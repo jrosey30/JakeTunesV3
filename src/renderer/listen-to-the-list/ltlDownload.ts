@@ -16,6 +16,7 @@
  * catalogue selection (the Download view's tracklist), and the selection's
  * Get carries the recommendation id back so the list still sees it land.
  */
+import { requestDiscoveryTab } from '../views/discoveryTab.ts'
 import type { Recommendation } from '../types.ts'
 import {
   enqueue, cancel, retry, subscribeQueue, getQueue, itemForRecommendation,
@@ -225,7 +226,16 @@ export function prefillDownloadView(rec: Recommendation, kind: 'album' | 'song' 
   // never searched, so he landed on an empty page. It now runs the search, and
   // for an album it opens that album's tracklist so he can take the whole
   // thing or pick songs out of it.
+  // Record Shop → Browse takes it (step 5 slice 4); the legacy Download route
+  // ignores a prefill addressed to Browse.
   window.dispatchEvent(new CustomEvent('jaketunes-download-prefill', {
-    detail: { query, kind, artist, title: name, origin: recoOrigin(rec) },
+    detail: { query, kind, artist, title: name, origin: recoOrigin(rec), target: 'browse' },
   }))
+}
+
+/** Open Record Shop → Browse. Call AFTER the prefill event: a mounted Browse
+ *  already took it; a fresh one reads the captured prefill when it mounts. */
+export function openBrowse(dispatch: (a: { type: 'SET_VIEW'; view: 'discovery' }) => void): void {
+  requestDiscoveryTab('browse')
+  dispatch({ type: 'SET_VIEW', view: 'discovery' })
 }

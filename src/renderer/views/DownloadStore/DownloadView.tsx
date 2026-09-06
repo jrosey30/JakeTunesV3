@@ -165,7 +165,11 @@ let pageCache: DownloadCache = { query: '', results: [], pasteUrl: '' }
 // was never there to hear it (2026-09-05, live: the search box still showed
 // the previous query). The event is captured at module scope and handed to
 // the view when it mounts; a mounted view takes it directly.
-export interface DownloadPrefill { query?: string; kind?: string; artist?: string; title?: string; origin?: QueueOrigin }
+/** `target` names which mounted instance may take the prefill — 'browse'
+ *  (Record Shop → Browse) or 'page' (the legacy route). A mounted view of the
+ *  other mode leaves it alone, so the module-level capture still reaches the
+ *  right one when it mounts. Unset = any (legacy callers). */
+export interface DownloadPrefill { query?: string; kind?: string; artist?: string; title?: string; origin?: QueueOrigin; target?: 'browse' | 'page' }
 let pendingPrefill: DownloadPrefill | null = null
 if (typeof window !== 'undefined') {
   window.addEventListener('jaketunes-download-prefill', (e: Event) => { pendingPrefill = (e as CustomEvent<DownloadPrefill>).detail ?? null })
@@ -441,15 +445,21 @@ export default function DownloadView({ mode = 'page' }: { mode?: 'page' | 'brows
       // directly would pin the first render's copy forever.
       void runSearchRef.current?.(q)
     }
-    const onPrefill = (e: Event) => applyPrefill((e as CustomEvent<DownloadPrefill>).detail)
+    const onPrefill = (e: Event) => {
+      const d = (e as CustomEvent<DownloadPrefill>).detail
+      if (d?.target && d.target !== mode) return   // meant for the other instance
+      applyPrefill(d)
+    }
     window.addEventListener('jaketunes-download-prefill', onPrefill)
     // Arrived from a prefill that fired before this view mounted.
-    if (pendingPrefill) {
+    if (pendingPrefill && (!pendingPrefill.target || pendingPrefill.target === mode)) {
       const d = pendingPrefill
       // runSearchRef is assigned by a later effect in this same commit; defer one tick.
       setTimeout(() => applyPrefill(d), 0)
     }
     return () => window.removeEventListener('jaketunes-download-prefill', onPrefill)
+    // `mode` is fixed for an instance's lifetime (the tab or the route decides it).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {

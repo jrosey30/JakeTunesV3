@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import NewForYouView from './NewForYouView'
 import ListenToTheListView from './ListenToTheListView'
 import DownloadView from './DownloadStore/DownloadView'
 import { useShopList } from '../record-shop/useShopSession'
+import { DISCOVERY_TAB_EVENT, rememberDiscoveryTab, rememberedDiscoveryTab, type DiscoveryTab } from './discoveryTab'
 import '../styles/discovery.css'
 
 // Backlog 2026-06-06 — "Discovery" merges the two discovery surfaces behind
@@ -12,18 +13,22 @@ import '../styles/discovery.css'
 // the wrapper just toggles which one is mounted. Recolored teal (see the
 // sidebar entry + discovery.css) so it reads cool vs. the Music Man's orange.
 
-export type DiscoveryTab = 'new-for-you' | 'browse' | 'your-list'
+export type { DiscoveryTab }
 
-// Remembered across remounts (MainContent unmounts views on navigation), so
-// returning to Discovery keeps the tab you were last on.
-let lastTab: DiscoveryTab = 'new-for-you'
-
+// The tab is remembered across remounts in ./discoveryTab (MainContent
+// unmounts views on navigation), so returning to Discovery keeps the tab you
+// were last on — and other views can ask for one (Browse) before navigating.
 export default function DiscoveryView({ initialTab }: { initialTab?: DiscoveryTab }) {
   const [tab, setTab] = useState<DiscoveryTab>(() => {
-    if (initialTab) lastTab = initialTab
-    return lastTab
+    if (initialTab) rememberDiscoveryTab(initialTab)
+    return rememberedDiscoveryTab()
   })
-  const select = (t: DiscoveryTab) => { lastTab = t; setTab(t) }
+  const select = (t: DiscoveryTab) => { rememberDiscoveryTab(t); setTab(t) }
+  useEffect(() => {
+    const onRequest = (e: Event) => setTab((e as CustomEvent<DiscoveryTab>).detail)
+    window.addEventListener(DISCOVERY_TAB_EVENT, onRequest)
+    return () => window.removeEventListener(DISCOVERY_TAB_EVENT, onRequest)
+  }, [])
   // The saved-item count on the Listen List tab (terminology map, 6.0 Record
   // Shop step 5): the same lean reader the Counter uses — no suggestion fetch.
   const { recs } = useShopList()

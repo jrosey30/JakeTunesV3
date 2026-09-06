@@ -25,6 +25,7 @@ import { CounterDesk } from './components/CounterDesk'
 import { shopFixtureSession } from '../../../common/record-shop-fixtures'
 import { recordingShopCommands } from '../../../common/record-shop-commands'
 import { useShopSession } from '../../record-shop/useShopSession'
+import { openBrowse } from '../../listen-to-the-list/ltlDownload'
 import { liveShopCommands } from '../../record-shop/liveShopCommands'
 import type { Blurb, Persona, ShelfId, ShelfItem } from './types'
 import storefrontBg from './art/storefront.png'
@@ -105,7 +106,7 @@ export default function RecordStoreView() {
   }, [trackById, playTrack])
   const commands = useMemo(() => fixtureMode
     ? recordingShopCommands((c) => console.log('[record-store] fixture command', c.verb, c.id))
-    : liveShopCommands({ session: () => sessionRef.current, recById: () => recRef.current, playTracks: playOwnedTracks, openDownloadView: () => dispatch({ type: 'SET_VIEW', view: 'download' }), refresh: live.refresh }),
+    : liveShopCommands({ session: () => sessionRef.current, recById: () => recRef.current, playTracks: playOwnedTracks, openDownloadView: () => openBrowse(dispatch), refresh: live.refresh }),
   [fixtureMode, playOwnedTracks, dispatch, live.refresh])
 
   const artIndex = useMemo(() => buildNormalizedArtworkIndex(lib.artworkMap), [lib.artworkMap])

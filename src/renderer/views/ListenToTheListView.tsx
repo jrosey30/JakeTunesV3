@@ -28,7 +28,7 @@ import { useItunesAutocomplete } from '../listen-to-the-list/useItunesAutocomple
 import { useListenToTheList } from '../listen-to-the-list/useListenToTheList'
 import type { AddFormState } from '../listen-to-the-list/useListenToTheList'
 import {
-  canDownloadReco, getLtlDownloadSnapshot, prefillDownloadView,
+  canDownloadReco, getLtlDownloadSnapshot, prefillDownloadView, openBrowse,
   queueRecoDownload, subscribeLtlDownload, type LtlDownloadStatus,
 } from '../listen-to-the-list/ltlDownload'
 import '../styles/listen-to-the-list.css'
@@ -174,8 +174,8 @@ export default function ListenToTheListView() {
     const f = friendOf(r)
     if (f) void window.electronAPI.friendEvent?.(f, 'got')
     const d = queueRecoDownload(r)
-    if (d.kind === 'select-edition') { prefillDownloadView(r, 'album'); dispatch({ type: 'SET_VIEW', view: 'download' }) }
-    else if (d.kind === 'browse-only') { prefillDownloadView(r, 'song'); dispatch({ type: 'SET_VIEW', view: 'download' }) }
+    if (d.kind === 'select-edition') { prefillDownloadView(r, 'album'); openBrowse(dispatch) }
+    else if (d.kind === 'browse-only') { prefillDownloadView(r, 'song'); openBrowse(dispatch) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -263,7 +263,7 @@ export default function ListenToTheListView() {
     const f = friendOf(rec)
     if (f) void window.electronAPI.friendEvent?.(f, 'got')
     prefillDownloadView(rec, recoType(rec) === 'album' ? 'album' : 'song')
-    dispatch({ type: 'SET_VIEW', view: 'download' })
+    openBrowse(dispatch)
   }
 
   // ── Standings (2026-08-05, Jake: "i want the friends area to look like

@@ -8,6 +8,7 @@
  */
 import { useState, useCallback, useEffect, useImperativeHandle, forwardRef, useSyncExternalStore } from 'react'
 import { useLibrary } from '../context/LibraryContext'
+import { openBrowse } from '../listen-to-the-list/ltlDownload'
 import { subscribeQueue, getQueue, cancel, retry, clearFinished } from '../views/DownloadStore/downloadQueue'
 import { downloadsPanelRows, panelSummary, type PanelRow } from '../../common/downloads-panel-model'
 import '../styles/downloads-panel.css'
@@ -52,13 +53,13 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
   useImperativeHandle(ref, () => ({ requestClose }), [requestClose])
 
   const toggleDetails = (key: string) => setOpen((s) => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n })
-  // A refused verdict re-opens the Download view on the same request so Jake
-  // picks a DIFFERENT edition or version — the job's provenance rides along.
+  // A refused verdict re-opens Record Shop → Browse on the same request so
+  // Jake picks a DIFFERENT edition or version — the job's provenance rides along.
   const chooseAgain = (row: PanelRow) => {
     if (!row.choose) return
     const origin = queue.find((q) => q.key === row.key)?.result.origin
-    window.dispatchEvent(new CustomEvent('jaketunes-download-prefill', { detail: { ...row.choose, origin } }))
-    dispatch({ type: 'SET_VIEW', view: 'download' })
+    window.dispatchEvent(new CustomEvent('jaketunes-download-prefill', { detail: { ...row.choose, origin, target: 'browse' } }))
+    openBrowse(dispatch)
     requestClose()
   }
 
