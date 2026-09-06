@@ -444,3 +444,27 @@ same blind spot.
 
 Follow-up recorded: prefill from the Counter / Listen List still opens the
 legacy Download route; point it at Record Shop → Browse once Browse is verified.
+
+## Choose actions → Record Shop → Browse — 2026-09-06 (dev instance, list fixture)
+
+| Check | Result |
+|---|---|
+| Listen List → Browse (fresh) | "Tracks" on the fixture Little Creatures jot switched to Browse with "Talking Heads Little Creatures" searched (`route-1-listenlist-to-browse.png`). |
+| Exact edition + provenance | Get on the Deluxe release: job key `…littlecreaturesdeluxeversion`, collectionId 124906778, 12 tracks, 2006; origin entryId `fixture-lc-album`, "from Alex"; done with 0 imported · 12 already owned (`route-2-browse-get-provenance.png`). |
+| One shared job | Counter row: "12 tracks · 0 imported, 12 already in your library", "All 12 in your library", On your shelf; Listen List released the owned record. |
+| Counter → Browse (fresh) | Get on the made-up song → Not found → Choose version → Browse with the song searched, "Nothing matched that." (`route-4-counter-choose-to-browse.png`). |
+| Panel → Browse (already mounted) | With Browse showing "XTC Skylarking", Choose version from the Downloads panel replaced the query in the SAME input element (`route-5-panel-choose-mounted.png`). |
+| From the legacy route | Choose version while the legacy Download page was mounted landed on Browse with the query; the legacy page did not consume the prefill (`route-6-legacy-route-choose.png`). |
+
+No music acquired; no rip left running. Hub tombstones created by the
+fixture's release were removed (see checkpoint).
+
+### Harness isolation re-run (same day, `JT_RECO_FIXTURE`)
+
+| Check | Result |
+|---|---|
+| Fixture served | Listen List shows the two fixture jots; read meta `backendReachable: true` from the fixture hub. |
+| Completion → release | Get on the owned Deluxe completed; the list released the fixture record (count 2 → 1); main log: "1 delete(s) landed on the FIXTURE hub". |
+| Explicit toss | The second fixture jot tossed; fixture list empty, fixture outbox empty. |
+| Real state untouched | `recommendations.json` / `recommendations-outbox.json` md5 identical before and after; hub list still one item; tombstones still 998 with the same tail. |
+| Fixture files | `recommendations.fixture.json` / `recommendations-outbox.fixture.json` created under the state dir, removed after the run. |

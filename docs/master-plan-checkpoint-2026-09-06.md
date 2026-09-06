@@ -39,13 +39,23 @@ Supersedes [2026-09-05](master-plan-checkpoint-2026-09-05.md) for current status
 
 ## Current next work
 
-Record Shop implementation order, step 5, remaining small changes in order:
-**literal labels** (For You / Listen List with count, per the terminology map
-in [record-shop-structure-and-domain.md](record-shop-structure-and-domain.md)),
-then Music Sources placement, the Downloads panel, and the Browse migration —
-each a separate reviewable slice, legacy routes retained until verified.
-After the Record Shop: the Desktop placement audit and the Activity Sync front
-end per [jaketunes-6-plan.md](jaketunes-6-plan.md).
+Record Shop step 5 is complete as five slices (labels 6351ed7, Music Sources
+93931e9, Downloads panel 5643d10, Browse 818e98f, Choose routing d68d2aa) plus
+the isolated acceptance harness (f17970c). Legacy surfaces still standing, on
+purpose, until their replacements are verified in Jake's own use: the sidebar
+Download route (page mode with its queue bar and Setup drawer), and the
+Bandcamp Store sidebar entry (the map keeps it through the transition).
+Retiring them is a problem-space audit (CLAUDE.md), not a slice.
+
+Next unfinished item: the **Desktop placement audit**, then the **Activity
+Sync front end**, per [jaketunes-6-plan.md](jaketunes-6-plan.md).
+
+Follow-ups 4 and 6 above are resolved inside the Downloads panel (Choose
+edition/version for refused verdicts; canceled jobs visible) and remain true
+of the legacy Download bar only.
+
+Mobile: the Now Playing queue-counter caption (under the album line) is a
+separate, uncommitted change in JakeTunesMobile pending Jake's device look.
 
 ## Done — step 5, slice 1: literal labels (6351ed7)
 
@@ -146,3 +156,40 @@ end per [jaketunes-6-plan.md](jaketunes-6-plan.md).
 - The sidebar Download route is the untouched `page` mode; prefill from the
   Counter / Listen List still opens that route until Browse is verified
   (recorded follow-up: point prefill at Record Shop → Browse).
+
+## Done — step 5, slice 5: Choose actions route into Record Shop → Browse
+
+- `views/discoveryTab.ts` remembers the shop tab and lets any view request
+  one; `openBrowse(dispatch)` (ltlDownload) = request Browse + SET_VIEW
+  discovery. Prefill events now carry `target: 'browse'`; a mounted Download
+  view of the other mode ignores them, so the captured prefill reaches Browse
+  whether it is already mounted or mounts fresh.
+- Routed: Listen List "Tracks" (select-edition) and browse-only Gets, the
+  Counter's Get-selection and Choose edition/version, and the Downloads
+  panel's Choose edition/version. The sidebar Download route stays.
+- Verified on the dev instance with a temporary main-process list fixture
+  (two jots served through the read IPC; hook removed before commit) —
+  fresh mount from the Listen List, from the Counter and from the legacy
+  Download route; already-mounted Browse (same input element, query replaced);
+  provenance retained on the job (`entryId`, `sourceLabel: Alex`); exact
+  edition selected (iTunes 124906778 · 12 tracks · 2006); one shared job —
+  the Counter row showed the Browse-started job's completion and ownership,
+  and the Listen List released the owned record. Captures `route-1…6`.
+- Side effect found and REVERSED: the first harness run served a fixture list
+  through the read IPC only, so the Listen List's release of the owned fixture
+  record posted a real delete to the hub, leaving tombstones
+  `identity:album:talkingheads~littlecreaturesdeluxeversion` and
+  `fixture-lc-album`; both removed from both hub copies (backups
+  `.pre-untomb2-20260906`), hub list and tombstone count verified unchanged
+  afterwards.
+- Acceptance harness, properly isolated (Jake's ask): `src/main/reco-hub.ts`
+  is now the ONE hub transport. `JT_RECO_FIXTURE=<seed.json>` in an unpackaged
+  build selects an in-memory hub — reads, adds, completion releases and deletes
+  all stay inside it, the NAS fallback is closed, and the local cache/outbox
+  move to `recommendations.fixture.json` / `recommendations-outbox.fixture.json`.
+  Live fulfilment is unchanged (same URLs, methods, identity params).
+  `reco-hub.test.ts` locks it, including completion-triggered cleanup never
+  touching the network. Re-run of the flow under the harness: release and
+  toss landed on the fixture hub (main log), real local files' md5 and the
+  hub's list + 998 tombstones unchanged. Launch entry `electron-dev-fixture`
+  in ~/.claude/launch.json; no temporary source hooks remain.
