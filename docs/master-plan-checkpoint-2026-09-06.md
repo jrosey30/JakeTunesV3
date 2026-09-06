@@ -50,9 +50,13 @@ Retiring them is a problem-space audit (CLAUDE.md), not a slice.
 Next unfinished item: the **Desktop placement audit** — first pass (the
 download flow) written as a document-only slice:
 [desktop-placement-audit-2026-09-06.md](desktop-placement-audit-2026-09-06.md);
-awaiting Jake's arbitration of P1–P5. Then the **Activity Sync front end**,
-per [jaketunes-6-plan.md](jaketunes-6-plan.md), on hold until the audit is
-reviewed.
+P1, P3, P4, P5 arbitrated and implemented the same day (see the audit's
+"Arbitration and status"): Record Shop under STORE, Downloads = the panel's
+row, missing-Qobuz notice, Bandcamp Store stays; parity run in Jake's order on
+the isolated harness; Add by link's real-link test waits on Jake's link; the
+legacy *Download page* row stays until parity plus everyday-use acceptance.
+Then the **Activity Sync front end**, per
+[jaketunes-6-plan.md](jaketunes-6-plan.md), on hold until Jake says go.
 
 Follow-ups 4 and 6 above are resolved inside the Downloads panel (Choose
 edition/version for refused verdicts; canceled jobs visible) and remain true

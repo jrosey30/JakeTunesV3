@@ -217,3 +217,52 @@ Preferences tab.
 Until these are answered nothing moves; the legacy route stays exactly as it
 is. Activity Sync implementation stays on hold. The Mobile counter caption
 remains a separate, uncommitted change.
+
+## Arbitration and status (2026-09-06, later the same day)
+
+Jake approved: **P4** Record Shop under STORE; **P5** Bandcamp Store stays;
+**P1** Downloads becomes the panel's full-row entry point with its door
+visible when empty; **P3** an actionable notice when an attempted operation
+needs Qobuz credentials, linking to Preferences → Music Sources, with
+browsing and previews unaffected. The legacy page is retired only after
+parity AND Jake's everyday-use acceptance.
+
+### Implemented (this arbitration round)
+
+| Change | Where |
+|---|---|
+| STORE reads Record Shop · Bandcamp Store · Downloads · *Download page*. Record Shop keeps its view id, highlight and icon; LIBRARY ends with The Music Man. | `Sidebar.tsx` |
+| The Downloads row toggles the panel; the glyph door stays when the queue is empty; the count rides inside it; the row lights (not "selected") while the panel is open. | `Sidebar.tsx`, `DownloadsPanel.tsx`, `sidebar.css` |
+| The legacy page keeps a quieter row, *Download page*, until retirement. | `Sidebar.tsx`, `sidebar.css` |
+| Missing-Qobuz notice: every Get in Browse and on the legacy page passes through one rule (`common/qobuz-notice.ts`); when the account is known-unconfigured a notice appears under the search with **Open Music Sources**, which opens Preferences on that tab. The job still runs (a song may come from Bandcamp/SoundCloud). Search, previews and Add by link never trigger it. | `DownloadView.tsx`, `CredentialNotice.tsx`, `credential-notice-store.ts`, `SettingsModal.tsx`, `App.tsx` |
+
+### Parity run — Jake's order, on the isolated harness (`JT_RECO_FIXTURE`)
+
+| Step | Result | Capture |
+|---|---|---|
+| 1 Search / preview | Album and song searches return Top match, Releases, Songs; the song hero's preview plays (`playingId dl|q|track|talkingheads|onceinalifetime`, "Once In a Lifetime") and stops on second click. Album results carry no preview control by design (previews are per song, inside See tracks). | `parity-1-search-preview.png` |
+| 2 Listen List and Counter handoffs | Listen List "Tracks" → Browse with the album searched; Counter "Choose version" after a refusal → Browse with the song searched. | `parity-2-listenlist-handoff.png`, `parity-4c-counter-choose-browse.png` |
+| 3 Exact-edition Get on owned material | Little Creatures Deluxe: done, 0 imported · 12 already owned, collectionId 124906778 · 12 tracks · 2006, provenance entry `fixture-lc-album` "from Alex"; row "1 done". | `parity-3-exact-edition-owned.png` |
+| 4 Cancel / retry / refusal | Downloading · 2s → Cancel → Canceled (Retry) → Retry → Needs a choice · Not found (Choose version, Details); Counter row "Not found · attempt 2". | `parity-4a-cancel.png`, `parity-4b-refused.png` |
+| 5 Add by link — prepared, not run | Card opens as "Add by link", hint points at Preferences → Music Sources, Download button disabled when empty and armed with a URL; no download attempted. | `parity-5-add-by-link-ready.png` |
+| Notice | Rendered through the shared store on a Get with `configured: false`: text, **Open Music Sources** → Preferences opens on Music Sources; search and results stay usable behind it. | `parity-6-qobuz-notice.png`, `parity-7-notice-opens-music-sources.png` |
+| Placements | Sidebar with an empty queue; the Downloads row open from Songs (Songs stays the selected view); Record Shop selected under STORE. | `place-1-sidebar-empty.png`, `place-2-downloads-row-open.png`, `place-3-record-shop-under-store.png` |
+
+Isolation held: real `recommendations.json` / outbox checksums identical before
+and after; hub list one item; tombstones 998, same tail; no rip process left.
+
+### The real-link test (waiting on Jake's link)
+
+Procedure once the link arrives: Record Shop → Browse → Add by link → paste →
+Download. Expected: the job appears in the Downloads panel as "pasted link",
+completes with the import count, and the track lands in the library with the
+link's title and artist; a partial import shows the failures list under the
+card. Checked afterwards: the Downloads row count, the panel's Details, and
+the library row. Nothing is acquired before the link is supplied.
+
+### Retirement gate for the legacy page (unchanged)
+
+Parity above, plus Jake's everyday-use acceptance of Browse, the panel and
+Add by link. Then: remove the *Download page* row, the `download` route from
+MainContent and ui-state (a saved `download` view lands on Record Shop →
+Browse), and the page-mode branches of the Download view.
