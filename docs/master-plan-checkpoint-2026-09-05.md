@@ -1,5 +1,7 @@
 # Master plan checkpoint — 2026-09-05
 
+> Superseded by [2026-09-06](master-plan-checkpoint-2026-09-06.md).
+
 **Later status:** the downloader slice is now committed as `f11314a`. Jake
 reported live acceptance on the installed build: XTC bonus answered fully
 owned without a rip; Little Creatures Deluxe imported 10 with 2 already owned;
