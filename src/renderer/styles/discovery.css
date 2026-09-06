@@ -31,6 +31,12 @@
 }
 .discovery-tab:hover { color: #5a554d; }
 .discovery-tab--on { color: #1f7a8c; border-bottom-color: #1f7a8c; }
+/* Literal labels (6.0 Record Shop step 5): the room's name rides under
+   "For You"; the Listen List tab carries its saved-item count. */
+.discovery-tab__sub { display: block; font-size: 10px; font-weight: 500; letter-spacing: 0.4px; text-transform: uppercase; color: #8a8378; margin-top: 1px; }
+.discovery-tab--on .discovery-tab__sub { color: #4f8f9c; }
+.discovery-tab__count { display: inline-block; margin-left: 6px; padding: 0 6px; min-width: 18px; border-radius: 9px; font-size: 10.5px; font-weight: 600; line-height: 16px; text-align: center; color: #fff; background: #8a8378; vertical-align: 1px; }
+.discovery-tab--on .discovery-tab__count { background: #1f7a8c; }
 
 /* Hosts whichever leaf view is active; each is height:100% + own scroll. */
 .discovery-body { flex: 1; min-height: 0; }

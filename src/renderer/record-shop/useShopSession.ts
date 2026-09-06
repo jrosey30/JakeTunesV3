@@ -18,7 +18,7 @@ let resolvedForLibrary = ''
 /** The saved list, read the way the regular shop reads it (same cache,
  *  same loader, same update signal) — WITHOUT the regular shop's
  *  Music Man suggestion fetch, which is that view's business. */
-function useShopList(): { recs: Recommendation[]; loading: boolean } {
+export function useShopList(): { recs: Recommendation[]; loading: boolean } {
   const cached = getRecsCache()
   const [recs, setRecs] = useState<Recommendation[]>(cached ?? [])
   const [loading, setLoading] = useState(cached === null)

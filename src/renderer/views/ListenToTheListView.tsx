@@ -363,7 +363,7 @@ export default function ListenToTheListView() {
     <div className="ltl-view ltl-view--v3" ref={ltlPageRef}>
       <div className="ltl-header">
         <div className="ltl-header-titles">
-          <h1 className="ltl-title">Listen to the List</h1>
+          <h1 className="ltl-title">Listen List</h1>
           <span className="ltl-progress">
             {inboxFlat.length > 0 ? `${inboxFlat.length} to decide` : recs.length > 0 ? 'Inbox zero ✓' : ''}
           </span>
