@@ -47,7 +47,7 @@ each a separate reviewable slice, legacy routes retained until verified.
 After the Record Shop: the Desktop placement audit and the Activity Sync front
 end per [jaketunes-6-plan.md](jaketunes-6-plan.md).
 
-## In progress — step 5, slice 1: literal labels (uncommitted)
+## Done — step 5, slice 1: literal labels (6351ed7)
 
 - Record Shop tabs: "For You" (subtitle "The Racks") and "Listen List" with the
   saved-item count (the Counter's lean list reader, no suggestion fetch).
@@ -65,3 +65,69 @@ end per [jaketunes-6-plan.md](jaketunes-6-plan.md).
   (the only request logged was one made explicitly to prove the instrument).
   Captures `labels-4-count-pill-for-you.png`, `labels-5-count-pill-listen-list.png`.
   Labels approved by Jake; committed. Not installed yet.
+
+## Done — step 5, slice 2: Music Sources placement (93931e9)
+
+- New shared panel `components/MusicSourcesPanel.tsx`: the Qobuz account
+  (password or token) and the download tool's status, the same markup and
+  handlers the Download view's setup drawer had.
+- Preferences gains a **Music Sources** tab (after Library) showing the panel,
+  with a line pointing catalogue search and paste-a-link to Record Shop →
+  Download. The Download drawer keeps "Paste a link" and reuses the same
+  panel, so the legacy placement stays until this one is verified.
+- Gate: 1,138 tests. Verified on the dev instance: Preferences → Music Sources
+  shows "Connected · <account>" and "streamrip 2.1.0 · ready"; the drawer
+  shows Paste a link + the two cards; header chips still read from the panel.
+  Captures `sources-1-preferences-tab.png`, `sources-2-download-drawer.png`.
+  Approved by Jake; committed. Not installed yet.
+
+## In progress — step 5, slice 3: the Downloads panel (uncommitted)
+
+- `src/common/downloads-panel-model.ts` (pure, tested): each scheduler job →
+  one row with status, provenance ("from Alex" / "from your Listen List" /
+  "pasted link"), edition identity (`album · 12 tracks · 2006 · iTunes 124906778`),
+  counts and completion line for finished jobs, verdict + full explanation +
+  refused candidates for failed ones. Actions follow the Counter's rule through
+  the same `refusedSelection` projection: Cancel (queued/downloading), Retry
+  (provider failure, canceled), **Choose edition / Choose version** for a refused
+  verdict (never a repeat of the refused request). Order: in flight, needs a
+  decision, canceled, done — newest first within a group.
+- `components/DownloadsPanel.tsx` + `styles/downloads-panel.css`: a right-hand
+  drawer mounted in App next to the play queue and Music Man (one drawer at a
+  time), opened from anywhere by the sidebar Download badge (now a control:
+  in-flight count while jobs move, "N done" once settled, absent when the queue
+  is empty) or the `jaketunes-downloads-panel` window event. Choose edition /
+  version prefill the Download view with the same request and provenance.
+  Clear finished drops settled jobs. Details per row.
+- Scheduler fix found by the panel: `downloadQueue.emit` now hands out a fresh
+  array (jobs are mutated in place), so `useSyncExternalStore` readers — the
+  legacy sidebar count included — see queued → downloading → done/canceled.
+  Everything else about the scheduler, provenance, identity and completion
+  details is untouched; the Download view's own queue bar stays until this
+  replacement is verified.
+- Gate: 1,144 tests (6 new). Live acceptance on the dev instance, playback idle,
+  queue exercised through the real scheduler with an owned album and made-up
+  requests that can never acquire anything (no library writes; `rip` never left
+  a process behind):
+  done (Little Creatures Deluxe, 0 imported · 12 already in your library, edition
+  + completion line), downloading with elapsed clock + Cancel, canceled with
+  Retry, refused song → Choose version, refused album → Choose edition (with
+  provenance "from your Listen List"), Choose version → Download view prefilled,
+  badge click over Songs opens the panel without leaving Songs, second click
+  closes it, Clear finished empties it and hides the badge. Captures
+  `dlp-0-empty.png` … `dlp-8-over-songs.png` in `diagnostics/step-inside-review/`.
+- Review round (Jake): the Download row now carries a persistent door to the
+  panel (a small panel glyph); only the count inside it hides when the queue is
+  empty. The count never calls a failed, refused or canceled job "done": moving
+  jobs → "N"; any failed/refused → "N need attention"; canceled among the
+  finished → "N finished"; "N done" only when every settled job is. Refused-candidates details verified visually with a temporary
+  in-memory queue fixture on the dev instance (an exact-not-found album with two
+  refused candidates pushed into the live queue array, no request made, nothing
+  acquired). `download-queue-snapshots.test.ts` locks the scheduler snapshot
+  fix: every status transition reaches subscribers as a new array.
+- Observed today, recorded without attribution: the Listen List's Cups jot
+  (D-Stone) is gone; the library holds "Cups (D Stone Edit)" by D Stone,
+  imported 2026-09-06 13:21Z (`imported_11732.m4a`, played three times that
+  morning), and the hub tombstone `identity:cups|dstone` is the newest entry.
+  None of this session's work touched the jot or the track; who acquired it is
+  unconfirmed.

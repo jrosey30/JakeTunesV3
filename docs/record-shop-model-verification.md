@@ -399,3 +399,35 @@ edition. Follow-up: the list must display the jot as written (or make the
 enriched edition an explicit, reversible choice), and the enrichment's
 edition must never become the selection. Separate from the live-wiring
 work; not fixed here.
+
+## Downloads panel acceptance — 2026-09-06 afternoon (dev instance, playback idle)
+
+Rows come from the one scheduler; the checks used an owned album and two
+made-up requests ("Nobody Lives Here") so nothing could be acquired.
+
+| Check | Result |
+|---|---|
+| Empty panel | "Nothing in the queue" + hint; sidebar badge absent (`dlp-0-empty.png`). |
+| Done job keeps identity + details | Little Creatures (Deluxe Version): `album · 12 tracks · 2006 · iTunes 124906778`, `0 imported · 12 already in your library`, Details → "12 tracks · 0 imported, 12 already in your library" (`dlp-1-done.png`, `dlp-2-done-details.png`). No import, no rip. |
+| In flight | "Downloading · 1s", provenance "from Alex", Cancel only (`dlp-3-downloading.png`). |
+| Canceled job visible | "Canceled" row with Retry; badge "2 done"; no rip process left (`dlp-4-canceled.png`). |
+| Retry → refused song | "Needs a choice · Not found", full explanation in Details, action **Choose version** (no Retry) (`dlp-5-refused-song.png`). |
+| Refused album | "from your Listen List", edition line retained, **Choose edition** (`dlp-6-refused-album.png`). Ordered: needs-a-choice rows above Done. |
+| Choose version | Panel closes, Download view opens prefilled "Nobody Lives Here Song That Does Not Exist"; legacy queue bar still shows the same jobs (`dlp-7-choose-version-prefill.png`). |
+| Reachable across views | Badge click on Songs opens the panel over Songs, selection stays Songs; second click closes (`dlp-8-over-songs.png`). |
+| Clear finished | Rows 0, badge hidden, empty state back. |
+| Fixture isolation | No fixture code involved; live scheduler only. |
+
+Library side effects: none (0 imported everywhere; no staging leftovers; `rip`
+never running after cancel). Scheduler change: `emit` snapshots the array so
+`useSyncExternalStore` readers update — the pre-existing sidebar count had the
+same blind spot.
+
+### Review round (same afternoon)
+
+| Check | Result |
+|---|---|
+| Door with an empty queue | The Download row's panel glyph is always present; no count. From Songs and from Record Shop it opens the empty state ("Nothing in the queue"), selection unchanged (`door-1-songs-empty.png`, `door-2-recordshop-empty.png`). |
+| Count inside the door | "1 done" after the owned Deluxe Get, "2 done" with the fixture, hidden again after Clear finished (`door-3-count-closed.png`). |
+| Refused candidates | Temporary in-memory fixture (an exact-not-found Remain in Light deluxe with two refused candidates pushed into the live queue array; no request made, nothing acquired): row reads Needs a choice · from Alex · edition line · Exact edition not found · Choose edition; Details lists both candidates with reason and provider (`fixture-1-refused-candidates.png`). Cleared afterwards. |
+| Snapshot regression | `download-queue-snapshots.test.ts`: queued → downloading → done each reach a subscriber as a new array; cancel mid-flight publishes a new snapshot equal to `getQueue()`. |
