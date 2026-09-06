@@ -210,3 +210,192 @@ wrongly. Acquisition needs a direct link from wherever the label sells it.
 
 UI follow-up (recorded, not changed): a "Not found" queue row still offers
 Retry, which invites the identical search the message warns against.
+
+## Live wiring — 2026-09-06 (built, not installed)
+
+The Counter reads the live session and performs verbs through the same
+modules the regular shop uses. Nothing in the regular shop's flow moved.
+
+- `src/common/record-shop-live.ts` — the live session builder (pure):
+  list jots → entries/items (`shopEntryFromLegacy`); scheduler items →
+  jobs keyed by item, `jobId` = queue key; a job's query → the item's
+  selection (the edition Jake chose, by iTunes id); a song jot selects
+  itself. Ownership attaches only when its verdict was made for the item's
+  current selection revision.
+- `src/main/record-shop-resolve.ts` + `ipc/record-shop-ipc.ts` —
+  `record-shop:resolve` (read-only): the tracklist behind an edition and
+  ownership by recording identity, through `itunesAlbumTracks` and
+  `matchLibraryOwnership`. A song without a runtime is reported
+  `unknown`, never matched by title alone.
+- `src/renderer/record-shop/useShopSession.ts` — list (same cache and
+  loader as the Listen List, no suggestion fetch) + queue + resolve
+  cache; verdicts drop when the library changes or a job lands.
+- `src/renderer/record-shop/liveShopCommands.ts` — Get on a selected
+  record enqueues the Download-view contract (collection id, count, year,
+  provenance); a song goes through `queueRecoDownload`; a record without
+  an edition, and Choose edition, go to the Download view prefilled;
+  cancel/retry address the queue key; Play plays the owned rows in order;
+  Preview uses the preview player. Every verb refuses `fx:` ids.
+- Fixtures: only behind `#shopFixtures` in the window hash, with the
+  recording bus; rails in `record-shop-isolation.test.ts`.
+
+Read-only smoke on the dev build (03:20): the counter showed the live
+list (1 item), `record-shop:resolve` answered Remain in Light with 8
+tracks and a partial verdict (2 of 8, 598 ms), a song with a runtime
+answered `none`, an unknown record answered `tracklist-unavailable`.
+
+### Live-test plan (attended, after install)
+
+Run with the Listen List open in one view and the Counter in the other;
+every step is checked in BOTH.
+
+1. **Save** — jot a song and an album in the Listen List. Counter: both
+   appear (song offers Preview/Inspect/Get; album offers Inspect/Choose
+   edition, "Pick edition").
+2. **Edition selection** — Counter → Choose edition on the album. The
+   Download view opens with the search run and the album card expanded.
+   Get all. Both views: the row goes Queued → Getting…; Counter shows the
+   chosen edition line (deluxe · N tracks · year) once the job carries it.
+3. **Cancel / retry** — Counter → Cancel while downloading: both views show
+   Canceled; Counter offers Retry only (no Get). Retry: attempt 2, job
+   resumes.
+4. **Completion** — let it finish. Counter: completion line
+   ("N tracks · X imported, Y already in your library"), ownership
+   refreshed to "All N in your library", verbs Inspect/Play, "On your
+   shelf". Listen List: the row is auto-removed (its existing rule), so the
+   Counter item disappears on the next list update — expected.
+5. **Ownership refresh** — jot an album you already own in full. Counter
+   → Choose edition → Get all on the owned edition: main answers from the
+   library (no rip), Counter reads complete; Inspect lists every track
+   "in library". Then jot a partly-owned deluxe: Inspect marks the owned
+   originals; Get imports only the missing ones.
+6. **Play** — on an owned record, Play starts the first owned track with
+   the rest queued in running order; the Now Playing pill agrees.
+7. **Get (song)** — Get on the song jot queues it (same job the Listen
+   List's Get would make: one row in the queue bar, provenance carried).
+8. **Refused edition** — pick an edition the sources lack (a live
+   variant). Both views: "Exact edition not found"; Counter offers
+   Details / Choose edition, never Retry/Get.
+9. **Isolation** — set `#shopFixtures` in the window hash and reopen the
+   room: the fixture set with the Prototype pill; Get/Play only log. Clear
+   the hash: the live list returns.
+
+Known limits to watch: the Listen List shows ownership only through
+completion and the hub sweep (no identity chip there yet); a Counter
+verdict for an album jot without a chosen edition stays "unknown" by
+design; iTunes throttling can delay Inspect tracklists.
+
+### Live-test run — 2026-09-06 (installed 09:38 build; Jake paused playback for it)
+
+Captures: `diagnostics/step-inside-review/live-1-getting.png` … `live-6-fixtures.png`.
+
+| Step | Result |
+|---|---|
+| Save | Song + record jots through the app's add path appear at the counter with the model's verbs (song: Preview/Inspect/Get; record: Inspect/Choose edition, "Pick edition"). **Defect found:** a second album jot by the same artist is deduped against the first ("Little Creatures (Deluxe Version)" returned the "Remain in Light (Deluxe Version)" row) — the add path's fallback key ignores the album. Pre-existing; not touched. |
+| Edition selection | Choose edition → Download view prefilled ("Talking Heads Remain in Light"), search run, both editions listed; the deluxe card was NOT auto-expanded (the plain edition took the hero slot — recorded follow-up). Expanded by hand, Get all. Counter: "deluxe · 12 tracks · 1980", "2 of 12 in your library", Getting…, Inspect/Play/Cancel. Downloads: the same job, one row. |
+| Cancel / retry | Cancel from the counter: Canceled, Retry only (no Get), rip process gone. Downloads: the canceled job is NOT shown (the queue bar renders active/failed/done only). Retry from the counter: "Getting… · attempt 2" in the counter, the job back in the Downloads bar. |
+| Completion | Counter: "12 tracks · 10 imported, 2 already in your library · attempt 2", ownership refreshed to "All 12 in your library", Inspect/Play/On your shelf; Inspect 12 tracks, 12 in library, iTunes collection 124922154. Readable until the regular shop's At the Counter tab was opened, which auto-removed the row (hub list confirmed). Afterwards Downloads still carried "1 in your library" and the failed details. |
+| Ownership refresh (owned record) | Little Creatures (Deluxe): Choose edition → Get all → no rip; counter "12 tracks · 0 imported, 12 already in your library", All 12, Inspect 12/12 in library. |
+| Play | Play on the owned record started playback (Now Playing, pmset assertion) in running order; paused again afterwards. Twice. |
+| Song Get | Cups (Jake's own jot) and Nervous Gallop: queued from the counter (Queued → Getting… with Cancel), both refused as Not found; counter offers Details / Choose version with "Refused"; the regular shop's list shows "Retry" for the same rows (recorded wording follow-up — same meaning, different verb). Downloads: "2 failed" + full details panel. |
+| Fixture isolation | `#shopFixtures`: 13 fixture rows, Prototype pill. Get, Play and Choose edition on fixtures: queue unchanged, no rip, no playback, 0 download log lines. Hash cleared: the live list (4 rows) returned. |
+
+**Library side effects:** +10 rows (11733–11742), Talking Heads "Remain in
+Light" deluxe: six 2005-remaster album tracks and four Unfinished Outtakes,
+titles carrying the source's "(2005 Remastered Album Version)" stamp. Test
+jots removed from the hub list afterwards (Once In a Lifetime, Nervous
+Gallop, Little Creatures); Cups left as found. No other writes.
+
+**Fixed during the run:** the counter's list reader trusted the regular
+shop's cache, so a jot added by any other path never appeared; it now
+shows the cache at once and always re-reads the mirror (rebuilt, reinstalled).
+
+**Known limits seen:** a song jot has no runtime, so its ownership stays
+"unknown" even after its album was imported (Once In a Lifetime); the
+queue is renderer memory, so a relaunch forgets finished jobs.
+
+### Correction pass — 2026-09-06 (built + installed 09:54; NOT committed)
+
+**Album-jot identity.** A songless row that names a record is now its own
+identity: `album:<artist>~<album>` (edition words included), never the
+artist alone; `artist:` remains only for songless, albumless rows. The
+add path dedupes by shared identity keys (album-aware) and the strict
+fallback key includes the album. Parity fixtures updated on both sides;
+the backend twin source (`~/JakeTunesMobile/backend/src/util/reco-identity.ts`)
+carries the identical change, tested (10/10) — **not deployed**: the hub
+on homemini still runs the old keys.
+
+Live (installed build): "+ List" on two record cards from the racks
+produced two rows (different artists). A second record by the same artist
+through the racks' exact add payload was no longer deduped on the desktop
+— but the hub returned the first record's row for it (its old identity
+code), so the fix is complete only once the backend twin is deployed. A
+repeat of the same record is still deduped (`deduped: true`).
+
+**Hub tombstone hazard (found):** deleting a songless row under the old
+hub code tombstones `identity:artist:<artist>`. The 2026-09-06 cleanup
+deletes left `identity:artist:talkingheads` on the hub, so until the
+backend twin is deployed (and that entry cleared or re-added), a Talking
+Heads record or artist jot can be refused by the hub. Do not delete album
+jots on the hub before the deploy.
+
+**Downloads: finished jobs inspectable.** The queue's Details panel now
+lists done jobs — edition facts (album/song, track count, year, iTunes
+id), imported / already-owned counts and the completion line — and the
+Details button shows when only done jobs remain. Built and installed; the
+targeted live check (owned song → done → list auto-removal → Details) was
+interrupted: Jake was using the app, so driving stopped. Unverified live.
+
+**Library event during this pass (facts):** at 09:48:49 a library save
+shrank the library 10644 → 10634 (−10) with the sync deferred
+(metadata-edit); the ten Remain in Light rows (11733–11742) are gone and
+their files are not on disk or in the Trash. Nothing in this pass touches
+the library or those files; the only preceding write was Jake's own add
+(GEEKIN — Nemzzz, 11743, 09:44). Cause not established from logs.
+
+Follow-ups kept separate: tracklist auto-expansion (hero case), canceled
+jobs invisible in the Downloads bar.
+
+### Deploy + verification — 2026-09-06 10:10–10:40 (still uncommitted)
+
+- Deletion investigation closed (Jake's call).
+- Backend twin deployed to homemini by hand: source copied, its own suite
+  10/10 on node 26, `tsc` built dist 10:11, launchd service kickstarted;
+  port 3000 is owned by the restarted process. The tracked source on
+  homemini was then restored to HEAD so the auto-deploy can fast-forward
+  when the commit lands (dist keeps the new keys until then; a manual
+  rebuild on homemini before the push would drop them). A stale second
+  `dist/server.js` process (node 22, ~31 h old) sits on homemini without a
+  listener — left alone.
+- Tombstone: only `identity:artist:talkingheads` removed from both hub
+  copies (NAS + durable local), each backed up as
+  `recommendations-deleted.json.pre-untomb-20260906`; live list 988 → 987.
+- Desktop → hub → desktop: "Stop Making Sense" and "Fear of Music" by
+  Talking Heads (the racks' exact add payload) → two ids on the desktop,
+  both on the hub, both back on the desktop after a fresh mirror; an exact
+  repeat of "Fear of Music" → `deduped: true`, same id.
+- Downloads details after auto-removal: "Little Creatures (Deluxe
+  Version)" (owned 12/12) → Get all ran no rip; counter read
+  "deluxe · 12 tracks · 1985", "All 12 in your library", "12 tracks · 0
+  imported, 12 already in your library"; the regular list's tab removed
+  the row (hub confirmed); Downloads → Details listed the job:
+  "album · 12 tracks · 2006 · iTunes 124906778", "0 imported · 12 already
+  in your library", completion line intact. (The panel also carried
+  Jake's own beabadoobee import from this session, 14 imported.)
+- Fear of Music was NOT acquired: iTunes lists only the 15-track bonus
+  edition and Jake owns the 11-track record, so Get would have ripped
+  four tracks. Test jots removed afterwards (Cups kept); the hub now
+  tombstones `identity:album:…` keys for those, never the artist.
+- Captures: `diagnostics/step-inside-review/live-8-*.png`, `live-9-downloads-done-details.png`.
+
+### Follow-up recorded — 2026-09-06: enrichment must not imply another edition
+
+The regular shop's list showed the record jots under their iTunes
+enrichment names ("Stop Making Sense (Live) [Special New Edition]",
+"Fear of Music (Remastered Bonus Track Version)") while the Counter showed
+them as written. Enrichment may add artwork and a preview, but a displayed
+name that names a different edition silently selects or implies that
+edition. Follow-up: the list must display the jot as written (or make the
+enriched edition an explicit, reversible choice), and the enrichment's
+edition must never become the selection. Separate from the live-wiring
+work; not fixed here.
