@@ -35,38 +35,11 @@
  * wrong-version guard. The phone's downloader is explicitly INCOMPLETE on
  * identity as of 2026-09-04; closing it is a mobile-phase change.
  */
+import type { Provider, RequestedRecording, Alternative, DownloadOutcome } from '../common/acquisition-identity.ts'
+export type { Provider, RequestedRecording, Alternative, DownloadOutcome } from '../common/acquisition-identity.ts'
+
 import { recoArtistMatches, recoNorm, recoTitleMatches } from './reco-match.ts'
 import { liveBrandMarker, maskedTitleMatches, subtitleVariantMatches, unwantedVersionOf, requestedVersionMarkers } from './streamrip-match.ts'
-
-export type Provider = 'qobuz' | 'bandcamp' | 'soundcloud'
-
-export interface RequestedRecording {
-  /** As displayed by the source Jake clicked (iTunes / Deezer / a card). */
-  artist: string
-  title: string
-  album: string
-  /** Normalised forms, for logs and equality. */
-  artistNorm: string
-  titleNorm: string
-  /** Seconds, when the clicked row knew its runtime; 0 = unknown. */
-  durationSec: number
-  /** ± seconds. Tight for the exact pressing; wide when we deliberately
-   *  searched for the SONG rather than that pressing (censored/remaster). */
-  durationTolSec: number
-  releaseYear?: number
-  /** What was ASKED for. 'clean' only when a clean record was deliberately
-   *  requested (`cleanRequested`) — an Apple listing that merely happened to
-   *  be the cleaned edition (`cleanedSource`) is NOT a request for
-   *  censorship: the ladder's explicit-first rule (Jake, 2026-09-04: "why do
-   *  these clean versions keep appearing???") still prefers the explicit
-   *  master there, so it stays 'unknown' for the judge. */
-  explicit: 'explicit' | 'clean' | 'unknown'
-  /** Version markers Jake asked for by name ("(Live)", "(Acoustic)"). Empty =
-   *  the ordinary studio recording was requested. */
-  requestedMarkers: string[]
-  /** Provider ids that travelled with the pick, when any did. */
-  providerIds: { itunesTrackId?: number; isrc?: string }
-}
 
 export interface RequestOpts {
   artist?: string
@@ -210,20 +183,6 @@ export function verifyCandidate(req: RequestedRecording, ev: CandidateEvidence):
   const albumMatches = !req.album || !ev.album || recoTitleMatches(req.album, ev.album)
   return { verdict: 'exact', evidence, albumMatches }
 }
-
-/** One rejected or unverifiable alternative, for the structured result a
- *  future approval UI can list ("we found these, none was the exact one"). */
-export interface Alternative { provider: Provider; desc: string; reason: string }
-
-export type DownloadOutcome =
-  | 'imported'
-  | 'exact-not-found'        // sources answered; nothing was the exact recording
-  | 'not-found'              // no source had anything resembling it
-  | 'unverifiable'           // a file arrived that could not be judged; not imported
-  | 'provider-failed'        // a match was found, the rip/transfer itself died — try again
-  | 'provider-unavailable'   // a service could not even be asked (auth, tool, network)
-  | 'canceled'
-  | 'not-released'
 
 /** Decide the honest final outcome once every lane has had its turn.
  *  `ripFailure` = a download of a matched candidate died; `searchFailure` =

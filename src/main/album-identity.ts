@@ -67,34 +67,8 @@
 import { recoArtistMatches, recoNorm, recoTitleMatches } from './reco-match.ts'
 import { foldAccents } from '../common/fold-text.ts'
 import { maskedTitleMatches, requestedVersionMarkers, searchTitle, subtitleVariantMatches, unwantedVersionOf } from './streamrip-match.ts'
-import type { Provider } from './exact-recording.ts'
-
-export interface RequestedAlbumTrack {
-  title: string
-  trackNumber?: number
-  discNumber?: number
-  durationSec?: number
-  explicitness?: string
-}
-
-export interface RequestedAlbum {
-  artist: string
-  /** As clicked ("Drums and Wires (Bonus Track Version)"). */
-  title: string
-  /** Packaging stripped, version markers kept ("Drums and Wires"). */
-  baseTitle: string
-  /** Packaging words on the request: bonus, deluxe, anniversary, expanded… */
-  packaging: string[]
-  /** Recording-changing markers Jake asked for by name: live, remix… */
-  versionMarkers: string[]
-  trackCount?: number
-  discCount?: number
-  /** Ordered as the catalogue lists them; may be empty when the lookup failed. */
-  tracks: RequestedAlbumTrack[]
-  releaseYear?: number
-  explicit: 'explicit' | 'clean' | 'unknown'
-  providerIds: { itunesCollectionId?: number; upc?: string }
-}
+import type { Provider, RequestedAlbum, RequestedAlbumTrack } from '../common/acquisition-identity.ts'
+export type { RequestedAlbum, RequestedAlbumTrack } from '../common/acquisition-identity.ts'
 
 export interface CandidateAlbumTrack {
   title: string
