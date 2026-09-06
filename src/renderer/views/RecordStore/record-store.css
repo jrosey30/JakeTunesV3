@@ -385,3 +385,172 @@
   text-align: center;
   color: #cdbfa9;
 }
+
+/* ── Leaving the room: one obvious way back to the regular shop ───── */
+.recordstore__leave {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 4;
+  appearance: none;
+  background: rgba(28, 22, 18, 0.86);
+  border: 1px solid #d8a25a;
+  color: #f4ece0;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.recordstore__leave:hover { background: rgba(60, 46, 36, 0.92); }
+.recordstore__leave:focus-visible,
+.rs-hotspot:focus-visible,
+.counter__btn:focus-visible,
+.crate__back:focus-visible { outline: 2px solid #d8a25a; outline-offset: 2px; }
+.rs-hotspot--counter .rs-hotspot__label { opacity: 0.92; transform: translate(-50%, -8px); }
+
+/* ── THE COUNTER: the shared shop session, in the room's voice ─────── */
+.counter {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 64px 28px 16px;
+  z-index: 2;
+  background: linear-gradient(to top, rgba(18, 14, 10, 0.97), rgba(18, 14, 10, 0.88) 60%, rgba(18, 14, 10, 0.55));
+  color: #f4ece0;
+}
+.counter__head { display: flex; align-items: flex-start; gap: 16px; flex: none; }
+.counter__pill {
+  margin-left: auto;
+  align-self: flex-start;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: #2a2018;
+  background: #d8a25a;
+  border-radius: 999px;
+  padding: 2px 9px;
+  white-space: nowrap;
+}
+.counter__list {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  overflow: auto;
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(460px, 1fr));
+  gap: 10px 14px;
+  align-content: start;
+}
+.counter__row { min-width: 0; }
+.counter__card {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(216, 162, 90, 0.28);
+  background: rgba(30, 23, 18, 0.97);
+  cursor: default;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.counter__row.is-active .counter__card { border-color: #d8a25a; background: rgba(44, 33, 24, 0.98); }
+.counter__row.is-owned .counter__card { border-style: dashed; }
+.counter__art { width: 56px; height: 56px; border-radius: 4px; overflow: hidden; border: 1px solid rgba(0, 0, 0, 0.5); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5); }
+.counter__art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.counter__art-blank {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; font-weight: 700; color: #cdbfa9;
+  background: repeating-linear-gradient(45deg, #3a342e, #3a342e 6px, #332e29 6px, #332e29 12px);
+}
+.counter__body { min-width: 0; }
+.counter__name-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 8px; }
+.counter__kind { font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; color: #d8a25a; font-weight: 700; }
+.counter__name { font-size: 15px; font-weight: 700; color: #f8f1e6; }
+.counter__artist { font-size: 13px; color: #cdbfa9; }
+.counter__facts { display: flex; flex-wrap: wrap; gap: 5px 8px; margin-top: 5px; font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; }
+.counter__edition { color: #e8dcc6; }
+.counter__own, .counter__job { padding: 1px 7px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.18); }
+.counter__own--complete { color: #163a1e; background: #b9e0a5; border-color: #8cc07a; }
+.counter__own--partial { color: #3a2a06; background: #f0d28a; border-color: #d8a25a; }
+.counter__own--none { color: #f4ece0; background: rgba(255, 255, 255, 0.08); }
+.counter__own--unknown { color: #cdbfa9; background: transparent; border-style: dashed; }
+.counter__job--done { color: #163a1e; background: #d5ecc8; border-color: #8cc07a; }
+.counter__job--downloading, .counter__job--queued { color: #2a2018; background: #d8a25a; border-color: #d8a25a; }
+.counter__job--failed { color: #f4ece0; background: #8f2a22; border-color: #c0392b; }
+.counter__job--canceled { color: #cdbfa9; }
+.counter__why { margin: 5px 0 0; font-size: 12px; color: #cdbfa9; font-style: italic; }
+.counter__from { font-style: normal; color: #e8dcc6; }
+.counter__detail { margin-top: 6px; font-size: 12px; }
+.counter__detail summary { cursor: pointer; color: #f0b7a0; font-weight: 600; }
+.counter__detail p { margin: 6px 0 0; line-height: 1.45; color: #e8dcc6; }
+.counter__alts { margin: 6px 0 0; padding-left: 16px; line-height: 1.45; }
+.counter__alts b { color: #d8a25a; margin-right: 4px; }
+.counter__alts span { color: #cdbfa9; }
+.counter__inspect { margin-top: 8px; padding: 10px 12px; border-radius: 6px; background: rgba(0, 0, 0, 0.42); border: 1px solid rgba(216, 162, 90, 0.35); font-size: 12px; line-height: 1.4; }
+.counter__inspect-head { margin: 0 0 6px; color: #f4ece0; font-weight: 700; font-size: 13px; }
+.counter__inspect-head span { font-weight: 400; color: #cdbfa9; margin-left: 6px; }
+/* One column: titles stay whole, numbers and durations line up. */
+.counter__tracks { list-style: none; margin: 0; padding: 0; }
+.counter__tracks li { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto 40px; gap: 0 8px; align-items: baseline; padding: 1px 0; break-inside: avoid; color: #e8dcc6; }
+.counter__tracks li.is-owned .counter__track-title { color: #b9e0a5; }
+.counter__track-no { text-align: right; color: #a3968a; font-variant-numeric: tabular-nums; }
+.counter__track-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.counter__track-own { font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; color: #8ccf84; }
+.counter__track-time { text-align: right; color: #cdbfa9; font-variant-numeric: tabular-nums; }
+.counter__inspect-meta { margin: 8px 0 0; font-size: 11px; color: #a3968a; }
+.counter__actions { display: flex; flex-direction: column; align-items: stretch; gap: 5px; min-width: 76px; }
+.counter__btn {
+  appearance: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 236, 200, 0.5);
+  background: rgba(28, 22, 18, 0.7);
+  color: #f4ece0;
+  cursor: pointer;
+}
+.counter__btn:hover { background: rgba(216, 162, 90, 0.5); }
+.counter__btn--getSelection { background: #d8a25a; color: #2a2018; border-color: #d8a25a; }
+.counter__btn--cancelJob { border-color: #c0392b; }
+.counter__blocked { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #8a7a64; text-align: center; padding-top: 2px; }
+.counter__hint { flex: none; margin: 8px 0 0; text-align: center; font-size: 11px; color: #8a7a64; letter-spacing: 0.5px; }
+
+/* Narrow room: one column, actions under the body. */
+@media (max-width: 760px) {
+  /* The sign owns the top; the counter's head stacks under it. */
+  .counter { padding: 128px 12px 12px; }
+  .counter__head { flex-wrap: wrap; gap: 8px 12px; }
+  .counter__head .crate__back { order: 2; }
+  .counter__head .crate__heading { order: 1; flex: 1 1 100%; }
+  .counter__pill { order: 3; margin-left: 0; }
+  .crate__tagline { max-width: none; }
+  .counter__list { grid-template-columns: 1fr; }
+  .counter__card { grid-template-columns: 48px minmax(0, 1fr); }
+  .counter__actions { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; }
+  /* The counter sits at the room's left edge: pin its label to the hotspot's left so it cannot clip off-screen. */
+  .rs-hotspot--counter .rs-hotspot__label, .rs-hotspot--counter:hover:not(:disabled) .rs-hotspot__label { left: 0; transform: translate(0, -8px); }
+  /* Narrow: a long title wraps rather than clipping. */
+  .counter__tracks li { align-items: start; }
+  .counter__track-title { white-space: normal; }
+  /* The sign and the rationale stack instead of overlapping. */
+  .recordstore__sign { max-width: 72%; top: 50px; }
+  .recordstore__sign-theme { font-size: 13px; }
+  .recordstore__rationale { top: 132px; left: 12px; right: 12px; max-width: none; font-size: 12px; }
+  .recordstore__leave { top: 12px; }
+  .recordstore__refresh--scene { top: 12px; }
+  .recordstore__leave { font-size: 11px; padding: 5px 9px; }
+}
+
+/* Reduce Motion: no camera push, no card fan animation, no slide-in. */
+@media (prefers-reduced-motion: reduce) {
+  .recordstore__scene-bg, .crate__card, .rs-hotspot::before, .rs-hotspot__label, .counter__card { transition: none; }
+  .recordstore__mm { animation: none; }
+}

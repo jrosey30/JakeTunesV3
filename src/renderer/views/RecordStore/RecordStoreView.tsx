@@ -13,7 +13,7 @@
 // Real covers come from the live library artwork (album-art:// protocol).
 // Playback / Library / useAudio are READ here, never edited.
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { useLibrary } from '../../context/LibraryContext'
 import { useAudio } from '../../hooks/useAudio'
@@ -21,6 +21,9 @@ import { buildNormalizedArtworkIndex, lookupArtwork } from '../../utils/artworkL
 import { useShelves } from './hooks/useShelves'
 import { DialogueBox } from './components/DialogueBox'
 import { CrateBrowse } from './components/CrateBrowse'
+import { CounterDesk } from './components/CounterDesk'
+import { shopFixtureSession } from '../../../common/record-shop-fixtures'
+import { recordingShopCommands } from '../../../common/record-shop-commands'
 import type { Blurb, Persona, ShelfId, ShelfItem } from './types'
 import storefrontBg from './art/storefront.png'
 import mmSmug from './art/musicman-smug.png'
@@ -40,7 +43,11 @@ type TakeState =
   | { status: 'loading'; item: ShelfItem }
   | { status: 'ready'; item: ShelfItem; text: string | null }
 
-type Scene = { view: 'wide' } | { view: 'bin'; shelfId: ShelfId }
+// 6.0 Record Shop: the counter is the shop's shared session (saved items,
+// orders, what's on the shelf) shown in this room. Fixtures until the
+// visual review passes; then the live session, same component.
+type Scene = { view: 'wide' } | { view: 'bin'; shelfId: ShelfId } | { view: 'counter' }
+const COUNTER_RECT: CSSProperties = { left: '3%', top: '52%', width: '17%', height: '30%' }
 
 // Clickable regions over the storefront art's drawn bins (point-and-click
 // adventure style). Percentages of the scene box — tune these to line up
@@ -58,11 +65,24 @@ const FALLBACK_RECTS: CSSProperties[] = [
 ]
 
 export default function RecordStoreView() {
-  const { state: lib } = useLibrary()
+  const { state: lib, dispatch } = useLibrary()
   const { playTrack } = useAudio()
   const { state, refresh } = useShelves()
   const [take, setTake] = useState<TakeState>({ status: 'idle' })
   const [scene, setScene] = useState<Scene>({ view: 'wide' })
+  // The shared shop session this room presents. Prototype: the fixture set
+  // through the same model the regular shop reads; commands are recorded,
+  // not performed, until live wiring (after visual review).
+  const session = useMemo(() => shopFixtureSession(), [])
+  const commands = useMemo(() => recordingShopCommands((c) => console.log('[record-store] command', c.verb, c.id)), [])
+  // The clear way OUT: back to the regular Record Shop, same items.
+  const leaveShop = useCallback(() => dispatch({ type: 'SET_VIEW', view: 'discovery' }), [dispatch])
+  useEffect(() => {
+    if (scene.view !== 'wide') return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && take.status === 'idle') leaveShop() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [scene.view, take.status, leaveShop])
 
   const trackById = useMemo(() => {
     const m = new Map<number, typeof lib.tracks[number]>()
@@ -167,10 +187,23 @@ export default function RecordStoreView() {
           <span className="recordstore__sign-theme">{bundle.theme.theme}</span>
         </div>
 
+        <button type="button" className="recordstore__leave" onClick={leaveShop} title="Back to the Record Shop (Esc)">← Leave the shop</button>
+
         {/* WIDE: the bins in the ART are the buttons. Hover highlights +
             labels a crate; click digs into that shelf. */}
         {scene.view === 'wide' && (
           <>
+            <button
+              type="button"
+              className="rs-hotspot rs-hotspot--counter"
+              style={COUNTER_RECT}
+              onClick={() => setScene({ view: 'counter' })}
+            >
+              <span className="rs-hotspot__label">
+                The Counter
+                <em>{session.items.length} items · {Object.values(session.jobs).filter((j) => j.status === 'downloading' || j.status === 'queued').length} on order</em>
+              </span>
+            </button>
             {bundle.theme.rationale && (
               <p className="recordstore__rationale">
                 {bundle.theme.rationale}
@@ -207,6 +240,11 @@ export default function RecordStoreView() {
             onBack={() => setScene({ view: 'wide' })}
             selectedId={take.status !== 'idle' ? take.item.id : null}
           />
+        )}
+
+        {/* COUNTER: the shared shop session, in this room's voice. */}
+        {scene.view === 'counter' && (
+          <CounterDesk session={session} commands={commands} onBack={() => setScene({ view: 'wide' })} fixtureMode />
         )}
 
         {/* Music Man pops in to talk (any view). */}
