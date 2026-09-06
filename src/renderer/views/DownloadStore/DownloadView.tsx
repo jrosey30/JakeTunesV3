@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState, useMemo, useReducer, useRef, useSyncExte
 import { useScrollPersistence } from '../../hooks/useScrollPersistence'
 import './download-store.css'
 import { useLibrary } from '../../context/LibraryContext'
-import { enqueue, itemFor, subscribeQueue, getQueue, retry, retryFailed, cancel, queueSummary, clearFinished, primaryFor, type QItem, type QResult } from './downloadQueue'
+import { enqueue, itemFor, subscribeQueue, getQueue, retry, retryFailed, cancel, queueSummary, clearFinished, primaryFor, trackQueryId, albumQueryId, type QItem, type QResult, type QueueOrigin } from './downloadQueue'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../../previewPlayer'
 import type { ItunesSuggestion } from '../../types'
 import { explicitWins } from '../../../common/explicit'
@@ -158,12 +158,24 @@ export function displayAlbumTitle(name: string): string {
 interface DownloadCache { query: string; results: ItunesSuggestion[]; pasteUrl: string }
 let pageCache: DownloadCache = { query: '', results: [], pasteUrl: '' }
 
+// A prefill (Listen List → "Tracks" / Get on an album) is dispatched BEFORE
+// the view that listens for it has mounted — the sender fires the event and
+// then switches views, so a listener registered in the component's effect
+// was never there to hear it (2026-09-05, live: the search box still showed
+// the previous query). The event is captured at module scope and handed to
+// the view when it mounts; a mounted view takes it directly.
+export interface DownloadPrefill { query?: string; kind?: string; artist?: string; title?: string; origin?: QueueOrigin }
+let pendingPrefill: DownloadPrefill | null = null
+if (typeof window !== 'undefined') {
+  window.addEventListener('jaketunes-download-prefill', (e: Event) => { pendingPrefill = (e as CustomEvent<DownloadPrefill>).detail ?? null })
+}
+
 // Queue entries resolve on Qobuz AT DOWNLOAD TIME by artist+title/album.
 // durationMs pins the EXACT version the user clicked — main verifies the
 // downloaded file against it, so a re-record/live cut can't slip in.
 const songQ = (r: SongRow): QResult => ({
   kind: 'query', source: 'qobuz', mediaType: 'track',
-  id: `q|track|${norm(r.artist)}|${norm(r.title)}`,
+  id: trackQueryId(r.artist, r.title),
   desc: `${r.title} — ${r.artist}`,
   artist: r.artist, title: r.title, album: r.album ? displayAlbumTitle(r.album) : r.album,
   durationMs: r.durationSecs ? r.durationSecs * 1000 : undefined,
@@ -173,7 +185,7 @@ const songQ = (r: SongRow): QResult => ({
 })
 const albumQ = (r: AlbumRow): QResult => ({
   kind: 'query', source: 'qobuz', mediaType: 'album',
-  id: `q|album|${norm(r.artist)}|${norm(r.album)}`,
+  id: albumQueryId(r.artist, r.album),
   desc: `${displayAlbumTitle(r.album)} — ${r.artist} (album)`,
   artist: r.artist,
   // Search Qobuz without Apple's " - Single"/" - EP" stamp. Identity (id)
@@ -220,7 +232,7 @@ export default function DownloadView() {
    *  permanently under the results on the page you use every day. */
   const [setupOpen, setSetupOpen] = useState(false)
   const [failDetailsOpen, setFailDetailsOpen] = useState(false)
-  const [albumTracks, setAlbumTracks] = useState<Record<string, { loading: boolean; tracks?: ItunesSuggestion[]; error?: string; releaseYear?: number; trackCount?: number; genre?: string; explicitness?: string }>>({})
+  const [albumTracks, setAlbumTracks] = useState<Record<string, { loading: boolean; tracks?: ItunesSuggestion[]; error?: string; releaseYear?: number; trackCount?: number; genre?: string; explicitness?: string; collectionId?: number }>>({})
 
   const toggleAlbum = (a: AlbumRow) => {
     const key = albumKey(a)
@@ -231,18 +243,20 @@ export default function DownloadView() {
       // Lazy-fetch the tracklist the first time it's opened — and again
       // after a failure, so a transient iTunes miss isn't pinned to the
       // card until restart (2026-09-03).
-      if ((!albumTracks[key] || albumTracks[key].error) && a.collectionId) {
+      // A row without a collection id (the Deezer failover, when Apple
+      // throttles the search) asks main by NAME; main resolves it only to
+      // one unambiguous edition and the tracklist comes back with that id,
+      // so the Get carries the edition — never a guess (2026-09-05).
+      if (!albumTracks[key] || albumTracks[key].error) {
         setAlbumTracks((m) => ({ ...m, [key]: { loading: true } }))
-        window.electronAPI.itunesAlbumTracks?.(a.collectionId)
+        window.electronAPI.itunesAlbumTracks?.(a.collectionId ?? { artist: a.artist, album: a.album })
           .then((r) => setAlbumTracks((m) => ({
             ...m,
             [key]: r?.ok && r.tracks?.length
-              ? { loading: false, tracks: r.tracks, releaseYear: r.releaseYear, trackCount: r.trackCount, genre: r.genre, explicitness: r.explicitness }
-              : { loading: false, error: 'Couldn’t load the tracklist.' },
+              ? { loading: false, tracks: r.tracks, releaseYear: r.releaseYear, trackCount: r.trackCount, genre: r.genre, explicitness: r.explicitness, collectionId: r.collectionId }
+              : { loading: false, error: a.collectionId ? 'Couldn’t load the tracklist.' : 'Couldn’t pin this edition in the catalogue — search it by name to pick one.' },
           })))
           .catch(() => setAlbumTracks((m) => ({ ...m, [key]: { loading: false, error: 'Couldn’t load the tracklist.' } })))
-      } else if (!a.collectionId && !albumTracks[key]) {
-        setAlbumTracks((m) => ({ ...m, [key]: { loading: false, error: 'No tracklist available for this album.' } }))
       }
       return next
     })
@@ -406,15 +420,21 @@ export default function DownloadView() {
   // nothing about the tracklist UI is new.
   const runSearchRef = useRef<(raw: string) => Promise<void>>()
   const pendingExpandRef = useRef<{ artist: string; album: string } | null>(null)
+  // Provenance of a prefill from the Listen List: every Get made from THIS
+  // search carries the recommendation id, so the list sees the job land
+  // (and the friend gets credit). Cleared the moment the search changes.
+  const pendingOriginRef = useRef<{ query: string; origin: QueueOrigin } | null>(null)
+  const withOrigin = (q: QResult): QResult => pendingOriginRef.current ? { ...q, origin: pendingOriginRef.current.origin } : q
   useEffect(() => {
-    const onPrefill = (e: Event) => {
-      const d = (e as CustomEvent<{ query?: string; kind?: string; artist?: string; title?: string }>).detail
+    const applyPrefill = (d: DownloadPrefill | null | undefined) => {
+      pendingPrefill = null
       const q = d?.query?.trim()
       if (!q) return
       setQuery(q)
       setResults([])
       setSearchErr(null)
       setNotice(null)
+      pendingOriginRef.current = d?.origin ? { query: q, origin: d.origin } : null
       pendingExpandRef.current = d?.kind === 'album' && d.artist && d.title
         ? { artist: d.artist, album: d.title }
         : null
@@ -422,7 +442,14 @@ export default function DownloadView() {
       // directly would pin the first render's copy forever.
       void runSearchRef.current?.(q)
     }
+    const onPrefill = (e: Event) => applyPrefill((e as CustomEvent<DownloadPrefill>).detail)
     window.addEventListener('jaketunes-download-prefill', onPrefill)
+    // Arrived from a prefill that fired before this view mounted.
+    if (pendingPrefill) {
+      const d = pendingPrefill
+      // runSearchRef is assigned by a later effect in this same commit; defer one tick.
+      setTimeout(() => applyPrefill(d), 0)
+    }
     return () => window.removeEventListener('jaketunes-download-prefill', onPrefill)
   }, [])
 
@@ -444,9 +471,12 @@ export default function DownloadView() {
     )
     if (all.length === 0) return          // still searching / nothing matched yet
     const wa = norm(want.artist), wl = norm(want.album)
-    const match = all.find((a) => norm(a.artist) === wa && norm(a.album) === wl)
-      || all.find((a) => norm(a.album) === wl)
-      || all[0]
+    // Only the album that was asked for opens. The old `|| all[0]` fallback
+    // opened whatever ranked first — Sting's "Brand New Day" for a Bedouin
+    // record (live, 2026-09-05) — one "Get all" away from the wrong album.
+    const reads = (a: string, b: string) => norm(a) === norm(b) || (norm(a).length >= 8 && norm(b).length >= 8 && (norm(a).includes(norm(b)) || norm(b).includes(norm(a))))
+    const match = all.find((a) => norm(a.artist) === wa && reads(a.album, want.album))
+      || all.find((a) => reads(a.album, want.album))
     pendingExpandRef.current = null
     if (match && !expandedAlbums.has(albumKey(match))) toggleAlbum(match)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -457,6 +487,7 @@ export default function DownloadView() {
   const searchTokenRef = useRef(0)
   const runSearch = async (raw: string) => {
     const q = raw.trim()
+    if (pendingOriginRef.current && pendingOriginRef.current.query !== q) pendingOriginRef.current = null
     const token = ++searchTokenRef.current
     if (!q) { setResults([]); setSearchErr(null); setSearching(false); return }
     setSearching(true)
@@ -608,7 +639,7 @@ export default function DownloadView() {
       const label = item?.primary || primaryFor(item?.outcome, item?.error)
       return <button className="download-retry download-retry--failed" onClick={() => item && retry(item.key)} title={`${label} — Retry`}>{label} · Retry</button>
     }
-    return <button className="download-result-btn" onClick={() => enqueue(qres)}>Get</button>
+    return <button className="download-result-btn" onClick={() => enqueue(withOrigin(qres))}>Get</button>
   }
 
   /** Cover art for a queue item, found in the results we already have. Not
@@ -713,7 +744,8 @@ export default function DownloadView() {
   /** A release, as a cover card. Art-forward because this is where the year
    *  and the ALBUM/EP distinction live. */
   const renderRelease = (a: AlbumRow, i = 0) => {
-    const qres = albumQ(a)
+    const pinned = albumTracks[albumKey(a)]
+    const qres = albumQ({ ...a, collectionId: a.collectionId ?? pinned?.collectionId, trackCount: a.trackCount ?? pinned?.trackCount, releaseYear: a.releaseYear ?? pinned?.releaseYear })
     const item = itemFor(qres)
     const key = albumKey(a)
     const isOpen = expandedAlbums.has(key)
@@ -770,7 +802,7 @@ export default function DownloadView() {
               </span>
               <span className="dl-rel-panel-spacer" />
               {cache?.tracks && cache.tracks.length > 0 && (
-                <button type="button" className="download-result-btn download-result-btn--sm" onClick={() => { if (!item) enqueue(albumQ(a)) }}>Get all</button>
+                <button type="button" className="download-result-btn download-result-btn--sm" onClick={() => { if (!item) enqueue(withOrigin(albumQ({ ...a, collectionId: a.collectionId ?? cache?.collectionId, trackCount: a.trackCount ?? cache?.trackCount, releaseYear: a.releaseYear ?? cache?.releaseYear }))) }}>Get all</button>
               )}
               <button type="button" className="dl-rel-panel-close" onClick={() => toggleAlbum(a)} title="Close">✕</button>
             </div>

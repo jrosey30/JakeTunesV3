@@ -217,7 +217,7 @@ const electronAPI = {
   suggestRecommendations: (opts?: { force?: boolean }) => ipcRenderer.invoke('suggest-recommendations', opts),
   // Brief 122 Phase 2 — iTunes Search autocomplete for the add form.
   searchItunes: (query: string) => ipcRenderer.invoke('search-itunes', query),
-  itunesAlbumTracks: (collectionId: number) => ipcRenderer.invoke('itunes-album-tracks', collectionId),
+  itunesAlbumTracks: (ref: number | { artist?: string; album: string }) => ipcRenderer.invoke('itunes-album-tracks', ref),
   // Artist-verified cover art for radar/discovery cards (no wrong covers).
   lookupRecoArtwork: (input: { artist: string; title: string }) => ipcRenderer.invoke('lookup-reco-artwork', input),
   lookupAlbumPreview: (input: { artist: string; album: string }): Promise<{ previewUrl?: string; trackTitle?: string }> => ipcRenderer.invoke('lookup-album-preview', input),

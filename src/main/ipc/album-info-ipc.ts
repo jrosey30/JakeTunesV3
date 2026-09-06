@@ -106,6 +106,6 @@ export function registerAlbumInfoIpc(ipc: IpcRegistrar): void {
   ipc.handle('search-itunes', async (_event, query: string) => searchItunesSuggestions(query),
     { refuse: { ok: false, results: [] } })
 
-  ipc.handle('itunes-album-tracks', async (_event, collectionId: number) => itunesAlbumTracks(collectionId),
+  ipc.handle('itunes-album-tracks', async (_event, ref: number | { artist?: string; album: string }) => itunesAlbumTracks(ref),
     { refuse: { ok: false, tracks: [] } })
 }

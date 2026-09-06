@@ -166,11 +166,17 @@ export default function ListenToTheListView() {
     togglePreview(r.id, r.previewUrl, r.matchedTitle || r.song || r.album || 'Preview', r.matchedArtist || r.artist || '')
   }, [])
 
+  // Songs queue on the one scheduler; an album has to have its EDITION picked
+  // in the catalogue first (the tracklist in Download), and an artist-only
+  // jot or a concert is browsed there — never downloaded blind.
   const getReco = useCallback((r: Recommendation) => {
     if (!canDownloadReco(r)) return
     const f = friendOf(r)
     if (f) void window.electronAPI.friendEvent?.(f, 'got')
-    queueRecoDownload(r)
+    const d = queueRecoDownload(r)
+    if (d.kind === 'select-edition') { prefillDownloadView(r, 'album'); dispatch({ type: 'SET_VIEW', view: 'download' }) }
+    else if (d.kind === 'browse-only') { prefillDownloadView(r, 'song'); dispatch({ type: 'SET_VIEW', view: 'download' }) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const commitToss = useCallback((r: Recommendation) => {

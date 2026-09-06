@@ -11,12 +11,34 @@
 //  - id: a raw streamrip catalog id (legacy path, still used by pasted links)
 //  - query: an iTunes-picked song/album resolved on Qobuz at download time
 //    (artist+title or artist+album) — the v2 search flow.
+import { foldAccents } from '../../../common/fold-text.ts'
+
+/** Where a job came from (the Record Shop's saved list, a feed shelf…) —
+ *  carried on the job so every presentation can find it by recommendation
+ *  id, and so "recommended by Alex" survives resolution on Qobuz. The queue
+ *  KEY stays the recording/edition identity: a Get from the Download view
+ *  and a Get from the list for the same recording are ONE job, and later
+ *  origins are adopted onto it. (6.0 Record Shop: one scheduler.) */
+export interface QueueOrigin {
+  recommendationIds: string[]
+  entryId?: string
+  /** 'user' | 'mm' | 'radar' — the list's own vocabulary; a person's name when known. */
+  sourceKind?: string
+  sourceLabel?: string
+}
+
+const normKey = (s: string): string => foldAccents(String(s || '')).replace(/[^a-z0-9]/g, '')
+/** ⚠️ TWIN: DownloadView.songQ/albumQ build their ids through these. */
+export const trackQueryId = (artist: string, title: string): string => `q|track|${normKey(artist)}|${normKey(title)}`
+export const albumQueryId = (artist: string, album: string): string => `q|album|${normKey(artist)}|${normKey(album)}`
+
 export interface QResult {
   source: string
   mediaType: string
   id: string
   desc: string
   kind?: 'id' | 'query'
+  origin?: QueueOrigin
   artist?: string
   title?: string
   album?: string
@@ -55,6 +77,10 @@ export interface QItem {
    *  never-truncated explanation for the details panel. */
   primary?: string
   detail?: string
+  /** What main matched, and for albums the completion line
+   *  ("12 tracks · 10 imported, 2 already in your library"). */
+  matchDesc?: string
+  completion?: string
   startedAt?: number
   endedAt?: number
 }
@@ -74,6 +100,20 @@ export function subscribeQueue(fn: () => void): () => void {
 }
 export function getQueue(): QItem[] { return queue }
 export function itemFor(r: QResult): QItem | undefined { return queue.find((q) => q.key === queueKey(r)) }
+/** The job a recommendation is riding on, if any. */
+export function itemForRecommendation(recommendationId: string): QItem | undefined {
+  return queue.find((q) => q.result.origin?.recommendationIds.includes(recommendationId))
+}
+
+/** Adopt a second origin onto an existing job (same recording, another
+ *  recommender). Ids are unioned; the first source label is kept. */
+export function mergeOrigin(into: QResult, from?: QueueOrigin): void {
+  if (!from) return
+  if (!into.origin) { into.origin = { ...from, recommendationIds: [...from.recommendationIds] }; return }
+  for (const id of from.recommendationIds) if (!into.origin.recommendationIds.includes(id)) into.origin.recommendationIds.push(id)
+  if (!into.origin.entryId && from.entryId) into.origin.entryId = from.entryId
+  if (!into.origin.sourceLabel && from.sourceLabel) { into.origin.sourceLabel = from.sourceLabel; into.origin.sourceKind = from.sourceKind }
+}
 
 export function queueSummary(): { active: number; queued: number; done: number; failed: number } {
   let active = 0, queued = 0, done = 0, failed = 0
@@ -92,7 +132,9 @@ export function enqueue(r: QResult): void {
   const key = queueKey(r)
   const existing = queue.find((q) => q.key === key)
   if (existing) {
+    mergeOrigin(existing.result, r.origin)
     if (existing.status === 'failed' || existing.status === 'canceled') { existing.status = 'queued'; existing.error = undefined; emit(); void pump() }
+    else emit()
     return
   }
   queue = [...queue, { key, result: r, status: 'queued' }]
@@ -168,9 +210,11 @@ async function pump(): Promise<void> {
       it.alternatives = undefined
       it.primary = undefined
       it.detail = undefined
+      it.matchDesc = undefined
+      it.completion = undefined
       emit()
       try {
-        const r: { ok: boolean; imported?: number; dupes?: number; error?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }>; primary?: string; detail?: string } | undefined = it.result.kind === 'query'
+        const r: { ok: boolean; imported?: number; dupes?: number; error?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }>; primary?: string; detail?: string; matchDesc?: string; completion?: string } | undefined = it.result.kind === 'query'
           ? await window.electronAPI.streamripDownloadByQuery?.({ artist: it.result.artist, title: it.result.title, album: it.result.album, durationMs: it.result.durationMs, cleanedSource: it.result.cleanedSource, explicitSource: it.result.explicitSource, releaseYear: it.result.releaseYear, collectionId: it.result.collectionId, trackCount: it.result.trackCount })
           : await window.electronAPI.streamripDownloadId?.(it.result.source, it.result.mediaType, it.result.id)
         // Read through a widened alias. TypeScript narrows it.status to
@@ -185,6 +229,8 @@ async function pump(): Promise<void> {
           it.status = 'done'
           it.imported = r.imported ?? 0
           it.dupes = r.dupes ?? 0
+          it.matchDesc = r.matchDesc
+          it.completion = r.completion
         } else {
           it.status = 'failed'
           it.error = r?.error || 'Download failed.'

@@ -93,8 +93,11 @@ export function RecoRow({ rec, onDelete, onOpenDownload }: RecoRowProps) {
           type="button"
           className={`ltl-download${dl.state === 'done' ? ' ltl-download--done' : ''}${dl.state === 'error' ? ' ltl-download--err' : ''}`}
           onClick={() => {
-            if (dl.state === 'error') onOpenDownload?.(rec)
-            else queueRecoDownload(rec)
+            if (dl.state === 'error') { onOpenDownload?.(rec); return }
+            // One scheduler: songs queue; an album (edition not chosen) or a
+            // browse-only jot goes to the Download view instead of downloading blind.
+            const d = queueRecoDownload(rec)
+            if (d.kind !== 'queue') onOpenDownload?.(rec)
           }}
           disabled={dlBusy}
           title={

@@ -524,7 +524,22 @@ export async function itunesFindAlbum(artist: string, title: string): Promise<{ 
   }
 }
 
-export async function itunesAlbumTracks(collectionId: number): Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string; releaseYear?: number; trackCount?: number; genre?: string; explicitness?: string }> {
+/** A tracklist request by id, or by NAME when the row that asked has no
+ *  collection id — the Deezer failover rows Apple's throttling leaves us
+ *  with (live, 2026-09-05: "Little Creatures (Deluxe Version)" opened with
+ *  no tracklist and no Get all, so the edition could not be selected). A
+ *  name resolves only to ONE unambiguous edition (pickItunesCollection:
+ *  artist, base title, packaging labels and version markers must all
+ *  agree); anything less is "couldn't load", never a guess. */
+export type AlbumTracksRef = number | { artist?: string; album: string }
+
+export async function itunesAlbumTracks(ref: AlbumTracksRef): Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string; releaseYear?: number; trackCount?: number; genre?: string; explicitness?: string; collectionId?: number }> {
+  let collectionId: number | undefined = typeof ref === 'number' ? ref : undefined
+  if (collectionId === undefined && ref && typeof ref === 'object' && ref.album) {
+    const found = await itunesFindAlbum(ref.artist || '', ref.album)
+    if (!found) return { ok: false, tracks: [] }
+    collectionId = found.collectionId
+  }
   const id = Number(collectionId)
   if (!id || !Number.isFinite(id)) return { ok: false, tracks: [] }
   try {
@@ -568,6 +583,7 @@ export async function itunesAlbumTracks(collectionId: number): Promise<{ ok: boo
     return {
       ok: true,
       tracks,
+      collectionId: id,
       album: collection?.collectionName ? String(collection.collectionName) : undefined,
       artist: collection?.artistName ? String(collection.artistName) : undefined,
       artworkUrl: collection?.artworkUrl100 ? String(collection.artworkUrl100).replace('100x100', '400x400') : undefined,
