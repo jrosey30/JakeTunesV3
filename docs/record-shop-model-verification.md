@@ -195,3 +195,18 @@ one." No identity check was loosened.
 no staging directory, the 12 library rows and files unchanged (same
 mtimes and sizes), library count unchanged. The take-label exception is
 now live-verified as well as unit-tested.
+
+### Unavailable through the app's searched sources — 2026-09-06
+
+Tom Clark, *Nervous Gallop - Single* (Absurd State, 2016; iTunes collection
+1151252662: Nervous Gallop, Following Light Remix, Aluria Remix; credited to
+Tom Clark, the cover reads "Tom Clark (UK)"). Traced on 2026-09-06 with the
+same searches the app runs: Qobuz has no track or album for it under the
+artist, the bare title, the cover's credit, the remixer or the label;
+Bandcamp's search API returns nothing for the release, the artist or the
+label; SoundCloud's single hit is a different Tom Clark song and was refused
+on title. The "Not found" verdict was correct and no candidate was filtered
+wrongly. Acquisition needs a direct link from wherever the label sells it.
+
+UI follow-up (recorded, not changed): a "Not found" queue row still offers
+Retry, which invites the identical search the message warns against.
