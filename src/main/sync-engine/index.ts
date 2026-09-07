@@ -26,6 +26,7 @@ import { refuseIpodSyncUnlessUserClick, type IpodSyncOpts } from '../ipod-sync-o
 import type { SyncConvertOptions } from '../ipc/sync-ipc.ts'
 import { runActivitySync } from '../ipod-activity-engine.ts'
 import { ensureContiguousDb } from '../ipod-db-contiguity.ts'
+import { orderForIpodCatalog, conformCatalogIdOrder } from '../ipod-catalog-order.ts'
 import {
   ACTIVITY_WIPE_MAX_PASSES, activitySetProven, activityWipeEmptyStreak, activityWipeProvenEmpty,
   catalogBytesMatch, catalogOnCardProven, fileSizeForItunesDb, ipodFirmwareWillList,
@@ -1466,6 +1467,13 @@ export function createSyncEngine(host: SyncEngineHost) {
     // Switch the toolbar status to the writer phase — the
     // preflight is done; from here it's the iTunesDB rebuild + write
     // (sub-second) and then the post-sync verifier (seconds).
+    // Mini 1.4.1 has no type-52 sort tables: the Artists menu reads mhit
+    // PHYSICAL order. The activity engine has ordered its catalog since
+    // 2026-08-28; the full-library path shipped in library order, so a
+    // whole-library sync listed artists shuffled. Playlists reference
+    // dbids, so their order is untouched by construction.
+    tracks = orderForIpodCatalog(tracks)
+
     await writeSyncJournal('db')
     sendToRenderer('sync-progress', {
       phase: 'db', current: 0, total: 1, title: 'Writing iTunesDB...',
@@ -1519,6 +1527,27 @@ export function createSyncEngine(host: SyncEngineHost) {
       py.on('close', async (code: number) => {
         console.log('sync-to-ipod stderr:', stderr)
         if (code === 0) {
+          // ── FIRMWARE ID ORDER (2026-09-07) ────────────────────────────
+          // Mini 1.4.1 finds songs by BINARY SEARCH over the mhit array
+          // keyed on the 32-bit id — records must ascend in id order or
+          // lookups silently fail and songs vanish from About (the
+          // 819-of-1000 saga, ipod-catalog-order.ts). The activity engine
+          // has conformed since 2fc09ad; the full-library path never did,
+          // and library order is NOT id order, so a whole-library catalog
+          // shipped mis-ordered. Same post-pass, same failure semantics:
+          // on refusal the previous catalog is left untouched.
+          const conform = await conformCatalogIdOrder(localDb)
+          if (!conform.ok) {
+            await retireIpodFirmwareScratch(IPOD_MOUNT)
+            try { await unlink(localDb) } catch { /* temp */ }
+            resolve({
+              ok: false,
+              error: `The catalog could not be conformed to firmware id order (${conform.error}). The previous catalog is untouched. Sync again.`,
+              copied, copyErrors,
+            })
+            return
+          }
+          console.log(`sync-to-ipod: ${conform.summary}`)
           // ── CATALOG LAYOUT PASS (2026-08-15, the 79-of-500 night) ─────────
           // Every existing gate below verifies the catalog's CONTENT; none of
           // them see its LAYOUT. The writer's output lands in whatever holes
