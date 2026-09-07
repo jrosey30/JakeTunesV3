@@ -7,7 +7,8 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { IDLE_TIMELINE, applySyncResult, reduceSyncEvent, resultLine, startTimeline, timelinePercent, type SyncEvent } from '../../common/sync-progress-model.ts'
-import { syncFailureCopy } from '../../common/sync-failure-copy.ts'
+import { syncFailureCopy, syncOutcome, stoppedLabel } from '../../common/sync-failure-copy.ts'
+import { ipodCountLabel } from '../../common/sync-progress-model.ts'
 
 const T0 = 1_000_000
 const ev = (phase: SyncEvent['phase'], current: number, total: number, title = ''): SyncEvent => ({ phase, current, total, title })
@@ -64,17 +65,63 @@ describe('sync timeline', () => {
 })
 
 describe('sync failure copy', () => {
-  it('says what happened, whether the iPod changed, and what to do — with the original kept', () => {
+  it('reads the message for what happened and what to do, keeping the original', () => {
     const c = syncFailureCopy('Only 998 of 1000 songs held across two remounts. Not writing a catalog (N means N). Sync again.')
-    assert.equal(c.stage, 'verify'); assert.equal(c.changed, 'partial'); assert.match(c.changedLine, /previous catalog stands/)
-    assert.match(c.next, /Sync again/); assert.match(c.raw, /N means N/)
-    const tsa = syncFailureCopy('Activity TSA boarded 3 for a 500-song set. Nothing was wiped.')
-    assert.equal(tsa.changed, 'no'); assert.equal(tsa.stage, 'prepare')
+    assert.equal(c.stage, 'verify'); assert.match(c.next, /Sync again/); assert.match(c.raw, /N means N/)
+    assert.equal(syncFailureCopy('Activity TSA boarded 3 for a 500-song set. Nothing was wiped.').stage, 'prepare')
+    assert.equal(syncFailureCopy('something the engine never said').stage, null)
   })
-  it('says plainly when the iPod’s state is unknown', () => {
-    const u = syncFailureCopy('something the engine never said')
-    assert.equal(u.changed, 'unknown'); assert.match(u.changedLine, /not known/); assert.equal(u.raw, 'something the engine never said')
-    assert.equal(syncFailureCopy('Activity wipe failed (EIO). Nothing was copied.').changed, 'unknown')
+  it('never diagnoses a failing card from a short count alone', () => {
+    for (const raw of ['Only 998 of 1000 songs held across two remounts. Not writing a catalog (N means N). Sync again.', 'Only 993 of 1000 songs actually stuck on the iPod after 3 tries — the card keeps dropping writes', 'Only 990 of 1000 songs confirmed on the card after copy. Not writing a catalog']) {
+      const c = syncFailureCopy(raw)
+      assert.doesNotMatch(c.happened + ' ' + c.next, /card is failing|card or cable is dropping/i, raw)
+      assert.match(c.next, /check the cable and the port before anything else/)
+    }
+  })
+})
+
+describe('sync outcome — claims from phase evidence', () => {
+  const run = (events: SyncEvent[], target = 1000) => events.reduce((t, e) => reduceSyncEvent(t, e, T0), startTimeline(T0, target))
+  it('pre-catalog cancellation: the engine re-empties Music — songs gone, previous catalog stands', () => {
+    const t = run([ev('copy', 0, 1, 'Wiping…'), ev('copy', 40, 1000, 'x'), ev('cancelled', 40, 1000)])
+    const o = syncOutcome(t)!
+    assert.equal(o.stoppedAt, 'copy'); assert.equal(o.changed, 'emptied'); assert.equal(o.catalog, 'previous'); assert.equal(o.fromEvidence, true)
+    assert.match(o.changedLine, /cleared again/); assert.match(o.changedLine, /previous catalog stands/); assert.equal(stoppedLabel(o), 'Stopped at Copy')
+  })
+  it('post-catalog seal failure: never the pre-catalog explanation — a catalog was written but not proved', () => {
+    const t = applySyncResult(run([ev('copy', 1000, 1000, 'x'), ev('verify', 1, 16), ev('db', 0, 1, 'Writing iTunesDB...'), ev('db', 1, 1, 'iTunesDB written'), ev('verify', 1, 1, 'Sealing')]), { ok: false, error: 'The 1000-song catalog never committed to the card. Mac cache is not the Mini — that is how Songs became 450. Not calling this done.' }, T0)
+    const o = syncOutcome(t)!
+    assert.equal(o.stoppedAt, 'seal'); assert.equal(o.changed, 'catalog-unverified'); assert.equal(o.catalog, 'written-unverified')
+    assert.doesNotMatch(o.changedLine, /no catalog was written|catalog was not replaced/)
+    assert.match(o.changedLine, /a new catalog was written, but the card did not prove it/)
+    // the engine reporting ok but short after the catalog is the same claim
+    const short = applySyncResult(run([ev('db', 1, 1, 'iTunesDB written'), ev('verify', 1, 1, 'Sealing')]), { ok: true, landed: 993, target: 1000, sealedOk: true }, T0)
+    assert.equal(syncOutcome(short)!.catalog, 'written-unverified')
+  })
+  it('verify and catalog-stage failures: new songs on the card, catalog not replaced', () => {
+    const v = syncOutcome(applySyncResult(run([ev('copy', 1000, 1000, 'x'), ev('verify', 3, 16)]), { ok: false, error: 'Only 998 of 1000 songs held across two remounts. Not writing a catalog (N means N). Sync again.' }, T0))!
+    assert.equal(v.changed, 'songs-only'); assert.equal(v.catalog, 'previous')
+    const c = syncOutcome(applySyncResult(run([ev('copy', 1000, 1000, 'x'), ev('verify', 1, 16), ev('db', 0, 1, 'Writing iTunesDB...')]), { ok: false, error: 'The catalog could not be conformed to firmware id order (x). Previous catalog is untouched. Sync again.' }, T0))!
+    assert.equal(c.stoppedAt, 'catalog'); assert.equal(c.changed, 'songs-only'); assert.equal(c.catalog, 'previous')
+  })
+  it('unknown state: a wipe-stage stop, or no phase evidence at all, says so', () => {
+    const w = syncOutcome(applySyncResult(run([ev('copy', 0, 1, 'Wiping the iPod for a clean rebuild…')]), { ok: false, error: 'Activity wipe failed (EIO). Nothing was copied.' }, T0))!
+    assert.equal(w.changed, 'unknown'); assert.match(w.changedLine, /not known/)
+    const blind = syncOutcome(applySyncResult(startTimeline(T0, 500), { ok: false, error: 'ENXIO: device not configured' }, T0))!
+    assert.equal(blind.fromEvidence, false); assert.equal(blind.changed, 'unknown'); assert.equal(stoppedLabel(blind), 'Stopped')
+    // nothing-happened stages may be trusted from the message alone
+    const tsa = syncOutcome(applySyncResult(startTimeline(T0, 500), { ok: false, error: 'Activity TSA boarded 3 for a 500-song set. Nothing was wiped.' }, T0))!
+    assert.equal(tsa.changed, 'no')
+  })
+  it('the header says "Last verified" after an uncertain or partial attempt', () => {
+    const clean = { landed: 1000, target: 1000, sealedOk: true }
+    assert.equal(ipodCountLabel(clean, 'idle'), 'On the iPod now')
+    assert.equal(ipodCountLabel(clean, 'failed'), 'Last verified')
+    assert.equal(ipodCountLabel(clean, 'cancelled'), 'Last verified')
+    assert.equal(ipodCountLabel(clean, 'running'), 'Last verified')
+    assert.equal(ipodCountLabel({ landed: 993, target: 1000, sealedOk: true }, 'idle'), 'Last verified')
+    assert.equal(ipodCountLabel({ landed: 500, target: 500, sealedOk: false }, 'idle'), 'Last verified')
+    assert.equal(ipodCountLabel(null, 'idle'), null)
   })
   it('every failure literal the engine and the sync IPC can emit has a mapping', () => {
     const files = ['src/main/ipod-activity-engine.ts', 'src/main/workout-sync-ipc.ts']

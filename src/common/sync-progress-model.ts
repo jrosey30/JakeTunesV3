@@ -50,14 +50,16 @@ export interface SyncTimeline {
   copied: number | null
   /** The engine's own words, verbatim, for Details. */
   error: string | null
+  /** How many engine events this run has seen — zero means no phase evidence. */
+  seen: number
 }
 
 export const IDLE_TIMELINE: SyncTimeline = {
-  status: 'idle', step: null, reached: [], current: 0, total: 0, title: '', startedAt: null, endedAt: null, target: null, landed: null, copied: null, error: null,
+  status: 'idle', step: null, reached: [], current: 0, total: 0, title: '', startedAt: null, endedAt: null, target: null, landed: null, copied: null, error: null, seen: 0,
 }
 
 export function startTimeline(now: number, target: number | null, title = 'Starting…'): SyncTimeline {
-  return { ...IDLE_TIMELINE, status: 'running', step: 'prepare', reached: ['prepare'], startedAt: now, target, title }
+  return { ...IDLE_TIMELINE, status: 'running', step: 'prepare', reached: ['prepare'], startedAt: now, target, title, seen: 0 }
 }
 
 function stepFor(t: SyncTimeline, e: SyncEvent): SyncStep | null {
@@ -81,6 +83,7 @@ function reach(reached: SyncStep[], step: SyncStep): SyncStep[] {
 export function reduceSyncEvent(t: SyncTimeline, e: SyncEvent, now: number): SyncTimeline {
   if (t.status === 'idle') t = startTimeline(now, t.target)
   if (t.status !== 'running') return t
+  t = { ...t, seen: t.seen + 1 }
   if (e.phase === 'cancelled') {
     return { ...t, status: 'cancelled', endedAt: now, copied: e.current, title: '' }
   }
@@ -133,4 +136,15 @@ export function elapsedLabel(t: SyncTimeline, now: number): string {
   if (!t.startedAt) return ''
   const s = Math.max(0, Math.floor(((t.endedAt ?? now) - t.startedAt) / 1000))
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+/** The header's claim about the card. "On the iPod now" only when the newest
+ *  recorded sync sealed its full set AND no attempt since has ended
+ *  uncertain; otherwise the old count is only what was LAST VERIFIED. */
+export function ipodCountLabel(latest: { landed?: number; target?: number; sealedOk?: boolean; aborted?: boolean } | null, timelineStatus: TimelineStatus): 'On the iPod now' | 'Last verified' | null {
+  if (!latest || latest.landed == null) return null
+  const clean = latest.sealedOk !== false && !latest.aborted && (latest.target == null || latest.landed >= latest.target)
+  if (!clean) return 'Last verified'
+  if (timelineStatus === 'failed' || timelineStatus === 'cancelled' || timelineStatus === 'running') return 'Last verified'
+  return 'On the iPod now'
 }
