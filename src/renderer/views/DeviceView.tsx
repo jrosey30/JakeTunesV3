@@ -78,7 +78,38 @@ export default function DeviceView() {
   // source of truth as StatusBar now, so the two numbers always agree.
   const regularTracks = useRegularLibraryTracks(state.tracks)
   const [syncing, setSyncing] = useState(false)
-  const [syncStatus, setSyncStatus] = useState<SyncStatus>({ state: 'idle' })
+  const [syncStatus, setSyncStatusState] = useState<SyncStatus>({ state: 'idle' })
+  // Activity Sync front end (2026-09-06, found on the Mini): the engine's
+  // cold remount during Verify drops the volume for a moment, the sidebar
+  // bounces off this page, and the handler's result then lands on an
+  // UNMOUNTED component — an effect on syncStatus never runs. So the sync
+  // timeline (a module store) is fed HERE, in the setter every handler
+  // already calls, which runs regardless of mount. Render-side only.
+  const libraryCountRef = useRef(0)
+  libraryCountRef.current = state.tracks.length
+  const setSyncStatus = (next: SyncStatus): void => {
+    setSyncStatusState(next)
+    if (deviceFixtureRequested()) return
+    const t = getSyncTimeline()
+    if (next.state === 'syncing') {
+      if (t.status !== 'running') {
+        const m = /(\d[\d,]*) tracks/.exec(next.step)
+        const target = m ? Number(m[1].replace(/,/g, '')) : (/whole library/i.test(next.step) ? libraryCountRef.current : null)
+        startSyncTimeline(target, next.step)
+      }
+    } else if (next.state === 'done') {
+      if (t.status === 'running' || t.status === 'idle') finishSyncTimeline({ ok: true, landed: next.total, target: t.target ?? next.total, copied: next.copied, sealedOk: true })
+    } else if (next.state === 'error') {
+      if (t.status === 'running' || t.status === 'idle') finishSyncTimeline({ ok: false, error: next.message })
+    } else if (next.state === 'idle' && t.status === 'running') {
+      // Back to idle while the timeline runs: either the build/review was
+      // cancelled before the engine ever ran (no events seen → nothing to
+      // show), or the engine's cancel path settled without a 'cancelled'
+      // event reaching the store (events seen → say it was stopped).
+      if (t.seen === 0) clearSyncTimeline()
+      else finishSyncTimeline({ ok: false, cancelled: true, copied: t.current })
+    }
+  }
   const [ipodName, setIpodName] = useState('iPod')
   // 2026-07-20 (Jake: "this shouldnt say ~1000 songs. it has to be 1000"):
   // the EXACT on-device catalog count, read from the iPod's own iTunesDB.
@@ -121,30 +152,10 @@ export default function DeviceView() {
     }).catch(() => {})
   }, [])
 
-  // Activity Sync front end (2026-09-06): the page's phase strip and result
-  // line read the sync TIMELINE (fed by the engine's own progress events via
-  // App). This effect mirrors the view's status into it — render-side only,
-  // the handlers above are untouched. Failures stay until dismissed or
-  // replaced by the next attempt (the 8-second auto-clear is gone).
+  // The page's phase strip and result line read the sync TIMELINE (fed by the
+  // engine's own progress events via App and by setSyncStatus above).
   const timeline = useSyncExternalStore(subscribeSyncTimeline, getSyncTimeline)
   const fixture = deviceFixtureRequested()
-  useEffect(() => {
-    if (fixture) return                                  // the harness drives the timeline by hand
-    if (syncStatus.state === 'syncing') {
-      if (getSyncTimeline().status !== 'running') {
-        const m = /(\d[\d,]*) tracks/.exec(syncStatus.step)
-        const target = m ? Number(m[1].replace(/,/g, '')) : (/whole library/i.test(syncStatus.step) ? state.tracks.length : (lastBrief?.target ?? null))
-        startSyncTimeline(target, syncStatus.step)
-      }
-    } else if (syncStatus.state === 'done') {
-      const t = getSyncTimeline()
-      if (t.status === 'running' || t.status === 'idle') finishSyncTimeline({ ok: true, landed: syncStatus.total, target: t.target ?? syncStatus.total, copied: syncStatus.copied, sealedOk: true })
-    } else if (syncStatus.state === 'error') {
-      const t = getSyncTimeline()
-      if (t.status === 'running' || t.status === 'idle') finishSyncTimeline({ ok: false, error: syncStatus.message })
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [syncStatus])
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     if (timeline.status !== 'running') return
