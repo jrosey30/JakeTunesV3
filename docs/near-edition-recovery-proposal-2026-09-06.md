@@ -295,3 +295,21 @@ Not acquired: track 4 “Here We Go” — runtime mismatch (8:04 found, 6:50
 picked)." with no button; Details showed the table with 11 ticks
 (`simple-1-row-owned.png`, `simple-2-details-table.png`). No live acquisition
 was run for this album, and none will be.
+
+### Closed (2026-09-07, 1:30 AM)
+
+Copy correction (Jake): when the omitted track exists in the library in the
+found runtime, the line reads "“Here We Go”: you own the 8:04 version; this
+edition lists 6:50" (`ownedVariantSec` on the row, `omittedTrackLine`); the
+owned-count line reads "All 11 matching tracks are yours." No further
+Chocolate Chords acquisition tests. Slice closed; action A has never been
+run live and stays that way until a case Jake picks.
+
+Dev review launches: `JT_DEV_REVIEW=1` (set only by the `electron-dev` launch
+configuration) mutes the window's audio at creation and after every load
+(`src/main/dev-review.ts`, one call in index.ts). Normal startup is untouched
+— the variable is absent in the packaged app. Verified: main logs
+"[dev-review] audio muted for this instance" and nothing played after boot.
+(The playback heard on 9/7 at 12:58 AM came from clicks in the dev window —
+the audio log shows five rapid track starts — not from a restore; the mute
+covers both.)

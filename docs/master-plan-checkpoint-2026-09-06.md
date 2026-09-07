@@ -38,7 +38,9 @@ Supersedes [2026-09-05](master-plan-checkpoint-2026-09-05.md) for current status
    "Get N matching tracks" (N = still missing), the table under Details, the
    alternate-edition action and confirmation removed from the UI (engine
    path kept underneath). Chocolate Chords is owned (Bandcamp purchase);
-   no live acquisition for it. Action A has not been run live.
+   no live acquisition for it. Copy corrected ("you own the 8:04 version;
+   this edition lists 6:50"). SLICE CLOSED 9/7. Action A has not been run
+   live. Dev review launches are muted (JT_DEV_REVIEW=1 in launch.json only).
 
 1. Tracklist auto-expansion on prefill when the plain edition takes the hero slot.
 2. Listen List cache freshness (the regular shop's hook does not subscribe to
