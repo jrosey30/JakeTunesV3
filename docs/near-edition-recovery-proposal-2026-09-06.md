@@ -263,3 +263,35 @@ Action B (the Bandcamp edition) is the next slice.
 The confirm block rendered with the identity ("terryleebrownjunior.bandcamp.com/album/chocolate-chords · 12 tracks · 1997"), the one runtime difference, the recorded line and the never line; Back closed it; the queue was byte-identical throughout (`actionB-1-confirm-step.png`). A landed source-edition fixture row shows the edition line, the note and "9 imported · 3 already in your library" beside the still-refused iTunes row (`actionB-2-panel-row-distinct.png`).
 
 Neither action is live-accepted. Live acquisition (A or B) waits for Jake's choice of material.
+
+## Simplified (2026-09-07, Jake: "too many buttons")
+
+Jake bought Chocolate Chords on Bandcamp rather than use the flow — the
+verdict on the sheet. What stands now:
+
+- **One inline action** on the refused album row in the Downloads panel:
+  **Get N matching tracks**, where N counts only recordings still missing
+  from the library (the read-only comparison, with ownership, is fetched
+  once per row when the panel shows it). The omitted track is named on the
+  same line: "Not acquired: track 4 “Here We Go” — runtime mismatch (8:04
+  found, 6:50 picked)". When nothing is missing the line says so and there
+  is no button.
+- **The comparison table sits under Details** (`NearEditionTable`, pure,
+  never touches the queue), with a "Yours" column.
+- **The alternate-edition action and its confirmation are gone** from the
+  UI. The source-edition plan and the engine's verify-against-snapshot path
+  remain underneath, tested, unreachable from any button.
+- The Browse/Download card's refused verb reads "Exact edition not found ·
+  Details" and opens the panel.
+- Verification is unchanged underneath: each matching-track job is a normal
+  song request through the one scheduler (identity, runtime pin,
+  post-staging verification).
+
+Ownership check before offering anything: the library now holds all 12
+Chocolate Chords tracks from the Bandcamp purchase (auto-import,
+`imported_11827…11838`; track 4 is the 8:04 version). On the dev instance the
+refused fixture row read "All 11 matching tracks are already in your library.
+Not acquired: track 4 “Here We Go” — runtime mismatch (8:04 found, 6:50
+picked)." with no button; Details showed the table with 11 ticks
+(`simple-1-row-owned.png`, `simple-2-details-table.png`). No live acquisition
+was run for this album, and none will be.

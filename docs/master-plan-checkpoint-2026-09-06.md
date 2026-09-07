@@ -33,9 +33,12 @@ Supersedes [2026-09-05](master-plan-checkpoint-2026-09-05.md) for current status
    editions sheet) and slice 2 (action A, the matching-track Gets through the
    one scheduler, grouped under the refused request) and slice 3 (action B,
    the source edition selected by URL + tracklist snapshot, verified against
-   it, distinct from the iTunes request) implemented and fixture-verified.
-   Neither action is live-accepted; live acquisition waits for Jake's choice
-   of material.
+   it, distinct from the iTunes request) implemented and fixture-verified —
+   then SIMPLIFIED 9/7 at Jake's call ("too many buttons"): one inline
+   "Get N matching tracks" (N = still missing), the table under Details, the
+   alternate-edition action and confirmation removed from the UI (engine
+   path kept underneath). Chocolate Chords is owned (Bandcamp purchase);
+   no live acquisition for it. Action A has not been run live.
 
 1. Tracklist auto-expansion on prefill when the plain edition takes the hero slot.
 2. Listen List cache freshness (the regular shop's hook does not subscribe to
