@@ -217,3 +217,33 @@ row). Re-arrange what sits between them into three zones and one voice.
 Nothing moves until these are answered. Record Shop stays under everyday-use
 review with the legacy Download page in place; the real Add by link test
 waits on the URL; the Mobile caption remains separate.
+
+## Implemented — renderer slice (2026-09-06, later the same day)
+
+Jake approved the layout with: Full Sync demoted, five recent syncs inline,
+Options collapsed, the retired preferences removed once confirmed consumer-
+free, the three-part failure voice with Details, no sidebar dot.
+
+| Change set | What landed |
+|---|---|
+| A. Models | `src/common/sync-progress-model.ts` (six steps from the engine's own events; Verify vs Seal told apart by having reached Catalog; `applySyncResult` never says done when `landed < target` or the seal failed) and `src/common/sync-failure-copy.ts` (what happened · was the iPod changed · what to do; `unknown` said plainly; the engine's sentence kept for Details). `sync-front-end-models.test.ts` replays the real phase order, cancellation, partial results, and walks every `error:` literal in the engine and the sync IPC to prove each maps. |
+| B. Plumbing | `App.tsx`: the existing `sync-progress` listener also feeds `renderer/syncTimeline.ts`; the LCD text is unchanged. |
+| C. Device page | `DeviceView.tsx`, render section only: header line "On the iPod now: N songs · verified …" from the ledger; SYNC zone (Activity Sync, size chips, Sync the Pool when the pool has songs, Full Sync… and Options ▸ as text buttons); the phase strip with counts, elapsed and Cancel; the result line (done / stopped-during / stopped-at with the changed line and next step, Details, Dismiss — no auto-clear); Options behind the disclosure with the Apply gate exactly as before; Recent syncs = the first five ledger rows through the sheet's own rows; footer keeps the capacity bar and the read-only buttons. The handlers and the state machine are untouched; the view mirrors its status into the timeline from an effect. |
+| D. History | `SyncHistorySheet.tsx` exports `SyncHistoryRows` (shared with the page); the sheet renders the same rows. |
+| E. Preferences | The two retired auto-sync checkboxes removed from Preferences › Sync. Their keys stay on disk, forced false by `settings-ipc`, because `index.ts` still reads `autoRemoveDeletedFromIpod` as a guard and the installed app reads `autoSyncOnConnect` — active consumers of the keys, none of the controls. The tab itself stays: it hosts library backups and the last-library-sync readout. |
+| Fixture door | `#deviceFixture` (renderer only): the sidebar shows an iPod row without a device and does not bounce off the page; the timeline is driven by hand through the store. Never affects a real sync — the buttons stay wired to the real IPC. |
+
+### Acceptance — results
+
+| # | Result |
+|---|---|
+| A1 | `git status` shows no change under the engine, sync IPC, pool, catalog-order or platform files. Gate green. |
+| A2 | Unit test replays preflight → wipe → copy → verify → db → verify → result; on the dev instance the strip lit Prepare 37/1,000 → Wipe → Copy 412/1,000 → Verify 2/16 → Catalog → Seal → done, with the live line and elapsed clock (`sync-1-prepare` … `sync-6-done`). A mid-copy cancel: "Stopped during Copy — 40 copied before the stop", the previous-catalog line (`sync-7-cancelled`). |
+| A3 | "Landed 1,000 of 1,000 — verified on the card, 9:29 PM" only from `landed`; `landed 993 of 1000` with `ok: true` renders as Stopped at Seal (`sync-8d-fail-seal-short`); unit tests cover short and unsealed. |
+| A4 | No auto-clear timer remains; every engine/IPC literal maps (test); on the page: Prepare/TSA → "Nothing on the iPod was changed" (`sync-8a`), Wipe → "Whether the iPod changed is not known" (`sync-8b`), Verify → partial with Details showing the engine's sentence verbatim (`sync-8c`), an unmapped string → unknown (`sync-8e`). Dismiss clears; a new attempt replaces. |
+| A5 | Recent syncs = the sheet's first five rows (500 of 500 sealed, Round Trip 8 plays home, …), See all (9) opens the sheet. |
+| A6 | Silhouette at the normal width and 700 px (`sync-0-idle`, `sync-2-copy`, `sync-10-narrow-700`): header, capacity bar and button row keep their places; the recent list scrolls inside itself so the footer stays pinned; at 700 px the footer wraps instead of colliding (one CSS line, the only footer change). |
+| A7 | Pending Jake's presence: one supervised Activity Sync at 100, one Cancel mid-copy, one Eject (success and a forced failure). No device operation was performed. |
+| A8 | Options: Apply gate unchanged (the disclosure opens itself while dirty; Apply sits inside it); the convert setting still reaches the sync confirmation. |
+
+Captures: `diagnostics/step-inside-review/sync-*.png`.
