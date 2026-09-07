@@ -12,9 +12,11 @@
 import { jobFromQueueItem, liveItemId, type QueueItemLike } from './record-shop-live.ts'
 import { refusedSelection } from './record-shop-commands.ts'
 import type { ShopItem, Snapshot } from './record-shop.ts'
+import { nearEditionOf } from './near-edition-detect.ts'
+import type { Alternative } from './acquisition-identity.ts'
 
 export type PanelStatus = 'downloading' | 'queued' | 'done' | 'failed' | 'refused' | 'canceled'
-export type PanelAction = 'cancel' | 'retry' | 'chooseEdition' | 'chooseVersion'
+export type PanelAction = 'cancel' | 'retry' | 'chooseEdition' | 'chooseVersion' | 'compareEditions'
 
 export interface PanelRow {
   key: string
@@ -34,6 +36,8 @@ export interface PanelRow {
   primary: string | null
   detail: string | null
   alternatives: ReadonlyArray<{ provider: string; desc: string; reason: string }>
+  /** A refused edition that is the same record with a tracklist difference — Compare editions can lay it beside the picked one. */
+  nearEdition: Alternative | null
   actions: PanelAction[]
   /** Seconds in flight (downloading) — the caller supplies `now`. */
   elapsedSec: number | null
@@ -80,6 +84,8 @@ export function panelRowFor(q: QueueItemLike, now: number): PanelRow {
   if (status === 'downloading' || status === 'queued') actions.push('cancel')
   else if (status === 'failed' || status === 'canceled') actions.push('retry')
   else if (status === 'refused') actions.push(kind === 'album' ? 'chooseEdition' : 'chooseVersion')
+  const nearEdition = status === 'refused' && kind === 'album' && q.outcome === 'exact-not-found' ? nearEditionOf(q.alternatives as Alternative[] | undefined, r.trackCount ?? null) : null
+  if (nearEdition) actions.push('compareEditions')
   const counts = status === 'done' ? `${q.imported ?? 0} imported · ${q.dupes ?? 0} already in your library` : null
   const chooseTitle = kind === 'album' ? (r.album || '') : (r.title || '')
   return {
@@ -91,6 +97,7 @@ export function panelRowFor(q: QueueItemLike, now: number): PanelRow {
     primary: status === 'failed' || status === 'refused' ? (q.primary || q.error || 'Download failed') : null,
     detail: status === 'failed' || status === 'refused' ? (q.detail || q.error || null) : null,
     alternatives: q.alternatives ?? [],
+    nearEdition,
     actions,
     elapsedSec: status === 'downloading' && q.startedAt ? Math.max(0, Math.floor((now - q.startedAt) / 1000)) : null,
     choose: status === 'refused' && artist && chooseTitle ? { query: `${artist} ${chooseTitle}`.trim(), kind: kind === 'album' ? 'album' : 'song', artist, title: chooseTitle } : null,

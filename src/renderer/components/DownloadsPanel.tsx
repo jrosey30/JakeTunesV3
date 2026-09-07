@@ -9,6 +9,7 @@
 import { useState, useCallback, useEffect, useImperativeHandle, forwardRef, useSyncExternalStore } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { openBrowse } from '../listen-to-the-list/ltlDownload'
+import CompareEditionsSheet, { type CompareEditionsSubject } from './CompareEditionsSheet'
 import { subscribeQueue, getQueue, cancel, retry, clearFinished } from '../views/DownloadStore/downloadQueue'
 import { downloadsPanelRows, panelSummary, type PanelRow } from '../../common/downloads-panel-model'
 import '../styles/downloads-panel.css'
@@ -48,6 +49,7 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
   const queue = useSyncExternalStore(subscribeQueue, getQueue)
   const [exiting, setExiting] = useState(false)
   const [open, setOpen] = useState<Set<string>>(() => new Set())
+  const [compare, setCompare] = useState<{ row: PanelRow; subject: CompareEditionsSubject } | null>(null)
   const anyActive = queue.some((q) => q.status === 'downloading')
   const now = useNow(anyActive)
   const rows = downloadsPanelRows(queue, now)
@@ -71,6 +73,19 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
     requestClose()
   }
 
+  // Compare editions (read-only): the refused album beside its nearest edition.
+  const openCompare = (row: PanelRow) => {
+    const q = queue.find((x) => x.key === row.key)
+    if (!q || !row.nearEdition || !row.artist) return
+    const r = q.result
+    setCompare({ row, subject: { artist: row.artist, album: r.album || row.title, collectionId: r.collectionId, trackCount: r.trackCount, releaseYear: r.releaseYear, candidate: { provider: row.nearEdition.provider, desc: row.nearEdition.desc, url: row.nearEdition.url, tracks: row.nearEdition.tracks } } })
+  }
+  const pasteLinkFor = (row: PanelRow) => {
+    setCompare(null)
+    if (row.choose) window.dispatchEvent(new CustomEvent('jaketunes-download-prefill', { detail: { ...row.choose, target: 'browse' } }))
+    openBrowse(dispatch)
+    requestClose()
+  }
   const summaryLine = [
     summary.active ? `${summary.active} downloading` : null,
     summary.queued ? `${summary.queued} queued` : null,
@@ -110,6 +125,7 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
                 {row.actions.includes('retry') && <button onClick={() => retry(row.key)}>Retry</button>}
                 {row.actions.includes('chooseEdition') && <button className="dlp-primary-action" onClick={() => chooseAgain(row)} disabled={!row.choose}>Choose edition</button>}
                 {row.actions.includes('chooseVersion') && <button className="dlp-primary-action" onClick={() => chooseAgain(row)} disabled={!row.choose}>Choose version</button>}
+                {row.actions.includes('compareEditions') && <button onClick={() => openCompare(row)} title="Lay the edition you picked beside the nearest one found — acquires nothing">Compare editions…</button>}
                 {hasDetails && <button className="dlp-details-toggle" onClick={() => toggleDetails(row.key)} aria-expanded={showDetails}>{showDetails ? 'Hide details' : 'Details'}</button>}
               </div>
               {showDetails && (
@@ -132,6 +148,7 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
           )
         })}
       </ul>
+      {compare && <CompareEditionsSheet subject={compare.subject} onClose={() => setCompare(null)} onPasteLink={() => pasteLinkFor(compare.row)} />}
     </div>
   )
 })
