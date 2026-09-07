@@ -60,9 +60,11 @@ document-only slice:
 [activity-sync-front-end-audit-2026-09-06.md](activity-sync-front-end-audit-2026-09-06.md)
 (inventory, actual states, controls, the failure catalogue, layout, change
 sets, acceptance checks A1–A8). Jake approved the layout; the renderer slice
-is implemented and fixture-verified (A1–A6, A8 in the audit doc). A7 — the
-supervised sync, cancel and eject on the Mini — waits for Jake's presence.
-Not installed yet.
+is implemented and fixture-verified (A1–A6, A8 in the audit doc), then the
+result wording was corrected to derive mutation/catalog claims from phase
+evidence, label stale counts "Last verified", and never diagnose the card from
+a short count (regression cases + recaptures). A7 — the supervised sync,
+cancel and eject on the Mini — waits for Jake's presence. Not installed yet.
 
 Follow-ups 4 and 6 above are resolved inside the Downloads panel (Choose
 edition/version for refused verdicts; canceled jobs visible) and remain true

@@ -247,3 +247,38 @@ free, the three-part failure voice with Details, no sidebar dot.
 | A8 | Options: Apply gate unchanged (the disclosure opens itself while dirty; Apply sits inside it); the convert setting still reaches the sync confirmation. |
 
 Captures: `diagnostics/step-inside-review/sync-*.png`.
+
+### Wording correction round (Jake, before any install or device test)
+
+- **Claims come from phase evidence, not the message.** `syncFailureCopy`
+  now reads the engine's sentence only for *what happened* and *what to do*;
+  `syncOutcome(timeline)` derives *whether the iPod changed* and *the catalog
+  claim* from the steps that ran and where the run stopped, matching what the
+  engine does at each stage: before Wipe → nothing changed; during Wipe →
+  unknown; Copy (cancel or abort — the engine re-empties Music) → the copied
+  songs were cleared again, previous catalog stands but its songs are gone;
+  Verify or Catalog → new songs on the card, catalog not replaced; Seal (after
+  Catalog completed) → a new catalog was written but the card did not prove it.
+  The pre-catalog explanation is never reused once Catalog completed; Details
+  lists the steps reached. With no phase events at all the page says the state
+  is not known (only the nothing-happened stages may be trusted from the
+  message alone).
+- **"Last verified"** replaces "On the iPod now" whenever the newest recorded
+  sync did not seal its full set, or the latest attempt ended uncertain,
+  partial or is still running (`ipodCountLabel`), with "what the iPod holds
+  now is not verified" appended.
+- **No card diagnosis from a short count.** Next steps say "sync again without
+  unplugging; if it comes up short again, check the cable and the port" —
+  never "the card is failing".
+- **Eject failure** is shown on the page from the real IPC result, and the
+  harness can simulate it (`showEjectFailure`) — no real write is disrupted.
+
+Regression cases added (`sync-front-end-models.test.ts`): pre-catalog
+cancellation, post-catalog seal failure (engine error, and engine "ok" but
+short), unknown state (wipe stage, and no phase evidence), the header label,
+and the no-card-diagnosis rule. Recaptured on the fixture:
+`sync-7-cancelled` (header flips to Last verified), `sync-8d-fail-seal-post-
+catalog-details`, `sync-8f-fail-seal-short`, `sync-8e-fail-unknown`,
+`sync-8b-fail-wipe-unknown`, `sync-8c-fail-verify-partial-details`,
+`sync-8a-fail-prepare-unchanged`, `sync-11-eject-failed`, `sync-6-done`.
+Gate: 1,166 tests. Still not installed; A7 still waits for Jake.
