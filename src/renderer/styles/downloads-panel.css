@@ -115,3 +115,13 @@
 .dlp-alt-desc { color: #333; }
 .dlp-alt-reason { color: #b0452a; }
 .dlp-alt-provider { color: #888; font-size: 10px; }
+
+/* Matching-track Gets folded under their refused album request. */
+.dlp-group { margin-top: 6px; padding: 6px 8px; background: rgba(0,0,0,0.04); border-radius: 3px; }
+.dlp-group-line { font-size: 10.5px; color: #444; margin-bottom: 4px; font-variant-numeric: tabular-nums; }
+.dlp-group-children { list-style: none; margin: 0; padding: 0; }
+.dlp-child { display: flex; align-items: center; gap: 6px; padding: 2px 0; font-size: 10.5px; border-top: 1px solid rgba(0,0,0,0.05); }
+.dlp-child-pos { width: 16px; text-align: right; color: #888; font-variant-numeric: tabular-nums; }
+.dlp-child-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #222; }
+.dlp-child .dlp-status { font-size: 9px; }
+.dlp-child button { font-size: 9.5px; padding: 0 6px; border-radius: 3px; border: 1px solid #a9a9a9; background: linear-gradient(180deg, #fbfbfb, #e6e6e6); }

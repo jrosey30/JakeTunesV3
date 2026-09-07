@@ -10,7 +10,8 @@ import { useState, useCallback, useEffect, useImperativeHandle, forwardRef, useS
 import { useLibrary } from '../context/LibraryContext'
 import { openBrowse } from '../listen-to-the-list/ltlDownload'
 import CompareEditionsSheet, { type CompareEditionsSubject } from './CompareEditionsSheet'
-import { subscribeQueue, getQueue, cancel, retry, clearFinished } from '../views/DownloadStore/downloadQueue'
+import type { MatchingTrackPlan } from '../../common/near-edition-actions'
+import { subscribeQueue, getQueue, cancel, retry, clearFinished, enqueue, type QResult } from '../views/DownloadStore/downloadQueue'
 import { downloadsPanelRows, panelSummary, type PanelRow } from '../../common/downloads-panel-model'
 import '../styles/downloads-panel.css'
 
@@ -78,7 +79,18 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
     const q = queue.find((x) => x.key === row.key)
     if (!q || !row.nearEdition || !row.artist) return
     const r = q.result
-    setCompare({ row, subject: { artist: row.artist, album: r.album || row.title, collectionId: r.collectionId, trackCount: r.trackCount, releaseYear: r.releaseYear, candidate: { provider: row.nearEdition.provider, desc: row.nearEdition.desc, url: row.nearEdition.url, tracks: row.nearEdition.tracks } } })
+    setCompare({ row, subject: { parentKey: row.key, sourceKind: r.origin?.sourceKind, sourceLabel: r.origin?.sourceLabel, artist: row.artist, album: r.album || row.title, collectionId: r.collectionId, trackCount: r.trackCount, releaseYear: r.releaseYear, candidate: { provider: row.nearEdition.provider, desc: row.nearEdition.desc, url: row.nearEdition.url, tracks: row.nearEdition.tracks } } })
+  }
+  // Action A: the explicit click. Each job is a song request through the one
+  // scheduler (identity, runtime pin, verification unchanged); enqueue's own
+  // key dedupe makes a repeat click harmless — done and in-flight tracks are
+  // untouched, failed ones are re-armed (that IS the retry).
+  const getMatching = (plan: MatchingTrackPlan) => {
+    for (const j of plan.jobs) enqueue(j as unknown as QResult)
+    setCompare(null)
+  }
+  const retryGroup = (row: PanelRow) => {
+    for (const c of row.group?.children ?? []) if (c.status === 'failed' || c.status === 'refused' || c.status === 'canceled') retry(c.key)
   }
   const pasteLinkFor = (row: PanelRow) => {
     setCompare(null)
@@ -126,8 +138,24 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
                 {row.actions.includes('chooseEdition') && <button className="dlp-primary-action" onClick={() => chooseAgain(row)} disabled={!row.choose}>Choose edition</button>}
                 {row.actions.includes('chooseVersion') && <button className="dlp-primary-action" onClick={() => chooseAgain(row)} disabled={!row.choose}>Choose version</button>}
                 {row.actions.includes('compareEditions') && <button onClick={() => openCompare(row)} title="Lay the edition you picked beside the nearest one found — acquires nothing">Compare editions…</button>}
+                {row.actions.includes('retryGroup') && <button onClick={() => retryGroup(row)} title="Retry only the tracks that failed or were canceled">Retry the {row.group ? row.group.failed + row.group.canceled : 0} that failed</button>}
                 {hasDetails && <button className="dlp-details-toggle" onClick={() => toggleDetails(row.key)} aria-expanded={showDetails}>{showDetails ? 'Hide details' : 'Details'}</button>}
               </div>
+              {row.group && (
+                <div className="dlp-group">
+                  <div className="dlp-group-line">{row.group.line}</div>
+                  <ul className="dlp-group-children">
+                    {row.group.children.map((c) => (
+                      <li key={c.key} className={`dlp-child dlp-child--${c.status}`}>
+                        <span className="dlp-child-pos">{c.groupPosition ?? ''}</span>
+                        <span className="dlp-child-title" title={c.title}>{c.title}</span>
+                        <span className={`dlp-status dlp-status--${c.status}`}>{STATUS_LABEL[c.status]}{c.elapsedSec != null ? ` · ${c.elapsedSec}s` : ''}{c.status === 'failed' || c.status === 'refused' ? ` · ${c.primary ?? ''}` : ''}</span>
+                        {c.actions.includes('cancel') && <button onClick={() => void cancel(c.key)}>Cancel</button>}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {showDetails && (
                 <div className="dlp-row-details">
                   {row.completion && <p>{row.completion}</p>}
@@ -148,7 +176,7 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
           )
         })}
       </ul>
-      {compare && <CompareEditionsSheet subject={compare.subject} onClose={() => setCompare(null)} onPasteLink={() => pasteLinkFor(compare.row)} />}
+      {compare && <CompareEditionsSheet subject={compare.subject} onClose={() => setCompare(null)} onPasteLink={() => pasteLinkFor(compare.row)} onGetMatching={getMatching} />}
     </div>
   )
 })

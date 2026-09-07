@@ -10,10 +10,15 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CompareEditionsResult } from '../../common/near-edition-types'
+import { planMatchingTrackGets, type MatchingTrackPlan } from '../../common/near-edition-actions'
 import '../styles/activity-sheet.css'
 import '../styles/compare-editions.css'
 
 export interface CompareEditionsSubject {
+  /** The refused album job's queue key — the group the matching-track Gets hang off. */
+  parentKey: string
+  sourceKind?: string
+  sourceLabel?: string
   artist: string
   album: string
   collectionId?: number
@@ -24,7 +29,7 @@ export interface CompareEditionsSubject {
 
 const fmt = (s: number | null | undefined): string => s == null ? '—' : `${Math.floor(s / 60)}:${String(Math.round(s) % 60).padStart(2, '0')}`
 
-export default function CompareEditionsSheet({ subject, onClose, onPasteLink }: { subject: CompareEditionsSubject; onClose: () => void; onPasteLink: () => void }) {
+export default function CompareEditionsSheet({ subject, onClose, onPasteLink, onGetMatching }: { subject: CompareEditionsSubject; onClose: () => void; onPasteLink: () => void; onGetMatching?: (plan: MatchingTrackPlan) => void }) {
   const [state, setState] = useState<{ loading: boolean; error: string | null; data: CompareEditionsResult | null }>({ loading: true, error: null, data: null })
   useEffect(() => {
     let cancelled = false
@@ -36,6 +41,11 @@ export default function CompareEditionsSheet({ subject, onClose, onPasteLink }: 
     return () => { cancelled = true }
   }, [subject])
   const d = state.data
+  // Action A: the plan is computed here (pure); the ENQUEUE happens in the
+  // panel that owns the queue — this sheet stays free of it, so opening it
+  // can never acquire anything.
+  const plan = d ? planMatchingTrackGets(d, { parentKey: subject.parentKey, artist: subject.artist, album: subject.album, releaseYear: subject.releaseYear, sourceKind: subject.sourceKind, sourceLabel: subject.sourceLabel }) : null
+  const [pressed, setPressed] = useState(false)
   // Portal to the body: the Downloads panel animates with a transform, which
   // would otherwise make this fixed overlay its captive.
   return createPortal(
@@ -77,8 +87,14 @@ export default function CompareEditionsSheet({ subject, onClose, onPasteLink }: 
             </div>
             <div className="cmp-actions">
               <div className="cmp-action">
-                <button type="button" className="activity-btn" disabled title="Not wired yet — this slice is read-only">Get the {d.summary.exact} matching track{d.summary.exact === 1 ? '' : 's'}</button>
-                <p>{d.summary.matchingSentence}</p>
+                <button
+                  type="button"
+                  className="activity-btn"
+                  disabled={!plan || plan.jobs.length === 0 || !onGetMatching || pressed}
+                  title={plan && plan.jobs.length === 0 ? 'Every matching track is already in your library' : 'Queue the matching tracks as song downloads'}
+                  onClick={() => { if (!plan || !onGetMatching || pressed) return; setPressed(true); onGetMatching(plan) }}
+                >{pressed ? 'Queued' : plan && plan.jobs.length === 0 ? 'Nothing to get — all matching tracks are yours' : `Get the ${plan ? plan.jobs.length : d.summary.exact} matching track${(plan ? plan.jobs.length : d.summary.exact) === 1 ? '' : 's'}`}</button>
+                <p>{d.summary.matchingSentence}{plan && plan.skippedOwned.length ? ` Skipped as already yours: ${plan.skippedOwned.map((r) => `${r.n} “${r.wantTitle}”`).join(', ')}.` : ''}</p>
               </div>
               <div className="cmp-action">
                 <button type="button" className="activity-btn" disabled title="Not wired yet — this slice is read-only">Get the {d.found.label}</button>
@@ -89,7 +105,7 @@ export default function CompareEditionsSheet({ subject, onClose, onPasteLink }: 
                 <p>Opens Record Shop → Browse with Add by link. Nothing is acquired until you paste one and press Download.</p>
               </div>
             </div>
-            <p className="cmp-note">Opening this sheet acquired nothing. The acquisition buttons are shown so their wording can be reviewed; they do nothing until their own change lands.</p>
+            <p className="cmp-note">Opening this sheet acquired nothing. Only the button you press queues downloads; the Bandcamp edition button is not wired yet.</p>
           </>
         )}
         <div className="activity-sheet-actions">
