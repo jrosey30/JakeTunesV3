@@ -5,6 +5,8 @@ import MusicSourcesPanel from '../../components/MusicSourcesPanel'
 import CredentialNotice from './CredentialNotice'
 import { showCredentialNotice } from './credential-notice-store'
 import { qobuzNoticeFor } from '../../../common/qobuz-notice'
+import { nearEditionOf } from '../../../common/near-edition-detect'
+import { toggleDownloadsPanel } from '../../components/DownloadsPanel'
 import { useLibrary } from '../../context/LibraryContext'
 import { enqueue, itemFor, subscribeQueue, getQueue, retry, retryFailed, cancel, queueSummary, clearFinished, primaryFor, trackQueryId, albumQueryId, type QItem, type QResult, type QueueOrigin } from './downloadQueue'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../../previewPlayer'
@@ -610,9 +612,19 @@ export default function DownloadView({ mode = 'page' }: { mode?: 'page' | 'brows
     }
     if (st === 'failed') {
       // 6.0 Phase 1: the row shows the short primary status; the full
-      // explanation lives in the queue bar's Details panel (keyboard-
-      // reachable), never only in a hover or a truncated line.
+      // explanation lives in the Downloads panel, never only in a hover.
       const label = item?.primary || primaryFor(item?.outcome, item?.error)
+      // A REFUSED verdict (exact edition / version not found, unverifiable)
+      // never offers Retry — retrying repeats the same search (Jake 9/7:
+      // the card said "Exact edition not found · Retry" while the panel
+      // said Needs a choice). It offers the panel, where the choice lives:
+      // Compare editions when a near edition was judged, else Choose.
+      const refused = item?.outcome === 'exact-not-found' || item?.outcome === 'not-found' || item?.outcome === 'unverifiable'
+      if (refused) {
+        const near = item && item.result.mediaType === 'album' ? nearEditionOf(item.alternatives as import('../../../common/acquisition-identity').Alternative[] | undefined, item.result.trackCount ?? null) : null
+        const verb = near ? 'Compare editions…' : item?.result.mediaType === 'album' ? 'Choose edition…' : 'Choose version…'
+        return <button className="download-retry download-retry--failed" onClick={() => toggleDownloadsPanel('open')} title={`${label} — open Downloads to ${near ? 'compare the editions' : 'choose another'}`}>{label} · {verb}</button>
+      }
       return <button className="download-retry download-retry--failed" onClick={() => item && retry(item.key)} title={`${label} — Retry`}>{label} · Retry</button>
     }
     return <button className="download-result-btn" onClick={() => startGet(qres)}>Get</button>

@@ -41,8 +41,13 @@ Supersedes [2026-09-05](master-plan-checkpoint-2026-09-05.md) for current status
 2. Listen List cache freshness (the regular shop's hook does not subscribe to
    `recommendations-updated`; the Counter's reader always re-reads on mount).
 3. Friend import credit matching should use the recording matchers.
-4. "Not found" rows still offer Retry (Downloads bar + regular list); the
-   Counter says Details / Choose version.
+4. "Not found" rows still offer Retry — RESOLVED for the Browse / Download
+   cards 9/7 (Jake's screenshot: "Exact edition not found · Retry" beside a
+   panel saying Needs a choice): a refused verdict on a card now reads
+   "… · Compare editions…" (near edition judged) or "… · Choose edition…" /
+   "… · Choose version…" and opens the Downloads panel; Retry stays for
+   provider failures and cancels. Still open on the legacy queue bar's
+   bulk Retry and the regular Listen List rows.
 5. Enrichment must not imply another edition: the regular list shows iTunes
    enrichment names for record jots; the Counter shows them as written.
 6. Canceled jobs are invisible in the Downloads bar.
