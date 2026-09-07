@@ -63,13 +63,12 @@ describe('near-edition detection', () => {
   it('the Downloads panel offers Compare editions only for a refused album with a near edition', () => {
     const base = { key: 'k', status: 'failed' as const, outcome: 'exact-not-found', primary: 'Exact edition not found', result: { kind: 'query' as const, source: 'qobuz', mediaType: 'album', id: 'q|album|x|y', desc: 'Chocolate Chords — Terry Lee Brown Junior (album)', artist: 'Terry Lee Brown Junior', album: 'Chocolate Chords', collectionId: 96265705, trackCount: 12, releaseYear: 1997 } }
     const near = downloadsPanelRows([{ ...base, alternatives: [{ provider: 'bandcamp', desc: 'Chocolate Chords — Terry Lee Brown Junior (12 tracks)', reason }] }], 0)[0]
-    assert.ok(near.actions.includes('compareEditions')); assert.equal(near.nearEdition?.provider, 'bandcamp'); assert.ok(near.actions.includes('chooseEdition'))
+    assert.ok(near.actions.includes('nearEdition')); assert.equal(near.nearEdition?.provider, 'bandcamp'); assert.ok(near.actions.includes('chooseEdition'))
     const far = downloadsPanelRows([{ ...base, alternatives: [{ provider: 'qobuz', desc: 'x (9 tracks)', reason: 'has 9 tracks; the edition you picked has 12' }] }], 0)[0]
-    assert.ok(!far.actions.includes('compareEditions')); assert.equal(far.nearEdition, null)
+    assert.ok(!far.actions.includes('nearEdition')); assert.equal(far.nearEdition, null)
   })
-  it('the sheet is read-only: it never imports the queue, the Get path or a prefill', () => {
-    const src = readFileSync(join(import.meta.dirname, '../../renderer/components/CompareEditionsSheet.tsx'), 'utf8')
-    for (const banned of ['downloadQueue', 'enqueue(', 'startGet', 'jaketunes-download-prefill', 'streamripDownload', 'queueRecoDownload']) assert.ok(!src.includes(banned), `sheet must not reference ${banned}`)
-    assert.ok(src.includes("nearEdition"), 'the sheet reads through the read-only compare IPC')
+  it('the comparison table is read-only: it never imports the queue, the Get path or a prefill', () => {
+    const src = readFileSync(join(import.meta.dirname, '../../renderer/components/NearEditionTable.tsx'), 'utf8')
+    for (const banned of ['downloadQueue', 'enqueue(', 'startGet', 'jaketunes-download-prefill', 'streamripDownload', 'queueRecoDownload', 'nearEdition.compare']) assert.ok(!src.includes(banned), `table must not reference ${banned}`)
   })
 })

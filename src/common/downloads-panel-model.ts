@@ -17,7 +17,7 @@ import type { Alternative } from './acquisition-identity.ts'
 import { differsLine, sourceEditionLabel } from './source-edition.ts'
 
 export type PanelStatus = 'downloading' | 'queued' | 'done' | 'failed' | 'refused' | 'canceled'
-export type PanelAction = 'cancel' | 'retry' | 'chooseEdition' | 'chooseVersion' | 'compareEditions' | 'retryGroup'
+export type PanelAction = 'cancel' | 'retry' | 'chooseEdition' | 'chooseVersion' | 'nearEdition' | 'retryGroup'
 
 export interface PanelRow {
   key: string
@@ -107,7 +107,7 @@ export function panelRowFor(q: QueueItemLike, now: number): PanelRow {
   else if (status === 'failed' || status === 'canceled') actions.push('retry')
   else if (status === 'refused') actions.push(kind === 'album' ? 'chooseEdition' : 'chooseVersion')
   const nearEdition = status === 'refused' && kind === 'album' && q.outcome === 'exact-not-found' ? nearEditionOf(q.alternatives as Alternative[] | undefined, r.trackCount ?? null) : null
-  if (nearEdition) actions.push('compareEditions')
+  if (nearEdition) actions.push('nearEdition')
   const counts = status === 'done' ? `${q.imported ?? 0} imported · ${q.dupes ?? 0} already in your library` : null
   const chooseTitle = kind === 'album' ? (r.album || '') : (r.title || '')
   return {

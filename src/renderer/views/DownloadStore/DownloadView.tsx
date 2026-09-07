@@ -622,8 +622,8 @@ export default function DownloadView({ mode = 'page' }: { mode?: 'page' | 'brows
       const refused = item?.outcome === 'exact-not-found' || item?.outcome === 'not-found' || item?.outcome === 'unverifiable'
       if (refused) {
         const near = item && item.result.mediaType === 'album' ? nearEditionOf(item.alternatives as import('../../../common/acquisition-identity').Alternative[] | undefined, item.result.trackCount ?? null) : null
-        const verb = near ? 'Compare editions…' : item?.result.mediaType === 'album' ? 'Choose edition…' : 'Choose version…'
-        return <button className="download-retry download-retry--failed" onClick={() => toggleDownloadsPanel('open')} title={`${label} — open Downloads to ${near ? 'compare the editions' : 'choose another'}`}>{label} · {verb}</button>
+        const verb = near ? 'Details' : item?.result.mediaType === 'album' ? 'Choose edition…' : 'Choose version…'
+        return <button className="download-retry download-retry--failed" onClick={() => toggleDownloadsPanel('open')} title={`${label} — open Downloads${near ? ' (the matching tracks can be taken from there)' : ' to choose another'}`}>{label} · {verb}</button>
       }
       return <button className="download-retry download-retry--failed" onClick={() => item && retry(item.key)} title={`${label} — Retry`}>{label} · Retry</button>
     }

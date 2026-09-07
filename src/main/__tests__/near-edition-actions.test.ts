@@ -137,9 +137,12 @@ describe('action A — matching-track Gets', () => {
     assert.equal(downloadsPanelRows(getQueue(), Date.now())[0].group!.done, 11)
   })
 
-  it('Compare still acquires nothing until the explicit action: the sheet never touches the queue', () => {
-    const src = readFileSync(join(import.meta.dirname, '../../renderer/components/CompareEditionsSheet.tsx'), 'utf8')
-    for (const banned of ['downloadQueue', 'enqueue(', 'startGet', 'jaketunes-download-prefill', 'streamripDownload', 'queueRecoDownload']) assert.ok(!src.includes(banned), `sheet must not reference ${banned}`)
-    assert.ok(src.includes('onGetMatching'), 'the enqueue is delegated to the panel behind the explicit click')
+  it('nothing is acquired before the one inline click: the table is pure, and the panel enqueues only inside getMatching', () => {
+    const table = readFileSync(join(import.meta.dirname, '../../renderer/components/NearEditionTable.tsx'), 'utf8')
+    for (const banned of ['downloadQueue', 'enqueue(', 'startGet', 'jaketunes-download-prefill', 'streamripDownload']) assert.ok(!table.includes(banned), `table must not reference ${banned}`)
+    const panel = readFileSync(join(import.meta.dirname, '../../renderer/components/DownloadsPanel.tsx'), 'utf8')
+    const enqueues = panel.split('enqueue(').length - 1
+    assert.equal(enqueues, 1, 'exactly one enqueue site — the Get N matching tracks click')
+    assert.ok(!panel.includes('Confirm —') && !panel.includes('onGetEdition'), 'the alternate-edition action and its confirmation are gone')
   })
 })

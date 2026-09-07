@@ -131,9 +131,8 @@ describe('action B — the source edition', () => {
     assert.deepEqual(b.job.origin.recommendationIds, [])
   })
 
-  it('the sheet still never touches the queue; the confirm step exists before the edition is queued', () => {
-    const src = readFileSync(join(import.meta.dirname, '../../renderer/components/CompareEditionsSheet.tsx'), 'utf8')
-    for (const banned of ['downloadQueue', 'enqueue(', 'startGet', 'jaketunes-download-prefill', 'streamripDownload']) assert.ok(!src.includes(banned), `sheet must not reference ${banned}`)
-    assert.ok(src.includes('Confirm — get') && src.includes('onGetEdition'), 'confirmation precedes the delegated enqueue')
+  it('the source-edition path stays underneath only: no UI offers it (Jake 9/7), the engine and plan remain tested', () => {
+    const panel = readFileSync(join(import.meta.dirname, '../../renderer/components/DownloadsPanel.tsx'), 'utf8')
+    assert.ok(!panel.includes('planSourceEditionGet') && !panel.includes('sourceEdition'), 'no alternate-edition action in the panel')
   })
 })
