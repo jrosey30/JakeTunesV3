@@ -29,7 +29,9 @@ Supersedes [2026-09-05](master-plan-checkpoint-2026-09-05.md) for current status
    (Chocolate Chords, 9/6). Investigated with the real judge (11 of 12 exact,
    track 4 a 74 s longer edit); recovery flow proposed in
    [near-edition-recovery-proposal-2026-09-06.md](near-edition-recovery-proposal-2026-09-06.md)
-   — awaiting Jake's decision before any code.
+   — approved 9/6 (both actions); slice 1 (pure model + read-only Compare
+   editions sheet) implemented and fixture-verified; actions A and B are the
+   next slices, live acquisition only after Jake picks the material.
 
 1. Tracklist auto-expansion on prefill when the plain edition takes the hero slot.
 2. Listen List cache freshness (the regular shop's hook does not subscribe to

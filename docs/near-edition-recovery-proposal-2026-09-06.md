@@ -154,3 +154,48 @@ will be recorded. Nothing happens on opening the sheet.
 Approve the sheet and actions A and B as described, or only A (the eleven
 matching tracks) first. The legacy Download page, the everyday-use review of
 the Record Shop and the Mobile caption stay separate.
+
+## Slice 1 — pure model + read-only sheet (implemented 2026-09-06, later)
+
+Approved: Compare editions with both acquisition choices; model and read-only
+sheet first, actions in their own slice.
+
+| Change | Where |
+|---|---|
+| Judged tracklists ride on refusals: `Alternative` gains `tracks`, `trackCount`, `url`; the download engine attaches them when it refuses an edition (data only, no behaviour change) | `common/acquisition-identity.ts`, `streamrip-store/index.ts` |
+| Near-edition detection (same record, same count, refused on the tracklist) | `common/near-edition-detect.ts` |
+| Per-track judge (the same `verifyAlbumCandidate`, one row at a time) + summary with exact counts, the differing runtimes and the two acquisition sentences; "runtime mismatch (8:04 found, 6:50 picked)", never a claim about which edit | `main/near-edition.ts`, `common/near-edition-types.ts` |
+| Read-only IPC `near-edition:compare`: the picked edition's tracklist from iTunes, the found edition's from the verdict's judged tracklist or the Bandcamp page (public, read-only). Acquires and writes nothing. | `main/ipc/near-edition-ipc.ts` |
+| The sheet (portal to the body): both editions, the 12-row table, counts, differing runtimes, the two acquisition choices with their sentences (shown, disabled, "not wired yet"), Paste a link (existing route), Not now | `components/CompareEditionsSheet.tsx`, `styles/compare-editions.css` |
+| Downloads panel: **Compare editions…** on a refused album row with a near edition | `downloads-panel-model.ts`, `DownloadsPanel.tsx` |
+
+### Regression results (`near-edition.test.ts`, gate 1,172)
+
+- Chocolate Chords fixture: 12 rows; 11 exact, track 4 "runtime mismatch (8:04
+  found, 6:50 picked)", Δ +74 s; punctuation and accent folds; no "longer
+  edit" wording.
+- Summary: exact counts and the differing runtimes in both sentences; the
+  matching sentence names track 4 as not acquired, says already-owned
+  recordings are skipped and that the record stays incomplete; the edition
+  sentence names the source, says the picked edition is not marked as owned.
+- A shorter candidate leaves the tail unknown; nothing invented.
+- Detection: same-count tracklist refusals only; count or version refusals
+  are not near editions; the panel offers Compare editions only for those.
+- Rail: the sheet never references the queue, the Get path, a prefill or the
+  download IPC.
+
+### On the dev instance (fixture job, real read-only fetches)
+
+The refused row shows Choose edition · **Compare editions…** · Details. The
+sheet fetched iTunes 96265705 and the Bandcamp page and rendered the table
+exactly as the test fixture predicts; the queue before and after opening was
+identical (N2), no rip process; Not now closes; Paste a link lands on Browse
+with "Terry Lee Brown Junior Chocolate Chords" searched and nothing queued.
+Captures: `compare-1-panel-row.png`, `compare-2-sheet.png`,
+`compare-2b-sheet-actions.png`, `compare-3-paste-link-browse.png`.
+
+Next slice: wire action A (matching-track Gets: recording identity, version
+markers, runtimes, verified files, already-owned skipped; the album request
+stays incomplete), then action B (explicit Bandcamp selection by source and
+tracklist; never fulfils the iTunes edition). Live acquisition only after
+Jake picks the material.
