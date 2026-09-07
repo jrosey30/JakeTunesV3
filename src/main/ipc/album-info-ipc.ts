@@ -10,6 +10,7 @@ import { itunesAlbumTracks, searchItunesSuggestions } from '../download-search'
 import { foldAccents } from '../../common/fold-text.ts'
 import { safeIpcError } from '../safe-ipc-error'
 import { registerRecordShopIpc } from './record-shop-ipc.ts'
+import { registerNearEditionIpc } from './near-edition-ipc.ts'
 
 export function registerAlbumInfoIpc(ipc: IpcRegistrar): void {
   // Brief 122 Phase 2 — autocomplete source for the add-recommendation form.
@@ -111,4 +112,5 @@ export function registerAlbumInfoIpc(ipc: IpcRegistrar): void {
     { refuse: { ok: false, tracks: [] } })
   // The Record Shop's identity + ownership question rides the same catalogue lookup.
   registerRecordShopIpc(ipc)
+  registerNearEditionIpc(ipc)
 }

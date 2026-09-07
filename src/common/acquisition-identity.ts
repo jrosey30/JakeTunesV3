@@ -33,7 +33,11 @@ export interface RequestedRecording {
 }
 
 /** A rejected or unverifiable candidate and its reason, for result details. */
-export interface Alternative { provider: Provider; desc: string; reason: string }
+export interface AlternativeTrack { title: string; trackNumber?: number; discNumber?: number; durationSec?: number | null }
+/** A judged-and-refused edition or recording. `tracks`/`url` ride along when
+ *  the judge had them (Compare editions needs the full list, not the first
+ *  mismatch). */
+export interface Alternative { provider: Provider; desc: string; reason: string; tracks?: AlternativeTrack[]; trackCount?: number; url?: string }
 
 export type DownloadOutcome =
   | 'imported'

@@ -842,11 +842,14 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         tracks,
       }
     }
-    const noteAlbumReject = (provider: Provider, cand: CandidateAlbum, verdict: AlbumVerdict): void => {
+    const noteAlbumReject = (provider: Provider, cand: CandidateAlbum, verdict: AlbumVerdict, url?: string): void => {
       if (verdict.verdict === 'exact') return
       if (verdict.verdict === 'unverifiable') sawUnverifiable = true
       const desc = albumAlternativeDesc(cand)
-      alternatives.push({ provider, desc, reason: verdict.reason })
+      // The judged tracklist rides along (no file paths) so Compare editions
+      // can show every track, not just the first mismatch the judge stopped at.
+      const tracks = cand.tracks?.map((t) => ({ title: t.title, trackNumber: t.trackNumber, discNumber: t.discNumber, durationSec: t.durationSec ?? null }))
+      alternatives.push({ provider, desc, reason: verdict.reason, tracks, trackCount: cand.trackCount ?? tracks?.length, url })
       trace.push(`${provider} edition “${desc}”: ${verdict.verdict} — ${verdict.reason}`)
       console.log(`[download] ${verdict.verdict === 'reject' ? 'refused' : 'could not prove'} ${provider} edition for “${title}”: “${desc}” ${verdict.reason}`)
     }
@@ -1023,7 +1026,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         const stagedAlbum = await albumFromStaged('bandcamp', st.staged, desc)
         if (!stagedAlbum.artist) stagedAlbum.artist = bcPick.band
         const post = verifyAlbumCandidate(reqAlbum, stagedAlbum)
-        if (post.verdict !== 'exact') { await discardStaged(st.staged); noteAlbumReject('bandcamp', stagedAlbum, post); continue }
+        if (post.verdict !== 'exact') { await discardStaged(st.staged); noteAlbumReject('bandcamp', stagedAlbum, post, bcPick.url); continue }
         console.log(`[download] Bandcamp resolved “${query}” → ${bcPick.url}`)
         return finishAlbum(st.staged, stagedAlbum, desc, post.evidence)
       }

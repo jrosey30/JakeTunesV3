@@ -28,7 +28,7 @@ export interface QueueResultLike {
 export interface QueueItemLike {
   key: string; result: QueueResultLike; status: 'queued' | 'downloading' | 'done' | 'failed' | 'canceled'; attempt?: number
   imported?: number; dupes?: number; error?: string; outcome?: string
-  alternatives?: ReadonlyArray<{ provider: string; desc: string; reason: string }>
+  alternatives?: ReadonlyArray<{ provider: string; desc: string; reason: string; tracks?: Array<{ title: string; trackNumber?: number; discNumber?: number; durationSec?: number | null }>; trackCount?: number; url?: string }>
   primary?: string; detail?: string; completion?: string; matchDesc?: string; startedAt?: number; endedAt?: number
 }
 

@@ -72,7 +72,7 @@ export interface QItem {
    *  means sources answered and every candidate was judged and refused —
    *  `alternatives` lists them with the reason each failed. */
   outcome?: string
-  alternatives?: Array<{ provider: string; desc: string; reason: string }>
+  alternatives?: Array<{ provider: string; desc: string; reason: string; tracks?: Array<{ title: string; trackNumber?: number; discNumber?: number; durationSec?: number | null }>; trackCount?: number; url?: string }>
   /** Short readable status ("Exact version not found") + the full,
    *  never-truncated explanation for the details panel. */
   primary?: string
@@ -222,7 +222,7 @@ async function pump(): Promise<void> {
       it.completion = undefined
       emit()
       try {
-        const r: { ok: boolean; imported?: number; dupes?: number; error?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }>; primary?: string; detail?: string; matchDesc?: string; completion?: string } | undefined = it.result.kind === 'query'
+        const r: { ok: boolean; imported?: number; dupes?: number; error?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string; tracks?: Array<{ title: string; trackNumber?: number; discNumber?: number; durationSec?: number | null }>; trackCount?: number; url?: string }>; primary?: string; detail?: string; matchDesc?: string; completion?: string } | undefined = it.result.kind === 'query'
           ? await window.electronAPI.streamripDownloadByQuery?.({ artist: it.result.artist, title: it.result.title, album: it.result.album, durationMs: it.result.durationMs, cleanedSource: it.result.cleanedSource, explicitSource: it.result.explicitSource, releaseYear: it.result.releaseYear, collectionId: it.result.collectionId, trackCount: it.result.trackCount })
           : await window.electronAPI.streamripDownloadId?.(it.result.source, it.result.mediaType, it.result.id)
         // Read through a widened alias. TypeScript narrows it.status to

@@ -873,6 +873,10 @@ const electronAPI = {
   recordShop: {
     resolve: (req: unknown): Promise<unknown> => ipcRenderer.invoke('record-shop:resolve', req),
   },
+  /** Compare editions (read-only): the per-track judge behind a refused album. Acquires nothing. */
+  nearEdition: {
+    compare: (req: unknown): Promise<unknown> => ipcRenderer.invoke('near-edition:compare', req),
+  },
   // ── Bandcamp Store v4 (download -> library events) ──
   onBandcampTrackImported: (callback: (track: { id?: number; title?: string; artist?: string; album?: string }) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, t: { id?: number; title?: string; artist?: string; album?: string }) => callback(t)

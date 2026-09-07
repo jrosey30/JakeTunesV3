@@ -677,6 +677,7 @@ declare global {
       itunesAlbumTracks: (ref: number | { artist?: string; album: string }) => Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string; releaseYear?: number; trackCount?: number; genre?: string; explicitness?: string; collectionId?: number }>
       /** Record Shop (6.0): resolve an item's catalogue selection + ownership (src/common/record-shop-live.ts types). */
       recordShop?: { resolve: (req: import('../common/record-shop-live').ShopResolveRequest) => Promise<import('../common/record-shop-live').ShopResolveResult> }
+      nearEdition?: { compare: (req: import('../common/near-edition-types').CompareEditionsRequest) => Promise<import('../common/near-edition-types').CompareEditionsResult | { ok: false; error: string }> }
       // Artist-verified cover art for radar/discovery cards — returns art only
       // when an iTunes row's artist matches the candidate, else {} (no art).
       lookupRecoArtwork: (input: { artist: string; title: string }) => Promise<{ artworkUrl?: string; previewUrl?: string }>
