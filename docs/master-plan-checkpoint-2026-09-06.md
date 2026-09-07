@@ -40,7 +40,30 @@ Supersedes [2026-09-05](master-plan-checkpoint-2026-09-05.md) for current status
    path kept underneath). Chocolate Chords is owned (Bandcamp purchase);
    no live acquisition for it. Copy corrected ("you own the 8:04 version;
    this edition lists 6:50"). SLICE CLOSED 9/7. Action A has not been run
-   live. Dev review launches are muted (JT_DEV_REVIEW=1 in launch.json only).
+   live. Dev review launches are muted (JT_DEV_REVIEW=1 in launch.json only)
+   AND, 9/7: review windows require a real user gesture for audio
+   (Chromium autoplay policy) and every listening write — record-play /
+   skip / rating, taste-ledger append, playCount / lastPlayedAt / skipCount
+   overrides — is acknowledged and dropped. Verified on a review launch:
+   boot restored the last track PAUSED (Turnstile at 0:04, no Pause
+   control), a reload stayed paused, the three IPCs answered
+   `suppressed: 'dev-review'`, and listening-log / play-events /
+   taste-ledger / audio-events were byte-for-byte unchanged (0 onplay
+   events). Normal startup untouched (no variable in the packaged app).
+   Follow-up CLOSED.
+
+## MYPOD (Jake's second iPod) — diagnosed 9/7, waiting on hardware
+
+iPod 4G (M9282, fw 3.1.1), iFlash 248.5 GB, now HFS+ after Jake's wipe
+attempts. With JakeTunes CLOSED, diskarbitrationd shows `/dev/disk9 appeared`
+every 4 s, no unmount or eject ever dispatched; unplugged, the screen shows
+the plug icon (battery too low to boot). Verdict: dead battery → USB
+brownout reset loop; not the app, cable, format or card size (an LBA28
+theory was raised and withdrawn — it had worked for the previous owner).
+Plan: wall-charge an hour, forced Disk Mode watch, else a 4G cell swap; no
+restore/resize until it holds. Note for the engine: MYPOD is HFS+ and the
+seal's contiguous-DB step is FAT-specific — first sync must be a supervised
+100. Detail in memory `project_mypod_ipod_4g`.
 
 1. Tracklist auto-expansion on prefill when the plain edition takes the hero slot.
 2. Listen List cache freshness (the regular shop's hook does not subscribe to
