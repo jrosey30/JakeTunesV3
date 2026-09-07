@@ -255,6 +255,7 @@ import {
 } from './import-pipeline'
 import { searchItunesSuggestions, itunesAlbumTracks } from './download-search'
 import { registerBandcampIntegration } from './bandcamp-integration'
+import { applyDevReview } from './dev-review.ts'
 import { registerStreamripStore } from './streamrip-store'
 import { registerGaplessTrimIpc } from './gapless-trim'
 import { registerPlaylistCoverIpc, registerPlaylistCoverProtocol } from './playlist-covers'
@@ -2554,6 +2555,7 @@ async function createWindow(): Promise<void> {
       backgroundThrottling: false,
     }
   })
+  applyDevReview(mainWindow)   // dev review: muted + titled (JT_DEV_REVIEW=1 only)
 
   if (saved?.isMaximized) mainWindow.maximize()
 
