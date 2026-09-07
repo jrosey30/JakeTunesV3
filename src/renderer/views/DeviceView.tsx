@@ -11,9 +11,9 @@ import SyncReviewSheet from '../components/SyncReviewSheet'
 import ConfirmDialog from '../components/ConfirmDialog'
 import IpodLibraryModal from '../components/IpodLibraryModal'
 import SyncHistorySheet, { SyncHistoryRows, type SyncHistoryEntryLike } from '../components/SyncHistorySheet'
-import { subscribeSyncTimeline, getSyncTimeline, startSyncTimeline, finishSyncTimeline, clearSyncTimeline, deviceFixtureRequested } from '../syncTimeline'
-import { SYNC_STEPS, timelinePercent, resultLine, elapsedLabel, stepLabel } from '../../common/sync-progress-model'
-import { syncFailureCopy } from '../../common/sync-failure-copy'
+import { subscribeSyncTimeline, getSyncTimeline, startSyncTimeline, finishSyncTimeline, clearSyncTimeline, deviceFixtureRequested, subscribeEjectFailure, getEjectFailure, showEjectFailure } from '../syncTimeline'
+import { SYNC_STEPS, timelinePercent, resultLine, elapsedLabel, stepLabel, ipodCountLabel } from '../../common/sync-progress-model'
+import { syncOutcome, stoppedLabel, syncFailureCopy } from '../../common/sync-failure-copy'
 import { getPoolIds, subscribePool, requestPoolMode } from '../activityPool'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import '../styles/device.css'
@@ -166,7 +166,12 @@ export default function DeviceView() {
   const [quickTarget, setQuickTarget] = useState<number>(() => 1000)
   useEffect(() => { if (lastBrief?.target) setQuickTarget(lastBrief.target) }, [lastBrief])
   const timeLabel = (ms: number) => new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
-  const failure = timeline.status === 'failed' ? syncFailureCopy(timeline.error || '') : null
+  // Claims come from the phase evidence (which steps ran, where it stopped),
+  // never from the message alone — see sync-failure-copy.ts.
+  const outcome = syncOutcome(timeline)
+  const ejectFailure = useSyncExternalStore(subscribeEjectFailure, getEjectFailure)
+  const ejectCopy = ejectFailure ? syncFailureCopy(`Eject failed: ${ejectFailure}`) : null
+  const countLabel = ipodCountLabel(lastSync, timeline.status)
 
   const saveLastSetAsPlaylist = () => {
     if (!lastCommitted) return
@@ -689,8 +694,8 @@ export default function DeviceView() {
             <span className="device-itunes-value">{ipodFsName || 'Unknown'}</span>
           </div>
           <div className="device-itunes-info-line device-now-line">
-            {lastSync
-              ? <span>On the iPod now: <strong>{(lastSync.landed ?? 0).toLocaleString()} songs</strong> · verified {new Date(lastSync.when).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}{lastSync.target != null && lastSync.landed != null && lastSync.landed < lastSync.target ? ` (short of ${lastSync.target.toLocaleString()})` : ''}</span>
+            {lastSync && countLabel
+              ? <span>{countLabel}: <strong>{(lastSync.landed ?? 0).toLocaleString()} songs</strong> · {new Date(lastSync.when).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}{lastSync.target != null && lastSync.landed != null && lastSync.landed < lastSync.target ? ` (short of ${lastSync.target.toLocaleString()})` : ''}{countLabel === 'Last verified' ? ' — what the iPod holds now is not verified' : ''}</span>
               : <span>No Activity Sync recorded yet.</span>}
             {fixture && <span className="device-fixture-tag" title="Renderer fixture — no iPod, no engine">Fixture</span>}
           </div>
@@ -761,27 +766,29 @@ export default function DeviceView() {
                 <button type="button" className="device-link-btn" onClick={clearSyncTimeline}>Dismiss</button>
               </div>
             )}
-            {timeline.status === 'cancelled' && (
-              <div className="device-sync-result device-sync-result--cancelled">
-                <span className="device-sync-result-line">Stopped during {timeline.step ? stepLabel(timeline.step) : 'the sync'}{timeline.copied != null ? ` — ${timeline.copied.toLocaleString()} copied before the stop` : ''}.</span>
-                <span className="device-sync-result-sub">The iPod was partly rewritten; no catalog was written, so the previous catalog stands. Sync again when ready.</span>
-                <button type="button" className="device-link-btn" onClick={clearSyncTimeline}>Dismiss</button>
-              </div>
-            )}
-            {timeline.status === 'failed' && failure && (
-              <div className={`device-sync-result device-sync-result--failed device-sync-result--changed-${failure.changed}`}>
-                <span className="device-sync-result-line">Stopped{failure.stage && failure.stage !== 'build' && failure.stage !== 'device' ? ` at ${stepLabel(failure.stage)}` : ''}: {failure.happened}</span>
-                <span className="device-sync-result-sub">{failure.changedLine} {failure.next}</span>
+            {outcome && (
+              <div className={`device-sync-result device-sync-result--${timeline.status} device-sync-result--changed-${outcome.changed}`}>
+                <span className="device-sync-result-line">{stoppedLabel(outcome)}: {outcome.happened}{timeline.status === 'cancelled' && timeline.copied != null ? ` ${timeline.copied.toLocaleString()} copied before the stop.` : ''}</span>
+                <span className="device-sync-result-sub">{outcome.changedLine} {outcome.next}</span>
                 <span className="device-sync-result-actions">
                   <button type="button" className="device-link-btn" aria-expanded={failureDetails} onClick={() => setFailureDetails((d) => !d)}>{failureDetails ? 'Hide details' : 'Details'}</button>
                   <button type="button" className="device-link-btn" onClick={() => { setFailureDetails(false); clearSyncTimeline(); if (syncStatus.state === 'error') setSyncStatus({ state: 'idle' }) }}>Dismiss</button>
                 </span>
-                {failureDetails && <pre className="device-sync-result-raw">{failure.raw}</pre>}
+                {failureDetails && <pre className="device-sync-result-raw">{outcome.raw}{outcome.fromEvidence ? `\n\nSteps reached: ${timeline.reached.map(stepLabel).join(' → ')}; stopped at ${timeline.step ? stepLabel(timeline.step) : '—'}.` : '\n\nNo phase events were received for this attempt.'}</pre>}
               </div>
             )}
           </div>
         )}
 
+        {ejectCopy && (
+          <div className="device-sync-strip device-sync-strip--failed device-eject-notice" role="status">
+            <div className="device-sync-result device-sync-result--failed">
+              <span className="device-sync-result-line">Eject failed: {ejectFailure}</span>
+              <span className="device-sync-result-sub">Nothing on the iPod was changed by the eject. {ejectCopy.next}</span>
+              <span className="device-sync-result-actions"><button type="button" className="device-link-btn" onClick={() => showEjectFailure(null)}>Dismiss</button></span>
+            </div>
+          </div>
+        )}
         {(lastCommitted || savedSetNotice) && (
           <div className="device-sync-status device-sync-status--saveset">
             {savedSetNotice ? (
@@ -914,7 +921,9 @@ export default function DeviceView() {
           <button
             className="device-itunes-btn device-itunes-btn--eject"
             onClick={async () => {
-              await window.electronAPI.ejectIpod()
+              const r = await window.electronAPI.ejectIpod()
+              if (r && r.ok === false) { showEjectFailure(r.error || 'Eject failed'); return }
+              showEjectFailure(null)
               window.dispatchEvent(new Event('jaketunes-ipod-ejected'))
             }}
           >Eject</button>

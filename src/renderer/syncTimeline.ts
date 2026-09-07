@@ -24,3 +24,11 @@ export function clearSyncTimeline(): void { timeline = IDLE_TIMELINE; emit() }
 export function deviceFixtureRequested(): boolean {
   return typeof window !== 'undefined' && /(^|#|&)deviceFixture(=|&|$)/.test(window.location.hash)
 }
+
+/** Eject outcome shown on the device page — from the real IPC result, or from
+ *  the harness (Jake: simulate eject failure rather than disrupting a write). */
+let ejectFailure: string | null = null
+const ejectSubs = new Set<() => void>()
+export function subscribeEjectFailure(fn: () => void): () => void { ejectSubs.add(fn); return () => { ejectSubs.delete(fn) } }
+export function getEjectFailure(): string | null { return ejectFailure }
+export function showEjectFailure(reason: string | null): void { ejectFailure = reason; for (const f of ejectSubs) f() }

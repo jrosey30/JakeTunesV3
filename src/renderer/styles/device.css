@@ -351,3 +351,5 @@
 /* Narrow windows: the capacity labels and the button row stack instead of
    colliding (seen at 700 px during the 2026-09-06 silhouette check). */
 @media (max-width: 900px) { .device-itunes-footer { flex-wrap: wrap; } .device-itunes-footer .device-itunes-actions { width: 100%; justify-content: flex-end; } }
+.device-sync-result--cancelled .device-sync-result-line { color: #8a5a10; }
+.device-eject-notice { margin-top: 10px; }
