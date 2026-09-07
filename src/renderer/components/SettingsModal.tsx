@@ -854,24 +854,10 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
                 500 became 492 on the Mini. After Activity Sync, TSA inspects every
                 song by identity and the set stays until you sync again.
               </p>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, opacity: 0.45 }}>
-                <input
-                  type="checkbox"
-                  checked={false}
-                  disabled
-                  readOnly
-                />
-                <span>Automatically sync to iPod when connected (retired)</span>
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, opacity: 0.45 }}>
-                <input
-                  type="checkbox"
-                  checked={false}
-                  disabled
-                  readOnly
-                />
-                <span>Automatically remove deleted tracks from iPod (retired)</span>
-              </label>
+              {/* The two retired auto-sync checkboxes were removed 2026-09-06
+                  (placement audit): no UI consumer remained. Their settings keys
+                  stay on disk, forced false by settings-ipc, because main still
+                  reads them as guards. */}
 
               {/* 4.5 — Library backups to homemini. Pulled out of the
                   now-playing pill (was a chirp on every import / metadata
