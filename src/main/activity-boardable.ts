@@ -87,8 +87,14 @@ export function formatSyncSetStreamedRefuse(streamed: string[], total: number): 
  * refusal now carries the dead ids back as verificationUpdates and the renderer
  * flags them. A dead row may cost one sync; it may not cost every sync.
  */
-export function formatHomeminiPullRefuse(failed: string[], total: number): string {
-  return `Activity sync refused — ${failed.length} of ${total} songs could not be pulled from homemini. Nothing was wiped. They are: ${formatNamedList(failed)}`
+export function formatHomeminiPullRefuse(
+  failed: string[],
+  total: number,
+  opts: { lead?: string; nothingVerb?: string } = {},
+): string {
+  const lead = opts.lead ?? 'Activity sync refused'
+  const nothing = opts.nothingVerb ?? 'Nothing was wiped.'
+  return `${lead} — ${failed.length} of ${total} songs could not be pulled from homemini. ${nothing} They are: ${formatNamedList(failed)}`
 }
 
 export interface ActivityPullNeeded {
@@ -99,19 +105,35 @@ export interface ActivityPullNeeded {
 
 export async function classifyActivitySyncTracks(
   tracks: Array<Record<string, unknown>>,
-  opts: { localMount: string; pathSep: string; lstat: LstatLike },
+  opts: {
+    localMount: string
+    pathSep: string
+    lstat: LstatLike
+    /**
+     * Full-library sync only. A track already stamped `audioMissing` has no
+     * audio on this Mac, on homemini or on the NAS — re-pulling it 404s and
+     * the whole sync refuses, forever, over a handful of dead rows (10 of
+     * 10,595 on 2026-09-07). With this on they are reported as
+     * `unsourceable` and left out of the set instead of blocking it.
+     * The activity paths do NOT pass it: an N-song set must stay exactly N,
+     * so there a dead track still refuses the run.
+     */
+    skipKnownMissing?: boolean
+  },
 ): Promise<{
   blanks: string[]
   fileless: string[]
   streamed: string[]
   missing: string[]
   toPull: ActivityPullNeeded[]
+  unsourceable: Array<{ id: number; label: string }>
 }> {
   const blanks: string[] = []
   const fileless: string[] = []
   const streamed: string[] = []
   const missing: string[] = []
   const toPull: ActivityPullNeeded[] = []
+  const unsourceable: Array<{ id: number; label: string }> = []
   for (const t of tracks) {
     const title = String(t.title || '').trim()
     const artist = String(t.artist || '').trim()
@@ -123,6 +145,10 @@ export async function classifyActivitySyncTracks(
     const kind = await classifyLocalLibraryFile(colon, opts)
     const label = `${title} — ${artist}`
     if (kind === 'ok') continue
+    if (opts.skipKnownMissing && t.audioMissing === true) {
+      unsourceable.push({ id: Number(t.id), label })
+      continue
+    }
     if (kind === 'streamed' || kind === 'missing') {
       toPull.push({ id: Number(t.id), path: colon, label })
       if (kind === 'streamed') streamed.push(label)
@@ -132,7 +158,7 @@ export async function classifyActivitySyncTracks(
     if (kind === 'no-path') fileless.push(`${label} (no path)`)
     else fileless.push(`${label} (no local file: ${colon})`)
   }
-  return { blanks, fileless, streamed, missing, toPull }
+  return { blanks, fileless, streamed, missing, toPull, unsourceable }
 }
 
 export interface ActivityBoardableTrack {

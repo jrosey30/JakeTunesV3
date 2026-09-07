@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  classifyActivitySyncTracks,
   classifyLocalLibraryFile,
   filterActivityBoardableTracks,
   formatHomeminiPullRefuse,
@@ -103,5 +104,44 @@ describe('a refused sync must still record what it learned', () => {
     assert.deepEqual(refusal.verificationUpdates, [{ id: 9860, audioMissing: true }])
     // And the flag must be the one filterActivityBoardableTracks already drops.
     assert.equal(refusal.verificationUpdates[0].audioMissing, true)
+  })
+})
+
+describe('a track whose audio is gone everywhere', () => {
+  const tracks = [
+    { id: 1, title: 'Alive', artist: 'A', path: ':iPod_Control:Music:F00:1.m4a' },
+    { id: 2, title: 'Gone', artist: 'B', path: ':iPod_Control:Music:F01:2.m4a', audioMissing: true },
+  ]
+  const lstat = (async (p: string) => {
+    if (p.endsWith('1.m4a')) return { isFile: () => true, isSymbolicLink: () => false, size: 4242 }
+    throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+  }) as never
+  const opts = { localMount: mount, pathSep, lstat }
+
+  it('still refuses an activity set, which must stay exactly N', async () => {
+    const strict = await classifyActivitySyncTracks(tracks, opts)
+    assert.deepEqual(strict.unsourceable, [])
+    assert.deepEqual(strict.toPull.map((p) => p.id), [2])
+  })
+
+  it('is named and left out of a full-library mirror, never re-pulled', async () => {
+    const lenient = await classifyActivitySyncTracks(tracks, { ...opts, skipKnownMissing: true })
+    assert.deepEqual(lenient.toPull, [])
+    assert.deepEqual(lenient.unsourceable, [{ id: 2, label: 'Gone — B' }])
+  })
+})
+
+describe('refusal wording follows the path that raised it', () => {
+  it('says wiped for activity and untouched for a full mirror', () => {
+    const activity = formatHomeminiPullRefuse(['X — Y'], 500)
+    assert.match(activity, /^Activity sync refused/)
+    assert.match(activity, /Nothing was wiped\./)
+
+    const full = formatHomeminiPullRefuse(['X — Y'], 10595, {
+      lead: 'Sync refused',
+      nothingVerb: 'Nothing on the iPod was changed.',
+    })
+    assert.match(full, /^Sync refused/)
+    assert.match(full, /Nothing on the iPod was changed\./)
   })
 })

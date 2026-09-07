@@ -368,15 +368,28 @@ export function createSyncEngine(host: SyncEngineHost) {
       const blanks: string[] = []
       const fileless: string[] = []
       const toPull: Array<{ id: number; path: string; label: string }> = []
+      const unsourceable: Array<{ id: number; label: string }> = []
       {
         const classified = await classifyActivitySyncTracks(tracks, {
           localMount: LOCAL_MOUNT,
           pathSep: IS_WINDOWS ? '\\' : '/',
           lstat,
+          // A whole-library mirror must not be held hostage by rows whose
+          // audio is gone everywhere; they are dropped and named below.
+          skipKnownMissing: true,
         })
         blanks.push(...classified.blanks)
         fileless.push(...classified.fileless)
         toPull.push(...classified.toPull)
+        unsourceable.push(...classified.unsourceable)
+      }
+      if (unsourceable.length > 0) {
+        const dead = new Set(unsourceable.map((u) => u.id))
+        tracks = tracks.filter((t) => !dead.has(Number(t.id)))
+        console.log(
+          `sync-to-ipod: leaving out ${unsourceable.length} track(s) with no audio on this Mac, homemini or the NAS:`,
+          unsourceable.slice(0, 10).map((u) => u.label),
+        )
       }
       if (blanks.length || fileless.length) {
         const error = formatSyncSetFileRefuse({
@@ -412,7 +425,13 @@ export function createSyncEngine(host: SyncEngineHost) {
         if (pullFail.length > 0) {
           await writeSyncJournal(null)
           return {
-            ok: false, copied: 0, error: formatHomeminiPullRefuse(pullFail, tracks.length),
+            ok: false, copied: 0,
+            error: formatHomeminiPullRefuse(pullFail, tracks.length, {
+              lead: syncOpts?.wipeFirst ? 'Activity sync refused' : 'Sync refused',
+              nothingVerb: syncOpts?.wipeFirst
+                ? 'Nothing was wiped.'
+                : 'Nothing on the iPod was changed.',
+            }),
             verificationUpdates: unsourceableIds.map((id) => ({ id, audioMissing: true })),   // learn-on-refusal
           }
         }
