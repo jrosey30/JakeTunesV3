@@ -7,6 +7,7 @@
  * owns the denser *surface* channels whose logic is already injectable.
  */
 import { join } from 'path'
+import { suppressListeningWrites } from '../dev-review.ts'
 import { mkdir, readFile, writeFile } from 'fs/promises'
 import type { Message, MessageCreateParamsNonStreaming } from '@anthropic-ai/sdk/resources/messages'
 import type { IpcRegistrar } from '../ipc-register.ts'
@@ -129,14 +130,15 @@ export function registerLibraryIpc(ipc: IpcRegistrar, host: LibraryIpcHost): voi
 
   ipc.handle('get-listening-memory', async () => getListeningMemory(), { public: true })
 
+  // Review mode (JT_DEV_REVIEW=1): listening activity is acknowledged, not written.
   ipc.handle('record-play', async (_event, track: { title: string; artist: string; album: string; genre: string; pct?: number }) =>
-    recordPlay(track), { refuse: undefined })
+    suppressListeningWrites() ? { ok: true, suppressed: 'dev-review' } : recordPlay(track), { refuse: undefined })
 
   ipc.handle('record-skip', async (_event, track: { title: string; artist: string; pct?: number }) =>
-    recordSkip(track), { refuse: undefined })
+    suppressListeningWrites() ? { ok: true, suppressed: 'dev-review' } : recordSkip(track), { refuse: undefined })
 
   ipc.handle('record-rating', async (_event, track: { title: string; artist: string; album: string; rating: number }) =>
-    recordRating(track), { refuse: undefined })
+    suppressListeningWrites() ? { ok: true, suppressed: 'dev-review' } : recordRating(track), { refuse: undefined })
 
   ipc.handle('load-playlists', async () => {
     return { ok: true, playlists: await host.getPlaylists() }

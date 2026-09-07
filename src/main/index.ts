@@ -255,7 +255,7 @@ import {
 } from './import-pipeline'
 import { searchItunesSuggestions, itunesAlbumTracks } from './download-search'
 import { registerBandcampIntegration } from './bandcamp-integration'
-import { applyDevReview } from './dev-review.ts'
+import { applyDevReview, devReviewWebPreferences, suppressListeningWrites } from './dev-review.ts'
 import { registerStreamripStore } from './streamrip-store'
 import { registerGaplessTrimIpc } from './gapless-trim'
 import { registerPlaylistCoverIpc, registerPlaylistCoverProtocol } from './playlist-covers'
@@ -2534,6 +2534,7 @@ async function createWindow(): Promise<void> {
     // before the renderer mounts doesn't flash a foreign gray.
     backgroundColor: '#f4f0e4',
     webPreferences: {
+      ...devReviewWebPreferences(),   // review windows: audio only from a real gesture
       preload: join(__dirname, '../preload/index.js'),
       // Explicit Electron secure defaults. webSecurity was historically
       // false (custom-protocol CORS workaround); privileged schemes now
@@ -9519,6 +9520,7 @@ async function applyMetadataOverrideInternal(trackId: number, field: string, val
 }
 
 ipc.handle('save-metadata-override', async (_event, trackId: number, field: string, value: string, fingerprint?: string) => {
+  if (suppressListeningWrites() && (field === 'playCount' || field === 'lastPlayedAt' || field === 'skipCount')) return { ok: true, suppressed: 'dev-review' }
   const lockReason = isSaveLocked()
   if (lockReason) {
     console.warn(`[save-metadata-override] refused (saves locked): ${lockReason}`)

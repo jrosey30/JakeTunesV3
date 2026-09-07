@@ -4,6 +4,7 @@
  * Extracted from main/index.ts (6.0 Phase 1) — bodies verbatim.
  */
 import { app } from 'electron'
+import { suppressListeningWrites } from '../dev-review.ts'
 import { join } from 'path'
 import { appendFile, readFile, stat } from 'fs/promises'
 import type { IpcRegistrar } from '../ipc-register.ts'
@@ -27,6 +28,7 @@ type TasteEvent = {
 }
 export function registerTasteIpc(ipc: IpcRegistrar): void {
   ipc.handle('taste-ledger-append', async (_e, events: TasteEvent[]) => {
+    if (suppressListeningWrites()) return { ok: true, appended: 0, suppressed: 'dev-review' }
     try {
       if (!Array.isArray(events) || events.length === 0) return { ok: true, appended: 0 }
       const lines = events

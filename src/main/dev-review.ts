@@ -11,6 +11,20 @@ export function devReviewRequested(env: NodeJS.ProcessEnv = process.env): boolea
   return env.JT_DEV_REVIEW === '1'
 }
 
+/** Review windows get Chromium's autoplay gate: audio may start only from a
+ *  real user gesture — a boot restore, a reload, or a scripted click cannot
+ *  start playback. Normal windows keep Electron's default. */
+export function devReviewWebPreferences(env: NodeJS.ProcessEnv = process.env): { autoplayPolicy: 'user-gesture-required' } | Record<string, never> {
+  return devReviewRequested(env) ? { autoplayPolicy: 'user-gesture-required' } : {}
+}
+
+/** In review mode, listening activity is never written: play/skip/rating
+ *  records, taste-ledger events and play-count overrides are acknowledged
+ *  and dropped, so a fixture session leaves no trace in Jake's history. */
+export function suppressListeningWrites(env: NodeJS.ProcessEnv = process.env): boolean {
+  return devReviewRequested(env)
+}
+
 export function applyDevReview(win: BrowserWindow, env: NodeJS.ProcessEnv = process.env): void {
   if (!devReviewRequested(env)) return
   win.webContents.setAudioMuted(true)
