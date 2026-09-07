@@ -26,8 +26,10 @@ Supersedes [2026-09-05](master-plan-checkpoint-2026-09-05.md) for current status
 
 0. Downloads panel: an exact-not-found verdict whose only near-match differs by
    one track's edit offers "Choose edition" with nothing different to choose
-   (Chocolate Chords, 9/6). Offer the matching tracks or the near edition with
-   the differing track marked.
+   (Chocolate Chords, 9/6). Investigated with the real judge (11 of 12 exact,
+   track 4 a 74 s longer edit); recovery flow proposed in
+   [near-edition-recovery-proposal-2026-09-06.md](near-edition-recovery-proposal-2026-09-06.md)
+   — awaiting Jake's decision before any code.
 
 1. Tracklist auto-expansion on prefill when the plain edition takes the hero slot.
 2. Listen List cache freshness (the regular shop's hook does not subscribe to
@@ -60,8 +62,9 @@ P1, P3, P4, P5 arbitrated and implemented the same day (see the audit's
 row, missing-Qobuz notice, Bandcamp Store stays; parity run in Jake's order on
 the isolated harness; Add by link's real-link test waits on Jake's link; the
 legacy *Download page* row stays until parity plus everyday-use acceptance.
-The **Activity Sync front end** audit and proposal is written as a
-document-only slice:
+**Activity Sync front end — COMPLETE** (approved layout, renderer slice,
+fixture verification, supervised device checks T1–T4 passed 9/6, installed
+705ee2f). The audit and proposal:
 [activity-sync-front-end-audit-2026-09-06.md](activity-sync-front-end-audit-2026-09-06.md)
 (inventory, actual states, controls, the failure catalogue, layout, change
 sets, acceptance checks A1–A8). Jake approved the layout; the renderer slice
