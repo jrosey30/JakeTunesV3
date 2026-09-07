@@ -55,8 +55,11 @@ P1, P3, P4, P5 arbitrated and implemented the same day (see the audit's
 row, missing-Qobuz notice, Bandcamp Store stays; parity run in Jake's order on
 the isolated harness; Add by link's real-link test waits on Jake's link; the
 legacy *Download page* row stays until parity plus everyday-use acceptance.
-Then the **Activity Sync front end**, per
-[jaketunes-6-plan.md](jaketunes-6-plan.md), on hold until Jake says go.
+The **Activity Sync front end** audit and proposal is written as a
+document-only slice:
+[activity-sync-front-end-audit-2026-09-06.md](activity-sync-front-end-audit-2026-09-06.md)
+(inventory, actual states, controls, the failure catalogue, layout, change
+sets, acceptance checks A1–A8); awaiting Jake's decisions 1–6 before any code.
 
 Follow-ups 4 and 6 above are resolved inside the Downloads panel (Choose
 edition/version for refused verdicts; canceled jobs visible) and remain true
