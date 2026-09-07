@@ -199,3 +199,37 @@ markers, runtimes, verified files, already-owned skipped; the album request
 stays incomplete), then action B (explicit Bandcamp selection by source and
 tracklist; never fulfils the iTunes edition). Live acquisition only after
 Jake picks the material.
+
+## Slice 2 — action A wired: the matching-track Gets (2026-09-06, later)
+
+| Change | Where |
+|---|---|
+| Ownership in the comparison: each row carries `owned` (the library's recording identity, `matchLibraryOwnership`); the summary counts `owned` and `toAcquire`, and the sentence says how many are skipped | `near-edition.ts`, `near-edition-ipc.ts`, `near-edition-types.ts` |
+| The plan (pure): one song request per exact, unowned row — title as picked (version markers intact), runtime as picked (`durationMs`), album as picked; the mismatch row never selected; NO recommendationIds; a `group` naming the refused album job, the position, the skipped-owned count and every track not acquired with its reason | `common/near-edition-actions.ts` |
+| The scheduler is unchanged: each job is an ordinary song request through `enqueue` → main's recording judge and post-staging verification. `enqueue`'s key dedupe makes a repeat click harmless: done and in-flight tracks untouched, failed ones re-armed | `downloadQueue.ts` (`QueueOrigin.group` only) |
+| The panel folds the children under the refused album row: per-track status with elapsed time and Cancel, a group line "N of 12 in your library · … · track 4 not acquired (runtime mismatch …)" that never says complete, and **Retry the N that failed** which re-arms only failed or canceled children | `downloads-panel-model.ts`, `DownloadsPanel.tsx` |
+| The sheet's first button is live; the enqueue happens in the panel behind that click (the sheet still never imports the queue). Zero to acquire → "Nothing to get — all matching tracks are yours", disabled | `CompareEditionsSheet.tsx` |
+
+### Regression results (`near-edition-actions.test.ts`, gate 1,178)
+
+| Case | Result |
+|---|---|
+| Plan | 12 rows, 2 owned → 9 jobs; track 4 and the owned two never selected; each job pinned (title, album, runtime), no recommendationIds, group position and skipped count carried; the all-owned plan is empty |
+| Mixed ownership | the refused album stays refused; ten children fold under it; line "11 of 12 in your library · track 4 not acquired (runtime mismatch …)"; every call to main carried the runtime pin and the album; the album jot still projects onto the refused album job, never a child |
+| Cancellation | one child cancelled mid-flight: "10 of 12 · 1 canceled"; Retry re-armed only that track (one call), then 11 landed |
+| Partial failure + post-staging verification failure | provider failure on one track, unverifiable file on another: both shown with their verdicts, nine landed; Retry re-armed exactly those two |
+| Repeat clicks | the second click added no jobs and re-ran only the failed track |
+| Compare acquires nothing | rail: the sheet never references the queue, the Get path or a prefill; the enqueue lives in the panel behind the click |
+
+### On the dev instance (fixtures, nothing acquired)
+
+Chocolate Chords via the read-only fetch path: the button reads **Get the 11
+matching tracks**, enabled, with the full sentence; it was not pressed, and
+the queue before and after opening was identical (`actionA-1-sheet-enabled.png`).
+A Little Creatures Deluxe fixture with an attached near-edition tracklist
+(track 3 altered): 11 exact, all already owned → "Nothing to get — all matching
+tracks are yours", disabled, the eleven listed as skipped
+(`actionA-2-sheet-all-owned.png`). No rip process at any point.
+
+Live acquisition of the real Chocolate Chords tracks waits for Jake's go.
+Action B (the Bandcamp edition) is the next slice.
