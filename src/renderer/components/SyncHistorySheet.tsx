@@ -16,37 +16,23 @@ function whenLabel(iso: string): string {
   return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
-export default function SyncHistorySheet({ onClose }: { onClose: () => void }) {
+export type SyncHistoryEntryLike = Entry
+
+/** The timeline rows — shared by the sheet and the device page's recent
+ *  list (same reader, same rendering; `limit` trims for the page). */
+export function SyncHistoryRows({ entries, limit }: { entries: Entry[]; limit?: number }) {
   const { state } = useLibrary()
-  const [entries, setEntries] = useState<Entry[] | null>(null)
   const [open, setOpen] = useState<string | null>(null)
-
-  useEffect(() => {
-    window.electronAPI.getSyncHistory()
-      .then((r) => setEntries(r.ok ? r.entries : []))
-      .catch(() => setEntries([]))
-  }, [])
-
   const byId = useMemo(() => new Map(state.tracks.map((t) => [t.id, t])), [state.tracks])
   const nameOf = (x: { id: number; t?: string; a?: string }): string => {
     if (x.a || x.t) return `${x.a || '?'} — ${x.t || '?'}`
     const t = byId.get(x.id)
     return t ? `${t.artist || '?'} — ${t.title || '?'}` : `track ${x.id}`
   }
-
+  const shown = limit ? entries.slice(0, limit) : entries
   return (
-    <div className="activity-sheet-overlay" onClick={onClose}>
-      <div className="activity-sheet sync-history-sheet" onClick={(e) => e.stopPropagation()}>
-        <h2 className="activity-sheet-title">Sync History</h2>
-        <p className="activity-sheet-sub">
-          Every sync&apos;s cargo — and every play the iPod brought home.
-        </p>
-        {entries === null && <div className="sh-empty">Reading the ledgers…</div>}
-        {entries !== null && entries.length === 0 && (
-          <div className="sh-empty">No syncs recorded yet.</div>
-        )}
         <div className="sh-rows">
-          {(entries || []).map((e) => {
+          {shown.map((e) => {
             const key = `${e.kind}-${e.when}`
             const expanded = open === key
             if (e.kind === 'roundtrip') {
@@ -110,6 +96,30 @@ export default function SyncHistorySheet({ onClose }: { onClose: () => void }) {
             )
           })}
         </div>
+  )
+}
+
+export default function SyncHistorySheet({ onClose }: { onClose: () => void }) {
+  const [entries, setEntries] = useState<Entry[] | null>(null)
+
+  useEffect(() => {
+    window.electronAPI.getSyncHistory()
+      .then((r) => setEntries(r.ok ? r.entries : []))
+      .catch(() => setEntries([]))
+  }, [])
+
+  return (
+    <div className="activity-sheet-overlay" onClick={onClose}>
+      <div className="activity-sheet sync-history-sheet" onClick={(e) => e.stopPropagation()}>
+        <h2 className="activity-sheet-title">Sync History</h2>
+        <p className="activity-sheet-sub">
+          Every sync&apos;s cargo — and every play the iPod brought home.
+        </p>
+        {entries === null && <div className="sh-empty">Reading the ledgers…</div>}
+        {entries !== null && entries.length === 0 && (
+          <div className="sh-empty">No syncs recorded yet.</div>
+        )}
+        {entries && entries.length > 0 && <SyncHistoryRows entries={entries} />}
         <div className="activity-sheet-actions">
           <button type="button" className="activity-btn activity-btn--ghost" onClick={onClose}>Close</button>
         </div>

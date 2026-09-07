@@ -301,3 +301,53 @@
 @media (prefers-reduced-motion: reduce) {
   .device-itunes-btn--apply { animation: none; }
 }
+
+/* ── Activity Sync front end (2026-09-06): SYNC zone, phase strip, result
+   line, recent syncs. The iTunes silhouette (header, capacity bar, button
+   row) is untouched above and below. ── */
+.device-now-line { margin-top: 6px; color: #4a4a4a; }
+.device-now-line strong { color: #222; }
+.device-fixture-tag { margin-left: 10px; padding: 0 6px; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: #8a3a1a; background: #fde3d1; border: 1px solid #e7b49a; border-radius: 8px; }
+.device-sync-primary { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.device-sync-sizes { display: inline-flex; gap: 2px; padding: 2px; background: #e9e6df; border: 1px solid #cfc9bd; border-radius: 10px; }
+.device-sync-size { border: 0; background: transparent; padding: 2px 9px; font-size: 11px; font-weight: 600; color: #6a655b; border-radius: 8px; cursor: default; font-variant-numeric: tabular-nums; }
+.device-sync-size.is-on { background: #fff; color: #222; box-shadow: 0 1px 2px rgba(0,0,0,0.12); }
+.device-sync-size:disabled { opacity: 0.5; }
+.device-sync-profile { font-size: 11px; color: #7a746a; }
+.device-sync-spacer { flex: 1; }
+.device-link-btn { border: 0; background: transparent; color: #3b5a8f; font-size: 12px; padding: 2px 4px; cursor: default; }
+.device-link-btn:hover:not(:disabled) { text-decoration: underline; }
+.device-link-btn:disabled { color: #9a948a; }
+.device-sync-strip { margin-top: 12px; padding: 10px 12px; border: 1px solid #d8d3c8; border-radius: 6px; background: linear-gradient(180deg, #fbfaf7, #f1eee7); }
+.device-sync-strip--failed { border-color: #e0a8a8; background: linear-gradient(180deg, #fff6f5, #fbeceb); }
+.device-sync-strip--cancelled { border-color: #e4cf9e; background: linear-gradient(180deg, #fffaf0, #f9f0da); }
+.device-sync-strip--done { border-color: #b7d6b7; background: linear-gradient(180deg, #f6fbf5, #e9f4e7); }
+.device-sync-steps { list-style: none; margin: 0; padding: 0; display: flex; gap: 6px; flex-wrap: wrap; }
+.device-sync-step { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; font-size: 11px; font-weight: 600; color: #8a8478; border: 1px solid #d5d0c5; border-radius: 10px; background: rgba(255,255,255,0.6); }
+.device-sync-step.is-done { color: #2f6e2f; border-color: #a9cfa9; background: #eaf5e8; }
+.device-sync-step.is-current { color: #1f4f8f; border-color: #8fb0dd; background: #e7f0fb; }
+.device-sync-step.is-stopped { color: #9a2f2f; border-color: #dda0a0; background: #fbe9e9; }
+.device-sync-step-mark { width: 10px; text-align: center; font-size: 10px; }
+.device-sync-step-count { font-weight: 500; color: inherit; opacity: 0.8; font-variant-numeric: tabular-nums; }
+.device-sync-live { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.device-sync-live-bar { flex: 1; height: 6px; background: #ddd8cd; border-radius: 3px; overflow: hidden; }
+.device-sync-live-bar i { display: block; height: 100%; background: linear-gradient(90deg, #5b8cd6, #3b6fc4); transition: width 300ms ease; }
+.device-sync-live-text { flex: 2; min-width: 0; font-size: 12px; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.device-sync-live-elapsed { font-size: 11px; color: #7a746a; font-variant-numeric: tabular-nums; }
+.device-sync-result { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.device-sync-result-line { font-size: 13px; font-weight: 600; color: #222; }
+.device-sync-result--done .device-sync-result-line { color: #2f6e2f; }
+.device-sync-result--failed .device-sync-result-line { color: #9a2f2f; }
+.device-sync-result-sub { font-size: 12px; color: #4a4a4a; line-height: 1.45; }
+.device-sync-result-actions { display: flex; gap: 8px; }
+.device-sync-result-raw { margin: 4px 0 0; padding: 6px 8px; font-size: 11px; line-height: 1.4; white-space: pre-wrap; color: #444; background: rgba(0,0,0,0.05); border-radius: 4px; user-select: text; }
+.device-itunes-options--disclosure { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #d8d3c8; }
+.device-recent .sh-rows { margin-top: 6px; }
+.device-recent .device-link-btn { margin-top: 6px; }
+/* The recent list scrolls inside itself; the capacity bar and button row stay
+   pinned where iTunes kept them. */
+.device-view--itunes .device-recent { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.device-view--itunes .device-itunes-footer { flex-shrink: 0; }
+/* Narrow windows: the capacity labels and the button row stack instead of
+   colliding (seen at 700 px during the 2026-09-06 silhouette check). */
+@media (max-width: 900px) { .device-itunes-footer { flex-wrap: wrap; } .device-itunes-footer .device-itunes-actions { width: 100%; justify-content: flex-end; } }

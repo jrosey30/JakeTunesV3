@@ -5,6 +5,7 @@ import { useLibrary } from '../../context/LibraryContext'
 import { subscribeQueue, getQueue } from '../../views/DownloadStore/downloadQueue'
 import { downloadsPanelRows, panelSummary, downloadsBadge } from '../../../common/downloads-panel-model'
 import { toggleDownloadsPanel, subscribeDownloadsPanelOpen, getDownloadsPanelOpen } from '../DownloadsPanel'
+import { deviceFixtureRequested } from '../../syncTimeline'
 import { usePlayback } from '../../context/PlaybackContext'
 import SidebarSection from './SidebarSection'
 import SidebarItem from './SidebarItem'
@@ -415,7 +416,7 @@ export default function Sidebar() {
 
   // If iPod is unmounted while viewing device page, switch to songs
   useEffect(() => {
-    if (!ipodMounted && state.currentView === 'device') {
+    if (!ipodMounted && state.currentView === 'device' && !deviceFixtureRequested()) {
       dispatch({ type: 'SET_VIEW', view: 'songs' })
     }
   }, [ipodMounted, state.currentView, dispatch])
@@ -558,9 +559,9 @@ export default function Sidebar() {
           />
         </SidebarSection>
 
-        {(ipodMounted || cdMounted) && (
+        {(ipodMounted || cdMounted || deviceFixtureRequested()) && (
           <SidebarSection title="DEVICES">
-            {ipodMounted && (
+            {(ipodMounted || deviceFixtureRequested()) && (
               <li
                 className={`sidebar-item sidebar-device-row ${state.currentView === 'device' ? 'sidebar-item--selected' : ''}`}
                 onClick={() => dispatch({ type: 'SET_VIEW', view: 'device' })}

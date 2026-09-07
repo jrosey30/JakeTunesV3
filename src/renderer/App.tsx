@@ -17,6 +17,7 @@ import QueuePanel, { type QueuePanelHandle } from './components/playback/QueuePa
 import MusicManDrawer, { type MusicManDrawerHandle } from './components/MusicManDrawer'
 import DownloadsPanel, { DOWNLOADS_PANEL_EVENT, setDownloadsPanelOpen, type DownloadsPanelHandle } from './components/DownloadsPanel'
 import { OPEN_PREFERENCES_EVENT } from './views/DownloadStore/credential-notice-store'
+import { ingestSyncEvent } from './syncTimeline'
 import QueueHonestyProbe from './components/QueueHonestyProbe'
 import ImportConvertModal from './components/ImportConvertModal'
 import LibraryMaintenanceModal from './components/LibraryMaintenanceModal'
@@ -1258,6 +1259,9 @@ function AppInner() {
     let clearTimer: ReturnType<typeof setTimeout> | null = null
     const cleanup = window.electronAPI.onSyncProgress((progress) => {
       if (clearTimer) { clearTimeout(clearTimer); clearTimer = null }
+      // The device page's phase strip reads every event as-is (Activity
+      // Sync front end); the LCD text below is unchanged.
+      ingestSyncEvent(progress)
       import('./activity').then(a => {
         if (progress.phase === 'copy') {
           a.setSync({

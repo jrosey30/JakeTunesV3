@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef } from 'react'
+import { useMemo, useState, useEffect, useRef, useSyncExternalStore } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { buildWorkoutIpodSyncPayload, assembleSyncPlaylists, type WorkoutSyncPayload } from '../utils/workoutIpodSync'
 // Called in runFullLibrarySync below. The comment at the top of this file has
@@ -10,7 +10,11 @@ import ActivitySheet, { type ActivityBrief } from '../components/ActivitySheet'
 import SyncReviewSheet from '../components/SyncReviewSheet'
 import ConfirmDialog from '../components/ConfirmDialog'
 import IpodLibraryModal from '../components/IpodLibraryModal'
-import SyncHistorySheet from '../components/SyncHistorySheet'
+import SyncHistorySheet, { SyncHistoryRows, type SyncHistoryEntryLike } from '../components/SyncHistorySheet'
+import { subscribeSyncTimeline, getSyncTimeline, startSyncTimeline, finishSyncTimeline, clearSyncTimeline, deviceFixtureRequested } from '../syncTimeline'
+import { SYNC_STEPS, timelinePercent, resultLine, elapsedLabel, stepLabel } from '../../common/sync-progress-model'
+import { syncFailureCopy } from '../../common/sync-failure-copy'
+import { getPoolIds, subscribePool, requestPoolMode } from '../activityPool'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import '../styles/device.css'
 
@@ -117,14 +121,52 @@ export default function DeviceView() {
     }).catch(() => {})
   }, [])
 
-  // A refused sync used to paint the pink banner forever. LCD pill
-  // cleared in 4s; this bar did not. Dismiss so "6 with no playable
-  // file" cannot sit on the iPod page after nothing was written.
+  // Activity Sync front end (2026-09-06): the page's phase strip and result
+  // line read the sync TIMELINE (fed by the engine's own progress events via
+  // App). This effect mirrors the view's status into it — render-side only,
+  // the handlers above are untouched. Failures stay until dismissed or
+  // replaced by the next attempt (the 8-second auto-clear is gone).
+  const timeline = useSyncExternalStore(subscribeSyncTimeline, getSyncTimeline)
+  const fixture = deviceFixtureRequested()
   useEffect(() => {
-    if (syncStatus.state !== 'error') return
-    const t = window.setTimeout(() => setSyncStatus({ state: 'idle' }), 8000)
-    return () => window.clearTimeout(t)
+    if (fixture) return                                  // the harness drives the timeline by hand
+    if (syncStatus.state === 'syncing') {
+      if (getSyncTimeline().status !== 'running') {
+        const m = /(\d[\d,]*) tracks/.exec(syncStatus.step)
+        const target = m ? Number(m[1].replace(/,/g, '')) : (/whole library/i.test(syncStatus.step) ? state.tracks.length : (lastBrief?.target ?? null))
+        startSyncTimeline(target, syncStatus.step)
+      }
+    } else if (syncStatus.state === 'done') {
+      const t = getSyncTimeline()
+      if (t.status === 'running' || t.status === 'idle') finishSyncTimeline({ ok: true, landed: syncStatus.total, target: t.target ?? syncStatus.total, copied: syncStatus.copied, sealedOk: true })
+    } else if (syncStatus.state === 'error') {
+      const t = getSyncTimeline()
+      if (t.status === 'running' || t.status === 'idle') finishSyncTimeline({ ok: false, error: syncStatus.message })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncStatus])
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (timeline.status !== 'running') return
+    const id = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [timeline.status])
+  // Recent syncs — the same reader the Sync History sheet uses; refreshed
+  // after every run so the list and the header line follow the ledger.
+  const [history, setHistory] = useState<SyncHistoryEntryLike[] | null>(null)
+  const loadHistory = () => { window.electronAPI.getSyncHistory().then((r) => setHistory(r.ok ? r.entries : [])).catch(() => setHistory([])) }
+  useEffect(() => { loadHistory() }, [])
+  useEffect(() => {
+    if (timeline.status === 'done' || timeline.status === 'failed' || timeline.status === 'cancelled') { const t = window.setTimeout(loadHistory, 1500); return () => window.clearTimeout(t) }
+  }, [timeline.status])
+  const lastSync = useMemo(() => (history || []).find((e) => e.kind === 'sync' && e.landed != null) ?? null, [history])
+  const poolIds = useSyncExternalStore(subscribePool, getPoolIds)
+  const [optionsOpen, setOptionsOpen] = useState(false)
+  const [failureDetails, setFailureDetails] = useState(false)
+  const [quickTarget, setQuickTarget] = useState<number>(() => 1000)
+  useEffect(() => { if (lastBrief?.target) setQuickTarget(lastBrief.target) }, [lastBrief])
+  const timeLabel = (ms: number) => new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  const failure = timeline.status === 'failed' ? syncFailureCopy(timeline.error || '') : null
 
   const saveLastSetAsPlaylist = () => {
     if (!lastCommitted) return
@@ -646,111 +688,184 @@ export default function DeviceView() {
             <span className="device-itunes-label">Format:</span>
             <span className="device-itunes-value">{ipodFsName || 'Unknown'}</span>
           </div>
+          <div className="device-itunes-info-line device-now-line">
+            {lastSync
+              ? <span>On the iPod now: <strong>{(lastSync.landed ?? 0).toLocaleString()} songs</strong> · verified {new Date(lastSync.when).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}{lastSync.target != null && lastSync.landed != null && lastSync.landed < lastSync.target ? ` (short of ${lastSync.target.toLocaleString()})` : ''}</span>
+              : <span>No Activity Sync recorded yet.</span>}
+            {fixture && <span className="device-fixture-tag" title="Renderer fixture — no iPod, no engine">Fixture</span>}
+          </div>
         </div>
       </div>
 
       <div className="device-itunes-divider" />
 
-      {/* ── Options ── */}
-      <div className="device-itunes-section">
-        <h2 className="device-itunes-section-title">Options</h2>
-        <div className="device-itunes-options">
-          <label className="device-itunes-option">
-            <input
-              type="checkbox"
-              checked={optOpenOnConnect}
-              onChange={e => setOptOpenOnConnect(e.target.checked)}
-            />
-            <span>Open JakeTunes when this iPod is connected</span>
-          </label>
-          <label className="device-itunes-option">
-            <input
-              type="checkbox"
-              checked={optSyncOnlyChecked}
-              onChange={e => setOptSyncOnlyChecked(e.target.checked)}
-            />
-            <span>Sync only checked songs</span>
-          </label>
-          <label className="device-itunes-option device-itunes-option--note">
-            <span>
-            Sync mode: answer a few questions → Music Man builds ~1,000 tracks for that
-            activity/place/weather. Rotates every sync. Songs land at the convert
-            setting below.
-            </span>
-          </label>
-          <label className="device-itunes-option">
-            <input
-              type="checkbox"
-              checked={optConvertBitrate}
-              onChange={e => setOptConvertBitrate(e.target.checked)}
-            />
-            <span>Convert higher bit rate songs to <select
-              className="device-itunes-select"
-              value={optConvertBitrateTarget}
-              disabled={!optConvertBitrate}
-              onChange={e => setOptConvertBitrateTarget(e.target.value as '128' | '192' | '256')}
-            ><option value="128">128 kbps</option><option value="192">192 kbps</option><option value="256">256 kbps</option></select> AAC</span>
-          </label>
-          <label className="device-itunes-option">
-            <input
-              type="checkbox"
-              checked={optManualManage}
-              onChange={e => setOptManualManage(e.target.checked)}
-            />
-            <span>Manually manage music</span>
-          </label>
-          <label className="device-itunes-option">
-            <input
-              type="checkbox"
-              checked={optDiskUse}
-              onChange={e => setOptDiskUse(e.target.checked)}
-            />
-            <span>Enable disk use</span>
-          </label>
+      {/* ── SYNC — one primary action, the phase strip, the result line ── */}
+      <div className="device-itunes-section device-sync">
+        <h2 className="device-itunes-section-title">Sync</h2>
+        <div className="device-sync-primary">
+          <button
+            className="device-itunes-btn device-itunes-btn--sync"
+            disabled={syncing || isDirty}
+            onClick={handleActivitySync}
+            title={isDirty ? 'Click Apply first to save your setting changes' : (syncing ? 'Sync in progress…' : 'Answer a few questions — Music Man builds the set for the activity')}
+          >{syncing ? 'Syncing…' : 'Activity Sync'}</button>
+          <span className="device-sync-sizes" role="radiogroup" aria-label="How many songs">
+            {[100, 250, 500, 1000].map((n) => (
+              <button key={n} type="button" role="radio" aria-checked={quickTarget === n} className={`device-sync-size${quickTarget === n ? ' is-on' : ''}`} disabled={syncing} onClick={() => { setQuickTarget(n); setLastBrief((b) => (b ? { ...b, target: n } : b)) }}>{n.toLocaleString()}</button>
+            ))}
+          </span>
+          {lastBrief?.profileName && <span className="device-sync-profile">profile: {lastBrief.profileName}</span>}
+          {poolIds.length > 0 && (
+            <button className="device-itunes-btn" disabled={syncing || isDirty} onClick={() => { requestPoolMode(); handleActivitySync() }} title="Sync the hand-built iPod Pool">Sync the Pool ({poolIds.length.toLocaleString()})</button>
+          )}
+          <span className="device-sync-spacer" />
+          <button type="button" className="device-link-btn" disabled={syncing || isDirty} onClick={handleFullSync} title={isDirty ? 'Click Apply first to save your setting changes' : 'Mirror the ENTIRE library to the iPod at your convert setting'}>Full Sync…</button>
+          <button type="button" className="device-link-btn" aria-expanded={optionsOpen || isDirty} onClick={() => setOptionsOpen((o) => !o)}>Options {optionsOpen || isDirty ? '▾' : '▸'}</button>
         </div>
+
+        {timeline.status !== 'idle' && (
+          <div className={`device-sync-strip device-sync-strip--${timeline.status}`} role="status">
+            <ol className="device-sync-steps">
+              {SYNC_STEPS.map((st) => {
+                const reached = timeline.reached.includes(st.id)
+                const current = timeline.step === st.id && timeline.status === 'running'
+                const stoppedHere = timeline.step === st.id && (timeline.status === 'failed' || timeline.status === 'cancelled')
+                const done = reached && !current && !stoppedHere && (timeline.status === 'done' || SYNC_STEPS.findIndex((x) => x.id === st.id) < SYNC_STEPS.findIndex((x) => x.id === timeline.step))
+                return (
+                  <li key={st.id} className={`device-sync-step${done ? ' is-done' : ''}${current ? ' is-current' : ''}${stoppedHere ? ' is-stopped' : ''}`}>
+                    <span className="device-sync-step-mark" aria-hidden="true">{done ? '✓' : stoppedHere ? '✕' : ''}</span>
+                    {st.label}
+                    {current && timeline.total > 1 && <span className="device-sync-step-count">{timeline.current.toLocaleString()}/{timeline.total.toLocaleString()}</span>}
+                  </li>
+                )
+              })}
+            </ol>
+            {timeline.status === 'running' && (
+              <div className="device-sync-live">
+                <span className="device-sync-live-bar" aria-hidden="true"><i style={{ width: `${timelinePercent(timeline)}%` }} /></span>
+                <span className="device-sync-live-text">{timeline.step ? stepLabel(timeline.step) : ''}{timeline.title ? ` — ${timeline.title}` : ''}</span>
+                <span className="device-sync-live-elapsed">{elapsedLabel(timeline, now)}</span>
+                <button
+                  className="device-itunes-btn"
+                  onClick={async () => {
+                    const r = await window.electronAPI.cancelSync()
+                    if (r.wasRunning) setSyncStatus({ state: 'syncing', step: 'Cancelling…' })
+                  }}
+                  title="Stop the current sync after the file in flight finishes"
+                >Cancel</button>
+              </div>
+            )}
+            {timeline.status === 'done' && (
+              <div className="device-sync-result device-sync-result--done">
+                <span className="device-sync-result-line">{resultLine(timeline, timeLabel)}</span>
+                <button type="button" className="device-link-btn" onClick={clearSyncTimeline}>Dismiss</button>
+              </div>
+            )}
+            {timeline.status === 'cancelled' && (
+              <div className="device-sync-result device-sync-result--cancelled">
+                <span className="device-sync-result-line">Stopped during {timeline.step ? stepLabel(timeline.step) : 'the sync'}{timeline.copied != null ? ` — ${timeline.copied.toLocaleString()} copied before the stop` : ''}.</span>
+                <span className="device-sync-result-sub">The iPod was partly rewritten; no catalog was written, so the previous catalog stands. Sync again when ready.</span>
+                <button type="button" className="device-link-btn" onClick={clearSyncTimeline}>Dismiss</button>
+              </div>
+            )}
+            {timeline.status === 'failed' && failure && (
+              <div className={`device-sync-result device-sync-result--failed device-sync-result--changed-${failure.changed}`}>
+                <span className="device-sync-result-line">Stopped{failure.stage && failure.stage !== 'build' && failure.stage !== 'device' ? ` at ${stepLabel(failure.stage)}` : ''}: {failure.happened}</span>
+                <span className="device-sync-result-sub">{failure.changedLine} {failure.next}</span>
+                <span className="device-sync-result-actions">
+                  <button type="button" className="device-link-btn" aria-expanded={failureDetails} onClick={() => setFailureDetails((d) => !d)}>{failureDetails ? 'Hide details' : 'Details'}</button>
+                  <button type="button" className="device-link-btn" onClick={() => { setFailureDetails(false); clearSyncTimeline(); if (syncStatus.state === 'error') setSyncStatus({ state: 'idle' }) }}>Dismiss</button>
+                </span>
+                {failureDetails && <pre className="device-sync-result-raw">{failure.raw}</pre>}
+              </div>
+            )}
+          </div>
+        )}
+
+        {(lastCommitted || savedSetNotice) && (
+          <div className="device-sync-status device-sync-status--saveset">
+            {savedSetNotice ? (
+              <span className="device-sync-message">✓ {savedSetNotice}</span>
+            ) : (
+              <button
+                className="device-itunes-btn device-itunes-btn--saveset"
+                onClick={saveLastSetAsPlaylist}
+                title="Keep this sync's track list as a playlist in the SYNCED SETS sidebar section"
+              >Save “{lastCommitted!.name}” as playlist</button>
+            )}
+          </div>
+        )}
+
+        {(optionsOpen || isDirty) && (
+          <div className="device-itunes-options device-itunes-options--disclosure">
+            <label className="device-itunes-option">
+              <input
+                type="checkbox"
+                checked={optOpenOnConnect}
+                onChange={e => setOptOpenOnConnect(e.target.checked)}
+              />
+              <span>Open JakeTunes when this iPod is connected</span>
+            </label>
+            <label className="device-itunes-option">
+              <input
+                type="checkbox"
+                checked={optSyncOnlyChecked}
+                onChange={e => setOptSyncOnlyChecked(e.target.checked)}
+              />
+              <span>Sync only checked songs</span>
+            </label>
+            <label className="device-itunes-option">
+              <input
+                type="checkbox"
+                checked={optConvertBitrate}
+                onChange={e => setOptConvertBitrate(e.target.checked)}
+              />
+              <span>Convert higher bit rate songs to <select
+                className="device-itunes-select"
+                value={optConvertBitrateTarget}
+                disabled={!optConvertBitrate}
+                onChange={e => setOptConvertBitrateTarget(e.target.value as '128' | '192' | '256')}
+              ><option value="128">128 kbps</option><option value="192">192 kbps</option><option value="256">256 kbps</option></select> AAC</span>
+            </label>
+            <label className="device-itunes-option">
+              <input
+                type="checkbox"
+                checked={optManualManage}
+                onChange={e => setOptManualManage(e.target.checked)}
+              />
+              <span>Manually manage music</span>
+            </label>
+            <label className="device-itunes-option">
+              <input
+                type="checkbox"
+                checked={optDiskUse}
+                onChange={e => setOptDiskUse(e.target.checked)}
+              />
+              <span>Enable disk use</span>
+            </label>
+            {isDirty && (
+              <button
+                className="device-itunes-btn device-itunes-btn--apply"
+                onClick={handleApplySettings}
+                title="Apply the changed sync settings before running Sync"
+              >Apply</button>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* The "Out of sync — Library: X · iPod: Y" badge that used to
-          live here was removed — it consistently showed stale or
-          confusing counts (especially right after a wipe + restore,
-          where the iTunesDB on the iPod takes a moment to settle)
-          and the user reported it might also be interfering with the
-          live sync flow by reading the iTunesDB at inopportune
-          moments. The Sync button below is the source of truth now;
-          if you want to inspect what's actually on the iPod, the
-          sidebar has the dedicated iPod library modal. */}
+      {/* ── RECENT SYNCS — the ledger, the same rows the Sync History sheet shows ── */}
+      <div className="device-itunes-section device-recent">
+        <h2 className="device-itunes-section-title">Recent syncs</h2>
+        {history === null && <div className="sh-empty">Reading the ledgers…</div>}
+        {history && history.length === 0 && <div className="sh-empty">No syncs recorded yet.</div>}
+        {history && history.length > 0 && <SyncHistoryRows entries={history} limit={5} />}
+        {history && history.length > 5 && (
+          <button type="button" className="device-link-btn" onClick={() => setShowSyncHistory(true)}>See all ({history.length})</button>
+        )}
+      </div>
 
-      {/* ── Sync status (only shows done / error here — live sync
-            progress lives in the toolbar's LCD pill, no need for a
-            second bar in the iPod view that duplicates it). ── */}
-      {(syncStatus.state === 'done' || syncStatus.state === 'error') && (
-        <div className={`device-sync-status device-sync-status--${syncStatus.state}`}>
-          {syncStatus.state === 'done' && (
-            <span className="device-sync-message">
-              ✓ Sync complete — {syncStatus.total.toLocaleString()} songs{syncStatus.copied > 0 ? ` (${syncStatus.copied} new copied)` : ''} synced to iPod at {syncStatus.time}
-            </span>
-          )}
-          {syncStatus.state === 'error' && (
-            <span className="device-sync-message">✗ Sync failed — {syncStatus.message}</span>
-          )}
-        </div>
-      )}
-
-      {(lastCommitted || savedSetNotice) && (
-        <div className="device-sync-status device-sync-status--saveset">
-          {savedSetNotice ? (
-            <span className="device-sync-message">✓ {savedSetNotice}</span>
-          ) : (
-            <button
-              className="device-itunes-btn device-itunes-btn--saveset"
-              onClick={saveLastSetAsPlaylist}
-              title="Keep this sync's track list as a playlist in the SYNCED SETS sidebar section"
-            >Save “{lastCommitted!.name}” as playlist</button>
-          )}
-        </div>
-      )}
-
-      {/* ── Bottom: capacity bar + action buttons (iTunes-style footer) ── */}
+      {/* ── Bottom: capacity bar + the read-only buttons (iTunes-style footer) ── */}
       <div className="device-itunes-footer">
         <div className="device-itunes-capacity">
           <div className="device-itunes-capacity-bar">
@@ -803,48 +918,6 @@ export default function DeviceView() {
               window.dispatchEvent(new Event('jaketunes-ipod-ejected'))
             }}
           >Eject</button>
-          {/* 4.5: Apply button — iTunes-style. Appears only when one
-              of the sync settings has been changed since the last
-              Apply (or session load). Click to persist; the button
-              disappears once the working state matches the applied
-              snapshot. Sync is disabled while dirty so the user
-              can't run a sync against half-committed settings. */}
-          {isDirty && (
-            <button
-              className="device-itunes-btn device-itunes-btn--apply"
-              onClick={handleApplySettings}
-              title="Apply the changed sync settings before running Sync"
-            >Apply</button>
-          )}
-          <button
-            className="device-itunes-btn"
-            disabled={syncing || isDirty}
-            onClick={handleFullSync}
-            title={isDirty ? 'Click Apply first to save your setting changes' : (syncing ? 'Sync in progress…' : 'Mirror the ENTIRE library to the iPod at your convert setting')}
-          >Full Sync</button>
-          <button
-            className="device-itunes-btn device-itunes-btn--sync"
-            disabled={syncing || isDirty}
-            onClick={handleActivitySync}
-            title={isDirty ? 'Click Apply first to save your setting changes' : (syncing ? 'Sync in progress…' : 'Answer a few questions — Music Man builds a ~1,000-track set for the activity')}
-          >{syncing ? 'Syncing…' : 'Activity Sync'}</button>
-          {/* 4.5.0-109: Cancel button — only rendered while a sync is in
-              flight. Hits cancel-sync IPC which flips a flag main checks
-              between each file copy. Pre-fix, force-quitting the app was
-              the only way to stop a runaway sync (which would also leave
-              the iPod in an undefined state). */}
-          {syncing && (
-            <button
-              className="device-itunes-btn"
-              onClick={async () => {
-                const r = await window.electronAPI.cancelSync()
-                if (r.wasRunning) {
-                  setSyncStatus({ state: 'syncing', step: 'Cancelling…' })
-                }
-              }}
-              title="Stop the current sync after the file in flight finishes"
-            >Cancel</button>
-          )}
         </div>
       </div>
       {showIpodLibrary && <IpodLibraryModal onClose={() => setShowIpodLibrary(false)} />}
