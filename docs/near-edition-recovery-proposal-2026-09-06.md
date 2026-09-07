@@ -233,3 +233,33 @@ tracks are yours", disabled, the eleven listed as skipped
 
 Live acquisition of the real Chocolate Chords tracks waits for Jake's go.
 Action B (the Bandcamp edition) is the next slice.
+
+## Slice 3 — action B wired: the source edition (2026-09-07)
+
+| Change | Where |
+|---|---|
+| The selection: `SourceEdition` = provider + the album's own page URL (stable identity) + the tracklist snapshot taken at comparison, plus what it was chosen instead of and where it differs | `common/source-edition.ts` |
+| Verification against the snapshot: the request IS the snapshot (`requestFromSourceEdition`, no collection id, no packaging labels); `verifySourceEdition` runs the same album judge and refuses a changed count, title or runtime with "the bandcamp tracklist is not the one you compared — …" | `main/source-edition-verify.ts` |
+| The engine path: an album request carrying `sourceEdition` builds its identity from the snapshot, skips the iTunes lookup and every other provider, stages the selected page directly, judges the staged files against the snapshot, and either imports through the normal `finishAlbum` (completion credits owned recordings) or refuses with "Source edition changed" and imports nothing. Everything else in the engine is untouched | `streamrip-store/index.ts` |
+| Pass-through: `QResult.sourceEdition` → preload → main; the job's key is `bandcamp|album|bc|album|<url>`, never the iTunes job's | `downloadQueue.ts`, `preload`, `types.ts` |
+| The plan (pure): job + identity line + every runtime difference + the recorded line + the never line ("iTunes 96265705 is not marked as owned by this; the Listen List entry for it is untouched"); no recommendationIds; `chosenInsteadOf` for display | `common/near-edition-actions.ts` |
+| The sheet: **Get the Bandcamp edition…** opens a confirmation block showing the identity, the runtime differences and what will be recorded; only **Confirm — get 12 tracks as the Bandcamp edition** hands the plan to the panel, which enqueues. Back cancels. The sheet still never imports the queue | `CompareEditionsSheet.tsx` |
+| The panel row: "Bandcamp edition · <url> · 12 tracks · 1997" with the note "chosen instead of iTunes 96265705 · differs at track 4 (8:04 vs 6:50)"; its own row beside the still-refused iTunes request | `downloads-panel-model.ts`, `DownloadsPanel.tsx` |
+
+### Regression results (`source-edition.test.ts`, gate 1,185)
+
+| Case | Result |
+|---|---|
+| Selection | by URL + 12-track snapshot with the source's own titles and runtimes; key distinct from the iTunes job; no recommendationIds; the runtime difference and the never-line present; no URL → cannot be selected |
+| Verification | same tracklist → exact; a changed runtime (track 8 +60 s), a changed title, a shorter count → refused with the snapshot named |
+| Mixed ownership | main receives the snapshot and no collection id; completion "12 tracks · 9 imported, 3 already in your library"; its own row beside the refused iTunes row; the jot still projects onto the iTunes job |
+| Repeat clicks / cancellation / partial import | a second click while in flight adds nothing; cancel mid-flight → canceled; a partial import comes back as "Album import incomplete" with nothing claimed complete; one call per attempt |
+| Source changed between comparison and acquisition | the engine's refusal renders as "Source edition changed · Nothing was imported" |
+| A and B distinct | no shared keys, no recommendation ids on either |
+| Compare acquires nothing | rail: the sheet never references the queue; the confirm step precedes the delegated enqueue |
+
+### On the dev instance (fixtures, nothing acquired)
+
+The confirm block rendered with the identity ("terryleebrownjunior.bandcamp.com/album/chocolate-chords · 12 tracks · 1997"), the one runtime difference, the recorded line and the never line; Back closed it; the queue was byte-identical throughout (`actionB-1-confirm-step.png`). A landed source-edition fixture row shows the edition line, the note and "9 imported · 3 already in your library" beside the still-refused iTunes row (`actionB-2-panel-row-distinct.png`).
+
+Neither action is live-accepted. Live acquisition (A or B) waits for Jake's choice of material.

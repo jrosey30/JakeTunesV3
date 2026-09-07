@@ -31,8 +31,11 @@ Supersedes [2026-09-05](master-plan-checkpoint-2026-09-05.md) for current status
    [near-edition-recovery-proposal-2026-09-06.md](near-edition-recovery-proposal-2026-09-06.md)
    — approved 9/6 (both actions); slice 1 (pure model + read-only Compare
    editions sheet) and slice 2 (action A, the matching-track Gets through the
-   one scheduler, grouped under the refused request) implemented and
-   fixture-verified; live acquisition waits for Jake's go; action B next.
+   one scheduler, grouped under the refused request) and slice 3 (action B,
+   the source edition selected by URL + tracklist snapshot, verified against
+   it, distinct from the iTunes request) implemented and fixture-verified.
+   Neither action is live-accepted; live acquisition waits for Jake's choice
+   of material.
 
 1. Tracklist auto-expansion on prefill when the plain edition takes the hero slot.
 2. Listen List cache freshness (the regular shop's hook does not subscribe to
