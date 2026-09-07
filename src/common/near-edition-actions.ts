@@ -32,7 +32,7 @@ export interface MatchingTrackRequest {
 export interface MatchingTrackPlan {
   jobs: MatchingTrackRequest[]
   skippedOwned: TrackRow[]
-  notAcquired: Array<{ position: number; title: string; reason: string }>
+  notAcquired: Array<{ position: number; title: string; reason: string; pickedSec?: number | null; ownedVariantSec?: number | null }>
   /** What pressing the button does — exact counts. */
   sentence: string
 }
@@ -42,7 +42,7 @@ const norm = (s: string): string => String(s || '').normalize('NFD').replace(/[�
 export function planMatchingTrackGets(cmp: CompareEditionsResult, ctx: { parentKey: string; artist: string; album: string; releaseYear?: number; sourceKind?: string; sourceLabel?: string }): MatchingTrackPlan {
   const exact = cmp.rows.filter((r) => r.verdict === 'exact')
   const skippedOwned = exact.filter((r) => r.owned)
-  const notAcquired = cmp.rows.filter((r) => r.verdict !== 'exact').map((r) => ({ position: r.n, title: r.wantTitle, reason: r.reason ?? 'unknown' }))
+  const notAcquired = cmp.rows.filter((r) => r.verdict !== 'exact').map((r) => ({ position: r.n, title: r.wantTitle, reason: r.reason ?? 'unknown', pickedSec: r.wantSec, ownedVariantSec: r.ownedVariantSec ?? null }))
   const group = { parentKey: ctx.parentKey, label: `${ctx.album} — ${ctx.artist}`, of: cmp.rows.length, position: 0, notAcquired, skippedOwned: skippedOwned.length, collectionId: cmp.picked.collectionId }
   const jobs: MatchingTrackRequest[] = exact.filter((r) => !r.owned).map((r) => ({
     kind: 'query', source: 'qobuz', mediaType: 'track',
@@ -109,4 +109,12 @@ export function planSourceEditionGet(cmp: CompareEditionsResult, ctx: { parentKe
     recordedLine: `Recorded as the Bandcamp edition, ${tracks.length} of ${tracks.length}${d ? `; ${d}` : ''}. Verified against this exact tracklist; if the page has changed by then, nothing is imported.`,
     neverLine: `${cmp.picked.label} is not marked as owned by this; the Listen List entry for it is untouched.`,
   }
+}
+
+/** The omitted track, in Jake's words: "“Here We Go”: you own the 8:04
+ *  version; this edition lists 6:50." — or the judge's reason when there is
+ *  no owned copy to point at. */
+export function omittedTrackLine(n: { position: number; title: string; reason: string; pickedSec?: number | null; ownedVariantSec?: number | null }): string {
+  if (n.ownedVariantSec != null) return `“${n.title}”: you own the ${fmtSec(n.ownedVariantSec)} version; this edition lists ${fmtSec(n.pickedSec)}`
+  return `track ${n.position} “${n.title}” — ${n.reason}`
 }

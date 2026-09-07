@@ -14,6 +14,8 @@ export interface TrackRow {
   reason: string | null
   /** The library already holds this recording (by recording identity) — action A skips it. */
   owned: boolean
+  /** For a mismatch: the runtime of the copy you DO own of this title (e.g. the found edition's), when the library has one. */
+  ownedVariantSec?: number | null
 }
 export interface NearEditionSummary {
   total: number

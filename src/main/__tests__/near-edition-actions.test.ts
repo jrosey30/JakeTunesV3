@@ -51,7 +51,8 @@ describe('action A — matching-track Gets', () => {
   it('the plan pins each selected recording (title as picked, runtime as picked), skips owned, never selects the mismatch, carries no recommendationIds', () => {
     const plan = planMatchingTrackGets(cmpFixture([2, 7]), ctx)
     assert.equal(plan.jobs.length, 9); assert.equal(plan.skippedOwned.length, 2)
-    assert.deepEqual(plan.notAcquired, [{ position: 4, title: 'Here We Go', reason: 'runtime mismatch (8:04 found, 6:50 picked)' }])
+    assert.equal(plan.notAcquired.length, 1)
+    assert.equal(plan.notAcquired[0].position, 4); assert.equal(plan.notAcquired[0].title, 'Here We Go'); assert.equal(plan.notAcquired[0].reason, 'runtime mismatch (8:04 found, 6:50 picked)')
     assert.ok(!plan.jobs.some((j) => j.title === 'Here We Go' || j.title === 'The Music' || j.title === 'Looking Beyond'))
     const j = plan.jobs[0]
     assert.equal(j.mediaType, 'track'); assert.equal(j.title, 'Straylight'); assert.equal(j.durationMs, 400_000); assert.equal(j.album, 'Chocolate Chords')

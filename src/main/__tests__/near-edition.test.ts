@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { buildRequestedAlbum } from '../album-identity.ts'
 import { judgeAlbumTracks, summarizeNearEdition } from '../near-edition.ts'
+import { omittedTrackLine, planMatchingTrackGets } from '../../common/near-edition-actions.ts'
 import { isNearEdition, nearEditionOf } from '../../common/near-edition-detect.ts'
 import { downloadsPanelRows } from '../../common/downloads-panel-model.ts'
 
@@ -43,6 +44,17 @@ describe('compare editions — the per-track judge', () => {
     assert.match(s.editionSentence, /^Acquires all 12 tracks as the Bandcamp edition \(terryleebrownjunior\.bandcamp\.com\/album\/chocolate-chords\), selected by that source and its own tracklist/)
     assert.match(s.editionSentence, /differs from the edition you picked at track 4 \(8:04 vs 6:50\)/)
     assert.match(s.editionSentence, /The edition you picked is not marked as owned\./)
+  })
+  it('an omitted track you own in the other runtime is said in Jake’s words', () => {
+    const library = [...BANDCAMP.map(([t, s]) => ({ title: t, artist: 'Terry Lee Brown Junior', durationSec: Math.round(s) }))]
+    const rows = judgeAlbumTracks(req, cand, undefined, library)
+    assert.equal(rows.filter((r) => r.owned).length, 11)
+    assert.equal(rows[3].verdict, 'mismatch'); assert.equal(rows[3].owned, false); assert.equal(rows[3].ownedVariantSec, 484)
+    const cmp = { ok: true as const, picked: { label: 'iTunes 96265705', trackCount: 12, collectionId: 96265705 }, found: { provider: 'bandcamp', label: 'Bandcamp edition', source: 's', trackCount: 12 }, rows, summary: summarizeNearEdition(rows, { label: 'x' }, { label: 'y', source: 'z' }), toleranceSec: 20 }
+    const plan = planMatchingTrackGets(cmp, { parentKey: 'p', artist: 'Terry Lee Brown Junior', album: 'Chocolate Chords' })
+    assert.equal(plan.jobs.length, 0)
+    assert.equal(omittedTrackLine(plan.notAcquired[0]), '“Here We Go”: you own the 8:04 version; this edition lists 6:50')
+    assert.equal(omittedTrackLine({ position: 4, title: 'Here We Go', reason: 'runtime mismatch (8:04 found, 6:50 picked)', pickedSec: 410, ownedVariantSec: null }), 'track 4 “Here We Go” — runtime mismatch (8:04 found, 6:50 picked)')
   })
   it('a shorter candidate leaves the tail unknown and never invents matches', () => {
     const rows = judgeAlbumTracks(req, cand.slice(0, 10))

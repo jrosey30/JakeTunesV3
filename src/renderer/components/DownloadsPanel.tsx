@@ -10,7 +10,7 @@ import { useState, useCallback, useEffect, useImperativeHandle, forwardRef, useS
 import { useLibrary } from '../context/LibraryContext'
 import { openBrowse } from '../listen-to-the-list/ltlDownload'
 import NearEditionTable from './NearEditionTable'
-import { planMatchingTrackGets, type MatchingTrackPlan } from '../../common/near-edition-actions'
+import { planMatchingTrackGets, omittedTrackLine, type MatchingTrackPlan } from '../../common/near-edition-actions'
 import type { CompareEditionsResult } from '../../common/near-edition-types'
 import { subscribeQueue, getQueue, cancel, retry, clearFinished, enqueue, type QResult } from '../views/DownloadStore/downloadQueue'
 import { downloadsPanelRows, panelSummary, type PanelRow } from '../../common/downloads-panel-model'
@@ -152,7 +152,7 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
               {row.nearEdition && !row.group && (() => {
                 const c = compares[row.key]
                 const plan = planFor(row)
-                const omitted = plan ? plan.notAcquired.map((n) => `track ${n.position} “${n.title}” — ${n.reason}`).join('; ') : ''
+                const omitted = plan ? plan.notAcquired.map(omittedTrackLine).join('; ') : ''
                 return (
                   <div className="dlp-near">
                     {(!c || c.loading) && <span className="dlp-near-text">Checking which tracks match…</span>}
@@ -160,11 +160,11 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
                     {plan && plan.jobs.length > 0 && (
                       <>
                         <button className="dlp-primary-action" onClick={() => getMatching(plan)} title={`Queues ${plan.jobs.length} song downloads pinned to the edition you picked; each is verified before import`}>Get {plan.jobs.length} matching track{plan.jobs.length === 1 ? '' : 's'}</button>
-                        <span className="dlp-near-text">{plan.skippedOwned.length ? `${plan.skippedOwned.length} already in your library. ` : ''}Not acquired: {omitted}.</span>
+                        <span className="dlp-near-text">{plan.skippedOwned.length ? `${plan.skippedOwned.length} already yours. ` : ''}Not acquired: {omitted}.</span>
                       </>
                     )}
                     {plan && plan.jobs.length === 0 && (
-                      <span className="dlp-near-text">{plan.skippedOwned.length ? `All ${plan.skippedOwned.length} matching tracks are already in your library.` : 'No track matches the edition you picked.'} {omitted ? `Not acquired: ${omitted}.` : ''}</span>
+                      <span className="dlp-near-text">{plan.skippedOwned.length ? `All ${plan.skippedOwned.length} matching tracks are yours.` : 'No track matches the edition you picked.'} {omitted ? `${omitted}.` : ''}</span>
                     )}
                   </div>
                 )

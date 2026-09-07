@@ -19,6 +19,14 @@ export function judgeAlbumTracks(req: RequestedAlbum, candTracks: AlternativeTra
   const want = req.tracks
   const ownership = library.length ? matchLibraryOwnership(req, library, tolSec) : null
   const ownedIdx = new Set(ownership?.owned.map((o) => o.index) ?? [])
+  const normT = (x: string) => String(x || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  const artistOk = (l: LibraryTrackLite) => !req.artist || !l.artist || normT(l.artist) === normT(req.artist)
+  /** The copy Jake owns of this title at the FOUND runtime (a different edit than the picked one). */
+  const ownedVariant = (title: string, foundSec: number | null): number | null => {
+    if (foundSec == null) return null
+    const hit = library.find((l) => artistOk(l) && normT(l.title) === normT(title) && l.durationSec != null && Math.abs(l.durationSec - foundSec) <= tolSec)
+    return hit?.durationSec ?? null
+  }
   const got = [...candTracks].sort((a, b) => ((a.discNumber ?? 1) - (b.discNumber ?? 1)) || ((a.trackNumber ?? 0) - (b.trackNumber ?? 0)))
   const rows: TrackRow[] = []
   for (let i = 0; i < want.length; i++) {
@@ -32,7 +40,7 @@ export function judgeAlbumTracks(req: RequestedAlbum, candTracks: AlternativeTra
     const v = verifyAlbumCandidate(one, cand, tolSec)
     const deltaSec = wantSec != null && gotSec != null ? Math.round(gotSec - wantSec) : null
     if (v.verdict === 'exact') rows.push({ n: i + 1, wantTitle: w.title, gotTitle: g.title, wantSec, gotSec, deltaSec, verdict: 'exact', reason: null, owned })
-    else if (v.verdict === 'reject') rows.push({ n: i + 1, wantTitle: w.title, gotTitle: g.title, wantSec, gotSec, deltaSec, verdict: 'mismatch', reason: /runs \d+:\d\d/.test(v.reason) ? `runtime mismatch (${fmt(gotSec)} found, ${fmt(wantSec)} picked)` : v.reason, owned })
+    else if (v.verdict === 'reject') rows.push({ n: i + 1, wantTitle: w.title, gotTitle: g.title, wantSec, gotSec, deltaSec, verdict: 'mismatch', reason: /runs \d+:\d\d/.test(v.reason) ? `runtime mismatch (${fmt(gotSec)} found, ${fmt(wantSec)} picked)` : v.reason, owned, ownedVariantSec: ownedVariant(w.title, gotSec) })
     else rows.push({ n: i + 1, wantTitle: w.title, gotTitle: g.title, wantSec, gotSec, deltaSec, verdict: 'unknown', reason: v.reason, owned })
   }
   return rows
