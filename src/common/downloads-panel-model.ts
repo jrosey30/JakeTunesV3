@@ -16,7 +16,7 @@ import { nearEditionOf } from './near-edition-detect.ts'
 import type { Alternative } from './acquisition-identity.ts'
 
 export type PanelStatus = 'downloading' | 'queued' | 'done' | 'failed' | 'refused' | 'canceled'
-export type PanelAction = 'cancel' | 'retry' | 'chooseEdition' | 'chooseVersion' | 'compareEditions'
+export type PanelAction = 'cancel' | 'retry' | 'chooseEdition' | 'chooseVersion' | 'compareEditions' | 'retryGroup'
 
 export interface PanelRow {
   key: string
@@ -38,11 +38,29 @@ export interface PanelRow {
   alternatives: ReadonlyArray<{ provider: string; desc: string; reason: string }>
   /** A refused edition that is the same record with a tracklist difference — Compare editions can lay it beside the picked one. */
   nearEdition: Alternative | null
+  /** Matching-track Gets recovered from this refused album request (action A): the child jobs and their tally. */
+  group: PanelGroup | null
+  /** This row is a child of a group (a matching-track Get). */
+  groupPosition: number | null
   actions: PanelAction[]
   /** Seconds in flight (downloading) — the caller supplies `now`. */
   elapsedSec: number | null
   /** What to search for when choosing again (refused rows). */
   choose: { query: string; kind: 'album' | 'song'; artist: string; title: string } | null
+}
+
+export interface PanelGroup {
+  of: number
+  selected: number
+  done: number
+  inFlight: number
+  failed: number
+  canceled: number
+  skippedOwned: number
+  notAcquired: Array<{ position: number; title: string; reason: string }>
+  children: PanelRow[]
+  /** "7 of 11 landed · 1 failed · track 4 not acquired (runtime mismatch)" — never "complete". */
+  line: string
 }
 
 export interface PanelSummary { active: number; queued: number; done: number; failed: number; canceled: number }
@@ -98,6 +116,8 @@ export function panelRowFor(q: QueueItemLike, now: number): PanelRow {
     detail: status === 'failed' || status === 'refused' ? (q.detail || q.error || null) : null,
     alternatives: q.alternatives ?? [],
     nearEdition,
+    group: null,
+    groupPosition: r.origin?.group?.position ?? null,
     actions,
     elapsedSec: status === 'downloading' && q.startedAt ? Math.max(0, Math.floor((now - q.startedAt) / 1000)) : null,
     choose: status === 'refused' && artist && chooseTitle ? { query: `${artist} ${chooseTitle}`.trim(), kind: kind === 'album' ? 'album' : 'song', artist, title: chooseTitle } : null,
@@ -106,14 +126,43 @@ export function panelRowFor(q: QueueItemLike, now: number): PanelRow {
 
 /** In-flight first, then what needs a decision, then what's finished — newest first within a group. */
 export function downloadsPanelRows(queue: readonly QueueItemLike[], now: number): PanelRow[] {
-  const rows = queue.map((q) => ({ row: panelRowFor(q, now), t: q.endedAt ?? q.startedAt ?? 0 }))
-  rows.sort((a, b) => STATUS_ORDER[a.row.status] - STATUS_ORDER[b.row.status] || b.t - a.t)
-  return rows.map((x) => x.row)
+  const rows = queue.map((q) => ({ q, row: panelRowFor(q, now), t: q.endedAt ?? q.startedAt ?? 0 }))
+  // Matching-track Gets fold under their refused album request.
+  const byParent = new Map<string, Array<{ q: QueueItemLike; row: PanelRow }>>()
+  for (const x of rows) {
+    const g = x.q.result.origin?.group
+    if (g) { const list = byParent.get(g.parentKey) ?? []; list.push(x); byParent.set(g.parentKey, list) }
+  }
+  const claimed = new Set<string>()
+  for (const x of rows) {
+    const kids = byParent.get(x.row.key)
+    if (!kids?.length) continue
+    kids.sort((a, b) => (a.row.groupPosition ?? 0) - (b.row.groupPosition ?? 0))
+    const meta = kids[0].q.result.origin!.group!
+    const children = kids.map((k) => k.row)
+    const done = children.filter((c) => c.status === 'done').length
+    const inFlight = children.filter((c) => c.status === 'downloading' || c.status === 'queued').length
+    const failed = children.filter((c) => c.status === 'failed' || c.status === 'refused').length
+    const canceled = children.filter((c) => c.status === 'canceled').length
+    const selected = children.length + meta.skippedOwned
+    const bits = [`${done + meta.skippedOwned} of ${meta.of} in your library`]
+    if (inFlight) bits.push(`${inFlight} on the way`)
+    if (failed) bits.push(`${failed} failed`)
+    if (canceled) bits.push(`${canceled} canceled`)
+    for (const na of meta.notAcquired) bits.push(`track ${na.position} not acquired (${na.reason})`)
+    x.row.group = { of: meta.of, selected, done, inFlight, failed, canceled, skippedOwned: meta.skippedOwned, notAcquired: meta.notAcquired, children, line: bits.join(' · ') }
+    if (failed + canceled > 0 && inFlight === 0) x.row.actions.push('retryGroup')
+    for (const k of kids) claimed.add(k.row.key)
+  }
+  const top = rows.filter((x) => !claimed.has(x.row.key))
+  top.sort((a, b) => STATUS_ORDER[a.row.status] - STATUS_ORDER[b.row.status] || b.t - a.t)
+  return top.map((x) => x.row)
 }
 
 export function panelSummary(rows: readonly PanelRow[]): PanelSummary {
   const s: PanelSummary = { active: 0, queued: 0, done: 0, failed: 0, canceled: 0 }
-  for (const r of rows) {
+  const all = rows.flatMap((r) => (r.group ? [r, ...r.group.children] : [r]))
+  for (const r of all) {
     if (r.status === 'downloading') s.active++
     else if (r.status === 'queued') s.queued++
     else if (r.status === 'done') s.done++

@@ -8,6 +8,7 @@
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { itunesAlbumTracks } from '../download-search'
 import { buildRequestedAlbum } from '../album-identity.ts'
+import { loadLibraryTracksLite } from '../import-pipeline.ts'
 import { judgeAlbumTracks, summarizeNearEdition } from '../near-edition.ts'
 import type { AlternativeTrack } from '../../common/acquisition-identity.ts'
 import type { CompareEditionsRequest, CompareEditionsResult } from '../../common/near-edition-types.ts'
@@ -65,7 +66,8 @@ export function registerNearEditionIpc(ipc: IpcRegistrar): void {
       if (url) { const page = await bandcampTracklist(url); if (page) { candTracks = page.tracks; candYear = candYear ?? page.releaseYear } }
     }
     if (!candTracks || !candTracks.length) return { ok: false, error: 'found-tracklist-unavailable' }
-    const rows = judgeAlbumTracks(reqAlbum, candTracks)
+    const library = await loadLibraryTracksLite().catch(() => [])
+    const rows = judgeAlbumTracks(reqAlbum, candTracks, undefined, library)
     const pickedLabel = req.collectionId ? `iTunes ${req.collectionId}` : 'the edition you picked'
     const providerName = req.candidate.provider === 'bandcamp' ? 'Bandcamp' : req.candidate.provider
     const foundLabel = `${providerName} edition`

@@ -25,6 +25,21 @@ export interface QueueOrigin {
   /** 'user' | 'mm' | 'radar' — the list's own vocabulary; a person's name when known. */
   sourceKind?: string
   sourceLabel?: string
+  /** Matching-track Gets (Compare editions, action A): this song job is one
+   *  of a group recovered from a refused album request. The group hangs off
+   *  the refused album job (`parentKey`) in the Downloads panel; it carries
+   *  NO recommendationIds, so nothing about it can fulfil the album jot. */
+  group?: QueueGroup
+}
+export interface QueueGroup {
+  parentKey: string
+  label: string
+  /** How many tracks the picked edition has, and which positions were never selected (with why). */
+  of: number
+  position: number
+  notAcquired: Array<{ position: number; title: string; reason: string }>
+  skippedOwned: number
+  collectionId?: number
 }
 
 const normKey = (s: string): string => foldAccents(String(s || '')).replace(/[^a-z0-9]/g, '')
