@@ -282,3 +282,29 @@ catalog-details`, `sync-8f-fail-seal-short`, `sync-8e-fail-unknown`,
 `sync-8b-fail-wipe-unknown`, `sync-8c-fail-verify-partial-details`,
 `sync-8a-fail-prepare-unchanged`, `sync-11-eject-failed`, `sync-6-done`.
 Gate: 1,166 tests. Still not installed; A7 still waits for Jake.
+
+### A7 — supervised on the Mini (2026-09-06, 10:00–10:35 PM, Jake present)
+
+Run on the dev instance from `9d62f5f`/`ff9628c` with the real engine; the
+installed app stayed on `3a65f66` until the checks passed.
+
+| Step | Result |
+|---|---|
+| Pre-flight | no simulator booted; mount stable 8/8; Round Trip at plug-in: 24 plays home; header "On the iPod now: 500 songs · Fri 3:27 PM"; On This iPod read the 500-record catalog |
+| T1 · Activity Sync 100 | engine: 100 landed, sealed, 0 copy errors; 100 files on the card; **About: 100**. Page: strip walked to Seal but did not settle — the engine's cold remount during Verify drops the volume, the sidebar leaves the page, and the handler's result reached an unmounted component (the effect never ran). Fixed the same session: the timeline is fed from the status setter every handler calls, which runs regardless of mount. T1's strip was then settled from the ledger's truth. |
+| T2 (first try) | Cancel pressed before the engine ran (build/review stage): no engine call, but the strip stayed at Prepare. Fixed: a return to idle clears the strip when no events were seen, or marks it stopped otherwise. |
+| T2 · Cancel during Copy | page: "Stopped at Copy: You stopped the sync. 5 copied before the stop." + the cleared-again / previous-catalog line; header "Last verified: 100 songs … not verified"; Recent syncs "did not finish". Card: 0 music files, T1's iTunesDB untouched. Ledger: picks row, no result. Exactly the engine's behaviour. |
+| T3 · Activity Sync 500 | engine: 500 landed, sealed, 0 copy errors; page "Landed 500 of 500"; **About: 500**. |
+| T4 · Eject from the page | Mini showed OK to disconnect; no failure line. The forced-failure case stayed harness-only. |
+
+The iPod is left with a fully verified, playable 500-song set. Two page
+defects found and fixed on the spot (both render-side; the engine was not
+touched). Captures: `device-pre-1-page`, `device-pre-2-on-this-ipod`,
+`device-T1-done`, `device-T2-cancelled`.
+
+Follow-up noted during the session (Record Shop, not this slice): an
+exact-not-found verdict whose only near-match differs by one track's edit
+(Chocolate Chords — Terry Lee Brown Junior: Bandcamp's 12-track edition, track
+4 runs 8:04 vs 6:50) offers "Choose edition" with nothing different to choose.
+The panel should offer a useful third action (the matching tracks, or the
+near edition with the differing track marked).

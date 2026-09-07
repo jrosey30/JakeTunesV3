@@ -24,6 +24,11 @@ Supersedes [2026-09-05](master-plan-checkpoint-2026-09-05.md) for current status
 
 ## Recorded follow-ups (visible, not started)
 
+0. Downloads panel: an exact-not-found verdict whose only near-match differs by
+   one track's edit offers "Choose edition" with nothing different to choose
+   (Chocolate Chords, 9/6). Offer the matching tracks or the near edition with
+   the differing track marked.
+
 1. Tracklist auto-expansion on prefill when the plain edition takes the hero slot.
 2. Listen List cache freshness (the regular shop's hook does not subscribe to
    `recommendations-updated`; the Counter's reader always re-reads on mount).
@@ -63,8 +68,10 @@ sets, acceptance checks A1–A8). Jake approved the layout; the renderer slice
 is implemented and fixture-verified (A1–A6, A8 in the audit doc), then the
 result wording was corrected to derive mutation/catalog claims from phase
 evidence, label stale counts "Last verified", and never diagnose the card from
-a short count (regression cases + recaptures). A7 — the supervised sync,
-cancel and eject on the Mini — waits for Jake's presence. Not installed yet.
+a short count (regression cases + recaptures). A7 passed with Jake present
+(T1 100 landed = About 100; T2 cancel told the truth about the emptied card;
+T3 500 landed = About 500; T4 clean eject); two page defects found and fixed
+on the spot. Installed after the pass.
 
 Follow-ups 4 and 6 above are resolved inside the Downloads panel (Choose
 edition/version for refused verdicts; canceled jobs visible) and remain true
