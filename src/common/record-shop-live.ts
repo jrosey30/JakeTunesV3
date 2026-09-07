@@ -21,11 +21,14 @@ export const recommendationIdOf = (itemId: string): string | null => itemId.star
 /** Structural twin of the scheduler's QueueOrigin / QResult / QItem — the
  *  fields the shop reads. Kept structural so common never imports renderer. */
 export interface QueueOriginLike { recommendationIds: readonly string[]; entryId?: string; sourceKind?: string; sourceLabel?: string
-  group?: { parentKey: string; label: string; of: number; position: number; notAcquired: Array<{ position: number; title: string; reason: string }>; skippedOwned: number; collectionId?: number }
+  chosenInsteadOf?: { parentKey: string; label: string }
+  group?: { parentKey: string; label: string; of: number; position: number; notAcquired: Array<{ position: number; title: string; reason: string
+}>; skippedOwned: number; collectionId?: number }
 }
 export interface QueueResultLike {
   source: string; mediaType: string; id: string; desc: string; kind?: 'id' | 'query'; origin?: QueueOriginLike
   artist?: string; title?: string; album?: string; durationMs?: number; releaseYear?: number; collectionId?: number; trackCount?: number
+  sourceEdition?: import('./source-edition.ts').SourceEdition
 }
 export interface QueueItemLike {
   key: string; result: QueueResultLike; status: 'queued' | 'downloading' | 'done' | 'failed' | 'canceled'; attempt?: number

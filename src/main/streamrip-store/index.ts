@@ -30,6 +30,8 @@ import { buildRequestedAlbum, verifyAlbumCandidate, reconcileAlbumCompletion, de
 import { loadLibraryTracksLite } from '../import-pipeline.ts'
 import { itunesAlbumTracks, itunesFindAlbum } from '../download-search'
 import { buildRequestedRecording, verifyCandidate, finalOutcome, describeOutcome, type Alternative, type CandidateEvidence, type DownloadOutcome, type Provider } from '../exact-recording.ts'
+import { requestFromSourceEdition, verifySourceEdition } from '../source-edition-verify.ts'
+import type { SourceEdition } from '../../common/source-edition.ts'
 import { recoTitleMatches, recoArtistMatches } from '../reco-match.ts'
 import { isAllowedStreamripUrl } from '../url-safety'
 import { quietWarn } from '../flight-recorder'
@@ -633,7 +635,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
    *  still tight enough to refuse a 9-minute megamix or a 90-second interlude. */
   const CLEANED_TOLERANCE_SEC = 30
   const fmtDur = (s: number | null): string => s == null ? 'unknown length' : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`
-  ipc.handle('streamrip:download-by-query', async (_e, opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number }): Promise<DownloadResult & { matchDesc?: string }> => {
+  ipc.handle('streamrip:download-by-query', async (_e, opts: { sourceEdition?: SourceEdition; artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number }): Promise<DownloadResult & { matchDesc?: string }> => {
     cancelRequested = false            // new attempt = clean slate
     lastStageFailure = null            // never let an OLD rip's error explain THIS request
     const artist = (opts?.artist || '').trim()
@@ -785,7 +787,14 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     // on the provider's listing before a byte moves, and on the staged
     // files before import. Not proven = not imported, never partially.
     let reqAlbum: RequestedAlbum | null = null
-    if (wantAlbum) {
+    const sourceEdition = opts?.sourceEdition && opts.sourceEdition.provider === 'bandcamp' && opts.sourceEdition.url && opts.sourceEdition.tracks?.length ? opts.sourceEdition : null
+    if (wantAlbum && sourceEdition) {
+      // Action B (Compare editions): the request IS the source edition's own
+      // tracklist snapshot — no iTunes lookup, no other provider. Verified
+      // against that snapshot below; a changed source is refused.
+      reqAlbum = requestFromSourceEdition(sourceEdition)
+      trace.push(`source edition: ${sourceEdition.provider} ${sourceEdition.url} — ${sourceEdition.tracks.length} tracks (snapshot)`)
+    } else if (wantAlbum) {
       let cid = typeof opts?.collectionId === 'number' && opts.collectionId > 0 ? opts.collectionId : undefined
       // Rows without a collection id can acquire a tracklist only from an
       // unambiguous name/edition match. A bonus, live, or deluxe listing must
@@ -881,6 +890,24 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         detail: `${completion}. The tracks already imported are in your library. Retry to import the missing tracks.`,
       }
       return { ...dl, matchDesc: `${desc} — ${completion}`, completion, outcome: 'imported' }
+    }
+
+    if (sourceEdition && reqAlbum) {
+      // Action B: straight to the selected source; nothing else is tried.
+      if (cancelRequested) return { ok: false, error: 'canceled', outcome: 'canceled' }
+      const st = await stageBandcamp(sourceEdition.url)
+      if (!st.ok) { trace.push(`source edition stage: ${st.error}`); return { ok: false, error: st.error, outcome: 'provider-failed', primary: 'Download failed', detail: `The Bandcamp edition at ${sourceEdition.url} could not be fetched: ${st.error}` } }
+      const desc = `${sourceEdition.title} — ${sourceEdition.artist} (Bandcamp edition)`
+      const stagedAlbum = await albumFromStaged('bandcamp', st.staged, desc)
+      if (!stagedAlbum.artist) stagedAlbum.artist = sourceEdition.artist
+      const post = verifySourceEdition(sourceEdition, stagedAlbum)
+      if (post.verdict !== 'exact') {
+        await discardStaged(st.staged)
+        noteAlbumReject('bandcamp', stagedAlbum, post, sourceEdition.url)
+        return { ok: false, outcome: 'exact-not-found', error: post.reason, primary: 'Source edition changed', detail: `${post.reason}. Nothing was imported. Compare editions again to see the current tracklist.`, alternatives }
+      }
+      console.log(`[download] source edition resolved → ${sourceEdition.url}`)
+      return finishAlbum(st.staged, stagedAlbum, desc, post.evidence)
     }
 
     if (ranked2.length) {

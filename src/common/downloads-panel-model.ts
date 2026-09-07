@@ -14,6 +14,7 @@ import { refusedSelection } from './record-shop-commands.ts'
 import type { ShopItem, Snapshot } from './record-shop.ts'
 import { nearEditionOf } from './near-edition-detect.ts'
 import type { Alternative } from './acquisition-identity.ts'
+import { differsLine, sourceEditionLabel } from './source-edition.ts'
 
 export type PanelStatus = 'downloading' | 'queued' | 'done' | 'failed' | 'refused' | 'canceled'
 export type PanelAction = 'cancel' | 'retry' | 'chooseEdition' | 'chooseVersion' | 'compareEditions' | 'retryGroup'
@@ -26,6 +27,8 @@ export interface PanelRow {
   artist: string | null
   /** Edition identity: "album · 12 tracks · 1980 · iTunes 124906778". */
   edition: string | null
+  /** A source edition chosen instead of a picked one: "chosen instead of iTunes 96265705 · differs at track 4 (8:04 vs 6:50)". */
+  editionNote: string | null
   /** Provenance: "from Alex", "from your Listen List", "pasted link". */
   from: string | null
   /** "10 imported · 2 already in your library" (done). */
@@ -69,6 +72,7 @@ const STATUS_ORDER: Record<PanelStatus, number> = { downloading: 0, queued: 1, r
 
 function editionOf(r: QueueItemLike['result']): string | null {
   if (r.kind !== 'query') return null
+  if (r.sourceEdition) return `Bandcamp edition · ${sourceEditionLabel(r.sourceEdition, r.trackCount)}`
   const facts = [r.trackCount ? `${r.trackCount} tracks` : null, r.releaseYear ? String(r.releaseYear) : null, r.collectionId ? `iTunes ${r.collectionId}` : null].filter(Boolean)
   // The kind alone is not an edition — a bare song row shows nothing here.
   if (!facts.length) return null
@@ -109,6 +113,7 @@ export function panelRowFor(q: QueueItemLike, now: number): PanelRow {
   return {
     key: q.key, status, kind, title, artist,
     edition: editionOf(r),
+    editionNote: r.sourceEdition ? [r.origin?.chosenInsteadOf ? `chosen instead of ${r.origin.chosenInsteadOf.label}` : null, differsLine(r.sourceEdition, !r.origin?.chosenInsteadOf)].filter(Boolean).join(' · ') || null : null,
     from: provenanceOf(q),
     counts,
     completion: status === 'done' ? (q.completion || q.matchDesc || null) : null,
