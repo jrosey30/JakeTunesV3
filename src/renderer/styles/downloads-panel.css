@@ -125,3 +125,4 @@
 .dlp-child-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #222; }
 .dlp-child .dlp-status { font-size: 9px; }
 .dlp-child button { font-size: 9.5px; padding: 0 6px; border-radius: 3px; border: 1px solid #a9a9a9; background: linear-gradient(180deg, #fbfbfb, #e6e6e6); }
+.dlp-row-edition--note { color: #8a5a10; }

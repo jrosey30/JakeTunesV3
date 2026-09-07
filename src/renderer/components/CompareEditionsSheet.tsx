@@ -10,7 +10,7 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CompareEditionsResult } from '../../common/near-edition-types'
-import { planMatchingTrackGets, type MatchingTrackPlan } from '../../common/near-edition-actions'
+import { planMatchingTrackGets, planSourceEditionGet, type MatchingTrackPlan, type SourceEditionPlan } from '../../common/near-edition-actions'
 import '../styles/activity-sheet.css'
 import '../styles/compare-editions.css'
 
@@ -29,7 +29,7 @@ export interface CompareEditionsSubject {
 
 const fmt = (s: number | null | undefined): string => s == null ? '—' : `${Math.floor(s / 60)}:${String(Math.round(s) % 60).padStart(2, '0')}`
 
-export default function CompareEditionsSheet({ subject, onClose, onPasteLink, onGetMatching }: { subject: CompareEditionsSubject; onClose: () => void; onPasteLink: () => void; onGetMatching?: (plan: MatchingTrackPlan) => void }) {
+export default function CompareEditionsSheet({ subject, onClose, onPasteLink, onGetMatching, onGetEdition }: { subject: CompareEditionsSubject; onClose: () => void; onPasteLink: () => void; onGetMatching?: (plan: MatchingTrackPlan) => void; onGetEdition?: (plan: SourceEditionPlan) => void }) {
   const [state, setState] = useState<{ loading: boolean; error: string | null; data: CompareEditionsResult | null }>({ loading: true, error: null, data: null })
   useEffect(() => {
     let cancelled = false
@@ -46,6 +46,12 @@ export default function CompareEditionsSheet({ subject, onClose, onPasteLink, on
   // can never acquire anything.
   const plan = d ? planMatchingTrackGets(d, { parentKey: subject.parentKey, artist: subject.artist, album: subject.album, releaseYear: subject.releaseYear, sourceKind: subject.sourceKind, sourceLabel: subject.sourceLabel }) : null
   const [pressed, setPressed] = useState(false)
+  // Action B: the source edition — selected by its URL and tracklist
+  // snapshot. A confirmation step shows the identity and every runtime
+  // difference before anything is queued; the enqueue lives in the panel.
+  const editionPlan = d ? planSourceEditionGet(d, { parentKey: subject.parentKey, artist: subject.artist, album: subject.album, sourceKind: subject.sourceKind, sourceLabel: subject.sourceLabel }) : null
+  const [confirming, setConfirming] = useState(false)
+  const [editionPressed, setEditionPressed] = useState(false)
   // Portal to the body: the Downloads panel animates with a transform, which
   // would otherwise make this fixed overlay its captive.
   return createPortal(
@@ -97,15 +103,38 @@ export default function CompareEditionsSheet({ subject, onClose, onPasteLink, on
                 <p>{d.summary.matchingSentence}{plan && plan.skippedOwned.length ? ` Skipped as already yours: ${plan.skippedOwned.map((r) => `${r.n} “${r.wantTitle}”`).join(', ')}.` : ''}</p>
               </div>
               <div className="cmp-action">
-                <button type="button" className="activity-btn" disabled title="Not wired yet — this slice is read-only">Get the {d.found.label}</button>
-                <p>{d.summary.editionSentence}</p>
+                <button
+                  type="button"
+                  className="activity-btn"
+                  disabled={!editionPlan || 'error' in editionPlan || !onGetEdition || editionPressed}
+                  title={editionPlan && 'error' in editionPlan ? editionPlan.error : 'Review the differences, then confirm'}
+                  onClick={() => setConfirming(true)}
+                >{editionPressed ? 'Queued' : `Get the ${d.found.label}…`}</button>
+                <p>{d.summary.editionSentence}{editionPlan && 'error' in editionPlan ? ` ${editionPlan.error}` : ''}</p>
               </div>
+              {confirming && editionPlan && !('error' in editionPlan) && (
+                <div className="cmp-confirm" role="group" aria-label="Confirm the source edition">
+                  <div className="cmp-confirm-title">Confirm: get the Bandcamp edition</div>
+                  <div className="cmp-confirm-line"><b>Selected by:</b> {editionPlan.identityLine}</div>
+                  <div className="cmp-confirm-line"><b>Runtime differences from the edition you picked:</b></div>
+                  <ul className="cmp-confirm-diffs">
+                    {editionPlan.differences.length === 0 && <li>None — every track matches to within {d.toleranceSec} s.</li>}
+                    {editionPlan.differences.map((x) => <li key={x.position}>{x.line}</li>)}
+                  </ul>
+                  <div className="cmp-confirm-line">{editionPlan.recordedLine}</div>
+                  <div className="cmp-confirm-line">{editionPlan.neverLine}</div>
+                  <div className="cmp-confirm-actions">
+                    <button type="button" className="activity-btn" onClick={() => { if (!onGetEdition || editionPressed) return; setEditionPressed(true); setConfirming(false); onGetEdition(editionPlan) }}>Confirm — get {editionPlan.job.trackCount} tracks as the Bandcamp edition</button>
+                    <button type="button" className="activity-btn activity-btn--ghost" onClick={() => setConfirming(false)}>Back</button>
+                  </div>
+                </div>
+              )}
               <div className="cmp-action cmp-action--quiet">
                 <button type="button" className="activity-btn activity-btn--ghost" onClick={onPasteLink}>Paste a link to the exact edition</button>
                 <p>Opens Record Shop → Browse with Add by link. Nothing is acquired until you paste one and press Download.</p>
               </div>
             </div>
-            <p className="cmp-note">Opening this sheet acquired nothing. Only the button you press queues downloads; the Bandcamp edition button is not wired yet.</p>
+            <p className="cmp-note">Opening this sheet acquired nothing. Only a button you press queues downloads; the Bandcamp edition asks you to confirm first.</p>
           </>
         )}
         <div className="activity-sheet-actions">

@@ -10,7 +10,7 @@ import { useState, useCallback, useEffect, useImperativeHandle, forwardRef, useS
 import { useLibrary } from '../context/LibraryContext'
 import { openBrowse } from '../listen-to-the-list/ltlDownload'
 import CompareEditionsSheet, { type CompareEditionsSubject } from './CompareEditionsSheet'
-import type { MatchingTrackPlan } from '../../common/near-edition-actions'
+import type { MatchingTrackPlan, SourceEditionPlan } from '../../common/near-edition-actions'
 import { subscribeQueue, getQueue, cancel, retry, clearFinished, enqueue, type QResult } from '../views/DownloadStore/downloadQueue'
 import { downloadsPanelRows, panelSummary, type PanelRow } from '../../common/downloads-panel-model'
 import '../styles/downloads-panel.css'
@@ -89,6 +89,11 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
     for (const j of plan.jobs) enqueue(j as unknown as QResult)
     setCompare(null)
   }
+  // Action B: one album job selected by source identity + tracklist snapshot.
+  const getEdition = (plan: SourceEditionPlan) => {
+    enqueue(plan.job as unknown as QResult)
+    setCompare(null)
+  }
   const retryGroup = (row: PanelRow) => {
     for (const c of row.group?.children ?? []) if (c.status === 'failed' || c.status === 'refused' || c.status === 'canceled') retry(c.key)
   }
@@ -130,6 +135,7 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
               <div className="dlp-row-title" title={row.title}>{row.title}</div>
               {row.artist && <div className="dlp-row-artist">{row.artist}</div>}
               {row.edition && <div className="dlp-row-edition">{row.edition}</div>}
+              {row.editionNote && <div className="dlp-row-edition dlp-row-edition--note">{row.editionNote}</div>}
               {row.counts && <div className="dlp-row-counts">{row.counts}</div>}
               {row.primary && <div className="dlp-row-primary">{row.primary}</div>}
               <div className="dlp-row-actions">
@@ -176,7 +182,7 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
           )
         })}
       </ul>
-      {compare && <CompareEditionsSheet subject={compare.subject} onClose={() => setCompare(null)} onPasteLink={() => pasteLinkFor(compare.row)} onGetMatching={getMatching} />}
+      {compare && <CompareEditionsSheet subject={compare.subject} onClose={() => setCompare(null)} onPasteLink={() => pasteLinkFor(compare.row)} onGetMatching={getMatching} onGetEdition={getEdition} />}
     </div>
   )
 })
