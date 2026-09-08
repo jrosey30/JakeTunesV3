@@ -62,3 +62,13 @@ report assumed, and the scan's aged-suspect count goes back to meaning
   cos 1.0000 vs last night's), candidate rt deltas
 - trainer log 2026-09-06 06:00:07Z line: `0 newly analysed, 500 on an
   older encoding, 0 whose bpm changed`
+
+## 2026-09-08 — 4th data point + exact queue position
+
+Watchlist 33/34 (11467–11499; id 454 cleared) STILL te=False after a
+4th consecutive `500 on an older encoding` night. New tonight: exact
+queue math from the live descriptors — the watchlist sits at position
+~7,488 of the 7,588-entry te≠3 library-order queue, i.e. **~14 more
+nights** before the trainer reaches it at 500/night (te=2 backlog
+7,481, draining ~500/night as predicted). Every fresh import lands
+BEHIND that backlog. Script: `watch_20260908.py`.
