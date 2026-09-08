@@ -1703,7 +1703,19 @@ export function createSyncEngine(host: SyncEngineHost) {
           const localBytes = contig.bytes
           let catalogConsecutive = 0
           let readback: { tracks: Array<Record<string, unknown>>; playlists?: unknown[] } | null = null
-          const CATALOG_PROOF_ROUNDS = syncOpts?.wipeFirst ? 4 : 2
+          // Both paths demand the SAME proof — two CONSECUTIVE cold-remount
+          // matches (catalogOnCardProven). What differed was the budget: the
+          // activity rebuild got 4 rounds to find them, the full mirror got
+          // exactly 2, so a single transient read was fatal with no round
+          // left to retry. Measured 2026-09-07: this volume is 249 GB of
+          // FAT32 under fskit and diskarbitrationd took 8.6 s to finish one
+          // mount ("mounted disk, ongoing" 23:52:50.158 → "success"
+          // 23:52:58.749). A read landing in that window burned one of the
+          // only two rounds and the sync refused a catalog that was in fact
+          // correct on the card — verified independently afterwards, GREEN,
+          // 10,645 records, zero id inversions. Same budget for both paths;
+          // the bar to clear is unchanged.
+          const CATALOG_PROOF_ROUNDS = 4
           for (let round = 1; round <= CATALOG_PROOF_ROUNDS; round++) {
             if (catalogConsecutive === 0) {
               try {
