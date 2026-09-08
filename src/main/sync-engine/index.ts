@@ -722,7 +722,15 @@ export function createSyncEngine(host: SyncEngineHost) {
             const hint = (codecByAbsPath.get(localFile) || '').toLowerCase()
             const hintSaysLossless = hint === 'alac' || LOSSLESS_CODECS.has(hint)
             const isLossless = LOSSLESS_EXTS.has(localExt) || hintSaysLossless
-            if (!(convertOptions?.enabled && isLossless)) {
+            // …and a file the Mini cannot actually play must be requeued
+            // even when it is byte-identical, because byte-identical is
+            // exactly the problem: the unplayable original is already
+            // sitting on the card. Skipping here is how the 5.1 record
+            // survived a second full sync and failed the firmware gate
+            // again (2026-09-07). The copy step swaps it for a stereo
+            // mirror; the master is untouched.
+            const unplayableOnDevice = exceedsIpodPlayableCeiling(ls.size, Number(track.duration || 0))
+            if (!unplayableOnDevice && !(convertOptions?.enabled && isLossless)) {
               if (typeof track.id === 'number' && ipodSize > 0) {
                 alreadyOnDevice.push({ id: track.id, srcPath: localFile, dstPath: ipodFile, expectedSize: ipodSize })
               }
