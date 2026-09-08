@@ -30,7 +30,7 @@ import { orderForIpodCatalog, conformCatalogIdOrder } from '../ipod-catalog-orde
 import {
   ACTIVITY_WIPE_MAX_PASSES, activitySetProven, activityWipeEmptyStreak, activityWipeProvenEmpty,
   catalogBytesMatch, catalogOnCardProven, fileSizeForItunesDb, ipodFirmwareWillList,
-  ipodPlayableDestPath, needsIpodAlacTranscode, sampleRateForItunesDb,
+  exceedsIpodPlayableCeiling, ipodPlayableDestPath, needsIpodAlacTranscode, sampleRateForItunesDb,
 } from '../ipod-reconcile.ts'
 import { confirmWriteOnCard, flushCardCaches, remountVerifyEntries, retireIpodFirmwareScratch } from '../ipod-sync-card.ts'
 import {
@@ -997,7 +997,18 @@ export function createSyncEngine(host: SyncEngineHost) {
       // Mini cannot index FLAC. If we are still pointing at a .flac (convert
       // off, or AAC mirror failed), transcode to ipod-safe ALAC .m4a. Never
       // copy the FLAC bytes onto the card — that's a Songs skip.
-      if (needsIpodAlacTranscode(srcToCopy)) {
+      // …and the same mirror rescues a file that is lossless but not
+      // stereo CD-quality (multichannel or high-res). Those index fine and
+      // play silent, and the out-of-range bitrate fails the firmware gate,
+      // which refuses the whole sync over one record.
+      const overCeiling = !needsIpodAlacTranscode(srcToCopy)
+        && await (async () => {
+          try {
+            const st = await stat(srcToCopy)
+            return exceedsIpodPlayableCeiling(st.size, Number(trackByLocal.get(local)?.duration || 0))
+          } catch { return false }
+        })()
+      if (needsIpodAlacTranscode(srcToCopy) || overCeiling) {
         try {
           sendToRenderer('sync-progress', {
             phase: 'copy', current: copied + copyErrors, total: totalToCopy,

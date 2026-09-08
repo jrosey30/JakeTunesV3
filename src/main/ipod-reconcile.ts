@@ -381,6 +381,31 @@ export function needsIpodAlacTranscode(pathOrExt?: string | null): boolean {
 }
 
 /**
+ * Stereo 16-bit / 44.1 kHz PCM is 1411 kbps, and ALAC is lossless — it can
+ * never meaningfully exceed its own PCM. So a lossless file measuring above
+ * that ceiling is NOT stereo CD-quality: it is multichannel, or high-res, or
+ * both. Either way Mini 1.4.1 cannot play it — a 5.1 track indexes fine and
+ * then plays SILENT (see the -ac 2 lesson from the disc pipeline).
+ *
+ * Found 2026-09-07: "Spaceballs (Main Title)" is 6-channel ALAC at 2081 kbps.
+ * It was the single record that failed the firmware semantic gate ("1/10619
+ * track(s) have out-of-range bitrate") and blocked a whole-library sync of
+ * 10,619 files. Routing it through buildIpodSafeAlacMirror (16-bit, 44.1 kHz,
+ * downmixed to stereo) makes it playable and leaves the master untouched.
+ *
+ * Size-and-duration only: no probe, no per-file ffprobe on a 10k-track sync.
+ * In Jake's library exactly one file trips it.
+ */
+export const IPOD_STEREO_LOSSLESS_CEILING_KBPS = 1450
+
+export function exceedsIpodPlayableCeiling(fileSize?: number | null, durationMs?: number | null): boolean {
+  const fs = Number(fileSize || 0)
+  const ms = Number(durationMs || 0)
+  if (fs <= 0 || ms <= 0) return false
+  return (fs * 8) / (ms / 1000) / 1000 > IPOD_STEREO_LOSSLESS_CEILING_KBPS
+}
+
+/**
  * Fold characters Mini 1.4.1 silently drops, without blanking a title
  * that has no Latin equivalent (Hebrew "דג" must not become "").
  *

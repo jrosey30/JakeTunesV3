@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  exceedsIpodPlayableCeiling,
   planReconcile,
   partitionLanded,
   sizeVerified,
@@ -407,5 +408,22 @@ describe('isIpodFirmwareScratchName — leftover Play Counts is a 450 abort', ()
     assert.equal(isIpodFirmwareScratchName('iTunesDB'), false)
     assert.equal(isIpodFirmwareScratchName('iTunesPrefs'), false)
     assert.equal(isIpodFirmwareScratchName('song.m4a'), false)
+  })
+})
+
+describe('exceedsIpodPlayableCeiling', () => {
+  it('passes ordinary stereo lossless and catches the 5.1 record that failed the gate', () => {
+    // Stereo 16/44.1 ALAC album track, ~1000 kbps.
+    assert.equal(exceedsIpodPlayableCeiling(30_000_000, 240_000), false)
+    // The real offender: Spaceballs (Main Title), 6-channel ALAC, 2081 kbps.
+    assert.equal(exceedsIpodPlayableCeiling(40_092_636, 154_091), true)
+    // Stereo CD PCM itself (1411 kbps) must not be rerouted.
+    assert.equal(exceedsIpodPlayableCeiling((1411 * 1000 / 8) * 300, 300_000), false)
+  })
+
+  it('never fires on an unknown size or duration', () => {
+    assert.equal(exceedsIpodPlayableCeiling(0, 154_091), false)
+    assert.equal(exceedsIpodPlayableCeiling(40_092_636, 0), false)
+    assert.equal(exceedsIpodPlayableCeiling(null, null), false)
   })
 })

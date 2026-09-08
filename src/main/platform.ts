@@ -690,6 +690,10 @@ async function convertToIpodSafeAlac(src: string, dest: string, readTimeoutMs = 
       '-map', '0:a:0',
       '-sample_fmt', 's16',
       '-ar', '44100',
+      // Downmix to stereo. The Mini has no multichannel decoder: a 5.1
+      // track indexes and then plays SILENT. "iPod-safe" has to mean the
+      // channel count too, not just bit depth and sample rate.
+      '-ac', '2',
       '-f', 'wav',
       '-loglevel', 'error',
       wavTmp,
