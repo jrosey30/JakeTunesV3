@@ -38,6 +38,7 @@ import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, 
 import { writeJsonAtomic } from './atomic-write'
 import { resolveContainedPath, isSafeCacheKey, isPathInside } from './path-safety'
 import { isHomeminiPlaybackClient, mayFollowPlaybackSymlink } from './stream-playback'
+import { streamVariant, normalizeStreamKbps, STREAM_KBPS_DEFAULT } from './stream-format'
 import {
   phonePlaylistSidecarsNeverPushFromDesktop,
   assertNoDesktopBluntPush,
@@ -4282,6 +4283,27 @@ async function trackIdForAbsPath(absPath: string): Promise<string | number | nul
   } catch { return null }
   return streamTrackIdByColonPath.get(colon) ?? null
 }
+// Compressed-stream marker: a machine on a link too thin for lossless
+// carries ~/.config/jaketunes/stream-compressed (optionally containing a
+// kbps number). Cached like streamSource — this is the playback hot path.
+// Absent = unchanged behaviour, which is what every machine but workmini
+// wants.
+let _streamCompressedCache: { on: boolean; kbps: number; t: number } | null = null
+async function readStreamCompressedCached(): Promise<{ on: boolean; kbps: number }> {
+  const now = Date.now()
+  if (_streamCompressedCache && now - _streamCompressedCache.t < 5000) return _streamCompressedCache
+  let on = false
+  let kbps = STREAM_KBPS_DEFAULT
+  try {
+    const raw = await readFile(join(process.env.HOME || '', '.config/jaketunes/stream-compressed'), 'utf8')
+    on = true
+    const n = parseInt(raw.trim(), 10)
+    if (Number.isFinite(n)) kbps = normalizeStreamKbps(n)
+  } catch { /* no marker — fat link, serve the original */ }
+  _streamCompressedCache = { on, kbps, t: now }
+  return _streamCompressedCache
+}
+
 async function fetchAudioFromHomemini(
   id: string | number,
   rangeHeader: string | null,
@@ -4296,10 +4318,12 @@ async function fetchAudioFromHomemini(
   // transcode cache is empty. A short header budget then looks like "music
   // doesn't play" until relaunch warms the cache. Give headers room; the body
   // is never aborted by this timer (fetchHeadersWithin).
-  const headerBudgetMs = wantFlac ? 25_000 : 12_000
-  const url = `${HOMEMINI_AUDIO_BASE}/${encodeURIComponent(String(id))}${wantFlac ? '?fmt=flac' : ''}`
+  const compressed = await readStreamCompressedCached()
+  const variant = streamVariant({ compressed: compressed.on, kbps: compressed.kbps, wantFlac })
+  const headerBudgetMs = variant.transcoding ? 25_000 : 12_000
+  const url = `${HOMEMINI_AUDIO_BASE}/${encodeURIComponent(String(id))}${variant.query}`
   // Spool ("do the deeper buffering thing", 2026-08-28): a landed local copy serves every range from disk — WAN jitter can't reach a playing song. Not landed yet: kick the full download, live-proxy this request as before.
-  const viaSpool = await spoolAwareServe(join(app.getPath('userData'), 'stream-spool'), `${id}${wantFlac ? '-flac' : ''}`, url, rangeHeader); if (viaSpool) return viaSpool
+  const viaSpool = await spoolAwareServe(join(app.getPath('userData'), 'stream-spool'), `${id}${variant.spoolSuffix}`, url, rangeHeader); if (viaSpool) return viaSpool
 
   const once = async (): Promise<Response | null> => {
     try {
@@ -4324,7 +4348,7 @@ async function fetchAudioFromHomemini(
       if (!res.body) return null
       const out: Record<string, string> = {
         'Accept-Ranges': 'bytes',
-        'X-JT-Audio-Source': wantFlac ? 'homemini-flac' : 'homemini',
+        'X-JT-Audio-Source': variant.label,
       }
       const ct = res.headers.get('content-type'); if (ct) out['Content-Type'] = ct
       const cr = res.headers.get('content-range'); if (cr) out['Content-Range'] = cr
