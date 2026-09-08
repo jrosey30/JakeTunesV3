@@ -36,6 +36,47 @@ const RETRY_COOLDOWN_MS = 60_000
 const inFlight = new Map<string, Promise<void>>()
 const failedAt = new Map<string, number>()
 
+// ── One spool at a time, newest first ────────────────────────────────────
+//
+// The spool exists to keep WAN jitter away from a playing song. Unbounded,
+// it does the exact opposite. Measured on workmini 2026-09-08: 140 tracks
+// downloading AT ONCE, 920 MB spooled, the whole link split 140 ways — so
+// the ONE track actually playing got a sliver, its buffer drained, and the
+// music stopped and started. Every range request kicks a spool, and a
+// library view or a queue walk touches many tracks, so "many at once" is
+// the normal case, not an edge case.
+//
+// Two rules fix it:
+//   • ACTIVE_LIMIT 1 — a spool takes the link, finishes fast (a 5 MB AAC
+//     track lands in ~9s at office throughput), and gets out of the way.
+//     Serial is not slower overall; it just stops starving the listener.
+//   • LIFO — the most recently requested track is the one being listened
+//     to. FIFO would make the playing song wait behind a queue of stale
+//     interest from a scroll five minutes ago.
+//
+// Same doctrine as the cache-fill rate limit: a batch job yields to
+// playback.
+const ACTIVE_LIMIT = 1
+// Waiting interest goes stale; a huge backlog is just the same starvation
+// deferred. Oldest waiters fall off.
+const WAITING_LIMIT = 24
+let activeSpools = 0
+const waiting: Array<{ key: string; start: () => void }> = []
+
+function pumpSpools(): void {
+  while (activeSpools < ACTIVE_LIMIT) {
+    const next = waiting.pop()          // LIFO: newest interest wins
+    if (!next) return
+    activeSpools++
+    next.start()
+  }
+}
+
+/** Test seam: how many downloads are running and queued. */
+export function spoolQueueState(): { active: number; waiting: number } {
+  return { active: activeSpools, waiting: waiting.length }
+}
+
 const donePath = (dir: string, key: string): string => join(dir, `${key}.done`)
 const metaPath = (dir: string, key: string): string => join(dir, `${key}.meta.json`)
 
@@ -58,7 +99,15 @@ export function ensureSpool(dir: string, key: string, url: string, fetchFn: type
   if (inFlight.has(key)) return
   const lastFail = failedAt.get(key)
   if (lastFail && Date.now() - lastFail < RETRY_COOLDOWN_MS) return
+  // Registered in inFlight while QUEUED as well as while downloading, so a
+  // repeat request for the same track can't stack a second entry.
+  let release = (): void => {}
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  waiting.push({ key, start: release })
+  while (waiting.length > WAITING_LIMIT) waiting.shift()   // drop stalest interest
   const run = (async () => {
+    await gate
+    try {
     await mkdir(dir, { recursive: true })
     if (await spoolReady(dir, key)) return
     const part = join(dir, `${key}.part.${process.pid}`)
@@ -83,9 +132,14 @@ export function ensureSpool(dir: string, key: string, url: string, fetchFn: type
       try { await unlink(part) } catch { /* never landed */ }
       console.warn(`[stream-spool] ${key} failed (live proxy continues):`, err instanceof Error ? err.message : err)
     }
+    } finally {
+      activeSpools--
+      pumpSpools()
+    }
   })()
   inFlight.set(key, run)
   void run.finally(() => inFlight.delete(key))
+  pumpSpools()
 }
 
 /** Oldest spooled tracks fall off past the cap. .part files are never touched. */

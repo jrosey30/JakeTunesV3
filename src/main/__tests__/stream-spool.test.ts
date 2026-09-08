@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { mkdtemp, writeFile, readFile, stat } from 'fs/promises'
-import { spoolReady, ensureSpool, serveSpoolRange, enforceSpoolCap } from '../stream-spool.ts'
+import { spoolReady, ensureSpool, serveSpoolRange, enforceSpoolCap , spoolQueueState} from '../stream-spool.ts'
 
 const fakeAudio = (bytes: number) => Buffer.alloc(bytes, 7)
 
@@ -82,4 +82,41 @@ describe('enforceSpoolCap', () => {
     await stat(join(dir, 'new.done'))
     await stat(join(dir, 'keep.part.123'))
   })
+})
+
+test('a burst of tracks downloads one at a time, newest first', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'jt-spool-burst-'))
+  const started: string[] = []
+  const finish = new Map<string, () => void>()
+
+  // A fetch that never resolves until the test releases it, so we can see
+  // exactly how many downloads are allowed to run at once.
+  const fetchFn = (async (url: string) => {
+    const id = String(url).split('/').pop() as string
+    started.push(id)
+    await new Promise<void>((resolve) => finish.set(id, resolve))
+    return new Response(new Uint8Array([1, 2, 3]), {
+      status: 200,
+      headers: { 'content-type': 'audio/mp4', 'content-length': '3' },
+    })
+  }) as unknown as typeof fetch
+
+  for (const id of ['a', 'b', 'c', 'd']) ensureSpool(dir, id, `http://h/${id}`, fetchFn)
+  await new Promise((r) => setTimeout(r, 20))
+
+  // The whole point: a burst must not put the link into four-way contention.
+  assert.equal(started.length, 1, 'only one download may run at a time')
+  assert.equal(started[0], 'a', 'a lone request never waits — it takes the free slot')
+  assert.equal(spoolQueueState().active, 1)
+  assert.equal(spoolQueueState().waiting, 3)
+
+  // The backlog drains NEWEST first: by the time a slot frees, the track the
+  // listener is on is the one most recently asked for, not the stalest.
+  finish.get('a')!()
+  await new Promise((r) => setTimeout(r, 30))
+  assert.equal(started.length, 2)
+  assert.equal(started[1], 'd', 'newest interest wins the freed slot')
+
+  for (const [, f] of finish) f()
+  await new Promise((r) => setTimeout(r, 30))
 })
