@@ -12,6 +12,14 @@
 //
 //   "A landmark 1973 krautrock album."
 //
+// The listening data is SEASONING, not the subject (2026-09-09, Jake:
+// "is he just going to comment on the amount of plays i have???"). The
+// original prompt said "React to the listening pattern", so every take
+// came out as an audit of his play counts — a clerk with a moustache
+// reading him a analytics dashboard. He is a record store clerk: the
+// RECORD is the subject, and what he knows about how you listen only
+// tints the tone.
+//
 // So the work here is mostly in buildItemRelationship(): mine the
 // library + play log for how THIS user actually listens to THIS record
 // (recent vs total plays, how cold it's gone, which tracks they skip,
@@ -200,9 +208,13 @@ function buildBlurbUserMessage(input: GenerateBlurbInput): string {
   return [
     `You're behind the counter of WJLR Records on Atlantic Ave. A regular just pulled ${r.artist} — ${r.title} off the ${input.shelfTitle} shelf.`,
     '',
-    'Say something about THEIR relationship with this exact record — the notes below are how they actually listen to it. 1-3 sentences, your voice. No plot summary, no track-by-track recap — they own it. React to the listening pattern; do NOT just restate the numbers. If a fact isn\'t given, talk about the sound or your take — never invent one.',
+    'Talk about THE RECORD. What it sounds like, what it was reaching for, who played on it, how it was made, where it sits next to its neighbours, what to listen for. 1-3 sentences, your voice — a clerk talking about something he actually loves.',
     '',
-    `How they listen to ${r.artist} — ${r.title}:`,
+    'The notes below are how this regular happens to listen to it. That is BACKGROUND ONLY: it may quietly shade your tone — an old favourite, a stranger, a summer record — but it is never the subject. Do NOT recite play counts, dates, skips, or how long it has been. Do NOT scold them for not playing it enough. Do NOT make the take about their habits at all. If nothing about the record comes to mind, say something honest about the sound rather than reaching for the numbers.',
+    '',
+    'Never invent a fact you were not given.',
+    '',
+    `Background on how they listen to ${r.artist} — ${r.title} (do not quote):`,
     formatRelationshipForPrompt(r),
   ].join('\n')
 }
