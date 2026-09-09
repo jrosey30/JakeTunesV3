@@ -555,3 +555,33 @@
   .recordstore__scene-bg, .crate__card, .rs-hotspot::before, .rs-hotspot__label, .counter__card { transition: none; }
   .recordstore__mm { animation: none; }
 }
+
+/* ── The shop's speakers ──────────────────────────────────────────────
+   Sits opposite "Leave the shop", same plate so the two controls read as
+   the room's fixtures rather than app chrome. Muted when off, so a glance
+   tells you whether the store is playing. */
+.recordstore__speaker {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  appearance: none;
+  background: rgba(28, 22, 18, 0.86);
+  border: 1px solid #d8a25a;
+  color: #f4ece0;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.recordstore__speaker:hover { background: rgba(60, 46, 36, 0.92); }
+.recordstore__speaker--off {
+  border-color: rgba(216, 162, 90, 0.4);
+  color: rgba(244, 236, 224, 0.55);
+}
+.recordstore__speaker-label { letter-spacing: 0.01em; }
