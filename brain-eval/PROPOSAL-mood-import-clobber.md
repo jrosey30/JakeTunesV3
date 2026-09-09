@@ -162,3 +162,16 @@ trainer finished 02:09 — for the first time. Consequences beyond the usual moo
 - Fixes 4/5 (drop mood-index from autoBackupStateToNas + repair the app's local copy) should
   now be read as: drop BOTH brain indexes from the mtime-wins replay, or make the replay
   merge-aware. Until then every import day risks reverting the night's enrichment wholesale.
+
+## 2026-09-09 — orphan-prune fix QUANTIFIED (read-only decomposition, exp_20260909_sag_decomp.py)
+
+First orphan-ONLY measurement (prior candidates always bundled prunes with re-embeds):
+pruning the 18 standing mood orphans (identity-gated: ids not in library.json; all from
+same-day-deleted imports 09-05/09-08) = **router-truth 0.805 → 0.818 (+0.013), worst
+per-probe delta +0.00** (ret-007 0.56→0.68, ret-008 0.96→1.00, ret-013 0.80→0.83).
+This component NEVER self-heals — the tracks are deleted, so no enrichment ever arrives,
+and the trainer never prunes the mood index. It also can't be fixed durably NAS-side:
+the next replay event resurrects the whole stale map. So "prune orphans in the trainer"
+(fix 2) is now worth a measured, permanent ~+0.013 router-truth on top of preventing the
+poison from accruing — cheap, identity-gated, and proven durable across trainer writes
+(08-19). NOT applied tonight per the ≥0.83 apply band + 09-05/06/08 precedent.

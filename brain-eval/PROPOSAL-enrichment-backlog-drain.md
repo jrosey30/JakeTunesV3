@@ -53,3 +53,13 @@ gives them tempo encoding; both are needed before a wave stops costing
 - `rt_20260908.py` — router-truth series point 0.808
 - `diag_ret007_20260908.py` — bare-genre hijack of ret-007, verified
 - REPORT-20260904-nightly.md — the "~0.82 wave ceiling" first noted
+
+## 2026-09-09 update — backlog turned around; sag decomposed
+
+- Backlog series now 315→458→542→564→**533** — first shrink night (+19-import day;
+  batch=50 wins when imports < 50/day). The proposal stands for wave days, but no
+  emergency drain is needed right now.
+- exp_20260909_sag_decomp.py decomposed the rt sag (0.805 tonight): un-enriched
+  component +0.022 (self-heals ~50/night), orphan component +0.013 (never heals —
+  see PROPOSAL-mood-import-clobber 09-09 note). Post-wave ceiling estimate **0.840**
+  = the healthy band, so the sag is fully accounted for; nothing hidden is broken.
