@@ -42,8 +42,16 @@ export function pickDeezerPreview(
 export function registerPreviewRefreshIpc(ipc: IpcRegistrar): void {
   ipc.handle('refresh-deezer-preview', async (_e, artist: string, title: string): Promise<{ ok: boolean; previewUrl?: string }> => {
     try {
-      const q = `artist:"${String(artist || '').trim()}" track:"${String(title || '').trim()}"`
-      const res = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=10`)
+      // 2026-09-09: Deezer's advanced search syntax (artist:"x" track:"y")
+      // now returns ZERO rows for unauthenticated calls — verified against
+      // PJ Harvey / Rid of Me and Nirvana / Lithium, with and without the
+      // quotes. Every refresh "missed", the player fell back to the cached
+      // link, and that 403'd (the console Jake sent). A plain query returns
+      // the track and its fresh preview fetches 200 audio/mpeg. The strict
+      // matcher below is what keeps a plain query honest: wrong preview is
+      // still worse than no preview.
+      const q = `${String(artist || '').trim()} ${String(title || '').trim()}`.trim()
+      const res = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=12`)
       if (!res.ok) return { ok: false }
       const data = await res.json() as { data?: DeezerTrackRow[] }
       const url = pickDeezerPreview(data.data || [], artist, title)

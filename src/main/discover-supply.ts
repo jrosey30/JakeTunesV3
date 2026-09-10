@@ -184,8 +184,14 @@ export async function harvestCuratorSongs(
     if (deps.ownsSong(c.artist, c.title)) continue
     const n = perArtist.get(c.artist) || 0
     if (n >= 2) continue
-    const q = encodeURIComponent(`artist:"${c.artist}" track:"${c.title}"`)
-    const rows = arr(await deps.fetchJson(`${API}/search?q=${q}&limit=5`).catch(() => null))
+    // 2026-09-09: Deezer's advanced syntax (artist:"x" track:"y") returns
+    // ZERO rows unauthenticated now — verified on PJ Harvey / Rid of Me and
+    // Nirvana / Lithium. Every song in this lane silently missed, and the
+    // report called it a shortfall. Plain query; the strict artist/title
+    // match below is what keeps it honest, so limit goes up to give the
+    // exact row room among covers and remixes.
+    const q = encodeURIComponent(`${c.artist} ${c.title}`)
+    const rows = arr(await deps.fetchJson(`${API}/search?q=${q}&limit=10`).catch(() => null))
     const hit = rows.find((t) => {
       const ra = norm(str((t.artist as { name?: string } | undefined)?.name || ''))
       const rt = norm(str(t.title))
