@@ -821,6 +821,19 @@
   white-space: nowrap;
 }
 
+/* Real streamrip/Qobuz reason — FAILED alone was a dead end (tooltip-only). */
+.ltl-tri-error {
+  margin-top: 3px;
+  max-width: 42em;
+  font-size: 11px;
+  line-height: 1.35;
+  color: #a15c16;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
 /* ── triage-first header ───────────────────────────────────────────────────
  * The page used to stack four jobs vertically — capture box, live suggestions,
  * Friends leaderboard, permission banner — and only then the inbox, which was
