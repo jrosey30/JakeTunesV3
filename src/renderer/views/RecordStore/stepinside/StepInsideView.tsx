@@ -66,9 +66,13 @@ const DEMO: DemoStep[] = [
 // Digging is framed from over the FRONT rail, like standing at the bin:
 // close, looking down ~40°, so the selected cover is legible and the run
 // of sleeve tops behind it is in frame.
-const DIG_DISTANCE = 1.25
-const DIG_HEIGHT = 2.0
-const DIG_LOOK_Y = 1.0
+// High and close, looking down ~57°: from there the line of sight to the
+// selected record's BOTTOM edge passes over the flipped pile at the front,
+// so the whole cover shows. At 40° the pile sat between camera and record
+// and hid its lower half.
+const DIG_DISTANCE = 0.9
+const DIG_HEIGHT = 2.35
+const DIG_LOOK_Y = 0.95
 
 type Mode = 'walk' | 'dig'
 

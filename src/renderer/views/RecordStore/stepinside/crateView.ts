@@ -32,21 +32,26 @@ const LEAN = 0.10                 // the packed stack leans back a touch
 // Flipped-past records lean forward INSIDE the bin against the front wall,
 // tops just over the rail. The old pose pivoted AT the rail and tipped 40°,
 // which swung the whole sleeve out past the front wall to hang in the air.
-const PASSED = 0.45
-const PASSED_INSET = 0.06         // pivot sits this far inside the front wall
+// A leaning record TOUCHES the wall: with the wall 0.30 m above the base,
+// a pivot 0.11 m inside and a 0.34 rad lean put the sleeve's face exactly
+// on the rail's inner edge, top 10 cm over it. The old 0.45 rad from 6 cm
+// inside pushed the top 21 cm past the wall — a slab lying on the rail.
+const PASSED = 0.34
+const PASSED_INSET = 0.11
 // The one you're on is lifted and rested on top of the flipped pile, the way
 // a digger holds a record up to look at it — whole cover clear of the pile,
 // bottom edge on the pile, nothing floating.
-const SEL_LIFT = 0.10
+// Barely a nudge: 10 cm left the record hovering with empty bin under it.
+const SEL_LIFT = 0.03
 // The selection comes FORWARD and stays near-upright. Leaning it back put
 // its top behind the tops of the records behind it, which then overlapped
 // the cover mid-flip.
-const SEL_TILT = -0.30           // leans back to face a camera over the front rail
+const SEL_TILT = -0.26           // leans back toward a camera high over the front rail
 // While digging, the pack BEHIND the selection leans back with it, a touch
 // further, the way a pile gives when you tip a record against it. Without
 // this the selection leaned into the sleeve behind and the face you saw
 // was the next record's, not the one named on the card.
-const STACK_TILT = -0.36
+const STACK_TILT = -0.30
 // No forward push: 0.12 m carried the sleeve THROUGH the front rail, so from
 // the room it sat on the crate rather than in it. The lift alone keeps its
 // top clear of the records behind.
@@ -86,7 +91,9 @@ export function buildCrateView(records: CrateRecord[]): CrateView {
   // The pack is anchored at the BACK of the bin. Digging moves records to a
   // pile at the front wall, so the gap opens exactly where you are and the
   // record you're on can stand in it — in the crate, not lifted out of it.
-  const backZ = -BIN.innerHalfZ + 0.04
+  // 20 cm behind the pack so it can lean back with the selection without
+  // the last record's top going through the back wall.
+  const backZ = -BIN.innerHalfZ + 0.20
   const frontZ = BIN.innerHalfZ
   const n = records.length
   const zFor = (i: number): number => backZ + (n - 1 - i) * SPACING
