@@ -53,9 +53,12 @@ const SEL_TILT = -0.26
 // While digging, the pack BEHIND the selection leans back with it, a touch
 // further, so the selection never leans into the sleeve behind it.
 const STACK_TILT = -0.30
-// Held pose: bottom edge a little above the pile tops, pivot just past the
-// front wall, leaned back ~30° so it squares up to a face at the rail.
-const HOLD_LIFT = 0.52
+// Held pose: pivot just past the front wall, leaned back ~30° so it squares
+// up to a face at the rail. The lift clears the TALLEST thing in the pile
+// from the eye's line of sight — a divider's tab, 10 cm over the sleeve
+// tops — not just the sleeves. 0.52 cleared the sleeves and put the record's
+// foot behind the tabs, and the cover showed through the gap above them.
+const HOLD_LIFT = 0.66
 const HOLD_FWD = 0.02
 const HOLD_TILT = -0.55
 const PULL_SECONDS = 0.55
