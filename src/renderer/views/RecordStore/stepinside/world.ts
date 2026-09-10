@@ -13,6 +13,7 @@
  */
 import * as THREE from 'three'
 import type { Blocker } from './playerModel'
+import { woodTexture, plasterTexture, floorboardTexture } from './textures'
 
 export const SHOP_DOOR_Z = -6
 export const SHOP_INTERIOR = { minX: -7, maxX: 7, minZ: -19, maxZ: SHOP_DOOR_Z }
@@ -43,14 +44,16 @@ const PALETTE = {
   sky: 0x5a6a8c,
 }
 
-/** Records lean back on this angle in the bin, and the whole crate is
- *  built around it, so nothing intersects anything. */
+/** The bin is sized to the RECORDS, not the other way round. A real crate
+ *  is barely wider than a 12" sleeve and holds ~50 LPs in half a metre of
+ *  depth; the old one was three sleeves wide and read as a bathtub with one
+ *  record in it. Everything in crateView.ts is laid out from these. */
 export const BIN = {
-  innerHalfX: 0.95,
-  innerHalfZ: 0.58,
-  wallTop: 0.92,      // the rim you look over
-  baseTop: 0.60,      // what the sleeves stand on
-  wallThick: 0.055,
+  innerHalfX: 0.345,    // 0.69 m — a sleeve is 0.62, plus finger room
+  innerHalfZ: 0.265,    // 0.53 m deep — 48 records at ~9 mm, packed
+  wallTop: 0.96,        // waist height; the rim you look over
+  baseTop: 0.66,        // what the sleeves stand on
+  wallThick: 0.035,
 }
 
 export interface WorldHandles {
@@ -145,13 +148,16 @@ export function buildWorld(): WorldHandles {
   scene.add(awning)
 
   // Interior shell
-  wall(scene, blockers, SHOP_INTERIOR.minX - 0.3, -12.5, 0.6, FRONT_H, 13, PALETTE.shopWall)
-  wall(scene, blockers, SHOP_INTERIOR.maxX + 0.3, -12.5, 0.6, FRONT_H, 13, PALETTE.shopWall)
-  wall(scene, blockers, 0, SHOP_INTERIOR.minZ, 15, FRONT_H, 0.6, PALETTE.shopWall)
+  const plaster = plasterTexture('#6f8270', 3)
+  for (const m of [
+    wall(scene, blockers, SHOP_INTERIOR.minX - 0.3, -12.5, 0.6, FRONT_H, 13, PALETTE.shopWall),
+    wall(scene, blockers, SHOP_INTERIOR.maxX + 0.3, -12.5, 0.6, FRONT_H, 13, PALETTE.shopWall),
+    wall(scene, blockers, 0, SHOP_INTERIOR.minZ, 15, FRONT_H, 0.6, PALETTE.shopWall),
+  ]) { const mm = m.material as THREE.MeshLambertMaterial; mm.map = plaster; mm.color.set(0xffffff) }
 
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(14, 13),
-    new THREE.MeshLambertMaterial({ color: PALETTE.shopFloor }),
+    new THREE.MeshLambertMaterial({ map: floorboardTexture(5) }),
   )
   floor.rotation.x = -Math.PI / 2
   floor.position.set(0, 0.03, -12.5)
@@ -167,7 +173,7 @@ export function buildWorld(): WorldHandles {
 
   // ── Props ──
   // The counter at the back — where the clerk stands.
-  wall(scene, blockers, 0, -17.4, 7, 1.1, 1.2, PALETTE.counter)
+  { const c = wall(scene, blockers, 0, -17.4, 7, 1.1, 1.2, PALETTE.counter); const cm = c.material as THREE.MeshLambertMaterial; cm.map = woodTexture('#4a3626', '#2e2016', 31, 2); cm.color.set(0xffffff) }
 
   // Wall racks, purely to make the room feel stocked.
   for (const z of [-9.5, -12.5, -15.5]) {
@@ -180,56 +186,46 @@ export function buildWorld(): WorldHandles {
   }
 
   // ── The crate you dig in ──
-  // An OPEN bin, not a solid block: a base the records stand on, four low
-  // walls you look over, and a plinth to the floor. The previous version
-  // was one closed box with sleeves floating through its lid, which is the
-  // intersection Jake saw.
+  // Open plywood bin on a stand: base the records stand on, four low walls
+  // you look over, wood grain on every face. Sized from BIN so the stack
+  // fills it edge to edge.
   const crateAnchor = new THREE.Object3D()
   crateAnchor.position.copy(CRATE_POS)
   scene.add(crateAnchor)
 
-  const binMat = new THREE.MeshLambertMaterial({ color: PALETTE.binBody })
-  const rimMat = new THREE.MeshLambertMaterial({ color: PALETTE.binRim })
+  const binWood = woodTexture('#5a3a26', '#3a2417', 21, 1)
+  const binMat = new THREE.MeshLambertMaterial({ map: binWood })
+  const standMat = new THREE.MeshLambertMaterial({ map: woodTexture('#2e2119', '#1a120c', 22, 1) })
 
-  const addPiece = (
-    w: number, h: number, d: number, x: number, y: number, z: number,
-    mat: THREE.Material,
-  ): void => {
+  const addPiece = (w: number, h: number, d: number, x: number, y: number, z: number, mat: THREE.Material): void => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat)
     m.position.set(x, y, z)
     crateAnchor.add(m)
   }
+  const oX = BIN.innerHalfX + BIN.wallThick
+  const oZ = BIN.innerHalfZ + BIN.wallThick
+  const wallH = BIN.wallTop - BIN.baseTop + 0.06
+  const wallY = BIN.baseTop - 0.06 + wallH / 2
 
-  const outerX = BIN.innerHalfX + BIN.wallThick
-  const outerZ = BIN.innerHalfZ + BIN.wallThick
-  const wallH = BIN.wallTop - 0.34
+  // Stand: four legs and a shelf, so it is furniture and not a block.
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    addPiece(0.05, BIN.baseTop - 0.06, 0.05, sx * (oX - 0.05), (BIN.baseTop - 0.06) / 2, sz * (oZ - 0.05), standMat)
+  }
+  addPiece(oX * 2, 0.04, oZ * 2, 0, 0.30, 0, standMat)
+  // Base + walls
+  addPiece(oX * 2, 0.06, oZ * 2, 0, BIN.baseTop - 0.03, 0, binMat)
+  addPiece(oX * 2, wallH, BIN.wallThick, 0, wallY, -oZ + BIN.wallThick / 2, binMat)
+  addPiece(oX * 2, wallH, BIN.wallThick, 0, wallY,  oZ - BIN.wallThick / 2, binMat)
+  addPiece(BIN.wallThick, wallH, oZ * 2, -oX + BIN.wallThick / 2, wallY, 0, binMat)
+  addPiece(BIN.wallThick, wallH, oZ * 2,  oX - BIN.wallThick / 2, wallY, 0, binMat)
 
-  // Plinth + base
-  addPiece(outerX * 2, 0.34, outerZ * 2, 0, 0.17, 0, new THREE.MeshLambertMaterial({ color: PALETTE.binBase }))
-  addPiece(BIN.innerHalfX * 2, 0.05, BIN.innerHalfZ * 2, 0, BIN.baseTop - 0.025, 0, rimMat)
-  // Long sides
-  addPiece(outerX * 2, wallH, BIN.wallThick, 0, 0.34 + wallH / 2, -outerZ + BIN.wallThick / 2, binMat)
-  addPiece(outerX * 2, wallH, BIN.wallThick, 0, 0.34 + wallH / 2, outerZ - BIN.wallThick / 2, binMat)
-  // End cheeks
-  addPiece(BIN.wallThick, wallH, outerZ * 2, -outerX + BIN.wallThick / 2, 0.34 + wallH / 2, 0, binMat)
-  addPiece(BIN.wallThick, wallH, outerZ * 2, outerX - BIN.wallThick / 2, 0.34 + wallH / 2, 0, binMat)
-  // Rim caps — a lip you can read the edge of, and the thing that makes it
-  // look like furniture rather than a chamfered cube.
-  addPiece(outerX * 2 + 0.04, 0.05, BIN.wallThick + 0.04, 0, BIN.wallTop, -outerZ + BIN.wallThick / 2, rimMat)
-  addPiece(outerX * 2 + 0.04, 0.05, BIN.wallThick + 0.04, 0, BIN.wallTop, outerZ - BIN.wallThick / 2, rimMat)
-  addPiece(BIN.wallThick + 0.04, 0.05, outerZ * 2 + 0.04, -outerX + BIN.wallThick / 2, BIN.wallTop, 0, rimMat)
-  addPiece(BIN.wallThick + 0.04, 0.05, outerZ * 2 + 0.04, outerX - BIN.wallThick / 2, BIN.wallTop, 0, rimMat)
-
-  // A dedicated warm light over the crate. Digging happens here, so this
-  // is where the contrast budget goes.
-  const crateLamp = new THREE.PointLight(0xffd9a0, 14, 7, 2)
-  crateLamp.position.set(0, 2.5, 0.5)
+  // A warm lamp over the bin — this is where the contrast budget goes,
+  // but low enough that kraft backs don't blow out to orange.
+  const crateLamp = new THREE.PointLight(0xffd9a0, 9, 6, 2)
+  crateLamp.position.set(0.1, 2.3, 0.7)
   crateAnchor.add(crateLamp)
 
-  blockers.push({
-    minX: CRATE_POS.x - outerX, maxX: CRATE_POS.x + outerX,
-    minZ: CRATE_POS.z - outerZ, maxZ: CRATE_POS.z + outerZ,
-  })
+  blockers.push({ minX: CRATE_POS.x - oX, maxX: CRATE_POS.x + oX, minZ: CRATE_POS.z - oZ, maxZ: CRATE_POS.z + oZ })
 
   // ── The listening station ──
   const stationAnchor = new THREE.Object3D()
