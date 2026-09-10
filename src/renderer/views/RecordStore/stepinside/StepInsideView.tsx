@@ -260,7 +260,7 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
         camera.lookAt(body.x, 1.05, body.z)
       }
 
-      crate.update(digRef.current.index, digRef.current.pulled, dt)
+      crate.update(digRef.current.index, digRef.current.pulled, dt, digging)
       world.platter.rotation.y += dt * (playback.isPlaying ? 3.4 : 0)
 
       // Proximity — what's within reach right now.

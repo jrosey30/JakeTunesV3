@@ -30,21 +30,26 @@ const THICK = 0.006
 const SPACING = 0.0092
 const LEAN = 0.10                 // the packed stack leans back a touch
 const PASSED = 0.70               // tipped forward onto the front rail, tops below the eyeline
-const SEL_LIFT = 0.18
+const SEL_LIFT = 0.22
 // The selection comes FORWARD and stays near-upright. Leaning it back put
 // its top behind the tops of the records behind it, which then overlapped
 // the cover mid-flip.
 const SEL_TILT = -0.16
-const SEL_FWD = 0.12
-const PULL_LIFT = 0.40
+// No forward push: 0.12 m carried the sleeve THROUGH the front rail, so from
+// the room it sat on the crate rather than in it. The lift alone keeps its
+// top clear of the records behind.
+const SEL_FWD = 0.0
+const PULL_LIFT = 0.46
 const PULL_TILT = -0.28
-const PULL_FWD = 0.24
+const PULL_FWD = 0.10
 const DIVIDER_EVERY = 8
 const TAB_COLOURS = [0xc94f3d, 0x3d78c9, 0xd9a63a, 0x4f9c5a, 0x8b5cc9, 0xd06aa0]
 
 export interface CrateView {
   group: THREE.Group
-  update: (index: number, pulled: boolean, dt: number) => void
+  /** `digging` false = nobody is at the bin: every record packed and upright,
+   *  no selection, nothing tipped. The lifted pose exists only mid-dig. */
+  update: (index: number, pulled: boolean, dt: number, digging: boolean) => void
   dispose: () => void
 }
 
@@ -122,8 +127,15 @@ export function buildCrateView(records: CrateRecord[]): CrateView {
   // Where a passed record rests: tipped onto the front rail, compressed.
   const passedZ = (rel: number): number => frontZ + 0.02 + Math.min(-rel, 12) * 0.003
 
-  const update = (index: number, pulled: boolean, dt: number): void => {
+  const update = (index: number, pulled: boolean, dt: number, digging: boolean): void => {
     const k = 1 - Math.exp(-12 * dt)
+    if (!digging) {
+      // Walk away and the crate settles back to a packed bin — the record
+      // you were on slides home, the tipped ones stand back up.
+      for (let i = 0; i < pivots.length; i++) settle(pivots[i], -LEAN, BIN.baseTop, frontZ - i * SPACING, k)
+      for (const d of dividers) settle(d.pivot, -LEAN, BIN.baseTop, frontZ - d.index * SPACING + SPACING / 2, k)
+      return
+    }
     for (let i = 0; i < pivots.length; i++) {
       const p = pivots[i]
       const rel = i - index
