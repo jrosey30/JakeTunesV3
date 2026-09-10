@@ -19,14 +19,53 @@ import { buildCrateView } from './crateView'
 import { useCrateStock } from './useCrateStock'
 import { bodyStart, stepBody, gait, resolveCollisions, type Body } from './playerModel'
 import { digStart, digFlip, digTogglePull, digPosition, digAtEdge } from './digModel'
+import { claimTransportKeys } from '../../../input-mode'
 import type { DigState } from './types'
 import './step-inside.css'
 
-/** PS2 output: draw small, upscale hard. 640x448 was the era's workhorse. */
-const RENDER_HEIGHT = 448
+// PS2 style is deliberate low-poly geometry and honest textures — NOT a
+// pixelation filter. Rendering at 448p and stretching it was hiding the
+// models and destroying album art, so the scene now draws at native size
+// with antialiasing on, and the era reads from the geometry and the flat
+// shading instead. (Jake 2026-09-09.)
+const MAX_PIXEL_RATIO = 2
 const CAM_DISTANCE = 4.2
 const CAM_HEIGHT = 2.15
 const REACH = 2.1
+
+/** Scripted acceptance run (#stepInsideDemo): approach, enter, browse,
+ *  pull, return. Exists so a playable run can be RECORDED and repeated,
+ *  rather than claimed from a screenshot.
+ *
+ *  Walking is by WAYPOINT, not by holding a key for N seconds: the avatar
+ *  steers toward each goal through the same momentum model a person
+ *  drives, and stops when it arrives. Timed key-holds overshot the crate
+ *  and ended the first run standing at the counter. The dig step still
+ *  goes through the reach gate, so if the walk is wrong the run says so
+ *  instead of flying the camera to the crate anyway. */
+type DemoStep = { at: number; note: string } & (
+  | { goto: { x: number; z: number } }
+  | { act: 'dig' | 'undig' | 'flip+' | 'flip-' | 'pull' }
+)
+const DEMO: DemoStep[] = [
+  { at: 0.6,  note: 'walk to the door',   goto: { x: 0, z: -4.2 } },
+  { at: 3.6,  note: 'step inside',        goto: { x: 0, z: -8.6 } },
+  { at: 6.4,  note: 'over to the crate',  goto: { x: -1.6, z: -10.9 } },   // 1.5 m from the bin, clear of its footprint
+  { at: 10.2, note: 'start digging',      act: 'dig' },
+  { at: 11.4, note: 'flip',               act: 'flip+' },
+  { at: 12.2, note: 'flip',               act: 'flip+' },
+  { at: 13.0, note: 'flip',               act: 'flip+' },
+  { at: 13.8, note: 'flip',               act: 'flip+' },
+  { at: 15.0, note: 'pull it out',        act: 'pull' },
+  { at: 18.2, note: 'slide it back',      act: 'pull' },
+  { at: 19.6, note: 'back up the crate',  act: 'flip-' },
+  { at: 20.4, note: 'flip back',          act: 'flip-' },
+  { at: 22.0, note: 'step back',          act: 'undig' },
+]
+// Digging framing: close enough to read a cover, angled down into the bin.
+const DIG_DISTANCE = 1.35
+const DIG_HEIGHT = 1.95
+const DIG_LOOK_Y = 0.94
 
 type Mode = 'walk' | 'dig'
 
@@ -36,7 +75,16 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
   const { state: playback } = usePlayback()
   const { playTrack } = useAudio()
 
-  const visitSeed = useMemo(() => Math.floor(Math.random() * 1e9), [])
+  // Hold the transport keys for as long as this view is mounted, so the
+  // arrows dig instead of skipping tracks — and hand them straight back on
+  // the way out, whether that is the button, Escape or an unmount.
+  useEffect(() => claimTransportKeys('step-inside'), [])
+
+  const demoMode = useMemo(
+    () => typeof window !== 'undefined' && /stepInsideDemo/i.test(window.location.hash),
+    [],
+  )
+  const visitSeed = useMemo(() => (demoMode ? 12345 : Math.floor(Math.random() * 1e9)), [demoMode])
   const records = useCrateStock(visitSeed)
 
   const [mode, setMode] = useState<Mode>('walk')
@@ -50,6 +98,8 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
   const digRef = useRef(dig); digRef.current = dig
   const recordsRef = useRef(records); recordsRef.current = records
   const insideRef = useRef(inside); insideRef.current = inside
+  const demoGoalRef = useRef<{ x: number; z: number } | null>(null)
+  const promptRef = useRef(prompt); promptRef.current = prompt
 
   const current = records[Math.min(dig.index, Math.max(0, records.length - 1))] ?? null
 
@@ -77,8 +127,8 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
     const mount = mountRef.current
     if (!mount) return
 
-    const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' })
-    renderer.setPixelRatio(1)                 // never supersample: the crunch is the look
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO))
     renderer.outputColorSpace = THREE.SRGBColorSpace
     mount.appendChild(renderer.domElement)
     renderer.domElement.className = 'stepinside__canvas'
@@ -92,8 +142,10 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
     world.crateAnchor.add(crate.group)
 
     let body: Body = bodyStart(SPAWN.x, SPAWN.z, Math.PI)
-    let camYaw = Math.PI
+    let camYaw = 0
     let camPos = new THREE.Vector3(SPAWN.x, CAM_HEIGHT, SPAWN.z + CAM_DISTANCE)
+    // Locked when a dig starts: the angle you approached the crate from.
+    let digYaw: number | null = null
     let distanceWalked = 0
 
     const keys = new Set<string>()
@@ -126,8 +178,7 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
       const w = mount.clientWidth
       const h = mount.clientHeight
       if (!w || !h) return
-      const scale = RENDER_HEIGHT / h
-      renderer.setSize(Math.max(320, Math.round(w * scale)), RENDER_HEIGHT, false)
+      renderer.setSize(w, h, false)
       camera.aspect = w / h
       camera.updateProjectionMatrix()
     }
@@ -159,6 +210,19 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
           x: -Math.sin(camYaw) * f + Math.cos(camYaw) * s,
           z: -Math.cos(camYaw) * f - Math.sin(camYaw) * s,
         }
+        // Harness waypoint: a world-space push toward the goal, easing off
+        // on arrival so the body settles instead of oscillating.
+        const goal = demoGoalRef.current
+        if (goal && f === 0 && s === 0) {
+          const dx = goal.x - body.x
+          const dz = goal.z - body.z
+          const dist = Math.hypot(dx, dz)
+          if (dist < 0.12) demoGoalRef.current = null
+          else {
+            const g = Math.min(1, dist / 0.9)
+            input = { x: (dx / dist) * g, z: (dz / dist) * g }
+          }
+        }
       }
 
       const prev = body
@@ -167,22 +231,33 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
       distanceWalked += Math.hypot(body.x - prev.x, body.z - prev.z)
 
       avatar.root.position.set(body.x, 0, body.z)
-      avatar.root.rotation.y = body.heading
+      avatar.root.rotation.y = body.heading + Math.PI
       avatar.update(gait(body), distanceWalked, dt)
 
-      // Camera: spring behind the player. Pulls in close over the crate.
-      const wantDist = digging ? 1.9 : CAM_DISTANCE
-      const wantHeight = digging ? 1.65 : CAM_HEIGHT
-      const anchorX = digging ? CRATE_POS.x : body.x
-      const anchorZ = digging ? CRATE_POS.z : body.z
-      tmp.set(
-        anchorX + Math.sin(camYaw) * wantDist,
-        wantHeight,
-        anchorZ + Math.cos(camYaw) * wantDist,
-      )
-      camPos.lerp(tmp, Math.min(1, (digging ? 6 : 4.2) * dt))
-      camera.position.copy(camPos)
-      camera.lookAt(anchorX, digging ? 1.0 : 1.05, anchorZ)
+      // Camera. Walking: a spring behind the player. Digging: locked to the
+      // side you approached from, close and angled down into the bin, so
+      // the whole selected cover is legible.
+      if (digging) {
+        if (digYaw === null) digYaw = Math.atan2(body.x - CRATE_POS.x, body.z - CRATE_POS.z)
+        tmp.set(
+          CRATE_POS.x + Math.sin(digYaw) * DIG_DISTANCE,
+          DIG_HEIGHT,
+          CRATE_POS.z + Math.cos(digYaw) * DIG_DISTANCE,
+        )
+        camPos.lerp(tmp, Math.min(1, 5.5 * dt))
+        camera.position.copy(camPos)
+        camera.lookAt(CRATE_POS.x, DIG_LOOK_Y, CRATE_POS.z + 0.12)
+      } else {
+        digYaw = null
+        tmp.set(
+          body.x + Math.sin(camYaw) * CAM_DISTANCE,
+          CAM_HEIGHT,
+          body.z + Math.cos(camYaw) * CAM_DISTANCE,
+        )
+        camPos.lerp(tmp, Math.min(1, 4.2 * dt))
+        camera.position.copy(camPos)
+        camera.lookAt(body.x, 1.05, body.z)
+      }
 
       crate.update(digRef.current.index, digRef.current.pulled, dt)
       world.platter.rotation.y += dt * (playback.isPlaying ? 3.4 : 0)
@@ -254,6 +329,29 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [mode, prompt, onLeave, playRecord, flash])
 
+  // The harness pushes the same transitions the keyboard does — it is a
+  // driver for the real interaction, not a second code path.
+  useEffect(() => {
+    if (!demoMode || !records.length) return
+    const t0 = performance.now()
+    const timers = DEMO.map((step) => window.setTimeout(() => {
+      if ('goto' in step) demoGoalRef.current = step.goto
+      else {
+        demoGoalRef.current = null
+        if (step.act === 'dig') {
+          if (promptRef.current === 'crate') { setMode('dig'); setDig(digStart()) }
+          else flash('HARNESS: not within reach of the crate — dig refused')
+        } else if (step.act === 'undig') { setMode('walk'); setDig(digStart()) }
+        else if (modeRef.current !== 'dig') flash(`HARNESS: ${step.act} ignored — not digging`)
+        else if (step.act === 'flip+') setDig((d) => digFlip(d, 1, recordsRef.current.length))
+        else if (step.act === 'flip-') setDig((d) => digFlip(d, -1, recordsRef.current.length))
+        else if (step.act === 'pull') setDig((d) => digTogglePull(d))
+      }
+      console.log('[step-inside/demo]', ((performance.now() - t0) / 1000).toFixed(1) + 's', step.note)
+    }, step.at * 1000))
+    return () => { timers.forEach((t) => window.clearTimeout(t)); demoGoalRef.current = null }
+  }, [demoMode, records.length, flash])
+
   const pos = digPosition(dig, records.length)
   const edge = digAtEdge(dig, records.length)
 
@@ -263,7 +361,7 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
 
       <div className="stepinside__hud">
         <button type="button" className="stepinside__leave" onClick={onLeave}>← Leave (Esc)</button>
-        <span className="stepinside__where">{inside ? 'WJLR Records' : 'Atlantic Ave'}</span>
+        <span className="stepinside__where">{inside ? 'WJLR Records' : 'Manhattan Ave, Greenpoint'}</span>
       </div>
 
       {mode === 'walk' && (

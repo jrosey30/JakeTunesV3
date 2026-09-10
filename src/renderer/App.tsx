@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { LibraryProvider, useLibrary } from './context/LibraryContext'
+import { shouldYieldToClaim } from './input-mode'
 import { primeColumnCacheFromUiState } from './utils/columnState'
 import { PlaybackProvider, usePlayback } from './context/PlaybackContext'
 import { CynthiaProvider } from './context/CynthiaContext'
@@ -574,6 +575,10 @@ function AppInner() {
       const meta = e.metaKey || e.ctrlKey
       const typing = isTypingTarget(e.target)
 
+      // Step Inside owns Space and the arrows while it is open (see
+      // input-mode.ts). Media keys, Escape and Cmd+F still work.
+      if (shouldYieldToClaim(e.code)) return
+
       if (e.key === 'Escape') {
         if (typing && e.target instanceof HTMLElement) e.target.blur()
         if (libStateRef.current.searchQuery) dispatch({ type: 'SET_SEARCH', query: '' })
@@ -941,7 +946,11 @@ function AppInner() {
           // Songs on relaunch so they don't open into a dead view with
           // no sidebar entry to navigate away from.
           const restoredView = ui.currentView === 'recordstore' ? 'songs' : ui.currentView
-          dispatch({ type: 'SET_VIEW', view: restoredView as import('./types').ViewName })
+          // Acceptance harness: #stepInside boots into the game so a run can
+          // be driven and recorded. Dev-only — main never sets this hash in
+          // a packaged app.
+          const harness = typeof window !== 'undefined' && /stepInside/i.test(window.location.hash)
+          dispatch({ type: 'SET_VIEW', view: (harness ? 'recordstore' : restoredView) as import('./types').ViewName })
         } else {
           // First open (no saved view): land on Home, the welcome dashboard.
           dispatch({ type: 'SET_VIEW', view: 'home' })
@@ -1565,6 +1574,11 @@ function AppInner() {
     const handleKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName
       const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable
+
+      // Capture phase beats every view listener, so a claim has to be
+      // checked HERE too — this is the handler that was eating the game's
+      // Space before its own keydown ever ran.
+      if (shouldYieldToClaim(e.code)) return
 
       // Space = play/pause (unless typing in an input)
       if (e.code === 'Space' && !isInput) {
