@@ -63,3 +63,11 @@ gives them tempo encoding; both are needed before a wave stops costing
   component +0.022 (self-heals ~50/night), orphan component +0.013 (never heals —
   see PROPOSAL-mood-import-clobber 09-09 note). Post-wave ceiling estimate **0.840**
   = the healthy band, so the sag is fully accounted for; nothing hidden is broken.
+
+## 2026-09-10 update — shrink stalled by a +49-import day
+
+Backlog series 315→458→542→564→533→**532** — technically a second shrink night,
+but only net −1: the trainer enriched +50 while 49 new imports landed (library
+10,812 → 10,861). batch=50 merely treads water on a ~50-import day, exactly the
+proposal's premise. Meanwhile the un-enriched rt component measured +0.011
+tonight (down from +0.022 on 09-09 — it does self-heal when imports pause).

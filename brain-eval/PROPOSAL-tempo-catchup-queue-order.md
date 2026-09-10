@@ -72,3 +72,11 @@ queue math from the live descriptors — the watchlist sits at position
 nights** before the trainer reaches it at 500/night (te=2 backlog
 7,481, draining ~500/night as predicted). Every fresh import lands
 BEHIND that backlog. Script: `watch_20260908.py`.
+
+## 2026-09-10 — 6th data point
+
+Watchlist 33/34 STILL te=False after a 6th consecutive `500 on an older
+encoding` night (09-10 log: 0 newly analysed / 500 older encoding / 0 bpm
+changed). Queue position ~6,488 → **~12 nights out**, draining ~500/night on
+schedule (te=2 census 6,481). Fresh imports still land behind the entire te=2
+backlog. Script: precheck_20260910.py.

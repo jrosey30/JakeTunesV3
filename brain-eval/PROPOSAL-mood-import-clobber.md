@@ -175,3 +175,17 @@ the next replay event resurrects the whole stale map. So "prune orphans in the t
 (fix 2) is now worth a measured, permanent ~+0.013 router-truth on top of preventing the
 poison from accruing — cheap, identity-gated, and proven durable across trainer writes
 (08-19). NOT applied tonight per the ≥0.83 apply band + 09-05/06/08 precedent.
+
+## 2026-09-10 — orphan cost CONFIRMED on a recovery night (exp_20260910_sag_decomp.py)
+
+Second orphan-only measurement, this time with the wave HEALING (rt recovered
+0.805 → 0.819 as enrichment caught up): pruning the same 18 identity-gated
+orphans = **0.819 → 0.832 (+0.013), worst per-probe delta +0.00** — the exact
+same +0.013 as 09-09. The un-enriched component shrank +0.022 → +0.011 (it
+self-heals, as claimed), the orphan component did NOT move. Slot occupancy
+unchanged (ret-007 4/25, ret-012 4/20, ret-008 1/25). The orphan cost is now
+measured as constant across both a sagging and a recovering night — it is a
+floor tax, not part of the wave. Fix 2 (trainer-side identity-gated mood-orphan
+prune) remains the ask; still NOT applied harness-side (mood-only change can't
+move run_eval retrieval/overall, and a NAS-only prune is resurrected by the
+next replay).
