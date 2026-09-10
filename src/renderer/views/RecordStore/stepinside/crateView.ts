@@ -1,34 +1,39 @@
 /**
- * The sleeves in the bin.
+ * The sleeves in one bin.
  *
  * What a crate actually looks like, and what this does:
  *
- *   • It is FULL. All 48 records are drawn, every frame, packed at ~9 mm,
- *     sorted by artist the way a shop files them. The run of sleeve tops
- *     behind the one you're on is the single strongest cue that you are
- *     in a crate and not looking at a card on a table.
+ *   • It is FULL. Every record is drawn, every frame, packed at ~9 mm.
+ *     The run of sleeve tops behind the one you're on is the single
+ *     strongest cue that you are in a crate and not looking at a card on
+ *     a table.
  *   • A sleeve is an object: a thin box with the cover on its face, kraft
  *     card on its back, spine and edges. Tipped over, it shows its back.
  *   • The bin is sized to the records (world.ts BIN), so the stack fills
  *     it wall to wall and the base is never visible.
  *   • Flipping: the ones you've passed tip FORWARD onto the front rail
- *     and compress there, the way a dug crate looks; the one you're on
- *     lifts a hand's width and leans back to face you at the rail.
+ *     and rest there, the way a dug crate looks; the one you're on lifts
+ *     a hand's width and leans back to face you at the rail.
  *   • Pulling is two moves, not a pop-up: the record rises straight out
  *     of its slot until its bottom edge clears the rail and the pile, THEN
  *     comes forward and tilts back into your hands. Sliding it back runs
  *     the same path in reverse — forward-then-down would drag it through
  *     the front wall.
- *   • Dividers are plain index cards with a printed tab every twelve
- *     records. The tab reads the artist letters of the section behind it
- *     — real, because the crate is sorted — and the tabs stagger
- *     left/centre/right like a cut-tab set so every one is readable.
+ *   • Dividers are plain index cards with a printed tab, wherever the
+ *     shop plan puts a section (letter ranges in a genre bin, genre names
+ *     in the mixed bin). Every card and every sleeve has a slot of its
+ *     own at the pack pitch: a card wedged half a slot between two
+ *     sleeves z-fights and the covers bleed through it.
+ *   • Covers load small (256 px) — nine bins of full-size art would be
+ *     gigabytes of texture — and the record you're on swaps to the full
+ *     file while you look at it.
  *
  * All motion is critically damped and frame-rate independent.
  */
 import * as THREE from 'three'
 import { BIN } from './world'
 import { kraftTexture, labelTexture } from './textures'
+import type { Section } from './shopPlan'
 import type { CrateRecord } from './types'
 
 const SLEEVE = 0.62
@@ -62,38 +67,38 @@ const HOLD_LIFT = 0.66
 const HOLD_FWD = 0.02
 const HOLD_TILT = -0.55
 const PULL_SECONDS = 0.55
-const DIVIDER_EVERY = 12
+const SMALL_COVER = 256
 
 export interface CrateView {
   group: THREE.Group
   /** `digging` false = nobody is at the bin: every record packed and upright,
    *  no selection, nothing tipped. The lifted pose exists only mid-dig. */
   update: (index: number, pulled: boolean, dt: number, digging: boolean) => void
-  /** Local z of the record at `index` — the camera looks here while digging. */
-  selectionZ: (index: number) => number
   /** Where the eye should rest, in the crate's local frame: the face of the
    *  record you're on, or the centre of the one in your hands. */
   focus: (index: number, pulled: boolean) => { y: number; z: number }
+  /** Load the full-size cover for the record you're on; null when nobody
+   *  is at the bin. Everything else stays at the small size. */
+  setFocus: (index: number | null) => void
   dispose: () => void
 }
 
 const ease = (t: number): number => t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t)
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t
 
-/** Filing letter for a divider tab: leading "The" dropped, accents folded
- *  (Édith files under E, the way the sort already puts her). Any script's
- *  letter counts — Hebrew and Cyrillic acts file after Z in this library,
- *  and the tab says so in their own alphabet. Digits and symbols are "#". */
-function filingLetter(artist: string): string {
-  const c = [...artist.replace(/^the\s+/i, '').trim()][0] ?? ''
-  const folded = c.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase()
-  return /\p{L}/u.test(folded) ? folded : '#'
+function prepare(tex: THREE.Texture): THREE.Texture {
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.magFilter = THREE.LinearFilter
+  tex.minFilter = THREE.LinearMipmapLinearFilter
+  tex.anisotropy = 8
+  return tex
 }
 
-export function buildCrateView(records: CrateRecord[]): CrateView {
+export function buildCrateView(records: CrateRecord[], sections: Section[]): CrateView {
   const group = new THREE.Group()
   const loader = new THREE.TextureLoader()
   const disposables: Array<{ dispose: () => void }> = []
+  let alive = true
 
   const kraft = kraftTexture('#b9a07a', 11)
   const kraftDark = kraftTexture('#8f7a5c', 12)
@@ -114,28 +119,45 @@ export function buildCrateView(records: CrateRecord[]): CrateView {
   const backZ = -BIN.innerHalfZ + 0.20
   const frontZ = BIN.innerHalfZ
   const n = records.length
-  // Every card and every sleeve has its own slot at the pack pitch — a
-  // divider wedged half a slot between two sleeves overlaps both by half a
-  // millimetre and the covers bleed through it. Slot 0 is the front.
-  const slotOfRecord = (i: number): number => i + Math.floor(i / DIVIDER_EVERY) + 1
-  const slotOfDivider = (i: number): number => slotOfRecord(i) - 1
-  const slots = slotOfRecord(n - 1) + 1
-  const zForSlot = (s: number): number => backZ + (slots - 1 - s) * SPACING
+  // Slot 0 is the front. A record's slot counts the cards in front of it.
+  const cardsBefore = (i: number): number => sections.filter((sec) => sec.at <= i).length
+  const slotOfRecord = (i: number): number => i + cardsBefore(i)
+  const slotOfCard = (k: number): number => slotOfRecord(sections[k].at) - 1
+  const slots = n + sections.length
+  const zForSlot = (sl: number): number => backZ + (slots - 1 - sl) * SPACING
   const zFor = (i: number): number => zForSlot(slotOfRecord(i))
+
+  // Covers: small for the pack, the full file for the one in focus.
+  const faceMats: THREE.MeshLambertMaterial[] = []
+  const small: Array<THREE.Texture | null> = records.map(() => null)
+  let focusIndex: number | null = null
+  let focusTex: THREE.Texture | null = null
+  const applyFace = (i: number, tex: THREE.Texture | null): void => {
+    const m = faceMats[i]
+    if (!m) return
+    m.map = tex
+    m.color.set(tex ? 0xffffff : 0xd8cbb0)
+    m.needsUpdate = true
+  }
 
   const pivots: THREE.Group[] = []
   records.forEach((rec, i) => {
     const faceMat = new THREE.MeshLambertMaterial({ color: 0xd8cbb0 })
+    faceMats.push(faceMat)
     disposables.push(faceMat)
     if (rec.coverUrl) {
       loader.load(rec.coverUrl, (tex) => {
-        tex.colorSpace = THREE.SRGBColorSpace
-        tex.magFilter = THREE.LinearFilter
-        tex.minFilter = THREE.LinearMipmapLinearFilter
-        tex.anisotropy = 8
-        faceMat.map = tex
-        faceMat.color.set(0xffffff)
-        faceMat.needsUpdate = true
+        if (!alive) { tex.dispose(); return }
+        // Downscale on a canvas: 48 sleeves × 9 bins at full size is
+        // gigabytes of GPU memory; at 256 px it is a hundred megabytes.
+        const c = document.createElement('canvas')
+        c.width = SMALL_COVER
+        c.height = SMALL_COVER
+        c.getContext('2d')!.drawImage(tex.image as CanvasImageSource, 0, 0, SMALL_COVER, SMALL_COVER)
+        tex.dispose()
+        const s = prepare(new THREE.CanvasTexture(c))
+        small[i] = s
+        if (focusIndex !== i || !focusTex) applyFace(i, s)
       }, undefined, () => { /* blank board: what an unsleeved record looks like */ })
     }
     const mesh = new THREE.Mesh(sleeveGeo, [edgeMat, edgeMat, edgeMat, edgeMat, faceMat, backMat])
@@ -148,34 +170,49 @@ export function buildCrateView(records: CrateRecord[]): CrateView {
     pivots.push(pivot)
   })
 
+  const setFocus = (index: number | null): void => {
+    const i = index === null ? null : Math.max(0, Math.min(n - 1, index))
+    if (i === focusIndex) return
+    if (focusIndex !== null) applyFace(focusIndex, small[focusIndex])
+    focusTex?.dispose()
+    focusTex = null
+    focusIndex = i
+    if (i === null) return
+    const rec = records[i]
+    if (!rec.coverUrl) return
+    loader.load(rec.coverUrl, (tex) => {
+      if (!alive || focusIndex !== i) { tex.dispose(); return }
+      focusTex = prepare(tex)
+      applyFace(i, focusTex)
+    }, undefined, () => { /* keep the small one */ })
+  }
+
   // Dividers: index cards, a little taller than the sleeves, with a printed
-  // tab. The card in front of record i files the section i … i+11.
+  // tab, staggered left/centre/right like a cut-tab set.
   const cardMat = new THREE.MeshLambertMaterial({ color: 0xece6d6 })
   const cardEdgeMat = new THREE.MeshLambertMaterial({ color: 0xd6cfbd })
   const dividerGeo = new THREE.BoxGeometry(SLEEVE + 0.04, SLEEVE + 0.03, 0.004)
   const tabGeo = new THREE.BoxGeometry(0.20, 0.07, 0.004)
   disposables.push(cardMat, cardEdgeMat, dividerGeo, tabGeo)
-  const dividers: Array<{ pivot: THREE.Group; index: number }> = []
-  for (let i = 0, ord = 0; i < records.length; i += DIVIDER_EVERY, ord++) {
-    const last = Math.min(i + DIVIDER_EVERY - 1, records.length - 1)
-    const from = filingLetter(records[i].artist)
-    const to = filingLetter(records[last].artist)
-    const label = labelTexture(from === to ? from : `${from}–${to}`)
+  const dividers: Array<{ pivot: THREE.Group; index: number; slot: number }> = []
+  sections.forEach((sec, k) => {
+    if (sec.at < 0 || sec.at >= n) return
+    const label = labelTexture(sec.label)
     const labelMat = new THREE.MeshLambertMaterial({ map: label })
     disposables.push(label, labelMat)
-
     const pivot = new THREE.Group()
     const card = new THREE.Mesh(dividerGeo, [cardEdgeMat, cardEdgeMat, cardEdgeMat, cardEdgeMat, cardMat, cardMat])
     card.position.y = (SLEEVE + 0.03) / 2
     pivot.add(card)
     const tab = new THREE.Mesh(tabGeo, [cardEdgeMat, cardEdgeMat, cardEdgeMat, cardEdgeMat, labelMat, cardMat])
-    tab.position.set(-0.19 + (ord % 3) * 0.19, SLEEVE + 0.03 + 0.03, 0)
+    tab.position.set(-0.19 + (k % 3) * 0.19, SLEEVE + 0.03 + 0.03, 0)
     pivot.add(tab)
-    pivot.position.set(0, BIN.baseTop, zForSlot(slotOfDivider(i)))
+    const slot = slotOfCard(k)
+    pivot.position.set(0, BIN.baseTop, zForSlot(slot))
     pivot.rotation.x = -LEAN
     group.add(pivot)
-    dividers.push({ pivot, index: i })
-  }
+    dividers.push({ pivot, index: sec.at, slot })
+  })
 
   const settle = (obj: THREE.Object3D, rot: number, y: number, z: number, k: number): void => {
     obj.rotation.x += (rot - obj.rotation.x) * k
@@ -211,7 +248,7 @@ export function buildCrateView(records: CrateRecord[]): CrateView {
       // Walk away and the crate settles back to a packed bin — the record
       // you were on slides home, the tipped ones stand back up.
       for (let i = 0; i < pivots.length; i++) settle(pivots[i], -LEAN, BIN.baseTop, zFor(i), k)
-      for (const d of dividers) settle(d.pivot, -LEAN, BIN.baseTop, zForSlot(slotOfDivider(d.index)), k)
+      for (const d of dividers) settle(d.pivot, -LEAN, BIN.baseTop, zForSlot(d.slot), k)
       return
     }
     // Flipping to another record drops whatever was in hand straight back.
@@ -230,11 +267,10 @@ export function buildCrateView(records: CrateRecord[]): CrateView {
       else settle(p, STACK_TILT, BIN.baseTop, zFor(i), k)
     }
     for (const d of dividers) {
-      const rel = d.index - index
       // The card that files the section you're in sits in front of the
       // record you're on: it has been flipped past too.
-      if (rel <= 0) settle(d.pivot, PASSED, BIN.baseTop, pileZ(slotOfDivider(d.index)), k)
-      else settle(d.pivot, STACK_TILT, BIN.baseTop, zForSlot(slotOfDivider(d.index)), k)
+      if (d.index <= index) settle(d.pivot, PASSED, BIN.baseTop, pileZ(d.slot), k)
+      else settle(d.pivot, STACK_TILT, BIN.baseTop, zForSlot(d.slot), k)
     }
   }
 
@@ -253,13 +289,11 @@ export function buildCrateView(records: CrateRecord[]): CrateView {
   }
 
   const dispose = (): void => {
+    alive = false
     for (const d of disposables) d.dispose()
-    for (const p of pivots) {
-      const m = p.children[0] as THREE.Mesh
-      const mats = m.material as THREE.MeshLambertMaterial[]
-      mats[4]?.map?.dispose()
-    }
+    for (const s of small) s?.dispose()
+    focusTex?.dispose()
   }
 
-  return { group, update, dispose, focus, selectionZ: (index: number) => zFor(Math.max(0, Math.min(n - 1, index))) }
+  return { group, update, focus, setFocus, dispose }
 }

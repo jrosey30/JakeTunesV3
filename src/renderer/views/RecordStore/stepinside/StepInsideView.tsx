@@ -1,9 +1,10 @@
 /**
  * Step Inside — the playable shop.
  *
- * One street, one door, one crate, one listening station. No city, no
- * dashboard: the brief asked for walking, entering and flipping to feel
- * right before anything expands, so everything here serves those three.
+ * One street, one door, nine bins filed the way a shop files them
+ * (shopPlan.ts), one listening station. No city, no dashboard: the brief
+ * asked for walking, entering and flipping to feel right before anything
+ * expands, so everything here serves those three.
  *
  * The normal app is never more than Esc away, and the regular Record Shop
  * tabs are untouched — this is an alternative way in, not a replacement.
@@ -13,14 +14,15 @@ import * as THREE from 'three'
 import { useLibrary } from '../../../context/LibraryContext'
 import { usePlayback } from '../../../context/PlaybackContext'
 import { useAudio } from '../../../hooks/useAudio'
-import { buildWorld, SPAWN, CRATE_POS, STATION_POS, SHOP_DOOR_Z } from './world'
+import { buildWorld, SPAWN, STATION_POS, SHOP_DOOR_Z } from './world'
 import { buildAvatar } from './avatar'
-import { buildCrateView } from './crateView'
-import { useCrateStock } from './useCrateStock'
+import { buildCrateView, type CrateView } from './crateView'
+import { useShopStock, type ShopBin } from './useCrateStock'
+import { BINS } from './shopPlan'
 import { bodyStart, stepBody, gait, resolveCollisions, type Body } from './playerModel'
 import { digStart, digFlip, digTogglePull, digPosition, digAtEdge } from './digModel'
 import { claimTransportKeys } from '../../../input-mode'
-import type { DigState } from './types'
+import type { CrateRecord, DigState } from './types'
 import './step-inside.css'
 
 // PS2 style is deliberate low-poly geometry and honest textures — NOT a
@@ -49,18 +51,22 @@ type DemoStep = { at: number; note: string } & (
 )
 const DEMO: DemoStep[] = [
   { at: 0.6,  note: 'walk to the door',   goto: { x: 0, z: -4.2 } },
-  { at: 3.6,  note: 'step inside',        goto: { x: 0, z: -8.6 } },
-  { at: 6.4,  note: 'over to the crate',  goto: { x: -1.6, z: -10.9 } },   // 1.5 m from the bin, clear of its footprint
-  { at: 10.2, note: 'start digging',      act: 'dig' },
+  { at: 3.4,  note: 'in to the ROCK bin', goto: { x: 0, z: -7.8 } },       // 1.6 m from the bin, clear of its footprint
+  { at: 8.0,  note: 'start digging',      act: 'dig' },
+  { at: 9.0,  note: 'flip',               act: 'flip+' },
+  { at: 9.8,  note: 'flip',               act: 'flip+' },
+  { at: 10.6, note: 'flip',               act: 'flip+' },
   { at: 11.4, note: 'flip',               act: 'flip+' },
-  { at: 12.2, note: 'flip',               act: 'flip+' },
-  { at: 13.0, note: 'flip',               act: 'flip+' },
-  { at: 13.8, note: 'flip',               act: 'flip+' },
-  { at: 15.0, note: 'pull it out',        act: 'pull' },
-  { at: 18.2, note: 'slide it back',      act: 'pull' },
-  { at: 19.6, note: 'back up the crate',  act: 'flip-' },
-  { at: 20.4, note: 'flip back',          act: 'flip-' },
-  { at: 22.0, note: 'step back',          act: 'undig' },
+  { at: 12.6, note: 'pull it out',        act: 'pull' },
+  { at: 15.4, note: 'slide it back',      act: 'pull' },
+  { at: 16.6, note: 'flip back',          act: 'flip-' },
+  { at: 17.8, note: 'step back',          act: 'undig' },
+  { at: 18.4, note: 'over to PUNK',       goto: { x: -4.5, z: -10.9 } },
+  { at: 23.0, note: 'dig the punk bin',   act: 'dig' },
+  { at: 24.0, note: 'flip',               act: 'flip+' },
+  { at: 24.8, note: 'flip',               act: 'flip+' },
+  { at: 26.0, note: 'pull it out',        act: 'pull' },
+  { at: 29.0, note: 'step back',          act: 'undig' },
 ]
 // Digging framing: your own eyes at the front rail. Standing height, a
 // step back from the bin, looking down ~35° at the record you're on, so
@@ -90,22 +96,32 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
     [],
   )
   const visitSeed = useMemo(() => (demoMode ? 12345 : Math.floor(Math.random() * 1e9)), [demoMode])
-  const records = useCrateStock(visitSeed)
+  const bins = useShopStock(visitSeed)
 
   const [mode, setMode] = useState<Mode>('walk')
   const [dig, setDig] = useState<DigState>(digStart)
   const [prompt, setPrompt] = useState<string | null>(null)
+  /** The bin within reach (walking) or being dug (digging). */
+  const [binId, setBinId] = useState<string | null>(null)
   const [inside, setInside] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
 
   // Refs the render loop reads — state it must not re-subscribe to.
   const modeRef = useRef(mode); modeRef.current = mode
   const digRef = useRef(dig); digRef.current = dig
-  const recordsRef = useRef(records); recordsRef.current = records
+  const binsRef = useRef(bins); binsRef.current = bins
+  const binIdRef = useRef(binId); binIdRef.current = binId
   const insideRef = useRef(inside); insideRef.current = inside
   const demoGoalRef = useRef<{ x: number; z: number } | null>(null)
   const promptRef = useRef(prompt); promptRef.current = prompt
+  /** The last record pulled out of any bin — what goes on the deck. */
+  const inHandRef = useRef<CrateRecord | null>(null)
 
+  const binById = (id: string | null): ShopBin | null => (id ? binsRef.current.find((b) => b.id === id) ?? null : null)
+  const activeRecords = (): CrateRecord[] => binById(binIdRef.current)?.records ?? []
+
+  const bin = bins.find((b) => b.id === binId) ?? null
+  const records = bin?.records ?? []
   const current = records[Math.min(dig.index, Math.max(0, records.length - 1))] ?? null
 
   // ── Actions ──
@@ -126,6 +142,15 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
     setNotice(msg)
     window.setTimeout(() => setNotice((n) => (n === msg ? null : n)), 2600)
   }, [])
+
+  // Pulling a record out is what puts it "in hand" — the deck plays that.
+  const pull = useCallback(() => {
+    setDig((d) => {
+      const next = digTogglePull(d)
+      if (next.pulled) inHandRef.current = activeRecords()[next.index] ?? null
+      return next
+    })
+  }, [])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── The world ──
   useEffect(() => {
@@ -150,8 +175,17 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
     const avatar = buildAvatar()
     world.scene.add(avatar.root)
 
-    const crate = buildCrateView(recordsRef.current)
-    world.crateAnchor.add(crate.group)
+    // One crate view per bin, parked in the world's anchor for it.
+    const crates = new Map<string, CrateView>()
+    for (const b of binsRef.current) {
+      const crate = buildCrateView(b.records, b.sections)
+      world.bins.get(b.id)?.add(crate.group)
+      crates.set(b.id, crate)
+    }
+    const binPos = (id: string | null): { x: number; z: number } => {
+      const def = BINS.find((b) => b.id === id) ?? BINS[0]
+      return { x: def.x, z: def.z }
+    }
 
     let body: Body = bodyStart(SPAWN.x, SPAWN.z, Math.PI)
     let camYaw = 0
@@ -213,7 +247,9 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
       if (keys.has('KeyQ')) camYaw += 2.2 * dt
       if (keys.has('KeyE') && modeRef.current === 'walk' && keys.has('ShiftLeft')) camYaw -= 2.2 * dt
 
-      const digging = modeRef.current === 'dig'
+      const digging = modeRef.current === 'dig' && binIdRef.current !== null
+      const active = binIdRef.current
+      const at = binPos(active)
       let input = { x: 0, z: 0 }
       if (!digging) {
         const f = (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0) - (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0)
@@ -230,9 +266,11 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
           const dx = goal.x - body.x
           const dz = goal.z - body.z
           const dist = Math.hypot(dx, dz)
-          if (dist < 0.12) demoGoalRef.current = null
+          // A generous arrival radius: at 0.12 the momentum model overshot,
+          // turned round and walked back, and the run showed his face.
+          if (dist < 0.3) demoGoalRef.current = null
           else {
-            const g = Math.min(1, dist / 0.9)
+            const g = Math.min(1, dist / 1.2)
             input = { x: (dx / dist) * g, z: (dz / dist) * g }
           }
         }
@@ -254,14 +292,15 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
         // The bin's front rail faces +Z (the aisle). Always frame from
         // there — a crate is dug from the front, whichever way you walked up.
         if (digYaw === null) digYaw = 0
-        tmp.set(CRATE_POS.x, DIG_HEIGHT, CRATE_POS.z + DIG_DISTANCE)
+        tmp.set(at.x, DIG_HEIGHT, at.z + DIG_DISTANCE)
         camPos.lerp(tmp, Math.min(1, 5.5 * dt))
         camera.position.copy(camPos)
         // Follow the record you're on as the dig goes deeper into the bin,
         // and rise to the one in your hands when you pull it. Eased, so a
         // pull is a glance up and not a cut.
-        const f = crate.focus(digRef.current.index, digRef.current.pulled)
-        tmp.set(CRATE_POS.x, f.y, CRATE_POS.z + f.z)
+        const crate = crates.get(active!)
+        const f = crate ? crate.focus(digRef.current.index, digRef.current.pulled) : { y: 1.0, z: 0 }
+        tmp.set(at.x, f.y, at.z + f.z)
         lookPos.lerp(tmp, Math.min(1, 7 * dt))
         camera.lookAt(lookPos)
       } else {
@@ -278,20 +317,29 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
       }
       // At the rail the camera stands where the player's head is; he is
       // out of shot until it pulls back behind him again.
-      tmp.set(CRATE_POS.x, DIG_HEIGHT, CRATE_POS.z + DIG_DISTANCE)
-      avatar.root.visible = camPos.distanceTo(tmp) > 0.7
+      tmp.set(at.x, DIG_HEIGHT, at.z + DIG_DISTANCE)
+      avatar.root.visible = !(active && camPos.distanceTo(tmp) < 0.7)
 
-      crate.update(digRef.current.index, digRef.current.pulled, dt, digging)
+      for (const [id, crate] of crates) {
+        const mine = digging && id === active
+        crate.update(digRef.current.index, digRef.current.pulled, dt, mine)
+        crate.setFocus(mine ? digRef.current.index : null)
+      }
       world.platter.rotation.y += dt * (playback.isPlaying ? 3.4 : 0)
 
-      // Proximity — what's within reach right now.
-      const dCrate = Math.hypot(body.x - CRATE_POS.x, body.z - CRATE_POS.z)
+      // Proximity — what's within reach right now: the nearest bin, or the deck.
       const dStation = Math.hypot(body.x - STATION_POS.x, body.z - STATION_POS.z)
       const nowInside = body.z < SHOP_DOOR_Z
       if (nowInside !== insideRef.current) { insideRef.current = nowInside; setInside(nowInside) }
 
       if (!digging) {
-        if (dCrate < REACH) setPrompt('crate')
+        let nearest: string | null = null
+        let best = REACH
+        for (const def of BINS) {
+          const d = Math.hypot(body.x - def.x, body.z - def.z)
+          if (d < best) { best = d; nearest = def.id }
+        }
+        if (nearest) { setPrompt('crate'); if (nearest !== binIdRef.current) setBinId(nearest) }
         else if (dStation < REACH) setPrompt('station')
         else if (!nowInside && Math.abs(body.x) < 2.4 && body.z < SHOP_DOOR_Z + 3) setPrompt('door')
         else setPrompt(null)
@@ -309,7 +357,7 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
       renderer.domElement.removeEventListener('pointerdown', onDown)
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
-      crate.dispose()
+      for (const c of crates.values()) c.dispose()
       world.dispose()
       renderer.dispose()
       if (renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement)
@@ -326,11 +374,11 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
 
       if (mode === 'dig') {
         if (e.code === 'Escape') { setMode('walk'); setDig(digStart()); return }
-        if (e.code === 'ArrowLeft' || e.code === 'KeyA') { setDig((d) => digFlip(d, -1, recordsRef.current.length)); e.preventDefault(); return }
-        if (e.code === 'ArrowRight' || e.code === 'KeyD') { setDig((d) => digFlip(d, 1, recordsRef.current.length)); e.preventDefault(); return }
-        if (e.code === 'Enter' || e.code === 'Space') { setDig((d) => digTogglePull(d)); e.preventDefault(); return }
+        if (e.code === 'ArrowLeft' || e.code === 'KeyA') { setDig((d) => digFlip(d, -1, activeRecords().length)); e.preventDefault(); return }
+        if (e.code === 'ArrowRight' || e.code === 'KeyD') { setDig((d) => digFlip(d, 1, activeRecords().length)); e.preventDefault(); return }
+        if (e.code === 'Enter' || e.code === 'Space') { pull(); e.preventDefault(); return }
         if (e.code === 'KeyP') {
-          const rec = recordsRef.current[digRef.current.index]
+          const rec = activeRecords()[digRef.current.index]
           if (rec) { playRecord(rec.trackIds); flash(`Playing ${rec.album}`) }
           return
         }
@@ -339,40 +387,40 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
 
       if (e.code === 'Escape') { onLeave(); return }
       if (e.code === 'KeyE') {
-        if (prompt === 'crate') { setMode('dig'); setDig(digStart()) }
+        if (prompt === 'crate' && binIdRef.current) { setMode('dig'); setDig(digStart()) }
         else if (prompt === 'station') {
-          const rec = recordsRef.current[digRef.current.index]
+          const rec = inHandRef.current
           if (rec) { playRecord(rec.trackIds); flash(`On the deck: ${rec.album}`) }
-          else flash('Nothing on the deck yet — dig something out first.')
+          else flash('Nothing on the deck yet — pull something out first.')
         }
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [mode, prompt, onLeave, playRecord, flash])
+  }, [mode, prompt, onLeave, playRecord, flash, pull])
 
   // The harness pushes the same transitions the keyboard does — it is a
   // driver for the real interaction, not a second code path.
   useEffect(() => {
-    if (!demoMode || !records.length) return
+    if (!demoMode || !bins.length) return
     const t0 = performance.now()
     const timers = DEMO.map((step) => window.setTimeout(() => {
       if ('goto' in step) demoGoalRef.current = step.goto
       else {
         demoGoalRef.current = null
         if (step.act === 'dig') {
-          if (promptRef.current === 'crate') { setMode('dig'); setDig(digStart()) }
-          else flash('HARNESS: not within reach of the crate — dig refused')
+          if (promptRef.current === 'crate' && binIdRef.current) { setMode('dig'); setDig(digStart()) }
+          else flash('HARNESS: not within reach of a bin — dig refused')
         } else if (step.act === 'undig') { setMode('walk'); setDig(digStart()) }
         else if (modeRef.current !== 'dig') flash(`HARNESS: ${step.act} ignored — not digging`)
-        else if (step.act === 'flip+') setDig((d) => digFlip(d, 1, recordsRef.current.length))
-        else if (step.act === 'flip-') setDig((d) => digFlip(d, -1, recordsRef.current.length))
-        else if (step.act === 'pull') setDig((d) => digTogglePull(d))
+        else if (step.act === 'flip+') setDig((d) => digFlip(d, 1, activeRecords().length))
+        else if (step.act === 'flip-') setDig((d) => digFlip(d, -1, activeRecords().length))
+        else if (step.act === 'pull') pull()
       }
       console.log('[step-inside/demo]', ((performance.now() - t0) / 1000).toFixed(1) + 's', step.note)
     }, step.at * 1000))
     return () => { timers.forEach((t) => window.clearTimeout(t)); demoGoalRef.current = null }
-  }, [demoMode, records.length, flash])
+  }, [demoMode, bins.length, flash, pull])   // eslint-disable-line react-hooks/exhaustive-deps
 
   const pos = digPosition(dig, records.length)
   const edge = digAtEdge(dig, records.length)
@@ -390,7 +438,7 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
         <div className="stepinside__help">
           <span><b>WASD</b> walk</span>
           <span><b>drag</b> or <b>Q</b> look</span>
-          {prompt && <span className="stepinside__prompt"><b>E</b> {prompt === 'crate' ? 'dig through the crate' : prompt === 'station' ? 'put it on the deck' : 'step inside'}</span>}
+          {prompt && <span className="stepinside__prompt"><b>E</b> {prompt === 'crate' ? `dig through ${bin?.label ?? 'the bin'}` : prompt === 'station' ? 'put it on the deck' : 'step inside'}</span>}
         </div>
       )}
 
@@ -408,7 +456,7 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
             <span><b>Enter</b> {dig.pulled ? 'slide it back' : 'pull it out'}</span>
             <span><b>P</b> play it</span>
             <span><b>Esc</b> step back</span>
-            <span className="stepinside__dig-count">{pos.at} / {pos.of}</span>
+            <span className="stepinside__dig-count">{bin?.label} · {pos.at} / {pos.of}</span>
           </div>
         </div>
       )}

@@ -104,19 +104,24 @@ export function floorboardTexture(seed = 5, repeat = 14): THREE.CanvasTexture {
   return t
 }
 
-/** A printed tab label: black type on index card. Drawn wide so the
- *  0.20 × 0.07 tab shows it at the right aspect. */
-export function labelTexture(text: string): THREE.CanvasTexture {
+/** Printed type on an index card. The canvas aspect matches the face it
+ *  is mapped onto (`aspect` = width / height) and the type shrinks to fit
+ *  the width, so "ALTERNATIVE / INDIE" and "A–D" both read. */
+export function labelTexture(text: string, aspect = 512 / 180, card = '#ece6d6'): THREE.CanvasTexture {
   const c = document.createElement('canvas')
-  c.width = 512
   c.height = 180
+  c.width = Math.round(180 * aspect)
   const g = c.getContext('2d')!
-  g.fillStyle = '#ece6d6'
+  g.fillStyle = card
   g.fillRect(0, 0, c.width, c.height)
   g.fillStyle = '#1c1a17'
-  g.font = 'bold 118px "Helvetica Neue", Helvetica, Arial, sans-serif'
   g.textAlign = 'center'
   g.textBaseline = 'middle'
+  let px = 118
+  const font = (n: number): string => `bold ${n}px "Helvetica Neue", Helvetica, Arial, sans-serif`
+  g.font = font(px)
+  const maxW = c.width - 40
+  while (px > 24 && g.measureText(text).width > maxW) { px -= 4; g.font = font(px) }
   g.fillText(text, c.width / 2, c.height / 2 + 6)
   const t = new THREE.CanvasTexture(c)
   t.colorSpace = THREE.SRGBColorSpace
