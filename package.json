@@ -2,7 +2,7 @@
   "name": "JakeTunes",
   "productName": "JakeTunes",
   "version": "6.0.0",
-  "description": "Classic iTunes replica \u2014 V5 iTunes-10 visuals, 2026 brain",
+  "description": "Classic iTunes replica — V5 iTunes-10 visuals, 2026 brain",
   "author": "Jacob Rosenbaum",
   "main": "out/main/index.js",
   "scripts": {
@@ -47,7 +47,7 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "JakeTunes records your voice for mixtape intros \u2014 a few seconds that get the 1979 cassette treatment."
+        "NSMicrophoneUsageDescription": "JakeTunes records your voice for mixtape intros — a few seconds that get the 1979 cassette treatment."
       }
     },
     "win": {
@@ -107,12 +107,14 @@
     "music-metadata": "^11.12.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "three": "^0.169.0",
     "yauzl": "^3.2.0"
   },
   "devDependencies": {
     "@types/howler": "^2.2.11",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
+    "@types/three": "^0.169.0",
     "@types/yauzl": "^2.10.3",
     "@vitejs/plugin-react": "^4.2.0",
     "electron": "^30.5.1",
