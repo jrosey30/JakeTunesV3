@@ -258,3 +258,21 @@ separate, uncommitted change in JakeTunesMobile pending Jake's device look.
   toss landed on the fixture hub (main log), real local files' md5 and the
   hub's list + 998 tombstones unchanged. Launch entry `electron-dev-fixture`
   in ~/.claude/launch.json; no temporary source hooks remain.
+
+## Step Inside — direction change (2026-09-09)
+
+Step Inside becomes a PS2-style record-digging game: third person, one
+neighbourhood block, shops you walk into and dig through. The authoritative
+brief is [step-inside-game-brief-2026-09-09.md](step-inside-game-brief-2026-09-09.md),
+which supersedes the illustrated-room direction and the Step Inside
+*presentation* sections of the domain proposal. The domain contract itself —
+identity, ownership, selection, acquisition commands — is unchanged and is what
+the game is built on.
+
+Scope is Record Shop / Step Inside ONLY. Library, playback, downloads, Activity
+Sync and every other view are untouched, and the Record Shop tabs remain the
+alternative way in.
+
+Stage 2 (playable prototype) is committed at `e39bb8e` with pure, tested models
+for movement and digging. It has NOT had its playable acceptance run, so it is
+not accepted. Scoring is designed but deliberately NOT wired.
