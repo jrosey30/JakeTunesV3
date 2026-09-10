@@ -135,6 +135,13 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO))
     renderer.outputColorSpace = THREE.SRGBColorSpace
+    // The shop's lights sum to more than white on a sleeve under the lamp,
+    // and without a tone curve anything pale clips: Turnstile's sky-blue
+    // Never Enough rendered as a blank white card. Neutral tone mapping
+    // (Khronos PBR Neutral) leaves midtones alone and rolls the top off,
+    // which is what a cover needs — its colours are the product.
+    renderer.toneMapping = THREE.NeutralToneMapping
+    renderer.toneMappingExposure = 0.9
     mount.appendChild(renderer.domElement)
     renderer.domElement.className = 'stepinside__canvas'
 

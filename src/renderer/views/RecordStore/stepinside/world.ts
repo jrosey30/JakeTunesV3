@@ -241,7 +241,9 @@ export function buildWorld(): WorldHandles {
   // pool on the records comes from somewhere you can see when you walk up.
   // Low enough to matter, not so low it blows kraft backs out to orange.
   const LAMP = new THREE.Vector3(0.1, 2.28, 0.45)
-  const crateLamp = new THREE.PointLight(0xffd9a0, 9, 6, 2)
+  // Warm, not orange: the bulb sets the mood of the room, the cover art
+  // keeps its own colours. 0xffd9a0 turned a white sleeve 250/235/211.
+  const crateLamp = new THREE.PointLight(0xfff0dc, 9, 6, 2)
   crateLamp.position.copy(LAMP)
   crateAnchor.add(crateLamp)
   const shade = new THREE.Mesh(
