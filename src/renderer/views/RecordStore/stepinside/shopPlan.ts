@@ -16,7 +16,10 @@
  *     neighbourhood shop files what it only has a few of.
  *   • No dollar bin.
  *
- * Ten bins in three rows (3 / 4 / 3), front rails facing the door (+z).
+ * Ten bins laid out like a shop, not a grid (Jake: "it should all be
+ * against the wall and in the middle"): a run of three along the left
+ * wall, a run of three along the right wall, and a double-sided island of
+ * four down the middle. Every rail faces an aisle.
  */
 
 export type BinKind = 'arrivals' | 'genre' | 'mixed'
@@ -28,6 +31,9 @@ export interface BinDef {
   kind: BinKind
   x: number
   z: number
+  /** Yaw of the front rail, radians: 0 faces the door (+z), +π/2 faces
+   *  +x (a left-wall bin faces the aisle), −π/2 faces −x. */
+  facing: number
 }
 
 /** A divider card: stands in front of record `at`, printed `label`. */
@@ -37,20 +43,37 @@ export interface Section { at: number; label: string }
  *  for this plus its cards (world.ts BIN / crateView.ts). */
 export const CRATE_CAPACITY = 48
 
-const ROW = [-9.4, -12.4, -15.4]
+// Bins are 0.76 m across the rail and 0.91 m deep; in a run they touch.
+const PITCH = 0.95
+const WALL_X = 5.95           // bin centre for a wall run; the back sits on the wall racks
+const ISLAND_X = 0.455        // back-to-back down the middle
+const LEFT = Math.PI / 2      // rail faces +x
+const RIGHT = -Math.PI / 2    // rail faces −x
 
 export const BINS: BinDef[] = [
-  { id: 'arrivals',   label: 'NEW ARRIVALS',                  kind: 'arrivals', x: -3,   z: ROW[0] },
-  { id: 'rock',       label: 'ROCK',                          kind: 'genre',    x: 0,    z: ROW[0] },
-  { id: 'alt',        label: 'ALTERNATIVE / INDIE',           kind: 'genre',    x: 3,    z: ROW[0] },
-  { id: 'punk',       label: 'PUNK',                          kind: 'genre',    x: -4.5, z: ROW[1] },
-  { id: 'grunge',     label: 'GRUNGE',                        kind: 'genre',    x: -1.5, z: ROW[1] },
-  { id: 'rap',        label: 'RAP / HIP-HOP',                 kind: 'genre',    x: 1.5,  z: ROW[1] },
-  { id: 'electronic', label: 'ELECTRONIC / DANCE',            kind: 'genre',    x: 4.5,  z: ROW[1] },
-  { id: 'soul',       label: 'SOUL / FUNK / R&B',             kind: 'genre',    x: -3,   z: ROW[2] },
-  { id: 'pop',        label: 'POP / NEW WAVE',                kind: 'genre',    x: 0,    z: ROW[2] },
-  { id: 'other',      label: 'JAZZ · WORLD · METAL · COUNTRY', kind: 'mixed',    x: 3,    z: ROW[2] },
+  // Left wall, front to back — what you meet first when you walk in.
+  { id: 'arrivals',   label: 'NEW ARRIVALS',                  kind: 'arrivals', x: -WALL_X, z: -9.2,             facing: LEFT },
+  { id: 'rock',       label: 'ROCK',                          kind: 'genre',    x: -WALL_X, z: -9.2 - PITCH,     facing: LEFT },
+  { id: 'alt',        label: 'ALTERNATIVE / INDIE',           kind: 'genre',    x: -WALL_X, z: -9.2 - 2 * PITCH, facing: LEFT },
+  // The island: dug from the left aisle …
+  { id: 'punk',       label: 'PUNK',                          kind: 'genre',    x: -ISLAND_X, z: -11.0,          facing: RIGHT },
+  { id: 'grunge',     label: 'GRUNGE',                        kind: 'genre',    x: -ISLAND_X, z: -11.0 - PITCH,  facing: RIGHT },
+  // … and from the right aisle.
+  { id: 'rap',        label: 'RAP / HIP-HOP',                 kind: 'genre',    x: ISLAND_X,  z: -11.0,          facing: LEFT },
+  { id: 'electronic', label: 'ELECTRONIC / DANCE',            kind: 'genre',    x: ISLAND_X,  z: -11.0 - PITCH,  facing: LEFT },
+  // Right wall, behind the listening deck, toward the counter.
+  { id: 'soul',       label: 'SOUL / FUNK / R&B',             kind: 'genre',    x: WALL_X, z: -13.0,             facing: RIGHT },
+  { id: 'pop',        label: 'POP / NEW WAVE',                kind: 'genre',    x: WALL_X, z: -13.0 - PITCH,     facing: RIGHT },
+  { id: 'other',      label: 'JAZZ · WORLD · METAL · COUNTRY', kind: 'mixed',    x: WALL_X, z: -13.0 - 2 * PITCH, facing: RIGHT },
 ]
+
+/** A point given in a bin's own frame (x across the rail, z out through
+ *  the rail) in world space. */
+export function binToWorld(def: BinDef, lx: number, lz: number): { x: number; z: number } {
+  const c = Math.cos(def.facing)
+  const s = Math.sin(def.facing)
+  return { x: def.x + lx * c + lz * s, z: def.z - lx * s + lz * c }
+}
 
 /** Order the small sections file in the mixed bin. */
 export const OTHER_SECTIONS = ['JAZZ', 'BRAZIL & LATIN', 'WORLD', 'REGGAE', 'METAL', 'COUNTRY', 'ODDITIES'] as const

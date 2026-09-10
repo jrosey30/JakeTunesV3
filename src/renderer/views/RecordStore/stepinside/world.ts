@@ -195,13 +195,13 @@ export function buildWorld(): WorldHandles {
   // The counter at the back — where the clerk stands.
   { const c = wall(scene, blockers, 0, -17.4, 7, 1.1, 1.2, PALETTE.counter); const cm = c.material as THREE.MeshLambertMaterial; cm.map = woodTexture('#4a3626', '#2e2016', 31, 2); cm.color.set(0xffffff) }
 
-  // Wall racks, purely to make the room feel stocked. The right wall
-  // keeps only its back bay; the listening station takes the front.
+  // Wall racks above the wall bins, so the walls read as stocked. The
+  // right wall's front bay is the listening deck's.
   for (const z of [-9.5, -12.5, -15.5]) {
     const rack = box(0.5, 2.2, 2.4, PALETTE.shopWallTrim)
     rack.position.set(SHOP_INTERIOR.minX + 0.4, 1.1, z)
     scene.add(rack)
-    if (z !== -15.5) continue
+    if (z === -9.5) continue
     const rack2 = box(0.5, 2.2, 2.4, PALETTE.shopWallTrim)
     rack2.position.set(SHOP_INTERIOR.maxX - 0.4, 1.1, z)
     scene.add(rack2)
@@ -227,6 +227,7 @@ export function buildWorld(): WorldHandles {
   const buildBin = (def: BinDef): void => {
     const anchor = new THREE.Object3D()
     anchor.position.set(def.x, 0, def.z)
+    anchor.rotation.y = def.facing
     scene.add(anchor)
     const addPiece = (w: number, h: number, d: number, x: number, y: number, z: number, mat: THREE.Material): void => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat)
@@ -275,7 +276,11 @@ export function buildWorld(): WorldHandles {
     cord.position.set(LAMP.x, LAMP.y + 0.22 + cordLen / 2, LAMP.z)
     anchor.add(cord)
 
-    blockers.push({ minX: def.x - oX, maxX: def.x + oX, minZ: def.z - oZ, maxZ: def.z + oZ })
+    // Footprint in world axes: a bin turned to face a wall swaps its extents.
+    const sideways = Math.abs(Math.sin(def.facing)) > 0.5
+    const hx = sideways ? oZ : oX
+    const hz = sideways ? oX : oZ
+    blockers.push({ minX: def.x - hx, maxX: def.x + hx, minZ: def.z - hz, maxZ: def.z + hz })
     bins.set(def.id, anchor)
   }
   for (const def of BINS) buildBin(def)

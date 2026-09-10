@@ -340,5 +340,12 @@ WAVE — and one mixed bin (JAZZ · WORLD · METAL · COUNTRY) with a genre card
 at each boundary. No dollar bin: "doesn't make sense in this world." The
 rules live in `stepinside/shopPlan.ts` and are tested; an album files under
 the genre most of its tracks carry, and unknown genres land on an ODDITIES
-card rather than vanishing. Shipped `f9e102e`; recording v14 on the Desktop.
+card rather than vanishing. Shipped `f9e102e`. Then Jake: "the record bins shouldn't be scattered
+throughout the store. it should all be against the wall and in the middle"
+— so the grid became a shop: a run of three bins along the left wall under
+the racks (NEW ARRIVALS, ROCK, ALTERNATIVE / INDIE), a double-sided island
+down the middle (PUNK, GRUNGE facing the left aisle; RAP, ELECTRONIC facing
+the right), a run of three along the right wall behind the listening deck
+(SOUL, POP, the mixed bin). Every rail faces an aisle; bins carry a
+`facing`. Recording v15 on the Desktop.
 Staff picks on the wall (the Music Man's slot) are designed, not built.

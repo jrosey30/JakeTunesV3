@@ -18,7 +18,7 @@ import { buildWorld, SPAWN, STATION_POS, SHOP_DOOR_Z } from './world'
 import { buildAvatar } from './avatar'
 import { buildCrateView, type CrateView } from './crateView'
 import { useShopStock, type ShopBin } from './useCrateStock'
-import { BINS } from './shopPlan'
+import { BINS, binToWorld, type BinDef } from './shopPlan'
 import { bodyStart, stepBody, gait, resolveCollisions, type Body } from './playerModel'
 import { digStart, digFlip, digTogglePull, digPosition, digAtEdge } from './digModel'
 import { claimTransportKeys } from '../../../input-mode'
@@ -50,23 +50,26 @@ type DemoStep = { at: number; note: string } & (
   | { act: 'dig' | 'undig' | 'flip+' | 'flip-' | 'pull' }
 )
 const DEMO: DemoStep[] = [
+  // Waypoints QUEUE: the next one is taken only on arrival, so a leg that
+  // runs long never makes him cut a corner through a wall.
   { at: 0.6,  note: 'walk to the door',   goto: { x: 0, z: -4.2 } },
-  { at: 3.4,  note: 'in to the ROCK bin', goto: { x: 0, z: -7.8 } },       // 1.6 m from the bin, clear of its footprint
-  { at: 8.0,  note: 'start digging',      act: 'dig' },
-  { at: 9.0,  note: 'flip',               act: 'flip+' },
-  { at: 9.8,  note: 'flip',               act: 'flip+' },
-  { at: 10.6, note: 'flip',               act: 'flip+' },
-  { at: 11.4, note: 'flip',               act: 'flip+' },
-  { at: 12.6, note: 'pull it out',        act: 'pull' },
-  { at: 15.4, note: 'slide it back',      act: 'pull' },
-  { at: 16.6, note: 'flip back',          act: 'flip-' },
-  { at: 17.8, note: 'step back',          act: 'undig' },
-  { at: 18.4, note: 'over to PUNK',       goto: { x: -4.5, z: -10.9 } },
-  { at: 23.0, note: 'dig the punk bin',   act: 'dig' },
-  { at: 24.0, note: 'flip',               act: 'flip+' },
-  { at: 24.8, note: 'flip',               act: 'flip+' },
-  { at: 26.0, note: 'pull it out',        act: 'pull' },
-  { at: 29.0, note: 'step back',          act: 'undig' },
+  { at: 0.7,  note: 'step inside',        goto: { x: 0, z: -7.8 } },
+  { at: 0.8,  note: 'over to ROCK',       goto: { x: -4.35, z: -10.15 } }, // 1.6 m out from the left-wall bin's rail
+  { at: 11.0, note: 'start digging',      act: 'dig' },
+  { at: 12.0, note: 'flip',               act: 'flip+' },
+  { at: 12.8, note: 'flip',               act: 'flip+' },
+  { at: 13.6, note: 'flip',               act: 'flip+' },
+  { at: 14.4, note: 'flip',               act: 'flip+' },
+  { at: 15.6, note: 'pull it out',        act: 'pull' },
+  { at: 18.0, note: 'slide it back',      act: 'pull' },
+  { at: 19.0, note: 'flip back',          act: 'flip-' },
+  { at: 20.0, note: 'step back',          act: 'undig' },
+  { at: 20.4, note: 'over to PUNK',       goto: { x: -2.05, z: -11.0 } },  // the island's left face
+  { at: 24.2, note: 'dig the punk bin',   act: 'dig' },
+  { at: 25.2, note: 'flip',               act: 'flip+' },
+  { at: 26.0, note: 'flip',               act: 'flip+' },
+  { at: 27.2, note: 'pull it out',        act: 'pull' },
+  { at: 29.4, note: 'step back',          act: 'undig' },
 ]
 // Digging framing: your own eyes at the front rail. Standing height, a
 // step back from the bin, looking down ~35° at the record you're on, so
@@ -112,7 +115,7 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
   const binsRef = useRef(bins); binsRef.current = bins
   const binIdRef = useRef(binId); binIdRef.current = binId
   const insideRef = useRef(inside); insideRef.current = inside
-  const demoGoalRef = useRef<{ x: number; z: number } | null>(null)
+  const demoGoalRef = useRef<Array<{ x: number; z: number }>>([])
   const promptRef = useRef(prompt); promptRef.current = prompt
   /** The last record pulled out of any bin — what goes on the deck. */
   const inHandRef = useRef<CrateRecord | null>(null)
@@ -182,10 +185,7 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
       world.bins.get(b.id)?.add(crate.group)
       crates.set(b.id, crate)
     }
-    const binPos = (id: string | null): { x: number; z: number } => {
-      const def = BINS.find((b) => b.id === id) ?? BINS[0]
-      return { x: def.x, z: def.z }
-    }
+    const binDef = (id: string | null): BinDef => BINS.find((b) => b.id === id) ?? BINS[0]
 
     let body: Body = bodyStart(SPAWN.x, SPAWN.z, Math.PI)
     let camYaw = 0
@@ -249,7 +249,9 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
 
       const digging = modeRef.current === 'dig' && binIdRef.current !== null
       const active = binIdRef.current
-      const at = binPos(active)
+      const def = binDef(active)
+      // Where the eye stands for this bin: a step out through its rail.
+      const eye = binToWorld(def, 0, DIG_DISTANCE)
       let input = { x: 0, z: 0 }
       if (!digging) {
         const f = (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0) - (keys.has('KeyS') || keys.has('ArrowDown') ? 1 : 0)
@@ -261,14 +263,14 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
         }
         // Harness waypoint: a world-space push toward the goal, easing off
         // on arrival so the body settles instead of oscillating.
-        const goal = demoGoalRef.current
+        const goal = demoGoalRef.current[0]
         if (goal && f === 0 && s === 0) {
           const dx = goal.x - body.x
           const dz = goal.z - body.z
           const dist = Math.hypot(dx, dz)
           // A generous arrival radius: at 0.12 the momentum model overshot,
           // turned round and walked back, and the run showed his face.
-          if (dist < 0.3) demoGoalRef.current = null
+          if (dist < 0.3) demoGoalRef.current.shift()
           else {
             const g = Math.min(1, dist / 1.2)
             input = { x: (dx / dist) * g, z: (dz / dist) * g }
@@ -292,7 +294,7 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
         // The bin's front rail faces +Z (the aisle). Always frame from
         // there — a crate is dug from the front, whichever way you walked up.
         if (digYaw === null) digYaw = 0
-        tmp.set(at.x, DIG_HEIGHT, at.z + DIG_DISTANCE)
+        tmp.set(eye.x, DIG_HEIGHT, eye.z)
         camPos.lerp(tmp, Math.min(1, 5.5 * dt))
         camera.position.copy(camPos)
         // Follow the record you're on as the dig goes deeper into the bin,
@@ -300,7 +302,8 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
         // pull is a glance up and not a cut.
         const crate = crates.get(active!)
         const f = crate ? crate.focus(digRef.current.index, digRef.current.pulled) : { y: 1.0, z: 0 }
-        tmp.set(at.x, f.y, at.z + f.z)
+        const look = binToWorld(def, 0, f.z)
+        tmp.set(look.x, f.y, look.z)
         lookPos.lerp(tmp, Math.min(1, 7 * dt))
         camera.lookAt(lookPos)
       } else {
@@ -317,7 +320,7 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
       }
       // At the rail the camera stands where the player's head is; he is
       // out of shot until it pulls back behind him again.
-      tmp.set(at.x, DIG_HEIGHT, at.z + DIG_DISTANCE)
+      tmp.set(eye.x, DIG_HEIGHT, eye.z)
       avatar.root.visible = !(active && camPos.distanceTo(tmp) < 0.7)
 
       for (const [id, crate] of crates) {
@@ -405,9 +408,9 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
     if (!demoMode || !bins.length) return
     const t0 = performance.now()
     const timers = DEMO.map((step) => window.setTimeout(() => {
-      if ('goto' in step) demoGoalRef.current = step.goto
+      if ('goto' in step) demoGoalRef.current.push(step.goto)
       else {
-        demoGoalRef.current = null
+        demoGoalRef.current = []
         if (step.act === 'dig') {
           if (promptRef.current === 'crate' && binIdRef.current) { setMode('dig'); setDig(digStart()) }
           else flash('HARNESS: not within reach of a bin — dig refused')
@@ -419,7 +422,7 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
       }
       console.log('[step-inside/demo]', ((performance.now() - t0) / 1000).toFixed(1) + 's', step.note)
     }, step.at * 1000))
-    return () => { timers.forEach((t) => window.clearTimeout(t)); demoGoalRef.current = null }
+    return () => { timers.forEach((t) => window.clearTimeout(t)); demoGoalRef.current = [] }
   }, [demoMode, bins.length, flash, pull])   // eslint-disable-line react-hooks/exhaustive-deps
 
   const pos = digPosition(dig, records.length)
