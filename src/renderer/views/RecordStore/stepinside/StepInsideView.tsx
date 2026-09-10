@@ -66,9 +66,9 @@ const DEMO: DemoStep[] = [
 // Digging is framed from over the FRONT rail, like standing at the bin:
 // close, looking down ~40°, so the selected cover is legible and the run
 // of sleeve tops behind it is in frame.
-const DIG_DISTANCE = 1.18
-const DIG_HEIGHT = 1.92
-const DIG_LOOK_Y = 1.02
+const DIG_DISTANCE = 1.25
+const DIG_HEIGHT = 2.0
+const DIG_LOOK_Y = 1.0
 
 type Mode = 'walk' | 'dig'
 
@@ -247,7 +247,8 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
         tmp.set(CRATE_POS.x, DIG_HEIGHT, CRATE_POS.z + DIG_DISTANCE)
         camPos.lerp(tmp, Math.min(1, 5.5 * dt))
         camera.position.copy(camPos)
-        camera.lookAt(CRATE_POS.x, DIG_LOOK_Y, CRATE_POS.z + 0.08)
+        // Follow the record you're on as the dig goes deeper into the bin.
+        camera.lookAt(CRATE_POS.x, DIG_LOOK_Y, CRATE_POS.z + crate.selectionZ(digRef.current.index) * 0.6)
       } else {
         digYaw = null
         tmp.set(

@@ -50,7 +50,9 @@ const PALETTE = {
  *  record in it. Everything in crateView.ts is laid out from these. */
 export const BIN = {
   innerHalfX: 0.345,    // 0.69 m — a sleeve is 0.62, plus finger room
-  innerHalfZ: 0.265,    // 0.53 m deep — 48 records at ~9 mm, packed
+  innerHalfZ: 0.42,     // 0.84 m deep: 48 records at ~9 mm fill half, the other
+                        // half is the room a dig needs — flipped ones pile at the
+                        // front, the one you're on stands in the gap, IN the crate
   wallTop: 0.96,        // waist height; the rim you look over
   baseTop: 0.66,        // what the sleeves stand on
   wallThick: 0.035,
