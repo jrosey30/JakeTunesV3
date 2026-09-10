@@ -41,6 +41,9 @@ const LEAN = 0.10                 // the packed stack leans back a touch
 // sleeve's face on the rail's inner edge.
 const PASSED = 0.34
 const PASSED_INSET = 0.11
+// Pitch of the flipped pile. Sleeves are 6 mm thick: anything tighter has
+// coplanar faces fighting and the cover behind a card shows through it.
+const PILE_PITCH = 0.011
 // The one you're on is lifted a hand's width — the way a digger tips a
 // record up out of the pack to see it — and leans back toward eyes at the
 // rail. From there the flipped pile hides its bottom quarter, which is
@@ -108,7 +111,14 @@ export function buildCrateView(records: CrateRecord[]): CrateView {
   const backZ = -BIN.innerHalfZ + 0.20
   const frontZ = BIN.innerHalfZ
   const n = records.length
-  const zFor = (i: number): number => backZ + (n - 1 - i) * SPACING
+  // Every card and every sleeve has its own slot at the pack pitch — a
+  // divider wedged half a slot between two sleeves overlaps both by half a
+  // millimetre and the covers bleed through it. Slot 0 is the front.
+  const slotOfRecord = (i: number): number => i + Math.floor(i / DIVIDER_EVERY) + 1
+  const slotOfDivider = (i: number): number => slotOfRecord(i) - 1
+  const slots = slotOfRecord(n - 1) + 1
+  const zForSlot = (s: number): number => backZ + (slots - 1 - s) * SPACING
+  const zFor = (i: number): number => zForSlot(slotOfRecord(i))
 
   const pivots: THREE.Group[] = []
   records.forEach((rec, i) => {
@@ -158,7 +168,7 @@ export function buildCrateView(records: CrateRecord[]): CrateView {
     const tab = new THREE.Mesh(tabGeo, [cardEdgeMat, cardEdgeMat, cardEdgeMat, cardEdgeMat, labelMat, cardMat])
     tab.position.set(-0.19 + (ord % 3) * 0.19, SLEEVE + 0.03 + 0.03, 0)
     pivot.add(tab)
-    pivot.position.set(0, BIN.baseTop, zFor(i) + SPACING / 2)
+    pivot.position.set(0, BIN.baseTop, zForSlot(slotOfDivider(i)))
     pivot.rotation.x = -LEAN
     group.add(pivot)
     dividers.push({ pivot, index: i })
@@ -170,8 +180,10 @@ export function buildCrateView(records: CrateRecord[]): CrateView {
     obj.position.z += (z - obj.position.z) * k
   }
 
-  // Where a passed record rests: tipped onto the front rail, compressed.
-  const passedZ = (rel: number): number => frontZ - PASSED_INSET - Math.min(-rel, 14) * 0.0025
+  // Where a flipped item rests: tipped onto the front rail, in the order
+  // it was flipped — the first one is at the front. Past 14 deep the pile
+  // stops growing; the ones behind are hidden by the ones in front anyway.
+  const pileZ = (slot: number): number => frontZ - PASSED_INSET - Math.min(slot, 14) * PILE_PITCH
 
   // Progress along the pull path, 0 = in its slot, 1 = in your hands.
   // Lift runs over the first 55 % of the path, the forward move over the
@@ -196,7 +208,7 @@ export function buildCrateView(records: CrateRecord[]): CrateView {
       // Walk away and the crate settles back to a packed bin — the record
       // you were on slides home, the tipped ones stand back up.
       for (let i = 0; i < pivots.length; i++) settle(pivots[i], -LEAN, BIN.baseTop, zFor(i), k)
-      for (const d of dividers) settle(d.pivot, -LEAN, BIN.baseTop, zFor(d.index) + SPACING / 2, k)
+      for (const d of dividers) settle(d.pivot, -LEAN, BIN.baseTop, zForSlot(slotOfDivider(d.index)), k)
       return
     }
     // Flipping to another record drops whatever was in hand straight back.
@@ -207,7 +219,7 @@ export function buildCrateView(records: CrateRecord[]): CrateView {
     for (let i = 0; i < pivots.length; i++) {
       const p = pivots[i]
       const rel = i - index
-      if (rel < 0) settle(p, PASSED, BIN.baseTop, passedZ(rel), k)
+      if (rel < 0) settle(p, PASSED, BIN.baseTop, pileZ(slotOfRecord(i)), k)
       else if (rel === 0) {
         const h = heldPose(i, pullT)
         settle(p, h.rot, h.y, h.z, Math.min(1, 2.2 * k))
@@ -218,8 +230,8 @@ export function buildCrateView(records: CrateRecord[]): CrateView {
       const rel = d.index - index
       // The card that files the section you're in sits in front of the
       // record you're on: it has been flipped past too.
-      if (rel <= 0) settle(d.pivot, PASSED, BIN.baseTop, passedZ(rel - 1) - 0.002, k)
-      else settle(d.pivot, STACK_TILT, BIN.baseTop, zFor(d.index) + SPACING / 2, k)
+      if (rel <= 0) settle(d.pivot, PASSED, BIN.baseTop, pileZ(slotOfDivider(d.index)), k)
+      else settle(d.pivot, STACK_TILT, BIN.baseTop, zForSlot(slotOfDivider(d.index)), k)
     }
   }
 
