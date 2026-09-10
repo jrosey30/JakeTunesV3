@@ -329,3 +329,16 @@ artist. Recordings v10–v12 in `~/Desktop/step-inside-run-2026-09-09/`.
 Still in stage 3: the listening station is a box with a platter; the wall
 racks are flat blocks; the street is bare; shop ambience is not folded
 into the game. Stage 4+ remains gated on Jake's word.
+
+**Filing, decided 2026-09-10 (Jake):** the shop is organised the way a shop
+is, not one way. Ten bins in three rows facing the door: NEW ARRIVALS
+(newest 48 by date added, newest at the front, no cards), then genre bins
+alphabetical by artist with letter-range cards — ROCK (Classic Rock + Rock),
+ALTERNATIVE / INDIE, PUNK, GRUNGE (each its own — "they're their own
+things"), RAP / HIP-HOP, ELECTRONIC / DANCE, SOUL / FUNK / R&B, POP / NEW
+WAVE — and one mixed bin (JAZZ · WORLD · METAL · COUNTRY) with a genre card
+at each boundary. No dollar bin: "doesn't make sense in this world." The
+rules live in `stepinside/shopPlan.ts` and are tested; an album files under
+the genre most of its tracks carry, and unknown genres land on an ODDITIES
+card rather than vanishing. Shipped `f9e102e`; recording v14 on the Desktop.
+Staff picks on the wall (the Music Man's slot) are designed, not built.
