@@ -316,3 +316,16 @@ plays; no measurable audio dropouts; zero rendering when the view is unmounted.
 **Status at time of writing:** stage 2 is built and committed (`e39bb8e`) with
 pure models under test — but it has **not had its playable run**, so it is not
 accepted. That run is the immediate next step, before anything in stage 3+.
+
+**Status 2026-09-10:** stage 3's crate is **accepted** — Jake: "excellent.
+this looks good" on `b5d1743`. Five passes got it there, and what settled
+it was geometry, not rendering tricks: an eye-level camera at the front
+rail; every card and sleeve in a slot of its own at the pack pitch (a card
+wedged between two sleeves z-fought and the covers bled through); a
+two-move pull that clears the tallest thing in the flipped pile — the
+divider tabs, not the sleeve tops — before coming forward; index-card
+dividers whose tabs print the real filing range of a crate sorted by
+artist. Recordings v10–v12 in `~/Desktop/step-inside-run-2026-09-09/`.
+Still in stage 3: the listening station is a box with a platter; the wall
+racks are flat blocks; the street is bare; shop ambience is not folded
+into the game. Stage 4+ remains gated on Jake's word.
