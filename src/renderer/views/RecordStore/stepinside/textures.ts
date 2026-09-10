@@ -89,13 +89,54 @@ export function plasterTexture(tone: string, seed = 3): THREE.CanvasTexture {
   return finish(c, 4)
 }
 
-/** Floorboards: wood with a plank seam every 32px. */
-export function floorboardTexture(seed = 5): THREE.CanvasTexture {
-  const t = woodTexture('#5a5348', '#3f3a32', seed, 6)
+/** Floorboards: wood with a plank seam every 32px, turned so the boards
+ *  run front-to-back. `repeat` sets the plank width: the tile is 8 boards,
+ *  so on a 14 m floor repeat 14 gives 12 cm boards — real, not tabletop. */
+export function floorboardTexture(seed = 5, repeat = 14): THREE.CanvasTexture {
+  const t = woodTexture('#5a5348', '#433d35', seed, repeat)
   const c = t.image as HTMLCanvasElement
   const g = c.getContext('2d')!
   g.fillStyle = 'rgba(0,0,0,0.35)'
   for (let y = 0; y < 256; y += 32) g.fillRect(0, y, 256, 1.5)
+  t.center.set(0.5, 0.5)
+  t.rotation = Math.PI / 2
   t.needsUpdate = true
+  return t
+}
+
+/** A printed tab label: black type on index card. Drawn wide so the
+ *  0.20 × 0.07 tab shows it at the right aspect. */
+export function labelTexture(text: string): THREE.CanvasTexture {
+  const c = document.createElement('canvas')
+  c.width = 512
+  c.height = 180
+  const g = c.getContext('2d')!
+  g.fillStyle = '#ece6d6'
+  g.fillRect(0, 0, c.width, c.height)
+  g.fillStyle = '#1c1a17'
+  g.font = 'bold 118px "Helvetica Neue", Helvetica, Arial, sans-serif'
+  g.textAlign = 'center'
+  g.textBaseline = 'middle'
+  g.fillText(text, c.width / 2, c.height / 2 + 6)
+  const t = new THREE.CanvasTexture(c)
+  t.colorSpace = THREE.SRGBColorSpace
+  t.anisotropy = 8
+  return t
+}
+
+/** Soft contact shadow: a blurred dark rectangle on a transparent tile,
+ *  laid under furniture. The PS2 way — no shadow maps, one decal. */
+export function contactShadowTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas')
+  c.width = 256
+  c.height = 256
+  const g = c.getContext('2d')!
+  g.clearRect(0, 0, 256, 256)
+  g.filter = 'blur(22px)'
+  g.fillStyle = 'rgba(0,0,0,0.9)'
+  g.fillRect(48, 48, 160, 160)
+  g.filter = 'none'
+  const t = new THREE.CanvasTexture(c)
+  t.colorSpace = THREE.SRGBColorSpace
   return t
 }

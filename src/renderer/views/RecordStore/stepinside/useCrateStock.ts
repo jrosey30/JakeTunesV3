@@ -74,7 +74,13 @@ export function useCrateStock(seed: number): CrateRecord[] {
       ;[picked[i], picked[j]] = [picked[j], picked[i]]
     }
 
-    return picked.slice(0, MAX_RECORDS).map((e) => {
+    // Filed by artist, the way a shop files a bin — so the divider tabs in
+    // the crate can read real letter ranges. "The" doesn't count.
+    const filing = (a: string): string => a.replace(/^the\s+/i, '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    const stock = picked.slice(0, MAX_RECORDS).sort((a, b) =>
+      filing(a.rec.artist).localeCompare(filing(b.rec.artist)) || a.rec.album.localeCompare(b.rec.album))
+
+    return stock.map((e) => {
       const ordered = [...e.tracks].sort((a, b) => {
         const da = Number(a.discNumber) || 1
         const db = Number(b.discNumber) || 1

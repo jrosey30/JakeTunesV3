@@ -13,7 +13,7 @@
  */
 import * as THREE from 'three'
 import type { Blocker } from './playerModel'
-import { woodTexture, plasterTexture, floorboardTexture } from './textures'
+import { woodTexture, plasterTexture, floorboardTexture, contactShadowTexture } from './textures'
 
 export const SHOP_DOOR_Z = -6
 export const SHOP_INTERIOR = { minX: -7, maxX: 7, minZ: -19, maxZ: SHOP_DOOR_Z }
@@ -75,6 +75,20 @@ function box(w: number, h: number, d: number, color: number): THREE.Mesh {
   )
   m.castShadow = false
   m.receiveShadow = false
+  return m
+}
+
+/** A soft shadow decal on the floor under a piece of furniture, so it
+ *  stands ON the boards instead of floating over them. */
+const shadowTex = contactShadowTexture()
+function contactShadow(w: number, d: number): THREE.Mesh {
+  const m = new THREE.Mesh(
+    new THREE.PlaneGeometry(w + 0.7, d + 0.7),
+    new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, opacity: 0.55, depthWrite: false }),
+  )
+  m.rotation.x = -Math.PI / 2
+  m.position.y = 0.045
+  m.renderOrder = 1
   return m
 }
 
@@ -159,7 +173,7 @@ export function buildWorld(): WorldHandles {
 
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(14, 13),
-    new THREE.MeshLambertMaterial({ map: floorboardTexture(5) }),
+    new THREE.MeshLambertMaterial({ map: floorboardTexture(5, 14) }),
   )
   floor.rotation.x = -Math.PI / 2
   floor.position.set(0, 0.03, -12.5)
@@ -221,11 +235,34 @@ export function buildWorld(): WorldHandles {
   addPiece(BIN.wallThick, wallH, oZ * 2, -oX + BIN.wallThick / 2, wallY, 0, binMat)
   addPiece(BIN.wallThick, wallH, oZ * 2,  oX - BIN.wallThick / 2, wallY, 0, binMat)
 
-  // A warm lamp over the bin — this is where the contrast budget goes,
-  // but low enough that kraft backs don't blow out to orange.
+  crateAnchor.add(contactShadow(oX * 2, oZ * 2))
+
+  // A pendant over the front of the bin — the light has a fixture, so the
+  // pool on the records comes from somewhere you can see when you walk up.
+  // Low enough to matter, not so low it blows kraft backs out to orange.
+  const LAMP = new THREE.Vector3(0.1, 2.28, 0.45)
   const crateLamp = new THREE.PointLight(0xffd9a0, 9, 6, 2)
-  crateLamp.position.set(0.1, 2.3, 0.7)
+  crateLamp.position.copy(LAMP)
   crateAnchor.add(crateLamp)
+  const shade = new THREE.Mesh(
+    new THREE.ConeGeometry(0.24, 0.2, 18, 1, true),
+    new THREE.MeshLambertMaterial({ color: PALETTE.shopWallTrim, side: THREE.DoubleSide }),
+  )
+  shade.position.set(LAMP.x, LAMP.y + 0.12, LAMP.z)
+  crateAnchor.add(shade)
+  const bulb = new THREE.Mesh(
+    new THREE.SphereGeometry(0.035, 10, 8),
+    new THREE.MeshBasicMaterial({ color: 0xffe6bd }),
+  )
+  bulb.position.copy(LAMP)
+  crateAnchor.add(bulb)
+  const cordLen = 5.2 - (LAMP.y + 0.22)
+  const cord = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.006, 0.006, cordLen, 6),
+    new THREE.MeshLambertMaterial({ color: 0x14120f }),
+  )
+  cord.position.set(LAMP.x, LAMP.y + 0.22 + cordLen / 2, LAMP.z)
+  crateAnchor.add(cord)
 
   blockers.push({ minX: CRATE_POS.x - oX, maxX: CRATE_POS.x + oX, minZ: CRATE_POS.z - oZ, maxZ: CRATE_POS.z + oZ })
 
@@ -236,6 +273,7 @@ export function buildWorld(): WorldHandles {
   const deck = box(1.6, 1.0, 1.2, PALETTE.counter)
   deck.position.set(0, 0.5, 0)
   stationAnchor.add(deck)
+  stationAnchor.add(contactShadow(1.6, 1.2))
   const platter = new THREE.Mesh(
     new THREE.CylinderGeometry(0.42, 0.42, 0.06, 20),
     new THREE.MeshLambertMaterial({ color: 0x14141a }),

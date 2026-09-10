@@ -62,17 +62,15 @@ const DEMO: DemoStep[] = [
   { at: 20.4, note: 'flip back',          act: 'flip-' },
   { at: 22.0, note: 'step back',          act: 'undig' },
 ]
-// Digging framing: close enough to read a cover, angled down into the bin.
-// Digging is framed from over the FRONT rail, like standing at the bin:
-// close, looking down ~40°, so the selected cover is legible and the run
-// of sleeve tops behind it is in frame.
-// High and close, looking down ~57°: from there the line of sight to the
-// selected record's BOTTOM edge passes over the flipped pile at the front,
-// so the whole cover shows. At 40° the pile sat between camera and record
-// and hid its lower half.
-const DIG_DISTANCE = 0.9
-const DIG_HEIGHT = 2.35
-const DIG_LOOK_Y = 0.95
+// Digging framing: your own eyes at the front rail. Standing height, a
+// step back from the bin, looking down ~35° at the record you're on, so
+// the cover reads, the fan of sleeve tops behind it is in frame and the
+// shop is still there behind the bin. The flipped pile at the front hides
+// the record's foot the way a real crate does; the top-down camera that
+// showed the whole cover made every sleeve behind it a blank tan edge.
+// The avatar is hidden while the camera is here — it is where his head is.
+const DIG_DISTANCE = 1.05
+const DIG_HEIGHT = 1.75
 
 type Mode = 'walk' | 'dig'
 
@@ -151,6 +149,7 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
     let body: Body = bodyStart(SPAWN.x, SPAWN.z, Math.PI)
     let camYaw = 0
     let camPos = new THREE.Vector3(SPAWN.x, CAM_HEIGHT, SPAWN.z + CAM_DISTANCE)
+    const lookPos = new THREE.Vector3(SPAWN.x, 1.05, SPAWN.z)
     // Locked when a dig starts: the angle you approached the crate from.
     let digYaw: number | null = null
     let distanceWalked = 0
@@ -251,8 +250,13 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
         tmp.set(CRATE_POS.x, DIG_HEIGHT, CRATE_POS.z + DIG_DISTANCE)
         camPos.lerp(tmp, Math.min(1, 5.5 * dt))
         camera.position.copy(camPos)
-        // Follow the record you're on as the dig goes deeper into the bin.
-        camera.lookAt(CRATE_POS.x, DIG_LOOK_Y, CRATE_POS.z + crate.selectionZ(digRef.current.index) * 0.6)
+        // Follow the record you're on as the dig goes deeper into the bin,
+        // and rise to the one in your hands when you pull it. Eased, so a
+        // pull is a glance up and not a cut.
+        const f = crate.focus(digRef.current.index, digRef.current.pulled)
+        tmp.set(CRATE_POS.x, f.y, CRATE_POS.z + f.z)
+        lookPos.lerp(tmp, Math.min(1, 7 * dt))
+        camera.lookAt(lookPos)
       } else {
         digYaw = null
         tmp.set(
@@ -262,8 +266,13 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
         )
         camPos.lerp(tmp, Math.min(1, 4.2 * dt))
         camera.position.copy(camPos)
-        camera.lookAt(body.x, 1.05, body.z)
+        lookPos.set(body.x, 1.05, body.z)
+        camera.lookAt(lookPos)
       }
+      // At the rail the camera stands where the player's head is; he is
+      // out of shot until it pulls back behind him again.
+      tmp.set(CRATE_POS.x, DIG_HEIGHT, CRATE_POS.z + DIG_DISTANCE)
+      avatar.root.visible = camPos.distanceTo(tmp) > 0.7
 
       crate.update(digRef.current.index, digRef.current.pulled, dt, digging)
       world.platter.rotation.y += dt * (playback.isPlaying ? 3.4 : 0)
