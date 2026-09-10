@@ -2596,10 +2596,18 @@ async function createWindow(): Promise<void> {
     sendMediaKeyAction(action)
   })
 
+  // Acceptance harness (dev only): JT_STEP_INSIDE=1 boots straight into
+  // Step Inside, and =demo additionally runs the scripted approach/browse/
+  // pull/return so a run can be recorded without a human at the keyboard.
+  // Ignored entirely in a packaged app, so normal startup is unchanged.
+  const stepInsideHash = !app.isPackaged && process.env['JT_STEP_INSIDE']
+    ? (process.env['JT_STEP_INSIDE'] === 'demo' ? '#stepInsideDemo' : '#stepInside')
+    : ''
+
   if (isDev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'] + stepInsideHash)
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    mainWindow.loadFile(join(__dirname, '../renderer/index.html'), stepInsideHash ? { hash: stepInsideHash.slice(1) } : undefined)
   }
 }
 

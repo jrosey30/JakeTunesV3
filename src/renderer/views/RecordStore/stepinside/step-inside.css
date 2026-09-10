@@ -14,7 +14,8 @@
   width: 100%;
   height: 100%;
   display: block;
-  image-rendering: pixelated;
+  /* No pixelation filter: the era comes from the models, not from
+     destroying the album art. */
   cursor: grab;
 }
 .stepinside__canvas:active { cursor: grabbing; }

@@ -206,7 +206,7 @@ export function formatRelationshipForPrompt(r: ItemRelationship): string {
 function buildBlurbUserMessage(input: GenerateBlurbInput): string {
   const r = input.relationship
   return [
-    `You're behind the counter of WJLR Records on Atlantic Ave. A regular just pulled ${r.artist} — ${r.title} off the ${input.shelfTitle} shelf.`,
+    `You're behind the counter of WJLR Records on Manhattan Ave in Greenpoint. A regular just pulled ${r.artist} — ${r.title} off the ${input.shelfTitle} shelf.`,
     '',
     'Talk about THE RECORD. What it sounds like, what it was reaching for, who played on it, how it was made, where it sits next to its neighbours, what to listen for. 1-3 sentences, your voice — a clerk talking about something he actually loves.',
     '',

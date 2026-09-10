@@ -276,3 +276,26 @@ alternative way in.
 Stage 2 (playable prototype) is committed at `e39bb8e` with pure, tested models
 for movement and digging. It has NOT had its playable acceptance run, so it is
 not accepted. Scoring is designed but deliberately NOT wired.
+
+### Stage 3 progress — one convincing crate (2026-09-09, later)
+
+Verified in a driven run, not from a build: `JT_STEP_INSIDE=demo` boots an
+isolated instance straight into Step Inside and steers the avatar by
+waypoint through approach → door → crate → dig → flip ×4 → pull → return →
+flip back → step back. The dig step goes through the same reach gate a
+person does, so an overshoot is reported ("HARNESS: not within reach"),
+never papered over. Recording + frames: `~/Desktop/step-inside-run-2026-09-09/`
+(kept out of the repo on purpose — diagnostics/ is not gitignored and the
+nightly robot commits everything).
+
+Fixed on the way: spawn faced away from the shop (atan2 heading vs three.js
+-Z forward); physically-based light units rendered the block black; the
+crate was a closed box with sleeves through its lid; the pixelation filter
+was hiding geometry and wrecking the art. Shop moved to Manhattan Ave,
+Greenpoint (blurb prompt too — it said Atlantic Ave).
+
+Still open before stage 3 is accepted: the street outside is bare; the
+upright stack behind the selected sleeve reads thin from the dig camera;
+the shop ambience did not survive the direction change and needs folding
+into the game. Keyboard conflicts are fixed and tested. Scoring remains
+unwired by instruction.
