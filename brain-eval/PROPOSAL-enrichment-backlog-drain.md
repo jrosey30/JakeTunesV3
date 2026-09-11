@@ -71,3 +71,16 @@ but only net −1: the trainer enriched +50 while 49 new imports landed (library
 10,812 → 10,861). batch=50 merely treads water on a ~50-import day, exactly the
 proposal's premise. Meanwhile the un-enriched rt component measured +0.011
 tonight (down from +0.022 on 09-09 — it does self-heal when imports pause).
+
+## 2026-09-11 update — first REAL drain night
+
+Backlog series 315→458→542→564→533→532→**485** (net −47: +50 enriched vs +2
+imports — batch=50 drains exactly as predicted the moment imports pause).
+At this rate the wave clears in ~10 quiet nights. The un-enriched rt component
+measured +0.009 tonight (series +0.022 → +0.011 → +0.009, self-heal on
+schedule). Note: the mood-index's un-enriched-in-lib cohort is EXACTLY 215 for
+a second night even as the backlog fell 47 — the stale bare-genre mood vectors
+belong to earlier import days, and tonight's 50 newly-enriched tracks entered
+the mood index only at enrichment time. The 215 will drain only as the queue
+reaches those specific import-day tracks. Proposal stands for wave days;
+no emergency drain needed while imports are quiet.

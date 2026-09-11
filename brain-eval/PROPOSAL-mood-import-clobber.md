@@ -189,3 +189,16 @@ floor tax, not part of the wave. Fix 2 (trainer-side identity-gated mood-orphan
 prune) remains the ask; still NOT applied harness-side (mood-only change can't
 move run_eval retrieval/overall, and a NAS-only prune is resurrected by the
 next replay).
+
+## 2026-09-11 — third orphan-only measurement (exp_20260911_sag_decomp.py, drain night)
+
+Same 18 identity-gated orphans, rt flat at 0.819: prune = **0.819 → 0.830
+(+0.011), worst per-probe delta +0.00** (ret-007 0.56→0.68, ret-008 0.96→1.00).
+Series: +0.013 (sag night) / +0.013 (recovery night) / **+0.011** (drain night)
+— constant-order floor tax across all three regimes; the small tonight-dip is
+slot arithmetic (ret-013's orphan slot was displaced by an un-enriched vector),
+not healing. Slot occupancy: ret-007 4/25, ret-012 4/20, ret-008 1/25 —
+unchanged for a third night. Fix 2 (trainer-side identity-gated mood-orphan
+prune) remains worth ~+0.011–0.013 permanent router-truth. Still NOT applied
+harness-side, same three reasons (can't move run_eval; NAS prune resurrected
+by replay; standing precedent).
