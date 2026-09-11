@@ -107,14 +107,14 @@ export function floorboardTexture(seed = 5, repeat = 14): THREE.CanvasTexture {
 /** Printed type on an index card. The canvas aspect matches the face it
  *  is mapped onto (`aspect` = width / height) and the type shrinks to fit
  *  the width, so "ALTERNATIVE / INDIE" and "A–D" both read. */
-export function labelTexture(text: string, aspect = 512 / 180, card = '#ece6d6'): THREE.CanvasTexture {
+export function labelTexture(text: string, aspect = 512 / 180, card = '#ece6d6', ink = '#1c1a17'): THREE.CanvasTexture {
   const c = document.createElement('canvas')
   c.height = 180
   c.width = Math.round(180 * aspect)
   const g = c.getContext('2d')!
   g.fillStyle = card
   g.fillRect(0, 0, c.width, c.height)
-  g.fillStyle = '#1c1a17'
+  g.fillStyle = ink
   g.textAlign = 'center'
   g.textBaseline = 'middle'
   let px = 118

@@ -15,6 +15,7 @@ import * as THREE from 'three'
 import type { Blocker } from './playerModel'
 import { woodTexture, plasterTexture, floorboardTexture, contactShadowTexture, labelTexture } from './textures'
 import { BINS, type BinDef } from './shopPlan'
+import { displaySize, type DisplaySlot } from './displays'
 
 export const SHOP_DOOR_Z = -6
 export const SHOP_INTERIOR = { minX: -7, maxX: 7, minZ: -19, maxZ: SHOP_DOOR_Z }
@@ -66,7 +67,14 @@ export interface WorldHandles {
   blockers: Blocker[]
   /** One anchor per bin, keyed by shopPlan id; crateView groups go here. */
   bins: Map<string, THREE.Object3D>
+  /** Face-out displays — wall racks, the window, the staff-picks wall.
+   *  Each anchor's +z faces the room; the view hangs sleeves in them. */
+  displays: Array<{ id: string; anchor: THREE.Object3D; slot: DisplaySlot }>
   stationAnchor: THREE.Object3D
+  /** The sleeve of whatever is on the deck, propped on the shelf behind
+   *  it. Hidden until the view gives it a cover. */
+  deckSleeve: THREE.MeshLambertMaterial
+  deckSleeveMesh: THREE.Object3D
   /** Spinning platter on the listening station — turned by the loop. */
   platter: THREE.Mesh
   dispose: () => void
@@ -144,24 +152,100 @@ export function buildWorld(): WorldHandles {
   sidewalk.rotation.x = -Math.PI / 2
   sidewalk.position.set(0, 0.02, -3)
   scene.add(sidewalk)
+  // Kerb: the sidewalk has an edge.
+  const kerb = box(80, 0.14, 0.18, 0x7a7872)
+  kerb.position.set(0, 0.07, 0)
+  scene.add(kerb)
 
-  // Neighbouring storefronts — solid, so the block has edges you feel.
+  // Neighbouring storefronts — solid, so the block has edges you feel —
+  // with windows and doors so they are buildings and not slabs.
   for (const [x, w, c] of [[-16, 12, PALETTE.brickA], [16, 12, PALETTE.brickB]] as const) {
     wall(scene, blockers, x, -9, w, 9, 7, c)
+    const face = -9 + 3.5 + 0.02
+    for (let i = 0; i < 4; i++) {
+      const wx = x - w / 2 + 1.5 + i * 3
+      for (const wy of [2.3, 4.7, 7.1]) {
+        const win = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.5), new THREE.MeshLambertMaterial({ color: 0x1b2330 }))
+        win.position.set(wx, wy, face)
+        scene.add(win)
+        const sill = box(1.3, 0.08, 0.12, 0xbdb6a6)
+        sill.position.set(wx, wy - 0.79, face + 0.05)
+        scene.add(sill)
+      }
+    }
+    const door = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 2.4), new THREE.MeshLambertMaterial({ color: 0x2a2320 }))
+    door.position.set(x + (x < 0 ? 4 : -4), 1.2, face)
+    scene.add(door)
   }
   // Kerb line and the far side of the street, so you can't wander to sea.
   wall(scene, blockers, 0, 15, 80, 8, 3, PALETTE.brickB)
   wall(scene, blockers, -26, 0, 3, 9, 40, PALETTE.brickA)
   wall(scene, blockers, 26, 0, 3, 9, 40, PALETTE.brickB)
 
-  // ── The shop shell: front wall with a doorway gap in the middle ──
+  // Street furniture: two lampposts and a tree pit.
+  for (const lx of [-9.5, 9.5]) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 3.8, 8), new THREE.MeshLambertMaterial({ color: 0x23262b }))
+    post.position.set(lx, 1.9, -0.6)
+    scene.add(post)
+    const head = box(0.5, 0.22, 0.3, 0x23262b)
+    head.position.set(lx, 3.85, -0.6)
+    scene.add(head)
+    const glow = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffe9c4 }))
+    glow.position.set(lx, 3.72, -0.6)
+    scene.add(glow)
+    const lamp = new THREE.PointLight(0xffe0b0, 14, 12, 2)
+    lamp.position.set(lx, 3.7, -0.6)
+    scene.add(lamp)
+    blockers.push({ minX: lx - 0.12, maxX: lx + 0.12, minZ: -0.72, maxZ: -0.48 })
+  }
+  {
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 2.2, 7), new THREE.MeshLambertMaterial({ color: 0x4a3524 }))
+    trunk.position.set(-13, 1.1, -1.4)
+    scene.add(trunk)
+    for (const [ty, r] of [[2.6, 1.1], [3.4, 0.8]] as const) {
+      const crown = new THREE.Mesh(new THREE.ConeGeometry(r, 1.3, 7), new THREE.MeshLambertMaterial({ color: 0x3f5a35 }))
+      crown.position.set(-13, ty, -1.4)
+      scene.add(crown)
+    }
+    blockers.push({ minX: -13.2, maxX: -12.8, minZ: -1.6, maxZ: -1.2 })
+  }
+
+  // ── The shop shell: front wall with a doorway in the middle and a
+  // display window either side. The windows are real holes: sill, header
+  // and piers, glass on the street face, a ledge of face-out sleeves in
+  // the opening (the street sees covers; the room sees their backs).
   const FRONT_H = 5.2
-  wall(scene, blockers, -4.5, SHOP_DOOR_Z, 5, FRONT_H, 0.6, PALETTE.shopWall)
-  wall(scene, blockers, 4.5, SHOP_DOOR_Z, 5, FRONT_H, 0.6, PALETTE.shopWall)
-  // Lintel over the door — geometry only, you walk under it.
+  const displays: WorldHandles['displays'] = []
+  for (const side of [-1, 1] as const) {
+    const cx = side * 4.5
+    wall(scene, blockers, cx, SHOP_DOOR_Z, 5, 0.9, 0.6, PALETTE.shopWall)                 // sill
+    const header = box(5, FRONT_H - 2.9, 0.6, PALETTE.shopWall)
+    header.position.set(cx, 2.9 + (FRONT_H - 2.9) / 2, SHOP_DOOR_Z)
+    scene.add(header)
+    wall(scene, blockers, side * 6.7, SHOP_DOOR_Z, 0.6, FRONT_H, 0.6, PALETTE.shopWall)   // outer pier
+    wall(scene, blockers, side * 2.3, SHOP_DOOR_Z, 0.6, FRONT_H, 0.6, PALETTE.shopWall)   // inner pier
+    const glass = new THREE.Mesh(
+      new THREE.PlaneGeometry(3.8, 2.0),
+      new THREE.MeshLambertMaterial({ color: 0x9fb4c8, transparent: true, opacity: 0.22, side: THREE.DoubleSide }),
+    )
+    glass.position.set(cx, 1.9, SHOP_DOOR_Z + 0.31)
+    scene.add(glass)
+    const winAnchor = new THREE.Object3D()
+    winAnchor.position.set(cx, 0.92, SHOP_DOOR_Z - 0.02)
+    scene.add(winAnchor)
+    displays.push({ id: side < 0 ? 'window-left' : 'window-right', anchor: winAnchor, slot: { rows: 1, cols: 5 } })
+  }
+  // Lintel over the door — geometry only, you walk under it — and the
+  // shop's name on it.
   const lintel = box(4, 1.2, 0.6, PALETTE.shopWall)
   lintel.position.set(0, FRONT_H - 0.6, SHOP_DOOR_Z)
   scene.add(lintel)
+  const sign = new THREE.Mesh(
+    new THREE.PlaneGeometry(3.6, 0.7),
+    new THREE.MeshLambertMaterial({ map: labelTexture('WJLR RECORDS', 3.6 / 0.7, '#2f3830', '#f3eee2') }),
+  )
+  sign.position.set(0, FRONT_H - 0.55, SHOP_DOOR_Z + 0.31)
+  scene.add(sign)
 
   const awning = box(14, 0.35, 2.2, PALETTE.awning)
   awning.position.set(0, FRONT_H + 0.1, SHOP_DOOR_Z + 1.1)
@@ -195,17 +279,32 @@ export function buildWorld(): WorldHandles {
   // The counter at the back — where the clerk stands.
   { const c = wall(scene, blockers, 0, -17.4, 7, 1.1, 1.2, PALETTE.counter); const cm = c.material as THREE.MeshLambertMaterial; cm.map = woodTexture('#4a3626', '#2e2016', 31, 2); cm.color.set(0xffffff) }
 
-  // Wall racks above the wall bins, so the walls read as stocked. The
-  // right wall's front bay is the listening deck's.
-  for (const z of [-9.5, -12.5, -15.5]) {
-    const rack = box(0.5, 2.2, 2.4, PALETTE.shopWallTrim)
-    rack.position.set(SHOP_INTERIOR.minX + 0.4, 1.1, z)
-    scene.add(rack)
-    if (z === -9.5) continue
-    const rack2 = box(0.5, 2.2, 2.4, PALETTE.shopWallTrim)
-    rack2.position.set(SHOP_INTERIOR.maxX - 0.4, 1.1, z)
-    scene.add(rack2)
+  // Wall displays: a dark panel on the wall with rows of face-out sleeves
+  // on ledges, above the wall bins. The right wall's front bay is the
+  // listening deck's. Behind the counter: the staff picks.
+  const hangDisplay = (id: string, x: number, y: number, z: number, yaw: number, slot: DisplaySlot): void => {
+    const { w, h } = displaySize(slot)
+    const anchor = new THREE.Object3D()
+    anchor.position.set(x, y, z)
+    anchor.rotation.y = yaw
+    scene.add(anchor)
+    const panel = box(w + 0.3, h + 0.18, 0.06, PALETTE.shopWallTrim)
+    panel.position.set(0, h / 2 + 0.02, -0.05)
+    anchor.add(panel)
+    displays.push({ id, anchor, slot })
   }
+  const LWALL = SHOP_INTERIOR.minX + 0.08
+  const RWALL = SHOP_INTERIOR.maxX - 0.08
+  hangDisplay('left-front', LWALL, 1.38, -10.15, Math.PI / 2, { rows: 2, cols: 4 })
+  hangDisplay('left-back',  LWALL, 1.38, -14.6,  Math.PI / 2, { rows: 2, cols: 4 })
+  hangDisplay('right',      RWALL, 1.38, -13.95, -Math.PI / 2, { rows: 2, cols: 4 })
+  hangDisplay('picks', 0, 1.55, SHOP_INTERIOR.minZ + 0.38, 0, { rows: 1, cols: 6 })
+  const picksSign = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.8, 0.32),
+    new THREE.MeshLambertMaterial({ map: labelTexture('STAFF PICKS', 1.8 / 0.32, '#f3eee2') }),
+  )
+  picksSign.position.set(0, 2.6, SHOP_INTERIOR.minZ + 0.36)
+  scene.add(picksSign)
 
   // ── The bins you dig in ──
   // Open plywood bins on stands: base the records stand on, four low walls
@@ -286,25 +385,71 @@ export function buildWorld(): WorldHandles {
   for (const def of BINS) buildBin(def)
 
   // ── The listening station ──
+  // A deck against the right wall, facing the aisle: turntable, tonearm,
+  // headphones on a hook, a shelf behind for the sleeve of whatever is
+  // on, and a sign so you know what it is for.
   const stationAnchor = new THREE.Object3D()
   stationAnchor.position.copy(STATION_POS)
-  stationAnchor.rotation.y = Math.PI / 2      // deck faces the aisle
+  stationAnchor.rotation.y = -Math.PI / 2     // local +z faces the aisle (−x)
   scene.add(stationAnchor)
-  const deck = box(1.6, 1.0, 1.2, PALETTE.counter)
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.0, 1.0), new THREE.MeshLambertMaterial({ map: woodTexture('#4a3626', '#2e2016', 31, 2) }))
   deck.position.set(0, 0.5, 0)
   stationAnchor.add(deck)
+  const plinth = box(0.92, 0.10, 0.72, 0x2a2622)
+  plinth.position.set(-0.15, 1.05, 0.02)
+  stationAnchor.add(plinth)
   const platter = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.42, 0.42, 0.06, 20),
+    new THREE.CylinderGeometry(0.30, 0.30, 0.03, 24),
     new THREE.MeshLambertMaterial({ color: 0x14141a }),
   )
-  platter.position.set(0, 1.03, 0)
+  platter.position.set(-0.25, 1.115, 0.02)
   stationAnchor.add(platter)
-  const spindle = box(0.05, 0.12, 0.05, 0xd8d8d8)
-  spindle.position.set(0, 1.09, 0)
+  const spindle = box(0.02, 0.06, 0.02, 0xd8d8d8)
+  spindle.position.set(-0.25, 1.15, 0.02)
   stationAnchor.add(spindle)
-  stationAnchor.add(contactShadow(1.6, 1.2))
+  const armBase = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.05, 12), new THREE.MeshLambertMaterial({ color: 0xb9bcc4 }))
+  armBase.position.set(0.18, 1.125, -0.24)
+  stationAnchor.add(armBase)
+  const arm = box(0.012, 0.012, 0.36, 0xd0d3da)
+  arm.position.set(0.05, 1.15, -0.12)
+  arm.rotation.y = -0.55
+  stationAnchor.add(arm)
+  // Headphones on a hook at the deck's end.
+  const hook = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.5, 6), new THREE.MeshLambertMaterial({ color: 0x23262b }))
+  hook.position.set(0.7, 1.25, 0.32)
+  stationAnchor.add(hook)
+  const band = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.018, 8, 18, Math.PI), new THREE.MeshLambertMaterial({ color: 0x1c1c20 }))
+  band.position.set(0.7, 1.38, 0.32)
+  band.rotation.y = Math.PI / 2
+  stationAnchor.add(band)
+  for (const dz of [-0.11, 0.11]) {
+    const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.03, 12), new THREE.MeshLambertMaterial({ color: 0x2a2a30 }))
+    cup.position.set(0.7, 1.36, 0.32 + dz)
+    cup.rotation.x = Math.PI / 2
+    stationAnchor.add(cup)
+  }
+  // Shelf on the wall behind, and the sleeve of whatever is on the deck.
+  const shelf = box(1.2, 0.03, 0.22, 0x2f3830)
+  shelf.position.set(0, 1.28, -0.86)
+  stationAnchor.add(shelf)
+  const deckSleeve = new THREE.MeshLambertMaterial({ color: 0xffffff })
+  const deckSleeveMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(0.62, 0.62, 0.008),
+    [deckSleeve, deckSleeve, deckSleeve, deckSleeve, deckSleeve, deckSleeve],
+  )
+  deckSleeveMesh.position.set(0, 1.295 + 0.31, -0.88)
+  deckSleeveMesh.rotation.x = -0.12
+  deckSleeveMesh.visible = false
+  stationAnchor.add(deckSleeveMesh)
+  const stationSign = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.5, 0.26),
+    new THREE.MeshLambertMaterial({ map: labelTexture('LISTENING STATION', 1.5 / 0.26, '#f3eee2') }),
+  )
+  stationSign.position.set(0, 2.25, -0.96)
+  stationAnchor.add(stationSign)
+  stationAnchor.add(contactShadow(1.6, 1.0))
   blockers.push({
-    minX: STATION_POS.x - 0.65, maxX: STATION_POS.x + 0.85,
+    minX: STATION_POS.x - 0.55, maxX: STATION_POS.x + 1.0,
     minZ: STATION_POS.z - 0.85, maxZ: STATION_POS.z + 0.85,
   })
 
@@ -319,5 +464,5 @@ export function buildWorld(): WorldHandles {
     disposables.forEach((d) => d.dispose())
   }
 
-  return { scene, blockers, bins, stationAnchor, platter, dispose }
+  return { scene, blockers, bins, displays, stationAnchor, platter, deckSleeve, deckSleeveMesh, dispose }
 }

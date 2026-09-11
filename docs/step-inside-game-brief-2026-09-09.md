@@ -348,4 +348,15 @@ down the middle (PUNK, GRUNGE facing the left aisle; RAP, ELECTRONIC facing
 the right), a run of three along the right wall behind the listening deck
 (SOUL, POP, the mixed bin). Every rail faces an aisle; bins carry a
 `facing`. Recording v15 on the Desktop.
-Staff picks on the wall (the Music Man's slot) are designed, not built.
+**Stage 3 leftovers, 2026-09-11 (Jake: "3"):** the walls are stocked — dark
+panels with two ledges of face-out sleeves above the wall bins, drawn from
+the bins beneath; the staff-picks wall behind the counter shows the Music
+Man's shelf (same `mm-picks` the 2D shop serves); the shop window is a real
+opening with glass and a ledge of NEW ARRIVALS facing the street; the front
+carries the shop's name; the street has a kerb, lampposts, a tree and
+neighbours with windows and doors. The listening deck is a turntable with
+a tonearm and headphones on a hook, a sign, and a shelf where the sleeve of
+whatever you put on stands. The shop's own record player is folded in: it
+plays what the bins stock, only while you are inside, yields to your own
+player, and has its speaker button in the HUD on the same preference as the
+2D shop. Never in the harness. Recording v16.

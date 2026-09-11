@@ -39,6 +39,20 @@
   padding: 6px 12px; border-radius: 6px; cursor: pointer;
 }
 .stepinside__leave:hover { background: rgba(46, 38, 30, 0.9); }
+.stepinside__hud-right { display: flex; align-items: center; gap: 12px; }
+/* The shop's speakers — same plate as Leave, so it reads as a fixture. */
+.stepinside__speaker {
+  pointer-events: auto;
+  display: inline-flex; align-items: center; gap: 7px;
+  appearance: none;
+  background: rgba(16, 19, 28, 0.82);
+  border: 1px solid #d8a25a;
+  color: #f4ece0;
+  font: inherit; font-size: 12px; font-weight: 600;
+  padding: 6px 12px; border-radius: 6px; cursor: pointer;
+}
+.stepinside__speaker:hover { background: rgba(46, 38, 30, 0.9); }
+.stepinside__speaker--off { border-color: rgba(216, 162, 90, 0.4); color: rgba(244, 236, 224, 0.55); }
 .stepinside__where {
   font-size: 12px; font-weight: 700; letter-spacing: 0.08em;
   text-transform: uppercase;

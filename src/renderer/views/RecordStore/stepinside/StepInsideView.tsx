@@ -17,8 +17,12 @@ import { useAudio } from '../../../hooks/useAudio'
 import { buildWorld, SPAWN, STATION_POS, SHOP_DOOR_Z } from './world'
 import { buildAvatar } from './avatar'
 import { buildCrateView, type CrateView } from './crateView'
+import { buildFaceOutDisplay, type FaceOutDisplay } from './displays'
 import { useShopStock, type ShopBin } from './useCrateStock'
 import { BINS, binToWorld, type BinDef } from './shopPlan'
+import { useStoreAmbience, type AmbienceTrack } from '../hooks/useStoreAmbience'
+import { useShelves } from '../hooks/useShelves'
+import { buildNormalizedArtworkIndex, lookupArtwork } from '../../../utils/artworkLookup'
 import { bodyStart, stepBody, gait, resolveCollisions, type Body } from './playerModel'
 import { digStart, digFlip, digTogglePull, digPosition, digAtEdge } from './digModel'
 import { claimTransportKeys } from '../../../input-mode'
@@ -70,6 +74,10 @@ const DEMO: DemoStep[] = [
   { at: 26.0, note: 'flip',               act: 'flip+' },
   { at: 27.2, note: 'pull it out',        act: 'pull' },
   { at: 29.4, note: 'step back',          act: 'undig' },
+  { at: 30.0, note: 'round the island',   goto: { x: -1.5, z: -9.6 } },
+  { at: 30.1, note: 'across the front',   goto: { x: 2.5, z: -9.6 } },
+  { at: 30.2, note: 'over to the deck',   goto: { x: 4.3, z: -10.9 } },   // in front of the listening station
+  { at: 30.3, note: 'and back to the picks', goto: { x: 0, z: -16.6 } },  // face the counter wall
 ]
 // Digging framing: your own eyes at the front rail. Standing height, a
 // step back from the bin, looking down ~35° at the record you're on, so
@@ -100,6 +108,9 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
   )
   const visitSeed = useMemo(() => (demoMode ? 12345 : Math.floor(Math.random() * 1e9)), [demoMode])
   const bins = useShopStock(visitSeed)
+  // The Music Man's picks for the wall behind the counter — the same
+  // shelf the 2D shop shows, so the wall means something.
+  const { state: shelves } = useShelves()
 
   const [mode, setMode] = useState<Mode>('walk')
   const [dig, setDig] = useState<DigState>(digStart)
@@ -108,6 +119,28 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
   const [binId, setBinId] = useState<string | null>(null)
   const [inside, setInside] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  // The shop's own record player. Same preference as the 2D shop, so
+  // turning it off in one room turns it off in the other.
+  const [ambienceOn, setAmbienceOn] = useState(true)
+  useEffect(() => {
+    void window.electronAPI.loadUiState().then((ui) => {
+      const v = (ui.ok && ui.state) ? (ui.state as Record<string, unknown>).recordStoreAmbience : undefined
+      if (typeof v === 'boolean') setAmbienceOn(v)
+    }).catch(() => { /* default ON */ })
+  }, [])
+  const toggleAmbience = useCallback(() => {
+    setAmbienceOn((prev) => {
+      const next = !prev
+      void (async () => {
+        try {
+          const ui = await window.electronAPI.loadUiState()
+          const existing = (ui.ok && ui.state) ? ui.state : {}
+          await window.electronAPI.saveUiState({ ...existing, recordStoreAmbience: next })
+        } catch { /* the toggle still works this session */ }
+      })()
+      return next
+    })
+  }, [])
 
   // Refs the render loop reads — state it must not re-subscribe to.
   const modeRef = useRef(mode); modeRef.current = mode
@@ -122,6 +155,8 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
 
   const binById = (id: string | null): ShopBin | null => (id ? binsRef.current.find((b) => b.id === id) ?? null : null)
   const activeRecords = (): CrateRecord[] => binById(binIdRef.current)?.records ?? []
+  const displaysRef = useRef<Map<string, FaceOutDisplay>>(new Map())
+  const deckRef = useRef<{ mat: THREE.MeshLambertMaterial; mesh: THREE.Object3D; tex: THREE.Texture | null } | null>(null)
 
   const bin = bins.find((b) => b.id === binId) ?? null
   const records = bin?.records ?? []
@@ -140,6 +175,40 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
     // Side A, track 1 — the running order IS the record.
     playTrack(ts[0], ts, 0, undefined, true, true)
   }, [trackById, playTrack])
+
+  // What the shop plays is what it stocks: every track in every bin. The
+  // player only runs while you are inside — the street is the street.
+  const ambienceTracks = useMemo<AmbienceTrack[]>(() => {
+    const out: AmbienceTrack[] = []
+    const seen = new Set<number>()
+    for (const b of bins) for (const r of b.records) for (const id of r.trackIds) {
+      if (seen.has(id)) continue
+      const t = trackById.get(id)
+      if (!t?.path) continue
+      seen.add(id)
+      out.push({ id, path: String(t.path) })
+    }
+    return out
+  }, [bins, trackById])
+  // Never in the harness: a scripted run must not play music out of
+  // Jake's speakers while he is doing something else.
+  useStoreAmbience({ enabled: ambienceOn && inside && !demoMode, tracks: ambienceTracks, userIsPlaying: playback.isPlaying })
+
+  // Put the record on the deck: its sleeve goes on the shelf behind it.
+  const putOnDeck = useCallback((rec: CrateRecord) => {
+    playRecord(rec.trackIds)
+    const deck = deckRef.current
+    if (!deck || !rec.coverUrl) return
+    new THREE.TextureLoader().load(rec.coverUrl, (tex) => {
+      if (deckRef.current !== deck) { tex.dispose(); return }
+      tex.colorSpace = THREE.SRGBColorSpace
+      deck.tex?.dispose()
+      deck.tex = tex
+      deck.mat.map = tex
+      deck.mat.needsUpdate = true
+      deck.mesh.visible = true
+    })
+  }, [playRecord])
 
   const flash = useCallback((msg: string) => {
     setNotice(msg)
@@ -186,6 +255,27 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
       crates.set(b.id, crate)
     }
     const binDef = (id: string | null): BinDef => BINS.find((b) => b.id === id) ?? BINS[0]
+
+    // The walls and the window: face-out sleeves from the bins beneath and
+    // around them. The staff-picks wall fills when the shelves arrive.
+    const stock = (id: string, n: number, from = 0): CrateRecord[] =>
+      (binsRef.current.find((b) => b.id === id)?.records ?? []).slice(from, from + n)
+    const wallStock: Record<string, CrateRecord[]> = {
+      'left-front': [...stock('arrivals', 3), ...stock('rock', 3), ...stock('alt', 2)],
+      'left-back': [...stock('punk', 2), ...stock('grunge', 2), ...stock('rap', 2), ...stock('electronic', 2)],
+      'right': [...stock('soul', 3), ...stock('pop', 3), ...stock('other', 2)],
+      'window-left': stock('arrivals', 5, 3),
+      'window-right': stock('arrivals', 5, 8),
+    }
+    const displays = new Map<string, FaceOutDisplay>()
+    for (const d of world.displays) {
+      const view = buildFaceOutDisplay(d.slot)
+      d.anchor.add(view.group)
+      displays.set(d.id, view)
+      if (wallStock[d.id]) view.show(wallStock[d.id])
+    }
+    displaysRef.current = displays
+    deckRef.current = { mat: world.deckSleeve, mesh: world.deckSleeveMesh, tex: null }
 
     let body: Body = bodyStart(SPAWN.x, SPAWN.z, Math.PI)
     let camYaw = 0
@@ -361,6 +451,10 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       for (const c of crates.values()) c.dispose()
+      for (const d of displays.values()) d.dispose()
+      displaysRef.current = new Map()
+      deckRef.current?.tex?.dispose()
+      deckRef.current = null
       world.dispose()
       renderer.dispose()
       if (renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement)
@@ -368,6 +462,22 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
     // Built once. Data changes are read through refs so the world is never
     // torn down mid-visit.
   }, [])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Staff picks on the wall behind the counter, from the Music Man's shelf.
+  const artIndex = useMemo(() => buildNormalizedArtworkIndex(lib.artworkMap), [lib.artworkMap])
+  useEffect(() => {
+    const wall = displaysRef.current.get('picks')
+    if (!wall || shelves.status !== 'ready') return
+    const shelf = shelves.bundle.shelves.find((sh) => sh.id === 'mm-picks')
+    if (!shelf) return
+    wall.show(shelf.items.slice(0, 6).map((item) => {
+      if (item.coverUrl) return { coverUrl: item.coverUrl }
+      const ids = item.payload.trackIds
+      const t = ids && ids.length ? trackById.get(Number(ids[0])) : undefined
+      const hash = t ? lookupArtwork(lib.artworkMap, artIndex, t.albumArtist || t.artist || '', t.album || '') : undefined
+      return { coverUrl: hash ? `album-art://${hash}.jpg` : null }
+    }))
+  }, [shelves, trackById, lib.artworkMap, artIndex])
 
   // ── Keys that drive React state (mode, flipping) ──
   useEffect(() => {
@@ -393,14 +503,14 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
         if (prompt === 'crate' && binIdRef.current) { setMode('dig'); setDig(digStart()) }
         else if (prompt === 'station') {
           const rec = inHandRef.current
-          if (rec) { playRecord(rec.trackIds); flash(`On the deck: ${rec.album}`) }
+          if (rec) { putOnDeck(rec); flash(`On the deck: ${rec.album}`) }
           else flash('Nothing on the deck yet — pull something out first.')
         }
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [mode, prompt, onLeave, playRecord, flash, pull])
+  }, [mode, prompt, onLeave, playRecord, putOnDeck, flash, pull])
 
   // The harness pushes the same transitions the keyboard does — it is a
   // driver for the real interaction, not a second code path.
@@ -434,7 +544,31 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
 
       <div className="stepinside__hud">
         <button type="button" className="stepinside__leave" onClick={onLeave}>← Leave (Esc)</button>
-        <span className="stepinside__where">{inside ? 'WJLR Records' : 'Manhattan Ave, Greenpoint'}</span>
+        <div className="stepinside__hud-right">
+          {inside && (
+            <button
+              type="button"
+              className={`stepinside__speaker${ambienceOn ? '' : ' stepinside__speaker--off'}`}
+              onClick={toggleAmbience}
+              aria-pressed={ambienceOn}
+              title={ambienceOn ? 'Turn the shop\u2019s music off' : 'Turn the shop\u2019s music on'}
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+                <path d="M4 9.5v5h3.2L12 18.6V5.4L7.2 9.5H4z" fill="currentColor" />
+                {ambienceOn ? (
+                  <>
+                    <path d="M15.4 8.8a4.3 4.3 0 0 1 0 6.4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                    <path d="M17.9 6.2a7.8 7.8 0 0 1 0 11.6" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                  </>
+                ) : (
+                  <path d="M15.8 9.4l5 5.2M20.8 9.4l-5 5.2" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                )}
+              </svg>
+              <span>{ambienceOn ? 'Shop music on' : 'Shop music off'}</span>
+            </button>
+          )}
+          <span className="stepinside__where">{inside ? 'WJLR Records' : 'Manhattan Ave, Greenpoint'}</span>
+        </div>
       </div>
 
       {mode === 'walk' && (
