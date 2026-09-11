@@ -18,13 +18,14 @@ import { buildWorld, SPAWN, STATION_POS, SHOP_DOOR_Z } from './world'
 import { buildAvatar } from './avatar'
 import { buildCrateView, type CrateView } from './crateView'
 import { buildFaceOutDisplay, type FaceOutDisplay } from './displays'
-import { useShopStock, type ShopBin } from './useCrateStock'
+import { useShopStock, useConcertPosters, type ShopBin } from './useCrateStock'
+import { buildPoster, type Poster } from './posters'
 import { BINS, binToWorld, type BinDef } from './shopPlan'
 import { useStoreAmbience, type AmbienceTrack } from '../hooks/useStoreAmbience'
 import { useShelves } from '../hooks/useShelves'
 import { buildNormalizedArtworkIndex, lookupArtwork } from '../../../utils/artworkLookup'
 import { bodyStart, stepBody, gait, resolveCollisions, type Body } from './playerModel'
-import { digStart, digFlip, digTogglePull, digPosition, digAtEdge } from './digModel'
+import { digStart, digFlip, digJump, digTogglePull, digPosition, digAtEdge } from './digModel'
 import { claimTransportKeys } from '../../../input-mode'
 import type { CrateRecord, DigState } from './types'
 import './step-inside.css'
@@ -108,6 +109,8 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
   )
   const visitSeed = useMemo(() => (demoMode ? 12345 : Math.floor(Math.random() * 1e9)), [demoMode])
   const bins = useShopStock(visitSeed)
+  const concerts = useConcertPosters()
+  const postersRef = useRef<Map<THREE.Object3D, Poster>>(new Map())
   // The Music Man's picks for the wall behind the counter — the same
   // shelf the 2D shop shows, so the wall means something.
   const { state: shelves } = useShelves()
@@ -155,7 +158,10 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
 
   const binById = (id: string | null): ShopBin | null => (id ? binsRef.current.find((b) => b.id === id) ?? null : null)
   const activeRecords = (): CrateRecord[] => binById(binIdRef.current)?.records ?? []
+  const activeSections = (): number[] => (binById(binIdRef.current)?.sections ?? []).map((sec) => sec.at)
   const displaysRef = useRef<Map<string, FaceOutDisplay>>(new Map())
+  const worldRef = useRef<ReturnType<typeof buildWorld> | null>(null)
+  const cratesRef = useRef<Map<string, CrateView>>(new Map())
   const deckRef = useRef<{ mat: THREE.MeshLambertMaterial; mesh: THREE.Object3D; tex: THREE.Texture | null } | null>(null)
 
   const bin = bins.find((b) => b.id === binId) ?? null
@@ -247,35 +253,22 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
     const avatar = buildAvatar()
     world.scene.add(avatar.root)
 
-    // One crate view per bin, parked in the world's anchor for it.
-    const crates = new Map<string, CrateView>()
-    for (const b of binsRef.current) {
-      const crate = buildCrateView(b.records, b.sections)
-      world.bins.get(b.id)?.add(crate.group)
-      crates.set(b.id, crate)
-    }
+    // Crates and wall displays are (re)built by the stock effect below, so
+    // the shop restocks when the bins change — the live sets loading after
+    // mount pulls the concerts out of the bins and onto the wall.
+    worldRef.current = world
+    const crates = cratesRef.current
     const binDef = (id: string | null): BinDef => BINS.find((b) => b.id === id) ?? BINS[0]
-
-    // The walls and the window: face-out sleeves from the bins beneath and
-    // around them. The staff-picks wall fills when the shelves arrive.
-    const stock = (id: string, n: number, from = 0): CrateRecord[] =>
-      (binsRef.current.find((b) => b.id === id)?.records ?? []).slice(from, from + n)
-    const wallStock: Record<string, CrateRecord[]> = {
-      'left-front': [...stock('arrivals', 3), ...stock('rock', 3), ...stock('alt', 2)],
-      'left-back': [...stock('punk', 2), ...stock('grunge', 2), ...stock('rap', 2), ...stock('electronic', 2)],
-      'right': [...stock('soul', 3), ...stock('pop', 3), ...stock('other', 2)],
-      'window-left': stock('arrivals', 5, 3),
-      'window-right': stock('arrivals', 5, 8),
-    }
     const displays = new Map<string, FaceOutDisplay>()
     for (const d of world.displays) {
       const view = buildFaceOutDisplay(d.slot)
       d.anchor.add(view.group)
       displays.set(d.id, view)
-      if (wallStock[d.id]) view.show(wallStock[d.id])
     }
     displaysRef.current = displays
     deckRef.current = { mat: world.deckSleeve, mesh: world.deckSleeveMesh, tex: null }
+    postersRef.current = new Map()
+    for (const slot of world.posterSlots) postersRef.current.set(slot, null as unknown as Poster)
 
     let body: Body = bodyStart(SPAWN.x, SPAWN.z, Math.PI)
     let camYaw = 0
@@ -410,8 +403,11 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
       }
       // At the rail the camera stands where the player's head is; he is
       // out of shot until it pulls back behind him again.
-      tmp.set(eye.x, DIG_HEIGHT, eye.z)
-      avatar.root.visible = !(active && camPos.distanceTo(tmp) < 0.7)
+      // Hide him only when the camera is inside HIM — never on proximity
+      // to a bin's eye-point, which the trailing walk camera can pass
+      // through (Jake: "he walks in front of the light and disappears").
+      tmp.set(body.x, 1.6, body.z)
+      avatar.root.visible = camPos.distanceTo(tmp) > 0.7
 
       for (const [id, crate] of crates) {
         const mine = digging && id === active
@@ -451,10 +447,14 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       for (const c of crates.values()) c.dispose()
+      crates.clear()
+      worldRef.current = null
       for (const d of displays.values()) d.dispose()
       displaysRef.current = new Map()
       deckRef.current?.tex?.dispose()
       deckRef.current = null
+      for (const p of postersRef.current.values()) p?.dispose()
+      postersRef.current = new Map()
       world.dispose()
       renderer.dispose()
       if (renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement)
@@ -479,6 +479,52 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
     }))
   }, [shelves, trackById, lib.artworkMap, artIndex])
 
+  // Stock the bins and the walls, and restock whenever the stock changes.
+  useEffect(() => {
+    const world = worldRef.current
+    if (!world) return
+    const crates = cratesRef.current
+    for (const [id, c] of crates) { c.dispose(); world.bins.get(id)?.remove(c.group) }
+    crates.clear()
+    for (const b of bins) {
+      const crate = buildCrateView(b.records, b.sections)
+      world.bins.get(b.id)?.add(crate.group)
+      crates.set(b.id, crate)
+    }
+    // The walls and the window: face-out sleeves from the bins beneath and
+    // around them. The staff-picks wall fills when the shelves arrive.
+    const stock = (id: string, n: number, from = 0): CrateRecord[] =>
+      (bins.find((b) => b.id === id)?.records ?? []).slice(from, from + n)
+    const wallStock: Record<string, CrateRecord[]> = {
+      'left-front': [...stock('arrivals', 3), ...stock('rock', 3), ...stock('alt', 2)],
+      'left-back': [...stock('punk', 2), ...stock('grunge', 2), ...stock('rap', 2), ...stock('electronic', 2)],
+      'right': [...stock('soul', 3), ...stock('pop', 3), ...stock('other', 2)],
+      'window-left': stock('arrivals', 5, 3),
+      'window-right': stock('arrivals', 5, 8),
+    }
+    for (const [id, view] of displaysRef.current) if (wallStock[id]) view.show(wallStock[id])
+  }, [bins])
+
+  // Concert posters go up as the live sets load. Seven slots; if there are
+  // more concerts than wall, this visit's seed picks which ones hang.
+  useEffect(() => {
+    const slots = [...postersRef.current.keys()]
+    if (!slots.length || !concerts.length) return
+    let s = visitSeed || 1
+    const rand = (): number => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296 }
+    const order = [...concerts]
+    for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [order[i], order[j]] = [order[j], order[i]] }
+    slots.forEach((slot, i) => {
+      const facts = order[i]
+      postersRef.current.get(slot)?.dispose()
+      slot.clear()
+      if (!facts) { postersRef.current.set(slot, null as unknown as Poster); return }
+      const poster = buildPoster(facts, (rand() - 0.5) * 0.06)
+      slot.add(poster.group)
+      postersRef.current.set(slot, poster)
+    })
+  }, [concerts, visitSeed])
+
   // ── Keys that drive React state (mode, flipping) ──
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -487,8 +533,15 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
 
       if (mode === 'dig') {
         if (e.code === 'Escape') { setMode('walk'); setDig(digStart()); return }
-        if (e.code === 'ArrowLeft' || e.code === 'KeyA') { setDig((d) => digFlip(d, -1, activeRecords().length)); e.preventDefault(); return }
-        if (e.code === 'ArrowRight' || e.code === 'KeyD') { setDig((d) => digFlip(d, 1, activeRecords().length)); e.preventDefault(); return }
+        // Quick shift: Shift jumps a section (to the next card) instead of one sleeve.
+        if (e.code === 'ArrowLeft' || e.code === 'KeyA') {
+          setDig((d) => e.shiftKey ? digJump(d, -1, activeSections(), activeRecords().length) : digFlip(d, -1, activeRecords().length))
+          e.preventDefault(); return
+        }
+        if (e.code === 'ArrowRight' || e.code === 'KeyD') {
+          setDig((d) => e.shiftKey ? digJump(d, 1, activeSections(), activeRecords().length) : digFlip(d, 1, activeRecords().length))
+          e.preventDefault(); return
+        }
         if (e.code === 'Enter' || e.code === 'Space') { pull(); e.preventDefault(); return }
         if (e.code === 'KeyP') {
           const rec = activeRecords()[digRef.current.index]
@@ -590,6 +643,7 @@ export default function StepInsideView({ onLeave }: { onLeave: () => void }) {
           </div>
           <div className="stepinside__dig-keys">
             <span className={edge === 'front' ? 'is-edge' : ''}><b>A</b>/<b>D</b> flip</span>
+            <span><b>Shift</b> + <b>A</b>/<b>D</b> skip a section</span>
             <span><b>Enter</b> {dig.pulled ? 'slide it back' : 'pull it out'}</span>
             <span><b>P</b> play it</span>
             <span><b>Esc</b> step back</span>

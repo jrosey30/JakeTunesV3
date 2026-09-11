@@ -124,10 +124,12 @@ export function filingLetter(artist: string): string {
 }
 
 /** Letter-range cards for an artist-sorted run: one every `every`
- *  records, reading the first and last filing letters of its section. */
+ *  records, reading the first and last filing letters of its section.
+ *  None in front of the first record — a bin leads with a cover, not a
+ *  card (Jake: "why does only 1 bin have a real album in front"). */
 export function letterSections(artists: string[], every = 12): Section[] {
   const out: Section[] = []
-  for (let i = 0; i < artists.length; i += every) {
+  for (let i = every; i < artists.length; i += every) {
     const last = Math.min(i + every - 1, artists.length - 1)
     const from = filingLetter(artists[i])
     const to = filingLetter(artists[last])
@@ -136,9 +138,11 @@ export function letterSections(artists: string[], every = 12): Section[] {
   return out
 }
 
-/** Cards at each change of section label in an already-grouped run. */
+/** Cards at each change of section label in an already-grouped run.
+ *  The first section has no card for the same reason: the bin's own
+ *  label already names it. */
 export function groupSections(labels: string[]): Section[] {
   const out: Section[] = []
-  labels.forEach((label, i) => { if (i === 0 || labels[i - 1] !== label) out.push({ at: i, label }) })
+  labels.forEach((label, i) => { if (i > 0 && labels[i - 1] !== label) out.push({ at: i, label }) })
   return out
 }

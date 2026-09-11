@@ -12,9 +12,11 @@
  * the front, the way a shop puts out what just came in. A record can be
  * in NEW ARRIVALS and in its genre bin at once — shops have two copies.
  */
-import { useMemo } from 'react'
+import { useEffect, useMemo, useSyncExternalStore } from 'react'
 import { useLibrary } from '../../../context/LibraryContext'
 import { buildNormalizedArtworkIndex, lookupArtwork } from '../../../utils/artworkLookup'
+import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, libraryHiddenTrackIds } from '../../../liveSets'
+import type { PosterFacts } from './posters'
 import {
   BINS, CRATE_CAPACITY, OTHER_SECTIONS, fileGenre, filingKey, letterSections, groupSections,
   type BinDef, type Section,
@@ -46,13 +48,48 @@ interface AlbumEntry {
   added: number
 }
 
+/** The full live concerts, as posters: act, venue, city, date and the
+ *  artwork, all from the concert's own grounded metadata. */
+export function useConcertPosters(): PosterFacts[] {
+  const { state: lib } = useLibrary()
+  const artIndex = useMemo(() => buildNormalizedArtworkIndex(lib.artworkMap), [lib.artworkMap])
+  const live = useSyncExternalStore(subscribeLiveSets, getLiveSetsSnapshot)
+  useEffect(() => { void ensureLiveSetsLoaded() }, [])
+  return useMemo(() => {
+    const byId = new Map<number, LibTrack>()
+    for (const t of lib.tracks as unknown as LibTrack[]) byId.set(t.id, t)
+    const out: PosterFacts[] = []
+    for (const entry of Object.values(live.sets)) {
+      const t = byId.get(entry.mergedTrackId)
+      if (!t) continue
+      const artist = (t.albumArtist || t.artist || '').trim()
+      const album = (t.album || '').trim()
+      if (!artist || !album) continue
+      const hash = lookupArtwork(lib.artworkMap, artIndex, artist, album)
+      out.push({
+        artist, title: album,
+        venue: entry.concert?.venue, city: entry.concert?.city, date: entry.concert?.date,
+        coverUrl: hash ? `album-art://${hash}.jpg` : null,
+      })
+    }
+    return out
+  }, [lib.tracks, lib.artworkMap, artIndex, live])
+}
+
 export function useShopStock(seed: number): ShopBin[] {
   const { state: lib } = useLibrary()
   const artIndex = useMemo(() => buildNormalizedArtworkIndex(lib.artworkMap), [lib.artworkMap])
+  // Full live concerts are posters on the wall, not records in the bins:
+  // the same projection the regular library uses hides them here.
+  const live = useSyncExternalStore(subscribeLiveSets, getLiveSetsSnapshot)
+  useEffect(() => { void ensureLiveSetsLoaded() }, [])
 
   return useMemo(() => {
+    const ids = new Set((lib.tracks as unknown as LibTrack[]).map((t) => t.id))
+    const hidden = live.loaded ? libraryHiddenTrackIds(ids) : new Set<number>()
     const byAlbum = new Map<string, AlbumEntry>()
     for (const raw of lib.tracks as unknown as LibTrack[]) {
+      if (hidden.has(raw.id)) continue
       const album = (raw.album || '').trim()
       const artist = (raw.albumArtist || raw.artist || '').trim()
       if (!album || !artist) continue
@@ -139,5 +176,5 @@ export function useShopStock(seed: number): ShopBin[] {
       const records = picked.map((p) => finish(p.e))
       return { ...def, records, sections: letterSections(records.map((r) => r.artist)) }
     })
-  }, [lib.tracks, lib.artworkMap, artIndex, seed])
+  }, [lib.tracks, lib.artworkMap, artIndex, seed, live])
 }

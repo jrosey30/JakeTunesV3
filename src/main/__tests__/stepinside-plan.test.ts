@@ -70,16 +70,21 @@ describe('shop plan — cards', () => {
     assert.equal(filingLetter('2Pac'), '#')
   })
 
+  it('no bin leads with a card: the first record faces you', () => {
+    assert.equal(letterSections(['A', 'B', 'C', 'D'], 2)[0]?.at, 2)
+    assert.equal(groupSections(['JAZZ', 'WORLD'])[0]?.at, 1)
+  })
+
   it('letter cards read the real range of each section', () => {
     const artists = ['AC/DC', 'Bala Desejo', 'The Beatles', 'Dire Straits', 'Eels', 'Turnstile']
-    assert.deepEqual(letterSections(artists, 3), [{ at: 0, label: 'A–B' }, { at: 3, label: 'D–T' }])
-    assert.deepEqual(letterSections(['Air', 'Aphex Twin'], 12), [{ at: 0, label: 'A' }])
+    assert.deepEqual(letterSections(artists, 3), [{ at: 3, label: 'D–T' }])
+    assert.deepEqual(letterSections(['Air', 'Aphex Twin'], 12), [])
     assert.deepEqual(letterSections([], 12), [])
   })
 
   it('group cards stand at each change of section', () => {
     assert.deepEqual(groupSections(['JAZZ', 'JAZZ', 'WORLD', 'METAL', 'METAL']), [
-      { at: 0, label: 'JAZZ' }, { at: 2, label: 'WORLD' }, { at: 3, label: 'METAL' },
+      { at: 2, label: 'WORLD' }, { at: 3, label: 'METAL' },
     ])
   })
 })

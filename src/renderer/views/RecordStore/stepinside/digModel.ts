@@ -37,3 +37,22 @@ export function digAtEdge(state: DigState, count: number): 'front' | 'back' | nu
   if (state.index >= count - 1) return 'back'
   return null
 }
+
+/** Quick shift: jump to the next divider card in `dir` (the start of the
+ *  next section), or back to the start of the current section — one press
+ *  further back if you are already on a card. With no cards ahead, jump
+ *  a dozen sleeves, and never past either end. Pulled records go back. */
+export function digJump(state: DigState, dir: 1 | -1, sectionStarts: number[], count: number): DigState {
+  if (count <= 0) return { index: 0, pulled: false }
+  const starts = [...sectionStarts].filter((a) => a > 0 && a < count).sort((a, b) => a - b)
+  let next: number
+  if (dir > 0) {
+    const ahead = starts.find((a) => a > state.index)
+    next = ahead ?? Math.min(count - 1, state.index + 12)
+  } else {
+    const behind = [...starts].reverse().find((a) => a < state.index)
+    next = behind ?? Math.max(0, state.index - 12)
+    if (behind === undefined && state.index > 0 && state.index <= 12) next = 0
+  }
+  return next === state.index ? state : { index: next, pulled: false }
+}

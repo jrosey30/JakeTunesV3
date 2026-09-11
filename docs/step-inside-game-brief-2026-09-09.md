@@ -360,3 +360,15 @@ whatever you put on stands. The shop's own record player is folded in: it
 plays what the bins stock, only while you are inside, yields to your own
 player, and has its speaker button in the HUD on the same preference as the
 2D shop. Never in the harness. Recording v16.
+
+**2026-09-11, second pass (Jake, with screenshots):** the wall sleeves were
+cut off at the knees — they lean back into the panel they hang on, so the
+panel now sits behind their tops; every bin leads with a cover, not a card
+(no divider in front of record 0); the full live concerts are OUT of the
+bins and UP on the wall as posters (`posters.ts`: the concert's own art,
+untouched, on paper, with the act, venue, city and date from the concert's
+grounded metadata, taped at the corners, each a touch crooked — seven slots,
+seeded per visit); Shift+A/D skips a section while digging (`digJump`,
+tested); the avatar hides only when the camera is inside his head, never on
+proximity to a bin ("he walks in front of the light and disappears").
+Recording v17.

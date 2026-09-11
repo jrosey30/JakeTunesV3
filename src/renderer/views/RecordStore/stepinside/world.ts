@@ -70,6 +70,9 @@ export interface WorldHandles {
   /** Face-out displays — wall racks, the window, the staff-picks wall.
    *  Each anchor's +z faces the room; the view hangs sleeves in them. */
   displays: Array<{ id: string; anchor: THREE.Object3D; slot: DisplaySlot }>
+  /** Where concert posters go up: anchors whose +z faces the room, in
+   *  the order the wall fills. Empty slots stay empty wall. */
+  posterSlots: THREE.Object3D[]
   stationAnchor: THREE.Object3D
   /** The sleeve of whatever is on the deck, propped on the shelf behind
    *  it. Hidden until the view gives it a cover. */
@@ -288,22 +291,47 @@ export function buildWorld(): WorldHandles {
     anchor.position.set(x, y, z)
     anchor.rotation.y = yaw
     scene.add(anchor)
+    // The sleeves lean back 0.12 rad from their ledge; a 0.62 sleeve's top
+    // sits 7.4 cm behind its foot. The panel goes BEHIND that — at −0.05 it
+    // cut every cover off at the knees and the wall showed a strip of each.
     const panel = box(w + 0.3, h + 0.18, 0.06, PALETTE.shopWallTrim)
-    panel.position.set(0, h / 2 + 0.02, -0.05)
+    panel.position.set(0, h / 2 + 0.02, -0.13)
     anchor.add(panel)
     displays.push({ id, anchor, slot })
   }
-  const LWALL = SHOP_INTERIOR.minX + 0.08
-  const RWALL = SHOP_INTERIOR.maxX - 0.08
+  // 22 cm off the wall face: the panel sits 13 cm behind the anchor and
+  // must stay in front of the plaster.
+  const LWALL = SHOP_INTERIOR.minX + 0.22
+  const RWALL = SHOP_INTERIOR.maxX - 0.22
   hangDisplay('left-front', LWALL, 1.38, -10.15, Math.PI / 2, { rows: 2, cols: 4 })
   hangDisplay('left-back',  LWALL, 1.38, -14.6,  Math.PI / 2, { rows: 2, cols: 4 })
   hangDisplay('right',      RWALL, 1.38, -13.95, -Math.PI / 2, { rows: 2, cols: 4 })
-  hangDisplay('picks', 0, 1.55, SHOP_INTERIOR.minZ + 0.38, 0, { rows: 1, cols: 6 })
+  hangDisplay('picks', 0, 1.55, SHOP_INTERIOR.minZ + 0.52, 0, { rows: 1, cols: 6 })
+
+  // Poster slots: either side of the staff picks on the back wall, the
+  // front of the right wall ahead of the deck, and the left wall between
+  // the window and the first display.
+  const posterSlots: THREE.Object3D[] = []
+  const posterSlot = (x: number, y: number, z: number, yaw: number): void => {
+    const a = new THREE.Object3D()
+    a.position.set(x, y, z)
+    a.rotation.y = yaw
+    scene.add(a)
+    posterSlots.push(a)
+  }
+  const BACK = SHOP_INTERIOR.minZ + 0.32
+  posterSlot(-3.3, 2.45, BACK, 0)
+  posterSlot(3.3, 2.45, BACK, 0)
+  posterSlot(-4.5, 2.45, BACK, 0)
+  posterSlot(4.5, 2.45, BACK, 0)
+  posterSlot(RWALL - 0.02, 2.55, -7.5, -Math.PI / 2)
+  posterSlot(RWALL - 0.02, 2.55, -8.7, -Math.PI / 2)
+  posterSlot(LWALL + 0.02, 2.55, -7.6, Math.PI / 2)
   const picksSign = new THREE.Mesh(
     new THREE.PlaneGeometry(1.8, 0.32),
     new THREE.MeshLambertMaterial({ map: labelTexture('STAFF PICKS', 1.8 / 0.32, '#f3eee2') }),
   )
-  picksSign.position.set(0, 2.6, SHOP_INTERIOR.minZ + 0.36)
+  picksSign.position.set(0, 2.6, SHOP_INTERIOR.minZ + 0.32)
   scene.add(picksSign)
 
   // ── The bins you dig in ──
@@ -429,15 +457,15 @@ export function buildWorld(): WorldHandles {
     stationAnchor.add(cup)
   }
   // Shelf on the wall behind, and the sleeve of whatever is on the deck.
-  const shelf = box(1.2, 0.03, 0.22, 0x2f3830)
-  shelf.position.set(0, 1.28, -0.86)
+  const shelf = box(1.2, 0.03, 0.2, 0x2f3830)
+  shelf.position.set(0, 1.28, -0.6)
   stationAnchor.add(shelf)
   const deckSleeve = new THREE.MeshLambertMaterial({ color: 0xffffff })
   const deckSleeveMesh = new THREE.Mesh(
     new THREE.BoxGeometry(0.62, 0.62, 0.008),
     [deckSleeve, deckSleeve, deckSleeve, deckSleeve, deckSleeve, deckSleeve],
   )
-  deckSleeveMesh.position.set(0, 1.295 + 0.31, -0.88)
+  deckSleeveMesh.position.set(0, 1.295 + 0.31, -0.6)
   deckSleeveMesh.rotation.x = -0.12
   deckSleeveMesh.visible = false
   stationAnchor.add(deckSleeveMesh)
@@ -445,7 +473,7 @@ export function buildWorld(): WorldHandles {
     new THREE.PlaneGeometry(1.5, 0.26),
     new THREE.MeshLambertMaterial({ map: labelTexture('LISTENING STATION', 1.5 / 0.26, '#f3eee2') }),
   )
-  stationSign.position.set(0, 2.25, -0.96)
+  stationSign.position.set(0, 2.25, -0.69)
   stationAnchor.add(stationSign)
   stationAnchor.add(contactShadow(1.6, 1.0))
   blockers.push({
@@ -464,5 +492,5 @@ export function buildWorld(): WorldHandles {
     disposables.forEach((d) => d.dispose())
   }
 
-  return { scene, blockers, bins, displays, stationAnchor, platter, deckSleeve, deckSleeveMesh, dispose }
+  return { scene, blockers, bins, displays, posterSlots, stationAnchor, platter, deckSleeve, deckSleeveMesh, dispose }
 }

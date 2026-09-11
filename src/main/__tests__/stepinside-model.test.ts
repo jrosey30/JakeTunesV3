@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { digStart, digFlip, digTogglePull, digAtEdge, digPosition } from '../../renderer/views/RecordStore/stepinside/digModel.ts'
+import { digStart, digFlip, digTogglePull, digAtEdge, digPosition, digJump } from '../../renderer/views/RecordStore/stepinside/digModel.ts'
 import { bodyStart, stepBody, gait, resolveCollisions, angleDelta, WALK_SPEED } from '../../renderer/views/RecordStore/stepinside/playerModel.ts'
 
 describe('digging a crate', () => {
@@ -109,5 +109,21 @@ describe('walls', () => {
     const prev = bodyStart(5, 5)
     const next = { ...prev, x: 5.1, z: 5.1 }
     assert.deepEqual(resolveCollisions(prev, next, wall), next)
+  })
+})
+
+describe('quick shift', () => {
+  const starts = [12, 24, 36]
+  it('jumps to the next card ahead, and back to the previous one', () => {
+    assert.deepEqual(digJump({ index: 3, pulled: true }, 1, starts, 48), { index: 12, pulled: false })
+    assert.deepEqual(digJump({ index: 12, pulled: false }, 1, starts, 48), { index: 24, pulled: false })
+    assert.deepEqual(digJump({ index: 30, pulled: false }, -1, starts, 48), { index: 24, pulled: false })
+    assert.deepEqual(digJump({ index: 24, pulled: false }, -1, starts, 48), { index: 12, pulled: false })
+  })
+  it('a dozen at a time when there are no cards, clamped to the ends', () => {
+    assert.deepEqual(digJump({ index: 40, pulled: false }, 1, starts, 48), { index: 47, pulled: false })
+    assert.deepEqual(digJump({ index: 5, pulled: false }, -1, starts, 48), { index: 0, pulled: false })
+    assert.deepEqual(digJump({ index: 5, pulled: false }, 1, [], 20), { index: 17, pulled: false })
+    assert.deepEqual(digJump({ index: 5, pulled: false }, 1, [], 6), { index: 5, pulled: false })
   })
 })
