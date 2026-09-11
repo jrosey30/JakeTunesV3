@@ -13,6 +13,8 @@ import {
   promoteBufferSourceToHowl,
   prefetchGaplessTrim,
   tailTrimSecForUrl,
+  headTrimFor,
+  tailTrimFor,
   type ScheduledIncoming,
 } from '../audio/seamScheduler'
 import { remainingMsUntilMusicEnd } from '../audio/gapless-timing'
@@ -67,6 +69,30 @@ let rafTickCount = 0
 function dx(ev: string, detail?: unknown) {
   if (!DIAGNOSTIC_LOGGING) return
   console.log('[dx]', ev, detail ?? '')
+}
+
+// ── Seam forensics (2026-09-11) ────────────────────────────────────
+// Jake: at track changes he hears a click/pop, a hiccup a moment later,
+// and a change of character that settles — on every seam. Three
+// symptoms, three suspects, no data: the flight recorder never said
+// which of the three seam paths fired or how far the handoff landed
+// from the outgoing's real end. These lines do. Every number is in
+// AudioContext time (ctx.currentTime) so the two clocks — the media
+// element the outgoing plays on, the Web Audio clock the incoming is
+// scheduled on — can be compared. Logging only; no behaviour change.
+const SEAM_DX = true
+let seamSerial = 0
+function seamCtx(): AudioContext | undefined {
+  return (window as unknown as { Howler?: { ctx?: AudioContext } }).Howler?.ctx
+}
+function sdx(ev: string, detail: Record<string, unknown>): void {
+  if (!SEAM_DX) return
+  const ctx = seamCtx()
+  logAudioEvent('seam.' + ev, { n: seamSerial, t: ctx ? +ctx.currentTime.toFixed(4) : null, ...detail })
+}
+function elementOf(howl: Howl | null | undefined): HTMLAudioElement | null {
+  const node = (howl as unknown as { _sounds?: Array<{ _node?: HTMLAudioElement }> } | null)?._sounds?.[0]?._node
+  return node instanceof HTMLAudioElement ? node : null
 }
 
 // Watchdog state for the "stuck audio" recovery (Airfoil hijack edge
@@ -980,6 +1006,27 @@ export function useAudio(opts?: { primary?: boolean }) {
           )
           const ctx = (window as unknown as { Howler?: { ctx?: AudioContext } }).Howler?.ctx
           if (ctx && ctx.state === 'suspended') void ctx.resume().catch(() => { /* ignore */ })
+          seamSerial++
+          {
+            const el = elementOf(sharedHowl)
+            sdx('arm', {
+              out: stateRef.current.nowPlaying?.title?.slice(0, 24),
+              remainingMs: Math.round(remaining * 1000),
+              msUntilEnd: Math.round(msUntilEnd),
+              tailTrimMs: Math.round(tailTrimSecForUrl(outgoingUrl) * 1000),
+              elT: el ? +el.currentTime.toFixed(3) : null,
+              elDur: el ? +el.duration.toFixed(3) : null,
+              bufReady: !!seamIncomingBuffer,
+              headTrimMs: seamIncomingBuffer ? Math.round(headTrimFor(seamIncomingBuffer) * 1000) : null,
+              inTailMs: seamIncomingBuffer ? Math.round(tailTrimFor(seamIncomingBuffer) * 1000) : null,
+              outLatMs: ctx ? Math.round(((ctx as AudioContext & { outputLatency?: number }).outputLatency ?? 0) * 1000) : null,
+              baseLatMs: ctx ? Math.round(ctx.baseLatency * 1000) : null,
+              vol: stateRef.current.volume,
+              elVol: el ? +el.volume.toFixed(3) : null,
+              prewarmed: gaplessNextPrewarmed,
+              xfade: crossfadeSettings.enabled,
+            })
+          }
           // 4.5.0-78 — sample-accurate fade-out via Howler's own
           // sample-accurate Web Audio gain ramp. Calling fade() with
           // duration = msUntilEnd makes the ramp END at the EXACT
@@ -1028,6 +1075,7 @@ export function useAudio(opts?: { primary?: boolean }) {
                 stateRef.current.volume,
                 20, // fade-in to mask buffer-start amplitude
               )
+              sdx('scheduled', { startAt: +absoluteSeamTime.toFixed(4), leadMs: Math.round(msUntilEnd), bufDur: +seamIncomingBuffer.duration.toFixed(3) })
             } catch (err) {
               dx('seam.schedule-failed', { err: String(err) })
               seamStartScheduled = false
@@ -1286,6 +1334,17 @@ export function useAudio(opts?: { primary?: boolean }) {
       },
       onend: () => {
         logAudioEvent('howl.onend', { title: track.title })
+        {
+          const el = elementOf(howl)
+          sdx('onend', {
+            out: track.title.slice(0, 24),
+            elT: el ? +el.currentTime.toFixed(3) : null,
+            elDur: el ? +el.duration.toFixed(3) : null,
+            elVol: el ? +el.volume.toFixed(3) : null,
+            scheduledStartAt: seamScheduled ? +seamScheduled.scheduledStartAt.toFixed(4) : null,
+            howlVol: +Number(howl.volume()).toFixed(3),
+          })
+        }
         // Brief 015d: capture loadAndPlay's `queueIndex` parameter into
         // this closure so runNaturalEnd uses the value that was actually
         // dispatched as PLAY_TRACK.queueIndex when this Howl was set up,
@@ -1603,7 +1662,40 @@ export function useAudio(opts?: { primary?: boolean }) {
           // start at volume 0; the promote helper crossfades them.
           try { next.volume(0) } catch { /* ignore */ }
           try { next.seek(Math.max(0, playedSec)) } catch { /* ignore */ }
+          {
+            const el = elementOf(next)
+            sdx('promote.seek', {
+              inTitle: nt.title.slice(0, 24),
+              playedSec: +playedSec.toFixed(4),
+              elT: el ? +el.currentTime.toFixed(3) : null,
+              elReady: el ? el.readyState : null,
+              elPaused: el ? el.paused : null,
+              howlPlaying: next.playing(),
+            })
+            if (el) {
+              const startedAt = handle.scheduledStartAt
+              const once = (name: string): void => el.addEventListener(name, () => {
+                const c = seamCtx()
+                sdx('promote.el.' + name, {
+                  elT: +el.currentTime.toFixed(3),
+                  bufPos: c ? +(c.currentTime - startedAt + headTrimFor(handle.buffer)).toFixed(3) : null,
+                  elVol: +el.volume.toFixed(3),
+                })
+              }, { once: true })
+              once('seeked'); once('play'); once('playing'); once('waiting')
+            }
+          }
           const finishPromote = () => {
+            {
+              const el = elementOf(next)
+              const c = seamCtx()
+              sdx('promote.crossfade', {
+                elT: el ? +el.currentTime.toFixed(3) : null,
+                bufPos: c ? +(c.currentTime - handle.scheduledStartAt + headTrimFor(handle.buffer)).toFixed(3) : null,
+                elReady: el ? el.readyState : null,
+                elPaused: el ? el.paused : null,
+              })
+            }
             attachHowlToEq(next)
             dx('raf.reschedule', { site: 'sample-accurate-promote-onplay' })
             sharedRaf = requestAnimationFrame(updatePosition)
@@ -1628,6 +1720,7 @@ export function useAudio(opts?: { primary?: boolean }) {
             isPaused,
           })
           dispatchRef.current({ type: 'PLAY_TRACK', track: nt, queueIndex: ni, locateInQueue: true, duration: nextDur, position: playedSec })
+          sdx('branch', { path: 'sample-accurate-promote' })
           if (DIAGNOSTIC_LOGGING) console.log('[dx.repeat.naturalEnd.exit]', { src: 'runNaturalEnd', branch: 'sample-accurate-promote', nextIdx, ts: Date.now() })
           return
         }
@@ -1643,6 +1736,7 @@ export function useAudio(opts?: { primary?: boolean }) {
           // mid-waveform; a hard volume(s.volume) flips the speaker
           // cone from silent to whatever sample is current, producing
           // the click users heard at every gapless seam.
+          sdx('branch', { path: 'gapless-prewarm' })
           fadeInHowl(next, s.volume, 25)
           attachHowlToEq(next)
           // Brief 012: atomic dispatch — duration travels INSIDE the
@@ -1682,6 +1776,7 @@ export function useAudio(opts?: { primary?: boolean }) {
           // is queued with event:'fade' and never drained. Mixes auto-
           // advance this path 24 times — that's "scrubber moving, no
           // sound until the volume slider."
+          sdx('branch', { path: 'standard-promote', bufReady: !!seamIncomingBuffer, scheduled: !!seamScheduled })
           const startIncoming = () => {
             attachHowlToEq(next)
             fadeInHowl(next, s.volume, GAPLESS_FADE_IN_MS)
@@ -1715,6 +1810,7 @@ export function useAudio(opts?: { primary?: boolean }) {
       }
 
       // Standard advance — preload didn't match (or wasn't ready).
+      sdx('branch', { path: 'standard-advance', hadPreload: !!gaplessNextHowl, bufReady: !!seamIncomingBuffer })
       cleanupGaplessPreload()
       dx('playtrack.dispatch', {
         site: 'standard-advance',
