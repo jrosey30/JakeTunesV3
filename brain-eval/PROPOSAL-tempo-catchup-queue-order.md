@@ -80,3 +80,14 @@ encoding` night (09-10 log: 0 newly analysed / 500 older encoding / 0 bpm
 changed). Queue position ~6,488 → **~12 nights out**, draining ~500/night on
 schedule (te=2 census 6,481). Fresh imports still land behind the entire te=2
 backlog. Script: precheck_20260910.py.
+
+## 2026-09-12 — 8th data point
+
+Watchlist 33/34 STILL te=False after an 8th consecutive `500 on an older
+encoding` night (09-12 log: 0 newly analysed / 500 older encoding / 0 bpm
+changed). Queue position ~5,488 → **~10 nights out**, draining ~500/night on
+schedule (te=2 census 5,481). Fresh imports still land behind the entire te=2
+backlog. The mood-side corollary is now measured directly: the 215-track
+stale mood cohort has been frozen for three nights because it sits at those
+same earlier queue positions (see PROPOSAL-enrichment-backlog-drain 09-12).
+Script: precheck_20260912.py.

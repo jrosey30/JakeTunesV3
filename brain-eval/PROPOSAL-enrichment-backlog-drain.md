@@ -84,3 +84,18 @@ belong to earlier import days, and tonight's 50 newly-enriched tracks entered
 the mood index only at enrichment time. The 215 will drain only as the queue
 reaches those specific import-day tracks. Proposal stands for wave days;
 no emergency drain needed while imports are quiet.
+
+## 2026-09-12 update — second real drain night; the 215 cohort is queue-locked
+
+Backlog series 315→458→542→564→533→532→485→**447** (net −38: +50 enriched vs
++13 imports). Two consecutive drain nights; ~9 quiet nights to clear at this
+rate. The un-enriched rt component measured **+0.009** again (series +0.022 →
++0.011 → +0.009 → +0.009 — the self-heal curve has flattened because the
+mood-index's un-enriched-in-lib cohort is EXACTLY 215 for a THIRD night even
+as the backlog fell another 38). This is now three-point-proven: the stale
+bare-genre mood vectors belong to specific earlier import days and drain only
+when the enrichment queue (library-order) reaches those tracks — nightly
+enrichment of *newer* queue positions never touches them. The remaining
+~+0.009 of wave sag is therefore stuck until the queue arrives, which is the
+same queue-order defect PROPOSAL-tempo-catchup-queue-order documents.
+Proposal stands for wave days; no emergency drain needed while imports are quiet.

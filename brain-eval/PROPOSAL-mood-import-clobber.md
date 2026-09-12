@@ -202,3 +202,17 @@ unchanged for a third night. Fix 2 (trainer-side identity-gated mood-orphan
 prune) remains worth ~+0.011–0.013 permanent router-truth. Still NOT applied
 harness-side, same three reasons (can't move run_eval; NAS prune resurrected
 by replay; standing precedent).
+
+## 2026-09-12 — fourth orphan-only measurement (exp_20260912_sag_decomp.py, 2nd drain night)
+
+Same 18 identity-gated orphans (id list byte-identical for an 8th consecutive
+night), rt 0.816: prune = **0.816 → 0.827 (+0.011), worst per-probe delta
++0.00** (ret-007 0.56→0.68, ret-008 0.96→1.00). Series: +0.013 / +0.013 /
++0.011 / **+0.011** — the floor tax is constant to the third decimal across
+sag, recovery, and two drain regimes. Slot occupancy: ret-007 4/25, ret-012
+4/20, ret-008 1/25 — unchanged for a fourth night. Fix 2 (trainer-side
+identity-gated mood-orphan prune) remains worth ~+0.011–0.013 permanent
+router-truth; the case is four-point-proven and the decision remains Jake's.
+Still NOT applied harness-side — same three reasons (mood-only change can't
+move run_eval; a NAS-only prune is resurrected by the next replay; the durable
+fix is trainer-side, which THE ONE RULE forbids the harness to touch).
