@@ -86,6 +86,17 @@ let preampNode: GainNode | null = null
  *  character jump. Null until the chain is built; callers fall back to
  *  ctx.destination). */
 export function getEqInputNode(): AudioNode | null { return preampNode }
+/** The context the element chain lives in. Built on demand, so a caller
+ *  that needs to schedule INTO the chain gets the same context the chain
+ *  will have — not whichever one Howler happens to own at that moment.
+ *  (2026-09-13: when the chain was built before Howler had a context, the
+ *  two diverged for the whole session and every sample-accurate seam threw
+ *  "cannot connect to an AudioNode belonging to a different audio context"
+ *  and fell back to the gapped path. Boot order decided gapless or not.) */
+export function getEqAudioContext(): AudioContext | null {
+  buildChain()
+  return audioContext
+}
 let filterNodes: BiquadFilterNode[] = []
 let analyserNode: AnalyserNode | null = null
 let masterTapped = false

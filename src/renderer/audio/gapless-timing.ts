@@ -28,6 +28,8 @@ export const MAX_TAIL_TRIM_SEC = 0.080
 export interface GaplessTrimSecs {
   delaySec: number
   paddingSec: number
+  /** Original PCM length in seconds when the tag says; 0 when unknown. */
+  originalSec?: number
 }
 
 export function clampPaddingSec(paddingSec: number): number {
@@ -86,6 +88,7 @@ export function trimSecsFromProbe(trim: {
   delaySamples?: number
   paddingSamples?: number
   sampleRate?: number
+  originalSamples?: number
 } | null | undefined): GaplessTrimSecs {
   if (!trim) return { delaySec: 0, paddingSec: 0 }
   const sr = trim.sampleRate && trim.sampleRate > 0 ? trim.sampleRate : 0
@@ -95,8 +98,11 @@ export function trimSecsFromProbe(trim: {
   const paddingSec = (trim.paddingSec && trim.paddingSec > 0)
     ? trim.paddingSec
     : (sr && trim.paddingSamples && trim.paddingSamples > 0 ? trim.paddingSamples / sr : 0)
-  return {
+  const out: GaplessTrimSecs = {
     delaySec: Number.isFinite(delaySec) ? delaySec : 0,
     paddingSec: Number.isFinite(paddingSec) ? paddingSec : 0,
   }
+  // Only when the tag said so — callers deep-compare the plain shape.
+  if (sr && trim.originalSamples && trim.originalSamples > 0) out.originalSec = trim.originalSamples / sr
+  return out
 }

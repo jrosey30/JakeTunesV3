@@ -76,7 +76,7 @@ const inFlightDecodes = new Map<string, Promise<AudioBuffer>>()
 // still has a pad number by the 250 ms seam window.
 const headTrimSec = new WeakMap<AudioBuffer, number>()
 const tailTrimSec = new WeakMap<AudioBuffer, number>()
-const trimByUrl = new Map<string, { delaySec: number; paddingSec: number }>()
+const trimByUrl = new Map<string, { delaySec: number; paddingSec: number; originalSec?: number }>()
 
 /** `ipod-audio://<encoded abs path>` → the path ffprobe needs. */
 function fsPathFromAudioUrl(url: string): string | null {
@@ -101,15 +101,42 @@ export function tailTrimSecForUrl(url: string | null | undefined): number {
   return trimByUrl.get(url)?.paddingSec ?? 0
 }
 
-function rememberTrim(url: string, buffer: AudioBuffer | null, delaySec: number, paddingSec: number): void {
+/** Encoder delay of a probed file. The media ELEMENT plays a priming-
+ *  stripped timeline but reports the raw container duration, so its
+ *  playable end is `duration − this` (measured 2026-09-13: 293.1055 s
+ *  reported, audio ends at 293.0576; 48 ms on every AAC file). */
+export function headTrimSecForUrl(url: string | null | undefined): number {
+  if (!url) return 0
+  return trimByUrl.get(url)?.delaySec ?? 0
+}
+
+/**
+ * 2026-09-13. Chromium's decodeAudioData ALREADY strips AAC/MP3 encoder
+ * priming (a decoded buffer is exactly 2112 samples shorter than the
+ * container, and its audio starts where the element's does), so skipping
+ * `delaySec` again cut 48 ms of music off the front of every seam — a
+ * discontinuity by construction. Decide from measurement, not assumption:
+ * the tag's original PCM length plus the (unstripped) padding equals the
+ * buffer length when the priming is gone. Unknown length (LAME) → trust
+ * the measured behaviour: stripped.
+ */
+function decoderStrippedPriming(buffer: AudioBuffer, delaySec: number, paddingSec: number, originalSec: number | undefined): boolean {
+  if (!originalSec || originalSec <= 0) return true
+  const stripped = originalSec + paddingSec
+  const kept = stripped + delaySec
+  return Math.abs(buffer.duration - stripped) <= Math.abs(buffer.duration - kept)
+}
+
+function rememberTrim(url: string, buffer: AudioBuffer | null, delaySec: number, paddingSec: number, originalSec?: number): void {
   // Always cache, including 0/0, so we don't re-probe tagless files every seam.
-  trimByUrl.set(url, { delaySec, paddingSec })
+  trimByUrl.set(url, { delaySec, paddingSec, originalSec })
   if (!buffer) return
-  if (delaySec > 0 && delaySec < buffer.duration / 2) headTrimSec.set(buffer, delaySec)
+  const stripped = decoderStrippedPriming(buffer, delaySec, paddingSec, originalSec)
+  if (!stripped && delaySec > 0 && delaySec < buffer.duration / 2) headTrimSec.set(buffer, delaySec)
   if (paddingSec > 0 && paddingSec < buffer.duration / 2) tailTrimSec.set(buffer, paddingSec)
 }
 
-async function probeTrim(url: string): Promise<{ delaySec: number; paddingSec: number } | null> {
+async function probeTrim(url: string): Promise<{ delaySec: number; paddingSec: number; originalSec?: number } | null> {
   const fsPath = fsPathFromAudioUrl(url)
   if (!fsPath) return null
   try {
@@ -134,7 +161,7 @@ export function prefetchGaplessTrim(url: string | null | undefined): void {
   if (!USE_GAPLESS_TAIL_TRIM) return
   if (!url || trimByUrl.has(url)) return
   void probeTrim(url).then((secs) => {
-    rememberTrim(url, null, secs?.delaySec ?? 0, secs?.paddingSec ?? 0)
+    rememberTrim(url, null, secs?.delaySec ?? 0, secs?.paddingSec ?? 0, secs?.originalSec)
   }).catch(() => {
     rememberTrim(url, null, 0, 0)
   })
@@ -160,10 +187,10 @@ export async function decodeUrl(url: string, ctx: AudioContext): Promise<AudioBu
     // and never fatal: no answer simply means no trim, i.e. today's behaviour.
     const cached = trimByUrl.get(url)
     if (cached) {
-      rememberTrim(url, buf, cached.delaySec, cached.paddingSec)
+      rememberTrim(url, buf, cached.delaySec, cached.paddingSec, cached.originalSec)
     } else {
       const secs = await probeTrim(url)
-      if (secs) rememberTrim(url, buf, secs.delaySec, secs.paddingSec)
+      if (secs) rememberTrim(url, buf, secs.delaySec, secs.paddingSec, secs.originalSec)
     }
     decodeCache.set(url, buf)
     decodeCacheOrder.unshift(url)
@@ -281,7 +308,15 @@ export function scheduleAbsoluteStart(
   // (2026-08-23; house rule: never a bare disconnect, and never a second
   // signal path that only "mostly" matches the first).
   const eqIn = getEqInputNode()
-  gain.connect(eqIn ?? ctx.destination)
+  // Insurance, never the plan: a node from another context cannot be
+  // connected, and a thrown seam is a gapped seam. Log it if it ever
+  // happens again; useAudio pins the seam to the chain's context now.
+  if (eqIn && eqIn.context !== ctx) {
+    console.warn('[seam] EQ input is on a different AudioContext — routing this seam to destination')
+    gain.connect(ctx.destination)
+  } else {
+    gain.connect(eqIn ?? ctx.destination)
+  }
   if (fadeInMs > 0) {
     gain.gain.setValueAtTime(0, absoluteStartTime)
     gain.gain.linearRampToValueAtTime(targetVolume, absoluteStartTime + fadeInMs / 1000)
