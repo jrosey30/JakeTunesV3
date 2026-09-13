@@ -1,7 +1,10 @@
 # PROPOSAL — refresh the tasteScore `W` constants (taste-weight drift, 2026-08-16)
 
-**Status: PROPOSED, awaiting Jake. Nothing applied — this is a code change to both
-tasteScore twins (needs desktop rebuild), so it's outside the nightly auto-apply lane.**
+**Status: SUPERSEDED 2026-09-13.** The taste v4 deploy (2026-08-23, JakeTunesMobile
+7d8c29f + desktop twin: playIntensity feature + re-learned `W`) replaced the constants
+this proposal targeted, resolving the 08-16 drift by other means. The v4-era refresh is
+now tracked in PROPOSAL-taste-weights-refresh-v4.md (2026-09-13 drift re-run: the v4
+constants have themselves drifted, +0.0083 held-out available).
 
 ## Finding
 
