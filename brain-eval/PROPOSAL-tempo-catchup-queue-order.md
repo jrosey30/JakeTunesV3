@@ -91,3 +91,12 @@ backlog. The mood-side corollary is now measured directly: the 215-track
 stale mood cohort has been frozen for three nights because it sits at those
 same earlier queue positions (see PROPOSAL-enrichment-backlog-drain 09-12).
 Script: precheck_20260912.py.
+
+## 2026-09-14 — 10th data point
+
+Watchlist 33/34 STILL te=False after a 10th consecutive `500 on an older
+encoding` night (09-14 log: 0 newly analysed / 500 older encoding / 0 bpm
+changed). Queue position ~4,488 → **~8 nights out**, draining ~500/night on
+schedule (te=2 census 4,481). The stale-215 mood cohort is now frozen a FIFTH
+night (queue-locked, see sag-decomp series — un-enriched rt component +0.007
+waiting on these same queue positions). Script: precheck_20260914.py.
