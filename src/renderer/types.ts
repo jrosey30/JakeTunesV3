@@ -908,8 +908,9 @@ declare global {
       getWorkoutSyncState?: () => Promise<{ ok: boolean; state?: { trackIds: number[]; name: string; convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }; commentary: string; syncedAt: string; alacCount: number } | null }>
       getActivityProfiles?: () => Promise<{ ok: boolean; profiles?: Array<Record<string, unknown>> }>
       // iPod Pool (2026-09-02)
-      getActivityPool?: () => Promise<{ ok: boolean; ids?: number[]; max?: number }>
-      addToActivityPool?: (candidates: Array<{ id: number; title?: string; duration?: number; genre?: string; playCount?: number; rating?: number }>) => Promise<{ ok: boolean; ids?: number[]; added?: number; dupes?: number; skits?: number; overflow?: number; max?: number; error?: string }>
+      getActivityPool?: () => Promise<{ ok: boolean; ids?: number[]; names?: Record<string, { t: string; a: string }>; max?: number }>
+      addToActivityPool?: (candidates: Array<{ id: number; title?: string; artist?: string; duration?: number; genre?: string; playCount?: number; rating?: number }>) => Promise<{ ok: boolean; ids?: number[]; names?: Record<string, { t: string; a: string }>; added?: number; dupes?: number; skits?: number; overflow?: number; max?: number; error?: string }>
+      swapInActivityPool?: (args: { oldId: number; newId: number; name?: { t: string; a: string } }) => Promise<{ ok: boolean; ids?: number[]; names?: Record<string, { t: string; a: string }>; error?: string }>
       removeFromActivityPool?: (ids: number[]) => Promise<{ ok: boolean; ids?: number[] }>
       clearActivityPool?: () => Promise<{ ok: boolean; ids?: number[] }>
       getActivityBrainContext?: () => Promise<{ ok: boolean; context?: unknown; promptBlock?: string }>

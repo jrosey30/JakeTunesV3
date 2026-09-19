@@ -628,10 +628,12 @@ const electronAPI = {
   getActivityProfiles: (): Promise<{ ok: boolean; profiles?: Array<Record<string, unknown>> }> =>
     ipcRenderer.invoke('get-activity-profiles'),
   // iPod Pool (2026-09-02) — the hand-built activity set.
-  getActivityPool: (): Promise<{ ok: boolean; ids?: number[]; max?: number }> =>
+  getActivityPool: (): Promise<{ ok: boolean; ids?: number[]; names?: Record<string, { t: string; a: string }>; max?: number }> =>
     ipcRenderer.invoke('activity-pool-get'),
-  addToActivityPool: (candidates: Array<{ id: number; title?: string; duration?: number; genre?: string; playCount?: number; rating?: number }>): Promise<{ ok: boolean; ids?: number[]; added?: number; dupes?: number; skits?: number; overflow?: number; max?: number; error?: string }> =>
+  addToActivityPool: (candidates: Array<{ id: number; title?: string; artist?: string; duration?: number; genre?: string; playCount?: number; rating?: number }>): Promise<{ ok: boolean; ids?: number[]; names?: Record<string, { t: string; a: string }>; added?: number; dupes?: number; skits?: number; overflow?: number; max?: number; error?: string }> =>
     ipcRenderer.invoke('activity-pool-add', candidates),
+  swapInActivityPool: (args: { oldId: number; newId: number; name?: { t: string; a: string } }): Promise<{ ok: boolean; ids?: number[]; names?: Record<string, { t: string; a: string }>; error?: string }> =>
+    ipcRenderer.invoke('activity-pool-swap', args),
   removeFromActivityPool: (ids: number[]): Promise<{ ok: boolean; ids?: number[] }> =>
     ipcRenderer.invoke('activity-pool-remove', ids),
   clearActivityPool: (): Promise<{ ok: boolean; ids?: number[] }> =>

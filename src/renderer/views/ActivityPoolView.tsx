@@ -13,8 +13,8 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import { TRACK_DRAG_TYPE } from '../utils/trackDrag'
 import { setNotice } from '../activity'
 import {
-  getPoolIds, getPoolMax, subscribePool, refreshPool,
-  addTracksToPool, removeFromPool, clearPool, requestPoolMode,
+  getPoolIds, getPoolMax, subscribePool, refreshPool, usePoolHealth,
+  addTracksToPool, removeFromPool, clearPool, requestPoolMode, swapInPool,
 } from '../activityPool'
 import '../styles/activity-pool.css'
 
@@ -39,9 +39,13 @@ export default function ActivityPoolView() {
   useEffect(() => { void refreshPool() }, [])
 
   const byId = useMemo(() => new Map(state.tracks.map((t) => [t.id, t])), [state.tracks])
-  const rows = useMemo(() => ids.map((id) => byId.get(id)).filter((t): t is NonNullable<typeof t> => !!t), [ids, byId])
+  // The rows are what will SYNC — the same count the sidebar badge and the
+  // Activity sheet show. What can't sync is listed underneath, by name,
+  // with the fix beside it (2026-09-19: "1000 in the pool, 992 at the sync").
+  const health = usePoolHealth(state.tracks)
+  const rows = useMemo(() => health.syncable.map((id) => byId.get(id)).filter((t): t is NonNullable<typeof t> => !!t), [health, byId])
   const totalMs = useMemo(() => rows.reduce((a, t) => a + (Number(t.duration) || 0), 0), [rows])
-  const missing = ids.length - rows.length
+  const cantSync = health.dead.length + health.concert.length + health.unsyncable.length
 
   const onDrop = (e: React.DragEvent) => {
     setDragOver(false)
@@ -65,8 +69,8 @@ export default function ActivityPoolView() {
         <div>
           <h1 className="pool-title">iPod Pool</h1>
           <div className="pool-sub">
-            {rows.length > 0
-              ? <>{rows.length.toLocaleString()} of {max.toLocaleString()} songs · {fmtLong(totalMs)}{missing > 0 ? ` · ${missing} no longer in the library` : ''}</>
+            {ids.length > 0
+              ? <>{rows.length.toLocaleString()} of {max.toLocaleString()} will sync · {fmtLong(totalMs)}{cantSync > 0 ? <> · <strong className="pool-sub-warn">{cantSync} can’t</strong></> : ''}</>
               : <>Empty — right-click songs and choose “Add to iPod Pool”, or drag songs, albums, artists or playlists onto this page.</>}
           </div>
         </div>
@@ -91,6 +95,45 @@ export default function ActivityPoolView() {
         Dropping skips skits, intros and sub-minute fragments (you’ll see the count). Duplicates never double-count.
         The pool is yours — no per-artist limit. Over the size you pick, the sync stops and asks you to trim; it never trims for you.
       </div>
+
+      {cantSync > 0 && (
+        <div className="pool-attention">
+          <div className="pool-attention-title">{cantSync} in the pool won’t reach the iPod</div>
+          <ul className="pool-attention-list">
+            {health.dead.map((d) => {
+              const rep = d.replacement !== undefined ? byId.get(d.replacement) : undefined
+              return (
+                <li key={`dead-${d.id}`}>
+                  <span className="pool-attention-name">{d.label}</span>
+                  <span className="pool-attention-why">{rep ? 'no longer in the library — the library has a new copy' : 'no longer in the library'}</span>
+                  {rep && <button type="button" className="pool-btn pool-btn--small pool-btn--go" onClick={() => { void swapInPool(d.id, rep) }}>Use the new copy</button>}
+                  <button type="button" className="pool-btn pool-btn--small" onClick={() => { void removeFromPool([d.id]) }}>Remove</button>
+                </li>
+              )
+            })}
+            {health.concert.map((id) => {
+              const t = byId.get(id)
+              return (
+                <li key={`concert-${id}`}>
+                  <span className="pool-attention-name">{t ? `${t.artist} — ${t.title}` : `Song #${id}`}</span>
+                  <span className="pool-attention-why">part of a Full Live Concert — concerts don’t sync as songs</span>
+                  <button type="button" className="pool-btn pool-btn--small" onClick={() => { void removeFromPool([id]) }}>Remove</button>
+                </li>
+              )
+            })}
+            {health.unsyncable.map((id) => {
+              const t = byId.get(id)
+              return (
+                <li key={`bad-${id}`}>
+                  <span className="pool-attention-name">{t ? `${t.artist || '?'} — ${t.title || '?'}` : `Song #${id}`}</span>
+                  <span className="pool-attention-why">{t?.audioMissing ? 'its audio file is missing on this Mac' : 'missing a title, artist or file'}</span>
+                  <button type="button" className="pool-btn pool-btn--small" onClick={() => { void removeFromPool([id]) }}>Remove</button>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
 
       {rows.length > 0 && (
         <table className="pool-table">

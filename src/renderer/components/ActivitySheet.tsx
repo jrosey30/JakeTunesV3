@@ -1,5 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from 'react'
-import { getPoolIds, subscribePool, refreshPool, consumePoolModeRequest } from '../activityPool'
+import { refreshPool, consumePoolModeRequest, usePoolHealth } from '../activityPool'
+import { useLibrary } from '../context/LibraryContext'
 import '../styles/activity-sheet.css'
 
 export type ActivityKind = 'bop' | 'run' | 'ski' | 'lift' | 'bike' | 'walk' | 'hike' | 'other'
@@ -69,17 +70,21 @@ const DEFAULT: ActivityBrief = {
 }
 
 export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
+  const { state: lib } = useLibrary()
   const [brief, setBrief] = useState<ActivityBrief>(() => {
     // The pool page's "Sync this pool…" button asks for pool mode once.
     const base = initial || DEFAULT
     return consumePoolModeRequest() ? { ...base, mode: 'pool' } : base
   })
   // iPod Pool (2026-09-02) — WHO picks: Music Man, or Jake's hand-built pool.
-  const poolIds = useSyncExternalStore(subscribePool, getPoolIds)
   useEffect(() => { void refreshPool() }, [])
   const poolMode = brief.mode === 'pool'
   const target = brief.target ?? DEFAULT_TARGET
+  // Counts what the sync will board — the same rule main applies (2026-09-19).
+  const poolHealthInfo = usePoolHealth(lib.tracks)
+  const poolIds = poolHealthInfo.syncable
   const poolCount = poolIds.length
+  const poolUnsyncable = poolHealthInfo.dead.length + poolHealthInfo.concert.length + poolHealthInfo.unsyncable.length
   const poolGap = target - poolCount
   const poolOver = poolMode && poolCount > target
   const poolEmpty = poolMode && poolCount === 0
@@ -166,6 +171,7 @@ export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
               {poolEmpty && 'The pool is empty — right-click any song and choose “Add to iPod Pool”. Once it has songs, the pool shows in the sidebar and you can drag albums, artists and playlists onto it.'}
               {poolOver && `${poolCount.toLocaleString()} in the pool — ${(poolCount - target).toLocaleString()} over ${target.toLocaleString()}. Remove some, or pick a bigger size. Nothing gets trimmed for you.`}
               {!poolEmpty && !poolOver && poolGap === 0 && `${poolCount.toLocaleString()} in the pool — exactly ${target.toLocaleString()}. Ready.`}
+              {poolUnsyncable > 0 && <span className="activity-pool-warn"> {poolUnsyncable} pooled song{poolUnsyncable === 1 ? '' : 's'} can't sync — see the iPod Pool page.</span>}
               {!poolEmpty && !poolOver && poolGap > 0 && (
                 <label className="activity-pool-fill">
                   <input type="checkbox" checked={brief.poolFill === true} onChange={(e) => set('poolFill', e.target.checked)} />

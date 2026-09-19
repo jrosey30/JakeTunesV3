@@ -14,7 +14,7 @@ import SyncHistorySheet, { SyncHistoryRows, type SyncHistoryEntryLike } from '..
 import { subscribeSyncTimeline, getSyncTimeline, startSyncTimeline, finishSyncTimeline, clearSyncTimeline, deviceFixtureRequested, subscribeEjectFailure, getEjectFailure, showEjectFailure } from '../syncTimeline'
 import { SYNC_STEPS, timelinePercent, resultLine, elapsedLabel, stepLabel, ipodCountLabel } from '../../common/sync-progress-model'
 import { syncOutcome, stoppedLabel, syncFailureCopy } from '../../common/sync-failure-copy'
-import { getPoolIds, subscribePool, requestPoolMode } from '../activityPool'
+import { getPoolIds, subscribePool, requestPoolMode, usePoolHealth } from '../activityPool'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import '../styles/device.css'
 
@@ -172,6 +172,7 @@ export default function DeviceView() {
   }, [timeline.status])
   const lastSync = useMemo(() => (history || []).find((e) => e.kind === 'sync' && e.landed != null) ?? null, [history])
   const poolIds = useSyncExternalStore(subscribePool, getPoolIds)
+  const poolHealthInfo = usePoolHealth(state.tracks)   // what will sync, not what was dropped (2026-09-19)
   const [optionsOpen, setOptionsOpen] = useState(false)
   const [failureDetails, setFailureDetails] = useState(false)
   const [quickTarget, setQuickTarget] = useState<number>(() => 1000)
@@ -732,7 +733,7 @@ export default function DeviceView() {
           </span>
           {lastBrief?.profileName && <span className="device-sync-profile">profile: {lastBrief.profileName}</span>}
           {poolIds.length > 0 && (
-            <button className="device-itunes-btn" disabled={syncing || isDirty} onClick={() => { requestPoolMode(); handleActivitySync() }} title="Sync the hand-built iPod Pool">Sync the Pool ({poolIds.length.toLocaleString()})</button>
+            <button className="device-itunes-btn" disabled={syncing || isDirty} onClick={() => { requestPoolMode(); handleActivitySync() }} title="Sync the hand-built iPod Pool">Sync the Pool ({poolHealthInfo.syncable.length.toLocaleString()})</button>
           )}
           <span className="device-sync-spacer" />
           <button type="button" className="device-link-btn" disabled={syncing || isDirty} onClick={handleFullSync} title={isDirty ? 'Click Apply first to save your setting changes' : 'Mirror the ENTIRE library to the iPod at your convert setting'}>Full Sync…</button>

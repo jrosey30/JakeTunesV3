@@ -15,7 +15,7 @@ import ConfirmDialog from '../ConfirmDialog'
 import type { ViewName, SmartPlaylistId, Track } from '../../types'
 import { setNotice } from '../../activity'
 import { setMixtapeId, getMixtapeId, getMixtapes, subscribeMixtapes, refreshMixtapes } from '../../mixtapes'
-import { getPoolIds, subscribePool, refreshPool, addTracksToPool } from '../../activityPool'
+import { getPoolIds, subscribePool, refreshPool, addTracksToPool, usePoolHealth } from '../../activityPool'
 import NewMixtapeSheet from '../NewMixtapeSheet'
 
 const LIBRARY_ICONS: Record<string, JSX.Element> = {
@@ -275,6 +275,9 @@ export default function Sidebar() {
   // iPod Pool (2026-09-02): the hand-built activity set. Count rides the
   // sidebar badge; drops onto the row add to it (iTunes: drag to the iPod).
   const poolIds = useSyncExternalStore(subscribePool, getPoolIds)
+  // The badge is what will SYNC, not what was dropped (2026-09-19: 1,000
+  // in the badge, 992 at the sheet). Pool page names the difference.
+  const poolHealthInfo = usePoolHealth(state.tracks)
   // Placement audit 9/2 — "Download" carries a live count of jobs in flight
   // (downloading + queued), the way iPod Pool does, so downloads are visible
   // from anywhere without opening the page. `getQueue` returns the same array
@@ -614,7 +617,7 @@ export default function Sidebar() {
           <SidebarItem
             label="iPod Pool"
             icon={<PoolIcon />}
-            badge={poolIds.length > 0 ? poolIds.length.toLocaleString() : undefined}
+            badge={poolIds.length > 0 ? poolHealthInfo.syncable.length.toLocaleString() : undefined}
             selected={state.currentView === 'activity-pool'}
             onClick={() => dispatch({ type: 'SET_VIEW', view: 'activity-pool' })}
             droppable

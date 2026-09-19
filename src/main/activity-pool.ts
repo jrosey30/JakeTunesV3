@@ -21,6 +21,7 @@ export const POOL_MAX = 1000
 export interface PoolCandidate {
   id: number
   title?: string
+  artist?: string
   duration?: number
   genre?: string
   playCount?: number
