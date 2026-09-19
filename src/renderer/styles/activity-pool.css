@@ -1,6 +1,11 @@
+/* The content pane clips overflow; every view scrolls ITSELF (see
+   .artist-detail, .album-page). This one didn't — fine for a 20-song
+   pool, a wall for a 1,000-song one (Jake, 2026-09-19: "i legit cannot
+   scroll in the ipod pool"). */
 .pool-view {
   padding: 22px 28px 40px;
-  min-height: 100%;
+  height: 100%;
+  overflow-y: auto;
   box-sizing: border-box;
 }
 .pool-view.is-dragover { outline: 2px dashed #3b5a8f; outline-offset: -8px; background: #f3f6fb; }
