@@ -216,3 +216,10 @@ router-truth; the case is four-point-proven and the decision remains Jake's.
 Still NOT applied harness-side — same three reasons (mood-only change can't
 move run_eval; a NAS-only prune is resurrected by the next replay; the durable
 fix is trainer-side, which THE ONE RULE forbids the harness to touch).
+
+**2026-09-23 (15th orphan measurement):** same 18 orphans, prune = rt 0.811→0.826,
++0.016 (elevated reading a 5th night: ret-007 4 + ret-012 4 + ret-008 1 slots),
+worst per-probe delta +0.00. Un-enriched component now +0.000 two nights running
+(cohort EMPTY 09-23) — the entire remaining sag is this orphan tax. Fifteen-point
+series: 0.013/0.013/0.011×6/0.013/0.016×4/0.013/0.016. Trainer-side prune remains
+the only lever left on the board.

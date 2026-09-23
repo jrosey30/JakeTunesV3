@@ -100,3 +100,27 @@ changed). Queue position ~4,488 → **~8 nights out**, draining ~500/night on
 schedule (te=2 census 4,481). The stale-215 mood cohort is now frozen a FIFTH
 night (queue-locked, see sag-decomp series — un-enriched rt component +0.007
 waiting on these same queue positions). Script: precheck_20260914.py.
+
+## 2026-09-23 — 18th data point: the pre-registered close-out, adjudicated by id
+
+The 09-22 prediction ("watchlist drains on the 09-23 run, queue pos 488–492")
+came in a night LATE, and the miss itself proves the queue-order mechanism:
+
+- The 33-id block actually spanned old-queue positions **488–520** — the
+  "488–492" figure was a 5-id sample of a contiguous block (recorded in
+  precheck output truncation, not a queue anomaly).
+- Tonight's 500-slot catch-up admitted **50 newly-analysed tracks** (librosa
+  bpm landed during the day; recent-first ordering queue-jumps them — the
+  same mechanism as the −2/−4 import gaps on drain nights 1 and 3, at ×50
+  scale), leaving ~450 effective slots for the standing tail.
+- Result, verified by id-level te diff across the frozen 09-22/09-23
+  snapshots (wl_closeout_20260923.py): **drained = exactly 11467–11479**
+  (old positions 488–500), **survivors = exactly 11480–11499** (old
+  positions 501–520), 0 joined. Perfect queue-order split, zero exceptions.
+- Survivors now sit at queue positions **1–20** → they drain on the 09-24
+  run barring a >480-track analysis wave. 19th (final) checkpoint tomorrow.
+
+Verdict: the strict one-night ETA FAILED; the mechanism this proposal rests
+on is CONFIRMED at id granularity for the 18th time. Under the proposed
+never-encoded-first sort, these 33 tracks (imported 09-05) would have been
+vibe-searchable 17 nights earlier. Script: wl_closeout_20260923.py.
