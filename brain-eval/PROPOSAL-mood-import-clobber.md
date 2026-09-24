@@ -223,3 +223,11 @@ worst per-probe delta +0.00. Un-enriched component now +0.000 two nights running
 (cohort EMPTY 09-23) — the entire remaining sag is this orphan tax. Fifteen-point
 series: 0.013/0.013/0.011×6/0.013/0.016×4/0.013/0.016. Trainer-side prune remains
 the only lever left on the board.
+
+**2026-09-24 (16th orphan measurement):** same 18 orphans (id list byte-identical
+a 10th consecutive night), prune = rt 0.821→0.835, **+0.013** (ret-007 4 +
+ret-008 1 + ret-012 4 slots), worst per-probe delta +0.00. Un-enriched component
++0.000 a THIRD night with `unenriched_in_lib=0` — the cohort story is closed and
+the sag is now 100% orphan tax by construction. Sixteen-point series:
+0.013/0.013/0.011×6/0.013/0.016×4/0.013/0.016/0.013. S1==S2==0.835 = the
+post-prune ceiling. Trainer-side prune remains the only lever on the board.

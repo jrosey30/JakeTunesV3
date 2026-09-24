@@ -124,3 +124,18 @@ Verdict: the strict one-night ETA FAILED; the mechanism this proposal rests
 on is CONFIRMED at id granularity for the 18th time. Under the proposed
 never-encoded-first sort, these 33 tracks (imported 09-05) would have been
 vibe-searchable 17 nights earlier. Script: wl_closeout_20260923.py.
+
+## 2026-09-24 — 19th (FINAL) checkpoint: PASSED, watch CLOSED
+
+wl_final_20260924.py (id-level te diff, frozen 09-23 vs 09-24 snapshots):
+all **20 survivors (exactly 11480–11499, queue positions 1–20) drained
+tonight** — 0 survived, 0 joined, 0 absent. Tonight's catch-up was 119
+newly-analysed + 0 older-encoding, so the head of the queue was reached
+with room to spare. te census: 10,903 v3 / 31 v2 / 22 True / 39 False;
+total te!=3 queue length is now 36.
+
+Verdict: the watchlist story closes at 19 data points with ZERO
+queue-order exceptions across every regime (quiet nights, import waves,
+analysis-wave queue-jumps). The evidence for the proposed
+never-encoded-first sort is complete; the decision remains Jake's. No
+further nightly watch is scheduled for this mechanism.
