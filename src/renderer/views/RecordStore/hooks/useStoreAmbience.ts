@@ -19,6 +19,7 @@
  * the queue, and touching Howler.ctx is its own documented disaster.
  */
 import { useEffect, useRef } from 'react'
+import { libraryAudioUrl } from '../../../../common/library-audio-url'
 
 /** Background, not foreground: loud enough to fill the room, quiet enough
  *  to talk over. */
@@ -26,6 +27,21 @@ export const AMBIENCE_VOLUME = 0.18
 /** Fade in/out so the shop never slams on or cuts dead. */
 const FADE_MS = 900
 const FADE_STEP_MS = 60
+/** After this many records in a row refuse to play, the shop goes quiet
+ *  instead of spinning through the library (the 9/21 storm). */
+const MAX_CONSECUTIVE_FAILURES = 4
+const RETRY_GAP_MS = 400
+
+/** The music root, fetched once per session. */
+let musicRootPromise: Promise<string> | null = null
+function musicRoot(): Promise<string> {
+  if (!musicRootPromise) {
+    musicRootPromise = (window.electronAPI?.getMusicLibraryPath?.() ?? Promise.resolve(''))
+      .then((p: string) => p || '')
+      .catch(() => '')
+  }
+  return musicRootPromise
+}
 
 export interface AmbienceTrack { id: number; path: string }
 
@@ -51,6 +67,9 @@ export function useStoreAmbience(opts: {
   const orderRef = useRef<AmbienceTrack[]>([])
   const idxRef = useRef(0)
   const fadeRef = useRef<number | null>(null)
+  const disposedRef = useRef(false)
+  const failuresRef = useRef(0)
+  const gaveUpRef = useRef(false)
 
   // Keep the running order fresh without restarting the music every time
   // the shelves re-render.
@@ -94,20 +113,41 @@ export function useStoreAmbience(opts: {
 
     const playNext = (): void => {
       const order = orderRef.current
-      if (!order.length) return
+      if (!order.length || disposedRef.current) return
+      if (failuresRef.current >= MAX_CONSECUTIVE_FAILURES) {
+        if (!gaveUpRef.current) {
+          gaveUpRef.current = true
+          console.warn(`[store-ambience] ${MAX_CONSECUTIVE_FAILURES} records in a row wouldn't play — the shop's player stays quiet until you walk back in`)
+        }
+        return
+      }
       const t = order[idxRef.current % order.length]
       idxRef.current++
-      let el = elRef.current
-      if (!el) {
-        el = new Audio()
-        el.addEventListener('ended', playNext)
-        // A missing or unplayable file must not end the shop's night.
-        el.addEventListener('error', playNext)
-        elRef.current = el
-      }
-      el.src = 'ipod-audio://' + encodeURIComponent(t.path)
-      el.volume = 0
-      void el.play().then(() => fadeTo(AMBIENCE_VOLUME)).catch(() => { /* autoplay refused; the toggle is a gesture */ })
+      void musicRoot().then((root) => {
+        if (disposedRef.current) return
+        const url = libraryAudioUrl(root, t.path)
+        if (!url) { onFail(); return }
+        let el = elRef.current
+        if (!el) {
+          el = new Audio()
+          el.addEventListener('ended', onEnded)
+          // A missing or unplayable file must not end the shop's night —
+          // but it must not spin through the library either.
+          el.addEventListener('error', onFail)
+          el.addEventListener('playing', onPlaying)
+          elRef.current = el
+        }
+        el.src = url
+        el.volume = 0
+        void el.play().then(() => fadeTo(AMBIENCE_VOLUME)).catch(() => { /* autoplay refused; the toggle is a gesture */ })
+      })
+    }
+    function onEnded(): void { playNext() }
+    function onPlaying(): void { failuresRef.current = 0 }
+    function onFail(): void {
+      if (disposedRef.current) return
+      failuresRef.current++
+      window.setTimeout(playNext, RETRY_GAP_MS)
     }
 
     const el = elRef.current
@@ -119,13 +159,22 @@ export function useStoreAmbience(opts: {
   }, [enabled, userIsPlaying, tracksKey])
 
   // Leaving the shop stops the music — always, even mid-fade.
-  useEffect(() => () => {
-    if (fadeRef.current !== null) window.clearInterval(fadeRef.current)
-    const el = elRef.current
-    if (el) {
-      try { el.pause() } catch { /* already gone */ }
-      el.src = ''
-      elRef.current = null
+  // Clearing src fires 'error'; disposed + a fresh element on re-entry keep
+  // that from starting a new player after you've left.
+  useEffect(() => {
+    disposedRef.current = false
+    failuresRef.current = 0
+    gaveUpRef.current = false
+    return () => {
+      disposedRef.current = true
+      if (fadeRef.current !== null) window.clearInterval(fadeRef.current)
+      const el = elRef.current
+      if (el) {
+        try { el.pause() } catch { /* already gone */ }
+        el.removeAttribute('src')
+        el.load()
+        elRef.current = null
+      }
     }
   }, [])
 }
