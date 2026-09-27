@@ -231,3 +231,20 @@ ret-008 1 + ret-012 4 slots), worst per-probe delta +0.00. Un-enriched component
 the sag is now 100% orphan tax by construction. Sixteen-point series:
 0.013/0.013/0.011×6/0.013/0.016×4/0.013/0.016/0.013. S1==S2==0.835 = the
 post-prune ceiling. Trainer-side prune remains the only lever on the board.
+
+**2026-09-27 — THE REPLAY WRITER HIT library.json ITSELF (severity upgrade).**
+Tonight, 60 seconds after homemini's SMB mounts returned from a NAS reboot
+(22:24 reboot, mounts restored 03:08 by hand), the replay writer stomped
+`library.json` on the NAS with a **2026-09-04 snapshot** — 10,988 tracks / 41
+playlists → 10,263 / 36, max dateAdded 09-04, erasing three weeks of imports
+from every NAS consumer (backend, phone, trainer, pull agents). Two recycle
+events 16 s apart show a fresh save landing first, then the stale replay over
+it. Diagnosed by dateAdded-diff against the 01:15 save in #recycle (no real
+deletions; 743 missing = post-09-04 imports; 18 stale-only = tracks Jake
+deleted since), then repaired by restoring the newest save (temp + atomic
+rename, verified, evidence in ~/library-incident-20260927/). Collateral: the
+trainer (manual run, post-mount) read the stale library — 1 orphan vector
+(id 12071) + 35-track enrichment backlog. Escalation: this proposal was scoped
+to the mood-index; tonight proves the writer replays ANY stale state file it
+holds, including the master library. Fixes 4/5 are now the top ask on the
+board. See REPORT-20260927-nightly.md.
