@@ -123,6 +123,7 @@ import { scorePlaylistCandidates } from './playlist-vibes'
 import { ARCHETYPES, buildArchetypeBlock, type ArchetypeId } from './archetypes'
 import { join, relative } from 'path'
 import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted, nasAvailable, isSaveLocked, startNasReconnectWatcher } from './state-dir'
+import { startBrainPull } from './brain-pull'
 import { snapshotLibrary, maybeAutoSnapshot } from './backup'
 import { shouldRefuseSave, mayUnlinkDeletions, UNLINK_CAP } from './save-guards'
 import { computeTasteFingerprint, getTasteAnchors } from './taste-model'
@@ -3998,10 +3999,8 @@ const STATE_FILE_NAMES = [
   // HTTP API — a reconcile push of V3's local copy is exactly the whole-file
   // clobber that resurrected phone-deleted recos.
   'play-events.jsonl',
-  'embeddings.bin',
-  // The vibe brain rides to the NAS like embeddings.bin so the homemini
-  // backend can route mixes/DJ vibe queries against it (phase 2).
-  'mood-index.bin',
+  // embeddings.bin + mood-index.bin ABSENT on purpose: homemini's trainer owns them;
+  // the laptop pulls (src/main/brain-pull.ts, which throws at boot if they come back).
   // Live Concert Mode declarations — the ONLY file that records "these tracks
   // form a declared concert" (mergedTrackId + cues + facts). Without it a
   // concert declared on one machine lands as an orphan track on the others.
@@ -10188,6 +10187,7 @@ app.whenReady().then(async () => {
   // in the background, so local edits (including the nightly brain enrichment)
   // mirror to the NAS without ever surfacing a "go push it" banner.
   setInterval(() => { void autoBackupStateToNas() }, 120_000)
+  startBrainPull(async () => new Set((((await libraryCache.get()) as { tracks?: Array<{ id: number }> }).tracks || []).map((t) => Number(t.id))), nasUp, STATE_FILE_NAMES) // NAS→laptop, never back
   // 4.5: auto-index new songs into RAG (Jake: "every new song to auto index").
   // Boot + every 30s — embeds anything imported that lacks a vector, so RAG /
   // mixes / chat can use it within seconds, not at the nightly trainer pass.

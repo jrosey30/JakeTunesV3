@@ -123,6 +123,18 @@ export async function persistEmbeddingsMap(): Promise<void> {
 // per-float writeFloatLE loop (12.8M calls at library scale — measured 20×
 // slower than bulk on the real 51MB file). LE float layout is unchanged —
 // arm64 is little-endian, so the bytes are identical.
+/**
+ * Replace the whole brain with an adopted copy (homemini's trained brain,
+ * merged by planBrainAdopt) and persist it. Swapping the in-memory cache
+ * first means a concurrent setEmbedding lands on the adopted map, not on
+ * the stale one. See src/main/brain-pull.ts.
+ */
+export async function adoptEmbeddingsMap(map: Map<number, Float32Array>): Promise<void> {
+  cache = map
+  await persistEmbeddingsMap()
+  try { cachedMtimeMs = (await stat(getEmbeddingsPath())).mtimeMs } catch { /* next get reloads */ }
+}
+
 export function serializeEmbeddingsBlob(map: Map<number, Float32Array>): Buffer {
   const recordSize = 4 + EMBED_DIM * 4
   const buf = Buffer.alloc(12 + map.size * recordSize)
