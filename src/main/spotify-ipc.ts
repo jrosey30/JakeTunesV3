@@ -39,6 +39,17 @@ const PULL_EVERY_MS = 6 * 24 * 3600 * 1000   // "weekly", tolerant of drift
  * artists so the Deezer graph digs from the Spotify side of his ear.
  */
 export async function pullSpotifyTaste(host: SpotifyIpcHost): Promise<{ ok: boolean; topArtists?: string[]; tracks?: number; error?: string }> {
+  // Offline / token endpoint down must come back as { ok:false }, never a
+  // throw: the weekly timer calls this with `void`, and a throw here was an
+  // unhandled rejection in main every night the laptop was off the net (9/25, 9/26).
+  try {
+    return await pullSpotifyTasteOnce(host)
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+async function pullSpotifyTasteOnce(host: SpotifyIpcHost): Promise<{ ok: boolean; topArtists?: string[]; tracks?: number; error?: string }> {
   const [short, medium, liked] = await Promise.all([
     fetchTopTracks(host.authFile, 'short_term'),
     fetchTopTracks(host.authFile, 'medium_term'),
@@ -61,6 +72,12 @@ export async function pullSpotifyTaste(host: SpotifyIpcHost): Promise<{ ok: bool
 
 /** Weekly cadence check — called on boot and every 12h. */
 export async function pullIfDue(host: SpotifyIpcHost): Promise<void> {
+  try { await pullIfDueOnce(host) } catch (err) {
+    console.warn('[spotify] weekly pull skipped:', err instanceof Error ? err.message : err)
+  }
+}
+
+async function pullIfDueOnce(host: SpotifyIpcHost): Promise<void> {
   const auth = await loadAuth(host.authFile)
   if (!auth.refreshToken) return   // not connected — silent
   const last = Date.parse(auth.lastPullAt || '') || 0
