@@ -20,6 +20,7 @@
  * year, and preview, never the model's memory. Unverified = dropped.
  */
 
+import { isJunkArtistName } from '../common/junk-artist.ts'
 import { searchTitle, unwantedVersionOf } from './streamrip-match.ts'
 import { recoArtistMatches } from './reco-match.ts'
 import { binForGenre, pickHookIndex } from '../common/record-shop-bins.ts'
@@ -227,6 +228,10 @@ export function filterFeed(
     const key = cardKey(c)
     if (seen.has(key)) return false
     seen.add(key)
+    // The last door every lane passes through: a cover factory never gets a
+    // card, whichever lane found it (2026-09-21, Yoyo International Orchestra
+    // "Neighbors with Nirvana"). The supply lane refuses these earlier too.
+    if (isJunkArtistName(c.artist)) return false
     if (opts.notForMe[ak]) return false
     if (c.type === 'artist' && opts.ownedArtists.has(ak)) return false
     if (c.type !== 'artist') {

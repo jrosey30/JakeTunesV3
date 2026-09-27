@@ -18,6 +18,8 @@
  * second-hop) rather than shipping 19 and calling it done.
  */
 
+import { isJunkArtistName, looksLikeCoverFactory } from '../common/junk-artist.ts'
+
 export interface SupplyDeps {
   fetchJson: (url: string) => Promise<unknown>
   /** true when the library already has this album (artist+album). */
@@ -64,6 +66,7 @@ export async function relatedArtistPool(
 ): Promise<Array<{ id: number; name: string; anchor: string; owned: boolean }>> {
   const seen = new Set<string>()
   const pool: Array<{ id: number; name: string; anchor: string; owned: boolean }> = []
+  const refused: string[] = []
   for (const anchor of anchors) {
     const found = arr(await deps.fetchJson(`${API}/search/artist?q=${encodeURIComponent(anchor)}&limit=1`).catch(() => null))
     const id = Number((found[0] as { id?: unknown })?.id)
@@ -74,9 +77,19 @@ export async function relatedArtistPool(
       const key = name.toLowerCase()
       if (!name || !Number.isFinite(rid) || seen.has(key)) continue
       seen.add(key)
+      // Deezer's related graph is polluted with cover factories — "Yoyo
+      // International Orchestra" is RELATED to Nirvana there. The name and
+      // the numbers (fans, fans per album) refuse them before any album is
+      // ever looked at (2026-09-21, Jake: "this crap cannot be recommended").
+      const { nb_fan, nb_album } = r as { nb_fan?: unknown; nb_album?: unknown }
+      if (isJunkArtistName(name) || looksLikeCoverFactory(nb_fan, nb_album)) {
+        refused.push(`${name} (${isJunkArtistName(name) ? 'name' : `${nb_fan} fans / ${nb_album} albums`})`)
+        continue
+      }
       pool.push({ id: rid, name, anchor, owned: deps.ownsArtist(name) })
     }
   }
+  if (refused.length) console.log(`[discover-supply] refused ${refused.length} related act(s) as cover factories: ${refused.slice(0, 6).join('; ')}${refused.length > 6 ? '; …' : ''}`)
   // Artists Jake does NOT already own lead — that is what "new music" means.
   return [...pool.filter((a) => !a.owned), ...pool.filter((a) => a.owned)]
 }
@@ -89,7 +102,12 @@ export async function relatedArtistPool(
 // 40-card headroom absorbs a false reject; a Deluxe on the shelf is the
 // "insane amount of minimal music" complaint all over again.
 const JUNK = new RegExp([
-  'karaoke', 'tribute', 'made famous', 'instrumental version', '\\bcovers? of\\b',
+  'karaoke', 'tribute', 'made famous', 'made popular', 'instrumental version', '\\bcovers? of\\b',
+  // 2026-09-21: "The Love Songs of the Beatles - Instrumentals Volume 1"
+  // carried none of the words above. Instrumental records, "performed /
+  // conducted by" credits and "in the style of" are covers by construction.
+  '\\binstrumentals?\\b', '\\bperformed by\\b', '\\bconducted by\\b', '\\bin the style of\\b', '\\boriginally performed\\b', '\\bcover versions?\\b',
+  '\\bplays the (music|songs|hits) of\\b', '\\b(music|songs|hits) of the\\b.*\\b(vol|volume)\\b',
   '\\bdeluxe\\b', '\\bexpanded\\b', 'remaster', '\\banniversary\\b', '\\breissue\\b',
   '\\bbest of\\b', 'greatest hits', '\\banthology\\b', '\\bb-?sides\\b',
   '\\blive (at|in|from)\\b', '\\([^)]*\\b(live|acoustic|demos?|unplugged)\\b[^)]*\\)',

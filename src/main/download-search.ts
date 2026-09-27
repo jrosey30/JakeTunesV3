@@ -22,6 +22,7 @@
  */
 
 import { foldAccents } from '../common/fold-text.ts'
+import { JUNK_ARTIST_NAME } from '../common/junk-artist.ts'
 import { explicitWins } from '../common/explicit.ts'
 import { packagingMarkersOf } from './album-identity.ts'
 import { recoArtistMatches, recoTitleMatches } from './reco-match.ts'
@@ -104,7 +105,8 @@ export function itunesYear(raw: unknown): number | undefined {
 // Obvious non-original acts — karaoke, tribute/cover factories, lullaby
 // renditions, kids covers. iTunes Search has NO popularity score, so it
 // dumps these in with the real thing. Filter them out entirely.
-export const ITUNES_JUNK_ARTIST = /karaoke|tribute|cover band|made famous|made popular|in the style of|originally performed|8.?bit|chiptune|lullaby|rockabye|little rock star|music foundation|piano (tribute|version|renditions?)|string quartet|meditation|sleep baby|nursery/i
+// One regex for every outside catalogue (2026-09-21): src/common/junk-artist.ts.
+export const ITUNES_JUNK_ARTIST = JUNK_ARTIST_NAME
 // Deezer public search — the INSTANT fallback when Apple rate-limits
 // (403s under heavy use; Jake typed "when you die MGMT" into a silent
 // blank, 2026-07-16). Keyless, ~200ms, artwork + 30s previews, and it

@@ -328,3 +328,58 @@ describe('edition gate — live markers ANYWHERE in the parens', () => {
     assert.deepEqual(out.map((a) => a.title), ['Alive', 'An Honest Record'])
   })
 })
+
+describe('relatedArtistPool — cover factories never enter the pool (2026-09-21)', () => {
+  // The fixture's related entries can carry Deezer's numbers.
+  function fakeWithNumbers(related: Record<string, Array<{ name: string; nb_fan?: number; nb_album?: number }>>) {
+    const ids = new Map<string, number>(); let next = 1
+    const idFor = (n: string): number => { if (!ids.has(n)) ids.set(n, next++); return ids.get(n)! }
+    const byId = new Map<number, string>()
+    for (const k of Object.keys(related)) byId.set(idFor(k), k)
+    for (const list of Object.values(related)) for (const r of list) byId.set(idFor(r.name), r.name)
+    const fetchJson = async (url: string): Promise<unknown> => {
+      const s = url.match(/search\/artist\?q=([^&]+)/)
+      if (s) { const n = decodeURIComponent(s[1]); return { data: [{ id: idFor(n), name: n }] } }
+      const rel = url.match(/artist\/(\d+)\/related/)
+      if (rel) { const who = byId.get(Number(rel[1])) ?? ''; return { data: (related[who] ?? []).map((r) => ({ id: idFor(r.name), ...r })) } }
+      return { data: [] }
+    }
+    return { fetchJson }
+  }
+
+  test('Yoyo International Orchestra is refused by name AND by numbers; a small real band is kept', async () => {
+    const dz = fakeWithNumbers({ Nirvana: [
+      { name: 'Yoyo International Orchestra', nb_fan: 72, nb_album: 37 },
+      { name: 'Everyone Asked About You', nb_fan: 1017, nb_album: 6 },
+      { name: 'Vitamin String Quartet', nb_fan: 37937, nb_album: 499 },
+      { name: 'muddymamba', nb_fan: 25, nb_album: 31 },
+      { name: 'Mannequin Pussy', nb_fan: 9666, nb_album: 4 },
+    ] })
+    const pool = await relatedArtistPool(['Nirvana'], deps({ fetchJson: dz.fetchJson }))
+    assert.deepEqual(pool.map((p) => p.name), ['Everyone Asked About You', 'Mannequin Pussy'])
+  })
+
+  test('unknown numbers are not evidence — a plain related row still enters', async () => {
+    const dz = fakeDeezer({ related: { Anchor: ['Real Band'] } })
+    const pool = await relatedArtistPool(['Anchor'], deps({ fetchJson: dz.fetchJson }))
+    assert.deepEqual(pool.map((p) => p.name), ['Real Band'])
+  })
+})
+
+describe('harvestAlbums — instrumental / performed-by records are not records (2026-09-21)', () => {
+  test('the Beatles instrumentals volume is refused even though the title never says tribute', async () => {
+    const dz = fakeDeezer({
+      related: { A: ['Band'] },
+      albums: { Band: [
+        { title: 'The Love Songs of the Beatles - Instrumentals Volume 1' },
+        { title: 'Classic Rock Instrumentals Vol. 28' },
+        { title: 'Songs of Innocence' },            // U2 — "songs of" alone is a real title
+        { title: 'Hits Performed by the Studio Players' },
+        { title: 'A Real Record' },
+      ] },
+    })
+    const pool = await relatedArtistPool(['A'], deps({ fetchJson: dz.fetchJson }))
+    const albums = await harvestAlbums(pool, 10, deps({ fetchJson: dz.fetchJson }))
+    assert.deepEqual(albums.map((a) => a.title), ['Songs of Innocence', 'A Real Record'])
+  })
+})
