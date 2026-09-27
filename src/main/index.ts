@@ -2459,7 +2459,7 @@ const flightRecorder = initFlightRecorder({
   logPath: () => join(app.getPath('userData'), 'main.log'),
   ready: app.whenReady(),
 })
-flightRecorder.mirrorConsole()
+flightRecorder.mirrorConsole({ unhandledRejections: true })
 flightRecorder.record('info', 'boot.main-start')
 app.whenReady().then(() => flightRecorder.record('info', 'boot.ready'))
 ipcMain.on('flight-record', (_e, payload: unknown) => {

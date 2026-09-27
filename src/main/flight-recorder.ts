@@ -49,8 +49,10 @@ export interface FlightRecorderDeps {
 
 export interface FlightRecorder {
   record: (level: 'info' | 'warn' | 'error', tag: string, detail?: unknown) => void
-  /** Wraps console.warn/console.error to also record. Idempotent. */
-  mirrorConsole: () => void
+  /** Wraps console.warn/console.error to also record. Idempotent.
+   *  `unhandledRejections` (main process only) also records every unhandled
+   *  promise rejection with its stack under one stable message prefix. */
+  mirrorConsole: (opts?: { unhandledRejections?: boolean }) => void
   /** Appends dropped so far (recorder-internal failures). For tests/health. */
   drops: () => number
 }
@@ -80,6 +82,49 @@ export function serializeDetail(detail: unknown): string {
     return s.length > MAX_LINE_BYTES ? s.slice(0, MAX_LINE_BYTES) + '…"' : s
   } catch {
     try { return JSON.stringify(String(detail)) } catch { return '"[unserializable]"' }
+  }
+}
+
+/**
+ * Storm gate (2026-09-27). One looping caller wrote 34,546 copies of the
+ * same warning in 13 seconds on 9/21; the 5MB rotation then threw away
+ * everything BEFORE the storm — the one stretch that would have said what
+ * started it. The same console message (level + text) now gets at most
+ * `perWindow` lines per window; the rest are counted and confessed in one
+ * line when the window closes. Pure: the caller owns the clock and timers.
+ */
+export const STORM_PER_WINDOW = 50
+export const STORM_WINDOW_MS = 60_000
+export type StormVerdict = 'log' | 'suppress-first' | 'suppress'
+export function createStormGate(opts: { perWindow?: number; windowMs?: number; now?: () => number } = {}): {
+  admit: (key: string) => StormVerdict
+  /** Close a key's window: returns how many were suppressed, resets it. */
+  take: (key: string) => number
+} {
+  const per = opts.perWindow ?? STORM_PER_WINDOW
+  const win = opts.windowMs ?? STORM_WINDOW_MS
+  const now = opts.now ?? Date.now
+  const state = new Map<string, { start: number; n: number; suppressed: number }>()
+  return {
+    admit(key) {
+      const t = now()
+      let s = state.get(key)
+      if (!s || t - s.start >= win) {
+        if (state.size > 500) state.clear()   // bounded memory, whatever the message mix
+        s = { start: t, n: 0, suppressed: s?.suppressed ?? 0 }
+        state.set(key, s)
+      }
+      if (s.n < per) { s.n++; return 'log' }
+      s.suppressed++
+      return s.suppressed === 1 ? 'suppress-first' : 'suppress'
+    },
+    take(key) {
+      const s = state.get(key)
+      if (!s) return 0
+      const n = s.suppressed
+      state.delete(key)
+      return n
+    },
   }
 }
 
@@ -120,18 +165,42 @@ export function initFlightRecorder(deps: FlightRecorderDeps): FlightRecorder {
     })
   }
 
-  const mirrorConsole = (): void => {
+  const storm = createStormGate({ now })
+  const gated = (level: 'warn' | 'error', args: unknown[]): void => {
+    const head = typeof args[0] === 'string' ? (args[0] as string).slice(0, 200) : '(non-string)'
+    const key = `${level}|${head}`
+    const v = storm.admit(key)
+    if (v === 'log') { record(level, 'console', consoleArgsDetail(args)); return }
+    if (v === 'suppress-first') {
+      setTimeout(() => {
+        const n = storm.take(key)
+        if (n > 0) record('warn', 'flight-recorder.storm', { msg: `suppressed ${n} more of the same ${level} in the last ${STORM_WINDOW_MS / 1000}s`, of: head })
+      }, STORM_WINDOW_MS).unref?.()
+    }
+  }
+
+  const mirrorConsole = (opts?: { unhandledRejections?: boolean }): void => {
     if (mirrored) return
     mirrored = true
+    if (opts?.unhandledRejections) {
+      // Node's default only prints a warning, and the stack arrived by luck
+      // (the Spotify pull, 9/25). With a handler the process keeps running,
+      // exactly as before, and the log gets one named, storm-gated line.
+      process.on('unhandledRejection', (reason) => {
+        const e = reason instanceof Error ? reason : new Error(String(reason))
+        const stack = String(e.stack || '').split('\n').slice(1, 9).map((l) => l.trim()).join(' | ')
+        gated('error', [`[unhandled-rejection] ${e.message}`, stack])
+      })
+    }
     const origWarn = console.warn.bind(console)
     const origError = console.error.bind(console)
     console.warn = (...args: unknown[]) => {
       origWarn(...args)
-      record('warn', 'console', consoleArgsDetail(args))
+      gated('warn', args)
     }
     console.error = (...args: unknown[]) => {
       origError(...args)
-      record('error', 'console', consoleArgsDetail(args))
+      gated('error', args)
     }
   }
 
