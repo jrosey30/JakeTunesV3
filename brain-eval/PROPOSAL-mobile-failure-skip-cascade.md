@@ -65,3 +65,16 @@ circuit-breaker and event-type change. Risk: a too-aggressive breaker could
 halt legitimate rapid skipping — Jake's real rapid skips (organic sessions) top
 out well under 30 consecutive sub-5s skips, so N=10–15 instant-failure
 advances is a safe threshold.
+
+**2026-10-06 — NEW: mobile-listening-log.jsonl FROZEN since
+2026-09-26T03:20:06Z, and the freeze boundary IS the last burst's boundary.**
+Ten days, zero events — while mobile-plays.json / mobile-stars.json /
+mobile-playlists.json all advance (phone in active use, backend writing the
+same state dir fine). Backend route + sidecar fence unchanged since 09-13;
+backend logs don't record per-request lines (and the 09-27 reboot wiped
+/tmp). Most likely the iOS client stopped firing /api/listen when the 09-26
+cascade session ended. Consequences while frozen: the skip gate
+(1,276/3,000) cannot advance, phone KPI parity silently degrades, and this
+proposal's evidence stream is dark. Ask: an iOS-side check that the app still
+POSTs /api/listen (or one authorized, clearly-marked probe event). Diagnosis
+details in REPORT-20261006-nightly.md.

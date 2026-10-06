@@ -248,3 +248,18 @@ trainer (manual run, post-mount) read the stale library — 1 orphan vector
 to the mood-index; tonight proves the writer replays ANY stale state file it
 holds, including the master library. Fixes 4/5 are now the top ask on the
 board. See REPORT-20260927-nightly.md.
+
+**2026-10-06 — SHIPPED + VALIDATED, series CLOSED.** Two things landed on main
+while the nightly loop was dark (09-28..10-05): (1) the trainer-side orphan
+prune (`34ba4de`) — this proposal's appendix lever, nineteen points of
+evidence — now runs every trainer pass with a ledger
+(`brain-prune-ledger.jsonl`) + `mood-index.bin.prune.bak` undo; tonight it
+removed the benign-18 + 12071 + 12128 and the decomp read **orphan tax
++0.000, S0==S1==S2, rt 0.835 = the former S2 ceiling** (predicted
++0.013–0.016; realized +0.014 vs the 0.821 pre-prune plateau). TWENTIETH and
+closing data point — stop collecting. (2) Fixes 4/5 (the replay writer):
+`5baa13e` stale-push guard + `309b375` one-way brain adoption (laptop adopts
+homemini's brain, never pushes its own), with tests. First guarded night:
+library.json stayed fresh (max dateAdded 02:37Z tonight, 42 playlists). Keep
+the import-day clobber pre-check until the guards have a few import waves
+behind them, then this proposal can be archived. See REPORT-20261006-nightly.md.

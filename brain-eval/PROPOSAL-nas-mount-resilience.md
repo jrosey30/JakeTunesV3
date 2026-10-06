@@ -32,3 +32,10 @@ Mounted from the keychain in <10 s, no dialog, from a launchd-spawned shell.
 Neither touches the brain, the eval, or any state file. Without these, every
 NAS reboot after ~22:00 silently costs a full trainer night + eval night
 unless someone is awake to notice.
+
+**2026-10-06 — trainer half SHIPPED (`ecba7d1`, wait up to an hour for the
+NAS).** After nine consecutive FATAL nights (09-27..10-05 — the mount never
+survived to 02:00), tonight the launchd run completed clean at 06:00–06:01Z
+and absorbed the entire nine-night backlog same-night (11,033/11,033, backlog
+0). The keeper osascript-fallback half remains open (the mount still has to
+exist by 02:00 for a 1-hour wait to win on a truly dead mount night).
