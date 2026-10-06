@@ -14,6 +14,7 @@ import type { BrowserWindow } from 'electron'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { IS_WINDOWS } from '../platform'
+import { triggerSync } from '../sync-orchestrator'
 import { safeIpcError } from '../safe-ipc-error'
 import { getCoverArtUrlByMbid, getMusicBrainzReleaseMbid } from '../external'
 import {
@@ -96,6 +97,8 @@ export function registerArtworkIpc(ipc: IpcRegistrar, host: ArtworkIpcHost): voi
       const versionedHash = `${hash}_${Date.now()}`
       index[key] = versionedHash
       await saveArtworkIndex(index)
+      // New art must reach homemini (the phone) now, not on the next 60 s home-only mirror (2026-10-06).
+      triggerSync('artwork')
       return { ok: true, key, hash: versionedHash }
     } catch (err: unknown) {
       const msg = safeIpcError(err, 'api-failed')
@@ -176,6 +179,8 @@ export function registerArtworkIpc(ipc: IpcRegistrar, host: ArtworkIpcHost): voi
       } catch (err) {
         console.warn('[artwork] sidecar write failed (continuing):', err instanceof Error ? err.message : err)
       }
+      // New art must reach homemini (the phone) now, not on the next 60 s home-only mirror (2026-10-06).
+      triggerSync('artwork')
       return { ok: true, key, hash: versionedHash }
     } catch (err) {
       return { ok: false, error: safeIpcError(err, 'io-failed') }

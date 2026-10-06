@@ -37,6 +37,7 @@
  * store's setNotice (the 4.4.12 LCD-pill mode 4).
  */
 
+import { quietWarn } from './flight-recorder'
 import { spawn, type ChildProcess } from 'child_process'
 import { safeIpcError } from './safe-ipc-error.ts'
 import { existsSync } from 'fs'
@@ -161,13 +162,15 @@ async function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: s
   // mount was slow/absent (laptop in remote mode, SMB over the tailnet).
   // A sync that cannot land must not spend 600s discovering that — ask the
   // breaker first and defer; the next window retries after the cooldown.
-  if (!(await nasAvailable())) {
-    // warn, not log: warns are mirrored into the flight recorder, and this
-    // fires at most once per sync window — the POSITIVE verdict that the
-    // breaker gate worked must be visible where the timeouts used to be.
-    console.warn(`[sync-orchestrator] deferred (reason=${reason}) — NAS unavailable or in breaker cooldown`)
-    lastSync.remote = await nasMountedViaTailnet()
-    return { ok: false, error: 'NAS unavailable (breaker cooldown)', durationMs: 0, deferred: true }
+  // NAS breaker open (2026-10-06): the homemini legs — library to the phone
+  // backend, state, artwork — only need SSH, so run them anyway with
+  // --homemini-only and owe the music leg. Before this, every edit made while
+  // the breaker was open waited for the NAS (measured up to 9.4 min to reach
+  // the phone). The breaker still keeps us off the slow/absent SMB mount.
+  const homeminiOnly = !(await nasAvailable())
+  if (homeminiOnly) {
+    quietWarn('sync-homemini-only', `[sync-orchestrator] NAS unavailable — homemini-only pass (reason=${reason}); music leg owed`)
+    fullSyncOwed = true
   }
   // WAN full-sync stomp (2026-08-22): when the NAS is mounted via the
   // TAILNET (remote mode), a full rsync --delete over the 73GB library
@@ -175,11 +178,11 @@ async function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: s
   // burned 600s and died. Downgrade full→quick out there (new imports
   // still propagate!) and remember a full pass is OWED; the first full
   // sync that succeeds back on home network clears the debt.
-  const remote = await nasMountedViaTailnet()
+  const remote = homeminiOnly ? true : await nasMountedViaTailnet()
   lastSync.remote = remote
   const wantQuick = isQuickReason(reason)
   const mode = decideSyncMode(wantQuick, remote)
-  if (mode.downgradedFromFull) {
+  if (mode.downgradedFromFull && !homeminiOnly) {
     fullSyncOwed = true
     console.warn(`[sync-orchestrator] remote mode (NAS via tailnet) — full sync deferred until home; running quick pass (reason=${reason})`)
   }
@@ -198,6 +201,7 @@ async function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: s
     const useQuickMode = mode.quick
     const args = [SYNC_SCRIPT]
     if (useQuickMode) args.push('--quick')
+    if (homeminiOnly) args.push('--homemini-only')
 
     console.log(`[sync-orchestrator] starting sync (reason=${reason}, mode=${useQuickMode ? 'quick' : 'full'})`)
     // Brief 016: spawn with detached: true so the bash child becomes the

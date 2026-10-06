@@ -174,7 +174,7 @@ import { readLedgerRows } from './taste-ledger-io.ts'
 import { JsonFileCache } from './state-cache'
 import { initFlightRecorder, sanitizeCrashPayload, quietWarn } from './flight-recorder'
 import { spawn } from 'child_process'
-import { stat, lstat, open, readFile, writeFile, mkdir, copyFile, unlink, readlink, symlink, rename, appendFile, readdir } from 'fs/promises'
+import { stat, lstat, open, readFile, writeFile, mkdir, copyFile, unlink, readlink, symlink, rename, appendFile, readdir, utimes } from 'fs/promises'
 import { createHash, randomUUID } from 'crypto'
 import Anthropic from '@anthropic-ai/sdk'
 import { config } from 'dotenv'
@@ -4027,7 +4027,7 @@ let stateConflicts: StateConflict[] = []
 async function detectStateConflicts(): Promise<void> {
   stateConflicts = []
   const localDir = app.getPath('userData')
-  const CONFLICT_THRESHOLD_MS = 60_000 // ignore <60s jitter
+  const CONFLICT_THRESHOLD_MS = 2_000 // NAS copies carry the local mtime (utimes after publish), so 2s = SMB timestamp granularity
   for (const f of STATE_FILE_NAMES) {
     const localPath = join(localDir, f)
     const nasPath = join(NAS_STATE_DIR_PATH, f)
@@ -4154,6 +4154,7 @@ async function handleReconcileStateConflicts(event: import('electron').IpcMainIn
       // Atomic publish (tmp+fsync+rename) — never overwrite the NAS file in
       // place, which on SMB can leave a duplicated-tail torn write.
       await atomicPublishToNas(c.nasPath, (tmp) => stageCopyToTmp(c.localPath, tmp), { verifyJson: c.file === 'library.json' })
+      await utimes(c.nasPath, new Date(c.localMtimeMs), new Date(c.localMtimeMs)).catch(() => { /* copy-time mtime is newer: no re-push loop either way */ })
       pushed++
       console.log(`[state] reconciled "${c.file}" → NAS (${(c.localSizeBytes / (1024 * 1024)).toFixed(1)} MB, local +${Math.round((c.localMtimeMs - c.nasMtimeMs) / 1000)}s newer)`)
     } catch (err) {
@@ -4203,6 +4204,7 @@ async function autoBackupStateToNas(): Promise<void> {
         // >50% shrink-skip above, and the in-place overwrite left the prior
         // file's longer tail behind, which the mobile backend then 500'd on.
         await atomicPublishToNas(c.nasPath, (tmp) => stageCopyToTmp(c.localPath, tmp), { verifyJson: c.file === 'library.json' })
+        await utimes(c.nasPath, new Date(c.localMtimeMs), new Date(c.localMtimeMs)).catch(() => { /* copy-time mtime is newer: no re-push loop either way */ })
         pushed++
       } catch (err) {
         console.warn(`[state] auto-backup failed for "${c.file}":`, err instanceof Error ? err.message : err)
