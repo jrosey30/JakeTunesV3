@@ -501,7 +501,19 @@ async function moodGapFill(tracks, desc) {
   return updateMoodIndex(entries, 'gap-fill')
 }
 
+// The NAS can be slow to come back after a power blip; the trainer used to
+// FATAL at 2:00 and lose the night (9 nights in a row, 9/27-10/5). Wait for
+// the state dir, checking each minute, before giving up.
+async function waitForStateDir() {
+  const minutes = Number(process.env.BRAIN_MOUNT_WAIT_MIN ?? 60)
+  for (let i = 0; i < minutes && !(existsSync(LIB) && existsSync(EMB)); i++) {
+    if (i === 0) log(`state dir not there yet (${STATE_DIR}) — waiting up to ${minutes} min for the NAS`)
+    await new Promise(r => setTimeout(r, 60_000))
+  }
+}
+
 async function main() {
+  await waitForStateDir()
   if (!existsSync(LIB) || !existsSync(EMB)) fatal(`library.json or embeddings.bin missing under ${STATE_DIR} — is the NAS mounted?`)
   const libRaw = JSON.parse(readFileSync(LIB, 'utf8'))
   const tracks = Array.isArray(libRaw) ? libRaw : (libRaw.tracks || [])
