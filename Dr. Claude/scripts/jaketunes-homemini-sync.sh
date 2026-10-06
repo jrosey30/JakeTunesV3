@@ -181,7 +181,7 @@ ensure_jakeshared() {
 #          phonePlaylistSidecarsNeverPushFromDesktop (repo-side tests lock
 #          SYNC_FILES against that list — but they lock the REPO copy, not
 #          this one, which is how the drift went unnoticed for 11 days).
-SYNC_FILES=(library.json metadata-overrides.json playlists.json play-events.jsonl listening-log.jsonl live-sets.json listener-profile.json musicman-memory.json musicman-interactions.jsonl picks-cache.json audio-index.bin)  # audio-index.bin added 2026-09-02: the CLAP ears, laptop-written, read by the Mini's fusion
+SYNC_FILES=(library.json metadata-overrides.json playlists.json play-events.jsonl listening-log.jsonl live-sets.json listener-profile.json musicman-memory.json musicman-interactions.jsonl picks-cache.json audio-index.bin activity-pool.json)  # audio-index.bin added 2026-09-02: the CLAP ears, laptop-written, read by the Mini's fusion
 # Phone-authored playlist sidecars — pull only, never push via SYNC_FILES.
 PHONE_PLAYLIST_SIDECARS=(mobile-playlists.json playlist-additions.json)
 
