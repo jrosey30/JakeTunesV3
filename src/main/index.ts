@@ -124,6 +124,7 @@ import { ARCHETYPES, buildArchetypeBlock, type ArchetypeId } from './archetypes'
 import { join, relative } from 'path'
 import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted, nasAvailable, isSaveLocked, startNasReconnectWatcher } from './state-dir'
 import { startBrainPull } from './brain-pull'
+import { machineBehindNas } from './stale-push-guard'
 import { snapshotLibrary, maybeAutoSnapshot } from './backup'
 import { shouldRefuseSave, mayUnlinkDeletions, UNLINK_CAP } from './save-guards'
 import { computeTasteFingerprint, getTasteAnchors } from './taste-model'
@@ -4183,6 +4184,8 @@ async function autoBackupStateToNas(): Promise<void> {
   try {
     await detectStateConflicts()
     if (stateConflicts.length === 0) return
+    const behind = await machineBehindNas(join(app.getPath('userData'), 'library.json'), join(NAS_STATE_DIR_PATH, 'library.json'))
+    if (behind) { quietWarn('state-backup-behind', `[state] auto-backup PAUSED: ${behind}`); return }   // src/common/stale-push.ts
     let pushed = 0, skipped = 0
     for (const c of stateConflicts) {
       try {
