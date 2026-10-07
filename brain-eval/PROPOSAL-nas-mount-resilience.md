@@ -39,3 +39,12 @@ survived to 02:00), tonight the launchd run completed clean at 06:00–06:01Z
 and absorbed the entire nine-night backlog same-night (11,033/11,033, backlog
 0). The keeper osascript-fallback half remains open (the mount still has to
 exist by 02:00 for a 1-hour wait to win on a truly dead mount night).
+
+**2026-10-07 — THIRD COST CLASS FOUND: permanent listen-event loss.** The
+nine-night outage didn't just cost trainer/eval nights — it silently dropped
+every mobile listen/skip event (backend `/api/listen` bare-appends to the NAS
+path, no local fallback; see listen.ts:27,55 + the 10-07 entry in
+PROPOSAL-mobile-failure-skip-cascade). Plays/stars survived (local-first);
+the listen log did not: 09-27..10-05 = zero events, unrecoverable. Adds a
+backend item to this proposal: local-first append (or queue-and-replay) for
+mobile-listening-log.jsonl. Jake-gated (backend code).

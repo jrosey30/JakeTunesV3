@@ -78,3 +78,24 @@ cascade session ended. Consequences while frozen: the skip gate
 proposal's evidence stream is dark. Ask: an iOS-side check that the app still
 POSTs /api/listen (or one authorized, clearly-marked probe event). Diagnosis
 details in REPORT-20261006-nightly.md.
+
+**2026-10-07 — 10-06 FREEZE FLAG RESOLVED: not the iOS client — the backend
+DROPS listen events whenever the NAS is unmounted.** The log unfroze 10-06
+12:50–16:50 ET (+18 events, 16 organic skips), the SAME DAY the NAS mount
+returned, with zero client-side change and NO backfill. Per-day census: zero
+events exactly spanning 09-27..10-05 = the NAS-dark window (09-26/27 quiet is
+normal — many zero-event days exist). Grounded mechanism
+(`backend/src/routes/listen.ts:27,55`): `/api/listen` does a bare
+`appendFile` to `config.stateDir/mobile-listening-log.jsonl` — the NAS path —
+with NO local fallback, queue, or retry; an unmounted path → 500 → the event
+is gone forever. mobile-plays/stars survived the outage because their write
+paths are local-first; the listen log is the ONLY per-event stream appended
+directly to the NAS. The 10-06 "iOS stopped POSTing" hypothesis is REFUTED;
+no iOS-side check needed. NEW ASK (supersedes the 10-06 ask, cross-filed to
+PROPOSAL-nas-mount-resilience): give /api/listen the same local-first
+treatment (append locally, mirror to NAS) OR at minimum queue-and-replay on
+append failure — otherwise every future NAS outage permanently loses the
+exact signal the skip gate is waiting on. Forensics recount tonight: organic
+682 mobile + 610 desktop = 1,292/3,000 CLOSED; no new mechanical bursts
+(still 14 sessions / 2,237) — the cascade has been quiet since 09-26, but
+the breaker asks above stand.
