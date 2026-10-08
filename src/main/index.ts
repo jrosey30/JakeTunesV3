@@ -5350,7 +5350,7 @@ const syncEngine = createSyncEngine({
     detectedIpodVolume = m ? volumeNameFromMount(m) : null
   },
   buildAacMirror, buildIpodSafeAlacMirror, candidateMusicMounts, cleanOrphansOnMusicRoot,
-  computeAudioFingerprint, getConcertOwnedTrackIds, isStreamedTrackFile,
+  computeAudioFingerprint, getConcertOwnedTrackIds, getLibraryTracks: () => libraryCache.get() as Promise<{ tracks?: Array<Record<string, unknown>> }>, isStreamedTrackFile,
   materializeLibraryTrack, readIpodDatabase, resolveTrackAbsPath, scheduleDbRebuild,
   sendToRenderer, verifyAndHealTracks, walkAudioFilesUnder,
 })

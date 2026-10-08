@@ -24,7 +24,7 @@ import { safeIpcError } from '../safe-ipc-error'
 import { normalize } from '../normalize'
 import { refuseIpodSyncUnlessUserClick, type IpodSyncOpts } from '../ipod-sync-origin'
 import type { SyncConvertOptions } from '../ipc/sync-ipc.ts'
-import { runActivitySync } from '../ipod-activity-engine.ts'
+import { bindActivityReplacements, runActivitySync } from '../ipod-activity-engine.ts'
 import { ensureContiguousDb } from '../ipod-db-contiguity.ts'
 import { orderForIpodCatalog, conformCatalogIdOrder } from '../ipod-catalog-order.ts'
 import {
@@ -72,6 +72,8 @@ export interface SyncEngineHost {
   cleanOrphansOnMusicRoot: (musicRoot: string, tracks: Array<{ path?: string }>, protectMtimeAfterMs?: number) => Promise<{ deleted: number; bytesFreed: number; protected: number }>
   computeAudioFingerprint: (absPath: string, durationMs: number) => Promise<string | null>
   getConcertOwnedTrackIds: () => Promise<Set<number>>
+  /** #47 fill-to-N: the library the activity engine pulls replacements from. */
+  getLibraryTracks: () => Promise<{ tracks?: Array<Record<string, unknown>> }>
   isStreamedTrackFile: (absPath: string) => Promise<boolean>
   materializeLibraryTrack: (colonPath: string, trackId: number | string) => Promise<{ ok: boolean; error?: string; pulled?: boolean }>
   readIpodDatabase: () => Promise<{ tracks: Array<Record<string, unknown>>; playlists: Array<{ name: string; trackIds: number[] }> }>
@@ -86,7 +88,7 @@ export function createSyncEngine(host: SyncEngineHost) {
   const {
     LOSSLESS_EXTS, LOSSLESS_CODECS, codecByAbsPath,
     buildAacMirror, buildIpodSafeAlacMirror, candidateMusicMounts, cleanOrphansOnMusicRoot,
-    computeAudioFingerprint, getConcertOwnedTrackIds, isStreamedTrackFile,
+    computeAudioFingerprint, getConcertOwnedTrackIds, getLibraryTracks, isStreamedTrackFile,
     materializeLibraryTrack, readIpodDatabase, resolveTrackAbsPath, scheduleDbRebuild,
     sendToRenderer, verifyAndHealTracks, walkAudioFilesUnder,
   } = host
@@ -324,6 +326,8 @@ export function createSyncEngine(host: SyncEngineHost) {
         getDetectedMount: () => host.getMount(),
         setDetectedMount: (m) => { host.setMount(m) },
         materializeTrack: materializeLibraryTrack,
+        // #47 (fill-to-N): next eligible library songs when a boarded one cannot copy.
+        loadReplacementTracks: bindActivityReplacements(getLibraryTracks, getConcertOwnedTrackIds),
       }, { tracks, playlists, convertOptions })
     }
     if (syncOpts?.wipeFirst) {

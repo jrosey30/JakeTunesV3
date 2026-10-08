@@ -42,6 +42,8 @@ const RULES: Rule[] = [
   { test: /no verified ipod mount|ipod is not mounted|no ipod detected/i, stage: 'device', happened: 'No iPod was found.', next: 'Plug it in (a direct USB port, no hub) and try again.' },
   { test: /library is empty|nothing to commit|could not build an activity set|api-failed|io-failed|build failed/i, stage: 'build', happened: 'The set could not be built.', next: 'Try the sheet again; if it keeps failing, check the library and the brain services.' },
   { test: /your pool has \d+ songs/i, stage: 'build', happened: 'The pool is larger than the chosen size.', next: 'Remove songs from the pool or pick a bigger size.' },
+  // #47 fill-to-N (merged 2026-10-08): refused before the wipe — the library cannot fill N.
+  { test: /only \d+ of \d+ requested songs can land/i, stage: 'prepare', happened: 'The library has fewer songs that can land on the iPod than the chosen size.', next: 'Pick a smaller size, or add songs the Mini can list, and sync again.' },
   { test: /activity tsa/i, stage: 'prepare', happened: 'Some songs could not board: a file is missing, has no destination, or would collide on the card.', next: 'Open Details for the songs, fix or drop them, and sync again.' },
   { test: /could not build an ipod-safe alac|flac→alac failed/i, stage: 'prepare', happened: 'A song could not be converted to an iPod-safe ALAC, so nothing on the iPod was touched.', next: 'Open Details for the song — the original may be multichannel or damaged. Drop it and sync again.' },
   { test: /activity wipe/i, stage: 'wipe', happened: 'The iPod could not be cleared for the rebuild.', next: 'Reseat the cable (direct USB port) and sync again.' },

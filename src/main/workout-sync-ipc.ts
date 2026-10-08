@@ -267,7 +267,7 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
       const syncable = (t: WorkoutTrack): boolean =>
         String(t.title || '').trim() !== '' && String(t.artist || '').trim() !== ''
         && t.audioMissing !== true && (t.path === undefined || String(t.path).trim() !== '')
-      const target = Math.min(opts?.target ?? WORKOUT_TARGET, tracks.length)
+      const target = Math.max(1, Math.floor(Number(opts?.target) || WORKOUT_TARGET))
       let poolIds: number[] = []
       if (poolMode) {
         const seen = new Set<number>()
@@ -306,6 +306,7 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
 
       const prev = await loadState()
       let fillIds: number[] = []
+      let reserveIds: number[] = []
       let name = ''
       let commentary = ''
       if (wantBrain) {
@@ -394,6 +395,7 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
           seedArtistCounts,
         })
         fillIds = selected.trackIds
+        reserveIds = selected.reserveIds
         name = selected.name
         commentary = poolMode
           ? `${selected.commentary} Built on your ${poolIds.length}-song pool; Music Man filled the last ${fillIds.length}.`
@@ -410,6 +412,13 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
       let alacCount = 0
       for (const id of trackIds) if (isAlacCodec(byId.get(id)?.codec)) alacCount++
       if (poolMode) console.log(`[workout-sync] pool mode: ${poolIds.length} pooled + ${fillIds.length} filled = ${trackIds.length}/${target}`)
+      // #47 (fill-to-N): a hand-built pool is its own N; a brain-built set is
+      // short only when the library could not fill the requested target.
+      const requested = wantBrain ? target : trackIds.length
+      const shortfall = Math.max(0, requested - trackIds.length)
+      if (shortfall > 0) {
+        console.warn(`[workout-sync] requested ${requested}, proposing ${trackIds.length} (shortfall ${shortfall})`)
+      }
 
       // REVIEW GATE (2026-07-18): building is now a PROPOSAL — nothing
       // persists here. The renderer shows the set for review (edits,
@@ -419,6 +428,9 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
       return {
         ok: true,
         trackIds,
+        reserveIds,
+        requested,
+        shortfall,
         name,
         commentary,
         alacCount,

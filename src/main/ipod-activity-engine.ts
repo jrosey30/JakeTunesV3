@@ -67,6 +67,8 @@ import {
   formatHomeminiPullRefuse,
   formatSyncSetFileRefuse,
 } from './activity-boardable.ts'
+import { activityTrackCanBoard, pickReplacementTracks, queueActivityCandidates } from './activity-fill.ts'
+import { orderTracksForIpodTitleIndex, stampIpodSortArtist } from './ipod-artist-sort.ts'
 
 export interface ActivitySyncHost {
   pythonCmd: string
@@ -103,12 +105,20 @@ export interface ActivitySyncHost {
   /** Pull homemini bytes onto this Mac when eviction (or a symlink) left
    *  nothing copyFile can send to the Mini. HTTP only — never SMB. */
   materializeTrack: (colonPath: string, trackId: number) => Promise<{ ok: boolean; error?: string; pulled?: boolean }>
+  /** Next eligible library tracks when a boarded song cannot copy.
+   *  Needed so 15 firmware-unlistable / dead-path rows do not shrink a
+   *  1000-song request to 985. */
+  loadReplacementTracks?: (excludeIds: Set<number>, needed: number) => Promise<Array<Record<string, unknown>>>
 }
 
 export interface ActivitySyncInput {
   tracks: Array<Record<string, unknown>>
   playlists: Array<Record<string, unknown>>
   convertOptions?: SyncConvertOptions
+  /** Explicit N (100/250/500/1000). Defaults to tracks.length. */
+  requestedTarget?: number
+  /** Extra eligible tracks the picker scored but did not board — copy replacements. */
+  reserve?: Array<Record<string, unknown>>
 }
 
 export interface ActivitySyncResult {
@@ -127,6 +137,16 @@ export interface ActivitySyncResult {
   pathRewrites?: Array<{ id: number; newPath: string }>
   streamed?: number
   destCollisions?: number
+}
+
+export function bindActivityReplacements(
+  getLibrary: () => Promise<{ tracks?: Array<Record<string, unknown>> }>,
+  getIneligible: () => Promise<Set<number>>,
+): NonNullable<ActivitySyncHost['loadReplacementTracks']> {
+  return async (excludeIds, needed) => {
+    const lib = await getLibrary()
+    return pickReplacementTracks(lib.tracks || [], excludeIds, needed, await getIneligible())
+  }
 }
 
 function fail(partial: Omit<ActivitySyncResult, 'ok'> & { error: string }): ActivitySyncResult {
@@ -157,13 +177,56 @@ async function spawnJson(cmd: string, args: string[], stdin: string): Promise<{ 
   })
 }
 
+async function expandActivityPool(
+  host: ActivitySyncHost,
+  primary: Array<Record<string, unknown>>,
+  reserve: Array<Record<string, unknown>>,
+  requested: number,
+): Promise<{ pool: Array<Record<string, unknown>>; shortfall: number }> {
+  const idOf = (t: Record<string, unknown>) => Number(t.id)
+  const exclude = new Set([...primary, ...reserve].map(idOf).filter((id) => Number.isFinite(id)))
+  let extra: Array<Record<string, unknown>> = []
+  if (host.loadReplacementTracks) {
+    const need = Math.max(0, requested - primary.filter(activityTrackCanBoard).length) + 40
+    extra = await host.loadReplacementTracks(exclude, need)
+  }
+  const { queue, shortfall } = queueActivityCandidates({
+    requested,
+    primary,
+    reserve,
+    extra,
+    canBoard: activityTrackCanBoard,
+    idOf,
+  })
+  return { pool: queue, shortfall }
+}
+
 export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyncInput): Promise<ActivitySyncResult> {
-  let tracks = input.tracks
   const playlists = input.playlists
   const convertOptions = input.convertOptions
-  const target = tracks.length
+  const requested = Math.max(1, Math.floor(Number(input.requestedTarget) || input.tracks.length || 0))
   const pathSep = host.pathSep
   const python = host.pythonCmd || PYTHON_CMD || 'python3'
+
+  let tracks: Array<Record<string, unknown>>
+  {
+    const expanded = await expandActivityPool(host, input.tracks, input.reserve || [], requested)
+    tracks = expanded.pool.slice(0, requested + 40)
+    if (expanded.pool.length < requested) {
+      console.error(`activity-sync: REFUSING — library only has ${expanded.pool.length} boardable songs for a ${requested}-song set`)
+      return fail({
+        copied: 0,
+        target: requested,
+        landed: expanded.pool.length,
+        shortfall: requested - expanded.pool.length,
+        error: `Activity sync refused — only ${expanded.pool.length} of ${requested} requested songs can land on the iPod (skits, blanks, concert-owned, and firmware-unlistable rows do not count). Nothing was wiped.`,
+      })
+    }
+    if (tracks.length > requested) {
+      console.log(`activity-sync: boarded ${requested} with ${tracks.length - requested} replacement(s) in reserve`)
+    }
+  }
+  const target = requested
 
   console.log(`activity-sync: START — dedicated wipe+rebuild for ${target} songs (not the full-library engine)`)
 
@@ -187,27 +250,58 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   const LOCAL_MOUNT = host.musicDir.replace(/[/\\]iPod_Control[/\\]Music$/, '')
 
   // ── 1. Preflight: names, then homemini-pull anything eviction removed ──
-  const { blanks, fileless, toPull } = await classifyActivitySyncTracks(tracks, {
+  // Unplayable rows are dropped and replaced — they do not count toward N.
+  {
+    const classified = await classifyActivitySyncTracks(tracks, {
+      localMount: LOCAL_MOUNT,
+      pathSep,
+      lstat,
+    })
+    if (classified.blanks.length || classified.fileless.length) {
+      const before = tracks.length
+      tracks = tracks.filter((t) => {
+        if (!activityTrackCanBoard(t)) return false
+        const label = `${String(t.title || '').trim()} — ${String(t.artist || '').trim()}`
+        if (classified.fileless.some((f) => f.startsWith(label))) return false
+        if (classified.blanks.some((b) => b.includes(`id ${t.id}:`))) return false
+        return true
+      })
+      console.warn(`activity-sync: dropped ${before - tracks.length} unplayable row(s); filling from reserve so ${target} still means ${target}`)
+      if (tracks.filter(activityTrackCanBoard).length < target && host.loadReplacementTracks) {
+        const have = new Set(tracks.map((t) => Number(t.id)))
+        const more = await host.loadReplacementTracks(have, target - tracks.length + 20)
+        tracks = queueActivityCandidates({
+          requested: target + 40,
+          primary: tracks,
+          extra: more,
+          canBoard: activityTrackCanBoard,
+          idOf: (t) => Number(t.id),
+        }).queue
+      }
+      if (tracks.filter(activityTrackCanBoard).length < target) {
+        console.error(`activity-sync: REFUSING — ${target}-song set has unplayable tracks and no replacements`)
+        for (const b of [...classified.blanks, ...classified.fileless].slice(0, 20)) console.error('   •', b)
+        await host.writeJournal(null)
+        return fail({
+          copied: 0,
+          error: formatSyncSetFileRefuse({
+            lead: 'Activity sync refused',
+            blanks: classified.blanks,
+            fileless: classified.fileless,
+            total: target,
+            nothingVerb: 'wiped',
+          }),
+          target,
+          shortfall: target - tracks.filter(activityTrackCanBoard).length,
+        })
+      }
+    }
+  }
+  const { toPull } = await classifyActivitySyncTracks(tracks, {
     localMount: LOCAL_MOUNT,
     pathSep,
     lstat,
   })
-  if (blanks.length || fileless.length) {
-    console.error(`activity-sync: REFUSING — ${target}-song set has unplayable tracks`)
-    for (const b of [...blanks, ...fileless].slice(0, 20)) console.error('   •', b)
-    await host.writeJournal(null)
-    return fail({
-      copied: 0,
-      error: formatSyncSetFileRefuse({
-        lead: 'Activity sync refused',
-        blanks,
-        fileless,
-        total: target,
-        nothingVerb: 'wiped',
-      }),
-      target,
-    })
-  }
   if (toPull.length > 0) {
     console.log(`activity-sync: ${toPull.length}/${target} not on this Mac — pulling from homemini before wipe`)
     const pullFail: string[] = []
@@ -232,35 +326,61 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
       }
     }
     if (pullFail.length > 0) {
-      await host.writeJournal(null)
-      return fail({
-        copied: 0,
-        error: formatHomeminiPullRefuse(pullFail, target),
-        target,
-      })
+      const failedIds = new Set(toPull.filter((p) => pullFail.some((f) => f.startsWith(p.label))).map((p) => p.id))
+      tracks = tracks.filter((t) => !failedIds.has(Number(t.id)))
+      console.warn(`activity-sync: homemini miss on ${failedIds.size} song(s) — replacing so ${target} still means ${target}`)
+      if (tracks.filter(activityTrackCanBoard).length < target && host.loadReplacementTracks) {
+        const have = new Set(tracks.map((t) => Number(t.id)))
+        const more = await host.loadReplacementTracks(have, target - tracks.length + 20)
+        tracks = queueActivityCandidates({
+          requested: target + 40,
+          primary: tracks,
+          extra: more,
+          canBoard: activityTrackCanBoard,
+          idOf: (t) => Number(t.id),
+        }).queue
+      }
+      if (tracks.filter(activityTrackCanBoard).length < target) {
+        await host.writeJournal(null)
+        return fail({
+          copied: 0,
+          error: formatHomeminiPullRefuse(pullFail, target),
+          target,
+          shortfall: target - tracks.filter(activityTrackCanBoard).length,
+        })
+      }
     }
   }
 
-  const tsaBoarded: TsaPassenger[] = tracks.map((t) => tsaBoardPassenger({
+  const destSeen = new Set<string>()
+  tracks = tracks.filter((t) => {
+    const dest = ipodPlayableDestPath(String(t.path || ''))
+    if (!dest) return false
+    if (destSeen.has(dest)) return false
+    destSeen.add(dest)
+    return true
+  })
+  const collisions = tsaDestCollisions(tracks.map((t) => tsaBoardPassenger({
+    ...t,
+    destPath: ipodPlayableDestPath(String(t.path || '')),
+  })))
+  if (collisions.length > 0) {
+    console.warn(`activity-sync: dest collision(s) after first-wins filter: ${collisions.slice(0, 3).join(', ')}`)
+    const collide = new Set(collisions)
+    tracks = tracks.filter((t) => !collide.has(ipodPlayableDestPath(String(t.path || ''))))
+  }
+  if (tracks.length < target) {
+    return fail({
+      copied: 0,
+      error: `Activity TSA boarded ${tracks.length} for a ${target}-song set. Nothing was wiped.`,
+      target,
+      shortfall: target - tracks.length,
+    })
+  }
+  let tsaBoarded: TsaPassenger[] = tracks.slice(0, target).map((t) => tsaBoardPassenger({
     ...t,
     destPath: ipodPlayableDestPath(String(t.path || '')),
   }))
-  if (tsaBoarded.length !== target || target <= 0) {
-    return fail({ copied: 0, error: `Activity TSA boarded ${tsaBoarded.length} for a ${target}-song set. Nothing was wiped.`, target })
-  }
-  const emptyDest = tsaBoarded.filter((p) => !p.destPath)
-  if (emptyDest.length > 0) {
-    return fail({ copied: 0, error: `Activity TSA: ${emptyDest.length} song(s) have no dest path. Nothing was wiped.`, target })
-  }
-  const collisions = tsaDestCollisions(tsaBoarded)
-  if (collisions.length > 0) {
-    return fail({
-      copied: 0,
-      error: `Activity TSA: ${collisions.length} dest path(s) would collide on the Mini. Nothing was wiped. Examples: ${collisions.slice(0, 3).join(', ')}`,
-      target,
-      destCollisions: collisions.length,
-    })
-  }
 
   // ── Activity Sync Ledger (2026-08-31, Jake: "we need records of this on
   // the back end so that we know what is going in and what is coming off
@@ -322,6 +442,9 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   const pathRewrites: Array<{ id: number; newPath: string }> = []
   interface CopyPlanEntry { i: number; id: number; title: string; srcToCopy: string; dstToCopy: string }
   const plan: CopyPlanEntry[] = []
+  // #47 (fill-to-N): tracks[target..] are copy-time replacements. They are
+  // resolved here like everything else, but never kept from a previous
+  // card and only copied when a primary miss leaves the card short of N.
   for (let i = 0; i < tracks.length; i++) {
     if (host.isCancelled()) {
       await host.writeJournal(null)
@@ -347,12 +470,12 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     let srcToCopy = localFile
     let dstToCopy = join(IPOD_MOUNT, destColon.replace(/:/g, pathSep))
 
-    host.sendProgress({ phase: 'copy', current: i, total: target, title: `Preparing: ${title}` })
+    host.sendProgress({ phase: 'copy', current: Math.min(i, target), total: target, title: `Preparing: ${title}` })
 
     if (convertOptions?.enabled) {
       try {
         host.sendProgress({
-          phase: 'copy', current: i, total: target,
+          phase: 'copy', current: Math.min(i, target), total: target,
           title: `Converting → ${convertOptions.targetKbps}k AAC: ${title}`,
         })
         const mirror = await host.buildAacMirror(localFile, convertOptions.targetKbps)
@@ -376,11 +499,12 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     if (needsIpodAlacTranscode(srcToCopy)) {
       try {
         host.sendProgress({
-          phase: 'copy', current: i, total: target,
+          phase: 'copy', current: Math.min(i, target), total: target,
           title: `Converting → ALAC: ${title}`,
         })
         const mirror = await host.buildIpodSafeAlacMirror(localFile)
         if (!mirror) {
+          if (i >= target) { console.warn(`activity-sync: reserve "${title}" has no iPod-safe ALAC — skipped`); continue }
           await host.writeJournal(null)
           return fail({ copied: 0, error: `Could not build an iPod-safe ALAC for "${title}". Nothing was wiped.`, target })
         }
@@ -392,6 +516,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
         pathRewrites.push({ id, newPath: String(track.path) })
       } catch (err) {
         console.error(`activity-sync: FLAC→ALAC failed for ${title}:`, err)
+        if (i >= target) { console.warn(`activity-sync: reserve "${title}" skipped`); continue }
         await host.writeJournal(null)
         return fail({ copied: 0, error: `FLAC→ALAC failed for "${title}" (${err instanceof Error ? err.message : String(err)}). Nothing was wiped.`, target })
       }
@@ -414,6 +539,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   const srcSizeById = new Map<number, number>()
   const cardSizeById = new Map<number, number>()
   for (const e of plan) {
+    if (e.i >= target) continue   // a reserve is never kept — it lands only if a primary misses
     const rel = e.dstToCopy.startsWith(IPOD_MOUNT) ? e.dstToCopy.slice(IPOD_MOUNT.length + 1) : e.dstToCopy
     const sourceSize = (await stat(e.srcToCopy).catch(() => null))?.size ?? 0
     const onCardSize = (await stat(e.dstToCopy).catch(() => null))?.size
@@ -492,6 +618,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   let copyErrors = 0
 
   for (const e of plan) {
+    if (writtenById.size >= target) break   // #47: N reached — the rest were reserves
     if (host.isCancelled()) {
       host.sendProgress({ phase: 'cancelled', current: copied + kept + copyErrors, total: target, title: '' })
       return rewipeAndStop({ ok: false, copied, kept, copyErrors, cancelled: true, error: 'Sync cancelled by user', target })
@@ -524,12 +651,23 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     }
   }
 
-  if (copied + kept !== target || copyErrors > 0 || writtenById.size !== target) {
+  // #47: the card holds what landed (primaries + any reserve that replaced a
+  // miss); a miss that was replaced is not a failure, so copyErrors no longer
+  // refuses the catalog on its own.
+  tracks = tracks.filter((t) => writtenById.has(Number(t.id)))
+  tsaBoarded = tracks.map((t) => tsaBoardPassenger({
+    ...t,
+    destPath: ipodPlayableDestPath(String(t.path || '')),
+  }))
+  if (copied + kept !== target || writtenById.size !== target || tracks.length !== target) {
     return rewipeAndStop(fail({
       copied, kept, copyErrors, target, landed: writtenById.size,
       shortfall: target - writtenById.size,
       error: `Only ${writtenById.size} of ${target} songs confirmed on the card after copy. Not writing a catalog — that is how Songs became 486. Sync again.`,
     }))
+  }
+  if (copyErrors > 0) {
+    console.warn(`activity-sync: ${copyErrors} copy miss(es) replaced — still ${target}/${target} on the card`)
   }
 
   // ── 4. Prove N files across remounts ──
@@ -629,6 +767,10 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   }
 
   // Stamp iTunesDB sizes from the card, not library.json.
+  // Write tracks in firmware-fold title order so Music > Songs is A–Z
+  // even if type-52 key 7 is discarded. stamp sortArtist for mhod 22
+  // (Artists). mhia + type-52 3/5 are built inside write_itunesdb.
+  tracks = orderTracksForIpodTitleIndex(tracks.map((t) => stampIpodSortArtist(t)))
   for (const t of tracks) {
     const remembered = writtenById.get(Number(t.id))
     if (!remembered) continue

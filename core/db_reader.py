@@ -6,6 +6,7 @@ import random
 import time
 import plistlib
 import hashlib
+import unicodedata
 
 MAC_EPOCH_OFFSET = 2082844800  # seconds between 1904-01-01 and 1970-01-01
 
@@ -395,7 +396,6 @@ def fold_for_ipod(text):
         return ''
     out = ''.join(IPOD_CHAR_FOLD.get(c, c) for c in s)
     if any(ord(c) > 0xFF for c in out):
-        import unicodedata
         folded = []
         for c in out:
             if ord(c) <= 0xFF:
@@ -688,7 +688,8 @@ def build_mhit_record(track, dbid, template_header, extra_mhods=None, is_new=Fal
     mhods = bytearray()
     mhods += build_string_mhod(1, track.get('title', ''))
     mhods += build_string_mhod(4, track.get('artist', ''))
-    mhods += build_string_mhod(22, track.get('artist', ''))
+    mhods += build_string_mhod(22, ipod_artist_sort_label(
+        track.get('artist', ''), track.get('sortArtist')))
     mhods += build_string_mhod(3, track.get('album', ''))
     mhods += build_string_mhod(5, track.get('genre', ''))
     mhods += build_string_mhod(6, ft)
@@ -742,6 +743,151 @@ def build_sort_mhod(sort_key, sorted_indices):
     return bytes(rec)
 
 
+def ipod_artist_sort_key(name, sort_artist=None):
+    """iPod Music > Artists A–Z key: case-insensitive, ignore leading The/A/An.
+
+    ⚠️ TWIN: src/main/ipod-artist-sort.ts ipodArtistSortKey / artistSortName
+    ⚠️ TWIN: src/renderer/utils/artistSort.ts artistSortName
+
+    Activity sync used to emit mhia records in picker/score order, so the
+    Mini's Artists menu was first-seen, not alphabetical. sortArtist wins
+    when present. Do NOT use this for type-52 mhod tables — those must
+    stay on _fold() or firmware discards out-of-order Songs rows.
+    """
+    raw = str(sort_artist or '').strip() or str(name or '')
+    s = raw.strip().lower()
+    prev = None
+    while s and s != prev:
+        prev = s
+        i = 0
+        while i < len(s) and (s[i].isspace() or unicodedata.category(s[i])[0] in 'PS'):
+            i += 1
+        s = s[i:]
+        for art in ('the ', 'a ', 'an '):
+            if s.startswith(art):
+                s = s[len(art):]
+                break
+        s = s.strip()
+    return s or raw.strip().lower()
+
+
+def ipod_artist_sort_label(name, sort_artist=None):
+    """mhod 22 value: 'Beatles' for 'The Beatles'. Explicit sortArtist wins.
+
+    ⚠️ TWIN: src/main/ipod-artist-sort.ts ipodArtistSortLabel
+    """
+    if sort_artist and str(sort_artist).strip():
+        return str(sort_artist).strip()
+    raw = str(name or '').strip()
+    if not raw:
+        return ''
+    s = raw
+    prev = None
+    while s and s != prev:
+        prev = s
+        i = 0
+        while i < len(s) and (s[i].isspace() or unicodedata.category(s[i])[0] in 'PS'):
+            i += 1
+        s = s[i:]
+        low = s.lower()
+        for art in ('the ', 'a ', 'an '):
+            if low.startswith(art):
+                s = s[len(art):]
+                break
+        s = s.strip()
+    return s or raw
+
+
+def album_tuples_for_itunesdb(tracks):
+    """Unique (artist, albumArtist, album) in Music > Albums A–Z order.
+
+    mhia is not a type-52 table, so article-strip is legal here: album
+    title (sortAlbum when present; leading The/A/An per artist-sort).
+    Artists menu stays A–Z via mhod 22 + type-52 key 4 — not via this
+    list's first-seen artist order (that was the #47 Artists fix; Albums
+    now owns mhia order).
+
+    ⚠️ TWIN: src/main/ipod-artist-sort.ts orderAlbumsForIpodIndex
+    """
+    seen = set()
+    rows = []
+    for t in tracks:
+        artist_str = (t.get('artist', '') or '').strip()
+        albumartist_str = (t.get('albumArtist', '') or t.get('artist', '') or '').strip()
+        album_str = (t.get('album', '') or '').strip()
+        if not album_str:
+            continue
+        key = (albumartist_str.lower(), album_str.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append((artist_str, albumartist_str, album_str, t.get('sortAlbum')))
+    rows.sort(key=lambda x: (
+        ipod_artist_sort_key(x[2], x[3]),
+        ipod_artist_sort_key(x[0]),
+        (x[1] or '').lower(),
+    ))
+    return [(a, aa, al) for a, aa, al, _sa in rows]
+
+
+def unique_genre_names_az(tracks):
+    """Unique genre display names in Music > Genres A–Z (_fold order).
+
+    No genre dataset is written (stale type-5 aborted index builds).
+    Genres on the Mini come from type-52 key 5; this list is the
+    expected first-seen / menu order for tests.
+
+    ⚠️ TWIN: src/main/ipod-artist-sort.ts uniqueGenresAz
+    """
+    seen = set()
+    names = []
+    for t in tracks:
+        g = (t.get('genre') or '').strip()
+        if not g:
+            continue
+        k = g.casefold()
+        if k in seen:
+            continue
+        seen.add(k)
+        names.append(g)
+    names.sort(key=_fold)
+    return names
+
+
+# Music-menu type-52 keys the Mini actually displays. A leftover master
+# playlist that only had album+artist tables used to omit Songs (7) and
+# Genres (5), so those menus fell back to insertion order after activity
+# sync. Always union these in — extras (18/35/36) from the template stay.
+REQUIRED_MUSIC_SORT_KEYS = (3, 4, 5, 7)
+DEFAULT_ITUNESDB_SORT_KEYS = (3, 4, 5, 7, 18, 35, 36)
+
+
+def music_menu_sort_keys(existing_sort_keys):
+    """Union template type-52 keys with the four Music-menu tables."""
+    keys = []
+    src = list(existing_sort_keys) if existing_sort_keys else list(DEFAULT_ITUNESDB_SORT_KEYS)
+    for k in REQUIRED_MUSIC_SORT_KEYS:
+        if k not in keys:
+            keys.append(k)
+    for k in src:
+        if k not in keys:
+            keys.append(k)
+    return keys
+
+
+def firmware_sort_text(track, field, sort_field=None):
+    """String type-52 _fold() sees. Explicit sortTitle/sortAlbum win.
+
+    Do NOT pass stamped sortArtist here for key 4 — that label strips
+    'The ' and firmware will discard the table as out-of-order.
+    """
+    if sort_field:
+        s = str(track.get(sort_field) or '').strip()
+        if s:
+            return s
+    return str(track.get(field) or '')
+
+
 def _fold(s):
     """Firmware-collation fold (2026-07-21): the iPod validates our mhod52
     sort tables against ITS collation and DISCARDS entries it sees as
@@ -751,6 +897,7 @@ def _fold(s):
     marks, normalize typographic quotes/dashes, casefold. Do NOT strip
     a leading 'The ' — the firmware doesn't for our tables (proven by
     the surviving The-prefixed artists).
+    ⚠️ TWIN: src/main/ipod-artist-sort.ts ipodFirmwareFold
     ⚠️ TWIN in spirit: any future sort-table writer must use this fold."""
     import unicodedata
     s = unicodedata.normalize('NFKD', str(s or ''))
@@ -761,32 +908,39 @@ def _fold(s):
 
 
 def _sort_indices(tracks, sort_key):
-    """Return list of track indices sorted by the given sort key."""
+    """Return list of track indices sorted by the given sort key.
+
+    Type-52 MUST use _fold() (firmware collation). Never article-strip
+    a leading 'The '/'A '/'An ' here — Mini 1.4.1 discards the table
+    (Tiësto / Entrañas / The-prefixed rows vanish from Songs).
+    sortAlbum / sortTitle are folded when present; artist key 4 always
+    folds the display artist, not stamped sortArtist.
+    """
     def key_fn(idx):
         t = tracks[idx]
-        if sort_key == 3:  # album
-            return (_fold(t.get('album', '')),
+        if sort_key == 3:  # album — Music > Albums
+            return (_fold(firmware_sort_text(t, 'album', 'sortAlbum')),
                     int(t.get('discNumber', 0) or 0),
                     int(t.get('trackNumber', 0) or 0))
-        elif sort_key == 4:  # artist
+        elif sort_key == 4:  # artist — Music > Artists (firmware fold)
             return (_fold(t.get('artist', '')),
-                    _fold(t.get('album', '')),
+                    _fold(firmware_sort_text(t, 'album', 'sortAlbum')),
                     int(t.get('discNumber', 0) or 0),
                     int(t.get('trackNumber', 0) or 0))
-        elif sort_key == 5:  # genre
+        elif sort_key == 5:  # genre — Music > Genres
             return (_fold(t.get('genre', '')),
                     _fold(t.get('artist', '')),
-                    _fold(t.get('album', '')))
-        elif sort_key == 7:  # title
-            return (_fold(t.get('title', '')),)
+                    _fold(firmware_sort_text(t, 'album', 'sortAlbum')))
+        elif sort_key == 7:  # title — Music > Songs
+            return (_fold(firmware_sort_text(t, 'title', 'sortTitle')),)
         elif sort_key == 18:  # artist + album + track (secondary sort)
             return (_fold(t.get('artist', '')),
-                    _fold(t.get('album', '')),
+                    _fold(firmware_sort_text(t, 'album', 'sortAlbum')),
                     int(t.get('discNumber', 0) or 0),
                     int(t.get('trackNumber', 0) or 0))
         elif sort_key in (35, 36):  # album artist / composer sort
             return (_fold(t.get('artist', '')),
-                    _fold(t.get('album', '')),
+                    _fold(firmware_sort_text(t, 'album', 'sortAlbum')),
                     int(t.get('trackNumber', 0) or 0))
         return (idx,)  # unknown key — preserve insertion order
 
@@ -1032,11 +1186,9 @@ def write_itunesdb(tracks, playlists, template_path, output_path, ipod_root=None
             yp += yt
         break  # Only need one playlist section for templates
 
-    if existing_sort_keys:
-        print(f"Existing sort keys: {existing_sort_keys}", file=sys.stderr)
-    else:
-        existing_sort_keys = [3, 4, 5, 7, 18, 35, 36]
-        print("No existing sort keys found, using defaults: [3,4,5,7,18,35,36]", file=sys.stderr)
+    existing_sort_keys = music_menu_sort_keys(existing_sort_keys)
+    print(f"Type-52 sort keys (Music menus 3/4/5/7 always present): {existing_sort_keys}",
+          file=sys.stderr)
 
     template_pl_mhods = (template_t100, template_t102)
     print(f"Template mhods: type100={len(template_t100) if template_t100 else 0}b, "
@@ -1162,19 +1314,7 @@ def write_itunesdb(tracks, playlists, template_path, output_path, ipod_root=None
     # Each mhia record is 0x58 bytes of header + 0..3 child mhods. The
     # mhia mhod types are 200=album, 201=artist, 202=albumArtist (NOT
     # the same as track-mhod types 1/2/3/4/5 — different namespace).
-    seen_albums = set()
-    album_tuples = []
-    for t in tracks:
-        artist_str = (t.get('artist', '') or '').strip()
-        albumartist_str = (t.get('albumArtist', '') or t.get('artist', '') or '').strip()
-        album_str = (t.get('album', '') or '').strip()
-        if not album_str:
-            continue
-        key = (albumartist_str.lower(), album_str.lower())
-        if key in seen_albums:
-            continue
-        seen_albums.add(key)
-        album_tuples.append((artist_str, albumartist_str, album_str))
+    album_tuples = album_tuples_for_itunesdb(tracks)
 
     def build_album_mhod(mhod_type, s):
         sb = s.encode('utf-16-le')
