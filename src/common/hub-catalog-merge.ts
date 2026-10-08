@@ -50,6 +50,8 @@ export interface HubMergeResult<T> {
   ignoredReason?: string
 }
 
+export const MAX_REMOVALS_PER_DELTA = 25
+
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
 
 /** Local rows only need an id (+ optional playCount); `Track` qualifies without an index signature. */
@@ -63,9 +65,15 @@ export function mergeHubCatalog<T extends LocalTrackLike>(
   if (payload.full && upserts.length === 0) {
     return { tracks: local, changed: false, added: 0, updated: 0, removed: 0, ignoredReason: 'empty-full-snapshot' }
   }
-  const removed = payload.full
+  // Mass-removal guard: a delta naming more than MAX_REMOVALS_PER_DELTA songs
+  // is not a person deleting songs, it is a torn/reverted publish (the 10/5
+  // Sep-4-revert class). Keep everything and say so; a real cleanup of that
+  // size is a desktop job, not a replica merge.
+  const removedIdsRaw = Array.isArray(payload.removedIds) ? payload.removedIds : []
+  const tooMany = removedIdsRaw.length > MAX_REMOVALS_PER_DELTA
+  const removed = payload.full || tooMany
     ? new Set<string>()
-    : new Set((payload.removedIds ?? []).map((id) => String(id)))
+    : new Set(removedIdsRaw.map((id) => String(id)))
 
   const byId = new Map<string, T>()
   for (const t of local) byId.set(String(t.id), t)
@@ -108,5 +116,5 @@ export function mergeHubCatalog<T extends LocalTrackLike>(
   }
   out.push(...appended)
   const changed = added > 0 || updated > 0 || removedCount > 0
-  return { tracks: changed ? out : local, changed, added, updated, removed: removedCount }
+  return { tracks: changed ? out : local, changed, added, updated, removed: removedCount, ignoredReason: tooMany ? `mass-removal-guard:${removedIdsRaw.length}` : undefined }
 }

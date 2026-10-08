@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { mergeHubCatalog } from '../../common/hub-catalog-merge.ts'
+import { mergeHubCatalog, MAX_REMOVALS_PER_DELTA } from '../../common/hub-catalog-merge.ts'
 
 const t = (id: number, extra: Record<string, unknown> = {}) =>
   ({ id, title: `T${id}`, artist: 'A', playCount: 0, path: `:iPod_Control:Music:F00:imported_${id}.flac`, ...extra })
@@ -49,5 +49,15 @@ describe('mergeHubCatalog: replicas adopt the hub without ever losing a song by 
     const r = mergeHubCatalog(local, { full: false, version: 'v', upserts: [t(1), t(2)], removedIds: [] })
     assert.equal(r.changed, false)
     assert.equal(r.tracks, local)
+  })
+  it('a delta that removes a crowd is a torn publish, not a cleanup — nothing is removed', () => {
+    const local = Array.from({ length: 200 }, (_, i) => t(i + 1))
+    const ids = local.slice(0, MAX_REMOVALS_PER_DELTA + 1).map((x) => String(x.id))
+    const r = mergeHubCatalog(local, { full: false, version: 'v', upserts: [], removedIds: ids })
+    assert.equal(r.removed, 0)
+    assert.equal(r.tracks.length, 200)
+    assert.match(r.ignoredReason ?? '', /mass-removal-guard/)
+    const ok = mergeHubCatalog(local, { full: false, version: 'v', upserts: [], removedIds: ids.slice(0, 3) })
+    assert.equal(ok.removed, 3)
   })
 })
