@@ -4,12 +4,15 @@ export default function RepeatIcon({ active = false, one = false }: { active?: b
   // tint. Pre-fix this icon hardcoded blue and ignored the CSS change.
   const color = active ? 'currentColor' : '#666'
   return (
-    <svg width="23" height="23" viewBox="0 0 16 16" fill="none" stroke={color} strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M11 1l2 2-2 2" />
-      <path d="M3 7V5a2 2 0 012-2h8" />
-      <path d="M5 15l-2-2 2-2" />
-      <path d="M13 9v2a2 2 0 01-2 2H3" />
-      {one && <text x="8" y="10.5" textAnchor="middle" fill={color} stroke="none" fontSize="7" fontWeight="bold">1</text>}
+    <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      {/* The canonical repeat loop (arrowheads outside the corners, two
+          parallel rails). 2026-09-02, third pass — Jake: "come on the
+          repeat icon can't go like this lol". */}
+      <polyline points="17 1 21 5 17 9" />
+      <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+      <polyline points="7 23 3 19 7 15" />
+      <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+      {one && <text x="12" y="15.4" textAnchor="middle" fill={color} stroke="none" fontSize="9" fontWeight="bold">1</text>}
     </svg>
   )
 }

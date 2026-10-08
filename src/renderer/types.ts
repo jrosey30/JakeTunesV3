@@ -135,7 +135,7 @@ export interface Mixtape {
   seasonal?: string
 }
 
-export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'download' | 'scotus' | 'recordstore' |'listen-to-the-list' | 'new-for-you' | 'discovery' | 'mix-detail' | 'concerts' | 'concert-detail' | 'mixtape-detail' | 'dj'
+export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'download' | 'scotus' | 'recordstore' |'listen-to-the-list' | 'new-for-you' | 'discovery' | 'mix-detail' | 'concerts' | 'concert-detail' | 'mixtape-detail' | 'dj' | 'activity-pool'
 
 // V5 Live Concert Mode — a declared album's merged "live set". Key'd by
 // albumKey (artist|||album) in live-sets.json; the merged file is a REAL
@@ -169,6 +169,8 @@ export interface ConcertMeta {
   city?: string
   date?: string        // display string, e.g. "May 15–16, 1980"
   poster?: string      // artwork key/hash for the concert poster (portrait)
+  blurb?: string       // one-line summary for the Live Concerts index (grounded; falls back to facts[0])
+  crowd?: boolean      // Crowd ambience remembered PER SHOW (an acoustic taping stays off; an arena can stay on)
   // Companion panel (tour-book layer). All grounded or user-authored, never
   // fabricated. facts = short grounded blurbs; notes = the user's own memories;
   // source/label = recording lineage; merchUrl = a real store link.
@@ -177,6 +179,10 @@ export interface ConcertMeta {
   source?: string
   label?: string
   merchUrl?: string
+  /** Grounded set-structure dividers rendered on the printed setlist —
+   *  e.g. { before: 15, label: 'Encore' } draws — ENCORE — above track 15.
+   *  ⚠️ TWIN: src/main/index.ts LiveSetEntry.concert carries the same shape. */
+  segments?: Array<{ before: number; label: string }>
 }
 
 // Brief 122 — a "Listen to the List" recommendation. User-authored "jot
@@ -492,6 +498,9 @@ export interface AppSettings {
     // bs2b-style headphone crossfeed: separate toggle, one amount control.
     crossfeedOn: boolean
     crossfeedAmount: number   // 0..1 of the standard 700 Hz / −4.5 dB feed
+    // 2026-09-02: the mid/high widths are CEILINGS applied in proportion to
+    // how narrow the source measures; wide mixes are left alone.
+    adaptiveWidth: boolean
   }
   // Brief 023: removed `mobile.snapshotExportPath`. The mobile-sync
   // feature (Export Snapshot for Mobile / Apply Mobile Overrides) is
@@ -523,7 +532,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
     // Width ON by default at the migration of the old 1.3 broadband default:
     // mono bass, gentle body, open air.
     widthOn: true, widthLow: 0, widthMid: 1.15, widthHigh: 1.6,
-    crossfeedOn: false, crossfeedAmount: 1.0,
+    crossfeedOn: false, crossfeedAmount: 1.0, adaptiveWidth: true,
   },
 }
 
@@ -598,13 +607,14 @@ declare global {
       getAppVersion: () => Promise<string>
       onMenuAction: (callback: (action: string) => void) => () => void
       setLibraryContext: (ctx: string) => Promise<void>
-      musicmanChat: (messages: { role: string; content: string }[]) => Promise<{ ok: boolean; text: string; textRaw: string; createdPlaylist?: { name: string; trackIds: number[] } | null }>
+      musicmanChat: (messages: { role: string; content: string }[], context?: string) => Promise<{ ok: boolean; text: string; textRaw: string; createdPlaylist?: { name: string; trackIds: number[] } | null }>
       musicmanSpeak: (text: string, fast?: boolean, voiceId?: string) => Promise<{ ok: boolean; audio?: string; error?: string }>
       musicmanDj: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => Promise<{ ok: boolean; text: string; transition?: 'talk' | 'scratch' | 'cut' }>
       // 4.4.52: active mic-button persona ('mm' | 'megan') for speech-bubble attribution
       getActiveHost: () => Promise<'mm' | 'megan'>
       audioLog: (line: string) => void
       // 2026-08-21 reliability P0: renderer crash net → main flight recorder.
+      dxRecord?: (tag: string, detail?: unknown) => void
       reportCrash: (payload: { kind: string; message?: string; stack?: string; source?: string }) => void
       // 4.1.6: Radio Mode — between-song WJLR-style commentary (distinct from
       // the one-shot mic-click `musicmanDj`). Forwards to ipcMain 'musicman-radio'.
@@ -660,11 +670,14 @@ declare global {
       // so it stays the single writer (cache-coherent + iTunes-enriched).
       loadRecommendations: () => Promise<{ ok: boolean; recommendations: Recommendation[]; meta?: RecoSyncMeta }>
       onRecommendationsUpdated?: (callback: (info: { reason: string }) => void) => () => void
-      addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string; source?: 'user' | 'mm' | 'radar'; from?: string; link?: string }) => Promise<{ ok: boolean; recommendation?: Recommendation; error?: string; savedLocally?: boolean; deduped?: boolean }>
+      addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string; source?: 'user' | 'mm' | 'radar'; from?: string; link?: string; kind?: 'track' | 'album' | 'concert' }) => Promise<{ ok: boolean; recommendation?: Recommendation; error?: string; savedLocally?: boolean; deduped?: boolean }>
       deleteRecommendation: (id: string) => Promise<{ ok: boolean; error?: string }>
       suggestRecommendations: (opts?: { force?: boolean }) => Promise<{ ok: boolean; suggestions?: Array<{ song: string; artist: string; note: string }>; error?: string }>
       searchItunes: (query: string) => Promise<{ ok: boolean; results: ItunesSuggestion[] }>
-      itunesAlbumTracks: (collectionId: number) => Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string; releaseYear?: number; trackCount?: number; genre?: string; explicitness?: string }>
+      itunesAlbumTracks: (ref: number | { artist?: string; album: string }) => Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string; releaseYear?: number; trackCount?: number; genre?: string; explicitness?: string; collectionId?: number }>
+      /** Record Shop (6.0): resolve an item's catalogue selection + ownership (src/common/record-shop-live.ts types). */
+      recordShop?: { resolve: (req: import('../common/record-shop-live').ShopResolveRequest) => Promise<import('../common/record-shop-live').ShopResolveResult> }
+      nearEdition?: { compare: (req: import('../common/near-edition-types').CompareEditionsRequest) => Promise<import('../common/near-edition-types').CompareEditionsResult | { ok: false; error: string }> }
       // Artist-verified cover art for radar/discovery cards — returns art only
       // when an iTunes row's artist matches the candidate, else {} (no art).
       lookupRecoArtwork: (input: { artist: string; title: string }) => Promise<{ artworkUrl?: string; previewUrl?: string }>
@@ -704,6 +717,8 @@ declare global {
       getDiscoverFeed: (force?: boolean) => Promise<{ ok: boolean; lanes?: Array<{ id: string; title: string; cards: Array<{ lane: string; type: 'song' | 'album' | 'artist'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string; brainPct?: number }> }>; generatedAt?: number; cached?: boolean; error?: string }>
       getMobileImports?: () => Promise<{ tracks: unknown[]; overrides?: Record<string, { fp?: string; fields?: Record<string, string> }> }>
   onMobileImportsUpdated?: (callback: (p: { tracks: unknown[] }) => void) => () => void
+  onHubCatalogUpdated?: (callback: (p: { full: boolean; version: string; upserts: unknown[]; removedIds: Array<string | number> }) => void) => () => void
+  hubCatalogAdopted?: (version: string) => Promise<{ ok: boolean }>
   onMobileOverridesUpdated?: (callback: (p: { overrides: Record<string, { fp?: string; fields?: Record<string, string> }> }) => void) => () => void
       onDiscoverFeedUpdated: (callback: (p: { lanes: Array<{ id: string; title: string; cards: Array<{ lane: string; type: 'song' | 'album' | 'artist'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string; brainPct?: number }> }>; generatedAt: number }) => void) => () => void
       getWindowedPlayCounts: (windowMs: number) => Promise<{ ok: boolean; counts: Record<string, number> }>
@@ -775,7 +790,7 @@ declare global {
       embeddingStatus: () => Promise<{ configured: boolean; count: number; total: number; stale: number }>
       embeddingBackfill: (opts?: { force?: boolean }) => Promise<{ ok: boolean; embedded: number; total: number; error?: string }>
       // 4.5: brain-driven playlist suggestions — centroid nearest library tracks.
-      playlistSimilar: (playlistIds: number[], clusters?: number) => Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }>
+      playlistSimilar: (playlistIds: number[], clusters?: number, hint?: string) => Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }>
       onEmbeddingBackfillProgress: (callback: (p: { done: number; total: number }) => void) => () => void
       // Brief 023: removed exportLibrarySnapshot / mobileOverridesPickFile
       // / mobileOverridesApply types — vestigial mobile-sync feature gone.
@@ -847,7 +862,16 @@ declare global {
         verificationUpdates?: Array<{ id: number; audioFingerprint?: string; path?: string; audioMissing?: boolean }>
       }>
       cancelSync: () => Promise<{ ok: boolean; wasRunning: boolean }>
-      onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'db' | 'verify' | 'cancelled' | 'error'; current: number; total: number; title: string }) => void) => () => void
+      getSyncHistory: () => Promise<{ ok: boolean; entries: Array<{
+    kind: 'sync' | 'roundtrip'; when: string; target?: number; landed?: number
+    sealedOk?: boolean; aborted?: boolean; pickedCount?: number
+    added?: Array<{ id: number; t?: string; a?: string }>
+    removed?: Array<{ id: number; t?: string; a?: string }>
+    plays?: Array<{ id: number; delta: number }>; otgLists?: number; unmatched?: number
+  }> }>
+  refreshDeezerPreview: (artist: string, title: string) => Promise<{ ok: boolean; previewUrl?: string }>
+  onIpodRoundTrip: (callback: (payload: { updates: Array<{ id: number; field: string; value: number }>; summary: { plays: number; tracks: number; otgLists: number } }) => void) => () => void
+  onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'db' | 'verify' | 'cancelled' | 'error'; current: number; total: number; title: string }) => void) => () => void
       onStateSaveLocked: (callback: (info: { reason: string }) => void) => () => void
       buildWorkoutSyncSet?: (tracks: Array<{
         id: number; title?: string; artist?: string; album?: string; genre?: string; year?: string | number
@@ -856,7 +880,7 @@ declare global {
       }>, opts?: { target?: number; brief?: {
         id?: string; profileName?: string; activity: string; intensity: string; setting: string
         place: string; social: string; note?: string
-      }; saveProfile?: boolean }) => Promise<{
+      }; saveProfile?: boolean; pool?: { ids: number[]; fill: boolean }  }) => Promise<{
         ok: boolean
         trackIds?: number[]
         reserveIds?: number[]
@@ -881,17 +905,34 @@ declare global {
       pickPlaylistCover?: (playlistId: string) => Promise<{ ok: boolean; path?: string; stamp?: number; canceled?: boolean; error?: string }>
       copyPlaylistCover?: (fromId: string, toId: string) => Promise<{ ok: boolean; copied?: boolean; error?: string }>
       clearPlaylistCover?: (playlistId: string) => Promise<{ ok: boolean; error?: string }>
-      gaplessTrim?: (absPath: string) => Promise<{ delaySamples: number; paddingSamples: number; sampleRate: number; delaySec: number; paddingSec: number } | null>
+      gaplessTrim?: (absPath: string) => Promise<{ delaySamples: number; paddingSamples: number; sampleRate: number; delaySec: number; paddingSec: number; originalSamples?: number } | null>
       saveMixtapeIntro?: (data: ArrayBuffer, voiceId?: string) => Promise<{ ok: boolean; path?: string; error?: string }>
       listMixtapeVoices?: () => Promise<{ ok: boolean; voices: Array<{ id: string; name: string }> }>
       previewIpodSync?: (tracks: Track[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }) => Promise<{ ok: boolean; plan: Array<{ id: number; action: 'keep' | 'copy' }>; leaving: Array<{ path: string; title: string; artist: string }>; deviceFileCount?: number; error?: string }>
       commitWorkoutSyncSet?: (payload: { trackIds: number[]; name: string; commentary: string; alacCount: number; brief: Record<string, unknown>; weather?: unknown; convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }; added?: Array<{ id: number; title: string; artist: string }>; removed?: Array<{ id: number; title: string; artist: string }> }) => Promise<{ ok: boolean; error?: string }>
       getWorkoutSyncState?: () => Promise<{ ok: boolean; state?: { trackIds: number[]; name: string; convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }; commentary: string; syncedAt: string; alacCount: number } | null }>
       getActivityProfiles?: () => Promise<{ ok: boolean; profiles?: Array<Record<string, unknown>> }>
+      // iPod Pool (2026-09-02)
+      getActivityPool?: () => Promise<{ ok: boolean; ids?: number[]; names?: Record<string, { t: string; a: string }>; max?: number }>
+      addToActivityPool?: (candidates: Array<{ id: number; title?: string; artist?: string; duration?: number; genre?: string; playCount?: number; rating?: number }>) => Promise<{ ok: boolean; ids?: number[]; names?: Record<string, { t: string; a: string }>; added?: number; dupes?: number; skits?: number; overflow?: number; max?: number; error?: string }>
+      swapInActivityPool?: (args: { oldId: number; newId: number; name?: { t: string; a: string } }) => Promise<{ ok: boolean; ids?: number[]; names?: Record<string, { t: string; a: string }>; error?: string }>
+      removeFromActivityPool?: (ids: number[]) => Promise<{ ok: boolean; ids?: number[] }>
+      clearActivityPool?: () => Promise<{ ok: boolean; ids?: number[] }>
       getActivityBrainContext?: () => Promise<{ ok: boolean; context?: unknown; promptBlock?: string }>
       previewPlaceWeather?: (place: string) => Promise<{ ok: boolean; weather?: { tempF: number; condition: string; description: string; placeLabel?: string } | null }>
       loadUiState: () => Promise<{ ok: boolean; state: Record<string, unknown> | null }>
       saveUiState: (state: Record<string, unknown>) => Promise<{ ok: boolean }>
+      // Spotify connect + Discover Weekly
+      spotifyStatus: () => Promise<{ ok: boolean; hasClientId: boolean; connected: boolean; connectedAt?: string; lastPullAt?: string; redirectUri: string }>
+      spotifySetClientId: (clientId: string) => Promise<{ ok: boolean; error?: string }>
+      spotifyConnect: () => Promise<{ ok: boolean; error?: string }>
+      spotifyDisconnect: () => Promise<{ ok: boolean }>
+      spotifyPullNow: () => Promise<{ ok: boolean; tracks?: number; topArtists?: string[]; error?: string }>
+      // Playlist hub push — main adopted new hub state
+      onPlaylistsUpdated: (callback: (p: { playlists: unknown[] }) => void) => () => void
+      // Sidebar pins — synced sidecar (playlist-pins.json), not per-machine ui-state
+      loadPlaylistPins: () => Promise<{ ok: boolean; pins: { pinnedPlaylists: string[]; updatedAt: string } | null }>
+      savePlaylistPins: (pinnedPlaylists: string[]) => Promise<{ ok: boolean }>
       // CD drive
       checkCdDrive: () => Promise<{ hasCd: boolean; volumeName?: string; volumePath?: string; trackCount?: number }>
       getCdInfo: () => Promise<{ ok: boolean; volumeName?: string; volumePath?: string; artist?: string; album?: string; year?: string; genre?: string; tracks?: { number: number; title: string; duration: number; filePath: string }[]; error?: string }>
@@ -909,6 +950,7 @@ declare global {
       loadLiveSets: () => Promise<{ ok: boolean; sets: Record<string, LiveSetEntry> }>
       saveLiveSet: (albumKey: string, entry: LiveSetEntry) => Promise<{ ok: boolean; error?: string }>
       removeLiveSet: (albumKey: string) => Promise<{ ok: boolean }>
+      extractConcertCrowd: (mergedTrackId: number, colonPath: string, cueStartsMs: number[], totalMs: number) => Promise<{ ok: boolean; error?: string; startSec?: number }>
       getConcertCrowd: (mergedTrackId: number) => Promise<string | null>
       saveCrowdTuning: (t: Record<string, number>) => Promise<{ ok: boolean }>
       loadCrowdTuning: () => Promise<Record<string, number> | null>
@@ -971,7 +1013,7 @@ declare global {
       streamripDownload: (url: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
       streamripSearch?: (opts: { query: string; source?: string; mediaType?: string; numResults?: number }) => Promise<{ ok: boolean; results?: Array<{ source: string; mediaType: string; id: string; desc: string }>; error?: string }>
       streamripDownloadId?: (source: string, mediaType: string, id: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
-      streamripDownloadByQuery?: (opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean }) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string }>
+      streamripDownloadByQuery?: (opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number ; sourceEdition?: import('../common/source-edition').SourceEdition }) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }> }>
       streamripCancelActive?: () => Promise<{ ok: boolean; killed: number }>
       streamripGetQobuz?: () => Promise<{ ok: boolean; configured: boolean; email?: string }>
       streamripSetQobuz?: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>
@@ -997,6 +1039,8 @@ declare global {
         ok: boolean
         reason: 'import' | 'metadata-edit' | 'playlist' | 'safety-net' | 'manual'
         error?: string
+        /** Deferred by the NAS breaker — not a failure; retries on its own. */
+        deferred?: boolean
         durationMs?: number
       }) => void) => () => void
       // 4.4.28 — Home view: music news + notable releases.

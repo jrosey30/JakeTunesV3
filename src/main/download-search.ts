@@ -22,7 +22,34 @@
  */
 
 import { foldAccents } from '../common/fold-text.ts'
+import { JUNK_ARTIST_NAME } from '../common/junk-artist.ts'
 import { explicitWins } from '../common/explicit.ts'
+import { packagingMarkersOf } from './album-identity.ts'
+import { recoArtistMatches, recoTitleMatches } from './reco-match.ts'
+import { requestedVersionMarkers, searchTitle } from './streamrip-match.ts'
+
+/**
+ * A catalogue row that is really a 30-second PREVIEW, not the song.
+ *
+ * 2026-08-26, Jake with a screenshot of a search result reading 0:29 —
+ * "WHAT THE FUCK IS THIS????". Matt and Kim's "Let's Go" was being offered at
+ * twenty-nine seconds. There was NO minimum-duration guard anywhere in search,
+ * so a snippet release ranked like a real track and would have downloaded as
+ * one.
+ *
+ * Deliberately narrow, because Jake's library legitimately contains 3-15s
+ * pieces (Eminem "Paul (Skit)", Modest Mouse "Horn Intro", The Who "Miracle
+ * Cure" — 122 tracks under 45s). Those announce themselves in the title. A
+ * short row that does NOT is a snippet.
+ */
+const DELIBERATELY_SHORT = /\b(interlude|skit|intro|outro|prelude|reprise|segue|prologue|epilogue|bonus beat|a cappella)\b|^untitled/i
+export const PREVIEW_MAX_SECS = 45
+
+export function isPreviewLengthResult(durationSecs: number | undefined, title: string): boolean {
+  if (typeof durationSecs !== 'number' || !Number.isFinite(durationSecs) || durationSecs <= 0) return false
+  if (durationSecs > PREVIEW_MAX_SECS) return false
+  return !DELIBERATELY_SHORT.test(String(title || ''))
+}
 
 export interface ItunesSuggestion {
   song: string
@@ -48,6 +75,14 @@ export interface ItunesSuggestion {
    *  carries that album as the Amended edition and nothing in the UI said so,
    *  so the clean cut was invisible until it was already in the library. */
   explicitness?: string
+  /** iTunes album (collection) id, track position, disc position and length —
+   *  the album-tracks lookup fills these so the album identity contract can
+   *  compare an edition's ORDERED tracklist, per disc (6.0 Phase 1). */
+  collectionId?: number
+  trackNumber?: number
+  discNumber?: number
+  discCount?: number
+  durationSecs?: number
 }
 /**
  * Year out of an iTunes releaseDate ("1994-09-13T07:00:00Z").
@@ -70,7 +105,8 @@ export function itunesYear(raw: unknown): number | undefined {
 // Obvious non-original acts — karaoke, tribute/cover factories, lullaby
 // renditions, kids covers. iTunes Search has NO popularity score, so it
 // dumps these in with the real thing. Filter them out entirely.
-export const ITUNES_JUNK_ARTIST = /karaoke|tribute|cover band|made famous|made popular|in the style of|originally performed|8.?bit|chiptune|lullaby|rockabye|little rock star|music foundation|piano (tribute|version|renditions?)|string quartet|meditation|sleep baby|nursery/i
+// One regex for every outside catalogue (2026-09-21): src/common/junk-artist.ts.
+export const ITUNES_JUNK_ARTIST = JUNK_ARTIST_NAME
 // Deezer public search — the INSTANT fallback when Apple rate-limits
 // (403s under heavy use; Jake typed "when you die MGMT" into a silent
 // blank, 2026-07-16). Keyless, ~200ms, artwork + 30s previews, and it
@@ -100,6 +136,19 @@ export async function fetchDeezerSuggestions(q: string): Promise<ItunesSuggestio
 // title-shaped queries harvest artistIds from their own results, artist-shaped
 // queries pass the resolved artist — so the two can never drift apart again
 // the way the original inline version did.
+/**
+ * The key an album is filed under in the explicit map. Apple names the same
+ * record "(Deluxe Version)" on one edition and "(Deluxe)" on the other
+ * (Watch the Throne, 2026-09-04), so the deluxe/edition suffix collapses
+ * before the fold.
+ */
+export function explicitMapKey(albumName: string): string {
+  return foldAccents(
+    albumName.replace(/\(\s*deluxe\s+(?:version|edition)\s*\)/gi, '(deluxe)')
+             .replace(/\bdeluxe\s+(?:version|edition)\b/gi, 'deluxe'),
+  ).replace(/[^a-z0-9]/g, '')
+}
+
 export async function fetchExplicitAlbumMap(artistIds: number[]): Promise<Map<string, { id: number; trackCount?: number }>> {
   const map = new Map<string, { id: number; trackCount?: number }>()
   if (artistIds.length === 0) return map
@@ -118,7 +167,7 @@ export async function fetchExplicitAlbumMap(artistIds: number[]): Promise<Map<st
       for (const c of abData.results || []) {
         if (c.wrapperType !== 'collection') continue
         if (c.collectionExplicitness !== 'explicit') continue
-        const name = foldAccents(String(c.collectionName ?? '')).replace(/[^a-z0-9]/g, '')
+        const name = explicitMapKey(String(c.collectionName ?? ''))
         if (!name || !c.collectionId) continue
         // First explicit wins: Apple lists deluxe/extended variants under
         // their own names, so a same-name hit is the album.
@@ -153,7 +202,7 @@ export function resolveExplicitEdition(
   rowTrackCount: number | undefined,
   map: Map<string, { id: number; trackCount?: number }>,
 ): { id: number } | undefined {
-  const folded = foldAccents(albumName).replace(/[^a-z0-9]/g, '')
+  const folded = explicitMapKey(albumName)
   if (!folded) return undefined
   const exact = map.get(folded)
   if (exact) return exact
@@ -237,7 +286,8 @@ export async function searchItunesSuggestions(query: string): Promise<{ ok: bool
                 : (typeof r.trackExplicitness === 'string' ? r.trackExplicitness : undefined),
             }
           })
-          .filter((s) => s.song && s.artist && !ITUNES_JUNK_ARTIST.test(s.artist) && !ITUNES_JUNK_ARTIST.test(s.album || ''))
+          .filter((s) => s.song && s.artist && !ITUNES_JUNK_ARTIST.test(s.artist) && !ITUNES_JUNK_ARTIST.test(s.album || '')
+            && !isPreviewLengthResult(s.durationSecs, s.song))
       }
     } catch { raw = null }
     if (raw === null) raw = await fetchDeezerSuggestions(q)
@@ -301,7 +351,15 @@ export async function searchItunesSuggestions(query: string): Promise<{ ok: bool
               // One implementation for both paths — see fetchExplicitAlbumMap
               // above the handler. This used to be inline here, which is how
               // the title-search path shipped without it.
-              const explicitByAlbum = await fetchExplicitAlbumMap([Number(hit.artistId)])
+              // The hit is the SOLO artist; a duo record (Watch the Throne
+              // under "JAŸ-Z & Kanye West") files its explicit edition under
+              // the duo's own artist id. Harvest the ids that own the cleaned
+              // rows too, exactly as the title-search path does.
+              const cleanedIds = [...new Set((lData.results || [])
+                .filter((r) => r.trackExplicitness === 'cleaned' || r.collectionExplicitness === 'cleaned')
+                .map((r) => Number(r.artistId))
+                .filter((id) => Number.isFinite(id) && id > 0 && id !== Number(hit.artistId)))].slice(0, 3)
+              const explicitByAlbum = await fetchExplicitAlbumMap([Number(hit.artistId), ...cleanedIds])
               const own = (lData.results || [])
                 .filter((r) => (r.wrapperType === 'track' || r.kind === 'song') && r.trackName && r.artistName)
                 // PRIMARY artist only. The lookup also returns the guest spots
@@ -422,13 +480,84 @@ export async function searchItunesSuggestions(query: string): Promise<{ ok: bool
 // returns the handful of songs that matched, so an album's real contents were
 // invisible. lookup?entity=song returns the collection record first, then every
 // track in order.
-export async function itunesAlbumTracks(collectionId: number): Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string; releaseYear?: number; trackCount?: number; genre?: string; explicitness?: string }> {
+/**
+ * Find the iTunes collection for an album named by artist + title, for rows
+ * that arrived WITHOUT a collection id (a library-derived card, the Deezer
+ * failover, a hub row). The album identity contract needs the edition's
+ * ordered tracklist, and this is the only way to reach one from a name.
+ *
+ * A name lookup may supply evidence only for matching edition and recording
+ * markers. A differently labelled result must not redefine what was requested.
+ * Ambiguous matches require a catalogue selection with a collection id.
+ */
+export interface ItunesCollectionRow { collectionId: number; collectionName: string; artistName?: string; trackCount?: number; releaseDate?: string }
+
+/** Pure choice among iTunes collections for a requested artist + album title
+ *  (see itunesFindAlbum). Exported so the tie-breaks are testable. */
+export function pickItunesCollection(rows: ItunesCollectionRow[], artist: string, title: string): ItunesCollectionRow | null {
+  const a = (artist || '').trim(), t = (title || '').trim()
+  if (!a || !t) return null
+  const markers = (x: string): string => JSON.stringify([packagingMarkersOf(x), requestedVersionMarkers(x).sort()])
+  const wantMarkers = markers(t)
+  const cands = rows.filter((r) => r.collectionId > 0 && r.collectionName)
+    .filter((r) => r.artistName && recoArtistMatches(a, r.artistName)
+      && recoTitleMatches(searchTitle(t) || t, searchTitle(r.collectionName) || r.collectionName)
+      && markers(r.collectionName) === wantMarkers)
+  const unique = [...new Map(cands.map((r) => [r.collectionId, r])).values()]
+  return unique.length === 1 ? unique[0] : null
+}
+
+export async function itunesFindAlbum(artist: string, title: string): Promise<{ collectionId: number; collectionName: string; trackCount?: number; releaseYear?: number } | null> {
+  const a = (artist || '').trim(), t = (title || '').trim()
+  if (!t) return null
+  try {
+    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(`${a} ${t}`.trim())}&entity=album&limit=25`
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+    if (!res.ok) return null
+    const data = (await res.json()) as { results?: Array<Record<string, unknown>> }
+    const rows: ItunesCollectionRow[] = (data.results || [])
+      .filter((r) => r.wrapperType === 'collection' && typeof r.collectionId === 'number' && typeof r.collectionName === 'string')
+      .map((r) => ({ collectionId: Number(r.collectionId), collectionName: String(r.collectionName), artistName: typeof r.artistName === 'string' ? r.artistName : undefined, trackCount: typeof r.trackCount === 'number' ? r.trackCount : undefined, releaseDate: typeof r.releaseDate === 'string' ? r.releaseDate : undefined }))
+    const pick = pickItunesCollection(rows, a, t)
+    if (!pick) return null
+    return { collectionId: pick.collectionId, collectionName: pick.collectionName, trackCount: pick.trackCount, releaseYear: itunesYear(pick.releaseDate) }
+  } catch {
+    return null
+  }
+}
+
+/** A tracklist request by id, or by NAME when the row that asked has no
+ *  collection id — the Deezer failover rows Apple's throttling leaves us
+ *  with (live, 2026-09-05: "Little Creatures (Deluxe Version)" opened with
+ *  no tracklist and no Get all, so the edition could not be selected). A
+ *  name resolves only to ONE unambiguous edition (pickItunesCollection:
+ *  artist, base title, packaging labels and version markers must all
+ *  agree); anything less is "couldn't load", never a guess. */
+export type AlbumTracksRef = number | { artist?: string; album: string }
+
+export async function itunesAlbumTracks(ref: AlbumTracksRef): Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string; releaseYear?: number; trackCount?: number; genre?: string; explicitness?: string; collectionId?: number }> {
+  let collectionId: number | undefined = typeof ref === 'number' ? ref : undefined
+  if (collectionId === undefined && ref && typeof ref === 'object' && ref.album) {
+    const found = await itunesFindAlbum(ref.artist || '', ref.album)
+    if (!found) return { ok: false, tracks: [] }
+    collectionId = found.collectionId
+  }
   const id = Number(collectionId)
   if (!id || !Number.isFinite(id)) return { ok: false, tracks: [] }
   try {
     const url = `https://itunes.apple.com/lookup?id=${id}&entity=song&limit=200`
-    const res = await fetch(url, { signal: AbortSignal.timeout(6000) })
-    if (!res.ok) return { ok: false, tracks: [] }
+    // Two tries, 8 s each: the lookup answers 403/timeout under a burst
+    // (2026-09-03, Sister Nancy "One Two": "Couldn't load the tracklist"
+    // while the same lookup returned 11 rows from a shell moments later).
+    let res: Response | null = null
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+        if (res.ok) break
+      } catch { res = null }
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 1200))
+    }
+    if (!res || !res.ok) return { ok: false, tracks: [] }
     const data = (await res.json()) as { results?: Array<Record<string, unknown>> }
     const rows = data.results || []
     const collection = rows.find((r) => r.wrapperType === 'collection' || r.collectionType)
@@ -443,15 +572,20 @@ export async function itunesAlbumTracks(collectionId: number): Promise<{ ok: boo
         appleMusicUrl: r.trackViewUrl ? String(r.trackViewUrl) : undefined,
         collectionId: id,
         trackNumber: r.trackNumber ? Number(r.trackNumber) : undefined,
+        discNumber: r.discNumber ? Number(r.discNumber) : undefined,
+        discCount: r.discCount ? Number(r.discCount) : undefined,
         durationSecs: r.trackTimeMillis ? Math.round(Number(r.trackTimeMillis) / 1000) : undefined,
         releaseYear: itunesYear(r.releaseDate),
         genre: typeof r.primaryGenreName === 'string' ? r.primaryGenreName : undefined,
         explicitness: typeof r.trackExplicitness === 'string' ? r.trackExplicitness : undefined,
       }))
-      .sort((a, b) => (a.trackNumber ?? 0) - (b.trackNumber ?? 0))
+      // A 30s snippet is not the song — see isPreviewLengthResult.
+      .filter((t) => !isPreviewLengthResult(t.durationSecs, t.song))
+      .sort((a, b) => (a.discNumber ?? 1) - (b.discNumber ?? 1) || (a.trackNumber ?? 0) - (b.trackNumber ?? 0))
     return {
       ok: true,
       tracks,
+      collectionId: id,
       album: collection?.collectionName ? String(collection.collectionName) : undefined,
       artist: collection?.artistName ? String(collection.artistName) : undefined,
       artworkUrl: collection?.artworkUrl100 ? String(collection.artworkUrl100).replace('100x100', '400x400') : undefined,

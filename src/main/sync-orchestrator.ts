@@ -37,6 +37,7 @@
  * store's setNotice (the 4.4.12 LCD-pill mode 4).
  */
 
+import { quietWarn } from './flight-recorder'
 import { spawn, type ChildProcess } from 'child_process'
 import { safeIpcError } from './safe-ipc-error.ts'
 import { existsSync } from 'fs'
@@ -100,6 +101,13 @@ export interface LastSyncSnapshot {
   durationMs: number | null
   error: string | null
   scriptPresent: boolean  // false on installs where homemini sync is not configured
+  /** 2026-09-02: the last time a sync was DEFERRED by the NAS breaker (not a
+   *  failure — it will run when the mount answers). null = not deferred since
+   *  the last real run. Kept apart from ok/at so a deferral never paints the
+   *  last real backup red. */
+  deferredAt: number | null
+  /** NAS served over the tailnet at the last attempt (laptop away from home). */
+  remote: boolean
 }
 // A remote-mode downgrade leaves a FULL pass owed (tombstones + out-of-band
 // edits wait for home network). Cleared by the first full sync that exits 0.
@@ -131,12 +139,14 @@ const lastSync: LastSyncSnapshot = {
   durationMs: null,
   error: null,
   scriptPresent: existsSync(SYNC_SCRIPT),
+  deferredAt: null,
+  remote: false,
 }
 export function getLastSyncSnapshot(): LastSyncSnapshot {
   return { ...lastSync }
 }
 
-function notify(detail: { ok: boolean; reason: SyncReason; error?: string; durationMs?: number }): void {
+function notify(detail: { ok: boolean; reason: SyncReason; error?: string; durationMs?: number; deferred?: boolean }): void {
   const win = getWindow?.()
   if (!win || win.isDestroyed()) return
   try {
@@ -146,18 +156,21 @@ function notify(detail: { ok: boolean; reason: SyncReason; error?: string; durat
   }
 }
 
-async function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: string; durationMs: number }> {
+async function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: string; durationMs: number; deferred?: boolean }> {
   // Flight-log stomp (2026-08-22): eight hourly safety-net runs each hung
   // the full 10-minute kill-timer while the NAS breaker ALREADY knew the
   // mount was slow/absent (laptop in remote mode, SMB over the tailnet).
   // A sync that cannot land must not spend 600s discovering that — ask the
   // breaker first and defer; the next window retries after the cooldown.
-  if (!(await nasAvailable())) {
-    // warn, not log: warns are mirrored into the flight recorder, and this
-    // fires at most once per sync window — the POSITIVE verdict that the
-    // breaker gate worked must be visible where the timeouts used to be.
-    console.warn(`[sync-orchestrator] deferred (reason=${reason}) — NAS unavailable or in breaker cooldown`)
-    return { ok: false, error: 'NAS unavailable (breaker cooldown)', durationMs: 0 }
+  // NAS breaker open (2026-10-06): the homemini legs — library to the phone
+  // backend, state, artwork — only need SSH, so run them anyway with
+  // --homemini-only and owe the music leg. Before this, every edit made while
+  // the breaker was open waited for the NAS (measured up to 9.4 min to reach
+  // the phone). The breaker still keeps us off the slow/absent SMB mount.
+  const homeminiOnly = !(await nasAvailable())
+  if (homeminiOnly) {
+    quietWarn('sync-homemini-only', `[sync-orchestrator] NAS unavailable — homemini-only pass (reason=${reason}); music leg owed`)
+    fullSyncOwed = true
   }
   // WAN full-sync stomp (2026-08-22): when the NAS is mounted via the
   // TAILNET (remote mode), a full rsync --delete over the 73GB library
@@ -165,10 +178,11 @@ async function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: s
   // burned 600s and died. Downgrade full→quick out there (new imports
   // still propagate!) and remember a full pass is OWED; the first full
   // sync that succeeds back on home network clears the debt.
-  const remote = await nasMountedViaTailnet()
+  const remote = homeminiOnly ? true : await nasMountedViaTailnet()
+  lastSync.remote = remote
   const wantQuick = isQuickReason(reason)
   const mode = decideSyncMode(wantQuick, remote)
-  if (mode.downgradedFromFull) {
+  if (mode.downgradedFromFull && !homeminiOnly) {
     fullSyncOwed = true
     console.warn(`[sync-orchestrator] remote mode (NAS via tailnet) — full sync deferred until home; running quick pass (reason=${reason})`)
   }
@@ -187,6 +201,7 @@ async function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: s
     const useQuickMode = mode.quick
     const args = [SYNC_SCRIPT]
     if (useQuickMode) args.push('--quick')
+    if (homeminiOnly) args.push('--homemini-only')
 
     console.log(`[sync-orchestrator] starting sync (reason=${reason}, mode=${useQuickMode ? 'quick' : 'full'})`)
     // Brief 016: spawn with detached: true so the bash child becomes the
@@ -308,12 +323,19 @@ async function flushDebounce(): Promise<void> {
   inFlight = false
   currentReason = null
 
-  lastSync.ok = result.ok
-  lastSync.reason = reason
-  lastSync.at = Date.now()
-  lastSync.durationMs = result.durationMs
-  lastSync.error = result.error || null
-  notify({ ok: result.ok, reason, error: result.error, durationMs: result.durationMs })
+  if (result.deferred) {
+    // A deferral is not a backup outcome — leave the last real run's
+    // verdict alone and just note that we're waiting on the NAS.
+    lastSync.deferredAt = Date.now()
+  } else {
+    lastSync.ok = result.ok
+    lastSync.reason = reason
+    lastSync.at = Date.now()
+    lastSync.durationMs = result.durationMs
+    lastSync.error = result.error || null
+    lastSync.deferredAt = null
+  }
+  notify({ ok: result.ok, reason, error: result.error, durationMs: result.durationMs, deferred: result.deferred === true })
 
   // If a trigger landed while we were running, fire another debounced sync.
   if (pendingReason) {

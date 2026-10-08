@@ -2,7 +2,4 @@ repo=https://github.com/jrosey30/jaketunes-contracts
 package=@jaketunes/contracts
 version=0.1.0
 ref=main
-# sha is filled by scripts/sync-jaketunes-contracts.sh when GitHub credentials
-# can read the private repo. Until then this tree vendors contracts.json so
-# `npm install` / CI / Jake's machine never need a private-package token.
-sha=
+sha=279fcf975a94b881bf27af180eb6973a12c2dcb4

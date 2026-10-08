@@ -15,7 +15,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, readFile, stat, writeFile } from 'fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { initFlightRecorder, serializeDetail, sanitizeCrashPayload } from '../flight-recorder.ts'
+import { initFlightRecorder, serializeDetail, sanitizeCrashPayload, createStormGate } from '../flight-recorder.ts'
 
 const tmp = async () => mkdtemp(join(tmpdir(), 'fr-test-'))
 // Poll-until-true, never a fixed sleep: fixed waits flaked the gate the
@@ -150,5 +150,26 @@ describe('sanitizeCrashPayload', () => {
   test('garbage in, empty shape out', () => {
     assert.equal(sanitizeCrashPayload(null).kind, 'unknown')
     assert.equal(sanitizeCrashPayload('lol').message, '')
+  })
+})
+
+
+describe('storm gate: a looping caller cannot flush the log history', () => {
+  test('logs the first N of a message per window, then counts the rest', () => {
+    let t = 0
+    const g = createStormGate({ perWindow: 3, windowMs: 1000, now: () => t })
+    const v = Array.from({ length: 6 }, () => g.admit('w|x'))
+    assert.deepEqual(v, ['log', 'log', 'log', 'suppress-first', 'suppress', 'suppress'])
+    assert.equal(g.take('w|x'), 3)
+    assert.equal(g.take('w|x'), 0)
+  })
+  test('keys are independent and a new window logs again', () => {
+    let t = 0
+    const g = createStormGate({ perWindow: 1, windowMs: 1000, now: () => t })
+    assert.equal(g.admit('a'), 'log')
+    assert.equal(g.admit('b'), 'log')
+    assert.equal(g.admit('a'), 'suppress-first')
+    t = 1500
+    assert.equal(g.admit('a'), 'log')
   })
 })

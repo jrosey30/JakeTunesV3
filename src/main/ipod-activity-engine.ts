@@ -21,19 +21,19 @@
 
 import { spawn } from 'child_process'
 import { createHash } from 'crypto'
-import { copyFile, mkdir, readFile, stat, lstat, unlink } from 'fs/promises'
+import { appendFile, copyFile, mkdir, readFile, stat, lstat, unlink } from 'fs/promises'
 import { join } from 'path'
 import { findIpodMount, isIpodMount, PYTHON_CMD, PYTHON_INSTALL_HINT, remountVolume } from './platform.ts'
 import {
   activitySetProven,
-  activityWipeEmptyStreak,
-  activityWipeProvenEmpty,
+  ACTIVITY_WIPE_EMPTY_STREAK,
   ACTIVITY_WIPE_MAX_PASSES,
   catalogBytesMatch,
   catalogOnCardProven,
   fileSizeForItunesDb,
   ipodFirmwareWillList,
   ipodPlayableDestPath,
+  ipodPathExtension,
   needsIpodAlacTranscode,
   sampleRateForItunesDb,
 } from './ipod-reconcile.ts'
@@ -59,6 +59,8 @@ import {
   retireIpodFirmwareScratch,
 } from './ipod-sync-card.ts'
 import { safeIpcError } from './safe-ipc-error.ts'
+import { activityKeepPlan, wipeListingMatchesKeep, keepStreak, type KeepCandidate } from './activity-keep.ts'
+import { orderForIpodCatalog, conformCatalogIdOrder } from './ipod-catalog-order.ts'
 import type { SyncConvertOptions } from './ipc/sync-ipc.ts'
 import {
   classifyActivitySyncTracks,
@@ -122,6 +124,8 @@ export interface ActivitySyncInput {
 export interface ActivitySyncResult {
   ok: boolean
   copied: number
+  /** Songs already on the card by identity + size, left in place (2026-09-19). */
+  kept?: number
   copyErrors?: number
   error?: string
   cancelled?: boolean
@@ -378,6 +382,37 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     destPath: ipodPlayableDestPath(String(t.path || '')),
   }))
 
+  // ── Activity Sync Ledger (2026-08-31, Jake: "we need records of this on
+  // the back end so that we know what is going in and what is coming off
+  // each activity sync"). Append-only JSONL in STATE_DIR — one 'picks'
+  // entry per attempt with the added/removed diff vs the previous attempt,
+  // one 'result' entry when a sync seals. A picks entry with no matching
+  // result = a refused/aborted run. Never blocks a sync.
+  const ledgerPath = join(host.stateDir, 'activity-sync-ledger.jsonl')
+  const ledgerWhen = new Date().toISOString()
+  try {
+    let prevIds: number[] = []
+    try {
+      const lines = (await readFile(ledgerPath, 'utf-8')).trim().split('\n')
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const e = JSON.parse(lines[i]) as { kind?: string; pickedIds?: number[] }
+        if (e.kind === 'picks') { prevIds = e.pickedIds || []; break }
+      }
+    } catch { /* first ledger entry ever */ }
+    const prevSet = new Set(prevIds)
+    const pickedIds = tsaBoarded.map((p) => p.id)
+    const nowSet = new Set(pickedIds)
+    await appendFile(ledgerPath, JSON.stringify({
+      kind: 'picks', when: ledgerWhen, target,
+      pickedIds,
+      added: pickedIds.filter((i) => !prevSet.has(i)),
+      removed: prevIds.filter((i) => !nowSet.has(i)),
+      picked: tsaBoarded.map((p) => ({ id: p.id, t: String(p.title || ''), a: String(p.artist || '') })),
+    }) + '\n', 'utf-8')
+  } catch (err) {
+    console.warn('activity-sync: ledger append failed (non-blocking):', err)
+  }
+
   await host.clearSeal()
   try {
     await host.writeManifest({
@@ -398,61 +433,22 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   }
 
   await host.writeJournal('copy')
-  // ── 2. Wipe until two consecutive empty listings ──
-  host.sendProgress({ phase: 'copy', current: 0, total: 1, title: 'Wiping the iPod for a clean rebuild…' })
-  let wiped = 0
-  try {
-    let emptyStreak = 0
-    let remaining = 0
-    for (let pass = 0; pass < ACTIVITY_WIPE_MAX_PASSES; pass++) {
-      const listed = await listIpodMusicFiles(IPOD_MOUNT)
-      for (const p of listed) {
-        try { await unlink(p); wiped++ } catch { /* retry */ }
-      }
-      remaining = (await listIpodMusicFiles(IPOD_MOUNT)).length
-      emptyStreak = activityWipeEmptyStreak(remaining, emptyStreak)
-      console.log(`activity-sync: WIPE pass ${pass + 1}/${ACTIVITY_WIPE_MAX_PASSES} deleted-this-listing=${listed.length} remaining=${remaining} emptyStreak=${emptyStreak}`)
-      if (activityWipeProvenEmpty(emptyStreak)) break
-      await new Promise((r) => setTimeout(r, 250))
-    }
-    if (!activityWipeProvenEmpty(emptyStreak)) {
-      return fail({
-        copied: 0,
-        error: `Activity wipe could not empty the iPod (${remaining} leftover file${remaining === 1 ? '' : 's'}). Reseat the cable and sync again — nothing new was copied.`,
-        target,
-      })
-    }
-    await retireIpodFirmwareScratch(IPOD_MOUNT)
-    console.log(`activity-sync: WIPE deleted ${wiped} file(s) — card is empty, rebuilding to ${target}`)
-  } catch (e) {
-    return fail({
-      copied: 0,
-      error: `Activity wipe failed (${e instanceof Error ? e.message : String(e)}). Nothing was copied.`,
-      target,
-    })
-  }
 
-  const rewipeAndStop = async (why: ActivitySyncResult): Promise<ActivitySyncResult> => {
-    try {
-      for (const p of await listIpodMusicFiles(IPOD_MOUNT)) {
-        try { await unlink(p) } catch { /* best effort */ }
-      }
-      await retireIpodFirmwareScratch(IPOD_MOUNT)
-    } catch { /* best effort */ }
-    console.error(`activity-sync: abort after wipe — re-emptied Music so Mini cannot index a ${why.landed ?? 'partial'} set. ${why.error}`)
-    return why
-  }
-
-  // ── 3. Copy every boarded song ──
+  // ── 2. Resolve every song's source and card path BEFORE touching the card ──
+  // The copy loop used to decide mirrors and paths per song AFTER the wipe.
+  // Deciding first means a mirror that cannot be built refuses the sync
+  // with the card untouched, and — the point — the keep plan below can
+  // compare what WOULD be written against what is already there.
   const pathRewrites: Array<{ id: number; newPath: string }> = []
-  const writtenById = new Map<number, { srcPath: string; dstPath: string; expectedSize: number }>()
-  let copied = 0
-  let copyErrors = 0
-
-  for (let i = 0; i < tracks.length && writtenById.size < target; i++) {
+  interface CopyPlanEntry { i: number; id: number; title: string; srcToCopy: string; dstToCopy: string }
+  const plan: CopyPlanEntry[] = []
+  // #47 (fill-to-N): tracks[target..] are copy-time replacements. They are
+  // resolved here like everything else, but never kept from a previous
+  // card and only copied when a primary miss leaves the card short of N.
+  for (let i = 0; i < tracks.length; i++) {
     if (host.isCancelled()) {
-      host.sendProgress({ phase: 'cancelled', current: copied + copyErrors, total: target, title: '' })
-      return rewipeAndStop({ ok: false, copied, copyErrors, cancelled: true, error: 'Sync cancelled by user', target })
+      await host.writeJournal(null)
+      return fail({ copied: 0, cancelled: true, error: 'Sync cancelled by user — nothing on the iPod was touched.', target })
     }
     const track = tracks[i]
     const title = String(track.title || '')
@@ -460,19 +456,26 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     const rawColon = String(track.path || '')
     const destColon = ipodPlayableDestPath(rawColon)
     if (destColon !== rawColon) {
-      pathRewrites.push({ id, newPath: destColon })
+      // track.path becomes the CARD path (DB payload + TSA read it), but a
+      // rewrite is only exported to the LIBRARY when the extension changed
+      // (flac/FAT-temp → m4a, the mechanism's original purpose). The 8.3
+      // stem shortening is card-only — exporting it rewrote 702 library
+      // rows to names that exist nowhere in the farm (2026-08-31).
+      if (ipodPathExtension(rawColon) !== ipodPathExtension(destColon)) {
+        pathRewrites.push({ id, newPath: destColon })
+      }
       track.path = destColon
     }
     const localFile = join(LOCAL_MOUNT, rawColon.replace(/:/g, pathSep))
     let srcToCopy = localFile
     let dstToCopy = join(IPOD_MOUNT, destColon.replace(/:/g, pathSep))
 
-    host.sendProgress({ phase: 'copy', current: copied + copyErrors, total: target, title })
+    host.sendProgress({ phase: 'copy', current: Math.min(i, target), total: target, title: `Preparing: ${title}` })
 
     if (convertOptions?.enabled) {
       try {
         host.sendProgress({
-          phase: 'copy', current: copied + copyErrors, total: target,
+          phase: 'copy', current: Math.min(i, target), total: target,
           title: `Converting → ${convertOptions.targetKbps}k AAC: ${title}`,
         })
         const mirror = await host.buildAacMirror(localFile, convertOptions.targetKbps)
@@ -496,13 +499,14 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     if (needsIpodAlacTranscode(srcToCopy)) {
       try {
         host.sendProgress({
-          phase: 'copy', current: copied + copyErrors, total: target,
+          phase: 'copy', current: Math.min(i, target), total: target,
           title: `Converting → ALAC: ${title}`,
         })
         const mirror = await host.buildIpodSafeAlacMirror(localFile)
         if (!mirror) {
-          copyErrors++
-          continue
+          if (i >= target) { console.warn(`activity-sync: reserve "${title}" has no iPod-safe ALAC — skipped`); continue }
+          await host.writeJournal(null)
+          return fail({ copied: 0, error: `Could not build an iPod-safe ALAC for "${title}". Nothing was wiped.`, target })
         }
         srcToCopy = mirror
         dstToCopy = ipodPlayableDestPath(dstToCopy)
@@ -512,40 +516,152 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
         pathRewrites.push({ id, newPath: String(track.path) })
       } catch (err) {
         console.error(`activity-sync: FLAC→ALAC failed for ${title}:`, err)
-        copyErrors++
-        continue
+        if (i >= target) { console.warn(`activity-sync: reserve "${title}" skipped`); continue }
+        await host.writeJournal(null)
+        return fail({ copied: 0, error: `FLAC→ALAC failed for "${title}" (${err instanceof Error ? err.message : String(err)}). Nothing was wiped.`, target })
       }
     }
 
     dstToCopy = ipodPlayableDestPath(dstToCopy)
+    plan.push({ i, id, title, srcToCopy, dstToCopy })
+  }
+
+  // ── 2b. Keep plan: what is already right on the card, by identity ──
+  // A song is kept only when the last SEALED manifest lists this id at this
+  // card path with this fingerprint identity AND the card file is exactly
+  // the size of what we would copy (activity-keep.ts). Anything else is
+  // copied; everything else on the card is deleted. All proof stages
+  // downstream are unchanged, so a wrong keep cannot seal.
+  let manifest: unknown = null
+  try { manifest = JSON.parse(await readFile(join(host.stateDir, 'last-sync-manifest.json'), 'utf-8')) } catch { manifest = null }
+  const identityById = new Map(tsaBoarded.map((p) => [p.id, p.identity]))
+  const candidates: KeepCandidate[] = []
+  const srcSizeById = new Map<number, number>()
+  const cardSizeById = new Map<number, number>()
+  for (const e of plan) {
+    if (e.i >= target) continue   // a reserve is never kept — it lands only if a primary misses
+    const rel = e.dstToCopy.startsWith(IPOD_MOUNT) ? e.dstToCopy.slice(IPOD_MOUNT.length + 1) : e.dstToCopy
+    const sourceSize = (await stat(e.srcToCopy).catch(() => null))?.size ?? 0
+    const onCardSize = (await stat(e.dstToCopy).catch(() => null))?.size
+    srcSizeById.set(e.id, sourceSize)
+    if (onCardSize !== undefined) cardSizeById.set(e.id, onCardSize)
+    candidates.push({
+      id: e.id,
+      destPath: tsaNormalizeColonPath(rel),
+      identity: identityById.get(e.id) || '',
+      sourceSize,
+      onCardSize,
+    })
+  }
+  const keep = activityKeepPlan(candidates, manifest as Parameters<typeof activityKeepPlan>[1])
+  const keepAbs = new Set(plan.filter((e) => keep.keepIds.has(e.id)).map((e) => e.dstToCopy))
+  console.log(`activity-sync: KEEP ${keep.keepIds.size} already on the card by identity, COPY ${keep.copyIds.length}` +
+    (keep.copyIds.length ? ` (${Object.entries(keep.reasons).map(([k, v]) => `${k}: ${v}`).join(', ')})` : ''))
+
+  // ── 3. Targeted wipe: delete everything outside the keep set, prove it ──
+  host.sendProgress({
+    phase: 'copy', current: 0, total: 1,
+    title: keep.keepIds.size > 0
+      ? `Keeping ${keep.keepIds.size.toLocaleString()} already on the iPod · clearing the rest…`
+      : 'Wiping the iPod for a clean rebuild…',
+  })
+  let wiped = 0
+  try {
+    let streak = 0
+    let listedNow: string[] = []
+    for (let pass = 0; pass < ACTIVITY_WIPE_MAX_PASSES; pass++) {
+      const listed = await listIpodMusicFiles(IPOD_MOUNT)
+      for (const p of listed) {
+        if (keepAbs.has(p)) continue
+        try { await unlink(p); wiped++ } catch { /* retry */ }
+      }
+      listedNow = await listIpodMusicFiles(IPOD_MOUNT)
+      streak = keepStreak(wipeListingMatchesKeep(listedNow, keepAbs), streak)
+      console.log(`activity-sync: WIPE pass ${pass + 1}/${ACTIVITY_WIPE_MAX_PASSES} listed=${listed.length} now=${listedNow.length} keep=${keepAbs.size} streak=${streak}`)
+      if (streak >= ACTIVITY_WIPE_EMPTY_STREAK) break
+      await new Promise((r) => setTimeout(r, 250))
+    }
+    if (streak < ACTIVITY_WIPE_EMPTY_STREAK) {
+      const extra = listedNow.filter((p) => !keepAbs.has(p)).length
+      const missing = [...keepAbs].filter((p) => !listedNow.includes(p)).length
+      return fail({
+        copied: 0,
+        error: `Activity wipe could not settle the iPod (${extra} leftover file${extra === 1 ? '' : 's'}, ${missing} kept file${missing === 1 ? '' : 's'} vanished). Reseat the cable and sync again — nothing new was copied.`,
+        target,
+      })
+    }
+    await retireIpodFirmwareScratch(IPOD_MOUNT)
+    console.log(`activity-sync: WIPE deleted ${wiped} file(s) — card holds exactly the ${keepAbs.size} kept, rebuilding to ${target}`)
+  } catch (e) {
+    return fail({
+      copied: 0,
+      error: `Activity wipe failed (${e instanceof Error ? e.message : String(e)}). Nothing was copied.`,
+      target,
+    })
+  }
+
+  const rewipeAndStop = async (why: ActivitySyncResult): Promise<ActivitySyncResult> => {
     try {
-      const dir = dstToCopy.substring(0, dstToCopy.lastIndexOf(pathSep))
+      for (const p of await listIpodMusicFiles(IPOD_MOUNT)) {
+        try { await unlink(p) } catch { /* best effort */ }
+      }
+      await retireIpodFirmwareScratch(IPOD_MOUNT)
+    } catch { /* best effort */ }
+    console.error(`activity-sync: abort after wipe — re-emptied Music so Mini cannot index a ${why.landed ?? 'partial'} set. ${why.error}`)
+    return why
+  }
+
+  // ── 3b. Copy what is not already there ──
+  const writtenById = new Map<number, { srcPath: string; dstPath: string; expectedSize: number }>()
+  let copied = 0
+  let kept = 0
+  let copyErrors = 0
+
+  for (const e of plan) {
+    if (writtenById.size >= target) break   // #47: N reached — the rest were reserves
+    if (host.isCancelled()) {
+      host.sendProgress({ phase: 'cancelled', current: copied + kept + copyErrors, total: target, title: '' })
+      return rewipeAndStop({ ok: false, copied, kept, copyErrors, cancelled: true, error: 'Sync cancelled by user', target })
+    }
+    if (keep.keepIds.has(e.id)) {
+      const sz = cardSizeById.get(e.id) ?? srcSizeById.get(e.id) ?? 0
+      writtenById.set(e.id, { srcPath: e.srcToCopy, dstPath: e.dstToCopy, expectedSize: sz })
+      kept++
+      host.sendProgress({ phase: 'copy', current: copied + kept + copyErrors, total: target, title: `Kept: ${e.title}` })
+      continue
+    }
+    host.sendProgress({ phase: 'copy', current: copied + kept + copyErrors, total: target, title: e.title })
+    try {
+      const dir = e.dstToCopy.substring(0, e.dstToCopy.lastIndexOf(pathSep))
       await mkdir(dir, { recursive: true })
-      await copyFile(srcToCopy, dstToCopy)
-      const conf = await confirmWriteOnCard(srcToCopy, dstToCopy)
+      await copyFile(e.srcToCopy, e.dstToCopy)
+      const conf = await confirmWriteOnCard(e.srcToCopy, e.dstToCopy)
       if (!conf.ok) {
-        console.error(`activity-sync: write NOT confirmed for "${title}" — ${conf.reason}`)
+        console.error(`activity-sync: write NOT confirmed for "${e.title}" — ${conf.reason}`)
         copyErrors++
         continue
       }
-      const sz = (await stat(srcToCopy)).size
-      writtenById.set(id, { srcPath: srcToCopy, dstPath: dstToCopy, expectedSize: sz })
+      const sz = (await stat(e.srcToCopy)).size
+      writtenById.set(e.id, { srcPath: e.srcToCopy, dstPath: e.dstToCopy, expectedSize: sz })
       copied++
-      host.sendProgress({ phase: 'copy', current: copied + copyErrors, total: target, title })
+      host.sendProgress({ phase: 'copy', current: copied + kept + copyErrors, total: target, title: e.title })
     } catch (err) {
-      console.error(`activity-sync: copy failed for "${title}":`, err)
+      console.error(`activity-sync: copy failed for "${e.title}":`, err)
       copyErrors++
     }
   }
 
+  // #47: the card holds what landed (primaries + any reserve that replaced a
+  // miss); a miss that was replaced is not a failure, so copyErrors no longer
+  // refuses the catalog on its own.
   tracks = tracks.filter((t) => writtenById.has(Number(t.id)))
   tsaBoarded = tracks.map((t) => tsaBoardPassenger({
     ...t,
     destPath: ipodPlayableDestPath(String(t.path || '')),
   }))
-  if (copied !== target || writtenById.size !== target || tracks.length !== target) {
+  if (copied + kept !== target || writtenById.size !== target || tracks.length !== target) {
     return rewipeAndStop(fail({
-      copied, copyErrors, target, landed: writtenById.size,
+      copied, kept, copyErrors, target, landed: writtenById.size,
       shortfall: target - writtenById.size,
       error: `Only ${writtenById.size} of ${target} songs confirmed on the card after copy. Not writing a catalog — that is how Songs became 486. Sync again.`,
     }))
@@ -678,6 +794,13 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     }))
   }
 
+  // Mini 1.4.1 lists artists in mhit PHYSICAL order (no type-52 sort
+  // tables in that firmware) — the catalog is written alphabetically so
+  // the Artists menu reads A-Z. Playlists reference dbids, so their order
+  // is untouched. (2026-08-28, Jake: "why are the artists not in
+  // alphabetical order?")
+  tracks = orderForIpodCatalog(tracks)
+
   // ── 5. Build catalog locally, copy to CF, prove bytes+hash+N ──
   await host.writeJournal('db')
   host.sendProgress({ phase: 'db', current: 0, total: 1, title: 'Writing iTunesDB...' })
@@ -700,6 +823,18 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     }))
   }
   console.log('activity-sync stderr:', written.stderr)
+  // Firmware finds songs by binary search on mhit id — ids must ascend in
+  // record order or songs silently vanish from About (the 819 saga).
+  const conform = await conformCatalogIdOrder(localDb)
+  if (!conform.ok) {
+    try { await unlink(localDb) } catch { /* temp */ }
+    await retireIpodFirmwareScratch(IPOD_MOUNT)
+    return rewipeAndStop(fail({
+      copied, copyErrors, target,
+      error: `The catalog could not be conformed to firmware id order (${conform.error}). Previous catalog is untouched. Sync again.`,
+    }))
+  }
+  console.log(`activity-sync: ${conform.summary}`)
   const contig = await ensureContiguousDb(localDb, python)
   console.log(`activity-sync: ${contig.summary}`)
   if (!contig.ok) {
@@ -934,6 +1069,14 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     copyErrors,
     failed: [],
   })
+  try {
+    await appendFile(join(host.stateDir, 'activity-sync-ledger.jsonl'), JSON.stringify({
+      kind: 'result', when: new Date().toISOString(), picksWhen: ledgerWhen,
+      target, landed: target, sealedOk, copied, copyErrors,
+    }) + '\n', 'utf-8')
+  } catch (err) {
+    console.warn('activity-sync: ledger result append failed (non-blocking):', err)
+  }
 
   return {
     ok: sealedOk,

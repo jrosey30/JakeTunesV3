@@ -292,7 +292,40 @@ export async function ejectVolume(mountPoint: string): Promise<void> {
     // finished can still have catalog bytes in the page cache; ejecting
     // without this is how a 500/500 report became 33 songs on the Mini.
     try { await execP('sync', [], { timeout: 15000 }) } catch { /* best-effort */ }
-    await execP('diskutil', ['eject', mountPoint])
+    try {
+      await execP('diskutil', ['eject', mountPoint])
+    } catch (err) {
+      // 2026-08-25 — diskutil's own words are the ONLY useful part of an eject
+      // failure ("in use by process N", "dissented by ..."), and they were
+      // being thrown away: the caller caught this and returned the literal
+      // string 'Eject failed', which the UI then prefixed with "Eject failed:"
+      // — Jake got "Eject failed: Eject failed" and no reason at all.
+      // Re-thrown with the cause, PATH-FREE so safeIpcError won't scrub it.
+      const raw = String((err as { stderr?: string; message?: string })?.stderr
+        || (err as Error)?.message || '')
+      const busy = /in use by process\s+(\d+)\s*\(([^)]+)\)/i.exec(raw)
+      if (/simulator/i.test(raw)) {
+        // Same escalation as the sync path: shut simulators, then kill the
+        // service that holds stale state, retrying the eject after each.
+        const steps: Array<{ cmd: string; args: string[]; timeout: number }> = [
+          { cmd: 'xcrun', args: ['simctl', 'shutdown', 'all'], timeout: 60000 },
+          { cmd: 'killall', args: ['-9', 'com.apple.CoreSimulator.CoreSimulatorService'], timeout: 20000 },
+        ]
+        for (const step of steps) {
+          try { await execP(step.cmd, step.args, { timeout: step.timeout }) } catch { /* best-effort */ }
+          await new Promise((r) => setTimeout(r, 3000))
+          try {
+            await execP('diskutil', ['eject', mountPoint])
+            return
+          } catch { /* try the next escalation */ }
+        }
+        throw new Error('the iOS Simulator is holding the disk and would not let go — unplug and replug the iPod')
+      }
+      if (busy) throw new Error(`the disk is still in use by ${busy[2]}`)
+      if (/dissent/i.test(raw)) throw new Error('another app refused to let the disk go')
+      if (/busy|resource/i.test(raw)) throw new Error('the disk is busy')
+      throw new Error('the disk did not respond to eject')
+    }
     return
   }
   // Windows — use PowerShell to call the Shell.Application COM object's
@@ -380,6 +413,20 @@ export async function remountVolume(mountPoint: string, opts: RemountVolumeOpts 
         lastErr = e instanceof Error ? e.message : String(e)
       }
     }
+    if (!unmounted && /simulator/i.test(lastErr)) {
+      if (tryN === 1) {
+        try { await execP('xcrun', ['simctl', 'shutdown', 'all'], { timeout: 60000 }) } catch { /* best-effort */ }
+        await new Promise((r) => setTimeout(r, 3000))
+        continue
+      }
+      if (tryN === 2) {
+        // Still dissenting with nothing booted: the SERVICE is holding stale
+        // state. launchd brings it back when something needs it.
+        try { await execP('killall', ['-9', 'com.apple.CoreSimulator.CoreSimulatorService'], { timeout: 20000 }) } catch { /* best-effort */ }
+        await new Promise((r) => setTimeout(r, 4000))
+        continue
+      }
+    }
     if (!unmounted && tryN < CLEAN_TRIES) {
       await new Promise((r) => setTimeout(r, 1000))
     }
@@ -393,9 +440,12 @@ export async function remountVolume(mountPoint: string, opts: RemountVolumeOpts 
     }
   }
   if (!unmounted) {
+    const hint = /simulator/i.test(lastErr)
+      ? 'the iOS Simulator is holding the card — quit it (xcrun simctl shutdown all) and sync again. '
+      : ''
     return {
       ok: false,
-      error: `clean unmount failed for ${node} (refusing force — force unmount discards dirty FAT32 pages and is the 500→33 roulette). ${lastErr}`.trim(),
+      error: `${hint}clean unmount failed for ${node} (refusing force — force unmount discards dirty FAT32 pages and is the 500→33 roulette). ${lastErr}`.trim(),
     }
   }
   // Remount by node — diskutil mount is synchronous and restores /Volumes/NAME.
@@ -640,6 +690,10 @@ async function convertToIpodSafeAlac(src: string, dest: string, readTimeoutMs = 
       '-map', '0:a:0',
       '-sample_fmt', 's16',
       '-ar', '44100',
+      // Downmix to stereo. The Mini has no multichannel decoder: a 5.1
+      // track indexes and then plays SILENT. "iPod-safe" has to mean the
+      // channel count too, not just bit depth and sample rate.
+      '-ac', '2',
       '-f', 'wav',
       '-loglevel', 'error',
       wavTmp,

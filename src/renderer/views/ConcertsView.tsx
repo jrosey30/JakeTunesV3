@@ -1,3 +1,10 @@
+/**
+ * ConcertsView — the Live Concerts index, rebuilt 2026-09-02 to follow the
+ * concert page's makeover: one ROW per show (poster at its own aspect + a
+ * short blurb), bands A→Z, ties in chronological order (Jake). The blurb is
+ * `concert.blurb` when set, else the first grounded fact — never invented.
+ * White / silver / charcoal / one orange; the brown poster wall is retired.
+ */
 import { useMemo, useRef, useSyncExternalStore, useCallback } from 'react'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { useLibrary } from '../context/LibraryContext'
@@ -8,14 +15,7 @@ import { setConcertKey } from '../concertNav'
 import type { LiveSetEntry } from '../types'
 import '../styles/albums.css'
 import '../styles/concerts.css'
-
-// Full Live Concerts — a browse section for declared live concerts only.
-// A "concert" = a live-sets sidecar entry (albumKey → LiveSetEntry). Its
-// merged "Full Set" track + constituents are hidden from the regular library
-// (useRegularLibraryTracks); this is where the whole show lives. Clicking a
-// concert opens its detail page (the existing AlbumDetailView, which already
-// has the continuous-scrubber Play Live Set + setlist), reached by the source
-// album key.
+import '../styles/concert-stage.css'
 
 function hms(ms: number): string {
   const s = Math.floor((ms || 0) / 1000)
@@ -27,19 +27,19 @@ function hms(ms: number): string {
     : `${m}:${String(sec).padStart(2, '0')}`
 }
 
-interface ConcertCard {
+interface ConcertRow {
   albumKey: string
   entry: LiveSetEntry
   band: string
   show: string
   venue?: string
+  city?: string
   date?: string
   artHash?: string
+  blurb?: string
+  when: number   // sortable date (ms); NaN-safe
 }
 
-// Extract venue + date for the poster from grounded sources ONLY — a persisted
-// concert.* override first, else the "(Live at VENUE, DATE)" tag pattern the
-// tracks already carry, else a date pulled from the show name. Never invents.
 function parseConcertMeta(
   showName: string,
   sampleTitle: string,
@@ -57,28 +57,42 @@ function parseConcertMeta(
   return { venue, date }
 }
 
+const MONTHS: Record<string, number> = { january: 0, february: 1, march: 2, april: 3, may: 4, june: 5, july: 6, august: 7, september: 8, october: 9, november: 10, december: 11 }
+/** "July 17, 18 & 21, 2009" → the FIRST night, as ms; unparseable → +∞ (sorts last). */
+export function firstNightMs(date?: string): number {
+  if (!date) return Number.POSITIVE_INFINITY
+  const y = /(\d{4})/.exec(date)?.[1]
+  const mo = /([A-Za-z]+)/.exec(date)?.[1]?.toLowerCase()
+  const d = /\b(\d{1,2})\b/.exec(date)?.[1]
+  if (!y) return Number.POSITIVE_INFINITY
+  const month = mo && MONTHS[mo] != null ? MONTHS[mo] : 0
+  return Date.UTC(Number(y), month, d ? Number(d) : 1)
+}
+/** Sort key for the band: drop a leading "The " so The Postal Service files under P. */
+function bandKey(band: string): string {
+  return band.toLowerCase().replace(/^the\s+/, '').trim()
+}
+
 export default function ConcertsView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()
   const snap = useSyncExternalStore(subscribeLiveSets, getLiveSetsSnapshot)
   const normalizedArtIndex = useMemo(() => buildNormalizedArtworkIndex(lib.artworkMap), [lib.artworkMap])
 
-  const concerts = useMemo((): ConcertCard[] => {
+  const concerts = useMemo((): ConcertRow[] => {
     const liveIds = new Set(lib.tracks.map((t) => t.id))
-    const out: ConcertCard[] = []
+    const out: ConcertRow[] = []
     for (const [albumKey, entry] of Object.entries(snap.sets)) {
-      // Skip stale sets whose merged track is gone (parity with liveSetFor).
       if (!liveIds.has(entry.mergedTrackId)) continue
-      // Derive band + clean show name from a constituent (still in lib.tracks,
-      // just projected out of the regular views), falling back to the merged track.
       const src = lib.tracks.find((t) => t.id === entry.cues[0]?.trackId)
         ?? lib.tracks.find((t) => t.id === entry.mergedTrackId)
       const band = entry.cues[0]?.artist || src?.artist || ''
       const show = src?.album?.replace(/\s*\(Live Set\)\s*$/i, '') || albumKey.split('|||')[1] || 'Live Concert'
       const artHash = lookupArtwork(lib.artworkMap, normalizedArtIndex, band, show)
       const { venue, date } = parseConcertMeta(show, entry.cues[0]?.title || '', entry.concert)
-      out.push({ albumKey, entry, band, show, venue, date, artHash: entry.concert?.poster || artHash })
+      const blurb = entry.concert?.blurb || entry.concert?.facts?.[0]
+      out.push({ albumKey, entry, band, show, venue, city: entry.concert?.city, date, artHash: entry.concert?.poster || artHash, blurb, when: firstNightMs(date) })
     }
-    return out.sort((a, b) => (b.entry.createdAt || '').localeCompare(a.entry.createdAt || ''))
+    return out.sort((a, b) => bandKey(a.band).localeCompare(bandKey(b.band)) || (a.when - b.when) || a.show.localeCompare(b.show))
   }, [snap, lib.tracks, lib.artworkMap, normalizedArtIndex])
 
   const openConcert = useCallback((albumKey: string) => {
@@ -103,11 +117,11 @@ export default function ConcertsView() {
           <span className="concerts-empty-em"> Declare Live Concert Mode</span> to add it here.
         </div>
       ) : (
-        <div className="concerts-grid">
+        <div className="concerts-rows">
           {concerts.map((c) => (
             <div
               key={c.albumKey}
-              className="concert-poster"
+              className="concert-row"
               data-album-key={c.albumKey}
               onClick={() => openConcert(c.albumKey)}
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openConcert(c.albumKey) } }}
@@ -115,25 +129,19 @@ export default function ConcertsView() {
               tabIndex={0}
               title={`${c.show} — ${c.band}`}
             >
-              <div className="concert-poster-art">
-                {c.artHash ? (
-                  <AlbumArtImage hash={c.artHash} alt={c.show} className="concert-poster-img" size={320} />
-                ) : (
-                  <div className="concert-poster-noart" aria-hidden="true">
-                    <svg width="40" height="40" viewBox="0 0 40 40" fill="none" stroke="#c9b98a" strokeWidth="1.4">
-                      <circle cx="20" cy="18" r="14" /><circle cx="20" cy="18" r="4" fill="#c9b98a" stroke="none" />
-                      <path d="M20 2 L24 13 L20 10 L16 13 Z" fill="#c9b98a" stroke="none" />
-                    </svg>
-                  </div>
-                )}
+              <div className="concert-row-art">
+                {c.artHash
+                  ? <AlbumArtImage hash={c.artHash} alt={c.show} className="concert-row-img" size={320} />
+                  : <div className="concert-row-noart" aria-hidden="true" />}
               </div>
-              <div className="concert-poster-band">
-                <div className="concert-poster-artist">{c.band || c.show}</div>
-                <div className="concert-poster-rule" />
-                {c.venue && <div className="concert-poster-venue">{c.venue}</div>}
-                <div className="concert-poster-date">
-                  {c.date || `${c.entry.cues.length} songs · ${hms(c.entry.totalDurationMs)}`}
+              <div className="concert-row-body">
+                <div className="concert-row-band">{c.band || c.show}</div>
+                <div className="concert-row-show">{c.show}</div>
+                <div className="concert-row-where">
+                  {c.venue && <b>{c.venue}</b>}{c.venue && c.city ? ', ' : ''}{c.city}{(c.venue || c.city) && c.date ? ' · ' : ''}{c.date}
                 </div>
+                {c.blurb && <p className="concert-row-blurb">{c.blurb}</p>}
+                <div className="concert-row-stat">{c.entry.cues.length} songs · {hms(c.entry.totalDurationMs)}</div>
               </div>
             </div>
           ))}

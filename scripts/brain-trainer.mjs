@@ -24,7 +24,8 @@
  * Cost: Gemma is free (local); OpenAI embed is ~$0.000002/track (~2¢ for the
  *       whole library, once).
  */
-import { readFileSync, writeFileSync, copyFileSync, existsSync, renameSync } from 'node:fs'
+import { readFileSync, writeFileSync, copyFileSync, existsSync, renameSync, appendFileSync } from 'node:fs'
+import { planMoodPrune } from './brain-prune.mjs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -105,10 +106,19 @@ const KEY = (existsSync(ENV)
 if (!KEY) fatal('no OPENAI_API_KEY (checked ~/JakeTunesV3/.env and env)')
 
 // ── embeddings.bin (EMBD binary format, shared with src/main/ai/embeddings.ts) ──
+// ⚠️ TWIN: src/main/ai/embeddings.ts parseEmbeddingsBlob (desktop) and
+// ~/JakeTunesMobile/backend/src/util/rag.ts readBrain (phone backend) parse
+// this same format — a format or guard change here must be mirrored there.
 function readEmb(path) {
   const buf = readFileSync(path)
   if (buf.length < 12 || buf.toString('ascii', 0, 4) !== MAGIC) throw new Error('embeddings.bin: bad magic')
   const dim = buf.readUInt16LE(6), count = buf.readUInt32LE(8), rec = 4 + dim * 4
+  // A short SMB read must be FATAL, never tolerated: on 2026-08-25 a flapping
+  // mount handed readFileSync 8510 of 9790 records without an error, the
+  // silent partial parse became the in-memory map, and the nightly write
+  // amputated 1280 vectors from the live brain. The header count is the
+  // truth — if the bytes don't cover it, this read cannot be trusted.
+  if (buf.length < 12 + count * rec) throw new Error(`${path}: truncated read — header says ${count} vectors but bytes cover only ${Math.floor((buf.length - 12) / rec)} (flaky mount?)`)
   const map = new Map(); let off = 12
   for (let i = 0; i < count && off + rec <= buf.length; i++) {
     const id = buf.readUInt32LE(off); off += 4
@@ -240,6 +250,11 @@ function baseText(t) {
   if (t.album) lines.push(`album: ${String(t.album).trim()}${t.year ? ` (${t.year})` : ''}`)
   else if (t.year) lines.push(`year: ${t.year}`)
   if (t.genre) lines.push(`genre: ${String(t.genre).trim()}`)
+  // ⚠️ TWIN: src/main/ai/embeddings.ts buildEmbeddingText — members line.
+  // Group membership from artist-members.json (MusicBrainz-grounded):
+  // "Huncho Jack" → Quavo, Travis Scott (Jake, 2026-09-04).
+  const members = (t.members || []).map(m => String(m).trim()).filter(m => m && m.toLowerCase() !== String(t.artist || '').trim().toLowerCase())
+  if (members.length) lines.push(`members: ${members.join(', ')}`)
   const sg = subgenreText(t); if (sg) lines.push(sg)
   const te = tempoEnergy(t); if (te) lines.push(te)
   const r = Number(t.rating) || 0, p = Number(t.playCount) || 0, sig = []
@@ -376,6 +391,27 @@ const NUMERIC_OVERRIDE_FIELDS = new Set([
   'bpm', 'audioAnalysisAt', 'keyConfidence',
 ])
 
+/**
+ * Attach group members to tracks from STATE_DIR/artist-members.json
+ * (scripts/artist-members.mjs, grounded in MusicBrainz). Missing file = no
+ * members anywhere; the text is unchanged for every track.
+ */
+function applyArtistMembers(tracks) {
+  const MEMBERS = join(STATE_DIR, 'artist-members.json')
+  let m = {}
+  try { m = JSON.parse(readFileSync(MEMBERS, 'utf8')) } catch { return 0 }
+  const fold = (x) => String(x || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  const byTag = new Map()
+  for (const [tag, v] of Object.entries(m)) if (v && Array.isArray(v.members) && v.members.length) byTag.set(fold(tag), v.members)
+  let n = 0
+  for (const t of tracks) {
+    const members = byTag.get(fold(t.artist)) || byTag.get(fold(t.albumArtist))
+    if (members) { t.members = members; n++ }
+  }
+  log(`artist members: ${byTag.size} group(s) known, ${n} track(s) carry members`)
+  return n
+}
+
 function applyMetadataOverrides(tracks) {
   if (!existsSync(OVERRIDES)) return
   let ov
@@ -408,11 +444,81 @@ function applyMetadataOverrides(tracks) {
  *  money and saved nothing. Up here it cannot be shadowed by execution order. */
 const TEMPO_ENCODING_VERSION = 3   // v3: omit low-confidence key/Camelot from embed text
 
+// Remove vibe vectors whose track has left the library (ask #1 of the nightly
+// brain exercise, PROPOSAL-mood-import-clobber.md fix 2). Identity-gated and
+// capped by planMoodPrune: a short/torn library read refuses instead of
+// deleting. Pre-prune copy kept at mood-index.bin.prune.bak (one-night undo);
+// every pruned id is appended to brain-prune-ledger.jsonl. A pruned track that
+// comes back gets its vector re-made by moodGapFill below.
+function pruneMoodOrphans(tracks, { anyway = false } = {}) {
+  if (!existsSync(MOOD)) return 0
+  let backedUp = false
+  try {
+    const mmap = readMood()
+    const before = mmap.size
+    let prune
+    if (anyway) {
+      const lib = new Set(tracks.map(t => Number(t.id)))
+      if (lib.size === 0) { log('mood-index prune REFUSED — library.json has no tracks'); return 0 }
+      prune = [...mmap.keys()].filter(id => !lib.has(id))
+    } else {
+      const plan = planMoodPrune(mmap.keys(), tracks.map(t => t.id))
+      if (plan.refused) { log(`mood-index prune REFUSED — ${plan.refused}`); return 0 }
+      prune = plan.prune
+    }
+    if (!prune.length) return 0
+    copyFileSync(MOOD, MOOD + '.prune.bak'); backedUp = true
+    for (const id of prune) mmap.delete(id)
+    writeEmb(MOOD, mmap)
+    const check = readEmb(MOOD)
+    if (check.dim !== EMBED_DIM || check.map.size !== before - prune.length) {
+      throw new Error(`verify failed: dim=${check.dim} count=${check.map.size} (expected ${before - prune.length})`)
+    }
+    appendFileSync(join(STATE_DIR, 'brain-prune-ledger.jsonl'), JSON.stringify({ at: new Date().toISOString(), index: 'mood-index.bin', before, after: check.map.size, ids: prune }) + '\n')
+    log(`mood-index prune: removed ${prune.length} vector(s) for tracks no longer in the library (${before} → ${check.map.size}); undo copy at mood-index.bin.prune.bak`)
+    return prune.length
+  } catch (e) {
+    log('mood-index prune FAILED —', e.message, backedUp ? '— restoring the pre-prune copy' : '— nothing was changed')
+    if (backedUp) { try { copyFileSync(MOOD + '.prune.bak', MOOD) } catch { /* keep going */ } }
+    return 0
+  }
+}
+
+// Self-heal: an in-library track that already has a Gemma descriptor but no
+// vibe vector (pruned while it was briefly out of the library, or lost to an
+// old clobber) would otherwise never get one back — the nightly pass only
+// writes vectors for tracks it describes THAT night. Capped; usually 0.
+async function moodGapFill(tracks, desc) {
+  if (!existsSync(MOOD)) return 0
+  const GAP_CAP = Number(process.env.BRAIN_MOOD_GAP_CAP) || 200
+  const mmap = readMood()
+  const entries = tracks
+    .filter(t => (t.artist || t.title) && desc[String(t.id)]?.d && !mmap.has(Number(t.id)))
+    .slice(0, GAP_CAP)
+    .map(t => ({ id: t.id, text: moodText(t, desc[String(t.id)].d) }))
+    .filter(e => e.text)
+  if (!entries.length) return 0
+  return updateMoodIndex(entries, 'gap-fill')
+}
+
+// The NAS can be slow to come back after a power blip; the trainer used to
+// FATAL at 2:00 and lose the night (9 nights in a row, 9/27-10/5). Wait for
+// the state dir, checking each minute, before giving up.
+async function waitForStateDir() {
+  const minutes = Number(process.env.BRAIN_MOUNT_WAIT_MIN ?? 60)
+  for (let i = 0; i < minutes && !(existsSync(LIB) && existsSync(EMB)); i++) {
+    if (i === 0) log(`state dir not there yet (${STATE_DIR}) — waiting up to ${minutes} min for the NAS`)
+    await new Promise(r => setTimeout(r, 60_000))
+  }
+}
+
 async function main() {
+  await waitForStateDir()
   if (!existsSync(LIB) || !existsSync(EMB)) fatal(`library.json or embeddings.bin missing under ${STATE_DIR} — is the NAS mounted?`)
   const libRaw = JSON.parse(readFileSync(LIB, 'utf8'))
   const tracks = Array.isArray(libRaw) ? libRaw : (libRaw.tracks || [])
   applyMetadataOverrides(tracks)
+  applyArtistMembers(tracks)
   const { map, dim } = readEmb(EMB)
   if (dim !== EMBED_DIM) fatal(`embeddings dim ${dim} != ${EMBED_DIM}`)
   const startCount = map.size
@@ -429,13 +535,25 @@ async function main() {
   // all. A health file that overstates itself is worse than none; this is the
   // same trap the tempo-catchup log line was rewritten to avoid.
   //
-  // Deliberately NOT pruning the orphans. library.json is on the NAS and has
+  // Deliberately NOT pruning the orphan DESCRIPTORS. (The mood-index prune
+  // below is separate and capped by planMoodPrune for exactly this reason.)
+  // library.json is on the NAS and has
   // been observed torn mid-write; a transiently short read would make this
   // delete descriptors permanently. Counting honestly is free and safe —
   // reclaiming the space is a separate, deliberate job.
   const libIds = new Set(tracks.map(t => String(t.id)))
   const enrichedCount = () => Object.keys(desc).reduce((n, k) => n + (libIds.has(k) ? 1 : 0), 0)
   const orphanCount = () => Object.keys(desc).length - enrichedCount()
+
+  // Mood-index hygiene, every run (including the quiet "nothing to do" nights):
+  // prune vectors for tracks that left the library, then re-make any missing
+  // vector for a described track that is in it.
+  if (process.argv.includes('--prune-mood-orphans-anyway')) {
+    pruneMoodOrphans(tracks, { anyway: true })
+    return
+  }
+  pruneMoodOrphans(tracks)
+  await moodGapFill(tracks, desc)
 
   // Grounded lyrics sidecar (written by scripts/lyrics-fetch.mjs, mirrored from
   // the laptop). lyricTextFor returns the plain lyric text (synced cues stripped)
@@ -603,6 +721,31 @@ async function main() {
   const tempoStale = (t, e) => {
     if (e.te !== TEMPO_ENCODING_VERSION) return true
     return Math.abs((Number(t.bpm) || 0) - (Number(e.teb) || 0)) > TEMPO_DRIFT
+  }
+  // `--reembed-artists=Huncho Jack,The Beatles` — re-embed those artists'
+  // tracks now (their text gained a members line) and stop. Same backup +
+  // verify discipline as the tempo catch-up below.
+  const raFlag = process.argv.find(a => a.startsWith('--reembed-artists='))
+  if (raFlag) {
+    const fold = (x) => String(x || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+    const want = new Set(raFlag.slice('--reembed-artists='.length).split(',').map(fold).filter(Boolean))
+    const byArtist = tracks.filter(t => want.has(fold(t.artist)) || want.has(fold(t.albumArtist)))
+    const sel = byArtist.filter(t => desc[String(t.id)])
+    const unenriched = byArtist.length - sel.length
+    if (unenriched) log(`reembed-artists: ${unenriched} matching track(s) have no descriptor yet — the nightly enrich pass embeds them WITH their members line; nothing to redo here`)
+    if (!sel.length) { log(`reembed-artists: nothing to re-embed (${byArtist.length} matched by artist)`); return }
+    log(`reembed-artists: ${sel.length} track(s) for ${[...want].join(', ')}`)
+    const vecs = await openaiEmbed(sel.map(t => enrichedText(t, desc[String(t.id)].d, desc[String(t.id)].m)))
+    copyFileSync(EMB, EMB + '.bak')
+    let cn = 0
+    for (let i = 0; i < sel.length; i++) { const v = vecs[i]; if (v) { map.set(Number(sel[i].id), v); cn++ } }
+    writeEmb(EMB, map)
+    try {
+      const check = readEmb(EMB)
+      if (check.dim !== EMBED_DIM || check.map.size < startCount) throw new Error(`verify failed: count=${check.map.size}`)
+    } catch (e) { log('reembed-artists VERIFY FAILED —', e.message, '— restoring backup'); copyFileSync(EMB + '.bak', EMB); process.exit(1) }
+    log(`reembed-artists: re-embedded ${cn}. Sample text:\n${enrichedText(sel[0], desc[String(sel[0].id)].d, desc[String(sel[0].id)].m)}`)
+    return
   }
   const needTempo = tracks.filter(t => (Number(t.bpm) || 0) > 0 && desc[String(t.id)] && tempoStale(t, desc[String(t.id)])).slice(0, CATCHUP_CAP)
   if (needTempo.length && !process.argv.includes('--meaning-catchup')) {   // --meaning-catchup isolates meaning: no tempo re-embeds to confound a before/after eval

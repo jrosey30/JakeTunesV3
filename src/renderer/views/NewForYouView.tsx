@@ -119,8 +119,9 @@ export default function NewForYouView() {
     if (tracks.length) playTrack(tracks[0], tracks, 0, undefined, true)
   }
 
-  const load = async (force = false) => {
-    setLoading(true); setError(null)
+  const load = async (force = false, quiet = false) => {
+    if (!quiet) setLoading(true)
+    setError(null)
     try {
       const r = await window.electronAPI.getDiscoverFeed?.(force)
       if (r?.ok && r.lanes) {
@@ -143,7 +144,14 @@ export default function NewForYouView() {
       pendingFeed = null
       return
     }
-    if (feedCache === null) void load()
+    // ALWAYS refetch on arrival (2026-08-28): the module cache used to be
+    // trusted forever, so a regen that finished while another view was open
+    // was never heard (the updated-push only subscribes while mounted) and
+    // the shop stayed stale until relaunch — "yeah no i dont see it...."
+    // Arrival IS "between visits", so adopting the newest feed here never
+    // reshuffles anything under the cursor; quiet keeps the seeded page
+    // from flashing a spinner.
+    void load(false, feedCache !== null)
   }, [])
 
   // A stale feed serves instantly; when the background refresh lands, only
@@ -231,12 +239,23 @@ export default function NewForYouView() {
   // Shelf quotas (Jake: 'some genre's shouldnt have 7 picks and others 2
   // and 1'): each shelf shows its best ~6; too-thin bins fold into a
   // single 'More Finds' shelf at the end.
-  const binSections = applyBinQuotas(
-    lanes.flatMap((l) => l.cards).map((c) => ({ ...c, bin: c.bin ?? binForGenre(c.genre) })),
-  )
+  // The daily 25/25 gets its own UNCAPPED shelves (2026-08-28): the genre
+  // shelves cap at ~6 by brain score, and the quota cards were losing that
+  // contest invisibly — the feed held 25/25 for days while the page showed
+  // none of it ("yeah no i dont see it...."). The quota is THE feature; it
+  // renders whole, first, and the curated genre crates follow.
+  const freshLane = (id: string) => lanes.find((l) => l.id === id)?.cards ?? []
+  const binSections = [
+    { bin: "Today's 25 New Records", cards: freshLane('fresh-albums') },
+    { bin: "Today's 25 New Songs", cards: freshLane('fresh-songs') },
+  ].filter((sec) => sec.cards.length > 0).concat(applyBinQuotas(
+    lanes.filter((l) => l.id !== 'fresh-albums' && l.id !== 'fresh-songs')
+      .flatMap((l) => l.cards).map((c) => ({ ...c, bin: c.bin ?? binForGenre(c.genre) })),
+  ))
 
   const SHOP_NAMES: Record<string, string> = {
     'brand-new': 'New', 'scene': 'Scene', 'missing': 'Gap', 'time-machine': 'Used', 'songs': 'Single',
+    'fresh-albums': 'New', 'fresh-songs': 'New',
   }
   const laneReason = (c: FeedCard): string | null => {
     switch (c.lane) {
@@ -245,6 +264,8 @@ export default function NewForYouView() {
       case 'scene': return 'From the scene around your library'
       case 'missing': return 'A gap in a genre you play'
       case 'songs': return 'One song to try'
+      case 'fresh-albums': return c.because ? `Not in your library — via ${c.because}` : 'Not in your library'
+      case 'fresh-songs': return c.because ? `Not in your library — via ${c.because}` : 'Not in your library'
       default: return null
     }
   }

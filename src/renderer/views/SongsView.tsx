@@ -1,4 +1,5 @@
 import { useCallback, useState, useEffect, useLayoutEffect, useRef, useMemo, memo, useSyncExternalStore } from 'react'
+import { flushSync } from 'react-dom'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
@@ -33,7 +34,7 @@ import type { SortColumn, Track } from '../types'
 import { setNotice } from '../activity'
 import EmptyState from '../components/EmptyState'
 import '../styles/songs.css'
-import { addToPlaylistEntry } from '../utils/playlistMenu'
+import { addToPlaylistEntry, addToIpodPoolEntry } from '../utils/playlistMenu'
 
 function formatDuration(ms: number): string {
   if (!ms || ms <= 0) return ''
@@ -344,8 +345,15 @@ export default function SongsView() {
   // value so the FIRST render computes startIndex/endIndex correctly.
   // Pair with useScrollPersistence(key, containerRef) which then keeps
   // both DOM scrollTop and the cache in sync.
+  // 2026-08-26 overscan, tuned WITH flushSync below — the two trade off.
+  // flushSync renders the new window in the same frame, which removes the
+  // blank band; but it also makes every scroll event pay for the whole slice.
+  // Measured at 44: 129 rows for 41 visible, median frame 17.8ms (over the
+  // 16.7ms 60fps budget), worst 26.5ms — a continuous scrollbar drag dropped
+  // frames and read as stutter. 14 keeps ~1.7x coverage at roughly half the
+  // per-frame work. (useVirtualScroll is Do-Not-Touch; this is its argument.)
   const { startIndex, endIndex, totalHeight, offsetY, containerRef, onScroll } = useVirtualScroll(
-    sorted.length, ROW_HEIGHT, 10, getSavedScrollTop('songs'),
+    sorted.length, ROW_HEIGHT, 14, getSavedScrollTop('songs'),
   )
   useScrollPersistence('songs', containerRef)
   // 4.4.27: removed useElasticOverscroll — let macOS provide the
@@ -533,6 +541,7 @@ export default function SongsView() {
       { label: `Play Next`, onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selectedTracks }) },
       { label: `Add to Up Next`, onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selectedTracks }) },
       addToPlaylistEntry(selectedTracks, lib.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
+      addToIpodPoolEntry(selectedTracks),
       ...(getDeckState() ? [
         {
           label: `Lay on the tape (${selectedTracks.length} song${selectedTracks.length === 1 ? '' : 's'})`,
@@ -851,8 +860,47 @@ export default function SongsView() {
     idleTimerRef.current = setTimeout(followNowPlayingTop, FOLLOW_IDLE_MS)
   }, [followNowPlayingTop])
 
+// Blank-frame recorder (2026-08-26). Synthetic drags could not reproduce what
+// Jake sees, so measure the real one: what fraction of the visible box is
+// covered by rows on the frame after a scroll. Reports a bad RUN once, with
+// numbers, instead of spamming per frame.
+let blankRun = 0, blankWorst = 100, blankLastReport = 0
+function scrollBlankProbe(sc: HTMLDivElement | null): void {
+  if (!sc) return
+  requestAnimationFrame(() => {
+    const cr = sc.getBoundingClientRect()
+    if (cr.height < 50) return
+    let top = Infinity, bot = -Infinity
+    for (const r of sc.querySelectorAll('.songs-row')) {
+      const b = (r as HTMLElement).getBoundingClientRect()
+      if (b.bottom < cr.top || b.top > cr.bottom) continue
+      if (b.top < top) top = b.top
+      if (b.bottom > bot) bot = b.bottom
+    }
+    const pct = isFinite(top)
+      ? Math.round((100 * Math.max(0, Math.min(bot, cr.bottom) - Math.max(top, cr.top))) / cr.height)
+      : 0
+    if (pct < 70) {
+      blankRun++
+      if (pct < blankWorst) blankWorst = pct
+    } else if (blankRun > 0) {
+      const now = Date.now()
+      if (now - blankLastReport > 3000) {
+        blankLastReport = now
+        console.warn(`[dx.scroll-blank] ${blankRun} frame(s) under 70% covered, worst ${blankWorst}% — scrollTop=${Math.round(sc.scrollTop)} rows=${sc.querySelectorAll('.songs-row').length}`)
+      }
+      blankRun = 0; blankWorst = 100
+    }
+  })
+}
+
   const handleScroll = useCallback((_e: React.UIEvent<HTMLDivElement>) => {
-    onScroll()
+    // See the note above the useVirtualScroll call: React batches this state
+    // update, so a fast scroll leaves the translated row block at the previous
+    // offset and the viewport goes blank until it catches up. Render it in the
+    // same frame as the scroll event.
+    flushSync(() => { onScroll() })
+    scrollBlankProbe(containerRef.current)
     // Skip activity update if this scroll was triggered by our own
     // auto-follow (within 200ms of the programmatic scrollTop write).
     if (Date.now() - isAutoScrollAtRef.current > 200) {

@@ -14,6 +14,7 @@
 import type { MenuEntry } from '../components/ContextMenu'
 import type { Playlist, Track } from '../types'
 import { setNotice } from '../activity'
+import { addTracksToPoolDirect } from '../activityPool'
 
 /** iPod-imported playlists whose names duplicate the built-in smart playlists.
  *  The sidebar hides them, and they're rule-driven, so a manual add would be
@@ -86,5 +87,20 @@ export function addToPlaylistEntry(
         },
       }
     }),
+  }
+}
+
+/**
+ * "Add to iPod Pool" (2026-09-02) — the iPod-free way to start a pool.
+ * Jake didn't want a permanent sidebar fixture ("its still sitting there"),
+ * so the pool row only shows while a pool has songs; this entry is how the
+ * first songs get in. Sits directly under "Add to Playlist" in every view.
+ */
+export function addToIpodPoolEntry(tracks: Track[]): MenuEntry {
+  const n = tracks.length
+  return {
+    label: n === 1 ? 'Add to iPod Pool' : `Add ${n} songs to iPod Pool`,
+    disabled: n === 0,
+    onClick: () => { void addTracksToPoolDirect(tracks) },
   }
 }

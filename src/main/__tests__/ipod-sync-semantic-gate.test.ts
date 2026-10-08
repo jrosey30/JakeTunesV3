@@ -19,13 +19,15 @@ const card = readFileSync(join(mainDir, 'ipod-sync-card.ts'), 'utf-8')
 const origin = readFileSync(join(mainDir, 'ipod-sync-origin.ts'), 'utf-8')
 const verifier = readFileSync(join(mainDir, '../../core/tools/itdb_verify.py'), 'utf-8')
 const syncIpc = readFileSync(join(mainDir, 'ipc/sync-ipc.ts'), 'utf-8')
+const syncEngine = readFileSync(join(mainDir, 'sync-engine/index.ts'), 'utf-8')
 const deviceView = readFileSync(join(mainDir, '../renderer/views/DeviceView.tsx'), 'utf-8')
 const app = readFileSync(join(mainDir, '../renderer/App.tsx'), 'utf-8')
 
 test('Activity Sync is a dedicated engine; click-only origin is required', () => {
-  assert.match(index, /runActivitySync/)
-  assert.match(index, /origin === 'activity-click'/)
-  assert.match(index, /refuseIpodSyncUnlessUserClick/)
+  // P1C2: the routing moved verbatim into sync-engine/ — the lock follows it.
+  assert.match(syncEngine, /runActivitySync/)
+  assert.match(syncEngine, /origin === 'activity-click'/)
+  assert.match(syncEngine, /refuseIpodSyncUnlessUserClick/)
   assert.match(origin, /activity-click/)
   assert.match(origin, /full-library-click/)
   assert.match(deviceView, /origin: 'activity-click'/)
@@ -60,6 +62,25 @@ test('activity engine refuses a catalog row the Mini will not list', () => {
   assert.match(engine, /ipodFirmwareWillList/)
   assert.match(engine, /needsIpodAlacTranscode/)
   assert.match(engine, /ipodPlayableDestPath/)
+  // 2026-08-31 locks: the sync ledger must exist (picks + result entries),
+  // and card-only 8.3 stem shortenings must never be exported as library
+  // path rewrites (702-row corruption incident).
+  assert.match(engine, /activity-sync-ledger\.jsonl/)
+  assert.match(engine, /kind: 'picks'/)
+  assert.match(engine, /kind: 'result'/)
+  assert.match(engine, /ipodPathExtension\(rawColon\) !== ipodPathExtension\(destColon\)/)
+})
+
+test('catalog ids are conformed to firmware binary-search order before the md5 proof', () => {
+  // 2026-09-01: Mini 1.4.1 finds songs by binary search on mhit id — the
+  // 819-of-1000 root cause. Ids must be re-minted ascending in record
+  // order AFTER the artist sort and BEFORE the contiguity/md5 proof.
+  assert.match(engine, /conformCatalogIdOrder/)
+  const sort = engine.indexOf('orderForIpodCatalog(tracks)')
+  const conform = engine.indexOf('await conformCatalogIdOrder(localDb)')
+  const contig = engine.indexOf('await ensureContiguousDb(localDb, python)')
+  assert.ok(sort >= 0 && conform > sort, 'id conform must run after the artist sort')
+  assert.ok(contig > conform, 'id conform must run before the contiguity/md5 proof')
 })
 
 test('activity engine runs TSA by identity and does not auto-delete after the catalog', () => {
@@ -120,7 +141,8 @@ test('activity sync writes artists A–Z and fills copy misses so N means N', ()
   assert.match(engine, /stampIpodSortArtist/)
   assert.match(engine, /loadReplacementTracks/)
   assert.match(engine, /bindActivityReplacements/)
-  assert.match(index, /bindActivityReplacements/)
+  // The activity-sync host is wired in sync-engine/ (P1C2 cut), not index.ts.
+  assert.match(readFileSync(join(mainDir, 'sync-engine/index.ts'), 'utf-8'), /loadReplacementTracks: bindActivityReplacements\(/)
   assert.match(fill, /queueActivityCandidates/)
   assert.match(sort, /ipodArtistSortKey/)
   assert.match(sort, /ipodFirmwareFold/)

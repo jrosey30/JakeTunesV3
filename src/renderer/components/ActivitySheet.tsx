@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
+import { refreshPool, consumePoolModeRequest, usePoolHealth } from '../activityPool'
+import { useLibrary } from '../context/LibraryContext'
 import '../styles/activity-sheet.css'
 
 export type ActivityKind = 'bop' | 'run' | 'ski' | 'lift' | 'bike' | 'walk' | 'hike' | 'other'
@@ -17,6 +19,10 @@ export interface ActivityBrief {
   note?: string
   /** How many songs to put on the iPod this sync. Default 1,000. */
   target?: number
+  /** 'pool' = the hand-built iPod Pool is the set (2026-09-02). */
+  mode?: 'brain' | 'pool'
+  /** Pool mode: the brain tops the pool up to the target. */
+  poolFill?: boolean
 }
 
 interface SavedProfile extends ActivityBrief {
@@ -64,7 +70,24 @@ const DEFAULT: ActivityBrief = {
 }
 
 export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
-  const [brief, setBrief] = useState<ActivityBrief>(initial || DEFAULT)
+  const { state: lib } = useLibrary()
+  const [brief, setBrief] = useState<ActivityBrief>(() => {
+    // The pool page's "Sync this pool…" button asks for pool mode once.
+    const base = initial || DEFAULT
+    return consumePoolModeRequest() ? { ...base, mode: 'pool' } : base
+  })
+  // iPod Pool (2026-09-02) — WHO picks: Music Man, or Jake's hand-built pool.
+  useEffect(() => { void refreshPool() }, [])
+  const poolMode = brief.mode === 'pool'
+  const target = brief.target ?? DEFAULT_TARGET
+  // Counts what the sync will board — the same rule main applies (2026-09-19).
+  const poolHealthInfo = usePoolHealth(lib.tracks)
+  const poolIds = poolHealthInfo.syncable
+  const poolCount = poolIds.length
+  const poolUnsyncable = poolHealthInfo.dead.length + poolHealthInfo.concert.length + poolHealthInfo.unsyncable.length
+  const poolGap = target - poolCount
+  const poolOver = poolMode && poolCount > target
+  const poolEmpty = poolMode && poolCount === 0
   const [profiles, setProfiles] = useState<SavedProfile[]>([])
   const [weatherLine, setWeatherLine] = useState<string | null>(null)
   const [weatherBusy, setWeatherBusy] = useState(false)
@@ -117,10 +140,18 @@ export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
         <div className="activity-sheet-head">
           <h2 className="activity-sheet-title">What are you doing?</h2>
           <p className="activity-sheet-sub">
-            Music Man reads your taste — what you star and play most — and builds a set that fits both
-            you and what you’re doing. Songs land at your convert setting.
-            “Bopping Around” is everyday listening: hanging out, commuting, errands.
+            {poolMode
+              ? 'Your iPod Pool is the set — every song you dragged in, in the order you dropped it. Music Man only steps in if you ask it to fill the rest.'
+              : 'Music Man reads your taste — what you star and play most — and builds a set that fits both you and what you’re doing. Songs land at your convert setting. “Bopping Around” is everyday listening: hanging out, commuting, errands.'}
           </p>
+        </div>
+
+        <div className="activity-q">
+          <span className="activity-q-label">Who picks</span>
+          <div className="activity-chips">
+            <button type="button" className={`activity-chip${!poolMode ? ' is-on' : ''}`} onClick={() => set('mode', 'brain')}>Music Man</button>
+            <button type="button" className={`activity-chip${poolMode ? ' is-on' : ''}`} onClick={() => set('mode', 'pool')}>My iPod Pool{poolCount > 0 ? ` (${poolCount.toLocaleString()})` : ''}</button>
+          </div>
         </div>
 
         <div className="activity-q">
@@ -135,6 +166,20 @@ export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
               >{s.label}</button>
             ))}
           </div>
+          {poolMode && (
+            <div className={`activity-pool-status${poolOver || poolEmpty ? ' is-blocked' : ''}`}>
+              {poolEmpty && 'The pool is empty — right-click any song and choose “Add to iPod Pool”. Once it has songs, the pool shows in the sidebar and you can drag albums, artists and playlists onto it.'}
+              {poolOver && `${poolCount.toLocaleString()} in the pool — ${(poolCount - target).toLocaleString()} over ${target.toLocaleString()}. Remove some, or pick a bigger size. Nothing gets trimmed for you.`}
+              {!poolEmpty && !poolOver && poolGap === 0 && `${poolCount.toLocaleString()} in the pool — exactly ${target.toLocaleString()}. Ready.`}
+              {poolUnsyncable > 0 && <span className="activity-pool-warn"> {poolUnsyncable} pooled song{poolUnsyncable === 1 ? '' : 's'} can't sync — see the iPod Pool page.</span>}
+              {!poolEmpty && !poolOver && poolGap > 0 && (
+                <label className="activity-pool-fill">
+                  <input type="checkbox" checked={brief.poolFill === true} onChange={(e) => set('poolFill', e.target.checked)} />
+                  <span>{poolCount.toLocaleString()} in the pool · {poolGap.toLocaleString()} open — let Music Man fill the rest (2 per artist, counting the pool). Unchecked, {poolCount.toLocaleString()} syncs as-is.</span>
+                </label>
+              )}
+            </div>
+          )}
         </div>
 
         {profiles.length > 0 && (
@@ -223,8 +268,9 @@ export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
           <button
             type="button"
             className="activity-btn activity-btn--go"
+            disabled={poolOver || poolEmpty}
             onClick={() => onConfirm({ ...brief, place: brief.place.trim() || 'Brooklyn' })}
-          >Build set & sync</button>
+          >{poolMode ? (brief.poolFill && poolGap > 0 ? 'Fill & sync pool' : 'Sync pool') : 'Build set & sync'}</button>
         </div>
       </div>
     </div>

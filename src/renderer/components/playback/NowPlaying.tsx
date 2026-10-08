@@ -509,7 +509,11 @@ export default function NowPlaying() {
           </div>
           <div className="scrubber-row">
             <div className="activity-bar">
-              <div className="activity-bar-fill activity-bar-fill--indeterminate" />
+              {syn.total && syn.total > 0 ? (
+                <div className="activity-bar-fill" style={{ width: `${((syn.current ?? 0) / syn.total) * 100}%` }} />
+              ) : (
+                <div className="activity-bar-fill activity-bar-fill--indeterminate" />
+              )}
             </div>
           </div>
         </>

@@ -123,6 +123,18 @@ export async function persistEmbeddingsMap(): Promise<void> {
 // per-float writeFloatLE loop (12.8M calls at library scale — measured 20×
 // slower than bulk on the real 51MB file). LE float layout is unchanged —
 // arm64 is little-endian, so the bytes are identical.
+/**
+ * Replace the whole brain with an adopted copy (homemini's trained brain,
+ * merged by planBrainAdopt) and persist it. Swapping the in-memory cache
+ * first means a concurrent setEmbedding lands on the adopted map, not on
+ * the stale one. See src/main/brain-pull.ts.
+ */
+export async function adoptEmbeddingsMap(map: Map<number, Float32Array>): Promise<void> {
+  cache = map
+  await persistEmbeddingsMap()
+  try { cachedMtimeMs = (await stat(getEmbeddingsPath())).mtimeMs } catch { /* next get reloads */ }
+}
+
 export function serializeEmbeddingsBlob(map: Map<number, Float32Array>): Buffer {
   const recordSize = 4 + EMBED_DIM * 4
   const buf = Buffer.alloc(12 + map.size * recordSize)
@@ -145,6 +157,14 @@ export function serializeEmbeddingsBlob(map: Map<number, Float32Array>): Buffer 
 // vectors vs 30ms of per-float reads — and the views share the one buffer
 // instead of duplicating 50MB of copies. Callers may freely mix in
 // standalone Float32Arrays via setEmbedding.
+// ⚠️ TWIN: scripts/brain-trainer.mjs readEmb and
+// ~/JakeTunesMobile/backend/src/util/rag.ts parse this same format.
+// KNOWN HOLE (2026-08-25): the loop below silently tolerates a truncated
+// buffer (short SMB read ⇒ partial map with no error). In the trainer that
+// exact hole amputated 1280 vectors from the live brain; readEmb now throws
+// on truncation. This side still tolerates it because both callers feed a
+// long-lived cache that later write paths replay — the safe fix needs
+// caller-by-caller analysis first. See PROPOSAL-truncated-read-guard.md.
 export function parseEmbeddingsBlob(buf: Buffer): Map<number, Float32Array> {
   const out = new Map<number, Float32Array>()
   if (buf.length < 12) return out
@@ -181,6 +201,10 @@ export interface EmbedTrackInput extends TempoEnergyInput {
   rating?: number
   subgenre?: string
   subgenrePath?: string
+  /// Members of a group act (artist-members.json, grounded in MusicBrainz):
+  /// Huncho Jack → Quavo, Travis Scott. Folded into the text so the brain
+  /// knows who is on the record (2026-09-04).
+  members?: string[]
 }
 
 // ⚠️ TWIN: scripts/brain-trainer.mjs subgenreText() — keep in sync. Folds the AI
@@ -201,6 +225,9 @@ export function buildEmbeddingText(t: EmbedTrackInput): string {
   if (album) lines.push(`album: ${album}${year ? ` (${year})` : ''}`)
   if (!album && year) lines.push(`year: ${year}`)
   if (genre) lines.push(`genre: ${genre}`)
+  // ⚠️ TWIN: scripts/brain-trainer.mjs baseText() — members line.
+  const members = (t.members || []).map((m) => String(m).trim()).filter((m) => m && m.toLowerCase() !== artist.toLowerCase())
+  if (members.length) lines.push(`members: ${members.join(', ')}`)
   const sg = subgenreText(t); if (sg) lines.push(sg)
   const te = tempoEnergyText(t); if (te) lines.push(te)
   const rating = Number(t.rating) || 0

@@ -37,6 +37,7 @@
  */
 
 import type { Track, Playlist, SmartPlaylistId } from '../types'
+import { isTop25Rankable } from '../../common/top25-rankable'
 import { buildTasteProfile, tasteScore } from './tasteScore'
 import { pickBestOfYear } from '../../common/best-of-year'
 
@@ -87,7 +88,7 @@ export function evaluateSmartPlaylist(id: SmartPlaylistId, tracks: Track[]): Tra
 
     case 'top-25':
       return [...tracks]
-        .filter(t => t.playCount > 0)
+        .filter(t => t.playCount > 0 && isTop25Rankable(t))
         .sort((a, b) => b.playCount - a.playCount)
         .slice(0, TOP_25_LIMIT)
 

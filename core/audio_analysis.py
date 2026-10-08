@@ -161,6 +161,14 @@ def _score_tempo_onsets(onset, sr: float, bpm: float, hop_length: int = 512) -> 
     return best if best > -1e8 else 0.0
 
 
+_IMPLAUSIBLE_FAST = 200.0
+_IMPLAUSIBLE_SLOW = 50.0
+# The band where an extractor's metrical level is trusted outright. Widened
+# past 160 would swallow punk/DnB; narrowed under 90 would swallow hip-hop.
+_ORDINARY_LOW = 60.0
+_ORDINARY_HIGH = 200.0
+
+
 def _arbitrate_bpm_octave(onset, sr: float, bpm: float, margin: float = _OCTAVE_MARGIN) -> float:
     """Choose bpm vs half vs double by tap-along onset score.
 
@@ -179,7 +187,7 @@ def _arbitrate_bpm_octave(onset, sr: float, bpm: float, margin: float = _OCTAVE_
             if not any(abs(cand - c) < 0.5 for c in cands):
                 cands.append(cand)
     if len(cands) == 1:
-        return round(bpm, 1)
+        return _plausibility_clamp(round(bpm, 1))
 
     scored = [(cand, _score_tempo_onsets(onset, sr, cand)) for cand in cands]
     # Prefer the measured tempo when scores are close — the extractor usually
@@ -187,9 +195,48 @@ def _arbitrate_bpm_octave(onset, sr: float, bpm: float, margin: float = _OCTAVE_
     # Quincy Jones. Only flip when an octave clearly taps better.
     measured_score = next((s for c, s in scored if abs(c - bpm) < 0.5), 0.0)
     best_cand, best_score = max(scored, key=lambda cs: cs[1])
+    # 2026-08-25 — the flip is now GATED on the measured tempo already being
+    # suspect. Measured against 40 tracks whose stored values are known good,
+    # this arbiter re-analysed 16 of them into a DIFFERENT octave: Pantera
+    # "Revolution Is My Name" 143 -> 71.5, Vanessa Carlton "A Thousand Miles"
+    # 95 -> 190, The Hives "Automatic Schmuck" 147 -> 73.5. Deterministic, and
+    # wrong every time. Onset-strength scoring simply cannot referee an octave
+    # when the halved grid lands on the same hits, and a bare margin let it
+    # overrule an extractor that was already right — a 40% corruption rate had
+    # anyone re-measured the library.
+    #
+    # Inside the ordinary band the extractor is trusted. Outside it we KNOW
+    # something is off, so the tap-along score gets to arbitrate.
+    if _ORDINARY_LOW <= bpm <= _ORDINARY_HIGH:
+        return _plausibility_clamp(round(bpm, 1))
     if best_score >= measured_score * margin and abs(best_cand - bpm) >= 0.5:
-        return round(best_cand, 1)
-    return round(bpm, 1)
+        return _plausibility_clamp(round(best_cand, 1))
+    return _plausibility_clamp(round(bpm, 1))
+
+
+# 2026-08-25 (Jake: "PATCHWORK BY WESTSIDE COWBOY IS 247 BPM?????????").
+# Onset scoring cannot break an octave tie when the halved grid lands on the
+# SAME hits — four-on-the-floor is the pathological case, and a doubled rock
+# tempo is its mirror. When it cannot tell, it keeps what was measured, and
+# the library ended up with 15 tracks above 200 BPM. Every one was exactly
+# double a real tempo: Westside Cowboy "Patchwork" 247 (~123), The Cars
+# "My Best Friend's Girl" 242 (~121), Maribou State "Otherside" 248 (~124),
+# Simple Plan "I'm Just a Kid" 220 (~110).
+#
+# So: a last, GENRE-FREE sanity rule. Recorded music essentially does not sit
+# above 200 or below 50 BPM; when a value does AND folding it once lands
+# squarely in the ordinary band, the fold is the answer. Deliberately narrow —
+# 160-199 is left alone because punk, DnB and hardcore genuinely live there,
+# and the genre-guessing repair script wanted to push blink-182 to 191-204
+# (First Date is ~158), which is exactly the over-correction to avoid.
+
+
+def _plausibility_clamp(bpm: float) -> float:
+    if bpm > _IMPLAUSIBLE_FAST and _ORDINARY_LOW <= bpm / 2.0 <= _ORDINARY_HIGH:
+        return round(bpm / 2.0, 1)
+    if 0 < bpm < _IMPLAUSIBLE_SLOW and _ORDINARY_LOW <= bpm * 2.0 <= _ORDINARY_HIGH:
+        return round(bpm * 2.0, 1)
+    return bpm
 
 
 def _bpm_from(y, sr) -> float:

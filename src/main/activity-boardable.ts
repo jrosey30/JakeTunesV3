@@ -67,8 +67,34 @@ export function formatSyncSetStreamedRefuse(streamed: string[], total: number): 
   return `Activity sync refused — ${streamed.length} of ${total} songs are streamed off the NAS (not downloaded locally). Pin/download them first. Nothing was wiped. They are: ${formatNamedList(streamed)}`
 }
 
-export function formatHomeminiPullRefuse(failed: string[], total: number): string {
-  return `Activity sync refused — ${failed.length} of ${total} songs could not be pulled from homemini. Nothing was wiped. They are: ${formatNamedList(failed)}`
+/**
+ * A refused sync must still record what it LEARNED (2026-08-25).
+ *
+ * Jake: "it refused 1000 because of cassius??" Four library rows had no audio
+ * anywhere — no local file, no NAS copy, homemini 404 — leftovers from a failed
+ * 2026-08-07..09 import. The picker chose one, the pull 404'd, and the whole
+ * 1000-song set was refused. The REFUSAL is correct: N means N, and a short
+ * catalog is how 500 became 486.
+ *
+ * The defect was that refusing taught the app nothing. `audioMissing` — the
+ * flag filterActivityBoardableTracks already drops on — is otherwise stamped
+ * only by the POST-sync verifier, which needs a sync that SUCCEEDS. So a ghost
+ * blocked every future sync, forever, and could never be flagged. (It also
+ * explains why 500 worked and 1000 did not: four dead rows in 9,785 are ~5%
+ * likely to be drawn at 500 and ~10% at 1000.)
+ *
+ * The pull is the ONLY place that learns a track cannot be sourced, so its
+ * refusal now carries the dead ids back as verificationUpdates and the renderer
+ * flags them. A dead row may cost one sync; it may not cost every sync.
+ */
+export function formatHomeminiPullRefuse(
+  failed: string[],
+  total: number,
+  opts: { lead?: string; nothingVerb?: string } = {},
+): string {
+  const lead = opts.lead ?? 'Activity sync refused'
+  const nothing = opts.nothingVerb ?? 'Nothing was wiped.'
+  return `${lead} — ${failed.length} of ${total} songs could not be pulled from homemini. ${nothing} They are: ${formatNamedList(failed)}`
 }
 
 export interface ActivityPullNeeded {
@@ -79,19 +105,35 @@ export interface ActivityPullNeeded {
 
 export async function classifyActivitySyncTracks(
   tracks: Array<Record<string, unknown>>,
-  opts: { localMount: string; pathSep: string; lstat: LstatLike },
+  opts: {
+    localMount: string
+    pathSep: string
+    lstat: LstatLike
+    /**
+     * Full-library sync only. A track already stamped `audioMissing` has no
+     * audio on this Mac, on homemini or on the NAS — re-pulling it 404s and
+     * the whole sync refuses, forever, over a handful of dead rows (10 of
+     * 10,595 on 2026-09-07). With this on they are reported as
+     * `unsourceable` and left out of the set instead of blocking it.
+     * The activity paths do NOT pass it: an N-song set must stay exactly N,
+     * so there a dead track still refuses the run.
+     */
+    skipKnownMissing?: boolean
+  },
 ): Promise<{
   blanks: string[]
   fileless: string[]
   streamed: string[]
   missing: string[]
   toPull: ActivityPullNeeded[]
+  unsourceable: Array<{ id: number; label: string }>
 }> {
   const blanks: string[] = []
   const fileless: string[] = []
   const streamed: string[] = []
   const missing: string[] = []
   const toPull: ActivityPullNeeded[] = []
+  const unsourceable: Array<{ id: number; label: string }> = []
   for (const t of tracks) {
     const title = String(t.title || '').trim()
     const artist = String(t.artist || '').trim()
@@ -103,6 +145,10 @@ export async function classifyActivitySyncTracks(
     const kind = await classifyLocalLibraryFile(colon, opts)
     const label = `${title} — ${artist}`
     if (kind === 'ok') continue
+    if (opts.skipKnownMissing && t.audioMissing === true) {
+      unsourceable.push({ id: Number(t.id), label })
+      continue
+    }
     if (kind === 'streamed' || kind === 'missing') {
       toPull.push({ id: Number(t.id), path: colon, label })
       if (kind === 'streamed') streamed.push(label)
@@ -112,7 +158,7 @@ export async function classifyActivitySyncTracks(
     if (kind === 'no-path') fileless.push(`${label} (no path)`)
     else fileless.push(`${label} (no local file: ${colon})`)
   }
-  return { blanks, fileless, streamed, missing, toPull }
+  return { blanks, fileless, streamed, missing, toPull, unsourceable }
 }
 
 export interface ActivityBoardableTrack {

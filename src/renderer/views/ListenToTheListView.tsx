@@ -28,7 +28,7 @@ import { useItunesAutocomplete } from '../listen-to-the-list/useItunesAutocomple
 import { useListenToTheList } from '../listen-to-the-list/useListenToTheList'
 import type { AddFormState } from '../listen-to-the-list/useListenToTheList'
 import {
-  canDownloadReco, getLtlDownloadSnapshot, prefillDownloadView,
+  canDownloadReco, getLtlDownloadSnapshot, prefillDownloadView, openBrowse,
   queueRecoDownload, subscribeLtlDownload, type LtlDownloadStatus,
 } from '../listen-to-the-list/ltlDownload'
 import '../styles/listen-to-the-list.css'
@@ -166,11 +166,17 @@ export default function ListenToTheListView() {
     togglePreview(r.id, r.previewUrl, r.matchedTitle || r.song || r.album || 'Preview', r.matchedArtist || r.artist || '')
   }, [])
 
+  // Songs queue on the one scheduler; an album has to have its EDITION picked
+  // in the catalogue first (the tracklist in Download), and an artist-only
+  // jot or a concert is browsed there — never downloaded blind.
   const getReco = useCallback((r: Recommendation) => {
     if (!canDownloadReco(r)) return
     const f = friendOf(r)
     if (f) void window.electronAPI.friendEvent?.(f, 'got')
-    queueRecoDownload(r)
+    const d = queueRecoDownload(r)
+    if (d.kind === 'select-edition') { prefillDownloadView(r, 'album'); openBrowse(dispatch) }
+    else if (d.kind === 'browse-only') { prefillDownloadView(r, 'song'); openBrowse(dispatch) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const commitToss = useCallback((r: Recommendation) => {
@@ -257,7 +263,7 @@ export default function ListenToTheListView() {
     const f = friendOf(rec)
     if (f) void window.electronAPI.friendEvent?.(f, 'got')
     prefillDownloadView(rec, recoType(rec) === 'album' ? 'album' : 'song')
-    dispatch({ type: 'SET_VIEW', view: 'download' })
+    openBrowse(dispatch)
   }
 
   // ── Standings (2026-08-05, Jake: "i want the friends area to look like
@@ -357,7 +363,7 @@ export default function ListenToTheListView() {
     <div className="ltl-view ltl-view--v3" ref={ltlPageRef}>
       <div className="ltl-header">
         <div className="ltl-header-titles">
-          <h1 className="ltl-title">Listen to the List</h1>
+          <h1 className="ltl-title">Listen List</h1>
           <span className="ltl-progress">
             {inboxFlat.length > 0 ? `${inboxFlat.length} to decide` : recs.length > 0 ? 'Inbox zero ✓' : ''}
           </span>

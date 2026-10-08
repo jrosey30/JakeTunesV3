@@ -7,11 +7,14 @@
  * owns the denser *surface* channels whose logic is already injectable.
  */
 import { join } from 'path'
+import { suppressListeningWrites } from '../dev-review.ts'
 import { mkdir, readFile, writeFile } from 'fs/promises'
 import type { Message, MessageCreateParamsNonStreaming } from '@anthropic-ai/sdk/resources/messages'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { STATE_DIR } from '../state-dir.ts'
+import { recordPlaylistSave, tombstonesPath } from '../playlist-tombstones.ts'
+import { stampModifiedPlaylists, schedulePlaylistHubConverge } from '../playlist-hub-sync.ts'
 import { safeIpcError } from '../safe-ipc-error.ts'
 import {
   computeArtistCandidates,
@@ -127,14 +130,15 @@ export function registerLibraryIpc(ipc: IpcRegistrar, host: LibraryIpcHost): voi
 
   ipc.handle('get-listening-memory', async () => getListeningMemory(), { public: true })
 
+  // Review mode (JT_DEV_REVIEW=1): listening activity is acknowledged, not written.
   ipc.handle('record-play', async (_event, track: { title: string; artist: string; album: string; genre: string; pct?: number }) =>
-    recordPlay(track), { refuse: undefined })
+    suppressListeningWrites() ? { ok: true, suppressed: 'dev-review' } : recordPlay(track), { refuse: undefined })
 
   ipc.handle('record-skip', async (_event, track: { title: string; artist: string; pct?: number }) =>
-    recordSkip(track), { refuse: undefined })
+    suppressListeningWrites() ? { ok: true, suppressed: 'dev-review' } : recordSkip(track), { refuse: undefined })
 
   ipc.handle('record-rating', async (_event, track: { title: string; artist: string; album: string; rating: number }) =>
-    recordRating(track), { refuse: undefined })
+    suppressListeningWrites() ? { ok: true, suppressed: 'dev-review' } : recordRating(track), { refuse: undefined })
 
   ipc.handle('load-playlists', async () => {
     return { ok: true, playlists: await host.getPlaylists() }
@@ -146,8 +150,20 @@ export function registerLibraryIpc(ipc: IpcRegistrar, host: LibraryIpcHost): voi
       console.warn(`[save-playlists] refused (saves locked): ${lockReason}`)
       return { ok: false, error: 'state-save-locked', reason: lockReason }
     }
-    host.setPlaylists(playlists)
+    // Deletion ledger (2026-08-28): the diff between consecutive saves IS the
+    // delete event — a dropped ID becomes a tombstone so no sync path can
+    // resurrect it ("existence is not memory"). Fire-and-forget: a ledger
+    // failure must never fail the save.
+    const prev = (await host.getPlaylists()) as Array<{ id?: unknown; name?: unknown }>
+    // Hub stamps (final-form sync): content changed → modifiedAt = now,
+    // untouched → carry the previous stamp. The renderer never sees stamps;
+    // this diff is where they're minted.
+    const stamped = stampModifiedPlaylists(prev as never, playlists as never)
+    host.setPlaylists(stamped)
     host.triggerSync('playlist')
+    void recordPlaylistSave(prev, playlists as Array<{ id?: unknown }>, tombstonesPath(STATE_DIR))
+      .catch((err) => console.warn('[playlist-tombstones] record failed:', err))
+    schedulePlaylistHubConverge()
     return { ok: true }
   }, { refuse: REFUSED_SENDER })
 

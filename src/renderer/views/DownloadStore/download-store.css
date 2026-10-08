@@ -780,7 +780,52 @@
 .dl-queue-art { width: 22px; height: 22px; border-radius: 3px; flex: none; object-fit: cover; box-shadow: 0 1px 2px rgba(0,0,0,0.25); }
 .dl-queue-name { font-weight: var(--fw-bold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; }
 .dl-queue-name--idle { color: var(--text-dim); font-weight: var(--fw-normal); }
-.dl-queue-name--err { color: var(--color-danger); font-weight: var(--fw-medium); max-width: 420px; }
+.dl-queue-name--err { color: var(--color-danger); font-weight: var(--fw-semibold); max-width: 420px; min-width: 0; }
+.dl-queue-name-sub { color: var(--text-secondary); font-weight: var(--fw-normal); }
+/* 6.0 Phase 1 — the failure reason is a real panel, not a hover. */
+.dl-queue-details-btn {
+  flex: none;
+  height: 20px;
+  padding: 0 8px;
+  font-size: var(--font-10);
+  font-weight: var(--fw-semibold);
+  color: #333;
+  border: 1px solid #a3a3a3;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #fcfcfc, #e6e6e6);
+  cursor: pointer;
+}
+.dl-queue-details-btn:hover { background: linear-gradient(180deg, #ffffff, #dedede); }
+.dl-queue-details-btn:focus-visible { outline: none; box-shadow: var(--ring-focus); }
+.dl-queue-details {
+  margin: 0 16px 8px;
+  padding: 8px 10px;
+  border: 1px solid #c8c8c8;
+  border-radius: 5px;
+  background: var(--surface-content);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.06);
+  max-height: 260px;
+  overflow: auto;
+}
+.dl-queue-detail + .dl-queue-detail { margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(0, 0, 0, 0.08); }
+.dl-queue-detail-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dl-queue-detail-status { flex: none; color: var(--color-danger); font-weight: var(--fw-bold); font-size: var(--font-11); }
+.dl-queue-detail-req { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--font-11); color: var(--text-secondary); }
+.dl-queue-detail-head .download-retry { flex: none; }
+.dl-queue-detail-status--done { color: var(--color-success); }
+.dl-queue-detail-facts { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 3px; font-size: var(--font-11); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.dl-queue-detail-text {
+  margin: 6px 0 0;
+  font: inherit;
+  font-size: var(--font-11);
+  line-height: 1.45;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.dl-queue-detail-alts { margin: 6px 0 0; padding-left: 16px; font-size: var(--font-11); line-height: 1.45; }
+.dl-queue-detail-why { color: var(--text-secondary); }
+.download-retry--failed { max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dl-queue-bar { flex: 1; max-width: 200px; height: 4px; border-radius: 2px; background: rgba(0,0,0,0.11); overflow: hidden; }
 /* Indeterminate on purpose: streamrip reports no byte progress, so a filling
    bar would be a lie. This travels to say "working", and nothing more. */
@@ -1067,3 +1112,36 @@
 .dl-rel { overflow: hidden; }
 .dl-rel-facts { flex-wrap: wrap; row-gap: 3px; }
 .dl-rel-title, .dl-rel-sub { max-width: 100%; }
+
+/* Music Sources panel (shared by Preferences → Music Sources and the
+   Download setup drawer). In the drawer it is a grid item; in Preferences
+   the two cards stack. */
+.music-sources { display: grid; gap: 10px; }
+.dl-setup-grid > .music-sources { display: contents; }
+.settings-music-sources .dl-setup-card { margin: 0; }
+
+/* Record Shop → Browse (step 5 slice 4): the search field shares its row
+   with "Add by link"; no page heading, the tab is the heading. */
+.dl-field-row { display: flex; align-items: center; gap: var(--space-4); }
+.dl-field-row .dl-field { flex: 1; min-width: 0; }
+.download-view--browse .dl-bar { padding-top: var(--space-5); }
+.download-view--browse .dl-setup-grid { grid-template-columns: minmax(340px, 560px); }
+
+/* Missing-account notice (placement audit P3): under the search, actionable,
+   dismissable; browsing and previews carry on around it. */
+.dl-cred-notice {
+  display: flex; align-items: center; gap: var(--space-4);
+  margin: var(--space-4) var(--space-8) 0; padding: var(--space-3) var(--space-4);
+  font-size: var(--font-11); color: #5a3d12;
+  background: rgba(255, 196, 92, 0.22);
+  border: 1px solid rgba(214, 140, 30, 0.45);
+  border-radius: var(--radius-md);
+}
+.dl-cred-notice-text { flex: 1; min-width: 0; line-height: 1.4; }
+.dl-cred-notice-btn {
+  flex: none; font-size: var(--font-11); font-weight: var(--fw-bold);
+  padding: 3px 10px; border-radius: var(--radius-md);
+  color: #fff; background: linear-gradient(180deg, #d9633f, #b8482b); border: 1px solid #8f3f2a;
+}
+.dl-cred-notice-btn:hover { background: linear-gradient(180deg, #e06c47, #c2502f); }
+.dl-cred-notice-close { flex: none; background: transparent; border: 0; color: #7a5a2a; font-size: 12px; padding: 0 4px; }

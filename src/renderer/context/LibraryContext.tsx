@@ -121,7 +121,7 @@ function libraryReducer(state: LibraryState, action: LibraryAction): LibraryStat
       // matching the Track interface (bpm: number, audioAnalysisAt: number).
       // The audioAnalysisCounts memo in MusicManView relies on bpm being
       // truthy-as-number (0 = unanalyzed) for its analyzed-count gate.
-      const NUMERIC_FIELDS = new Set(['year', 'trackNumber', 'trackCount', 'discNumber', 'discCount', 'playCount', 'rating', 'duration', 'fileSize', 'bpm', 'audioAnalysisAt', 'keyConfidence'])
+      const NUMERIC_FIELDS = new Set(['year', 'trackNumber', 'trackCount', 'discNumber', 'discCount', 'playCount', 'rating', 'duration', 'fileSize', 'bpm', 'audioAnalysisAt', 'keyConfidence', 'lastPlayedAt'])
       const BOOLEAN_FIELDS = new Set(['audioMissing'])
       const updateMap = new Map<number, { field: string; value: string | boolean }[]>()
       for (const u of action.updates) {

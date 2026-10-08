@@ -2,6 +2,10 @@ import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from '
 import { SMART_PLAYLIST_NAMES } from '../../utils/playlistMenu'
 import { BEST_OF_YEAR_NAME } from '../../utils/smartPlaylists'
 import { useLibrary } from '../../context/LibraryContext'
+import { subscribeQueue, getQueue } from '../../views/DownloadStore/downloadQueue'
+import { downloadsPanelRows, panelSummary, downloadsBadge } from '../../../common/downloads-panel-model'
+import { toggleDownloadsPanel, subscribeDownloadsPanelOpen, getDownloadsPanelOpen } from '../DownloadsPanel'
+import { deviceFixtureRequested } from '../../syncTimeline'
 import { usePlayback } from '../../context/PlaybackContext'
 import SidebarSection from './SidebarSection'
 import SidebarItem from './SidebarItem'
@@ -11,6 +15,7 @@ import ConfirmDialog from '../ConfirmDialog'
 import type { ViewName, SmartPlaylistId, Track } from '../../types'
 import { setNotice } from '../../activity'
 import { setMixtapeId, getMixtapeId, getMixtapes, subscribeMixtapes, refreshMixtapes } from '../../mixtapes'
+import { getPoolIds, subscribePool, refreshPool, addTracksToPool, usePoolHealth } from '../../activityPool'
 import NewMixtapeSheet from '../NewMixtapeSheet'
 
 const LIBRARY_ICONS: Record<string, JSX.Element> = {
@@ -48,7 +53,6 @@ const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
   // Music Man's #FC5501 below, which used to clash with New for You's orange.
   // 2026-08-07 rebrand: Discovery is now the Record Shop — copper vinyl,
   // same view id ('discovery') so nav history + ui-state stay valid.
-  { label: 'Record Shop', view: 'discovery', highlight: '#b87333' },
   { label: 'The Music Man', view: 'musicman', highlight: '#FC5501' },
 ]
 
@@ -193,6 +197,17 @@ function EjectIcon() {
   )
 }
 
+function PoolIcon() {
+  // A record crate: the pool is the box of records you pull for the trip.
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#5a6b8a" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2.5 6.5h11l-1 7h-9z" />
+      <path d="M1.8 6.5 3 3.2h10l1.2 3.3" />
+      <path d="M5.5 9.2h5" />
+    </svg>
+  )
+}
+
 function IpodIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#555" strokeWidth="1">
@@ -224,20 +239,19 @@ export default function Sidebar() {
   // Pinned playlists (2026-08-07, Jake: "pin 3 and only 3 playlists to the
   // very tippy top above defaults....i can absolutely pin a default").
   // Raw ids — user playlists ('pl-…'/'mm-…') and smart ids never collide.
-  // Persisted in ui-state via FRESH read-modify-write (the scroll-clobber
-  // lesson: never save from a stale snapshot).
+  // 2026-08-28: pins moved OUT of per-machine ui-state into the synced
+  // playlist-pins.json sidecar ("same pins" across machines — the workmini
+  // harvest exchanges it, newest save wins). load-playlist-pins migrates a
+  // machine's old ui-state pins on first read, so nothing is lost.
   const [pinned, setPinned] = useState<string[]>([])
   useEffect(() => {
-    void window.electronAPI.loadUiState().then((r) => {
-      const raw = (r?.state as Record<string, unknown> | null)?.pinnedPlaylists
-      if (Array.isArray(raw)) setPinned(raw.filter((x): x is string => typeof x === 'string').slice(0, 3))
+    void window.electronAPI.loadPlaylistPins().then((r) => {
+      if (r?.ok && r.pins) setPinned(r.pins.pinnedPlaylists.slice(0, 3))
     })
   }, [])
   const persistPins = useCallback(async (next: string[]) => {
     setPinned(next)
-    const r = await window.electronAPI.loadUiState()
-    const fresh = (r?.state as Record<string, unknown> | null) ?? {}
-    await window.electronAPI.saveUiState({ ...fresh, pinnedPlaylists: next })
+    await window.electronAPI.savePlaylistPins(next)
   }, [])
   const togglePin = useCallback((id: string) => {
     setPlCtxMenu(null)
@@ -258,6 +272,23 @@ export default function Sidebar() {
   const [showBlankTape, setShowBlankTape] = useState(false)
 
   useEffect(() => { void refreshMixtapes() }, [])
+  // iPod Pool (2026-09-02): the hand-built activity set. Count rides the
+  // sidebar badge; drops onto the row add to it (iTunes: drag to the iPod).
+  const poolIds = useSyncExternalStore(subscribePool, getPoolIds)
+  // The badge is what will SYNC, not what was dropped (2026-09-19: 1,000
+  // in the badge, 992 at the sheet). Pool page names the difference.
+  const poolHealthInfo = usePoolHealth(state.tracks)
+  // Placement audit 9/2 — "Download" carries a live count of jobs in flight
+  // (downloading + queued), the way iPod Pool does, so downloads are visible
+  // from anywhere without opening the page. `getQueue` returns the same array
+  // reference until the queue changes, which is what useSyncExternalStore wants.
+  const downloadQueue = useSyncExternalStore(subscribeQueue, getQueue)
+  // Step 5 slice 3 — the row carries a persistent door to the Downloads
+  // panel; the count inside it reads in-flight while jobs move, "N done"
+  // once they settle, and is hidden when the queue is empty.
+  const downloadsBadgeText = downloadsBadge(panelSummary(downloadsPanelRows(downloadQueue, Date.now())))
+  const downloadsPanelOpen = useSyncExternalStore(subscribeDownloadsPanelOpen, getDownloadsPanelOpen)
+  useEffect(() => { void refreshPool() }, [])
 
   useEffect(() => {
     if (creatingPlaylist) {
@@ -388,7 +419,7 @@ export default function Sidebar() {
 
   // If iPod is unmounted while viewing device page, switch to songs
   useEffect(() => {
-    if (!ipodMounted && state.currentView === 'device') {
+    if (!ipodMounted && state.currentView === 'device' && !deviceFixtureRequested()) {
       dispatch({ type: 'SET_VIEW', view: 'songs' })
     }
   }, [ipodMounted, state.currentView, dispatch])
@@ -417,6 +448,16 @@ export default function Sidebar() {
         </SidebarSection>
 
         <SidebarSection title="STORE">
+          {/* Placement audit P4 (Jake 2026-09-06): Record Shop lives under STORE —
+              LIBRARY is what you own, STORE is where you get more. Same view id
+              ('discovery'), same highlight; only the row moved. */}
+          <SidebarItem
+            label="Record Shop"
+            icon={LIBRARY_ICONS['discovery']}
+            selected={state.currentView === 'discovery' || state.currentView === 'listen-to-the-list' || state.currentView === 'new-for-you' || state.currentView === 'recordstore'}
+            highlight="#b87333"
+            onClick={() => dispatch({ type: 'SET_VIEW', view: 'discovery' })}
+          />
           <SidebarItem
             label="Bandcamp Store"
             icon={(
@@ -429,13 +470,40 @@ export default function Sidebar() {
             selected={state.currentView === 'store'}
             onClick={() => dispatch({ type: 'SET_VIEW', view: 'store' })}
           />
+          {/* Placement audit P1 (approved): the Downloads row IS the panel's door —
+              the whole row toggles it; the glyph stays visible when the queue is
+              empty and the count rides inside it. The legacy page keeps its own
+              row below until parity and everyday use retire it. */}
           <SidebarItem
-            label="Download"
+            label="Downloads"
             icon={(
               <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#7a5ca8" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M8 2.5v6" />
                 <path d="M5.5 6 8 8.7 10.5 6" />
                 <path d="M3 11.5h10" />
+              </svg>
+            )}
+            className={downloadsPanelOpen ? 'sidebar-item--panel-open' : undefined}
+            onClick={() => toggleDownloadsPanel('toggle')}
+            door={{
+              title: 'Show downloads',
+              onClick: () => toggleDownloadsPanel('toggle'),
+              badge: downloadsBadgeText,
+              icon: (
+                <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="1.5" y="2" width="9" height="8" rx="1.2" />
+                  <path d="M7 2v8" />
+                </svg>
+              ),
+            }}
+          />
+          <SidebarItem
+            label="Download page"
+            className="sidebar-item--legacy"
+            icon={(
+              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#9a948a" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
+                <path d="M2.5 6h11" />
               </svg>
             )}
             selected={state.currentView === 'download'}
@@ -460,18 +528,6 @@ export default function Sidebar() {
               onClick={() => dispatch({ type: 'SET_VIEW', view: 'dj' })}
               />
           */}
-          <SidebarItem
-            label="Beck v. Prupis"
-            icon={(
-              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#9a7b3a" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M2 6 8 2.3 14 6" />
-                <path d="M2.6 6.6v6M6 6.6v6M10 6.6v6M13.4 6.6v6" />
-                <path d="M1.4 13h13.2" />
-              </svg>
-            )}
-            selected={state.currentView === 'scotus'}
-            onClick={() => dispatch({ type: 'SET_VIEW', view: 'scotus' })}
-          />
           {/* Brief 037 Record Store — entry HIDDEN for the 4.5.0-111
               release (shipping listen-to-the-list only; Phase-2 store held).
               Re-add this SidebarItem when RECORD_STORE_ENABLED flips back on:
@@ -489,9 +545,26 @@ export default function Sidebar() {
               /> */}
         </SidebarSection>
 
-        {(ipodMounted || cdMounted) && (
+        {/* Placement audit 9/2 — Beck v. Prupis is a private archive (never a
+            track, never public), not a store. Its own one-row section says so. */}
+        <SidebarSection title="ARCHIVE">
+          <SidebarItem
+            label="Beck v. Prupis"
+            icon={(
+              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#9a7b3a" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M2 6 8 2.3 14 6" />
+                <path d="M2.6 6.6v6M6 6.6v6M10 6.6v6M13.4 6.6v6" />
+                <path d="M1.4 13h13.2" />
+              </svg>
+            )}
+            selected={state.currentView === 'scotus'}
+            onClick={() => dispatch({ type: 'SET_VIEW', view: 'scotus' })}
+          />
+        </SidebarSection>
+
+        {(ipodMounted || cdMounted || deviceFixtureRequested()) && (
           <SidebarSection title="DEVICES">
-            {ipodMounted && (
+            {(ipodMounted || deviceFixtureRequested()) && (
               <li
                 className={`sidebar-item sidebar-device-row ${state.currentView === 'device' ? 'sidebar-item--selected' : ''}`}
                 onClick={() => dispatch({ type: 'SET_VIEW', view: 'device' })}
@@ -514,7 +587,7 @@ export default function Sidebar() {
                   if (r.ok) {
                     window.dispatchEvent(new Event('jaketunes-ipod-ejected'))
                   } else {
-                    setNotice(`Eject failed: ${r.error || 'unknown error'}`, { kind: 'error', durationMs: 6000 })
+                    setNotice(`Couldn't eject — ${r.error || 'the disk did not respond'}`, { kind: 'error', durationMs: 6000 })
                   }
                 }}><EjectIcon /></button>
               </li>
@@ -530,6 +603,27 @@ export default function Sidebar() {
               </li>
             )}
           </SidebarSection>
+        )}
+
+        {/* iPod Pool (2026-09-02): the hand-built Activity Sync set. Its own
+            section, named for what it feeds — Jake: a pool "listed as a
+            device and ipod not even plugged in" is wrong, and a permanent
+            row is "still sitting there". So: shown ONLY while the pool has
+            songs. First songs enter via right-click → Add to iPod Pool;
+            after that the row is the drop target for whole albums,
+            artists and playlists. Clear the pool and the row goes. */}
+        {poolIds.length > 0 && (
+        <SidebarSection title="ACTIVITY SYNC">
+          <SidebarItem
+            label="iPod Pool"
+            icon={<PoolIcon />}
+            badge={poolIds.length > 0 ? poolHealthInfo.syncable.length.toLocaleString() : undefined}
+            selected={state.currentView === 'activity-pool'}
+            onClick={() => dispatch({ type: 'SET_VIEW', view: 'activity-pool' })}
+            droppable
+            onDrop={(trackIds) => { void addTracksToPool(trackIds, new Map(state.tracks.map((t) => [t.id, t]))) }}
+          />
+        </SidebarSection>
         )}
 
         {/* WJLR Picks moved INTO the Record Shop as the staff wall
@@ -570,6 +664,7 @@ export default function Sidebar() {
                   icon={<SmartPlaylistIcon />}
                   selected={state.currentView === 'playlist' && state.activePlaylistId === pl.id}
                   onClick={() => dispatch({ type: 'VIEW_PLAYLIST', id: pl.id })}
+                  dragTrackIds={pl.trackIds}
                 />
               </div>
             ))}
@@ -604,6 +699,7 @@ export default function Sidebar() {
                   onClick={() => dispatch({ type: 'VIEW_PLAYLIST', id: pl.id })}
                   droppable
                   onDrop={(trackIds) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pl.id, trackIds })}
+                  dragTrackIds={pl.trackIds}
                 />
               </div>
             )
@@ -647,6 +743,7 @@ export default function Sidebar() {
                   onClick={() => dispatch({ type: 'VIEW_PLAYLIST', id: pl.id })}
                   droppable
                   onDrop={(trackIds) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pl.id, trackIds })}
+                  dragTrackIds={pl.trackIds}
                 />
               </div>
             )

@@ -4,6 +4,7 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { Track } from '../types'
+import { PlaylistQuickAdd } from '../components/PlaylistQuickAdd'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import { getDeckState, layOnDeck } from '../mixtapes'
 import { MAX_TAPE_SONGS } from '../../common/tape-physics'
@@ -36,7 +37,7 @@ import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import { setNotice } from '../activity'
 import { songsGridTemplate, songsGridTemplateFixed } from '../utils/songsGridTemplate'
 import '../styles/songs.css'
-import { addToPlaylistEntry } from '../utils/playlistMenu'
+import { addToPlaylistEntry, addToIpodPoolEntry } from '../utils/playlistMenu'
 
 function formatDuration(ms: number): string {
   if (!ms || ms <= 0) return ''
@@ -128,6 +129,7 @@ export default function PlaylistView() {
   // Tracks handed to the mixtape sheet — null when it's closed.
   const [mixtapeFrom, setMixtapeFrom] = useState<Track[] | null>(null)
   const [coverBusy, setCoverBusy] = useState(false)
+  const [confirmDropCover, setConfirmDropCover] = useState(false)
   const [coverNote, setCoverNote] = useState('')
   const customCover = playlistCoverSrc(playlist?.id ?? '')
   const chooseCover = async (): Promise<void> => {
@@ -226,11 +228,11 @@ export default function PlaylistView() {
   const [vibeClusterSeeds, setVibeClusterSeeds] = useState<number[]>([])
   // Taste-ledger loop: learned per-playlist blend weights + the diag map
   // (each shown candidate's blend components) that verdict events carry.
-  const [tasteWeights, setTasteWeights] = useState<Record<string, { vibe?: number; genre?: number; taste?: number }>>({})
-  const suggestDiag = useRef(new Map<number, { vn: number; g: number; b: number; ta: number }>())
+  const [tasteWeights, setTasteWeights] = useState<Record<string, { vibe?: number; genre?: number; taste?: number; era?: number }>>({})
+  const suggestDiag = useRef(new Map<number, { vn: number; g: number; b: number; ta: number; e: number }>())
   useEffect(() => {
     void window.electronAPI.getTasteWeights?.().then((r) => {
-      const pl = (r?.weights as { playlists?: Record<string, { vibe?: number; genre?: number; taste?: number }> })?.playlists
+      const pl = (r?.weights as { playlists?: Record<string, { vibe?: number; genre?: number; taste?: number; era?: number }> })?.playlists
       if (pl) setTasteWeights(pl)
     })
   }, [])
@@ -244,11 +246,15 @@ export default function PlaylistView() {
   // `tracks` (suggestions are for the whole playlist), and NOT just length (a
   // same-size swap must still recompute). ↻ then re-pages this pool locally.
   const plMembershipKey = (playlist?.trackIds ?? []).join(',')
+  // The playlist's NAME and DESCRIPTION are clues too (2026-09-04) — the brain
+  // embeds them and gives the best text matches their own strip seat. Renaming
+  // or editing the description re-fetches, same as a membership change.
+  const plHint = playlist ? `${playlist.name}${shownDesc ? `. ${shownDesc}` : ''}` : ''
   useEffect(() => {
     let cancelled = false
     const ids = playlist?.trackIds ?? []
     if (ids.length === 0) { setVibeHits([]); return }
-    window.electronAPI.playlistSimilar(ids, 5)
+    window.electronAPI.playlistSimilar(ids, 5, plHint)
       .then(r => {
         if (cancelled) return
         setVibeHits(r.ok ? r.hits : [])
@@ -256,7 +262,7 @@ export default function PlaylistView() {
       })
       .catch(() => { if (!cancelled) { setVibeHits([]); setVibeClusterSeeds([]) } })
     return () => { cancelled = true }
-  }, [state.activePlaylistId, plMembershipKey])
+  }, [state.activePlaylistId, plMembershipKey, plHint])
   const suggestions = useMemo(
     () => {
       suggestDiag.current = new Map()
@@ -268,6 +274,7 @@ export default function PlaylistView() {
     [allPlaylistTracks, suggestPool, vibeHits, vibeClusterSeeds, suggestRotate, tasteWeights, playlist],
   )
   const suggestArtIndex = useMemo(() => buildNormalizedArtworkIndex(state.artworkMap), [state.artworkMap])
+  const quickAddExclude = useMemo(() => new Set(playlist?.trackIds ?? []), [plMembershipKey])
 
   const sortedTracks = useMemo(() => {
     if (!sortCol) return tracks // natural order
@@ -589,6 +596,7 @@ export default function PlaylistView() {
       { label: `Play Next`, onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selected }) },
       { label: `Add to Up Next`, onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selected }) },
       addToPlaylistEntry(selected, state.playlists, (pid, ids) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
+      addToIpodPoolEntry(selected),
       ...(getDeckState() ? [
         {
           label: `Lay on the tape (${selected.length} song${selected.length === 1 ? '' : 's'})`,
@@ -670,7 +678,7 @@ export default function PlaylistView() {
           className="playlist-view-cover"
           title={customCover ? 'Click to replace this cover · right-click to go back to the album mosaic' : 'Click to choose a cover'}
           onClick={() => { void chooseCover() }}
-          onContextMenu={(e) => { e.preventDefault(); if (customCover) void dropCover() }}
+          onContextMenu={(e) => { e.preventDefault(); if (customCover) setConfirmDropCover(true) }}
         >
           {customCover
             ? <img src={customCover} alt="" className="playlist-view-cover-img" />
@@ -729,11 +737,37 @@ export default function PlaylistView() {
         </div>
       </div>
 
-      {suggestions.length > 0 && (
+      {/* Click to write or edit. Always present (as a prompt when empty) so
+          the ability is discoverable — a description you can only find by
+          guessing isn't one. Enter saves, Escape cancels, blur saves. */}
+      {descEditing ? (
+        <textarea
+          className="playlist-view-desc-input"
+          autoFocus
+          value={descDraft}
+          rows={1}
+          placeholder="What is this playlist for?"
+          onChange={(e) => setDescDraft(e.target.value)}
+          onBlur={() => { void commitDesc() }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void commitDesc() }
+            if (e.key === 'Escape') { setDescDraft(savedNote); setDescEditing(false) }
+          }}
+        />
+      ) : (
+        <div
+          className={`playlist-view-commentary${shownDesc ? '' : ' playlist-view-commentary--empty'}`}
+          title="Click to write a description"
+          onClick={() => { setDescDraft(savedNote); setDescEditing(true) }}
+        >
+          {shownDesc || 'Add a description…'}
+        </div>
+      )}
+      {playlist && (suggestions.length > 0 || allPlaylistTracks.length === 0) && (
         <div className="pl-suggest">
           <div className="pl-suggest-head">
             <span className="pl-suggest-title">Suggested for this playlist</span>
-            <button
+            {suggestions.length > 0 && <button
               className="pl-suggest-refresh"
               onClick={() => {
                 if (playlist) {
@@ -747,9 +781,18 @@ export default function PlaylistView() {
               }}
               title="Show different suggestions"
               aria-label="More suggestions"
-            >↻</button>
+            >↻</button>}
+            {/* Quick add — for the songs Jake already has in mind that the
+                strip didn't surface. Same ADD_TRACKS_TO_PLAYLIST as the +
+                chips; no taste-ledger verdict (it isn't a judgement on a
+                suggestion, so it must not train the strip's weights). */}
+            <PlaylistQuickAdd
+              pool={suggestPool}
+              excludeIds={quickAddExclude}
+              onAdd={(t) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: playlist.id, trackIds: [t.id] })}
+            />
           </div>
-          <div className="pl-suggest-row">
+          {suggestions.length > 0 && <div className="pl-suggest-row">
             {suggestions.map(s => {
               const hash = lookupArtwork(state.artworkMap, suggestArtIndex, s.albumArtist || s.artist, s.album)
               return (
@@ -774,33 +817,7 @@ export default function PlaylistView() {
                 </div>
               )
             })}
-          </div>
-        </div>
-      )}
-      {/* Click to write or edit. Always present (as a prompt when empty) so
-          the ability is discoverable — a description you can only find by
-          guessing isn't one. Enter saves, Escape cancels, blur saves. */}
-      {descEditing ? (
-        <textarea
-          className="playlist-view-desc-input"
-          autoFocus
-          value={descDraft}
-          rows={2}
-          placeholder="What is this playlist for?"
-          onChange={(e) => setDescDraft(e.target.value)}
-          onBlur={() => { void commitDesc() }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void commitDesc() }
-            if (e.key === 'Escape') { setDescDraft(savedNote); setDescEditing(false) }
-          }}
-        />
-      ) : (
-        <div
-          className={`playlist-view-commentary${shownDesc ? '' : ' playlist-view-commentary--empty'}`}
-          title="Click to write a description"
-          onClick={() => { setDescDraft(savedNote); setDescEditing(true) }}
-        >
-          {shownDesc || 'Add a description…'}
+          </div>}
         </div>
       )}
       {/* V5 facelift: Grid / Cover Flow modes swap only the table below
@@ -1003,6 +1020,15 @@ export default function PlaylistView() {
               })),
           ]}
           onClose={() => setHeaderCtxMenu(null)}
+        />
+      )}
+      {confirmDropCover && (
+        <ConfirmDialog
+          message={`Remove the custom cover from "${playlist.name}"?`}
+          detail="The cover goes back to the album mosaic. The picture file itself is not deleted."
+          confirmLabel="Remove Cover"
+          onConfirm={() => { setConfirmDropCover(false); void dropCover() }}
+          onCancel={() => setConfirmDropCover(false)}
         />
       )}
       {confirmAction && confirmAction.type === 'remove-tracks' && (

@@ -130,3 +130,26 @@ describe('selectWorkoutSyncSet', () => {
     assert.ok(!picked.trackIds.includes(2), 'audioMissing must not be picked')
   })
 })
+
+describe('pool fill (2026-09-02)', () => {
+  const lib = [
+    t({ id: 1, artist: 'A' }), t({ id: 2, artist: 'A' }), t({ id: 3, artist: 'A' }),
+    t({ id: 4, artist: 'B' }), t({ id: 5, artist: 'B' }), t({ id: 6, artist: 'C' }),
+    t({ id: 7, artist: 'D' }), t({ id: 8, artist: 'E' }),
+  ]
+
+  it('never re-picks an excluded (pooled) id, even in backfill', () => {
+    const r = selectWorkoutSyncSet(lib, { target: 8, excludeIds: [1, 4, 6] })
+    assert.ok(!r.trackIds.includes(1) && !r.trackIds.includes(4) && !r.trackIds.includes(6))
+    assert.equal(r.trackIds.length, 5)
+  })
+
+  it('the 2-per-artist cap counts what the pool already holds', () => {
+    // Pool holds two A songs → the fill may add ZERO more A while other artists remain.
+    const seed = new Map([['a', 2]])
+    const r = selectWorkoutSyncSet(lib, { target: 3, excludeIds: [1, 2], seedArtistCounts: seed })
+    const artists = r.trackIds.map((id) => lib.find((x) => x.id === id)?.artist)
+    assert.ok(!artists.includes('A'), `fill added A on top of a full pool: ${artists.join(',')}`)
+    assert.equal(r.trackIds.length, 3)
+  })
+})

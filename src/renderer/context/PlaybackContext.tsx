@@ -1,4 +1,5 @@
 import { createContext, useContext, useReducer, useEffect, useRef, ReactNode } from 'react'
+import { locateTrackIndex } from '../queue-seam'
 import { Track, RepeatMode } from '../types'
 
 interface PlaybackState {
@@ -20,7 +21,7 @@ interface PlaybackState {
 }
 
 type PlaybackAction =
-  | { type: 'PLAY_TRACK'; track: Track; queue?: Track[]; queueIndex?: number; skipHistory?: boolean; duration?: number; position?: number; freshContext?: boolean; preserveOrder?: boolean }
+  | { type: 'PLAY_TRACK'; track: Track; queue?: Track[]; queueIndex?: number; skipHistory?: boolean; duration?: number; position?: number; freshContext?: boolean; preserveOrder?: boolean; locateInQueue?: boolean }
   | { type: 'PAUSE' }
   | { type: 'RESUME' }
   | { type: 'STOP' }
@@ -143,6 +144,19 @@ function playbackReducer(state: PlaybackState, action: PlaybackAction): Playback
           resolvedQueueIndex = action.queueIndex ?? state.queueIndex
           resolvedOriginalQueue = null
         }
+      }
+      else if (action.locateInQueue) {
+        // Queue honesty (2026-09-02, Jake: "make damn sure that every
+        // which way that i can affect the queue… is fixed"). The audio
+        // engine's seams no longer hand us a queue SNAPSHOT — they keep
+        // THIS state's queue (the live one, with every add / remove /
+        // reorder the listener made since the next track was primed) and
+        // ask us to find the track by id; the passed queueIndex is only a
+        // hint for duplicates. A track that isn't in the queue at all
+        // keeps the hinted index (it was removed mid-play; playback
+        // continues from that slot).
+        const li = locateTrackIndex(state.queue, action.track.id, action.queueIndex ?? state.queueIndex)
+        if (li >= 0) resolvedQueueIndex = li
       }
       // else: no action.queue — keep defaults (state.queue, etc.)
 

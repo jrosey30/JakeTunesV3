@@ -1,8 +1,14 @@
 import { Fragment, useEffect, useState, useMemo, useReducer, useRef, useSyncExternalStore, type CSSProperties } from 'react'
 import { useScrollPersistence } from '../../hooks/useScrollPersistence'
 import './download-store.css'
+import MusicSourcesPanel from '../../components/MusicSourcesPanel'
+import CredentialNotice from './CredentialNotice'
+import { showCredentialNotice } from './credential-notice-store'
+import { qobuzNoticeFor } from '../../../common/qobuz-notice'
+import { nearEditionOf } from '../../../common/near-edition-detect'
+import { toggleDownloadsPanel } from '../../components/DownloadsPanel'
 import { useLibrary } from '../../context/LibraryContext'
-import { enqueue, itemFor, subscribeQueue, getQueue, retry, retryFailed, cancel, queueSummary, clearFinished, type QItem, type QResult } from './downloadQueue'
+import { enqueue, itemFor, subscribeQueue, getQueue, retry, retryFailed, cancel, queueSummary, clearFinished, primaryFor, trackQueryId, albumQueryId, type QItem, type QResult, type QueueOrigin } from './downloadQueue'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../../previewPlayer'
 import type { ItunesSuggestion } from '../../types'
 import { explicitWins } from '../../../common/explicit'
@@ -158,21 +164,38 @@ export function displayAlbumTitle(name: string): string {
 interface DownloadCache { query: string; results: ItunesSuggestion[]; pasteUrl: string }
 let pageCache: DownloadCache = { query: '', results: [], pasteUrl: '' }
 
+// A prefill (Listen List → "Tracks" / Get on an album) is dispatched BEFORE
+// the view that listens for it has mounted — the sender fires the event and
+// then switches views, so a listener registered in the component's effect
+// was never there to hear it (2026-09-05, live: the search box still showed
+// the previous query). The event is captured at module scope and handed to
+// the view when it mounts; a mounted view takes it directly.
+/** `target` names which mounted instance may take the prefill — 'browse'
+ *  (Record Shop → Browse) or 'page' (the legacy route). A mounted view of the
+ *  other mode leaves it alone, so the module-level capture still reaches the
+ *  right one when it mounts. Unset = any (legacy callers). */
+export interface DownloadPrefill { query?: string; kind?: string; artist?: string; title?: string; origin?: QueueOrigin; target?: 'browse' | 'page' }
+let pendingPrefill: DownloadPrefill | null = null
+if (typeof window !== 'undefined') {
+  window.addEventListener('jaketunes-download-prefill', (e: Event) => { pendingPrefill = (e as CustomEvent<DownloadPrefill>).detail ?? null })
+}
+
 // Queue entries resolve on Qobuz AT DOWNLOAD TIME by artist+title/album.
 // durationMs pins the EXACT version the user clicked — main verifies the
 // downloaded file against it, so a re-record/live cut can't slip in.
 const songQ = (r: SongRow): QResult => ({
   kind: 'query', source: 'qobuz', mediaType: 'track',
-  id: `q|track|${norm(r.artist)}|${norm(r.title)}`,
+  id: trackQueryId(r.artist, r.title),
   desc: `${r.title} — ${r.artist}`,
   artist: r.artist, title: r.title, album: r.album ? displayAlbumTitle(r.album) : r.album,
   durationMs: r.durationSecs ? r.durationSecs * 1000 : undefined,
   cleanedSource: r.explicitness === 'cleaned',
   explicitSource: r.explicitness === 'explicit',
+  releaseYear: r.releaseYear,
 })
 const albumQ = (r: AlbumRow): QResult => ({
   kind: 'query', source: 'qobuz', mediaType: 'album',
-  id: `q|album|${norm(r.artist)}|${norm(r.album)}`,
+  id: albumQueryId(r.artist, r.album),
   desc: `${displayAlbumTitle(r.album)} — ${r.artist} (album)`,
   artist: r.artist,
   // Search Qobuz without Apple's " - Single"/" - EP" stamp. Identity (id)
@@ -180,9 +203,20 @@ const albumQ = (r: AlbumRow): QResult => ({
   album: displayAlbumTitle(r.album) || r.album,
   cleanedSource: r.explicitness === 'cleaned',
   explicitSource: r.explicitness === 'explicit',
+  // The EDITION Jake picked, by id and size — main fetches the ordered
+  // tracklist and refuses any other edition (album identity contract).
+  collectionId: r.collectionId,
+  trackCount: r.trackCount,
+  releaseYear: r.releaseYear,
 })
 
-export default function DownloadView() {
+/** `browse` (Record Shop → Browse, step 5 slice 4): the same catalogue search,
+ *  results and exact-selection Get, without the page chrome that moved
+ *  elsewhere — the Downloads panel carries activity, Preferences → Music
+ *  Sources carries setup. Paste a link stays as "Add by link". The `page`
+ *  mode is the legacy Download route, unchanged until Browse is verified. */
+export default function DownloadView({ mode = 'page' }: { mode?: 'page' | 'browse' } = {}) {
+  const browse = mode === 'browse'
   const downloadPageRef = useRef<HTMLDivElement>(null)
   useScrollPersistence('download-page', downloadPageRef)
   const [status, setStatus] = useState<RipStatus | null>(null)
@@ -195,14 +229,6 @@ export default function DownloadView() {
   const [pasteUrl, setPasteUrl] = useState(pageCache.pasteUrl)
   const [pasteBusy, setPasteBusy] = useState(false)
   const [qobuz, setQobuz] = useState<{ configured: boolean; email?: string } | null>(null)
-  const [qEmail, setQEmail] = useState('')
-  const [qPass, setQPass] = useState('')
-  const [qEditing, setQEditing] = useState(false)
-  const [qSaving, setQSaving] = useState(false)
-  const [qMsg, setQMsg] = useState<{ ok: boolean; msg: string } | null>(null)
-  const [qMode, setQMode] = useState<'password' | 'token'>('password')
-  const [qUserId, setQUserId] = useState('')
-  const [qToken, setQToken] = useState('')
 
   // Album expansion — the search only surfaces a few of an album's songs, so
   // opening a card fetches its FULL tracklist from iTunes (2026-07-23, Jake:
@@ -213,7 +239,8 @@ export default function DownloadView() {
    *  Closed by default — these are things you do once, and they used to sit
    *  permanently under the results on the page you use every day. */
   const [setupOpen, setSetupOpen] = useState(false)
-  const [albumTracks, setAlbumTracks] = useState<Record<string, { loading: boolean; tracks?: ItunesSuggestion[]; error?: string; releaseYear?: number; trackCount?: number; genre?: string; explicitness?: string }>>({})
+  const [failDetailsOpen, setFailDetailsOpen] = useState(false)
+  const [albumTracks, setAlbumTracks] = useState<Record<string, { loading: boolean; tracks?: ItunesSuggestion[]; error?: string; releaseYear?: number; trackCount?: number; genre?: string; explicitness?: string; collectionId?: number }>>({})
 
   const toggleAlbum = (a: AlbumRow) => {
     const key = albumKey(a)
@@ -221,19 +248,23 @@ export default function DownloadView() {
       const next = new Set(prev)
       if (next.has(key)) { next.delete(key); return next }
       next.add(key)
-      // Lazy-fetch the tracklist the first time it's opened.
-      if (!albumTracks[key] && a.collectionId) {
+      // Lazy-fetch the tracklist the first time it's opened — and again
+      // after a failure, so a transient iTunes miss isn't pinned to the
+      // card until restart (2026-09-03).
+      // A row without a collection id (the Deezer failover, when Apple
+      // throttles the search) asks main by NAME; main resolves it only to
+      // one unambiguous edition and the tracklist comes back with that id,
+      // so the Get carries the edition — never a guess (2026-09-05).
+      if (!albumTracks[key] || albumTracks[key].error) {
         setAlbumTracks((m) => ({ ...m, [key]: { loading: true } }))
-        window.electronAPI.itunesAlbumTracks?.(a.collectionId)
+        window.electronAPI.itunesAlbumTracks?.(a.collectionId ?? { artist: a.artist, album: a.album })
           .then((r) => setAlbumTracks((m) => ({
             ...m,
             [key]: r?.ok && r.tracks?.length
-              ? { loading: false, tracks: r.tracks, releaseYear: r.releaseYear, trackCount: r.trackCount, genre: r.genre, explicitness: r.explicitness }
-              : { loading: false, error: 'Couldn’t load the tracklist.' },
+              ? { loading: false, tracks: r.tracks, releaseYear: r.releaseYear, trackCount: r.trackCount, genre: r.genre, explicitness: r.explicitness, collectionId: r.collectionId }
+              : { loading: false, error: a.collectionId ? 'Couldn’t load the tracklist.' : 'Couldn’t pin this edition in the catalogue — search it by name to pick one.' },
           })))
           .catch(() => setAlbumTracks((m) => ({ ...m, [key]: { loading: false, error: 'Couldn’t load the tracklist.' } })))
-      } else if (!a.collectionId && !albumTracks[key]) {
-        setAlbumTracks((m) => ({ ...m, [key]: { loading: false, error: 'No tracklist available for this album.' } }))
       }
       return next
     })
@@ -397,15 +428,29 @@ export default function DownloadView() {
   // nothing about the tracklist UI is new.
   const runSearchRef = useRef<(raw: string) => Promise<void>>()
   const pendingExpandRef = useRef<{ artist: string; album: string } | null>(null)
+  // Provenance of a prefill from the Listen List: every Get made from THIS
+  // search carries the recommendation id, so the list sees the job land
+  // (and the friend gets credit). Cleared the moment the search changes.
+  const pendingOriginRef = useRef<{ query: string; origin: QueueOrigin } | null>(null)
+  const withOrigin = (q: QResult): QResult => pendingOriginRef.current ? { ...q, origin: pendingOriginRef.current.origin } : q
+  // Every Get goes through here: a missing Qobuz account is said out loud with
+  // its fix (Preferences → Music Sources); the job still runs so the other
+  // providers can answer for a song. Search and previews never ask.
+  const startGet = (q: QResult): void => {
+    const n = qobuzNoticeFor(qobuz, 'get', { kind: q.mediaType === 'album' ? 'album' : 'song', title: (q.mediaType === 'album' ? q.album : q.title) || q.desc })
+    if (n) showCredentialNotice(n)
+    enqueue(withOrigin(q))
+  }
   useEffect(() => {
-    const onPrefill = (e: Event) => {
-      const d = (e as CustomEvent<{ query?: string; kind?: string; artist?: string; title?: string }>).detail
+    const applyPrefill = (d: DownloadPrefill | null | undefined) => {
+      pendingPrefill = null
       const q = d?.query?.trim()
       if (!q) return
       setQuery(q)
       setResults([])
       setSearchErr(null)
       setNotice(null)
+      pendingOriginRef.current = d?.origin ? { query: q, origin: d.origin } : null
       pendingExpandRef.current = d?.kind === 'album' && d.artist && d.title
         ? { artist: d.artist, album: d.title }
         : null
@@ -413,8 +458,21 @@ export default function DownloadView() {
       // directly would pin the first render's copy forever.
       void runSearchRef.current?.(q)
     }
+    const onPrefill = (e: Event) => {
+      const d = (e as CustomEvent<DownloadPrefill>).detail
+      if (d?.target && d.target !== mode) return   // meant for the other instance
+      applyPrefill(d)
+    }
     window.addEventListener('jaketunes-download-prefill', onPrefill)
+    // Arrived from a prefill that fired before this view mounted.
+    if (pendingPrefill && (!pendingPrefill.target || pendingPrefill.target === mode)) {
+      const d = pendingPrefill
+      // runSearchRef is assigned by a later effect in this same commit; defer one tick.
+      setTimeout(() => applyPrefill(d), 0)
+    }
     return () => window.removeEventListener('jaketunes-download-prefill', onPrefill)
+    // `mode` is fixed for an instance's lifetime (the tab or the route decides it).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -435,9 +493,12 @@ export default function DownloadView() {
     )
     if (all.length === 0) return          // still searching / nothing matched yet
     const wa = norm(want.artist), wl = norm(want.album)
-    const match = all.find((a) => norm(a.artist) === wa && norm(a.album) === wl)
-      || all.find((a) => norm(a.album) === wl)
-      || all[0]
+    // Only the album that was asked for opens. The old `|| all[0]` fallback
+    // opened whatever ranked first — Sting's "Brand New Day" for a Bedouin
+    // record (live, 2026-09-05) — one "Get all" away from the wrong album.
+    const reads = (a: string, b: string) => norm(a) === norm(b) || (norm(a).length >= 8 && norm(b).length >= 8 && (norm(a).includes(norm(b)) || norm(b).includes(norm(a))))
+    const match = all.find((a) => norm(a.artist) === wa && reads(a.album, want.album))
+      || all.find((a) => reads(a.album, want.album))
     pendingExpandRef.current = null
     if (match && !expandedAlbums.has(albumKey(match))) toggleAlbum(match)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -448,6 +509,7 @@ export default function DownloadView() {
   const searchTokenRef = useRef(0)
   const runSearch = async (raw: string) => {
     const q = raw.trim()
+    if (pendingOriginRef.current && pendingOriginRef.current.query !== q) pendingOriginRef.current = null
     const token = ++searchTokenRef.current
     if (!q) { setResults([]); setSearchErr(null); setSearching(false); return }
     setSearching(true)
@@ -515,50 +577,6 @@ export default function DownloadView() {
     }
   }
 
-  const saveQobuz = async () => {
-    const e = qEmail.trim()
-    if (!e || !qPass || qSaving) return
-    setQSaving(true)
-    setQMsg(null)
-    try {
-      const r = await window.electronAPI.streamripSetQobuz?.(e, qPass)
-      if (r?.ok) {
-        setQobuz({ configured: true, email: e })
-        setQPass('')
-        setQEditing(false)
-        setQMsg({ ok: true, msg: 'Qobuz connected — downloads now resolve there in hi-fi.' })
-      } else {
-        setQMsg({ ok: false, msg: r?.error || 'Couldn’t save Qobuz login.' })
-      }
-    } catch (err) {
-      setQMsg({ ok: false, msg: err instanceof Error ? err.message : 'Couldn’t save Qobuz login.' })
-    } finally {
-      setQSaving(false)
-    }
-  }
-
-  const saveQobuzToken = async () => {
-    const u = qUserId.trim()
-    const t = qToken.trim()
-    if (!u || !t || qSaving) return
-    setQSaving(true)
-    setQMsg(null)
-    try {
-      const r = await window.electronAPI.streamripSetQobuzToken?.(u, t)
-      if (r?.ok) {
-        setQobuz({ configured: true, email: `user ${u}` })
-        setQToken('')
-        setQEditing(false)
-        setQMsg({ ok: true, msg: 'Qobuz connected via token — downloads now resolve there in hi-fi.' })
-      } else {
-        setQMsg({ ok: false, msg: r?.error || 'Couldn’t save Qobuz token.' })
-      }
-    } catch (err) {
-      setQMsg({ ok: false, msg: err instanceof Error ? err.message : 'Couldn’t save Qobuz token.' })
-    } finally {
-      setQSaving(false)
-    }
-  }
 
   // Right-side action = the item's OWN lifecycle, with CANCEL at every stage
   // before "done" (a mis-click is never a commitment).
@@ -593,9 +611,23 @@ export default function DownloadView() {
       return <button className="download-retry" onClick={() => item && retry(item.key)} title="Download after all">Canceled — redo</button>
     }
     if (st === 'failed') {
-      return <button className="download-retry" onClick={() => item && retry(item.key)} title={item?.error || 'Retry'}>Retry</button>
+      // 6.0 Phase 1: the row shows the short primary status; the full
+      // explanation lives in the Downloads panel, never only in a hover.
+      const label = item?.primary || primaryFor(item?.outcome, item?.error)
+      // A REFUSED verdict (exact edition / version not found, unverifiable)
+      // never offers Retry — retrying repeats the same search (Jake 9/7:
+      // the card said "Exact edition not found · Retry" while the panel
+      // said Needs a choice). It offers the panel, where the choice lives:
+      // Compare editions when a near edition was judged, else Choose.
+      const refused = item?.outcome === 'exact-not-found' || item?.outcome === 'not-found' || item?.outcome === 'unverifiable'
+      if (refused) {
+        const near = item && item.result.mediaType === 'album' ? nearEditionOf(item.alternatives as import('../../../common/acquisition-identity').Alternative[] | undefined, item.result.trackCount ?? null) : null
+        const verb = near ? 'Details' : item?.result.mediaType === 'album' ? 'Choose edition…' : 'Choose version…'
+        return <button className="download-retry download-retry--failed" onClick={() => toggleDownloadsPanel('open')} title={`${label} — open Downloads${near ? ' (the matching tracks can be taken from there)' : ' to choose another'}`}>{label} · {verb}</button>
+      }
+      return <button className="download-retry download-retry--failed" onClick={() => item && retry(item.key)} title={`${label} — Retry`}>{label} · Retry</button>
     }
-    return <button className="download-result-btn" onClick={() => enqueue(qres)}>Get</button>
+    return <button className="download-result-btn" onClick={() => startGet(qres)}>Get</button>
   }
 
   /** Cover art for a queue item, found in the results we already have. Not
@@ -700,7 +732,8 @@ export default function DownloadView() {
   /** A release, as a cover card. Art-forward because this is where the year
    *  and the ALBUM/EP distinction live. */
   const renderRelease = (a: AlbumRow, i = 0) => {
-    const qres = albumQ(a)
+    const pinned = albumTracks[albumKey(a)]
+    const qres = albumQ({ ...a, collectionId: a.collectionId ?? pinned?.collectionId, trackCount: a.trackCount ?? pinned?.trackCount, releaseYear: a.releaseYear ?? pinned?.releaseYear })
     const item = itemFor(qres)
     const key = albumKey(a)
     const isOpen = expandedAlbums.has(key)
@@ -757,7 +790,7 @@ export default function DownloadView() {
               </span>
               <span className="dl-rel-panel-spacer" />
               {cache?.tracks && cache.tracks.length > 0 && (
-                <button type="button" className="download-result-btn download-result-btn--sm" onClick={() => { if (!item) enqueue(albumQ(a)) }}>Get all</button>
+                <button type="button" className="download-result-btn download-result-btn--sm" onClick={() => { if (!item) startGet(albumQ({ ...a, collectionId: a.collectionId ?? cache?.collectionId, trackCount: a.trackCount ?? cache?.trackCount, releaseYear: a.releaseYear ?? cache?.releaseYear })) }}>Get all</button>
               )}
               <button type="button" className="dl-rel-panel-close" onClick={() => toggleAlbum(a)} title="Close">✕</button>
             </div>
@@ -833,15 +866,20 @@ export default function DownloadView() {
 
   const active = getQueue().find((q) => q.status === 'downloading')
   const failedItems = getQueue().filter((q) => q.status === 'failed')
+  // Finished jobs stay inspectable here after the Listen List has taken
+  // the row off (its own rule): the edition, the counts and the completion
+  // line are the record of what happened (2026-09-06).
+  const doneItems = getQueue().filter((q) => q.status === 'done')
+  const editionFacts = (r: QResult): string => [r.mediaType === 'album' ? 'album' : 'song', r.trackCount ? `${r.trackCount} tracks` : null, r.releaseYear ? String(r.releaseYear) : null, r.collectionId ? `iTunes ${r.collectionId}` : null].filter(Boolean).join(' · ')
   const failedHint = failedItems.map((f) => `${f.result.desc}: ${f.error || 'Download failed.'}`).join('\n')
   const hasResults = !!(ranked.hero || ranked.songs.length || ranked.albums.length)
 
   return (
-    <div className="download-view" ref={downloadPageRef}>
+    <div className={`download-view${browse ? ' download-view--browse' : ''}`} ref={downloadPageRef}>
       {/* ── command bar. Pinned, because the search field IS the page and it
              used to scroll away the moment results arrived. ── */}
       <div className="dl-bar">
-        <div className="dl-bar-top">
+        {!browse && <div className="dl-bar-top">
           <div className="dl-bar-id">
             <span className="dl-eyebrow">Get music</span>
             <h1 className="dl-h1">Download</h1>
@@ -864,7 +902,8 @@ export default function DownloadView() {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="12" cy="12" r="3.2" /><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z" /></svg>
             Setup
           </button>
-        </div>
+        </div>}
+        <div className="dl-field-row">
         <div className="dl-field">
           <svg className="dl-field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
           <input
@@ -878,10 +917,24 @@ export default function DownloadView() {
           {searching && <span className="dl-spinner dl-field-spin" aria-hidden="true" />}
           {!searching && query && <button type="button" className="dl-field-clear" onClick={() => setQuery('')} title="Clear">✕</button>}
         </div>
+        {browse && (
+          <button
+            type="button"
+            className={`dl-setup-btn${setupOpen ? ' is-open' : ''}`}
+            onClick={() => setSetupOpen((o) => !o)}
+            aria-expanded={setupOpen}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" /><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" /></svg>
+            Add by link
+          </button>
+        )}
+        </div>
       </div>
+      <CredentialNotice />
 
-      {/* ── the queue, as something you can actually read ── */}
-      {(summary.active + summary.queued + summary.done + summary.failed) > 0 && (
+      {/* ── the queue, as something you can actually read. Browse leaves this
+             to the Downloads panel; the legacy route keeps it. ── */}
+      {!browse && (summary.active + summary.queued + summary.done + summary.failed) > 0 && (
         <div className="dl-queue">
           {active ? (
             <>
@@ -891,11 +944,36 @@ export default function DownloadView() {
               <span className="dl-queue-meta">{mmss(active.startedAt ? Math.floor((Date.now() - active.startedAt) / 1000) : 0)}</span>
             </>
           ) : failedItems[0] ? (
-            <span className="dl-queue-name dl-queue-name--err" title={failedHint}>
-              {failedItems[0].error || 'Download failed.'}
-            </span>
+            <>
+              <span className="dl-queue-name dl-queue-name--err" title={failedItems[0].result.desc}>
+                {failedItems[0].primary || primaryFor(failedItems[0].outcome, failedItems[0].error)}
+                <span className="dl-queue-name-sub"> · {failedItems[0].result.desc}</span>
+              </span>
+              <button
+                type="button"
+                className="dl-queue-details-btn"
+                onClick={() => setFailDetailsOpen((o) => !o)}
+                aria-expanded={failDetailsOpen}
+                aria-controls="dl-queue-details"
+              >
+                {failDetailsOpen ? 'Hide details' : 'Details'}
+              </button>
+            </>
           ) : (
-            <span className="dl-queue-name dl-queue-name--idle">Nothing downloading</span>
+            <>
+              <span className="dl-queue-name dl-queue-name--idle">Nothing downloading</span>
+              {doneItems.length > 0 && (
+                <button
+                  type="button"
+                  className="dl-queue-details-btn"
+                  onClick={() => setFailDetailsOpen((o) => !o)}
+                  aria-expanded={failDetailsOpen}
+                  aria-controls="dl-queue-details"
+                >
+                  {failDetailsOpen ? 'Hide details' : 'Details'}
+                </button>
+              )}
+            </>
           )}
           <span className="dl-queue-counts">
             {summary.queued > 0 && <span className="dq-part">{summary.queued} queued</span>}
@@ -911,13 +989,48 @@ export default function DownloadView() {
           )}
         </div>
       )}
+      {/* The full, untruncated reason for every failed item — what was asked
+          for, what each source answered, what to do next. Toggled by the
+          Details button above; reachable by keyboard; never hover-only. */}
+      {!browse && failDetailsOpen && (failedItems.length > 0 || doneItems.length > 0) && (
+        <div className="dl-queue-details" id="dl-queue-details" role="region" aria-label="Download details">
+          {doneItems.map((d) => (
+            <div key={d.key} className="dl-queue-detail dl-queue-detail--done">
+              <div className="dl-queue-detail-head">
+                <span className="dl-queue-detail-status dl-queue-detail-status--done">In your library</span>
+                <span className="dl-queue-detail-req">{d.result.desc}</span>
+              </div>
+              <div className="dl-queue-detail-facts">
+                <span>{editionFacts(d.result)}</span>
+                <span>{d.imported ?? 0} imported · {d.dupes ?? 0} already in your library</span>
+              </div>
+              {(d.completion || d.matchDesc) && <pre className="dl-queue-detail-text">{d.completion || d.matchDesc}</pre>}
+            </div>
+          ))}
+          {failedItems.map((f) => (
+            <div key={f.key} className="dl-queue-detail">
+              <div className="dl-queue-detail-head">
+                <span className="dl-queue-detail-status">{f.primary || primaryFor(f.outcome, f.error)}</span>
+                <span className="dl-queue-detail-req">{f.result.desc}</span>
+                <button type="button" className="download-retry" onClick={() => retry(f.key)}>Retry</button>
+              </div>
+              <pre className="dl-queue-detail-text">{f.detail || f.error || 'Download failed.'}</pre>
+              {f.alternatives && f.alternatives.length > 0 && (
+                <ul className="dl-queue-detail-alts">
+                  {f.alternatives.map((a, i) => <li key={i}><b>{a.provider}</b> {a.desc} <span className="dl-queue-detail-why">{a.reason}</span></li>)}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {setupOpen && (
         <div className="dl-setup-panel">
           <div className="dl-setup-grid">
             {/* ── Direct link ── */}
             <section className="dl-setup-card">
-              <div className="dl-setup-card-head">Paste a link</div>
+              <div className="dl-setup-card-head">{browse ? 'Add by link' : 'Paste a link'}</div>
               <div className="download-row">
                 <input
                   className="download-input"
@@ -932,62 +1045,17 @@ export default function DownloadView() {
                   {pasteBusy ? 'Downloading…' : 'Download'}
                 </button>
               </div>
-              <div className="download-hint">YouTube needs no login. For lossless Qobuz, connect your account.</div>
+              <div className="download-hint">{browse ? 'YouTube needs no login. For lossless Qobuz, connect your account in Preferences → Music Sources.' : 'YouTube needs no login. For lossless Qobuz, connect your account.'}</div>
               {notice && (
                 <div className={`download-result ${notice.ok ? 'download-result--ok' : 'download-result--err'}`}>{notice.msg}</div>
               )}
             </section>
 
-            {/* ── Qobuz account — password hashed locally, written to streamrip's config ── */}
-            <section className="dl-setup-card">
-              <div className="dl-setup-card-head">Qobuz account</div>
-              {qobuz?.configured && !qEditing ? (
-                <div className="download-account-row">
-                  <span className="download-account-status">Connected{qobuz.email ? ` · ${qobuz.email}` : ''}</span>
-                  <button className="download-link-btn" onClick={() => { setQEditing(true); setQMsg(null) }}>Change</button>
-                </div>
-              ) : qMode === 'token' ? (
-                <>
-                  <div className="download-account-form">
-                    <input className="download-input download-input--narrow" placeholder="Qobuz user ID" value={qUserId} onChange={(e) => setQUserId(e.target.value)} disabled={qSaving} spellCheck={false} autoComplete="off" />
-                    <input className="download-input" type="password" placeholder="Qobuz auth token" value={qToken} onChange={(e) => setQToken(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void saveQobuzToken() }} disabled={qSaving} autoComplete="off" />
-                    <button className="download-btn" onClick={() => void saveQobuzToken()} disabled={qSaving || !qUserId.trim() || !qToken.trim()}>{qSaving ? 'Saving…' : 'Connect'}</button>
-                  </div>
-                  <details className="download-steps">
-                    <summary>How to get your user ID + token (Google sign-in)</summary>
-                    <ol>
-                      <li>Open <strong>play.qobuz.com</strong> in your browser and log out.</li>
-                      <li>Open dev tools (<strong>⌥⌘I</strong>) → <strong>Network</strong> tab; type <code>login</code> in the filter box.</li>
-                      <li>Log back in with Google. A request named <code>login</code> appears — click it → the <strong>Response</strong> tab.</li>
-                      <li>Copy <code>user_auth_token</code> → paste as <strong>auth token</strong>. Find <code>"user":&#123; "id": NUMBER</code> → paste that NUMBER as <strong>user ID</strong>.</li>
-                    </ol>
-                  </details>
-                  <button className="download-link-btn download-toggle" onClick={() => { setQMode('password'); setQMsg(null) }}>Have a Qobuz password instead?</button>
-                </>
-              ) : (
-                <>
-                  <div className="download-account-form">
-                    <input className="download-input" placeholder="Qobuz email" value={qEmail} onChange={(e) => setQEmail(e.target.value)} disabled={qSaving} spellCheck={false} autoComplete="off" />
-                    <input className="download-input" type="password" placeholder="Qobuz password" value={qPass} onChange={(e) => setQPass(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void saveQobuz() }} disabled={qSaving} autoComplete="off" />
-                    <button className="download-btn" onClick={() => void saveQobuz()} disabled={qSaving || !qEmail.trim() || !qPass}>{qSaving ? 'Saving…' : 'Connect'}</button>
-                  </div>
-                  <button className="download-link-btn download-toggle" onClick={() => { setQMode('token'); setQMsg(null) }}>Sign in with Google? Use a token instead →</button>
-                </>
-              )}
-              {qMsg && <div className={`download-result ${qMsg.ok ? 'download-result--ok' : 'download-result--err'}`}>{qMsg.msg}</div>}
-              <div className="download-hint download-hint--sub">Saved to streamrip’s config on this Mac — your credentials never leave your machine or go through chat.</div>
-            </section>
+            {/* Music Sources (Qobuz account + download tool) — the same panel
+                Preferences → Music Sources shows (Record Shop step 5). This
+                drawer keeps it until that placement is verified. */}
+            {!browse && <MusicSourcesPanel onQobuzChange={setQobuz} onStatusChange={(st) => setStatus(st)} />}
           </div>
-
-          {status && !status.installed && (
-            <div className="download-warn">
-              {/* The reason comes from main, which tells "not installed" apart
-                  from "installed but can't start" — those need different fixes,
-                  and the old blanket message sent Jake to `pipx install
-                  streamrip` for a broken Homebrew dependency (2026-08-08). */}
-              {status.reason || <>streamrip (the <code>rip</code> command) wasn’t found. Install it with <code>pipx install streamrip</code>, then reopen this view.</>}
-            </div>
-          )}
 
           {failures.length > 0 && (
             <div className="download-failures">
@@ -1042,11 +1110,13 @@ export default function DownloadView() {
         {!hasResults && !searching && (
           <div className="dl-empty">
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z" /></svg>
-            <span className="dl-empty-title">{query ? 'Nothing matched that.' : 'Search anything.'}</span>
+            <span className="dl-empty-title">{query ? 'Nothing matched that.' : browse ? 'Search for songs, albums or artists.' : 'Search anything.'}</span>
             <span className="dl-empty-sub">
               {query
                 ? 'Try the artist and the song together — "when you die mgmt".'
-                : 'Results are instant, with 30-second previews. Get resolves it on Qobuz in hi-fi.'}
+                : browse
+                  ? 'Preview where available, then choose what to get.'
+                  : 'Results are instant, with 30-second previews. Get resolves it on Qobuz in hi-fi.'}
             </span>
           </div>
         )}

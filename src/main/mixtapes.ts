@@ -28,7 +28,23 @@ import type { MessageCreateParamsNonStreaming } from '@anthropic-ai/sdk/resource
 import type { Message } from '@anthropic-ai/sdk/resources/messages'
 import { fitSide, tapeTracks, MAX_TAPE_SONGS } from '../common/tape-physics'
 import { RADIO_CAST } from './cast'
-import { isSkitOrIntro } from './workout-sync.ts'
+import { isSkitOrIntro, isIntroTitled } from './workout-sync.ts'
+// Tombstone primitives are structural ({id, name, deletedAt}) — the same
+// machinery playlists use, pointed at mixtape-tombstones.json, so a tape
+// deleted on either machine stays deleted everywhere (the harvest unions
+// and applies both files). "Existence is not memory."
+import { loadTombstones, saveTombstones } from './playlist-tombstones.ts'
+import { scheduleMixtapeHubConverge } from './mixtape-hub-sync.ts'
+
+/** Hub accessors — the mixtape hub client converges through these. */
+export async function readMixtapesForHub(): Promise<Mixtape[]> {
+  return loadMixtapes()
+}
+export async function writeMixtapesFromHub(tapes: Mixtape[]): Promise<void> {
+  await saveMixtapes(tapes)
+}
+export const mixtapeTombstonesFile = (): string => MIXTAPE_TOMBSTONES_FILE()
+export const mixtapeIntrosDir = (): string => INTROS_DIR()
 
 const execP = promisify(execFile)
 
@@ -41,6 +57,9 @@ export interface MixtapesHost {
   /** Season tapes: real listening data, supplied by index.ts. */
   loadLibraryTracks?: () => Promise<Array<Record<string, unknown>>>
   loadPlayEvents?: () => Promise<Array<{ id: number; ts: number }>>
+  /** Pull an evicted track's audio back from homemini (activity-sync's
+   *  materializer) — the dub needs LOCAL files and eviction is design. */
+  materializeTrack?: (colonPath: string, trackId: number | string) => Promise<{ ok: boolean; error?: string }>
 }
 
 export interface MixtapeLinerNote { id: number; note: string }
@@ -74,6 +93,9 @@ export interface Mixtape {
    *  only has its tail. Sparse, keyed by track id. */
   startOffsets?: Record<string, number>
   createdAt: string
+  /** Hub stamp (2026-08-28): set on every save — the mixtape hub's
+   *  newest-wholesale merge keys on it. */
+  modifiedAt?: string
   /** J-card ink color the renderer drew the label with (stable per tape). */
   inkColor?: string
   /** Season tape marker ('YYYY-MM') — auto-dubbed monthly, deduped by this. */
@@ -93,6 +115,7 @@ interface MixtapeInputTrack {
 }
 
 const MIXTAPES_FILE = () => join(app.getPath('userData'), 'mixtapes.json')
+const MIXTAPE_TOMBSTONES_FILE = () => join(app.getPath('userData'), 'mixtape-tombstones.json')
 const INTROS_DIR = () => join(app.getPath('userData'), 'mixtape-intros')
 const MAX_INPUT_SONGS = 150
 // TRUE tape limits (Jake: "absolutely true time limits... if i run out of
@@ -238,6 +261,20 @@ async function buildMixtapeProposal(
   if (!Array.isArray(tracks) || tracks.length < 2) {
     return { ok: false, error: 'Pick at least 2 songs for a mixtape.' }
   }
+  // Warehouse-drift gate (2026-09-01, Jake: "no intros should ever be on
+  // a mixtape... usually, no songs less than 1 minute"): the season
+  // picker has refused skits/intros/fragments all along; this AI builder
+  // never did — a 37s Drake "Intro" shipped at slot 23 of Warehouse
+  // Drift Inward. Same shared gate, applied to the INPUTS so the model
+  // never even sees them. Manual tape edits stay ungated — a human
+  // choosing a fragment on purpose is not drift.
+  // Refined mid-review: an INTRO-titled track is legitimate — but only
+  // as the tape's opener. Skits/interludes/fragments stay banned outright;
+  // intro-titled tracks pass this input gate and are position-locked below.
+  tracks = tracks.filter((t) => isIntroTitled(t.title) || !isSkitOrIntro(t))
+  if (tracks.length < 2) {
+    return { ok: false, error: 'After removing skits/fragments there are fewer than 2 real songs.' }
+  }
   if (tracks.length > MAX_INPUT_SONGS) {
     return { ok: false, error: `That's ${tracks.length} songs — narrow it down (${MAX_INPUT_SONGS} max).` }
   }
@@ -248,7 +285,7 @@ async function buildMixtapeProposal(
   ).join('\n')
 
   const user = [
-    `Make a mixtape from these songs. ONE continuous run — no sides, no flip. HARD LIMIT: ${MAX_TAPE_SONGS} songs. Fewer is fine and often better; never more.`,
+    `Make a mixtape from these songs. ONE continuous run — no sides, no flip. HARD LIMIT: ${MAX_TAPE_SONGS} songs. Fewer is fine and often better; never more. An intro-titled track may ONLY be track 1 — anywhere else it will be removed.`,
     '',
     `Songs (id | title | artist | album | genre | bpm | length):`,
     list,
@@ -298,6 +335,8 @@ async function buildMixtapeProposal(
 
   // Fallback: keep the given order, take the first MAX_TAPE_SONGS.
   if (!seq || seq.length < 2) seq = cleanSequence(tracks.map((t) => t.id), byId)
+  // Position lock: an intro-titled track may ONLY open the tape.
+  seq = seq.filter((id, i) => i === 0 || !isIntroTitled(byId.get(id)?.title))
   if (!title) title = `Mixtape · ${new Date().toLocaleDateString([], { month: 'short', day: 'numeric' })}`
   if (!commentary) commentary = 'Dubbed with love. Play loud, rewind with a pencil.'
 
@@ -558,10 +597,18 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
         return { ok: false, error: `A tape holds ${MAX_TAPE_SONGS} songs.` }
       }
       const all = await loadMixtapes()
+      tape.modifiedAt = new Date().toISOString()   // hub merge keys on this
       const idx = all.findIndex((m) => m.id === tape.id)
       if (idx >= 0) all[idx] = tape
       else all.unshift(tape)
       await saveMixtapes(all)
+      scheduleMixtapeHubConverge()
+      // A saved tape is alive by the owner's word — clear any tombstone for
+      // its id so a deliberate re-creation isn't re-deleted by the next sync.
+      const ts = await loadTombstones(MIXTAPE_TOMBSTONES_FILE())
+      if (ts.some((t) => t.id === tape.id)) {
+        await saveTombstones(ts.filter((t) => t.id !== tape.id), MIXTAPE_TOMBSTONES_FILE())
+      }
       return { ok: true }
     } catch (err) {
       return { ok: false, error: safeIpcError(err, 'io-failed') }
@@ -577,6 +624,14 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
       const next = all.filter((m) => m.id !== id)
       if (next.length === all.length) return { ok: false, error: 'No mixtape with that id.' }
       await saveMixtapes(next)
+      // Durable record of the deletion — the harvest unions this with
+      // workmini's so the tape stays dead everywhere and can never be
+      // resurrected by a sync ("existence is not memory").
+      const ts = await loadTombstones(MIXTAPE_TOMBSTONES_FILE())
+      if (!ts.some((t) => t.id === id)) {
+        await saveTombstones([...ts, { id, name: gone?.title ?? '', deletedAt: new Date().toISOString() }], MIXTAPE_TOMBSTONES_FILE())
+      }
+      scheduleMixtapeHubConverge()
       if (gone?.introPath) await unlink(gone.introPath).catch(() => {})
       // The merged tape audio goes with the tape — otherwise every deleted
       // tape leaves a few hundred MB of ALAC behind forever. Identity-gated
@@ -600,7 +655,7 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
       title: string
       sides: Array<{
         label: 'A' | 'B'
-        songs: Array<{ absPath: string; cutMs?: number; startMs?: number }>
+        songs: Array<{ absPath: string; cutMs?: number; startMs?: number; id?: number; colonPath?: string }>
         talkovers: Array<{ atMs: number; path: string }>
         introPath?: string
       }>
@@ -613,10 +668,18 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
       const outputs: string[] = []
       for (const side of payload.sides) {
         if (side.songs.length === 0) continue
-        // Pre-flight: every source must exist (streamed/missing files fail loud).
+        // Pre-flight: every source must exist locally. An EVICTED track
+        // (local copy retired by design — pass-through storage) is pulled
+        // back from homemini first; only a track homemini can't serve
+        // either fails, loudly, by name.
         for (const sng of side.songs) {
-          const st = await stat(sng.absPath).catch(() => null)
-          if (!st) return { ok: false, error: `Missing audio file for Side ${side.label}: ${sng.absPath}` }
+          let st = await stat(sng.absPath).catch(() => null)
+          if (!st && sng.colonPath && sng.id != null && host.materializeTrack) {
+            console.log(`[dub] "${sng.colonPath}" evicted — pulling from homemini for the dub`)
+            const m = await host.materializeTrack(sng.colonPath, sng.id).catch(() => ({ ok: false }))
+            if (m.ok) st = await stat(sng.absPath).catch(() => null)
+          }
+          if (!st) return { ok: false, error: `Missing audio for Side ${side.label}: ${sng.absPath.split('/').pop()} — not local and homemini couldn't supply it.` }
         }
         const inputs: string[] = []
         const chains: string[] = []

@@ -1,10 +1,12 @@
 import { useMemo, useState, useEffect, useRef, useCallback, useSyncExternalStore } from 'react'
+import { audioFromBase64Mpeg } from '../audio/base64-audio'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { attachClipToBroadcast, detachClipFromBroadcast } from '../audio/eq'
 import { evaluateSmartPlaylist } from '../utils/smartPlaylists'
+import { isTop25Rankable } from '../../common/top25-rankable'
 import { Track } from '../types'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
@@ -23,7 +25,7 @@ import { setNotice } from '../activity'
 import { songsGridTemplate, songsGridTemplateFixed } from '../utils/songsGridTemplate'
 import '../styles/musicman.css'
 import '../styles/songs.css'
-import { addToPlaylistEntry } from '../utils/playlistMenu'
+import { addToPlaylistEntry, addToIpodPoolEntry } from '../utils/playlistMenu'
 
 // Persist sort preferences per smart playlist across navigation
 const smartSortPrefs = new Map<string, { col: string | null; dir: 'asc' | 'desc' }>()
@@ -377,7 +379,7 @@ export default function SmartPlaylistView() {
       if (haveAnyEvents) {
         return Object.entries(windowedCounts)
           .map(([id, cnt]) => ({ track: trackById.get(Number(id)), cnt }))
-          .filter((x): x is { track: Track; cnt: number } => x.track !== undefined && x.cnt > 0)
+          .filter((x): x is { track: Track; cnt: number } => x.track !== undefined && x.cnt > 0 && isTop25Rankable(x.track))
           .sort((a, b) => b.cnt - a.cnt)
           .slice(0, 25)
           .map(x => x.track)
@@ -387,7 +389,7 @@ export default function SmartPlaylistView() {
       // tracks play). Same shape as the old approximation.
       const cutoff = Date.now() - WINDOW_MS
       return libState.tracks
-        .filter(t => typeof t.lastPlayedAt === 'number' && t.lastPlayedAt >= cutoff)
+        .filter(t => typeof t.lastPlayedAt === 'number' && t.lastPlayedAt >= cutoff && isTop25Rankable(t))
         .sort((a, b) => (b.playCount || 0) - (a.playCount || 0))
         .slice(0, 25)
     }
@@ -706,7 +708,7 @@ export default function SmartPlaylistView() {
           window.addEventListener('musicman-fade-ready', listener, { once: true })
           setTimeout(() => resolve(), 2000)
         })
-        const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
+        const audio = audioFromBase64Mpeg(tts.audio)
         attachClipToBroadcast(audio)
         audioRef.current = audio
         audio.onended = () => {
@@ -876,6 +878,7 @@ export default function SmartPlaylistView() {
       { label: `Play Next`, onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selected }) },
       { label: `Add to Up Next`, onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selected }) },
       addToPlaylistEntry(selected, libState.playlists, (pid, ids) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
+      addToIpodPoolEntry(selected),
       { separator: true as const },
       { label: 'Go to Artist', onClick: () => dispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(track.albumArtist || track.artist || '') }) },
       { label: 'Go to Album', onClick: () => dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyOf(track) }) },

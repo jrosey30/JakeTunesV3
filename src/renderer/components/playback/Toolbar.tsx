@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
+import { audioFromBase64Mpeg } from '../../audio/base64-audio'
 import { usePlayback } from '../../context/PlaybackContext'
 import { useLibrary } from '../../context/LibraryContext'
 import { useAudio, setAutoDjMode } from '../../hooks/useAudio'
@@ -110,8 +111,8 @@ const BUBBLE_SPEAKER_VERB: Record<BubbleSpeaker, string> = {
   djhands: 'is on the decks',
 }
 
-export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onToggleQueue: () => void; onOpenQueue: () => void; showQueue: boolean }) {
-  const { state: pb } = usePlayback()
+export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggleMusicMan, showMusicMan }: { onToggleQueue: () => void; onOpenQueue: () => void; showQueue: boolean; onToggleMusicMan: () => void; showMusicMan: boolean }) {
+  const { state: pb, dispatch: pbDispatch } = usePlayback()
   const { state: lib } = useLibrary()
   const { setVolume, playTrack, stopPlayback } = useAudio()
   const [autoDj, setAutoDj] = useState(false)
@@ -804,7 +805,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       const caption = stripRadioAudioTags(seg.line)
       // Tape-off-the-radio: the deck (if REC is down) tapes this DJ break.
       window.dispatchEvent(new CustomEvent('jaketunes-radio-segment', { detail: { audioData: seg.audioData } }))
-      const audio = new Audio(`data:audio/mpeg;base64,${seg.audioData}`)
+      const audio = audioFromBase64Mpeg(seg.audioData)
       const finish = () => {
         try { detachClipFromBroadcast(audio) } catch { /* ignore */ }
         resolve()
@@ -994,6 +995,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
 
     if (!pb.nowPlaying) return
     djCancelledRef.current = false
+    let micFailed = ''
     setDjActive(true)
     setDjLoading(true)
     setDjText('')
@@ -1041,7 +1043,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         console.log('[DJ] TTS response:', tts.ok, tts.error || '')
         if (tts.ok && tts.audio) {
           const caption = stripAudioTags(result.text)
-          const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
+          const audio = audioFromBase64Mpeg(tts.audio)
           attachClipToBroadcast(audio)
           djAudioRef.current = audio
           audio.onended = () => {
@@ -1101,13 +1103,25 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
           return
         } else {
           console.warn('[DJ] TTS failed or no audio:', tts.error)
+          micFailed = /401|unauthor/i.test(String(tts.error || ''))
+            ? "Music Man can't speak — the voice service rejected the key."
+            : "Music Man had the words but no voice — speech failed."
         }
       } else {
         console.warn('[DJ] Claude returned no text:', result)
+        micFailed = 'Music Man had nothing to say about this one.'
       }
     } catch (err) {
       console.error('[DJ] Error:', err)
+      micFailed = "Music Man couldn't reach the mic."
     }
+    // 2026-08-25 — Jake: "the mic button lowered the volume but no voice....no
+    // fun fact....nothing". Every failure fell through to a console.warn nobody
+    // reads, and the volume duck was NEVER undone — the exact
+    // reverse-every-side-effect rule in CLAUDE.md. Restore on EVERY path and
+    // say what happened; a silently half-volume app is the worst outcome.
+    try { fadeVolumeIn() } catch { /* ignore */ }
+    if (micFailed) setNotice(micFailed, { kind: 'error', durationMs: 6000 })
     setDjActive(false)
     setDjLoading(false)
     setDjText('')
@@ -1548,7 +1562,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
         setDjLoading(false)
         if (tts.ok && tts.audio) {
           setDjText(result.intro)
-          const audio = new Audio(`data:audio/mpeg;base64,${tts.audio}`)
+          const audio = audioFromBase64Mpeg(tts.audio)
           attachClipToBroadcast(audio)
           djAudioRef.current = audio
           await fadeVolumeOut()
@@ -1732,17 +1746,12 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
       </div>
       <div className="volume-group">
       <VolumeSlider />
-      <button
-        className="transport-toggle viz-btn"
-        onClick={() => window.dispatchEvent(new CustomEvent('toggle-visualizer'))}
-        title="Visualizer (⌘T) — fullscreen, reacts to what's playing"
-        aria-label="Visualizer"
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
-          <circle cx="8" cy="8" r="1.7" fill="currentColor" stroke="none" />
-          <path d="M8 1.6V3.6M8 12.4V14.4M1.6 8H3.6M12.4 8H14.4M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M12.5 3.5l-1.4 1.4M4.9 11.1l-1.4 1.4" />
-        </svg>
-      </button>
+      </div>
+      {/* 2011 facelift (Jake 9/2): the Visualizer lives in View → Visualizer
+          (⌘T); the three panel buttons — AirPlay, the Music Man, Up Next —
+          sit as ONE evenly-spaced group behind a hairline, so the right
+          end of the toolbar reads as three things, not a pile. */}
+      <div className="toolbar-panels">
       <div className="airplay-wrapper" ref={airplayRef}>
         <button
           className={`transport-toggle airplay-btn ${isExternalOutput ? 'airplay-btn--active' : ''}`}
@@ -1803,18 +1812,44 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue }: { onT
           </div>
         )}
       </div>
-      </div>
+      <button
+        className={`transport-toggle queue-toggle ${showMusicMan ? 'queue-toggle--active' : ''}`}
+        onClick={onToggleMusicMan}
+        title="The Music Man (⇧⌘M) — ask about what's in front of you"
+        aria-label="The Music Man"
+      >
+        <svg width="24" height="24" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M2.5 4h15v9h-8l-4 3.5V13h-3z" />
+          <path d="M6 7.5h8M6 10h5" />
+        </svg>
+      </button>
       <button
         className={`transport-toggle queue-toggle ${showQueue ? 'queue-toggle--active' : ''}`}
         onClick={onToggleQueue}
-        title="Up Next"
+        title="Up Next — drop songs here to play them next"
         onDragOver={(e) => {
           e.preventDefault()
+          e.dataTransfer.dropEffect = 'copy'
           if (!showQueue) onOpenQueue()
+        }}
+        onDrop={(e) => {
+          // Queue honesty (2026-09-02): a drop on THIS button used to be
+          // silently refused — the panel opened and the songs went nowhere.
+          // Now it means "play next". Quietly.
+          const raw = e.dataTransfer.getData('application/jaketunes-tracks')
+          if (!raw) return
+          e.preventDefault()
+          try {
+            const ids: number[] = JSON.parse(raw)
+            const tracks = ids.map((id) => lib.tracks.find((t) => t.id === id)).filter((t): t is NonNullable<typeof t> => !!t)
+            if (tracks.length === 0) return
+            pbDispatch({ type: 'PLAY_NEXT', tracks })   // no notice — Jake: "it should just work"
+          } catch { /* not ours */ }
         }}
       >
         <QueueIcon />
       </button>
+      </div>
       <SearchPill />
     </div>
   )

@@ -181,7 +181,7 @@ ensure_jakeshared() {
 #          phonePlaylistSidecarsNeverPushFromDesktop (repo-side tests lock
 #          SYNC_FILES against that list — but they lock the REPO copy, not
 #          this one, which is how the drift went unnoticed for 11 days).
-SYNC_FILES=(library.json metadata-overrides.json playlists.json play-events.jsonl listening-log.jsonl live-sets.json listener-profile.json musicman-memory.json musicman-interactions.jsonl picks-cache.json)
+SYNC_FILES=(library.json metadata-overrides.json playlists.json play-events.jsonl listening-log.jsonl live-sets.json listener-profile.json musicman-memory.json musicman-interactions.jsonl picks-cache.json audio-index.bin activity-pool.json)  # audio-index.bin added 2026-09-02: the CLAP ears, laptop-written, read by the Mini's fusion
 # Phone-authored playlist sidecars — pull only, never push via SYNC_FILES.
 PHONE_PLAYLIST_SIDECARS=(mobile-playlists.json playlist-additions.json)
 
@@ -261,9 +261,15 @@ log "=== sync started (PID $$) ==="
 # same ladder as ~/bin/nas-mount-keeper.sh), mount with the USERNAME in
 # the URL (keychain, silent), alarm-capped, and if nothing is reachable
 # SKIP the mount quietly — never attempt a mount that must fail.
-ensure_jakeshared || true
+# --homemini-only (2026-10-06): the NAS breaker is open or the share is
+# away. The homemini legs (library → phone backend, state, artwork) only need
+# SSH, so they still run; the NAS music leg is skipped. Before this, every
+# edit made while the NAS looked slow waited for the breaker (up to 9 min).
+HOMEMINI_ONLY=0
+for arg in "$@"; do [ "$arg" = "--homemini-only" ] && HOMEMINI_ONLY=1; done
+[ $HOMEMINI_ONLY -eq 0 ] && { ensure_jakeshared || true; }
 
-if [ ! -d "$MOUNT/JakeTunesLibrary" ]; then
+if [ $HOMEMINI_ONLY -eq 0 ] && [ ! -d "$MOUNT/JakeTunesLibrary" ]; then
   log "ERROR: $MOUNT/JakeTunesLibrary not present after mount attempt — aborting"
   notify "Couldn't mount JakeShared. Music sync skipped."
   exit 1
@@ -289,6 +295,56 @@ resolve_sync_src() {
 # library.json never reached homemini because steps 3–4 sat AFTER the
 # music rsync. Pushing state first means metadata lands on homemini
 # even when the music walk is slow, partial, or killed.
+# Publish library.json where the PHONE backend reads it (homemini .env
+# LIBRARY_JSON_PATH=~/JakeTunesState/library.json). Until 2026-10-06 the
+# instant sync only reached the desktop-app folder, so the phone learned
+# about an edit through autoBackup (120 s) → NAS → mini-nas-pull (60 s):
+# measured 17 s to 9.4 min. Atomic (temp + verify + rename), mtime kept so
+# mini-nas-pull's --update agrees, and it refuses to go BACKWARDS:
+# ⚠️ TWIN: src/common/stale-push.ts libraryPushVerdict (same rule — if the
+# copy on homemini holds songs the incoming one lacks, added after the
+# incoming one's newest, the incoming copy is stale and is refused).
+publish_backend_library() {
+  local src="$1" out
+  if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$src" 2>/dev/null; then
+    log "backend publish: local library.json does not parse — not publishing"
+    return 1
+  fi
+  if ! rsync -tz --no-perms --no-owner --no-group "$src" "$HOMEMINI:JakeTunesState/.library.json.incoming" >> "$LOG" 2>&1; then
+    log "backend publish: upload to homemini failed"
+    return 1
+  fi
+  out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOMEMINI" 'cd ~/JakeTunesState && python3 - <<"EOF"
+import json, os
+from datetime import datetime
+def tracks(p):
+    try:
+        d = json.load(open(p))
+    except Exception:
+        return None
+    return d if isinstance(d, list) else d.get("tracks", [])
+def ts(t):
+    try: return datetime.fromisoformat(str(t.get("dateAdded","")).replace("Z","+00:00")).timestamp()
+    except Exception: return None
+new = tracks(".library.json.incoming")
+if new is None or len(new) == 0:
+    print("refused-corrupt"); raise SystemExit(0)
+cur = tracks("library.json") or []
+ids = set(str(t.get("id")) for t in new)
+newest = max([x for x in (ts(t) for t in new) if x is not None] or [float("-inf")])
+ahead = [t for t in cur if str(t.get("id")) not in ids and (ts(t) or float("-inf")) > newest]
+if ahead:
+    print("refused-stale %d" % len(ahead)); raise SystemExit(0)
+os.replace(".library.json.incoming", "library.json")
+print("published %d" % len(new))
+EOF' 2>>"$LOG")
+  case "$out" in
+    published*) log "backend publish: $out tracks → ~/JakeTunesState/library.json (phone sees it on its next check)"; return 0 ;;
+    refused-stale*) log "backend publish REFUSED: homemini has ${out#refused-stale } song(s) newer than this copy — this copy is stale"; return 1 ;;
+    *) log "backend publish: unexpected result '$out'"; return 1 ;;
+  esac
+}
+
 push_homemini_state() {
   local lib_src
   lib_src=$(resolve_sync_src "library.json")
@@ -296,6 +352,7 @@ push_homemini_state() {
     log "no library.json found (local or NAS) — skipping homemini state push"
     return 0
   fi
+  publish_backend_library "$lib_src" || true
 
   local local_fp="" remote_fp="" remote_fp_cmd f src m
   for f in "${SYNC_FILES[@]}"; do
@@ -353,8 +410,33 @@ done'
   return 0
 }
 
+sync_artwork_to_homemini() {
+  LOCAL_ARTWORK="$JT_DATA_LOCAL/artwork/"
+  REMOTE_ARTWORK="$JT_DATA_REMOTE/artwork/"
+  if [ -d "$LOCAL_ARTWORK" ]; then
+    log "rsync artwork → $HOMEMINI:$REMOTE_ARTWORK …"
+    ssh -o BatchMode=yes -o ConnectTimeout=5 "$HOMEMINI" \
+      "mkdir -p \"$REMOTE_ARTWORK\"" >> "$LOG" 2>&1 || true
+    rsync -rtz --update --no-perms --no-owner --no-group \
+      --include='*.jpg' --include='*.meta.json' --exclude='*' \
+      "$LOCAL_ARTWORK" "$HOMEMINI:$REMOTE_ARTWORK" >> "$LOG" 2>&1
+    art_rc=$?
+    if [ $art_rc -eq 0 ]; then
+      log "artwork rsync OK"
+    else
+      log "WARNING: artwork rsync exit $art_rc — mobile may show blank covers for new imports"
+      notify "Artwork didn't reach homemini (rsync exit $art_rc). Mobile covers may be blank."
+    fi
+  fi
+}
+
 homemini_rc=0
 push_homemini_state || homemini_rc=$?
+if [ $HOMEMINI_ONLY -eq 1 ]; then
+  sync_artwork_to_homemini
+  log "homemini-only pass done (state rc=$homemini_rc) — NAS legs skipped"
+  exit 0
+fi
 # Non-fatal: continue to NAS music rsync even if homemini push failed.
 if [ $homemini_rc -ne 0 ]; then
   log "homemini state push returned $homemini_rc (continuing to NAS music rsync)"
@@ -641,23 +723,7 @@ fi
 # Non-critical: an artwork sync failure logs + notifies but does NOT
 # block the JSON state push below. Library is still useful on mobile
 # without covers; missing covers backfill on the next sync.
-LOCAL_ARTWORK="$JT_DATA_LOCAL/artwork/"
-REMOTE_ARTWORK="$JT_DATA_REMOTE/artwork/"
-if [ -d "$LOCAL_ARTWORK" ]; then
-  log "rsync artwork → $HOMEMINI:$REMOTE_ARTWORK …"
-  ssh -o BatchMode=yes -o ConnectTimeout=5 "$HOMEMINI" \
-    "mkdir -p \"$REMOTE_ARTWORK\"" >> "$LOG" 2>&1 || true
-  rsync -rtz --update --no-perms --no-owner --no-group \
-    --include='*.jpg' --include='*.meta.json' --exclude='*' \
-    "$LOCAL_ARTWORK" "$HOMEMINI:$REMOTE_ARTWORK" >> "$LOG" 2>&1
-  art_rc=$?
-  if [ $art_rc -eq 0 ]; then
-    log "artwork rsync OK"
-  else
-    log "WARNING: artwork rsync exit $art_rc — mobile may show blank covers for new imports"
-    notify "Artwork didn't reach homemini (rsync exit $art_rc). Mobile covers may be blank."
-  fi
-fi
+sync_artwork_to_homemini
 
 # ── 5. mobile-set sidecars under LOCAL-PRIMARY (homemini ↔ local). ──
 #

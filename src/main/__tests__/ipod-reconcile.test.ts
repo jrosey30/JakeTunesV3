@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  exceedsIpodPlayableCeiling,
   planReconcile,
   partitionLanded,
   sizeVerified,
@@ -329,9 +330,11 @@ describe('ipodPlayableDestPath / foldForIpod / ipodFirmwareWillList — 497 is 7
       ipodPlayableDestPath(':iPod_Control:Music:F00:x.0i4zLU'),
       ':iPod_Control:Music:F00:x.m4a',
     )
+    // 2026-08-31: long stems become 8.3-safe (digits win) — LFN chains
+    // written by FSKit are what Mini 1.4.1 silently drops.
     assert.equal(
       ipodPlayableDestPath(':iPod_Control:Music:F10:imported_9860.flac'),
-      ':iPod_Control:Music:F10:imported_9860.m4a',
+      ':iPod_Control:Music:F10:9860.m4a',
     )
     assert.equal(
       ipodPlayableDestPath(':iPod_Control:Music:F00:ok.m4a'),
@@ -339,6 +342,26 @@ describe('ipodPlayableDestPath / foldForIpod / ipodFirmwareWillList — 497 is 7
     )
     assert.equal(needsIpodAlacTranscode(':F10:imported_9860.flac'), true)
     assert.equal(needsIpodAlacTranscode(':F00:ok.m4a'), false)
+  })
+
+  it('8.3-safe stems: legacy 4-char names untouched, long names shortened, fs paths too', () => {
+    assert.equal(
+      ipodPlayableDestPath(':iPod_Control:Music:F35:SVNM.m4a'),
+      ':iPod_Control:Music:F35:SVNM.m4a',
+    )
+    assert.equal(
+      ipodPlayableDestPath(':iPod_Control:Music:F11:imported_10926.m4a'),
+      ':iPod_Control:Music:F11:10926.m4a',
+    )
+    assert.equal(
+      ipodPlayableDestPath('/Volumes/JAKETUNES/iPod_Control/Music/F11/imported_4811.m4a'),
+      '/Volumes/JAKETUNES/iPod_Control/Music/F11/4811.m4a',
+    )
+    // no digits in a long stem → safe chars, tail-8
+    assert.equal(
+      ipodPlayableDestPath(':iPod_Control:Music:F00:whitewinterhymnal.m4a'),
+      ':iPod_Control:Music:F00:erhymnal.m4a',
+    )
   })
 
   it('folds curly apostrophes but does not blank Hebrew', () => {
@@ -385,5 +408,22 @@ describe('isIpodFirmwareScratchName — leftover Play Counts is a 450 abort', ()
     assert.equal(isIpodFirmwareScratchName('iTunesDB'), false)
     assert.equal(isIpodFirmwareScratchName('iTunesPrefs'), false)
     assert.equal(isIpodFirmwareScratchName('song.m4a'), false)
+  })
+})
+
+describe('exceedsIpodPlayableCeiling', () => {
+  it('passes ordinary stereo lossless and catches the 5.1 record that failed the gate', () => {
+    // Stereo 16/44.1 ALAC album track, ~1000 kbps.
+    assert.equal(exceedsIpodPlayableCeiling(30_000_000, 240_000), false)
+    // The real offender: Spaceballs (Main Title), 6-channel ALAC, 2081 kbps.
+    assert.equal(exceedsIpodPlayableCeiling(40_092_636, 154_091), true)
+    // Stereo CD PCM itself (1411 kbps) must not be rerouted.
+    assert.equal(exceedsIpodPlayableCeiling((1411 * 1000 / 8) * 300, 300_000), false)
+  })
+
+  it('never fires on an unknown size or duration', () => {
+    assert.equal(exceedsIpodPlayableCeiling(0, 154_091), false)
+    assert.equal(exceedsIpodPlayableCeiling(40_092_636, 0), false)
+    assert.equal(exceedsIpodPlayableCeiling(null, null), false)
   })
 })

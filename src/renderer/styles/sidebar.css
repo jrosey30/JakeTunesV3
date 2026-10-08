@@ -79,11 +79,10 @@
 .sidebar-item--selected {
   background: linear-gradient(180deg, var(--selection-top), var(--selection-bottom));
   color: #fff;
-  /* iTunes 8 selection pill carries a subtle inner top-edge highlight
-     and a 1px deeper-blue border, giving it a slightly lifted feel. */
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.25),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.10);
+  /* 2011: Lion's flat blue-grey band — one faint top edge, no lift. */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.18);
+  font-weight: 700;
 }
 
 .sidebar-item--selected:hover {
@@ -97,10 +96,31 @@
   border-radius: 3px;
 }
 
-.sidebar-item--selected .sidebar-item-icon svg {
-  fill: #fff;
-  stroke: #fff;
+.sidebar-item.sidebar-item--selected .sidebar-item-icon svg { color: #fff; }   /* outranks the grey ink rule below */
+
+/* 2011 facelift, phase 2 (Jake 9/2: "do the sidebar icons") — iTunes 10.5's
+ * monochrome source list. Every glyph is drawn in one ink via currentColor,
+ * whatever color its SVG attributes carry; white fills (a record's label
+ * hole) stay white; the two featured rows and the selected row paint their
+ * glyph white through `color`. A 1px white emboss beneath is the Lion tell. */
+.sidebar-item .sidebar-item-icon svg {
+  color: #70767f;
+  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.6));
 }
+.sidebar-item-icon svg[fill]:not([fill="none"]),
+.sidebar-item-icon svg [fill]:not([fill="none"]):not([fill="#fff"]):not([fill="#ffffff"]):not([fill="white"]) {
+  fill: currentColor;
+}
+.sidebar-item-icon svg[stroke]:not([stroke="none"]),
+.sidebar-item-icon svg [stroke]:not([stroke="none"]) {
+  stroke: currentColor;
+}
+.sidebar-item--selected .sidebar-item-icon svg,
+.sidebar-item--highlight .sidebar-item-icon svg { filter: none; }
+/* On a colored row a white glyph's white "hole" (the record's label)
+ * vanishes — tint it so the Record Shop still reads as a record. */
+.sidebar-item--selected .sidebar-item-icon svg [fill="#fff"],
+.sidebar-item--highlight .sidebar-item-icon svg [fill="#fff"] { fill: rgba(0, 0, 0, 0.30); }
 
 .sidebar-item-icon {
   flex-shrink: 0;
@@ -120,6 +140,43 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.sidebar-item-badge {
+  flex-shrink: 0;
+  margin-left: 6px;
+  padding: 0 6px;
+  min-width: 14px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  border-radius: 8px;
+  background: #8e8b83;
+  color: #fff;
+}
+.sidebar-item--selected .sidebar-item-badge { background: rgba(255,255,255,0.9); color: #3b5a8f; }
+/* The Download row's door to the Downloads panel — always there, the count
+   rides inside it only while the queue has something to say. */
+.sidebar-item-door {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 0 3px;
+  height: 16px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #8e8b83;
+  font-family: inherit;
+  cursor: default;
+}
+.sidebar-item-door:hover { background: rgba(0,0,0,0.08); color: #4a4841; }
+.sidebar-item-door-icon { display: inline-flex; }
+.sidebar-item-door-badge { margin-left: 0; }
+.sidebar-item--selected .sidebar-item-door { color: rgba(255,255,255,0.85); }
+.sidebar-item--selected .sidebar-item-door:hover { background: rgba(255,255,255,0.18); color: #fff; }
 
 .sidebar-item-indicator {
   width: 6px;
@@ -157,10 +214,7 @@
   filter: brightness(1.1);
 }
 
-.sidebar-item--highlight .sidebar-item-icon svg {
-  fill: #fff;
-  stroke: #fff;
-}
+.sidebar-item.sidebar-item--highlight .sidebar-item-icon svg { color: #fff; }
 
 .sidebar-item--highlight-selected {
   background: #fff !important;
@@ -359,3 +413,12 @@
     0 0 16px rgba(var(--brand-orange-rgb),0.35),
     inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
 }
+
+/* The legacy Download page row — quieter, on its way out (placement audit P1). */
+.sidebar-item--legacy .sidebar-item-label { color: #8a8378; font-style: italic; }
+.sidebar-item--legacy.sidebar-item--selected .sidebar-item-label { color: #fff; }
+
+/* The Downloads row while its panel is open — lit, but not the selected VIEW
+   (one row stays the view's; this one is a drawer's). */
+.sidebar-item--panel-open { background: rgba(59, 90, 143, 0.14); }
+.sidebar-item--panel-open .sidebar-item-label { color: #2f4a78; font-weight: 700; }

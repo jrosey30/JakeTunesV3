@@ -16,6 +16,7 @@ process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '64'
 
 
 import { getVenueShows, type VenueShow } from './venues.js'
+import { startHubCatalogPoll } from './hub-catalog'
 // The four persona system prompts — 268 lines of prose, lifted out 2026-08-10.
 import {
   MUSIC_MAN_CORE, MEGAN_CORE, DJ_HANDS_CORE,
@@ -38,22 +39,50 @@ import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, 
 import { writeJsonAtomic } from './atomic-write'
 import { resolveContainedPath, isSafeCacheKey, isPathInside } from './path-safety'
 import { isHomeminiPlaybackClient, mayFollowPlaybackSymlink } from './stream-playback'
+import { streamVariant, normalizeStreamKbps, STREAM_KBPS_DEFAULT } from './stream-format'
 import {
   phonePlaylistSidecarsNeverPushFromDesktop,
   assertNoDesktopBluntPush,
 } from './sidecar-contracts.ts'
-import { fetchHeadersWithin } from './fetch-headers'
+import { fetchHeadersWithin } from './fetch-headers'; import { spoolAwareServe } from './stream-spool.ts'; import { refreshPhoneMirrors, ensureMobileImportAudio } from './phone-mirrors.ts'; import { safeIpcError } from './safe-ipc-error.ts'
 import { computeDeletedPaths } from './library-deletions'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
+import { createPlayCache } from './play-cache.ts'
+import { createServePin } from './play-cache-serve-pin.ts'
 import { createIpcRegistrar, REFUSED_SENDER } from './ipc-register.ts'
-import { safeIpcError } from './safe-ipc-error.ts'
 import { registerUiStateIpc } from './ipc/ui-state-ipc.ts'
 import { registerBackupIpc } from './ipc/backup-ipc.ts'
 import { registerSettingsIpc } from './ipc/settings-ipc.ts'
 import { registerImportIpc, resolveAudioPaths } from './ipc/import-ipc.ts'
 import { registerLibraryIpc } from './ipc/library-ipc.ts'
+import { registerCdIpc } from './ipc/cd-ipc.ts'
+import { registerAudioOutputIpc } from './ipc/audio-output-ipc.ts'
+import { registerLiveSetsIpc } from './ipc/live-sets-ipc.ts'
+import { registerMobileReadsIpc } from './ipc/mobile-reads-ipc.ts'
+import { registerArtworkIpc } from './ipc/artwork-ipc.ts'
+import { registerRecommendations, MOBILE_BACKEND_URL, type RecoSource, type RecommendationRecord } from './ipc/recommendations-ipc.ts'
+import { registerTasteIpc, TASTE_LEDGER_PATH } from './ipc/taste-ipc.ts'
+import { registerPreviewRefreshIpc } from './ipc/preview-refresh-ipc.ts'
+import { registerSyncHistoryIpc } from './ipc/sync-history-ipc.ts'
+import { registerActivityPoolIpc } from './ipc/activity-pool-ipc.ts'
+import { registerAlbumInfoIpc } from './ipc/album-info-ipc.ts'
+import {
+  initRagRetrieval, ragIndexedCountForTracks, ragLibraryArtistSet, pickRetrievalIndex,
+  ragTrackYearMap, ragRetrieveByQuery, buildRagPoolForPicks, buildRetrievalBlockForQuery,
+} from './ai/rag-retrieval.ts'
+import {
+  getArtworkDir, artworkHash, invalidateArtBytes, getCachedArtBytes, putArtBytes,
+  loadArtworkIndex, mergeArtworkSidecarsIntoIndex, saveArtworkIndex, loadArtworkLocks,
+  selfHealUserLockedArtwork, setArtworkLock, extractAndSaveEmbeddedArtwork,
+  scheduleArtworkLookupRebuild, normalizeArtworkPartServer, resolveArtworkCache,
+  pendingArtworkMigrations, bareArtHash, getArtworkLockedBackupDir,
+  artworkLookupRebuildPromise, artworkNormIndexMem, artworkSidecarNormMem,
+  setArtworkIndexMem, type ParsedPicture, searchDeezerArt,
+} from './artwork-engine.ts'
 import { registerIpodIpc } from './ipc/ipod-ipc.ts'
 import { registerSyncIpc, type SyncConvertOptions } from './ipc/sync-ipc.ts'
+import { createSyncEngine, type VerifyTrackInput, type VerifyTrackUpdate } from './sync-engine/index.ts'
+import { ingestIpodRoundTrip } from './sync-engine/roundtrip.ts'
 import { registerAiIpc } from './ipc/ai-ipc.ts'
 import {
   registerCynthiaIpc,
@@ -81,12 +110,22 @@ import {
 import { buildCallerSegmentMode } from './cast'
 import { startImessageCapture } from './imessage-capture'
 import { decodeHtmlEntities } from './imessage-capture-core'
-import { computeImportCredits, pairKeys, friendOfNote } from './friend-imports-core'
+import { sweepFriendImports as moduleSweepFriendImports, noteAttribution } from './friend-credit-sweep.ts'
+import { initPlaylistHubSync, schedulePlaylistHubConverge, type HubPlaylistLike } from './playlist-hub-sync.ts'
+import { initMixtapeHubSync, scheduleMixtapeHubConverge } from './mixtape-hub-sync.ts'
+import { registerSpotifyIpc } from './spotify-ipc.ts'
+import { loadSpotifyTasteAnchors } from './spotify-taste.ts'
+import { readMixtapesForHub, writeMixtapesFromHub, mixtapeTombstonesFile, mixtapeIntrosDir } from './mixtapes.ts'
+import { tombstonesPath as playlistTombstonesPath, loadTombstones as loadPlaylistTombstones } from './playlist-tombstones.ts'
+import { pinsPath as playlistPinsPath } from './playlist-pins.ts'
+import { hostname as osHostname } from 'os'
 import { computeStandings, computeAlbumCredits, creditKindOf, albumKeyOfStrings, type CreditRecord } from './friend-standings-core'
 import { scorePlaylistCandidates } from './playlist-vibes'
 import { ARCHETYPES, buildArchetypeBlock, type ArchetypeId } from './archetypes'
 import { join, relative } from 'path'
 import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted, nasAvailable, isSaveLocked, startNasReconnectWatcher } from './state-dir'
+import { startBrainPull } from './brain-pull'
+import { machineBehindNas } from './stale-push-guard'
 import { snapshotLibrary, maybeAutoSnapshot } from './backup'
 import { shouldRefuseSave, mayUnlinkDeletions, UNLINK_CAP } from './save-guards'
 import { computeTasteFingerprint, getTasteAnchors } from './taste-model'
@@ -134,9 +173,9 @@ import { explicitWins } from '../common/explicit.ts'
 import { summariseLearning, discoverVerdicts, type LedgerRow } from './discovery-learned.ts'
 import { readLedgerRows } from './taste-ledger-io.ts'
 import { JsonFileCache } from './state-cache'
-import { initFlightRecorder, sanitizeCrashPayload } from './flight-recorder'
+import { initFlightRecorder, sanitizeCrashPayload, quietWarn } from './flight-recorder'
 import { spawn } from 'child_process'
-import { stat, lstat, open, readFile, writeFile, mkdir, copyFile, unlink, readlink, symlink, rename, appendFile, readdir } from 'fs/promises'
+import { stat, lstat, open, readFile, writeFile, mkdir, copyFile, unlink, readlink, symlink, rename, appendFile, readdir, utimes } from 'fs/promises'
 import { createHash, randomUUID } from 'crypto'
 import Anthropic from '@anthropic-ai/sdk'
 import { config } from 'dotenv'
@@ -192,7 +231,7 @@ import {
 } from './ipod-sync-tsa'
 import { ensureContiguousDb } from './ipod-db-contiguity'
 import { refuseIpodSyncUnlessUserClick, type IpodSyncOpts } from './ipod-sync-origin'
-import { bindActivityReplacements, runActivitySync } from './ipod-activity-engine'
+import { runActivitySync } from './ipod-activity-engine'
 import {
   classifyActivitySyncTracks,
   formatHomeminiPullRefuse,
@@ -206,6 +245,7 @@ import {
   retireIpodFirmwareScratch,
 } from './ipod-sync-card'
 import { sweepOnce, type SweepResult } from './library-eviction'
+import { serveEvictedFromHomemini } from './evicted-playback.ts'
 import {
   initImportPipeline,
   importOneFile,
@@ -219,6 +259,7 @@ import {
 } from './import-pipeline'
 import { searchItunesSuggestions, itunesAlbumTracks } from './download-search'
 import { registerBandcampIntegration } from './bandcamp-integration'
+import { applyDevReview, devReviewWebPreferences, suppressListeningWrites } from './dev-review.ts'
 import { registerStreamripStore } from './streamrip-store'
 import { registerGaplessTrimIpc } from './gapless-trim'
 import { registerPlaylistCoverIpc, registerPlaylistCoverProtocol } from './playlist-covers'
@@ -899,7 +940,7 @@ async function audioAnalysisWorker(): Promise<void> {
       // `remaining` counts down across the batch so the UI ticks smoothly; a
       // null dispatch (skipped — no librosa) still advances the counter.
       dispatches.forEach((dispatch, idx) => {
-        mainWindow?.webContents.send('audio-analysis:progress', {
+        sendToRenderer('audio-analysis:progress', {
           remaining: audioAnalysisQueue.length + (dispatches.length - 1 - idx),
           ...(dispatch ? {
             trackId: dispatch.trackId,
@@ -983,6 +1024,13 @@ function kickAudioAnalysisWorker(): void {
 
 let mainWindow: BrowserWindow | null = null
 
+// Renderer sends must survive window teardown — `?.` guards null but a
+// destroyed window still throws ("Object has been destroyed", seen ×2 in
+// the flight recorder from mid-sync progress events).
+const sendToRenderer = (channel: string, ...args: unknown[]): void => {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, ...args)
+}
+
 // AI host preference — written by settings IPC, read by prompt builders.
 // Declared above registerSettingsIpc so the setter closure is valid.
 let cachedActiveHost: 'mm' | 'megan' = 'mm'
@@ -992,6 +1040,15 @@ let cachedActiveHost: 'mm' | 'megan' = 'mm'
 // only for intentionally public / read-only channels.
 const ipc = createIpcRegistrar(() => mainWindow)
 registerUiStateIpc(ipc)
+// Spotify connect + weekly Discover Weekly → brain-gated onto the list
+// ("get Discover Weekly into the brain", greenlit 2026-07-14).
+registerSpotifyIpc(ipc, {
+  authFile: join(STATE_DIR, 'spotify-auth.json'),
+  tasteFile: join(STATE_DIR, 'spotify-taste.json'),
+  curatorsFile: join(STATE_DIR, 'spotify-curators.json'),
+  curatorPoolFile: join(STATE_DIR, 'spotify-curator-pool.json'),
+  openExternal: (url) => { void shell.openExternal(url) },
+})
 registerBackupIpc(ipc, { getMainWindow: () => mainWindow })
 registerSettingsIpc(ipc, {
   setCachedActiveHost: (host) => { cachedActiveHost = host },
@@ -1018,14 +1075,22 @@ registerIpodIpc(ipc, {
     if ('missStreak' in next && typeof next.missStreak === 'number') ipodMissStreak = next.missStreak
   },
   runPythonRestore: (args, stdinData) => runPythonRestore(args, stdinData),
-  isSyncInFlight: () => syncInFlight,
+  isSyncInFlight: () => syncEngine.isSyncInFlight(),
+  onMountDetected: (mount) => {
+    void ingestIpodRoundTrip(mount, {
+      stateDir: STATE_DIR,
+      getLibraryTracks: async () =>
+        (((await libraryCache.get()) as { tracks?: Array<{ id: number; playCount?: number; lastPlayedAt?: number }> }).tracks) || [],
+      appendPlayEvents: async (trackId, count, tsMs) => {
+        for (let i = 0; i < count; i++) await appendPlayEvent(trackId, tsMs)
+      },
+      sendToRenderer,
+      isSyncInFlight: () => syncEngine.isSyncInFlight(),
+    })
+  },
 })
 registerSyncIpc(ipc, {
-  requestSyncCancel: () => {
-    if (!syncInFlight) return { wasRunning: false }
-    syncCancelRequested = true
-    return { wasRunning: true }
-  },
+  requestSyncCancel: () => syncEngine.requestSyncCancel(),
   syncToIpod: (tracks, playlists, convertOptions, syncOpts) =>
     handleSyncToIpod(tracks, playlists, convertOptions, syncOpts),
   syncIpodFromDevice: (existingIds) => handleSyncIpodFromDevice(existingIds),
@@ -1086,7 +1151,7 @@ registerCynthiaIpc(ipc, cynthiaIpcHost)
 const codecByAbsPath = new Map<string, string>()
 
 function sendMenuAction(action: string) {
-  mainWindow?.webContents.send('menu-action', action)
+  sendToRenderer('menu-action', action)
 }
 
 // Hardware media keys (keyboard play/pause/next/prev). Menu F7/F8/F9
@@ -1460,7 +1525,7 @@ ipc.handle('discovery-allow-again', async (_e, artist: string) => {
 // feed built by v2 carries VA-compilation junk cards and must regenerate.
 // v4 (2026-08-07): "From the Scene" lane (human-graph reach — the
 // Ceremony problem); regenerate so the lane appears.
-const FEED_GEN_VERSION = 5  // 5: bins + album hooks + scene pitches (2026-08-22)
+const FEED_GEN_VERSION = 9   // 2026-09-21: cover-factory gates in the supply lane; stale shelves regenerate  // 8: curator lane — Spotify curator picks seat New Songs slots (2026-09-01); 7: supply edition gate; 6: 25/25 supply lanes; 5: bins + hooks + pitches
 type FeedCacheShape = { at: number; ver?: number; lanes: Array<{ id: string; title: string; cards: unknown[] }> }
 let discoverFeedMem: FeedCacheShape | null = null
 const DISCOVER_TTL_MS = 3 * 60 * 60 * 1000
@@ -1501,10 +1566,10 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     const anchorNames = speaking.map((a) => a.artist).join(', ')
     const nk = (x: string) => String(x || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim()
     const ownedArtists = new Set(tracks.map((t) => nk(String((t as { artist?: string }).artist || ''))).filter(Boolean))
-    const ownedAlbumKeys = new Set(tracks.map((t) => {
-      const tr = t as { artist?: string; album?: string; title?: string }
-      return [`${nk(String(tr.artist || ''))}|${nk(String(tr.album || ''))}`, `${nk(String(tr.artist || ''))}|${nk(String(tr.title || ''))}`]
-    }).flat())
+    // Contributor-expanded (2026-08-28, the FourFiveSeconds catch): a
+    // collab tag indexes under every credited artist. Logic + tests in
+    // discover-feed.ownedPairKeys.
+    const ownedAlbumKeys = new Set(df.ownedPairKeys(tracks as Array<{ artist?: string; albumArtist?: string; album?: string; title?: string }>))
     // Recording-identity keys: owning "Undone - The Sweater Song" must also
     // block "Undone -- The Sweater Song (Kitchen Tape Demo)" — Jake rejected
     // exactly that card the day this shipped.
@@ -1525,19 +1590,22 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     const radarPromise = (async () => {
       try {
         const year = String(new Date().getFullYear())
-        const scenes = fp.spines.slice(0, 3).map((sp) => RADAR_SCENES[sp.name] || sp.name.toLowerCase())
+        // 2026-08-25: 3 scenes -> 6. Only 9% of the feed was from the last two
+        // years because this, the only new-release lane, was also the smallest.
+        const scenes = fp.spines.slice(0, 6).map((sp) => RADAR_SCENES[sp.name] || sp.name.toLowerCase())
         const { exaNewMusic } = await import('./exa')
         const blocks = await Promise.all(scenes.map((sc) => exaNewMusic(sc, year)))
         const journalism = blocks.filter(Boolean).join('\n\n')
         if (!journalism) return
         const reply = await claudeCall('discover-brand-new', {
-          model: 'claude-sonnet-4-6', max_tokens: 2600, system: MUSIC_MAN_CORE,
-          messages: [{ role: 'user', content: `${tasteLine}\n\nCurrent music journalism:\n${journalism}\n\nFrom ONLY the releases named above, pick up to 24 this listener would love. Canonical studio releases only — never demos, live albums, remasters, deluxe/expanded reissues, tributes, or covers. Return ONLY JSON: [{"artist","title","year","why"}] — "why" MUST be 8 words or fewer, punchy, no filler. No prose.` }],
+          model: 'claude-sonnet-4-6', max_tokens: 8000, system: MUSIC_MAN_CORE,
+          messages: [{ role: 'user', content: `${tasteLine}\n\nCurrent music journalism:\n${journalism}\n\nFrom ONLY the releases named above, pick up to 40 this listener would love. Canonical studio releases only — never demos, live albums, remasters, deluxe/expanded reissues, tributes, or covers. Return ONLY JSON: [{"artist","title","year","why"}] — "why" MUST be 8 words or fewer, punchy, no filler. No prose.` }],
         })
-        const block = reply.content[0]
-        const text = block && block.type === 'text' ? block.text : ''
+        const block = reply.content[0]; console.warn(`[dx.brandnew] scenes=${scenes.length} journalism=${journalism.length}ch`)
+        const text = block && block.type === 'text' ? block.text : ''; console.warn(`[dx.brandnew] replyChars=${text.length} stop=${reply.stop_reason} picks=${df.parseFeedJson(text).length}`)
         for (const r of df.parseFeedJson<{ artist?: string; title?: string; year?: string; why?: string }>(text)) {
-          if (r.artist && r.title) cards.push({ lane: 'brand-new', type: 'album', artist: String(r.artist), title: String(r.title), year: String(r.year || new Date().getFullYear()), why: df.clipWhy(String(r.why || '')), desc: df.clipWhy(String(r.why || '')) })
+          const card = await df.dressJournalismPick(r, { verify: df.itunesVerify as never, caa: fetchCaaArtwork, clipWhy: df.clipWhy })  // existence gate
+          if (card) cards.push(card); else console.warn(`[dx.brandnew] REJECTED ${r.artist} — ${r.title}`)
         }
       } catch (err) { console.warn('[discover] brand-new lane failed:', err) }
     })()
@@ -1545,17 +1613,12 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     // L2 · You're missing — MusicBrainz discography minus owned (pure grounding).
     const missingPromise = (async () => {
       try {
-        const tops = anchors.slice(0, 12)
-        for (const a of tops) {
-          const disco = await fetchArtistDiscography(a.artist).catch(() => null)
-          if (!disco) continue
-          const missing = disco.albums.filter((al) => !ownedAlbumKeys.has(`${nk(a.artist)}|${nk(al.title)}`)).slice(0, 4)
-          for (const al of missing) {
-            // This lane's anchor is a FACT, not a model claim — it comes straight
-            // from the owned-track count, so it needs no validation.
-            cards.push({ lane: 'missing', type: 'album', artist: a.artist, title: al.title, year: String(al.year || ''), why: `${a.tracks} of their tracks already yours`, because: a.artist })
-          }
-        }
+        // 2026-08-25: completion WAS the page. Now a small shelf — buildGapCards.
+        const discos = await Promise.all(anchors.slice(0, 8).map(async (a) => ({
+          artist: a.artist, tracks: a.tracks,
+          albums: (await fetchArtistDiscography(a.artist).catch(() => null))?.albums || [],
+        })))
+        for (const c of df.buildGapCards(discos, ownedAlbumKeys)) cards.push(c)
       } catch (err) { console.warn('[discover] missing lane failed:', err) }
     })()
 
@@ -1634,7 +1697,9 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
         let made = 0
         let tried = 0
         for (const p of picks) {
-          if (made >= 14 || tried >= 44) break
+          // 2026-08-25: the "never heard of them" lane (already refuses owned
+          // artists). The throttle, not the supply, kept it at 7 cards.
+          if (made >= 26 || tried >= 80) break
           tried++
           const v = await df.itunesVerify(p.name, 'album', { artist: p.name }).catch(() => null)
           await new Promise((r) => setTimeout(r, 250))
@@ -1680,20 +1745,25 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
         for (const c of (parsed.classics || []).slice(0, 24)) {
           if (!c.artist) continue
           const entity = c.type === 'artist' ? 'musicArtist' : 'album'
-          const v = await df.itunesVerify(c.type === 'artist' ? c.artist : `${c.artist} ${c.title || ''}`, entity as 'album' | 'musicArtist', { artist: c.artist, title: c.type === 'artist' ? undefined : c.title })
+          const v = await df.catalogVerify(c.type === 'artist' ? c.artist : `${c.artist} ${c.title || ''}`, entity as 'album' | 'musicArtist', { artist: c.artist, title: c.type === 'artist' ? undefined : c.title }, df.itunesVerify as never)
           if (v) cards.push({ lane: 'time-machine', type: (c.type === 'artist' ? 'artist' : 'album'), artist: v.artist, title: v.title, year: v.year || String(c.year || ''), why: df.clipWhy(String(c.why || '')), artUrl: v.artUrl, because: validBecause(c.because), genre: v.genre, collectionId: v.collectionId, desc: df.clipWhy(String(c.why || '')) })
           await new Promise((r) => setTimeout(r, 250))   // stay polite with Apple
         }
         for (const sng of (parsed.songs || []).slice(0, 24)) {
           if (!sng.artist || !sng.title) continue
-          const v = await df.itunesVerify(`${sng.artist} ${sng.title}`, 'song', { artist: sng.artist, title: sng.title })
+          const v = await df.catalogVerify(`${sng.artist} ${sng.title}`, 'song', { artist: sng.artist, title: sng.title }, df.itunesVerify as never)
           if (v) cards.push({ lane: 'songs', type: 'song', artist: v.artist, title: v.title, year: v.year || String(sng.year || ''), why: df.clipWhy(String(sng.why || '')), artUrl: v.artUrl, previewUrl: v.previewUrl, because: validBecause(sng.because), genre: v.genre, desc: df.clipWhy(String(sng.why || '')) })
           await new Promise((r) => setTimeout(r, 250))
         }
       } catch (err) { console.warn('[discover] llm lanes failed:', err) }
     })()
 
-    await Promise.all([radarPromise, missingPromise, scenePromise, llmLanes])
+    // L0 · Bulk supply — the 25/25 quota lanes (Jake: "NO LESS"). Deezer graph, module-side; all 16
+    // anchors feed the pool, plus his top SPOTIFY artists ("wire in the taste signal they use").
+    const spotifyAnchors = await loadSpotifyTasteAnchors(join(STATE_DIR, 'spotify-taste.json'), 4)
+    const supplyPromise = df.supplyLanes([...anchors.map((a) => a.artist), ...spotifyAnchors], dayN, { artists: ownedArtists, albumKeys: ownedAlbumKeys, baseKeys: ownedBaseKeys }).then((cs) => { cards.push(...cs) }).catch((err) => console.warn('[discover] supply lanes failed:', err))
+
+    await Promise.all([radarPromise, missingPromise, scenePromise, llmLanes, supplyPromise])
 
     // Clerk pitches (module pass — Jake: "need you to get deeper than
     // label-mates"): runs before scoring so the pitch feeds the embedding.
@@ -1743,16 +1813,10 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
       scoreCandidates: (cands) => brainMatchCandidates(cands, tracks as Array<{ id?: number; rating?: number; playCount?: number }>, 5),
     })
 
-    const laneDefs = [
-      { id: 'brand-new', title: 'Brand New' },
-      { id: 'scene', title: 'From the Scene' },
-      { id: 'missing', title: "You're Missing" },
-      { id: 'time-machine', title: 'Time Machine' },
-      { id: 'songs', title: 'Songs to Try' },
-    ]
-    const lanes = laneDefs
-      .map((l) => ({ ...l, cards: shelved.filter((c) => c.lane === l.id).sort((a, b) => (b.brainPct ?? 0) - (a.brainPct ?? 0)).slice(0, 24) }))
-      .filter((l) => l.cards.length > 0)
+    // Lane seating moved to df.assembleLanes (2026-08-27, the line-ratchet
+    // extraction) — quota lanes seat 25, narrative lanes 24, scene keeps
+    // its orbit cap.
+    const lanes = df.assembleLanes(shelved)
 
     // 2026-08-24 — the serve-count MOVED OUT of generation (Jake: "not enough
     // new music recommendations where did that go????"). Counting a "view"
@@ -1769,7 +1833,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     if (lanes.length > 0) {
       discoverFeedMem = { at: nowMs, ver: FEED_GEN_VERSION, lanes }
       await discoverFeedDisk.update(() => ({ at: nowMs, ver: FEED_GEN_VERSION, lanes }))
-      mainWindow?.webContents.send('discover-feed-updated', { lanes, generatedAt: nowMs })
+      sendToRenderer('discover-feed-updated', { lanes, generatedAt: nowMs })
       // If Apple rate-limited during THIS build, cards persisted artless —
       // re-dress them instead of serving gray placeholders until the TTL.
       void backfillDiscoverArt()
@@ -1825,7 +1889,7 @@ async function backfillDiscoverArt(): Promise<void> {
     }
     if (fixed > 0) {
       await discoverFeedDisk.update(() => ({ at: mem.at, ver: mem.ver ?? FEED_GEN_VERSION, lanes: mem.lanes }))
-      mainWindow?.webContents.send('discover-feed-updated', { lanes: mem.lanes, generatedAt: mem.at })
+      sendToRenderer('discover-feed-updated', { lanes: mem.lanes, generatedAt: mem.at })
       // Progress was made — let the next serve finish the stragglers without
       // waiting out the backoff window.
       discoverArtBackfillLastTry = 0
@@ -2397,12 +2461,20 @@ const flightRecorder = initFlightRecorder({
   logPath: () => join(app.getPath('userData'), 'main.log'),
   ready: app.whenReady(),
 })
-flightRecorder.mirrorConsole()
+flightRecorder.mirrorConsole({ unhandledRejections: true })
 flightRecorder.record('info', 'boot.main-start')
 app.whenReady().then(() => flightRecorder.record('info', 'boot.ready'))
 ipcMain.on('flight-record', (_e, payload: unknown) => {
   const p = sanitizeCrashPayload(payload)
   flightRecorder.record(p.kind.startsWith('boot.') ? 'info' : 'error', `renderer.${p.kind}`, p)
+})
+// dx rows from the renderer (queue honesty probe etc.) — info level, bounded.
+ipcMain.on('dx-record', (_e, payload: unknown) => {
+  const p = (payload && typeof payload === 'object' ? payload : {}) as { tag?: unknown; detail?: unknown }
+  const tag = String(p.tag || 'unknown').replace(/[^a-z0-9._-]/gi, '').slice(0, 60)
+  let detail = p.detail
+  try { if (JSON.stringify(detail ?? null).length > 2000) detail = { truncated: true } } catch { detail = { unserializable: true } }
+  flightRecorder.record('info', `dx.${tag}`, detail)
 })
 // Warn-once state for persisting conditions (flight-log stomp 2026-08-22:
 // one orphaned-edits condition = 23 identical lines; nine propagating
@@ -2466,6 +2538,7 @@ async function createWindow(): Promise<void> {
     // before the renderer mounts doesn't flash a foreign gray.
     backgroundColor: '#f4f0e4',
     webPreferences: {
+      ...devReviewWebPreferences(),   // review windows: audio only from a real gesture
       preload: join(__dirname, '../preload/index.js'),
       // Explicit Electron secure defaults. webSecurity was historically
       // false (custom-protocol CORS workaround); privileged schemes now
@@ -2487,6 +2560,7 @@ async function createWindow(): Promise<void> {
       backgroundThrottling: false,
     }
   })
+  applyDevReview(mainWindow)   // dev review: muted + titled (JT_DEV_REVIEW=1 only)
 
   if (saved?.isMaximized) mainWindow.maximize()
 
@@ -2525,10 +2599,18 @@ async function createWindow(): Promise<void> {
     sendMediaKeyAction(action)
   })
 
+  // Acceptance harness (dev only): JT_STEP_INSIDE=1 boots straight into
+  // Step Inside, and =demo additionally runs the scripted approach/browse/
+  // pull/return so a run can be recorded without a human at the keyboard.
+  // Ignored entirely in a packaged app, so normal startup is unchanged.
+  const stepInsideHash = !app.isPackaged && process.env['JT_STEP_INSIDE']
+    ? (process.env['JT_STEP_INSIDE'] === 'demo' ? '#stepInsideDemo' : '#stepInside')
+    : ''
+
   if (isDev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'] + stepInsideHash)
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    mainWindow.loadFile(join(__dirname, '../renderer/index.html'), stepInsideHash ? { hash: stepInsideHash.slice(1) } : undefined)
   }
 }
 
@@ -2800,17 +2882,14 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
       { label: 'Albums', click: () => sendMenuAction('view-albums') },
       { label: 'Genres', click: () => sendMenuAction('view-genres') },
       { type: 'separator' },
+      { label: 'The Music Man', accelerator: 'Shift+CmdOrCtrl+M', click: () => sendMenuAction('toggle-music-man') },
+      // ⌘T is handled in the renderer (Visualizer.tsx keydown) — show the
+      // shortcut here without registering it, or one press toggles twice.
+      { label: 'Visualizer', accelerator: 'CmdOrCtrl+T', registerAccelerator: false, click: () => sendMenuAction('toggle-visualizer') },
+      { type: 'separator' },
       { label: 'Toggle Developer Tools', accelerator: 'Alt+CmdOrCtrl+I', role: 'toggleDevTools' }
     ]
   },
-  {
-    label: 'Playlists',
-    submenu: [
-      { label: 'Recently Added' },
-      { label: 'Recently Played' },
-      { label: 'Top 25 Most Played' }
-    ]
-  }
 ]
 
 // Search Wikipedia for artist info
@@ -3656,6 +3735,9 @@ const libraryCache = new JsonFileCache<CachedLibrary>(
   () => ({ tracks: [], playlists: [] }),
   'library',
 )
+// RAG retrieval core lives in ai/rag-retrieval.ts (6.0 Phase 1) — hand
+// it its world before any retrieval call can fire.
+initRagRetrieval({ libraryCache, libraryPath: () => LIBRARY_PATH })
 const overridesCache = new JsonFileCache<Record<string, unknown>>(
   () => join(STATE_DIR, 'metadata-overrides.json'),
   () => ({}),
@@ -3722,7 +3804,7 @@ const mobileStarsCache = new JsonFileCache<{ trackIds: string[] }>(
 // caches exist purely to keep startup reads off the SMB hot path.
 // Same JsonFileCache contract as mobile-stars: error-fallback locks
 // writes anyway, but we also just never call .update() on these.
-interface MobilePlaylistRecord { id: string; name: string; trackIds: string[]; createdAt?: string; source?: string }
+export interface MobilePlaylistRecord { id: string; name: string; trackIds: string[]; createdAt?: string; source?: string }
 const mobilePlaylistsCache = new JsonFileCache<{ playlists: MobilePlaylistRecord[] }>(
   () => join(STATE_DIR, 'mobile-playlists.json'),
   () => ({ playlists: [] }),
@@ -3765,28 +3847,18 @@ const PHONE_AUTHORED_FILES = [
   'mobile-imports.json',
 ]
 async function refreshPhoneAuthoredMirrors(): Promise<void> {
-  // Circuit breaker — bare stat() on a wedged Synology share parks a libuv
-  // thread forever. That is the "works after restart, then certain songs
-  // stop" leftover after the playback path itself stopped touching SMB.
-  if (!(await nasAvailable())) return
-  const nasDir = '/Volumes/JakeShared/JakeTunesState'
-  try { await stat(nasDir) } catch { return } // NAS asleep — keep what we have
-  const refreshedNames: string[] = []
-  for (const name of PHONE_AUTHORED_FILES) {
-    try {
-      const nasPath = join(nasDir, name)
-      const localPath = join(app.getPath('userData'), name)
-      const nasStat = await stat(nasPath)
-      const localStat = await stat(localPath).catch(() => null)
-      if (!localStat || nasStat.mtimeMs > localStat.mtimeMs + 1000) {
-        const tmp = localPath + '.tmp'
-        await copyFile(nasPath, tmp)
-        const { rename: renameFS } = await import('fs/promises')
-        await renameFS(tmp, localPath)
-        refreshedNames.push(name)
-      }
-    } catch { /* per-file best effort */ }
-  }
+  // 2026-08-30 ("do a better job of adding the songs i download on mobile
+  // to the library"): mirroring moved to phone-mirrors.ts — HTTP from the
+  // backend FIRST (works from anywhere), the flappy NAS mount only as
+  // fallback. The old NAS-only path sat NINE DAYS stale behind breaker
+  // cooldowns while phone downloads waited invisible.
+  const refreshedNames = await refreshPhoneMirrors({
+    files: PHONE_AUTHORED_FILES,
+    localDir: app.getPath('userData'),
+    nasDir: '/Volumes/JakeShared/JakeTunesState',
+    backendUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''),
+    nasAvailable,
+  })
   if (refreshedNames.length > 0) {
     mobilePlaylistsCache.invalidate()
     mobileStarsCache.invalidate()
@@ -3799,7 +3871,7 @@ async function refreshPhoneAuthoredMirrors(): Promise<void> {
     if (refreshedNames.includes('mobile-metadata-overrides.json')) {
       try {
         const ov = await mobileMetadataOverridesCache.get()
-        mainWindow?.webContents.send('mobile-overrides-updated', { overrides: ov })
+        sendToRenderer('mobile-overrides-updated', { overrides: ov })
       } catch { /* next boot's overlay still applies them */ }
     }
   }
@@ -3813,7 +3885,10 @@ async function refreshPhoneAuthoredMirrors(): Promise<void> {
       const parsed = JSON.parse(raw) as { tracks?: unknown[] }
       const tracks = Array.isArray(parsed?.tracks) ? parsed.tracks : []
       if (tracks.length > 0 && mainWindow) {
-        mainWindow.webContents.send('mobile-imports-updated', { tracks })
+        // Audio FIRST (pulled straight from homemini — no rsync, no NAS),
+        // so the absorb always lands rows whose bytes are already on disk.
+        await ensureMobileImportAudio(tracks as never, { libraryRoot: MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, ''), backendUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, '') })
+        sendToRenderer('mobile-imports-updated', { tracks })
       }
     } catch { /* no imports yet — next tick retries */ }
   }
@@ -3829,13 +3904,44 @@ ipc.handle('get-mobile-imports', async () => {
   try {
     const raw = await readFile(join(app.getPath('userData'), 'mobile-imports.json'), 'utf-8')
     const parsed = JSON.parse(raw) as { tracks?: unknown[] }
-    return { tracks: Array.isArray(parsed?.tracks) ? parsed.tracks : [], overrides }
+    const tracks = Array.isArray(parsed?.tracks) ? parsed.tracks : []
+    if (tracks.length > 0) await ensureMobileImportAudio(tracks as never, { libraryRoot: MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, ''), backendUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, '') })
+    return { tracks, overrides }
   } catch {
     return { tracks: [], overrides }
   }
 }, { public: true })
 setTimeout(() => { void refreshPhoneAuthoredMirrors() }, 5_000)
 setInterval(() => { void refreshPhoneAuthoredMirrors() }, 5 * 60_000)
+
+// 2026-10-08 — HUB CATALOG for replicas. Any machine with library.streamRoot
+// (workmini) adopts the library from homemini exactly like the phone does:
+// version poll → delta → merge in the running app → ack. This replaced the
+// laptop's file swap onto workmini (jaketunes-workmini-index-sync.sh, retired
+// 2026-10-08), which reloaded whatever the laptop had at that second and
+// made phone downloads vanish mid-play. Inert on the canonical laptop.
+const hubCatalog = startHubCatalogPoll({
+  stateDir: app.getPath('userData'),
+  hubBase: async () => {
+    // Replica = streaming client: streamSource 'homemini' OR a streamRoot
+    // (which on workmini is a filesystem path, NOT a URL — the hub address
+    // is the backend URL the phone mirrors already use).
+    const replica = (await readStreamSourceCached()) === 'homemini' || (await readStreamRootCached()) !== null
+    if (!replica) return null
+    try { return new URL(MOBILE_BACKEND_URL).origin } catch { return null }
+  },
+  send: (channel, payload) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false
+    mainWindow.webContents.send(channel, payload)
+    return true
+  },
+  isLocked: () => isSaveLocked(),
+})
+ipc.handle('hub-catalog-adopted', async (_e, version: unknown) => {
+  if (typeof version === 'string' && version) await hubCatalog.adopted(version)
+  return { ok: true }
+}, { public: true })
+setTimeout(() => { void hubCatalog.tick() }, 8_000)
 
 const playlistAdditionsCache = new JsonFileCache<Record<string, string[]>>(
   () => join(STATE_DIR, 'playlist-additions.json'),
@@ -3884,7 +3990,7 @@ export interface LiveSetEntry {
   // Constituents reimported to the regular library (right-click → Add to
   // Library). Exempted from the concert's library-hide. See src/renderer/types.ts.
   promotedTrackIds?: number[]
-  concert?: { venue?: string; city?: string; date?: string; poster?: string; facts?: string[]; notes?: string; source?: string; label?: string; merchUrl?: string }
+  concert?: { venue?: string; city?: string; date?: string; poster?: string; facts?: string[]; notes?: string; source?: string; label?: string; merchUrl?: string; segments?: Array<{ before: number; label: string }> }  /* ⚠️ TWIN: renderer types.ts ConcertMeta */
 }
 const liveSetsCache = new JsonFileCache<Record<string, LiveSetEntry>>(
   () => join(STATE_DIR, 'live-sets.json'),
@@ -3924,15 +4030,16 @@ const STATE_FILE_NAMES = [
   // HTTP API — a reconcile push of V3's local copy is exactly the whole-file
   // clobber that resurrected phone-deleted recos.
   'play-events.jsonl',
-  'embeddings.bin',
-  // The vibe brain rides to the NAS like embeddings.bin so the homemini
-  // backend can route mixes/DJ vibe queries against it (phase 2).
-  'mood-index.bin',
+  // embeddings.bin + mood-index.bin ABSENT on purpose: homemini's trainer owns them;
+  // the laptop pulls (src/main/brain-pull.ts, which throws at boot if they come back).
   // Live Concert Mode declarations — the ONLY file that records "these tracks
   // form a declared concert" (mergedTrackId + cues + facts). Without it a
   // concert declared on one machine lands as an orphan track on the others.
   // Single-writer (the desktop app), so no clobber risk like recommendations.json.
   'live-sets.json',
+  // Group membership grounded in MusicBrainz (scripts/artist-members.mjs) —
+  // the trainer on homemini folds `members:` into each track's text.
+  'artist-members.json',
 ] as const
 assertNoDesktopBluntPush(STATE_FILE_NAMES, 'STATE_FILE_NAMES')
 interface StateConflict {
@@ -3950,7 +4057,7 @@ let stateConflicts: StateConflict[] = []
 async function detectStateConflicts(): Promise<void> {
   stateConflicts = []
   const localDir = app.getPath('userData')
-  const CONFLICT_THRESHOLD_MS = 60_000 // ignore <60s jitter
+  const CONFLICT_THRESHOLD_MS = 2_000 // NAS copies carry the local mtime (utimes after publish), so 2s = SMB timestamp granularity
   for (const f of STATE_FILE_NAMES) {
     const localPath = join(localDir, f)
     const nasPath = join(NAS_STATE_DIR_PATH, f)
@@ -3980,7 +4087,7 @@ async function detectStateConflicts(): Promise<void> {
     const orphanKey = stateConflicts.map(c => c.file).sort().join('|')
     if (orphanKey !== lastOrphanWarnKey) {
       lastOrphanWarnKey = orphanKey
-      console.warn(`[state] ORPHANED LOCAL EDITS detected (offline-mode work that didn't reach NAS): ${summary}. Use Settings → Library → Push local edits to NAS to resolve.`)
+      quietWarn('state-orphaned-edits', `[state] ORPHANED LOCAL EDITS detected (offline-mode work that didn't reach NAS): ${summary}. Use Settings → Library → Push local edits to NAS to resolve.`)
     }
   } else {
     lastOrphanWarnKey = ''
@@ -4077,6 +4184,7 @@ async function handleReconcileStateConflicts(event: import('electron').IpcMainIn
       // Atomic publish (tmp+fsync+rename) — never overwrite the NAS file in
       // place, which on SMB can leave a duplicated-tail torn write.
       await atomicPublishToNas(c.nasPath, (tmp) => stageCopyToTmp(c.localPath, tmp), { verifyJson: c.file === 'library.json' })
+      await utimes(c.nasPath, new Date(c.localMtimeMs), new Date(c.localMtimeMs)).catch(() => { /* copy-time mtime is newer: no re-push loop either way */ })
       pushed++
       console.log(`[state] reconciled "${c.file}" → NAS (${(c.localSizeBytes / (1024 * 1024)).toFixed(1)} MB, local +${Math.round((c.localMtimeMs - c.nasMtimeMs) / 1000)}s newer)`)
     } catch (err) {
@@ -4107,13 +4215,15 @@ async function autoBackupStateToNas(): Promise<void> {
   try {
     await detectStateConflicts()
     if (stateConflicts.length === 0) return
+    const behind = await machineBehindNas(join(app.getPath('userData'), 'library.json'), join(NAS_STATE_DIR_PATH, 'library.json'))
+    if (behind) { quietWarn('state-backup-behind', `[state] auto-backup PAUSED: ${behind}`); return }   // src/common/stale-push.ts
     let pushed = 0, skipped = 0
     for (const c of stateConflicts) {
       try {
         if (c.nasMtimeMs > 0) {
           const ns = await stat(c.nasPath).catch(() => null)
           if (ns && c.localSizeBytes < ns.size * 0.5) {
-            console.warn(`[state] auto-backup SKIPPED "${c.file}" — local ${(c.localSizeBytes / 1048576).toFixed(1)}MB ≪ NAS ${(ns.size / 1048576).toFixed(1)}MB (possible truncation; left for manual review)`)
+            quietWarn(`state-backup-skip:${c.file}`, `[state] auto-backup SKIPPED "${c.file}" — local ${(c.localSizeBytes / 1048576).toFixed(1)}MB ≪ NAS ${(ns.size / 1048576).toFixed(1)}MB (possible truncation; left for manual review)`)
             skipped++
             continue
           }
@@ -4124,6 +4234,7 @@ async function autoBackupStateToNas(): Promise<void> {
         // >50% shrink-skip above, and the in-place overwrite left the prior
         // file's longer tail behind, which the mobile backend then 500'd on.
         await atomicPublishToNas(c.nasPath, (tmp) => stageCopyToTmp(c.localPath, tmp), { verifyJson: c.file === 'library.json' })
+        await utimes(c.nasPath, new Date(c.localMtimeMs), new Date(c.localMtimeMs)).catch(() => { /* copy-time mtime is newer: no re-push loop either way */ })
         pushed++
       } catch (err) {
         console.warn(`[state] auto-backup failed for "${c.file}":`, err instanceof Error ? err.message : err)
@@ -4214,6 +4325,27 @@ async function trackIdForAbsPath(absPath: string): Promise<string | number | nul
   } catch { return null }
   return streamTrackIdByColonPath.get(colon) ?? null
 }
+// Compressed-stream marker: a machine on a link too thin for lossless
+// carries ~/.config/jaketunes/stream-compressed (optionally containing a
+// kbps number). Cached like streamSource — this is the playback hot path.
+// Absent = unchanged behaviour, which is what every machine but workmini
+// wants.
+let _streamCompressedCache: { on: boolean; kbps: number; t: number } | null = null
+async function readStreamCompressedCached(): Promise<{ on: boolean; kbps: number }> {
+  const now = Date.now()
+  if (_streamCompressedCache && now - _streamCompressedCache.t < 5000) return _streamCompressedCache
+  let on = false
+  let kbps = STREAM_KBPS_DEFAULT
+  try {
+    const raw = await readFile(join(process.env.HOME || '', '.config/jaketunes/stream-compressed'), 'utf8')
+    on = true
+    const n = parseInt(raw.trim(), 10)
+    if (Number.isFinite(n)) kbps = normalizeStreamKbps(n)
+  } catch { /* no marker — fat link, serve the original */ }
+  _streamCompressedCache = { on, kbps, t: now }
+  return _streamCompressedCache
+}
+
 async function fetchAudioFromHomemini(
   id: string | number,
   rangeHeader: string | null,
@@ -4228,8 +4360,12 @@ async function fetchAudioFromHomemini(
   // transcode cache is empty. A short header budget then looks like "music
   // doesn't play" until relaunch warms the cache. Give headers room; the body
   // is never aborted by this timer (fetchHeadersWithin).
-  const headerBudgetMs = wantFlac ? 25_000 : 12_000
-  const url = `${HOMEMINI_AUDIO_BASE}/${encodeURIComponent(String(id))}${wantFlac ? '?fmt=flac' : ''}`
+  const compressed = await readStreamCompressedCached()
+  const variant = streamVariant({ compressed: compressed.on, kbps: compressed.kbps, wantFlac })
+  const headerBudgetMs = variant.transcoding ? 25_000 : 12_000
+  const url = `${HOMEMINI_AUDIO_BASE}/${encodeURIComponent(String(id))}${variant.query}`
+  // Spool ("do the deeper buffering thing", 2026-08-28): a landed local copy serves every range from disk — WAN jitter can't reach a playing song. Not landed yet: kick the full download, live-proxy this request as before.
+  const viaSpool = await spoolAwareServe(join(app.getPath('userData'), 'stream-spool'), `${id}${variant.spoolSuffix}`, url, rangeHeader); if (viaSpool) return viaSpool
 
   const once = async (): Promise<Response | null> => {
     try {
@@ -4254,7 +4390,7 @@ async function fetchAudioFromHomemini(
       if (!res.body) return null
       const out: Record<string, string> = {
         'Accept-Ranges': 'bytes',
-        'X-JT-Audio-Source': wantFlac ? 'homemini-flac' : 'homemini',
+        'X-JT-Audio-Source': variant.label,
       }
       const ct = res.headers.get('content-type'); if (ct) out['Content-Type'] = ct
       const cr = res.headers.get('content-range'); if (cr) out['Content-Range'] = cr
@@ -4807,7 +4943,7 @@ function scheduleDbRebuild(deletedPaths: string[]) {
         } catch (err) { reject(err) }
       })
       console.log(`[delete-sync] removed ${removed.length} files from iPod, iTunesDB rebuilt`)
-      mainWindow?.webContents.send('ipod-db-rebuilt', { removed: removed.length })
+      sendToRenderer('ipod-db-rebuilt', { removed: removed.length })
     } catch (err) {
       console.warn('[delete-sync] iPod cleanup after delete failed:', err)
     }
@@ -4912,7 +5048,7 @@ async function saveLibraryImpl(tracks: unknown[], playlists?: unknown[], force?:
       if (driftFromLoad > 2000 && driftFromSelfWrite > 2000) {
         console.warn(`[save-library] EXTERNAL-WRITE CONFLICT: on-disk mtime ${onDiskMtime} > load ${lastLoadedLibraryMtimeMs} (+${driftFromLoad}ms) AND > self-write ${lastSelfWriteMtimeMs} (+${driftFromSelfWrite}ms). Refusing to overwrite.`)
         libraryCache.invalidate()
-        mainWindow?.webContents.send('library-external-change')
+        sendToRenderer('library-external-change')
         return {
           ok: false,
           error: 'external-write-conflict',
@@ -4946,7 +5082,7 @@ async function saveLibraryImpl(tracks: unknown[], playlists?: unknown[], force?:
     if (refusal) {
       console.warn(`[save-library] REFUSED (${refusal.error}): ${prevCount} → ${newCount} tracks. Pass force to override.`)
       libraryCache.invalidate()
-      mainWindow?.webContents.send('library-external-change')
+      sendToRenderer('library-external-change')
       return { ok: false, ...refusal }
     }
     if (newCount < prevCount) {
@@ -5106,7 +5242,7 @@ async function saveLibraryImpl(tracks: unknown[], playlists?: unknown[], force?:
 // Solution: watch the file. When mtime changes AND it wasn't us who
 // wrote it, tell the renderer to reload. The renderer calls load-tracks
 // which reads the fresh disk state into memory.
-import { watch as fsWatch } from 'fs'
+import { watch as fsWatch, readFileSync, writeFileSync, renameSync } from 'fs'
 let libraryWatcherStarted = false
 let lastObservedLibraryMtimeMs = 0
 async function checkLibraryExternalChange(): Promise<void> {
@@ -5137,7 +5273,7 @@ async function checkLibraryExternalChange(): Promise<void> {
     // codec map freezes at boot and new ALACs play as raw Chromium-illegal
     // audio until relaunch.
     void loadCodecMapFromLibrary()
-    mainWindow?.webContents.send('library-external-change')
+    sendToRenderer('library-external-change')
   } catch { /* file briefly missing during atomic replace — ignore */ }
 }
 function startLibraryWatcher() {
@@ -5161,33 +5297,6 @@ function startLibraryWatcher() {
 }
 
 // Sync: read iPod DB and return NEW tracks/playlists not already in the library
-async function handleSyncIpodFromDevice(existingIds: number[]): Promise<unknown> {
-  try {
-    const ipodData = await readIpodDatabase()
-    const knownIds = new Set(existingIds)
-    const newTracks = ipodData.tracks.filter(t => !knownIds.has(t.id as number))
-    // Backfill audioFingerprint for the incoming tracks so the
-    // post-sync verifier on subsequent flows has something to compare
-    // against. Only computes for files that exist; missing files are
-    // left alone (the verifier will flag them on next sync if the user
-    // actually wants those tracks).
-    const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
-    const mounts = [detectedIpodMount, LOCAL_MOUNT].filter((m): m is string => !!m)
-    for (const t of newTracks) {
-      if (typeof t.audioFingerprint === 'string' && t.audioFingerprint) continue
-      const colon = String(t.path || '')
-      if (!colon) continue
-      const abs = await resolveTrackAbsPath(colon, mounts)
-      if (!abs) continue
-      const fp = await computeAudioFingerprint(abs, Number(t.duration || 0))
-      if (fp) t.audioFingerprint = fp
-    }
-    return { ok: true, newTracks, playlists: ipodData.playlists, totalIpod: ipodData.tracks.length }
-  } catch (err) {
-    return { ok: false, error: safeIpcError(err, 'io-failed'), newTracks: [], playlists: [], totalIpod: 0 }
-  }
-}
-
 // Read the iPod's actual iTunesDB and return the full track + playlist
 // set. This is what iTunes used to call "On This iPod" — it's what the
 // device itself reports as present, independent of the app's local
@@ -5230,1955 +5339,22 @@ ipc.handle('brain-status', async () => {
   } catch { /* none yet */ }
   return { ok: true, ...out }
 }, { public: true })
-// ── Sync library TO iPod ──
-//
-// Content-safety invariant: this handler will REFUSE to commit the
-// iTunesDB if any library entry's path points at audio whose embedded
-// tags disagree with what the library claims the track is.
-//
-// That used to happen when filename-only smart-matching linked a
-// library entry to the wrong file (e.g. a Beatles entry ended up
-// playing Pink Floyd because both files had the same basename
-// "imported_3713.m4a"). The smart-match step in this handler now
-// tag-verifies, AND the preflight below verifies every remaining
-// track's existing path too, so even a library.json that got
-// corrupted by some OTHER flow can't write incorrect paths into the
-// iPod database.
-// Module-level lock so a second sync-to-ipod invocation can't fire
-// while one is already in flight. Without this, two paths can race:
-// (1) the user clicks Sync, (2) the auto-sync-on-mount listener in
-// App.tsx fires when the iPod momentarily ejects/remounts during the
-// running sync. The race manifests as the preflight progress
-// counter running up to ~1600/4530 then jumping back to 0/4530, plus
-// random write failures from two writers stomping the same iTunesDB.
-// 4.5: also tracks WHEN the sync started so a hung sync auto-clears
-// after SYNC_HANG_TIMEOUT_MS (2 hours). Pre-fix, a sync that hung
-// (network volume gone, disk full, panic) left the flag permanently
-// set; every subsequent Sync click failed with "A sync is already in
-// progress" until the app was relaunched. The watchdog still exists
-// as a last resort — but 5 minutes was too short for a 500-song
-// activity sync and released the lock while the first writer was live.
-let syncInFlight = false
-let syncStartedAt = 0
-// 2 hours, not 5 minutes. A 500-song activity sync (copy + convert + two
-// cold remounts) routinely runs past 5 minutes. The old watchdog released
-// the lock mid-copy, auto-repair started a second writer, and the Mini
-// indexed a random subset (33 / 111 / 340…). Cancel is the user abort.
-const SYNC_HANG_TIMEOUT_MS = 2 * 60 * 60 * 1000
-// 4.5.0-109: cancellation flag. Set by the cancel-sync IPC handler;
-// checked by the copy loop between each file. The renderer's Cancel
-// button calls cancel-sync, which flips this on; runSyncToIpod bails
-// out at the next file-copy boundary and returns ok:false, cancelled:true.
-// Reset to false at the top of every new runSyncToIpod call.
-let syncCancelRequested = false
-
-
-
-async function handleSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions, syncOpts?: IpodSyncOpts): Promise<unknown> {
-  // Same guard as save-library: this one writes to the iPod.
-  // Full live concerts NEVER sync to the main iPod (Jake keeps a separate iPod
-  // for full concerts). Drop the merged concert track AND any of its constituent
-  // songs not individually reimported (promoted). A promoted song is a normal
-  // library track again and syncs as usual. Enforced main-side so the rule can't
-  // be bypassed. ⚠️ mirrors libraryHiddenTrackIds in src/renderer/liveSets.ts.
-  // (Shared with the workout-sync picker — getConcertOwnedTrackIds — so the
-  // Music Man can't PICK what the sync would drop.)
-  try {
-    const concertOwned = await getConcertOwnedTrackIds()
-    if (concertOwned.size) {
-      const before = tracks.length
-      tracks = tracks.filter((t) => !concertOwned.has(Number(t.id)))
-      if (tracks.length !== before) console.log(`sync-to-ipod: kept ${before - tracks.length} full-concert track(s) OFF the iPod`)
-    }
-  } catch { /* no live sets → nothing to exclude */ }
-  const refused = refuseIpodSyncUnlessUserClick(syncOpts)
-  if (refused) {
-    console.error(`sync-to-ipod: REFUSED — ${refused.error}`)
-    return refused
-  }
-  if (syncInFlight) {
-    const ageMs = Date.now() - syncStartedAt
-    if (ageMs > SYNC_HANG_TIMEOUT_MS) {
-      console.warn(`[sync] previous syncInFlight has been pending for ${Math.round(ageMs/1000)}s — assuming hung, releasing the lock`)
-      syncInFlight = false
-    } else {
-      // 4.5.0-109: iTunes behavior — clicking Sync while a sync is
-      // already running silently no-ops instead of throwing an error
-      // toast. The existing sync continues; the user's intent ("I want
-      // it to be syncing") is already satisfied. Pre-fix this returned
-      // ok:false with an error string, which the renderer surfaced as
-      // a "Sync failed" notice — confusing, since nothing actually
-      // failed. The renderer's syncing state is already true, so a
-      // benign ok:true with a flag is sufficient.
-      console.log(`[sync] click suppressed — already running (${Math.round(ageMs/1000)}s in)`)
-      return { ok: true, alreadyRunning: true, copied: 0, copyErrors: 0 }
-    }
-  }
-  syncInFlight = true
-  syncStartedAt = Date.now()
-  // Do not stamp the copy journal until a writer actually mutates the
-  // card. A preflight refuse used to leave phase:copy on disk, and the
-  // LCD / iPod page kept showing a failed sync that never wrote a byte.
-  try {
-    const result = await runSyncToIpod(tracks, playlists, convertOptions, syncOpts)
-    if ((result as { ok?: boolean })?.ok) await writeSyncJournal(null)
-    else {
-      const err = String((result as { error?: string }).error || 'Sync failed')
-      mainWindow?.webContents.send('sync-progress', {
-        phase: 'error', current: 0, total: 0, title: err,
-      })
-    }
-    return result
-  } finally {
-    syncInFlight = false
-    syncStartedAt = 0
-  }
-}
-
-interface SyncReport {
-  syncedAt: string
-  target: number
-  landed: number
-  shortfall: number
-  verifyPasses: number
-  copied: number
-  copyErrors: number
-  failed: Array<{ id: number; title: string; artist: string; path: string }>
-}
-/**
- * A durable record of what a sync LOST.
- *
- * The journal next door answers "did the last sync finish"; this answers "what
- * did it drop, and was it the same songs as last time". Keeps the previous
- * report alongside the current one, because the whole diagnostic value is in
- * the comparison: identical failures point at those files, a different set
- * every run points at the card dropping writes.
- */
-const IPOD_SYNC_REPORT_FILE = () => join(app.getPath('userData'), 'last-sync-report.json')
-const IPOD_SYNC_REPORT_PREV = () => join(app.getPath('userData'), 'prev-sync-report.json')
-async function writeSyncReport(r: SyncReport): Promise<void> {
-  try {
-    await copyFile(IPOD_SYNC_REPORT_FILE(), IPOD_SYNC_REPORT_PREV()).catch(() => {})
-    await writeJsonAtomic(IPOD_SYNC_REPORT_FILE(), r)
-    if (r.shortfall > 0) {
-      console.warn(`sync-to-ipod: SHORT — ${r.shortfall} of ${r.target} never committed. Report: ${IPOD_SYNC_REPORT_FILE()}`)
-    }
-  } catch { /* diagnostics must never break a sync */ }
-}
-
-// confirmWriteOnCard / remountVerifyEntries / retireIpodFirmwareScratch live
-// in ipod-sync-card.ts (shared by activity rebuild and full-library sync).
-
-const IPOD_SYNC_JOURNAL_FILE = () => join(app.getPath('userData'), 'ipod-sync-journal.json')
-const IPOD_TSA_SEAL_FILE = () => join(app.getPath('userData'), 'ipod-activity-tsa-seal.json')
-
-async function clearTsaSeal(): Promise<void> {
-  try { await unlink(IPOD_TSA_SEAL_FILE()) } catch { /* no prior seal */ }
-}
-
-async function writeTsaSealFile(seal: { version: 1; sealedAt: string; target: number; passengers: unknown[] }): Promise<void> {
-  const path = IPOD_TSA_SEAL_FILE()
-  const tmp = `${path}.${process.pid}.tmp`
-  await writeFile(tmp, JSON.stringify(seal, null, 2), 'utf-8')
-  await rename(tmp, path)
-}
-
-async function writeLastSyncManifest(payload: Record<string, unknown>): Promise<void> {
-  const manifestPath = join(STATE_DIR, 'last-sync-manifest.json')
-  const tmp = `${manifestPath}.${process.pid}.tmp`
-  await writeFile(tmp, JSON.stringify(payload, null, 1), 'utf-8')
-  await rename(tmp, manifestPath)
-}
-
-async function writeSyncJournal(phase: string | null): Promise<void> {
-  try {
-    if (phase === null) {
-      await unlink(IPOD_SYNC_JOURNAL_FILE()).catch(() => {})
-    } else {
-      await writeFile(IPOD_SYNC_JOURNAL_FILE(), JSON.stringify({ phase, at: new Date().toISOString() }), 'utf-8')
-    }
-  } catch { /* best effort — never block a sync on the journal */ }
-}
-// Journal stays on disk for diagnostics. Do not replay it as a Notice
-// on every launch — that banner told Jake to "repair" by syncing, which
-// is how Songs went to 486, and it was still there the next morning.
-
-async function runSyncToIpod(tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions, syncOpts?: IpodSyncOpts): Promise<unknown> {
-  const refused = refuseIpodSyncUnlessUserClick(syncOpts)
-  if (refused) {
-    console.error(`sync-to-ipod: REFUSED — ${refused.error}`)
-    return refused
-  }
-  syncCancelRequested = false
-  if (syncOpts?.origin === 'activity-click') {
-    return runActivitySync({
-      pythonCmd: PYTHON_CMD ?? 'python3',
-      pythonHint: PYTHON_INSTALL_HINT,
-      coreScript: (rel) => join(app.isPackaged ? process.resourcesPath : app.getAppPath(), rel),
-      tempDir: app.getPath('temp'),
-      stateDir: STATE_DIR,
-      pid: process.pid,
-      musicDir: MUSIC_DIR,
-      pathSep: IS_WINDOWS ? '\\' : '/',
-      isMac: IS_MAC,
-      sendProgress: (p) => { mainWindow?.webContents.send('sync-progress', p) },
-      isCancelled: () => syncCancelRequested,
-      isStreamedTrackFile,
-      buildAacMirror,
-      buildIpodSafeAlacMirror,
-      readIpodDatabase,
-      writeJournal: writeSyncJournal,
-      writeManifest: writeLastSyncManifest,
-      writeSeal: writeTsaSealFile,
-      clearSeal: clearTsaSeal,
-      writeReport: writeSyncReport,
-      getDetectedMount: () => detectedIpodMount,
-      setDetectedMount: (m) => {
-        detectedIpodMount = m
-        detectedIpodVolume = m ? volumeNameFromMount(m) : null
-      },
-      materializeTrack: materializeLibraryTrack, loadReplacementTracks: bindActivityReplacements(() => libraryCache.get() as Promise<{ tracks?: Array<Record<string, unknown>> }>, getConcertOwnedTrackIds),
-    }, { tracks, playlists, convertOptions })
-  }
-  if (syncOpts?.wipeFirst) {
-    return { ok: false, copied: 0, error: 'Activity Sync is the dedicated engine, not this copy loop.' }
-  }
-  // 4.5.0-109: reset cancel flag at the top of every sync.
-  syncCancelRequested = false
-  // Everything copied/written from here on carries an mtime ≥ this stamp;
-  // the orphan cleanup uses it to refuse to delete anything this sync
-  // touched (2026-07-21 shrinking-iPod fix).
-  const syncRunStartMs = Date.now()
-  // A cached device path is not authority. The capacity panel once held the
-  // NAS mount while displaying the iPod name (926.3 GiB instead of 119.2 GiB).
-  // Re-prove the canonical iPod layout before this path gains write authority.
-  if (detectedIpodMount && !(await isIpodMount(detectedIpodMount))) {
-    console.error(`sync-to-ipod: refusing stale/non-iPod mount ${detectedIpodMount}`)
-    detectedIpodMount = null
-    detectedIpodVolume = null
-  }
-  if (!detectedIpodMount) {
-    detectedIpodMount = await findIpodMount()
-    detectedIpodVolume = detectedIpodMount ? volumeNameFromMount(detectedIpodMount) : null
-  }
-  if (!detectedIpodMount) return { ok: false, error: 'No verified iPod mount detected', copied: 0 }
-  const IPOD_MOUNT = detectedIpodMount
-  // Strip the trailing "iPod_Control/Music" segment whether it's / or \ delimited.
-  const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
-
-  // Check iPod is mounted
-  try {
-    await stat(IPOD_MOUNT)
-  } catch {
-    return { ok: false, error: 'iPod is not mounted', copied: 0 }
-  }
-
-  // ── KNOW EXACTLY WHAT WE SYNC (2026-07-21, Jake: "you need to know what
-  // you are syncing at all times... it should always always always get to
-  // 1000 songs exactly"). Before a single byte moves: assert every track
-  // has a title, an artist, AND a real local file. A blank-metadata or
-  // fileless track can NEVER reach the device again. Then write a full
-  // manifest (every song + the exact add/remove delta vs the last sync)
-  // to disk and the log, so we always have a record of what shipped. ──
-  {
-    const blanks: string[] = []
-    const fileless: string[] = []
-    const toPull: Array<{ id: number; path: string; label: string }> = []
-    {
-      const classified = await classifyActivitySyncTracks(tracks, {
-        localMount: LOCAL_MOUNT,
-        pathSep: IS_WINDOWS ? '\\' : '/',
-        lstat,
-      })
-      blanks.push(...classified.blanks)
-      fileless.push(...classified.fileless)
-      toPull.push(...classified.toPull)
-    }
-    if (blanks.length || fileless.length) {
-      const error = formatSyncSetFileRefuse({
-        lead: 'Sync refused',
-        blanks,
-        fileless,
-        total: tracks.length,
-        nothingVerb: 'sent',
-      })
-      console.error(`sync-to-ipod: REFUSING — ${tracks.length}-song set has bad tracks`)
-      for (const b of [...blanks, ...fileless].slice(0, 20)) console.error('   •', b)
-      await writeSyncJournal(null)
-      return {
-        ok: false,
-        copied: 0,
-        error,
-      }
-    }
-    if (toPull.length > 0) {
-      console.log(`sync-to-ipod: ${toPull.length}/${tracks.length} not on this Mac — pulling from homemini`)
-      const pullFail: string[] = []
-      for (const p of toPull) {
-        if (syncCancelRequested) {
-          await writeSyncJournal(null)
-          return { ok: false, copied: 0, cancelled: true, error: 'Sync cancelled by user' }
-        }
-        const r = await materializeLibraryTrack(p.path, p.id)
-        if (!r.ok) {
-          pullFail.push(`${p.label} (${r.error || 'homemini miss'})`)
-          console.error(`sync-to-ipod: homemini pull failed — ${p.label}: ${r.error}`)
-        }
-      }
-      if (pullFail.length > 0) {
-        await writeSyncJournal(null)
-        return {
-          ok: false,
-          copied: 0,
-          error: formatHomeminiPullRefuse(pullFail, tracks.length),
-        }
-      }
-    }
-
-    // Manifest: full-library sync writes the shipped set now. Activity
-    // wipe+rebuild writes in-flight here and only stamps sealed:true after
-    // TSA — a failed 500 must not look like 500 shipped.
-    try {
-      const prevIds = new Set<number>()
-      try {
-        const prev = JSON.parse(await readFile(join(STATE_DIR, 'last-sync-manifest.json'), 'utf-8')) as { tracks?: Array<{ id: number }> }
-        for (const x of prev.tracks || []) prevIds.add(x.id)
-      } catch { /* first manifest */ }
-      const curIds = new Set(tracks.map((t) => Number(t.id)))
-      const added = tracks.filter((t) => !prevIds.has(Number(t.id)))
-      const removedIds = [...prevIds].filter((id) => !curIds.has(id))
-      const base = {
-        syncedAt: new Date().toISOString(),
-        count: tracks.length,
-        added: added.length,
-        removed: removedIds.length,
-        tracks: tracks.map((t) => ({ id: Number(t.id), title: String(t.title || ''), artist: String(t.artist || ''), album: String(t.album || '') })),
-        addedTracks: added.map((t) => `${t.title} — ${t.artist}`),
-      }
-      if (syncOpts?.wipeFirst) {
-        await writeLastSyncManifest({ ...base, status: 'in-flight', sealed: false })
-        console.log(`sync-to-ipod: MANIFEST in-flight — ${tracks.length} songs boarded, not sealed`)
-      } else {
-        await writeLastSyncManifest({ ...base, status: 'shipped', sealed: false })
-        console.log(`sync-to-ipod: MANIFEST — ${tracks.length} songs (all named + file-verified), +${added.length} added / -${removedIds.length} removed since last sync`)
-      }
-    } catch (mErr) {
-      console.warn('sync-to-ipod: manifest write failed (non-fatal):', mErr instanceof Error ? mErr.message : mErr)
-    }
-  }
-
-  // ──────────────── PRE-SYNC SAFETY: LIBRARY DEDUP CHECK ────────────────
-  // If two library entries point at the same audio file (same colon
-  // path), they're unambiguously duplicates: both will emit separate
-  // mhit records into iTunesDB, which the iPod collapses in the
-  // "songs" count but keeps as ghost rows. That's how you end up with
-  // "library 4395 / iPod 4389" drift. Refuse to sync until the library
-  // is clean and tell the user which entries collide so they can pick
-  // one to delete in Get Info.
-  {
-    const pathCounts = new Map<string, number>()
-    for (const t of tracks) {
-      const p = String(t.path || '')
-      if (!p) continue
-      pathCounts.set(p, (pathCounts.get(p) || 0) + 1)
-    }
-    const dupes: Array<{ path: string; n: number; titles: string[] }> = []
-    for (const [p, n] of pathCounts) {
-      if (n > 1) {
-        const titles = tracks
-          .filter(t => t.path === p)
-          .map(t => `"${t.title}" / ${t.artist}`)
-        dupes.push({ path: p, n, titles })
-      }
-    }
-    if (dupes.length > 0) {
-      const sample = dupes.slice(0, 3).map(d => `  • ${d.path}\n    → ${d.titles.join(' + ')}`).join('\n')
-      const msg = `Sync aborted: ${dupes.length} file${dupes.length === 1 ? '' : 's'} ${dupes.length === 1 ? 'has' : 'have'} multiple library entries pointing at ${dupes.length === 1 ? 'it' : 'them'}. Delete the duplicate library entries and sync again.\n\nExamples:\n${sample}${dupes.length > 3 ? `\n  …and ${dupes.length - 3} more` : ''}`
-      console.error('sync-to-ipod: pre-sync dedup check failed:\n' + msg)
-      return { ok: false, error: msg, copied: 0, duplicatePaths: dupes.length }
-    }
-  }
-
-  // Copy audio files that don't exist on the iPod yet.
-  //
-  // Pass 1: figure out which tracks need copying (so we know the
-  // denominator for progress reporting). Pass 2: copy and emit a
-  // sync-progress event per file so the renderer can show a real bar
-  // instead of a perpetually-indeterminate pulse.
-  //
-  // Smart-match before copying: library.json paths can drift (a track
-  // whose path says F48/NTJL.m4a may already exist at F12/NTJL.m4a).
-  // Without smart-match, sync blindly copies hundreds of already-
-  // present files. But the old filename-only match was dangerous — it
-  // would accept any file that shared a basename, so a re-imported
-  // track at "imported_3767.m4a" got silently linked to a DIFFERENT
-  // song that happened to own the same filename slot. That's how
-  // Beatles tracks ended up playing Pink Floyd.
-  //
-  // New rule: we only accept a smart-match rewrite if the candidate
-  // file's EMBEDDED TAGS (title + artist) actually agree with the
-  // library entry's metadata. If tags disagree or are missing, we
-  // fall back to copying the real file.
-  // ── WIPE-FIRST (2026-07-24, Jake: "just wipe the songs from the iPod each
-  // time i do activity sync, then rebuild to whatever number i pick"). Deletes
-  // every audio file under iPod_Control/Music/F00–F49 so the set is rebuilt from
-  // a clean slate — no leftover files, no stale/duplicate catalog entries piling
-  // up across syncs (a prime suspect in the firmware loading fewer songs than
-  // the DB holds). The iTunesDB is rewritten fresh from `tracks` below, so after
-  // this the device holds EXACTLY the picked set. Only activity sync passes
-  // wipeFirst; full-library sync + plug-in auto-repair do not.
-  const activityTarget = tracks.length
-  const tsaBoarded: TsaPassenger[] = syncOpts?.wipeFirst
-    ? tracks.map((t) => tsaBoardPassenger({
-      ...t,
-      destPath: ipodPlayableDestPath(String(t.path || '')),
-    }))
-    : []
-  if (syncOpts?.wipeFirst) {
-    if (activityTarget <= 0 || tsaBoarded.length !== activityTarget) {
-      return {
-        ok: false,
-        copied: 0,
-        error: `Activity TSA boarded ${tsaBoarded.length} for a ${activityTarget}-song set. Nothing was wiped.`,
-        target: activityTarget,
-      }
-    }
-    const emptyDest = tsaBoarded.filter((p) => !p.destPath)
-    if (emptyDest.length > 0) {
-      return {
-        ok: false,
-        copied: 0,
-        error: `Activity TSA: ${emptyDest.length} song(s) have no dest path. Nothing was wiped.`,
-        target: activityTarget,
-      }
-    }
-    const collisions = tsaDestCollisions(tsaBoarded)
-    if (collisions.length > 0) {
-      return {
-        ok: false,
-        copied: 0,
-        error: `Activity TSA: ${collisions.length} dest path(s) would collide on the Mini (two songs rewriting to the same file). Nothing was wiped. Examples: ${collisions.slice(0, 3).join(', ')}`,
-        target: activityTarget,
-        destCollisions: collisions.length,
-      }
-    }
-    await clearTsaSeal()
-    mainWindow?.webContents.send('sync-progress', { phase: 'copy', current: 0, total: 1, title: 'Wiping the iPod for a clean rebuild…' })
-    const wipeMusicRoot = join(IPOD_MOUNT, 'iPod_Control', 'Music')
-    let wiped = 0
-    try {
-      const { readdir: rdw } = await import('fs/promises')
-      const listMusicFiles = async (): Promise<string[]> => {
-        const found: string[] = []
-        for (let i = 0; i < 50; i++) {
-          const sub = join(wipeMusicRoot, `F${String(i).padStart(2, '0')}`)
-          const entries = await rdw(sub).catch(() => [] as string[])
-          for (const fn of entries) {
-            if (fn === '.' || fn === '..') continue
-            found.push(join(sub, fn))
-          }
-        }
-        return found
-      }
-      // fskit returns PARTIAL directory listings. One pass that deleted
-      // "everything it saw" left 153 leftover 4-letter m4a files on the
-      // Mini (2026-08-15) while the catalog claimed a clean 500. Require
-      // two consecutive empty readdirs before believing the card is empty.
-      let emptyStreak = 0
-      let remaining = 0
-      for (let pass = 0; pass < ACTIVITY_WIPE_MAX_PASSES; pass++) {
-        const listed = await listMusicFiles()
-        for (const p of listed) {
-          try { await unlink(p); wiped++ } catch { /* retry on the next listing */ }
-        }
-        const after = await listMusicFiles()
-        remaining = after.length
-        emptyStreak = activityWipeEmptyStreak(remaining, emptyStreak)
-        console.log(`sync-to-ipod: WIPE-FIRST pass ${pass + 1}/${ACTIVITY_WIPE_MAX_PASSES} deleted-this-listing=${listed.length} remaining=${remaining} emptyStreak=${emptyStreak}`)
-        if (activityWipeProvenEmpty(emptyStreak)) break
-        await new Promise(r => setTimeout(r, 250))
-      }
-      if (!activityWipeProvenEmpty(emptyStreak)) {
-        console.error(`sync-to-ipod: WIPE-FIRST could not empty Music (${remaining} file(s) still listed after ${ACTIVITY_WIPE_MAX_PASSES} passes)`)
-        return {
-          ok: false,
-          copied: 0,
-          error: `Activity wipe could not empty the iPod (${remaining} leftover file${remaining === 1 ? '' : 's'}). macOS is not listing the card consistently. Reseat the cable and sync again — nothing new was copied.`,
-        }
-      }
-      await retireIpodFirmwareScratch(IPOD_MOUNT)
-      console.log(`sync-to-ipod: WIPE-FIRST deleted ${wiped} existing file(s) — rebuilding clean to ${tracks.length}`)
-    } catch (e) {
-      console.error('sync-to-ipod: wipe-first failed — refusing to copy onto a dirty card:', e)
-      return {
-        ok: false,
-        copied: 0,
-        error: `Activity wipe failed (${e instanceof Error ? e.message : String(e)}). Nothing was copied.`,
-      }
-    }
-  }
-
-  await writeSyncJournal('copy')
-  let copied = 0
-  let copyErrors = 0
-  const pathSep = IS_WINDOWS ? '\\' : '/'
-  const basenameToIpodPath = new Map<string, string>()
-  try {
-    const { readdir: rd } = await import('fs/promises')
-    for (let i = 0; i < 50; i++) {
-      const sub = join(IPOD_MOUNT, 'iPod_Control', 'Music', `F${String(i).padStart(2, '0')}`)
-      const entries = await rd(sub).catch(() => [] as string[])
-      for (const fn of entries) {
-        if (!basenameToIpodPath.has(fn)) {
-          basenameToIpodPath.set(fn, join(sub, fn))
-        }
-      }
-    }
-  } catch { /* best-effort */ }
-
-  // ⚠️ TWIN: normalize imported from ./normalize.ts — keep in sync with
-  // core/repair_mismatches.py::normalize.
-
-  // First pass: determine candidate rewrites. Anything that resolves
-  // to a basename match on the iPod is a candidate — we'll verify tags
-  // on the batch in one Python call below.
-  type Candidate = {
-    track: Record<string, unknown>
-    colonPath: string
-    ipodFile: string
-    localFile: string
-    baseName: string
-    altIpodPath?: string    // candidate for smart-match rewrite
-  }
-  const candidates: Candidate[] = []
-  const playablePathRewrites: Array<{ id: number; oldPath: string; newPath: string }> = []
-  const alreadyOnDevice: Array<{ id: number; srcPath: string; dstPath: string; expectedSize: number }> = []
-  for (const track of tracks) {
-    const rawColon = String(track.path || '')
-    if (!rawColon) continue
-    // Mini 1.4.1 will not list .flac or FAT temp names (.0i4zLU). Copy
-    // to a real audio extension; the DB writer stamps M4A from that path.
-    // 2026-08-15: 500 catalog → Songs 497 from three ALAC files named
-    // as staging temps and stamped MP3.
-    const colonPath = ipodPlayableDestPath(rawColon)
-    if (colonPath !== rawColon && typeof track.id === 'number') {
-      playablePathRewrites.push({ id: track.id, oldPath: rawColon, newPath: colonPath })
-    }
-    const rawRel = rawColon.replace(/:/g, pathSep)
-    const relPath = colonPath.replace(/:/g, pathSep)
-    const ipodFile = join(IPOD_MOUNT, relPath)
-    const localFile = join(LOCAL_MOUNT, rawRel)
-    const baseName = rawColon.split(':').pop() || ''
-    const needsAlac = needsIpodAlacTranscode(rawColon)
-
-    // Does the iPod already have this file? If yes, only skip the
-    // copy if the on-disk local file hasn't changed. We compare size —
-    // a re-encode (like the 2-step ALAC fix) produces a file with a
-    // different byte count, and we want THAT version to land on the
-    // iPod instead of the stale one. Without this, sync would see the
-    // iPod still has "something" at the path and refuse to overwrite,
-    // so fixes made locally never reach the device.
-    //
-    // Playable-dest rewrite: existence is the NEW .m4a, not the stale
-    // .0i4zLU / .flac. A size match on the garbage name must not skip.
-    let exists = false
-    let ipodSize = 0
-    try {
-      const s = await stat(ipodFile)
-      exists = true
-      ipodSize = s.size
-    } catch { /* not at expected path */ }
-    if (exists) {
-      if (needsAlac) {
-        // Dest is already .m4a from a prior FLAC→ALAC land. Don't
-        // recopy just because the local FLAC is a different size.
-        if (typeof track.id === 'number' && ipodSize > 0) {
-          alreadyOnDevice.push({ id: track.id, srcPath: ipodFile, dstPath: ipodFile, expectedSize: ipodSize })
-        }
-        continue
-      }
-      try {
-        const ls = await stat(localFile)
-        if (ls.size === ipodSize) {
-          // 4.5: byte-identical normally means "already synced, skip".
-          // EXCEPTION: if bitrate conversion is enabled AND the source
-          // is actually lossless, fall through and requeue — the iPod
-          // copy is the FULL-quality file and we want to replace it
-          // with an AAC mirror. iTunes-style "convert higher bit rate
-          // songs" RETROACTIVELY shrinks lossless tracks synced before
-          // the toggle was on.
-          //
-          // Critical: .m4a/.mp4 alone is NOT a lossless signal — most
-          // .m4a in a typical library are already AAC. Treating them
-          // as lossless candidates causes thousands of byte-identical
-          // re-copies over USB that free zero space (buildAacMirror
-          // probes the codec, sees AAC, returns null, then we copy the
-          // source over itself). Require either a lossless extension
-          // OR a codec hint that explicitly says lossless before
-          // requeuing.
-          const localExt = localFile.slice(localFile.lastIndexOf('.')).toLowerCase()
-          const hint = (codecByAbsPath.get(localFile) || '').toLowerCase()
-          const hintSaysLossless = hint === 'alac' || LOSSLESS_CODECS.has(hint)
-          const isLossless = LOSSLESS_EXTS.has(localExt) || hintSaysLossless
-          if (!(convertOptions?.enabled && isLossless)) {
-            if (typeof track.id === 'number' && ipodSize > 0) {
-              alreadyOnDevice.push({ id: track.id, srcPath: localFile, dstPath: ipodFile, expectedSize: ipodSize })
-            }
-            continue   // byte-identical and no re-encode needed
-          }
-          // fall through — queue this for conversion
-        }
-        // Size differs → local was re-encoded/updated, queue a re-copy.
-        // (We fall through to push this into toCopy below — the copy
-        // step overwrites the iPod file when dest already exists.)
-      } catch {
-        // Local file missing but iPod has one — keep iPod's copy,
-        // nothing we can do anyway.
-        if (typeof track.id === 'number' && ipodSize > 0) {
-          alreadyOnDevice.push({ id: track.id, srcPath: ipodFile, dstPath: ipodFile, expectedSize: ipodSize })
-        }
-        continue
-      }
-    }
-
-    const altIpodPath = baseName ? basenameToIpodPath.get(baseName) : undefined
-    candidates.push({
-      track, colonPath: rawColon, ipodFile, localFile, baseName,
-      altIpodPath: altIpodPath && altIpodPath !== ipodFile ? altIpodPath : undefined,
-    })
-  }
-
-  // Second pass: if we have any alt-path candidates, batch-verify
-  // their embedded tags against the library metadata via tag_reader.
-  const rewriteCandidatePaths = candidates.map(c => c.altIpodPath).filter((p): p is string => !!p)
-  const tagsByPath = new Map<string, { title: string; artist: string; ok: boolean }>()
-  if (rewriteCandidatePaths.length > 0) {
-    try {
-      const tagReaderScript = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/tag_reader.py')
-      const read = await new Promise<string>((resolve, reject) => {
-        const py = spawn(PYTHON_CMD ?? 'python3', [tagReaderScript])
-        let stdout = ''
-        let stderr = ''
-        py.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
-        py.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-        py.on('error', reject)
-        py.on('close', (code: number) => {
-          if (code === 0) resolve(stdout)
-          else reject(new Error(`tag_reader exit ${code}: ${stderr}`))
-        })
-        py.stdin.on('error', reject)  // EPIPE-safe — see scheduleDbRebuild for why
-        try {
-          py.stdin.write(JSON.stringify(rewriteCandidatePaths))
-          py.stdin.end()
-        } catch (err) { reject(err) }
-      })
-      const arr = JSON.parse(read) as Array<{ path: string; title?: string; artist?: string; ok?: boolean }>
-      for (const t of arr) {
-        tagsByPath.set(t.path, { title: t.title || '', artist: t.artist || '', ok: !!t.ok })
-      }
-    } catch (err) {
-      console.warn('sync-to-ipod: tag verification failed, will fall back to copy:', err)
-      // tagsByPath stays empty → no smart-match rewrites will be accepted.
-    }
-  }
-
-  const toCopy: Array<{ local: string; ipod: string; title: string; trackId: number }> = []
-  const pathRewrites: Array<{ id: number; oldPath: string; newPath: string }> = []
-  // Exact bytes that landed (or were confirmed already present) per track.
-  // Verify/recopy MUST use these — never the library master — or a convert
-  // sync compares AAC-on-card to ALAC-in-library, "fails" every song, and
-  // recopies full-size masters until the Mini fills (~100 of 500).
-  const writtenById = new Map<number, { srcPath: string; dstPath: string; expectedSize: number }>()
-  for (const e of alreadyOnDevice) writtenById.set(e.id, e)
-  const rememberWritten = async (trackId: number | undefined, srcPath: string, dstPath: string) => {
-    if (trackId == null) return
-    try {
-      const sz = (await stat(srcPath)).size
-      writtenById.set(trackId, { srcPath, dstPath, expectedSize: sz })
-    } catch { /* non-fatal — verify will treat as missing */ }
-  }
-  let rewritesVetoed = 0
-  for (const c of candidates) {
-    if (c.altIpodPath) {
-      const t = tagsByPath.get(c.altIpodPath)
-      const libTitle  = normalize(c.track.title)
-      const libArtist = normalize(c.track.artist)
-      const fileTitle  = t ? normalize(t.title)  : ''
-      const fileArtist = t ? normalize(t.artist) : ''
-
-      // Accept the rewrite only if the file's tags (or at least one of
-      // them) actually identify this as the same song. This is the
-      // permanent fix for the Beatles/Pink Floyd cross-linking bug.
-      const titleOk  = libTitle  && fileTitle  && (libTitle  === fileTitle  || libTitle.includes(fileTitle)  || fileTitle.includes(libTitle))
-      const artistOk = libArtist && fileArtist && (libArtist === fileArtist || libArtist.includes(fileArtist) || fileArtist.includes(libArtist))
-
-      if (titleOk && artistOk) {
-        // Don't re-link onto a FAT temp / .flac — Mini 1.4.1 will skip it.
-        if (ipodPlayableDestPath(c.altIpodPath) !== c.altIpodPath) {
-          rewritesVetoed += 1
-        } else {
-          const altRel = c.altIpodPath.slice(IPOD_MOUNT.length + 1)
-          const altColonPath = ':' + altRel.split(pathSep).join(':')
-          pathRewrites.push({
-            id: c.track.id as number,
-            oldPath: c.colonPath,
-            newPath: altColonPath,
-          })
-          // Already on the device at altIpodPath — record on-card size as the
-          // verify target. Recopy source prefers the AAC mirror when convert is
-          // on so a recovery pass doesn't shove the ALAC master back onto a Mini.
-          try {
-            const onCard = (await stat(c.altIpodPath)).size
-            let srcPath = c.localFile
-            if (convertOptions?.enabled) {
-              try {
-                const mirror = await buildAacMirror(c.localFile, convertOptions.targetKbps)
-                if (mirror) srcPath = mirror
-              } catch { /* keep library master as recopy source */ }
-            }
-            writtenById.set(c.track.id as number, {
-              srcPath,
-              dstPath: c.altIpodPath,
-              expectedSize: onCard,
-            })
-          } catch { /* verify will notice */ }
-          continue
-        }
-      } else {
-        // Tags didn't match — don't silently re-link. Copy the real file.
-        rewritesVetoed += 1
-      }
-    }
-
-    toCopy.push({
-      local: c.localFile,
-      ipod: c.ipodFile,
-      title: String(c.track.title || c.baseName),
-      trackId: c.track.id as number,
-    })
-  }
-  if (rewritesVetoed > 0) {
-    console.log(`sync-to-ipod: vetoed ${rewritesVetoed} filename-only smart-matches (tags disagreed with library)`)
-  }
-
-  const totalToCopy = toCopy.length
-  // Kick off the progress so the renderer can seed its bar even
-  // when nothing needs copying (still-will-write-DB phase coming).
-  mainWindow?.webContents.send('sync-progress', {
-    phase: 'copy', current: 0, total: totalToCopy, title: '',
-  })
-  // 4.5: track-id → newColonPath when bitrate conversion changes
-  // the destination extension (FLAC/WAV/AIFF → .m4a). Merged into the
-  // existing pathRewrites array before the iTunesDB writer runs so
-  // the device sees the converted file at its new path.
-  const convertedPathRewrites: Array<{ id: number; oldPath: string; newPath: string }> = []
-  // Per-song confirm bookkeeping: fsync per file, /bin/sync every few songs.
-  let sinceFlush = 0
-  // Map local → trackId so we can look up the right pathRewrite entry
-  // during the copy loop without re-walking the tracks array.
-  const trackByLocal = new Map<string, Record<string, unknown>>()
-  for (const c of candidates) trackByLocal.set(c.localFile, c.track)
-
-  // Do NOT remount per song. Each remount was a chance to `unmount force`
-  // (busy volume from the sidebar poll) and discard dirty FAT32 pages for
-  // songs already "verified" — that's 500/500 in JakeTunes and 33 on the
-  // Mini after eject. Copy + F_FULLFSYNC here; one clean remount-verify of
-  // the whole set after the loop is the proof.
-  const COPY_VERIFY_CHUNK = 0
-  let chunkPending: Array<{ id: number; dstPath: string; localFile: string; expectedSize: number }> = []
-  const flushCopyChunk = async (force = false) => {
-    if (COPY_VERIFY_CHUNK <= 0) return
-    if (!force && chunkPending.length < COPY_VERIFY_CHUNK) return
-    if (chunkPending.length === 0) return
-    const batch = chunkPending
-    chunkPending = []
-    mainWindow?.webContents.send('sync-progress', {
-      phase: 'verify', current: copied, total: Math.max(totalToCopy, 1),
-      title: `Confirming song ${copied} actually stuck on the card…`,
-    })
-    await flushCardCaches()
-    const r = await remountVerifyEntries(IPOD_MOUNT, batch, {
-      maxPasses: 8,
-      label: 'chunk',
-      isCancelled: () => syncCancelRequested,
-    })
-    if (r.remountFailed && r.landedIds.size === 0) {
-      console.warn('sync-to-ipod: chunk remount failed — continuing; final verify will catch drops')
-      return
-    }
-    // Drop write-records for songs that still didn't stick after chunk retries
-    // so the final DB/verify pass cannot treat them as landed.
-    for (const e of batch) {
-      if (!r.landedIds.has(e.id)) {
-        writtenById.delete(e.id)
-        console.warn(`sync-to-ipod: chunk verify — track ${e.id} did not stick; will retry in final pass`)
-      }
-    }
-  }
-
-  for (const { local, ipod, title, trackId } of toCopy) {
-    // 4.5.0-109: cancellation check at the file boundary. Per-file is the
-    // right granularity — fine enough that a Cancel click is felt within
-    // seconds, coarse enough that we don't shred a half-written copy
-    // (each copyFile is atomic from the FS perspective). Emit a final
-    // progress event with phase:'cancelled' so the renderer flips out
-    // of the syncing state cleanly.
-    if (syncCancelRequested) {
-      mainWindow?.webContents.send('sync-progress', {
-        phase: 'cancelled', current: copied + copyErrors, total: totalToCopy, title: '',
-      })
-      console.log(`sync-to-ipod: cancelled by user after ${copied} of ${totalToCopy} files`)
-      return { ok: false, error: 'Sync cancelled by user', copied, copyErrors, cancelled: true }
-    }
-    let srcToCopy = local
-    let dstToCopy = ipod
-    // ── Streaming: skip streamed tracks ───────────────────────────
-    // A streamed track's local file is a symlink (real bytes on homemini).
-    // Copying it to the iPod would push a dangling/0-byte file and could
-    // overwrite a good existing device copy. Skip it — to sync a streamed
-    // track to the iPod, download (pin) it locally first. Non-destructive:
-    // any existing iPod copy is left untouched. Count it as processed so the
-    // progress bar still completes (matches the byte-identical skip below).
-    if (await isStreamedTrackFile(local)) {
-      console.log(`sync-to-ipod: skipping streamed track (not downloaded locally): ${title}`)
-      copied++
-      mainWindow?.webContents.send('sync-progress', {
-        phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
-      })
-      continue
-    }
-    // ── Bitrate conversion ────────────────────────────────────────
-    // When enabled, try to build an AAC mirror of the source. Returns
-    // null for non-lossless inputs, in which case we just copy the
-    // original. For lossless inputs we substitute the mirror as the
-    // copy source — and if the file extension changed (FLAC/WAV/AIFF
-    // → .m4a), rewrite the iPod-side destination + the iTunesDB
-    // track entry's path so the device knows the new filename.
-    if (convertOptions?.enabled) {
-      try {
-        mainWindow?.webContents.send('sync-progress', {
-          phase: 'copy', current: copied + copyErrors, total: totalToCopy,
-          title: `Converting → ${convertOptions.targetKbps}k AAC: ${title}`,
-        })
-        const mirror = await buildAacMirror(local, convertOptions.targetKbps)
-        if (mirror) {
-          srcToCopy = mirror
-          // If source ext differs from .m4a, rewrite the iPod-side
-          // destination filename too. Otherwise (.m4a / .mp4 ALAC)
-          // the existing destination is already correct.
-          const srcExt = local.slice(local.lastIndexOf('.')).toLowerCase()
-          if (srcExt !== '.m4a' && srcExt !== '.mp4') {
-            // Replace dest extension with .m4a
-            const dotIdx = ipod.lastIndexOf('.')
-            dstToCopy = dotIdx > 0 ? ipod.slice(0, dotIdx) + '.m4a' : ipod + '.m4a'
-            // Build the equivalent colon-path for the iTunesDB rewrite
-            const tr = trackByLocal.get(local)
-            if (tr) {
-              const newRel = dstToCopy.slice(IPOD_MOUNT.length + 1)
-              const newColonPath = ':' + newRel.split(pathSep).join(':')
-              const oldColon = String(tr.path || '')
-              convertedPathRewrites.push({
-                id: tr.id as number,
-                oldPath: oldColon,
-                newPath: newColonPath,
-              })
-            }
-          }
-        }
-      } catch (err) {
-        // Conversion failed — fall through and copy the original. Worse
-        // case: the iPod gets a bigger file than the user expected, but
-        // sync still completes.
-        console.warn(`[sync-convert] mirror build failed for ${local}, copying original:`, err)
-      }
-    }
-    // Mini cannot index FLAC. If we are still pointing at a .flac (convert
-    // off, or AAC mirror failed), transcode to ipod-safe ALAC .m4a. Never
-    // copy the FLAC bytes onto the card — that's a Songs skip.
-    if (needsIpodAlacTranscode(srcToCopy)) {
-      try {
-        mainWindow?.webContents.send('sync-progress', {
-          phase: 'copy', current: copied + copyErrors, total: totalToCopy,
-          title: `Converting → ALAC: ${title}`,
-        })
-        const mirror = await buildIpodSafeAlacMirror(local)
-        if (!mirror) {
-          console.error(`sync-to-ipod: refusing to copy FLAC onto the Mini: ${title}`)
-          copyErrors++
-          mainWindow?.webContents.send('sync-progress', {
-            phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
-          })
-          continue
-        }
-        srcToCopy = mirror
-        dstToCopy = ipodPlayableDestPath(dstToCopy)
-        const tr = trackByLocal.get(local)
-        if (tr) tr.codec = 'alac'
-      } catch (err) {
-        console.error(`sync-to-ipod: FLAC→ALAC failed, not copying original: ${title}`, err)
-        copyErrors++
-        mainWindow?.webContents.send('sync-progress', {
-          phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
-        })
-        continue
-      }
-    }
-    dstToCopy = ipodPlayableDestPath(dstToCopy)
-    // Last-mile byte-identical skip. When the source was converted to an
-    // AAC mirror (or matches the iPod copy for any other reason), check
-    // the destination size first — if it already matches the source we
-    // are about to write, the copyFile would be a pure USB-bandwidth
-    // burn. This is the path that fires for the "library ALAC source
-    // vs iPod AAC mirror" case: the planning-phase size compare sees
-    // different sizes (ALAC vs AAC) and queues a re-copy, but once
-    // buildAacMirror swaps srcToCopy to the cached mirror, the mirror's
-    // size matches what's already on the iPod and there's no work to do.
-    try {
-      const srcStat = await stat(srcToCopy)
-      const dstStat = await stat(dstToCopy).catch(() => null)
-      if (dstStat && dstStat.size === srcStat.size) {
-        const tr = trackByLocal.get(local)
-        await rememberWritten(tr?.id as number | undefined, srcToCopy, dstToCopy)
-        if (trackId != null && Number.isFinite(trackId)) {
-          chunkPending.push({
-            id: trackId,
-            dstPath: dstToCopy,
-            localFile: srcToCopy,
-            expectedSize: srcStat.size,
-          })
-          await flushCopyChunk()
-        }
-        copied++
-        mainWindow?.webContents.send('sync-progress', {
-          phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
-        })
-        continue
-      }
-    } catch { /* fall through to copy — non-fatal */ }
-    try {
-      const dir = dstToCopy.substring(0, dstToCopy.lastIndexOf(pathSep))
-      await mkdir(dir, { recursive: true })
-      await copyFile(srcToCopy, dstToCopy)
-      // Confirm THIS song is on the card before moving to the next.
-      const conf = await confirmWriteOnCard(srcToCopy, dstToCopy)
-      if (!conf.ok) {
-        console.error(`sync-to-ipod: write NOT confirmed for "${title}" — ${conf.reason}`)
-        copyErrors++
-        mainWindow?.webContents.send('sync-progress', {
-          phase: 'copy', current: copied + copyErrors, total: totalToCopy,
-          title: `✗ did not stick: ${title}`,
-        })
-        continue
-      }
-      {
-        const tr = trackByLocal.get(local)
-        await rememberWritten(tr?.id as number | undefined, srcToCopy, dstToCopy)
-        try {
-          const sz = (await stat(srcToCopy)).size
-          chunkPending.push({
-            id: trackId,
-            dstPath: dstToCopy,
-            localFile: srcToCopy,
-            expectedSize: sz,
-          })
-          await flushCopyChunk()
-        } catch { /* final verify still runs */ }
-      }
-      if (++sinceFlush >= 8) { await flushCardCaches(); sinceFlush = 0 }
-      copied++
-      // 4.5: orphan cleanup — when a lossless source (.flac/.wav/.aif)
-      // is converted, the destination filename changes to .m4a. The
-      // OLD file at `ipod` (the original-extension copy from a prior
-      // sync) becomes orphaned: iTunesDB no longer references it (we
-      // pushed a path rewrite above) but the bytes still sit on the
-      // iPod taking space. Delete it now so the conversion actually
-      // frees the GB the user expected. Only fires when dst != ipod
-      // (i.e. extension changed); same-ext conversion (.m4a→.m4a)
-      // overwrites in place via copyFile, no orphan to clean.
-      if (dstToCopy !== ipod) {
-        try {
-          await unlink(ipod)
-        } catch { /* old file may have already been moved/missing */ }
-      }
-    } catch (err) {
-      console.error(`Copy failed: ${srcToCopy} → ${dstToCopy}:`, err)
-      copyErrors++
-    }
-    mainWindow?.webContents.send('sync-progress', {
-      phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
-    })
-  }
-  // Flush any leftover chunk before the final full-set verify.
-  await flushCopyChunk(true)
-  // One last filesystem-wide flush so the DB write and the eject start from
-  // a clean slate — nothing of the audio left in the page cache to lose.
-  await flushCardCaches()
-  // Merge the convert-driven path rewrites into the existing array
-  // so the smart-match block below picks them up alongside its own.
-  if (convertedPathRewrites.length > 0) {
-    pathRewrites.push(...convertedPathRewrites)
-    console.log(`sync-to-ipod: converted ${convertedPathRewrites.length} lossless files to AAC; rewriting their iTunesDB paths`)
-  }
-  if (playablePathRewrites.length > 0) {
-    pathRewrites.push(...playablePathRewrites)
-    console.log(`sync-to-ipod: rewrote ${playablePathRewrites.length} dest path(s) to a Mini-listable extension (.m4a)`)
-  }
-  // Apply smart-match path rewrites to the in-flight tracks array so
-  // the Python DB writer (which reads this JSON) gets the correct
-  // (already-on-iPod) paths, not the stale ones from library.json.
-  if (pathRewrites.length) {
-    const rewriteMap = new Map(pathRewrites.map(r => [r.id, r.newPath]))
-    for (const t of tracks) {
-      const nv = rewriteMap.get(t.id as number)
-      if (nv) t.path = nv
-    }
-    console.log(`sync-to-ipod: smart-match rewrote ${pathRewrites.length} track paths (saved that many redundant copies)`)
-  }
-  // Drop leftover FAT-temp / .flac names now that the playable dest exists.
-  for (const r of playablePathRewrites) {
-    const stale = join(IPOD_MOUNT, tsaRelFromColon(r.oldPath, pathSep))
-    const fresh = join(IPOD_MOUNT, tsaRelFromColon(r.newPath, pathSep))
-    if (stale === fresh) continue
-    try {
-      await stat(fresh)
-      await unlink(stale)
-    } catch { /* fresh missing or stale already gone */ }
-  }
-
-  // ── VERIFIED-COUNT LOOP (2026-07-24, Jake: "100 means 100, 250 means 250,
-  // 500 means 500, 1000 means 1000"). The iFlash/FAT32 iPod on macOS fskit
-  // accepts writes into the MOUNT CACHE and reports them present while only a
-  // subset physically commits to the card — so copyFile "succeeds", the cache
-  // says N, but the device shows a RANDOM count every sync (103 / 421 / 238…).
-  // Remount-evict + recopy until the true committed count hits the target, then
-  // build the iTunesDB from ONLY what landed. Activity wipe+rebuild refuses to
-  // report success on a shortfall — N means N, or the sync failed.
-  const syncTarget = syncOpts?.wipeFirst ? activityTarget : tracks.length
-  let verifiedLanded = syncTarget
-  let verifyAttempts = 0
-  let verifyRan = false
-  let activityShortfall = false
-  let activityTsaScreen: TsaScreen | null = null
-  let activityTsaSealed = false
-  let failedForReport: SyncReport['failed'] = []
-  if (IS_MAC && tracks.length > 0) {
-    const verify: Array<{ id: number; dstPath: string; localFile: string; expectedSize: number }> = []
-    for (const t of tracks) {
-      const id = t.id as number
-      const remembered = writtenById.get(id)
-      if (remembered) {
-        verify.push({
-          id,
-          dstPath: remembered.dstPath,
-          localFile: remembered.srcPath,
-          expectedSize: remembered.expectedSize,
-        })
-        continue
-      }
-      const colonPath = String(t.path || '')
-      if (!colonPath) continue
-      const relPath = tsaRelFromColon(colonPath, pathSep)
-      const libraryFile = join(LOCAL_MOUNT, relPath)
-      try {
-        if (await isStreamedTrackFile(libraryFile)) continue
-        let srcForVerify = libraryFile
-        if (convertOptions?.enabled) {
-          const mirror = await buildAacMirror(libraryFile, convertOptions.targetKbps)
-          if (mirror) srcForVerify = mirror
-        }
-        const sz = (await stat(srcForVerify)).size
-        verify.push({
-          id,
-          dstPath: join(IPOD_MOUNT, relPath),
-          localFile: srcForVerify,
-          expectedSize: sz,
-        })
-      } catch { /* no local source */ }
-    }
-    // Activity sync: more passes — random short counts were us giving up too early
-    // while the card was still dropping mid-flush writes.
-    const MAX_VERIFY_PASSES = syncOpts?.wipeFirst ? 16 : 4
-    let landedIds = new Set<number>()
-    if (verify.length > 0) {
-      mainWindow?.webContents.send('sync-progress', {
-        phase: 'verify', current: 1, total: MAX_VERIFY_PASSES,
-        title: `Verifying all ${verify.length} songs actually landed on the iPod…`,
-      })
-      const r = await remountVerifyEntries(IPOD_MOUNT, verify, {
-        maxPasses: MAX_VERIFY_PASSES,
-        label: 'final',
-        isCancelled: () => syncCancelRequested,
-      })
-      verifyAttempts = r.attempts
-      landedIds = r.landedIds
-      if (r.remountFailed && landedIds.size === 0) {
-        verifyRan = false
-        if (syncOpts?.wipeFirst) {
-          // Do NOT fall through and write a catalog from the mount cache — that
-          // is exactly how the Mini ends up indexing a random partial Songs list.
-          // Leave the journal: only a completed ok:true sync may clear it.
-          return {
-            ok: false,
-            error: `Could not verify the iPod (remount failed after writing). The mount cache lies on this card — sync again without unplugging. Nothing was committed as "done".`,
-            copied, copyErrors, landed: 0, target: syncTarget, shortfall: syncTarget, verifyAttempts,
-          }
-        }
-      } else {
-        verifyRan = true
-      }
-    }
-    if (verifyRan && landedIds.size === 0 && verify.length > 0) {
-      return {
-        ok: false,
-        error: `Sync failed: none of the ${syncTarget} songs committed to the iPod's card — the card is dropping every write. A reformat is needed.`,
-        copied, copyErrors, landed: 0, target: syncTarget, shortfall: syncTarget, attempts: verifyAttempts,
-      }
-    }
-    if (verifyRan) {
-      // Gap-fill (2026-08-12): Jake hit 482/500 — remount-verify was honest,
-      // but batch recopies of the missing set still dumped into the cache and
-      // lost again. For wipe-first activity sync, finish the last few ONE AT A
-      // TIME: copy → fsync → remount → size-check, before accepting shortfall.
-      const gapFillMissing = async (missing: typeof verify, label: string) => {
-        if (missing.length === 0 || syncCancelRequested) return 0
-        console.warn(`sync-to-ipod: ${label} — ${missing.length} missing; copy + F_FULLFSYNC + clean remount per song (never force)`)
-        mainWindow?.webContents.send('sync-progress', {
-          phase: 'verify', current: landedIds.size, total: syncTarget,
-          title: `Finishing the last ${missing.length} song(s) — one at a time…`,
-        })
-        let recovered = 0
-        for (let i = 0; i < missing.length; i++) {
-          if (syncCancelRequested) break
-          const e = missing[i]
-          let stuck = false
-          for (let attempt = 1; attempt <= 5 && !stuck; attempt++) {
-            if (syncCancelRequested) break
-            try {
-              const dir = e.dstPath.substring(0, Math.max(e.dstPath.lastIndexOf('/'), e.dstPath.lastIndexOf('\\')))
-              if (dir) await mkdir(dir, { recursive: true })
-              await copyFile(e.localFile, e.dstPath)
-              const conf = await confirmWriteOnCard(e.localFile, e.dstPath)
-              if (!conf.ok) {
-                console.warn(`sync-to-ipod: ${label} copy not confirmed for ${e.id} (try ${attempt}): ${conf.reason}`)
-                continue
-              }
-              await flushCardCaches()
-              const rm = await remountVolume(IPOD_MOUNT)
-              if (!rm.ok) {
-                console.warn(`sync-to-ipod: ${label} remount failed for ${e.id}: ${rm.error}`)
-                continue
-              }
-              const sz = (await stat(e.dstPath).catch(() => null))?.size ?? -1
-              if (sz === e.expectedSize) {
-                landedIds.add(e.id)
-                writtenById.set(e.id, { srcPath: e.localFile, dstPath: e.dstPath, expectedSize: e.expectedSize })
-                recovered++
-                stuck = true
-                console.log(`sync-to-ipod: ${label} recovered track ${e.id} on try ${attempt} (${landedIds.size}/${syncTarget})`)
-              } else {
-                console.warn(`sync-to-ipod: ${label} size mismatch for ${e.id}: got ${sz}, want ${e.expectedSize}`)
-              }
-            } catch (err) {
-              console.warn(`sync-to-ipod: ${label} failed for ${e.id}:`, err)
-            }
-          }
-          mainWindow?.webContents.send('sync-progress', {
-            phase: 'verify', current: landedIds.size, total: syncTarget,
-            title: stuck
-              ? `Recovered ${recovered} of ${missing.length} missing…`
-              : `Still missing after retries (${i + 1}/${missing.length})…`,
-          })
-        }
-        verifyAttempts += missing.length
-        return recovered
-      }
-
-      if (syncOpts?.wipeFirst && landedIds.size < verify.length) {
-        await gapFillMissing(verify.filter((e) => !landedIds.has(e.id)), 'GAP-FILL')
-      }
-
-      // ── ROULETTE PROOF (2026-08-12) ────────────────────────────────────
-      // Jake: "it jumps to 482 but may drop down to 8 or 108… roulette."
-      // One remount can still catch the card mid-flush and report a lucky
-      // high count; the next boot shows the real subset. For activity sync,
-      // require TWO consecutive cold remounts that agree on the FULL target
-      // before we treat the set as landed. If a remount loses songs,
-      // gap-fill again and reset the streak — never celebrate a lucky read.
-      let consecutiveFull = 0
-      if (syncOpts?.wipeFirst && verify.length > 0 && !syncCancelRequested) {
-        const PROOF_ROUNDS = 4
-        for (let round = 1; round <= PROOF_ROUNDS; round++) {
-          if (syncCancelRequested) break
-          mainWindow?.webContents.send('sync-progress', {
-            phase: 'verify', current: landedIds.size, total: syncTarget,
-            title: `Double-checking the card (proof ${round}/${PROOF_ROUNDS}) — no cache lies…`,
-          })
-          await flushCardCaches()
-          const proof = await remountVerifyEntries(IPOD_MOUNT, verify, {
-            maxPasses: 1,
-            label: `proof-${round}`,
-            isCancelled: () => syncCancelRequested,
-          })
-          verifyAttempts += proof.attempts
-          if (proof.remountFailed) {
-            console.warn(`sync-to-ipod: proof ${round} remount failed — treating as not proven (keeping last landed set, not wiping the catalog to 0)`)
-            consecutiveFull = 0
-            activityShortfall = true
-            break
-          }
-          const lost = [...landedIds].filter((id) => !proof.landedIds.has(id))
-          landedIds = proof.landedIds
-          if (lost.length > 0) {
-            console.error(`sync-to-ipod: ROULETTE — proof ${round} lost ${lost.length} song(s) that a prior remount claimed (now ${landedIds.size}/${syncTarget})`)
-          }
-          if (landedIds.size >= syncTarget && proof.landedIds.size >= verify.length) {
-            consecutiveFull++
-            console.log(`sync-to-ipod: proof ${round} full (${consecutiveFull} consecutive) — ${landedIds.size}/${syncTarget}`)
-            if (consecutiveFull >= 2) {
-              console.log(`sync-to-ipod: ROULETTE PROOF passed — ${landedIds.size}/${syncTarget} held across two remounts`)
-              break
-            }
-            continue
-          }
-          consecutiveFull = 0
-          const stillMissing = verify.filter((e) => !landedIds.has(e.id))
-          if (stillMissing.length === 0) break
-          await gapFillMissing(stillMissing, `GAP-FILL-proof-${round}`)
-        }
-      }
-      // A single remount that says 500 is the cache lie. Skipping the proof
-      // loop (cancel, empty verify) must not green a 500/500 either.
-      if (syncOpts?.wipeFirst && !activitySetProven(consecutiveFull, landedIds.size, syncTarget)) {
-        activityShortfall = true
-        console.error(`sync-to-ipod: ROULETTE — ${landedIds.size}/${syncTarget} after ${consecutiveFull} consecutive full proof(s); refusing success (N means N)`)
-      }
-
-      const before = tracks.length
-      const failedNow = tracks
-        .filter((t) => !landedIds.has(t.id as number))
-        .map((t) => ({
-          id: t.id as number,
-          title: String((t as Record<string, unknown>).title ?? ''),
-          artist: String((t as Record<string, unknown>).artist ?? ''),
-          path: String((t as Record<string, unknown>).path ?? ''),
-        }))
-      failedForReport = failedNow
-      tracks = tracks.filter((t) => landedIds.has(t.id as number))
-      verifiedLanded = tracks.length
-      console.log(`sync-to-ipod: VERIFIED ${verifiedLanded}/${syncTarget} landed on the card after ${verifyAttempts} pass(es)${verifiedLanded !== before ? ` (dropped ${before - verifiedLanded} that never committed)` : ''} — DB will be built from the verified set`)
-      if (syncOpts?.wipeFirst && verifiedLanded < syncTarget) {
-        activityShortfall = true
-        console.error(`sync-to-ipod: ACTIVITY SHORTFALL — asked for ${syncTarget}, card kept ${verifiedLanded}. Will write the honest catalog and report failure (N means N).`)
-      }
-    } else if (syncOpts?.wipeFirst) {
-      // Activity sync on Mac MUST remount-verify. A cache-only "all present"
-      // read is exactly how 500 → 103 / 421 / 238 happened with a green check.
-      // Leave the journal so boot still nags until a proven sync lands.
-      return {
-        ok: false,
-        error: `Could not remount-verify the activity set — refusing to trust the mount cache. Sync again without unplugging.`,
-        copied, copyErrors, landed: 0, target: syncTarget, shortfall: syncTarget, verifyAttempts,
-      }
-    }
-  }
-
-  // Belt-and-suspenders (2026-08-11): even when remount-verify couldn't run
-  // (or on non-Mac), never write an iTunesDB entry for a file that isn't
-  // actually on the card. Activity sync is ALAC on a 120GB Mini — capacity
-  // is fine; the lie is claiming 500 songs while the firmware only sees the
-  // files that physically committed. Stat each destination; keep only those
-  // present with a positive size. Prefer writtenById's expected size when we
-  // have one.
-  {
-    const present: typeof tracks = []
-    let sizeRewrites = 0
-    for (const t of tracks) {
-      const id = t.id as number
-      const remembered = writtenById.get(id)
-      const colonPath = String(t.path || '')
-      if (!colonPath && !remembered) continue
-      const dst = remembered?.dstPath
-        || join(IPOD_MOUNT, tsaRelFromColon(colonPath, pathSep))
-      try {
-        const sz = (await stat(dst)).size
-        if (sz <= 0) continue
-        if (remembered && remembered.expectedSize > 0 && sz !== remembered.expectedSize) continue
-        // Mini 1.4.1 indexes by mhit 0x24. library.json fileSize is often a
-        // stale ALAC length over an AAC/smart-matched file on the card
-        // (Beyond Me 31MB vs 7.5MB → Songs abort / roulette).
-        const libSize = Number(t.fileSize) || 0
-        t.fileSize = fileSizeForItunesDb(sz)
-        if (libSize !== t.fileSize) sizeRewrites++
-        t.sampleRate = sampleRateForItunesDb(t.sampleRate as number | undefined)
-        present.push(t)
-      } catch { /* missing on card */ }
-    }
-    if (present.length !== tracks.length) {
-      console.warn(`sync-to-ipod: on-disk gate — keeping ${present.length}/${tracks.length} with real files on the card before DB write`)
-      tracks = present
-      verifiedLanded = tracks.length
-    }
-    if (sizeRewrites > 0) {
-      console.log(`sync-to-ipod: stamped ${sizeRewrites} iTunesDB fileSize(s) from the card (not library.json)`)
-    }
-  }
-
-  // Last word for activity wipe+rebuild: ANY path that ends below the picked
-  // count (remount verify, on-disk gate, streamed skips, copy errors) is a
-  // failed sync. Without this, the on-disk gate could shrink 500→238 and still
-  // return ok:true — which is the "random Songs count every time" Jake sees.
-  if (syncOpts?.wipeFirst && verifiedLanded < syncTarget) {
-    activityShortfall = true
-    console.error(`sync-to-ipod: ACTIVITY SHORTFALL (pre-DB) — asked for ${syncTarget}, have ${verifiedLanded} verified files`)
-  }
-
-  // Firmware listability: catalog N with Songs N-3 is the 497 class.
-  // Fill empty title/artist so the writer cannot emit blank mhods; then
-  // refuse success if any remaining row would not list.
-  {
-    for (const t of tracks) {
-      if (!String(t.title || '').trim()) {
-        const base = String(t.path || '').split(':').pop() || 'Unknown'
-        t.title = base.replace(/\.[^.]+$/, '') || 'Unknown'
-      }
-      if (!String(t.artist || '').trim()) {
-        t.artist = String(t.albumArtist || t.album || 'Unknown Artist')
-      }
-    }
-    const unlistable = tracks.filter((t) => !ipodFirmwareWillList(t))
-    if (unlistable.length > 0) {
-      console.error(
-        `sync-to-ipod: ${unlistable.length} track(s) Mini 1.4.1 will not list (497-of-500 class):`,
-        unlistable.slice(0, 8).map((t) => `${t.artist} — ${t.title} (${t.path})`),
-      )
-      if (syncOpts?.wipeFirst) {
-        activityShortfall = true
-        for (const t of unlistable) {
-          failedForReport.push({
-            id: t.id as number,
-            title: String(t.title ?? ''),
-            artist: String(t.artist ?? ''),
-            path: String(t.path ?? ''),
-          })
-        }
-      }
-    }
-  }
-
-  // The full-library tag-verification preflight that used to live here
-  // was removed in 4.0.5. It read tags off every audio file on the
-  // iPod every sync (~5 minutes over USB 2.0 on a 4500-track library)
-  // for a safety net the codebase no longer needs:
-  //   • smart-match (above) already tag-verifies tracks whose paths got
-  //     rewritten to point at existing files on the iPod — that's the
-  //     case the preflight was ACTUALLY catching most of the time
-  //   • the post-sync fingerprint verifier (below, after the writer)
-  //     silently self-heals path drift, fingerprint backfills, and
-  //     audioMissing flags
-  //   • the round-trip harness in core/tests/test_db_roundtrip.py
-  //     guards against writer regressions at dev time
-  // For the rare case of a directly-corrupted library.json, the user
-  // can run core/tools/refresh_fingerprints.py to recompute every
-  // fingerprint from disk on demand.
-
-  // Switch the toolbar status to the writer phase — the
-  // preflight is done; from here it's the iTunesDB rebuild + write
-  // (sub-second) and then the post-sync verifier (seconds).
-  await writeSyncJournal('db')
-  mainWindow?.webContents.send('sync-progress', {
-    phase: 'db', current: 0, total: 1, title: 'Writing iTunesDB...',
-  })
-
-  // Backup existing iTunesDB on the card (template + recovery).
-  const ipodDb = join(IPOD_MOUNT, 'iPod_Control', 'iTunes', 'iTunesDB')
-  try {
-    await copyFile(ipodDb, ipodDb + '.bak')
-  } catch (err) {
-    console.error('Backup iTunesDB failed:', err)
-  }
-
-  // Build the catalog on the Mac, then copy it to the CF the same way as
-  // audio. Writing Python straight onto /Volumes/JAKETUNES is how a
-  // "500-row catalog" lived in the mount cache and never on the card
-  // (Jake 2026-08-16). Mini Songs was 450.
-  const localDb = join(app.getPath('temp'), `jaketunes-itunesdb-${process.pid}`)
-  const scriptPath = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/db_reader.py')
-  return await new Promise((resolve) => {
-    const input = JSON.stringify({ tracks, playlists })
-    const py = spawn(PYTHON_CMD ?? 'python3', [
-      scriptPath, '--write', localDb, '--template', ipodDb, '--ipod-root', IPOD_MOUNT,
-    ])
-    py.on('error', (err: Error) => {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        resolve({ ok: false, error: PYTHON_INSTALL_HINT, copied, copyErrors })
-      } else {
-        resolve({ ok: false, error: safeIpcError(err, 'tool-failed'), copied, copyErrors })
-      }
-    })
-    // EPIPE-safe stdin write. User hit a main-process crash on 4.1.3
-    // right after a sync — almost certainly this write or a debounced
-    // post-sync child died with no listener on stdin's 'error', so the
-    // EPIPE escalated to an Uncaught Exception. Same pattern below.
-    py.stdin.on('error', (err) => {
-      resolve({ ok: false, error: `stdin write failed: ${safeIpcError(err, 'tool-failed')}`, copied, copyErrors })
-    })
-    try {
-      py.stdin.write(input)
-      py.stdin.end()
-    } catch (err) {
-      resolve({ ok: false, error: `stdin write threw: ${safeIpcError(err, 'tool-failed')}`, copied, copyErrors })
-    }
-
-    let stderr = ''
-    let stdout = ''
-    py.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
-    py.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
-
-    py.on('close', async (code: number) => {
-      console.log('sync-to-ipod stderr:', stderr)
-      if (code === 0) {
-        // ── CATALOG LAYOUT PASS (2026-08-15, the 79-of-500 night) ─────────
-        // Every existing gate below verifies the catalog's CONTENT; none of
-        // them see its LAYOUT. The writer's output lands in whatever holes
-        // the activity churn left in the FAT — measured at NINE fragments —
-        // and the Mini's firmware walks the chain, dies partway, and shows
-        // a different count each sync (79/12/471). Rewrite the identical
-        // bytes as one contiguous run BEFORE the readback gates, so the
-        // artifact they verify is the artifact that ships. On verification
-        // failure the worker restores the writer's original and the sync
-        // FAILS here — a fragmented-but-correct catalog must never be
-        // silently replaced by a torn one.
-        const contig = await ensureContiguousDb(localDb, PYTHON_CMD ?? 'python3')
-        console.log(`sync-to-ipod: ${contig.summary}`)
-        if (!contig.ok) {
-          await retireIpodFirmwareScratch(IPOD_MOUNT)
-          try { await unlink(localDb) } catch { /* temp */ }
-          resolve({
-            ok: false,
-            error: `The catalog was written but could not be laid down as one piece and verified (${contig.error}). The previous catalog is untouched. Sync again.`,
-            copied, copyErrors,
-          })
-          return
-        }
-        mainWindow?.webContents.send('sync-progress', {
-          phase: 'db', current: 1, total: 1, title: 'iTunesDB written',
-        })
-
-        // ──────────── POST-SYNC FINGERPRINT VERIFIER ────────────
-        // Quietly verify that the tracks whose paths just changed in
-        // this sync still resolve to the audio they're supposed to,
-        // and backfill audioFingerprint for any track that doesn't
-        // have one yet. Identity-based check (sha1 of first 256KB +
-        // duration), no text matching, never deletes — the only
-        // outputs are: (a) backfill a fingerprint, (b) silently
-        // rewrite a path if the right audio is found elsewhere on the
-        // iPod, or (c) flag audioMissing for the UI. Restricted to
-        // the tracks we just touched so it stays cheap (a typical
-        // sync rewrites <100 paths and copies <100 files).
-        const verifyIds = new Set<number>()
-        for (const r of pathRewrites) verifyIds.add(r.id)
-        // Find the IDs of newly-copied tracks too. We re-derive them
-        // from the tracks array by colon path — toCopy didn't carry
-        // ids. (toCopy items are in 1:1 order with the candidates
-        // pushed earlier, but reconstructing that mapping is more
-        // fragile than just scanning here.)
-        const ipodColonsCopied = new Set(toCopy.map(c => {
-          // ipod path back to colon form
-          const rel = c.ipod.slice(IPOD_MOUNT.length + 1)
-          return ':' + rel.split(pathSep).join(':')
-        }))
-        for (const t of tracks) {
-          if (ipodColonsCopied.has(String(t.path || ''))) verifyIds.add(t.id as number)
-        }
-        let verificationUpdates: VerifyTrackUpdate[] = []
-        if (verifyIds.size > 0) {
-          const inputs: VerifyTrackInput[] = tracks
-            .filter(t => verifyIds.has(t.id as number))
-            .map(t => ({
-              id: t.id as number,
-              path: String(t.path || ''),
-              duration: Number(t.duration || 0),
-              audioFingerprint: typeof t.audioFingerprint === 'string' ? t.audioFingerprint : undefined,
-              audioMissing: t.audioMissing === true,
-            }))
-          try {
-            // Every root that can hold audio — including library.streamRoot.
-            // This call used to pass only [iPod, local], so a track kept solely
-            // on the NAS resolved nowhere and got stamped audioMissing by a
-            // routine iPod sync. That is how a clean file ended up wearing a
-            // warning badge.
-            verificationUpdates = await verifyAndHealTracks(inputs, await candidateMusicMounts())
-            const healedPaths = verificationUpdates.filter(u => u.path).length
-            const backfilled = verificationUpdates.filter(u => u.audioFingerprint).length
-            const flagged = verificationUpdates.filter(u => u.audioMissing).length
-            if (healedPaths || backfilled || flagged) {
-              console.log(`sync-to-ipod: post-sync verifier — ${healedPaths} path heal${healedPaths === 1 ? '' : 's'}, ${backfilled} fingerprint backfill${backfilled === 1 ? '' : 's'}, ${flagged} flagged audioMissing`)
-            }
-          } catch (verr) {
-            console.warn('sync-to-ipod: post-sync verifier crashed (non-fatal):', verr)
-          }
-        }
-
-        // Post-sync iPod orphan cleanup — delete audio files on the device
-        // whose basename is not referenced by library.json (identity-safe).
-        // Activity wipe+rebuild already emptied Music. Deleting more files
-        // AFTER the catalog is written is how a sealed 500 becomes 492 on
-        // the Mini. TSA holds the set until the next explicit Activity Sync.
-        let ipodOrphansDeleted = 0
-        if (!syncOpts?.wipeFirst) {
-        try {
-          const ipodMusicRoot = join(IPOD_MOUNT, 'iPod_Control', 'Music')
-          const ipodResult = await cleanOrphansOnMusicRoot(ipodMusicRoot, tracks as Array<{ path?: string }>, syncRunStartMs)
-          ipodOrphansDeleted = ipodResult.deleted
-          if (ipodOrphansDeleted > 0) {
-            console.log(`sync-to-ipod: cleaned ${ipodOrphansDeleted} iPod orphan file(s), freed ${(ipodResult.bytesFreed / 1e9).toFixed(2)} GB`)
-          }
-          if (ipodResult.protected > 0) {
-            console.warn(`sync-to-ipod: orphan cleanup PROTECTED ${ipodResult.protected} freshly-written file(s) from deletion — the shrinking-iPod bug would have eaten these`)
-          }
-        } catch (ipodOrphErr) {
-          console.warn('sync-to-ipod: iPod orphan cleanup failed (non-fatal):', ipodOrphErr)
-        }
-        } else {
-          console.log('sync-to-ipod: TSA — skipping post-catalog orphan deletes on activity rebuild (the wipe was the cleanup)')
-        }
-
-        // Copy the local catalog onto the CF and prove it the same way as
-        // audio: F_FULLFSYNC + two cold remounts. A parse of 500 from the
-        // mount cache is not the Mini.
-        mainWindow?.webContents.send('sync-progress', {
-          phase: 'db', current: 1, total: 1,
-          title: `Putting the ${syncTarget}-song catalog on the card…`,
-        })
-        const localMd5 = contig.md5
-        const localBytes = contig.bytes
-        let catalogConsecutive = 0
-        let readback: { tracks: Array<Record<string, unknown>>; playlists?: unknown[] } | null = null
-        const CATALOG_PROOF_ROUNDS = syncOpts?.wipeFirst ? 4 : 2
-        for (let round = 1; round <= CATALOG_PROOF_ROUNDS; round++) {
-          if (catalogConsecutive === 0) {
-            try {
-              await copyFile(localDb, ipodDb)
-              const conf = await confirmWriteOnCard(localDb, ipodDb)
-              if (!conf.ok) {
-                console.error(`sync-to-ipod: catalog copy not confirmed (${conf.reason})`)
-                continue
-              }
-            } catch (copyErr) {
-              console.error('sync-to-ipod: catalog copy onto the card failed:', copyErr)
-              continue
-            }
-          }
-          await retireIpodFirmwareScratch(IPOD_MOUNT)
-          const flush = await remountVolume(IPOD_MOUNT)
-          if (!flush.ok) {
-            await retireIpodFirmwareScratch(IPOD_MOUNT)
-            try { await unlink(localDb) } catch { /* temp */ }
-            resolve({
-              ok: false,
-              error: `The catalog file never made it onto the card — remount failed (${flush.error}). The Mini does not have ${syncTarget} songs. Do not unplug — sync again.`,
-              copied, copyErrors, target: syncTarget, landed: 0, shortfall: syncTarget, verifyAttempts,
-            })
-            return
-          }
-          await retireIpodFirmwareScratch(IPOD_MOUNT)
-          let onCard: Buffer
-          try {
-            onCard = await readFile(ipodDb)
-          } catch {
-            catalogConsecutive = 0
-            continue
-          }
-          const cardMd5 = createHash('md5').update(onCard).digest('hex')
-          try {
-            readback = await readIpodDatabase() as { tracks: Array<Record<string, unknown>>; playlists?: unknown[] }
-          } catch {
-            catalogConsecutive = 0
-            continue
-          }
-          const match = catalogBytesMatch({
-            onCardBytes: onCard.length,
-            localBytes,
-            onCardMd5: cardMd5,
-            localMd5,
-            trackCount: readback.tracks.length,
-            target: syncTarget,
-          })
-          console.log(`sync-to-ipod: catalog proof ${round}/${CATALOG_PROOF_ROUNDS} — card ${onCard.length}b md5 ${cardMd5.slice(0, 8)} tracks=${readback.tracks.length} vs local ${localBytes}b md5 ${localMd5.slice(0, 8)} target=${syncTarget} match=${match}`)
-          if (match) {
-            catalogConsecutive++
-            if (catalogOnCardProven(catalogConsecutive, match)) {
-              console.log(`sync-to-ipod: catalog ON CARD — ${syncTarget} tracks, ${localBytes} bytes, held across two remounts`)
-              break
-            }
-          } else {
-            catalogConsecutive = 0
-          }
-        }
-        try { await unlink(localDb) } catch { /* temp */ }
-        if (!readback || !catalogOnCardProven(catalogConsecutive, catalogConsecutive >= 2)) {
-          resolve({
-            ok: false,
-            error: `The ${syncTarget}-song catalog never committed to the card. Mac cache is not the Mini — that is how Songs became 450. Not calling this done. Sync again without unplugging.`,
-            copied, copyErrors, target: syncTarget, landed: 0, shortfall: syncTarget, verifyAttempts,
-          })
-          return
-        }
-
-        // ── DEVICE-TRUTH READBACK — catalog bytes already proven on the CF.
-        try {
-          const onDevice = readback.tracks.length
-          if (onDevice !== tracks.length) {
-            console.error(`sync-to-ipod: READBACK MISMATCH — wrote ${tracks.length} tracks, device catalog answers ${onDevice}`)
-            resolve({
-              ok: false,
-              error: `Your songs are fine — ${verifiedLanded || copied} of ${tracks.length} are verified on the iPod. What failed is the CATALOG (the iPod's table of contents): it lists ${onDevice}. Sync again to rewrite it — no music needs re-copying.`,
-              copied, copyErrors,
-            })
-            return
-          }
-          // 2026-07-21: the catalog is NOT enough — Jake's device kept
-          // showing fewer songs than a 1000-record catalog because the
-          // FILES were being deleted out from under it.
-          // 2026-08-16: do NOT prove existence with readdir. fskit returns
-          // partial listings; 4 hidden names became "device will show 496",
-          // then Mini Songs was 450 because firmware aborts the index on
-          // ghosts + leftover Play Counts — it does not subtract 4.
-          // Stat each catalog dest the way copy-verify does.
-          const missingRows: Array<{ title: string; artist: string; path: string }> = []
-          for (const t of readback.tracks as Array<{ path?: string; title?: string; artist?: string }>) {
-            const colon = String(t.path || '')
-            const abs = colon ? join(IPOD_MOUNT, tsaRelFromColon(colon, pathSep)) : ''
-            try {
-              if (!colon) throw new Error('no-path')
-              const sz = (await stat(abs)).size
-              if (sz <= 0) throw new Error('empty')
-            } catch {
-              missingRows.push({
-                title: String(t.title || ''),
-                artist: String(t.artist || ''),
-                path: colon,
-              })
-            }
-          }
-          if (missingRows.length > 0) {
-            const sample = missingRows.slice(0, 8)
-              .map((r) => `${r.artist} — ${r.title} (${r.path})`)
-              .join('; ')
-            console.error(`sync-to-ipod: FILE READBACK — ${missingRows.length}/${onDevice} catalog dests failed stat: ${sample}`)
-            await writeSyncReport({
-              syncedAt: new Date().toISOString(), target: syncTarget,
-              landed: onDevice - missingRows.length, shortfall: missingRows.length,
-              verifyPasses: verifyAttempts, copied, copyErrors,
-              failed: missingRows.slice(0, 40).map((r, i) => ({
-                id: i, title: r.title, artist: r.artist, path: r.path,
-              })),
-            })
-            resolve({
-              ok: false,
-              error: `Sync verify failed: ${missingRows.length} of ${onDevice} catalog songs are not on the card at the path the Mini will open. Firmware 1.4.1 aborts Songs (450 of 500), it does not skip ${missingRows.length}. ${sample}`,
-              copied, copyErrors, target: syncTarget,
-              landed: onDevice - missingRows.length,
-              shortfall: missingRows.length, verifyAttempts,
-            })
-            return
-          }
-          const musicRoot = join(IPOD_MOUNT, 'iPod_Control', 'Music')
-          const onDiskFiles = await walkAudioFilesUnder(musicRoot)
-
-          // ── FIRMWARE-SEMANTIC GATE ─────────────────────────────────────
-          // Counts + paths + byte sizes do NOT prove the Mini will expose a
-          // song. Firmware 1.4.1 silently filters mhit rows with invalid audio
-          // facts (observed live: 500 rows/files, but four rows carried
-          // bitrate=0, sampleRate=0, mediatype=0 and only 496 appeared).
-          // Run the independent validator against the cold-remounted DB before
-          // success. This checker deliberately shares no parser code with the
-          // writer, so a writer regression cannot validate itself.
-          const semanticScript = join(
-            app.isPackaged ? process.resourcesPath : app.getAppPath(),
-            'core/tools/itdb_verify.py',
-          )
-          const semantic = await new Promise<{ ok: boolean; output: string }>((done) => {
-            const check = spawn(PYTHON_CMD ?? 'python3', [
-              semanticScript,
-              ipodDb,
-              '--root', IPOD_MOUNT,
-              '--expect', String(syncTarget),
-            ])
-            let output = ''
-            check.stdout.on('data', (d: Buffer) => { output += d.toString() })
-            check.stderr.on('data', (d: Buffer) => { output += d.toString() })
-            check.on('error', (err: Error) => done({ ok: false, output: safeIpcError(err, 'tool-failed') }))
-            check.on('close', (checkCode: number) => done({ ok: checkCode === 0, output }))
-          })
-          if (!semantic.ok) {
-            console.error(`sync-to-ipod: FIRMWARE SEMANTIC VALIDATION FAILED:\n${semantic.output}`)
-            await writeSyncReport({
-              syncedAt: new Date().toISOString(), target: syncTarget,
-              landed: 0, shortfall: syncTarget, verifyPasses: verifyAttempts,
-              copied, copyErrors,
-              failed: [{ id: 0, title: 'iTunesDB semantic validation failed', artist: '', path: '' }],
-            })
-            resolve({
-              ok: false,
-              error: `The ${syncTarget} files are safely on the iPod, but its catalog contains firmware-invalid song records. JakeTunes refused to claim success. Sync again to rebuild the catalog; restarting the iPod cannot repair this.`,
-              copied, copyErrors, target: syncTarget, landed: 0,
-              shortfall: syncTarget, verifyAttempts,
-            })
-            return
-          }
-          console.log(`sync-to-ipod: firmware-semantic validation GREEN for all ${syncTarget} tracks`)
-          console.log(`sync-to-ipod: readback verified — ${onDevice} catalog records, all ${onDiskFiles.length} files present on disk`)
-
-          // ── TSA (2026-08-15) — every boarded identity on the card, in the
-          // catalog, and listable. 492/497/79 after a green N/N is a hold,
-          // not a near-miss. Plug-in must not auto-repair; this seal is the
-          // set that has to stay until the next explicit Activity Sync.
-          // Screen here; write the seal only after the on-device count check
-          // so a short catalog cannot leave a lying seal on disk.
-          if (syncOpts?.wipeFirst) {
-            mainWindow?.webContents.send('sync-progress', {
-              phase: 'verify', current: 1, total: 1,
-              title: `TSA — inspecting all ${syncTarget} songs by identity…`,
-            })
-            const byId = new Map(tracks.map((t) => [Number(t.id), t]))
-            for (const p of tsaBoarded) {
-              const t = byId.get(p.id)
-              if (t) {
-                p.destPath = tsaNormalizeColonPath(String(t.path || p.destPath))
-                p.title = String(t.title || p.title)
-                p.artist = String(t.artist || p.artist)
-                const remembered = writtenById.get(p.id)
-                p.expectedSize = remembered?.expectedSize || Number(t.fileSize) || p.expectedSize
-              } else {
-                p.destPath = tsaNormalizeColonPath(p.destPath)
-              }
-            }
-            const onCard = new Map<string, number>()
-            for (const p of tsaBoarded) {
-              const remembered = writtenById.get(p.id)
-              const dest = remembered?.dstPath
-                || join(IPOD_MOUNT, tsaRelFromColon(p.destPath, pathSep))
-              try {
-                onCard.set(p.destPath, (await stat(dest)).size)
-              } catch { /* missing — TSA holds */ }
-            }
-            const catalogPaths = new Set(
-              (readback.tracks as Array<{ path?: string }>).map((t) => tsaNormalizeColonPath(String(t.path || ''))),
-            )
-            const screen = tsaScreen({ boarded: tsaBoarded, onCard, catalogPaths })
-            activityTsaScreen = screen
-            if (!tsaAllClear(tsaBoarded.length, screen.cleared.length, screen.held.length) || tsaBoarded.length !== syncTarget) {
-              const sample = screen.held.slice(0, 8)
-                .map((h) => `${h.artist} — ${h.title} (${h.reason})`)
-                .join('; ')
-              console.error(`sync-to-ipod: TSA HELD ${screen.held.length}/${tsaBoarded.length} (target ${syncTarget}): ${sample}`)
-              await writeSyncReport({
-                syncedAt: new Date().toISOString(), target: syncTarget,
-                landed: screen.cleared.length, shortfall: Math.max(screen.held.length, syncTarget - screen.cleared.length),
-                verifyPasses: verifyAttempts, copied, copyErrors,
-                failed: screen.held.slice(0, 40).map((h) => ({
-                  id: h.id, title: h.title, artist: h.artist, path: h.destPath,
-                })),
-              })
-              resolve({
-                ok: false,
-                error: `TSA held ${Math.max(screen.held.length, syncTarget - screen.cleared.length)} of ${syncTarget} songs — the Mini would not show ${syncTarget}. ${sample}`,
-                copied, copyErrors, target: syncTarget,
-                landed: screen.cleared.length,
-                shortfall: Math.max(screen.held.length, syncTarget - screen.cleared.length), verifyAttempts,
-              })
-              return
-            }
-          }
-
-          // ── DEBRIS REPORT (2026-08-15) — report-only, deletes NOTHING ──
-          // The raw FAT walk that night found ~431 unreferenced audio files
-          // plus .XXXXXX staging temps and a stray .flac accumulated on the
-          // card. That churn is what shreds free space, and shredded free
-          // space is where the next catalog gets fragmented. Deletion stays
-          // a deliberate act (per the destructive-ops rule) — this makes the
-          // pile VISIBLE on every sync instead of discoverable only by
-          // forensics at 3am. Identity source: the catalog just verified.
-          {
-            const referenced = new Set<string>()
-            for (const t of readback.tracks as Array<{ path?: string }>) {
-              const bn = (t.path || '').split(/[/:\\]/).pop() || ''
-              if (bn) referenced.add(bn.toLowerCase())
-            }
-            const debris = onDiskFiles.filter((f) => {
-              const bn = (f.split(/[/\\]/).pop() || '').toLowerCase()
-              return bn && !referenced.has(bn)
-            })
-            // Staging temps (.name.XXXXXX) are dotfiles with a non-audio
-            // final extension, so walkAudioFilesUnder never sees them —
-            // they need their own sweep or this count reads 0 forever.
-            let staging = 0
-            try {
-              const { readdir } = await import('fs/promises')
-              for (const fdir of await readdir(musicRoot, { withFileTypes: true })) {
-                if (!fdir.isDirectory()) continue
-                for (const name of await readdir(join(musicRoot, fdir.name))) {
-                  if (/^\..+\.[A-Za-z0-9]{6}$/.test(name)) staging++
-                }
-              }
-            } catch { /* report-only — never fail a sync over a count */ }
-            if (debris.length > 0 || staging > 0) {
-              console.warn(`sync-to-ipod: DEBRIS — ${debris.length} unreferenced audio file(s) + ${staging} staging temp(s) on the card. Examples: ${debris.slice(0, 3).map((f) => f.split('/').pop()).join(', ') || '(temps only)'}`)
-            } else {
-              console.log('sync-to-ipod: no debris — every file on the card is referenced by the catalog')
-            }
-          }
-          // Activity wipe+rebuild: catalog matching the partial landed set is
-          // still a FAILED sync if it's under the pick (489 of 500).
-          if (syncOpts?.wipeFirst && onDevice < syncTarget) {
-            resolve({
-              ok: false,
-              error: `Only ${onDevice} of ${syncTarget} songs stuck on the iPod — the card is still dropping writes (roulette). Catalog matches what landed. Sync again, or reformat the card if this keeps happening.`,
-              copied, copyErrors,
-              target: syncTarget,
-              landed: onDevice,
-              shortfall: syncTarget - onDevice,
-              verifyAttempts,
-            })
-            return
-          }
-          // Seal only after the on-device count is the boarded N. A seal
-          // written earlier is how a short catalog could look "done."
-          if (syncOpts?.wipeFirst) {
-            const screen = activityTsaScreen
-            if (
-              activityShortfall
-              || !screen
-              || tsaBoarded.length !== syncTarget
-              || !tsaAllClear(tsaBoarded.length, screen.cleared.length, screen.held.length)
-            ) {
-              resolve({
-                ok: false,
-                error: `Activity set of ${syncTarget} did not clear TSA (${screen?.cleared.length ?? 0} cleared). Not calling this a success.`,
-                copied, copyErrors, target: syncTarget,
-                landed: screen?.cleared.length ?? verifiedLanded,
-                shortfall: syncTarget - (screen?.cleared.length ?? verifiedLanded),
-                verifyAttempts,
-              })
-              return
-            }
-            const seal = tsaSealFromScreen(screen, new Date().toISOString())
-            if (!seal || seal.target !== syncTarget) {
-              resolve({
-                ok: false,
-                error: `Activity set of ${syncTarget} cleared the lane but TSA could not build a seal. Sync again.`,
-                copied, copyErrors, target: syncTarget, landed: screen.cleared.length,
-                shortfall: 0, verifyAttempts,
-              })
-              return
-            }
-            try {
-              await writeTsaSealFile(seal)
-              activityTsaSealed = true
-              console.log(`sync-to-ipod: TSA sealed ${seal.target} songs — plug-in will inspect, not auto-sync`)
-              try {
-                await writeLastSyncManifest({
-                  syncedAt: seal.sealedAt,
-                  status: 'sealed',
-                  sealed: true,
-                  count: seal.target,
-                  tracks: seal.passengers.map((p) => ({ id: p.id, destPath: p.destPath, identity: p.identity })),
-                })
-              } catch (mErr) {
-                console.warn('sync-to-ipod: sealed, but last-sync-manifest update failed:', mErr)
-              }
-            } catch (sealErr) {
-              console.error('sync-to-ipod: TSA seal write failed — refusing success:', sealErr)
-              resolve({
-                ok: false,
-                error: `The ${syncTarget} songs are on the card but TSA could not seal the set (${sealErr instanceof Error ? sealErr.message : String(sealErr)}). Sync again without unplugging.`,
-                copied, copyErrors, target: syncTarget, landed: screen.cleared.length,
-                shortfall: 0, verifyAttempts,
-              })
-              return
-            }
-          }
-          // Third pass: Mini may have rewritten Play Counts during this
-          // readback window. iTunes deletes these every sync.
-          await retireIpodFirmwareScratch(IPOD_MOUNT)
-        } catch (rbErr) {
-          console.warn('sync-to-ipod: readback failed (treating as sync failure):', rbErr)
-          await retireIpodFirmwareScratch(IPOD_MOUNT)
-          resolve({
-            ok: false,
-            error: `Sync verify failed: could not read the iPod's catalog back (${rbErr instanceof Error ? rbErr.message : String(rbErr)}). Sync again before unplugging.`,
-            copied, copyErrors,
-          })
-          return
-        }
-
-        const finalShortfall = Math.max(0, syncTarget - verifiedLanded)
-        await writeSyncReport({
-          syncedAt: new Date().toISOString(),
-          target: syncTarget,
-          landed: activityShortfall ? verifiedLanded : syncTarget,
-          shortfall: activityShortfall ? finalShortfall : 0,
-          verifyPasses: verifyAttempts,
-          copied,
-          copyErrors,
-          failed: activityShortfall ? failedForReport : [],
-        })
-        resolve({
-          ok: syncOpts?.wipeFirst
-            ? tsaActivityOk({
-              target: syncTarget,
-              boarded: tsaBoarded.length,
-              cleared: activityTsaScreen?.cleared.length ?? 0,
-              held: activityTsaScreen?.held.length ?? 0,
-              sealed: activityTsaSealed,
-              shortfall: activityShortfall,
-            })
-            : !activityShortfall,
-          copied, copyErrors,
-          totalTracks: tracks.length,
-          // Verified-count truth (2026-07-24): what the user picked vs what
-          // actually committed to the card. shortfall>0 → the renderer shows an
-          // honest banner instead of a false success. Activity wipe+rebuild
-          // sets ok:false on shortfall so we never commit "N on the iPod"
-          // when the card kept a random subset (103 / 421 / 238…).
-          target: syncTarget,
-          landed: verifiedLanded,
-          shortfall: finalShortfall,
-          verifyAttempts,
-          error: (syncOpts?.wipeFirst
-            ? !tsaActivityOk({
-              target: syncTarget,
-              boarded: tsaBoarded.length,
-              cleared: activityTsaScreen?.cleared.length ?? 0,
-              held: activityTsaScreen?.held.length ?? 0,
-              sealed: activityTsaSealed,
-              shortfall: activityShortfall,
-            })
-            : activityShortfall)
-            ? (verifiedLanded < syncTarget
-              ? `Only ${verifiedLanded} of ${syncTarget} songs actually stuck on the iPod after ${verifyAttempts} tries — the card keeps dropping writes. The catalog matches what landed; sync again (or reformat the card) to reach ${syncTarget}.`
-              : `${verifiedLanded} files looked present but did not hold across two remounts — that is the N/N → 33 roulette. Not calling this a success. Sync again without unplugging.`)
-            : undefined,
-          ipodOrphansDeleted,
-          // Return the path rewrites so the renderer can update
-          // library.json to match what actually ended up on the iPod.
-          pathRewrites: pathRewrites.map(r => ({ id: r.id, newPath: r.newPath })),
-          // Fingerprint backfills, silent path heals, and audioMissing
-          // flags from the post-sync verifier. Renderer applies these
-          // as UPDATE_TRACKS so library.json reflects the verified
-          // state on the next save.
-          verificationUpdates,
-        })
-      } else {
-        resolve({ ok: false, error: safeIpcError(`DB write failed (code ${code}): ${stderr}`, 'tool-failed'), copied, copyErrors })
-      }
-    })
-    py.on('error', (err: Error) => {
-      resolve({ ok: false, error: safeIpcError(err, 'tool-failed'), copied, copyErrors })
-    })
-  })
-}
+// ── Sync library TO iPod ── (pipeline extracted to sync-engine/ —
+// 6.0 Phase 1 / roadmap P1C2. Behavior lives there; this is the host.)
+const syncEngine = createSyncEngine({
+  LOSSLESS_EXTS, LOSSLESS_CODECS, codecByAbsPath,
+  getMusicDir: () => MUSIC_DIR,
+  getMount: () => detectedIpodMount,
+  setMount: (m) => {
+    detectedIpodMount = m
+    detectedIpodVolume = m ? volumeNameFromMount(m) : null
+  },
+  buildAacMirror, buildIpodSafeAlacMirror, candidateMusicMounts, cleanOrphansOnMusicRoot,
+  computeAudioFingerprint, getConcertOwnedTrackIds, getLibraryTracks: () => libraryCache.get() as Promise<{ tracks?: Array<Record<string, unknown>> }>, isStreamedTrackFile,
+  materializeLibraryTrack, readIpodDatabase, resolveTrackAbsPath, scheduleDbRebuild,
+  sendToRenderer, verifyAndHealTracks, walkAudioFilesUnder,
+})
+const { handleSyncToIpod, handleSyncIpodFromDevice } = syncEngine
 
 // ── iPod Classic ALAC compatibility fix ──
 //
@@ -7226,7 +5402,7 @@ ipc.handle('alac-compat-fix', async () => {
       // Python line "[N/M] file … OK" counts as a step.
       const m = d.toString().match(/\[(\d+)\/(\d+)\]\s+(\S+)/)
       if (m) {
-        mainWindow?.webContents.send('alac-compat-progress', {
+        sendToRenderer('alac-compat-progress', {
           current: Number(m[1]), total: Number(m[2]), file: m[3],
         })
       }
@@ -7467,22 +5643,8 @@ async function resolveTrackAbsPath(colonPath: string, mounts: string[]): Promise
   return null
 }
 
-interface VerifyTrackInput {
-  id: number
-  path: string
-  duration: number
-  audioFingerprint?: string
-  // Current flag, so a track that is fine again can have it RETRACTED.
-  // Without this the verifier could only ever stamp audioMissing, never
-  // clear it, and a warning badge outlived the problem that caused it.
-  audioMissing?: boolean
-}
-interface VerifyTrackUpdate {
-  id: number
-  audioFingerprint?: string
-  path?: string
-  audioMissing?: boolean
-}
+// VerifyTrackInput / VerifyTrackUpdate moved to sync-engine/ with their
+// only caller; the implementation below still lives here as host duty.
 
 // Silent post-sync verifier. For each input track:
 //   1. Resolve current path against {local, iPod} mounts.
@@ -8020,7 +6182,7 @@ ipc.handle('import-tracks', async (_e, filePaths: string[], nextId: number, pref
   const dupeFingerprints = await loadDupeFingerprintsFromLibrary()
 
   // Initial progress event so the pill lights up immediately
-  mainWindow?.webContents.send('import-progress', {
+  sendToRenderer('import-progress', {
     current: 0, total: resolvedPaths.length, title: '',
   })
 
@@ -8067,7 +6229,7 @@ ipc.handle('import-tracks', async (_e, filePaths: string[], nextId: number, pref
 
       id++
       trackIndex++
-      mainWindow?.webContents.send('import-progress', {
+      sendToRenderer('import-progress', {
         current: imported.length,
         total: resolvedPaths.length,
         title: r.track.title as string,
@@ -8075,12 +6237,12 @@ ipc.handle('import-tracks', async (_e, filePaths: string[], nextId: number, pref
     } else if (r.ok && r.dupe) {
       skippedDupes.push(r.dupe)
       trackIndex++
-      mainWindow?.webContents.send('import-progress', {
+      sendToRenderer('import-progress', {
         current: trackIndex, total: resolvedPaths.length,
         title: `Skipped (already in library): ${r.dupe.matchedTitle}`,
       })
     } else {
-      mainWindow?.webContents.send('import-progress', {
+      sendToRenderer('import-progress', {
         current: imported.length,
         total: resolvedPaths.length,
         title: srcPath.substring(srcPath.lastIndexOf('/') + 1),
@@ -8115,20 +6277,7 @@ const MIME_TYPES: Record<string, string> = {
   '.alac': 'audio/mp4',
 }
 
-// Artwork helpers
-function getArtworkDir(): string {
-  return join(app.getPath('userData'), 'artwork')
-}
-
-function getArtworkIndexPath(): string {
-  return join(getArtworkDir(), 'index.json')
-}
-
-// 4.4.40: artist photo cache helpers. Photos come from Bandsintown's
-// /artists/{name} endpoint (free, app_id auth only). Each artist's photo
-// is saved as `${slug}.jpg` and `${slug}.miss` is the tombstone file
-// written when Bandsintown has no photo / 404'd — prevents re-querying
-// every launch for artists they don't index. Both kinds expire after
+// Artwork engine extracted to artwork-engine.ts (6.0 Phase 1).
 // 30 days so labels that get added later eventually surface.
 function getArtistImageDir(): string {
   return join(app.getPath('userData'), 'artist-images')
@@ -8260,533 +6409,6 @@ async function getArtistImage(artist: string): Promise<string | null> {
     ARTIST_IMAGE_IN_FLIGHT.delete(slug)
   }
 }
-
-function artworkHash(artist: string, album: string): string {
-  return createHash('md5').update(`${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`).digest('hex')
-}
-
-// In-memory artwork index — avoids re-reading JSON on every resolve-artwork
-// / fetch-album-art / protocol miss. Invalidated on saveArtworkIndex.
-let artworkIndexMem: Record<string, string> | null = null
-// resolve-artwork result cache (exact artist|||album key → hash|null).
-const resolveArtworkCache = new Map<string, string | null>()
-/** O(1) normalized key → hash; rebuilt when artwork index changes. */
-let artworkNormIndexMem: Map<string, string> | null = null
-/** O(1) normalized artist|||album → hash from sidecars; rebuilt with index. */
-let artworkSidecarNormMem: Map<string, string> | null = null
-let artworkLookupRebuildPromise: Promise<void> | null = null
-
-function normalizeArtworkPartServer(s: string): string {
-  return (s || '')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/\s*\((?:remaster(?:ed)?|deluxe|bonus|live|expanded|reissue|remix|special|anniversary|edition|mono|stereo)[^)]*\)/g, '')
-    .replace(/\s*\[(?:remaster(?:ed)?|deluxe|bonus|live|expanded|reissue|remix|special|anniversary|edition|mono|stereo)[^\]]*\]/g, '')
-    .replace(/\s*\((?:feat\.?|featuring|with|prod\.?|produced by)[^)]+\)/g, '')
-    .replace(/\s*\[(?:feat\.?|featuring|with)[^\]]+\]/g, '')
-    .replace(/\s+-\s+(?:remaster(?:ed)?|deluxe|bonus|live|expanded|reissue|remix|special|anniversary|edition|mono|stereo)[^-]*$/g, '')
-    .replace(/[^a-z0-9]+/g, '')
-}
-
-async function rebuildArtworkLookupCaches(index: Record<string, string>): Promise<void> {
-  const normIndex = new Map<string, string>()
-  for (const [k, v] of Object.entries(index)) {
-    const [ka, kal] = k.split('|||')
-    const kn = `${normalizeArtworkPartServer(ka || '')}|||${normalizeArtworkPartServer(kal || '')}`
-    if (!normIndex.has(kn)) normIndex.set(kn, v)
-  }
-  artworkNormIndexMem = normIndex
-
-  const sidecarIndex = new Map<string, string>()
-  try {
-    const { readdir } = await import('fs/promises')
-    const dir = getArtworkDir()
-    const entries = await readdir(dir)
-    for (const name of entries) {
-      if (!name.endsWith('.meta.json')) continue
-      try {
-        const sidecar = JSON.parse(await readFile(join(dir, name), 'utf-8')) as { artist?: string; album?: string }
-        const sa = normalizeArtworkPartServer(sidecar.artist || '')
-        const sal = normalizeArtworkPartServer(sidecar.album || '')
-        if (sa && sal) {
-          sidecarIndex.set(`${sa}|||${sal}`, name.replace(/\.meta\.json$/, ''))
-        }
-      } catch { /* malformed sidecar */ }
-    }
-  } catch { /* readdir failed */ }
-  artworkSidecarNormMem = sidecarIndex
-}
-
-function scheduleArtworkLookupRebuild(index: Record<string, string>): void {
-  artworkLookupRebuildPromise = rebuildArtworkLookupCaches(index).catch((err) => {
-    console.warn('[artwork-index] lookup cache rebuild failed:', err instanceof Error ? err.message : err)
-  })
-}
-// LRU byte cache for album-art:// protocol — skips repeated readFile for
-// the same cover when scrolling grids / revisiting views.
-const ART_BYTES_CACHE = new Map<string, ArrayBuffer>()
-const ART_BYTES_CACHE_MAX = 400
-
-function bareArtHash(hash: string): string {
-  return hash.replace(/_\d+$/, '')
-}
-
-function invalidateArtBytes(hash: string): void {
-  const bare = bareArtHash(hash)
-  ART_BYTES_CACHE.delete(bare)
-  // Thumbnail tier: sweep every size variant from memory AND disk, or a
-  // replaced cover would keep serving its old thumb forever (the URL
-  // cache-bust only reaches the browser cache, not our stores).
-  for (const key of [...ART_BYTES_CACHE.keys()]) {
-    if (key.startsWith(`${bare}@`)) ART_BYTES_CACHE.delete(key)
-  }
-  void (async () => {
-    try {
-      const thumbDir = join(getArtworkDir(), 'thumbs')
-      const entries = await readdir(thumbDir).catch(() => [] as string[])
-      await Promise.all(entries
-        .filter((f) => f.startsWith(`${bare}_`))
-        .map((f) => unlink(join(thumbDir, f)).catch(() => {})))
-    } catch { /* best-effort */ }
-  })()
-}
-
-function getCachedArtBytes(hash: string): ArrayBuffer | undefined {
-  const key = bareArtHash(hash)
-  const hit = ART_BYTES_CACHE.get(key)
-  if (!hit) return undefined
-  // Refresh LRU position
-  ART_BYTES_CACHE.delete(key)
-  ART_BYTES_CACHE.set(key, hit)
-  return hit
-}
-
-function putArtBytes(hash: string, body: ArrayBuffer): void {
-  const key = bareArtHash(hash)
-  if (ART_BYTES_CACHE.has(key)) ART_BYTES_CACHE.delete(key)
-  while (ART_BYTES_CACHE.size >= ART_BYTES_CACHE_MAX) {
-    const oldest = ART_BYTES_CACHE.keys().next().value
-    if (oldest === undefined) break
-    ART_BYTES_CACHE.delete(oldest)
-  }
-  ART_BYTES_CACHE.set(key, body)
-}
-
-async function loadArtworkIndex(): Promise<Record<string, string>> {
-  if (artworkIndexMem) return artworkIndexMem
-  try {
-    const data = await readFile(getArtworkIndexPath(), 'utf-8')
-    artworkIndexMem = JSON.parse(data) as Record<string, string>
-    scheduleArtworkLookupRebuild(artworkIndexMem)
-    return artworkIndexMem
-  } catch {
-    artworkIndexMem = {}
-    artworkNormIndexMem = new Map()
-    artworkSidecarNormMem = new Map()
-    return artworkIndexMem
-  }
-}
-
-// Self-heal the artwork index from the .meta.json sidecars. Custom art (e.g. a
-// concert poster) reaches other machines as <hash>.jpg + <hash>.meta.json — the
-// deploy + syncs ship those, but NOT index.json — while the renderer's
-// artworkMap is built from index.json. Without this, a synced poster's file is
-// present but unmapped, so it never renders. Merge any sidecar whose key isn't
-// in the index (bare hash → resolves via bareArtHash). Gated on the artwork
-// dir being newer than the index so it only walks meta.json when new art
-// actually arrived (not on every boot once merged). Returns whether it changed.
-async function mergeArtworkSidecarsIntoIndex(index: Record<string, string>): Promise<boolean> {
-  try {
-    const dirStat = await stat(getArtworkDir())
-    const idxStat = await stat(getArtworkIndexPath()).catch(() => null)
-    if (idxStat && dirStat.mtimeMs <= idxStat.mtimeMs + 1000) return false // nothing new since last merge
-  } catch { /* fall through and scan */ }
-  let changed = false
-  try {
-    const { readdir } = await import('fs/promises')
-    const dir = getArtworkDir()
-    for (const name of await readdir(dir)) {
-      if (!name.endsWith('.meta.json')) continue
-      try {
-        const meta = JSON.parse(await readFile(join(dir, name), 'utf-8')) as { key?: string; artist?: string; album?: string }
-        const key = (meta.key || (meta.artist && meta.album ? `${meta.artist.toLowerCase().trim()}|||${meta.album.toLowerCase().trim()}` : '')).trim()
-        if (!key || index[key]) continue
-        index[key] = name.replace(/\.meta\.json$/, '')
-        changed = true
-      } catch { /* malformed sidecar */ }
-    }
-  } catch { /* readdir failed */ }
-  return changed
-}
-
-// 4.4.12: single-flight + atomic write for the artwork index.
-//
-// Same class of bug 4.1.1 fixed for metadata-overrides (see
-// writeOverridesSerialized). Without this:
-//   • Risk 1 (atomic): writeFile in place could be torn by a mid-write
-//     crash → next launch loadArtworkIndex catches the parse error and
-//     returns {} → every custom-art entry the user ever added is gone.
-//   • Risk 2 (single-flight): two concurrent callers (e.g. drag-drop 10
-//     tracks from one album, OR user adds art for A while App.tsx's
-//     auto-fetch loop finishes B) all do load → mutate → save with stale
-//     snapshots → later writes overwrite earlier ones.
-//
-// Fix: a Promise chain that serializes every save through one writer,
-// with a unique tmp filename per write + atomic rename. Mirrors the
-// exact pattern used by writeOverridesSerialized.
-let artworkWriteChain: Promise<void> = Promise.resolve()
-async function saveArtworkIndex(index: Record<string, string>): Promise<void> {
-  const snapshot = { ...index }  // capture the caller's intent immediately
-  const job = artworkWriteChain.then(async () => {
-    const indexPath = getArtworkIndexPath()
-    await mkdir(getArtworkDir(), { recursive: true })
-    const tmpPath = `${indexPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`
-    await writeFile(tmpPath, JSON.stringify(snapshot, null, 2), 'utf-8')
-    const { rename } = await import('fs/promises')
-    await rename(tmpPath, indexPath)
-    artworkIndexMem = snapshot
-    resolveArtworkCache.clear()
-    scheduleArtworkLookupRebuild(snapshot)
-  }).catch((err) => {
-    console.warn('[artwork-index] serialized write failed:', err instanceof Error ? err.message : err)
-  })
-  artworkWriteChain = job
-  return job
-}
-
-// 4.4.57 — user-uploaded artwork is sacred: once the user sets their
-// own cover for an album, NOTHING auto-fetches over it (not the online
-// fetcher, not embedded-art extraction, not even a forced re-fetch).
-// Tracked in a separate locks file (key = `${artist}|||${album}`,
-// lowercased) so the index format stays untouched. set-custom-artwork
-// adds a lock; remove-artwork clears it; every auto-fetch path checks it.
-function getArtworkLocksPath(): string {
-  return join(getArtworkDir(), 'user-locked.json')
-}
-// 4.5.0-80 — defense-in-depth backup dir for user-locked JPGs. Every
-// set-custom-artwork ALSO writes a copy here. Startup self-heal
-// restores the main file from this dir if anything (accidental
-// delete, sync glitch, disk error) wipes it.
-function getArtworkLockedBackupDir(): string {
-  return join(getArtworkDir(), 'locked-backup')
-}
-async function loadArtworkLocks(): Promise<Set<string>> {
-  try {
-    const data = await readFile(getArtworkLocksPath(), 'utf-8')
-    const arr = JSON.parse(data)
-    return new Set(Array.isArray(arr) ? (arr as string[]) : [])
-  } catch {
-    return new Set()
-  }
-}
-// 4.5.0-80 — startup self-heal for the user-locked artwork set.
-//
-// The user-locked.json file is now the LEAST authoritative source —
-// it's a cache of what can be derived from disk truth:
-//   - Each user-set cover writes a ${hash}.meta.json sidecar with
-//     `source: 'user-custom'` (set in set-custom-artwork since 4.5.0-55).
-//   - Each user-set cover also writes a copy to locked-backup/${hash}.jpg
-//     (4.5.0-80).
-//
-// On launch we scan both, rebuild user-locked.json to the UNION of
-// (locks already in the file) ∪ (keys with `source: 'user-custom'`
-// sidecars) ∪ (keys with a copy in locked-backup/). Any locked key
-// whose main JPG is missing but the backup exists gets restored.
-//
-// Net effect: even if user-locked.json is accidentally deleted or
-// corrupted, the next launch reconstructs it from the JPGs + sidecars
-// that travel with the artwork. Your hand-picked covers persist.
-async function selfHealUserLockedArtwork(): Promise<void> {
-  const dir = getArtworkDir()
-  const backupDir = getArtworkLockedBackupDir()
-  try { await mkdir(dir, { recursive: true }) } catch { /* ignore */ }
-  try { await mkdir(backupDir, { recursive: true }) } catch { /* ignore */ }
-
-  const { readdir, copyFile: cf, stat: statFn } = await import('fs/promises')
-
-  // Sources of truth: sidecars marked user-custom + JPGs in backup dir.
-  const lockedKeys = new Set<string>(await loadArtworkLocks())
-  let reconstructedFromSidecar = 0
-  let reconstructedFromBackup = 0
-  let restoredJpg = 0
-
-  // Scan sidecars.
-  let sidecarEntries: string[] = []
-  try { sidecarEntries = await readdir(dir) } catch { /* nothing */ }
-  for (const name of sidecarEntries) {
-    if (!name.endsWith('.meta.json')) continue
-    try {
-      const raw = await readFile(join(dir, name), 'utf-8')
-      const meta = JSON.parse(raw) as { artist?: string; album?: string; source?: string; key?: string }
-      if (meta.source !== 'user-custom') continue
-      const key = meta.key || (meta.artist && meta.album
-        ? `${meta.artist.toLowerCase().trim()}|||${meta.album.toLowerCase().trim()}`
-        : '')
-      if (!key) continue
-      if (!lockedKeys.has(key)) {
-        lockedKeys.add(key)
-        reconstructedFromSidecar++
-      }
-    } catch { /* malformed sidecar, skip */ }
-  }
-
-  // Scan backup dir — any JPG here is from a user-locked cover.
-  let backupEntries: string[] = []
-  try { backupEntries = await readdir(backupDir) } catch { /* nothing */ }
-  for (const name of backupEntries) {
-    if (!name.endsWith('.jpg')) continue
-    const hash = name.replace(/\.jpg$/, '')
-    // Find the (artist, album) for this hash via the sidecar.
-    try {
-      const sidecarPath = join(dir, `${hash}.meta.json`)
-      const raw = await readFile(sidecarPath, 'utf-8')
-      const meta = JSON.parse(raw) as { artist?: string; album?: string; key?: string }
-      const key = meta.key || (meta.artist && meta.album
-        ? `${meta.artist.toLowerCase().trim()}|||${meta.album.toLowerCase().trim()}`
-        : '')
-      if (key && !lockedKeys.has(key)) {
-        lockedKeys.add(key)
-        reconstructedFromBackup++
-      }
-      // If the main JPG is missing but the backup exists, restore.
-      const mainJpg = join(dir, `${hash}.jpg`)
-      let mainExists = false
-      try { await statFn(mainJpg); mainExists = true } catch { /* missing */ }
-      if (!mainExists) {
-        try {
-          await cf(join(backupDir, name), mainJpg)
-          restoredJpg++
-        } catch (err) {
-          console.warn(`[artwork-heal] failed to restore ${hash}.jpg from backup:`, err instanceof Error ? err.message : err)
-        }
-      }
-    } catch { /* no sidecar — backup orphan, skip */ }
-  }
-
-  // Persist the reconstructed lock set if it grew.
-  const original = await loadArtworkLocks()
-  if (lockedKeys.size !== original.size) {
-    const locksPath = getArtworkLocksPath()
-    const tmpPath = `${locksPath}.${process.pid}.${Date.now()}.heal.tmp`
-    try {
-      await writeFile(tmpPath, JSON.stringify([...lockedKeys].sort(), null, 2), 'utf-8')
-      const { rename } = await import('fs/promises')
-      await rename(tmpPath, locksPath)
-    } catch (err) {
-      console.warn('[artwork-heal] failed to persist healed locks:', err instanceof Error ? err.message : err)
-    }
-  }
-
-  if (reconstructedFromSidecar + reconstructedFromBackup + restoredJpg > 0) {
-    console.log(`[artwork-heal] reconstructed locks from sidecars: ${reconstructedFromSidecar}, from backups: ${reconstructedFromBackup}; restored ${restoredJpg} missing JPGs from locked-backup/`)
-  }
-}
-
-let artworkLockWriteChain: Promise<void> = Promise.resolve()
-async function setArtworkLock(key: string, locked: boolean): Promise<void> {
-  const job = artworkLockWriteChain.then(async () => {
-    const locks = await loadArtworkLocks()
-    if (locked) locks.add(key)
-    else locks.delete(key)
-    await mkdir(getArtworkDir(), { recursive: true })
-    const locksPath = getArtworkLocksPath()
-    const tmpPath = `${locksPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`
-    await writeFile(tmpPath, JSON.stringify([...locks], null, 2), 'utf-8')
-    const { rename } = await import('fs/promises')
-    await rename(tmpPath, locksPath)
-  }).catch((err) => {
-    console.warn('[artwork-locks] serialized write failed:', err instanceof Error ? err.message : err)
-  })
-  artworkLockWriteChain = job
-  return job
-}
-
-// 4.4.12: helper that takes the music-metadata parse result + the
-// destination artist/album and saves the embedded front cover into
-// the artwork directory using the SAME conventions as set-custom-artwork
-// (line ~5067):
-//   • key  = `${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`
-//   • hash = artworkHash(artist, album)
-//   • file = `${getArtworkDir()}/${hash}.jpg` (or sips-converted to jpg)
-//   • index entry = `${hash}_${Date.now()}` (versioned for renderer cache-bust)
-//
-// IDENTITY GATE: never overwrites an existing index entry (the user may
-// have set custom art previously — embedded-art import should NOT clobber
-// that). Gated on `if (!index[key])`, not on text comparison.
-//
-// Returns the {key, hash} on success so the caller can pass it back to the
-// renderer for a single ADD_ARTWORK dispatch (no second IPC round-trip).
-// Returns null on any of: no artist, no album, no pictures, picture write
-// failed, sips failed. Failures are logged at warn level — they never
-// propagate to the import flow (the audio file is the primary artifact;
-// art is best-effort).
-interface ParsedPicture {
-  format?: string
-  type?: string
-  data: Buffer | Uint8Array
-}
-async function extractAndSaveEmbeddedArtwork(
-  pictures: ParsedPicture[] | undefined,
-  artist: string,
-  album: string,
-): Promise<{ key: string; hash: string } | null> {
-  if (!pictures || pictures.length === 0) return null
-  const cleanArtist = (artist || '').trim()
-  const cleanAlbum = (album || '').trim()
-  if (!cleanArtist || !cleanAlbum) return null  // no key to store under
-
-  // Prefer the front cover; fall back to the first picture if untagged.
-  const pic =
-    pictures.find(p => p.type === 'Cover (front)') ??
-    pictures[0]
-  if (!pic || !pic.data || pic.data.byteLength === 0) return null
-
-  const key = `${cleanArtist.toLowerCase()}|||${cleanAlbum.toLowerCase()}`
-  // 4.4.57 — user-uploaded art is sacred: NEVER overwrite a locked key.
-  if ((await loadArtworkLocks()).has(key)) return null
-
-  const hash = artworkHash(cleanArtist, cleanAlbum)
-  const dir = getArtworkDir()
-  const destPath = join(dir, `${hash}.jpg`)
-  const sidecarPath = join(dir, `${hash}.meta.json`)
-  await mkdir(dir, { recursive: true })
-
-  // 4.5.0-55 — IDENTITY GATE RELAXED. The old rule "if entry exists,
-  // never overwrite" guaranteed that a single bad first import poisoned
-  // the well forever (Adele Skyfall → orange polygon, May 2026). New
-  // rule: an existing entry is replaced ONLY when the new candidate is
-  // SUBSTANTIALLY higher quality (≥1.5× byte count). That threshold is
-  // wide enough that minor re-encodes of the same image won't thrash
-  // the file, but tight enough that a real 1500×1500 cover beats out a
-  // garbage 300×300 placeholder. User-locked covers always win (above).
-  const newBuf = Buffer.isBuffer(pic.data) ? pic.data : Buffer.from(pic.data)
-  const existingIndex = await loadArtworkIndex()
-  const hasExistingEntry = !!existingIndex[key]
-  let existingSize = 0
-  if (hasExistingEntry) {
-    try { existingSize = (await stat(destPath)).size } catch { existingSize = 0 }
-  }
-  const QUALITY_UPGRADE_RATIO = 1.5
-  if (hasExistingEntry && existingSize > 0 && newBuf.length < existingSize * QUALITY_UPGRADE_RATIO) {
-    // New cover isn't meaningfully bigger than what we have. Keep
-    // existing — avoids re-encode thrash on every re-import.
-    return null
-  }
-  // If we're going to write, log it so the user can see in dev console
-  // why a cover changed.
-  if (hasExistingEntry && existingSize > 0) {
-    console.log(`[artwork] upgrading "${key}" — ${existingSize}B → ${newBuf.length}B (${(newBuf.length / existingSize).toFixed(2)}x)`)
-  }
-
-  try {
-    const fmt = (pic.format || '').toLowerCase()
-    invalidateArtBytes(hash)
-    if (fmt === 'image/jpeg' || fmt === 'image/jpg') {
-      await writeFile(destPath, newBuf)
-    } else {
-      // Same sips conversion path as set-custom-artwork. Write the
-      // embedded blob to a tmp file with an extension sips will recognize,
-      // convert, drop the tmp.
-      const inferredExt =
-        fmt.includes('png') ? '.png' :
-        fmt.includes('tiff') ? '.tiff' :
-        fmt.includes('bmp') ? '.bmp' :
-        fmt.includes('gif') ? '.gif' :
-        fmt.includes('webp') ? '.webp' :
-        '.img'
-      const { execFile } = await import('child_process')
-      const { promisify } = await import('util')
-      const execP = promisify(execFile)
-      const tmpPath = destPath + '.tmp' + inferredExt
-      await writeFile(tmpPath, newBuf)
-      try {
-        await execP('sips', ['-s', 'format', 'jpeg', tmpPath, '--out', destPath])
-      } finally {
-        await unlink(tmpPath).catch(() => {})
-      }
-    }
-  } catch (err) {
-    console.warn('[artwork] embedded-art write failed (continuing import):', err instanceof Error ? err.message : err)
-    return null
-  }
-
-  // 4.5.0-55 — sidecar metadata. Each artwork JPG gets a ${hash}.meta.json
-  // next to it carrying the (artist, album, source, importedAt) tuple.
-  // Lets us rebuild the index from disk alone if it ever drifts, audit
-  // for orphans, and detect cross-key collisions in the future. Best-
-  // effort: write failures are logged but don't fail the import.
-  try {
-    const meta = {
-      artist: cleanArtist,
-      album: cleanAlbum,
-      key,
-      source: 'embedded',
-      bytes: (await stat(destPath)).size,
-      importedAt: new Date().toISOString(),
-    }
-    await writeFile(sidecarPath, JSON.stringify(meta, null, 2), 'utf-8')
-  } catch (err) {
-    console.warn('[artwork] sidecar write failed (continuing):', err instanceof Error ? err.message : err)
-  }
-
-  // Versioned hash so the renderer's <img src="album-art://${hash}.jpg">
-  // cache-busts when the same key+hash gets a fresher file.
-  const versionedHash = `${hash}_${Date.now()}`
-  // Single-flight save — won't race against concurrent imports / fetches /
-  // set-custom-artwork callers. Always update the index entry to the
-  // fresh versioned hash so the renderer cache-busts to the new file.
-  const index = await loadArtworkIndex()
-  index[key] = versionedHash
-  // 4.5.0-64: drain any pending artwork-key migrations waiting on THIS
-  // key. The race: user edits artist/album in Get Info before the
-  // import's artwork extraction finishes. The migration in save-
-  // metadata-override fired against an empty index, registered itself
-  // as pending, and returned. Now that the original key finally exists,
-  // mirror it into the new keys the user already requested. Without
-  // this, the renderer asks for the new key, gets nothing, and the
-  // album tile renders blank forever (until a manual rescan).
-  const pendingTargets = pendingArtworkMigrations.get(key)
-  if (pendingTargets && pendingTargets.size > 0) {
-    const locks = await loadArtworkLocks()
-    const sourceLocked = locks.has(key)
-    for (const newKey of pendingTargets) {
-      if (!index[newKey]) {
-        index[newKey] = versionedHash
-        console.log(`[artwork-migrate] drained pending "${key}" → "${newKey}"`)
-      }
-      // 4.5.0-79 — propagate lock through the drain too.
-      if (sourceLocked && !locks.has(newKey)) {
-        await setArtworkLock(newKey, true)
-        console.log(`[artwork-migrate] propagated lock "${key}" → "${newKey}" (drain)`)
-      }
-    }
-    pendingArtworkMigrations.delete(key)
-  }
-  await saveArtworkIndex(index)
-  // 4.5.0-69 — kick a sync so new artwork lands on homemini within one
-  // sync cycle. Pre-fix the sync orchestrator only fired on import /
-  // metadata-edit / playlist / safety-net, none of which guarantee the
-  // artwork JPG had been written by the time they ran. New artwork
-  // could sit on the MacBook for up to 10 minutes (safety-net interval)
-  // before reaching Mini — which the mobile app reads from. The new
-  // `artwork` reason routes through the same 5s debounce + single-
-  // flight as the others, so a 12-track album import producing 12
-  // artwork writes (mostly no-ops past the first) still coalesces to
-  // one sync run.
-  triggerSync('artwork')
-  return { key, hash: versionedHash }
-}
-
-// 4.5.0-64 — pending-migration registry. When save-metadata-override
-// runs an artwork-key migration but the source key isn't in the index
-// yet (import still extracting), we record (oldKey -> newKey) here.
-// extractAndSaveEmbeddedArtwork drains entries for the key it just
-// wrote, so the artwork ends up under the user-edited (artist, album)
-// without a manual rescan. In-memory only — the race window is
-// seconds long; if the app crashes mid-import the missing artwork is
-// recoverable by re-importing the file anyway.
-const pendingArtworkMigrations = new Map<string, Set<string>>()
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'ipod-audio', privileges: { stream: true, bypassCSP: true, supportFetchAPI: true } },
@@ -9796,7 +7418,7 @@ function buildCynthiaSweepHooks() {
     },
     isIdle: () => !playbackActive,
     sendProgress: (payload: { swept: number; total: number; withFindings: number; autoApplied: Array<{ trackId: number; field: string; newValue: string }>; currentAlbum?: string }) => {
-      mainWindow?.webContents.send('cynthia-sweep:progress', payload)
+      sendToRenderer('cynthia-sweep:progress', payload)
     },
     escalate: async (_albumKey: string, label: string, tracks: CynthiaScanTrack[], evidence: string) => {
       const res = await runCynthiaInvestigation(
@@ -9843,8 +7465,11 @@ function buildCynthiaSweepHooks() {
 
 
 // Music Man chat
-ipc.handle('musicman-chat', async (_event, messages: { role: string; content: string }[]) => {
+ipc.handle('musicman-chat', async (_event, messages: { role: string; content: string }[], context?: string) => {
   const lastUserMsg = messages.filter(m => m.role === 'user').pop()?.content || ''
+  // Drawer context (2026-09-02): what's playing / which page is open, so
+  // "is this any good?" means THIS song. Bounded; never trusted as fact.
+  const lookingAt = typeof context === 'string' && context.trim() ? context.trim().slice(0, 400) : ''
   // 4.5.0-87 — RAG retrieval kicks off in parallel with web search so
   // both round trips overlap. The retrieval result is injected as a
   // FOCUSED tracks block alongside the digest — model gets BOTH the
@@ -9901,7 +7526,7 @@ sneak in a track that violates a stated constraint. After the tool
 returns, confirm in 1-2 sentences with a couple of highlights — the
 playlist itself is already in their sidebar; don't recite it.
 
-This response is shown as text in a chat panel, but the user may click a speaker button to hear it via ElevenLabs v3. Feel free to use v3 performance tags ([scoff], [laughs], [sighs], [softer], [whispers], [excited], [sarcastic]) where they meaningfully shape the delivery — they're invisible in the text panel (stripped before display) and performed by v3 if the user opts to hear the message.${searchResults ? `\n\nLive web search results — TREAT AS GROUND TRUTH and answer FROM these. Don't tell the user to "check" anything; you just did:\n${searchResults}` : ''}${retrievedTracksBlock ? `\n\n${retrievedTracksBlock}` : ''}`
+This response is shown as text in a chat panel, but the user may click a speaker button to hear it via ElevenLabs v3. Feel free to use v3 performance tags ([scoff], [laughs], [sighs], [softer], [whispers], [excited], [sarcastic]) where they meaningfully shape the delivery — they're invisible in the text panel (stripped before display) and performed by v3 if the user opts to hear the message.${searchResults ? `\n\nLive web search results — TREAT AS GROUND TRUTH and answer FROM these. Don't tell the user to "check" anything; you just did:\n${searchResults}` : ''}${retrievedTracksBlock ? `\n\n${retrievedTracksBlock}` : ''}${lookingAt ? `\n\nWHAT THE LISTENER HAS IN FRONT OF THEM RIGHT NOW (the drawer is open beside the library): ${lookingAt}. When they say "this" or "it", they mean that.` : ''}`
 
   const systemPrompt = buildMusicManPrompt(chatInstructions)
 
@@ -10789,7 +8414,7 @@ Your picks should also be shaped by:
 LIBRARY-AWARE FALLBACK: if the user's library doesn't have ${opts.trackCount} tracks in your strict lane, take what's CLOSEST to your lane — but stay AS FAR AS POSSIBLE from the other two personas' territory. You MUST return EXACTLY ${opts.trackCount} tracks. If you genuinely can't find ${opts.trackCount} in-lane, acknowledge it in the commentary ("Library was thin in my territory this week — these are the closest matches.").
 
 Return ONLY a JSON object (no markdown, no code fences):
-{"name":"creative weekly rotation name","commentary":"3-4 sentences explaining the week's picks, in character — why THIS music for THIS WEEK. Be specific about what's driving your choices.","trackIds":[array of exactly ${opts.trackCount} track ID numbers]}
+{"name":"creative weekly rotation name","commentary":"1-2 sentences, max 30 words total, about THE MUSIC IN THIS LIST — what it sounds like and who it is for. Name a band or two. NO musing about festivals, the news, the state of the library, or your own feelings. NO 'I will die on this hill'. NO throat-clearing. Say what is in here and stop.","trackIds":[array of exactly ${opts.trackCount} track ID numbers]}
 
 Rules:
 - ONLY use track IDs from the provided library
@@ -11194,6 +8819,9 @@ registerWorkoutSyncIpc({
   musicManCore: MUSIC_MAN_CORE,
   getIneligibleTrackIds: getConcertOwnedTrackIds,
 })
+// iPod Pool — the hand-built sync set (drag songs/albums/artists/playlists
+// onto the sidebar row); build-workout-sync-set reads it in pool mode.
+registerActivityPoolIpc(ipc)
 
 // Mixtapes — songs → a real C60/C90/C120 cassette with Jake's voice on it
 registerGaplessTrimIpc(ipc)
@@ -11209,6 +8837,7 @@ registerMixtapesIpc({
   },
   loadPlayEvents: async () =>
     parsePlayEvents(await readFile(getPlayEventsPath(), 'utf-8').catch(() => '')),
+  materializeTrack: (colonPath, trackId) => materializeLibraryTrack(colonPath, trackId),
 })
 
 // Music Man metadata scanner
@@ -11379,11 +9008,6 @@ import {
   filterOrbitNeighbors,
 } from './ai/orbit-quality'
 
-async function ragIndexedCountForTracks(tracks: Array<{ id: number }>): Promise<number> {
-  const validIds = new Set(tracks.map(t => t.id))
-  const { indexed } = await ragAnalyzeEmbeddings(validIds).catch(() => ({ indexed: 0, stale: 0, missing: validIds.size }))
-  return indexed
-}
 
 // Tiny cosine k-means (Lloyd's, farthest-point init) to split a playlist's seed
 // vectors into its distinct SUB-VIBES. Bounded + cheap (~60 seeds × k × 10 iters).
@@ -11401,7 +9025,62 @@ async function ragIndexedCountForTracks(tracks: Array<{ id: number }>): Promise<
 // playlist's actual seed tracks instead — music that genuinely SOUNDS like it,
 // regardless of artist. The renderer then filters for freshness (new artists,
 // no same-album) + diversity. We return a generous pool so ↻ has real variety.
-ipc.handle('playlist-similar', async (_e, playlistIds: number[], clusters: number = 5): Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }> => {
+// Playlist name + description → a musical expectation → one embedding.
+// The raw name embeds badly ("Dinner Party" sat at z=0.04 against Jake's
+// actual dinner-party songs, same as "Baseball"); a one-line expansion
+// ("smooth soul, light '70s–'90s pop, relaxed…") is what the track texts
+// look like, so the agreement gate in playlist-vibes.ts can finally tell
+// Dinner Party (0.81) / Pool (0.54) / Q104.3 (1.48) from Baseball (0.24) /
+// Justification (−0.04). Expansions persist in STATE_DIR (one Haiku call per
+// distinct name+description, ever); vectors are per-session.
+const playlistHintVecs = new Map<string, Float32Array>()
+const PLAYLIST_HINT_CACHE = join(STATE_DIR, 'playlist-hint-cache.json')
+let playlistHintExpansions: Record<string, string> | null = null
+function loadHintExpansions(): Record<string, string> {
+  if (playlistHintExpansions) return playlistHintExpansions
+  try { playlistHintExpansions = JSON.parse(readFileSync(PLAYLIST_HINT_CACHE, 'utf8')) as Record<string, string> }
+  catch { playlistHintExpansions = {} }
+  return playlistHintExpansions
+}
+async function expandPlaylistHint(text: string): Promise<string> {
+  const cache = loadHintExpansions()
+  if (typeof cache[text] === 'string') return cache[text]
+  let expansion = ''
+  try {
+    const msg = await anthropic.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 120,
+      messages: [{ role: 'user', content: `A music fan named a playlist "${text}". In ONE line (max 30 words) describe the music someone would expect on it: genres, mood, era, tempo, typical artists. If the name is not about music at all (a private joke, a random word, a date), reply exactly: NOT MUSICAL. Output only the line.` }],
+    })
+    const out = msg.content.find((c) => c.type === 'text')
+    expansion = (out && out.type === 'text' ? out.text : '').trim()
+  } catch (err) {
+    console.warn('[playlist-similar] hint expansion skipped:', err instanceof Error ? err.message : err)
+    return ''   // not cached — try again next time
+  }
+  cache[text] = expansion
+  try { writeFileSync(PLAYLIST_HINT_CACHE + '.tmp', JSON.stringify(cache, null, 1)); renameSync(PLAYLIST_HINT_CACHE + '.tmp', PLAYLIST_HINT_CACHE) } catch { /* cache is a convenience */ }
+  return expansion
+}
+async function playlistHintVector(hint: string | undefined): Promise<Float32Array | null> {
+  const text = (hint ?? '').replace(/\s+/g, ' ').trim()
+  if (text.length < 3) return null
+  const hit = playlistHintVecs.get(text)
+  if (hit) return hit
+  try {
+    const expansion = await expandPlaylistHint(text)
+    const embedText = expansion && expansion !== 'NOT MUSICAL' ? `Playlist: ${text}. ${expansion}` : `Playlist: ${text}`
+    const [v] = await ragEmbedTexts([embedText])
+    if (!v) return null
+    if (playlistHintVecs.size > 200) playlistHintVecs.clear()
+    playlistHintVecs.set(text, v)
+    return v
+  } catch (err) {
+    console.warn('[playlist-similar] hint embed skipped:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+ipc.handle('playlist-similar', async (_e, playlistIds: number[], clusters: number = 5, hint?: string): Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }> => {
   try {
     if (!Array.isArray(playlistIds) || playlistIds.length === 0) return { ok: false, hits: [] }
     const m = await ragGetEmbeddingsMap()
@@ -11437,7 +9116,8 @@ ipc.handle('playlist-similar', async (_e, playlistIds: number[], clusters: numbe
     function* candidateEntries(): Generator<[number, Float32Array]> {
       for (const e of m) { if (!inPl.has(e[0])) yield e }
     }
-    const { hits, clusterSeeds } = scorePlaylistCandidates(seeds, candidateEntries(), gc, clusters)
+    const hintVec = await playlistHintVector(hint)
+    const { hits, clusterSeeds } = scorePlaylistCandidates(seeds, candidateEntries(), gc, Math.max(1, Math.min(clusters, Math.floor(seeds.length / 3))), hintVec)
     // Candidate DIVERSITY (2026-08-07, Jake: "it seems to only suggest
     // other songs by bands already in that playlist"): measured on Pool
     // Dos, 101 of 162 raw candidates were catalog-mates of the playlist's
@@ -11675,163 +9355,6 @@ async function autoIndexNewTracks(): Promise<void> {
   }
 }
 
-// ── Dual-index retrieval router ──────────────────────────────────────
-// Two brains, one door: embeddings.bin knows WHO (artist/album/title/
-// year/★), mood-index.bin knows how it FEELS (descriptor/tempo/genre,
-// identity stripped). Identity collapses on the mood index BY DESIGN
-// (Sublime → 0.00 in the validation), so routing is load-bearing:
-//   • query names a library artist  → main index
-//   • query names a decade/year     → main index (mood text has no year)
-//   • anything else (vibe-shaped)   → mood index, if it's ready
-// Validated 2026-07-07 (brain-eval mood_index_proto.py): this routing
-// takes retrieval 0.825 → ~0.91 on the held-out eval set.
-// DECADE_QUERY_RE lives in ./ai/decade-query (twin with Mobile rag).
-// Genre-ish words that can also be band names — an artist match on one
-// of these must not hijack a vibe query ("house and dance music" is not
-// about a band named House).
-const GENRE_WORD_ARTISTS = new Set([
-  'house', 'dance', 'funk', 'soul', 'punk', 'metal', 'grunge', 'jazz', 'blues',
-  'rock', 'pop', 'disco', 'techno', 'ambient', 'folk', 'country', 'rap',
-  'reggae', 'ska', 'indie', 'emo', 'hardcore', 'trance', 'garage', 'gospel',
-])
-let ragArtistSetCache: { at: number; set: Set<string> } | null = null
-async function ragLibraryArtistSet(): Promise<Set<string>> {
-  if (ragArtistSetCache && Date.now() - ragArtistSetCache.at < 5 * 60 * 1000) return ragArtistSetCache.set
-  const set = new Set<string>()
-  try {
-    const lib = (await libraryCache.get()) as { tracks?: Array<{ artist?: string; albumArtist?: string }> }
-    for (const t of lib.tracks || []) {
-      for (const a of [t.artist, t.albumArtist]) {
-        // ⚠️ Must fold identically to pickRetrievalIndex's qNorm below, or an
-        //    accented artist is in this set under a name the query can't form.
-        const norm = foldAccents(a || '').replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()
-        if (norm.length >= 4 && !GENRE_WORD_ARTISTS.has(norm)) set.add(norm)
-      }
-    }
-  } catch { /* empty set = router falls back to the main index only on artist grounds */ }
-  ragArtistSetCache = { at: Date.now(), set }
-  return set
-}
-
-async function pickRetrievalIndex(query: string): Promise<'main' | 'mood'> {
-  if (DECADE_QUERY_RE.test(query)) return 'main'
-  const qNorm = ` ${foldAccents(query).replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()} `
-  const artists = await ragLibraryArtistSet()
-  for (const a of artists) {
-    if (qNorm.includes(` ${a} `)) return 'main'
-  }
-  // Vibe-shaped. Route to the mood index only once it covers most of
-  // the brain — a half-built index would silently shrink the library.
-  const [main, mood] = await Promise.all([ragGetEmbeddingsMap(), getMoodIndexMap()])
-  return mood.size >= main.size * 0.5 && mood.size > 0 ? 'mood' : 'main'
-}
-
-/** Library year lookup for the decade hard-gate. Missing year = excluded. */
-async function ragTrackYearMap(): Promise<Map<number, string | number | undefined>> {
-  try {
-    const lib = (await libraryCache.get()) as { tracks?: Array<{ id: number; year?: string | number }> }
-    return new Map((lib.tracks || []).filter(t => typeof t?.id === 'number').map(t => [t.id, t.year]))
-  } catch {
-    return new Map()
-  }
-}
-
-// Retrieve the K most-similar tracks to a free-text query. Used by
-// musicman-chat to build a focused context block in place of the
-// giant pre-computed digest. Returns track IDs + similarity scores;
-// caller resolves to full track records. Routes between the identity
-// brain and the mood brain (see the router block above).
-//
-// Decade hard-gate (2026-08): when the query claims an era ("1970s",
-// "seventies", "'80s"), restrict the cosine scan to tracks whose
-// library year falls in that range. Soft embedding similarity alone
-// will happily rank Turnstile next to Bill Withers on a "1970s" query —
-// that is the daily-mix "1970s, Your Version" failure mode. Fail closed
-// on missing year (no year → not eligible for a decade claim).
-async function ragRetrieveByQuery(query: string, k: number): Promise<Array<{ trackId: number; score: number }>> {
-  if (!ragIsConfigured()) return []
-  const route = await pickRetrievalIndex(query)
-  let map = route === 'mood' ? await getMoodIndexMap() : await ragGetEmbeddingsMap()
-  if (map.size === 0) return []
-  const decade = parseDecadeConstraint(query)
-  if (decade) {
-    const years = await ragTrackYearMap()
-    const gated = new Map<number, Float32Array>()
-    for (const [id, vec] of map) {
-      if (yearInDecade(years.get(id), decade)) gated.set(id, vec)
-    }
-    console.log(`[rag] decade hard-gate ${decade.label} (${decade.start}-${decade.end}): ${gated.size}/${map.size} candidates`)
-    map = gated
-    if (map.size === 0) return []
-  }
-  try {
-    const [qvec] = await ragEmbedTexts([query])
-    if (!qvec) return []
-    console.log(`[rag] route=${route} k=${k} "${query.slice(0, 60)}"`)
-    return ragTopK(qvec, map, k)
-  } catch (err) {
-    console.warn('[rag] retrieve failed:', err instanceof Error ? err.message : err)
-    return []
-  }
-}
-
-// Build a focused block of retrieved tracks for injection into the
-// AI prompt. Reads the live library so the displayed metadata reflects
-// any post-embedding edits (artist renames, etc.). Returns '' when
-// retrieval has no hits — caller appends nothing and the legacy digest
-// is the only library context the model sees.
-// 4.5.0-89 — shared RAG pool builder for the three weekly-picks
-// handlers (mm / megan / dj-hands). Each persona passes its own seed
-// query so the retrieved candidate pool biases toward that persona's
-// lane WITHIN the user's library. Returns the original tracks array
-// untouched when:
-//   - OPENAI_API_KEY is not set
-//   - fewer than 80% of library tracks are embedded
-//   - retrieval returns < 100 hits (below threshold for picks variety)
-// That fallback keeps current behavior intact when RAG isn't ready.
-async function buildRagPoolForPicks<T extends { id: number }>(
-  seedQuery: string,
-  allTracks: T[],
-  k: number,
-  minPool: number = 100,
-): Promise<{ pool: T[]; used: boolean }> {
-  if (!ragIsConfigured()) return { pool: allTracks, used: false }
-  const idxCount = await ragIndexedCountForTracks(allTracks)
-  if (idxCount < Math.max(50, Math.floor(allTracks.length * 0.8))) return { pool: allTracks, used: false }
-  const hits = await ragRetrieveByQuery(seedQuery, k)
-  if (hits.length < minPool) return { pool: allTracks, used: false }
-  const idSet = new Set(hits.map(h => h.trackId))
-  const pool = allTracks.filter(t => idSet.has(t.id))
-  if (pool.length < minPool) return { pool: allTracks, used: false }
-  return { pool, used: true }
-}
-
-async function buildRetrievalBlockForQuery(query: string, k: number): Promise<string> {
-  if (!query.trim()) return ''
-  const hits = await ragRetrieveByQuery(query, k)
-  if (hits.length === 0) return ''
-  try {
-    const raw = await readFile(LIBRARY_PATH, 'utf-8')
-    const lib = JSON.parse(raw) as { tracks?: Array<{ id: number; title?: string; artist?: string; album?: string; year?: number | string; playCount?: number; rating?: number }> }
-    const byId = new Map((lib.tracks || []).map(t => [t.id, t]))
-    const lines = hits
-      .map(h => {
-        const t = byId.get(h.trackId)
-        if (!t) return null
-        const sig: string[] = []
-        if (Number(t.rating) > 0) sig.push(`★${t.rating}`)
-        const plays = Number(t.playCount) || 0
-        if (plays > 0) sig.push(`${plays}p`)
-        return `  • "${t.title || '?'}" — ${t.artist || '?'}${t.album ? ` (${t.album}${t.year ? ` ${t.year}` : ''})` : ''}${sig.length ? ` ${sig.join(' ')}` : ''}`
-      })
-      .filter((line): line is string => !!line)
-    if (lines.length === 0) return ''
-    return `RELEVANT TRACKS in the user's library (retrieved by semantic similarity to "${query.replace(/"/g, '\\"').slice(0, 80)}" — these are real tracks they own, ordered by relevance; use them to ground specifics):\n${lines.join('\n')}`
-  } catch (err) {
-    console.warn('[rag] block build failed:', err instanceof Error ? err.message : err)
-    return ''
-  }
-}
 
 // 4.5.0-82 — per-play event log (true windowed counts).
 //
@@ -11858,226 +9381,16 @@ async function appendPlayEvent(trackId: number, ts: number): Promise<void> {
     console.warn('[play-events] append failed:', err instanceof Error ? err.message : err)
   }
 }
-ipc.handle('get-windowed-play-counts', async (_e, windowMs: number): Promise<{ ok: boolean; counts: Record<string, number> }> => {
-  try {
-    const cutoff = Date.now() - Math.max(0, windowMs)
-    const raw = await readFile(getPlayEventsPath(), 'utf-8').catch(() => '')
-    const counts: Record<string, number> = {}
-    let parseErrors = 0
-    for (const line of raw.split('\n')) {
-      if (!line) continue
-      try {
-        const evt = JSON.parse(line) as { id?: number; ts?: number }
-        if (typeof evt.id !== 'number' || typeof evt.ts !== 'number') continue
-        if (evt.ts < cutoff) continue
-        const k = String(evt.id)
-        counts[k] = (counts[k] || 0) + 1
-      } catch { parseErrors++ }
-    }
-    if (parseErrors > 0) console.warn(`[play-events] ${parseErrors} malformed lines (skipped)`)
-    return { ok: true, counts }
-  } catch (err) {
-    console.warn('[play-events] read failed:', err)
-    return { ok: false, counts: {} }
-  }
-}, { public: true })
-// 4.5.0-106 Phase 2.5: now backed by mobileStarsCache. The legacy
-// "writeMobileStarSidecar -> readFile NAS / rename" chain was a per-star
-// SMB round-trip; the cache makes the read free, the mutate synchronous,
-// and the NAS flush a fire-and-forget background job.
-async function readMobileStarsSet(): Promise<Set<string>> {
-  const parsed = await mobileStarsCache.get()
-  const ids = Array.isArray(parsed?.trackIds) ? parsed.trackIds : []
-  return new Set(ids.filter((x): x is string => typeof x === 'string'))
-}
-async function writeMobileStarSidecar(trackId: number, starred: boolean): Promise<void> {
-  await mobileStarsCache.update((current) => {
-    const set = new Set(Array.isArray(current?.trackIds) ? current.trackIds : [])
-    const key = String(trackId)
-    if (starred) set.add(key); else set.delete(key)
-    return { trackIds: Array.from(set).sort() }
-  })
-}
+// ── Mobile-state reads ── (extracted to ipc/mobile-reads-ipc.ts, 6.0 Phase 1)
+const mobileReadsApi = registerMobileReadsIpc(ipc, {
+  getPlayEventsPath,
+  libraryCache,
+  mobileStarsCache,
+  mobilePlaylistsCache,
+  ragTrackYearMap,
+  playlistAdditionsCache,
+})
 
-// Sync B-pass (2026-06-07) — fold phone-side stars in under local-primary.
-// The app is the SOLE writer of the local mobile-stars.json (via the cache), so
-// the sync script must NOT write it directly (that would race the cache). The
-// script instead stages homemini's set at mobile-stars.incoming.json; this
-// unions it into the local set on the app's own terms, then consumes the file.
-// Additive (mobile-stars-merge.ts) — a star on either device survives. Returns
-// the count of NEW ids added (0 = nothing was pending).
-async function mergeIncomingMobileStars(): Promise<number> {
-  const incomingPath = join(STATE_DIR, 'mobile-stars.incoming.json')
-  let incoming: string[] = []
-  try {
-    const parsed = JSON.parse(await readFile(incomingPath, 'utf-8')) as { trackIds?: unknown }
-    incoming = Array.isArray(parsed?.trackIds)
-      ? parsed.trackIds.filter((x): x is string => typeof x === 'string')
-      : []
-  } catch {
-    return 0   // no staging file (the common case) — nothing to merge
-  }
-  let added = 0
-  if (incoming.length > 0) {
-    await mobileStarsCache.update((current) => {
-      const local = Array.isArray(current?.trackIds) ? current.trackIds : []
-      const merged = mergeStarIds(local, incoming)
-      added = merged.length - new Set(local).size
-      return { trackIds: merged }
-    })
-  }
-  // Consume the staging file so the same set isn't re-merged on every read.
-  await unlink(incomingPath).catch(() => { /* already gone — fine */ })
-  if (added > 0) console.log(`[mobile-stars] merged ${added} incoming phone star(s) from sync`)
-  return added
-}
-
-ipc.handle('load-mobile-stars', async (): Promise<{ ok: boolean; trackIds: string[] }> => {
-  await mergeIncomingMobileStars()   // fold in any phone stars the last sync staged
-  const set = await readMobileStarsSet()
-  return { ok: true, trackIds: Array.from(set) }
-}, { public: true })
-
-// Brief 121 — read iOS-created playlists. Schema on disk:
-//   { playlists: [{ id: "mobile:UUID", name, trackIds: string[], createdAt, source: "mobile" }] }
-// Always returns ok:true with an empty list on missing/torn file — the
-// JsonFileCache fallback path already handles that, and the renderer
-// merges whatever it gets into the sidebar playlist list.
-ipc.handle('read-mobile-playlists', async (): Promise<{ ok: boolean; playlists: MobilePlaylistRecord[] }> => {
-  try {
-    const data = await mobilePlaylistsCache.get()
-    const playlists = Array.isArray(data?.playlists) ? data.playlists : []
-    return { ok: true, playlists }
-  } catch {
-    return { ok: true, playlists: [] }
-  }
-}, { public: true })
-
-// 4.5: "Your Mixes" — pull the SAME daily mixes the iOS app shows, from the
-// mobile backend on homemini (single source of truth so desktop ↔ mobile match
-// exactly). The backend themes + caches them daily and merges phone+desktop
-// play history. We return only trackIds; the renderer resolves them to local
-// Track objects for playback. Any failure (backend down / off-tailnet) → ok:false
-// and the Home section quietly hides. See JakeTunesMobile backend/src/routes/mixes.ts.
-//
-// Desktop safety nets until Mobile twins land at generation time:
-//   1. Decade hard-gate — title/subtitle claims an era → strip out-of-year tracks.
-//   2. Orbit quality floor — "orbit of X" / "Because You Played Y" → re-score
-//      neighbors against the seed embedding and drop weak false matches
-//      (RHCP in a Robson Jorge orbit). Same lesson as playlist-vibes SOAD floor.
-const MOBILE_MIXES_BACKEND = 'http://homemini:3000'
-
-async function applyOrbitQualityFloor(
-  title: string,
-  subtitle: string,
-  trackIds: number[],
-): Promise<number[]> {
-  const seedRef = parseOrbitSeed(title, subtitle)
-  if (!seedRef || trackIds.length === 0) return trackIds
-  try {
-    const emb = await ragGetEmbeddingsMap()
-    if (emb.size === 0) return trackIds
-    const lib = (await libraryCache.get()) as {
-      tracks?: Array<{ id: number; title?: string; artist?: string; albumArtist?: string }>
-    }
-    const library = lib.tracks || []
-    const seedIds = resolveOrbitSeedIds(seedRef, library)
-    const seedVecs = seedIds.map((id) => emb.get(id)).filter((v): v is Float32Array => !!v)
-    if (seedVecs.length === 0) return trackIds
-    const candidates = trackIds
-      .map((id) => {
-        const vec = emb.get(id)
-        return vec ? { trackId: id, vec } : null
-      })
-      .filter((c): c is { trackId: number; vec: Float32Array } => !!c)
-    const kept = filterOrbitNeighbors(seedVecs, candidates, {
-      alwaysKeep: new Set(seedIds),
-    })
-    if (kept.length === 0) return trackIds // fail open — don't blank the card
-    if (kept.length < trackIds.length) {
-      console.warn(
-        `[mobile-mixes] orbit quality floor on "${title}": kept ${kept.length}/${trackIds.length} ` +
-          `(seed=${seedRef.kind}:${seedRef.query})`,
-      )
-    }
-    // Preserve original mix order among survivors (not re-rank by score) so
-    // the tape's sequencing intent survives; only the junk is removed.
-    const keepSet = new Set(kept.map((k) => k.trackId))
-    return trackIds.filter((id) => keepSet.has(id))
-  } catch (err) {
-    console.warn('[mobile-mixes] orbit floor skipped:', err instanceof Error ? err.message : err)
-    return trackIds
-  }
-}
-
-ipc.handle('get-mobile-mixes', async (): Promise<{ ok: boolean; date?: string; mixes?: Array<{ id: string; title: string; subtitle: string; trackIds: number[] }>; error?: string }> => {
-  try {
-    const res = await fetch(`${MOBILE_MIXES_BACKEND}/api/mixes`, { signal: AbortSignal.timeout(20000) })
-    if (!res.ok) return { ok: false, error: `backend ${res.status}` }
-    const body = await res.json() as { date?: string; mixes?: Array<{ id?: string; title?: string; subtitle?: string; tracks?: Array<{ id?: string | number }> }> }
-    const years = await ragTrackYearMap()
-    const mixes: Array<{ id: string; title: string; subtitle: string; trackIds: number[] }> = []
-    for (const m of body.mixes || []) {
-      const title = String(m.title ?? 'Mix')
-      const subtitle = String(m.subtitle ?? '')
-      const decade = parseDecadeConstraint(`${title} ${subtitle}`)
-      let trackIds = (m.tracks || []).map(t => Number(t.id)).filter(n => Number.isFinite(n))
-      if (decade && trackIds.length) {
-        const before = trackIds.length
-        trackIds = trackIds.filter(id => yearInDecade(years.get(id), decade))
-        if (trackIds.length < before) {
-          console.warn(`[mobile-mixes] decade hard-gate ${decade.label} on "${title}": kept ${trackIds.length}/${before} (stripped ${before - trackIds.length} out-of-era)`)
-        }
-      }
-      trackIds = await applyOrbitQualityFloor(title, subtitle, trackIds)
-      if (trackIds.length > 0) mixes.push({ id: String(m.id ?? ''), title, subtitle, trackIds })
-    }
-    return { ok: true, date: body.date, mixes }
-  } catch (e) {
-    return { ok: false, error: safeIpcError(e, 'api-failed') }
-  }
-}, { refuse: REFUSED_SENDER })
-ipc.handle('get-mobile-vibe-mix', async (_e, vibe: string): Promise<{ ok: boolean; mix?: { id: string; title: string; subtitle: string; trackIds: number[] }; error?: string }> => {
-  try {
-    const res = await fetch(`${MOBILE_MIXES_BACKEND}/api/mixes/vibe`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vibe: String(vibe ?? '').slice(0, 200) }),
-      signal: AbortSignal.timeout(25000),
-    })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({})) as { error?: string }
-      return { ok: false, error: err.error || `backend ${res.status}` }
-    }
-    const m = await res.json() as { id?: string; title?: string; subtitle?: string; tracks?: Array<{ id?: string | number }> }
-    return { ok: true, mix: {
-      id: String(m.id ?? ''),
-      title: String(m.title ?? vibe),
-      subtitle: String(m.subtitle ?? ''),
-      trackIds: (m.tracks || []).map(t => Number(t.id)).filter(n => Number.isFinite(n)),
-    } }
-  } catch (e) {
-    return { ok: false, error: safeIpcError(e, 'api-failed') }
-  }
-}, { refuse: REFUSED_SENDER })
-
-// Brief 121 — read iOS-side additions to V3-owned playlists. Schema:
-//   { [v3PlaylistId: string]: trackId[] }   (trackIds as strings)
-// Same error tolerance as mobile-playlists.
-ipc.handle('read-playlist-additions', async (): Promise<{ ok: boolean; additions: Record<string, string[]> }> => {
-  try {
-    const data = await playlistAdditionsCache.get()
-    const additions: Record<string, string[]> = {}
-    if (data && typeof data === 'object') {
-      for (const [k, v] of Object.entries(data)) {
-        if (Array.isArray(v)) additions[k] = v.filter((x): x is string => typeof x === 'string')
-      }
-    }
-    return { ok: true, additions }
-  } catch {
-    return { ok: true, additions: {} }
-  }
-}, { public: true })
 
 // Brief 122 — "Listen to the List". recommendations.json is a bare JSON
 // array of Recommendation objects. The Mini backend (homemini) is the
@@ -12085,1007 +9398,28 @@ ipc.handle('read-playlist-additions', async (): Promise<{ ok: boolean; additions
 // under local-primary (4.5.0-114). Phone picks never appeared on desktop
 // because read-recommendations only read the local file (often missing)
 // while the backend + NAS held the canonical list — sync on every read.
-// Who put a recommendation on the list. 'user' = you jotted it; 'mm' = added
-// from a Music Man suggestion; 'radar' = added from the New for You feed.
-// Drives the "Your jots" vs "Suggested for you" sections in the UI. Legacy
-// records have no source → treated as 'user' (the original jot-it-down flow).
-type RecoSource = 'user' | 'mm' | 'radar'
-interface RecommendationRecord {
-  id: string
-  song?: string
-  artist?: string
-  album?: string
-  note?: string
-  createdAt: string
-  artworkUrl?: string
-  appleMusicUrl?: string
-  previewUrl?: string
-  matchedTitle?: string
-  matchedArtist?: string
-  matchedAlbum?: string
-  resolvedAt?: string
-  source?: RecoSource
-  // Brief 126 — sync protocol v2: what the jot wants (track/album/full
-  // concert) + a stable external id (archive.org item — strongest identity).
-  kind?: 'track' | 'album' | 'concert'
-  externalId?: string
-  // Fulfillment (backend-synced): the jot landed in the library.
-  owned?: boolean
-  ownedAt?: string
-  ownedVia?: string
-  ownedDesc?: string
-}
-// The Mini backend owns enrichment for adds; reachable on the tailnet.
-// Override for a local dev backend via JAKETUNES_MOBILE_BACKEND.
-const MOBILE_BACKEND_URL = process.env.JAKETUNES_MOBILE_BACKEND || 'http://homemini:3000'
-
-function recommendationsPath(): string {
-  return join(STATE_DIR, 'recommendations.json')
-}
-
-// Brief 126: V3 keeps ZERO tombstone state of its own. The backend's LIVE
-// tombstone file (written next to library.json on the NAS) is the only
-// delete knowledge, read here read-only to gate the NAS display fallback.
-// (The old frozen STATE_DIR/recommendations-deleted.json — whose staleness
-// powered the stray-migration resurrections — is removed by the one-time
-// boot reset.)
-async function readNasRecoTombstones(): Promise<Set<string>> {
-  if (!(await nasAvailable())) return new Set()   // breaker open: no NAS IO
-  try {
-    // Async readFile ONLY — never existsSync/statSync here: this path is an
-    // SMB mount, and a stale mount turns any sync fs call into a
-    // seconds-long MAIN-PROCESS freeze (beachball) on every 60s sync tick
-    // that hits the fallback leg. Missing file = catch = empty set.
-    const p = join(NAS_STATE_DIR_PATH, 'recommendations-deleted.json')
-    const parsed = JSON.parse(await readFile(p, 'utf-8')) as unknown
-    if (Array.isArray(parsed)) return new Set(parsed.map((e) => String(e)))
-  } catch { /* NAS unreachable or file missing — fallback leg imports nothing new */ }
-  return new Set()
-}
-
-function sortRecommendations(list: RecommendationRecord[]): RecommendationRecord[] {
-  return [...list].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
-}
-
-function parseRecommendationsPayload(parsed: unknown): RecommendationRecord[] {
-  if (Array.isArray(parsed)) return parsed as RecommendationRecord[]
-  if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { items?: unknown }).items)) {
-    return (parsed as { items: RecommendationRecord[] }).items
-  }
-  return []
-}
-
-async function readRecommendationsFile(): Promise<RecommendationRecord[]> {
-  try {
-    const raw = await readFile(recommendationsPath(), 'utf-8')
-    return parseRecommendationsPayload(JSON.parse(raw) as unknown)
-  } catch {
-    return []
-  }
-}
-
-// LOCAL cache only (Brief 125): never mirrored to the NAS — the mobile backend
-// is the single writer of the shared recommendations files.
-async function writeRecommendationsFile(list: RecommendationRecord[]): Promise<void> {
-  const recoPath = recommendationsPath()
-  const sorted = sortRecommendations(list)
-  const tmp = recoPath + '.tmp.json'
-  await writeFile(tmp, JSON.stringify(sorted, null, 2))
-  const { rename: renameFS } = await import('fs/promises')
-  await renameFS(tmp, recoPath)
-}
-
-function mergeRecommendationsById(...sources: RecommendationRecord[][]): RecommendationRecord[] {
-  const byId = new Map<string, RecommendationRecord>()
-  for (const src of sources) {
-    for (const r of src) {
-      if (!r?.id) continue
-      const id = String(r.id)
-      const prev = byId.get(id)
-      if (!prev || (r.createdAt || '').localeCompare(prev.createdAt || '') > 0) {
-        byId.set(id, r)
-      }
-    }
-  }
-  return sortRecommendations([...byId.values()])
-}
-
-// Collapse rows that are the same SONG under different ids (the duplication
-// disease). Brief 126: grouping now uses the canonical protocol key
-// (recoDedupeKey — ext:/pair/solo:/full fallback chain, twin of the backend)
-// so artist-less jots dedupe correctly too.
-function dedupeRecommendationsByIdentity(list: RecommendationRecord[]): RecommendationRecord[] {
-  const byIdentity = new Map<string, RecommendationRecord>()
-  for (const r of list) {
-    const k = recoDedupeKey(r)
-    const prev = byIdentity.get(k)
-    byIdentity.set(k, prev ? pickBetterReco(prev, r) : r)
-  }
-  return sortRecommendations([...byIdentity.values()])
-}
-
-const RECO_ITUNES_JUNK = /karaoke|tribute|cover band|made famous|made popular|in the style of|originally performed|8.?bit|chiptune|lullaby|rockabye|little rock star|music foundation|piano (tribute|version|renditions?)|string quartet|meditation|sleep baby|nursery/i
-
-function recoMatchKey(input: { song?: string; artist?: string; note?: string }): string {
-  const norm = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')   // ⚠️ NOT folded: feeds recoMatchKey, a PERSISTED identity key.
-  return `${norm(input.song || '')}|${norm(input.artist || '')}|${norm(input.note || '')}`
-}
-
-function recoRecordKey(r: RecommendationRecord): string {
-  return recoMatchKey({
-    song: r.song || r.matchedTitle,
-    artist: r.artist || r.matchedArtist,
-    note: r.note,
-  })
-}
-
-// Cross-surface "same song" identity — song+artist only (NOT note), so a radar
-// pick and a hand-jot of the same track collapse to one. Null when we lack both
-// fields (e.g. a note-only or album-only jot), in which case callers fall back
-// to the stricter recoMatchKey. Shares recoNorm with iTunes verify + the UI.
-function recoIdentityKey(song?: string, artist?: string): string | null {
-  const s = recoNorm(song || '')
-  const a = recoNorm(artist || '')
-  return s && a ? `${s}|${a}` : null
-}
-
-function recoRecordIdentityKey(r: RecommendationRecord): string | null {
-  return recoIdentityKey(r.song || r.matchedTitle, r.artist || r.matchedArtist)
-}
-
-type RecoItunesRow = { song: string; artist: string; album?: string; artworkUrl?: string; previewUrl?: string; appleMusicUrl?: string }
-
-/** In-session iTunes Search cache — Listen-to-the-List verify hits the same queries repeatedly. */
-const recoItunesSearchCache = new Map<string, RecoItunesRow[]>()
-const recoItunesInflight = new Map<string, Promise<RecoItunesRow[]>>()
-
-async function runWithConcurrency<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T) => Promise<R>,
-): Promise<R[]> {
-  if (items.length === 0) return []
-  const results: R[] = new Array(items.length)
-  let next = 0
-  const worker = async (): Promise<void> => {
-    while (true) {
-      const i = next++
-      if (i >= items.length) return
-      results[i] = await fn(items[i])
-    }
-  }
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, () => worker()),
-  )
-  return results
-}
-
-async function fetchItunesRecoRows(term: string, limit = 25): Promise<RecoItunesRow[]> {
-  const q = term.trim()
-  if (q.length < 2) return []
-  const cacheKey = `${recoNorm(q)}|${limit}`
-  const cached = recoItunesSearchCache.get(cacheKey)
-  if (cached) return cached
-  const inflight = recoItunesInflight.get(cacheKey)
-  if (inflight) return inflight
-
-  const promise = (async (): Promise<RecoItunesRow[]> => {
-    try {
-      const url = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&entity=song&limit=${limit}`
-      const res = await fetch(url, { signal: AbortSignal.timeout(4000) })
-      if (!res.ok) return []
-      const data = (await res.json()) as { results?: Array<Record<string, unknown>> }
-      const rows = (data.results || [])
-        .map((r) => ({
-          song: String(r.trackName ?? ''),
-          artist: String(r.artistName ?? ''),
-          album: r.collectionName ? String(r.collectionName) : undefined,
-          artworkUrl: r.artworkUrl100 ? String(r.artworkUrl100).replace('100x100', '600x600') : undefined,
-          previewUrl: r.previewUrl ? String(r.previewUrl) : undefined,
-          appleMusicUrl: r.trackViewUrl ? String(r.trackViewUrl) : undefined,
-        }))
-        .filter((s) => s.song && s.artist && !RECO_ITUNES_JUNK.test(s.artist) && !RECO_ITUNES_JUNK.test(s.album || ''))
-      recoItunesSearchCache.set(cacheKey, rows)
-      return rows
-    } catch {
-      return []
-    } finally {
-      recoItunesInflight.delete(cacheKey)
-    }
-  })()
-  recoItunesInflight.set(cacheKey, promise)
-  return promise
-}
-
-// Verified cover-art lookup for radar / discovery cards. The renderer used to
-// hit search-itunes and take results[0] blindly — which is how a Vince Staples
-// card ended up wearing a Guns N' Roses cover. Reuse the SAME matchers the reco
-// add-path uses (recoArtistMatches / recoTitleMatches) and accept art ONLY from
-// a row whose ARTIST matches the candidate; prefer a row whose title also
-// matches (exact cover) but fall back to any same-artist row. No match → return
-// nothing, so the card keeps its honest ♪ placeholder rather than wrong art.
-// MusicBrainz asks for ≤1 request/sec per client — radar enriches up to 12
-// cards in parallel, so serialize MB calls through a promise chain with a
-// 1.1s gap. CAA/archive.org has no such limit.
-let mbCallChain: Promise<unknown> = Promise.resolve()
-function mbThrottled<T>(fn: () => Promise<T>): Promise<T> {
-  const run = mbCallChain.then(fn, fn)
-  mbCallChain = run.then(
-    () => new Promise((r) => setTimeout(r, 1100)),
-    () => new Promise((r) => setTimeout(r, 1100)),
-  )
-  return run
-}
-
-/** Brand-new releases often hit MusicBrainz/Cover Art Archive before iTunes.
- *  Artist+title verified against the release-group credit — same honesty rule
- *  as the iTunes path: wrong art is worse than no art. Returns a CAA front
- *  cover URL or null; null is cached too (don't re-ask MB every remount). */
-const caaArtCache = new Map<string, string | null>()
-async function fetchCaaArtwork(artist: string, title: string): Promise<string | null> {
-  const cacheKey = `${recoNorm(artist)}|${recoNorm(title)}`
-  const cached = caaArtCache.get(cacheKey)
-  if (cached !== undefined) return cached
-  const headers = { 'User-Agent': 'JakeTunes/4.5 ( jakerosenbaum30@gmail.com )' }
-  let result: string | null = null
-  try {
-    const q = `releasegroup:"${title}" AND artist:"${artist}"`
-    const res = await mbThrottled(() =>
-      fetch(`https://musicbrainz.org/ws/2/release-group?query=${encodeURIComponent(q)}&fmt=json&limit=3`, { headers, signal: AbortSignal.timeout(6000) })
-    )
-    if (res.ok) {
-      const data = await res.json() as { 'release-groups'?: Array<{ id: string; title?: string; 'artist-credit'?: Array<{ name?: string; artist?: { name?: string } }> }> }
-      const verified = (data['release-groups'] || []).find((g) => {
-        const credits = (g['artist-credit'] || []).map((c) => c.name || c.artist?.name || '')
-        return recoTitleMatches(title, g.title || '') && credits.some((c) => recoArtistMatches(artist, c))
-      })
-      if (verified) {
-        // HEAD-probe the front cover so the renderer never renders a 404 <img>.
-        const url = `https://coverartarchive.org/release-group/${verified.id}/front-500`
-        const head = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(6000) }).catch(() => null)
-        if (head?.ok) result = url
-      }
-    }
-  } catch { /* fall through to null */ }
-  caaArtCache.set(cacheKey, result)
-  return result
-}
-
-// 30s preview of A SONG OFF an album, for playing in place (Home's New
-// This Week, 2026-08-07). iTunes first; Deezer keyless fallback because
-// Apple 403-limits this IP under load and the preview button then died
-// SILENTLY (Jake: "shit dont work!!!!"). Deezer search is plain-text, so
-// the artist MUST match and an album match is preferred — junk hits
-// (a Henze symphony for a metal query) get filtered, and an honest miss
-// beats a wrong song.
-ipc.handle('lookup-album-preview', async (_event, input: { artist?: string; album?: string }): Promise<{ previewUrl?: string; trackTitle?: string }> => {
-  const artist = (input?.artist || '').trim()
-  const album = (input?.album || '').trim()
-  if (artist.length < 2 || album.length < 1) return {}
-  try {
-    const rows = await fetchItunesRecoRows(`${artist} ${album}`, 25)
-    const same = rows.filter((r) => recoArtistMatches(artist, r.artist) && r.previewUrl)
-    const best = same.find((r) => recoTitleMatches(album, r.album || '')) || same[0]
-    if (best?.previewUrl) return { previewUrl: best.previewUrl, trackTitle: best.song }
-  } catch { /* fall through to Deezer */ }
-  try {
-    const res = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(`${artist} ${album}`)}&limit=10`, { signal: AbortSignal.timeout(6000) })
-    if (res.ok) {
-      const data = await res.json() as { data?: Array<{ preview?: string; title?: string; artist?: { name?: string }; album?: { title?: string } }> }
-      const hits = (data.data || []).filter((d) => d.preview && recoArtistMatches(artist, d.artist?.name || ''))
-      const best = hits.find((d) => recoTitleMatches(album, d.album?.title || '')) || hits[0]
-      if (best?.preview) return { previewUrl: best.preview, trackTitle: best.title }
-    }
-  } catch { /* no preview to be had */ }
-  return {}
-}, { refuse: {} })
-
-ipc.handle('lookup-reco-artwork', async (_event, input: { artist?: string; title?: string }): Promise<{ artworkUrl?: string; previewUrl?: string }> => {
-  const artist = (input?.artist || '').trim()
-  const title = (input?.title || '').trim()
-  if (artist.length < 2 || title.length < 1) return {}
-  try {
-    const rows = await fetchItunesRecoRows(`${artist} ${title}`, 25)
-    const sameArtist = rows.filter((r) => recoArtistMatches(artist, r.artist))
-    if (sameArtist.length) {
-      // Radar candidates are usually releases — match the title against the
-      // ALBUM name too, so the right record's cover wins over a stray single.
-      const best =
-        sameArtist.find((r) => recoTitleMatches(title, r.album || '')) ||
-        sameArtist.find((r) => recoTitleMatches(title, r.song)) ||
-        sameArtist[0]
-      return { artworkUrl: best.artworkUrl, previewUrl: best.previewUrl }
-    }
-    // iTunes has nothing by this artist (common for week-old releases) —
-    // try MusicBrainz + Cover Art Archive before giving up.
-    const caa = await fetchCaaArtwork(artist, title)
-    return caa ? { artworkUrl: caa } : {}
-  } catch {
-    return {}
-  }
-}, { refuse: {} })
-
-/** Recommendations for suggest — reuse sync TTL so navigation does not re-pull homemini/NAS every time. */
-async function recommendationsForSuggest(): Promise<RecommendationRecord[]> {
-  const stale = Date.now() - recommendationsSyncedAtMs > RECOMMENDATIONS_SYNC_TTL_MS
-  if (!stale && recommendationsSyncedAtMs > 0) {
-    // Local rows are all live (mirror + outbox, Brief 125) — no tombstone filter.
-    return readRecommendationsFile()
-  }
-  return syncRecommendationsToLocal()
-}
-
-/** iTunes-verify a Music Man pick; return canonical song/artist or null if not real. */
-async function verifyMusicManSuggestion(s: { song: string; artist: string; note: string }): Promise<{ song: string; artist: string; note: string } | null> {
-  const strictCredit = await lookupItunesForRecommendation({ song: s.song, artist: s.artist }, { requireArtist: true })
-  let canonical = await lookupItunesForRecommendation({ song: s.song, artist: s.artist })
-  // Wrong-artist+title queries often return 0 rows (e.g. "Territorial Pissings
-  // Smashing Pumpkins"). Fall back to title-only so we can reject or correct.
-  if (!canonical.matchedTitle || !canonical.matchedArtist) {
-    canonical = await lookupItunesForRecommendation({ song: s.song })
-  }
-  const strictOk =
-    Boolean(strictCredit.matchedTitle) &&
-    Boolean(strictCredit.matchedArtist) &&
-    recoTitleMatches(s.song, strictCredit.matchedTitle!) &&
-    recoArtistMatches(s.artist, strictCredit.matchedArtist!)
-  const needsTitlePool =
-    Boolean(canonical.matchedTitle && canonical.matchedArtist) &&
-    !recoArtistMatches(s.artist, canonical.matchedArtist ?? '') &&
-    !strictOk
-  const titleOnlyRows = needsTitlePool ? await fetchItunesRecoRows(s.song, 25) : []
-  const verdict = evaluateMusicManVerification({
-    mm: { song: s.song, artist: s.artist },
-    strictCredit,
-    canonical,
-    titleOnlyRows,
-  })
-  if (!verdict.ok) {
-    if (verdict.reason === 'artist_hallucination') {
-      console.warn('[reco] suggest: rejected artist hallucination —', s.song, 'is not by', s.artist, canonical.matchedArtist ? `(iTunes: ${canonical.matchedArtist})` : '')
-    }
-    return null
-  }
-  if (verdict.mode === 'corrected') {
-    console.warn('[reco] suggest: corrected artist credit —', s.song, s.artist, '→', verdict.artist)
-  }
-  return { song: verdict.song, artist: verdict.artist, note: s.note }
-}
-
-/** iTunes Search best-match enrichment for a single reco add (local fallback). */
-async function lookupItunesForRecommendation(
-  input: { song?: string; artist?: string; album?: string },
-  opts?: { requireArtist?: boolean },
-): Promise<Pick<RecommendationRecord, 'artworkUrl' | 'appleMusicUrl' | 'previewUrl' | 'matchedTitle' | 'matchedArtist' | 'matchedAlbum'>> {
-  const q = [input.song, input.artist, input.album].filter(Boolean).join(' ').trim()
-  if (q.length < 2) return {}
-  try {
-    const raw = await fetchItunesRecoRows(q, 25)
-    if (raw.length === 0) return {}
-    const wantSong = recoNorm(input.song || '')
-    const wantArtist = recoNorm(input.artist || '')
-    const artistFreq = new Map<string, number>()
-    for (const s of raw) {
-      const k = s.artist.toLowerCase()
-      artistFreq.set(k, (artistFreq.get(k) || 0) + 1)
-    }
-    const scoreOf = (s: RecoItunesRow): number => {
-      if (input.song && !recoTitleMatches(input.song, s.song)) return -1000
-      if (opts?.requireArtist && input.artist && !recoArtistMatches(input.artist, s.artist)) return -1000
-      const songN = recoNorm(s.song)
-      const artistN = recoNorm(s.artist)
-      let score = (artistFreq.get(s.artist.toLowerCase()) || 1) * 2
-      if (wantSong && songN === wantSong) score += 50
-      else if (wantSong && recoTitleMatches(input.song || '', s.song)) score += 35
-      if (wantArtist && artistN === wantArtist) score += 40
-      else if (wantArtist && (artistN.includes(wantArtist) || wantArtist.includes(artistN))) score += 15
-      const album = (s.album || '').toLowerCase()
-      const song = s.song.toLowerCase()
-      const isLive = /\blive\b|\(live/.test(song) || /\blive\b/.test(album)
-      if (!isLive && !/ - single$/.test(album)) score += 4
-      if (isLive) score -= 3
-      if (/ - single$/.test(album) && album.startsWith(song)) score -= 6
-      return score
-    }
-    const best = raw
-      .map((s, i) => ({ s, i, score: scoreOf(s) }))
-      .filter((x) => x.score >= 0)
-      .sort((a, b) => (b.score - a.score) || (a.i - b.i))[0]?.s
-    if (!best) return {}
-    return {
-      matchedTitle: best.song,
-      matchedArtist: best.artist,
-      matchedAlbum: best.album,
-      artworkUrl: best.artworkUrl,
-      previewUrl: best.previewUrl,
-      appleMusicUrl: best.appleMusicUrl,
-    }
-  } catch {
-    return {}
-  }
-}
-
-async function appendRecommendationLocal(recommendation: RecommendationRecord): Promise<void> {
-  const local = await readRecommendationsFile()
-  await writeRecommendationsFile(mergeRecommendationsById(local, [recommendation]))
-}
-
-async function buildLocalRecommendation(input: {
-  song?: string; artist?: string; album?: string; note?: string
-}, source: RecoSource = 'user'): Promise<RecommendationRecord> {
-  const now = new Date().toISOString()
-  const enrichment = await lookupItunesForRecommendation(input)
-  const canonicalSong = enrichment.matchedTitle || input.song?.trim() || undefined
-  const canonicalArtist = enrichment.matchedArtist || input.artist?.trim() || undefined
-  return {
-    id: randomUUID(),
-    song: canonicalSong,
-    artist: canonicalArtist,
-    album: enrichment.matchedAlbum || input.album?.trim() || undefined,
-    note: input.note?.trim() || undefined,
-    createdAt: now,
-    ...enrichment,
-    resolvedAt: enrichment.matchedTitle ? now : undefined,
-    source,
-  }
-}
-
-/** homemini sometimes returns 500 after persisting — find the row via GET. */
-async function recoverRecommendationFromBackend(input: {
-  song?: string; artist?: string; album?: string; note?: string
-}): Promise<RecommendationRecord | null> {
-  const backend = (await fetchRecommendationsFromBackend()) ?? []
-  if (backend.length === 0) return null
-  const key = recoMatchKey(input)
-  const cutoff = Date.now() - 5 * 60 * 1000
-  const matches = backend.filter((r) => recoRecordKey(r) === key)
-  const recent = matches.filter((r) => new Date(r.createdAt || 0).getTime() >= cutoff)
-  const pool = recent.length > 0 ? recent : matches
-  if (pool.length === 0) return null
-  return pool.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))[0]
-}
-
-async function fetchRecommendationsFromBackend(): Promise<RecommendationRecord[] | null> {
-  try {
-    const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations`, {
-      signal: AbortSignal.timeout(8000),
-    })
-    if (!res.ok) {
-      console.warn('[reco] backend GET failed:', res.status)
-      return null
-    }
-    return parseRecommendationsPayload(await res.json() as unknown)
-  } catch (err) {
-    console.warn('[reco] backend GET unreachable:', err instanceof Error ? err.message : err)
-    return null
-  }
-}
-
-async function readRecommendationsFromNas(): Promise<RecommendationRecord[] | null> {
-  if (!(await nasAvailable())) return null   // breaker open: no NAS IO
-  try {
-    // Async readFile ONLY — no existsSync on the SMB mount (see
-    // readNasRecoTombstones: a stale mount makes sync fs calls block the
-    // main process for seconds = the beachball).
-    const nasPath = join(NAS_STATE_DIR_PATH, 'recommendations.json')
-    const raw = await readFile(nasPath, 'utf-8')
-    return parseRecommendationsPayload(JSON.parse(raw) as unknown)
-  } catch {
-    return null
-  }
-}
-
-// ---- Brief 125: queue-and-replay outbox --------------------------------
-// The homemini backend is the SINGLE writer of the shared recommendations
-// files. V3 mutates only via its HTTP API; when the Mini is unreachable the
-// mutation is queued here (V3-private file) and replayed on a later sync.
-function recommendationsOutboxPath(): string {
-  return join(STATE_DIR, 'recommendations-outbox.json')
-}
-
-async function readRecoOutbox(): Promise<RecoOutboxOp[]> {
-  try {
-    return parseOutbox(JSON.parse(await readFile(recommendationsOutboxPath(), 'utf-8')) as unknown)
-  } catch {
-    return []
-  }
-}
-
-async function writeRecoOutbox(ops: RecoOutboxOp[]): Promise<void> {
-  const p = recommendationsOutboxPath()
-  const tmp = p + '.tmp.json'
-  await writeFile(tmp, JSON.stringify(ops, null, 2))
-  const { rename: renameFS } = await import('fs/promises')
-  await renameFS(tmp, p)
-}
-
-// Serialize every outbox read-modify-write (adds, deletes, and replay can
-// overlap) through a promise chain so ops are never lost to a lost update.
-let recoOutboxChain: Promise<void> = Promise.resolve()
-function withRecoOutbox(fn: (ops: RecoOutboxOp[]) => Promise<RecoOutboxOp[]>): Promise<void> {
-  const run = recoOutboxChain.then(async () => {
-    const ops = await readRecoOutbox()
-    const next = await fn(ops)
-    await writeRecoOutbox(next)
-  })
-  recoOutboxChain = run.catch((err) => console.warn('[reco] outbox op failed (mutation may be unrecorded):', err?.message ?? err))
-  return run
-}
-
-function enqueueRecoOps(mutate: (ops: RecoOutboxOp[]) => RecoOutboxOp[]): Promise<void> {
-  return withRecoOutbox(async (ops) => mutate(ops))
-}
-
-/** Replay queued mutations against the backend API. Failures stay queued for
- *  the next pass; a landed add adopts homemini's id in the local cache (the
- *  same swap pushLocalOnlyRecommendations used to do) so the next mirror pull
- *  can't duplicate it.
- *  Brief 126: adds declare origin 'user' (they were human actions — a
- *  deliberate re-add may un-delete); a `suppressed` response counts as
- *  landed. Deletes transmit the op's FULL identity-key set as query params,
- *  so the backend tombstones the SONG even when the id no longer resolves. */
-async function replayRecommendationsOutbox(): Promise<void> {
-  await withRecoOutbox(async (ops) => {
-    if (ops.length === 0) return ops
-    const remaining: RecoOutboxOp[] = []
-    const adoptions: Array<{ localId: string; adopted: RecommendationRecord }> = []
-    let landedAdds = 0
-    let landedDeletes = 0
-    for (const op of ops) {
-      if (op.op === 'add') {
-        try {
-          const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...op.input, origin: 'user', clientQueuedAt: op.queuedAt || undefined }),
-            signal: AbortSignal.timeout(10000),
-          })
-          if (!res.ok) { remaining.push(op); continue }
-          const parsed = (await res.json().catch(() => null)) as (RecommendationRecord & { suppressed?: boolean }) | { item?: RecommendationRecord } | null
-          if (parsed && typeof parsed === 'object' && (parsed as { suppressed?: boolean }).suppressed) {
-            landedAdds++   // backend said no (tombstoned system-class row) — op is settled
-            continue
-          }
-          const adopted = (parsed && typeof parsed === 'object' && 'id' in parsed && (parsed as RecommendationRecord).id)
-            ? (parsed as RecommendationRecord)
-            : ((parsed as { item?: RecommendationRecord } | null)?.item ?? null)
-          if (adopted?.id && String(adopted.id) !== op.localId) {
-            adoptions.push({ localId: op.localId, adopted })
-          }
-          landedAdds++
-        } catch {
-          remaining.push(op)   // Mini unreachable — retry next sync
-        }
-      } else {
-        const identityParams = op.identities
-          .slice(0, 8)
-          .map((k) => `identity=${encodeURIComponent(k)}`)
-          .join('&')
-        const stillDoomed: string[] = []
-        for (const did of op.ids) {
-          try {
-            const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations/${encodeURIComponent(did)}${identityParams ? `?${identityParams}` : ''}`, {
-              method: 'DELETE',
-              signal: AbortSignal.timeout(8000),
-            })
-            if (!res.ok && res.status !== 404) { stillDoomed.push(did); continue }
-            const body = (await res.json().catch(() => null)) as { existed?: boolean } | null
-            if (body && body.existed === false) {
-              console.log(`[reco] delete no-op'd on backend (id ${did} unknown) — identity keys tombstoned anyway`)
-            }
-          } catch {
-            stillDoomed.push(did)
-          }
-        }
-        if (stillDoomed.length > 0) remaining.push({ ...op, ids: stillDoomed })
-        else landedDeletes++
-      }
-    }
-    if (adoptions.length > 0) {
-      const local = await readRecommendationsFile()
-      const byId = new Map(local.map((r) => [String(r.id), r] as const))
-      for (const { localId, adopted } of adoptions) {
-        const mine = byId.get(localId)
-        byId.delete(localId)
-        // Adopt homemini's id; keep our enrichment where homemini's is sparse.
-        byId.set(String(adopted.id), mine ? { ...mine, ...adopted, id: adopted.id } : adopted)
-      }
-      await writeRecommendationsFile([...byId.values()])
-    }
-    if (landedAdds > 0 || landedDeletes > 0) {
-      console.log(`[reco] outbox replay: ${landedAdds} add(s), ${landedDeletes} delete(s) landed on homemini; ${remaining.length} op(s) still queued`)
-    }
-    return remaining
-  })
-}
-
-/** Brief 126 sync protocol v2: server-authoritative mirror through the PURE
- *  merge engine (reco-sync.ts). The backend is the only source of truth; the
- *  local file is a cache of its list overlaid with this machine's outbox.
- *  NOTHING IS INFERRED FROM ABSENCE — a local row that is not on the backend
- *  and not in the outbox was deleted elsewhere and is dropped. (The old
- *  "stray migration" that re-POSTed such rows — and thereby un-deleted every
- *  phone delete on the next desktop sync — is gone, structurally: no such
- *  branch exists in computeMirror.) When the backend is unreachable, a
- *  read-only additive import from the NAS copy keeps the display fresh,
- *  gated by the backend's LIVE NAS tombstones. */
-let recommendationsSyncedAtMs = 0
-const RECOMMENDATIONS_SYNC_TTL_MS = 60 * 1000
-interface RecoSyncMeta {
-  source: 'backend' | 'cache' | 'nas-fallback'
-  backendReachable: boolean
-  syncedAt: number | null
-  pendingOps: number
-}
-let lastRecoSyncMeta: RecoSyncMeta = { source: 'cache', backendReachable: false, syncedAt: null, pendingOps: 0 }
-
-async function syncRecommendationsToLocal(): Promise<RecommendationRecord[]> {
-  await replayRecommendationsOutbox().catch((err) => console.warn('[reco] outbox replay failed (will retry next sync):', err?.message ?? err))
-  const local = await readRecommendationsFile()
-  const outbox = await readRecoOutbox()
-  const backendRaw = await fetchRecommendationsFromBackend()   // null = homemini unreachable
-
-  if (backendRaw === null) {
-    const nas = (await readRecommendationsFromNas()) ?? []
-    const nasTombstones = await readNasRecoTombstones()
-    const incoming = computeNasFallback({ local, nas, nasTombstones, ops: outbox })
-    lastRecoSyncMeta = { source: 'nas-fallback', backendReachable: false, syncedAt: recommendationsSyncedAtMs || null, pendingOps: outbox.length }
-    if (incoming.length === 0) return local
-    const merged = dedupeRecommendationsByIdentity(mergeRecommendationsById(local, incoming))
-    await writeRecommendationsFile(merged)
-    console.log(`[reco] backend unreachable — pulled ${incoming.length} new from the NAS copy (read-only)`)
-    return merged
-  }
-
-  const { merged: mirrorRows, dupeDeleteIds } = computeMirror({ backend: backendRaw, local, ops: outbox })
-  const merged = sortRecommendations(mirrorRows)
-
-  // Heal server-side duplicates the dedupe collapsed: converge homemini via
-  // queued API deletes (ids only — NO identity keys, the song stays live).
-  if (dupeDeleteIds.length > 0) {
-    await enqueueRecoOps((ops) => [
-      ...ops,
-      { op: 'delete', ids: dupeDeleteIds, identities: [], queuedAt: new Date().toISOString() },
-    ])
-    console.log(`[reco] healed ${dupeDeleteIds.length} duplicate cop${dupeDeleteIds.length === 1 ? 'y' : 'ies'} — queued homemini delete(s)`)
-  }
-
-  await writeRecommendationsFile(merged)
-  recommendationsSyncedAtMs = Date.now()
-  lastRecoSyncMeta = { source: 'backend', backendReachable: true, syncedAt: recommendationsSyncedAtMs, pendingOps: outbox.length }
-  return merged
-}
-
-// ── Brief 126: freshness + push. A 60s main-process timer keeps the mirror
-// current (a phone delete disappears from an open desktop view within ≤60s);
-// any sync that changed the list pushes `recommendations-updated` so the
-// renderer never polls. Mutations schedule a converge-sync ~2s out. ──
-let recoLastPushedJson = ''
-async function runRecoSyncAndNotify(reason: string): Promise<void> {
-  try {
-    const list = await syncRecommendationsToLocal()
-    const json = JSON.stringify(list.map((r) => r.id + (r.owned ? '!' : '')))
-    if (json !== recoLastPushedJson) {
-      recoLastPushedJson = json
-      for (const w of BrowserWindow.getAllWindows()) {
-        w.webContents.send('recommendations-updated', { reason })
-      }
-    }
-  } catch (err) {
-    console.warn('[reco] scheduled sync failed:', err instanceof Error ? err.message : err)
-  }
-}
-let recoSyncTimerStarted = false
-function startRecoSyncTimer(): void {
-  if (recoSyncTimerStarted) return
-  recoSyncTimerStarted = true
-  setInterval(() => { void runRecoSyncAndNotify('timer') }, 60 * 1000)
-}
-let recoConvergeTimer: NodeJS.Timeout | null = null
-function scheduleRecoConvergeSync(): void {
-  if (recoConvergeTimer) clearTimeout(recoConvergeTimer)
-  recoConvergeTimer = setTimeout(() => {
-    recoConvergeTimer = null
-    void runRecoSyncAndNotify('mutation')
-  }, 2000)
-}
-
-// ── Brief 126: one-time boot reset. Scrubs the outbox of stray-migration
-// residue (queued adds whose identity is live or tombstoned on the backend),
-// deletes the frozen legacy tombstone file, and forces a full mirror.
-// Safety-gated: aborts (and retries next boot) when the backend is
-// unreachable — the reset never runs blind. ──
-async function runRecoResetV2IfNeeded(): Promise<void> {
-  const marker = join(STATE_DIR, 'reco-reset-v2.done')
-  const { existsSync } = await import('fs')
-  if (existsSync(marker)) return
-  try {
-    const backend = await fetchRecommendationsFromBackend()
-    if (backend === null) { console.log('[reco] reset-v2 deferred — backend unreachable'); return }
-    const res = await fetch(`${MOBILE_BACKEND_URL}/api/recommendations/deleted`, { signal: AbortSignal.timeout(8000) })
-    if (!res.ok) { console.log('[reco] reset-v2 deferred — /deleted', res.status); return }
-    const deleted = (await res.json()) as { keys?: string[] }
-    const tombstoneEntries = new Set((deleted.keys || []).map(String))
-    const backendKeys = new Set(backend.flatMap((r) => recordIdentityKeys(r)))
-    await withRecoOutbox(async (ops) => {
-      const { ops: kept, dropped } = scrubOutboxAgainstBackend(ops, backendKeys, tombstoneEntries)
-      for (const d of dropped) {
-        if (d.op === 'add') console.log(`[reco] reset-v2 dropped stray queued add: "${d.input.song ?? ''}" — ${d.input.artist ?? ''}`)
-      }
-      return kept
-    })
-    try { await unlink(join(STATE_DIR, 'recommendations-deleted.json')) } catch { /* already gone */ }
-    await syncRecommendationsToLocal()
-    await writeFile(marker, new Date().toISOString())
-    console.log('[reco] reset-v2 complete — legacy tombstones removed, outbox scrubbed, mirror forced')
-  } catch (err) {
-    console.warn('[reco] reset-v2 failed (will retry next boot):', err instanceof Error ? err.message : err)
-  }
-}
-
-type ReadRecosResult = { ok: boolean; recommendations: RecommendationRecord[]; meta: RecoSyncMeta }
-let readRecoInflight: Promise<ReadRecosResult> | null = null
-
-ipc.handle('read-recommendations', async (_event, opts?: { forceSync?: boolean }): Promise<ReadRecosResult> => {
-  if (!opts?.forceSync && readRecoInflight) return readRecoInflight
-  readRecoInflight = (async (): Promise<ReadRecosResult> => {
-    try {
-      const forceSync = opts?.forceSync === true
-      const stale = Date.now() - recommendationsSyncedAtMs > RECOMMENDATIONS_SYNC_TTL_MS
-      const recommendations = (forceSync || stale || recommendationsSyncedAtMs === 0)
-        ? await syncRecommendationsToLocal()
-        : await readRecommendationsFile()
-      if (!stale && !forceSync && lastRecoSyncMeta.source === 'backend') {
-        lastRecoSyncMeta = { ...lastRecoSyncMeta, source: 'cache' }
-      }
-      return { ok: true, recommendations, meta: lastRecoSyncMeta }
-    } catch (err) {
-      // Brief 126: an error NEVER masquerades as an empty list. Serve the
-      // cached file with backendReachable:false — the UI shows a banner,
-      // not an innocent EmptyState.
-      console.warn('[reco] read/sync failed:', err instanceof Error ? err.message : err)
-      const cached = await readRecommendationsFile().catch(() => [] as RecommendationRecord[])
-      const outbox = await readRecoOutbox().catch(() => [] as RecoOutboxOp[])
-      return {
-        ok: cached.length > 0,
-        recommendations: cached,
-        meta: { source: 'cache', backendReachable: false, syncedAt: recommendationsSyncedAtMs || null, pendingOps: outbox.length },
-      }
-    } finally {
-      readRecoInflight = null
-    }
-  })()
-  return readRecoInflight
-}, { public: true })
-
-// Shared by the renderer's omnibox AND the iMessage watcher — one add path,
-// so attribution, friends-ledger ticks, identity dedupe, and outbox replay
-// behave identically no matter where a song came from.
-async function addRecommendationCore(input: { song?: string; artist?: string; album?: string; note?: string; source?: RecoSource; from?: string; link?: string }): Promise<{ ok: boolean; recommendation?: RecommendationRecord; error?: string; savedLocally?: boolean; deduped?: boolean }> {
-  // v2 capture: friend attribution + source link ride the synced `note`
-  // field (backend passes note through verbatim), and the friend gets an
-  // 'add' tick in the local ledger for the Scouts ranking.
-  const noteBits = [input.note?.trim(), input.from?.trim() ? `from ${input.from.trim()}` : '', input.link?.trim() || ''].filter(Boolean)
-  const trimmed = {
-    song: input.song?.trim() || undefined,
-    artist: input.artist?.trim() || undefined,
-    album: input.album?.trim() || undefined,
-    note: noteBits.length ? noteBits.join(' · ') : undefined,
-  }
-  // The 'add' tick fires ONLY when a row actually lands on the list — at the
-  // success returns below, never up front. The old top-of-function tick
-  // counted (a) failed captures — Dan Gottlieb's podcast-episode link showed
-  // as "1 sent" with nothing ever listed — and (b) DEDUPED re-adds, which is
-  // exactly how Lorin's two retro-captured songs double-counted 13 → 15
-  // on top of their manual adds (both 2026-08-07).
-  const fromName = input.from?.trim() || ''
-  const tickFriendAdd = (): void => {
-    if (!fromName) return
-    void friendsCache.update((cur) => {
-      const key = fromName.toLowerCase()
-      const f = cur[key] || { name: fromName, adds: 0, got: 0, tossed: 0, lastAt: 0 }
-      f.adds += 1; f.lastAt = Date.now(); cur[key] = f
-      return cur
-    })
-  }
-  if (!trimmed.song && !trimmed.artist && !trimmed.album && !trimmed.note) {
-    return { ok: false, error: 'nothing to add' }
-  }
-  const source: RecoSource = input.source || 'user'
-
-  // Idempotency: if this song is already on the list (song+artist identity, or
-  // exact song|artist|note for note-only jots), return the existing record
-  // instead of creating a duplicate. Covers double-clicks, retries after a
-  // timeout, and a radar pick the user already jotted by hand. Checked BEFORE
-  // the backend POST so homemini never mints a duplicate id either.
-  try {
-    // Local rows are all live now (mirror + outbox — no tombstone filter needed).
-    const existing = await readRecommendationsFile()
-    const idKey = recoIdentityKey(trimmed.song, trimmed.artist)
-    const fullKey = recoMatchKey(trimmed)
-    const dupe = existing.find((r) => {
-      const rid = recoRecordIdentityKey(r)
-      return idKey && rid ? rid === idKey : recoRecordKey(r) === fullKey
-    })
-    if (dupe) {
-      console.log('[reco] add deduped — already on list:', dupe.id)
-      return { ok: true, recommendation: dupe, deduped: true }
-    }
-  } catch { /* fall through to normal add */ }
-
-  // Un-deleting on re-add is the backend's job (it clears the identity
-  // tombstone on a genuine re-add through POST) — V3 keeps no tombstones.
-
-  const url = `${MOBILE_BACKEND_URL}/api/recommendations`
-  console.log('[reco] POST →', url, JSON.stringify(trimmed))
-  let recommendation: RecommendationRecord | null = null
-  let backendStatus: number | null = null
-
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      // origin:'user' — a deliberate human add; may un-delete (Brief 126).
-      body: JSON.stringify({ ...trimmed, origin: 'user' }),
-      signal: AbortSignal.timeout(10000),
-    })
-    backendStatus = res.status
-    if (res.ok) {
-      try {
-        const parsed = await res.json() as RecommendationRecord | { item?: RecommendationRecord }
-        recommendation = ('id' in parsed && parsed.id)
-          ? parsed as RecommendationRecord
-          : (parsed as { item?: RecommendationRecord }).item ?? null
-      } catch {
-        recommendation = null
-      }
-    } else {
-      console.warn('[reco] POST failed — backend', res.status)
-    }
-  } catch (err) {
-    console.warn('[reco] POST threw:', err instanceof Error ? err.message : err)
-  }
-
-  // homemini can return 500 even after persisting — recover via GET before local fallback.
-  if (!recommendation?.id) {
-    recommendation = await recoverRecommendationFromBackend(trimmed)
-    if (recommendation?.id) {
-      console.log('[reco] recovered from backend after POST', backendStatus ?? 'error', '—', recommendation.id)
-    }
-  }
-
-  if (recommendation?.id) {
-    try {
-      const enriched = await buildLocalRecommendation({
-        song: recommendation.song || recommendation.matchedTitle,
-        artist: recommendation.artist || recommendation.matchedArtist,
-        album: recommendation.album || recommendation.matchedAlbum,
-        note: recommendation.note,
-      })
-      recommendation = { ...recommendation, ...enriched, id: recommendation.id, createdAt: recommendation.createdAt, source: recommendation.source || source }
-      await appendRecommendationLocal(recommendation)
-      suggestResultCache = null   // a new add changes the dedup set — force fresh MM picks
-    } catch (err) {
-      console.warn('[reco] local append after POST failed:', err instanceof Error ? err.message : err)
-    }
-    scheduleRecoConvergeSync()
-    tickFriendAdd()
-    return { ok: true, recommendation }
-  }
-
-  // Mini unreachable or broken — save locally with iTunes enrichment and QUEUE
-  // the add for replay through the backend API (single-writer: the fallback is
-  // never a direct write to the shared NAS files).
-  try {
-    const local = await buildLocalRecommendation(trimmed, source)
-    await appendRecommendationLocal(local)
-    await enqueueRecoOps((ops) => [
-      ...ops,
-      {
-        op: 'add',
-        localId: String(local.id),
-        input: trimmed,
-        identities: recordIdentityKeys(local),
-        queuedAt: new Date().toISOString(),
-      },
-    ])
-    suggestResultCache = null   // a new add changes the dedup set — force fresh MM picks
-    console.log('[reco] saved locally + queued for homemini (backend', backendStatus ?? 'unreachable', ') —', local.id)
-    tickFriendAdd()
-    return { ok: true, recommendation: local, savedLocally: true }
-  } catch (err) {
-    console.error('[reco] local add failed:', err instanceof Error ? err.message : err)
-    return { ok: false, error: safeIpcError(err, 'unknown') }
-  }
-}
-ipc.handle('add-recommendation', (_event, input: Parameters<typeof addRecommendationCore>[0]) => addRecommendationCore(input), { refuse: { ok: false, error: 'refused-sender' } as const })
-
-// ── iMessage capture (2026-07-19): Spotify / Apple Music links texted to
-// Jake land on the list automatically, credited "from <sender>". The
-// watcher lives in imessage-capture.ts; it feeds addRecommendationCore so
-// every capture gets the same dedupe/attribution/outbox treatment as a
-// hand-typed jot. State is V3-local (userData) — the laptop is the only
-// machine signed into Messages.
-startImessageCapture(ipc, {
-  stateFile: join(app.getPath('userData'), 'imessage-capture.json'),
-  addRecommendation: (input) => addRecommendationCore(input),
+// Recommendations subsystem extracted to ipc/recommendations-ipc.ts (6.0 Phase 1).
+const recoApi = registerRecommendations(ipc, {
+  claudeCall,
+  libraryCache,
+  friendsCache: friendsCache as never,
 })
+const { readRecommendationsFile, syncRecommendationsToLocal, startRecoSyncTimer,
+  runRecoResetV2IfNeeded, fetchCaaArtwork, recoRecordIdentityKey, recoIdentityKey } = recoApi
 
-// ── Friend import credit (2026-07-19): the Scouts ledger's `imported`
-// counter — a friend earns it only when their reco's song is ACTUALLY in
-// the library, arrived after they sent it. Logic in friend-imports-core.ts
-// (pure, tested); one credit per reco ever (ledger below). ──
-const importCreditCache = new JsonFileCache<{ credited: string[] }>(
-  () => join(STATE_DIR, 'reco-import-credit.json'),
-  () => ({ credited: [] }),
-  'reco-import-credit',
-)
-async function sweepFriendImports(): Promise<number> {
-  try {
-    const recos = await readRecommendationsFile()
-    const lib = (await libraryCache.get()) as { tracks?: Array<{ title?: string; artist?: string; albumArtist?: string; album?: string; dateAdded?: string }> }
-    const credited = new Set((await importCreditCache.get()).credited)
-    const tracks = lib.tracks || []
 
-    // Song credits (existing matcher) — but only for song-kind recos, so an
-    // album reco that happens to carry a title can't double-earn.
-    const songRecos = recos.filter((r) => creditKindOf(r as Parameters<typeof creditKindOf>[0]) === 'song')
-    const credits = computeImportCredits(songRecos, tracks, credited)
-    // Album credits (2026-08-05, the standings feature): +5 material.
-    const albumHits = computeAlbumCredits(recos as Parameters<typeof computeAlbumCredits>[0], tracks, credited, friendOfNote)
-
-    if (credits.length === 0 && albumHits.length === 0) return 0
-
-    // Per-credit RECORDS with the identity the award was granted on —
-    // standings recompute points from these against the live library, which
-    // is what makes "minus 1 when I delete it" automatic.
-    const recoById = new Map(recos.map((r) => [String(r.id), r]))
-    const now = new Date().toISOString()
-    const newRecords: CreditRecord[] = []
-    for (const c of credits) {
-      const r = recoById.get(c.recoId)
-      if (!r) continue
-      const title = String(r.matchedTitle || r.song || '').trim()
-      const artist = String(r.matchedArtist || r.artist || '').trim()
-      newRecords.push({
-        recoId: c.recoId, friend: c.friend, kind: 'song',
-        label: artist ? `${title} — ${artist}` : title,
-        keys: pairKeys(r), creditedAt: now,
-      })
-    }
-    for (const h of albumHits) {
-      newRecords.push({
-        recoId: h.recoId, friend: h.friend, kind: 'album',
-        label: h.label, albumKey: h.albumKey, n0: h.n0, creditedAt: now,
-      })
-    }
-
-    await friendsCache.update((cur) => {
-      for (const c of [...credits, ...albumHits]) {
-        const key = c.friend.trim().toLowerCase()
-        const f = cur[key] || { name: c.friend.trim(), adds: 0, got: 0, tossed: 0, lastAt: 0 }
-        f.imported = (f.imported || 0) + 1
-        cur[key] = f
-      }
-      return cur
-    })
-    await friendCreditsCache.update((cur) => {
-      const have = new Set(cur.credits.map((r) => r.recoId))
-      for (const r of newRecords) if (!have.has(r.recoId)) cur.credits.push(r)
-      return cur
-    })
-    await importCreditCache.update((cur) => {
-      cur.credited = [...new Set([...cur.credited, ...newRecords.map((r) => r.recoId)])]
-      return cur
-    })
-    for (const r of newRecords) console.log(`[scouts] ${r.kind} credit → ${r.friend} (${r.label})`)
-    return newRecords.length
-  } catch (err) {
-    console.warn('[scouts] import sweep failed:', err instanceof Error ? err.message : err)
-    return 0
-  }
+// ── Friend import credit: sweep + attribution ledger moved to
+// friend-credit-sweep.ts (2026-08-28, the line-ratchet extraction, in the
+// same change that added attribution credits — "lorin should get credit
+// for the latest john mayer song that i imported"). Pure logic stays in
+// friend-imports-core.ts.
+const sweepDeps: import('./friend-credit-sweep.ts').SweepDeps = {
+  readRecos: () => readRecommendationsFile() as unknown as Promise<Array<Record<string, unknown>>>,
+  getTracks: async () => ((await libraryCache.get()) as { tracks?: Array<{ title?: string; artist?: string; albumArtist?: string; album?: string; dateAdded?: string }> }).tracks || [],
+  updateFriends: (fn) => friendsCache.update(fn as never),
+  creditsCache: friendCreditsCache,
 }
-
+const sweepFriendImports = (): Promise<number> => moduleSweepFriendImports(sweepDeps)
 /**
  * Standings: friends ranked by deletion-aware points. Points are computed
  * fresh from credit records vs the live library on every call — nothing has
@@ -13095,53 +9429,11 @@ async function sweepFriendImports(): Promise<number> {
  * counters) become flat +1 "legacy" entries once, so history isn't erased —
  * but they carry no identity and can never go negative.
  */
-// ── Taste ledger (2026-08-07, "ok go go go") ─────────────────────────
-// One append-only stream of every silent verdict Jake gives: strip
-// suggestions added vs refreshed past, Discover +Lists vs vetoes, Music
-// Man playlists kept vs deleted, review-gate adds/removes. The nightly
-// learner (scripts/taste-ledger-learn.py) turns it into per-playlist
-// blend weights; the KPI snapshot turns it into the acceptance rate.
-// Desktop main is the single writer.
-const TASTE_LEDGER_PATH = () => join(app.getPath('userData'), 'taste-ledger.jsonl')
-const TASTE_WEIGHTS_PATH = () => join(app.getPath('userData'), 'taste-weights.json')
-type TasteEvent = {
-  surface: 'strip' | 'discover' | 'mm-playlist' | 'review-gate'
-  verdict: 'accept' | 'reject' | 'pass'
-  key?: Record<string, unknown>
-  ctx?: Record<string, unknown>
-}
-ipc.handle('taste-ledger-append', async (_e, events: TasteEvent[]) => {
-  try {
-    if (!Array.isArray(events) || events.length === 0) return { ok: true, appended: 0 }
-    const lines = events
-      .filter((ev) => ev && typeof ev === 'object' && ev.surface && ev.verdict)
-      .slice(0, 50)
-      .map((ev) => JSON.stringify({ ts: new Date().toISOString(), surface: ev.surface, verdict: ev.verdict, key: ev.key ?? {}, ctx: ev.ctx ?? {} }))
-    if (lines.length === 0) return { ok: true, appended: 0 }
-    await appendFile(TASTE_LEDGER_PATH(), lines.join('\n') + '\n', 'utf-8')
-    return { ok: true, appended: lines.length }
-  } catch (err) {
-    return { ok: false, error: safeIpcError(err, 'unknown') }
-  }
-}, { refuse: REFUSED_SENDER })
-// Per-playlist blend weights the nightly learner writes; the suggestion
-// strip multiplies its blend components by these. mtime-cached.
-let tasteWeightsCache: { at: number; mtime: number; weights: Record<string, unknown> } | null = null
-ipc.handle('get-taste-weights', async () => {
-  try {
-    const p = TASTE_WEIGHTS_PATH()
-    const st = await stat(p).catch(() => null)
-    if (!st) return { ok: true, weights: {} }
-    if (tasteWeightsCache && tasteWeightsCache.mtime === st.mtimeMs) {
-      return { ok: true, weights: tasteWeightsCache.weights }
-    }
-    const weights = JSON.parse(await readFile(p, 'utf-8')) as Record<string, unknown>
-    tasteWeightsCache = { at: Date.now(), mtime: st.mtimeMs, weights }
-    return { ok: true, weights }
-  } catch {
-    return { ok: true, weights: {} }
-  }
-}, { public: true })
+// Taste ledger + weights extracted to ipc/taste-ipc.ts (6.0 Phase 1).
+registerTasteIpc(ipc)
+registerPreviewRefreshIpc(ipc)
+registerSyncHistoryIpc(ipc, { stateDir: STATE_DIR })
+
 
 ipc.handle('get-friend-standings', async () => {
   try {
@@ -13182,313 +9474,40 @@ ipc.handle('sweep-friend-imports', async () => ({ ok: true, credited: await swee
 setTimeout(() => { void sweepFriendImports() }, 30_000)
 setInterval(() => { void sweepFriendImports() }, 5 * 60_000)
 
-ipc.handle('delete-recommendation', async (_event, id: string): Promise<{ ok: boolean; error?: string }> => {
-  // Identity-wide delete: removing a song removes EVERY copy of it (the list
-  // once carried 14 copies of one track under different ids). The remote
-  // removal routes through the backend API via the outbox — the backend
-  // tombstones the id + every transmitted identity key (Brief 126: the keys
-  // ride the DELETE as query params, so the song dies even if the backend
-  // re-minted its id). A queued add of the same song is cancelled instead of
-  // deleted remotely, so an offline add-then-delete can't replay the POST
-  // after the DELETE and resurrect it.
-  const rid = String(id)
-  let doomedIds: string[] = [rid]
-  let identities: string[] = []
-  try {
-    const all = await readRecommendationsFile()
-    const target = all.find((r) => String(r.id) === rid)
-    if (target) {
-      const plan = identitiesForDelete(target, all)
-      doomedIds = plan.doomedIds
-      identities = plan.identities
-    }
-    const next = all.filter((r) => !doomedIds.includes(String(r.id)))
-    if (next.length !== all.length) await writeRecommendationsFile(next)
-  } catch (err) {
-    console.warn('[reco] local delete failed:', err instanceof Error ? err.message : err)
-  }
-  suggestResultCache = null   // deleting frees the Music Man to re-suggest
-  await enqueueRecoOps((ops) => {
-    const { ops: scrubbed, remoteIds } = scrubOutboxForDelete(ops, doomedIds, identities)
-    // Even when every local copy was a still-queued add, the identity keys
-    // must land on the backend — the song may exist there under an id this
-    // machine never saw.
-    if (remoteIds.length === 0 && identities.length === 0) return scrubbed
-    return [...scrubbed, { op: 'delete', ids: remoteIds.length > 0 ? remoteIds : [rid], identities, queuedAt: new Date().toISOString() }]
-  })
-  // Replay now when the Mini is up; otherwise the op waits for the next sync.
-  void replayRecommendationsOutbox().catch((err) => console.warn('[reco] outbox replay failed (will retry next sync):', err?.message ?? err))
-  scheduleRecoConvergeSync()
-  return { ok: true }
-}, { refuse: REFUSED_SENDER })
+// ── Playlist hub (2026-08-28, final-form sync: "work like spotify") ──
+// Converge with homemini quietly: on boot, every 10 minutes, and
+// (debounced, via library-ipc) after every save. The hub's answer is
+// adopted into the cache BEFORE the renderer hears about it, so the echo
+// save diffs against already-adopted state. homemini down = quiet skip.
+initPlaylistHubSync({
+  hubUrl: MOBILE_BACKEND_URL,
+  device: osHostname(),
+  getPlaylists: () => playlistsCache.get() as Promise<HubPlaylistLike[]>,
+  setPlaylists: (p) => { playlistsCache.set(p as unknown[]) },
+  tombstonesFile: playlistTombstonesPath(STATE_DIR),
+  pinsFile: playlistPinsPath(STATE_DIR),
+  onApplied: (p) => { sendToRenderer('playlists-updated', { playlists: p }) },
+})
+setTimeout(() => { schedulePlaylistHubConverge(0) }, 45_000)
+setInterval(() => { schedulePlaylistHubConverge(0) }, 10 * 60_000)
 
-// Brief 122 — Music Man suggests 3 things to add to the Listen-to-the-List.
-// DISCOVERY only: artists/songs not already in the library or on the list.
-// Over-generates per attempt and retries up to 4× until ≥3 survive the hard
-// filter (large libraries eat most LLM picks). Returns a pool (up to 10) so
-// the UI can always show 3 and backfill when one is added.
-type SuggestRecoResult = { ok: boolean; suggestions?: Array<{ song: string; artist: string; note: string }>; error?: string }
-let suggestResultCache: { at: number; suggestions: Array<{ song: string; artist: string; note: string }> } | null = null
-let suggestRecoInflight: Promise<SuggestRecoResult> | null = null
-const SUGGEST_RESULT_TTL_MS = 30 * 60 * 1000
+// Mixtape hub (same doctrine; tapes were the last ssh-synced collection).
+// Voice audio heals through the hub's store in the same converge pass.
+initMixtapeHubSync({
+  hubUrl: MOBILE_BACKEND_URL,
+  device: osHostname(),
+  getMixtapes: () => readMixtapesForHub() as unknown as Promise<import('./mixtape-hub-sync.ts').HubTapeLike[]>,
+  setMixtapes: (tapes) => writeMixtapesFromHub(tapes as never),
+  tombstonesFile: mixtapeTombstonesFile(),
+  introsDir: mixtapeIntrosDir(),
+})
+setTimeout(() => { scheduleMixtapeHubConverge(0) }, 60_000)
+setInterval(() => { scheduleMixtapeHubConverge(0) }, 10 * 60_000)
 
-ipc.handle('suggest-recommendations', async (_event, opts?: { force?: boolean }): Promise<SuggestRecoResult> => {
-  const force = opts?.force === true
-  const now = Date.now()
-  if (!force && suggestResultCache && now - suggestResultCache.at < SUGGEST_RESULT_TTL_MS) {
-    return { ok: true, suggestions: suggestResultCache.suggestions }
-  }
-  if (!force && suggestRecoInflight) return suggestRecoInflight
-  if (force) suggestResultCache = null
 
-  suggestRecoInflight = (async (): Promise<SuggestRecoResult> => {
-  try {
-    const lib = (await libraryCache.get()) as { tracks?: Array<{ artist?: string; albumArtist?: string; title?: string; genre?: string; playCount?: number }> }
-    const tracks = Array.isArray(lib.tracks) ? lib.tracks : []
-    const norm = (s: string) => foldAccents(s).replace(/[^a-z0-9]/g, '')
-    const playsByArtist = new Map<string, number>()
-    const playsByGenre = new Map<string, number>()
-    const ownedArtists = new Set<string>() // normalized — every artist in the library
-    const ownedSongs = new Set<string>()   // normalized artist|title
-    for (const t of tracks) {
-      const a = (t.albumArtist || t.artist || '').trim()
-      if (a) {
-        playsByArtist.set(a, (playsByArtist.get(a) ?? 0) + (Number(t.playCount) || 0))
-        ownedArtists.add(norm(a))
-        if (t.title) ownedSongs.add(`${norm(a)}|${norm(t.title)}`)
-      }
-      const g = (t.genre || '').trim()
-      if (g) playsByGenre.set(g, (playsByGenre.get(g) ?? 0) + (Number(t.playCount) || 0))
-    }
-    // Top 150 seed the model-facing no-fly list (bannedArtists) so famous owned
-    // artists are excluded at the SOURCE, not just post-filtered; the prompt's
-    // "already owns and loves" line stays a tight top-15.
-    const topOwnedArtists = Array.from(playsByArtist.entries()).sort((a, b) => b[1] - a[1]).slice(0, 150).map(([a]) => a)
-    const topArtists = topOwnedArtists.slice(0, 15)
-    const topGenres = Array.from(playsByGenre.entries()).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([g]) => g)
+// Album info + iTunes search extracted to ipc/album-info-ipc.ts (6.0 Phase 1).
+registerAlbumInfoIpc(ipc)
 
-    let existing: string[] = []
-    const listSongs = new Set<string>() // normalized artist|title already ON the list
-    const listPairs: Array<{ artist: string; title: string }> = [] // raw, for the loose-artist check
-    try {
-      const parsed = await recommendationsForSuggest()
-      if (parsed.length > 0) {
-        existing = parsed
-          .map((r) => `${r.song || r.matchedTitle || ''} — ${r.artist || r.matchedArtist || ''}`.trim())
-          .filter((s) => s.length > 2)
-          .slice(0, 50)
-        for (const r of parsed) {
-          const rawA = String(r.artist || r.matchedArtist || '')
-          const rawT = String(r.song || r.matchedTitle || '')
-          const a = norm(rawA)
-          const t = norm(rawT)
-          if (a && t) {
-            listSongs.add(`${a}|${t}`)
-            listPairs.push({ artist: rawA, title: rawT })
-          }
-        }
-      }
-    } catch { /* no list yet */ }
-
-    // Exact-match alone misses multi-credit lines MM writes for collabs/features
-    // (e.g. "Daft Punk, Pharrell Williams & Nile Rodgers" never equals the library's
-    // plain "Daft Punk"), letting already-owned artists slip past the discovery
-    // filter. recoArtistMatches (substring-aware, same helper suggest-verify uses)
-    // catches those; the Set.has fast path just avoids an O(n) scan on the common
-    // exact-match case.
-    const isOwnedArtist = (artist: string): boolean => {
-      const a = norm(artist)
-      if (ownedArtists.has(a)) return true
-      for (const owned of ownedArtists) {
-        if (recoArtistMatches(artist, owned)) return true
-      }
-      return false
-    }
-
-    // Same multi-credit seam on the on-list side: a list entry saved as
-    // "Daft Punk" must still block a suggestion credited "Daft Punk, Pharrell
-    // Williams & Nile Rodgers" for the same title.
-    const isOnList = (s: { song: string; artist: string }): boolean => {
-      if (listSongs.has(`${norm(s.artist)}|${norm(s.song)}`)) return true
-      const title = norm(s.song)
-      return listPairs.some((p) => norm(p.title) === title && recoArtistMatches(s.artist, p.artist))
-    }
-
-    const passesFilter = (s: { song: string; artist: string }) => {
-      const key = `${norm(s.artist)}|${norm(s.song)}`
-      return !isOwnedArtist(s.artist) && !ownedSongs.has(key) && !isOnList(s)
-    }
-
-    const accumulated: Array<{ song: string; artist: string; note: string }> = []
-    const seenKeys = new Set<string>()
-    const bannedArtists = new Set<string>(topOwnedArtists.map((a) => a.toLowerCase().trim()))
-
-    for (let attempt = 0; attempt < 4 && accumulated.length < 3; attempt++) {
-      const excludeArtists = Array.from(bannedArtists).slice(0, 160)
-      const excludePicked = accumulated.map((s) => s.artist)
-      const user = [
-        `Artists this person ALREADY OWNS and loves: ${topArtists.join(', ') || '(unknown)'}.`,
-        topGenres.length ? `Genres in rotation: ${topGenres.join(', ')}.` : '',
-        existing.length ? `Already on their Listen-to-the-List: ${existing.join('; ')}.` : '',
-        excludeArtists.length ? `NEVER suggest these artists (owned, on-list, or already rejected): ${excludeArtists.join(', ')}.` : '',
-        excludePicked.length ? `Already picked this round — do NOT repeat: ${excludePicked.join(', ')}.` : '',
-        attempt > 0 ? 'Your last batch was mostly artists they already own. Dig deeper — smaller labels, regional scenes, one-album wonders.' : '',
-        '',
-        'This is a DISCOVERY list. Suggest 20 records they almost certainly do NOT own yet — artists NEW to this collection that sit in the lineage of, or just adjacent to, what they love (their influences, contemporaries, the bands they inspired or ripped off, the deeper scene). Do NOT suggest any artist listed above, and nothing already on the list — they HAVE those. The entire point is music they have not heard.',
-        'Each: a real song + the artist + a one-sentence note in your voice on why it\'s the right next step for them.',
-        'The note must be about THAT SAME song/artist — never argue against your own pick or pitch a different record than the one named in the entry.',
-        'CRITICAL: song + artist must be a real recording on Apple Music/iTunes — the primary credited artist on that track. Never attribute a famous song to the wrong artist (e.g. Daft Punk\'s "Around the World" is not by Modjo; Chromeo\'s "Bonafide Lovin\'" is not by Röyksopp).',
-        'Return ONLY JSON, no prose, no code fence: an array of 20 objects [{"song":"...","artist":"...","note":"..."}, ...].',
-      ].filter(Boolean).join('\n')
-
-      const reply = await claudeCall(`listen-list:suggest:${attempt}`, {
-        model: 'claude-sonnet-4-6',
-        max_tokens: 1200,
-        system: MUSIC_MAN_CORE,
-        messages: [{ role: 'user', content: user }],
-      })
-      const block = reply.content[0]
-      const text = block && block.type === 'text' ? block.text : ''
-      const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
-      const parsed = JSON.parse((fence ? fence[1] : text).trim()) as Array<{ song?: unknown; artist?: unknown; note?: unknown }>
-      const candidates = (Array.isArray(parsed) ? parsed : [])
-        .map((s) => ({ song: String(s.song || '').trim(), artist: String(s.artist || '').trim(), note: String(s.note || '').trim() }))
-        .filter((s) => s.song && s.artist)
-
-      const verifiedBatch = await runWithConcurrency(candidates, 3, async (s) => ({
-        raw: s,
-        verified: await verifyMusicManSuggestion(s),
-      }))
-      for (const { raw: s, verified } of verifiedBatch) {
-        if (accumulated.length >= 10) break
-        if (!verified) {
-          console.warn('[reco] suggest: dropped unverified pick', s.artist, '—', s.song)
-          bannedArtists.add(s.artist.toLowerCase().trim())
-          continue
-        }
-        if (!passesFilter(verified)) {
-          bannedArtists.add(verified.artist.toLowerCase().trim())
-          continue
-        }
-        const key = `${norm(verified.artist)}|${norm(verified.song)}`
-        if (seenKeys.has(key)) continue
-        seenKeys.add(key)
-        accumulated.push(verified)
-        bannedArtists.add(verified.artist.toLowerCase().trim())
-      }
-    }
-
-    if (accumulated.length < 3) console.warn('[reco] suggest: only', accumulated.length, 'survived filter after retries (wanted ≥3)')
-    const suggestions = accumulated.slice(0, 10)
-    suggestResultCache = { at: Date.now(), suggestions }
-    return { ok: true, suggestions }
-  } catch (err) {
-    console.error('[reco] suggest failed:', err instanceof Error ? err.message : err)
-    return { ok: false, error: safeIpcError(err, 'unknown') }
-  } finally {
-    suggestRecoInflight = null
-  }
-  })()
-  return suggestRecoInflight
-}, { refuse: REFUSED_SENDER })
-
-// Brief 122 Phase 2 — autocomplete source for the add-recommendation form.
-// iTunes Search is public + key-less; hit it straight from the main process
-// (no CORS, and no per-keystroke round-trip to the Mini backend). Returns a
-// small normalized suggestion list. Does NOT touch the music library.
-// ── Album detail page (4.5.0-115): factual credits + Music Man blurb ──
-// Credits come from real lookups (iTunes Search + MusicBrainz), never the
-// LLM, so we never invent a producer or date. Honest gaps where the APIs
-// don't have it. Blurb is the Music Man's editorial take (opinion, grounded —
-// it's told NOT to state hard credits). Both cached in-memory per session.
-type AlbumCredits = { released?: string; label?: string; producer?: string; recorded?: string }
-const albumInfoCache = new Map<string, AlbumCredits>()
-const albumCacheKey = (artist: string, album: string) => `${(artist || '').toLowerCase().trim()}|${(album || '').toLowerCase().trim()}`
-
-async function fetchItunesAlbum(artist: string, album: string): Promise<{ released?: string; label?: string } | null> {
-  try {
-    const url = `https://itunes.apple.com/search?term=${encodeURIComponent(`${artist} ${album}`)}&entity=album&limit=5`
-    const res = await fetch(url)
-    if (!res.ok) return null
-    const data = await res.json() as { results?: Array<{ collectionName?: string; releaseDate?: string; copyright?: string }> }
-    const norm = (s: string) => foldAccents(s).replace(/[^a-z0-9]/g, '')
-    const want = norm(album)
-    const results = data.results || []
-    const best = results.find((r) => norm(r.collectionName || '') === want) || results[0]
-    if (!best) return null
-    const released = best.releaseDate ? best.releaseDate.slice(0, 10) : undefined
-    let label: string | undefined
-    if (best.copyright) {
-      // "℗ 1972 Curtom Records. Marketed by Rhino…" → "Curtom Records".
-      // Strip the ℗/© + year, then keep only the label name before the
-      // first sentence break / "Marketed by" / "Distributed by" legalese.
-      const stripped = best.copyright.replace(/^\s*[℗©]\s*/, '').replace(/^\d{4}\s*/, '').trim()
-      const name = stripped.split(/\s*[.;]\s|,\s|\s+Marketed\b|\s+Distributed\b|\s+under\b|\s+a\s+(?:division|Warner|Universal|Sony)\b/i)[0].trim()
-      if (name && name.length >= 2 && name.length < 60) label = name
-    }
-    return { released, label }
-  } catch { return null }
-}
-
-async function fetchMusicBrainzAlbumCredits(artist: string, album: string): Promise<{ released?: string; producer?: string } | null> {
-  // Separate from searchMusicBrainz() (that returns a prose facts string for
-  // the persona); this pulls STRUCTURED release-group data. Best-effort,
-  // single timeout-bounded pass. MB asks for a descriptive User-Agent.
-  const headers = { 'User-Agent': 'JakeTunes/4.5 ( jakerosenbaum30@gmail.com )' }
-  try {
-    const q = `releasegroup:"${album}" AND artist:"${artist}"`
-    const rgRes = await fetch(`https://musicbrainz.org/ws/2/release-group?query=${encodeURIComponent(q)}&fmt=json&limit=1`, { headers })
-    if (!rgRes.ok) return null
-    const rg = await rgRes.json() as { 'release-groups'?: Array<{ id: string; 'first-release-date'?: string }> }
-    const group = rg['release-groups']?.[0]
-    if (!group) return null
-    const released = group['first-release-date'] || undefined
-    let producer: string | undefined
-    try {
-      const relRes = await fetch(`https://musicbrainz.org/ws/2/release-group/${group.id}?inc=artist-rels&fmt=json`, { headers })
-      if (relRes.ok) {
-        const rel = await relRes.json() as { relations?: Array<{ type?: string; artist?: { name?: string } }> }
-        const prod = (rel.relations || []).find((r) => /producer/i.test(r.type || ''))
-        if (prod?.artist?.name) producer = prod.artist.name
-      }
-    } catch { /* relations are a bonus; ignore */ }
-    return { released, producer }
-  } catch { return null }
-}
-
-ipc.handle('get-album-info', async (_e, artist: string, album: string, year?: string | number): Promise<{ ok: boolean; credits?: AlbumCredits; error?: string }> => {
-  if (!album) return { ok: true, credits: {} }
-  const tagYear = tagYearStr(year)
-  const key = `${albumCacheKey(artist, album)}|y:${tagYear || '?'}`
-  const cached = albumInfoCache.get(key)
-  if (cached) {
-    return { ok: true, credits: sanitizeAlbumCredits(tagYear, cached) }
-  }
-  try {
-    const [it, mb] = await Promise.all([fetchItunesAlbum(artist, album), fetchMusicBrainzAlbumCredits(artist, album)])
-    const merged: AlbumCredits = {}
-    const released = pickAlbumReleaseDate(tagYear, mb?.released, it?.released)
-    if (released) merged.released = released
-    if (it?.label) merged.label = it.label
-    if (mb?.producer) merged.producer = mb.producer
-    const sanitized = sanitizeAlbumCredits(tagYear, merged)
-    albumInfoCache.set(key, sanitized)
-    return { ok: true, credits: sanitized }
-  } catch (err) {
-    return { ok: false, error: safeIpcError(err, 'unknown') }
-  }
-}, { refuse: REFUSED_SENDER })
-/** ⚠️ TWIN: src/renderer/types.ts (ItunesSuggestion). This crosses the IPC
- *  boundary, so a field added on one side and not the other is silently
- *  dropped rather than caught — change both together. */
-// Download search moved to download-search.ts (renovation P1C3). The two
-// registrations below are shims; every body, template and doctrine comment
-// lives in the module now.
-ipc.handle('search-itunes', async (_event, query: string) => searchItunesSuggestions(query),
-  { refuse: { ok: false, results: [] } })
-
-ipc.handle('itunes-album-tracks', async (_event, collectionId: number) => itunesAlbumTracks(collectionId),
-  { refuse: { ok: false, tracks: [] } })
 
 ipc.handle('load-metadata-overrides', async () => {
   // 4.5.0-106: served from in-memory cache after first load (≤1ms vs the
@@ -13567,6 +9586,7 @@ async function applyMetadataOverrideInternal(trackId: number, field: string, val
 }
 
 ipc.handle('save-metadata-override', async (_event, trackId: number, field: string, value: string, fingerprint?: string) => {
+  if (suppressListeningWrites() && (field === 'playCount' || field === 'lastPlayedAt' || field === 'skipCount')) return { ok: true, suppressed: 'dev-review' }
   const lockReason = isSaveLocked()
   if (lockReason) {
     console.warn(`[save-metadata-override] refused (saves locked): ${lockReason}`)
@@ -13646,7 +9666,7 @@ ipc.handle('save-metadata-override', async (_event, trackId: number, field: stri
     // override returns. The chain itself catches its own errors and
     // logs, so this await never throws — worst case the IPC adds a
     // few ms of NAS round-trip.
-    await writeMobileStarSidecar(trackId, Number(value) > 0)
+    await mobileReadsApi.writeMobileStarSidecar(trackId, Number(value) > 0)
   }
 
   // 4.5.0-51: artwork-key migration on artist/album edit. When the user
@@ -13988,353 +10008,25 @@ ipc.handle('refresh-file-sizes', async (event) => {
   }
 }, { refuse: REFUSED_SENDER })
 
-// Normalize an artist/album string for strict matching: drop edition
-// parens/brackets, a leading "the", and collapse whitespace.
-function normalizeArtTerm(s: string): string {
-  return s.toLowerCase()
-    .replace(/\s*\(.*?\)\s*/g, ' ')
-    .replace(/\s*\[.*?\]\s*/g, ' ')
-    .replace(/^the\s+/, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
 
-// Deezer album art search (shared by artwork fetcher and recommendations).
-//
-// 4.4.57 — STRICT matching. Rule: "auto-fetched art must be completely
-// accurate, or nothing." The old scoring accepted an album-title match
-// even when the artist was completely wrong — an exact album-title hit
-// scored 20, the pass threshold was 8 — so every "Greatest Hits" /
-// "Live" / short common title pulled some random artist's cover. Now
-// the artist must match EXACTLY and the album must match exactly (after
-// normalization) or be a clean prefix either way. Anything less → null
-// → the caller shows a placeholder instead of a wrong cover.
-async function searchDeezerArt(query: string, artistLower: string, albumLower: string): Promise<string | null> {
-  const res = await fetch(`https://api.deezer.com/search/album?q=${encodeURIComponent(query)}&limit=10`)
-  if (!res.ok) return null
-  const data = await res.json() as { data?: { title?: string; artist?: { name?: string }; cover_xl?: string }[] }
-  if (!data.data || data.data.length === 0) return null
+// ── V5 Live Concert Mode ── (extracted to ipc/live-sets-ipc.ts, 6.0 Phase 1)
+registerLiveSetsIpc(ipc, {
+  getMusicDir: () => MUSIC_DIR,
+  liveSetsCache,
+  artworkHash,
+  loadArtworkIndex,
+  saveArtworkIndex,
+})
 
-  const wantArtist = normalizeArtTerm(artistLower)
-  const wantAlbum = normalizeArtTerm(albumLower)
+// Artwork IPC extracted to ipc/artwork-ipc.ts (6.0 Phase 1).
+registerArtworkIpc(ipc, {
+  getMusicDir: () => MUSIC_DIR,
+  sendToRenderer,
+  getMount: () => detectedIpodMount,
+  getMainWindow: () => mainWindow,
+  liveSetsCache,
+})
 
-  for (const r of data.data) {
-    if (!r.cover_xl) continue
-    const rArtist = normalizeArtTerm(r.artist?.name || '')
-    const rAlbum = normalizeArtTerm(r.title || '')
-    // Artist MUST match exactly — a wrong artist is a wrong cover, period.
-    if (rArtist !== wantArtist) continue
-    // Album: exact, or a clean prefix either way (covers an edition
-    // suffix the paren/bracket strip didn't catch).
-    const albumOk = rAlbum === wantAlbum
-      || (wantAlbum.length >= 3 && (rAlbum.startsWith(wantAlbum) || wantAlbum.startsWith(rAlbum)))
-    if (albumOk) return r.cover_xl
-  }
-  return null
-}
-
-// Album artwork
-ipc.handle('fetch-album-art', async (_event, artist: string, album: string, force?: boolean) => {
-  const dir = getArtworkDir()
-  await mkdir(dir, { recursive: true })
-  const key = `${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`
-  const hash = artworkHash(artist, album)
-  const filePath = join(dir, `${hash}.jpg`)
-
-  const index = await loadArtworkIndex()
-
-  // 4.4.57 — user-uploaded artwork is sacred. If the user has locked
-  // this album's art (via set-custom-artwork), NEVER overwrite it — not
-  // on an auto-fetch, not even on a forced re-fetch. To replace it the
-  // user must explicitly remove it first (remove-artwork clears the lock).
-  const locks = await loadArtworkLocks()
-  if (locks.has(key)) {
-    return { ok: true, key, hash: index[key] || hash }
-  }
-
-  // Use cached version unless force re-fetch
-  if (index[key] && !force) {
-    return { ok: true, key, hash: index[key] }
-  }
-
-  const artistLower = artist.toLowerCase().trim()
-  const albumLower = album.toLowerCase().trim()
-
-  try {
-    // 4.3.0: Cover Art Archive first — higher quality than Deezer when
-    // we can match a MusicBrainz release. Falls through to Deezer on
-    // miss so existing behavior is preserved.
-    let artUrl: string | null = null
-    const mbid = await getMusicBrainzReleaseMbid(artist, album)
-    if (mbid) {
-      const candidate = getCoverArtUrlByMbid(mbid)
-      // HEAD-check the URL — Cover Art Archive returns 404 when the
-      // release exists in MusicBrainz but no front art has been uploaded.
-      try {
-        const head = await fetch(candidate, { method: 'HEAD', signal: AbortSignal.timeout(5000), redirect: 'follow' })
-        if (head.ok) artUrl = candidate
-      } catch { /* fall through to Deezer */ }
-    }
-    if (!artUrl) {
-      artUrl = await searchDeezerArt(`${artist} ${album}`, artistLower, albumLower)
-    }
-    if (!artUrl) {
-      artUrl = await searchDeezerArt(album, artistLower, albumLower)
-    }
-
-    if (!artUrl) return { ok: false, error: 'No matching artwork found' }
-
-    const imgRes = await fetch(artUrl, { redirect: 'follow' })
-    if (!imgRes.ok) return { ok: false, error: 'Failed to download image' }
-    const imgBuf = Buffer.from(await imgRes.arrayBuffer())
-    invalidateArtBytes(hash)
-    await writeFile(filePath, imgBuf)
-
-    // Append timestamp so renderer sees a new hash and re-renders the image
-    const versionedHash = `${hash}_${Date.now()}`
-    index[key] = versionedHash
-    await saveArtworkIndex(index)
-    return { ok: true, key, hash: versionedHash }
-  } catch (err: unknown) {
-    const msg = safeIpcError(err, 'api-failed')
-    return { ok: false, error: msg }
-  }
-}, { refuse: REFUSED_SENDER })
-
-// 4.5.0-79 — verification IPC. Returns the count of user-locked
-// covers so renderer / About panel can display "N covers locked."
-ipc.handle('get-artwork-lock-count', async (): Promise<{ ok: boolean; count: number }> => {
-  try {
-    const locks = await loadArtworkLocks()
-    return { ok: true, count: locks.size }
-  } catch {
-    return { ok: false, count: 0 }
-  }
-}, { public: true })
-
-ipc.handle('set-custom-artwork', async (_event, artist: string, album: string, imagePath: string) => {
-  try {
-    const dir = getArtworkDir()
-    await mkdir(dir, { recursive: true })
-    const key = `${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`
-    const hash = artworkHash(artist, album)
-    const destPath = join(dir, `${hash}.jpg`)
-
-    invalidateArtBytes(hash)
-    // Convert to JPEG using macOS sips (handles PNG, TIFF, BMP, GIF, etc.)
-    const ext = imagePath.slice(imagePath.lastIndexOf('.')).toLowerCase()
-    if (ext === '.jpg' || ext === '.jpeg') {
-      await copyFile(imagePath, destPath)
-    } else {
-      const { execFile } = await import('child_process')
-      const { promisify } = await import('util')
-      const execP = promisify(execFile)
-      const tmpPath = destPath + '.tmp' + ext
-      await copyFile(imagePath, tmpPath)
-      await execP('sips', ['-s', 'format', 'jpeg', tmpPath, '--out', destPath])
-      await unlink(tmpPath).catch(() => {})
-    }
-
-    // Append timestamp so renderer sees a new hash and re-renders the image
-    const versionedHash = `${hash}_${Date.now()}`
-    const index = await loadArtworkIndex()
-    index[key] = versionedHash
-    await saveArtworkIndex(index)
-    // 4.4.57 — the user chose this cover: lock it so no auto-fetch path
-    // (online fetcher, embedded-art extraction, forced re-fetch) ever
-    // overwrites it.
-    await setArtworkLock(key, true)
-    // 4.5.0-80 — defense layer 3: copy the locked JPG into
-    // locked-backup/ so accidental deletion of the main file is
-    // recoverable at next launch. Best-effort; failure here doesn't
-    // block the set operation (the main file + lock + sidecar are
-    // already in place).
-    try {
-      await mkdir(getArtworkLockedBackupDir(), { recursive: true })
-      await copyFile(destPath, join(getArtworkLockedBackupDir(), `${hash}.jpg`))
-    } catch (err) {
-      console.warn('[artwork-lock-backup] copy failed (continuing):', err instanceof Error ? err.message : err)
-    }
-    // 4.5.0-55 — write sidecar so disk is fully self-describing.
-    try {
-      const meta = {
-        artist: artist.trim(),
-        album: album.trim(),
-        key,
-        source: 'user-custom',
-        bytes: (await stat(destPath)).size,
-        importedAt: new Date().toISOString(),
-      }
-      await writeFile(join(dir, `${hash}.meta.json`), JSON.stringify(meta, null, 2), 'utf-8')
-    } catch (err) {
-      console.warn('[artwork] sidecar write failed (continuing):', err instanceof Error ? err.message : err)
-    }
-    return { ok: true, key, hash: versionedHash }
-  } catch (err) {
-    return { ok: false, error: safeIpcError(err, 'io-failed') }
-  }
-}, { refuse: REFUSED_SENDER })
-
-// 4.4.12: one-shot embedded-art backfill. Recovers art for tracks the
-// user imported BEFORE the import-time extractor landed. Runs once per
-// install (gated by a marker file in userData) — subsequent launches
-// no-op.
-//
-// Why a marker file rather than a per-track flag: the work is
-// idempotent (extractAndSaveEmbeddedArtwork's identity gate skips any
-// track whose album already has art in the index), so we just need to
-// know "have we walked the whole library once on this version?" The
-// marker is the simplest possible expression of that.
-//
-// Workload shape: parseFile is ~10-50ms per track on local SSD. A
-// 5000-track library is roughly 25-250 seconds in the background.
-// Yields between tracks via setImmediate so playback isn't impacted
-// (matches the 4.0.10 worker-yields pattern). The renderer awaits the
-// IPC and dispatches ADD_ARTWORK for each result as the batch progresses
-// via an `artwork-backfill-progress` event.
-function getArtworkBackfillMarkerPath(): string {
-  return join(app.getPath('userData'), 'artwork-backfill-done')
-}
-async function markerExists(p: string): Promise<boolean> {
-  try { await stat(p); return true } catch { return false }
-}
-ipc.handle('artwork-backfill-status', async () => {
-  // "done" once the one-shot pre-4.4.12 embedded backfill has run.
-  const done = await markerExists(getArtworkBackfillMarkerPath())
-  return { ok: true, done }
-}, { public: true })
-ipc.handle('backfill-embedded-artwork', async (_event, tracks: Array<{ path: string; artist: string; album: string }>) => {
-  // resolve iPod-style colon paths to absolute file paths
-  const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
-  const pathSep = IS_WINDOWS ? '\\' : '/'
-  const results: Array<{ key: string; hash: string }> = []
-
-  // One extraction pass over the library: seed seenKeys from the existing
-  // index so albums that already have art are skipped — pure pre-4.4.12
-  // embedded backfill. extractAndSaveEmbeddedArtwork's identity gate and
-  // user-lock check keep this strictly non-destructive: it only fills in
-  // albums that have no art at all, and never overwrites.
-  const runPass = async (): Promise<void> => {
-    const seenKeys = new Set<string>(Object.keys(await loadArtworkIndex()))
-    let processed = 0
-    const total = tracks.length
-    const mm = await import('music-metadata')
-    for (const t of tracks) {
-      processed++
-      const cleanArtist = (t.artist || '').trim()
-      const cleanAlbum = (t.album || '').trim()
-      if (!cleanArtist || !cleanAlbum) continue
-      const key = `${cleanArtist.toLowerCase()}|||${cleanAlbum.toLowerCase()}`
-      // Dedupe parseFile work per album within this pass.
-      if (seenKeys.has(key)) continue
-      seenKeys.add(key)
-
-      // Resolve to absolute path. The colon-format path lives in
-      // library.json; the underlying file lives in MUSIC_DIR.
-      const colon = String(t.path || '')
-      if (!colon) continue
-      const abs = colon.startsWith('/') ? colon : join(LOCAL_MOUNT, colon.replace(/:/g, pathSep))
-
-      try {
-        const metadata = await mm.parseFile(abs)
-        const result = await extractAndSaveEmbeddedArtwork(
-          metadata.common.picture as ParsedPicture[] | undefined,
-          cleanArtist,
-          cleanAlbum,
-        )
-        if (result) results.push(result)
-      } catch (err) {
-        // parseFile can fail on weird codecs / inaccessible files.
-        // Best-effort — log and move on; never block.
-        console.warn(`[artwork-backfill] parseFile failed for ${abs}:`, err instanceof Error ? err.message : err)
-      }
-
-      // Progress + cooperative yield — give the audio decoder a thread
-      // tick between every parseFile (the 4.0.10 "playback wins" rule).
-      if (processed % 25 === 0) {
-        mainWindow?.webContents.send('artwork-backfill-progress', { processed, total })
-      }
-      await new Promise(resolve => setImmediate(resolve))
-    }
-  }
-
-  const writeMarker = async (markerPath: string): Promise<void> => {
-    try {
-      await mkdir(app.getPath('userData'), { recursive: true })
-      await writeFile(markerPath, `done ${new Date().toISOString()}\n`, 'utf-8')
-    } catch (err) {
-      console.warn('[artwork-backfill] failed to write marker (will re-run next launch):', err instanceof Error ? err.message : err)
-    }
-  }
-
-  try {
-    // Pass 1 — original embedded backfill for pre-4.4.12 imports. One-shot.
-    if (!(await markerExists(getArtworkBackfillMarkerPath()))) {
-      await runPass()
-      await writeMarker(getArtworkBackfillMarkerPath())
-    }
-  } catch (err) {
-    return { ok: false, error: safeIpcError(err, 'io-failed'), artwork: results }
-  }
-
-  mainWindow?.webContents.send('artwork-backfill-progress', { processed: tracks.length, total: tracks.length })
-  return { ok: true, artwork: results }
-}, { refuse: REFUSED_SENDER })
-
-ipc.handle('remove-artwork', async (_event, artist: string, album: string, force?: boolean) => {
-  try {
-    const key = `${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`
-    // 4.5.0-80 — defense layer 4: refuse to silently nuke a user-
-    // locked cover. A stray context-menu click can't undo hand-set
-    // artwork anymore; caller must pass force:true (UI shows a
-    // confirmation dialog first).
-    const locks = await loadArtworkLocks()
-    if (locks.has(key) && !force) {
-      return { ok: false, locked: true, error: 'This cover is user-locked. Pass force:true to remove.' }
-    }
-    const hash = artworkHash(artist, album)
-    const dir = getArtworkDir()
-    const filePath = join(dir, `${hash}.jpg`)
-    const sidecarPath = join(dir, `${hash}.meta.json`)
-    const backupPath = join(getArtworkLockedBackupDir(), `${hash}.jpg`)
-
-    await unlink(filePath).catch(() => {})
-    // 4.5.0-55 — sidecar cleanup so disk stays consistent.
-    await unlink(sidecarPath).catch(() => {})
-    // 4.5.0-80 — also remove the locked-backup copy (only when forced
-    // removal of a previously-locked cover). Without this, a
-    // re-applied lock for the same (artist, album) would silently
-    // re-resurrect the OLD cover from the backup.
-    if (locks.has(key)) await unlink(backupPath).catch(() => {})
-
-    const index = await loadArtworkIndex()
-    delete index[key]
-    await saveArtworkIndex(index)
-    // 4.4.57 — removing the art also clears any user-lock, so the user
-    // can auto-fetch fresh art for this album again.
-    await setArtworkLock(key, false)
-    return { ok: true, key }
-  } catch (err) {
-    return { ok: false, error: safeIpcError(err, 'io-failed') }
-  }
-}, { refuse: REFUSED_SENDER })
-
-ipc.handle('choose-artwork-file', async () => {
-  if (!mainWindow) return { ok: false }
-  const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Choose Album Artwork',
-    filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'tiff', 'bmp', 'gif', 'webp'] }],
-    properties: ['openFile'],
-  })
-  if (result.canceled || result.filePaths.length === 0) return { ok: false }
-  return { ok: true, path: result.filePaths[0] }
-}, { refuse: { ok: false } })
-
-// Read-only: return the grounded lyrics for a track from the lyrics.json
-// sidecar (fetched by scripts/lyrics-fetch.mjs). Get Info's Lyrics section
-// self-fetches through this so the modal's props interface stays untouched
-// (one of its 7 call sites is the do-not-touch GenresView). A genuine miss /
-// instrumental / not-yet-fetched all return no text — the UI shows "No lyrics".
 ipc.handle('get-track-lyrics', async (_e, trackId: number): Promise<{ ok: boolean; plain?: string; synced?: string; instrumental?: boolean }> => {
   try {
     const store = await lyricsCache.get()
@@ -14346,727 +10038,22 @@ ipc.handle('get-track-lyrics', async (_e, trackId: number): Promise<{ ok: boolea
   }
 }, { public: true })
 
-ipc.handle('load-artwork-map', async () => {
-  const index = await loadArtworkIndex()
-  // Self-heal from synced .meta.json sidecars so custom art (concert posters,
-  // user covers) that arrived via a deploy/sync resolves even though index.json
-  // didn't travel. Persist + refresh so it's durable and the next boot is fast.
-  if (await mergeArtworkSidecarsIntoIndex(index)) {
-    artworkIndexMem = index
-    void saveArtworkIndex(index)
-    scheduleArtworkLookupRebuild(index)
-  }
-  return { ok: true, map: index }
-}, { public: true })
 
-// ─────────────────────────────────────────────────────────────────────
-// V5 Live Concert Mode — merge a declared live album into one gapless
-// ALAC "live set" + sidecar cue data. See src/main/live-set-merge.ts
-// for the engine; these handlers own IPC, path conversion, artwork
-// aliasing, and the sidecar. The renderer owns the import + library
-// steps (same division of labor as CD rip).
-// ─────────────────────────────────────────────────────────────────────
+// ── CD Drive Detection & Import ── (extracted to ipc/cd-ipc.ts, 6.0 Phase 1)
+registerCdIpc(ipc, {
+  getMusicDir: () => MUSIC_DIR,
+  getMount: () => detectedIpodMount,
+  computeAudioFingerprint,
+  enqueueAnalysisForImportedTrack,
+  enqueueStreamConvert,
+  prewarmAlacCache: (paths) => prewarmAlacCache(paths),
+  readStreamSource,
+  registerKnownCodec: (path, mtime, codec) => registerKnownCodec(path, mtime, codec),
+  sendToRenderer,
+})
 
-function liveSetScratchDir(): string {
-  return join(STATE_DIR, 'live-set-scratch')
-}
-
-ipc.handle('load-live-sets', async () => {
-  const sets = await liveSetsCache.get()
-  return { ok: true, sets }
-}, { public: true })
-
-ipc.handle('save-live-set', async (_e, albumKey: string, entry: LiveSetEntry) => {
-  if (!albumKey || !entry || typeof entry.mergedTrackId !== 'number' || !Array.isArray(entry.cues)) {
-    return { ok: false, error: 'invalid live-set entry' }
-  }
-  await liveSetsCache.update((sets) => ({ ...sets, [albumKey]: entry }))
-  return { ok: true }
-}, { refuse: REFUSED_SENDER })
-
-ipc.handle('remove-live-set', async (_e, albumKey: string) => {
-  await liveSetsCache.update((sets) => {
-    const next = { ...sets }
-    delete next[albumKey]
-    return next
-  })
-  return { ok: true }
-}, { refuse: REFUSED_SENDER })
-
-// Concert crowd ambience (LC-7): serve the short "that night's crowd" clip
-// extracted from the show's own between-song gap. Stored per merged-track-id in
-// userData/concert-crowd/<id>.m4a. Returns base64 (renderer makes a Blob URL) or
-// null when a show has no clip — the crowd layer then simply does nothing.
-ipc.handle('get-concert-crowd', async (_e, mergedTrackId: number): Promise<string | null> => {
-  try {
-    const p = join(app.getPath('userData'), 'concert-crowd', `${mergedTrackId}.m4a`)
-    const buf = await readFile(p)
-    return buf.toString('base64')
-  } catch { return null }
-}, { public: true })
-// Crowd tuning knobs (level / rise / tail) — persisted so the user's by-ear dial-in sticks.
-function crowdTuningPath(): string { return join(app.getPath('userData'), 'concert-crowd-tuning.json') }
-ipc.handle('save-crowd-tuning', async (_e, t: Record<string, number>): Promise<{ ok: boolean }> => {
-  try { await writeFile(crowdTuningPath(), JSON.stringify(t, null, 2), 'utf-8') } catch { /* best effort */ }
-  return { ok: true }
-}, { refuse: { ok: false } })
-ipc.handle('load-crowd-tuning', async (): Promise<Record<string, number> | null> => {
-  try { return JSON.parse(await readFile(crowdTuningPath(), 'utf-8')) } catch { return null }
-}, { public: true })
-
-ipc.handle('live-set-merge', async (
-  event,
-  tracks: Array<{ id: number; title: string; artist: string; path: string; durationMs: number }>,
-  album: { name: string; artist: string; genre?: string; year?: string | number },
-) => {
-  const { mergeLiveSet } = await import('./live-set-merge')
-  // Colon-notation library paths → absolute, same conversion the
-  // save-library unlink path uses.
-  const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
-  const pathSep = IS_WINDOWS ? '\\' : '/'
-  const inputs = tracks.map((t) => ({
-    id: t.id,
-    title: t.title,
-    artist: t.artist,
-    durationMs: t.durationMs,
-    absPath: join(LOCAL_MOUNT, String(t.path || '').replace(/:/g, pathSep)),
-  }))
-  try {
-    const result = await mergeLiveSet(inputs, album, liveSetScratchDir(), (p) => {
-      event.sender.send('live-set-progress', p)
-    })
-    // Artwork alias: the "(Live Set)" album inherits the source album's
-    // cover — same JPG on disk, second index key. Best-effort; a missing
-    // source entry just means the resolver's fallback chain runs later.
-    try {
-      const index = await loadArtworkIndex()
-      const srcKey = `${album.artist.toLowerCase().trim()}|||${album.name.toLowerCase().trim()}`
-      const liveKey = `${album.artist.toLowerCase().trim()}|||${`${album.name} (Live Set)`.toLowerCase().trim()}`
-      if (index[srcKey] && !index[liveKey]) {
-        await saveArtworkIndex({ ...index, [liveKey]: index[srcKey] })
-      }
-    } catch (err) {
-      console.warn('[live-set] artwork alias failed (non-fatal):', err instanceof Error ? err.message : err)
-    }
-    return { ok: true, ...result }
-  } catch (err) {
-    return { ok: false, error: safeIpcError(err, 'unknown') }
-  }
-}, { refuse: REFUSED_SENDER })
-
-// Post-import cleanup of the merged source file. Identity-gated: only
-// paths inside OUR scratch dir are deletable — a confused caller can't
-// aim this at library audio.
-ipc.handle('live-set-cleanup', async (_e, absPath: string) => {
-  const scratch = liveSetScratchDir()
-  const normalized = String(absPath || '')
-  if (!normalized.startsWith(scratch + (IS_WINDOWS ? '\\' : '/'))) {
-    return { ok: false, error: 'path outside live-set scratch dir' }
-  }
-  const { rm } = await import('fs/promises')
-  await rm(normalized, { force: true }).catch(() => {})
-  return { ok: true }
-}, { refuse: REFUSED_SENDER })
-
-/**
- * 4.5.0-51 — Authoritative artwork resolver.
- *
- * The renderer's in-memory artworkMap is one source of truth, but it
- * drifts (Get Info edits, tag changes after import, partial migrations).
- * When the renderer can't find art for an (artist, album) pair, it
- * delegates to this IPC, which does the FULL chain:
- *
- *   1. Exact JSON key (`${artist.toLowerCase().trim()}|||${album...}`)
- *   2. Normalized JSON key — parens/diacritics/etc. stripped on both sides
- *   3. Recompute artworkHash from CURRENT strings; check if the file
- *      exists on disk (catches cases where the JSON index entry was lost
- *      but the JPG is still sitting there)
- *   4. Normalized-string hash variants checked on disk
- *
- * Returns the matching hash (versioned if present in the index) or null.
- * Renderer caches the result via ADD_ARTWORK so future lookups are sync.
- */
-async function fileExists(absPath: string): Promise<boolean> {
-  try { await stat(absPath); return true } catch { return false }
-}
-
-ipc.handle('resolve-artwork', async (_event, artist: string, album: string): Promise<{ ok: boolean; hash: string | null; source?: 'exact' | 'normalized' | 'disk-hash' | 'disk-normalized' }> => {
-  if (!artist || !album) return { ok: true, hash: null }
-  const resolveKey = `${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`
-  if (resolveArtworkCache.has(resolveKey)) {
-    return { ok: true, hash: resolveArtworkCache.get(resolveKey)! }
-  }
-  const dir = getArtworkDir()
-  const index = await loadArtworkIndex()
-  if (artworkLookupRebuildPromise) {
-    await artworkLookupRebuildPromise.catch(() => {})
-  }
-
-  // 1. Exact JSON key
-  const exactKey = `${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`
-  if (index[exactKey]) {
-    const bareHash = String(index[exactKey]).replace(/_\d+$/, '')
-    if (await fileExists(join(dir, `${bareHash}.jpg`))) {
-      resolveArtworkCache.set(resolveKey, index[exactKey])
-      return { ok: true, hash: index[exactKey], source: 'exact' }
-    }
-  }
-
-  // 2. Normalized JSON key — O(1) via prebuilt index (was O(n) scan).
-  const nArtist = normalizeArtworkPartServer(artist)
-  const nAlbum = normalizeArtworkPartServer(album)
-  const wantedNorm = `${nArtist}|||${nAlbum}`
-  const normHit = artworkNormIndexMem?.get(wantedNorm)
-  if (normHit) {
-    const bareHash = String(normHit).replace(/_\d+$/, '')
-    if (await fileExists(join(dir, `${bareHash}.jpg`))) {
-      resolveArtworkCache.set(resolveKey, normHit)
-      return { ok: true, hash: normHit, source: 'normalized' }
-    }
-  }
-
-  // 3. Compute the hash from CURRENT strings (post-Get-Info edit case
-  // where the JSON entry was never updated but the file IS on disk
-  // under a key we can recompute).
-  const directHash = artworkHash(artist, album)
-  if (await fileExists(join(dir, `${directHash}.jpg`))) {
-    resolveArtworkCache.set(resolveKey, directHash)
-    return { ok: true, hash: directHash, source: 'disk-hash' }
-  }
-
-  // 4. Normalized-string hash variants — try hashing the normalized
-  // (parens-stripped, diacritics-folded) artist+album. Catches the
-  // case where a track was imported with "(Remastered)" in the title
-  // and the user later cleaned it up, OR vice versa.
-  const normalizedHash = createHash('md5')
-    .update(`${nArtist}|||${nAlbum}`)
-    .digest('hex')
-  if (await fileExists(join(dir, `${normalizedHash}.jpg`))) {
-    resolveArtworkCache.set(resolveKey, normalizedHash)
-    return { ok: true, hash: normalizedHash, source: 'disk-normalized' }
-  }
-
-  // 5. Sidecar index — O(1) lookup (was linear readdir+parse per miss).
-  const sidecarHash = artworkSidecarNormMem?.get(wantedNorm)
-  if (sidecarHash && await fileExists(join(dir, `${sidecarHash}.jpg`))) {
-    resolveArtworkCache.set(resolveKey, sidecarHash)
-    return { ok: true, hash: sidecarHash, source: 'disk-normalized' }
-  }
-
-  resolveArtworkCache.set(resolveKey, null)
-  return { ok: true, hash: null }
-}, { public: true })
-
-/**
- * 4.5.0-51 — Get Info migration. When the user changes a track's artist
- * or album in Get Info, copy the existing artwork map entry to the NEW
- * key so the cover follows the track. We COPY (don't move) so other
- * tracks under the original key keep their art too.
- */
-ipc.handle('migrate-artwork-key', async (_event, oldArtist: string, oldAlbum: string, newArtist: string, newAlbum: string) => {
-  if (!oldArtist || !oldAlbum || !newArtist || !newAlbum) return { ok: false }
-  const oldKey = `${oldArtist.toLowerCase().trim()}|||${oldAlbum.toLowerCase().trim()}`
-  const newKey = `${newArtist.toLowerCase().trim()}|||${newAlbum.toLowerCase().trim()}`
-  if (oldKey === newKey) return { ok: true, migrated: false }
-  const index = await loadArtworkIndex()
-  if (!index[oldKey]) return { ok: true, migrated: false }
-  if (index[newKey]) return { ok: true, migrated: false }  // don't clobber an existing entry under the new key
-  index[newKey] = index[oldKey]
-  await saveArtworkIndex(index)
-  return { ok: true, migrated: true, hash: index[newKey] }
-}, { refuse: REFUSED_SENDER })
-
-// ── CD Drive Detection & Import ──
-
-async function detectAudioCD(): Promise<{ hasCd: boolean; volumeName?: string; volumePath?: string; trackCount?: number }> {
-  try {
-    // Ask the platform helper whether any optical drive has media.
-    const hasMedia = await hasOpticalMedia()
-    if (!hasMedia) return { hasCd: false }
-
-    // Now find the mount point that contains the audio CD tracks.
-    // macOS: CDs mount as AIFF files under /Volumes/DISC_NAME
-    // Windows: CDs appear as a drive letter with .cda placeholder files
-    const { readdir: readdirFS } = await import('fs/promises')
-    const mounts = await listMountPoints()
-
-    // Volumes to skip (the iPod and the system drive).
-    const skipMounts = new Set<string>()
-    if (detectedIpodMount) skipMounts.add(detectedIpodMount)
-    if (IS_MAC) {
-      skipMounts.add('/Volumes/Macintosh HD')
-      skipMounts.add('/Volumes/Macintosh HD - Data')
-    }
-
-    for (const mountPath of mounts) {
-      if (skipMounts.has(mountPath)) continue
-      try {
-        const files = await readdirFS(mountPath)
-        // macOS exposes tracks as .aiff/.aif, Windows exposes them as .cda.
-        const audioFiles = files.filter(f => {
-          const lower = f.toLowerCase()
-          return lower.endsWith('.aiff') || lower.endsWith('.aif') || lower.endsWith('.cda')
-        })
-        if (audioFiles.length >= 2) {
-          return {
-            hasCd: true,
-            volumeName: volumeNameFromMount(mountPath),
-            volumePath: mountPath,
-            trackCount: audioFiles.length,
-          }
-        }
-      } catch { /* not readable */ }
-    }
-
-    // Disc present but no track files visible (could be a data disc).
-    return { hasCd: false }
-  } catch {
-    return { hasCd: false }
-  }
-}
-
-ipc.handle('check-cd-drive', async () => {
-  return detectAudioCD()
-}, { public: true })
-
-ipc.handle('get-cd-info', async () => {
-  const cd = await detectAudioCD()
-  if (!cd.hasCd || !cd.volumePath) {
-    return { ok: false, error: 'No audio CD found' }
-  }
-
-  try {
-    const { readdir: readdirFS } = await import('fs/promises')
-    const mm = await import('music-metadata')
-
-    const files = await readdirFS(cd.volumePath)
-    const aiffFiles = files
-      .filter(f => f.toLowerCase().endsWith('.aiff') || f.toLowerCase().endsWith('.aif'))
-      .sort((a, b) => {
-        const numA = parseInt(a) || 0
-        const numB = parseInt(b) || 0
-        return numA - numB
-      })
-
-    const tracks: { number: number; title: string; duration: number; filePath: string }[] = []
-    for (let i = 0; i < aiffFiles.length; i++) {
-      const filePath = join(cd.volumePath, aiffFiles[i])
-      let title = aiffFiles[i].replace(/\.(aiff|aif)$/i, '')
-      let duration = 0
-
-      try {
-        const metadata = await mm.parseFile(filePath)
-        if (metadata.common.title) title = metadata.common.title
-        duration = Math.round((metadata.format.duration || 0) * 1000)
-      } catch { /* use filename as title */ }
-
-      tracks.push({ number: i + 1, title, duration, filePath })
-    }
-
-    // Look up metadata from MusicBrainz using TOC
-    let artist = ''
-    let album = cd.volumeName || 'Audio CD'
-    let year = ''
-    let genre = ''
-
-    if (tracks.length > 0) {
-      const durations = tracks.map(t => t.duration)
-      const framesPerSecond = 75
-      let offset = 150 // 2-second pregap
-      const offsets: number[] = []
-      for (let i = 0; i < durations.length; i++) {
-        offsets.push(offset)
-        offset += Math.round((durations[i] / 1000) * framesPerSecond)
-      }
-      const leadOut = offset
-      const toc = `1 ${durations.length} ${leadOut} ${offsets.join(' ')}`
-
-      try {
-        // Include release-groups + tags so we can fall back to the group's
-        // first-release date when a specific release has no date, and pull
-        // a genre from MusicBrainz release / release-group tags.
-        const url = `https://musicbrainz.org/ws/2/discid/-?toc=${encodeURIComponent(toc)}&fmt=json&cdstubs=no&inc=recordings+artist-credits+release-groups+tags`
-        const res = await fetch(url, {
-          headers: { 'User-Agent': `JakeTunes/${app.getVersion()} (jaketunes@example.com)` }
-        })
-        if (res.ok) {
-          type MBTag = { name: string; count?: number }
-          const data = await res.json() as {
-            releases?: Array<{
-              id: string
-              title: string
-              date?: string
-              'artist-credit'?: Array<{ artist: { name: string } }>
-              media?: Array<{ tracks?: Array<{ position: number; title: string }> }>
-              'release-group'?: { 'first-release-date'?: string; tags?: MBTag[] }
-              tags?: MBTag[]
-            }>
-          }
-          const releases = data.releases || []
-          // Pick release with matching track count
-          const release = releases.find(r => {
-            const disc = (r.media || [])[0]
-            return disc?.tracks?.length === tracks.length
-          }) || releases[0]
-
-          if (release) {
-            artist = release['artist-credit']?.[0]?.artist?.name || ''
-            album = release.title || album
-            // Prefer the specific release date; fall back to the
-            // release-group's first-release-date (better coverage for
-            // compilations / remasters whose release has no date).
-            year = release.date?.split('-')[0]
-              || release['release-group']?.['first-release-date']?.split('-')[0]
-              || ''
-
-            // Genre from top-tagged tag name. Release-level tags are
-            // usually more specific; fall back to release-group tags.
-            const pickTopTag = (tags?: MBTag[]): string => {
-              if (!tags || tags.length === 0) return ''
-              const sorted = [...tags].sort((a, b) => (b.count || 0) - (a.count || 0))
-              const name = sorted[0]?.name || ''
-              // Title-case it so "rock" → "Rock", "hip hop" → "Hip Hop"
-              return name ? name.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') : ''
-            }
-            genre = pickTopTag(release.tags) || pickTopTag(release['release-group']?.tags) || ''
-
-            const mbTracks = (release.media || [])[0]?.tracks || []
-            for (let i = 0; i < Math.min(tracks.length, mbTracks.length); i++) {
-              if (mbTracks[i].title) tracks[i].title = mbTracks[i].title
-            }
-          }
-        }
-      } catch { /* MusicBrainz lookup failed, continue with defaults */ }
-    }
-
-    return { ok: true, volumeName: cd.volumeName, volumePath: cd.volumePath, artist, album, year, genre, tracks }
-  } catch (err) {
-    return { ok: false, error: safeIpcError(err, 'io-failed') }
-  }
-}, { public: true })
-
-// Stage a CDDA track to local disk with LARGE sequential reads before
-// converting. cddafs punishes small reads — measured on a real slow disc
-// (As We Bop, MCA 1988, GU90N drive): ffmpeg reading the mount directly
-// averaged ~150 KB/s (341s for one 4:50 track), while 4MB block reads
-// sustained 417-587 KB/s across the disc. Staging first cuts a full-CD rip
-// from ~40+ minutes to ~12-14 on that hardware; converting the local copy
-// then takes seconds per track. Each individual read gets a 120s guard so
-// a genuinely dead drive errors out instead of hanging the rip forever.
-async function stageCdTrackLocally(src: string, dest: string): Promise<void> {
-  const srcH = await open(src, 'r')
-  try {
-    const dstH = await open(dest, 'w')
-    try {
-      const buf = Buffer.allocUnsafe(4 * 1024 * 1024)
-      while (true) {
-        const read = srcH.read(buf, 0, buf.length, -1)
-        const guard = new Promise<never>((_, reject) => {
-          const t = setTimeout(() => reject(new Error('CD read stalled (no data for 120s) — drive or disc problem')), 120000)
-          void read.finally(() => clearTimeout(t))
-        })
-        const { bytesRead } = await Promise.race([read, guard])
-        if (bytesRead <= 0) break
-        await dstH.write(buf, 0, bytesRead)
-      }
-    } finally {
-      await dstH.close()
-    }
-  } finally {
-    await srcH.close()
-  }
-}
-
-ipc.handle('rip-cd-tracks', async (_e,
-  cdTracks: Array<{ number: number; title: string; duration: number; filePath: string }>,
-  metadata: { artist: string; album: string; year: string; genre: string },
-  nextId: number,
-  format?: string
-) => {
-  const imported: Array<Record<string, unknown>> = []
-
-  // The renderer passes `nextId = max(library.id, max-imported-NNNN-in-paths)
-  // + 1` (App.tsx useEffect, fixed Apr 26). The on-disk scan below is the
-  // belt-and-suspenders second line of defense: if disk has orphan files
-  // from a prior session that never made it into library.json, or any
-  // other source of drift, `findFreeImportedId` walks forward until it
-  // finds a free slot.
-  //
-  // ⚠️ TWIN: same helper is used by `import-track`'s `importOneFile`.
-  // Centralizes the scan so we don't ship two versions that drift apart.
-  let id = await findFreeImportedId(nextId)
-  if (id !== nextId) {
-    console.warn(`rip-cd-tracks: nextId ${nextId} collides with existing file imported_${nextId}.*; bumped to ${id}`)
-  }
-
-  // Validate and default the format.
-  const validFormats: AudioFormat[] = ['aac-128', 'aac-256', 'aac-320', 'alac', 'aiff', 'wav']
-  const fmt: AudioFormat = validFormats.includes(format as AudioFormat)
-    ? (format as AudioFormat)
-    : 'aac-256'
-  const destExt = extensionForFormat(fmt)
-
-  const cdBatchBaseTime = Date.now()
-  let cdTrackIndex = 0
-
-  for (const cdTrack of cdTracks) {
-    // Re-check before each track in case the previous iteration's id
-    // has now been written and we're about to land on a slot a parallel
-    // process took. Cheap (single stat per ext when no collision).
-    id = await findFreeImportedId(id)
-    const subDir = `F${String(id % 50).padStart(2, '0')}`
-    const destDir = join(MUSIC_DIR, subDir)
-    await mkdir(destDir, { recursive: true })
-
-    const fileName = `imported_${id}${destExt}`
-    const destPath = join(destDir, fileName)
-
-    const stagedPath = join(app.getPath('temp'), `jaketunes-cdstage-${id}.aiff`)
-    try {
-      const yearStr = metadata.year ? String(parseInt(metadata.year, 10) || '') : ''
-      // Read the track off the disc FIRST with big sequential reads (see
-      // stageCdTrackLocally — ~3x faster than letting ffmpeg/afconvert read
-      // the cddafs mount), then convert the local copy. The duration-scaled
-      // watchdog stays as belt-and-suspenders: 4× duration + 2 min, min
-      // 5 min — slow-but-progressing converts finish, hung encoders die.
-      const ripTimeoutMs = Math.max(300000, Math.round((cdTrack.duration || 0) * 1000 * 4) + 120000)
-      await stageCdTrackLocally(cdTrack.filePath, stagedPath)
-      await convertAudio(stagedPath, destPath, fmt, {
-        title: cdTrack.title,
-        artist: metadata.artist,
-        album: metadata.album,
-        albumArtist: metadata.artist,
-        genre: metadata.genre,
-        year: yearStr,
-        trackNumber: cdTrack.number,
-        trackCount: cdTracks.length,
-        discNumber: 1,
-        discCount: 1,
-      }, { timeoutMs: ripTimeoutMs })
-
-      const fileStats = await stat(destPath)
-      const cdTrackTime = new Date(cdBatchBaseTime + cdTrackIndex)
-
-      // Stage 3 ingestion redirect (twin of the importOneFile hook): in
-      // homemini streaming mode, enqueue this non-ALAC rip for background
-      // conversion to a streamed symlink once homemini serves matching bytes.
-      // Fingerprint is computed just for the identity gate; the track's stored
-      // fingerprint is still backfilled later by verifyAndHealTracks as before.
-      if (fmt !== 'alac' && (await readStreamSource()) === 'homemini') {
-        const cdFp = await computeAudioFingerprint(destPath, (cdTrack.duration || 0) * 1000)
-        if (cdFp) void enqueueStreamConvert(`:iPod_Control:Music:${subDir}:${fileName}`, cdFp, Date.now())
-      }
-
-      imported.push({
-        id,
-        title: cdTrack.title,
-        artist: metadata.artist,
-        album: metadata.album,
-        genre: metadata.genre,
-        year: metadata.year ? parseInt(metadata.year, 10) || '' : '',
-        duration: cdTrack.duration,
-        path: `:iPod_Control:Music:${subDir}:${fileName}`,
-        trackNumber: cdTrack.number,
-        trackCount: cdTracks.length,
-        discNumber: 1,
-        discCount: 1,
-        playCount: 0,
-        dateAdded: cdTrackTime.toISOString(),
-        fileSize: fileStats.size,
-        rating: 0,
-        // Brief 031 Phase 4b: same default as the file-import path —
-        // newly-ripped CD tracks land with [artist] as their
-        // contributingArtists. Collab splits stay one-shot.
-        contributingArtists: [metadata.artist || ''],
-      })
-      // BPM/key analysis starts the moment the rip lands — CD rips were the
-      // other road that skipped it.
-      enqueueAnalysisForImportedTrack(imported[imported.length - 1] as unknown as Record<string, unknown>)
-
-      // Send per-track progress to renderer, including the just-imported
-      // track record so the library can add it immediately instead of
-      // waiting for the whole batch to finish.
-      mainWindow?.webContents.send('cd-rip-progress', {
-        current: imported.length,
-        total: cdTracks.length,
-        trackNumber: cdTrack.number,
-        trackTitle: cdTrack.title,
-        track: imported[imported.length - 1],
-      })
-
-      id++
-      cdTrackIndex++
-    } catch (err) {
-      console.error(`Failed to rip track ${cdTrack.number}:`, err)
-      mainWindow?.webContents.send('cd-rip-progress', {
-        current: imported.length,
-        total: cdTracks.length,
-        trackNumber: cdTrack.number,
-        trackTitle: cdTrack.title,
-        error: safeIpcError(err, 'io-failed'),
-      })
-    } finally {
-      await unlink(stagedPath).catch(() => {})
-    }
-  }
-
-  // Resolve the just-imported tracks' on-disk paths once — used for
-  // both pre-warming ALAC transcodes and for pre-registering their
-  // codec with the play handler so first-play doesn't have to ffprobe.
-  const localMount = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
-  const importedAbsPaths = imported.map(t => {
-    const hfs = (t.path as string) || ''
-    const rel = hfs.replace(/^:/, '').replace(/:/g, '/')
-    return join(localMount, rel)
-  }).filter(Boolean)
-
-  // Pre-register codec (we know it — we just wrote it).
-  // 'alac' for lossless rips, 'aac' for AAC 128/256/320.
-  const knownCodec = fmt === 'alac' ? 'alac' : fmt.startsWith('aac-') ? 'aac' : ''
-  if (knownCodec) {
-    for (const p of importedAbsPaths) {
-      try {
-        const s = await stat(p)
-        registerKnownCodec(p, s.mtimeMs, knownCodec)
-      } catch { /* file missing — skip */ }
-    }
-  }
-
-  // If we ripped as ALAC, transcode the play-cache mirror NOW (await).
-  // Same reasoning as importOneFile — user is already in rip-progress
-  // UI; an extra few seconds is invisible. First-play is then instant.
-  if (fmt === 'alac') {
-    await prewarmAlacCache(importedAbsPaths).catch(err => console.warn('pre-warm failed:', err))
-  }
-
-  return { ok: true, tracks: imported }
-}, { refuse: REFUSED_SENDER })
-
-ipc.handle('eject-cd', async () => {
-  try {
-    await ejectOpticalMedia()
-    return { ok: true }
-  } catch (err) {
-    return { ok: false, error: safeIpcError(err, 'io-failed') }
-  }
-}, { refuse: REFUSED_SENDER })
-
-ipc.handle('open-sound-settings', async () => {
-  const { exec } = await import('child_process')
-  if (IS_MAC) {
-    exec('open "x-apple.systempreferences:com.apple.Sound-Settings.extension?output"')
-  } else if (IS_WINDOWS) {
-    // ms-settings:sound is the deep link to Windows 10/11 Sound settings.
-    exec('start ms-settings:sound')
-  }
-}, { refuse: undefined })
-
-ipc.handle('list-audio-devices', async () => {
-  const relPath = audioHelperRelPath()
-  if (!relPath) {
-    // No native helper on this platform — fall back to empty list so UI
-    // gracefully shows "default device" rather than erroring.
-    return { ok: true, devices: [] }
-  }
-  const helperPath = join(
-    app.isPackaged ? process.resourcesPath : app.getAppPath(),
-    relPath
-  )
-  try {
-    const { execFile } = await import('child_process')
-    const { promisify } = await import('util')
-    const execP = promisify(execFile)
-    const { stdout } = await execP(helperPath, ['list'], { timeout: 5000 })
-    return { ok: true, devices: JSON.parse(stdout) }
-  } catch (err) {
-    console.error('[AudioHelper] list failed:', err)
-    return { ok: false, devices: [], error: safeIpcError(err, 'tool-failed') }
-  }
-}, { public: true })
-
-ipc.handle('set-audio-device', async (_e, deviceId: number) => {
-  const relPath = audioHelperRelPath()
-  if (!relPath) {
-    return { ok: false, error: 'Audio device selection is not supported on this platform yet.' }
-  }
-  const helperPath = join(
-    app.isPackaged ? process.resourcesPath : app.getAppPath(),
-    relPath
-  )
-  try {
-    const { execFile } = await import('child_process')
-    const { promisify } = await import('util')
-    const execP = promisify(execFile)
-    const { stdout } = await execP(helperPath, ['set', String(deviceId)], { timeout: 5000 })
-    return JSON.parse(stdout)
-  } catch (err) {
-    console.error('[AudioHelper] set failed:', err)
-    return { ok: false, error: safeIpcError(err, 'tool-failed') }
-  }
-}, { refuse: REFUSED_SENDER })
-
-// ── Bandcamp Store: download → library bridge ──
-// Reuses importOneFile() (dedupe / convert / tag-embed / hashed-folder
-// placement) so Bandcamp purchases route exactly like any other import.
-// Injected into the Bandcamp integration to keep that module decoupled.
-// nextLibraryId / importDownloadedFiles moved to import-pipeline.ts
-// (renovation P1C1); wired via initImportPipeline at startup.
-
-// 4.4.51: microphone-activity watcher for the auto-route-on-call
-// feature. The renderer ARMS this (set-call-watch true) only while
-// music is playing AND the call-route setting is on; main then polls
-// `audio_helper mic-status` every ~3s and fires `call-state-changed`
-// on each true↔false flip. The renderer reacts by routing JakeTunes'
-// OWN audio output (AudioContext.setSinkId) to the configured speaker
-// — the system default output is never touched, so a Teams/Zoom call
-// keeps using whatever the OS has it on. Gated-polling (not always-on)
-// mirrors the 4.4.15 output-device-disconnect watcher.
-let callWatchTimer: ReturnType<typeof setInterval> | null = null
-let lastMicActive: boolean | null = null
-
-async function pollMicStatus(): Promise<void> {
-  const relPath = audioHelperRelPath()
-  if (!relPath) return
-  const helperPath = join(
-    app.isPackaged ? process.resourcesPath : app.getAppPath(),
-    relPath
-  )
-  try {
-    const { execFile } = await import('child_process')
-    const { promisify } = await import('util')
-    const execP = promisify(execFile)
-    const { stdout } = await execP(helperPath, ['mic-status'], { timeout: 4000 })
-    const parsed = JSON.parse(stdout) as { ok?: boolean; micActive?: boolean }
-    const active = !!parsed.micActive
-    if (lastMicActive === null) {
-      // First reading establishes the baseline. If the mic is ALREADY
-      // active when we arm (music started during a call), fire once so
-      // the renderer routes immediately — otherwise stay quiet.
-      lastMicActive = active
-      if (active) mainWindow?.webContents.send('call-state-changed', { onCall: true })
-      return
-    }
-    if (active !== lastMicActive) {
-      lastMicActive = active
-      mainWindow?.webContents.send('call-state-changed', { onCall: active })
-    }
-  } catch {
-    // mic-status failed (helper missing / timeout) — stay quiet, retry next tick.
-  }
-}
-
-ipc.handle('set-call-watch', (_e, armed: boolean) => {
-  if (armed) {
-    if (callWatchTimer) return { ok: true }
-    lastMicActive = null               // re-baseline on (re)arm
-    void pollMicStatus()               // immediate first read
-    callWatchTimer = setInterval(() => { void pollMicStatus() }, 3000)
-  } else {
-    if (callWatchTimer) { clearInterval(callWatchTimer); callWatchTimer = null }
-    lastMicActive = null
-  }
-  return { ok: true }
-}, { refuse: { ok: false } })
+// ── Audio output + call watch ── (extracted to ipc/audio-output-ipc.ts, 6.0 Phase 1)
+registerAudioOutputIpc(ipc, { sendToRenderer })
 
 app.whenReady().then(async () => {
   // Brief 011b: resolve MUSIC_DIR before anything else. IPC handlers and
@@ -15094,7 +10081,7 @@ app.whenReady().then(async () => {
     enqueueAnalysis: (track) => { enqueueAnalysisForImportedTrack(track) },
     prewarmAlacCache,
     trashItem: (abs) => shell.trashItem(abs),
-    emitToRenderer: (channel, payload) => { mainWindow?.webContents.send(channel, payload) },
+    emitToRenderer: (channel, payload) => { sendToRenderer(channel, payload) },
   })
 
   // ── Pass-through eviction (2026-08-15, Jake: "files i download are not
@@ -15108,7 +10095,7 @@ app.whenReady().then(async () => {
       examined: 0, tooYoung: 0, notInLibrary: 0, notOnHomemini: 0,
       hashMismatch: 0, evicted: 0, evictedBytes: 0, errors: 0,
     }
-    if (syncInFlight) {
+    if (syncEngine.isSyncInFlight()) {
       console.log('[evict] skipped — iPod sync in flight (copy source must stay)')
       return empty
     }
@@ -15180,7 +10167,7 @@ app.whenReady().then(async () => {
         await append(join(app.getPath('userData'), 'evictions.log'), line + '\n', 'utf-8')
       },
       now: () => Date.now(),
-      shouldAbort: () => syncInFlight,
+      shouldAbort: () => syncEngine.isSyncInFlight(),
     })
     if (result.evicted > 0 || result.errors > 0) {
       console.log(`[evict] examined=${result.examined} evicted=${result.evicted} (${(result.evictedBytes / 1e6).toFixed(1)}MB) young=${result.tooYoung} noLib=${result.notInLibrary} noRemote=${result.notOnHomemini} mismatch=${result.hashMismatch} errors=${result.errors}`)
@@ -15211,7 +10198,7 @@ app.whenReady().then(async () => {
   // telling the user to restart.
   startNasReconnectWatcher((reason) => {
     try {
-      mainWindow?.webContents.send('state-save-locked', { reason })
+      sendToRenderer('state-save-locked', { reason })
     } catch { /* renderer may not be mounted yet — the lock is still active */ }
   })
   // 4.5.0-91 Phase 2.5 — orphaned-edit detection. When the user makes
@@ -15235,6 +10222,7 @@ app.whenReady().then(async () => {
   // in the background, so local edits (including the nightly brain enrichment)
   // mirror to the NAS without ever surfacing a "go push it" banner.
   setInterval(() => { void autoBackupStateToNas() }, 120_000)
+  startBrainPull(async () => new Set((((await libraryCache.get()) as { tracks?: Array<{ id: number }> }).tracks || []).map((t) => Number(t.id))), nasUp, STATE_FILE_NAMES) // NAS→laptop, never back
   // 4.5: auto-index new songs into RAG (Jake: "every new song to auto index").
   // Boot + every 30s — embeds anything imported that lacks a vector, so RAG /
   // mixes / chat can use it within seconds, not at the nightly trainer pass.
@@ -15543,245 +10531,21 @@ app.whenReady().then(async () => {
       .catch((err) => console.warn('[cynthia-sweep] boot failed:', err instanceof Error ? err.message : err))
   }, 30_000)
 
-  // Cache of transcoded AAC copies of ALAC sources. Chromium can't decode
-  // ALAC, so when the renderer asks for one we detect it and hand back a
-  // cached AAC transcode instead. The source ALAC file is preserved
-  // untouched on disk (the user wants lossless for iPod sync).
-  //
-  // Cache key: first 16 hex chars of sha1(path). Cache entry is stale if
-  // source mtime > cache mtime. Cache lives in userData/play-cache/.
-  const PLAY_CACHE = join(app.getPath('userData'), 'play-cache')
-  await mkdir(PLAY_CACHE, { recursive: true }).catch(() => {})
-
-  // In-flight transcodes, to coalesce concurrent range requests for the
-  // same source file into a single ffmpeg pass.
-  const transcodeInFlight = new Map<string, Promise<string>>()
-
-  // Codec-detection cache. ffprobe is ~200-500ms per call; running it
-  // on every play — even for AAC files that don't need any transcode —
-  // made first-play latency user-visible. Keyed by source path with
-  // the mtime at the time we probed, so the entry is invalidated if
-  // the source file changes.
-  const codecCache = new Map<string, { mtime: number; codec: string }>()
-
-  // Cache file name = <pathHash>-<contentTag>.m4a.
-  //
-  // ⚠️ The content tag is the whole point. This used to be <pathHash>.m4a with
-  // a freshness test of `cache.mtime >= source.mtime`, and that test is not an
-  // identity check — mtime moves BACKWARD all the time. Unzip a Bandcamp
-  // archive and the files carry their original timestamps; rsync -a, Finder
-  // copies and restores from backup all preserve the source mtime. So
-  // replacing a bad file with a good one left the old cache entry looking
-  // "fresh" forever, and the app kept serving the bad audio no matter how many
-  // times the user re-downloaded. That is exactly what happened: an audit
-  // found 11 tracks whose cache disagreed with their source, including two
-  // 30-second preview clips standing in for full songs ("The Sweet Escape",
-  // "Beaches In Tennessee") long after the real files had been put in place.
-  //
-  // Size+mtime as a TAG rather than an ordering has no direction to get wrong:
-  // any replacement changes the tag, which changes the file name, which misses
-  // the cache and re-transcodes. A file with identical size and mtime is the
-  // same file.
-  function cacheNameFor(src: string, size: number, mtimeMs: number): { pathHash: string; file: string } {
-    return {
-      pathHash: pathHashFor(src),
-      file: join(PLAY_CACHE, playCacheName(src, size, mtimeMs)),
-    }
-  }
-
-  // Drop every other cache entry for this source. Because the name encodes
-  // content, a superseded file is dead weight the moment we transcode a new
-  // one — without this the cache would grow one entry per edit, forever.
-  async function evictOtherCacheEntries(pathHash: string, keep: string): Promise<void> {
-    try {
-      const { readdir } = await import('fs/promises')
-      for (const name of await readdir(PLAY_CACHE)) {
-        if (!isEntryFor(name, pathHash)) continue
-        const full = join(PLAY_CACHE, name)
-        if (full === keep) continue
-        await unlink(full).catch(() => {})
-      }
-    } catch { /* cache dir unreadable — nothing to evict */ }
-  }
-
-  // ── cache size cap ────────────────────────────────────────────────────────
-  // FLAC entries are ~3x the old AAC ones, and a full-library lossless cache
-  // would be ~95 GB — the no-local-space rule caps it at ~20 GB (parity with
-  // the AAC cache it replaced). Least-recently-touched entries fall off; the
-  // hot set stays lossless-instant, cold tracks pay ~1s to re-transcode.
-  const PLAY_CACHE_CAP_BYTES = 20 * 1024 * 1024 * 1024
-  let enforcingCap = false
-  async function enforceCacheCap(justWritten: string): Promise<void> {
-    if (enforcingCap) return
-    enforcingCap = true
-    try {
-      const { readdir } = await import('fs/promises')
-      const names = await readdir(PLAY_CACHE)
-      const entries: Array<{ p: string; size: number; at: number }> = []
-      let total = 0
-      for (const n of names) {
-        if (!n.endsWith('.m4a') && !n.endsWith('.flac')) continue
-        const p = join(PLAY_CACHE, n)
-        try {
-          const st = await stat(p)
-          entries.push({ p, size: st.size, at: st.atimeMs || st.mtimeMs })
-          total += st.size
-        } catch { /* raced a delete */ }
-      }
-      if (total <= PLAY_CACHE_CAP_BYTES) return
-      entries.sort((a, b) => a.at - b.at)
-      for (const e of entries) {
-        if (total <= PLAY_CACHE_CAP_BYTES) break
-        if (e.p === justWritten) continue
-        try { await unlink(e.p); total -= e.size } catch { /* already gone */ }
-      }
-    } catch { /* cap enforcement must never break playback */ } finally {
-      enforcingCap = false
-    }
-  }
-
-  async function aacCachePath(
-    src: string,
-    srcMtime: number,
-    srcSize: number,
-  ): Promise<string | null> {
-    const { execFile } = await import('child_process')
-    const { promisify } = await import('util')
-    const execP = promisify(execFile)
-
-    let codec = ''
-    const prev = codecCache.get(src)
-    if (prev && prev.mtime === srcMtime) {
-      codec = prev.codec
-    } else {
-      try {
-        const { stdout } = await execP('ffprobe', [
-          '-v', 'error', '-select_streams', 'a:0',
-          '-show_entries', 'stream=codec_name', '-of', 'default=nw=1:nk=1', src,
-        ], { timeout: 5000 })
-        codec = (stdout || '').trim().toLowerCase()
-        codecCache.set(src, { mtime: srcMtime, codec })
-      } catch {
-        return null  // ffprobe unavailable — fall through to raw file
-      }
-    }
-    if (codec !== 'alac') return null  // AAC and others play fine raw
-
-    const { pathHash, file: cached } = cacheNameFor(src, srcSize, srcMtime)
-    try {
-      const cStat = await stat(cached)
-      // Name match IS the freshness proof. Size guard only rejects the
-      // empty file a crashed transcode can leave behind.
-      if (cStat.size > 0) return cached
-    } catch { /* not cached yet */ }
-
-    // NOTE: pre-FLAC entries (.m4a, lossy AAC-256) are deliberately NOT
-    // adopted — a lossy mirror must not masquerade as the lossless cache.
-    // They are swept by evictOtherCacheEntries when the FLAC lands.
-
-    // Need to transcode. Dedupe concurrent requests.
-    const existing = transcodeInFlight.get(src)
-    if (existing) return existing
-
-    const p = (async () => {
-      // Atomic write: ffmpeg → tmp file → rename into place. Without
-      // this, a killed ffmpeg (app quit mid-transcode, OS reap, etc.)
-      // leaves a partial file at `cached` whose mtime still passes
-      // the freshness check, so the app would keep serving a
-      // truncated 42-second version of a 4-minute song. rename()
-      // guarantees the final path is either complete or absent.
-      // .partial.m4a (not .tmp) so ffmpeg recognizes the mp4 container
-      // format from the extension. Rename on success is still atomic.
-      const tmp = cached + '.partial.flac'
-      try {
-        // FLAC, not AAC (2026-08-06): the cache used to hand Chromium a lossy
-        // 256k mirror of every ALAC file — the single biggest quality ceiling
-        // in the whole playback path. FLAC decodes natively in Chromium and
-        // its decoded PCM is bit-identical to the ALAC source (proved by MD5
-        // of the decoded streams). compression_level 0 encodes ~100x realtime
-        // at ~1.03x the ALAC size, so a cache miss costs about a second.
-        await execP('ffmpeg', [
-          '-y', '-i', src, '-vn',
-          '-c:a', 'flac', '-compression_level', '0',
-          '-map_metadata', '0',
-          tmp,
-        ], { timeout: 300000 })
-        const { rename: renameFS } = await import('fs/promises')
-        await renameFS(tmp, cached)
-        await evictOtherCacheEntries(pathHash, cached)
-        void enforceCacheCap(cached)
-        return cached
-      } catch (err) {
-        // Clean up the partial tmp file so we don't leave garbage.
-        try { await unlink(tmp) } catch { /* already gone */ }
-        throw err
-      } finally {
-        transcodeInFlight.delete(src)
-      }
-    })()
-    transcodeInFlight.set(src, p)
-    return p
-  }
-
-  // Expose a module-visible pre-warm trigger so rip-cd-tracks (and the
-  // library-load path later, if we want) can kick off transcodes for
-  // newly-imported ALAC files before the user clicks play. Best-effort;
-  // failures log and skip.
-  //
-  // CRITICAL: cap concurrency at 4. The original implementation
-  // fire-and-forgot every file in the loop, which on a fresh install
-  // with 800 ALAC tracks meant 800 simultaneous ffmpeg processes. The
-  // box would peg every core, the UI would stutter on scroll, and the
-  // first-play latency we were trying to hide actually got WORSE
-  // because the on-demand transcode for the song the user just hit
-  // play on was queued behind 799 background jobs all fighting for
-  // CPU. Four workers = enough throughput to chew through 800 files
-  // in a few minutes without starving the renderer.
-  prewarmAlacCache = async (paths: string[]) => {
-    const CONCURRENCY = 4
-    // With the 20 GB cap, warming past the cap is pure churn — each new entry
-    // would evict another. Warm until full, then stop and say so.
-    let capReached = false
-    const atCap = async (): Promise<boolean> => {
-      try {
-        const { readdir } = await import('fs/promises')
-        let total = 0
-        for (const n of await readdir(PLAY_CACHE)) {
-          if (!n.endsWith('.m4a') && !n.endsWith('.flac')) continue
-          try { total += (await stat(join(PLAY_CACHE, n))).size } catch { /* raced */ }
-        }
-        return total >= PLAY_CACHE_CAP_BYTES
-      } catch { return false }
-    }
-    let i = 0
-    const worker = async (): Promise<void> => {
-      while (i < paths.length) {
-        if (capReached) return
-        const idx = i++
-        // Re-check the cap every 25 files — cheap, and bounds the overshoot.
-        if (idx % 25 === 0 && await atCap()) {
-          capReached = true
-          console.log(`[play-cache] prewarm stopped at the ${(PLAY_CACHE_CAP_BYTES / 1e9).toFixed(0)} GB cap — hot set is warm, cold tracks transcode on first play`)
-          return
-        }
-        const p = paths[idx]
-        try {
-          const s = await stat(p)
-          await aacCachePath(p, s.mtimeMs, s.size).catch(() => {})
-        } catch { /* file missing — skip */ }
-      }
-    }
-    const workers: Promise<void>[] = []
-    for (let w = 0; w < CONCURRENCY; w++) workers.push(worker())
-    await Promise.all(workers)
-  }
-
-  // Populate the codec cache with a codec we already know (from a rip
-  // we just wrote). Eliminates the ~300ms ffprobe delay that shows up
-  // on a track's first play even for AAC files.
-  registerKnownCodec = (path, mtime, codec) => {
-    codecCache.set(path, { mtime, codec })
-  }
+  // Play cache (6.0 caches seam, 2026-09-02): the lossless transcode cache
+  // is a STATE OBJECT now — src/main/play-cache.ts owns the dir, in-flight
+  // coalescing, the codec probe cache and the 20 GB cap (unit-tested there,
+  // which this closure never was). Serving policy stays in the ipod-audio://
+  // handler below, where the stream-playback-path locks can see it. Local
+  // names are kept so the handler and the maintenance IPCs read as before.
+  const playCache = createPlayCache({ dir: join(app.getPath('userData'), 'play-cache') })
+  // One media load, one byte stream — see play-cache-serve-pin.ts.
+  const servePin = createServePin()
+  await playCache.ensureDir()
+  const PLAY_CACHE = playCache.dir
+  const aacCachePath = playCache.cachePathFor
+  const cacheNameFor = playCache.entryFor
+  prewarmAlacCache = playCache.prewarm
+  registerKnownCodec = playCache.registerKnownCodec
 
   // ── 4.1 Library Maintenance: ALAC cache management ─────────────────
   //
@@ -16085,7 +10849,7 @@ app.whenReady().then(async () => {
           )
           if (rawTry) return rawTry
         }
-        console.warn(
+        quietWarn('ipod-audio-homemini-miss',
           `[ipod-audio] homemini miss for id=${streamId} — if this is a brand-new import, ` +
           `homemini's backend may not have reloaded library.json yet (index-sync kickstarts it)`,
         )
@@ -16132,6 +10896,14 @@ app.whenReady().then(async () => {
           }
         }
       } catch { /* fall through */ }
+      {
+        const start = servePin.rangeStart(request.headers.get('range'))
+        const served = servePin.resolve(rawPath, { kind: 'local', path: filePath }, start, (p) => existsSync(p))
+        if (served.kind === 'local' && served.path !== filePath) {
+          filePath = served.path
+          ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase()
+        }
+      }
       const mimeType = MIME_TYPES[ext] || 'audio/mpeg'
       try {
         const fileStat = await stat(filePath)
@@ -16224,6 +10996,9 @@ app.whenReady().then(async () => {
         if (altOk) resolvedPath = candidate
       }
     }
+    // Evicted-track fallback — pass-through storage trashed the local copy; serve homemini's proven bytes (evicted-playback.ts).
+    const evictedServe = (localMissing && resolvedPath === rawPath) ? await serveEvictedFromHomemini(rawPath, request.headers.get('range'), { trackIdForAbsPath, fetchAudioFromHomemini, wantsFlac: wantsHomeminiFlac }) : null
+    if (evictedServe) return evictedServe
 
     let filePath = resolvedPath
     let ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase()
@@ -16249,11 +11024,13 @@ app.whenReady().then(async () => {
       if (!streamed && (await readStreamSourceCached()) === 'homemini') {
         try { streamed = (await lstat(resolvedPath)).isSymbolicLink() } catch { /* real local file */ }
       }
-      if (streamed) {
+      const pinStart = servePin.rangeStart(request.headers.get('range'))
+      const pinnedNow = pinStart > 0 ? servePin.pinned(rawPath) : null
+      if (streamed && pinnedNow?.kind !== 'local') {
         const id = await trackIdForAbsPath(rawPath)
         if (id != null) {
           const remote = await fetchAudioFromHomemini(id, request.headers.get('range'), isAlac)
-          if (remote) return remote
+          if (remote) { servePin.resolve(rawPath, { kind: 'remote' }, pinStart, () => true); return remote }
         }
       }
     }
@@ -16294,6 +11071,14 @@ app.whenReady().then(async () => {
         }
       }
     } catch { /* fall through */ }
+    {
+      const start = servePin.rangeStart(request.headers.get('range'))
+      const served = servePin.resolve(rawPath, { kind: 'local', path: filePath }, start, (p) => existsSync(p))
+      if (served.kind === 'local' && served.path !== filePath) {
+        filePath = served.path
+        ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase()
+      }
+    }
     const mimeType = MIME_TYPES[ext] || 'audio/mpeg'
     try {
       const fileStat = await stat(filePath)
@@ -16470,12 +11255,12 @@ app.whenReady().then(async () => {
     autoUpdater.autoInstallOnAppQuit = true
     autoUpdater.on('update-available', (info) => {
       console.log('Update available:', info.version)
-      if (mainWindow) mainWindow.webContents.send('update-status', { status: 'available', version: info.version })
+      sendToRenderer('update-status', { status: 'available', version: info.version })
     })
     autoUpdater.on('update-downloaded', (info) => {
       console.log('Update downloaded:', info.version)
       if (mainWindow) {
-        mainWindow.webContents.send('update-status', { status: 'downloaded', version: info.version })
+        sendToRenderer('update-status', { status: 'downloaded', version: info.version })
         dialog.showMessageBox(mainWindow, {
           type: 'info',
           title: 'Update Ready',
@@ -16485,7 +11270,7 @@ app.whenReady().then(async () => {
           defaultId: 0,
         }).then(({ response }) => {
           if (response === 0) {
-            if (mainWindow) mainWindow.webContents.send('update-status', { status: 'installing', version: info.version })
+            sendToRenderer('update-status', { status: 'installing', version: info.version })
             // On macOS, calling quitAndInstall directly from the dialog
             // promise callback can occasionally no-op (app neither quits
             // nor relaunches). Defer to the next tick and pass explicit

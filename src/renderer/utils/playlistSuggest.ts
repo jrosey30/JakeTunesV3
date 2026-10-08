@@ -172,8 +172,8 @@ export function suggestForPlaylist<T extends SuggestibleTrack>(
  * electronic / hip-hop corners). ↻ advances the rank within each cluster.
  * Falls back to suggestForPlaylist (metadata) when no embeddings exist.
  */
-export interface SuggestBlendWeights { vibe?: number; genre?: number; taste?: number }
-export interface SuggestDiag { vn: number; g: number; b: number; ta: number }
+export interface SuggestBlendWeights { vibe?: number; genre?: number; taste?: number; era?: number }
+export interface SuggestDiag { vn: number; g: number; b: number; ta: number; e: number }
 
 export function suggestFromVibeHits<T extends SuggestibleTrack>(
   playlistTracks: T[],
@@ -235,6 +235,42 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
     if (c) for (const nb of camelotNeighbors(c)) compat.add(nb)
   }
   const keyWeight = compat.size > 0 && compat.size <= 14 ? 0.15 : 0   // only when key-cohesive
+  // ERA (2026-09-04, Jake: "wrong decade picks are unacceptable but not
+  // all of those are supposed to be centered around a decade"). Two kinds
+  // of playlist: ERA-CENTERED (Y2k Burnt CD, 90's Music, Q104.3, Weirdtronic
+  // — the middle half of its songs spans ≤10 years) and everything else
+  // (Dinner Party, Movies, METAL VOL 1 — a mood across decades). Centered:
+  // a dated candidate outside [Q1−3, Q3+3] is CUT outright (a demotion was
+  // not enough — the round-robin hands every sub-vibe a seat, so a cluster
+  // of 1991 grunge kept reaching a 2002–2006 CD) and the survivors rank by
+  // a Gaussian on the median year (σ = the playlist's own spread, floor 3).
+  // Not centered: era is switched OFF — neutral 0.5 for every candidate,
+  // no cut — a 1975 Zeppelin cut on Dinner Party is right; a 1975 cut
+  // because the median happens to be 1998 is not. Playlists with <7 dated
+  // songs rank by era but never cut (each song IS the vibe). Undated
+  // candidates are always neutral. Calibrated on the real playlists
+  // (IQR: Y2k 4, Weirdtronic 4, 90's 8, Q104.3 10 · Dinner Party 43,
+  // Movies 19, METAL VOL 1 23).
+  const plYears = playlistTracks.map(t => Number(t.year) || 0).filter(y => y > 1900).sort((a, b) => a - b)
+  const medianYear = plYears.length >= 3 ? plYears[plYears.length >> 1] : 0
+  let ySigma = 3
+  if (plYears.length > 1) {
+    const ymean = plYears.reduce((s, y) => s + y, 0) / plYears.length
+    ySigma = Math.max(3, Math.sqrt(plYears.reduce((s, y) => s + (y - ymean) ** 2, 0) / plYears.length))
+  }
+  const q1 = plYears.length ? plYears[Math.floor(plYears.length / 4)] : 0
+  const q3 = plYears.length ? plYears[Math.floor((3 * plYears.length) / 4)] : 0
+  const eraCentered = plYears.length >= 7 && q3 - q1 <= 10
+  const eraRanks = eraCentered || plYears.length < 7
+  const eraFit = (t: T): number => {
+    const y = Number(t.year) || 0
+    return (eraRanks && y > 1900 && medianYear > 0) ? Math.exp(-0.5 * ((y - medianYear) / ySigma) ** 2) : 0.5
+  }
+  const eraCut = (t: T): boolean => {
+    if (!eraCentered) return false
+    const y = Number(t.year) || 0
+    return y > 1900 && (y < q1 - 3 || y > q3 + 3)
+  }
 
   // Group candidates by their SUB-VIBE cluster (vibe score = sim to that cluster).
   const byCluster = new Map<number, Array<{ t: T; vibe: number }>>()
@@ -243,6 +279,7 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
     if (!clusterEligible(h.cluster)) continue
     const t = byId.get(h.trackId)
     if (!t || inPlaylist.has(t.id) || t.audioMissing || plAlbums.has(albumKey(t))) continue
+    if (eraCut(t)) continue   // era-centered playlist, wrong decade — out (see above)
     let arr = byCluster.get(h.cluster)
     if (!arr) { arr = []; byCluster.set(h.cluster, arr) }
     arr.push({ t, vibe: h.score })
@@ -270,9 +307,10 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
       // stars + play history nudge the songs he'd actually ADD above
       // equal-vibe strangers. Small weight — fit still leads.
       const taste = Math.min(1, ((Number(t.rating) || 0) / 5) * 0.6 + Math.min((Number(t.playCount) || 0) / 8, 1) * 0.4)
-      if (diagOut) diagOut.set(t.id, { vn, g: gFit, b: bpmFit, ta: taste })
-      const wV = weights.vibe ?? 1, wG = weights.genre ?? 1, wT = weights.taste ?? 1
-      return { t, s: 0.45 * wV * vn + 0.22 * wG * gFit + 0.15 * bpmFit + keyWeight * keyFit + 0.10 * wT * taste }
+      const eFit = eraFit(t)
+      if (diagOut) diagOut.set(t.id, { vn, g: gFit, b: bpmFit, ta: taste, e: eFit })
+      const wV = weights.vibe ?? 1, wG = weights.genre ?? 1, wT = weights.taste ?? 1, wE = weights.era ?? 1
+      return { t, s: 0.45 * wV * vn + 0.22 * wG * gFit + 0.15 * bpmFit + keyWeight * keyFit + 0.10 * wT * taste + 0.15 * wE * eFit }
     })
     scored.sort((a, b) => b.s - a.s)
     const fr = scored.filter(x => !plArtists.has(norm(x.t.albumArtist || x.t.artist))).map(x => x.t)

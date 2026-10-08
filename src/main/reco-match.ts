@@ -37,6 +37,12 @@ export function recoFold(s: string): string {
 //   solo:<norm(song)>~<norm(album)>~<norm(note)> ONLY when no artist anywhere —
 //     the artist-less-jot fix; the prefix + both-artists-empty gate guarantee
 //     a title-only jot can never collide with a real pair key.
+//   album:<norm(artist)>~<norm(album)>            a SONGLESS row that names a
+//     record: the record (with its edition words) is the identity, so two
+//     records by one artist — or two editions of one record — never collapse
+//     (2026-09-06: "Little Creatures (Deluxe Version)" came back as the
+//     "Remain in Light (Deluxe Version)" row).
+//   artist:<norm(artist)>                         songless AND albumless only.
 
 export interface RecoIdentityInput {
   id?: string
@@ -78,7 +84,12 @@ export function recordIdentityKeys(r: RecoIdentityInput): string[] {
   // ALONE so any songless entry for that artist stays dead. ⚠️ TWIN:
   // ~/JakeTunesMobile/backend/src/util/reco-identity.ts — keep identical.
   const anyArtist = recoNorm(r.artist || '') || recoNorm(r.matchedArtist || '')
-  if (!raw && !matched && anyArtist) {
+  const album = recoNorm(r.album || '')
+  const songless = !recoNorm(r.song || '') && !recoNorm(r.matchedTitle || '')
+  if (!raw && !matched && songless && album) {
+    // The record is the identity — never the artist alone.
+    keys.add(`album:${anyArtist}~${album}`)
+  } else if (!raw && !matched && anyArtist) {
     keys.add(`artist:${anyArtist}`)
   }
   // Absolute catch-all: a non-empty row must never be keyless (album-only

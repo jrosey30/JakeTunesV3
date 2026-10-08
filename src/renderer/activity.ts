@@ -20,6 +20,8 @@ export interface RipActivity {
 export interface SyncActivity {
   active: boolean          // true during an iPod sync
   step: string             // human-readable current step, e.g. "Copying 12 new tracks to iPod..."
+  current?: number         // determinate progress when the engine reports counts
+  total?: number           // (copy/preflight phases); omitted = indeterminate pulse
 }
 
 /** Drag-drop / Bandcamp imports going through the renderer importQueue.

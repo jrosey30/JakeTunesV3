@@ -273,3 +273,74 @@ test('a suppressed vibe weight demotes the pure-vibe pick', () => {
   const weighted = suggestFromVibeHits(playlist, library, hits, 2, 0, [6], w)
   assert.equal(weighted[0]?.id, 2, 'genre-fit candidate must lead under learned weights')
 })
+
+// ── Era fit (2026-09-04) ──────────────────────────────────────────────
+function vibeHits(ids: number[]) { return ids.map(id => ({ trackId: id, score: 0.7, cluster: 0 })) }
+
+test('era: a tight-era playlist demotes an equal-vibe pick from another decade', () => {
+  const pl = [2002, 2003, 2004, 2005, 2006].map(y => t({ artist: `A${y}`, genre: 'Rock', year: y }))
+  const grunge = t({ artist: 'Soundgarden', genre: 'Rock', year: 1991 })
+  const y2k = t({ artist: 'The Starting Line', genre: 'Rock', year: 2004 })
+  const picks = suggestFromVibeHits(pl, [...pl, grunge, y2k], vibeHits([grunge.id, y2k.id]), 2, 0, [pl.length])
+  assert.deepEqual(picks.map(p => p.id), [y2k.id, grunge.id])
+})
+
+test('era: a wide-era playlist barely cares — year does not override a stronger vibe', () => {
+  const pl = [1972, 1985, 1998, 2011, 2024].map(y => t({ artist: `A${y}`, genre: 'Rock', year: y }))
+  const old = t({ artist: 'Sweet', genre: 'Rock', year: 1974 })
+  const recent = t({ artist: 'Geese', genre: 'Rock', year: 2025 })
+  const hits = [{ trackId: recent.id, score: 0.8, cluster: 0 }, { trackId: old.id, score: 0.6, cluster: 0 }]
+  const picks = suggestFromVibeHits(pl, [...pl, old, recent], hits, 2, 0, [pl.length])
+  assert.equal(picks[0].id, recent.id)
+})
+
+test('era: undated candidates score neutral, not penalised', () => {
+  const pl = [2002, 2003, 2004, 2005, 2006].map(y => t({ artist: `A${y}`, genre: 'Rock', year: y }))
+  const undated = t({ artist: 'Mystery', genre: 'Rock', year: undefined })
+  const far = t({ artist: 'Far', genre: 'Rock', year: 1975 })
+  const picks = suggestFromVibeHits(pl, [...pl, undated, far], vibeHits([far.id, undated.id]), 2, 0, [pl.length])
+  assert.equal(picks[0].id, undated.id)
+})
+
+test('era: diag carries e and the era weight dial scales it', () => {
+  const pl = [2002, 2003, 2004, 2005, 2006].map(y => t({ artist: `A${y}`, genre: 'Rock', year: y }))
+  const grunge = t({ artist: 'Soundgarden', genre: 'Rock', year: 1991 })
+  const diag = new Map()
+  suggestFromVibeHits(pl, [...pl, grunge], vibeHits([grunge.id]), 1, 0, [pl.length], {}, diag)
+  assert.ok(diag.get(grunge.id).e < 0.05)
+})
+
+test('era: on a tight playlist a cluster made only of wrong-decade songs serves nothing', () => {
+  const pl = [2002, 2003, 2004, 2004, 2005, 2005, 2006].map(y => t({ artist: `A${y}`, genre: 'Rock', year: y }))
+  const grunge = t({ artist: 'Soundgarden', genre: 'Grunge', year: 1991 })
+  const chains = t({ artist: 'Alice In Chains', genre: 'Grunge', year: 1992 })
+  const picks = suggestFromVibeHits(pl, [...pl, grunge, chains], vibeHits([grunge.id, chains.id]), 2, 0, [pl.length])
+  assert.deepEqual(picks, [])
+})
+
+test('era: a small playlist (<7 dated) never cuts — each song IS the vibe', () => {
+  const pl = [2002, 2003, 2004].map(y => t({ artist: `A${y}`, genre: 'Rock', year: y }))
+  const grunge = t({ artist: 'Soundgarden', genre: 'Grunge', year: 1991 })
+  const picks = suggestFromVibeHits(pl, [...pl, grunge], vibeHits([grunge.id]), 1, 0, [pl.length])
+  assert.deepEqual(picks.map(p => p.id), [grunge.id])
+})
+
+test('era: a big playlist that is NOT era-centered ignores year entirely — no cut, no demotion', () => {
+  const pl = [1972, 1978, 1985, 1991, 1998, 2005, 2011, 2018, 2024].map(y => t({ artist: `A${y}`, genre: 'Rock', year: y }))
+  const zep = t({ artist: 'Led Zeppelin', genre: 'Rock', year: 1975 })
+  const geese = t({ artist: 'Geese', genre: 'Rock', year: 2025 })
+  const hits = [{ trackId: zep.id, score: 0.7, cluster: 0 }, { trackId: geese.id, score: 0.69, cluster: 0 }]
+  const diag = new Map()
+  const picks = suggestFromVibeHits(pl, [...pl, zep, geese], hits, 2, 0, [pl.length], {}, diag)
+  assert.deepEqual(picks.map(p => p.id), [zep.id, geese.id])
+  assert.equal(diag.get(zep.id).e, 0.5)
+  assert.equal(diag.get(geese.id).e, 0.5)
+})
+
+test('era: the centered window is the middle half ±3y, so one stray old song does not widen it', () => {
+  const pl = [1975, 1991, 1992, 1993, 1994, 1995, 1996, 1997, 1998, 1999].map(y => t({ artist: `A${y}`, genre: 'Rock', year: y }))
+  const ok = t({ artist: 'Edge', genre: 'Rock', year: 1989 })       // Q1 1992 − 3 = 1989 → allowed
+  const out = t({ artist: 'Too Old', genre: 'Rock', year: 1984 })  // outside → cut
+  const picks = suggestFromVibeHits(pl, [...pl, ok, out], vibeHits([out.id, ok.id]), 2, 0, [pl.length])
+  assert.deepEqual(picks.map(p => p.id), [ok.id])
+})

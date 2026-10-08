@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { LibraryProvider, useLibrary } from './context/LibraryContext'
+import { shouldYieldToClaim } from './input-mode'
 import { primeColumnCacheFromUiState } from './utils/columnState'
 import { PlaybackProvider, usePlayback } from './context/PlaybackContext'
 import { CynthiaProvider } from './context/CynthiaContext'
@@ -14,6 +15,11 @@ import DeckBar from './components/DeckBar'
 import Visualizer from './components/Visualizer'
 import SplashScreen from './components/SplashScreen'
 import QueuePanel, { type QueuePanelHandle } from './components/playback/QueuePanel'
+import MusicManDrawer, { type MusicManDrawerHandle } from './components/MusicManDrawer'
+import DownloadsPanel, { DOWNLOADS_PANEL_EVENT, setDownloadsPanelOpen, type DownloadsPanelHandle } from './components/DownloadsPanel'
+import { OPEN_PREFERENCES_EVENT } from './views/DownloadStore/credential-notice-store'
+import { ingestSyncEvent } from './syncTimeline'
+import QueueHonestyProbe from './components/QueueHonestyProbe'
 import ImportConvertModal from './components/ImportConvertModal'
 import LibraryMaintenanceModal from './components/LibraryMaintenanceModal'
 import ShowDuplicatesModal from './components/ShowDuplicatesModal'
@@ -47,9 +53,10 @@ import { setUserAliases } from './utils/artistAlias'
 import { initDownloads } from './utils/downloadStore'
 import { ensureLiveSetsLoaded } from './liveSets'
 import { hydrateScrollCacheFromUiState } from './hooks/useScrollPersistence'
-import { AppSettings, DEFAULT_APP_SETTINGS } from './types'
+import { AppSettings, DEFAULT_APP_SETTINGS, type Playlist } from './types'
 import { setNotice } from './activity'
 import './styles/variables.css'
+import './styles/lion-controls.css'
 import './styles/primitives.css'
 import './styles/motion.css'
 import './styles/reset.css'
@@ -57,6 +64,7 @@ import './styles/scrollbars.css'
 import './styles/app.css'
 import './styles/toolbar.css'
 import './styles/sidebar.css'
+import { mergeHubCatalog } from '../common/hub-catalog-merge'
 
 // Session cap — startup must not walk every missing album via fetchAlbumArt.
 const STARTUP_NETWORK_ART_CAP = 16
@@ -76,12 +84,42 @@ function AppInner() {
   const [sidebarWidth, setSidebarWidth] = useState(170)
   const [showQueue, setShowQueue] = useState(false)
   const queueRef = useRef<QueuePanelHandle>(null)
+  // The Music Man drawer (2026-09-02) shares the right-hand slot with Up
+  // Next — opening one closes the other.
+  const [showMusicMan, setShowMusicMan] = useState(false)
+  const musicManRef = useRef<MusicManDrawerHandle>(null)
+  // Downloads panel (Record Shop step 5 slice 3): one right-hand drawer at a
+  // time — opening it closes the play queue / Music Man, and vice versa.
+  const [showDownloads, setShowDownloads] = useState(false)
+  const downloadsRef = useRef<DownloadsPanelHandle>(null)
+  const showDownloadsRef = useRef(false)
+  showDownloadsRef.current = showDownloads
+  useEffect(() => { setDownloadsPanelOpen(showDownloads) }, [showDownloads])
+  useEffect(() => {
+    const onToggle = (e: Event) => {
+      const action = (e as CustomEvent<'toggle' | 'open' | 'close'>).detail ?? 'toggle'
+      const cur = showDownloadsRef.current
+      const next = action === 'toggle' ? !cur : action === 'open'
+      if (next === cur) return
+      if (next) { queueRef.current?.requestClose(); musicManRef.current?.requestClose(); setShowDownloads(true) }
+      else downloadsRef.current?.requestClose()
+    }
+    window.addEventListener(DOWNLOADS_PANEL_EVENT, onToggle)
+    return () => window.removeEventListener(DOWNLOADS_PANEL_EVENT, onToggle)
+  }, [])
   const [importConvertOpen, setImportConvertOpen] = useState(false)
   const [alacCompatOpen, setAlacCompatOpen] = useState(false)
   const [playCacheMode, setPlayCacheMode] = useState<'prepare' | 'prune' | null>(null)
   const [orphanCleanupOpen, setOrphanCleanupOpen] = useState(false)
   const [showDuplicatesOpen, setShowDuplicatesOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // A notice can ask for Preferences on a specific tab (Music Sources).
+  const [settingsTab, setSettingsTab] = useState<'Music Sources' | undefined>(undefined)
+  useEffect(() => {
+    const onOpen = (e: Event) => { setSettingsTab((e as CustomEvent<{ tab?: 'Music Sources' }>).detail?.tab); setSettingsOpen(true) }
+    window.addEventListener(OPEN_PREFERENCES_EVENT, onOpen)
+    return () => window.removeEventListener(OPEN_PREFERENCES_EVENT, onOpen)
+  }, [])
   // Brief 020: tag write-back batch UI state. Two phases:
   //   - applyOverridesConfirmOpen → confirm modal
   //   - applyOverridesProgress != null → in-flight modal (counter + bar)
@@ -453,14 +491,22 @@ function AppInner() {
   // and was disabled in 4.5.
   useEffect(() => {
     const cleanup = window.electronAPI.onLibrarySyncStatus((status) => {
-      if (!status.ok) {
-        setNotice(
-          status.error
+      if (status.ok) return
+      // 2026-09-02 (Jake: "why do i keep seeing this??"): a sync DEFERRED by
+      // the NAS breaker is not a failure — away from home the mount rides
+      // the tailnet and the probe misses now and then; four metadata edits
+      // in 40s posted four identical banners. Automatic triggers stay quiet
+      // (Settings → Sync shows the waiting state); only a sync Jake asked
+      // for himself, or a real failure, reaches the pill.
+      if (status.deferred && status.reason !== 'manual') return
+      setNotice(
+        status.deferred
+          ? 'Sync is waiting — the NAS isn’t answering right now (away from home?). It catches up on its own.'
+          : status.error
             ? `Couldn't sync to homemini: ${status.error}`
             : "Couldn't sync to homemini.",
-          { kind: 'error', durationMs: 6000 },
-        )
-      }
+        { kind: status.deferred ? 'info' : 'error', durationMs: 6000 },
+      )
     })
     return cleanup
   }, [])
@@ -529,6 +575,10 @@ function AppInner() {
     const handler = (e: KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey
       const typing = isTypingTarget(e.target)
+
+      // Step Inside owns Space and the arrows while it is open (see
+      // input-mode.ts). Media keys, Escape and Cmd+F still work.
+      if (shouldYieldToClaim(e.code)) return
 
       if (e.key === 'Escape') {
         if (typing && e.target instanceof HTMLElement) e.target.blur()
@@ -897,7 +947,11 @@ function AppInner() {
           // Songs on relaunch so they don't open into a dead view with
           // no sidebar entry to navigate away from.
           const restoredView = ui.currentView === 'recordstore' ? 'songs' : ui.currentView
-          dispatch({ type: 'SET_VIEW', view: restoredView as import('./types').ViewName })
+          // Acceptance harness: #stepInside boots into the game so a run can
+          // be driven and recorded. Dev-only — main never sets this hash in
+          // a packaged app.
+          const harness = typeof window !== 'undefined' && /stepInside/i.test(window.location.hash)
+          dispatch({ type: 'SET_VIEW', view: (harness ? 'recordstore' : restoredView) as import('./types').ViewName })
         } else {
           // First open (no saved view): land on Home, the welcome dashboard.
           dispatch({ type: 'SET_VIEW', view: 'home' })
@@ -1091,7 +1145,41 @@ function AppInner() {
     window.electronAPI.savePlaylists(libState.playlists)
   }, [libState.playlists])
 
+  // Playlist hub push (2026-08-28, final-form sync): the main process
+  // converged with homemini and adopted new state — swap the list in
+  // place. The echo save this triggers diffs clean against the already-
+  // adopted cache, so nothing loops and nothing tombstones.
+  useEffect(() => {
+    return window.electronAPI.onPlaylistsUpdated(({ playlists }) => {
+      if (Array.isArray(playlists)) {
+        dispatch({ type: 'LOAD_PLAYLISTS', playlists: playlists as Playlist[] })
+      }
+    })
+  }, [dispatch])
+
   // Persist library (tracks + playlists) whenever tracks change (debounced)
+  const libTracksRef = useRef(libState.tracks)
+  libTracksRef.current = libState.tracks
+  // 2026-10-08 hub catalog (replicas): merge homemini's upserts/removals into
+  // the live library, then ack so main remembers the adopted version. The
+  // save effect below persists it like any other change.
+  useEffect(() => {
+    const off = window.electronAPI.onHubCatalogUpdated?.((p) => {
+      // Merge against the CURRENT list (ref, not a stale closure) and hand the
+      // result to SET_TRACKS — LibraryContext itself stays untouched.
+      const r = mergeHubCatalog(libTracksRef.current, {
+        full: p.full, version: p.version,
+        upserts: p.upserts as import('../common/hub-catalog-merge').HubTrackLike[],
+        removedIds: p.removedIds,
+      })
+      if (r.changed) {
+        console.log(`[hub-catalog] merged ${p.full ? 'FULL' : 'delta'} ${p.version}: +${r.added} ~${r.updated} -${r.removed}`)
+        dispatch({ type: 'SET_TRACKS', tracks: r.tracks })
+      }
+      void window.electronAPI.hubCatalogAdopted?.(p.version)
+    })
+    return () => { off?.() }
+  }, [dispatch])
   const libraryLoaded = useRef(false)
   const librarySaveRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
@@ -1203,6 +1291,9 @@ function AppInner() {
     let clearTimer: ReturnType<typeof setTimeout> | null = null
     const cleanup = window.electronAPI.onSyncProgress((progress) => {
       if (clearTimer) { clearTimeout(clearTimer); clearTimer = null }
+      // The device page's phase strip reads every event as-is (Activity
+      // Sync front end); the LCD text below is unchanged.
+      ingestSyncEvent(progress)
       import('./activity').then(a => {
         if (progress.phase === 'copy') {
           a.setSync({
@@ -1210,6 +1301,8 @@ function AppInner() {
             step: progress.total > 0
               ? `Copying ${progress.current}/${progress.total} to iPod${progress.title ? ' — ' + progress.title : ''}`
               : 'Copying to iPod...',
+            current: progress.current,
+            total: progress.total,
           })
         } else if (progress.phase === 'preflight') {
           a.setSync({
@@ -1217,7 +1310,14 @@ function AppInner() {
             step: progress.total > 0
               ? `Verifying ${progress.current}/${progress.total} audio files…`
               : 'Verifying audio files…',
+            current: progress.current,
+            total: progress.total,
           })
+        } else if (progress.phase === 'verify') {
+          // Landing-proof + TSA are the longest stretch of an activity
+          // sync; no auto-clear here — DeviceView's terminal status
+          // always replaces this step.
+          a.setSync({ active: true, step: progress.title || 'Verifying the iPod…' })
         } else if (progress.phase === 'db') {
           const done = progress.current >= progress.total
           a.setSync({
@@ -1241,6 +1341,26 @@ function AppInner() {
     })
     return () => { if (clearTimer) clearTimeout(clearTimer); cleanup() }
   }, [])
+
+  // Round Trip (6.0): the iPod brought home offline listens. Apply the
+  // absolute play-count/last-played updates through the normal reducer +
+  // debounced save flow, and say so in the pill. Main already deduped,
+  // delta'd, and ledgered — this is pure application.
+  useEffect(() => {
+    const cleanup = window.electronAPI.onIpodRoundTrip?.((payload) => {
+      if (payload.updates.length > 0) {
+        // Reducer's action type carries string values; NUMERIC_FIELDS
+        // coerces playCount/lastPlayedAt back to numbers on apply.
+        dispatch({ type: 'UPDATE_TRACKS', updates: payload.updates.map(u => ({ ...u, value: String(u.value) })) })
+      }
+      import('./activity').then(a => {
+        const s = payload.summary
+        a.setNotice(`iPod brought home ${s.plays} play${s.plays === 1 ? '' : 's'} across ${s.tracks} song${s.tracks === 1 ? '' : 's'}`,
+          { kind: 'success', durationMs: 6000 })
+      }).catch(() => {})
+    })
+    return () => { cleanup?.() }
+  }, [dispatch])
 
   // Global CD-rip progress listener. Lives at the App level so it survives
   // when the user navigates away from the CD Import view mid-rip — the
@@ -1296,13 +1416,19 @@ function AppInner() {
         case 'view-artists': dispatch({ type: 'SET_VIEW', view: 'artists' }); break
         case 'view-albums': dispatch({ type: 'SET_VIEW', view: 'albums' }); break
         case 'view-genres': dispatch({ type: 'SET_VIEW', view: 'genres' }); break
+        case 'toggle-visualizer': window.dispatchEvent(new CustomEvent('toggle-visualizer')); break
+        case 'toggle-music-man': {
+          if (showMusicMan) musicManRef.current?.requestClose()
+          else { if (showQueue) queueRef.current?.requestClose(); setShowMusicMan(true) }
+          break
+        }
         case 'open-import-convert': setImportConvertOpen(true); break
         case 'fix-ipod-compat':     setAlacCompatOpen(true); break
         case 'prepare-alac-cache':  setPlayCacheMode('prepare'); break
         case 'prune-alac-cache':    setPlayCacheMode('prune'); break
         case 'clean-orphan-files':  setOrphanCleanupOpen(true); break
         case 'show-duplicates':     setShowDuplicatesOpen(true); break
-        case 'open-preferences':    setSettingsOpen(true); break
+        case 'open-preferences':    setSettingsTab(undefined); setSettingsOpen(true); break
         // Brief 023: 'export-mobile-snapshot' and 'apply-mobile-overrides'
         // removed — vestigial mobile-sync feature that never shipped.
         // Tag write-back (Brief 020) is the path Plex/mobile consume now.
@@ -1471,6 +1597,11 @@ function AppInner() {
     const handleKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName
       const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable
+
+      // Capture phase beats every view listener, so a claim has to be
+      // checked HERE too — this is the handler that was eating the game's
+      // Space before its own keydown ever ran.
+      if (shouldYieldToClaim(e.code)) return
 
       // Space = play/pause (unless typing in an input)
       if (e.code === 'Space' && !isInput) {
@@ -1676,10 +1807,15 @@ function AppInner() {
         <Toolbar
           onToggleQueue={() => {
             if (showQueue) queueRef.current?.requestClose()
-            else setShowQueue(true)
+            else { if (showMusicMan) musicManRef.current?.requestClose(); if (showDownloads) downloadsRef.current?.requestClose(); setShowQueue(true) }
           }}
-          onOpenQueue={() => setShowQueue(true)}
+          onOpenQueue={() => { if (showMusicMan) musicManRef.current?.requestClose(); if (showDownloads) downloadsRef.current?.requestClose(); setShowQueue(true) }}
           showQueue={showQueue}
+          onToggleMusicMan={() => {
+            if (showMusicMan) musicManRef.current?.requestClose()
+            else { if (showQueue) queueRef.current?.requestClose(); if (showDownloads) downloadsRef.current?.requestClose(); setShowMusicMan(true) }
+          }}
+          showMusicMan={showMusicMan}
         />
       </div>
       <div className="sidebar-area" style={{ width: sidebarWidth }}>
@@ -1689,8 +1825,11 @@ function AppInner() {
       <div className="content-area" style={{ position: 'relative' }}>
         <MainContent />
         <TapeMonitor />
+        <QueueHonestyProbe />
         <DeckBar />
         {showQueue && <QueuePanel ref={queueRef} onClose={() => setShowQueue(false)} />}
+        {showMusicMan && <MusicManDrawer ref={musicManRef} onClose={() => setShowMusicMan(false)} />}
+        {showDownloads && <DownloadsPanel ref={downloadsRef} onClose={() => setShowDownloads(false)} />}
         {importConvertOpen && <ImportConvertModal onClose={() => setImportConvertOpen(false)} />}
         {alacCompatOpen && <LibraryMaintenanceModal mode="alac" onClose={() => setAlacCompatOpen(false)} />}
         {playCacheMode && <PlayCacheModal mode={playCacheMode} onClose={() => setPlayCacheMode(null)} />}
@@ -1707,6 +1846,7 @@ function AppInner() {
         {settingsOpen && (
           <SettingsModal
             initial={appSettings}
+            initialTab={settingsTab}
             onClose={() => setSettingsOpen(false)}
             onSaved={(next) => {
               setAppSettings(next)

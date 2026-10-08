@@ -57,6 +57,13 @@ export interface WorkoutSelectOpts {
    *  syncs back was fully fair game and the same favourites kept cycling.
    *  This is a graded, decaying memory instead of a one-shot flag. */
   recentCounts?: Map<number, number>
+  /** POOL FILL (2026-09-02): ids the caller already holds (the hand-built
+   *  pool) — never picked again, in any pass including backfill. */
+  excludeIds?: Iterable<number>
+  /** POOL FILL: artist → count already in the pool, so the 2-per-artist
+   *  rule counts what Jake dragged in. The pool itself is exempt from the
+   *  cap (he dragged the album; he wants the album) — only the fill obeys. */
+  seedArtistCounts?: Map<string, number>
   /** Brain fit 0..1 per track (taste + steer), from computeActivityBrainFit.
    *  The dominant quality signal — folds the taste model into the score so
    *  the picker stops grabbing genre-tagged junk (2026-07-23). Absent → the
@@ -98,6 +105,14 @@ const SKIT_TITLE = /\b(skit|interlude|intro|outro|prelude|segue|snippet|spoken w
 const SHORT_OK_GENRE = /punk|hardcore|grind|powerviolence|thrash|crust|ska|garage|surf|noise/i
 const SHORT_MS = 75_000   // under this, a non-punk track needs evidence
 const MICRO_MS = 35_000   // under this, only punk-family survives
+
+/** Strictly INTRO-titled (not skit/interlude/outro). Mixtapes may seat
+ *  one of these ONLY as track 1 (Jake 2026-09-01: "intros should only be
+ *  the first track of a mixtape... if they arent the first track...they
+ *  arent on it"). */
+export function isIntroTitled(title: string | undefined): boolean {
+  return /\bintro\b/i.test(title || '')
+}
 
 export function isSkitOrIntro(t: WorkoutTrack): boolean {
   if (SKIT_TITLE.test(t.title || '')) return true
@@ -208,6 +223,12 @@ export function scoreWorkoutTrack(
   return Math.round(score * 100) / 100
 }
 
+/** The 2-per-artist cap's key. ⚠️ Pool fill seeds perArtist through this
+ *  same function (workout-sync-ipc.ts) — keep them identical. */
+export function artistCapKey(artist: string | undefined): string {
+  return (artist || 'Unknown').toLowerCase().trim()
+}
+
 export function selectWorkoutSyncSet(
   tracks: WorkoutTrack[],
   opts: WorkoutSelectOpts = {},
@@ -240,8 +261,9 @@ export function selectWorkoutSyncSet(
   const named = (t: WorkoutTrack) => String(t.title || '').trim() !== '' && String(t.artist || '').trim() !== ''
   const playableHint = (t: WorkoutTrack) =>
     t.audioMissing !== true && (t.path === undefined || String(t.path).trim() !== '')
+  const excluded = new Set<number>(opts.excludeIds ? [...opts.excludeIds].map(Number) : [])
   const firmwareOk = (t: WorkoutTrack) => t.path === undefined || ipodFirmwareWillList(t)
-  const eligible = tracks.filter((t) => named(t) && playableHint(t) && firmwareOk(t) && !isSkitOrIntro(t))
+  const eligible = tracks.filter((t) => named(t) && playableHint(t) && firmwareOk(t) && !isSkitOrIntro(t) && !excluded.has(Number(t.id)))
 
   // Brain term: the taste model is the dominant quality signal now. Cosine
   // fit is tightly packed in this embedding space (~0.59 … 0.72 across the
@@ -341,7 +363,7 @@ export function selectWorkoutSyncSet(
   // A separate album cap is now redundant: two per artist already bounds any
   // one album by the same artist at two.
   const CAP = 2
-  const perArtist = new Map<string, number>()
+  const perArtist = new Map<string, number>(opts.seedArtistCounts ?? [])
   const out: number[] = []
   const scoreMap = new Map<number, number>()
 
@@ -352,7 +374,7 @@ export function selectWorkoutSyncSet(
       // Primary pass honors the taste floor; the relaxed pass drops it so a
       // small library can still reach target. The artist cap holds in BOTH.
       if (!relaxFloor && belowFloor(t.id)) continue
-      const key = (t.artist || 'Unknown').toLowerCase().trim()
+      const key = artistCapKey(t.artist)
       const n = perArtist.get(key) || 0
       if (n >= CAP) continue
       out.push(t.id)

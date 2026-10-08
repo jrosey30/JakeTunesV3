@@ -49,7 +49,17 @@ Cut order (each ~1 brief):
    is a MOVE-ONLY cut.
 3. `download-search.ts` — the iTunes/Deezer search + rescue machinery
    (~800 lines, includes fetchExplicitAlbumMap + resolveExplicitEdition).
-4. `caches.ts` — RE-SCOPED after the P1C4 audit (2026-08-16): the
+4. `play-cache.ts` — DONE 2026-09-02 (was "caches.ts"). The precondition
+   below was met as designed: the play-cache machinery became a STATE
+   OBJECT (`createPlayCache` — dir, in-flight coalescing, codec probe cache,
+   20 GB cap, prewarm; ffprobe/ffmpeg injectable) handed to the
+   ipod-audio:// handler, whose serving policy stayed in index.ts byte-for-
+   byte so the stream-playback-path locks never moved. Local names
+   (`PLAY_CACHE`, `aacCachePath`, `cacheNameFor`) are aliases onto the
+   object, so the handler and the maintenance IPCs read exactly as before.
+   First unit coverage of coalescing / eviction / cap (play-cache.test.ts).
+   index.ts 11,442 → 11,203. ORIGINAL SCOPING NOTE (kept for the record):
+   RE-SCOPED after the P1C4 audit (2026-08-16): the
    play-cache machinery (PLAY_CACHE dir, transcode coalescing map, codec
    cache, prewarm/prune) lives INSIDE the ipod-audio:// protocol
    handler's closure and shares live state with the serving path — the
@@ -102,3 +112,31 @@ instead of a 2am session.
 - No new features until Phase 1 is done — the god file is the fire.
 - iPod/Activity Sync internals stay with their owning session; Phase 1
   cut #2 moves their code without changing it, coordinated first.
+
+## Phase 1 progress log (6.0 push)
+
+- 2026-09-01: P1C2 sync-engine/ cut LANDED (move-only, 13 enumerated
+  substitutions; index.ts 16,586 → 14,609). IPC batches 1–3 LANDED:
+  cd-ipc, audio-output-ipc, live-sets-ipc, mobile-reads-ipc,
+  artwork-engine.ts + artwork-ipc (32 handlers total; index.ts →
+  12,834; ratchet follows at every step).
+- 2026-09-01 (evening): reco braid SUB-MAPPED and cut — recommendations
+  subsystem to ipc/recommendations-ipc.ts (friends/taste/hub-sync/
+  album-info strands identified and separated); taste-ipc + album-info-ipc
+  landed; rag retrieval core to ai/rag-retrieval.ts with initRagRetrieval
+  wiring-locked (Phase 3a UNBLOCKED — the eval harness can call the
+  production path). index.ts 16,586 → 11,402 across the day; 48 handlers
+  in 9 modules. Phase 1 remaining: caches.ts seam (still gated on its own
+  design brief), discovery feed cluster, musicman handler bodies,
+  metadata-overrides, friends strand — all optional-scope beyond the
+  40–60 target, which is met.
+- 2026-09-01 (Phase 4): download reliability SHIPPED f2d9f59 — 12-min
+  ladder clock with clamped stage timeouts, kind-scoped cancel (searches
+  survive; flag ends the whole ladder), stageRip retry-with-backoff
+  (staging wiped between attempts), boot sweep of orphaned
+  jaketunes-{rip,bc,ripsearch,itunesdb}-* temp dirs. Matcher "rewrite"
+  RE-SCOPED with evidence: rankStreamripCandidates already IS a weighted
+  score with identity vetoes around it (unwantedVersionOf, live-brand
+  lexicon, explicit gate — each pinning a tested incident). Score for
+  preference / veto for identity is the right architecture; grow the
+  lexicons and regression matrix as incidents arrive, never rewrite.

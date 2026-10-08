@@ -4,6 +4,7 @@ import { EQ_BAND_FREQUENCIES, EQ_PRESETS } from '../audio/eq'
 import { getCorrelation, setEnhanceConfig } from '../audio/audioEnhance'
 import { getCaptionsOn, setCaptionsOn } from '../activity'
 import '../styles/import-convert.css'
+import MusicSourcesPanel from './MusicSourcesPanel'
 
 /**
  * App-level user preferences. Tabbed layout (Playback / Library / Sync /
@@ -21,10 +22,12 @@ interface Props {
   initial: AppSettings
   onClose: () => void
   onSaved: (next: AppSettings) => void
+  /** Open on a given tab (a notice deep-links to Music Sources). */
+  initialTab?: Tab
 }
 
-type Tab = 'Playback' | 'EQ' | 'Library' | 'Sync' | 'Audio' | 'AI'
-const TABS: Tab[] = ['Playback', 'EQ', 'Library', 'Sync', 'Audio', 'AI']
+type Tab = 'Playback' | 'EQ' | 'Library' | 'Music Sources' | 'Sync' | 'Audio' | 'AI'
+const TABS: Tab[] = ['Playback', 'EQ', 'Library', 'Music Sources', 'Sync', 'Audio', 'AI']
 
 // Pretty Hz labels for the band frequencies (31, 62, 125, 250, 500,
 // 1000, 2000, 4000, 8000, 16000). Anything ≥1k becomes "1k" / "16k".
@@ -121,9 +124,11 @@ interface LastSync {
   durationMs: number | null
   error: string | null
   scriptPresent: boolean
+  deferredAt?: number | null
+  remote?: boolean
 }
 
-export default function SettingsModal({ initial, onClose, onSaved }: Props) {
+export default function SettingsModal({ initial, onClose, onSaved, initialTab }: Props) {
   // The width/crossfeed sliders apply LIVE while dragging (tuning by ear needs
   // to be audible), so Cancel must put the sound back the way it was. Wrap
   // onClose: revert the audio chain to the settings the modal OPENED with.
@@ -135,9 +140,17 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
 
   const [draft, setDraft] = useState<AppSettings>(initial)
   const [radioCaptions, setRadioCaptions] = useState(getCaptionsOn())  // 4.5 radioV2 CC toggle
-  const [tab, setTab] = useState<Tab>('Playback')
+  const [tab, setTab] = useState<Tab>(initialTab ?? 'Playback')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Spotify connect (AI tab) — status loads when the tab opens.
+  const [spotify, setSpotify] = useState<{ ok: boolean; hasClientId: boolean; connected: boolean; connectedAt?: string; lastPullAt?: string; redirectUri: string } | null>(null)
+  const [spotifyClientId, setSpotifyClientId] = useState('')
+  const [spotifyBusy, setSpotifyBusy] = useState(false)
+  const [spotifyMsg, setSpotifyMsg] = useState('')
+  useEffect(() => {
+    if (tab === 'AI' && !spotify) void window.electronAPI.spotifyStatus().then(setSpotify).catch(() => {})
+  }, [tab, spotify])
   // 4.4.13: resolved default path (~/Music2/_inbox) used as the placeholder
   // for the inbox folder input. Comes from main since renderer doesn't
   // know the user's homedir without a separate IPC.
@@ -472,7 +485,7 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
                   and ~260 µs late, the way a head does it for speakers. */}
               <div style={{ marginBottom: 18, paddingBottom: 16, borderBottom: '1px solid #e0ded8' }}>
                 <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, fontWeight: 600 }}>
-                  <span>Headphone crossfeed</span>
+                  <span>Headphone crossfeed <span style={{ fontWeight: 400, color: '#8a857c' }}>— headphones only; on speakers it just narrows the image</span></span>
                   <input
                     type="checkbox"
                     checked={draft.audio.crossfeedOn}
@@ -634,6 +647,17 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
             </>
           )}
 
+          {tab === 'Music Sources' && (
+            <div className="settings-music-sources">
+              {/* Record Shop step 5 — provider setup lives with the other
+                  preferences, not on discovery cards or the search page.
+                  Links and searches stay in Record Shop → Download. */}
+              <MusicSourcesPanel />
+              <p style={{ margin: '10px 2px 0', fontSize: 12, color: '#666' }}>
+                Searching the catalogue and pasting a link live in Record Shop → Download.
+              </p>
+            </div>
+          )}
           {tab === 'Library' && (
             <>
               <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: '#3a3a3a' }}>
@@ -830,24 +854,10 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
                 500 became 492 on the Mini. After Activity Sync, TSA inspects every
                 song by identity and the set stays until you sync again.
               </p>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, opacity: 0.45 }}>
-                <input
-                  type="checkbox"
-                  checked={false}
-                  disabled
-                  readOnly
-                />
-                <span>Automatically sync to iPod when connected (retired)</span>
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, opacity: 0.45 }}>
-                <input
-                  type="checkbox"
-                  checked={false}
-                  disabled
-                  readOnly
-                />
-                <span>Automatically remove deleted tracks from iPod (retired)</span>
-              </label>
+              {/* The two retired auto-sync checkboxes were removed 2026-09-06
+                  (placement audit): no UI consumer remained. Their settings keys
+                  stay on disk, forced false by settings-ipc, because main still
+                  reads them as guards. */}
 
               {/* 4.5 — Library backups to homemini. Pulled out of the
                   now-playing pill (was a chirp on every import / metadata
@@ -894,6 +904,12 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
                     </div>
                     {!lastSync.ok && lastSync.error && (
                       <div style={{ color: '#a23a2a', fontSize: 11 }}>{lastSync.error}</div>
+                    )}
+                    {lastSync.deferredAt != null && (
+                      <div style={{ color: '#8a6a1a', fontSize: 11 }}>
+                        Waiting for the NAS since {formatRelative(lastSync.deferredAt)}
+                        {lastSync.remote ? ' — away from home (over Tailscale); it catches up on its own, full pass when you’re back.' : ' — it retries on its own.'}
+                      </div>
                     )}
                   </div>
                 )}
@@ -1112,6 +1128,62 @@ export default function SettingsModal({ initial, onClose, onSaved }: Props) {
               <p className="imp-help" style={{ marginTop: 10 }}>
                 Hard cap on how many Claude calls JakeTunes makes per day (max 2000). After hitting the ceiling, fallback uses the most recent cached response.
               </p>
+              {/* Spotify — Discover Weekly into the brain (greenlit 2026-07-14).
+                  One-time setup: free dev app at developer.spotify.com with
+                  the exact redirect URI shown, paste the Client ID, Connect. */}
+              <div style={{ marginTop: 22, padding: '12px 14px', background: '#f5f1e2', borderRadius: 6 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Spotify — Discover Weekly</div>
+                {spotify && spotify.connected ? (
+                  <>
+                    <p className="imp-help" style={{ marginBottom: 8 }}>
+                      Connected{spotify.connectedAt ? ` since ${new Date(spotify.connectedAt).toLocaleDateString()}` : ''}.
+                      {spotify.lastPullAt ? ` Last pull ${new Date(spotify.lastPullAt).toLocaleString()}.` : ' No pull yet.'}
+                      {' '}Weekly taste signal: your Spotify listening feeds the Record Shop's anchors.
+                    </p>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button className="imp-btn" disabled={spotifyBusy} onClick={() => { void (async () => {
+                        setSpotifyBusy(true); setSpotifyMsg('Pulling…')
+                        const r = await window.electronAPI.spotifyPullNow()
+                        setSpotifyMsg(r.ok ? `Pulled ${r.tracks ?? 0} tracks · top: ${(r.topArtists ?? []).slice(0, 3).join(', ')}` : (r.error || 'Pull failed'))
+                        setSpotifyBusy(false)
+                      })() }}>Pull now</button>
+                      <button className="imp-btn" disabled={spotifyBusy} onClick={() => { void (async () => {
+                        await window.electronAPI.spotifyDisconnect()
+                        setSpotify(await window.electronAPI.spotifyStatus())
+                        setSpotifyMsg('Disconnected.')
+                      })() }}>Disconnect</button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="imp-help" style={{ marginBottom: 8 }}>
+                      One-time setup: create a free app at developer.spotify.com with redirect URI
+                      {' '}<code style={{ userSelect: 'all' }}>{spotify?.redirectUri || 'http://127.0.0.1:48213/callback'}</code>,
+                      paste its Client ID here, then Connect (opens Spotify login once).
+                    </p>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <input
+                        type="text"
+                        placeholder="Client ID"
+                        value={spotifyClientId}
+                        onChange={(e) => setSpotifyClientId(e.target.value)}
+                        style={{ flex: 1, padding: 6, fontSize: 12, fontFamily: 'monospace' }}
+                      />
+                      <button className="imp-btn" disabled={spotifyBusy || !spotifyClientId.trim()} onClick={() => { void (async () => {
+                        setSpotifyBusy(true); setSpotifyMsg('')
+                        const set = await window.electronAPI.spotifySetClientId(spotifyClientId)
+                        if (!set.ok) { setSpotifyMsg(set.error || 'Bad Client ID'); setSpotifyBusy(false); return }
+                        setSpotifyMsg('Waiting for Spotify login in your browser…')
+                        const r = await window.electronAPI.spotifyConnect()
+                        setSpotifyMsg(r.ok ? 'Connected.' : (r.error || 'Connect failed'))
+                        setSpotify(await window.electronAPI.spotifyStatus())
+                        setSpotifyBusy(false)
+                      })() }}>Connect</button>
+                    </div>
+                  </>
+                )}
+                {spotifyMsg && <p className="imp-help" style={{ marginTop: 8 }}>{spotifyMsg}</p>}
+              </div>
             </>
           )}
 

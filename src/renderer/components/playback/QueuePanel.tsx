@@ -128,6 +128,8 @@ const QueuePanel = forwardRef<QueuePanelHandle, { onClose: () => void }>(functio
     }
 
     // Player is active (playing or paused) — queue without interrupting.
+    // No notices (Jake 9/2: "it should just work") — the panel itself is
+    // the feedback: the song appears where it was dropped.
     if (dropIndex !== null) {
       const absIndex = state.queueIndex + 1 + dropIndex
       dispatch({ type: 'INSERT_IN_QUEUE', tracks, atIndex: absIndex })

@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   _normFingerprint,
+  _normTitleFingerprint,
   fingerprintTrack,
   loadDupeFingerprintsFromLibrary,
   addSessionImportedFingerprint,
@@ -54,6 +55,15 @@ describe('the text dedupe key', () => {
     // a behavior change and belongs to its own brief, not a move-only cut.
     assert.equal(_normFingerprint('N.Y. Lipps!'), 'n y lipps')
     assert.notEqual(_normFingerprint('N.Y. Lipps!'), _normFingerprint('NY Lipps'))
+  })
+
+  test('edition stamps never split the key; version markers still do (2026-09-05 live run)', () => {
+    assert.equal(_normTitleFingerprint('Helicopter (2001 Digital Remaster)'), _normFingerprint('Helicopter'))
+    assert.equal(_normTitleFingerprint('Life Begins At The Hop (Remastered 2001)'), _normFingerprint('Life Begins At The Hop'))
+    assert.equal(fingerprintTrack({ title: 'Helicopter (2001 Digital Remaster)', artist: 'XTC', duration: 234733 }),
+      fingerprintTrack({ title: 'Helicopter', artist: 'XTC', duration: 234733 }))
+    assert.notEqual(_normTitleFingerprint('Helicopter (Live)'), _normFingerprint('Helicopter'))
+    assert.notEqual(_normTitleFingerprint('Helicopter (Remix)'), _normFingerprint('Helicopter'))
   })
 
   test('fingerprintTrack refuses partial identities', () => {

@@ -1,38 +1,126 @@
 {
-  "name": "@jaketunes/contracts",
+  "package": "@jaketunes/contracts",
   "version": "0.1.0",
+  "upstream": "https://github.com/jrosey30/jaketunes-contracts",
   "sidecars": {
     "desktopOwned": [
       "library.json",
       "metadata-overrides.json",
+      "playlists.json",
+      "mixtapes.json",
+      "live-sets.json",
+      "embeddings.bin",
+      "mood-index.bin",
+      "mood-index.json",
+      "play-events.jsonl",
+      "listening-log.jsonl",
       "lyrics.json",
       "discovery-feedback.json",
       "friends.json",
-      "playlists.json",
-      "play-events.jsonl",
-      "listening-log.jsonl",
-      "live-sets.json",
       "listener-profile.json",
       "musicman-memory.json",
       "musicman-interactions.jsonl",
       "picks-cache.json"
     ],
     "mobileWritable": [
+      "recommendations.json",
+      "recommendations-deleted.json",
       "mobile-playlists.json",
+      "mobile-playlist-deletions.json",
       "playlist-additions.json",
+      "playlist-removals.json",
       "mobile-stars.json",
       "mobile-plays.json",
+      "mobile-play-log.json",
+      "mobile-listening-log.jsonl",
       "mobile-metadata-overrides.json",
       "mobile-imports.json",
-      "mobile-listening-log.jsonl",
-      "recommendations.json",
-      "recommendations-deleted.json"
+      "taste-memory-long.json",
+      "taste-memory-short.json",
+      "rsvps.json",
+      "record-stores.json",
+      "mount-rushmores.json",
+      "mixtape-hides.json",
+      "mixtapes-ai.json",
+      "gapless-albums.json",
+      "discogs-collection.json",
+      "mixes-cache.json",
+      "brain-eval-status.json",
+      "brain-status.json",
+      "desktop-playlist-hub.json",
+      "mixtape-hub.json"
     ],
     "phonePlaylistSidecarsNeverPushFromDesktop": [
       "mobile-playlists.json",
       "playlist-additions.json"
     ]
   },
+  "companion": {
+    "header": "X-JakeTunes-Companion",
+    "token": "jaketunes-homemini-phone",
+    "env": "MOBILE_API_TOKEN"
+  },
+  "backendTrust": {
+    "hosts": [
+      "homemini",
+      "localhost",
+      "127.0.0.1"
+    ],
+    "port": 3000,
+    "schemes": [
+      "http"
+    ]
+  },
+  "deepLinks": {
+    "scheme": "jaketunes",
+    "hosts": [
+      "wjlr",
+      "nowplaying"
+    ]
+  },
+  "apiRoutes": {
+    "unsignedGetMethods": [
+      "GET",
+      "HEAD"
+    ],
+    "unsignedGetPathPatterns": [
+      "^/healthz/?$",
+      "^/brainz/?$",
+      "^/audio(?:/|$)",
+      "^/artwork(?:/|$)",
+      "^/artist-image(?:/|$)",
+      "^/api/playlist-cover(?:/|$)"
+    ],
+    "mounts": [
+      "/healthz",
+      "/brainz",
+      "/audio",
+      "/artwork",
+      "/artist-image",
+      "/api",
+      "/api/playlist-cover",
+      "/api/assistant",
+      "/api/dj-set",
+      "/api/fun-fact",
+      "/api/recommendations",
+      "/api/identify",
+      "/api/artist",
+      "/api/concerts",
+      "/api/rsvps",
+      "/api/charts",
+      "/api/station",
+      "/api/news",
+      "/api/discogs",
+      "/api/mount-rushmore",
+      "/api/record-stores",
+      "/api/gapless",
+      "/api/live-sets",
+      "/api/mixtapes",
+      "/api/ai-report",
+      "/api/brain-eval"
+    ]
+  },
+  "name": "@jaketunes/contracts",
   "notes": {
     "recommendationsSingleWriter": "The homemini mobile backend is the SINGLE writer of recommendations.json and recommendations-deleted.json. Desktop V3 must never blunt-push those files via SYNC_FILES, STATE_FILE_NAMES, or reconcile/auto-backup. Mutations go through the backend HTTP API; when homemini is unreachable they queue in the V3-private recommendations-outbox.json and replay later."
   }

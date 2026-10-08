@@ -151,3 +151,13 @@ describe('width and crossfeed are opt-in', () => {
     assert.deepEqual(rogue, [], `setEnhanceConfig() called from ${rogue.join(', ')} — Jake's sound can now change without him asking.`)
   })
 })
+
+
+describe('width is adaptive and can never clip (2026-09-02)', () => {
+  test('ends in a safety limiter and measures the SOURCE per band', () => {
+    assert.match(enhance, /limiter = c\.createDynamicsCompressor\(\)/, 'the safety limiter is gone')
+    assert.match(enhance, /limiter\.connect\(c\.destination\)/, 'the limiter is no longer the last node before the destination')
+    assert.match(enhance, /adaptiveWidth: true/, 'adaptive width no longer defaults on')
+    assert.match(enhance, /splitter\.connect\(probeL, 0\); splitter\.connect\(probeR, 1\)/, 'the adaptive probes must read the band BEFORE widening')
+  })
+})

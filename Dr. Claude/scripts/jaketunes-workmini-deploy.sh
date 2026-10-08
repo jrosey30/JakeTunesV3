@@ -334,9 +334,22 @@ fi
 # validate_json sidecar loop the JSON files share.
 # Each push is best-effort; missing sources are skipped silently
 # (different Macs have different feature subsets enabled).
+say "[4/5a] Harvesting playlists created on workmini"
+# workmini used to be a DEAD END: its playlists had nowhere to go and the push
+# below overwrote them. Harvest first — workmini-only playlists (matched by
+# stable ID, never by name) come home to the MacBook, and only then does the
+# merged file go back out. ADD-ONLY: deletion needs tombstones, which playlists
+# do not have yet, and an add-only harvest cannot resurrect anything by itself.
+if [[ -x "$HOME/bin/jaketunes-workmini-playlist-harvest.sh" ]]; then
+  bash "$HOME/bin/jaketunes-workmini-playlist-harvest.sh" "$WORKMINI_USER" \
+    || echo "  ⚠ harvest skipped (see message above)"
+else
+  echo "  • harvest script missing — skipping"
+fi
+
 say "[4/5] Bootstrapping library.json + sidecars"
 ssh $SSH_OPTS "$REMOTE" "mkdir -p '$WM_HOME/Library/Application Support/JakeTunes'"
-SIDECARS=(picks-cache.json mobile-playlists.json playlist-additions.json metadata-overrides.json)
+SIDECARS=(picks-cache.json mobile-playlists.json playlist-additions.json metadata-overrides.json playlists.json mixtapes.json live-sets.json lyrics.json friends.json mobile-stars.json mobile-plays.json)
 # Phone-authored playlist sidecars: NAS is fresher than a possibly-stale
 # MacBook userData mirror (iOS backend writes via homemini → NAS). Prefer NAS
 # for those two so workmini doesn't inherit an empty/stale clobber copy.

@@ -43,6 +43,9 @@ export interface GaplessTrim {
   delaySec: number
   /** Tail trim in SECONDS — subtract from Howler remaining at the seam. */
   paddingSec: number
+  /** iTunSMPB original PCM sample count; 0 when unknown (LAME). Lets the
+   *  renderer measure whether decodeAudioData already stripped the priming. */
+  originalSamples: number
 }
 
 export interface ParsedGapless {
@@ -153,6 +156,7 @@ export function toGaplessTrim(
     sampleRate: sr,
     delaySec: parsed.delaySamples / sr,
     paddingSec: parsed.paddingSamples / sr,
+    originalSamples: parsed.originalSamples,
   }
 }
 

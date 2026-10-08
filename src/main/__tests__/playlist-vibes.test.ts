@@ -107,3 +107,53 @@ describe('playlist-vibes — kmeansCentroids', () => {
     assert.equal(kmeansCentroids([vec(0, 1)], 5).length, 1)
   })
 })
+
+// 2026-08-25 — Jake on a 7-song eclectic playlist: "only 2 suggestions?????"
+// The floor is right for a playlist with one clear character; on a mosaic it
+// starved the strip. The backfill must relax rather than serve an empty shelf.
+describe('vibe floor backfill — an eclectic playlist still fills the strip', () => {
+  it('yields a usable pool instead of a handful', () => {
+    const dim = 8
+    const unit = (i: number) => { const v = new Float32Array(dim); v[i % dim] = 1; return v }
+    const seeds = [0, 1, 2, 3, 4].map(unit)   // five distant corners = a mosaic
+    const candidates = new Map<number, Float32Array>()
+    for (let i = 0; i < 120; i++) {
+      const v = new Float32Array(dim)
+      v[i % 5] = 0.6
+      v[(i * 7) % dim] += 0.4
+      candidates.set(i + 1, v)
+    }
+    const { hits } = scorePlaylistCandidates(seeds, candidates, null)
+    assert.ok(hits.length >= 40, `expected a usable pool, got ${hits.length}`)
+  })
+})
+
+describe('playlist hint (name + description)', () => {
+  const seeds = [0.1, 0.2, 0.15, 0.05, 0.12, 0.18, 0.08, 0.14, 0.11, 0.16].map(m => vec(0, 1, m))
+  const cands: Array<[number, Float32Array]> = [[1, vec(0, 1, 0.13)], [2, vec(0, 1, 0.9)], [3, vec(3, 4, 0.5)], [4, vec(5, 6, 0.5)], [5, vec(2, 7, 0.3)]]
+
+  it('a name the music AGREES with adds its own pool (extra cluster, seat share) and nudges every score', () => {
+    const hint = vec(0, 1, 0.12)   // reads like the music
+    const plain = scorePlaylistCandidates(seeds, cands, null, 2)
+    const withHint = scorePlaylistCandidates(seeds, cands, null, 2, hint)
+    const K = withHint.clusterSeeds.length - 1
+    assert.equal(withHint.clusterSeeds.length, plain.clusterSeeds.length + 1)
+    assert.equal(withHint.clusterSeeds[K], 2)                        // 20% of 10 seeds → seat-eligible
+    const pool = withHint.hits.filter(h => h.cluster === K)
+    assert.equal(pool[0]?.trackId, 1)                                // best text match leads the hint pool
+    const a = plain.hits.find(h => h.trackId === 1 && h.cluster !== K)!
+    const b = withHint.hits.find(h => h.trackId === 1 && h.cluster !== K)!
+    assert.ok(b.score > a.score)                                     // every candidate feels the hint
+  })
+
+  it('a name that means nothing (Baseball) — music no closer to it than the library — is ignored entirely', () => {
+    const hint = vec(5, 6, 0.5)    // nothing like the music
+    const plain = scorePlaylistCandidates(seeds, cands, null, 2)
+    const withHint = scorePlaylistCandidates(seeds, cands, null, 2, hint)
+    assert.deepEqual(withHint, plain)
+  })
+
+  it('no hint → identical output to before', () => {
+    assert.deepEqual(scorePlaylistCandidates(seeds, cands, null, 2, null), scorePlaylistCandidates(seeds, cands, null, 2))
+  })
+})

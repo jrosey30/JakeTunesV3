@@ -34,6 +34,10 @@ export interface IpodIpcHost {
    * and used to start a second writer mid-copy (roulette).
    */
   isSyncInFlight?: () => boolean
+  /** Fired once per plug-in transition (absent → mounted). The Round Trip
+   *  ingest hangs off this — reading Play Counts/OTG the moment the iPod
+   *  arrives, before any sync can retire them. */
+  onMountDetected?: (mount: string) => void
 }
 
 const IPOD_MISS_THRESHOLD = 3   // ~3 polls (~7.5s) of true absence before "disconnected"
@@ -107,7 +111,9 @@ export function registerIpodIpc(ipc: IpcRegistrar, host: IpodIpcHost): void {
       }
       if (mount) {
         const volume = volumeNameFromMount(mount)
+        const wasAbsent = !state.mount
         host.setMount({ mount, volume, missStreak: 0 })
+        if (wasAbsent) host.onMountDetected?.(mount)
         return { mounted: true, name: volume }
       }
       // No mount this poll. Ride out a brief flap rather than yanking the
@@ -136,8 +142,11 @@ export function registerIpodIpc(ipc: IpcRegistrar, host: IpodIpcHost): void {
       await ejectVolume(mount)
       host.setMount({ mount: null, volume: null, missStreak: 0 })
       return { ok: true }
-    } catch {
-      return { ok: false, error: 'Eject failed' }
+    } catch (err) {
+      // Pass the CAUSE through (platform.ts phrases it path-free) instead of a
+      // constant the UI then prefixes into "Eject failed: Eject failed".
+      const why = err instanceof Error ? err.message : ''
+      return { ok: false, error: why || 'the disk did not respond to eject' }
     }
   }, { refuse: REFUSED_SENDER })
 

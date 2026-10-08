@@ -10,6 +10,7 @@ import { join } from 'path'
 import { readFile, writeFile } from 'fs/promises'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
+import { loadPins, savePins, normalizePins, pinsPath } from '../playlist-pins.ts'
 
 function uiStatePath(): string {
   return join(app.getPath('userData'), 'ui-state.json')
@@ -107,5 +108,29 @@ export function registerUiStateIpc(ipc: IpcRegistrar): void {
     const run = uiStateWriteChain.then(() => saveUiStateSerialized(uiState), () => saveUiStateSerialized(uiState))
     uiStateWriteChain = run.catch(() => {})
     return run
+  }, { refuse: REFUSED_SENDER })
+
+  // Sidebar pins (2026-08-28) — moved OUT of per-machine ui-state into their
+  // own synced sidecar so "same pins" holds across machines (the workmini
+  // harvest exchanges it, newest updatedAt wins). Legacy migration: a machine
+  // with no pins file yet serves its old ui-state pinnedPlaylists with an
+  // EMPTY stamp, so the first real save anywhere outranks every legacy copy.
+  ipc.handle('load-playlist-pins', async () => {
+    const file = pinsPath(app.getPath('userData'))
+    const pins = await loadPins(file)
+    if (pins) return { ok: true, pins }
+    try {
+      const legacy = JSON.parse(await readFile(uiStatePath(), 'utf-8')) as Record<string, unknown>
+      const migrated = normalizePins({ pinnedPlaylists: legacy['pinnedPlaylists'], updatedAt: '' })
+      if (migrated) return { ok: true, pins: migrated }
+    } catch { /* no legacy state either — first run */ }
+    return { ok: true, pins: null }
+  }, { public: true })
+
+  ipc.handle('save-playlist-pins', async (_e, pinnedPlaylists: unknown) => {
+    const pins = normalizePins({ pinnedPlaylists, updatedAt: new Date().toISOString() })
+    if (!pins) return { ok: false, error: 'bad-shape' }
+    await savePins(pins, pinsPath(app.getPath('userData')))
+    return { ok: true }
   }, { refuse: REFUSED_SENDER })
 }

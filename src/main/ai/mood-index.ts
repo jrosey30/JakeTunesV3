@@ -100,6 +100,12 @@ export async function persistMoodIndex(): Promise<void> {
   cachedMtimeMs = (await stat(getMoodIndexPath())).mtimeMs
 }
 
+/** Same as adoptEmbeddingsMap, for the vibe index. See src/main/brain-pull.ts. */
+export async function adoptMoodIndexMap(map: Map<number, Float32Array>): Promise<void> {
+  cache = map
+  await persistMoodIndex()
+}
+
 export async function pruneStaleMoodVectors(validTrackIds: Set<number>): Promise<number> {
   const map = await getMoodIndexMap()
   let pruned = 0

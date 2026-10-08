@@ -157,12 +157,15 @@ export function computeStandings(
     if (seen.has(key)) continue
     rows.push({ name: led.name, points: 0, credits: [], adds: led.adds ?? 0, tossed: led.tossed ?? 0 })
   }
-  // Jake's rule (2026-08-07, the Dan Gottlieb podcast case): a friend does
-  // not SHOW in standings until they've sent a legitimate song. A ledger
-  // entry with zero adds and zero credits means nothing they sent ever
-  // landed on the list — a podcast link, a failed capture. They stay in the
-  // ledger (first real song makes them appear) but never on the board.
-  const filtered = rows.filter((r) => r.adds > 0 || r.credits.length > 0 || r.tossed > 0)
+  // Jake's rule, tightened 2026-08-28 ("Joey should not be in standings" —
+  // Joey had sent one legitimate song, never imported): SENDING no longer
+  // seats you. A friend appears on the board only once a credit exists —
+  // their first import (or the deletion penalty that follows one). The
+  // ledger still remembers every sender; the first credit makes them show.
+  // (Supersedes the 2026-08-07 adds>0 rule from the Dan Gottlieb case —
+  // that rule kept podcast-only friends off the board, this one also keeps
+  // the not-yet-imported off it.)
+  const filtered = rows.filter((r) => r.credits.length > 0)
   // Rank: points desc, then most credits (activity), then name for stability.
   filtered.sort((a, b) => b.points - a.points || b.credits.length - a.credits.length || a.name.localeCompare(b.name))
   return filtered

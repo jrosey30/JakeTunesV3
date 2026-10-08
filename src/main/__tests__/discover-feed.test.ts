@@ -173,3 +173,17 @@ describe('discoverVerdicts — the scorer’s view of the ledger', () => {
     assert.equal(v.accepts.length + v.rejects.length, 0)
   })
 })
+
+describe('filterFeed — cover factories never get a card, from any lane (2026-09-21)', () => {
+  test('Yoyo International Orchestra is dropped; a real band is not', () => {
+    const out = filterFeed(
+      [
+        card({ type: 'album', artist: 'Yoyo International Orchestra', title: 'The Love Songs of the Beatles - Instrumentals Volume 1' }),
+        card({ type: 'album', artist: 'Vitamin String Quartet', title: 'VSQ Performs Nirvana' }),
+        card({ type: 'album', artist: 'Electric Light Orchestra', title: 'Out of the Blue' }),
+      ],
+      baseOpts(),
+    )
+    assert.deepEqual(out.map((c) => c.artist), ['Electric Light Orchestra'])
+  })
+})

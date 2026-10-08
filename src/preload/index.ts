@@ -13,8 +13,8 @@ const electronAPI = {
     return () => { ipcRenderer.removeListener('menu-action', handler) }
   },
   setLibraryContext: (ctx: string): Promise<void> => ipcRenderer.invoke('set-library-context', ctx),
-  musicmanChat: (messages: { role: string; content: string }[]): Promise<{ ok: boolean; text: string; textRaw: string; createdPlaylist?: { name: string; trackIds: number[] } | null }> =>
-    ipcRenderer.invoke('musicman-chat', messages),
+  musicmanChat: (messages: { role: string; content: string }[], context?: string): Promise<{ ok: boolean; text: string; textRaw: string; createdPlaylist?: { name: string; trackIds: number[] } | null }> =>
+    ipcRenderer.invoke('musicman-chat', messages, context),
   musicmanSpeak: (text: string, fast?: boolean, voiceId?: string): Promise<{ ok: boolean; audio?: string; error?: string }> =>
     ipcRenderer.invoke('musicman-speak', text, fast, voiceId),
   musicmanDj: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen'): Promise<{ ok: boolean; text: string; transition?: 'talk' | 'scratch' | 'cut' }> =>
@@ -54,6 +54,8 @@ const electronAPI = {
     ipcRenderer.invoke('get-active-host'),
   audioLog: (line: string): void => ipcRenderer.send('audio-log', line),
   reportCrash: (payload: { kind: string; message?: string; stack?: string; source?: string }): void => ipcRenderer.send('flight-record', payload),
+  // Diagnostic rows (dx.*) into main.log — observation only, never load-bearing.
+  dxRecord: (tag: string, detail?: unknown): void => ipcRenderer.send('dx-record', { tag, detail }),
   // 4.1.6: Radio Mode — between-song WJLR-style commentary, distinct
   // from one-shot DJ comment (mic click). Same shape, different system
   // prompt + voice.
@@ -201,7 +203,7 @@ const electronAPI = {
   // (next to library.json on the NAS); add/delete route through the Mini
   // backend so it stays the single writer.
   loadRecommendations: () => ipcRenderer.invoke('read-recommendations'),
-  addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string; source?: 'user' | 'mm' | 'radar'; from?: string; link?: string }) =>
+  addRecommendation: (input: { song?: string; artist?: string; album?: string; note?: string; source?: 'user' | 'mm' | 'radar'; from?: string; link?: string; kind?: 'track' | 'album' | 'concert' }) =>
     ipcRenderer.invoke('add-recommendation', input),
   deleteRecommendation: (id: string) => ipcRenderer.invoke('delete-recommendation', id),
   // Brief 126 — main pushes when the mirror changed (60s timer / mutations);
@@ -215,7 +217,7 @@ const electronAPI = {
   suggestRecommendations: (opts?: { force?: boolean }) => ipcRenderer.invoke('suggest-recommendations', opts),
   // Brief 122 Phase 2 — iTunes Search autocomplete for the add form.
   searchItunes: (query: string) => ipcRenderer.invoke('search-itunes', query),
-  itunesAlbumTracks: (collectionId: number) => ipcRenderer.invoke('itunes-album-tracks', collectionId),
+  itunesAlbumTracks: (ref: number | { artist?: string; album: string }) => ipcRenderer.invoke('itunes-album-tracks', ref),
   // Artist-verified cover art for radar/discovery cards (no wrong covers).
   lookupRecoArtwork: (input: { artist: string; title: string }) => ipcRenderer.invoke('lookup-reco-artwork', input),
   lookupAlbumPreview: (input: { artist: string; album: string }): Promise<{ previewUrl?: string; trackTitle?: string }> => ipcRenderer.invoke('lookup-album-preview', input),
@@ -283,6 +285,14 @@ const electronAPI = {
     ipcRenderer.on('mobile-imports-updated', handler)
     return () => { ipcRenderer.removeListener('mobile-imports-updated', handler) }
   },
+  // 2026-10-08 hub catalog (replicas): the hub's upserts/removals, and the ack
+  // that lets main remember the adopted version.
+  onHubCatalogUpdated: (callback: (p: { full: boolean; version: string; upserts: unknown[]; removedIds: Array<string | number> }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, p: { full: boolean; version: string; upserts: unknown[]; removedIds: Array<string | number> }) => callback(p)
+    ipcRenderer.on('hub-catalog-updated', handler)
+    return () => { ipcRenderer.removeListener('hub-catalog-updated', handler) }
+  },
+  hubCatalogAdopted: (version: string) => ipcRenderer.invoke('hub-catalog-adopted', version),
   onMobileOverridesUpdated: (callback: (p: { overrides: Record<string, { fp?: string; fields?: Record<string, string> }> }) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, p: { overrides: Record<string, { fp?: string; fields?: Record<string, string> }> }) => callback(p)
     ipcRenderer.on('mobile-overrides-updated', handler)
@@ -410,8 +420,8 @@ const electronAPI = {
   // 4.5: brain-driven playlist suggestions — the playlist's embedding centroid's
   // nearest library tracks (vibe match). PlaylistView's "Suggested" strip filters
   // these for freshness + diversity instead of the old artist-match heuristic.
-  playlistSimilar: (playlistIds: number[], clusters?: number): Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }> =>
-    ipcRenderer.invoke('playlist-similar', playlistIds, clusters),
+  playlistSimilar: (playlistIds: number[], clusters?: number, hint?: string): Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }> =>
+    ipcRenderer.invoke('playlist-similar', playlistIds, clusters, hint),
   onEmbeddingBackfillProgress: (callback: (p: { done: number; total: number }) => void): () => void => {
     const handler = (_e: unknown, p: { done: number; total: number }) => callback(p)
     ipcRenderer.on('embedding-backfill-progress', handler)
@@ -573,7 +583,7 @@ const electronAPI = {
     id: number; title?: string; artist?: string; album?: string; genre?: string; year?: string | number
     playCount?: number; skipCount?: number; rating?: number; bpm?: number | null; codec?: string; fileSize?: number
     path?: string; audioMissing?: boolean
-  }>, opts?: { target?: number; brief?: Record<string, unknown>; saveProfile?: boolean }): Promise<{
+  }>, opts?: { target?: number; brief?: Record<string, unknown>; saveProfile?: boolean; pool?: { ids: number[]; fill: boolean } }): Promise<{
     ok: boolean
     trackIds?: number[]
     reserveIds?: number[]
@@ -614,7 +624,7 @@ const electronAPI = {
     ipcRenderer.invoke('playlist-cover-copy', fromId, toId),
   clearPlaylistCover: (playlistId: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('playlist-cover-clear', playlistId),
-  gaplessTrim: (absPath: string): Promise<{ delaySamples: number; paddingSamples: number; sampleRate: number; delaySec: number; paddingSec: number } | null> =>
+  gaplessTrim: (absPath: string): Promise<{ delaySamples: number; paddingSamples: number; sampleRate: number; delaySec: number; paddingSec: number; originalSamples?: number } | null> =>
     ipcRenderer.invoke('gapless-trim', absPath),
   saveMixtapeIntro: (data: ArrayBuffer, voiceId?: string): Promise<{ ok: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke('save-mixtape-intro', data, voiceId),
@@ -628,12 +638,32 @@ const electronAPI = {
     ipcRenderer.invoke('get-workout-sync-state'),
   getActivityProfiles: (): Promise<{ ok: boolean; profiles?: Array<Record<string, unknown>> }> =>
     ipcRenderer.invoke('get-activity-profiles'),
+  // iPod Pool (2026-09-02) — the hand-built activity set.
+  getActivityPool: (): Promise<{ ok: boolean; ids?: number[]; names?: Record<string, { t: string; a: string }>; max?: number }> =>
+    ipcRenderer.invoke('activity-pool-get'),
+  addToActivityPool: (candidates: Array<{ id: number; title?: string; artist?: string; duration?: number; genre?: string; playCount?: number; rating?: number }>): Promise<{ ok: boolean; ids?: number[]; names?: Record<string, { t: string; a: string }>; added?: number; dupes?: number; skits?: number; overflow?: number; max?: number; error?: string }> =>
+    ipcRenderer.invoke('activity-pool-add', candidates),
+  swapInActivityPool: (args: { oldId: number; newId: number; name?: { t: string; a: string } }): Promise<{ ok: boolean; ids?: number[]; names?: Record<string, { t: string; a: string }>; error?: string }> =>
+    ipcRenderer.invoke('activity-pool-swap', args),
+  removeFromActivityPool: (ids: number[]): Promise<{ ok: boolean; ids?: number[] }> =>
+    ipcRenderer.invoke('activity-pool-remove', ids),
+  clearActivityPool: (): Promise<{ ok: boolean; ids?: number[] }> =>
+    ipcRenderer.invoke('activity-pool-clear'),
   getActivityBrainContext: (): Promise<{ ok: boolean; context?: unknown; promptBlock?: string }> =>
     ipcRenderer.invoke('get-activity-brain-context'),
   previewPlaceWeather: (place: string): Promise<{ ok: boolean; weather?: { tempF: number; condition: string; description: string; placeLabel?: string } | null }> =>
     ipcRenderer.invoke('preview-place-weather', place),
-  onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'db' | 'cancelled' | 'error'; current: number; total: number; title: string }) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, progress: { phase: 'copy' | 'preflight' | 'db' | 'cancelled' | 'error'; current: number; total: number; title: string }) => callback(progress)
+  getSyncHistory: (): Promise<{ ok: boolean; entries: Array<Record<string, unknown>> }> =>
+    ipcRenderer.invoke('get-sync-history'),
+  refreshDeezerPreview: (artist: string, title: string): Promise<{ ok: boolean; previewUrl?: string }> =>
+    ipcRenderer.invoke('refresh-deezer-preview', artist, title),
+  onIpodRoundTrip: (callback: (payload: { updates: Array<{ id: number; field: string; value: number }>; summary: { plays: number; tracks: number; otgLists: number } }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: { updates: Array<{ id: number; field: string; value: number }>; summary: { plays: number; tracks: number; otgLists: number } }) => callback(payload)
+    ipcRenderer.on('ipod-roundtrip', handler)
+    return () => { ipcRenderer.removeListener('ipod-roundtrip', handler) }
+  },
+  onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'verify' | 'db' | 'cancelled' | 'error'; current: number; total: number; title: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: { phase: 'copy' | 'preflight' | 'verify' | 'db' | 'cancelled' | 'error'; current: number; total: number; title: string }) => callback(progress)
     ipcRenderer.on('sync-progress', handler)
     return () => { ipcRenderer.removeListener('sync-progress', handler) }
   },
@@ -646,6 +676,29 @@ const electronAPI = {
     ipcRenderer.invoke('load-ui-state'),
   saveUiState: (state: Record<string, unknown>): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('save-ui-state', state),
+  // Spotify connect (PKCE) + Discover Weekly pull.
+  spotifyStatus: (): Promise<{ ok: boolean; hasClientId: boolean; connected: boolean; connectedAt?: string; lastPullAt?: string; redirectUri: string }> =>
+    ipcRenderer.invoke('spotify-status'),
+  spotifySetClientId: (clientId: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('spotify-set-client-id', clientId),
+  spotifyConnect: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('spotify-connect'),
+  spotifyDisconnect: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('spotify-disconnect'),
+  spotifyPullNow: (): Promise<{ ok: boolean; tracks?: number; topArtists?: string[]; error?: string }> =>
+    ipcRenderer.invoke('spotify-pull-now'),
+  // Playlist hub push (final-form sync): main adopted new hub state —
+  // the renderer swaps its list in place, no reboot needed.
+  onPlaylistsUpdated: (callback: (p: { playlists: unknown[] }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, p: { playlists: unknown[] }) => callback(p)
+    ipcRenderer.on('playlists-updated', handler)
+    return () => { ipcRenderer.removeListener('playlists-updated', handler) }
+  },
+  // Sidebar pins — synced sidecar, no longer part of per-machine ui-state.
+  loadPlaylistPins: (): Promise<{ ok: boolean; pins: { pinnedPlaylists: string[]; updatedAt: string } | null }> =>
+    ipcRenderer.invoke('load-playlist-pins'),
+  savePlaylistPins: (pinnedPlaylists: string[]): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('save-playlist-pins', pinnedPlaylists),
   // CD drive
   checkCdDrive: (): Promise<{ hasCd: boolean; volumeName?: string; volumePath?: string; trackCount?: number }> =>
     ipcRenderer.invoke('check-cd-drive'),
@@ -683,6 +736,8 @@ const electronAPI = {
     ipcRenderer.invoke('save-live-set', albumKey, entry),
   removeLiveSet: (albumKey: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('remove-live-set', albumKey),
+  extractConcertCrowd: (mergedTrackId: number, colonPath: string, cueStartsMs: number[], totalMs: number): Promise<{ ok: boolean; error?: string; startSec?: number }> =>
+    ipcRenderer.invoke('extract-concert-crowd', mergedTrackId, colonPath, cueStartsMs, totalMs),
   getConcertCrowd: (mergedTrackId: number): Promise<string | null> =>
     ipcRenderer.invoke('get-concert-crowd', mergedTrackId),
   saveCrowdTuning: (t: Record<string, number>): Promise<{ ok: boolean }> =>
@@ -802,7 +857,7 @@ const electronAPI = {
     ipcRenderer.invoke('streamrip:search', opts),
   streamripDownloadId: (source: string, mediaType: string, id: string): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }> =>
     ipcRenderer.invoke('streamrip:download-id', source, mediaType, id),
-  streamripDownloadByQuery: (opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean }): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string }> =>
+  streamripDownloadByQuery: (opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number; sourceEdition?: unknown }): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }> }> =>
     ipcRenderer.invoke('streamrip:download-by-query', opts),
   streamripCancelActive: (): Promise<{ ok: boolean; killed: number }> =>
     ipcRenderer.invoke('streamrip:cancel-active'),
@@ -826,6 +881,14 @@ const electronAPI = {
       ipcRenderer.invoke('record-store:speak-blurb', args),
     cancelSpeech: (args: { audioId: string }): Promise<{ ok: true }> =>
       ipcRenderer.invoke('record-store:cancel-speech', args),
+  },
+  // ── Record Shop (6.0): an item's catalogue identity + library ownership by recording identity ──
+  recordShop: {
+    resolve: (req: unknown): Promise<unknown> => ipcRenderer.invoke('record-shop:resolve', req),
+  },
+  /** Compare editions (read-only): the per-track judge behind a refused album. Acquires nothing. */
+  nearEdition: {
+    compare: (req: unknown): Promise<unknown> => ipcRenderer.invoke('near-edition:compare', req),
   },
   // ── Bandcamp Store v4 (download -> library events) ──
   onBandcampTrackImported: (callback: (track: { id?: number; title?: string; artist?: string; album?: string }) => void) => {
@@ -905,6 +968,8 @@ const electronAPI = {
     ok: boolean
     reason: 'import' | 'metadata-edit' | 'playlist' | 'safety-net' | 'manual'
     error?: string
+    /** Deferred by the NAS breaker — not a failure; retries on its own. */
+    deferred?: boolean
     durationMs?: number
   }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, status: Parameters<typeof callback>[0]) => callback(status)

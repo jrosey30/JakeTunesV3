@@ -13,14 +13,22 @@
 // Real covers come from the live library artwork (album-art:// protocol).
 // Playback / Library / useAudio are READ here, never edited.
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { useLibrary } from '../../context/LibraryContext'
+import { usePlayback } from '../../context/PlaybackContext'
 import { useAudio } from '../../hooks/useAudio'
+import { useStoreAmbience, type AmbienceTrack } from './hooks/useStoreAmbience'
 import { buildNormalizedArtworkIndex, lookupArtwork } from '../../utils/artworkLookup'
 import { useShelves } from './hooks/useShelves'
 import { DialogueBox } from './components/DialogueBox'
 import { CrateBrowse } from './components/CrateBrowse'
+import { CounterDesk } from './components/CounterDesk'
+import { shopFixtureSession } from '../../../common/record-shop-fixtures'
+import { recordingShopCommands } from '../../../common/record-shop-commands'
+import { useShopSession } from '../../record-shop/useShopSession'
+import { openBrowse } from '../../listen-to-the-list/ltlDownload'
+import { liveShopCommands } from '../../record-shop/liveShopCommands'
 import type { Blurb, Persona, ShelfId, ShelfItem } from './types'
 import storefrontBg from './art/storefront.png'
 import mmSmug from './art/musicman-smug.png'
@@ -40,7 +48,14 @@ type TakeState =
   | { status: 'loading'; item: ShelfItem }
   | { status: 'ready'; item: ShelfItem; text: string | null }
 
-type Scene = { view: 'wide' } | { view: 'bin'; shelfId: ShelfId }
+// 6.0 Record Shop: the counter is the shop's shared session (saved items,
+// orders, what's on the shelf) shown in this room. Live by default; the
+// frozen fixture set (and its recording-only command bus) appears ONLY
+// when the window hash carries #shopFixtures — a review aid, never a
+// default, and fixture ids are refused by the live bus regardless.
+const fixtureModeRequested = (): boolean => typeof window !== 'undefined' && /shopFixtures/.test(window.location.hash)
+type Scene = { view: 'wide' } | { view: 'bin'; shelfId: ShelfId } | { view: 'counter' }
+const COUNTER_RECT: CSSProperties = { left: '3%', top: '52%', width: '17%', height: '30%' }
 
 // Clickable regions over the storefront art's drawn bins (point-and-click
 // adventure style). Percentages of the scene box — tune these to line up
@@ -58,17 +73,94 @@ const FALLBACK_RECTS: CSSProperties[] = [
 ]
 
 export default function RecordStoreView() {
-  const { state: lib } = useLibrary()
+  const { state: lib, dispatch } = useLibrary()
+  const { state: playback } = usePlayback()
   const { playTrack } = useAudio()
+  // The shop's own record player. Persisted per machine, default ON — you
+  // walked into a record store, it should sound like one.
+  const [ambienceOn, setAmbienceOn] = useState(true)
+  useEffect(() => {
+    void window.electronAPI.loadUiState().then((ui) => {
+      const v = (ui.ok && ui.state) ? (ui.state as Record<string, unknown>).recordStoreAmbience : undefined
+      if (typeof v === 'boolean') setAmbienceOn(v)
+    }).catch(() => { /* default ON */ })
+  }, [])
+  const toggleAmbience = useCallback(() => {
+    setAmbienceOn((prev) => {
+      const next = !prev
+      void (async () => {
+        try {
+          const ui = await window.electronAPI.loadUiState()
+          const existing = (ui.ok && ui.state) ? ui.state : {}
+          await window.electronAPI.saveUiState({ ...existing, recordStoreAmbience: next })
+        } catch { /* the toggle still works this session */ }
+      })()
+      return next
+    })
+  }, [])
   const { state, refresh } = useShelves()
   const [take, setTake] = useState<TakeState>({ status: 'idle' })
   const [scene, setScene] = useState<Scene>({ view: 'wide' })
+  // The shared shop session this room presents: the live list + scheduler
+  // + ownership, through the same model the regular shop reads.
+  const fixtureMode = useMemo(fixtureModeRequested, [])
+  const live = useShopSession()
+  const fixtureSession = useMemo(() => (fixtureMode ? shopFixtureSession() : null), [fixtureMode])
+  const session = fixtureSession ?? live.session
+  const sessionRef = useRef(session); sessionRef.current = session
+  const recById = useMemo(() => new Map(live.recs.map((r) => [r.id, r] as const)), [live.recs])
+  const recRef = useRef(recById); recRef.current = recById
+  // The clear way OUT: back to the regular Record Shop, same items.
+  const leaveShop = useCallback(() => dispatch({ type: 'SET_VIEW', view: 'discovery' }), [dispatch])
+  useEffect(() => {
+    if (scene.view !== 'wide') return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && take.status === 'idle') leaveShop() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [scene.view, take.status, leaveShop])
 
   const trackById = useMemo(() => {
     const m = new Map<number, typeof lib.tracks[number]>()
     for (const t of lib.tracks) m.set(t.id, t)
     return m
   }, [lib.tracks])
+
+  const playOwnedTracks = useCallback((ids: number[]) => {
+    const ts = ids.map((id) => trackById.get(Number(id))).filter((t): t is NonNullable<typeof t> => Boolean(t))
+    if (ts.length) playTrack(ts[0], ts, 0, undefined, true, true)   // the running order is the record
+  }, [trackById, playTrack])
+  const commands = useMemo(() => fixtureMode
+    ? recordingShopCommands((c) => console.log('[record-store] fixture command', c.verb, c.id))
+    : liveShopCommands({ session: () => sessionRef.current, recById: () => recRef.current, playTracks: playOwnedTracks, openDownloadView: () => openBrowse(dispatch), refresh: live.refresh }),
+  [fixtureMode, playOwnedTracks, dispatch, live.refresh])
+
+  // What the shop plays = what the shop stocks. Every track on today's
+  // shelves, so the room sounds like the crates you're standing in.
+  const ambienceTracks = useMemo<AmbienceTrack[]>(() => {
+    if (state.status !== 'ready') return []
+    const out: AmbienceTrack[] = []
+    const seen = new Set<number>()
+    for (const shelf of state.bundle.shelves) {
+      for (const item of shelf.items) {
+        for (const raw of item.payload.trackIds ?? []) {
+          const id = Number(raw)
+          if (seen.has(id)) continue
+          const t = trackById.get(id)
+          if (!t?.path) continue
+          seen.add(id)
+          out.push({ id, path: String(t.path) })
+        }
+      }
+    }
+    return out
+  }, [state, trackById])
+
+  useStoreAmbience({
+    enabled: ambienceOn,
+    tracks: ambienceTracks,
+    // A shop never plays over your own record.
+    userIsPlaying: playback.isPlaying,
+  })
 
   const artIndex = useMemo(() => buildNormalizedArtworkIndex(lib.artworkMap), [lib.artworkMap])
 
@@ -167,10 +259,49 @@ export default function RecordStoreView() {
           <span className="recordstore__sign-theme">{bundle.theme.theme}</span>
         </div>
 
+        <button type="button" className="recordstore__leave" onClick={leaveShop} title="Back to the Record Shop (Esc)">← Leave the shop</button>
+
+        {/* The shop's speakers. Off is a real off: the hook stops the
+            element, it doesn't just mute a running track. */}
+        <button
+          type="button"
+          className={`recordstore__speaker${ambienceOn ? '' : ' recordstore__speaker--off'}`}
+          onClick={toggleAmbience}
+          aria-pressed={ambienceOn}
+          title={ambienceOn ? 'Turn the shop\u2019s music off' : 'Turn the shop\u2019s music on'}
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+            <path
+              d="M4 9.5v5h3.2L12 18.6V5.4L7.2 9.5H4z"
+              fill="currentColor"
+            />
+            {ambienceOn ? (
+              <>
+                <path d="M15.4 8.8a4.3 4.3 0 0 1 0 6.4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+                <path d="M17.9 6.2a7.8 7.8 0 0 1 0 11.6" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+              </>
+            ) : (
+              <path d="M15.8 9.4l5 5.2M20.8 9.4l-5 5.2" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+            )}
+          </svg>
+          <span className="recordstore__speaker-label">{ambienceOn ? 'Shop music on' : 'Shop music off'}</span>
+        </button>
+
         {/* WIDE: the bins in the ART are the buttons. Hover highlights +
             labels a crate; click digs into that shelf. */}
         {scene.view === 'wide' && (
           <>
+            <button
+              type="button"
+              className="rs-hotspot rs-hotspot--counter"
+              style={COUNTER_RECT}
+              onClick={() => setScene({ view: 'counter' })}
+            >
+              <span className="rs-hotspot__label">
+                The Counter
+                <em>{session.items.length} items · {Object.values(session.jobs).filter((j) => j.status === 'downloading' || j.status === 'queued').length} on order</em>
+              </span>
+            </button>
             {bundle.theme.rationale && (
               <p className="recordstore__rationale">
                 {bundle.theme.rationale}
@@ -207,6 +338,11 @@ export default function RecordStoreView() {
             onBack={() => setScene({ view: 'wide' })}
             selectedId={take.status !== 'idle' ? take.item.id : null}
           />
+        )}
+
+        {/* COUNTER: the shared shop session, in this room's voice. */}
+        {scene.view === 'counter' && (
+          <CounterDesk session={session} commands={commands} onBack={() => setScene({ view: 'wide' })} fixtureMode={fixtureMode} loading={!fixtureMode && live.loading} />
         )}
 
         {/* Music Man pops in to talk (any view). */}

@@ -14,7 +14,7 @@ import type { ViewName } from '../../types'
 
 const VIEW_LABELS: Partial<Record<ViewName, string>> = {
   home: 'Home', songs: 'Songs', artists: 'Artists', albums: 'Albums',
-  genres: 'Genres', discovery: 'Discovery', musicman: 'The Music Man',
+  genres: 'Genres', discovery: 'Record Shop', musicman: 'The Music Man',
   store: 'Store', download: 'Download', recordstore: 'Record Store',
   device: 'iPod', 'cd-import': 'CD Import', scotus: 'SCOTUS Archive',
 }

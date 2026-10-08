@@ -6,20 +6,20 @@
      "warmer silver" without consciously seeing the orange. */
   /* 2026-08-07: "a hint more silver" — yellow cast eased, still warm
      enough to live with the cream surfaces. */
-  --chrome-top: #d6d4d1;
-  --chrome-bottom: #c5c2bd;
+  --chrome-top: #e9e9e9;      /* 2011 (iTunes 10.5 on Lion): unified silver, no warm cast */
+  --chrome-bottom: #d2d2d2;
   /* Sidebar stays cool blue-grey — distinct visual zone from the
      warm toolbar. */
-  --sidebar-top: #c1cad7;
-  --sidebar-bottom: #a9b4c2;
+  --sidebar-top: #e4e9f0;     /* Lion source list: pale blue-grey, nearly flat */
+  --sidebar-bottom: #dae0e8;
   /* Selection pill (iTunes 8 blue). */
-  --selection-top: #5b86dc;
-  --selection-bottom: #3e6ec7;
+  --selection-top: #7f97ba;   /* Lion selection: blue-grey, not blue glass */
+  --selection-bottom: #5f79a4;
   /* V5 facelift: rgba() sibling of --selection-top (same pattern as
      --brand-orange-rgb) so hover glows reference the real selection
      blue instead of the drifted one-off literals genres.css/songs.css
      each carried (rgba(74,144,217,…) — close, but not the token). */
-  --selection-top-rgb: 91, 134, 220;
+  --selection-top-rgb: 127, 151, 186;
   /* V5 facelift: alt-row tint consolidated to ONE app-wide zebra.
      History: 4.5 dialed #f9f4eb back to #f6f2e8 (too warm-yellow vs the
      pill); then 4.5.0-111 cooled --white to #fdfdfd and songs.css was
@@ -28,7 +28,7 @@
      a previously-REJECTED cool blue). The token now carries the most
      recent deliberate value, tuned against the current --white; songs,
      genres, and musicman all reference it. */
-  --row-alt: #f2f2f2;   /* re-tuned to the brighter --white (same ~4% step) */
+  --row-alt: #f3f6f9;   /* 2011: faint blue-white zebra, not grey */
   /* 4.5: Now-playing LCD pill — another notch of orange. Iteration 3:
      prior pass (#f7e6c4 → #e1d0a5) read amber but still leaned cream;
      this nudges the hue ~5% toward the brand orange. Reads as soft

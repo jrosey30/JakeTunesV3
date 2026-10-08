@@ -82,7 +82,7 @@ describe('RATCHETS — locked at today, may only shrink', () => {
   // slack, so the ratchet keeps biting from the new baseline. Raise this for a
   // merge from main; NEVER to make room for new capability — that belongs in a
   // module (personas.ts / library-eviction.ts).
-  const INDEX_LINES_LOCKED = 16437
+  const INDEX_LINES_LOCKED = 11405
   test(`index.ts stays ≤ ${INDEX_LINES_LOCKED + 150} lines and the lock follows it down`, () => {
     const lines = readFileSync(join(SRC, 'main/index.ts'), 'utf-8').split('\n').length
     assert.ok(lines <= INDEX_LINES_LOCKED + 150,
@@ -124,12 +124,14 @@ describe('WIRING — the tested code is the live code', () => {
   // this is the roster of load-bearing wires with no better home.)
   const WIRES: Array<{ fn: string; file: string; minCalls: number; why: string; literal?: boolean }> = [
     { fn: 'explicitWins', file: 'main/download-search.ts', minCalls: 1, why: 'the dedupe merge must run on the TESTED doctrine (unwired 08/10-08/15; moved with P1C3)' },
-    { fn: 'ensureContiguousDb', file: 'main/index.ts', minCalls: 1, why: 'the catalog layout pass — content gates cannot see fragmentation' },
+    { fn: 'ensureContiguousDb', file: 'main/sync-engine/index.ts', minCalls: 1, why: 'the catalog layout pass — content gates cannot see fragmentation (moved with the P1C2 sync-engine cut)' },
     { fn: 'sweepOnce', file: 'main/index.ts', minCalls: 1, why: 'pass-through eviction — without the wire the laptop silently hoards again' },
     { fn: 'initPersonaPrompts', file: 'main/index.ts', minCalls: 1, why: 'supplier injection — a missing init freezes activeHost at boot value' },
-    { fn: 'searchItunesSuggestions', file: 'main/index.ts', minCalls: 1, why: 'P1C3 — the search shim must call the module' },
-    { fn: 'itunesAlbumTracks', file: 'main/index.ts', minCalls: 1, why: 'P1C3 — the album-expand shim must call the module' },
+    { fn: 'searchItunesSuggestions', file: 'main/ipc/album-info-ipc.ts', minCalls: 1, why: 'P1C3 — the search shim must call the module (moved with the album-info cut)' },
+    { fn: 'itunesAlbumTracks', file: 'main/ipc/album-info-ipc.ts', minCalls: 1, why: 'P1C3 — the album-expand shim must call the module (moved with the album-info cut)' },
     { fn: 'initImportPipeline', file: 'main/index.ts', minCalls: 1, why: 'P1C1 — the pipeline is dead weight without its world wired in' },
+    { fn: 'initRagRetrieval', file: 'main/index.ts', minCalls: 1, why: 'P1 rag cut — retrieval throws on first call if its world is never wired in' },
+    { fn: 'ingestIpodRoundTrip', file: 'main/index.ts', minCalls: 1, why: 'the 6.0 story — unwired, every offline listen evaporates again' },
     // Called as df.applyQualityFloor (dynamic-import namespace), so the wire
     // matches the literal dotted form the bare-call regex would reject.
     { fn: '.applyQualityFloor(', file: 'main/index.ts', minCalls: 1, literal: true, why: 'discovery quality floor — without the wire the shop ships 40% "no signal" cards again' },
@@ -159,4 +161,54 @@ describe('WIRING — the tested code is the live code', () => {
         `${w.fn} has ${calls} call site(s) in ${w.file}, needs ≥${w.minCalls} — a rebuild dropped the wire again`)
     })
   }
+})
+
+describe('FORTIFICATIONS — 2026-08-29 ("IT SPEAKS. fortify fortify fortify.")', () => {
+  // ── Voice playback: data-URIs are BANNED on media elements ──────────
+  // Chromium rejects large data:audio URLs ("Media load rejected by URL
+  // safety check"); short quips squeaked under the cap for months and a
+  // full Music Man take killed EVERY voice in the app behind a misleading
+  // "couldn't reach the mic" notice. Seven sites shared the landmine.
+  // Base64 speech goes through audioFromBase64Mpeg (Blob URL) — always.
+  test('BAN: no data:audio URIs anywhere in the renderer', () => {
+    const files = walk(join(SRC, 'renderer'), ['.ts', '.tsx'])
+    const { total, hits } = countAcross(files, /data:audio\/[a-z0-9]+;base64/g)
+    assert.equal(total, 0,
+      `data:audio URI(s) in: ${hits.map((h) => `${h.file}(${h.n})`).join(', ')} — use audioFromBase64Mpeg (renderer/audio/base64-audio.ts); Chromium refuses large media data-URLs`)
+  })
+
+  test('WIRING: audioFromBase64Mpeg carries the voices (≥5 live call sites)', () => {
+    const files = walk(join(SRC, 'renderer'), ['.ts', '.tsx']).filter((f) => !f.includes('base64-audio'))
+    const { total } = countAcross(files, /audioFromBase64Mpeg\(/g)
+    assert.ok(total >= 5,
+      `audioFromBase64Mpeg has ${total} call site(s); the DJ/one-shot/Radio/MusicMan/commentary voices all route through it — a drop below 5 means a voice path regressed`)
+  })
+
+  // ── Stream spool: the deeper-buffering doctrine stays wired ──────────
+  test('WIRING: spoolAwareServe is live in the homemini fetch path', () => {
+    const idx = readFileSync(join(SRC, 'main/index.ts'), 'utf-8')
+    assert.ok(/spoolAwareServe\(/.test(idx),
+      'fetchAudioFromHomemini no longer consults the stream spool — WAN jitter reaches playing songs again ("do the deeper buffering thing")')
+  })
+
+  // ── Downloads: the SoundCloud truncation guard stays in the picker ───
+  test('WIRING: pickBestSoundcloudMatch keeps the truncated-paren refusal', () => {
+    const m = readFileSync(join(SRC, 'main/streamrip-match.ts'), 'utf-8')
+    assert.ok(m.includes('TRUNCATION SUSPICION'),
+      'the truncated-desc refusal left pickBestSoundcloudMatch — SoundCloud descs cut at ~50 chars hid "(TopKnot 5 Years L[ater Remix)" and a 5:57 remix imported as a 3:07 song')
+  })
+
+  test('WIRING: the SoundCloud lane stages and probes before import', () => {
+    const store = readFileSync(join(SRC, 'main/streamrip-store/index.ts'), 'utf-8')
+    const scBlock = store.split('── SoundCloud fallback (2026-07-22')[1]?.split('if (!qsearch.ok')[0] ?? ''
+    assert.ok(/stageRip\(/.test(scBlock) && /probeStagedFile\(/.test(scBlock),
+      'the SoundCloud lane imports without staging witnesses again — "the file\'s own clock is the only trustworthy witness"')
+  })
+
+  // ── Cache warm: not home = no warm ───────────────────────────────────
+  test('WIRING: cache-manager.py keeps the home-LAN gate', () => {
+    const cm = readFileSync(join(SRC, '../Dr. Claude/scripts/cache-manager.py'), 'utf-8')
+    assert.ok(cm.includes('homemini.local'),
+      'the cache warm lost its remote-mode gate — at the office it grinds the WAN and starves the streaming it exists to serve')
+  })
 })

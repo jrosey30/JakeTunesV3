@@ -69,6 +69,9 @@ let lastRecoveryAt = 0
 const FLAP_WINDOW_MS = 10 * 60_000
 const COOLDOWN_MS = 5 * 60_000
 const FLAP_COOLDOWN_MS = 15 * 60_000
+// While the breaker is open, look again this often — cheap enough to be
+// invisible, frequent enough that recovery is felt in a minute, not fifteen.
+const HALF_OPEN_PROBE_MS = 60_000
 // Recovery kick (2026-08-22): a good window on a marginal link may only
 // last minutes — waiting for the next hourly tick wastes it (the 17:58Z
 // harvest that healed nine stranded tracks was pure timing luck). The
@@ -79,8 +82,15 @@ export function onNasRecovery(fn: () => void): void { nasRecoveryListener = fn }
 
 export async function nasAvailable(): Promise<boolean> {
   const now = Date.now()
-  if (now < nasBreakerUntil) return false
-  if (now - lastProbeAt < 30_000) return lastVerdict   // verdict cache
+  // HALF-OPEN (2026-08-25). A cooldown used to return false WITHOUT looking, so
+  // a NAS that came back after 30 seconds still had every write refused for the
+  // full 15 minutes — and Jake watched "Couldn't sync to homemini: NAS
+  // unavailable (breaker cooldown)" on a NAS that was demonstrably up (a manual
+  // sync ran clean while the banner was showing). The probe is ONE stat with a
+  // 2s timeout; that is not the hammering a breaker exists to prevent. So while
+  // cooling down, retry once a minute and close the moment it answers.
+  if (now < nasBreakerUntil && now - lastProbeAt < HALF_OPEN_PROBE_MS) return false
+  if (now >= nasBreakerUntil && now - lastProbeAt < 30_000) return lastVerdict   // verdict cache
   if (probeInflight) return probeInflight
   probeInflight = (async () => {
     try {
@@ -99,6 +109,7 @@ export async function nasAvailable(): Promise<boolean> {
         }
       } else if (breakerEpisodeOpen) {
         breakerEpisodeOpen = false
+        nasBreakerUntil = 0          // half-open probe succeeded: stop refusing NOW
         lastRecoveryAt = Date.now()
         console.warn('[nas-breaker] NAS recovered — resuming NAS IO')
         try { nasRecoveryListener?.() } catch (err) { console.warn('[nas-breaker] recovery listener threw:', err) }

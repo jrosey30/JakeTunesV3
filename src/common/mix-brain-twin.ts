@@ -24,6 +24,18 @@
  * hit its track count must ship short, not padded.
  */
 
+/**
+ * ⚠️ EXPLICITLY INCOMPLETE TWIN (2026-09-02): desktop vibe retrieval now
+ * runs AUDIO FUSION by default — src/main/ai/rag-retrieval.ts blends the
+ * mood pool with CLAP audio cosines (audio-index.bin, 512-d) via the helper
+ * in src/main/ai/audio-query.ts (scripts/audio-embed.py --server). Mobile
+ * (backend/src/util/rag.ts) is still mood-only: homemini has no CLAP text
+ * tower yet. Measured gap on the production eval: 0.844 vs 0.812. Closing
+ * it = run the text tower on homemini (CPU is fine for text queries) and
+ * port the fusion scorer; until then a vibe query can differ desktop vs
+ * phone, and that is known, not a bug.
+ */
+
 /** Below this raw cosine to the seed, an orbit neighbor is not in orbit. */
 export const ORBIT_ABS_FLOOR = 0.58
 
@@ -38,10 +50,12 @@ export const MIX_BRAIN_TWIN = {
   mobileMustTwin: [
     'backend/src/routes/mixes.ts',
     'backend/src/util/rag.ts',
+    'backend/src/util/ragRerank.ts',
   ],
   desktopCanonical: [
     'src/common/mix-brain-twin.ts',
     'src/main/ai/decade-query.ts',
+    'src/main/ai/rag-rerank.ts',
     'src/main/ai/orbit-quality.ts',
     'src/main/ai/embeddings.ts',
     'src/main/playlist-vibes.ts',

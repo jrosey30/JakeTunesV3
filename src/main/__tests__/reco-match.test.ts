@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import {
+import { recordIdentityKeys, recoDedupeKey,
   recoTitleMatches,
   recoArtistMatches,
   distinctArtistsForRecoTitle,
@@ -138,5 +138,30 @@ describe('evaluateMusicManVerification', () => {
     })
     assert.equal(v.ok, false)
     if (!v.ok) assert.equal(v.reason, 'artist_hallucination')
+  })
+})
+
+describe('recordIdentityKeys — a record jot is its own identity', () => {
+  it('two records by one artist never share a key; two editions of one record never share a key', () => {
+    const ril = recordIdentityKeys({ artist: 'Talking Heads', album: 'Remain in Light (Deluxe Version)' })
+    const lc = recordIdentityKeys({ artist: 'Talking Heads', album: 'Little Creatures (Deluxe Version)' })
+    const lcStd = recordIdentityKeys({ artist: 'Talking Heads', album: 'Little Creatures' })
+    assert.deepEqual(ril, ['album:talkingheads~remaininlightdeluxeversion'])
+    assert.deepEqual(lc, ['album:talkingheads~littlecreaturesdeluxeversion'])
+    assert.deepEqual(lcStd, ['album:talkingheads~littlecreatures'])
+    assert.equal(ril.some((k) => lc.includes(k)), false)
+    assert.equal(lc.some((k) => lcStd.includes(k)), false)
+    // no artist: key for a record jot — deleting one record must not tombstone the band
+    assert.equal(ril.some((k) => k.startsWith('artist:')), false)
+  })
+  it('the same record twice IS one identity; an artist-only jot keeps the artist key; a song keeps the pair', () => {
+    assert.deepEqual(recordIdentityKeys({ artist: 'Talking Heads', album: 'Remain in Light' }), recordIdentityKeys({ artist: 'talking heads', album: 'Remain In Light' }))
+    assert.deepEqual(recordIdentityKeys({ artist: 'Talking Heads' }), ['artist:talkingheads'])
+    assert.deepEqual(recordIdentityKeys({ song: 'Once in a Lifetime', artist: 'Talking Heads', album: 'Remain in Light' }), ['onceinalifetime|talkingheads'])
+    assert.deepEqual(recordIdentityKeys({ album: 'Remain in Light' }), ['album:~remaininlight'])
+  })
+  it('dedupe keys follow: distinct records dedupe apart, the same record together', () => {
+    assert.notEqual(recoDedupeKey({ artist: 'Talking Heads', album: 'Remain in Light (Deluxe Version)' }), recoDedupeKey({ artist: 'Talking Heads', album: 'Little Creatures (Deluxe Version)' }))
+    assert.equal(recoDedupeKey({ artist: 'Talking Heads', album: 'Remain in Light' }), recoDedupeKey({ artist: 'Talking Heads', album: 'Remain in Light', note: 'from Sam' }))
   })
 })

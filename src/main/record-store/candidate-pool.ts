@@ -47,6 +47,11 @@ export interface CandTrack {
   playCount: number
   lastPlayedAt?: number
   skipCount?: number
+  /** Running order. Present on every library track; the Record Store used
+   *  to drop these, which is why digging out a record played the wrong
+   *  song (2026-09-09). */
+  trackNumber?: number
+  discNumber?: number
 }
 
 export interface AlbumCandidate {
@@ -117,8 +122,25 @@ const PER_DAY_ARTIST_CAP = 2
 // ── Album grouping (shared with Phase 0 index.ts; kept inline so
 //    this module is self-contained for the script-probe in §1a verify) ─
 
+/** Disc, then track number, then title — the sleeve's own order. Tracks
+ *  with no number sort last (alphabetical) rather than jumping the queue. */
+function orderAlbumTracks(ids: number[], byId: Map<number, CandTrack>): number[] {
+  return [...ids].sort((a, b) => {
+    const ta = byId.get(a)
+    const tb = byId.get(b)
+    const da = Number(ta?.discNumber) || 1
+    const db = Number(tb?.discNumber) || 1
+    if (da !== db) return da - db
+    const na = Number(ta?.trackNumber) || Number.MAX_SAFE_INTEGER
+    const nb = Number(tb?.trackNumber) || Number.MAX_SAFE_INTEGER
+    if (na !== nb) return na - nb
+    return (ta?.title || '').localeCompare(tb?.title || '')
+  })
+}
+
 function groupAlbums(tracks: CandTrack[], todayMs: number): AlbumCandidate[] {
   const map = new Map<string, AlbumCandidate>()
+  const byId = new Map<number, CandTrack>(tracks.map((t) => [t.id, t]))
   for (const t of tracks) {
     if (!t.album) continue
     const artist = (t.albumArtist && t.albumArtist.trim()) || (t.artist || '').trim()
@@ -153,6 +175,12 @@ function groupAlbums(tracks: CandTrack[], todayMs: number): AlbumCandidate[] {
   for (const u of map.values()) {
     u.daysSinceLastPlay =
       u.lastPlayedAt > 0 ? Math.max(0, (todayMs - u.lastPlayedAt) / 86_400_000) : Infinity
+    // Put the record back in RUNNING ORDER. Tracks arrive in whatever order
+    // the library hands them over, so pulling a record out of the crate
+    // dropped the needle on an arbitrary cut and played the album shuffled
+    // (Jake 2026-09-09: "it plays the wrong songs"). Side A track 1 is not
+    // a detail — it is what putting a record on means.
+    u.trackIds = orderAlbumTracks(u.trackIds, byId)
   }
   return Array.from(map.values())
 }

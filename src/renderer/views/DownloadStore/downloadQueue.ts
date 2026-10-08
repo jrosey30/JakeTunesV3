@@ -11,12 +11,51 @@
 //  - id: a raw streamrip catalog id (legacy path, still used by pasted links)
 //  - query: an iTunes-picked song/album resolved on Qobuz at download time
 //    (artist+title or artist+album) — the v2 search flow.
+import { foldAccents } from '../../../common/fold-text.ts'
+
+/** Where a job came from (the Record Shop's saved list, a feed shelf…) —
+ *  carried on the job so every presentation can find it by recommendation
+ *  id, and so "recommended by Alex" survives resolution on Qobuz. The queue
+ *  KEY stays the recording/edition identity: a Get from the Download view
+ *  and a Get from the list for the same recording are ONE job, and later
+ *  origins are adopted onto it. (6.0 Record Shop: one scheduler.) */
+export interface QueueOrigin {
+  recommendationIds: string[]
+  entryId?: string
+  /** 'user' | 'mm' | 'radar' — the list's own vocabulary; a person's name when known. */
+  sourceKind?: string
+  sourceLabel?: string
+  /** Matching-track Gets (Compare editions, action A): this song job is one
+   *  of a group recovered from a refused album request. The group hangs off
+   *  the refused album job (`parentKey`) in the Downloads panel; it carries
+   *  NO recommendationIds, so nothing about it can fulfil the album jot. */
+  group?: QueueGroup
+  /** Action B: this source edition was chosen instead of a picked (iTunes) edition. Display only. */
+  chosenInsteadOf?: { parentKey: string; label: string }
+}
+export interface QueueGroup {
+  parentKey: string
+  label: string
+  /** How many tracks the picked edition has, and which positions were never selected (with why). */
+  of: number
+  position: number
+  notAcquired: Array<{ position: number; title: string; reason: string }>
+  skippedOwned: number
+  collectionId?: number
+}
+
+const normKey = (s: string): string => foldAccents(String(s || '')).replace(/[^a-z0-9]/g, '')
+/** ⚠️ TWIN: DownloadView.songQ/albumQ build their ids through these. */
+export const trackQueryId = (artist: string, title: string): string => `q|track|${normKey(artist)}|${normKey(title)}`
+export const albumQueryId = (artist: string, album: string): string => `q|album|${normKey(artist)}|${normKey(album)}`
+
 export interface QResult {
   source: string
   mediaType: string
   id: string
   desc: string
   kind?: 'id' | 'query'
+  origin?: QueueOrigin
   artist?: string
   title?: string
   album?: string
@@ -30,6 +69,15 @@ export interface QResult {
    *  the guard to ±5s of the clean edit rejected every one of them. */
   cleanedSource?: boolean
   explicitSource?: boolean
+  /** Release year of the clicked row — part of the identity contract. */
+  releaseYear?: number
+  /** Album rows: the iTunes collection id and its track count — main fetches
+   *  the ordered tracklist by id and verifies the EDITION before import
+   *  (album identity contract, 6.0 Phase 1). */
+  collectionId?: number
+  trackCount?: number
+  /** Action B: the album is selected by its source identity and tracklist snapshot, not an iTunes edition. */
+  sourceEdition?: import('../../../common/source-edition').SourceEdition
 }
 export type QStatus = 'queued' | 'downloading' | 'done' | 'failed' | 'canceled'
 export interface QItem {
@@ -39,8 +87,23 @@ export interface QItem {
   imported?: number
   dupes?: number
   error?: string
+  /** Structured verdict behind `error` (6.0 Phase 1): 'exact-not-found'
+   *  means sources answered and every candidate was judged and refused —
+   *  `alternatives` lists them with the reason each failed. */
+  outcome?: string
+  alternatives?: Array<{ provider: string; desc: string; reason: string; tracks?: Array<{ title: string; trackNumber?: number; discNumber?: number; durationSec?: number | null }>; trackCount?: number; url?: string }>
+  /** Short readable status ("Exact version not found") + the full,
+   *  never-truncated explanation for the details panel. */
+  primary?: string
+  detail?: string
+  /** What main matched, and for albums the completion line
+   *  ("12 tracks · 10 imported, 2 already in your library"). */
+  matchDesc?: string
+  completion?: string
   startedAt?: number
   endedAt?: number
+  /** How many times this job has been armed (1 = first try). */
+  attempt?: number
 }
 
 export function queueKey(r: QResult): string {
@@ -50,7 +113,11 @@ export function queueKey(r: QResult): string {
 let queue: QItem[] = []
 let running = false
 const subs = new Set<() => void>()
-const emit = (): void => { for (const f of subs) f() }
+// Jobs are mutated in place (pump/cancel/retry hold the object across
+// awaits), so every emit hands out a FRESH array: useSyncExternalStore
+// readers (sidebar badge, Downloads panel) compare snapshots by reference
+// and would otherwise miss queued→downloading→done on the same object.
+const emit = (): void => { queue = [...queue]; for (const f of subs) f() }
 
 export function subscribeQueue(fn: () => void): () => void {
   subs.add(fn)
@@ -58,6 +125,20 @@ export function subscribeQueue(fn: () => void): () => void {
 }
 export function getQueue(): QItem[] { return queue }
 export function itemFor(r: QResult): QItem | undefined { return queue.find((q) => q.key === queueKey(r)) }
+/** The job a recommendation is riding on, if any. */
+export function itemForRecommendation(recommendationId: string): QItem | undefined {
+  return queue.find((q) => q.result.origin?.recommendationIds.includes(recommendationId))
+}
+
+/** Adopt a second origin onto an existing job (same recording, another
+ *  recommender). Ids are unioned; the first source label is kept. */
+export function mergeOrigin(into: QResult, from?: QueueOrigin): void {
+  if (!from) return
+  if (!into.origin) { into.origin = { ...from, recommendationIds: [...from.recommendationIds] }; return }
+  for (const id of from.recommendationIds) if (!into.origin.recommendationIds.includes(id)) into.origin.recommendationIds.push(id)
+  if (!into.origin.entryId && from.entryId) into.origin.entryId = from.entryId
+  if (!into.origin.sourceLabel && from.sourceLabel) { into.origin.sourceLabel = from.sourceLabel; into.origin.sourceKind = from.sourceKind }
+}
 
 export function queueSummary(): { active: number; queued: number; done: number; failed: number } {
   let active = 0, queued = 0, done = 0, failed = 0
@@ -76,7 +157,9 @@ export function enqueue(r: QResult): void {
   const key = queueKey(r)
   const existing = queue.find((q) => q.key === key)
   if (existing) {
-    if (existing.status === 'failed' || existing.status === 'canceled') { existing.status = 'queued'; existing.error = undefined; emit(); void pump() }
+    mergeOrigin(existing.result, r.origin)
+    if (existing.status === 'failed' || existing.status === 'canceled') { existing.status = 'queued'; existing.error = undefined; existing.attempt = (existing.attempt ?? 1) + 1; emit(); void pump() }
+    else emit()
     return
   }
   queue = [...queue, { key, result: r, status: 'queued' }]
@@ -109,6 +192,7 @@ export function retry(key: string): void {
   it.error = undefined
   it.imported = undefined
   it.dupes = undefined
+  it.attempt = (it.attempt ?? 1) + 1
   emit()
   void pump()
 }
@@ -123,6 +207,7 @@ export function retryFailed(): void {
     it.error = undefined
     it.imported = undefined
     it.dupes = undefined
+    it.attempt = (it.attempt ?? 1) + 1
     any = true
   }
   if (!any) return
@@ -148,10 +233,16 @@ async function pump(): Promise<void> {
       it.imported = undefined
       it.dupes = undefined
       it.error = undefined
+      it.outcome = undefined
+      it.alternatives = undefined
+      it.primary = undefined
+      it.detail = undefined
+      it.matchDesc = undefined
+      it.completion = undefined
       emit()
       try {
-        const r = it.result.kind === 'query'
-          ? await window.electronAPI.streamripDownloadByQuery?.({ artist: it.result.artist, title: it.result.title, album: it.result.album, durationMs: it.result.durationMs, cleanedSource: it.result.cleanedSource, explicitSource: it.result.explicitSource })
+        const r: { ok: boolean; imported?: number; dupes?: number; error?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string; tracks?: Array<{ title: string; trackNumber?: number; discNumber?: number; durationSec?: number | null }>; trackCount?: number; url?: string }>; primary?: string; detail?: string; matchDesc?: string; completion?: string } | undefined = it.result.kind === 'query'
+          ? await window.electronAPI.streamripDownloadByQuery?.({ artist: it.result.artist, title: it.result.title, album: it.result.album, durationMs: it.result.durationMs, cleanedSource: it.result.cleanedSource, explicitSource: it.result.explicitSource, releaseYear: it.result.releaseYear, collectionId: it.result.collectionId, trackCount: it.result.trackCount, sourceEdition: it.result.sourceEdition })
           : await window.electronAPI.streamripDownloadId?.(it.result.source, it.result.mediaType, it.result.id)
         // Read through a widened alias. TypeScript narrows it.status to
         // 'downloading' before the await and cannot see that cancel() mutates
@@ -165,15 +256,23 @@ async function pump(): Promise<void> {
           it.status = 'done'
           it.imported = r.imported ?? 0
           it.dupes = r.dupes ?? 0
+          it.matchDesc = r.matchDesc
+          it.completion = r.completion
         } else {
           it.status = 'failed'
           it.error = r?.error || 'Download failed.'
+          it.outcome = r?.outcome
+          it.alternatives = r?.alternatives
+          it.primary = r?.primary || primaryFor(r?.outcome, it.error)
+          it.detail = r?.detail || it.error
         }
       } catch (e) {
         const statusAfterThrow = it.status as QStatus
         if (statusAfterThrow !== 'canceled') {
           it.status = 'failed'
           it.error = e instanceof Error ? e.message : 'Download failed.'
+          it.primary = 'Download failed'
+          it.detail = it.error
         }
       }
       it.endedAt = Date.now()
@@ -181,5 +280,20 @@ async function pump(): Promise<void> {
     }
   } finally {
     running = false
+  }
+}
+
+/** The short status for an outcome when main did not send one (older
+ *  paths, thrown errors). ⚠️ TWIN: src/main/exact-recording.ts describeOutcome. */
+export function primaryFor(outcome: string | undefined, error?: string): string {
+  switch (outcome) {
+    case 'exact-not-found': return 'Exact version not found'
+    case 'unverifiable': return 'Couldn’t verify recording'
+    case 'provider-unavailable': return 'Provider unavailable'
+    case 'not-found': return 'Not found'
+    case 'not-released': return 'Not out yet'
+    case 'canceled': return 'Canceled'
+    case 'provider-failed': return 'Download failed'
+    default: return /not out yet/i.test(error || '') ? 'Not out yet' : 'Download failed'
   }
 }

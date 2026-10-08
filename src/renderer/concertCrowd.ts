@@ -24,9 +24,14 @@ const listeners = new Set<() => void>()
 // The crowd rises over `rise` before a song boundary, then fades over `tail` so
 // the next downbeat is clean. `level` is the swell ceiling (the clip is already
 // loudnorm'd quiet). Persisted so a dial-in sticks.
-let leadIn = 3.5   // rise
-let fadeOut = 1.4  // tail
-let peak = 0.7     // level
+// ONE preset, no knobs (2026-09-02, Jake: "crowd noise settings are
+// confusing… it should be a slight enhancement"). The room rises gently into
+// each seam and is gone quickly after the downbeat; the level is a whisper
+// under the mix, never a feature. The tuning IPCs stay (harmless), but the
+// page no longer exposes them and saved tunings are ignored.
+let leadIn = 3.0   // rise
+let fadeOut = 1.2  // tail
+let peak = 0.32    // level
 
 function emit(): void { for (const l of listeners) l() }
 export function subscribeConcertCrowd(cb: () => void): () => void { listeners.add(cb); return () => { listeners.delete(cb) } }
@@ -43,17 +48,7 @@ export async function setCrowdParams(partial: { level?: number; rise?: number; t
   try { await window.electronAPI.saveCrowdTuning({ level: peak, rise: leadIn, tail: fadeOut }) } catch { /* best effort */ }
 }
 // Load the persisted dial-in once at startup.
-void (async () => {
-  try {
-    const t = await window.electronAPI.loadCrowdTuning?.()
-    if (t) {
-      if (typeof t.level === 'number') peak = t.level
-      if (typeof t.rise === 'number') leadIn = t.rise
-      if (typeof t.tail === 'number') fadeOut = t.tail
-      emit()
-    }
-  } catch { /* defaults are fine */ }
-})()
+// (Saved tunings are deliberately NOT loaded — the preset is the product.)
 
 export function setConcertCrowdEnabled(on: boolean): void {
   enabled = on
