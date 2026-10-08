@@ -3923,9 +3923,12 @@ setInterval(() => { void refreshPhoneAuthoredMirrors() }, 5 * 60_000)
 const hubCatalog = startHubCatalogPoll({
   stateDir: app.getPath('userData'),
   hubBase: async () => {
-    const root = await readStreamRootCached()
-    if (!root) return null
-    try { return new URL(root).origin } catch { return null }
+    // Replica = streaming client: streamSource 'homemini' OR a streamRoot
+    // (which on workmini is a filesystem path, NOT a URL — the hub address
+    // is the backend URL the phone mirrors already use).
+    const replica = (await readStreamSourceCached()) === 'homemini' || (await readStreamRootCached()) !== null
+    if (!replica) return null
+    try { return new URL(MOBILE_BACKEND_URL).origin } catch { return null }
   },
   send: (channel, payload) => {
     if (!mainWindow || mainWindow.isDestroyed()) return false
