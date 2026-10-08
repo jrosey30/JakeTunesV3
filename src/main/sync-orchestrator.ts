@@ -28,9 +28,12 @@
  * always synced; no trigger is dropped.
  *
  * Runs ~/bin/jaketunes-homemini-sync.sh as a child process. That
- * script handles auto-mount, rsync, library.json scp over Tailscale,
- * and JakeTunes restart on homemini. It also no-ops cleanly when
- * library.json mtime hasn't changed.
+ * script handles auto-mount, music rsync, state files (library.json
+ * among them), artwork, stars, plays, and playlist pulls. A replica
+ * passes --skip-library-json so only the library.json publish is
+ * skipped; every other leg still runs. The process that actually
+ * runs is ~/bin/, copied from Dr. Claude/scripts/. An older copy
+ * ignores the flag.
  *
  * Outcome is forwarded to the renderer via `library-sync-status` IPC
  * — App.tsx subscribes and surfaces success/failure via the activity
@@ -46,13 +49,16 @@ import { join } from 'path'
 import type { BrowserWindow } from 'electron'
 import { nasAvailable, onNasRecovery, NAS_STATE_DIR_PATH } from './state-dir'
 import { mountHostFor, isTailnetHost, decideSyncMode } from './sync-mode.ts'
+import { syncLaunchArgs } from '../common/sync-launch-args.ts'
 
 const SYNC_SCRIPT = join(homedir(), 'bin', 'jaketunes-homemini-sync.sh')
 
-// Replicas adopt the catalog. The sync script's first move is to publish
-// library.json onto homemini (and from there the phone). A replica must
-// not run it. Default is "not a replica" so a machine that never registers
-// the guard — tests, a half-booted process — keeps the canonical behavior.
+// Replicas adopt the catalog from the hub. The sync script publishes
+// library.json in two places (phone backend + the homemini desktop
+// state rsync) and also carries music, artwork, overrides, playlists,
+// play logs, and stars. A replica skips only the library.json publish.
+// Default is "not a replica" so a machine that never registers the
+// guard — tests, a half-booted process — keeps the canonical behavior.
 let blocksHubLibraryPublish: () => Promise<boolean> = async () => false
 export function setBlocksHubLibraryPublish(fn: () => Promise<boolean>): void {
   blocksHubLibraryPublish = fn
@@ -166,9 +172,9 @@ function notify(detail: { ok: boolean; reason: SyncReason; error?: string; durat
 }
 
 async function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: string; durationMs: number; deferred?: boolean }> {
-  if (await blocksHubLibraryPublish()) {
-    quietWarn('sync-replica-skip', `[sync-orchestrator] replica — not publishing library.json (reason=${reason})`)
-    return { ok: true, durationMs: 0 }
+  const skipLibraryJson = await blocksHubLibraryPublish()
+  if (skipLibraryJson) {
+    quietWarn('sync-replica-library', `[sync-orchestrator] replica — skipping library.json publish only (reason=${reason})`)
   }
   // Flight-log stomp (2026-08-22): eight hourly safety-net runs each hung
   // the full 10-minute kill-timer while the NAS breaker ALREADY knew the
@@ -212,9 +218,12 @@ async function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: s
     // edits. Manual invocations also use full mode (assume the user
     // wants a thorough sync).
     const useQuickMode = mode.quick
-    const args = [SYNC_SCRIPT]
-    if (useQuickMode) args.push('--quick')
-    if (homeminiOnly) args.push('--homemini-only')
+    const args = syncLaunchArgs({
+      script: SYNC_SCRIPT,
+      quick: useQuickMode,
+      homeminiOnly,
+      skipLibraryJson,
+    })
 
     console.log(`[sync-orchestrator] starting sync (reason=${reason}, mode=${useQuickMode ? 'quick' : 'full'})`)
     // Brief 016: spawn with detached: true so the bash child becomes the

@@ -25,6 +25,13 @@
 #   - LaunchAgent `com.jaketunes.sync` every 600s (background, idempotent).
 #   - Manual invocation: bash ~/bin/jaketunes-homemini-sync.sh
 #
+# --skip-library-json: a replica must not publish library.json (the hub
+# owns the catalog; a replica copy puts deleted songs back). The app
+# runs ~/bin/jaketunes-homemini-sync.sh, which is a COPY of this file
+# (see README.md and docs/homemini.md). An older ~/bin copy ignores
+# unknown arguments and still publishes library.json — reinstall this
+# file for the flag to take effect. Every other leg still runs.
+#
 # Lockfile prevents two runs colliding (launchd + manual + future
 # post-import trigger). If a previous run is still in flight, this one
 # exits quietly.
@@ -266,7 +273,24 @@ log "=== sync started (PID $$) ==="
 # SSH, so they still run; the NAS music leg is skipped. Before this, every
 # edit made while the NAS looked slow waited for the breaker (up to 9 min).
 HOMEMINI_ONLY=0
-for arg in "$@"; do [ "$arg" = "--homemini-only" ] && HOMEMINI_ONLY=1; done
+SKIP_LIBRARY_JSON=0
+for arg in "$@"; do
+  [ "$arg" = "--homemini-only" ] && HOMEMINI_ONLY=1
+  [ "$arg" = "--skip-library-json" ] && SKIP_LIBRARY_JSON=1
+done
+# Drop library.json from the state push before any fingerprint or rsync.
+# The default SYNC_FILES assignment above still lists it, so a canonical
+# run (no flag) publishes it. Both publish sites — publish_backend_library
+# and this array — have to skip, or the phone still reads the replica copy.
+if [ "$SKIP_LIBRARY_JSON" -eq 1 ]; then
+  _kept=()
+  for f in "${SYNC_FILES[@]}"; do
+    [ "$f" = "library.json" ] && continue
+    _kept+=("$f")
+  done
+  SYNC_FILES=("${_kept[@]}")
+  log "replica: not publishing library.json (hub owns the catalog); other state files still push"
+fi
 [ $HOMEMINI_ONLY -eq 0 ] && { ensure_jakeshared || true; }
 
 if [ $HOMEMINI_ONLY -eq 0 ] && [ ! -d "$MOUNT/JakeTunesLibrary" ]; then
@@ -347,12 +371,14 @@ EOF' 2>>"$LOG")
 
 push_homemini_state() {
   local lib_src
-  lib_src=$(resolve_sync_src "library.json")
-  if [ -z "$lib_src" ] || [ ! -f "$lib_src" ]; then
-    log "no library.json found (local or NAS) — skipping homemini state push"
-    return 0
+  if [ "$SKIP_LIBRARY_JSON" -eq 0 ]; then
+    lib_src=$(resolve_sync_src "library.json")
+    if [ -z "$lib_src" ] || [ ! -f "$lib_src" ]; then
+      log "no library.json found (local or NAS) — skipping homemini state push"
+      return 0
+    fi
+    publish_backend_library "$lib_src" || true
   fi
-  publish_backend_library "$lib_src" || true
 
   local local_fp="" remote_fp="" remote_fp_cmd f src m
   for f in "${SYNC_FILES[@]}"; do
@@ -382,12 +408,18 @@ done'
   # mtime, same bytes). Hashing only runs when a push is already happening (the
   # mtime fingerprint gate above skips no-op syncs), so the cost is bounded.
   local rsync_args=(-tz --checksum --no-perms --no-owner --no-group)
+  local pushed=0
   for f in "${SYNC_FILES[@]}"; do
     src=$(resolve_sync_src "$f")
     if [ -n "$src" ] && [ -f "$src" ]; then
       rsync_args+=("$src")
+      pushed=1
     fi
   done
+  if [ "$pushed" -eq 0 ]; then
+    log "no state files to push"
+    return 0
+  fi
   rsync "${rsync_args[@]}" "$HOMEMINI:$JT_DATA_REMOTE/" >> "$LOG" 2>&1
   local scp_rc=$?
   if [ $scp_rc -ne 0 ]; then

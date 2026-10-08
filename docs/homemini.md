@@ -82,7 +82,7 @@ ssh jakerosenbaumnas@homemini 'cd ~/JakeTunesMobile && git pull && ./deploy/inst
 cd ~/JakeTunesMobile && ./deploy/install-macbook-nas-sync.sh
 ```
 
-**Full homemini sync script** lives at `~/bin/jaketunes-homemini-sync.sh` (copy from `JakeTunesV3/Dr. Claude/scripts/jaketunes-homemini-sync.sh`). V3's sync orchestrator calls it automatically when the script exists.
+**Full homemini sync script** lives at `~/bin/jaketunes-homemini-sync.sh` (copy from `JakeTunesV3/Dr. Claude/scripts/jaketunes-homemini-sync.sh`). V3's sync orchestrator calls it automatically when the script exists. A replica passes `--skip-library-json` so the script still syncs music, artwork, overrides, playlists, play logs, and stars, and does not publish `library.json`. The running copy is `~/bin/`; an older copy ignores that flag and still publishes `library.json`, so reinstall the script when it changes.
 
 ### JakeTunes ports & env (homemini backend)
 
