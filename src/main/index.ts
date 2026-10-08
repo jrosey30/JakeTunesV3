@@ -16,6 +16,7 @@ process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '64'
 
 
 import { getVenueShows, type VenueShow } from './venues.js'
+import { startHubCatalogPoll } from './hub-catalog'
 // The four persona system prompts — 268 lines of prose, lifted out 2026-08-10.
 import {
   MUSIC_MAN_CORE, MEGAN_CORE, DJ_HANDS_CORE,
@@ -3912,6 +3913,32 @@ ipc.handle('get-mobile-imports', async () => {
 }, { public: true })
 setTimeout(() => { void refreshPhoneAuthoredMirrors() }, 5_000)
 setInterval(() => { void refreshPhoneAuthoredMirrors() }, 5 * 60_000)
+
+// 2026-10-08 — HUB CATALOG for replicas. Any machine with library.streamRoot
+// (workmini) adopts the library from homemini exactly like the phone does:
+// version poll → delta → merge in the running app → ack. This replaced the
+// laptop's file swap onto workmini (jaketunes-workmini-index-sync.sh, retired
+// 2026-10-08), which reloaded whatever the laptop had at that second and
+// made phone downloads vanish mid-play. Inert on the canonical laptop.
+const hubCatalog = startHubCatalogPoll({
+  stateDir: app.getPath('userData'),
+  hubBase: async () => {
+    const root = await readStreamRootCached()
+    if (!root) return null
+    try { return new URL(root).origin } catch { return null }
+  },
+  send: (channel, payload) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false
+    mainWindow.webContents.send(channel, payload)
+    return true
+  },
+  isLocked: () => isSaveLocked(),
+})
+ipc.handle('hub-catalog-adopted', async (_e, version: unknown) => {
+  if (typeof version === 'string' && version) await hubCatalog.adopted(version)
+  return { ok: true }
+}, { public: true })
+setTimeout(() => { void hubCatalog.tick() }, 8_000)
 
 const playlistAdditionsCache = new JsonFileCache<Record<string, string[]>>(
   () => join(STATE_DIR, 'playlist-additions.json'),

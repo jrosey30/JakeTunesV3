@@ -64,6 +64,7 @@ import './styles/scrollbars.css'
 import './styles/app.css'
 import './styles/toolbar.css'
 import './styles/sidebar.css'
+import { mergeHubCatalog } from '../common/hub-catalog-merge'
 
 // Session cap — startup must not walk every missing album via fetchAlbumArt.
 const STARTUP_NETWORK_ART_CAP = 16
@@ -1157,6 +1158,28 @@ function AppInner() {
   }, [dispatch])
 
   // Persist library (tracks + playlists) whenever tracks change (debounced)
+  const libTracksRef = useRef(libState.tracks)
+  libTracksRef.current = libState.tracks
+  // 2026-10-08 hub catalog (replicas): merge homemini's upserts/removals into
+  // the live library, then ack so main remembers the adopted version. The
+  // save effect below persists it like any other change.
+  useEffect(() => {
+    const off = window.electronAPI.onHubCatalogUpdated?.((p) => {
+      // Merge against the CURRENT list (ref, not a stale closure) and hand the
+      // result to SET_TRACKS — LibraryContext itself stays untouched.
+      const r = mergeHubCatalog(libTracksRef.current, {
+        full: p.full, version: p.version,
+        upserts: p.upserts as import('../common/hub-catalog-merge').HubTrackLike[],
+        removedIds: p.removedIds,
+      })
+      if (r.changed) {
+        console.log(`[hub-catalog] merged ${p.full ? 'FULL' : 'delta'} ${p.version}: +${r.added} ~${r.updated} -${r.removed}`)
+        dispatch({ type: 'SET_TRACKS', tracks: r.tracks })
+      }
+      void window.electronAPI.hubCatalogAdopted?.(p.version)
+    })
+    return () => { off?.() }
+  }, [dispatch])
   const libraryLoaded = useRef(false)
   const librarySaveRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {

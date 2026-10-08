@@ -285,6 +285,14 @@ const electronAPI = {
     ipcRenderer.on('mobile-imports-updated', handler)
     return () => { ipcRenderer.removeListener('mobile-imports-updated', handler) }
   },
+  // 2026-10-08 hub catalog (replicas): the hub's upserts/removals, and the ack
+  // that lets main remember the adopted version.
+  onHubCatalogUpdated: (callback: (p: { full: boolean; version: string; upserts: unknown[]; removedIds: Array<string | number> }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, p: { full: boolean; version: string; upserts: unknown[]; removedIds: Array<string | number> }) => callback(p)
+    ipcRenderer.on('hub-catalog-updated', handler)
+    return () => { ipcRenderer.removeListener('hub-catalog-updated', handler) }
+  },
+  hubCatalogAdopted: (version: string) => ipcRenderer.invoke('hub-catalog-adopted', version),
   onMobileOverridesUpdated: (callback: (p: { overrides: Record<string, { fp?: string; fields?: Record<string, string> }> }) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, p: { overrides: Record<string, { fp?: string; fields?: Record<string, string> }> }) => callback(p)
     ipcRenderer.on('mobile-overrides-updated', handler)
