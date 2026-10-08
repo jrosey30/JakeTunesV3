@@ -31,3 +31,6 @@ Read-only audit (subagent, 64 tool calls). Status: **not met**. Fix in stages, o
 3. **Counts & stars:** phone/workmini plays as idempotent play EVENTS merged into playCount (2); stars as per-track LWW with tombstones (4).
 4. **Playlists & pins:** removals/deletes as tombstones (5); pins as LWW synced via homemini + live sidebar reload (6); hub edit-race (11).
 5. **Robustness:** offline outbox for phone writes (12); backend unique temps + reload + parse-fail fallback to last good (10).
+
+## Progress
+- **2026-10-08 — Stage 1, gap 1 SHIPPED (84de078 + guard):** replicas adopt the library from the homemini hub (`src/main/hub-catalog.ts` + `src/common/hub-catalog-merge.ts`): version poll → `/api/tracks/delta` → merge in the running app (hub fields win, playCount = max, local-only songs kept, removals only from a delta and never more than 25 at once) → ack. `~/bin/jaketunes-workmini-index-sync.sh` retired, its plist moved to `~/bin/retired-launchagents/`. Trigger incident: phone-downloaded Geese songs vanished from workmini mid-play at 10:32 when the laptop's older file was swapped in. Still open in Stage 1: gap 7 (workmini nightly deploy tests), gap 8 (listening-log path), and the return path for workmini's own plays/edits (today they are overwritten by hub upserts except playCount).
