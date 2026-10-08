@@ -65,11 +65,17 @@ import './styles/app.css'
 import './styles/toolbar.css'
 import './styles/sidebar.css'
 import { mergeHubCatalog } from '../common/hub-catalog-merge'
+import { ackVersionAfterSave, hubAdoptAfterMerge, trackIdKey } from '../common/hub-catalog-ack'
 
 // Session cap — startup must not walk every missing album via fetchAlbumArt.
 const STARTUP_NETWORK_ART_CAP = 16
 const STARTUP_NETWORK_ART_CONCURRENCY = 2
 let startupNetworkArtStarted = false
+// Set once the disk library has been dispatched. Hub payloads that arrive
+// before that would merge onto [] and the save effect would treat the
+// result as the initial load and skip the write — then an early ack would
+// strand the version. Main resends while this stays false.
+let hubCatalogMayApply = false
 
 function AppInner() {
   const { state: libState, dispatch } = useLibrary()
@@ -855,6 +861,7 @@ function AppInner() {
         }
       }
       dispatch({ type: 'SET_TRACKS', tracks })
+      hubCatalogMayApply = true
 
       // Merge iPod playlists with user-saved playlists (only on first load).
       // Respect tombstones: if the user explicitly deleted an iPod-sourced
@@ -1160,41 +1167,91 @@ function AppInner() {
   // Persist library (tracks + playlists) whenever tracks change (debounced)
   const libTracksRef = useRef(libState.tracks)
   libTracksRef.current = libState.tracks
+  const libraryLoaded = useRef(false)
+  const librarySaveRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Hub version whose merged tracks are in memory but not yet confirmed on
+  // disk. Cleared only when a save of exactly those ids returns ok.
+  const pendingHubAdopt = useRef<{ version: string; idKey: string; protectedIds: string[] } | null>(null)
+
+  function scheduleLibrarySave(tracks: typeof libState.tracks, playlists: typeof libState.playlists) {
+    if (librarySaveRef.current) clearTimeout(librarySaveRef.current)
+    librarySaveRef.current = setTimeout(() => {
+      const launched = pendingHubAdopt.current
+      // Fourth arg, not third: third is `force` and would bypass the shrink
+      // refusal. An adoption save must not unlink audio for the rows it drops.
+      const adoption = launched != null
+      window.electronAPI.saveLibrary(tracks, playlists, undefined, adoption).then((r) => {
+        if (r.ok && (r.preservedOrphanCount ?? 0) > 0) {
+          setPreservedOrphanBanner(r.preservedOrphanCount ?? 0)
+        }
+        const ack = ackVersionAfterSave({
+          ok: r.ok === true,
+          savedIdKey: trackIdKey(tracks.map((t) => t.id)),
+          launched,
+          current: pendingHubAdopt.current,
+        })
+        if (ack) {
+          const protectedIds = pendingHubAdopt.current?.protectedIds
+          pendingHubAdopt.current = null
+          void window.electronAPI.hubCatalogAdopted?.({ version: ack, protectedIds })
+        }
+      }).catch(() => {})
+    }, 1000)
+  }
+
   // 2026-10-08 hub catalog (replicas): merge homemini's upserts/removals into
-  // the live library, then ack so main remembers the adopted version. The
-  // save effect below persists it like any other change.
+  // the live library. The version is acked only after the save that contains
+  // it returns ok — a refused save (locked, shrink, conflict) or a quit
+  // inside the debounce leaves the cursor so the next poll retries.
   useEffect(() => {
     const off = window.electronAPI.onHubCatalogUpdated?.((p) => {
+      if (!hubCatalogMayApply) return
       // Merge against the CURRENT list (ref, not a stale closure) and hand the
       // result to SET_TRACKS — LibraryContext itself stays untouched.
       const r = mergeHubCatalog(libTracksRef.current, {
         full: p.full, version: p.version,
         upserts: p.upserts as import('../common/hub-catalog-merge').HubTrackLike[],
         removedIds: p.removedIds,
+      }, {
+        seenIds: p.seenIds,
+        protectedIds: p.protectedIds,
+        adoptedAt: p.adoptedAt,
       })
+      const decision = hubAdoptAfterMerge({
+        changed: r.changed,
+        ignoredReason: r.ignoredReason,
+        hasUnpersistedMerge: pendingHubAdopt.current != null,
+      })
+      if (decision === 'hold') {
+        console.log(`[hub-catalog] holding ${p.version} (${r.ignoredReason ?? 'unpersisted'}) — next poll retries`)
+        return
+      }
+      if (decision === 'ack-now') {
+        // Nothing in the track list changed, but a replica-local song may
+        // have just become protected. Persist that set with the ack or the
+        // next full snapshot (adoptedAt moved forward) drops it.
+        void window.electronAPI.hubCatalogAdopted?.({ version: p.version, protectedIds: r.protectedIds })
+        return
+      }
+      pendingHubAdopt.current = {
+        version: p.version,
+        idKey: trackIdKey(r.tracks.map((t) => t.id)),
+        protectedIds: r.protectedIds,
+      }
       if (r.changed) {
         console.log(`[hub-catalog] merged ${p.full ? 'FULL' : 'delta'} ${p.version}: +${r.added} ~${r.updated} -${r.removed}`)
         dispatch({ type: 'SET_TRACKS', tracks: r.tracks })
       }
-      void window.electronAPI.hubCatalogAdopted?.(p.version)
+      scheduleLibrarySave(r.tracks, libStateRef.current.playlists)
     })
     return () => { off?.() }
   }, [dispatch])
-  const libraryLoaded = useRef(false)
-  const librarySaveRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     if (!libraryLoaded.current) {
       if (libState.tracks.length > 0) libraryLoaded.current = true
       return
     }
-    if (librarySaveRef.current) clearTimeout(librarySaveRef.current)
-    librarySaveRef.current = setTimeout(() => {
-      window.electronAPI.saveLibrary(libState.tracks, libState.playlists).then((r) => {
-        if (r.ok && (r.preservedOrphanCount ?? 0) > 0) {
-          setPreservedOrphanBanner(r.preservedOrphanCount ?? 0)
-        }
-      }).catch(() => {})
-    }, 1000)
+    scheduleLibrarySave(libState.tracks, libState.playlists)
   }, [libState.tracks, libState.playlists])
 
   // Save UI state on changes (debounced). Merges into the existing

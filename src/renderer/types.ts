@@ -717,8 +717,16 @@ declare global {
       getDiscoverFeed: (force?: boolean) => Promise<{ ok: boolean; lanes?: Array<{ id: string; title: string; cards: Array<{ lane: string; type: 'song' | 'album' | 'artist'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string; brainPct?: number }> }>; generatedAt?: number; cached?: boolean; error?: string }>
       getMobileImports?: () => Promise<{ tracks: unknown[]; overrides?: Record<string, { fp?: string; fields?: Record<string, string> }> }>
   onMobileImportsUpdated?: (callback: (p: { tracks: unknown[] }) => void) => () => void
-  onHubCatalogUpdated?: (callback: (p: { full: boolean; version: string; upserts: unknown[]; removedIds: Array<string | number> }) => void) => () => void
-  hubCatalogAdopted?: (version: string) => Promise<{ ok: boolean }>
+  onHubCatalogUpdated?: (callback: (p: {
+    full: boolean
+    version: string
+    upserts: unknown[]
+    removedIds: Array<string | number>
+    seenIds?: string[]
+    protectedIds?: string[]
+    adoptedAt?: string | null
+  }) => void) => () => void
+  hubCatalogAdopted?: (ack: string | { version: string; protectedIds?: string[] }) => Promise<{ ok: boolean }>
   onMobileOverridesUpdated?: (callback: (p: { overrides: Record<string, { fp?: string; fields?: Record<string, string> }> }) => void) => () => void
       onDiscoverFeedUpdated: (callback: (p: { lanes: Array<{ id: string; title: string; cards: Array<{ lane: string; type: 'song' | 'album' | 'artist'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string; brainPct?: number }> }>; generatedAt: number }) => void) => () => void
       getWindowedPlayCounts: (windowMs: number) => Promise<{ ok: boolean; counts: Record<string, number> }>
@@ -838,7 +846,7 @@ declare global {
       importResolvePaths: (paths: string[]) => Promise<{ ok: boolean; paths?: string[]; error?: string }>
       importPickFiles: () => Promise<{ ok: boolean; paths?: string[]; canceled?: boolean }>
       allowDroppedImportPaths: (files: File[]) => Promise<{ ok: boolean; paths?: string[]; error?: string }>
-      saveLibrary: (tracks: Track[], playlists?: Playlist[]) => Promise<{ ok: boolean; deletedPaths?: number; preservedOrphanCount?: number; error?: string }>
+      saveLibrary: (tracks: Track[], playlists?: Playlist[], force?: boolean, adoption?: boolean) => Promise<{ ok: boolean; deletedPaths?: number; preservedOrphanCount?: number; error?: string }>
       syncIpod: (existingIds: number[]) => Promise<{ ok: boolean; newTracks: Track[]; playlists: { name: string; trackIds: number[] }[]; totalIpod: number; error?: string }>
       syncToIpod: (tracks: Track[], playlists: Playlist[], convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }, syncOpts?: { wipeFirst?: boolean; origin?: 'activity-click' | 'full-library-click' }) => Promise<{
         ok: boolean

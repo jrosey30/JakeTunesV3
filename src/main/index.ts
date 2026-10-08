@@ -16,7 +16,7 @@ process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '64'
 
 
 import { getVenueShows, type VenueShow } from './venues.js'
-import { startHubCatalogPoll } from './hub-catalog'
+import { parseHubAdoptAck, startHubCatalogPoll } from './hub-catalog'
 // The four persona system prompts — 268 lines of prose, lifted out 2026-08-10.
 import {
   MUSIC_MAN_CORE, MEGAN_CORE, DJ_HANDS_CORE,
@@ -283,7 +283,9 @@ import {
 import {
   startSyncOrchestrator,
   triggerSync,
+  setBlocksHubLibraryPublish,
 } from './sync-orchestrator'
+import { libraryPublishTargets } from '../common/replica-library-push'
 // Brief 023: removed imports from ./library-snapshot and
 // ./library-overrides — both modules are deleted along with this
 // commit. They were the backing for the vestigial mobile-sync feature
@@ -3937,8 +3939,9 @@ const hubCatalog = startHubCatalogPoll({
   },
   isLocked: () => isSaveLocked(),
 })
-ipc.handle('hub-catalog-adopted', async (_e, version: unknown) => {
-  if (typeof version === 'string' && version) await hubCatalog.adopted(version)
+ipc.handle('hub-catalog-adopted', async (_e, raw: unknown) => {
+  const ack = parseHubAdoptAck(raw)
+  if (ack) await hubCatalog.adopted(ack.version, ack.protectedIds)
   return { ok: true }
 }, { public: true })
 setTimeout(() => { void hubCatalog.tick() }, 8_000)
@@ -4056,9 +4059,15 @@ const RECONCILE_BACKUP_MIN_BYTES = 64 * 1024
 let stateConflicts: StateConflict[] = []
 async function detectStateConflicts(): Promise<void> {
   stateConflicts = []
+  // Replicas adopt library.json from the hub. Surfacing it as a local-newer
+  // conflict is what auto-backup and "Push local edits" then write onto the
+  // NAS — the copy the phone reads — and a deleted song comes back.
+  const pushLibrary = libraryPublishTargets(await isHomeminiPlaybackClientCached()).nas
+  if (!pushLibrary) quietWarn('replica-library-no-push', '[state] replica: library.json is not published to the NAS')
   const localDir = app.getPath('userData')
   const CONFLICT_THRESHOLD_MS = 2_000 // NAS copies carry the local mtime (utimes after publish), so 2s = SMB timestamp granularity
   for (const f of STATE_FILE_NAMES) {
+    if (f === 'library.json' && !pushLibrary) continue
     const localPath = join(localDir, f)
     const nasPath = join(NAS_STATE_DIR_PATH, f)
     try {
@@ -4957,6 +4966,13 @@ function scheduleDbRebuild(deletedPaths: string[]) {
 // missing mirror can't cause empty-display or loss. tmp+rename for atomicity
 // when it does land.
 async function mirrorLibraryToNas(library: unknown): Promise<void> {
+  // Same gate as detectStateConflicts. The stale-push guard is the wrong
+  // tool here: a replica holding a deleted song is a superset, and that
+  // guard lets supersets push. Replicas do not publish library.json at all.
+  if (!libraryPublishTargets(await isHomeminiPlaybackClientCached()).nas) {
+    quietWarn('mirror-replica-skip', '[mirror] replica: library.json saved locally, not copied to the NAS')
+    return
+  }
   if (!(await nasAvailable())) return   // breaker open: skip ALL NAS IO
   const nasPath = join(NAS_STATE_DIR_PATH, 'library.json')
   const json = JSON.stringify(library, null, 2)
@@ -5005,13 +5021,16 @@ async function mirrorLibraryToNas(library: unknown): Promise<void> {
 // overlap: an 8.6 MB pretty-printed write to SMB can outlast the next debounce.
 let librarySaveChain: Promise<unknown> = Promise.resolve()
 
-ipc.handle('save-library', (_e, tracks: unknown[], playlists?: unknown[], force?: boolean) => {
+ipc.handle('save-library', (_e, tracks: unknown[], playlists?: unknown[], force?: boolean, adoption?: boolean) => {
   // Only our own top-level window may rewrite the library. `ipcMain.handle`
   // answers any frame in the app, and the Bandcamp store runs a remote page
   // in a <webview> in this session.
+  // `adoption` is a fourth argument on purpose. A truthy third argument is
+  // `force`, which bypasses the shrink refusal — an options object there
+  // would do that.
   const run = librarySaveChain.then(
-    () => saveLibraryImpl(tracks, playlists, force),
-    () => saveLibraryImpl(tracks, playlists, force),
+    () => saveLibraryImpl(tracks, playlists, force, adoption === true),
+    () => saveLibraryImpl(tracks, playlists, force, adoption === true),
   )
   // Chain-keeper only: save errors are surfaced by saveLibraryImpl itself
   // (both .then arms call it); this catch merely keeps the chain adoptable.
@@ -5020,7 +5039,7 @@ ipc.handle('save-library', (_e, tracks: unknown[], playlists?: unknown[], force?
   return run
 }, { refuse: REFUSED_SENDER })
 
-async function saveLibraryImpl(tracks: unknown[], playlists?: unknown[], force?: boolean) {
+async function saveLibraryImpl(tracks: unknown[], playlists?: unknown[], force?: boolean, adoption?: boolean) {
   // Bug #1 guard: if we booted in local-fallback mode and NAS later
   // reappeared, our in-memory tracks are stale relative to whatever
   // workmini/homemini wrote to NAS while we were offline. Saving here
@@ -5196,18 +5215,26 @@ async function saveLibraryImpl(tracks: unknown[], playlists?: unknown[], force?:
       // the files on disk as orphans (recoverable via
       // scripts/recover-orphans.mjs) rather than permanently unlinking
       // precious audio. `force` (explicit recovery/cleanup) bypasses the cap.
-      if (mayUnlinkDeletions(deletedPaths.length, force)) {
+      // Hub adoption is not a delete: the index drops rows the hub no longer
+      // lists, and the audio stays on this machine. `force` does not override
+      // that, and the iPod rebuild (which can unlink the same paths off a
+      // mounted iPod) is skipped for the same reason. No orphan banner —
+      // that dialog offers to delete the files.
+      const unlinkAudio = mayUnlinkDeletions(deletedPaths.length, force, { adoption: adoption === true })
+      if (unlinkAudio) {
         const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
         const pathSep = IS_WINDOWS ? '\\' : '/'
         for (const colon of deletedPaths) {
           const rel = colon.replace(/:/g, pathSep)
           try { await unlinkFS(join(LOCAL_MOUNT, rel)) } catch { /* file might already be gone */ }
         }
+      } else if (adoption === true) {
+        console.warn(`[save-library] hub adoption dropped ${deletedPaths.length} track(s) from the index; audio left on disk.`)
       } else {
         preservedOrphanCount = deletedPaths.length
         console.warn(`[save-library] preserved ${deletedPaths.length} audio file(s) on disk (exceeds unlink cap ${UNLINK_CAP}); index updated, files kept as orphans.`)
       }
-      scheduleDbRebuild(deletedPaths)
+      if (adoption !== true) scheduleDbRebuild(deletedPaths)
     }
 
     // Brief 023: removed the mobile-snapshot auto-export. The
@@ -11247,6 +11274,7 @@ app.whenReady().then(async () => {
   // works fine here. Triggers wired in the import-track /
   // import-tracks / save-metadata-override / save-playlists handlers
   // above; safety net fires every 10 min.
+  setBlocksHubLibraryPublish(async () => !libraryPublishTargets(await isHomeminiPlaybackClientCached()).hub)
   startSyncOrchestrator(() => mainWindow)
 
   // Auto-update: check for updates in production

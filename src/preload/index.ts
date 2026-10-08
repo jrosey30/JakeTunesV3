@@ -287,12 +287,12 @@ const electronAPI = {
   },
   // 2026-10-08 hub catalog (replicas): the hub's upserts/removals, and the ack
   // that lets main remember the adopted version.
-  onHubCatalogUpdated: (callback: (p: { full: boolean; version: string; upserts: unknown[]; removedIds: Array<string | number> }) => void) => {
-    const handler = (_e: Electron.IpcRendererEvent, p: { full: boolean; version: string; upserts: unknown[]; removedIds: Array<string | number> }) => callback(p)
+  onHubCatalogUpdated: (callback: (p: { full: boolean; version: string; upserts: unknown[]; removedIds: Array<string | number>; seenIds?: string[]; protectedIds?: string[]; adoptedAt?: string | null }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, p: { full: boolean; version: string; upserts: unknown[]; removedIds: Array<string | number>; seenIds?: string[]; protectedIds?: string[]; adoptedAt?: string | null }) => callback(p)
     ipcRenderer.on('hub-catalog-updated', handler)
     return () => { ipcRenderer.removeListener('hub-catalog-updated', handler) }
   },
-  hubCatalogAdopted: (version: string) => ipcRenderer.invoke('hub-catalog-adopted', version),
+  hubCatalogAdopted: (ack: string | { version: string; protectedIds?: string[] }) => ipcRenderer.invoke('hub-catalog-adopted', ack),
   onMobileOverridesUpdated: (callback: (p: { overrides: Record<string, { fp?: string; fields?: Record<string, string> }> }) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, p: { overrides: Record<string, { fp?: string; fields?: Record<string, string> }> }) => callback(p)
     ipcRenderer.on('mobile-overrides-updated', handler)
@@ -564,8 +564,8 @@ const electronAPI = {
     }
     return ipcRenderer.invoke('import-allow-dropped-paths', paths)
   },
-  saveLibrary: (tracks: unknown[], playlists?: unknown[]): Promise<{ ok: boolean; deletedPaths?: number; preservedOrphanCount?: number; error?: string }> =>
-    ipcRenderer.invoke('save-library', tracks, playlists),
+  saveLibrary: (tracks: unknown[], playlists?: unknown[], force?: boolean, adoption?: boolean): Promise<{ ok: boolean; deletedPaths?: number; preservedOrphanCount?: number; error?: string }> =>
+    ipcRenderer.invoke('save-library', tracks, playlists, force, adoption === true),
   syncIpod: (existingIds: number[]): Promise<{ ok: boolean; newTracks: unknown[]; playlists: { name: string; trackIds: number[] }[]; totalIpod: number; error?: string }> =>
     ipcRenderer.invoke('sync-ipod', existingIds),
   // 4.5: third arg `convertOptions` enables iTunes-style "Convert

@@ -97,7 +97,7 @@ JakeTunes is not MacBook-only. A Mac Mini at home (**homemini**, Tailscale hostn
 | Triggers `~/bin/jaketunes-homemini-sync.sh` after library changes | Pulls new music from NAS every 60s (`mini-nas-pull`) for resilient playback |
 | Music in `~/Music2/JakeTunesLibrary/` | Local copy in `~/Music/JakeTunesLibrary/` |
 
-**Setup:** install `Dr. Claude/scripts/jaketunes-homemini-sync.sh` to `~/bin/`, ensure Tailscale + Synology `JakeShared` mount work, then deploy the mobile backend from [JakeTunesMobile](https://github.com/jrosey30/JakeTunesMobile):
+**Setup:** install `Dr. Claude/scripts/jaketunes-homemini-sync.sh` to `~/bin/` (the app runs that copy, not the repo file), ensure Tailscale + Synology `JakeShared` mount work, then deploy the mobile backend from [JakeTunesMobile](https://github.com/jrosey30/JakeTunesMobile). Reinstall `~/bin` when the script changes — a replica's `--skip-library-json` flag is ignored by an older copy, which then still publishes `library.json`.
 
 ```bash
 ssh jakerosenbaumnas@homemini 'cd ~/JakeTunesMobile && git pull && ./deploy/install-on-mini.sh'
