@@ -9,7 +9,7 @@
 // src/common/hub-catalog-merge.ts for the merge rules.
 import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { HubCatalogPayload } from '../common/hub-catalog-merge'
+import { adoptHubCatalogState, type HubCatalogPayload } from '../common/hub-catalog-merge.ts'
 
 export interface HubCatalogDeps {
   /** app.getPath('userData') — holds hub-catalog-state.json */
@@ -26,7 +26,28 @@ export interface HubCatalogDeps {
   requestTimeoutMs?: number
 }
 
-interface HubState { version: string; adoptedAt?: string }
+/** Renderer ack is either a version string (older callers) or `{ version, protectedIds }`. */
+export function parseHubAdoptAck(raw: unknown): { version: string; protectedIds?: string[] } | null {
+  if (typeof raw === 'string') return raw ? { version: raw } : null
+  if (!raw || typeof raw !== 'object') return null
+  const version = (raw as { version?: unknown }).version
+  if (typeof version !== 'string' || !version) return null
+  const p = (raw as { protectedIds?: unknown }).protectedIds
+  if (p === undefined) return { version }
+  if (!Array.isArray(p)) return { version }
+  const protectedIds: string[] = []
+  for (const id of p) {
+    if (typeof id === 'string' || typeof id === 'number') protectedIds.push(String(id))
+  }
+  return { version, protectedIds }
+}
+
+interface HubState {
+  version: string
+  adoptedAt?: string
+  seenIds?: string[]
+  protectedIds?: string[]
+}
 
 const STATE_FILE = 'hub-catalog-state.json'
 const ACK_GRACE_MS = 60_000
@@ -36,7 +57,7 @@ export interface HubCatalogHandle {
   /** Renderer ack: the save that contains `version` succeeded. Calling this
    *  before that save lands (or after a refused save) retires the cursor
    *  and the delta is never retried. */
-  adopted: (version: string) => Promise<void>
+  adopted: (version: string, protectedIds?: string[]) => Promise<void>
   /** For tests / diagnostics. */
   tick: () => Promise<void>
 }
@@ -50,13 +71,25 @@ export function startHubCatalogPoll(deps: HubCatalogDeps): HubCatalogHandle {
 
   let inFlight = false
   let lastKey: string | null = null
-  let pending: { version: string; sentAt: number } | null = null
+  let pending: { version: string; sentAt: number; hubIds: string[] } | null = null
   let stopped = false
 
+  function idList(v: unknown): string[] {
+    if (!Array.isArray(v)) return []
+    const out: string[] = []
+    for (const id of v) if (typeof id === 'string' || typeof id === 'number') out.push(String(id))
+    return out
+  }
   async function readState(): Promise<HubState> {
     try {
       const raw = JSON.parse(await readFile(statePath, 'utf-8')) as HubState
-      return typeof raw?.version === 'string' ? raw : { version: '' }
+      if (typeof raw?.version !== 'string') return { version: '' }
+      return {
+        version: raw.version,
+        adoptedAt: typeof raw.adoptedAt === 'string' ? raw.adoptedAt : undefined,
+        seenIds: idList(raw.seenIds),
+        protectedIds: idList(raw.protectedIds),
+      }
     } catch { return { version: '' } }
   }
   async function writeState(s: HubState): Promise<void> {
@@ -98,18 +131,30 @@ export function startHubCatalogPoll(deps: HubCatalogDeps): HubCatalogHandle {
       if (!version) throw new Error('delta reply had no version')
       if (d.unchanged === true) {
         lastKey = key
-        if (state.version !== version) await writeState({ version, adoptedAt: new Date().toISOString() })
+        if (state.version !== version) {
+          await writeState({
+            version,
+            adoptedAt: new Date().toISOString(),
+            seenIds: state.seenIds ?? [],
+            protectedIds: state.protectedIds ?? [],
+          })
+        }
         return
       }
       const full = d.full === true
       const upserts = (full ? d.items : d.upserts) as HubCatalogPayload['upserts'] | undefined
       const removedIds = (Array.isArray(d.removedIds) ? d.removedIds : []) as Array<string | number>
-      const payload: HubCatalogPayload = { full, version, upserts: Array.isArray(upserts) ? upserts : [], removedIds }
+      const payload: HubCatalogPayload = {
+        full, version, upserts: Array.isArray(upserts) ? upserts : [], removedIds,
+        seenIds: state.seenIds ?? [],
+        protectedIds: state.protectedIds ?? [],
+        adoptedAt: state.adoptedAt ?? null,
+      }
       if (!deps.send('hub-catalog-updated', payload)) {
         log('[hub-catalog] no window to receive the catalog — will retry')
         return
       }
-      pending = { version, sentAt: Date.now() }
+      pending = { version, sentAt: Date.now(), hubIds: payload.upserts.map((u) => String(u.id)) }
       lastKey = key
       log(`[hub-catalog] sent ${full ? 'FULL' : 'delta'} ${version}: ${payload.upserts.length} upsert(s), ${removedIds.length} removal(s)`)
     } catch (err) {
@@ -122,9 +167,17 @@ export function startHubCatalogPoll(deps: HubCatalogDeps): HubCatalogHandle {
   const timer = setInterval(() => { void tick() }, intervalMs)
   return {
     stop: () => { stopped = true; clearInterval(timer) },
-    adopted: async (version: string) => {
+    adopted: async (version: string, protectedIds?: string[]) => {
+      const state = await readState()
+      const hubIds = pending && pending.version === version ? pending.hubIds : []
       if (pending && pending.version === version) pending = null
-      await writeState({ version, adoptedAt: new Date().toISOString() })
+      const next = adoptHubCatalogState(state, {
+        version,
+        hubIds,
+        protectedIds,
+        now: new Date().toISOString(),
+      })
+      await writeState(next)
       log(`[hub-catalog] adopted ${version}`)
     },
     tick,

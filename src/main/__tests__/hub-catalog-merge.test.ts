@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { mergeHubCatalog, MAX_REMOVALS_PER_DELTA } from '../../common/hub-catalog-merge.ts'
+import { adoptHubCatalogState, mergeHubCatalog, MAX_REMOVALS_PER_DELTA } from '../../common/hub-catalog-merge.ts'
 import { idsPushedBySave, libraryPublishTargets } from '../../common/replica-library-push.ts'
 
 const t = (id: number, extra: Record<string, unknown> = {}) =>
@@ -111,6 +111,110 @@ describe('mergeHubCatalog: replicas adopt the hub without ever losing a song by 
     assert.match(detect, /libraryPublishTargets/)
     assert.match(index, /setBlocksHubLibraryPublish/)
   })
+  it('a full snapshot keeps a replica-local song the hub has never seen, and still drops a song the hub used to list', () => {
+    const adoptedAt = '2026-10-08T12:00:00.000Z'
+    const local = [
+      t(1),
+      t(2),
+      t(3, { title: 'deleted on the laptop', dateAdded: '2020-01-01T00:00:00.000Z' }),
+      t(99, { title: 'imported on the replica', dateAdded: '2026-10-08T13:00:00.000Z' }),
+    ]
+    const ctx = { seenIds: ['1', '2', '3'], protectedIds: [] as string[], adoptedAt }
+    const r = mergeHubCatalog(local, {
+      full: true, version: 'v2', upserts: [t(1), t(2)], removedIds: [],
+    }, ctx)
+    assert.deepEqual(r.tracks.map((x) => x.id), [1, 2, 99])
+    assert.equal(r.removed, 1)
+    assert.deepEqual(r.protectedIds, ['99'])
+    // The ack moves adoptedAt forward. Protection has to be the persisted
+    // set, or the next snapshot drops 99 (its dateAdded is now "before").
+    const remembered = adoptHubCatalogState(
+      { seenIds: ctx.seenIds, protectedIds: [] },
+      { version: 'v2', hubIds: ['1', '2'], protectedIds: r.protectedIds, now: '2026-10-08T14:00:00.000Z' },
+    )
+    assert.deepEqual(remembered.seenIds, ['1', '2', '3'])
+    assert.deepEqual(remembered.protectedIds, ['99'])
+    assert.equal(remembered.seenIds.includes('99'), false)
+    const later = mergeHubCatalog(r.tracks, {
+      full: true, version: 'v3', upserts: [t(1), t(2)], removedIds: [],
+    }, { seenIds: remembered.seenIds, protectedIds: remembered.protectedIds, adoptedAt: remembered.adoptedAt })
+    assert.deepEqual(later.tracks.map((x) => x.id), [1, 2, 99])
+    assert.deepEqual(later.protectedIds, ['99'])
+  })
+
+  it('the first snapshot is still the catalog — a local-only id with no prior adoption is a laptop deletion', () => {
+    const local = [
+      t(1),
+      t(3, { title: 'gone before this replica ever adopted', dateAdded: '2026-10-08T13:00:00.000Z' }),
+    ]
+    const r = mergeHubCatalog(local, { full: true, version: 'v1', upserts: [t(1)], removedIds: [] })
+    assert.deepEqual(r.tracks.map((x) => x.id), [1])
+    assert.deepEqual(r.protectedIds, [])
+  })
+
+  it('once the hub lists a replica-local song, a later omission deletes it', () => {
+    const adoptedAt = '2026-10-08T12:00:00.000Z'
+    const local = [t(1), t(99, { dateAdded: '2026-10-08T13:00:00.000Z' })]
+    const graduated = mergeHubCatalog(local, {
+      full: true, version: 'v2', upserts: [t(1), t(99)], removedIds: [],
+    }, { seenIds: ['1'], protectedIds: ['99'], adoptedAt })
+    assert.deepEqual(graduated.tracks.map((x) => x.id), [1, 99])
+    assert.deepEqual(graduated.protectedIds, [])
+    const state = adoptHubCatalogState(
+      { seenIds: ['1'], protectedIds: ['99'] },
+      { version: 'v2', hubIds: ['1', '99'], protectedIds: graduated.protectedIds, now: '2026-10-08T15:00:00.000Z' },
+    )
+    assert.deepEqual(state.protectedIds, [])
+    assert.ok(state.seenIds.includes('99'))
+    const deleted = mergeHubCatalog(local, {
+      full: true, version: 'v3', upserts: [t(1)], removedIds: [],
+    }, state)
+    assert.deepEqual(deleted.tracks.map((x) => x.id), [1])
+  })
+
+  it('replica-local songs do not let a torn snapshot past the shrink floor', () => {
+    const adoptedAt = '2026-10-01T00:00:00.000Z'
+    const hub = Array.from({ length: 100 }, (_, i) => t(i + 1))
+    const localOnly = Array.from({ length: 40 }, (_, i) => t(1000 + i, { dateAdded: '2026-10-08T13:00:00.000Z' }))
+    const local = [...hub, ...localOnly]
+    const seenIds = hub.map((x) => String(x.id))
+    const protectedIds = localOnly.map((x) => String(x.id))
+    const torn = mergeHubCatalog(local, {
+      full: true, version: 'v', upserts: hub.slice(0, 40), removedIds: [],
+    }, { seenIds, protectedIds, adoptedAt })
+    assert.equal(torn.changed, false)
+    assert.equal(torn.tracks.length, 140)
+    assert.match(torn.ignoredReason ?? '', /full-snapshot-shrink-guard/)
+    const real = mergeHubCatalog(local, {
+      full: true, version: 'v', upserts: hub.slice(0, 60), removedIds: [],
+    }, { seenIds, protectedIds, adoptedAt })
+    assert.equal(real.removed, 40)
+    assert.equal(real.tracks.length, 100)
+    assert.ok(real.tracks.some((x) => x.id === 1000))
+  })
+
+  it('a delta removes an id the hub names, and does not remove a replica-local song it does not', () => {
+    const adoptedAt = '2026-10-08T12:00:00.000Z'
+    const local = [t(1), t(2), t(99, { dateAdded: '2026-10-08T13:00:00.000Z' })]
+    const ctx = { seenIds: ['1', '2'], protectedIds: ['99'], adoptedAt }
+    const kept = mergeHubCatalog(local, { full: false, version: 'v', upserts: [], removedIds: ['2'] }, ctx)
+    assert.deepEqual(kept.tracks.map((x) => x.id), [1, 99])
+    assert.deepEqual(kept.protectedIds, ['99'])
+    const named = mergeHubCatalog(local, { full: false, version: 'v', upserts: [], removedIds: ['99'] }, ctx)
+    assert.deepEqual(named.tracks.map((x) => x.id), [1, 2])
+    assert.deepEqual(named.protectedIds, [])
+  })
+
+  it('an adoption save is wired to unlink nothing, and the ack persists the protected set', () => {
+    const index = readFileSync(new URL('../index.ts', import.meta.url), 'utf8')
+    assert.match(index, /mayUnlinkDeletions\(deletedPaths\.length, force, \{ adoption: adoption === true \}\)/)
+    assert.match(index, /if \(adoption !== true\) scheduleDbRebuild\(deletedPaths\)/)
+    const app = readFileSync(new URL('../../renderer/App.tsx', import.meta.url), 'utf8')
+    assert.match(app, /saveLibrary\(tracks, playlists, undefined, adoption\)/)
+    assert.match(app, /hubCatalogAdopted\?\.\(\{ version: p\.version, protectedIds: r\.protectedIds \}\)/)
+    assert.match(app, /hubCatalogAdopted\?\.\(\{ version: ack, protectedIds \}\)/)
+  })
+
   it('a delta that removes a crowd is a torn publish, not a cleanup — nothing is removed', () => {
     const local = Array.from({ length: 200 }, (_, i) => t(i + 1))
     const ids = local.slice(0, MAX_REMOVALS_PER_DELTA + 1).map((x) => String(x.id))

@@ -52,4 +52,11 @@ describe('save-guards (the 2026-05-29 data-loss protection)', () => {
     assert.equal(mayUnlinkDeletions(UNLINK_CAP + 1), false) // over → preserve as orphans
     assert.equal(mayUnlinkDeletions(10000, true), true)     // force overrides
   })
+
+  it('a hub-adoption save unlinks nothing, including under the cap and with force', () => {
+    assert.equal(mayUnlinkDeletions(5, false, { adoption: true }), false)
+    assert.equal(mayUnlinkDeletions(1, undefined, { adoption: true }), false)
+    assert.equal(mayUnlinkDeletions(UNLINK_CAP, true, { adoption: true }), false)
+    assert.equal(mayUnlinkDeletions(3, true, { adoption: false }), true)
+  })
 })

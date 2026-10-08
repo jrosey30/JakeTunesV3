@@ -1171,13 +1171,16 @@ function AppInner() {
   const librarySaveRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Hub version whose merged tracks are in memory but not yet confirmed on
   // disk. Cleared only when a save of exactly those ids returns ok.
-  const pendingHubAdopt = useRef<{ version: string; idKey: string } | null>(null)
+  const pendingHubAdopt = useRef<{ version: string; idKey: string; protectedIds: string[] } | null>(null)
 
   function scheduleLibrarySave(tracks: typeof libState.tracks, playlists: typeof libState.playlists) {
     if (librarySaveRef.current) clearTimeout(librarySaveRef.current)
     librarySaveRef.current = setTimeout(() => {
       const launched = pendingHubAdopt.current
-      window.electronAPI.saveLibrary(tracks, playlists).then((r) => {
+      // Fourth arg, not third: third is `force` and would bypass the shrink
+      // refusal. An adoption save must not unlink audio for the rows it drops.
+      const adoption = launched != null
+      window.electronAPI.saveLibrary(tracks, playlists, undefined, adoption).then((r) => {
         if (r.ok && (r.preservedOrphanCount ?? 0) > 0) {
           setPreservedOrphanBanner(r.preservedOrphanCount ?? 0)
         }
@@ -1188,8 +1191,9 @@ function AppInner() {
           current: pendingHubAdopt.current,
         })
         if (ack) {
+          const protectedIds = pendingHubAdopt.current?.protectedIds
           pendingHubAdopt.current = null
-          void window.electronAPI.hubCatalogAdopted?.(ack)
+          void window.electronAPI.hubCatalogAdopted?.({ version: ack, protectedIds })
         }
       }).catch(() => {})
     }, 1000)
@@ -1208,6 +1212,10 @@ function AppInner() {
         full: p.full, version: p.version,
         upserts: p.upserts as import('../common/hub-catalog-merge').HubTrackLike[],
         removedIds: p.removedIds,
+      }, {
+        seenIds: p.seenIds,
+        protectedIds: p.protectedIds,
+        adoptedAt: p.adoptedAt,
       })
       const decision = hubAdoptAfterMerge({
         changed: r.changed,
@@ -1219,10 +1227,17 @@ function AppInner() {
         return
       }
       if (decision === 'ack-now') {
-        void window.electronAPI.hubCatalogAdopted?.(p.version)
+        // Nothing in the track list changed, but a replica-local song may
+        // have just become protected. Persist that set with the ack or the
+        // next full snapshot (adoptedAt moved forward) drops it.
+        void window.electronAPI.hubCatalogAdopted?.({ version: p.version, protectedIds: r.protectedIds })
         return
       }
-      pendingHubAdopt.current = { version: p.version, idKey: trackIdKey(r.tracks.map((t) => t.id)) }
+      pendingHubAdopt.current = {
+        version: p.version,
+        idKey: trackIdKey(r.tracks.map((t) => t.id)),
+        protectedIds: r.protectedIds,
+      }
       if (r.changed) {
         console.log(`[hub-catalog] merged ${p.full ? 'FULL' : 'delta'} ${p.version}: +${r.added} ~${r.updated} -${r.removed}`)
         dispatch({ type: 'SET_TRACKS', tracks: r.tracks })

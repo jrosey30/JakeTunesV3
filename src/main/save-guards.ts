@@ -39,7 +39,14 @@ export function shouldRefuseSave(prevCount: number, newCount: number, force?: bo
 /**
  * Whether a save that removed `deletedCount` paths may unlink the underlying
  * audio. Beyond UNLINK_CAP (and not forced) the files are preserved as orphans.
+ * A hub-adoption save never unlinks, even under the cap and even with force:
+ * matching the replica's index to the hub is not a request to delete masters.
  */
-export function mayUnlinkDeletions(deletedCount: number, force?: boolean): boolean {
+export function mayUnlinkDeletions(
+  deletedCount: number,
+  force?: boolean,
+  opts?: { adoption?: boolean },
+): boolean {
+  if (opts?.adoption === true) return false
   return force === true || deletedCount <= UNLINK_CAP
 }
