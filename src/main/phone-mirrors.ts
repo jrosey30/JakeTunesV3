@@ -23,6 +23,7 @@
  */
 import { readFile, writeFile, rename, stat, mkdir } from 'fs/promises'
 import { join, dirname } from 'path'
+import { withCompanionInit } from './hub-companion.ts'
 
 export interface PhoneMirrorDeps {
   files: string[]
@@ -53,7 +54,7 @@ export async function refreshPhoneMirrors(deps: PhoneMirrorDeps): Promise<string
     const localStat = await stat(localPath).catch(() => null)
     let done = false
     try {
-      const res = await fetchFn(`${deps.backendUrl}/api/phone-sidecars/${encodeURIComponent(name)}`, { signal: AbortSignal.timeout(8000) })
+      const res = await fetchFn(`${deps.backendUrl}/api/phone-sidecars/${encodeURIComponent(name)}`, withCompanionInit({ signal: AbortSignal.timeout(8000) }))
       if (res.ok) {
         const d = await res.json() as { mtimeMs?: number; body?: string }
         if (typeof d.body === 'string' && typeof d.mtimeMs === 'number') {
@@ -117,7 +118,7 @@ export async function ensureMobileImportAudio(
     const have = await stat(dest).catch(() => null)
     if (have && have.size > 0) continue                  // already here — never overwrite
     try {
-      const res = await fetchFn(`${opts.backendUrl}/audio/${encodeURIComponent(String(id))}`, { signal: AbortSignal.timeout(5 * 60_000) })
+      const res = await fetchFn(`${opts.backendUrl}/audio/${encodeURIComponent(String(id))}`, withCompanionInit({ signal: AbortSignal.timeout(5 * 60_000) }))
       if (!res.ok) { opts.log?.(`[phone-mirrors] audio ${id} → ${res.status} (rsync return-leg will retry)`); continue }
       const buf = Buffer.from(await res.arrayBuffer())
       const want = Number(res.headers.get('content-length')) || 0

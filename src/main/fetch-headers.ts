@@ -12,6 +12,7 @@
  * Response exists, clear the timer and let the body stream for as long as
  * Chromium needs it.
  */
+import { withCompanionInit } from './hub-companion.ts'
 
 /**
  * Like fetch(), but `headerTimeoutMs` only covers the wait until headers
@@ -38,7 +39,7 @@ export async function fetchHeadersWithin(
   }
 
   try {
-    const res = await fetch(url, { ...init, signal: ac.signal })
+    const res = await fetch(url, withCompanionInit({ ...init, signal: ac.signal }))
     clearTimeout(timer)
     if (caller) caller.removeEventListener('abort', onCallerAbort)
     return res

@@ -16,6 +16,7 @@ import { getEmbeddingsMap as ragGetEmbeddingsMap } from '../ai/embeddings'
 import { filterOrbitNeighbors, parseOrbitSeed, resolveOrbitSeedIds } from '../ai/orbit-quality'
 import { mergeStarIds } from '../mobile-stars-merge'
 import { safeIpcError } from '../safe-ipc-error'
+import { withCompanionInit } from '../hub-companion.ts'
 import { tombstonesPath as playlistTombstonesPath, loadTombstones as loadPlaylistTombstones } from '../playlist-tombstones.ts'
 import type { MobilePlaylistRecord } from '../index.ts'
 
@@ -191,7 +192,7 @@ export function registerMobileReadsIpc(ipc: IpcRegistrar, host: MobileReadsIpcHo
 
   ipc.handle('get-mobile-mixes', async (): Promise<{ ok: boolean; date?: string; mixes?: Array<{ id: string; title: string; subtitle: string; trackIds: number[] }>; error?: string }> => {
     try {
-      const res = await fetch(`${MOBILE_MIXES_BACKEND}/api/mixes`, { signal: AbortSignal.timeout(20000) })
+      const res = await fetch(`${MOBILE_MIXES_BACKEND}/api/mixes`, withCompanionInit({ signal: AbortSignal.timeout(20000) }))
       if (!res.ok) return { ok: false, error: `backend ${res.status}` }
       const body = await res.json() as { date?: string; mixes?: Array<{ id?: string; title?: string; subtitle?: string; tracks?: Array<{ id?: string | number }> }> }
       const years = await host.ragTrackYearMap()
@@ -218,12 +219,12 @@ export function registerMobileReadsIpc(ipc: IpcRegistrar, host: MobileReadsIpcHo
   }, { refuse: REFUSED_SENDER })
   ipc.handle('get-mobile-vibe-mix', async (_e, vibe: string): Promise<{ ok: boolean; mix?: { id: string; title: string; subtitle: string; trackIds: number[] }; error?: string }> => {
     try {
-      const res = await fetch(`${MOBILE_MIXES_BACKEND}/api/mixes/vibe`, {
+      const res = await fetch(`${MOBILE_MIXES_BACKEND}/api/mixes/vibe`, withCompanionInit({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ vibe: String(vibe ?? '').slice(0, 200) }),
         signal: AbortSignal.timeout(25000),
-      })
+      }))
       if (!res.ok) {
         const err = await res.json().catch(() => ({})) as { error?: string }
         return { ok: false, error: err.error || `backend ${res.status}` }

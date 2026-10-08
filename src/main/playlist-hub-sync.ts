@@ -19,6 +19,7 @@
  */
 import { loadTombstones, saveTombstones, type PlaylistTombstone } from './playlist-tombstones.ts'
 import { loadPins, savePins, type PlaylistPins } from './playlist-pins.ts'
+import { withCompanionInit } from './hub-companion.ts'
 
 export interface HubPlaylistLike {
   id?: unknown
@@ -84,12 +85,12 @@ export async function convergePlaylistHub(deps: HubSyncDeps): Promise<ConvergeRe
       loadTombstones(deps.tombstonesFile),
       loadPins(deps.pinsFile),
     ])
-    const res = await fetchFn(`${deps.hubUrl}/api/desktop-playlists/converge`, {
+    const res = await fetchFn(`${deps.hubUrl}/api/desktop-playlists/converge`, withCompanionInit({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ playlists, tombstones, pins, device: deps.device }),
       signal: AbortSignal.timeout(15_000),
-    })
+    }))
     if (!res.ok) return { ok: false, changed: false, error: `hub ${res.status}` }
     const merged = await res.json() as { ok?: boolean; playlists?: HubPlaylistLike[]; tombstones?: PlaylistTombstone[]; pins?: PlaylistPins | null }
     if (!merged?.ok || !Array.isArray(merged.playlists)) return { ok: false, changed: false, error: 'bad hub reply' }

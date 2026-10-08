@@ -7,9 +7,21 @@
 // This replaced ~/bin/jaketunes-workmini-index-sync.sh (laptop → workmini
 // file swap under the running app), retired the same day. See
 // src/common/hub-catalog-merge.ts for the merge rules.
+//
+// /api/library-version only moves on library, tracks, stars, and plays.
+// Phone song edits, phone imports, and live sets live on other routes, so
+// those stamps are folded into the same key (same interval, no new publish):
+//   • phone edits  — mtimeMs (or ETag / Last-Modified) of
+//     GET /api/phone-sidecars/mobile-metadata-overrides.json
+//   • phone imports — the same for mobile-imports.json
+//   • live sets — ETag or Last-Modified on HEAD /api/live-sets when the
+//     hub sends one; otherwise mtimeMs on GET /api/live-sets; otherwise
+//     the SHA-256 of that body
+import { createHash } from 'node:crypto'
 import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { adoptHubCatalogState, type HubCatalogPayload } from '../common/hub-catalog-merge.ts'
+import { withCompanionInit } from './hub-companion.ts'
 
 export interface HubCatalogDeps {
   /** app.getPath('userData') — holds hub-catalog-state.json */
@@ -52,6 +64,61 @@ interface HubState {
 const STATE_FILE = 'hub-catalog-state.json'
 const ACK_GRACE_MS = 60_000
 
+/** Phone Get Info edits. Served by the existing phone-sidecar route. */
+export const PHONE_EDIT_SIDECAR = 'mobile-metadata-overrides.json'
+/** Phone downloads waiting to be absorbed. Same route. */
+export const PHONE_IMPORT_SIDECAR = 'mobile-imports.json'
+
+export interface StampHeaders { get(name: string): string | null }
+
+/**
+ * Change stamp for a phone sidecar. 5xx / network → null (keep the
+ * previous stamp). Missing file → '' so it stays quiet until the file
+ * appears. Prefer a validator header; the hub's JSON puts the stamp in
+ * `mtimeMs` and usually sends neither header.
+ */
+export function phoneSidecarStamp(status: number, header: StampHeaders, body: string): string | null {
+  if (status >= 500 || status <= 0) return null
+  if (status < 200 || status >= 300) return ''
+  const etag = header.get('etag')
+  if (etag) return `etag:${etag}`
+  const lm = header.get('last-modified')
+  if (lm) return `lm:${lm}`
+  try {
+    const parsed = JSON.parse(body) as { mtimeMs?: unknown }
+    if (typeof parsed.mtimeMs === 'number' && Number.isFinite(parsed.mtimeMs)) return `mtime:${parsed.mtimeMs}`
+  } catch { /* not JSON — no stamp in the body */ }
+  return ''
+}
+
+/**
+ * Change stamp for GET/HEAD /api/live-sets. Same failure rule as the
+ * phone sidecars. Validators first, then `mtimeMs`, then a hash of the
+ * body so a list with no clock still moves the key.
+ */
+export function liveSetStamp(status: number, header: StampHeaders, body: string): string | null {
+  if (status >= 500 || status <= 0) return null
+  if (status < 200 || status >= 300) return `http:${status}`
+  const etag = header.get('etag')
+  if (etag) return `etag:${etag}`
+  const lm = header.get('last-modified')
+  if (lm) return `lm:${lm}`
+  try {
+    const parsed = JSON.parse(body) as { mtimeMs?: unknown }
+    if (typeof parsed.mtimeMs === 'number' && Number.isFinite(parsed.mtimeMs)) return `mtime:${parsed.mtimeMs}`
+  } catch { /* hash the bytes */ }
+  return `sha256:${createHash('sha256').update(body).digest('hex')}`
+}
+
+/** The poll's change key. Any one field moving means "fetch the delta". */
+export function hubCatalogChangeKey(
+  version: Record<string, unknown>,
+  stamps: { phoneEdits: string; phoneImports: string; liveSets: string },
+): string {
+  const core = ['library', 'tracks', 'stars', 'plays'].map((k) => String(version[k] ?? '')).join('|')
+  return `${core}|phone-edits:${stamps.phoneEdits}|phone-imports:${stamps.phoneImports}|live-sets:${stamps.liveSets}`
+}
+
 export interface HubCatalogHandle {
   stop: () => void
   /** Renderer ack: the save that contains `version` succeeded. Calling this
@@ -73,6 +140,11 @@ export function startHubCatalogPoll(deps: HubCatalogDeps): HubCatalogHandle {
   let lastKey: string | null = null
   let pending: { version: string; sentAt: number; hubIds: string[] } | null = null
   let stopped = false
+  // Last good sidecar / live-set stamps. A failed probe keeps these so a
+  // blip does not look like a change and does not wipe a real one.
+  let phoneEdits = ''
+  let phoneImports = ''
+  let liveSets = ''
 
   function idList(v: unknown): string[] {
     if (!Array.isArray(v)) return []
@@ -102,10 +174,40 @@ export function startHubCatalogPoll(deps: HubCatalogDeps): HubCatalogHandle {
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), timeoutMs)
     try {
-      const r = await fetchImpl(url, { signal: ctrl.signal, headers: { accept: 'application/json' } })
+      const r = await fetchImpl(url, withCompanionInit({ signal: ctrl.signal, headers: { accept: 'application/json' } }))
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       return (await r.json()) as T
     } finally { clearTimeout(timer) }
+  }
+
+  async function probe(url: string, method: 'GET' | 'HEAD'): Promise<{ status: number; headers: Headers; text: string } | null> {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+    try {
+      const r = await fetchImpl(url, withCompanionInit({ method, signal: ctrl.signal, headers: { accept: 'application/json' } }))
+      const text = method === 'HEAD' ? '' : await r.text()
+      return { status: r.status, headers: r.headers, text }
+    } catch {
+      return null
+    } finally { clearTimeout(timer) }
+  }
+
+  async function readSidecarStamp(
+    url: string,
+    stamp: (status: number, headers: StampHeaders, body: string) => string | null,
+  ): Promise<string | null> {
+    const head = await probe(url, 'HEAD')
+    const headOk = !!head && head.status >= 200 && head.status < 300
+    if (headOk && (head.headers.get('etag') || head.headers.get('last-modified'))) {
+      return stamp(head.status, head.headers, '')
+    }
+    const got = await probe(url, 'GET')
+    if (!got) return null
+    return stamp(got.status, got.headers, got.text)
+  }
+
+  async function readLiveSetStamp(url: string): Promise<string | null> {
+    return readSidecarStamp(url, liveSetStamp)
   }
 
   async function tick(): Promise<void> {
@@ -121,12 +223,21 @@ export function startHubCatalogPoll(deps: HubCatalogDeps): HubCatalogHandle {
       if (pending && Date.now() - pending.sentAt < ACK_GRACE_MS) return
       if (pending) { pending = null; lastKey = null }
 
-      const ver = await getJson<Record<string, unknown>>(`${base}/api/library-version`)
-      const key = ['library', 'tracks', 'stars', 'plays'].map((k) => String(ver[k] ?? '')).join('|')
+      const origin = base.replace(/\/$/, '')
+      const [ver, editStamp, importStamp, liveStamp] = await Promise.all([
+        getJson<Record<string, unknown>>(`${origin}/api/library-version`),
+        readSidecarStamp(`${origin}/api/phone-sidecars/${encodeURIComponent(PHONE_EDIT_SIDECAR)}`, phoneSidecarStamp),
+        readSidecarStamp(`${origin}/api/phone-sidecars/${encodeURIComponent(PHONE_IMPORT_SIDECAR)}`, phoneSidecarStamp),
+        readLiveSetStamp(`${origin}/api/live-sets`),
+      ])
+      if (editStamp !== null) phoneEdits = editStamp
+      if (importStamp !== null) phoneImports = importStamp
+      if (liveStamp !== null) liveSets = liveStamp
+      const key = hubCatalogChangeKey(ver, { phoneEdits, phoneImports, liveSets })
       if (key === lastKey) return
       const state = await readState()
       const since = encodeURIComponent(state.version)
-      const d = await getJson<Record<string, unknown>>(`${base}/api/tracks/delta?since=${since}`)
+      const d = await getJson<Record<string, unknown>>(`${origin}/api/tracks/delta?since=${since}`)
       const version = typeof d.version === 'string' ? d.version : ''
       if (!version) throw new Error('delta reply had no version')
       if (d.unchanged === true) {

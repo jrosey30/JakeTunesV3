@@ -26,6 +26,7 @@ import { createWriteStream, createReadStream } from 'fs'
 import { readFile, writeFile, rename, mkdir, stat, readdir, unlink } from 'fs/promises'
 import { join } from 'path'
 import { Readable } from 'stream'
+import { withCompanionInit } from './hub-companion.ts'
 
 export interface SpoolMeta { contentType: string; total: number }
 export interface SpoolReady { file: string; contentType: string; total: number }
@@ -112,7 +113,7 @@ export function ensureSpool(dir: string, key: string, url: string, fetchFn: type
     if (await spoolReady(dir, key)) return
     const part = join(dir, `${key}.part.${process.pid}`)
     try {
-      const res = await fetchFn(url, { signal: AbortSignal.timeout(10 * 60_000) })
+      const res = await fetchFn(url, withCompanionInit({ signal: AbortSignal.timeout(10 * 60_000) }))
       if (!res.ok || !res.body) throw new Error(`spool fetch ${res.status}`)
       const total = Number(res.headers.get('content-length')) || 0
       const contentType = res.headers.get('content-type') || 'audio/mpeg'
