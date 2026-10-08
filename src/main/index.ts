@@ -17,6 +17,7 @@ process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '64'
 
 import { getVenueShows, type VenueShow } from './venues.js'
 import { parseHubAdoptAck, startHubCatalogPoll } from './hub-catalog'
+import { ensureCompanionTokenFromEnvFile, withCompanionInit } from './hub-companion.ts'
 // The four persona system prompts — 268 lines of prose, lifted out 2026-08-10.
 import {
   MUSIC_MAN_CORE, MEGAN_CORE, DJ_HANDS_CORE,
@@ -354,6 +355,15 @@ const envPaths = [
 ]
 for (const p of envPaths) {
   config({ path: p, override: false })
+}
+// Hub companion token. dotenv above loads MOBILE_API_TOKEN from userData/.env
+// when the line is there. This second read covers a dotenv miss. The value
+// is never logged. See docs/homemini.md.
+if (!process.env.MOBILE_API_TOKEN?.trim()) {
+  try {
+    const fs = require('fs') as typeof import('fs')
+    ensureCompanionTokenFromEnvFile(fs.readFileSync(join(app.getPath('userData'), '.env'), 'utf8'))
+  } catch { /* no userData .env — header stays off, same as today */ }
 }
 
 // Fallback: read API keys directly from userData .env if dotenv missed them
@@ -4451,7 +4461,7 @@ async function probeHomeminiReachability(): Promise<void> {
   const base = (process.env.JAKETUNES_MOBILE_BACKEND || 'http://homemini:3000').replace(/\/$/, '')
   const url = `${base}/healthz`
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(3000) })
+    const res = await fetch(url, withCompanionInit({ signal: AbortSignal.timeout(3000) }))
     if (res.ok) {
       console.log(`[stream] homemini reachable at ${url} — streaming playback path OK`)
     } else {
@@ -4514,10 +4524,10 @@ async function homeminiServesMatchingBytes(id: string | number, storedFingerprin
   if (!storedFingerprint || !storedFingerprint.startsWith('sha1:')) return false
   const wantHash = storedFingerprint.split('|')[0].slice('sha1:'.length)
   try {
-    const res = await fetch(`${HOMEMINI_AUDIO_BASE}/${encodeURIComponent(String(id))}`, {
+    const res = await fetch(`${HOMEMINI_AUDIO_BASE}/${encodeURIComponent(String(id))}`, withCompanionInit({
       headers: { Range: 'bytes=0-262143' },   // first 256KB — matches the fingerprint window
       signal: AbortSignal.timeout(8000),
-    })
+    }))
     if (!res.ok && res.status !== 206) return false
     const buf = Buffer.from(await res.arrayBuffer())
     if (buf.length <= 0) return false
@@ -4577,7 +4587,7 @@ async function materializeLibraryTrack(colonPath: string, trackId: number | stri
     rename,
     unlink,
     fetchAudio: async (url) => {
-      const res = await fetch(url, { signal: AbortSignal.timeout(30_000) })
+      const res = await fetch(url, withCompanionInit({ signal: AbortSignal.timeout(30_000) }))
       return { ok: res.ok, status: res.status, buffer: Buffer.from(await res.arrayBuffer()) }
     },
   })

@@ -12,6 +12,7 @@
 import { basename, join } from 'path'
 import { readFile, writeFile, rename, mkdir, access } from 'fs/promises'
 import { loadTombstones, saveTombstones } from './playlist-tombstones.ts'
+import { withCompanionInit } from './hub-companion.ts'
 
 export interface HubTapeLike {
   id?: unknown
@@ -73,12 +74,12 @@ export async function convergeMixtapeHub(deps: MixtapeHubDeps): Promise<MixtapeC
       deps.getMixtapes(),
       loadTombstones(deps.tombstonesFile),
     ])
-    const res = await fetchFn(`${deps.hubUrl}/api/desktop-mixtapes/converge`, {
+    const res = await fetchFn(`${deps.hubUrl}/api/desktop-mixtapes/converge`, withCompanionInit({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mixtapes: tapes, tombstones, device: deps.device }),
       signal: AbortSignal.timeout(15_000),
-    })
+    }))
     if (!res.ok) return { ok: false, changed: false, ...none, error: `hub ${res.status}` }
     const merged = await res.json() as { ok?: boolean; mixtapes?: HubTapeLike[]; tombstones?: Array<{ id: string; name: string; deletedAt: string }> }
     if (!merged?.ok || !Array.isArray(merged.mixtapes)) return { ok: false, changed: false, ...none, error: 'bad hub reply' }
@@ -95,14 +96,14 @@ export async function convergeMixtapeHub(deps: MixtapeHubDeps): Promise<MixtapeC
     let audioPushed = 0
     const wanted = referencedAudioNames(merged.mixtapes, deps.introsDir)
     if (wanted.length) {
-      const invRes = await fetchFn(`${deps.hubUrl}/api/desktop-mixtapes/audio`, { signal: AbortSignal.timeout(10_000) })
+      const invRes = await fetchFn(`${deps.hubUrl}/api/desktop-mixtapes/audio`, withCompanionInit({ signal: AbortSignal.timeout(10_000) }))
       const hubNames = new Set(invRes.ok ? ((await invRes.json() as { names?: string[] }).names ?? []) : [])
       await mkdir(deps.introsDir, { recursive: true })
       for (const name of wanted) {
         const local = join(deps.introsDir, name)
         const haveLocal = await access(local).then(() => true, () => false)
         if (!haveLocal && hubNames.has(name)) {
-          const dl = await fetchFn(`${deps.hubUrl}/api/desktop-mixtapes/audio/${name}`, { signal: AbortSignal.timeout(30_000) })
+          const dl = await fetchFn(`${deps.hubUrl}/api/desktop-mixtapes/audio/${name}`, withCompanionInit({ signal: AbortSignal.timeout(30_000) }))
           if (dl.ok) {
             const buf = Buffer.from(await dl.arrayBuffer())
             if (buf.length > 0) {
@@ -114,12 +115,12 @@ export async function convergeMixtapeHub(deps: MixtapeHubDeps): Promise<MixtapeC
           }
         } else if (haveLocal && !hubNames.has(name)) {
           const buf = await readFile(local)
-          const up = await fetchFn(`${deps.hubUrl}/api/desktop-mixtapes/audio/${name}`, {
+          const up = await fetchFn(`${deps.hubUrl}/api/desktop-mixtapes/audio/${name}`, withCompanionInit({
             method: 'PUT',
             headers: { 'Content-Type': 'audio/mp4' },
             body: buf,
             signal: AbortSignal.timeout(60_000),
-          })
+          }))
           if (up.ok) audioPushed++
         }
       }

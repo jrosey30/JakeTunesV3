@@ -96,6 +96,23 @@ cd ~/JakeTunesMobile && ./deploy/install-macbook-nas-sync.sh
 
 Health check: `curl http://homemini:3000/healthz`
 
+### Companion token (desktop → hub)
+
+The hub can require header `X-JakeTunes-Companion` on its protected routes. The header name and the env var (`MOBILE_API_TOKEN`) come from `@jaketunes/contracts` (`companion`). Enforcement is off until it is turned on at the hub. Desktop sends the header only when a token is configured, and it never logs the value. With no token, requests go out exactly as they do today.
+
+On the work Mac, set `MOBILE_API_TOKEN` to the same value the hub process uses. Either of these works; the app checks them in this order:
+
+1. The environment JakeTunes is launched with.
+2. A line in the app's userData `.env`. That file is already how this app keeps local keys (Anthropic, ElevenLabs, and the rest), and it is not in git:
+
+   `~/Library/Application Support/JakeTunes/.env`
+
+   ```
+   MOBILE_API_TOKEN=<the hub's value>
+   ```
+
+Restart JakeTunes after editing the file. Unsigned routes (`/healthz`, `/audio`, `/artwork`) do not require the header. Desktop still attaches it there when a token is set, which is harmless.
+
 ## Nowhere video pipeline
 
 1. **Media vault** — Movies on NAS (`/Volumes/Movies` from MacBook, `~/nowhere-media/` on homemini). TV shows delivered to homemini via `server/scripts/seinfeld-*.sh`.

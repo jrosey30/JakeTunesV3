@@ -1,3 +1,5 @@
+import { withCompanionInit } from './hub-companion.ts'
+
 /**
  * The hub transport for recommendations — the ONE place main talks to the
  * homemini backend about the list. Two implementations:
@@ -42,7 +44,7 @@ export function liveRecoHub(baseUrl: string, fetchImpl: FetchLike = fetch as unk
     mode: 'live',
     nasFallback: true,
     async list() {
-      const res = await fetchImpl(`${baseUrl}/api/recommendations`, { signal: AbortSignal.timeout(8000) })
+      const res = await fetchImpl(`${baseUrl}/api/recommendations`, withCompanionInit({ signal: AbortSignal.timeout(8000) }) as Record<string, unknown>)
       if (!res.ok) return null
       const parsed = await res.json() as unknown
       if (Array.isArray(parsed)) return parsed as HubRecord[]
@@ -50,18 +52,18 @@ export function liveRecoHub(baseUrl: string, fetchImpl: FetchLike = fetch as unk
       return []
     },
     async add(body) {
-      return reply(await fetchImpl(`${baseUrl}/api/recommendations`, {
+      return reply(await fetchImpl(`${baseUrl}/api/recommendations`, withCompanionInit({
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(10000),
-      }))
+      }) as Record<string, unknown>))
     },
     async remove(id, identities) {
       const q = identityQuery(identities)
-      return reply(await fetchImpl(`${baseUrl}/api/recommendations/${encodeURIComponent(id)}${q ? `?${q}` : ''}`, {
+      return reply(await fetchImpl(`${baseUrl}/api/recommendations/${encodeURIComponent(id)}${q ? `?${q}` : ''}`, withCompanionInit({
         method: 'DELETE', signal: AbortSignal.timeout(8000),
-      }))
+      }) as Record<string, unknown>))
     },
     async deletedKeys() {
-      const res = await fetchImpl(`${baseUrl}/api/recommendations/deleted`, { signal: AbortSignal.timeout(8000) })
+      const res = await fetchImpl(`${baseUrl}/api/recommendations/deleted`, withCompanionInit({ signal: AbortSignal.timeout(8000) }) as Record<string, unknown>)
       if (!res.ok) return null
       const parsed = await res.json() as { keys?: unknown }
       return Array.isArray(parsed?.keys) ? parsed.keys.map(String) : []
