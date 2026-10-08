@@ -33,7 +33,9 @@ const ACK_GRACE_MS = 60_000
 
 export interface HubCatalogHandle {
   stop: () => void
-  /** Renderer ack: the payload for `version` was merged and persisted. */
+  /** Renderer ack: the save that contains `version` succeeded. Calling this
+   *  before that save lands (or after a refused save) retires the cursor
+   *  and the delta is never retried. */
   adopted: (version: string) => Promise<void>
   /** For tests / diagnostics. */
   tick: () => Promise<void>

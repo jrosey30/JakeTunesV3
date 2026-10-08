@@ -283,7 +283,9 @@ import {
 import {
   startSyncOrchestrator,
   triggerSync,
+  setBlocksHubLibraryPublish,
 } from './sync-orchestrator'
+import { libraryPublishTargets } from '../common/replica-library-push'
 // Brief 023: removed imports from ./library-snapshot and
 // ./library-overrides — both modules are deleted along with this
 // commit. They were the backing for the vestigial mobile-sync feature
@@ -4056,9 +4058,15 @@ const RECONCILE_BACKUP_MIN_BYTES = 64 * 1024
 let stateConflicts: StateConflict[] = []
 async function detectStateConflicts(): Promise<void> {
   stateConflicts = []
+  // Replicas adopt library.json from the hub. Surfacing it as a local-newer
+  // conflict is what auto-backup and "Push local edits" then write onto the
+  // NAS — the copy the phone reads — and a deleted song comes back.
+  const pushLibrary = libraryPublishTargets(await isHomeminiPlaybackClientCached()).nas
+  if (!pushLibrary) quietWarn('replica-library-no-push', '[state] replica: library.json is not published to the NAS')
   const localDir = app.getPath('userData')
   const CONFLICT_THRESHOLD_MS = 2_000 // NAS copies carry the local mtime (utimes after publish), so 2s = SMB timestamp granularity
   for (const f of STATE_FILE_NAMES) {
+    if (f === 'library.json' && !pushLibrary) continue
     const localPath = join(localDir, f)
     const nasPath = join(NAS_STATE_DIR_PATH, f)
     try {
@@ -4957,6 +4965,13 @@ function scheduleDbRebuild(deletedPaths: string[]) {
 // missing mirror can't cause empty-display or loss. tmp+rename for atomicity
 // when it does land.
 async function mirrorLibraryToNas(library: unknown): Promise<void> {
+  // Same gate as detectStateConflicts. The stale-push guard is the wrong
+  // tool here: a replica holding a deleted song is a superset, and that
+  // guard lets supersets push. Replicas do not publish library.json at all.
+  if (!libraryPublishTargets(await isHomeminiPlaybackClientCached()).nas) {
+    quietWarn('mirror-replica-skip', '[mirror] replica: library.json saved locally, not copied to the NAS')
+    return
+  }
   if (!(await nasAvailable())) return   // breaker open: skip ALL NAS IO
   const nasPath = join(NAS_STATE_DIR_PATH, 'library.json')
   const json = JSON.stringify(library, null, 2)
@@ -11247,6 +11262,7 @@ app.whenReady().then(async () => {
   // works fine here. Triggers wired in the import-track /
   // import-tracks / save-metadata-override / save-playlists handlers
   // above; safety net fires every 10 min.
+  setBlocksHubLibraryPublish(async () => !libraryPublishTargets(await isHomeminiPlaybackClientCached()).hub)
   startSyncOrchestrator(() => mainWindow)
 
   // Auto-update: check for updates in production

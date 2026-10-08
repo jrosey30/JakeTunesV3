@@ -48,6 +48,15 @@ import { nasAvailable, onNasRecovery, NAS_STATE_DIR_PATH } from './state-dir'
 import { mountHostFor, isTailnetHost, decideSyncMode } from './sync-mode.ts'
 
 const SYNC_SCRIPT = join(homedir(), 'bin', 'jaketunes-homemini-sync.sh')
+
+// Replicas adopt the catalog. The sync script's first move is to publish
+// library.json onto homemini (and from there the phone). A replica must
+// not run it. Default is "not a replica" so a machine that never registers
+// the guard — tests, a half-booted process — keeps the canonical behavior.
+let blocksHubLibraryPublish: () => Promise<boolean> = async () => false
+export function setBlocksHubLibraryPublish(fn: () => Promise<boolean>): void {
+  blocksHubLibraryPublish = fn
+}
 // 4.4.36: dropped debounce 30 → 5 sec. The 30-sec window was meant to
 // coalesce 12 import-track triggers from an album into one sync, but
 // the single-flight gate already does that (the second trigger queues
@@ -157,6 +166,10 @@ function notify(detail: { ok: boolean; reason: SyncReason; error?: string; durat
 }
 
 async function runSyncOnce(reason: SyncReason): Promise<{ ok: boolean; error?: string; durationMs: number; deferred?: boolean }> {
+  if (await blocksHubLibraryPublish()) {
+    quietWarn('sync-replica-skip', `[sync-orchestrator] replica — not publishing library.json (reason=${reason})`)
+    return { ok: true, durationMs: 0 }
+  }
   // Flight-log stomp (2026-08-22): eight hourly safety-net runs each hung
   // the full 10-minute kill-timer while the NAS breaker ALREADY knew the
   // mount was slow/absent (laptop in remote mode, SMB over the tailnet).

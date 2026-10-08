@@ -1,3 +1,5 @@
+import { isCatastrophicShrink } from './library-shrink.ts'
+
 // Hub catalog merge (2026-10-08) — the pure half of "replicas adopt the
 // library from homemini like the phone does".
 //
@@ -10,15 +12,23 @@
 // carried the songs the whole time. So the replica now reads the hub.
 //
 // Rules (Jake: "latest updates should always win", "this cannot happen"):
-//   - a song the hub knows is upserted: catalog fields come from the hub
+//   - a song the hub lists is upserted: catalog fields come from the hub
 //     (it is the laptop's publish + phone edits, i.e. the newest view),
 //     playCount is the MAX of local and hub (plays are never lost here)
-//   - a song only this machine knows is KEPT — a full snapshot is not a
-//     list of deletions
-//   - a song is removed ONLY when a delta names it in removedIds (the hub
-//     positively saw it leave between two versions)
-//   - an empty full snapshot is ignored (a torn or empty hub reply must
-//     never blank a library)
+//   - a DELTA removes a song only when removedIds names it. More than
+//     MAX_REMOVALS_PER_DELTA names is a torn publish, not a cleanup:
+//     nothing is removed.
+//   - a FULL snapshot (first adoption, or the hub declined the delta —
+//     a backend restart does this) IS the catalog. The replica's library
+//     matches it, removals included. Keeping local-only ids here was the
+//     resurrection bug: a song Jake deleted is absent from `items`, the
+//     replica kept it, and the next save wrote it back to the NAS copy
+//     the phone reads. The 10-08 Geese songs were ON the hub the whole
+//     time; a hub snapshot still contains them.
+//   - an empty full snapshot is ignored (a torn reply must never blank
+//     a library). A full snapshot that would trip the shrink floor
+//     (src/common/library-shrink.ts, the same line save-library refuses)
+//     is ignored too — adoption does not get a force hatch.
 
 export interface HubTrackLike {
   id: number
@@ -61,19 +71,38 @@ export function mergeHubCatalog<T extends LocalTrackLike>(
   local: T[],
   payload: HubCatalogPayload,
 ): HubMergeResult<T> {
-  const upserts = Array.isArray(payload.upserts) ? payload.upserts : []
+  const upserts = (Array.isArray(payload.upserts) ? payload.upserts : []).filter(
+    (u): u is HubTrackLike => u != null && typeof u.id === 'number',
+  )
   if (payload.full && upserts.length === 0) {
     return { tracks: local, changed: false, added: 0, updated: 0, removed: 0, ignoredReason: 'empty-full-snapshot' }
   }
   // Mass-removal guard: a delta naming more than MAX_REMOVALS_PER_DELTA songs
   // is not a person deleting songs, it is a torn/reverted publish (the 10/5
   // Sep-4-revert class). Keep everything and say so; a real cleanup of that
-  // size is a desktop job, not a replica merge.
+  // size is a desktop job, not a replica merge. Full snapshots are not this
+  // path — their membership IS the catalog, guarded by the shrink floor.
   const removedIdsRaw = Array.isArray(payload.removedIds) ? payload.removedIds : []
-  const tooMany = removedIdsRaw.length > MAX_REMOVALS_PER_DELTA
-  const removed = payload.full || tooMany
-    ? new Set<string>()
-    : new Set(removedIdsRaw.map((id) => String(id)))
+  const tooMany = !payload.full && removedIdsRaw.length > MAX_REMOVALS_PER_DELTA
+  const removed = new Set<string>()
+  if (payload.full) {
+    const hubIds = new Set(upserts.map((u) => String(u.id)))
+    const localIds = new Set(local.map((t) => String(t.id)))
+    let dropped = 0
+    for (const t of local) if (!hubIds.has(String(t.id))) dropped++
+    let addedPreview = 0
+    for (const id of hubIds) if (!localIds.has(id)) addedPreview++
+    const newCount = local.length - dropped + addedPreview
+    if (isCatastrophicShrink(local.length, newCount)) {
+      return {
+        tracks: local, changed: false, added: 0, updated: 0, removed: 0,
+        ignoredReason: `full-snapshot-shrink-guard:${local.length}->${newCount}`,
+      }
+    }
+    for (const t of local) if (!hubIds.has(String(t.id))) removed.add(String(t.id))
+  } else if (!tooMany) {
+    for (const id of removedIdsRaw) removed.add(String(id))
+  }
 
   const byId = new Map<string, T>()
   for (const t of local) byId.set(String(t.id), t)
