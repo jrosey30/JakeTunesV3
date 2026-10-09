@@ -154,6 +154,8 @@ describe('ALAC is enqueued for stream convert', () => {
     assert.equal(shouldEnqueueStreamConvert(undefined, 'homemini'), false)
     assert.equal(shouldEnqueueStreamConvert('sha1:abcd|1000', null), false)
     assert.equal(shouldEnqueueStreamConvert('sha1:abcd|1000', 'nas'), false)
+    assert.equal(shouldEnqueueStreamConvert('sha1:abcd|1000', null, true), true)
+    assert.equal(shouldEnqueueStreamConvert(null, null, true), false)
     const pipeline = readFileSync(new URL('../import-pipeline.ts', import.meta.url), 'utf8')
     assert.equal(pipeline.includes("storedCodec !== 'alac'"), false)
     const cd = readFileSync(new URL('../ipc/cd-ipc.ts', import.meta.url), 'utf8')
@@ -193,6 +195,20 @@ describe('ALAC is enqueued for stream convert', () => {
     writeFileSync(src2, pcm16Wav(44100, 4410))
     await importOneFile(src2, 2, 'alac', new Set())
     assert.equal(queued.length, 0)
+
+    const src3 = join(dir, 'hub.alac')
+    writeFileSync(src3, pcm16Wav(44100, 4410))
+    initImportPipeline(minimalDeps({
+      musicDir: () => musicDir,
+      libraryPath: () => join(dir, 'library.json'),
+      readStreamSource: async () => null,
+      readOffloadAudio: async () => true,
+      computeAudioFingerprint: async () => 'sha1:abc123|100',
+      enqueueStreamConvert: (path, fp) => { queued.push({ path, fp }) },
+    }))
+    await importOneFile(src3, 3, 'alac', new Set())
+    assert.equal(queued.length, 1)
+    assert.equal(queued[0].fp, 'sha1:abc123|100')
   })
 })
 
