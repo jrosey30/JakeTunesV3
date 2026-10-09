@@ -450,6 +450,11 @@ export interface AppSettings {
   }
   library: {
     defaultImportFormat: ImportFormatChoice   // new imports; lossless sources use this (default ALAC)
+    // Hub only. Missing or false: this Mac keeps every file local.
+    // True: new imports enqueue stream-convert and a symlink plays from
+    // homemini. Does not set streamSource and does not start the bulk
+    // migration of files already on disk.
+    offloadAudioToHomemini?: boolean
   }
   sync: {
     autoSyncOnConnect: boolean        // auto-fire sync when iPod is mounted
@@ -515,7 +520,7 @@ export interface AppSettings {
 // truth at runtime is whichever is more permissive (the eq module).
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   crossfade: { enabled: false, seconds: 6 },
-  library: { defaultImportFormat: 'alac' },
+  library: { defaultImportFormat: 'alac', offloadAudioToHomemini: false },
   sync: { autoSyncOnConnect: false, autoRemoveDeletedFromIpod: false },
   ai: { musicManVoiceEnabled: true, claudeDailyCeiling: 200, aiHost: 'mm', exaApiKey: '', exaConfigured: false },
   eq: {

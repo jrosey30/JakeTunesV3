@@ -52,6 +52,11 @@ import { createPlayCache } from './play-cache.ts'
 import { createStreamAlacCache, downloadUrlToFile, ffmpegAlacToFlac, localFileNeedsStreamAlacDecode } from './stream-alac-cache.ts'
 import { backfillAlacFingerprints, planLocalAlacMigration, type AlacMigrateTrack } from './alac-stream-migrate.ts'
 import { decideStreamConvertAttempt, decideStreamConvertMiss } from './stream-convert-retry.ts'
+import {
+  appendOffloadReplacement, createCachedOffloadReader, hubOffloadActive,
+  OFFLOAD_CONVERT_BATCH, serveHubOffloadSymlink, streamConvertRuns,
+} from './offload-audio.ts'
+import { bootHubOffload, menuHubOffload, registerOffloadIpc } from './ipc/offload-ipc.ts'
 import { createServePin } from './play-cache-serve-pin.ts'
 import { createIpcRegistrar, REFUSED_SENDER } from './ipc-register.ts'
 import { registerUiStateIpc } from './ipc/ui-state-ipc.ts'
@@ -2851,14 +2856,10 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
           // actual file, and writes back the corrected fileSize. Audio
           // files themselves are NOT modified.
           { label: 'Refresh File Sizes…',         click: () => sendMenuAction('refresh-file-sizes') },
-          // (Removed: "Verify & Repair Library…" — the underlying tag
-          // matcher had false-negative cases (e.g. file tag "Pt. 1" vs.
-          // library "Part 1") that would land real tracks in the
-          // unrepairable bucket and, with --delete-unrepairable on,
-          // silently delete them. Restored from backup, then ripped the
-          // UI out. iTunes never had this; sync should "just work."
-          // The Python CLI is still in core/repair_mismatches.py for
-          // any future controlled debug pass.)
+          { type: 'separator' },
+          { label: 'Offload Audio to Homemini — Dry Run', click: () => menuHubOffload('dry-run') },
+          { label: 'Offload Audio to Homemini — Start', click: () => menuHubOffload('start') },
+          { label: 'Undo Offload (pull audio back)', click: () => menuHubOffload('rehydrate') },
         ],
       },
       { type: 'separator' },
@@ -4511,6 +4512,9 @@ async function readStreamSourceCached(): Promise<'homemini' | null> {
   _streamSourceCache = { v, t: now }
   return v
 }
+const readOffloadAudio = createCachedOffloadReader(async () => {
+  try { return JSON.parse(await readFile(appSettingsPath(), 'utf-8')) } catch { return null }
+})
 // The local symlink target for streamed tracks: a single always-present 0-byte
 // sentinel under the library root. Playback keys off isSymbolicLink() (→ homemini);
 // a non-dangling target just means any un-guarded stat()-follower sees a present
@@ -4576,6 +4580,10 @@ async function convertTrackToStreamed(ipodPath: string, storedFingerprint: strin
     await unlink(tmp).catch(() => {})
     await symlink(sentinel, tmp)
     await rename(tmp, fp)                                  // atomic: real file → symlink
+    await appendOffloadReplacement(app.getPath('userData'), {
+      ts: new Date().toISOString(), id, path: ipodPath,
+      fingerprint: storedFingerprint || '', bytes: st.size, sentinel,
+    })
     return { ok: true }
   } catch (err) {
     return { ok: false, error: safeIpcError(err, 'unknown') }
@@ -4700,16 +4708,22 @@ async function runStreamConvertPass(now: number): Promise<void> {
   if (streamConvertPassRunning) return
   streamConvertPassRunning = true
   try {
-    if ((await readStreamSource()) !== 'homemini') return   // mode off → do nothing
+    const source = await readStreamSource()
+    const offload = await readOffloadAudio()
+    if (!streamConvertRuns({ streamSource: source, offload })) return
     let items = await readStreamConvertQueue()
     if (!items.length) return
+    const hub = hubOffloadActive({ streamSource: source, offload })
     const keep: StreamConvertItem[] = []
     let changed = false
+    let attempted = 0
     for (const it of items) {
       if (decideStreamConvertAttempt(it, now) === 'wait') {
         keep.push(it)
         continue
       }
+      if (hub && attempted >= OFFLOAD_CONVERT_BATCH) { keep.push(it); continue }
+      attempted++
       const fpr = it.fingerprint ?? await fingerprintForIpodPath(it.ipodPath)
       const r = await convertTrackToStreamed(it.ipodPath, fpr)
       if (r.ok) {
@@ -10138,6 +10152,19 @@ ipc.handle('get-track-lyrics', async (_e, trackId: number): Promise<{ ok: boolea
 
 
 // ── CD Drive Detection & Import ── (extracted to ipc/cd-ipc.ts, 6.0 Phase 1)
+registerOffloadIpc(ipc, {
+  readStreamSource,
+  readOffloadAudio,
+  libraryPath: () => LIBRARY_PATH,
+  userDataDir: () => app.getPath('userData'),
+  musicRoot: () => MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, ''),
+  hashFile: computeAudioFingerprint,
+  enqueue: enqueueStreamConvertBatch,
+  ensureWorker: ensureStreamConvertWorker,
+  kickPass: () => { void runStreamConvertPass(Date.now()) },
+  audioBase: HOMEMINI_AUDIO_BASE,
+})
+
 registerCdIpc(ipc, {
   getMusicDir: () => MUSIC_DIR,
   getMount: () => detectedIpodMount,
@@ -10146,6 +10173,7 @@ registerCdIpc(ipc, {
   enqueueStreamConvert,
   prewarmAlacCache: (paths) => prewarmAlacCache(paths),
   readStreamSource,
+  readOffloadAudio,
   registerKnownCodec: (path, mtime, codec) => registerKnownCodec(path, mtime, codec),
   sendToRenderer,
 })
@@ -10175,6 +10203,7 @@ app.whenReady().then(async () => {
     extractEmbeddedArtwork: (pictures, artist, album) =>
       extractAndSaveEmbeddedArtwork(pictures as ParsedPicture[] | undefined, artist, album),
     readStreamSource,
+    readOffloadAudio,
     enqueueStreamConvert: (colonPath, fp, at) => { void enqueueStreamConvert(colonPath, fp, at) },
     enqueueAnalysis: (track) => { enqueueAnalysisForImportedTrack(track) },
     prewarmAlacCache,
@@ -10345,13 +10374,15 @@ app.whenReady().then(async () => {
   // conversion.
   await loadCodecMapFromLibrary()
 
-  // Stage 3: resume any pending stream-conversions from a prior session (a
-  // track imported just before quit whose homemini propagation hadn't landed
-  // yet). No-op unless streamSource is 'homemini' and the queue is non-empty.
-  if ((await readStreamSource()) === 'homemini' && (await readStreamConvertQueue()).length) {
+  // Resume a stream-convert queue on a replica, or on a hub whose offload
+  // setting is on (a previous explicit start, or a new import). An empty
+  // queue does not scan the library. Hub bulk migration resumes only from
+  // offload-migration.json inside bootHubOffload.
+  if (streamConvertRuns({ streamSource: await readStreamSource(), offload: await readOffloadAudio() }) && (await readStreamConvertQueue()).length) {
     ensureStreamConvertWorker()
     void runStreamConvertPass(Date.now())
   }
+  void bootHubOffload(process.argv)
 
   // 4.5.0-117: one library snapshot per launch (Phase 0 backup/restore).
   // Fire-and-forget; skips an empty library.
@@ -10951,28 +10982,10 @@ app.whenReady().then(async () => {
     const localMountRoot = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
     const homeminiClient = await isHomeminiPlaybackClientCached()
 
-    // ── homemini FIRST, before any filesystem call ────────────────────────
-    // Jake, 2026-08-10: "it doesnt play... NON FUCKING STOP", on a machine
-    // where the same track plays one minute and hangs the next.
-    //
-    // Everything that follows can touch the disk: resolveContainedPath calls
-    // realpath(), the streamRoot fallback calls existsSync(), the streamed-
-    // track test calls lstat(). On workmini those paths are SYMLINKS into an
-    // SMB mount to the house, and that mount wedges — measured, repeatedly:
-    // a directory listing took 203 seconds while the app sat in
-    // uninterruptible state. Those calls then block in the kernel and the
-    // request never returns. It did not matter that the bytes were going to
-    // come from homemini anyway; we never got far enough to ask.
-    //
-    // That is the whole random-looking failure: whether a song plays depends
-    // on whether the mount happens to be wedged in that instant, not on the
-    // song. It is also why the phone never had this problem — it only ever
-    // talks to homemini over HTTP and touches no mount.
-    //
-    // Engaged when streamSource=homemini OR streamRoot is set (workmini
-    // cache-farm). The July 2026 gate that kept streamRoot machines on NAS
-    // playback was the hang. trackIdForAbsPath only stats library.json on
-    // the LOCAL disk. Nothing here can touch the NAS.
+    // Homemini BEFORE any filesystem call. workmini's files are SMB symlinks;
+    // realpath/existsSync/lstat-follow wedge the kernel (203s listings,
+    // 2026-08-10). streamSource=homemini OR streamRoot. The July 2026 gate
+    // that left streamRoot on NAS playback was the hang.
     if (homeminiClient) {
       const streamId = await trackIdForAbsPath(rawPath)
       if (streamId == null) {
@@ -11109,18 +11122,28 @@ app.whenReady().then(async () => {
       }
     }
 
-    // ── Fully-local machines (MacBook) — original disk path ───────────────
-    // CONTAINMENT (2026-08-03, from the Cursor "fortify internal piping" audit).
-    // This handler used to hand `rawPath` straight to stat/read: an absolute
-    // path taken out of a URL and served verbatim. Anything able to issue an
-    // ipod-audio:// URL could read any file the app can read — and the Bandcamp
-    // store loads a real remote page in a webview in this same session, so
-    // "only our own renderer talks to us" was never actually true.
-    //
-    // Every legitimate source is listed. streamRoot matters specifically
-    // because streamed tracks are SYMLINKS pointing outside the music dir;
-    // leaving it out would refuse them and silently break playback on the
-    // machine that streams (workmini sets it). See path-safety.ts.
+    // Hub offload (streamSource still empty). lstat does not follow the
+    // .jt-streamed sentinel. A symlink is fetched from homemini by the id
+    // this hub published. ALAC uses the decode cache. A real file falls
+    // through to disk, and realpath below is not asked to follow the link.
+    const hubServed = await serveHubOffloadSymlink({
+      offload: await readOffloadAudio(),
+      isHomeminiClient: false,
+      rawPath,
+      range: request.headers.get('range'),
+      wantsAlac: wantsHomeminiFlac(rawPath),
+      isSymlink: async () => {
+        try { return (await lstat(rawPath)).isSymbolicLink() } catch { return false }
+      },
+      trackId: () => trackIdForAbsPath(rawPath),
+      serveAlac: (id, range) => streamAlacCache.serve(id, range),
+      fetchById: (id, range) => fetchAudioFromHomemini(id, range, false),
+    })
+    if (hubServed) return hubServed
+
+    // Fully-local disk path. Containment: an ipod-audio:// URL must not read
+    // arbitrary files. streamRoot stays in the allow-list so a NAS symlink
+    // on a non-client install is still a legal target. See path-safety.ts.
     const contained = await resolveContainedPath(rawPath, [
       MUSIC_DIR,
       playCacheDir,
@@ -11132,15 +11155,8 @@ app.whenReady().then(async () => {
       return new Response('Forbidden', { status: 403 })
     }
 
-    // ── Fall back to library.streamRoot when the local copy isn't there.
-    //
-    // The renderer only ever builds LOCAL paths — musicRoot + the track's
-    // colon path. That is fine while every file has a local copy, and wrong
-    // the moment one doesn't. Homemini/streamRoot clients never reach this
-    // block — they return above. This path is for fully-local installs that
-    // also have a NAS mirror configured for some tracks.
-    //
-    // Never existsSync here — sync SMB probes beachball the main process.
+    // streamRoot fallback when the local file is missing. Clients returned
+    // above. Never existsSync — a sync SMB probe beachballs the main process.
     let resolvedPath = rawPath
     let localMissing = false
     try { await lstat(rawPath) } catch { localMissing = true }
