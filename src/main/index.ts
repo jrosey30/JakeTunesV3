@@ -199,6 +199,7 @@ import {
   ensureFaststart,
   extensionForFormat,
   resolveImportFormat,
+  DEFAULT_IMPORT_FORMAT,
   type AudioFormat,
 } from './platform'
 import {
@@ -3581,6 +3582,8 @@ async function buildAacMirror(srcPath: string, targetKbps: number): Promise<stri
  * Activity sync is ALAC-on-purpose — do not route this through AAC.
  * Mini 1.4.1 cannot index .flac; 2026-08-15 left Cassius "Feeling for You"
  * on the card as FLAC and that row is the same skip class as 497.
+ * Library import does not use this downsample — ipodSafe keeps the
+ * existing Mini mirror at 16-bit / 44.1 kHz when the master is hi-res.
  */
 async function buildIpodSafeAlacMirror(srcPath: string): Promise<string | null> {
   const srcStat = await stat(srcPath).catch(() => null)
@@ -3596,7 +3599,7 @@ async function buildIpodSafeAlacMirror(srcPath: string): Promise<string | null> 
   } catch { /* miss */ }
   const tmp = cached + '.partial.m4a'
   try {
-    await convertAudio(srcPath, tmp, 'alac')
+    await convertAudio(srcPath, tmp, 'alac', undefined, { ipodSafe: true })
     await rename(tmp, cached)
     return cached
   } catch (err) {
@@ -6029,12 +6032,12 @@ ipc.handle('import-track', async (_e, srcPath: string, id: number, preferredForm
   }
   const userPreferred: AudioFormat = validFormats.includes(resolvedFormat as AudioFormat)
     ? (resolvedFormat as AudioFormat)
-    : 'aac-256'
-  // Jake's import policy: FLAC/WAV sources become AAC regardless of the
-  // user preference; ALAC stays ALAC; everything else honors preference.
+    : DEFAULT_IMPORT_FORMAT
+  // Honors the setting (default ALAC). The May 22 rule that forced
+  // FLAC/WAV to AAC was an abandoned iPod idea, not library policy.
   const chosenFmt = resolveImportFormat(srcPath, userPreferred)
   const dupeFingerprints = await loadDupeFingerprintsFromLibrary()
-  const r = await importOneFile(srcPath, id, chosenFmt, preferredFormat, dupeFingerprints)
+  const r = await importOneFile(srcPath, id, chosenFmt, dupeFingerprints)
 
   // Record this import's fingerprint at the session level so the
   // NEXT import-track call (which may fire before save-library has
@@ -6057,7 +6060,7 @@ ipc.handle('import-track', async (_e, srcPath: string, id: number, preferredForm
   // first time the user clicked play on the new track they hit the 5s
   // on-demand transcode wait. (4.1 design: cache is hot the moment
   // import completes, never on-demand at play-time.)
-  if (r.ok && r.track && chosenFmt === 'alac') {
+  if (r.ok && r.track && r.track.codec === 'alac') {
     const colon = String(r.track.path || '')
     if (colon) {
       const LOCAL_MOUNT = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
@@ -6214,7 +6217,7 @@ ipc.handle('import-tracks', async (_e, filePaths: string[], nextId: number, pref
   }
   const chosenFmt: AudioFormat = validFormats.includes(resolvedFormat as AudioFormat)
     ? (resolvedFormat as AudioFormat)
-    : 'aac-256'
+    : DEFAULT_IMPORT_FORMAT
 
   const dupeFingerprints = await loadDupeFingerprintsFromLibrary()
 
@@ -6228,7 +6231,8 @@ ipc.handle('import-tracks', async (_e, filePaths: string[], nextId: number, pref
 
   for (const srcPath of resolvedPaths) {
     const trackTime = new Date(batchBaseTime + trackIndex)
-    const r = await importOneFile(srcPath, id, chosenFmt, preferredFormat, dupeFingerprints, trackTime)
+    const fileFmt = resolveImportFormat(srcPath, chosenFmt)
+    const r = await importOneFile(srcPath, id, fileFmt, dupeFingerprints, trackTime)
     if (r.ok && r.track) {
       imported.push(r.track)
       // 4.4.12: accumulate artwork records from successful imports.

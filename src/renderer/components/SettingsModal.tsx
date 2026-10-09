@@ -86,9 +86,9 @@ function transportHint(transport: string): string {
 
 const FORMAT_OPTIONS: { value: ImportFormatChoice; label: string }[] = [
   { value: 'aac-128', label: 'AAC 128 kbps (small)' },
-  { value: 'aac-256', label: 'AAC 256 kbps (default)' },
+  { value: 'aac-256', label: 'AAC 256 kbps' },
   { value: 'aac-320', label: 'AAC 320 kbps (high)' },
-  { value: 'alac',    label: 'Apple Lossless (ALAC)' },
+  { value: 'alac',    label: 'Apple Lossless (ALAC, default)' },
   { value: 'aiff',    label: 'AIFF (uncompressed)' },
   { value: 'wav',     label: 'WAV (uncompressed)' },
 ]
@@ -676,7 +676,7 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
                 ))}
               </select>
               <p className="imp-help" style={{ marginTop: 10 }}>
-                Applied when you drag-drop or use Import. Existing tracks aren't re-encoded.
+                Applied to new imports. Lossless sources (FLAC, WAV, AIFF) convert to this format. MP3 and AAC are copied unchanged. Tracks already in the library are left alone.
               </p>
 
               {/* 4.5.0-83 — locked-artwork visibility. Surfaces the

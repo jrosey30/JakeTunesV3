@@ -101,6 +101,13 @@ export interface MobileImportRow { id?: unknown; path?: unknown; title?: unknown
  * from homemini. Identity-addressed by the row's own id; the destination
  * comes from the row's own path, gated inside iPod_Control; an existing
  * file is never touched. Returns how many files landed.
+ *
+ * Not the laptop import pipeline. The phone already chose the container
+ * and the path is the identity the sidecar shares with the catalog.
+ * Re-encoding a FLAC to ALAC here would rename the file out from under
+ * that path, and the next poll would download it again. Laptop streamrip,
+ * inbox, and drag-drop go through importOneFile, which converts lossless
+ * sources to the library format (default ALAC).
  */
 export async function ensureMobileImportAudio(
   rows: MobileImportRow[],

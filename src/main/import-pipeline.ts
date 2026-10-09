@@ -38,6 +38,7 @@ import { stat, mkdir, copyFile, readFile, lstat } from 'fs/promises'
 import {
   IS_WINDOWS,
   convertAudio,
+  DEFAULT_IMPORT_FORMAT,
   ensureFaststart,
   extensionForFormat,
   resolveImportFormat,
@@ -269,11 +270,61 @@ export async function findFreeImportedId(startId: number): Promise<number> {
   }
 }
 
+const LOSSLESS_SOURCE_EXTS = new Set(['.flac', '.wav', '.wave', '.aiff', '.aif', '.alac'])
+
+/** FLAC / WAV / AIFF / ALAC / PCM. Codec wins over the extension so an
+ *  ALAC .m4a is lossless and an AAC .m4a is not. */
+export function sourceLooksLossless(ext: string, codec: string): boolean {
+  const c = codec.toLowerCase()
+  if (c.includes('alac') || c.includes('flac') || c.startsWith('pcm')) return true
+  return LOSSLESS_SOURCE_EXTS.has(ext)
+}
+
+/** MP3 and AAC (including AAC-in-m4a) are never re-encoded. A lossless
+ *  re-import of a song that already exists as lossy is still the text
+ *  dupe key's decision — this function does not widen that skip. */
+export function sourceIsKeptLossy(ext: string, codec: string): boolean {
+  if (sourceLooksLossless(ext, codec)) return false
+  if (ext === '.mp3' || ext === '.aac') return true
+  if (ext === '.m4a' || ext === '.mp4' || ext === '.m4b') return true
+  return false
+}
+
+/**
+ * Convert when the source is lossless (or an unplayable lossy container
+ * such as Ogg) and isn't already in `chosenFmt`. MP3/AAC copy as-is
+ * even when the setting is ALAC — re-encoding them would not make them
+ * lossless.
+ */
+export function shouldConvertOnImport(ext: string, codec: string, chosenFmt: AudioFormat): boolean {
+  if (sourceIsKeptLossy(ext, codec)) return false
+  if (!sourceLooksLossless(ext, codec)) return true
+  const c = codec.toLowerCase()
+  if (chosenFmt === 'alac' && (c.includes('alac') || ext === '.alac')) return false
+  if (chosenFmt === 'wav' && (ext === '.wav' || ext === '.wave')) return false
+  if (chosenFmt === 'aiff' && (ext === '.aiff' || ext === '.aif')) return false
+  if (chosenFmt.startsWith('aac-') && (ext === '.m4a' || ext === '.mp4' || ext === '.aac') && !c.includes('alac') && !c.includes('flac')) return false
+  return true
+}
+
+/** Codec stamped on a copied file. Must be the bytes we wrote, not the
+ *  user's preferred format — an MP3 copied while the setting is ALAC is
+ *  still MP3, or the play-cache treats it as ALAC. */
+export function codecForCopiedSource(ext: string, probedCodec: string): string {
+  const c = probedCodec.toLowerCase()
+  if (c.includes('alac') || ext === '.alac') return 'alac'
+  if (c.includes('flac') || ext === '.flac') return 'flac'
+  if (c.includes('mp3') || ext === '.mp3') return 'mp3'
+  if (c.includes('aac') || c.includes('mp4a') || ext === '.aac' || ext === '.m4a' || ext === '.mp4' || ext === '.m4b') return 'aac'
+  if (ext === '.wav' || ext === '.wave' || ext === '.aiff' || ext === '.aif' || c.startsWith('pcm')) return 'pcm'
+  if (c) return c
+  return ext.replace(/^\./, '') || 'unknown'
+}
+
 export async function importOneFile(
   srcPath: string,
   id: number,
   chosenFmt: AudioFormat,
-  preferredFormat: string | undefined,
   dupeFingerprints: Set<string>,
   dateOverride?: Date,
   source?: string,
@@ -317,12 +368,15 @@ export async function importOneFile(
     await mkdir(destDir, { recursive: true })
 
     const codec = format.codec?.toLowerCase() || ''
-    const needsConvert = codec.includes('alac') || codec.includes('flac') ||
-      ext === '.flac' || ext === '.wav' || ext === '.wave' || ext === '.aiff' || ext === '.aif'
+    // Lossless sources convert to chosenFmt (default ALAC). MP3/AAC are
+    // copied. The May 22 FLAC→AAC override lived in resolveImportFormat,
+    // not here; this is the copy-vs-convert decision.
+    const doConvert = shouldConvertOnImport(ext, codec, chosenFmt)
 
     let finalExt = ext
     let fileName: string
     let destPath: string
+    let didConvert = false
 
     const embedTags = {
       title: common.title || srcPath.substring(srcPath.lastIndexOf('/') + 1).replace(/\.[^.]+$/, ''),
@@ -337,10 +391,6 @@ export async function importOneFile(
       discCount: common.disk?.of || 0,
     }
 
-    const sourcePlayable = ext === '.m4a' || ext === '.mp3' || ext === '.aac'
-    const userRequestedReencode = preferredFormat != null && preferredFormat !== 'aac-256'
-    const doConvert = needsConvert || userRequestedReencode || !sourcePlayable
-
     if (doConvert) {
       finalExt = extensionForFormat(chosenFmt)
       fileName = `imported_${id}${finalExt}`
@@ -349,6 +399,7 @@ export async function importOneFile(
         await convertAudio(srcPath, destPath, chosenFmt, embedTags)
         // Old iPods need moov-first; external pipelines often mux moov-last.
         await ensureFaststart(destPath)
+        didConvert = true
       } catch (convertErr) {
         console.error(`Conversion failed for ${srcPath}, copying original:`, convertErr)
         finalExt = ext
@@ -361,6 +412,10 @@ export async function importOneFile(
       destPath = join(destDir, fileName)
       await copyFile(srcPath, destPath)
     }
+
+    // The play-cache branches on === 'alac'. A copied MP3 must not be
+    // stamped with the preferred format.
+    const storedCodec = didConvert ? chosenFmt : codecForCopiedSource(finalExt, codec)
 
     const fileStats = await stat(destPath)
     const trackTime = dateOverride || new Date()
@@ -401,7 +456,7 @@ export async function importOneFile(
       // skip its ~200-500 ms ffprobe call on first-play. chosenFmt is
       // the encoder's output format; the handler only branches on
       // === 'alac' (cache hit) vs anything else (serve raw).
-      codec: chosenFmt,
+      codec: storedCodec,
       ...(audioFingerprint ? { audioFingerprint } : {}),
       ...(source ? { source } : {}),
     }
@@ -409,7 +464,7 @@ export async function importOneFile(
     // 4.4.85: populate the in-memory codec map so the protocol handler
     // gets a hit immediately for tracks imported during this session
     // (and ahead of library.json being rewritten by save-library).
-    D().setCodecForPath(destPath, chosenFmt)
+    D().setCodecForPath(destPath, storedCodec)
 
     // Add this fingerprint to the set so a duplicate appearing later in
     // the same batch (or a back-to-back drop) gets caught even before
@@ -438,7 +493,7 @@ export async function importOneFile(
     // LOCAL + PLAYABLE now, then let the background pass convert it to a streamed
     // symlink once homemini serves byte-identical bytes. ALAC never streams
     // (Chromium can't decode raw ALAC, homemini doesn't transcode) — stays local.
-    if (chosenFmt !== 'alac' && audioFingerprint && (await D().readStreamSource()) === 'homemini') {
+    if (storedCodec !== 'alac' && audioFingerprint && (await D().readStreamSource()) === 'homemini') {
       void D().enqueueStreamConvert(String(track.path), audioFingerprint, Date.now())
     }
 
@@ -465,7 +520,7 @@ export async function importDownloadedFiles(absPaths: string[], source?: string)
   const preferred = await D().defaultImportFormat()
   const userPreferred: AudioFormat = validFormats.includes(preferred as AudioFormat)
     ? (preferred as AudioFormat)
-    : 'aac-256'
+    : DEFAULT_IMPORT_FORMAT
   const dupeFingerprints = await loadDupeFingerprintsFromLibrary()
   let id = await nextLibraryId()
   const tracks: Array<Record<string, unknown>> = []
@@ -483,8 +538,10 @@ export async function importDownloadedFiles(absPaths: string[], source?: string)
   // the requested track's identity against the file the key came from).
   const dupeFiles: Array<{ src: string; matchedTitle: string; matchedArtist: string }> = []
   for (const p of absPaths) {
-    // Per-file format resolution so a FLAC track inside an album-zip
-    // becomes AAC even when the user's default is ALAC (Jake's policy).
+    // Per-file, so a mixed album zip still honors the setting. FLAC is
+    // not forced to AAC: that May 22 override was an abandoned iPod idea
+    // wrongly applied to library import. With the default 'alac', a
+    // lossless source stays lossless.
     const chosenFmt = resolveImportFormat(p, userPreferred)
     // 4.4.85: emit progress before each file so the now-playing pill's
     // import mode (the same one drag-drop uses) advances visibly as the
@@ -495,7 +552,7 @@ export async function importDownloadedFiles(absPaths: string[], source?: string)
     D().emitToRenderer('bandcamp:batch-progress', {
       current: done, total, trackTitle, errors, running: true,
     })
-    const r = await importOneFile(p, id, chosenFmt, preferred, dupeFingerprints, undefined, source)
+    const r = await importOneFile(p, id, chosenFmt, dupeFingerprints, undefined, source)
     if (r.ok && r.track) {
       tracks.push(r.track)
       // BPM/key analysis starts the moment the song lands — same as drag-drop.
@@ -504,7 +561,7 @@ export async function importDownloadedFiles(absPaths: string[], source?: string)
       if (fp) for (const k of dupeKeyVariants(fp)) sessionImportedFingerprints.add(k)
       done += 1
       id = (Number(r.track.id) || id) + 1
-      if (chosenFmt === 'alac') {
+      if (r.track.codec === 'alac') {
         const colon = String(r.track.path || '')
         if (colon) {
           const LOCAL_MOUNT = D().musicDir().replace(/[/\\]iPod_Control[/\\]Music$/, '')

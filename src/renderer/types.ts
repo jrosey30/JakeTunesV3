@@ -449,7 +449,7 @@ export interface AppSettings {
     seconds: number   // 1..12, iTunes-default 6
   }
   library: {
-    defaultImportFormat: ImportFormatChoice   // applied when user imports new tracks
+    defaultImportFormat: ImportFormatChoice   // new imports; lossless sources use this (default ALAC)
   }
   sync: {
     autoSyncOnConnect: boolean        // auto-fire sync when iPod is mounted
@@ -515,7 +515,7 @@ export interface AppSettings {
 // truth at runtime is whichever is more permissive (the eq module).
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   crossfade: { enabled: false, seconds: 6 },
-  library: { defaultImportFormat: 'aac-256' },
+  library: { defaultImportFormat: 'alac' },
   sync: { autoSyncOnConnect: false, autoRemoveDeletedFromIpod: false },
   ai: { musicManVoiceEnabled: true, claudeDailyCeiling: 200, aiHost: 'mm', exaApiKey: '', exaConfigured: false },
   eq: {
