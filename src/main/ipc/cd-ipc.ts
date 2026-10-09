@@ -11,7 +11,7 @@ import { join } from 'path'
 import { mkdir, open, readdir, stat, unlink } from 'fs/promises'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
-import { findFreeImportedId } from '../import-pipeline'
+import { findFreeImportedId, shouldEnqueueStreamConvert } from '../import-pipeline'
 import {
   IS_MAC, type AudioFormat, convertAudio, DEFAULT_IMPORT_FORMAT, ejectOpticalMedia, extensionForFormat,
   hasOpticalMedia, listMountPoints, volumeNameFromMount,
@@ -26,6 +26,7 @@ export interface CdIpcHost {
   enqueueStreamConvert: (ipodPath: string, fingerprint: string | undefined, enqueuedAt: number) => Promise<void>
   prewarmAlacCache: (paths: string[]) => Promise<void>
   readStreamSource: () => Promise<'homemini' | null>
+  readOffloadAudio?: () => Promise<boolean>
   registerKnownCodec: (path: string, mtime: number, codec: string) => void
   sendToRenderer: (channel: string, ...args: unknown[]) => void
 }
@@ -310,9 +311,13 @@ export function registerCdIpc(ipc: IpcRegistrar, host: CdIpcHost): void {
         // on the laptop. Fingerprint is computed just for the identity
         // gate; the track's stored fingerprint is still backfilled later
         // by verifyAndHealTracks as before.
-        if ((await host.readStreamSource()) === 'homemini') {
+        const cdSource = await host.readStreamSource()
+        const cdOffload = host.readOffloadAudio ? await host.readOffloadAudio() : false
+        if (cdSource === 'homemini' || cdOffload) {
           const cdFp = await host.computeAudioFingerprint(destPath, (cdTrack.duration || 0) * 1000)
-          if (cdFp) void host.enqueueStreamConvert(`:iPod_Control:Music:${subDir}:${fileName}`, cdFp, Date.now())
+          if (cdFp && shouldEnqueueStreamConvert(cdFp, cdSource, cdOffload)) {
+            void host.enqueueStreamConvert(`:iPod_Control:Music:${subDir}:${fileName}`, cdFp, Date.now())
+          }
         }
 
         imported.push({

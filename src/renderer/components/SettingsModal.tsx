@@ -667,7 +667,7 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
                 value={draft.library.defaultImportFormat}
                 onChange={(e) => setDraft({
                   ...draft,
-                  library: { defaultImportFormat: e.target.value as ImportFormatChoice },
+                  library: { ...draft.library, defaultImportFormat: e.target.value as ImportFormatChoice },
                 })}
                 style={{ width: '100%', padding: 6, fontSize: 13 }}
               >
@@ -677,6 +677,20 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
               </select>
               <p className="imp-help" style={{ marginTop: 10 }}>
                 Applied to new imports. Lossless sources (FLAC, WAV, AIFF) convert to this format. MP3 and AAC are copied unchanged. Tracks already in the library are left alone.
+              </p>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 16 }}>
+                <input
+                  type="checkbox"
+                  checked={draft.library.offloadAudioToHomemini === true}
+                  onChange={(e) => setDraft({
+                    ...draft,
+                    library: { ...draft.library, offloadAudioToHomemini: e.target.checked },
+                  })}
+                />
+                <span>Offload audio to homemini</span>
+              </label>
+              <p className="imp-help" style={{ marginTop: 8 }}>
+                This Mac stays the hub and keeps publishing the library. New imports stream once homemini has the same bytes, and a symlink plays from homemini. Files already on this Mac stay put until File → Library → Offload Audio to Homemini — Dry Run, then Start. Do not set the stream source to homemini.
               </p>
 
               {/* 4.5.0-83 — locked-artwork visibility. Surfaces the

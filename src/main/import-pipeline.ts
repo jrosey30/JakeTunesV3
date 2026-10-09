@@ -75,6 +75,8 @@ export interface ImportPipelineDeps {
     album: string,
   ) => Promise<{ key: string; hash: string } | null>
   readStreamSource: () => Promise<string | null>
+  /** library.offloadAudioToHomemini. Missing means off. */
+  readOffloadAudio?: () => Promise<boolean>
   enqueueStreamConvert: (colonPath: string, audioFingerprint: string, at: number) => void
   enqueueAnalysis: (track: Record<string, unknown>) => void
   prewarmAlacCache: (absPaths: string[]) => Promise<void>
@@ -311,13 +313,16 @@ export function shouldConvertOnImport(ext: string, codec: string, chosenFmt: Aud
  * Stream-convert queue gate. Codec is not part of it. ALAC used to be
  * excluded so the laptop kept every lossless master; that exclusion is
  * gone. No fingerprint → stay local (the convert is destructive and
- * must hash-match homemini). streamSource other than homemini → stay local.
+ * must hash-match homemini). A replica (streamSource homemini) enqueues.
+ * A hub enqueues only when library.offloadAudioToHomemini is on. That
+ * flag does not make the machine a replica.
  */
 export function shouldEnqueueStreamConvert(
   audioFingerprint: string | null | undefined,
   streamSource: string | null,
+  offload = false,
 ): boolean {
-  return !!audioFingerprint && streamSource === 'homemini'
+  return !!audioFingerprint && (streamSource === 'homemini' || offload === true)
 }
 
 /** Codec stamped on a copied file. Must be the bytes we wrote, not the
@@ -511,7 +516,9 @@ export async function importOneFile(
     // cache (stream-alac-cache.ts). The iPod Mini mirror is unaffected:
     // sync materializes the raw bytes over HTTP before it encodes.
     const streamSource = await D().readStreamSource()
-    if (audioFingerprint && shouldEnqueueStreamConvert(audioFingerprint, streamSource)) {
+    const readOffload = D().readOffloadAudio
+    const offload = readOffload ? await readOffload() : false
+    if (audioFingerprint && shouldEnqueueStreamConvert(audioFingerprint, streamSource, offload)) {
       void D().enqueueStreamConvert(String(track.path), audioFingerprint, Date.now())
     }
 
