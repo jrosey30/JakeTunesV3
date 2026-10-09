@@ -17,6 +17,7 @@ import { withCompanionInit } from '../hub-companion.ts'
 import { colonPathToAbs } from '../activity-boardable.ts'
 import {
   bootOffloadIntent,
+  compareLocalToRaw,
   drainOffloadEnqueue,
   dryRunOffload,
   formatOffloadDryRun,
@@ -27,8 +28,12 @@ import {
   offloadReplacementsPath,
   parseMigrationState,
   parseReplacementLog,
+  FULL_BODY_TIMEOUT_MS,
+  rawAudioUrl,
+  readPrefixBody,
   rehydrateReplacements,
   stateForExplicitStart,
+  urlAsksForTranscode,
   type OffloadMigrationState,
   type OffloadTrack,
 } from '../offload-audio.ts'
@@ -97,16 +102,24 @@ async function queueLength(): Promise<number> {
 
 async function probePrefix(id: string | number) {
   if (!host) return { transportError: true, status: 0, body: null }
+  const url = rawAudioUrl(host.audioBase, id)
+  if (urlAsksForTranscode(url)) return { transportError: false, status: 0, body: null }
   try {
-    const res = await fetch(`${host.audioBase}/${encodeURIComponent(String(id))}`, withCompanionInit({
+    const res = await fetch(url, withCompanionInit({
       headers: { Range: 'bytes=0-262143' },
       signal: AbortSignal.timeout(8000),
     }))
-    if (!res.ok && res.status !== 206) return { transportError: false, status: res.status, body: null }
-    return { transportError: false, status: res.status, body: Buffer.from(await res.arrayBuffer()) }
+    if ((!res.ok && res.status !== 206) || !res.body) return { transportError: false, status: res.status, body: null }
+    const body = await readPrefixBody(res.body)
+    return { transportError: false, status: res.status, body: body.length ? body : null }
   } catch {
     return { transportError: true, status: 0, body: null }
   }
+}
+
+async function confirmFull(abs: string, id: string | number) {
+  if (!host) return { kind: 'unreachable' as const }
+  return compareLocalToRaw({ localAbs: abs, id, audioBase: host.audioBase })
 }
 
 async function showText(title: string, message: string, interactive: boolean): Promise<void> {
@@ -138,6 +151,7 @@ async function runDry(interactive: boolean): Promise<{ ok: boolean; report?: str
     colonToAbs: toAbs,
     hashPrefix: host.hashFile,
     probe: probePrefix,
+    confirmFull,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   })
   const setting = offload
@@ -199,7 +213,7 @@ async function runStart(interactive: boolean): Promise<{ ok: boolean; error?: st
     return { ok: false, error: message }
   }
   const ok = await confirmStart(
-    'Local files become symlinks only after homemini serves a byte-identical sha1 of the first 256KB. The hub keeps publishing library.json. Each replacement is logged so it can be pulled back.',
+    'Local files become symlinks only after homemini serves the whole file at the same size and full sha1. A 256KB prefix is only a pre-filter. The hub keeps publishing library.json. Each replacement is logged so it can be pulled back.',
     interactive,
   )
   if (!ok) return { ok: false, error: 'cancelled' }
@@ -230,8 +244,10 @@ async function runRehydrate(interactive: boolean): Promise<{ ok: boolean; restor
     },
     fetchFull: async (id) => {
       try {
-        const res = await fetch(`${host!.audioBase}/${encodeURIComponent(String(id))}`, withCompanionInit({
-          signal: AbortSignal.timeout(120_000),
+        const url = rawAudioUrl(host!.audioBase, id)
+        if (urlAsksForTranscode(url)) return null
+        const res = await fetch(url, withCompanionInit({
+          signal: AbortSignal.timeout(FULL_BODY_TIMEOUT_MS),
         }))
         if (!res.ok) return null
         return Buffer.from(await res.arrayBuffer())

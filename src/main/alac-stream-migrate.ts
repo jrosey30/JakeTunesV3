@@ -6,10 +6,10 @@
  * A symlink is already streamed and is skipped. A missing file was
  * already evicted and is skipped. A real file with a sha1 fingerprint
  * is ready to enqueue. A real file with no fingerprint is NOT left on
- * the laptop: the caller hashes it with the same sha1 window
- * stream-convert matches (first 256KB), throttled, off the boot path,
- * then enqueues. convertTrackToStreamed still refuses to drop the bytes
- * until homemini serves that fingerprint.
+ * the laptop: the caller hashes the 256KB window, throttled, off the
+ * boot path, then enqueues. That window is only a pre-filter.
+ * convertTrackToStreamed still refuses to drop the bytes until the raw
+ * homemini body matches the local file's size and full sha1.
  *
  * Do not run this against a live library from a dev machine.
  */

@@ -53,8 +53,8 @@ import { createStreamAlacCache, downloadUrlToFile, ffmpegAlacToFlac, localFileNe
 import { backfillAlacFingerprints, planLocalAlacMigration, type AlacMigrateTrack } from './alac-stream-migrate.ts'
 import { decideStreamConvertAttempt, decideStreamConvertMiss } from './stream-convert-retry.ts'
 import {
-  appendOffloadReplacement, createCachedOffloadReader, hubOffloadActive,
-  OFFLOAD_CONVERT_BATCH, serveHubOffloadSymlink, streamConvertRuns,
+  appendOffloadReplacement, confirmRawHomeminiMatch, createCachedOffloadReader, hubOffloadActive,
+  libraryRootFromMusicDir, OFFLOAD_CONVERT_BATCH, serveHubOffloadSymlink, streamConvertRuns,
 } from './offload-audio.ts'
 import { bootHubOffload, menuHubOffload, registerOffloadIpc } from './ipc/offload-ipc.ts'
 import { createServePin } from './play-cache-serve-pin.ts'
@@ -4528,27 +4528,6 @@ async function ensureStreamedSentinel(): Promise<string> {
   try { await stat(p) } catch { try { await writeFile(p, '') } catch { /* best effort */ } }
   return p
 }
-// Identity gate for a destructive convert-to-streamed: homemini must serve the
-// EXACT bytes we're about to drop locally. Fetch the first 256KB from homemini
-// and require sha1(bytes) to match the stored audioFingerprint hash (the same
-// window computeAudioFingerprint uses). Refuse on any mismatch, missing
-// fingerprint, or unreachable homemini — never evict blind (CLAUDE.md
-// destructive-ops rule: gate on identity/binary fingerprint, not text).
-async function homeminiServesMatchingBytes(id: string | number, storedFingerprint: string | undefined): Promise<boolean> {
-  if (!storedFingerprint || !storedFingerprint.startsWith('sha1:')) return false
-  const wantHash = storedFingerprint.split('|')[0].slice('sha1:'.length)
-  try {
-    const res = await fetch(`${HOMEMINI_AUDIO_BASE}/${encodeURIComponent(String(id))}`, withCompanionInit({
-      headers: { Range: 'bytes=0-262143' },   // first 256KB — matches the fingerprint window
-      signal: AbortSignal.timeout(8000),
-    }))
-    if (!res.ok && res.status !== 206) return false
-    const buf = Buffer.from(await res.arrayBuffer())
-    if (buf.length <= 0) return false
-    const got = createHash('sha1').update(buf).digest('hex').slice(0, 16)
-    return got === wantHash
-  } catch { return false }
-}
 // Look up a track's stored audioFingerprint by its colon path (for the
 // convert-to-streamed identity gate when the caller doesn't already have it).
 async function fingerprintForIpodPath(ipodPath: string): Promise<string | undefined> {
@@ -4560,29 +4539,29 @@ async function fingerprintForIpodPath(ipodPath: string): Promise<string | undefi
   } catch { /* ignore */ }
   return undefined
 }
-// Convert a local track file into a streamed symlink — DESTRUCTIVE (drops the
-// local bytes). Gated on homeminiServesMatchingBytes: the identity check that
-// keeps this from ever orphaning a track. Atomic (symlink tmp → rename). No-op
-// if already a symlink.
+// Convert a local track file into a streamed symlink. Drops local bytes only
+// after confirmRawHomeminiMatch: raw /audio/:id size and full sha1. The 256KB
+// fingerprint is a pre-filter. Atomic (symlink tmp → rename). No-op if linked.
 async function convertTrackToStreamed(ipodPath: string, storedFingerprint: string | undefined): Promise<{ ok: boolean; error?: string }> {
   try {
     const fp = trackFarmPath(ipodPath)
     let st
     try { st = await lstat(fp) } catch { return { ok: false, error: 'local file not found' } }
-    if (st.isSymbolicLink()) return { ok: true }         // already streamed
+    if (st.isSymbolicLink()) return { ok: true }
     const id = await trackIdForAbsPath(fp)
     if (id == null) return { ok: false, error: 'track id not found in library' }
-    if (!(await homeminiServesMatchingBytes(id, storedFingerprint))) {
-      return { ok: false, error: 'homemini does not yet serve matching bytes — kept local' }
-    }
+    const match = await confirmRawHomeminiMatch({
+      id, localAbs: fp, storedFingerprint, audioBase: HOMEMINI_AUDIO_BASE,
+    })
+    if (!match.ok) return { ok: false, error: 'homemini does not yet serve the full file — kept local' }
     const sentinel = await ensureStreamedSentinel()
     const tmp = fp + '.stream.tmp'
     await unlink(tmp).catch(() => {})
     await symlink(sentinel, tmp)
-    await rename(tmp, fp)                                  // atomic: real file → symlink
+    await rename(tmp, fp)
     await appendOffloadReplacement(app.getPath('userData'), {
       ts: new Date().toISOString(), id, path: ipodPath,
-      fingerprint: storedFingerprint || '', bytes: st.size, sentinel,
+      fingerprint: storedFingerprint || '', bytes: match.bytes, fullSha1: match.fullSha1, sentinel,
     })
     return { ok: true }
   } catch (err) {
@@ -10157,7 +10136,7 @@ registerOffloadIpc(ipc, {
   readOffloadAudio,
   libraryPath: () => LIBRARY_PATH,
   userDataDir: () => app.getPath('userData'),
-  musicRoot: () => MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, ''),
+  musicRoot: () => libraryRootFromMusicDir(MUSIC_DIR),
   hashFile: computeAudioFingerprint,
   enqueue: enqueueStreamConvertBatch,
   ensureWorker: ensureStreamConvertWorker,
