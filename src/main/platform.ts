@@ -541,27 +541,79 @@ export function extensionForFormat(fmt: AudioFormat): string {
 }
 
 /**
- * Pick the output format for an imported file given the user's preferred
- * default. Jake's import policy (covers Bandcamp purchases, drag-drop
- * manual uploads, anywhere):
- *
- *   - FLAC source -> AAC (no point keeping a lossy-of-lossless copy
- *     when the AAC encoder is fine for everyday listening)
- *   - WAV source  -> AAC (same reasoning, plus uncompressed sizes are
- *     wasteful on the library disk)
- *   - ALAC source -> ALAC (lossless stays lossless)
- *   - everything else -> the user's preferred default unchanged
- *
- * The AAC variant for FLAC/WAV picks the user's preferred bitrate if
- * they already had one (aac-128/256/320); otherwise defaults to
- * aac-256.
+ * Missing / invalid `library.defaultImportFormat` lands here.
+ * ALAC, not AAC: the library master stays lossless unless the setting
+ * itself asks for something else.
  */
-export function resolveImportFormat(srcPath: string, userPreferred: AudioFormat): AudioFormat {
-  const ext = srcPath.slice(srcPath.lastIndexOf('.')).toLowerCase()
-  if (ext === '.flac' || ext === '.wav') {
-    return userPreferred.startsWith('aac-') ? userPreferred : 'aac-256'
-  }
+export const DEFAULT_IMPORT_FORMAT: AudioFormat = 'alac'
+
+/**
+ * Output format for one imported file.
+ *
+ * 2026-05-22 (8f6bd26, "FLAC/WAV → AAC policy") forced FLAC and WAV to
+ * 256 kbps AAC even when this setting was ALAC, and the comment called
+ * that Jake's policy. It was not. It was an abandoned idea for putting
+ * AAC on the iPod, and Jake decided not to go ahead with it. It was
+ * never meant to apply to library import. That override is gone.
+ *
+ * Library import honors `userPreferred` (the setting, default `'alac'`).
+ * A lossless source therefore stays lossless. Lossy MP3/AAC are not
+ * re-encoded; callers copy those bytes. iPod sync is a separate path
+ * and is not decided here.
+ *
+ * `srcPath` stays in the signature so every import call site still
+ * routes through this one function. The extension is no longer a
+ * reason to ignore the setting.
+ */
+export function resolveImportFormat(_srcPath: string, userPreferred: AudioFormat): AudioFormat {
   return userPreferred
+}
+
+/** ffmpeg ALAC sample format that preserves the source bit depth.
+ *  16-bit → s16p (ffprobe reports 16). Wider than 16 → s32p: ALAC stores
+ *  24-bit in 32-bit samples and ffprobe reports bits_per_raw_sample=24.
+ *  Forcing s32p on a 16-bit source makes the file report 24, so the
+ *  choice has to follow the source. */
+export function alacSampleFmt(bitsPerSample: number): 's16p' | 's32p' {
+  return bitsPerSample > 16 ? 's32p' : 's16p'
+}
+
+/** PCM codec for a WAV intermediate that keeps the source bit depth. */
+export function nativePcmCodec(bitsPerSample: number): 'pcm_s16le' | 'pcm_s24le' | 'pcm_s32le' {
+  if (bitsPerSample > 24) return 'pcm_s32le'
+  if (bitsPerSample > 16) return 'pcm_s24le'
+  return 'pcm_s16le'
+}
+
+/**
+ * ffmpeg args for a library ALAC encode. No `-ar` and no `-ac`: sample
+ * rate and channel count stay the source's, so the decode is bit-exact.
+ * `-map 0:v?` + `-c:v copy` keeps an attached cover when the source has
+ * one; without the explicit audio map, ffmpeg tries to re-encode that
+ * picture as h264 and the m4a mux fails.
+ *
+ * Before (every platform's library ALAC, and the Windows branch):
+ *   -c:a alac -ar 44100 -sample_fmt s16p
+ * which truncated 24-bit to 16-bit and resampled 96 kHz to 44.1 kHz.
+ */
+export function ffmpegPreserveAlacArgs(src: string, dest: string, bitsPerSample: number | null): string[] {
+  const args = ['-y', '-i', src, '-map', '0:a:0', '-map', '0:v?', '-c:v', 'copy', '-c:a', 'alac']
+  if (bitsPerSample != null && bitsPerSample > 0) args.push('-sample_fmt', alacSampleFmt(bitsPerSample))
+  args.push(dest)
+  return args
+}
+
+/**
+ * afconvert data format for library ALAC on macOS. `alac` with no
+ * `@44100` takes the WAV's own sample rate and bit depth. The WAV must
+ * already be native-depth PCM (see nativePcmCodec) — a 16-bit
+ * intermediate would throw the high bits away before afconvert runs.
+ * afconvert is macOS-only; other platforms use ffmpegPreserveAlacArgs.
+ */
+export const AFCONVERT_LIBRARY_ALAC_DATA_FORMAT = 'alac'
+
+export function afconvertLibraryAlacArgs(wav: string, dest: string): string[] {
+  return ['-f', 'm4af', '-d', AFCONVERT_LIBRARY_ALAC_DATA_FORMAT, wav, dest]
 }
 
 /**
@@ -636,10 +688,25 @@ export async function ensureFaststart(path: string): Promise<void> {
 async function embedTags(path: string, tags: AudioTags): Promise<void> {
   const nonEmpty = Object.entries(tags).some(([, v]) => v !== undefined && v !== null && v !== '')
   if (!nonEmpty) return
-  const { app } = await import('electron')
+  // Best-effort, matching the comment above: a missing electron app
+  // (unit tests, a bare node process) must not fail the encode. The
+  // file already carries whatever tags the encoder copied.
+  let appRoot: string
+  try {
+    const electron = await import('electron') as { app?: { isPackaged?: boolean; getAppPath?: () => string } }
+    const app = electron.app
+    if (!app?.getAppPath) {
+      console.warn(`embedTags: electron app unavailable, leaving encoder tags on ${path}`)
+      return
+    }
+    appRoot = app.isPackaged ? process.resourcesPath : app.getAppPath()
+  } catch (err) {
+    console.warn(`embedTags: electron unavailable, leaving encoder tags on ${path}:`, err)
+    return
+  }
   const { join } = await import('path')
   const { spawn } = await import('child_process')
-  const script = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/tag_writer.py')
+  const script = join(appRoot, 'core/tag_writer.py')
   await new Promise<void>((resolve) => {
     // embedTags only needs mutagen, not librosa, so we fall back to
     // a bare 'python3' if the librosa-aware resolver returned null.
@@ -660,18 +727,21 @@ async function embedTags(path: string, tags: AudioTags): Promise<void> {
 }
 
 /**
- * Two-step ALAC conversion that's guaranteed to produce iPod-Classic-
- * playable output regardless of source format:
+ * Existing iPod Mini mirror only — NOT library import.
  *
- *   1. ffmpeg decodes the source to 16-bit PCM WAV at ≤48 kHz
+ * `buildIpodSafeAlacMirror` passes `ipodSafe: true` so a FLAC (or a
+ * hi-res file over the Mini's bitrate ceiling) still becomes 16-bit /
+ * 44.1 kHz stereo ALAC for the device. Library import does not call
+ * this. The May 22 FLAC→AAC rule was an abandoned iPod idea; it is
+ * not reintroduced here.
+ *
+ *   1. ffmpeg decodes the source to 16-bit PCM WAV at 44.1 kHz
  *   2. afconvert encodes the WAV back to ALAC
  *
- * Why both tools? Going ffmpeg → ALAC direct produces files that
- * metadata-wise claim 16-bit but contain bitstream layouts iPod's
- * hardware decoder chokes on ("scratched CD" stutter). afconvert is
- * Apple's own encoder — its ALAC output is byte-for-byte compatible
- * with iPod's decoder. But afconvert can't easily force 16-bit from
- * a 32-bit input in one shot, hence the WAV intermediate.
+ * Why both tools? ffmpeg → ALAC direct can produce a bitstream the
+ * Mini's hardware decoder stutters on. afconvert is Apple's encoder.
+ * afconvert can't easily force 16-bit from a 32-bit input in one shot,
+ * hence the WAV intermediate.
  */
 async function convertToIpodSafeAlac(src: string, dest: string, readTimeoutMs = 300000): Promise<void> {
   const { unlink } = await import('fs/promises')
@@ -709,14 +779,118 @@ async function convertToIpodSafeAlac(src: string, dest: string, readTimeoutMs = 
   }
 }
 
+export interface SourceAudioLayout {
+  bitsPerSample: number
+  sampleRate: number
+  channels: number
+}
+
+/** First audio stream's bit depth, rate, and channel count. Null when
+ *  ffprobe can't answer — the encoder then omits `-sample_fmt` and lets
+ *  ffmpeg keep the decoded layout instead of guessing 16-bit. */
+export async function probeSourceAudioLayout(src: string): Promise<SourceAudioLayout | null> {
+  try {
+    const { stdout } = await execP('ffprobe', [
+      '-v', 'error', '-select_streams', 'a:0',
+      '-show_entries', 'stream=bits_per_raw_sample,sample_rate,channels,sample_fmt',
+      '-of', 'json', src,
+    ], { timeout: 15000, maxBuffer: 1024 * 1024 })
+    const parsed = JSON.parse(stdout || '{}') as { streams?: Array<Record<string, string | number>> }
+    const s = parsed.streams?.[0]
+    if (!s) return null
+    let bits = Number(s.bits_per_raw_sample) || 0
+    const sampleFmt = String(s.sample_fmt || '')
+    if (!bits) {
+      if (sampleFmt.startsWith('s16')) bits = 16
+      else if (sampleFmt.startsWith('s32') || sampleFmt.startsWith('s24')) bits = 24
+      else bits = 16
+    }
+    return {
+      bitsPerSample: bits,
+      sampleRate: Number(s.sample_rate) || 0,
+      channels: Number(s.channels) || 0,
+    }
+  } catch (err) {
+    console.warn(`[convert] ffprobe layout failed for ${src}:`, err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
+async function runFfmpeg(args: string[], timeoutMs: number): Promise<void> {
+  try {
+    await execP('ffmpeg', args, { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (msg.includes('ENOENT')) {
+      throw new Error(
+        'ffmpeg is not installed. Download it from https://www.gyan.dev/ffmpeg/builds/ (choose "release essentials"), extract, and add its bin/ folder to your PATH. Then restart JakeTunes.'
+      )
+    }
+    throw err
+  }
+}
+
+/** Library ALAC: same bit depth and sample rate as the source.
+ *  macOS writes it with afconvert (`-d alac` on a native-depth WAV) so
+ *  the bitstream stays Apple's. ffmpeg is the encoder everywhere else,
+ *  and the fallback if afconvert fails.
+ *
+ *  The WAV step shells out to `ffmpeg` / `ffprobe` on PATH. There is no
+ *  ffmpeg binary bundled in the app. On a Mac that is whichever ffmpeg
+ *  is on PATH (typically Homebrew: `/opt/homebrew/bin/ffmpeg` or
+ *  `/usr/local/bin/ffmpeg`). afconvert encodes the WAV; it does not
+ *  decode the source FLAC, so a Mac with no PATH ffmpeg cannot run this
+ *  branch and falls through to the ffmpeg preserve args (which also
+ *  need that same binary). */
+async function convertToLibraryAlac(src: string, dest: string, timeoutMs: number): Promise<void> {
+  const layout = await probeSourceAudioLayout(src)
+  const bits = layout?.bitsPerSample ?? null
+  // No probed depth → skip the WAV step. Guessing 16-bit here would
+  // truncate a 24-bit master before afconvert ever saw it. ffmpeg's
+  // preserve args omit -sample_fmt in that case and keep the layout.
+  if (IS_MAC && bits != null) {
+    const { unlink } = await import('fs/promises')
+    const { randomBytes } = await import('crypto')
+    const os = await import('os')
+    const { join } = await import('path')
+    const wavTmp = join(os.tmpdir(), `jaketunes-alac-${randomBytes(6).toString('hex')}.wav`)
+    try {
+      await runFfmpeg([
+        '-y', '-i', src,
+        '-map', '0:a:0',
+        '-c:a', nativePcmCodec(bits ?? 16),
+        '-f', 'wav',
+        '-loglevel', 'error',
+        wavTmp,
+      ], timeoutMs)
+      await execP('afconvert', afconvertLibraryAlacArgs(wavTmp, dest), { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 })
+      return
+    } catch (err) {
+      console.warn(`[convert] afconvert library ALAC failed, ffmpeg will keep bit depth:`, err instanceof Error ? err.message : err)
+    } finally {
+      await unlink(wavTmp).catch((err) => {
+        console.warn(`[convert] leftover WAV ${wavTmp}:`, err instanceof Error ? err.message : err)
+      })
+    }
+  }
+  await runFfmpeg(ffmpegPreserveAlacArgs(src, dest, bits), timeoutMs)
+}
+
 /**
  * Convert `src` to `dest` in the requested format. Uses afconvert on macOS
  * and ffmpeg on Windows. For the AIFF "format" we just copy the source
  * unchanged, since most CDs already rip as AIFF.
  *
+ * ALAC keeps the source bit depth and sample rate (24-bit stays 24-bit,
+ * 96 kHz stays 96 kHz). The old library path pinned `-ar 44100` and
+ * `-sample_fmt s16p` — that was the abandoned iPod downsample, and it
+ * does not apply to library import. Pass `ipodSafe: true` only from the
+ * existing Mini mirror (`buildIpodSafeAlacMirror`), which still needs
+ * 16-bit / 44.1 kHz stereo.
+ *
  * If `tags` is provided, write them into the output file after encoding
  * so the file is self-identifying even if the library.json ever
- * disappears. ffmpeg gets them via `-metadata`; afconvert doesn't support
+ * disappears. ffmpeg copies source metadata; afconvert doesn't support
  * tagging, so we post-process with mutagen.
  *
  * On Windows, throws a helpful error if ffmpeg isn't on PATH.
@@ -726,7 +900,7 @@ export async function convertAudio(
   dest: string,
   fmt: AudioFormat,
   tags?: AudioTags,
-  opts?: { timeoutMs?: number },
+  opts?: { timeoutMs?: number; ipodSafe?: boolean },
 ): Promise<void> {
   // The timeout exists to catch HUNG encoders, not to police slow media.
   // A fixed 300s ceiling has now twice killed legitimate CD rips (120s ate
@@ -743,25 +917,25 @@ export async function convertAudio(
     return
   }
 
-  if (IS_MAC) {
-    // Special case: ALAC import ALWAYS targets 16-bit / 44.1kHz so
-    // anything imported is guaranteed iPod-Classic-playable. Without
-    // this, importing a 24/32-bit or 96/192kHz "high-res" album as
-    // ALAC would produce files the iPod hardware skips like a
-    // scratched CD. We use a two-step pipeline so the output is
-    // written by afconvert (Apple's own encoder, iPod-friendly
-    // bitstream), not ffmpeg-direct-to-ALAC (which creates valid-
-    // looking files that iPod's decoder chokes on).
-    if (fmt === 'alac') {
-      await convertToIpodSafeAlac(src, dest, timeoutMs)
-      if (tags) await embedTags(dest, tags)
-      return
+  if (fmt === 'alac') {
+    if (opts?.ipodSafe) {
+      if (IS_MAC) await convertToIpodSafeAlac(src, dest, timeoutMs)
+      // Audio only. Mapping the attached cover makes ffmpeg try to mux
+      // it as h264 and the m4a encode fails — the mac step already uses
+      // -map 0:a:0. Rate and bit depth stay pinned for the Mini.
+      else await runFfmpeg(['-y', '-i', src, '-map', '0:a:0', '-c:a', 'alac', '-ar', '44100', '-sample_fmt', 's16p', dest], timeoutMs)
+    } else {
+      await convertToLibraryAlac(src, dest, timeoutMs)
     }
+    if (tags) await embedTags(dest, tags)
+    return
+  }
 
-    // `aac@44100` pins output to 44.1 kHz regardless of source rate.
+  if (IS_MAC) {
+    // `aac@44100` pins AAC output to 44.1 kHz regardless of source rate.
     // iPod Mini Gen 1's AAC decoder mishandles 48 kHz playback (audible
-    // squeaking on ~half of 48k tracks), so we resample at encode time —
-    // mirroring the ALAC path's iPod-safety guarantee above.
+    // squeaking on ~half of 48k tracks), so we resample at encode time.
+    // This is the sync/AAC encoder, not the library ALAC master.
     const args: string[] = (() => {
       switch (fmt) {
         case 'aac-128': return ['-f', 'm4af', '-d', 'aac@44100', '-b', '128000', '-s', '2']
@@ -780,27 +954,17 @@ export async function convertAudio(
   }
 
   // Windows — shell out to ffmpeg. `-ar 44100` matches the macOS AAC
-  // path's iPod-safety resample; ALAC also pinned for the same reason
-  // (mirrors macOS convertToIpodSafeAlac).
+  // path's iPod-safety resample. Library ALAC is handled above and is
+  // not pinned.
   const args: string[] = (() => {
     switch (fmt) {
       case 'aac-128': return ['-y', '-i', src, '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', dest]
       case 'aac-256': return ['-y', '-i', src, '-c:a', 'aac', '-b:a', '256k', '-ar', '44100', dest]
       case 'aac-320': return ['-y', '-i', src, '-c:a', 'aac', '-b:a', '320k', '-ar', '44100', dest]
-      case 'alac':    return ['-y', '-i', src, '-c:a', 'alac', '-ar', '44100', '-sample_fmt', 's16p', dest]
       case 'wav':     return ['-y', '-i', src, '-c:a', 'pcm_s16le', '-ar', '44100', dest]
+      default:        return ['-y', '-i', src, dest]
     }
   })()
-  try {
-    await execP('ffmpeg', args, { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 })
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    if (msg.includes('ENOENT')) {
-      throw new Error(
-        'ffmpeg is not installed. Download it from https://www.gyan.dev/ffmpeg/builds/ (choose "release essentials"), extract, and add its bin/ folder to your PATH. Then restart JakeTunes.'
-      )
-    }
-    throw err
-  }
+  await runFfmpeg(args, timeoutMs)
   if (tags) await embedTags(dest, tags)
 }

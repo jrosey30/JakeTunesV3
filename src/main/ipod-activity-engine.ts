@@ -4,7 +4,8 @@
  * This is NOT the full-library copy loop with extra gates. Activity Sync
  * of N (100 / 250 / 500 / 1000) is one pipeline:
  *
- *   1. Board N by identity. Refuse streamed, dest collisions, blanks.
+ *   1. Board N by identity. Streamed songs are probed on homemini, then
+ *      staged one file at a time at copy. Refuse dest collisions and blanks.
  *   2. Wipe Music until two consecutive empty listings.
  *   3. Copy every song (ALAC, or AAC if the convert toggle is on) + F_FULLFSYNC.
  *   4. Two consecutive remounts must show N files at the intended sizes.
@@ -64,9 +65,15 @@ import { orderForIpodCatalog, conformCatalogIdOrder } from './ipod-catalog-order
 import type { SyncConvertOptions } from './ipc/sync-ipc.ts'
 import {
   classifyActivitySyncTracks,
+  classifyLocalLibraryFile,
   formatHomeminiPullRefuse,
   formatSyncSetFileRefuse,
 } from './activity-boardable.ts'
+import {
+  diskWriteWouldBreachFloor,
+  formatFreeSpaceRefuse,
+  type StageTrackResult,
+} from './ipod-sync-materialize.ts'
 import { activityTrackCanBoard, pickReplacementTracks, queueActivityCandidates } from './activity-fill.ts'
 import { orderTracksForIpodTitleIndex, stampIpodSortArtist } from './ipod-artist-sort.ts'
 
@@ -102,9 +109,12 @@ export interface ActivitySyncHost {
   }) => Promise<void>
   getDetectedMount: () => string | null
   setDetectedMount: (mount: string | null) => void
-  /** Pull homemini bytes onto this Mac when eviction (or a symlink) left
-   *  nothing copyFile can send to the Mini. HTTP only — never SMB. */
-  materializeTrack: (colonPath: string, trackId: number) => Promise<{ ok: boolean; error?: string; pulled?: boolean }>
+  /** Range probe. No bytes land on this Mac. A 404 is known before wipe. */
+  probeHomeminiTrack: (trackId: number) => Promise<{ ok: boolean; error?: string; bytes?: number }>
+  /** One song into a temp file. Caller must cleanup. The library symlink stays. */
+  stageTrack: (colonPath: string, trackId: number) => Promise<StageTrackResult>
+  /** Free bytes on the laptop volume. Used to refuse a pull under the 10 GB floor. */
+  freeBytes: () => Promise<number>
   /** Next eligible library tracks when a boarded song cannot copy.
    *  Needed so 15 firmware-unlistable / dead-path rows do not shrink a
    *  1000-song request to 985. */
@@ -302,8 +312,16 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     pathSep,
     lstat,
   })
+  const remoteBytes = new Map<number, number>()
   if (toPull.length > 0) {
-    console.log(`activity-sync: ${toPull.length}/${target} not on this Mac — pulling from homemini before wipe`)
+    const free = await host.freeBytes().catch(() => 0)
+    if (diskWriteWouldBreachFloor(free, 0)) {
+      const msg = `Activity sync refused — ${formatFreeSpaceRefuse(free)}. Nothing was wiped.`
+      console.error(`activity-sync: ${msg}`)
+      await host.writeJournal(null)
+      return fail({ copied: 0, error: msg, target })
+    }
+    console.log(`activity-sync: ${toPull.length}/${target} not on this Mac — probing homemini before wipe (one file staged at copy; library symlink stays)`)
     const pullFail: string[] = []
     for (let i = 0; i < toPull.length; i++) {
       if (host.isCancelled()) {
@@ -315,14 +333,14 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
         phase: 'preflight',
         current: i + 1,
         total: toPull.length,
-        title: `Pulling from homemini: ${p.label}`,
+        title: `Checking homemini: ${p.label}`,
       })
-      const r = await host.materializeTrack(p.path, p.id)
+      const r = await host.probeHomeminiTrack(p.id)
       if (!r.ok) {
         pullFail.push(`${p.label} (${r.error || 'homemini miss'})`)
-        console.error(`activity-sync: homemini pull failed — ${p.label}: ${r.error}`)
-      } else if (r.pulled) {
-        console.log(`activity-sync: pulled ${p.label} from homemini`)
+        console.error(`activity-sync: homemini probe failed — ${p.label}: ${r.error}`)
+      } else if (r.bytes && r.bytes > 0) {
+        remoteBytes.set(p.id, r.bytes)
       }
     }
     if (pullFail.length > 0) {
@@ -440,7 +458,15 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   // with the card untouched, and — the point — the keep plan below can
   // compare what WOULD be written against what is already there.
   const pathRewrites: Array<{ id: number; newPath: string }> = []
-  interface CopyPlanEntry { i: number; id: number; title: string; srcToCopy: string; dstToCopy: string }
+  interface CopyPlanEntry {
+    i: number
+    id: number
+    title: string
+    srcToCopy: string
+    dstToCopy: string
+    restage?: { colon: string; id: number }
+    knownSourceSize?: number
+  }
   const plan: CopyPlanEntry[] = []
   // #47 (fill-to-N): tracks[target..] are copy-time replacements. They are
   // resolved here like everything else, but never kept from a previous
@@ -469,61 +495,101 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     const localFile = join(LOCAL_MOUNT, rawColon.replace(/:/g, pathSep))
     let srcToCopy = localFile
     let dstToCopy = join(IPOD_MOUNT, destColon.replace(/:/g, pathSep))
+    let restage: { colon: string; id: number } | undefined
+    let knownSourceSize: number | undefined
 
     host.sendProgress({ phase: 'copy', current: Math.min(i, target), total: target, title: `Preparing: ${title}` })
 
-    if (convertOptions?.enabled) {
-      try {
-        host.sendProgress({
-          phase: 'copy', current: Math.min(i, target), total: target,
-          title: `Converting → ${convertOptions.targetKbps}k AAC: ${title}`,
-        })
-        const mirror = await host.buildAacMirror(localFile, convertOptions.targetKbps)
-        if (mirror) {
-          srcToCopy = mirror
-          const srcExt = localFile.slice(localFile.lastIndexOf('.')).toLowerCase()
-          if (srcExt !== '.m4a' && srcExt !== '.mp4') {
-            const dotIdx = dstToCopy.lastIndexOf('.')
-            dstToCopy = dotIdx > 0 ? dstToCopy.slice(0, dotIdx) + '.m4a' : dstToCopy + '.m4a'
-            const newRel = dstToCopy.slice(IPOD_MOUNT.length + 1)
-            const newColon = ':' + newRel.split(pathSep).join(':')
-            track.path = newColon
-            pathRewrites.push({ id, newPath: newColon })
+    const kind = await classifyLocalLibraryFile(rawColon, { localMount: LOCAL_MOUNT, pathSep, lstat })
+    const needsPull = kind === 'streamed' || kind === 'missing'
+    let bytesForMirror = localFile
+    let stageCleanup: (() => Promise<void>) | null = null
+    if (needsPull && (convertOptions?.enabled || needsIpodAlacTranscode(localFile))) {
+      const staged = await host.stageTrack(rawColon, id)
+      if (!staged.ok) {
+        const msg = staged.reason === 'free-space'
+          ? `Activity sync refused — ${staged.error}. Nothing was wiped.`
+          : `Could not stage "${title}" for the iPod (${staged.error}). Nothing was wiped.`
+        console.error(`activity-sync: ${msg}`)
+        if (i >= target) { console.warn(`activity-sync: reserve "${title}" skipped`); continue }
+        await host.writeJournal(null)
+        return fail({ copied: 0, error: msg, target })
+      }
+      bytesForMirror = staged.abs
+      stageCleanup = staged.cleanup
+    }
+
+    try {
+      if (convertOptions?.enabled) {
+        try {
+          host.sendProgress({
+            phase: 'copy', current: Math.min(i, target), total: target,
+            title: `Converting → ${convertOptions.targetKbps}k AAC: ${title}`,
+          })
+          const mirror = await host.buildAacMirror(bytesForMirror, convertOptions.targetKbps)
+          if (mirror) {
+            srcToCopy = mirror
+            const srcExt = localFile.slice(localFile.lastIndexOf('.')).toLowerCase()
+            if (srcExt !== '.m4a' && srcExt !== '.mp4') {
+              const dotIdx = dstToCopy.lastIndexOf('.')
+              dstToCopy = dotIdx > 0 ? dstToCopy.slice(0, dotIdx) + '.m4a' : dstToCopy + '.m4a'
+              const newRel = dstToCopy.slice(IPOD_MOUNT.length + 1)
+              const newColon = ':' + newRel.split(pathSep).join(':')
+              track.path = newColon
+              pathRewrites.push({ id, newPath: newColon })
+            }
           }
+        } catch (err) {
+          console.warn(`activity-sync: AAC mirror failed for ${title}, copying original:`, err)
         }
-      } catch (err) {
-        console.warn(`activity-sync: AAC mirror failed for ${title}, copying original:`, err)
+      }
+
+      if (needsIpodAlacTranscode(srcToCopy === localFile ? bytesForMirror : srcToCopy)) {
+        try {
+          host.sendProgress({
+            phase: 'copy', current: Math.min(i, target), total: target,
+            title: `Converting → ALAC: ${title}`,
+          })
+          // bytesForMirror is a real file: a library master, or one staged
+          // temp. The library symlink is not replaced.
+          const mirror = await host.buildIpodSafeAlacMirror(bytesForMirror)
+          if (!mirror) {
+            if (i >= target) { console.warn(`activity-sync: reserve "${title}" has no iPod-safe ALAC — skipped`); continue }
+            await host.writeJournal(null)
+            return fail({ copied: 0, error: `Could not build an iPod-safe ALAC for "${title}". Nothing was wiped.`, target })
+          }
+          srcToCopy = mirror
+          dstToCopy = ipodPlayableDestPath(dstToCopy)
+          const newRel = dstToCopy.startsWith(IPOD_MOUNT) ? dstToCopy.slice(IPOD_MOUNT.length + 1) : dstToCopy
+          track.path = tsaNormalizeColonPath(newRel)
+          track.codec = 'alac'
+          pathRewrites.push({ id, newPath: String(track.path) })
+        } catch (err) {
+          console.error(`activity-sync: FLAC→ALAC failed for ${title}:`, err)
+          if (i >= target) { console.warn(`activity-sync: reserve "${title}" skipped`); continue }
+          await host.writeJournal(null)
+          return fail({ copied: 0, error: `FLAC→ALAC failed for "${title}" (${err instanceof Error ? err.message : String(err)}). Nothing was wiped.`, target })
+        }
+      }
+    } finally {
+      if (stageCleanup) {
+        if (srcToCopy === bytesForMirror) {
+          knownSourceSize = (await stat(bytesForMirror).catch(() => null))?.size
+          restage = { colon: rawColon, id }
+          srcToCopy = localFile
+        }
+        await stageCleanup()
       }
     }
 
-    if (needsIpodAlacTranscode(srcToCopy)) {
-      try {
-        host.sendProgress({
-          phase: 'copy', current: Math.min(i, target), total: target,
-          title: `Converting → ALAC: ${title}`,
-        })
-        const mirror = await host.buildIpodSafeAlacMirror(localFile)
-        if (!mirror) {
-          if (i >= target) { console.warn(`activity-sync: reserve "${title}" has no iPod-safe ALAC — skipped`); continue }
-          await host.writeJournal(null)
-          return fail({ copied: 0, error: `Could not build an iPod-safe ALAC for "${title}". Nothing was wiped.`, target })
-        }
-        srcToCopy = mirror
-        dstToCopy = ipodPlayableDestPath(dstToCopy)
-        const newRel = dstToCopy.startsWith(IPOD_MOUNT) ? dstToCopy.slice(IPOD_MOUNT.length + 1) : dstToCopy
-        track.path = tsaNormalizeColonPath(newRel)
-        track.codec = 'alac'
-        pathRewrites.push({ id, newPath: String(track.path) })
-      } catch (err) {
-        console.error(`activity-sync: FLAC→ALAC failed for ${title}:`, err)
-        if (i >= target) { console.warn(`activity-sync: reserve "${title}" skipped`); continue }
-        await host.writeJournal(null)
-        return fail({ copied: 0, error: `FLAC→ALAC failed for "${title}" (${err instanceof Error ? err.message : String(err)}). Nothing was wiped.`, target })
-      }
+    if (needsPull && srcToCopy === localFile) {
+      restage = { colon: rawColon, id }
+      const remote = remoteBytes.get(id)
+      if (knownSourceSize == null && remote && remote > 0) knownSourceSize = remote
     }
 
     dstToCopy = ipodPlayableDestPath(dstToCopy)
-    plan.push({ i, id, title, srcToCopy, dstToCopy })
+    plan.push({ i, id, title, srcToCopy, dstToCopy, restage, knownSourceSize })
   }
 
   // ── 2b. Keep plan: what is already right on the card, by identity ──
@@ -541,7 +607,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   for (const e of plan) {
     if (e.i >= target) continue   // a reserve is never kept — it lands only if a primary misses
     const rel = e.dstToCopy.startsWith(IPOD_MOUNT) ? e.dstToCopy.slice(IPOD_MOUNT.length + 1) : e.dstToCopy
-    const sourceSize = (await stat(e.srcToCopy).catch(() => null))?.size ?? 0
+    const sourceSize = e.knownSourceSize ?? (await stat(e.srcToCopy).catch(() => null))?.size ?? 0
     const onCardSize = (await stat(e.dstToCopy).catch(() => null))?.size
     srcSizeById.set(e.id, sourceSize)
     if (onCardSize !== undefined) cardSizeById.set(e.id, onCardSize)
@@ -613,6 +679,15 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
 
   // ── 3b. Copy what is not already there ──
   const writtenById = new Map<number, { srcPath: string; dstPath: string; expectedSize: number }>()
+  const restageById = new Map<number, { colon: string; id: number }>()
+  for (const e of plan) if (e.restage) restageById.set(e.id, e.restage)
+  const prepareSource = async (entry: { id: number; localFile: string }): Promise<{ abs: string; cleanup: () => Promise<void> }> => {
+    const rs = restageById.get(entry.id)
+    if (!rs) return { abs: entry.localFile, cleanup: async () => {} }
+    const staged = await host.stageTrack(rs.colon, rs.id)
+    if (!staged.ok) throw new Error(staged.error)
+    return { abs: staged.abs, cleanup: staged.cleanup }
+  }
   let copied = 0
   let kept = 0
   let copyErrors = 0
@@ -631,23 +706,37 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
       continue
     }
     host.sendProgress({ phase: 'copy', current: copied + kept + copyErrors, total: target, title: e.title })
+    let copySrc = e.srcToCopy
+    let release = async () => {}
+    if (e.restage) {
+      const staged = await host.stageTrack(e.restage.colon, e.restage.id)
+      if (!staged.ok) {
+        console.error(`activity-sync: skipping "${e.title}" — ${staged.error}`)
+        copyErrors++
+        continue
+      }
+      copySrc = staged.abs
+      release = staged.cleanup
+    }
     try {
       const dir = e.dstToCopy.substring(0, e.dstToCopy.lastIndexOf(pathSep))
       await mkdir(dir, { recursive: true })
-      await copyFile(e.srcToCopy, e.dstToCopy)
-      const conf = await confirmWriteOnCard(e.srcToCopy, e.dstToCopy)
+      await copyFile(copySrc, e.dstToCopy)
+      const conf = await confirmWriteOnCard(copySrc, e.dstToCopy)
       if (!conf.ok) {
         console.error(`activity-sync: write NOT confirmed for "${e.title}" — ${conf.reason}`)
         copyErrors++
         continue
       }
-      const sz = (await stat(e.srcToCopy)).size
+      const sz = (await stat(copySrc)).size
       writtenById.set(e.id, { srcPath: e.srcToCopy, dstPath: e.dstToCopy, expectedSize: sz })
       copied++
       host.sendProgress({ phase: 'copy', current: copied + kept + copyErrors, total: target, title: e.title })
     } catch (err) {
       console.error(`activity-sync: copy failed for "${e.title}":`, err)
       copyErrors++
+    } finally {
+      await release()
     }
   }
 
@@ -692,6 +781,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     maxPasses: 16,
     label: 'activity-files',
     isCancelled: () => host.isCancelled(),
+    prepareSource,
   })
   let landedIds = verified.landedIds
   let verifyAttempts = verified.attempts
@@ -711,11 +801,14 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
       if (host.isCancelled()) break
       for (let attempt = 1; attempt <= 5; attempt++) {
         if (host.isCancelled()) break
+        let release = async () => {}
         try {
+          const prepared = await prepareSource(e)
+          release = prepared.cleanup
           const dir = e.dstPath.substring(0, Math.max(e.dstPath.lastIndexOf('/'), e.dstPath.lastIndexOf('\\')))
           if (dir) await mkdir(dir, { recursive: true })
-          await copyFile(e.localFile, e.dstPath)
-          const conf = await confirmWriteOnCard(e.localFile, e.dstPath)
+          await copyFile(prepared.abs, e.dstPath)
+          const conf = await confirmWriteOnCard(prepared.abs, e.dstPath)
           if (!conf.ok) continue
           await flushCardCaches()
           const rm = await remountVolume(IPOD_MOUNT)
@@ -725,7 +818,9 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
             landedIds.add(e.id)
             break
           }
-        } catch { /* next attempt */ }
+        } catch { /* next attempt */ } finally {
+          await release()
+        }
       }
     }
   }

@@ -13,7 +13,7 @@ import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { findFreeImportedId } from '../import-pipeline'
 import {
-  IS_MAC, type AudioFormat, convertAudio, ejectOpticalMedia, extensionForFormat,
+  IS_MAC, type AudioFormat, convertAudio, DEFAULT_IMPORT_FORMAT, ejectOpticalMedia, extensionForFormat,
   hasOpticalMedia, listMountPoints, volumeNameFromMount,
 } from '../platform'
 import { safeIpcError } from '../safe-ipc-error'
@@ -259,7 +259,7 @@ export function registerCdIpc(ipc: IpcRegistrar, host: CdIpcHost): void {
     const validFormats: AudioFormat[] = ['aac-128', 'aac-256', 'aac-320', 'alac', 'aiff', 'wav']
     const fmt: AudioFormat = validFormats.includes(format as AudioFormat)
       ? (format as AudioFormat)
-      : 'aac-256'
+      : DEFAULT_IMPORT_FORMAT
     const destExt = extensionForFormat(fmt)
 
     const cdBatchBaseTime = Date.now()
@@ -304,11 +304,13 @@ export function registerCdIpc(ipc: IpcRegistrar, host: CdIpcHost): void {
         const cdTrackTime = new Date(cdBatchBaseTime + cdTrackIndex)
 
         // Stage 3 ingestion redirect (twin of the importOneFile hook): in
-        // homemini streaming mode, enqueue this non-ALAC rip for background
-        // conversion to a streamed symlink once homemini serves matching bytes.
-        // Fingerprint is computed just for the identity gate; the track's stored
-        // fingerprint is still backfilled later by verifyAndHealTracks as before.
-        if (fmt !== 'alac' && (await host.readStreamSource()) === 'homemini') {
+        // homemini streaming mode, enqueue this rip — ALAC included — for
+        // background conversion to a streamed symlink once homemini serves
+        // matching bytes. ALAC used to be skipped, which left the master
+        // on the laptop. Fingerprint is computed just for the identity
+        // gate; the track's stored fingerprint is still backfilled later
+        // by verifyAndHealTracks as before.
+        if ((await host.readStreamSource()) === 'homemini') {
           const cdFp = await host.computeAudioFingerprint(destPath, (cdTrack.duration || 0) * 1000)
           if (cdFp) void host.enqueueStreamConvert(`:iPod_Control:Music:${subDir}:${fileName}`, cdFp, Date.now())
         }

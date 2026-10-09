@@ -39,6 +39,11 @@ import {
   type TsaPassenger, type TsaScreen,
 } from '../ipod-sync-tsa.ts'
 import { classifyActivitySyncTracks, formatHomeminiPullRefuse, formatSyncSetFileRefuse } from '../activity-boardable.ts'
+import {
+  diskWriteWouldBreachFloor,
+  formatFreeSpaceRefuse,
+  type StageTrackResult,
+} from '../ipod-sync-materialize.ts'
 
 // Contract of the silent post-sync verifier (implementation stays in the
 // main process; these shapes moved here with its only caller).
@@ -75,7 +80,11 @@ export interface SyncEngineHost {
   /** #47 fill-to-N: the library the activity engine pulls replacements from. */
   getLibraryTracks: () => Promise<{ tracks?: Array<Record<string, unknown>> }>
   isStreamedTrackFile: (absPath: string) => Promise<boolean>
-  materializeLibraryTrack: (colonPath: string, trackId: number | string) => Promise<{ ok: boolean; error?: string; pulled?: boolean }>
+  /** Range probe. A 404 is known before any copy. No bytes are written. */
+  probeHomeminiTrack: (trackId: number | string) => Promise<{ ok: boolean; error?: string; bytes?: number }>
+  /** One song into a temp file for the iPod copy. Never replaces the library symlink. */
+  stageLibraryTrack: (colonPath: string, trackId: number | string) => Promise<StageTrackResult>
+  freeBytes: () => Promise<number>
   readIpodDatabase: () => Promise<{ tracks: Array<Record<string, unknown>>; playlists: Array<{ name: string; trackIds: number[] }> }>
   resolveTrackAbsPath: (colonPath: string, mounts: string[]) => Promise<string | null>
   scheduleDbRebuild: (deletedPaths: string[]) => void
@@ -89,7 +98,7 @@ export function createSyncEngine(host: SyncEngineHost) {
     LOSSLESS_EXTS, LOSSLESS_CODECS, codecByAbsPath,
     buildAacMirror, buildIpodSafeAlacMirror, candidateMusicMounts, cleanOrphansOnMusicRoot,
     computeAudioFingerprint, getConcertOwnedTrackIds, getLibraryTracks, isStreamedTrackFile,
-    materializeLibraryTrack, readIpodDatabase, resolveTrackAbsPath, scheduleDbRebuild,
+    probeHomeminiTrack, stageLibraryTrack, freeBytes, readIpodDatabase, resolveTrackAbsPath, scheduleDbRebuild,
     sendToRenderer, verifyAndHealTracks, walkAudioFilesUnder,
   } = host
 
@@ -325,7 +334,9 @@ export function createSyncEngine(host: SyncEngineHost) {
         writeReport: writeSyncReport,
         getDetectedMount: () => host.getMount(),
         setDetectedMount: (m) => { host.setMount(m) },
-        materializeTrack: materializeLibraryTrack,
+        probeHomeminiTrack: (trackId) => probeHomeminiTrack(trackId),
+        stageTrack: (colonPath, trackId) => stageLibraryTrack(colonPath, trackId),
+        freeBytes,
         // #47 (fill-to-N): next eligible library songs when a boarded one cannot copy.
         loadReplacementTracks: bindActivityReplacements(getLibraryTracks, getConcertOwnedTrackIds),
       }, { tracks, playlists, convertOptions })
@@ -413,17 +424,24 @@ export function createSyncEngine(host: SyncEngineHost) {
         }
       }
       if (toPull.length > 0) {
-        console.log(`sync-to-ipod: ${toPull.length}/${tracks.length} not on this Mac — pulling from homemini`)
+        const free = await freeBytes().catch(() => 0)
+        if (diskWriteWouldBreachFloor(free, 0)) {
+          const msg = `Sync refused — ${formatFreeSpaceRefuse(free)}. Nothing on the iPod was changed.`
+          console.error(`sync-to-ipod: ${msg}`)
+          await writeSyncJournal(null)
+          return { ok: false, copied: 0, error: msg }
+        }
+        console.log(`sync-to-ipod: ${toPull.length}/${tracks.length} not on this Mac — probing homemini (staged at copy, library symlink stays)`)
         const pullFail: string[] = []; const unsourceableIds: number[] = []   // ghosts: see activity-boardable.ts
         for (const p of toPull) {
           if (syncCancelRequested) {
             await writeSyncJournal(null)
             return { ok: false, copied: 0, cancelled: true, error: 'Sync cancelled by user' }
           }
-          const r = await materializeLibraryTrack(p.path, p.id)
+          const r = await probeHomeminiTrack(p.id)
           if (!r.ok) {
             pullFail.push(`${p.label} (${r.error || 'homemini miss'})`); unsourceableIds.push(p.id)
-            console.error(`sync-to-ipod: homemini pull failed — ${p.label}: ${r.error}`)
+            console.error(`sync-to-ipod: homemini probe failed — ${p.label}: ${r.error}`)
           }
         }
         if (pullFail.length > 0) {
@@ -803,11 +821,19 @@ export function createSyncEngine(host: SyncEngineHost) {
     // sync compares AAC-on-card to ALAC-in-library, "fails" every song, and
     // recopies full-size masters until the Mini fills (~100 of 500).
     const writtenById = new Map<number, { srcPath: string; dstPath: string; expectedSize: number }>()
+    const restageById = new Map<number, { colon: string; id: number | string }>()
+    const prepareSource = async (entry: { id: number; localFile: string }): Promise<{ abs: string; cleanup: () => Promise<void> }> => {
+      const rs = restageById.get(entry.id)
+      if (!rs) return { abs: entry.localFile, cleanup: async () => {} }
+      const staged = await stageLibraryTrack(rs.colon, rs.id)
+      if (!staged.ok) throw new Error(staged.error)
+      return { abs: staged.abs, cleanup: staged.cleanup }
+    }
     for (const e of alreadyOnDevice) writtenById.set(e.id, e)
-    const rememberWritten = async (trackId: number | undefined, srcPath: string, dstPath: string) => {
+    const rememberWritten = async (trackId: number | undefined, srcPath: string, dstPath: string, sizeOverride?: number) => {
       if (trackId == null) return
       try {
-        const sz = (await stat(srcPath)).size
+        const sz = sizeOverride ?? (await stat(srcPath)).size
         writtenById.set(trackId, { srcPath, dstPath, expectedSize: sz })
       } catch { /* non-fatal — verify will treat as missing */ }
     }
@@ -915,6 +941,7 @@ export function createSyncEngine(host: SyncEngineHost) {
         maxPasses: 8,
         label: 'chunk',
         isCancelled: () => syncCancelRequested,
+        prepareSource,
       })
       if (r.remountFailed && r.landedIds.size === 0) {
         console.warn('sync-to-ipod: chunk remount failed — continuing; final verify will catch drops')
@@ -946,21 +973,53 @@ export function createSyncEngine(host: SyncEngineHost) {
       }
       let srcToCopy = local
       let dstToCopy = ipod
-      // ── Streaming: skip streamed tracks ───────────────────────────
-      // A streamed track's local file is a symlink (real bytes on homemini).
-      // Copying it to the iPod would push a dangling/0-byte file and could
-      // overwrite a good existing device copy. Skip it — to sync a streamed
-      // track to the iPod, download (pin) it locally first. Non-destructive:
-      // any existing iPod copy is left untouched. Count it as processed so the
-      // progress bar still completes (matches the byte-identical skip below).
-      if (await isStreamedTrackFile(local)) {
-        console.log(`sync-to-ipod: skipping streamed track (not downloaded locally): ${title}`)
-        copied++
-        sendToRenderer('sync-progress', {
-          phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
-        })
-        continue
+      // A streamed or missing library file is staged for this one copy.
+      // The symlink stays. The temp file is deleted in the finally below,
+      // including on the continue paths. A mirror in the sync cache is the
+      // durable recopy source; a raw master is staged again if verify recopies.
+      let masterPath = local
+      let releaseStage: (() => Promise<void>) | null = null
+      let restageThis: { colon: string; id: number | string } | undefined
+      let stagedSize = 0
+      const needsStage = await (async () => {
+        try {
+          const st = await lstat(local)
+          if (st.isSymbolicLink()) return true
+          return !st.isFile()
+        } catch { return true }
+      })()
+      if (needsStage) {
+        const tr = trackByLocal.get(local)
+        const colon = String(tr?.path || '')
+        const id = (tr?.id as number | string | undefined) ?? trackId
+        if (!colon || id == null) {
+          console.error(`sync-to-ipod: skipping "${title}" — streamed file has no library path`)
+          copyErrors++
+          sendToRenderer('sync-progress', {
+            phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
+          })
+          continue
+        }
+        const staged = await stageLibraryTrack(colon, id)
+        if (!staged.ok) {
+          console.error(`sync-to-ipod: skipping "${title}" — ${staged.error}`)
+          copyErrors++
+          sendToRenderer('sync-progress', {
+            phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
+          })
+          continue
+        }
+        masterPath = staged.abs
+        srcToCopy = staged.abs
+        releaseStage = staged.cleanup
+        restageThis = { colon, id }
+        stagedSize = (await stat(staged.abs).catch(() => null))?.size ?? 0
       }
+      const durableSource = () => (restageThis && srcToCopy === masterPath) ? local : srcToCopy
+      const noteRestage = () => {
+        if (restageThis && srcToCopy === masterPath && Number.isFinite(trackId)) restageById.set(trackId, restageThis)
+      }
+      try {
       // ── Bitrate conversion ────────────────────────────────────────
       // When enabled, try to build an AAC mirror of the source. Returns
       // null for non-lossless inputs, in which case we just copy the
@@ -974,9 +1033,10 @@ export function createSyncEngine(host: SyncEngineHost) {
             phase: 'copy', current: copied + copyErrors, total: totalToCopy,
             title: `Converting → ${convertOptions.targetKbps}k AAC: ${title}`,
           })
-          const mirror = await buildAacMirror(local, convertOptions.targetKbps)
+          const mirror = await buildAacMirror(masterPath, convertOptions.targetKbps)
           if (mirror) {
             srcToCopy = mirror
+            restageThis = undefined
             // If source ext differs from .m4a, rewrite the iPod-side
             // destination filename too. Otherwise (.m4a / .mp4 ALAC)
             // the existing destination is already correct.
@@ -1026,7 +1086,7 @@ export function createSyncEngine(host: SyncEngineHost) {
             phase: 'copy', current: copied + copyErrors, total: totalToCopy,
             title: `Converting → ALAC: ${title}`,
           })
-          const mirror = await buildIpodSafeAlacMirror(local)
+          const mirror = await buildIpodSafeAlacMirror(masterPath)
           if (!mirror) {
             console.error(`sync-to-ipod: refusing to copy FLAC onto the Mini: ${title}`)
             copyErrors++
@@ -1036,6 +1096,7 @@ export function createSyncEngine(host: SyncEngineHost) {
             continue
           }
           srcToCopy = mirror
+          restageThis = undefined
           dstToCopy = ipodPlayableDestPath(dstToCopy)
           const tr = trackByLocal.get(local)
           if (tr) tr.codec = 'alac'
@@ -1063,12 +1124,18 @@ export function createSyncEngine(host: SyncEngineHost) {
         const dstStat = await stat(dstToCopy).catch(() => null)
         if (dstStat && dstStat.size === srcStat.size) {
           const tr = trackByLocal.get(local)
-          await rememberWritten(tr?.id as number | undefined, srcToCopy, dstToCopy)
+          noteRestage()
+          await rememberWritten(
+            tr?.id as number | undefined,
+            durableSource(),
+            dstToCopy,
+            restageThis && srcToCopy === masterPath ? stagedSize : undefined,
+          )
           if (trackId != null && Number.isFinite(trackId)) {
             chunkPending.push({
               id: trackId,
               dstPath: dstToCopy,
-              localFile: srcToCopy,
+              localFile: durableSource(),
               expectedSize: srcStat.size,
             })
             await flushCopyChunk()
@@ -1097,13 +1164,19 @@ export function createSyncEngine(host: SyncEngineHost) {
         }
         {
           const tr = trackByLocal.get(local)
-          await rememberWritten(tr?.id as number | undefined, srcToCopy, dstToCopy)
+          noteRestage()
+          await rememberWritten(
+            tr?.id as number | undefined,
+            durableSource(),
+            dstToCopy,
+            restageThis && srcToCopy === masterPath ? stagedSize : undefined,
+          )
           try {
             const sz = (await stat(srcToCopy)).size
             chunkPending.push({
               id: trackId,
               dstPath: dstToCopy,
-              localFile: srcToCopy,
+              localFile: durableSource(),
               expectedSize: sz,
             })
             await flushCopyChunk()
@@ -1132,6 +1205,9 @@ export function createSyncEngine(host: SyncEngineHost) {
       sendToRenderer('sync-progress', {
         phase: 'copy', current: copied + copyErrors, total: totalToCopy, title,
       })
+      } finally {
+        if (releaseStage) await releaseStage()
+      }
     }
     // Flush any leftover chunk before the final full-set verify.
     await flushCopyChunk(true)
@@ -1233,6 +1309,7 @@ export function createSyncEngine(host: SyncEngineHost) {
           maxPasses: MAX_VERIFY_PASSES,
           label: 'final',
           isCancelled: () => syncCancelRequested,
+          prepareSource,
         })
         verifyAttempts = r.attempts
         landedIds = r.landedIds
@@ -1278,11 +1355,14 @@ export function createSyncEngine(host: SyncEngineHost) {
             let stuck = false
             for (let attempt = 1; attempt <= 5 && !stuck; attempt++) {
               if (syncCancelRequested) break
+              let release = async () => {}
               try {
+                const prepared = await prepareSource(e)
+                release = prepared.cleanup
                 const dir = e.dstPath.substring(0, Math.max(e.dstPath.lastIndexOf('/'), e.dstPath.lastIndexOf('\\')))
                 if (dir) await mkdir(dir, { recursive: true })
-                await copyFile(e.localFile, e.dstPath)
-                const conf = await confirmWriteOnCard(e.localFile, e.dstPath)
+                await copyFile(prepared.abs, e.dstPath)
+                const conf = await confirmWriteOnCard(prepared.abs, e.dstPath)
                 if (!conf.ok) {
                   console.warn(`sync-to-ipod: ${label} copy not confirmed for ${e.id} (try ${attempt}): ${conf.reason}`)
                   continue
@@ -1305,6 +1385,8 @@ export function createSyncEngine(host: SyncEngineHost) {
                 }
               } catch (err) {
                 console.warn(`sync-to-ipod: ${label} failed for ${e.id}:`, err)
+              } finally {
+                await release()
               }
             }
             sendToRenderer('sync-progress', {
@@ -1343,6 +1425,7 @@ export function createSyncEngine(host: SyncEngineHost) {
               maxPasses: 1,
               label: `proof-${round}`,
               isCancelled: () => syncCancelRequested,
+              prepareSource,
             })
             verifyAttempts += proof.attempts
             if (proof.remountFailed) {

@@ -39,7 +39,13 @@ export const flushCardCaches = (): Promise<void> => new Promise((resolve) => {
 export async function remountVerifyEntries(
   mountPoint: string,
   entries: Array<{ id: number; dstPath: string; localFile: string; expectedSize: number }>,
-  opts: { maxPasses: number; label?: string; isCancelled?: () => boolean } = { maxPasses: 4 },
+  opts: {
+    maxPasses: number
+    label?: string
+    isCancelled?: () => boolean
+    /** Restage a streamed master for a recopy, then delete it. Default is the local file. */
+    prepareSource?: (entry: { id: number; localFile: string }) => Promise<{ abs: string; cleanup: () => Promise<void> }>
+  } = { maxPasses: 4 },
 ): Promise<{ ok: boolean; landedIds: Set<number>; attempts: number; remountFailed: boolean }> {
   const landedIds = new Set<number>()
   if (entries.length === 0) return { ok: true, landedIds, attempts: 0, remountFailed: false }
@@ -73,15 +79,22 @@ export async function remountVerifyEntries(
       if (opts.isCancelled?.()) break
       const e = byId.get(id)
       if (!e) continue
+      let release = async () => {}
       try {
+        const prepared = opts.prepareSource
+          ? await opts.prepareSource(e)
+          : { abs: e.localFile, cleanup: async () => {} }
+        release = prepared.cleanup
         const dir = e.dstPath.substring(0, Math.max(e.dstPath.lastIndexOf('/'), e.dstPath.lastIndexOf('\\')))
         if (dir) await mkdir(dir, { recursive: true })
-        await copyFile(e.localFile, e.dstPath)
-        const conf = await confirmWriteOnCard(e.localFile, e.dstPath)
+        await copyFile(prepared.abs, e.dstPath)
+        const conf = await confirmWriteOnCard(prepared.abs, e.dstPath)
         if (!conf.ok) { console.warn(`ipod-card: recopy NOT confirmed for track ${id} — ${conf.reason}`); continue }
         recopied++
       } catch (err) {
         console.warn(`ipod-card: recopy failed for track ${id}:`, err)
+      } finally {
+        await release()
       }
     }
     await flushCardCaches()
