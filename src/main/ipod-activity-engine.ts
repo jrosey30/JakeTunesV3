@@ -502,6 +502,8 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
           phase: 'copy', current: Math.min(i, target), total: target,
           title: `Converting → ALAC: ${title}`,
         })
+        // localFile is a real file here. A streamed ALAC symlink was
+        // replaced by materializeTrack (raw /audio/:id) in the pull above.
         const mirror = await host.buildIpodSafeAlacMirror(localFile)
         if (!mirror) {
           if (i >= target) { console.warn(`activity-sync: reserve "${title}" has no iPod-safe ALAC — skipped`); continue }

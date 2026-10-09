@@ -49,6 +49,8 @@ import { fetchHeadersWithin } from './fetch-headers'; import { spoolAwareServe }
 import { computeDeletedPaths } from './library-deletions'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
 import { createPlayCache } from './play-cache.ts'
+import { createStreamAlacCache, downloadUrlToFile, ffmpegAlacToFlac, localFileNeedsStreamAlacDecode } from './stream-alac-cache.ts'
+import { planLocalAlacMigration, type AlacMigrateTrack } from './alac-stream-migrate.ts'
 import { createServePin } from './play-cache-serve-pin.ts'
 import { createIpcRegistrar, REFUSED_SENDER } from './ipc-register.ts'
 import { registerUiStateIpc } from './ipc/ui-state-ipc.ts'
@@ -3584,6 +3586,12 @@ async function buildAacMirror(srcPath: string, targetKbps: number): Promise<stri
  * on the card as FLAC and that row is the same skip class as 497.
  * Library import does not use this downsample — ipodSafe keeps the
  * existing Mini mirror at 16-bit / 44.1 kHz when the master is hi-res.
+ *
+ * A streamed library file is a symlink to the 0-byte sentinel. stat()
+ * would follow that and encode nothing. Activity sync and full-library
+ * sync both call materializeTrackFromHomemini first: it pulls the raw
+ * `/audio/:id` bytes (no transcode query) over HTTP and replaces the
+ * symlink, so this function reads a real ALAC file.
  */
 async function buildIpodSafeAlacMirror(srcPath: string): Promise<string | null> {
   const srcStat = await stat(srcPath).catch(() => null)
@@ -4637,13 +4645,25 @@ async function writeStreamConvertQueue(items: StreamConvertItem[]): Promise<void
   await writeJsonAtomic(streamConvertQueuePath(), { items, updatedAt: new Date().toISOString() })
 }
 async function enqueueStreamConvert(ipodPath: string, fingerprint: string | undefined, enqueuedAt: number): Promise<void> {
+  await enqueueStreamConvertBatch([{ ipodPath, fingerprint, enqueuedAt }])
+}
+async function enqueueStreamConvertBatch(incoming: StreamConvertItem[]): Promise<void> {
   try {
     const items = await readStreamConvertQueue()
-    if (items.some((it) => it.ipodPath === ipodPath)) return
-    items.push({ ipodPath, fingerprint, enqueuedAt })
+    const seen = new Set(items.map((it) => it.ipodPath))
+    let added = 0
+    for (const it of incoming) {
+      if (!it.ipodPath || seen.has(it.ipodPath)) continue
+      seen.add(it.ipodPath)
+      items.push(it)
+      added++
+    }
+    if (!added) return
     await writeStreamConvertQueue(items)
     ensureStreamConvertWorker()
-  } catch { /* non-fatal: track just stays local */ }
+  } catch (err) {
+    console.warn('[stream-convert] enqueue failed:', err instanceof Error ? err.message : err)
+  }
 }
 let streamConvertPassRunning = false
 async function runStreamConvertPass(now: number): Promise<void> {
@@ -10579,6 +10599,38 @@ app.whenReady().then(async () => {
   // handler below, where the stream-playback-path locks can see it. Local
   // names are kept so the handler and the maintenance IPCs read as before.
   const playCache = createPlayCache({ dir: join(app.getPath('userData'), 'play-cache') })
+  // Streamed ALAC → bounded FLAC. Homemini serves the raw master; this
+  // machine decodes it. Cap is 2 GB (stream-alac-cache.ts), not the
+  // 20 GB local play-cache.
+  const streamAlacCache = createStreamAlacCache({
+    dir: join(app.getPath('userData'), 'stream-alac-cache'),
+    fetchRaw: (id, dest) => downloadUrlToFile(
+      `${HOMEMINI_AUDIO_BASE}/${encodeURIComponent(id)}`,
+      dest,
+      (url, init) => fetch(url, withCompanionInit(init)),
+    ),
+    transcode: ffmpegAlacToFlac,
+  })
+  await streamAlacCache.ensureDir()
+  // ALAC already on this disk: same queue as a new import. Symlinks and
+  // missing files are skipped. Not run from tests or from a non-homemini
+  // machine. The 30-minute give-up in the worker still applies — a track
+  // homemini never hash-matches stays a real local file.
+  void (async () => {
+    if ((await readStreamSource()) !== 'homemini') return
+    let tracks: AlacMigrateTrack[] = []
+    try {
+      const lib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8')) as { tracks?: AlacMigrateTrack[] }
+      tracks = Array.isArray(lib.tracks) ? lib.tracks : []
+    } catch (err) {
+      console.warn('[stream-convert] local ALAC scan skipped:', err instanceof Error ? err.message : err)
+      return
+    }
+    const pending = await planLocalAlacMigration(tracks, lstat, trackFarmPath, Date.now())
+    if (!pending.length) return
+    await enqueueStreamConvertBatch(pending)
+    console.log(`[stream-convert] queued ${pending.length} local ALAC file(s) for NAS pass-through`)
+  })()
   // One media load, one byte stream — see play-cache-serve-pin.ts.
   const servePin = createServePin()
   await playCache.ensureDir()
@@ -10877,6 +10929,22 @@ app.whenReady().then(async () => {
         console.warn('[ipod-audio] streaming client but no library id for', rawPath.slice(0, 120))
       } else {
         const wantsFlac = wantsHomeminiFlac(rawPath)
+        // Streamed or evicted ALAC on a fat link: do not ask homemini for
+        // ?fmt=flac (that transcode is not in this repo) and do not hand
+        // Chromium the raw ALAC. Decode into the 2 GB cache. A real local
+        // file falls through to the play-cache. Thin-link machines keep
+        // ?fmt=aac via fetchAudioFromHomemini. lstat does not follow SMB.
+        const compressed = await readStreamCompressedCached()
+        if (wantsFlac && !compressed.on && isPathInside(rawPath, localMountRoot)) {
+          if (await localFileNeedsStreamAlacDecode(rawPath, lstat)) {
+            try {
+              return await streamAlacCache.serve(streamId, request.headers.get('range'))
+            } catch (err) {
+              console.warn('[ipod-audio] streamed ALAC decode failed:', err instanceof Error ? err.message : err)
+              return new Response('Unavailable', { status: 503 })
+            }
+          }
+        }
         const early = await fetchAudioFromHomemini(
           streamId, request.headers.get('range'), wantsFlac,
         )

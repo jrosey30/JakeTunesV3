@@ -9,9 +9,10 @@
  */
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { promisify } from 'node:util'
 import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { mkdtemp, readFile, writeFile, mkdir, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -39,6 +40,20 @@ import {
 } from '../import-pipeline.ts'
 
 const exec = promisify(execFile)
+
+/** Present when the binary can be spawned. A non-zero exit still counts
+ *  (afconvert -version is not a real flag); ENOENT does not. */
+function binOnPath(bin: string): boolean {
+  try {
+    execFileSync(bin, ['-version'], { stdio: 'ignore' })
+    return true
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== 'ENOENT'
+  }
+}
+
+const FFMPEG_SKIP = 'ffmpeg is not on PATH'
+const AFCONVERT_SKIP = 'afconvert is not on PATH'
 
 function sha256(buf: Buffer): string {
   return createHash('sha256').update(buf).digest('hex')
@@ -175,7 +190,8 @@ describe('the May 22 FLAC→AAC override is gone', () => {
 })
 
 describe('import writes ALAC that decodes bit-exact', () => {
-  test('16-bit/44.1 and 24-bit/96 FLAC become matching ALAC, tags and cover included', async () => {
+  test('16-bit/44.1 and 24-bit/96 FLAC become matching ALAC, tags and cover included', async (t) => {
+    if (!binOnPath('ffmpeg')) { t.skip(FFMPEG_SKIP); return }
     const dir = await mkdtemp(join(tmpdir(), 'jt-alac-'))
     await mkdir(join(dir, 'iPod_Control', 'Music'), { recursive: true })
     await writeFile(join(dir, 'library.json'), JSON.stringify({ tracks: [] }))
@@ -229,7 +245,8 @@ describe('import writes ALAC that decodes bit-exact', () => {
     assert.deepEqual(alac24, src24)
   })
 
-  test('MP3 and AAC imports are byte-identical copies', async () => {
+  test('MP3 and AAC imports are byte-identical copies', async (t) => {
+    if (!binOnPath('ffmpeg')) { t.skip(FFMPEG_SKIP); return }
     const dir = await mkdtemp(join(tmpdir(), 'jt-lossy-'))
     await mkdir(join(dir, 'iPod_Control', 'Music'), { recursive: true })
     await writeFile(join(dir, 'library.json'), JSON.stringify({ tracks: [] }))
@@ -261,7 +278,8 @@ describe('import writes ALAC that decodes bit-exact', () => {
     assert.equal(sha256(await readFile(join(music, 'F04', 'imported_4.m4a'))), sha256(aacBytes))
   })
 
-  test('defaultImportFormat is the format a download batch actually writes', async () => {
+  test('defaultImportFormat is the format a download batch actually writes', async (t) => {
+    if (!binOnPath('ffmpeg')) { t.skip(FFMPEG_SKIP); return }
     const dir = await mkdtemp(join(tmpdir(), 'jt-batch-'))
     await mkdir(join(dir, 'iPod_Control', 'Music'), { recursive: true })
     await writeFile(join(dir, 'library.json'), JSON.stringify({ tracks: [] }))
@@ -281,7 +299,8 @@ describe('import writes ALAC that decodes bit-exact', () => {
     assert.deepEqual(out, src)
   })
 
-  test('a lossless re-import of a lossy library row is the same text dupe as before, and the lossy file stays', async () => {
+  test('a lossless re-import of a lossy library row is the same text dupe as before, and the lossy file stays', async (t) => {
+    if (!binOnPath('ffmpeg')) { t.skip(FFMPEG_SKIP); return }
     const dir = await mkdtemp(join(tmpdir(), 'jt-dupe-'))
     const musicDir = join(dir, 'iPod_Control', 'Music')
     await mkdir(join(musicDir, 'F07'), { recursive: true })
@@ -306,7 +325,8 @@ describe('import writes ALAC that decodes bit-exact', () => {
     await assert.rejects(() => stat(join(musicDir, 'F08', 'imported_8.m4a')))
   })
 
-  test('the existing Mini mirror still asks for 16-bit 44.1 ALAC; library import does not', async () => {
+  test('the existing Mini mirror still asks for 16-bit 44.1 ALAC; library import does not', async (t) => {
+    if (!binOnPath('ffmpeg')) { t.skip(FFMPEG_SKIP); return }
     const dir = await mkdtemp(join(tmpdir(), 'jt-ipod-'))
     const flac = await makeFlac(dir, 'hires', {
       bits: 24, rate: 96000, title: 'Mini', artist: 'Probe', album: 'Masters',
@@ -324,3 +344,69 @@ describe('import writes ALAC that decodes bit-exact', () => {
     assert.equal(kept.rate, 96000)
   })
 })
+
+describe('macOS library ALAC is afconvert on a native-depth WAV', () => {
+  test('the WAV step is PATH ffmpeg, not a bundled binary', () => {
+    const src = readFileSync(new URL('../platform.ts', import.meta.url), 'utf8')
+    assert.match(src, /execP\('ffmpeg'/)
+    assert.match(src, /execP\('ffprobe'/)
+    assert.match(src, /nativePcmCodec\(bits \?\? 16\)/)
+    assert.doesNotMatch(src, /ffmpeg-static/)
+    assert.doesNotMatch(src, /resourcesPath[\s\S]{0,120}ffmpeg/)
+  })
+
+  test('afconvert -f m4af -d alac keeps 24-bit 96 kHz', async (t) => {
+    if (!binOnPath('afconvert') || !binOnPath('afinfo')) {
+      t.skip(AFCONVERT_SKIP)
+      return
+    }
+    // Node-written WAV: this half of the Mac path does not need ffmpeg.
+    // convertToLibraryAlac still does — ffmpeg decodes the source to this
+    // WAV (pcm_s24le, no -ar) before these exact afconvert args.
+    const dir = await mkdtemp(join(tmpdir(), 'jt-afconvert-'))
+    const wav = join(dir, 'native.wav')
+    const dest = join(dir, 'out.m4a')
+    await writeFile(wav, pcm24Wav(96000, 9600))
+    const args = afconvertLibraryAlacArgs(wav, dest)
+    assert.deepEqual(args, ['-f', 'm4af', '-d', 'alac', wav, dest])
+    assert.equal(args.includes('44100'), false)
+    await exec('afconvert', args)
+    const { stdout } = await exec('afinfo', [dest], { maxBuffer: 1024 * 1024 })
+    assert.match(stdout, /96000/, `afinfo sample rate:\n${stdout}`)
+    assert.match(stdout, /alac/i, `afinfo codec:\n${stdout}`)
+    assert.match(stdout, /24/, `afinfo bit depth:\n${stdout}`)
+  })
+})
+
+/** 24-bit little-endian stereo PCM WAV. afconvert accepts a classic fmt
+ *  chunk (format 1, bits 24, block align 6) — no ffmpeg required. */
+function pcm24Wav(sampleRate: number, frames: number): Buffer {
+  const channels = 2
+  const blockAlign = channels * 3
+  const dataSize = frames * blockAlign
+  const buf = Buffer.alloc(44 + dataSize)
+  buf.write('RIFF', 0)
+  buf.writeUInt32LE(36 + dataSize, 4)
+  buf.write('WAVE', 8)
+  buf.write('fmt ', 12)
+  buf.writeUInt32LE(16, 16)
+  buf.writeUInt16LE(1, 20)
+  buf.writeUInt16LE(channels, 22)
+  buf.writeUInt32LE(sampleRate, 24)
+  buf.writeUInt32LE(sampleRate * blockAlign, 28)
+  buf.writeUInt16LE(blockAlign, 32)
+  buf.writeUInt16LE(24, 34)
+  buf.write('data', 36)
+  buf.writeUInt32LE(dataSize, 40)
+  let o = 44
+  for (let i = 0; i < frames; i++) {
+    let s = Math.round(Math.sin((2 * Math.PI * 440 * i) / sampleRate) * 0x3fffff)
+    if (s < 0) s += 0x1000000
+    for (let c = 0; c < channels; c++) {
+      buf[o++] = s & 0xff
+      buf[o++] = (s >> 8) & 0xff
+      buf[o++] = (s >> 16) & 0xff
+    }
+  }
+  return buf
+}

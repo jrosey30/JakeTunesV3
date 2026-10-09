@@ -833,7 +833,15 @@ async function runFfmpeg(args: string[], timeoutMs: number): Promise<void> {
 /** Library ALAC: same bit depth and sample rate as the source.
  *  macOS writes it with afconvert (`-d alac` on a native-depth WAV) so
  *  the bitstream stays Apple's. ffmpeg is the encoder everywhere else,
- *  and the fallback if afconvert fails. */
+ *  and the fallback if afconvert fails.
+ *
+ *  The WAV step shells out to `ffmpeg` / `ffprobe` on PATH. There is no
+ *  ffmpeg binary bundled in the app. On a Mac that is whichever ffmpeg
+ *  is on PATH (typically Homebrew: `/opt/homebrew/bin/ffmpeg` or
+ *  `/usr/local/bin/ffmpeg`). afconvert encodes the WAV; it does not
+ *  decode the source FLAC, so a Mac with no PATH ffmpeg cannot run this
+ *  branch and falls through to the ffmpeg preserve args (which also
+ *  need that same binary). */
 async function convertToLibraryAlac(src: string, dest: string, timeoutMs: number): Promise<void> {
   const layout = await probeSourceAudioLayout(src)
   const bits = layout?.bitsPerSample ?? null

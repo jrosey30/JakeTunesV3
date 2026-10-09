@@ -307,6 +307,19 @@ export function shouldConvertOnImport(ext: string, codec: string, chosenFmt: Aud
   return true
 }
 
+/**
+ * Stream-convert queue gate. Codec is not part of it. ALAC used to be
+ * excluded so the laptop kept every lossless master; that exclusion is
+ * gone. No fingerprint → stay local (the convert is destructive and
+ * must hash-match homemini). streamSource other than homemini → stay local.
+ */
+export function shouldEnqueueStreamConvert(
+  audioFingerprint: string | null | undefined,
+  streamSource: string | null,
+): boolean {
+  return !!audioFingerprint && streamSource === 'homemini'
+}
+
 /** Codec stamped on a copied file. Must be the bytes we wrote, not the
  *  user's preferred format — an MP3 copied while the setting is ALAC is
  *  still MP3, or the play-cache treats it as ALAC. */
@@ -489,11 +502,16 @@ export async function importOneFile(
       console.warn(`[import] embedded-art extraction skipped for ${srcPath}:`, err instanceof Error ? err.message : err)
     }
 
-    // Stage 3 ingestion redirect: in homemini streaming mode, keep this import
-    // LOCAL + PLAYABLE now, then let the background pass convert it to a streamed
-    // symlink once homemini serves byte-identical bytes. ALAC never streams
-    // (Chromium can't decode raw ALAC, homemini doesn't transcode) — stays local.
-    if (storedCodec !== 'alac' && audioFingerprint && (await D().readStreamSource()) === 'homemini') {
+    // Stage 3 ingestion redirect: keep this import local and playable now,
+    // then let the background pass replace it with a streamed symlink once
+    // homemini serves byte-identical bytes. ALAC is included. Leaving it
+    // local was the old "Chromium can't decode raw ALAC, homemini doesn't
+    // transcode" rule, and with lossless import that fills the laptop.
+    // Playback of the symlink decodes homemini's raw ALAC into the bounded
+    // cache (stream-alac-cache.ts). The iPod Mini mirror is unaffected:
+    // sync materializes the raw bytes over HTTP before it encodes.
+    const streamSource = await D().readStreamSource()
+    if (audioFingerprint && shouldEnqueueStreamConvert(audioFingerprint, streamSource)) {
       void D().enqueueStreamConvert(String(track.path), audioFingerprint, Date.now())
     }
 

@@ -304,11 +304,13 @@ export function registerCdIpc(ipc: IpcRegistrar, host: CdIpcHost): void {
         const cdTrackTime = new Date(cdBatchBaseTime + cdTrackIndex)
 
         // Stage 3 ingestion redirect (twin of the importOneFile hook): in
-        // homemini streaming mode, enqueue this non-ALAC rip for background
-        // conversion to a streamed symlink once homemini serves matching bytes.
-        // Fingerprint is computed just for the identity gate; the track's stored
-        // fingerprint is still backfilled later by verifyAndHealTracks as before.
-        if (fmt !== 'alac' && (await host.readStreamSource()) === 'homemini') {
+        // homemini streaming mode, enqueue this rip — ALAC included — for
+        // background conversion to a streamed symlink once homemini serves
+        // matching bytes. ALAC used to be skipped, which left the master
+        // on the laptop. Fingerprint is computed just for the identity
+        // gate; the track's stored fingerprint is still backfilled later
+        // by verifyAndHealTracks as before.
+        if ((await host.readStreamSource()) === 'homemini') {
           const cdFp = await host.computeAudioFingerprint(destPath, (cdTrack.duration || 0) * 1000)
           if (cdFp) void host.enqueueStreamConvert(`:iPod_Control:Music:${subDir}:${fileName}`, cdFp, Date.now())
         }
