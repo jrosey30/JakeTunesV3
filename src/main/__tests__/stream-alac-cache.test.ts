@@ -2,13 +2,14 @@
  *  that feeds the same stream-convert queue as AAC/MP3. */
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, readdir, utimes, stat, writeFile, mkdir, symlink, lstat, rename, unlink } from 'fs/promises'
+import { mkdtemp, rm, readdir, utimes, stat, writeFile, readFile, mkdir, symlink, lstat, rename, unlink } from 'fs/promises'
+import { existsSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { createStreamAlacCache, localFileNeedsStreamAlacDecode } from '../stream-alac-cache.ts'
-import { planLocalAlacMigration } from '../alac-stream-migrate.ts'
+import { backfillAlacFingerprints, planLocalAlacMigration } from '../alac-stream-migrate.ts'
 import { classifyActivitySyncTracks } from '../activity-boardable.ts'
-import { materializeTrackFromHomemini } from '../ipod-sync-materialize.ts'
+import { stageTrackForSync } from '../ipod-sync-materialize.ts'
 
 async function freshDir(name: string): Promise<string> {
   return mkdtemp(join(tmpdir(), name))
@@ -143,35 +144,56 @@ describe('what needs the laptop decode', () => {
 })
 
 describe('ALAC already on the laptop', () => {
-  test('plans a stream-convert for a real ALAC file and skips symlinks, missing files, and rows with no fingerprint', async () => {
+  test('queues a fingerprinted ALAC file and lists a real file that still needs a sha1', async () => {
     const dir = await freshDir('jt-salac-mig-')
     const music = join(dir, 'iPod_Control', 'Music', 'F01')
     await mkdir(music, { recursive: true })
     const real = join(music, 'imported_1.m4a')
     await writeFile(real, 'alac-bytes')
+    const bare = join(music, 'imported_4.m4a')
+    await writeFile(bare, 'no-fingerprint-yet')
     const link = join(music, 'imported_2.m4a')
     await symlink(join(dir, '.jt-streamed'), link)
     const colon = (name: string) => `:iPod_Control:Music:F01:${name}`
-    const items = await planLocalAlacMigration([
+    const plan = await planLocalAlacMigration([
       { path: colon('imported_1.m4a'), codec: 'alac', audioFingerprint: 'sha1:aaaa|180000' },
       { path: colon('imported_2.m4a'), codec: 'alac', audioFingerprint: 'sha1:bbbb|180000' },
       { path: colon('imported_3.m4a'), codec: 'alac', audioFingerprint: 'sha1:cccc|180000' },
-      { path: colon('imported_4.m4a'), codec: 'alac' },
+      { path: colon('imported_4.m4a'), codec: 'alac', duration: 180000 },
       { path: colon('imported_5.mp3'), codec: 'mp3', audioFingerprint: 'sha1:dddd|180000' },
     ], lstat, (c) => join(dir, c.replace(/:/g, '/').replace(/^\//, '')), 123)
-    assert.deepEqual(items, [{
+    assert.deepEqual(plan.ready, [{
       ipodPath: colon('imported_1.m4a'),
       fingerprint: 'sha1:aaaa|180000',
       enqueuedAt: 123,
     }])
+    assert.deepEqual(plan.needsFingerprint, [{
+      ipodPath: colon('imported_4.m4a'),
+      abs: bare,
+      durationMs: 180000,
+    }])
+    const sleeps: number[] = []
+    const queued: string[] = []
+    const n = await backfillAlacFingerprints(
+      plan.needsFingerprint,
+      async (abs, dur) => `sha1:deadbeef|${dur}`,
+      async (item) => { queued.push(`${item.ipodPath}|${item.fingerprint}`) },
+      () => 50,
+      async (ms) => { sleeps.push(ms) },
+      250,
+    )
+    assert.equal(n, 1)
+    assert.deepEqual(sleeps, [250])
+    assert.deepEqual(queued, [`${colon('imported_4.m4a')}|sha1:deadbeef|180000`])
     await rm(dir, { recursive: true, force: true })
   })
 })
 
 describe('iPod Mini mirror still gets the ALAC bytes', () => {
-  test('a streamed ALAC symlink is pulled as raw homemini bytes before anyone encodes it', async () => {
+  test('a streamed ALAC symlink is staged from raw homemini bytes and the library link stays', async () => {
     const root = await freshDir('jt-salac-ipod-')
     const music = join(root, 'iPod_Control', 'Music', 'F03')
+    const stage = join(root, 'stage')
     await mkdir(music, { recursive: true })
     const abs = join(music, 'imported_9.m4a')
     await symlink(join(root, '.jt-streamed'), abs)
@@ -183,12 +205,13 @@ describe('iPod Mini mirror still gets the ALAC bytes', () => {
     assert.equal(classified.toPull.length, 1)
     assert.equal(classified.toPull[0].path, colon)
     let url = ''
-    const pulled = await materializeTrackFromHomemini({
+    const staged = await stageTrackForSync({
       colonPath: colon,
       trackId: 9,
       localMount: root,
       pathSep: '/',
       homeminiAudioBase: 'http://homemini:3000/audio',
+      stageDir: stage,
       lstat, mkdir, writeFile, rename, unlink,
       fetchAudio: async (u) => {
         url = u
@@ -197,10 +220,15 @@ describe('iPod Mini mirror still gets the ALAC bytes', () => {
     })
     assert.equal(url, 'http://homemini:3000/audio/9')
     assert.equal(url.includes('fmt='), false)
-    assert.equal(pulled.ok, true)
+    assert.equal(staged.ok, true)
+    if (!staged.ok) return
+    assert.equal(staged.staged, true)
+    assert.equal(await readFile(staged.abs, 'utf-8'), 'alac-master-bytes')
     const st = await lstat(abs)
-    assert.equal(st.isSymbolicLink(), false)
-    assert.equal(st.isFile(), true)
+    assert.equal(st.isSymbolicLink(), true)
+    await staged.cleanup()
+    assert.equal(existsSync(staged.abs), false)
+    assert.equal((await lstat(abs)).isSymbolicLink(), true)
     await rm(root, { recursive: true, force: true })
   })
 })

@@ -50,7 +50,8 @@ import { computeDeletedPaths } from './library-deletions'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
 import { createPlayCache } from './play-cache.ts'
 import { createStreamAlacCache, downloadUrlToFile, ffmpegAlacToFlac, localFileNeedsStreamAlacDecode } from './stream-alac-cache.ts'
-import { planLocalAlacMigration, type AlacMigrateTrack } from './alac-stream-migrate.ts'
+import { backfillAlacFingerprints, planLocalAlacMigration, type AlacMigrateTrack } from './alac-stream-migrate.ts'
+import { decideStreamConvertAttempt, decideStreamConvertMiss } from './stream-convert-retry.ts'
 import { createServePin } from './play-cache-serve-pin.ts'
 import { createIpcRegistrar, REFUSED_SENDER } from './ipc-register.ts'
 import { registerUiStateIpc } from './ipc/ui-state-ipc.ts'
@@ -178,7 +179,7 @@ import { readLedgerRows } from './taste-ledger-io.ts'
 import { JsonFileCache } from './state-cache'
 import { initFlightRecorder, sanitizeCrashPayload, quietWarn } from './flight-recorder'
 import { spawn } from 'child_process'
-import { stat, lstat, open, readFile, writeFile, mkdir, copyFile, unlink, readlink, symlink, rename, appendFile, readdir, utimes } from 'fs/promises'
+import { stat, statfs, lstat, open, readFile, writeFile, mkdir, copyFile, unlink, readlink, symlink, rename, appendFile, readdir, utimes } from 'fs/promises'
 import { createHash, randomUUID } from 'crypto'
 import Anthropic from '@anthropic-ai/sdk'
 import { config } from 'dotenv'
@@ -241,7 +242,7 @@ import {
   formatHomeminiPullRefuse,
   formatSyncSetFileRefuse,
 } from './activity-boardable'
-import { materializeTrackFromHomemini } from './ipod-sync-materialize'
+import { materializeTrackFromHomemini, probeHomeminiAudio, stageTrackForSync } from './ipod-sync-materialize'
 import {
   confirmWriteOnCard,
   flushCardCaches,
@@ -3587,11 +3588,9 @@ async function buildAacMirror(srcPath: string, targetKbps: number): Promise<stri
  * Library import does not use this downsample — ipodSafe keeps the
  * existing Mini mirror at 16-bit / 44.1 kHz when the master is hi-res.
  *
- * A streamed library file is a symlink to the 0-byte sentinel. stat()
- * would follow that and encode nothing. Activity sync and full-library
- * sync both call materializeTrackFromHomemini first: it pulls the raw
- * `/audio/:id` bytes (no transcode query) over HTTP and replaces the
- * symlink, so this function reads a real ALAC file.
+ * A streamed library file is a symlink to the 0-byte sentinel. Sync
+ * stages one temp file (stageTrackForSync) and passes that path. This
+ * function does not follow the library symlink and does not replace it.
  */
 async function buildIpodSafeAlacMirror(srcPath: string): Promise<string | null> {
   const srcStat = await stat(srcPath).catch(() => null)
@@ -4582,28 +4581,58 @@ async function convertTrackToStreamed(ipodPath: string, storedFingerprint: strin
     return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 }
-// Pull homemini bytes onto this Mac when eviction (or a NAS symlink) left
-// nothing copyFile can send to the Mini. HTTP only — never SMB.
-async function materializeLibraryTrack(colonPath: string, trackId: number | string): Promise<{ ok: boolean; error?: string; pulled?: boolean }> {
-  const localMount = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
-  const r = await materializeTrackFromHomemini({
+async function laptopFreeBytes(): Promise<number> {
+  try {
+    const root = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '') || app.getPath('home')
+    const s = await statfs(root)
+    return Number(s.bavail) * Number(s.bsize)
+  } catch (err) {
+    console.warn('[disk] free-space check failed:', err instanceof Error ? err.message : err)
+    return 0
+  }
+}
+function homeminiPullOpts(colonPath: string, trackId: number | string) {
+  return {
     colonPath,
     trackId,
-    localMount,
+    localMount: MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, ''),
     pathSep: IS_WINDOWS ? '\\' : '/',
     homeminiAudioBase: HOMEMINI_AUDIO_BASE,
-    lstat,
-    mkdir,
-    writeFile,
-    rename,
-    unlink,
-    fetchAudio: async (url) => {
-      const res = await fetch(url, withCompanionInit({ signal: AbortSignal.timeout(30_000) }))
+    lstat, mkdir, writeFile, rename, unlink,
+    freeBytes: laptopFreeBytes,
+    fetchAudio: async (url: string) => {
+      const res = await fetch(url, withCompanionInit({ signal: AbortSignal.timeout(120_000) }))
       return { ok: res.ok, status: res.status, buffer: Buffer.from(await res.arrayBuffer()) }
     },
-  })
+  }
+}
+// Pin / Download / a cassette dub. Replaces the library path. Refuses under the 10 GB floor.
+async function materializeLibraryTrack(colonPath: string, trackId: number | string): Promise<{ ok: boolean; error?: string; pulled?: boolean }> {
+  const r = await materializeTrackFromHomemini(homeminiPullOpts(colonPath, trackId))
   if (!r.ok) return { ok: false, error: r.error }
   return { ok: true, pulled: r.pulled }
+}
+async function stageLibraryTrack(colonPath: string, trackId: number | string) {
+  return stageTrackForSync({
+    ...homeminiPullOpts(colonPath, trackId),
+    stageDir: join(app.getPath('userData'), 'sync-stage'),
+  })
+}
+async function probeHomeminiTrack(trackId: number | string) {
+  return probeHomeminiAudio({
+    trackId,
+    homeminiAudioBase: HOMEMINI_AUDIO_BASE,
+    probe: async (url) => {
+      const res = await fetch(url, withCompanionInit({
+        headers: { Range: 'bytes=0-0' },
+        signal: AbortSignal.timeout(8000),
+      }))
+      const cr = res.headers.get('content-range') || ''
+      const m = /\/(\d+)\s*$/.exec(cr)
+      const bytes = m ? Number(m[1]) : Number(res.headers.get('content-length') || 0)
+      return { ok: res.ok || res.status === 206, status: res.status, bytes: Number.isFinite(bytes) ? bytes : 0 }
+    },
+  })
 }
 
 // Pull a streamed/evicted track's real bytes down from homemini into a local
@@ -4626,11 +4655,12 @@ async function pinStreamedTrackFromHomemini(ipodPath: string): Promise<{ ok: boo
 // analysis run on real bytes), then enqueued here. A background pass keeps the
 // track LOCAL and PLAYABLE until homemini is confirmed to serve byte-identical
 // bytes (macbook→NAS→homemini propagation, typically ≤60-120s), then converts
-// it to a streamed symlink. If homemini never serves a match within
-// STREAM_CONVERT_MAX_AGE_MS, the track just stays local (safe). Crash-safe:
+// it to a streamed symlink. A miss past STREAM_CONVERT_MAX_AGE_MS is
+// retried every period while the app runs — the file is not abandoned
+// until the next boot. Crash-safe:
 // persisted in userData. Poll interval is > 30s to dodge homemini's miss-cache.
-interface StreamConvertItem { ipodPath: string; fingerprint?: string; enqueuedAt: number }
-const STREAM_CONVERT_MAX_AGE_MS = 30 * 60 * 1000   // give up after 30 min → stays local
+interface StreamConvertItem { ipodPath: string; fingerprint?: string; enqueuedAt: number; retryAfter?: number }
+const STREAM_CONVERT_MAX_AGE_MS = 30 * 60 * 1000   // after this, retry once per period while the app runs
 let streamConvertTimer: ReturnType<typeof setInterval> | null = null
 function streamConvertQueuePath(): string {
   return join(app.getPath('userData'), 'stream-convert-queue.json')
@@ -4674,20 +4704,27 @@ async function runStreamConvertPass(now: number): Promise<void> {
     let items = await readStreamConvertQueue()
     if (!items.length) return
     const keep: StreamConvertItem[] = []
+    let changed = false
     for (const it of items) {
-      if (now - it.enqueuedAt > STREAM_CONVERT_MAX_AGE_MS) {
-        console.log(`[stream-convert] gave up (homemini never served a match in time), staying local: ${it.ipodPath}`)
-        continue                                            // drop → stays local
+      if (decideStreamConvertAttempt(it, now) === 'wait') {
+        keep.push(it)
+        continue
       }
       const fpr = it.fingerprint ?? await fingerprintForIpodPath(it.ipodPath)
       const r = await convertTrackToStreamed(it.ipodPath, fpr)
       if (r.ok) {
         console.log(`[stream-convert] converted to streamed: ${it.ipodPath}`)
-      } else {
-        keep.push(it)                                       // not ready yet → retry next pass
+        changed = true
+        continue
       }
+      const miss = decideStreamConvertMiss(it, now, STREAM_CONVERT_MAX_AGE_MS)
+      if (miss.rescheduled) {
+        changed = true
+        console.log(`[stream-convert] no homemini match yet, retrying in 30 min: ${it.ipodPath}`)
+      }
+      keep.push(miss.item)
     }
-    if (keep.length !== items.length) await writeStreamConvertQueue(keep)
+    if (changed || keep.length !== items.length) await writeStreamConvertQueue(keep)
     if (!keep.length && streamConvertTimer) { clearInterval(streamConvertTimer); streamConvertTimer = null }
   } catch { /* non-fatal */ } finally {
     streamConvertPassRunning = false
@@ -5411,7 +5448,7 @@ const syncEngine = createSyncEngine({
   },
   buildAacMirror, buildIpodSafeAlacMirror, candidateMusicMounts, cleanOrphansOnMusicRoot,
   computeAudioFingerprint, getConcertOwnedTrackIds, getLibraryTracks: () => libraryCache.get() as Promise<{ tracks?: Array<Record<string, unknown>> }>, isStreamedTrackFile,
-  materializeLibraryTrack, readIpodDatabase, resolveTrackAbsPath, scheduleDbRebuild,
+  probeHomeminiTrack, stageLibraryTrack, freeBytes: laptopFreeBytes, readIpodDatabase, resolveTrackAbsPath, scheduleDbRebuild,
   sendToRenderer, verifyAndHealTracks, walkAudioFilesUnder,
 })
 const { handleSyncToIpod, handleSyncIpodFromDevice } = syncEngine
@@ -10613,9 +10650,8 @@ app.whenReady().then(async () => {
   })
   await streamAlacCache.ensureDir()
   // ALAC already on this disk: same queue as a new import. Symlinks and
-  // missing files are skipped. Not run from tests or from a non-homemini
-  // machine. The 30-minute give-up in the worker still applies — a track
-  // homemini never hash-matches stays a real local file.
+  // missing files are skipped. Rows with no sha1 are hashed off this
+  // path (same window as the stream-convert match) so boot is not blocked.
   void (async () => {
     if ((await readStreamSource()) !== 'homemini') return
     let tracks: AlacMigrateTrack[] = []
@@ -10626,10 +10662,24 @@ app.whenReady().then(async () => {
       console.warn('[stream-convert] local ALAC scan skipped:', err instanceof Error ? err.message : err)
       return
     }
-    const pending = await planLocalAlacMigration(tracks, lstat, trackFarmPath, Date.now())
-    if (!pending.length) return
-    await enqueueStreamConvertBatch(pending)
-    console.log(`[stream-convert] queued ${pending.length} local ALAC file(s) for NAS pass-through`)
+    const plan = await planLocalAlacMigration(tracks, lstat, trackFarmPath, Date.now())
+    if (plan.ready.length) {
+      await enqueueStreamConvertBatch(plan.ready)
+      console.log(`[stream-convert] queued ${plan.ready.length} local ALAC file(s) for NAS pass-through`)
+    }
+    if (!plan.needsFingerprint.length) return
+    console.log(`[stream-convert] hashing ${plan.needsFingerprint.length} local ALAC file(s) with no fingerprint`)
+    void backfillAlacFingerprints(
+      plan.needsFingerprint,
+      computeAudioFingerprint,
+      async (item) => { await enqueueStreamConvertBatch([item]) },
+      () => Date.now(),
+      (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    ).then((n) => {
+      if (n) console.log(`[stream-convert] queued ${n} fingerprinted ALAC file(s)`)
+    }).catch((err) => {
+      console.warn('[stream-convert] fingerprint backfill failed:', err instanceof Error ? err.message : err)
+    })
   })()
   // One media load, one byte stream — see play-cache-serve-pin.ts.
   const servePin = createServePin()

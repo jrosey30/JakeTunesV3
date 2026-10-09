@@ -4,7 +4,8 @@
  *
  * Missing local files and NAS symlinks are NOT a refuse — pass-through
  * eviction is supposed to delete the Mac copy once homemini has it.
- * Sync pulls those bytes over HTTP (ipod-sync-materialize.ts) before wipe.
+ * Sync probes those over HTTP before wipe, then stages one file at
+ * copy time (ipod-sync-materialize.ts). The library symlink stays.
  *
  * Identity is path + lstat, never title. Do not stat()-follow — a dead
  * NAS target must not hang on SMB.
