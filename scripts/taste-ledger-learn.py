@@ -19,6 +19,15 @@ Learning rule (deliberately boring):
   - A playlist needs >= MIN_ACCEPTS accepts and >= MIN_PASSES passes in
     the window before we touch its weights — no learning from noise.
 
+An accept only counts if the song is STILL on the playlist (2026-10-10):
+the strip logs the moment of adding, and Jake added 42 suggestions to
+Rocksurgence and later removed 26 — each of those was being learned as a
+"yes". An accept whose track has since left its playlist is learned as a
+pass. Membership comes from playlists.json and mobile-playlists.json; a
+playlist that no longer exists keeps its events as logged.
+
+--dry-run prints what would change and writes nothing.
+
 Read-only over the ledger (append-only file, never rewritten here);
 taste-weights.json is written atomically (tmp + rename) so the app's
 mtime-cached reader never sees a torn file.
@@ -62,7 +71,26 @@ def read_ledger(cutoff):
         return
 
 
+def playlist_members():
+    """playlist id -> set of track ids as strings, desktop last (it wins)."""
+    members = {}
+    for name in ('mobile-playlists.json', 'playlists.json'):
+        try:
+            with open(os.path.join(UD, name)) as f:
+                d = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            continue
+        lists = d if isinstance(d, list) else next((v for v in d.values() if isinstance(v, list)), [])
+        for p in lists:
+            if isinstance(p, dict) and p.get('id') and isinstance(p.get('trackIds'), list):
+                members[p['id']] = {str(x) for x in p['trackIds']}
+    return members
+
+
 def main():
+    dry_run = '--dry-run' in sys.argv
+    members = playlist_members()
+    reverted = defaultdict(int)
     cutoff = (datetime.now(timezone.utc) - timedelta(days=WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%S')
     # accepts/passes per playlist: playlistId -> verdict -> list of ctx dicts
     strip = defaultdict(lambda: {'accept': [], 'pass': []})
@@ -73,6 +101,10 @@ def main():
             continue
         pid = (ev.get('key') or {}).get('playlistId')
         v = ev.get('verdict')
+        tid = (ev.get('key') or {}).get('trackId')
+        if v == 'accept' and pid in members and tid is not None and str(tid) not in members[pid]:
+            v = 'pass'   # added, then taken back off — not a "yes"
+            reverted[pid] += 1
         if pid and v in ('accept', 'pass'):
             strip[pid][v].append(ev.get('ctx') or {})
 
@@ -111,9 +143,15 @@ def main():
     store['playlists'] = playlists
     store['updatedAt'] = time.strftime('%Y-%m-%dT%H:%M:%S')
     store['evidence'] = {
-        pid: {'accepts': len(b['accept']), 'passes': len(b['pass'])}
+        pid: {'accepts': len(b['accept']), 'passes': len(b['pass']), 'acceptsTakenBack': reverted.get(pid, 0)}
         for pid, b in strip.items()
     }
+    if dry_run:
+        print('DRY RUN — nothing written')
+        print('accepts taken back (learned as passes):', dict(reverted))
+        for n in nudged:
+            print('would nudge', n)
+        return
     tmp = WEIGHTS + '.tmp'
     with open(tmp, 'w') as f:
         json.dump(store, f, indent=2)
