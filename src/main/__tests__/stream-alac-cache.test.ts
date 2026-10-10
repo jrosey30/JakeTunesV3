@@ -6,7 +6,8 @@ import { mkdtemp, rm, readdir, utimes, stat, writeFile, readFile, mkdir, symlink
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { createStreamAlacCache, localFileNeedsStreamAlacDecode } from '../stream-alac-cache.ts'
+import { createStreamAlacCache, localFileNeedsStreamAlacDecode, ffmpegAlacToFlac } from '../stream-alac-cache.ts'
+import { execFileSync } from 'child_process'
 import { backfillAlacFingerprints, planLocalAlacMigration } from '../alac-stream-migrate.ts'
 import { classifyActivitySyncTracks } from '../activity-boardable.ts'
 import { stageTrackForSync } from '../ipod-sync-materialize.ts'
@@ -230,5 +231,32 @@ describe('iPod Mini mirror still gets the ALAC bytes', () => {
     assert.equal(existsSync(staged.abs), false)
     assert.equal((await lstat(abs)).isSymbolicLink(), true)
     await rm(root, { recursive: true, force: true })
+  })
+})
+
+// 2026-10-09: the cache decodes to `<id>.flac.partial`. ffmpeg picks the
+// container from the last extension, ".partial" is none, so the real decode
+// refused every streamed ALAC and the song sat on loading. The tests above
+// stub the transcode, so only a real ffmpeg run catches this.
+describe('the real ALAC → FLAC decode', () => {
+  const haveFfmpeg = (() => {
+    try { execFileSync('ffmpeg', ['-version'], { stdio: 'ignore' }); return true } catch { return false }
+  })()
+
+  test('writes FLAC to the cache\'s own .partial temp name', async (t) => {
+    if (!haveFfmpeg) { t.skip('ffmpeg is not on PATH'); return }
+    const dir = await freshDir('jt-salac-real-')
+    try {
+      // A 24-bit/48k ALAC like the one that failed ("makeup sex", 12440).
+      const src = join(dir, '12440.alac.partial')
+      execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1:sample_rate=48000',
+        '-ac', '2', '-c:a', 'alac', '-sample_fmt', 's32p', '-f', 'ipod', src])
+      const tmp = join(dir, '12440.flac.partial')
+      await ffmpegAlacToFlac(src, tmp)
+      const head = (await readFile(tmp)).subarray(0, 4).toString('latin1')
+      assert.equal(head, 'fLaC', 'the temp file is a FLAC stream')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 })
