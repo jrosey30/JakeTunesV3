@@ -99,3 +99,13 @@ enrichment of *newer* queue positions never touches them. The remaining
 ~+0.009 of wave sag is therefore stuck until the queue arrives, which is the
 same queue-order defect PROPOSAL-tempo-catchup-queue-order documents.
 Proposal stands for wave days; no emergency drain needed while imports are quiet.
+
+## 2026-10-10 update — October wave outruns batch=50 a second night
+
+Backlog 0 (10-08) → 119 (10-09, +168 imports) → **226** (10-10, +156 imports):
+two consecutive wave days each >3× the nightly batch. Production impact stayed
+nil both nights (rt 0.837/0.837, baseline band-center — the 34ba4de prune means
+vectorless new tracks are ABSENT from the mood index, not polluting it), so
+this remains a latency problem, not a quality problem: at batch=50 the new wave
+is vibe-blind for ~5+ quiet nights, longer if imports continue. Unchanged ask;
+this is the first multi-day compounding wave since the proposal was filed.
