@@ -151,6 +151,7 @@ describe('WIRING — the tested code is the live code', () => {
     { fn: 'tapeElapsedMs', file: 'renderer/components/DeckBar.tsx', minCalls: 1, why: 'spec-01 — the deck must pin voices with the ruler Play Tape reads them back with' },
     { fn: 'talkoverPlays', file: 'renderer/components/DeckBar.tsx', minCalls: 1, why: 'spec-01 — the strip never says a voice landed that Play Tape would skip' },
     { fn: 'dubTalkovers', file: 'renderer/views/MixtapeView.tsx', minCalls: 1, why: 'spec-01 — Export places every voice where Play Tape fires it' },
+    { fn: 'claimTransportKeys', file: 'renderer/views/ScotusView/ScotusView.tsx', minCalls: 1, why: 'spec-02 — unwired, Space in the courtroom toggles the music and the argument at once again' },
     { fn: 'armGlobalNets', file: 'renderer/main.tsx', minCalls: 1, why: 'reliability P0 — the renderer crash net must arm before first render or grey screens go unrecorded again' },
     // Passed by REFERENCE (importDownloaded: importDownloadedFiles), never
     // called directly in index — so this wire matches the reference form.
