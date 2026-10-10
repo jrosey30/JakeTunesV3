@@ -20,12 +20,14 @@
  *   - post-success of `save-metadata-override`
  *   - post-success of `save-playlists`
  *
- * Every trigger funnels through a single 30-sec debounce so an album
- * of 12 tracks results in ONE sync, not 12. A single-flight gate
- * prevents two syncs from running concurrently — if a trigger fires
- * while one is in flight, the new trigger is captured and a fresh
- * sync runs as soon as the current one finishes. The final state is
- * always synced; no trigger is dropped.
+ * Timing lives in src/common/sync-batching.ts (2026-10-10): imports,
+ * covers and manual syncs run 5 s after the last trigger (an album of
+ * 12 tracks is ONE sync); routine library saves — play counts, stars,
+ * edits, playlist adds — batch into one sync per 5-minute window. A
+ * single-flight gate prevents two syncs from running concurrently — if a
+ * trigger fires while one is in flight, it is captured and a fresh sync
+ * runs after the current one finishes. The final state is always
+ * synced; no trigger is dropped.
  *
  * Runs ~/bin/jaketunes-homemini-sync.sh as a child process. That
  * script handles auto-mount, music rsync, state files (library.json
@@ -50,6 +52,7 @@ import type { BrowserWindow } from 'electron'
 import { nasAvailable, onNasRecovery, NAS_STATE_DIR_PATH } from './state-dir'
 import { mountHostFor, isTailnetHost, decideSyncMode } from './sync-mode.ts'
 import { syncLaunchArgs } from '../common/sync-launch-args.ts'
+import { nextDueAt, mergePendingReason, dueAfterRun, syncUrgency, SYNC_BATCH_WINDOW_MS } from '../common/sync-batching.ts'
 
 const SYNC_SCRIPT = join(homedir(), 'bin', 'jaketunes-homemini-sync.sh')
 
@@ -63,14 +66,9 @@ let blocksHubLibraryPublish: () => Promise<boolean> = async () => false
 export function setBlocksHubLibraryPublish(fn: () => Promise<boolean>): void {
   blocksHubLibraryPublish = fn
 }
-// 4.4.36: dropped debounce 30 → 5 sec. The 30-sec window was meant to
-// coalesce 12 import-track triggers from an album into one sync, but
-// the single-flight gate already does that (the second trigger queues
-// for after the first finishes). 5 sec is enough to cover the
-// inbox-watcher's 1.5-sec batch debounce + a small margin, and makes
-// "instant" feel possible — paired with --quick mode rsync, the whole
-// chain runs in 10-15 sec for a typical album drop.
-const DEBOUNCE_MS = 5_000
+// 4.4.36: dropped debounce 30 → 5 sec for imports (paired with --quick mode
+// rsync, an album drop reaches homemini in 10-15 sec). 2026-10-10: that 5 s
+// is now the URGENT delay only; routine saves batch (src/common/sync-batching.ts).
 // 4.5.0-119: the full reconcile (rsync stat-walk over the ~73GB library) is
 // heavy + flaky over SMB. It's a SAFETY NET, not the main path — quick syncs
 // (on every import/edit, ~15s) carry new music. So run the full one rarely,
@@ -88,10 +86,12 @@ const SAFETY_NET_INTERVAL_MS = 21_600_000 // 6 h — rare full reconcile (10 min
 const RUN_TIMEOUT_MS = 600_000            // kill a hung sync after 10 min
 
 export type SyncReason =
-  | 'import' | 'metadata-edit' | 'playlist' | 'safety-net' | 'manual' | 'artwork' | 'nas-recovery'
+  | 'import' | 'metadata-edit' | 'playlist' | 'safety-net' | 'manual' | 'artwork' | 'nas-recovery' | 'startup'
 
 let getWindow: (() => BrowserWindow | null) | null = null
 let debounceTimer: NodeJS.Timeout | null = null
+// When the pending sync runs (epoch ms), or null when nothing is pending.
+let dueAt: number | null = null
 let safetyNetTimer: NodeJS.Timeout | null = null
 let inFlight = false
 let pendingReason: SyncReason | null = null
@@ -102,7 +102,16 @@ let pendingReason: SyncReason | null = null
 let currentChild: ChildProcess | null = null
 let currentReason: SyncReason | null = null
 let preempted = false
-const isQuickReason = (r: SyncReason): boolean => r === 'import' || r === 'metadata-edit' || r === 'playlist' || r === 'nas-recovery'
+// 2026-10-10: 'artwork' is quick too. It used to run FULL mode — a stat-walk
+// over the whole 73 GB library for one new cover — though the artwork leg
+// runs in every mode.
+const isQuickReason = (r: SyncReason): boolean =>
+  r === 'import' || r === 'metadata-edit' || r === 'playlist' || r === 'nas-recovery' || r === 'artwork' || r === 'startup'
+
+function armTimer(): void {
+  if (debounceTimer) clearTimeout(debounceTimer)
+  debounceTimer = dueAt === null ? null : setTimeout(flushDebounce, Math.max(0, dueAt - Date.now()))
+}
 
 // 4.5: persist the last sync outcome in process memory so the renderer
 // can read "last backed up: 3 min ago" in Settings → Sync. Cleared on
@@ -339,6 +348,7 @@ async function flushDebounce(): Promise<void> {
 
   const reason = pendingReason || 'manual'
   pendingReason = null
+  dueAt = null
   inFlight = true
   currentReason = reason
   const result = await runSyncOnce(reason)
@@ -359,21 +369,27 @@ async function flushDebounce(): Promise<void> {
   }
   notify({ ok: result.ok, reason, error: result.error, durationMs: result.durationMs, deferred: result.deferred === true })
 
-  // If a trigger landed while we were running, fire another debounced sync.
+  // If a trigger landed while we were running, run again at its moment —
+  // a batched change keeps its window, a moment that passed mid-run fires
+  // after the urgent delay.
   if (pendingReason) {
-    if (debounceTimer) clearTimeout(debounceTimer)
-    debounceTimer = setTimeout(flushDebounce, DEBOUNCE_MS)
+    dueAt = dueAfterRun(dueAt, Date.now())
+    armTimer()
   }
 }
 
 /**
- * Fire a sync. Debounced — repeated calls within DEBOUNCE_MS coalesce
- * into one run. Safe to call from any IPC handler; non-blocking.
+ * Fire a sync. Urgent reasons run 5 s after the last call; batched ones
+ * ride a 5-minute window (src/common/sync-batching.ts). Safe to call from
+ * any IPC handler; non-blocking.
  *
  * Use a tight reason string for telemetry / notifications:
- *   - 'import' — post-import-track / post-import-tracks
- *   - 'metadata-edit' — post-save-metadata-override
- *   - 'playlist' — post-save-playlists
+ *   - 'import' — post-import-track / post-import-tracks (urgent)
+ *   - 'artwork' — a new cover was saved (urgent)
+ *   - 'metadata-edit' — every save-library: play counts, stars, edits,
+ *     playlist changes (batched)
+ *   - 'playlist' — post-save-playlists (batched)
+ *   - 'startup' — the catch-up pass after launch (batched)
  *   - 'safety-net' — periodic full reconcile tick (6 h)
  *   - 'manual' — explicit user action
  */
@@ -386,12 +402,13 @@ export function triggerSync(reason: SyncReason): void {
   // canonical sync source shouldn't sync, and definitely shouldn't
   // surface an error Notice for not doing so.
   if (!existsSync(SYNC_SCRIPT)) return
-  pendingReason = reason
-  // 4.5.0-119: if a fresh import/edit lands while a slow FULL reconcile is
+  pendingReason = mergePendingReason(pendingReason, reason)
+  // 4.5.0-119: if a fresh import lands while a slow FULL reconcile is
   // grinding, preempt it — kill the full sync so the quick one runs now
   // rather than queuing behind a 73GB walk. The killed run resolves cleanly
-  // (preempted) and this pending quick reason fires right after.
-  if (isQuickReason(reason) && inFlight && currentReason && !isQuickReason(currentReason) && currentChild) {
+  // (preempted) and this pending quick reason fires right after. Only an
+  // URGENT reason preempts: a play count can wait for the walk to finish.
+  if (syncUrgency(reason) === 'urgent' && isQuickReason(reason) && inFlight && currentReason && !isQuickReason(currentReason) && currentChild) {
     preempted = true
     try {
       if (currentChild.pid !== undefined) process.kill(-currentChild.pid, 'SIGTERM')
@@ -400,15 +417,15 @@ export function triggerSync(reason: SyncReason): void {
       try { currentChild.kill('SIGTERM') } catch { /* already gone */ }
     }
   }
-  if (debounceTimer) clearTimeout(debounceTimer)
-  debounceTimer = setTimeout(flushDebounce, DEBOUNCE_MS)
+  dueAt = nextDueAt(dueAt, reason, Date.now())
+  armTimer()
 }
 
 /**
  * Wire the orchestrator. Call once from main/index.ts after the
- * BrowserWindow exists. Starts the safety-net timer; does NOT fire
- * an initial sync (let import/edit triggers do that on their own
- * cadence so app launch doesn't slam the network).
+ * BrowserWindow exists. Starts the safety-net timer and queues one
+ * batched catch-up pass (5 min after launch, so launch itself never
+ * slams the network).
  */
 export function startSyncOrchestrator(windowAccessor: () => BrowserWindow | null): void {
   getWindow = windowAccessor
@@ -435,7 +452,12 @@ export function startSyncOrchestrator(windowAccessor: () => BrowserWindow | null
   // what quick mode does, in seconds. Anything older is still caught by the
   // periodic full reconcile and by the fullSyncOwed debt.
   onNasRecovery(() => triggerSync('nas-recovery'))
-  console.log(`[sync-orchestrator] started (script=${SYNC_SCRIPT}, safety-net every ${SAFETY_NET_INTERVAL_MS / 1000}s)`)
+  // 2026-10-10: one batched catch-up pass after launch. A batched change
+  // made in the last minutes before a quit would otherwise wait for the next
+  // edit; the push is fingerprint-gated, so with nothing pending it is cheap.
+  // Batched (5 min out), so launch itself never slams the network.
+  triggerSync('startup')
+  console.log(`[sync-orchestrator] started (script=${SYNC_SCRIPT}, safety-net every ${SAFETY_NET_INTERVAL_MS / 1000}s, batch window ${SYNC_BATCH_WINDOW_MS / 1000}s)`)
 }
 
 export function stopSyncOrchestrator(): void {
@@ -443,5 +465,6 @@ export function stopSyncOrchestrator(): void {
   safetyNetTimer = null
   if (debounceTimer) clearTimeout(debounceTimer)
   debounceTimer = null
+  dueAt = null
   pendingReason = null
 }
