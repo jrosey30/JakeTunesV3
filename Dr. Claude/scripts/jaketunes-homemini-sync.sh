@@ -7,11 +7,11 @@
 #   2. rsyncs ~/Music2/JakeTunesLibrary → /Volumes/JakeShared/JakeTunesLibrary
 #      (homemini reads music from this share).
 #   3. scps library.json directly to homemini over Tailscale ssh.
-#      Only pushes if local library.json is newer than remote — saves a
-#      restart cycle when nothing's changed.
-#   4. If library.json was pushed, restarts JakeTunes on homemini so it
-#      picks up the new metadata. (Future: hot-reload via fs.watch in
-#      JakeTunes itself, no restart needed.)
+#      Only pushes when a state file's mtime differs from homemini's copy.
+#   4. Makes sure JakeTunes is running on homemini. It is NOT restarted:
+#      the app reloads library.json by itself (fs.watch + a 15 s mtime poll,
+#      startLibraryWatcher in src/main/index.ts) and playlists converge
+#      through the homemini hub.
 #   5. On any failure, posts a macOS notification so the user knows.
 #
 # 4.4.68 / Brief 019 — full-mode rsync NO LONGER uses --delete.
@@ -60,7 +60,7 @@
 #   JT_PLEX_SKIP      set to 1 to skip the Plex scan step (e.g. local-only tests)
 #
 # Exit codes:
-#   0  — success (music + library.json sync, and any needed restart)
+#   0  — success (music + library.json sync)
 #   1  — couldn't mount JakeShared
 #   2  — rsync failed
 #   3  — library.json scp failed
@@ -487,17 +487,24 @@ done'
     return 0
   fi
 
-  log "restarting JakeTunes on homemini …"
+  # No restart (2026-10-10). This used to pkill + relaunch JakeTunes on
+  # homemini after every push, from before the app could reload by itself.
+  # Every library save on the laptop (a play count, a star, a playlist add)
+  # pushes here, so that was 257 kill/relaunch cycles in one day — the app
+  # relaunched every 10-30 s, never finished booting, wrote an 8.5 MB launch
+  # backup each time and was killed mid-write. The running app already picks
+  # up a pushed library.json within 15 s (startLibraryWatcher), refuses to
+  # save over a newer file (save-library's external-write guard), and gets
+  # playlists from the hub converge. So only start it if it isn't running.
   ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOMEMINI" \
-    'pkill -f "JakeTunes.app/Contents/MacOS" 2>/dev/null; sleep 2; open /Applications/JakeTunes.app' \
+    'pgrep -f "JakeTunes.app/Contents/MacOS/JakeTunes$" >/dev/null || open -g /Applications/JakeTunes.app' \
     >> "$LOG" 2>&1
   local ssh_rc=$?
   if [ $ssh_rc -ne 0 ]; then
-    log "WARNING: ssh restart returned $ssh_rc (library.json was pushed though)"
-    notify "library.json synced, but couldn't restart JakeTunes on homemini. Restart it manually."
-    return 4
+    log "WARNING: couldn't check JakeTunes on homemini (ssh $ssh_rc) — state was pushed; a running app reloads it"
+    return 0
   fi
-  log "homemini JakeTunes restarted — new tracks/edits should be visible now"
+  log "state pushed — homemini JakeTunes reloads it itself (no restart)"
   return 0
 }
 

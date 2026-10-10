@@ -155,7 +155,11 @@ describe('sync script: a replica pushes only into its own folder on homemini', (
 })
 
 describe('sync script: the hub run is unchanged', () => {
-  it('hub publishes library.json, pushes state into the hub folder, restarts homemini JakeTunes', () => {
+  // 2026-10-10: the hub no longer kills + relaunches JakeTunes on homemini
+  // after a push (257 times in one day — every play count, star and playlist
+  // add). The running app reloads library.json itself; the sync only starts
+  // it when it isn't running.
+  it('hub publishes library.json, pushes state into the hub folder, never restarts homemini JakeTunes', () => {
     const r = runScript(['--quick', '--homemini-only'])
     assert.equal(r.status, 0, r.log)
     assert.ok(rsyncs(r).some((c) => dest(c) === 'test@stub:JakeTunesState/.library.json.incoming'), 'library publish')
@@ -163,7 +167,10 @@ describe('sync script: the hub run is unchanged', () => {
     assert.ok(push)
     assert.equal(dest(push), `test@stub:${HUB_DIR}/`)
     assert.ok(push.args.some((a) => a.endsWith('/library.json')))
-    assert.ok(r.calls.some((c) => c.tool === 'SSH' && c.args.join(' ').includes('pkill -f "JakeTunes.app/Contents/MacOS"')))
+    const sshCmds = r.calls.filter((c) => c.tool === 'SSH').map((c) => c.args.join(' '))
+    assert.equal(sshCmds.some((s) => /pkill|killall/.test(s)), false, 'no kill of homemini JakeTunes')
+    assert.ok(sshCmds.some((s) => s.includes('pgrep -f "JakeTunes.app/Contents/MacOS/JakeTunes$" >/dev/null || open -g /Applications/JakeTunes.app')),
+      'starts it only when it is not running')
     const art = artworkPush(r)
     assert.ok(art && art.args.includes('--update') && !art.args.includes('--ignore-existing'))
     assert.equal(r.calls.some((c) => c.tool === 'SSH' && c.args.join(' ').includes('replicas/')), false)
