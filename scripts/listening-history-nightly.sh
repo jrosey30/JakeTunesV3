@@ -41,10 +41,18 @@ args=(
 )
 if with_timeout 600 "$NODE" "$W/scripts/listening-history.mts" "${args[@]}" >> "$LOG" 2>&1; then
   log "built $OUT"
-  if mkdir -p "$NAS_STATE/yir" 2>/dev/null && cp "$OUT"/listening-summary-*.json "$OUT/listening-kpi.json" "$NAS_STATE/yir/" 2>>"$LOG"; then
+  # The NAS copy goes through node, not cp: under launchd macOS grants
+  # network-volume access per program, and on homemini node has it while
+  # /bin/cp is refused ("Operation not permitted", measured 2026-10-10).
+  if "$NODE" -e '
+    const fs = require("fs"), path = require("path")
+    const [src, dst] = process.argv.slice(1)
+    fs.mkdirSync(dst, { recursive: true })
+    for (const f of fs.readdirSync(src)) if (/^listening-(summary-\d+|kpi)\.json$/.test(f)) fs.copyFileSync(path.join(src, f), path.join(dst, f))
+  ' "$OUT" "$NAS_STATE/yir" 2>>"$LOG"; then
     log "copied the summary and scorecard to the NAS"
   else
-    log "NAS copy skipped (mount unavailable) — homemini's copy is current"
+    log "NAS copy FAILED (error above) — homemini's copy is current"
   fi
 else
   log "FAILED — previous outputs left in place"
