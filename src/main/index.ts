@@ -9210,7 +9210,19 @@ ipc.handle('playlist-similar', async (_e, playlistIds: number[], clusters: numbe
       for (const e of m) { if (!inPl.has(e[0])) yield e }
     }
     const hintVec = await playlistHintVector(hint)
-    const { hits, clusterSeeds } = scorePlaylistCandidates(seeds, candidateEntries(), gc, Math.max(1, Math.min(clusters, Math.floor(seeds.length / 3))), hintVec)
+    // Exclusions + artist caps go in BEFORE each sub-vibe's pool cut
+    // (playlist-vibes.ts PoolDiversity — 2026-10-10, Rocksurgence "0/10").
+    const libForArtists = (await libraryCache.get() as { tracks?: Array<{ id: number; artist?: string; albumArtist?: string; album?: string; audioMissing?: boolean }> }).tracks ?? []
+    const libById = new Map(libForArtists.map((t) => [t.id, t]))
+    const artistOf = new Map(libForArtists.map((t) => [t.id, String(t.albumArtist || t.artist || '').toLowerCase().trim()]))
+    const plArtistSet = new Set(playlistIds.map((id) => artistOf.get(id)).filter(Boolean))
+    const albumOf = (id: number): string => `${artistOf.get(id) || ''} ${String(libById.get(id)?.album || '').toLowerCase().trim()}`
+    const plAlbums = new Set(playlistIds.map(albumOf).filter((k) => k.trim().length > 0))
+    const admit = (id: number): string | null => {
+      const t = libById.get(id)
+      return !t || t.audioMissing || plAlbums.has(albumOf(id)) ? null : (artistOf.get(id) || '')
+    }
+    const { hits, clusterSeeds } = scorePlaylistCandidates(seeds, candidateEntries(), gc, Math.max(1, Math.min(clusters, Math.floor(seeds.length / 3))), hintVec, { admit, playlistArtists: plArtistSet as Set<string> })
     // Candidate DIVERSITY (2026-08-07, Jake: "it seems to only suggest
     // other songs by bands already in that playlist"): measured on Pool
     // Dos, 101 of 162 raw candidates were catalog-mates of the playlist's
@@ -9219,9 +9231,6 @@ ipc.handle('playlist-similar', async (_e, playlistIds: number[], clusters: numbe
     // seat. Balance each cluster's pool: max 2 candidates per artist, and
     // playlist-resident artists capped at ~25% of the pool. Relevance is
     // preserved (embedding-ranked walk); the strip finally breathes.
-    const libForArtists = (await libraryCache.get() as { tracks?: Array<{ id: number; artist?: string; albumArtist?: string }> }).tracks ?? []
-    const artistOf = new Map(libForArtists.map((t) => [t.id, String(t.albumArtist || t.artist || '').toLowerCase().trim()]))
-    const plArtistSet = new Set(playlistIds.map((id) => artistOf.get(id)).filter(Boolean))
     const byClusterHits = new Map<number, typeof hits>()
     for (const h of hits) {
       const arr = byClusterHits.get(h.cluster) ?? []

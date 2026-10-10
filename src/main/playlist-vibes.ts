@@ -106,6 +106,26 @@ const HINT_SEED_SHARE = 0.2
 const HINT_MIN_Z = 0.5
 
 /**
+ * Who may fill a sub-vibe's pool, applied BEFORE its PER_CLUSTER_POOL cut
+ * (2026-10-10, Jake on Rocksurgence: "trash", "like a 0/10"). The embedding
+ * is mostly an artist index — ~85% of any track's nearest neighbours are by
+ * the same artist — so cutting to 60 first and balancing artists after (the
+ * old order) filled the core sub-vibes with the playlist's own artists, then
+ * threw them away: Rocksurgence's main cluster kept 51 of 60 slots on its own
+ * artists and served FOUR suggestions, while a 2-song French-house corner
+ * served ten. admit() returns the artist key, or null to exclude the track
+ * (audio missing, an album already on the playlist).
+ */
+export interface PoolDiversity {
+  admit: (trackId: number) => string | null
+  playlistArtists: Set<string>
+}
+/** Per sub-vibe pool: at most this many tracks by one artist… */
+const MAX_PER_ARTIST = 2
+/** …and by the playlist's own artists, at most this share of the pool. */
+const PLAYLIST_ARTIST_SHARE = 0.25
+
+/**
  * The full scoring pass: k-means the seed vectors into sub-vibes, assign
  * every candidate to its nearest sub-vibe, floor out clusters that can't
  * produce real matches, return the per-cluster top pools (cluster-tagged
@@ -117,6 +137,7 @@ export function scorePlaylistCandidates(
   globalCentroid: Float32Array | null,
   clusters = 5,
   hint: Float32Array | null = null,
+  diversity: PoolDiversity | null = null,
 ): { hits: VibeHit[]; clusterSeeds: number[] } {
   if (seeds.length === 0) return { hits: [], clusterSeeds: [] }
   const cents = kmeansCentroids(seeds, Math.max(1, Math.min(clusters, seeds.length)))
@@ -170,12 +191,32 @@ export function scorePlaylistCandidates(
   // renderer to choose from, relax in steps and keep taking the best remaining
   // — still best-first, never random. Same doctrine as the discovery lane's
   // LANE_MIN: a small shelf of decent picks beats an empty one.
+  const plCap = Math.max(6, Math.floor(PER_CLUSTER_POOL * PLAYLIST_ARTIST_SHARE))
   const collect = (cut: number): VibeHit[] => {
     const out: VibeHit[] = []
     perCluster.forEach((list, c) => {
       const servable = list.filter((h) => h.rawSim >= cut)
       servable.sort((a, b) => b.score - a.score)
-      for (const h of servable.slice(0, PER_CLUSTER_POOL)) out.push({ trackId: h.trackId, score: h.score, cluster: c })
+      if (!diversity) {
+        for (const h of servable.slice(0, PER_CLUSTER_POOL)) out.push({ trackId: h.trackId, score: h.score, cluster: c })
+        return
+      }
+      // Exclusions and artist caps FIRST, then the pool size — see PoolDiversity.
+      const perArtist = new Map<string, number>()
+      let fromPlaylistArtists = 0
+      let taken = 0
+      for (const h of servable) {
+        if (taken >= PER_CLUSTER_POOL) break
+        const artist = diversity.admit(h.trackId)
+        if (artist === null) continue
+        if ((perArtist.get(artist) || 0) >= MAX_PER_ARTIST) continue
+        const isPl = diversity.playlistArtists.has(artist)
+        if (isPl && fromPlaylistArtists >= plCap) continue
+        perArtist.set(artist, (perArtist.get(artist) || 0) + 1)
+        if (isPl) fromPlaylistArtists++
+        out.push({ trackId: h.trackId, score: h.score, cluster: c })
+        taken++
+      }
     })
     return out
   }

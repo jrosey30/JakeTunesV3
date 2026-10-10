@@ -157,3 +157,34 @@ describe('playlist hint (name + description)', () => {
     assert.deepEqual(scorePlaylistCandidates(seeds, cands, null, 2, null), scorePlaylistCandidates(seeds, cands, null, 2))
   })
 })
+
+// ── 2026-10-10: exclusions and artist caps run BEFORE the pool cut ───────
+// The embedding is mostly an artist index, so a sub-vibe's 60 nearest are
+// mostly the playlist's own artists. Cutting first and balancing after left
+// Rocksurgence's core sub-vibe with 4 usable picks out of 60.
+describe('PoolDiversity — exclude first, then cut', () => {
+  const dim = 8
+  const at = (x: number): Float32Array => { const v = new Float32Array(dim); v[0] = 1; v[1] = x; const n = Math.hypot(1, x); v[0] /= n; v[1] /= n; return v }
+  const seeds = Array.from({ length: 6 }, () => at(0))
+  // 100 near-identical tracks by ONE playlist artist score highest; 40 by
+  // forty other artists sit just behind them.
+  const cands: Array<[number, Float32Array]> = [
+    ...Array.from({ length: 100 }, (_, i): [number, Float32Array] => [i + 1, at(0.001 * i)]),
+    ...Array.from({ length: 40 }, (_, i): [number, Float32Array] => [1000 + i, at(0.2 + 0.001 * i)]),
+  ]
+  const artist = (id: number): string => (id < 1000 ? 'geese' : `other${id}`)
+  it('without it, the playlist artist fills the whole pool', () => {
+    const { hits } = scorePlaylistCandidates(seeds, cands, null, 1)
+    assert.ok(hits.every((h) => h.trackId < 1000), 'old order: 60 of one artist, then balancing finds nothing else')
+  })
+  it('with it, the pool holds other artists and caps the playlist artist', () => {
+    const { hits } = scorePlaylistCandidates(seeds, cands, null, 1, null, { admit: artist, playlistArtists: new Set(['geese']) })
+    const own = hits.filter((h) => h.trackId < 1000).length
+    assert.ok(own <= 2, `≤2 per artist (got ${own})`)
+    assert.ok(hits.filter((h) => h.trackId >= 1000).length >= 30, 'other artists reach the pool')
+  })
+  it('admit() returning null excludes a track (missing audio, an album already on the playlist)', () => {
+    const { hits } = scorePlaylistCandidates(seeds, cands, null, 1, null, { admit: (id) => (id === 1000 ? null : artist(id)), playlistArtists: new Set() })
+    assert.ok(!hits.some((h) => h.trackId === 1000))
+  })
+})
