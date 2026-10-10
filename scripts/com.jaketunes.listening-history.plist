@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- homemini: nightly all-device listening history (scripts/listening-history-nightly.sh,
+     installed as ~/bin/jaketunes-listening-history.sh). -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.jaketunes.listening-history</string>
+  <key>ProgramArguments</key><array>
+    <string>/bin/bash</string>
+    <string>/Users/jakerosenbaumnas/bin/jaketunes-listening-history.sh</string>
+  </array>
+  <key>StartCalendarInterval</key><dict>
+    <key>Hour</key><integer>4</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key><string>/tmp/jaketunes-listening-history.out</string>
+  <key>StandardErrorPath</key><string>/tmp/jaketunes-listening-history.out</string>
+</dict></plist>

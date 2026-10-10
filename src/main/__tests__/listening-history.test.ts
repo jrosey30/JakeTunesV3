@@ -5,7 +5,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  classifyDevice, fromIpodLedger, mergeHistories, attachTrackIds, summarize, songKey,
+  classifyDevice, fromIpodLedger, mergeHistories, attachTrackIds, summarize, songKey, windowStats,
   BURST_MIN, type RawListen,
 } from '../../common/listening-history.ts'
 
@@ -101,5 +101,21 @@ describe('the year summary', () => {
   it('other years are left out', () => {
     const s = summarize([{ ts: '2025-12-31T23:00:00.000Z', device: 'laptop', kind: 'play', pct: 100, artist: 'A', title: 'B', album: '', genre: '' }], 2026, () => 1000)
     assert.equal(s.totals.play, 0)
+  })
+})
+
+describe('the honest skip rate for a window', () => {
+  it('counts every device; glances and bursts are not skips', () => {
+    const phone = classifyDevice([play(0), ...Array.from({ length: 10 }, (_, i) => skip(100 + i * 3)), skip(400, 2)], 'phone')
+    const lap = classifyDevice([play(500), play(800), skip(1100, 50)], 'laptop')
+    const w = windowStats(mergeHistories([phone, lap]), Date.parse(at(0)), Date.parse(at(2000)))
+    assert.deepEqual(w.totals, { play: 3, skip: 1, glance: 1, mechanical: 10 })
+    assert.equal(w.realSkipRate, 0.25)
+    assert.equal(w.completionRate, 0.75)
+    assert.equal(w.byDevice.phone.mechanical, 10)
+  })
+  it('outside the window is ignored; an empty window has no rate', () => {
+    const w = windowStats(classifyDevice([play(0)], 'laptop'), Date.parse(at(10)), Date.parse(at(20)))
+    assert.equal(w.realSkipRate, null)
   })
 })

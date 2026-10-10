@@ -1,0 +1,52 @@
+#!/bin/bash
+# Nightly on homemini (launchd com.jaketunes.listening-history, 04:00 — after
+# the brain trainer at 2:00 and brain-improve at 3:05): build the all-device
+# listening history and the 28-day scorecard the weekly KPI report reads
+# (Year in Review step 2, 2026-10-10).
+#
+# Installed as ~/bin/jaketunes-listening-history.sh (a stable path, so the
+# checkout below can move under it). Runs the code from its OWN checkout,
+# ~/JakeTunesV3-yir, detached at origin/main and refreshed each night — it
+# never moves the brain trainer's clone. Reads the logs; writes only
+# ~/Library/Application Support/JakeTunes/yir/ (+ a copy on the NAS).
+set -u
+W="${JT_YIR_WORKTREE:-$HOME/JakeTunesV3-yir}"
+UD="$HOME/Library/Application Support/JakeTunes"
+NAS_STATE="${JT_NAS_STATE:-/Volumes/JakeShared/JakeTunesState}"
+OUT="$UD/yir"
+LOG="$HOME/Library/Logs/jaketunes-listening-history.log"
+NODE="${JT_NODE:-/opt/homebrew/bin/node}"
+
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
+with_timeout() { local s="$1"; shift; perl -e 'alarm shift; exec @ARGV' "$s" "$@"; }
+
+log "=== start"
+if [ ! -d "$W/.git" ] && [ ! -f "$W/.git" ]; then
+  log "no checkout at $W — run: git -C ~/JakeTunesV3 worktree add --detach $W origin/main"
+  exit 1
+fi
+if with_timeout 60 git -C "$W" fetch -q origin main 2>>"$LOG"; then
+  with_timeout 30 git -C "$W" checkout -q --detach origin/main 2>>"$LOG" && log "code @ $(git -C "$W" rev-parse --short HEAD)"
+else
+  log "fetch failed — running the code already checked out ($(git -C "$W" rev-parse --short HEAD))"
+fi
+
+args=(
+  --laptop "$UD/listening-log.jsonl"
+  --workmini "$UD/replicas/workmini/listening-log.jsonl"
+  --phone "$NAS_STATE/mobile-listening-log.jsonl"
+  --ipod "$UD/ipod-roundtrip-ledger.jsonl"
+  --library "$UD/library.json"
+  --out "$OUT"
+)
+if with_timeout 600 "$NODE" "$W/scripts/listening-history.mts" "${args[@]}" >> "$LOG" 2>&1; then
+  log "built $OUT"
+  if mkdir -p "$NAS_STATE/yir" 2>/dev/null && cp "$OUT"/listening-summary-*.json "$OUT/listening-kpi.json" "$NAS_STATE/yir/" 2>>"$LOG"; then
+    log "copied the summary and scorecard to the NAS"
+  else
+    log "NAS copy skipped (mount unavailable) — homemini's copy is current"
+  fi
+else
+  log "FAILED — previous outputs left in place"
+  exit 1
+fi

@@ -4,14 +4,16 @@
 //     --workmini <replicas/workmini/listening-log.jsonl> \
 //     --phone   <NAS mobile-listening-log.jsonl> \
 //     --ipod    <ipod-roundtrip-ledger.jsonl> \
-//     --library <library.json> --out <dir> [--year 2026]
+//     --library <library.json> --out <dir> [--year 2026] [--kpi-days 28]
 // Any source may be omitted (it is reported as missing, never guessed).
-// Writes <out>/listening-history.jsonl and <out>/listening-summary-<year>.json.
+// Writes <out>/listening-history.jsonl, <out>/listening-summary-<year>.json and
+// <out>/listening-kpi.json (the last --kpi-days, every device, real skips only —
+// what the weekly KPI report reads).
 // Reads its inputs only; writes only into --out.
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  classifyDevice, fromIpodLedger, mergeHistories, attachTrackIds, summarize,
+  classifyDevice, fromIpodLedger, mergeHistories, attachTrackIds, summarize, windowStats,
   type Device, type RawListen, type IpodLedgerEntry, type Listen,
 } from '../src/common/listening-history.ts'
 
@@ -48,6 +50,10 @@ const summary = summarize(history, year, (l) => (l.trackId !== undefined ? byId.
 mkdirSync(out, { recursive: true })
 writeFileSync(join(out, 'listening-history.jsonl'), history.map((l) => JSON.stringify(l)).join('\n') + '\n')
 writeFileSync(join(out, `listening-summary-${year}.json`), JSON.stringify({ builtAt: new Date().toISOString(), sources, ...summary }, null, 2))
+const kpiDays = Number(flag('kpi-days') || 28)
+const now = Date.now()
+const kpi = windowStats(history, now - kpiDays * 86400000, now)
+writeFileSync(join(out, 'listening-kpi.json'), JSON.stringify({ builtAt: new Date(now).toISOString(), windowDays: kpiDays, sources, ...kpi }, null, 2))
 
 const t = summary.totals
 const ided = history.filter((l) => l.trackId !== undefined).length
@@ -56,6 +62,7 @@ console.log(`${year}: ${t.play} plays · ${t.skip} skips · ${t.glance} glances 
 console.log(`listening time: ${Math.round(summary.minutesListened / 60)} h (${summary.minutesKnownFor}/${t.play} plays have a known length)`)
 console.log(`matched to a library song: ${ided}/${history.length}`)
 console.log(`first play ${summary.firstListen} · last ${summary.lastListen}`)
+console.log(`last ${kpiDays} days: ${kpi.totals.play} plays · ${kpi.totals.skip} skips · real skip rate ${kpi.realSkipRate === null ? 'n/a' : (kpi.realSkipRate * 100).toFixed(1) + '%'}`)
 for (const [dev, months] of Object.entries(summary.byDeviceMonth)) {
   console.log(`  ${dev.padEnd(8)} ${Object.entries(months).sort().map(([m, c]) => `${m}:${c.play}`).join(' ')}`)
 }
