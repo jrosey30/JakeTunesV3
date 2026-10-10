@@ -112,6 +112,8 @@ function reasonLabel(reason: string | null): string {
     case 'metadata-edit': return 'Metadata edits'
     case 'playlist':      return 'Playlist changes'
     case 'safety-net':    return 'Routine backup'
+    case 'artwork':       return 'New artwork'
+    case 'startup':       return 'Catch-up after launch'
     case 'manual':        return 'Manual'
     default:              return reason || 'Sync'
   }
