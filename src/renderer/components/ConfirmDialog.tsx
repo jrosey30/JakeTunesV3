@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { defaultButton, enterPresses } from '../confirm-keys'
 import '../styles/confirm.css'
 
 interface ConfirmDialogProps {
@@ -32,11 +33,10 @@ export default function ConfirmDialog({
   const confirmRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
-    // Focus cancel button by default (safer). When cancel is hidden
-    // (informational modal) focus the lone confirm button instead so
-    // keyboard users land on something actionable.
-    if (hideCancel) confirmRef.current?.focus()
-    else cancelRef.current?.focus()
+    // A destructive dialog opens on Cancel; any other opens on its confirm
+    // button (and an informational one has nothing else to focus).
+    if (defaultButton(destructive, hideCancel) === 'cancel') cancelRef.current?.focus()
+    else confirmRef.current?.focus()
 
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -47,12 +47,17 @@ export default function ConfirmDialog({
       if (e.key === 'Enter') {
         e.preventDefault()
         e.stopImmediatePropagation()
-        onConfirm()
+        // Enter presses the button that has focus (spec-03). It used to
+        // confirm every time — with Cancel focused, Enter deleted.
+        const active = document.activeElement
+        const focused = active === cancelRef.current ? 'cancel' : active === confirmRef.current ? 'confirm' : null
+        if (enterPresses(focused, destructive, hideCancel) === 'cancel') onCancel()
+        else onConfirm()
       }
     }
     window.addEventListener('keydown', handleKey, true)
     return () => window.removeEventListener('keydown', handleKey, true)
-  }, [onConfirm, onCancel, hideCancel])
+  }, [onConfirm, onCancel, hideCancel, destructive])
 
   return (
     <div className="confirm-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel() }}>

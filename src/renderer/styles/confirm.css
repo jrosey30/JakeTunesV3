@@ -5,7 +5,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 300;
+  /* Above every sheet (activity/mixtape sheets are 9000) so a destroy
+     asked from inside one is never hidden behind it; below the
+     state-save-locked banner and the visualizer (9999). */
+  z-index: 9500;
 }
 
 .confirm-dialog {
@@ -36,6 +39,9 @@
   text-align: center;
   margin-top: 6px;
   line-height: 1.4;
+  /* Callers write "\n" between lines (the copy, then what is lost);
+     honor them instead of running everything together. */
+  white-space: pre-line;
 }
 
 .confirm-buttons {

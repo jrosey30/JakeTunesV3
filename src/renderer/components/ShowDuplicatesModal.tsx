@@ -60,12 +60,24 @@ function formatBytes(b: number): string {
   return `${(b / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
-function pathTail(p: string): string {
-  // iPod paths use ":" as separator; show last two segments so the
-  // F-dir + filename are visible without flooding the row width.
-  if (!p) return ''
-  const segs = p.split(':').filter(Boolean)
-  return segs.slice(-2).join(':') || p
+// What a person tells copies apart by (spec-03): length, size, format and
+// when it arrived. The row used to print an audio fingerprint and the
+// internal file path instead — machinery, not a choice.
+const FORMAT_NAMES: Record<string, string> = { alac: 'ALAC', aac: 'AAC', mp3: 'MP3', flac: 'FLAC', mp2: 'MP2' }
+function formatOf(t: Track): string {
+  if (t.codec) return FORMAT_NAMES[t.codec] || t.codec.toUpperCase()
+  const ext = (t.path || '').split('.').pop()?.toLowerCase() || ''
+  // .m4a is ALAC or AAC; say nothing rather than guess.
+  return ext === 'mp3' || ext === 'flac' ? ext.toUpperCase() : ''
+}
+function addedOn(t: Track): string {
+  const d = t.dateAdded ? new Date(t.dateAdded) : null
+  if (!d || Number.isNaN(d.getTime())) return ''
+  return `Added ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+}
+/** One line describing a copy: "ALAC · 41.2 MB · 4:21 · Added Oct 9, 2026". */
+function copyLine(t: Track): string {
+  return [formatOf(t), formatBytes(t.fileSize || 0), formatDuration(t.duration || 0), addedOn(t)].filter(Boolean).join(' · ')
 }
 
 // Member-id signature: sorted, comma-joined. Compared at filter time so
@@ -81,7 +93,8 @@ function memberSig(members: Track[]): string {
 const DISMISSED_KEY = 'jaketunes:dup-dismissed-v1'
 
 export default function ShowDuplicatesModal({ tracks, onClose, onDelete }: Props) {
-  const [pendingDelete, setPendingDelete] = useState<Track | null>(null)
+  // The copy about to be deleted, and how many others in its group stay.
+  const [pendingDelete, setPendingDelete] = useState<{ track: Track; othersStay: number } | null>(null)
   const [dismissed, setDismissed] = useState<Map<string, string>>(new Map())
   const [dismissedLoaded, setDismissedLoaded] = useState(false)
   const [showHidden, setShowHidden] = useState(false)
@@ -259,19 +272,15 @@ export default function ShowDuplicatesModal({ tracks, onClose, onDelete }: Props
                     {g.members.map((t) => (
                       <div className="dup-row" key={t.id}>
                         <div className="dup-row-meta">
-                          <span className="dup-tn">#{t.trackNumber || '?'}</span>
+                          {t.trackNumber ? <span className="dup-tn">#{t.trackNumber}</span> : null}
                           <span className="dup-dur">{formatDuration(t.duration || 0)}</span>
                           <span className="dup-size">{formatBytes(t.fileSize || 0)}</span>
-                          {t.audioFingerprint && (
-                            <span className="dup-fp" title={t.audioFingerprint}>
-                              fp:{t.audioFingerprint.slice(0, 8)}
-                            </span>
-                          )}
+                          {formatOf(t) && <span className="dup-format">{formatOf(t)}</span>}
                         </div>
-                        <div className="dup-row-path" title={t.path}>{pathTail(t.path || '')}</div>
+                        <div className="dup-row-added">{addedOn(t)}</div>
                         <button
                           className="dup-delete-btn"
-                          onClick={() => setPendingDelete(t)}
+                          onClick={() => setPendingDelete({ track: t, othersStay: g.members.length - 1 })}
                           // Last-copy guard: never let this modal delete the
                           // sole remaining instance of a song. Once the
                           // group shrinks to 1 it disappears from the UI
@@ -311,15 +320,13 @@ export default function ShowDuplicatesModal({ tracks, onClose, onDelete }: Props
 
       {pendingDelete && (
         <ConfirmDialog
-          message="Delete this copy from your library?"
-          detail={`${pendingDelete.title} — ${pendingDelete.artist}\n${formatBytes(
-            pendingDelete.fileSize || 0
-          )} · ${formatDuration(
-            pendingDelete.duration || 0
-          )}\n\nOther copies in this duplicate group will remain. This cannot be undone.`}
+          message="Delete this copy?"
+          detail={`${pendingDelete.track.title} — ${pendingDelete.track.artist}\n${copyLine(pendingDelete.track)}\n\nThis copy and its file are deleted. ${
+            pendingDelete.othersStay === 1 ? 'The other copy stays' : `The other ${pendingDelete.othersStay} copies stay`
+          } in your library. This can't be undone.`}
           confirmLabel="Delete"
           onConfirm={() => {
-            onDelete(pendingDelete.id)
+            onDelete(pendingDelete.track.id)
             setPendingDelete(null)
           }}
           onCancel={() => setPendingDelete(null)}
