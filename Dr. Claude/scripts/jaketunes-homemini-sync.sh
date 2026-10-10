@@ -223,6 +223,13 @@ notify() {
 # rsync destination on homemini. openrsync (macOS /usr/bin/rsync) passes the
 # remote path to the remote shell unprotected, so spaces must be escaped;
 # GNU rsync protects it and must NOT get backslashes (it would keep them).
+# EVERY remote path under $JT_DATA_REMOTE ("Application Support") goes through
+# this — source or destination. Which rsync runs depends on the PATH of
+# whatever launched JakeTunes: from 2026-10-09 21:00 the app ran with /usr/bin
+# first, and the six raw "$HOMEMINI:$JT_DATA_REMOTE/…" paths split at the
+# space. Desktop star pushes failed loudly (a banner every quick sync), and
+# the phone star and playlist-sidecar pulls failed SILENTLY — rsync_optional
+# reads the split path's "No such file" as "not on homemini yet".
 RSYNC_OPEN=0
 rsync --version 2>&1 | head -1 | grep -qi openrsync && RSYNC_OPEN=1
 rremote() {
@@ -833,7 +840,7 @@ sync_artwork_to_homemini
 # until merged, then re-pushed next cycle.
 log "pulling phone stars (homemini → local staging) …"
 rsync -tz --no-perms --no-owner --no-group \
-  "$HOMEMINI:$JT_DATA_REMOTE/mobile-stars.json" "$JT_DATA_LOCAL/mobile-stars.incoming.json" >> "$LOG" 2>&1
+  "$(rremote "$JT_DATA_REMOTE/mobile-stars.json")" "$JT_DATA_LOCAL/mobile-stars.incoming.json" >> "$LOG" 2>&1
 pull_rc=$?
 if [ $pull_rc -ne 0 ] && [ $pull_rc -ne 23 ] && [ $pull_rc -ne 24 ]; then
   log "WARNING: pull of mobile-stars returned $pull_rc (continuing)"
@@ -846,23 +853,23 @@ fi
 # Both locations are tried and BOTH may be absent pre-first-play, so these use
 # rsync_optional: a missing source is normal here and must not log an error.
 rsync_optional "$HOMEMINI:JakeTunesState/mobile-listening-log.jsonl" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
-rsync_optional "$HOMEMINI:$JT_DATA_REMOTE/mobile-listening-log.jsonl" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
+rsync_optional "$(rremote "$JT_DATA_REMOTE/mobile-listening-log.jsonl")" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
   log_hourly /tmp/.jt-phonelog-note "phone listening log not present yet (appears after the first phone play post-deploy)"
 # Phone playlist sidecars: PULL ONLY (homemini → MacBook local, and NAS when
 # mounted). Never the reverse — see PHONE_PLAYLIST_SIDECARS above. Desktop V3
 # reads these as Brief 121 mirrors; the iOS backend is the writer.
 log "pulling phone playlist sidecars (homemini → local) …"
 for f in "${PHONE_PLAYLIST_SIDECARS[@]}"; do
-  rsync_optional "$HOMEMINI:$JT_DATA_REMOTE/$f" "$JT_DATA_LOCAL/$f" || \
+  rsync_optional "$(rremote "$JT_DATA_REMOTE/$f")" "$JT_DATA_LOCAL/$f" || \
     log_hourly "/tmp/.jt-phonepl-$f-note" "phone playlist sidecar $f not present on homemini yet"
   if [ -d "$MOUNT/JakeTunesState" ]; then
-    rsync_optional "$HOMEMINI:$JT_DATA_REMOTE/$f" "$MOUNT/JakeTunesState/$f" || true
+    rsync_optional "$(rremote "$JT_DATA_REMOTE/$f")" "$MOUNT/JakeTunesState/$f" || true
   fi
 done
 log "pushing desktop stars (local → homemini) …"
 if [ -f "$JT_DATA_LOCAL/mobile-stars.json" ]; then
   rsync -tz --update --no-perms --no-owner --no-group \
-    "$JT_DATA_LOCAL/mobile-stars.json" "$HOMEMINI:$JT_DATA_REMOTE/mobile-stars.json" >> "$LOG" 2>&1
+    "$JT_DATA_LOCAL/mobile-stars.json" "$(rremote "$JT_DATA_REMOTE/mobile-stars.json")" >> "$LOG" 2>&1
   push_rc=$?
   if [ $push_rc -ne 0 ] && [ $push_rc -ne 23 ] && [ $push_rc -ne 24 ]; then
     log "WARNING: push of mobile-stars returned $push_rc (continuing)"
@@ -874,7 +881,7 @@ fi
 # this is harmless prep (no staging/merge).
 if [ -f "$JT_DATA_LOCAL/mobile-plays.json" ]; then
   rsync -tz --update --no-perms --no-owner --no-group \
-    "$JT_DATA_LOCAL/mobile-plays.json" "$HOMEMINI:$JT_DATA_REMOTE/mobile-plays.json" >> "$LOG" 2>&1 || true
+    "$JT_DATA_LOCAL/mobile-plays.json" "$(rremote "$JT_DATA_REMOTE/mobile-plays.json")" >> "$LOG" 2>&1 || true
 fi
 
 # ── 5b. Prune phone-deleted recommendations from the DESKTOP copy. ────

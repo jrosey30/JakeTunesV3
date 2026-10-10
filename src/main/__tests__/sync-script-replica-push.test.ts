@@ -65,6 +65,12 @@ function runScript(args: string[], env: Record<string, string> = {}): Run {
     const data = join(home, HUB_DIR)
     mkdirSync(join(data, 'artwork'), { recursive: true })
     for (const f of STATE_FILES) writeFileSync(join(data, f), f === 'library.json' ? '{"tracks":[{"id":1}]}' : `${f}\n`)
+    // The phone legs run on a full hub pass (after the NAS legs) and only
+    // when the desktop side has something to push.
+    mkdirSync(join(root, 'nas', 'JakeTunesLibrary'), { recursive: true })
+    mkdirSync(join(root, 'lib'), { recursive: true })
+    writeFileSync(join(data, 'mobile-stars.json'), '{}')
+    writeFileSync(join(data, 'mobile-plays.json'), '{}')
     writeFileSync(join(data, 'artwork', 'abc.jpg'), 'jpg')
     writeFileSync(join(data, 'artwork', 'abc.meta.json'), '{}')
     const calls = join(root, 'calls.txt')
@@ -166,5 +172,25 @@ describe('sync script: the hub run is unchanged', () => {
   it('hub: a failed push still shows its notification', () => {
     const r = runScript(['--homemini-only'], { STUB_RSYNC_EXIT: '23' })
     assert.ok(r.calls.some((c) => c.tool === 'OSASCRIPT'), 'the hub keeps its notifications')
+  })
+
+  // 2026-10-10: six phone legs (stars both ways, playlist sidecars, listening
+  // log, plays) built "$HOMEMINI:$JT_DATA_REMOTE/…" by hand. Once JakeTunes
+  // launched with /usr/bin ahead of Homebrew, openrsync split them at the
+  // space: a "Couldn't push desktop stars" banner (Script Editor) on every
+  // playlist add, and the phone pulls failing silently as "not there yet".
+  it('every remote path is escaped for openrsync, pulls and pushes alike', () => {
+    const open = runScript(['--quick'], { STUB_RSYNC_VERSION: 'openrsync: protocol version 29' })
+    assert.equal(open.status, 0, open.log)
+    const remote = rsyncs(open).flatMap((c) => c.args).filter((a) => a.startsWith('test@stub:'))
+    for (const want of ['mobile-stars.json', 'mobile-playlists.json', 'playlist-additions.json', 'mobile-plays.json']) {
+      assert.ok(remote.some((a) => a.endsWith(`/${want}`)), `${want} leg ran`)
+    }
+    const raw = remote.filter((a) => a.includes('Application Support'))
+    assert.deepEqual(raw, [], 'no remote path reaches openrsync with a bare space')
+    const gnu = runScript(['--quick'])
+    const gnuRemote = rsyncs(gnu).flatMap((c) => c.args).filter((a) => a.startsWith('test@stub:'))
+    assert.ok(gnuRemote.some((a) => a === `test@stub:${HUB_DIR}/mobile-stars.json`))
+    assert.deepEqual(gnuRemote.filter((a) => a.includes('\\')), [], 'GNU rsync never gets a backslash')
   })
 })
