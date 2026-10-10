@@ -2,7 +2,9 @@
 # Nightly on homemini (launchd com.jaketunes.listening-history, 04:00 — after
 # the brain trainer at 2:00 and brain-improve at 3:05): build the all-device
 # listening history and the 28-day scorecard the weekly KPI report reads
-# (Year in Review step 2, 2026-10-10).
+# (Year in Review step 2, 2026-10-10), then this year's Year in Review facts
+# from that history (step 4) — so the review is always current, not built
+# by hand in December.
 #
 # Installed as ~/bin/jaketunes-listening-history.sh (a stable path, so the
 # checkout below can move under it). Runs the code from its OWN checkout,
@@ -41,6 +43,20 @@ args=(
 )
 if with_timeout 600 "$NODE" "$W/scripts/listening-history.mts" "${args[@]}" >> "$LOG" 2>&1; then
   log "built $OUT"
+  # Year in Review facts. Its own failure never touches the history or the
+  # scorecard above — those are already written. The year is New York's
+  # (the review's calendar), and mixtapes.json is whichever copy is newer:
+  # the NAS mirror of the laptop's, or homemini's own.
+  YEAR=$(TZ=America/New_York date +%Y)
+  TAPES="$NAS_STATE/mixtapes.json"
+  [ "$UD/mixtapes.json" -nt "$TAPES" ] && TAPES="$UD/mixtapes.json"
+  if with_timeout 300 "$NODE" "$W/scripts/year-in-review.mts" \
+      --history "$OUT/listening-history.jsonl" --library "$UD/library.json" \
+      --live-sets "$UD/live-sets.json" --mixtapes "$TAPES" --year "$YEAR" --out "$OUT" >> "$LOG" 2>&1; then
+    log "built year-in-review-$YEAR.json"
+  else
+    log "year in review FAILED (error above) — history and scorecard are fine"
+  fi
   # The NAS copy goes through node, not cp: under launchd macOS grants
   # network-volume access per program, and on homemini node has it while
   # /bin/cp is refused ("Operation not permitted", measured 2026-10-10).
@@ -48,9 +64,9 @@ if with_timeout 600 "$NODE" "$W/scripts/listening-history.mts" "${args[@]}" >> "
     const fs = require("fs"), path = require("path")
     const [src, dst] = process.argv.slice(1)
     fs.mkdirSync(dst, { recursive: true })
-    for (const f of fs.readdirSync(src)) if (/^listening-(summary-\d+|kpi)\.json$/.test(f)) fs.copyFileSync(path.join(src, f), path.join(dst, f))
+    for (const f of fs.readdirSync(src)) if (/^(listening-(summary-\d+|kpi)|year-in-review-\d+)\.json$/.test(f)) fs.copyFileSync(path.join(src, f), path.join(dst, f))
   ' "$OUT" "$NAS_STATE/yir" 2>>"$LOG"; then
-    log "copied the summary and scorecard to the NAS"
+    log "copied the summary, scorecard and year in review to the NAS"
   else
     log "NAS copy FAILED (error above) — homemini's copy is current"
   fi
