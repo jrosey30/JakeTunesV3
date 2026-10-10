@@ -1,7 +1,9 @@
 /**
- * A replica must not publish library.json, and must still run every other
- * leg of jaketunes-homemini-sync.sh. The early return in runSyncOnce skipped
- * music, artwork, overrides, playlists, play logs, and stars.
+ * A replica must not publish library.json, and the app must still launch
+ * jaketunes-homemini-sync.sh for it (the early return in runSyncOnce once
+ * skipped the script entirely). What a replica's run then pushes — only into
+ * replicas/<name>/ on homemini, artwork additive, no NAS legs — is covered
+ * end to end in sync-script-replica-push.test.ts (2026-10-09).
  *
  * The process that runs is ~/bin/jaketunes-homemini-sync.sh, a copy of
  * Dr. Claude/scripts/jaketunes-homemini-sync.sh. An older copy ignores
@@ -17,7 +19,7 @@ import { syncLaunchArgs, SKIP_LIBRARY_JSON_ARG } from '../../common/sync-launch-
 const repoRoot = join(import.meta.dirname, '..', '..', '..')
 const scriptPath = join(repoRoot, 'Dr. Claude', 'scripts', 'jaketunes-homemini-sync.sh')
 
-describe('replica sync still runs everything except the library.json publish', () => {
+describe('replica sync launches the script and never publishes library.json', () => {
   it('launch args keep the script and only add the library skip on a replica', () => {
     const script = '/Users/jake/bin/jaketunes-homemini-sync.sh'
     assert.deepEqual(
@@ -46,7 +48,7 @@ describe('replica sync still runs everything except the library.json publish', (
     assert.match(body, /spawn\('nice'/)
   })
 
-  it('the script skips both library.json publishes and still runs the other legs', () => {
+  it('the script skips both library.json publishes; the hub keeps every leg', () => {
     const src = readFileSync(scriptPath, 'utf8')
     execFileSync('bash', ['-n', scriptPath])
     assert.match(src, /--skip-library-json/)
