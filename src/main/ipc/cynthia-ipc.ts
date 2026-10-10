@@ -20,6 +20,7 @@ import { diffAgainstMusicBrainz, type MbLookupResult } from '../cynthia-mb-diff.
 import { albumKeyOfMain } from '../cynthia-sweep.ts'
 import { getCachedMbRelease } from '../mb-release-cache.ts'
 import { getDiscogsReleaseInfo, getWikidataArtist } from '../external.ts'
+import { MODEL_SMART, MODEL_FAST } from '../../common/ai-models.ts'
 
 export type CynthiaTrackInScope = {
   id: number
@@ -251,7 +252,7 @@ Investigate. Use your tools only for what the evidence doesn't already answer. T
 
   try {
     response = await host.claudeCall('cynthia-investigate-init', {
-      model: 'claude-sonnet-4-6',
+      model: MODEL_SMART,
       max_tokens: 8192,
       system: systemPrompt,
       tools,
@@ -284,7 +285,7 @@ Investigate. Use your tools only for what the evidence doesn't already answer. T
       if (toolResults.length === 0) break
       messages.push({ role: 'user', content: toolResults })
       response = await host.claudeCall('cynthia-investigate-tool', {
-        model: 'claude-sonnet-4-6',
+        model: MODEL_SMART,
         max_tokens: 8192,
         system: systemPrompt,
         tools,
@@ -424,7 +425,7 @@ ${trackBrief}${scope.tracks.length > 30 ? `\n(+${scope.tracks.length - 30} more)
 
     try {
       let response = await host.claudeCall('cynthia-chat-init', {
-        model: 'claude-haiku-4-5',
+        model: MODEL_FAST,
         max_tokens: 512,
         system: systemPrompt,
         tools,
@@ -449,7 +450,7 @@ ${trackBrief}${scope.tracks.length > 30 ? `\n(+${scope.tracks.length - 30} more)
         if (toolResults.length === 0) break
         apiMessages.push({ role: 'user', content: toolResults })
         response = await host.claudeCall('cynthia-chat-tool', {
-          model: 'claude-haiku-4-5',
+          model: MODEL_FAST,
           max_tokens: 512,
           system: systemPrompt,
           tools,

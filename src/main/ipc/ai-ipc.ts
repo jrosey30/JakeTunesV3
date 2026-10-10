@@ -28,6 +28,7 @@ import {
   sweepStatus,
 } from '../cynthia-sweep.ts'
 import type Anthropic from '@anthropic-ai/sdk'
+import { MODEL_SMART, MODEL_FAST } from '../../common/ai-models.ts'
 
 export interface AiIpcHost {
   setClaudeDailyCeiling: (ceiling: number) => Promise<{ ok: boolean; dailyCeiling: number }>
@@ -279,7 +280,7 @@ export function registerAiIpc(ipc: IpcRegistrar, host: AiIpcHost): void {
         search ? `\nLive web search results — TREAT AS GROUND TRUTH:\n${search}` : '',
       ].filter(Boolean).join('\n')
       const reply = await host.claudeCall('album-blurb', {
-        model: 'claude-sonnet-4-6',
+        model: MODEL_SMART,
         max_tokens: 300,
         system: 'You are a precise, neutral music historian. Ground every claim in the provided search results and the known release year. NEVER invent dates, deaths, lineup changes, or events you are not certain of — omit rather than guess. No ratings, rankings, or opinions.',
         messages: [{ role: 'user', content: user }],
@@ -308,7 +309,7 @@ export function registerAiIpc(ipc: IpcRegistrar, host: AiIpcHost): void {
         'Plain prose ONLY — no markdown (no # headings, no *asterisks*, no backticks).',
       ].filter(Boolean).join('\n')
       const reply = await host.claudeCall('album-take', {
-        model: 'claude-haiku-4-5',
+        model: MODEL_FAST,
         max_tokens: 220,
         system: MUSIC_MAN_CORE,
         messages: [{ role: 'user', content: user }],

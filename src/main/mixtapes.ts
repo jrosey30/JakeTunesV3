@@ -35,6 +35,7 @@ import { isSkitOrIntro, isIntroTitled } from './workout-sync.ts'
 // and applies both files). "Existence is not memory."
 import { loadTombstones, saveTombstones } from './playlist-tombstones.ts'
 import { scheduleMixtapeHubConverge } from './mixtape-hub-sync.ts'
+import { MODEL_SMART } from '../common/ai-models.ts'
 
 /** Hub accessors — the mixtape hub client converges through these. */
 export async function readMixtapesForHub(): Promise<Mixtape[]> {
@@ -309,7 +310,7 @@ async function buildMixtapeProposal(
   let linerNotes: MixtapeLinerNote[] = []
   try {
     const reply = await host.claudeCall('mixtape-build', {
-      model: 'claude-sonnet-4-6',
+      model: MODEL_SMART,
       max_tokens: 3000,
       system: host.musicManCore,
       messages: [{ role: 'user', content: user }],

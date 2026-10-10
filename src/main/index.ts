@@ -179,6 +179,7 @@ import {
 } from '../common/albumReleaseDate'
 import { foldAccents } from '../common/fold-text.ts'
 import { explicitWins } from '../common/explicit.ts'
+import { MODEL_SMART, MODEL_FAST, withModelPolicy } from '../common/ai-models.ts'
 import { summariseLearning, discoverVerdicts, type LedgerRow } from './discovery-learned.ts'
 import { readLedgerRows } from './taste-ledger-io.ts'
 import { JsonFileCache } from './state-cache'
@@ -504,7 +505,9 @@ async function claudeCall(
   console.log(`[claude] ${callKey} — session=${sessionCallCount} today=${claudeStats.callsToday}/${claudeStats.dailyCeiling}`)
 
   try {
-    const reply = await anthropic.messages.create(params)
+    // The model policy (ai-models.ts): no temperature, thinking off — the
+    // 5.x models refuse the first and spend short budgets on the second.
+    const reply = await anthropic.messages.create(withModelPolicy(params))
     claudeStats.lastResponses[callKey] = { reply, ts: Date.now() }
     void saveClaudeStats()
     return reply
@@ -1305,7 +1308,7 @@ ipc.handle('get-related-artists', async (_e, artist: string): Promise<{ ok: bool
   if (cached && Date.now() - cached.at < RELATED_TTL_MS) return { ok: true, related: cached.related }
   try {
     const reply = await claudeCall('related-artists', {
-      model: 'claude-haiku-4-5',
+      model: MODEL_FAST,
       max_tokens: 800,
       system: 'You are a precise music encyclopedia listing artists a fan should explore. Return only real, well-established MUSICAL artists related to the subject — bands, their NOTABLE members (ones with real recording careers of their own), those members\' own bands/side projects, and a few genuinely similar or closely-allied recording artists. NEVER include producers, engineers, managers, songwriters-for-hire, or minor/early former members who left before the act\'s success or had no recording career of their own (e.g. for the Beatles: exclude George Martin, Pete Best, Stuart Sutcliffe). Never invent a relationship.',
       messages: [{ role: 'user', content: `List the recording artists most directly related to "${name}" — for a fan who likes them and wants similar or adjacent artists to explore. Include: the band(s) they are/were in, that band's NOTABLE members (the ones with real careers of their own), those members' side projects/aliases/other bands, and a few genuinely similar artists. EXCLUDE producers, engineers, managers, and minor/early members. Return ONLY JSON — an array of {"name","relation"} where relation is one of "band","member","sideProject","similar" (use "similar" for similar/adjacent artists). 6–12 entries, most relevant first. No prose, no code fence.` }],
@@ -1619,7 +1622,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
         const journalism = blocks.filter(Boolean).join('\n\n')
         if (!journalism) return
         const reply = await claudeCall('discover-brand-new', {
-          model: 'claude-sonnet-4-6', max_tokens: 8000, system: MUSIC_MAN_CORE,
+          model: MODEL_SMART, max_tokens: 8000, system: MUSIC_MAN_CORE,
           messages: [{ role: 'user', content: `${tasteLine}\n\nCurrent music journalism:\n${journalism}\n\nFrom ONLY the releases named above, pick up to 40 this listener would love. Canonical studio releases only — never demos, live albums, remasters, deluxe/expanded reissues, tributes, or covers. Return ONLY JSON: [{"artist","title","year","why"}] — "why" MUST be 8 words or fewer, punchy, no filler. No prose.` }],
         })
         const block = reply.content[0]; console.warn(`[dx.brandnew] scenes=${scenes.length} journalism=${journalism.length}ch`)
@@ -1746,7 +1749,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     const llmLanes = (async () => {
       try {
         const reply = await claudeCall('discover-time-machine', {
-          model: 'claude-sonnet-4-6', max_tokens: 3800, system: MUSIC_MAN_CORE,
+          model: MODEL_SMART, max_tokens: 3800, system: MUSIC_MAN_CORE,
           messages: [{ role: 'user', content: `${tasteLine}\n\nArtists this listener actually plays (pick "because" ONLY from this list, spelled exactly):\n${anchorNames}\n\nRecommend music from ANY era (1960s to last year — deliberately NOT this year's releases) adjacent to this taste that the listener plausibly does NOT own. Mix eras widely AND spread across the listener's genre range — punk, rock, hip-hop, electronic, soul, and beyond — rather than clustering in one lane; go deep and surprising, not just the obvious canon. Canonical studio recordings only — never demos, live versions, remasters, deluxe/expanded reissues, tributes, or covers.\n\nEVERY pick must name the ONE artist above it bridges from, in "because". Do not invent an artist that is not on that list. The "why" must say what carries over from that artist — the specific sonic link, not praise.\n\nReturn ONLY JSON with two arrays:\n{"classics":[{"type":"album"|"artist","artist","title","year","because","why"}] (24 items), "songs":[{"artist","title","year","because","why"}] (24 items)}\nEvery "why" MUST be 8 words or fewer. No prose, no code fence.` }],
         })
         const block = reply.content[0]
@@ -1791,7 +1794,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     await df.applyScenePitches(cards, {
       pitchCall: async (prompt) => {
         const reply = await claudeCall('discover-scene-pitch', {
-          model: 'claude-sonnet-4-6', max_tokens: 1400, system: MUSIC_MAN_CORE,
+          model: MODEL_SMART, max_tokens: 1400, system: MUSIC_MAN_CORE,
           messages: [{ role: 'user', content: prompt }],
         })
         const b = reply.content[0]
@@ -2011,7 +2014,7 @@ ipc.handle('get-new-music-radar', async (_e, force?: boolean) => {
       `From ONLY the releases named above, pick up to 15 NEW releases (${Number(year) - 1}–${year}) this listener would most likely love given their taste. For each give: artist, release title, its genre, the year, and a one-sentence "why" in your voice tying it to their taste. If a pick is genuinely comparable to one of the artists they actually play most (named above), set "anchor" to that artist's name — omit it otherwise (don't force a connection that isn't real). Do NOT invent releases that aren't named above. Return ONLY JSON — an array of objects [{"artist","title","genre","year","why","anchor"}] ("anchor" optional), no prose, no code fence.`,
     ].filter(Boolean).join('\n')
     const reply = await claudeCall('new-music-radar', {
-      model: 'claude-sonnet-4-6',
+      model: MODEL_SMART,
       max_tokens: 1500,
       system: MUSIC_MAN_CORE,
       messages: [{ role: 'user', content: user }],
@@ -2097,7 +2100,7 @@ async function addMusicManRediscoveryPitches(picks: RediscoveryPick[]): Promise<
     `Return ONLY a JSON array of strings — one per item, in order. No numbering, no prose, no code fence.`,
   ].join('\n')
   const reply = await claudeCall('rediscovery', {
-    model: 'claude-sonnet-4-6',
+    model: MODEL_SMART,
     max_tokens: 1400,
     system: MUSIC_MAN_CORE,
     messages: [{ role: 'user', content: user }],
@@ -6564,8 +6567,8 @@ If background info from MusicBrainz or Wikipedia is provided below, USE IT for f
 
   try {
     let accumulated = ''
-    const stream = anthropic.messages.stream({
-      model: 'claude-sonnet-4-6',
+    const stream = anthropic.messages.stream(withModelPolicy({
+      model: MODEL_SMART,
       // 4.5.0-50: 500 → 300. The hard "1-3 sentence default" rule in
       // MUSIC_MAN_CORE means most takes are now 60-120 tokens; 300
       // leaves headroom for the rare longer take without enabling the
@@ -6573,7 +6576,7 @@ If background info from MusicBrainz or Wikipedia is provided below, USE IT for f
       max_tokens: 300,
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
-    })
+    }))
     stream.on('text', (textChunk: string) => {
       accumulated += textChunk
       try {
@@ -6654,7 +6657,7 @@ If background info from MusicBrainz or Wikipedia is provided below, USE IT for a
 
   try {
     const response = await claudeCall('musicman-dj', {
-      model: 'claude-sonnet-4-6',
+      model: MODEL_SMART,
       // 4.5.0-50: 500 → 300, matching the streaming sibling above.
       max_tokens: 300,
       system: djPrompt,
@@ -7024,7 +7027,7 @@ Don't invent specifics you can't verify — if you don't have facts, lean into o
 
   try {
     const response = await claudeCall('musicman-radio', {
-      model: 'claude-sonnet-4-6',
+      model: MODEL_SMART,
       max_tokens: 220,
       system: radioPrompt,
       messages: [{ role: 'user', content: userMessage }]
@@ -7133,7 +7136,7 @@ Rules:
 
   try {
     const response = await claudeCall('musicman-dj-set', {
-      model: 'claude-sonnet-4-6',
+      model: MODEL_SMART,
       max_tokens: 512,
       system: systemPrompt,
       messages: [{ role: 'user', content: `Pick songs for your next DJ set.\n\nLibrary (ID|Title|Artist|Album|Genre|Year):\n${trackList}` }]
@@ -7235,7 +7238,7 @@ async function generateObservation() {
   const tasteCtx = buildTasteProfile()
   try {
     const response = await claudeCall('listener-obs', {
-      model: 'claude-sonnet-4-6',
+      model: MODEL_SMART,
       max_tokens: 200,
       system: `You are analyzing a music listener's habits. Based on the data below, write 1-2 SHORT, specific observations about their taste that a DJ would find useful. Be concrete — don't say "they like rock", say "they keep coming back to post-punk revival bands" or "they listen to Radiohead more than anything but skip the later albums." If you've already made similar observations, note what's CHANGED or NEW. Return ONLY the observations, no preamble.`,
       messages: [{ role: 'user', content: tasteCtx }]
@@ -7675,7 +7678,7 @@ This response is shown as text in a chat panel, but the user may click a speaker
       return { matched: matchedDesc.length, missed, note: trackIds.length ? 'Playlist created in the sidebar.' : 'Nothing matched the library — pick songs the user actually owns.' }
     }
 
-    let response = await claudeCall('musicman-chat', { model: 'claude-sonnet-4-6', max_tokens: 1400, system: systemPrompt, messages: convo, tools: [playlistTool] })
+    let response = await claudeCall('musicman-chat', { model: MODEL_SMART, max_tokens: 1400, system: systemPrompt, messages: convo, tools: [playlistTool] })
     for (let round = 0; round < 2 && response.stop_reason === 'tool_use'; round++) {
       const toolUses = response.content.filter((b): b is Anthropic.Messages.ToolUseBlock => b.type === 'tool_use')
       const results: Anthropic.Messages.ToolResultBlockParam[] = []
@@ -7687,7 +7690,7 @@ This response is shown as text in a chat panel, but the user may click a speaker
       }
       convo.push({ role: 'assistant', content: response.content })
       convo.push({ role: 'user', content: results })
-      response = await claudeCall('musicman-chat', { model: 'claude-sonnet-4-6', max_tokens: 1400, system: systemPrompt, messages: convo, tools: [playlistTool] })
+      response = await claudeCall('musicman-chat', { model: MODEL_SMART, max_tokens: 1400, system: systemPrompt, messages: convo, tools: [playlistTool] })
     }
 
     // Aggregate text across any text blocks in the response.
@@ -7851,7 +7854,7 @@ CRAFT RULES:
   async function callOnce(extra: string | null): Promise<{ theme?: string; throughline?: string; trackIds?: number[] }> {
     const userContent = `LIBRARY DIGEST:\n${digest}\n\nELIGIBLE TRACKS (ID|Title|Artist|Album|Genre|Year|plays|lp|★rating) — recent-week tracks have been removed:\n${trackList}${extra ? `\n\n${extra}` : ''}`
     const response = await claudeCall('musicman-radio-plan', {
-      model: 'claude-sonnet-4-6',
+      model: MODEL_SMART,
       max_tokens: 1024,
       system: systemPrompt,
       messages: [{ role: 'user', content: userContent }],
@@ -8086,7 +8089,7 @@ CRAFT RULES (for non-canon mood requests):
   async function callOnce(extraUserHint: string | null): Promise<{ name?: string; commentary?: string; trackIds?: number[]; rawText: string }> {
     const userContent = `Build me a playlist for: "${mood}"\n\nMy library (ID|Title|Artist|Album|Genre|Year|plays|lp|★rating):\n${trackList}${extraUserHint ? `\n\n${extraUserHint}` : ''}`
     const response = await claudeCall('musicman-playlist', {
-      model: 'claude-sonnet-4-6',
+      model: MODEL_SMART,
       max_tokens: 1024,
       system: systemPrompt,
       messages: [{ role: 'user', content: userContent }],
@@ -8541,7 +8544,7 @@ ipc.handle('musicman-picks', async (_event, tracks: PicksTrack[], force?: boolea
 
     try {
       const response = await claudeCall('musicman-picks', {
-        model: 'claude-sonnet-4-6',
+        model: MODEL_SMART,
         max_tokens: 1024,
         system: systemPrompt,
         messages: [{ role: 'user', content: userContent }]
@@ -8589,7 +8592,7 @@ ipc.handle('megan-picks', async (_event, tracks: PicksTrack[], force?: boolean) 
 
     try {
       const response = await claudeCall('megan-picks', {
-        model: 'claude-sonnet-4-6',
+        model: MODEL_SMART,
         max_tokens: 1024,
         system: systemPrompt,
         messages: [{ role: 'user', content: userContent }]
@@ -8689,7 +8692,7 @@ Rules:
 
   try {
     const response = await claudeCall('dj-hands-picks', {
-      model: 'claude-sonnet-4-6',
+      model: MODEL_SMART,
       max_tokens: 1024,
       system: systemPrompt,
       messages: [{ role: 'user', content: userContent }]
@@ -8787,11 +8790,10 @@ Their top genres: ${topGenres}${lineageBlock}`
 
   try {
     const response = await claudeCall('musicman-recs', {
-      model: 'claude-sonnet-4-6',
+      model: MODEL_SMART,
       max_tokens: 2048,
-      // Brief 122 Phase 3b — crank temperature for variety so the page
-      // stops returning the same picks every visit.
-      temperature: 1,
+      // Brief 122 Phase 3b set temperature 1 for variety; 1 is the API's
+      // default, and the 5.x models refuse the parameter (2026-10-10).
       system: systemPrompt,
       messages: [{ role: 'user', content: `Recommend albums I don't have.\n\nMy albums:\n${albumList}` }]
     })
@@ -8971,7 +8973,7 @@ Rules:
 
   try {
     const response = await claudeCall('musicman-scan-metadata', {
-      model: 'claude-sonnet-4-6',
+      model: MODEL_SMART,
       max_tokens: 4096,
       system: systemPrompt,
       messages: [{ role: 'user', content: `Scan this library for metadata issues.\n\nTracks (ID|Title|Artist|Album|Genre|Year):\n${trackList}` }]
@@ -9138,11 +9140,11 @@ async function expandPlaylistHint(text: string): Promise<string> {
   if (typeof cache[text] === 'string') return cache[text]
   let expansion = ''
   try {
-    const msg = await anthropic.messages.create({
-      model: 'claude-haiku-4-5',
+    const msg = await anthropic.messages.create(withModelPolicy({
+      model: MODEL_FAST,
       max_tokens: 120,
       messages: [{ role: 'user', content: `A music fan named a playlist "${text}". In ONE line (max 30 words) describe the music someone would expect on it: genres, mood, era, tempo, typical artists. If the name is not about music at all (a private joke, a random word, a date), reply exactly: NOT MUSICAL. Output only the line.` }],
-    })
+    }))
     const out = msg.content.find((c) => c.type === 'text')
     expansion = (out && out.type === 'text' ? out.text : '').trim()
   } catch (err) {
@@ -11323,7 +11325,7 @@ app.whenReady().then(async () => {
     ipc,
     askClaude: async (callKey, system, userText, maxTokens) => {
       const reply = await claudeCall(callKey, {
-        model: 'claude-sonnet-4-6',
+        model: MODEL_SMART,
         max_tokens: maxTokens,
         system,
         messages: [{ role: 'user', content: userText }],

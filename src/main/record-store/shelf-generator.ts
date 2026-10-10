@@ -32,6 +32,7 @@ import { buildCandidatePool, type AlbumCandidate, type CandTrack } from './candi
 import type { DayTheme, Persona, Shelf, ShelfBundle, ShelfId, ShelfItem } from './types'
 import type { ExternalContext } from './external-context'
 import { formatExternalContextForPrompt } from './external-context'
+import { MODEL_SMART } from '../../common/ai-models.ts'
 
 // ── Public types ─────────────────────────────────────────────────────
 
@@ -102,7 +103,7 @@ export interface PickDayThemeInput {
 
 const THIRTY_DAYS_MS = 30 * 86_400_000
 const COLD_DAYS = 90
-const DAY_THEME_MODEL = 'claude-sonnet-4-6'
+const DAY_THEME_MODEL = MODEL_SMART
 const DAY_THEME_MAX_TOKENS = 700
 
 // ── Listening summary (pure; no I/O) ─────────────────────────────────
@@ -455,7 +456,7 @@ const SHELF_MAX = 7
 const SHELF_MIN = 3
 /** Max items per artist across the whole day's wall (§3.4). */
 const PER_DAY_ARTIST_CAP = 2
-const SHELF_GEN_MODEL = 'claude-sonnet-4-6'
+const SHELF_GEN_MODEL = MODEL_SMART
 const SHELF_GEN_MAX_TOKENS = 2000
 
 export type ShelfPools = Record<'mm-picks' | 'new-arrivals' | 'deep-cuts', AlbumCandidate[]>

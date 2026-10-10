@@ -31,6 +31,7 @@ import { computeMirror, computeNasFallback, identitiesForDelete } from '../reco-
 import type { ClaudeCall } from './library-ipc.ts'
 import { safeIpcError } from '../safe-ipc-error'
 import { selectRecoHub } from '../reco-hub.ts'
+import { MODEL_SMART } from '../../common/ai-models.ts'
 
 // The Mini backend owns enrichment for adds; reachable on the tailnet.
 // Override for a local dev backend via JAKETUNES_MOBILE_BACKEND.
@@ -1151,7 +1152,7 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
         ].filter(Boolean).join('\n')
 
         const reply = await host.claudeCall(`listen-list:suggest:${attempt}`, {
-          model: 'claude-sonnet-4-6',
+          model: MODEL_SMART,
           max_tokens: 1200,
           system: MUSIC_MAN_CORE,
           messages: [{ role: 'user', content: user }],
