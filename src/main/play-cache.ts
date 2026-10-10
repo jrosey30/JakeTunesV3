@@ -76,6 +76,9 @@ async function defaultTranscode(src: string, tmp: string): Promise<void> {
     '-y', '-i', src, '-vn',
     '-c:a', 'flac', '-compression_level', '0',
     '-map_metadata', '0',
+    // Explicit container — twin of stream-alac-cache's ffmpegAlacToFlac,
+    // where a ".partial" temp name made ffmpeg refuse to guess.
+    '-f', 'flac',
     tmp,
   ], { timeout: 300000 })
 }

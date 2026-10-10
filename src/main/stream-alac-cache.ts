@@ -84,12 +84,17 @@ export async function downloadUrlToFile(
   if (st.size <= 0) throw new Error('alac fetch wrote no bytes')
 }
 
-/** PATH `ffmpeg` → FLAC, same args as the play-cache (bit-exact PCM). */
+/** PATH `ffmpeg` → FLAC, same args as the play-cache (bit-exact PCM).
+ *  `-f flac` is required: the output is `<id>.flac.partial`, and ffmpeg picks
+ *  the container from the LAST extension — ".partial" is none, so without it
+ *  every streamed ALAC failed ("Unable to choose an output format") and the
+ *  song sat on loading (2026-10-09). */
 export async function ffmpegAlacToFlac(src: string, tmp: string): Promise<void> {
   await execP('ffmpeg', [
     '-y', '-i', src, '-vn',
     '-c:a', 'flac', '-compression_level', '0',
     '-map_metadata', '0',
+    '-f', 'flac',
     tmp,
   ], { timeout: 300000 })
 }
