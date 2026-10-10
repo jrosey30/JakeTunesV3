@@ -23,7 +23,7 @@ import {
   getDeckState, setDeckState, getMixtapes, getTapeSession, getMixtapeId,
   subscribeMixtapes, refreshMixtapes, liveTapeCounter,
 } from '../mixtapes'
-import { effectiveDurationFn, tapeTracks, MAX_TAPE_SONGS } from '../../common/tape-physics'
+import { tapeTracks, tapeElapsedMs, tapeRunMs, talkoverPlays, MAX_TAPE_SONGS } from '../../common/tape-physics'
 import { mechanicalSound, tapeMotorPause } from '../tapeDeck'
 import type { Mixtape } from '../types'
 import '../styles/mixtape.css'
@@ -119,21 +119,31 @@ export default function DeckBar() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deck?.recArmed])
 
-  // Where the pen is on the active side right now (effective-time).
+  // Where the pen is on the tape's run right now (effective-time) — the
+  // same ruler Play Tape and Export read voices back with.
   const penMs = useCallback((): number => {
     const d = getDeckState()
     const t = d ? getMixtapes().find((m) => m.id === d.mixtapeId) : undefined
     if (!d || !t) return 0
-    const effDur = effectiveDurationFn(durOf, t.startOffsets)
-    const ids = tapeTracks(t)
-    const idx = nowId != null ? ids.indexOf(nowId) : -1
+    const at = nowId != null ? tapeElapsedMs(t, nowId, pb.position * 1000, durOf) : null
     // Not on the tape yet = the pen sits at the end of what IS recorded.
-    if (idx < 0) return ids.reduce((sum, id) => sum + effDur(id), 0)
-    let before = 0
-    for (let i = 0; i < idx; i++) before += effDur(ids[i])
-    const off = t.startOffsets?.[String(nowId)] || 0
-    return before + Math.max(0, pb.position * 1000 - off)
+    return at ?? tapeRunMs(t, durOf)
   }, [durOf, nowId, pb.position])
+
+  // A voice goes on the tape only where it will play: there has to be a
+  // song under it. The strip never says a voice landed that Play Tape
+  // would skip (spec-01).
+  const layVoice = useCallback(async (fresh: Mixtape, atMs: number, path: string, landed: string): Promise<void> => {
+    const pin = { side: 'A' as const, atMs, path }
+    if (!talkoverPlays(fresh, pin, durOf)) {
+      flash("There's no song under that take, so it isn't on the tape.")
+      return
+    }
+    // Talkovers pin to a spot on the ONE tape now; 'A' is written only to
+    // satisfy the legacy field shape.
+    await persist({ ...fresh, talkovers: [...(fresh.talkovers || []), pin] })
+    flash(landed)
+  }, [durOf, persist])
 
   // ── MIC engine: REC down + MIC on = the mic is HOT — even in silence
   // (Jake: "if i record before the tape it needs to be a part of the
@@ -179,8 +189,7 @@ export default function DeckBar() {
                     await persist({ ...fresh, introPath: r.path })
                     flash('Your voice opens the tape — it plays before track 1, always.')
                   } else {
-                    await persist({ ...fresh, talkovers: [...(fresh.talkovers || []), { side: 'A', atMs: pin.atMs, path: r.path }] })
-                    flash(`Voice on tape at ${fmt(pin.atMs)}.`)
+                    await layVoice(fresh, pin.atMs, r.path, `Voice on tape at ${fmt(pin.atMs)}.`)
                   }
                 }
               }
@@ -198,7 +207,7 @@ export default function DeckBar() {
       if (micRecRef.current.state === 'recording') micRecRef.current.stop()
     }
     return () => { cancelled = true }
-  }, [micShouldRun, penMs, persist])
+  }, [micShouldRun, penMs, persist, layVoice])
 
   // ── Tape off the radio: while REC is down, WJLR's DJ breaks land on
   // the tape as talkovers pinned right where the tape is — songs land
@@ -224,10 +233,7 @@ export default function DeckBar() {
                 await persist({ ...fresh, introPath: r.path })
                 flash('Taped the DJ off the air — opens the tape.')
               } else {
-                // Talkovers pin to a spot on the ONE tape now; 'A' is written
-                // only to satisfy the legacy field shape.
-                await persist({ ...fresh, talkovers: [...(fresh.talkovers || []), { side: 'A', atMs: pin.atMs, path: r.path }] })
-                flash(`Taped the DJ off the air at ${fmt(pin.atMs)}.`)
+                await layVoice(fresh, pin.atMs, r.path, `Taped the DJ off the air at ${fmt(pin.atMs)}.`)
               }
             }
           }
@@ -236,7 +242,7 @@ export default function DeckBar() {
     }
     window.addEventListener('jaketunes-radio-segment', onRadioSegment)
     return () => window.removeEventListener('jaketunes-radio-segment', onRadioSegment)
-  }, [penMs, persist])
+  }, [penMs, persist, layVoice])
 
   useEffect(() => () => { // unmount safety
     micStreamRef.current?.getTracks().forEach((t) => t.stop())

@@ -145,6 +145,12 @@ describe('WIRING — the tested code is the live code', () => {
     { fn: '.stampBins(', file: 'main/index.ts', minCalls: 1, literal: true, why: 'crate reorg — the feed gen must file cards into bins' },
     { fn: '.applyScenePitches(', file: 'main/index.ts', minCalls: 1, literal: true, why: 'deeper-than-label-mates doctrine — unwired, the shallow connection lines return' },
     { fn: '.applyAlbumHooks(', file: 'main/index.ts', minCalls: 1, literal: true, why: 'album hook sample — unwired, album cards lose their 30s sell' },
+    // spec-01: Play and Export are the same tape. One ruler in common/tape-physics.ts;
+    // the player, the deck and the export each call it instead of measuring sides.
+    { fn: 'talkoversDue', file: 'renderer/components/TapeMonitor.tsx', minCalls: 1, why: 'spec-01 — unwired, Play Tape goes back to skipping every voice on a one-sided tape' },
+    { fn: 'tapeElapsedMs', file: 'renderer/components/DeckBar.tsx', minCalls: 1, why: 'spec-01 — the deck must pin voices with the ruler Play Tape reads them back with' },
+    { fn: 'talkoverPlays', file: 'renderer/components/DeckBar.tsx', minCalls: 1, why: 'spec-01 — the strip never says a voice landed that Play Tape would skip' },
+    { fn: 'dubTalkovers', file: 'renderer/views/MixtapeView.tsx', minCalls: 1, why: 'spec-01 — Export places every voice where Play Tape fires it' },
     { fn: 'armGlobalNets', file: 'renderer/main.tsx', minCalls: 1, why: 'reliability P0 — the renderer crash net must arm before first render or grey screens go unrecorded again' },
     // Passed by REFERENCE (importDownloaded: importDownloadedFiles), never
     // called directly in index — so this wire matches the reference form.

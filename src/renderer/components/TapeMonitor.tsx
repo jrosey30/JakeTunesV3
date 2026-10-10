@@ -15,7 +15,7 @@ import { useEffect, useRef, useSyncExternalStore } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
-import { effectiveDurationFn } from '../../common/tape-physics'
+import { talkoversDue } from '../../common/tape-physics'
 import { getTapeSession, setTapeSession, getMixtapes, getPendingTapeSeek, setPendingTapeSeek, subscribeMixtapes } from '../mixtapes'
 import { initTapeDeck, tapeMotorStart, tapeFlipRitual } from '../tapeDeck'
 
@@ -97,8 +97,8 @@ export default function TapeMonitor() {
       return
     }
     // ── Talkovers: Jake's voice, laid down WITH the music, plays over
-    // the song at its pinned spot on the side. Fire when the tape's
-    // side-elapsed crosses atMs (position ticks ~1s — tape-accurate).
+    // the song at its pinned spot on the tape. Fire when the tape's
+    // elapsed run crosses the pin (position ticks ~1s — tape-accurate).
     const tape = mixtapes.find((m) => m.id === session.mixtapeId)
     // Spooling: a FF/REW that crossed into this slot seeks mid-song the
     // moment it starts — the tape lands wherever the reels stopped.
@@ -127,27 +127,19 @@ export default function TapeMonitor() {
       }
     }
     if (tape?.talkovers?.length) {
-      const side: 'A' | 'B' | null = tape.sideA.includes(nowId) ? 'A' : tape.sideB.includes(nowId) ? 'B' : null
-      if (side) {
-        const effDur = effectiveDurationFn((id) => lib.tracks.find((t) => t.id === id)?.duration || undefined, tape.startOffsets)
-        const ids = side === 'A' ? tape.sideA : tape.sideB
-        const idx = ids.indexOf(nowId)
-        let before = 0
-        for (let i = 0; i < idx; i++) before += effDur(ids[i])
-        const off = tape.startOffsets?.[String(nowId)] || 0
-        const elapsed = before + Math.max(0, pb.position * 1000 - off)
-        for (const tk of tape.talkovers) {
-          if (tk.side !== side) continue
-          const key = `${tk.side}|${tk.atMs}|${tk.path}`
-          if (playedTalkRef.current.has(key)) continue
-          if (elapsed >= tk.atMs && elapsed - tk.atMs < 4000) {
-            playedTalkRef.current.add(key)
-            const a = new Audio('ipod-audio://' + encodeURIComponent(tk.path))
-            overlayRef.current.push(a)
-            a.onended = () => { overlayRef.current = overlayRef.current.filter((x) => x !== a) }
-            void a.play().catch(() => {})
-          }
-        }
+      // The same ruler the deck pinned with and the export mixes with
+      // (spec-01: Play and Export are the same tape). A one-sided tape has
+      // no Side A / Side B lists to look the song up in, which is how every
+      // voice recorded after 2026-08-08 used to be skipped.
+      const durOf = (id: number) => lib.tracks.find((t) => t.id === id)?.duration || undefined
+      for (const tk of talkoversDue(tape, tape.talkovers, nowId, pb.position * 1000, durOf)) {
+        const key = `${tk.side}|${tk.atMs}|${tk.path}`
+        if (playedTalkRef.current.has(key)) continue
+        playedTalkRef.current.add(key)
+        const a = new Audio('ipod-audio://' + encodeURIComponent(tk.path))
+        overlayRef.current.push(a)
+        a.onended = () => { overlayRef.current = overlayRef.current.filter((x) => x !== a) }
+        void a.play().catch(() => {})
       }
     }
     const cut = session.cuts.find((c) => c.trackId === nowId)
