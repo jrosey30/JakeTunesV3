@@ -207,13 +207,18 @@ export interface EmbedTrackInput extends TempoEnergyInput {
   members?: string[]
 }
 
-// ⚠️ TWIN: scripts/brain-trainer.mjs subgenreText() — keep in sync. Folds the AI
-// genre taxonomy's general→specific path into the embed text.
-function subgenreText(t: EmbedTrackInput): string {
-  const p = String(t.subgenrePath || t.subgenre || '').trim()
-  return p ? `subgenre: ${p.replace(/\s*›\s*/g, ' / ')}` : ''
-}
-
+// ⚠️ TWIN: scripts/brain-trainer.mjs baseText() — keep in sync. The MAIN
+// brain is PLAIN since 2026-10-10: artist — title, album (year), genre tag.
+// Measured that day on the whole library (scratch re-embeds, real trainer):
+// the sound-and-mood descriptors, lyrics meaning, tempo, AI subgenre path,
+// members and play-count lines blurred genre and era — 10 nearest
+// other-artist neighbours in the same genre family 72.3% → 80.9% plain; rock
+// queries pulling electronic neighbours 7.0% → 3.4%; retrieval suite 0.736 →
+// 0.788; playlist suggestions on-genre Rocksurgence 90→96%, Dinner Party
+// 67→80%, Pool Dos 75→89%. Vibe searches lose nothing: the router sends them
+// to the MOOD index (rag-retrieval pickRetrievalIndex), which keeps the
+// descriptors — the production-path eval scored identically. Removing only
+// the AI subgenre line changed nothing (72.3 → 70.9%), so it was not the cause.
 export function buildEmbeddingText(t: EmbedTrackInput): string {
   const lines: string[] = []
   const artist = (t.artist || '').trim()
@@ -225,18 +230,6 @@ export function buildEmbeddingText(t: EmbedTrackInput): string {
   if (album) lines.push(`album: ${album}${year ? ` (${year})` : ''}`)
   if (!album && year) lines.push(`year: ${year}`)
   if (genre) lines.push(`genre: ${genre}`)
-  // ⚠️ TWIN: scripts/brain-trainer.mjs baseText() — members line.
-  const members = (t.members || []).map((m) => String(m).trim()).filter((m) => m && m.toLowerCase() !== artist.toLowerCase())
-  if (members.length) lines.push(`members: ${members.join(', ')}`)
-  const sg = subgenreText(t); if (sg) lines.push(sg)
-  const te = tempoEnergyText(t); if (te) lines.push(te)
-  const rating = Number(t.rating) || 0
-  const plays = Number(t.playCount) || 0
-  const sig: string[] = []
-  if (rating > 0) sig.push(`★${rating}`)
-  if (plays > 5) sig.push(`loved (${plays} plays)`)
-  else if (plays > 0) sig.push(`${plays} plays`)
-  if (sig.length) lines.push(sig.join(' '))
   return lines.join('\n')
 }
 

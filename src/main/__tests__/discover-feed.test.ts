@@ -9,8 +9,8 @@
  *  - applyQualityFloor: no lane ships a card the brain doesn't believe in;
  *    thin lanes back-fill to a minimum but the 40 "no signal" sentinel
  *    never ships.
- *  - buildCandidateText: candidate embeds speak the library voice (genre +
- *    sonic desc), not a bare name-and-year stub.
+ *  - buildCandidateText: candidate embeds speak the library's plain voice
+ *    (album/year + genre), not a bare name-and-year stub.
  */
 
 import { test, describe } from 'node:test'
@@ -113,7 +113,7 @@ describe('applyQualityFloor', () => {
 })
 
 describe('buildCandidateText — the library voice', () => {
-  test('album card carries the album: line, genre, and the sonic desc', () => {
+  test('album card carries the album: line and genre, the plain library voice (no sonic desc since 2026-10-10)', () => {
     const text = buildCandidateText({
       artist: 'Can', title: 'Ege Bamyasi', year: '1972', type: 'album',
       genre: 'Krautrock', desc: 'Motorik groove that built the whole genre',
@@ -122,7 +122,6 @@ describe('buildCandidateText — the library voice', () => {
       'Can — Ege Bamyasi',
       'album: Ege Bamyasi (1972)',
       'genre: Krautrock',
-      'Motorik groove that built the whole genre',
     ])
   })
   test('song card uses year: line; empty fields add no lines', () => {

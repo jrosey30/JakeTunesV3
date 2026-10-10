@@ -15,9 +15,9 @@
  *
  * Negative results are cached too ("Person", or no exact match), so a rerun
  * only asks about new tags. The sidecar rides to the NAS with the other state
- * files; the nightly brain-trainer folds `members:` into each track's text
- * (⚠️ TWIN: src/main/ai/embeddings.ts buildEmbeddingText) and the RAG router
- * counts member names as library artists.
+ * files; the RAG router counts member names as library artists. (Members
+ * were also folded into each track's embed text until 2026-10-10, when the
+ * main brain went plain — see src/main/ai/embeddings.ts buildEmbeddingText.)
  *
  * Grounded, never guessed (feedback_ground_ai_facts): only an EXACT
  * folded-name match at score 100 counts; anything fuzzier is recorded as

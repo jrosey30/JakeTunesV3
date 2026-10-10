@@ -198,12 +198,6 @@ function tempoEnergy(t) {
   return parts.join(' · ')
 }
 
-// ⚠️ TWIN: src/main/ai/embeddings.ts subgenreText — keep in sync. Folds the AI
-// genre taxonomy's general→specific path into the embed text.
-function subgenreText(t) {
-  const p = String(t.subgenrePath || t.subgenre || '').trim()
-  return p ? `subgenre: ${p.replace(/\s*›\s*/g, ' / ')}` : ''
-}
 
 // The mood index — the brain's second ear (vibe-only text, identity stripped).
 // ⚠️ TWIN: src/main/ai/mood-index.ts buildMoodText — keep in sync. Validated
@@ -243,24 +237,16 @@ async function updateMoodIndex(entries, label) {
   }
 }
 
-// Mirrors src/main/ai/embeddings.ts buildEmbeddingText so enriched vectors live
-// in the same space as the rest, just with the sound/mood line appended.
+// The MAIN brain's text — PLAIN since 2026-10-10: artist — title, album
+// (year), genre tag. ⚠️ TWIN: src/main/ai/embeddings.ts buildEmbeddingText
+// (the measurements behind the change are there). The sound-and-mood
+// descriptor and tempo still feed the MOOD index (moodText), which is where
+// the router sends vibe searches.
 function baseText(t) {
   const lines = [`${(t.artist || '?').trim()} — ${(t.title || '?').trim()}`]
   if (t.album) lines.push(`album: ${String(t.album).trim()}${t.year ? ` (${t.year})` : ''}`)
   else if (t.year) lines.push(`year: ${t.year}`)
   if (t.genre) lines.push(`genre: ${String(t.genre).trim()}`)
-  // ⚠️ TWIN: src/main/ai/embeddings.ts buildEmbeddingText — members line.
-  // Group membership from artist-members.json (MusicBrainz-grounded):
-  // "Huncho Jack" → Quavo, Travis Scott (Jake, 2026-09-04).
-  const members = (t.members || []).map(m => String(m).trim()).filter(m => m && m.toLowerCase() !== String(t.artist || '').trim().toLowerCase())
-  if (members.length) lines.push(`members: ${members.join(', ')}`)
-  const sg = subgenreText(t); if (sg) lines.push(sg)
-  const te = tempoEnergy(t); if (te) lines.push(te)
-  const r = Number(t.rating) || 0, p = Number(t.playCount) || 0, sig = []
-  if (r > 0) sig.push(`★${r}`)
-  if (p > 5) sig.push(`loved (${p} plays)`); else if (p > 0) sig.push(`${p} plays`)
-  if (sig.length) lines.push(sig.join(' '))
   return lines.join('\n')
 }
 
@@ -278,17 +264,13 @@ async function gemmaDescribe(t) {
   return (d.length >= 8 && d.length <= 400) ? d : null
 }
 
-// The enrichment layer: base library facts + Gemma's sound/mood descriptor (d)
-// + a lyrics-derived MEANING line (m). Kept OUT of baseText()/buildEmbeddingText
-// (the base twin the desktop shares) on purpose — the desktop has no lyrics, so
-// meaning lives here at the trainer's append layer, exactly like sound/mood.
-// Each line is gated on a truthy value so a missing signal adds NOTHING (never
-// fabricate). This is the ONLY place the enriched embed text is assembled.
-function enrichedText(t, d, m) {
-  let s = baseText(t)
-  if (d) s += `\nsound and mood: ${d}`
-  if (m) s += `\nmeaning: ${m}`
-  return s
+// The main brain's text for a track. Until 2026-10-10 this appended Gemma's
+// sound/mood descriptor (d) and the lyrics-derived meaning (m); the main brain
+// is plain now (see baseText), so both are ignored here — d still feeds the
+// mood index through moodText. Kept as the one entry point every re-embed
+// path calls, so none of them can drift back to the old recipe.
+function enrichedText(t, _d, _m) {
+  return baseText(t)
 }
 
 // Sibling of gemmaDescribe: read a track's real lyrics and write ONE compact
@@ -312,10 +294,21 @@ async function openaiEmbed(texts) {
   const out = []
   for (let i = 0; i < texts.length; i += 100) {
     const chunk = texts.slice(i, i + 100)
-    const r = await fetch(EMBED_URL, {
-      method: 'POST', headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: EMBED_MODEL, input: chunk }), signal: AbortSignal.timeout(60000),
-    })
+    // A full re-embed is millions of tokens and hits the account's
+    // tokens-per-minute cap (measured 2026-10-10: two concurrent re-embeds
+    // failed in seconds with 429). Wait as long as OpenAI asks, then retry.
+    let r
+    for (let attempt = 0; ; attempt++) {
+      r = await fetch(EMBED_URL, {
+        method: 'POST', headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: EMBED_MODEL, input: chunk }), signal: AbortSignal.timeout(60000),
+      })
+      if (r.status !== 429 || attempt >= 8) break
+      const body = await r.text()
+      const m = /try again in ([\d.]+)(ms|s)/.exec(body)
+      const wait = m ? (m[2] === 'ms' ? Number(m[1]) : Number(m[1]) * 1000) + 500 : 15000
+      await new Promise((res) => setTimeout(res, wait))
+    }
     if (!r.ok) throw new Error(`openai ${r.status} ${(await r.text()).slice(0, 160)}`)
     for (const row of (await r.json()).data) {
       if (Array.isArray(row.embedding) && row.embedding.length === EMBED_DIM) out.push(Float32Array.from(row.embedding))

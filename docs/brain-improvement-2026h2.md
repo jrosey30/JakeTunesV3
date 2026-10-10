@@ -93,3 +93,38 @@ one command), trainer --redescribe-all + GEMMA_MODEL override +
 think:false (all committed — the moment a genuinely better
 model/prompt exists, the overnight path is one launch away), qwen3:8b
 staged on the Mini.
+
+## 2026-10-10 — the main brain goes PLAIN (Jake's decision)
+
+Trigger: playlist suggestions "0/10" (Rocksurgence offered house and rap). After
+the pipeline fix (PR #61) the remaining cross-genre picks came from the brain.
+
+Experiment (real trainer `--reembed-all` on scratch copies of the NAS state, the
+live brain untouched): current recipe vs the same minus the AI subgenre line vs
+PLAIN (artist — title, album (year), genre tag).
+
+| | 10NN other-artist same family | rock → electronic nbrs | retrieval (main) | mood qs on main (workout / chill / aggressive) | production path (router) |
+|---|---|---|---|---|---|
+| current | 72.3% | 7.0% | 0.736 | 0.70 / 0.17 / 0.43 | baseline |
+| − subgenre | 70.9% | 7.7% | 0.734 | 0.87 / 0.17 / 0.43 | — |
+| **plain** | **80.9%** | **3.4%** | **0.788** | 0.27 / 0.07 / 0.57 | **identical on every mood route, ≥ on main routes** |
+
+The AI subgenre line was NOT the cause. The descriptor / meaning / tempo lines
+blur genre and era. Vibe searches never use the main brain in production —
+`pickRetrievalIndex` sends anything not naming an artist or a decade to the mood
+index, which keeps the descriptor — so the prod-path bucket scored the same.
+Suggestions (new pipeline): Rocksurgence 90→96% on-genre, Dinner Party 67→80,
+Pool Dos 75→89, Q104.3 97→100; small playlists get thinner pools (Indie sleaze
+82→14).
+
+**For whoever reads the eval next (incl. the nightly brain-improve agent):** the
+main-embedding `enrichment_sensitive` prompts (ret-013..015) are EXPECTED lower
+from here — they measure the main index directly, which no longer carries sound
+words. Measure vibe on the production-path bucket (`prod-*`, mood routes). Do not
+fold descriptors or meaning back into the main brain: it regresses the
+genre/era prompts this change was made for.
+
+Known cost: a query naming an artist AND a lyric theme ("Drake songs about
+money") routes to main and no longer sees the lyrics meaning. Theme-only queries
+already went to the mood index, which never had it — folding meaning into the
+mood text is the open follow-up (measure on the prod path first).
