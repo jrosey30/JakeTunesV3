@@ -30,7 +30,21 @@
 # runs ~/bin/jaketunes-homemini-sync.sh, which is a COPY of this file
 # (see README.md and docs/homemini.md). An older ~/bin copy ignores
 # unknown arguments and still publishes library.json — reinstall this
-# file for the flag to take effect. Every other leg still runs.
+# file for the flag to take effect.
+#
+# Replica mode (--skip-library-json, 2026-10-09): a replica pushes SAFELY.
+#   - Its state files go to replicas/<name>/ inside homemini's JakeTunes
+#     folder — never over the hub's copies. play-events.jsonl and
+#     listening-log.jsonl there are the MacBook's (the phone backend reads
+#     them, "one-way synced from the MacBook"); a replica's logs share no
+#     lines with them, so a plain push replaced the MacBook's history.
+#   - Artwork is additive only (--ignore-existing).
+#   - No JakeTunes restart on homemini, no NAS / Plex / stars legs.
+#   - Notices are logged, not shown: on macOS 26 osascript notifications
+#     open Script Editor, once per song change on a replica.
+# Remote paths are escaped for macOS's /usr/bin/rsync (openrsync), which
+# hands them to the remote shell unprotected ("Application Support" split
+# in two). GNU rsync ≥ 3.2.4 protects them itself and gets them unchanged.
 #
 # Lockfile prevents two runs colliding (launchd + manual + future
 # post-import trigger). If a previous run is still in flight, this one
@@ -73,8 +87,8 @@ cleanup_children() {
 }
 trap cleanup_children TERM INT
 
-LOG=/tmp/jaketunes-sync.log
-LOCK=/tmp/jaketunes-sync.lock
+LOG="${JT_SYNC_LOG:-/tmp/jaketunes-sync.log}"
+LOCK="${JT_SYNC_LOCK:-/tmp/jaketunes-sync.lock}"
 LIBRARY_ROOT="${JT_LIBRARY_ROOT:-$HOME/Music2/JakeTunesLibrary}"
 SHARE_URL="${JT_SHARE:-smb://ds225.local/JakeShared}"
 MOUNT="${JT_MOUNT:-/Volumes/JakeShared}"
@@ -198,7 +212,32 @@ log() {
 
 notify() {
   # macOS user notification — works whether launchd or interactive.
+  # A replica logs it instead (see the header: Script Editor on macOS 26).
+  if [ "${REPLICA:-0}" -eq 1 ]; then
+    log "notice (replica, not shown): $1"
+    return 0
+  fi
   osascript -e "display notification \"$1\" with title \"JakeTunes sync\"" 2>/dev/null || true
+}
+
+# rsync destination on homemini. openrsync (macOS /usr/bin/rsync) passes the
+# remote path to the remote shell unprotected, so spaces must be escaped;
+# GNU rsync protects it and must NOT get backslashes (it would keep them).
+RSYNC_OPEN=0
+rsync --version 2>&1 | head -1 | grep -qi openrsync && RSYNC_OPEN=1
+rremote() {
+  if [ "$RSYNC_OPEN" -eq 1 ]; then
+    printf '%s:%s' "$HOMEMINI" "${1// /\\ }"
+  else
+    printf '%s:%s' "$HOMEMINI" "$1"
+  fi
+}
+
+# Folder name for this replica's pushes on homemini: [a-z0-9-] only.
+replica_name() {
+  local n="${JT_REPLICA_NAME:-$(scutil --get LocalHostName 2>/dev/null || hostname -s)}"
+  n=$(printf '%s' "$n" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | tr -s '-' | sed -e 's/^-*//' -e 's/-*$//')
+  printf '%s' "${n:-replica}"
 }
 
 # Pull a file that may legitimately not exist yet, WITHOUT crying wolf.
@@ -282,14 +321,19 @@ done
 # The default SYNC_FILES assignment above still lists it, so a canonical
 # run (no flag) publishes it. Both publish sites — publish_backend_library
 # and this array — have to skip, or the phone still reads the replica copy.
-if [ "$SKIP_LIBRARY_JSON" -eq 1 ]; then
+REPLICA=$SKIP_LIBRARY_JSON
+REMOTE_STATE_DIR="$JT_DATA_REMOTE"
+if [ "$REPLICA" -eq 1 ]; then
   _kept=()
   for f in "${SYNC_FILES[@]}"; do
     [ "$f" = "library.json" ] && continue
     _kept+=("$f")
   done
   SYNC_FILES=("${_kept[@]}")
-  log "replica: not publishing library.json (hub owns the catalog); other state files still push"
+  REPLICA_NAME=$(replica_name)
+  REMOTE_STATE_DIR="$JT_DATA_REMOTE/replicas/$REPLICA_NAME"
+  HOMEMINI_ONLY=1
+  log "replica: not publishing library.json (hub owns the catalog); this machine's state goes to $REMOTE_STATE_DIR on homemini, never over the hub's files; NAS, Plex and stars legs skipped; notices logged, not shown"
 fi
 [ $HOMEMINI_ONLY -eq 0 ] && { ensure_jakeshared || true; }
 
@@ -390,8 +434,8 @@ push_homemini_state() {
   done
 
   remote_fp_cmd='for f in '"${SYNC_FILES[*]}"'; do
-  if [ -f "Library/Application Support/JakeTunes/$f" ]; then
-    m=$(stat -f "%m" "Library/Application Support/JakeTunes/$f" 2>/dev/null || echo 0)
+  if [ -f "'"$REMOTE_STATE_DIR"'/$f" ]; then
+    m=$(stat -f "%m" "'"$REMOTE_STATE_DIR"'/$f" 2>/dev/null || echo 0)
     printf "%s:%s|" "$f" "$m"
   fi
 done'
@@ -420,12 +464,20 @@ done'
     log "no state files to push"
     return 0
   fi
-  rsync "${rsync_args[@]}" "$HOMEMINI:$JT_DATA_REMOTE/" >> "$LOG" 2>&1
+  if [ "$REPLICA" -eq 1 ]; then
+    ssh -o BatchMode=yes -o ConnectTimeout=5 "$HOMEMINI" \
+      "mkdir -p \"$REMOTE_STATE_DIR\"" >> "$LOG" 2>&1 || true
+  fi
+  rsync "${rsync_args[@]}" "$(rremote "$REMOTE_STATE_DIR/")" >> "$LOG" 2>&1
   local scp_rc=$?
   if [ $scp_rc -ne 0 ]; then
     log "ERROR: rsync of JSON state failed (exit $scp_rc) — homemini may be offline"
     notify "Library state sync to homemini failed. Music may still reach the NAS."
     return 3
+  fi
+  if [ "$REPLICA" -eq 1 ]; then
+    log "replica state pushed to $REMOTE_STATE_DIR — homemini's JakeTunes left running"
+    return 0
   fi
 
   log "restarting JakeTunes on homemini …"
@@ -449,9 +501,11 @@ sync_artwork_to_homemini() {
     log "rsync artwork → $HOMEMINI:$REMOTE_ARTWORK …"
     ssh -o BatchMode=yes -o ConnectTimeout=5 "$HOMEMINI" \
       "mkdir -p \"$REMOTE_ARTWORK\"" >> "$LOG" 2>&1 || true
-    rsync -rtz --update --no-perms --no-owner --no-group \
+    local art_mode=--update
+    [ "$REPLICA" -eq 1 ] && art_mode=--ignore-existing   # a replica only adds covers
+    rsync -rtz "$art_mode" --no-perms --no-owner --no-group \
       --include='*.jpg' --include='*.meta.json' --exclude='*' \
-      "$LOCAL_ARTWORK" "$HOMEMINI:$REMOTE_ARTWORK" >> "$LOG" 2>&1
+      "$LOCAL_ARTWORK" "$(rremote "$REMOTE_ARTWORK")" >> "$LOG" 2>&1
     art_rc=$?
     if [ $art_rc -eq 0 ]; then
       log "artwork rsync OK"
