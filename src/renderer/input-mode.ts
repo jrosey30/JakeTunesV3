@@ -22,12 +22,23 @@
  *     button, by Escape, or by the view unmounting — restores the app's
  *     shortcuts in the same tick.
  */
+export type TransportKey = 'Space' | 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown'
+
+/** The keys a claim withholds by default. Everything else falls through to the app. */
+const TRANSPORT_KEYS: readonly TransportKey[] = ['Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']
+
 let owner: string | null = null
+let withheld: ReadonlySet<string> = new Set(TRANSPORT_KEYS)
 
 /** Claim the transport keys. Returns the release function; call it on
- *  unmount. Releasing a claim someone else now holds does nothing. */
-export function claimTransportKeys(id: string): () => void {
+ *  unmount. Releasing a claim someone else now holds does nothing.
+ *
+ *  A view that only uses some of them names those (the Listen List moves
+ *  with ↑/↓ and previews with Space, so ←/→ keep skipping tracks there).
+ *  A narrower claim never withholds a key the view would then ignore. */
+export function claimTransportKeys(id: string, keys: readonly TransportKey[] = TRANSPORT_KEYS): () => void {
   owner = id
+  withheld = new Set(keys)
   return () => { if (owner === id) owner = null }
 }
 
@@ -35,11 +46,8 @@ export function transportKeysClaimed(): boolean {
   return owner !== null
 }
 
-/** The keys a claim withholds. Everything else falls through to the app. */
-const WITHHELD = new Set(['Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'])
-
 /** True when the app's global shortcut handlers must ignore this event.
  *  Takes the event's `code` so it is testable without a DOM. */
 export function shouldYieldToClaim(code: string): boolean {
-  return owner !== null && WITHHELD.has(code)
+  return owner !== null && withheld.has(code)
 }
