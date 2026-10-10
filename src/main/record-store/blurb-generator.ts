@@ -35,10 +35,11 @@ import type { Blurb, Persona, ShelfItem } from './types'
 import type { CandTrack } from './candidate-pool'
 import type { PlayEvent, RecordStoreLlm } from './shelf-generator'
 import { partOfDay } from './external-context'
+import { MODEL_FAST } from '../../common/ai-models'
 
 const THIRTY_DAYS_MS = 30 * 86_400_000
 const SEVEN_DAYS_MS = 7 * 86_400_000
-const BLURB_MODEL = 'claude-haiku-4-5'
+const BLURB_MODEL = MODEL_FAST
 const BLURB_MAX_TOKENS = 160
 /** Need at least this many logged plays before claiming a time-of-day
  *  habit — two plays is noise, not a pattern. */

@@ -28,6 +28,7 @@ import {
   recordSkip,
   recordRating,
 } from '../listener-profile.ts'
+import { MODEL_SMART } from '../../common/ai-models.ts'
 
 function aliasesPath(): string {
   return join(STATE_DIR, 'artist-aliases.json')
@@ -115,7 +116,7 @@ export function registerLibraryIpc(ipc: IpcRegistrar, host: LibraryIpcHost): voi
         'Return ONLY JSON — an array of {"tag","type","canonical","contributors","why"}: "canonical" only for persona, "contributors" (array) only for collaboration, "why" = one short sentence. No prose, no code fence.',
       ].join('\n')
       const reply = await host.claudeCall('artist-groups:classify', {
-        model: 'claude-sonnet-4-6',
+        model: MODEL_SMART,
         max_tokens: 6000,
         system: 'You are a meticulous music-metadata expert. You know artist relationships precisely — a musician\'s bands/aliases/side-projects vs. one-off collaborations vs. standalone groups whose name simply contains "&"/"and"/"/". Be conservative: when unsure whether two tags are the SAME act, prefer "standalone" or "collaboration" over a wrong merge.',
         messages: [{ role: 'user', content: user }],

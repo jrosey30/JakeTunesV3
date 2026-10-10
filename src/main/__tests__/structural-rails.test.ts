@@ -157,6 +157,8 @@ describe('WIRING — the tested code is the live code', () => {
     { fn: '<RemoveConcertDialog', file: 'renderer/views/ConcertDetailView.tsx', minCalls: 1, literal: true, why: 'spec-03 — the concert page goes back to a click-twice remove that forgets itself' },
     { fn: '<RemoveConcertDialog', file: 'renderer/views/AlbumDetailView.tsx', minCalls: 1, literal: true, why: 'spec-03 — the album page and the concert page must ask in the same words' },
     { fn: 'setConfirmTapeOver(true)', file: 'renderer/components/MixtapeSheet.tsx', minCalls: 1, literal: true, why: 'spec-03 — taping over a saved tape goes back to destroying it without asking' },
+    // 2026-10-10 model upgrade: the 5.x models refuse temperature and think by default.
+    { fn: 'withModelPolicy', file: 'main/index.ts', minCalls: 3, why: 'model upgrade — unwired, a 5.x call 400s on temperature or spends its budget thinking and returns no text' },
     { fn: 'armGlobalNets', file: 'renderer/main.tsx', minCalls: 1, why: 'reliability P0 — the renderer crash net must arm before first render or grey screens go unrecorded again' },
     // Passed by REFERENCE (importDownloaded: importDownloadedFiles), never
     // called directly in index — so this wire matches the reference form.
