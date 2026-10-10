@@ -32,6 +32,7 @@ import { getConcertKey, subscribeConcertKey } from '../concertNav'
 import { buildNormalizedArtworkIndex, lookupArtwork } from '../utils/artworkLookup'
 import AlbumArtImage from '../components/AlbumArtImage'
 import ContextMenu from '../components/ContextMenu'
+import RemoveConcertDialog, { REMOVE_CONCERT_LABEL } from '../components/RemoveConcertDialog'
 import type { LiveSetCue, Track } from '../types'
 import '../styles/concerts.css'
 import '../styles/concert-detail.css'
@@ -272,10 +273,9 @@ export default function ConcertDetailView() {
             >{crowdLabel}</button>
             <button
               className="cd-btn cd-btn--remove"
-              onClick={() => { if (confirmRemove) void handleUndeclare(); else setConfirmRemove(true) }}
-              onMouseLeave={() => setConfirmRemove(false)}
-              title="Remove this concert — the individual songs are unaffected"
-            >{confirmRemove ? 'Remove concert?' : 'Undeclare'}</button>
+              onClick={() => setConfirmRemove(true)}
+              title="Remove this concert — the songs are unaffected"
+            >{REMOVE_CONCERT_LABEL}</button>
           </div>
         </div>
       </section>
@@ -408,6 +408,14 @@ export default function ConcertDetailView() {
               : [{ label: `Add "${cleanTitle(cueCtx.cue.title)}" to My Library`, onClick: () => { void promoteTrackToLibrary(albumKey, cueCtx.cue.trackId) } }]
           }
           onClose={() => setCueCtx(null)}
+        />
+      )}
+
+      {confirmRemove && (
+        <RemoveConcertDialog
+          name={meta.show || albumKey}
+          onConfirm={() => { setConfirmRemove(false); void handleUndeclare() }}
+          onCancel={() => setConfirmRemove(false)}
         />
       )}
     </div>

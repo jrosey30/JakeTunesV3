@@ -20,6 +20,7 @@ import { useMemo, useState } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { inheritCover } from '../playlistCovers'
 import MixtapeMic from './MixtapeMic'
+import ConfirmDialog from './ConfirmDialog'
 import { refreshMixtapes, setMixtapeId, pickInk } from '../mixtapes'
 import { effectiveDurationFn, tapeTracks, fitTape, MAX_TAPE_SONGS } from '../../common/tape-physics'
 import type { Track, Mixtape } from '../types'
@@ -72,6 +73,8 @@ export default function MixtapeSheet({ tracks, onClose, existing, keepOrder, ini
   const [note, setNote] = useState('')
   const [introPath, setIntroPath] = useState<string | null>(existing?.introPath ?? null)
   const [error, setError] = useState('')
+  // Taping over a saved tape asks first, in the red dialog (spec-03).
+  const [confirmTapeOver, setConfirmTapeOver] = useState(false)
   const [title, setTitle] = useState(existing?.title ?? initialTitle ?? '')
   const [commentary, setCommentary] = useState(existing?.commentary ?? '')
   const [linerNotes, setLinerNotes] = useState<Array<{ id: number; note: string }>>(existing?.linerNotes ?? [])
@@ -282,11 +285,6 @@ export default function MixtapeSheet({ tracks, onClose, existing, keepOrder, ini
               </div>
             )}
 
-            {existing && (
-              <div className="mixsheet-tapeover-warning">
-                Saving tapes over “{existing.title}” — the old arrangement is gone for good.
-              </div>
-            )}
             {error && <div className="mixsheet-error">{error}</div>}
             <div className="activity-sheet-actions">
               <button type="button" className="activity-btn activity-btn--ghost" onClick={onClose}>Cancel</button>
@@ -296,13 +294,25 @@ export default function MixtapeSheet({ tracks, onClose, existing, keepOrder, ini
               {!existing && !keepOrder && (
                 <button type="button" className="activity-btn activity-btn--ghost" onClick={() => { void build() }}>Re-deal</button>
               )}
-              <button type="button" className="activity-btn activity-btn--go" onClick={() => { void save() }}>
+              <button type="button" className="activity-btn activity-btn--go" onClick={() => { if (existing) setConfirmTapeOver(true); else void save() }}>
                 {existing ? 'Tape over it' : 'Dub the tape'}
               </button>
             </div>
           </>
         )}
       </div>
+      {confirmTapeOver && existing && (() => {
+        const n = tapeTracks(existing).length
+        return (
+          <ConfirmDialog
+            message={`Tape over “${existing.title}”?`}
+            detail={`The ${n} song${n === 1 ? '' : 's'} on it now, in that order, are gone for good.`}
+            confirmLabel="Tape over it"
+            onConfirm={() => { setConfirmTapeOver(false); void save() }}
+            onCancel={() => setConfirmTapeOver(false)}
+          />
+        )
+      })()}
     </div>
   )
 }

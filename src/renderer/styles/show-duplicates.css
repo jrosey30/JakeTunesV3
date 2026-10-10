@@ -95,31 +95,26 @@
 .dup-tn { font-weight: 600; min-width: 28px; color: #333; }
 .dup-dur { min-width: 40px; }
 .dup-size { min-width: 56px; }
-.dup-fp {
-  color: #888;
-  font-family: ui-monospace, Menlo, monospace;
-  font-size: 10px;
-}
+.dup-format { min-width: 34px; color: #555; }
 
-.dup-row-path {
+/* When the copy arrived — the last thing a person compares copies by
+   (spec-03: no fingerprint, no file path on the row). */
+.dup-row-added {
   flex: 1;
-  font-family: ui-monospace, Menlo, monospace;
   font-size: 10px;
   color: #777;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .dup-delete-btn {
-  /* 22×64 px button: visually small but click target stays comfortable.
-     Color: warm rust gradient on cream — matches the Brick palette
-     ('Jake's hippy palette' for destructive admin actions). */
+  /* Quiet on the row (spec-03): the red belongs to the dialog that asks
+     before anything is deleted, not to the button that opens it. Same
+     grey push-button family as the rest of the modal. */
   padding: 4px 10px;
-  border: 1px solid #b54a14;
+  border: 1px solid #a8a8a8;
   border-radius: 3px;
-  background: linear-gradient(180deg, #f0c8b0, #e0a070);
-  color: #5b1f08;
+  background: linear-gradient(180deg, #fdfdfd, #e4e4e4);
+  color: #333;
   font-size: 10px;
   font-weight: 600;
   cursor: pointer;
@@ -127,10 +122,10 @@
   flex-shrink: 0;
 }
 .dup-delete-btn:hover:not(:disabled) {
-  background: linear-gradient(180deg, #f5d0b8, #e8a878);
+  background: linear-gradient(180deg, #ffffff, #ececec);
 }
 .dup-delete-btn:active:not(:disabled) {
-  background: linear-gradient(180deg, #d89668, #c07848);
+  background: linear-gradient(180deg, #d6d6d6, #e6e6e6);
 }
 .dup-delete-btn:disabled {
   opacity: 0.4;

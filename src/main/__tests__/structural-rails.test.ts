@@ -152,6 +152,11 @@ describe('WIRING — the tested code is the live code', () => {
     { fn: 'talkoverPlays', file: 'renderer/components/DeckBar.tsx', minCalls: 1, why: 'spec-01 — the strip never says a voice landed that Play Tape would skip' },
     { fn: 'dubTalkovers', file: 'renderer/views/MixtapeView.tsx', minCalls: 1, why: 'spec-01 — Export places every voice where Play Tape fires it' },
     { fn: 'claimTransportKeys', file: 'renderer/views/ScotusView/ScotusView.tsx', minCalls: 1, why: 'spec-02 — unwired, Space in the courtroom toggles the music and the argument at once again' },
+    // spec-03: every destroy asks, in the one red dialog.
+    { fn: 'enterPresses', file: 'renderer/components/ConfirmDialog.tsx', minCalls: 1, why: 'spec-03 — unwired, Enter on a focused Cancel deletes again' },
+    { fn: '<RemoveConcertDialog', file: 'renderer/views/ConcertDetailView.tsx', minCalls: 1, literal: true, why: 'spec-03 — the concert page goes back to a click-twice remove that forgets itself' },
+    { fn: '<RemoveConcertDialog', file: 'renderer/views/AlbumDetailView.tsx', minCalls: 1, literal: true, why: 'spec-03 — the album page and the concert page must ask in the same words' },
+    { fn: 'setConfirmTapeOver(true)', file: 'renderer/components/MixtapeSheet.tsx', minCalls: 1, literal: true, why: 'spec-03 — taping over a saved tape goes back to destroying it without asking' },
     { fn: 'armGlobalNets', file: 'renderer/main.tsx', minCalls: 1, why: 'reliability P0 — the renderer crash net must arm before first render or grey screens go unrecorded again' },
     // Passed by REFERENCE (importDownloaded: importDownloadedFiles), never
     // called directly in index — so this wire matches the reference form.

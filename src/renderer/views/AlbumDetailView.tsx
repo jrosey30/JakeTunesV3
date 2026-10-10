@@ -20,6 +20,7 @@ import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import { downloadMenuEntries } from '../utils/downloadStore'
 import GetInfoModal from '../components/GetInfoModal'
 import ConfirmDialog from '../components/ConfirmDialog'
+import RemoveConcertDialog, { REMOVE_CONCERT_LABEL } from '../components/RemoveConcertDialog'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import { setNotice } from '../activity'
 // V5 Live Concert Mode — declared-set store + declare orchestration.
@@ -193,7 +194,7 @@ export default function AlbumDetailView() {
     libDispatch({ type: 'DELETE_TRACKS', ids: [liveSet.mergedTrackId] })
     await unregisterLiveSet(albumKey)
     setUndeclareConfirm(false)
-    setNotice('Live Mode undeclared — the individual tracks are unchanged')
+    setNotice('Concert removed. The songs are unchanged.')
   }, [liveSet, albumKey, libDispatch])
   const setPlaying = !!(mergedTrack && pb.nowPlaying?.id === mergedTrack.id)
   const activeCue = liveSet && setPlaying ? cueAt(liveSet, pb.position * 1000) : null
@@ -575,7 +576,7 @@ export default function AlbumDetailView() {
                 >
                   {crowdOn ? '◉ Crowd on' : '◎ Crowd'}
                 </button>
-                <button type="button" className="album-page-shuffle album-page-liveset-undeclare" onClick={() => setUndeclareConfirm(true)} title="Delete the merged set file (individual tracks unaffected)">Undeclare Live Mode</button>
+                <button type="button" className="album-page-shuffle album-page-liveset-undeclare" onClick={() => setUndeclareConfirm(true)} title="Remove this concert — the songs are unaffected">{REMOVE_CONCERT_LABEL}</button>
               </>
             ) : (
               <button
@@ -799,10 +800,8 @@ export default function AlbumDetailView() {
         />
       )}
       {undeclareConfirm && liveSet && (
-        <ConfirmDialog
-          message={`Undeclare Live Mode for "${albumName}"?`}
-          detail="The merged live-set file will be deleted. The individual tracks are not affected — they stay exactly as they always were."
-          confirmLabel="Undeclare"
+        <RemoveConcertDialog
+          name={albumName}
           onConfirm={() => { void handleUndeclare() }}
           onCancel={() => setUndeclareConfirm(false)}
         />
@@ -812,6 +811,9 @@ export default function AlbumDetailView() {
           message={`Is this the complete show?`}
           detail={`The files don't declare the album's total track count, so it can't be verified automatically. What's here checks out: ${completeness.total} tracks, numbered with no gaps or duplicates. Only declare Live Mode if this is every track of the show.`}
           confirmLabel="It's complete — merge"
+          // A question, not a destroy: it creates the concert, so it is not
+          // red and Enter answers yes (spec-03 keeps Enter=Cancel for destroys).
+          destructive={false}
           onConfirm={() => { setCompletenessConfirm(false); void runDeclare(true) }}
           onCancel={() => setCompletenessConfirm(false)}
         />
