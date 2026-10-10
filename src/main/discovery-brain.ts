@@ -31,26 +31,29 @@ export interface BrainScorable {
   year?: string
   /** 'album' | 'song' | 'artist' — shapes the embed text like the library's. */
   type?: string
-  /** Sonic one-liner (the card's why/connection) — the candidate's stand-in
-   *  for the descriptors and lyric themes the library vectors carry. */
+  /** Sonic one-liner (the card's why/connection). Not embedded since
+   *  2026-10-10 — the library vectors no longer carry descriptors, so it
+   *  would only add noise (see buildCandidateText). Kept on the type for
+   *  the callers that pass it. */
   desc?: string
 }
 
 /**
- * The candidate's embedding text, shaped like buildEmbeddingText's library
- * voice (same line labels, same order) so the cosines compare like with like.
+ * The candidate's embedding text, shaped exactly like buildEmbeddingText's
+ * library text (same lines, same order) so the cosines compare like with
+ * like. ⚠️ TWIN: src/main/ai/embeddings.ts buildEmbeddingText.
  * 2026-08-21: candidates used to embed as a bare "Artist — Title" while the
- * library side carried genre, subgenre, tempo/mood and lyric themes — the
- * score was mostly measuring whether the model recognized the artist's name.
- * A candidate can't have audio analysis, but genre (iTunes gives it away
- * free) plus the why-line's sonic description close most of the gap.
+ * library side carried genre and more — the score was mostly measuring
+ * whether the model recognized the artist's name. 2026-10-10: the library
+ * side is plain now (artist — title, album (year), genre), so the sonic
+ * description (desc) left the candidate text too — matched against a library
+ * that no longer describes sound, it was only noise.
  */
 export function buildCandidateText(c: BrainScorable): string {
   const lines = [`${c.artist} — ${c.title}`]
   if (c.type === 'album') lines.push(`album: ${c.title}${c.year ? ` (${c.year})` : ''}`)
   else if (c.year) lines.push(`year: ${c.year}`)
   if (c.genre) lines.push(`genre: ${c.genre}`)
-  if (c.desc) lines.push(c.desc)
   return lines.join('\n')
 }
 
