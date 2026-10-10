@@ -25,7 +25,7 @@ import {
 } from '../playlistCovers'
 import { getMixtapeId, getMixtapes, getDeckState, subscribeMixtapes, refreshMixtapes, pickInk, setTapeSession, setDeckState, liveTapeCounter, spoolTarget, setPendingTapeSeek, setWindDisplay } from '../mixtapes'
 import { startWindSound, stopWindSound, mechanicalSound, tapeMotorPause } from '../tapeDeck'
-import { effectiveDurationFn, tapeTracks } from '../../common/tape-physics'
+import { effectiveDurationFn, tapeTracks, tapeCutMs, tapePlayIds, dubTalkovers } from '../../common/tape-physics'
 import type { Track, Mixtape } from '../types'
 import '../styles/mixtape.css'
 
@@ -195,27 +195,32 @@ export default function MixtapeView() {
     setDubNotice('Exporting… rendering the tape.')
     try {
       const abs = (t: Track) => mountRef.current + String(t.path || '').replace(/:/g, '/')
-      const mkSide = (label: 'A' | 'B', tracksOnSide: Track[], cutMs?: number) => ({
-        label,
-        songs: tracksOnSide.map((t, i) => ({
-          absPath: abs(t),
-          id: t.id,
-          colonPath: String(t.path || ''),
-          cutMs: cutMs !== undefined && i === tracksOnSide.length - 1 ? cutMs : undefined,
-          startMs: tape.startOffsets?.[String(t.id)] || undefined,
-        })),
-        talkovers: (tape.talkovers || []).filter((tv) => tv.side === label).map((tv) => ({ atMs: tv.atMs, path: tv.path })),
-        introPath: label === 'A' ? tape.introPath : undefined,
-      })
       // A tape made under the 2026-08-08 rules is one continuous run, so it
       // dubs as ONE file. A grandfathered two-sided tape still dubs as two,
       // because that's physically what it is.
       const twoSided = !Array.isArray(tape.tracks) && (tape.sideA.length > 0 || tape.sideB.length > 0)
+      // Play and Export are the same tape (spec-01): the songs Play Tape
+      // plays, cut where it cuts, and every voice where Play Tape fires it.
+      const durOf = (id: number) => byId.get(id)?.duration || undefined
+      const voices = dubTalkovers(tape, tape.talkovers || [], durOf, twoSided)
+      const mkSide = (label: 'A' | 'B', tracksOnSide: Track[]) => ({
+        label,
+        songs: tracksOnSide.map((t) => ({
+          absPath: abs(t),
+          id: t.id,
+          colonPath: String(t.path || ''),
+          cutMs: tapeCutMs(tape, t.id),
+          startMs: tape.startOffsets?.[String(t.id)] || undefined,
+        })),
+        talkovers: voices[label].map((tv) => ({ atMs: tv.atMs, path: tv.path })),
+        introPath: label === 'A' ? tape.introPath : undefined,
+      })
+      const playIds = new Set(tapePlayIds(tape))
       const r = await window.electronAPI.dubMixtape?.({
         title: tape.title,
         sides: twoSided
-          ? [mkSide('A', sideATracks, tape.sideACutMs), mkSide('B', sideBTracks, tape.sideBCutMs)]
-          : [mkSide('A', allTracks, undefined)],
+          ? [mkSide('A', sideATracks), mkSide('B', sideBTracks)]
+          : [mkSide('A', allTracks.filter((t) => playIds.has(t.id)))],
       })
       setDubNotice(r?.ok
         ? `Exported to Desktop → JakeTunes Dubs → ${tape.title}.`
