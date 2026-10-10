@@ -137,9 +137,10 @@ test('refresh NEVER empties the strip — rotate wraps forever', () => {
   }
 })
 
-test('an ECLECTIC playlist (no dominant vibe) keeps every corner', () => {
+test('an ECLECTIC playlist (no dominant vibe) keeps every real corner', () => {
   const { playlist, library, hits } = vibeFixture()
-  // Five vibes, none holding half the playlist — nothing gets dropped.
+  // Five vibes, none holding half the playlist — every corner of 2+ songs
+  // keeps its seats (since 2026-10-10 a lone song's corner does not).
   const picks = suggestFromVibeHits(playlist, library, hits, 5, 0, [3, 2, 2, 2, 1])
   assert.ok(picks.some((p) => p.genre === 'Metal'), 'no vibe dropped on a mosaic playlist')
 })
@@ -343,4 +344,84 @@ test('era: the centered window is the middle half ±3y, so one stray old song do
   const out = t({ artist: 'Too Old', genre: 'Rock', year: 1984 })  // outside → cut
   const picks = suggestFromVibeHits(pl, [...pl, ok, out], vibeHits([out.id, ok.id]), 2, 0, [pl.length])
   assert.deepEqual(picks.map(p => p.id), [ok.id])
+})
+
+// ── 2026-10-10, Jake on Rocksurgence: "trash", "like a 0/10" ─────────────
+// A 39-song modern-rock playlist; two songs whose AI subgenre reads "French
+// house" formed their own 2-seed sub-vibe, and because no sub-vibe held half
+// the seeds the old rule called the playlist a mosaic and let that corner
+// keep every seat it found: Agent Stereo, Cartier God, Daft Punk.
+function rocksurgenceFixture() {
+  const playlist: SuggestibleTrack[] = Array.from({ length: 39 }, (_, i) => ({ id: 2000 + i, title: `rock ${i}`, artist: `band${i}`, genre: 'Rock' }))
+  const rockLib: SuggestibleTrack[] = Array.from({ length: 20 }, (_, i) => ({ id: 300 + i, title: `new rock ${i}`, artist: `newband${i}`, genre: 'Rock' }))
+  const houseLib: SuggestibleTrack[] = Array.from({ length: 6 }, (_, i) => ({ id: 400 + i, title: `house ${i}`, artist: `dj${i}`, genre: 'House' }))
+  const hits = [
+    ...rockLib.map((tr, i) => ({ trackId: tr.id, score: 0.8 - i * 0.01, cluster: i % 3 })),
+    ...houseLib.map((tr, i) => ({ trackId: tr.id, score: 0.9 - i * 0.01, cluster: 3 })),
+  ]
+  return { playlist, library: [...rockLib, ...houseLib], hits }
+}
+
+test('a 2-song corner of a big playlist earns no seat, mosaic or not', () => {
+  const { playlist, library, hits } = rocksurgenceFixture()
+  // seeds [16, 12, 9, 2]: no sub-vibe holds half — the old "mosaic" — yet the
+  // 2-seed house corner is 5% of the playlist.
+  for (let rotate = 0; rotate < 8; rotate++) {
+    const picks = suggestFromVibeHits(playlist, library, hits, 5, rotate, [16, 12, 9, 2])
+    assert.ok(!picks.some((p) => p.genre === 'House'), `rotate=${rotate}: no house from the 2-song corner`)
+  }
+})
+
+test('a lone song never buys seats, even at exactly a tenth of the playlist', () => {
+  const { playlist, library, hits } = vibeFixture()
+  // 10-song playlist, 1-seed metal corner = exactly 10%.
+  assert.ok(!suggestFromVibeHits(playlist, library, hits, 5, 0, [9, 1]).some((p) => p.genre === 'Metal'))
+})
+
+test('seats follow the songs behind each sub-vibe', () => {
+  const playlist: SuggestibleTrack[] = Array.from({ length: 20 }, (_, i) => ({ id: 5000 + i, title: `p${i}`, artist: `pa${i}`, genre: 'Rock' }))
+  const core: SuggestibleTrack[] = Array.from({ length: 30 }, (_, i) => ({ id: 600 + i, title: `c${i}`, artist: `core${i}`, genre: 'Rock' }))
+  const corner: SuggestibleTrack[] = Array.from({ length: 30 }, (_, i) => ({ id: 700 + i, title: `k${i}`, artist: `corner${i}`, genre: 'Rock' }))
+  const hits = [
+    ...core.map((tr, i) => ({ trackId: tr.id, score: 0.8 - i * 0.001, cluster: 0 })),
+    ...corner.map((tr, i) => ({ trackId: tr.id, score: 0.8 - i * 0.001, cluster: 1 })),
+  ]
+  // 16 songs behind the core, 4 behind the corner → ~4:1 over the first pages.
+  const first20 = [0, 1, 2, 3].flatMap((r) => suggestFromVibeHits(playlist, [...core, ...corner], hits, 5, r, [16, 4]))
+  const fromCore = first20.filter((p) => p.artist.startsWith('core')).length
+  assert.ok(fromCore >= 14 && fromCore <= 18, `core served ${fromCore}/20 — expected ≈16`)
+})
+
+// ── 2026-10-10: the user's genre TAG vetoes a wrong AI label ─────────────
+// Q104.3 (classic rock radio): Marlo Thomas's "It's Alright To Cry" is tagged
+// Kids but the AI subgenre path calls it "Rock › Classic Rock", so genreFit
+// alone ranked it into the first strip once the pools reached deeper.
+import { tagFamily } from '../../renderer/utils/playlistSuggest.ts'
+
+test('tag families: rock variants group, catch-alls keep their own tag', () => {
+  assert.equal(tagFamily('Classic Rock'), 'rock/alt')
+  assert.equal(tagFamily('Alternative Indie'), 'rock/alt')
+  assert.equal(tagFamily('Rap'), tagFamily('Hip-Hop'))
+  assert.equal(tagFamily('Kids'), 'other:kids')
+  assert.notEqual(tagFamily('Kids'), tagFamily('Jazz'))
+  assert.equal(tagFamily(''), '')
+})
+
+test('a candidate whose tag the playlist never uses cannot ride a wrong AI label', () => {
+  const rock = (i: number): SuggestibleTrack => ({ id: 8000 + i, title: `cr${i}`, artist: `crband${i}`, genre: 'Classic Rock', subgenrePath: 'Rock › Classic Rock › Soft Rock' })
+  const playlist = Array.from({ length: 12 }, (_, i) => rock(i))
+  const kids: SuggestibleTrack = { id: 1, title: "It's Alright To Cry", artist: 'Marlo Thomas & Friends', genre: 'Kids', subgenrePath: 'Rock › Classic Rock › Soft Rock' }
+  const real: SuggestibleTrack = { id: 2, title: 'The Logical Song', artist: 'Supertramp', genre: 'Classic Rock', subgenrePath: 'Rock › Classic Rock › Soft Rock' }
+  // A realistic pool: thirty classic-rock candidates spread over 0.60–0.89,
+  // with the kids' song a hair ABOVE the real one on vibe.
+  const fillers = Array.from({ length: 30 }, (_, i): SuggestibleTrack => ({ id: 100 + i, title: `f${i}`, artist: `fill${i}`, genre: 'Classic Rock', subgenrePath: 'Rock › Classic Rock › Soft Rock' }))
+  const hits = [
+    { trackId: 1, score: 0.82, cluster: 0 },
+    { trackId: 2, score: 0.80, cluster: 0 },
+    ...fillers.map((f, i) => ({ trackId: f.id, score: 0.60 + i * 0.01, cluster: 0 })),
+  ]
+  const ranked = suggestFromVibeHits(playlist, [kids, real, ...fillers], hits, 32, 0, [12])
+  const at = (title: string): number => ranked.findIndex((p) => p.title === title)
+  assert.ok(at('The Logical Song') >= 0 && at('The Logical Song') < at("It's Alright To Cry"), `real ${at('The Logical Song')} vs kids ${at("It's Alright To Cry")}`)
+  assert.ok(at("It's Alright To Cry") >= 5, 'the kids song is not on the first strip')
 })

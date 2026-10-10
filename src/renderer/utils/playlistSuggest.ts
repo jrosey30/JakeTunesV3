@@ -67,6 +67,28 @@ export function genreFit(t: SuggestibleTrack, profile: { fam: Map<string, number
 
 const norm = (s: string | undefined): string => (s || '').toLowerCase().trim()
 
+/**
+ * The family of a genre TAG — the user's own tag, which is reliable where the
+ * AI subgenre path is not (2026-10-10). Measured: 47% of 2021+ rock-tagged
+ * tracks carry a non-rock AI root, and the reverse happens too: Marlo Thomas's
+ * "It's Alright To Cry" is tagged Kids but labelled "Rock › Classic Rock", so
+ * genreFit alone ranked it into Q104.3's first strip. Catch-all genres keep
+ * their own tag ("other:jazz" ≠ "other:kids").
+ */
+export function tagFamily(g0: string | undefined): string {
+  const g = norm(g0)
+  if (!g) return ''
+  if (/(hip-hop|hip hop|rap|dub-hop|g-punk)/.test(g)) return 'hiphop'
+  if (/(house|electro|dance|disco|techno|garage$|uk garage|big beat|breakbeat|dnb|drum|chillwave|indietronica|trip hop|dubstep|2 step|trance|dark wave|electronic|berlin|edm|idm)/.test(g) && !/alternative garage|garage rock/.test(g)) return 'electronic'
+  if (/(r&b|soul|funk$|^funk|boogie|nu funk)/.test(g) && !/funk rock|funk metal|soul rock/.test(g)) return 'soul/funk'
+  if (/(country|folk|americana$|bluegrass)/.test(g) && !/americana rock/.test(g)) return 'country/folk'
+  if (/(jazz|bossa|mpb|samba$|reggae|dancehall|^latin$|latin pop|world|soundtrack|comedy|easy listening|kids|video game|^game$|blues|classical)/.test(g)) return `other:${g}`
+  if (/(pop)/.test(g) && !/pop-punk|pop\/rock|rock, pop/.test(g)) return 'pop'
+  return 'rock/alt'
+}
+/** Below this share of the playlist, a tag family is foreign to it. */
+const TAG_FAMILY_MIN_SHARE = 0.15
+
 // Camelot harmonic neighbours of a key (e.g. "8A" → 8A, 7A, 9A, 8B): the same
 // key, ±1 around the wheel (same letter), and the relative major/minor (same
 // number, other letter). Standard DJ harmonic-mixing compatibility.
@@ -203,12 +225,20 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
   // corner, or the strip thins out to two vibes (Jake, same day: "now
   // there is less suggestions… UGH"). pool dos (chill-dominant) still
   // sheds its one metal track; a 5-vibe mosaic keeps all five.
-  const maxShare = totalSeeds > 0 ? Math.max(...clusterSeeds) / totalSeeds : 0
+  //
+  // 2026-10-10 (Jake on Rocksurgence: "trash", "0/10"): the mosaic exception
+  // let a 2-song corner of a 39-song playlist keep every candidate it found —
+  // no sub-vibe held half the seeds, so a single-genre rock playlist counted
+  // as "eclectic", and two French-house-labelled songs served ten house and
+  // disco picks. A corner now earns seats on its own size, mosaic or not: 3+
+  // songs, or 2+ songs that are at least a tenth of the playlist. A lone
+  // song's corner never does (the Pool Dos rule). Pools are fuller now that
+  // exclusions run before the cut (playlist-vibes.ts PoolDiversity), so this
+  // no longer starves an eclectic strip.
   const clusterEligible = (c: number): boolean => {
     if (playlistTracks.length < 7 || totalSeeds === 0) return true
-    if (maxShare < 0.5) return true
     const seeds = clusterSeeds[c] ?? 0
-    return seeds >= 2 || seeds / totalSeeds >= 0.15
+    return seeds >= 3 || (seeds >= 2 && seeds / totalSeeds >= 0.10)
   }
   const byId = new Map(library.map(t => [t.id, t]))
   const inPlaylist = new Set(playlistTracks.map(t => t.id))
@@ -295,6 +325,13 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
   // stranger, so METAL VOL 1 pulls from the Punk/Metal shelves, not from
   // whatever happens to share its energy.
   const gProfile = buildGenreProfile(playlistTracks)
+  const tagShares = { byFam: new Map<string, number>(), total: 0 }
+  for (const pt of playlistTracks) {
+    const f = tagFamily(pt.genre)
+    if (!f) continue
+    tagShares.byFam.set(f, (tagShares.byFam.get(f) || 0) + 1)
+    tagShares.total++
+  }
   const blendSort = (list: Array<{ t: T; vibe: number }>): T[] => {
     const scored = list.map(({ t, vibe }) => {
       const vn = (vibe - vmin) / vrange
@@ -302,7 +339,11 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
       const bpmFit = (b > 0 && median > 0) ? Math.exp(-0.5 * ((b - median) / sigma) ** 2) : 0.5
       const key = (t.camelotKey || '').toUpperCase()
       const keyFit = key ? (compat.has(key) ? 1 : 0.15) : 0.5
-      const gFit = genreFit(t, gProfile)
+      // The user's tag vetoes the AI label when they disagree: a candidate
+      // whose tag family the playlist barely uses fits like "elsewhere".
+      const fam = tagFamily(t.genre)
+      const foreignTag = tagShares.total >= 5 && fam !== '' && (tagShares.byFam.get(fam) || 0) / tagShares.total < TAG_FAMILY_MIN_SHARE
+      const gFit = foreignTag ? Math.min(genreFit(t, gProfile), 0.15) : genreFit(t, gProfile)
       // Taste voice (2026-08-07, Jake: "the AI has no feel for playlists"):
       // stars + play history nudge the songs he'd actually ADD above
       // equal-vibe strangers. Small weight — fit still leads.
@@ -318,9 +359,12 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
     return [...fr, ...fa]
   }
   // Denser sub-vibes fill first — the playlist's dominant character leads.
-  const clusterLists = [...byCluster.entries()]
+  const clusterOrder = [...byCluster.entries()]
     .sort((a, b) => (clusterSeeds[b[0]] ?? 0) - (clusterSeeds[a[0]] ?? 0))
-    .map(([, list]) => blendSort(list))
+  const clusterLists = clusterOrder.map(([, list]) => blendSort(list))
+  // Seats in proportion to the songs behind each sub-vibe (2026-10-10): a
+  // 16-song core and a 3-song corner no longer take equal turns.
+  const seatWeights = clusterOrder.map(([c]) => Math.max(0.0001, clusterSeeds[c] ?? 1))
 
   // Interleave the clusters round-robin into ONE ranked pool (denser
   // sub-vibes lead each round; one-per-artist until the pool runs thin),
@@ -333,21 +377,28 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
   const pool: T[] = []
   const inPool = new Set<T>()
   const perArtist = new Map<string, number>()
+  const totalWeight = seatWeights.reduce((s, w) => s + w, 0)
   for (let cap = 1; cap <= 3 && pool.length < limit * 12; cap++) {
-    for (let rank = 0; ; rank++) {
-      let any = false
-      for (const list of clusterLists) {
-        const t = list[rank]
-        if (!t) continue
-        any = true
-        if (inPool.has(t)) continue
-        const a = norm(t.albumArtist || t.artist)
-        if ((perArtist.get(a) || 0) >= cap) continue
-        perArtist.set(a, (perArtist.get(a) || 0) + 1)
-        inPool.add(t)
-        pool.push(t)
+    // Smooth weighted round-robin: each turn, every live sub-vibe gains its
+    // weight in credit and the richest one serves its next candidate.
+    const next = clusterLists.map(() => 0)
+    const credit = clusterLists.map(() => 0)
+    for (;;) {
+      let best = -1
+      for (let i = 0; i < clusterLists.length; i++) {
+        if (next[i] >= clusterLists[i].length) continue
+        credit[i] += seatWeights[i]
+        if (best < 0 || credit[i] > credit[best]) best = i
       }
-      if (!any) break
+      if (best < 0) break
+      credit[best] -= totalWeight
+      const t = clusterLists[best][next[best]++]
+      if (inPool.has(t)) continue
+      const a = norm(t.albumArtist || t.artist)
+      if ((perArtist.get(a) || 0) >= cap) continue
+      perArtist.set(a, (perArtist.get(a) || 0) + 1)
+      inPool.add(t)
+      pool.push(t)
     }
   }
   if (pool.length === 0) return []
