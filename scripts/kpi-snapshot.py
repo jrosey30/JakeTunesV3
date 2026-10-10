@@ -11,12 +11,38 @@ All read-only over userData files; never touches app state.
 """
 import json
 import os
+import subprocess
 import sys
 import time
 from collections import defaultdict
 
 UD = os.path.expanduser('~/Library/Application Support/JakeTunes')
 HISTORY = os.path.join(UD, 'kpi-history.jsonl')
+# The honest listening numbers (2026-10-10). This report used to read only
+# the laptop log (and a stale copy of the phone's) and count every logged
+# skip — 75.7% "skip rate" when the real one was 6.8%: workmini, the main
+# listener, was missing, and 4,428 of 6,653 skips were mechanical bursts.
+# homemini builds the all-device history nightly (scripts/listening-history
+# .mts via scripts/listening-history-nightly.sh) and its 28-day scorecard is
+# read here. Over SSH because a launchd job on this Mac may not read the NAS.
+HOMEMINI = os.environ.get('JT_HOMEMINI', 'jakerosenbaumnas@homemini')
+FLEET_KPI = 'Library/Application Support/JakeTunes/yir/listening-kpi.json'
+
+
+def fleet_listening():
+    """homemini's all-device 28-day scorecard, or None (offline, stale, absent)."""
+    try:
+        r = subprocess.run(['ssh', '-o', 'ConnectTimeout=8', '-o', 'BatchMode=yes', HOMEMINI, 'cat', '"%s"' % FLEET_KPI],
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            return None
+        k = json.loads(r.stdout)
+        built = time.mktime(time.strptime(str(k.get('builtAt', ''))[:19], '%Y-%m-%dT%H:%M:%S'))
+        if time.time() - built > 3 * 86400:
+            return None   # the nightly stopped — never report a stale week as this week
+        return k
+    except Exception:
+        return None
 WINDOW_DAYS = 28   # trailing window for rate metrics
 
 
@@ -218,6 +244,25 @@ def main():
     n = len(tracks)
     snap['libraryTracks'] = n
     snap['subgenreCoverage'] = round(len(sub_of) / n, 4) if n else None
+
+    # ── Honest listening (every device, real skips only) ──
+    snap['skipRateLaptopRaw'] = snap.get('skipRate')
+    snap['completionRateLaptopRaw'] = snap.get('completionRate')
+    fk = fleet_listening()
+    if fk and fk.get('realSkipRate') is not None:
+        tot = fk.get('totals', {})
+        snap['skipRate'] = fk['realSkipRate']
+        snap['completionRate'] = fk.get('completionRate')
+        snap['plays28dFleet'] = tot.get('play')
+        snap['skips28dFleet'] = tot.get('skip')
+        snap['glances28d'] = tot.get('glance')
+        snap['mechanical28d'] = tot.get('mechanical')
+        snap['playsByDevice'] = {d: v.get('play') for d, v in (fk.get('byDevice') or {}).items()}
+        snap['fleetBuiltAt'] = fk.get('builtAt')
+        snap['skipRateSource'] = 'fleet'
+    else:
+        snap['skipRateSource'] = 'laptop-only'
+    snap['metricsVersion'] = 2
 
     os.makedirs(UD, exist_ok=True)
     with open(HISTORY, 'a') as f:

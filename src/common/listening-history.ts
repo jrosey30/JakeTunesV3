@@ -220,3 +220,37 @@ export function summarize(listens: readonly Listen[], year: number, durationMsOf
     lastListen: last,
   }
 }
+
+export interface WindowStats {
+  since: string
+  until: string
+  totals: Record<ListenKind, number>
+  byDevice: Record<string, Record<ListenKind, number>>
+  /** skips ÷ (plays + skips) — glances and mechanical bursts are not verdicts. */
+  realSkipRate: number | null
+  /** plays ÷ (plays + skips). */
+  completionRate: number | null
+}
+
+/** The honest skip numbers for a window (the weekly KPI's 28 days): every
+ *  device, real skips only. The old report read one device and counted the
+ *  bursts — 75.7% "skip rate" on 2026-10-10 when the real one was 6.8%. */
+export function windowStats(listens: readonly Listen[], sinceMs: number, untilMs: number): WindowStats {
+  const totals = zero()
+  const byDevice: WindowStats['byDevice'] = {}
+  for (const l of listens) {
+    const t = ms(l.ts)
+    if (!(t >= sinceMs && t < untilMs)) continue
+    totals[l.kind]++
+    ;(byDevice[l.device] ??= zero())[l.kind]++
+  }
+  const verdicts = totals.play + totals.skip
+  return {
+    since: new Date(sinceMs).toISOString(),
+    until: new Date(untilMs).toISOString(),
+    totals,
+    byDevice,
+    realSkipRate: verdicts ? Math.round((totals.skip / verdicts) * 10000) / 10000 : null,
+    completionRate: verdicts ? Math.round((totals.play / verdicts) * 10000) / 10000 : null,
+  }
+}
