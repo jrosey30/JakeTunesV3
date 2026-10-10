@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { audioFromBase64Mpeg } from '../../audio/base64-audio'
+import { claimTransportKeys } from '../../input-mode'
 import type { ScotusArchiveData, ScotusOpinionDoc, ScotusSegment } from '../../types'
 import './scotus.css'
 
@@ -151,9 +152,15 @@ export default function ScotusView() {
   }, [])
 
   // Keyboard transport while the exhibit is open: Space = play/pause the
-  // ARGUMENT, ←/→ = ±15s. Capture-phase + stopPropagation so App.tsx's
-  // global space-toggles-music handler doesn't also fire underneath.
+  // ARGUMENT, ←/→ = ±15s — and nothing else (spec-02). App.tsx's own Space
+  // handler is ALSO a capture listener on window, registered first, so
+  // stopPropagation here never reached it: Space toggled the music and the
+  // argument at once. The courtroom claims the transport keys instead (the
+  // same claim Step Inside uses); App's handlers stand aside while it holds,
+  // and leaving the room releases it. Media keys and the toolbar still
+  // drive the music.
   useEffect(() => {
+    const release = claimTransportKeys('scotus')
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
@@ -162,7 +169,10 @@ export default function ScotusView() {
       else if (e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); seekBy(15) }
     }
     window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      release()
+    }
   }, [toggle, seekBy])
 
   // Smoothly fade the argument's volume (duck/restore) — like the Music Man mic.
