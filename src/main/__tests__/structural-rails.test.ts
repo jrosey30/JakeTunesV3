@@ -153,6 +153,7 @@ describe('WIRING — the tested code is the live code', () => {
     { fn: 'dubTalkovers', file: 'renderer/views/MixtapeView.tsx', minCalls: 1, why: 'spec-01 — Export places every voice where Play Tape fires it' },
     { fn: 'claimTransportKeys', file: 'renderer/views/ScotusView/ScotusView.tsx', minCalls: 1, why: 'spec-02 — unwired, Space in the courtroom toggles the music and the argument at once again' },
     { fn: 'armGlobalNets', file: 'renderer/main.tsx', minCalls: 1, why: 'reliability P0 — the renderer crash net must arm before first render or grey screens go unrecorded again' },
+    { fn: 'claimTransportKeys', file: 'renderer/views/ListenToTheListView.tsx', minCalls: 1, why: 'unwired, Space in the Listen List previews AND toggles the music, and ↑/↓ nudge the volume while you triage' },
     // Passed by REFERENCE (importDownloaded: importDownloadedFiles), never
     // called directly in index — so this wire matches the reference form.
     { fn: 'importDownloaded: importDownloadedFiles', file: 'main/index.ts', minCalls: 2, literal: true,

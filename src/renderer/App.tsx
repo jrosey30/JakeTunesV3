@@ -582,7 +582,8 @@ function AppInner() {
       const meta = e.metaKey || e.ctrlKey
       const typing = isTypingTarget(e.target)
 
-      // Step Inside owns Space and the arrows while it is open (see
+      // A view that claims the transport keys (Step Inside, the Listen
+      // List's Inbox) owns them while it holds the claim (see
       // input-mode.ts). Media keys, Escape and Cmd+F still work.
       if (shouldYieldToClaim(e.code)) return
 
