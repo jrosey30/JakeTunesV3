@@ -77,6 +77,8 @@ export interface Track {
   // broad subgenre shown in the Song View column; subgenrePath = the full
   // general→specific path (hover tooltip); subgenreLean = the runner-up "web" link.
   subgenre?: string
+  /** Where the artist is from (MusicBrainz), e.g. "United Kingdom". Blank when unknown — never guessed. */
+  origin?: string
   subgenrePath?: string
   subgenreLean?: string
   // 4.5: epoch-ms timestamp of the most recent star toggle ON. Drives
@@ -602,7 +604,7 @@ export interface ListeningMemoryData {
   observations: string[]
 }
 
-export type SortColumn = 'title' | 'artist' | 'album' | 'genre' | 'subgenre' | 'year' | 'dateAdded' | 'playCount' | 'rating' | 'channelMode' | 'bpm' | 'camelotKey'
+export type SortColumn = 'title' | 'artist' | 'album' | 'genre' | 'origin' | 'subgenre' | 'year' | 'dateAdded' | 'playCount' | 'rating' | 'channelMode' | 'bpm' | 'camelotKey'
 export type SortDirection = 'asc' | 'desc'
 
 declare global {

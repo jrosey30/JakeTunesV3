@@ -5,7 +5,7 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
 import { useVirtualScroll } from '../hooks/useVirtualScroll'
 import { useScrollPersistence, getSavedScrollTop } from '../hooks/useScrollPersistence'
-import { getColumnCache, setColumnCache, primeColumnCacheFromUiState, DEFAULT_HIDDEN } from '../utils/columnState'
+import { getColumnCache, setColumnCache, primeColumnCacheFromUiState, DEFAULT_HIDDEN, orderColumnKeys } from '../utils/columnState'
 import { useSortedTracks } from '../hooks/useSortedTracks'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { getSnapshot as recentlyAddedSnapshot, isRecentlyAdded, subscribe as subscribeRecentlyAdded } from '../state/recentlyAdded'
@@ -89,6 +89,10 @@ const ALL_COLUMN_DEFS: ColDef[] = [
   { key: 'artist', label: 'Artist', defaultWidth: 180, minWidth: 60, resizable: true },
   { key: 'album', label: 'Album', defaultWidth: 180, minWidth: 60, resizable: true },
   { key: 'genre', label: 'Genre', defaultWidth: 100, minWidth: 50, resizable: true },
+  // 2026-10-11 (Jake): where the artist is from, so "World" no longer has to be
+  // a genre — the genre says the sound, Origin says the place. MusicBrainz
+  // country; blank when unknown. Visible by default (he asked for it).
+  { key: 'origin', label: 'Origin', defaultWidth: 120, minWidth: 60, resizable: true },
   // 4.5: AI-assigned subgenre. Hidden by default (optional) — enable via the header
   // right-click column picker; hover a cell to see the full general→specific path.
   { key: 'subgenre', label: 'Subgenre', defaultWidth: 150, minWidth: 60, resizable: true },
@@ -235,6 +239,8 @@ const SongRow = memo(function SongRow({
             return <div key={col.key} className="songs-cell">{track.album || ''}</div>
           case 'genre':
             return <div key={col.key} className="songs-cell">{track.genre || ''}</div>
+          case 'origin':
+            return <div key={col.key} className="songs-cell">{track.origin || ''}</div>
           case 'subgenre':
             return <div key={col.key} className="songs-cell" title={track.subgenrePath || ''}>{track.subgenre || ''}</div>
           case 'year':
@@ -323,15 +329,7 @@ export default function SongsView() {
   // only works if their reference doesn't churn every render.
   const { visibleCols, colWidths } = useMemo(() => {
     const byKey = ALL_COLUMN_DEFS.reduce<Record<string, ColDef>>((m, c) => { m[c.key] = c; return m }, {})
-    const orderedCols: ColDef[] = []
-    const seen = new Set<string>()
-    for (const k of columnOrder) {
-      const c = byKey[k]
-      if (c && !seen.has(k)) { orderedCols.push(c); seen.add(k) }
-    }
-    for (const c of ALL_COLUMN_DEFS) {
-      if (!seen.has(c.key)) orderedCols.push(c)
-    }
+    const orderedCols: ColDef[] = orderColumnKeys(columnOrder, ALL_COLUMN_DEFS.map((c) => c.key)).map((k) => byKey[k])
     const visibleCols = orderedCols.filter(c => !hiddenCols.has(c.key))
     const colWidths = visibleCols.map(c => colWidthMap[c.key] ?? c.defaultWidth)
     return { visibleCols, colWidths }
