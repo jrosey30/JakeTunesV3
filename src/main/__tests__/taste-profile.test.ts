@@ -137,6 +137,32 @@ describe('the Record Shop reads the profile', () => {
   })
 })
 
+describe('Rock DNA in the Record Shop (step 2)', () => {
+  it('no quiz: no prompt line, nothing extra blocked', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jt-focus-'))
+    try {
+      const f = await loadDiscoveryFocus(dir, [], {})
+      assert.equal(f.dnaLine, '')
+      assert.equal(f.blocks({ artist: 'Greta Van Fleet' }), false)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+  it('Dislike keeps an artist out; Respect never does; Rocksurgence membership beats the quiz', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jt-focus-'))
+    try {
+      writeFileSync(join(dir, 'taste-profile.json'), JSON.stringify({ focusPlaylists: ['Rocksurgence'] }))
+      writeFileSync(join(dir, 'playlists.json'), JSON.stringify([{ id: 'pl-1', name: 'Rocksurgence', trackIds: [1] }]))
+      writeFileSync(join(dir, 'rock-dna.json'), JSON.stringify({ ratings: { 'Greta Van Fleet': 'dislike', Rush: 'respect', Geese: 'dislike' }, answers: { 'c-first': { picks: ['riff'] } } }))
+      const f = await loadDiscoveryFocus(dir, [{ id: 1, artist: 'Geese' }], {})
+      assert.equal(f.blocks({ artist: 'Greta Van Fleet' }), true)
+      assert.equal(f.blocks({ artist: 'greta van fleet' }), true, 'spelling-tolerant')
+      assert.equal(f.blocks({ artist: 'Rush' }), false, 'respect is not a no')
+      assert.equal(f.blocks({ artist: 'Geese' }), false, 'on Rocksurgence = in, whatever the quiz says')
+      assert.match(f.dnaLine, /^Rock DNA \(his own quiz answers\): .*Respects but does NOT enjoy \(never treat as taste\): Rush\./)
+      assert.match(f.dnaLine, /came around to Geese/)
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+})
+
 describe('wired into the generator (index.ts)', () => {
   const src = readFileSync(join(import.meta.dirname, '..', 'index.ts'), 'utf8')
   it('exceptions leave the anchors, Rocksurgence joins the supply, the gate and the exemplars are live', () => {
@@ -146,5 +172,8 @@ describe('wired into the generator (index.ts)', () => {
     assert.match(src, /genreGate: focus\.blocks/)
     assert.equal((src.match(/focus\.exemplars\(tracks\)/g) || []).length, 2)
     assert.match(src, /const FEED_GEN_VERSION = 1\d/, 'old feeds regenerate with the profile')
+  })
+  it('Rock DNA rides in the picking prompts', () => {
+    assert.match(src, /const tasteLine = `Taste: [^`]*\$\{focus\.dnaLine/)
   })
 })

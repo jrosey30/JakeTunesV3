@@ -181,6 +181,11 @@ const electronAPI = {
     ipcRenderer.invoke('genre-check:list'),
   genreCheckResolve: (key: string, genre: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('genre-check:resolve', key, genre),
+  // Rock DNA (Rocksurgence step 2): userData/rock-dna.json, saved after every answer.
+  rockDnaLoad: (): Promise<{ state: unknown; exceptions: Array<{ artist: string; genre: string }> }> =>
+    ipcRenderer.invoke('rock-dna:load'),
+  rockDnaSave: (state: unknown): Promise<{ ok: boolean; state?: unknown; error?: string }> =>
+    ipcRenderer.invoke('rock-dna:save', state),
   restoreXmlPickFile: (): Promise<{ ok: boolean; path?: string; canceled?: boolean }> =>
     ipcRenderer.invoke('restore-xml-pick-file'),
   restoreXmlScan: (xmlPath: string): Promise<{ ok: boolean; data?: unknown; error?: string }> =>
