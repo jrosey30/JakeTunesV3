@@ -1,6 +1,6 @@
 /**
  * Best of <year> doctrine (rev 2026-08-23): year-filtered, stars-then-
- * plays ranked, hard 2-per-ARTIST cap, 100 max, seeded mix with an
+ * plays ranked, hard 2-per-ARTIST cap, 200 max, seeded mix with an
  * adjacency spread — and the same seed always deals the same order.
  */
 
@@ -40,16 +40,24 @@ describe('pickBestOfYear', () => {
     assert.equal(pickBestOfYear(comp, { year: 2026 }).length, 4)
   })
 
-  test('limit 100, and the mix is deterministic per seed', () => {
-    const pool = Array.from({ length: 260 }, (_, i) => t({ artist: `Artist${i % 80}`, album: `Album${i % 80}`, playCount: (i * 7) % 41, rating: i % 3 ? 0 : 5, title: `s${i}` }))
+  test('limit 200, and the mix is deterministic per seed', () => {
+    const pool = Array.from({ length: 300 }, (_, i) => t({ artist: `Artist${i % 130}`, album: `Album${i % 130}`, playCount: (i * 7) % 41, rating: i % 3 ? 0 : 5, title: `s${i}` }))
     const a = pickBestOfYear(pool, { year: 2026 })
     const b = pickBestOfYear(pool, { year: 2026 })
-    assert.equal(a.length, 100)
+    assert.equal(a.length, 200)
     assert.deepEqual(a.map((x) => x.id), b.map((x) => x.id))
     // …and it is genuinely MIXED, not score-sorted.
     const scores = a.map((x) => (Number(x.rating) || 0) * 25 + Math.min(Number(x.playCount) || 0, 40))
     const sorted = [...scores].sort((x, y) => y - x)
     assert.notDeepEqual(scores, sorted)
+  })
+
+  test('the 2-per-artist cap holds for names in other alphabets', () => {
+    const pool = [1, 2, 3, 4].map((n) => t({ artist: 'הדג נחש', album: `א${n}`, rating: 5, title: `s${n}` }))
+      .concat([1, 2, 3].map((n) => t({ artist: 'Молчат Дома', album: 'Этажи', rating: 5, title: `m${n}` })))
+    const out = pickBestOfYear(pool, { year: 2026 })
+    assert.equal(out.filter((x) => x.artist === 'הדג נחש').length, 2)
+    assert.equal(out.filter((x) => x.artist === 'Молчат Дома').length, 2)
   })
 
   test('spread pass: no same-album neighbors when avoidable', () => {

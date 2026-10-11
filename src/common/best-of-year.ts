@@ -11,6 +11,10 @@
  * single-artist records and deliberately lets compilations carry more
  * than two tracks (different artists on one album are different votes).
  *
+ * 2026-10-11 (Jake): "expand 2026 best of to 200 songs." Same 2-per-artist
+ * cap; artist keys now keep every alphabet, so Hebrew/Cyrillic artists get
+ * the cap too (they all folded to '' and slipped past it).
+ *
  * "Best" is Jake's own signals, nothing invented: stars dominate, plays
  * refine. "Mix them up" is a SEEDED shuffle — the same year always deals
  * the same order (a default playlist that silently reshuffles between
@@ -29,7 +33,7 @@ export interface BestOfInput {
   playCount?: number
 }
 
-const nk = (s: string | undefined): string => String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim()
+const nk = (s: string | undefined): string => String(s || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{M}\p{N}]+/gu, ' ').trim()
 
 /** Deterministic PRNG (mulberry32) — the mix must be stable per seed. */
 function rng(seed: number): () => number {
@@ -55,7 +59,7 @@ export function pickBestOfYear<T extends BestOfInput>(
   tracks: T[],
   opts: { year: number; limit?: number; perArtist?: number; seed?: number },
 ): T[] {
-  const limit = opts.limit ?? 100
+  const limit = opts.limit ?? 200
   const perArtist = opts.perArtist ?? 2
   const seed = opts.seed ?? opts.year
 

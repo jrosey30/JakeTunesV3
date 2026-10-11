@@ -28,9 +28,12 @@ export interface TasteProfile {
 
 export const EMPTY_PROFILE: TasteProfile = { focusPlaylists: [], lowGenres: [], exceptions: [] }
 
-/** Accent-fold BEFORE stripping (é → e, not a space), then keep [a-z0-9]. */
+/** Accent-fold BEFORE stripping (é → e, not a space), then keep letters and
+ *  digits of EVERY script. Keeping only [a-z0-9] folded every Hebrew/Cyrillic
+ *  name to '' — one shared key, so Молчат Дома inherited an Israeli band's
+ *  origin (2026-10-11). */
 export function normName(s: string | undefined): string {
-  return String(s || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  return String(s || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^\p{L}\p{M}\p{N}]+/gu, ' ').trim()
 }
 
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim()) : [])

@@ -20,6 +20,7 @@
  * Pure decisions + injected effects, so the rules are tested directly.
  */
 import { GENRES, GENRE_NAMES, CATCH_ALL, ROCK_FAMILY, PER_ALBUM_ARTISTS, isListGenre } from '../common/genre-vocab.ts'
+import { normName } from './taste-profile.ts'
 
 export interface FilerTrack {
   id: number
@@ -49,7 +50,9 @@ export interface Decision {
 
 export interface Evidence { artistTags: string[]; albumTags: string[]; origin?: string; press: string }
 
-const norm = (s: string | undefined): string => String(s || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+// Artist/album keys keep every script — see normName (Молчат Дома ≠ ברי סחרוף).
+const norm = (s: string | undefined): string => normName(s)
+const HEBREW = /\p{Script=Hebrew}/u
 const isVarious = (a: string): boolean => /^(various|various artists|va)$/i.test(a.trim())
 
 /** The fingerprint App.tsx validates overrides against.
@@ -236,6 +239,9 @@ export async function fillOrigins(deps: FilerDeps, tracks: FilerTrack[], homes: 
       lookups++
       origin = (await deps.lookupOrigin(g.name)) ?? undefined
     }
+    // Jake's rule (2026-10-11): a name written in Hebrew is an Israeli artist.
+    // Not extended to Cyrillic — that spans Belarus, Russia, Ukraine and more.
+    if (!origin && HEBREW.test(g.name)) origin = 'Israel'
     if (!origin) continue
     for (const t of g.tracks) {
       await deps.persist(t, { origin })
