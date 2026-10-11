@@ -25,6 +25,11 @@ export interface GenreFilerHost {
 }
 
 const CHECK_FILE = (): string => join(app.getPath('userData'), 'genre-check.json')
+/** Origins already asked of MusicBrainz: {artistNorm: {origin|null, at}} — so an
+ *  artist nobody knows isn't asked about every five minutes. */
+const ORIGIN_FILE = (): string => join(app.getPath('userData'), 'origin-lookups.json')
+const ORIGIN_RETRY_MS = 60 * 24 * 3600 * 1000
+const normKey = (s: string): string => s.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 const SWEEP_MS = 5 * 60_000
 const FIRST_SWEEP_MS = 90_000
 
@@ -65,6 +70,19 @@ function deps(host: GenreFilerHost): FilerDeps {
       return { artistTags, albumTags, origin: a?.origin, press }
     },
     classify: (system, user) => host.claude(system, user),
+    lookupOrigin: async (artist) => {
+      let cache: Record<string, { origin: string | null; at: number }> = {}
+      try { cache = JSON.parse(await readFile(ORIGIN_FILE(), 'utf8')) as typeof cache } catch { /* first lookup */ }
+      const k = normKey(artist) || artist.trim().toLowerCase(), hit = cache[k]   // non-Latin names fold to '' — keep them apart
+      if (hit && (hit.origin || Date.now() - hit.at < ORIGIN_RETRY_MS)) return hit.origin
+      await host.mbThrottle()
+      const a = await musicBrainzArtist(artist, host.userAgent)
+      if (!a) return undefined                       // MusicBrainz busy — ask next sweep
+      cache[k] = { origin: a.origin ?? null, at: Date.now() }
+      const tmp = `${ORIGIN_FILE()}.tmp`
+      await writeFile(tmp, JSON.stringify(cache)); await rename(tmp, ORIGIN_FILE())
+      return a.origin ?? null
+    },
     loadCheck,
     saveCheck,
     log: (m) => console.log(m),
@@ -78,7 +96,7 @@ export function startGenreFiler(host: GenreFilerHost): void {
     running = true
     try {
       const r = await runFilerSweep(deps(host))
-      if (r.filed || r.checked) console.log(`[genre-filer] sweep: filed ${r.filed}, to check ${r.checked}, waiting ${r.deferred}`)
+      if (r.filed || r.checked || r.origins) console.log(`[genre-filer] sweep: filed ${r.filed}, to check ${r.checked}, waiting ${r.deferred}, origins ${r.origins}`)
     } catch (err) {
       console.warn('[genre-filer] sweep failed:', err instanceof Error ? err.message : err)
     } finally { running = false }

@@ -159,17 +159,21 @@ export interface FilerDeps {
   log?(msg: string): void
   now?: () => Date
   maxUnits?: number
+  /** Where an artist is from: a country name, null when nobody knows (don't
+   *  ask again soon), undefined when the lookup failed (ask next sweep). */
+  lookupOrigin?(artist: string): Promise<string | null | undefined>
+  maxOriginLookups?: number
 }
 
 /** One sweep: file what the rules can, look up the rest (capped), list the unsure. */
-export async function runFilerSweep(deps: FilerDeps): Promise<{ filed: number; checked: number; deferred: number }> {
+export async function runFilerSweep(deps: FilerDeps): Promise<{ filed: number; checked: number; deferred: number; origins: number }> {
   const tracks = await deps.tracks()
   const byId = new Map(tracks.map((t) => [t.id, t]))
   const check = await deps.loadCheck()
   const listed = new Set(check.map((c) => c.key))
   const units = unfiledUnits(tracks).filter((u) => !listed.has(u.key))
-  if (!units.length) return { filed: 0, checked: 0, deferred: 0 }
   const homes = artistHomes(tracks)
+  if (!units.length) return { filed: 0, checked: 0, deferred: 0, origins: await fillOrigins(deps, tracks, homes, new Set()) }
   const decided: Array<[FilerUnit, Decision]> = []
   const needEvidence: FilerUnit[] = []
   for (const u of units) {
@@ -204,7 +208,43 @@ export async function runFilerSweep(deps: FilerDeps): Promise<{ filed: number; c
   }
   if (updates.length) deps.applied(updates)
   if (decided.some(([, d]) => !d.genre)) await deps.saveCheck(check)
-  return { filed, checked: decided.filter(([, d]) => !d.genre).length, deferred: needEvidence.length - batch.length }
+  const origins = await fillOrigins(deps, tracks, homes, new Set(updates.filter((u) => u.field === 'origin').map((u) => u.trackId)))
+  return { filed, checked: decided.filter(([, d]) => !d.genre).length, deferred: needEvidence.length - batch.length, origins }
+}
+
+/**
+ * Origin for songs whose genre is already settled but whose Origin is blank —
+ * Charley Crockett arrived with a fine "Country" tag, so nothing ever filed him.
+ * An artist he already has an origin for is copied with no lookup; the rest
+ * are looked up a few per sweep. Never guessed: no answer, no origin.
+ */
+export async function fillOrigins(deps: FilerDeps, tracks: FilerTrack[], homes: Map<string, { genre: string; origin?: string }>, alreadySet: Set<number>): Promise<number> {
+  const byArtist = new Map<string, { name: string; tracks: FilerTrack[] }>()
+  for (const t of tracks) {
+    if (t.origin || alreadySet.has(t.id) || !isSettled(t)) continue
+    const a = (t.albumArtist || t.artist || '').trim()
+    if (!a || isVarious(a)) continue
+    const g = byArtist.get(norm(a)) ?? { name: a, tracks: [] }
+    g.tracks.push(t)
+    byArtist.set(norm(a), g)
+  }
+  const updates: Array<{ trackId: number; field: string; newValue: string }> = []
+  let lookups = 0
+  for (const [k, g] of byArtist) {
+    let origin = homes.get(k)?.origin
+    if (!origin && deps.lookupOrigin && lookups < (deps.maxOriginLookups ?? 10)) {
+      lookups++
+      origin = (await deps.lookupOrigin(g.name)) ?? undefined
+    }
+    if (!origin) continue
+    for (const t of g.tracks) {
+      await deps.persist(t, { origin })
+      updates.push({ trackId: t.id, field: 'origin', newValue: origin })
+    }
+    deps.log?.(`[genre-filer] origin: ${g.name} → ${origin} (${g.tracks.length} song${g.tracks.length === 1 ? '' : 's'})`)
+  }
+  if (updates.length) deps.applied(updates)
+  return updates.length
 }
 
 /** Jake picks a genre for a check-list entry: write it, drop the entry. */

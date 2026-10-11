@@ -132,6 +132,27 @@ describe('a sweep', () => {
   })
 })
 
+describe('origin for settled songs', () => {
+  it("copies an artist's known origin with no lookup; looks up the rest; never guesses", async () => {
+    const lib: FilerTrack[] = [
+      T(30, 'Charley Crockett', 'Clovis', 'Country'),                                   // settled genre, no origin
+      T(31, 'Charley Crockett', 'Old Album', 'Country', { origin: 'United States', genreApproved: true }),
+      T(32, 'Mystery Band', 'A', 'Indie Rock', { genreApproved: true }),
+      T(33, 'Nobody Knows', 'B', 'Indie Rock', { genreApproved: true }),
+    ]
+    const f = fakeDeps(lib, {})
+    const asked: string[] = []
+    f.deps.lookupOrigin = async (a) => { asked.push(a); return a === 'Mystery Band' ? 'Japan' : null }
+    const r = await runFilerSweep(f.deps)
+    const originOf = (id: number) => f.persisted.find(([tid, fl]) => tid === id && fl.origin)?.[1].origin
+    assert.equal(originOf(30), 'United States', 'from his other album — no lookup')
+    assert.equal(originOf(32), 'Japan')
+    assert.equal(originOf(33), undefined, 'unknown stays blank')
+    assert.deepEqual(asked.sort(), ['Mystery Band', 'Nobody Knows'])
+    assert.equal(r.origins, 2)
+  })
+})
+
 describe('the check list', () => {
   it('his pick is written to every song on the album and the entry leaves', async () => {
     const f = fakeDeps(LIB, {})
