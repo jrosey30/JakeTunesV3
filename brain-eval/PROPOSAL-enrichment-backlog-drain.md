@@ -109,3 +109,28 @@ vectorless new tracks are ABSENT from the mood index, not polluting it), so
 this remains a latency problem, not a quality problem: at batch=50 the new wave
 is vibe-blind for ~5+ quiet nights, longer if imports continue. Unchanged ask;
 this is the first multi-day compounding wave since the proposal was filed.
+
+## 2026-10-11 update — STATUS CHANGE: the backlog now actively COSTS production quality (was latency-only)
+
+Backlog 226 → **236** (+60 imports vs +50 enriched — compounding a THIRD night).
+The 10-10 daytime plain-brain re-embed (PR #66 `--reembed-all`) changed the
+backlog's failure mode: it wrote mood vectors for ~277 backlog tracks that were
+previously ABSENT from the index. Absent vectors can't pollute; present-but-BARE
+(tempo+genre only, no descriptor) vectors can and do:
+
+- ret-007 "punk rock" mood recall@25 fell 1.00 → **0.44**, with **14/25 top
+  slots held by tonight's bare new-import vectors** (diag_ret007_20261011.py,
+  id-level; every enriched slot in the top-25 is a hit — the brain is fine,
+  the bare cohort is the entire gap).
+- mood-routed rt mean 0.846 → **0.780** (−0.066) in one night.
+- Headline rt still rose to an all-time high 0.849 (plain main brain lifted
+  the main-routed probes), which MASKS the mood-side dilution in the topline.
+
+So the trade-off the proposal weighs is no longer "vibe-blind new tracks for
+~5 nights" but "degraded mood routing for every night the backlog persists,
+growing with each wave day that outruns batch=50." At 236 and compounding,
+that's ~5 quiet nights of degradation minimum. This is the strongest evidence
+yet for the supervised drain / adaptive batch ask. NOT auto-applied (trainer
+code + a ~236-call Gemma load on the shared 16GB box = supervised-run
+territory, Jake-gated as filed). Self-heal check each nightly: bare-in-top25
+on ret-007 must fall ~nightly; if it grows on a no-import night, something new.

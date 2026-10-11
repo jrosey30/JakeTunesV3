@@ -99,3 +99,10 @@ exact signal the skip gate is waiting on. Forensics recount tonight: organic
 682 mobile + 610 desktop = 1,292/3,000 CLOSED; no new mechanical bursts
 (still 14 sessions / 2,237) — the cascade has been quiet since 09-26, but
 the breaker asks above stand.
+
+## 2026-10-11 — new mechanical burst (15th)
+
+2026-10-11T00:34:43Z → 00:46:36Z, **105 skips** (first burst since 09-26; gap
+of two quiet weeks, then the cascade fired again). Forensics totals now 15
+mechanical sessions / ~2,342 mechanical skips vs organic mobile 740. The
+client-side circuit-breaker ask stands unchanged.
