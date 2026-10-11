@@ -21,25 +21,24 @@
  */
 
 import type { Track, Playlist } from '../types'
-import { albumKeyOf } from './albumKey'
-import { artistIdentityKey } from './artistAlias'
+import { albumKeyOf } from './albumKey.ts'
+import { artistIdentityKey } from './artistAlias.ts'
+import { nameKey } from '../../common/fold-text.ts'
 
 // ── Normalization ───────────────────────────────────────────────────
 /**
- * Lowercases + folds diacritics + strips ASCII punctuation. Returns
- * the canonical form used for both index storage and query matching.
- * "Beyoncé — Crazy in Love (feat. JAY-Z)" → "beyonce crazy in love feat jayz"
+ * Lowercases + folds diacritics + strips punctuation, keeping letters of
+ * EVERY script. Returns the canonical form used for both index storage and
+ * query matching.
+ * "Beyoncé — Crazy in Love (feat. JAY-Z)" → "beyonce crazy in love feat jay z"
+ * Under [a-z0-9] a Hebrew or Cyrillic name normalized to '' and could never
+ * be found (2026-10-11).
+ * ⚠️ TWIN: src/renderer/views/DownloadStore/downloadKeys.ts (normQ) — both
+ * fold through nameKey now, so they cannot drift apart again.
  */
 export function normalize(s: string | null | undefined): string {
   if (!s) return ''
-  return s
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')     // strip combining diacritics
-    .replace(/['''‛`]/g, '')              // strip straight + smart apostrophes (don't / don't → dont)
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]+/g, ' ')        // ASCII punct + non-letter → space
-    .replace(/\s+/g, ' ')
-    .trim()
+  return nameKey(s.replace(/['''‛`]/g, ''))   // apostrophes vanish first (don't → dont)
 }
 
 /** Cheap token split — splits on whitespace after normalize. */

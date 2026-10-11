@@ -17,15 +17,19 @@
  * just teach the renderer to be tolerant on the read.
  */
 
+import { nameKey } from '../../common/fold-text.ts'
+
 /**
  * Strip parens-bound modifiers ("(Remastered)", "(Deluxe Edition)",
  * "(feat. X)"), trailing dash suffixes ("- 2019 Mix"), diacritics,
  * and non-alphanumeric punctuation. Aggressive — leans toward false
  * matches over false misses since a wrong artwork (rare) is less
- * confusing than a missing one.
+ * confusing than a missing one. Any script: under [a-z0-9] every Hebrew
+ * album keyed '|||' and took one cover (2026-10-11).
+ * ⚠️ TWIN: src/main/artwork-engine.ts normalizeArtworkPartServer — keep identical.
  */
-function normalizeArtworkPart(s: string): string {
-  return (s || '')
+export function normalizeArtworkPart(s: string): string {
+  return nameKey((s || '')
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')                                 // strip diacritics
     .toLowerCase()
@@ -33,8 +37,7 @@ function normalizeArtworkPart(s: string): string {
     .replace(/\s*\[(?:remaster(?:ed)?|deluxe|bonus|live|expanded|reissue|remix|special|anniversary|edition|mono|stereo)[^\]]*\]/g, '')
     .replace(/\s*\((?:feat\.?|featuring|with|prod\.?|produced by)[^)]+\)/g, '')
     .replace(/\s*\[(?:feat\.?|featuring|with)[^\]]+\]/g, '')
-    .replace(/\s+-\s+(?:remaster(?:ed)?|deluxe|bonus|live|expanded|reissue|remix|special|anniversary|edition|mono|stereo)[^-]*$/g, '')
-    .replace(/[^a-z0-9]+/g, '')
+    .replace(/\s+-\s+(?:remaster(?:ed)?|deluxe|bonus|live|expanded|reissue|remix|special|anniversary|edition|mono|stereo)[^-]*$/g, ''), '')
 }
 
 export function normalizedArtworkKey(artist: string, album: string): string {

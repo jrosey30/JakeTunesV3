@@ -180,7 +180,7 @@ import {
   sanitizeAlbumCredits,
   tagYearStr,
 } from '../common/albumReleaseDate'
-import { foldAccents } from '../common/fold-text.ts'
+import { foldAccents, nameKey, storedNameKey } from '../common/fold-text.ts'
 import { explicitWins } from '../common/explicit.ts'
 import { MODEL_SMART, MODEL_FAST, withModelPolicy } from '../common/ai-models.ts'
 import { summariseLearning, discoverVerdicts, type LedgerRow } from './discovery-learned.ts'
@@ -1351,9 +1351,10 @@ const RADAR_SCENES: Record<string, string> = {
   'Pop': 'pop',
   'Jazz, Blues & Classical': 'jazz and experimental',
 }
-// Normalized key for discovery feedback (artist- and title-level).
+// Normalized key for discovery feedback (artist- and title-level). ⚠️ TWIN:
+// discover-feed.ts normKey — the same STORED key (Latin legacy, other scripts nameKey).
 function normArtistKey(sname: string): string {
-  return String(sname || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim()
+  return storedNameKey(sname, (s) => s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim())
 }
 
 // ── Listen to the List v2: friends ledger + capture-anything resolver ──
@@ -1591,7 +1592,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     const speaking = [...anchors.slice(0, 3)]
     for (let i = 0; i < Math.min(5, bench.length); i++) speaking.push(bench[(dayN * 5 + i) % bench.length])
     const anchorNames = speaking.map((a) => a.artist).join(', ')
-    const nk = (x: string) => String(x || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim()
+    const nk = (x: string): string => normArtistKey(x)   // must equal discover-feed normKey (filterFeed, supplyLanes)
     const ownedArtists = new Set(tracks.map((t) => nk(String((t as { artist?: string }).artist || ''))).filter(Boolean))
     // Contributor-expanded (2026-08-28, the FourFiveSeconds catch): a
     // collab tag indexes under every credited artist. Logic + tests in
@@ -3189,7 +3190,8 @@ async function getLibraryGenresForArtist(artistName: string): Promise<string[]> 
 }
 
 function discoCachePath(artist: string): string {
-  const safe = artist.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 80)
+  // Any script: [a-z0-9] put every Hebrew artist in one file, '_.json' — one artist's discography for all.
+  const safe = Array.from(nameKey(artist, '_')).slice(0, 80).join('') || `_${createHash('md5').update(artist).digest('hex').slice(0, 12)}`
   return join(app.getPath('userData'), 'discography-cache', `${safe}.json`)
 }
 

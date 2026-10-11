@@ -53,6 +53,10 @@ export interface Evidence { artistTags: string[]; albumTags: string[]; origin?: 
 // Artist/album keys keep every script — see normName (Молчат Дома ≠ ברי סחרוף).
 const norm = (s: string | undefined): string => normName(s)
 const HEBREW = /\p{Script=Hebrew}/u
+/** origin-lookups.json key: the filer's artist key, in any script (it was
+ *  [a-z0-9], so "Молчат Дома & X" and "ברי סחרוף & X" shared "x"). A name
+ *  that folds to nothing ("!!!") keys as itself. */
+export const originCacheKey = (artist: string): string => norm(artist) || artist.trim().toLowerCase()
 const isVarious = (a: string): boolean => /^(various|various artists|va)$/i.test(a.trim())
 
 /** The fingerprint App.tsx validates overrides against.

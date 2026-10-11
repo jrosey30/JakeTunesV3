@@ -21,7 +21,7 @@
  * widening it is a type change, not a move.
  */
 
-import { foldAccents } from '../common/fold-text.ts'
+import { foldAccents, nameKey } from '../common/fold-text.ts'
 import { JUNK_ARTIST_NAME } from '../common/junk-artist.ts'
 import { explicitWins } from '../common/explicit.ts'
 import { packagingMarkersOf } from './album-identity.ts'
@@ -434,45 +434,52 @@ export async function searchItunesSuggestions(query: string): Promise<{ ok: bool
       } catch { /* the plain search already stands on its own */ }
     }
 
-    // Re-rank toward the recognizable version. iTunes gives no popularity
-    // score, so use a free proxy: a famous artist shows up MULTIPLE times
-    // for one song (studio + live + comps), while a one-off cover appears
-    // once. Boost by that frequency, prefer studio over live, and demote
-    // the "<TrackTitle> - Single" one-offs that covers ship as.
-    const artistFreq = new Map<string, number>()
-    for (const s of raw) {
-      const k = s.artist.toLowerCase()
-      artistFreq.set(k, (artistFreq.get(k) || 0) + 1)
-    }
-    // Fold accents BEFORE stripping, or an accented artist scores against a
-    // mangled string — "JAŸ-Z" becomes "ja z" and never matches "jay z".
-    const qNorm = foldAccents(q).replace(/[^a-z0-9]+/g, ' ').trim()
-    const scoreOf = (s: ItunesSuggestion): number => {
-      let score = (artistFreq.get(s.artist.toLowerCase()) || 1) * 10
-      const album = (s.album || '').toLowerCase()
-      const song = s.song.toLowerCase()
-      // The song the user actually TYPED wins: if the track title appears
-      // verbatim inside the query, nothing popularity-ranked beats it
-      // ("when you die mgmt" must put When You Die above Little Dark Age).
-      const songNorm = foldAccents(song).replace(/[^a-z0-9]+/g, ' ').trim()
-      if (songNorm.length > 3 && qNorm.includes(songNorm)) score += 25
-      const isLive = /\blive\b|\(live/.test(song) || /\blive\b/.test(album)
-      const isRemix = /remix|rework|edit\)/.test(song) || /remix/.test(album)
-      if (!isLive && !isRemix && !/ - single$/.test(album)) score += 4   // prefer the studio cut
-      if (isLive) score -= 3                                          // demote live versions a touch
-      if (isRemix) score -= 3                                         // and remixes — the original leads
-      if (/ - single$/.test(album) && album.startsWith(song)) score -= 6 // one-off cover single
-      return score
-    }
-    const ranked = raw
-      .map((s, i) => ({ s, i, score: scoreOf(s) }))
-      .sort((a, b) => (b.score - a.score) || (a.i - b.i))   // score desc, iTunes order as stable tiebreak
-      .slice(0, 10)
-      .map((x) => x.s)
-    return { ok: true, results: ranked }
+    return { ok: true, results: rankSuggestions(raw, q) }
   } catch {
     return { ok: false, results: [] }
   }
+}
+
+/**
+ * Re-rank toward the recognizable version (and the song the user typed).
+ * Pure — extracted from searchItunesSuggestions so node tests reach it.
+ */
+export function rankSuggestions(raw: ItunesSuggestion[], q: string): ItunesSuggestion[] {
+  // Re-rank toward the recognizable version. iTunes gives no popularity
+  // score, so use a free proxy: a famous artist shows up MULTIPLE times
+  // for one song (studio + live + comps), while a one-off cover appears
+  // once. Boost by that frequency, prefer studio over live, and demote
+  // the "<TrackTitle> - Single" one-offs that covers ship as.
+  const artistFreq = new Map<string, number>()
+  for (const s of raw) {
+    const k = s.artist.toLowerCase()
+    artistFreq.set(k, (artistFreq.get(k) || 0) + 1)
+  }
+  // Fold accents BEFORE stripping, or an accented artist scores against a
+  // mangled string — "JAŸ-Z" becomes "ja z" and never matches "jay z".
+  const qNorm = nameKey(q)
+  const scoreOf = (s: ItunesSuggestion): number => {
+    let score = (artistFreq.get(s.artist.toLowerCase()) || 1) * 10
+    const album = (s.album || '').toLowerCase()
+    const song = s.song.toLowerCase()
+    // The song the user actually TYPED wins: if the track title appears
+    // verbatim inside the query, nothing popularity-ranked beats it
+    // ("when you die mgmt" must put When You Die above Little Dark Age).
+    const songNorm = nameKey(song)
+    if (songNorm.length > 3 && qNorm.includes(songNorm)) score += 25
+    const isLive = /\blive\b|\(live/.test(song) || /\blive\b/.test(album)
+    const isRemix = /remix|rework|edit\)/.test(song) || /remix/.test(album)
+    if (!isLive && !isRemix && !/ - single$/.test(album)) score += 4   // prefer the studio cut
+    if (isLive) score -= 3                                          // demote live versions a touch
+    if (isRemix) score -= 3                                         // and remixes — the original leads
+    if (/ - single$/.test(album) && album.startsWith(song)) score -= 6 // one-off cover single
+    return score
+  }
+  return raw
+    .map((s, i) => ({ s, i, score: scoreOf(s) }))
+    .sort((a, b) => (b.score - a.score) || (a.i - b.i))   // score desc, iTunes order as stable tiebreak
+    .slice(0, 10)
+    .map((x) => x.s)
 }
 
 // Full tracklist for an album, by iTunes collection id. Powers the Download

@@ -10,6 +10,7 @@ import { join } from 'path'
 import { copyFile, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'fs/promises'
 import { normalize } from './normalize.ts'
 import { triggerSync } from './sync-orchestrator.ts'
+import { nameKey } from '../common/fold-text.ts'
 
 // Artwork helpers
 export function getArtworkDir(): string {
@@ -45,8 +46,10 @@ export let artworkNormIndexMem: Map<string, string> | null = null
 export let artworkSidecarNormMem: Map<string, string> | null = null
 export let artworkLookupRebuildPromise: Promise<void> | null = null
 
+/** ⚠️ TWIN: src/renderer/utils/artworkLookup.ts normalizeArtworkPart — keep identical.
+ *  Any script: under [a-z0-9] every Hebrew album keyed '|||' and took one cover. */
 export function normalizeArtworkPartServer(s: string): string {
-  return (s || '')
+  return nameKey((s || '')
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
@@ -54,8 +57,7 @@ export function normalizeArtworkPartServer(s: string): string {
     .replace(/\s*\[(?:remaster(?:ed)?|deluxe|bonus|live|expanded|reissue|remix|special|anniversary|edition|mono|stereo)[^\]]*\]/g, '')
     .replace(/\s*\((?:feat\.?|featuring|with|prod\.?|produced by)[^)]+\)/g, '')
     .replace(/\s*\[(?:feat\.?|featuring|with)[^\]]+\]/g, '')
-    .replace(/\s+-\s+(?:remaster(?:ed)?|deluxe|bonus|live|expanded|reissue|remix|special|anniversary|edition|mono|stereo)[^-]*$/g, '')
-    .replace(/[^a-z0-9]+/g, '')
+    .replace(/\s+-\s+(?:remaster(?:ed)?|deluxe|bonus|live|expanded|reissue|remix|special|anniversary|edition|mono|stereo)[^-]*$/g, ''), '')
 }
 
 export async function rebuildArtworkLookupCaches(index: Record<string, string>): Promise<void> {

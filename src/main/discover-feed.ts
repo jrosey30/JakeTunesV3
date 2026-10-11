@@ -24,6 +24,7 @@ import { isJunkArtistName } from '../common/junk-artist.ts'
 import { searchTitle, unwantedVersionOf } from './streamrip-match.ts'
 import { recoArtistMatches } from './reco-match.ts'
 import { binForGenre, pickHookIndex } from '../common/record-shop-bins.ts'
+import { nameKey, storedNameKey } from '../common/fold-text.ts'
 
 export type FeedCardType = 'song' | 'album' | 'artist'
 
@@ -166,14 +167,20 @@ export function parseFeedJson<T>(text: string): T[] {
   } catch { return salvageObjects<T>(body.slice(start)) }
 }
 
-const normKey = (s: string) => String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim()
+const legacyNormKey = (s: string): string => String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim()
+/** The ledger key. CANNOT change for Latin names: cardKey feeds the persisted
+ *  served/notForMe ledgers, and refolding would orphan every verdict Jake has
+ *  already given — so a Latin name keeps the legacy key byte for byte. A name
+ *  in another script gets a real key (storedNameKey): the legacy fold erased
+ *  it to '', so every Hebrew card was one card — one per feed, resting
+ *  together, owned if any was (2026-10-11; the live ledger held no such
+ *  key, so nothing is orphaned). ⚠️ index.ts normArtistKey uses this too. */
+export const normKey = (s: string): string => storedNameKey(s, legacyNormKey)
 /** Accent-FOLDING key: combining marks are removed BEFORE the non-alnum
  *  strip, so "Récord" → "record" and "JAŸ-Z" → "jay z" (normKey turns the
- *  orphaned marks into spaces — "re cord"). normKey itself CANNOT change:
- *  cardKey feeds the persisted served/notForMe ledgers, and refolding it
- *  would orphan every verdict Jake has already given. Use foldKey only for
- *  ephemeral, rebuilt-per-run comparisons. */
-export const foldKey = (s: string): string => String(s || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim()
+ *  orphaned marks into spaces — "re cord"). Use foldKey only for ephemeral,
+ *  rebuilt-per-run comparisons. */
+export const foldKey = (s: string): string => nameKey(s)
 export const cardKey = (c: { artist: string; title: string }) => `${normKey(c.artist)}|${normKey(c.title)}`
 
 /** Clip a "why" to at most n words — the feed shows phrases, not paragraphs. */
@@ -420,7 +427,7 @@ export function trimGapLane<T extends { artist?: string; title?: string }>(
   opts: { perArtist?: number } = {},
 ): T[] {
   const perArtist = opts.perArtist ?? 1
-  const nk = (s: unknown) => String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim()
+  const nk = (s: unknown): string => normKey(String(s || ''))
   const count = new Map<string, number>()
   const scored = new Set<string>()
   const out: T[] = []
@@ -450,7 +457,8 @@ export function buildGapCards(
   ownedAlbumKeys: Set<string>,
   opts: { limit?: number } = {},
 ): FeedCard[] {
-  const nk = (s: unknown) => String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim()
+  // Same key ownedPairKeys built ownedAlbumKeys with.
+  const nk = (s: unknown): string => normKey(String(s || ''))
   const gap: FeedCard[] = []
   for (const a of input) {
     for (const al of a.albums) {
@@ -535,17 +543,19 @@ export async function deezerVerify(
   const body = await res.json() as { data?: Array<Record<string, unknown>> }
   const rows = Array.isArray(body?.data) ? body.data : []
   if (!rows.length) return null
-  const want = `${artist} ${title}`.toLowerCase().replace(/[^a-z0-9]+/g, '')
+  // Any script: an all-Hebrew want used to be '' — which every row "contains".
+  const sq = (s: string): string => nameKey(s, '')
+  const want = sq(`${artist} ${title}`)
   // Prefer a row whose artist AND title both look right; fall back to the
   // first hit, which Deezer already ranks by relevance.
   const scored = rows.map((r) => {
     const a = String((r.artist as { name?: string })?.name || '')
     const t = String(r.title || '')
-    const joined = `${a} ${t}`.toLowerCase().replace(/[^a-z0-9]+/g, '')
+    const joined = sq(`${a} ${t}`)
     let score = 0
     if (joined === want) score += 4
-    if (want.includes(t.toLowerCase().replace(/[^a-z0-9]+/g, '')) && t) score += 2
-    if (want.includes(a.toLowerCase().replace(/[^a-z0-9]+/g, '')) && a) score += 2
+    if (want.includes(sq(t)) && sq(t)) score += 2
+    if (want.includes(sq(a)) && sq(a)) score += 2
     if (String(r.record_type || '') === 'album') score += 1
     return { r, a, t, score }
   }).sort((x, y) => y.score - x.score)
@@ -570,7 +580,7 @@ export async function deezerTrack(artist: string, title: string, fetchFn: typeof
   if (!res.ok) return null
   const body = await res.json() as { data?: Array<Record<string, unknown>> }
   const rows = Array.isArray(body?.data) ? body.data : []
-  const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9]+/g, '')
+  const norm = (x: string): string => nameKey(x, '')
   const wantA = norm(artist), wantT = norm(title)
   for (const r of rows) {
     const a = String((r.artist as { name?: string })?.name || '')
