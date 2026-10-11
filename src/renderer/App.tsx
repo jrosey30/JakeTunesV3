@@ -66,6 +66,7 @@ import './styles/toolbar.css'
 import './styles/sidebar.css'
 import { mergeHubCatalog } from '../common/hub-catalog-merge'
 import { ackVersionAfterSave, hubAdoptAfterMerge, trackIdKey } from '../common/hub-catalog-ack'
+import { phoneOverlayFields } from '../common/genre-vocab'
 
 // Session cap — startup must not walk every missing album via fetchAlbumArt.
 const STARTUP_NETWORK_ART_CAP = 16
@@ -746,7 +747,8 @@ function AppInner() {
         if (!t) continue
         const fp = `${(t.title || '').toLowerCase().trim()}|${(t.artist || '').toLowerCase().trim()}|${t.duration || 0}`
         if (entry.fp !== fp) continue
-        for (const [field, value] of Object.entries(entry.fields)) {
+        // Off-list phone genres never mask the desktop's shelf (genre-vocab.ts).
+        for (const [field, value] of Object.entries(phoneOverlayFields(entry.fields as Record<string, string>))) {
           updates.push({ id: t.id, field, value })
         }
       }
@@ -1766,6 +1768,16 @@ function AppInner() {
         type: 'UPDATE_TRACKS',
         updates: p.autoApplied.map(f => ({ id: f.trackId, field: f.field, value: f.newValue })),
       })
+    })
+  }, [dispatch])
+
+  // Genre filer (2026-10-11): a song the main process just filed (genre /
+  // origin) shows its new shelf right away instead of after a relaunch.
+  useEffect(() => {
+    if (!window.electronAPI.onGenreFilerApplied) return
+    return window.electronAPI.onGenreFilerApplied((p) => {
+      if (!p.updates.length) return
+      dispatch({ type: 'UPDATE_TRACKS', updates: p.updates.map((u) => ({ id: u.trackId, field: u.field, value: u.newValue })) })
     })
   }, [dispatch])
 

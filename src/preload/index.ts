@@ -171,6 +171,16 @@ const electronAPI = {
     ipcRenderer.on('cynthia-sweep:progress', handler)
     return () => { ipcRenderer.removeListener('cynthia-sweep:progress', handler) }
   },
+  // Genre filer (2026-10-11): songs it filed (live UPDATE_TRACKS) + Jake's check list.
+  onGenreFilerApplied: (callback: (p: { updates: Array<{ trackId: number; field: string; newValue: string }> }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, p: { updates: Array<{ trackId: number; field: string; newValue: string }> }) => callback(p)
+    ipcRenderer.on('genre-filer:applied', handler)
+    return () => { ipcRenderer.removeListener('genre-filer:applied', handler) }
+  },
+  genreCheckList: (): Promise<Array<{ key: string; artist: string; album: string; ids: number[]; tag: string; suggested?: string; why: string; at: string }>> =>
+    ipcRenderer.invoke('genre-check:list'),
+  genreCheckResolve: (key: string, genre: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('genre-check:resolve', key, genre),
   restoreXmlPickFile: (): Promise<{ ok: boolean; path?: string; canceled?: boolean }> =>
     ipcRenderer.invoke('restore-xml-pick-file'),
   restoreXmlScan: (xmlPath: string): Promise<{ ok: boolean; data?: unknown; error?: string }> =>

@@ -72,3 +72,37 @@ export async function musicBrainzTags(artist: string, userAgent: string, fetchFn
     return [...(hit.tags ?? [])].sort((a, b) => (b.count ?? 0) - (a.count ?? 0)).slice(0, 8).map((t) => t.name)
   } catch { return null }
 }
+
+/** The artist's MusicBrainz entry: most-voted tags plus where they're from
+ *  (genre filer, 2026-10-11). null on failure; tags [] when unknown. */
+export async function musicBrainzArtist(artist: string, userAgent: string, fetchFn: typeof fetch = fetch): Promise<{ tags: string[]; origin?: string } | null> {
+  try {
+    const q = encodeURIComponent(`artist:"${artist}"`)
+    const res = await fetchFn(`https://musicbrainz.org/ws/2/artist?query=${q}&fmt=json&limit=5`, {
+      headers: { 'User-Agent': userAgent, Accept: 'application/json' }, signal: AbortSignal.timeout(10_000),
+    })
+    if (!res.ok) return null
+    const body = (await res.json()) as { artists?: Array<{ name?: string; score?: number; country?: string; area?: { name?: string }; tags?: Array<{ name: string; count?: number }> }> }
+    const want = normName(artist)
+    const hit = (body.artists ?? []).find((a) => normName(a.name) === want && (a.score ?? 0) >= 80)
+    if (!hit) return { tags: [] }
+    const tags = [...(hit.tags ?? [])].sort((a, b) => (b.count ?? 0) - (a.count ?? 0)).slice(0, 8).map((t) => t.name)
+    // Only a country-level area counts as an origin; a bare city with no country stays blank.
+    return { tags, origin: hit.country && hit.area?.name ? hit.area.name : undefined }
+  } catch { return null }
+}
+
+/** Tags on the album's MusicBrainz release group — the per-album evidence. */
+export async function musicBrainzAlbumTags(artist: string, album: string, userAgent: string, fetchFn: typeof fetch = fetch): Promise<string[] | null> {
+  try {
+    const q = encodeURIComponent(`releasegroup:"${album}" AND artist:"${artist}"`)
+    const res = await fetchFn(`https://musicbrainz.org/ws/2/release-group?query=${q}&fmt=json&limit=5`, {
+      headers: { 'User-Agent': userAgent, Accept: 'application/json' }, signal: AbortSignal.timeout(10_000),
+    })
+    if (!res.ok) return null
+    const body = (await res.json()) as { 'release-groups'?: Array<{ title?: string; tags?: Array<{ name: string; count?: number }> }> }
+    const want = normName(album)
+    const hit = (body['release-groups'] ?? []).find((r) => { const t = normName(r.title); return t === want || (want.length > 4 && (t.includes(want) || want.includes(t))) })
+    return hit ? [...(hit.tags ?? [])].sort((a, b) => (b.count ?? 0) - (a.count ?? 0)).slice(0, 8).map((t) => t.name) : []
+  } catch { return null }
+}
