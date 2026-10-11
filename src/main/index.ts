@@ -138,6 +138,7 @@ import { machineBehindNas } from './stale-push-guard'
 import { snapshotLibrary, maybeAutoSnapshot } from './backup'
 import { shouldRefuseSave, mayUnlinkDeletions, UNLINK_CAP } from './save-guards'
 import { computeTasteFingerprint, getTasteAnchors } from './taste-model'
+import { loadDiscoveryFocus } from './discovery-focus'
 import type { TrackLike } from './taste-model'
 import { parseCandidates, rankCandidates } from './radar-core'
 import type { RankedCandidate } from './radar-core'
@@ -1549,7 +1550,7 @@ ipc.handle('discovery-allow-again', async (_e, artist: string) => {
 // feed built by v2 carries VA-compilation junk cards and must regenerate.
 // v4 (2026-08-07): "From the Scene" lane (human-graph reach — the
 // Ceremony problem); regenerate so the lane appears.
-const FEED_GEN_VERSION = 9   // 2026-09-21: cover-factory gates in the supply lane; stale shelves regenerate  // 8: curator lane — Spotify curator picks seat New Songs slots (2026-09-01); 7: supply edition gate; 6: 25/25 supply lanes; 5: bins + hooks + pitches
+const FEED_GEN_VERSION = 10  // 2026-10-10: taste profile — Rocksurgence seeds the supply, math rock gated, Angine an exception  // 9: cover-factory gates in the supply lane  // 8: curator lane — Spotify curator picks seat New Songs slots (2026-09-01); 7: supply edition gate; 6: 25/25 supply lanes; 5: bins + hooks + pitches
 type FeedCacheShape = { at: number; ver?: number; lanes: Array<{ id: string; title: string; cards: unknown[] }> }
 let discoverFeedMem: FeedCacheShape | null = null
 const DISCOVER_TTL_MS = 3 * 60 * 60 * 1000
@@ -1576,7 +1577,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     // 16 anchors: 8 speak in prompts; the deeper bench widens the
     // MusicBrainz gap-lane and the because-validation map (2026-08-21, the
     // starving-shelves fix — one lane had a single card).
-    const anchors = getTasteAnchors(tracks, 16)
+    const focus = await loadDiscoveryFocus(STATE_DIR, tracks, { userAgent: `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)`, throttle: mbThrottle }), anchors = focus.dropExceptions(getTasteAnchors(tracks, 16))
     // Anchor rotation (the daily-mixes lesson, applied to generation): the
     // top 3 always speak — they ARE the taste — while the other five prompt
     // seats rotate daily through the bench, so each day's regeneration
@@ -1785,7 +1786,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     // L0 · Bulk supply — the 25/25 quota lanes (Jake: "NO LESS"). Deezer graph, module-side; all 16
     // anchors feed the pool, plus his top SPOTIFY artists ("wire in the taste signal they use").
     const spotifyAnchors = await loadSpotifyTasteAnchors(join(STATE_DIR, 'spotify-taste.json'), 4)
-    const supplyPromise = df.supplyLanes([...anchors.map((a) => a.artist), ...spotifyAnchors], dayN, { artists: ownedArtists, albumKeys: ownedAlbumKeys, baseKeys: ownedBaseKeys }).then((cs) => { cards.push(...cs) }).catch((err) => console.warn('[discover] supply lanes failed:', err))
+    const supplyPromise = df.supplyLanes([...anchors.map((a) => a.artist), ...spotifyAnchors, ...focus.anchors(dayN)], dayN, { artists: ownedArtists, albumKeys: ownedAlbumKeys, baseKeys: ownedBaseKeys }).then((cs) => { cards.push(...cs) }).catch((err) => console.warn('[discover] supply lanes failed:', err))
 
     await Promise.all([radarPromise, missingPromise, scenePromise, llmLanes, supplyPromise])
 
@@ -1803,7 +1804,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     })
 
     // Artwork pass (module): dress artless journalism/MB cards from iTunes.
-    await df.dressArtlessCards(cards)
+    await Promise.all([df.dressArtlessCards(cards), focus.prefetchTags(cards.filter((c) => !ownedArtists.has(nk(c.artist))))])
 
     // The verdict stream: accepts retire their cards from circulation (a yes
     // is already on the list — "existence is not memory", the tombstone is
@@ -1814,7 +1815,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     // Jake's verdicts + rotation + ownership + cross-lane dedupe.
     const fb = await discoveryFeedbackCache.get()
     const nowMs = Date.now()
-    const visible = df.filterFeed(cards, { ownedArtists, ownedAlbumKeys, ownedBaseKeys, notForMe: fb.notForMe, served: fb.served, now: nowMs })
+    const visible = df.filterFeed(cards, { ownedArtists, ownedAlbumKeys, ownedBaseKeys, notForMe: fb.notForMe, served: fb.served, now: nowMs, genreGate: focus.blocks })
 
     // The brain scores EVERYTHING in the feed — one embed batch — then the
     // quality floor decides what earns a shelf spot. The brain PICKS now; it
@@ -1822,7 +1823,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     const { brainMatchCandidates } = await import('./discovery-brain.ts')
     const pcts = await brainMatchCandidates(
       visible.map((c) => ({ artist: c.artist, title: c.title, genre: c.genre || '', year: c.year, type: c.type, desc: c.desc })),
-      tracks as Array<{ id?: number; rating?: number; playCount?: number }>,
+      focus.exemplars(tracks) as Array<{ id?: number; rating?: number; playCount?: number }>,
       5,
       verdicts,
     )
@@ -1834,7 +1835,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     df.stampBins(shelved)
     await df.applyAlbumHooks(shelved, {
       albumTracks: (id) => itunesAlbumTracks(id),
-      scoreCandidates: (cands) => brainMatchCandidates(cands, tracks as Array<{ id?: number; rating?: number; playCount?: number }>, 5),
+      scoreCandidates: (cands) => brainMatchCandidates(cands, focus.exemplars(tracks) as Array<{ id?: number; rating?: number; playCount?: number }>, 5),
     })
 
     // Lane seating moved to df.assembleLanes (2026-08-27, the line-ratchet
