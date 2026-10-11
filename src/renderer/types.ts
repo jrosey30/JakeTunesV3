@@ -664,6 +664,8 @@ declare global {
       onGenreFilerApplied?: (callback: (p: { updates: Array<{ trackId: number; field: string; newValue: string }> }) => void) => () => void
       genreCheckList?: () => Promise<Array<{ key: string; artist: string; album: string; ids: number[]; tag: string; suggested?: string; why: string; at: string }>>
       genreCheckResolve?: (key: string, genre: string) => Promise<{ ok: boolean; error?: string }>
+      rockDnaLoad?: () => Promise<{ state: unknown; exceptions: Array<{ artist: string; genre: string }> }>
+      rockDnaSave?: (state: unknown) => Promise<{ ok: boolean; state?: unknown; error?: string }>
       onCynthiaSweepProgress: (callback: (progress: { swept: number; total: number; withFindings: number; autoApplied: Array<{ trackId: number; field: string; newValue: string }>; currentAlbum?: string }) => void) => () => void
       restoreXmlPickFile: () => Promise<{ ok: boolean; path?: string; canceled?: boolean }>
       restoreXmlScan: (xmlPath: string) => Promise<{ ok: boolean; data?: RestoreScanResult; error?: string }>
