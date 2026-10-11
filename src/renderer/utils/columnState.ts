@@ -76,3 +76,24 @@ export function primeColumnCacheFromUiState(detail: UiColumnDetail): void {
 
   cache = { hidden: hidden ?? cache?.hidden ?? [...DEFAULT_HIDDEN], widths, order }
 }
+
+/**
+ * The saved column order, with any column the save doesn't know about placed
+ * right after its neighbour from the default layout (2026-10-11: Origin lands
+ * next to Genre instead of at the far end). Unknown saved keys are dropped.
+ */
+export function orderColumnKeys(saved: readonly string[], defaults: readonly string[]): string[] {
+  const known = new Set(defaults)
+  const out: string[] = []
+  for (const k of saved) if (known.has(k) && !out.includes(k)) out.push(k)
+  defaults.forEach((k, i) => {
+    if (out.includes(k)) return
+    let at = out.length
+    for (let j = i - 1; j >= 0; j--) {
+      const p = out.indexOf(defaults[j])
+      if (p >= 0) { at = p + 1; break }
+    }
+    out.splice(at, 0, k)
+  })
+  return out
+}
