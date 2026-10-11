@@ -11,6 +11,7 @@ import {
   type FilerTrack, type CheckEntry, type FilerDeps,
 } from '../genre-filer.ts'
 import { GENRES, GENRE_NAMES, phoneOverlayFields } from '../../common/genre-vocab.ts'
+import { matchMbArtist } from '../artist-tags.ts'
 
 const T = (id: number, artist: string, album: string, genre: string, extra: Partial<FilerTrack> = {}): FilerTrack =>
   ({ id, title: `t${id}`, artist, album, genre, duration: 1000 + id, ...extra })
@@ -150,6 +151,46 @@ describe('origin for settled songs', () => {
     assert.equal(originOf(33), undefined, 'unknown stays blank')
     assert.deepEqual(asked.sort(), ['Mystery Band', 'Nobody Knows'])
     assert.equal(r.origins, 2)
+  })
+})
+
+describe('names in other alphabets (Молчат Дома → Israel, 10/11)', () => {
+  it('keeps Hebrew and Cyrillic artists apart; Hebrew names are Israeli; Cyrillic is never assumed', async () => {
+    const lib: FilerTrack[] = [
+      T(40, 'ברי סחרוף', 'א', 'Rock', { origin: 'Israel', genreApproved: true }),
+      T(41, 'Молчат Дома', 'Этажи', 'Post-Punk', { genreApproved: true }),
+      T(42, 'דג', 'למה הים כחול?', 'Israeli Hip-Hop', { genreApproved: true }),
+    ]
+    const f = fakeDeps(lib, {})
+    const asked: string[] = []
+    f.deps.lookupOrigin = async (a) => { asked.push(a); return null }
+    await runFilerSweep(f.deps)
+    const originOf = (id: number) => f.persisted.find(([tid, fl]) => tid === id && fl.origin)?.[1].origin
+    assert.equal(originOf(41), undefined, "never another artist's origin, never a guess from Cyrillic")
+    assert.equal(originOf(42), 'Israel', "Jake's rule: a Hebrew name is an Israeli artist")
+    assert.deepEqual(asked.sort(), ['Молчат Дома', 'דג'].sort(), 'each asked on its own')
+  })
+  it('gives each non-Latin artist and album its own home', () => {
+    const homes = artistHomes([
+      T(43, 'ברי סחרוף', 'א', 'Rock', { genreApproved: true }),
+      T(44, 'Молчат Дома', 'Этажи', 'Post-Punk', { genreApproved: true }),
+    ])
+    assert.equal(homes.size, 2)
+    const units = unfiledUnits([T(45, 'הדג נחש', 'ב', 'Alternative'), T(46, 'זקני צפת', 'ג', 'Alternative')])
+    assert.equal(units.length, 2, 'two different albums, not one blank key')
+  })
+})
+
+describe('MusicBrainz match by alias', () => {
+  it('finds Molchat Doma from the Cyrillic spelling, and never matches a different artist', () => {
+    const mb = [
+      { name: 'Hadag Nahash', score: 90, aliases: [{ name: 'הדג נחש' }] },
+      { name: 'Molchat Doma', score: 100, country: 'BY', area: { name: 'Belarus' }, aliases: [{ name: 'Молчат Дома' }] },
+    ]
+    assert.equal(matchMbArtist(mb, 'Молчат Дома')?.name, 'Molchat Doma')
+    assert.equal(matchMbArtist(mb, 'Molchat Doma')?.name, 'Molchat Doma')
+    assert.equal(matchMbArtist(mb, 'ברי סחרוף'), undefined)
+    assert.equal(matchMbArtist(mb, '!!!'), undefined, 'an empty key matches nothing')
   })
 })
 

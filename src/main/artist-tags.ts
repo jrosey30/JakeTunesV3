@@ -57,17 +57,24 @@ export async function ensureArtistTags(
   return n
 }
 
+type MbArtist = { name?: string; score?: number; country?: string; area?: { name?: string }; aliases?: Array<{ name?: string }>; tags?: Array<{ name: string; count?: number }> }
+/** Name OR alias — the library may spell an artist the way MusicBrainz lists as
+ *  an alias ("Молчат Дома" for Molchat Doma). */
+const MB_ARTIST_QUERY = (artist: string): string => encodeURIComponent(`artist:"${artist}" OR alias:"${artist}"`)
+export function matchMbArtist(artists: MbArtist[] | undefined, artist: string): MbArtist | undefined {
+  const want = normName(artist)
+  if (!want) return undefined
+  return (artists ?? []).find((a) => (a.score ?? 0) >= 80 && [a.name, ...(a.aliases ?? []).map((x) => x.name)].some((n) => normName(n) === want))
+}
+
 /** MusicBrainz artist search → the exact-name match's tags, most-voted first. */
 export async function musicBrainzTags(artist: string, userAgent: string, fetchFn: typeof fetch = fetch): Promise<string[] | null> {
   try {
-    const q = encodeURIComponent(`artist:"${artist}"`)
-    const res = await fetchFn(`https://musicbrainz.org/ws/2/artist?query=${q}&fmt=json&limit=5`, {
+    const res = await fetchFn(`https://musicbrainz.org/ws/2/artist?query=${MB_ARTIST_QUERY(artist)}&fmt=json&limit=5`, {
       headers: { 'User-Agent': userAgent, Accept: 'application/json' }, signal: AbortSignal.timeout(10_000),
     })
     if (!res.ok) return null
-    const body = (await res.json()) as { artists?: Array<{ name?: string; score?: number; tags?: Array<{ name: string; count?: number }> }> }
-    const want = normName(artist)
-    const hit = (body.artists ?? []).find((a) => normName(a.name) === want && (a.score ?? 0) >= 80)
+    const hit = matchMbArtist(((await res.json()) as { artists?: MbArtist[] }).artists, artist)
     if (!hit) return []   // a real answer: MusicBrainz doesn't know them — cache it
     return [...(hit.tags ?? [])].sort((a, b) => (b.count ?? 0) - (a.count ?? 0)).slice(0, 8).map((t) => t.name)
   } catch { return null }
@@ -77,14 +84,11 @@ export async function musicBrainzTags(artist: string, userAgent: string, fetchFn
  *  (genre filer, 2026-10-11). null on failure; tags [] when unknown. */
 export async function musicBrainzArtist(artist: string, userAgent: string, fetchFn: typeof fetch = fetch): Promise<{ tags: string[]; origin?: string } | null> {
   try {
-    const q = encodeURIComponent(`artist:"${artist}"`)
-    const res = await fetchFn(`https://musicbrainz.org/ws/2/artist?query=${q}&fmt=json&limit=5`, {
+    const res = await fetchFn(`https://musicbrainz.org/ws/2/artist?query=${MB_ARTIST_QUERY(artist)}&fmt=json&limit=5`, {
       headers: { 'User-Agent': userAgent, Accept: 'application/json' }, signal: AbortSignal.timeout(10_000),
     })
     if (!res.ok) return null
-    const body = (await res.json()) as { artists?: Array<{ name?: string; score?: number; country?: string; area?: { name?: string }; tags?: Array<{ name: string; count?: number }> }> }
-    const want = normName(artist)
-    const hit = (body.artists ?? []).find((a) => normName(a.name) === want && (a.score ?? 0) >= 80)
+    const hit = matchMbArtist(((await res.json()) as { artists?: MbArtist[] }).artists, artist)
     if (!hit) return { tags: [] }
     const tags = [...(hit.tags ?? [])].sort((a, b) => (b.count ?? 0) - (a.count ?? 0)).slice(0, 8).map((t) => t.name)
     // Only a country-level area counts as an origin; a bare city with no country stays blank.
