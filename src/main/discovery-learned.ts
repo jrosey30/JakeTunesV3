@@ -27,6 +27,8 @@
  * Pure and fs-free so the tests bind to production code.
  */
 
+import { nameKey } from '../common/fold-text.ts'
+
 export interface LedgerRow {
   ts?: string
   surface?: string
@@ -49,7 +51,8 @@ export interface DiscoverVerdict {
  * years of ledger accumulate.
  */
 export function discoverVerdicts(rows: LedgerRow[]): { accepts: DiscoverVerdict[]; rejects: DiscoverVerdict[] } {
-  const nk = (s: string) => String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, ' ').trim()
+  // Any script — under [a-z0-9] every all-Hebrew card was one card, and only its latest verdict survived.
+  const nk = (s: string): string => nameKey(s)
   const latest = new Map<string, { verdict: string; v: DiscoverVerdict }>()
   for (const r of rows) {
     if (r.surface !== 'discover') continue

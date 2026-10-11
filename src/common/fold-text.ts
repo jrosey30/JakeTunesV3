@@ -51,6 +51,41 @@ export function foldAccents(s: string | null | undefined): string {
 }
 
 /**
+ * THE identity/matching key for a name, in any script: accents folded
+ * (foldAccents, after NFKC so full-width and ligature forms fold too), case
+ * dropped, letters + marks + digits of EVERY script kept, each run of
+ * anything else turned into one `sep` (' ' by default; '' squashes).
+ *
+ * Why every script (2026-10-11): `[^a-z0-9]` deleted every Hebrew, Cyrillic,
+ * Greek, Arabic and CJK letter, so all those names became the SAME empty key —
+ * Молчат Дома inherited an Israeli band's origin, every all-Hebrew song was one
+ * song in the listening history, and every Hebrew album shared one cover.
+ * One helper so the folds stop drifting apart.
+ */
+export function nameKey(s: string | null | undefined, sep = ' '): string {
+  if (!s) return ''
+  const k = foldAccents(String(s).normalize('NFKC')).replace(/[^\p{L}\p{M}\p{N}]+/gu, ' ').trim()
+  return sep === ' ' ? k : k.replace(/ /g, sep)
+}
+
+/** A letter from a script other than Latin — the letters `[^a-z0-9]` erased. */
+const OTHER_SCRIPT = /(?![\p{Script=Latin}\p{Script=Common}\p{Script=Inherited}])\p{L}/u
+export function hasOtherScript(s: string | null | undefined): boolean {
+  return !!s && OTHER_SCRIPT.test(String(s))
+}
+
+/**
+ * For a key that is ALREADY STORED under an ASCII-only fold (verdict
+ * ledgers, caches): a Latin-script name keeps its `legacy` key byte for
+ * byte, so nothing on disk is orphaned; a name with letters of another
+ * script — which the legacy fold erased — gets nameKey. Those names never
+ * had a working key, so there is nothing of theirs to orphan.
+ */
+export function storedNameKey(s: string | null | undefined, legacy: (s: string) => string): string {
+  return hasOtherScript(s) ? nameKey(s) : legacy(String(s ?? ''))
+}
+
+/**
  * Is `a` within `max` edits of `b`? Bounded Levenshtein with an early exit.
  *
  * Needed because iTunes ALREADY corrects a typo — "radiohed" returns Radiohead,

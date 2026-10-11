@@ -11,7 +11,7 @@
 //  - id: a raw streamrip catalog id (legacy path, still used by pasted links)
 //  - query: an iTunes-picked song/album resolved on Qobuz at download time
 //    (artist+title or artist+album) — the v2 search flow.
-import { foldAccents } from '../../../common/fold-text.ts'
+import { norm } from './downloadKeys.ts'
 
 /** Where a job came from (the Record Shop's saved list, a feed shelf…) —
  *  carried on the job so every presentation can find it by recommendation
@@ -44,7 +44,7 @@ export interface QueueGroup {
   collectionId?: number
 }
 
-const normKey = (s: string): string => foldAccents(String(s || '')).replace(/[^a-z0-9]/g, '')
+const normKey = (s: string): string => norm(String(s || ''))   // any script — see downloadKeys.ts
 /** ⚠️ TWIN: DownloadView.songQ/albumQ build their ids through these. */
 export const trackQueryId = (artist: string, title: string): string => `q|track|${normKey(artist)}|${normKey(title)}`
 export const albumQueryId = (artist: string, album: string): string => `q|album|${normKey(artist)}|${normKey(album)}`

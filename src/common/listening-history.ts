@@ -19,7 +19,7 @@
  *
  * Pure: no I/O. scripts/listening-history.mts feeds it the files.
  */
-import { foldAccents } from './fold-text.ts'
+import { nameKey } from './fold-text.ts'
 
 export type Device = 'laptop' | 'workmini' | 'phone' | 'ipod'
 
@@ -115,10 +115,12 @@ export function fromIpodLedger(
   return out
 }
 
-/** Identity of a song for joining and counting: folded artist + title. */
+/** Identity of a song for joining and counting: folded artist + title, in
+ *  any script. Keeping only [a-z0-9] made every all-Hebrew song the key '|' —
+ *  one song in the counts, dropped from top artists, and attached to whichever
+ *  Hebrew track alone had plays (2026-10-11). Not stored: rebuilt nightly. */
 export function songKey(artist: string, title: string): string {
-  const f = (s: string): string => foldAccents(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
-  return `${f(artist)}|${f(title)}`
+  return `${nameKey(artist)}|${nameKey(title)}`
 }
 
 /** Union of the device histories, exact duplicates dropped, in time order. */

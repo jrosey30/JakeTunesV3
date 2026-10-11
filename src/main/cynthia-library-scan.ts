@@ -25,15 +25,17 @@
  */
 
 import type { CynthiaFinding, CynthiaScanTrack } from './cynthia-scan'
-import { foldAccents } from '../common/fold-text.ts'
+import { nameKey } from '../common/fold-text.ts'
 
 function collapse(s: string): string {
   return s.replace(/\s+/g, ' ').trim()
 }
 
-/** Letters-only cluster key: case-, space- and punctuation-insensitive. */
+/** Letters-only cluster key: case-, space- and punctuation-insensitive, in
+ *  any script. Under [a-z0-9] "ברי סחרוף feat. X" and "אביב גפן feat. X" were
+ *  both "featx" — one cluster, a finding to rename one artist to the other. */
 function clusterKey(s: string): string {
-  return foldAccents(collapse(s)).replace(/[^a-z0-9]+/gi, '')
+  return nameKey(collapse(s), '')
 }
 
 const FEAT_VARIANT_RE = /\b(featuring|ft\.)\s+/gi

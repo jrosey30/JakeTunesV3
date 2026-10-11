@@ -18,6 +18,7 @@
  * Electron-free and pure except loadTasteProfile (file read).
  */
 import { readFile } from 'fs/promises'
+import { nameKey } from '../common/fold-text.ts'
 
 export interface TasteException { artist: string; genre: string; note?: string; at?: string }
 export interface TasteProfile {
@@ -33,7 +34,7 @@ export const EMPTY_PROFILE: TasteProfile = { focusPlaylists: [], lowGenres: [], 
  *  name to '' — one shared key, so Молчат Дома inherited an Israeli band's
  *  origin (2026-10-11). */
 export function normName(s: string | undefined): string {
-  return String(s || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^\p{L}\p{M}\p{N}]+/gu, ' ').trim()
+  return nameKey(s)
 }
 
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim()) : [])

@@ -18,6 +18,7 @@
  */
 
 import { cosine } from '../playlist-vibes.ts'
+import { nameKey } from '../../common/fold-text.ts'
 import { ORBIT_ABS_FLOOR, ORBIT_REL_MARGIN } from '../../common/mix-brain-twin.ts'
 
 export { ORBIT_ABS_FLOOR, ORBIT_REL_MARGIN }
@@ -45,8 +46,11 @@ export function parseOrbitSeed(title: string, subtitle = ''): OrbitSeedRef | nul
   return null
 }
 
+/** Any script. Under [a-z0-9] an all-Hebrew title folded to '' — which every
+ *  title seed "includes" — so Hebrew songs joined every orbit's seeds.
+ *  ⚠️ TWIN: JakeTunesMobile backend/src/util/orbitQuality.ts foldName. */
 function foldName(s: string): string {
-  return s.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').replace(/[^a-z0-9]+/g, ' ').trim()
+  return nameKey(s)
 }
 
 export interface OrbitSeedTrack {
@@ -72,6 +76,7 @@ export function resolveOrbitSeedIds(
   if (seed.kind === 'title') {
     for (const t of library) {
       const title = foldName(t.title || '')
+      if (!title) continue
       if (title === q || title.includes(q) || q.includes(title)) {
         hits.push(t.id)
         if (hits.length >= cap) break

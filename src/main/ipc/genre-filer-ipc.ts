@@ -10,7 +10,7 @@ import { join } from 'path'
 import { readFile, writeFile, rename } from 'fs/promises'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
-import { runFilerSweep, resolveCheckEntry, trackFingerprint, isSettled, type FilerTrack, type FilerDeps, type CheckEntry, type Evidence } from '../genre-filer.ts'
+import { runFilerSweep, resolveCheckEntry, trackFingerprint, isSettled, originCacheKey, type FilerTrack, type FilerDeps, type CheckEntry, type Evidence } from '../genre-filer.ts'
 import { musicBrainzArtist, musicBrainzAlbumTags } from '../artist-tags.ts'
 import { exaSearch } from '../exa.ts'
 
@@ -29,7 +29,6 @@ const CHECK_FILE = (): string => join(app.getPath('userData'), 'genre-check.json
  *  artist nobody knows isn't asked about every five minutes. */
 const ORIGIN_FILE = (): string => join(app.getPath('userData'), 'origin-lookups.json')
 const ORIGIN_RETRY_MS = 60 * 24 * 3600 * 1000
-const normKey = (s: string): string => s.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 const SWEEP_MS = 5 * 60_000
 const FIRST_SWEEP_MS = 90_000
 
@@ -73,7 +72,7 @@ function deps(host: GenreFilerHost): FilerDeps {
     lookupOrigin: async (artist) => {
       let cache: Record<string, { origin: string | null; at: number }> = {}
       try { cache = JSON.parse(await readFile(ORIGIN_FILE(), 'utf8')) as typeof cache } catch { /* first lookup */ }
-      const k = normKey(artist) || artist.trim().toLowerCase(), hit = cache[k]   // non-Latin names fold to '' — keep them apart
+      const k = originCacheKey(artist), hit = cache[k]
       if (hit && (hit.origin || Date.now() - hit.at < ORIGIN_RETRY_MS)) return hit.origin
       await host.mbThrottle()
       const a = await musicBrainzArtist(artist, host.userAgent)

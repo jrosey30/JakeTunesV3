@@ -7,7 +7,7 @@
 import { join } from 'path'
 import { readFile } from 'fs/promises'
 import { STATE_DIR } from '../state-dir'
-import { foldAccents } from '../../common/fold-text.ts'
+import { routeArtistKey, queryNamesArtist } from './rag-route.ts'
 import { DECADE_QUERY_RE, parseDecadeConstraint, yearInDecade } from './decade-query'
 import {
   analyzeEmbeddings as ragAnalyzeEmbeddings,
@@ -45,15 +45,8 @@ export async function ragIndexedCountForTracks(tracks: Array<{ id: number }>): P
 //   • anything else (vibe-shaped)   → mood index, if it's ready
 // Validated 2026-07-07 (brain-eval mood_index_proto.py): this routing
 // takes retrieval 0.825 → ~0.91 on the held-out eval set.
-// DECADE_QUERY_RE lives in ./ai/decade-query (twin with Mobile rag).
-// Genre-ish words that can also be band names — an artist match on one
-// of these must not hijack a vibe query ("house and dance music" is not
-// about a band named House).
-const GENRE_WORD_ARTISTS = new Set([
-  'house', 'dance', 'funk', 'soul', 'punk', 'metal', 'grunge', 'jazz', 'blues',
-  'rock', 'pop', 'disco', 'techno', 'ambient', 'folk', 'country', 'rap',
-  'reggae', 'ska', 'indie', 'emo', 'hardcore', 'trance', 'garage', 'gospel',
-])
+// DECADE_QUERY_RE lives in ./ai/decade-query (twin with Mobile rag); the
+// artist check (fold + genre-word filter) lives in ./ai/rag-route.
 let ragArtistSetCache: { at: number; set: Set<string> } | null = null
 export async function ragLibraryArtistSet(): Promise<Set<string>> {
   if (ragArtistSetCache && Date.now() - ragArtistSetCache.at < 5 * 60 * 1000) return ragArtistSetCache.set
@@ -61,10 +54,8 @@ export async function ragLibraryArtistSet(): Promise<Set<string>> {
   try {
     const lib = (await ragHost.libraryCache.get()) as { tracks?: Array<{ artist?: string; albumArtist?: string }> }
     const add = (a?: string) => {
-      // ⚠️ Must fold identically to pickRetrievalIndex's qNorm below, or an
-      //    accented artist is in this set under a name the query can't form.
-      const norm = foldAccents(a || '').replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()
-      if (norm.length >= 4 && !GENRE_WORD_ARTISTS.has(norm)) set.add(norm)
+      const k = routeArtistKey(a)   // folds exactly as queryNamesArtist does
+      if (k) set.add(k)
     }
     for (const t of lib.tracks || []) {
       for (const a of [t.artist, t.albumArtist]) add(a)
@@ -82,11 +73,7 @@ export async function ragLibraryArtistSet(): Promise<Set<string>> {
 
 export async function pickRetrievalIndex(query: string): Promise<'main' | 'mood'> {
   if (DECADE_QUERY_RE.test(query)) return 'main'
-  const qNorm = ` ${foldAccents(query).replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()} `
-  const artists = await ragLibraryArtistSet()
-  for (const a of artists) {
-    if (qNorm.includes(` ${a} `)) return 'main'
-  }
+  if (queryNamesArtist(query, await ragLibraryArtistSet())) return 'main'
   // Vibe-shaped. Route to the mood index only once it covers most of
   // the brain — a half-built index would silently shrink the library.
   const [main, mood] = await Promise.all([ragGetEmbeddingsMap(), getMoodIndexMap()])

@@ -21,6 +21,7 @@
  * visits reads as broken) — followed by a spread pass so the same artist
  * or album never plays back-to-back when it can be helped.
  */
+import { nameKey } from './fold-text.ts'
 
 export interface BestOfInput {
   id: number
@@ -33,7 +34,7 @@ export interface BestOfInput {
   playCount?: number
 }
 
-const nk = (s: string | undefined): string => String(s || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{M}\p{N}]+/gu, ' ').trim()
+const nk = (s: string | undefined): string => nameKey(s)
 
 /** Deterministic PRNG (mulberry32) — the mix must be stable per seed. */
 function rng(seed: number): () => number {
