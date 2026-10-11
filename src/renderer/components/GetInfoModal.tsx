@@ -19,6 +19,9 @@ const EDITABLE_FIELDS = [
   { key: 'albumArtist', label: 'Album Artist' },
   { key: 'album', label: 'Album' },
   { key: 'genre', label: 'Genre' },
+  // 2026-10-11 (Jake: "i should be able to edit origin when i click get info"):
+  // where the artist is from. Saved like any field; never written into the file's tags.
+  { key: 'origin', label: 'Origin' },
   { key: 'year', label: 'Year' },
 ]
 
@@ -398,12 +401,18 @@ export default function GetInfoModal({
                   type="text"
                   value={getFieldValue(key)}
                   placeholder={getPlaceholder(key)}
+                  list={key === 'origin' ? 'getinfo-origins' : undefined}
                   onChange={(e) =>
                     setEditedFields((prev) => ({ ...prev, [key]: e.target.value }))
                   }
                 />
               </div>
             ))}
+            {/* Origin autocompletes from the countries already in the library, so
+                one country is always spelled one way. */}
+            <datalist id="getinfo-origins">
+              {[...new Set(allTracks.map((t) => t.origin).filter((o): o is string => !!o))].sort().map((o) => <option key={o} value={o} />)}
+            </datalist>
             {/* iTunes-style "X of Y" paired fields for Track and Disc */}
             {PAIRED_FIELDS.map(({ label, numKey, ofKey }) => (
               <div className="getinfo-field-row" key={numKey}>

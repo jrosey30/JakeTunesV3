@@ -32,6 +32,12 @@ describe('wired into Song View', () => {
     assert.match(view, /case 'origin':/)
     assert.ok(!DEFAULT_HIDDEN.includes('origin'), 'he asked for it — visible')
   })
+  it('editable in Get Info, autocompleting from the countries already there', () => {
+    const gi = readFileSync(join(R, 'components', 'GetInfoModal.tsx'), 'utf8')
+    assert.match(gi, /\{ key: 'genre', label: 'Genre' \},\n(?:\s*\/\/[^\n]*\n)*\s*\{ key: 'origin', label: 'Origin' \}/)
+    assert.match(gi, /<datalist id="getinfo-origins">/)
+    assert.match(gi, /list=\{key === 'origin' \? 'getinfo-origins' : undefined\}/)
+  })
   it('searchable and sortable', () => {
     assert.match(readFileSync(join(R, 'hooks', 'useSortedTracks.ts'), 'utf8'), /t\.origin \|\| ''/)
     assert.match(readFileSync(join(R, 'types.ts'), 'utf8'), /SortColumn = [^\n]*'origin'/)
