@@ -443,10 +443,6 @@ function levelOf(score: number, mentions: number): TraitLevel | 'none' {
   return 'mixed'
 }
 
-function shortQ(s: DnaScreen): string {
-  return s.text.replace(/\?$/, '').replace(/^(Pick one\.|Which|What)\s+/i, '').slice(0, 48)
-}
-
 export function buildProfile(state: DnaState, exceptions: Array<{ artist: string; genre: string }> = []): DnaProfile {
   const screens = activeScreens(state)
   const score = new Map<TraitId, number>()
@@ -474,7 +470,8 @@ export function buildProfile(state: DnaState, exceptions: Array<{ artist: string
     for (const pid of a.picks) {
       const o = s.options?.find((x) => x.id === pid)
       if (!o) continue
-      const why = o.song ? `${o.label} (${o.song.artist}) — ${shortQ(s)}` : `${o.label} — ${shortQ(s)}`
+      // The answer and the whole question — never a clipped fragment.
+      const why = `${o.song ? `${o.label} (${o.song.artist})` : `“${o.label}”`} — ${s.text}`
       for (const [t, w] of Object.entries(o.signals ?? {})) bump(t as TraitId, w as number, why)
       // A pick is +1 for its own lineage; the bands not picked get nothing —
       // choosing one never counts against the others.

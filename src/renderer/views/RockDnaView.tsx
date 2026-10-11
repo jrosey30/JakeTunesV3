@@ -6,7 +6,7 @@
  * notes come from Jake's own library; owned songs play through the existing
  * player (useAudio) — no new playback, no previews from outside.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { useAudio } from '../hooks/useAudio'
 import AlbumArtImage from '../components/AlbumArtImage'
@@ -22,6 +22,7 @@ import '../styles/rock-dna.css'
 
 const nk = (s: string | undefined): string => String(s || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^\p{L}\p{M}\p{N}]+/gu, ' ').trim()
 /** "Black Dog (Remaster)" and "Black Dog - 2012 Remaster" are the song "Black Dog". */
+const initial = (name: string): string => name.replace(/^the\s+/i, '').slice(0, 1).toUpperCase()
 const songKey = (s: string | undefined): string => nk(String(s || '').replace(/\s*[([].*?[)\]]\s*/g, ' ').replace(/\s+-\s+.*$/, ''))
 
 type Mode = 'intro' | 'quiz' | 'profile'
@@ -36,12 +37,16 @@ export default function RockDnaView(): JSX.Element {
   const [returnToProfile, setReturnToProfile] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [confirmRetake, setConfirmRetake] = useState(false)
+  // The latest state, written synchronously: two quick clicks (two ratings,
+  // two multi-select picks) must build on each other, not on one stale render.
+  const dnaRef = useRef<DnaState | null>(null)
 
   useEffect(() => {
     let live = true
     window.electronAPI.rockDnaLoad?.().then((r) => {
       if (!live) return
       const st = normalizeDnaState(r.state)
+      dnaRef.current = st
       setDna(st)
       setExceptions(r.exceptions ?? [])
       setMode(st.completedAt ? 'profile' : 'intro')
@@ -50,6 +55,7 @@ export default function RockDnaView(): JSX.Element {
   }, [])
 
   const save = useCallback((next: DnaState): void => {
+    dnaRef.current = next
     setDna(next)
     window.electronAPI.rockDnaSave?.(next).then((r) => setError(r.ok ? null : `Couldn't save: ${r.error ?? 'unknown error'}`))
       .catch((e) => setError(`Couldn't save: ${e instanceof Error ? e.message : String(e)}`))
@@ -92,6 +98,7 @@ export default function RockDnaView(): JSX.Element {
   const screens = activeScreens(dna)
   const { answered, total } = progress(dna)
   const now = (): string => new Date().toISOString()
+  const base = (): DnaState => dnaRef.current ?? dna
 
   /** Done: stamp it, show the profile. The Record Shop regenerates with the
    *  profile once, the first time a run finishes. */
@@ -102,10 +109,10 @@ export default function RockDnaView(): JSX.Element {
     if (!st.completedAt) void window.electronAPI.getDiscoverFeed?.(true)
   }
   const open = (s: DnaScreen | null): void => {
-    if (!s) { complete(dna); return }
+    if (!s) { complete(base()); return }
     setCur(s.id)
     setMode('quiz')
-    save({ ...dna, position: s.id, startedAt: dna.startedAt ?? now() })
+    save({ ...base(), position: s.id, startedAt: base().startedAt ?? now() })
   }
   const advance = (next: DnaState, fromId: string): void => {
     if (returnToProfile) { save({ ...next, position: undefined }); setMode('profile'); setReturnToProfile(false); return }
@@ -115,7 +122,7 @@ export default function RockDnaView(): JSX.Element {
     save({ ...next, position: n.id })
   }
   const answer = (s: DnaScreen, a: DnaState['answers'][string]): void => {
-    advance({ ...dna, answers: { ...dna.answers, [s.id]: { ...a, at: now() } } }, s.id)
+    advance({ ...base(), answers: { ...base().answers, [s.id]: { ...a, at: now() } } }, s.id)
   }
 
   // ── Intro ──
@@ -147,11 +154,11 @@ export default function RockDnaView(): JSX.Element {
   if (mode === 'profile') {
     const p = buildProfile(dna, exceptions)
     const editTrait = (id: TraitId, v: string): void => {
-      const traitEdits = { ...dna.traitEdits }
+      const traitEdits = { ...base().traitEdits }
       if (v === 'auto') delete traitEdits[id]; else traitEdits[id] = v as TraitLevel
-      save({ ...dna, traitEdits })
+      save({ ...base(), traitEdits })
     }
-    const rate = (artist: string, r: Rating): void => save({ ...dna, ratings: { ...dna.ratings, [artist]: r } })
+    const rate = (artist: string, r: Rating): void => save({ ...base(), ratings: { ...base().ratings, [artist]: r } })
     const answeredScreens = screens.filter((s) => isAnswered(dna, s) && s.kind !== 'rate')
     const answerText = (s: DnaScreen): string => {
       const a = dna.answers[s.id]
@@ -290,7 +297,7 @@ export default function RockDnaView(): JSX.Element {
             detail="Your answers start over. This run is kept as your previous one until you finish the new run."
             confirmLabel="Retake"
             onCancel={() => setConfirmRetake(false)}
-            onConfirm={() => { setConfirmRetake(false); const fresh = retake(dna, now()); save(fresh); setCur(null); setMode('intro') }}
+            onConfirm={() => { setConfirmRetake(false); const fresh = retake(base(), now()); save(fresh); setCur(null); setMode('intro') }}
           />
         )}
       </div>
@@ -306,14 +313,15 @@ export default function RockDnaView(): JSX.Element {
 
   const choose = (o: DnaOption): void => {
     if (s.kind === 'multi') {
-      const next = picks.includes(o.id) ? picks.filter((x) => x !== o.id) : [...picks, o.id]
-      save({ ...dna, answers: { ...dna.answers, [s.id]: { picks: next, at: now() } } })
+      const cur = base().answers[s.id]?.picks ?? []
+      const next = cur.includes(o.id) ? cur.filter((x) => x !== o.id) : [...cur, o.id]
+      save({ ...base(), answers: { ...base().answers, [s.id]: { picks: next, at: now() } } })
     } else answer(s, { picks: [o.id] })
   }
   const back = (): void => {
     if (returnToProfile) { setMode('profile'); setReturnToProfile(false); return }
-    const p = prevScreen(dna, s.id)
-    if (p) { setCur(p.id); save({ ...dna, position: p.id }) } else setMode('intro')
+    const p = prevScreen(base(), s.id)
+    if (p) { setCur(p.id); save({ ...base(), position: p.id }) } else setMode('intro')
   }
   const skip = (): void => answer(s, { skipped: true })
 
@@ -335,7 +343,7 @@ export default function RockDnaView(): JSX.Element {
 
         {s.about && (() => { const info = artistInfo(s.about); return (
           <div className="dna-hero">
-            {info.hash ? <AlbumArtImage hash={info.hash} alt={s.about} className="dna-hero__art" size={160} /> : <div className="dna-hero__art dna-blank">{s.about.slice(0, 1)}</div>}
+            {info.hash ? <AlbumArtImage hash={info.hash} alt={s.about} className="dna-hero__art" size={160} /> : <div className="dna-hero__art dna-blank">{initial(s.about)}</div>}
             <div><div className="dna-hero__name">{s.about}</div><div className="dna-hero__note">{info.note}</div></div>
           </div>
         ) })()}
@@ -345,7 +353,7 @@ export default function RockDnaView(): JSX.Element {
 
         {s.kind === 'rate' ? (
           <RateScreen artists={s.artists ?? []} ratings={dna.ratings} info={artistInfo}
-            onRate={(artist, r) => save({ ...dna, ratings: { ...dna.ratings, [artist]: r } })} />
+            onRate={(artist, r) => save({ ...base(), ratings: { ...base().ratings, [artist]: r } })} />
         ) : (
           <div className="dna-options">
             {(s.options ?? []).map((o) => {
@@ -358,7 +366,7 @@ export default function RockDnaView(): JSX.Element {
                   className={`dna-opt${on ? ' dna-opt--on' : ''}${info ? '' : ' dna-opt--text'}`}
                   onClick={() => choose(o)}
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(o) } }}>
-                  {info && (info.hash ? <AlbumArtImage hash={info.hash} alt={art!} className="dna-opt__art" size={120} /> : <span className="dna-opt__art dna-blank">{art!.slice(0, 1)}</span>)}
+                  {info && (info.hash ? <AlbumArtImage hash={info.hash} alt={art!} className="dna-opt__art" size={120} /> : <span className="dna-opt__art dna-blank">{initial(art!)}</span>)}
                   <span className="dna-opt__text">
                     <span className="dna-opt__label">{o.label}</span>
                     {o.sub && <span className="dna-opt__sub">{o.sub}</span>}
@@ -389,10 +397,10 @@ export default function RockDnaView(): JSX.Element {
             <button type="button" className="dna-btn dna-btn--quiet" onClick={back}>Back</button>
             <button type="button" className="dna-btn" onClick={skip}>Skip</button>
             {(s.kind === 'multi' || s.kind === 'rate') && (
-              <button type="button" className="dna-btn dna-btn--primary" disabled={!isAnswered(dna, s)} onClick={() => advance(dna, s.id)}>Continue</button>
+              <button type="button" className="dna-btn dna-btn--primary" disabled={!isAnswered(dna, s)} onClick={() => advance(base(), s.id)}>Continue</button>
             )}
           </div>
-          <button type="button" className="dna-link" onClick={() => { save({ ...dna, position: s.id }); setMode('profile'); setReturnToProfile(false) }}>
+          <button type="button" className="dna-link" onClick={() => { save({ ...base(), position: s.id }); setMode('profile'); setReturnToProfile(false) }}>
             Saved · see profile so far
           </button>
         </div>
@@ -409,12 +417,12 @@ function RateScreen({ artists, ratings, info, onRate }: {
 }): JSX.Element {
   return (
     <div className="dna-rate">
-      <p className="dna-hint">{RATINGS.map((r) => `${r.label}: ${r.meaning.toLowerCase()}`).join(' · ')}</p>
+      <p className="dna-hint">{RATINGS.map((r) => `${r.label}: ${r.meaning}`).join(' · ')}</p>
       {artists.map((artist) => {
         const i = info(artist)
         return (
           <div key={artist} className="dna-rate__row">
-            {i.hash ? <AlbumArtImage hash={i.hash} alt={artist} className="dna-rate__art" size={80} /> : <span className="dna-rate__art dna-blank">{artist.slice(0, 1)}</span>}
+            {i.hash ? <AlbumArtImage hash={i.hash} alt={artist} className="dna-rate__art" size={80} /> : <span className="dna-rate__art dna-blank">{initial(artist)}</span>}
             <div className="dna-rate__name"><div>{artist}</div><div className="dna-opt__note">{i.note}</div></div>
             <div className="dna-seg-btns" role="radiogroup" aria-label={`How you feel about ${artist}`}>
               {RATINGS.map((r) => (
