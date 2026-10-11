@@ -43,6 +43,28 @@ describe('the transport-key claim', () => {
     }
   })
 
+  it('a narrow claim withholds only the keys it names', () => {
+    const release = claimTransportKeys('listen-list', ['Space', 'ArrowUp', 'ArrowDown'])
+    assert.equal(shouldYieldToClaim('Space'), true)
+    assert.equal(shouldYieldToClaim('ArrowUp'), true)
+    assert.equal(shouldYieldToClaim('ArrowDown'), true)
+    // The Listen List never moves sideways — ←/→ keep skipping tracks.
+    assert.equal(shouldYieldToClaim('ArrowLeft'), false)
+    assert.equal(shouldYieldToClaim('ArrowRight'), false)
+    release()
+    assert.equal(shouldYieldToClaim('Space'), false)
+  })
+
+  it('a full claim after a narrow one withholds all five again', () => {
+    const narrow = claimTransportKeys('listen-list', ['Space', 'ArrowUp', 'ArrowDown'])
+    const full = claimTransportKeys('step-inside')
+    narrow()                                        // late unmount of the Listen List
+    for (const k of ['Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']) {
+      assert.equal(shouldYieldToClaim(k), true, `${k} withheld by the full claim`)
+    }
+    full()
+  })
+
   it('ignores a stale release from a view that already handed over', () => {
     const staleRelease = claimTransportKeys('old-view')
     const freshRelease = claimTransportKeys('new-view')

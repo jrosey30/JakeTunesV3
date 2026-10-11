@@ -21,6 +21,7 @@ import PageGate from '../components/PageGate'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { useLibrary } from '../context/LibraryContext'
 import { getPreviewSnapshot, subscribePreview, togglePreview, stopPreview } from '../previewPlayer'
+import { claimTransportKeys } from '../input-mode'
 import { formatAppDate } from '../utils/formatDate'
 import type { Recommendation, ItunesSuggestion } from '../types'
 import { displayRecoName } from '../listen-to-the-list/components'
@@ -203,6 +204,18 @@ export default function ListenToTheListView() {
   useEffect(() => () => { if (tossTimer.current) clearTimeout(tossTimer.current) }, [])
 
   // ── Keyboard fly-through (Inbox only; never steals from inputs) ───────────
+  // App.tsx binds Space (play/pause) as a capture listener on window that
+  // registers first, and ↑/↓ (volume) on document — so stopPropagation here
+  // never reached either: Space previewed AND toggled the music, and moving
+  // the selection nudged the volume. The Inbox claims just the keys it uses
+  // (see input-mode.ts) while it has rows; App's handlers stand aside. ←/→
+  // still skip tracks, media keys still work, and an empty Inbox hands Space
+  // back to the music.
+  const inboxHasRows = inboxFlat.length > 0
+  useEffect(() => {
+    if (!inboxHasRows) return
+    return claimTransportKeys('listen-list', ['Space', 'ArrowUp', 'ArrowDown'])
+  }, [inboxHasRows])
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement
@@ -219,7 +232,7 @@ export default function ListenToTheListView() {
         default: return
       }
     }
-    window.addEventListener('keydown', onKey, true)   // capture — beat the global transport Space
+    window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [inboxFlat, sel, previewReco, getReco, tossReco])
 
