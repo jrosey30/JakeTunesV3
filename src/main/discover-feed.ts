@@ -218,6 +218,9 @@ export function filterFeed(
     now: number
     rotateViews?: number
     rotateRestMs?: number
+    /** Taste-profile genre gate (discovery-focus.ts): true = leave the card
+     *  out. Math rock stays out unless the artist is one of his exceptions. */
+    genreGate?: (card: FeedCard) => boolean
   },
 ): FeedCard[] {
   const seen = new Set<string>()
@@ -233,6 +236,7 @@ export function filterFeed(
     // "Neighbors with Nirvana"). The supply lane refuses these earlier too.
     if (isJunkArtistName(c.artist)) return false
     if (opts.notForMe[ak]) return false
+    if (opts.genreGate?.(c)) return false
     if (c.type === 'artist' && opts.ownedArtists.has(ak)) return false
     if (c.type !== 'artist') {
       if (opts.ownedAlbumKeys.has(key)) return false
