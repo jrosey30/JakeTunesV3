@@ -5,6 +5,7 @@ import { getCorrelation, setEnhanceConfig } from '../audio/audioEnhance'
 import { getCaptionsOn, setCaptionsOn } from '../activity'
 import '../styles/import-convert.css'
 import MusicSourcesPanel from './MusicSourcesPanel'
+import GenreCheckList from './GenreCheckList'
 
 /**
  * App-level user preferences. Tabbed layout (Playback / Library / Sync /
@@ -694,6 +695,8 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
               <p className="imp-help" style={{ marginTop: 8 }}>
                 This Mac stays the hub and keeps publishing the library. New imports stream once homemini has the same bytes, and a symlink plays from homemini. Files already on this Mac stay put until File → Library → Offload Audio to Homemini — Dry Run, then Start. Do not set the stream source to homemini.
               </p>
+
+              <GenreCheckList />
 
               {/* 4.5.0-83 — locked-artwork visibility. Surfaces the
                   count of covers you've hand-set so you can verify

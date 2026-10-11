@@ -71,6 +71,8 @@ import { registerMobileReadsIpc } from './ipc/mobile-reads-ipc.ts'
 import { registerArtworkIpc } from './ipc/artwork-ipc.ts'
 import { registerRecommendations, MOBILE_BACKEND_URL, type RecoSource, type RecommendationRecord } from './ipc/recommendations-ipc.ts'
 import { registerTasteIpc, TASTE_LEDGER_PATH } from './ipc/taste-ipc.ts'
+import { registerGenreFilerIpc } from './ipc/genre-filer-ipc.ts'
+import { phoneOverlayFields } from '../common/genre-vocab.ts'
 import { registerPreviewRefreshIpc } from './ipc/preview-refresh-ipc.ts'
 import { registerSyncHistoryIpc } from './ipc/sync-history-ipc.ts'
 import { registerActivityPoolIpc } from './ipc/activity-pool-ipc.ts'
@@ -9534,6 +9536,7 @@ const sweepFriendImports = (): Promise<number> => moduleSweepFriendImports(sweep
  */
 // Taste ledger + weights extracted to ipc/taste-ipc.ts (6.0 Phase 1).
 registerTasteIpc(ipc)
+registerGenreFilerIpc(ipc, { libraryTracks: async () => ((await libraryCache.get()) as { tracks?: [] }).tracks ?? [], overrides: async () => (await overridesCache.get()) as Record<string, { fp?: string; fields?: Record<string, string> }>, persist: (id, fields, fp) => persistOverrideFields(id, fields, fp).then(() => triggerSync('metadata-edit')), send: (ch, p) => sendToRenderer(ch, p), claude: async (system, user) => { const r = await claudeCall('genre-filer', { model: MODEL_SMART, max_tokens: 2000, system, messages: [{ role: 'user', content: user }] }); const b = r.content[0]; return b && b.type === 'text' ? b.text : '' }, mbThrottle, userAgent: `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)` })
 registerPreviewRefreshIpc(ipc)
 registerSyncHistoryIpc(ipc, { stateDir: STATE_DIR })
 
@@ -9633,8 +9636,8 @@ ipc.handle('load-metadata-overrides', async () => {
     for (const [id, entry] of Object.entries(mobile)) {
       if (!entry || typeof entry !== 'object' || !entry.fields) continue
       const cur = merged[id] as OvEntry | undefined
-      if (!cur || !cur.fields) { merged[id] = entry; continue }
-      if (cur.fp === entry.fp) merged[id] = { fp: cur.fp, fields: { ...cur.fields, ...entry.fields } }
+      if (!cur || !cur.fields) { merged[id] = { ...entry, fields: phoneOverlayFields(entry.fields) }; continue }
+      if (cur.fp === entry.fp) merged[id] = { fp: cur.fp, fields: { ...cur.fields, ...phoneOverlayFields(entry.fields) } }
     }
   } catch { /* phone overlay is best-effort; desktop overrides still serve */ }
   return { ok: true, overrides: merged }

@@ -661,6 +661,9 @@ declare global {
       cynthiaGetLedger: (limit?: number) => Promise<{ ok: boolean; entries: CynthiaLedgerEntry[] }>
       cynthiaRevertLedgerEntry: (id: string) => Promise<{ ok: boolean; error?: string }>
       cynthiaSweepStatus: () => Promise<{ ok: boolean; swept: number; queued: number; withFindings: number; autoAppliedTotal: number; lastSweptAt: number | null }>
+      onGenreFilerApplied?: (callback: (p: { updates: Array<{ trackId: number; field: string; newValue: string }> }) => void) => () => void
+      genreCheckList?: () => Promise<Array<{ key: string; artist: string; album: string; ids: number[]; tag: string; suggested?: string; why: string; at: string }>>
+      genreCheckResolve?: (key: string, genre: string) => Promise<{ ok: boolean; error?: string }>
       onCynthiaSweepProgress: (callback: (progress: { swept: number; total: number; withFindings: number; autoApplied: Array<{ trackId: number; field: string; newValue: string }>; currentAlbum?: string }) => void) => () => void
       restoreXmlPickFile: () => Promise<{ ok: boolean; path?: string; canceled?: boolean }>
       restoreXmlScan: (xmlPath: string) => Promise<{ ok: boolean; data?: RestoreScanResult; error?: string }>
