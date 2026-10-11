@@ -110,7 +110,7 @@ export function evaluateSmartPlaylist(id: SmartPlaylistId, tracks: Track[]): Tra
 
     case 'best-of-year':
       // Jake, 2026-08-22: "best of 2026. no more than 2 songs per album.
-      // mix them up. 40 songs." Definition + mix live in
+      // mix them up. 40 songs." → 100 (8/23) → 200 (10/11). Definition + mix live in
       // common/best-of-year.ts (node-tested); seeded by the year so the
       // order holds steady all year and rolls fresh next January.
       return pickBestOfYear(tracks, { year: BEST_OF_YEAR })
