@@ -13,21 +13,26 @@ import type { Track } from '../../types'
 
 export type YirFacts = YearInReview & { builtAt?: string }
 
-let cached: { year: number; facts: YirFacts | null } | null = null
-let inflight: Promise<YirFacts | null> | null = null
+let cached: { year: number; facts: YirFacts } | null = null
 
-/** The facts for a year; shared by the Home card and the view. */
+/** The facts for a year; shared by the Home card and the view. Asks again on
+ *  every mount (the nightly build lands mid-session), and while this Mac has
+ *  none yet (first launch: the mirror is still copying), every minute. */
 export function useYirFacts(year: number): { facts: YirFacts | null; loading: boolean } {
   const [facts, setFacts] = useState<YirFacts | null>(cached?.year === year ? cached.facts : null)
   const [loading, setLoading] = useState(cached?.year !== year)
   useEffect(() => {
     let live = true
-    inflight ??= (window.electronAPI.yirGet?.(year) ?? Promise.resolve(null)).catch(() => null)
-    inflight.then((f) => {
-      cached = { year, facts: f }
-      if (live) { setFacts(f); setLoading(false) }
-    }).finally(() => { inflight = null })
-    return () => { live = false }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const ask = (): void => {
+      void (window.electronAPI.yirGet?.(year) ?? Promise.resolve(null)).catch(() => null).then((f) => {
+        if (!live) return
+        if (f) { cached = { year, facts: f }; setFacts(f) } else timer = setTimeout(ask, 60_000)
+        setLoading(false)
+      })
+    }
+    ask()
+    return () => { live = false; clearTimeout(timer) }
   }, [year])
   return { facts, loading }
 }

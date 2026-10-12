@@ -19,6 +19,7 @@
   background: var(--yir-ink);
   color: var(--yir-cream);
   box-shadow: 0 10px 28px rgba(20, 18, 16, 0.18);
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
 }
 .yir-home-year { font-size: 64px; font-weight: 900; letter-spacing: -3px; line-height: 0.9; }
 .yir-home-year span { color: var(--yir-orange); }
