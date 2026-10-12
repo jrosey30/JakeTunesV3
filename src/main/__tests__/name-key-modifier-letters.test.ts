@@ -57,3 +57,17 @@ describe('Rock DNA folds with nameKey — no third copy', () => {
     }
   })
 })
+
+describe('the Arabic tatweel is deleted, not a word break', () => {
+  it('"عـربي" is "عربي" — a stretched word is the same word', () => {
+    assert.equal(nameKey('عـربي'), nameKey('عربي'))
+    assert.equal(nameKey('كــتــاب'), 'كتاب')
+    assert.equal(nameKey('فيـروز', ''), nameKey('فيروز', ''))
+    assert.equal(nameKey('ـ'), '')
+  })
+  it('Arabic itself is untouched, and still another script', () => {
+    assert.equal(nameKey('فيروز'), 'فيروز')
+    assert.equal(nameKey('أم كلثوم'), 'أم كلثوم'.normalize('NFD'), 'NFD, as always: أ comes back as ا + hamza')
+    assert.equal(hasOtherScript('فيـروز'), true)
+  })
+})
