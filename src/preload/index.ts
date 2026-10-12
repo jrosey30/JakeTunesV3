@@ -1024,13 +1024,16 @@ const electronAPI = {
   getUpcomingReleasesPersonal: (): Promise<{ ok: boolean; items: Array<{ title: string; artist: string; releaseDate: string; mbid: string; coverUrl: string }> }> =>
     ipcRenderer.invoke('get-upcoming-releases-personal'),
 
-  // 4.4.40 — Per-artist photo via Bandsintown, with 30-day disk cache
-  // (hit + miss tombstone) and single-flight gating in main. Returns
+  // Per-artist photo (Deezer, identity-confirmed — artist-photo.ts), 30-day
+  // disk cache, single-flight in main. Returns
   // { ok: true, slug: '<slug>' | null }. The renderer loads photos via
   // the artist-image:// custom protocol scheme; this IPC just kicks
   // the fetch + tells the renderer when a slug is ready to render.
   getArtistImage: (artist: string): Promise<{ ok: boolean; slug: string | null }> =>
     ipcRenderer.invoke('get-artist-image', artist),
+  // Confirmed Deezer fan counts (the Artists page's Depth sort).
+  getArtistFans: (names: string[]): Promise<Record<string, number>> =>
+    ipcRenderer.invoke('get-artist-fans', names),
   // 4.5: Wikipedia summary for artist detail page. 24h disk cache.
   getArtistWiki: (artist: string): Promise<{ ok: boolean; extract: string | null; pageUrl: string | null }> =>
     ipcRenderer.invoke('get-artist-wiki', artist),
