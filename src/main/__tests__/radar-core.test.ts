@@ -150,6 +150,29 @@ describe('radar-core — listenListPredicate (the real Listen List key)', () => 
     assert.equal(isOnList('Camila Cabello', 'Romance'), false)
   })
 
+  it('matches albums without their edition words, either side', () => {
+    const isOnList = listenListPredicate([
+      rec({ artist: 'Wednesday', album: 'Rat Saw God (Deluxe Edition)', kind: 'album' }),
+      rec({ artist: 'Talking Heads', album: 'Remain in Light (2005 Remaster)' }),
+      rec({ artist: 'pratt', album: 'pitch', matchedArtist: 'Jessica Pratt', matchedAlbum: 'Here in the Pitch - EP' }),
+      rec({ artist: 'Overmono', album: 'Good Lies', kind: 'album' }),
+    ])
+    assert.equal(isOnList('Wednesday', 'Rat Saw God'), true)
+    assert.equal(isOnList('Wednesday', 'Rat Saw God (Expanded Edition)'), true)
+    assert.equal(isOnList('Talking Heads', 'Remain in Light'), true)
+    assert.equal(isOnList('Jessica Pratt', 'Here in the Pitch'), true)
+    assert.equal(isOnList('Overmono', 'Good Lies (Deluxe)'), true)
+  })
+
+  it('keeps a live album, and a different deluxe record, apart', () => {
+    const isOnList = listenListPredicate([
+      rec({ artist: 'Wednesday', album: 'Rat Saw God', kind: 'album' }),
+      rec({ artist: 'Talking Heads', album: 'Little Creatures (Deluxe Version)', kind: 'album' }),
+    ])
+    assert.equal(isOnList('Wednesday', 'Rat Saw God (Live)'), false)
+    assert.equal(isOnList('Talking Heads', 'Remain in Light (Deluxe Version)'), false)
+  })
+
   it('hides exactly the rows the list files under Albums (recoKind twin)', () => {
     const rows = [
       rec({ artist: 'Wednesday', album: 'Rat Saw God', kind: 'album' }),

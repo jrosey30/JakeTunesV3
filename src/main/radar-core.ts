@@ -9,6 +9,7 @@
 import { scoreCandidateForRadar, norm } from './taste-model.ts'
 import type { TasteFingerprint, TasteAnchor } from './taste-model.ts'
 import { recoIdentityPairKey } from './reco-match.ts'
+import { searchTitle } from './streamrip-match.ts'
 
 export interface RawCandidate { artist?: string; title?: string; genre?: string; year?: string | number; why?: string; anchor?: string }
 export interface RankedCandidate {
@@ -71,20 +72,31 @@ function isAlbumRow(r: ListenListRow): boolean {
  * The radar's "title" is a RELEASE, so album rows key their album the same
  * way (album|artist, raw names, then the iTunes ones). A song row that names
  * its album doesn't hide the album — one saved song isn't the record.
+ *
+ * Albums compare WITHOUT edition words on both sides (searchTitle — the
+ * same strip albumKey uses): "Rat Saw God (Deluxe Edition)" on the list
+ * hides "Rat Saw God", and "- EP"/"- Single" fall away. "(Live)"/"(Remix)"
+ * survive — those are other recordings. This is a hide-from-radar compare,
+ * never stored; the persisted identity keys keep editions apart.
  */
 export function listenListPredicate(records: ListenListRow[]): (artist: string, title: string) => boolean {
-  const listKeys = new Set<string>()
-  const add = (k: string | null): void => { if (k) listKeys.add(k) }
+  const songKeys = new Set<string>()
+  const albumKeys = new Set<string>()
+  const albumKey = (album: string | undefined, artist: string | undefined): string | null =>
+    recoIdentityPairKey(album && (searchTitle(album) || album), artist)
+  const add = (set: Set<string>, k: string | null): void => { if (k) set.add(k) }
   for (const r of records) {
-    add(recoIdentityPairKey(r.song || r.matchedTitle, r.artist || r.matchedArtist))
+    add(songKeys, recoIdentityPairKey(r.song || r.matchedTitle, r.artist || r.matchedArtist))
     if (isAlbumRow(r)) {
-      add(recoIdentityPairKey(r.album || r.matchedAlbum, r.artist || r.matchedArtist))
-      add(recoIdentityPairKey(r.matchedAlbum, r.matchedArtist))
+      add(albumKeys, albumKey(r.album || r.matchedAlbum, r.artist || r.matchedArtist))
+      add(albumKeys, albumKey(r.matchedAlbum, r.matchedArtist))
     }
   }
   return (artist, title) => {
-    const k = recoIdentityPairKey(title, artist)
-    return k != null && listKeys.has(k)
+    const song = recoIdentityPairKey(title, artist)
+    if (song != null && songKeys.has(song)) return true
+    const album = albumKey(title, artist)
+    return album != null && albumKeys.has(album)
   }
 }
 
