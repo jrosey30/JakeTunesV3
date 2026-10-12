@@ -79,7 +79,7 @@ describe('the photo cache', () => {
       assert.ok(!existsSync(join(dir, '2pac.miss')), 'no miss written over a real photo')
     } finally { rmSync(root, { recursive: true, force: true }) }
   })
-  it('a confirmed artist is downloaded once and its fan count kept for the Depth sort', async () => {
+  it('a confirmed artist is downloaded once', async () => {
     const { root, dir, factsFile } = setup()
     try {
       const log: string[] = []
@@ -93,7 +93,6 @@ describe('the photo cache', () => {
       const calls = log.length
       assert.equal(await photos.get('Geese'), 'geese')
       assert.equal(log.length, calls, 'second ask is the disk cache')
-      assert.deepEqual(await photos.fans(['Geese', 'Unknown Band']), { Geese: 41000 })
     } finally { rmSync(root, { recursive: true, force: true }) }
   })
   it('seeded facts (confirmed earlier) skip the lookup', async () => {
@@ -108,36 +107,3 @@ describe('the photo cache', () => {
   })
 })
 
-describe('genre iceberg lookups', () => {
-  it('facts: known ones answer at once, unknown ones are looked up within the budget, the rest are pending', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'jt-ice-'))
-    try {
-      const factsFile = join(root, 'artist-deezer.json')
-      writeFileSync(factsFile, JSON.stringify({ Geese: { dz: 7, fans: 41000, at: Date.now() }, MESH: { none: true, at: Date.now() } }))
-      const photos = createArtistPhotos({
-        dir: join(root, 'img'), factsFile, owned: async () => ({ albums: ['Ultraviolence'], titles: [] }),
-        fetchJson: fake({ 'search/artist': { data: [{ id: 9, name: 'Lana Del Rey', nb_fan: 9000000 }] }, 'artist/9/albums': { data: [{ title: 'Ultraviolence' }] } }),
-        download: async () => null,
-      })
-      const r = await photos.facts(['Geese', 'MESH', 'Lana Del Rey', 'Someone Else'], 1)
-      assert.deepEqual(r.facts, { Geese: { dz: 7, fans: 41000 }, 'Lana Del Rey': { dz: 9, fans: 9000000 } })
-      assert.equal(r.pending, 1, 'one unknown left for the next call; MESH (no match) is an answer, not pending')
-    } finally { rmSync(root, { recursive: true, force: true }) }
-  })
-  it('related: cached per artist for 30 days, fetched within the budget', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'jt-ice-'))
-    try {
-      const log: string[] = []
-      const photos = createArtistPhotos({
-        dir: join(root, 'img'), factsFile: join(root, 'f.json'), relatedFile: join(root, 'r.json'), owned: async () => ({ albums: [], titles: [] }),
-        fetchJson: fake({ 'artist/7/related': { data: [{ name: 'Dry Cleaning', nb_fan: 10614 }] } }, log), download: async () => null,
-      })
-      const a = await photos.related([7, 8], 1)
-      assert.deepEqual(a.related[7], [['Dry Cleaning', 10614]])
-      assert.equal(a.pending, 1)
-      const n = log.length
-      await photos.related([7], 5)
-      assert.equal(log.length, n, 'second ask is the cache')
-    } finally { rmSync(root, { recursive: true, force: true }) }
-  })
-})

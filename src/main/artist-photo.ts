@@ -6,8 +6,7 @@
  *
  * Now: Deezer, and only the Deezer artist one of Jake's albums or songs proves
  * is HIS (the MESH lesson: a name is not an identity). The confirmed artist's
- * fan count is kept too — the Artists page's Depth sort and the genre icebergs
- * read it. A photo already on disk is never hidden by a failed refresh.
+ * fan count is kept in artist-deezer.json alongside the photo. A photo already on disk is never hidden by a failed refresh.
  *
  * Electron-free; fetch, clock and file locations are injected for tests.
  */
@@ -87,7 +86,6 @@ export interface ArtistFacts { dz?: number; fans?: number; pic?: string; none?: 
 export interface PhotoDeps {
   dir: string                     // userData/artist-images
   factsFile: string               // userData/artist-deezer.json — keyed by artist name
-  relatedFile?: string            // userData/artist-related.json — keyed by Deezer id (genre icebergs)
   owned(artist: string): Promise<{ albums: string[]; titles: string[] }>
   fetchJson(url: string): Promise<unknown>        // undefined on any failure
   download(url: string): Promise<Buffer | null>
@@ -96,9 +94,6 @@ export interface PhotoDeps {
 
 export function createArtistPhotos(deps: PhotoDeps): {
   get(artist: string): Promise<string | null>
-  fans(names: string[]): Promise<Record<string, number>>
-  facts(names: string[], budget: number): Promise<{ facts: Record<string, { dz: number; fans: number }>; pending: number }>
-  related(ids: number[], budget: number): Promise<{ related: Record<number, Array<[string, number]>>; pending: number }>
 } {
   const now = deps.now ?? Date.now
   const inFlight = new Map<string, Promise<string | null>>()
@@ -128,18 +123,6 @@ export function createArtistPhotos(deps: PhotoDeps): {
     all[artist] = found ? { dz: found.id, fans: found.fans, pic: found.pic, at: now() } : { none: true, at: now() }
     void saveFacts()
     return all[artist]
-  }
-
-  let relatedCache: Record<string, { at: number; list: Array<[string, number]> }> | null = null
-  let writingRelated = Promise.resolve()
-  const loadRelated = async (): Promise<NonNullable<typeof relatedCache>> => {
-    if (!relatedCache) { try { relatedCache = deps.relatedFile ? JSON.parse(await readFile(deps.relatedFile, 'utf8')) : {} } catch { relatedCache = {} } }
-    return relatedCache!
-  }
-  const saveRelated = (): void => {
-    if (!deps.relatedFile) return
-    const file = deps.relatedFile
-    writingRelated = writingRelated.then(async () => { const tmp = `${file}.tmp`; await writeFile(tmp, JSON.stringify(relatedCache)); await rename(tmp, file) }).catch(() => { /* convenience cache */ })
   }
 
   const get = (artist: string): Promise<string | null> => {
@@ -172,50 +155,5 @@ export function createArtistPhotos(deps: PhotoDeps): {
 
   return {
     get,
-    /** Genre icebergs: confirmed identities for these artists, looking up at most
-     *  `budget` unknown ones per call; `pending` = still unknown (ask again). */
-    facts: async (names, budget) => {
-      const all = await loadFacts()
-      const out: Record<string, { dz: number; fans: number }> = {}
-      let asked = 0, pending = 0
-      for (const n of names) {
-        let f = all[n]
-        if ((!f || now() - f.at > PHOTO_MAX_AGE_MS)) {
-          if (asked >= budget) { pending++; continue }
-          asked++
-          f = await factFor(n) as ArtistFacts
-        }
-        if (f && !f.none && typeof f.dz === 'number') out[n] = { dz: f.dz, fans: f.fans ?? 0 }
-      }
-      if (asked) await writing          // what was looked up is on disk before we answer
-      return { facts: out, pending }
-    },
-    /** Deezer's related artists for these confirmed ids (30-day cache), at most
-     *  `budget` fetched per call — the "scene you don't own yet". */
-    related: async (ids, budget) => {
-      const cache = await loadRelated()
-      const out: Record<number, Array<[string, number]>> = {}
-      let asked = 0, pending = 0
-      for (const id of ids) {
-        const hit = cache[id]
-        if (hit && now() - hit.at <= PHOTO_MAX_AGE_MS) { out[id] = hit.list; continue }
-        if (asked >= budget) { pending++; continue }
-        asked++
-        const d = await deps.fetchJson(`${API}/artist/${id}/related?limit=20`) as { data?: Array<{ name?: string; nb_fan?: number }> } | undefined
-        if (!d) { pending++; continue }
-        const list = (d.data ?? []).filter((x) => x.name).map((x): [string, number] => [x.name!, x.nb_fan ?? 0])
-        cache[id] = { at: now(), list }
-        out[id] = list
-      }
-      if (asked) { saveRelated(); await writingRelated }
-      return { related: out, pending }
-    },
-    /** Confirmed Deezer fan counts for these artists (unknown ones left out). */
-    fans: async (names) => {
-      const all = await loadFacts()
-      const out: Record<string, number> = {}
-      for (const n of names) { const f = all[n]; if (f && !f.none && typeof f.fans === 'number') out[n] = f.fans }
-      return out
-    },
   }
 }

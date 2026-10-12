@@ -1031,14 +1031,8 @@ const electronAPI = {
   // the fetch + tells the renderer when a slug is ready to render.
   getArtistImage: (artist: string): Promise<{ ok: boolean; slug: string | null }> =>
     ipcRenderer.invoke('get-artist-image', artist),
-  // Confirmed Deezer fan counts (the Artists page's Depth sort).
-  getArtistFans: (names: string[]): Promise<Record<string, number>> =>
-    ipcRenderer.invoke('get-artist-fans', names),
-  // Genre icebergs: confirmed identities (depth) and related artists (the scene), budgeted per call.
-  icebergFacts: (names: string[]): Promise<{ facts: Record<string, { dz: number; fans: number }>; pending: number }> =>
-    ipcRenderer.invoke('iceberg:facts', names),
-  icebergRelated: (ids: number[]): Promise<{ related: Record<number, Array<[string, number]>>; pending: number }> =>
-    ipcRenderer.invoke('iceberg:related', ids),
+  // Genre Iceberg: listener counts that rank a genre's artists (artist-listeners.json).
+  artistListeners: (): Promise<Record<string, number>> => ipcRenderer.invoke('artist-listeners'),
   // 4.5: Wikipedia summary for artist detail page. 24h disk cache.
   getArtistWiki: (artist: string): Promise<{ ok: boolean; extract: string | null; pageUrl: string | null }> =>
     ipcRenderer.invoke('get-artist-wiki', artist),
