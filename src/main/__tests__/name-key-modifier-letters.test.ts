@@ -84,7 +84,7 @@ describe('Arabic harakat and hamza fold away, like accents', () => {
     assert.equal(nameKey('آمال ماهر'), 'امال ماهر')
     assert.equal(nameKey('ٱلقمر'), 'القمر')
     assert.equal(nameKey('مؤمن'), 'مومن')
-    assert.equal(nameKey('هيئة'), 'هيية')
+    assert.equal(nameKey('هيئة'), 'هييه', 'ئ → ي, and (since the ى/ة PR) the final ة → ه')
   })
   it('Arabic is still its own script, and nothing else moves', () => {
     assert.equal(hasOtherScript('مُحَمَّد'), true)
@@ -109,5 +109,23 @@ describe('Hebrew niqqud and cantillation fold away, like accents', () => {
     assert.equal(nameKey('ברי סחרוף'), 'ברי סחרוף')
     assert.equal(nameKey('مُحَمَّد'), nameKey('محمد'))
     assert.equal(nameKey('Beyoncé'), 'beyonce')
+  })
+})
+
+describe('Arabic alef maksura and teh marbuta fold (ى → ي, ة → ه)', () => {
+  it('a name spelled either way is one name', () => {
+    assert.equal(nameKey('مصطفى'), nameKey('مصطفي'))
+    assert.equal(nameKey('فاطمة'), nameKey('فاطمه'))
+    assert.equal(nameKey('ليلى'), 'ليلي')
+    assert.equal(nameKey('\uFEF0'), 'ي', 'the presentation form normalizes first, then folds')
+  })
+  it('the known cost, pinned: على ("on") and علي ("Ali") share a key now', () => {
+    assert.equal(nameKey('على'), nameKey('علي'))
+  })
+  it('the other Arabic folds still hold, and nothing outside Arabic moves', () => {
+    assert.equal(nameKey('أم كلثوم'), 'ام كلثوم')
+    assert.equal(nameKey('مُحَمَّد'), nameKey('محمد'))
+    assert.equal(nameKey('ברי סחרוף'), 'ברי סחרוף')
+    assert.equal(nameKey('Björk'), 'bjork')
   })
 })

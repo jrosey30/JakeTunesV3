@@ -32,6 +32,12 @@ const SINGLETONS: Record<string, string> = {
   ß: 'ss', ł: 'l', Ł: 'l', đ: 'd', Đ: 'd', ð: 'd', Ð: 'd',
   þ: 'th', Þ: 'th', ı: 'i', İ: 'i', ŋ: 'n', ħ: 'h',
   ٱ: 'ا',   // Arabic alef wasla: no decomposition, folds like the other alefs
+  // Arabic alef maksura → yeh and teh marbuta → heh (2026-10-12): the
+  // standard Arabic search folds (Lucene's ArabicNormalizer does both).
+  // Written forms vary, "مصطفى"/"مصطفي", "فاطمة"/"فاطمه". Unlike the
+  // marks these change a LETTER, so a few distinct words now share a key
+  // (على "on" and علي "Ali" — pinned in the tests). Jake's call, for matching.
+  ى: 'ي', ة: 'ه',
 }
 
 /**
