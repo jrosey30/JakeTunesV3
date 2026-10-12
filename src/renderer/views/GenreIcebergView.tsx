@@ -56,7 +56,7 @@ export default function GenreIcebergView(): JSX.Element {
             </div>
           ))}
         </div>
-        <div className="gi-waterline" aria-hidden="true"><span>waterline</span></div>
+        <div className="gi-waterline" aria-hidden="true" />
         {BANDS.map(([k, name]) => (
           <div key={k} className={`gi-row gi-d${k}`} role="row">
             <div className="gi-lab" role="rowheader">{name}</div>

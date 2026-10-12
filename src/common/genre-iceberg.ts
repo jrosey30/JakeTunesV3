@@ -56,6 +56,7 @@ export const GENRE_DEPTH: Readonly<Record<string, 1 | 2 | 3 | 4>> = {
   "Psychedelic Pop": 3, "Rap Rock": 3, "Ska-Punk": 3, "Space Rock": 3, "Traditional Pop": 3, "UK Garage": 3,
   "Yacht Rock": 3,
   // Abyss
+  "Geordie Jazz": 4,   // one Newcastle scene: no tag, no article, no listeners to speak of — the abyss
   "Afrobeat": 4, "Ambient House": 4, "Bedroom Pop": 4, "Brazilian Boogie": 4, "Chicago House": 4,
   "Darkwave": 4, "Disco House": 4, "Dub-Hop": 4, "Electro Swing": 4, "Future Funk": 4, "Garage Punk": 4,
   "Global Psych": 4, "Indie Groove": 4, "Israeli Hip-Hop": 4, "Italo Disco": 4, "Jangle Pop": 4, "Jazz Pop": 4,
