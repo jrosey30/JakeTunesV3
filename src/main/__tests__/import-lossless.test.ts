@@ -22,6 +22,7 @@ import {
   alacSampleFmt,
   afconvertLibraryAlacArgs,
   convertAudio,
+  ffmpegAttachCoverArgs,
   ffmpegPreserveAlacArgs,
   nativePcmCodec,
   resolveImportFormat,
@@ -204,6 +205,12 @@ describe('the May 22 FLAC→AAC override is gone', () => {
     assert.equal(ffmpegPreserveAlacArgs('in.flac', 'out.m4a', null).includes('-sample_fmt'), false)
     assert.equal(AFCONVERT_LIBRARY_ALAC_DATA_FORMAT, 'alac')
     assert.deepEqual(afconvertLibraryAlacArgs('native.wav', 'out.m4a'), ['-f', 'm4af', '-d', 'alac', 'native.wav', 'out.m4a'])
+    // The cover comes from the source; the audio stays afconvert's packets.
+    const cover = ffmpegAttachCoverArgs('af.m4a', 'in.flac', 'out.m4a')
+    assert.deepEqual(cover.slice(0, 9), ['-y', '-i', 'af.m4a', '-i', 'in.flac', '-map', '0:a:0', '-map', '1:v?'])
+    assert.equal(cover[cover.indexOf('-c') + 1], 'copy')
+    assert.equal(cover.includes('+faststart'), true)
+    assert.equal(cover.at(-1), 'out.m4a')
   })
 
   test('MP3 and AAC are not re-encoded; lossless sources that are already the target are copied', () => {
