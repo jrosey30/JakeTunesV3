@@ -76,9 +76,16 @@ describe('the facts', () => {
     assert.deepEqual(yir.discoveries.foundByMonth, { '06': 2 })
   })
 
-  it('starred class: found this year and 4+ stars — a starred import does not count', () => {
+  it('starred class: found this year and starred — a starred import does not count', () => {
     assert.equal(yir.starredClass.count, 1)
     assert.equal(yir.starredClass.top[0].name, 'Taxes')
+  })
+
+  it('the star is binary: a legacy 2-star find is starred, an unstarred find is not (Jake 10/12)', () => {
+    const legacy = library.map((t) => (t.id === 2 ? { ...t, rating: 2 } : t))
+    const y = buildYearInReview({ year: 2026, listens, library: legacy })
+    assert.equal(y.starredClass.count, 2)
+    assert.deepEqual(y.starredClass.top.map((s) => s.name), ['Taxes', 'Cobra'])
   })
 
   it('coverage says which months the history does not reach', () => {
