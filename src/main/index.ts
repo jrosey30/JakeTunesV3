@@ -1865,7 +1865,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     if (lanes.length > 0) {
       discoverFeedMem = { at: nowMs, ver: FEED_GEN_VERSION, lanes }
       await discoverFeedDisk.update(() => ({ at: nowMs, ver: FEED_GEN_VERSION, lanes }))
-      sendToRenderer('discover-feed-updated', { lanes, generatedAt: nowMs })
+      sendToRenderer('discover-feed-updated', { lanes: await withoutListed(lanes), generatedAt: nowMs })
       // If Apple rate-limited during THIS build, cards persisted artless —
       // re-dress them instead of serving gray placeholders until the TTL.
       void backfillDiscoverArt()
@@ -1921,7 +1921,7 @@ async function backfillDiscoverArt(): Promise<void> {
     }
     if (fixed > 0) {
       await discoverFeedDisk.update(() => ({ at: mem.at, ver: mem.ver ?? FEED_GEN_VERSION, lanes: mem.lanes }))
-      sendToRenderer('discover-feed-updated', { lanes: mem.lanes, generatedAt: mem.at })
+      sendToRenderer('discover-feed-updated', { lanes: await withoutListed(mem.lanes), generatedAt: mem.at })
       // Progress was made — let the next serve finish the stragglers without
       // waiting out the backoff window.
       discoverArtBackfillLastTry = 0
@@ -1951,6 +1951,19 @@ async function countFeedServed(lanes: Array<{ id: string; title: string; cards: 
   } catch (err) { console.warn('[discover] serve-count failed (rotation may repeat a card):', err) }
 }
 
+// Discover is where the radar lives now (its Brand New lanes), and it never
+// checked the Listen List: a pick Jake added came back as "+ List" on the
+// next visit. The radar's guard runs on every feed that leaves main.
+async function withoutListed<L extends { cards: unknown[] }>(lanes: L[]): Promise<L[]> {
+  try {
+    const { dropListed } = await import('./discover-feed.ts')
+    return dropListed(lanes, listenListPredicate(await readRecommendationsFile()))
+  } catch (err) {
+    console.warn('[discover] Listen List unreadable — serving the feed unguarded:', err)
+    return lanes
+  }
+}
+
 ipc.handle('get-discover-feed', async (_e, force?: boolean) => {
   const isFresh = (at: number) => Date.now() - at < DISCOVER_TTL_MS
   const currentVer = (c: FeedCacheShape | null) => (c?.ver ?? 0) === FEED_GEN_VERSION
@@ -1964,14 +1977,18 @@ ipc.handle('get-discover-feed', async (_e, force?: boolean) => {
   if (!force && discoverFeedMem?.lanes.length && currentVer(discoverFeedMem)) {
     // Serve what we have INSTANTLY; refresh behind the scenes if stale, and
     // re-dress any artless cards (see backfillDiscoverArt above).
-    if (!isFresh(discoverFeedMem.at)) void generateDiscoverFeed()
+    const mem = discoverFeedMem
+    if (!isFresh(mem.at)) void generateDiscoverFeed()
     void backfillDiscoverArt()
-    void countFeedServed(discoverFeedMem.lanes)
-    return { ok: true, lanes: discoverFeedMem.lanes, generatedAt: discoverFeedMem.at, cached: true, stale: !isFresh(discoverFeedMem.at) }
+    const lanes = await withoutListed(mem.lanes)
+    void countFeedServed(lanes)
+    return { ok: true, lanes, generatedAt: mem.at, cached: true, stale: !isFresh(mem.at) }
   }
   const gen = await generateDiscoverFeed()
-  if (gen.ok && gen.lanes) void countFeedServed(gen.lanes)
-  return gen
+  if (!gen.ok || !gen.lanes) return gen
+  const lanes = await withoutListed(gen.lanes)
+  void countFeedServed(lanes)
+  return { ...gen, lanes }
 }, { refuse: REFUSED_SENDER })
 
 // Boot warmer: if the persisted feed is stale/empty, regenerate quietly ~25s

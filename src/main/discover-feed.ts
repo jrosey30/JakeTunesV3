@@ -259,6 +259,28 @@ export function filterFeed(
   })
 }
 
+/** Leave out every card already on the Listen List. `isOnList` is the
+ *  radar's guard (radar-core listenListPredicate), handed the card's type so
+ *  a song card meets listed songs and an album card listed albums. Artist
+ *  cards pass: the guard keys songs and albums. A lane left empty goes too.
+ *  Run on every feed that leaves main, not at generation: the list changes
+ *  between visits, the cached feed doesn't (2026-10-11). */
+export function dropListed<L extends { cards: unknown[] }>(
+  lanes: L[],
+  isOnList: (artist: string, title: string, kind?: 'song' | 'album') => boolean,
+): L[] {
+  return lanes
+    .map((l) => ({
+      ...l,
+      cards: l.cards.filter((x) => {
+        const c = x as Partial<FeedCard>
+        if (c.type !== 'song' && c.type !== 'album') return true
+        return !isOnList(c.artist ?? '', c.title ?? '', c.type)
+      }),
+    }))
+    .filter((l) => l.cards.length > 0)
+}
+
 // ── Quality floor ────────────────────────────────────────────────────
 // The brain's floor for a shelf spot. Below BRAIN_FLOOR the brain doesn't
 // actually believe in the pick; a thin lane may back-fill with its best
