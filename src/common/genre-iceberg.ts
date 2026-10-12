@@ -86,6 +86,16 @@ export function bergLayout(present: Map<string, number>): BergUmbrella[] {
   })
 }
 
+/** A genre's layer on the berg, 0 (the tip) to 4 (the abyss); null when it
+ *  isn't on the berg at all (Soundtrack, Comedy — no umbrella). Year in
+ *  Review counts plays by this, so the two always agree. */
+export function layerOf(genre: string | undefined): 0 | 1 | 2 | 3 | 4 | null {
+  if (!genre) return null
+  const u = umbrellaOf(genre)
+  if (!u) return null
+  return u.shelf === genre ? 0 : (GENRE_DEPTH[genre] ?? 2)
+}
+
 export function depthOf(genre: string): string {
   if (UMBRELLAS.some((u) => u.shelf === genre)) return DEPTHS[0]
   return DEPTHS[GENRE_DEPTH[genre] ?? 2]
