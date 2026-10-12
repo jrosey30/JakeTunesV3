@@ -94,3 +94,20 @@ describe('Arabic harakat and hamza fold away, like accents', () => {
     assert.equal(nameKey('عـربي'), nameKey('عربي'), 'tatweel still goes')
   })
 })
+
+describe('Hebrew niqqud and cantillation fold away, like accents', () => {
+  it('a name written with its vowel points is the same name', () => {
+    assert.equal(nameKey('שָׁלוֹם'), 'שלום')
+    assert.equal(nameKey('בְּרִי סַחַרוֹף'), nameKey('ברי סחרוף'))
+    assert.equal(nameKey('הַדָּג נָחָשׁ'), 'הדג נחש')
+    assert.equal(nameKey('בְּרֵאשִׁ֖ית'), 'בראשית', 'cantillation too')
+    assert.equal(nameKey('\uFB2Aיר'), 'שיר', 'a presentation form (שׁ) splits and folds')
+  })
+  it('maqaf stays a word break; Hebrew is still its own script; nothing else moves', () => {
+    assert.equal(nameKey('בית־ספר'), 'בית ספר')
+    assert.equal(hasOtherScript('שָׁלוֹם'), true)
+    assert.equal(nameKey('ברי סחרוף'), 'ברי סחרוף')
+    assert.equal(nameKey('مُحَمَّد'), nameKey('محمد'))
+    assert.equal(nameKey('Beyoncé'), 'beyonce')
+  })
+})
