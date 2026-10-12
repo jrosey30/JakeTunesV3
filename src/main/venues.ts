@@ -28,6 +28,7 @@
  *  - Never claim more precision than the source gives.
  */
 import type { TourDate } from './external.js'
+import { nameKey } from '../common/fold-text.ts'
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36'
 const CACHE_MS = 6 * 60 * 60 * 1000
@@ -223,4 +224,31 @@ export async function getVenueShows(): Promise<VenueShow[]> {
     .sort((a, b) => a.date.localeCompare(b.date))
   cache = { at: Date.now(), shows: fresh }
   return fresh
+}
+
+/**
+ * Flag the shows whose artist is in the library (`known`), so the renderer
+ * can mark them. Moved out of index.ts's get-venue-shows to be testable.
+ * Names fold in any script: [a-z0-9] made every Hebrew or Cyrillic name '',
+ * so a show listed under one never read as known. A name that folds to
+ * nothing is never known (an empty key would match every other one).
+ * Venue feeds usually transliterate ("Molchat Doma"), and a library tag in
+ * its own script ("Молчат Дома") still won't meet that — that needs aliases.
+ * ⚠️ TWIN: ~/JakeTunesMobile/backend/src/util/concertsMatch.ts
+ * eventsByLibraryArtists — the phone's "your artists, playing near you"
+ * feed, same rule, same fold.
+ */
+export function markKnownShows<S extends { artist: string }>(
+  shows: S[],
+  tracks: Array<{ artist?: string; albumArtist?: string }>,
+): Array<S & { known: boolean }> {
+  const owned = new Set<string>()
+  for (const t of tracks) {
+    const a = nameKey(t.albumArtist || t.artist || '', '')
+    if (a) owned.add(a)
+  }
+  return shows.map((s) => {
+    const k = nameKey(s.artist, '')
+    return { ...s, known: !!k && owned.has(k) }
+  })
 }
