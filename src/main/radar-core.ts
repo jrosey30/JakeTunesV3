@@ -182,8 +182,13 @@ export function stripEditionWords(title: string): string {
  * never stored; the persisted identity keys keep editions apart. Edition
  * words in other languages go first (stripEditionWords): "Этажи (Делюкс)",
  * "(Edición Aniversario)", "【初回限定盤】".
+ *
+ * `kind` is what the caller knows the title is. A Discover card is typed, so
+ * a song card meets listed songs only and an album card listed albums only
+ * (a listed title track doesn't hide its album); the radar's release could
+ * be either, so it checks both.
  */
-export function listenListPredicate(records: ListenListRow[]): (artist: string, title: string) => boolean {
+export function listenListPredicate(records: ListenListRow[]): (artist: string, title: string, kind?: 'song' | 'album') => boolean {
   const songKeys = new Set<string>()
   const albumKeys = new Set<string>()
   const pairKey = (name: string | undefined, artist: string | undefined): string | null => {
@@ -203,9 +208,10 @@ export function listenListPredicate(records: ListenListRow[]): (artist: string, 
       add(albumKeys, albumKey(r.matchedAlbum, r.matchedArtist))
     }
   }
-  return (artist, title) => {
-    const song = pairKey(title, artist)
+  return (artist, title, kind) => {
+    const song = kind === 'album' ? null : pairKey(title, artist)
     if (song != null && songKeys.has(song)) return true
+    if (kind === 'song') return false
     const album = albumKey(title, artist)
     return album != null && albumKeys.has(album)
   }

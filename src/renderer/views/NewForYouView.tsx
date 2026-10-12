@@ -62,6 +62,14 @@ let pendingFeed: { lanes: Lane[]; generatedAt: number } | null = null
 
 const cardId = (c: FeedCard) => `disc|${c.artist}|${c.title}`.toLowerCase()
 
+// Picks put on the Listen List this session. Main leaves listed cards out of
+// every feed it serves (dropListed); the copies kept between visits drop them
+// too, so an added card can't flash back with "+ List" on the next arrival.
+// The open page keeps it, marked "On your list ✓".
+const listedIds = new Set<string>()
+const withoutListedIds = (ls: Lane[]): Lane[] =>
+  ls.map((l) => ({ ...l, cards: l.cards.filter((c) => !listedIds.has(cardId(c))) })).filter((l) => l.cards.length > 0)
+
 export default function NewForYouView() {
   const [lanes, setLanes] = useState<Lane[]>(feedCache ?? [])
   const [loading, setLoading] = useState(feedCache === null)
@@ -166,7 +174,7 @@ export default function NewForYouView() {
           setGeneratedAt(p.generatedAt)
           return p.lanes
         }
-        pendingFeed = { lanes: p.lanes, generatedAt: p.generatedAt }
+        pendingFeed = { lanes: withoutListedIds(p.lanes), generatedAt: p.generatedAt }
         const key = (c: FeedCard) => `${c.artist}|${c.title}`.toLowerCase()
         const fresh = new Map<string, FeedCard>()
         for (const l of p.lanes) for (const c of l.cards) fresh.set(key(c), c)
@@ -184,7 +192,7 @@ export default function NewForYouView() {
             }
           }),
         }))
-        feedCache = merged
+        feedCache = withoutListedIds(merged)
         return merged
       })
     })
@@ -200,7 +208,7 @@ export default function NewForYouView() {
       ctx: { lane: c.lane, type: c.type },
     }])
     const next = lanes.map((l) => ({ ...l, cards: l.cards.filter((x) => x.artist !== c.artist) })).filter((l) => l.cards.length > 0)
-    feedCache = next
+    feedCache = withoutListedIds(next)
     setLanes(next)
   }
 
@@ -212,12 +220,18 @@ export default function NewForYouView() {
       key: { artist: c.artist, title: c.title },
       ctx: { lane: c.lane, type: c.type },
     }])
-    await window.electronAPI.addRecommendation({
+    const res = await window.electronAPI.addRecommendation({
       song: c.type === 'song' ? c.title : undefined,
       album: c.type === 'album' ? c.title : undefined,
       artist: c.artist,
       source: 'radar',
     })
+    // Only once it's really on the list: a failed add must still show next visit.
+    if (res?.ok) {
+      listedIds.add(id)
+      if (feedCache) feedCache = withoutListedIds(feedCache)
+      if (pendingFeed) pendingFeed = { ...pendingFeed, lanes: withoutListedIds(pendingFeed.lanes) }
+    }
   }
 
   // ── What I've learned ────────────────────────────────────────────────
