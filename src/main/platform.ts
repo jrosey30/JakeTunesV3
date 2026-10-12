@@ -617,6 +617,28 @@ export function afconvertLibraryAlacArgs(wav: string, dest: string): string[] {
 }
 
 /**
+ * ffmpeg args that put the source's cover back on afconvert's ALAC.
+ * afconvert reads the WAV intermediate, and a WAV has no picture, so its
+ * m4a never had the cover. tag_writer.py writes text tags only, so Mac
+ * FLAC imports landed with no cover in the file (2026-10-12: every
+ * streamrip album since the 10/09 ALAC switch).
+ *
+ * `-c copy` keeps afconvert's ALAC packets as they are; the decode stays
+ * bit-exact. `+faststart` keeps moov ahead of mdat, as afconvert writes
+ * it, because the old iPods skip moov-last files.
+ */
+export function ffmpegAttachCoverArgs(alac: string, src: string, dest: string): string[] {
+  return [
+    '-y', '-i', alac, '-i', src,
+    '-map', '0:a:0', '-map', '1:v?',
+    '-c', 'copy',
+    '-movflags', '+faststart',
+    '-loglevel', 'error',
+    dest,
+  ]
+}
+
+/**
  * Metadata that can be embedded into the output file at convert time. All
  * fields are optional — only non-empty values are written.
  */
@@ -841,7 +863,12 @@ async function runFfmpeg(args: string[], timeoutMs: number): Promise<void> {
  *  `/usr/local/bin/ffmpeg`). afconvert encodes the WAV; it does not
  *  decode the source FLAC, so a Mac with no PATH ffmpeg cannot run this
  *  branch and falls through to the ffmpeg preserve args (which also
- *  need that same binary). */
+ *  need that same binary).
+ *
+ *  The WAV drops the source's cover, so when the source has one,
+ *  afconvert writes to a temp m4a and ffmpegAttachCoverArgs remuxes the
+ *  cover onto it. Sources with no cover (CD-rip AIFFs, live-set WAVs)
+ *  skip the remux, and afconvert writes dest directly as before. */
 async function convertToLibraryAlac(src: string, dest: string, timeoutMs: number): Promise<void> {
   const layout = await probeSourceAudioLayout(src)
   const bits = layout?.bitsPerSample ?? null
@@ -849,11 +876,14 @@ async function convertToLibraryAlac(src: string, dest: string, timeoutMs: number
   // truncate a 24-bit master before afconvert ever saw it. ffmpeg's
   // preserve args omit -sample_fmt in that case and keep the layout.
   if (IS_MAC && bits != null) {
-    const { unlink } = await import('fs/promises')
+    const { unlink, copyFile } = await import('fs/promises')
     const { randomBytes } = await import('crypto')
     const os = await import('os')
     const { join } = await import('path')
-    const wavTmp = join(os.tmpdir(), `jaketunes-alac-${randomBytes(6).toString('hex')}.wav`)
+    const scratch = join(os.tmpdir(), `jaketunes-alac-${randomBytes(6).toString('hex')}`)
+    const wavTmp = `${scratch}.wav`
+    const alacTmp = `${scratch}.m4a`
+    const cover = await sourceHasAttachedPicture(src)
     try {
       await runFfmpeg([
         '-y', '-i', src,
@@ -863,7 +893,17 @@ async function convertToLibraryAlac(src: string, dest: string, timeoutMs: number
         '-loglevel', 'error',
         wavTmp,
       ], timeoutMs)
-      await execP('afconvert', afconvertLibraryAlacArgs(wavTmp, dest), { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 })
+      await execP('afconvert', afconvertLibraryAlacArgs(wavTmp, cover ? alacTmp : dest), { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 })
+      if (cover) {
+        try {
+          await runFfmpeg(ffmpegAttachCoverArgs(alacTmp, src, dest), timeoutMs)
+        } catch (err) {
+          // The audio is the import; the artwork cache already has the
+          // cover from the source tags. Keep afconvert's file.
+          console.warn(`[convert] cover not embedded in ${dest}, keeping ALAC without it:`, err instanceof Error ? err.message : err)
+          await copyFile(alacTmp, dest)
+        }
+      }
       return
     } catch (err) {
       console.warn(`[convert] afconvert library ALAC failed, ffmpeg will keep bit depth:`, err instanceof Error ? err.message : err)
@@ -871,9 +911,34 @@ async function convertToLibraryAlac(src: string, dest: string, timeoutMs: number
       await unlink(wavTmp).catch((err) => {
         console.warn(`[convert] leftover WAV ${wavTmp}:`, err instanceof Error ? err.message : err)
       })
+      if (cover) {
+        await unlink(alacTmp).catch((err) => {
+          // afconvert failed before writing it; nothing to clean up.
+          if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+            console.warn(`[convert] leftover ALAC ${alacTmp}:`, err instanceof Error ? err.message : err)
+          }
+        })
+      }
     }
   }
   await runFfmpeg(ffmpegPreserveAlacArgs(src, dest, bits), timeoutMs)
+}
+
+/** True when ffprobe finds an attached picture (an embedded cover) in
+ *  src. A failed probe answers false: the import then keeps the audio
+ *  without the cover, as it did before ffmpegAttachCoverArgs. */
+async function sourceHasAttachedPicture(src: string): Promise<boolean> {
+  try {
+    const { stdout } = await execP('ffprobe', [
+      '-v', 'error', '-select_streams', 'v',
+      '-show_entries', 'stream_disposition=attached_pic',
+      '-of', 'csv=p=0', src,
+    ], { timeout: 15000, maxBuffer: 1024 * 1024 })
+    return stdout.split('\n').some((line) => line.trim() === '1')
+  } catch (err) {
+    console.warn(`[convert] ffprobe cover check failed for ${src}:`, err instanceof Error ? err.message : err)
+    return false
+  }
 }
 
 /**
