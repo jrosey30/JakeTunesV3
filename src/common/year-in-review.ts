@@ -115,7 +115,7 @@ export interface YearInReview {
     foundByMonth: Record<string, number>
     foundTotal: number
   }
-  /** Found through JakeTunes this year AND rated 4+ stars. */
+  /** Found through JakeTunes this year AND starred. */
   starredClass: { count: number; top: Ranked[] }
   concerts: Array<YirConcert & { plays: number }>
   mixtapes: YirMixtape[]
@@ -264,8 +264,10 @@ export function buildYearInReview(input: YirInput): YearInReview {
   const newArtists = [...newArtistKeys].map((k) => artists.get(k) ?? { name: earliest.get(k)!.albumArtist || earliest.get(k)!.artist || k, plays: 0 })
     .sort((a, b) => b.plays - a.plays)
 
-  // Starred class: found this year and rated 4+.
-  const starred = input.library.filter((t) => (t.rating ?? 0) >= 4 && isFound(t))
+  // Starred class: found this year and starred. JakeTunes' star is binary
+  // (StarRating.tsx, 4.5.2): any rating > 0 reads as starred, same as the
+  // Starred playlist. Jake 10/12: "you either get a star or you dont".
+  const starred = input.library.filter((t) => (t.rating ?? 0) > 0 && isFound(t))
   const starredTop = starred
     .map((t) => ({ name: t.title || '', artist: t.artist || '', plays: songs.get(`${norm(t.artist)}|${norm(t.title)}`)?.plays ?? 0 }))
     .sort((a, b) => b.plays - a.plays)
