@@ -26,6 +26,7 @@
  */
 import { readFileSync, writeFileSync, copyFileSync, existsSync, renameSync, appendFileSync } from 'node:fs'
 import { planMoodPrune } from './brain-prune.mjs'
+import { pickBatch } from './brain-batch.mjs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -52,6 +53,10 @@ const EMBED_URL = 'https://api.openai.com/v1/embeddings'
 const EMBED_MODEL = 'text-embedding-3-small'
 const EMBED_DIM = 1536
 const BATCH = Number(process.env.BRAIN_BATCH || 300)
+// A whole run's time budget (2026-10-12). New adds are no longer capped by
+// BATCH (see pickBatch); this is what bounds a huge import night, so the
+// trainer (02:00) is always finished well before brain-improve (03:05).
+const MINUTES = Number(process.env.BRAIN_MINUTES || 40)
 const MAGIC = 'EMBD', VERSION = 1
 
 const log = (...a) => console.log(new Date().toISOString(), '[brain-trainer]', ...a)
@@ -507,6 +512,7 @@ async function waitForStateDir() {
 
 async function main() {
   await waitForStateDir()
+  const deadline = Date.now() + MINUTES * 60_000
   if (!existsSync(LIB) || !existsSync(EMB)) fatal(`library.json or embeddings.bin missing under ${STATE_DIR} — is the NAS mounted?`)
   const libRaw = JSON.parse(readFileSync(LIB, 'utf8'))
   const tracks = Array.isArray(libRaw) ? libRaw : (libRaw.tracks || [])
@@ -821,21 +827,9 @@ async function main() {
   // backfill. A track with no base embedding yet (new import the desktop hasn't
   // embedded) gets embedded here too — so the trainer ALONE guarantees every
   // song lands in the brain, heard, without waiting on a manual Settings backfill.
-  const RECENT_MS = 14 * 24 * 60 * 60 * 1000
-  const now = Date.now()
-  const addedMs = (t) => { const d = Date.parse(t.dateAdded || ''); return Number.isFinite(d) ? d : 0 }
-  const isRecent = (t) => { const a = addedMs(t); return a > 0 && now - a < RECENT_MS }
-  const batch = tracks
-    .filter(t => !done.has(String(t.id)) && (t.artist || t.title))
-    .sort((a, b) => {
-      const ra = isRecent(a), rb = isRecent(b)
-      if (ra !== rb) return ra ? -1 : 1               // new adds jump the queue
-      if (ra && rb) return addedMs(b) - addedMs(a)    // newest of the recent first
-      return (b.playCount ?? 0) - (a.playCount ?? 0)  // else most-played first
-    })
-    .slice(0, BATCH)
+  const batch = pickBatch(tracks, done, { batch: BATCH })
 
-  log(`${enrichedCount()}/${total} tracks enriched so far; processing ${batch.length} this run (batch=${BATCH})`)
+  log(`${enrichedCount()}/${total} tracks enriched so far; processing ${batch.length} this run (every new add + up to ${BATCH} older, ${MINUTES}-min budget)`)
   if (batch.length === 0) {
     log('library fully enriched — nothing to do tonight')
     // Record the healthy no-op. This path returned WITHOUT writing status, so a
@@ -850,7 +844,8 @@ async function main() {
 
   // 1) Gemma descriptors (sequential; free, local). Skip-on-fail, retry next run.
   const pending = []
-  for (const t of batch) {
+  for (const [i, t] of batch.entries()) {
+    if (Date.now() > deadline) { log(`time budget (${MINUTES} min) reached — ${batch.length - i} left for tomorrow night`); break }
     try {
       const d = await gemmaDescribe(t)
       if (!d) continue
