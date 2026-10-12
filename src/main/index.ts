@@ -73,6 +73,7 @@ import { registerRecommendations, MOBILE_BACKEND_URL, type RecoSource, type Reco
 import { registerTasteIpc, TASTE_LEDGER_PATH } from './ipc/taste-ipc.ts'
 import { registerGenreFilerIpc } from './ipc/genre-filer-ipc.ts'
 import { registerRockDnaIpc } from './ipc/rock-dna-ipc.ts'
+import { createArtistPhotos, nameKey as photoNameKey } from './artist-photo.ts'
 import { phoneOverlayFields } from '../common/genre-vocab.ts'
 import { registerPreviewRefreshIpc } from './ipc/preview-refresh-ipc.ts'
 import { registerSyncHistoryIpc } from './ipc/sync-history-ipc.ts'
@@ -2240,6 +2241,7 @@ ipc.handle('get-artist-image', async (_event, artist: string): Promise<{ ok: boo
     return { ok: true, slug: null }
   }
 }, { refuse: { ok: false, slug: null } })
+ipc.handle('get-artist-fans', async (_event, names: string[]) => artistPhotos.fans(Array.isArray(names) ? names.map(String) : []), { refuse: {} })
 
 // 4.5: Wikipedia summary for the artist detail page. Hits the public
 // REST summary endpoint (en.wikipedia.org/api/rest_v1/page/summary/<title>),
@@ -6383,132 +6385,43 @@ function getArtistImageDir(): string {
   return join(app.getPath('userData'), 'artist-images')
 }
 
-const ARTIST_IMAGE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000  // 30 days
-// 4.5.0-72 — miss tombstones used to share the 30-day TTL with hits.
-// Reality: a real "Bandsintown + TheAudioDB both have no photo for
-// this artist" is rare; transient misses (network, source rate-limit,
-// fetch threw) are common. 30-day misses meant The Beatles + The
-// Smiths + literally-any-band could go without a photo for a month
-// after one bad lookup. New: misses live 6 hours, refresh on next
-// view. Hits keep the 30-day TTL.
-const ARTIST_IMAGE_MISS_TTL_MS = 6 * 60 * 60 * 1000  // 6 hours
-const ARTIST_IMAGE_IN_FLIGHT = new Map<string, Promise<string | null>>()
-
-function artistSlug(name: string): string {
-  return name
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')   // strip combining marks
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 80)
-    || 'unknown'
-}
-
-/** Resolve a Bandsintown artist photo to a local slug. Returns null
- *  if the artist isn't on Bandsintown or the fetch failed. Idempotent;
- *  single-flight per slug; 30-day disk cache (hit + miss). */
-async function getArtistImage(artist: string): Promise<string | null> {
-  const slug = artistSlug(artist)
-  if (!slug || slug === 'unknown') return null
-
-  // Single-flight: collapse concurrent calls for the same artist into
-  // one network request.
-  const existing = ARTIST_IMAGE_IN_FLIGHT.get(slug)
-  if (existing) return existing
-
-  const task = (async () => {
-    const dir = getArtistImageDir()
-    const jpg = join(dir, `${slug}.jpg`)
-    const miss = join(dir, `${slug}.miss`)
-    await mkdir(dir, { recursive: true }).catch(() => {})
-
-    // Disk-cache HIT path. If the .jpg exists and is fresh, return slug.
-    try {
-      const st = await stat(jpg)
-      if (Date.now() - st.mtimeMs < ARTIST_IMAGE_MAX_AGE_MS) return slug
-    } catch { /* doesn't exist — fall through */ }
-    // Disk-cache MISS tombstone. Don't hammer Bandsintown for artists
-    // they don't have until the tombstone expires.
-    try {
-      const st = await stat(miss)
-      if (Date.now() - st.mtimeMs < ARTIST_IMAGE_MISS_TTL_MS) return null
-    } catch { /* doesn't exist — fall through */ }
-
-    // 4.5.0-66 — photo fallback chain. Old behavior: Bandsintown only;
-    // miss → letter avatar. New: Bandsintown → TheAudioDB (MBID-resolved
-    // when possible) → letter avatar. Both sources are name-based, so
-    // we use resolveCanonicalArtist's MB-canonical name + MBID to
-    // disambiguate ("Drake" the rapper vs other Drakes).
-    const tryDownload = async (imgUrl: string): Promise<Buffer | null> => {
-      try {
-        const r = await fetch(imgUrl, {
-          headers: { 'User-Agent': `JakeTunes/${app.getVersion()}` },
-          signal: AbortSignal.timeout(10_000),
-        })
-        if (!r.ok) return null
-        const b = Buffer.from(await r.arrayBuffer())
-        return b.length >= 200 ? b : null
-      } catch { return null }
+// Artist photos: Deezer, identity-confirmed by Jake's albums/songs, never
+// hiding a photo on disk (artist-photo.ts — the old Bandsintown/TheAudioDB
+// sources died and stale photos vanished, 2026-10-11).
+let deezerGate = Promise.resolve()
+const artistPhotos = createArtistPhotos({
+  dir: getArtistImageDir(),
+  factsFile: join(app.getPath('userData'), 'artist-deezer.json'),
+  owned: async (artist) => {
+    const k = photoNameKey(artist), albums = new Set<string>(), titles = new Set<string>()
+    for (const t of (((await libraryCache.get()) as { tracks?: TrackLike[] }).tracks ?? []) as Array<{ artist?: string; albumArtist?: string; album?: string; title?: string; contributingArtists?: string[] }>) {
+      if (![t.artist, t.albumArtist, ...(t.contributingArtists ?? [])].some((a) => photoNameKey(a) === k)) continue
+      if (t.album) albums.add(t.album)
+      if (t.title) titles.add(t.title)
     }
-    let buf: Buffer | null = null
-    // Resolve MBID once — used by both backends. Library-genre context
-    // makes the resolver pick the right entity for common names.
-    const libraryGenres = await getLibraryGenresForArtist(artist)
-    const canon = await resolveCanonicalArtist(artist, { libraryGenres })
-    const lookupName = canon?.name || artist
-    // Source 1: Bandsintown
+    return { albums: [...albums], titles: [...titles] }
+  },
+  fetchJson: async (url) => {
+    const turn = deezerGate.then(() => new Promise<void>((r) => setTimeout(r, 120)))   // Deezer allows ~50 requests / 5 s
+    deezerGate = turn
+    await turn
     try {
-      const url = `https://rest.bandsintown.com/artists/${encodeURIComponent(lookupName)}?app_id=jaketunes-desktop`
-      const res = await fetch(url, {
-        headers: { 'User-Agent': `JakeTunes/${app.getVersion()}`, Accept: 'application/json' },
-        signal: AbortSignal.timeout(7000),
-      })
-      if (res.ok) {
-        const body = await res.json() as { image_url?: string; thumb_url?: string }
-        const imgUrl = body.image_url || body.thumb_url
-        if (imgUrl && !imgUrl.includes('bandsintown-no-image') && !imgUrl.includes('placeholder')) {
-          buf = await tryDownload(imgUrl)
-        }
-      }
-    } catch { /* fall through to next source */ }
-    // Source 2: TheAudioDB. Free, no auth. Prefer MBID lookup when we
-    // have one (artist-mb.php) — eliminates the name-disambiguation
-    // problem the Bandsintown source still has. Falls back to name
-    // search if no MBID.
-    if (!buf) {
-      try {
-        const tadbUrl = canon?.mbid
-          ? `https://www.theaudiodb.com/api/v1/json/2/artist-mb.php?i=${canon.mbid}`
-          : `https://www.theaudiodb.com/api/v1/json/2/search.php?s=${encodeURIComponent(lookupName)}`
-        const res = await fetch(tadbUrl, {
-          headers: { 'User-Agent': `JakeTunes/${app.getVersion()}`, Accept: 'application/json' },
-          signal: AbortSignal.timeout(7000),
-        })
-        if (res.ok) {
-          const body = await res.json() as { artists?: Array<{ strArtistThumb?: string; strArtistFanart?: string; strArtistLogo?: string }> }
-          const a = body.artists?.[0]
-          const candidate = a?.strArtistThumb || a?.strArtistFanart || a?.strArtistLogo
-          if (candidate) buf = await tryDownload(candidate)
-        }
-      } catch { /* both sources missed */ }
-    }
-    if (!buf) {
-      await writeFile(miss, '').catch(() => {})
-      return null
-    }
-    await writeFile(jpg, buf)
-    await unlink(miss).catch(() => {})
-    return slug
-  })()
-
-  ARTIST_IMAGE_IN_FLIGHT.set(slug, task)
-  try {
-    return await task
-  } finally {
-    ARTIST_IMAGE_IN_FLIGHT.delete(slug)
-  }
-}
+      const r = await fetch(url, { headers: { 'User-Agent': `JakeTunes/${app.getVersion()}` }, signal: AbortSignal.timeout(8000) })
+      if (!r.ok) return undefined
+      const d = await r.json() as { error?: unknown }
+      return d && !d.error ? d : undefined
+    } catch { return undefined }
+  },
+  download: async (url) => {
+    try {
+      const r = await fetch(url, { headers: { 'User-Agent': `JakeTunes/${app.getVersion()}` }, signal: AbortSignal.timeout(10_000) })
+      if (!r.ok) return null
+      const b = Buffer.from(await r.arrayBuffer())
+      return b.length >= 200 ? b : null
+    } catch { return null }
+  },
+})
+const getArtistImage = (artist: string): Promise<string | null> => artistPhotos.get(artist)
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'ipod-audio', privileges: { stream: true, bypassCSP: true, supportFetchAPI: true } },
