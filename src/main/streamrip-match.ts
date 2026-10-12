@@ -183,11 +183,57 @@ export function searchTitle(raw: string): string {
   return out || String(raw || '').trim()
 }
 
+/**
+ * Version markers in Hebrew and Russian, read as the English marker they
+ * mean (2026-10-11). Taken from the decorations on iTunes IL/RU for 15
+ * Israeli and 12 Russian artists: הופעה חיה / בהופעה / לייב (live),
+ * אינסטרומנטלי (16×), אקוסטי, מתוך מחרוזת (medley), מתוך חזרות (rehearsals);
+ * Инструментальная версия, Акустика, Трибьют.
+ *
+ * An ALIAS, not a marker of its own: the same Israeli recording is titled
+ * "(Live)", "(הופעה חיה)" or "(Live - הופעה חיה)" depending on the store, so
+ * asking for one must accept the others. Hebrew attaches ב/ה/מ to the word,
+ * so those forms are listed. Neutral words (מהדורת ויניל, רימאסטרינג,
+ * Приглашение на концерт) are deliberately absent.
+ */
+const MARKER_ALIASES: Record<string, string> = {
+  הופעה: 'live', בהופעה: 'live', ההופעה: 'live', מהופעה: 'live', לייב: 'live', בלייב: 'live',
+  אקוסטי: 'acoustic', אקוסטית: 'acoustic', אקוסטיות: 'acoustic',
+  אינסטרומנטלי: 'instrumental', אינסטרומנטלית: 'instrumental', אינסטרומנטל: 'instrumental',
+  רמיקס: 'remix', רמיקסים: 'remixes', מיקס: 'mix', דמו: 'demo',
+  מחרוזת: 'medley', במחרוזת: 'medley', חזרות: 'rehearsals',
+  קריוקי: 'karaoke', קאריוקי: 'karaoke', קאבר: 'cover', מחווה: 'tribute',
+  акустика: 'acoustic', инструментал: 'instrumental', ремикс: 'remix', ремиксы: 'remixes',
+  демо: 'demo', трибьют: 'tribute', кавер: 'cover', караоке: 'karaoke', попурри: 'medley',
+}
+/** Russian adjectives inflect (Инструментальная версия, концертная запись). */
+const MARKER_STEMS: Array<[RegExp, string]> = [
+  [/^акустическ\p{L}*$/u, 'acoustic'],
+  [/^инструментальн\p{L}*$/u, 'instrumental'],
+  [/^концертн\p{L}*$/u, 'live'],
+]
+function markerAlias(w: string): string | undefined {
+  return MARKER_ALIASES[w] ?? MARKER_STEMS.find(([re]) => re.test(w))?.[1]
+}
+
 // Any script: [a-z0-9] dropped every Hebrew word, so a decorated Hebrew title
-// counted no extra words and tied the undecorated original. Version markers
-// are still English words, so marker detection is unchanged.
-const titleTokens = (s: string): string[] =>
-  foldAccents(s).split(/\s+/).map((w) => nameKey(w, '')).filter(Boolean)
+// counted no extra words and tied the undecorated original. A Hebrew or
+// Russian marker word becomes its English marker, and only when the title
+// doesn't already say it: "(Live - הופעה חיה)" is ONE label, not two live
+// markers that a plain "(Live)" request would count as an extra one.
+const titleTokens = (s: string): string[] => {
+  const words = foldAccents(s).split(/\s+/).map((w) => nameKey(w, '')).filter(Boolean)
+  const said = new Set(words)
+  const out: string[] = []
+  for (const w of words) {
+    const m = markerAlias(w)
+    if (!m) { out.push(w); continue }
+    if (said.has(m)) continue
+    said.add(m)
+    out.push(m)
+  }
+  return out
+}
 
 /** If `gotTitle` carries a version marker the request didn't ask for, return
  *  that marker; null = clean. COUNT-based token diff, so a song legitimately
