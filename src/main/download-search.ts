@@ -143,10 +143,21 @@ export async function fetchDeezerSuggestions(q: string): Promise<ItunesSuggestio
  * before the fold.
  */
 export function explicitMapKey(albumName: string): string {
-  return foldAccents(
+  // Any script: stripped to [a-z0-9], "<Hebrew title> (Deluxe)" keyed as
+  // "deluxe" and shared its explicit edition with every other one.
+  return nameKey(
     albumName.replace(/\(\s*deluxe\s+(?:version|edition)\s*\)/gi, '(deluxe)')
              .replace(/\bdeluxe\s+(?:version|edition)\b/gi, 'deluxe'),
-  ).replace(/[^a-z0-9]/g, '')
+    '',
+  )
+}
+
+/** The iTunes album row that IS `album` (folded in any script), else Apple's
+ *  first row. Folded to [a-z0-9], every Hebrew album was '' and the first
+ *  Hebrew row won, whatever it was. Shared with album-info-ipc. */
+export function pickItunesAlbumRow<T extends { collectionName?: string }>(results: T[], album: string): T | undefined {
+  const want = nameKey(album, '')
+  return results.find((r) => nameKey(r.collectionName || '', '') === want) || results[0]
 }
 
 export async function fetchExplicitAlbumMap(artistIds: number[]): Promise<Map<string, { id: number; trackCount?: number }>> {
@@ -208,7 +219,7 @@ export function resolveExplicitEdition(
   if (exact) return exact
   const base = albumName.replace(/\s*[([][^)\]]*[)\]]\s*$/, '')
   if (base === albumName) return undefined
-  const baseFolded = foldAccents(base).replace(/[^a-z0-9]/g, '')
+  const baseFolded = nameKey(base, '')
   const bridged = baseFolded ? map.get(baseFolded) : undefined
   if (!bridged) return undefined
   if (rowTrackCount === undefined || bridged.trackCount === undefined) return undefined

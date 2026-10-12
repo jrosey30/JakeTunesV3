@@ -9,7 +9,7 @@ import type { IpcRegistrar } from '../ipc-register.ts'
 import { itunesAlbumTracks } from '../download-search'
 import { buildRequestedAlbum } from '../album-identity.ts'
 import { loadLibraryTracksLite } from '../import-pipeline.ts'
-import { judgeAlbumTracks, summarizeNearEdition } from '../near-edition.ts'
+import { bandcampAlbumHit, judgeAlbumTracks, summarizeNearEdition } from '../near-edition.ts'
 import type { AlternativeTrack } from '../../common/acquisition-identity.ts'
 import type { CompareEditionsRequest, CompareEditionsResult } from '../../common/near-edition-types.ts'
 
@@ -24,8 +24,7 @@ async function bandcampAlbumUrl(artist: string, album: string): Promise<string |
     })
     if (!res.ok) return null
     const d = await res.json() as { auto?: { results?: Array<{ type?: string; name?: string; band_name?: string; item_url_path?: string }> } }
-    const norm = (s: string) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
-    const hit = (d.auto?.results || []).find((r) => r.type === 'a' && r.item_url_path && norm(String(r.name)) === norm(album) && norm(String(r.band_name)) === norm(artist))
+    const hit = bandcampAlbumHit(d.auto?.results || [], artist, album)
     return hit?.item_url_path ?? null
   } catch { return null }
 }

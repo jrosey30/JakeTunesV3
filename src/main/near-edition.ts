@@ -9,6 +9,7 @@
  */
 import { buildRequestedAlbum, verifyAlbumCandidate, matchLibraryOwnership, ALBUM_TRACK_TOLERANCE_SEC, type CandidateAlbum, type LibraryTrackLite } from './album-identity.ts'
 import type { RequestedAlbum, RequestedAlbumTrack } from '../common/acquisition-identity.ts'
+import { nameKey } from '../common/fold-text.ts'
 import type { AlternativeTrack } from '../common/acquisition-identity.ts'
 import type { TrackRow, NearEditionSummary, CompareEditionsResult } from '../common/near-edition-types.ts'
 export type { TrackRow, NearEditionSummary, CompareEditionsResult }
@@ -19,7 +20,9 @@ export function judgeAlbumTracks(req: RequestedAlbum, candTracks: AlternativeTra
   const want = req.tracks
   const ownership = library.length ? matchLibraryOwnership(req, library, tolSec) : null
   const ownedIdx = new Set(ownership?.owned.map((o) => o.index) ?? [])
-  const normT = (x: string) => String(x || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  // Any script: stripped to [a-z0-9], every Hebrew title and artist was '',
+  // so any owned Hebrew track at the found runtime read as "you own the X version".
+  const normT = (x: string) => nameKey(x, '')
   const artistOk = (l: LibraryTrackLite) => !req.artist || !l.artist || normT(l.artist) === normT(req.artist)
   /** The copy Jake owns of this title at the FOUND runtime (a different edit than the picked one). */
   const ownedVariant = (title: string, foundSec: number | null): number | null => {
@@ -44,6 +47,14 @@ export function judgeAlbumTracks(req: RequestedAlbum, candTracks: AlternativeTra
     else rows.push({ n: i + 1, wantTitle: w.title, gotTitle: g.title, wantSec, gotSec, deltaSec, verdict: 'unknown', reason: v.reason, owned })
   }
   return rows
+}
+
+/** The Bandcamp autocomplete row that IS this album by this band. Names fold
+ *  in any script: stripped to [a-z0-9], every Hebrew album and band was '',
+ *  so the first Hebrew album of ANY band was compared as the picked one. */
+export function bandcampAlbumHit<T extends { type?: string; name?: string; band_name?: string; item_url_path?: string }>(results: T[], artist: string, album: string): T | undefined {
+  const k = (s: string): string => nameKey(s, '')
+  return results.find((r) => r.type === 'a' && r.item_url_path && k(String(r.name)) === k(album) && k(String(r.band_name)) === k(artist))
 }
 
 export function summarizeNearEdition(rows: TrackRow[], picked: { label: string }, found: { label: string; source: string }): NearEditionSummary {

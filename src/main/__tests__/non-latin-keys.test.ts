@@ -31,6 +31,17 @@ import { norm as dlNorm, normQ } from '../../renderer/views/DownloadStore/downlo
 import { trackQueryId, albumQueryId } from '../../renderer/views/DownloadStore/downloadQueue.ts'
 import { normalize as searchNormalize, buildIndex, search } from '../../renderer/utils/searchIndex.ts'
 import type { Track } from '../../renderer/types.ts'
+import { recordIdentityKeys, recoDedupeKey, recoIdNorm, recoNorm, isTombstonedRecord, RECO_IDENTITY_PREFIX } from '../reco-match.ts'
+import { maskedTitleMatches } from '../streamrip-match.ts'
+import { buildRequestedRecording, verifyCandidate, textNamesArtist } from '../exact-recording.ts'
+import { getTasteAnchors, computeTasteFingerprint, scoreCandidate } from '../taste-model.ts'
+import { rankCandidates } from '../radar-core.ts'
+import { buildRequestedAlbum } from '../album-identity.ts'
+import { judgeAlbumTracks, bandcampAlbumHit } from '../near-edition.ts'
+import { planMatchingTrackGets } from '../../common/near-edition-actions.ts'
+import type { CompareEditionsResult, TrackRow } from '../../common/near-edition-types.ts'
+import { explicitMapKey, resolveExplicitEdition, pickItunesAlbumRow } from '../download-search.ts'
+import { normForOwnership } from '../owned-album-key.ts'
 
 const SRC = join(import.meta.dirname, '../..')
 const read = (p: string): string => readFileSync(join(SRC, p), 'utf-8')
@@ -294,5 +305,172 @@ describe('index.ts keys (main process — checked at the source)', () => {
     assert.match(index, /const safe = Array\.from\(nameKey\(artist, '_'\)\)\.slice\(0, 80\)\.join\(''\) \|\|/)
     assert.equal(nameKey(BERRY, '_'), 'ברי_סחרוף')
     assert.notEqual(nameKey(BERRY, '_'), nameKey(HADAG, '_'))
+  })
+})
+
+// ── Second sweep (2026-10-11) ─────────────────────────────────────────────
+
+describe('recommendation identity (reco-match — PERSISTED: tombstones, dedupe)', () => {
+  const heb = { song: 'למה הים כחול?', artist: HADAG }
+  const heb2 = { song: 'שיר', artist: BERRY }
+  const cyr = { song: 'Группа крови', artist: KINO }
+  it('an all-Hebrew or all-Cyrillic jot has identity keys, and they are its own', () => {
+    for (const r of [heb, heb2, cyr]) assert.equal(recordIdentityKeys(r).length, 1, r.song)
+    assert.notEqual(recoDedupeKey(heb), recoDedupeKey(heb2))
+    assert.notEqual(recoDedupeKey(cyr), recoDedupeKey({ song: 'Судно', artist: MOLCHAT }))
+  })
+  it('deleting one Hebrew song by a Latin-named artist does not hide the others', () => {
+    // Was ['artist:rockfour'] for both — a delete tombstoned every songless
+    // Rockfour row and every other Hebrew-titled Rockfour song.
+    const a = { song: 'שיר', artist: 'Rockfour' }, b = { song: 'למה', artist: 'Rockfour' }
+    const tombs = new Set(recordIdentityKeys(a).map((k) => RECO_IDENTITY_PREFIX + k))
+    assert.ok(isTombstonedRecord(tombs, a))
+    assert.ok(!isTombstonedRecord(tombs, b))
+    assert.ok(!isTombstonedRecord(tombs, { artist: 'Rockfour' }))
+  })
+  it('a deleted Hebrew jot stays deleted when it comes back under a fresh id', () => {
+    const tombs = new Set(['id-1', ...recordIdentityKeys(heb).map((k) => RECO_IDENTITY_PREFIX + k)])
+    assert.ok(isTombstonedRecord(tombs, { ...heb, id: 'id-2' }))
+    assert.ok(!isTombstonedRecord(tombs, { ...heb2, id: 'id-3' }))
+  })
+  it('every Latin name keeps its stored key byte for byte', () => {
+    for (const n of ['Sigur Rós', 'Björk', "Can't Stop Playing", 'JAŸ-Z', 'µ-Ziq', '!!!', 'Motörhead']) assert.equal(recoIdNorm(n), recoNorm(n), n)
+  })
+  it("recommendations-ipc's add-path fallback key is this one, and it keeps no copy of the pair key", () => {
+    const src = read('main/ipc/recommendations-ipc.ts')
+    assert.match(src, /function recoMatchKey\([^)]*\): string \{\n\s+const norm = recoIdNorm\b/)
+    // Its only pair-key wrapper, recoIdentityKey, fed the radar's on-list
+    // guard; that guard now keys in radar-core (listenListPredicate, PR #81).
+    assert.doesNotMatch(src, /function recoIdentityKey\(|function recoRecordIdentityKey\(/)
+  })
+})
+
+describe('Music Man suggest filter (recommendations-ipc)', () => {
+  it('folds in any script, so one owned Hebrew artist no longer marks every Hebrew pick owned', () => {
+    const src = read('main/ipc/recommendations-ipc.ts')
+    const at = src.indexOf('const ownedArtists = new Set<string>() // normalized')
+    assert.match(src.slice(at - 400, at), /const norm = \(s: string\) => nameKey\(s, ''\)/)
+    assert.notEqual(nameKey(BERRY, ''), nameKey(HADAG, ''))
+    assert.notEqual(`${nameKey(KINO, '')}|${nameKey('Кукушка', '')}`, `${nameKey(MOLCHAT, '')}|${nameKey('Судно', '')}`)
+  })
+})
+
+describe('Get: the recording guard (maskedTitleMatches, verifyCandidate)', () => {
+  it('a Hebrew title no longer reads as every other Hebrew title', () => {
+    assert.equal(maskedTitleMatches('שיר', 'למה הים כחול'), false)
+    assert.equal(maskedTitleMatches('Группа крови', 'Звезда по имени Солнце'), false)
+    assert.equal(maskedTitleMatches('שיר', 'שיר (Live)'), true, 'its own title still reads, decoration and all')
+    assert.equal(maskedTitleMatches('N****s in Paris', 'Niggas in Paris'), true, 'masked profanity unchanged')
+  })
+  it('the wrong Hebrew song by the right artist is refused on its title', () => {
+    const req = buildRequestedRecording({ artist: 'Rockfour', title: 'שיר', durationTolSec: 3 })
+    const v = verifyCandidate(req, { provider: 'qobuz', title: 'למה הים כחול', artist: 'Rockfour' })
+    assert.equal(v.verdict, 'reject')
+    assert.equal(v.verdict === 'reject' && v.kind, 'title')
+    assert.notEqual(verifyCandidate(req, { provider: 'qobuz', title: 'שיר', artist: 'Rockfour' }).verdict, 'reject')
+  })
+  it('a SoundCloud upload must actually name the Hebrew or Cyrillic artist', () => {
+    const req = buildRequestedRecording({ artist: BERRY, title: 'שיר', durationTolSec: 3 })
+    const stranger = verifyCandidate(req, { provider: 'soundcloud', title: 'שיר', artist: 'Some Label' })
+    assert.equal(stranger.verdict === 'reject' && stranger.kind, 'artist')
+    assert.notEqual(verifyCandidate(req, { provider: 'soundcloud', title: `${BERRY} - שיר`, artist: 'Some Label' }).verdict, 'reject')
+    assert.equal(textNamesArtist('Группа крови', KINO), false)
+    assert.equal(textNamesArtist('КИНО — Группа крови', KINO), true)
+  })
+  it('Latin artists now fold accents too; a name with no letters is looked for as written, not matched by everything', () => {
+    assert.equal(textNamesArtist('Sigur Ros - Hoppipolla', 'Sigur Rós'), true)
+    assert.equal(textNamesArtist('!!! - Heart of Hearts', '!!!'), true)
+    assert.equal(textNamesArtist('Heart of Hearts', '!!!'), false)
+  })
+})
+
+describe('taste model + radar (norm is comparison-only)', () => {
+  const tracks = [
+    ...Array.from({ length: 6 }, () => ({ artist: BERRY, genre: 'Rock', playCount: 9 })),
+    ...Array.from({ length: 4 }, () => ({ artist: KINO, genre: 'Post-Punk', playCount: 5 })),
+    ...Array.from({ length: 3 }, () => ({ artist: MOLCHAT, genre: 'Post-Punk', playCount: 2 })),
+  ]
+  it('each Hebrew and Cyrillic artist is its own taste anchor, with its own plays', () => {
+    const anchors = getTasteAnchors(tracks, 10)
+    assert.deepEqual(anchors.map((a) => a.artist), [BERRY, KINO, MOLCHAT])
+    assert.deepEqual(anchors.map((a) => a.plays), [54, 20, 6])
+  })
+  it('owning Кино does not mark a Hadag Nahash pick as owned', () => {
+    const fp = computeTasteFingerprint([{ artist: KINO, genre: 'Post-Punk', playCount: 3 }])
+    assert.equal(scoreCandidate(fp, { artist: HADAG, genre: 'Hip-Hop' }).owned, false)
+    assert.equal(scoreCandidate(fp, { artist: 'КИНО', genre: 'Post-Punk' }).owned, true)
+  })
+  it('the radar keeps every distinct Hebrew and Cyrillic pick', () => {
+    const fp = computeTasteFingerprint([{ artist: 'Radiohead', genre: 'Rock', playCount: 3 }])
+    const ranked = rankCandidates(fp, [
+      { artist: BERRY, title: 'שיר' }, { artist: HADAG, title: 'למה הים כחול' },
+      { artist: KINO, title: 'Группа крови' }, { artist: MOLCHAT, title: 'Судно' }, { artist: KINO, title: 'группа крови!' },
+    ], 12)
+    assert.equal(ranked.length, 4)
+  })
+})
+
+describe('compare editions (near-edition)', () => {
+  const req = buildRequestedAlbum({ artist: 'Rockfour', title: 'Supermarket', trackCount: 1, tracks: [{ title: 'שיר', trackNumber: 1, durationSec: 200 }] })
+  const found = [{ title: 'שיר', trackNumber: 1, durationSec: 300 }]
+  it('a different Hebrew song you own at the found runtime is not "you own the other version"', () => {
+    const [row] = judgeAlbumTracks(req, found, undefined, [{ title: 'למה', artist: 'Rockfour', durationSec: 300 }, { title: 'שיר', artist: HADAG, durationSec: 300 }])
+    assert.equal(row.verdict, 'mismatch')
+    assert.equal(row.ownedVariantSec, null)
+    const [own] = judgeAlbumTracks(req, found, undefined, [{ title: 'שיר', artist: 'Rockfour', durationSec: 300 }])
+    assert.equal(own.ownedVariantSec, 300)
+  })
+  it('Bandcamp: the album that matches, not the first Hebrew or Cyrillic album of any band', () => {
+    const rows = [
+      { type: 'a', name: 'לאן נעלם', band_name: HADAG, item_url_path: '/hadag' },
+      { type: 'a', name: 'Этажи', band_name: MOLCHAT, item_url_path: '/molchat' },
+      { type: 'a', name: 'נעלם ונשכח', band_name: BERRY, item_url_path: '/berry' },
+    ]
+    assert.equal(bandcampAlbumHit(rows, BERRY, 'נעלם ונשכח')?.item_url_path, '/berry')
+    assert.equal(bandcampAlbumHit(rows, KINO, 'Группа крови'), undefined)
+    assert.equal(bandcampAlbumHit([{ type: 'a', name: 'Homogenic', band_name: 'Björk', item_url_path: '/b' }], 'Bjork', 'Homogenic')?.item_url_path, '/b')
+  })
+  it('matching-track Gets: each Hebrew track is its own job, under the same id Download gives it', () => {
+    const row = (n: number, title: string): TrackRow => ({ n, wantTitle: title, gotTitle: title, wantSec: 200, gotSec: 200, deltaSec: 0, verdict: 'exact', reason: null, owned: false })
+    const cmp = { ok: true, picked: { label: 'x', trackCount: 3 }, found: { provider: 'bandcamp', label: 'y', source: 'z', trackCount: 3 }, rows: [row(1, 'שיר'), row(2, 'למה הים כחול?'), row(3, 'Группа крови')], summary: {}, toleranceSec: 20 } as unknown as CompareEditionsResult
+    const plan = planMatchingTrackGets(cmp, { parentKey: 'p', artist: HADAG, album: 'א' })
+    assert.equal(new Set(plan.jobs.map((j) => j.id)).size, 3)
+    for (const j of plan.jobs) assert.equal(j.id, trackQueryId(HADAG, j.title))
+    assert.equal(planMatchingTrackGets({ ...cmp, rows: [row(1, 'Halo')] }, { parentKey: 'p', artist: 'Beyoncé', album: 'x' }).jobs[0].id, trackQueryId('Beyoncé', 'Halo'))
+  })
+})
+
+describe('Download: album rows (explicitMapKey, pickItunesAlbumRow)', () => {
+  it('two Hebrew deluxe albums are two explicit editions', () => {
+    assert.notEqual(explicitMapKey('שיר (Deluxe)'), explicitMapKey('למה (Deluxe)'))
+    const map = new Map([[explicitMapKey('נעלם ונשכח (Deluxe)'), { id: 1, trackCount: 12 }]])
+    assert.equal(resolveExplicitEdition('לאן נעלם (Deluxe)', 12, map), undefined)
+    assert.deepEqual(resolveExplicitEdition('נעלם ונשכח (Deluxe Version)', 12, map), { id: 1, trackCount: 12 })
+    assert.equal(explicitMapKey('Watch the Throne (Deluxe Version)'), 'watchthethronedeluxe', 'Latin keys unchanged')
+  })
+  it('album info reads the row that IS the album, not the first Hebrew one', () => {
+    const rows = [{ collectionName: 'לאן נעלם' }, { collectionName: 'נעלם ונשכח' }]
+    assert.equal(pickItunesAlbumRow(rows, 'נעלם ונשכח')?.collectionName, 'נעלם ונשכח')
+    assert.equal(pickItunesAlbumRow([{ collectionName: 'Этажи' }, { collectionName: 'Монумент' }], 'Монумент')?.collectionName, 'Монумент')
+    assert.equal(pickItunesAlbumRow(rows, 'Something Else')?.collectionName, 'לאן נעלם', "Apple's first row is still the fallback")
+  })
+})
+
+describe("Music Man album picks: the owned filter (normForOwnership)", () => {
+  it('owning one Hebrew album no longer hides every Hebrew pick', () => {
+    const owned = `${normForOwnership(BERRY)}|${normForOwnership('נעלם ונשכח')}`
+    assert.notEqual(owned, `${normForOwnership(HADAG)}|${normForOwnership('לאן נעלם')}`)
+    assert.notEqual(`${normForOwnership(KINO)}|${normForOwnership('Группа крови')}`, `${normForOwnership(MOLCHAT)}|${normForOwnership('Этажи')}`)
+    assert.equal(normForOwnership('Группа крови (Remastered)'), normForOwnership('ГРУППА КРОВИ'))
+  })
+  it('keeps every Latin rule it had', () => {
+    assert.equal(normForOwnership('The Beatles'), normForOwnership('Beatles'))
+    assert.equal(normForOwnership('Simon & Garfunkel'), normForOwnership('Simon and Garfunkel'))
+    assert.equal(normForOwnership('Kill Bill: Vol. 1 [Original Soundtrack]'), 'kill bill volume 1')
+    assert.equal(normForOwnership('Beyoncé'), 'beyonce')
+    assert.equal(normForOwnership('No. 5'), 'number 5')
+  })
+  it('index.ts uses it', () => {
+    assert.match(read('main/index.ts'), /import \{ normForOwnership \} from '\.\/owned-album-key\.ts'/)
   })
 })

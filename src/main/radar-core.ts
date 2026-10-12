@@ -168,7 +168,8 @@ export function stripEditionWords(title: string): string {
  * Names fold through nameKey, not recoNorm: recoNorm's [^a-z0-9] erased every
  * Hebrew/Cyrillic/CJK title (no key, so never hidden) and dropped accented
  * letters ("Ágætis byrjun" ≠ "Agaetis Byrjun"). A-Z names key exactly as
- * before. recoNorm stays on the persisted keys; this compare is never stored.
+ * before. The persisted keys keep recoNorm's shape (recoIdNorm: unaccented
+ * Latin, byte for byte); this compare is never stored, so it folds accents.
  *
  * The radar's "title" is a RELEASE, so album rows key their album the same
  * way (album|artist, raw names, then the iTunes ones). A song row that names
