@@ -44,6 +44,15 @@ const SINGLETONS: Record<string, string> = {
 const ARABIC_MARKS = /[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g
 
 /**
+ * Hebrew niqqud and cantillation (2026-10-11): vowel points, dagesh, the
+ * shin/sin dots, and the te'amim. Optional in written Hebrew, the same as the
+ * harakat, so "שָׁלוֹם" is "שלום". The four non-marks in the block stay out:
+ * maqaf ־ (a hyphen, already a word break), paseq, sof pasuq, nun hafukha.
+ * Presentation forms (שׁ U+FB2A) reach here already split by NFKC.
+ */
+const HEBREW_MARKS = /[\u0591-\u05BD\u05BF\u05C1\u05C2\u05C4\u05C5\u05C7]/g
+
+/**
  * Diacritics folded, case dropped, everything else left exactly as it was —
  * callers still apply their own punctuation rules on top. Folding must happen
  * BEFORE any [a-z0-9] strip, or the accented letter is already gone.
@@ -58,6 +67,7 @@ export function foldAccents(s: string | null | undefined): string {
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .replace(ARABIC_MARKS, '')
+    .replace(HEBREW_MARKS, '')
     .toLowerCase()
 }
 
