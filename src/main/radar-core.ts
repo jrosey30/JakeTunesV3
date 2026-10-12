@@ -8,7 +8,7 @@
  */
 import { scoreCandidateForRadar, norm } from './taste-model.ts'
 import type { TasteFingerprint, TasteAnchor } from './taste-model.ts'
-import { searchTitle } from './streamrip-match.ts'
+import { searchTitle, requestedVersionMarkers } from './streamrip-match.ts'
 import { nameKey } from '../common/fold-text.ts'
 
 export interface RawCandidate { artist?: string; title?: string; genre?: string; year?: string | number; why?: string; anchor?: string }
@@ -65,38 +65,63 @@ function isAlbumRow(r: ListenListRow): boolean {
 // Edition words in any language, for the radar's album compare ONLY.
 // searchTitle (English) also builds download-search queries, so widening it
 // would move what a Get asks Qobuz for; this list never leaves the radar.
-// A word list, not phrases: a group is edition metadata when EVERY word is
-// on it and at least one is a CORE word. "En Vivo", "Ao Vivo", "Acústico"
-// are on neither, so a group naming another recording always survives.
-const foldWords = (words: string): Set<string> => new Set(words.split(/\s+/).filter(Boolean).map((w) => nameKey(w, '')))
-const EDITION_CORE = foldWords(`
-  deluxe edition remaster remastered remastering anniversary expanded reissue bonus
-  edición reedición remasterizado remasterizada remasterizados remasterizadas remasterización aniversario ampliada ampliado
-  edição reedição comemorativa
-  réédition remasterisé remasterisée remasterisés remasterisées anniversaire augmentée
-  edizione rimasterizzato rimasterizzata rimasterizzati ristampa espansa
-  ausgabe jubiläumsausgabe sonderausgabe neuauflage erweiterte remastert
-  издание переиздание делюкс ремастер ремастеринг ремастированная ремастированный ремастированное юбилейное расширенное летие
-  מהדורה מהדורת דלוקס רמאסטר רימאסטר מורחבת בונוס
-  デラックス エディション リマスター リマスター盤 リマスター版 デラックス盤 デラックス版 限定盤 初回限定盤 初回生産限定盤 完全生産限定盤 期間生産限定盤 初回盤 通常盤
-  디럭스 에디션 리마스터 한정판
-  豪华版 豪華版 纪念版 紀念版 限量版 重制版 重製版 典藏版
-`)
-// Allowed beside a core word, never enough alone ("(Special)" is a title).
-const EDITION_FILLER = foldWords(`
-  version versión versão versione версия גרסה גרסת バージョン 버전
-  special especial spéciale speciale spezial специальное מיוחדת スペシャル 스페셜
-  limited limitada limitée limitata limitierte ограниченное מוגבלת
-  collector collectors s super digital track tracks коллекционное подарочное
-  years year años anos ans anni jahre лет שנה
-  the and de del la el los las da do dos di des du d l der die das und y e et
-`)
-const ORDINAL = /^\d+(?:st|nd|rd|th|e|er|eme|o|a)?$/
+//
+// Same shape as searchTitle's English rule (".*edition.*" unless a version
+// marker): a group that names an EDITION is metadata whatever else it says —
+// "Edición Diamante", "Zlatá edice", "Feest Editie" — unless it also names
+// another RECORDING (live, acoustic, remix…) or VOLUME, which survives.
+//
+// The words come from real labels, not memory: a 2026-10-11 harvest of album
+// titles from the iTunes catalog in 27 storefronts (ru ua br pt es mx ar fr
+// it de nl se no dk fi pl cz hu ro tr gr il jp kr tw hk cn) plus the library.
+const foldList = (words: string): string[] => words.split(/\s+/).filter(Boolean).map((w) => nameKey(w, ''))
+const EDITION_WORDS = new Set(foldList(`
+  deluxe edition editions remaster remastered remastering remasters anniversary expanded reissue reissued bonus
+  edición ediciones reedición remasterizado remasterizada remasterizados remasterizadas remasterización aniversario ampliada ampliado conmemorativa conmemorativo
+  edição edições reedição remasterização comemorativa comemorativo
+  réédition remasterisé remasterisée remasterisés remasterisées remasterisation anniversaire augmentée
+  edizione edizioni rimasterizzato rimasterizzata rimasterizzati rimasterizzate rimasterizzazione ristampa anniversario espansa
+  neuauflage erweiterte remastert jubiläum
+  geremasterd jubileum remastrad remastrade remastret jubilæum remasteroitu remasteroidut
+  edycja wydanie zremasterowana zremasterowany zremasterowane rocznicowa rocznicowe jubileuszowa jubileuszowe
+  edice edícia vydání remasterovaná remasterované remasterovaný výročí kiadás jubileumi
+  ediție aniversară remasterizat remasterizată baskı
+  έκδοση επανέκδοση
+  издание издания переиздание делюкс ремастер ремастеринг ремастированная ремастированный ремастированное ремастированные
+  юбилейное юбилейный юбилейная летие расширенное расширенная расширенный бонус
+  видання перевидання ювілейне ювілейний ювілейна
+  מהדורה מהדורת מהדורות דלוקס רמאסטר רימאסטר מורחבת בונוס
+`))
+// Compounds end in the edition noun: Jubiläumsausgabe, kersteditie,
+// specialutgåva, juhlapainos, 十週年紀念版, 26周年スペシャルリマスター,
+// 初回生産限定盤D, リマスター2017. (Not "expedition"/"expeditie".)
+const EDITION_ENDING = new RegExp(`(?:(?<!exp)edition|(?<!exp)editie|${foldList(`
+  ausgabe udgave utgave utgåva painos kiadás
+  纪念版 紀念版 典藏版 珍藏版 豪华版 豪華版 限量版 限定版 修复版 修復版 重制版 重製版 复刻版 復刻版
+  限定盤 通常盤 初回盤 リマスター盤 リマスター版 リマスター デラックス盤 デラックス版 デラックス エディション
+  에디션 디럭스 리마스터 한정판
+`).join('|')})[a-z0-9]*$`)
+// Another recording (live, acoustic, remix… beyond searchTitle's English
+// markers) or another VOLUME — "(Коллекционное издание, том 17)" is not
+// volume 10. A group naming either stays.
+const OTHER_RECORD = new Set(foldList(`
+  vivo directo direct concierto concerto konzert koncert canlı ζωντανά
+  acústico acústica acústicos acoustique akustisch akustik akustisk akustinen akustyczna
+  remezcla remezclas remezclado remezclada remixé remixée remixado remixada remixato remixata geremixt remixt remiks
+  sinfónico sinfônico sinfonico symphonique symfonisch instrumentale strumentale playback
+  концерт концертная живой живьём акустика акустический акустическая ремикс ремиксы инструментал караоке ремікс
+  הופעה חי חיה אקוסטי אקוסטית רמיקס
+  vol volume volumes volumen tom том part pt parte partie teil deel folge część část rész osa disc часть частина חלק כרך
+`))
+const OTHER_RECORD_CJK = new RegExp(foldList(`
+  ライブ アコースティック リミックス カラオケ インスト 라이브 어쿠스틱 리믹스 现场 現場 演唱会 演唱會 音乐会 音樂會 伴奏
+`).join('|'))
 
 function isEditionGroup(body: string): boolean {
   const words = nameKey(body).split(' ').filter(Boolean)
-  return words.some((w) => EDITION_CORE.has(w))
-    && words.every((w) => EDITION_CORE.has(w) || EDITION_FILLER.has(w) || ORDINAL.test(w))
+  if (!words.some((w) => EDITION_WORDS.has(w) || EDITION_ENDING.test(w))) return false
+  if (requestedVersionMarkers(body).length > 0) return false
+  return !words.some((w) => OTHER_RECORD.has(w) || OTHER_RECORD_CJK.test(w))
 }
 
 /** Drop bracketed or " - " trailing edition groups, in any language. Returns

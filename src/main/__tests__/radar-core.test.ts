@@ -263,11 +263,39 @@ describe('radar-core — stripEditionWords (any language, radar only)', () => {
     ]
     for (const [title, want] of cases) assert.equal(stripEditionWords(title), want, title)
   })
+  // Real labels from the 2026-10-11 iTunes-catalog harvest (27 storefronts):
+  // an edition noun strips the group whatever else it says, compounds too.
+  it('drops the edition labels real catalogs use', () => {
+    const cases: Array<[string, string]> = [
+      ['México en la Piel (Edición Diamante)', 'México en la Piel'],
+      ['Inercia (Edición de Lujo)', 'Inercia'],
+      ['Sinfônico 40 Anos (Edição Luxo) [Ao Vivo]', 'Sinfônico 40 Anos [Ao Vivo]'],
+      ['Lumières & Trahisons (Remasterisé en 2017)', 'Lumières & Trahisons'],
+      ['Ciche dni (Edycja Specjalna)', 'Ciche dni'],
+      ['Pokazde - Zlatá edice', 'Pokazde'],
+      ['Luister (Kersteditie)', 'Luister'],
+      ['Shu-bi-dua 7 (Deluxe udgave)', 'Shu-bi-dua 7'],
+      ['Jag kommer hem igen till jul - Jubileumsutgåva', 'Jag kommer hem igen till jul'],
+      ['Az Utca Másik Oldalán (Felújított Kiadás)', 'Az Utca Másik Oldalán'],
+      ['Люди (Дополненное издание)', 'Люди'],
+      ['WE GO【初回限定盤B】', 'WE GO'],
+      ['BAND WAGON (リマスター2017)', 'BAND WAGON'],
+      ['时光幻游指南 (十周年纪念版)', '时光幻游指南'],
+    ]
+    for (const [title, want] of cases) assert.equal(stripEditionWords(title), want, title)
+  })
   it('keeps groups that name another recording, and filler words alone', () => {
     for (const title of [
       'Acabou Chorare (Ao Vivo)', 'Mi Plan (En Vivo)', 'אלבום (הופעה חיה)', 'Album (Live Edition)',
       'Album (Special)', 'Album (Limited)', 'The Edition - Live', '(Deluxe)',
+      'Lo Niego Todo (En Directo)', 'Wat is dan liefde (Radio editie)', '纪念日 (现场版)',
+      'Album (Remezclado y Remasterizado 2019)', 'Album (Remixé et remasterisé)', 'Album (Expedition)',
     ]) assert.equal(stripEditionWords(title), title, title)
+  })
+  it('keeps a group that names a volume — volume 17 is not volume 10', () => {
+    assert.equal(stripEditionWords('Очи Чёрные (Коллекционное издание, том 10)'), 'Очи Чёрные (Коллекционное издание, том 10)')
+    assert.equal(stripEditionWords('Album (Deluxe Edition, Pt. 2)'), 'Album (Deluxe Edition, Pt. 2)')
+    assert.equal(stripEditionWords('Candomblé (Edição Bahia) (Vol.2)'), 'Candomblé (Vol.2)')
   })
 })
 
