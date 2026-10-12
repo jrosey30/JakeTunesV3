@@ -11,7 +11,7 @@ import {
   type FilerTrack, type CheckEntry, type FilerDeps,
 } from '../genre-filer.ts'
 import { GENRES, GENRE_NAMES, phoneOverlayFields } from '../../common/genre-vocab.ts'
-import { matchMbArtist, confirmedArtist, countryName } from '../artist-tags.ts'
+import { matchMbArtist, confirmedArtist, countryName, musicBrainzCountryById } from '../artist-tags.ts'
 
 const T = (id: number, artist: string, album: string, genre: string, extra: Partial<FilerTrack> = {}): FilerTrack =>
   ({ id, title: `t${id}`, artist, album, genre, duration: 1000 + id, ...extra })
@@ -199,7 +199,7 @@ describe('MusicBrainz identity is proven by an album (MESH, 10/11)', () => {
   it("a namesake's genre and origin never count without one of his albums credited to them", () => {
     assert.equal(confirmedArtist([bristol], []), undefined, 'No Fun At All is not on Bristol Mesh')
     assert.equal(confirmedArtist([bristol], ['mesh-philly']), undefined)
-    assert.deepEqual(confirmedArtist([bristol], ['mesh-uk']), { tags: ['synthpop'], origin: 'United Kingdom' })
+    assert.deepEqual(confirmedArtist([bristol], ['mesh-uk']), { id: 'mesh-uk', tags: ['synthpop'], origin: 'United Kingdom' })
   })
   it('origin comes from the country code, not a region name', () => {
     const floyd = { id: 'pf', name: 'Pink Floyd', score: 100, country: 'GB', area: { name: 'England' } }
@@ -208,6 +208,12 @@ describe('MusicBrainz identity is proven by an album (MESH, 10/11)', () => {
     assert.equal(confirmedArtist([twigs], ['lt'])!.origin, 'United States')
     assert.equal(countryName('XW'), undefined, 'worldwide is not a country')
     assert.equal(countryName(undefined), undefined)
+  })
+  it('a region-only area still yields the country (Gorillaz: England → GB-ENG)', async () => {
+    const lookup = (async () => new Response(JSON.stringify({ area: { name: 'England', 'iso-3166-2-codes': ['GB-ENG'] } }), { status: 200 })) as unknown as typeof fetch
+    assert.equal(await musicBrainzCountryById('gorillaz', 'test', lookup), 'United Kingdom')
+    const busy = (async () => new Response('busy', { status: 503 })) as unknown as typeof fetch
+    assert.equal(await musicBrainzCountryById('gorillaz', 'test', busy), null, 'busy = ask again later')
   })
   it('fillOrigins hands the lookup the albums that prove identity', async () => {
     const lib: FilerTrack[] = [T(50, 'MESH', 'No Fun At All', 'Post-Punk', { genreApproved: true }), T(51, 'MESH', 'No Fun At All', 'Post-Punk', { genreApproved: true })]

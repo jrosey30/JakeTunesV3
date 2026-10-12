@@ -119,11 +119,27 @@ export async function musicBrainzAlbum(artist: string, album: string, userAgent:
 
 /** The candidate one of Jake's albums is actually credited to — or nobody.
  *  Unconfirmed means unknown: no tags, no origin, never a namesake's. */
-export function confirmedArtist(candidates: MbArtist[], creditIds: string[]): { tags: string[]; origin?: string } | undefined {
+export function confirmedArtist(candidates: MbArtist[], creditIds: string[]): { id?: string; tags: string[]; origin?: string } | undefined {
   const hit = candidates.find((c) => c.id && creditIds.includes(c.id))
   if (!hit) return undefined
   const tags = [...(hit.tags ?? [])].sort((a, b) => (b.count ?? 0) - (a.count ?? 0)).slice(0, 8).map((t) => t.name)
-  return { tags, origin: countryName(hit.country) }
+  return { id: hit.id, tags, origin: countryName(hit.country) }
+}
+
+/** The confirmed artist's country when the search result left it out: search
+ *  omits the code when the area is a region ("England"), the artist lookup
+ *  has it — or its area's ISO 3166-2 code ("GB-ENG") does. */
+export async function musicBrainzCountryById(mbid: string, userAgent: string, fetchFn: typeof fetch = fetch): Promise<string | undefined | null> {
+  try {
+    const res = await fetchFn(`https://musicbrainz.org/ws/2/artist/${encodeURIComponent(mbid)}?fmt=json`, {
+      headers: { 'User-Agent': userAgent, Accept: 'application/json' }, signal: AbortSignal.timeout(10_000),
+    })
+    if (!res.ok) return null
+    const d = (await res.json()) as { country?: string; area?: { 'iso-3166-1-codes'?: string[]; 'iso-3166-2-codes'?: string[] }; 'begin-area'?: { 'iso-3166-1-codes'?: string[]; 'iso-3166-2-codes'?: string[] } }
+    const codes = [d.country, ...[d.area, d['begin-area']].flatMap((a) => [...(a?.['iso-3166-1-codes'] ?? []), ...(a?.['iso-3166-2-codes'] ?? [])].map((c) => c.slice(0, 2)))]
+    for (const c of codes) { const n = countryName(c); if (n) return n }
+    return undefined
+  } catch { return null }
 }
 
 /** MusicBrainz's ISO country code → the country's name. The area itself is

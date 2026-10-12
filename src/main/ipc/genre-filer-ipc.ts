@@ -11,7 +11,7 @@ import { readFile, writeFile, rename } from 'fs/promises'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { runFilerSweep, resolveCheckEntry, trackFingerprint, isSettled, originCacheKey, type FilerTrack, type FilerDeps, type CheckEntry, type Evidence } from '../genre-filer.ts'
-import { musicBrainzArtistCandidates, musicBrainzAlbum, confirmedArtist } from '../artist-tags.ts'
+import { musicBrainzArtistCandidates, musicBrainzAlbum, confirmedArtist, musicBrainzCountryById } from '../artist-tags.ts'
 import { exaSearch } from '../exa.ts'
 
 export interface GenreFilerHost {
@@ -65,6 +65,7 @@ function deps(host: GenreFilerHost): FilerDeps {
       // The artist's tags and origin count only when this album is credited to
       // them; otherwise the name may be a namesake's (MESH ≠ Bristol's Mesh).
       const a = confirmedArtist(cands, album?.creditIds ?? [])
+      if (a && !a.origin && a.id) { await host.mbThrottle(); a.origin = (await musicBrainzCountryById(a.id, host.userAgent)) ?? undefined }
       const albumTags = album?.tags ?? []
       const artistTags = a?.tags ?? []
       // Press only when MusicBrainz is thin — the Telescreens lesson.
@@ -89,7 +90,11 @@ function deps(host: GenreFilerHost): FilerDeps {
         const al = await musicBrainzAlbum(artist, album, host.userAgent)
         if (!al) return undefined
         const a = confirmedArtist(cands, al.creditIds)
-        if (a) { origin = a.origin ?? null; break }
+        if (a) {
+          if (!a.origin && a.id) { await host.mbThrottle(); const c = await musicBrainzCountryById(a.id, host.userAgent); if (c === null) return undefined; a.origin = c }
+          origin = a.origin ?? null
+          break
+        }
       }
       cache[k] = { origin, at: Date.now() }
       const tmp = `${ORIGIN_FILE()}.tmp`
