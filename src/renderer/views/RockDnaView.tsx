@@ -18,9 +18,10 @@ import {
   type DnaState, type DnaScreen, type DnaOption, type Rating, type TraitId, type TraitLevel,
 } from '../../common/rock-dna'
 import type { Track } from '../types'
+import { nameKey } from '../../common/fold-text'
 import '../styles/rock-dna.css'
 
-const nk = (s: string | undefined): string => String(s || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^\p{L}\p{M}\p{N}]+/gu, ' ').trim()
+const nk = (s: string | undefined): string => nameKey(s)   // the one fold (fold-text); was a copy of it
 /** "Black Dog (Remaster)" and "Black Dog - 2012 Remaster" are the song "Black Dog". */
 const initial = (name: string): string => name.replace(/^the\s+/i, '').slice(0, 1).toUpperCase()
 const songKey = (s: string | undefined): string => nk(String(s || '').replace(/\s*[([].*?[)\]]\s*/g, ' ').replace(/\s+-\s+.*$/, ''))
