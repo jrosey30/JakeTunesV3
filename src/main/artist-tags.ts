@@ -60,7 +60,7 @@ export async function ensureArtistTags(
 type MbArtist = { id?: string; name?: string; score?: number; country?: string; area?: { name?: string }; aliases?: Array<{ name?: string }>; tags?: Array<{ name: string; count?: number }> }
 /** Name OR alias — the library may spell an artist the way MusicBrainz lists as
  *  an alias ("Молчат Дома" for Molchat Doma). */
-const MB_ARTIST_QUERY = (artist: string): string => encodeURIComponent(`artist:"${artist}" OR alias:"${artist}"`)
+export const MB_ARTIST_QUERY = (artist: string): string => encodeURIComponent(`artist:"${artist}" OR alias:"${artist}"`)
 export function matchMbArtist(artists: MbArtist[] | undefined, artist: string): MbArtist | undefined {
   const want = normName(artist)
   if (!want) return undefined
