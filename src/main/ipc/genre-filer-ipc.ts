@@ -11,7 +11,7 @@ import { readFile, writeFile, rename } from 'fs/promises'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { runFilerSweep, resolveCheckEntry, trackFingerprint, isSettled, originCacheKey, type FilerTrack, type FilerDeps, type CheckEntry, type Evidence } from '../genre-filer.ts'
-import { musicBrainzArtist, musicBrainzAlbumTags } from '../artist-tags.ts'
+import { musicBrainzArtistCandidates, musicBrainzAlbum, confirmedArtist } from '../artist-tags.ts'
 import { exaSearch } from '../exa.ts'
 
 export interface GenreFilerHost {
@@ -27,7 +27,8 @@ export interface GenreFilerHost {
 const CHECK_FILE = (): string => join(app.getPath('userData'), 'genre-check.json')
 /** Origins already asked of MusicBrainz: {artistNorm: {origin|null, at}} — so an
  *  artist nobody knows isn't asked about every five minutes. */
-const ORIGIN_FILE = (): string => join(app.getPath('userData'), 'origin-lookups.json')
+// v2 (10/11): v1 answers came from name-only matches (MESH got Bristol's origin) — not reused.
+const ORIGIN_FILE = (): string => join(app.getPath('userData'), 'origin-lookups-v2.json')
 const ORIGIN_RETRY_MS = 60 * 24 * 3600 * 1000
 const SWEEP_MS = 5 * 60_000
 const FIRST_SWEEP_MS = 90_000
@@ -58,9 +59,13 @@ function deps(host: GenreFilerHost): FilerDeps {
     applied: (updates) => host.send('genre-filer:applied', { updates }),
     evidence: async (u): Promise<Evidence> => {
       await host.mbThrottle()
-      const a = await musicBrainzArtist(u.artist, host.userAgent)
-      let albumTags: string[] = []
-      if (!u.comp && u.album) { await host.mbThrottle(); albumTags = (await musicBrainzAlbumTags(u.artist, u.album, host.userAgent)) ?? [] }
+      const cands = (await musicBrainzArtistCandidates(u.artist, host.userAgent)) ?? []
+      let album: { tags: string[]; creditIds: string[] } | null = null
+      if (!u.comp && u.album) { await host.mbThrottle(); album = await musicBrainzAlbum(u.artist, u.album, host.userAgent) }
+      // The artist's tags and origin count only when this album is credited to
+      // them; otherwise the name may be a namesake's (MESH ≠ Bristol's Mesh).
+      const a = confirmedArtist(cands, album?.creditIds ?? [])
+      const albumTags = album?.tags ?? []
       const artistTags = a?.tags ?? []
       // Press only when MusicBrainz is thin — the Telescreens lesson.
       const press = artistTags.length + albumTags.length >= 3 ? '' : await exaSearch(`${u.artist} ${u.comp ? u.title : u.album} band music review`, {
@@ -69,18 +74,27 @@ function deps(host: GenreFilerHost): FilerDeps {
       return { artistTags, albumTags, origin: a?.origin, press }
     },
     classify: (system, user) => host.claude(system, user),
-    lookupOrigin: async (artist) => {
+    lookupOrigin: async (artist, albums) => {
       let cache: Record<string, { origin: string | null; at: number }> = {}
       try { cache = JSON.parse(await readFile(ORIGIN_FILE(), 'utf8')) as typeof cache } catch { /* first lookup */ }
       const k = originCacheKey(artist), hit = cache[k]
       if (hit && (hit.origin || Date.now() - hit.at < ORIGIN_RETRY_MS)) return hit.origin
       await host.mbThrottle()
-      const a = await musicBrainzArtist(artist, host.userAgent)
-      if (!a) return undefined                       // MusicBrainz busy — ask next sweep
-      cache[k] = { origin: a.origin ?? null, at: Date.now() }
+      const cands = await musicBrainzArtistCandidates(artist, host.userAgent)
+      if (!cands) return undefined                   // MusicBrainz busy — ask next sweep
+      let origin: string | null = null
+      // Confirmed by one of his albums, or not at all.
+      for (const album of cands.length ? albums.slice(0, 2) : []) {
+        await host.mbThrottle()
+        const al = await musicBrainzAlbum(artist, album, host.userAgent)
+        if (!al) return undefined
+        const a = confirmedArtist(cands, al.creditIds)
+        if (a) { origin = a.origin ?? null; break }
+      }
+      cache[k] = { origin, at: Date.now() }
       const tmp = `${ORIGIN_FILE()}.tmp`
       await writeFile(tmp, JSON.stringify(cache)); await rename(tmp, ORIGIN_FILE())
-      return a.origin ?? null
+      return origin
     },
     loadCheck,
     saveCheck,
