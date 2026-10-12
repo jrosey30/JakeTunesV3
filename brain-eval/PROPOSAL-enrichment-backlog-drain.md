@@ -134,3 +134,18 @@ yet for the supervised drain / adaptive batch ask. NOT auto-applied (trainer
 code + a ~236-call Gemma load on the shared 16GB box = supervised-run
 territory, Jake-gated as filed). Self-heal check each nightly: bare-in-top25
 on ret-007 must fall ~nightly; if it grows on a no-import night, something new.
+
+## 2026-10-12 — queue-order starvation PROVEN + mood-refresh sequencing constraint
+Import night wave 4 (+141, library 11,560; backlog 236→327, compounding 4th
+night). The trainer's entire 50-batch went to the NEWEST imports (precheck:
++50 adds ids 12663–12712, 0 existing vectors changed) — the 227-track
+present-but-bare mood cohort drained by ZERO; ret-007 bare-in-top25 static
+14/25, recall 0.44 (diag_ret007_20261012). "Self-heals ~50/night" is
+falsified while imports keep landing: the enrich queue starves the oldest
+bare tracks (same ordering lever as PROPOSAL-tempo-catchup-queue-order).
+NEW SEQUENCING CONSTRAINT (measured 10-12): refreshing mood texts to the new
+genre taxonomy while the bare cohort exists is HARMFUL (full reembed-all
+candidate: ret-007 mood 0.44→0.16, bare-in-top25 14→21, mood-routed mean
+−0.021 → REJECTED; main-only applied instead). Right order: (1) drain the
+bare cohort (this proposal), (2) THEN one `--rebuild-mood-index` to carry
+the 10-11 taxonomy into mood texts. Both steps Jake-gated as filed.

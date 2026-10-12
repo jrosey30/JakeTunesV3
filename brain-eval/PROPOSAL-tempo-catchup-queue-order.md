@@ -139,3 +139,10 @@ queue-order exceptions across every regime (quiet nights, import waves,
 analysis-wave queue-jumps). The evidence for the proposed
 never-encoded-first sort is complete; the decision remains Jake's. No
 further nightly watch is scheduled for this mechanism.
+
+## 2026-10-12 — 20th point, now spanning the ENRICH queue too
+Tonight's 50-batch enriched ONLY the newest imports (adds 12663–12712)
+while the 227-track bare-mood cohort (oldest waiting) got nothing — on the
+night the cohort's dilution cost is live in production (ret-007 mood 0.44).
+Oldest-first (or bare-cohort-first) ordering remains the ask; evidence now
+covers both the tempo catch-up and the nightly enrich batch. Jake's call.
