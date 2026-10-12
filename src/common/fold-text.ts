@@ -62,6 +62,14 @@ export function foldAccents(s: string | null | undefined): string {
 const NOT_NAME = /(?:[^\p{L}\p{M}\p{N}]|[\u02B0-\u02FF])+/gu
 
 /**
+ * The Arabic tatweel (U+0640, kashida): a stretch line for justification,
+ * not a letter of the word — "عـربي" IS "عربي". Unicode calls it a letter and
+ * NFKC keeps it, so it is DELETED before folding (separating it, as the
+ * apostrophes are, would split one word in two) (2026-10-11).
+ */
+const TATWEEL = /\u0640/g
+
+/**
  * THE identity/matching key for a name, in any script: accents folded
  * (foldAccents, after NFKC so full-width and ligature forms fold too), case
  * dropped, letters + marks + digits of EVERY script kept, each run of
@@ -75,7 +83,7 @@ const NOT_NAME = /(?:[^\p{L}\p{M}\p{N}]|[\u02B0-\u02FF])+/gu
  */
 export function nameKey(s: string | null | undefined, sep = ' '): string {
   if (!s) return ''
-  const k = foldAccents(String(s).normalize('NFKC')).replace(NOT_NAME, ' ').trim()
+  const k = foldAccents(String(s).normalize('NFKC').replace(TATWEEL, '')).replace(NOT_NAME, ' ').trim()
   return sep === ' ' ? k : k.replace(/ /g, sep)
 }
 
