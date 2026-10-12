@@ -1,6 +1,6 @@
 /** Pure Qobuz search-result matching for streamrip — shared by download-by-query and tests. */
 import { recoArtistMatches, recoNorm, recoTitleMatches } from './reco-match.ts'
-import { foldAccents } from '../common/fold-text.ts'
+import { foldAccents, nameKey } from '../common/fold-text.ts'
 
 export interface StreamripSearchHit { source: string; mediaType: string; id: string; desc: string }
 
@@ -102,7 +102,10 @@ function maskedTokenPattern(tok: string): RegExp {
   return new RegExp(`^${out}$`, 'i')
 }
 
-/** Does a masked want-title match a real candidate title, token for token? */
+/** Does a masked want-title match a real candidate title, token for token?
+ *  Tokens fold in any script: stripped to [a-z0-9], every Hebrew or Cyrillic
+ *  word was '' and equal to every other, so any Hebrew title "read as" the
+ *  one asked for and the wrong song passed the recording guard. */
 export function maskedTitleMatches(want: string, got: string): boolean {
   const w = want.toLowerCase().split(/\s+/).filter(Boolean)
   const g = got.toLowerCase().split(/\s+/).filter(Boolean)
@@ -112,10 +115,10 @@ export function maskedTitleMatches(want: string, got: string): boolean {
   outer: for (let off = 0; off + w.length <= g.length; off++) {
     for (let i = 0; i < w.length; i++) {
       const wt = w[i]
-      const gt = g[off + i].replace(/[^a-z0-9]/gi, '')
+      const gt = nameKey(g[off + i], '')
       if (isMaskedToken(wt)) {
         if (!maskedTokenPattern(wt).test(gt)) continue outer
-      } else if (wt.replace(/[^a-z0-9]/gi, '') !== gt) {
+      } else if (nameKey(wt, '') !== gt) {
         continue outer
       }
     }

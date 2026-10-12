@@ -18,13 +18,13 @@ import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { NAS_STATE_DIR_PATH, STATE_DIR, nasAvailable } from '../state-dir'
 import { quietWarn } from '../flight-recorder'
-import { foldAccents } from '../../common/fold-text.ts'
+import { nameKey } from '../../common/fold-text.ts'
 import { noteAttribution } from '../friend-credit-sweep.ts'
 import { startImessageCapture } from '../imessage-capture'
 import { MUSIC_MAN_CORE } from '../personas.ts'
 import {
   evaluateMusicManVerification, pickBetterReco, recoArtistMatches, recoDedupeKey,
-  recoNorm, recoTitleMatches, recordIdentityKeys,
+  recoIdNorm, recoIdentityPairKey, recoNorm, recoTitleMatches, recordIdentityKeys,
 } from '../reco-match'
 import { type RecoOutboxOp, parseOutbox, scrubOutboxAgainstBackend, scrubOutboxForDelete } from '../reco-outbox'
 import { computeMirror, computeNasFallback, identitiesForDelete } from '../reco-sync'
@@ -183,7 +183,7 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
   const RECO_ITUNES_JUNK = /karaoke|tribute|cover band|made famous|made popular|in the style of|originally performed|8.?bit|chiptune|lullaby|rockabye|little rock star|music foundation|piano (tribute|version|renditions?)|string quartet|meditation|sleep baby|nursery/i
 
   function recoMatchKey(input: { song?: string; artist?: string; album?: string; note?: string }): string {
-    const norm = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')   // ⚠️ NOT folded: feeds recoMatchKey, a PERSISTED identity key.
+    const norm = recoIdNorm   // ⚠️ NOT accent-folded: the strict identity fallback. Latin keys are recoNorm byte for byte; other scripts get their own (an all-Hebrew jot used to read as a dupe of any other).
     // The album is part of the strict key: two records by one artist, or two
     // editions of one record, are different jots (2026-09-06).
     return `${norm(input.song || '')}|${norm(input.artist || '')}|${norm(input.album || '')}|${norm(input.note || '')}`
@@ -203,9 +203,7 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
   // fields (e.g. a note-only or album-only jot), in which case callers fall back
   // to the stricter recoMatchKey. Shares recoNorm with iTunes verify + the UI.
   function recoIdentityKey(song?: string, artist?: string): string | null {
-    const s = recoNorm(song || '')
-    const a = recoNorm(artist || '')
-    return s && a ? `${s}|${a}` : null
+    return recoIdentityPairKey(song, artist)   // the pair key recordIdentityKeys emits — one definition
   }
 
   function recoRecordIdentityKey(r: RecommendationRecord): string | null {
@@ -1055,7 +1053,9 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
     try {
       const lib = (await host.libraryCache.get()) as { tracks?: Array<{ artist?: string; albumArtist?: string; title?: string; genre?: string; playCount?: number }> }
       const tracks = Array.isArray(lib.tracks) ? lib.tracks : []
-      const norm = (s: string) => foldAccents(s).replace(/[^a-z0-9]/g, '')
+      // Any script: [a-z0-9] made every Hebrew/Cyrillic name '', so owning one
+      // Hebrew artist marked every Hebrew pick owned, and only one survived.
+      const norm = (s: string) => nameKey(s, '')
       const playsByArtist = new Map<string, number>()
       const playsByGenre = new Map<string, number>()
       const ownedArtists = new Set<string>() // normalized — every artist in the library

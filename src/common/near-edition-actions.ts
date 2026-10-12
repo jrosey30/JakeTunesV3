@@ -9,6 +9,7 @@
  */
 import type { CompareEditionsResult, TrackRow } from './near-edition-types.ts'
 import { differsLine, fmtSec, sourceEditionLabel, type SourceEdition } from './source-edition.ts'
+import { nameKey } from './fold-text.ts'
 
 export interface MatchingTrackRequest {
   kind: 'query'
@@ -37,7 +38,11 @@ export interface MatchingTrackPlan {
   sentence: string
 }
 
-const norm = (s: string): string => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '')
+// ⚠️ TWIN: renderer DownloadStore/downloadQueue.ts trackQueryId — a job's id
+// is its queue key, so the same song must get the same id from either place.
+// Any script: [a-z0-9] gave every Hebrew track of an album the id 'q|track||',
+// so they collapsed into one queued job.
+const norm = (s: string): string => nameKey(s, '')
 
 export function planMatchingTrackGets(cmp: CompareEditionsResult, ctx: { parentKey: string; artist: string; album: string; releaseYear?: number; sourceKind?: string; sourceLabel?: string }): MatchingTrackPlan {
   const exact = cmp.rows.filter((r) => r.verdict === 'exact')

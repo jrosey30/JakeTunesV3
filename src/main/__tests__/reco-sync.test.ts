@@ -82,6 +82,36 @@ const PARITY_FIXTURES: Array<{ name: string; record: Record<string, string | und
     record: { album: 'Mezzanine' },
     keys: ['album:~mezzanine'],
   },
+  {
+    name: 'all-Hebrew jot has a key of its own (2026-10-11; [a-z0-9] left it keyless, so a delete never stuck)',
+    record: { song: 'למה הים כחול?', artist: 'הדג נחש' },
+    keys: ['למה הים כחול|הדג נחש'],
+  },
+  {
+    name: 'all-Cyrillic jot has a key of its own (2026-10-11)',
+    record: { song: 'Группа крови', artist: 'Кино' },
+    keys: ['группа крови|кино'],
+  },
+  {
+    name: 'Hebrew song by a Latin-named artist is a pair, never artist:<artist> alone (2026-10-11)',
+    record: { song: 'שיר', artist: 'Rockfour' },
+    keys: ['שיר|rockfour'],
+  },
+  {
+    name: 'Cyrillic record jot keys the record (2026-10-11)',
+    record: { artist: 'Молчат Дома', album: 'Этажи' },
+    keys: ['album:молчат дома~этажи'],
+  },
+  {
+    name: 'artist-less Hebrew jot → solo key (2026-10-11)',
+    record: { song: 'שיר' },
+    keys: ['solo:שיר~~'],
+  },
+  {
+    name: 'a Latin name keeps its stored key byte for byte — accents dropped, not folded (2026-10-11)',
+    record: { song: 'Hoppípolla', artist: 'Sigur Rós' },
+    keys: ['hopppolla|sigurrs'],
+  },
 ]
 
 test('parity fixtures: recordIdentityKeys matches the backend byte-for-byte', () => {
