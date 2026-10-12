@@ -48,7 +48,8 @@ export function recoFields(rec: Recommendation): { artist: string; title: string
 }
 
 /** Song / Album / Artist — what a recommendation IS. ⚠️ TWIN:
- *  views/ListenToTheListView.tsx recoType (the list groups by the same rule). */
+ *  views/ListenToTheListView.tsx recoType (the list groups by the same rule),
+ *  and main/radar-core.ts isAlbumRow (the radar hides the albums listed here). */
 export function recoKind(rec: Recommendation): 'song' | 'album' | 'concert' | 'artist' {
   const { title, album } = recoFields(rec)
   if (rec.kind === 'concert') return 'concert'

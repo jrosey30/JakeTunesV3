@@ -9,7 +9,6 @@
 import { scoreCandidateForRadar, norm } from './taste-model.ts'
 import type { TasteFingerprint, TasteAnchor } from './taste-model.ts'
 import { recoIdentityPairKey } from './reco-match.ts'
-import type { RecoIdentityInput } from './reco-match.ts'
 
 export interface RawCandidate { artist?: string; title?: string; genre?: string; year?: string | number; why?: string; anchor?: string }
 export interface RankedCandidate {
@@ -40,20 +39,48 @@ export function parseCandidates(text: string): RawCandidate[] {
   }
 }
 
+/** A Listen List row, as far as the radar's on-list guard reads it. */
+export interface ListenListRow {
+  song?: string
+  artist?: string
+  album?: string
+  kind?: string
+  matchedTitle?: string
+  matchedArtist?: string
+  matchedAlbum?: string
+}
+
+/** Does the list file this row under Albums? ⚠️ TWIN:
+ *  renderer/listen-to-the-list/ltlDownload.ts recoKind ('album' or 'concert')
+ *  and views/ListenToTheListView.tsx recoType — same rule, so the radar hides
+ *  exactly the albums the list shows. */
+function isAlbumRow(r: ListenListRow): boolean {
+  if (r.kind === 'album' || r.kind === 'concert') return true
+  const title = (r.matchedTitle || r.song || '').trim()
+  const album = (r.matchedAlbum || r.album || '').trim()
+  return !title && Boolean(album)
+}
+
 /**
  * The `isOnList` predicate for rankCandidates, built from the Listen List
  * rows: same song|artist identity the list itself keys by (raw fields first,
  * iTunes-matched as fallback). ⚠️ The key is SONG first — the radar hands us
  * (artist, title), so it must be flipped. index.ts passed (artist, title)
  * straight into a (song, artist) key and the guard never matched (2026-10-11).
+ *
+ * The radar's "title" is a RELEASE, so album rows key their album the same
+ * way (album|artist, raw names, then the iTunes ones). A song row that names
+ * its album doesn't hide the album — one saved song isn't the record.
  */
-export function listenListPredicate(
-  records: Array<Pick<RecoIdentityInput, 'song' | 'artist' | 'matchedTitle' | 'matchedArtist'>>,
-): (artist: string, title: string) => boolean {
+export function listenListPredicate(records: ListenListRow[]): (artist: string, title: string) => boolean {
   const listKeys = new Set<string>()
+  const add = (k: string | null): void => { if (k) listKeys.add(k) }
   for (const r of records) {
-    const k = recoIdentityPairKey(r.song || r.matchedTitle, r.artist || r.matchedArtist)
-    if (k) listKeys.add(k)
+    add(recoIdentityPairKey(r.song || r.matchedTitle, r.artist || r.matchedArtist))
+    if (isAlbumRow(r)) {
+      add(recoIdentityPairKey(r.album || r.matchedAlbum, r.artist || r.matchedArtist))
+      add(recoIdentityPairKey(r.matchedAlbum, r.matchedArtist))
+    }
   }
   return (artist, title) => {
     const k = recoIdentityPairKey(title, artist)

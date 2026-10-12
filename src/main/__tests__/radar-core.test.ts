@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseCandidates, rankCandidates, listenListPredicate } from '../radar-core.ts'
 import { computeTasteFingerprint, getTasteAnchors } from '../taste-model.ts'
+import { recoKind } from '../../renderer/listen-to-the-list/ltlDownload.ts'
+import type { Recommendation } from '../../renderer/types.ts'
+
+const rec = (over: Partial<Recommendation>): Recommendation => ({ id: 'r1', createdAt: '2026-10-11T00:00:00Z', ...over })
 
 const rep = (n: number, t: Record<string, unknown>) => Array.from({ length: n }, (_, i) => ({ ...t, title: `t${i}` }))
 const fp = computeTasteFingerprint([
@@ -116,6 +120,51 @@ describe('radar-core — listenListPredicate (the real Listen List key)', () => 
   it('drops nothing when the list is empty or a row is missing a side', () => {
     assert.equal(listenListPredicate([])('Overmono', 'Good Lies'), false)
     assert.equal(listenListPredicate([{ song: 'Good Lies' }, { artist: 'Overmono' }])('Overmono', 'Good Lies'), false)
+  })
+
+  // The radar's "title" is a release — an album on the list is on the list.
+  it('drops a radar release already on the list as an album', () => {
+    const albums = [
+      rec({ artist: 'Wednesday', album: 'Rat Saw God', kind: 'album' }),
+      rec({ artist: 'Fontaines D.C.', album: 'Romance' }),                    // songless → an album row
+      rec({ artist: 'pratt', album: 'pitch',                                  // a loose jot, iTunes-matched
+        matchedArtist: 'Jessica Pratt', matchedAlbum: 'Here in the Pitch' }),
+    ]
+    const out = rankCandidates(fp, [
+      { artist: 'Wednesday', title: 'Rat Saw God', genre: 'Indie Rock', year: 2023 },
+      { artist: 'Fontaines D.C.', title: 'Romance', genre: 'Post-Punk', year: 2024 },
+      { artist: 'Jessica Pratt', title: 'Here in the Pitch', genre: 'Folk', year: 2024 },
+      { artist: 'Jamie xx', title: 'In Waves', genre: 'Electronic', year: 2024 },
+    ], 12, listenListPredicate(albums))
+    assert.deepEqual(out.map((c) => c.artist), ['Jamie xx'])
+  })
+
+  it('a song row that names its album does not hide the album', () => {
+    const isOnList = listenListPredicate([rec({ song: 'Bull Believer', artist: 'Wednesday', album: 'Rat Saw God' })])
+    assert.equal(isOnList('Wednesday', 'Rat Saw God'), false)
+    assert.equal(isOnList('Wednesday', 'Bull Believer'), true)
+  })
+
+  it('an album needs its artist — same title by another band stays', () => {
+    const isOnList = listenListPredicate([rec({ artist: 'Fontaines D.C.', album: 'Romance' }), rec({ album: 'Romance' })])
+    assert.equal(isOnList('Camila Cabello', 'Romance'), false)
+  })
+
+  it('hides exactly the rows the list files under Albums (recoKind twin)', () => {
+    const rows = [
+      rec({ artist: 'Wednesday', album: 'Rat Saw God', kind: 'album' }),
+      rec({ artist: 'Wednesday', album: 'Rat Saw God', kind: 'concert' }),
+      rec({ artist: 'Wednesday', album: 'Rat Saw God' }),
+      rec({ matchedArtist: 'Wednesday', matchedAlbum: 'Rat Saw God' }),
+      rec({ artist: 'Wednesday', album: 'Rat Saw God', song: 'Bull Believer' }),
+      rec({ artist: 'Wednesday', album: 'Rat Saw God', matchedTitle: 'Bull Believer', kind: 'track' }),
+      rec({ artist: 'Wednesday' }),
+    ]
+    for (const r of rows) {
+      const filed = recoKind(r)
+      assert.equal(listenListPredicate([r])('Wednesday', 'Rat Saw God'), filed === 'album' || filed === 'concert',
+        `${JSON.stringify(r)} is filed as ${filed}`)
+    }
   })
 
   it('is what the radar IPC in index.ts hands rankCandidates (checked at the source)', () => {
