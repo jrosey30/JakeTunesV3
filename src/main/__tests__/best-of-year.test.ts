@@ -74,3 +74,14 @@ describe('pickBestOfYear', () => {
     }
   })
 })
+
+describe('nothing under a minute (Jake: "what did i say about songs that are less than a minute")', () => {
+  test('a starred 16-second intro never makes Best of; unknown durations stay in', () => {
+    const out = pickBestOfYear([
+      t({ artist: 'MUNA', title: '...Unless', rating: 5, playCount: 40, duration: 16000 }),
+      t({ artist: 'MUNA', title: 'Silk Chiffon', rating: 5, duration: 205000 }),
+      t({ artist: 'Geese', title: 'Taxes', rating: 5 }),
+    ], { year: 2026 })
+    assert.deepEqual(out.map((x) => x.title).sort(), ['Silk Chiffon', 'Taxes'])
+  })
+})

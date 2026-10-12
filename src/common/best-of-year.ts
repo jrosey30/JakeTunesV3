@@ -23,6 +23,8 @@
  */
 import { nameKey } from './fold-text.ts'
 
+import { isTop25Rankable } from './top25-rankable.ts'
+
 export interface BestOfInput {
   id: number
   title?: string
@@ -32,6 +34,7 @@ export interface BestOfInput {
   year?: string | number
   rating?: number
   playCount?: number
+  duration?: number
 }
 
 const nk = (s: string | undefined): string => nameKey(s)
@@ -66,7 +69,8 @@ export function pickBestOfYear<T extends BestOfInput>(
 
   const score = (t: T): number => (Number(t.rating) || 0) * 25 + Math.min(Number(t.playCount) || 0, 40)
   const ranked = tracks
-    .filter((t) => Number(t.year) === opts.year)
+    // Jake (9/2, Top 25; 10/11 here): nothing under a minute holds a ranked slot.
+    .filter((t) => Number(t.year) === opts.year && isTop25Rankable(t))
     .sort((a, b) => score(b) - score(a)
       || (Number(b.playCount) || 0) - (Number(a.playCount) || 0)
       || String(a.title || '').localeCompare(String(b.title || '')))

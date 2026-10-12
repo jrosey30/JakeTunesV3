@@ -123,7 +123,7 @@ export function evaluateSmartPlaylist(id: SmartPlaylistId, tracks: Track[]): Tra
       // view preserves this order when no column header is clicked.
       const profile = buildTasteProfile(tracks)
       const ranked = tracks
-        .filter(t => (Number(t.rating) || 0) === 0)
+        .filter(t => (Number(t.rating) || 0) === 0 && isTop25Rankable(t))   // nothing under a minute ranks (Jake)
         .map(t => ({ t, s: tasteScore(t, profile) }))
         .sort((a, b) => b.s - a.s)
       // Diversity cap: at most a few per artist, so the list spreads across
