@@ -17,6 +17,7 @@ describe('the shape Jake approved', () => {
     assert.equal(umbrellaName('Synth-Pop'), 'Pop', 'New Wave & Synth lives under Pop')
     assert.equal(umbrellaName('Midwest Rap'), 'Hip-Hop')
     assert.equal(depthOf('Garage Punk'), 'Abyss')
+    assert.equal(depthOf('Geordie Jazz'), 'Abyss', 'was missing from the table and fell to Below')
     assert.equal(depthOf('Rock'), 'The tip', "the umbrella's own shelf is the peak")
   })
   it('every placed genre is on his list, and nothing from "Other" is on the berg', () => {

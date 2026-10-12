@@ -21,7 +21,6 @@
 .gi-tip .gi-cell::before { content: ""; position: absolute; left: 8%; right: 8%; bottom: 0; height: 86%; background: linear-gradient(180deg, #fff 35%, #e7f1f7); clip-path: polygon(50% 0, 58% 14%, 63% 9%, 100% 100%, 0 100%, 38% 16%); }
 .gi-tip .gi-g { position: relative; font-size: 14px; font-weight: 800; }
 .gi-waterline { height: 0; border-top: 2px solid rgba(255, 255, 255, 0.9); position: relative; }
-.gi-waterline span { position: absolute; left: 36px; top: 3px; font-size: 9px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase; color: #0f3550; }
 .gi-d1 { background: #8fbcd6; } .gi-d1 .gi-cell { background: rgba(255, 255, 255, 0.32); }
 .gi-d2 { background: #5a95b8; } .gi-d2 .gi-cell { background: rgba(255, 255, 255, 0.22); }
 .gi-d3 { background: #2f6a90; color: #fff; } .gi-d3 .gi-cell { background: rgba(255, 255, 255, 0.12); }
