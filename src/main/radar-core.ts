@@ -62,6 +62,54 @@ function isAlbumRow(r: ListenListRow): boolean {
   return !title && Boolean(album)
 }
 
+// Edition words in any language, for the radar's album compare ONLY.
+// searchTitle (English) also builds download-search queries, so widening it
+// would move what a Get asks Qobuz for; this list never leaves the radar.
+// A word list, not phrases: a group is edition metadata when EVERY word is
+// on it and at least one is a CORE word. "En Vivo", "Ao Vivo", "Acústico"
+// are on neither, so a group naming another recording always survives.
+const foldWords = (words: string): Set<string> => new Set(words.split(/\s+/).filter(Boolean).map((w) => nameKey(w, '')))
+const EDITION_CORE = foldWords(`
+  deluxe edition remaster remastered remastering anniversary expanded reissue bonus
+  edición reedición remasterizado remasterizada remasterizados remasterizadas remasterización aniversario ampliada ampliado
+  edição reedição comemorativa
+  réédition remasterisé remasterisée remasterisés remasterisées anniversaire augmentée
+  edizione rimasterizzato rimasterizzata rimasterizzati ristampa espansa
+  ausgabe jubiläumsausgabe sonderausgabe neuauflage erweiterte remastert
+  издание переиздание делюкс ремастер ремастеринг ремастированная ремастированный ремастированное юбилейное расширенное летие
+  מהדורה מהדורת דלוקס רמאסטר רימאסטר מורחבת בונוס
+  デラックス エディション リマスター リマスター盤 リマスター版 デラックス盤 デラックス版 限定盤 初回限定盤 初回生産限定盤 完全生産限定盤 期間生産限定盤 初回盤 通常盤
+  디럭스 에디션 리마스터 한정판
+  豪华版 豪華版 纪念版 紀念版 限量版 重制版 重製版 典藏版
+`)
+// Allowed beside a core word, never enough alone ("(Special)" is a title).
+const EDITION_FILLER = foldWords(`
+  version versión versão versione версия גרסה גרסת バージョン 버전
+  special especial spéciale speciale spezial специальное מיוחדת スペシャル 스페셜
+  limited limitada limitée limitata limitierte ограниченное מוגבלת
+  collector collectors s super digital track tracks коллекционное подарочное
+  years year años anos ans anni jahre лет שנה
+  the and de del la el los las da do dos di des du d l der die das und y e et
+`)
+const ORDINAL = /^\d+(?:st|nd|rd|th|e|er|eme|o|a)?$/
+
+function isEditionGroup(body: string): boolean {
+  const words = nameKey(body).split(' ').filter(Boolean)
+  return words.some((w) => EDITION_CORE.has(w))
+    && words.every((w) => EDITION_CORE.has(w) || EDITION_FILLER.has(w) || ORDINAL.test(w))
+}
+
+/** Drop bracketed or " - " trailing edition groups, in any language. Returns
+ *  the title unchanged when nothing (or everything) would be left. */
+export function stripEditionWords(title: string): string {
+  const out = title
+    .replace(/\s*[([{【（]([^()[\]{}【】（）]*)[)\]}】）]/g, (whole, body: string) => (isEditionGroup(body) ? '' : whole))
+    .replace(/^(.*\S)\s+[-–—]\s+(.+)$/, (whole, head: string, tail: string) => (isEditionGroup(tail) ? head : whole))
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+  return out || title.trim()
+}
+
 /**
  * The `isOnList` predicate for rankCandidates, built from the Listen List
  * rows: song|artist from the same fields the list keys by (raw fields first,
@@ -82,7 +130,9 @@ function isAlbumRow(r: ListenListRow): boolean {
  * same strip albumKey uses): "Rat Saw God (Deluxe Edition)" on the list
  * hides "Rat Saw God", and "- EP"/"- Single" fall away. "(Live)"/"(Remix)"
  * survive — those are other recordings. This is a hide-from-radar compare,
- * never stored; the persisted identity keys keep editions apart.
+ * never stored; the persisted identity keys keep editions apart. Edition
+ * words in other languages go first (stripEditionWords): "Этажи (Делюкс)",
+ * "(Edición Aniversario)", "【初回限定盤】".
  */
 export function listenListPredicate(records: ListenListRow[]): (artist: string, title: string) => boolean {
   const songKeys = new Set<string>()
@@ -92,8 +142,10 @@ export function listenListPredicate(records: ListenListRow[]): (artist: string, 
     const a = nameKey(artist, '')
     return n && a ? `${n}|${a}` : null
   }
-  const albumKey = (album: string | undefined, artist: string | undefined): string | null =>
-    pairKey(album && (searchTitle(album) || album), artist)
+  const albumKey = (album: string | undefined, artist: string | undefined): string | null => {
+    const base = album && stripEditionWords(album)
+    return pairKey(base && (searchTitle(base) || base), artist)
+  }
   const add = (set: Set<string>, k: string | null): void => { if (k) set.add(k) }
   for (const r of records) {
     add(songKeys, pairKey(r.song || r.matchedTitle, r.artist || r.matchedArtist))

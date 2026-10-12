@@ -2,7 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { parseCandidates, rankCandidates, listenListPredicate } from '../radar-core.ts'
+import { parseCandidates, rankCandidates, listenListPredicate, stripEditionWords } from '../radar-core.ts'
 import { computeTasteFingerprint, getTasteAnchors } from '../taste-model.ts'
 import { nameKey } from '../../common/fold-text.ts'
 import { recoNorm } from '../reco-match.ts'
@@ -197,6 +197,20 @@ describe('radar-core — listenListPredicate (the real Listen List key)', () => 
     assert.equal(isOnList('Кино', 'Группа крови'), false)         // another song
   })
 
+  it('matches albums without their edition words in other languages too', () => {
+    const isOnList = listenListPredicate([
+      rec({ album: 'Этажи (Делюкс)', artist: 'Молчат Дома', kind: 'album' }),
+      rec({ album: 'Acabou Chorare', artist: 'Novos Baianos', kind: 'album' }),
+      rec({ album: 'POP VIRUS【初回限定盤】', artist: '星野源', kind: 'album' }),
+      rec({ album: 'אלבום (מהדורת דלוקס)', artist: 'הדג נחש', kind: 'album' }),
+    ])
+    assert.equal(isOnList('Молчат Дома', 'Этажи'), true)
+    assert.equal(isOnList('Novos Baianos', 'Acabou Chorare (Edição Comemorativa)'), true)
+    assert.equal(isOnList('星野源', 'POP VIRUS (デラックス・エディション)'), true)
+    assert.equal(isOnList('הדג נחש', 'אלבום'), true)
+    assert.equal(isOnList('Novos Baianos', 'Acabou Chorare (Ao Vivo)'), false)   // a live album stays
+  })
+
   it('folds accents instead of dropping the letter', () => {
     const isOnList = listenListPredicate([rec({ artist: 'Sigur Rós', album: 'Ágætis byrjun', kind: 'album' })])
     assert.equal(isOnList('Sigur Ros', 'Agaetis Byrjun'), true)
@@ -230,6 +244,30 @@ describe('radar-core — listenListPredicate (the real Listen List key)', () => 
     assert.match(index, /isOnList = listenListPredicate\(await readRecommendationsFile\(\)\)/)
     assert.match(index, /rankCandidates\(fp, parseCandidates\(text\), 24, isOnList, anchors\)/)
     assert.doesNotMatch(index, /recoIdentityKey\(/)
+  })
+})
+
+describe('radar-core — stripEditionWords (any language, radar only)', () => {
+  it('drops edition groups in brackets or after " - "', () => {
+    const cases: Array<[string, string]> = [
+      ['Этажи - Делюкс-издание', 'Этажи'],
+      ['Группа крови (Юбилейное издание)', 'Группа крови'],
+      ['Romance (Edición 25º Aniversario)', 'Romance'],
+      ['Mi Plan (Versión Remasterizada)', 'Mi Plan'],
+      ['Histoire de Melody Nelson (Édition Deluxe)', 'Histoire de Melody Nelson'],
+      ['La voce del padrone (Edizione Rimasterizzata)', 'La voce del padrone'],
+      ['Mensch (Jubiläumsausgabe)', 'Mensch'],
+      ['אלבום (מהדורה מורחבת)', 'אלבום'],
+      ['Album (豪华版)', 'Album'],
+      ["Album (Collector's Edition) [Remastered]", 'Album'],
+    ]
+    for (const [title, want] of cases) assert.equal(stripEditionWords(title), want, title)
+  })
+  it('keeps groups that name another recording, and filler words alone', () => {
+    for (const title of [
+      'Acabou Chorare (Ao Vivo)', 'Mi Plan (En Vivo)', 'אלבום (הופעה חיה)', 'Album (Live Edition)',
+      'Album (Special)', 'Album (Limited)', 'The Edition - Live', '(Deluxe)',
+    ]) assert.equal(stripEditionWords(title), title, title)
   })
 })
 
