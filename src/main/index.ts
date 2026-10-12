@@ -2246,7 +2246,6 @@ ipc.handle('get-artist-image', async (_event, artist: string): Promise<{ ok: boo
     return { ok: true, slug: null }
   }
 }, { refuse: { ok: false, slug: null } })
-ipc.handle('get-artist-fans', async (_event, names: string[]) => artistPhotos.fans(Array.isArray(names) ? names.map(String) : []), { refuse: {} })
 // Genre Iceberg: ListenBrainz listener counts (seeded at install) rank a genre's artists, best-known first.
 ipc.handle('artist-listeners', async () => { try { return JSON.parse(await readFile(join(app.getPath('userData'), 'artist-listeners.json'), 'utf8')) as Record<string, number> } catch { return {} } }, { refuse: {} })
 

@@ -79,7 +79,7 @@ describe('the photo cache', () => {
       assert.ok(!existsSync(join(dir, '2pac.miss')), 'no miss written over a real photo')
     } finally { rmSync(root, { recursive: true, force: true }) }
   })
-  it('a confirmed artist is downloaded once and its fan count kept for the Depth sort', async () => {
+  it('a confirmed artist is downloaded once', async () => {
     const { root, dir, factsFile } = setup()
     try {
       const log: string[] = []
@@ -93,7 +93,6 @@ describe('the photo cache', () => {
       const calls = log.length
       assert.equal(await photos.get('Geese'), 'geese')
       assert.equal(log.length, calls, 'second ask is the disk cache')
-      assert.deepEqual(await photos.fans(['Geese', 'Unknown Band']), { Geese: 41000 })
     } finally { rmSync(root, { recursive: true, force: true }) }
   })
   it('seeded facts (confirmed earlier) skip the lookup', async () => {

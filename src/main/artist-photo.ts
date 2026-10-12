@@ -6,7 +6,7 @@
  *
  * Now: Deezer, and only the Deezer artist one of Jake's albums or songs proves
  * is HIS (the MESH lesson: a name is not an identity). The confirmed artist's
- * fan count is kept too — the Artists page's Depth sort reads it. A photo already on disk is never hidden by a failed refresh.
+ * fan count is kept in artist-deezer.json alongside the photo. A photo already on disk is never hidden by a failed refresh.
  *
  * Electron-free; fetch, clock and file locations are injected for tests.
  */
@@ -94,7 +94,6 @@ export interface PhotoDeps {
 
 export function createArtistPhotos(deps: PhotoDeps): {
   get(artist: string): Promise<string | null>
-  fans(names: string[]): Promise<Record<string, number>>
 } {
   const now = deps.now ?? Date.now
   const inFlight = new Map<string, Promise<string | null>>()
@@ -156,12 +155,5 @@ export function createArtistPhotos(deps: PhotoDeps): {
 
   return {
     get,
-    /** Confirmed Deezer fan counts for these artists (unknown ones left out). */
-    fans: async (names) => {
-      const all = await loadFacts()
-      const out: Record<string, number> = {}
-      for (const n of names) { const f = all[n]; if (f && !f.none && typeof f.fans === 'number') out[n] = f.fans }
-      return out
-    },
   }
 }

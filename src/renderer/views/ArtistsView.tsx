@@ -37,7 +37,10 @@ import '../styles/artists-grid.css'
 
 const AZ_LETTERS = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ']
 const FAMILY = new Map(GENRES.map((g) => [g.name, g.area]))
-const LAYERS: Array<[string, number]> = [['The Tip', 500_000], ['Just Below', 100_000], ['Below', 10_000], ['Deep Water', 1_000], ['The Abyss', 0]]
+// Depth = ListenBrainz listeners (music fans), not Deezer fans — Deezer put
+// Hayley Williams (510K) in the Tip with The Beatles and Television (20K)
+// down in Below (Jake: "how does hayley williams end up with the beatles????").
+const LAYERS: Array<[string, number]> = [['The Tip', 150_000], ['Just Below', 50_000], ['Below', 10_000], ['Deep Water', 1_000], ['The Abyss', 0]]
 type SortId = 'az' | 'played' | 'added' | 'genre' | 'country' | 'depth'
 const SORTS: Array<[SortId, string]> = [['az', 'A–Z'], ['played', 'Most played'], ['added', 'Recently added'], ['genre', 'Genre'], ['country', 'Country'], ['depth', 'Depth']]
 /** The sort survives leaving the view (MainContent unmounts it). */
@@ -66,7 +69,7 @@ export default function ArtistsView(): JSX.Element {
   const [sort, setSortState] = useState<SortId>(lastSort)
   const setSort = (s: SortId): void => { lastSort = s; setSortState(s) }
   const [photos, setPhotos] = useState<Map<string, string | null>>(() => new Map(sessionArtistImages))
-  const [fans, setFans] = useState<Record<string, number>>({})
+  const [fans, setFans] = useState<Record<string, number>>({})   // ListenBrainz listeners, for Depth
   const [heavy, setHeavy] = useState<Array<{ artist: string; plays: number }>>([])
   const [groupingOpen, setGroupingOpen] = useState(false)
   const [listFilter, setListFilter] = useState('')
@@ -122,15 +125,13 @@ export default function ArtistsView(): JSX.Element {
     window.electronAPI.getListeningMemory?.().then((m) => { const top = m.ok ? m.insights?.topArtists30d : undefined; if (live && top) setHeavy(top) }).catch(() => {})
     return () => { live = false }
   }, [])
-  // Depth needs the confirmed Deezer fan counts main has kept.
+  // Depth reads the ListenBrainz listener counts (artist-listeners.json).
   useEffect(() => {
     if (sort !== 'depth') return
     let live = true
-    window.electronAPI.getArtistFans?.(artists.map((a) => a.name)).then((f) => { if (live) setFans(f) }).catch(() => {})
+    window.electronAPI.artistListeners?.().then((f) => { if (live) setFans(f) }).catch(() => {})
     return () => { live = false }
-    // Re-read as photo lookups confirm more artists — every 25, not every one.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sort, artists, Math.floor(photos.size / 25)])
+  }, [sort])
 
   const byKey = useMemo(() => new Map(artists.map((a) => [artistIdentityKey(a.name), a])), [artists])
   const shelves = useMemo(() => {
@@ -164,7 +165,7 @@ export default function ArtistsView(): JSX.Element {
       const layer = (a: ArtistCard): string => { const f = fans[a.name]; return f === undefined ? 'Not placed yet' : LAYERS.find(([, min]) => f >= min)![0] }
       const order = (k: string): number => (k === 'Not placed yet' ? 99 : LAYERS.findIndex(([n]) => n === k))
       return [...group(layer).entries()].sort((x, y) => order(x[0]) - order(y[0]))
-        .map(([k, v]) => ({ title: k, sub: k === 'Not placed yet' ? 'no confirmed Deezer match yet' : 'by Deezer fans', items: v.sort((a, b) => (fans[b.name] ?? 0) - (fans[a.name] ?? 0)), chip: (a) => (fans[a.name] !== undefined ? `${fans[a.name].toLocaleString()} fans` : '') }))
+        .map(([k, v]) => ({ title: k, sub: k === 'Not placed yet' ? 'no listener count yet' : 'by ListenBrainz listeners', items: v.sort((a, b) => (fans[b.name] ?? 0) - (fans[a.name] ?? 0)), chip: (a) => (fans[a.name] !== undefined ? `${fans[a.name].toLocaleString()} listeners` : '') }))
     }
     const m = group((a) => artistSectionLetter(a.name))
     return AZ_LETTERS.filter((L) => m.has(L)).map((L) => ({ id: L, title: L, items: m.get(L)! }))
