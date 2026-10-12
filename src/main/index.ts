@@ -2243,6 +2243,9 @@ ipc.handle('get-artist-image', async (_event, artist: string): Promise<{ ok: boo
   }
 }, { refuse: { ok: false, slug: null } })
 ipc.handle('get-artist-fans', async (_event, names: string[]) => artistPhotos.fans(Array.isArray(names) ? names.map(String) : []), { refuse: {} })
+// Genre icebergs: identities (depth) and related artists (the scene), in budgeted batches.
+ipc.handle('iceberg:facts', async (_event, names: string[]) => artistPhotos.facts(Array.isArray(names) ? names.map(String) : [], 25), { refuse: { facts: {}, pending: 0 } })
+ipc.handle('iceberg:related', async (_event, ids: number[]) => artistPhotos.related(Array.isArray(ids) ? ids.map(Number).filter(Number.isFinite) : [], 40), { refuse: { related: {}, pending: 0 } })
 
 // 4.5: Wikipedia summary for the artist detail page. Hits the public
 // REST summary endpoint (en.wikipedia.org/api/rest_v1/page/summary/<title>),
@@ -6393,6 +6396,7 @@ let deezerGate = Promise.resolve()
 const artistPhotos = createArtistPhotos({
   dir: getArtistImageDir(),
   factsFile: join(app.getPath('userData'), 'artist-deezer.json'),
+  relatedFile: join(app.getPath('userData'), 'artist-related.json'),
   owned: async (artist) => {
     const k = photoNameKey(artist), albums = new Set<string>(), titles = new Set<string>()
     for (const t of (((await libraryCache.get()) as { tracks?: TrackLike[] }).tracks ?? []) as Array<{ artist?: string; albumArtist?: string; album?: string; title?: string; contributingArtists?: string[] }>) {
