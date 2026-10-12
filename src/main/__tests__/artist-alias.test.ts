@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { canonicalArtist, isSameArtist, setUserAliases } from '../../renderer/utils/artistAlias.ts'
+import { canonicalArtist, isSameArtist, setUserAliases, artistIdentityKey, featLead } from '../../renderer/utils/artistAlias.ts'
 
 describe('artist-alias — curated baseline', () => {
   beforeEach(() => setUserAliases({}))
@@ -41,5 +41,25 @@ describe('artist-alias — user/AI override map', () => {
     setUserAliases({ 'the fireman': 'Paul McCartney' })
     assert.equal(canonicalArtist('The Fireman'), 'Paul McCartney')
     assert.equal(canonicalArtist('FIREMAN'), 'Paul McCartney') // "the" stripped + lowercased
+  })
+})
+
+describe('artist-alias — "feat." credits fold into the lead artist (Jake, 10/11)', () => {
+  beforeEach(() => setUserAliases({}))
+  it('folds feat. / ft. / featuring, with or without brackets', () => {
+    assert.equal(canonicalArtist('Baby Rose feat. Elmiene'), 'Baby Rose')
+    assert.equal(canonicalArtist('Baby Rose (feat. Leon Thomas)'), 'Baby Rose')
+    assert.equal(canonicalArtist('David Guetta featuring Kid Cudi'), 'David Guetta')
+    assert.equal(canonicalArtist('Lil Baby ft. Gunna'), 'Lil Baby')
+    assert.equal(canonicalArtist('Earth, Wind & Fire featuring The Emotions'), 'Earth, Wind & Fire')
+    assert.equal(artistIdentityKey('Baby Rose feat. Elmiene'), artistIdentityKey('Baby Rose'), 'one card, one artist page')
+  })
+  it('never splits real names or duos', () => {
+    for (const n of ['Little Feat', 'Daft Punk', 'Simon & Garfunkel', 'Ivan Gough & Feenixpawl', 'Leftfield', 'Feat']) assert.equal(canonicalArtist(n), n)
+    assert.equal(featLead('feat. Nobody'), 'feat. Nobody', 'no lead, no fold')
+  })
+  it('the lead still goes through the alias map', () => {
+    setUserAliases({ 'tyler the creator': 'Tyler, The Creator' })
+    assert.equal(canonicalArtist('Tyler the Creator feat. Frank Ocean'), 'Tyler, The Creator')
   })
 })
