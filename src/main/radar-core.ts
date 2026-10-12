@@ -8,6 +8,8 @@
  */
 import { scoreCandidateForRadar, norm } from './taste-model.ts'
 import type { TasteFingerprint, TasteAnchor } from './taste-model.ts'
+import { recoIdentityPairKey } from './reco-match.ts'
+import type { RecoIdentityInput } from './reco-match.ts'
 
 export interface RawCandidate { artist?: string; title?: string; genre?: string; year?: string | number; why?: string; anchor?: string }
 export interface RankedCandidate {
@@ -35,6 +37,27 @@ export function parseCandidates(text: string): RawCandidate[] {
     return Array.isArray(arr) ? (arr as RawCandidate[]) : []
   } catch {
     return []
+  }
+}
+
+/**
+ * The `isOnList` predicate for rankCandidates, built from the Listen List
+ * rows: same song|artist identity the list itself keys by (raw fields first,
+ * iTunes-matched as fallback). ⚠️ The key is SONG first — the radar hands us
+ * (artist, title), so it must be flipped. index.ts passed (artist, title)
+ * straight into a (song, artist) key and the guard never matched (2026-10-11).
+ */
+export function listenListPredicate(
+  records: Array<Pick<RecoIdentityInput, 'song' | 'artist' | 'matchedTitle' | 'matchedArtist'>>,
+): (artist: string, title: string) => boolean {
+  const listKeys = new Set<string>()
+  for (const r of records) {
+    const k = recoIdentityPairKey(r.song || r.matchedTitle, r.artist || r.matchedArtist)
+    if (k) listKeys.add(k)
+  }
+  return (artist, title) => {
+    const k = recoIdentityPairKey(title, artist)
+    return k != null && listKeys.has(k)
   }
 }
 

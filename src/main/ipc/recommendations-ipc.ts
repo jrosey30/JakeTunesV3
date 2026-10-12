@@ -198,20 +198,6 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
     })
   }
 
-  // Cross-surface "same song" identity — song+artist only (NOT note), so a radar
-  // pick and a hand-jot of the same track collapse to one. Null when we lack both
-  // fields (e.g. a note-only or album-only jot), in which case callers fall back
-  // to the stricter recoMatchKey. Shares recoNorm with iTunes verify + the UI.
-  function recoIdentityKey(song?: string, artist?: string): string | null {
-    const s = recoNorm(song || '')
-    const a = recoNorm(artist || '')
-    return s && a ? `${s}|${a}` : null
-  }
-
-  function recoRecordIdentityKey(r: RecommendationRecord): string | null {
-    return recoIdentityKey(r.song || r.matchedTitle, r.artist || r.matchedArtist)
-  }
-
   type RecoItunesRow = { song: string; artist: string; album?: string; artworkUrl?: string; previewUrl?: string; appleMusicUrl?: string }
 
   /** In-session iTunes Search cache — Listen-to-the-List verify hits the same queries repeatedly. */
@@ -1209,7 +1195,5 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
     addRecommendationCore,
     runRecoResetV2IfNeeded,
     fetchCaaArtwork,
-    recoRecordIdentityKey,
-    recoIdentityKey,
   }
 }
