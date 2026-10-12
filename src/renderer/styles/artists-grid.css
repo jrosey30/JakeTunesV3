@@ -33,3 +33,6 @@
 .ag-meta { font-size: 11px; line-height: 1.3; color: #8a857c; }
 .ag-chip { margin-top: 1px; font-size: 10.5px; font-weight: 700; color: var(--brand-orange, #FC5501); font-variant-numeric: tabular-nums; }
 @media (prefers-reduced-motion: reduce) { .ag-play, .ag-ph { transition: none; } }
+/* The hint names all three things the filter matches — give it room so it
+   never clips ("Filter by artist, genre or cc", 10/11). */
+.ag-tools .list-filter { width: 300px; max-width: 46vw; }
