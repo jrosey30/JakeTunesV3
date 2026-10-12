@@ -1,5 +1,5 @@
 /** Pure iTunes reco matching — shared by suggest-verify and unit tests. */
-import { foldAccents, storedNameKey } from '../common/fold-text.ts'
+import { nameKey, storedNameKey } from '../common/fold-text.ts'
 
 /**
  * ⚠️ IDENTITY, NOT MATCHING. recoNorm feeds recoMatchKey, and those keys are
@@ -22,19 +22,29 @@ export function recoNorm(s: string): string {
  * every other one. Live state on 2026-10-11: 0 rows, 0 tombstones with
  * other-script letters, so nothing stored changes.
  * ⚠️ TWIN: ~/JakeTunesMobile/backend/src/util/reco-identity.ts idNorm.
+ * Also the friend-credit keys (friend-imports-core, friend-standings-core),
+ * which are stored the same way.
  */
 export function recoIdNorm(s: string): string {
   return storedNameKey(s, recoNorm)
 }
 
 /**
- * The same shape, but accent-folded — for COMPARING two names, never for
- * storing one. iTunes writes JAŸ-Z and Qobuz writes Jay-Z; recoNorm turns
- * those into "jaz" and "jayz" and they never meet.
- * See src/common/fold-text.ts for why NFD alone is not enough.
+ * The same shape, but accent-folded and in any script — for COMPARING two
+ * names, never for storing one. iTunes writes JAŸ-Z and Qobuz writes Jay-Z;
+ * recoNorm turns those into "jaz" and "jayz" and they never meet.
+ *
+ * Any script (2026-10-11): this was foldAccents + [a-z0-9], which erased
+ * every Hebrew and Cyrillic name to '', and every matcher below returns
+ * false on ''. So a Hebrew or Cyrillic artist never verified anywhere: Get
+ * refused it on "artist", the Record Shop never saw it as owned, discovery
+ * dropped its cards, and Music Man never confirmed a pick. It is fold-text
+ * nameKey squashed. On Jake's library, 2 of 14,583 Latin-only names fold
+ * differently, both better (ª → a, ᴹᴰ → md).
+ * See src/common/fold-text.ts.
  */
 export function recoFold(s: string): string {
-  return foldAccents(s).replace(/[^a-z0-9]/g, '')
+  return nameKey(s, '')
 }
 
 // ── Recommendation identity (sync protocol v2, Brief 126) ──────────────────
@@ -174,7 +184,7 @@ export function recoTitleMatches(want: string, got: string): boolean {
   return false
 }
 
-// ⚠️ TWIN: src/renderer/listen-to-the-list/store.ts artistLooselyMatches —
+// ⚠️ TWIN: src/renderer/listen-to-the-list/store.ts artistLooselyMatches (same fold: nameKey squashed) —
 // renderer-side copy of this rule (no cross-bundle import); keep in sync.
 export function recoArtistMatches(want: string, got: string): boolean {
   const w = recoFold(want)
@@ -194,7 +204,7 @@ export function distinctArtistsForRecoTitle(
   const out: string[] = []
   for (const r of rows) {
     if (!recoTitleMatches(wantTitle, r.song)) continue
-    const key = recoNorm(r.artist)
+    const key = recoFold(r.artist)   // compared, never stored: a Hebrew artist counts (was '', skipped, so a title looked unambiguous)
     if (!key || seen.has(key)) continue
     seen.add(key)
     out.push(r.artist)

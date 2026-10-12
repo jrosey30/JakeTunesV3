@@ -15,7 +15,8 @@
 process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '64'
 
 
-import { getVenueShows, type VenueShow } from './venues.js'
+import { getVenueShows, markKnownShows, type VenueShow } from './venues.js'
+import { librarySpellings } from './artist-spellings-store.ts'
 import { parseHubAdoptAck, startHubCatalogPoll } from './hub-catalog'
 import { ensureCompanionTokenFromEnvFile, withCompanionInit } from './hub-companion.ts'
 // The four persona system prompts — 268 lines of prose, lifted out 2026-08-10.
@@ -2214,14 +2215,8 @@ ipc.handle('get-venue-shows', async (): Promise<{ ok: boolean; shows: VenueShow[
     const shows = await getVenueShows()
     const raw = await readFile(LIBRARY_PATH, 'utf-8').catch(() => null)
     const lib = raw ? JSON.parse(raw) as { tracks?: Array<{ artist?: string; albumArtist?: string }> } : { tracks: [] }
-    const norm = (s: string): string => foldAccents(s).replace(/[^a-z0-9]/g, '')
-    const owned = new Set<string>()
-    for (const t of lib.tracks || []) {
-      const a = norm(t.albumArtist || t.artist || '')
-      if (a) owned.add(a)
-    }
-    const marked = shows.map((s) => ({ ...s, known: owned.has(norm(s.artist)) }))
-    return { ok: true, shows: marked.slice(0, 120) }
+    const spellings = await librarySpellings(lib.tracks || [], { throttle: mbThrottle, userAgent: `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)` })
+    return { ok: true, shows: markKnownShows(shows, lib.tracks || [], spellings).slice(0, 120) }
   } catch (err) {
     console.warn('[get-venue-shows] failed:', err)
     return { ok: true, shows: [] }

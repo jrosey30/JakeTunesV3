@@ -1,4 +1,4 @@
-import { foldAccents } from '../common/fold-text.ts'
+import { nameKey } from '../common/fold-text.ts'
 // 4.3.0: external API integrations that enrich the WJLR show + Picks
 // without bloating index.ts. Six sources, all with TTL caching so we
 // don't hammer free-tier limits. Every function is fail-soft — a
@@ -954,7 +954,57 @@ function escapeLuceneValue(s: string): string {
 const VARIOUS_ARTISTS_MBID = '89ad4ac3-39f7-470e-963a-56509c546377'
 function normArtist(s: string): string {
   // MusicBrainz writes Sigur Rós; folding first is what makes it meet ours.
-  return foldAccents(s).replace(/[^a-z0-9]/g, '')
+  // Any script (2026-10-11): [a-z0-9] erased every Hebrew/Cyrillic name, so
+  // MB's "Молчат Дома" or "הדג נחש" credit never read as owned and their new
+  // records never showed. MB credits them in their own script (checked live).
+  return nameKey(s, '')
+}
+
+type MbReleaseGroup = {
+  id?: string
+  title?: string
+  'first-release-date'?: string
+  'primary-type'?: string
+  'secondary-types'?: string[]
+  'artist-credit'?: Array<{ name?: string; artist?: { name?: string; id?: string } }>
+}
+
+/** The release groups worth showing: studio albums/EPs, by an artist the
+ *  listener owns, with a real future date. Pure — the rules of
+ *  fetchUpcomingForBatch, moved out so they can be tested. */
+export function upcomingFromGroups(groups: MbReleaseGroup[], artists: string[], now: Date): UpcomingRelease[] {
+  const ownedSet = new Set(artists.map(normArtist).filter(Boolean))
+  const items: UpcomingRelease[] = []
+  for (const g of groups) {
+    // 1. Studio Albums/EPs only — drop Single / Broadcast / Other.
+    const ptype = (g['primary-type'] || '').toLowerCase()
+    if (ptype !== 'album' && ptype !== 'ep') continue
+    // 2. No secondary types AT ALL — this is what kills the junk:
+    //    Compilation / Live / Soundtrack / Remix / DJ-mix / Demo / Interview.
+    if ((g['secondary-types'] || []).length > 0) continue
+    // 3. Drop Various Artists outright (it leaks comps in even after #2).
+    const credit = g['artist-credit']?.[0]
+    const artist = (credit?.name || credit?.artist?.name || '').trim()
+    if (!artist || artist.toLowerCase() === 'various artists' || credit?.artist?.id === VARIOUS_ARTISTS_MBID) continue
+    // 4. The credited artist must actually be one the listener OWNS — not a
+    //    fuzzy MB match to a tribute / "& Friends" / soundtrack credit.
+    if (!ownedSet.has(normArtist(artist))) continue
+    // 5. Real, month-level future date — a bare "2026" is a placeholder.
+    const dateStr = g['first-release-date'] || ''
+    if (dateStr.length < 7) continue
+    const parsed = new Date(dateStr.length === 7 ? `${dateStr}-28` : dateStr)
+    if (isNaN(parsed.getTime()) || parsed < now) continue
+    const mbid = g.id || ''
+    if (!mbid || !g.title) continue
+    items.push({
+      title: g.title,
+      artist,
+      releaseDate: dateStr,
+      mbid,
+      coverUrl: `https://coverartarchive.org/release-group/${mbid}/front-250`,
+    })
+  }
+  return items
 }
 
 async function fetchUpcomingForBatch(artists: string[]): Promise<UpcomingRelease[]> {
@@ -972,50 +1022,8 @@ async function fetchUpcomingForBatch(artists: string[]): Promise<UpcomingRelease
       signal: AbortSignal.timeout(15_000),
     })
     if (!res.ok) return []
-    const data = await res.json() as {
-      'release-groups'?: Array<{
-        id?: string
-        title?: string
-        'first-release-date'?: string
-        'primary-type'?: string
-        'secondary-types'?: string[]
-        'artist-credit'?: Array<{ name?: string; artist?: { name?: string; id?: string } }>
-      }>
-    }
-    const groups = data['release-groups'] || []
-    const now = new Date()
-    const ownedSet = new Set(artists.map(normArtist).filter(Boolean))
-    const items: UpcomingRelease[] = []
-    for (const g of groups) {
-      // 1. Studio Albums/EPs only — drop Single / Broadcast / Other.
-      const ptype = (g['primary-type'] || '').toLowerCase()
-      if (ptype !== 'album' && ptype !== 'ep') continue
-      // 2. No secondary types AT ALL — this is what kills the junk:
-      //    Compilation / Live / Soundtrack / Remix / DJ-mix / Demo / Interview.
-      if ((g['secondary-types'] || []).length > 0) continue
-      // 3. Drop Various Artists outright (it leaks comps in even after #2).
-      const credit = g['artist-credit']?.[0]
-      const artist = (credit?.name || credit?.artist?.name || '').trim()
-      if (!artist || artist.toLowerCase() === 'various artists' || credit?.artist?.id === VARIOUS_ARTISTS_MBID) continue
-      // 4. The credited artist must actually be one the listener OWNS — not a
-      //    fuzzy MB match to a tribute / "& Friends" / soundtrack credit.
-      if (!ownedSet.has(normArtist(artist))) continue
-      // 5. Real, month-level future date — a bare "2026" is a placeholder.
-      const dateStr = g['first-release-date'] || ''
-      if (dateStr.length < 7) continue
-      const parsed = new Date(dateStr.length === 7 ? `${dateStr}-28` : dateStr)
-      if (isNaN(parsed.getTime()) || parsed < now) continue
-      const mbid = g.id || ''
-      if (!mbid || !g.title) continue
-      items.push({
-        title: g.title,
-        artist,
-        releaseDate: dateStr,
-        mbid,
-        coverUrl: `https://coverartarchive.org/release-group/${mbid}/front-250`,
-      })
-    }
-    return items
+    const data = await res.json() as { 'release-groups'?: MbReleaseGroup[] }
+    return upcomingFromGroups(data['release-groups'] || [], artists, new Date())
   } catch {
     return []
   }

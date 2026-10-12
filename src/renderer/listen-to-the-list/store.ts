@@ -4,7 +4,7 @@
  */
 
 import type { Recommendation } from '../types'
-import { foldAccents } from '../../common/fold-text'
+import { nameKey } from '../../common/fold-text.ts'
 
 export interface MmSuggestion {
   song: string
@@ -70,9 +70,9 @@ export function suggKey(s: { song: string; artist: string }): string {
 // exact keys miss multi-credit strings: a list entry saved as "Daft Punk" must
 // still match a suggestion credited "Daft Punk, Pharrell Williams & Nile Rodgers".
 function artistLooselyMatches(want: string, got: string): boolean {
-  // Fold BEFORE stripping — otherwise Sigur Rós becomes 'sigurrs' and never
-  // matches 'Sigur Ros'. See src/common/fold-text.ts.
-  const clean = (s: string) => foldAccents(s).replace(/[^a-z0-9]/g, '')
+  // = recoFold: accents folded (Sigur Rós meets Sigur Ros) and any script
+  // kept (a Hebrew artist was '' and never matched). See src/common/fold-text.ts.
+  const clean = (s: string) => nameKey(s, '')
   const w = clean(want)
   const g = clean(got)
   if (!w || !g) return false

@@ -24,7 +24,7 @@ import { startImessageCapture } from '../imessage-capture'
 import { MUSIC_MAN_CORE } from '../personas.ts'
 import {
   evaluateMusicManVerification, pickBetterReco, recoArtistMatches, recoDedupeKey,
-  recoIdNorm, recoIdentityPairKey, recoNorm, recoTitleMatches, recordIdentityKeys,
+  recoFold, recoIdNorm, recoIdentityPairKey, recoTitleMatches, recordIdentityKeys,
 } from '../reco-match'
 import { type RecoOutboxOp, parseOutbox, scrubOutboxAgainstBackend, scrubOutboxForDelete } from '../reco-outbox'
 import { computeMirror, computeNasFallback, identitiesForDelete } from '../reco-sync'
@@ -240,7 +240,7 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
   async function fetchItunesRecoRows(term: string, limit = 25): Promise<RecoItunesRow[]> {
     const q = term.trim()
     if (q.length < 2) return []
-    const cacheKey = `${recoNorm(q)}|${limit}`
+    const cacheKey = `${recoFold(q)}|${limit}`   // any script: recoNorm keyed every Hebrew query '|25', one shared result set
     const cached = recoItunesSearchCache.get(cacheKey)
     if (cached) return cached
     const inflight = recoItunesInflight.get(cacheKey)
@@ -300,7 +300,7 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
    *  cover URL or null; null is cached too (don't re-ask MB every remount). */
   const caaArtCache = new Map<string, string | null>()
   async function fetchCaaArtwork(artist: string, title: string): Promise<string | null> {
-    const cacheKey = `${recoNorm(artist)}|${recoNorm(title)}`
+    const cacheKey = `${recoFold(artist)}|${recoFold(title)}`   // any script: '|' served one Hebrew cover for all
     const cached = caaArtCache.get(cacheKey)
     if (cached !== undefined) return cached
     const headers = { 'User-Agent': 'JakeTunes/4.5 ( jakerosenbaum30@gmail.com )' }
@@ -439,8 +439,11 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
     try {
       const raw = await fetchItunesRecoRows(q, 25)
       if (raw.length === 0) return {}
-      const wantSong = recoNorm(input.song || '')
-      const wantArtist = recoNorm(input.artist || '')
+      // Compared, never stored: recoFold, so a Hebrew jot earns the same
+      // exact-song / exact-artist boosts a Latin one does. Under recoNorm both
+      // were '' and the most frequent row (a cover) would win and rename the jot.
+      const wantSong = recoFold(input.song || '')
+      const wantArtist = recoFold(input.artist || '')
       const artistFreq = new Map<string, number>()
       for (const s of raw) {
         const k = s.artist.toLowerCase()
@@ -449,8 +452,8 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
       const scoreOf = (s: RecoItunesRow): number => {
         if (input.song && !recoTitleMatches(input.song, s.song)) return -1000
         if (opts?.requireArtist && input.artist && !recoArtistMatches(input.artist, s.artist)) return -1000
-        const songN = recoNorm(s.song)
-        const artistN = recoNorm(s.artist)
+        const songN = recoFold(s.song)
+        const artistN = recoFold(s.artist)
         let score = (artistFreq.get(s.artist.toLowerCase()) || 1) * 2
         if (wantSong && songN === wantSong) score += 50
         else if (wantSong && recoTitleMatches(input.song || '', s.song)) score += 35
