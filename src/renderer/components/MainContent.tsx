@@ -9,7 +9,7 @@ import ConcertsView from '../views/ConcertsView'
 import ConcertDetailView from '../views/ConcertDetailView'
 import MixtapeView from '../views/MixtapeView'
 import MixDetailView from '../views/MixDetailView'
-import GenresView from '../views/GenresView'
+import GenresPage from '../views/GenresPage'
 import DiscoveryView from '../views/DiscoveryView'
 import DJView from '../views/DJView'
 import MusicManView from '../views/MusicManView'
@@ -67,7 +67,7 @@ export default function MainContent() {
     case 'mixtape-detail': viewElement = <MixtapeView />; break
     case 'activity-pool': viewElement = <ActivityPoolView />; break
     case 'mix-detail': viewElement = <MixDetailView />; break
-    case 'genres': viewElement = <GenresView />; break
+    case 'genres': viewElement = <GenresPage />; break   // Browse (GenresView, untouched) | Icebergs
     case 'discovery': viewElement = <DiscoveryView />; break
     case 'dj': viewElement = <DJView />; break
     // Back-compat: the old standalone view names still resolve, landing on

@@ -1,0 +1,80 @@
+/* Genres page: Browse | Icebergs (2026-10-11). */
+.genres-page { display: flex; flex-direction: column; height: 100%; }
+.genres-page__toggle { display: flex; gap: 4px; padding: 8px 16px 0; border-bottom: 1px solid #e0ddd6; background: #fff; flex-shrink: 0; }
+.genres-page__tab { appearance: none; border: 0; background: none; padding: 6px 12px 8px; margin-bottom: -1px; font: inherit; font-size: 12.5px; font-weight: 600; color: #8a8780; border-bottom: 2px solid transparent; cursor: pointer; }
+.genres-page__tab:hover { color: #5a554d; }
+.genres-page__tab--on { color: #1c1c1e; border-bottom-color: var(--brand-orange, #FC5501); }
+.genres-page__body { flex: 1; min-height: 0; }
+
+/* The iceberg: sky above, ice in five bands, water darkening with depth. */
+.gi { height: 100%; overflow-y: auto; background: #eef4f7; color: #10222e; padding: 16px 20px 40px; }
+.gi-muted { color: #5b6b75; font-size: 12px; }
+.gi-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 12px; }
+.gi-chip { appearance: none; border: 1px solid #d5e1e7; background: #fff; color: #10222e; border-radius: 16px; padding: 5px 12px; font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.gi-chip span { margin-left: 5px; color: #5b6b75; font-weight: 500; font-variant-numeric: tabular-nums; }
+.gi-chip--on { background: #10222e; border-color: #10222e; color: #fff; }
+.gi-chip--on span { color: #a9bcc8; }
+.gi-crumb { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 4px 0 8px; }
+.gi-crumb h2 { margin: 0; font-size: 21px; font-weight: 800; letter-spacing: -0.3px; }
+.gi-crumb button { appearance: none; border: 0; background: none; padding: 0; font: inherit; font-size: 21px; font-weight: 800; color: #4f8db2; cursor: pointer; }
+.gi-zoom { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 12px; }
+.gi-zoom > span { font-size: 10.5px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: #5b6b75; margin-right: 4px; }
+.gi-zchip { appearance: none; border: 1px solid #d5e1e7; background: #fff; color: #10222e; border-radius: 13px; padding: 3px 10px; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.gi-zchip span { margin-left: 3px; color: #5b6b75; font-weight: 500; }
+.gi-zchip--on { background: #4f8db2; border-color: #4f8db2; color: #fff; }
+.gi-zchip--on span { color: #dbeaf3; }
+.gi-compare { display: grid; gap: 5px; max-width: 640px; margin-bottom: 14px; }
+.gi-cmp { appearance: none; border: 0; background: none; padding: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; display: grid; grid-template-columns: 130px 1fr 130px; gap: 10px; align-items: center; font-size: 12px; }
+.gi-cmp b { font-weight: 600; }
+.gi-cmp--total b { font-weight: 800; }
+.gi-cmp--on b { text-decoration: underline; text-underline-offset: 3px; }
+.gi-bar { display: flex; height: 9px; border-radius: 5px; overflow: hidden; background: #dfe9ee; }
+.gi-bar i { display: block; height: 100%; }
+.gi-pct { color: #5b6b75; font-variant-numeric: tabular-nums; }
+.gi-toggle { display: flex; gap: 8px; align-items: center; font-size: 12.5px; margin-bottom: 12px; cursor: pointer; }
+
+.gi-grid { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 18px; align-items: start; }
+@media (max-width: 900px) { .gi-grid { grid-template-columns: 1fr; } }
+.gi-berg { border-radius: 12px; overflow: hidden; background: #0b2a40; box-shadow: 0 8px 28px rgba(16, 34, 46, 0.12); }
+.gi-band { position: relative; }
+.gi-ice { position: relative; padding: 20px 0 24px; }
+.gi-b0 .gi-ice { padding-top: 70px; }
+.gi-b4 .gi-ice { padding-bottom: 46px; }
+.gi-ice::before { content: ""; position: absolute; inset: 0; background: var(--ice); clip-path: var(--shape); }
+.gi-b0 { background: linear-gradient(180deg, #d3e3ec, #e2edf2); color: #10222e; --ice: linear-gradient(180deg, #fff 30%, #e6f1f7); }
+.gi-b1 { background: #7fb2cf; color: #10222e; --ice: #c4dcea; }
+.gi-b2 { background: #4f8db2; color: #10222e; --ice: #96bfd6; }
+.gi-b3 { background: #2d6890; color: #fff; --ice: #6a99b8; }
+.gi-b4 { background: #174767; color: #fff; --ice: #4b7c9d; }
+.gi-wl { position: absolute; left: 0; right: 0; top: -6px; height: 12px; z-index: 2; pointer-events: none; }
+.gi-wl svg { width: 100%; height: 12px; display: block; }
+.gi-wl span { position: absolute; right: 12px; top: 12px; font-size: 9.5px; letter-spacing: 1.2px; text-transform: uppercase; font-weight: 700; color: #0f3550; }
+.gi-label { position: relative; text-align: center; font-size: 10px; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase; margin-bottom: 8px; }
+.gi-label em { font-style: normal; font-weight: 500; letter-spacing: 0.4px; text-transform: none; opacity: 0.8; }
+.gi-names { position: relative; display: flex; flex-wrap: wrap; justify-content: center; gap: 3px 11px; margin: 0 auto; }
+.gi-nm { appearance: none; border: 0; background: none; padding: 1px 2px; font: inherit; font-weight: 650; color: inherit; cursor: pointer; border-radius: 4px; line-height: 1.25; }
+.gi-nm:hover, .gi-nm:focus-visible { background: rgba(255, 255, 255, 0.28); outline: none; }
+.gi-nm--find { font-weight: 500; font-style: italic; border: 1px dashed currentColor; padding: 0 6px; border-radius: 10px; opacity: 0.85; }
+.gi-nm--sel { box-shadow: 0 0 0 2px var(--brand-orange, #FC5501); }
+.gi-nm--plain { font-size: 13px; padding: 0; text-align: left; }
+.gi-more { appearance: none; border: 0; background: rgba(255, 255, 255, 0.2); color: inherit; font: inherit; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 10px; cursor: pointer; }
+.gi-seabed { padding: 10px 16px 14px; color: #8fb1c6; font-size: 11px; text-align: center; }
+
+.gi-panel { display: grid; gap: 11px; }
+.gi-card { background: #fff; border: 1px solid #d5e1e7; border-radius: 10px; padding: 13px 15px; font-size: 13px; }
+.gi-card h3 { margin: 0 0 7px; font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase; color: #5b6b75; }
+.gi-card p { margin: 6px 0 0; }
+.gi-big { font-size: 32px; font-weight: 800; letter-spacing: -1px; line-height: 1; font-variant-numeric: tabular-nums; }
+.gi-sel { font-size: 17px; font-weight: 800; }
+.gi-tag { display: inline-block; margin-top: 4px; font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 9px; background: #e8f0f4; color: #24414f; }
+.gi-tag--find { background: #fff1e9; color: #a03a07; }
+.gi-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.gi-tags span { font-size: 11px; padding: 1px 8px; border-radius: 9px; background: #eef4f7; border: 1px solid #d5e1e7; }
+.gi-tags span.gi-here { background: #4f8db2; border-color: #4f8db2; color: #fff; }
+.gi-open { margin-top: 10px; appearance: none; border: 1px solid #d5e1e7; background: #fff; color: #10222e; font: inherit; font-size: 12px; font-weight: 600; padding: 5px 11px; border-radius: 7px; cursor: pointer; }
+.gi-open:hover { border-color: #4f8db2; }
+.gi-row { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; border-top: 1px solid #edf2f5; }
+.gi-row:first-of-type { border-top: 0; }
+.gi-row small { color: #5b6b75; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.gi-note { margin: 0; font-size: 11.5px; color: #5b6b75; }
+.gi button:focus-visible { outline: 2px solid var(--brand-orange, #FC5501); outline-offset: 2px; }

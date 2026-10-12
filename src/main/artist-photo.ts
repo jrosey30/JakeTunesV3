@@ -87,6 +87,7 @@ export interface ArtistFacts { dz?: number; fans?: number; pic?: string; none?: 
 export interface PhotoDeps {
   dir: string                     // userData/artist-images
   factsFile: string               // userData/artist-deezer.json — keyed by artist name
+  relatedFile?: string            // userData/artist-related.json — keyed by Deezer id (genre icebergs)
   owned(artist: string): Promise<{ albums: string[]; titles: string[] }>
   fetchJson(url: string): Promise<unknown>        // undefined on any failure
   download(url: string): Promise<Buffer | null>
@@ -96,6 +97,8 @@ export interface PhotoDeps {
 export function createArtistPhotos(deps: PhotoDeps): {
   get(artist: string): Promise<string | null>
   fans(names: string[]): Promise<Record<string, number>>
+  facts(names: string[], budget: number): Promise<{ facts: Record<string, { dz: number; fans: number }>; pending: number }>
+  related(ids: number[], budget: number): Promise<{ related: Record<number, Array<[string, number]>>; pending: number }>
 } {
   const now = deps.now ?? Date.now
   const inFlight = new Map<string, Promise<string | null>>()
@@ -115,6 +118,30 @@ export function createArtistPhotos(deps: PhotoDeps): {
   const fresh = async (p: string, ttl: number): Promise<boolean> => { try { return now() - (await stat(p)).mtimeMs < ttl } catch { return false } }
   const exists = async (p: string): Promise<boolean> => { try { await stat(p); return true } catch { return false } }
 
+  /** Confirmed identity for one artist, looked up (and remembered) when unknown or old. */
+  const factFor = async (artist: string): Promise<ArtistFacts | undefined> => {
+    const all = await loadFacts()
+    const f = all[artist]
+    if (f && now() - f.at <= PHOTO_MAX_AGE_MS) return f
+    const found = await findDeezerArtist(artist, await deps.owned(artist), deps.fetchJson)
+    if (found === undefined) return f
+    all[artist] = found ? { dz: found.id, fans: found.fans, pic: found.pic, at: now() } : { none: true, at: now() }
+    void saveFacts()
+    return all[artist]
+  }
+
+  let relatedCache: Record<string, { at: number; list: Array<[string, number]> }> | null = null
+  let writingRelated = Promise.resolve()
+  const loadRelated = async (): Promise<NonNullable<typeof relatedCache>> => {
+    if (!relatedCache) { try { relatedCache = deps.relatedFile ? JSON.parse(await readFile(deps.relatedFile, 'utf8')) : {} } catch { relatedCache = {} } }
+    return relatedCache!
+  }
+  const saveRelated = (): void => {
+    if (!deps.relatedFile) return
+    const file = deps.relatedFile
+    writingRelated = writingRelated.then(async () => { const tmp = `${file}.tmp`; await writeFile(tmp, JSON.stringify(relatedCache)); await rename(tmp, file) }).catch(() => { /* convenience cache */ })
+  }
+
   const get = (artist: string): Promise<string | null> => {
     const slug = artistSlug(artist)
     if (slug === 'unknown') return Promise.resolve(null)
@@ -126,15 +153,8 @@ export function createArtistPhotos(deps: PhotoDeps): {
       const have = await exists(jpg)
       if (have && await fresh(jpg, PHOTO_MAX_AGE_MS)) return slug
       if (await fresh(miss, MISS_TTL_MS)) return have ? slug : null
-      const all = await loadFacts()
-      let f = all[artist]
-      if (!f || now() - f.at > PHOTO_MAX_AGE_MS) {
-        const found = await findDeezerArtist(artist, await deps.owned(artist), deps.fetchJson)
-        if (found === undefined) return have ? slug : null          // Deezer unreachable: keep what we have
-        f = found ? { dz: found.id, fans: found.fans, pic: found.pic, at: now() } : { none: true, at: now() }
-        all[artist] = f
-        void saveFacts()
-      }
+      const f = await factFor(artist)
+      if (!f) return have ? slug : null                              // Deezer unreachable: keep what we have
       if (!f.pic) {
         if (have) return slug                                        // never hide a photo we already have
         await writeFile(miss, '').catch(() => {})
@@ -152,6 +172,44 @@ export function createArtistPhotos(deps: PhotoDeps): {
 
   return {
     get,
+    /** Genre icebergs: confirmed identities for these artists, looking up at most
+     *  `budget` unknown ones per call; `pending` = still unknown (ask again). */
+    facts: async (names, budget) => {
+      const all = await loadFacts()
+      const out: Record<string, { dz: number; fans: number }> = {}
+      let asked = 0, pending = 0
+      for (const n of names) {
+        let f = all[n]
+        if ((!f || now() - f.at > PHOTO_MAX_AGE_MS)) {
+          if (asked >= budget) { pending++; continue }
+          asked++
+          f = await factFor(n) as ArtistFacts
+        }
+        if (f && !f.none && typeof f.dz === 'number') out[n] = { dz: f.dz, fans: f.fans ?? 0 }
+      }
+      if (asked) await writing          // what was looked up is on disk before we answer
+      return { facts: out, pending }
+    },
+    /** Deezer's related artists for these confirmed ids (30-day cache), at most
+     *  `budget` fetched per call — the "scene you don't own yet". */
+    related: async (ids, budget) => {
+      const cache = await loadRelated()
+      const out: Record<number, Array<[string, number]>> = {}
+      let asked = 0, pending = 0
+      for (const id of ids) {
+        const hit = cache[id]
+        if (hit && now() - hit.at <= PHOTO_MAX_AGE_MS) { out[id] = hit.list; continue }
+        if (asked >= budget) { pending++; continue }
+        asked++
+        const d = await deps.fetchJson(`${API}/artist/${id}/related?limit=20`) as { data?: Array<{ name?: string; nb_fan?: number }> } | undefined
+        if (!d) { pending++; continue }
+        const list = (d.data ?? []).filter((x) => x.name).map((x): [string, number] => [x.name!, x.nb_fan ?? 0])
+        cache[id] = { at: now(), list }
+        out[id] = list
+      }
+      if (asked) { saveRelated(); await writingRelated }
+      return { related: out, pending }
+    },
     /** Confirmed Deezer fan counts for these artists (unknown ones left out). */
     fans: async (names) => {
       const all = await loadFacts()
