@@ -93,3 +93,19 @@ describe('the facts', () => {
     assert.deepEqual(yir.mixtapes.map((m) => m.title), ['METAL VOL 1'])
   })
 })
+
+describe('nothing under a minute ranks (Jake 9/2 for Top 25; every ranking 10/11)', () => {
+  it('a 16-second intro played a lot never takes a top-song or song-of-the-month slot — its plays still count', () => {
+    const library = [
+      { id: 1, title: '...Unless', artist: 'MUNA', album: 'Dancing on the Wall', duration: 16000, dateAdded: '2026-02-01T12:00:00Z' },
+      { id: 2, title: 'Silk Chiffon', artist: 'MUNA', album: 'MUNA', duration: 205000, dateAdded: '2026-02-01T12:00:00Z' },
+    ]
+    const listens: Listen[] = [
+      ...[1, 2, 3, 4, 5].map((d) => L(`2026-03-0${d}T16:00:00Z`, 'MUNA', '...Unless', 'play', { trackId: 1 })),
+      L('2026-03-06T16:00:00Z', 'MUNA', 'Silk Chiffon', 'play', { trackId: 2 }),
+    ]
+    const r = buildYearInReview({ year: 2026, listens, library } as never)
+    assert.deepEqual(r.topSongs.map((s: { name: string }) => s.name), ['Silk Chiffon'])
+    assert.equal(r.topArtists[0].plays, 6, 'every play still counts for the artist')
+  })
+})

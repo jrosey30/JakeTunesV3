@@ -15,6 +15,7 @@
  * Pure: no I/O. scripts/year-in-review.mts feeds it the files.
  */
 import type { Listen } from './listening-history.ts'
+import { isTop25Rankable } from './top25-rankable.ts'
 
 export const YIR_TIME_ZONE = 'America/New_York'
 
@@ -164,7 +165,10 @@ export function buildYearInReview(input: YirInput): YearInReview {
     const lp = localParts(l.ts)
     const songKey = `${norm(l.artist)}|${norm(l.title)}`
     const artistName = l.artist || t?.artist || ''
-    bump(songs, songKey, () => ({ name: l.title, artist: artistName, plays: 0 }), min)
+    // The play counts everywhere; a song under a minute just can't hold a
+    // ranked slot (Jake's Top 25 rule, applied to every ranking 10/11).
+    const rankable = isTop25Rankable({ duration: dur })
+    if (rankable) bump(songs, songKey, () => ({ name: l.title, artist: artistName, plays: 0 }), min)
     if (artistName) bump(artists, norm(artistName), () => ({ name: artistName, plays: 0 }), min)
     const album = l.album || t?.album || ''
     if (album) bump(albums, `${norm(t?.albumArtist || artistName)}|${norm(album)}`, () => ({ name: album, artist: t?.albumArtist || artistName, plays: 0 }), min)
@@ -173,7 +177,7 @@ export function buildYearInReview(input: YirInput): YearInReview {
     monthCount.set(lp.month, (monthCount.get(lp.month) ?? 0) + 1)
     if (!monthArtists.has(lp.month)) { monthArtists.set(lp.month, new Map()); monthSongs.set(lp.month, new Map()) }
     if (artistName) bump(monthArtists.get(lp.month)!, norm(artistName), () => ({ name: artistName, plays: 0 }))
-    bump(monthSongs.get(lp.month)!, songKey, () => ({ name: l.title, artist: artistName, plays: 0 }))
+    if (rankable) bump(monthSongs.get(lp.month)!, songKey, () => ({ name: l.title, artist: artistName, plays: 0 }))
     days.set(lp.date, (days.get(lp.date) ?? 0) + 1)
     byHour[lp.hour]++
     byWeekday[lp.weekday]++
