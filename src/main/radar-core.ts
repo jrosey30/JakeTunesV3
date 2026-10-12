@@ -8,8 +8,8 @@
  */
 import { scoreCandidateForRadar, norm } from './taste-model.ts'
 import type { TasteFingerprint, TasteAnchor } from './taste-model.ts'
-import { recoIdentityPairKey } from './reco-match.ts'
 import { searchTitle } from './streamrip-match.ts'
+import { nameKey } from '../common/fold-text.ts'
 
 export interface RawCandidate { artist?: string; title?: string; genre?: string; year?: string | number; why?: string; anchor?: string }
 export interface RankedCandidate {
@@ -64,10 +64,15 @@ function isAlbumRow(r: ListenListRow): boolean {
 
 /**
  * The `isOnList` predicate for rankCandidates, built from the Listen List
- * rows: same song|artist identity the list itself keys by (raw fields first,
+ * rows: song|artist from the same fields the list keys by (raw fields first,
  * iTunes-matched as fallback). ⚠️ The key is SONG first — the radar hands us
  * (artist, title), so it must be flipped. index.ts passed (artist, title)
  * straight into a (song, artist) key and the guard never matched (2026-10-11).
+ *
+ * Names fold through nameKey, not recoNorm: recoNorm's [^a-z0-9] erased every
+ * Hebrew/Cyrillic/CJK title (no key, so never hidden) and dropped accented
+ * letters ("Ágætis byrjun" ≠ "Agaetis Byrjun"). A-Z names key exactly as
+ * before. recoNorm stays on the persisted keys; this compare is never stored.
  *
  * The radar's "title" is a RELEASE, so album rows key their album the same
  * way (album|artist, raw names, then the iTunes ones). A song row that names
@@ -82,18 +87,23 @@ function isAlbumRow(r: ListenListRow): boolean {
 export function listenListPredicate(records: ListenListRow[]): (artist: string, title: string) => boolean {
   const songKeys = new Set<string>()
   const albumKeys = new Set<string>()
+  const pairKey = (name: string | undefined, artist: string | undefined): string | null => {
+    const n = nameKey(name, '')
+    const a = nameKey(artist, '')
+    return n && a ? `${n}|${a}` : null
+  }
   const albumKey = (album: string | undefined, artist: string | undefined): string | null =>
-    recoIdentityPairKey(album && (searchTitle(album) || album), artist)
+    pairKey(album && (searchTitle(album) || album), artist)
   const add = (set: Set<string>, k: string | null): void => { if (k) set.add(k) }
   for (const r of records) {
-    add(songKeys, recoIdentityPairKey(r.song || r.matchedTitle, r.artist || r.matchedArtist))
+    add(songKeys, pairKey(r.song || r.matchedTitle, r.artist || r.matchedArtist))
     if (isAlbumRow(r)) {
       add(albumKeys, albumKey(r.album || r.matchedAlbum, r.artist || r.matchedArtist))
       add(albumKeys, albumKey(r.matchedAlbum, r.matchedArtist))
     }
   }
   return (artist, title) => {
-    const song = recoIdentityPairKey(title, artist)
+    const song = pairKey(title, artist)
     if (song != null && songKeys.has(song)) return true
     const album = albumKey(title, artist)
     return album != null && albumKeys.has(album)

@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseCandidates, rankCandidates, listenListPredicate } from '../radar-core.ts'
 import { computeTasteFingerprint, getTasteAnchors } from '../taste-model.ts'
+import { nameKey } from '../../common/fold-text.ts'
+import { recoNorm } from '../reco-match.ts'
 import { recoKind } from '../../renderer/listen-to-the-list/ltlDownload.ts'
 import type { Recommendation } from '../../renderer/types.ts'
 
@@ -171,6 +173,39 @@ describe('radar-core — listenListPredicate (the real Listen List key)', () => 
     ])
     assert.equal(isOnList('Wednesday', 'Rat Saw God (Live)'), false)
     assert.equal(isOnList('Talking Heads', 'Remain in Light (Deluxe Version)'), false)
+  })
+
+  // Names in other alphabets: recoNorm's [^a-z0-9] erased them, so a Hebrew
+  // or Cyrillic song on the list had no key at all and came right back.
+  const otherScripts = [
+    rec({ song: 'שירת הסטיקר', artist: 'הדג נחש' }),
+    rec({ album: 'Этажи', artist: 'Молчат Дома', kind: 'album' }),
+    rec({ song: 'Кукушка', artist: 'Кино' }),
+  ]
+
+  it('hides songs and albums titled in other alphabets', () => {
+    const isOnList = listenListPredicate(otherScripts)
+    assert.equal(isOnList('הדג נחש', 'שירת הסטיקר'), true)
+    assert.equal(isOnList('Молчат Дома', 'Этажи'), true)
+    assert.equal(isOnList('КИНО', 'кукушка'), true)
+  })
+
+  it('keeps other-alphabet songs, albums and artists apart', () => {
+    const isOnList = listenListPredicate(otherScripts)
+    assert.equal(isOnList('ברי סחרוף', 'שירת הסטיקר'), false)   // same title, another band
+    assert.equal(isOnList('Молчат Дома', 'Монумент'), false)     // another album
+    assert.equal(isOnList('Кино', 'Группа крови'), false)         // another song
+  })
+
+  it('folds accents instead of dropping the letter', () => {
+    const isOnList = listenListPredicate([rec({ artist: 'Sigur Rós', album: 'Ágætis byrjun', kind: 'album' })])
+    assert.equal(isOnList('Sigur Ros', 'Agaetis Byrjun'), true)
+  })
+
+  it('keys A-Z names exactly as recoNorm did', () => {
+    for (const s of ['Good Lies', 'Fontaines D.C.', "Rock 'n' Roll", 'AC/DC', '1999', 'Rat  Saw--God!']) {
+      assert.equal(nameKey(s, ''), recoNorm(s))
+    }
   })
 
   it('hides exactly the rows the list files under Albums (recoKind twin)', () => {
