@@ -128,17 +128,34 @@ export function canonicalArtist(name: string): string {
   if (!name) return name
   const trimmed = name.trim()
   if (!trimmed) return trimmed
+  const hit = aliasOf(trimmed)
+  if (hit) return hit
+  // Jake, 2026-10-11: "fold feat into the main artist" — "Baby Rose feat.
+  // Elmiene" is Baby Rose's song, on Baby Rose's card and page. Only feat /
+  // ft / featuring: "&" and "x" also join real duos (Simon & Garfunkel).
+  const lead = featLead(trimmed)
+  return lead === trimmed ? trimmed : (aliasOf(lead) ?? lead)
+}
+
+function aliasOf(name: string): string | undefined {
   // User/AI map wins over the curated baseline — it's the override layer.
-  const userHit = userAliases[normalizeForCompare(trimmed)]
+  const userHit = userAliases[normalizeForCompare(name)]
   if (userHit) return userHit
   for (const [pattern, canonical] of ALIAS_RULES) {
     if (typeof pattern === 'string') {
-      if (normalizeForCompare(trimmed) === normalizeForCompare(pattern)) return canonical
-    } else if (pattern.test(trimmed)) {
+      if (normalizeForCompare(name) === normalizeForCompare(pattern)) return canonical
+    } else if (pattern.test(name)) {
       return canonical
     }
   }
-  return trimmed
+  return undefined
+}
+
+const FEAT_TAIL = /\s*(?:[([]\s*(?:feat\.?|ft\.|featuring)\s+[^)\]]*[)\]]|\s(?:feat\.?|ft\.?|featuring)\s+.*)$/i
+/** The lead artist of a "X feat. Y" credit; anything else unchanged. */
+export function featLead(name: string): string {
+  const lead = name.replace(FEAT_TAIL, '').trim()
+  return lead || name
 }
 
 /**
