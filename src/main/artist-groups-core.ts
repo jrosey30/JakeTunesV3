@@ -6,6 +6,8 @@
  * `node --test` drives it.
  */
 
+import { hasOtherScript, nameKey } from '../common/fold-text.ts'
+
 export interface ArtistCandidate { tag: string; count: number }
 
 export interface GroupingProposal {
@@ -29,12 +31,16 @@ const STOPWORDS = new Set([
   'vs', 'a', 'of', 'amp',
 ])
 
+// Words through fold-text nameKey (2026-10-11). [^a-z0-9] cut accented
+// names into fragments ("Björk" → "bj" + "rk", both too short, so Björk could
+// never be offered as a primary; "Benét" → "ben", which matched any Ben) and
+// erased Hebrew and Cyrillic names outright. A word of another script may be
+// two letters: Hebrew writes few vowels and CJK packs a word into two
+// characters (דג is a whole artist name).
 function tokenize(s: string): string[] {
-  return (s || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9 ]/g, ' ')
-    .split(/\s+/)
-    .filter((w) => w.length >= 3 && !STOPWORDS.has(w))
+  return nameKey(s)
+    .split(' ')
+    .filter((w) => w.length >= (hasOtherScript(w) ? 2 : 3) && !STOPWORDS.has(w))
 }
 
 /**

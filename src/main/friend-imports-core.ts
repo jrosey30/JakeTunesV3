@@ -17,7 +17,14 @@
  *    granted from evidence present at sweep time, never reconstructed.
  */
 
-import { recoNorm } from './reco-match.ts'
+// recoIdNorm, not recoNorm (2026-10-11): these keys are STORED — in
+// friend-credits.json (CreditRecord keys / albumKey) and inside attribution
+// credit ids in reco-import-credit.json — so a Latin name must keep its
+// recoNorm key byte for byte. recoNorm alone erased every Hebrew and
+// Cyrillic letter, so a friend's Hebrew or Cyrillic send could never earn a
+// credit or show on the standings. Live state on 10/11: 0 such entries in
+// any of the four friend files, so nothing stored changes.
+import { recoIdNorm } from './reco-match.ts'
 
 export interface CreditableReco {
   id: string
@@ -49,10 +56,10 @@ export function friendOfNote(note: string | undefined): string | null {
  *  identity than the award did. */
 export function pairKeys(r: CreditableReco): string[] {
   const keys: string[] = []
-  const raw = recoNorm(r.song || '') && recoNorm(r.artist || '')
-    ? `${recoNorm(r.song || '')}|${recoNorm(r.artist || '')}` : null
-  const matched = recoNorm(r.matchedTitle || '') && recoNorm(r.matchedArtist || '')
-    ? `${recoNorm(r.matchedTitle || '')}|${recoNorm(r.matchedArtist || '')}` : null
+  const raw = recoIdNorm(r.song || '') && recoIdNorm(r.artist || '')
+    ? `${recoIdNorm(r.song || '')}|${recoIdNorm(r.artist || '')}` : null
+  const matched = recoIdNorm(r.matchedTitle || '') && recoIdNorm(r.matchedArtist || '')
+    ? `${recoIdNorm(r.matchedTitle || '')}|${recoIdNorm(r.matchedArtist || '')}` : null
   if (raw) keys.push(raw)
   if (matched && matched !== raw) keys.push(matched)
   return keys
@@ -69,11 +76,11 @@ export function computeImportCredits(
   // matching copy (artist AND albumArtist both index the track).
   const arrival = new Map<string, number>()
   for (const t of tracks) {
-    const title = recoNorm(t.title || '')
+    const title = recoIdNorm(t.title || '')
     if (!title) continue
     const when = Date.parse(t.dateAdded || '') || 0
     for (const artist of [t.artist, t.albumArtist]) {
-      const a = recoNorm(artist || '')
+      const a = recoIdNorm(artist || '')
       if (!a) continue
       const key = `${title}|${a}`
       if ((arrival.get(key) ?? -1) < when) arrival.set(key, when)
@@ -122,8 +129,8 @@ export interface RecoAttribution {
 }
 
 export function attributionKey(a: { song?: string; artist?: string }): string | null {
-  const t = recoNorm(a.song || '')
-  const ar = recoNorm(a.artist || '')
+  const t = recoIdNorm(a.song || '')
+  const ar = recoIdNorm(a.artist || '')
   return t && ar ? `${t}|${ar}` : null
 }
 
@@ -143,11 +150,11 @@ export function computeAttributionCredits(
 ): Array<ImportCredit & { key: string; label: string }> {
   const arrival = new Map<string, number>()
   for (const t of tracks) {
-    const title = recoNorm(t.title || '')
+    const title = recoIdNorm(t.title || '')
     if (!title) continue
     const when = Date.parse(t.dateAdded || '') || 0
     for (const artist of [t.artist, t.albumArtist]) {
-      const a = recoNorm(artist || '')
+      const a = recoIdNorm(artist || '')
       if (!a) continue
       const key = `${title}|${a}`
       if ((arrival.get(key) ?? -1) < when) arrival.set(key, when)
