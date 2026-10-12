@@ -168,7 +168,8 @@ export interface FilerDeps {
   maxUnits?: number
   /** Where an artist is from: a country name, null when nobody knows (don't
    *  ask again soon), undefined when the lookup failed (ask next sweep). */
-  lookupOrigin?(artist: string): Promise<string | null | undefined>
+  /** Origin confirmed by one of these albums (null = unknown, undefined = try later). */
+  lookupOrigin?(artist: string, albums: string[]): Promise<string | null | undefined>
   maxOriginLookups?: number
 }
 
@@ -241,7 +242,7 @@ export async function fillOrigins(deps: FilerDeps, tracks: FilerTrack[], homes: 
     let origin = homes.get(k)?.origin
     if (!origin && deps.lookupOrigin && lookups < (deps.maxOriginLookups ?? 10)) {
       lookups++
-      origin = (await deps.lookupOrigin(g.name)) ?? undefined
+      origin = (await deps.lookupOrigin(g.name, [...new Set(g.tracks.map((t) => t.album).filter((a): a is string => !!a))])) ?? undefined
     }
     // Jake's rule (2026-10-11): a name written in Hebrew is an Israeli artist.
     // Not extended to Cyrillic — that spans Belarus, Russia, Ukraine and more.

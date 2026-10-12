@@ -57,7 +57,7 @@ export async function ensureArtistTags(
   return n
 }
 
-type MbArtist = { name?: string; score?: number; country?: string; area?: { name?: string }; aliases?: Array<{ name?: string }>; tags?: Array<{ name: string; count?: number }> }
+type MbArtist = { id?: string; name?: string; score?: number; country?: string; area?: { name?: string }; aliases?: Array<{ name?: string }>; tags?: Array<{ name: string; count?: number }> }
 /** Name OR alias — the library may spell an artist the way MusicBrainz lists as
  *  an alias ("Молчат Дома" for Molchat Doma). */
 const MB_ARTIST_QUERY = (artist: string): string => encodeURIComponent(`artist:"${artist}" OR alias:"${artist}"`)
@@ -80,33 +80,73 @@ export async function musicBrainzTags(artist: string, userAgent: string, fetchFn
   } catch { return null }
 }
 
-/** The artist's MusicBrainz entry: most-voted tags plus where they're from
- *  (genre filer, 2026-10-11). null on failure; tags [] when unknown. */
-export async function musicBrainzArtist(artist: string, userAgent: string, fetchFn: typeof fetch = fetch): Promise<{ tags: string[]; origin?: string } | null> {
+/** Every MusicBrainz artist whose name (or alias) is exactly this one, with
+ *  ids — the candidates. A name alone is not an identity: "MESH" matched the
+ *  Bristol synth-pop Mesh for a 2026 Philadelphia punk band (10/11).
+ *  null on failure; [] when MusicBrainz knows nobody by that name. */
+export async function musicBrainzArtistCandidates(artist: string, userAgent: string, fetchFn: typeof fetch = fetch): Promise<MbArtist[] | null> {
   try {
-    const res = await fetchFn(`https://musicbrainz.org/ws/2/artist?query=${MB_ARTIST_QUERY(artist)}&fmt=json&limit=5`, {
+    const res = await fetchFn(`https://musicbrainz.org/ws/2/artist?query=${MB_ARTIST_QUERY(artist)}&fmt=json&limit=10`, {
       headers: { 'User-Agent': userAgent, Accept: 'application/json' }, signal: AbortSignal.timeout(10_000),
     })
     if (!res.ok) return null
-    const hit = matchMbArtist(((await res.json()) as { artists?: MbArtist[] }).artists, artist)
-    if (!hit) return { tags: [] }
-    const tags = [...(hit.tags ?? [])].sort((a, b) => (b.count ?? 0) - (a.count ?? 0)).slice(0, 8).map((t) => t.name)
-    // Only a country-level area counts as an origin; a bare city with no country stays blank.
-    return { tags, origin: hit.country && hit.area?.name ? hit.area.name : undefined }
+    const want = normName(artist)
+    if (!want) return []
+    return (((await res.json()) as { artists?: MbArtist[] }).artists ?? [])
+      .filter((a) => (a.score ?? 0) >= 80 && [a.name, ...(a.aliases ?? []).map((x) => x.name)].some((n) => normName(n) === want))
   } catch { return null }
 }
 
-/** Tags on the album's MusicBrainz release group — the per-album evidence. */
-export async function musicBrainzAlbumTags(artist: string, album: string, userAgent: string, fetchFn: typeof fetch = fetch): Promise<string[] | null> {
+/** The release group titled like Jake's album, by an artist of that name: its
+ *  tags (per-album evidence) and the MusicBrainz artist ids credited on it —
+ *  the proof of WHICH artist this is. null on failure. */
+export async function musicBrainzAlbum(artist: string, album: string, userAgent: string, fetchFn: typeof fetch = fetch): Promise<{ tags: string[]; creditIds: string[] } | null> {
   try {
     const q = encodeURIComponent(`releasegroup:"${album}" AND artist:"${artist}"`)
     const res = await fetchFn(`https://musicbrainz.org/ws/2/release-group?query=${q}&fmt=json&limit=5`, {
       headers: { 'User-Agent': userAgent, Accept: 'application/json' }, signal: AbortSignal.timeout(10_000),
     })
     if (!res.ok) return null
-    const body = (await res.json()) as { 'release-groups'?: Array<{ title?: string; tags?: Array<{ name: string; count?: number }> }> }
+    const body = (await res.json()) as { 'release-groups'?: Array<{ title?: string; tags?: Array<{ name: string; count?: number }>; 'artist-credit'?: Array<{ artist?: { id?: string } }> }> }
     const want = normName(album)
-    const hit = (body['release-groups'] ?? []).find((r) => { const t = normName(r.title); return t === want || (want.length > 4 && (t.includes(want) || want.includes(t))) })
-    return hit ? [...(hit.tags ?? [])].sort((a, b) => (b.count ?? 0) - (a.count ?? 0)).slice(0, 8).map((t) => t.name) : []
+    const hits = (body['release-groups'] ?? []).filter((r) => { const t = normName(r.title); return t === want || (want.length > 4 && (t.includes(want) || want.includes(t))) })
+    return {
+      tags: hits[0] ? [...(hits[0].tags ?? [])].sort((a, b) => (b.count ?? 0) - (a.count ?? 0)).slice(0, 8).map((t) => t.name) : [],
+      creditIds: [...new Set(hits.flatMap((r) => (r['artist-credit'] ?? []).map((c) => c.artist?.id).filter((x): x is string => !!x)))],
+    }
   } catch { return null }
+}
+
+/** The candidate one of Jake's albums is actually credited to — or nobody.
+ *  Unconfirmed means unknown: no tags, no origin, never a namesake's. */
+export function confirmedArtist(candidates: MbArtist[], creditIds: string[]): { id?: string; tags: string[]; origin?: string } | undefined {
+  const hit = candidates.find((c) => c.id && creditIds.includes(c.id))
+  if (!hit) return undefined
+  const tags = [...(hit.tags ?? [])].sort((a, b) => (b.count ?? 0) - (a.count ?? 0)).slice(0, 8).map((t) => t.name)
+  return { id: hit.id, tags, origin: countryName(hit.country) }
+}
+
+/** The confirmed artist's country when the search result left it out: search
+ *  omits the code when the area is a region ("England"), the artist lookup
+ *  has it — or its area's ISO 3166-2 code ("GB-ENG") does. */
+export async function musicBrainzCountryById(mbid: string, userAgent: string, fetchFn: typeof fetch = fetch): Promise<string | undefined | null> {
+  try {
+    const res = await fetchFn(`https://musicbrainz.org/ws/2/artist/${encodeURIComponent(mbid)}?fmt=json`, {
+      headers: { 'User-Agent': userAgent, Accept: 'application/json' }, signal: AbortSignal.timeout(10_000),
+    })
+    if (!res.ok) return null
+    const d = (await res.json()) as { country?: string; area?: { 'iso-3166-1-codes'?: string[]; 'iso-3166-2-codes'?: string[] }; 'begin-area'?: { 'iso-3166-1-codes'?: string[]; 'iso-3166-2-codes'?: string[] } }
+    const codes = [d.country, ...[d.area, d['begin-area']].flatMap((a) => [...(a?.['iso-3166-1-codes'] ?? []), ...(a?.['iso-3166-2-codes'] ?? [])].map((c) => c.slice(0, 2)))]
+    for (const c of codes) { const n = countryName(c); if (n) return n }
+    return undefined
+  } catch { return null }
+}
+
+/** MusicBrainz's ISO country code → the country's name. The area itself is
+ *  often a region ("England" for Pink Floyd, "Long Island" for The Lemon
+ *  Twigs) — dropping those left 326 known artists blank (10/11). Codes for
+ *  non-countries (XW worldwide, XE Europe) give no origin. */
+export function countryName(code: string | undefined): string | undefined {
+  if (!code || !/^[A-Z]{2}$/.test(code) || code.startsWith('X')) return undefined
+  try { const n = new Intl.DisplayNames(['en'], { type: 'region' }).of(code); return n && n !== code ? n : undefined } catch { return undefined }
 }
