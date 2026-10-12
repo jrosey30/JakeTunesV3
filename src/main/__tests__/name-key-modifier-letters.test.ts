@@ -67,7 +67,30 @@ describe('the Arabic tatweel is deleted, not a word break', () => {
   })
   it('Arabic itself is untouched, and still another script', () => {
     assert.equal(nameKey('فيروز'), 'فيروز')
-    assert.equal(nameKey('أم كلثوم'), 'أم كلثوم'.normalize('NFD'), 'NFD, as always: أ comes back as ا + hamza')
+    assert.equal(nameKey('أم كلثوم'), 'ام كلثوم', 'the hamza on alef folds away (harakat/hamza PR)')
     assert.equal(hasOtherScript('فيـروز'), true)
+  })
+})
+
+describe('Arabic harakat and hamza fold away, like accents', () => {
+  it('a name written with its vowel marks is the same name', () => {
+    assert.equal(nameKey('مُحَمَّد'), nameKey('محمد'))
+    assert.equal(nameKey('فَيْرُوز'), 'فيروز')
+    assert.equal(nameKey('عَمْرو دِيَاب'), nameKey('عمرو دياب'))
+  })
+  it('أ إ آ ٱ are ا; ؤ is و; ئ is ي', () => {
+    assert.equal(nameKey('أم كلثوم'), nameKey('ام كلثوم'))
+    assert.equal(nameKey('إليسا'), 'اليسا')
+    assert.equal(nameKey('آمال ماهر'), 'امال ماهر')
+    assert.equal(nameKey('ٱلقمر'), 'القمر')
+    assert.equal(nameKey('مؤمن'), 'مومن')
+    assert.equal(nameKey('هيئة'), 'هيية')
+  })
+  it('Arabic is still its own script, and nothing else moves', () => {
+    assert.equal(hasOtherScript('مُحَمَّد'), true)
+    assert.equal(nameKey('Beyoncé'), 'beyonce')
+    assert.equal(nameKey('ברי סחרוף'), 'ברי סחרוף')
+    assert.equal(nameKey('Молчат Дома'), 'молчат дома')
+    assert.equal(nameKey('عـربي'), nameKey('عربي'), 'tatweel still goes')
   })
 })

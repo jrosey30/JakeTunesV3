@@ -31,7 +31,17 @@ const SINGLETONS: Record<string, string> = {
   ø: 'o', Ø: 'o', æ: 'ae', Æ: 'ae', œ: 'oe', Œ: 'oe',
   ß: 'ss', ł: 'l', Ł: 'l', đ: 'd', Đ: 'd', ð: 'd', Ð: 'd',
   þ: 'th', Þ: 'th', ı: 'i', İ: 'i', ŋ: 'n', ħ: 'h',
+  ٱ: 'ا',   // Arabic alef wasla: no decomposition, folds like the other alefs
 }
+
+/**
+ * Arabic diacritics (2026-10-11): the harakat (short vowels, tanwin, shadda,
+ * sukun, superscript alef), the honorific and Quranic marks, and the hamza
+ * and madda that NFD splits off their seat. So "مُحَمَّد" is "محمد", and
+ * أ إ آ fold to ا, ؤ to و, ئ to ي, the way é folds to e. Like Latin accents
+ * they are optional in written Arabic, so one name came out two ways.
+ */
+const ARABIC_MARKS = /[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g
 
 /**
  * Diacritics folded, case dropped, everything else left exactly as it was —
@@ -47,6 +57,7 @@ export function foldAccents(s: string | null | undefined): string {
   return out
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
+    .replace(ARABIC_MARKS, '')
     .toLowerCase()
 }
 
