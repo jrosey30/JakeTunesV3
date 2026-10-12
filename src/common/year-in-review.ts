@@ -16,6 +16,7 @@
  */
 import type { Listen } from './listening-history.ts'
 import { isTop25Rankable } from './top25-rankable.ts'
+import { layerOf } from './genre-iceberg.ts'
 
 export const YIR_TIME_ZONE = 'America/New_York'
 
@@ -90,11 +91,18 @@ export interface YearInReview {
   }
   honesty: { skips: number; glances: number; mechanical: number; realSkipRate: number | null }
   topSongs: Ranked[]
+  /** The song of the year's own best 7-day stretch ("seven of them in one
+   *  week in July" comes from here, never from a guess). */
+  songOfTheYearBestWeek: { plays: number; weekOf: string } | null
   topArtists: Ranked[]
   topAlbums: Ranked[]
   topGenres: Ranked[]
   months: Array<{ month: string; plays: number; topArtist: Ranked | null; topSong: Ranked | null }>
   clock: { byHour: number[]; byWeekday: number[] }
+  /** Plays by genre-iceberg layer (genre-iceberg.ts layerOf, the song's
+   *  current tag): [tip, just below, below, deep water, abyss]. offBerg =
+   *  plays of genres not on the berg (Soundtrack, Comedy) or untagged. */
+  depth: { layers: number[]; offBerg: number }
   firstPlay: { ts: string; artist: string; title: string } | null
   /** The most plays one song got inside any 7-day stretch. */
   onRepeat: { artist: string; title: string; plays: number; weekOf: string } | null
@@ -152,6 +160,8 @@ export function buildYearInReview(input: YirInput): YearInReview {
   const monthSongs = new Map<string, Map<string, Ranked>>()
   const days = new Map<string, number>()
   const byHour = new Array<number>(24).fill(0)
+  const depthLayers = [0, 0, 0, 0, 0]
+  let offBerg = 0
   const byWeekday = new Array<number>(7).fill(0)
   const byDevice: Record<string, number> = {}
   let minutes = 0
@@ -174,6 +184,12 @@ export function buildYearInReview(input: YirInput): YearInReview {
     if (album) bump(albums, `${norm(t?.albumArtist || artistName)}|${norm(album)}`, () => ({ name: album, artist: t?.albumArtist || artistName, plays: 0 }), min)
     const genre = l.genre || t?.genre || ''
     if (genre) bump(genres, norm(genre), () => ({ name: genre, plays: 0 }), min)
+    // The berg is drawn from each song's CURRENT tag (Jake 10/11: "against
+    // what each song is currently marked as"), so depth reads that first;
+    // the logged genre is the play-time tag, often a retired broad one.
+    const layer = layerOf(t?.genre || genre)
+    if (layer === null) offBerg++
+    else depthLayers[layer]++
     monthCount.set(lp.month, (monthCount.get(lp.month) ?? 0) + 1)
     if (!monthArtists.has(lp.month)) { monthArtists.set(lp.month, new Map()); monthSongs.set(lp.month, new Map()) }
     if (artistName) bump(monthArtists.get(lp.month)!, norm(artistName), () => ({ name: artistName, plays: 0 }))
@@ -218,6 +234,14 @@ export function buildYearInReview(input: YirInput): YearInReview {
       const n = hi - lo + 1
       if (!onRepeat || n > onRepeat.plays) onRepeat = { artist: list[hi].artist, title: list[hi].title, plays: n, weekOf: localParts(list[lo].ts).date }
     }
+  }
+
+  const topSongs = rank(songs, top)
+  let songOfTheYearBestWeek: YearInReview['songOfTheYearBestWeek'] = null
+  const sotyPlays = topSongs[0] ? perSong.get(`${norm(topSongs[0].artist)}|${norm(topSongs[0].name)}`) ?? [] : []
+  for (let hi = 0, lo = 0; hi < sotyPlays.length; hi++) {
+    while (Date.parse(sotyPlays[hi].ts) - Date.parse(sotyPlays[lo].ts) > 7 * dayMs) lo++
+    if (!songOfTheYearBestWeek || hi - lo + 1 > songOfTheYearBestWeek.plays) songOfTheYearBestWeek = { plays: hi - lo + 1, weekOf: localParts(sotyPlays[lo].ts).date }
   }
 
   // Discoveries: what came INTO the library through JakeTunes this year.
@@ -267,12 +291,14 @@ export function buildYearInReview(input: YirInput): YearInReview {
       mechanical: inYear.filter((l) => l.kind === 'mechanical').length,
       realSkipRate: verdicts ? Math.round((inYear.filter((l) => l.kind === 'skip').length / verdicts) * 10000) / 10000 : null,
     },
-    topSongs: rank(songs, top),
+    topSongs,
+    songOfTheYearBestWeek,
     topArtists: rank(artists, top),
     topAlbums: rank(albums, Math.min(top, 10)),
     topGenres: rank(genres, 10),
     months: monthsWithPlays.map((m) => ({ month: m, plays: monthCount.get(m) ?? 0, topArtist: rank(monthArtists.get(m)!, 1)[0] ?? null, topSong: rank(monthSongs.get(m)!, 1)[0] ?? null })),
     clock: { byHour, byWeekday },
+    depth: { layers: depthLayers, offBerg },
     firstPlay: plays[0] ? { ts: plays[0].ts, artist: plays[0].artist, title: plays[0].title } : null,
     onRepeat,
     discoveries: { newArtists: newArtists.slice(0, top), newArtistCount: newArtists.length, foundByMonth, foundTotal },

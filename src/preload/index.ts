@@ -1033,6 +1033,8 @@ const electronAPI = {
     ipcRenderer.invoke('get-artist-image', artist),
   // Genre Iceberg: listener counts that rank a genre's artists (artist-listeners.json).
   artistListeners: (): Promise<Record<string, number>> => ipcRenderer.invoke('artist-listeners'),
+  // Year in Review: the nightly facts from homemini, mirrored locally (yir-mirror.ts).
+  yirGet: (year?: number): Promise<Record<string, unknown> | null> => ipcRenderer.invoke('yir:get', year),
   // 4.5: Wikipedia summary for artist detail page. 24h disk cache.
   getArtistWiki: (artist: string): Promise<{ ok: boolean; extract: string | null; pageUrl: string | null }> =>
     ipcRenderer.invoke('get-artist-wiki', artist),

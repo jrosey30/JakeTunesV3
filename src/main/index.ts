@@ -74,6 +74,7 @@ import { registerRecommendations, MOBILE_BACKEND_URL, type RecoSource, type Reco
 import { registerTasteIpc, TASTE_LEDGER_PATH } from './ipc/taste-ipc.ts'
 import { registerGenreFilerIpc } from './ipc/genre-filer-ipc.ts'
 import { registerRockDnaIpc } from './ipc/rock-dna-ipc.ts'
+import { registerYirIpc } from './ipc/yir-ipc.ts'
 import { createArtistPhotos, nameKey as photoNameKey } from './artist-photo.ts'
 import { phoneOverlayFields } from '../common/genre-vocab.ts'
 import { registerPreviewRefreshIpc } from './ipc/preview-refresh-ipc.ts'
@@ -9443,6 +9444,7 @@ const sweepFriendImports = (): Promise<number> => moduleSweepFriendImports(sweep
 registerTasteIpc(ipc)
 registerGenreFilerIpc(ipc, { libraryTracks: async () => ((await libraryCache.get()) as { tracks?: [] }).tracks ?? [], overrides: async () => (await overridesCache.get()) as Record<string, { fp?: string; fields?: Record<string, string> }>, persist: (id, fields, fp) => persistOverrideFields(id, fields, fp).then(() => triggerSync('metadata-edit')), send: (ch, p) => sendToRenderer(ch, p), claude: async (system, user) => { const r = await claudeCall('genre-filer', { model: MODEL_SMART, max_tokens: 2000, system, messages: [{ role: 'user', content: user }] }); const b = r.content[0]; return b && b.type === 'text' ? b.text : '' }, mbThrottle, userAgent: `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)` })
 registerRockDnaIpc(ipc)
+registerYirIpc(ipc)
 registerPreviewRefreshIpc(ipc)
 registerSyncHistoryIpc(ipc, { stateDir: STATE_DIR })
 

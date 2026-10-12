@@ -109,3 +109,31 @@ describe('nothing under a minute ranks (Jake 9/2 for Top 25; every ranking 10/11
     assert.equal(r.topArtists[0].plays, 6, 'every play still counts for the artist')
   })
 })
+
+describe('the story slides\' facts (10/12)', () => {
+  it('how deep: each play lands on its genre\'s iceberg layer; Soundtrack and untagged sit off the berg', () => {
+    const listens = [
+      L('2026-06-02T16:00:00Z', 'Nirvana', 'Lithium', 'play', { genre: 'Rock' }),
+      L('2026-06-02T17:00:00Z', 'Nirvana', 'Lithium', 'play', { genre: 'Grunge' }),
+      L('2026-06-02T18:00:00Z', 'Ty Segall', 'Finger', 'play', { genre: 'Garage Punk' }),
+      L('2026-06-02T19:00:00Z', 'Hans Zimmer', 'Time', 'play', { genre: 'Soundtrack' }),
+      L('2026-06-02T20:00:00Z', 'Nobody', 'Untitled', 'play', { genre: '' }),
+    ]
+    const y = buildYearInReview({ year: 2026, listens, library: [] })
+    assert.equal(y.depth.layers[0], 1, 'Rock is the tip')
+    assert.equal(y.depth.layers[4], 1, 'Garage Punk is the abyss')
+    assert.equal(y.depth.layers.reduce((a, b) => a + b, 0), 3)
+    assert.equal(y.depth.offBerg, 2)
+  })
+
+  it('the song of the year carries its own best week, not some other song\'s', () => {
+    const listens = [
+      ...['06-01', '06-02', '06-03', '07-20', '07-21', '07-22', '07-23'].map((d) => L(`2026-${d}T16:00:00Z`, 'TV Girl', 'Pantyhose')),
+      ...['08-01', '08-01', '08-01', '08-01', '08-02', '08-02'].map((d, i) => L(`2026-${d}T1${i}:00:00Z`, 'Geese', 'Taxes')),
+    ]
+    const y = buildYearInReview({ year: 2026, listens, library: [] })
+    assert.equal(y.topSongs[0].name, 'Pantyhose')
+    assert.deepEqual(y.songOfTheYearBestWeek, { plays: 4, weekOf: '2026-07-20' })
+    assert.equal(y.onRepeat?.title, 'Taxes', 'on repeat is still the whole year\'s best week')
+  })
+})

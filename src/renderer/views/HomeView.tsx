@@ -24,6 +24,7 @@ import { buildNormalizedArtworkIndex, lookupArtwork, queueArtworkResolutions } f
 import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
 import AlbumArtImage from '../components/AlbumArtImage'
 import MadeForYou from '../components/MadeForYou'
+import YirHomeCard from '../components/yir/YirHomeCard'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import type { Track, MusicNewsItem, TourDate, VenueShow, UpcomingRelease, ListeningMemoryData, RediscoveryPick } from '../types'
 import '../styles/home.css'
@@ -832,6 +833,8 @@ export default function HomeView() {
           )}
         </nav>
       </header>
+
+      <YirHomeCard />
 
       {libraryEmpty && (
         <section className="home-welcome-empty" aria-label="Start your library">

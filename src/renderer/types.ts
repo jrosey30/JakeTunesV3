@@ -137,7 +137,7 @@ export interface Mixtape {
   seasonal?: string
 }
 
-export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'download' | 'scotus' | 'recordstore' |'listen-to-the-list' | 'new-for-you' | 'discovery' | 'mix-detail' | 'concerts' | 'concert-detail' | 'mixtape-detail' | 'dj' | 'activity-pool'
+export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'download' | 'scotus' | 'recordstore' |'listen-to-the-list' | 'new-for-you' | 'discovery' | 'mix-detail' | 'concerts' | 'concert-detail' | 'mixtape-detail' | 'dj' | 'activity-pool' | 'year-in-review'
 
 // V5 Live Concert Mode — a declared album's merged "live set". Key'd by
 // albumKey (artist|||album) in live-sets.json; the merged file is a REAL
@@ -1080,6 +1080,7 @@ declare global {
       // artist-image:// protocol scheme.
       getArtistImage: (artist: string) => Promise<{ ok: boolean; slug: string | null }>
       artistListeners?: () => Promise<Record<string, number>>
+      yirGet?: (year?: number) => Promise<(import('../common/year-in-review').YearInReview & { builtAt?: string }) | null>
       // 4.5 — Wikipedia summary for the artist detail page. 24h disk
       // cache in main; both fields null on no-result so UI can fall
       // back to photo + name only.

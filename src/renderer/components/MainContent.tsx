@@ -22,6 +22,7 @@ import StoreView from '../views/BandcampStore'
 import DownloadView from '../views/DownloadStore'
 import ScotusView from '../views/ScotusView'
 import RecordStoreView from '../views/RecordStore'
+import YearInReviewView from '../views/YearInReviewView'
 import ViewModeToggle from './ViewModeToggle'
 import '../styles/main-content.css'
 
@@ -63,6 +64,7 @@ export default function MainContent() {
     case 'albums': viewElement = <AlbumsView />; break
     case 'album-detail': viewElement = <AlbumDetailView />; break
     case 'concerts': viewElement = <ConcertsView />; break
+    case 'year-in-review': viewElement = <YearInReviewView />; break
     case 'concert-detail': viewElement = <ConcertDetailView />; break
     case 'mixtape-detail': viewElement = <MixtapeView />; break
     case 'activity-pool': viewElement = <ActivityPoolView />; break
