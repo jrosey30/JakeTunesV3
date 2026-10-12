@@ -28,6 +28,8 @@ export function getArtworkIndexPath(): string {
 // every launch for artists they don't index. Both kinds expire after
 
 
+// ⚠️ TWIN: scripts/cover-vault.mjs artKey and artwork-provenance.ts build
+// this same key; change all three together.
 export function artworkHash(artist: string, album: string): string {
   return createHash('md5').update(`${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`).digest('hex')
 }
