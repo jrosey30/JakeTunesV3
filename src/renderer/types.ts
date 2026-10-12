@@ -1079,6 +1079,7 @@ declare global {
       // 4.4.40 — Per-artist photo slug; renderer loads via the
       // artist-image:// protocol scheme.
       getArtistImage: (artist: string) => Promise<{ ok: boolean; slug: string | null }>
+      getArtistFans?: (names: string[]) => Promise<Record<string, number>>
       // 4.5 — Wikipedia summary for the artist detail page. 24h disk
       // cache in main; both fields null on no-result so UI can fall
       // back to photo + name only.
