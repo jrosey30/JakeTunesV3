@@ -1,5 +1,5 @@
 /** Pure iTunes reco matching — shared by suggest-verify and unit tests. */
-import { foldAccents } from '../common/fold-text.ts'
+import { foldAccents, storedNameKey } from '../common/fold-text.ts'
 
 /**
  * ⚠️ IDENTITY, NOT MATCHING. recoNorm feeds recoMatchKey, and those keys are
@@ -10,6 +10,21 @@ import { foldAccents } from '../common/fold-text.ts'
  */
 export function recoNorm(s: string): string {
   return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+/**
+ * recoNorm for the identity keys below. A Latin name keeps its recoNorm key
+ * byte for byte, so no tombstone is orphaned. A name with Hebrew, Cyrillic or
+ * any other script's letters gets nameKey: recoNorm erased those, so an
+ * all-Hebrew jot had NO identity key (a delete never stuck, and desktop's
+ * add treated every such jot as a dupe of the first), and a Hebrew song by a
+ * Latin-named artist keyed as `artist:<artist>` alone, so deleting it hid
+ * every other one. Live state on 2026-10-11: 0 rows, 0 tombstones with
+ * other-script letters, so nothing stored changes.
+ * ⚠️ TWIN: ~/JakeTunesMobile/backend/src/util/reco-identity.ts idNorm.
+ */
+export function recoIdNorm(s: string): string {
+  return storedNameKey(s, recoNorm)
 }
 
 /**
@@ -60,21 +75,21 @@ export interface RecoIdentityInput {
 export const RECO_IDENTITY_PREFIX = 'identity:'
 
 export function recoIdentityPairKey(song: string | undefined, artist: string | undefined): string | null {
-  const s = recoNorm(song || '')
-  const a = recoNorm(artist || '')
+  const s = recoIdNorm(song || '')
+  const a = recoIdNorm(artist || '')
   return s && a ? `${s}|${a}` : null
 }
 
 export function recordIdentityKeys(r: RecoIdentityInput): string[] {
   const keys = new Set<string>()
-  const ext = recoNorm(r.externalId || '')
+  const ext = recoIdNorm(r.externalId || '')
   if (ext) keys.add(`ext:${ext}`)
   const raw = recoIdentityPairKey(r.song, r.artist)
   if (raw) keys.add(raw)
   const matched = recoIdentityPairKey(r.matchedTitle, r.matchedArtist)
   if (matched) keys.add(matched)
-  if (!recoNorm(r.artist || '') && !recoNorm(r.matchedArtist || '') && recoNorm(r.song || '')) {
-    keys.add(`solo:${recoNorm(r.song || '')}~${recoNorm(r.album || '')}~${recoNorm(r.note || '')}`)
+  if (!recoIdNorm(r.artist || '') && !recoIdNorm(r.matchedArtist || '') && recoIdNorm(r.song || '')) {
+    keys.add(`solo:${recoIdNorm(r.song || '')}~${recoIdNorm(r.album || '')}~${recoIdNorm(r.note || '')}`)
   }
   // Artist-anchored key for SONGLESS rows — a band or album link with no
   // title. Symmetric to solo:. Without it these get ZERO identity keys, so
@@ -83,9 +98,9 @@ export function recordIdentityKeys(r: RecoIdentityInput): string[] {
   // Victoryland "always show up even if deleted"). Keyed on the artist
   // ALONE so any songless entry for that artist stays dead. ⚠️ TWIN:
   // ~/JakeTunesMobile/backend/src/util/reco-identity.ts — keep identical.
-  const anyArtist = recoNorm(r.artist || '') || recoNorm(r.matchedArtist || '')
-  const album = recoNorm(r.album || '')
-  const songless = !recoNorm(r.song || '') && !recoNorm(r.matchedTitle || '')
+  const anyArtist = recoIdNorm(r.artist || '') || recoIdNorm(r.matchedArtist || '')
+  const album = recoIdNorm(r.album || '')
+  const songless = !recoIdNorm(r.song || '') && !recoIdNorm(r.matchedTitle || '')
   if (!raw && !matched && songless && album) {
     // The record is the identity — never the artist alone.
     keys.add(`album:${anyArtist}~${album}`)
@@ -95,7 +110,7 @@ export function recordIdentityKeys(r: RecoIdentityInput): string[] {
   // Absolute catch-all: a non-empty row must never be keyless (album-only
   // or note-only jots), else it too becomes un-deletable.
   if (keys.size === 0) {
-    const parts = [recoNorm(r.album || ''), recoNorm(r.note || '')].filter(Boolean)
+    const parts = [recoIdNorm(r.album || ''), recoIdNorm(r.note || '')].filter(Boolean)
     if (parts.length) keys.add(`partial:${parts.join('~')}`)
   }
   return [...keys]
@@ -106,7 +121,7 @@ export function recordIdentityKeys(r: RecoIdentityInput): string[] {
 export function recoDedupeKey(r: RecoIdentityInput): string {
   const keys = recordIdentityKeys(r)
   if (keys.length > 0) return keys[0]
-  const full = [r.song, r.artist, r.album, r.note].map((s) => recoNorm(s || '')).join('|')
+  const full = [r.song, r.artist, r.album, r.note].map((s) => recoIdNorm(s || '')).join('|')
   return full !== '|||' ? `full:${full}` : `id:${r.id ?? ''}`
 }
 

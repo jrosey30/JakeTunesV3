@@ -182,6 +182,7 @@ import {
   tagYearStr,
 } from '../common/albumReleaseDate'
 import { foldAccents, nameKey, storedNameKey } from '../common/fold-text.ts'
+import { normForOwnership } from './owned-album-key.ts'
 import { explicitWins } from '../common/explicit.ts'
 import { MODEL_SMART, MODEL_FAST, withModelPolicy } from '../common/ai-models.ts'
 import { summariseLearning, discoverVerdicts, type LedgerRow } from './discovery-learned.ts'
@@ -8830,25 +8831,8 @@ Their top genres: ${topGenres}${lineageBlock}`
       // is lost. See CLAUDE.md "destructive operations may not gate on
       // text comparison" for context.
       //
-      // ⚠️ Intentionally NOT shared with the file-identity normalize at
-      // ~line 968 (twin-paired with core/repair_mismatches.py). That one
-      // is for sync-time identity matching and any change must be
-      // mirrored in Python. This one is local, non-destructive, and free
-      // to evolve. Do not consolidate.
-      const normForOwnership = (s: string): string => {
-        if (!s) return ''
-        return s
-          .normalize('NFKD').replace(/[̀-ͯ]/g, '')      // strip diacritics
-          .toLowerCase()
-          .replace(/\s*[\(\[][^\)\]]*[\)\]]\s*/g, ' ')            // drop ( ... ) and [ ... ]
-          .replace(/\bpts?\b\.?/g, m => m.startsWith('pts') ? 'parts' : 'part')
-          .replace(/\bvols?\b\.?/g, m => m.startsWith('vols') ? 'volumes' : 'volume')
-          .replace(/\bno\.?\s*(\d)/g, 'number $1')                // "No. 1" → "number 1"
-          .replace(/&/g, ' and ')
-          .replace(/\bthe\b/g, ' ')
-          .replace(/[^a-z0-9\s]/g, ' ')                           // strip remaining punct (no mid-word merging)
-          .split(/\s+/).filter(Boolean).join(' ')
-      }
+      // normForOwnership (owned-album-key.ts) is ⚠️ intentionally NOT
+      // shared with the file-identity normalize — see that file.
       const ownedArtistAlbum = new Set<string>()
       const ownedArtist = new Set<string>()
       for (const t of tracks) {

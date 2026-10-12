@@ -40,6 +40,18 @@ export type { Provider, RequestedRecording, Alternative, DownloadOutcome } from 
 
 import { recoArtistMatches, recoNorm, recoTitleMatches } from './reco-match.ts'
 import { liveBrandMarker, maskedTitleMatches, subtitleVariantMatches, unwantedVersionOf, requestedVersionMarkers } from './streamrip-match.ts'
+import { nameKey } from '../common/fold-text.ts'
+
+/** Does free text (a SoundCloud title/desc) name the artist? Folded in any
+ *  script. It used to test recoNorm(text).includes(req.artistNorm), and a
+ *  Hebrew or Cyrillic artist's artistNorm is '' — which every string
+ *  includes, so any upload "named" them. A name with no letters at all
+ *  ("!!!") is looked for as written. */
+export function textNamesArtist(text: string, artist: string): boolean {
+  const a = nameKey(artist, '')
+  if (!a) return !!artist.trim() && text.toLowerCase().includes(artist.trim().toLowerCase())
+  return nameKey(text, '').includes(a)
+}
 
 export interface RequestOpts {
   artist?: string
@@ -143,13 +155,13 @@ export function verifyCandidate(req: RequestedRecording, ev: CandidateEvidence):
   //    SoundCloud's artist tag is often the uploader (a label), so there the
   //    artist may instead appear in the title/desc.
   if (req.artist && ev.artist) {
-    const inText = recoNorm(`${ev.title ?? ''} ${ev.desc ?? ''}`).includes(req.artistNorm)
+    const inText = textNamesArtist(`${ev.title ?? ''} ${ev.desc ?? ''}`, req.artist)
     const ok = recoArtistMatches(req.artist, ev.artist) || (ev.provider === 'soundcloud' && inText)
     if (!ok) return { verdict: 'reject', kind: 'artist', reason: `is by “${ev.artist}”, not ${req.artist}` }
     evidence.push(`artist “${ev.artist}”`)
   } else if (req.artist && ev.provider === 'soundcloud' && (ev.title || ev.desc)) {
     // No artist tag at all: the artist must be somewhere in what we can see.
-    if (!recoNorm(`${ev.title ?? ''} ${ev.desc ?? ''}`).includes(req.artistNorm)) {
+    if (!textNamesArtist(`${ev.title ?? ''} ${ev.desc ?? ''}`, req.artist)) {
       return { verdict: 'reject', kind: 'artist', reason: `does not name ${req.artist} anywhere` }
     }
   }

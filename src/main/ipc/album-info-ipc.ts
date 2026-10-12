@@ -6,8 +6,7 @@
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { pickAlbumReleaseDate, sanitizeAlbumCredits, tagYearStr } from '../../common/albumReleaseDate'
-import { itunesAlbumTracks, searchItunesSuggestions } from '../download-search'
-import { foldAccents } from '../../common/fold-text.ts'
+import { itunesAlbumTracks, pickItunesAlbumRow, searchItunesSuggestions } from '../download-search'
 import { safeIpcError } from '../safe-ipc-error'
 import { registerRecordShopIpc } from './record-shop-ipc.ts'
 import { registerNearEditionIpc } from './near-edition-ipc.ts'
@@ -32,10 +31,7 @@ export function registerAlbumInfoIpc(ipc: IpcRegistrar): void {
       const res = await fetch(url)
       if (!res.ok) return null
       const data = await res.json() as { results?: Array<{ collectionName?: string; releaseDate?: string; copyright?: string }> }
-      const norm = (s: string) => foldAccents(s).replace(/[^a-z0-9]/g, '')
-      const want = norm(album)
-      const results = data.results || []
-      const best = results.find((r) => norm(r.collectionName || '') === want) || results[0]
+      const best = pickItunesAlbumRow(data.results || [], album)
       if (!best) return null
       const released = best.releaseDate ? best.releaseDate.slice(0, 10) : undefined
       let label: string | undefined
