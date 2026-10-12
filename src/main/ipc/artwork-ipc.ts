@@ -25,6 +25,7 @@ import {
   saveArtworkIndex, scheduleArtworkLookupRebuild, setArtworkIndexMem, setArtworkLock,
   searchDeezerArt,
 } from '../artwork-engine.ts'
+import { type ArtworkFetchProvider, fetchedArtworkSidecar } from '../artwork-provenance.ts'
 import type { LiveSetEntry } from '../index.ts'
 
 export interface ArtworkIpcHost {
@@ -68,6 +69,7 @@ export function registerArtworkIpc(ipc: IpcRegistrar, host: ArtworkIpcHost): voi
       // we can match a MusicBrainz release. Falls through to Deezer on
       // miss so existing behavior is preserved.
       let artUrl: string | null = null
+      let provider: ArtworkFetchProvider = 'deezer'
       const mbid = await getMusicBrainzReleaseMbid(artist, album)
       if (mbid) {
         const candidate = getCoverArtUrlByMbid(mbid)
@@ -75,7 +77,7 @@ export function registerArtworkIpc(ipc: IpcRegistrar, host: ArtworkIpcHost): voi
         // release exists in MusicBrainz but no front art has been uploaded.
         try {
           const head = await fetch(candidate, { method: 'HEAD', signal: AbortSignal.timeout(5000), redirect: 'follow' })
-          if (head.ok) artUrl = candidate
+          if (head.ok) { artUrl = candidate; provider = 'coverartarchive' }
         } catch { /* fall through to Deezer */ }
       }
       if (!artUrl) {
@@ -92,6 +94,14 @@ export function registerArtworkIpc(ipc: IpcRegistrar, host: ArtworkIpcHost): voi
       const imgBuf = Buffer.from(await imgRes.arrayBuffer())
       invalidateArtBytes(hash)
       await writeFile(filePath, imgBuf)
+      // The old sidecar (often `embedded`) would otherwise keep vouching
+      // for bytes this fetch just replaced. Best-effort, like the others.
+      try {
+        const meta = fetchedArtworkSidecar(artist, album, provider, artUrl, imgBuf.length)
+        await writeFile(join(dir, `${hash}.meta.json`), JSON.stringify(meta, null, 2), 'utf-8')
+      } catch (err) {
+        console.warn('[artwork] fetched sidecar write failed (continuing):', err instanceof Error ? err.message : err)
+      }
 
       // Append timestamp so renderer sees a new hash and re-renders the image
       const versionedHash = `${hash}_${Date.now()}`
