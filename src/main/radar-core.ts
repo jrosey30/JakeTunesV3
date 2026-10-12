@@ -73,8 +73,19 @@ function isAlbumRow(r: ListenListRow): boolean {
 //
 // The words come from real labels, not memory: a 2026-10-11 harvest of album
 // titles from the iTunes catalog in 27 storefronts (ru ua br pt es mx ar fr
-// it de nl se no dk fi pl cz hu ro tr gr il jp kr tw hk cn) plus the library.
-const foldList = (words: string): string[] => words.split(/\s+/).filter(Boolean).map((w) => nameKey(w, ''))
+// it de nl se no dk fi pl cz hu ro tr gr il jp kr tw hk cn) plus the library,
+// then 8 more (sa eg ae jo lb th in vn). There, the native "edition" word —
+// نسخة/إصدار, ฉบับ, संस्करण, phiên bản — names VERSIONS (slow, acoustic,
+// Hindi-language, female…: other recordings), so it is deliberately absent;
+// only طبعة, Thai รีมาสเตอร์/ดีลักซ์ อิดิชั่น and loanwords (deluxe/remaster,
+// Vietnamese tái bản) are edition words in those four languages.
+//
+// Arabic writes one word several ways — with or without short vowels and
+// hamza (إِصْدَار / اصدار), ة or ه, ى or ي — so those fold away too. NFD
+// has already split hamza-on-alef into alef + a mark in this range.
+const editionFold = (w: string): string =>
+  w.replace(/[ً-ٰٟـ]/g, '').replace(/ٱ/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه')
+const foldList = (words: string): string[] => words.split(/\s+/).filter(Boolean).map((w) => editionFold(nameKey(w, '')))
 const EDITION_WORDS = new Set(foldList(`
   deluxe edition editions remaster remastered remastering remasters anniversary expanded reissue reissued bonus
   edición ediciones reedición remasterizado remasterizada remasterizados remasterizadas remasterización aniversario ampliada ampliado conmemorativa conmemorativo
@@ -91,7 +102,13 @@ const EDITION_WORDS = new Set(foldList(`
   юбилейное юбилейный юбилейная летие расширенное расширенная расширенный бонус
   видання перевидання ювілейне ювілейний ювілейна
   מהדורה מהדורת מהדורות דלוקס רמאסטר רימאסטר מורחבת בונוס
+  طبعة ديلوكس ريماستر ريماسترد
+  डीलक्स रीमास्टर रीमास्टर्ड
 `))
+// Two-word edition names in a language that spaces every syllable.
+const EDITION_PHRASES = ['tái bản'].map((p) => nameKey(p))
+// Thai runs words together: ขอจีบเธอได้ไหม(รีมาสเตอร์), ดีลักซ์ อิดิชั่น.
+const EDITION_UNSPACED = new RegExp(foldList('รีมาสเตอร์ ดีลักซ์ อิดิชั่น เอดิชั่น ครบรอบ').join('|'))
 // Compounds end in the edition noun: Jubiläumsausgabe, kersteditie,
 // specialutgåva, juhlapainos, 十週年紀念版, 26周年スペシャルリマスター,
 // 初回生産限定盤D, リマスター2017. (Not "expedition"/"expeditie".)
@@ -111,17 +128,23 @@ const OTHER_RECORD = new Set(foldList(`
   sinfónico sinfônico sinfonico symphonique symfonisch instrumentale strumentale playback
   концерт концертная живой живьём акустика акустический акустическая ремикс ремиксы инструментал караоке ремікс
   הופעה חי חיה אקוסטי אקוסטית רמיקס
+  لايف حفلة أكوستيك ريمكس ريميكس كاريوكي كوفر
+  लाइव रीमिक्स अनप्लग्ड
   vol volume volumes volumen tom том part pt parte partie teil deel folge część část rész osa disc часть частина חלק כרך
 `))
-const OTHER_RECORD_CJK = new RegExp(foldList(`
+const OTHER_RECORD_UNSPACED = new RegExp(foldList(`
   ライブ アコースティック リミックス カラオケ インスト 라이브 어쿠스틱 리믹스 现场 現場 演唱会 演唱會 音乐会 音樂會 伴奏
+  แสดงสด คอนเสิร์ต เสียงสด อะคูสติก รีมิกซ์ คาราโอเกะ
 `).join('|'))
 
 function isEditionGroup(body: string): boolean {
-  const words = nameKey(body).split(' ').filter(Boolean)
-  if (!words.some((w) => EDITION_WORDS.has(w) || EDITION_ENDING.test(w))) return false
+  const words = nameKey(body).split(' ').filter(Boolean).map(editionFold)
+  const text = ` ${words.join(' ')} `
+  const names = words.some((w) => EDITION_WORDS.has(w) || EDITION_ENDING.test(w) || EDITION_UNSPACED.test(w))
+    || EDITION_PHRASES.some((p) => text.includes(` ${p} `))
+  if (!names) return false
   if (requestedVersionMarkers(body).length > 0) return false
-  return !words.some((w) => OTHER_RECORD.has(w) || OTHER_RECORD_CJK.test(w))
+  return !words.some((w) => OTHER_RECORD.has(w) || OTHER_RECORD_UNSPACED.test(w))
 }
 
 /** Drop bracketed or " - " trailing edition groups, in any language. Returns

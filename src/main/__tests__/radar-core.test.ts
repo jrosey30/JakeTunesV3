@@ -292,6 +292,30 @@ describe('radar-core — stripEditionWords (any language, radar only)', () => {
       'Album (Remezclado y Remasterizado 2019)', 'Album (Remixé et remasterisé)', 'Album (Expedition)',
     ]) assert.equal(stripEditionWords(title), title, title)
   })
+  // Arabic, Thai, Hindi, Vietnamese (second harvest: sa eg ae jo lb th in vn).
+  // Their native "edition" word names VERSIONS in the catalog, so only real
+  // edition words strip.
+  it('strips the Arabic and Thai edition labels the catalog uses, and loanwords', () => {
+    const cases: Array<[string, string]> = [
+      ['إله المستحيل (طبعة خاصة)', 'إله المستحيل'],
+      ['إله المستحيل (طَبْعَة خاصه)', 'إله المستحيل'],          // vowel marks, ه for ة
+      ['เพลงประกอบละคร คาราบาว เดอะ ซีรี่ส์ (ดีลักซ์ อิดิชั่น)', 'เพลงประกอบละคร คาราบาว เดอะ ซีรี่ส์'],
+      ['ขอจีบเธอได้ไหม(รีมาสเตอร์)', 'ขอจีบเธอได้ไหม'],
+      ['Album (ديلوكس)', 'Album'],
+      ['Album (डीलक्स)', 'Album'],
+      ['Album (Tái bản 2020)', 'Album'],
+    ]
+    for (const [title, want] of cases) assert.equal(stripEditionWords(title), want, title)
+  })
+  it('keeps their version words — those are other recordings', () => {
+    for (const title of [
+      'خيبه (نسخة بطيئة)', 'أصابك عشق (نسخة أكوستيك)', 'سورة القلم (الإصدار الثاني)',
+      'ทำไมต้องสงคราม (ฉบับภาษาไทย)', 'ความลับ (ฉบับรีเมค)', 'โกวิท (แสดงสด)',
+      'नाचो मत रुको (हिंदी संस्करण)', 'श्री हनुमान चालीसा (भक्ति संस्करण)',
+      'Sầu Thương (Phiên bản đặc biệt)', 'Thanh Thúy 10 - Đặc Biệt', 'Yêu Đi ! Đừng Lo Xa (Phiên Bản Acoustic)',
+      'Album (طبعة خاصة - لايف)', 'Album (ดีลักซ์ อิดิชั่น แสดงสด)', 'Album (डीलक्स लाइव)',
+    ]) assert.equal(stripEditionWords(title), title, title)
+  })
   it('keeps a group that names a volume — volume 17 is not volume 10', () => {
     assert.equal(stripEditionWords('Очи Чёрные (Коллекционное издание, том 10)'), 'Очи Чёрные (Коллекционное издание, том 10)')
     assert.equal(stripEditionWords('Album (Deluxe Edition, Pt. 2)'), 'Album (Deluxe Edition, Pt. 2)')
