@@ -145,7 +145,7 @@ import { shouldRefuseSave, mayUnlinkDeletions, UNLINK_CAP } from './save-guards'
 import { computeTasteFingerprint, getTasteAnchors } from './taste-model'
 import { loadDiscoveryFocus } from './discovery-focus'
 import type { TrackLike } from './taste-model'
-import { parseCandidates, rankCandidates } from './radar-core'
+import { parseCandidates, rankCandidates, listenListPredicate } from './radar-core'
 import type { RankedCandidate } from './radar-core'
 import { mergeStarIds } from './mobile-stars-merge'
 import { parseRelatedArtists } from './artist-groups-core'
@@ -2032,19 +2032,11 @@ ipc.handle('get-new-music-radar', async (_e, force?: boolean) => {
     // Don't surface anything already on the user's list (hand-jots + prior
     // picks) — radar is for NEW discovery. Same recoNorm identity the add
     // handler + MM verify use, so the three surfaces agree on "same song".
-    const listKeys = new Set<string>()
+    let isOnList: (artist: string, title: string) => boolean = () => false
     try {
       // Local rows are all live (mirror + outbox, Brief 125) — no tombstone filter.
-      const recos = await readRecommendationsFile()
-      for (const r of recos) {
-        const k = recoRecordIdentityKey(r)
-        if (k) listKeys.add(k)
-      }
+      isOnList = listenListPredicate(await readRecommendationsFile())
     } catch { /* list unavailable — show all candidates */ }
-    const isOnList = (a: string, t: string): boolean => {
-      const k = recoIdentityKey(a, t)
-      return k != null && listKeys.has(k)
-    }
     // Rank generously (24), then let the BRAIN and Jake's verdicts cut it down.
     const ranked = rankCandidates(fp, parseCandidates(text), 24, isOnList, anchors)
 
@@ -9405,7 +9397,7 @@ const recoApi = registerRecommendations(ipc, {
   friendsCache: friendsCache as never,
 })
 const { readRecommendationsFile, syncRecommendationsToLocal, startRecoSyncTimer,
-  runRecoResetV2IfNeeded, fetchCaaArtwork, recoRecordIdentityKey, recoIdentityKey } = recoApi
+  runRecoResetV2IfNeeded, fetchCaaArtwork } = recoApi
 
 
 // ── Friend import credit: sweep + attribution ledger moved to

@@ -344,10 +344,12 @@ describe('recommendation identity (reco-match — PERSISTED: tombstones, dedupe)
   it('every Latin name keeps its stored key byte for byte', () => {
     for (const n of ['Sigur Rós', 'Björk', "Can't Stop Playing", 'JAŸ-Z', 'µ-Ziq', '!!!', 'Motörhead']) assert.equal(recoIdNorm(n), recoNorm(n), n)
   })
-  it("recommendations-ipc's add-path fallback key and pair key are these, not copies", () => {
+  it("recommendations-ipc's add-path fallback key is this one, and it keeps no copy of the pair key", () => {
     const src = read('main/ipc/recommendations-ipc.ts')
     assert.match(src, /function recoMatchKey\([^)]*\): string \{\n\s+const norm = recoIdNorm\b/)
-    assert.match(src, /function recoIdentityKey\([^)]*\): string \| null \{\n\s+return recoIdentityPairKey\(song, artist\)/)
+    // Its only pair-key wrapper, recoIdentityKey, fed the radar's on-list
+    // guard; that guard now keys in radar-core (listenListPredicate, PR #81).
+    assert.doesNotMatch(src, /function recoIdentityKey\(|function recoRecordIdentityKey\(/)
   })
 })
 
