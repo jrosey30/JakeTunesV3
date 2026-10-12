@@ -56,11 +56,12 @@ describe('venue shows (markKnownShows)', () => {
   it('a name that folds to nothing is never known', () => {
     assert.deepEqual(markKnownShows([{ artist: '!!!' }], [{ artist: '!!!' }, { artist: '???' }]).map((s) => s.known), [false])
   })
-  it('still a gap: a venue that transliterates ("Molchat Doma") does not meet the Cyrillic tag — that needs aliases', () => {
+  it('a venue that transliterates ("Molchat Doma") meets the Cyrillic tag only through MusicBrainz spellings (artist-spellings.test.ts)', () => {
     assert.deepEqual(markKnownShows([{ artist: 'Molchat Doma' }], tracks).map((s) => s.known), [false])
+    assert.deepEqual(markKnownShows([{ artist: 'Molchat Doma' }], tracks, ['Molchat Doma']).map((s) => s.known), [true])
   })
   it('index.ts get-venue-shows marks through it', () => {
     const src = readFileSync(join(import.meta.dirname, '..', 'index.ts'), 'utf-8')
-    assert.match(src, /return \{ ok: true, shows: markKnownShows\(shows, lib\.tracks \|\| \[\]\)\.slice\(0, 120\) \}/)
+    assert.match(src, /return \{ ok: true, shows: markKnownShows\(shows, lib\.tracks \|\| \[\], spellings\)\.slice\(0, 120\) \}/)
   })
 })

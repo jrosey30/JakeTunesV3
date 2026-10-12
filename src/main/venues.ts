@@ -232,8 +232,9 @@ export async function getVenueShows(): Promise<VenueShow[]> {
  * Names fold in any script: [a-z0-9] made every Hebrew or Cyrillic name '',
  * so a show listed under one never read as known. A name that folds to
  * nothing is never known (an empty key would match every other one).
- * Venue feeds usually transliterate ("Molchat Doma"), and a library tag in
- * its own script ("Молчат Дома") still won't meet that — that needs aliases.
+ * Venue feeds usually transliterate ("Molchat Doma"), so a library tag in
+ * its own script ("Молчат Дома") needs `spellings`: the other ways
+ * MusicBrainz writes Jake's non-Latin artists (artist-spellings.ts).
  * ⚠️ TWIN: ~/JakeTunesMobile/backend/src/util/concertsMatch.ts
  * eventsByLibraryArtists — the phone's "your artists, playing near you"
  * feed, same rule, same fold.
@@ -241,10 +242,11 @@ export async function getVenueShows(): Promise<VenueShow[]> {
 export function markKnownShows<S extends { artist: string }>(
   shows: S[],
   tracks: Array<{ artist?: string; albumArtist?: string }>,
+  spellings: Iterable<string> = [],
 ): Array<S & { known: boolean }> {
   const owned = new Set<string>()
-  for (const t of tracks) {
-    const a = nameKey(t.albumArtist || t.artist || '', '')
+  for (const name of [...tracks.map((t) => t.albumArtist || t.artist || ''), ...spellings]) {
+    const a = nameKey(name, '')
     if (a) owned.add(a)
   }
   return shows.map((s) => {
