@@ -1,5 +1,5 @@
 /** Pure Qobuz search-result matching for streamrip — shared by download-by-query and tests. */
-import { recoArtistMatches, recoNorm, recoTitleMatches } from './reco-match.ts'
+import { recoArtistMatches, recoFold, recoTitleMatches } from './reco-match.ts'
 import { foldAccents, nameKey } from '../common/fold-text.ts'
 
 export interface StreamripSearchHit { source: string; mediaType: string; id: string; desc: string }
@@ -183,8 +183,11 @@ export function searchTitle(raw: string): string {
   return out || String(raw || '').trim()
 }
 
+// Any script: [a-z0-9] dropped every Hebrew word, so a decorated Hebrew title
+// counted no extra words and tied the undecorated original. Version markers
+// are still English words, so marker detection is unchanged.
 const titleTokens = (s: string): string[] =>
-  foldAccents(s).split(/\s+/).map((w) => w.replace(/[^a-z0-9]/g, '')).filter(Boolean)
+  foldAccents(s).split(/\s+/).map((w) => nameKey(w, '')).filter(Boolean)
 
 /** If `gotTitle` carries a version marker the request didn't ask for, return
  *  that marker; null = clean. COUNT-based token diff, so a song legitimately
@@ -229,9 +232,9 @@ function bareTitle(s: string): string {
 }
 
 export function subtitleVariantMatches(want: string, got: string): boolean {
-  const w = recoNorm(want), g = recoNorm(got)
+  const w = recoFold(want), g = recoFold(got)
   if (!w || !g || w === g) return false
-  const wb = recoNorm(bareTitle(want)), gb = recoNorm(bareTitle(got))
+  const wb = recoFold(bareTitle(want)), gb = recoFold(bareTitle(got))
   // Exactly one side decorated, and dropping its subtitle makes them equal.
   if (wb && wb !== w && wb === g) return true
   if (gb && gb !== g && gb === w) return true
@@ -261,7 +264,7 @@ export function rankStreamripCandidates(
 ): { ranked: StreamripSearchHit[]; rejectedVersions: string[] } {
   const scored: Array<{ r: StreamripSearchHit; score: number; i: number }> = []
   const rejectedVersions: string[] = []
-  const nWant = recoNorm(wantTitle)
+  const nWant = recoFold(wantTitle)   // compared only. recoNorm made every Hebrew title '' and gave each the exact-title bonus
   const wantToks = new Set(titleTokens(wantTitle))
   for (let i = 0; i < results.length; i++) {
     const r = results[i]
@@ -285,7 +288,7 @@ export function rankStreamripCandidates(
     } else if (artist) {
       score += 1
     }
-    if (recoNorm(title) === nWant) score += 6
+    if (recoFold(title) === nWant) score += 6
     const extras = titleTokens(title).filter((w) => !wantToks.has(w)).length
     score -= Math.min(4, extras)
     scored.push({ r, score, i })
@@ -342,14 +345,14 @@ export function rankSoundcloudCandidates(
   wantArtist: string,
   results: StreamripSearchHit[],
 ): StreamripSearchHit[] {
-  const nTitle = recoNorm(wantTitle)
-  const nArtist = recoNorm(wantArtist)
+  const nTitle = recoFold(wantTitle)
+  const nArtist = recoFold(wantArtist)   // any script: recoNorm made a Hebrew artist '', which skipped the artist gate
   if (!nTitle) return []
   const scored: Array<{ r: StreamripSearchHit; score: number; i: number }> = []
   for (let i = 0; i < results.length; i++) {
     const r = results[i]
     if (r.mediaType !== 'track') continue
-    const hay = recoNorm(r.desc)
+    const hay = recoFold(r.desc)
     if (!hay.includes(nTitle)) continue
     if (unwantedVersionOf(`${wantTitle} ${wantArtist}`, r.desc)) continue
     if (liveBrandMarker(`${wantTitle} ${wantArtist}`, r.desc)) continue
@@ -406,14 +409,14 @@ export function pickBestSoundcloudMatch(
   wantArtist: string,
   results: StreamripSearchHit[],
 ): StreamripSearchHit | null {
-  const nTitle = recoNorm(wantTitle)
-  const nArtist = recoNorm(wantArtist)
+  const nTitle = recoFold(wantTitle)
+  const nArtist = recoFold(wantArtist)   // any script: recoNorm made a Hebrew artist '', which skipped the artist gate
   if (!nTitle) return null
   let best: StreamripSearchHit | null = null
   let bestScore = -1
   for (const r of results) {
     if (r.mediaType !== 'track') continue
-    const hay = recoNorm(r.desc)
+    const hay = recoFold(r.desc)
     if (!hay.includes(nTitle)) continue        // title must be present
     // Same version guard as Qobuz: an upload whose desc carries live/remix/
     // cover/etc. beyond the requested words is a different recording.

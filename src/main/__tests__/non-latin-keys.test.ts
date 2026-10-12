@@ -42,6 +42,14 @@ import { planMatchingTrackGets } from '../../common/near-edition-actions.ts'
 import type { CompareEditionsResult, TrackRow } from '../../common/near-edition-types.ts'
 import { explicitMapKey, resolveExplicitEdition, pickItunesAlbumRow } from '../download-search.ts'
 import { normForOwnership } from '../owned-album-key.ts'
+import { recoTitleMatches, recoArtistMatches, recoFold, shouldRejectRecoArtistCorrection, evaluateMusicManVerification } from '../reco-match.ts'
+import { rankStreamripCandidates, pickBestSoundcloudMatch, rankSoundcloudCandidates } from '../streamrip-match.ts'
+import { verifyAlbumCandidate, matchLibraryOwnership } from '../album-identity.ts'
+import { acceptableHit } from '../discover-feed.ts'
+import { pickItunesCollection } from '../download-search.ts'
+import { dedupeSuggestions } from '../../renderer/listen-to-the-list/store.ts'
+import { foldAccents } from '../../common/fold-text.ts'
+import type { Recommendation } from '../../renderer/types.ts'
 
 const SRC = join(import.meta.dirname, '../..')
 const read = (p: string): string => readFileSync(join(SRC, p), 'utf-8')
@@ -470,5 +478,108 @@ describe("Music Man album picks: the owned filter (normForOwnership)", () => {
   })
   it('index.ts uses it', () => {
     assert.match(read('main/index.ts'), /import \{ normForOwnership \} from '\.\/owned-album-key\.ts'/)
+  })
+})
+
+// ── The matchers (2026-10-11): recoFold kept only [a-z0-9] ──────────────
+
+describe('recoTitleMatches / recoArtistMatches — every script', () => {
+  it('a Hebrew or Cyrillic name matches itself and only itself', () => {
+    assert.equal(recoArtistMatches(BERRY, BERRY), true)
+    assert.equal(recoArtistMatches(BERRY, HADAG), false)
+    assert.equal(recoArtistMatches(KINO, 'КИНО'), true)
+    assert.equal(recoArtistMatches(MOLCHAT, KINO), false)
+    assert.equal(recoArtistMatches(BERRY, `${BERRY} & Rockfour`), true, 'a joint credit still contains the artist')
+    assert.equal(recoTitleMatches('למה הים כחול?', 'למה הים כחול'), true)
+    assert.equal(recoTitleMatches('שיר', 'למה הים כחול'), false)
+    assert.equal(recoTitleMatches('Группа крови', 'Группа Крови'), true)
+    assert.equal(recoTitleMatches('Группа крови', 'Звезда по имени Солнце'), false)
+  })
+  it('Latin names compare exactly as before', () => {
+    const before = (s: string): string => foldAccents(s).replace(/[^a-z0-9]/g, '')
+    for (const n of ['JAŸ-Z', 'Sigur Rós', 'Björk', 'Motörhead', "Can't Stop Playing", 'MØ', 'Bonafied Lovin\'', '!!!', 'P!nk', 'Ke$ha', 'AC/DC']) assert.equal(recoFold(n), before(n), n)
+    assert.equal(recoArtistMatches('JAŸ-Z', 'Jay-Z'), true)
+    assert.equal(recoTitleMatches('Bonafide Lovin', "Bonafied Lovin'"), true)
+  })
+})
+
+describe('Music Man verification', () => {
+  it('a real Hebrew pick verifies on its own credit', () => {
+    const v = evaluateMusicManVerification({ mm: { song: 'שיר', artist: BERRY }, strictCredit: { matchedTitle: 'שיר', matchedArtist: BERRY }, canonical: {}, titleOnlyRows: [] })
+    assert.deepEqual(v, { ok: true, song: 'שיר', artist: BERRY, mode: 'strict' })
+  })
+  it('a title a Hebrew and a Latin artist share is ambiguous, so the credit is not "corrected"', () => {
+    // Before: the Hebrew artist was invisible, so "Love" looked like Rockfour's
+    // alone and Music Man's credit was rewritten to Rockfour.
+    const rows = [{ song: 'Love', artist: BERRY }, { song: 'Love', artist: 'Rockfour' }]
+    assert.equal(shouldRejectRecoArtistCorrection('Love', HADAG, 'Rockfour', rows), true)
+    assert.equal(shouldRejectRecoArtistCorrection('Love', HADAG, 'Rockfour', [rows[1]]), false, 'one artist with the title is still a correction')
+  })
+})
+
+describe('Get: Qobuz, SoundCloud and the recording guard', () => {
+  const q = (id: string, desc: string) => ({ source: 'qobuz', mediaType: 'track', id, desc })
+  it('Qobuz: the Hebrew artist ranks, the stranger is out, and only the exact title gets the exact bonus', () => {
+    const { ranked } = rankStreamripCandidates('שיר', BERRY, [q('1', `שיר אהבה by ${BERRY}`), q('2', `שיר by ${BERRY}`), q('3', `שיר by ${HADAG}`)])
+    assert.deepEqual(ranked.map((r) => r.id), ['2', '1'])
+  })
+  it('the right Hebrew recording verifies; the same title by another Hebrew artist does not', () => {
+    const req = buildRequestedRecording({ artist: BERRY, title: 'שיר', durationTolSec: 3, durationMs: 200_000 })
+    assert.equal(verifyCandidate(req, { provider: 'qobuz', title: 'שיר', artist: BERRY, durationSec: 201 }).verdict, 'exact')
+    const wrong = verifyCandidate(req, { provider: 'qobuz', title: 'שיר', artist: HADAG, durationSec: 201 })
+    assert.equal(wrong.verdict === 'reject' && wrong.kind, 'artist')
+  })
+  it('SoundCloud: a Hebrew artist must be in the upload; a Hebrew title can be found', () => {
+    const sc = (id: string, desc: string) => ({ source: 'soundcloud', mediaType: 'track', id, desc })
+    assert.equal(pickBestSoundcloudMatch('Song Title', BERRY, [sc('a', 'Song Title by Random Uploader')]), null, 'the artist gate was skipped for a Hebrew artist')
+    assert.equal(pickBestSoundcloudMatch('Song Title', BERRY, [sc('a', 'Song Title by Random Uploader'), sc('b', `${BERRY} - Song Title`)])?.id, 'b')
+    assert.deepEqual(rankSoundcloudCandidates('שיר', BERRY, [sc('a', `${HADAG} - שיר`), sc('b', `${BERRY} - שיר`)]).map((r) => r.id), ['b'])
+  })
+})
+
+describe('albums: identity and ownership', () => {
+  const req = buildRequestedAlbum({ artist: BERRY, title: 'נעלם ונשכח', trackCount: 2, tracks: [{ title: 'שיר', trackNumber: 1, durationSec: 200 }, { title: 'למה', trackNumber: 2, durationSec: 180 }] })
+  const cand = (artist: string) => ({ provider: 'qobuz' as const, desc: 'x', title: 'נעלם ונשכח', artist, trackCount: 2, tracks: [{ title: 'שיר', trackNumber: 1, durationSec: 201 }, { title: 'למה', trackNumber: 2, durationSec: 180 }] })
+  it('a Hebrew album verifies as itself, and not when another artist made it', () => {
+    assert.equal(verifyAlbumCandidate(req, cand(BERRY)).verdict, 'exact')
+    const v = verifyAlbumCandidate(req, cand(HADAG))
+    assert.equal(v.verdict === 'reject' && v.kind, 'artist')
+  })
+  it("the library owns the Hebrew track it has — not another artist's track of the same title", () => {
+    const own = matchLibraryOwnership(req, [{ id: 1, title: 'שיר', artist: BERRY, durationSec: 200 }, { id: 2, title: 'למה', artist: HADAG, durationSec: 180 }])
+    assert.deepEqual(own.owned.map((o) => o.index), [0])
+    assert.deepEqual(own.missing, [1])
+  })
+  it('the iTunes collection for a Hebrew album is found by its own name and artist', () => {
+    const rows = [{ collectionId: 1, collectionName: 'נעלם ונשכח', artistName: BERRY }, { collectionId: 2, collectionName: 'לאן נעלם', artistName: HADAG }]
+    assert.equal(pickItunesCollection(rows, BERRY, 'נעלם ונשכח')?.collectionId, 1)
+    assert.equal(pickItunesCollection(rows, KINO, 'נעלם ונשכח'), null)
+  })
+})
+
+describe('discovery and the Listen List', () => {
+  it("a discovery hit is acceptable only when it is the card's own Hebrew or Cyrillic artist", () => {
+    assert.equal(acceptableHit({ artist: BERRY }, { artist: BERRY }), true)
+    assert.equal(acceptableHit({ artist: BERRY }, { artist: HADAG }), false)
+    assert.equal(acceptableHit({ artist: MOLCHAT, title: 'Этажи' }, { artist: MOLCHAT, title: 'Этажи' }), true)
+  })
+  it('a Music Man suggestion already on the list (under a joint Hebrew credit) is dropped; a different artist is kept', () => {
+    const list = [{ id: 'r1', song: 'שיר', artist: BERRY }] as unknown as Recommendation[]
+    const out = dedupeSuggestions([{ song: 'שיר', artist: `${BERRY} & Rockfour`, note: '' }, { song: 'שיר', artist: HADAG, note: '' }], list)
+    assert.deepEqual(out.map((s) => s.artist), [HADAG])
+  })
+})
+
+describe('recommendations-ipc: caches and iTunes scoring compare with recoFold', () => {
+  const src = read('main/ipc/recommendations-ipc.ts')
+  it('the iTunes search cache and the cover-art cache key on recoFold, not one Hebrew key for all', () => {
+    assert.match(src, /const cacheKey = `\$\{recoFold\(q\)\}\|\$\{limit\}`/)
+    assert.match(src, /const cacheKey = `\$\{recoFold\(artist\)\}\|\$\{recoFold\(title\)\}`/)
+    assert.notEqual(recoFold(`${HADAG} למה`), recoFold(`${BERRY} שיר`))
+  })
+  it("a Hebrew jot earns the exact-artist boost, so a cover never renames it", () => {
+    assert.match(src, /const wantSong = recoFold\(input\.song \|\| ''\)\n\s+const wantArtist = recoFold\(input\.artist \|\| ''\)/)
+    assert.match(src, /const songN = recoFold\(s\.song\)\n\s+const artistN = recoFold\(s\.artist\)/)
+    assert.doesNotMatch(src, /recoNorm\(/, 'recoNorm is identity-only; nothing in this file compares with it')
   })
 })
