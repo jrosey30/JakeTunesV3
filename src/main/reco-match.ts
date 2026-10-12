@@ -22,6 +22,8 @@ export function recoNorm(s: string): string {
  * every other one. Live state on 2026-10-11: 0 rows, 0 tombstones with
  * other-script letters, so nothing stored changes.
  * ⚠️ TWIN: ~/JakeTunesMobile/backend/src/util/reco-identity.ts idNorm.
+ * Also the friend-credit keys (friend-imports-core, friend-standings-core),
+ * which are stored the same way.
  */
 export function recoIdNorm(s: string): string {
   return storedNameKey(s, recoNorm)

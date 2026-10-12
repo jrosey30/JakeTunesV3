@@ -20,7 +20,14 @@
  *          we can't honestly say a song we never fingerprinted was deleted.
  */
 
-import { recoNorm } from './reco-match.ts'
+// recoIdNorm, not recoNorm (2026-10-11): these keys are STORED — in
+// friend-credits.json (CreditRecord keys / albumKey) and inside attribution
+// credit ids in reco-import-credit.json — so a Latin name must keep its
+// recoNorm key byte for byte. recoNorm alone erased every Hebrew and
+// Cyrillic letter, so a friend's Hebrew or Cyrillic send could never earn a
+// credit or show on the standings. Live state on 10/11: 0 such entries in
+// any of the four friend files, so nothing stored changes.
+import { recoIdNorm } from './reco-match.ts'
 
 export type CreditKind = 'song' | 'album'
 
@@ -73,8 +80,8 @@ export function creditKindOf(r: { kind?: string; song?: string; matchedTitle?: s
 }
 
 export function albumKeyOfStrings(album: string, artist: string): string | null {
-  const al = recoNorm(album)
-  const ar = recoNorm(artist)
+  const al = recoIdNorm(album)
+  const ar = recoIdNorm(artist)
   return al && ar ? `${al}|${ar}` : null
 }
 
@@ -82,17 +89,17 @@ export function buildLibraryIndex(tracks: StandingsTrackLite[]): LibraryIndex {
   const pairKeys = new Set<string>()
   const albumCounts = new Map<string, number>()
   for (const t of tracks) {
-    const title = recoNorm(t.title || '')
-    const album = recoNorm(t.album || '')
+    const title = recoIdNorm(t.title || '')
+    const album = recoIdNorm(t.album || '')
     for (const artistRaw of [t.artist, t.albumArtist]) {
-      const a = recoNorm(artistRaw || '')
+      const a = recoIdNorm(artistRaw || '')
       if (!a) continue
       if (title) pairKeys.add(`${title}|${a}`)
       if (album) {
         const k = `${album}|${a}`
         // A track indexed under both artist and albumArtist must count ONCE —
         // count per track, not per index entry.
-        if (artistRaw === t.artist || recoNorm(t.artist || '') !== a) {
+        if (artistRaw === t.artist || recoIdNorm(t.artist || '') !== a) {
           albumCounts.set(k, (albumCounts.get(k) ?? 0) + 1)
         }
       }
@@ -206,10 +213,10 @@ export function computeAlbumCredits(
   // album|artist key → { count, newestArrival }
   const albums = new Map<string, { count: number; newest: number }>()
   for (const t of tracks) {
-    const album = recoNorm(t.album || '')
+    const album = recoIdNorm(t.album || '')
     if (!album) continue
     const when = Date.parse(t.dateAdded || '') || 0
-    const artists = new Set([recoNorm(t.artist || ''), recoNorm(t.albumArtist || '')])
+    const artists = new Set([recoIdNorm(t.artist || ''), recoIdNorm(t.albumArtist || '')])
     for (const a of artists) {
       if (!a) continue
       const k = `${album}|${a}`
