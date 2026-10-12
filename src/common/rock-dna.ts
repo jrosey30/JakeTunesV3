@@ -22,6 +22,8 @@
  * another listener later (`person`), but this phase is Jake's alone.
  */
 
+import { nameKey } from './fold-text.ts'
+
 export type SectionId = 'A' | 'B' | 'C' | 'D' | 'E'
 export type Rating = 'love' | 'like' | 'respect' | 'dislike' | 'unfamiliar'
 export const RATINGS: Array<{ id: Rating; label: string; meaning: string }> = [
@@ -534,7 +536,7 @@ function experimentSummary(traits: ProfileTrait[], state: DnaState): string | un
   return undefined
 }
 
-const nk = (s: string | undefined): string => String(s || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^\p{L}\p{M}\p{N}]+/gu, ' ').trim()
+const nk = (s: string | undefined): string => nameKey(s)   // the one fold (fold-text); was a copy of it
 
 /** Artists Jake marked Dislike — kept out of the Record Shop (explicit). */
 export function dislikedArtists(state: DnaState): string[] {

@@ -51,6 +51,17 @@ export function foldAccents(s: string | null | undefined): string {
 }
 
 /**
+ * What a name key drops: anything that isn't a letter, mark or digit, AND the
+ * spacing modifier letters U+02B0–U+02FF. Those are letters to Unicode (Lm)
+ * but apostrophes and primes in practice: ʼ (U+02BC) is the apostrophe in
+ * "Donʼt" and in Ukrainian, ʻ the okina in "Hawaiʻi", ʹ ʾ ʿ the primes and
+ * ayin/hamza of transliteration. Kept as letters, "Donʼt" never met "Don't"
+ * (2026-10-11). Only that block: Japanese ー and 々 are Lm too, and they are
+ * part of the word.
+ */
+const NOT_NAME = /(?:[^\p{L}\p{M}\p{N}]|[\u02B0-\u02FF])+/gu
+
+/**
  * THE identity/matching key for a name, in any script: accents folded
  * (foldAccents, after NFKC so full-width and ligature forms fold too), case
  * dropped, letters + marks + digits of EVERY script kept, each run of
@@ -64,7 +75,7 @@ export function foldAccents(s: string | null | undefined): string {
  */
 export function nameKey(s: string | null | undefined, sep = ' '): string {
   if (!s) return ''
-  const k = foldAccents(String(s).normalize('NFKC')).replace(/[^\p{L}\p{M}\p{N}]+/gu, ' ').trim()
+  const k = foldAccents(String(s).normalize('NFKC')).replace(NOT_NAME, ' ').trim()
   return sep === ' ' ? k : k.replace(/ /g, sep)
 }
 
