@@ -185,6 +185,7 @@ import {
   tagYearStr,
 } from '../common/albumReleaseDate'
 import { foldAccents, nameKey, storedNameKey } from '../common/fold-text.ts'
+import { measureLibraryFileSizes, type FileSizeProgress, type FileSizeScan } from '../common/library-file-sizes.ts'
 import { normForOwnership } from './owned-album-key.ts'
 import { explicitWins } from '../common/explicit.ts'
 import { MODEL_SMART, MODEL_FAST, withModelPolicy } from '../common/ai-models.ts'
@@ -9897,13 +9898,11 @@ ipc.handle('apply-overrides-batch', async (event) => {
     const refreshedPaths = new Set(
       result.results.filter(r => r.ok && r.fieldsWritten.length > 0).map(r => r.filePath)
     )
-    let fileSizesRefreshed = 0
-    if (refreshedPaths.size > 0) {
-      fileSizesRefreshed = await refreshLibraryFileSizes((absPath) => refreshedPaths.has(absPath))
-    }
-    if (fileSizesRefreshed > 0) {
-      console.log(`[apply-overrides-batch] refreshed fileSize on ${fileSizesRefreshed} tracks in library.json`)
-    }
+    // Measured here, applied by the renderer (UPDATE_TRACKS), written by
+    // its save-library like any other edit.
+    const sizeScan = refreshedPaths.size > 0
+      ? await measureFileSizesOnDisk((absPath) => refreshedPaths.has(absPath))
+      : null
 
     return {
       ok: true,
@@ -9913,7 +9912,8 @@ ipc.handle('apply-overrides-batch', async (event) => {
       skippedNoTrack,
       skippedFpMismatch,
       skippedNoWritable,
-      fileSizesRefreshed,
+      fileSizesRefreshed: sizeScan?.stale ?? 0,
+      fileSizes: sizeScan?.measured ?? [],
       // Don't ship the full per-file results array (could be 6k entries) —
       // the summary is enough for the UI. First 10 failures are useful
       // for diagnosis though.
@@ -9930,93 +9930,41 @@ ipc.handle('apply-overrides-batch', async (event) => {
   }
 }, { refuse: REFUSED_SENDER })
 
-// Brief 016 commit 2: refresh `fileSize` in library.json by stat'ing
-// the on-disk file for every track whose absolute audio-file path
-// satisfies the predicate. Returns the count of entries actually
-// changed.
-//
-// Read-modify-write — see Decision 8 in Brief 016: this is NOT atomic
-// against concurrent save-library / save-playlist writes. The probability
-// of collision is low (this fires only after explicit tag write-back or
-// from a user-invoked menu item, not in background paths), and the
-// failure mode if it collides is a single playlist edit silently
-// overwritten. A follow-up brief introduces a real file lock if the
-// race ever bites.
-//
-// Uses the same temp+rename + lastSelfWriteMtimeMs pre-stamp pattern
-// as save-library so the fs watcher doesn't fire on our own write.
-async function refreshLibraryFileSizes(
-  shouldRefresh: (absPath: string) => boolean,
-  onProgress?: (p: { scanned: number; refreshed: number; total: number }) => void,
-): Promise<number> {
-  let libRaw: string
+// Brief 016 commit 2: measure `fileSize` for every track whose absolute
+// audio path satisfies the predicate. Main measures; the renderer applies
+// the differences (UPDATE_TRACKS) and its save-library writes them. When
+// this wrote library.json itself, the renderer's next save put the old
+// sizes back. See common/library-file-sizes.ts.
+async function measureFileSizesOnDisk(
+  shouldMeasure: (absPath: string) => boolean,
+  onProgress?: (p: FileSizeProgress) => void,
+): Promise<FileSizeScan | null> {
+  let tracks: Array<Record<string, unknown>>
   try {
-    libRaw = await readFile(LIBRARY_PATH, 'utf-8')
+    tracks = (JSON.parse(await readFile(LIBRARY_PATH, 'utf-8')) as { tracks?: Array<Record<string, unknown>> }).tracks || []
   } catch (err) {
     console.warn(`[refresh-file-sizes] could not read library.json:`, err instanceof Error ? err.message : err)
-    return 0
+    return null
   }
-  const libObj = JSON.parse(libRaw) as { tracks?: Array<Record<string, unknown>>; playlists?: unknown[] }
-  const tracks = libObj.tracks || []
-  let refreshed = 0
-  let scanned = 0
-  for (let i = 0; i < tracks.length; i++) {
-    const t = tracks[i]
-    const colonPath = String(t.path || '')
-    if (!colonPath) continue
-    const abs = colonPathToAbsolute(colonPath, MUSIC_DIR)
-    scanned++
-    if (!shouldRefresh(abs)) {
-      if (onProgress && scanned % 200 === 0) onProgress({ scanned, refreshed, total: tracks.length })
-      continue
-    }
-    try {
-      const s = await stat(abs)
-      const current = typeof t.fileSize === 'number' ? t.fileSize : 0
-      if (current !== s.size) {
-        ;(t as { fileSize: number }).fileSize = s.size
-        refreshed++
-      }
-    } catch {
-      // File missing or unreadable — skip. The audioMissing flag from
-      // post-sync verification covers user-visible reporting; this
-      // refresh stays read-only-on-skip.
-    }
-    if (onProgress && scanned % 200 === 0) onProgress({ scanned, refreshed, total: tracks.length })
-  }
-  if (onProgress) onProgress({ scanned, refreshed, total: tracks.length })
-  if (refreshed === 0) return 0
-
-  // Atomic write with watcher pre-stamp — same pattern save-library uses.
-  // The pre-stamp before rename closes the race between fsWatch's stat
-  // call and our stat() update of lastSelfWriteMtimeMs.
-  lastSelfWriteMtimeMs = Date.now()
-  const tmp = LIBRARY_PATH + '.partial.json'
-  await writeFile(tmp, JSON.stringify(libObj, null, 2))
-  const { rename: renameFS } = await import('fs/promises')
-  await renameFS(tmp, LIBRARY_PATH)
-  try {
-    const s = await stat(LIBRARY_PATH)
-    lastSelfWriteMtimeMs = Math.round(s.mtimeMs)
-  } catch { /* non-fatal */ }
-  return refreshed
+  return measureLibraryFileSizes(tracks, (p) => colonPathToAbsolute(p, MUSIC_DIR), shouldMeasure, lstat, onProgress)
 }
 
-// Brief 016 commit 2: full-library fileSize refresh. Reads every track,
-// stats its actual on-disk file, updates library.json.fileSize if the
-// stat differs from the cached value. Surfaced via the Library menu
+// Brief 016 commit 2: full-library fileSize refresh. Measures every
+// track's local file and returns the sizes; the renderer applies the
+// ones that differ. Surfaced via the Library menu
 // for one-shot retrofit of pre-existing drift (the 29.7% scan finding
 // from Brief 016's diagnostic phase — likely from a historical "Fix
 // iPod Compatibility" re-encode pass that cut ~515KB per track).
 ipc.handle('refresh-file-sizes', async (event) => {
   try {
-    const refreshed = await refreshLibraryFileSizes(
+    const scan = await measureFileSizesOnDisk(
       () => true,
       (p) => {
         try { event.sender.send('refresh-file-sizes:progress', p) } catch { /* ignore */ }
       },
     )
-    return { ok: true, refreshed }
+    if (!scan) return { ok: false, error: 'library.json could not be read' }
+    return { ok: true, refreshed: scan.stale, measured: scan.measured, streamed: scan.streamed, missing: scan.missing }
   } catch (err) {
     return { ok: false, error: safeIpcError(err, 'unknown') }
   }

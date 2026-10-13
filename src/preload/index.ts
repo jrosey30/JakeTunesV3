@@ -536,6 +536,7 @@ const electronAPI = {
     skippedFpMismatch?: number
     skippedNoWritable?: number
     fileSizesRefreshed?: number
+    fileSizes?: Array<{ id: number; fileSize: number }>
     failures?: Array<{ filePath: string; error?: string }>
     error?: string
   }> =>
@@ -545,12 +546,11 @@ const electronAPI = {
     ipcRenderer.on('tag-writeback:progress', handler)
     return () => { ipcRenderer.removeListener('tag-writeback:progress', handler) }
   },
-  // Brief 016 commit 2: full-library fileSize refresh. Walks every
-  // track, stats the on-disk file, updates library.json.fileSize if
-  // it differs from the cached value. Use case is one-shot retrofit
-  // of pre-existing drift (Brief 016 diagnostic found 29.7% of tracks
-  // had stale fileSize, likely from a historical re-encode pass).
-  refreshFileSizes: (): Promise<{ ok: boolean; refreshed?: number; error?: string }> =>
+  // Brief 016 commit 2: full-library fileSize refresh. Main measures
+  // every local file and returns the sizes; the renderer applies the
+  // ones that differ (UPDATE_TRACKS) and saves them like any edit.
+  // Streamed (symlinked) and missing files are counted, not measured.
+  refreshFileSizes: (): Promise<{ ok: boolean; refreshed?: number; measured?: Array<{ id: number; fileSize: number }>; streamed?: number; missing?: number; error?: string }> =>
     ipcRenderer.invoke('refresh-file-sizes'),
   onRefreshFileSizesProgress: (callback: (p: { scanned: number; refreshed: number; total: number }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, p: { scanned: number; refreshed: number; total: number }) => callback(p)

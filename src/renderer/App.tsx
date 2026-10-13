@@ -67,6 +67,7 @@ import './styles/sidebar.css'
 import { mergeHubCatalog } from '../common/hub-catalog-merge'
 import { ackVersionAfterSave, hubAdoptAfterMerge, trackIdKey } from '../common/hub-catalog-ack'
 import { phoneOverlayFields } from '../common/genre-vocab'
+import { fileSizeUpdates } from '../common/library-file-sizes'
 
 // Session cap — startup must not walk every missing album via fetchAlbumArt.
 const STARTUP_NETWORK_ART_CAP = 16
@@ -1959,6 +1960,10 @@ function AppInner() {
                   unsub()
                   setApplyOverridesProgress(null)
                   if (r.ok) {
+                    // Tag writes resize files. Main measured them; the
+                    // track list's own save writes the new sizes.
+                    const sizeUpdates = fileSizeUpdates(libTracksRef.current, r.fileSizes ?? [])
+                    if (sizeUpdates.length) dispatch({ type: 'UPDATE_TRACKS', updates: sizeUpdates })
                     setApplyOverridesResult({
                       total: r.total ?? 0,
                       succeeded: r.succeeded ?? 0,
@@ -2061,7 +2066,12 @@ function AppInner() {
                   unsub()
                   setRefreshSizesProgress(null)
                   if (r.ok) {
-                    setRefreshSizesResult({ refreshed: r.refreshed ?? 0 })
+                    // Applied here so save-library writes them. Main used
+                    // to write library.json itself, and the next save put
+                    // the old sizes back.
+                    const sizeUpdates = fileSizeUpdates(libTracksRef.current, r.measured ?? [])
+                    if (sizeUpdates.length) dispatch({ type: 'UPDATE_TRACKS', updates: sizeUpdates })
+                    setRefreshSizesResult({ refreshed: sizeUpdates.length })
                   } else {
                     setRefreshSizesResult({ refreshed: 0, error: r.error })
                   }
