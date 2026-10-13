@@ -191,8 +191,26 @@ def v1_bar(base, cand, base_rows=(), cand_rows=()):
         else:
             worst = min(common, key=lambda p: c[p] - b[p])
             d = c[worst] - b[worst]
-            checks.append({"check": "v1_mood_per_probe", "pass": d >= -EPS,
-                           "detail": f"mood-index.bin changed → worst v1 per-probe mood Δ {worst} {d:+.4f} over {scope} (must be ≥ 0)"})
+            # Jake 2026-10-13 ("go with option 1"): ONE mood-routed probe may
+            # lose ONE slot (1/k — a single song, the smallest change the test
+            # can see) when it is the only drop and the mood-routed probes
+            # improve on average. Only with production routes on both runs;
+            # the strict fallback gets no allowance.
+            drops = [p for p in common if c[p] - b[p] < -EPS]
+            ks = {r["probe_id"]: r.get("k") for r in base_rows if r.get("group") == "retrieval"}
+            mean_d = sum(c[p] - b[p] for p in common) / len(common)
+            one_slot = (routed and len(drops) == 1 and bool(ks.get(drops[0]))
+                        and (c[drops[0]] - b[drops[0]]) >= -(1.0 / ks[drops[0]]) - EPS and mean_d > EPS)
+            if d >= -EPS:
+                detail = f"mood-index.bin changed → worst v1 per-probe mood Δ {worst} {d:+.4f} over {scope} (must be ≥ 0)"
+            elif one_slot:
+                detail = (f"mood-index.bin changed → {worst} {d:+.4f} is ONE slot of k={ks[worst]} and the only drop; "
+                          f"mood-routed mean Δ {mean_d:+.4f} over {scope} improves — allowed (one-slot rule)")
+            else:
+                detail = (f"mood-index.bin changed → worst v1 per-probe mood Δ {worst} {d:+.4f} over {scope} "
+                          f"({len(drops)} drop(s), mood-routed mean Δ {mean_d:+.4f}); allowed only: one drop of one slot "
+                          f"with the mood-routed mean improving")
+            checks.append({"check": "v1_mood_per_probe", "pass": d >= -EPS or one_slot, "detail": detail})
     if not main_changed and not mood_changed:
         checks.append({"check": "v1_something_changed", "pass": False,
                        "detail": "candidate brain is byte-identical to the baseline — nothing to apply"})
