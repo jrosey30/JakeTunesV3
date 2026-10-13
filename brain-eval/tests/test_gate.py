@@ -117,6 +117,29 @@ class V1Bar(unittest.TestCase):
         self.assertTrue(G.v1_bar(self.base, cand, br, good)["pass"])
         self.assertFalse(G.v1_bar(self.base, cand, br, bad)["pass"])
 
+    def test_mood_rule_counts_only_mood_routed_probes(self):
+        # Jake 2026-10-13: a main-routed probe's mood reading never reaches him
+        # (ret-006 "1970s classic rock" is main+decade in production).
+        cand = dict(self.base, mood_id="x2")
+        br = [{"probe_id": "ret-006", "group": "retrieval", "score_mood": 0.60, "route": "main"},
+              {"probe_id": "ret-007", "group": "retrieval", "score_mood": 0.44, "route": "mood"}]
+        main_drop = [dict(br[0], score_mood=0.44), dict(br[1], score_mood=0.84)]
+        mood_drop = [dict(br[0], score_mood=0.60), dict(br[1], score_mood=0.40)]
+        res = G.v1_bar(self.base, cand, br, main_drop)
+        self.assertTrue(res["pass"], res)
+        self.assertIn("1 mood-routed", [c for c in res["checks"] if c["check"] == "v1_mood_per_probe"][0]["detail"])
+        self.assertFalse(G.v1_bar(self.base, cand, br, mood_drop)["pass"])
+
+    def test_mood_rule_without_routes_stays_strict(self):
+        # No routes recorded (old rows or a bridge failure): every probe counts.
+        cand = dict(self.base, mood_id="x2")
+        br = [{"probe_id": "ret-006", "group": "retrieval", "score_mood": 0.60},
+              {"probe_id": "ret-007", "group": "retrieval", "score_mood": 0.44}]
+        main_drop = [dict(br[0], score_mood=0.44), dict(br[1], score_mood=0.84)]
+        self.assertFalse(G.v1_bar(self.base, cand, br, main_drop)["pass"])
+        half = [dict(br[0], route="main"), dict(br[1], route="mood")]   # routes on one side only
+        self.assertFalse(G.v1_bar(self.base, cand, half, main_drop)["pass"])
+
     def test_identical_brain_has_nothing_to_apply(self):
         self.assertFalse(G.v1_bar(self.base, dict(self.base))["pass"])
 

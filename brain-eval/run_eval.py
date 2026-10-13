@@ -275,7 +275,7 @@ def check_citations(cited, titles, artists):
 GROUND_SYS = ("You are the Music Man, JakeTunes' in-house DJ — an arrogant, "
               "knowledgeable music savant. Answer ONLY about tracks in the user's "
               "library. You may use the retrieved library context provided. Cite "
-              "specific tracks by their EXACT title and artist. If the library has "
+              "specific tracks by their EXACT title and artist, written exactly as listed (\"Title\" by Artist). If the library has "
               "none that fit, say so plainly and cite nothing — never invent a track. "
               'Return ONLY JSON: {"tracks":[{"title":"...","artist":"..."}],"answer":"..."}')
 
@@ -285,7 +285,7 @@ def run_grounding(entry, ids, vecs, qvec, by_id, titles, artists, model):
     for tid in topk:
         t = by_id.get(tid)
         if t:
-            ctx.append(f"- {t.get('title','?')} — {t.get('artist','?')} [{t.get('genre','')}, {t.get('year','')}]")
+            ctx.append(f"- \"{t.get('title','?')}\" by {t.get('artist','?')} [{t.get('genre','')}, {t.get('year','')}]")
     user = (f"Retrieved library context:\n" + "\n".join(ctx) +
             f"\n\nUser question: {entry['question']}")
     raw = claude(GROUND_SYS, user, model, max_tokens=500)
@@ -437,6 +437,27 @@ def v1_mood_diag(prompts, tracks, embed_cache):
     return out, sha_of(path)
 
 
+def v1_production_routes(prompts, args):
+    """Where production sends each v1 retrieval query ('main' | 'mood'), from
+    main's real router through the bridge. Additive: it never changes a v1
+    score. gate.py's v1 mood rule counts only the mood-routed probes (Jake,
+    2026-10-13: "yes change the rule"), and falls back to EVERY probe when
+    this is unavailable, so a bridge failure can only make the bar stricter."""
+    if args.no_bridge:
+        return {}, None
+    try:
+        import scorecard as S  # noqa: N812 — same local import the v3 path uses
+        src_dir, main_sha = S.extract_main_src(args.main_ref)
+        ret = [e for e in prompts if e["bucket"] == "retrieval"]
+        bres, _ = S.run_bridge([{"query": e["query"], "k": e.get("k", 20)} for e in ret],
+                               STATE_DIR, src_dir, key("OPENAI_API_KEY"))
+        return {e["id"]: bres[(e["query"], int(e.get("k", 20)))]["index"] for e in ret}, main_sha
+    except Exception as ex:  # noqa: BLE001 — unavailable routes = the strict fallback
+        print(f"[v1] production routes unavailable ({str(ex)[:200]}) — gate's v1 mood rule will count every probe",
+              file=sys.stderr)
+        return {}, None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ruler", choices=("v1", "v3"), default="v1",
@@ -511,6 +532,10 @@ def main():
 
     # additive diagnostics (never part of a v1 mean): per-probe mood-index readings
     mood_diag, mood_id = v1_mood_diag(prompts, tracks, embed_cache)
+    v1_routes, routes_src = v1_production_routes(prompts, args)
+    if v1_routes:
+        print(f"[v1] production routes (main src {routes_src[:12]}): "
+              f"{sum(1 for v in v1_routes.values() if v == 'mood')} mood / {sum(1 for v in v1_routes.values() if v != 'mood')} main")
     lib_sha = sha_of(LIB_PATH)
 
     # append one row per brain (+ its per-probe rows)
@@ -530,6 +555,8 @@ def main():
         for r in rows:
             if r["group"] == "retrieval":
                 r["score_mood"] = mood_diag.get(r["probe_id"])
+                if v1_routes.get(r["probe_id"]):
+                    r["route"] = v1_routes[r["probe_id"]]
             probe_rows.append({"run_id": run_id, "ruler": "v1", "label": s["label"], "at": int(now * 1000),
                                "brain_id": s["brain_id"], "mood_id": mood_id, "library_sha": lib_sha, **r})
     append_jsonl(log_path, log_rows)
@@ -742,7 +769,7 @@ def main_v3(args):
             for tid in hits[:g.get("k", 14)]:
                 t = by_id.get(tid)
                 if t:
-                    ctx.append(f"- {t.get('title','?')} — {t.get('artist','?')} [{t.get('genre','')}, {t.get('year','')}]")
+                    ctx.append(f"- \"{t.get('title','?')}\" by {t.get('artist','?')} [{t.get('genre','')}, {t.get('year','')}]")
             raw = claude(GROUND_SYS, "Retrieved library context:\n" + "\n".join(ctx) +
                          f"\n\nUser question: {g['question']}", args.model, max_tokens=500)
             obj = parse_json_obj(raw)

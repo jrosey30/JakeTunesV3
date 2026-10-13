@@ -170,14 +170,29 @@ def v1_bar(base, cand, base_rows=(), cand_rows=()):
         b = {r["probe_id"]: r.get("score_mood") for r in base_rows if r.get("group") == "retrieval"}
         c = {r["probe_id"]: r.get("score_mood") for r in cand_rows if r.get("group") == "retrieval"}
         common = [p for p in b if b[p] is not None and c.get(p) is not None]
-        if not common:
+        # Jake 2026-10-13 ("yes change the rule"): only probes production
+        # actually ROUTES to the mood index count — a main-routed probe's mood
+        # reading never reaches him (10-13: ret-006, "1970s classic rock", is
+        # main+decade in production). Routes come from run_eval's bridge pass;
+        # without them on BOTH runs, every probe counts (the old, stricter rule).
+        rb = {r["probe_id"]: r.get("route") for r in base_rows if r.get("group") == "retrieval"}
+        rc = {r["probe_id"]: r.get("route") for r in cand_rows if r.get("group") == "retrieval"}
+        routed = bool(common) and all(rb.get(p) and rc.get(p) for p in common)
+        scope = "every probe (no production routes recorded)"
+        if routed:
+            common = [p for p in common if rb[p] == "mood" or rc[p] == "mood"]
+            scope = f"{len(common)} mood-routed probe(s)"
+        if not common and not routed:
             checks.append({"check": "v1_mood_per_probe", "pass": False,
                            "detail": "mood-index.bin changed but no v1 per-probe mood readings to compare"})
+        elif not common:
+            checks.append({"check": "v1_mood_per_probe", "pass": True,
+                           "detail": "mood-index.bin changed; no v1 probe is mood-routed in production"})
         else:
             worst = min(common, key=lambda p: c[p] - b[p])
             d = c[worst] - b[worst]
             checks.append({"check": "v1_mood_per_probe", "pass": d >= -EPS,
-                           "detail": f"mood-index.bin changed → worst v1 per-probe mood Δ {worst} {d:+.4f} (must be ≥ 0)"})
+                           "detail": f"mood-index.bin changed → worst v1 per-probe mood Δ {worst} {d:+.4f} over {scope} (must be ≥ 0)"})
     if not main_changed and not mood_changed:
         checks.append({"check": "v1_something_changed", "pass": False,
                        "detail": "candidate brain is byte-identical to the baseline — nothing to apply"})
