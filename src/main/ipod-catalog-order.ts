@@ -15,12 +15,20 @@
  * files under B), accents fold BEFORE the strip (Motörhead under M, not
  * after Z — the JAŸ-Z lesson), case ignored. Within an artist: album,
  * then numeric track number, then title.
+ *
+ * Names in other alphabets (2026-10-13): the fold used to keep only
+ * [a-z0-9], so every Hebrew and Cyrillic name sorted as '' — all of them at
+ * the top of the Artists menu, their songs interleaved by track number
+ * across artists and albums. The shared nameKey keeps every script, so they
+ * sort after Z (by code point, as iTunes files them), each artist and album
+ * together. Safe for the firmware's binary search: conformCatalogIdOrder
+ * re-mints ids AFTER this order is written, whatever the order is.
  */
 
 import { readFile, writeFile } from 'node:fs/promises'
+import { nameKey } from '../common/fold-text.ts'
 
-const fold = (s: string): string =>
-  String(s || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim()
+const fold = (s: string): string => nameKey(s)
 
 export function ipodArtistSortKey(name: string): string {
   return fold(name).replace(/^(the|a|an) /, '')

@@ -56,6 +56,34 @@ describe('orderForIpodCatalog', () => {
     ])
     assert.deepEqual(out.map((x) => x.albumArtist || x.artist), ['Alpha', 'Zeta'])
   })
+
+  // 2026-10-13: the fold kept only [a-z0-9], so every Hebrew/Cyrillic artist
+  // sorted as '' — all at the top, songs interleaved by track number across
+  // artists and albums. Jake's library has exactly these five.
+  test('Hebrew and Cyrillic artists sort after Z, each artist and album together', () => {
+    const out = orderForIpodCatalog([
+      t('הדג נחש', 'לאן נעלם', 1, 'א'),
+      t('ברי סחרוף', 'נעלם ונשכח', 1, 'ב'),
+      t('Weezer', 'Blue Album', 1, 'My Name Is Jonas'),
+      t('הדג נחש', 'לאן נעלם', 2, 'ג'),
+      t('Молчат Дома', 'Этажи', 1, 'Судно'),
+      t('ברי סחרוף', 'נעלם ונשכח', 2, 'ד'),
+      t('Кино', 'Группа крови', 1, 'Группа крови'),
+      t('Abba', 'Arrival', 1, 'Dancing Queen'),
+    ])
+    assert.deepEqual(out.map((x) => `${x.artist} ${x.trackNumber}`), [
+      'Abba 1', 'Weezer 1',
+      'Кино 1', 'Молчат Дома 1',                       // Cyrillic, alphabetical
+      'ברי סחרוף 1', 'ברי סחרוף 2', 'הדג נחש 1', 'הדג נחש 2', // Hebrew, alef-bet order, grouped
+    ])
+  })
+
+  test('non-Latin artists get keys of their own; Latin keys are as before', () => {
+    assert.notEqual(ipodArtistSortKey('ברי סחרוף'), ipodArtistSortKey('הדג נחש'))
+    assert.equal(ipodArtistSortKey('Молчат Дома'), 'молчат дома')
+    assert.equal(ipodArtistSortKey('Lindstrøm'), 'lindstrom', 'ø folds to o instead of splitting the word')
+    assert.equal(ipodArtistSortKey('The Beatles'), 'beatles')
+  })
 })
 
 /** Firmware binary-searches mhits by the 32-bit id — the 819-of-1000 root
