@@ -82,3 +82,74 @@ cat score_log.jsonl | python3 -c "import sys,json; [print(j['iso'], j['label'], 
 - Auto-promoting/rejecting anything. This brief **only measures**.
 - Building a real prompt+correction usage log (the current interaction log lacks
   the user's prompt and any correction signal — its own future brief).
+
+---
+
+## Scorecard v3 (2026-10-12) — vocab-resolved ruler, production path, keep gate, experiment queue
+
+**Why.** The 15-probe v1 ruler matched genres by substring, so the 10-11
+taxonomy refresh (7,189 tags re-filed) read as a 0.05 "regression" until two
+predicates were hand-recalibrated. v3 resolves genres through the app's own
+vocab, refuses to score a stale ruler, scores what production actually
+retrieves, and turns "keep it?" into a fixed statistical gate.
+
+| file | what it is |
+|---|---|
+| `vocab_snapshot.json` | the app's genre vocab, frozen: leaf → family (genre-vocab "area") → umbrella (Genre Iceberg). `export_vocab.py` executes `src/common/genre-vocab.ts` + `genre-iceberg.ts` from a `git archive` of origin/main (`--check` = is it current?) |
+| `eval_set_v3.json` | the frozen v3 ruler from `gen_probes.py` (seed + generating library sha inside): 154 probes in six groups + 20 grounding questions (14 normal, 6 anachronistic-era traps) |
+| `eval_set_v3.qvec.json` | the ruler's query vectors, frozen — baseline vs candidate and night N vs N+1 see bit-identical queries |
+| `scorecard.py` | shared v3 machinery: predicates, ruler-stale guard, query-vector cache, bridge runner, Python router fallback |
+| `bridge/` | the production-path bridge (`rag-bridge.ts`, ported from main) + the electron stub; runs main's real `ragRetrieveByQuery` (router, mood index, audio fusion, decade gate, reranker, subgenre lexicon) from `bridge/.main-src/<sha>/` |
+| `gate.py` | the keep gate (v3) + the unchanged v1 bar; the dual-run decision |
+| `experiments/` | `queue.json` (E1–E9), `ledger.jsonl`, `state/`, `tools/` (scratch-copy-only methods) |
+| `pick_experiment.py` | picks the night's ONE item, records results, guards re-queues |
+| `nightly-prompt-v3.md` | DRAFT of the homemini prompt (not installed) |
+| `tests/` | `python3 -m unittest discover -s brain-eval/tests` |
+
+**Predicates (v3).** `genre_leaf` / `genre_family` / `genre_umbrella` are exact
+vocab names, UNIONed; `year_range`, `bpm_min` / `bpm_max` (measured bpm only) and
+`artist` (exact folded name vs `artist` or `contributingArtists`) are ANDed on.
+An unknown name is an error, never a zero. If >0.5% of the library's genre tags
+don't resolve in the vocab, run_eval exits 3 with **RULER STALE**.
+
+**Groups.** artist 30 (≥20 tracks) · umbrella_family 18 (7 umbrellas + 11
+families) · leaf 50 (≥25 tracks; catch-all leaves excluded) · family_decade 30
+(≥50 tracks) · tempo_family 16 (bpm ≤85 / ≥130 × family, ≥30 tracks) · vibe 10
+(ret-013..015 + v2 prod-001..007, recast mechanically and proven equal on the
+generating library). **Headline = mean of the group means.**
+
+**Running it.**
+```bash
+python3 run_eval.py --ruler v3 --no-llm --state-dir /tmp/brain-snap-YYYYMMDD   # retrieval only
+python3 run_eval.py --ruler v3 --state-dir "$SNAP" --label baseline --run-id B3   # + 20 grounding Qs
+python3 run_eval.py --ruler v1 --state-dir "$SNAP" --run-id B1                    # v1, unchanged
+python3 gate.py --base B3 --cand C3 --v1-base B1 --v1-cand C1                     # exit 0 = APPLY
+python3 pick_experiment.py pick --state-dir "$SNAP" --dry-run
+```
+Per-probe rows land in `score_rows.jsonl` (keyed by `run_id`); every
+`score_log.jsonl` row now carries `ruler` (rows without one are v1).
+`--log-dir` sends both elsewhere (use it for lab runs).
+
+**The bridge needs:** node + `npx --yes tsx` (or `JT_TSX="node /path/to/tsx/dist/cli.mjs"`),
+git (it `git archive`s origin/main's `src/` — no checkout), and, for audio fusion,
+the CLAP helper (`~/JakeTunesV3/.venv-clap` + `scripts/audio-embed.py`, or
+`JT_CLAP_ROOT`). Without the helper, production falls back to mood-only and so
+does the bridge; the `routes` field records which ran, and gate.py refuses to
+compare a fusion run with a non-fusion one. If the bridge can't run at all,
+run_eval says so loudly and scores the Python router port (`primary_source:
+py-router`) — that is NOT the production path and nothing may be applied on it.
+
+**Keep gate (v3):** mean per-probe Δ ≥ +0.005 · 90% paired bootstrap lower
+bound > 0 · no group mean drops > 0.01 · candidate grounding = 1.000.
+**Dual run:** apply only if the v1 bar AND the v3 gate both pass (gate.py).
+
+**Regenerating the ruler** (only when it goes stale — it resets v3 comparability):
+`export_vocab.py` → `gen_probes.py --library <snapshot>/library.json` →
+`run_eval.py --ruler v3 --no-llm --state-dir <snapshot> --freeze-qvec`.
+
+**Baseline (laptop snapshot 2026-10-12, library 10ca503eec45, main c36a3bd70694,
+mood a7f0bb302353):** headline **0.743** — artist 0.963, umbrella_family 0.960,
+leaf 0.428, family_decade 0.872, tempo_family 0.472, vibe 0.761; grounding
+1.000 (20/20). Diagnostics: main-index 0.585, mood-index 0.457. The leaf group
+is the production gap: genre-name queries ("Garage Punk", "Prog Rock") route to
+the mood/fusion path and score 0.43 where the main index alone scores 0.78.
