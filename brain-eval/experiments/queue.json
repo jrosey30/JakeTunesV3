@@ -132,15 +132,15 @@
   {
    "id": "E3",
    "title": "Mood-text refresh once the bare backlog is drained",
-   "status": "rejected",
+   "status": "queued",
    "priority": 70,
    "lane": "auto",
    "hypothesis": {
-    "metric": "v3 mean per-probe delta (production path)",
-    "from": "tonight's baseline",
-    "to_beat": "+0.005 with CI lower bound > 0, vibe/tempo_family groups not down",
+    "metric": "dual-run gate on the mood rebuild WITH the family/umbrella genre line (JakeTunesV3 #110)",
+    "from": "10-13 baseline: v3 0.742, leaf 0.518, umbrella_family 0.913, v1 0.810/1.000/0.905",
+    "to_beat": "v3 mean delta >= +0.005 with CI lower bound > 0 (priced 10-13: +0.110, CI [+0.079, +0.142]); umbrella_family >= baseline - 0.01 (priced -0.002); leaf >= 0.80 (priced 0.844); grounding 1.000 (priced 20/20); v1 mood rule on mood-routed probes with the one-slot allowance (priced: ret-014 -1/30 the only drop, mood-routed mean +0.027)",
     "op": ">=",
-    "statement": "Mood texts still carry the pre-taxonomy genre line; rebuilding them helps ONLY once almost no bare tracks remain (10-12 sequencing rule: drain the bare cohort first, then refresh mood)."
+    "statement": "The 10-13 rejection was the genre line losing broad words (pop music 0.80 -> 0.44). With leaf + family + umbrella in the line the umbrella loss is repaired on the production path and the leaf win stays."
    },
    "method": [
     "S=/tmp/brain-cand-E3-$NIGHT; rm -rf \"$S\"; mkdir -p \"$S\"; for f in library.json embeddings.bin mood-index.bin brain-descriptors.json audio-index.bin artist-members.json metadata-overrides.json lyrics.json; do [ -f \"$SNAP/$f\" ] && cp -p \"$SNAP/$f\" \"$S/\"; done",
@@ -161,9 +161,16 @@
      "kind": "file_exists",
      "path": "~/JakeTunesV3/scripts/brain-trainer.mjs",
      "why": "the rebuild uses the real trainer"
+    },
+    {
+     "kind": "source_grep",
+     "file": "~/JakeTunesV3/scripts/brain-trainer.mjs",
+     "pattern": "genreWithParents\\(",
+     "expect": "present",
+     "why": "the rebuild must use the family/umbrella genre line (JakeTunesV3 #110); an old trainer would rebuild the 10-13 rejected candidate"
     }
    ],
-   "acceptance": "dual-run gate (gate.py exit 0: worst per-probe v1 mood Δ >= 0, nothing regresses, AND v3 gate)",
+   "acceptance": "dual-run gate (gate.py exit 0): v3 gate AND the v1 bar, whose mood rule counts mood-routed probes only and allows ONE mood-routed probe to lose ONE slot when it is the only drop and the mood-routed mean improves (Jake 10/13)",
    "rollback": "Before the atomic apply: cp -p $LIVE/mood-index.bin $LIVE/mood-index.bin.pre-E3-$NIGHT (verify sha). Undo = copy it back.",
    "grounding_source": "REPORT-20261012-nightly.md (mood-side taxonomy staleness measured HARMFUL to fix while bare: ret-007 -0.28; sequencing note)",
    "budget": {
@@ -173,32 +180,10 @@
    },
    "max_nights": 1,
    "series": false,
-   "result": {
-    "at": "2026-10-13T03:14:17",
-    "outcome": "rejected",
-    "summary": "Mood rebuild on the drained-bare brain: v3 mean Δ +0.111 [CI +0.079,+0.143], leaf 0.518->0.854, BUT gate exit 1 — umbrella_family -0.033 (pop/jazz umbrella tokens left the mood texts when fine leaves replaced coarse tags), candidate grounding 0.95 (v3-grd-11 fabrication), v1 ret-004 mood -0.25. Discarded; fix = leaf+family/umbrella mood genre line = moodText/buildMoodText twin change -> Jake proposal.",
-    "metrics": {
-     "v3_base": 0.742,
-     "v3_cand": 0.804,
-     "mean_delta": 0.1107,
-     "ci": [
-      0.0791,
-      0.1432
-     ],
-     "leaf": [
-      0.518,
-      0.854
-     ],
-     "umbrella_family": [
-      0.913,
-      0.88
-     ],
-     "grounding_cand": 0.95,
-     "v1_worst_mood_probe": {
-      "ret-004": -0.25
-     }
-    }
-   }
+   "result": null,
+   "notes": [
+    "10-13 requeued after #110 + #112; priced on homemini: v3 +0.110 (leaf 0.518 -> 0.844, umbrella -0.002), grounding 20/20, v1 topline identical, ret-014 -1/30 the only mood-routed drop -> APPLY under the new rule."
+   ]
   },
   {
    "id": "E4",

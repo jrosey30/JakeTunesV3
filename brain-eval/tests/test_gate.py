@@ -130,6 +130,26 @@ class V1Bar(unittest.TestCase):
         self.assertIn("1 mood-routed", [c for c in res["checks"] if c["check"] == "v1_mood_per_probe"][0]["detail"])
         self.assertFalse(G.v1_bar(self.base, cand, br, mood_drop)["pass"])
 
+    def test_one_mood_probe_may_lose_one_slot_when_the_rest_improve(self):
+        # Jake 2026-10-13, option 1 — the E3 shape: ret-014 loses 1 of 30,
+        # three other mood-routed probes gain.
+        cand = dict(self.base, mood_id="x2")
+        def r(p, v, route="mood", k=30): return {"probe_id": p, "group": "retrieval", "score_mood": v, "route": route, "k": k}
+        br = [r("ret-014", 10 / 30), r("ret-007", 0.92, k=25), r("ret-011", 0.88, k=25), r("ret-006", 0.44, "main", 25)]
+        e3 = [r("ret-014", 9 / 30), r("ret-007", 1.0, k=25), r("ret-011", 1.0, k=25), r("ret-006", 0.28, "main", 25)]
+        res = G.v1_bar(self.base, cand, br, e3)
+        self.assertTrue(res["pass"], res)
+        self.assertIn("one-slot rule", [c for c in res["checks"] if c["check"] == "v1_mood_per_probe"][0]["detail"])
+        two_slots = [dict(e3[0], score_mood=8 / 30)] + e3[1:]
+        self.assertFalse(G.v1_bar(self.base, cand, br, two_slots)["pass"], "more than one song")
+        two_drops = [e3[0], dict(e3[1], score_mood=0.88)] + e3[2:]
+        self.assertFalse(G.v1_bar(self.base, cand, br, two_drops)["pass"], "two probes dropping")
+        flat = [e3[0], dict(e3[1], score_mood=0.92), dict(e3[2], score_mood=0.88), e3[3]]
+        self.assertFalse(G.v1_bar(self.base, cand, br, flat)["pass"], "mood-routed mean must improve")
+        no_routes = [{k: v for k, v in x.items() if k != "route"} for x in e3]
+        br_nr = [{k: v for k, v in x.items() if k != "route"} for x in br]
+        self.assertFalse(G.v1_bar(self.base, cand, br_nr, no_routes)["pass"], "strict fallback gets no allowance")
+
     def test_mood_rule_without_routes_stays_strict(self):
         # No routes recorded (old rows or a bridge failure): every probe counts.
         cand = dict(self.base, mood_id="x2")
