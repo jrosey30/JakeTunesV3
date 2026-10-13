@@ -13,7 +13,7 @@
  * ⚠️ TWIN: src/main/workout-sync-ipc.ts `syncable` + the concert-owned
  * drop are the sync-side rules. This must reach the same count they do.
  */
-import { foldAccents } from './fold-text.ts'
+import { nameKey } from './fold-text.ts'
 
 export interface PoolLibraryTrack {
   id: number
@@ -54,10 +54,14 @@ export function isSyncableTrack(t: PoolLibraryTrack): boolean {
 }
 
 /** Artist + title folded to a comparison key: accents dropped, case
- *  dropped, punctuation and spacing collapsed. Enough to find the same
- *  song re-added under a new id; not a fingerprint, never used to delete. */
+ *  dropped, punctuation and spacing collapsed, letters of every script kept
+ *  (fold-text nameKey). Enough to find the same song re-added under a new
+ *  id; not a fingerprint, never used to delete — the swap is Jake's click.
+ *  Under [a-z0-9] every all-Hebrew or all-Cyrillic song keyed '|||', so a
+ *  dead one was offered whichever unrelated Hebrew song came first
+ *  (2026-10-13). A name that folds to nothing ("!!!") keys as itself. */
 export function songKey(artist: string | undefined, title: string | undefined): string {
-  const f = (s: string | undefined): string => foldAccents(s || '').replace(/[^a-z0-9]+/g, ' ').trim()
+  const f = (s: string | undefined): string => nameKey(s) || String(s || '').trim().toLowerCase()
   return `${f(artist)}|||${f(title)}`
 }
 

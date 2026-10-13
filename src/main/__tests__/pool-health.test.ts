@@ -44,6 +44,32 @@ describe('poolHealth', () => {
     assert.equal(songKey('JAŸ-Z', '99 Problems'), songKey('jay z', '99 problems'))
   })
 
+  // 2026-10-13: [a-z0-9] keyed every all-Hebrew/Cyrillic song '|||', so a
+  // dead one was offered whichever unrelated Hebrew song came first.
+  it('offers a dead Hebrew or Cyrillic song its own re-added copy, never another song', () => {
+    const intl = new Map([
+      [10, { id: 10, title: 'שיר', artist: 'ברי סחרוף', path: '/h1' }],
+      [11, { id: 11, title: 'למה הים כחול?', artist: 'הדג נחש', path: '/h2' }],       // the re-added copy
+      [12, { id: 12, title: 'Кукушка', artist: 'Кино', path: '/c1' }],
+      [13, { id: 13, title: 'Группа крови', artist: 'Кино', path: '/c2' }],          // the re-added copy
+    ])
+    const names = { '70': { a: 'הדג נחש', t: 'למה הים כחול?' }, '71': { a: 'Кино', t: 'Группа крови' }, '72': { a: 'אביב גפן', t: 'שיר אחר' } }
+    const h = poolHealth([70, 71, 72], names, intl, new Set())
+    assert.deepEqual(h.dead, [
+      { id: 70, label: 'הדג נחש — למה הים כחול?', replacement: 11 },
+      { id: 71, label: 'Кино — Группа крови', replacement: 13 },
+      { id: 72, label: 'אביב גפן — שיר אחר' },
+    ])
+  })
+
+  it('keys names in other alphabets apart, and a letterless name as itself', () => {
+    assert.notEqual(songKey('ברי סחרוף', 'שיר'), songKey('הדג נחש', 'למה הים כחול?'))
+    assert.notEqual(songKey('Молчат Дома', 'Судно'), songKey('Кино', 'Группа крови'))
+    assert.equal(songKey('Кино', 'Группа Крови!'), songKey('КИНО', 'группа крови'))
+    assert.equal(songKey('!!!', 'Wallop'), songKey('!!!', 'wallop'))
+    assert.notEqual(songKey('!!!', 'Wallop'), songKey('+/-', 'Wallop'))
+  })
+
   it('mirrors the sync-side syncable rule', () => {
     assert.equal(isSyncableTrack({ id: 1, title: 'x', artist: 'y' }), true)
     assert.equal(isSyncableTrack({ id: 1, title: 'x', artist: 'y', path: '' }), false)
