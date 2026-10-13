@@ -4,6 +4,7 @@
  * verbatim from main/index.ts (6.0 Phase 1, the Phase-3a precursor:
  * the eval harness can now call the PRODUCTION retrieval path).
  */
+import type { CreditTrack } from './credit-guard'
 import { join } from 'path'
 import { readFile } from 'fs/promises'
 import { STATE_DIR } from '../state-dir'
@@ -274,29 +275,39 @@ export async function buildRagPoolForPicks<T extends { id: number }>(
   return { pool, used: true }
 }
 
-export async function buildRetrievalBlockForQuery(query: string, k: number): Promise<string> {
-  if (!query.trim()) return ''
+/** The chat's grounding block plus the songs in it (for the credit guard,
+ *  credit-guard.ts). Each song is written "Title" by Artist so a band named
+ *  like a song can't be read the wrong way round (10/13: "Celebrity" by the
+ *  band My First Time was swapped when the lines were dash-joined). */
+export async function buildRetrievalForQuery(query: string, k: number): Promise<{ block: string; tracks: CreditTrack[] }> {
+  const none = { block: '', tracks: [] as CreditTrack[] }
+  if (!query.trim()) return none
   const hits = await ragRetrieveByQuery(query, k)
-  if (hits.length === 0) return ''
+  if (hits.length === 0) return none
   try {
     const raw = await readFile(ragHost.libraryPath(), 'utf-8')
     const lib = JSON.parse(raw) as { tracks?: Array<{ id: number; title?: string; artist?: string; album?: string; year?: number | string; playCount?: number; rating?: number }> }
     const byId = new Map((lib.tracks || []).map(t => [t.id, t]))
+    const tracks: CreditTrack[] = []
     const lines = hits
       .map(h => {
         const t = byId.get(h.trackId)
         if (!t) return null
+        tracks.push({ title: t.title, artist: t.artist, album: t.album })
         const sig: string[] = []
         if (Number(t.rating) > 0) sig.push(`★${t.rating}`)
         const plays = Number(t.playCount) || 0
         if (plays > 0) sig.push(`${plays}p`)
-        return `  • "${t.title || '?'}" — ${t.artist || '?'}${t.album ? ` (${t.album}${t.year ? ` ${t.year}` : ''})` : ''}${sig.length ? ` ${sig.join(' ')}` : ''}`
+        return `  • "${t.title || '?'}" by ${t.artist || '?'}${t.album ? ` — album "${t.album}"${t.year ? ` (${t.year})` : ''}` : ''}${sig.length ? ` ${sig.join(' ')}` : ''}`
       })
       .filter((line): line is string => !!line)
-    if (lines.length === 0) return ''
-    return `RELEVANT TRACKS in the user's library (retrieved by semantic similarity to "${query.replace(/"/g, '\\"').slice(0, 80)}" — these are real tracks they own, ordered by relevance; use them to ground specifics):\n${lines.join('\n')}`
+    if (lines.length === 0) return none
+    return {
+      block: `RELEVANT TRACKS in the user's library (retrieved by semantic similarity to "${query.replace(/"/g, '\\"').slice(0, 80)}" — these are real tracks they own, ordered by relevance; use them to ground specifics). When you name one of these, write it exactly as listed: "Title" by Artist.\n${lines.join('\n')}`,
+      tracks,
+    }
   } catch (err) {
     console.warn('[rag] block build failed:', err instanceof Error ? err.message : err)
-    return ''
+    return none
   }
 }
