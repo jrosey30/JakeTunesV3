@@ -410,8 +410,8 @@
     "statement": "play intensity (plays per month owned) drifts mechanically with the clock and can't tell a trial listen from love (0.586 single-feature AUC vs the 935 aged-in summer finds; 0.730 vs older negatives). Make it age-stable, e.g. ignore plays in the first ~30 days after add, or floor owned-time at ~6 months."
    },
    "method": [
-    "cd /private/tmp/claude-503/-Users-jacobrosenbaum/3a9012e8-0500-47a9-8785-a0bc23a596d2/scratchpad/taste-dx && python3 clock.py   # read-only 'only today moves' test (be.py ports the backend brainEval)",
-    "re-run clock.py with the candidate intensity variant in be.py score_parts; then python3 scripts/taste-eval.py (5x5 CV) on the candidate"
+    "cd brain-eval/experiments/evidence/E9 && copy in the data files listed in README.md (read-only copies) && python3 clock.py   # 'only today moves' baseline",
+    "apply the candidate intensity variant in be.py score_parts; re-run clock.py + why.py; then python3 scripts/taste-eval.py (5x5 CV) on the candidate"
    ],
    "touches": [
     "JakeTunesV3 src/renderer/utils/tasteScore.ts",
@@ -420,13 +420,13 @@
    "preconditions": [
     {
      "kind": "file_exists",
-     "path": "/private/tmp/claude-503/-Users-jacobrosenbaum/3a9012e8-0500-47a9-8785-a0bc23a596d2/scratchpad/taste-dx/clock.py",
-     "why": "the diagnosis (session scratchpad — ephemeral; port be.py/clock.py into brain-eval before pricing if it is gone)"
+     "path": "brain-eval/experiments/evidence/E9/clock.py",
+     "why": "the diagnosis scripts, committed with this queue (scripts only; data copied in at run time)"
     },
     {
      "kind": "file_exists",
-     "path": "/private/tmp/claude-503/-Users-jacobrosenbaum/3a9012e8-0500-47a9-8785-a0bc23a596d2/scratchpad/taste-dx/be.py",
-     "why": "Python port of backend brainEval + tasteScore v4"
+     "path": "brain-eval/experiments/evidence/E9/clock.py",
+     "why": "the diagnosis scripts, committed with this queue (scripts only; data copied in at run time)"
     },
     {
      "kind": "source_grep",
@@ -447,7 +447,44 @@
    },
    "max_nights": 1,
    "series": false,
-   "result": null
+   "result": null,
+   "notes": [
+    "10/12: measurement fix shipped as JakeTunesMobile #403 (live: matured-90d AUC 0.7852, finds 0.7491); E9 is the model half."
+   ]
+  },
+  {
+   "id": "E10",
+   "title": "leaf-genre queries reach the index that knows them",
+   "status": "queued",
+   "priority": 70,
+   "lane": "jake",
+   "hypothesis": {
+    "metric": "v3 leaf group, production path (bridge)",
+    "from": 0.428,
+    "to_beat": 0.7,
+    "op": ">=",
+    "and": [
+     "no other v3 group drops > 0.01",
+     "grounding 1.000"
+    ],
+    "statement": "The v3 baseline (10/12, laptop) shows queries that name a leaf genre ('Garage Punk', 'Midwest Rap') score 0.428 on the production path but 0.784 on the main index: the router sends them to the mood/audio path, where genre names carry little signal. Route (or fuse toward) the main index when the query names a vocab leaf/family."
+   },
+   "method": [
+    "on a scratch branch: in the production router (desktop src/main rag routing + its JakeTunesMobile backend util/rag.ts twin), treat a query that matches a genre-vocab leaf/family name as a main-index query (or raise the main-index fusion weight for it)",
+    "python3 run_eval.py --ruler v3 --no-llm through the bridge, baseline vs candidate; python3 gate.py"
+   ],
+   "touches": [
+    "JakeTunesV3 production RAG router",
+    "JakeTunesMobile backend/src/util/rag.ts (twin)"
+   ],
+   "preconditions": [],
+   "acceptance": "gate.py v3 PASS and v1 bar unchanged (dual-run); leaf group >= 0.70",
+   "rollback": "revert the router change in both twins",
+   "budget": "one night of measurement; code change needs Jake",
+   "max_nights": 1,
+   "result": null,
+   "grounding_source": "v3 baseline per-group table in the 10/12 scorecard PR (#106)",
+   "series": false
   }
  ]
 }
