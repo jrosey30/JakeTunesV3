@@ -6,7 +6,7 @@ brain-eval/run_eval.py — an altimeter for the JakeTunes EMBEDDING brain.
 This script NEVER touches, edits, pauses, imports-for-modification, or writes
 near the JakeTunes app, the nightly brain-trainer, or embeddings.bin. It only
 READS embeddings.bin + library.json, calls the OpenAI/Anthropic HTTP APIs, and
-writes exactly two things: brain-eval/score_log.jsonl and brain-eval/tmp/*.
+writes brain-eval/score_log.jsonl, brain-eval/score_rows.jsonl and brain-eval/tmp/*.
 If anything here would require editing the app or the trainer to work, STOP.
 =====================================================================
 
@@ -37,6 +37,23 @@ USAGE:
   python run_eval.py --no-llm             # retrieval only (no Claude calls)
   python run_eval.py --limit 6            # quick smoke: first 6 prompts per bucket
   python run_eval.py --model claude-haiku-4-5   # LLM for grounding/judge
+
+TWO RULERS (2026-10-12, scorecard v3):
+  --ruler v1   (default) eval_set.json — FROZEN, scored exactly as before. Kept
+               for continuity; its headline (retrieval/overall) is unchanged.
+  --ruler v3   eval_set_v3.json (gen_probes.py): ~155 vocab-resolved probes in
+               six groups, scored on the PRODUCTION retrieval path (the
+               main-branch bridge), main/mood index readings as diagnostics,
+               20 grounding questions where a citation must match the
+               question's predicate. Headline = mean of the group means.
+               Aborts with "ruler stale" if >0.5% of genre tags don't resolve.
+  Every score_log row carries "ruler" (rows without one are v1); every probe
+  lands in score_rows.jsonl under the run's run_id, which gate.py compares.
+
+  python run_eval.py --ruler v3 --no-llm                 # retrieval only
+  python run_eval.py --ruler v3 --label baseline         # + grounding (Claude)
+  JT_STATE_DIR=/tmp/cand python run_eval.py --ruler v3 --label candidate
+  python run_eval.py --ruler v3 --state-dir /tmp/snap --log-dir /tmp/out
 """
 import argparse, hashlib, json, os, re, struct, sys, time, urllib.request, urllib.error
 
@@ -330,6 +347,7 @@ def eval_brain(label, emb_path, prompts, by_id, tracks, titles, artists, args, e
     brain_id = sha_of(emb_path)
     print(f"\n=== brain '{label}'  ({os.path.basename(emb_path)}, {meta['count']} vectors, sha {brain_id}) ===")
     R = {"retrieval": [], "grounding": [], "persona": []}
+    rows = []  # per-probe detail for score_rows.jsonl (additive; never feeds a mean)
 
     # retrieval
     for e in [p for p in prompts if p["bucket"] == "retrieval"]:
@@ -340,6 +358,8 @@ def eval_brain(label, emb_path, prompts, by_id, tracks, titles, artists, args, e
         topk = retrieve_topk(embed_cache[e["query"]], ids, vecs, e.get("k", 20))
         rec = recall_at_k(topk, exp, e.get("k", 20))
         R["retrieval"].append(rec)
+        rows.append({"probe_id": e["id"], "group": "retrieval", "k": e.get("k", 20),
+                     "n_expected": len(exp), "score": rec})
         tag = " *enrich" if e.get("enrichment_sensitive") else ""
         print(f"  ret {e['id']}: recall@{e.get('k',20)}={rec:.2f}  (|expected|={len(exp)}){tag}")
 
@@ -353,6 +373,8 @@ def eval_brain(label, emb_path, prompts, by_id, tracks, titles, artists, args, e
                     print(f"  [note] {e['id']}: trap predicate matched {len(hit)} tracks — still expects 'name nothing'")
             res = run_grounding(e, ids, vecs, embed_cache[e["question"]], by_id, titles, artists, args.model)
             R["grounding"].append(res["score"])
+            rows.append({"probe_id": e["id"], "group": "grounding", "kind": e.get("kind", "normal"),
+                         "score": res["score"], "reason": res["reason"]})
             print(f"  grd {e['id']} [{e.get('kind','normal')}]: {res['score']:.0f}  ({res['reason']})")
 
     # persona (optional judge)
@@ -374,22 +396,73 @@ def eval_brain(label, emb_path, prompts, by_id, tracks, titles, artists, args, e
     bucket_means = [summary[b] for b in ("retrieval", "grounding", "persona") if summary[b] is not None]
     summary["overall"] = round(sum(bucket_means) / len(bucket_means), 4) if bucket_means else None
     summary["n"] = {b: len([x for x in R[b] if x is not None]) for b in R}
+    summary["_rows"] = rows
     return summary
 
 def fmt(v):
     return "  —  " if v is None else f"{v:.3f}"
 
+def set_state_dir(path):
+    """--state-dir: point every brain read at a snapshot (same as JT_STATE_DIR)."""
+    global STATE_DIR, EMB_PATH, LIB_PATH
+    STATE_DIR = os.path.abspath(path)
+    EMB_PATH = os.path.join(STATE_DIR, "embeddings.bin")
+    LIB_PATH = os.path.join(STATE_DIR, "library.json")
+
+
+def new_run_id(label, ruler):
+    return f"{time.strftime('%Y%m%dT%H%M%S')}-{ruler}-{label}-{os.getpid()}"
+
+
+def append_jsonl(path, rows):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r) + "\n")
+
+
+def v1_mood_diag(prompts, tracks, embed_cache):
+    """Per-probe recall of the v1 retrieval prompts on mood-index.bin — the
+    reading the nightly reports track as 'ret-007 mood'. Additive diagnostic:
+    it never enters a v1 mean. Returns ({probe_id: recall}, mood_sha|None)."""
+    path = os.path.join(STATE_DIR, "mood-index.bin")
+    if not os.path.exists(path):
+        return {}, None
+    ids, vecs, _ = read_embeddings(path)
+    out = {}
+    for e in [p for p in prompts if p["bucket"] == "retrieval"]:
+        exp = expected_ids(e["expected"], tracks)
+        if exp:
+            out[e["id"]] = recall_at_k(retrieve_topk(embed_cache[e["query"]], ids, vecs, e.get("k", 20)), exp, e.get("k", 20))
+    return out, sha_of(path)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--baseline", action="store_true", help="also score embeddings.bin.bak as 'base'")
+    ap.add_argument("--ruler", choices=("v1", "v3"), default="v1",
+                    help="v1 = frozen eval_set.json (default, unchanged); v3 = eval_set_v3.json")
+    ap.add_argument("--baseline", action="store_true", help="v1 only: also score embeddings.bin.bak as 'base'")
     ap.add_argument("--models", nargs="*", default=None, help="brief-compat: 'base current'")
-    ap.add_argument("--judge", action="store_true", help="enable persona judge (Claude)")
+    ap.add_argument("--judge", action="store_true", help="v1 only: enable persona judge (Claude)")
     ap.add_argument("--no-llm", action="store_true", help="retrieval only (no Claude calls)")
     ap.add_argument("--model", default="claude-haiku-4-5", help="LLM for grounding/judge")
-    ap.add_argument("--limit", type=int, default=0, help="first N prompts per bucket (smoke test)")
+    ap.add_argument("--limit", type=int, default=0, help="first N prompts per bucket/group (smoke test)")
+    ap.add_argument("--state-dir", default=None, help="read the brain from this dir (a snapshot); same as JT_STATE_DIR")
+    ap.add_argument("--log-dir", default=HERE, help="where score_log.jsonl / score_rows.jsonl are appended")
+    ap.add_argument("--label", default=None, help="run label (v3 default 'current'; v1 labels stay base/current)")
+    ap.add_argument("--run-id", default=None, help="override the generated run id (gate.py keys on it)")
+    ap.add_argument("--no-bridge", action="store_true", help="v3: skip the production bridge (py-router fallback)")
+    ap.add_argument("--main-src", default=None, help="v3: a main-branch tree (containing src/) for the bridge")
+    ap.add_argument("--main-ref", default="origin/main", help="v3: git ref whose src/ the bridge runs (default origin/main)")
+    ap.add_argument("--freeze-qvec", action="store_true", help="v3: rewrite eval_set_v3.qvec.json from this run's query texts")
     args = ap.parse_args()
+    if args.state_dir:
+        set_state_dir(args.state_dir)
+    if args.ruler == "v3":
+        return main_v3(args)
 
     do_base = args.baseline or (args.models and "base" in args.models)
+    run_id = args.run_id or new_run_id("current", "v1")
 
     spec = json.load(open(EVAL_PATH, encoding="utf-8"))
     prompts = spec["prompts"]
@@ -436,17 +509,314 @@ def main():
     print("retrieval/grounding are mechanical; persona needs --judge. "
           "The enrichment_sensitive (*enrich) retrieval prompts are the real altimeter.")
 
-    # append one row per brain
+    # additive diagnostics (never part of a v1 mean): per-probe mood-index readings
+    mood_diag, mood_id = v1_mood_diag(prompts, tracks, embed_cache)
+    lib_sha = sha_of(LIB_PATH)
+
+    # append one row per brain (+ its per-probe rows)
     now = time.time()
-    with open(LOG_PATH, "a", encoding="utf-8") as f:
-        for s in summaries:
-            f.write(json.dumps({
-                "at": int(now * 1000),
-                "iso": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now)),
-                "model": args.model, "judged": bool(args.judge), "no_llm": bool(args.no_llm),
-                "limit": args.limit, **s,
-            }) + "\n")
-    print(f"\nappended {len(summaries)} row(s) to {os.path.relpath(LOG_PATH, REPO)}")
+    log_path = os.path.join(args.log_dir, "score_log.jsonl")
+    rows_path = os.path.join(args.log_dir, "score_rows.jsonl")
+    log_rows, probe_rows = [], []
+    for s in summaries:
+        rows = s.pop("_rows")
+        log_rows.append({
+            "at": int(now * 1000),
+            "iso": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now)),
+            "model": args.model, "judged": bool(args.judge), "no_llm": bool(args.no_llm),
+            "limit": args.limit, **s,
+            "ruler": "v1", "run_id": run_id, "mood_id": mood_id, "library_sha": lib_sha,
+        })
+        for r in rows:
+            if r["group"] == "retrieval":
+                r["score_mood"] = mood_diag.get(r["probe_id"])
+            probe_rows.append({"run_id": run_id, "ruler": "v1", "label": s["label"], "at": int(now * 1000),
+                               "brain_id": s["brain_id"], "mood_id": mood_id, "library_sha": lib_sha, **r})
+    append_jsonl(log_path, log_rows)
+    append_jsonl(rows_path, probe_rows)
+    print(f"\nappended {len(log_rows)} row(s) to {log_path} (ruler v1, run_id {run_id}); "
+          f"{len(probe_rows)} probe row(s) to {rows_path}")
+
+
+# ====================================================================== v3
+GROUP_ORDER = ("artist", "umbrella_family", "leaf", "family_decade", "tempo_family", "vibe")
+
+
+def check_citations_v3(cited, title_idx, match):
+    """Every citation must (1) resolve to a library track by title AND artist
+    and (2) satisfy the question's predicate. Returns (n_cited, n_bad, details)."""
+    import scorecard as S
+    n = bad = 0
+    details = []
+    for c in cited:
+        if not isinstance(c, dict):
+            n += 1; bad += 1; details.append(("UNPARSEABLE", str(c)[:60], "")); continue
+        ti, ar = S.cite_key(c.get("title")), S.cite_key(c.get("artist"))
+        if not ti and not ar:
+            continue
+        n += 1
+        cands = title_idx.get(ti, [])
+        if not cands:
+            bad += 1; details.append(("FABRICATED", c.get("title"), c.get("artist"))); continue
+        if ar:
+            def amatch(t):
+                keys = {S.cite_key(t.get("artist"))} | {S.cite_key(a) for a in (t.get("contributingArtists") or [])}
+                keys.discard("")
+                return any(ar == k or (min(len(ar), len(k)) >= 4 and (ar in k or k in ar)) for k in keys)
+            cands = [t for t in cands if amatch(t)]
+            if not cands:
+                bad += 1; details.append(("MISATTRIBUTED", c.get("title"), c.get("artist"))); continue
+        if not any(match(t) for t in cands):
+            t0 = cands[0]
+            bad += 1; details.append(("OFF-PREDICATE", c.get("title"), f"{c.get('artist')} [{t0.get('genre')}, {t0.get('year')}]"))
+            continue
+        details.append(("ok", c.get("title"), c.get("artist")))
+    return n, bad, details
+
+
+def title_index(tracks):
+    import scorecard as S
+    idx = {}
+    for t in tracks:
+        k = S.cite_key(t.get("title"))
+        if k:
+            idx.setdefault(k, []).append(t)
+    return idx
+
+
+def v3_self_test(tracks, vocab):
+    """The v3 grounding check must catch fabrication AND off-predicate citations
+    before anything is scored (exit 2 otherwise)."""
+    import scorecard as S
+    idx = title_index(tracks)
+    t = next(t for t in tracks if t.get("title") and t.get("artist") and str(t.get("genre") or "") in vocab.leaf_family)
+    leaf = str(t["genre"]).strip()
+    other = next(l for l in vocab.leaf_family if l != leaf)
+    on, off = S.compile_predicate({"genre_leaf": leaf}, vocab), S.compile_predicate({"genre_leaf": other}, vocab)
+    real = [{"title": t["title"], "artist": t["artist"]}]
+    fake = [{"title": "Imaginary Song That Cannot Exist 9z9z", "artist": "Nobody At All 9z9z"}]
+    checks = [
+        (check_citations_v3(fake, idx, on)[1] == 1, "fabricated citation not flagged"),
+        (check_citations_v3(real, idx, on)[1] == 0, f"real on-predicate track {t['title']!r} flagged"),
+        (check_citations_v3(real, idx, off)[1] == 1, "off-predicate citation not flagged"),
+    ]
+    for ok, why in checks:
+        if not ok:
+            print(f"[FATAL] v3 self-test: {why} — the grounding check is broken. STOP.", file=sys.stderr)
+            sys.exit(2)
+    print(f"[selftest v3] fabricated -> flagged, \"{t['title']}\" on-predicate -> ok, off-predicate -> flagged. OK")
+
+
+def _mean(xs):
+    xs = [x for x in xs if x is not None]
+    return round(sum(xs) / len(xs), 4) if xs else None
+
+
+def group_summary(rows, field):
+    groups = {}
+    for g in GROUP_ORDER:
+        vals = [r[field] for r in rows if r["group"] == g and r.get(field) is not None]
+        if vals:
+            groups[g] = _mean(vals)
+    head = _mean(list(groups.values()))
+    return head, groups
+
+
+def main_v3(args):
+    import scorecard as S
+    label = args.label or "current"
+    run_id = args.run_id or new_run_id(label, "v3")
+    vocab = S.load_vocab()
+    spec = json.load(open(S.EVAL_V3_PATH, encoding="utf-8"))
+    probes, gq = spec["probes"], spec["grounding"]
+    if args.limit:
+        seen, kept = {}, []
+        for p in probes:
+            seen[p["group"]] = seen.get(p["group"], 0) + 1
+            if seen[p["group"]] <= args.limit:
+                kept.append(p)
+        probes = kept
+        gq = [g for g in gq if g["kind"] == "normal"][:args.limit] + [g for g in gq if g["kind"] == "trap"][:args.limit]
+
+    tracks = S.load_tracks(LIB_PATH)
+    rc = S.assert_ruler_fresh(tracks, vocab)
+    lib_sha = sha_of(LIB_PATH)
+    print(f"[v3] state {STATE_DIR}\n[v3] library {len(tracks)} tracks sha {lib_sha} | ruler check "
+          f"{rc['unresolved']}/{rc['tagged']} unresolved ({rc['frac']:.3%}) | probes {len(probes)} | grounding {len(gq)}")
+    _, by_id1, titles, artists = load_library()
+    self_test(titles, artists, by_id1)
+    v3_self_test(tracks, vocab)
+
+    exp = {p["id"]: S.expected_ids(p["expected"], tracks, vocab) for p in probes}
+    gexp = {g["id"]: S.expected_ids(g["expected"], tracks, vocab) for g in gq}
+
+    # query vectors: frozen cache first; misses embedded once and parked in tmp/
+    qc = S.QvecCache()
+    texts = [p["query"] for p in probes] + [g["question"] for g in gq]
+    qv = qc.get_many(texts, key("OPENAI_API_KEY"))
+    print(f"[v3] query vectors: {qc.cached} frozen/cached, {qc.fresh} embedded fresh")
+
+    ids_m, vecs_m, meta_m = read_embeddings(EMB_PATH)
+    brain_id = sha_of(EMB_PATH)
+    mood_path = os.path.join(STATE_DIR, "mood-index.bin")
+    has_mood = os.path.exists(mood_path)
+    ids_x, vecs_x, meta_x = read_embeddings(mood_path) if has_mood else (None, None, {"count": 0})
+    mood_id = sha_of(mood_path) if has_mood else None
+    audio_path = os.path.join(STATE_DIR, "audio-index.bin")
+    audio_id = sha_of(audio_path) if os.path.exists(audio_path) else None
+    print(f"[v3] main {brain_id} ({meta_m['count']} vec) | mood {mood_id} ({meta_x['count']} vec) | audio {audio_id}")
+
+    # ---- primary: the production path through the main-branch bridge
+    source, bridge_err, main_sha, bstats, bres = None, None, None, None, {}
+    if not args.no_bridge:
+        try:
+            if args.main_src:
+                src_dir, main_sha = os.path.abspath(args.main_src), "custom:" + os.path.abspath(args.main_src)
+            else:
+                src_dir, main_sha = S.extract_main_src(args.main_ref)
+            brows, seen = [], set()
+            for q, k in [(p["query"], p["k"]) for p in probes] + \
+                        ([(g["question"], g.get("k", 14)) for g in gq] if not args.no_llm else []):
+                if (q, k) not in seen:
+                    seen.add((q, k)); brows.append({"query": q, "k": k})
+            t0 = time.time()
+            bres, bstats = S.run_bridge(brows, STATE_DIR, src_dir, key("OPENAI_API_KEY"))
+            source = "bridge"
+            print(f"[v3] bridge OK: {len(bres)} rows in {time.time() - t0:.1f}s, main src {main_sha[:12]}, "
+                  f"qvec cached {bstats.get('cached')} fresh {bstats.get('fresh')}")
+        except (S.BridgeError, RuntimeError) as e:
+            bridge_err = str(e)[:2000]
+            print(f"\n[v3] !!! PRODUCTION BRIDGE FAILED — falling back to the Python router port, which has "
+                  f"NO reranker / audio fusion / decade gate / lexicon. Primary scores below are NOT the "
+                  f"production path.\n[v3] reason: {bridge_err[:600]}\n", file=sys.stderr)
+    if source is None:
+        source = "py-router"
+        qc.reload_overflow()
+        artist_set = S.router_artist_set(tracks)
+
+    def primary_hits(q, k):
+        if source == "bridge":
+            row = bres[(q, k)]
+            return row["index"], S.route_mode(row.get("rag"), row["index"]), [int(h["trackId"]) for h in row["hits"]]
+        route = S.py_route(q, artist_set, meta_x["count"], meta_m["count"])
+        ids, vecs = (ids_x, vecs_x) if (route == "mood" and has_mood) else (ids_m, vecs_m)
+        return route, f"py-{route}", S.topk_ids(qv[q], ids, vecs, k)
+
+    now = time.time()
+    common = {"run_id": run_id, "ruler": "v3", "label": label, "at": int(now * 1000),
+              "brain_id": brain_id, "mood_id": mood_id, "library_sha": lib_sha}
+    rows = []
+    print(f"\n{'probe':<18}{'group':<16}{'k':>3}{'|exp|':>7}  {'PRIMARY':>7} {'main':>5} {'mood':>5}  route")
+    for p in probes:
+        e, k, q = exp[p["id"]], p["k"], p["query"]
+        if not e:
+            print(f"  [skip] {p['id']}: predicate matched 0 library tracks (frozen probe went empty) — NOT scored")
+            rows.append({**common, "probe_id": p["id"], "group": p["group"], "k": k, "n_expected": 0,
+                         "score": None, "note": "predicate-empty"})
+            continue
+        route, mode, hits = primary_hits(q, k)
+        sp = S.recall_at_k(hits, e, k)
+        sm = S.recall_at_k(S.topk_ids(qv[q], ids_m, vecs_m, k), e, k)
+        sx = S.recall_at_k(S.topk_ids(qv[q], ids_x, vecs_x, k), e, k) if has_mood else None
+        rows.append({**common, "probe_id": p["id"], "group": p["group"], "k": k, "n_expected": len(e),
+                     "score": sp, "source": source, "route": route, "mode": mode,
+                     "score_main": sm, "score_mood": sx})
+        print(f"{p['id']:<18}{p['group']:<16}{k:>3}{len(e):>7}  {sp:>7.2f} {sm:>5.2f} "
+              f"{(sx if sx is not None else float('nan')):>5.2f}  {mode}")
+
+    # ---- grounding: 20 questions; a citation must exist AND match the predicate
+    grows = []
+    if not args.no_llm:
+        idx = title_index(tracks)
+        by_id = {int(t["id"]): t for t in tracks}
+        print()
+        for g in gq:
+            n_now = len(gexp[g["id"]])
+            if g["kind"] == "trap" and n_now:
+                print(f"  grd {g['id']} [trap]: INVALID — predicate now matches {n_now} tracks; not scored")
+                grows.append({**common, "probe_id": g["id"], "group": "grounding", "kind": "trap",
+                              "score": None, "reason": f"trap-invalid ({n_now} matches)"})
+                continue
+            _, _, hits = primary_hits(g["question"], g.get("k", 14))
+            ctx = []
+            for tid in hits[:g.get("k", 14)]:
+                t = by_id.get(tid)
+                if t:
+                    ctx.append(f"- {t.get('title','?')} — {t.get('artist','?')} [{t.get('genre','')}, {t.get('year','')}]")
+            raw = claude(GROUND_SYS, "Retrieved library context:\n" + "\n".join(ctx) +
+                         f"\n\nUser question: {g['question']}", args.model, max_tokens=500)
+            obj = parse_json_obj(raw)
+            if obj is None:
+                score, reason, cited = 0.0, "unparseable/no-LLM", []
+                details = []
+            else:
+                cited = obj.get("tracks") or []
+                match = S.compile_predicate(g["expected"], vocab)
+                n, bad, details = check_citations_v3(cited, idx, match)
+                if g["kind"] == "trap":
+                    score = 1.0 if len(cited) == 0 else 0.0
+                    reason = "named nothing (correct)" if score else f"cited {len(cited)} on a trap"
+                else:
+                    score = 1.0 if (n >= 1 and bad == 0) else 0.0
+                    reason = (f"{n} cited, all real + on-predicate" if score else
+                              ("no citation" if n == 0 else
+                               "; ".join(f"{d[0]}: {d[1]} — {d[2]}" for d in details if d[0] != "ok")[:300]))
+            grows.append({**common, "probe_id": g["id"], "group": "grounding", "kind": g["kind"],
+                          "score": score, "reason": reason, "cited": len(cited)})
+            print(f"  grd {g['id']} [{g['kind']}]: {score:.0f}  ({reason})")
+
+    head, groups = group_summary(rows, "score")
+    dm_head, dm_groups = group_summary(rows, "score_main")
+    dx_head, dx_groups = group_summary(rows, "score_mood")
+    g_scored = [r["score"] for r in grows if r.get("score") is not None]
+    grounding = _mean(g_scored)
+    routes = {}
+    for r in rows:
+        if r.get("mode"):
+            routes[r["mode"]] = routes.get(r["mode"], 0) + 1
+
+    print("\n" + "=" * 72)
+    print(f"{'group':<18}{'n':>4}{'PRIMARY':>10}{'main-idx':>10}{'mood-idx':>10}")
+    print("-" * 72)
+    for g in GROUP_ORDER:
+        n = sum(1 for r in rows if r["group"] == g and r.get("score") is not None)
+        print(f"{g:<18}{n:>4}{fmt(groups.get(g)):>10}{fmt(dm_groups.get(g)):>10}{fmt(dx_groups.get(g)):>10}")
+    print("-" * 72)
+    print(f"{'HEADLINE (mean of group means)':<32}{fmt(head):>10}{fmt(dm_head):>10}{fmt(dx_head):>10}")
+    print(f"{'grounding':<32}{fmt(grounding):>10}   ({len(g_scored)} scored)")
+    print(f"primary source: {source}" + (f"  (bridge error: {bridge_err[:120]})" if bridge_err else ""))
+    print(f"routes: {routes}")
+    print("=" * 72)
+
+    summary = {
+        "at": int(now * 1000), "iso": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now)),
+        "ruler": "v3", "run_id": run_id, "label": label, "model": args.model, "judged": False,
+        "no_llm": bool(args.no_llm), "limit": args.limit,
+        "brain_id": brain_id, "mood_id": mood_id, "audio_id": audio_id,
+        "vectors": meta_m["count"], "mood_vectors": meta_x["count"], "library_sha": lib_sha,
+        "eval_set_sha": sha_of(S.EVAL_V3_PATH), "vocab_sha": sha_of(S.VOCAB_PATH),
+        "main_src_sha": main_sha, "primary_source": source, "bridge_error": bridge_err,
+        "qvec": {"cached": qc.cached + (bstats or {}).get("cached", 0), "fresh": qc.fresh + (bstats or {}).get("fresh", 0)},
+        "headline": head, "groups": groups,
+        "n": {g: sum(1 for r in rows if r["group"] == g and r.get("score") is not None) for g in GROUP_ORDER},
+        "diag_main": {"headline": dm_head, "groups": dm_groups},
+        "diag_mood": {"headline": dx_head, "groups": dx_groups},
+        "grounding": grounding, "grounding_n": len(g_scored),
+        "routes": routes, "ruler_check": {k: rc[k] for k in ("tagged", "unresolved", "frac")},
+    }
+    log_path = os.path.join(args.log_dir, "score_log.jsonl")
+    rows_path = os.path.join(args.log_dir, "score_rows.jsonl")
+    append_jsonl(log_path, [summary])
+    append_jsonl(rows_path, rows + grows)
+    print(f"\nappended 1 row to {log_path} (ruler v3, run_id {run_id}); {len(rows) + len(grows)} probe rows to {rows_path}")
+
+    if args.freeze_qvec:
+        qc.reload_overflow()
+        extra = (bstats or {}).get("texts", [])
+        n = qc.freeze(texts + list(extra))
+        print(f"[v3] froze {n} query vectors into {os.path.relpath(S.QVEC_FROZEN, REPO)}")
+    return summary
+
 
 if __name__ == "__main__":
     main()
