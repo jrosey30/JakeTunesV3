@@ -1,0 +1,490 @@
+{
+ "_meta": {
+  "what": "The nightly brain job's experiment queue (scorecard v3). pick_experiment.py chooses ONE item per night; every result goes to ledger.jsonl.",
+  "created": "2026-10-12",
+  "rules": [
+   "Exactly one queue item per night: the highest-priority QUEUED auto item whose preconditions all pass.",
+   "No auto item eligible -> MEASURE the top eligible jake item to price its proposal (never applies; record 'priced').",
+   "An auto item applies only through the dual-run gate: gate.py exit 0 (v1 bar AND v3 gate), with a verified backup + exact undo.",
+   "Watch series are capped at 3 nights; the nightly never opens a new series (it never adds items).",
+   "A rejected item is re-queued only with a NEW hypothesis (pick_experiment.py requeue)."
+  ],
+  "vars": {
+   "$SNAP": "tonight's measured, sha-verified snapshot of the brain (e.g. /tmp/brain-snap-YYYYMMDD) — never the live dir",
+   "$NIGHT": "YYYYMMDD",
+   "$LIVE": "/Volumes/JakeShared/JakeTunesState (homemini)",
+   "$BRAIN_EVAL": "the brain-eval/ dir of the nightly worktree"
+  },
+  "measure": [
+   "cd $BRAIN_EVAL",
+   "python3 run_eval.py --ruler v1 --state-dir \"$SNAP\" --run-id B1-$NIGHT",
+   "python3 run_eval.py --ruler v3 --state-dir \"$SNAP\" --label baseline --run-id B3-$NIGHT",
+   "python3 run_eval.py --ruler v1 --state-dir \"$CAND\" --run-id C1-<id>-$NIGHT",
+   "python3 run_eval.py --ruler v3 --state-dir \"$CAND\" --label candidate --run-id C3-<id>-$NIGHT",
+   "python3 gate.py --base B3-$NIGHT --cand C3-<id>-$NIGHT --v1-base B1-$NIGHT --v1-cand C1-<id>-$NIGHT --json   # exit 0 = APPLY allowed",
+   "jake-lane pricing / measure-only: v3 --no-llm runs + `gate.py --v3-only` (prices, never applies)"
+  ]
+ },
+ "items": [
+  {
+   "id": "E1",
+   "title": "Drop bare mood vectors for un-described tracks",
+   "status": "queued",
+   "priority": 90,
+   "lane": "auto",
+   "hypothesis": {
+    "metric": "v1 ret-007 mood-index recall@25 (score_rows score_mood)",
+    "from": 0.44,
+    "to_beat": 0.8,
+    "op": ">=",
+    "and": "v3 gate passes (production path)",
+    "statement": "Tempo+genre-only ('bare') mood vectors crowd the punk neighbourhood: 14/25 of ret-007's mood slots on 10-12. Absent beats bare (10-12: a full reembed that ADDED bare vectors took ret-007 mood 0.44 -> 0.16)."
+   },
+   "method": [
+    "S=/tmp/brain-cand-E1-$NIGHT; rm -rf \"$S\"; mkdir -p \"$S\"; for f in library.json embeddings.bin mood-index.bin brain-descriptors.json audio-index.bin artist-members.json metadata-overrides.json lyrics.json; do [ -f \"$SNAP/$f\" ] && cp -p \"$SNAP/$f\" \"$S/\"; done",
+    "python3 $BRAIN_EVAL/experiments/tools/drop_bare_mood.py --state-dir \"$S\"",
+    "then MEASURE with CAND=\"$S\" (see _meta.measure) and `python3 gate.py ... --json > /tmp/gate-E1-$NIGHT.json`"
+   ],
+   "touches": [
+    "mood-index.bin"
+   ],
+   "preconditions": [
+    {
+     "kind": "source_grep",
+     "file": "~/JakeTunesV3/scripts/brain-trainer.mjs",
+     "pattern": "pending\\.map\\(\\(\\{ t, d \\}\\) => \\(\\{ id: t\\.id, text: moodText\\(t, d\\) \\}\\)\\)",
+     "expect": "present",
+     "why": "the trainer won't re-add bare vectors: its nightly mood writes come only from tracks it just described"
+    },
+    {
+     "kind": "source_grep",
+     "file": "~/JakeTunesV3/scripts/brain-trainer.mjs",
+     "pattern": "desc\\[String\\(t\\.id\\)\\]\\?\\.d && !mmap\\.has\\(Number\\(t\\.id\\)\\)",
+     "expect": "present",
+     "why": "the trainer won't re-add bare vectors: gap-fill only re-makes vectors for DESCRIBED tracks"
+    },
+    {
+     "kind": "bare_backlog",
+     "min": 1,
+     "why": "there is a bare cohort to drop"
+    }
+   ],
+   "acceptance": "dual-run gate (gate.py exit 0: v1 bar incl. worst per-probe v1 mood Δ >= 0, AND v3 gate) AND ret-007 mood >= 0.80",
+   "rollback": "Before the atomic apply: cp -p $LIVE/mood-index.bin $LIVE/mood-index.bin.pre-E1-$NIGHT (verify sha). Undo = cp -p $LIVE/mood-index.bin.pre-E1-$NIGHT $LIVE/mood-index.bin. Dropped ids are in $S/E1-dropped-ids.json; the trainer re-makes their vectors (with descriptors) as it describes them.",
+   "grounding_source": "REPORT-20261012-nightly.md (full reembed-all REJECTED: ret-007 mood 0.44->0.16, bare-in-top25 14->21; sequencing rule), REPORT-20261011-nightly.md (ret-007 mood 1.00->0.44 with 14/25 bare), diag_ret007_20261012.py",
+   "budget": {
+    "openai_usd": 0.0,
+    "llm_runs": 2,
+    "minutes": 25
+   },
+   "max_nights": 1,
+   "series": false,
+   "result": null
+  },
+  {
+   "id": "E2",
+   "title": "Main-index taxonomy text refresh after a genre re-tag wave",
+   "status": "queued",
+   "priority": 80,
+   "lane": "auto",
+   "hypothesis": {
+    "metric": "v3 mean per-probe delta (production path) and v1 retrieval",
+    "from": "tonight's baseline",
+    "to_beat": "+0.005 (v3, CI lower bound > 0) and v1 retrieval > baseline",
+    "op": ">=",
+    "statement": "When >1% of genre tags changed since the main index was embedded, its texts speak a stale taxonomy; re-embedding the main index only (mood untouched) recovers it. 10-12: +0.015 v1 retrieval, rt 0.852->0.861."
+   },
+   "method": [
+    "S=/tmp/brain-cand-E2-$NIGHT; rm -rf \"$S\"; mkdir -p \"$S\"; for f in library.json embeddings.bin mood-index.bin brain-descriptors.json audio-index.bin artist-members.json metadata-overrides.json lyrics.json; do [ -f \"$SNAP/$f\" ] && cp -p \"$SNAP/$f\" \"$S/\"; done",
+    "JT_STATE_DIR=\"$S\" node ~/JakeTunesV3/scripts/brain-trainer.mjs --reembed-all",
+    "cp -p \"$SNAP/mood-index.bin\" \"$S/mood-index.bin\"   # MAIN INDEX ONLY — the 10-12 full candidate's mood side was rejected",
+    "then MEASURE with CAND=\"$S\" (see _meta.measure) and `python3 gate.py ... --json > /tmp/gate-E2-$NIGHT.json`",
+    "after an APPLY: python3 $BRAIN_EVAL/pick_experiment.py record-tags --library \"$SNAP/library.json\""
+   ],
+   "touches": [
+    "embeddings.bin"
+   ],
+   "preconditions": [
+    {
+     "kind": "genre_tag_churn",
+     "min_frac": 0.01,
+     "snapshot": "$BRAIN_EVAL/experiments/state/main-index-tags.json",
+     "why": ">1% of genre tags changed since the main index text was last embedded"
+    },
+    {
+     "kind": "file_exists",
+     "path": "~/JakeTunesV3/scripts/brain-trainer.mjs",
+     "why": "the proven recipe uses the real trainer"
+    }
+   ],
+   "acceptance": "dual-run gate (gate.py exit 0: v1 retrieval AND overall strictly improve, nothing regresses, AND v3 gate)",
+   "rollback": "Before the atomic apply: cp -p $LIVE/embeddings.bin $LIVE/embeddings.bin.pre-E2-$NIGHT (verify sha). Undo = cp -p $LIVE/embeddings.bin.pre-E2-$NIGHT $LIVE/embeddings.bin. Apply embeddings.bin ONLY (never the candidate's mood-index.bin or brain-descriptors.json).",
+   "grounding_source": "REPORT-20261012-nightly.md (the proven 10/12 recipe: trainer --reembed-all on a scratch copy, main index only; applied 99d0de2fdc27)",
+   "budget": {
+    "openai_usd": 0.01,
+    "llm_runs": 2,
+    "minutes": 35
+   },
+   "max_nights": 1,
+   "series": false,
+   "result": null
+  },
+  {
+   "id": "E3",
+   "title": "Mood-text refresh once the bare backlog is drained",
+   "status": "queued",
+   "priority": 70,
+   "lane": "auto",
+   "hypothesis": {
+    "metric": "v3 mean per-probe delta (production path)",
+    "from": "tonight's baseline",
+    "to_beat": "+0.005 with CI lower bound > 0, vibe/tempo_family groups not down",
+    "op": ">=",
+    "statement": "Mood texts still carry the pre-taxonomy genre line; rebuilding them helps ONLY once almost no bare tracks remain (10-12 sequencing rule: drain the bare cohort first, then refresh mood)."
+   },
+   "method": [
+    "S=/tmp/brain-cand-E3-$NIGHT; rm -rf \"$S\"; mkdir -p \"$S\"; for f in library.json embeddings.bin mood-index.bin brain-descriptors.json audio-index.bin artist-members.json metadata-overrides.json lyrics.json; do [ -f \"$SNAP/$f\" ] && cp -p \"$SNAP/$f\" \"$S/\"; done",
+    "JT_STATE_DIR=\"$S\" node ~/JakeTunesV3/scripts/brain-trainer.mjs --rebuild-mood-index",
+    "cp -p \"$SNAP/embeddings.bin\" \"$S/embeddings.bin\"   # mood only",
+    "then MEASURE with CAND=\"$S\" (see _meta.measure) and `python3 gate.py ... --json > /tmp/gate-E3-$NIGHT.json`"
+   ],
+   "touches": [
+    "mood-index.bin"
+   ],
+   "preconditions": [
+    {
+     "kind": "bare_backlog",
+     "max": 25,
+     "why": "a rebuild re-embeds every bare track as bare — only worth it once the backlog is <= 25"
+    },
+    {
+     "kind": "file_exists",
+     "path": "~/JakeTunesV3/scripts/brain-trainer.mjs",
+     "why": "the rebuild uses the real trainer"
+    }
+   ],
+   "acceptance": "dual-run gate (gate.py exit 0: worst per-probe v1 mood Δ >= 0, nothing regresses, AND v3 gate)",
+   "rollback": "Before the atomic apply: cp -p $LIVE/mood-index.bin $LIVE/mood-index.bin.pre-E3-$NIGHT (verify sha). Undo = copy it back.",
+   "grounding_source": "REPORT-20261012-nightly.md (mood-side taxonomy staleness measured HARMFUL to fix while bare: ret-007 -0.28; sequencing note)",
+   "budget": {
+    "openai_usd": 0.01,
+    "llm_runs": 2,
+    "minutes": 30
+   },
+   "max_nights": 1,
+   "series": false,
+   "result": null
+  },
+  {
+   "id": "E4",
+   "title": "Every new add is heard the night it arrives",
+   "status": "done",
+   "priority": 0,
+   "lane": "jake",
+   "hypothesis": {
+    "metric": "unheard adds left after a trainer night",
+    "from": 377,
+    "to_beat": 0,
+    "op": "<=",
+    "statement": "At a fixed 50/night the trainer was outrun by ~130 adds/day; take every add from the last 14 days, bound the run by time."
+   },
+   "method": [
+    "shipped — scripts/brain-batch.mjs pickBatch + BRAIN_MINUTES budget (JakeTunesV3 PR #105)"
+   ],
+   "touches": [
+    "scripts/brain-trainer.mjs",
+    "scripts/brain-batch.mjs"
+   ],
+   "preconditions": [],
+   "acceptance": "merged by Jake",
+   "rollback": "git revert 9390129 (JakeTunesV3)",
+   "grounding_source": "JakeTunesV3 PR #105 (https://github.com/jrosey30/JakeTunesV3/pull/105), merged 2026-10-12T23:28:49Z as 9390129",
+   "budget": {
+    "openai_usd": 0.0,
+    "llm_runs": 0,
+    "minutes": 0
+   },
+   "max_nights": 1,
+   "series": false,
+   "result": {
+    "at": "2026-10-12T23:28:49",
+    "outcome": "done",
+    "summary": "SHIPPED as JakeTunesV3 PR #105 — \"every new add is heard the night it arrives\" (9390129).",
+    "ref": "JakeTunesV3#105"
+   }
+  },
+  {
+   "id": "E5",
+   "title": "Taste weights v4 refresh (drifted W constants)",
+   "status": "queued",
+   "priority": 60,
+   "lane": "jake",
+   "hypothesis": {
+    "metric": "taste held-out AUC (locked 5x5 taste-eval shape)",
+    "from": 0.8133,
+    "to_beat": "deployed W + 0.005",
+    "op": ">=",
+    "statement": "The v4 W deployed 08-23 drifted with the September import wave; the 09-13 re-run had the full-rate candidate (arm D) at 0.8216 vs deployed 0.8133."
+   },
+   "method": [
+    "JT_STATE_DIR=\"$SNAP\" python3 $BRAIN_EVAL/taste_weight_drift_v4_20260913.py   # read-only",
+    "JT_STATE_DIR=\"$SNAP\" python3 $BRAIN_EVAL/drift_v4_armD_fullrate_20260913.py   # read-only; arm D = the wire-in set",
+    "price = arm D AUC - arm A (deployed) AUC, paired folds"
+   ],
+   "touches": [
+    "JakeTunesV3 src/renderer/utils/tasteScore.ts",
+    "JakeTunesMobile backend/src/util/tasteScore.ts"
+   ],
+   "preconditions": [
+    {
+     "kind": "file_exists",
+     "path": "$BRAIN_EVAL/taste_weight_drift_v4_20260913.py",
+     "why": "the locked drift protocol"
+    },
+    {
+     "kind": "file_exists",
+     "path": "$BRAIN_EVAL/drift_v4_armD_fullrate_20260913.py",
+     "why": "the deployment-parity candidate"
+    },
+    {
+     "kind": "file_exists",
+     "path": "$STATE_DIR/library.json",
+     "why": "a snapshot to measure on"
+    }
+   ],
+   "acceptance": "candidate held-out AUC >= deployed + 0.005 on the same folds (the +0.005 AUC gate); then Jake ships both twins in lockstep",
+   "rollback": "revert the W constants in both twins (same commit pair)",
+   "grounding_source": "PROPOSAL-taste-weights-refresh-v4.md (09-13: A 0.8133 vs D 0.8216); taste-drift monthly due ~10-13 (REPORT-20261012)",
+   "budget": {
+    "openai_usd": 0.0,
+    "llm_runs": 0,
+    "minutes": 15
+   },
+   "max_nights": 1,
+   "series": false,
+   "result": null
+  },
+  {
+   "id": "E6",
+   "title": "\"The\"-stripped artist guard, safe variant (S2), measured through the bridge",
+   "status": "queued",
+   "priority": 50,
+   "lane": "jake",
+   "hypothesis": {
+    "metric": "v3 production-path artist + vibe groups, and bare-name artist routing coverage",
+    "from": "tonight's baseline; coverage 0/142 bare 'The X' names route to main",
+    "to_beat": "v3 vibe Δ >= 0 (no hijacks) and coverage 142/142",
+    "op": ">=",
+    "statement": "Queries naming a 'The X' band without 'The' misroute to the mood index (recall +0.75 when routed right); S2 adds stripped variants but lets dictionary-word variants match only artist-intent templates."
+   },
+   "method": [
+    "D=$BRAIN_EVAL/bridge/.main-src/E6-s2; rm -rf \"$D\"; mkdir -p \"$D\"; git -C ~/JakeTunesV3 archive origin/main src | tar -x -C \"$D\"",
+    "patch -p1 -d \"$D\" < $BRAIN_EVAL/experiments/patches/E6-s2-stripped-artist-guard.patch",
+    "python3 $BRAIN_EVAL/run_eval.py --ruler v3 --no-llm --state-dir \"$SNAP\" --main-src \"$D\" --label E6 --run-id E6-$NIGHT",
+    "python3 $BRAIN_EVAL/gate.py --base B3-$NIGHT --cand E6-$NIGHT --v3-only; python3 $BRAIN_EVAL/p2_safe_variant_check.py"
+   ],
+   "touches": [
+    "JakeTunesV3 src/main/ai/rag-route.ts",
+    "JakeTunesMobile backend/src/util/rag.ts (twin)"
+   ],
+   "preconditions": [
+    {
+     "kind": "file_exists",
+     "path": "$BRAIN_EVAL/experiments/patches/E6-s2-stripped-artist-guard.patch",
+     "why": "the S2 variant must exist as a patch against main's rag-route.ts before it can be priced (app code — Jake-gated)"
+    }
+   ],
+   "acceptance": "price only: v3 gate on the patched bridge (no group drop, vibe not down) + 142/142 coverage; Jake decides",
+   "rollback": "revert the patch in both twins",
+   "grounding_source": "PROPOSAL-p2-stripped-artist-guard.md (S2 recommended: 0/12 vibe hijacks, 142/142 coverage), p2_safe_variant_check.py",
+   "budget": {
+    "openai_usd": 0.0,
+    "llm_runs": 0,
+    "minutes": 10
+   },
+   "max_nights": 1,
+   "series": false,
+   "result": null
+  },
+  {
+   "id": "E7",
+   "title": "Sweep the reranker genre bonus 0.08 -> 0.04 and 0.12 via the bridge",
+   "status": "queued",
+   "priority": 55,
+   "lane": "jake",
+   "hypothesis": {
+    "metric": "v3 mean per-probe delta vs RERANK_GENRE_W=0.08 (production path)",
+    "from": 0.0,
+    "to_beat": "+0.005 with CI lower bound > 0 and no group drop > 0.01, for W=0.04 or W=0.12",
+    "op": ">=",
+    "statement": "0.08 was chosen on the 16-prompt v2 bucket (09-01); the 154-probe v3 ruler may prefer a different weight."
+   },
+   "method": [
+    "for W in 0.04 0.12; do JT_RERANK_GENRE_W=$W python3 $BRAIN_EVAL/run_eval.py --ruler v3 --no-llm --state-dir \"$SNAP\" --label E7-w$W --run-id E7-w$W-$NIGHT; python3 $BRAIN_EVAL/gate.py --base B3-$NIGHT --cand E7-w$W-$NIGHT --v3-only; done   # the bridge inherits JT_RERANK_GENRE_W (rag-rerank.ts lab override)"
+   ],
+   "touches": [
+    "JakeTunesV3 src/main/ai/rag-rerank.ts RERANK_GENRE_W",
+    "JakeTunesMobile backend/src/util/ragRerank.ts (twin)"
+   ],
+   "preconditions": [
+    {
+     "kind": "source_grep",
+     "ref": "origin/main",
+     "path": "src/main/ai/rag-rerank.ts",
+     "pattern": "process\\.env\\.JT_RERANK_GENRE_W",
+     "expect": "present",
+     "why": "the production reranker still reads the lab override, so the bridge can sweep it without a code change"
+    }
+   ],
+   "acceptance": "price only: the v3 gate (minus grounding, --no-llm) for each W; Jake changes the constant in both twins",
+   "rollback": "constant back to 0.08 in both twins",
+   "grounding_source": "src/main/ai/rag-rerank.ts header (weight chosen by sweeping the production-path eval, score_log 2026-09-01)",
+   "budget": {
+    "openai_usd": 0.0,
+    "llm_runs": 0,
+    "minutes": 5
+   },
+   "max_nights": 1,
+   "series": false,
+   "result": null
+  },
+  {
+   "id": "E8",
+   "title": "Lyrics meaning in the mood text (300-track sample)",
+   "status": "queued",
+   "priority": 40,
+   "lane": "auto",
+   "measure_only": true,
+   "hypothesis": {
+    "metric": "v3 vibe-group delta, meaning arm vs control arm (same 300 tracks)",
+    "from": 0.0,
+    "to_beat": "+0.01 with no group drop > 0.01",
+    "op": ">=",
+    "statement": "The grounded 'what the song is about' line left the brain when the main index went plain (10-10); folding it into the MOOD text might sharpen vibe retrieval."
+   },
+   "method": [
+    "SRC=$(cd $BRAIN_EVAL && python3 -c 'import scorecard as S; print(S.extract_main_src()[0])')",
+    "for ARM in control meaning; do S=/tmp/brain-cand-E8$ARM-$NIGHT; rm -rf \"$S\"; mkdir -p \"$S\"; for f in library.json embeddings.bin mood-index.bin brain-descriptors.json audio-index.bin artist-members.json metadata-overrides.json lyrics.json; do [ -f \"$SNAP/$f\" ] && cp -p \"$SNAP/$f\" \"$S/\"; done; (set -a; . ~/JakeTunesV3/.env; set +a; cd $BRAIN_EVAL/bridge && JT_STATE_DIR=\"$S\" JT_MAIN_SRC=\"$SRC\" npx --yes tsx mood-meaning-sample.ts --arm $ARM --n 300 --seed 8); python3 $BRAIN_EVAL/run_eval.py --ruler v3 --no-llm --state-dir \"$S\" --label E8-$ARM --run-id E8-$ARM-$NIGHT; done",
+    "python3 $BRAIN_EVAL/gate.py --base E8-control-$NIGHT --cand E8-meaning-$NIGHT --v3-only"
+   ],
+   "touches": [],
+   "preconditions": [
+    {
+     "kind": "meaning_count",
+     "min": 300,
+     "why": "300 described tracks with a grounded lyrics meaning and a mood vector"
+    },
+    {
+     "kind": "file_exists",
+     "path": "$BRAIN_EVAL/bridge/mood-meaning-sample.ts",
+     "why": "the sampling tool"
+    }
+   ],
+   "acceptance": "MEASURE-ONLY: record 'measured' with the vibe-group delta and CI; a win becomes a Jake proposal (it changes the trainer's moodText + its twin buildMoodText)",
+   "rollback": "nothing applied (scratch copies only)",
+   "grounding_source": "e364d7e (trainer lyrics-meaning enrichment, LRCLIB-grounded), caa5bf0 (meaning left the main brain, 10-10)",
+   "budget": {
+    "openai_usd": 0.002,
+    "llm_runs": 0,
+    "minutes": 15
+   },
+   "max_nights": 1,
+   "series": false,
+   "result": null
+  },
+  {
+   "id": "E9",
+   "title": "taste intensity stays stable as tracks age",
+   "status": "queued",
+   "priority": 58,
+   "lane": "jake",
+   "hypothesis": {
+    "metric": "'only today moves' AUC delta (identical tracks, today 8/28 -> 10/9)",
+    "from": -0.0093,
+    "to_beat": "|delta| <= 0.002",
+    "op": "<=",
+    "and": [
+     "intensity single-feature AUC vs the aged-in summer finds > 0.586",
+     "scripts/taste-eval.py 5x5 CV held-out AUC >= 0.817"
+    ],
+    "statement": "play intensity (plays per month owned) drifts mechanically with the clock and can't tell a trial listen from love (0.586 single-feature AUC vs the 935 aged-in summer finds; 0.730 vs older negatives). Make it age-stable, e.g. ignore plays in the first ~30 days after add, or floor owned-time at ~6 months."
+   },
+   "method": [
+    "cd brain-eval/experiments/evidence/E9 && copy in the data files listed in README.md (read-only copies) && python3 clock.py   # 'only today moves' baseline",
+    "apply the candidate intensity variant in be.py score_parts; re-run clock.py + why.py; then python3 scripts/taste-eval.py (5x5 CV) on the candidate"
+   ],
+   "touches": [
+    "JakeTunesV3 src/renderer/utils/tasteScore.ts",
+    "JakeTunesMobile backend/src/util/tasteScore.ts"
+   ],
+   "preconditions": [
+    {
+     "kind": "file_exists",
+     "path": "brain-eval/experiments/evidence/E9/clock.py",
+     "why": "the diagnosis scripts, committed with this queue (scripts only; data copied in at run time)"
+    },
+    {
+     "kind": "file_exists",
+     "path": "brain-eval/experiments/evidence/E9/clock.py",
+     "why": "the diagnosis scripts, committed with this queue (scripts only; data copied in at run time)"
+    },
+    {
+     "kind": "source_grep",
+     "ref": "origin/main",
+     "path": "scripts/taste-eval.py",
+     "pattern": "AUC",
+     "expect": "present",
+     "why": "the 5x5 CV held-out AUC check"
+    }
+   ],
+   "acceptance": "clock-only |delta| <= 0.002 AND intensity single-feature AUC vs aged-in cohort > 0.586 AND taste-eval 5x5 CV held-out AUC >= 0.817",
+   "rollback": "revert both twins (src/renderer/utils/tasteScore.ts + backend/src/util/tasteScore.ts) — changed in lockstep",
+   "grounding_source": "read-only diagnosis /private/tmp/claude-503/-Users-jacobrosenbaum/3a9012e8-0500-47a9-8785-a0bc23a596d2/scratchpad/taste-dx/ (be.py, clock.py): -0.0093 AUC from moving 'today' 8/28 -> 10/9 on identical tracks, +0.0001 with intensity removed; intensity 0.586 single-feature AUC vs the 935 aged-in summer finds, 0.730 vs older negatives. Queued with Jake's approval (2026-10-12).",
+   "budget": {
+    "openai_usd": 0.0,
+    "llm_runs": 0,
+    "minutes": 20
+   },
+   "max_nights": 1,
+   "series": false,
+   "result": null,
+   "notes": [
+    "10/12: measurement fix shipped as JakeTunesMobile #403 (live: matured-90d AUC 0.7852, finds 0.7491); E9 is the model half."
+   ]
+  },
+  {
+   "id": "E10",
+   "title": "leaf-genre queries reach the index that knows them",
+   "status": "queued",
+   "priority": 70,
+   "lane": "jake",
+   "hypothesis": {
+    "metric": "v3 leaf group, production path (bridge)",
+    "from": 0.428,
+    "to_beat": 0.7,
+    "op": ">=",
+    "and": [
+     "no other v3 group drops > 0.01",
+     "grounding 1.000"
+    ],
+    "statement": "The v3 baseline (10/12, laptop) shows queries that name a leaf genre ('Garage Punk', 'Midwest Rap') score 0.428 on the production path but 0.784 on the main index: the router sends them to the mood/audio path, where genre names carry little signal. Route (or fuse toward) the main index when the query names a vocab leaf/family."
+   },
+   "method": [
+    "on a scratch branch: in the production router (desktop src/main rag routing + its JakeTunesMobile backend util/rag.ts twin), treat a query that matches a genre-vocab leaf/family name as a main-index query (or raise the main-index fusion weight for it)",
+    "python3 run_eval.py --ruler v3 --no-llm through the bridge, baseline vs candidate; python3 gate.py"
+   ],
+   "touches": [
+    "JakeTunesV3 production RAG router",
+    "JakeTunesMobile backend/src/util/rag.ts (twin)"
+   ],
+   "preconditions": [],
+   "acceptance": "gate.py v3 PASS and v1 bar unchanged (dual-run); leaf group >= 0.70",
+   "rollback": "revert the router change in both twins",
+   "budget": "one night of measurement; code change needs Jake",
+   "max_nights": 1,
+   "result": null,
+   "grounding_source": "v3 baseline per-group table in the 10/12 scorecard PR (#106)",
+   "series": false
+  }
+ ]
+}

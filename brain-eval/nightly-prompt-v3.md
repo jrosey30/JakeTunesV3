@@ -1,0 +1,67 @@
+<!--
+DRAFT — scorecard v3 nightly prompt for homemini (~/.jaketunes/brain-improve-prompt.md).
+NOT INSTALLED. Deploy only after Jake approves. Based on the prompt live on 2026-10-12.
+Changes from the live prompt:
+  - REMOVED the stale "last known-good retrieval ~0.825, overall ~0.912 (2026-07-03)" figure.
+  - REMOVED "skips are a good first experiment" — refuted four times (the original test, the 08-08 re-test,
+    the 08-09 per-track shapes, the 09-07 1,000-skip re-test; REPORT-20260808/0809/0907). Skips stay closed.
+  - ADDED the experiment queue: exactly ONE queue item per night, never a new watch series.
+  - ADDED the dual-run period: v1 bar AND v3 gate (gate.py), both required to apply.
+  - Everything else (where things live, pipeline coordination, guardrails, plain main brain) is unchanged.
+-->
+
+Run ONE precise, measured, reversible "exercise" to improve JakeTunes's AI "brain" (its OpenAI-embeddings + RAG + taste system) and apply ONLY improvements that are provably better. Operate extremely precisely and wisely, NEVER recklessly. An unmeasured or unproven change is a FAILURE, not progress. When in doubt, change nothing and report.
+
+YOU ARE RUNNING on homemini (the always-on Mac mini) at ~3:05 AM as a launchd job, with full local access. homemini OWNS the brain (migrated 2026-07-11).
+
+WHERE THINGS LIVE (on THIS machine, homemini)
+- Canonical brain = the NAS state dir `/Volumes/JakeShared/JakeTunesState/`: `embeddings.bin` (identity/taste index — encodes Jake's ★ ratings), `mood-index.bin` (the "feel" index), `brain-descriptors.json` (enrichment progress). The mobile backend (this box) reads the brain from there, so it IS what the phone + desktop mixes use. Taste = IDENTITY, not sound — NEVER measure taste with the identity index.
+- Repos: `~/JakeTunesV3` (brain scripts + the eval harness) and `~/JakeTunesMobile` (the Express backend that serves the phone; `main` auto-deploys). `metadata-overrides.json` on the NAS is authored on the LAPTOP (Cynthia + taxonomy-classify) — you may READ it but must NOT write it.
+- Eval harness: the `brain-eval` branch of `~/JakeTunesV3` (git fetch it if needed). Run it in a git worktree; copy the repo-root `.env` into the worktree FIRST (probes need the real OpenAI key); COMMIT the score_log / score_rows / experiments ledger + queue or they die with the worktree. Read `brain-eval/README.md` (scorecard v3 section) before the first run.
+- OpenAI key is in `~/JakeTunesV3/.env`. Local Gemma is at `http://localhost:11434` (gemma3:4b) — but homemini has only ~16GB RAM shared with other services, so Gemma 500s under heavy concurrent load; call it gently / few at a time.
+
+PIPELINE COORDINATION — you are the LAST brain writer of the night; never race or get clobbered:
+- ONE deterministic writer runs before you on THIS machine: `brain-trainer` (launchd ~2:00 AM, `~/JakeTunesV3/scripts/brain-trainer.mjs` with `JT_STATE_DIR` = the NAS dir, log `~/Library/Logs/jaketunes-brain-trainer.log`) enriches new tracks + writes `embeddings.bin`/`mood-index.bin`/`brain-descriptors.json` on the NAS. Since PR #105 it takes EVERY add from the last 14 days, bounded by a 40-minute budget.
+- `taxonomy-classify` runs on the LAPTOP and writes only `metadata-overrides.json` (NOT the brain), so it is NOT a writer you race.
+- BEFORE you measure: confirm brain-trainer completed for the night (its log shows a finished run dated today) AND `embeddings.bin` mtime has been STABLE for ≥2 minutes (nothing mid-write). If it's still running, hasn't run, or the file is changing, WAIT briefly and re-check, or ABORT and report — never measure/write a brain mid-rebuild.
+- Measure from a SNAPSHOT: copy the brain files to `/tmp/brain-snap-YYYYMMDD` ($SNAP), sha-verified against the NAS before and after the copy. Every run_eval / pick_experiment call reads `--state-dir "$SNAP"`; every candidate is built in its own `/tmp/brain-cand-<id>-YYYYMMDD` copy.
+- BEFORE you apply: re-check `embeddings.bin` / `mood-index.bin` mtime + size + sha have NOT changed since your measurement. If they changed, DISCARD the apply and report.
+
+HARD GUARDRAILS — this is the whole point ("wisely, not recklessly"):
+1. MEASURE FIRST. Establish a trustworthy baseline via the brain-eval harness before changing anything — BOTH rulers (see SCORECARD). If it can't run or the baseline is implausible, ABORT and report — never proceed blind.
+2. GROUND EVERYTHING. Any fact/metadata must come from a real source (web / MusicBrainz / audio analysis), never invented from model memory. If you can't ground it, don't use it.
+3. ONE QUEUE ITEM PER NIGHT. Run exactly the item `pick_experiment.py pick` chooses — nothing else, no side experiments. Never add queue items and never open a new watch series (a series already in the queue stops at its max_nights, ≤3). If you find something worth trying, write it up as a proposal for Jake instead.
+4. PROVE IT. Keep a change ONLY if `gate.py` says APPLY (exit 0) — the dual-run rule below. Else discard it.
+5. APPLY SAFELY + REVERSIBLY. Apply a proven win ONLY after a verified backup + a revertible ledger entry (what changed, before/after scores, exact undo — the item's `rollback`). Overwrite `embeddings.bin` / `mood-index.bin` only via temp-file + atomic rename, and self-verify vector count/dim after (restore backup if the round-trip fails — mirror brain-trainer.mjs's pattern). Apply ONLY the file(s) the item `touches`. Never overwrite without a good backup. Never delete user data.
+6. DEFAULT TO DO-NOTHING. If nothing passed the gate, apply NOTHING and say so. If a change is ambiguous or unprovable, propose it for Jake's review instead.
+7. FAIL-SAFE. On any error / missing access / inability to verify, STOP and report. Do the least, not the most. Never leave a half-changed state.
+8. LOG + NOTIFY. score_log.jsonl + score_rows.jsonl (run_eval writes both), `pick_experiment.py record` for the item's result, and the nightly report (tried, deltas, applied, rejected, current scores). Commit all of it.
+
+SCORECARD (dual-run period — both rulers every night)
+- v1 = `eval_set.json`, frozen and unchanged; its headline (retrieval / grounding / overall) continues the old series. New normals after the 10-12 recalibration + apply: 0.810 / 1.000 / 0.905.
+- v3 = `eval_set_v3.json`: 154 vocab-resolved probes in six groups (artist, umbrella_family, leaf, family_decade, tempo_family, vibe) scored on the PRODUCTION retrieval path (main's code through `bridge/rag-bridge.ts`), with main-index and mood-index readings as diagnostics, plus 20 grounding questions (6 traps) where every cited track must exist AND match the question's predicate. Headline = mean of the group means. Query vectors are frozen (`eval_set_v3.qvec.json`), so an unchanged brain scores identically.
+- Commands (from the worktree's `brain-eval/`):
+  - `python3 run_eval.py --ruler v1 --state-dir "$SNAP" --run-id B1-$NIGHT`
+  - `python3 run_eval.py --ruler v3 --state-dir "$SNAP" --label baseline --run-id B3-$NIGHT`
+  - candidate: the same two with `--state-dir "$CAND"` and run ids `C1-<id>-$NIGHT` / `C3-<id>-$NIGHT`
+  - `python3 gate.py --base B3-$NIGHT --cand C3-<id>-$NIGHT --v1-base B1-$NIGHT --v1-cand C1-<id>-$NIGHT --json > /tmp/gate-<id>-$NIGHT.json` — exit 0 = APPLY allowed
+- THE V3 GATE (all must hold): mean per-probe Δ ≥ +0.005; the 90% paired bootstrap interval's lower bound > 0; no group's mean drops more than 0.01; candidate grounding = 1.000. In practice the interval binds first: a change that moves many probes needs roughly +0.015 mean to clear it (measured churn, 10-12).
+- THE V1 BAR (unchanged): no tracked v1 metric regresses (retrieval, grounding, overall); if `embeddings.bin` changed, v1 retrieval AND overall must strictly improve; if `mood-index.bin` changed, no v1 probe's mood-index reading may drop (v1 retrieval can't see a mood-only change — its improvement must show on the production path, i.e. the v3 gate).
+- DUAL RUN: a candidate applies ONLY if it passes BOTH the v1 bar AND the v3 gate. gate.py computes both; never override it, never apply on a "close" result.
+- `RULER STALE` (exit 3: >0.5% of library genre tags no longer resolve in `vocab_snapshot.json`): do NOT regenerate the ruler and do NOT apply anything (the dual-run gate can't pass without v3). Report it with the top unresolved tags; re-export + regeneration is Jake's call.
+- If the v3 run says `PRODUCTION BRIDGE FAILED` (primary source `py-router`), the v3 numbers are NOT the production path: apply nothing that night, report the bridge error verbatim.
+- If v3's per-probe rows change on an UNCHANGED brain (same shas), the harness is broken, not the brain: stop and report.
+
+THE QUEUE (`brain-eval/experiments/`)
+- `python3 pick_experiment.py pick --state-dir "$SNAP"` → exactly one of:
+  - RUN <auto item>: build the candidate with the item's `method` (scratch copy only), measure both rulers, run gate.py. APPLY only on gate exit 0 AND the item's own acceptance; then `record --outcome applied --gate /tmp/gate-<id>-$NIGHT.json`. Otherwise `record --outcome rejected` (or `no-change` / `blocked` with the reason). Measure-only items (E8) record `measured` and never apply.
+  - MEASURE <jake item>: no auto item qualified, so price the top Jake-lane proposal (v3 `--no-llm` + `gate.py --v3-only`, or the item's own protocol). It NEVER applies. `record --outcome priced` with the numbers, and update/attach the proposal for Jake.
+  - IDLE: nothing eligible — run the baselines, report, apply nothing.
+- Every result goes to the ledger via `record`. A rejected item comes back only through `requeue` with a NEW hypothesis (a number to beat) — never re-run a refuted idea under the same bar.
+- E2 needs `experiments/state/main-index-tags.json` (the genre tags the main index was last embedded with). If it is missing, record it once from tonight's snapshot (`pick_experiment.py record-tags --library "$SNAP/library.json"`) and say so in the report; re-record it after every E2 apply.
+
+APPLY POLICY (Jake's default): AUTO-APPLY only Auto-lane queue items that pass the dual-run gate, with a verified backup + revert entry (guardrails 4–5). Everything uncertain is proposed for review, not applied. Auto-apply NEVER runs on a regression, on doubt, on a stale ruler, on a failed bridge, or without a verified backup + revert entry. Jake-lane items (app code, taste weights, twins) are never applied by this job.
+
+SUCCESS = exactly one of: (a) the picked item passed the dual-run gate and was applied with backup + ledger + logged delta; (b) a clear "nothing passed the gate, nothing changed" report (including a priced Jake proposal); or (c) a specific gated proposal when something blocked measurement. A reckless or unmeasured change is a failure even if the app still runs.
+
+2026-10-10 — THE MAIN BRAIN IS PLAIN, ON PURPOSE (Jake's decision; JakeTunesV3 PR #66, docs/brain-improvement-2026h2.md). embeddings.bin text is artist — title, album (year), genre tag only; the sound-and-mood descriptor lives in mood-index.bin, where the router sends every vibe query. Measured: genre/era coherence and retrieval rose (0.736 → 0.788) and the production-path eval was identical on mood routes. So the main-index enrichment_sensitive prompts (ret-013..015) are EXPECTED lower now — that is not a regression. Judge vibe on the production path (v3's primary score). Never fold descriptors, lyrics meaning, tempo or the AI subgenre path back into the main brain text.

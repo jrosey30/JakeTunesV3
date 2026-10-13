@@ -1,0 +1,924 @@
+{
+ "_meta": {
+  "what": "Frozen copy of the app's genre vocab for the v3 eval ruler (leaf -> family -> umbrella).",
+  "source_ref": "origin/main",
+  "source_sha": "48791e6b7cf3aa203452aa36d151e56b8dab671f",
+  "source_files": {
+   "src/common/genre-vocab.ts": "0f0ce037b2a77ee2e2ed7031be1cee4e8f32da9f",
+   "src/common/genre-iceberg.ts": "9fb4c1c4a8313d4d0dcc4f968e5e13bd3eaae23c"
+  },
+  "exported_at": "2026-10-12T19:42:37",
+  "counts": {
+   "leaves": 132,
+   "families": 11,
+   "umbrellas": 7
+  },
+  "family_note": "family = genre-vocab 'area'. 'Other' (Soundtrack, Comedy, ...) has no umbrella — off the berg."
+ },
+ "leaves": {
+  "Rock": {
+   "family": "Rock",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Classic Rock": {
+   "family": "Rock",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Hard Rock": {
+   "family": "Rock",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Prog Rock": {
+   "family": "Rock",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Glam Rock": {
+   "family": "Rock",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Southern Rock": {
+   "family": "Rock",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Americana Rock": {
+   "family": "Rock",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Psychedelic Rock": {
+   "family": "Rock",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Space Rock": {
+   "family": "Rock",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Garage Rock": {
+   "family": "Rock",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Alternative": {
+   "family": "Rock",
+   "umbrella": "Rock",
+   "strict": true
+  },
+  "College Rock": {
+   "family": "Rock",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Grunge": {
+   "family": "Rock",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Indie Rock": {
+   "family": "Rock",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Indie Sleaze": {
+   "family": "Rock",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Power Pop": {
+   "family": "Rock",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Shoegaze": {
+   "family": "Rock",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Math Rock": {
+   "family": "Rock",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Stoner Rock": {
+   "family": "Rock",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Blues Rock": {
+   "family": "Rock",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Funk Rock": {
+   "family": "Rock",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Latin Rock": {
+   "family": "Rock",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Punk": {
+   "family": "Punk",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Hardcore Punk": {
+   "family": "Punk",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Pop-Punk": {
+   "family": "Punk",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Ska-Punk": {
+   "family": "Punk",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Garage Punk": {
+   "family": "Punk",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Post-Punk": {
+   "family": "Punk",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Dance-Punk": {
+   "family": "Punk",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Heavy Metal": {
+   "family": "Metal",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Thrash Metal": {
+   "family": "Metal",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Nu-Metal": {
+   "family": "Metal",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "Groove Metal": {
+   "family": "Metal",
+   "umbrella": "Rock",
+   "strict": false
+  },
+  "New Wave": {
+   "family": "New Wave & Synth",
+   "umbrella": "Pop",
+   "strict": false
+  },
+  "Synth-Pop": {
+   "family": "New Wave & Synth",
+   "umbrella": "Pop",
+   "strict": false
+  },
+  "Darkwave": {
+   "family": "New Wave & Synth",
+   "umbrella": "Pop",
+   "strict": false
+  },
+  "Goth Rock": {
+   "family": "New Wave & Synth",
+   "umbrella": "Pop",
+   "strict": false
+  },
+  "Synthwave": {
+   "family": "New Wave & Synth",
+   "umbrella": "Pop",
+   "strict": false
+  },
+  "Future Funk": {
+   "family": "New Wave & Synth",
+   "umbrella": "Pop",
+   "strict": false
+  },
+  "Pop": {
+   "family": "Pop",
+   "umbrella": "Pop",
+   "strict": true
+  },
+  "Dance-Pop": {
+   "family": "Pop",
+   "umbrella": "Pop",
+   "strict": false
+  },
+  "Indie Pop": {
+   "family": "Pop",
+   "umbrella": "Pop",
+   "strict": false
+  },
+  "Bedroom Pop": {
+   "family": "Pop",
+   "umbrella": "Pop",
+   "strict": false
+  },
+  "Dream Pop": {
+   "family": "Pop",
+   "umbrella": "Pop",
+   "strict": false
+  },
+  "Jangle Pop": {
+   "family": "Pop",
+   "umbrella": "Pop",
+   "strict": false
+  },
+  "Psychedelic Pop": {
+   "family": "Pop",
+   "umbrella": "Pop",
+   "strict": false
+  },
+  "Art Pop": {
+   "family": "Pop",
+   "umbrella": "Pop",
+   "strict": false
+  },
+  "Hyperpop": {
+   "family": "Pop",
+   "umbrella": "Pop",
+   "strict": false
+  },
+  "Yacht Rock": {
+   "family": "Pop",
+   "umbrella": "Pop",
+   "strict": false
+  },
+  "Traditional Pop": {
+   "family": "Pop",
+   "umbrella": "Pop",
+   "strict": false
+  },
+  "Easy Listening": {
+   "family": "Pop",
+   "umbrella": "Pop",
+   "strict": false
+  },
+  "East Coast Rap": {
+   "family": "Hip-Hop",
+   "umbrella": "Hip-Hop",
+   "strict": false
+  },
+  "West Coast Rap": {
+   "family": "Hip-Hop",
+   "umbrella": "Hip-Hop",
+   "strict": false
+  },
+  "Southern Rap": {
+   "family": "Hip-Hop",
+   "umbrella": "Hip-Hop",
+   "strict": false
+  },
+  "Midwest Rap": {
+   "family": "Hip-Hop",
+   "umbrella": "Hip-Hop",
+   "strict": false
+  },
+  "Trap": {
+   "family": "Hip-Hop",
+   "umbrella": "Hip-Hop",
+   "strict": false
+  },
+  "Jazz Rap": {
+   "family": "Hip-Hop",
+   "umbrella": "Hip-Hop",
+   "strict": false
+  },
+  "Conscious Rap": {
+   "family": "Hip-Hop",
+   "umbrella": "Hip-Hop",
+   "strict": false
+  },
+  "Alternative Hip-Hop": {
+   "family": "Hip-Hop",
+   "umbrella": "Hip-Hop",
+   "strict": false
+  },
+  "Cloud Rap": {
+   "family": "Hip-Hop",
+   "umbrella": "Hip-Hop",
+   "strict": false
+  },
+  "Melodic Rap": {
+   "family": "Hip-Hop",
+   "umbrella": "Hip-Hop",
+   "strict": false
+  },
+  "Old School Hip-Hop": {
+   "family": "Hip-Hop",
+   "umbrella": "Hip-Hop",
+   "strict": false
+  },
+  "Rap Rock": {
+   "family": "Hip-Hop",
+   "umbrella": "Hip-Hop",
+   "strict": false
+  },
+  "Club Rap": {
+   "family": "Hip-Hop",
+   "umbrella": "Hip-Hop",
+   "strict": false
+  },
+  "Instrumental Hip-Hop": {
+   "family": "Hip-Hop",
+   "umbrella": "Hip-Hop",
+   "strict": false
+  },
+  "Dub-Hop": {
+   "family": "Hip-Hop",
+   "umbrella": "Hip-Hop",
+   "strict": false
+  },
+  "Israeli Hip-Hop": {
+   "family": "Hip-Hop",
+   "umbrella": "Hip-Hop",
+   "strict": false
+  },
+  "R&B": {
+   "family": "R&B, Soul & Funk",
+   "umbrella": "R&B & Soul",
+   "strict": true
+  },
+  "Alternative R&B": {
+   "family": "R&B, Soul & Funk",
+   "umbrella": "R&B & Soul",
+   "strict": false
+  },
+  "Neo-Soul": {
+   "family": "R&B, Soul & Funk",
+   "umbrella": "R&B & Soul",
+   "strict": false
+  },
+  "Classic Soul": {
+   "family": "R&B, Soul & Funk",
+   "umbrella": "R&B & Soul",
+   "strict": false
+  },
+  "Motown": {
+   "family": "R&B, Soul & Funk",
+   "umbrella": "R&B & Soul",
+   "strict": false
+  },
+  "Modern Soul": {
+   "family": "R&B, Soul & Funk",
+   "umbrella": "R&B & Soul",
+   "strict": false
+  },
+  "Funk": {
+   "family": "R&B, Soul & Funk",
+   "umbrella": "R&B & Soul",
+   "strict": false
+  },
+  "Nu Funk": {
+   "family": "R&B, Soul & Funk",
+   "umbrella": "R&B & Soul",
+   "strict": false
+  },
+  "Boogie": {
+   "family": "R&B, Soul & Funk",
+   "umbrella": "R&B & Soul",
+   "strict": false
+  },
+  "Brazilian Boogie": {
+   "family": "R&B, Soul & Funk",
+   "umbrella": "R&B & Soul",
+   "strict": false
+  },
+  "Indie Groove": {
+   "family": "R&B, Soul & Funk",
+   "umbrella": "R&B & Soul",
+   "strict": false
+  },
+  "House": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Deep House": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Disco House": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Chicago House": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Acid House": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Tech House": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "French House": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Latin House": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Electro House": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Disco": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Nu Disco": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Italo Disco": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Electroclash": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "French Electro": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Alternative Dance": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Big Beat": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Breakbeat": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Drum & Bass": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "UK Garage": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "EDM": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Trance": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Eurodance": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Techno": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Ambient": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Ambient House": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Downtempo": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Chillwave": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Trip Hop": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Indietronica": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Electro Swing": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Experimental": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Mashup": {
+   "family": "Electronic & Dance",
+   "umbrella": "Electronic",
+   "strict": false
+  },
+  "Country": {
+   "family": "Country, Folk & Blues",
+   "umbrella": "Country & Folk",
+   "strict": false
+  },
+  "Folk": {
+   "family": "Country, Folk & Blues",
+   "umbrella": "Country & Folk",
+   "strict": false
+  },
+  "Singer-Songwriter": {
+   "family": "Country, Folk & Blues",
+   "umbrella": "Country & Folk",
+   "strict": false
+  },
+  "Blues": {
+   "family": "Country, Folk & Blues",
+   "umbrella": "Country & Folk",
+   "strict": false
+  },
+  "Jazz": {
+   "family": "Jazz, Brazil, Latin & Global",
+   "umbrella": "Jazz & Global",
+   "strict": false
+  },
+  "Jazz Fusion": {
+   "family": "Jazz, Brazil, Latin & Global",
+   "umbrella": "Jazz & Global",
+   "strict": false
+  },
+  "Jazz Pop": {
+   "family": "Jazz, Brazil, Latin & Global",
+   "umbrella": "Jazz & Global",
+   "strict": false
+  },
+  "Latin Jazz": {
+   "family": "Jazz, Brazil, Latin & Global",
+   "umbrella": "Jazz & Global",
+   "strict": false
+  },
+  "Nu Jazz": {
+   "family": "Jazz, Brazil, Latin & Global",
+   "umbrella": "Jazz & Global",
+   "strict": false
+  },
+  "Geordie Jazz": {
+   "family": "Jazz, Brazil, Latin & Global",
+   "umbrella": "Jazz & Global",
+   "strict": false
+  },
+  "Bossa Nova": {
+   "family": "Jazz, Brazil, Latin & Global",
+   "umbrella": "Jazz & Global",
+   "strict": false
+  },
+  "MPB": {
+   "family": "Jazz, Brazil, Latin & Global",
+   "umbrella": "Jazz & Global",
+   "strict": false
+  },
+  "Latin": {
+   "family": "Jazz, Brazil, Latin & Global",
+   "umbrella": "Jazz & Global",
+   "strict": false
+  },
+  "Latin Pop": {
+   "family": "Jazz, Brazil, Latin & Global",
+   "umbrella": "Jazz & Global",
+   "strict": false
+  },
+  "Reggae": {
+   "family": "Jazz, Brazil, Latin & Global",
+   "umbrella": "Jazz & Global",
+   "strict": false
+  },
+  "Dancehall": {
+   "family": "Jazz, Brazil, Latin & Global",
+   "umbrella": "Jazz & Global",
+   "strict": false
+  },
+  "Afrobeat": {
+   "family": "Jazz, Brazil, Latin & Global",
+   "umbrella": "Jazz & Global",
+   "strict": false
+  },
+  "Global Psych": {
+   "family": "Jazz, Brazil, Latin & Global",
+   "umbrella": "Jazz & Global",
+   "strict": false
+  },
+  "Soundtrack": {
+   "family": "Other",
+   "umbrella": null,
+   "strict": false
+  },
+  "Video Game Music": {
+   "family": "Other",
+   "umbrella": null,
+   "strict": false
+  },
+  "Comedy": {
+   "family": "Other",
+   "umbrella": null,
+   "strict": false
+  },
+  "Children's": {
+   "family": "Other",
+   "umbrella": null,
+   "strict": false
+  }
+ },
+ "families": {
+  "Rock": {
+   "umbrella": "Rock",
+   "leaves": [
+    "Rock",
+    "Classic Rock",
+    "Hard Rock",
+    "Prog Rock",
+    "Glam Rock",
+    "Southern Rock",
+    "Americana Rock",
+    "Psychedelic Rock",
+    "Space Rock",
+    "Garage Rock",
+    "Alternative",
+    "College Rock",
+    "Grunge",
+    "Indie Rock",
+    "Indie Sleaze",
+    "Power Pop",
+    "Shoegaze",
+    "Math Rock",
+    "Stoner Rock",
+    "Blues Rock",
+    "Funk Rock",
+    "Latin Rock"
+   ]
+  },
+  "Punk": {
+   "umbrella": "Rock",
+   "leaves": [
+    "Punk",
+    "Hardcore Punk",
+    "Pop-Punk",
+    "Ska-Punk",
+    "Garage Punk",
+    "Post-Punk",
+    "Dance-Punk"
+   ]
+  },
+  "Metal": {
+   "umbrella": "Rock",
+   "leaves": [
+    "Heavy Metal",
+    "Thrash Metal",
+    "Nu-Metal",
+    "Groove Metal"
+   ]
+  },
+  "New Wave & Synth": {
+   "umbrella": "Pop",
+   "leaves": [
+    "New Wave",
+    "Synth-Pop",
+    "Darkwave",
+    "Goth Rock",
+    "Synthwave",
+    "Future Funk"
+   ]
+  },
+  "Pop": {
+   "umbrella": "Pop",
+   "leaves": [
+    "Pop",
+    "Dance-Pop",
+    "Indie Pop",
+    "Bedroom Pop",
+    "Dream Pop",
+    "Jangle Pop",
+    "Psychedelic Pop",
+    "Art Pop",
+    "Hyperpop",
+    "Yacht Rock",
+    "Traditional Pop",
+    "Easy Listening"
+   ]
+  },
+  "Hip-Hop": {
+   "umbrella": "Hip-Hop",
+   "leaves": [
+    "East Coast Rap",
+    "West Coast Rap",
+    "Southern Rap",
+    "Midwest Rap",
+    "Trap",
+    "Jazz Rap",
+    "Conscious Rap",
+    "Alternative Hip-Hop",
+    "Cloud Rap",
+    "Melodic Rap",
+    "Old School Hip-Hop",
+    "Rap Rock",
+    "Club Rap",
+    "Instrumental Hip-Hop",
+    "Dub-Hop",
+    "Israeli Hip-Hop"
+   ]
+  },
+  "R&B, Soul & Funk": {
+   "umbrella": "R&B & Soul",
+   "leaves": [
+    "R&B",
+    "Alternative R&B",
+    "Neo-Soul",
+    "Classic Soul",
+    "Motown",
+    "Modern Soul",
+    "Funk",
+    "Nu Funk",
+    "Boogie",
+    "Brazilian Boogie",
+    "Indie Groove"
+   ]
+  },
+  "Electronic & Dance": {
+   "umbrella": "Electronic",
+   "leaves": [
+    "House",
+    "Deep House",
+    "Disco House",
+    "Chicago House",
+    "Acid House",
+    "Tech House",
+    "French House",
+    "Latin House",
+    "Electro House",
+    "Disco",
+    "Nu Disco",
+    "Italo Disco",
+    "Electroclash",
+    "French Electro",
+    "Alternative Dance",
+    "Big Beat",
+    "Breakbeat",
+    "Drum & Bass",
+    "UK Garage",
+    "EDM",
+    "Trance",
+    "Eurodance",
+    "Techno",
+    "Ambient",
+    "Ambient House",
+    "Downtempo",
+    "Chillwave",
+    "Trip Hop",
+    "Indietronica",
+    "Electro Swing",
+    "Experimental",
+    "Mashup"
+   ]
+  },
+  "Country, Folk & Blues": {
+   "umbrella": "Country & Folk",
+   "leaves": [
+    "Country",
+    "Folk",
+    "Singer-Songwriter",
+    "Blues"
+   ]
+  },
+  "Jazz, Brazil, Latin & Global": {
+   "umbrella": "Jazz & Global",
+   "leaves": [
+    "Jazz",
+    "Jazz Fusion",
+    "Jazz Pop",
+    "Latin Jazz",
+    "Nu Jazz",
+    "Geordie Jazz",
+    "Bossa Nova",
+    "MPB",
+    "Latin",
+    "Latin Pop",
+    "Reggae",
+    "Dancehall",
+    "Afrobeat",
+    "Global Psych"
+   ]
+  },
+  "Other": {
+   "umbrella": null,
+   "leaves": [
+    "Soundtrack",
+    "Video Game Music",
+    "Comedy",
+    "Children's"
+   ]
+  }
+ },
+ "umbrellas": {
+  "Rock": {
+   "families": [
+    "Rock",
+    "Punk",
+    "Metal"
+   ],
+   "shelf": "Rock"
+  },
+  "Pop": {
+   "families": [
+    "Pop",
+    "New Wave & Synth"
+   ],
+   "shelf": "Pop"
+  },
+  "Hip-Hop": {
+   "families": [
+    "Hip-Hop"
+   ],
+   "shelf": null
+  },
+  "Electronic": {
+   "families": [
+    "Electronic & Dance"
+   ],
+   "shelf": null
+  },
+  "R&B & Soul": {
+   "families": [
+    "R&B, Soul & Funk"
+   ],
+   "shelf": "R&B"
+  },
+  "Country & Folk": {
+   "families": [
+    "Country, Folk & Blues"
+   ],
+   "shelf": null
+  },
+  "Jazz & Global": {
+   "families": [
+    "Jazz, Brazil, Latin & Global"
+   ],
+   "shelf": null
+  }
+ },
+ "catch_all": [
+  "Alternative",
+  "Classic Rock",
+  "Pop",
+  "Punk",
+  "R&B",
+  "Rock"
+ ]
+}
