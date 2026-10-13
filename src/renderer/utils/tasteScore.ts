@@ -86,7 +86,17 @@ export function buildTasteProfile(library: Track[]): TasteProfile {
 // Weights re-derived on the full-rate basis (deployment parity).
 // Re-derive via the lab; the laptop harness (taste-eval.py) now measures the
 // same 7-feature model. ⚠️ TWIN: keep identical to the other tasteScore copy.
-const W = { bias: -6.529, album: 12.625, artist: 1.892, genre: -0.068, decade: 0.285, plays: -0.824, recency: -0.191, intensity: 4.65 }
+// v5 (2026-10-13, E9 + E5, Jake: "do both E9 and E6"): intensity divides by
+// the SQUARE ROOT of months owned, and every weight is refit. The 10-12
+// diagnosis (brain-eval experiments/evidence/E9) found plays-per-month
+// drifted with the clock: identical tracks lost 0.0093 AUC just from "today"
+// moving 6 weeks, and a trial listen looked like love (0.586 vs the aged-in
+// summer finds). Refit on the matured-90d library (out-of-fold affinities,
+// LogReg): weekly eval 0.785 -> 0.818, clock drift +0.0008, trial-vs-love
+// 0.646, 5x5 CV 0.8197; fit on 8/28 data alone it scores 0.791 on the 1,214
+// tracks it never saw (deployed v4: 0.772). ⚠️ TWIN: keep this line
+// byte-identical to the other tasteScore copy (the nightly W guard checks).
+const W = { bias: -4.577, album: 4.238, artist: 2.343, genre: 1.442, decade: 2.748, plays: -0.247, recency: 0.422, intensity: 3.311 }
 
 /** Predicted star-probability (0..1): a logistic model over identity affinity
  *  (album > artist > genre > era) + listening behavior, learned weights. Unknown
@@ -110,7 +120,7 @@ export function tasteScore(t: Track, p: TasteProfile): number {
   const lp = Number(t.lastPlayedAt) || 0
   const daysAgo = lp > 0 ? (p.nowMs - lp) / 86400000 : 3650
   const recencyNorm = 1 - Math.min(daysAgo, 3650) / 3650
-  const intensity = monthsOwned(t, p.nowMs) > 0 ? Math.log1p(Number(t.playCount) || 0) / monthsOwned(t, p.nowMs) : 0
+  const intensity = Math.log1p(Number(t.playCount) || 0) / Math.sqrt(monthsOwned(t, p.nowMs))   // monthsOwned >= 1
   const z = W.bias + W.album * al + W.artist * ar + W.genre * ge + W.decade * de + W.plays * playNorm + W.recency * recencyNorm + W.intensity * intensity
   return 1 / (1 + Math.exp(-z))
 }
