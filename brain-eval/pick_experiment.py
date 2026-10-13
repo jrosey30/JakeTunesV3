@@ -210,7 +210,13 @@ def check_preconditions(item, ctx):
 
 # ------------------------------------------------------------------ picking
 def nights_run(item_id, ledger):
-    return len({r["at"][:10] for r in ledger if r.get("id") == item_id and r.get("event") == "result"})
+    """Nights spent on the item's CURRENT hypothesis: result rows since its
+    last re-queue. A re-queue is a new hypothesis, so it gets a fresh budget
+    (10-13: E3 re-queued after the Synthpop fix still read 1/1 and would have
+    been skipped). The ledger is append-only, so row order is time order."""
+    rows = [r for r in ledger if r.get("id") == item_id]
+    since = max((i for i, r in enumerate(rows) if r.get("event") == "requeued"), default=-1)
+    return len({r["at"][:10] for r in rows[since + 1:] if r.get("event") == "result"})
 
 
 def pick(queue, ledger, ctx):
