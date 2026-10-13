@@ -1,15 +1,3 @@
-<!--
-DRAFT — scorecard v3 nightly prompt for homemini (~/.jaketunes/brain-improve-prompt.md).
-NOT INSTALLED. Deploy only after Jake approves. Based on the prompt live on 2026-10-12.
-Changes from the live prompt:
-  - REMOVED the stale "last known-good retrieval ~0.825, overall ~0.912 (2026-07-03)" figure.
-  - REMOVED "skips are a good first experiment" — refuted four times (the original test, the 08-08 re-test,
-    the 08-09 per-track shapes, the 09-07 1,000-skip re-test; REPORT-20260808/0809/0907). Skips stay closed.
-  - ADDED the experiment queue: exactly ONE queue item per night, never a new watch series.
-  - ADDED the dual-run period: v1 bar AND v3 gate (gate.py), both required to apply.
-  - Everything else (where things live, pipeline coordination, guardrails, plain main brain) is unchanged.
--->
-
 Run ONE precise, measured, reversible "exercise" to improve JakeTunes's AI "brain" (its OpenAI-embeddings + RAG + taste system) and apply ONLY improvements that are provably better. Operate extremely precisely and wisely, NEVER recklessly. An unmeasured or unproven change is a FAILURE, not progress. When in doubt, change nothing and report.
 
 YOU ARE RUNNING on homemini (the always-on Mac mini) at ~3:05 AM as a launchd job, with full local access. homemini OWNS the brain (migrated 2026-07-11).
@@ -40,11 +28,13 @@ HARD GUARDRAILS — this is the whole point ("wisely, not recklessly"):
 SCORECARD (dual-run period — both rulers every night)
 - v1 = `eval_set.json`, frozen and unchanged; its headline (retrieval / grounding / overall) continues the old series. New normals after the 10-12 recalibration + apply: 0.810 / 1.000 / 0.905.
 - v3 = `eval_set_v3.json`: 154 vocab-resolved probes in six groups (artist, umbrella_family, leaf, family_decade, tempo_family, vibe) scored on the PRODUCTION retrieval path (main's code through `bridge/rag-bridge.ts`), with main-index and mood-index readings as diagnostics, plus 20 grounding questions (6 traps) where every cited track must exist AND match the question's predicate. Headline = mean of the group means. Query vectors are frozen (`eval_set_v3.qvec.json`), so an unchanged brain scores identically.
+- PYTHON: always `/usr/bin/python3` (3.9, the only interpreter on homemini with numpy). The job's PATH puts `/opt/homebrew/bin` first and its `python3` has NO numpy, so a bare `python3` fails with ModuleNotFoundError.
+- AUDIO FUSION is OFF on homemini (no `.venv-clap` CLAP helper), so the bridge runs production's mood-only routing for both baseline and candidate — comparable night to night; `routes` in score_log records it. Not a failure. (Pre-flight 2026-10-12: v3 headline 0.740, primary source bridge, routes main 29 / mood 94 / mood+lexicon 1 / main+decade 30.)
 - Commands (from the worktree's `brain-eval/`):
-  - `python3 run_eval.py --ruler v1 --state-dir "$SNAP" --run-id B1-$NIGHT`
-  - `python3 run_eval.py --ruler v3 --state-dir "$SNAP" --label baseline --run-id B3-$NIGHT`
+  - `/usr/bin/python3 run_eval.py --ruler v1 --state-dir "$SNAP" --run-id B1-$NIGHT`
+  - `/usr/bin/python3 run_eval.py --ruler v3 --state-dir "$SNAP" --label baseline --run-id B3-$NIGHT`
   - candidate: the same two with `--state-dir "$CAND"` and run ids `C1-<id>-$NIGHT` / `C3-<id>-$NIGHT`
-  - `python3 gate.py --base B3-$NIGHT --cand C3-<id>-$NIGHT --v1-base B1-$NIGHT --v1-cand C1-<id>-$NIGHT --json > /tmp/gate-<id>-$NIGHT.json` — exit 0 = APPLY allowed
+  - `/usr/bin/python3 gate.py --base B3-$NIGHT --cand C3-<id>-$NIGHT --v1-base B1-$NIGHT --v1-cand C1-<id>-$NIGHT --json > /tmp/gate-<id>-$NIGHT.json` — exit 0 = APPLY allowed
 - THE V3 GATE (all must hold): mean per-probe Δ ≥ +0.005; the 90% paired bootstrap interval's lower bound > 0; no group's mean drops more than 0.01; candidate grounding = 1.000. In practice the interval binds first: a change that moves many probes needs roughly +0.015 mean to clear it (measured churn, 10-12).
 - THE V1 BAR (unchanged): no tracked v1 metric regresses (retrieval, grounding, overall); if `embeddings.bin` changed, v1 retrieval AND overall must strictly improve; if `mood-index.bin` changed, no v1 probe's mood-index reading may drop (v1 retrieval can't see a mood-only change — its improvement must show on the production path, i.e. the v3 gate).
 - DUAL RUN: a candidate applies ONLY if it passes BOTH the v1 bar AND the v3 gate. gate.py computes both; never override it, never apply on a "close" result.
@@ -53,12 +43,12 @@ SCORECARD (dual-run period — both rulers every night)
 - If v3's per-probe rows change on an UNCHANGED brain (same shas), the harness is broken, not the brain: stop and report.
 
 THE QUEUE (`brain-eval/experiments/`)
-- `python3 pick_experiment.py pick --state-dir "$SNAP"` → exactly one of:
+- `/usr/bin/python3 pick_experiment.py pick --state-dir "$SNAP"` → exactly one of:
   - RUN <auto item>: build the candidate with the item's `method` (scratch copy only), measure both rulers, run gate.py. APPLY only on gate exit 0 AND the item's own acceptance; then `record --outcome applied --gate /tmp/gate-<id>-$NIGHT.json`. Otherwise `record --outcome rejected` (or `no-change` / `blocked` with the reason). Measure-only items (E8) record `measured` and never apply.
   - MEASURE <jake item>: no auto item qualified, so price the top Jake-lane proposal (v3 `--no-llm` + `gate.py --v3-only`, or the item's own protocol). It NEVER applies. `record --outcome priced` with the numbers, and update/attach the proposal for Jake.
   - IDLE: nothing eligible — run the baselines, report, apply nothing.
 - Every result goes to the ledger via `record`. A rejected item comes back only through `requeue` with a NEW hypothesis (a number to beat) — never re-run a refuted idea under the same bar.
-- E2 needs `experiments/state/main-index-tags.json` (the genre tags the main index was last embedded with). If it is missing, record it once from tonight's snapshot (`pick_experiment.py record-tags --library "$SNAP/library.json"`) and say so in the report; re-record it after every E2 apply.
+- E2 needs `experiments/state/main-index-tags.json` (the genre tags the main index was last embedded with). If it is missing, record it once from tonight's snapshot (`/usr/bin/python3 pick_experiment.py record-tags --library "$SNAP/library.json"`) and say so in the report; re-record it after every E2 apply.
 
 APPLY POLICY (Jake's default): AUTO-APPLY only Auto-lane queue items that pass the dual-run gate, with a verified backup + revert entry (guardrails 4–5). Everything uncertain is proposed for review, not applied. Auto-apply NEVER runs on a regression, on doubt, on a stale ruler, on a failed bridge, or without a verified backup + revert entry. Jake-lane items (app code, taste weights, twins) are never applied by this job.
 
