@@ -27,6 +27,7 @@
 import { readFileSync, writeFileSync, copyFileSync, existsSync, renameSync, appendFileSync } from 'node:fs'
 import { planMoodPrune } from './brain-prune.mjs'
 import { pickBatch } from './brain-batch.mjs'
+import { genreWithParents } from '../src/common/mood-genre-line.ts'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -212,7 +213,7 @@ function moodText(t, d) {
   const dd = String(d || '').trim()
   if (dd) lines.push(`sound and mood: ${dd}`)
   const te = tempoEnergy(t); if (te) lines.push(te)
-  const g = String(t.genre || '').trim(); if (g) lines.push(`genre: ${g}`)
+  const g = genreWithParents(String(t.genre || '')); if (g) lines.push(`genre: ${g}`)   // shared with the app (mood-genre-line.ts)
   return lines.join('\n')
 }
 
