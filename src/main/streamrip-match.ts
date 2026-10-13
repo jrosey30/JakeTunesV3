@@ -254,6 +254,39 @@ export function unwantedVersionOf(wantTitle: string, gotTitle: string): string |
 }
 
 /**
+ * Remaster stamps, in any language (2026-10-12). NOT version markers: a
+ * remaster IS the original recording, so the download guard, the ranker and
+ * titleTokens never see these. Read only by itunesVerify's canonical-edition
+ * PREFERENCE (discover-feed.ts), which prefers "Who Are You" over "Who Are You
+ * (Remastered 2015)" when both are listed, and keeps the remaster when that is
+ * all Apple has. A title carries one stamp at most, so "(Remastered -
+ * רימאסטרינג)" is one label.
+ * ⚠️ TWIN: JakeTunesMobile backend/src/util/itunesCanonical.ts addsVersionMarker
+ *    (VERSION_MARKER remaster + PHONE_MARKER_ALIASES רימאסטרינג).
+ */
+const REMASTER_WORD = /^(?:remaster(?:ed)?|רימאסטרינג)$/u
+const remasterTokens = (s: string): string[] => {
+  let stamped = false
+  const out: string[] = []
+  for (const w of titleTokens(s)) {
+    if (!REMASTER_WORD.test(w)) { out.push(w); continue }
+    if (!stamped) out.push('remastered')
+    stamped = true
+  }
+  return out
+}
+export function addsRemasterStamp(wantTitle: string, gotTitle: string): boolean {
+  const budget = new Map<string, number>()
+  for (const w of remasterTokens(wantTitle)) budget.set(w, (budget.get(w) ?? 0) + 1)
+  for (const w of remasterTokens(gotTitle)) {
+    const left = budget.get(w) ?? 0
+    if (left > 0) { budget.set(w, left - 1); continue }
+    if (w === 'remastered') return true
+  }
+  return false
+}
+
+/**
  * A parenthetical SUBTITLE that one catalogue carries and another drops.
  *
  * Jake, 2026-08-09: "i cannot download the real version of lady hear me
