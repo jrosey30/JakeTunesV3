@@ -1,0 +1,2188 @@
+{
+ "_meta": {
+  "version": 3,
+  "ruler": "v3",
+  "created": "2026-10-12",
+  "generator": "gen_probes.py",
+  "seed": 1012,
+  "library_sha": "10ca503eec45",
+  "library_tracks": 11561,
+  "vocab_source_sha": "48791e6b7cf3aa203452aa36d151e56b8dab671f",
+  "vocab_file_sha": "3c6d2e22e73f",
+  "v2_source": {
+   "ref": "origin/main",
+   "sha": "48791e6b7cf3aa203452aa36d151e56b8dab671f"
+  },
+  "ruler_check_at_gen": {
+   "tagged": 11561,
+   "untagged": 0,
+   "unresolved": 0,
+   "frac": 0.0,
+   "max_frac": 0.005,
+   "stale": false,
+   "top_unresolved": []
+  },
+  "counts": {
+   "artist": 30,
+   "umbrella_family": 18,
+   "leaf": 50,
+   "family_decade": 30,
+   "tempo_family": 16,
+   "vibe": 10
+  },
+  "grounding": {
+   "normal": 14,
+   "trap": 6
+  },
+  "eligibility": {
+   "artist_min_tracks": 20,
+   "artist_excluded": [
+    "unknown",
+    "unknown artist",
+    "va",
+    "various",
+    "various artists"
+   ],
+   "leaf_min_tracks": 25,
+   "family_decade_min_tracks": 50,
+   "tempo_min_tracks": 30,
+   "tempo": "bpm<=85 or bpm>=130, measured bpm only",
+   "traps": "empty family x decade, >= 20y before the family's first library decade, decade >= 1950, family >= 100 tracks",
+   "leaf_excluded": [
+    "Alternative",
+    "Classic Rock",
+    "Pop",
+    "Punk",
+    "R&B",
+    "Rock"
+   ]
+  },
+  "eligible_pool": {
+   "artist": 115,
+   "leaf": 82,
+   "family_decade": 38,
+   "tempo_slow": 7,
+   "tempo_fast": 11
+  },
+  "headline": "mean of the group means (each group weighs the same)",
+  "held_out_rule": "These probes are the ruler; never training/enrichment input. Regenerating resets v3 comparability.",
+  "predicate_semantics": "genre_leaf/genre_family/genre_umbrella are exact vocab names, UNIONed; year_range, bpm_min/bpm_max (measured bpm only) and artist (exact folded name vs artist or contributingArtists) are ANDed on top. See scorecard.compile_predicate."
+ },
+ "probes": [
+  {
+   "id": "v3-art-01",
+   "group": "artist",
+   "query": "put on 2Pac",
+   "k": 20,
+   "expected": {
+    "artist": "2Pac"
+   },
+   "n_expected_at_gen": 46
+  },
+  {
+   "id": "v3-art-02",
+   "group": "artist",
+   "query": "play AC/DC",
+   "k": 20,
+   "expected": {
+    "artist": "AC/DC"
+   },
+   "n_expected_at_gen": 42
+  },
+  {
+   "id": "v3-art-03",
+   "group": "artist",
+   "query": "put on Camper Van Beethoven",
+   "k": 20,
+   "expected": {
+    "artist": "Camper Van Beethoven"
+   },
+   "n_expected_at_gen": 24
+  },
+  {
+   "id": "v3-art-04",
+   "group": "artist",
+   "query": "tracks by D12",
+   "k": 20,
+   "expected": {
+    "artist": "D12"
+   },
+   "n_expected_at_gen": 40
+  },
+  {
+   "id": "v3-art-05",
+   "group": "artist",
+   "query": "play Daft Punk",
+   "k": 20,
+   "expected": {
+    "artist": "Daft Punk"
+   },
+   "n_expected_at_gen": 68
+  },
+  {
+   "id": "v3-art-06",
+   "group": "artist",
+   "query": "put on David Bowie",
+   "k": 20,
+   "expected": {
+    "artist": "David Bowie"
+   },
+   "n_expected_at_gen": 43
+  },
+  {
+   "id": "v3-art-07",
+   "group": "artist",
+   "query": "songs by De La Soul",
+   "k": 20,
+   "expected": {
+    "artist": "De La Soul"
+   },
+   "n_expected_at_gen": 24
+  },
+  {
+   "id": "v3-art-08",
+   "group": "artist",
+   "query": "tracks by Drake",
+   "k": 20,
+   "expected": {
+    "artist": "Drake"
+   },
+   "n_expected_at_gen": 162
+  },
+  {
+   "id": "v3-art-09",
+   "group": "artist",
+   "query": "Duett songs",
+   "k": 20,
+   "expected": {
+    "artist": "Duett"
+   },
+   "n_expected_at_gen": 21
+  },
+  {
+   "id": "v3-art-10",
+   "group": "artist",
+   "query": "tracks by FUTURE",
+   "k": 20,
+   "expected": {
+    "artist": "FUTURE"
+   },
+   "n_expected_at_gen": 40
+  },
+  {
+   "id": "v3-art-11",
+   "group": "artist",
+   "query": "Foo Fighters songs",
+   "k": 20,
+   "expected": {
+    "artist": "Foo Fighters"
+   },
+   "n_expected_at_gen": 115
+  },
+  {
+   "id": "v3-art-12",
+   "group": "artist",
+   "query": "songs by J. Cole",
+   "k": 20,
+   "expected": {
+    "artist": "J. Cole"
+   },
+   "n_expected_at_gen": 29
+  },
+  {
+   "id": "v3-art-13",
+   "group": "artist",
+   "query": "JAY-Z songs",
+   "k": 20,
+   "expected": {
+    "artist": "JAY-Z"
+   },
+   "n_expected_at_gen": 49
+  },
+  {
+   "id": "v3-art-14",
+   "group": "artist",
+   "query": "put on James Brown",
+   "k": 20,
+   "expected": {
+    "artist": "James Brown"
+   },
+   "n_expected_at_gen": 20
+  },
+  {
+   "id": "v3-art-15",
+   "group": "artist",
+   "query": "Johnny Cash songs",
+   "k": 20,
+   "expected": {
+    "artist": "Johnny Cash"
+   },
+   "n_expected_at_gen": 36
+  },
+  {
+   "id": "v3-art-16",
+   "group": "artist",
+   "query": "tracks by Jungle",
+   "k": 20,
+   "expected": {
+    "artist": "Jungle"
+   },
+   "n_expected_at_gen": 27
+  },
+  {
+   "id": "v3-art-17",
+   "group": "artist",
+   "query": "put on Kanye West",
+   "k": 20,
+   "expected": {
+    "artist": "Kanye West"
+   },
+   "n_expected_at_gen": 94
+  },
+  {
+   "id": "v3-art-18",
+   "group": "artist",
+   "query": "tracks by King Gizzard & The Lizard Wizard",
+   "k": 20,
+   "expected": {
+    "artist": "King Gizzard & The Lizard Wizard"
+   },
+   "n_expected_at_gen": 21
+  },
+  {
+   "id": "v3-art-19",
+   "group": "artist",
+   "query": "songs by LCD Soundsystem",
+   "k": 20,
+   "expected": {
+    "artist": "LCD Soundsystem"
+   },
+   "n_expected_at_gen": 36
+  },
+  {
+   "id": "v3-art-20",
+   "group": "artist",
+   "query": "tracks by Meat Puppets",
+   "k": 20,
+   "expected": {
+    "artist": "Meat Puppets"
+   },
+   "n_expected_at_gen": 44
+  },
+  {
+   "id": "v3-art-21",
+   "group": "artist",
+   "query": "tracks by Modest Mouse",
+   "k": 20,
+   "expected": {
+    "artist": "Modest Mouse"
+   },
+   "n_expected_at_gen": 20
+  },
+  {
+   "id": "v3-art-22",
+   "group": "artist",
+   "query": "Paramore songs",
+   "k": 20,
+   "expected": {
+    "artist": "Paramore"
+   },
+   "n_expected_at_gen": 21
+  },
+  {
+   "id": "v3-art-23",
+   "group": "artist",
+   "query": "tracks by Queens of the Stone Age",
+   "k": 20,
+   "expected": {
+    "artist": "Queens of the Stone Age"
+   },
+   "n_expected_at_gen": 41
+  },
+  {
+   "id": "v3-art-24",
+   "group": "artist",
+   "query": "put on Red Hot Chili Peppers",
+   "k": 20,
+   "expected": {
+    "artist": "Red Hot Chili Peppers"
+   },
+   "n_expected_at_gen": 203
+  },
+  {
+   "id": "v3-art-25",
+   "group": "artist",
+   "query": "put on Rush",
+   "k": 20,
+   "expected": {
+    "artist": "Rush"
+   },
+   "n_expected_at_gen": 44
+  },
+  {
+   "id": "v3-art-26",
+   "group": "artist",
+   "query": "tracks by Sextile",
+   "k": 20,
+   "expected": {
+    "artist": "Sextile"
+   },
+   "n_expected_at_gen": 24
+  },
+  {
+   "id": "v3-art-27",
+   "group": "artist",
+   "query": "put on Sonic Youth",
+   "k": 20,
+   "expected": {
+    "artist": "Sonic Youth"
+   },
+   "n_expected_at_gen": 37
+  },
+  {
+   "id": "v3-art-28",
+   "group": "artist",
+   "query": "put on Tame Impala",
+   "k": 20,
+   "expected": {
+    "artist": "Tame Impala"
+   },
+   "n_expected_at_gen": 49
+  },
+  {
+   "id": "v3-art-29",
+   "group": "artist",
+   "query": "put on Vampire Weekend",
+   "k": 20,
+   "expected": {
+    "artist": "Vampire Weekend"
+   },
+   "n_expected_at_gen": 23
+  },
+  {
+   "id": "v3-art-30",
+   "group": "artist",
+   "query": "songs by Van Halen",
+   "k": 20,
+   "expected": {
+    "artist": "Van Halen"
+   },
+   "n_expected_at_gen": 106
+  },
+  {
+   "id": "v3-umb-01",
+   "group": "umbrella_family",
+   "query": "country and folk music",
+   "k": 25,
+   "expected": {
+    "genre_umbrella": "Country & Folk"
+   },
+   "n_expected_at_gen": 227
+  },
+  {
+   "id": "v3-umb-02",
+   "group": "umbrella_family",
+   "query": "electronic music",
+   "k": 25,
+   "expected": {
+    "genre_umbrella": "Electronic"
+   },
+   "n_expected_at_gen": 1591
+  },
+  {
+   "id": "v3-umb-03",
+   "group": "umbrella_family",
+   "query": "hip-hop",
+   "k": 25,
+   "expected": {
+    "genre_umbrella": "Hip-Hop"
+   },
+   "n_expected_at_gen": 1629
+  },
+  {
+   "id": "v3-umb-04",
+   "group": "umbrella_family",
+   "query": "jazz and world music",
+   "k": 25,
+   "expected": {
+    "genre_umbrella": "Jazz & Global"
+   },
+   "n_expected_at_gen": 401
+  },
+  {
+   "id": "v3-umb-05",
+   "group": "umbrella_family",
+   "query": "pop music",
+   "k": 25,
+   "expected": {
+    "genre_umbrella": "Pop"
+   },
+   "n_expected_at_gen": 1255
+  },
+  {
+   "id": "v3-umb-06",
+   "group": "umbrella_family",
+   "query": "r&b and soul",
+   "k": 25,
+   "expected": {
+    "genre_umbrella": "R&B & Soul"
+   },
+   "n_expected_at_gen": 569
+  },
+  {
+   "id": "v3-umb-07",
+   "group": "umbrella_family",
+   "query": "rock music",
+   "k": 25,
+   "expected": {
+    "genre_umbrella": "Rock"
+   },
+   "n_expected_at_gen": 5788
+  },
+  {
+   "id": "v3-fam-08",
+   "group": "umbrella_family",
+   "query": "country, folk and blues",
+   "k": 25,
+   "expected": {
+    "genre_family": "Country, Folk & Blues"
+   },
+   "n_expected_at_gen": 227
+  },
+  {
+   "id": "v3-fam-09",
+   "group": "umbrella_family",
+   "query": "dance and electronic music",
+   "k": 25,
+   "expected": {
+    "genre_family": "Electronic & Dance"
+   },
+   "n_expected_at_gen": 1591
+  },
+  {
+   "id": "v3-fam-10",
+   "group": "umbrella_family",
+   "query": "rap songs",
+   "k": 25,
+   "expected": {
+    "genre_family": "Hip-Hop"
+   },
+   "n_expected_at_gen": 1629
+  },
+  {
+   "id": "v3-fam-11",
+   "group": "umbrella_family",
+   "query": "jazz, brazilian and latin music",
+   "k": 25,
+   "expected": {
+    "genre_family": "Jazz, Brazil, Latin & Global"
+   },
+   "n_expected_at_gen": 401
+  },
+  {
+   "id": "v3-fam-12",
+   "group": "umbrella_family",
+   "query": "metal",
+   "k": 25,
+   "expected": {
+    "genre_family": "Metal"
+   },
+   "n_expected_at_gen": 213
+  },
+  {
+   "id": "v3-fam-13",
+   "group": "umbrella_family",
+   "query": "new wave and synth music",
+   "k": 25,
+   "expected": {
+    "genre_family": "New Wave & Synth"
+   },
+   "n_expected_at_gen": 455
+  },
+  {
+   "id": "v3-fam-14",
+   "group": "umbrella_family",
+   "query": "soundtracks, comedy and kids' songs",
+   "k": 25,
+   "expected": {
+    "genre_family": "Other"
+   },
+   "n_expected_at_gen": 101
+  },
+  {
+   "id": "v3-fam-15",
+   "group": "umbrella_family",
+   "query": "pop songs",
+   "k": 25,
+   "expected": {
+    "genre_family": "Pop"
+   },
+   "n_expected_at_gen": 800
+  },
+  {
+   "id": "v3-fam-16",
+   "group": "umbrella_family",
+   "query": "punk",
+   "k": 25,
+   "expected": {
+    "genre_family": "Punk"
+   },
+   "n_expected_at_gen": 1542
+  },
+  {
+   "id": "v3-fam-17",
+   "group": "umbrella_family",
+   "query": "r&b, soul and funk",
+   "k": 25,
+   "expected": {
+    "genre_family": "R&B, Soul & Funk"
+   },
+   "n_expected_at_gen": 569
+  },
+  {
+   "id": "v3-fam-18",
+   "group": "umbrella_family",
+   "query": "guitar rock songs",
+   "k": 25,
+   "expected": {
+    "genre_family": "Rock"
+   },
+   "n_expected_at_gen": 4033
+  },
+  {
+   "id": "v3-leaf-01",
+   "group": "leaf",
+   "query": "give me some Alternative Dance",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Alternative Dance"
+   },
+   "n_expected_at_gen": 50
+  },
+  {
+   "id": "v3-leaf-02",
+   "group": "leaf",
+   "query": "Ambient House songs",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Ambient House"
+   },
+   "n_expected_at_gen": 34
+  },
+  {
+   "id": "v3-leaf-03",
+   "group": "leaf",
+   "query": "give me some Americana Rock",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Americana Rock"
+   },
+   "n_expected_at_gen": 53
+  },
+  {
+   "id": "v3-leaf-04",
+   "group": "leaf",
+   "query": "play some Big Beat",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Big Beat"
+   },
+   "n_expected_at_gen": 76
+  },
+  {
+   "id": "v3-leaf-05",
+   "group": "leaf",
+   "query": "Bossa Nova tracks",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Bossa Nova"
+   },
+   "n_expected_at_gen": 48
+  },
+  {
+   "id": "v3-leaf-06",
+   "group": "leaf",
+   "query": "Chillwave songs",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Chillwave"
+   },
+   "n_expected_at_gen": 27
+  },
+  {
+   "id": "v3-leaf-07",
+   "group": "leaf",
+   "query": "Club Rap tracks",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Club Rap"
+   },
+   "n_expected_at_gen": 79
+  },
+  {
+   "id": "v3-leaf-08",
+   "group": "leaf",
+   "query": "Country",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Country"
+   },
+   "n_expected_at_gen": 160
+  },
+  {
+   "id": "v3-leaf-09",
+   "group": "leaf",
+   "query": "Dance-Pop tracks",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Dance-Pop"
+   },
+   "n_expected_at_gen": 39
+  },
+  {
+   "id": "v3-leaf-10",
+   "group": "leaf",
+   "query": "Dance-Punk songs",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Dance-Punk"
+   },
+   "n_expected_at_gen": 170
+  },
+  {
+   "id": "v3-leaf-11",
+   "group": "leaf",
+   "query": "Darkwave songs",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Darkwave"
+   },
+   "n_expected_at_gen": 35
+  },
+  {
+   "id": "v3-leaf-12",
+   "group": "leaf",
+   "query": "play some Deep House",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Deep House"
+   },
+   "n_expected_at_gen": 66
+  },
+  {
+   "id": "v3-leaf-13",
+   "group": "leaf",
+   "query": "play some Disco",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Disco"
+   },
+   "n_expected_at_gen": 79
+  },
+  {
+   "id": "v3-leaf-14",
+   "group": "leaf",
+   "query": "Disco House songs",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Disco House"
+   },
+   "n_expected_at_gen": 26
+  },
+  {
+   "id": "v3-leaf-15",
+   "group": "leaf",
+   "query": "play some East Coast Rap",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "East Coast Rap"
+   },
+   "n_expected_at_gen": 231
+  },
+  {
+   "id": "v3-leaf-16",
+   "group": "leaf",
+   "query": "Electro House songs",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Electro House"
+   },
+   "n_expected_at_gen": 49
+  },
+  {
+   "id": "v3-leaf-17",
+   "group": "leaf",
+   "query": "Electroclash tracks",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Electroclash"
+   },
+   "n_expected_at_gen": 64
+  },
+  {
+   "id": "v3-leaf-18",
+   "group": "leaf",
+   "query": "French House songs",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "French House"
+   },
+   "n_expected_at_gen": 115
+  },
+  {
+   "id": "v3-leaf-19",
+   "group": "leaf",
+   "query": "Funk Rock songs",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Funk Rock"
+   },
+   "n_expected_at_gen": 236
+  },
+  {
+   "id": "v3-leaf-20",
+   "group": "leaf",
+   "query": "give me some Garage Punk",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Garage Punk"
+   },
+   "n_expected_at_gen": 108
+  },
+  {
+   "id": "v3-leaf-21",
+   "group": "leaf",
+   "query": "Garage Rock tracks",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Garage Rock"
+   },
+   "n_expected_at_gen": 237
+  },
+  {
+   "id": "v3-leaf-22",
+   "group": "leaf",
+   "query": "Glam Rock tracks",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Glam Rock"
+   },
+   "n_expected_at_gen": 81
+  },
+  {
+   "id": "v3-leaf-23",
+   "group": "leaf",
+   "query": "Grunge tracks",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Grunge"
+   },
+   "n_expected_at_gen": 283
+  },
+  {
+   "id": "v3-leaf-24",
+   "group": "leaf",
+   "query": "play some Hardcore Punk",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Hardcore Punk"
+   },
+   "n_expected_at_gen": 134
+  },
+  {
+   "id": "v3-leaf-25",
+   "group": "leaf",
+   "query": "play some House",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "House"
+   },
+   "n_expected_at_gen": 296
+  },
+  {
+   "id": "v3-leaf-26",
+   "group": "leaf",
+   "query": "play some Hyperpop",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Hyperpop"
+   },
+   "n_expected_at_gen": 32
+  },
+  {
+   "id": "v3-leaf-27",
+   "group": "leaf",
+   "query": "Indie Rock tracks",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Indie Rock"
+   },
+   "n_expected_at_gen": 661
+  },
+  {
+   "id": "v3-leaf-28",
+   "group": "leaf",
+   "query": "give me some Indietronica",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Indietronica"
+   },
+   "n_expected_at_gen": 53
+  },
+  {
+   "id": "v3-leaf-29",
+   "group": "leaf",
+   "query": "Instrumental Hip-Hop songs",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Instrumental Hip-Hop"
+   },
+   "n_expected_at_gen": 34
+  },
+  {
+   "id": "v3-leaf-30",
+   "group": "leaf",
+   "query": "play some Jazz",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Jazz"
+   },
+   "n_expected_at_gen": 56
+  },
+  {
+   "id": "v3-leaf-31",
+   "group": "leaf",
+   "query": "Jazz Fusion",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Jazz Fusion"
+   },
+   "n_expected_at_gen": 44
+  },
+  {
+   "id": "v3-leaf-32",
+   "group": "leaf",
+   "query": "Jazz Rap",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Jazz Rap"
+   },
+   "n_expected_at_gen": 119
+  },
+  {
+   "id": "v3-leaf-33",
+   "group": "leaf",
+   "query": "Melodic Rap songs",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Melodic Rap"
+   },
+   "n_expected_at_gen": 189
+  },
+  {
+   "id": "v3-leaf-34",
+   "group": "leaf",
+   "query": "Neo-Soul",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Neo-Soul"
+   },
+   "n_expected_at_gen": 36
+  },
+  {
+   "id": "v3-leaf-35",
+   "group": "leaf",
+   "query": "New Wave",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "New Wave"
+   },
+   "n_expected_at_gen": 228
+  },
+  {
+   "id": "v3-leaf-36",
+   "group": "leaf",
+   "query": "give me some Post-Punk",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Post-Punk"
+   },
+   "n_expected_at_gen": 316
+  },
+  {
+   "id": "v3-leaf-37",
+   "group": "leaf",
+   "query": "play some Prog Rock",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Prog Rock"
+   },
+   "n_expected_at_gen": 133
+  },
+  {
+   "id": "v3-leaf-38",
+   "group": "leaf",
+   "query": "play some Psychedelic Rock",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Psychedelic Rock"
+   },
+   "n_expected_at_gen": 135
+  },
+  {
+   "id": "v3-leaf-39",
+   "group": "leaf",
+   "query": "Reggae",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Reggae"
+   },
+   "n_expected_at_gen": 40
+  },
+  {
+   "id": "v3-leaf-40",
+   "group": "leaf",
+   "query": "Shoegaze",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Shoegaze"
+   },
+   "n_expected_at_gen": 65
+  },
+  {
+   "id": "v3-leaf-41",
+   "group": "leaf",
+   "query": "give me some Singer-Songwriter",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Singer-Songwriter"
+   },
+   "n_expected_at_gen": 36
+  },
+  {
+   "id": "v3-leaf-42",
+   "group": "leaf",
+   "query": "Southern Rap songs",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Southern Rap"
+   },
+   "n_expected_at_gen": 80
+  },
+  {
+   "id": "v3-leaf-43",
+   "group": "leaf",
+   "query": "give me some Southern Rock",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Southern Rock"
+   },
+   "n_expected_at_gen": 63
+  },
+  {
+   "id": "v3-leaf-44",
+   "group": "leaf",
+   "query": "play some Stoner Rock",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Stoner Rock"
+   },
+   "n_expected_at_gen": 62
+  },
+  {
+   "id": "v3-leaf-45",
+   "group": "leaf",
+   "query": "play some Synth-Pop",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Synth-Pop"
+   },
+   "n_expected_at_gen": 190
+  },
+  {
+   "id": "v3-leaf-46",
+   "group": "leaf",
+   "query": "Tech House tracks",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Tech House"
+   },
+   "n_expected_at_gen": 53
+  },
+  {
+   "id": "v3-leaf-47",
+   "group": "leaf",
+   "query": "Techno tracks",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Techno"
+   },
+   "n_expected_at_gen": 38
+  },
+  {
+   "id": "v3-leaf-48",
+   "group": "leaf",
+   "query": "UK Garage songs",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "UK Garage"
+   },
+   "n_expected_at_gen": 52
+  },
+  {
+   "id": "v3-leaf-49",
+   "group": "leaf",
+   "query": "give me some West Coast Rap",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "West Coast Rap"
+   },
+   "n_expected_at_gen": 144
+  },
+  {
+   "id": "v3-leaf-50",
+   "group": "leaf",
+   "query": "give me some Yacht Rock",
+   "k": 25,
+   "expected": {
+    "genre_leaf": "Yacht Rock"
+   },
+   "n_expected_at_gen": 27
+  },
+  {
+   "id": "v3-fdec-01",
+   "group": "family_decade",
+   "query": "2020s country and folk",
+   "k": 25,
+   "expected": {
+    "genre_family": "Country, Folk & Blues",
+    "year_range": [
+     2020,
+     2029
+    ]
+   },
+   "n_expected_at_gen": 147
+  },
+  {
+   "id": "v3-fdec-02",
+   "group": "family_decade",
+   "query": "1990s dance music",
+   "k": 25,
+   "expected": {
+    "genre_family": "Electronic & Dance",
+    "year_range": [
+     1990,
+     1999
+    ]
+   },
+   "n_expected_at_gen": 182
+  },
+  {
+   "id": "v3-fdec-03",
+   "group": "family_decade",
+   "query": "2000s dance music",
+   "k": 25,
+   "expected": {
+    "genre_family": "Electronic & Dance",
+    "year_range": [
+     2000,
+     2009
+    ]
+   },
+   "n_expected_at_gen": 199
+  },
+  {
+   "id": "v3-fdec-04",
+   "group": "family_decade",
+   "query": "2010s dance music songs",
+   "k": 25,
+   "expected": {
+    "genre_family": "Electronic & Dance",
+    "year_range": [
+     2010,
+     2019
+    ]
+   },
+   "n_expected_at_gen": 315
+  },
+  {
+   "id": "v3-fdec-05",
+   "group": "family_decade",
+   "query": "2020s dance music",
+   "k": 25,
+   "expected": {
+    "genre_family": "Electronic & Dance",
+    "year_range": [
+     2020,
+     2029
+    ]
+   },
+   "n_expected_at_gen": 850
+  },
+  {
+   "id": "v3-fdec-06",
+   "group": "family_decade",
+   "query": "1980s hip-hop",
+   "k": 25,
+   "expected": {
+    "genre_family": "Hip-Hop",
+    "year_range": [
+     1980,
+     1989
+    ]
+   },
+   "n_expected_at_gen": 86
+  },
+  {
+   "id": "v3-fdec-07",
+   "group": "family_decade",
+   "query": "hip-hop from the 1990s",
+   "k": 25,
+   "expected": {
+    "genre_family": "Hip-Hop",
+    "year_range": [
+     1990,
+     1999
+    ]
+   },
+   "n_expected_at_gen": 355
+  },
+  {
+   "id": "v3-fdec-08",
+   "group": "family_decade",
+   "query": "2000s hip-hop songs",
+   "k": 25,
+   "expected": {
+    "genre_family": "Hip-Hop",
+    "year_range": [
+     2000,
+     2009
+    ]
+   },
+   "n_expected_at_gen": 453
+  },
+  {
+   "id": "v3-fdec-09",
+   "group": "family_decade",
+   "query": "2010s hip-hop",
+   "k": 25,
+   "expected": {
+    "genre_family": "Hip-Hop",
+    "year_range": [
+     2010,
+     2019
+    ]
+   },
+   "n_expected_at_gen": 494
+  },
+  {
+   "id": "v3-fdec-10",
+   "group": "family_decade",
+   "query": "2010s jazz and latin music",
+   "k": 25,
+   "expected": {
+    "genre_family": "Jazz, Brazil, Latin & Global",
+    "year_range": [
+     2010,
+     2019
+    ]
+   },
+   "n_expected_at_gen": 89
+  },
+  {
+   "id": "v3-fdec-11",
+   "group": "family_decade",
+   "query": "metal from the 90s",
+   "k": 25,
+   "expected": {
+    "genre_family": "Metal",
+    "year_range": [
+     1990,
+     1999
+    ]
+   },
+   "n_expected_at_gen": 51
+  },
+  {
+   "id": "v3-fdec-12",
+   "group": "family_decade",
+   "query": "2000s metal songs",
+   "k": 25,
+   "expected": {
+    "genre_family": "Metal",
+    "year_range": [
+     2000,
+     2009
+    ]
+   },
+   "n_expected_at_gen": 75
+  },
+  {
+   "id": "v3-fdec-13",
+   "group": "family_decade",
+   "query": "1970s new wave and synth-pop songs",
+   "k": 25,
+   "expected": {
+    "genre_family": "New Wave & Synth",
+    "year_range": [
+     1970,
+     1979
+    ]
+   },
+   "n_expected_at_gen": 83
+  },
+  {
+   "id": "v3-fdec-14",
+   "group": "family_decade",
+   "query": "80s new wave and synth-pop songs",
+   "k": 25,
+   "expected": {
+    "genre_family": "New Wave & Synth",
+    "year_range": [
+     1980,
+     1989
+    ]
+   },
+   "n_expected_at_gen": 109
+  },
+  {
+   "id": "v3-fdec-15",
+   "group": "family_decade",
+   "query": "new wave and synth-pop from the 2020s",
+   "k": 25,
+   "expected": {
+    "genre_family": "New Wave & Synth",
+    "year_range": [
+     2020,
+     2029
+    ]
+   },
+   "n_expected_at_gen": 183
+  },
+  {
+   "id": "v3-fdec-16",
+   "group": "family_decade",
+   "query": "2000s pop",
+   "k": 25,
+   "expected": {
+    "genre_family": "Pop",
+    "year_range": [
+     2000,
+     2009
+    ]
+   },
+   "n_expected_at_gen": 134
+  },
+  {
+   "id": "v3-fdec-17",
+   "group": "family_decade",
+   "query": "pop from the 2010s",
+   "k": 25,
+   "expected": {
+    "genre_family": "Pop",
+    "year_range": [
+     2010,
+     2019
+    ]
+   },
+   "n_expected_at_gen": 100
+  },
+  {
+   "id": "v3-fdec-18",
+   "group": "family_decade",
+   "query": "pop from the 2020s",
+   "k": 25,
+   "expected": {
+    "genre_family": "Pop",
+    "year_range": [
+     2020,
+     2029
+    ]
+   },
+   "n_expected_at_gen": 463
+  },
+  {
+   "id": "v3-fdec-19",
+   "group": "family_decade",
+   "query": "1970s punk",
+   "k": 25,
+   "expected": {
+    "genre_family": "Punk",
+    "year_range": [
+     1970,
+     1979
+    ]
+   },
+   "n_expected_at_gen": 139
+  },
+  {
+   "id": "v3-fdec-20",
+   "group": "family_decade",
+   "query": "1990s punk",
+   "k": 25,
+   "expected": {
+    "genre_family": "Punk",
+    "year_range": [
+     1990,
+     1999
+    ]
+   },
+   "n_expected_at_gen": 180
+  },
+  {
+   "id": "v3-fdec-21",
+   "group": "family_decade",
+   "query": "2000s punk songs",
+   "k": 25,
+   "expected": {
+    "genre_family": "Punk",
+    "year_range": [
+     2000,
+     2009
+    ]
+   },
+   "n_expected_at_gen": 279
+  },
+  {
+   "id": "v3-fdec-22",
+   "group": "family_decade",
+   "query": "2020s punk songs",
+   "k": 25,
+   "expected": {
+    "genre_family": "Punk",
+    "year_range": [
+     2020,
+     2029
+    ]
+   },
+   "n_expected_at_gen": 772
+  },
+  {
+   "id": "v3-fdec-23",
+   "group": "family_decade",
+   "query": "70s r&b and soul",
+   "k": 25,
+   "expected": {
+    "genre_family": "R&B, Soul & Funk",
+    "year_range": [
+     1970,
+     1979
+    ]
+   },
+   "n_expected_at_gen": 85
+  },
+  {
+   "id": "v3-fdec-24",
+   "group": "family_decade",
+   "query": "2000s r&b and soul",
+   "k": 25,
+   "expected": {
+    "genre_family": "R&B, Soul & Funk",
+    "year_range": [
+     2000,
+     2009
+    ]
+   },
+   "n_expected_at_gen": 51
+  },
+  {
+   "id": "v3-fdec-25",
+   "group": "family_decade",
+   "query": "r&b and soul from the 2010s",
+   "k": 25,
+   "expected": {
+    "genre_family": "R&B, Soul & Funk",
+    "year_range": [
+     2010,
+     2019
+    ]
+   },
+   "n_expected_at_gen": 76
+  },
+  {
+   "id": "v3-fdec-26",
+   "group": "family_decade",
+   "query": "r&b and soul from the 2020s",
+   "k": 25,
+   "expected": {
+    "genre_family": "R&B, Soul & Funk",
+    "year_range": [
+     2020,
+     2029
+    ]
+   },
+   "n_expected_at_gen": 287
+  },
+  {
+   "id": "v3-fdec-27",
+   "group": "family_decade",
+   "query": "60s rock",
+   "k": 25,
+   "expected": {
+    "genre_family": "Rock",
+    "year_range": [
+     1960,
+     1969
+    ]
+   },
+   "n_expected_at_gen": 326
+  },
+  {
+   "id": "v3-fdec-28",
+   "group": "family_decade",
+   "query": "1970s rock",
+   "k": 25,
+   "expected": {
+    "genre_family": "Rock",
+    "year_range": [
+     1970,
+     1979
+    ]
+   },
+   "n_expected_at_gen": 480
+  },
+  {
+   "id": "v3-fdec-29",
+   "group": "family_decade",
+   "query": "2000s rock songs",
+   "k": 25,
+   "expected": {
+    "genre_family": "Rock",
+    "year_range": [
+     2000,
+     2009
+    ]
+   },
+   "n_expected_at_gen": 666
+  },
+  {
+   "id": "v3-fdec-30",
+   "group": "family_decade",
+   "query": "2010s rock",
+   "k": 25,
+   "expected": {
+    "genre_family": "Rock",
+    "year_range": [
+     2010,
+     2019
+    ]
+   },
+   "n_expected_at_gen": 313
+  },
+  {
+   "id": "v3-tempo-01",
+   "group": "tempo_family",
+   "query": "fast-paced country and folk songs",
+   "k": 25,
+   "expected": {
+    "genre_family": "Country, Folk & Blues",
+    "bpm_min": 130
+   },
+   "n_expected_at_gen": 45
+  },
+  {
+   "id": "v3-tempo-02",
+   "group": "tempo_family",
+   "query": "fast-paced hip-hop songs",
+   "k": 25,
+   "expected": {
+    "genre_family": "Hip-Hop",
+    "bpm_min": 130
+   },
+   "n_expected_at_gen": 381
+  },
+  {
+   "id": "v3-tempo-03",
+   "group": "tempo_family",
+   "query": "fast jazz and latin music",
+   "k": 25,
+   "expected": {
+    "genre_family": "Jazz, Brazil, Latin & Global",
+    "bpm_min": 130
+   },
+   "n_expected_at_gen": 144
+  },
+  {
+   "id": "v3-tempo-04",
+   "group": "tempo_family",
+   "query": "high-energy fast metal",
+   "k": 25,
+   "expected": {
+    "genre_family": "Metal",
+    "bpm_min": 130
+   },
+   "n_expected_at_gen": 94
+  },
+  {
+   "id": "v3-tempo-05",
+   "group": "tempo_family",
+   "query": "high-energy fast soundtrack music",
+   "k": 25,
+   "expected": {
+    "genre_family": "Other",
+    "bpm_min": 130
+   },
+   "n_expected_at_gen": 46
+  },
+  {
+   "id": "v3-tempo-06",
+   "group": "tempo_family",
+   "query": "fast pop",
+   "k": 25,
+   "expected": {
+    "genre_family": "Pop",
+    "bpm_min": 130
+   },
+   "n_expected_at_gen": 235
+  },
+  {
+   "id": "v3-tempo-07",
+   "group": "tempo_family",
+   "query": "fast punk",
+   "k": 25,
+   "expected": {
+    "genre_family": "Punk",
+    "bpm_min": 130
+   },
+   "n_expected_at_gen": 566
+  },
+  {
+   "id": "v3-tempo-08",
+   "group": "tempo_family",
+   "query": "fast-paced r&b and soul songs",
+   "k": 25,
+   "expected": {
+    "genre_family": "R&B, Soul & Funk",
+    "bpm_min": 130
+   },
+   "n_expected_at_gen": 112
+  },
+  {
+   "id": "v3-tempo-09",
+   "group": "tempo_family",
+   "query": "fast-paced rock songs",
+   "k": 25,
+   "expected": {
+    "genre_family": "Rock",
+    "bpm_min": 130
+   },
+   "n_expected_at_gen": 1587
+  },
+  {
+   "id": "v3-tempo-10",
+   "group": "tempo_family",
+   "query": "slow, mellow country and folk songs",
+   "k": 25,
+   "expected": {
+    "genre_family": "Country, Folk & Blues",
+    "bpm_max": 85
+   },
+   "n_expected_at_gen": 41
+  },
+  {
+   "id": "v3-tempo-11",
+   "group": "tempo_family",
+   "query": "slow dance music",
+   "k": 25,
+   "expected": {
+    "genre_family": "Electronic & Dance",
+    "bpm_max": 85
+   },
+   "n_expected_at_gen": 51
+  },
+  {
+   "id": "v3-tempo-12",
+   "group": "tempo_family",
+   "query": "slow hip-hop",
+   "k": 25,
+   "expected": {
+    "genre_family": "Hip-Hop",
+    "bpm_max": 85
+   },
+   "n_expected_at_gen": 211
+  },
+  {
+   "id": "v3-tempo-13",
+   "group": "tempo_family",
+   "query": "slow, mellow pop songs",
+   "k": 25,
+   "expected": {
+    "genre_family": "Pop",
+    "bpm_max": 85
+   },
+   "n_expected_at_gen": 43
+  },
+  {
+   "id": "v3-tempo-14",
+   "group": "tempo_family",
+   "query": "laid-back slow punk",
+   "k": 25,
+   "expected": {
+    "genre_family": "Punk",
+    "bpm_max": 85
+   },
+   "n_expected_at_gen": 53
+  },
+  {
+   "id": "v3-tempo-15",
+   "group": "tempo_family",
+   "query": "slow r&b and soul",
+   "k": 25,
+   "expected": {
+    "genre_family": "R&B, Soul & Funk",
+    "bpm_max": 85
+   },
+   "n_expected_at_gen": 46
+  },
+  {
+   "id": "v3-tempo-16",
+   "group": "tempo_family",
+   "query": "slow rock",
+   "k": 25,
+   "expected": {
+    "genre_family": "Rock",
+    "bpm_max": 85
+   },
+   "n_expected_at_gen": 183
+  },
+  {
+   "id": "v3-vibe-ret-013",
+   "group": "vibe",
+   "query": "high-energy fast music to work out to",
+   "k": 30,
+   "expected": {
+    "bpm_min": 130
+   },
+   "n_expected_at_gen": 3703,
+   "meta": {
+    "recast_from": {
+     "source": "eval_set.json",
+     "id": "ret-013",
+     "expected": {
+      "bpm_min": 130
+     }
+    },
+    "equivalent_at_gen": true
+   }
+  },
+  {
+   "id": "v3-vibe-ret-014",
+   "group": "vibe",
+   "query": "slow mellow chilled-out songs for the late night",
+   "k": 30,
+   "expected": {
+    "bpm_max": 85
+   },
+   "n_expected_at_gen": 672,
+   "meta": {
+    "recast_from": {
+     "source": "eval_set.json",
+     "id": "ret-014",
+     "expected": {
+      "bpm_max": 85
+     }
+    },
+    "equivalent_at_gen": true
+   }
+  },
+  {
+   "id": "v3-vibe-ret-015",
+   "group": "vibe",
+   "query": "aggressive heavy intense music",
+   "k": 30,
+   "expected": {
+    "genre_family": [
+     "Metal",
+     "Punk"
+    ],
+    "genre_leaf": [
+     "Grunge"
+    ]
+   },
+   "n_expected_at_gen": 2038,
+   "meta": {
+    "recast_from": {
+     "source": "eval_set.json",
+     "id": "ret-015",
+     "expected": {
+      "genre_any": [
+       "punk",
+       "grunge",
+       "metal"
+      ]
+     }
+    },
+    "equivalent_at_gen": true
+   }
+  },
+  {
+   "id": "v3-vibe-prod-001",
+   "group": "vibe",
+   "query": "dreamy ambient soundscapes for late night",
+   "k": 25,
+   "expected": {
+    "genre_leaf": [
+     "Ambient",
+     "Ambient House",
+     "Chillwave",
+     "Downtempo"
+    ]
+   },
+   "n_expected_at_gen": 91,
+   "meta": {
+    "recast_from": {
+     "source": "eval_set_v2.json@48791e6b7cf3",
+     "id": "prod-001",
+     "expected": {
+      "genre_any": [
+       "ambient",
+       "downtempo",
+       "chill",
+       "electronic"
+      ]
+     }
+    },
+    "equivalent_at_gen": true,
+    "dropped_terms": [
+     "electronic"
+    ]
+   }
+  },
+  {
+   "id": "v3-vibe-prod-002",
+   "group": "vibe",
+   "query": "aggressive high-energy workout bangers",
+   "k": 25,
+   "expected": {
+    "bpm_min": 130
+   },
+   "n_expected_at_gen": 3703,
+   "meta": {
+    "recast_from": {
+     "source": "eval_set_v2.json@48791e6b7cf3",
+     "id": "prod-002",
+     "expected": {
+      "bpm_min": 130
+     }
+    },
+    "equivalent_at_gen": true
+   }
+  },
+  {
+   "id": "v3-vibe-prod-003",
+   "group": "vibe",
+   "query": "slow heartbroken late-night ballads",
+   "k": 25,
+   "expected": {
+    "bpm_max": 85
+   },
+   "n_expected_at_gen": 672,
+   "meta": {
+    "recast_from": {
+     "source": "eval_set_v2.json@48791e6b7cf3",
+     "id": "prod-003",
+     "expected": {
+      "bpm_max": 85
+     }
+    },
+    "equivalent_at_gen": true
+   }
+  },
+  {
+   "id": "v3-vibe-prod-004",
+   "group": "vibe",
+   "query": "smooth jazzy grooves for a rainy evening",
+   "k": 25,
+   "expected": {
+    "genre_leaf": [
+     "Alternative R&B",
+     "Classic Soul",
+     "Funk",
+     "Funk Rock",
+     "Future Funk",
+     "Geordie Jazz",
+     "Jazz",
+     "Jazz Fusion",
+     "Jazz Pop",
+     "Jazz Rap",
+     "Latin Jazz",
+     "Modern Soul",
+     "Neo-Soul",
+     "Nu Funk",
+     "Nu Jazz",
+     "R&B"
+    ]
+   },
+   "n_expected_at_gen": 974,
+   "meta": {
+    "recast_from": {
+     "source": "eval_set_v2.json@48791e6b7cf3",
+     "id": "prod-004",
+     "expected": {
+      "genre_any": [
+       "jazz",
+       "soul",
+       "r&b",
+       "funk"
+      ]
+     }
+    },
+    "equivalent_at_gen": true
+   }
+  },
+  {
+   "id": "v3-vibe-prod-005",
+   "group": "vibe",
+   "query": "sunny feel-good reggae and ska vibes",
+   "k": 25,
+   "expected": {
+    "genre_leaf": [
+     "Dub-Hop",
+     "Reggae",
+     "Ska-Punk"
+    ]
+   },
+   "n_expected_at_gen": 207,
+   "meta": {
+    "recast_from": {
+     "source": "eval_set_v2.json@48791e6b7cf3",
+     "id": "prod-005",
+     "expected": {
+      "genre_any": [
+       "reggae",
+       "ska",
+       "dub"
+      ]
+     }
+    },
+    "equivalent_at_gen": true
+   }
+  },
+  {
+   "id": "v3-vibe-prod-006",
+   "group": "vibe",
+   "query": "heavy crushing guitars and screaming",
+   "k": 25,
+   "expected": {
+    "genre_family": [
+     "Metal",
+     "Punk"
+    ]
+   },
+   "n_expected_at_gen": 1755,
+   "meta": {
+    "recast_from": {
+     "source": "eval_set_v2.json@48791e6b7cf3",
+     "id": "prod-006",
+     "expected": {
+      "genre_any": [
+       "metal",
+       "hardcore",
+       "punk"
+      ]
+     }
+    },
+    "equivalent_at_gen": true
+   }
+  },
+  {
+   "id": "v3-vibe-prod-007",
+   "group": "vibe",
+   "query": "glittery upbeat dance floor fillers",
+   "k": 25,
+   "expected": {
+    "genre_leaf": [
+     "Acid House",
+     "Alternative Dance",
+     "Ambient House",
+     "Chicago House",
+     "Dance-Pop",
+     "Dance-Punk",
+     "Dancehall",
+     "Deep House",
+     "Disco",
+     "Disco House",
+     "Electro House",
+     "Eurodance",
+     "French House",
+     "House",
+     "Italo Disco",
+     "Latin House",
+     "Nu Disco",
+     "Tech House"
+    ]
+   },
+   "n_expected_at_gen": 1306,
+   "meta": {
+    "recast_from": {
+     "source": "eval_set_v2.json@48791e6b7cf3",
+     "id": "prod-007",
+     "expected": {
+      "genre_any": [
+       "dance",
+       "house",
+       "disco",
+       "electronic"
+      ]
+     }
+    },
+    "equivalent_at_gen": true,
+    "dropped_terms": [
+     "electronic"
+    ]
+   }
+  }
+ ],
+ "grounding": [
+  {
+   "id": "v3-grd-01",
+   "kind": "normal",
+   "question": "Name three Daft Punk songs from my library.",
+   "expected": {
+    "artist": "Daft Punk"
+   },
+   "k": 14,
+   "n_expected_at_gen": 68,
+   "from_probe": "v3-art-05"
+  },
+  {
+   "id": "v3-grd-02",
+   "kind": "normal",
+   "question": "Give me a couple of FUTURE songs I own.",
+   "expected": {
+    "artist": "FUTURE"
+   },
+   "k": 14,
+   "n_expected_at_gen": 40,
+   "from_probe": "v3-art-10"
+  },
+  {
+   "id": "v3-grd-03",
+   "kind": "normal",
+   "question": "Which James Brown tracks do I have? Name a few.",
+   "expected": {
+    "artist": "James Brown"
+   },
+   "k": 14,
+   "n_expected_at_gen": 20,
+   "from_probe": "v3-art-14"
+  },
+  {
+   "id": "v3-grd-04",
+   "kind": "normal",
+   "question": "Give me a couple of Jungle songs I own.",
+   "expected": {
+    "artist": "Jungle"
+   },
+   "k": 14,
+   "n_expected_at_gen": 27,
+   "from_probe": "v3-art-16"
+  },
+  {
+   "id": "v3-grd-05",
+   "kind": "normal",
+   "question": "Which Van Halen tracks do I have? Name a few.",
+   "expected": {
+    "artist": "Van Halen"
+   },
+   "k": 14,
+   "n_expected_at_gen": 106,
+   "from_probe": "v3-art-30"
+  },
+  {
+   "id": "v3-grd-06",
+   "kind": "normal",
+   "question": "Name a few Country tracks I own.",
+   "expected": {
+    "genre_leaf": "Country"
+   },
+   "k": 14,
+   "n_expected_at_gen": 160,
+   "from_probe": "v3-leaf-08"
+  },
+  {
+   "id": "v3-grd-07",
+   "kind": "normal",
+   "question": "Name a few Deep House tracks I own.",
+   "expected": {
+    "genre_leaf": "Deep House"
+   },
+   "k": 14,
+   "n_expected_at_gen": 66,
+   "from_probe": "v3-leaf-12"
+  },
+  {
+   "id": "v3-grd-08",
+   "kind": "normal",
+   "question": "What Neo-Soul songs are in my library? Name some specific ones.",
+   "expected": {
+    "genre_leaf": "Neo-Soul"
+   },
+   "k": 14,
+   "n_expected_at_gen": 36,
+   "from_probe": "v3-leaf-34"
+  },
+  {
+   "id": "v3-grd-09",
+   "kind": "normal",
+   "question": "Name a few Post-Punk tracks I own.",
+   "expected": {
+    "genre_leaf": "Post-Punk"
+   },
+   "k": 14,
+   "n_expected_at_gen": 316,
+   "from_probe": "v3-leaf-36"
+  },
+  {
+   "id": "v3-grd-10",
+   "kind": "normal",
+   "question": "Name three 1980s hip-hop songs from my collection.",
+   "expected": {
+    "genre_family": "Hip-Hop",
+    "year_range": [
+     1980,
+     1989
+    ]
+   },
+   "k": 14,
+   "n_expected_at_gen": 86,
+   "from_probe": "v3-fdec-06"
+  },
+  {
+   "id": "v3-grd-11",
+   "kind": "normal",
+   "question": "Name three 2020s punk songs from my collection.",
+   "expected": {
+    "genre_family": "Punk",
+    "year_range": [
+     2020,
+     2029
+    ]
+   },
+   "k": 14,
+   "n_expected_at_gen": 772,
+   "from_probe": "v3-fdec-22"
+  },
+  {
+   "id": "v3-grd-12",
+   "kind": "normal",
+   "question": "Name three 1970s r&b and soul songs from my collection.",
+   "expected": {
+    "genre_family": "R&B, Soul & Funk",
+    "year_range": [
+     1970,
+     1979
+    ]
+   },
+   "k": 14,
+   "n_expected_at_gen": 85,
+   "from_probe": "v3-fdec-23"
+  },
+  {
+   "id": "v3-grd-13",
+   "kind": "normal",
+   "question": "What metal do I have? Name a few specific tracks.",
+   "expected": {
+    "genre_family": "Metal"
+   },
+   "k": 14,
+   "n_expected_at_gen": 213,
+   "from_probe": "v3-fam-12"
+  },
+  {
+   "id": "v3-grd-14",
+   "kind": "normal",
+   "question": "What rock music do I have? Name a few specific tracks.",
+   "expected": {
+    "genre_umbrella": "Rock"
+   },
+   "k": 14,
+   "n_expected_at_gen": 5788,
+   "from_probe": "v3-umb-07"
+  },
+  {
+   "id": "v3-grd-15",
+   "kind": "trap",
+   "question": "Name some 1950s dance music songs I own.",
+   "expected": {
+    "genre_family": "Electronic & Dance",
+    "year_range": [
+     1950,
+     1959
+    ]
+   },
+   "k": 14,
+   "n_expected_at_gen": 0
+  },
+  {
+   "id": "v3-grd-16",
+   "kind": "trap",
+   "question": "Name some 1950s hip-hop songs I own.",
+   "expected": {
+    "genre_family": "Hip-Hop",
+    "year_range": [
+     1950,
+     1959
+    ]
+   },
+   "k": 14,
+   "n_expected_at_gen": 0
+  },
+  {
+   "id": "v3-grd-17",
+   "kind": "trap",
+   "question": "Name some 1960s hip-hop songs I own.",
+   "expected": {
+    "genre_family": "Hip-Hop",
+    "year_range": [
+     1960,
+     1969
+    ]
+   },
+   "k": 14,
+   "n_expected_at_gen": 0
+  },
+  {
+   "id": "v3-grd-18",
+   "kind": "trap",
+   "question": "Name some 1950s metal songs I own.",
+   "expected": {
+    "genre_family": "Metal",
+    "year_range": [
+     1950,
+     1959
+    ]
+   },
+   "k": 14,
+   "n_expected_at_gen": 0
+  },
+  {
+   "id": "v3-grd-19",
+   "kind": "trap",
+   "question": "Name some 1950s new wave and synth-pop songs I own.",
+   "expected": {
+    "genre_family": "New Wave & Synth",
+    "year_range": [
+     1950,
+     1959
+    ]
+   },
+   "k": 14,
+   "n_expected_at_gen": 0
+  },
+  {
+   "id": "v3-grd-20",
+   "kind": "trap",
+   "question": "Name some 1950s soundtrack music songs I own.",
+   "expected": {
+    "genre_family": "Other",
+    "year_range": [
+     1950,
+     1959
+    ]
+   },
+   "k": 14,
+   "n_expected_at_gen": 0
+  }
+ ]
+}
