@@ -127,6 +127,14 @@ class RecordAndRequeue(Fixture):
         P.record(q, "A", "no-change", "nothing moved", ledger=led)
         self.assertEqual(q["items"][0]["status"], "expired")
 
+    def test_requeue_resets_the_night_budget(self):
+        led = [{"at": "2026-10-13T03:10:00", "event": "result", "id": "E3", "outcome": "rejected"},
+               {"at": "2026-10-13T19:17:40", "event": "requeued", "id": "E3"}]
+        self.assertEqual(P.nights_run("E3", led), 0, "a new hypothesis starts fresh")
+        led.append({"at": "2026-10-14T03:12:00", "event": "result", "id": "E3", "outcome": "applied"})
+        self.assertEqual(P.nights_run("E3", led), 1)
+        self.assertEqual(P.nights_run("E3", led[:1]), 1, "without a re-queue the old night still counts")
+
     def test_requeue_needs_a_new_hypothesis(self):
         led = os.path.join(self.d, "ledger.jsonl")
         q = {"items": [item("A")]}
