@@ -21,7 +21,7 @@
  */
 
 import { isJunkArtistName } from '../common/junk-artist.ts'
-import { searchTitle, unwantedVersionOf } from './streamrip-match.ts'
+import { addsRemasterStamp, searchTitle, unwantedVersionOf } from './streamrip-match.ts'
 import { recoArtistMatches } from './reco-match.ts'
 import { binForGenre, pickHookIndex } from '../common/record-shop-bins.ts'
 import { nameKey, storedNameKey } from '../common/fold-text.ts'
@@ -125,10 +125,18 @@ export async function itunesVerify(
     // one — "Undone" should resolve to the song, not whichever demo/live/
     // remaster Apple ranks first. Preference only: if every hit is decorated,
     // the first match still wins (some records only exist decorated).
+    // Remasters (2026-10-12): unwantedVersionOf never flags one (a remaster is
+    // the original recording, and the download guard must not refuse it), so
+    // until now a "(Remastered 2015)" listed first won here. They rank between
+    // a clean hit and a different recording: plain > remaster > live/demo.
+    // ⚠️ TWIN: JakeTunesMobile backend/src/util/itunesCanonical.ts
+    //    resolveRecommendation (addsVersionMarker preference) — same doctrine.
     const wantTitle = want?.title || ''
+    const sameRecording = (h: ItunesHit) => unwantedVersionOf(wantTitle, titleOf(h)) === null
     const hit = entity === 'musicArtist'
       ? matches[0]
-      : matches.find((h) => unwantedVersionOf(wantTitle, titleOf(h)) === null) ?? matches[0]
+      : matches.find((h) => sameRecording(h) && !addsRemasterStamp(wantTitle, titleOf(h)))
+        ?? matches.find(sameRecording) ?? matches[0]
     if (!hit) return null
     const artist = String(hit.artistName || '').trim()
     if (!artist) return null
