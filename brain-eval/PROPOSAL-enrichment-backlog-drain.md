@@ -149,3 +149,21 @@ candidate: ret-007 mood 0.44→0.16, bare-in-top25 14→21, mood-routed mean
 −0.021 → REJECTED; main-only applied instead). Right order: (1) drain the
 bare cohort (this proposal), (2) THEN one `--rebuild-mood-index` to carry
 the 10-11 taxonomy into mood texts. Both steps Jake-gated as filed.
+
+## 2026-10-13 — RESOLVED by PR #105 (close pending Jake's archive)
+
+The shipped fix (`9390129`, "every new add is heard the night it arrives":
+pickBatch takes every add from the last 14 days under a 40-minute budget) ran
+its first night 10-12 23:29 ET and enriched **328 tracks in 7m51s** — the
+entire compounding backlog (100 vectorless + 227 bare + new adds) in one run;
+the 02:00 launchd pass added the evening's +16. Tonight's precheck: backlog
+**0**, bare cohort **227 → 0**, mood coverage **11,577/11,577 (first-ever
+100%)**, orphans 0 / dups 0. Production effect: rt 0.861 → **0.891 ATH**,
+mood-routed 0.790 → **0.839** (ret-007 mood 0.92, bare-in-top25 collapsed) —
+the brain got its biggest production lift of the quarter from the drain
+alone, no index surgery. Step 2 of the sequencing rule (mood-text refresh)
+was measured tonight (E3) and REJECTED on umbrella/grounding regressions —
+see PROPOSAL-mood-umbrella-genre-line.md for the repaired version. Queue-order
+starvation (PROPOSAL-tempo-catchup-queue-order's enrich-queue half) is moot
+while the budget covers every add; the proposal stays open only for the
+tempo-catchup ordering nuance.

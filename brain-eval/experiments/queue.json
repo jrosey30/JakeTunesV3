@@ -132,7 +132,7 @@
   {
    "id": "E3",
    "title": "Mood-text refresh once the bare backlog is drained",
-   "status": "queued",
+   "status": "rejected",
    "priority": 70,
    "lane": "auto",
    "hypothesis": {
@@ -173,7 +173,32 @@
    },
    "max_nights": 1,
    "series": false,
-   "result": null
+   "result": {
+    "at": "2026-10-13T03:14:17",
+    "outcome": "rejected",
+    "summary": "Mood rebuild on the drained-bare brain: v3 mean Δ +0.111 [CI +0.079,+0.143], leaf 0.518->0.854, BUT gate exit 1 — umbrella_family -0.033 (pop/jazz umbrella tokens left the mood texts when fine leaves replaced coarse tags), candidate grounding 0.95 (v3-grd-11 fabrication), v1 ret-004 mood -0.25. Discarded; fix = leaf+family/umbrella mood genre line = moodText/buildMoodText twin change -> Jake proposal.",
+    "metrics": {
+     "v3_base": 0.742,
+     "v3_cand": 0.804,
+     "mean_delta": 0.1107,
+     "ci": [
+      0.0791,
+      0.1432
+     ],
+     "leaf": [
+      0.518,
+      0.854
+     ],
+     "umbrella_family": [
+      0.913,
+      0.88
+     ],
+     "grounding_cand": 0.95,
+     "v1_worst_mood_probe": {
+      "ret-004": -0.25
+     }
+    }
+   }
   },
   {
    "id": "E4",
