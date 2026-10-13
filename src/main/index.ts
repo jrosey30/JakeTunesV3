@@ -74,6 +74,7 @@ import { registerRecommendations, MOBILE_BACKEND_URL, type RecoSource, type Reco
 import { registerTasteIpc, TASTE_LEDGER_PATH } from './ipc/taste-ipc.ts'
 import { registerGenreFilerIpc } from './ipc/genre-filer-ipc.ts'
 import { registerRockDnaIpc } from './ipc/rock-dna-ipc.ts'
+import { guardCredits, type CreditTrack } from './ai/credit-guard.ts'
 import { registerYirIpc } from './ipc/yir-ipc.ts'
 import { createArtistPhotos, nameKey as photoNameKey } from './artist-photo.ts'
 import { phoneOverlayFields } from '../common/genre-vocab.ts'
@@ -83,7 +84,7 @@ import { registerActivityPoolIpc } from './ipc/activity-pool-ipc.ts'
 import { registerAlbumInfoIpc } from './ipc/album-info-ipc.ts'
 import {
   initRagRetrieval, ragIndexedCountForTracks, ragLibraryArtistSet, pickRetrievalIndex,
-  ragTrackYearMap, ragRetrieveByQuery, buildRagPoolForPicks, buildRetrievalBlockForQuery,
+  ragTrackYearMap, ragRetrieveByQuery, buildRagPoolForPicks, buildRetrievalForQuery,
 } from './ai/rag-retrieval.ts'
 import {
   getArtworkDir, artworkHash, invalidateArtBytes, getCachedArtBytes, putArtBytes,
@@ -7501,16 +7502,18 @@ ipc.handle('musicman-chat', async (_event, messages: { role: string; content: st
   // embedding read (file mid-rsync, SMB hiccup) doesn't lock the chat
   // forever. Empty block on timeout means the model falls back to the
   // legacy library digest path — no quality cliff, just less grounded.
+  const noRetrieval = { block: '', tracks: [] as CreditTrack[] }
   const retrievalWithTimeout = USE_RAG_FOR_CHAT
     ? Promise.race([
-        buildRetrievalBlockForQuery(lastUserMsg, 30),
-        new Promise<string>((resolve) => setTimeout(() => resolve(''), 3000)),
+        buildRetrievalForQuery(lastUserMsg, 30),
+        new Promise<typeof noRetrieval>((resolve) => setTimeout(() => resolve(noRetrieval), 3000)),
       ])
-    : Promise.resolve('')
-  const [searchResults, retrievedTracksBlock] = await Promise.all([
+    : Promise.resolve(noRetrieval)
+  const [searchResults, retrieved] = await Promise.all([
     searchWeb(lastUserMsg, undefined, 'chat'),
     retrievalWithTimeout,
   ])
+  const retrievedTracksBlock = retrieved.block
 
   // 4.5: chat output is READ AS TEXT in the panel, but the user can
   // ALSO click the speaker button under any assistant message to play
@@ -7621,11 +7624,15 @@ This response is shown as text in a chat panel, but the user may click a speaker
     }
 
     // Aggregate text across any text blocks in the response.
-    const textRaw = response.content
+    // Credit guard (10/13): a listed song credited to its own title, its
+    // album, or swapped with its band is put right before anyone sees it.
+    const credited = guardCredits(response.content
       .filter((b): b is Anthropic.Messages.TextBlock => b.type === 'text')
       .map(b => b.text)
       .join('\n')
-      .trim()
+      .trim(), retrieved.tracks)
+    if (credited.fixes.length) console.warn('[musicman] credit guard fixed:', credited.fixes.map(f => `${f.from} -> ${f.to} (${f.why})`).join('; '))
+    const textRaw = credited.text
     // Strip performance tags WITHOUT flattening structure — the old
     // `\s+ → ' '` collapse destroyed every newline the model wrote,
     // which is exactly how a 50-song list became an unreadable wall
