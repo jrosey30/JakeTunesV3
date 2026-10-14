@@ -109,3 +109,59 @@ test('prime() updates memory without writing', async () => {
     assert.deepEqual(await h.cache.get(), { onDisk: 'changed' })
   } finally { h.cleanup() }
 })
+
+test('brief 173: a failed flush is counted and its error kept in flushStats()', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'jt-state-cache-'))
+  try {
+    // Parent directory does not exist → the staged writeFile fails.
+    const file = join(dir, 'missing', 'state.json')
+    const cache = new JsonFileCache<Record<string, string>>(() => file, () => ({}), 'test173')
+    await cache.update((c) => { c.a = '1'; return c })
+    await cache.flush() // resolves despite the failure — the chain absorbs it
+    const stats = cache.flushStats()
+    assert.equal(stats.flushFailures, 1)
+    assert.ok(stats.lastFlushError, 'last flush error must be recorded')
+    assert.ok(stats.lastFlushError!.message.length > 0)
+    assert.equal(stats.pendingWrites, 0)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('brief 173: a safety-lock dropped write is counted, not silent', async () => {
+  const h = makeCache<Record<string, string>>('{ this is not json')
+  try {
+    await h.cache.get()
+    await h.cache.update((c) => { c.wiped = 'yes'; return c })
+    await h.cache.flush()
+    assert.equal(h.cache.flushStats().droppedWrites, 1)
+    assert.ok(h.cache.flushStats().lastFlushError)
+  } finally { h.cleanup() }
+})
+
+test('brief 173: whenIdle resolves after queued writes land, stats clean', async () => {
+  const h = makeCache<Record<string, string>>()
+  try {
+    await h.cache.update((c) => { c.v = 'x'; return c })
+    await h.cache.whenIdle()
+    assert.equal(readJson(h.file).v, 'x')
+    assert.deepEqual(h.cache.flushStats(), { pendingWrites: 0, flushFailures: 0, droppedWrites: 0, lastFlushError: null })
+  } finally { h.cleanup() }
+})
+
+test('brief 173: flushAllCaches settles real caches and bounds a wedged one', async () => {
+  const { flushAllCaches } = await import('../state-cache.ts')
+  const h = makeCache<Record<string, string>>()
+  try {
+    await h.cache.update((c) => { c.v = 'y'; return c })
+    const ok = await flushAllCaches([h.cache], 2000)
+    assert.equal(ok.timedOut, false)
+    assert.equal(ok.failures, 0)
+    assert.equal(readJson(h.file).v, 'y')
+
+    const wedged = {
+      flush: () => new Promise<void>(() => { /* never settles */ }),
+      flushStats: () => ({ pendingWrites: 1, flushFailures: 0, droppedWrites: 0, lastFlushError: null }),
+    }
+    const bounded = await flushAllCaches([wedged], 50)
+    assert.equal(bounded.timedOut, true, 'a wedged flush must be bounded by the timeout')
+  } finally { h.cleanup() }
+})
