@@ -27,6 +27,7 @@
 import { readFileSync, writeFileSync, copyFileSync, existsSync, renameSync, appendFileSync } from 'node:fs'
 import { planMoodPrune } from './brain-prune.mjs'
 import { writeBrainStatus } from './brain-status.mjs'
+import { comparePurity, gateDecision, PURITY_MAX_REGRESSION } from './brain-purity.mjs'
 import { pickBatch } from './brain-batch.mjs'
 import { genreWithParents } from '../src/common/mood-genre-line.ts'
 import { homedir } from 'node:os'
@@ -120,6 +121,35 @@ function fatal(reason) {
   writeStatus({ ok: false, error: reason })
   notifyFailure('JakeTunes brain: nightly training FAILED', reason)
   process.exit(1)
+}
+
+// ── QUALITY GATE (Brief 179) ─────────────────────────────────────────────────
+// Integrity checks (dim/count/round-trip) prove the candidate index is
+// INTACT, not that it is GOOD — a degraded embed model would pass them all
+// while the brain quietly got worse every night. Before any publish, score
+// the candidate's sampled neighbour purity against the currently-published
+// index (scripts/brain-purity.mjs); a regression beyond the threshold
+// BLOCKS the publish: previous index kept, failure status written, alert
+// pushed. The gate only ever blocks — it never writes an index itself.
+// A gate that cannot score (empty sample, unreadable previous index)
+// abstains and logs, rather than wedging the nightly job.
+function purityGate(candidateMap, meta, label) {
+  try {
+    const prev = readEmb(EMB)
+    const maxRegression = Number(process.env.BRAIN_PURITY_MAX_REGRESSION) || PURITY_MAX_REGRESSION
+    const cmp = comparePurity(candidateMap, prev.map, meta, { sampleSize: 100, k: 10 })
+    const decision = gateDecision(cmp, maxRegression)
+    log(`purity gate (${label}):`, decision.reason)
+    if (decision.block) {
+      writeStatus({ ok: false, gateBlocked: true, error: `purity gate blocked the ${label} publish: ${decision.reason}`,
+        candidatePurity: cmp.candidate.purity, previousPurity: cmp.previous.purity })
+      notifyFailure('JakeTunes brain: publish BLOCKED by purity gate', decision.reason)
+    }
+    return decision
+  } catch (e) {
+    log(`purity gate (${label}) could not score — abstaining:`, e.message)
+    return { block: false, reason: `gate abstained: ${e.message}` }
+  }
 }
 
 const KEY = (existsSync(ENV)
@@ -681,6 +711,8 @@ async function main() {
     copyFileSync(EMB, EMB + '.bak')
     let n = 0
     for (let i = 0; i < cands.length; i++) { const v = vecs[i]; if (v) { map.set(Number(cands[i].id), v); const e = desc[String(cands[i].id)]; if (e) { e.te = (Number(cands[i].bpm) || 0) > 0 ? TEMPO_ENCODING_VERSION : false; e.teb = Number(cands[i].bpm) || 0 } n++ } }
+    const gate = purityGate(map, new Map(tracks.map(t => [Number(t.id), { artist: t.artist, genre: t.genre }])), 'reembed-all')
+    if (gate.block) throw new Error(`purity gate blocked the reembed-all publish: ${gate.reason}`)
     const written = writeEmb(EMB, map)
     try {
       const check = readEmb(EMB)
@@ -895,6 +927,8 @@ async function main() {
     if (!sample) sample = { artist: t.artist, title: t.title, d }
     enriched++
   }
+  const gate = purityGate(map, new Map(tracks.map(t => [Number(t.id), { artist: t.artist, genre: t.genre }])), 'nightly')
+  if (gate.block) throw new Error(`purity gate blocked the nightly publish: ${gate.reason}`)
   const written = writeEmb(EMB, map)
 
   // 4) Self-verify: re-read and confirm the brain round-tripped intact; else restore.
