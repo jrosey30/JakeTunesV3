@@ -11,11 +11,19 @@
  *  - main wrote library.json itself and stamped the write as its own, so
  *    the renderer never reloaded, and its next save-library put every
  *    old size back. 1,255 local files carried a stale size that day.
+ *
+ * A tag write (Brief 020, per edit or batch) also changes the bytes
+ * `audioFingerprint` hashes (the first 256 KB, where an m4a's moov and
+ * an mp3's ID3 sit), so those callers re-measure the fingerprint too.
+ * A stale one lets verifyAndHealTracks relink the track to any other
+ * file that still has the old bytes.
  */
 
 export interface MeasuredFileSize {
   id: number
   fileSize: number
+  /** Present only when the caller asked for fingerprints. */
+  audioFingerprint?: string
 }
 
 export interface FileSizeScan {
@@ -30,6 +38,7 @@ export interface FileSizeScan {
 }
 
 type LstatLike = (path: string) => Promise<{ size: number; isFile(): boolean; isSymbolicLink(): boolean }>
+type FingerprintFn = (absPath: string, durationMs: number) => Promise<string | null>
 
 export interface FileSizeProgress {
   scanned: number
@@ -38,11 +47,12 @@ export interface FileSizeProgress {
 }
 
 export async function measureLibraryFileSizes(
-  tracks: ReadonlyArray<{ id?: unknown; path?: unknown; fileSize?: unknown }>,
+  tracks: ReadonlyArray<{ id?: unknown; path?: unknown; fileSize?: unknown; duration?: unknown }>,
   toAbsolute: (colonPath: string) => string,
   shouldMeasure: (absPath: string) => boolean,
   lstat: LstatLike,
   onProgress?: (p: FileSizeProgress) => void,
+  fingerprint?: FingerprintFn,
 ): Promise<FileSizeScan> {
   const scan: FileSizeScan = { measured: [], stale: 0, streamed: 0, missing: 0 }
   let scanned = 0
@@ -63,7 +73,10 @@ export async function measureLibraryFileSizes(
       if (s?.isSymbolicLink()) scan.streamed++
       else if (s && !s.isFile()) scan.missing++
       else if (s) {
-        scan.measured.push({ id, fileSize: s.size })
+        const entry: MeasuredFileSize = { id, fileSize: s.size }
+        const fp = fingerprint ? await fingerprint(abs, Number(t.duration) || 0) : null
+        if (fp) entry.audioFingerprint = fp
+        scan.measured.push(entry)
         if (Number(t.fileSize) !== s.size) scan.stale++
       }
     }
@@ -73,18 +86,21 @@ export async function measureLibraryFileSizes(
   return scan
 }
 
-/** UPDATE_TRACKS entries for the measured sizes that differ from the
+/** UPDATE_TRACKS entries for the measured values that differ from the
  *  tracks the renderer holds now (not the disk copy main scanned). */
-export function fileSizeUpdates(
-  tracks: ReadonlyArray<{ id: number; fileSize?: number }>,
+export function measuredFileUpdates(
+  tracks: ReadonlyArray<{ id: number; fileSize?: number; audioFingerprint?: string }>,
   measured: ReadonlyArray<MeasuredFileSize>,
-): Array<{ id: number; field: 'fileSize'; value: string }> {
-  const current = new Map(tracks.map((t) => [t.id, t.fileSize]))
-  const updates: Array<{ id: number; field: 'fileSize'; value: string }> = []
+): Array<{ id: number; field: 'fileSize' | 'audioFingerprint'; value: string }> {
+  const current = new Map(tracks.map((t) => [t.id, t]))
+  const updates: Array<{ id: number; field: 'fileSize' | 'audioFingerprint'; value: string }> = []
   for (const m of measured) {
-    if (!current.has(m.id)) continue
-    if (current.get(m.id) === m.fileSize) continue
-    updates.push({ id: m.id, field: 'fileSize', value: String(m.fileSize) })
+    const t = current.get(m.id)
+    if (!t) continue
+    if (t.fileSize !== m.fileSize) updates.push({ id: m.id, field: 'fileSize', value: String(m.fileSize) })
+    if (m.audioFingerprint && t.audioFingerprint !== m.audioFingerprint) {
+      updates.push({ id: m.id, field: 'audioFingerprint', value: m.audioFingerprint })
+    }
   }
   return updates
 }

@@ -67,7 +67,7 @@ import './styles/sidebar.css'
 import { mergeHubCatalog } from '../common/hub-catalog-merge'
 import { ackVersionAfterSave, hubAdoptAfterMerge, trackIdKey } from '../common/hub-catalog-ack'
 import { phoneOverlayFields } from '../common/genre-vocab'
-import { fileSizeUpdates } from '../common/library-file-sizes'
+import { measuredFileUpdates } from '../common/library-file-sizes'
 
 // Session cap — startup must not walk every missing album via fetchAlbumArt.
 const STARTUP_NETWORK_ART_CAP = 16
@@ -1783,6 +1783,16 @@ function AppInner() {
     })
   }, [dispatch])
 
+  // Per-edit tag write-back (Brief 020) rewrote a track's file in the
+  // background: apply its new size and fingerprint so save-library
+  // writes them. libTracksRef is declared above (scheduleLibrarySave).
+  useEffect(() => {
+    return window.electronAPI.onTagWritebackFileChanged((m) => {
+      const updates = measuredFileUpdates(libTracksRef.current, [m])
+      if (updates.length) dispatch({ type: 'UPDATE_TRACKS', updates })
+    })
+  }, [dispatch])
+
   const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
@@ -1962,7 +1972,7 @@ function AppInner() {
                   if (r.ok) {
                     // Tag writes resize files. Main measured them; the
                     // track list's own save writes the new sizes.
-                    const sizeUpdates = fileSizeUpdates(libTracksRef.current, r.fileSizes ?? [])
+                    const sizeUpdates = measuredFileUpdates(libTracksRef.current, r.fileSizes ?? [])
                     if (sizeUpdates.length) dispatch({ type: 'UPDATE_TRACKS', updates: sizeUpdates })
                     setApplyOverridesResult({
                       total: r.total ?? 0,
@@ -2069,7 +2079,7 @@ function AppInner() {
                     // Applied here so save-library writes them. Main used
                     // to write library.json itself, and the next save put
                     // the old sizes back.
-                    const sizeUpdates = fileSizeUpdates(libTracksRef.current, r.measured ?? [])
+                    const sizeUpdates = measuredFileUpdates(libTracksRef.current, r.measured ?? [])
                     if (sizeUpdates.length) dispatch({ type: 'UPDATE_TRACKS', updates: sizeUpdates })
                     setRefreshSizesResult({ refreshed: sizeUpdates.length })
                   } else {
