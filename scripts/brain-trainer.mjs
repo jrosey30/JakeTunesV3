@@ -26,6 +26,7 @@
  */
 import { readFileSync, writeFileSync, copyFileSync, existsSync, renameSync, appendFileSync } from 'node:fs'
 import { planMoodPrune } from './brain-prune.mjs'
+import { writeBrainStatus } from './brain-status.mjs'
 import { pickBatch } from './brain-batch.mjs'
 import { genreWithParents } from '../src/common/mood-genre-line.ts'
 import { homedir } from 'node:os'
@@ -81,10 +82,9 @@ const STATUS = join(STATE_DIR, 'brain-status.json')
 const STATUS_LOCAL = join(homedir(), 'Library', 'Application Support', 'JakeTunes', 'brain-status.json')
 
 function writeStatus(payload) {
-  const body = JSON.stringify({ ...payload, at: new Date().toISOString(), host: hostname() }, null, 2)
-  for (const p of new Set([STATUS, STATUS_LOCAL])) {
-    try { writeFileSync(p, body) } catch { /* best-effort — never let reporting break the run */ }
-  }
+  // Brief 176: the write itself lives in scripts/brain-status.mjs — the one
+  // module that owns brain-status.json's shape, shared with the watchdog.
+  writeBrainStatus([STATUS, STATUS_LOCAL], payload)
 }
 
 // Deliberately SEPARATE from the async notify() further down: this one is
@@ -96,6 +96,22 @@ function notifyFailure(title, message) {
       `display notification ${JSON.stringify(message)} with title ${JSON.stringify(title)}`],
       { timeout: 5000, stdio: 'ignore' })
   } catch { /* headless / no GUI session — the status file still carries it */ }
+  // Brief 176: a failure also pushes to the phone via the SAME ntfy channel
+  // notify() uses on success/stall (topic file ~/.config/jaketunes/ntfy-topic).
+  // Synchronous curl because fatal() exits immediately after this returns —
+  // an async fetch would be cut off by process.exit. Best-effort throughout.
+  try {
+    const tf = join(homedir(), '.config', 'jaketunes', 'ntfy-topic')
+    if (existsSync(tf)) {
+      const topic = readFileSync(tf, 'utf8').trim()
+      if (topic) {
+        const url = topic.startsWith('http') ? topic : `https://ntfy.sh/${topic}`
+        execFileSync('/usr/bin/curl', ['-s', '-m', '8',
+          '-H', `Title: ${title.replace(/[^\x20-\x7E]/g, '').trim() || 'Brain Trainer'}`,
+          '-d', message, url], { timeout: 10000, stdio: 'ignore' })
+      }
+    }
+  } catch { /* phone push best-effort — the status file still carries it */ }
 }
 
 /** Log loudly, record the failure durably, notify, and exit non-zero. */
@@ -669,7 +685,7 @@ async function main() {
     try {
       const check = readEmb(EMB)
       if (check.dim !== EMBED_DIM || check.map.size < startCount) throw new Error(`verify failed: dim=${check.dim} count=${check.map.size} (>=${startCount})`)
-    } catch (e) { log('VERIFY FAILED —', e.message, '— restoring backup'); copyFileSync(EMB + '.bak', EMB); process.exit(1) }
+    } catch (e) { log('VERIFY FAILED —', e.message, '— restoring backup'); copyFileSync(EMB + '.bak', EMB); throw e }
     writeFileSync(DESC + '.tmp', JSON.stringify(desc)); renameSync(DESC + '.tmp', DESC)   // persist te (tempo-included) flags
     log(`reembed-all done: ${n}/${cands.length} re-embedded; embeddings.bin ${written} vectors. Sync will carry it to homemini.`)
     // The vibe brain rebuilds from the same facts (descriptor + tempo + genre).
@@ -743,7 +759,7 @@ async function main() {
     try {
       const check = readEmb(EMB)
       if (check.dim !== EMBED_DIM || check.map.size < startCount) throw new Error(`verify failed: count=${check.map.size}`)
-    } catch (e) { log('reembed-artists VERIFY FAILED —', e.message, '— restoring backup'); copyFileSync(EMB + '.bak', EMB); process.exit(1) }
+    } catch (e) { log('reembed-artists VERIFY FAILED —', e.message, '— restoring backup'); copyFileSync(EMB + '.bak', EMB); throw e }
     log(`reembed-artists: re-embedded ${cn}. Sample text:\n${enrichedText(sel[0], desc[String(sel[0].id)].d, desc[String(sel[0].id)].m)}`)
     return
   }
@@ -772,7 +788,7 @@ async function main() {
     try {
       const check = readEmb(EMB)
       if (check.dim !== EMBED_DIM || check.map.size < startCount) throw new Error(`verify failed: count=${check.map.size}`)
-    } catch (e) { log('tempo catch-up VERIFY FAILED —', e.message, '— restoring backup'); copyFileSync(EMB + '.bak', EMB); process.exit(1) }
+    } catch (e) { log('tempo catch-up VERIFY FAILED —', e.message, '— restoring backup'); copyFileSync(EMB + '.bak', EMB); throw e }
     writeFileSync(DESC + '.tmp', JSON.stringify(desc)); renameSync(DESC + '.tmp', DESC)
     log(`tempo catch-up: re-embedded ${cn} (now vibe-searchable). Sync carries it to homemini.`)
     // Their tempo line changed → refresh the vibe vectors too.
@@ -815,7 +831,7 @@ async function main() {
       try {
         const check = readEmb(EMB)
         if (check.dim !== EMBED_DIM || check.map.size < startCount) throw new Error(`verify failed: count=${check.map.size}`)
-      } catch (e) { log('meaning catch-up VERIFY FAILED —', e.message, '— restoring backup'); copyFileSync(EMB + '.bak', EMB); process.exit(1) }
+      } catch (e) { log('meaning catch-up VERIFY FAILED —', e.message, '— restoring backup'); copyFileSync(EMB + '.bak', EMB); throw e }
       writeFileSync(DESC + '.tmp', JSON.stringify(desc)); renameSync(DESC + '.tmp', DESC)
       log(`meaning catch-up: ${mn} track(s) now understand their lyrics. Sync carries it to homemini.`)
     }
@@ -861,6 +877,7 @@ async function main() {
   if (pending.length === 0) {
     log('no descriptors produced this run (homemini Gemma down?) — nothing written')
     await notify('🧠 Brain Trainer — stalled', `Couldn't reach homemini's Gemma tonight — 0 tracks learned. Will retry tomorrow.`)
+    writeStatus({ ok: false, stalled: true, error: 'no descriptors produced this run (homemini Gemma unreachable?) — nothing written' })
     return
   }
 
@@ -889,7 +906,7 @@ async function main() {
   } catch (e) {
     log('VERIFY FAILED —', e.message, '— restoring backup, NOT writing progress')
     copyFileSync(EMB + '.bak', EMB)
-    process.exit(1)
+    throw e
   }
 
   const dtmp = DESC + '.tmp'; writeFileSync(dtmp, JSON.stringify(desc)); renameSync(dtmp, DESC)
@@ -915,5 +932,14 @@ async function main() {
 // an unrelated fix and re-embedded 500 tracks by accident. A module that runs
 // itself on import is a landmine for every tool that touches it.
 if (import.meta.url === pathToFileURL(process.argv[1] || '.').href) {
-  main().catch(e => { log('FATAL', e.message); process.exit(1) })
+  main().catch(e => {
+    // Brief 176: a crash mid-run is a failure like any other — it writes the
+    // failure status and pushes the alert BEFORE exiting, so last night's
+    // ok:true can never survive a crashed run and pose as health.
+    const reason = `crash: ${e?.message || e}`
+    log('FATAL', reason)
+    try { writeStatus({ ok: false, error: reason }) } catch { /* reporting must not mask the exit */ }
+    notifyFailure('JakeTunes brain: nightly training FAILED', reason)
+    process.exit(1)
+  })
 }
