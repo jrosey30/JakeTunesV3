@@ -44,6 +44,7 @@ from pathlib import Path
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 from tag_reader import read_tags  # noqa: E402
+from atomic_write import atomic_write_json, require_app_not_running  # noqa: E402  (Brief 165)
 
 
 def _default_ipod_mount():
@@ -395,6 +396,9 @@ def main():
         return
 
     # --- Apply ---
+    # Brief 165: refuse while the app is running (its next save would
+    # silently overwrite this write); the write itself is temp+rename.
+    require_app_not_running('repair library.json')
     # Back up first.
     ts = datetime.now().strftime('%Y%m%d-%H%M%S')
     backup = f'{library_path}.bak-repair-{ts}'
@@ -507,8 +511,7 @@ def main():
             ids = pl.get('trackIds') or []
             pl['trackIds'] = [i for i in ids if i not in purge_set]
 
-    with open(library_path, 'w') as fh:
-        json.dump(library, fh, indent=2, ensure_ascii=False)
+    atomic_write_json(library_path, library)
     print(f'Wrote {len(fixed)} path fixes to {library_path}')
     if removed_dups:
         print(f'Removed {removed_dups} duplicate library entries')
