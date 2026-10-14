@@ -27,6 +27,11 @@ import argparse, json, os, struct, subprocess, sys, time
 STATE_DIR = os.environ.get("JT_STATE_DIR") or os.path.expanduser("~/Library/Application Support/JakeTunes")
 LIB_PATH = os.path.join(STATE_DIR, "library.json")
 OUT_PATH = os.path.join(STATE_DIR, "audio-index.bin")
+LEDGER_PATH = os.path.join(STATE_DIR, "enrichment-ledger.json")
+# Brief 177: a failed CLAP attempt is not retried for 30 days — mirrors
+# lyrics-fetch.mjs's MISS_TTL_MS and scripts/enrichment-ledger.mjs's
+# RETRY_TTL_MS (this file carries the Python mirror of that ledger format).
+RETRY_TTL_MS = 30 * 24 * 3600 * 1000
 HOMEMINI_AUDIO = os.environ.get("JT_HOMEMINI_AUDIO", "http://homemini:3000/audio")
 # larger_clap_music's Hub conversion is BROKEN under transformers (both
 # towers collapse to near-constant vectors — verified live 2026-09-01 on
@@ -44,6 +49,55 @@ def log(msg: str) -> None:
 def _feat(out):
     # transformers 4.x returns the projected tensor; 5.x wraps it.
     return out.pooler_output if hasattr(out, "pooler_output") else out
+
+# ── Enrichment ledger (Brief 177) ────────────────────────────────────────────
+# enrichment-ledger.json in STATE_DIR — the cross-job per-track attempted/
+# done record. The canonical format + rules live in
+# scripts/enrichment-ledger.mjs; this is its Python mirror (same shape, same
+# TTL). The ledger is a SIDECAR on purpose: library.json's sole writer is
+# the desktop app, and jobs writing into it would recreate the multi-writer
+# defect. A corrupt ledger reads as empty — audio-index.bin remains the
+# truth for "done"; only attempt history is lost.
+def load_ledger() -> dict:
+    try:
+        with open(LEDGER_PATH) as f:
+            raw = json.load(f)
+        if isinstance(raw, dict) and isinstance(raw.get("tracks"), dict):
+            return {"version": 1, "tracks": raw["tracks"]}
+    except Exception:
+        pass
+    return {"version": 1, "tracks": {}}
+
+def save_ledger(ledger: dict) -> None:
+    tmp = f"{LEDGER_PATH}.{os.getpid()}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(ledger, f)
+        f.flush(); os.fsync(f.fileno())
+    os.replace(tmp, LEDGER_PATH)
+
+def _ledger_entry(ledger: dict, tid: int) -> dict:
+    e = ledger["tracks"].setdefault(str(tid), {
+        "clapAttempted": False, "clapDone": False, "lyricsDone": False, "taxonomyDone": False,
+        "clapAttemptedAt": None, "clapDoneAt": None, "lyricsAttemptedAt": None, "lyricsDoneAt": None,
+        "taxonomyDoneAt": None, "lastError": None, "lastJob": None, "updatedAt": 0})
+    return e
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+def order_candidates(todo: list, ledger: dict, now_ms: int) -> tuple:
+    """Fresh (never attempted / TTL-expired) first; tracks that failed
+    inside the retry TTL go to the BACK instead of leading every run."""
+    fresh, deferred = [], []
+    for t in todo:
+        e = ledger["tracks"].get(str(t["id"]))
+        if (e and e.get("clapAttempted") and not e.get("clapDone")
+                and e.get("clapAttemptedAt") and (now_ms - e["clapAttemptedAt"]) <= RETRY_TTL_MS):
+            deferred.append(t)
+        else:
+            fresh.append(t)
+    return fresh + deferred, len(fresh), len(deferred)
+
 
 def load_model():
     import torch
@@ -141,6 +195,18 @@ def run_batch(limit: int) -> int:
     music_root = os.environ.get("JT_MUSIC_DIR") or os.path.expanduser("~/Music/JakeTunesLibrary/iPod_Control/Music")
     done = read_index(OUT_PATH)
     todo = [t for t in tracks if isinstance(t.get("id"), int) and t["id"] not in done]
+    # Brief 177: consult the ledger before ordering any work. Tracks the
+    # index already holds are recorded done; failed-inside-TTL tracks are
+    # deferred to the back of the queue instead of re-decoded first.
+    ledger = load_ledger()
+    for tid in done:
+        e = _ledger_entry(ledger, tid)
+        if not e.get("clapDone"):
+            e["clapDone"] = True
+            e["clapAttempted"] = True
+    todo, n_fresh, n_deferred = order_candidates(todo, ledger, _now_ms())
+    if n_deferred:
+        log(f"ledger: {n_deferred} recently-failed track(s) deferred to the back (30-day retry TTL)")
     log(f"library {len(tracks)} | already embedded {len(done)} | to do {len(todo)}" + (f" (limit {limit})" if limit else ""))
     if not todo:
         return 0
@@ -168,24 +234,38 @@ def run_batch(limit: int) -> int:
             src = nas_path
         else:
             src = f"{HOMEMINI_AUDIO}/{tid}"
+        # Mark the attempt BEFORE the work, so even a crashed run leaves
+        # the record that stops this track leading the next one.
+        entry = _ledger_entry(ledger, tid)
+        entry["clapAttempted"] = True
+        entry["clapAttemptedAt"] = _now_ms()
+        entry["lastJob"] = "clap"
+        entry["updatedAt"] = _now_ms()
         try:
             dur_ms = float(t.get("duration") or 0)
             blob = embed_track(model, processor, device, src, dur_ms / 1000.0)
             if blob is None:
                 miss += 1
+                entry["lastError"] = "undecodable (no window decoded)"
             else:
                 done[tid] = blob
                 ok += 1
+                entry["clapDone"] = True
+                entry["clapDoneAt"] = _now_ms()
+                entry["lastError"] = None
         except Exception as e:
             err += 1
+            entry["lastError"] = str(e)[:200]
             if err <= 5:
                 log(f"id {tid} failed: {e}")
         if ok and ok % 50 == 0:
             write_index(OUT_PATH, done)
+            save_ledger(ledger)
             rate = n / max(1, time.time() - t0)
             eta_h = (len(todo) - n) / max(rate, 0.01) / 3600
             log(f"{ok} embedded ({miss} undecodable, {err} errors) — {rate:.2f}/s, ~{eta_h:.1f}h left")
     write_index(OUT_PATH, done)
+    save_ledger(ledger)
     log(f"DONE this run: embedded {ok}, undecodable {miss}, errors {err} — index now {len(done)} vectors")
     return 0
 
