@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Brief 183 template — com.jaketunes.taste-eval (scripts/taste-eval.py).
+     Label + 'every few days' cadence evidenced in the script's docstring;
+     3 days is the PROPOSED interpretation (see jobs.json).
+     Path tokens are rendered by install-launchagents.sh. -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.jaketunes.taste-eval</string>
+  <key>ProgramArguments</key><array>
+    <string>__PYTHON3__</string>
+    <string>__REPO__/scripts/taste-eval.py</string>
+  </array>
+  <key>WorkingDirectory</key><string>__REPO__</string>
+  <key>StartInterval</key><integer>259200</integer>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/jaketunes-taste-eval.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/jaketunes-taste-eval.log</string>
+</dict></plist>

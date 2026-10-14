@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Brief 183 template — com.jaketunes.brain-watchdog (Brief 176's watchdog:
+     alerts when brain-status.json is >26h old / missing / unparseable).
+     Hourly cadence is PROPOSED (see jobs.json). Exits 1 while stale by design.
+     Path tokens are rendered by install-launchagents.sh. -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.jaketunes.brain-watchdog</string>
+  <key>ProgramArguments</key><array>
+    <string>__NODE__</string>
+    <string>__REPO__/scripts/brain-watchdog.mjs</string>
+  </array>
+  <key>WorkingDirectory</key><string>__REPO__</string>
+  <key>StartInterval</key><integer>3600</integer>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/jaketunes-brain-watchdog.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/jaketunes-brain-watchdog.log</string>
+</dict></plist>
