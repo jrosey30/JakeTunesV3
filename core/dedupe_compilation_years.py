@@ -30,6 +30,7 @@ from pathlib import Path
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
+from atomic_write import atomic_write_json, require_app_not_running  # noqa: E402  (Brief 165)
 
 LIBRARY = os.path.expanduser('~/Library/Application Support/JakeTunes/library.json')
 LOCAL   = os.path.expanduser('~/Music2/JakeTunesLibrary')
@@ -101,6 +102,10 @@ def main() -> None:
         print('Dry run — pass --apply to write')
         return
 
+    # Brief 165: refuse while the app is running (its next save would
+    # silently overwrite this write); the write itself is temp+rename.
+    require_app_not_running('rewrite library.json years')
+
     # Backup library.json
     ts = datetime.now().strftime('%Y%m%d-%H%M%S')
     shutil.copy(LIBRARY, f'{LIBRARY}.bak-yeardedup-{ts}')
@@ -116,8 +121,7 @@ def main() -> None:
     for t in tracks:
         if t['id'] in updates:
             t['year'] = updates[t['id']]
-    with open(LIBRARY, 'w') as f:
-        json.dump(lib, f, indent=2, ensure_ascii=False)
+    atomic_write_json(LIBRARY, lib)
     print(f'Updated library.json: {len(updates)} tracks')
 
     # Re-embed tags into the corresponding files

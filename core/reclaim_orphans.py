@@ -37,6 +37,7 @@ from pathlib import Path
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 from tag_reader import read_tags  # noqa: E402
+from atomic_write import atomic_write_json, require_app_not_running  # noqa: E402  (Brief 165)
 
 
 DEFAULT_LIB = os.path.expanduser('~/Library/Application Support/JakeTunes/library.json')
@@ -213,6 +214,11 @@ def main() -> None:
         print('Nothing to do.')
         return
 
+    # Brief 165: refuse while the app is running (its next save would
+    # silently overwrite this write) — gated before ANY apply mutation,
+    # the file deletions below included. The write itself is temp+rename.
+    require_app_not_running('reclaim orphans into library.json')
+
     # Backup library before modifying.
     if to_add:
         ts = datetime.now().strftime('%Y%m%d-%H%M%S')
@@ -220,8 +226,7 @@ def main() -> None:
         Path(bak).write_bytes(Path(args.library).read_bytes())
         print(f'Library backup: {bak}')
         lib['tracks'] = tracks + to_add
-        with open(args.library, 'w') as fh:
-            json.dump(lib, fh, indent=2, ensure_ascii=False)
+        atomic_write_json(args.library, lib)
         print(f'Added {len(to_add)} entries. Library now has {len(lib["tracks"])} tracks.')
 
     deleted = 0

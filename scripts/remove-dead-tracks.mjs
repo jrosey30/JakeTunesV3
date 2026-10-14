@@ -16,7 +16,7 @@
 // signal is untrustworthy (no/empty/incomplete music root, or a flood of
 // dead tracks), which is what silently dropped 265 tracks on workmini.
 
-import { readFileSync, writeFileSync, copyFileSync, existsSync, lstatSync } from 'fs'
+import { readFileSync, copyFileSync, existsSync, lstatSync } from 'fs'
 import { join, basename } from 'path'
 import {
   LIBRARY_PATH,
@@ -25,6 +25,7 @@ import {
   DEFAULT_MUSIC_DIR,
   walkAudioFiles,
 } from './lib-orphan-shared.mjs'
+import { assertAppNotRunning, writeJsonAtomic } from './lib/atomic-write.mjs'
 
 // ── Safety guard constants — keep in lockstep with reconcile-guard.ts ──
 const MAX_SAFE_ONE_SHOT_REMOVAL = 100
@@ -133,9 +134,12 @@ if (!commit) {
   process.exit(0)
 }
 
+// Brief 165: refuse while the app is running (its next save would silently
+// overwrite this write), then write via temp + parse-back + rename.
+assertAppNotRunning('remove dead tracks from library.json')
 const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
 try { copyFileSync(LIBRARY_PATH, `${LIBRARY_PATH}.pre-dead-remove-${stamp}.bak`) } catch { /* best effort */ }
 const deadIds = new Set(dead.map((t) => t.id))
 lib.tracks = tracks.filter((t) => !deadIds.has(t.id))
-writeFileSync(LIBRARY_PATH, JSON.stringify(lib, null, 2))
+writeJsonAtomic(LIBRARY_PATH, lib)
 console.log(`\nRemoved ${dead.length} dead track(s). Library now has ${lib.tracks.length} tracks.${force && !guard.safe ? ' (--force used)' : ''}`)

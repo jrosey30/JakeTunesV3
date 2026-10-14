@@ -41,6 +41,12 @@ import sys
 import time
 from pathlib import Path
 
+# Brief 165: the shared atomic writer + app-quit gate live in core/
+# (the parent directory), importable the way core/ siblings import
+# each other — via sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from atomic_write import atomic_write_json, require_app_not_running  # noqa: E402
+
 LIB = Path.home() / 'Library' / 'Application Support' / 'JakeTunes' / 'library.json'
 IPOD_MOUNT_DEFAULT = '/Volumes/JAKETUNES'
 LOCAL_MOUNT_DEFAULT = str(Path.home() / 'Music' / 'JakeTunesLibrary')
@@ -156,6 +162,10 @@ def main() -> int:
         print("\nNothing to write — library is already in sync with file fingerprints.")
         return 0
 
+    # Brief 165: refuse while the app is running (its next save would
+    # silently overwrite this write); the write itself is temp+rename.
+    require_app_not_running('refresh fingerprints in library.json')
+
     # Backup BEFORE writing.
     ts = time.strftime('%Y%m%d-%H%M%S')
     backup = LIB.with_suffix(f'.json.{ts}.bak')
@@ -167,8 +177,7 @@ def main() -> int:
         out = data
     else:
         out = tracks
-    with open(LIB, 'w') as f:
-        json.dump(out, f, indent=2, ensure_ascii=False)
+    atomic_write_json(LIB, out)
     print(f"wrote library.json: {n_changed:,} tracks updated")
     return 0
 
