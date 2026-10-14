@@ -194,6 +194,7 @@ import { summariseLearning, discoverVerdicts, type LedgerRow } from './discovery
 import { readLedgerRows } from './taste-ledger-io.ts'
 import { JsonFileCache } from './state-cache'
 import { hashPayload, verifyLandedFile, stagePayloadAndRename } from './save-verify.ts'
+import { decideStagedRecovery, snapshotLibraryFile } from './staged-recovery.ts'
 import { initFlightRecorder, sanitizeCrashPayload, quietWarn } from './flight-recorder'
 import { spawn } from 'child_process'
 import { stat, statfs, lstat, open, readFile, writeFile, mkdir, copyFile, unlink, readlink, symlink, rename, appendFile, readdir, utimes } from 'fs/promises'
@@ -3715,11 +3716,10 @@ initLibraryDigest({ libraryPath: LIBRARY_PATH })
 // Pre-load self-heal for failed atomic saves.
 //
 // V3's save-library writes to a temp sidecar (`<lib>.partial.json` or
-// `<lib>.new`) and then atomically renames over `library.json`. On a
-// healthy local FS that's bulletproof. On SMB-mounted state dirs
-// (macOS Sequoia + Synology) the rename intermittently fails with
-// "Resource busy (16)" when another process or a wedged kernel SMB
-// session holds a stale handle on `library.json`. When that happens:
+// `<lib>.new`) and then rename()s it over `library.json`. On network volumes
+// (SMB/NAS) the rename can fail "Resource busy (16)" when another process or
+// a wedged kernel SMB session holds a stale handle on `library.json`. When
+// that happens:
 //   - the sidecar file is left on disk with the FULL up-to-date state
 //   - `library.json` keeps the old state
 //   - if V3 quits before retry succeeds, the next launch reads the
@@ -3729,41 +3729,35 @@ initLibraryDigest({ libraryPath: LIBRARY_PATH })
 // `library.json.partial.json` for ~20 min while V3 retried; required
 // manual unmount/remount + mv to recover. This helper makes the next
 // recurrence self-healing: on every load, before reading library.json,
-// check the partial sidecars. If one has STRICTLY more tracks than the
-// current library.json, swap it in. Identical or smaller sidecars are
-// cleaned up (they're stale from a save where atomic-rename had
-// completed but the sidecar got orphaned for some other reason).
+// check the partial sidecars.
+//
+// Brief 167: the decision is RECENCY, not track count (see
+// staged-recovery.ts). The old strictly-more-tracks rule deleted staged
+// saves holding only metadata/playlist/star edits, deletions, or a
+// legitimate shrink. Promotions AND discards are logged — a discarded
+// stage is at least visible now.
 async function recoverPartialIfNewer(libraryPath: string): Promise<void> {
   const candidates = [`${libraryPath}.partial.json`, `${libraryPath}.new`]
   const { rename, unlink } = await import('fs/promises')
-  let currentTrackCount = 0
-  try {
-    const cur = JSON.parse(await readFile(libraryPath, 'utf-8'))
-    currentTrackCount = Array.isArray(cur?.tracks) ? cur.tracks.length : 0
-  } catch { /* current missing or unparseable — any non-empty partial wins */ }
-
+  let live = await snapshotLibraryFile(libraryPath)
   for (const candidate of candidates) {
-    let partialTrackCount = 0
-    try {
-      const partial = JSON.parse(await readFile(candidate, 'utf-8'))
-      partialTrackCount = Array.isArray(partial?.tracks) ? partial.tracks.length : 0
-    } catch {
-      continue // candidate missing or unparseable — leave it for next run
-    }
-    if (partialTrackCount === 0) continue
-    if (partialTrackCount > currentTrackCount) {
+    const snap = await snapshotLibraryFile(candidate)
+    const decision = decideStagedRecovery(snap, live)
+    if (decision.action === 'promote') {
       try {
         await rename(candidate, libraryPath)
-        console.log(`[load-tracks] RECOVERED ${partialTrackCount - currentTrackCount} tracks from ${candidate} (current had ${currentTrackCount}, partial has ${partialTrackCount})`)
-        currentTrackCount = partialTrackCount
+        console.log(`[load-tracks] RECOVERED staged save from ${candidate} (${decision.reason}; ${snap.trackCount} tracks)`)
+        live = snap
       } catch (err) {
         console.warn(`[load-tracks] partial recovery rename failed for ${candidate}:`, err)
       }
-    } else {
+    } else if (decision.action === 'discard') {
+      console.log(`[load-tracks] discarding staged save ${candidate} (${decision.reason})`)
       try { await unlink(candidate) } catch { /* concurrent cleanup race — fine */ }
     }
   }
 }
+
 
 // 4.5.0-106 Phase 2.5 — singleton in-memory caches for the hottest NAS
 // state files. Lazy-loaded on first access, mutated in RAM, flushed to
