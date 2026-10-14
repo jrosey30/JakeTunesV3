@@ -838,13 +838,18 @@ sync_artwork_to_homemini
 #   PULL homemini's set → mobile-stars.incoming.json (staging). The app unions
 #        it into the local set on next launch (mergeIncomingMobileStars), then
 #        deletes it.
-#   PUSH the local set → homemini with --update (only when the desktop set is
-#        newer), so a just-set phone star on homemini isn't clobbered before the
-#        staging file has carried it back to the desktop.
-# PULL BEFORE PUSH so a phone star is captured into staging before the push
-# overwrites homemini. Additive union — cross-device un-star is best-effort
-# (mobile-stars-merge.ts). No permanent loss: a phone star lives in staging
+#   PUSH the local set → homemini as .mobile-stars.json.incoming, merged
+#        into homemini's copy there (Brief 172 — see the push below).
+# PULL BEFORE PUSH so a phone star is captured into staging before the
+# push merges it back. No permanent loss: a phone star lives in staging
 # until merged, then re-pushed next cycle.
+#
+# Brief 172 — the sidecar is format v2 with tombstones ({v, trackIds,
+# removed: {id: ts}, added: {id: ts}}, last-writer-wins per id;
+# ⚠️ TWIN: src/main/mobile-stars-merge.ts and JakeTunesMobile
+# backend/src/util/starSidecar.ts). The old additive union (and the old
+# --update copy push) resurrected un-starred tracks: whichever copy
+# still held the id won. Readers everywhere still accept v1 files.
 log "pulling phone stars (homemini → local staging) …"
 rsync -tz --no-perms --no-owner --no-group \
   "$(rremote "$JT_DATA_REMOTE/mobile-stars.json")" "$JT_DATA_LOCAL/mobile-stars.incoming.json" >> "$LOG" 2>&1
@@ -873,14 +878,65 @@ for f in "${PHONE_PLAYLIST_SIDECARS[@]}"; do
     rsync_optional "$(rremote "$JT_DATA_REMOTE/$f")" "$MOUNT/JakeTunesState/$f" || true
   fi
 done
-log "pushing desktop stars (local → homemini) …"
+# Brief 172: the push is a MERGE, not a copy. Upload the local set as
+# .mobile-stars.json.incoming; a remote python pass merges it into
+# homemini's copy with the same last-writer-wins tombstone rule the app
+# and the backend use, then os.replace. A blunt copy (even --update)
+# would erase phone tombstones written since the pull above, and a
+# stale local v1 file would resurrect everything the phone un-starred.
+log "pushing desktop stars (local → homemini, tombstone merge) …"
 if [ -f "$JT_DATA_LOCAL/mobile-stars.json" ]; then
-  rsync -tz --update --no-perms --no-owner --no-group \
-    "$JT_DATA_LOCAL/mobile-stars.json" "$(rremote "$JT_DATA_REMOTE/mobile-stars.json")" >> "$LOG" 2>&1
+  rsync -tz --no-perms --no-owner --no-group \
+    "$JT_DATA_LOCAL/mobile-stars.json" "$(rremote "$JT_DATA_REMOTE/.mobile-stars.json.incoming")" >> "$LOG" 2>&1
   push_rc=$?
   if [ $push_rc -ne 0 ] && [ $push_rc -ne 23 ] && [ $push_rc -ne 24 ]; then
     log "WARNING: push of mobile-stars returned $push_rc (continuing)"
     notify "Couldn't push desktop stars to homemini — phone may be behind."
+  elif [ $push_rc -eq 0 ]; then
+    star_out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOMEMINI" 'cd ~/"Library/Application Support/JakeTunes" && python3 - <<"EOF"
+import json, os
+def load(p):
+    try:
+        with open(p) as f: return json.load(f)
+    except Exception:
+        return None
+def norm(raw):
+    if isinstance(raw, list):
+        return {"trackIds": [x for x in raw if isinstance(x, str) and x], "removed": {}, "added": {}}
+    if isinstance(raw, dict):
+        ids = raw.get("trackIds")
+        ids = [x for x in ids if isinstance(x, str) and x] if isinstance(ids, list) else []
+        def tmap(m):
+            out = {}
+            if isinstance(m, dict):
+                for k, v in m.items():
+                    if isinstance(k, str) and k and isinstance(v, (int, float)) and v > 0: out[k] = v
+            return out
+        return {"trackIds": ids, "removed": tmap(raw.get("removed")), "added": tmap(raw.get("added"))}
+    return {"trackIds": [], "removed": {}, "added": {}}
+inc = load(".mobile-stars.json.incoming")
+if inc is None:
+    print("refused-corrupt")
+    raise SystemExit(0)
+a = norm(inc); b = norm(load("mobile-stars.json"))
+removed = dict(b["removed"]); added = dict(b["added"])
+for k, v in a["removed"].items(): removed[k] = max(removed.get(k, 0), v)
+for k, v in a["added"].items(): added[k] = max(added.get(k, 0), v)
+listed = set(a["trackIds"]) | set(b["trackIds"])
+merged = sorted(i for i in listed | set(removed) | set(added)
+                if (i in listed or i in added) and added.get(i, 0) >= removed.get(i, 0))
+out_obj = {"v": 2, "trackIds": merged, "removed": removed, "added": added}
+tmp = ".mobile-stars.json.merge-tmp"
+with open(tmp, "w") as f: json.dump(out_obj, f)
+os.replace(tmp, "mobile-stars.json")
+try: os.unlink(".mobile-stars.json.incoming")
+except OSError: pass
+print("merged %d stars, %d tombstones" % (len(merged), len(removed)))
+EOF' 2>>"$LOG")
+    case "$star_out" in
+      merged*) log "star push: $star_out → homemini mobile-stars.json" ;;
+      *) log "WARNING: star merge on homemini returned '$star_out' (continuing)"; notify "Couldn't merge desktop stars on homemini — phone may be behind." ;;
+    esac
   fi
 fi
 # Plays: one-way push of the desktop play log to homemini. The iOS app doesn't
