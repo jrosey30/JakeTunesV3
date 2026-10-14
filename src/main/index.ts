@@ -10711,6 +10711,11 @@ app.whenReady().then(async () => {
     try {
       const lib: { tracks?: Array<Record<string, unknown>>; playlists?: unknown[] } =
         JSON.parse(await readFile(LIBRARY_PATH, 'utf-8'))
+      // Brief 169: remember the mtime of the state this removal is based
+      // on — the chained write below re-checks it immediately before its
+      // rename, so a save landing during verification is never clobbered.
+      let readMtimeMs = 0
+      try { readMtimeMs = Math.round((await stat(LIBRARY_PATH)).mtimeMs) } catch { /* non-fatal */ }
       const tracks = lib.tracks || []
       // Verify across ALL existing music roots — a track is dead only if its
       // audio is absent from every mount (and its fingerprint can't be found).
@@ -10757,16 +10762,39 @@ app.whenReady().then(async () => {
       lib.tracks = tracks.filter((t) => !deadIds.has(Number(t.id)))
       const removed = prevCount - lib.tracks.length
       const tmp = `${LIBRARY_PATH}.dead-remove.tmp`
-      await writeFile(tmp, JSON.stringify(lib, null, 2))
-      // Pre-stamp before the rename so the fsWatch handler treats this as our
-      // own write (matches save-library's ordering).
-      lastSelfWriteMtimeMs = Date.now()
-      const { rename: renameFS } = await import('fs/promises')
-      await renameFS(tmp, LIBRARY_PATH)
-      try {
-        const s = await stat(LIBRARY_PATH)
-        lastSelfWriteMtimeMs = Math.round(s.mtimeMs)
-      } catch { /* non-fatal */ }
+      // Brief 169: the final write joins librarySaveChain. The old code
+      // wrote outside the chain with its mtime pre-stamped, so any normal
+      // save landing during the (long) verification window above was
+      // silently overwritten and the guard couldn't see the staleness.
+      // Inside the chain, re-check the on-disk mtime immediately before
+      // the rename: if library.json moved since our read, refuse rather
+      // than overwrite the newer state.
+      const writeRun = librarySaveChain.then(async (): Promise<boolean> => {
+        if (readMtimeMs > 0) {
+          try {
+            if (Math.round((await stat(LIBRARY_PATH)).mtimeMs) !== readMtimeMs) return false
+          } catch { return false }
+        }
+        await writeFile(tmp, JSON.stringify(lib, null, 2))
+        // Pre-stamp before the rename so the fsWatch handler treats this
+        // as our own write (matches save-library's ordering).
+        lastSelfWriteMtimeMs = Date.now()
+        const { rename: renameFS } = await import('fs/promises')
+        await renameFS(tmp, LIBRARY_PATH)
+        try {
+          const s = await stat(LIBRARY_PATH)
+          lastSelfWriteMtimeMs = Math.round(s.mtimeMs)
+        } catch { /* non-fatal */ }
+        return true
+      })
+      // Chain-keeper: keeps the chain adoptable for the next save even if
+      // this write fails (logged, not silent — the rails count silent
+      // catches); the handler reads the real outcome from writeRun itself.
+      librarySaveChain = writeRun.catch((err) => { console.warn('[remove-dead-tracks] chained write failed:', err) })
+      if (!(await writeRun)) {
+        console.warn('[remove-dead-tracks] REFUSED: library.json changed on disk during verification — not overwriting newer state')
+        return { ok: false, error: 'library.json changed during verification; retry remove-dead-tracks', reason: 'external-write-conflict', deadCount: deadIds.size }
+      }
       libraryCache.invalidate()
       void mirrorLibraryToNas(lib)
       console.log(`[remove-dead-tracks] removed ${removed} dead track(s) (${prevCount}→${lib.tracks.length}); backup library.json.bak-dead-${stamp}`)
