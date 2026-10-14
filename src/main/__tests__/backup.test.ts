@@ -3,7 +3,10 @@ import assert from 'node:assert/strict'
 import { mkdtemp, writeFile, readFile, readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { snapshotLibraryAt, listBackupsAt, restoreBackupAt } from '../backup-core.ts'
+import {
+  snapshotLibraryAt, listBackupsAt, restoreBackupAt,
+  snapshotOverridesAt, listOverridesBackupsAt, restoreOverridesBackupAt,
+} from '../backup-core.ts'
 
 async function setup(trackCount = 5) {
   const dir = await mkdtemp(join(tmpdir(), 'jt-backup-'))
@@ -75,6 +78,86 @@ describe('backup-core (Phase 0 data-safety)', () => {
     const { lib, backups, cleanup } = await setup(5)
     try {
       assert.equal((await restoreBackupAt(lib, backups, '../../etc/passwd')).ok, false)
+    } finally { await cleanup() }
+  })
+})
+
+async function setupOverrides(entries = 3) {
+  const dir = await mkdtemp(join(tmpdir(), 'jt-backup-ov-'))
+  const ov = join(dir, 'metadata-overrides.json')
+  const backups = join(dir, 'backups')
+  const doc: Record<string, unknown> = {}
+  for (let i = 0; i < entries; i++) doc[String(100 + i)] = { rating: 5, playCount: i }
+  await writeFile(ov, JSON.stringify(doc))
+  return { dir, ov, backups, cleanup: () => rm(dir, { recursive: true, force: true }) }
+}
+
+describe('backup-core — metadata-overrides.json (Brief 171)', () => {
+  it('snapshots the overrides file with entry count + reason in the name', async () => {
+    const { ov, backups, cleanup } = await setupOverrides(3)
+    try {
+      const info = await snapshotOverridesAt(ov, backups, 'launch')
+      assert.ok(info, 'returns info')
+      assert.equal(info!.trackCount, 3)
+      assert.match(info!.file, /^metadata-overrides-\d{8}-\d{6}-3entries-launch\.json$/)
+      assert.deepEqual(
+        JSON.parse(await readFile(join(backups, info!.file), 'utf-8')),
+        JSON.parse(await readFile(ov, 'utf-8')),
+        'snapshot holds the exact overrides document',
+      )
+    } finally { await cleanup() }
+  })
+
+  it('refuses to snapshot a missing, empty, or non-object overrides file', async () => {
+    const { dir, ov, backups, cleanup } = await setupOverrides(0)
+    try {
+      assert.equal(await snapshotOverridesAt(ov, backups, 'manual'), null, 'empty object refused')
+      assert.equal((await readdir(backups).catch(() => [])).length, 0, 'no file written')
+      await writeFile(ov, JSON.stringify([1, 2, 3]))
+      assert.equal(await snapshotOverridesAt(ov, backups, 'manual'), null, 'array refused')
+      assert.equal(await snapshotOverridesAt(join(dir, 'does-not-exist.json'), backups, 'manual'), null, 'missing refused')
+    } finally { await cleanup() }
+  })
+
+  it('rotates: keeps only the newest 20, and never prunes library snapshots', async () => {
+    const { lib, backups, cleanup } = await setup(3)
+    const { ov, cleanup: cleanupOv } = await setupOverrides(2)
+    try {
+      await snapshotLibraryAt(lib, backups, 'manual')
+      for (let i = 0; i < 25; i++) {
+        await snapshotOverridesAt(ov, backups, 'save', 20, `20260101-0000${String(i).padStart(2, '0')}`)
+      }
+      assert.equal((await listOverridesBackupsAt(backups)).length, 20, 'pruned to keep=20')
+      assert.equal((await listBackupsAt(backups)).length, 1, 'library snapshot untouched by overrides rotation')
+    } finally { await cleanup(); await cleanupOv() }
+  })
+
+  it('restores an overrides snapshot AND backs up the current state first (reversible)', async () => {
+    const { ov, backups, cleanup } = await setupOverrides(3)
+    try {
+      const snap = await snapshotOverridesAt(ov, backups, 'manual')
+      // Mutate the live overrides down to a single different entry, then restore.
+      await writeFile(ov, JSON.stringify({ '999': { rating: 1 } }))
+      const res = await restoreOverridesBackupAt(ov, backups, snap!.file)
+      assert.equal(res.ok, true)
+      assert.equal(res.trackCount, 3)
+      assert.deepEqual(Object.keys(JSON.parse(await readFile(ov, 'utf-8'))).sort(), ['100', '101', '102'], 'overrides restored to 3 entries')
+      const list = await listOverridesBackupsAt(backups)
+      assert.ok(list.some((b) => b.reason === 'pre-restore' && b.trackCount === 1), 'current (1-entry) state snapshotted before restore')
+    } finally { await cleanup() }
+  })
+
+  it('refuses to restore an empty/invalid overrides backup, and rejects traversal', async () => {
+    const { ov, backups, cleanup } = await setupOverrides(3)
+    try {
+      await snapshotOverridesAt(ov, backups, 'manual')
+      const bad = 'metadata-overrides-20260101-000000-0entries-bad.json'
+      const { mkdir } = await import('node:fs/promises')
+      await mkdir(backups, { recursive: true })
+      await writeFile(join(backups, bad), JSON.stringify({}))
+      assert.equal((await restoreOverridesBackupAt(ov, backups, bad)).ok, false)
+      assert.equal((await restoreOverridesBackupAt(ov, backups, '../../etc/passwd')).ok, false)
+      assert.equal((await restoreOverridesBackupAt(ov, backups, 'library-20260101-000000-3tracks-x.json')).ok, false, 'library snapshots are not overrides restores')
     } finally { await cleanup() }
   })
 })
