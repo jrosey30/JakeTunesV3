@@ -263,9 +263,9 @@ export async function flushAllCaches(
   let timer: ReturnType<typeof setTimeout> | undefined
   const settled = Promise.all(caches.map((c) => c.flush())).then(() => false)
   const timeout = new Promise<boolean>((resolve) => {
+    // Not unref'd: bounded and always cleared below, and unref'ing it let
+    // Node exit mid-wait when a wedged flush was the only other work.
     timer = setTimeout(() => resolve(true), timeoutMs)
-    const t = timer as unknown as { unref?: () => void }
-    if (typeof t.unref === 'function') t.unref()
   })
   const timedOut = await Promise.race([settled, timeout])
   if (timer) clearTimeout(timer)
