@@ -226,7 +226,7 @@
   {
    "id": "E5",
    "title": "Taste weights v4 refresh (drifted W constants)",
-   "status": "queued",
+   "status": "done",
    "priority": 60,
    "lane": "jake",
    "hypothesis": {
@@ -272,12 +272,17 @@
    },
    "max_nights": 1,
    "series": false,
-   "result": null
+   "result": {
+    "at": "2026-10-13T20:11:13",
+    "outcome": "done",
+    "summary": "SHIPPED as JakeTunesV3#117 + JakeTunesMobile#408 — taste weights refit, folded into E9 (most of E9's gain was the refit: refit with the old feature already reads 0.8175).",
+    "ref": "JakeTunesV3#117 + JakeTunesMobile#408"
+   }
   },
   {
    "id": "E6",
    "title": "\"The\"-stripped artist guard, safe variant (S2), measured through the bridge",
-   "status": "queued",
+   "status": "done",
    "priority": 50,
    "lane": "jake",
    "hypothesis": {
@@ -314,7 +319,12 @@
    },
    "max_nights": 1,
    "series": false,
-   "result": null
+   "result": {
+    "at": "2026-10-13T20:11:13",
+    "outcome": "done",
+    "summary": "SHIPPED as JakeTunesV3#118 + JakeTunesMobile#409 — \"The\"-stripped artist guard S2 + search under the real name. Bare band names 2/175 -> 175/175; every bare band search returns all the band's songs (clash 0->20, doors 0->15, postal service 0->20, cure 0->18, beatles 14->20); 0/12 vibe hijacks; v3 154 probes identical.",
+    "ref": "JakeTunesV3#118 + JakeTunesMobile#409"
+   }
   },
   {
    "id": "E7",
@@ -405,7 +415,7 @@
   {
    "id": "E9",
    "title": "taste intensity stays stable as tracks age",
-   "status": "queued",
+   "status": "done",
    "priority": 58,
    "lane": "jake",
    "hypothesis": {
@@ -457,7 +467,12 @@
    },
    "max_nights": 1,
    "series": false,
-   "result": null,
+   "result": {
+    "at": "2026-10-13T20:11:13",
+    "outcome": "done",
+    "summary": "SHIPPED as JakeTunesV3#117 + JakeTunesMobile#408 — taste v5: intensity per sqrt(month) + refit weights. Weekly eval 0.785 -> 0.818, clock drift -0.0095 -> +0.0008, trial-vs-love 0.586 -> 0.646, 5x5 CV 0.8197; out of time (fit 8/28, scored 10/12) 0.791 on unseen vs v4 0.772.",
+    "ref": "JakeTunesV3#117 + JakeTunesMobile#408"
+   },
    "notes": [
     "10/12: measurement fix shipped as JakeTunesMobile #403 (live: matured-90d AUC 0.7852, finds 0.7491); E9 is the model half."
    ]
