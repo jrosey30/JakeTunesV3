@@ -19,6 +19,7 @@ import {
   type ScheduledIncoming,
 } from '../audio/seamScheduler'
 import { remainingMsUntilMusicEnd } from '../audio/gapless-timing'
+import { notifyToast } from '../state/recentlyAdded'
 
 // 4.5.0-78 — sample-accurate seam scheduling. See seamScheduler.ts
 // header for the full rationale. Flag-gated so flipping to false
@@ -117,6 +118,14 @@ let watchdogLastObservedPos = -1
 let watchdogLastAdvanceMs = 0
 let watchdogLastRecoveryMs = 0
 let watchdogRecoveryInFlight = false
+
+// Brief 160: the failure-advance budget. A load/play failure on the
+// current track ADVANCES (see failAdvanceRef) instead of dying in
+// silence — but a dead album must not skip through the whole library,
+// so consecutive failure-advances are capped. Any successful play
+// resets the count.
+const MAX_CONSECUTIVE_FAILURE_ADVANCES = 3
+let consecutiveFailureAdvances = 0
 
 // ── Diagnostic ring buffer (4.0.9) ──────────────────────────────────────
 // Capture the last 50 audio-pipeline events so when "music stops playing"
@@ -634,8 +643,32 @@ export function useAudio(opts?: { primary?: boolean }) {
           stuckTicks++
           if (stuckTicks >= 2) {
             logAudioEvent('heartbeat.observed-stuck-no-action', { pos, stuckTicks })
-            // (kick + hardRecover removed — see comment above)
-            void playTrackRef.current  // keep ref alive for type-checker
+            // Brief 160: a CONFIRMED freeze (position identical across
+            // heartbeat ticks while Howler still claims playing) earns
+            // exactly ONE Howl destroy/recreate via playTrack, behind
+            // the watchdog's existing 30s recovery cooldown. This is
+            // deliberately narrower than the 4.5-removed hard-recover:
+            // no node.play() kick, no seek games on the old element,
+            // at most one recreation per cooldown window. The watchdog
+            // state vars above (kept alive all this time) carry the
+            // guard; the recreated Howl resumes at the frozen position
+            // on its first play event.
+            const nowMs = Date.now()
+            if (!watchdogRecoveryInFlight && nowMs - watchdogLastRecoveryMs >= WATCHDOG_COOLDOWN_MS) {
+              watchdogRecoveryInFlight = true
+              watchdogLastRecoveryMs = nowMs
+              const cur = stateRef.current.nowPlaying
+              logAudioEvent('heartbeat.stuck-recover', { pos, title: cur?.title })
+              if (cur) {
+                notifyToast(`'${cur.title}' froze — restarting it`)
+                playTrackRef.current?.(cur, stateRef.current.queue, stateRef.current.queueIndex)
+                const nh = sharedHowl
+                if (nh && pos > 1) {
+                  nh.once('play', () => { try { nh.seek(pos) } catch { /* element not ready — the restart from 0 stands */ } })
+                }
+              }
+              watchdogRecoveryInFlight = false
+            }
           }
         } else {
           stuckTicks = 0
@@ -659,6 +692,10 @@ export function useAudio(opts?: { primary?: boolean }) {
   // recover by re-loading the current track. updatePosition is defined
   // first, so this ref is the cycle-breaker.
   const playTrackRef = useRef<((track: Track, queue?: Track[], queueIndex?: number, djTransition?: boolean, freshContext?: boolean, preserveOrder?: boolean) => void) | null>(null)
+  // Brief 160: the failure ending, held by ref for the same reason as
+  // playTrackRef — the Howl error handlers are created inside
+  // loadAndPlay, before the advance logic can be bound below.
+  const failAdvanceRef = useRef<((failed: Track, why: string) => void) | null>(null)
 
   const updatePosition = useCallback(() => {
     rafTickCount++
@@ -1256,6 +1293,11 @@ export function useAudio(opts?: { primary?: boolean }) {
     // nor the start lands on a non-zero waveform sample — eliminates the
     // "click" pop on song change.
     const startVolume = 0
+    // Brief 160: one failure ending per Howl. Howler can fire both
+    // onloaderror and onplayerror for the same dead track (and the
+    // play() retry below can give up on it too) — the ending must
+    // happen exactly once.
+    const failureHolder = { handled: false }
     const howl = new Howl({
       src: [url],
       format: [format],
@@ -1303,6 +1345,8 @@ export function useAudio(opts?: { primary?: boolean }) {
       volume: startVolume,
       onplay: () => {
         logAudioEvent('howl.onplay', { title: track.title, url: url.slice(0, 80) })
+        // Brief 160: a track actually playing clears the failure budget.
+        consecutiveFailureAdvances = 0
         // EQ tap: bind the underlying HTMLAudioElement to the Web Audio
         // chain. Idempotent + a no-op when EQ is disabled. Done in onplay
         // (not after construction) because Howler's _sounds[0]._node
@@ -1329,6 +1373,12 @@ export function useAudio(opts?: { primary?: boolean }) {
       },
       onplayerror: (_id: number, err: unknown) => {
         logAudioEvent('howl.onplayerror', { err: String(err), title: track.title })
+        // Brief 160: a play error on the current track is an ending, not
+        // a log line — advance (counted, capped) via failAdvanceRef.
+        if (sharedHowl === howl && !failureHolder.handled) {
+          failureHolder.handled = true
+          failAdvanceRef.current?.(track, 'play-error')
+        }
       },
       onstop: () => {
         logAudioEvent('howl.onstop', { title: track.title })
@@ -1374,6 +1424,13 @@ export function useAudio(opts?: { primary?: boolean }) {
       onloaderror: (_id: number, err: unknown) => {
         logAudioEvent('howl.onloaderror', { err: String(err), url: url.slice(0, 80) })
         console.error('Audio load error:', err, url)
+        // Brief 160: same ending as onplayerror. Brief 161's body-timeout
+        // lands here too — a wedged stream errors the body, Howler
+        // surfaces it as a load error, and the track advances.
+        if (sharedHowl === howl && !failureHolder.handled) {
+          failureHolder.handled = true
+          failAdvanceRef.current?.(track, 'load-error')
+        }
       }
     })
 
@@ -1414,6 +1471,13 @@ export function useAudio(opts?: { primary?: boolean }) {
       }
       if (playAttempts >= 3) {
         logAudioEvent('howl.play.gaveup', { title: track.title, tries: playAttempts })
+        // Brief 160: giving up silently was the third dead end. A
+        // loaded-but-never-playing track is a failed track — advance
+        // (counted, capped) instead of sitting at 0:00 forever.
+        if (!failureHolder.handled) {
+          failureHolder.handled = true
+          failAdvanceRef.current?.(track, 'play-gaveup')
+        }
         return
       }
       playAttempts++
@@ -1423,6 +1487,35 @@ export function useAudio(opts?: { primary?: boolean }) {
     }
     window.setTimeout(retryIfStuck, 350)
   }, [updatePosition])
+
+  // Brief 160: bind the failure ending. A failure on the CURRENT track
+  // advances through the same seam resolution natural-end uses (live
+  // queue, track located by id — never a remembered snapshot). The
+  // module-level counter caps consecutive advances so a dead album
+  // cannot skip through the library; at the cap we stop and say so.
+  useEffect(() => {
+    failAdvanceRef.current = (failed, why) => {
+      const s = stateRef.current
+      if (!s.nowPlaying || s.nowPlaying.id !== failed.id) return  // stale Howl — not the current item
+      if (consecutiveFailureAdvances >= MAX_CONSECUTIVE_FAILURE_ADVANCES) {
+        logAudioEvent('howl.failadvance.stop', { title: failed.title, why, count: consecutiveFailureAdvances })
+        notifyToast(`Couldn't play '${failed.title}' — playback stopped after repeated failures`)
+        dispatchRef.current({ type: 'STOP' })
+        return
+      }
+      consecutiveFailureAdvances++
+      const seam = resolveSeamAdvance(s.queue, failed.id, s.queueIndex, s.repeat)
+      const next = seam.nextIndex >= 0 ? s.queue[seam.nextIndex] : undefined
+      logAudioEvent('howl.failadvance', { title: failed.title, why, toIdx: seam.nextIndex, count: consecutiveFailureAdvances })
+      if (!next || next.id === failed.id) {
+        notifyToast(`Couldn't play '${failed.title}'`)
+        dispatchRef.current({ type: 'STOP' })
+        return
+      }
+      notifyToast(`Couldn't play '${failed.title}' — skipping to the next track`)
+      loadAndPlay(next, s.queue, seam.nextIndex)
+    }
+  })
 
   // Bind the natural-end handler to a ref so both this loadAndPlay's
   // Howl and gapless-promoted Howls (which need the same recursive

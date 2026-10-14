@@ -14,9 +14,9 @@ export default function BandcampImportToast() {
   if (!toast) return null
 
   const isFailure = toast.kind === 'failure'
-  const message = toast.kind === 'success'
-    ? toast.message
-    : `Couldn't import '${toast.filename}' — ${toast.error}`
+  const message = toast.kind === 'failure'
+    ? `Couldn't import '${toast.filename}' — ${toast.error}`
+    : toast.message
 
   return (
     <div
