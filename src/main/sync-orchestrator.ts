@@ -45,7 +45,9 @@
 import { quietWarn } from './flight-recorder'
 import { spawn, type ChildProcess } from 'child_process'
 import { safeIpcError } from './safe-ipc-error.ts'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
+import { createHash } from 'crypto'
+import { app } from 'electron'
 import { homedir } from 'os'
 import { join } from 'path'
 import type { BrowserWindow } from 'electron'
@@ -55,6 +57,45 @@ import { syncLaunchArgs } from '../common/sync-launch-args.ts'
 import { nextDueAt, mergePendingReason, dueAfterRun, syncUrgency, SYNC_BATCH_WINDOW_MS } from '../common/sync-batching.ts'
 
 const SYNC_SCRIPT = join(homedir(), 'bin', 'jaketunes-homemini-sync.sh')
+
+// Brief 183: the process that runs is ~/bin/'s COPY of the repo script at
+// 'Dr. Claude/scripts/jaketunes-homemini-sync.sh' (see header). A copy can
+// drift: the repo script gains a fix (or a flag — an older copy already
+// ignores --skip-library-json) and the installed copy silently keeps the
+// old behaviour. At startup we checksum the installed copy against the
+// repo copy and warn LOUDLY on mismatch. Warn-only, always: a drifted
+// script still syncs, and blocking sync on a bookkeeping check would
+// trade a real outage for a tidy ledger.
+const REPO_SYNC_SCRIPT_REL = join('Dr. Claude', 'scripts', 'jaketunes-homemini-sync.sh')
+function repoSyncScriptPath(): string | null {
+  const candidates: string[] = []
+  if (process.env.JAKETUNES_REPO_DIR) candidates.push(join(process.env.JAKETUNES_REPO_DIR, REPO_SYNC_SCRIPT_REL))
+  try { candidates.push(join(app.getAppPath(), REPO_SYNC_SCRIPT_REL)) } catch { /* not in an app context */ }
+  return candidates.find((c) => existsSync(c)) ?? null
+}
+function sha256OfFile(path: string): string {
+  return createHash('sha256').update(readFileSync(path)).digest('hex')
+}
+function checkSyncScriptDrift(): void {
+  try {
+    const repoCopy = repoSyncScriptPath()
+    if (!repoCopy) {
+      console.warn(`[sync-orchestrator] ⚠️ SYNC SCRIPT DRIFT UNVERIFIABLE: installed ${SYNC_SCRIPT} has no repo counterpart at '<repo>/${REPO_SYNC_SCRIPT_REL}' — the copy in ~/bin cannot be checked against git. Set JAKETUNES_REPO_DIR or run from the repo checkout.`)
+      return
+    }
+    const installedHash = sha256OfFile(SYNC_SCRIPT)
+    const repoHash = sha256OfFile(repoCopy)
+    if (installedHash !== repoHash) {
+      const msg = `[sync-orchestrator] ⚠️ SYNC SCRIPT DRIFT: installed ${SYNC_SCRIPT} (sha256 ${installedHash.slice(0, 12)}…) does NOT match the repo copy ${repoCopy} (sha256 ${repoHash.slice(0, 12)}…). The ~/bin copy is stale (or locally edited) — re-copy it from the repo. Sync continues with the installed copy.`
+      console.warn(msg)
+      quietWarn('sync-script-drift', msg)
+    } else {
+      console.log(`[sync-orchestrator] sync script matches the repo copy (sha256 ${installedHash.slice(0, 12)}…)`)
+    }
+  } catch (err) {
+    console.warn(`[sync-orchestrator] sync-script drift check failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
 
 // Replicas adopt the catalog from the hub. The sync script publishes
 // library.json in two places (phone backend + the homemini desktop
@@ -437,6 +478,7 @@ export function startSyncOrchestrator(windowAccessor: () => BrowserWindow | null
     console.log(`[sync-orchestrator] sync script not found (${SYNC_SCRIPT}) — homemini sync disabled on this machine`)
     return
   }
+  checkSyncScriptDrift()
   if (safetyNetTimer) clearInterval(safetyNetTimer)
   safetyNetTimer = setInterval(() => {
     triggerSync('safety-net')
