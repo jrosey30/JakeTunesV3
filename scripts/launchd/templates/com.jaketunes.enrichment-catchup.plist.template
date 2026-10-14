@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Brief 183 template — com.jaketunes.enrichment-catchup (Brief 177's
+     scripts/enrichment-catchup.mjs: ledger refresh -> CLAP delta -> lyrics
+     batch, inside a time budget). 04:30 is PROPOSED (see jobs.json).
+     Path tokens are rendered by install-launchagents.sh. -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.jaketunes.enrichment-catchup</string>
+  <key>ProgramArguments</key><array>
+    <string>__NODE__</string>
+    <string>__REPO__/scripts/enrichment-catchup.mjs</string>
+    <string>--budget-min</string>
+    <string>60</string>
+  </array>
+  <key>WorkingDirectory</key><string>__REPO__</string>
+  <key>StartCalendarInterval</key><dict>
+    <key>Hour</key><integer>4</integer>
+    <key>Minute</key><integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/jaketunes-enrichment-catchup.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/jaketunes-enrichment-catchup.log</string>
+</dict></plist>
