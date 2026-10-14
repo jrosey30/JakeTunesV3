@@ -23,6 +23,13 @@
  * Why per-file serialized chain: even backgrounded, two concurrent
  * read-modify-writes against the same file would race. The chain keeps
  * writes in submission order without ever blocking the IPC reply.
+ *
+ * Brief 173: flushes are awaitable and their failures are inspectable.
+ * .whenIdle() / the module-level flushAllCaches() let the quit path wait
+ * for every pending flush to settle (bounded by a timeout, so a wedged
+ * SMB flush can't trap the app open), and every flush failure or
+ * safety-lock dropped write is counted in .flushStats() with the last
+ * error recorded — instead of being logged once and dropped.
  */
 
 import { readFile, writeFile, rename } from 'node:fs/promises'
@@ -41,6 +48,14 @@ export class JsonFileCache<T> {
   // it permanently. The user can resolve by quitting (no writes occur)
   // and re-trying after fixing the underlying disk/permission issue.
   private loadedAsErrorFallback = false
+
+  // Brief 173: flush outcome bookkeeping. A background flush that fails
+  // (or a write dropped by the error-fallback safety lock) used to be a
+  // lone console.warn; now it is counted and the last error is kept, so
+  // the quit path — or any diagnostic — can see that state was lost.
+  private flushFailureCount = 0
+  private droppedWriteCount = 0
+  private lastFlushError: { message: string; at: number } | null = null
 
   // Plain fields, not constructor parameter properties. Node's
   // --experimental-strip-types (what `npm test` runs on) cannot parse
@@ -140,6 +155,25 @@ export class JsonFileCache<T> {
     await this.writeChain
   }
 
+  /**
+   * Brief 173: alias of flush() with quit-path semantics — resolves when
+   * every flush queued so far has settled (succeeded OR failed; failures
+   * are visible via flushStats(), never as a rejection here).
+   */
+  async whenIdle(): Promise<void> {
+    await this.writeChain
+  }
+
+  /** Brief 173: snapshot of this cache's flush outcomes. */
+  flushStats(): FlushStats {
+    return {
+      pendingWrites: this.writesInFlight,
+      flushFailures: this.flushFailureCount,
+      droppedWrites: this.droppedWriteCount,
+      lastFlushError: this.lastFlushError,
+    }
+  }
+
   /** Number of writes currently queued or in-flight (for diagnostics). */
   pendingWrites(): number {
     return this.writesInFlight
@@ -152,6 +186,8 @@ export class JsonFileCache<T> {
       // it. Flushing our empty-fallback would silently wipe whatever's
       // on disk. Drop the write instead and log so the user / future
       // diagnostic notices.
+      this.droppedWriteCount++
+      this.lastFlushError = { message: 'write dropped: initial load failed; refusing to overwrite existing on-disk file', at: Date.now() }
       console.warn(`[state-cache:${this.label}] WRITE DROPPED — initial load failed; refusing to overwrite existing on-disk file.`)
       return
     }
@@ -180,10 +216,65 @@ export class JsonFileCache<T> {
         await writeFile(tmp, JSON.stringify(snapshot, null, 2), 'utf-8')
         await rename(tmp, path)
       } catch (err) {
+        this.flushFailureCount++
+        this.lastFlushError = { message: err instanceof Error ? err.message : String(err), at: Date.now() }
         console.warn(`[state-cache:${this.label}] flush failed:`, err instanceof Error ? err.message : err)
       } finally {
         this.writesInFlight--
       }
     })
   }
+}
+
+/** Brief 173: inspectable flush outcomes for one cache. */
+export interface FlushStats {
+  pendingWrites: number
+  flushFailures: number
+  droppedWrites: number
+  lastFlushError: { message: string; at: number } | null
+}
+
+/** The slice of JsonFileCache flushAllCaches needs — structural, so any
+ *  cache (or a test double) qualifies. */
+export interface FlushableCache {
+  flush(): Promise<void>
+  flushStats(): FlushStats
+}
+
+export interface FlushAllResult {
+  /** True when the timeout fired before every flush settled. */
+  timedOut: boolean
+  /** Total flush failures recorded across the given caches. */
+  failures: number
+  /** Total safety-lock dropped writes recorded across the given caches. */
+  dropped: number
+}
+
+/**
+ * Brief 173: await every given cache's pending flushes, bounded by
+ * `timeoutMs` so a wedged flush can't trap the caller (the quit path)
+ * forever. Never rejects: per-cache flush chains already absorb their
+ * own errors, and outcomes are reported in the result + flushStats().
+ */
+export async function flushAllCaches(
+  caches: ReadonlyArray<FlushableCache>,
+  timeoutMs = 2000,
+): Promise<FlushAllResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const settled = Promise.all(caches.map((c) => c.flush())).then(() => false)
+  const timeout = new Promise<boolean>((resolve) => {
+    // Not unref'd: bounded and always cleared below, and unref'ing it let
+    // Node exit mid-wait when a wedged flush was the only other work.
+    timer = setTimeout(() => resolve(true), timeoutMs)
+  })
+  const timedOut = await Promise.race([settled, timeout])
+  if (timer) clearTimeout(timer)
+  let failures = 0
+  let dropped = 0
+  for (const c of caches) {
+    const s = c.flushStats()
+    failures += s.flushFailures
+    dropped += s.droppedWrites
+  }
+  return { timedOut, failures, dropped }
 }
