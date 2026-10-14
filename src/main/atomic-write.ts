@@ -23,9 +23,41 @@
  *
  * So: the staging name is unique per write (pid + time + random), never
  * derived from the destination alone.
+ *
+ * Brief 168: the staged file is also fsynced BEFORE the rename and the
+ * destination directory fsynced AFTER it. Rename alone protects against
+ * app crashes, not power loss — without the fsyncs, an outage can bring
+ * the renamed file back empty or stale.
  */
-import { writeFile, rename, unlink, mkdir } from 'node:fs/promises'
+import { writeFile, rename, unlink, mkdir, open } from 'node:fs/promises'
 import { dirname } from 'node:path'
+
+/** Force a staged file's bytes to stable storage. Throws on failure. */
+async function fsyncFile(path: string): Promise<void> {
+  const fh = await open(path, 'r')
+  try {
+    await fh.sync()
+  } finally {
+    await fh.close()
+  }
+}
+
+/**
+ * Best-effort fsync of a directory after a rename into it. Some
+ * filesystems/platforms refuse to open or sync a directory; by the time
+ * this runs the rename has already landed, so a refusal must not fail a
+ * completed write.
+ */
+async function fsyncDir(dir: string): Promise<void> {
+  try {
+    const fh = await open(dir, 'r')
+    try {
+      await fh.sync()
+    } finally {
+      await fh.close()
+    }
+  } catch { /* platform/filesystem refuses directory fsync — rename still atomic */ }
+}
 
 /** Unique staging path — never collides, even between two writes in one tick. */
 function stagingPathFor(destPath: string): string {
@@ -49,7 +81,9 @@ export async function writeJsonAtomic(destPath: string, data: unknown, pretty = 
     // got this right. (Its staging path was the bug; this part was not.)
     await mkdir(dirname(destPath), { recursive: true })
     await writeFile(tmp, JSON.stringify(data, null, pretty ? 2 : undefined), 'utf-8')
+    await fsyncFile(tmp)
     await rename(tmp, destPath)
+    await fsyncDir(dirname(destPath))
   } catch (err) {
     await unlink(tmp).catch(() => { /* never mask the real error */ })
     throw err
