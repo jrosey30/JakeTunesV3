@@ -8,7 +8,7 @@ import type { CreditTrack } from './credit-guard'
 import { join } from 'path'
 import { readFile } from 'fs/promises'
 import { STATE_DIR } from '../state-dir'
-import { routeArtistKey, queryNamesArtist } from './rag-route.ts'
+import { routeArtistKey, queryNamesArtist, buildStrippedArtists, restoreStrippedArtist, type StrippedArtists } from './rag-route.ts'
 import { DECADE_QUERY_RE, parseDecadeConstraint, yearInDecade } from './decade-query'
 import {
   analyzeEmbeddings as ragAnalyzeEmbeddings,
@@ -48,7 +48,32 @@ export async function ragIndexedCountForTracks(tracks: Array<{ id: number }>): P
 // takes retrieval 0.825 → ~0.91 on the held-out eval set.
 // DECADE_QUERY_RE lives in ./ai/decade-query (twin with Mobile rag); the
 // artist check (fold + genre-word filter) lives in ./ai/rag-route.
-let ragArtistSetCache: { at: number; set: Set<string> } | null = null
+let ragArtistSetCache: { at: number; set: Set<string>; stripped: StrippedArtists } | null = null
+
+/** The macOS word list, read only to sort the "The X" variants (rag-route
+ *  buildStrippedArtists) and then dropped. Missing = null = every single-word
+ *  variant treated as an ordinary word (template-only), the cautious side. */
+async function ordinaryWordsFor(keys: Iterable<string>): Promise<Set<string> | null> {
+  try {
+    const want = new Set<string>()
+    for (const k of keys) if (k.startsWith('the ')) { const v = k.slice(4); want.add(v); if (v.endsWith('s')) want.add(v.slice(0, -1)) }
+    const hit = new Set<string>()
+    for (const w of (await readFile('/usr/share/dict/words', 'utf-8')).split('\n')) {
+      const lw = w.trim().toLowerCase()
+      if (want.has(lw)) hit.add(lw)
+    }
+    return hit
+  } catch {
+    return null
+  }
+}
+
+/** "The X" bands also answer to "X" (E6 guard; rag-route.ts). */
+export async function ragStrippedArtists(): Promise<StrippedArtists> {
+  await ragLibraryArtistSet()
+  return ragArtistSetCache?.stripped ?? { plain: new Set(), wordy: new Set() }
+}
+
 export async function ragLibraryArtistSet(): Promise<Set<string>> {
   if (ragArtistSetCache && Date.now() - ragArtistSetCache.at < 5 * 60 * 1000) return ragArtistSetCache.set
   const set = new Set<string>()
@@ -68,13 +93,13 @@ export async function ragLibraryArtistSet(): Promise<Set<string>> {
       for (const v of Object.values(members)) for (const m of v.members || []) add(m)
     } catch { /* no sidecar yet */ }
   } catch { /* empty set = router falls back to the main index only on artist grounds */ }
-  ragArtistSetCache = { at: Date.now(), set }
+  ragArtistSetCache = { at: Date.now(), set, stripped: buildStrippedArtists(set, await ordinaryWordsFor(set)) }
   return set
 }
 
 export async function pickRetrievalIndex(query: string): Promise<'main' | 'mood'> {
   if (DECADE_QUERY_RE.test(query)) return 'main'
-  if (queryNamesArtist(query, await ragLibraryArtistSet())) return 'main'
+  if (queryNamesArtist(query, await ragLibraryArtistSet(), await ragStrippedArtists())) return 'main'
   // Vibe-shaped. Route to the mood index only once it covers most of
   // the brain — a half-built index would silently shrink the library.
   const [main, mood] = await Promise.all([ragGetEmbeddingsMap(), getMoodIndexMap()])
@@ -138,7 +163,9 @@ export async function ragRetrieveByQuery(query: string, k: number): Promise<Arra
   // anchor artists' in-era tracks are in the pool, and let the reranker
   // lift them. Absent a match, everything below is exactly as before.
   const lex = matchSubgenre(query)
-  const embedText = lex ? expandSubgenreQuery(query, lex) : query
+  // A band recognized by its bare name is searched under its real name (E6).
+  const named = route === 'main' ? restoreStrippedArtist(query, await ragLibraryArtistSet(), await ragStrippedArtists()) : query
+  const embedText = lex ? expandSubgenreQuery(named, lex) : named
   const anchorIds = lex ? await ragSubgenreAnchorIds(lex) : new Set<number>()
   if (lex) console.log(`[rag] lexicon "${lex.key}": ${anchorIds.size} anchor track(s)`)
   const dotQ = (a: Float32Array, b: Float32Array): number => { let t = 0; for (let i = 0; i < a.length; i++) t += a[i] * b[i]; return t }
