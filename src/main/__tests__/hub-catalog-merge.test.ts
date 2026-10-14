@@ -226,3 +226,66 @@ describe('mergeHubCatalog: replicas adopt the hub without ever losing a song by 
     assert.equal(ok.removed, 3)
   })
 })
+
+describe('mergeHubCatalog: Brief 197 — an absorbed phone import survives hub omission', () => {
+  const adoptedAt = '2026-10-14T00:00:00.000Z'
+  it('a full snapshot omitting a seen, absorbed import keeps it (the Morphine shape)', () => {
+    // The hub listed 12741 (its catalog merges the sidecar row), this
+    // replica absorbed it, then a cross-lineage publish erased it from
+    // the canonical and the next FULL snapshot omits it. Without the
+    // absorbed registration, seen-membership makes the merge treat the
+    // omission as a real deletion and the local copy goes too.
+    const local = [
+      ...Array.from({ length: 9 }, (_, i) => t(i + 1)),
+      t(12741, { title: 'Cure for Pain (Album Version)', artist: 'Morphine' }),
+    ]
+    const r = mergeHubCatalog(local, {
+      full: true, version: 'v2',
+      upserts: local.slice(0, 9),
+      removedIds: [],
+    }, {
+      seenIds: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '12741'],
+      protectedIds: ['absorbed:12741'],
+      adoptedAt,
+    })
+    assert.equal(r.removed, 0)
+    assert.ok(r.tracks.some((x) => x.id === 12741), 'the absorbed copy survives the omission')
+    assert.ok(r.protectedIds.includes('absorbed:12741'), 'protection is carried to the next round')
+  })
+
+  it('the same omission WITHOUT the absorbed registration still deletes (pre-197 behavior, contrast)', () => {
+    const local = [...Array.from({ length: 9 }, (_, i) => t(i + 1)), t(12741)]
+    const r = mergeHubCatalog(local, {
+      full: true, version: 'v2', upserts: local.slice(0, 9), removedIds: [],
+    }, {
+      seenIds: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '12741'],
+      protectedIds: [],
+      adoptedAt,
+    })
+    assert.equal(r.removed, 1)
+    assert.ok(!r.tracks.some((x) => x.id === 12741))
+  })
+
+  it('an explicit delta removal still deletes an absorbed import (deliberate deletion propagates)', () => {
+    const local = [t(1), t(12741)]
+    const r = mergeHubCatalog(local, {
+      full: false, version: 'v3', upserts: [], removedIds: ['12741'],
+    }, {
+      seenIds: ['1', '12741'],
+      protectedIds: ['absorbed:12741'],
+      adoptedAt,
+    })
+    assert.equal(r.removed, 1)
+    assert.ok(!r.tracks.some((x) => x.id === 12741))
+    assert.ok(!r.protectedIds.includes('absorbed:12741'), 'protection lapses with the row')
+  })
+
+  it('the ack state keeps an absorbed entry even once the hub has listed the bare id', () => {
+    const s = adoptHubCatalogState(
+      { seenIds: ['1'], protectedIds: [] },
+      { version: 'v2', hubIds: ['1', '12741'], protectedIds: ['absorbed:12741'], now: '2026-10-14T23:05:03.000Z' },
+    )
+    assert.ok(s.seenIds.includes('12741'))
+    assert.deepEqual(s.protectedIds, ['absorbed:12741'])
+  })
+})
