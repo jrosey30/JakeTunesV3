@@ -34,6 +34,7 @@
  *       descriptive User-Agent, 10s timeout, small delay, cached/resumable).
  */
 import { readFileSync, writeFileSync, existsSync, renameSync } from 'node:fs'
+import { loadLedger, saveLedger, ledgerPath, markLyricsDone, markLyricsAttempted } from './enrichment-ledger.mjs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -183,6 +184,27 @@ function persist() {
   const tmp = LYRICS + '.tmp'
   writeFileSync(tmp, JSON.stringify(store))
   renameSync(tmp, LYRICS)   // atomic — never a torn write
+  persistLedger()
+}
+
+// Brief 177: record outcomes in the cross-job enrichment ledger
+// (enrichment-ledger.json beside lyrics.json) so the scheduled catch-up can
+// see lyrics state without opening this file's store. Best-effort by
+// design — the ledger must never break the fetch; lyrics.json stays the
+// authoritative lyrics store and this job's fetch decisions don't change.
+const LEDGER = ledgerPath(STATE_DIR)
+let _ledger = null
+function recordLedger(id, outcome) {
+  if (DRY) return
+  try {
+    if (!_ledger) _ledger = loadLedger(LEDGER)
+    if (outcome === 'done') markLyricsDone(_ledger, id)
+    else markLyricsAttempted(_ledger, id)
+  } catch { /* ledger is a view, not the store — never fail the run over it */ }
+}
+function persistLedger() {
+  if (DRY || !_ledger) return
+  try { saveLedger(LEDGER, _ledger) } catch { /* best-effort, as above */ }
 }
 
 let processed = 0, hits = 0, instrumentals = 0, misses = 0, skipped = 0, errors = 0
@@ -208,9 +230,11 @@ for (const t of tracks) {
     if (rec) {
       if (rec.instrumental) instrumentals++; else hits++
       store[id] = rec
+      recordLedger(id, 'done')
     } else {
       store[id] = { miss: true, source: 'lrclib', fetchedAt: Date.now() }
       misses++
+      recordLedger(id, 'attempted')
     }
   } catch (e) {
     errors++   // transient (timeout / 5xx) — do NOT store a miss; retry next run
