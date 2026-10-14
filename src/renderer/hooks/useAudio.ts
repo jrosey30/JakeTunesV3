@@ -2054,7 +2054,9 @@ export function useAudio(opts?: { primary?: boolean }) {
         const np = stateRef.current.nowPlaying
         const resumePos = stateRef.current.position
         playTrackRef.current?.(np, stateRef.current.queue, stateRef.current.queueIndex)
-        const nh = sharedHowl
+        // playTrack -> loadAndPlay assigns sharedHowl synchronously; TS still
+        // holds the guard's `null` narrowing, so re-widen before reading it.
+        const nh = sharedHowl as Howl | null
         if (nh && resumePos > 1) {
           nh.once('play', () => { try { nh.seek(resumePos) } catch { /* element not ready — plays from the top */ } })
         }
