@@ -41,8 +41,16 @@ re-done here.
 - **`scripts/check-no-root-bundle.mjs`** (new): exits 1 if any
   `index.js` exists at the repo root — there is no legitimate root
   bundle, stamped or otherwise, so presence is the regression.
-- **CI** (`.github/workflows/check.yml`): new step running the check
-  before dependency install.
+- **CI step — PREPARED, NOT APPLIED (permission blocker):** the
+  automation's GitHub App gets `403 Resource not accessible by
+  integration` on `.github/workflows/` (no workflow scope), so the
+  step could not be pushed from here. The check IS wired into
+  `npm run check`. Manual step: add this step to
+  `.github/workflows/check.yml` after "Setup Node 22" —
+  ```yaml
+      - name: No stale root bundle (Brief 192)
+        run: node scripts/check-no-root-bundle.mjs
+  ```
 - **README:** entry-point pointer under "Building a distributable
   app" — the real entry, the deleted bundle, the build stamp.
 - **`src/main/__tests__/root-bundle-check.test.ts`** (new): runs the
@@ -75,5 +83,7 @@ re-done here.
    `out/main/build-info.json` appears; with the chain-B provenance
    patch applied, the startup log prints
    `JakeTunes 6.0.0 (build <sha12>, built <time>)`.
-2. Delete any root `index.js` copies in other checkouts/worktrees —
+2. Add the CI step above to `.github/workflows/check.yml` by hand
+   (the App cannot edit workflows).
+3. Delete any root `index.js` copies in other checkouts/worktrees —
    they were never load-bearing.
