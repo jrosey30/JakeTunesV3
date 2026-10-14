@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# vern — JakeTunes diagnostic capture, v0.6
-# Brief 017 (v0.1), Brief 027 (v0.5), Brief 028 (v0.6). Foundation
+# vern — JakeTunes diagnostic capture, v0.7
+# Brief 017 (v0.1), Brief 027 (v0.5), Brief 028 (v0.6), Brief 196
+# (v0.7, --share). Foundation
 # for diagnostic capture tooling. Outputs a single markdown file to
 # ~/JakeTunesV3/diagnostics/.
 #
@@ -12,6 +13,13 @@
 # Usage:
 #   ./scripts/vern                      # capture with no context note
 #   ./scripts/vern "scrubber bug back"  # capture with a context note
+#   ./scripts/vern --share ["note"]     # capture + a REDACTED share
+#                                       # bundle (diagnostics/
+#                                       # vern-share-latest.md) that is
+#                                       # safe to send off-machine —
+#                                       # Brief 196. Redaction is
+#                                       # fail-closed: no redactor, no
+#                                       # share file.
 #
 # The output is a single .md file the user uploads to the AI advisor
 # instead of running 20+ grep/sed/cat/curl commands manually.
@@ -32,7 +40,13 @@ cd "$REPO_ROOT"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
 ISO_TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 OUTPUT="${REPO_ROOT}/diagnostics/vern-${TIMESTAMP}.md"
-NOTE="${1:-}"
+SHARE=0
+if [ "${1:-}" = "--share" ]; then
+  SHARE=1
+  NOTE="${2:-}"
+else
+  NOTE="${1:-}"
+fi
 
 mkdir -p "$(dirname "$OUTPUT")"
 
@@ -440,10 +454,33 @@ probe_ssh() {
   # ── Footer ──────────────────────────────────────────────────────────
   echo "---"
   echo
-  echo "*vern v0.6 — Briefs 017 + 027 + 028 — \`~/JakeTunesV3/scripts/vern\`*"
+  echo "*vern v0.7 — Briefs 017 + 027 + 028 + 196 — \`~/JakeTunesV3/scripts/vern\`*"
   echo
   echo "To add a context note to future captures: \`./scripts/vern \"your note here\"\`"
 } > "$OUTPUT"
 
 echo "vern: wrote ${OUTPUT}"
 echo "vern: $(wc -l < "$OUTPUT" | tr -d ' ') lines, $(wc -c < "$OUTPUT" | tr -d ' ') bytes"
+
+# ── Brief 196: --share — a redacted bundle that can leave the machine ──
+# The capture above stays on this machine exactly as before (vern is
+# read-only; writing its own diagnostics output is its existing
+# behaviour). --share additionally runs the capture through
+# scripts/vern-redact.py (tokens/secrets + absolute home paths →
+# placeholders) into diagnostics/vern-share-<ts>.md, with
+# vern-share-latest.md pointing at the newest. FAIL-CLOSED: if the
+# redactor or python3 is missing, no share file is written at all —
+# an unredacted copy must never be the fallback.
+if [ "$SHARE" -eq 1 ]; then
+  SHARE_FILE="${REPO_ROOT}/diagnostics/vern-share-${TIMESTAMP}.md"
+  SHARE_LATEST="${REPO_ROOT}/diagnostics/vern-share-latest.md"
+  REDACTOR="${REPO_ROOT}/scripts/vern-redact.py"
+  if [ -f "$REDACTOR" ] && command -v python3 >/dev/null 2>&1; then
+    REDACTIONS="$(python3 "$REDACTOR" "$OUTPUT" "$SHARE_FILE" "$HOME" "$REPO_ROOT")"
+    cp "$SHARE_FILE" "$SHARE_LATEST"
+    echo "vern: share bundle ready — ${SHARE_LATEST} (${REDACTIONS} redaction(s); version ${VERSION:-unknown}, tsc web ${TSC_WEB_COUNT:-?} errors, node ${TSC_NODE_COUNT:-?} errors)"
+  else
+    echo "vern: --share FAILED — redactor unavailable (scripts/vern-redact.py or python3 missing); no share file written" >&2
+    exit 1
+  fi
+fi
