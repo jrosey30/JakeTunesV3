@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Brief 183 template — com.jaketunes.taxonomy (scripts/taxonomy-classify.py).
+     The job's existence is evidenced; the 01:30 time and this label are
+     PROPOSED (see jobs.json) — before the 02:00 trainer so fresh subgenres
+     fold into the night's training. Exit 3 = deferred (Brief 182).
+     Path tokens are rendered by install-launchagents.sh. -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.jaketunes.taxonomy</string>
+  <key>ProgramArguments</key><array>
+    <string>__PYTHON3__</string>
+    <string>__REPO__/scripts/taxonomy-classify.py</string>
+  </array>
+  <key>WorkingDirectory</key><string>__REPO__</string>
+  <key>StartCalendarInterval</key><dict>
+    <key>Hour</key><integer>1</integer>
+    <key>Minute</key><integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/jaketunes-taxonomy.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/jaketunes-taxonomy.log</string>
+</dict></plist>
