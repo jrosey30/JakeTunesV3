@@ -1,6 +1,8 @@
-import { createContext, useContext, useReducer, useEffect, useRef, ReactNode } from 'react'
+import { createContext, useContext, useReducer, useEffect, useRef, useCallback, ReactNode } from 'react'
 import { locateTrackIndex } from '../queue-seam'
 import { Track, RepeatMode } from '../types'
+import { useLibrary } from './LibraryContext'
+import { snapshotPlayback, parsePersistedPlayback, resolveRestoredQueue } from '../playback-persistence'
 
 interface PlaybackState {
   nowPlaying: Track | null
@@ -40,6 +42,7 @@ type PlaybackAction =
   | { type: 'SHUFFLE_QUEUE' }
   | { type: 'MOVE_IN_QUEUE'; fromIndex: number; toIndex: number }
   | { type: 'SET_SHUFFLE_HISTORY'; history: number[] }
+  | { type: 'RESTORE_PLAYBACK'; track: Track; queue: Track[]; queueIndex: number; position: number; volume: number }
 
 const initialState: PlaybackState = {
   nowPlaying: null,
@@ -178,6 +181,23 @@ function playbackReducer(state: PlaybackState, action: PlaybackAction): Playback
         recentlyPlayed: rp,
         shuffleHistory: sh,
         originalQueue: resolvedOriginalQueue,
+      }
+    }
+    case 'RESTORE_PLAYBACK': {
+      // Brief 162: launch restore is PAUSED by construction — isPlaying
+      // stays false, no auto-audio on launch ever — and it never stomps
+      // a session the user already started in this run.
+      if (state.nowPlaying) return state
+      return {
+        ...state,
+        nowPlaying: action.track,
+        isPlaying: false,
+        position: action.position,
+        duration: (action.track.duration || 0) / 1000,
+        volume: action.volume,
+        queue: action.queue,
+        queueIndex: action.queueIndex,
+        originalQueue: null,
       }
     }
     case 'PAUSE':
@@ -392,6 +412,63 @@ const PlaybackContext = createContext<{
 
 export function PlaybackProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(loggingReducer, initialState)
+
+  // ── Brief 162: persist playback state; restore it PAUSED ─────────
+  // PlaybackContext.tsx is on CLAUDE.md's Do-Not-Touch list; Brief 162
+  // explicitly mandates this change (see Dr. Claude/162-persist-
+  // playback-state.md for the mandate paragraph). Persistence rides
+  // the EXISTING ui-state IPC store (load-ui-state / save-ui-state,
+  // src/main/ipc/ui-state-ipc.ts) under the top-level `playbackState`
+  // key — main deep-merges top-level keys, so this never clobbers
+  // layout state. localStorage is banned in this renderer; not used.
+  // PlaybackProvider is mounted inside LibraryProvider (App.tsx is
+  // the only mount), so useLibrary is safe here.
+  const { state: libState } = useLibrary()
+  const restoredRef = useRef(false)
+  const latestStateRef = useRef(state)
+  latestStateRef.current = state
+
+  // Restore once, as soon as the library lands: saved queue IDs are
+  // resolved to live Track objects by the pure helper (missing IDs
+  // drop out, the index follows the playing track, the position
+  // clamps inside it) and dispatched into a PAUSED state.
+  useEffect(() => {
+    if (restoredRef.current) return
+    if (libState.tracks.length === 0) return
+    restoredRef.current = true
+    let cancelled = false
+    window.electronAPI.loadUiState().then((r) => {
+      if (cancelled || !r.ok || !r.state) return
+      const persisted = parsePersistedPlayback((r.state as Record<string, unknown>)['playbackState'])
+      if (!persisted) return
+      const byId = new Map(libState.tracks.map((t) => [t.id, t]))
+      const resolved = resolveRestoredQueue(persisted, byId)
+      if (resolved) {
+        dispatch({ type: 'RESTORE_PLAYBACK', track: resolved.track, queue: resolved.queue, queueIndex: resolved.queueIndex, position: resolved.position, volume: persisted.volume })
+      }
+    }).catch(() => { /* no readable ui-state — a first run; nothing to restore */ })
+    return () => { cancelled = true }
+  }, [libState.tracks])
+
+  // Persist: structural changes (queue / index / track / volume /
+  // pause) debounce at 800ms; while playing, a 5s ticker also saves
+  // the position, so a crash loses only a few seconds. Nothing is
+  // saved until the restore read above has had its chance.
+  const persistPlayback = useCallback(() => {
+    const snap = snapshotPlayback(latestStateRef.current)
+    void window.electronAPI.saveUiState({ playbackState: snap }).catch(() => { /* the next change retries */ })
+  }, [])
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (!restoredRef.current) return
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(persistPlayback, 800)
+  }, [state.queue, state.queueIndex, state.nowPlaying, state.volume, state.isPlaying, persistPlayback])
+  useEffect(() => {
+    if (!state.isPlaying) return
+    const id = window.setInterval(persistPlayback, 5000)
+    return () => window.clearInterval(id)
+  }, [state.isPlaying, persistPlayback])
 
   // Brief 015c: every render, compare current state to the previous
   // snapshot. If queueIndex/queue.length/nowPlaying changed without a
