@@ -4916,10 +4916,31 @@ ipc.handle('load-tracks', async () => {
           }
         } catch { /* still mid-write; retry */ }
       }
-      // Still unreadable after retries. Surface the error instead of
-      // destroying the library by overwriting with iPod data.
-      console.error('load-tracks: library.json exists but parse kept failing — refusing iPod fallback to avoid data loss', err)
-      return { tracks: [], playlists: [], noDataSource: true, error: 'library-parse-failed' }
+      // Still unreadable after retries. Two different situations:
+      //  - A staged partial exists (a save was in flight, or recovery
+      //    could not rename it in): surface the error and refuse the
+      //    iPod fallback — overwriting would destroy real state.
+      //  - Brief 175: NO staged partial — the file is unrecoverable
+      //    garbage, most likely a torn first-launch seed. Preserve it
+      //    under a timestamped name for forensics, log loudly, and fall
+      //    through to the iPod reseed ONCE. The preserved copy stays on
+      //    disk, so the old "refuses to fall back over an unparseable
+      //    library" safety property is recoverable, not destructive.
+      const hasPartial = await statFn(`${LIBRARY_PATH}.partial.json`).then(() => true).catch(() => false)
+      const hasNew = await statFn(`${LIBRARY_PATH}.new`).then(() => true).catch(() => false)
+      if (hasPartial || hasNew) {
+        console.error('load-tracks: library.json exists but parse kept failing — refusing iPod fallback to avoid data loss', err)
+        return { tracks: [], playlists: [], noDataSource: true, error: 'library-parse-failed' }
+      }
+      const preservedPath = `${LIBRARY_PATH}.unparseable-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`
+      try {
+        const { rename: renamePreserve } = await import('fs/promises')
+        await renamePreserve(LIBRARY_PATH, preservedPath)
+        console.error(`[load-tracks] library.json unparseable with no staged partial — preserved as ${preservedPath}; reseeding from iPod`)
+      } catch (preserveErr) {
+        console.error('load-tracks: could not preserve unparseable library.json — refusing iPod fallback to avoid data loss', preserveErr)
+        return { tracks: [], playlists: [], noDataSource: true, error: 'library-parse-failed' }
+      }
     } catch {
       // library.json genuinely does not exist — first launch case,
       // safe to seed from iPod.
@@ -4929,7 +4950,15 @@ ipc.handle('load-tracks', async () => {
   // TRUE first launch (no library.json at all): read from iPod and save as local library
   try {
     const ipodData = await readIpodDatabase()
-    await writeFile(LIBRARY_PATH, JSON.stringify(ipodData, null, 2))
+    // Brief 175: seed through the staged partial + rename, never a direct
+    // in-place write — an interrupted direct write used to leave a file
+    // that exists but won't parse, bricking every later launch. The
+    // staging name is the recovery sidecar's, so even a crash between
+    // write and rename self-heals on the next load.
+    const seedTmp = `${LIBRARY_PATH}.partial.json`
+    await writeFile(seedTmp, JSON.stringify(ipodData, null, 2))
+    const { rename: renameSeed } = await import('fs/promises')
+    await renameSeed(seedTmp, LIBRARY_PATH)
     return { ...ipodData, noDataSource: false }
   } catch (err) {
     console.error('Failed to read iPod database:', err)
