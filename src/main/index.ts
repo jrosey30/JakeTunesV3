@@ -1057,6 +1057,10 @@ function kickAudioAnalysisWorker(): void {
 }
 
 let mainWindow: BrowserWindow | null = null
+// Brief 163(b): renderer-gone reload guard — at most one reload per
+// guard window, so a poisoned page cannot reload-loop the app.
+let lastRendererGoneReloadMs = 0
+const RENDERER_GONE_RELOAD_GUARD_MS = 60_000
 
 // Renderer sends must survive window teardown — `?.` guards null but a
 // destroyed window still throws ("Object has been destroyed", seen ×2 in
@@ -2504,6 +2508,21 @@ const flightRecorder = initFlightRecorder({
 flightRecorder.mirrorConsole({ unhandledRejections: true })
 flightRecorder.record('info', 'boot.main-start')
 app.whenReady().then(() => flightRecorder.record('info', 'boot.ready'))
+
+// ── Brief 163(a): one instance only ─────────────────────────────────
+// No lock existed anywhere: two launches produced two audible players
+// racing the same library/state writes. The loser quits immediately;
+// the winner gets a 'second-instance' event and surfaces its window.
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
+  })
+}
 ipcMain.on('flight-record', (_e, payload: unknown) => {
   const p = sanitizeCrashPayload(payload)
   flightRecorder.record(p.kind.startsWith('boot.') ? 'info' : 'error', `renderer.${p.kind}`, p)
@@ -2607,6 +2626,23 @@ async function createWindow(): Promise<void> {
   // Privileged window: never navigate to remote content or spawn child
   // windows with the preload API. Dev Vite URL is the only non-file allow.
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  // Brief 163(b): a renderer death that is NOT a JS error (OOM kill, GPU
+  // loss) never reaches CrashNet — the renderer IS the net. Log it through
+  // the same flight-recorder channel CrashNet feeds (renderer.* events),
+  // then reload once per guard window; further deaths are logged only.
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    flightRecorder.record('error', 'renderer.render-process-gone', {
+      reason: details.reason,
+      exitCode: details.exitCode,
+    })
+    const now = Date.now()
+    if (now - lastRendererGoneReloadMs < RENDERER_GONE_RELOAD_GUARD_MS) {
+      flightRecorder.record('error', 'renderer.render-process-gone.reload-skipped', { reason: details.reason })
+      return
+    }
+    lastRendererGoneReloadMs = now
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.reload()
+  })
   mainWindow.webContents.on('will-navigate', (event, url) => {
     const devUrl = isDev ? process.env['ELECTRON_RENDERER_URL'] : undefined
     const allowed =
