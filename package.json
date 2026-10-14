@@ -7,13 +7,13 @@
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "rm -rf out && electron-vite build",
+    "build": "rm -rf out && electron-vite build && node scripts/write-build-info.mjs",
     "preview": "electron-vite preview",
-    "dist": "electron-vite build && electron-builder",
-    "dist:mac": "electron-vite build && electron-builder --mac",
-    "dist:win": "electron-vite build && electron-builder --win",
-    "dist:dmg": "electron-vite build && electron-builder --mac dmg",
-    "release": "electron-vite build && electron-builder --mac --publish always",
+    "dist": "npm run build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:dmg": "npm run build && electron-builder --mac dmg",
+    "release": "npm run build && electron-builder --mac --publish always",
     "release:patch": "npm version patch && npm run release",
     "release:minor": "npm version minor && npm run release",
     "release:major": "npm version major && npm run release",
@@ -22,7 +22,8 @@
     "test:all": "npm test && npm run test:mobile",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "sync:contracts": "bash scripts/sync-jaketunes-contracts.sh",
-    "check": "npx tsc -p tsconfig.web.json --noEmit && npx tsc -p tsconfig.node.json --noEmit && npm test"
+    "check": "npx tsc -p tsconfig.web.json --noEmit && npx tsc -p tsconfig.node.json --noEmit && npm test && node scripts/check-no-root-bundle.mjs",
+    "check:root-bundle": "node scripts/check-no-root-bundle.mjs"
   },
   "build": {
     "appId": "com.jacobrosenbaum.jaketunes",
