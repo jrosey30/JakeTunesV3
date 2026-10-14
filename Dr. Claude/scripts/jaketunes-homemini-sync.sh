@@ -376,9 +376,11 @@ resolve_sync_src() {
 # about an edit through autoBackup (120 s) → NAS → mini-nas-pull (60 s):
 # measured 17 s to 9.4 min. Atomic (temp + verify + rename), mtime kept so
 # mini-nas-pull's --update agrees, and it refuses to go BACKWARDS:
-# ⚠️ TWIN: src/common/stale-push.ts libraryPushVerdict (same rule — if the
+# ⚠️ TWIN: src/common/stale-push.ts libraryPushVerdict (same rules — if the
 # copy on homemini holds songs the incoming one lacks, added after the
-# incoming one's newest, the incoming copy is stale and is refused).
+# incoming one's newest, the incoming copy is stale and is refused; and,
+# Brief 197, a song it lacks that was added in the last 30 days refuses
+# too, even when older than the incoming one's newest, and is named).
 publish_backend_library() {
   local src="$1" out
   if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$src" 2>/dev/null; then
@@ -390,7 +392,7 @@ publish_backend_library() {
     return 1
   fi
   out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOMEMINI" 'cd ~/JakeTunesState && python3 - <<"EOF"
-import json, os
+import json, os, time
 from datetime import datetime
 def tracks(p):
     try:
@@ -410,12 +412,23 @@ newest = max([x for x in (ts(t) for t in new) if x is not None] or [float("-inf"
 ahead = [t for t in cur if str(t.get("id")) not in ids and (ts(t) or float("-inf")) > newest]
 if ahead:
     print("refused-stale %d" % len(ahead)); raise SystemExit(0)
+# Brief 197 — twin of the recent-id rule in stale-push.ts: a song the
+# incoming copy lacks that was added in the last 30 days refuses too,
+# even when it is OLDER than the incoming copy's newest (the same-day
+# phone download erased by a cross-lineage publish, 2026-10-14). Named,
+# so the refusal is loud, never silent.
+cutoff = time.time() - 30 * 24 * 3600
+recent = [t for t in cur if str(t.get("id")) not in ids and (ts(t) or 0) > cutoff]
+if recent:
+    names = "; ".join(str(t.get("title") or t.get("id")) for t in recent[:10])
+    print("refused-recent %d %s" % (len(recent), names)); raise SystemExit(0)
 os.replace(".library.json.incoming", "library.json")
 print("published %d" % len(new))
 EOF' 2>>"$LOG")
   case "$out" in
     published*) log "backend publish: $out tracks → ~/JakeTunesState/library.json (phone sees it on its next check)"; return 0 ;;
     refused-stale*) log "backend publish REFUSED: homemini has ${out#refused-stale } song(s) newer than this copy — this copy is stale"; return 1 ;;
+    refused-recent*) log "backend publish REFUSED: homemini has song(s) this copy has never seen, added in the last 30 days (${out#refused-recent }) — refusing to drop them (Brief 197)"; return 1 ;;
     *) log "backend publish: unexpected result '$out'"; return 1 ;;
   esac
 }
