@@ -159,27 +159,44 @@ export function serializeEmbeddingsBlob(map: Map<number, Float32Array>): Buffer 
 // standalone Float32Arrays via setEmbedding.
 // ⚠️ TWIN: scripts/brain-trainer.mjs readEmb and
 // ~/JakeTunesMobile/backend/src/util/rag.ts parse this same format.
-// KNOWN HOLE (2026-08-25): the loop below silently tolerates a truncated
-// buffer (short SMB read ⇒ partial map with no error). In the trainer that
-// exact hole amputated 1280 vectors from the live brain; readEmb now throws
-// on truncation. This side still tolerates it because both callers feed a
-// long-lived cache that later write paths replay — the safe fix needs
-// caller-by-caller analysis first. See PROPOSAL-truncated-read-guard.md.
+// Truncation is FATAL here, exactly as in the trainer's readEmb: when the
+// header's declared count/dimension needs more payload than the buffer
+// holds, this throws instead of returning a partial map. (Brief 180 —
+// closes the truncation hole recorded 2026-08-25, where a short SMB
+// read silently became a smaller brain; in the trainer that hole
+// amputated 1280 vectors from the live brain.)
+// Caller analysis for the throw (done for Brief 180): every caller
+// already treats a failed parse as "keep the previous state / refuse the
+// copy" — getEmbeddingsMap and getMoodIndexMap catch around the parse
+// and keep serving the last good map (the file's mtime is not adopted,
+// so the next getter retries the read), and brain-pull's
+// pullBrainFromNas catches, logs, and retries next tick without
+// adopting. A partial brain is never served.
 export function parseEmbeddingsBlob(buf: Buffer): Map<number, Float32Array> {
   const out = new Map<number, Float32Array>()
-  if (buf.length < 12) return out
+  if (buf.length < 12) {
+    throw new Error(`[embeddings] truncated blob: ${buf.length} byte(s) is shorter than the 12-byte header`)
+  }
   const magic = buf.toString('ascii', 0, 4)
   if (magic !== EMBED_FORMAT_MAGIC) return out
   const ver = buf.readUInt16LE(4)
   const dim = buf.readUInt16LE(6)
   const count = buf.readUInt32LE(8)
+  const recordSize = 4 + dim * 4
+  // The header is the truth: the payload must cover every declared
+  // record at the declared dimension (mirrors brain-trainer readEmb).
+  if (buf.length < 12 + count * recordSize) {
+    throw new Error(
+      `[embeddings] truncated blob: header declares ${count} vector(s) at dim ${dim} ` +
+      `(${12 + count * recordSize} bytes) but the buffer holds ${buf.length} byte(s)`,
+    )
+  }
   if (ver !== EMBED_FORMAT_VERSION || dim !== EMBED_DIM) {
     console.warn(`[embeddings] format mismatch (file v${ver} dim${dim}, expected v${EMBED_FORMAT_VERSION} dim${EMBED_DIM}) — discarding`)
     return out
   }
-  const recordSize = 4 + dim * 4
   let offset = 12
-  for (let i = 0; i < count && offset + recordSize <= buf.length; i++) {
+  for (let i = 0; i < count; i++) {
     const trackId = buf.readUInt32LE(offset); offset += 4
     const vec = new Float32Array(buf.buffer, buf.byteOffset + offset, dim)
     offset += dim * 4
