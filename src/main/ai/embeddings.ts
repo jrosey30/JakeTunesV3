@@ -35,6 +35,7 @@ import { app } from 'electron'
 import { readFile, writeFile, mkdir, stat } from 'fs/promises'
 import { STATE_DIR } from '../state-dir'
 import { tempoEnergyText, KEY_CONFIDENCE_FLOOR, type TempoEnergyInput } from './tempo-energy'
+import { baseText } from '../../common/embedding-text.ts'
 
 export { tempoEnergyText, KEY_CONFIDENCE_FLOOR }
 
@@ -207,30 +208,15 @@ export interface EmbedTrackInput extends TempoEnergyInput {
   members?: string[]
 }
 
-// ⚠️ TWIN: scripts/brain-trainer.mjs baseText() — keep in sync. The MAIN
-// brain is PLAIN since 2026-10-10: artist — title, album (year), genre tag.
-// Measured that day on the whole library (scratch re-embeds, real trainer):
-// the sound-and-mood descriptors, lyrics meaning, tempo, AI subgenre path,
-// members and play-count lines blurred genre and era — 10 nearest
-// other-artist neighbours in the same genre family 72.3% → 80.9% plain; rock
-// queries pulling electronic neighbours 7.0% → 3.4%; retrieval suite 0.736 →
-// 0.788; playlist suggestions on-genre Rocksurgence 90→96%, Dinner Party
-// 67→80%, Pool Dos 75→89%. Vibe searches lose nothing: the router sends them
-// to the MOOD index (rag-retrieval pickRetrievalIndex), which keeps the
-// descriptors — the production-path eval scored identically. Removing only
-// the AI subgenre line changed nothing (72.3 → 70.9%), so it was not the cause.
+// Brief 181: buildEmbeddingText delegates to baseText in
+// src/common/embedding-text.ts — the ONE source of truth the nightly
+// trainer (scripts/brain-trainer.mjs) imports too. The MAIN brain is PLAIN
+// since 2026-10-10: artist — title, album (year), genre tag; the
+// measurements behind that recipe live with baseText in the shared module.
+// Do not re-implement the text here — the hand-synced twin this used to be
+// had already drifted from the trainer on untrimmed string fields.
 export function buildEmbeddingText(t: EmbedTrackInput): string {
-  const lines: string[] = []
-  const artist = (t.artist || '').trim()
-  const title = (t.title || '').trim()
-  const album = (t.album || '').trim()
-  const genre = (t.genre || '').trim()
-  const year = t.year ? String(t.year).trim() : ''
-  lines.push(`${artist || '?'} — ${title || '?'}`)
-  if (album) lines.push(`album: ${album}${year ? ` (${year})` : ''}`)
-  if (!album && year) lines.push(`year: ${year}`)
-  if (genre) lines.push(`genre: ${genre}`)
-  return lines.join('\n')
+  return baseText(t)
 }
 
 // ── OpenAI batch embed ──────────────────────────────────────────────
