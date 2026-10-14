@@ -14,7 +14,13 @@ import { STATE_DIR } from '../state-dir'
 import { parseDecadeConstraint, yearInDecade } from '../ai/decade-query'
 import { getEmbeddingsMap as ragGetEmbeddingsMap } from '../ai/embeddings'
 import { filterOrbitNeighbors, parseOrbitSeed, resolveOrbitSeedIds } from '../ai/orbit-quality'
-import { mergeStarIds } from '../mobile-stars-merge'
+import {
+  normalizeStarSidecar,
+  mergeStarStates,
+  applyStarChange,
+  starSidecarForWrite,
+  type StarSidecarData,
+} from '../mobile-stars-merge'
 import { safeIpcError } from '../safe-ipc-error'
 import { withCompanionInit } from '../hub-companion.ts'
 import { tombstonesPath as playlistTombstonesPath, loadTombstones as loadPlaylistTombstones } from '../playlist-tombstones.ts'
@@ -23,9 +29,12 @@ import type { MobilePlaylistRecord } from '../index.ts'
 export interface MobileReadsIpcHost {
   getPlayEventsPath: () => string
   libraryCache: { get: () => Promise<unknown> }
+  // Brief 172: the sidecar is format v2 ({v, trackIds, removed, added});
+  // the cache stores it whole. v1 files ({trackIds} only) still satisfy
+  // this shape — normalizeStarSidecar handles them at every read.
   mobileStarsCache: {
-    get: () => Promise<{ trackIds: string[] }>
-    update: (fn: (current: { trackIds: string[] }) => { trackIds: string[] }) => Promise<void>
+    get: () => Promise<StarSidecarData>
+    update: (fn: (current: StarSidecarData) => StarSidecarData) => Promise<void>
   }
   mobilePlaylistsCache: { get: () => Promise<{ playlists: MobilePlaylistRecord[] }> }
   ragTrackYearMap: () => Promise<Map<number, string | number | undefined>>
@@ -62,15 +71,17 @@ export function registerMobileReadsIpc(ipc: IpcRegistrar, host: MobileReadsIpcHo
   // and the NAS flush a fire-and-forget background job.
   async function readMobileStarsSet(): Promise<Set<string>> {
     const parsed = await host.mobileStarsCache.get()
-    const ids = Array.isArray(parsed?.trackIds) ? parsed.trackIds : []
-    return new Set(ids.filter((x): x is string => typeof x === 'string'))
+    return new Set(normalizeStarSidecar(parsed).trackIds)
   }
   async function writeMobileStarSidecar(trackId: number, starred: boolean): Promise<void> {
+    // Brief 172: an un-star now writes a tombstone (removed[id] = now) and
+    // a star writes an add timestamp, so the change survives the sync
+    // round-trip instead of resurrecting from the other device's copy.
+    // First write also migrates a v1 sidecar to v2 (removed starts {} —
+    // removals the old format never recorded stay unknown).
     await host.mobileStarsCache.update((current) => {
-      const set = new Set(Array.isArray(current?.trackIds) ? current.trackIds : [])
-      const key = String(trackId)
-      if (starred) set.add(key); else set.delete(key)
-      return { trackIds: Array.from(set).sort() }
+      const next = applyStarChange(normalizeStarSidecar(current), String(trackId), starred, Date.now())
+      return starSidecarForWrite(next)
     })
   }
 
@@ -78,27 +89,28 @@ export function registerMobileReadsIpc(ipc: IpcRegistrar, host: MobileReadsIpcHo
   // The app is the SOLE writer of the local mobile-stars.json (via the cache), so
   // the sync script must NOT write it directly (that would race the cache). The
   // script instead stages homemini's set at mobile-stars.incoming.json; this
-  // unions it into the local set on the app's own terms, then consumes the file.
-  // Additive (mobile-stars-merge.ts) — a star on either device survives. Returns
-  // the count of NEW ids added (0 = nothing was pending).
+  // merges it into the local set on the app's own terms, then consumes the file.
+  // Brief 172: the merge is tombstone-aware last-writer-wins per id
+  // (mobile-stars-merge.ts) — an un-star on EITHER device now survives,
+  // where the 2026-06-07 additive union resurrected it. The staging file
+  // may be v1 or v2; both parse. Returns the count of NEW ids added
+  // (0 = nothing was pending).
   async function mergeIncomingMobileStars(): Promise<number> {
     const incomingPath = join(STATE_DIR, 'mobile-stars.incoming.json')
-    let incoming: string[] = []
+    let incomingRaw: unknown
     try {
-      const parsed = JSON.parse(await readFile(incomingPath, 'utf-8')) as { trackIds?: unknown }
-      incoming = Array.isArray(parsed?.trackIds)
-        ? parsed.trackIds.filter((x): x is string => typeof x === 'string')
-        : []
+      incomingRaw = JSON.parse(await readFile(incomingPath, 'utf-8')) as unknown
     } catch {
       return 0   // no staging file (the common case) — nothing to merge
     }
+    const incoming = normalizeStarSidecar(incomingRaw)
     let added = 0
-    if (incoming.length > 0) {
+    if (incoming.trackIds.length > 0 || Object.keys(incoming.removed).length > 0 || Object.keys(incoming.added).length > 0) {
       await host.mobileStarsCache.update((current) => {
-        const local = Array.isArray(current?.trackIds) ? current.trackIds : []
-        const merged = mergeStarIds(local, incoming)
-        added = merged.length - new Set(local).size
-        return { trackIds: merged }
+        const local = normalizeStarSidecar(current)
+        const merged = mergeStarStates(local, incoming)
+        added = merged.trackIds.filter((id) => !local.trackIds.includes(id)).length
+        return starSidecarForWrite(merged)
       })
     }
     // Consume the staging file so the same set isn't re-merged on every read.
