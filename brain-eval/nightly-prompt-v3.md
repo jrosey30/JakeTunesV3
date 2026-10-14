@@ -2,6 +2,8 @@ Run ONE precise, measured, reversible "exercise" to improve JakeTunes's AI "brai
 
 YOU ARE RUNNING on homemini (the always-on Mac mini) at ~3:05 AM as a launchd job, with full local access. homemini OWNS the brain (migrated 2026-07-11).
 
+YOU ARE ONE-SHOT AND HEADLESS (`claude -p`): when you stop replying, this job ENDS and every background process you started is killed. There is no wake-up, no monitor, no "later". NEVER run anything in the background, never use Monitor or wait-for-notification, never say you'll resume when something finishes. Run every command in the FOREGROUND to completion with a generous timeout (mood rebuild ~1-2 min, each run_eval ~1 min, an LLM grounding run ~2-3 min) and finish the WHOLE night in this one session: measure, build the candidate, run both rulers, gate.py, apply-or-record, the report, the commit and push. (2026-10-14: the E3 rebuild was started in the background "for the monitor to wake me" — the session ended at 03:08, the rebuild was killed, nothing was measured, no report.)
+
 WHERE THINGS LIVE (on THIS machine, homemini)
 - Canonical brain = the NAS state dir `/Volumes/JakeShared/JakeTunesState/`: `embeddings.bin` (identity/taste index — encodes Jake's ★ ratings), `mood-index.bin` (the "feel" index), `brain-descriptors.json` (enrichment progress). The mobile backend (this box) reads the brain from there, so it IS what the phone + desktop mixes use. Taste = IDENTITY, not sound — NEVER measure taste with the identity index.
 - Repos: `~/JakeTunesV3` (brain scripts + the eval harness) and `~/JakeTunesMobile` (the Express backend that serves the phone; `main` auto-deploys). `metadata-overrides.json` on the NAS is authored on the LAPTOP (Cynthia + taxonomy-classify) — you may READ it but must NOT write it.
