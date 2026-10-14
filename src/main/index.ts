@@ -195,6 +195,7 @@ import { readLedgerRows } from './taste-ledger-io.ts'
 import { JsonFileCache } from './state-cache'
 import { hashPayload, verifyLandedFile, stagePayloadAndRename } from './save-verify.ts'
 import { decideStagedRecovery, snapshotLibraryFile } from './staged-recovery.ts'
+import { fsyncFile, fsyncParentDir } from './fs-durability.ts'
 import { initFlightRecorder, sanitizeCrashPayload, quietWarn } from './flight-recorder'
 import { spawn } from 'child_process'
 import { stat, statfs, lstat, open, readFile, writeFile, mkdir, copyFile, unlink, readlink, symlink, rename, appendFile, readdir, utimes } from 'fs/promises'
@@ -5228,6 +5229,9 @@ async function saveLibraryImpl(tracks: unknown[], playlists?: unknown[], force?:
     // actually landed and compare hashes — not track counts.
     const expectedHash = hashPayload(payload)
     await writeFile(tmp, payload)
+    // Brief 168: fsync the staged file BEFORE the rename and the directory
+    // after it — rename alone does not survive a power loss.
+    await fsyncFile(tmp)
     const { rename: renameFS, unlink: unlinkFS } = await import('fs/promises')
     // Brief 016: pre-stamp lastSelfWriteMtimeMs BEFORE the rename so the
     // fsWatch handler (which fires synchronously with the rename) reads
@@ -5243,6 +5247,7 @@ async function saveLibraryImpl(tracks: unknown[], playlists?: unknown[], force?:
     // doesn't matter.
     lastSelfWriteMtimeMs = Date.now()
     await renameFS(tmp, LIBRARY_PATH)
+    await fsyncParentDir(LIBRARY_PATH)
     try {
       const s = await stat(LIBRARY_PATH)
       lastSelfWriteMtimeMs = Math.round(s.mtimeMs)
