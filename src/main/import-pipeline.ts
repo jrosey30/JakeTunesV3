@@ -34,7 +34,7 @@
  */
 
 import { join } from 'path'
-import { stat, mkdir, copyFile, readFile, lstat } from 'fs/promises'
+import { stat, mkdir, copyFile, readFile, lstat, open, rm } from 'fs/promises'
 import {
   IS_WINDOWS,
   convertAudio,
@@ -339,6 +339,27 @@ export function codecForCopiedSource(ext: string, probedCodec: string): string {
   return ext.replace(/^\./, '') || 'unknown'
 }
 
+// ── Brief 170: one import at a time, in-process ─────────────────────
+// Three entry points allocate library IDs (renderer import-track,
+// import-tracks, importDownloadedFiles for the stores) plus the CD
+// ripper's imports — and nothing stopped two of them allocating at
+// the same moment, taking the same ID, and converting over each
+// other's destination. Every importOneFile call now runs inside this
+// single promise-chain mutex, whichever door it came through. The
+// chain survives a rejected import (the next import still runs) and
+// no entry point needs its own lock — the guard lives at the one
+// function they all share.
+let importChain: Promise<unknown> = Promise.resolve()
+
+export function runImportExclusive<T>(fn: () => Promise<T>): Promise<T> {
+  const run = importChain.then(fn, fn)
+  importChain = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  return run
+}
+
 export async function importOneFile(
   srcPath: string,
   id: number,
@@ -347,7 +368,22 @@ export async function importOneFile(
   dateOverride?: Date,
   source?: string,
 ): Promise<SingleImportResult> {
+  return runImportExclusive(() => importOneFileLocked(srcPath, id, chosenFmt, dupeFingerprints, dateOverride, source))
+}
+
+async function importOneFileLocked(
+  srcPath: string,
+  id: number,
+  chosenFmt: AudioFormat,
+  dupeFingerprints: Set<string>,
+  dateOverride?: Date,
+  source?: string,
+): Promise<SingleImportResult> {
   const ext = srcPath.substring(srcPath.lastIndexOf('.')).toLowerCase()
+  // Brief 170: the destination this import reserved, if it got that
+  // far. Declared outside the try so a failed import can release the
+  // reservation instead of leaving a 0-byte file squatting on the ID.
+  let reservedDestPath: string | null = null
   try {
     const mm = await import('music-metadata')
     const metadata = await mm.parseFile(srcPath)
@@ -376,14 +412,6 @@ export async function importOneFile(
     // `id` will reflect the bumped value; the renderer queue advances
     // its counter accordingly.
     const requestedId = id
-    id = await findFreeImportedId(id)
-    if (id !== requestedId) {
-      console.warn(`import-track: id ${requestedId} collides with existing file imported_${requestedId}.*; bumped to ${id}`)
-    }
-
-    const subDir = `F${String(id % 50).padStart(2, '0')}`
-    const destDir = join(D().musicDir(), subDir)
-    await mkdir(destDir, { recursive: true })
 
     const codec = format.codec?.toLowerCase() || ''
     // Lossless sources convert to chosenFmt (default ALAC). MP3/AAC are
@@ -392,9 +420,44 @@ export async function importOneFile(
     const doConvert = shouldConvertOnImport(ext, codec, chosenFmt)
 
     let finalExt = ext
-    let fileName: string
-    let destPath: string
+    let fileName = ''
+    let destPath = ''
+    let subDir = ''
     let didConvert = false
+
+    // Brief 170: RESERVE the destination atomically, before conversion.
+    // findFreeImportedId alone is a check; the conversion that follows
+    // can run for minutes, and a second allocator checking in that
+    // window saw the same "free" slot. Creating the destination with
+    // 'wx' makes the reservation a fact on disk the instant it happens:
+    // any other allocator's findFreeImportedId sees the file and bumps.
+    // (In-process allocators are already serialized by the import
+    // mutex above; this closes the window against everything else —
+    // including a second app process — too.) The placeholder is
+    // overwritten in place by the convert/copy that follows (ffmpeg
+    // runs with -y; copyFile truncates), and released in the catch
+    // below if the import fails.
+    const reserveDest = async (wantExt: string): Promise<void> => {
+      while (true) {
+        id = await findFreeImportedId(id)
+        subDir = `F${String(id % 50).padStart(2, '0')}`
+        const destDir = join(D().musicDir(), subDir)
+        await mkdir(destDir, { recursive: true })
+        const candidate = join(destDir, `imported_${id}${wantExt}`)
+        try {
+          const fh = await open(candidate, 'wx')
+          await fh.close()
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === 'EEXIST') { id++; continue }
+          throw err
+        }
+        finalExt = wantExt
+        fileName = `imported_${id}${wantExt}`
+        destPath = candidate
+        reservedDestPath = candidate
+        return
+      }
+    }
 
     const embedTags = {
       title: common.title || srcPath.substring(srcPath.lastIndexOf('/') + 1).replace(/\.[^.]+$/, ''),
@@ -410,9 +473,7 @@ export async function importOneFile(
     }
 
     if (doConvert) {
-      finalExt = extensionForFormat(chosenFmt)
-      fileName = `imported_${id}${finalExt}`
-      destPath = join(destDir, fileName)
+      await reserveDest(extensionForFormat(chosenFmt))
       try {
         await convertAudio(srcPath, destPath, chosenFmt, embedTags)
         // Old iPods need moov-first; external pipelines often mux moov-last.
@@ -420,15 +481,22 @@ export async function importOneFile(
         didConvert = true
       } catch (convertErr) {
         console.error(`Conversion failed for ${srcPath}, copying original:`, convertErr)
-        finalExt = ext
-        fileName = `imported_${id}${finalExt}`
-        destPath = join(destDir, fileName)
+        // The copy lands under the SOURCE extension. Release the convert
+        // reservation (unless it's the same path) and reserve that slot
+        // the same atomic way before copying.
+        if (reservedDestPath && finalExt !== ext) {
+          await rm(reservedDestPath, { force: true }).catch(() => undefined)
+          reservedDestPath = null
+        }
+        if (!reservedDestPath) await reserveDest(ext)
         await copyFile(srcPath, destPath)
       }
     } else {
-      fileName = `imported_${id}${finalExt}`
-      destPath = join(destDir, fileName)
+      await reserveDest(ext)
       await copyFile(srcPath, destPath)
+    }
+    if (id !== requestedId) {
+      console.warn(`import-track: id ${requestedId} collides with existing file imported_${requestedId}.*; bumped to ${id}`)
     }
 
     // The play-cache branches on === 'alac'. A copied MP3 must not be
@@ -525,19 +593,49 @@ export async function importOneFile(
     return { ok: true, track, ...(artwork ? { artwork } : {}) }
   } catch (err) {
     console.error(`Failed to import ${srcPath}:`, err)
+    // Brief 170: release the reservation — a failed import must not
+    // leave a 0-byte placeholder claiming this ID forever.
+    if (reservedDestPath) {
+      await rm(reservedDestPath, { force: true }).catch(() => undefined)
+    }
     return { ok: false, error: safeIpcError(err, 'io-failed') }
   }
 }
 
-export async function nextLibraryId(): Promise<number> {
-  try {
-    const lib = JSON.parse(await readFile(D().libraryPath(), 'utf-8')) as { tracks?: Array<{ id?: number }> }
-    let max = 0
-    for (const t of lib.tracks || []) max = Math.max(max, Number(t.id) || 0)
-    return max + 1
-  } catch {
-    return 1
+// Brief 170: the pure half of nextLibraryId — max numeric id + 1.
+// Junk ids (strings that aren't numbers, nulls) don't count.
+export function computeNextLibraryId(tracks: Array<{ id?: unknown }> | undefined): number {
+  let max = 0
+  for (const t of tracks || []) {
+    const n = Number(t?.id)
+    if (Number.isFinite(n)) max = Math.max(max, n)
   }
+  return max + 1
+}
+
+export async function nextLibraryId(): Promise<number> {
+  // Brief 170: this used to return 1 on ANY failure — an unreadable or
+  // unparseable library silently restarted ID allocation at 1, straight
+  // into collisions with every existing imported file. Now it fails
+  // loudly. The ONE legitimate bootstrap stays: no library file at all
+  // (fresh install, first import) starts at 1.
+  let raw: string
+  try {
+    raw = await readFile(D().libraryPath(), 'utf-8')
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return 1
+    throw new Error(`nextLibraryId: cannot read library at ${D().libraryPath()}: ${err instanceof Error ? err.message : String(err)}`)
+  }
+  let lib: { tracks?: Array<{ id?: unknown }> }
+  try {
+    lib = JSON.parse(raw) as { tracks?: Array<{ id?: unknown }> }
+  } catch (err) {
+    throw new Error(`nextLibraryId: library at ${D().libraryPath()} does not parse — refusing to allocate id 1 over an unreadable library (${err instanceof Error ? err.message : String(err)})`)
+  }
+  if (!lib || typeof lib !== 'object' || (lib.tracks !== undefined && !Array.isArray(lib.tracks))) {
+    throw new Error(`nextLibraryId: library at ${D().libraryPath()} has an unexpected shape — refusing to allocate id 1 over it`)
+  }
+  return computeNextLibraryId(lib.tracks)
 }
 
 export async function importDownloadedFiles(absPaths: string[], source?: string): Promise<{ tracks: Array<Record<string, unknown>>; dupeCount: number; errorCount: number; dupes: Array<{ src: string; matchedTitle: string; matchedArtist: string }> }> {
