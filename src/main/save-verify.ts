@@ -16,6 +16,7 @@
  */
 import { createHash } from 'node:crypto'
 import { readFile, writeFile, rename } from 'node:fs/promises'
+import { fsyncFile, fsyncParentDir } from './fs-durability.ts'
 
 /** sha256 hex of the exact payload string (utf-8) that will be written. */
 export function hashPayload(payload: string): string {
@@ -50,5 +51,9 @@ export async function stagePayloadAndRename(
   payload: string,
 ): Promise<void> {
   await writeFile(stagingPath, payload, 'utf-8')
+  // Brief 168: same durability discipline as the canonical save — fsync
+  // the staged file before the rename, the directory after.
+  await fsyncFile(stagingPath)
   await rename(stagingPath, destPath)
+  await fsyncParentDir(destPath)
 }
