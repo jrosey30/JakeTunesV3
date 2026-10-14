@@ -192,7 +192,7 @@ import { explicitWins } from '../common/explicit.ts'
 import { MODEL_SMART, MODEL_FAST, withModelPolicy } from '../common/ai-models.ts'
 import { summariseLearning, discoverVerdicts, type LedgerRow } from './discovery-learned.ts'
 import { readLedgerRows } from './taste-ledger-io.ts'
-import { JsonFileCache } from './state-cache'
+import { JsonFileCache, flushAllCaches } from './state-cache'
 import { hashPayload, verifyLandedFile, stagePayloadAndRename } from './save-verify.ts'
 import { decideStagedRecovery, snapshotLibraryFile } from './staged-recovery.ts'
 import { fsyncFile, fsyncParentDir } from './fs-durability.ts'
@@ -11411,32 +11411,36 @@ app.on('window-all-closed', () => {
 // hangs for a few seconds before Electron force-kills it.
 // 4.5: also ping the renderer to fade audio before the process dies.
 // Without this, cmd+Q snaps any playing audio mid-waveform → speaker
-// pop. We defer the quit once, send 'app-quit-fade', wait 180ms for
-// the renderer to ramp Howler volumes to 0, then let the original
-// quit proceed. `quittingForFade` guards against re-entry — the second
-// 'before-quit' (when we call app.quit() ourselves) bypasses the
-// deferral and tears down normally.
-let quittingForFade = false
+// pop. We send 'app-quit-fade' and hold the quit for 180ms so the
+// renderer can ramp Howler volumes to 0.
+// Brief 173: the first 'before-quit' is now preventDefault()ed until
+// the sidecar flush SETTLES (state-cache's flushAllCaches — the old
+// code fired `void Promise.all([...flush()])` and raced it against the
+// fade, losing the last seconds of override/star/profile edits on a
+// fast quit). Bounded at 2s inside flushAllCaches so a wedged SMB
+// flush can't trap the app open; flush failures/drops are logged from
+// the cache stats instead of vanishing. `quitDeferralStarted` guards
+// re-entry — the second 'before-quit' (our own app.quit()) proceeds.
+let quitDeferralStarted = false
 app.on('before-quit', (e) => {
   unregisterMediaKeyShortcuts()
   void stopInboxWatcher().catch(() => { /* shutting down, ignore */ })
-  // 4.5.0-106 Phase 2.5: flush any pending NAS writes before we let the
-  // process exit. Cache writes are backgrounded, so a fast quit could
-  // otherwise lose the last few seconds of edits. Wrapped in a Promise
-  // chain that resolves regardless — we don't want quit to hang on a
-  // stuck SMB connection.
-  void Promise.all([
-    overridesCache.flush(),
-    mobileStarsCache.flush(),
-    listenerProfileCache.flush(),
-    musicmanMemoryCache.flush(),
-    playlistsCache.flush(),
-  ]).catch(() => { /* ignore — quitting */ })
-  if (quittingForFade) return
-  const win = mainWindow
-  if (!win || win.isDestroyed()) return
+  if (quitDeferralStarted) return
+  quitDeferralStarted = true
   e.preventDefault()
-  quittingForFade = true
-  try { win.webContents.send('app-quit-fade') } catch { /* ignore */ }
-  setTimeout(() => app.quit(), 180)
+  const win = mainWindow
+  const hasWin = !!win && !win.isDestroyed()
+  if (win && !win.isDestroyed()) {
+    try { win.webContents.send('app-quit-fade') } catch { /* ignore */ }
+  }
+  void (async () => {
+    const [settled] = await Promise.all([
+      flushAllCaches([overridesCache, mobileStarsCache, listenerProfileCache, musicmanMemoryCache, playlistsCache], 2000),
+      // Preserve the 180ms audio-fade deferral alongside the flush wait.
+      new Promise((r) => setTimeout(r, hasWin ? 180 : 0)),
+    ])
+    if (settled.timedOut) console.warn('[quit] sidecar flush did not settle within 2s — quitting anyway')
+    if (settled.failures > 0 || settled.dropped > 0) console.warn(`[quit] sidecar flush settled with ${settled.failures} failure(s), ${settled.dropped} dropped write(s) — see [state-cache] logs`)
+    app.quit()
+  })()
 })
