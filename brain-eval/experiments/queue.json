@@ -132,7 +132,7 @@
   {
    "id": "E3",
    "title": "Mood-text refresh once the bare backlog is drained",
-   "status": "queued",
+   "status": "applied",
    "priority": 70,
    "lane": "auto",
    "hypothesis": {
@@ -180,7 +180,38 @@
    },
    "max_nights": 1,
    "series": false,
-   "result": null,
+   "result": {
+    "at": "2026-10-14T11:32:31",
+    "outcome": "applied",
+    "summary": "Mood-text refresh with the #110 family/umbrella genre line APPLIED. Gate exit 0: v3 mean dpp +0.1110 CI90 [+0.080,+0.143] over 154 probes (52 up/10 down/92 same); headline 0.742->0.805; leaf 0.517->0.844, umbrella_family 0.913->0.916 (10-13 regression repaired), tempo_family +0.035, vibe +0.013; grounding 20/20. v1 topline identical 0.810/1.000/0.905; ret-014 -1/30 the only mood-routed drop, mood-routed mean +0.0308 (one-slot rule). Applied atomically to NAS mood-index.bin (2e84bd21b734); backup mood-index.bin.pre-E3-20261014 (028b02ea0e93) verified; header EMBD v1 dim1536 count 11584 OK. embeddings.bin untouched (a174a607bd65).",
+    "metrics": {
+     "v3_base": 0.742,
+     "v3_cand": 0.805,
+     "mean_dpp": 0.11095,
+     "ci90": [
+      0.08,
+      0.14286
+     ],
+     "leaf": [
+      0.517,
+      0.844
+     ],
+     "umbrella_family": [
+      0.913,
+      0.916
+     ],
+     "grounding_cand": 1.0,
+     "v1": [
+      0.81,
+      1.0,
+      0.905
+     ],
+     "ret014_slots": -1,
+     "mood_routed_mean_delta": 0.0308,
+     "applied_sha": "2e84bd21b73491f7eed0db995188d031e39bcffd3485f5513421bbd99c3beb63",
+     "backup": "mood-index.bin.pre-E3-20261014"
+    }
+   },
    "notes": [
     "10-13 requeued after #110 + #112; priced on homemini: v3 +0.110 (leaf 0.518 -> 0.844, umbrella -0.002), grounding 20/20, v1 topline identical, ret-014 -1/30 the only mood-routed drop -> APPLY under the new rule."
    ]
