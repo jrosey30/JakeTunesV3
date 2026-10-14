@@ -20,7 +20,8 @@ whole response once cut healthy long transfers mid-body.)
   timer resets on every chunk, and ~10 s of zero bytes errors the
   stream (and cancels the wedged source). A slow-but-alive stream
   is never cut — the budget is per-gap, not a total deadline. The
-  timer is `unref`'d so a wedged stream can't keep the app alive.
+  timer is bounded and self-clearing, so it is not `unref`'d (fix
+  commit on this branch: unref let Node exit mid-read).
 - **`src/main/index.ts` hunk** (3 small pieces): import the wrapper;
   extend the budget comment; wrap the live-proxy body in
   `fetchAudioFromHomemini`'s `once()` before it is handed to the

@@ -53,8 +53,9 @@ export function withBodyInactivityTimeout<T>(
       // Release the wedged underlying source; its bytes are unwanted now.
       reader.cancel().catch(() => undefined)
     }, timeoutMs)
-    // Node main process: a wedged stream must never keep the app alive.
-    ;(timer as unknown as { unref?: () => void }).unref?.()
+    // Deliberately NOT unref'd: the timer is bounded and self-clearing (it
+    // fires or is cleared within timeoutMs), and unref'ing it let Node exit
+    // while a stalled read was still pending (the tests were cancelled).
   }
 
   return new ReadableStream<T>({
