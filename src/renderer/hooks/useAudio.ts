@@ -2045,6 +2045,21 @@ export function useAudio(opts?: { primary?: boolean }) {
     } else if (stateRef.current.nowPlaying) {
       isPaused = false
       primeAudioGraph()
+      if (!sharedHowl) {
+        // Brief 162: a restored session has a nowPlaying track but no
+        // Howl — the state was rebuilt from disk, paused, on launch.
+        // Resume means building the Howl now (playTrack) and seeking
+        // to the restored position on its first play event. Without
+        // this branch the play button dispatched RESUME into silence.
+        const np = stateRef.current.nowPlaying
+        const resumePos = stateRef.current.position
+        playTrackRef.current?.(np, stateRef.current.queue, stateRef.current.queueIndex)
+        const nh = sharedHowl
+        if (nh && resumePos > 1) {
+          nh.once('play', () => { try { nh.seek(resumePos) } catch { /* element not ready — plays from the top */ } })
+        }
+        return
+      }
       snapHowlOutputVolume(sharedHowl, stateRef.current.volume)
       sharedHowl?.play()
       dispatchRef.current({ type: 'RESUME' })
