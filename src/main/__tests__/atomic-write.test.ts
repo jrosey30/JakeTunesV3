@@ -70,3 +70,25 @@ test('a failed write does not leave a staging file or clobber the destination', 
     assert.ok(existsSync(s.file))
   } finally { s.cleanup() }
 })
+
+test('brief 168: writes land byte-exact through the fsync path, repeatedly', async () => {
+  const s = scratch()
+  try {
+    // Every write now fsyncs the staged file before rename and the
+    // directory after; the observable contract is that repeated writes
+    // still land exactly one complete payload, byte for byte.
+    for (let i = 0; i < 5; i++) await writeJsonAtomic(s.file, { i, filler: 'y'.repeat(i * 100) })
+    const raw = readFileSync(s.file, 'utf-8')
+    assert.equal(raw, JSON.stringify({ i: 4, filler: 'y'.repeat(400) }, null, 2))
+    assert.deepEqual(readdirSync(s.dir).filter((f) => f.endsWith('.tmp')), [], 'no staging litter')
+  } finally { s.cleanup() }
+})
+
+test('brief 168: creates and fsyncs into a not-yet-existing nested directory', async () => {
+  const s = scratch()
+  try {
+    const nested = join(s.dir, 'a', 'b', 'state.json')
+    await writeJsonAtomic(nested, { deep: true })
+    assert.deepEqual(JSON.parse(readFileSync(nested, 'utf-8')), { deep: true })
+  } finally { s.cleanup() }
+})
