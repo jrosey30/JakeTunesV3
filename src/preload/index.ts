@@ -536,11 +536,18 @@ const electronAPI = {
     skippedFpMismatch?: number
     skippedNoWritable?: number
     fileSizesRefreshed?: number
-    fileSizes?: Array<{ id: number; fileSize: number }>
+    fileSizes?: Array<{ id: number; fileSize: number; audioFingerprint?: string }>
     failures?: Array<{ filePath: string; error?: string }>
     error?: string
   }> =>
     ipcRenderer.invoke('apply-overrides-batch'),
+  // Brief 020 per-edit write-back: the tag write rewrote this track's
+  // file. New size and fingerprint, for the renderer to apply and save.
+  onTagWritebackFileChanged: (callback: (m: { id: number; fileSize: number; audioFingerprint?: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, m: { id: number; fileSize: number; audioFingerprint?: string }) => callback(m)
+    ipcRenderer.on('tag-writeback:file-changed', handler)
+    return () => { ipcRenderer.removeListener('tag-writeback:file-changed', handler) }
+  },
   onTagWritebackProgress: (callback: (p: { done: number; total: number; succeeded: number; failed: number; currentPath?: string }) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, p: { done: number; total: number; succeeded: number; failed: number; currentPath?: string }) => callback(p)
     ipcRenderer.on('tag-writeback:progress', handler)

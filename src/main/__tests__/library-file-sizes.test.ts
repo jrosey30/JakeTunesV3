@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs'
 import { lstat, mkdtemp, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileSizeUpdates, measureLibraryFileSizes } from '../../common/library-file-sizes.ts'
+import { measureLibraryFileSizes, measuredFileUpdates } from '../../common/library-file-sizes.ts'
 
 const SRC = join(import.meta.dirname, '..', '..')
 
@@ -64,6 +64,21 @@ describe('measureLibraryFileSizes', () => {
     assert.deepEqual(scan.measured, [{ id: 2, fileSize: 7 }])
   })
 
+  test('fingerprints are measured only when asked, with the track duration', async () => {
+    const seen: Array<[string, number]> = []
+    const fp = async (abs: string, ms: number) => { seen.push([abs, ms]); return `sha1:${abs.length}|${ms}` }
+    const tracks = [
+      { id: 1, path: ':a', fileSize: 1, duration: 215000 },
+      { id: 2, path: ':link', fileSize: 1, duration: 9 },
+    ]
+    const lst = fakeLstat({ ':a': { size: 5, kind: 'file' }, ':link': { size: 0, kind: 'link' } })
+    const plain = await measureLibraryFileSizes(tracks, (c) => c, () => true, lst)
+    assert.deepEqual(plain.measured, [{ id: 1, fileSize: 5 }])
+    const withFp = await measureLibraryFileSizes(tracks, (c) => c, () => true, lst, undefined, fp)
+    assert.deepEqual(withFp.measured, [{ id: 1, fileSize: 5, audioFingerprint: 'sha1:2|215000' }])
+    assert.deepEqual(seen, [[':a', 215000]], 'never fingerprints a streamed symlink')
+  })
+
   test('a real offload symlink to the empty sentinel is not measured as 0 bytes', async () => {
     const root = await mkdtemp(join(tmpdir(), 'jt-sizes-'))
     const sentinel = join(root, '.jt-streamed')
@@ -84,15 +99,26 @@ describe('measureLibraryFileSizes', () => {
   })
 })
 
-describe('fileSizeUpdates', () => {
+describe('measuredFileUpdates', () => {
   test('only sizes that differ from the renderer copy, for tracks it holds', () => {
-    const updates = fileSizeUpdates(
+    const updates = measuredFileUpdates(
       [{ id: 1, fileSize: 100 }, { id: 2, fileSize: 200 }, { id: 3 }],
       [{ id: 1, fileSize: 100 }, { id: 2, fileSize: 250 }, { id: 3, fileSize: 30 }, { id: 99, fileSize: 1 }],
     )
     assert.deepEqual(updates, [
       { id: 2, field: 'fileSize', value: '250' },
       { id: 3, field: 'fileSize', value: '30' },
+    ])
+  })
+
+  test('a measured fingerprint replaces a stale one; none measured leaves it alone', () => {
+    const updates = measuredFileUpdates(
+      [{ id: 1, fileSize: 10, audioFingerprint: 'sha1:old|1' }, { id: 2, fileSize: 20, audioFingerprint: 'sha1:keep|2' }],
+      [{ id: 1, fileSize: 11, audioFingerprint: 'sha1:new|1' }, { id: 2, fileSize: 20 }],
+    )
+    assert.deepEqual(updates, [
+      { id: 1, field: 'fileSize', value: '11' },
+      { id: 1, field: 'audioFingerprint', value: 'sha1:new|1' },
     ])
   })
 })
@@ -107,13 +133,32 @@ describe('refresh is saved by the renderer, not written by main', () => {
     assert.ok(start > 0)
     const body = index.slice(start, index.indexOf('\n}\n', start))
     assert.equal(/writeFile|rename|lastSelfWriteMtimeMs/.test(body), false, 'no library.json write in the measure path')
-    assert.match(body, /measureLibraryFileSizes\(tracks, .*, shouldMeasure, lstat, onProgress\)/)
+    assert.match(body, /measureLibraryFileSizes\(tracks, .*, shouldMeasure, lstat, onProgress, withFingerprints \? computeAudioFingerprint : undefined\)/)
   })
 
   test('both renderer flows apply the measured sizes with UPDATE_TRACKS', () => {
-    assert.match(app, /fileSizeUpdates\(libTracksRef\.current, r\.measured \?\? \[\]\)/)
-    assert.match(app, /fileSizeUpdates\(libTracksRef\.current, r\.fileSizes \?\? \[\]\)/)
+    assert.match(app, /measuredFileUpdates\(libTracksRef\.current, r\.measured \?\? \[\]\)/)
+    assert.match(app, /measuredFileUpdates\(libTracksRef\.current, r\.fileSizes \?\? \[\]\)/)
     assert.equal((app.match(/if \(sizeUpdates\.length\) dispatch\(\{ type: 'UPDATE_TRACKS', updates: sizeUpdates \}\)/g) || []).length, 2)
+  })
+
+  test('tag write-back re-measures size and fingerprint; the menu refresh measures sizes only', () => {
+    const hookStart = index.indexOf('const result = await writeTagsToFile({ audioFilePath: absPath, overrides })')
+    assert.ok(hookStart > 0, 'per-edit write-back still writes tags')
+    const hook = index.slice(hookStart, index.indexOf('} else if (!result.ok)', hookStart))
+    assert.match(hook, /measureLibraryFileSizes\(\[track\], \(\) => absPath, \(\) => true, lstat, undefined, computeAudioFingerprint\)/)
+    assert.match(hook, /sendToRenderer\('tag-writeback:file-changed', measured\[0\]\)/)
+    assert.match(index, /measureFileSizesOnDisk\(\(absPath\) => refreshedPaths\.has\(absPath\), undefined, true\)/)
+    const menu = index.slice(index.indexOf("ipc.handle('refresh-file-sizes'"), index.indexOf("ipc.handle('refresh-file-sizes'") + 600)
+    assert.equal(/measureFileSizesOnDisk\([\s\S]*?,\s*true\s*\)/.test(menu), false, 'the menu refresh does not re-stamp fingerprints')
+  })
+
+  test('the renderer applies a per-edit rewrite through UPDATE_TRACKS', () => {
+    const at = app.indexOf('window.electronAPI.onTagWritebackFileChanged((m) => {')
+    assert.ok(at > app.indexOf('const libTracksRef = useRef('), 'subscribes after libTracksRef exists')
+    const body = app.slice(at, at + 300)
+    assert.match(body, /measuredFileUpdates\(libTracksRef\.current, \[m\]\)/)
+    assert.match(body, /dispatch\(\{ type: 'UPDATE_TRACKS', updates \}\)/)
   })
 
   test('UPDATE_TRACKS stores fileSize as a number', () => {

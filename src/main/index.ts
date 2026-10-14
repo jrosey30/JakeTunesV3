@@ -9797,6 +9797,10 @@ ipc.handle('save-metadata-override', async (_event, trackId: number, field: stri
         const result = await writeTagsToFile({ audioFilePath: absPath, overrides })
         if (result.ok && result.fieldsWritten.length > 0) {
           console.log(`[tag-writeback] ${trackId} ${field}=${value} → ${absPath}${result.sidecarBackup ? ' (backed up)' : ''}`)
+          // The write resized the file and changed the bytes its fingerprint
+          // hashes. The renderer applies both; its save writes them.
+          const { measured } = await measureLibraryFileSizes([track], () => absPath, () => true, lstat, undefined, computeAudioFingerprint)
+          if (measured[0]) sendToRenderer('tag-writeback:file-changed', measured[0])
         } else if (!result.ok) {
           console.warn(`[tag-writeback] ${trackId} ${field} failed: ${result.error}`)
         }
@@ -9908,7 +9912,7 @@ ipc.handle('apply-overrides-batch', async (event) => {
     // Measured here, applied by the renderer (UPDATE_TRACKS), written by
     // its save-library like any other edit.
     const sizeScan = refreshedPaths.size > 0
-      ? await measureFileSizesOnDisk((absPath) => refreshedPaths.has(absPath))
+      ? await measureFileSizesOnDisk((absPath) => refreshedPaths.has(absPath), undefined, true)
       : null
 
     return {
@@ -9945,6 +9949,7 @@ ipc.handle('apply-overrides-batch', async (event) => {
 async function measureFileSizesOnDisk(
   shouldMeasure: (absPath: string) => boolean,
   onProgress?: (p: FileSizeProgress) => void,
+  withFingerprints = false,
 ): Promise<FileSizeScan | null> {
   let tracks: Array<Record<string, unknown>>
   try {
@@ -9953,7 +9958,7 @@ async function measureFileSizesOnDisk(
     console.warn(`[refresh-file-sizes] could not read library.json:`, err instanceof Error ? err.message : err)
     return null
   }
-  return measureLibraryFileSizes(tracks, (p) => colonPathToAbsolute(p, MUSIC_DIR), shouldMeasure, lstat, onProgress)
+  return measureLibraryFileSizes(tracks, (p) => colonPathToAbsolute(p, MUSIC_DIR), shouldMeasure, lstat, onProgress, withFingerprints ? computeAudioFingerprint : undefined)
 }
 
 // Brief 016 commit 2: full-library fileSize refresh. Measures every
