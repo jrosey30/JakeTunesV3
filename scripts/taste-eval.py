@@ -113,7 +113,8 @@ def identity_auc(tracks, y):
             return max(1.0, (now_ms/1000 - d.timestamp()) / (30*86400))
         except Exception:
             return 24.0
-    intensity = np.array([np.log1p(float(t.get("playCount") or 0)) / _months(t) for t in tracks])
+    # v5 (2026-10-13, E9): per sqrt(month) — clock-stable; mirrors tasteScore.ts.
+    intensity = np.array([np.log1p(float(t.get("playCount") or 0)) / np.sqrt(_months(t)) for t in tracks])
     rec = np.array([(3650.0 if not (t.get("lastPlayedAt") or 0)
                      else min(3650.0, (now_ms - (t.get("lastPlayedAt") or 0)) / 86400000.0)) / 3650.0
                     for t in tracks])
