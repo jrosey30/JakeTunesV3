@@ -10,7 +10,10 @@
  * there is no legitimate root bundle, stamped or otherwise, so its
  * presence is the regression.
  *
- * Wired into `npm run check` and CI (.github/workflows/check.yml).
+ * Wired into `npm run check` (the repo gate). A CI step for
+ * .github/workflows/check.yml is specified in
+ * docs/briefs/192-bundle-ci.md — it is a manual step because the
+ * automation's GitHub App cannot edit workflow files.
  * Root defaults to this script's repo; override with argv[2] or
  * JT_ROOT_BUNDLE_CHECK_DIR (the test uses a fixture tree).
  */
