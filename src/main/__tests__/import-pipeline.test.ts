@@ -25,10 +25,13 @@ import {
   findFreeImportedId,
   importOneFile,
   initImportPipeline,
+  nextLibraryId,
+  computeNextLibraryId,
+  runImportExclusive,
   shouldEnqueueStreamConvert,
   type ImportPipelineDeps,
 } from '../import-pipeline.ts'
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 
 function minimalDeps(over: Partial<ImportPipelineDeps>): ImportPipelineDeps {
   return {
@@ -231,3 +234,87 @@ function pcm16Wav(sampleRate: number, frames: number): Buffer {
   buf.writeUInt32LE(dataSize, 40)
   return buf
 }
+
+describe('Brief 170 — import ID allocation', () => {
+  test('computeNextLibraryId is max+1 and ignores junk ids', () => {
+    assert.equal(computeNextLibraryId(undefined), 1)
+    assert.equal(computeNextLibraryId([]), 1)
+    assert.equal(computeNextLibraryId([{ id: 7 }, { id: 3 }]), 8)
+    assert.equal(computeNextLibraryId([{ id: 'x' }, { id: null }, { id: 41 }]), 42)
+  })
+
+  test('nextLibraryId reads the max from a real library', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jt-nextid-'))
+    const lib = join(dir, 'library.json')
+    writeFileSync(lib, JSON.stringify({ tracks: [{ id: 5 }, { id: 9001 }] }))
+    initImportPipeline(minimalDeps({ libraryPath: () => lib }))
+    assert.equal(await nextLibraryId(), 9002)
+  })
+
+  test('nextLibraryId THROWS on an unparseable library — no ID-1 fallback', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jt-nextid-'))
+    const lib = join(dir, 'library.json')
+    writeFileSync(lib, '{torn write, not json')
+    initImportPipeline(minimalDeps({ libraryPath: () => lib }))
+    await assert.rejects(nextLibraryId(), /does not parse/)
+  })
+
+  test('nextLibraryId still bootstraps at 1 when no library exists yet', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jt-nextid-'))
+    initImportPipeline(minimalDeps({ libraryPath: () => join(dir, 'library.json') }))
+    assert.equal(await nextLibraryId(), 1)
+  })
+
+  test('runImportExclusive never overlaps two imports', async () => {
+    let active = 0
+    let maxActive = 0
+    const order: string[] = []
+    const task = (name: string, ms: number) => runImportExclusive(async () => {
+      active++; maxActive = Math.max(maxActive, active)
+      order.push(`${name}:start`)
+      await new Promise((r) => setTimeout(r, ms))
+      order.push(`${name}:end`)
+      active--
+      return name
+    })
+    const results = await Promise.all([task('a', 30), task('b', 5), task('c', 5)])
+    assert.deepEqual(results, ['a', 'b', 'c'])
+    assert.equal(maxActive, 1, 'imports run one at a time')
+    assert.deepEqual(order, ['a:start', 'a:end', 'b:start', 'b:end', 'c:start', 'c:end'])
+  })
+
+  test('runImportExclusive survives a rejected import', async () => {
+    await assert.rejects(runImportExclusive(async () => { throw new Error('boom') }), /boom/)
+    assert.equal(await runImportExclusive(async () => 'next still runs'), 'next still runs')
+  })
+
+  test('two concurrent imports asking for the SAME id land on distinct ids and files', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jt-race-'))
+    const musicDir = join(dir, 'iPod_Control/Music')
+    mkdirSync(musicDir, { recursive: true })
+    const srcA = join(dir, 'a.wav')
+    const srcB = join(dir, 'b.wav')
+    writeFileSync(srcA, pcm16Wav(44100, 4410))
+    writeFileSync(srcB, pcm16Wav(44100, 2205))
+    initImportPipeline(minimalDeps({
+      musicDir: () => musicDir,
+      libraryPath: () => join(dir, 'library.json'),
+    }))
+    // The Brief 170 race: two entry points, same requested id, at the
+    // same moment. Before the mutex + atomic reservation, the second
+    // conversion overwrote the first's destination.
+    const [r1, r2] = await Promise.all([
+      importOneFile(srcA, 5, 'wav', new Set()),
+      importOneFile(srcB, 5, 'wav', new Set()),
+    ])
+    assert.equal(r1.ok, true)
+    assert.equal(r2.ok, true)
+    const ids = [Number(r1.track?.id), Number(r2.track?.id)].sort((x, y) => x - y)
+    assert.deepEqual(ids, [5, 6], 'the loser is bumped, not overwritten')
+    assert.notEqual(r1.track?.path, r2.track?.path)
+    for (const r of [r1, r2]) {
+      const rel = String(r.track?.path).replace(/:/g, '/').replace(/^\/iPod_Control\/Music\//, '')
+      assert.ok(existsSync(join(musicDir, rel.split('/').slice(-2).join('/'))), `destination exists for id ${String(r.track?.id)}`)
+    }
+  })
+})
