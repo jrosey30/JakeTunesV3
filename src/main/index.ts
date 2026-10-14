@@ -42,6 +42,7 @@ import { writeJsonAtomic } from './atomic-write'
 import { resolveContainedPath, isSafeCacheKey, isPathInside } from './path-safety'
 import { isHomeminiPlaybackClient, mayFollowPlaybackSymlink } from './stream-playback'
 import { streamVariant, normalizeStreamKbps, STREAM_KBPS_DEFAULT } from './stream-format'
+import { parseRangeHeader } from './range-header.ts'
 import {
   phonePlaylistSidecarsNeverPushFromDesktop,
   assertNoDesktopBluntPush,
@@ -10991,13 +10992,16 @@ app.whenReady().then(async () => {
         const total = fileStat.size
         const rangeHeader = request.headers.get('range')
         if (rangeHeader) {
-          const m = /bytes=(\d+)-(\d*)/.exec(rangeHeader)
-          if (m) {
-            const start = parseInt(m[1], 10)
-            const end = m[2] ? parseInt(m[2], 10) : total - 1
-            if (start >= total || end >= total || start > end) {
-              return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${total}` } })
-            }
+          // Brief 164: range semantics are the tested twin's (range-header.ts,
+          // RFC 9110 §14.2) — clamp an oversize end, honour suffix ranges, and
+          // 416 only when truly unsatisfiable. Garbage/multi-range (null)
+          // falls through to the full serve below, as it did before.
+          const parsed = parseRangeHeader(rangeHeader, total)
+          if (parsed === 'unsatisfiable') {
+            return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${total}` } })
+          }
+          if (parsed) {
+            const { start, end } = parsed
             const { createReadStream } = await import('fs')
             const { Readable } = await import('stream')
             const nodeStream = createReadStream(filePath, { start, end })
@@ -11182,13 +11186,16 @@ app.whenReady().then(async () => {
       const { Readable } = await import('stream')
 
       if (rangeHeader) {
-        const match = rangeHeader.match(/bytes=(\d+)-(\d*)/)
-        const start = match ? parseInt(match[1], 10) : 0
-        const end = match && match[2] ? parseInt(match[2], 10) : total - 1
-        if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || start >= total || end >= total || start > end) {
+        // Brief 164: same twin as the local-cache serve above (range-header.ts,
+        // RFC 9110 §14.2). 'unsatisfiable' is the only 416 left; garbage or
+        // multi-range headers (null) serve the whole file, as they did before.
+        const parsed = parseRangeHeader(rangeHeader, total)
+        if (parsed === 'unsatisfiable') {
           return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${total}` } })
         }
-        const chunkSize = end - start + 1
+        if (parsed) {
+          const { start, end } = parsed
+          const chunkSize = end - start + 1
         const nodeStream = createReadStream(filePath, { start, end })
         const webStream = Readable.toWeb(nodeStream) as unknown as ReadableStream<Uint8Array>
         return new Response(webStream, {
@@ -11201,6 +11208,7 @@ app.whenReady().then(async () => {
             'X-JT-Audio-Source': 'local',
           },
         })
+        }
       }
 
       const nodeStream = createReadStream(filePath)
