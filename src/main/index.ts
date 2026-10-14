@@ -193,6 +193,7 @@ import { MODEL_SMART, MODEL_FAST, withModelPolicy } from '../common/ai-models.ts
 import { summariseLearning, discoverVerdicts, type LedgerRow } from './discovery-learned.ts'
 import { readLedgerRows } from './taste-ledger-io.ts'
 import { JsonFileCache } from './state-cache'
+import { hashPayload, verifyLandedFile, stagePayloadAndRename } from './save-verify.ts'
 import { initFlightRecorder, sanitizeCrashPayload, quietWarn } from './flight-recorder'
 import { spawn } from 'child_process'
 import { stat, statfs, lstat, open, readFile, writeFile, mkdir, copyFile, unlink, readlink, symlink, rename, appendFile, readdir, utimes } from 'fs/promises'
@@ -5228,7 +5229,11 @@ async function saveLibraryImpl(tracks: unknown[], playlists?: unknown[], force?:
     // -106/-108 (rename-after-unlink failure left a 0-byte file).
     libraryCache.prime(library as unknown as CachedLibrary)
     const tmp = LIBRARY_PATH + '.partial.json'
-    await writeFile(tmp, JSON.stringify(library, null, 2))
+    const payload = JSON.stringify(library, null, 2)
+    // Brief 166: hash the exact payload now; after the rename we hash what
+    // actually landed and compare hashes — not track counts.
+    const expectedHash = hashPayload(payload)
+    await writeFile(tmp, payload)
     const { rename: renameFS, unlink: unlinkFS } = await import('fs/promises')
     // Brief 016: pre-stamp lastSelfWriteMtimeMs BEFORE the rename so the
     // fsWatch handler (which fires synchronously with the rename) reads
@@ -5252,21 +5257,22 @@ async function saveLibraryImpl(tracks: unknown[], playlists?: unknown[], force?:
     // ── Torn-write self-heal (NAS/SMB) ── A rename over an SMB share can
     // leave library.json missing or zero-byte — the 2026-05-29 incident,
     // where the NAS copy vanished mid-save and the app then loaded empty.
-    // Re-read what actually landed; if it's gone or doesn't match what we
-    // just wrote, rewrite it directly. Non-atomic, but there's no concurrent
-    // reader mid-incident and a correct-present file beats a missing one.
-    try {
-      const check = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8')) as { tracks?: unknown[] }
-      const landed = Array.isArray(check.tracks) ? check.tracks.length : -1
-      if (landed !== newCount) throw new Error(`landed ${landed} vs expected ${newCount}`)
-    } catch (verifyErr) {
-      console.error(`[save-library] post-write verify failed (${verifyErr instanceof Error ? verifyErr.message : String(verifyErr)}); self-healing with direct write`)
+    // Brief 166: verify by HASH of the payload (a landing with the right
+    // track count but wrong content is still corruption), and heal by
+    // re-running the staged partial+rename path — NEVER an in-place write
+    // on the live file, whose crash window is the torn file this design
+    // exists to prevent.
+    const verify = await verifyLandedFile(LIBRARY_PATH, expectedHash)
+    if (!verify.ok) {
+      console.error(`[save-library] post-write verify failed (landed hash ${verify.actualHash ?? 'unreadable'} != written ${expectedHash}); self-healing via staged rename`)
       try {
-        await writeFile(LIBRARY_PATH, JSON.stringify(library, null, 2))
+        // Pre-stamp before the heal rename, same ordering as the main write.
+        lastSelfWriteMtimeMs = Date.now()
+        await stagePayloadAndRename(tmp, LIBRARY_PATH, payload)
         const s2 = await stat(LIBRARY_PATH)
         lastSelfWriteMtimeMs = Math.round(s2.mtimeMs)
       } catch (healErr) {
-        console.error('[save-library] self-heal direct write also failed:', healErr)
+        console.error('[save-library] self-heal staged write also failed:', healErr)
       }
     }
 
