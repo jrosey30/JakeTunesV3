@@ -22,8 +22,18 @@ SAFE-WRITE (metadata-overrides.json is the app's file):
 
 Usage: python3 taxonomy-classify.py [--dry-run]
   --dry-run classifies + stages but writes ONLY a /tmp preview, never the live file.
+
+Brief 182: the write path re-reads metadata-overrides.json from disk and
+merges additively at write time (a concurrent override written during the
+minutes-long classify is never lost), re-checks app_running() immediately
+before os.replace, keeps 5 rotated .bak-classify generations, and when the
+app is running at write time leaves taxonomy-deferred.json {at,
+pendingCount} beside the overrides + exits 3 (deferred) instead of the old
+silent exit 0 — silent deferral ends. Dry-run writes ONLY its /tmp preview:
+no deferred file, no backup rotation, no live writes.
+Exit codes: 0 = written / fully classified / dry-run; 3 = deferred (app running).
 """
-import json, os, re, struct, time, sys, subprocess, shutil
+import json, os, re, struct, time, sys, subprocess, shutil, datetime
 import numpy as np
 from collections import defaultdict, Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -188,45 +198,122 @@ if todo:
 # --- stage subgenres for any cached track that still lacks a subgenre override ---
 def fp_of(t):
     return f"{(t.get('title') or '').lower().strip()}|{(t.get('artist') or '').lower().strip()}|{t.get('duration') or 0}"
-staged = 0
-for tid, a in cache.items():
-    t = byid.get(tid)
-    if not t or has_subgenre(tid) or not a.get('subgenre'): continue
-    e = ov.get(tid) or {}
-    fields = dict(e.get('fields') or {})
-    fields['subgenre'] = a['subgenre']
-    fields['subgenrePath'] = a.get('path') or a['subgenre']
-    if a.get('lean'): fields['subgenreLean'] = a['lean']
-    ov[tid] = {'fp': (e.get('fp') or fp_of(t)), 'fields': fields}   # keep accepted fp; compute only for new entries
-    staged += 1
 
-if staged == 0:
+def has_subgenre_in(ovmap, tid):
+    e = ovmap.get(str(tid))
+    return bool(e and (e.get('fields') or {}).get('subgenre'))
+
+def merge_staged(ovmap, cachemap, byidmap):
+    """Brief 182: apply the staged additive subgenre writes onto `ovmap`
+    (the overrides AS THEY ARE ON DISK at write time — not the copy loaded
+    when this run started). The discipline is the script's existing one,
+    preserved exactly: only add subgenre/subgenrePath/subgenreLean where a
+    subgenre is still absent; preserve every existing field and each
+    entry's accepted fp (compute fp only for brand-new entries). Anything
+    another writer changed since load survives, because nothing here ever
+    overwrites an existing field. Returns the number staged."""
+    staged = 0
+    for tid, a in cachemap.items():
+        t = byidmap.get(tid)
+        if not t or has_subgenre_in(ovmap, tid) or not a.get('subgenre'): continue
+        e = ovmap.get(tid) or {}
+        fields = dict(e.get('fields') or {})
+        fields['subgenre'] = a['subgenre']
+        fields['subgenrePath'] = a.get('path') or a['subgenre']
+        if a.get('lean'): fields['subgenreLean'] = a['lean']
+        ovmap[tid] = {'fp': (e.get('fp') or fp_of(t)), 'fields': fields}   # keep accepted fp; compute only for new entries
+        staged += 1
+    return staged
+
+DEFERRED = os.path.join(SD, 'taxonomy-deferred.json')
+BACKUP_GENERATIONS = 5
+
+def write_deferred(pending):
+    """Brief 182: deferral becomes a visible state, not a log line nobody
+    reads — {at, pendingCount} beside the overrides, for Brief 178/183
+    surfacing. Best-effort: a failed marker write must not mask the defer."""
+    try:
+        tmp = DEFERRED + '.tmp'
+        json.dump({'at': datetime.datetime.now().isoformat(timespec='seconds'), 'pendingCount': pending},
+                  open(tmp, 'w'))
+        os.replace(tmp, DEFERRED)
+    except Exception as e:
+        log(f"could not write deferred marker: {e}")
+
+def clear_deferred():
+    try:
+        if os.path.exists(DEFERRED): os.remove(DEFERRED)
+    except Exception:
+        pass
+
+def rotate_backups():
+    """Keep several .bak-classify generations (Brief 182) instead of one
+    overwritten backup: .bak-classify.1 is newest … .5 oldest."""
+    for i in range(BACKUP_GENERATIONS - 1, 0, -1):
+        src = OVP + f'.bak-classify.{i}'
+        if os.path.exists(src): os.replace(src, OVP + f'.bak-classify.{i + 1}')
+    if os.path.exists(OVP + '.bak-classify'):
+        os.replace(OVP + '.bak-classify', OVP + '.bak-classify.1')
+    shutil.copy(OVP, OVP + '.bak-classify')
+
+# First pass against the load-time copy — only to know whether there is
+# anything to write at all (the authoritative merge happens at write time).
+_preview = {k: (dict(v) if isinstance(v, dict) else v) for k, v in ov.items()}
+staged_preview = merge_staged(_preview, cache, byid)
+
+if staged_preview == 0:
     log("library fully classified — nothing to write."); sys.exit(0)
-log(f"{staged} track(s) staged for an additive subgenre write")
+log(f"{staged_preview} track(s) staged for an additive subgenre write")
 
 if DRY:
-    json.dump(ov, open('/tmp/overrides-preview.json', 'w'))
-    log(f"DRY-RUN: preview at /tmp/overrides-preview.json (live file untouched)"); sys.exit(0)
-
-if app_running():
-    log(f"JakeTunes is RUNNING — deferring write of {staged} subgenre(s) to a run when it's quit "
-        f"(a live app clobbers external override writes). Classifications are cached; will write next eligible run.")
+    json.dump(_preview, open('/tmp/overrides-preview.json', 'w'))
+    log(f"DRY-RUN: preview at /tmp/overrides-preview.json (live file untouched — no deferred marker, no backup rotation)")
     sys.exit(0)
 
-# safe write: backup -> atomic replace -> verify (parse + count + size guard).
-# indent=2 matches the app's own on-disk format — the app pretty-prints this
-# file, so a compact json.dump() of identical data reads as an ~16% "shrink"
-# and false-trips the size guard below even though the count check already
-# proved nothing was lost. Matching format keeps the size check meaningful.
-shutil.copy(OVP, OVP + '.bak-classify')
-old_size = os.path.getsize(OVP)
+if app_running():
+    log(f"JakeTunes is RUNNING — deferring write of {staged_preview} subgenre(s) to a run when it's quit "
+        f"(a live app clobbers external override writes). Classifications are cached; will write next eligible run.")
+    write_deferred(staged_preview)
+    sys.exit(3)   # distinct code: deferred is not success (Brief 182)
+
+# Brief 182: RE-READ the overrides from disk and merge onto the CURRENT
+# file. The classify above ran for minutes over the load-time copy; any
+# override the app (or another writer) landed in between is in this fresh
+# copy and survives, because merge_staged only ADDS absent subgenres.
+ov_now = json.load(open(OVP)) if os.path.exists(OVP) else {}
+staged = merge_staged(ov_now, cache, byid)
+if staged == 0:
+    log("nothing left to write after the write-time re-read (a concurrent writer already landed these).")
+    clear_deferred()
+    sys.exit(0)
+
+# safe write: backup (rotated) -> atomic replace -> verify (parse + count +
+# size guard). indent=2 matches the app's own on-disk format — the app
+# pretty-prints this file, so a compact json.dump() of identical data reads
+# as an ~16% "shrink" and false-trips the size guard below even though the
+# count check already proved nothing was lost. Matching format keeps the
+# size check meaningful.
+old_size = os.path.getsize(OVP) if os.path.exists(OVP) else 0
+rotate_backups()
 tmp = OVP + '.classify.tmp'
-json.dump(ov, open(tmp, 'w'), indent=2)
+json.dump(ov_now, open(tmp, 'w'), indent=2)
 chk = json.load(open(tmp))                      # parses?
-assert len(chk) == len(ov), f"verify: count {len(chk)} != {len(ov)}"
-assert os.path.getsize(tmp) >= old_size * 0.95, "verify: file shrank unexpectedly"
+assert len(chk) == len(ov_now), f"verify: count {len(chk)} != {len(ov_now)}"
+if old_size:
+    assert os.path.getsize(tmp) >= old_size * 0.95, "verify: file shrank unexpectedly"
+# Brief 182: re-check the app gate IMMEDIATELY before the replace — the
+# app may have launched during the merge/verify above, and a running app
+# clobbers external override writes on its next play-event save.
+if app_running():
+    log(f"JakeTunes STARTED during the write — deferring {staged} subgenre(s) rather than racing it. "
+        f"Classifications are cached; will write next eligible run.")
+    try: os.remove(tmp)
+    except Exception: pass
+    write_deferred(staged)
+    sys.exit(3)
 os.replace(tmp, OVP)
-log(f"wrote {staged} subgenre(s) into metadata-overrides.json (backup .bak-classify)")
+clear_deferred()
+log(f"wrote {staged} subgenre(s) into metadata-overrides.json (backups: .bak-classify + .1-.4 rotations)")
 
 # fold the new subgenres into embeddings via the existing (subgenre-aware) re-embed
 log("re-embedding so the new subgenres land in the brain...")
