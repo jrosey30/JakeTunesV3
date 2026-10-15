@@ -14,6 +14,14 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
 const repoRoot = join(import.meta.dirname, '..', '..', '..')
+// Children must never inherit the caller's GIT_* variables. Under the
+// pre-commit gate git exports GIT_DIR / GIT_INDEX_FILE for the REAL repo
+// (a linked worktree's gitdir), so a bare `git init` in a temp dir
+// re-initialized the real repository and set core.bare=true in its shared
+// config — breaking git in every worktree after each commit (2026-10-14).
+const childEnv: NodeJS.ProcessEnv = Object.fromEntries(
+  Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')),
+)
 const redactor = join(repoRoot, 'scripts', 'vern-redact.py')
 
 const FAKE_GHP = 'gh' + 'p_' + 'A1'.repeat(18)
@@ -60,13 +68,13 @@ describe('Brief 196 — vern-redact.py', () => {
       const vernSrc = readFileSync(join(repoRoot, 'scripts', 'vern'), 'utf8')
       writeFileSync(join(scripts, 'vern'), vernSrc)
       writeFileSync(join(dir, 'package.json'), '{"name":"JakeTunes","version":"6.0.0"}')
-      const init = spawnSync('git', ['init', '-q', '.'], { cwd: dir })
+      const init = spawnSync('git', ['init', '-q', '.'], { cwd: dir, env: childEnv })
       assert.equal(init.status, 0)
-      spawnSync('git', ['add', '-A'], { cwd: dir })
-      spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'], { cwd: dir })
+      spawnSync('git', ['add', '-A'], { cwd: dir, env: childEnv })
+      spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init'], { cwd: dir, env: childEnv })
       const r = spawnSync('/bin/bash', [join(scripts, 'vern'), '--share'], {
         cwd: dir,
-        env: { ...process.env, PATH: '/usr/bin:/bin' },
+        env: { ...childEnv, PATH: '/usr/bin:/bin' },
         encoding: 'utf8',
         timeout: 240_000,
       })
