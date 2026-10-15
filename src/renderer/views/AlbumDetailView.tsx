@@ -9,7 +9,7 @@ import { albumKeyOf } from '../utils/albumKey'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { canonicalArtist } from '../utils/artistAlias'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
-import { albumCreditReleaseDate } from '../utils/albumReleaseDate'
+import { albumCreditReleaseDate, formatReleaseDateDisplay } from '../utils/albumReleaseDate'
 import { albumDetailBackLabel } from '../utils/albumBackLabel'
 import { useNavigation } from '../context/NavigationContext'
 import { lookupArtwork, buildNormalizedArtworkIndex, clearArtworkNegativeCache } from '../utils/artworkLookup'
@@ -505,7 +505,7 @@ export default function AlbumDetailView() {
 
   const creditLine = hasCredits
     ? [
-        releaseDisplay && `Released ${releaseDisplay}`,
+        releaseDisplay && `Released ${formatReleaseDateDisplay(releaseDisplay)}`,
         credits!.label && credits!.label,
         credits!.producer && `Produced by ${credits!.producer}`,
       ].filter(Boolean).join(' · ')
