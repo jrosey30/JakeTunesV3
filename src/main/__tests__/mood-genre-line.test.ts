@@ -35,15 +35,23 @@ describe('genre line: leaf + family + umbrella, no repeated words', () => {
 })
 
 describe('both mood writers use the ONE shared function', () => {
+  // Brief 181 moved both writers' mood text into ONE builder: moodText in
+  // src/common/embedding-text.ts. The locks follow it there — same two
+  // checks (imports genreWithParents from mood-genre-line.ts; the mood
+  // text body calls it) — plus the link proving each writer uses it.
+  const shared = readFileSync(join(root, 'src/common/embedding-text.ts'), 'utf8')
+  const sharedMoodBody = shared.slice(shared.indexOf('export function moodText('), shared.indexOf('export function moodText(') + 700)
   it('the nightly trainer', () => {
     const src = readFileSync(join(root, 'scripts/brain-trainer.mjs'), 'utf8')
-    assert.match(src, /import \{ genreWithParents \} from '\.\.\/src\/common\/mood-genre-line\.ts'/)
-    const body = src.slice(src.indexOf('function moodText(t, d) {'), src.indexOf('function readMood()'))
-    assert.match(body, /genreWithParents\(/)
+    assert.match(src, /import \{[^}]*\bmoodText\b[^}]*\} from '\.\.\/src\/common\/embedding-text\.ts'/)
+    assert.match(shared, /import \{ genreWithParents \} from '\.\/mood-genre-line\.ts'/)
+    assert.match(sharedMoodBody, /genreWithParents\(/)
   })
   it('the app', () => {
     const src = readFileSync(join(root, 'src/main/ai/mood-index.ts'), 'utf8')
+    assert.match(src, /import \{[^}]*\bmoodText\b[^}]*\} from '\.\.\/\.\.\/common\/embedding-text\.ts'/)
     const body = src.slice(src.indexOf('export function buildMoodText'), src.indexOf('export function buildMoodText') + 700)
-    assert.match(body, /genreWithParents\(/)
+    assert.match(body, /\bmoodText\(/)
+    assert.match(sharedMoodBody, /genreWithParents\(/)
   })
 })
