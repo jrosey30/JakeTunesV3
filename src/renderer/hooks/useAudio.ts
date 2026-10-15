@@ -44,10 +44,22 @@ const FORMAT_MAP: Record<string, string> = {
   '.flac': 'flac', '.ogg': 'ogg', '.oga': 'ogg', '.wma': 'wma', '.alac': 'mp4',
 }
 
-function ipodPathToAudioURL(ipodPath: string): { url: string; format: string } {
+// Brief 164(b): codec → Howler format label, for when the extension
+// says nothing. Import stamps `codec` on every track record (the Track
+// type doesn't declare it yet — hence the narrow casts at call sites).
+const CODEC_FORMAT_MAP: Record<string, string> = {
+  alac: 'mp4', aac: 'aac', mp3: 'mp3', flac: 'flac', pcm: 'wav',
+}
+
+function ipodPathToAudioURL(ipodPath: string, codecHint?: string): { url: string; format: string | undefined } {
   const fsPath = IPOD_MOUNT + ipodPath.replace(/:/g, '/')
   const ext = fsPath.slice(fsPath.lastIndexOf('.')).toLowerCase()
-  const format = FORMAT_MAP[ext] || 'mp3'
+  // Brief 164(b): never lie to Howler about the format. The label comes
+  // from the extension map, else from the track's known codec. When
+  // NEITHER knows, the label is OMITTED (call sites spread it only when
+  // defined) and Howler sniffs the bytes itself — instead of the old
+  // default that called every unknown file 'mp3'.
+  const format = FORMAT_MAP[ext] || (codecHint ? CODEC_FORMAT_MAP[codecHint.toLowerCase()] : undefined)
   const url = 'ipod-audio://' + encodeURIComponent(fsPath)
   return { url, format }
 }
@@ -433,11 +445,11 @@ export function prefetchTrackForPlay(track: Track) {
     prefetchDebounceTimer = 0
     if (prefetchTrackId === track.id) return
     clearPrefetch()
-    const { url, format } = ipodPathToAudioURL(track.path || '')
+    const { url, format } = ipodPathToAudioURL(track.path || '', (track as { codec?: string }).codec)
     prefetchTrackId = track.id
     prefetchHowl = new Howl({
       src: [url],
-      format: [format],
+      ...(format ? { format: [format] } : {}),
       // Same reason as the main path: Web Audio XHRs the file, and on an XHR
       // error howler.js:2430 silently switches to html5 and EMPTIES _sounds,
       // destroying the queued play(). This Howl gets PROMOTED into the main
@@ -468,11 +480,11 @@ export function prefetchTrackImmediate(track: Track) {
     prefetchDebounceTimer = 0
   }
   clearPrefetch()
-  const { url, format } = ipodPathToAudioURL(track.path || '')
+  const { url, format } = ipodPathToAudioURL(track.path || '', (track as { codec?: string }).codec)
   prefetchTrackId = track.id
   prefetchHowl = new Howl({
     src: [url],
-    format: [format],
+    ...(format ? { format: [format] } : {}),
     // Same reason as the main path: Web Audio XHRs the file, and on an XHR
     // error howler.js:2430 silently switches to html5 and EMPTIES _sounds,
     // destroying the queued play(). This Howl gets PROMOTED into the main
@@ -940,10 +952,10 @@ export function useAudio(opts?: { primary?: boolean }) {
             if (nextIdx >= 0) {
               const nextTrack = s.queue[nextIdx]
               if (nextTrack) {
-                const { url: nextUrl, format: nextFormat } = ipodPathToAudioURL(nextTrack.path || '')
+                const { url: nextUrl, format: nextFormat } = ipodPathToAudioURL(nextTrack.path || '', (nextTrack as { codec?: string }).codec)
                 const preload = new Howl({
                   src: [nextUrl],
-                  format: [nextFormat],
+                  ...(nextFormat ? { format: [nextFormat] } : {}),
                   // Same reason as the main path: Web Audio XHRs the file, and on an XHR
                   // error howler.js:2430 silently switches to html5 and EMPTIES _sounds,
                   // destroying the queued play(). This Howl gets PROMOTED into the main
@@ -1281,7 +1293,7 @@ export function useAudio(opts?: { primary?: boolean }) {
       return
     }
 
-    const { url, format } = ipodPathToAudioURL(track.path || '')
+    const { url, format } = ipodPathToAudioURL(track.path || '', (track as { codec?: string }).codec)
     // Guard against the Howler 'end' event firing twice for the same
     // playback, which would cause the same track to auto-play again
     // even with repeat off. Also belt-and-suspenders loop:false so no
@@ -1300,7 +1312,7 @@ export function useAudio(opts?: { primary?: boolean }) {
     const failureHolder = { handled: false }
     const howl = new Howl({
       src: [url],
-      format: [format],
+      ...(format ? { format: [format] } : {}),
       // 4.5: html5:true → html5:false. PERMANENT pop fix. Streaming
       // HTMLAudioElement decoded audio on the renderer thread + read
       // bytes lazily from the protocol handler; any thread starvation
