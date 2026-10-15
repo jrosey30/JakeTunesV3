@@ -39,6 +39,9 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
+      - name: No stale root bundle (Brief 192)
+        run: node scripts/check-no-root-bundle.mjs
+
       - name: Setup Python 3.14
         uses: actions/setup-python@v5
         with:
