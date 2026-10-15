@@ -42,6 +42,20 @@ import { isCatastrophicShrink } from './library-shrink.ts'
 //     is ignored too — adoption does not get a force hatch. Replica-local
 //     rows are not counted in that ratio, so they cannot pad a torn
 //     snapshot over the floor.
+//   - Brief 197: a phone import THIS replica absorbed from the sidecar
+//     (the renderer registers its id in the ack's protectedIds with the
+//     `absorbed:` prefix) is never removed by a full snapshot's omission,
+//     even though the hub HAS listed the id — the hub's catalog lists
+//     sidecar rows the canonical library.json does not contain yet, so
+//     "listed, then omitted" is the cross-lineage publish erasing it,
+//     not a deletion (2026-10-14: "Cure for Pain" vanished this way).
+//     Protection keys on the absorb, not the row's dateAdded, and lapses
+//     only on an explicit delta removal (a deliberate deletion) or when
+//     the row leaves the local library. The merge cannot observe the
+//     moment the hub's canonical comes to contain the id, so it errs on
+//     the side of keeping — the failure this prevents is silent and
+//     permanent; the cost is a replica keeping a song until a delta
+//     names its deletion.
 
 export interface HubTrackLike {
   id: number
@@ -57,7 +71,10 @@ export interface HubCatalogPayload {
   removedIds: Array<string | number>
   /** Ids any previously adopted hub catalog has listed. Empty = first adoption. */
   seenIds?: string[]
-  /** Ids kept on an earlier adoption because the hub had never listed them. */
+  /** Ids kept on an earlier adoption because the hub had never listed them.
+   *  Entries prefixed with ABSORBED_IMPORT_PREFIX are absorbed phone
+   *  imports (Brief 197) — held against full-snapshot omission even
+   *  though the hub has listed them. */
   protectedIds?: string[]
   /** ISO time of the last adopted version. Absent = no adoption yet. */
   adoptedAt?: string | null
@@ -86,7 +103,9 @@ export interface HubMergeResult<T> {
   ignoredReason?: string
   /**
    * Ids to persist after this adoption acks. Survives the ack moving
-   * adoptedAt forward. Does not include any id the hub listed this round.
+   * adoptedAt forward. Does not include any bare id the hub listed this
+   * round; ABSORBED_IMPORT_PREFIX entries are carried while their row
+   * stays local (Brief 197).
    */
   protectedIds: string[]
 }
@@ -105,6 +124,30 @@ function asIdSet(ids: ReadonlyArray<string | number> | undefined): Set<string> {
   if (!ids) return s
   for (const id of ids) s.add(String(id))
   return s
+}
+
+/**
+ * Brief 197: protectedIds entries with this prefix are absorbed phone
+ * imports — ids the renderer absorbed from the phone sidecar into this
+ * replica's library. They ride the existing protectedIds ack channel
+ * (main persists the strings verbatim, and a prefixed entry is never a
+ * hub id, so adoptHubCatalogState's seen-filter never strips one).
+ */
+export const ABSORBED_IMPORT_PREFIX = 'absorbed:'
+
+function splitProtected(
+  raw: ReadonlyArray<string | number> | undefined,
+): { held: Set<string>; absorbed: Set<string> } {
+  const held = new Set<string>()
+  const absorbed = new Set<string>()
+  if (raw) {
+    for (const id of raw) {
+      const s = String(id)
+      if (s.startsWith(ABSORBED_IMPORT_PREFIX)) absorbed.add(s.slice(ABSORBED_IMPORT_PREFIX.length))
+      else held.add(s)
+    }
+  }
+  return { held, absorbed }
 }
 
 function addedAtMs(track: { dateAdded?: unknown }): number | null {
@@ -179,9 +222,12 @@ export function mergeHubCatalog<T extends LocalTrackLike>(
   ctx: HubMergeContext = {},
 ): HubMergeResult<T> {
   const seen = asIdSet(ctx.seenIds ?? payload.seenIds)
-  const held = asIdSet(ctx.protectedIds ?? payload.protectedIds)
+  const { held, absorbed } = splitProtected(ctx.protectedIds ?? payload.protectedIds)
   const adoptedAtMs = adoptedMs(ctx.adoptedAt ?? payload.adoptedAt)
-  const priorProtected = [...held].sort(cmpId)
+  const priorProtected = [
+    ...held,
+    ...[...absorbed].map((id) => `${ABSORBED_IMPORT_PREFIX}${id}`),
+  ].sort(cmpId)
   const upserts = (Array.isArray(payload.upserts) ? payload.upserts : []).filter(
     (u): u is HubTrackLike => u != null && typeof u.id === 'number',
   )
@@ -212,6 +258,7 @@ export function mergeHubCatalog<T extends LocalTrackLike>(
       for (const t of local) {
         const key = String(t.id)
         if (hubListed.has(key)) continue
+        if (absorbed.has(key)) continue
         if (holdReplicaLocal(t, seen, held, adoptedAtMs)) continue
         droppedPreview++
       }
@@ -238,6 +285,9 @@ export function mergeHubCatalog<T extends LocalTrackLike>(
     for (const t of local) {
       const key = String(t.id)
       if (hubListed.has(key)) continue
+      // Brief 197: an absorbed phone import is held against omission
+      // even when the hub has listed it before (see header rules).
+      if (absorbed.has(key)) continue
       if (holdReplicaLocal(t, seen, held, adoptedAtMs)) continue
       removed.add(key)
     }
@@ -287,7 +337,7 @@ export function mergeHubCatalog<T extends LocalTrackLike>(
   out.push(...appended)
   const changed = added > 0 || updated > 0 || removedCount > 0
   const kept = changed ? out : local
-  const protectedIds = nextProtectedIds(kept, hubListed, removed, seen, held, adoptedAtMs, payload.full)
+  const protectedIds = nextProtectedIds(kept, hubListed, removed, seen, held, absorbed, adoptedAtMs, payload.full)
   return {
     tracks: kept, changed, added, updated, removed: removedCount,
     ignoredReason: tooMany ? `mass-removal-guard:${removedIdsRaw.length}` : undefined,
@@ -301,10 +351,21 @@ function nextProtectedIds<T extends LocalTrackLike>(
   removedApplied: Set<string>,
   seen: Set<string>,
   held: Set<string>,
+  absorbed: Set<string>,
   adoptedAtMs: number | null,
   full: boolean,
 ): string[] {
   const next = new Set<string>()
+  // Brief 197: absorbed-import protection survives as long as the row is
+  // still local and was not explicitly removed by this delta. It is NOT
+  // dropped when the hub lists the id — a listing can be the sidecar
+  // merge, not the canonical library (see header rules).
+  const keptIds = new Set(kept.map((t) => String(t.id)))
+  for (const id of absorbed) {
+    if (keptIds.has(id) && !removedApplied.has(id)) {
+      next.add(`${ABSORBED_IMPORT_PREFIX}${id}`)
+    }
+  }
   if (full) {
     for (const t of kept) {
       const key = String(t.id)

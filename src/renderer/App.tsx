@@ -64,7 +64,7 @@ import './styles/scrollbars.css'
 import './styles/app.css'
 import './styles/toolbar.css'
 import './styles/sidebar.css'
-import { mergeHubCatalog } from '../common/hub-catalog-merge'
+import { mergeHubCatalog, ABSORBED_IMPORT_PREFIX } from '../common/hub-catalog-merge'
 import { ackVersionAfterSave, hubAdoptAfterMerge, trackIdKey } from '../common/hub-catalog-ack'
 import { phoneOverlayFields } from '../common/genre-vocab'
 import { measuredFileUpdates } from '../common/library-file-sizes'
@@ -677,6 +677,12 @@ function AppInner() {
     return () => window.removeEventListener('jaketunes-ipod-mounted', onIpodMounted)
   }, [])
 
+  // Brief 197: ids of phone downloads this machine absorbed from the
+  // sidecar (see absorbMobileImports below). Unioned into the hub-adoption
+  // merge context and re-synced from each merge result, so the set main
+  // persists via the ack is exactly the set the merge still protects.
+  const absorbedImportIdsRef = useRef<Set<string>>(new Set())
+
   // Phone Qobuz DOWNLOADS arriving from the NAS sidecar (main mirrors +
   // pushes every 5 minutes and once at boot). Absorb any track the library
   // doesn't have — by id AND path, so a row whose id was independently
@@ -708,6 +714,15 @@ function AppInner() {
         })
       }
       if (eligible.length) {
+        // Brief 197: register the absorbed ids so hub adoption protects
+        // them. They ride the next adoption ack's protectedIds with the
+        // 'absorbed:' prefix (see ../common/hub-catalog-merge.ts), keyed
+        // on THIS absorb — the row's backend dateAdded predates any
+        // adoption and cannot be the protection key. Without this, a hub
+        // full snapshot that omits the id (a cross-lineage publish erased
+        // it from the canonical before the canonical absorbed it) deletes
+        // this replica's absorbed copy as a "real deletion".
+        for (const t of eligible) absorbedImportIdsRef.current.add(String(t.id))
         // dateAdded arrives VERBATIM from the phone's import moment — the
         // absorbed songs slot into date-added history where they were
         // actually downloaded, never as the library's newest (Jake:
@@ -1218,7 +1233,13 @@ function AppInner() {
         removedIds: p.removedIds,
       }, {
         seenIds: p.seenIds,
-        protectedIds: p.protectedIds,
+        // Brief 197: union the persisted protectedIds with the imports
+        // this session absorbed (prefixed) — the merge's result set,
+        // acked below, is what main persists for the next round.
+        protectedIds: [
+          ...(p.protectedIds ?? []),
+          ...[...absorbedImportIdsRef.current].map((id) => `${ABSORBED_IMPORT_PREFIX}${id}`),
+        ],
         adoptedAt: p.adoptedAt,
       })
       const decision = hubAdoptAfterMerge({
@@ -1230,6 +1251,13 @@ function AppInner() {
         console.log(`[hub-catalog] holding ${p.version} (${r.ignoredReason ?? 'unpersisted'}) — next poll retries`)
         return
       }
+      // Brief 197: adopt the merge's surviving absorbed set (an explicit
+      // removal or a local delete prunes it there first).
+      absorbedImportIdsRef.current = new Set(
+        r.protectedIds
+          .filter((x) => x.startsWith(ABSORBED_IMPORT_PREFIX))
+          .map((x) => x.slice(ABSORBED_IMPORT_PREFIX.length)),
+      )
       if (decision === 'ack-now') {
         // Nothing in the track list changed, but a replica-local song may
         // have just become protected. Persist that set with the ack or the
