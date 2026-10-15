@@ -26,6 +26,7 @@ export interface ImportedTrack {
 export type ToastKind =
   | { kind: 'success'; message: string }
   | { kind: 'failure'; filename: string; error: string }
+  | { kind: 'notice'; message: string }
 
 interface State {
   /** Track IDs currently marked as recently added (decays per-id at MARKER_TTL_MS). */
@@ -112,6 +113,15 @@ function flushAggregate(): void {
     const label = topAlbum ? `'${topAlbum}'` : 'your purchase'
     showToast({ kind: 'success', message: `Added ${batch.length} tracks from ${label} to your library` })
   }
+}
+
+/** Brief 160: the app's one toast surface, borrowed for playback
+ *  failures (a track that could not play, a recovered freeze). This is
+ *  the established transient-message signal in the renderer — import
+ *  toasts keep their own kinds; 'notice' is a plain message with the
+ *  same 4s life. */
+export function notifyToast(message: string): void {
+  showToast({ kind: 'notice', message })
 }
 
 function onTrackImported(track: ImportedTrack): void {
