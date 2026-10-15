@@ -43,6 +43,7 @@ import { resolveContainedPath, isSafeCacheKey, isPathInside } from './path-safet
 import { isHomeminiPlaybackClient, mayFollowPlaybackSymlink } from './stream-playback'
 import { streamVariant, normalizeStreamKbps, STREAM_KBPS_DEFAULT } from './stream-format'
 import { parseRangeHeader } from './range-header.ts'
+import { getBuildProvenance, formatBuildProvenance } from './build-provenance.ts'
 import {
   phonePlaylistSidecarsNeverPushFromDesktop,
   assertNoDesktopBluntPush,
@@ -2511,6 +2512,10 @@ const flightRecorder = initFlightRecorder({
 })
 flightRecorder.mirrorConsole({ unhandledRejections: true })
 flightRecorder.record('info', 'boot.main-start')
+// Brief 192: stamp the boot with build provenance (version + build SHA +
+// build time; "dev" when no build-info.json was generated). This line is
+// the label Brief 195's parity checks compare across installs.
+console.log(`[boot] ${formatBuildProvenance(getBuildProvenance(app.getVersion()))}`)
 app.whenReady().then(() => flightRecorder.record('info', 'boot.ready'))
 
 // ── Brief 163(a): one instance only ─────────────────────────────────
