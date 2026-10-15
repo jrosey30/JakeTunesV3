@@ -420,6 +420,55 @@ EOF' 2>>"$LOG")
   esac
 }
 
+# Brief 174 — metadata-overrides.json gets the library publish treatment.
+# The general state push below rsyncs --checksum straight at the state
+# directory: no parse check, no stale check, so a locally corrupt
+# overrides sidecar was faithfully propagated over the good remote copy.
+# This routes overrides through the same incoming+verify+replace pattern
+# as publish_backend_library: local parse gate, upload to
+# .metadata-overrides.json.incoming, remote verifier refuses
+# empty/corrupt (JSON parse + must be a non-empty object) and refuses
+# stale (the remote copy's mtime is newer than the incoming copy's —
+# rsync -t preserves the source mtime, so this compares source ages,
+# the mtime analogue of the library publish's dated-track check), then
+# os.replace. SYNC_FILES still lists the file (fingerprints + the
+# contracts lock), but the bulk rsync below skips it.
+publish_verified_overrides() {
+  local src="$1" out
+  if ! python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if isinstance(d,dict) and len(d)>0 else 1)" "$src" 2>/dev/null; then
+    log "overrides publish: local metadata-overrides.json is empty, corrupt, or not a JSON object — not publishing"
+    return 1
+  fi
+  if ! rsync -tz --no-perms --no-owner --no-group "$src" "$(rremote "$REMOTE_STATE_DIR/.metadata-overrides.json.incoming")" >> "$LOG" 2>&1; then
+    log "overrides publish: upload to homemini failed"
+    return 1
+  fi
+  out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOMEMINI" 'cd "$HOME/'"$REMOTE_STATE_DIR"'" && python3 - <<"EOF"
+import json, os
+inc = ".metadata-overrides.json.incoming"
+try:
+    with open(inc) as f: data = json.load(f)
+except Exception:
+    print("refused-corrupt"); raise SystemExit(0)
+if not isinstance(data, dict) or len(data) == 0:
+    print("refused-corrupt"); raise SystemExit(0)
+try:
+    cur_mtime = os.path.getmtime("metadata-overrides.json")
+except OSError:
+    cur_mtime = None
+if cur_mtime is not None and cur_mtime > os.path.getmtime(inc):
+    print("refused-stale"); raise SystemExit(0)
+os.replace(inc, "metadata-overrides.json")
+print("published %d" % len(data))
+EOF' 2>>"$LOG")
+  case "$out" in
+    published*) log "overrides publish: $out override entries — verified + replaced on homemini"; return 0 ;;
+    refused-stale) log "overrides publish REFUSED: homemini's copy is newer than this one — this copy is stale"; return 1 ;;
+    refused-corrupt) log "overrides publish REFUSED: incoming copy failed verification on homemini (empty/corrupt)"; return 1 ;;
+    *) log "overrides publish: unexpected result '$out'"; return 1 ;;
+  esac
+}
+
 push_homemini_state() {
   local lib_src
   if [ "$SKIP_LIBRARY_JSON" -eq 0 ]; then
@@ -429,6 +478,15 @@ push_homemini_state() {
       return 0
     fi
     publish_backend_library "$lib_src" || true
+  fi
+
+  # Brief 174: metadata-overrides.json publishes through the verified
+  # path (never the bulk rsync below), hub and replica alike — a replica
+  # publishes into its own REMOTE_STATE_DIR, same as its other files.
+  local overrides_src=""
+  overrides_src=$(resolve_sync_src "metadata-overrides.json")
+  if [ -n "$overrides_src" ] && [ -f "$overrides_src" ]; then
+    publish_verified_overrides "$overrides_src" || true
   fi
 
   local local_fp="" remote_fp="" remote_fp_cmd f src m
@@ -461,6 +519,8 @@ done'
   local rsync_args=(-tz --checksum --no-perms --no-owner --no-group)
   local pushed=0
   for f in "${SYNC_FILES[@]}"; do
+    # Brief 174: published via publish_verified_overrides above.
+    if [ "$f" = "metadata-overrides.json" ]; then continue; fi
     src=$(resolve_sync_src "$f")
     if [ -n "$src" ] && [ -f "$src" ]; then
       rsync_args+=("$src")
