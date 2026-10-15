@@ -30,10 +30,9 @@ import { STATE_DIR } from '../state-dir'
 import {
   parseEmbeddingsBlob,
   serializeEmbeddingsBlob,
-  tempoEnergyText,
   type EmbedTrackInput,
 } from './embeddings'
-import { genreWithParents } from '../../common/mood-genre-line'
+import { moodText } from '../../common/embedding-text.ts'
 
 function getMoodIndexPath(): string {
   return join(STATE_DIR, 'mood-index.bin')
@@ -43,23 +42,15 @@ function getMoodIndexPath(): string {
  * The mood-only embed text. Empty string when the track has nothing
  * vibe-worthy yet (no descriptor, no bpm, no genre) — callers skip
  * embedding those.
- * ⚠️ TWIN: scripts/brain-trainer.mjs moodText() — the trainer builds
- * the same text with the Gemma descriptor it owns. Keep in sync. The genre
- * line is shared code (src/common/mood-genre-line.ts), not a twin.
+ * Brief 181: delegates to moodText in src/common/embedding-text.ts — the
+ * ONE source of truth the trainer imports too (it builds the same text
+ * with the Gemma descriptor it owns). The genre line is shared code
+ * (src/common/mood-genre-line.ts), not a twin.
  * (Design source: brain-eval branch mood_index_proto.py — the
  * validated prototype these lines must keep matching.)
  */
 export function buildMoodText(t: EmbedTrackInput, descriptor?: string): string {
-  const lines: string[] = []
-  const d = (descriptor || '').trim()
-  if (d) lines.push(`sound and mood: ${d}`)
-  const te = tempoEnergyText(t)
-  if (te) lines.push(te)
-  // Leaf + its family/umbrella, from the ONE shared function the trainer
-  // also uses (2026-10-13) — "Synthpop (New Wave & Synth, Pop)".
-  const genre = genreWithParents(t.genre || '')
-  if (genre) lines.push(`genre: ${genre}`)
-  return lines.join('\n')
+  return moodText(t, descriptor)
 }
 
 // mtime-tracked cache, same discipline as embeddings.ts — the file is

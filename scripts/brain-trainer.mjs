@@ -29,7 +29,7 @@ import { planMoodPrune } from './brain-prune.mjs'
 import { writeBrainStatus } from './brain-status.mjs'
 import { comparePurity, gateDecision, PURITY_MAX_REGRESSION } from './brain-purity.mjs'
 import { pickBatch } from './brain-batch.mjs'
-import { genreWithParents } from '../src/common/mood-genre-line.ts'
+import { baseText, moodText, tempoEnergy } from '../src/common/embedding-text.ts'   // Brief 181: the text twins' ONE source of truth (the app imports it too)
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -196,72 +196,13 @@ function writeEmb(path, map) {
   return written
 }
 
-// Grounded tempo/energy/use-case from REAL library bpm + genre. The literary
-// "sound and mood" descriptor alone scored ~random (0.47 AUC) on tempo queries
-// like "fast workout music" / "mellow late-night" — the brain had no idea what
-// was fast or slow despite bpm sitting right in the library. Appending this
-// lifts mood retrieval +0.32/+0.36 AUC (validated /tmp/validate_mood.py 2026-06-26).
-// ⚠️ TWIN: src/main/ai/embeddings.ts buildEmbeddingText — keep these in sync.
-// Rewritten 2026-07-26. See the TS twin for the full rationale + measurements.
-// Short version: the old line described all 8,730 tracks with 10 distinct
-// strings (33% identical, 60% with no energy statement, 259 self-contradicting
-// because a genre regex overrode the measured tempo). Now: bpm thresholds
-// calibrated to this library's real 72-152 spread, plus key/mode — 100% covered
-// by audio analysis and never previously used. 504 distinct descriptions.
-function tempoEnergy(t) {
-  const b = Number(t.bpm) || 0
-  if (b <= 0) return ''   // no bpm → say nothing (never fabricate)
-  const tempo =
-    b < 88 ? 'slow, spacious, downtempo'
-    : b < 100 ? 'relaxed, loping mid-tempo'
-    : b < 112 ? 'steady mid-tempo groove'
-    : b < 122 ? 'brisk, forward-moving'
-    : b < 134 ? 'fast, driving, propulsive'
-    : 'very fast, urgent, relentless'
-
-  const parts = [`tempo: ${Math.round(b)} BPM, ${tempo}`]
-
-  const root = String(t.keyRoot || '').trim()
-  const mode = String(t.keyMode || '').trim().toLowerCase()
-  // ⚠️ TWIN: src/main/ai/embeddings.ts KEY_CONFIDENCE_FLOOR + tempoEnergyText
-  const KEY_CONFIDENCE_FLOOR = 0.45
-  const confRaw = t.keyConfidence
-  const conf = confRaw == null || confRaw === '' ? null : Number(confRaw)
-  const keyTrusted = conf == null || (Number.isFinite(conf) && conf >= KEY_CONFIDENCE_FLOOR)
-  if (keyTrusted && (mode === 'minor' || mode === 'major')) {
-    parts.push(mode === 'minor'
-      ? `key: ${root} minor — darker, moody, melancholy, introspective`
-      : `key: ${root} major — brighter, warmer, open, resolved`)
-  }
-
-  const fast = b >= 122
-  const slow = b < 100
-  const minor = keyTrusted && mode === 'minor'
-  parts.push('good for: ' + (
-    fast && minor ? 'driving late-night, workout, intense focus'
-    : fast ? 'workout, running, parties, daytime energy'
-    : slow && minor ? 'late night, rainy day, winding down, solitude'
-    : slow ? 'morning, relaxing, background, easy listening'
-    : 'focus, walking, everyday listening'
-  ))
-
-  const cam = String(t.camelotKey || '').trim()
-  if (keyTrusted && cam) parts.push(`camelot ${cam}`)
-  return parts.join(' · ')
-}
-
-
-// The mood index — the brain's second ear (vibe-only text, identity stripped).
-// ⚠️ TWIN: src/main/ai/mood-index.ts buildMoodText — keep in sync. Validated
-// on the brain-eval branch (mood_index_proto.py): vibe recall 0.756→0.900.
-function moodText(t, d) {
-  const lines = []
-  const dd = String(d || '').trim()
-  if (dd) lines.push(`sound and mood: ${dd}`)
-  const te = tempoEnergy(t); if (te) lines.push(te)
-  const g = genreWithParents(String(t.genre || '')); if (g) lines.push(`genre: ${g}`)   // shared with the app (mood-genre-line.ts)
-  return lines.join('\n')
-}
+// The brain's texts — baseText (main index), moodText (mood index) and
+// tempoEnergy (the tempo line inside moodText) — are imported from
+// src/common/embedding-text.ts, the ONE source of truth the app also uses
+// (Brief 181). They used to be hand-synced twins defined here; the twins
+// had already drifted on untrimmed string fields. Do not redefine them
+// locally — edit the shared module (and bump TEMPO_ENCODING_VERSION when
+// tempoEnergy's output changes).
 
 function readMood() { return existsSync(MOOD) ? readEmb(MOOD).map : new Map() }
 
@@ -287,19 +228,6 @@ async function updateMoodIndex(entries, label) {
     try { if (existsSync(MOOD + '.bak')) copyFileSync(MOOD + '.bak', MOOD) } catch { /* keep going */ }
     return 0
   }
-}
-
-// The MAIN brain's text — PLAIN since 2026-10-10: artist — title, album
-// (year), genre tag. ⚠️ TWIN: src/main/ai/embeddings.ts buildEmbeddingText
-// (the measurements behind the change are there). The sound-and-mood
-// descriptor and tempo still feed the MOOD index (moodText), which is where
-// the router sends vibe searches.
-function baseText(t) {
-  const lines = [`${(t.artist || '?').trim()} — ${(t.title || '?').trim()}`]
-  if (t.album) lines.push(`album: ${String(t.album).trim()}${t.year ? ` (${t.year})` : ''}`)
-  else if (t.year) lines.push(`year: ${t.year}`)
-  if (t.genre) lines.push(`genre: ${String(t.genre).trim()}`)
-  return lines.join('\n')
 }
 
 async function gemmaDescribe(t) {
