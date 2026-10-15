@@ -46,7 +46,7 @@ import {
   phonePlaylistSidecarsNeverPushFromDesktop,
   assertNoDesktopBluntPush,
 } from './sidecar-contracts.ts'
-import { fetchHeadersWithin } from './fetch-headers'; import { spoolAwareServe } from './stream-spool.ts'; import { refreshPhoneMirrors, ensureMobileImportAudio } from './phone-mirrors.ts'; import { safeIpcError } from './safe-ipc-error.ts'
+import { fetchHeadersWithin } from './fetch-headers'; import { withBodyInactivityTimeout } from './stream-body-timeout.ts'; import { spoolAwareServe } from './stream-spool.ts'; import { refreshPhoneMirrors, ensureMobileImportAudio } from './phone-mirrors.ts'; import { safeIpcError } from './safe-ipc-error.ts'
 import { computeDeletedPaths } from './library-deletions'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
 import { createPlayCache } from './play-cache.ts'
@@ -4405,7 +4405,10 @@ async function fetchAudioFromHomemini(
   // Cold ALAC→FLAC on homemini can take >8s before the first header when the
   // transcode cache is empty. A short header budget then looks like "music
   // doesn't play" until relaunch warms the cache. Give headers room; the body
-  // is never aborted by this timer (fetchHeadersWithin).
+  // is never aborted by this timer (fetchHeadersWithin). Brief 161: the body
+  // gets its OWN budget below — withBodyInactivityTimeout errors the stream
+  // after ~10s of zero bytes, which surfaces as a load failure (and, in the
+  // renderer, as Brief 160's advance-to-next ending) instead of a hang.
   const compressed = await readStreamCompressedCached()
   const variant = streamVariant({ compressed: compressed.on, kbps: compressed.kbps, wantFlac })
   const headerBudgetMs = variant.transcoding ? 25_000 : 12_000
@@ -4434,6 +4437,14 @@ async function fetchAudioFromHomemini(
         return null
       }
       if (!res.body) return null
+      // Brief 161: guard the live-proxy body. (The spool path above already
+      // returned for landed copies and is deliberately unguarded — it fills
+      // at its own pace for later plays.)
+      const guardedBody = withBodyInactivityTimeout(
+        res.body as unknown as ReadableStream<Uint8Array>,
+        undefined,
+        () => console.warn(`[stream] homemini body stalled id=${id} flac=${wantFlac} — aborting as a load failure`),
+      )
       const out: Record<string, string> = {
         'Accept-Ranges': 'bytes',
         'X-JT-Audio-Source': variant.label,
@@ -4441,7 +4452,7 @@ async function fetchAudioFromHomemini(
       const ct = res.headers.get('content-type'); if (ct) out['Content-Type'] = ct
       const cr = res.headers.get('content-range'); if (cr) out['Content-Range'] = cr
       const cl = res.headers.get('content-length'); if (cl) out['Content-Length'] = cl
-      return new Response(res.body as unknown as ReadableStream<Uint8Array>, { status: res.status, headers: out })
+      return new Response(guardedBody, { status: res.status, headers: out })
     } catch (err) {
       console.warn(
         `[stream] homemini fetch failed id=${id} flac=${wantFlac}:`,
