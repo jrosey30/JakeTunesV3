@@ -402,7 +402,7 @@
   {
    "id": "E8",
    "title": "Lyrics meaning in the mood text (300-track sample)",
-   "status": "queued",
+   "status": "measured",
    "priority": 40,
    "lane": "auto",
    "measure_only": true,
@@ -441,7 +441,26 @@
    },
    "max_nights": 1,
    "series": false,
-   "result": null
+   "result": {
+    "at": "2026-10-15T03:09:09",
+    "outcome": "measured",
+    "summary": "E8 measured 20261015: lyrics-meaning line in mood text REFUTED. 300-track sample (seed 8), control vs meaning arms both retrieval-identical pipeline; mean per-probe delta -0.0008 (CI90 [-0.0023,+0.0008]), vibe -0.004 (hypothesis needed >= +0.01), tempo_family -0.0075, umbrella +0.0022; 3 up / 4 down / 147 same. Control arm reproduced baseline exactly (re-embed round-trip clean). No Jake proposal warranted; scratch copies only, nothing applied.",
+    "metrics": {
+     "mean_delta": -0.00078,
+     "ci90": [
+      -0.00234,
+      0.00078
+     ],
+     "vibe_delta": -0.004,
+     "tempo_family_delta": -0.0075,
+     "umbrella_delta": 0.0022,
+     "control_headline": 0.804,
+     "meaning_headline": 0.802,
+     "n_probes": 154,
+     "sample_n": 300,
+     "seed": 8
+    }
+   }
   },
   {
    "id": "E9",
