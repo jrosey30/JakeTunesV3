@@ -68,6 +68,8 @@ npm run dist:win   # .exe NSIS installer in release/
 
 The build does **not** bundle your `.env` — each user of the distributed app must supply their own keys via their own `.env` file in the app's user data directory.
 
+**Entry point (Brief 192):** the app is `src/main/index.ts`, built to `out/main/index.js` (package.json `main`). There is no repo-root bundle — a root `index.js` was a stale esbuild artifact of an old main process and was deleted; `scripts/check-no-root-bundle.mjs` (in `npm run check` and CI) fails if one reappears. Every build stamps `out/main/build-info.json` with the commit SHA + build time (`scripts/write-build-info.mjs`), which the app logs at startup and Brief 195's parity script compares across installs.
+
 ## Project layout
 
 ```
