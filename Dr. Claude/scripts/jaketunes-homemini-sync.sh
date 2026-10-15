@@ -414,7 +414,7 @@ if ahead:
     print("refused-stale %d" % len(ahead)); raise SystemExit(0)
 # Brief 197 — twin of the recent-id rule in stale-push.ts: a song the
 # incoming copy lacks that was added in the last 30 days refuses too,
-# even when it is OLDER than the incoming copy's newest (the same-day
+# even when it is OLDER than the newest in the incoming copy (the same-day
 # phone download erased by a cross-lineage publish, 2026-10-14). Named,
 # so the refusal is loud, never silent.
 cutoff = time.time() - 30 * 24 * 3600
