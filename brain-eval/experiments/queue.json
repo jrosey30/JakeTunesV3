@@ -530,7 +530,7 @@
   {
    "id": "E10",
    "title": "leaf-genre queries reach the index that knows them",
-   "status": "queued",
+   "status": "priced",
    "priority": 70,
    "lane": "jake",
    "hypothesis": {
@@ -557,7 +557,48 @@
    "rollback": "revert the router change in both twins",
    "budget": "one night of measurement; code change needs Jake",
    "max_nights": 1,
-   "result": null,
+   "result": {
+    "at": "2026-10-16T03:12:10",
+    "outcome": "priced",
+    "summary": "Priced on the post-E3 brain (leaf already 0.843 production vs 0.784 main-idx — the 10-12 premise of leaf 0.428 is gone). Leaf-name->main routing (the favorable core case; family-name routing strictly worse): headline 0.803->0.766, mean per-probe delta -0.0200 CI90 [-0.0431,+0.0029], leaf +0.022 to 0.865 (meets the 0.70 target but 17/50 leaf probes DROP), tempo_family -0.250 (0.510->0.260: 'fast punk'-style tempo-qualified queries hijacked to the tempo-blind main index), umbrella_family -0.027. Gate FAIL (all retrieval checks). E3's genre line in the mood text already solved the leaf gap; re-routing now strictly loses. Proposal updated: recommend Jake close E10, and E7-style tempo work remains the real gap.",
+    "metrics": {
+     "v3_base": 0.803,
+     "v3_cand": 0.766,
+     "mean_delta": -0.02,
+     "ci90": [
+      -0.0431,
+      0.0029
+     ],
+     "leaf": [
+      0.843,
+      0.865
+     ],
+     "tempo_family": [
+      0.51,
+      0.26
+     ],
+     "umbrella_family": [
+      0.913,
+      0.887
+     ],
+     "vibe": [
+      0.719,
+      0.751
+     ],
+     "routes_base": {
+      "main": 29,
+      "mood": 94,
+      "mood+lexicon": 1,
+      "main+decade": 30
+     },
+     "routes_cand": {
+      "main": 105,
+      "mood": 18,
+      "main+lexicon": 1,
+      "main+decade": 30
+     }
+    }
+   },
    "grounding_source": "v3 baseline per-group table in the 10/12 scorecard PR (#106)",
    "series": false
   }
