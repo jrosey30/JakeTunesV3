@@ -29,7 +29,7 @@ import {
 } from '../cynthia-sweep.ts'
 import type Anthropic from '@anthropic-ai/sdk'
 import { MODEL_SMART, MODEL_FAST } from '../../common/ai-models.ts'
-import { pitchShiftMp3, pitchSemitonesFromEnv } from '../voice-pitch'
+import { pitchShiftMp3, pitchSemitonesFromEnv, speedFromEnv } from '../voice-pitch'
 
 export interface AiIpcHost {
   setClaudeDailyCeiling: (ceiling: number) => Promise<{ ok: boolean; dailyCeiling: number }>
@@ -266,7 +266,7 @@ export function registerAiIpc(ipc: IpcRegistrar, host: AiIpcHost): void {
           // MUSIC_MAN_PITCH_SEMITONES in the userData .env (voice-pitch.ts).
           const raw = Buffer.from(arrayBuf)
           const audioBuf = voice === mmVoice
-            ? await pitchShiftMp3(raw, pitchSemitonesFromEnv(process.env.MUSIC_MAN_PITCH_SEMITONES))
+            ? await pitchShiftMp3(raw, pitchSemitonesFromEnv(process.env.MUSIC_MAN_PITCH_SEMITONES), speedFromEnv(process.env.MUSIC_MAN_SPEED))
             : raw
           return { ok: true, audio: audioBuf.toString('base64') }
         } catch (err: unknown) {
