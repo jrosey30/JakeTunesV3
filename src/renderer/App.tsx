@@ -58,6 +58,8 @@ import { setNotice } from './activity'
 import { autoNavBlocked } from './utils/autoNavGuard'
 import { fetchArtForArrivals, countInRecentlyAdded } from './utils/newArrivals'
 import { idleImportBatch, stepImportBatch, arrivalsMessage } from '../common/arrivals'
+import { applyStarToggle } from './components/StarRating'
+import { requestShowNowPlaying } from './nowPlayingNav'
 import './styles/variables.css'
 import './styles/lion-controls.css'
 import './styles/primitives.css'
@@ -559,6 +561,36 @@ function AppInner() {
   // that track's playback state.
   const pbStateRef = useRef(pbState)
   pbStateRef.current = pbState
+
+  // ⇧⌘S (and Controls → Star Current Song): star / unstar the playing song
+  // from anywhere. Same writer as the right-click Star entry, so starredAt
+  // is stamped identically. Reads the LIBRARY row — nowPlaying is a copy
+  // whose rating can be stale.
+  const starNowPlaying = useCallback(() => {
+    const id = pbStateRef.current.nowPlaying?.id
+    if (id == null) return
+    const track = libStateRef.current.tracks.find((t) => t.id === id)
+    if (!track) return
+    const target = applyStarToggle([track], dispatch)
+    const who = track.artist ? ` — ${track.artist}` : ''
+    setNotice(`${target > 0 ? 'Starred' : 'Unstarred'}: ${track.title}${who}`, target > 0 ? { kind: 'success' } : undefined)
+  }, [dispatch])
+  const starNowPlayingRef = useRef(starNowPlaying)
+  starNowPlayingRef.current = starNowPlaying
+
+  // ⌘L "Go to Current Song" from ANY view. SongsView handles it in place
+  // when it's showing; from anywhere else, switch to Songs and leave a
+  // pending flag that SongsView takes after its scroll restore.
+  useEffect(() => {
+    const onShowNowPlaying = () => {
+      if (libStateRef.current.currentView === 'songs') return
+      if (!pbStateRef.current.nowPlaying) return
+      requestShowNowPlaying()
+      dispatch({ type: 'SET_VIEW', view: 'songs' })
+    }
+    window.addEventListener('jaketunes-show-now-playing', onShowNowPlaying)
+    return () => window.removeEventListener('jaketunes-show-now-playing', onShowNowPlaying)
+  }, [dispatch])
 
   // 4.5: global keyboard shortcuts. Bound to document.keydown so they
   // fire from anywhere in the app, but every transport key bails when
@@ -1532,6 +1564,7 @@ function AppInner() {
         case 'new-playlist': window.dispatchEvent(new Event('jaketunes-new-playlist')); break
         case 'import-files': window.dispatchEvent(new Event('jaketunes-import-files')); break
         case 'show-now-playing': window.dispatchEvent(new Event('jaketunes-show-now-playing')); break
+        case 'star-current-song': starNowPlayingRef.current(); break
         case 'view-songs': dispatch({ type: 'SET_VIEW', view: 'songs' }); break
         case 'view-artists': dispatch({ type: 'SET_VIEW', view: 'artists' }); break
         case 'view-albums': dispatch({ type: 'SET_VIEW', view: 'albums' }); break
@@ -1744,6 +1777,15 @@ function AppInner() {
       if ((e.metaKey || e.ctrlKey) && e.key === 'l') {
         e.preventDefault()
         window.dispatchEvent(new Event('jaketunes-show-now-playing'))
+        return
+      }
+
+      // Shift+Cmd+S = star / unstar the playing song. The menu item shows
+      // the shortcut without registering it (registerAccelerator: false),
+      // so this is the only key path — one press, one toggle.
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        starNowPlayingRef.current()
         return
       }
     }

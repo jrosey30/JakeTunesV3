@@ -5,6 +5,8 @@ import { usePlayback } from '../../context/PlaybackContext'
 import { useAudio } from '../../hooks/useAudio'
 import { buildIndex, search, normalize, type SearchIndex, type SearchRow, type RankedRow } from '../../utils/searchIndex'
 import { buildNormalizedArtworkIndex, lookupArtwork } from '../../utils/artworkLookup'
+import { albumKeyOf } from '../../utils/albumKey'
+import { sortAlbumTracks } from '../../utils/albumTrackOrder'
 import AlbumArtImage from '../AlbumArtImage'
 import '../../styles/search-panel.css'
 
@@ -13,7 +15,7 @@ import '../../styles/search-panel.css'
  * dropdown beneath the SearchPill in the toolbar. Visible whenever
  * the input is focused AND the query is non-empty. Sections: top hit,
  * tracks, albums, artists, playlists. Click a row to navigate:
- *  - track    → playTrack (and queue context = visible tracks)
+ *  - track    → playTrack (queue context = the track's album, from the hit)
  *  - album    → VIEW_ALBUM_DETAIL with the album's canonical key
  *  - artist   → VIEW_ARTIST_DETAIL
  *  - playlist → VIEW_PLAYLIST
@@ -146,10 +148,13 @@ export default function SearchPanel({ query, inputEl, onClose }: Props) {
     if (row.kind === 'track') {
       const t = lib.tracks.find(x => x.id === row.id)
       if (t) {
-        // Queue context = all currently visible tracks of the same
-        // kind. For now we just play the single match; future polish
-        // can pull in adjacent matches as a queue.
-        playTrack(t, [t], 0, undefined, true)
+        // Queue context = the hit's album in record order, starting at
+        // the hit — a one-song queue went silent after the match ended.
+        const key = albumKeyOf(t)
+        const album = sortAlbumTracks(lib.tracks.filter(x => albumKeyOf(x) === key))
+        const idx = album.findIndex(x => x.id === t.id)
+        if (idx >= 0) playTrack(t, album, idx, undefined, true)
+        else playTrack(t, [t], 0, undefined, true)
       }
     } else {
       // Opening a detail/playlist from a result — remember the search so the

@@ -14,7 +14,7 @@ import { canonicalArtist } from '../utils/artistAlias'
 import { groupTracksIntoAlbums, type Album } from '../utils/albumGroups'
 import type { Track } from '../types'
 import '../styles/coverflow.css'
-import { addToPlaylistEntry, addToIpodPoolEntry } from '../utils/playlistMenu'
+import { addToPlaylistEntry, addToIpodPoolEntry, queueMenuEntries } from '../utils/playlistMenu'
 
 /// V5 facelift: Cover Flow — reimagined as THE JUKEBOX ARC (Jake's pick
 /// over the classic Apple side-scroll rolodex). Same capability —
@@ -202,8 +202,7 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
       { label: `Play "${album.name}"`, onClick: () => { if (ordered.length) playTrack(ordered[0], ordered, 0, undefined, true) } },
       { label: 'Shuffle', onClick: () => { const s = [...ordered].sort(() => Math.random() - 0.5); if (s.length) playTrack(s[0], s, 0, undefined, true) } },
       { separator: true as const },
-      { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: ordered }) },
-      { label: 'Add to Up Next', onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: ordered }) },
+      ...queueMenuEntries(ordered, pbDispatch),
       addToPlaylistEntry(ordered, lib.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
       addToIpodPoolEntry(ordered),
       { separator: true as const },

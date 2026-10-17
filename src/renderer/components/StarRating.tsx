@@ -44,40 +44,43 @@ export default function StarRating({ value, onChange }: Props) {
  * the menu's checkmark stays correct for legacy 1..4 ratings.
  */
 import type { MenuEntry } from './ContextMenu'
+import { isStarred, planStarToggle } from '../../common/star-toggle'
+
+type StarDispatch = (action: { type: 'UPDATE_TRACKS'; updates: { id: number; field: string; value: string }[] }) => void
+
+/**
+ * Perform a binary star toggle on `tracks` and persist it — the one writer
+ * behind the menu's Star/Unstar and ⇧⌘S (star the playing song), so
+ * starredAt is stamped identically from both. A mixed selection stars
+ * everyone (see planStarToggle). Returns the target: 5 starred, 0 unstarred.
+ */
+export function applyStarToggle(tracks: { id: number; rating?: number }[], dispatch: StarDispatch): 0 | 5 {
+  const plan = planStarToggle(tracks, Date.now())
+  dispatch({ type: 'UPDATE_TRACKS', updates: plan.ratingUpdates })
+  for (const u of plan.ratingUpdates) window.electronAPI.saveMetadataOverride(u.id, 'rating', u.value)
+  // 4.5: stamp starredAt on bulk star-ON. Recent-first sort of the
+  // Starred smart playlist uses this; legacy stars without the field
+  // sort to the bottom.
+  if (plan.stampUpdates.length > 0) {
+    dispatch({ type: 'UPDATE_TRACKS', updates: plan.stampUpdates })
+    for (const u of plan.stampUpdates) window.electronAPI.saveMetadataOverride(u.id, 'starredAt', u.value)
+  }
+  return plan.target
+}
 
 export function ratingMenuEntries(
   tracks: { id: number; rating?: number }[],
-  dispatch: (action: { type: 'UPDATE_TRACKS'; updates: { id: number; field: string; value: string }[] }) => void,
+  dispatch: StarDispatch,
 ): MenuEntry[] {
-  const someStarred = tracks.some(t => (Number(t.rating) || 0) > 0)
-  const allStarred  = tracks.every(t => (Number(t.rating) || 0) > 0)
-  // If a mixed selection, default to "Star" (apply 5 to everyone so
-  // the state becomes consistent). Avoids the trap where toggling on
-  // a mixed set leaves you with half starred.
-  const target = allStarred ? 0 : 5
-
-  const apply = () => {
-    const updates = tracks.map(t => ({ id: t.id, field: 'rating', value: String(target) }))
-    dispatch({ type: 'UPDATE_TRACKS', updates })
-    for (const u of updates) window.electronAPI.saveMetadataOverride(u.id, 'rating', u.value)
-    // 4.5: stamp starredAt on bulk star-ON. Recent-first sort of the
-    // Starred smart playlist uses this; legacy stars without the field
-    // sort to the bottom. All tracks in the bulk get the same stamp,
-    // which is fine — they were starred together.
-    if (target > 0) {
-      const stamp = String(Date.now())
-      const stampUpdates = tracks.map(t => ({ id: t.id, field: 'starredAt', value: stamp }))
-      dispatch({ type: 'UPDATE_TRACKS', updates: stampUpdates })
-      for (const u of stampUpdates) window.electronAPI.saveMetadataOverride(u.id, 'starredAt', u.value)
-    }
-  }
+  const someStarred = tracks.some(isStarred)
+  const allStarred  = tracks.every(isStarred)
 
   return [
     { separator: true as const },
     {
       label: allStarred ? 'Unstar' : 'Star',
       checked: someStarred && allStarred,
-      onClick: apply,
+      onClick: () => { applyStarToggle(tracks, dispatch) },
     },
   ]
 }
