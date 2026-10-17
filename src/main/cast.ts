@@ -342,7 +342,8 @@ export interface RadioCastMember {
  *  V1 TTS path so V2 sounds identical. (Verify `label`s against V1's
  *  RADIO_SPEAKER_LABEL when the engine is wired in Phase 1's final step.) */
 const RADIO_HOSTS: RadioCastMember[] = [
-  { id: 'mm',        name: 'The Music Man',    tag: 'MM',        label: 'The Music Man', kind: 'host',      voiceId: undefined,              voiceSettings: { stability: 0.2,  similarity_boost: 0.7,  style: 0.85 } },
+  // 'mm' settings changed 2026-10-16 (Jake picked take B). ⚠️ TWIN: src/main/ipc/ai-ipc.ts musicman-speak Music Man branch.
+  { id: 'mm',        name: 'The Music Man',    tag: 'MM',        label: 'The Music Man', kind: 'host',      voiceId: undefined,              voiceSettings: { stability: 0.5,  similarity_boost: 0.75, style: 0.35 } },
   { id: 'megan',     name: 'Megan',            tag: 'MEGAN',     label: 'Megan',         kind: 'host',      voiceId: 'T7eLpgAAhoXHlrNajG8v', voiceSettings: { stability: 0.2,  similarity_boost: 0.7,  style: 0.85 } },
   { id: 'announcer', name: 'Announcer',        tag: 'ANNOUNCER', label: 'WJLR',          kind: 'announcer', voiceId: 'CeNX9CMwmxDxUF5Q2Inm', voiceSettings: { stability: 0.75, similarity_boost: 0.85, style: 0.45 } },
   { id: 'stephen',   name: 'DJ Stephen Hands', tag: 'STEPHEN',   label: 'Stephen Hands', kind: 'host',      voiceId: 'ApBE43wHy5MiZGz9ihqB', voiceSettings: { stability: 0.45, similarity_boost: 0.8,  style: 0.55 } },

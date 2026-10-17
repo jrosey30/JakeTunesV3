@@ -203,6 +203,8 @@ export function registerAiIpc(ipc: IpcRegistrar, host: AiIpcHost): void {
       const ANNOUNCER_VOICE_ID  = 'CeNX9CMwmxDxUF5Q2Inm'
       const DJ_HANDS_VOICE_ID   = 'ApBE43wHy5MiZGz9ihqB'
       const callerByVoice = Object.values(CALLERS).find(c => c.voiceId === voice)
+      // The Music Man's own voice (ELEVENLABS_VOICE_ID or the default).
+      const mmVoice = process.env.ELEVENLABS_VOICE_ID || 'ljX1ZrXuDIIRVcmiVSyR'
       const voiceSettings =
         voice === ANNOUNCER_VOICE_ID
           ? {
@@ -220,12 +222,22 @@ export function registerAiIpc(ipc: IpcRegistrar, host: AiIpcHost): void {
                   style: 0.55,
                   use_speaker_boost: true,
                 }
-              : {
-                  stability: 0.2,
-                  similarity_boost: 0.7,
-                  style: 0.85,
-                  use_speaker_boost: true,
-                }
+              : voice === mmVoice
+                // Music Man (Jake, 2026-10-16: "too robotic", picked take B):
+                // v3 "Natural" stability, calmer style.
+                // ⚠️ TWIN: src/main/cast.ts RADIO_HOSTS 'mm' voiceSettings.
+                ? {
+                    stability: 0.5,
+                    similarity_boost: 0.75,
+                    style: 0.35,
+                    use_speaker_boost: true,
+                  }
+                : {
+                    stability: 0.2,
+                    similarity_boost: 0.7,
+                    style: 0.85,
+                    use_speaker_boost: true,
+                  }
       let lastError = ''
       for (const model of modelChain) {
         try {
@@ -252,7 +264,6 @@ export function registerAiIpc(ipc: IpcRegistrar, host: AiIpcHost): void {
           }
           // Music Man only (not Megan, callers, announcer, DJ): pitch per
           // MUSIC_MAN_PITCH_SEMITONES in the userData .env (voice-pitch.ts).
-          const mmVoice = process.env.ELEVENLABS_VOICE_ID || 'ljX1ZrXuDIIRVcmiVSyR'
           const raw = Buffer.from(arrayBuf)
           const audioBuf = voice === mmVoice
             ? await pitchShiftMp3(raw, pitchSemitonesFromEnv(process.env.MUSIC_MAN_PITCH_SEMITONES))
