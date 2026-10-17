@@ -605,7 +605,7 @@ const electronAPI = {
     id: number; title?: string; artist?: string; album?: string; genre?: string; year?: string | number
     playCount?: number; skipCount?: number; rating?: number; bpm?: number | null; codec?: string; fileSize?: number
     path?: string; audioMissing?: boolean
-  }>, opts?: { target?: number; brief?: Record<string, unknown>; saveProfile?: boolean; pool?: { ids: number[]; fill: boolean } }): Promise<{
+  }>, opts?: { target?: number; brief?: Record<string, unknown>; saveProfile?: boolean; pool?: { ids: number[]; fill: boolean; pinnedIds?: number[] } }): Promise<{
     ok: boolean
     trackIds?: number[]
     reserveIds?: number[]

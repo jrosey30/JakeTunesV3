@@ -4,8 +4,9 @@
  * Everything dropped onto the sidebar's "iPod Pool" row (or onto this
  * page) lands here in drop order. The page is a plain, honest list: what
  * is in the pool, how long it runs, remove one, clear all, and hand off to
- * the Device page to sync it. No picking happens here — the brain only
- * enters at sync time, and only if asked to fill the gap.
+ * the Device page to sync it. No picking happens here. Every Activity Sync
+ * is half and half (2026-10-16): the newest half-set of this pool goes on,
+ * and Music Man picks the other half.
  */
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { useLibrary } from '../context/LibraryContext'
@@ -17,6 +18,8 @@ import {
   addTracksToPool, removeFromPool, clearPool, requestPoolMode, swapInPool,
 } from '../activityPool'
 import '../styles/activity-pool.css'
+import { resolvePinnedPoolIds } from '../utils/poolPinnedLists'
+import { splitHalfAndHalf } from '../../common/activity-split'
 
 function fmtClock(ms: number): string {
   const s = Math.round(ms / 1000)
@@ -39,6 +42,8 @@ export default function ActivityPoolView() {
   useEffect(() => { void refreshPool() }, [])
 
   const byId = useMemo(() => new Map(state.tracks.map((t) => [t.id, t])), [state.tracks])
+  // Always-in lists (2026-10-16), resolved live — the same helper the sync uses.
+  const pinned = useMemo(() => resolvePinnedPoolIds(state.tracks, state.playlists), [state.tracks, state.playlists])
   // The rows are what will SYNC — the same count the sidebar badge and the
   // Activity sheet show. What can't sync is listed underneath, by name,
   // with the fix beside it (2026-09-19: "1000 in the pool, 992 at the sync").
@@ -69,9 +74,16 @@ export default function ActivityPoolView() {
         <div>
           <h1 className="pool-title">iPod Pool</h1>
           <div className="pool-sub">
+            Always in, live: {pinned.lists.map((l) => l.found ? `${l.name} (${l.count.toLocaleString()})` : `${l.name} (no playlist by that name)`).join(' · ')}
+          </div>
+          <div className="pool-sub">
             {ids.length > 0
-              ? <>{rows.length.toLocaleString()} of {max.toLocaleString()} will sync · {fmtLong(totalMs)}{cantSync > 0 ? <> · <strong className="pool-sub-warn">{cantSync} can’t</strong></> : ''}</>
-              : <>Empty — right-click songs and choose “Add to iPod Pool”, or drag songs, albums, artists or playlists onto this page.</>}
+              ? (() => {
+                  const split = splitHalfAndHalf(health.syncable, max, pinned.ids)
+                  const dropsOn = split.manualIds.length - split.pinnedCount
+                  return <>{rows.length.toLocaleString()} dropped in · a {max.toLocaleString()}-song sync takes those lists + your newest {dropsOn.toLocaleString()} drops, Music Man picks the other {split.brainTarget.toLocaleString()} · {fmtLong(totalMs)}{cantSync > 0 ? <> · <strong className="pool-sub-warn">{cantSync} can’t</strong></> : ''}</>
+                })()
+              : <>No songs dropped in yet — right-click songs and choose “Add to iPod Pool”, or drag songs, albums, artists or playlists onto this page.</>}
           </div>
         </div>
         <div className="pool-actions">
@@ -84,7 +96,7 @@ export default function ActivityPoolView() {
               // pool the next time it's shown (DeviceView stays untouched).
               requestPoolMode()
               dispatch({ type: 'SET_VIEW', view: 'device' })
-              setNotice('Plug in the iPod and press Activity Sync — the sheet will open on your pool.', { kind: 'info', durationMs: 6000 })
+              setNotice('Plug in the iPod and press Activity Sync — half the set comes from your newest pool drops, Music Man picks the rest.', { kind: 'info', durationMs: 6000 })
             }}
           >Sync this pool…</button>
           <button type="button" className="pool-btn" disabled={rows.length === 0} onClick={() => setConfirmClear(true)}>Clear pool</button>
