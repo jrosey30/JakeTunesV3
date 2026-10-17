@@ -55,6 +55,7 @@ import { ensureLiveSetsLoaded } from './liveSets'
 import { hydrateScrollCacheFromUiState } from './hooks/useScrollPersistence'
 import { AppSettings, DEFAULT_APP_SETTINGS, type Playlist } from './types'
 import { setNotice } from './activity'
+import { autoNavBlocked } from './utils/autoNavGuard'
 import './styles/variables.css'
 import './styles/lion-controls.css'
 import './styles/primitives.css'
@@ -659,7 +660,23 @@ function AppInner() {
   // remount (500/500 → 492 / 33). TSA sealed the last Activity Sync; if
   // songs have drifted, tell Jake — do not copy, convert, or wipe.
   useEffect(() => {
+    // "Open JakeTunes when this iPod is connected" (Device page options,
+    // persisted by DeviceView's Apply as ui-state `optOpenOnConnect`) was
+    // saved but never read (2026-10-17). On: the plug-in opens the Device
+    // page — unless a sync, a rip or a modal is in flight (autoNavGuard).
+    // Navigation only; nothing here touches the device.
+    const openDeviceIfAsked = async () => {
+      try {
+        const r = await window.electronAPI.loadUiState()
+        if (!r?.ok || r.state?.optOpenOnConnect !== true) return
+        if (libStateRef.current.currentView === 'device' || autoNavBlocked()) return
+        dispatch({ type: 'SET_VIEW', view: 'device' })
+      } catch (err) {
+        console.warn('[ipod-open-on-connect] skipped:', err)
+      }
+    }
     const onIpodMounted = async () => {
+      void openDeviceIfAsked()
       try {
         const r = await window.electronAPI.inspectIpodTsaSeal?.()
         if (!r?.ok || !r.sealed || r.unmounted) return
