@@ -48,9 +48,9 @@ export function pkcePair(): { verifier: string; challenge: string } {
   return { verifier, challenge }
 }
 
-export function authorizeUrl(clientId: string, challenge: string, state: string): string {
+export function authorizeUrl(clientId: string, challenge: string, state: string, redirectUri = SPOTIFY_REDIRECT_URI): string {
   const q = new URLSearchParams({
-    client_id: clientId, response_type: 'code', redirect_uri: SPOTIFY_REDIRECT_URI,
+    client_id: clientId, response_type: 'code', redirect_uri: redirectUri,
     code_challenge_method: 'S256', code_challenge: challenge, scope: SCOPES, state,
   })
   return `${AUTH_URL}?${q}`
@@ -110,12 +110,18 @@ export async function freshAccessToken(file: string, fetchFn: typeof fetch = fet
 /**
  * One-time connect: open the consent page, catch the code on loopback,
  * exchange it, persist tokens. Resolves when the browser round-trip lands.
+ *
+ * `port` stays SPOTIFY_LOOPBACK_PORT in the app — Spotify only redirects
+ * to the URI registered on the dev app. Tests pass 0 so two runs at once
+ * (parallel pre-commit gates) never fight over 48213; the redirect URI
+ * then follows whatever port the OS handed out.
  */
 export async function connectSpotify(
   file: string,
   openUrl: (url: string) => void,
   fetchFn: typeof fetch = fetch,
   timeoutMs = 5 * 60_000,
+  port = SPOTIFY_LOOPBACK_PORT,
 ): Promise<{ ok: boolean; error?: string }> {
   const auth = await loadAuth(file)
   if (!auth.clientId) return { ok: false, error: 'No Client ID — paste it in Settings first.' }
@@ -123,8 +129,9 @@ export async function connectSpotify(
   const state = b64url(randomBytes(24))
 
   return await new Promise((resolve) => {
+    let redirectUri = SPOTIFY_REDIRECT_URI
     const server = createServer((req, res) => {
-      const url = new URL(req.url || '/', SPOTIFY_REDIRECT_URI)
+      const url = new URL(req.url || '/', redirectUri)
       if (url.pathname !== '/callback') { res.writeHead(404).end(); return }
       const gotState = url.searchParams.get('state')
       const code = url.searchParams.get('code')
@@ -136,7 +143,7 @@ export async function connectSpotify(
         if (err) { resolve({ ok: false, error: `Spotify said: ${err}` }); return }
         if (!code || gotState !== state) { resolve({ ok: false, error: 'Bad callback (state mismatch).' }); return }
         const tok = await tokenRequest(new URLSearchParams({
-          grant_type: 'authorization_code', code, redirect_uri: SPOTIFY_REDIRECT_URI,
+          grant_type: 'authorization_code', code, redirect_uri: redirectUri,
           client_id: auth.clientId!, code_verifier: verifier,
         }), fetchFn)
         if (!tok) { resolve({ ok: false, error: 'Token exchange failed.' }); return }
@@ -151,8 +158,10 @@ export async function connectSpotify(
       })()
     })
     server.on('error', (e) => resolve({ ok: false, error: `Loopback listener failed: ${e.message}` }))
-    server.listen(SPOTIFY_LOOPBACK_PORT, '127.0.0.1', () => {
-      openUrl(authorizeUrl(auth.clientId!, challenge, state))
+    server.listen(port, '127.0.0.1', () => {
+      const addr = server.address()
+      if (addr && typeof addr === 'object') redirectUri = `http://127.0.0.1:${addr.port}/callback`
+      openUrl(authorizeUrl(auth.clientId!, challenge, state, redirectUri))
     })
     setTimeout(() => { try { server.close() } catch { /* closed */ } resolve({ ok: false, error: 'Login timed out.' }) }, timeoutMs).unref?.()
   })
