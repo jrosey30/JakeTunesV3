@@ -26,12 +26,13 @@
  * ffmpeg is the PATH binary (`ffmpeg`), not a file bundled in the app.
  * On a Mac that is whichever ffmpeg is on PATH (typically Homebrew).
  */
-import { createReadStream, createWriteStream } from 'fs'
+import { createReadStream } from 'fs'
 import { mkdir, rename, stat, unlink, readdir, utimes } from 'fs/promises'
 import { join } from 'path'
 import { Readable } from 'stream'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
+import { writeWebBodyToFile } from './web-body-to-file.ts'
 
 const execP = promisify(execFile)
 
@@ -76,10 +77,8 @@ export async function downloadUrlToFile(
   if ((!res.ok && res.status !== 206) || !res.body) {
     throw new Error(`alac fetch ${res.status}`)
   }
-  const out = createWriteStream(dest)
-  await new Promise<void>((resolve, reject) => {
-    Readable.fromWeb(res.body as never).pipe(out).on('finish', resolve).on('error', reject)
-  })
+  // pipeline via writeWebBodyToFile — see web-body-to-file.ts (2026-10-17).
+  await writeWebBodyToFile(res.body, dest)
   const st = await stat(dest)
   if (st.size <= 0) throw new Error('alac fetch wrote no bytes')
 }

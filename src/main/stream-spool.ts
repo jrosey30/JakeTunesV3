@@ -22,11 +22,12 @@
  *
  * Electron-free (dir + fetch injected) so node --test loads it.
  */
-import { createWriteStream, createReadStream } from 'fs'
+import { createReadStream } from 'fs'
 import { readFile, writeFile, rename, mkdir, stat, readdir, unlink } from 'fs/promises'
 import { join } from 'path'
 import { Readable } from 'stream'
 import { withCompanionInit } from './hub-companion.ts'
+import { writeWebBodyToFile } from './web-body-to-file.ts'
 
 export interface SpoolMeta { contentType: string; total: number }
 export interface SpoolReady { file: string; contentType: string; total: number }
@@ -117,10 +118,10 @@ export function ensureSpool(dir: string, key: string, url: string, fetchFn: type
       if (!res.ok || !res.body) throw new Error(`spool fetch ${res.status}`)
       const total = Number(res.headers.get('content-length')) || 0
       const contentType = res.headers.get('content-type') || 'audio/mpeg'
-      const out = createWriteStream(part)
-      await new Promise<void>((resolve, reject) => {
-        Readable.fromWeb(res.body as never).pipe(out).on('finish', resolve).on('error', reject)
-      })
+      // pipeline via writeWebBodyToFile: a dropped connection now rejects into
+      // the catch below (cooldown + .part cleanup) instead of an uncaught
+      // exception dialog and a spool slot that never frees (2026-10-17).
+      await writeWebBodyToFile(res.body, part)
       const written = (await stat(part)).size
       if (total > 0 && written !== total) throw new Error(`spool short: ${written}/${total}`)
       await writeFile(metaPath(dir, key), JSON.stringify({ contentType, total: written } satisfies SpoolMeta))
