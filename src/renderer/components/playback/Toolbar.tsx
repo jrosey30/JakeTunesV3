@@ -605,6 +605,14 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
     playTrack(firstTrack, shuffled, 0, true, true)
   }, [radioMode, lib.tracks, playTrack, stopPlayback, stopRadioMode])
 
+  // Radio Mode from the Controls menu (⇧⌘R) — the same toggle as the
+  // button, mirroring how toggle-dj-mode reaches handleDjModeClick.
+  useEffect(() => {
+    const handler = () => { void handleRadioToggle() }
+    window.addEventListener('toggle-radio-mode', handler)
+    return () => window.removeEventListener('toggle-radio-mode', handler)
+  }, [handleRadioToggle])
+
   // "Start Artist Radio" — dispatched from any view's right-click menu
   // (initially SongsView, expandable to Albums/Artists/Genres later).
   // Filters the library to that artist, shuffles, sets queue, turns
@@ -1765,7 +1773,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
           <button
             className={`transport-toggle dj-btn radio-mode-btn ${radioMode ? 'radio-mode-btn--on' : ''}`}
             onClick={handleRadioToggle}
-            title={radioMode ? 'Radio Mode is ON — click to turn OFF (WJLR 330.9, Music Man + Megan)' : 'Radio Mode — click to start WJLR 330.9 (whole library shuffled, MM + Megan banter)'}
+            title={radioMode ? 'Radio Mode is ON (⇧⌘R) — click to turn OFF (WJLR 330.9, Music Man + Megan)' : 'Radio Mode (⇧⌘R) — click to start WJLR 330.9 (whole library shuffled, MM + Megan banter)'}
           >
             <RadioIcon />
             {radioMode && (

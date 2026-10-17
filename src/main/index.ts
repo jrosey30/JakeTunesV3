@@ -2952,7 +2952,10 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
       { label: 'Increase Volume', accelerator: 'CmdOrCtrl+Up', click: () => sendMenuAction('volume-up') },
       { label: 'Decrease Volume', accelerator: 'CmdOrCtrl+Down', click: () => sendMenuAction('volume-down') },
       { type: 'separator' },
-      { label: 'Go to Current Song', accelerator: 'CmdOrCtrl+L', click: () => sendMenuAction('show-now-playing') }
+      { label: 'Go to Current Song', accelerator: 'CmdOrCtrl+L', click: () => sendMenuAction('show-now-playing') },
+      { type: 'separator' },
+      { label: 'Radio Mode', accelerator: 'Shift+CmdOrCtrl+R', click: () => sendMenuAction('toggle-radio-mode') },
+      { label: 'DJ Mode', accelerator: 'Shift+CmdOrCtrl+D', click: () => sendMenuAction('toggle-dj-mode') }
     ]
   },
   {
