@@ -4,7 +4,7 @@
  * tape saves and loads straight into the DeckBar with REC ready. Then
  * it's just play + record — how mixtapes are made.
  */
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { refreshMixtapes, setDeckState, pickInk } from '../mixtapes'
 import type { Mixtape } from '../types'
 import '../styles/activity-sheet.css'
@@ -18,8 +18,29 @@ interface Props {
 export default function BlankTapeSheet({ onClose }: Props) {
   const [title, setTitle] = useState('')
   const [error, setError] = useState('')
+  // Enter auto-repeats when held — one tape per press, not one per repeat.
+  const creatingRef = useRef(false)
+
+  // Esc backs out from anywhere in the sheet (capture, like ConfirmDialog,
+  // so nothing behind the sheet also acts on it).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      onClose()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [onClose])
 
   const create = async () => {
+    if (creatingRef.current) return
+    creatingRef.current = true
+    try { await wrapTape() } finally { creatingRef.current = false }
+  }
+
+  const wrapTape = async () => {
     const id = `mix-${Date.now().toString(36)}`
     const tape: Mixtape = {
       id,
@@ -56,8 +77,9 @@ export default function BlankTapeSheet({ onClose }: Props) {
         </div>
         <div className="activity-q">
           <span className="activity-q-label">Write on the label</span>
-          <input className="activity-place" type="text" value={title}
+          <input className="activity-place" type="text" value={title} autoFocus
             onChange={(e) => setTitle(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); void create() } }}
             placeholder="summer '26 · for the car · side b is a secret…" />
         </div>
         {error && <div className="mixsheet-error">{error}</div>}
