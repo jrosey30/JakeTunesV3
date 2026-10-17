@@ -27,6 +27,11 @@ describe('PKCE', () => {
     assert.equal(u.searchParams.get('redirect_uri'), SPOTIFY_REDIRECT_URI)
     assert.equal(u.searchParams.get('state'), 'st8')
   })
+
+  test('the app default is the URI registered on the Spotify dev app', () => {
+    // Tests below bind port 0; the app must still listen where Spotify redirects.
+    assert.equal(SPOTIFY_REDIRECT_URI, 'http://127.0.0.1:48213/callback')
+  })
 })
 
 describe('tokenStale', () => {
@@ -48,29 +53,44 @@ describe('pickDiscoverWeekly', () => {
   })
 })
 
+/** Connect on an OS-assigned port (0), never the real 48213 — two gate runs
+ *  at once would fight over it (EADDRINUSE). `consent` resolves once the
+ *  listener is up (openUrl fires from listen's callback), or rejects if it
+ *  never came up, so no test sleeps and hopes. */
+function startConnect(file: string, fetchFn: typeof fetch): { done: ReturnType<typeof connectSpotify>; consent: Promise<string> } {
+  let opened!: (url: string) => void
+  const openedP = new Promise<string>((r) => { opened = r })
+  const done = connectSpotify(file, (u) => opened(u), fetchFn, 10_000, 0)
+  const neverOpened = done.then((r) => { throw new Error(`listener never opened: ${r.error}`) })
+  return { done, consent: Promise.race([openedP, neverOpened]) }
+}
+
 describe('connectSpotify — loopback round trip', () => {
   test('opens consent, catches the callback, exchanges the code, persists tokens', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'spot-'))
     const file = join(dir, 'spotify-auth.json')
     await saveAuth({ clientId: 'client123' }, file)
 
+    let redirect = ''
     const fakeFetch = (async (url: string, init?: { body?: string }) => {
       if (String(url).includes('accounts.spotify.com/api/token')) {
         const body = new URLSearchParams(String(init?.body))
         assert.equal(body.get('grant_type'), 'authorization_code')
         assert.equal(body.get('code'), 'CODE42')
         assert.ok(body.get('code_verifier'), 'verifier must travel')
+        assert.equal(body.get('redirect_uri'), redirect, 'exchange must name the redirect the browser used')
         return { ok: true, json: async () => ({ access_token: 'AT', refresh_token: 'RT', expires_in: 3600 }) }
       }
       return { ok: false, status: 404, text: async () => '' }
     }) as unknown as typeof fetch
 
-    let consentUrl = ''
-    const done = connectSpotify(file, (u) => { consentUrl = u }, fakeFetch, 10_000)
-    // The "browser": wait for the listener, then hit the callback like Spotify would.
-    await new Promise((r) => setTimeout(r, 150))
-    const state = new URL(consentUrl).searchParams.get('state')
-    await fetch(`${SPOTIFY_REDIRECT_URI}?code=CODE42&state=${state}`)
+    const { done, consent } = startConnect(file, fakeFetch)
+    // The "browser": follow the consent URL's redirect like Spotify would.
+    const consentUrl = new URL(await consent)
+    redirect = consentUrl.searchParams.get('redirect_uri') ?? ''
+    assert.match(redirect, /^http:\/\/127\.0\.0\.1:\d+\/callback$/)
+    const state = consentUrl.searchParams.get('state')
+    await fetch(`${redirect}?code=CODE42&state=${state}`)
     const r = await done
     assert.equal(r.ok, true, r.error)
     const auth = await loadAuth(file)
@@ -85,11 +105,13 @@ describe('connectSpotify — loopback round trip', () => {
     await saveAuth({ clientId: 'client123' }, file)
     let exchanged = false
     const fakeFetch = (async () => { exchanged = true; return { ok: true, json: async () => ({}) } }) as unknown as typeof fetch
-    const done = connectSpotify(file, () => {}, fakeFetch, 10_000)
-    await new Promise((r) => setTimeout(r, 150))
-    await fetch(`${SPOTIFY_REDIRECT_URI}?code=EVIL&state=WRONG`)
+    const { done, consent } = startConnect(file, fakeFetch)
+    const redirect = new URL(await consent).searchParams.get('redirect_uri')
+    await fetch(`${redirect}?code=EVIL&state=WRONG`)
     const r = await done
     assert.equal(r.ok, false)
+    // Refused for the RIGHT reason — a listener that never bound also fails.
+    assert.match(r.error ?? '', /state mismatch/)
     assert.equal(exchanged, false)
   })
 })
