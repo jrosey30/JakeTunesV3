@@ -94,7 +94,9 @@ export async function declareLiveSet(album: DeclareAlbumInput, opts?: { confirme
       })
     })
 
-    const added = await enqueueFiles([mergedPath], 'alac')
+    // quiet: the merged file is a concert, not songs — no "rides the next
+    // Activity Sync" landing toast for it.
+    const added = await enqueueFiles([mergedPath], 'alac', { quiet: true })
     if (added === 0) {
       throw new Error('merged file could not be enqueued for import')
     }
