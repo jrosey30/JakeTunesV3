@@ -15,6 +15,7 @@ import type { MenuEntry } from '../components/ContextMenu'
 import type { Playlist, Track } from '../types'
 import { setNotice } from '../activity'
 import { addTracksToPoolDirect } from '../activityPool'
+import { queueNoticeText, type QueueMode } from '../../common/queue-notice'
 
 /** iPod-imported playlists whose names duplicate the built-in smart playlists.
  *  The sidebar hides them, and they're rule-driven, so a manual add would be
@@ -88,6 +89,28 @@ export function addToPlaylistEntry(
       }
     }),
   }
+}
+
+/**
+ * "Play Next" / "Add to Up Next" — queue the songs AND say so, in the same
+ * notice style as Add to Playlist above. Every track context menu uses
+ * queueMenuEntries so the wording can't drift between views. `dispatch` is
+ * the playback dispatch (PlaybackContext's reducer does the queue edit).
+ */
+type QueueDispatch = (action: { type: 'PLAY_NEXT'; tracks: Track[] } | { type: 'ADD_TO_QUEUE'; tracks: Track[] }) => void
+
+export function queueTracks(mode: QueueMode, tracks: Track[], dispatch: QueueDispatch): void {
+  if (tracks.length === 0) return
+  if (mode === 'next') dispatch({ type: 'PLAY_NEXT', tracks })
+  else dispatch({ type: 'ADD_TO_QUEUE', tracks })
+  setNotice(queueNoticeText(mode, tracks), { kind: 'success' })
+}
+
+export function queueMenuEntries(tracks: Track[], dispatch: QueueDispatch): MenuEntry[] {
+  return [
+    { label: 'Play Next', onClick: () => queueTracks('next', tracks, dispatch) },
+    { label: 'Add to Up Next', onClick: () => queueTracks('later', tracks, dispatch) },
+  ]
 }
 
 /**

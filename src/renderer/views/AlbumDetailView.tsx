@@ -31,7 +31,8 @@ import { verifyLiveSetCompleteness } from '../utils/liveSetCompleteness'
 import type { Track, LiveSetCue } from '../types'
 import '../styles/songs.css'
 import '../styles/album-page.css'
-import { addToPlaylistEntry, addToIpodPoolEntry } from '../utils/playlistMenu'
+import { addToPlaylistEntry, addToIpodPoolEntry, queueMenuEntries } from '../utils/playlistMenu'
+import { getInfoTarget, type GetInfoTarget } from '../../common/get-info-target'
 
 function formatDuration(ms: number): string {
   if (!ms || ms <= 0) return ''
@@ -137,7 +138,7 @@ export default function AlbumDetailView() {
   // Right-click a setlist song → reimport that one track into the regular
   // library (promote). The concert stays intact; only that song re-appears.
   const [cueCtx, setCueCtx] = useState<{ x: number; y: number; cue: LiveSetCue } | null>(null)
-  const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
+  const [getInfoState, setGetInfoState] = useState<GetInfoTarget<Track> | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: number[]; count: number } | null>(null)
 
   // ── V5 Live Concert Mode ──
@@ -252,6 +253,20 @@ export default function AlbumDetailView() {
     const track = tracks[idx]
     if (track) playTrack(track, tracks, idx, undefined, true)
   }, [tracks, playTrack])
+
+  // Cmd+I → Get Info for the selected rows (nothing selected → the
+  // now-playing song). Same listener shape as SongsView's.
+  useEffect(() => {
+    if (lib.currentView !== 'album-detail') return
+    const handler = () => {
+      if (document.querySelector('.getinfo-overlay')) return
+      const np = pb.nowPlaying ? lib.tracks.find(t => t.id === pb.nowPlaying!.id) : undefined
+      const target = getInfoTarget(tracks, lib.selectedTrackIds, np)
+      if (target) setGetInfoState(target)
+    }
+    window.addEventListener('jaketunes-get-info', handler)
+    return () => window.removeEventListener('jaketunes-get-info', handler)
+  }, [lib.currentView, lib.selectedTrackIds, lib.tracks, pb.nowPlaying, tracks])
 
   // ⚠️ TWIN: src/renderer/views/SongsView.tsx::handleRatingChange — keep in sync.
   const handleRatingChange = useCallback((trackId: number, rating: number) => {
@@ -378,8 +393,7 @@ export default function AlbumDetailView() {
     return [
       { label: `Play "${label}"`, onClick: () => playTrack(track, tracks, idx, undefined, true) },
       { separator: true as const },
-      { label: 'Play Next', onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selectedTracks }) },
-      { label: 'Add to Up Next', onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selectedTracks }) },
+      ...queueMenuEntries(selectedTracks, pbDispatch),
       addToPlaylistEntry(selectedTracks, lib.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
       addToIpodPoolEntry(selectedTracks),
       { separator: true as const },
@@ -781,7 +795,7 @@ export default function AlbumDetailView() {
       {getInfoState && (
         <GetInfoModal
           tracks={getInfoState.tracks}
-          allTracks={tracks}
+          allTracks={getInfoState.allTracks ?? tracks}
           initialIndex={getInfoState.index}
           artworkMap={lib.artworkMap}
           onClose={() => setGetInfoState(null)}
