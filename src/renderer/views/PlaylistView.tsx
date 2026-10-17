@@ -37,7 +37,8 @@ import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import { setNotice } from '../activity'
 import { songsGridTemplate, songsGridTemplateFixed } from '../utils/songsGridTemplate'
 import '../styles/songs.css'
-import { addToPlaylistEntry, addToIpodPoolEntry } from '../utils/playlistMenu'
+import { addToPlaylistEntry, addToIpodPoolEntry, queueMenuEntries } from '../utils/playlistMenu'
+import { getInfoTarget } from '../../common/get-info-target'
 
 function formatDuration(ms: number): string {
   if (!ms || ms <= 0) return ''
@@ -85,7 +86,7 @@ export default function PlaylistView() {
   const inputRef = useRef<HTMLInputElement>(null)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; idx: number } | null>(null)
-  const [confirmAction, setConfirmAction] = useState<{ type: 'remove-tracks' | 'delete-playlist' | 'delete-tracks'; trackIds?: number[] } | null>(null)
+  const [confirmAction, setConfirmAction] = useState<{ type: 'delete-playlist' | 'delete-tracks'; trackIds?: number[] } | null>(null)
   const [undoState, setUndoState] = useState<{ trackIds: number[]; atIndex: number; playlistId: string; message: string } | null>(null)
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null)
   const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
@@ -346,28 +347,34 @@ export default function PlaylistView() {
     window.addEventListener('mouseup', onUp)
   }, [colWidths])
 
-  // Prompt to remove selected tracks from playlist
+  // Remove tracks from THIS playlist — no confirm: the songs stay in the
+  // library and the Undo toast puts them back, so a dialog in front of it
+  // was a second "are you sure" for a reversible step. Library deletion
+  // and deleting the whole playlist keep their ConfirmDialogs below.
+  const removeFromPlaylist = useCallback((trackIds: number[]) => {
+    if (!playlist || trackIds.length === 0) return
+    // Find the position of the first removed track for undo
+    const firstRemovedIdx = playlist.trackIds.findIndex(id => trackIds.includes(id))
+    const count = trackIds.length
+    dispatch({ type: 'REMOVE_TRACKS_FROM_PLAYLIST', playlistId: playlist.id, trackIds })
+    setSelectedIds(new Set())
+    setUndoState({
+      trackIds,
+      atIndex: firstRemovedIdx >= 0 ? firstRemovedIdx : 0,
+      playlistId: playlist.id,
+      message: `Removed ${count} song${count !== 1 ? 's' : ''} from "${playlist.name}"`,
+    })
+  }, [playlist, dispatch])
+
   const removeSelected = useCallback(() => {
     if (!playlist || selectedIds.size === 0) return
-    setConfirmAction({ type: 'remove-tracks', trackIds: Array.from(selectedIds) })
-  }, [playlist, selectedIds])
+    removeFromPlaylist(Array.from(selectedIds))
+  }, [playlist, selectedIds, removeFromPlaylist])
 
-  // Actually remove after confirmation
+  // Actually delete / remove the playlist after confirmation
   const executeRemove = useCallback(() => {
     if (!playlist || !confirmAction) return
-    if (confirmAction.type === 'remove-tracks' && confirmAction.trackIds) {
-      // Find the position of the first removed track for undo
-      const firstRemovedIdx = playlist.trackIds.findIndex(id => confirmAction.trackIds!.includes(id))
-      const count = confirmAction.trackIds.length
-      dispatch({ type: 'REMOVE_TRACKS_FROM_PLAYLIST', playlistId: playlist.id, trackIds: confirmAction.trackIds })
-      setSelectedIds(new Set())
-      setUndoState({
-        trackIds: confirmAction.trackIds,
-        atIndex: firstRemovedIdx >= 0 ? firstRemovedIdx : 0,
-        playlistId: playlist.id,
-        message: `Removed ${count} song${count !== 1 ? 's' : ''} from "${playlist.name}"`,
-      })
-    } else if (confirmAction.type === 'delete-tracks' && confirmAction.trackIds) {
+    if (confirmAction.type === 'delete-tracks' && confirmAction.trackIds) {
       dispatch({ type: 'DELETE_TRACKS', ids: confirmAction.trackIds })
       setSelectedIds(new Set())
     } else if (confirmAction.type === 'delete-playlist') {
@@ -396,6 +403,9 @@ export default function PlaylistView() {
         return
       }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.size > 0 && playlist) {
+        // Removal is immediate now (Undo, no confirm) — a stray Backspace
+        // with Get Info open must not take songs out underneath it.
+        if (document.querySelector('.getinfo-overlay')) return
         e.preventDefault()
         removeSelected()
       }
@@ -444,19 +454,18 @@ export default function PlaylistView() {
     [dispatch]
   )
 
-  // Listen for Cmd+I (Get Info) when in playlist view
+  // Listen for Cmd+I (Get Info) when in playlist view (nothing selected →
+  // the now-playing song; see getInfoTarget)
   useEffect(() => {
     if (state.currentView !== 'playlist') return
     const handler = () => {
-      if (selectedIds.size > 0) {
-        const selectedTracks = sortedTracks.filter(t => selectedIds.has(t.id))
-        const idx = sortedTracks.findIndex(t => selectedIds.has(t.id))
-        setGetInfoState({ tracks: selectedTracks, index: idx >= 0 ? idx : 0 })
-      }
+      const np = pb.nowPlaying ? state.tracks.find(t => t.id === pb.nowPlaying!.id) : undefined
+      const target = getInfoTarget(sortedTracks, selectedIds, np)
+      if (target) setGetInfoState({ tracks: target.tracks, index: target.index })
     }
     window.addEventListener('jaketunes-get-info', handler)
     return () => window.removeEventListener('jaketunes-get-info', handler)
-  }, [state.currentView, selectedIds, sortedTracks])
+  }, [state.currentView, selectedIds, sortedTracks, state.tracks, pb.nowPlaying])
 
   // Auto-follow now-playing on track change (4.0).
   useEffect(() => {
@@ -593,8 +602,7 @@ export default function PlaylistView() {
     return [
       { label: `Play "${label}"`, onClick: () => playTrack(track, sortedTracks, idx, undefined, true) },
       { separator: true as const },
-      { label: `Play Next`, onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selected }) },
-      { label: `Add to Up Next`, onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selected }) },
+      ...queueMenuEntries(selected, pbDispatch),
       addToPlaylistEntry(selected, state.playlists, (pid, ids) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
       addToIpodPoolEntry(selected),
       ...(getDeckState() ? [
@@ -647,9 +655,7 @@ export default function PlaylistView() {
       { separator: true as const },
       {
         label: count > 1 ? `Remove ${count} from Playlist` : `Remove from Playlist`,
-        onClick: () => {
-          setConfirmAction({ type: 'remove-tracks', trackIds: selected.map(t => t.id) })
-        },
+        onClick: () => removeFromPlaylist(selected.map(t => t.id)),
       },
       // 4.4.10: removed "Delete Song" from the playlist context menu —
       // sat right next to "Remove from Playlist" and made it trivial
@@ -1031,15 +1037,6 @@ export default function PlaylistView() {
           onCancel={() => setConfirmDropCover(false)}
         />
       )}
-      {confirmAction && confirmAction.type === 'remove-tracks' && (
-        <ConfirmDialog
-          message={`Remove ${confirmAction.trackIds!.length === 1 ? '1 song' : `${confirmAction.trackIds!.length} songs`} from "${playlist.name}"?`}
-          detail="The songs will remain in your library."
-          confirmLabel="Remove"
-          onConfirm={executeRemove}
-          onCancel={() => setConfirmAction(null)}
-        />
-      )}
       {confirmAction && confirmAction.type === 'delete-tracks' && (
         <ConfirmDialog
           message={confirmAction.trackIds!.length === 1
@@ -1062,6 +1059,9 @@ export default function PlaylistView() {
       )}
       {undoState && (
         <UndoToast
+          // A fresh toast (and timer) per removal — with no confirm in
+          // between, back-to-back removals can land inside one toast's life.
+          key={`${undoState.playlistId}:${undoState.trackIds.join(',')}`}
           message={undoState.message}
           onUndo={() => {
             dispatch({

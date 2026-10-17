@@ -8,6 +8,9 @@ interface Props {
   indicator?: string
   highlight?: string          // amber/orange row background color
   onClick: () => void
+  /** Optional second gesture (playlist rows: play from the top). The
+   *  single click still runs first — double-click never replaces it. */
+  onDoubleClick?: () => void
   droppable?: boolean
   onDrop?: (trackIds: number[]) => void
   /** 4.4.0: extra className on the row — used for the WJLR Picks
@@ -24,7 +27,7 @@ interface Props {
   dragTrackIds?: number[]
 }
 
-export default function SidebarItem({ label, icon, selected, indicator, highlight, onClick, droppable, onDrop, className, badge, door, dragTrackIds }: Props) {
+export default function SidebarItem({ label, icon, selected, indicator, highlight, onClick, onDoubleClick, droppable, onDrop, className, badge, door, dragTrackIds }: Props) {
   const [dragOver, setDragOver] = useState(false)
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -74,6 +77,7 @@ export default function SidebarItem({ label, icon, selected, indicator, highligh
       className={cls}
       style={highlightStyle}
       onClick={onClick}
+      onDoubleClick={onDoubleClick ? () => { window.getSelection()?.removeAllRanges(); onDoubleClick() } : undefined}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
