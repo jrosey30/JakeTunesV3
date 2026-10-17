@@ -34,7 +34,9 @@ import type { SortColumn, Track } from '../types'
 import { setNotice } from '../activity'
 import EmptyState from '../components/EmptyState'
 import '../styles/songs.css'
-import { addToPlaylistEntry, addToIpodPoolEntry } from '../utils/playlistMenu'
+import { addToPlaylistEntry, addToIpodPoolEntry, queueMenuEntries } from '../utils/playlistMenu'
+import { hasPendingShowNowPlaying, takePendingShowNowPlaying } from '../nowPlayingNav'
+import { getInfoTarget, type GetInfoTarget } from '../../common/get-info-target'
 
 function formatDuration(ms: number): string {
   if (!ms || ms <= 0) return ''
@@ -317,7 +319,7 @@ export default function SongsView() {
   const [dragOverKey, setDragOverKey] = useState<string | null>(null)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; idx: number } | null>(null)
   const [headerCtxMenu, setHeaderCtxMenu] = useState<{ x: number; y: number } | null>(null)
-  const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
+  const [getInfoState, setGetInfoState] = useState<GetInfoTarget<Track> | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: number[]; count: number } | null>(null)
 
   // Filter columns based on visibility, ordered per user's columnOrder.
@@ -536,8 +538,7 @@ export default function SongsView() {
     return [
       { label: `Play "${label}"`, onClick: () => playTrack(track, sorted, idx, undefined, true) },
       { separator: true as const },
-      { label: `Play Next`, onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selectedTracks }) },
-      { label: `Add to Up Next`, onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selectedTracks }) },
+      ...queueMenuEntries(selectedTracks, pbDispatch),
       addToPlaylistEntry(selectedTracks, lib.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
       addToIpodPoolEntry(selectedTracks),
       ...(getDeckState() ? [
@@ -1043,38 +1044,53 @@ function scrollBlankProbe(sc: HTMLDivElement | null): void {
     return () => window.removeEventListener('keydown', handleKeyDown, true)
   }, [sorted, libDispatch, playTrack, scrollToIdx, markActivity])
 
-  // Cmd+I → open Get Info for selected tracks
+  // Cmd+I → open Get Info for selected tracks (nothing selected → the
+  // now-playing song; see getInfoTarget)
   useEffect(() => {
     const handler = () => {
       if (lib.currentView !== 'songs') return
       if (document.querySelector('.getinfo-overlay')) return
-      if (lib.selectedTrackIds.size === 0) return
-      const selectedTracks = sorted.filter(t => lib.selectedTrackIds.has(t.id))
-      if (selectedTracks.length > 0) {
-        const idx = sorted.findIndex(t => t.id === selectedTracks[0].id)
-        setGetInfoState({ tracks: selectedTracks, index: idx >= 0 ? idx : 0 })
-      }
+      const np = pb.nowPlaying ? lib.tracks.find(t => t.id === pb.nowPlaying!.id) : undefined
+      const target = getInfoTarget(sorted, lib.selectedTrackIds, np)
+      if (target) setGetInfoState(target)
     }
     window.addEventListener('jaketunes-get-info', handler)
     return () => window.removeEventListener('jaketunes-get-info', handler)
-  }, [lib.currentView, lib.selectedTrackIds, sorted])
+  }, [lib.currentView, lib.selectedTrackIds, lib.tracks, pb.nowPlaying, sorted])
 
   // Cmd+L → scroll to now-playing track
+  const showNowPlaying = useCallback(() => {
+    if (!pb.nowPlaying) return
+    const idx = sorted.findIndex(t => t.id === pb.nowPlaying!.id)
+    if (idx >= 0) {
+      focusedIdx.current = idx
+      lastClickedIdx.current = idx
+      libDispatch({ type: 'SELECT_TRACK', id: pb.nowPlaying!.id })
+      scrollToIdx(idx)
+    }
+  }, [pb.nowPlaying, sorted, libDispatch, scrollToIdx])
+  const showNowPlayingRef = useRef(showNowPlaying)
+  showNowPlayingRef.current = showNowPlaying
   useEffect(() => {
     const handler = () => {
       if (lib.currentView !== 'songs') return
-      if (!pb.nowPlaying) return
-      const idx = sorted.findIndex(t => t.id === pb.nowPlaying!.id)
-      if (idx >= 0) {
-        focusedIdx.current = idx
-        lastClickedIdx.current = idx
-        libDispatch({ type: 'SELECT_TRACK', id: pb.nowPlaying!.id })
-        scrollToIdx(idx)
-      }
+      showNowPlaying()
     }
     window.addEventListener('jaketunes-show-now-playing', handler)
     return () => window.removeEventListener('jaketunes-show-now-playing', handler)
-  }, [lib.currentView, pb.nowPlaying, sorted, libDispatch, scrollToIdx])
+  }, [lib.currentView, showNowPlaying])
+  // ⌘L pressed in another view: App switched here and left a pending flag.
+  // Act a beat after mount so it lands AFTER the scroll restore above (the
+  // useScrollPersistence / seed layout effects), not underneath it. The
+  // flag is taken inside the timer so a StrictMode effect replay can't
+  // consume it and then cancel the only timer that would have used it.
+  useEffect(() => {
+    if (!hasPendingShowNowPlaying()) return
+    const t = window.setTimeout(() => {
+      if (takePendingShowNowPlaying()) showNowPlayingRef.current()
+    }, 60)
+    return () => window.clearTimeout(t)
+  }, [])
 
   // Restore column state from saved UI state
   useEffect(() => {
@@ -1301,7 +1317,7 @@ function scrollBlankProbe(sc: HTMLDivElement | null): void {
       {getInfoState && (
         <GetInfoModal
           tracks={getInfoState.tracks}
-          allTracks={sorted}
+          allTracks={getInfoState.allTracks ?? sorted}
           initialIndex={getInfoState.index}
           artworkMap={lib.artworkMap}
           onClose={() => setGetInfoState(null)}

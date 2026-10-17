@@ -7,6 +7,7 @@ import { downloadsPanelRows, panelSummary, downloadsBadge } from '../../../commo
 import { toggleDownloadsPanel, subscribeDownloadsPanelOpen, getDownloadsPanelOpen } from '../DownloadsPanel'
 import { deviceFixtureRequested } from '../../syncTimeline'
 import { usePlayback } from '../../context/PlaybackContext'
+import { useAudio } from '../../hooks/useAudio'
 import SidebarSection from './SidebarSection'
 import SidebarItem from './SidebarItem'
 import AlbumArtPanel from './AlbumArtPanel'
@@ -231,6 +232,7 @@ function CdIcon() {
 export default function Sidebar() {
   const { state, dispatch } = useLibrary()
   const { state: pb, dispatch: pbDispatch } = usePlayback()
+  const { playTrack } = useAudio()
   const [ipodMounted, setIpodMounted] = useState(false)
   const [ipodName, setIpodName] = useState('iPod')
   const [cdMounted, setCdMounted] = useState(false)
@@ -322,6 +324,20 @@ export default function Sidebar() {
     dispatch({ type: 'ADD_PLAYLIST', playlist })
     dispatch({ type: 'VIEW_PLAYLIST', id: playlist.id })
   }, [dispatch])
+
+  // Double-click a playlist row / right-click Play or Shuffle: play the
+  // playlist's songs in its own (stored) order from the top, or shuffled.
+  // Same playTrack call as PlaylistView's Play All. Rule-driven smart
+  // playlists compute their songs inside SmartPlaylistView, so this is
+  // for playlists that carry trackIds.
+  const playPlaylist = useCallback((playlistId: string, shuffle = false) => {
+    const pl = state.playlists.find(p => p.id === playlistId)
+    if (!pl) return
+    const byId = new Map(state.tracks.map(t => [t.id, t]))
+    const list = pl.trackIds.map(id => byId.get(id)).filter((t): t is Track => t !== undefined)
+    const q = shuffle ? [...list].sort(() => Math.random() - 0.5) : list
+    if (q.length) playTrack(q[0], q, 0, undefined, true)
+  }, [state.playlists, state.tracks, playTrack])
 
   const handlePlaylistContextMenu = useCallback((e: React.MouseEvent, id: string, name: string, kind: 'user' | 'smart' = 'user') => {
     e.preventDefault()
@@ -430,6 +446,9 @@ export default function Sidebar() {
       dispatch({ type: 'SET_VIEW', view: 'songs' })
     }
   }, [cdMounted, state.currentView, dispatch])
+
+  // Right-click Play / Shuffle grey out on a playlist with no songs.
+  const ctxPlaylistEmpty = !plCtxMenu || !state.playlists.find(p => p.id === plCtxMenu.playlistId)?.trackIds.length
 
   return (
     <div className="sidebar">
@@ -664,6 +683,7 @@ export default function Sidebar() {
                   icon={<SmartPlaylistIcon />}
                   selected={state.currentView === 'playlist' && state.activePlaylistId === pl.id}
                   onClick={() => dispatch({ type: 'VIEW_PLAYLIST', id: pl.id })}
+                  onDoubleClick={() => playPlaylist(pl.id)}
                   dragTrackIds={pl.trackIds}
                 />
               </div>
@@ -697,6 +717,7 @@ export default function Sidebar() {
                   icon={<PlaylistIcon />}
                   selected={state.currentView === 'playlist' && state.activePlaylistId === pl.id}
                   onClick={() => dispatch({ type: 'VIEW_PLAYLIST', id: pl.id })}
+                  onDoubleClick={() => playPlaylist(pl.id)}
                   droppable
                   onDrop={(trackIds) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pl.id, trackIds })}
                   dragTrackIds={pl.trackIds}
@@ -741,6 +762,7 @@ export default function Sidebar() {
                   icon={<PlaylistIcon />}
                   selected={state.currentView === 'playlist' && state.activePlaylistId === pl.id}
                   onClick={() => dispatch({ type: 'VIEW_PLAYLIST', id: pl.id })}
+                  onDoubleClick={() => playPlaylist(pl.id)}
                   droppable
                   onDrop={(trackIds) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pl.id, trackIds })}
                   dragTrackIds={pl.trackIds}
@@ -774,6 +796,11 @@ export default function Sidebar() {
           x={plCtxMenu.x}
           y={plCtxMenu.y}
           items={[
+            ...(plCtxMenu.kind === 'user' ? [
+              { label: 'Play', disabled: ctxPlaylistEmpty, onClick: () => playPlaylist(plCtxMenu.playlistId) },
+              { label: 'Shuffle', disabled: ctxPlaylistEmpty, onClick: () => playPlaylist(plCtxMenu.playlistId, true) },
+              { separator: true as const },
+            ] : []),
             { label: pinned.includes(plCtxMenu.playlistId) ? 'Unpin from Top' : 'Pin to Top', onClick: () => togglePin(plCtxMenu.playlistId) },
             ...(plCtxMenu.kind === 'user' ? [
               { separator: true as const },

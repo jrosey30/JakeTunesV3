@@ -25,7 +25,8 @@ import { setNotice } from '../activity'
 import { songsGridTemplate, songsGridTemplateFixed } from '../utils/songsGridTemplate'
 import '../styles/musicman.css'
 import '../styles/songs.css'
-import { addToPlaylistEntry, addToIpodPoolEntry } from '../utils/playlistMenu'
+import { addToPlaylistEntry, addToIpodPoolEntry, queueMenuEntries } from '../utils/playlistMenu'
+import { getInfoTarget } from '../../common/get-info-target'
 
 // Persist sort preferences per smart playlist across navigation
 const smartSortPrefs = new Map<string, { col: string | null; dir: 'asc' | 'desc' }>()
@@ -875,8 +876,7 @@ export default function SmartPlaylistView() {
     return [
       { label: `Play`, onClick: () => playTrack(track, sortedTracks, idx, undefined, true) },
       { separator: true as const },
-      { label: `Play Next`, onClick: () => pbDispatch({ type: 'PLAY_NEXT', tracks: selected }) },
-      { label: `Add to Up Next`, onClick: () => pbDispatch({ type: 'ADD_TO_QUEUE', tracks: selected }) },
+      ...queueMenuEntries(selected, pbDispatch),
       addToPlaylistEntry(selected, libState.playlists, (pid, ids) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
       addToIpodPoolEntry(selected),
       { separator: true as const },
@@ -933,19 +933,18 @@ export default function SmartPlaylistView() {
     [dispatch]
   )
 
-  // Cmd+I for Get Info
+  // Cmd+I for Get Info (nothing selected → the now-playing song; see
+  // getInfoTarget)
   useEffect(() => {
     if (libState.currentView !== 'smart-playlist') return
     const handler = () => {
-      if (selectedIds.size > 0) {
-        const sel = sortedTracks.filter(t => selectedIds.has(t.id))
-        const idx = sortedTracks.findIndex(t => selectedIds.has(t.id))
-        setGetInfoState({ tracks: sel, index: idx >= 0 ? idx : 0 })
-      }
+      const np = pbState.nowPlaying ? libState.tracks.find(t => t.id === pbState.nowPlaying!.id) : undefined
+      const target = getInfoTarget(sortedTracks, selectedIds, np)
+      if (target) setGetInfoState({ tracks: target.tracks, index: target.index })
     }
     window.addEventListener('jaketunes-get-info', handler)
     return () => window.removeEventListener('jaketunes-get-info', handler)
-  }, [libState.currentView, selectedIds, sortedTracks])
+  }, [libState.currentView, selectedIds, sortedTracks, libState.tracks, pbState.nowPlaying])
 
   const isPicksView = picksConfig !== null
   const displayName = isPicksView && picks?.name ? picks.name : title

@@ -129,7 +129,15 @@ export default function SearchPill() {
         <SearchPanel
           query={query}
           inputEl={inputRef.current}
-          onClose={() => { setQuery(''); setFocused(false) }}
+          onClose={() => {
+            // Blur too, not just clear: a still-focused input keeps
+            // swallowing Space (types instead of pausing after Enter-to-
+            // play) and makes the next ⌘F a no-op focus() that never
+            // fires onFocus, so the panel can't reopen.
+            setQuery('')
+            setFocused(false)
+            inputRef.current?.blur()
+          }}
         />
       )}
     </div>
