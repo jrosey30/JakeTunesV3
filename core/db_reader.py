@@ -854,10 +854,11 @@ def unique_genre_names_az(tracks):
     return names
 
 
-# Music-menu type-52 keys the Mini actually displays. A leftover master
-# playlist that only had album+artist tables used to omit Songs (7) and
-# Genres (5), so those menus fell back to insertion order after activity
-# sync. Always union these in — extras (18/35/36) from the template stay.
+# Music-menu type-52 keys the Mini actually displays: 3 Songs, 4 Albums,
+# 5 Artists, 7 Genres (firmware numbering — see _sort_indices). A leftover
+# master playlist that only had some of the tables used to omit menus, so
+# they fell back to insertion order after activity sync. Always union these
+# in — extras (18/35/36) from the template stay.
 REQUIRED_MUSIC_SORT_KEYS = (3, 4, 5, 7)
 DEFAULT_ITUNESDB_SORT_KEYS = (3, 4, 5, 7, 18, 35, 36)
 
@@ -913,26 +914,34 @@ def _sort_indices(tracks, sort_key):
     Type-52 MUST use _fold() (firmware collation). Never article-strip
     a leading 'The '/'A '/'An ' here — Mini 1.4.1 discards the table
     (Tiësto / Entrañas / The-prefixed rows vanish from Songs).
-    sortAlbum / sortTitle are folded when present; artist key 4 always
-    folds the display artist, not stamped sortArtist.
+    sortAlbum / sortTitle are folded when present; the artist key (5)
+    always folds the display artist, not stamped sortArtist.
+
+    Key numbers are the FIRMWARE's (libgpod MHOD52_SORTTYPE): 3 = title
+    (Songs), 4 = album (Albums), 5 = artist (Artists), 7 = genre (Genres).
+    Until 2026-10-17 this table had them rotated (3 album, 4 artist,
+    5 genre, 7 title), so every Music menu walked the wrong order — proven
+    on the Mini: its Artists screen read "Yeah Yeah Yeahs, Boy Harsher,
+    Twin Tribes, BELLA, DJ Split", which is exactly the first-seen artist
+    order of the GENRE-sorted table we had written under key 5.
     """
     def key_fn(idx):
         t = tracks[idx]
-        if sort_key == 3:  # album — Music > Albums
+        if sort_key == 3:  # title — Music > Songs
+            return (_fold(firmware_sort_text(t, 'title', 'sortTitle')),)
+        elif sort_key == 4:  # album — Music > Albums
             return (_fold(firmware_sort_text(t, 'album', 'sortAlbum')),
                     int(t.get('discNumber', 0) or 0),
                     int(t.get('trackNumber', 0) or 0))
-        elif sort_key == 4:  # artist — Music > Artists (firmware fold)
+        elif sort_key == 5:  # artist — Music > Artists (firmware fold)
             return (_fold(t.get('artist', '')),
                     _fold(firmware_sort_text(t, 'album', 'sortAlbum')),
                     int(t.get('discNumber', 0) or 0),
                     int(t.get('trackNumber', 0) or 0))
-        elif sort_key == 5:  # genre — Music > Genres
+        elif sort_key == 7:  # genre — Music > Genres
             return (_fold(t.get('genre', '')),
                     _fold(t.get('artist', '')),
                     _fold(firmware_sort_text(t, 'album', 'sortAlbum')))
-        elif sort_key == 7:  # title — Music > Songs
-            return (_fold(firmware_sort_text(t, 'title', 'sortTitle')),)
         elif sort_key == 18:  # artist + album + track (secondary sort)
             return (_fold(t.get('artist', '')),
                     _fold(firmware_sort_text(t, 'album', 'sortAlbum')),
