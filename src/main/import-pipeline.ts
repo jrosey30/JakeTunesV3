@@ -35,6 +35,7 @@
 
 import { join } from 'path'
 import { stat, mkdir, copyFile, readFile, lstat, open, rm } from 'fs/promises'
+import { ensureLandedDecodes } from './audio-write-guard.ts'
 import {
   IS_WINDOWS,
   convertAudio,
@@ -495,6 +496,19 @@ async function importOneFileLocked(
       await reserveDest(ext)
       await copyFile(srcPath, destPath)
     }
+
+    // Never land audio that doesn't decode. A source that won't decode is
+    // refused; otherwise one more write. (The Oct 2026 damage came later,
+    // from tag write-back; audio-write-guard.ts guards that half.)
+    const landed = await ensureLandedDecodes(srcPath, destPath, async () => {
+      if (didConvert) {
+        await convertAudio(srcPath, destPath, chosenFmt, embedTags)
+        await ensureFaststart(destPath)
+      } else {
+        await copyFile(srcPath, destPath)
+      }
+    })
+    if (!landed.ok) throw new Error(`${landed.error} (${srcPath})`)
     if (id !== requestedId) {
       console.warn(`import-track: id ${requestedId} collides with existing file imported_${requestedId}.*; bumped to ${id}`)
     }
