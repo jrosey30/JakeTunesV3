@@ -33,6 +33,7 @@ import { buildActivityQueryText } from './activity-context-core.ts'
 import { computeActivityBrainFit, type BrainFitResult } from './activity-brain.ts'
 import { pickTasteExemplars } from './discovery-brain.ts'
 import { getEmbeddingsMap, embedTexts } from './ai/embeddings.ts'
+import { splitHalfAndHalf } from '../common/activity-split'
 
 type ClaudeCall = (callKey: string, params: MessageCreateParamsNonStreaming) => Promise<Message>
 
@@ -229,7 +230,7 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
   ipc.handle('build-workout-sync-set', async (
     _e,
     tracks: WorkoutTrack[],
-    opts?: { target?: number; brief?: ActivityBrief; saveProfile?: boolean; pool?: { ids: number[]; fill: boolean } },
+    opts?: { target?: number; brief?: ActivityBrief; saveProfile?: boolean; pool?: { ids: number[]; fill: boolean; pinnedIds?: number[] } },
   ) => {
     try {
       if (!Array.isArray(tracks) || tracks.length === 0) {
@@ -256,39 +257,48 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
         social: 'solo',
       }
 
-      // ── POOL MODE (2026-09-02) ─────────────────────────────────────
-      // Jake's hand-built pool IS the set. The brain only runs to fill the
-      // gap up to target when he asks it to; a pool alone syncs as-is (a
-      // 780-song pool is a legitimate 780-song sync). The pool is exempt
-      // from the 2-per-artist rule — the fill is not, and counts the pool.
+      // ── HALF AND HALF (2026-10-16) ─────────────────────────────────
+      // Jake: "ipod sync pool needs to be 50% automated 50% manual" — always.
+      // Every sync of N = the NEWEST N/2 songs of the hand-built pool + the
+      // rest picked by Music Man (src/common/activity-split.ts — the sheet shows the same split). Older drops wait their
+      // turn; a pool under N/2 goes on whole and Music Man covers the rest.
+      // Pool songs are exempt from the 2-per-artist rule; Music Man's half is
+      // not, and counts the pool half. (Replaces the 2026-09-02 either/or
+      // "Who picks" pool mode and its over-target hard stop.)
       const pool = opts?.pool
-      const poolMode = !!pool && Array.isArray(pool.ids) && pool.ids.length > 0
+      const poolMode = !!pool && ((Array.isArray(pool.ids) && pool.ids.length > 0) || (Array.isArray(pool.pinnedIds) && pool.pinnedIds.length > 0))
       const byId = new Map(tracks.map((t) => [Number(t.id), t]))
       const syncable = (t: WorkoutTrack): boolean =>
         String(t.title || '').trim() !== '' && String(t.artist || '').trim() !== ''
         && t.audioMissing !== true && (t.path === undefined || String(t.path).trim() !== '')
       const target = Math.max(1, Math.floor(Number(opts?.target) || WORKOUT_TARGET))
       let poolIds: number[] = []
+      let pinnedIds: number[] = []
       if (poolMode) {
+        const seenPinned = new Set<number>()
+        for (const raw of pool.pinnedIds || []) {
+          const id = Number(raw)
+          const t = byId.get(id)
+          if (!t || seenPinned.has(id) || !syncable(t)) continue
+          seenPinned.add(id)
+          pinnedIds.push(id)
+        }
         const seen = new Set<number>()
-        for (const raw of pool.ids) {
+        for (const raw of pool.ids || []) {
           const id = Number(raw)
           const t = byId.get(id)
           if (!t || seen.has(id) || !syncable(t)) continue
           seen.add(id)
           poolIds.push(id)
         }
-        if (poolIds.length !== pool.ids.length) {
+        if (poolIds.length !== (pool.ids || []).length) {
           console.log(`[workout-sync] pool: ${pool.ids.length - poolIds.length} id(s) not syncable/unknown — dropped from ${pool.ids.length}`)
         }
-        if (poolIds.length > target) {
-          // HARD STOP, never a silent trim — the machine does not decide
-          // what comes off a hand-built list.
-          return { ok: false, error: `Your pool has ${poolIds.length} songs — ${poolIds.length - target} over the ${target} target. Remove some, or pick a bigger size.` }
-        }
       }
-      const gap = poolMode ? target - poolIds.length : target
-      const wantBrain = !poolMode || (pool.fill === true && gap > 0)
+      const split = splitHalfAndHalf(poolIds, target, pinnedIds)
+      const manualIds = split.manualIds
+      const gap = split.brainTarget
+      const wantBrain = gap > 0
 
       const wx = await getWeatherForPlace(brief.place || 'Brooklyn')
       const weather: ActivityWeather | null = wx
@@ -371,10 +381,11 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
           console.log(`[workout-sync] rotation memory: ${recentCounts.size} track(s) seen in the last ${RECENT_SYNCS} sync(s)`)
         }
 
-        // Pool fill: the picker never re-picks a pooled id, and the artist cap
-        // starts from what the pool already holds (same key function).
+        // Music Man's half never picks a pooled id (the older drops wait their
+        // turn rather than sneak in), and the artist cap starts from the pool
+        // half actually going on (same key function).
         const seedArtistCounts = new Map<string, number>()
-        for (const id of poolIds) {
+        for (const id of manualIds) {
           const k = artistCapKey(byId.get(id)?.artist)
           seedArtistCounts.set(k, (seedArtistCounts.get(k) || 0) + 1)
         }
@@ -391,27 +402,27 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
           boostIds,
           brainFitById: brainFit?.fitById,
           tasteById: brainFit?.tasteById,
-          excludeIds: poolIds,
+          excludeIds: [...poolIds, ...pinnedIds],
           seedArtistCounts,
         })
         fillIds = selected.trackIds
         reserveIds = selected.reserveIds
         name = selected.name
-        commentary = poolMode
-          ? `${selected.commentary} Built on your ${poolIds.length}-song pool; Music Man filled the last ${fillIds.length}.`
+        commentary = manualIds.length > 0
+          ? `${selected.commentary} Half and half: ${split.pinnedCount} from Recently Added / Bops / Rocksurgence + your ${manualIds.length - split.pinnedCount} newest pool drop${manualIds.length - split.pinnedCount === 1 ? '' : 's'} + ${fillIds.length} Music Man pick${fillIds.length === 1 ? '' : 's'}.${split.waitingIds.length > 0 ? ` ${split.waitingIds.length} older pool song${split.waitingIds.length === 1 ? '' : 's'} sit this one out.` : ''}`
           : selected.commentary
       } else {
         name = (brief.profileName || '').trim() || 'iPod Pool'
         commentary = `Hand-built pool — ${poolIds.length} songs, in the order you dropped them.`
       }
 
-      const trackIds = poolMode ? [...poolIds, ...fillIds] : fillIds
+      const trackIds = [...manualIds, ...fillIds]
       if (trackIds.length === 0) {
         return { ok: false, error: 'Could not build an activity set from this library.' }
       }
       let alacCount = 0
       for (const id of trackIds) if (isAlacCodec(byId.get(id)?.codec)) alacCount++
-      if (poolMode) console.log(`[workout-sync] pool mode: ${poolIds.length} pooled + ${fillIds.length} filled = ${trackIds.length}/${target}`)
+      console.log(`[workout-sync] half and half: ${split.pinnedCount} pinned + ${manualIds.length - split.pinnedCount} pool drops (newest of ${poolIds.length}) + ${fillIds.length} Music Man = ${trackIds.length}/${target}`)
       // #47 (fill-to-N): a hand-built pool is its own N; a brain-built set is
       // short only when the library could not fill the requested target.
       const requested = wantBrain ? target : trackIds.length
@@ -438,7 +449,7 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
         rotatedFrom: prev?.trackIds?.length ?? 0,
         weather,
         brief,
-        pool: poolMode ? { pooled: poolIds.length, filled: fillIds.length } : undefined,
+        pool: poolMode ? { pooled: manualIds.length, filled: fillIds.length } : undefined,
       }
     } catch (err) {
       console.error('[workout-sync] build failed:', err)

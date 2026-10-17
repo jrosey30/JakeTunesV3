@@ -902,7 +902,7 @@ declare global {
       }>, opts?: { target?: number; brief?: {
         id?: string; profileName?: string; activity: string; intensity: string; setting: string
         place: string; social: string; note?: string
-      }; saveProfile?: boolean; pool?: { ids: number[]; fill: boolean }  }) => Promise<{
+      }; saveProfile?: boolean; pool?: { ids: number[]; fill: boolean; pinnedIds?: number[] }  }) => Promise<{
         ok: boolean
         trackIds?: number[]
         reserveIds?: number[]

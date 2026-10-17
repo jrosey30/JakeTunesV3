@@ -9,6 +9,7 @@ import type { Track, Playlist } from '../types'
 import { buildSmartPlaylistsForSync } from './smartPlaylists'
 import type { ActivityBrief } from '../components/ActivitySheet'
 import { getPoolIds } from '../activityPool'
+import { resolvePinnedPoolIds } from './poolPinnedLists'
 
 export interface WorkoutSyncPayload {
   tracks: Track[]
@@ -72,13 +73,16 @@ export async function buildWorkoutIpodSyncPayload(
   regularPlaylists: Playlist[],
   brief?: ActivityBrief | null,
 ): Promise<{ ok: true; payload: WorkoutSyncPayload } | { ok: false; error: string }> {
-  // POOL MODE (2026-09-02): the hand-built iPod Pool is the set; the brain
-  // only tops it up when asked. DeviceView (do-not-touch) never learns the
-  // difference — the brief carries the mode and this util reads the pool.
-  const pool = brief?.mode === 'pool' ? { ids: getPoolIds(), fill: brief.poolFill === true } : undefined
-  if (pool && pool.ids.length === 0) {
-    return { ok: false, error: 'Your iPod Pool is empty — drag songs, albums, artists or playlists onto it first.' }
-  }
+  // HALF AND HALF (2026-10-16): every sync takes the newest half-set from
+  // the hand-built iPod Pool and Music Man picks the rest (main's
+  // activity-split.ts). The pool always rides along; an empty pool simply
+  // means Music Man picks the whole set. DeviceView (do-not-touch) never
+  // learns the difference — this util reads the pool.
+  // Bops / Rocksurgence / Recently Added ride along PINNED, resolved live
+  // from the library right now (poolPinnedLists.ts).
+  const poolIds = getPoolIds()
+  const pinnedIds = resolvePinnedPoolIds(allTracks, regularPlaylists).ids
+  const pool = poolIds.length > 0 || pinnedIds.length > 0 ? { ids: poolIds, pinnedIds, fill: true } : undefined
   const res = await window.electronAPI.buildWorkoutSyncSet?.(
     allTracks.map(toWorkoutTrack),
     brief ? { brief, saveProfile: true, target: brief.target ?? 1000, pool } : undefined,
