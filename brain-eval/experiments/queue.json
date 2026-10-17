@@ -360,7 +360,7 @@
   {
    "id": "E7",
    "title": "Sweep the reranker genre bonus 0.08 -> 0.04 and 0.12 via the bridge",
-   "status": "queued",
+   "status": "priced",
    "priority": 55,
    "lane": "jake",
    "hypothesis": {
@@ -397,7 +397,42 @@
    },
    "max_nights": 1,
    "series": false,
-   "result": null
+   "result": {
+    "at": "2026-10-17T03:09:01",
+    "outcome": "priced",
+    "summary": "Swept RERANK_GENRE_W 0.04/0.12 vs 0.08 via the bridge on the 10-17 snapshot (v3 --no-llm, gate --v3-only). W=0.04: mean d -0.0015, CI90 [-0.0049,+0.0024], vibe -0.0113, leaf -0.0024, 3 up/13 down - worse. W=0.12: zero change, 154/154 probes identical (bonus saturates above 0.08; the 0.04 arm moving proves the override is live). 0.08 is already optimal on the v3 ruler. Recommend CLOSE - keep 0.08 in both twins, no code change.",
+    "metrics": {
+     "baseline_v3_headline": 0.803,
+     "w004": {
+      "mean_delta": -0.00152,
+      "ci90": [
+       -0.00489,
+       0.00238
+      ],
+      "group_deltas": {
+       "leaf": -0.0024,
+       "vibe": -0.0113
+      },
+      "changed": {
+       "up": 3,
+       "down": 13,
+       "same": 138
+      }
+     },
+     "w012": {
+      "mean_delta": 0.0,
+      "ci90": [
+       0.0,
+       0.0
+      ],
+      "changed": {
+       "up": 0,
+       "down": 0,
+       "same": 154
+      }
+     }
+    }
+   }
   },
   {
    "id": "E8",
