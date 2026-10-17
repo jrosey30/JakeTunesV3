@@ -17,6 +17,8 @@ import type { ViewName, SmartPlaylistId, Track } from '../../types'
 import { setNotice } from '../../activity'
 import { setMixtapeId, getMixtapeId, getMixtapes, subscribeMixtapes, refreshMixtapes } from '../../mixtapes'
 import { getPoolIds, subscribePool, refreshPool, addTracksToPool, usePoolHealth } from '../../activityPool'
+import { CD_PRESENCE_START, stepCdPresence } from '../../../common/auto-nav'
+import { autoNavBlocked } from '../../utils/autoNavGuard'
 import NewMixtapeSheet from '../NewMixtapeSheet'
 
 const LIBRARY_ICONS: Record<string, JSX.Element> = {
@@ -237,6 +239,10 @@ export default function Sidebar() {
   const [ipodName, setIpodName] = useState('iPod')
   const [cdMounted, setCdMounted] = useState(false)
   const [cdName, setCdName] = useState('Audio CD')
+  // Read by the drive poll below (an effect with no deps) to skip a
+  // redundant SET_VIEW when the CD Import page is already showing.
+  const currentViewRef = useRef(state.currentView)
+  currentViewRef.current = state.currentView
   const [plCtxMenu, setPlCtxMenu] = useState<{ x: number; y: number; playlistId: string; playlistName: string; kind: 'user' | 'smart' } | null>(null)
   // Pinned playlists (2026-08-07, Jake: "pin 3 and only 3 playlists to the
   // very tippy top above defaults....i can absolutely pin a default").
@@ -371,6 +377,11 @@ export default function Sidebar() {
     // auto-ejected").
     let ipodMissStreak = 0
     let prevMounted = false
+    // New audio CD → CD Import page (2026-10-17), the way iTunes did. Only a
+    // disc that APPEARS counts (one in the drive at launch is the baseline),
+    // a one-poll flicker mid-rip is not a new disc, and the page never moves
+    // during an iPod sync, a rip, or with a modal open (common/auto-nav.ts).
+    let cdPresence = CD_PRESENCE_START
     const check = () => {
       window.electronAPI.checkIpodMounted().then(r => {
         if (r.mounted) {
@@ -412,6 +423,11 @@ export default function Sidebar() {
       window.electronAPI.checkCdDrive().then(r => {
         setCdMounted(r.hasCd)
         if (r.volumeName) setCdName(r.volumeName)
+        const step = stepCdPresence(cdPresence, r.hasCd)
+        cdPresence = step.next
+        if (step.newDisc && currentViewRef.current !== 'cd-import' && !autoNavBlocked()) {
+          dispatch({ type: 'SET_VIEW', view: 'cd-import' })
+        }
       }).catch(() => {})
     }
     check()

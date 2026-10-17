@@ -153,7 +153,9 @@ export function lookupArtworkOneShot(
  *
  * Fire-and-forget. The caller doesn't await — they just trigger and
  * trust that the next render after resolution will pick up the new map
- * entry via the LibraryContext reducer.
+ * entry via the LibraryContext reducer. (2026-10-17: it also returns the
+ * outcome — the hash, or null for a miss/skip — so the new-arrivals art
+ * pass can try disk first and only go to the network on a real miss.)
  */
 type ResolveDispatch = (action: { type: 'ADD_ARTWORK'; key: string; hash: string }) => void
 
@@ -183,16 +185,17 @@ export function requestArtworkResolution(
   artist: string,
   album: string,
   dispatch: ResolveDispatch,
-): void {
-  if (!artist || !album) return
+): Promise<string | null> {
+  if (!artist || !album) return Promise.resolve(null)
   const key = cacheKey(artist, album)
   // Skip if we already asked and got a no-go recently.
   const neg = negativeCache.get(key)
-  if (neg && neg > Date.now()) return
+  if (neg && neg > Date.now()) return Promise.resolve(null)
   // Share in-flight promise.
-  if (inFlight.has(key)) return
+  const pending = inFlight.get(key)
+  if (pending) return pending
   const electronAPI = (window as unknown as { electronAPI?: { resolveArtwork?: (a: string, b: string) => Promise<{ ok: boolean; hash: string | null }> } }).electronAPI
-  if (!electronAPI?.resolveArtwork) return
+  if (!electronAPI?.resolveArtwork) return Promise.resolve(null)
   const p = electronAPI.resolveArtwork(artist, album).then(r => {
     inFlight.delete(key)
     if (r?.ok && r.hash) {
@@ -211,6 +214,7 @@ export function requestArtworkResolution(
     return null
   })
   inFlight.set(key, p)
+  return p
 }
 
 const RESOLVE_BATCH = 4

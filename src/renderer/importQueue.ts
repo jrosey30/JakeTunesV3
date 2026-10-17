@@ -78,6 +78,10 @@ export interface QueueItem {
    * the user can retry.
    */
   deleteSourceOnSuccess?: boolean
+  /** 2026-10-17 — an internal import (a Full Live Concert's merged file)
+   *  the app's landing toast must not announce as songs: concerts don't
+   *  ride a sync as songs (see common/arrivals.ts). */
+  quiet?: boolean
 }
 
 interface QueueState {
@@ -170,7 +174,7 @@ function nextUid(): string {
 export async function enqueueFiles(
   paths: string[],
   format?: string,
-  opts?: { deleteSourceOnSuccess?: boolean },
+  opts?: { deleteSourceOnSuccess?: boolean; quiet?: boolean },
 ): Promise<number> {
   if (!paths.length) return 0
   const resolved = await window.electronAPI.importResolvePaths(paths)
@@ -208,6 +212,7 @@ export async function enqueueFiles(
       status: 'pending',
       addedAt: now,
       deleteSourceOnSuccess: opts?.deleteSourceOnSuccess,
+      quiet: opts?.quiet,
     })
   }
   if (!newItems.length && surviving.length === state.items.length) return 0

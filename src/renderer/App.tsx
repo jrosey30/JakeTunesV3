@@ -53,8 +53,11 @@ import { setUserAliases } from './utils/artistAlias'
 import { initDownloads } from './utils/downloadStore'
 import { ensureLiveSetsLoaded } from './liveSets'
 import { hydrateScrollCacheFromUiState } from './hooks/useScrollPersistence'
-import { AppSettings, DEFAULT_APP_SETTINGS, type Playlist } from './types'
+import { AppSettings, DEFAULT_APP_SETTINGS, type Playlist, type Track } from './types'
 import { setNotice } from './activity'
+import { autoNavBlocked } from './utils/autoNavGuard'
+import { fetchArtForArrivals, countInRecentlyAdded } from './utils/newArrivals'
+import { idleImportBatch, stepImportBatch, arrivalsMessage } from '../common/arrivals'
 import { applyStarToggle } from './components/StarRating'
 import { requestShowNowPlaying } from './nowPlayingNav'
 import './styles/variables.css'
@@ -691,7 +694,23 @@ function AppInner() {
   // remount (500/500 → 492 / 33). TSA sealed the last Activity Sync; if
   // songs have drifted, tell Jake — do not copy, convert, or wipe.
   useEffect(() => {
+    // "Open JakeTunes when this iPod is connected" (Device page options,
+    // persisted by DeviceView's Apply as ui-state `optOpenOnConnect`) was
+    // saved but never read (2026-10-17). On: the plug-in opens the Device
+    // page — unless a sync, a rip or a modal is in flight (autoNavGuard).
+    // Navigation only; nothing here touches the device.
+    const openDeviceIfAsked = async () => {
+      try {
+        const r = await window.electronAPI.loadUiState()
+        if (!r?.ok || r.state?.optOpenOnConnect !== true) return
+        if (libStateRef.current.currentView === 'device' || autoNavBlocked()) return
+        dispatch({ type: 'SET_VIEW', view: 'device' })
+      } catch (err) {
+        console.warn('[ipod-open-on-connect] skipped:', err)
+      }
+    }
     const onIpodMounted = async () => {
+      void openDeviceIfAsked()
       try {
         const r = await window.electronAPI.inspectIpodTsaSeal?.()
         if (!r?.ok || !r.sealed || r.unmounted) return
@@ -760,7 +779,19 @@ function AppInner() {
         // actually downloaded, never as the library's newest (Jake:
         // "they should not show up as the newest").
         console.log(`[phone-sync] absorbing ${eligible.length} phone download(s) into the library`)
+        // Counted before the dispatch re-renders: the library as it was,
+        // plus these (countInRecentlyAdded unions them).
+        const landed = arrivalsMessage('phone', {
+          landed: eligible.length,
+          inRecentlyAdded: countInRecentlyAdded(eligible, libStateRef.current.tracks),
+        })
         dispatch({ type: 'ADD_IMPORTED_TRACKS', tracks: eligible })
+        // 2026-10-17: say they landed (and whether they ride the next
+        // Activity Sync), and give their albums covers — phone downloads
+        // used to arrive with no art pass at all.
+        if (landed) setNotice(landed.message, { kind: landed.kind, durationMs: 7000 })
+        const arrived = eligible
+        window.setTimeout(() => fetchArtForArrivals(arrived, () => libStateRef.current.artworkMap, dispatch), 1500)
       }
     } catch (err) {
       console.error('[phone-imports absorb] crash-guard:', err)
@@ -1825,6 +1856,33 @@ function AppInner() {
       dispatch({ type: 'ADD_IMPORTED_TRACKS', tracks: [t] })
       if (artwork) {
         dispatch({ type: 'ADD_ARTWORK', key: artwork.key, hash: artwork.hash })
+      }
+    })
+  }, [dispatch])
+
+  // New arrivals (2026-10-17). When an import batch finishes (the queue
+  // goes busy → empty), one toast says how many landed — and that they're
+  // in Recently Added, so they ride the next Activity Sync — with the
+  // duplicate / failed counts for THIS batch (common/arrivals.ts tracks the
+  // delta). Then the albums still without a cover get the resolve → fetch
+  // pass; the short wait lets the embedded art dispatched above land first.
+  useEffect(() => {
+    let batch = idleImportBatch<Track>()
+    return subscribeImportQueue(() => {
+      const step = stepImportBatch(batch, getQueueState().items)
+      batch = step.batch
+      const done = step.finished
+      if (!done) return
+      const msg = arrivalsMessage('import', {
+        landed: done.imported,
+        inRecentlyAdded: countInRecentlyAdded(done.tracks, libStateRef.current.tracks),
+        dupes: done.dupes,
+        gone: done.gone,
+        failed: done.failed,
+      })
+      if (msg) setNotice(msg.message, { kind: msg.kind, durationMs: done.failed ? 9000 : 7000 })
+      if (done.tracks.length) {
+        window.setTimeout(() => fetchArtForArrivals(done.tracks, () => libStateRef.current.artworkMap, dispatch), 1500)
       }
     })
   }, [dispatch])
