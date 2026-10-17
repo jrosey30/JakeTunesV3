@@ -4,7 +4,8 @@
  * Same module-store pattern as mixtapes.ts: a cached id list the sidebar
  * badge and the pool view subscribe to, refreshed through IPC. The main
  * process owns the file (activity-pool.json) and the merge rules (dedupe,
- * skit skip, hard cap) — this side only reports what happened, loudly.
+ * skit skip, 1,000 cap where the oldest drops roll off) — this side only
+ * reports what happened, loudly.
  */
 import { useMemo, useSyncExternalStore } from 'react'
 import type { Track } from './types'
@@ -15,8 +16,10 @@ import { subscribeLiveSets, getLiveSetsSnapshot, libraryHiddenTrackIds } from '.
 let ids: number[] = []
 let names: Record<string, PoolName> = {}
 let max = 1000
-/** Set by the pool view's "Sync this pool" button so the Activity sheet
- *  opens on the pool the next time it is shown (DeviceView is untouched). */
+/** RETIRED 2026-10-16 with pool "mode" — every sync is half and half. The
+ *  pool page no longer raises it; DeviceView's "Sync the Pool" button
+ *  (Do-Not-Touch) still does, and the Activity sheet consumes and ignores
+ *  it. Kept only so that call site compiles. */
 let pendingPoolMode = false
 const listeners = new Set<() => void>()
 
@@ -85,14 +88,20 @@ export async function addTracksToPool(dropped: number[], byId: Map<number, Track
     return
   }
   if (Array.isArray(r.ids)) { ids = r.ids; if (r.names) names = r.names; notify() }
+  const cap = r.max ?? max
   const parts: string[] = []
-  parts.push(`${r.added ?? 0} added`)
+  // 2026-10-17: past 1,000 the oldest drops roll off (main's mergeIntoPool)
+  // — said out loud, with the count, so nothing leaves the pool silently.
+  const rolled = r.rolledOff
+    ? ` — ${r.rolledOff.toLocaleString()} oldest drop${r.rolledOff === 1 ? '' : 's'} rolled off`
+    : ''
+  parts.push(`Added ${(r.added ?? 0).toLocaleString()}${rolled}`)
   if (r.dupes) parts.push(`${r.dupes} already in the pool`)
   if (r.skits) parts.push(`${r.skits} skit${r.skits === 1 ? '' : 's'}/intro${r.skits === 1 ? '' : 's'} skipped`)
-  if (r.overflow) parts.push(`${r.overflow} refused — pool is full at ${r.max ?? max}`)
-  setNotice(`iPod Pool: ${parts.join(' · ')} (${ids.length} / ${r.max ?? max})`, {
-    kind: r.overflow ? 'error' : 'success',
-    durationMs: r.overflow || r.skits ? 6000 : 3500,
+  if (r.overflow) parts.push(`the first ${r.overflow.toLocaleString()} of this drop didn’t fit — the pool holds ${cap.toLocaleString()}`)
+  setNotice(`iPod Pool: ${parts.join(' · ')} (${ids.length.toLocaleString()} / ${cap.toLocaleString()})`, {
+    kind: 'success',
+    durationMs: r.overflow || r.rolledOff || r.skits ? 6000 : 3500,
   })
 }
 

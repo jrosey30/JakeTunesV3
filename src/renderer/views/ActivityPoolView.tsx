@@ -15,7 +15,7 @@ import { TRACK_DRAG_TYPE } from '../utils/trackDrag'
 import { setNotice } from '../activity'
 import {
   getPoolIds, getPoolMax, subscribePool, refreshPool, usePoolHealth,
-  addTracksToPool, removeFromPool, clearPool, requestPoolMode, swapInPool,
+  addTracksToPool, removeFromPool, clearPool, swapInPool,
 } from '../activityPool'
 import '../styles/activity-pool.css'
 import { resolvePinnedPoolIds } from '../utils/poolPinnedLists'
@@ -92,11 +92,21 @@ export default function ActivityPoolView() {
             className="pool-btn pool-btn--go"
             disabled={rows.length === 0}
             onClick={() => {
-              // Hand off to the Device page: the Activity sheet opens on the
-              // pool the next time it's shown (DeviceView stays untouched).
-              requestPoolMode()
-              dispatch({ type: 'SET_VIEW', view: 'device' })
-              setNotice('Plug in the iPod and press Activity Sync — half the set comes from your newest pool drops, Music Man picks the rest.', { kind: 'info', durationMs: 6000 })
+              // Hand off to the Device page — but only when there IS one: with
+              // no iPod mounted the Sidebar bounces the Device page straight
+              // back to Songs, which read as the button doing nothing (and the
+              // notice still said "press Activity Sync"). No iPod → stay here.
+              // (Every sync is half and half, so there is no pool "mode" to
+              // hand over any more — the Activity sheet ignored it.)
+              const tail = 'half the set comes from your newest pool drops, Music Man picks the rest.'
+              void window.electronAPI.checkIpodMounted().then((r) => r.mounted, () => false).then((mounted) => {
+                if (!mounted) {
+                  setNotice(`Plug in the iPod, then press Activity Sync — ${tail}`, { kind: 'info', durationMs: 6000 })
+                  return
+                }
+                dispatch({ type: 'SET_VIEW', view: 'device' })
+                setNotice(`Press Activity Sync — ${tail}`, { kind: 'info', durationMs: 6000 })
+              })
             }}
           >Sync this pool…</button>
           <button type="button" className="pool-btn" disabled={rows.length === 0} onClick={() => setConfirmClear(true)}>Clear pool</button>
@@ -105,7 +115,8 @@ export default function ActivityPoolView() {
 
       <div className="pool-rules">
         Dropping skips skits, intros and sub-minute fragments (you’ll see the count). Duplicates never double-count.
-        The pool is yours — no per-artist limit. Over the size you pick, the sync stops and asks you to trim; it never trims for you.
+        The pool is yours — no per-artist limit. Every sync takes your newest drops for its half; older drops sit that one out.
+        The pool holds {max.toLocaleString()} — drop more and the oldest drops roll off to make room (you’ll see how many).
       </div>
 
       {cantSync > 0 && (
