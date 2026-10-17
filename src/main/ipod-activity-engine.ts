@@ -886,8 +886,9 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
 
   // Stamp iTunesDB sizes from the card, not library.json.
   // Write tracks in firmware-fold title order so Music > Songs is A–Z
-  // even if type-52 key 7 is discarded. stamp sortArtist for mhod 22
-  // (Artists). mhia + type-52 3/5 are built inside write_itunesdb.
+  // even if type-52 key 3 (Songs) is discarded. stamp sortArtist for mhod 22
+  // (Artists). mhia + the type-52 tables (3 Songs, 4 Albums, 5 Artists,
+  // 7 Genres) are built inside write_itunesdb.
   tracks = orderTracksForIpodTitleIndex(tracks.map((t) => stampIpodSortArtist(t)))
   for (const t of tracks) {
     const remembered = writtenById.get(Number(t.id))
@@ -912,11 +913,12 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     }))
   }
 
-  // Mini 1.4.1 lists artists in mhit PHYSICAL order (no type-52 sort
-  // tables in that firmware) — the catalog is written alphabetically so
-  // the Artists menu reads A-Z. Playlists reference dbids, so their order
-  // is untouched. (2026-08-28, Jake: "why are the artists not in
-  // alphabetical order?")
+  // The catalog is written alphabetically (artist > album > track). The
+  // 2026-08-28 belief that Mini 1.4.1 lists Artists in this PHYSICAL order
+  // was wrong: its Music menus read the type-52 tables, which db_reader
+  // had keyed in the wrong numbering until 2026-10-17 (see _sort_indices).
+  // The physical order stays — harmless, and conformCatalogIdOrder re-mints
+  // ids against it. Playlists reference dbids, so their order is untouched.
   tracks = orderForIpodCatalog(tracks)
 
   // ── 5. Build catalog locally, copy to CF, prove bytes+hash+N ──

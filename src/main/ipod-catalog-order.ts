@@ -3,8 +3,14 @@
  * artists on the ipod mini, even after successful sync, are not in
  * alphabetical order?").
  *
- * The Mini's 1.4.1 firmware predates the type-52 sort tables the DB writer
- * dutifully builds — it walks the mhit records in PHYSICAL order. We were
+ * CORRECTION 2026-10-17: the Mini's Music menus DO read the type-52 sort
+ * tables — the real defect was db_reader keying them in the wrong numbering
+ * (see core/db_reader.py _sort_indices). The physical order below stays:
+ * harmless, and conformCatalogIdOrder re-mints ids against it.
+ *
+ * (Original 8/28 belief:) The Mini's 1.4.1 firmware predates the type-52
+ * sort tables the DB writer dutifully builds — it walks the mhit records in
+ * PHYSICAL order. We were
  * writing them in library order, so the Artists menu came out 48% shuffled.
  * The fix is not in the writer (core/ is Do-Not-Touch): the engine sorts
  * the track array before handing it over, because mhits are emitted in

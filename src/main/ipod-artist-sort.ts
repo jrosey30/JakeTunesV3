@@ -129,7 +129,7 @@ function optionalSortText(display: unknown, sortValue?: unknown): string {
   return String(display || '')
 }
 
-/** Music > Songs write / type-52 key 7 order (firmware fold of sortTitle || title). */
+/** Music > Songs write / type-52 key 3 order (firmware fold of sortTitle || title). */
 export function orderTracksForIpodTitleIndex<T extends {
   title?: unknown
   sortTitle?: unknown
@@ -190,7 +190,7 @@ export function orderAlbumsForIpodIndex<T extends {
   return rows.map(({ artist, albumArtist, album }) => ({ artist, albumArtist, album }))
 }
 
-/** Unique genres in Music > Genres A–Z (firmware fold — type-52 key 5).
+/** Unique genres in Music > Genres A–Z (firmware fold — type-52 key 7).
  *  ⚠️ TWIN: core/db_reader.py unique_genre_names_az
  */
 export function uniqueGenresAz<T extends { genre?: unknown }>(tracks: T[]): string[] {

@@ -164,7 +164,8 @@ def main(mount: str) -> int:
         print(f"Master playlist:")
         print(f"  item_count (header):  {item_count}")
         print(f"  mhip records walked:  {mhip_count}")
-        sort_key_names = {3: 'album', 4: 'artist', 5: 'genre', 7: 'title',
+        # Firmware numbering (libgpod MHOD52_SORTTYPE) — see db_reader._sort_indices.
+        sort_key_names = {3: 'title', 4: 'album', 5: 'artist', 7: 'genre',
                           18: 'composer', 35: 'album-artist', 36: 'composer-sort'}
         for key, n in sort_indices:
             print(f"  sort index {key} ({sort_key_names.get(key, '?'):<14}): {n}")
