@@ -51,6 +51,12 @@ export class RadioEngine {
   private byId = new Map<string, CastMember>()
   private byTag = new Map<string, CastMember>()
   private currentAudio: HTMLAudioElement | null = null
+  /** Settles the line playing now. stop() calls it: pause() fires neither
+   *  'ended' nor 'error', so an interrupted line used to leave its promise
+   *  pending forever — handleTransition/playOpener never returned, the
+   *  Toolbar's transition handler hung with its busy flag set, the next
+   *  track never started, and every later transition advanced silently. */
+  private finishCurrent: (() => void) | null = null
   private stopped = false
   private seq = 0
   private cache = new Map<string, RadioSegment>()
@@ -151,12 +157,25 @@ export class RadioEngine {
       const caption = stripAudioTags(line.text)
       const audio = audioFromBase64Mpeg(line.audio || '')
       this.currentAudio = audio
+      let settled = false
       const finish = (): void => {
+        if (settled) return
+        settled = true
+        if (this.finishCurrent === finish) this.finishCurrent = null
         try { detachClipFromBroadcast(audio) } catch { /* ignore */ }
         resolve()
       }
+      this.finishCurrent = finish
+      // stop() nulls currentAudio — a line stopped during its pre-stinger or
+      // metadata wait must neither caption nor start afterwards.
+      const live = (): boolean => this.currentAudio === audio
+      const start = (): void => {
+        if (!live()) { finish(); return }
+        audio.play().catch(() => finish())
+      }
       const sync = async (): Promise<void> => {
         await this.waitMeta(audio)
+        if (!live()) return
         const durationMs = audio.duration > 0 && !isNaN(audio.duration) ? audio.duration * 1000 : 3000
         line.durationMs = durationMs
         setBroadcastTimed({ speaker: member?.label || '', text: caption }, durationMs)
@@ -167,12 +186,12 @@ export class RadioEngine {
         audio.onended = () => { playStinger(randomEndStinger()); setTimeout(finish, 200) }
         audio.onerror = finish
         void sync()
-        setTimeout(() => { audio.play().catch(() => finish()) }, Math.max(50, preDur * 700))
+        setTimeout(start, Math.max(50, preDur * 700))
       } else {
         attachClipToBroadcast(audio)
         audio.onended = finish
         audio.onerror = finish
-        void sync().then(() => { audio.play().catch(() => finish()) })
+        void sync().then(start)
       }
     })
   }
@@ -240,6 +259,11 @@ export class RadioEngine {
       try { detachClipFromBroadcast(this.currentAudio) } catch { /* ignore */ }
       this.currentAudio = null
     }
+    // Release whoever awaits the interrupted line; playSegment then sees
+    // `stopped` and returns, so the caller's continuation runs.
+    const finish = this.finishCurrent
+    this.finishCurrent = null
+    finish?.()
     this.cache.clear()
     this.inFlight.clear()
     setRadio(null)

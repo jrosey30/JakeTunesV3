@@ -16,7 +16,7 @@
  * discographies minus what the library owns.
  */
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, useCallback } from 'react'
-import type { DiscoveryLearned } from '../types'
+import type { DiscoveryLearned, Recommendation } from '../types'
 import PageGate from '../components/PageGate'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { getPreviewSnapshot, subscribePreview, togglePreview } from '../previewPlayer'
@@ -30,6 +30,9 @@ import mmSmug from './RecordStore/art/musicman-smug.png'
 import { binForGenre, applyBinQuotas } from '../../common/record-shop-bins'
 import { useWjlrPicks } from '../hooks/useWjlrPicks'
 import { lookupArtworkOneShot } from '../utils/artworkLookup'
+import {
+  getLtlDownloadSnapshot, subscribeLtlDownload, queueRecoDownload, prefillDownloadView, openBrowse,
+} from '../listen-to-the-list/ltlDownload'
 import '../styles/discover-feed.css'
 
 interface FeedCard {
@@ -76,6 +79,10 @@ export default function NewForYouView() {
   const [error, setError] = useState<string | null>(null)
   const [generatedAt, setGeneratedAt] = useState<number | null>(feedAtCache)
   const [added, setAdded] = useState<Set<string>>(new Set())
+  // The list entry each "+ List" made (by cardId) — once it's back, the
+  // same button becomes "↓ Get" and downloads it the way the Listen List does.
+  const [addedRecs, setAddedRecs] = useState<Map<string, Recommendation>>(new Map())
+  const dlMap = useSyncExternalStore(subscribeLtlDownload, getLtlDownloadSnapshot)
   const [owned, setOwned] = useState<RediscoveryPick[]>(rediscCache ?? [])
   // Real artist photos for the Overlooked lane. Jake, twice: "that's an
   // album picture not an artist". Keyed by artist name; null = looked up,
@@ -231,7 +238,18 @@ export default function NewForYouView() {
       listedIds.add(id)
       if (feedCache) feedCache = withoutListedIds(feedCache)
       if (pendingFeed) pendingFeed = { ...pendingFeed, lanes: withoutListedIds(pendingFeed.lanes) }
+      const rec = res.recommendation
+      if (rec) setAddedRecs((m) => new Map(m).set(id, rec))
     }
+  }
+
+  // The Listen List's own door (ListenToTheListView getReco): a song queues
+  // on the one scheduler; an album has its EDITION picked in Browse first;
+  // an artist-only pick is browsed, never downloaded blind.
+  const getReco = (rec: Recommendation) => {
+    const d = queueRecoDownload(rec)
+    if (d.kind === 'select-edition') { prefillDownloadView(rec, 'album'); openBrowse(dispatch) }
+    else if (d.kind === 'browse-only') { prefillDownloadView(rec, 'song'); openBrowse(dispatch) }
   }
 
   // ── What I've learned ────────────────────────────────────────────────
@@ -416,9 +434,24 @@ export default function NewForYouView() {
                     ? <div className="store-because">Because you play <b>{c.because}</b></div>
                     : laneReason(c) ? <div className="store-because store-because--lane">{laneReason(c)}</div> : null}
                   {c.why && <div className="store-pitch">{c.why}</div>}
-                  <button type="button" className={`store-add${isAdded ? ' store-add--done' : ''}`} disabled={isAdded} onClick={() => void addToList(c)}>
-                    {isAdded ? 'On your list ✓' : '+ List'}
-                  </button>
+                  {(() => {
+                    if (!isAdded) {
+                      return <button type="button" className="store-add" onClick={() => void addToList(c)}>+ List</button>
+                    }
+                    const rec = addedRecs.get(id)
+                    const dl = rec ? dlMap.get(rec.id)?.state ?? 'idle' : null
+                    if (!rec || dl === 'queued' || dl === 'downloading' || dl === 'done') {
+                      const label = !rec ? 'On your list ✓' : dl === 'queued' ? 'Queued…' : dl === 'downloading' ? 'Getting…' : 'In your library ✓'
+                      return <button type="button" className="store-add store-add--done" disabled>{label}</button>
+                    }
+                    const failed = dl === 'error'
+                    return (
+                      <button type="button" className="store-add" onClick={() => getReco(rec)}
+                        title={failed ? (dlMap.get(rec.id)?.error || 'Download failed — try again') : c.type === 'song' ? 'Download to your library' : c.type === 'album' ? 'Pick the edition in Browse' : 'Browse their records'}>
+                        {failed ? 'Retry ↓' : '↓ Get'}
+                      </button>
+                    )
+                  })()}
                 </div>
               )
             })}
