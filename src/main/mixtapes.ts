@@ -36,6 +36,7 @@ import { isSkitOrIntro, isIntroTitled } from './workout-sync.ts'
 import { loadTombstones, saveTombstones } from './playlist-tombstones.ts'
 import { scheduleMixtapeHubConverge } from './mixtape-hub-sync.ts'
 import { MODEL_SMART } from '../common/ai-models.ts'
+import { pitchShiftMp3, pitchSemitonesFromEnv } from './voice-pitch'
 
 /** Hub accessors — the mixtape hub client converges through these. */
 export async function readMixtapesForHub(): Promise<Mixtape[]> {
@@ -407,7 +408,12 @@ async function speechToSpeech(rawWebmPath: string, voiceId: string): Promise<str
     })
     if (!res.ok) throw new Error(`elevenlabs sts ${res.status}: ${(await res.text()).slice(0, 200)}`)
     const out = rawWebmPath + '.sts.mp3'
-    await writeFile(out, new Uint8Array(await res.arrayBuffer()))
+    let audio: Buffer = Buffer.from(await res.arrayBuffer())
+    if (voiceId === (process.env.ELEVENLABS_VOICE_ID || 'ljX1ZrXuDIIRVcmiVSyR')) {
+      // The Music Man sounds the same everywhere (voice-pitch.ts).
+      audio = await pitchShiftMp3(audio, pitchSemitonesFromEnv(process.env.MUSIC_MAN_PITCH_SEMITONES))
+    }
+    await writeFile(out, new Uint8Array(audio))
     return out
   } finally {
     await unlink(wav).catch(() => {})

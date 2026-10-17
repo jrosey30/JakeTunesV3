@@ -29,6 +29,7 @@ import {
 } from '../cynthia-sweep.ts'
 import type Anthropic from '@anthropic-ai/sdk'
 import { MODEL_SMART, MODEL_FAST } from '../../common/ai-models.ts'
+import { pitchShiftMp3, pitchSemitonesFromEnv } from '../voice-pitch'
 
 export interface AiIpcHost {
   setClaudeDailyCeiling: (ceiling: number) => Promise<{ ok: boolean; dailyCeiling: number }>
@@ -249,7 +250,14 @@ export function registerAiIpc(ipc: IpcRegistrar, host: AiIpcHost): void {
           if (model !== modelChain[0]) {
             console.log(`[TTS] fell back to ${model} for voice ${voice.slice(0, 8)}…`)
           }
-          return { ok: true, audio: Buffer.from(arrayBuf).toString('base64') }
+          // Music Man only (not Megan, callers, announcer, DJ): pitch per
+          // MUSIC_MAN_PITCH_SEMITONES in the userData .env (voice-pitch.ts).
+          const mmVoice = process.env.ELEVENLABS_VOICE_ID || 'ljX1ZrXuDIIRVcmiVSyR'
+          const raw = Buffer.from(arrayBuf)
+          const audioBuf = voice === mmVoice
+            ? await pitchShiftMp3(raw, pitchSemitonesFromEnv(process.env.MUSIC_MAN_PITCH_SEMITONES))
+            : raw
+          return { ok: true, audio: audioBuf.toString('base64') }
         } catch (err: unknown) {
           lastError = err instanceof Error ? err.message : String(err)
           console.warn(`[TTS] ${model} threw for voice ${voice.slice(0, 8)}…: ${lastError}`)
