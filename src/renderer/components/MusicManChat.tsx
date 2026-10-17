@@ -74,13 +74,38 @@ export default function MusicManChat({ variant, contextLine }: Props) {
     if (el) el.scrollTop = el.scrollHeight
   }, [messages])
 
-  // The drawer opens to type — focus the box once the slide has settled,
-  // and without letting the browser scroll anything to reveal it.
+  // Both surfaces open to type — focus the box (the drawer once its slide
+  // has settled), without letting the browser scroll anything to reveal it.
   useEffect(() => {
-    if (variant !== 'drawer') return
-    const t = window.setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 240)
+    const t = window.setTimeout(() => inputRef.current?.focus({ preventScroll: true }), variant === 'drawer' ? 240 : 0)
     return () => window.clearTimeout(t)
   }, [variant])
+
+  // Keep the cursor across replies. The box is disabled while he thinks,
+  // which drops focus, and focus() on a still-disabled input is a no-op —
+  // so the refocus waits for the commit that re-enables it (this effect),
+  // not the send's finally. If the listener clicked away mid-wait, or
+  // focus already went somewhere real, the reply doesn't yank it back.
+  const layoutRef = useRef<HTMLDivElement>(null)
+  const wasLoadingRef = useRef(false)
+  const leftWhileLoadingRef = useRef(false)
+  useEffect(() => {
+    if (isLoading) {
+      leftWhileLoadingRef.current = false
+      const onDown = (e: PointerEvent) => {
+        if (!layoutRef.current?.contains(e.target as Node)) leftWhileLoadingRef.current = true
+      }
+      window.addEventListener('pointerdown', onDown, true)
+      wasLoadingRef.current = true
+      return () => window.removeEventListener('pointerdown', onDown, true)
+    }
+    if (!wasLoadingRef.current) return
+    wasLoadingRef.current = false
+    const el = inputRef.current
+    const active = document.activeElement
+    const focusIsFree = !active || active === document.body || active === el || !!layoutRef.current?.contains(active)
+    if (el && !leftWhileLoadingRef.current && focusIsFree) el.focus({ preventScroll: true })
+  }, [isLoading])
 
   // Stop any in-flight TTS when the surface unmounts (navigating away,
   // closing the drawer). Detach → pause → null, then tell the rest of the
@@ -238,7 +263,7 @@ export default function MusicManChat({ variant, contextLine }: Props) {
   const intro = CHAT_INTROS[Math.floor(new Date().getDate() + new Date().getMonth() * 31) % CHAT_INTROS.length]
 
   return (
-    <div className={`musicman-chat-layout musicman-chat-layout--${variant}`}>
+    <div ref={layoutRef} className={`musicman-chat-layout musicman-chat-layout--${variant}`}>
       {variant === 'page' && conversations.length > 0 && (
         <div className="musicman-chat-history">
           <button className="musicman-chat-new" onClick={startNewChat}>+ New Chat</button>
