@@ -677,6 +677,42 @@
   animation: dj-pulse 1s ease-in-out infinite;
 }
 
+/* Under a reply: the speaker button, then (only when his create_playlist
+   tool made one on that turn) "Play it · Open" as quiet orange links.
+   The row takes the speaker's old 4px top margin so nothing moves. */
+.musicman-msg-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+.musicman-msg-actions .musicman-speak-btn { margin-top: 0; }
+.musicman-msg-playlist {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.musicman-msg-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  color: var(--musicman-accent);
+}
+.musicman-msg-link:hover { text-decoration: underline; }
+.musicman-msg-link:focus-visible {
+  outline: 2px solid rgba(var(--brand-orange-rgb), 0.6);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+.musicman-msg-sep { color: #8a7a60; }
+
 /* Metadata Scanner */
 .musicman-metadata {
   display: flex;

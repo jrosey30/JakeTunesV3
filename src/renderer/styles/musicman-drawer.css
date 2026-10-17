@@ -72,6 +72,8 @@
 .mm-drawer .musicman-typing { color: #7a7a7a; font-style: italic; }
 .mm-drawer .musicman-speak-btn { color: #666; }
 .mm-drawer .musicman-speak-btn:hover, .mm-drawer .musicman-speak-btn--active { color: #FC5501; }
+.mm-drawer .musicman-msg-link { color: #FC5501; }
+.mm-drawer .musicman-msg-sep { color: #8a8a8a; }
 .mm-drawer .musicman-chat-input-row {
   display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid #b8b8b8; background: linear-gradient(180deg, #e4e4e4, #d8d8d8); flex-shrink: 0;
 }

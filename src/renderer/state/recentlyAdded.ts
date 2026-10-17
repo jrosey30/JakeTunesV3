@@ -12,19 +12,21 @@
 //  one user, and useSyncExternalStore wants a stable external source.
 // ════════════════════════════════════════════════════════════════════════
 
+import { summarizeImportBatch, type ImportedTrackLike } from '../../common/import-toast'
+
 const MARKER_TTL_MS = 10_000
 const TOAST_TTL_MS = 4_000
+// A success toast is a door now (click → play what just landed), so it
+// stays long enough to reach for. Failures/notices keep the 4s life.
+const SUCCESS_TOAST_TTL_MS = 7_000
 const AGGREGATION_WINDOW_MS = 2_000
 
-export interface ImportedTrack {
-  id?: number
-  title?: string
-  artist?: string
-  album?: string
-}
+export type ImportedTrack = ImportedTrackLike
 
 export type ToastKind =
-  | { kind: 'success'; message: string }
+  /** trackIds: the burst's real library ids (arrival order) — the toast
+   *  plays them on click. */
+  | { kind: 'success'; message: string; trackIds: number[] }
   | { kind: 'failure'; filename: string; error: string }
   | { kind: 'notice'; message: string }
 
@@ -84,35 +86,16 @@ function showToast(toast: ToastKind): void {
     state = { ...state, toast: null }
     toastTimer = null
     notify()
-  }, TOAST_TTL_MS)
+  }, toast.kind === 'success' ? SUCCESS_TOAST_TTL_MS : TOAST_TTL_MS)
 }
 
 function flushAggregate(): void {
   const batch = aggregateBuffer
   aggregateBuffer = []
   aggregateTimer = null
-  if (batch.length === 0) return
-
-  if (batch.length === 1) {
-    const t = batch[0]
-    const label = t.title ? `'${t.title}'` : 'track'
-    showToast({ kind: 'success', message: `Added ${label} to your library` })
-  } else {
-    // Most-common album in the batch wins the headline. Real-world album
-    // zips have all the same album, so this is almost always trivially
-    // unambiguous; the modal collapse is for the edge case of two purchases
-    // landing inside the same aggregation window.
-    const albumCounts = new Map<string, number>()
-    for (const t of batch) {
-      const a = (t.album || '').trim()
-      if (a) albumCounts.set(a, (albumCounts.get(a) || 0) + 1)
-    }
-    let topAlbum = ''
-    let topCount = 0
-    for (const [a, c] of albumCounts) if (c > topCount) { topAlbum = a; topCount = c }
-    const label = topAlbum ? `'${topAlbum}'` : 'your purchase'
-    showToast({ kind: 'success', message: `Added ${batch.length} tracks from ${label} to your library` })
-  }
+  // Message + ids live in common/import-toast.ts (tested there).
+  const summary = summarizeImportBatch(batch)
+  if (summary) showToast({ kind: 'success', message: summary.message, trackIds: summary.trackIds })
 }
 
 /** Brief 160: the app's one toast surface, borrowed for playback

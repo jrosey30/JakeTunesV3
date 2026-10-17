@@ -16,6 +16,7 @@ import { useLibrary } from '../context/LibraryContext'
 import { useAudio } from '../hooks/useAudio'
 import { setTapeSession } from '../mixtapes'
 import MixArtwork from './MixArtwork'
+import { PlayIcon } from './TransportIcons'
 import { openMix, type VibeMix as Mix } from '../utils/activeMix'
 import type { Track } from '../types'
 import '../styles/home-madeforyou.css'
@@ -107,19 +108,32 @@ export default function MadeForYou() {
       {mixes.length > 0 && (
         <div className="home-mixes-row">
           {mixes.map((m) => {
+            // The play button is a SIBLING laid over the art, not a child —
+            // a button can't nest in a button. Clicking the card still opens
+            // the mix; the button plays it from the top as a tape (playMix).
             return (
-              <button
-                key={m.id}
-                className="home-mix-card"
-                onClick={() => { openMix(m, lib.currentView); dispatch({ type: 'SET_VIEW', view: 'mix-detail' }) }}
-                title={m.subtitle ? `${m.title} — ${m.subtitle}` : `${m.title} · ${m.tracks.length} songs`}
-              >
-                <div className="home-mix-art">
-                  <MixArtwork tracks={m.tracks} />
-                  <div className="home-mix-scrim" aria-hidden="true" />
-                  <div className="home-mix-title">{m.title}</div>
-                </div>
-              </button>
+              <div key={m.id} className="home-mix-cell">
+                <button
+                  className="home-mix-card"
+                  onClick={() => { openMix(m, lib.currentView); dispatch({ type: 'SET_VIEW', view: 'mix-detail' }) }}
+                  title={m.subtitle ? `${m.title} — ${m.subtitle}` : `${m.title} · ${m.tracks.length} songs`}
+                >
+                  <div className="home-mix-art">
+                    <MixArtwork tracks={m.tracks} />
+                    <div className="home-mix-scrim" aria-hidden="true" />
+                    <div className="home-mix-title">{m.title}</div>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  className="home-mix-play"
+                  onClick={(e) => { e.stopPropagation(); playMix(m) }}
+                  title={`Play ${m.title}`}
+                  aria-label={`Play ${m.title}`}
+                >
+                  <PlayIcon size={16} />
+                </button>
+              </div>
             )
           })}
         </div>
