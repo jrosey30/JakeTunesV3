@@ -112,12 +112,14 @@ export function registerActivityPoolIpc(ipc: IpcRegistrar): void {
       playCount: c.playCount, rating: c.rating,
     }))
     const names = { ...file.names }
+    for (const id of r.rolledOffIds) delete names[String(id)]
+    const pooled = new Set(r.ids)
     for (const c of candidates) {
       const id = Number(c?.id)
-      if (Number.isFinite(id) && r.ids.includes(id)) names[String(id)] = { t: String(c.title ?? ''), a: String(c.artist ?? '') }
+      if (Number.isFinite(id) && pooled.has(id)) names[String(id)] = { t: String(c.title ?? ''), a: String(c.artist ?? '') }
     }
-    if (r.added > 0) await saveActivityPool(r.ids, names)
-    console.log(`[activity-pool] +${r.added} (dupes ${r.dupes}, skits ${r.skits}, overflow ${r.overflow}) → ${r.ids.length}/${POOL_MAX}`)
+    if (r.added > 0 || r.rolledOff > 0) await saveActivityPool(r.ids, names)
+    console.log(`[activity-pool] +${r.added} (dupes ${r.dupes}, skits ${r.skits}, rolled off ${r.rolledOff}, overflow ${r.overflow}) → ${r.ids.length}/${POOL_MAX}`)
     return { ok: true, ...r, names, max: POOL_MAX }
   }, { refuse: REFUSED_SENDER })
 
