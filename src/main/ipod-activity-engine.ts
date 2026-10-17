@@ -148,6 +148,10 @@ export interface ActivitySyncResult {
   pathRewrites?: Array<{ id: number; newPath: string }>
   streamed?: number
   destCollisions?: number
+  /** Songs whose audio could not be converted for the iPod (a damaged
+   *  file, e.g. the 2026-10-10/11 ALAC imports). Skipped and replaced from
+   *  reserve so N still means N — never the reason a whole sync stops. */
+  unconvertible?: Array<{ id: number; title: string; artist: string }>
 }
 
 export function bindActivityReplacements(
@@ -469,6 +473,19 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     knownSourceSize?: number
   }
   const plan: CopyPlanEntry[] = []
+  // Everything in this loop happens BEFORE the wipe, so its progress is
+  // 'preflight' (the Prepare step). It used to say 'copy', and when a
+  // song failed here the screen claimed Wipe ✓ / Copy ✗ and "the copied
+  // songs were cleared" — while the card had not been touched (2026-10-17).
+  // A song whose audio cannot be converted (damaged file) is dropped like an
+  // unplayable row and replaced from reserve — one bad file must not stop a
+  // 1000-song sync (2026-10-17: "Breeze" stopped one; 44 such files exist).
+  const unconvertible: Array<{ id: number; title: string; artist: string }> = []
+  const skipUnconvertible = (title: string, artist: string, id: number, why: string): void => {
+    unconvertible.push({ id, title, artist })
+    console.warn(`activity-sync: "${title}" (id ${id}) cannot be converted for the iPod (${why}) — skipped, a reserve takes its place`)
+    host.sendProgress({ phase: 'preflight', current: 0, total: target, title: `Skipped (damaged file): ${title}` })
+  }
   // #47 (fill-to-N): tracks[target..] are copy-time replacements. They are
   // resolved here like everything else, but never kept from a previous
   // card and only copied when a primary miss leaves the card short of N.
@@ -499,7 +516,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     let restage: { colon: string; id: number } | undefined
     let knownSourceSize: number | undefined
 
-    host.sendProgress({ phase: 'copy', current: Math.min(i, target), total: target, title: `Preparing: ${title}` })
+    host.sendProgress({ phase: 'preflight', current: Math.min(i, target), total: target, title: `Preparing: ${title}` })
 
     const kind = await classifyLocalLibraryFile(rawColon, { localMount: LOCAL_MOUNT, pathSep, lstat })
     const needsPull = kind === 'streamed' || kind === 'missing'
@@ -537,7 +554,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
       if (convertOptions?.enabled) {
         try {
           host.sendProgress({
-            phase: 'copy', current: Math.min(i, target), total: target,
+            phase: 'preflight', current: Math.min(i, target), total: target,
             title: `Converting → ${convertOptions.targetKbps}k AAC: ${title}`,
           })
           const mirror = await host.buildAacMirror(bytesForMirror, convertOptions.targetKbps)
@@ -564,7 +581,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
         || (overCeiling && srcToCopy === localFile)) {
         try {
           host.sendProgress({
-            phase: 'copy', current: Math.min(i, target), total: target,
+            phase: 'preflight', current: Math.min(i, target), total: target,
             title: `Converting → ALAC: ${title}`,
           })
           // bytesForMirror is a real file: a library master, or one staged
@@ -572,8 +589,8 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
           const mirror = await host.buildIpodSafeAlacMirror(bytesForMirror)
           if (!mirror) {
             if (i >= target) { console.warn(`activity-sync: reserve "${title}" has no iPod-safe ALAC — skipped`); continue }
-            await host.writeJournal(null)
-            return fail({ copied: 0, error: `Could not build an iPod-safe ALAC for "${title}". Nothing was wiped.`, target })
+            skipUnconvertible(title, String(track.artist || ''), id, 'no iPod-safe ALAC')
+            continue
           }
           srcToCopy = mirror
           dstToCopy = ipodPlayableDestPath(dstToCopy)
@@ -590,8 +607,8 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
         } catch (err) {
           console.error(`activity-sync: FLAC→ALAC failed for ${title}:`, err)
           if (i >= target) { console.warn(`activity-sync: reserve "${title}" skipped`); continue }
-          await host.writeJournal(null)
-          return fail({ copied: 0, error: `FLAC→ALAC failed for "${title}" (${err instanceof Error ? err.message : String(err)}). Nothing was wiped.`, target })
+          skipUnconvertible(title, String(track.artist || ''), id, err instanceof Error ? err.message.slice(0, 120) : String(err).slice(0, 120))
+          continue
         }
       }
     } finally {
@@ -613,6 +630,20 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
 
     dstToCopy = ipodPlayableDestPath(dstToCopy)
     plan.push({ i, id, title, srcToCopy, dstToCopy, restage, knownSourceSize })
+  }
+
+  // Damaged songs were dropped above; reserves fill their places. Only if
+  // there are not enough reserves does the sync stop — still before the wipe.
+  if (unconvertible.length > 0) {
+    const names = unconvertible.slice(0, 5).map((u) => `${u.artist} — ${u.title}`).join('; ')
+    console.warn(`activity-sync: ${unconvertible.length} damaged song(s) skipped and replaced: ${names}`)
+    if (plan.length < target) {
+      await host.writeJournal(null)
+      return fail({
+        copied: 0, target, unconvertible,
+        error: `${unconvertible.length} song(s) have damaged audio and there are not enough replacements to make ${target}. Nothing was wiped. ${names}`,
+      })
+    }
   }
 
   // ── 2b. Keep plan: what is already right on the card, by identity ──
@@ -1193,6 +1224,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     await appendFile(join(host.stateDir, 'activity-sync-ledger.jsonl'), JSON.stringify({
       kind: 'result', when: new Date().toISOString(), picksWhen: ledgerWhen,
       target, landed: target, sealedOk, copied, copyErrors,
+      ...(unconvertible.length > 0 ? { unconvertible: unconvertible.map((u) => u.id) } : {}),
     }) + '\n', 'utf-8')
   } catch (err) {
     console.warn('activity-sync: ledger result append failed (non-blocking):', err)
@@ -1208,6 +1240,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     shortfall: sealedOk ? 0 : target,
     verifyAttempts,
     pathRewrites: pathRewrites.map((r) => ({ id: r.id, newPath: r.newPath })),
+    ...(unconvertible.length > 0 ? { unconvertible } : {}),
     error: sealedOk ? undefined : `Activity set of ${target} did not seal. Not calling this a success.`,
   }
 }

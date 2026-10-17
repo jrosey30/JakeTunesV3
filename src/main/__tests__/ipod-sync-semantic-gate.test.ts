@@ -179,3 +179,16 @@ test('activity sync converts hi-res / multichannel ALAC, not only .flac (twin of
   // the library path (the 8.3 stem is card-only).
   assert.match(engine, /if \(ipodPathExtension\(rawColon\) !== ipodPathExtension\(String\(track\.path\)\)\) \{\n\s+pathRewrites\.push/)
 })
+
+test('a damaged song is skipped and replaced from reserve, not the reason a sync stops', () => {
+  // 2026-10-17: "Jermango Dreaming — Breeze" (a damaged ALAC import, one of
+  // 44 from 10/10–10/11) could not be converted, and the primary-pick
+  // branch refused the whole 1000-song sync. A primary that cannot be
+  // converted is now dropped like an unplayable row; reserves fill N.
+  assert.doesNotMatch(engine, /return fail\(\{ copied: 0, error: `Could not build an iPod-safe ALAC for/)
+  assert.doesNotMatch(engine, /return fail\(\{ copied: 0, error: `FLAC→ALAC failed for/)
+  assert.match(engine, /skipUnconvertible\(title, String\(track\.artist \|\| ''\), id, 'no iPod-safe ALAC'\)/)
+  // Not enough reserves still refuses — before the wipe, naming the songs.
+  assert.match(engine, /if \(plan\.length < target\) \{/)
+  assert.ok(engine.indexOf('if (plan.length < target) {') < engine.indexOf('── 2b. Keep plan'))
+})

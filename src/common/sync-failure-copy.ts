@@ -45,6 +45,7 @@ const RULES: Rule[] = [
   // #47 fill-to-N (merged 2026-10-08): refused before the wipe — the library cannot fill N.
   { test: /only \d+ of \d+ requested songs can land/i, stage: 'prepare', happened: 'The library has fewer songs that can land on the iPod than the chosen size.', next: 'Pick a smaller size, or add songs the Mini can list, and sync again.' },
   { test: /activity tsa/i, stage: 'prepare', happened: 'Some songs could not board: a file is missing, has no destination, or would collide on the card.', next: 'Open Details for the songs, fix or drop them, and sync again.' },
+  { test: /have damaged audio and there are not enough replacements/i, stage: 'prepare', happened: 'Some songs have damaged audio files and there were not enough replacement songs, so nothing on the iPod was touched.', next: 'Pick a smaller size, or re-download the damaged songs (Details lists them), then sync again.' },
   { test: /could not build an ipod-safe alac|flac→alac failed/i, stage: 'prepare', happened: 'A song could not be converted to an iPod-safe ALAC, so nothing on the iPod was touched.', next: 'Open Details for the song — the original may be multichannel or damaged. Drop it and sync again.' },
   { test: /activity wipe/i, stage: 'wipe', happened: 'The iPod could not be cleared for the rebuild.', next: 'Reseat the cable (direct USB port) and sync again.' },
   { test: /sync cancelled/i, stage: 'copy', happened: 'You stopped the sync.', next: 'Sync again when ready.' },
