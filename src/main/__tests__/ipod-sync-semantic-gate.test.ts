@@ -163,3 +163,19 @@ test('activity sync writes artists A–Z and fills copy misses so N means N', ()
   assert.match(writer, /unique_genre_names_az/)
   assert.match(writer, /firmware_sort_text/)
 })
+
+test('activity sync converts hi-res / multichannel ALAC, not only .flac (twin of the full sync)', () => {
+  // 2026-10-17: six hi-res streamrip ALAC .m4a downloads (2840–5137 kbps)
+  // rode an Activity Sync raw — the engine only checked the .flac
+  // extension — and the firmware-semantic gate refused all 1000 songs
+  // ("6/1000 track(s) have out-of-range bitrate"). The full sync has had
+  // the ceiling check since 2026-09-07; both engines must route over-ceiling
+  // lossless through the iPod-safe ALAC mirror.
+  assert.match(engine, /exceedsIpodPlayableCeiling\(sourceBytes, Number\(track\.duration/)
+  assert.match(engine, /needsIpodAlacTranscode\(localFile\) \|\| overCeiling\)/)
+  assert.match(engine, /\|\| \(overCeiling && srcToCopy === localFile\)\)/)
+  assert.match(syncEngine, /exceedsIpodPlayableCeiling/)
+  // The mirror path is the card only: a .m4a → .m4a mirror never rewrites
+  // the library path (the 8.3 stem is card-only).
+  assert.match(engine, /if \(ipodPathExtension\(rawColon\) !== ipodPathExtension\(String\(track\.path\)\)\) \{\n\s+pathRewrites\.push/)
+})

@@ -31,6 +31,7 @@ import {
   ACTIVITY_WIPE_MAX_PASSES,
   catalogBytesMatch,
   catalogOnCardProven,
+  exceedsIpodPlayableCeiling,
   fileSizeForItunesDb,
   ipodFirmwareWillList,
   ipodPlayableDestPath,
@@ -502,9 +503,22 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
 
     const kind = await classifyLocalLibraryFile(rawColon, { localMount: LOCAL_MOUNT, pathSep, lstat })
     const needsPull = kind === 'streamed' || kind === 'missing'
+    // Lossless but not stereo CD-quality — a high-res (24-bit / 96–192 kHz)
+    // or multichannel ALAC .m4a. The Mini cannot play it, and its >2000 kbps
+    // record fails the firmware-semantic gate, which refuses the WHOLE sync
+    // ("6/1000 track(s) have out-of-range bitrate", 2026-10-17 — six hi-res
+    // streamrip downloads). The full sync learned this on 2026-09-07
+    // (sync-engine exceedsIpodPlayableCeiling); Activity Sync only ever
+    // checked the .flac extension. Same rescue: the 16-bit / 44.1 kHz
+    // stereo ALAC mirror. The master is untouched.
+    const sourceBytes = needsPull
+      ? (remoteBytes.get(id) || Number(track.fileSize) || 0)
+      : ((await stat(localFile).catch(() => null))?.size ?? 0)
+    const overCeiling = !needsIpodAlacTranscode(localFile)
+      && exceedsIpodPlayableCeiling(sourceBytes, Number(track.duration || 0))
     let bytesForMirror = localFile
     let stageCleanup: (() => Promise<void>) | null = null
-    if (needsPull && (convertOptions?.enabled || needsIpodAlacTranscode(localFile))) {
+    if (needsPull && (convertOptions?.enabled || needsIpodAlacTranscode(localFile) || overCeiling)) {
       const staged = await host.stageTrack(rawColon, id)
       if (!staged.ok) {
         const msg = staged.reason === 'free-space'
@@ -544,7 +558,10 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
         }
       }
 
-      if (needsIpodAlacTranscode(srcToCopy === localFile ? bytesForMirror : srcToCopy)) {
+      // overCeiling only while the source is still the original: an AAC
+      // mirror (convert toggle on) already brought the bitrate down.
+      if (needsIpodAlacTranscode(srcToCopy === localFile ? bytesForMirror : srcToCopy)
+        || (overCeiling && srcToCopy === localFile)) {
         try {
           host.sendProgress({
             phase: 'copy', current: Math.min(i, target), total: target,
@@ -563,7 +580,13 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
           const newRel = dstToCopy.startsWith(IPOD_MOUNT) ? dstToCopy.slice(IPOD_MOUNT.length + 1) : dstToCopy
           track.path = tsaNormalizeColonPath(newRel)
           track.codec = 'alac'
-          pathRewrites.push({ id, newPath: String(track.path) })
+          // Exported to the LIBRARY only when the extension changed (.flac →
+          // .m4a). A hi-res .m4a stays .m4a, and its card path may carry the
+          // card-only 8.3 stem — exporting that is the 702-row bug (see the
+          // destColon rewrite above).
+          if (ipodPathExtension(rawColon) !== ipodPathExtension(String(track.path))) {
+            pathRewrites.push({ id, newPath: String(track.path) })
+          }
         } catch (err) {
           console.error(`activity-sync: FLAC→ALAC failed for ${title}:`, err)
           if (i >= target) { console.warn(`activity-sync: reserve "${title}" skipped`); continue }
