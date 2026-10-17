@@ -9,9 +9,11 @@
  * All chat state, history persistence, sending, and the ElevenLabs speaker
  * button live here so the two surfaces cannot drift.
  */
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { audioFromBase64Mpeg } from '../audio/base64-audio'
 import { useLibrary } from '../context/LibraryContext'
+import { useAudio } from '../hooks/useAudio'
+import { PlayIcon } from './TransportIcons'
 import { attachClipToBroadcast, detachClipFromBroadcast } from '../audio/eq'
 import { setNotice } from '../activity'
 import { ChatConversation } from '../types'
@@ -41,6 +43,9 @@ export interface ChatMessage {
   // is the stripped-clean version — but used by the speaker button so v3 still
   // performs the dialogue expressively when the user opts into hearing it.
   contentRaw?: string
+  /** The playlist his create_playlist tool made on this turn — drives the
+   *  "Play it · Open" row. Older saved messages simply don't have one. */
+  playlistId?: string
 }
 
 interface Props {
@@ -52,7 +57,8 @@ interface Props {
 }
 
 export default function MusicManChat({ variant, contextLine }: Props) {
-  const { dispatch } = useLibrary()
+  const { state: lib, dispatch } = useLibrary()
+  const { playTrack } = useAudio()
   const [chatInput, setChatInput] = useState('')
   const [conversations, setConversations] = useState<ChatConversation[]>([])
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
@@ -167,8 +173,10 @@ export default function MusicManChat({ variant, contextLine }: Props) {
       // 2026-08-07: the Music Man has HANDS — when his create_playlist
       // tool fired, the resolved playlist lands in the sidebar HERE, the
       // same ADD_PLAYLIST path a hand-made playlist uses.
+      let playlistId: string | undefined
       if (result.createdPlaylist && result.createdPlaylist.trackIds.length > 0) {
         const playlist = { id: `mm-${Date.now()}`, name: result.createdPlaylist.name, trackIds: result.createdPlaylist.trackIds }
+        playlistId = playlist.id
         dispatch({ type: 'ADD_PLAYLIST', playlist })
         void window.electronAPI.tasteLedgerAppend?.([{
           surface: 'mm-playlist', verdict: 'accept',
@@ -183,6 +191,7 @@ export default function MusicManChat({ variant, contextLine }: Props) {
         role: 'assistant',
         content: result.text,
         contentRaw: result.textRaw || result.text,
+        ...(playlistId ? { playlistId } : {}),
       }]
       setMessages(finalMessages)
 
@@ -260,6 +269,18 @@ export default function MusicManChat({ variant, contextLine }: Props) {
     }
   }
 
+  // "Play it · Open" under a reply that made a playlist. Looked up live, so
+  // a playlist deleted since then just loses its row.
+  const playlistsById = useMemo(() => new Map(lib.playlists.map((p) => [p.id, p])), [lib.playlists])
+  const playPlaylist = (id: string) => {
+    const pl = playlistsById.get(id)
+    if (!pl) return
+    const byId = new Map(lib.tracks.map((t) => [t.id, t]))
+    const tracks = pl.trackIds.map((tid) => byId.get(tid)).filter((t): t is NonNullable<typeof t> => !!t)
+    if (tracks.length) playTrack(tracks[0], tracks, 0, undefined, true)
+  }
+  const openPlaylist = (id: string) => dispatch({ type: 'VIEW_PLAYLIST', id })
+
   const intro = CHAT_INTROS[Math.floor(new Date().getDate() + new Date().getMonth() * 31) % CHAT_INTROS.length]
 
   return (
@@ -294,34 +315,50 @@ export default function MusicManChat({ variant, contextLine }: Props) {
               <p>{intro}</p>
             </div>
           )}
-          {messages.map((msg, i) => (
-            <div key={i} className={`musicman-chat-msg ${msg.role === 'user' ? 'musicman-chat-msg--user' : 'musicman-chat-msg--assistant'}`}>
-              {msg.role === 'assistant' ? (
-                <>
-                  {msg.content.split('\n').map((line, j) => (
-                    <p key={j}>{line}</p>
-                  ))}
-                  <button
-                    className={`musicman-speak-btn ${isSpeaking && speakingIdx === i ? 'musicman-speak-btn--active' : ''}`}
-                    onClick={() => speakMessage(msg.contentRaw || msg.content, i)}
-                    title={isSpeaking && speakingIdx === i ? 'Stop' : 'Listen'}
-                  >
-                    {isSpeaking && speakingIdx === i ? (
-                      <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><rect x="2" y="2" width="8" height="8" rx="1" /></svg>
-                    ) : (
-                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
-                        <path d="M1.5 5.5v3h2l3 3v-9l-3 3h-2z" fill="currentColor" stroke="none" />
-                        <path d="M9 5.5a2 2 0 010 3" />
-                        <path d="M10.5 4a4 4 0 010 6" />
-                      </svg>
-                    )}
-                  </button>
-                </>
-              ) : (
-                <p>{msg.content}</p>
-              )}
-            </div>
-          ))}
+          {messages.map((msg, i) => {
+            const made = msg.playlistId ? playlistsById.get(msg.playlistId) : undefined
+            return (
+              <div key={i} className={`musicman-chat-msg ${msg.role === 'user' ? 'musicman-chat-msg--user' : 'musicman-chat-msg--assistant'}`}>
+                {msg.role === 'assistant' ? (
+                  <>
+                    {msg.content.split('\n').map((line, j) => (
+                      <p key={j}>{line}</p>
+                    ))}
+                    <div className="musicman-msg-actions">
+                      <button
+                        className={`musicman-speak-btn ${isSpeaking && speakingIdx === i ? 'musicman-speak-btn--active' : ''}`}
+                        onClick={() => speakMessage(msg.contentRaw || msg.content, i)}
+                        title={isSpeaking && speakingIdx === i ? 'Stop' : 'Listen'}
+                      >
+                        {isSpeaking && speakingIdx === i ? (
+                          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><rect x="2" y="2" width="8" height="8" rx="1" /></svg>
+                        ) : (
+                          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
+                            <path d="M1.5 5.5v3h2l3 3v-9l-3 3h-2z" fill="currentColor" stroke="none" />
+                            <path d="M9 5.5a2 2 0 010 3" />
+                            <path d="M10.5 4a4 4 0 010 6" />
+                          </svg>
+                        )}
+                      </button>
+                      {made && (
+                        <span className="musicman-msg-playlist">
+                          <button type="button" className="musicman-msg-link" onClick={() => playPlaylist(made.id)} title={`Play “${made.name}”`}>
+                            <PlayIcon size={10} /> Play it
+                          </button>
+                          <span className="musicman-msg-sep" aria-hidden="true">·</span>
+                          <button type="button" className="musicman-msg-link" onClick={() => openPlaylist(made.id)} title={`Open “${made.name}”`}>
+                            Open
+                          </button>
+                        </span>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <p>{msg.content}</p>
+                )}
+              </div>
+            )
+          })}
           {isLoading && (
             <div className="musicman-chat-msg musicman-chat-msg--assistant">
               <p className="musicman-typing">thinking...</p>
