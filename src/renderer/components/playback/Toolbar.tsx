@@ -119,7 +119,9 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
   // 4.1.6: Radio Mode — continuous WJLR-style commentary between tracks.
   // Distinct from `autoDj` which is only on during a Music-Man-curated
   // DJ Set. Radio Mode rides whatever queue the user picked. Mutually
-  // exclusive with autoDj at the UI level (toggling one off the other).
+  // exclusive with DJ Mode: every start path stops the other mode first
+  // (stopRadioMode / stopDjMode below) — not just autoDj, which left the
+  // DJ vinyl lit and its set loading while the show went on air.
   const [radioMode, setRadioMode] = useState(false)
   // 4.4.3: Radio Mode is capped at 90 minutes per session. Real FM
   // shows have a runtime; an unbounded radio session loses its sense of
@@ -131,6 +133,18 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
   const radioTickIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const radioCapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const radioEngineRef = useRef<RadioEngine | null>(null)  // 4.5 radioV2 engine
+  // Radio ⇄ DJ Mode exclusivity: each start path stops the other mode
+  // first. A Radio start awaits its planner + opener for seconds, so a
+  // stop (or a DJ Mode start) during that wait bumps this counter and the
+  // stale start bails — the same pattern as djModeGenerationRef below.
+  const radioGenerationRef = useRef(0)
+  // True while a Radio start's opener owns djActive/djLoading; a stop
+  // during the opener clears them, since the cancelled start never will.
+  const radioOpenerInFlightRef = useRef(false)
+  // DJ Mode's stop lives beside its state (~"DJ Mode (Spotify-style AI
+  // DJ)" below); Radio's start paths reach it through this ref, which is
+  // re-pointed at a fresh closure every render.
+  const stopDjModeIfActiveRef = useRef<() => void>(() => {})
   // 4.2.20: recording state — captures the broadcast (music + TTS routed
   // through the AudioContext via attachClipToBroadcast) into a single
   // audio file. Click Record to start, click again to stop. On stop we
@@ -396,26 +410,43 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
     }
   }, [recording])
 
+  // Radio OFF — clear caches, counters, and the cap timer. ONE teardown for
+  // every way the show ends: the toggle, the 90-minute cap, and a DJ Mode
+  // start (Radio and DJ Mode are mutually exclusive).
+  const stopRadioMode = useCallback(() => {
+    radioGenerationRef.current += 1   // a start still planning / in its opener bails
+    setRadioMode(false)
+    radioEngineRef.current?.stop()
+    radioCacheRef.current.clear()
+    radioPrefetchedKeyRef.current = null
+    radioTransitionParamsRef.current.clear()
+    radioTransitionCounterRef.current = 0
+    if (radioTickIntervalRef.current) { clearInterval(radioTickIntervalRef.current); radioTickIntervalRef.current = null }
+    if (radioCapTimerRef.current) { clearTimeout(radioCapTimerRef.current); radioCapTimerRef.current = null }
+    setRadioElapsedMs(0)
+    if (radioOpenerInFlightRef.current) {
+      radioOpenerInFlightRef.current = false
+      setDjActive(false)
+      setDjLoading(false)
+    }
+    // 4.5: drop the persisted show plan so it doesn't leak into the
+    // next session's segments. Fire-and-forget.
+    void window.electronAPI.radioClearShowPlan?.()
+  }, [])
+
   const handleRadioToggle = useCallback(async () => {
     if (radioMode) {
-      // OFF — clear caches, counters, and the cap timer.
-      setRadioMode(false)
-      radioEngineRef.current?.stop()
-      radioCacheRef.current.clear()
-      radioPrefetchedKeyRef.current = null
-      radioTransitionParamsRef.current.clear()
-      radioTransitionCounterRef.current = 0
-      if (radioTickIntervalRef.current) { clearInterval(radioTickIntervalRef.current); radioTickIntervalRef.current = null }
-      if (radioCapTimerRef.current) { clearTimeout(radioCapTimerRef.current); radioCapTimerRef.current = null }
-      setRadioElapsedMs(0)
-      // 4.5: drop the persisted show plan so it doesn't leak into the
-      // next session's segments. Fire-and-forget.
-      void window.electronAPI.radioClearShowPlan?.()
+      stopRadioMode()
       return
     }
+    // Mutually exclusive with DJ Mode: a running (or still-loading) DJ set
+    // stops first — vinyl off, its pending start cancelled, volume back.
+    stopDjModeIfActiveRef.current()
     setAutoDj(false)
     const tracks = lib.tracks
     if (tracks.length === 0) return
+    const myGen = ++radioGenerationRef.current
+    const isStale = () => radioGenerationRef.current !== myGen
 
     // 4.5: ask the hosts to PLAN the show before playback starts.
     // Pre-4.5 the queue was just `[...tracks].sort(random)` → genre
@@ -452,6 +483,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
       const planPromise = window.electronAPI.musicmanRadioPlan(planCompactTracks, recentIds)
       const timeout = new Promise<{ ok: false }>((resolve) => setTimeout(() => resolve({ ok: false }), 3000))
       const result = await Promise.race([planPromise, timeout])
+      if (isStale()) return   // superseded while planning: never push its plan
       if (result.ok && 'trackIds' in result && Array.isArray(result.trackIds) && result.trackIds.length > 0) {
         const byId = new Map(tracks.map(t => [t.id, t]))
         const planTracks = result.trackIds.map(id => byId.get(id)).filter((t): t is typeof tracks[number] => !!t)
@@ -483,6 +515,8 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
       shuffled = [...tracks].sort(() => Math.random() - 0.5)
     }
 
+    // Superseded while planning (a second press, or DJ Mode started).
+    if (isStale()) return
     const firstTrack = shuffled[0]
     setRadioMode(true)
     stopPlayback()
@@ -499,28 +533,22 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
     if (radioCapTimerRef.current) clearTimeout(radioCapTimerRef.current)
     radioCapTimerRef.current = setTimeout(() => {
       console.log('[Radio] 90-minute cap reached — signing off.')
-      // Trigger the same teardown the OFF branch above runs. Calling
-      // setRadioMode(false) flips the React state; the cleanup
-      // useEffect handles the rest. Manually clear the timer/interval
-      // so they don't double-fire if the user toggles fast after.
-      setRadioMode(false)
-      radioEngineRef.current?.stop()
-      radioCacheRef.current.clear()
-      radioPrefetchedKeyRef.current = null
-      radioTransitionCounterRef.current = 0
-      if (radioTickIntervalRef.current) { clearInterval(radioTickIntervalRef.current); radioTickIntervalRef.current = null }
-      radioCapTimerRef.current = null
-      setRadioElapsedMs(0)
-      void window.electronAPI.radioClearShowPlan?.()
+      // The same teardown the toggle's OFF runs.
+      stopRadioMode()
     }, RADIO_CAP_MS)
     console.log('[Radio] toggle ON — generating opener…')
 
+    radioOpenerInFlightRef.current = true
     if (RADIO_V2) {
       try {
         const engine = await ensureRadioEngine()
-        setDjActive(true)
-        setDjLoading(true)
-        await engine.playOpener(buildSegmentReq({}, firstTrack, { useAnnouncer: true, slot: 0, hourCounter: 0 }))
+        // playOpener re-arms a stopped engine, so a stop that landed during
+        // init must be honoured HERE or the opener would air after OFF.
+        if (!isStale()) {
+          setDjActive(true)
+          setDjLoading(true)
+          await engine.playOpener(buildSegmentReq({}, firstTrack, { useAnnouncer: true, slot: 0, hourCounter: 0 }))
+        }
       } catch (err) {
         console.warn('[radioV2] opener threw, starting track directly:', err)
       }
@@ -556,6 +584,11 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
       console.warn('[Radio] opener flow threw, starting track directly:', err)
     }
     }
+    // Turned off (or DJ Mode started) during the opener: stopRadioMode
+    // already undid this start, including the opener's djActive/djLoading.
+    // Starting the first track now would play the show nobody is hosting.
+    if (isStale()) return
+    radioOpenerInFlightRef.current = false
     djAudioRef.current = null
     setDjActive(false)
     setDjLoading(false)
@@ -570,7 +603,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
     // exactly this: "they speak once and then they don't come in and
     // out." This is the kick that started turning the radio off.
     playTrack(firstTrack, shuffled, 0, true, true)
-  }, [radioMode, lib.tracks, playTrack, stopPlayback])
+  }, [radioMode, lib.tracks, playTrack, stopPlayback, stopRadioMode])
 
   // "Start Artist Radio" — dispatched from any view's right-click menu
   // (initially SongsView, expandable to Albums/Artists/Genres later).
@@ -581,8 +614,15 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
     const handler = (e: Event) => {
       const { tracks } = (e as CustomEvent).detail as { tracks: typeof lib.tracks; label?: string }
       if (!tracks || tracks.length === 0) return
+      // Mutually exclusive with DJ Mode — stop a DJ set (even one still
+      // loading, which the manual-play cancel never saw) first.
+      stopDjModeIfActiveRef.current()
       const shuffled = [...tracks].sort(() => Math.random() - 0.5)
-      playTrack(shuffled[0], shuffled, 0, false, true)
+      // djTransition=true, for the toggle's 4.2.15 reason: with Radio
+      // already on, a "manual" play dispatches musicman-dj-cancel, which
+      // zeroes the module flag while radioMode stays true — the sync
+      // effect never re-runs and the hosts go quiet for the whole show.
+      playTrack(shuffled[0], shuffled, 0, true, true)
       setAutoDj(false)
       setRadioMode(true)
       radioCacheRef.current.clear()
@@ -1566,6 +1606,9 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
           attachClipToBroadcast(audio)
           djAudioRef.current = audio
           await fadeVolumeOut()
+          // A stop during the duck resolves this await early (clearFade) —
+          // the intro must not start talking after DJ Mode was turned off.
+          if (djCancelledRef.current || isStale()) return
           await new Promise<void>((resolve) => {
             audio.onended = () => {
               djAudioRef.current = null
@@ -1618,36 +1661,49 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
     }
   }, [lib.tracks, pb.volume, playTrack, setVolume])
 
+  // Stop DJ mode — kill everything immediately. Shared by the toggle and
+  // by Radio's start paths (Radio and DJ Mode are mutually exclusive).
+  const stopDjMode = useCallback(() => {
+    djCancelledRef.current = true
+    // 4.4.14: invalidate any in-flight startDjSet so a stale IPC
+    // response can't proceed (rapid off-then-on within 500ms).
+    djModeGenerationRef.current += 1
+    setDjModeActive(false)
+    setDjModeLoading(false)
+    setDjModeTheme('')
+    setAutoDj(false)
+    setAutoDjMode(false) // immediately clear module-level flag
+    if (djAudioRef.current) {
+      // 4.4.14: disconnect from broadcast chain (4.4.6 rattle class).
+      detachClipFromBroadcast(djAudioRef.current)
+      djAudioRef.current.pause()
+      djAudioRef.current = null
+    }
+    // The intro's duck may still be ramping — stop it before restoring, or
+    // it yanks the volume back down (the musicman-dj-cancel path does this).
+    clearFade()
+    isFadedRef.current = false
+    setVolume(savedVolumeRef.current)
+    setDjActive(false)
+    setDjLoading(false)
+    setDjText('')
+  }, [setVolume, clearFade])
+  stopDjModeIfActiveRef.current = () => { if (djModeActive) stopDjMode() }
+
   const handleDjModeClick = useCallback(() => {
     if (djModeActive) {
-      // Stop DJ mode — kill everything immediately
-      djCancelledRef.current = true
-      // 4.4.14: invalidate any in-flight startDjSet so a stale IPC
-      // response can't proceed (rapid off-then-on within 500ms).
-      djModeGenerationRef.current += 1
-      setDjModeActive(false)
-      setDjModeLoading(false)
-      setDjModeTheme('')
-      setAutoDj(false)
-      setAutoDjMode(false) // immediately clear module-level flag
-      if (djAudioRef.current) {
-        // 4.4.14: disconnect from broadcast chain (4.4.6 rattle class).
-        detachClipFromBroadcast(djAudioRef.current)
-        djAudioRef.current.pause()
-        djAudioRef.current = null
-      }
-      setVolume(savedVolumeRef.current)
-      setDjActive(false)
-      setDjLoading(false)
-      setDjText('')
+      stopDjMode()
       return
     }
 
-    // Start DJ mode
+    // Start DJ mode. Mutually exclusive with Radio: sign the show off first
+    // (or cancel a Radio start still planning, before radioMode flips on).
+    if (radioMode) stopRadioMode()
+    else radioGenerationRef.current += 1
     djCancelledRef.current = false
     setDjModeActive(true)
     startDjSet()
-  }, [djModeActive, startDjSet])
+  }, [djModeActive, radioMode, startDjSet, stopDjMode, stopRadioMode])
 
   // Listen for DJ Mode toggle from sidebar button
   useEffect(() => {
