@@ -38,10 +38,22 @@ if [ "${PROTECTED_OK:-}" != "1" ]; then
 fi
 
 # ── The full check: both tsconfigs at zero + every test incl. the rails ──
-echo "pre-commit: typecheck + tests (npm run check)…" >&2
-if ! npm run check >/tmp/jaketunes-precommit.log 2>&1; then
-  echo "pre-commit: BLOCKED — check failed. Tail:" >&2
-  tail -15 /tmp/jaketunes-precommit.log >&2
+# One log PER RUN (worktree + pid): two worktrees gating at once used to
+# share one file and interleave into an unreadable failure report.
+# /tmp/jaketunes-precommit.log stays as a symlink to the newest run —
+# with parallel gates that may be someone else's, so read the path
+# printed below. Runs older than a day are pruned.
+WT=$(basename "$PWD")
+LOG="/tmp/jaketunes-precommit-${WT//[^A-Za-z0-9._-]/_}-$$.log"
+LATEST=/tmp/jaketunes-precommit.log
+find /tmp/ -maxdepth 1 -name 'jaketunes-precommit-*.log' -mtime +1 -delete 2>/dev/null   # slash: /tmp is a symlink
+: >"$LOG"
+# ln + mv: the rename swaps the link atomically under a concurrent gate.
+ln -sfn "$LOG" "$LATEST.$$" && mv -f "$LATEST.$$" "$LATEST" 2>/dev/null || rm -f "$LATEST.$$"
+echo "pre-commit: typecheck + tests (npm run check)… log: $LOG" >&2
+if ! npm run check >"$LOG" 2>&1; then
+  echo "pre-commit: BLOCKED — check failed. Tail of $LOG:" >&2
+  tail -15 "$LOG" >&2
   exit 1
 fi
 echo "pre-commit: gate passed." >&2
