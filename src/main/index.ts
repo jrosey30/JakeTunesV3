@@ -76,6 +76,8 @@ import { registerRecommendations, MOBILE_BACKEND_URL, type RecoSource, type Reco
 import { registerTasteIpc, TASTE_LEDGER_PATH } from './ipc/taste-ipc.ts'
 import { registerGenreFilerIpc } from './ipc/genre-filer-ipc.ts'
 import { registerRockDnaIpc } from './ipc/rock-dna-ipc.ts'
+import { registerReleaseKindsIpc } from './ipc/release-kinds-ipc.ts'
+import { startReleaseKindsJob, effectiveAlbumRows, releaseKindsPath } from './release-kinds.ts'
 import { guardCredits, type CreditTrack } from './ai/credit-guard.ts'
 import { registerYirIpc } from './ipc/yir-ipc.ts'
 import { createArtistPhotos, nameKey as photoNameKey } from './artist-photo.ts'
@@ -3057,6 +3059,7 @@ interface DiscographyAlbum {
   title: string
   year: string  // 4-digit, or '' if unknown
   tracks: { title: string; position: number }[]
+  mb?: { primaryType?: string; secondaryTypes?: string[] }  // release-group type → the artist page's sections (release-kind.ts)
 }
 interface DiscographyResult {
   artist: string
@@ -3426,7 +3429,7 @@ async function fetchArtistDiscography(artist: string): Promise<DiscographyResult
         if (titles.length >= 4 && overlap / titles.length > 0.3) continue
         for (const t of titles) seenTitles.add(t)
         const year = (rg['first-release-date'] || release.date || '').slice(0, 4)
-        albums.push({ title: rg.title, year, tracks })
+        albums.push({ title: rg.title, year, tracks, mb: { primaryType: rg['primary-type'], secondaryTypes: rg['secondary-types'] } })
       } catch { /* skip this release group */ }
     }
 
@@ -4126,6 +4129,8 @@ const STATE_FILE_NAMES = [
   // Group membership grounded in MusicBrainz (scripts/artist-members.mjs) —
   // the trainer on homemini folds `members:` into each track's text.
   'artist-members.json',
+  // What each album IS (album/EP/single/live/compilation; src/main/release-kinds.ts) — the phone backend reads it here.
+  'release-kinds.json',
 ] as const
 assertNoDesktopBluntPush(STATE_FILE_NAMES, 'STATE_FILE_NAMES')
 interface StateConflict {
@@ -9514,6 +9519,7 @@ const sweepFriendImports = (): Promise<number> => moduleSweepFriendImports(sweep
 registerTasteIpc(ipc)
 registerGenreFilerIpc(ipc, { libraryTracks: async () => ((await libraryCache.get()) as { tracks?: [] }).tracks ?? [], overrides: async () => (await overridesCache.get()) as Record<string, { fp?: string; fields?: Record<string, string> }>, persist: (id, fields, fp) => persistOverrideFields(id, fields, fp).then(() => triggerSync('metadata-edit')), send: (ch, p) => sendToRenderer(ch, p), claude: async (system, user) => { const r = await claudeCall('genre-filer', { model: MODEL_SMART, max_tokens: 2000, system, messages: [{ role: 'user', content: user }] }); const b = r.content[0]; return b && b.type === 'text' ? b.text : '' }, mbThrottle, userAgent: `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)` })
 registerRockDnaIpc(ipc)
+registerReleaseKindsIpc(ipc, { file: () => releaseKindsPath(STATE_DIR) })
 registerYirIpc(ipc)
 registerPreviewRefreshIpc(ipc)
 registerSyncHistoryIpc(ipc, { stateDir: STATE_DIR })
@@ -10279,6 +10285,8 @@ app.whenReady().then(async () => {
   // mixes / chat can use it within seconds, not at the nightly trainer pass.
   void autoIndexNewTracks()
   setInterval(() => { void autoIndexNewTracks() }, 30_000)
+  // Album / EP / single / live / compilation, one MusicBrainz ask per album (shared throttle), minutes after boot then every 10 min for imports.
+  startReleaseKindsJob({ file: releaseKindsPath(STATE_DIR), rows: async () => effectiveAlbumRows(((await libraryCache.get()) as CachedLibrary).tracks || [], await overridesCache.get()), isReplica: isHomeminiPlaybackClientCached, throttle: mbThrottle, userAgent: `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)` })
   // Brief 122 — warm recommendations.json from homemini/NAS so "Listen to
   // the List" isn't empty when the phone wrote picks the laptop never pulled.
   // Brief 126 — the one-time reset runs FIRST (scrub stray-migration residue

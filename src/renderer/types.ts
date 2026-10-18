@@ -640,7 +640,8 @@ declare global {
       onMusicmanDjChunk: (callback: (p: { chunk: string; accumulated: string }) => void) => () => void
       musicmanPrefetchFacts: (track: { artist: string; album: string }) => Promise<{ ok: boolean }>
       onAppQuitFade: (callback: () => void) => () => void
-      getArtistDiscography: (artist: string) => Promise<{ ok: boolean; albums?: Array<{ title: string; year: string; tracks: Array<{ title: string; position: number }> }>; error?: string }>
+      getArtistDiscography: (artist: string) => Promise<{ ok: boolean; albums?: Array<{ title: string; year: string; tracks: Array<{ title: string; position: number }>; mb?: { primaryType?: string; secondaryTypes?: string[] } }>; error?: string }>
+      loadReleaseKinds?: () => Promise<{ ok: boolean; updatedAt: string; albums: import('../common/release-kind').ReleaseKindsFile['albums'] }>
       musicmanPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], force?: boolean) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
       meganPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], force?: boolean) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
       djHandsPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], force?: boolean) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
