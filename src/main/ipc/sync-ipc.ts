@@ -7,13 +7,14 @@
  * + planner body live here behind a small host for mount / codec hint /
  * readIpodDatabase so new sync channels default-deny via createIpcRegistrar.
  */
-import { app } from 'electron'
+import { app, powerSaveBlocker } from 'electron'
 import { join } from 'path'
 import { readFile, stat } from 'fs/promises'
 import type { IpcMainInvokeEvent } from 'electron'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { safeIpcError } from '../safe-ipc-error.ts'
+import { withDisplayAwake } from '../sync-keep-awake.ts'
 import { STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted } from '../state-dir.ts'
 import { parseTsaSeal, tsaInspectSeal, tsaRelFromColon, tsaNormalizeColonPath } from '../ipod-sync-tsa.ts'
 
@@ -246,7 +247,9 @@ export function registerSyncIpc(ipc: IpcRegistrar, host: SyncIpcHost): void {
   }, { public: true })
 
   ipc.handle('sync-to-ipod', async (_e, tracks: Array<Record<string, unknown>>, playlists: Array<Record<string, unknown>>, convertOptions?: SyncConvertOptions, syncOpts?: { wipeFirst?: boolean; origin?: string }) => {
-    return host.syncToIpod(tracks, playlists, convertOptions, syncOpts)
+    // A locked screen makes macOS refuse the Verify remount (see
+    // sync-keep-awake.ts) — keep the display awake for the whole sync.
+    return withDisplayAwake(powerSaveBlocker, () => host.syncToIpod(tracks, playlists, convertOptions, syncOpts))
   }, { refuse: { ok: false, copied: 0, error: 'refused-sender' } as const })
 
   // Read-only preview of the keep/copy plan — same planner as the copy loop.
