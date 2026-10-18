@@ -7,6 +7,7 @@ import { open, readdir, stat } from 'fs/promises'
 import { execFile, execSync } from 'child_process'
 import { promisify } from 'util'
 import { remountUnmountArgSets } from './remount-unmount-args.ts'
+import { withFileWriteLock } from './audio-write-guard.ts'
 
 export { remountUnmountArgSets } from './remount-unmount-args.ts'
 
@@ -729,7 +730,9 @@ async function embedTags(path: string, tags: AudioTags): Promise<void> {
   const { join } = await import('path')
   const { spawn } = await import('child_process')
   const script = join(appRoot, 'core/tag_writer.py')
-  await new Promise<void>((resolve) => {
+  // Same per-file lock as the tag write-back (audio-write-guard.ts): two
+  // mutagen writers on one file corrupt it.
+  await withFileWriteLock(path, () => new Promise<void>((resolve) => {
     // embedTags only needs mutagen, not librosa, so we fall back to
     // a bare 'python3' if the librosa-aware resolver returned null.
     const py = spawn(PYTHON_CMD ?? 'python3', [script, path])
@@ -745,7 +748,7 @@ async function embedTags(path: string, tags: AudioTags): Promise<void> {
     })
     py.stdin.write(JSON.stringify(tags))
     py.stdin.end()
-  })
+  }))
 }
 
 /**

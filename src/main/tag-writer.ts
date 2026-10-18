@@ -22,9 +22,9 @@
 import { join } from 'path'
 import { stat, readFile, writeFile, access } from 'fs/promises'
 import { spawn } from 'child_process'
-import { app } from 'electron'
-import { PYTHON_CMD, IS_WINDOWS } from './platform'
+import { PYTHON_CMD, IS_WINDOWS } from './platform.ts'
 import { safeIpcError } from './safe-ipc-error.ts'
+import { withFileWriteLock, writeVerified } from './audio-write-guard.ts'
 
 // Fields safe to propagate to embedded file tags. Anything not in this
 // set is JakeTunes-internal (analysis results, listener stats, ratings)
@@ -125,12 +125,18 @@ async function backupOriginalTags(audioFilePath: string): Promise<string | undef
   }
 }
 
+// Electron is imported lazily so plain-Node tests can load this module
+// (they pass the script path to writeTagsToFile instead).
+async function defaultTagWriterScript(): Promise<string> {
+  const { app } = await import('electron')
+  return join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/tag_writer.py')
+}
+
 // Spawn python3 core/tag_writer.py <path> and pipe the payload to stdin.
 // Same pattern as embedTags() in platform.ts. ~30-80ms per file on local
 // SSD (mutagen mostly).
-function runPythonTagWriter(audioFilePath: string, payload: Record<string, string | number>): Promise<{ ok: boolean; error?: string }> {
+function runPythonTagWriter(script: string, audioFilePath: string, payload: Record<string, string | number>): Promise<{ ok: boolean; error?: string }> {
   return new Promise((resolve) => {
-    const script = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/tag_writer.py')
     const py = spawn(PYTHON_CMD ?? 'python3', [script, audioFilePath])
     let stderr = ''
     py.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
@@ -156,7 +162,7 @@ function runPythonTagWriter(audioFilePath: string, payload: Record<string, strin
   })
 }
 
-export async function writeTagsToFile(req: TagWriteRequest): Promise<TagWriteResult> {
+export async function writeTagsToFile(req: TagWriteRequest, opts: { script?: string } = {}): Promise<TagWriteResult> {
   const { audioFilePath, overrides } = req
   // Absolute-path sanity check. iPod colon-paths would silently fail
   // here ("file not found" deep in mutagen), so reject up front with a
@@ -192,16 +198,26 @@ export async function writeTagsToFile(req: TagWriteRequest): Promise<TagWriteRes
     }
   }
 
-  const sidecarBackup = await backupOriginalTags(audioFilePath)
-  const writeResult = await runPythonTagWriter(audioFilePath, payload)
-  return {
-    ok: writeResult.ok,
-    filePath: audioFilePath,
-    fieldsWritten: writeResult.ok ? Object.keys(payload) : [],
-    fieldsSkipped: skipped,
-    sidecarBackup,
-    error: writeResult.error,
-  }
+  // One writer per file, and the edit lands only if the audio still
+  // decodes. save-metadata-override fires one of these per field without
+  // waiting; unserialized, five of them on one unpadded ALAC shifted its
+  // mdat against each other (44 songs, Oct 10–11). See audio-write-guard.ts.
+  const script = opts.script ?? await defaultTagWriterScript()
+  return withFileWriteLock(audioFilePath, async () => {
+    const sidecarBackup = await backupOriginalTags(audioFilePath)
+    // Callers (writeTagsBatch's Promise.all among them) expect a result,
+    // never a throw: a vanished file or a refused rename is a failed write.
+    const writeResult = await writeVerified(audioFilePath, (target) => runPythonTagWriter(script, target, payload))
+      .catch((err: unknown) => ({ ok: false, error: safeIpcError(err, 'io-failed') }))
+    return {
+      ok: writeResult.ok,
+      filePath: audioFilePath,
+      fieldsWritten: writeResult.ok ? Object.keys(payload) : [],
+      fieldsSkipped: skipped,
+      sidecarBackup,
+      error: writeResult.error,
+    }
+  })
 }
 
 export interface BatchProgress {
