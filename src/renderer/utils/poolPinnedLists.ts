@@ -8,13 +8,16 @@
  *
  * Priority order matters only when the pinned lists alone overflow your half
  * of a small sync (see src/common/activity-split.ts): earlier lists win.
+ * Locked albums (common/pool-locked-albums.ts — Geese's studio albums) go
+ * before all of them.
  */
 import type { Track, Playlist } from '../types'
 import { evaluateSmartPlaylist } from './smartPlaylists'
+import { resolveLockedAlbumIds } from '../../common/pool-locked-albums'
 
 export const ALWAYS_IN_POOL = ['Recently Added', 'Bops', 'Rocksurgence'] as const
 
-export interface PinnedListInfo { name: string; found: boolean; count: number }
+export interface PinnedListInfo { name: string; found: boolean; count: number; locked?: true }
 
 export function resolvePinnedPoolIds(
   tracks: Track[],
@@ -23,6 +26,15 @@ export function resolvePinnedPoolIds(
   const ids: number[] = []
   const seen = new Set<number>()
   const lists: PinnedListInfo[] = []
+  // Locked albums first (Geese studio albums, 2026-10-18) — "locked" wins
+  // the pinned half on a small sync. See common/pool-locked-albums.ts.
+  const locked = resolveLockedAlbumIds(tracks)
+  for (const set of locked.sets) lists.push({ name: set.label, found: set.count > 0, count: set.count, locked: true })
+  for (const id of locked.ids) {
+    if (seen.has(id)) continue
+    seen.add(id)
+    ids.push(id)
+  }
   for (const name of ALWAYS_IN_POOL) {
     let src: Array<number | string> | null
     if (name === 'Recently Added') {

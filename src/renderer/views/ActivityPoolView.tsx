@@ -74,7 +74,7 @@ export default function ActivityPoolView() {
         <div>
           <h1 className="pool-title">iPod Pool</h1>
           <div className="pool-sub">
-            Always in, live: {pinned.lists.map((l) => l.found ? `${l.name} (${l.count.toLocaleString()})` : `${l.name} (no playlist by that name)`).join(' · ')}
+            Always in, live: {pinned.lists.map((l) => l.found ? `${l.name} (${l.count.toLocaleString()})` : `${l.name} (${l.locked ? 'none in your library' : 'no playlist by that name'})`).join(' · ')}
           </div>
           <div className="pool-sub">
             {ids.length > 0

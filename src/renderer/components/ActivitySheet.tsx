@@ -124,7 +124,11 @@ export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
   const pinned = useMemo(() => resolvePinnedPoolIds(lib.tracks, lib.playlists), [lib.tracks, lib.playlists])
   const split = splitHalfAndHalf(poolIds, target, pinned.ids)
   const pinnedOn = split.pinnedCount
-  const missingPinned = pinned.lists.filter((l) => !l.found).map((l) => l.name)
+  const missingPinned = pinned.lists.filter((l) => !l.found && !l.locked).map((l) => l.name)
+  // "Geese studio albums, Recently Added, Bops and Rocksurgence" — from the
+  // resolver, so a new locked set or pinned list names itself here.
+  const pinnedNames = pinned.lists.filter((l) => l.found).map((l) => l.name)
+  const pinnedLabel = pinnedNames.length <= 1 ? (pinnedNames[0] || 'your pinned lists') : `${pinnedNames.slice(0, -1).join(', ')} and ${pinnedNames[pinnedNames.length - 1]}`
   const poolHalf = split.manualIds.length
   const brainHalf = split.brainTarget
   const poolWaiting = split.waitingIds.length
@@ -247,7 +251,7 @@ export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
           <div className="activity-pool-status">
             {poolHalf === 0
               ? `Your iPod Pool is empty, so Music Man picks all ${target.toLocaleString()}. Right-click any song and choose “Add to iPod Pool” to claim half.`
-              : `Your half: ${pinnedOn.toLocaleString()} from Recently Added, Bops and Rocksurgence + your ${(poolHalf - pinnedOn).toLocaleString()} newest pool drops. Music Man picks the other ${brainHalf.toLocaleString()}.${poolWaiting > 0 ? ` ${poolWaiting.toLocaleString()} older pool song${poolWaiting === 1 ? '' : 's'} sit this one out.` : ''}`}
+              : `Your half: ${pinnedOn.toLocaleString()} from ${pinnedLabel} + your ${(poolHalf - pinnedOn).toLocaleString()} newest pool drops. Music Man picks the other ${brainHalf.toLocaleString()}.${poolWaiting > 0 ? ` ${poolWaiting.toLocaleString()} older pool song${poolWaiting === 1 ? '' : 's'} sit this one out.` : ''}`}
             {missingPinned.length > 0 && <span className="activity-pool-warn"> No playlist named {missingPinned.join(' or ')}, so it isn't pinned.</span>}
             {poolUnsyncable > 0 && <span className="activity-pool-warn"> {poolUnsyncable} pooled song{poolUnsyncable === 1 ? '' : 's'} can't sync — see the iPod Pool page.</span>}
           </div>
