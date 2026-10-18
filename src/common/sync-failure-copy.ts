@@ -92,6 +92,11 @@ const CHANGED_LINE: Record<IpodChanged, string> = {
   'catalog-unverified': 'The new songs are on the card and a new catalog was written, but the card did not prove it. Do not trust the count the iPod shows until a sync seals.',
 }
 
+/** Appended by the Activity engine when an abort after the wipe removed
+ *  the songs it had copied (rewipeAndStop) — the claim then is 'emptied'
+ *  whatever step the abort happened at. */
+export const REWIPED_NOTE = 'The songs copied this run were taken off the card again.'
+
 /** The claims, from what actually happened. */
 export function syncOutcome(t: SyncTimeline): SyncOutcome | null {
   if (t.status !== 'failed' && t.status !== 'cancelled') return null
@@ -114,6 +119,7 @@ export function syncOutcome(t: SyncTimeline): SyncOutcome | null {
       case 'seal': changed = 'catalog-unverified'; catalog = 'written-unverified'; break
     }
   }
+  if ((t.error || '').includes(REWIPED_NOTE)) { changed = 'emptied'; catalog = 'previous' }
   return { ...copy, stoppedAt, changed, catalog, changedLine: CHANGED_LINE[changed], fromEvidence: evidence }
 }
 

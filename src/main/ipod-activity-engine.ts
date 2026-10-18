@@ -63,6 +63,7 @@ import {
 import { safeIpcError } from './safe-ipc-error.ts'
 import { activityKeepPlan, wipeListingMatchesKeep, keepStreak, type KeepCandidate } from './activity-keep.ts'
 import { orderForIpodCatalog, conformCatalogIdOrder } from './ipod-catalog-order.ts'
+import { REWIPED_NOTE } from '../common/sync-failure-copy.ts'
 import type { SyncConvertOptions } from './ipc/sync-ipc.ts'
 import {
   classifyActivitySyncTracks,
@@ -728,7 +729,10 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
       await retireIpodFirmwareScratch(IPOD_MOUNT)
     } catch { /* best effort */ }
     console.error(`activity-sync: abort after wipe — re-emptied Music so Mini cannot index a ${why.landed ?? 'partial'} set. ${why.error}`)
-    return why
+    // Say so in the result: the screen used to claim "the new songs are on
+    // the card" after a Verify abort that had just removed them (10-17).
+    const error = [why.error || 'Sync stopped.', REWIPED_NOTE].join(' ')
+    return { ...why, error }
   }
 
   // ── 3b. Copy what is not already there ──
