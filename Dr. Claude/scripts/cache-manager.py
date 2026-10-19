@@ -70,6 +70,34 @@ def unproven(t,lp):
         if total!=size: return f"size differs (local {size}, homemini {total})"
         if hashlib.sha1(body).hexdigest()!=want: return f"{part} differs from homemini's copy"
     return None
+
+# Atomic fill (2026-10-19). Both fill copies used to write straight to the cache
+# path, so a copy that died partway (a link drop, a wedged SMB mount, a kill)
+# left a truncated real file there. Every later run read "real file at lp" as
+# cached, and the eviction guard above refuses it too (its size is not
+# homemini's), so it stayed forever. Now a copy lands at lp+PART, must match the
+# source's byte size, and only then is renamed into place. PART is a name only
+# this script makes. A run killed mid-copy leaves one behind; the next run
+# removes it by its exact path (never by pattern), so nothing else under DST is
+# touched.
+PART=".cache-manager.part"
+def fill(args,src,lp,rp,label):
+    """True when lp now holds a full copy of src. On failure lp is untouched and no temp file is left."""
+    tmp=lp+PART
+    try:
+        if os.path.lexists(tmp): os.unlink(tmp)   # cp writes through a symlink
+        want=os.path.getsize(src)
+        subprocess.run(["cp",*args,src,tmp],check=True,capture_output=True)
+        got=os.path.getsize(tmp)
+        if got!=want:
+            print(f"SHORT COPY {rp} from {label}: {got} of {want} bytes, discarded")
+            raise OSError("short copy")
+        os.replace(tmp,lp); return True
+    except Exception:
+        try: os.unlink(tmp)
+        except OSError: pass
+        return False
+SUSPECT_SHOWN=20
 tr=(json.load(open(LIB)).get("tracks") or [])
 pins=set()
 try: pins=set(json.load(open(DLS)).get("pinned") or [])
@@ -84,22 +112,31 @@ for t in rk:
     if t["path"] in hot: continue
     s=t.get("fileSize") or 0
     if tot+s<=CAP: hot.add(t["path"]); tot+=s
-cl=cn=lk=ev=ms=kp=dn=0
+cl=cn=lk=ev=ms=kp=dn=su=0
 for t in tr:
     rp=rel(t["path"]); lp=f"{DST}/{rp}"; nas=f"{NAS}/{rp}"; old=f"{OLD}/{rp}"
     d=os.path.dirname(lp)
     if not os.path.isdir(d): os.makedirs(d,exist_ok=True)
+    if not os.path.islink(lp+PART) and os.path.isfile(lp+PART):
+        try: os.remove(lp+PART)   # an earlier run died mid-copy
+        except OSError: pass
     if t["path"] in hot:
-        if os.path.exists(lp) and not os.path.islink(lp): continue
+        if os.path.exists(lp) and not os.path.islink(lp):
+            # A size that disagrees with library.json may be a truncated copy
+            # from before the atomic fill, or just a stale fileSize after a tag
+            # edit. Log it only: deleting needs proof, like the eviction guard.
+            fs=t.get("fileSize")
+            try: sz=os.path.getsize(lp)
+            except OSError: sz=fs
+            if fs and sz!=fs:
+                su+=1
+                if su<=SUSPECT_SHOWN: print(f"SUSPECT {rp} (id {t.get('id')}): local {sz} bytes, library.json says {fs}; kept")
+            continue
         if os.path.islink(lp):
             try: os.unlink(lp)
             except Exception: pass
-        if os.path.exists(old) and not os.path.islink(old):
-            try: subprocess.run(["cp","-c",old,lp],check=True,capture_output=True); cl+=1; continue
-            except Exception: pass
-        if os.path.exists(nas):
-            try: subprocess.run(["cp",nas,lp],check=True,capture_output=True); cn+=1; continue
-            except Exception: pass
+        if os.path.exists(old) and not os.path.islink(old) and fill(["-c"],old,lp,rp,"old library"): cl+=1; continue
+        if os.path.exists(nas) and fill([],nas,lp,rp,"NAS"): cn+=1; continue
         try: os.symlink(nas,lp); lk+=1
         except Exception: ms+=1
     else:
@@ -116,4 +153,5 @@ for t in tr:
         try: os.symlink(nas,lp); lk+=1
         except Exception: ms+=1
 if dn: print(f"KEPT {dn} eviction candidates: homemini unreachable, so no copy could be proven")
-print(f"HOT={len(hot)} (pins={len(pins)}) ~{tot//1024**3}GB | cloned_local={cl} copied_nas={cn} symlinks={lk} evicted={ev} kept_unproven={kp} missing={ms}")
+if su>SUSPECT_SHOWN: print(f"SUSPECT: {su-SUSPECT_SHOWN} more hot copies whose size disagrees with library.json (not listed)")
+print(f"HOT={len(hot)} (pins={len(pins)}) ~{tot//1024**3}GB | cloned_local={cl} copied_nas={cn} symlinks={lk} evicted={ev} kept_unproven={kp} missing={ms} suspect_size={su}")

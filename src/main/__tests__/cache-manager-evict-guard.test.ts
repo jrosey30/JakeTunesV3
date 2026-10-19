@@ -13,6 +13,10 @@
  * answers /healthz and /audio/:id range reads the way the backend does
  * (206 + Content-Range with the full size; suffix ranges return the tail).
  *
+ * The fill side (second describe) runs the same way with a cap big enough that
+ * every track is hot: the bytes start in workmini's old library or the NAS vault
+ * (both inside the temp HOME), and a stub `cp` on PATH can die partway.
+ *
  * CACHE_MANAGER_PY picks the interpreter (workmini runs /usr/bin/python3, 3.9).
  */
 import { describe, it } from 'node:test'
@@ -28,8 +32,12 @@ const repoRoot = join(import.meta.dirname, '..', '..', '..')
 const scriptPath = join(repoRoot, 'Dr. Claude', 'scripts', 'cache-manager.py')
 const PY = process.env.CACHE_MANAGER_PY ?? 'python3'
 const KB = 1024
+/** The temp name the warm copies to before renaming into place. */
+const PART = '.cache-manager.part'
 
-interface FakeTrack { id?: string; path: string; local: Buffer }
+type Source = 'local' | 'old' | 'nas'
+/** `local` is the song's bytes; `at` overrides WarmOpts.at; `fileSize` overrides what library.json claims. */
+interface FakeTrack { id?: string; path: string; local: Buffer; at?: Source[]; fileSize?: number }
 type AudioMode = 'serve' | 'drop'
 
 /** Deterministic bytes, so two "songs" never share content by accident. */
@@ -79,27 +87,52 @@ async function deadBase(): Promise<string> {
 
 interface Outcome { home: string; out: string; status: number | null; localPath: (t: FakeTrack) => string }
 
+interface WarmOpts {
+  /** CAP_GB for the run. '0' (the default) leaves nothing hot, so every track is an eviction candidate. */
+  capGb?: string
+  /** Where each track's bytes start: the local cache (the default), workmini's old library, the NAS vault. */
+  at?: Source[]
+  /** Commands to put first on PATH, e.g. a `cp` that dies partway. */
+  bin?: Record<string, string>
+  /** Run again over an earlier run's HOME. */
+  home?: string
+  /** Lay down extra files before the run. */
+  before?: (localPath: (t: FakeTrack) => string) => void
+}
+
 /** Lay out a workmini HOME, run the shipped script against `base`, report what happened. */
-async function runWarm(tracks: FakeTrack[], base: string): Promise<Outcome> {
-  const home = mkdtempSync(join(tmpdir(), 'jt-cache-guard-'))
+async function runWarm(tracks: FakeTrack[], base: string, opts: WarmOpts = {}): Promise<Outcome> {
+  const home = opts.home ?? mkdtempSync(join(tmpdir(), 'jt-cache-guard-'))
   const appDir = join(home, 'Library', 'Application Support', 'JakeTunes')
-  const dst = join(home, 'JakeTunesLib', 'JakeTunesLibrary')
   const bin = join(home, 'bin')
   mkdirSync(appDir, { recursive: true })
+  rmSync(bin, { recursive: true, force: true })
   mkdirSync(bin)
   // The script's home-LAN gate pings homemini.local; answer "home".
-  writeFileSync(join(bin, 'ping'), '#!/bin/sh\nexit 0\n')
-  chmodSync(join(bin, 'ping'), 0o755)
-  const localPath = (t: FakeTrack): string => join(dst, t.path.replace(/^:+/, '').replace(/:/g, '/'))
-  for (const t of tracks) {
-    const lp = localPath(t)
-    mkdirSync(join(lp, '..'), { recursive: true })
-    writeFileSync(lp, t.local)
+  const stubs: Record<string, string> = { ping: '#!/bin/sh\nexit 0\n', ...opts.bin }
+  for (const [name, body] of Object.entries(stubs)) {
+    writeFileSync(join(bin, name), body)
+    chmodSync(join(bin, name), 0o755)
   }
+  const rel = (t: FakeTrack): string => t.path.replace(/^:+/, '').replace(/:/g, '/')
+  const roots = {
+    local: join(home, 'JakeTunesLib', 'JakeTunesLibrary'),
+    old: join(home, 'Music', 'JakeTunesLibrary'),
+    nas: join(home, 'JakeShareNAS', 'JakeTunesLibrary'),
+  }
+  const localPath = (t: FakeTrack): string => join(roots.local, rel(t))
+  for (const t of tracks) {
+    for (const where of t.at ?? opts.at ?? ['local']) {
+      const p = join(roots[where], rel(t))
+      mkdirSync(join(p, '..'), { recursive: true })
+      writeFileSync(p, t.local)
+    }
+  }
+  opts.before?.(localPath)
   writeFileSync(join(appDir, 'library.json'), JSON.stringify({
     tracks: tracks.map((t, i) => ({
       ...(t.id !== undefined ? { id: t.id } : {}),
-      path: t.path, title: `Song ${i}`, fileSize: t.local.length, playCount: 0,
+      path: t.path, title: `Song ${i}`, fileSize: t.fileSize ?? t.local.length, playCount: 0,
     })),
   }))
   const child = spawn(PY, [scriptPath], {
@@ -107,7 +140,7 @@ async function runWarm(tracks: FakeTrack[], base: string): Promise<Outcome> {
       ...process.env,
       HOME: home,
       PATH: `${bin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
-      CAP_GB: '0',                       // nothing is hot: every track is an eviction candidate
+      CAP_GB: opts.capGb ?? '0',
       JAKETUNES_MOBILE_BACKEND: base,
     },
   })
@@ -249,5 +282,110 @@ describe('cache-manager.py evicts only what homemini provably holds', () => {
       assert.match(r.out, /evicted=1 kept_unproven=1/)
       rmSync(r.home, { recursive: true, force: true })
     } finally { fake.server.close() }
+  })
+})
+
+/**
+ * A `cp` that writes the first 100 KB of its source and exits `code`: a link
+ * drop, a wedged mount or a kill partway through. With `onlyClone` it does that
+ * only for `cp -c` (the clone from workmini's old library) and runs the real
+ * /bin/cp for everything else.
+ */
+function partialCp(code: number, onlyClone = false): string {
+  return '#!/bin/sh\n' +
+    (onlyClone ? 'case "$1" in -c) ;; *) exec /bin/cp "$@" ;; esac\n' : '') +
+    'for a; do src=$dst; dst=$a; done\n' +
+    `head -c ${100 * KB} "$src" > "$dst"\n` +
+    `exit ${code}\n`
+}
+
+describe('cache-manager.py fills the hot set atomically', () => {
+  const HOT = '40'   // GB: every test track is hot
+
+  it('leaves no file at the cache path when cp dies partway, and the next run lands it whole', async () => {
+    const t = song('1101', 31)
+    const base = await deadBase()
+    const r = await runWarm([t], base, { capGb: HOT, at: ['old'], bin: { cp: partialCp(1) } })
+    assert.equal(r.status, 0, r.out)
+    const lp = r.localPath(t)
+    assert.ok(!isRealFile(lp), `a partial copy was left at the cache path, where every later run would count it as cached:\n${r.out}`)
+    assert.ok(lstatSync(lp).isSymbolicLink(), `with no NAS copy either, it should fall through to the symlink:\n${r.out}`)
+    assert.ok(!existsSync(lp + PART), `the temp file was left behind:\n${r.out}`)
+    assert.match(r.out, /cloned_local=0 copied_nas=0 symlinks=1/)
+
+    const again = await runWarm([t], base, { capGb: HOT, at: ['old'], home: r.home })
+    assert.equal(again.status, 0, again.out)
+    assert.ok(isRealFile(lp), again.out)
+    assert.deepEqual(readFileSync(lp), t.local)
+    assert.match(again.out, /cloned_local=1 copied_nas=0/)
+    rmSync(r.home, { recursive: true, force: true })
+  })
+
+  it('falls through to the NAS copy when the clone dies partway', async () => {
+    const t = song('1102', 32)
+    const r = await runWarm([t], await deadBase(), { capGb: HOT, at: ['old', 'nas'], bin: { cp: partialCp(1, true) } })
+    assert.equal(r.status, 0, r.out)
+    assert.ok(isRealFile(r.localPath(t)), r.out)
+    assert.deepEqual(readFileSync(r.localPath(t)), t.local)
+    assert.ok(!existsSync(r.localPath(t) + PART), r.out)
+    assert.match(r.out, /cloned_local=0 copied_nas=1/)
+    rmSync(r.home, { recursive: true, force: true })
+  })
+
+  it('discards a copy that exits 0 but comes up short', async () => {
+    const t = song('1103', 33)
+    const r = await runWarm([t], await deadBase(), { capGb: HOT, at: ['old'], bin: { cp: partialCp(0) } })
+    assert.equal(r.status, 0, r.out)
+    const lp = r.localPath(t)
+    assert.ok(!isRealFile(lp), `a short copy was kept at the cache path:\n${r.out}`)
+    assert.ok(!existsSync(lp + PART), r.out)
+    assert.match(r.out, new RegExp(`SHORT COPY Music/Artist 33/Album/33 Song\\.m4a from old library: ${100 * KB} of ${t.local.length} bytes`))
+    assert.match(r.out, /cloned_local=0 copied_nas=0 symlinks=1/)
+    rmSync(r.home, { recursive: true, force: true })
+  })
+
+  it('lands the full file from either source on a good copy', async () => {
+    const fromOld: FakeTrack = { ...song('1104', 34), at: ['old'] }
+    const fromNas: FakeTrack = { ...song('1105', 35), at: ['nas'] }
+    const r = await runWarm([fromOld, fromNas], await deadBase(), { capGb: HOT })
+    assert.equal(r.status, 0, r.out)
+    for (const t of [fromOld, fromNas]) {
+      assert.ok(isRealFile(r.localPath(t)), r.out)
+      assert.deepEqual(readFileSync(r.localPath(t)), t.local)
+      assert.ok(!existsSync(r.localPath(t) + PART), r.out)
+    }
+    assert.match(r.out, /cloned_local=1 copied_nas=1/)
+    rmSync(r.home, { recursive: true, force: true })
+  })
+
+  it('clears a temp file a killed run left behind, and no other file', async () => {
+    const t = song('1106', 36)
+    const r = await runWarm([t], await deadBase(), {
+      capGb: HOT,
+      before: (localPath) => {
+        const lp = localPath(t)
+        writeFileSync(lp + PART, 'half a song')
+        writeFileSync(lp + '.part', 'not ours')
+        writeFileSync(join(lp, '..', 'notes.part'), 'not ours either')
+      },
+    })
+    assert.equal(r.status, 0, r.out)
+    const lp = r.localPath(t)
+    assert.ok(!existsSync(lp + PART), `the stale temp file is still there:\n${r.out}`)
+    assert.equal(readFileSync(lp + '.part', 'utf8'), 'not ours')
+    assert.equal(readFileSync(join(lp, '..', 'notes.part'), 'utf8'), 'not ours either')
+    assert.deepEqual(readFileSync(lp), t.local)
+    rmSync(r.home, { recursive: true, force: true })
+  })
+
+  it('logs a cached copy whose size disagrees with library.json, and keeps it', async () => {
+    const t = { ...song('1107', 37), fileSize: 400 * KB + 1234 }
+    const r = await runWarm([t], await deadBase(), { capGb: HOT })
+    assert.equal(r.status, 0, r.out)
+    assert.ok(isRealFile(r.localPath(t)), r.out)
+    assert.deepEqual(readFileSync(r.localPath(t)), t.local)
+    assert.match(r.out, new RegExp(`SUSPECT Music/Artist 37/Album/37 Song\\.m4a \\(id 1107\\): local ${400 * KB} bytes, library\\.json says ${400 * KB + 1234}; kept`))
+    assert.match(r.out, /suspect_size=1/)
+    rmSync(r.home, { recursive: true, force: true })
   })
 })
