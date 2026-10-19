@@ -45,6 +45,18 @@ def fleet_listening():
     return None
 
 
+def taste_engine_scorecard():
+    """homemini's nightly taste-engine scorecard (scripts/taste-engine.py) —
+    the per-night learning numbers, folded into this weekly report."""
+    try:
+        r = subprocess.run(['ssh', '-o', 'ConnectTimeout=8', '-o', 'BatchMode=yes', HOMEMINI, 'cat',
+                            '"Library/Application Support/JakeTunes/taste-engine/taste-scorecard.json"'],
+                           capture_output=True, text=True, timeout=30)
+        return json.loads(r.stdout) if r.returncode == 0 else None
+    except Exception:
+        return None
+
+
 def _fleet_once():
     try:
         r = subprocess.run(['ssh', '-o', 'ConnectTimeout=8', '-o', 'BatchMode=yes', HOMEMINI, 'cat', '"%s"' % FLEET_KPI],
@@ -343,6 +355,17 @@ def main():
         snap['skipRateSource'] = 'fleet'
     else:
         snap['skipRateSource'] = 'laptop-only'
+    te = taste_engine_scorecard()
+    if te:
+        ev = te.get('evaluation') or {}
+        sug = te.get('suggestions') or {}
+        snap['tasteEngine'] = {
+            'at': te.get('at'), 'promoted': te.get('promoted'), 'why': te.get('why'),
+            'aucChallenger': (ev.get('auc') or {}).get('challenger'), 'aucV5': (ev.get('auc') or {}).get('champion_v5'),
+            'mixPlayedThroughRate': (te.get('mixes') or {}).get('playedThroughRate'),
+            'stripAddKeptRate': sug.get('stripAddKeptRate'), 'stripAddPlayedRate': sug.get('stripAddPlayedRate'),
+            'stripDistinctArtistsPer100': sug.get('stripDistinctArtistsPer100'),
+        }
     snap['metricsVersion'] = 3
 
     if '--dry-run' in sys.argv:   # print only — no history row

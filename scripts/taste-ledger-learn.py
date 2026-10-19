@@ -372,13 +372,38 @@ def main():
     return 0
 
 
+def mac_notify(msg):
+    """A Mac notification (this job runs on the laptop, where Jake sees it).
+    JT_UD set = a test or a by-hand run against another folder: stay quiet."""
+    if os.environ.get('JT_UD'):
+        print('(notification suppressed)', msg)
+        return
+    try:
+        import subprocess
+        subprocess.run(['osascript', '-e', 'display notification "%s" with title "JakeTunes"' % msg.replace('"', "'")], timeout=10)
+    except Exception as e:
+        print('notify failed:', e)
+
+
+def check_taxonomy_handoff():
+    """The subgenre hand-off (src/main/taxonomy-staged.ts) applies within
+    minutes while the app runs. A staged file a day old means the app is not
+    applying it — say so instead of letting subgenres silently pile up again."""
+    p = os.path.join(UD, 'taxonomy-staged.json')
+    if os.path.exists(p) and time.time() - os.path.getmtime(p) > 24 * 3600:
+        mac_notify('Subgenres waiting over a day — the app has not filed them (taxonomy-staged.json).')
+
+
 if __name__ == '__main__':
     try:
-        sys.exit(main())
+        rc = main()
+        check_taxonomy_handoff()
+        sys.exit(rc)
     except Exception as e:   # leave a visible failure, never a silent stall
         try:
             with open(STATUS + '.tmp', 'w') as f:
                 json.dump({'ok': False, 'at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S'), 'error': str(e)}, f)
             os.replace(STATUS + '.tmp', STATUS)
+            mac_notify('The playlist-suggestion learner failed last night: %s' % str(e)[:120])
         finally:
             raise
