@@ -13,6 +13,8 @@ Scenarios:
      subgenre is never overwritten; unrelated fields survive).
   2. Backup rotation keeps 5 generations and drops the oldest.
   3. The deferred marker round-trips {at, pendingCount}.
+  4. (2026-10-19) The hand-off to a running app carries exactly the songs
+     still missing a subgenre (src/main/taxonomy-staged.ts applies it).
 
 Run: python3 scripts/tests/test_taxonomy_merge.py
 """
@@ -107,6 +109,19 @@ class TaxonomyMergeTest(unittest.TestCase):
         self.assertIn("at", marker)
         self.g["clear_deferred"]()
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "taxonomy-deferred.json")))
+
+    def test_hand_off_carries_only_unfiled_songs(self):
+        seg = SRC[SRC.index("STAGED = os.path.join(SD, 'taxonomy-staged.json')"):SRC.index("if app_running():\n    write_deferred(staged_preview)")]
+        ov = {"1": {"fp": "song one|artist a|200000", "fields": {"subgenre": "Dream Pop"}}}
+        g = dict(self.g)
+        g.update({"cache": self.cache, "byid": self.byid, "ov": ov})
+        exec(seg, g)
+        n = g["stage_for_app"]()
+        self.assertEqual(n, 2)
+        staged = json.load(open(os.path.join(self.tmp, "taxonomy-staged.json")))
+        self.assertEqual(staged["version"], 1)
+        self.assertEqual(sorted(staged["entries"]), ["2", "3"])
+        self.assertEqual(staged["entries"]["3"], {"subgenre": "Grime", "subgenrePath": "Electronic › Grime"})
 
 
 if __name__ == "__main__":
