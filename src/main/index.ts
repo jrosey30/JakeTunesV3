@@ -81,6 +81,7 @@ import { startReleaseKindsJob, effectiveAlbumRows, releaseKindsPath } from './re
 import { guardCredits, type CreditTrack } from './ai/credit-guard.ts'
 import { registerYirIpc } from './ipc/yir-ipc.ts'
 import { registerSyncedPicksIpc } from './ipc/synced-picks-ipc.ts'
+import { registerHomeSpotlightIpc } from './ipc/home-spotlight-ipc.ts'
 import { assertNoSyncedPicksPush } from './synced-picks-client.ts'
 import { createArtistPhotos, nameKey as photoNameKey } from './artist-photo.ts'
 import { phoneOverlayFields } from '../common/genre-vocab.ts'
@@ -9527,6 +9528,7 @@ registerRockDnaIpc(ipc)
 registerReleaseKindsIpc(ipc, { file: () => releaseKindsPath(STATE_DIR) })
 registerYirIpc(ipc)
 registerSyncedPicksIpc(ipc)
+registerHomeSpotlightIpc(ipc, { getPlayEventsPath, libraryCache })
 registerPreviewRefreshIpc(ipc)
 registerSyncHistoryIpc(ipc, { stateDir: STATE_DIR })
 

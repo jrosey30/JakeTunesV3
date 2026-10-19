@@ -121,7 +121,7 @@ export function artistFacts(tracks: readonly SpotTrack[], plays: readonly SpotPl
     if (p.ts < since || p.ts > now) continue
     plays30 += 1
     const ago = Math.floor((now - p.ts) / DAY_MS)
-    if (ago >= 0 && ago < 30) days[29 - ago] += 1
+    if (ago >= 0 && ago < 30) days[29 - ago]! += 1
     const title = String(t.title || '').trim()
     if (title) songs.set(title, (songs.get(title) || 0) + 1)
   }

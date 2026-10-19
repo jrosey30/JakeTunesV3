@@ -1062,6 +1062,16 @@ const electronAPI = {
     ipcRenderer.on('synced-picks-updated', handler)
     return () => { ipcRenderer.removeListener('synced-picks-updated', handler) }
   },
+  // 2026-10-18 — launch page "G": the Home spotlight from homemini
+  // (GET /api/home-spotlight), cached in main; this Mac's own history when
+  // homemini is away. get = no network; refresh = one GET (throttled).
+  homeSpotlightGet: (): Promise<unknown> => ipcRenderer.invoke('home-spotlight:get'),
+  homeSpotlightRefresh: (): Promise<unknown> => ipcRenderer.invoke('home-spotlight:refresh'),
+  onHomeSpotlightUpdated: (callback: (state: unknown) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state)
+    ipcRenderer.on('home-spotlight-updated', handler)
+    return () => { ipcRenderer.removeListener('home-spotlight-updated', handler) }
+  },
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)
