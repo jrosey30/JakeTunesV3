@@ -25,6 +25,8 @@ import { addsRemasterStamp, searchTitle, unwantedVersionOf } from './streamrip-m
 import { recoArtistMatches } from './reco-match.ts'
 import { binForGenre, pickHookIndex } from '../common/record-shop-bins.ts'
 import { nameKey, storedNameKey } from '../common/fold-text.ts'
+import { CRITIC_LANE, CRITIC_PICKS_SOURCE } from '../common/critic-picks.ts'
+import type { RecommendationSource } from '../common/record-shop.ts'
 
 export type FeedCardType = 'song' | 'album' | 'artist'
 
@@ -64,6 +66,10 @@ export interface FeedCard {
    *  fabricated "because you like …" is worse than none — it claims to know
    *  the listener and gets it wrong. Unvalidated = left undefined. */
   because?: string
+  /** Who recommends it, when that is a named person rather than the shop —
+   *  the critic wall's picks carry { kind: 'person', name: '@handle' }.
+   *  Unset = the shop's own pick (shopItemFromFeed reads it as 'ai'). */
+  source?: RecommendationSource
 }
 
 interface ItunesHit {
@@ -262,7 +268,10 @@ export function filterFeed(
       if (opts.ownedBaseKeys && bt && bt !== ak && opts.ownedBaseKeys.has(`${ak}|${bt}`)) return false
     }
     const sv = opts.served[key]
-    if (sv && sv.views >= rv && opts.now - sv.last < rr) return false
+    // A paced lane moves on by its own ledger, so view rotation never rests
+    // it — only a hard Not-for-me rest does.
+    const restAt = PACED_LANES.has(c.lane) ? CARD_REST_VIEWS : rv
+    if (sv && sv.views >= restAt && opts.now - sv.last < rr) return false
     return true
   })
 }
@@ -311,7 +320,7 @@ export function applyQualityFloor(cards: FeedCard[]): FeedCard[] {
   for (const [lane, arr] of byLane) {
     // Quota lanes (25/25, "NO LESS"): the brain ORDERS them, it never
     // starves them — the count is the contract, not the cosine.
-    if (QUOTA_LANES.has(lane)) { out.push(...arr); continue }
+    if (QUOTA_LANES.has(lane) || PACED_LANES.has(lane)) { out.push(...arr); continue }
     const kept = arr.filter((c) => (c.brainPct ?? 0) >= BRAIN_FLOOR)
     if (kept.length < BRAIN_LANE_MIN) {
       const backfill = arr
@@ -739,6 +748,14 @@ export function salvageObjects<T>(body: string): T[] {
  *  starves them below quota, it only orders them. */
 export const QUOTA_LANES = new Set(['fresh-albums', 'fresh-songs'])
 
+/** Lanes paced by their OWN served ledger (the critic wall: N new picks a
+ *  day, never repeated). The floor never cuts them and view rotation never
+ *  rests them — their ledger already moves them on daily. */
+export const PACED_LANES = new Set([CRITIC_LANE])
+/** The views a hard "Not for me" card rest stamps (index.ts
+ *  discovery-not-for-me writes 99) — the only rest a paced lane honours. */
+export const CARD_REST_VIEWS = 99
+
 /**
  * "Already in the library" — THE identity check every lane that promises
  * "not in your library" asks (extracted from supplyLanes 2026-10-18 so the
@@ -851,6 +868,7 @@ export function assembleLanes(shelved: FeedCard[]): Array<{ id: string; title: s
     { id: 'missing', title: "You're Missing", cap: 24 },
     { id: 'time-machine', title: 'Time Machine', cap: 24 },
     { id: 'songs', title: 'Songs to Try', cap: 24 },
+    { id: CRITIC_LANE, title: 'Staff Picks', cap: CRITIC_PICKS_SOURCE.perDay },
   ]
   return laneDefs
     .map((l) => ({
