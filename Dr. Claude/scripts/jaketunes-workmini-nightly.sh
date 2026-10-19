@@ -27,13 +27,23 @@
 #   stayed 5.1.0 — so nothing about the app LOOKED stale. A failed
 #   typecheck, failed test, or a build that produces no new artifact
 #   now aborts the run loudly instead of installing yesterday's app.
+#
+#   2026-10-19: --build never once worked. This PATH put /usr/local/bin
+#   first, and the node there is v18, which rejects the test script's
+#   --experimental-strip-types flag. `npm test` died in 2 s every weekday
+#   from Aug 10 and the log only said "tests failed". Homebrew's node
+#   comes first now, and the deploy script refuses up front, by name,
+#   if the node it finds cannot run the tests. Every run now builds
+#   origin/main in a fresh worktree (never the ~/JakeTunesV3 checkout),
+#   so the old --build flag is the default and no longer passed.
 # ──────────────────────────────────────────────────────────────────────
 set -uo pipefail
 
-# Standard PATH for launchd context. /usr/local/bin and /opt/homebrew/bin
-# cover Homebrew on both Intel and Apple Silicon; the rest covers
-# system binaries the deploy script reaches for.
-export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+# Standard PATH for launchd context. /opt/homebrew/bin MUST come before
+# /usr/local/bin: its node is node@22, and /usr/local/bin/node is a stale
+# v18 that cannot run the test suite (see above). The rest covers system
+# binaries the deploy script reaches for.
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 LOG_DIR="$HOME/Library/Logs/JakeTunes"
 LOG_FILE="$LOG_DIR/workmini-nightly.log"
@@ -47,7 +57,7 @@ echo "=============================================================="
 echo "Run started: $(date '+%Y-%m-%d %H:%M:%S %Z')"
 echo "=============================================================="
 
-"$HOME/bin/jaketunes-workmini-deploy.sh" jacobrosenbaum --with-env --build
+"$HOME/bin/jaketunes-workmini-deploy.sh" jacobrosenbaum --with-env
 RC=$?
 
 echo ""

@@ -5,7 +5,7 @@
 # library metadata, end to end.
 #
 # Usage:
-#   jaketunes-workmini-deploy.sh <workmini-username> [--with-env]
+#   jaketunes-workmini-deploy.sh <workmini-username> [--with-env] [--dry-run]
 #
 #   <workmini-username>  the macOS short username ON workmini. Get it by
 #                        running `whoami` in Terminal on workmini — it is
@@ -15,6 +15,32 @@
 #                        .env (the API keys for the AI personas). Off by
 #                        default because it moves secrets between machines
 #                        — opt in explicitly.
+#   --dry-run            build main and run every proof and gate check, then
+#                        stop before anything on workmini changes. SSH is
+#                        read-only in this mode.
+#   --build              accepted for old callers; every run builds now.
+#
+# What ships (2026-10-19): ALWAYS origin/main, built in a fresh detached
+# worktree with a fresh `npm ci`. Never the ~/JakeTunesV3 checkout: other
+# sessions work there, so its branch and its uncommitted edits are whatever
+# they left. From 2026-08-10 to 2026-10-19 this job built that checkout,
+# and it failed every single weekday (tests under launchd's node 18, then a
+# feature branch). It never installed anything in that time.
+#
+# Before the swap, three things must hold or the run stops and changes
+# nothing:
+#   1. the app installed on workmini is a SUBSET of main: its stamped
+#      commit (out/main/build-info.json) is an ancestor of origin/main and
+#      was not built from uncommitted edits. Parallel sessions install
+#      unmerged branches; installing main over one would silently delete
+#      that work.
+#   2. app.asar has not changed since that proof (another session did not
+#      install in between).
+#   3. the audio + idle gate: JakeTunes is not playing on workmini and
+#      nobody has touched it for $IDLE_MIN_S seconds. Never quit the app
+#      under Jake's music.
+# Every ssh/scp/rsync has a hard wall-clock limit (tmo), so a dead link
+# cannot hang the job with JakeTunes quit.
 #
 # PREREQUISITE (the one thing this script can't do for you):
 #   Remote Login must be ON on workmini —
@@ -39,35 +65,53 @@
 # ─────────────────────────────────────────────────────────────────────
 set -uo pipefail
 
+# A git child that inherits GIT_DIR / GIT_INDEX_FILE acts on whatever repo
+# they name. That is how a test re-initialized ~/JakeTunesV3 as bare on
+# 2026-10-14. Nothing this script runs should see them.
+for v in $(env | sed -n 's/^\(GIT_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done
+
 WORKMINI_USER=""
 WITH_ENV=false
-BUILD_FIRST=false
+DRY_RUN=false
 
 # Flags are order-independent: the first bare word is the username, and
-# --with-env / --build can appear on either side of it. The old code read
-# --with-env from $2 positionally, so `deploy.sh --build jacobrosenbaum`
-# would have silently dropped it.
+# the flags can appear on either side of it. The old code read --with-env
+# from $2 positionally, so `deploy.sh --build jacobrosenbaum` would have
+# silently dropped it.
 for arg in "$@"; do
   case "$arg" in
     --with-env) WITH_ENV=true ;;
-    --build)    BUILD_FIRST=true ;;
+    --build)    ;;  # every run builds origin/main now; kept so old callers work
+    --dry-run)  DRY_RUN=true ;;
     -*)         echo "Unknown flag: $arg" >&2; exit 1 ;;
     *)          [[ -z "$WORKMINI_USER" ]] && WORKMINI_USER="$arg" ;;
   esac
 done
 
 if [[ -z "$WORKMINI_USER" ]]; then
-  echo "Usage: $(basename "$0") <workmini-username> [--with-env] [--build]"
+  echo "Usage: $(basename "$0") <workmini-username> [--with-env] [--dry-run]"
   echo "  Run 'whoami' in Terminal on workmini to get the username."
-  echo "  --build  compile a fresh DMG from the working tree before deploying"
+  echo "  --dry-run  build main + run every proof and gate, change nothing on workmini"
   exit 1
 fi
 
 HOST="workmini"                       # Tailscale MagicDNS name
-SSH_OPTS="-o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new"
+# ServerAlive drops a dead link in ~60 s; tmo (below) caps every call anyway.
+SSH_OPTS=(-o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4
+          -o BatchMode=yes -o StrictHostKeyChecking=accept-new)
+RSYNC_SSH="ssh ${SSH_OPTS[*]}"
 REMOTE="${WORKMINI_USER}@${HOST}"
+# The shared checkout is used ONLY as a git object store (fetch + worktree
+# add). Never cd into it, build in it, or read files from its working tree:
+# its branch belongs to whichever session is working there.
 REPO="/Users/jacobrosenbaum/JakeTunesV3"
-DMG="$(ls -t "$REPO"/release/JakeTunes-*-arm64.dmg 2>/dev/null | head -1)"
+BUILD_ROOT="$HOME/Library/Caches/JakeTunes-workmini-build"
+WT="$BUILD_ROOT/worktree"             # recreated from origin/main every run
+LOCK="$BUILD_ROOT/lock"
+BUILD_LOG="$HOME/Library/Logs/JakeTunes/workmini-build.log"
+IDLE_MIN_S="${JT_DEPLOY_IDLE_MIN_S:-120}"        # gate: workmini idle at least this long
+GATE_WAIT_MIN="${JT_DEPLOY_GATE_WAIT_MIN:-60}"   # how long to wait for the gate to open
+DMG=""
 LIB_SRC="/Users/jacobrosenbaum/Music2/JakeTunesLibrary/"
 USERDATA="/Users/jacobrosenbaum/Library/Application Support/JakeTunes"
 NAS_STATE="/Volumes/JakeShared/JakeTunesState"
@@ -91,6 +135,117 @@ say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 die() { printf '\n\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 validate_json() {
   python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$1" 2>/dev/null
+}
+
+# tmo SECS cmd… — run cmd with a hard wall-clock limit; exit 124 on timeout
+# (launchd's PATH has no coreutils `timeout`). The command gets its own
+# process group so a timeout kills everything it spawned (npm → node →
+# electron-builder, rsync → ssh), and a terminal stdin is swapped for
+# /dev/null so a backgrounded ssh can never stop on SIGTTIN.
+tmo() {
+  perl -e '
+    my $secs = shift;
+    open(STDIN, "<", "/dev/null") if -t STDIN;
+    my $pid = fork() // exit 125;
+    if ($pid == 0) { setpgrp(0, 0); exec { $ARGV[0] } @ARGV or exit 127 }
+    my $stop = sub { kill "TERM", -$pid; sleep 3; kill "KILL", -$pid; waitpid($pid, 0); exit $_[0] };
+    $SIG{ALRM} = sub { $stop->(124) };
+    $SIG{INT} = $SIG{TERM} = sub { $stop->(130) };
+    alarm $secs;
+    waitpid($pid, 0);
+    exit(($? & 127) ? 128 + ($? & 127) : $? >> 8);
+  ' "$@"
+}
+# Every remote command goes through one of these three.
+rsh() { local secs="$1"; shift; tmo "$secs" ssh "${SSH_OPTS[@]}" "$REMOTE" "$@"; }
+rcp() { local secs="$1"; shift; tmo "$secs" scp -q "${SSH_OPTS[@]}" "$@"; }
+rsy() { local secs="$1"; shift; tmo "$secs" rsync -e "$RSYNC_SSH" "$@"; }
+
+# step SECS LABEL cmd… — a build step: hard limit, full output to $BUILD_LOG.
+step() {
+  local secs="$1" label="$2"; shift 2
+  printf '\n── %s (%s)\n' "$label" "$(date '+%H:%M:%S')" >>"$BUILD_LOG"
+  tmo "$secs" "$@" >>"$BUILD_LOG" 2>&1
+}
+build_die() { tail -40 "$BUILD_LOG" | sed 's/^/    /'; die "$1 — full output: $BUILD_LOG"; }
+
+# Reads an app.asar and prints key=value lines: present, mtime, deps (the
+# packaged node_modules count — 18 instead of 58 shipped a dead app on
+# 2026-10-13), sha + dirty from out/main/build-info.json. Runs here and,
+# over ssh, on workmini (stock python3 3.9 there). The asar header is
+# [u32 4][u32 headerSize] then a pickle [u32 payload][u32 jsonLen][json];
+# file data starts at 8 + headerSize.
+ASAR_INFO_PY="$(cat <<'PY'
+import json, os, struct, sys
+p = sys.argv[1]
+try:
+    st = os.stat(p)
+except OSError:
+    print("present=false"); sys.exit(0)
+print("present=true")
+print("mtime=%d" % int(st.st_mtime))
+try:
+    with open(p, "rb") as f:
+        hsize = struct.unpack("<I", f.read(8)[4:8])[0]
+        pickle = f.read(hsize)
+        jlen = struct.unpack("<I", pickle[4:8])[0]
+        files = json.loads(pickle[8:8 + jlen].decode("utf-8"))["files"]
+        deps = 0
+        for name, node in files.get("node_modules", {}).get("files", {}).items():
+            kids = node.get("files", {})
+            if name.startswith("@"):
+                deps += sum(1 for k in kids.values() if "package.json" in k.get("files", {}))
+            elif "package.json" in kids:
+                deps += 1
+        print("deps=%d" % deps)
+        node = files["out"]["files"]["main"]["files"]["build-info.json"]
+        f.seek(8 + hsize + int(node["offset"]))
+        info = json.loads(f.read(node["size"]).decode("utf-8"))
+except Exception as e:
+    print("error=%s: %s" % (type(e).__name__, str(e).replace("\n", " "))); sys.exit(0)
+print("sha=%s" % str(info.get("sha") or "").strip())
+d = info.get("dirty")
+print("dirty=%s" % ("true" if d is True else "false" if d is False else "unknown"))
+PY
+)"
+kv() { sed -n "s/^$1=//p" <<<"$2" | head -1; }
+
+# The audio + idle gate, as one remote snippet (arg 1 = idle seconds
+# required). Exit 0 = clear, 10 = blocked; the reason is printed either
+# way. Two audio signals because each has missed once: the "Playing audio"
+# assertion (9/1: a gate that only grepped it inline in an && chain killed
+# Jake's music mid-song), and a coreaudiod stream created for a JakeTunes
+# process (it outlives a pause, so this side is conservative on purpose).
+GATE_SH="$(cat <<'GATE'
+idle_min="$1"
+if pmset -g assertions | grep JakeTunes | grep -q "Playing audio"; then
+  echo "JakeTunes is playing audio on workmini"; exit 10
+fi
+for p in $(pmset -g assertions | grep -A1 coreaudiod | sed -nE 's/.*Created for PID: ([0-9]+).*/\1/p'); do
+  if ps -o comm= -p "$p" 2>/dev/null | grep -q JakeTunes; then
+    echo "JakeTunes holds an audio stream on workmini"; exit 10
+  fi
+done
+idle=$(ioreg -c IOHIDSystem | awk '/HIDIdleTime/ {print int($NF/1000000000); exit}')
+if [ -z "$idle" ] || [ "$idle" -lt "$idle_min" ]; then
+  echo "workmini was used ${idle:-?}s ago (gate needs ${idle_min}s idle)"; exit 10
+fi
+echo "clear: no JakeTunes audio, idle ${idle}s"
+GATE
+)"
+check_gate() { rsh 30 "bash -s -- $IDLE_MIN_S" <<<"$GATE_SH" 2>&1; }
+
+# Polls the gate (read-only) until it opens or GATE_WAIT_MIN runs out.
+# Any failure to check counts as closed.
+GATE_REASON=""
+wait_for_gates() {
+  local deadline=$(( $(date +%s) + GATE_WAIT_MIN * 60 )) said=""
+  while :; do
+    if GATE_REASON="$(check_gate)"; then echo "  ✓ gate $GATE_REASON"; return 0; fi
+    (( $(date +%s) >= deadline )) && return 1
+    [[ -n "$said" ]] || { echo "  … gate closed ($GATE_REASON); re-checking every 2 min for up to ${GATE_WAIT_MIN} min"; said=1; }
+    sleep 120
+  done
 }
 
 # library.json source-of-truth: LOCAL userData.
@@ -123,135 +278,231 @@ else
   die "No library.json found in userData or on NAS — nothing to deploy."
 fi
 
-# ── 0. Build a fresh DMG from source (--build) ──────────────────────
-# Without this, the deploy ships whatever DMG happens to be sitting in
-# release/. That is how workmini ran a 3-day-old app across 103 commits
-# (2026-08-10) — the whole 2.0 logo/palette, the rebuilt Downloads page,
-# the accent-folding search fix — while reporting the SAME version string
-# as this Mac. The version only moves on a real milestone, by design, so
-# "both say 5.1.0" was never evidence that they matched.
-if $BUILD_FIRST; then
-  say "[0/5] Building a fresh DMG from source"
-  cd "$REPO" || die "Cannot cd to $REPO"
-
-  HEAD_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
-  DIRTY="$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
-  echo "  commit $HEAD_SHA, $DIRTY uncommitted file(s)"
-  # Said plainly because it is easy to forget: this builds the WORKING
-  # TREE, not HEAD. Uncommitted edits ship. That is what building from
-  # source means, and the log records the state so a surprise on workmini
-  # can be traced back to what was actually on disk at 11:30.
-
-  # Gates. This runs unattended against the Mac Jake actually works on,
-  # so a day skipped with a loud reason beats a broken app installed
-  # quietly. Tests are hard — they lock the workmini playback path.
-  # Typecheck is soft: CI marks tsc continue-on-error (pre-existing debt);
-  # hard-failing it here blocked the Aug-12 urgent workmini ship while
-  # music was dead. Warn loud, still build.
-  if npm run typecheck >/dev/null 2>&1; then
-    echo "  ✓ typecheck"
-  else
-    echo "  ⚠ typecheck failed (pre-existing; CI soft-gates this) — continuing build"
+# ── 1. Preflight + the subset proof ─────────────────────────────────
+mkdir -p "$BUILD_ROOT" "$(dirname "$BUILD_LOG")"
+if ! mkdir "$LOCK" 2>/dev/null; then
+  other="$(cat "$LOCK/pid" 2>/dev/null)"
+  if [[ -n "$other" ]] && kill -0 "$other" 2>/dev/null; then
+    die "Another workmini deploy is running (pid $other)."
   fi
-  npm test >/dev/null 2>&1 \
-    || die "tests failed — refusing to build. Run 'npm test' locally to see it."
-  echo "  ✓ tests pass"
-
-  # Anti-staleness, and the reason this flag exists at all: mark the time
-  # BEFORE building, then require the DMG to be newer than that mark. If
-  # electron-builder fails, no-ops, or writes somewhere unexpected, the
-  # old artifact is still sitting in release/ and every later step would
-  # happily ship it. Falling through to a stale DMG is precisely the bug
-  # being fixed, so it has to be an error, not a fallback.
-  BUILD_STAMP="$(mktemp)"
-  echo "  building (electron-vite + electron-builder, a few minutes)…"
-  npm run dist:dmg > "$REPO/.deploy-build.log" 2>&1 || true
-  DMG="$(ls -t "$REPO"/release/JakeTunes-*-arm64.dmg 2>/dev/null | head -1)"
-  if [[ -z "$DMG" || ! -f "$DMG" ]]; then
-    tail -25 "$REPO/.deploy-build.log" | sed 's/^/    /'
-    rm -f "$BUILD_STAMP"
-    die "Build produced no DMG in $REPO/release/ — see $REPO/.deploy-build.log"
-  fi
-  if [[ ! "$DMG" -nt "$BUILD_STAMP" ]]; then
-    tail -25 "$REPO/.deploy-build.log" | sed 's/^/    /'
-    rm -f "$BUILD_STAMP"
-    die "$(basename "$DMG") predates this build — the build did not produce a new artifact. Refusing to ship a stale app (see $REPO/.deploy-build.log)."
-  fi
-  rm -f "$BUILD_STAMP"
-  echo "  ✓ fresh DMG: $(basename "$DMG")  ($(stat -f '%Sm' -t '%Y-%m-%d %H:%M' "$DMG"), $(du -h "$DMG" | cut -f1))"
+  rm -rf "$LOCK"; mkdir "$LOCK" || die "Cannot take the deploy lock at $LOCK"
 fi
+echo $$ >"$LOCK/pid"
+cleanup() {
+  cd / || true
+  if [[ -z "${JT_DEPLOY_KEEP_WORKTREE:-}" && -d "$WT" ]]; then
+    git -C "$REPO" worktree remove --force "$WT" >/dev/null 2>&1 || rm -rf "$WT"
+    git -C "$REPO" worktree prune >/dev/null 2>&1
+  fi
+  rm -rf "$LOCK"
+}
+trap cleanup EXIT
 
-say "JakeTunes → workmini deployment"
-echo "  app:      $(basename "${DMG:-<none found>}")"
-echo "  target:   ${REMOTE}"
-echo "  library:  $LIBJSON_LABEL"
-echo "  .env:     $([[ $WITH_ENV == true ]] && echo 'will copy (--with-env)' || echo 'skipped (default)')"
-
-# ── 1. Preflight ─────────────────────────────────────────────────────
 say "[1/5] Preflight"
-[[ -n "$DMG" && -f "$DMG" ]] || die "No DMG in $REPO/release/ — run 'npm run dist:dmg' first."
+$DRY_RUN && echo "  DRY RUN — nothing on workmini will change"
+# launchd once put /usr/local/bin's node 18 first: `npm test` died on the
+# --experimental-strip-types flag in 2 s, every weekday for two months,
+# and the log only ever said "tests failed".
+node --experimental-strip-types -e 0 >/dev/null 2>&1 \
+  || die "node $(node -v 2>/dev/null) at $(command -v node) cannot run the test suite (needs Node ≥ 22.6 for --experimental-strip-types). Fix PATH in jaketunes-workmini-nightly.sh."
+echo "  ✓ node $(node -v) ($(command -v node))"
 [[ -f "$LIBJSON_SRC" ]]      || die "library.json not found at $LIBJSON_SRC"
 [[ -d "$LIB_SRC" ]]         || die "Music library not found at $LIB_SRC"
 ping -c1 -t3 "$HOST" >/dev/null 2>&1 || die "$HOST is not reachable on Tailscale (is it awake / on the tailnet?)."
-if ! ssh $SSH_OPTS -o BatchMode=yes "$REMOTE" true 2>/dev/null; then
+if ! rsh 20 true; then
   die "SSH to ${REMOTE} failed.
     → Enable Remote Login on workmini:
         System Settings → General → Sharing → Remote Login (ON)
     → Double-check the username (run 'whoami' on workmini).
     Then re-run this script."
 fi
-WM_HOME="$(ssh $SSH_OPTS "$REMOTE" 'echo $HOME')"
+WM_HOME="$(rsh 20 'echo $HOME')"
 [[ -n "$WM_HOME" ]] || die "Couldn't resolve workmini's home directory."
 echo "  ✓ SSH OK — workmini home: $WM_HOME"
 
-# ── 2. Install the app (+ fail-fast launch check) ───────────────────
-# Install BEFORE the 73 GB sync and verify the app actually runs — a
-# code-signature / Gatekeeper kill is instant, so we catch it here
-# instead of after a long music transfer. ditto (not cp -R) is used
-# precisely because cp -R over a running bundle corrupts the embedded
-# signature → SIGKILL "Code Signature Invalid" at launch.
-say "[2/5] Installing JakeTunes.app on workmini"
-scp -q $SSH_OPTS "$DMG" "${REMOTE}:jaketunes-deploy.dmg" || die "DMG copy failed."  # staged in $HOME — /tmp on workmini eats dmgs
-ssh $SSH_OPTS "$REMOTE" 'bash -s' <<'REMOTE_INSTALL'
-set -e
-osascript -e 'quit app "JakeTunes"' 2>/dev/null || true
-sleep 4                                    # let a running instance fully exit
-MNT="$(hdiutil attach "$HOME"/jaketunes-deploy.dmg -nobrowse -quiet >/dev/null && ls -d /Volumes/JakeTunes* | head -1)"
-[ -n "$MNT" ] || { echo "  ✗ DMG mount failed" >&2; exit 1; }
-rm -rf /Applications/JakeTunes.app
-ditto "$MNT/JakeTunes.app" /Applications/JakeTunes.app   # ditto preserves bundle/signature
-hdiutil detach "$MNT" -quiet
-rm -f "$HOME"/jaketunes-deploy.dmg
-# Re-register with Launch Services so Dock/Finder resolve the icon to
-# THIS bundle. A ditto install doesn't trigger LS registration the way a
-# drag-install does; without this the OS can keep showing a stale icon
-# indefinitely — the MacBook did, for ~10 versions, until 4.4.60 traced
-# it to ~25 ghost /Volumes/JakeTunes*/ registrations and zero entry for
-# the real /Applications bundle.
-LSREG="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
-"$LSREG" -f /Applications/JakeTunes.app 2>/dev/null || true
-VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' /Applications/JakeTunes.app/Contents/Info.plist)"
-echo "  ✓ Installed JakeTunes $VER"
-# Signature must be intact, or the OS SIGKILLs it at exec.
-if ! codesign --verify --strict /Applications/JakeTunes.app 2>/dev/null; then
-  echo "  ✗ Code signature INVALID on workmini — aborting before the music sync." >&2
-  exit 2
+[[ "$(git -C "$REPO" rev-parse --is-bare-repository 2>/dev/null)" == false ]] \
+  || die "$REPO reports core.bare=true, which breaks every worktree. Back up .git/config, then: git config --file $REPO/.git/config core.bare false"
+tmo 180 git -C "$REPO" fetch --quiet origin main || die "git fetch origin main failed (exit $?)."
+MAIN_SHA="$(git -C "$REPO" rev-parse --verify --quiet 'origin/main^{commit}')"
+[[ -n "$MAIN_SHA" ]] || die "Cannot resolve origin/main."
+echo "  ✓ origin/main = ${MAIN_SHA:0:12}  $(git -C "$REPO" log -1 --format=%s "$MAIN_SHA" | cut -c1-70)"
+
+# The subset proof. Installing main replaces the whole app, so anything the
+# installed build has that main lacks is deleted by the install. Prove
+# there is nothing: the stamped commit is an ancestor of origin/main and
+# was built clean. A build with no stamp proves nothing, so it refuses.
+INST="$(rsh 60 'python3 - /Applications/JakeTunes.app/Contents/Resources/app.asar' <<<"$ASAR_INFO_PY")" \
+  || die "Could not read workmini's installed app (exit $?)."
+[[ "$(kv present "$INST")" == true ]] \
+  || die "workmini has no /Applications/JakeTunes.app/Contents/Resources/app.asar. Another install may be mid-swap. Refusing."
+[[ -z "$(kv error "$INST")" ]] || die "Could not read workmini's app.asar: $(kv error "$INST")"
+INST_SHA="$(kv sha "$INST")"; INST_DIRTY="$(kv dirty "$INST")"
+INST_DEPS="$(kv deps "$INST")"; INST_MTIME="$(kv mtime "$INST")"
+[[ "$INST_SHA" =~ ^[0-9a-f]{40}$ ]] \
+  || die "workmini's installed build has no commit stamp (sha='$INST_SHA'), so nothing proves it is a subset of main. Refusing."
+[[ "$INST_DIRTY" != true ]] \
+  || die "workmini's installed build ${INST_SHA:0:12} was made from uncommitted edits: it holds code main does not. Refusing to replace it."
+if ! git -C "$REPO" merge-base --is-ancestor "$INST_SHA" "$MAIN_SHA" 2>/dev/null; then
+  where="$(git -C "$REPO" branch -a --contains "$INST_SHA" 2>/dev/null | sed 's/^[* ]*//' | head -3 | paste -sd, -)"
+  die "workmini runs ${INST_SHA:0:12}, which is NOT in origin/main${where:+ (it is on: $where)}. Installing main would delete that work. Refusing."
 fi
-echo "  ✓ Code signature valid"
-# Launch and confirm it STAYS alive (signature/Gatekeeper kills are
-# instant — catch it now, not after a 73 GB transfer). An empty
-# library at this point is expected; music + metadata come next.
-open -a JakeTunes
-sleep 6
-if pgrep -f 'JakeTunes.app/Contents/MacOS' >/dev/null; then
-  echo "  ✓ JakeTunes launches and stays running on workmini"
+if [[ "$INST_DIRTY" == unknown ]]; then
+  # Builds stamped before 2026-10-19 carry no "dirty" field. Ancestry is
+  # still proven; cleanliness is recorded from the next stamped install on.
+  echo "  ✓ installed ${INST_SHA:0:12} is in origin/main (older stamp: clean/dirty not recorded)"
 else
-  echo "  ✗ JakeTunes crashed on launch — see ~/Library/Logs/DiagnosticReports/" >&2
-  exit 3
+  echo "  ✓ installed ${INST_SHA:0:12} is in origin/main, built clean"
 fi
+ALREADY_CURRENT=false
+[[ "$INST_SHA" == "$MAIN_SHA" ]] && ALREADY_CURRENT=true
+
+# ── 1.5. Build main in a fresh worktree ─────────────────────────────
+# A new detached worktree at exactly $MAIN_SHA and a fresh `npm ci` every
+# run. Never a symlinked or copied node_modules: electron-builder cannot
+# walk a symlink and shipped an app with 18 of 58 packages (2026-10-13).
+if $ALREADY_CURRENT && ! $DRY_RUN; then
+  say "[1.5/5] Build — skipped, workmini already runs main ${MAIN_SHA:0:12}"
+else
+  say "[1.5/5] Building main ${MAIN_SHA:0:12} in a fresh worktree"
+  printf 'workmini build %s — main %s\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')" "$MAIN_SHA" >"$BUILD_LOG"
+  if [[ -e "$WT" ]]; then git -C "$REPO" worktree remove --force "$WT" >/dev/null 2>&1 || rm -rf "$WT"; fi
+  git -C "$REPO" worktree prune
+  step 180 "worktree add" git -C "$REPO" worktree add --detach "$WT" "$MAIN_SHA" \
+    || build_die "git worktree add failed"
+  [[ "$(git -C "$WT" rev-parse HEAD)" == "$MAIN_SHA" && -z "$(git -C "$WT" status --porcelain)" ]] \
+    || die "The worktree at $WT is not a clean checkout of $MAIN_SHA."
+  cd "$WT" || die "Cannot cd to $WT"
+  step 1800 "npm ci" npm ci --no-audit --no-fund || build_die "npm ci failed (exit $?)"
+  [[ -d node_modules && ! -L node_modules ]] || die "node_modules in $WT is not a real directory."
+  echo "  ✓ npm ci ($(ls node_modules | wc -l | tr -d ' ') top-level packages)"
+
+  # Tests are hard — they lock the workmini playback path. Typecheck is
+  # soft: CI marks tsc continue-on-error (pre-existing debt); hard-failing
+  # it here blocked the Aug-12 urgent workmini ship while music was dead.
+  if step 900 typecheck npm run typecheck; then
+    echo "  ✓ typecheck"
+  else
+    echo "  ⚠ typecheck failed (pre-existing; CI soft-gates this) — continuing build"
+  fi
+  step 1200 tests npm test || build_die "tests failed on main ${MAIN_SHA:0:12} (exit $?) — refusing to build"
+  echo "  ✓ tests pass ($(sed -n 's/^# pass //p' "$BUILD_LOG" | tail -1) passed)"
+
+  echo "  building (electron-vite + electron-builder, a few minutes)…"
+  step 2700 "dist:dmg" npm run dist:dmg || build_die "build failed (exit $?)"
+  DMG="$(ls "$WT"/release/JakeTunes-*-arm64.dmg 2>/dev/null | head -1)"
+  NEW_APP="$WT/release/mac-arm64/JakeTunes.app"
+  [[ -n "$DMG" && -f "$DMG" && -d "$NEW_APP" ]] || build_die "the build produced no DMG/app in $WT/release"
+  [[ -z "$(git -C "$WT" status --porcelain --untracked-files=no)" ]] \
+    || die "Building changed tracked files in $WT — refusing to ship a build that is not exactly main."
+
+  # The new build must BE main, and must not have lost packages.
+  NEW="$(python3 -c "$ASAR_INFO_PY" "$NEW_APP/Contents/Resources/app.asar")"
+  [[ -z "$(kv error "$NEW")" ]] || die "Could not read the new app.asar: $(kv error "$NEW")"
+  [[ "$(kv sha "$NEW")" == "$MAIN_SHA" ]] || die "The new build is stamped '$(kv sha "$NEW")', not $MAIN_SHA."
+  [[ "$(kv dirty "$NEW")" != true ]] || die "The new build is stamped dirty."
+  NEW_DEPS="$(kv deps "$NEW")"
+  if [[ ! "$NEW_DEPS" =~ ^[0-9]+$ ]] || (( NEW_DEPS == 0 || NEW_DEPS * 10 < ${INST_DEPS:-0} * 8 )); then
+    die "The new app packs ${NEW_DEPS:-?} node_modules packages; workmini's has ${INST_DEPS:-?}. A drop like that is a broken package. Refusing."
+  fi
+  codesign --verify --deep --strict "$NEW_APP" 2>/dev/null || die "The new app's code signature does not verify."
+  echo "  ✓ fresh DMG: $(basename "$DMG")  ($(du -h "$DMG" | cut -f1)) — main ${MAIN_SHA:0:12}, ${NEW_DEPS} packages (installed has ${INST_DEPS})"
+fi
+
+say "JakeTunes → workmini deployment"
+if $ALREADY_CURRENT; then
+  echo "  app:      already main ${MAIN_SHA:0:12} — no install"
+else
+  echo "  app:      $(basename "$DMG")  ${INST_SHA:0:12} → ${MAIN_SHA:0:12}"
+fi
+echo "  target:   ${REMOTE}"
+echo "  library:  $LIBJSON_LABEL"
+echo "  .env:     $([[ $WITH_ENV == true ]] && echo 'will copy (--with-env)' || echo 'skipped (default)')"
+
+if $DRY_RUN; then
+  say "Dry run — stopping before anything on workmini changes"
+  if GATE_REASON="$(check_gate)"; then echo "  gate now: $GATE_REASON"; else echo "  gate now: closed — $GATE_REASON"; fi
+  echo "  a real run would $($ALREADY_CURRENT && echo 'skip the install (already current) and sync data' || echo "install main ${MAIN_SHA:0:12} once the gate is clear, then sync data")"
+  exit 0
+fi
+
+# ── 2. Install the app (+ fail-fast launch check) ───────────────────
+# Install BEFORE the data sync and verify the app actually runs — a
+# code-signature / Gatekeeper kill is instant, so we catch it here.
+# ditto (not cp -R) because cp -R over a running bundle corrupts the
+# embedded signature → SIGKILL "Code Signature Invalid" at launch. The
+# previous bundle is moved OUT of /Applications (a renamed copy inside it
+# makes LaunchServices launch the old build) and kept for a manual undo.
+if $ALREADY_CURRENT; then
+  say "[2/5] Install — skipped, workmini already runs main ${MAIN_SHA:0:12}"
+else
+say "[2/5] Installing JakeTunes.app on workmini"
+wait_for_gates || die "Install skipped — gate stayed closed for ${GATE_WAIT_MIN} min: $GATE_REASON. workmini keeps ${INST_SHA:0:12}."
+rcp 1200 "$DMG" "${REMOTE}:jaketunes-deploy.dmg" || die "DMG copy failed (exit $?)."  # staged in $HOME — /tmp on workmini eats dmgs
+BK="JakeTunes-prev-auto-$(date +%Y%m%d-%H%M).app"
+{
+  printf 'GATE_SH=%q\nASAR_INFO_PY=%q\n' "$GATE_SH" "$ASAR_INFO_PY"
+  cat <<'REMOTE_INSTALL'
+set -u
+EXPECT_SHA="$1"; WANT_MTIME="$2"; BK="$3"; IDLE_MIN="$4"
+APP=/Applications/JakeTunes.app
+ASAR="$APP/Contents/Resources/app.asar"
+DMG="$HOME/jaketunes-deploy.dmg"
+MNT="$HOME/.jaketunes-deploy-mnt"
+LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+abort() { echo "  ✗ $1" >&2; hdiutil detach "$MNT" -quiet -force 2>/dev/null; rm -f "$DMG"; exit "${2:-1}"; }
+running() { pgrep -x JakeTunes >/dev/null; }
+
+# A fixed mount point: ghost /Volumes/JakeTunes* attaches made the old
+# `ls -d /Volumes/JakeTunes*` pick the wrong volume.
+hdiutil detach "$MNT" -quiet -force 2>/dev/null; mkdir -p "$MNT"
+hdiutil attach "$DMG" -nobrowse -readonly -noautoopen -mountpoint "$MNT" -quiet || abort "DMG mount failed"
+NEW="$MNT/JakeTunes.app"
+[ -d "$NEW" ] || abort "no JakeTunes.app inside the DMG"
+got=$(python3 -c "$ASAR_INFO_PY" "$NEW/Contents/Resources/app.asar" | sed -n 's/^sha=//p')
+[ "$got" = "$EXPECT_SHA" ] || abort "the DMG holds build ${got:-unstamped}, expected $EXPECT_SHA"
+codesign --verify --deep --strict "$NEW" 2>/dev/null || abort "staged app signature invalid"
+
+# The subset proof was made against this exact app.asar. If it changed or
+# vanished since, another session installed in between: stop, never guess.
+have=$(stat -f %m "$ASAR" 2>/dev/null) || abort "installed app.asar is missing (another install mid-swap?)"
+[ "$have" = "$WANT_MTIME" ] || abort "installed app.asar changed since the subset proof ($have != $WANT_MTIME): another session installed"
+
+# The gate again, last thing before the quit.
+reason=$(bash -c "$GATE_SH" gate "$IDLE_MIN") || abort "gate closed at swap time: $reason" 10
+
+if running; then
+  perl -e 'alarm 20; exec @ARGV' osascript -e 'quit app id "com.jacobrosenbaum.jaketunes"' >/dev/null 2>&1
+  for i in $(seq 1 45); do running || break; sleep 1; done
+  running && abort "JakeTunes did not quit — install untouched"
+fi
+mv "$APP" "$HOME/$BK" || abort "could not move the old bundle aside"
+if ! ditto "$NEW" "$APP"; then
+  rm -rf "$APP"; mv "$HOME/$BK" "$APP"; open -a "$APP"
+  abort "ditto failed — previous build restored and relaunched"
+fi
+hdiutil detach "$MNT" -quiet -force 2>/dev/null; rm -f "$DMG"
+xattr -dr com.apple.quarantine "$APP" 2>/dev/null
+codesign --verify --deep --strict "$APP" 2>/dev/null || abort "installed signature INVALID — previous build is at ~/$BK" 2
+"$LSREG" -f "$APP" 2>/dev/null
+# Keep this job's two newest set-aside bundles; never touch anyone else's.
+ls -dt "$HOME"/JakeTunes-prev-auto-*.app 2>/dev/null | tail -n +3 | while IFS= read -r old; do rm -rf "$old"; done
+VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
+echo "  ✓ Installed JakeTunes $VER @ ${EXPECT_SHA:0:12} (previous build kept at ~/$BK)"
+# Launch and confirm it STAYS alive (signature/Gatekeeper kills are
+# instant). An empty library at this point is expected; data comes next.
+open -a "$APP"
+sleep 8
+running || abort "JakeTunes crashed on launch — see ~/Library/Logs/DiagnosticReports/; previous build is at ~/$BK" 3
+echo "  ✓ JakeTunes launches and stays running on workmini"
 REMOTE_INSTALL
+} | rsh 300 "bash -s -- '$MAIN_SHA' '$INST_MTIME' '$BK' '$IDLE_MIN_S'"
 RC=$?
-[[ $RC -eq 0 ]] || die "Remote install/launch failed (exit $RC). Music sync NOT started — the app must run first."
+case $RC in
+  0)  ;;
+  10) die "Install skipped — the gate closed at swap time. workmini keeps ${INST_SHA:0:12}." ;;
+  *)  die "Remote install/launch failed (exit $RC). Data sync NOT started — the app must run first." ;;
+esac
+fi
 
 # ── 3. Music library (~73 GB — rsync, resumable) ─────────────────────
 # NO -z: the library is already-compressed audio (.m4a/.mp3/.flac), so
@@ -264,8 +515,8 @@ if $STREAMING; then
   echo "  • streaming mode: audio comes from homemini:3000; local cache-farm + NAS mount are fallback only"
 else
 say "[3/5] Syncing music library (~73 GB — first run is long; resumable)"
-ssh $SSH_OPTS "$REMOTE" "mkdir -p '$WM_HOME/Music/JakeTunesLibrary'"
-rsync -a --partial --timeout=300 --info=progress2 \
+rsh 30 "mkdir -p '$WM_HOME/Music/JakeTunesLibrary'"
+rsy 21600 -a --partial --timeout=300 --info=progress2 \
   "$LIB_SRC" "${REMOTE}:$WM_HOME/Music/JakeTunesLibrary/"
 RC=$?
 if [[ $RC -eq 0 ]]; then
@@ -292,8 +543,8 @@ fi
 # library list, they just see placeholder covers for new albums.
 say "[3.5/5] Syncing artwork (album covers + artist images)"
 if [[ -d "$ART_SRC" ]]; then
-  ssh $SSH_OPTS "$REMOTE" "mkdir -p '$WM_HOME/Library/Application Support/JakeTunes/artwork'"
-  rsync -rtz --update --no-perms --no-owner --no-group \
+  rsh 30 "mkdir -p '$WM_HOME/Library/Application Support/JakeTunes/artwork'"
+  rsy 1800 -rtz --update --no-perms --no-owner --no-group \
     --include='*.jpg' --include='*.meta.json' --exclude='*' \
     "$ART_SRC" "${REMOTE}:$WM_HOME/Library/Application Support/JakeTunes/artwork/" \
     && echo "  ✓ artwork synced" \
@@ -302,8 +553,8 @@ else
   echo "  • $ART_SRC not present on this Mac — skipping album artwork"
 fi
 if [[ -d "$ARTIST_IMG_SRC" ]]; then
-  ssh $SSH_OPTS "$REMOTE" "mkdir -p '$WM_HOME/Library/Application Support/JakeTunes/artist-images'"
-  rsync -rtz --update --no-perms --no-owner --no-group \
+  rsh 30 "mkdir -p '$WM_HOME/Library/Application Support/JakeTunes/artist-images'"
+  rsy 1800 -rtz --update --no-perms --no-owner --no-group \
     --include='*.jpg' --include='*.meta.json' --exclude='*' \
     "$ARTIST_IMG_SRC" "${REMOTE}:$WM_HOME/Library/Application Support/JakeTunes/artist-images/" \
     && echo "  ✓ artist images synced" \
@@ -341,14 +592,14 @@ say "[4/5a] Harvesting playlists created on workmini"
 # merged file go back out. ADD-ONLY: deletion needs tombstones, which playlists
 # do not have yet, and an add-only harvest cannot resurrect anything by itself.
 if [[ -x "$HOME/bin/jaketunes-workmini-playlist-harvest.sh" ]]; then
-  bash "$HOME/bin/jaketunes-workmini-playlist-harvest.sh" "$WORKMINI_USER" \
+  tmo 600 bash "$HOME/bin/jaketunes-workmini-playlist-harvest.sh" "$WORKMINI_USER" \
     || echo "  ⚠ harvest skipped (see message above)"
 else
   echo "  • harvest script missing — skipping"
 fi
 
 say "[4/5] Bootstrapping library.json + sidecars"
-ssh $SSH_OPTS "$REMOTE" "mkdir -p '$WM_HOME/Library/Application Support/JakeTunes'"
+rsh 30 "mkdir -p '$WM_HOME/Library/Application Support/JakeTunes'"
 # release-kinds.json (2026-10-18): workmini is a replica and never resolves
 # release kinds itself — its artist page groups by the laptop's answers.
 SIDECARS=(picks-cache.json mobile-playlists.json playlist-additions.json metadata-overrides.json playlists.json mixtapes.json live-sets.json release-kinds.json lyrics.json friends.json mobile-stars.json mobile-plays.json)
@@ -384,7 +635,7 @@ for f in "${SIDECARS[@]}"; do
     echo "  ⚠ $f sourced from NAS (local missing/corrupt)"
   fi
   if [[ -n "$src" ]]; then
-    scp -q $SSH_OPTS "$src" \
+    rcp 300 "$src" \
       "${REMOTE}:$WM_HOME/Library/Application Support/JakeTunes/$f" \
       && echo "  ✓ $f copied" \
       || echo "  ⚠ $f copy failed"
@@ -416,13 +667,13 @@ elif [[ -s "$NAS_STATE/embeddings.bin" ]]; then
 fi
 if [[ -n "$EMB_SRC" ]]; then
   WM_EMB="$WM_HOME/Library/Application Support/JakeTunes/embeddings.bin"
-  if scp -q $SSH_OPTS "$EMB_SRC" "${REMOTE}:${WM_EMB}.tmp" \
-     && ssh $SSH_OPTS "$REMOTE" "mv '${WM_EMB}.tmp' '${WM_EMB}'"; then
+  if rcp 900 "$EMB_SRC" "${REMOTE}:${WM_EMB}.tmp" \
+     && rsh 30 "mv '${WM_EMB}.tmp' '${WM_EMB}'"; then
     EMB_BYTES="$(stat -f%z "$EMB_SRC" 2>/dev/null || echo '?')"
     echo "  ✓ embeddings.bin copied ($EMB_BYTES bytes — local brain refreshed)"
   else
     echo "  ⚠ embeddings.bin push failed — workmini keeps its previous (stale) brain"
-    ssh $SSH_OPTS "$REMOTE" "rm -f '${WM_EMB}.tmp'" 2>/dev/null || true
+    rsh 30 "rm -f '${WM_EMB}.tmp'" 2>/dev/null || true
   fi
 else
   echo "  • embeddings.bin not present on this Mac — skipping (local brain stays as-is)"
@@ -434,9 +685,9 @@ fi
 # on 2026-06-03 when a corrupt source was scp'd directly over the
 # canonical path.
 WM_LIBJSON="$WM_HOME/Library/Application Support/JakeTunes/library.json"
-scp -q $SSH_OPTS "$LIBJSON_SRC" "${REMOTE}:${WM_LIBJSON}.tmp" \
+rcp 600 "$LIBJSON_SRC" "${REMOTE}:${WM_LIBJSON}.tmp" \
   || die "library.json copy failed."
-ssh $SSH_OPTS "$REMOTE" "mv '${WM_LIBJSON}.tmp' '${WM_LIBJSON}'" \
+rsh 30 "mv '${WM_LIBJSON}.tmp' '${WM_LIBJSON}'" \
   || die "library.json atomic install failed."
 LIBJSON_TRACKS="$(python3 -c "import json; d=json.load(open('$LIBJSON_SRC')); k='tracks' if 'tracks' in d else 'songs'; print(len(d.get(k,[])))" 2>/dev/null || echo '?')"
 echo "  ✓ library.json copied ($LIBJSON_TRACKS tracks)"
@@ -454,7 +705,7 @@ echo "  ✓ library.json copied ($LIBJSON_TRACKS tracks)"
 # which is the exact path that made every song hang. Pin it every deploy.
 if $STREAMING; then
   say "[4.5/5] Pinning streaming library settings (musicRoot + streamRoot + streamSource)"
-  ssh $SSH_OPTS "$REMOTE" "bash -s" <<'REMOTE_SETTINGS'
+  rsh 60 "bash -s" <<'REMOTE_SETTINGS'
 set -e
 SETTINGS_DIR="$HOME/Library/Application Support/JakeTunes"
 SETTINGS_PATH="$SETTINGS_DIR/app-settings.json"
@@ -496,7 +747,7 @@ REMOTE_SETTINGS
   [[ $RC -eq 0 ]] || die "Failed to write streaming library settings (exit $RC)."
 else
 say "[4.5/5] Pinning library.musicRoot in app-settings.json"
-ssh $SSH_OPTS "$REMOTE" "bash -s" <<'REMOTE_SETTINGS'
+rsh 60 "bash -s" <<'REMOTE_SETTINGS'
 set -e
 SETTINGS_DIR="$HOME/Library/Application Support/JakeTunes"
 SETTINGS_PATH="$SETTINGS_DIR/app-settings.json"
@@ -536,7 +787,7 @@ fi
 say "[5/5] API keys (.env)"
 if $WITH_ENV; then
   [[ -f "$ENV_SRC" ]] || die ".env not found at $ENV_SRC"
-  scp -q $SSH_OPTS "$ENV_SRC" \
+  rcp 60 "$ENV_SRC" \
     "${REMOTE}:$WM_HOME/Library/Application Support/JakeTunes/.env" \
     || die ".env copy failed."
   echo "  ✓ .env copied — AI personas (Music Man / Megan / Stephen / Cynthia) have credentials"
@@ -558,16 +809,18 @@ if $STREAMING; then
   # version control, no review — which is how a ranking bug that stopped every
   # newly-imported song from playing sat in it unnoticed (2026-08-10). The repo
   # copy is the source of truth now; this overwrites whatever is on the host.
-  scp -q $SSH_OPTS "$REPO/Dr. Claude/scripts/cache-manager.py" \
-    "${REMOTE}:$WM_HOME/Library/Application Support/JakeTunes/cache-manager.py" \
-    && echo "  ✓ cache-manager.py updated" || echo "  ⚠ cache-manager.py push failed — host copy left as-is"
+  # Taken from main's commit, never the shared checkout's working tree.
+  CM_SRC="$BUILD_ROOT/cache-manager.py"
+  git -C "$REPO" show "$MAIN_SHA:Dr. Claude/scripts/cache-manager.py" >"$CM_SRC" 2>/dev/null \
+    && rcp 60 "$CM_SRC" "${REMOTE}:$WM_HOME/Library/Application Support/JakeTunes/cache-manager.py" \
+    && echo "  ✓ cache-manager.py updated (main ${MAIN_SHA:0:12})" || echo "  ⚠ cache-manager.py push failed — host copy left as-is"
   # BACKGROUND, deliberately. This used to be awaited, and once the cache
   # started prioritising ALAC (which can be tens of GB over a slow link) the
   # deploy sat here for hours — with JakeTunes still QUIT, because the
   # relaunch comes after. A best-effort cache warm must never hold the app
   # closed. It is explicitly non-fatal; every track streams regardless.
-  ssh $SSH_OPTS "$REMOTE" \
-    'nohup /usr/bin/python3 "$HOME/Library/Application Support/JakeTunes/cache-manager.py" >/tmp/cache-manager.log 2>&1 &' \
+  rsh 30 \
+    'nohup /usr/bin/python3 "$HOME/Library/Application Support/JakeTunes/cache-manager.py" >/tmp/cache-manager.log 2>&1 </dev/null &' \
     && echo "  ✓ cache warm started in background (see /tmp/cache-manager.log on workmini)" \
     || echo "  ⚠ could not start cache warm — music still streams from NAS"
 fi
@@ -575,8 +828,15 @@ fi
 # ── Relaunch so it picks up the freshly-synced library ──────────────
 # Step 2 already proved the app runs, but it launched against an empty
 # library. Quit + relaunch now that music + library.json (+ .env) are
-# in place so it boots into the full library.
+# in place so it boots into the full library. A relaunch is a quit, so it
+# passes the same audio + idle gate as the install; if the gate is closed
+# the new library simply loads at the next launch.
 say "Relaunching JakeTunes with the full library…"
-ssh $SSH_OPTS "$REMOTE" "osascript -e 'quit app \"JakeTunes\"' 2>/dev/null || true; sleep 3; open -a JakeTunes" || true
-say "✓ Done — JakeTunes deployed and running on workmini."
+if GATE_REASON="$(check_gate)"; then
+  rsh 60 "osascript -e 'quit app \"JakeTunes\"' 2>/dev/null || true; sleep 3; open -a JakeTunes" || true
+  echo "  ✓ relaunched ($GATE_REASON)"
+else
+  echo "  • not relaunching — $GATE_REASON. The new library loads at JakeTunes' next launch."
+fi
+say "✓ Done — workmini runs main ${MAIN_SHA:0:12}, data synced."
 echo "  Future versions auto-update from the GitHub release, same as homemini."
