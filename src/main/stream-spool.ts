@@ -96,8 +96,54 @@ export async function spoolReady(dir: string, key: string): Promise<SpoolReady |
   }
 }
 
-/** Kick a full-file download (single-flight, cooldown after failure). */
-export function ensureSpool(dir: string, key: string, url: string, fetchFn: typeof fetch = fetch): void {
+// ── Thin links: pace the spool, never let it take the whole pipe ─────────
+//
+// Measured on workmini 2026-10-19 (Jake: "totally freezing and having
+// trouble playing music"): the office↔home tunnel carries only ~300 KB/s.
+// One serial spool still downloaded at wire speed, filled every buffer on
+// the path, and held the tunnel's round trip at 0.5–2 s for as long as
+// music played — the playing song's own live proxy stalled behind it, and
+// the NAS mount riding the same tunnel froze Finder. With JakeTunes quit
+// the same tunnel answered in ~60 ms. ACTIVE_LIMIT 1 fixed "140 at once";
+// it can't fix "one at full speed" on a link this thin.
+//
+// So on a stream-compressed machine (the marker that already says "this
+// link is thin") the spool reads at 3× the stream's own bitrate: a 256 kbps
+// track spools at 96 KB/s — a 4-minute song lands in ~80 s, while the live
+// proxy and everything else on the tunnel keep their headroom. Reading
+// slower is what slows the sender: the TCP window closes behind us instead
+// of a queue building in the middle. Fat links pass 0 and are untouched.
+export const SPOOL_PACE_MULTIPLE = 3
+
+/** Bytes/second for a spool on a thin link carrying `kbps` streams. */
+export function spoolPaceFor(kbps: number): number {
+  return Math.round((kbps * 1000 / 8) * SPOOL_PACE_MULTIPLE)
+}
+
+/** Pass `body` through at no more than `bytesPerSec` (0 = unpaced). */
+export function pacedBody(
+  body: ReadableStream<Uint8Array>,
+  bytesPerSec: number,
+  now: () => number = Date.now,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): ReadableStream<Uint8Array> {
+  if (!(bytesPerSec > 0)) return body
+  let start = -1
+  let sent = 0
+  return body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    async transform(chunk, controller) {
+      if (start < 0) start = now()
+      sent += chunk.byteLength
+      const wait = start + (sent / bytesPerSec) * 1000 - now()
+      if (wait > 0) await sleep(wait)
+      controller.enqueue(chunk)
+    },
+  }))
+}
+
+/** Kick a full-file download (single-flight, cooldown after failure).
+ *  `paceBytesPerSec` > 0 caps the read rate (thin links); 0 = wire speed. */
+export function ensureSpool(dir: string, key: string, url: string, fetchFn: typeof fetch = fetch, paceBytesPerSec = 0): void {
   if (inFlight.has(key)) return
   const lastFail = failedAt.get(key)
   if (lastFail && Date.now() - lastFail < RETRY_COOLDOWN_MS) return
@@ -121,7 +167,7 @@ export function ensureSpool(dir: string, key: string, url: string, fetchFn: type
       // pipeline via writeWebBodyToFile: a dropped connection now rejects into
       // the catch below (cooldown + .part cleanup) instead of an uncaught
       // exception dialog and a spool slot that never frees (2026-10-17).
-      await writeWebBodyToFile(res.body, part)
+      await writeWebBodyToFile(pacedBody(res.body as unknown as ReadableStream<Uint8Array>, paceBytesPerSec) as typeof res.body, part)
       const written = (await stat(part)).size
       if (total > 0 && written !== total) throw new Error(`spool short: ${written}/${total}`)
       await writeFile(metaPath(dir, key), JSON.stringify({ contentType, total: written } satisfies SpoolMeta))
@@ -214,9 +260,10 @@ export async function spoolAwareServe(
   url: string,
   rangeHeader: string | null,
   fetchFn: typeof fetch = fetch,
+  paceBytesPerSec = 0,
 ): Promise<Response | null> {
   const ready = await spoolReady(dir, key)
   if (ready) return serveSpoolRange(ready, rangeHeader)
-  if (rangeHeader) ensureSpool(dir, key, url, fetchFn)
+  if (rangeHeader) ensureSpool(dir, key, url, fetchFn, paceBytesPerSec)
   return null
 }
