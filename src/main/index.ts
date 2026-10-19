@@ -1571,7 +1571,7 @@ ipc.handle('discovery-allow-again', async (_e, artist: string) => {
 // feed built by v2 carries VA-compilation junk cards and must regenerate.
 // v4 (2026-08-07): "From the Scene" lane (human-graph reach — the
 // Ceremony problem); regenerate so the lane appears.
-const FEED_GEN_VERSION = 11  // 2026-10-11: Rock DNA rides in the picking prompts, Dislike leaves the shop  // 10: 2026-10-10: taste profile — Rocksurgence seeds the supply, math rock gated, Angine an exception  // 9: cover-factory gates in the supply lane  // 8: curator lane — Spotify curator picks seat New Songs slots (2026-09-01); 7: supply edition gate; 6: 25/25 supply lanes; 5: bins + hooks + pitches
+const FEED_GEN_VERSION = 12  // 2026-10-18: critic wall lane (critic-picks-feed.ts)  // 11: 2026-10-11: Rock DNA rides in the picking prompts, Dislike leaves the shop  // 10: 2026-10-10: taste profile — Rocksurgence seeds the supply, math rock gated, Angine an exception  // 9: cover-factory gates in the supply lane  // 8: curator lane — Spotify curator picks seat New Songs slots (2026-09-01); 7: supply edition gate; 6: 25/25 supply lanes; 5: bins + hooks + pitches
 type FeedCacheShape = { at: number; ver?: number; lanes: Array<{ id: string; title: string; cards: unknown[] }> }
 let discoverFeedMem: FeedCacheShape | null = null
 const DISCOVER_TTL_MS = 3 * 60 * 60 * 1000
@@ -1809,7 +1809,9 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     const spotifyAnchors = await loadSpotifyTasteAnchors(join(STATE_DIR, 'spotify-taste.json'), 4)
     const supplyPromise = df.supplyLanes([...anchors.map((a) => a.artist), ...spotifyAnchors, ...focus.anchors(dayN)], dayN, { artists: ownedArtists, albumKeys: ownedAlbumKeys, baseKeys: ownedBaseKeys }).then((cs) => { cards.push(...cs) }).catch((err) => console.warn('[discover] supply lanes failed:', err))
 
-    await Promise.all([radarPromise, missingPromise, scenePromise, llmLanes, supplyPromise])
+    // L5 · Critic wall — a public ratings sheet's 9s/10s he doesn't own, 5 a day, credited; IN ADDITION to the 25/25 and never a taste signal (critic-picks-feed.ts). Unshifted so it wins cross-lane dedupe.
+    const criticPromise = import('./critic-picks-feed.ts').then((m) => m.criticPickCards({ stateDir: STATE_DIR, tracks: tracks as Array<{ artist?: string; albumArtist?: string; album?: string }>, owned: { artists: ownedArtists, albumKeys: ownedAlbumKeys, baseKeys: ownedBaseKeys }, blocks: focus.blocks, feedback: () => discoveryFeedbackCache.get(), isOnList: async () => listenListPredicate(await readRecommendationsFile()) })).then((cs) => { cards.unshift(...cs) }).catch((err) => console.warn('[discover] critic picks failed:', err))
+    await Promise.all([radarPromise, missingPromise, scenePromise, llmLanes, supplyPromise, criticPromise])
 
     // Clerk pitches (module pass — Jake: "need you to get deeper than
     // label-mates"): runs before scoring so the pitch feeds the embedding.
