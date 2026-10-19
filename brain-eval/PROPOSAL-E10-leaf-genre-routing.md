@@ -1,6 +1,6 @@
 # PROPOSAL — E10: leaf-genre queries → main index (PRICED 2026-10-16, recommend CLOSE)
 
-**Status: priced and refuted on the current brain. Recommendation: close E10; do not ship the router change.**
+**Status: CLOSED 2026-10-19 (taste-engine program) — refuted, not shipped.** Priced 2026-10-16.
 
 ## The idea (from the 10-12 scorecard, PR #106)
 On 10-12 a query naming a leaf genre ("Garage Punk", "Midwest Rap") scored

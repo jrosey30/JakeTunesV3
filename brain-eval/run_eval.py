@@ -773,9 +773,19 @@ def main_v3(args):
             raw = claude(GROUND_SYS, "Retrieved library context:\n" + "\n".join(ctx) +
                          f"\n\nUser question: {g['question']}", args.model, max_tokens=500)
             obj = parse_json_obj(raw)
+            raw_excerpt = None
             if obj is None:
-                score, reason, cited = 0.0, "unparseable/no-LLM", []
+                # grd-16 diagnostic (2026-10-19): v3-grd-16 scored 0 as
+                # "unparseable/no-LLM" on 10-14 and 10-18 and nobody could
+                # tell a dropped call from a prose answer. Keep what came back
+                # (or that nothing did) before deciding on any retry.
+                score, cited = 0.0, []
                 details = []
+                if not raw:
+                    reason = "no-LLM (call returned nothing)"
+                else:
+                    reason = "unparseable (reply was not JSON)"
+                    raw_excerpt = str(raw)[:400]
             else:
                 cited = obj.get("tracks") or []
                 match = S.compile_predicate(g["expected"], vocab)
@@ -789,7 +799,8 @@ def main_v3(args):
                               ("no citation" if n == 0 else
                                "; ".join(f"{d[0]}: {d[1]} — {d[2]}" for d in details if d[0] != "ok")[:300]))
             grows.append({**common, "probe_id": g["id"], "group": "grounding", "kind": g["kind"],
-                          "score": score, "reason": reason, "cited": len(cited)})
+                          "score": score, "reason": reason, "cited": len(cited),
+                          **({"raw_excerpt": raw_excerpt} if raw_excerpt else {})})
             print(f"  grd {g['id']} [{g['kind']}]: {score:.0f}  ({reason})")
 
     head, groups = group_summary(rows, "score")
