@@ -100,7 +100,7 @@ import {
   pendingArtworkMigrations, bareArtHash, getArtworkLockedBackupDir,
   artworkLookupRebuildPromise, artworkNormIndexMem, artworkSidecarNormMem,
   setArtworkIndexMem, type ParsedPicture, searchDeezerArt,
-} from './artwork-engine.ts'
+} from './artwork-engine.ts'; import { readFreshThumb, thumbsToBuild } from './thumb-freshness.ts'
 import { registerIpodIpc } from './ipc/ipod-ipc.ts'
 import { registerSyncIpc, type SyncConvertOptions } from './ipc/sync-ipc.ts'
 import { createSyncEngine, type VerifyTrackInput, type VerifyTrackUpdate } from './sync-engine/index.ts'
@@ -10378,7 +10378,7 @@ app.whenReady().then(async () => {
         const thumbDir = join(getArtworkDir(), 'thumbs')
         const thumbPath = join(thumbDir, `${hash}_${size}.jpg`)
         try {
-          data = await readFile(thumbPath)
+          data = await readFreshThumb(thumbPath, fullPath)
         } catch {
           // Generate once: decode full art, downscale, persist. Some
           // covers defeat nativeImage (mislabeled PNGs, exotic JPEGs —
@@ -10453,9 +10453,8 @@ app.whenReady().then(async () => {
         const artDir = getArtworkDir()
         const thumbDir = join(artDir, 'thumbs')
         await mkdir(thumbDir, { recursive: true })
-        const [arts, thumbs] = await Promise.all([readdir(artDir), readdir(thumbDir)])
-        const have = new Set(thumbs)
-        const todo = arts.filter((f) => /^[^.].*\.jpg$/.test(f) && !have.has(f.replace(/\.jpg$/, '_320.jpg')))
+        // Missing OR older than its art (a copied-in poster) — freshness, not mere presence.
+        const todo = await thumbsToBuild(artDir, thumbDir, await readdir(artDir))
         if (todo.length === 0) return
         console.log(`[art-thumbs] pregenerating ${todo.length} thumbnail(s) in background`)
         let made = 0
