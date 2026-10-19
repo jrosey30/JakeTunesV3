@@ -81,6 +81,13 @@ const STALL_MS = 20_000
 /** homemini transcodes the whole track before its first header (ffmpeg's
  *  own limit there is 120 s). */
 const HEADER_TIMEOUT_MS = 120_000
+/** A full concert (hours of audio) transcodes far longer before its first
+ *  header than a song does — anything this big gets the long wait. */
+const BIG_FILE_BYTES = 100e6
+const BIG_FILE_HEADER_TIMEOUT_MS = 10 * 60_000
+/** Concert fetches that fail tonight before the rest of the concerts are
+ *  skipped (they're too big to burn the window retrying). */
+const MAX_CONCERT_FAILURES = 2
 /** Slower than this for the whole file = a trickle, not a link. */
 const MIN_RATE_BYTES_PER_SEC = 50_000
 /** Playback must have been off this long before the next download — track
@@ -126,11 +133,16 @@ export interface PlanInputs {
   playlists: readonly PreloadPlaylist[]
   islandAlbums: readonly IslandSlot[]
   favoriteArtists: readonly FavoriteSlot[]
+  /** Declared Full Live Concerts (live-sets.json): each one's merged
+   *  full-show track. Jake 2026-10-19: "add concerts to the overnight
+   *  pre-load" — a show is hours long, the slowest thing to stream over
+   *  workmini's office link. */
+  liveSets?: ReadonlyArray<{ mergedTrackId: number | string; totalDurationMs?: number }>
   now: number
 }
 
-export type PreloadTier = 'recent-add' | 'heavy-rotation' | 'island-album' | 'favorite-artist' | 'playlist' | 'most-played'
-export const PRELOAD_TIERS: readonly PreloadTier[] = ['recent-add', 'heavy-rotation', 'island-album', 'favorite-artist', 'playlist', 'most-played']
+export type PreloadTier = 'concert' | 'recent-add' | 'heavy-rotation' | 'island-album' | 'favorite-artist' | 'playlist' | 'most-played'
+export const PRELOAD_TIERS: readonly PreloadTier[] = ['concert', 'recent-add', 'heavy-rotation', 'island-album', 'favorite-artist', 'playlist', 'most-played']
 
 export interface PlanEntry { streamId: number | string; track: PreloadTrack; tier: PreloadTier }
 
@@ -174,6 +186,19 @@ export function buildPreloadPlan(inp: PlanInputs): PlanEntry[] {
     if (seen.has(k)) return
     seen.add(k)
     out.push({ streamId, track: byId.get(k) ?? t, tier })
+  }
+
+  // 0. Full Live Concerts — first: a few GB in all, and the worst thing to
+  // stream live. The merged track's id is stable across machines (library.json
+  // travels whole), so a show still missing from THIS machine's library is
+  // pre-loaded by id anyway: homemini serves it from its own library.
+  for (const s of inp.liveSets ?? []) {
+    const k = String(s.mergedTrackId)
+    const row = byId.get(k)
+    if (row && streamable(row)) { add(row, 'concert'); continue }
+    if (seen.has(k) || row?.audioMissing === true) continue
+    seen.add(k)
+    out.push({ streamId: s.mergedTrackId, track: { id: s.mergedTrackId, codec: 'alac', duration: s.totalDurationMs }, tier: 'concert' })
   }
 
   // 1. Recent adds
@@ -320,6 +345,7 @@ export interface NightDeps {
 }
 
 const gb = (b: number): string => `${(b / 1e9).toFixed(1)} GB`
+export const headerTimeoutFor = (estBytes: number): number => (estBytes > BIG_FILE_BYTES ? BIG_FILE_HEADER_TIMEOUT_MS : HEADER_TIMEOUT_MS)
 
 async function spoolDirUsage(dir: string): Promise<number> {
   let total = 0
@@ -349,8 +375,8 @@ export async function runPreloadNight(deps: NightDeps): Promise<NightReport> {
     paceBytesPerSec: NIGHT_PACE_BYTES_PER_SEC,
     signal,
     stallMs: STALL_MS,
-    headerTimeoutMs: HEADER_TIMEOUT_MS,
-    deadlineMs: HEADER_TIMEOUT_MS + Math.ceil((est / MIN_RATE_BYTES_PER_SEC) * 1000),
+    headerTimeoutMs: headerTimeoutFor(est),
+    deadlineMs: headerTimeoutFor(est) + Math.ceil((est / MIN_RATE_BYTES_PER_SEC) * 1000),
     limits: spoolLimitsFor(true),
   }))
 
@@ -359,7 +385,7 @@ export async function runPreloadNight(deps: NightDeps): Promise<NightReport> {
   for (const e of plan) tierCounts[e.tier]++
 
   // Select: the longest prefix of the list that fits the budget.
-  type Row = { key: string; url: string; est: number }
+  type Row = { key: string; url: string; est: number; tier: PreloadTier }
   const todo: Row[] = []
   const pins: string[] = []
   let localAtStart = 0
@@ -376,7 +402,7 @@ export async function runPreloadNight(deps: NightDeps): Promise<NightReport> {
     selectedBytes += bytes
     pins.push(spoolKey)
     if (landed !== null) pinnedLandedBytes += landed
-    else todo.push({ key: spoolKey, url, est: bytes })
+    else todo.push({ key: spoolKey, url, est: bytes, tier: e.tier })
   }
   await writePins(pins)
 
@@ -389,6 +415,7 @@ export async function runPreloadNight(deps: NightDeps): Promise<NightReport> {
   let loadedBytes = 0
   let failures = 0
   let consecutive = 0
+  let concertFailures = 0
   let missing = 0
   let pausedForPlaybackMs = 0
   let lastPlayingAt = -Infinity
@@ -410,6 +437,7 @@ export async function runPreloadNight(deps: NightDeps): Promise<NightReport> {
 
   walk: for (let i = 0; i < todo.length; i++) {
     const row = todo[i]
+    if (row.tier === 'concert' && concertFailures >= MAX_CONCERT_FAILURES) continue
     // Actual sizes can run past the estimates — re-check before each fetch.
     if (pinnedLandedBytes + row.est > budget) { stoppedBy = 'budget'; break }
     const gate = await waitForQuiet()
@@ -453,6 +481,14 @@ export async function runPreloadNight(deps: NightDeps): Promise<NightReport> {
         break
       case 'failed':
         failures++
+        // A failed concert doesn't count as a link failure — a multi-hour
+        // transcode can fail on its own; the songs after it still deserve
+        // the night. Two failed concerts skip the rest of the concerts.
+        if (row.tier === 'concert') {
+          concertFailures++
+          log(`[preload] concert ${row.key} failed (${concertFailures} tonight): ${out.reason}`)
+          break
+        }
         consecutive++
         log(`[preload] ${row.key} failed (${consecutive} in a row): ${out.reason}`)
         if (consecutive >= MAX_CONSECUTIVE_FAILURES) { stoppedBy = 'errors'; break walk }
@@ -532,9 +568,24 @@ export interface PreloadHost {
   library: () => Promise<unknown>
   playlists: () => Promise<unknown>
   playEventsPath: string
+  /** live-sets.json through the app's cache (Full Live Concerts). */
+  liveSets?: () => Promise<unknown>
 }
 
 const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
+
+/** live-sets.json's entries → the merged full-show tracks to pre-load. */
+export function liveSetsFrom(raw: unknown): Array<{ mergedTrackId: number | string; totalDurationMs?: number }> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return []
+  const out: Array<{ mergedTrackId: number | string; totalDurationMs?: number }> = []
+  for (const v of Object.values(raw as Record<string, unknown>)) {
+    const e = v as { mergedTrackId?: unknown; totalDurationMs?: unknown } | null
+    const id = e?.mergedTrackId
+    if (typeof id !== 'number' && typeof id !== 'string') continue
+    out.push({ mergedTrackId: id, totalDurationMs: typeof e?.totalDurationMs === 'number' ? e.totalDurationMs : undefined })
+  }
+  return out
+}
 
 /** Tonight's inputs from this machine's own files — library.json and
  *  playlists.json through the app's caches, play-events.jsonl, and the
@@ -544,7 +595,7 @@ export async function loadPlanInputs(host: PreloadHost, now = Date.now()): Promi
   // baseUrl is never used: read() touches only the local cache + outbox.
   const island = createSyncedPicksClient({ spec: ISLAND_ALBUMS_SPEC, baseUrl: 'http://unused', dir: host.userData })
   const favorites = createSyncedPicksClient({ spec: FAVORITE_ARTISTS_SPEC, baseUrl: 'http://unused', dir: host.userData })
-  const [lib, playlists, events, islandState, favoriteState] = await Promise.all([
+  const [lib, playlists, events, islandState, favoriteState, sets] = await Promise.all([
     host.library(),
     host.playlists(),
     readFile(host.playEventsPath, 'utf-8').catch((err: NodeJS.ErrnoException) => {
@@ -553,6 +604,7 @@ export async function loadPlanInputs(host: PreloadHost, now = Date.now()): Promi
     }),
     island.read(),
     favorites.read(),
+    (host.liveSets?.() ?? Promise.resolve(null)).catch(() => null),
   ])
   return {
     tracks: arr((lib as { tracks?: unknown })?.tracks) as PreloadTrack[],
@@ -560,6 +612,7 @@ export async function loadPlanInputs(host: PreloadHost, now = Date.now()): Promi
     playlists: arr(playlists) as PreloadPlaylist[],
     islandAlbums: islandState.values,
     favoriteArtists: favoriteState.values,
+    liveSets: liveSetsFrom(sets),
     now,
   }
 }

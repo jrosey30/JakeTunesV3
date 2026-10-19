@@ -10186,7 +10186,7 @@ app.whenReady().then(async () => {
   void probeHomeminiReachability()
   // Thin links only (workmini): overnight, pre-load the songs most likely to play into the stream spool — see overnight-preload.ts.
   void startOvernightPreload({ userData: app.getPath('userData'), audioBase: HOMEMINI_AUDIO_BASE, isPlaying: () => playbackActive, streamCompressed: readStreamCompressedCached, isStreamingClient: isHomeminiPlaybackClientCached,
-    library: () => libraryCache.get(), playlists: () => playlistsCache.get(), playEventsPath: getPlayEventsPath() }).catch((err) => console.warn('[preload] schedule failed:', err instanceof Error ? err.message : err))
+    library: () => libraryCache.get(), playlists: () => playlistsCache.get(), playEventsPath: getPlayEventsPath(), liveSets: () => liveSetsCache.get() }).catch((err) => console.warn('[preload] schedule failed:', err instanceof Error ? err.message : err))
   // 4.5.0-114 — local SSD is canonical; NAS is async backup mirror only.
   const nasUp = await nasAvailable()
   console.log(`[state] storage mode: ${STATE_IS_NAS ? 'NAS' : 'local-primary'} — dir=${STATE_DIR}${nasUp ? ` (NAS backup mirror at ${NAS_STATE_DIR_PATH})` : ` (NAS backup unavailable — ${NAS_STATE_DIR_PATH} not mounted)`}`)
