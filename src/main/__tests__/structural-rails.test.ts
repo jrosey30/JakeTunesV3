@@ -206,6 +206,14 @@ describe('FORTIFICATIONS — 2026-08-29 ("IT SPEAKS. fortify fortify fortify.")'
       'fetchAudioFromHomemini no longer consults the stream spool — WAN jitter reaches playing songs again ("do the deeper buffering thing")')
   })
 
+  test('WIRING: on a thin link the live proxy is paced too, not just the spool', () => {
+    const idx = readFileSync(join(SRC, 'main/index.ts'), 'utf-8')
+    // workmini 2026-10-19: with only the spool paced, the unpaced live proxy
+    // still pulled ~260 KB/s through a ~300 KB/s tunnel and held it at ~1 s.
+    assert.ok(/withBodyInactivityTimeout\([^\n]*\n\s*pacedBody\(res\.body[^\n]*compressed\.on \? spoolPaceFor\(compressed\.kbps\) : 0\)/.test(idx),
+      'the homemini live proxy reads at wire speed again on a thin link — the tunnel jams and playback stalls')
+  })
+
   // ── Downloads: the SoundCloud truncation guard stays in the picker ───
   test('WIRING: pickBestSoundcloudMatch keeps the truncated-paren refusal', () => {
     const m = readFileSync(join(SRC, 'main/streamrip-match.ts'), 'utf-8')

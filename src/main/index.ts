@@ -48,7 +48,7 @@ import {
   phonePlaylistSidecarsNeverPushFromDesktop,
   assertNoDesktopBluntPush,
 } from './sidecar-contracts.ts'
-import { fetchHeadersWithin } from './fetch-headers'; import { withBodyInactivityTimeout } from './stream-body-timeout.ts'; import { spoolAwareServe, spoolPaceFor } from './stream-spool.ts'; import { refreshPhoneMirrors, ensureMobileImportAudio } from './phone-mirrors.ts'; import { safeIpcError } from './safe-ipc-error.ts'
+import { fetchHeadersWithin } from './fetch-headers'; import { withBodyInactivityTimeout } from './stream-body-timeout.ts'; import { spoolAwareServe, spoolPaceFor, pacedBody } from './stream-spool.ts'; import { refreshPhoneMirrors, ensureMobileImportAudio } from './phone-mirrors.ts'; import { safeIpcError } from './safe-ipc-error.ts'
 import { computeDeletedPaths } from './library-deletions'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
 import { createPlayCache } from './play-cache.ts'
@@ -4497,8 +4497,8 @@ async function fetchAudioFromHomemini(
       // Brief 161: guard the live-proxy body. (The spool path above already
       // returned for landed copies and is deliberately unguarded — it fills
       // at its own pace for later plays.)
-      const guardedBody = withBodyInactivityTimeout(
-        res.body as unknown as ReadableStream<Uint8Array>,
+      const guardedBody = withBodyInactivityTimeout( // thin link: the live proxy is paced like the spool (stream-spool.ts, 2026-10-19)
+        pacedBody(res.body as unknown as ReadableStream<Uint8Array>, compressed.on ? spoolPaceFor(compressed.kbps) : 0),
         undefined,
         () => console.warn(`[stream] homemini body stalled id=${id} flac=${wantFlac} — aborting as a load failure`),
       )
