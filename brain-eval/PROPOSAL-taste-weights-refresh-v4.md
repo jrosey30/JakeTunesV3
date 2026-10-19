@@ -1,6 +1,6 @@
 # PROPOSAL — refresh the taste v4 `W` constants (drift re-run, 2026-09-13)
 
-**Status: PROPOSED, awaiting Jake. Nothing applied — this is a code change to both
+**Status: SUPERSEDED 2026-10-19 — do NOT apply.** Taste v5 (E5 + E9, JakeTunesV3#117 / JakeTunesMobile#408, 10-13) refit the weights on a new intensity feature; these v4-era constants would overwrite v5.
 tasteScore twins (needs desktop rebuild), so it's outside the nightly auto-apply lane.**
 
 Supersedes the drift half of PROPOSAL-taste-weights-refresh.md (whose 08-16 constants

@@ -1,6 +1,6 @@
 # PROPOSAL — E7: reranker genre bonus (RERANK_GENRE_W) sweep — RECOMMEND CLOSE, KEEP 0.08
 
-**Status:** PRICED 2026-10-17 (jake lane — nothing was applied). Recommendation: **close E7, keep 0.08.**
+**Status: CLOSED 2026-10-19 (taste-engine program) — keep 0.08, no code change.** Priced 2026-10-17; recommendation below stood on the numbers alone.
 
 ## What was asked
 
