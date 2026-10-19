@@ -1,9 +1,11 @@
 /**
  * Home / Dashboard — the desktop launch page (first view after splash).
  *
- * Hierarchy: greeting + invite → library shelves (catalog cards with
- * counts), then the featured pick (or empty-library welcome) and the
- * existing rails (mixes, recents, artists, news).
+ * Hierarchy: TONIGHT ON JAKETUNES (launch page "G" — the album you're
+ * living in, Island Albums Cover Flow, Now Digging; components/
+ * TonightOnJakeTunes.tsx) → greeting + invite → library shelves (catalog
+ * cards with counts), then the featured pick (or empty-library welcome)
+ * and the existing rails (mixes, recents, artists, news).
  *
  * Aggregation runs in useMemo against lib.tracks — same source as
  * AlbumsView/ArtistsView, no separate state.
@@ -25,6 +27,7 @@ import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
 import AlbumArtImage from '../components/AlbumArtImage'
 import MadeForYou from '../components/MadeForYou'
 import YirHomeCard from '../components/yir/YirHomeCard'
+import TonightOnJakeTunes from '../components/TonightOnJakeTunes'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import type { Track, MusicNewsItem, TourDate, VenueShow, UpcomingRelease, ListeningMemoryData, RediscoveryPick } from '../types'
 import '../styles/home.css'
@@ -759,6 +762,9 @@ export default function HomeView() {
   return (
     <div className="home-view" ref={rootRef}>
       <ScrollTopButton targetRef={rootRef} />
+      {/* 2026-10-18 — launch page "G": tonight's album on an art-soaked
+          backdrop, the Island Albums Cover Flow, Now Digging. */}
+      <TonightOnJakeTunes tracks={regularTracks} artworkMap={lib.artworkMap} artIndex={normalizedArtIndex} dispatch={dispatch} playTrack={playTrack} />
       <header className="home-header">
         <div className="home-header-copy">
           <p className="home-kicker">Welcome</p>
