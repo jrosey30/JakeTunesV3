@@ -188,6 +188,9 @@ export interface FilerDeps {
 export interface OriginCacheEntry { origin?: string | null; at?: number; source?: OriginSource; via?: 'mb' | 'mb-lone-name'; mbid?: string; note?: string; failedAt?: number }
 export type OriginCache = Record<string, OriginCacheEntry>
 export const ORIGIN_RETRY_MS = 60 * 24 * 3600 * 1000
+/** Busy lookups in one sweep before it stops asking. One 503 is MusicBrainz
+ *  shedding load for a moment; two in a sweep, it is struggling. */
+export const ORIGIN_BUSY_STOP = 2
 /** v2 → v3: its known answers carry over; its "unknown"s don't — they were
  *  asked the old way (two albums, " - EP" titles, whole multi-artist credits). */
 export function originCacheFromV2(v2: unknown): OriginCache {
@@ -318,7 +321,9 @@ export function planOrigins(tracks: FilerTrack[], cache: OriginCache, now: numbe
  * blocking anyone else). Then up to maxOriginLookups real lookups; only those
  * count (10/18: the 10 remembered unknowns at the head of the walk ate the
  * whole budget every sweep from 10/12, and 123 artists were never asked).
- * MusicBrainz busy → this sweep stops asking; nothing is remembered.
+ * Busy (503 / timeout) → nothing is remembered, that artist is asked again
+ * next sweep; a second busy stops this sweep's asking (MusicBrainz is
+ * struggling — no hammering).
  * Never guessed: no answer, no origin.
  */
 export async function fillOrigins(deps: FilerDeps, tracks: FilerTrack[], _homes: Map<string, { genre: string; origin?: string }>, alreadySet: Set<number>): Promise<number> {
@@ -327,15 +332,15 @@ export async function fillOrigins(deps: FilerDeps, tracks: FilerTrack[], _homes:
   const groups = planOrigins(tracks, cache, now, alreadySet, deps.originRetryMs)
   const budget = deps.maxOriginLookups ?? 10
   const updates: Array<{ trackId: number; field: string; newValue: string }> = []
-  let asked = 0, busy = false
+  let asked = 0, busy = 0
   for (const g of groups) {
     let origin = g.origin
     let how = g.plan === 'copy' ? 'his other songs' : 'remembered'
-    if (g.plan === 'ask' && deps.lookupOrigin && !busy && asked < budget) {
+    if (g.plan === 'ask' && deps.lookupOrigin && busy < ORIGIN_BUSY_STOP && asked < budget) {
       asked++
       const r = await deps.lookupOrigin(g.name, g.albums)
       if (r.kind === 'busy') {
-        busy = true                                  // no hammering: the rest wait for the next sweep
+        busy++                                       // ORIGIN_BUSY_STOP of these and the rest wait for the next sweep
         cache[g.key] = { ...cache[g.key], failedAt: now }
         deps.log?.(`[genre-filer] origin: ${g.name} — lookup busy (${r.note}); asking again next sweep`)
       } else if (r.kind === 'found') {
@@ -360,8 +365,8 @@ export async function fillOrigins(deps: FilerDeps, tracks: FilerTrack[], _homes:
   }
   if (updates.length) deps.applied(updates)
   if (asked) {
-    const left = groups.filter((g) => g.plan === 'ask').length - asked + (busy ? 1 : 0)
-    deps.log?.(`[genre-filer] origins: asked ${asked} of ${budget}${busy ? ' (stopped: busy)' : ''}, ${left} artist${left === 1 ? '' : 's'} still to ask`)
+    const left = groups.filter((g) => g.plan === 'ask').length - asked + busy
+    deps.log?.(`[genre-filer] origins: asked ${asked} of ${budget}${busy ? `, ${busy} busy${busy >= ORIGIN_BUSY_STOP ? ' (stopped)' : ''}` : ''}, ${left} artist${left === 1 ? '' : 's'} still to ask`)
   }
   return updates.length
 }

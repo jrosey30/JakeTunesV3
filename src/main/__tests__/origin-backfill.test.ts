@@ -94,21 +94,30 @@ describe('the per-sweep budget pays for lookups only', () => {
 })
 
 describe('MusicBrainz busy is never an answer', () => {
-  it('a 503 is not remembered, stops this sweep (no hammering), and is asked again next sweep — after the never-failed', async () => {
-    const lib = [T(1, 'Busy Band', 'A', {}), T(2, 'Busy Band', 'A2'), T(3, 'Second', 'B'), T(4, 'Third', 'C')]
-    let calls = 0
-    const h = harness(lib, (a) => { calls++; return a === 'Busy Band' ? busy : found('Chile') })
+  it('a 503 is not remembered; the artist is asked again next sweep — behind the never-failed', async () => {
+    const lib = [T(1, 'Busy Band', 'A'), T(2, 'Busy Band', 'A2'), T(3, 'Second', 'B'), T(4, 'Third', 'C')]
+    const h = harness(lib, (a) => a === 'Busy Band' ? busy : found('Chile'))
     await h.sweep()
-    assert.deepEqual(h.asked.map(([a]) => a), ['Busy Band'], 'most songs first; then the sweep stops asking')
+    assert.deepEqual(h.asked.map(([a]) => a), ['Busy Band', 'Second', 'Third'], 'one busy answer skips that artist, not the sweep')
     const entry = h.state.cache[originCacheKey('Busy Band')]
     assert.equal(entry.origin, undefined, 'not cached as unknown')
     assert.equal(entry.failedAt, NOW.getTime())
+    assert.equal(h.originOf(1), undefined)
     assert.ok(h.logs.some((l) => /^\[genre-filer\] origin: Busy Band — lookup busy/.test(l)))
-    const next = harness(lib, () => found('Chile'), h.state.cache)
+    const more = [...lib, T(5, 'Fourth', 'D')]
+    const next = harness(more, () => found('Chile'), h.state.cache)
     await next.sweep()
-    assert.deepEqual(next.asked.map(([a]) => a), ['Second', 'Third', 'Busy Band'], 'asked again — behind the artists that never failed')
+    assert.deepEqual(next.asked.map(([a]) => a), ['Fourth', 'Busy Band'], 'asked again — after the artists that never failed')
     assert.equal(next.originOf(1), 'Chile')
-    assert.equal(calls, 1)
+  })
+
+  it('a second busy answer stops the sweep (no hammering a struggling MusicBrainz)', async () => {
+    const lib = [T(1, 'B1', 'A'), T(2, 'B1', 'A'), T(3, 'B1', 'A'), T(4, 'B2', 'B'), T(5, 'B2', 'B'), T(6, 'C', 'C')]
+    const h = harness(lib, (a) => a === 'C' ? found('Chile') : busy)
+    await h.sweep()
+    assert.deepEqual(h.asked.map(([a]) => a), ['B1', 'B2'])
+    assert.ok(h.logs.includes('[genre-filer] origins: asked 2 of 10, 2 busy (stopped), 3 artists still to ask'))
+    assert.deepEqual(Object.values(h.state.cache).map((e) => e.origin), [undefined, undefined], 'nothing remembered as unknown')
   })
 
   it('the lookup reports 503 / 429 / timeouts as busy, and a 400 as a plain miss', async () => {
