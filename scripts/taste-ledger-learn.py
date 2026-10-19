@@ -1,59 +1,89 @@
 #!/usr/bin/env python3
 """
-taste-ledger-learn — nightly pass that moves the actual weights (2026-08-07,
-Jake: "the AI has no feel for playlists right now").
+taste-ledger-learn v2 — the playlist-suggestion learner, rebuilt so it can't
+saturate (2026-10-19, taste-engine repairs).
 
-Reads taste-ledger.jsonl (the unified verdict stream: strip accepts/passes,
-discover accept/reject, mm-playlist keep/delete, review-gate edits) and
-nudges per-playlist blend weights in taste-weights.json. The suggestion
-strip multiplies its vibe/genre/taste components by these weights, so a
-playlist where Jake consistently accepts high-genre-fit picks drifts
-toward genre, one where he accepts on vibe drifts toward vibe.
+WHY v1 SATURATED (28 of 33 dials pinned at 0.5/1.5 by 10/19): every night it
+re-read the SAME 90-day evidence and, if accepts beat passes on a component
+by > 0.03, stepped that dial another ±0.05 from wherever it already was.
+Nothing ever told it the dial had already absorbed that evidence (the logged
+components are raw, unweighted), so identical evidence marched every dial
+to its clamp in ~10 nights — and 3 accepts vs 10 passes was enough to start.
 
-Learning rule (deliberately boring):
-  - Only 'strip' events carry blend components (ctx: vn/g/ta from
-    SuggestDiag). Compare the mean component among ACCEPTS vs PASSES.
-  - If accepts beat passes on a component by > MARGIN, nudge that weight
-    +LR; if they trail by > MARGIN, nudge -LR. Otherwise leave it.
-  - Weights clamp to [0.5, 1.5]; everything starts at 1.0.
-  - A playlist needs >= MIN_ACCEPTS accepts and >= MIN_PASSES passes in
-    the window before we touch its weights — no learning from noise.
+v2 IS STATELESS AND EVIDENCE-GATED:
+  - Weights are RECOMPUTED from the ledger every night, never stepped from
+    yesterday's values. Same evidence -> same weights. No drift.
+  - The question asked is the right one: "with these dial settings, would
+    the songs Jake added have ranked above the ones he passed over?" —
+    a weighted ranking AUC over the logged blend components.
+  - Candidate settings come from a fixed grid (each of vibe / genre /
+    taste / era in 0.25 … 3.0 — wide on purpose: on 10/19's ledger genre
+    fit predicted adds (AUC 0.61) and era fit predicted the OPPOSITE (0.39),
+    which v1's 0.5–1.5 clamp could never express). A setting is adopted only if it beats the
+    plain 1.0 blend on HELD-BACK data (the most recent 30% of each
+    playlist's verdicts, never seen when choosing) by a margin, with a
+    bootstrap lower bound above zero. Otherwise: 1.0, and the journal says
+    why ("insufficient data" is a result, not a failure).
+  - One GLOBAL setting is learned from every playlist pooled; a playlist
+    earns its OWN setting only with >= 15 adds (>= 5 of them held back) and
+    only if it beats the global one on its held-back verdicts.
 
-An accept only counts if the song is STILL on the playlist (2026-10-10):
-the strip logs the moment of adding, and Jake added 42 suggestions to
-Rocksurgence and later removed 26 — each of those was being learned as a
-"yes". An accept whose track has since left its playlist is learned as a
-pass. Membership comes from playlists.json and mobile-playlists.json; a
-playlist that no longer exists keeps its events as logged.
+VERDICTS (src/main/ipc/taste-ipc.ts) and how much each one says:
+  accept (still on the playlist) ........ yes            weight 1.0
+  accept, later taken back off .......... no             weight 1.0
+  reject (the strip's ✕) ................ no             weight 1.0
+  skipped: shown beside a pick that was
+           taken, not chosen ............ no             weight 0.5
+  refresh (↻ while it showed; legacy
+           'pass' rows are refreshes) ... no             weight 0.3
+  ignored: shown, nothing done .......... no             weight 0.1
+Impressions ('shown', with a batch id) exist from 2026-10-19; older rows
+are accept/pass only and are read as accepts vs refreshes.
 
---dry-run prints what would change and writes nothing.
+Outputs (all in the app's userData; the app is the only reader):
+  taste-weights.json        {version: 2, global, playlists, evidence, updatedAt}
+  taste-learn-status.json   last run: ok/at/summary (stale = stalled job)
+  strip-learn-journal.jsonl one line per run: what changed, why, held-back AUCs
+The first v2 run backs up the v1 weights to taste-weights.v1-backup.json.
 
-Read-only over the ledger (append-only file, never rewritten here);
-taste-weights.json is written atomically (tmp + rename) so the app's
-mtime-cached reader never sees a torn file.
+--dry-run prints what it would write and writes nothing.
 """
+import itertools
 import json
 import os
+import random
 import sys
 import time
+import zlib
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 UD = os.environ.get('JT_UD') or os.path.expanduser('~/Library/Application Support/JakeTunes')
 LEDGER = os.path.join(UD, 'taste-ledger.jsonl')
 WEIGHTS = os.path.join(UD, 'taste-weights.json')
-WINDOW_DAYS = 90
-LR = 0.05
-MARGIN = 0.03
-MIN_ACCEPTS = 3
-MIN_PASSES = 10
-BOUNDS = (0.5, 1.5)
-# ctx key -> weight key (SuggestDiag: vn=vibe-neighbor, g=genreFit, ta=taste,
-# e=eraFit — ⚠️ TWIN: src/renderer/utils/playlistSuggest.ts SuggestBlendWeights)
-COMPONENTS = {'vn': 'vibe', 'g': 'genre', 'ta': 'taste', 'e': 'era'}
+STATUS = os.path.join(UD, 'taste-learn-status.json')
+JOURNAL = os.path.join(UD, 'strip-learn-journal.jsonl')
+V1_BACKUP = os.path.join(UD, 'taste-weights.v1-backup.json')
+
+WINDOW_DAYS = 120
+HOLDOUT_SHARE = 0.30
+GRID = (0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0)
+DIALS = ('vibe', 'genre', 'taste', 'era')
+GLOBAL_MIN_POS, GLOBAL_MIN_HOLDOUT_POS = 30, 10
+OWN_MIN_POS, OWN_MIN_HOLDOUT_POS = 15, 5
+MIN_GAIN = 0.01          # held-back AUC must improve at least this much…
+BOOTSTRAP = 200          # …and its bootstrap 5th percentile must be > 0
+PRIOR = 0.004            # mild pull toward 1.0 when choosing (per |ln w|)
+# Verdict weights — see the table above.
+W_ACCEPT, W_TAKEN_BACK, W_REJECT, W_SKIPPED, W_REFRESH, W_IGNORED = 1.0, 1.0, 1.0, 0.5, 0.3, 0.1
+# ⚠️ TWIN: src/common/strip-memory.ts REFRESH_HIDE_COUNT / REFRESH_HIDE_DAYS
+REFRESH_HIDE_COUNT, REFRESH_HIDE_DAYS = 2, 90
+# ⚠️ TWIN: src/renderer/utils/playlistSuggest.ts suggestFromVibeHits blend
+BASE = {'vn': 0.45, 'g': 0.22, 'b': 0.15, 'ta': 0.10, 'e': 0.15}
+DIAL_OF = {'vn': 'vibe', 'g': 'genre', 'ta': 'taste', 'e': 'era'}
 
 
-def read_ledger(cutoff):
+def read_ledger(cutoff_iso):
     try:
         with open(LEDGER) as f:
             for line in f:
@@ -64,8 +94,7 @@ def read_ledger(cutoff):
                     ev = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                ts = ev.get('ts', '')
-                if ts >= cutoff:
+                if ev.get('surface') == 'strip' and str(ev.get('ts', '')) >= cutoff_iso:
                     yield ev
     except FileNotFoundError:
         return
@@ -87,85 +116,269 @@ def playlist_members():
     return members
 
 
+def build_examples(events, members):
+    """Per playlist: list of (ts, y, weight, ctx) — one row per judged
+    impression (new format) or per legacy accept/pass row."""
+    by_pl = defaultdict(list)
+    batches = defaultdict(lambda: {'shown': {}, 'accept': set(), 'reject': set(), 'refresh': set(), 'ts': ''})
+    taken_back = defaultdict(int)
+    for ev in events:
+        key = ev.get('key') or {}
+        pid, tid = key.get('playlistId'), key.get('trackId')
+        if not pid or tid is None:
+            continue
+        tid = str(tid)
+        v, ctx = ev.get('verdict'), ev.get('ctx') or {}
+        batch = ctx.get('batch')
+        if batch:
+            b = batches[(pid, batch)]
+            b['ts'] = b['ts'] or ev.get('ts', '')
+            if v == 'shown':
+                b['shown'][tid] = ctx
+            elif v in ('accept', 'reject', 'refresh'):
+                b[v].add(tid)
+                b['shown'].setdefault(tid, ctx)
+            continue
+        # legacy rows (no batch): accept vs pass(=refresh)
+        if v == 'accept':
+            back = pid in members and tid not in members[pid]
+            taken_back[pid] += back
+            by_pl[pid].append((ev.get('ts', ''), 0 if back else 1, W_TAKEN_BACK if back else W_ACCEPT, ctx))
+        elif v == 'pass':
+            by_pl[pid].append((ev.get('ts', ''), 0, W_REFRESH, ctx))
+    for (pid, _batch), b in batches.items():
+        any_accept = bool(b['accept'])
+        for tid, ctx in b['shown'].items():
+            if tid in b['accept']:
+                back = pid in members and tid not in members[pid]
+                taken_back[pid] += back
+                y, w = (0, W_TAKEN_BACK) if back else (1, W_ACCEPT)
+            elif tid in b['reject']:
+                y, w = 0, W_REJECT
+            elif tid in b['refresh']:
+                y, w = 0, W_REFRESH if not any_accept else W_SKIPPED
+            elif any_accept:
+                y, w = 0, W_SKIPPED
+            else:
+                y, w = 0, W_IGNORED
+            by_pl[pid].append((b['ts'], y, w, ctx))
+    for rows in by_pl.values():
+        rows.sort(key=lambda r: r[0])
+    return by_pl, taken_back
+
+
+def score(ctx, w):
+    s = 0.0
+    for c, base in BASE.items():
+        x = ctx.get(c)
+        if not isinstance(x, (int, float)):
+            x = 0.5
+        s += base * w.get(DIAL_OF.get(c, ''), 1.0) * x
+    k = ctx.get('k')
+    return s + (k if isinstance(k, (int, float)) else 0.0)
+
+
+def wauc(rows, w):
+    """Weighted Mann–Whitney AUC: P(an add outranks a no), each pair weighted
+    by both verdicts' weights; ties count half. None without both classes."""
+    pts = sorted(((score(c, w), y, wt) for _, y, wt, c in rows), key=lambda t: t[0])
+    pos_w = sum(wt for _, y, wt in pts if y == 1)
+    neg_w = sum(wt for _, y, wt in pts if y == 0)
+    if pos_w <= 0 or neg_w <= 0:
+        return None
+    acc, neg_below, i = 0.0, 0.0, 0
+    while i < len(pts):
+        j = i
+        while j < len(pts) and pts[j][0] == pts[i][0]:
+            j += 1
+        tie_pos = sum(wt for _, y, wt in pts[i:j] if y == 1)
+        tie_neg = sum(wt for _, y, wt in pts[i:j] if y == 0)
+        acc += tie_pos * (neg_below + 0.5 * tie_neg)
+        neg_below += tie_neg
+        i = j
+    return acc / (pos_w * neg_w)
+
+
+def split(rows):
+    cut = int(len(rows) * (1 - HOLDOUT_SHARE))
+    return rows[:cut], rows[cut:]
+
+
+def npos(rows):
+    return sum(1 for _, y, _, _ in rows if y == 1)
+
+
+def prior_pen(w):
+    import math
+    return PRIOR * sum(abs(math.log(w[d])) for d in DIALS)
+
+
+def best_on(train, around=None):
+    best, best_obj = None, -1.0
+    for combo in itertools.product(GRID, repeat=len(DIALS)):
+        w = dict(zip(DIALS, combo))
+        a = wauc(train, w)
+        if a is None:
+            continue
+        obj = a - prior_pen(w)
+        if around is not None:
+            import math
+            obj -= PRIOR * sum(abs(math.log(w[d] / around[d])) for d in DIALS)
+        if obj > best_obj + 1e-12:
+            best, best_obj = w, obj
+    return best
+
+
+def bootstrap_gain(holdout, w_new, w_old, seed):
+    rnd = random.Random(seed)
+    gains = []
+    for _ in range(BOOTSTRAP):
+        sample = [holdout[rnd.randrange(len(holdout))] for _ in holdout]
+        a, b = wauc(sample, w_new), wauc(sample, w_old)
+        if a is not None and b is not None:
+            gains.append(a - b)
+    if not gains:
+        return None
+    gains.sort()
+    return gains[int(0.05 * len(gains))]
+
+
+NEUTRAL = {d: 1.0 for d in DIALS}
+
+
+def decide(rows, base_w, min_pos, min_hold_pos, seed):
+    """Pick a setting on the older 70%, keep it only if it beats `base_w`
+    on the newest 30%. Returns (weights, evidence dict)."""
+    train, hold = split(rows)
+    ev = {'positives': npos(rows), 'examples': len(rows), 'holdoutPositives': npos(hold)}
+    if npos(rows) < min_pos or npos(hold) < min_hold_pos:
+        ev['decision'] = 'insufficient data'
+        return base_w, ev
+    cand = best_on(train, around=base_w)
+    if cand is None:
+        ev['decision'] = 'insufficient data'
+        return base_w, ev
+    a_new, a_old = wauc(hold, cand), wauc(hold, base_w)
+    if a_new is None or a_old is None:
+        ev['decision'] = 'insufficient data (held-back verdicts lack adds or passes)'
+        return base_w, ev
+    ev['holdoutAuc'] = {'candidate': round(a_new, 4), 'current': round(a_old, 4)}
+    if a_new - a_old < MIN_GAIN:
+        ev['decision'] = 'no reliable gain on held-back verdicts'
+        return base_w, ev
+    lb = bootstrap_gain(hold, cand, base_w, seed)
+    ev['gainLowerBound'] = None if lb is None else round(lb, 4)
+    if lb is None or lb <= 0:
+        ev['decision'] = 'gain not reliable (bootstrap lower bound <= 0)'
+        return base_w, ev
+    ev['decision'] = 'adopted'
+    return cand, ev
+
+
+def repeat_failures(events, now):
+    """Last 28 days: impressions of songs the strip-memory rules would
+    already have hidden (✕'d, or refreshed past twice in 90 days). Baseline
+    on 10/19, before the memory shipped: 3,720 of 4,950 refreshed
+    impressions (75%). Should fall to ~0 — this is the check that it does."""
+    refreshes = defaultdict(list)
+    rejected = {}
+    bad = 0
+    for ev in sorted(events, key=lambda e: e.get('ts', '')):
+        key = ev.get('key') or {}
+        k = (key.get('playlistId'), str(key.get('trackId')))
+        try:
+            t = datetime.strptime(str(ev.get('ts', ''))[:19], '%Y-%m-%dT%H:%M:%S').replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        v = ev.get('verdict')
+        recent = t >= now - timedelta(days=28)
+        rs = [r for r in refreshes[k] if t - r <= timedelta(days=REFRESH_HIDE_DAYS)]
+        hidden = k in rejected or len(rs) >= REFRESH_HIDE_COUNT
+        # A 'shown' row, or a pre-10/19 refresh row (it was on screen when ↻
+        # was pressed), for a song the rules would already have hidden.
+        if recent and hidden and (v == 'shown' or (v in ('refresh', 'pass') and not (ev.get('ctx') or {}).get('batch'))):
+            bad += 1
+        if v == 'reject':
+            rejected[k] = t
+        elif v in ('refresh', 'pass'):
+            refreshes[k].append(t)
+        elif v == 'accept':
+            refreshes[k] = []
+    return bad
+
+
 def main():
     dry_run = '--dry-run' in sys.argv
+    started = time.time()
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%S')
+    events = list(read_ledger(cutoff))
     members = playlist_members()
-    reverted = defaultdict(int)
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=WINDOW_DAYS)).strftime('%Y-%m-%dT%H:%M:%S')
-    # accepts/passes per playlist: playlistId -> verdict -> list of ctx dicts
-    strip = defaultdict(lambda: {'accept': [], 'pass': []})
-    counts = defaultdict(int)
-    for ev in read_ledger(cutoff):
-        counts[(ev.get('surface'), ev.get('verdict'))] += 1
-        if ev.get('surface') != 'strip':
-            continue
-        pid = (ev.get('key') or {}).get('playlistId')
-        v = ev.get('verdict')
-        tid = (ev.get('key') or {}).get('trackId')
-        if v == 'accept' and pid in members and tid is not None and str(tid) not in members[pid]:
-            v = 'pass'   # added, then taken back off — not a "yes"
-            reverted[pid] += 1
-        if pid and v in ('accept', 'pass'):
-            strip[pid][v].append(ev.get('ctx') or {})
+    by_pl, taken_back = build_examples(events, members)
+
+    pooled = sorted((r for rows in by_pl.values() for r in rows), key=lambda r: r[0])
+    g_w, g_ev = decide(pooled, NEUTRAL, GLOBAL_MIN_POS, GLOBAL_MIN_HOLDOUT_POS, seed=1)
+
+    playlists, evidence = {}, {}
+    for pid in sorted(by_pl):
+        rows = by_pl[pid]
+        w, ev = decide(rows, g_w, OWN_MIN_POS, OWN_MIN_HOLDOUT_POS, seed=zlib.crc32(pid.encode()))   # stable across runs (hash() is salted)
+        ev['source'] = 'own' if ev.get('decision') == 'adopted' else ('global' if g_ev.get('decision') == 'adopted' else 'neutral')
+        ev['acceptsTakenBack'] = taken_back.get(pid, 0)
+        playlists[pid] = w
+        evidence[pid] = ev
 
     try:
         with open(WEIGHTS) as f:
-            store = json.load(f)
+            previous = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        store = {}
-    playlists = store.get('playlists') or {}
+        previous = {}
+    prev_pl = previous.get('playlists') or {}
+    changes = []
+    for pid, w in playlists.items():
+        old = {d: prev_pl.get(pid, {}).get(d, 1.0) for d in DIALS}
+        if any(abs(old[d] - w[d]) > 1e-9 for d in DIALS):
+            changes.append({'playlist': pid, 'from': old, 'to': w, 'why': evidence[pid]['decision']})
 
-    nudged = []
-    for pid, buckets in strip.items():
-        accepts, passes = buckets['accept'], buckets['pass']
-        if len(accepts) < MIN_ACCEPTS or len(passes) < MIN_PASSES:
-            continue
-        w = dict(playlists.get(pid) or {})
-        for ck, wk in COMPONENTS.items():
-            a_vals = [c[ck] for c in accepts if isinstance(c.get(ck), (int, float))]
-            p_vals = [c[ck] for c in passes if isinstance(c.get(ck), (int, float))]
-            if not a_vals or not p_vals:
-                continue
-            delta = sum(a_vals) / len(a_vals) - sum(p_vals) / len(p_vals)
-            cur = w.get(wk, 1.0)
-            if delta > MARGIN:
-                nxt = min(BOUNDS[1], round(cur + LR, 4))
-            elif delta < -MARGIN:
-                nxt = max(BOUNDS[0], round(cur - LR, 4))
-            else:
-                continue
-            if nxt != cur:
-                w[wk] = nxt
-                nudged.append((pid, wk, cur, nxt, round(delta, 4), len(a_vals), len(p_vals)))
-        if w:
-            playlists[pid] = w
-
-    store['playlists'] = playlists
-    store['updatedAt'] = time.strftime('%Y-%m-%dT%H:%M:%S')
-    store['evidence'] = {
-        pid: {'accepts': len(b['accept']), 'passes': len(b['pass']), 'acceptsTakenBack': reverted.get(pid, 0)}
-        for pid, b in strip.items()
+    store = {'version': 2, 'global': g_w, 'playlists': playlists, 'evidence': evidence,
+             'globalEvidence': g_ev, 'updatedAt': now.strftime('%Y-%m-%dT%H:%M:%S')}
+    rf = repeat_failures(events, now)
+    summary = {
+        'examples': len(pooled), 'adds': npos(pooled), 'playlists': len(playlists),
+        'own': sum(1 for e in evidence.values() if e['source'] == 'own'),
+        'global': g_ev.get('decision'), 'changes': len(changes), 'repeatFailures28d': rf,
     }
     if dry_run:
         print('DRY RUN — nothing written')
-        print('accepts taken back (learned as passes):', dict(reverted))
-        for n in nudged:
-            print('would nudge', n)
-        return
+        print(json.dumps({'summary': summary, 'global': g_w, 'globalEvidence': g_ev, 'changes': changes[:20]}, indent=2))
+        return 0
+
+    if previous and previous.get('version') != 2 and not os.path.exists(V1_BACKUP):
+        with open(V1_BACKUP, 'w') as f:
+            json.dump(previous, f, indent=2)
     tmp = WEIGHTS + '.tmp'
     with open(tmp, 'w') as f:
         json.dump(store, f, indent=2)
     os.replace(tmp, WEIGHTS)
-
-    total = sum(counts.values())
-    print(f"ledger window: {total} events {dict(counts)}")
-    if nudged:
-        for pid, wk, cur, nxt, delta, na, np_ in nudged:
-            print(f"  {pid}: {wk} {cur} -> {nxt} (delta {delta:+}, {na} accepts vs {np_} passes)")
-    else:
-        print("  no nudges (insufficient evidence or deltas within margin)")
+    with open(JOURNAL, 'a') as f:
+        f.write(json.dumps({'at': store['updatedAt'], 'summary': summary, 'globalEvidence': g_ev, 'changes': changes}) + '\n')
+    status = {'ok': True, 'at': store['updatedAt'], 'seconds': round(time.time() - started, 1), 'summary': summary}
+    with open(STATUS + '.tmp', 'w') as f:
+        json.dump(status, f, indent=2)
+    os.replace(STATUS + '.tmp', STATUS)
+    print(f"strip learner v2: {summary}")
+    for c in changes:
+        print(f"  {c['playlist']}: {c['from']} -> {c['to']} ({c['why']})")
     return 0
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as e:   # leave a visible failure, never a silent stall
+        try:
+            with open(STATUS + '.tmp', 'w') as f:
+                json.dump({'ok': False, 'at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S'), 'error': str(e)}, f)
+            os.replace(STATUS + '.tmp', STATUS)
+        finally:
+            raise
