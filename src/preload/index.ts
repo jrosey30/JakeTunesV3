@@ -262,6 +262,8 @@ const electronAPI = {
   getFriends: (): Promise<{ ok: boolean; friends: Array<{ name: string; adds: number; got: number; tossed: number; lastAt: number; imported: number }> }> => ipcRenderer.invoke('get-friends'),
   tasteLedgerAppend: (events: Array<{ surface: string; verdict: string; key?: Record<string, unknown>; ctx?: Record<string, unknown> }>): Promise<{ ok: boolean; appended?: number }> =>
     ipcRenderer.invoke('taste-ledger-append', events),
+  stripMemory: (playlistId: string, memberIds: number[]): Promise<{ ok: boolean; hidden: number[]; negatives: number[] }> =>
+    ipcRenderer.invoke('strip-memory', playlistId, memberIds),
   getTasteWeights: (): Promise<{ ok: boolean; weights: Record<string, unknown> }> =>
     ipcRenderer.invoke('get-taste-weights'),
   getFriendStandings: (): Promise<{ ok: boolean; standings?: Array<{ name: string; points: number; adds: number; tossed: number; credits: Array<{ status: 'kept' | 'partial' | 'deleted' | 'legacy'; points: number; record: { kind: 'song' | 'album'; label: string; creditedAt: string } }> }>; error?: string }> => ipcRenderer.invoke('get-friend-standings'),
@@ -439,8 +441,8 @@ const electronAPI = {
   // 4.5: brain-driven playlist suggestions — the playlist's embedding centroid's
   // nearest library tracks (vibe match). PlaylistView's "Suggested" strip filters
   // these for freshness + diversity instead of the old artist-match heuristic.
-  playlistSimilar: (playlistIds: number[], clusters?: number, hint?: string): Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }> =>
-    ipcRenderer.invoke('playlist-similar', playlistIds, clusters, hint),
+  playlistSimilar: (playlistIds: number[], clusters?: number, hint?: string, memory?: { hidden?: number[]; negatives?: number[] }): Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }> =>
+    ipcRenderer.invoke('playlist-similar', playlistIds, clusters, hint, memory),
   onEmbeddingBackfillProgress: (callback: (p: { done: number; total: number }) => void): () => void => {
     const handler = (_e: unknown, p: { done: number; total: number }) => callback(p)
     ipcRenderer.on('embedding-backfill-progress', handler)

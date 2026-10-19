@@ -718,6 +718,7 @@ declare global {
       discoveryLearned?: () => Promise<{ ok: boolean; summary?: DiscoveryLearned; error?: string }>
       getFriends: () => Promise<{ ok: boolean; friends: Array<{ name: string; adds: number; got: number; tossed: number; lastAt: number; imported: number }> }>
       tasteLedgerAppend?: (events: Array<{ surface: string; verdict: string; key?: Record<string, unknown>; ctx?: Record<string, unknown> }>) => Promise<{ ok: boolean; appended?: number }>
+      stripMemory?: (playlistId: string, memberIds: number[]) => Promise<{ ok: boolean; hidden: number[]; negatives: number[] }>
       getTasteWeights?: () => Promise<{ ok: boolean; weights: Record<string, unknown> }>
       getFriendStandings: () => Promise<{ ok: boolean; standings?: Array<{ name: string; points: number; adds: number; tossed: number; credits: Array<{ status: 'kept' | 'partial' | 'deleted' | 'legacy'; points: number; record: { kind: 'song' | 'album'; label: string; creditedAt: string } }> }>; error?: string }>
       sweepFriendImports: () => Promise<{ ok: boolean; credited: number }>
@@ -811,7 +812,7 @@ declare global {
       embeddingStatus: () => Promise<{ configured: boolean; count: number; total: number; stale: number }>
       embeddingBackfill: (opts?: { force?: boolean }) => Promise<{ ok: boolean; embedded: number; total: number; error?: string }>
       // 4.5: brain-driven playlist suggestions — centroid nearest library tracks.
-      playlistSimilar: (playlistIds: number[], clusters?: number, hint?: string) => Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }>
+      playlistSimilar: (playlistIds: number[], clusters?: number, hint?: string, memory?: { hidden?: number[]; negatives?: number[] }) => Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }>
       onEmbeddingBackfillProgress: (callback: (p: { done: number; total: number }) => void) => () => void
       // Brief 023: removed exportLibrarySnapshot / mobileOverridesPickFile
       // / mobileOverridesApply types — vestigial mobile-sync feature gone.

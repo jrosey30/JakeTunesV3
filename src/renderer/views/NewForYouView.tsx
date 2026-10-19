@@ -24,6 +24,7 @@ import { useLibrary } from '../context/LibraryContext'
 import { sessionArtistImages, hashColor, initials, prefetchArtistPortraits } from '../utils/artistPortrait'
 import { useAudio } from '../hooks/useAudio'
 import AlbumArtImage from '../components/AlbumArtImage'
+import { useImpressions } from '../hooks/useImpressions'
 import { PlayIcon, PauseIcon, CloseIcon } from '../components/TransportIcons'
 import type { RediscoveryPick } from '../types'
 import mmSmug from './RecordStore/art/musicman-smug.png'
@@ -206,6 +207,16 @@ export default function NewForYouView() {
     })
     return () => { off?.() }
   }, [])
+
+  // Impressions: a card counts as shown only once it was really on screen
+  // (hooks/useImpressions.ts) — the denominator Discovery acceptance lacked.
+  const seenRef = useImpressions<FeedCard>((batch) => {
+    void window.electronAPI.tasteLedgerAppend?.(batch.map(({ meta: c }) => ({
+      surface: 'discover', verdict: 'shown',
+      key: { artist: c.artist, title: c.title },
+      ctx: { lane: c.lane, type: c.type },
+    })))
+  })
 
   const notForMe = (c: FeedCard) => {
     void window.electronAPI.discoveryNotForMe?.(c.artist, cardId(c))
@@ -413,7 +424,7 @@ export default function NewForYouView() {
               const isAdded = added.has(id)
               const sampleUrl = c.type === 'album' ? c.hookPreviewUrl : c.previewUrl
               return (
-                <div key={id} className="store-card store-card--reco">
+                <div key={id} ref={seenRef(id, c)} className="store-card store-card--reco">
                   <div className="store-art">
                     <div className="df-art-ph" aria-hidden="true">♪</div>
                     {c.artUrl && <img className="store-art-img" src={c.artUrl} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none' }} />}

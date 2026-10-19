@@ -188,3 +188,18 @@ describe('PoolDiversity — exclude first, then cut', () => {
     assert.ok(!hits.some((h) => h.trackId === 1000))
   })
 })
+
+describe('playlist-vibes — negative examples (2026-10-19)', () => {
+  it('demotes a candidate that sits closer to a rejected song than to its sub-vibe, and only that one', () => {
+    const seeds = [vec(0, 2, 0.05), vec(0, 2, 0.10), vec(0, 2, 0.15)]
+    const near = vec(0, 2, 0.6)       // drifted toward axis 2
+    const core = vec(0, 2, 0.1)       // right in the playlist's vibe
+    const rejected = vec(0, 2, 0.62)  // what Jake ✕'d: almost exactly `near`
+    const cands: Array<[number, Float32Array]> = [[1, near], [2, core]]
+    const plain = scorePlaylistCandidates(seeds, cands, null, 1).hits
+    const withNeg = scorePlaylistCandidates(seeds, cands, null, 1, null, null, [rejected]).hits
+    const score = (hs: typeof plain, id: number) => hs.find((h) => h.trackId === id)?.score ?? NaN
+    assert.ok(score(withNeg, 1) < score(plain, 1) - 0.1, 'the near-copy of a rejected song drops')
+    assert.equal(score(withNeg, 2), score(plain, 2), 'a candidate nearer its sub-vibe is untouched')
+  })
+})

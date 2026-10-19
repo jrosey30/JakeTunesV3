@@ -197,6 +197,18 @@ export const normKey = (s: string): string => storedNameKey(s, legacyNormKey)
 export const foldKey = (s: string): string => nameKey(s)
 export const cardKey = (c: { artist: string; title: string }) => `${normKey(c.artist)}|${normKey(c.title)}`
 
+/** The ledger keys a "Not for me" on an OWNED artist's card must rest.
+ *  The page sends its own card id (`disc|artist|title`, lowercased) but
+ *  filterFeed looks cards up by cardKey — so until 2026-10-19 the rest was
+ *  written under a key the feed never read, and the card came straight back
+ *  (only the critic lane, which checks both, honoured it). Both are kept. */
+export function restKeysForCard(pageCardId: string): string[] {
+  const parts = pageCardId.split('|')
+  if (parts[0] !== 'disc' || parts.length < 3) return [pageCardId]
+  const feedKey = cardKey({ artist: parts[1], title: parts.slice(2).join('|') })
+  return feedKey === pageCardId ? [pageCardId] : [pageCardId, feedKey]
+}
+
 /** Clip a "why" to at most n words — the feed shows phrases, not paragraphs. */
 export function clipWhy(why: string, maxWords = 9): string {
   const words = String(why || '').replace(/["""]/g, '').trim().split(/\s+/)

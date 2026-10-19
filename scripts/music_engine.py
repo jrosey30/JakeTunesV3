@@ -3,7 +3,9 @@
 music_engine — NAS-side data layer, FFmpeg mixtape renderer, metadata
 harmonizer, and inbox file watcher for JakeTunes.
 
-Complements scripts/nightly_loop.py:
+Standalone tool. (Its companion scripts/nightly_loop.py was retired on
+2026-10-19 — it was never scheduled anywhere; the nightly taste work is
+scripts/taste-engine.py.)
   - SQLite indexes virtual tracks inside multi-hour live masters
   - Stores contrastive listening logs + nightly precision scores
   - Harmonizes Deezer → MusicBrainz → Discogs enrichment

@@ -1540,10 +1540,11 @@ ipc.handle('discovery-not-for-me', async (_e, artist: string, cardKey?: string) 
     }
   } catch { /* can't read the library: fall through to the old behaviour */ }
 
+  const { restKeysForCard } = await import('./discover-feed.ts')
   await discoveryFeedbackCache.update((cur) => {
     if (owned) {
       // Rest this card hard rather than blacklisting a artist Jake plays.
-      if (cardKey) cur.served[String(cardKey)] = { first: Date.now(), last: Date.now(), views: 99 }
+      if (cardKey) for (const k of restKeysForCard(String(cardKey))) cur.served[k] = { first: Date.now(), last: Date.now(), views: 99 }
     } else {
       cur.notForMe[key] = { artist: String(artist), at: Date.now() }
     }
@@ -9095,7 +9096,7 @@ async function playlistHintVector(hint: string | undefined): Promise<Float32Arra
     return null
   }
 }
-ipc.handle('playlist-similar', async (_e, playlistIds: number[], clusters: number = 5, hint?: string): Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }> => {
+ipc.handle('playlist-similar', async (_e, playlistIds: number[], clusters: number = 5, hint?: string, memory?: { hidden?: number[]; negatives?: number[] }): Promise<{ ok: boolean; hits: Array<{ trackId: number; score: number; cluster: number }>; clusterSeeds?: number[] }> => {
   try {
     if (!Array.isArray(playlistIds) || playlistIds.length === 0) return { ok: false, hits: [] }
     const m = await ragGetEmbeddingsMap()
@@ -9142,9 +9143,12 @@ ipc.handle('playlist-similar', async (_e, playlistIds: number[], clusters: numbe
     const plAlbums = new Set(playlistIds.map(albumOf).filter((k) => k.trim().length > 0))
     const admit = (id: number): string | null => {
       const t = libById.get(id)
-      return !t || t.audioMissing || plAlbums.has(albumOf(id)) ? null : (artistOf.get(id) || '')
+      return !t || t.audioMissing || plAlbums.has(albumOf(id)) || hiddenIds.has(id) ? null : (artistOf.get(id) || '')
     }
-    const { hits, clusterSeeds } = scorePlaylistCandidates(seeds, candidateEntries(), gc, Math.max(1, Math.min(clusters, Math.floor(seeds.length / 3))), hintVec, { admit, playlistArtists: plArtistSet as Set<string> })
+    // Strip memory (src/common/strip-memory.ts): hidden songs leave before the pool cut; ✕'d / taken-back songs are negative examples.
+    const hiddenIds = new Set((memory?.hidden ?? []).map(Number))
+    const negVecs = (memory?.negatives ?? []).map((id) => m.get(Number(id))).filter((v): v is Float32Array => !!v)
+    const { hits, clusterSeeds } = scorePlaylistCandidates(seeds, candidateEntries(), gc, Math.max(1, Math.min(clusters, Math.floor(seeds.length / 3))), hintVec, { admit, playlistArtists: plArtistSet as Set<string> }, negVecs)
     // Candidate DIVERSITY (2026-08-07, Jake: "it seems to only suggest
     // other songs by bands already in that playlist"): measured on Pool
     // Dos, 101 of 162 raw candidates were catalog-mates of the playlist's
