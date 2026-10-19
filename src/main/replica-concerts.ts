@@ -62,6 +62,8 @@ export interface ReplicaConcertDeps {
 
 const BARE_HASH = /^[0-9a-f]{32}$/
 const MAX_POSTER_BYTES = 25 * 1024 * 1024
+/** artwork/<this>: { bare hash → the versioned hash its jpg was fetched as }. */
+export const REPLICA_POSTERS_FILE = 'replica-posters.json'
 const MAX_CROWD_BYTES = 8 * 1024 * 1024
 const CROWD_MISS_TTL_MS = 10 * 60_000
 
@@ -179,7 +181,22 @@ export function startReplicaConcertSync(deps: ReplicaConcertDeps): ReplicaConcer
     return true
   }
 
-  /** Bring each concert's poster key in line with the laptop's. */
+  // Which poster version each file on disk really is. The index can already
+  // carry the laptop's versioned hash while the jpg is an older image —
+  // replacing a poster rewrites <bare>.jpg in place and only bumps the
+  // index's `_<epoch>` suffix (Geese "Getting Killed Again", 2026-10-19:
+  // index matched, the jpg was the Oct 8 image, the laptop's is Oct 12's).
+  // So the index can't say what's on disk; this small sidecar can.
+  const fetchedPath = join(deps.artwork.dir, REPLICA_POSTERS_FILE)
+  async function loadFetched(): Promise<Record<string, string>> {
+    try {
+      const raw = JSON.parse(await readFile(fetchedPath, 'utf-8')) as unknown
+      return raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, string>) : {}
+    } catch { return {} }
+  }
+
+  /** Bring each concert's poster key in line with the laptop's — the index
+   *  entry AND the image bytes behind it. */
   async function pullPosters(origin: string): Promise<Array<{ key: string; hash: string }>> {
     const keys = concertArtworkKeys(await deps.liveSets.get(), (await deps.tracks()).filter(isTrackRow))
     if (!keys.length) return []
@@ -189,15 +206,21 @@ export function startReplicaConcertSync(deps: ReplicaConcertDeps): ReplicaConcer
     if (!res.ok) throw new Error(`live-sets artwork HTTP ${res.status}`)
     const items = ((await res.json()) as { items?: Record<string, unknown> }).items ?? {}
     const index = await deps.artwork.loadIndex()
+    const fetched = await loadFetched()
+    let fetchedChanged = false
     const changed: Array<{ key: string; hash: string }> = []
     for (const key of keys) {
       const hash = items[key]
       // null = the laptop has no art for this key: never delete ours.
-      if (typeof hash !== 'string' || !hash || index[key] === hash) continue
+      if (typeof hash !== 'string' || !hash) continue
       const bare = hash.replace(/_\d+$/, '')
       if (!BARE_HASH.test(bare)) continue
       const jpg = join(deps.artwork.dir, `${bare}.jpg`)
-      if (!(await exists(jpg))) {
+      // Re-download whenever the bytes on disk aren't the version the laptop
+      // names — even if the index already agrees and a file is present.
+      const stale = fetched[bare] !== hash || !(await exists(jpg))
+      if (!stale && index[key] === hash) continue
+      if (stale) {
         const img = await get(`${origin}/artwork/${bare}`, { accept: 'image/*' })
         const type = img.headers.get('content-type') || ''
         if (!img.ok || !type.startsWith('image/')) {
@@ -208,9 +231,12 @@ export function startReplicaConcertSync(deps: ReplicaConcertDeps): ReplicaConcer
         if (bytes.length === 0 || bytes.length > MAX_POSTER_BYTES) continue
         await mkdir(deps.artwork.dir, { recursive: true })
         await writeAtomic(jpg, bytes)
+        fetched[bare] = hash
+        fetchedChanged = true
       }
       changed.push({ key, hash })
     }
+    if (fetchedChanged) await writeAtomic(fetchedPath, JSON.stringify(fetched, null, 1))
     if (changed.length) {
       // Fresh load right before the save: the index writer is serialized, and
       // this keeps the window for a concurrent edit as small as every other

@@ -194,6 +194,30 @@ describe('replica pull against the hub', () => {
     } finally { r.handle.stop() }
   })
 
+  it('a poster replaced in place on the laptop is re-downloaded even when the index already agrees (Geese, 2026-10-19)', async () => {
+    // workmini: index carried the laptop's versioned hash, but the jpg on disk
+    // was the Oct 8 image; the laptop had rewritten <bare>.jpg on Oct 12.
+    const hub = freshHub()
+    const r = await replica(hub, { local: sets, index: { ...hub.index } })
+    await writeFile(join(r.artDir, 'accd557ecfd5443d7e49d4870e98f375.jpg'), Buffer.from('OLD-OCT-8-IMAGE'))
+    try {
+      await r.handle.tick()
+      const jpg = await readFile(join(r.artDir, 'accd557ecfd5443d7e49d4870e98f375.jpg'))
+      assert.equal(jpg[0], 0xff, 'the stale bytes were replaced with the hub image')
+      assert.ok((r.notes.at(-1)?.artwork ?? []).length > 0, 'the renderer is told to redraw it')
+      // Recorded: the next pass trusts the file and fetches nothing.
+      const before = hub.calls.filter((c) => c.startsWith('/artwork/')).length
+      await r.handle.tick()
+      assert.equal(hub.calls.filter((c) => c.startsWith('/artwork/')).length, before)
+      // The laptop replaces it again → new version suffix → fetched again.
+      hub.index['the postal service|||everything will change (live)'] = 'accd557ecfd5443d7e49d4870e98f375_1799999999999'
+      hub.images.accd557ecfd5443d7e49d4870e98f375 = Buffer.from([0xff, 0xd8, 0xff, 0xe1, 9])
+      await r.handle.tick()
+      const again = await readFile(join(r.artDir, 'accd557ecfd5443d7e49d4870e98f375.jpg'))
+      assert.equal(again[3], 0xe1, 'a newer poster on the laptop lands on the replica')
+    } finally { r.handle.stop() }
+  })
+
   it('a poster the hub cannot serve leaves the key alone', async () => {
     const hub = { ...freshHub(), images: {} }
     const r = await replica(hub, { local: sets, index: { 'the postal service|||everything will change (live)': POSTAL_OLD } })
