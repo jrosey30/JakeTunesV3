@@ -12,6 +12,10 @@ import {
 } from '../genre-filer.ts'
 import { GENRES, GENRE_NAMES, phoneOverlayFields } from '../../common/genre-vocab.ts'
 import { matchMbArtist, confirmedArtist, countryName, musicBrainzCountryById } from '../artist-tags.ts'
+import type { OriginLookup } from '../origin-lookup.ts'
+
+const found = (origin: string): OriginLookup => ({ kind: 'found', origin, source: 'mb', mbid: 'test', evidence: 'test' })
+const unknown: OriginLookup = { kind: 'unknown', note: 'test' }
 
 const T = (id: number, artist: string, album: string, genre: string, extra: Partial<FilerTrack> = {}): FilerTrack =>
   ({ id, title: `t${id}`, artist, album, genre, duration: 1000 + id, ...extra })
@@ -143,7 +147,7 @@ describe('origin for settled songs', () => {
     ]
     const f = fakeDeps(lib, {})
     const asked: string[] = []
-    f.deps.lookupOrigin = async (a) => { asked.push(a); return a === 'Mystery Band' ? 'Japan' : null }
+    f.deps.lookupOrigin = async (a) => { asked.push(a); return a === 'Mystery Band' ? found('Japan') : unknown }
     const r = await runFilerSweep(f.deps)
     const originOf = (id: number) => f.persisted.find(([tid, fl]) => tid === id && fl.origin)?.[1].origin
     assert.equal(originOf(30), 'United States', 'from his other album — no lookup')
@@ -163,7 +167,7 @@ describe('names in other alphabets (Молчат Дома → Israel, 10/11)', (
     ]
     const f = fakeDeps(lib, {})
     const asked: string[] = []
-    f.deps.lookupOrigin = async (a) => { asked.push(a); return null }
+    f.deps.lookupOrigin = async (a) => { asked.push(a); return unknown }
     await runFilerSweep(f.deps)
     const originOf = (id: number) => f.persisted.find(([tid, fl]) => tid === id && fl.origin)?.[1].origin
     assert.equal(originOf(41), undefined, "never another artist's origin, never a guess from Cyrillic")
@@ -219,7 +223,7 @@ describe('MusicBrainz identity is proven by an album (MESH, 10/11)', () => {
     const lib: FilerTrack[] = [T(50, 'MESH', 'No Fun At All', 'Post-Punk', { genreApproved: true }), T(51, 'MESH', 'No Fun At All', 'Post-Punk', { genreApproved: true })]
     const f = fakeDeps(lib, {})
     const seen: Array<[string, string[]]> = []
-    f.deps.lookupOrigin = async (a, albums) => { seen.push([a, albums]); return 'United States' }
+    f.deps.lookupOrigin = async (a, albums) => { seen.push([a, albums]); return found('United States') }
     await runFilerSweep(f.deps)
     assert.deepEqual(seen, [['MESH', ['No Fun At All']]])
   })

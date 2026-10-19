@@ -10,8 +10,9 @@ import { join } from 'path'
 import { readFile, writeFile, rename } from 'fs/promises'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
-import { runFilerSweep, resolveCheckEntry, trackFingerprint, isSettled, originCacheKey, type FilerTrack, type FilerDeps, type CheckEntry, type Evidence } from '../genre-filer.ts'
+import { runFilerSweep, resolveCheckEntry, trackFingerprint, isSettled, type FilerTrack, type FilerDeps, type CheckEntry, type Evidence, type OriginCache, originCacheFromV2 } from '../genre-filer.ts'
 import { musicBrainzArtistCandidates, musicBrainzAlbum, confirmedArtist, musicBrainzCountryById } from '../artist-tags.ts'
+import { lookupArtistOrigin, cleanAlbumTitle } from '../origin-lookup.ts'
 import { exaSearch } from '../exa.ts'
 
 export interface GenreFilerHost {
@@ -25,11 +26,14 @@ export interface GenreFilerHost {
 }
 
 const CHECK_FILE = (): string => join(app.getPath('userData'), 'genre-check.json')
-/** Origins already asked of MusicBrainz: {artistNorm: {origin|null, at}} — so an
- *  artist nobody knows isn't asked about every five minutes. */
+/** Origins already asked: {originCacheKey: OriginCacheEntry} — so an artist
+ *  nobody knows isn't asked about every five minutes. */
 // v2 (10/11): v1 answers came from name-only matches (MESH got Bristol's origin) — not reused.
-const ORIGIN_FILE = (): string => join(app.getPath('userData'), 'origin-lookups-v2.json')
-const ORIGIN_RETRY_MS = 60 * 24 * 3600 * 1000
+// v3 (10/18): v2's "unknown"s were asked the old way — two albums, " - EP"
+// titles, whole multi-artist credits — so they are asked once more; its
+// known answers carry over.
+const ORIGIN_FILE = (): string => join(app.getPath('userData'), 'origin-lookups-v3.json')
+const ORIGIN_FILE_V2 = (): string => join(app.getPath('userData'), 'origin-lookups-v2.json')
 const SWEEP_MS = 5 * 60_000
 const FIRST_SWEEP_MS = 90_000
 
@@ -40,6 +44,15 @@ async function saveCheck(list: CheckEntry[]): Promise<void> {
   const tmp = `${CHECK_FILE()}.tmp`
   await writeFile(tmp, JSON.stringify(list, null, 2))
   await rename(tmp, CHECK_FILE())
+}
+
+async function loadOriginCache(): Promise<OriginCache> {
+  try { return JSON.parse(await readFile(ORIGIN_FILE(), 'utf8')) as OriginCache } catch { /* no v3 yet */ }
+  try { return originCacheFromV2(JSON.parse(await readFile(ORIGIN_FILE_V2(), 'utf8'))) } catch { return {} }
+}
+async function saveOriginCache(cache: OriginCache): Promise<void> {
+  const tmp = `${ORIGIN_FILE()}.tmp`
+  await writeFile(tmp, JSON.stringify(cache)); await rename(tmp, ORIGIN_FILE())
 }
 
 /** Library tracks with the desktop overrides' genre/origin applied (same fp rule as App.tsx). */
@@ -61,7 +74,7 @@ function deps(host: GenreFilerHost): FilerDeps {
       await host.mbThrottle()
       const cands = (await musicBrainzArtistCandidates(u.artist, host.userAgent)) ?? []
       let album: { tags: string[]; creditIds: string[] } | null = null
-      if (!u.comp && u.album) { await host.mbThrottle(); album = await musicBrainzAlbum(u.artist, u.album, host.userAgent) }
+      if (!u.comp && u.album) { await host.mbThrottle(); album = await musicBrainzAlbum(u.artist, cleanAlbumTitle(u.album), host.userAgent) }
       // The artist's tags and origin count only when this album is credited to
       // them; otherwise the name may be a namesake's (MESH ≠ Bristol's Mesh).
       const a = confirmedArtist(cands, album?.creditIds ?? [])
@@ -75,35 +88,16 @@ function deps(host: GenreFilerHost): FilerDeps {
       return { artistTags, albumTags, origin: a?.origin, press }
     },
     classify: (system, user) => host.claude(system, user),
-    lookupOrigin: async (artist, albums) => {
-      let cache: Record<string, { origin: string | null; at: number }> = {}
-      try { cache = JSON.parse(await readFile(ORIGIN_FILE(), 'utf8')) as typeof cache } catch { /* first lookup */ }
-      const k = originCacheKey(artist), hit = cache[k]
-      if (hit && (hit.origin || Date.now() - hit.at < ORIGIN_RETRY_MS)) return hit.origin
-      await host.mbThrottle()
-      const cands = await musicBrainzArtistCandidates(artist, host.userAgent)
-      if (!cands) return undefined                   // MusicBrainz busy — ask next sweep
-      let origin: string | null = null
-      // Confirmed by one of his albums, or not at all.
-      for (const album of cands.length ? albums.slice(0, 2) : []) {
-        await host.mbThrottle()
-        const al = await musicBrainzAlbum(artist, album, host.userAgent)
-        if (!al) return undefined
-        const a = confirmedArtist(cands, al.creditIds)
-        if (a) {
-          if (!a.origin && a.id) { await host.mbThrottle(); const c = await musicBrainzCountryById(a.id, host.userAgent); if (c === null) return undefined; a.origin = c }
-          origin = a.origin ?? null
-          break
-        }
-      }
-      cache[k] = { origin, at: Date.now() }
-      const tmp = `${ORIGIN_FILE()}.tmp`
-      await writeFile(tmp, JSON.stringify(cache)); await rename(tmp, ORIGIN_FILE())
-      return origin
-    },
+    // Network only — the cache and the per-sweep budget live in fillOrigins.
+    lookupOrigin: (artist, albums) => lookupArtistOrigin(artist, albums, { throttle: host.mbThrottle, userAgent: host.userAgent }),
+    loadOriginCache,
+    saveOriginCache,
     loadCheck,
     saveCheck,
-    log: (m) => console.log(m),
+    // warn, not log: main.log keeps only warn/error, and the filer's picks,
+    // check-list parkings and origin hits/misses are what a later "why does
+    // this say X" needs (10/18 — the origin backfill was dead for 6 days, silently).
+    log: (m) => console.warn(m),
   }
 }
 
@@ -114,7 +108,7 @@ export function startGenreFiler(host: GenreFilerHost): void {
     running = true
     try {
       const r = await runFilerSweep(deps(host))
-      if (r.filed || r.checked || r.origins) console.log(`[genre-filer] sweep: filed ${r.filed}, to check ${r.checked}, waiting ${r.deferred}, origins ${r.origins}`)
+      if (r.filed || r.checked || r.origins) console.warn(`[genre-filer] sweep: filed ${r.filed}, to check ${r.checked}, waiting ${r.deferred}, origins ${r.origins}`)
     } catch (err) {
       console.warn('[genre-filer] sweep failed:', err instanceof Error ? err.message : err)
     } finally { running = false }
