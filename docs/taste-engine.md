@@ -46,7 +46,12 @@ otherwise. Too few verdicts → "insufficient data", never a score. 7. Publish.
 - homemini mixes / DJ: `backend/src/util/tasteState.ts` → `tasteScore` uses the
   learned score only while `promoted` and < 72 h old; v5 otherwise.
 - Desktop: `src/main/taste-state.ts` adopts the NAS copy; the playlist strip's
-  taste term uses the learned percentile under the same rule.
+  taste term uses the learned percentile under the same rule. With no NAS
+  mount (workmini, a replica) it asks homemini's backend instead —
+  `GET /api/taste-state` (JakeTunesMobile `backend/src/routes/tasteState.ts`)
+  serves the same file from memory with an ETag, so the 10-minute poll is a
+  304 until the next nightly build. Same rules: malformed or older builds are
+  refused.
 - Scores are quantile-mapped onto v5's distribution, so TASTE_W keeps its meaning.
 
 ## First readings (10/19, real data, out-of-time)
@@ -65,4 +70,4 @@ starts 2026-05-25), overlooked album track, never played, matches recent sound.
 `taste-scorecard.json` (latest), `taste-journal.jsonl` (history),
 `taste-engine-status.json` (staleness). Log: `~/Library/Logs/jaketunes-taste-engine.log`.
 Tests: `python3 scripts/tests/test_taste_engine.py`, `src/main/__tests__/taste-state.test.ts`,
-JakeTunesMobile `backend/src/util/__tests__/tasteState.test.ts`.
+JakeTunesMobile `backend/src/util/__tests__/tasteState.test.ts` + `backend/src/routes/__tests__/tasteState.test.ts`.

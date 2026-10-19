@@ -10232,7 +10232,7 @@ app.whenReady().then(async () => {
   // mirror to the NAS without ever surfacing a "go push it" banner.
   setInterval(() => { void autoBackupStateToNas() }, 120_000)
   startBrainPull(async () => new Set((((await libraryCache.get()) as { tracks?: Array<{ id: number }> }).tracks || []).map((t) => Number(t.id))), nasUp, STATE_FILE_NAMES) // NAS→laptop, never back
-  startTasteStatePull({ localDir: STATE_DIR, nasDir: NAS_STATE_DIR_PATH, nasAvailable, log: (m) => console.warn(m) }) // NAS→laptop learned taste (taste-engine)
+  startTasteStatePull({ localDir: STATE_DIR, nasDir: NAS_STATE_DIR_PATH, nasAvailable, hubBase: () => { try { return new URL(MOBILE_BACKEND_URL).origin } catch { return null } }, log: (m) => console.warn(m) }) // learned taste (taste-engine): NAS, else homemini's /api/taste-state (workmini has no NAS mount)
   // 4.5: auto-index new songs into RAG (Jake: "every new song to auto index").
   // Boot + every 30s — embeds anything imported that lacks a vector, so RAG /
   // mixes / chat can use it within seconds, not at the nightly trainer pass.
