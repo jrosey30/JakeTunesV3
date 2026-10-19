@@ -3965,16 +3965,15 @@ setInterval(() => { void refreshPhoneAuthoredMirrors() }, 5 * 60_000)
 // laptop's file swap onto workmini (jaketunes-workmini-index-sync.sh, retired
 // 2026-10-08), which reloaded whatever the laptop had at that second and
 // made phone downloads vanish mid-play. Inert on the canonical laptop.
+// Replica = streamSource 'homemini' OR a streamRoot (a path on workmini); hub = the phone mirrors' backend. Null on the laptop.
+async function replicaHubBase(): Promise<string | null> {
+  const replica = (await readStreamSourceCached()) === 'homemini' || (await readStreamRootCached()) !== null
+  if (!replica) return null
+  try { return new URL(MOBILE_BACKEND_URL).origin } catch { return null }
+}
 const hubCatalog = startHubCatalogPoll({
   stateDir: app.getPath('userData'),
-  hubBase: async () => {
-    // Replica = streaming client: streamSource 'homemini' OR a streamRoot
-    // (which on workmini is a filesystem path, NOT a URL — the hub address
-    // is the backend URL the phone mirrors already use).
-    const replica = (await readStreamSourceCached()) === 'homemini' || (await readStreamRootCached()) !== null
-    if (!replica) return null
-    try { return new URL(MOBILE_BACKEND_URL).origin } catch { return null }
-  },
+  hubBase: replicaHubBase,
   send: (channel, payload) => {
     if (!mainWindow || mainWindow.isDestroyed()) return false
     mainWindow.webContents.send(channel, payload)
@@ -9996,7 +9995,8 @@ registerLiveSetsIpc(ipc, {
   liveSetsCache,
   artworkHash,
   loadArtworkIndex,
-  saveArtworkIndex,
+  saveArtworkIndex, replicaHubBase, sendToRenderer, // + replica concert mirror (replica-concerts.ts)
+  libraryTracks: async () => ((await libraryCache.get()) as CachedLibrary).tracks || [],
 })
 
 // Artwork IPC extracted to ipc/artwork-ipc.ts (6.0 Phase 1).

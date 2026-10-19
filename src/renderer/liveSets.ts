@@ -58,19 +58,42 @@ export function ensureLiveSetsLoaded(): Promise<void> {
 }
 
 /**
+ * Re-read live-sets.json after main replaced it (a replica adopting the
+ * laptop's copy from the hub — src/main/replica-concerts.ts).
+ */
+export async function reloadLiveSets(): Promise<void> {
+  try {
+    const res = await window.electronAPI.loadLiveSets()
+    if (res.ok) setState({ loaded: true, sets: res.sets })
+  } catch (err) {
+    console.warn('[liveSets] reload failed:', err instanceof Error ? err.message : err)
+  }
+}
+
+/**
  * Self-healing read used by the UI: entries whose merged track no longer
  * exists in the library (e.g. Jake deleted the merged file from Songs
  * directly instead of undeclaring) are treated as not-declared. The stale
  * sidecar row is also swept from disk, so the two stores re-converge.
+ *
+ * The in-memory entry is dropped only once main CONFIRMS the sweep. A
+ * replica refuses it (its live sets mirror the laptop's, and its library can
+ * briefly lack the merged row mid-adopt — 2026-10-19 workmini lacked all 12),
+ * so there the concert simply reappears once its row lands.
  */
+const sweepAsked = new Set<string>()
 export function liveSetFor(albumKey: string, tracks: Track[]): LiveSetEntry | null {
   const entry = state.sets[albumKey]
   if (!entry) return null
   if (!tracks.some(t => t.id === entry.mergedTrackId)) {
-    void window.electronAPI.removeLiveSet(albumKey)
-    const next = { ...state.sets }
-    delete next[albumKey]
-    setState({ ...state, sets: next })
+    if (sweepAsked.has(albumKey)) return null   // one ask per set per session
+    sweepAsked.add(albumKey)
+    void window.electronAPI.removeLiveSet(albumKey).then((r) => {
+      if (!r?.ok || !state.sets[albumKey]) return
+      const next = { ...state.sets }
+      delete next[albumKey]
+      setState({ ...state, sets: next })
+    })
     return null
   }
   return entry

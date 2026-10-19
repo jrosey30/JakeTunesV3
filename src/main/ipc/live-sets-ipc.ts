@@ -14,6 +14,8 @@ import { IS_WINDOWS } from '../platform'
 import { STATE_DIR, NAS_STATE_DIR_PATH } from '../state-dir'
 import { allowImportPaths } from '../import-allowlist.ts'
 import { safeIpcError } from '../safe-ipc-error'
+import { getArtworkDir } from '../artwork-engine.ts'
+import { startReplicaConcertSync } from '../replica-concerts.ts'
 import type { LiveSetEntry } from '../index.ts'
 
 export interface LiveSetsIpcHost {
@@ -21,13 +23,37 @@ export interface LiveSetsIpcHost {
   liveSetsCache: {
     get: () => Promise<Record<string, LiveSetEntry>>
     update: (fn: (sets: Record<string, LiveSetEntry>) => Record<string, LiveSetEntry>) => Promise<void>
+    set: (next: Record<string, LiveSetEntry>) => void
   }
   artworkHash: (artist: string, album: string) => string
   loadArtworkIndex: () => Promise<Record<string, string>>
   saveArtworkIndex: (index: Record<string, string>) => Promise<void>
+  /** Hub origin on a replica (workmini), null on the canonical laptop. A
+   *  replica's live sets, concert posters and crowd clips MIRROR the laptop's
+   *  through homemini (src/main/replica-concerts.ts). */
+  replicaHubBase: () => Promise<string | null>
+  /** This machine's library rows (each concert's band/show for its poster key). */
+  libraryTracks: () => Promise<readonly unknown[]>
+  sendToRenderer: (channel: string, ...args: unknown[]) => void
 }
 
+/** Why a replica refuses a live-set write: the next hub pull would undo it. */
+export const REPLICA_LIVE_SETS_READ_ONLY = 'live sets on this machine mirror the laptop (through homemini) — change concerts on the laptop'
+
 export function registerLiveSetsIpc(ipc: IpcRegistrar, host: LiveSetsIpcHost): void {
+  // Replica concert mirror (2026-10-19, Jake: "the workmini should mimic the
+  // live concert thing exactly"): inert on the laptop (no hub base).
+  const replica = startReplicaConcertSync({
+    hubBase: host.replicaHubBase,
+    liveSets: { get: () => host.liveSetsCache.get(), set: (next) => host.liveSetsCache.set(next as Record<string, LiveSetEntry>) },
+    tracks: host.libraryTracks,
+    artwork: { dir: getArtworkDir(), loadIndex: host.loadArtworkIndex, saveIndex: host.saveArtworkIndex },
+    crowdDir: join(app.getPath('userData'), 'concert-crowd'),
+    notify: (u) => host.sendToRenderer('live-sets-updated', u),
+  })
+  setTimeout(() => { void replica.tick() }, 12_000)
+  const isReplica = async (): Promise<boolean> => (await host.replicaHubBase()) !== null
+
   // ─────────────────────────────────────────────────────────────────────
   // V5 Live Concert Mode — merge a declared live album into one gapless
   // ALAC "live set" + sidecar cue data. See src/main/live-set-merge.ts
@@ -49,11 +75,15 @@ export function registerLiveSetsIpc(ipc: IpcRegistrar, host: LiveSetsIpcHost): v
     if (!albumKey || !entry || typeof entry.mergedTrackId !== 'number' || !Array.isArray(entry.cues)) {
       return { ok: false, error: 'invalid live-set entry' }
     }
+    if (await isReplica()) return { ok: false, error: REPLICA_LIVE_SETS_READ_ONLY }
     await host.liveSetsCache.update((sets) => ({ ...sets, [albumKey]: entry }))
     return { ok: true }
   }, { refuse: REFUSED_SENDER })
 
   ipc.handle('remove-live-set', async (_e, albumKey: string) => {
+    // A replica never deletes a set: its library can briefly lack a merged
+    // row mid-adopt, and the renderer's self-heal would sweep the concert.
+    if (await isReplica()) return { ok: false, error: REPLICA_LIVE_SETS_READ_ONLY }
     await host.liveSetsCache.update((sets) => {
       const next = { ...sets }
       delete next[albumKey]
@@ -67,6 +97,8 @@ export function registerLiveSetsIpc(ipc: IpcRegistrar, host: LiveSetsIpcHost): v
   // userData/concert-crowd/<id>.m4a. Returns base64 (renderer makes a Blob URL) or
   // null when a show has no clip — the crowd layer then simply does nothing.
   ipc.handle('get-concert-crowd', async (_e, mergedTrackId: number): Promise<string | null> => {
+    // Replica: the laptop's clip, fetched once from homemini and kept locally.
+    if (await isReplica()) return (await replica.crowdClip(Number(mergedTrackId)))?.toString('base64') ?? null
     try {
       const p = join(app.getPath('userData'), 'concert-crowd', `${mergedTrackId}.m4a`)
       const buf = await readFile(p)
@@ -78,6 +110,11 @@ export function registerLiveSetsIpc(ipc: IpcRegistrar, host: LiveSetsIpcHost): v
   // lands where get-concert-crowd already looks. Idempotent per merged id.
   const crowdInFlight = new Map<number, Promise<{ ok: boolean; error?: string; startSec?: number }>>()
   ipc.handle('extract-concert-crowd', async (_e, mergedTrackId: number, colonPath: string, cueStartsMs: number[], totalMs: number) => {
+    // Never on a replica: its music dir is streamed stubs / cache-farm links,
+    // and reading through them is the SMB hot path CLAUDE.md forbids. The
+    // laptop cuts the clip (when the show is opened there) and mirrors it to
+    // homemini, which this machine then pulls (get-concert-crowd above).
+    if (await isReplica()) return { ok: false, error: 'crowd clips are cut on the laptop' }
     const existing = crowdInFlight.get(mergedTrackId)
     if (existing) return existing
     const job = (async () => {

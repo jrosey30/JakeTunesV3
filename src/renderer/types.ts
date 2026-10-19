@@ -972,8 +972,9 @@ declare global {
       onLiveSetProgress: (callback: (progress: { stage: 'decode' | 'concat' | 'encode'; current: number; total: number; label: string }) => void) => () => void
       loadLiveSets: () => Promise<{ ok: boolean; sets: Record<string, LiveSetEntry> }>
       saveLiveSet: (albumKey: string, entry: LiveSetEntry) => Promise<{ ok: boolean; error?: string }>
-      removeLiveSet: (albumKey: string) => Promise<{ ok: boolean }>
+      removeLiveSet: (albumKey: string) => Promise<{ ok: boolean; error?: string }>
       extractConcertCrowd: (mergedTrackId: number, colonPath: string, cueStartsMs: number[], totalMs: number) => Promise<{ ok: boolean; error?: string; startSec?: number }>
+      onLiveSetsUpdated?: (callback: (p: { liveSets: boolean; artwork: Array<{ key: string; hash: string }> }) => void) => () => void
       getConcertCrowd: (mergedTrackId: number) => Promise<string | null>
       saveCrowdTuning: (t: Record<string, number>) => Promise<{ ok: boolean }>
       loadCrowdTuning: () => Promise<Record<string, number> | null>

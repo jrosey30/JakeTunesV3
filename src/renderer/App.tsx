@@ -51,7 +51,7 @@ import { setEqSettings, setAudioOutputSink, getAudioOutputSink } from './audio/e
 import { setEnhanceConfig } from './audio/audioEnhance'
 import { setUserAliases } from './utils/artistAlias'
 import { initDownloads } from './utils/downloadStore'
-import { ensureLiveSetsLoaded } from './liveSets'
+import { ensureLiveSetsLoaded, reloadLiveSets } from './liveSets'
 import { hydrateScrollCacheFromUiState } from './hooks/useScrollPersistence'
 import { AppSettings, DEFAULT_APP_SETTINGS, type Playlist, type Track } from './types'
 import { setNotice } from './activity'
@@ -211,6 +211,12 @@ function AppInner() {
   // (Songs/Albums/Artists/count) excludes concert tracks on first paint,
   // not after a flash. Idempotent (first caller wins inside the store).
   useEffect(() => { void ensureLiveSetsLoaded() }, [])
+  // Replicas (2026-10-19): main mirrored the laptop's live-sets.json and/or a
+  // concert's poster key from the hub (src/main/replica-concerts.ts).
+  useEffect(() => window.electronAPI.onLiveSetsUpdated?.((u) => {
+    if (u.liveSets) void reloadLiveSets()
+    for (const a of u.artwork) dispatch({ type: 'ADD_ARTWORK', key: a.key, hash: a.hash })
+  }), [dispatch])
 
   // Subscribe the renderer-side recently-added store to the main-process
   // Bandcamp download-router events. Idempotent.
