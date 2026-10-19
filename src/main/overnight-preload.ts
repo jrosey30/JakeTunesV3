@@ -78,11 +78,14 @@ export const MAX_CONSECUTIVE_FAILURES = 3
 const FAILURE_BACKOFF_MS = 30_000
 /** Zero body bytes this long = a stalled download. */
 const STALL_MS = 20_000
-/** homemini transcodes the whole track before its first header (ffmpeg's
- *  own limit there is 120 s). */
+/** homemini transcodes the whole track before its first header. Its ffmpeg
+ *  budget is max(120 s, duration / 18x + 60 s) since 2026-10-19 (it was a
+ *  flat 120 s, which killed every multi-hour concert). */
 const HEADER_TIMEOUT_MS = 120_000
 /** A full concert (hours of audio) transcodes far longer before its first
- *  header than a song does — anything this big gets the long wait. */
+ *  header than a song does — anything this big gets the long wait. Must
+ *  outlast the hub's budget for a show (Nassau, 2.6 h: 580 s).
+ *  ⚠️ TWIN: ~/JakeTunesMobile backend/src/util/transcodePolicy.ts */
 const BIG_FILE_BYTES = 100e6
 const BIG_FILE_HEADER_TIMEOUT_MS = 10 * 60_000
 /** Concert fetches that fail tonight before the rest of the concerts are
