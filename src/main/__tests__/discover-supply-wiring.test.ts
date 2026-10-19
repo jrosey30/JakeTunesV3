@@ -10,7 +10,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  applyQualityFloor, assembleLanes, supplyLanes, QUOTA_LANES, BRAIN_FLOOR, foldKey,
+  applyQualityFloor, assembleLanes, supplyLanes, ownershipChecks, QUOTA_LANES, BRAIN_FLOOR, foldKey,
   type FeedCard,
 } from '../discover-feed.ts'
 
@@ -104,6 +104,27 @@ describe('supplyLanes — harvest dressed as feed cards', () => {
     const cards = await supplyLanes(['Anchor'], 1, { artists: new Set(), albumKeys, baseKeys: new Set() }, fakeFetch, 0)
     assert.ok(!cards.some((c) => c.lane === 'fresh-albums' && c.artist === 'Band 0' && /0A$/.test(c.title)),
       'an owned album crossed the gate because the keys diverged')
+  })
+})
+
+describe('ownershipChecks — the one "already in the library" question (2026-10-18)', () => {
+  const owned = {
+    artists: new Set(['kanye west', 'the white stripes']),
+    albumKeys: new Set(['kanye west|the college dropout', 'the white stripes|elephant', 'bjo rk|homogenic']),
+    baseKeys: new Set<string>(),
+  }
+  test('a leading article on either side of the pair never makes an owned record new', () => {
+    const { ownsAlbum, ownsSong } = ownershipChecks(owned)
+    assert.equal(ownsAlbum('Kanye West', 'College Dropout'), true)
+    assert.equal(ownsAlbum('White Stripes', 'Elephant'), true)
+    assert.equal(ownsSong('White Stripes', 'Elephant'), true)
+  })
+  test('the accent bridge still holds; a different record is still new', () => {
+    const { ownsAlbum, ownsArtist } = ownershipChecks(owned)
+    assert.equal(ownsAlbum('Björk', 'Homogenic'), true, 'normKey stored the accent as a space')
+    assert.equal(ownsAlbum('Kanye West', 'Graduation'), false)
+    assert.equal(ownsAlbum('Kanye West', 'A College Dropout Tribute'), false)
+    assert.equal(ownsArtist('Kanye West'), true)
   })
 })
 

@@ -1,5 +1,5 @@
 /** Pure adapters for the next shop/queue migration. No matcher, I/O or effects. */
-import { shopSnapshot, type ShopItem, type ShopListEntry, type ShopRecommendation, type Snapshot, type ShopSelection, type ShopAcquisitionResult } from './record-shop.ts'
+import { shopSnapshot, type ShopItem, type ShopListEntry, type ShopRecommendation, type Snapshot, type ShopSelection, type ShopAcquisitionResult, type RecommendationSource } from './record-shop.ts'
 import type { Alternative, DownloadOutcome } from './acquisition-identity.ts'
 
 /** Structural subset of today's renderer Recommendation; legacy sync unchanged. */
@@ -38,6 +38,8 @@ export interface ShopFeedCard {
   type: 'song' | 'album' | 'artist'; artist: string; title: string
   why: string; lane: string; because?: string; artUrl?: string
   previewUrl?: string; hookPreviewUrl?: string; hookTitle?: string
+  /** A named recommender (the critic wall's '@handle'); unset = the shop's own pick. */
+  source?: RecommendationSource
 }
 
 /** Caller supplies stable entry ids; artist/title are not cross-provider ids. */
@@ -50,7 +52,7 @@ export function shopItemFromFeed(card: ShopFeedCard, ids: { itemId: string; reco
     item: { itemId: ids.itemId, kind: card.type === 'song' ? 'recording' : card.type === 'album' ? 'release' : 'artist',
       display: { title: card.title, artist: card.artist, artworkUrl: card.artUrl, preview } },
     recommendation: { recommendationId: ids.recommendationId, itemId: ids.itemId, receivedAt: ids.receivedAt,
-      source: { kind: 'ai', legacySource: 'radar' }, reason: card.why, becauseArtist: card.because, lane: card.lane },
+      source: card.source ? { ...card.source } : { kind: 'ai', legacySource: 'radar' }, reason: card.why, becauseArtist: card.because, lane: card.lane },
   }
 }
 

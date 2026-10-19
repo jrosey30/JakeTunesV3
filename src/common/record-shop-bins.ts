@@ -62,16 +62,27 @@ export function pickHookIndex(tracks: Array<{ previewUrl?: string; pct?: number 
  *    original order;
  *  - a bin with fewer than `minShelf` cards can't stand as a shelf — its
  *    cards fold into the 'More Finds' shelf at the end, so nothing is lost
- *    but no shelf looks abandoned.
+ *    but no shelf looks abandoned;
+ *  - `keep` pins cards that must survive the cap (the critic wall's daily
+ *    five — a count Jake asked for, not a brain contest). Pinned cards take
+ *    their seats first; the best unpinned fill what is left.
  */
 export const MORE_BIN = 'More Finds'
 
 export function applyBinQuotas<T extends { bin?: string; brainPct?: number }>(
   cards: T[],
-  opts: { cap?: number; minShelf?: number } = {},
+  opts: { cap?: number; minShelf?: number; keep?: (card: T) => boolean } = {},
 ): Array<{ bin: string; cards: T[] }> {
   const cap = opts.cap ?? 6
   const minShelf = opts.minShelf ?? 3
+  const pinned = (c: T): number => (opts.keep?.(c) ? 1 : 0)
+  // Pinned first, then brain %, ties keep original order; then back to it.
+  const best = (arr: T[], n: number): T[] => arr
+    .map((c, i) => ({ c, i }))
+    .sort((a, b) => (pinned(b.c) - pinned(a.c)) || ((b.c.brainPct ?? 0) - (a.c.brainPct ?? 0)) || (a.i - b.i))
+    .slice(0, Math.max(n, arr.filter((c) => pinned(c)).length))
+    .sort((a, b) => a.i - b.i)
+    .map((x) => x.c)
   const byBin = new Map<string, T[]>()
   for (const c of cards) {
     const b = c.bin || 'Misc'
@@ -85,24 +96,10 @@ export function applyBinQuotas<T extends { bin?: string; brainPct?: number }>(
     const arr = byBin.get(bin)
     if (!arr) continue
     if (arr.length < minShelf) { overflow.push(...arr); continue }
-    const kept = [...arr]
-      .map((c, i) => ({ c, i }))
-      .sort((a, b) => ((b.c.brainPct ?? 0) - (a.c.brainPct ?? 0)) || (a.i - b.i))
-      .slice(0, cap)
-      .sort((a, b) => a.i - b.i)
-      .map((x) => x.c)
-    shelves.push({ bin, cards: kept })
+    shelves.push({ bin, cards: best(arr, cap) })
   }
   // Unknown bins (future-proofing) fold into More too.
   for (const [bin, arr] of byBin) if (!(SHOP_BINS as readonly string[]).includes(bin)) overflow.push(...arr)
-  if (overflow.length) {
-    const kept = [...overflow]
-      .map((c, i) => ({ c, i }))
-      .sort((a, b) => ((b.c.brainPct ?? 0) - (a.c.brainPct ?? 0)) || (a.i - b.i))
-      .slice(0, cap + 2)
-      .sort((a, b) => a.i - b.i)
-      .map((x) => x.c)
-    shelves.push({ bin: MORE_BIN, cards: kept })
-  }
+  if (overflow.length) shelves.push({ bin: MORE_BIN, cards: best(overflow, cap + 2) })
   return shelves
 }

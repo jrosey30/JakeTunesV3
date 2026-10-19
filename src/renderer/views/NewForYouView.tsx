@@ -28,6 +28,7 @@ import { PlayIcon, PauseIcon, CloseIcon } from '../components/TransportIcons'
 import type { RediscoveryPick } from '../types'
 import mmSmug from './RecordStore/art/musicman-smug.png'
 import { binForGenre, applyBinQuotas } from '../../common/record-shop-bins'
+import { CRITIC_LANE } from '../../common/critic-picks'
 import { useWjlrPicks } from '../hooks/useWjlrPicks'
 import { lookupArtworkOneShot } from '../utils/artworkLookup'
 import {
@@ -276,6 +277,8 @@ export default function NewForYouView() {
   // contest invisibly — the feed held 25/25 for days while the page showed
   // none of it ("yeah no i dont see it...."). The quota is THE feature; it
   // renders whole, first, and the curated genre crates follow.
+  // The critic wall's daily five file into those crates pinned — like the
+  // quota, a count Jake asked for, never lost to the brain-% cap.
   const freshLane = (id: string) => lanes.find((l) => l.id === id)?.cards ?? []
   const binSections = [
     { bin: "Today's 25 New Records", cards: freshLane('fresh-albums') },
@@ -283,11 +286,12 @@ export default function NewForYouView() {
   ].filter((sec) => sec.cards.length > 0).concat(applyBinQuotas(
     lanes.filter((l) => l.id !== 'fresh-albums' && l.id !== 'fresh-songs')
       .flatMap((l) => l.cards).map((c) => ({ ...c, bin: c.bin ?? binForGenre(c.genre) })),
+    { keep: (c) => c.lane === CRITIC_LANE },
   ))
 
   const SHOP_NAMES: Record<string, string> = {
     'brand-new': 'New', 'scene': 'Scene', 'missing': 'Gap', 'time-machine': 'Used', 'songs': 'Single',
-    'fresh-albums': 'New', 'fresh-songs': 'New',
+    'fresh-albums': 'New', 'fresh-songs': 'New', [CRITIC_LANE]: 'Staff',
   }
   const laneReason = (c: FeedCard): string | null => {
     switch (c.lane) {
