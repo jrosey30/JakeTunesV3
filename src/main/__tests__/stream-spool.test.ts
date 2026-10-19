@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { mkdtemp, writeFile, readFile, stat } from 'fs/promises'
-import { spoolReady, ensureSpool, serveSpoolRange, enforceSpoolCap , spoolQueueState} from '../stream-spool.ts'
+import { spoolReady, ensureSpool, serveSpoolRange, enforceSpoolCap , spoolQueueState, pacedBody, spoolPaceFor } from '../stream-spool.ts'
 
 const fakeAudio = (bytes: number) => Buffer.alloc(bytes, 7)
 
@@ -117,6 +117,55 @@ test('a burst of tracks downloads one at a time, newest first', async () => {
   assert.equal(started.length, 2)
   assert.equal(started[1], 'd', 'newest interest wins the freed slot')
 
-  for (const [, f] of finish) f()
-  await new Promise((r) => setTimeout(r, 30))
+  // Release every waiter as its turn comes (c, then b) — the spool queue is
+  // module state, so a download left hanging here would block later tests.
+  for (let round = 0; round < 4; round++) {
+    for (const [, f] of finish) f()
+    await new Promise((r) => setTimeout(r, 30))
+  }
+  assert.deepEqual(spoolQueueState(), { active: 0, waiting: 0 })
+})
+
+// Thin-link pacing (workmini 2026-10-19: one wire-speed spool held the
+// office↔home tunnel at 0.5–2 s round trips; quit → ~60 ms).
+describe('thin-link spool pacing', () => {
+  const chunks = (n: number, size: number) => new ReadableStream<Uint8Array>({
+    start(c) { for (let i = 0; i < n; i++) c.enqueue(new Uint8Array(size).fill(i)); c.close() },
+  })
+  const drain = async (rs: ReadableStream<Uint8Array>) => {
+    const parts: Uint8Array[] = []
+    const r = rs.getReader()
+    for (;;) { const { done, value } = await r.read(); if (done) break; parts.push(value) }
+    return Buffer.concat(parts)
+  }
+
+  test('a 256 kbps link spools at 3× its stream rate (96 KB/s)', () => {
+    assert.equal(spoolPaceFor(256), 96_000)
+  })
+
+  test('paces to the rate on a fake clock, bytes untouched', async () => {
+    let t = 0
+    const waits: number[] = []
+    const out = await drain(pacedBody(chunks(10, 96_000), 96_000, () => t, async (ms) => { waits.push(ms); t += ms }))
+    assert.equal(out.length, 960_000)
+    assert.deepEqual([...new Set(out.subarray(96_000 * 3, 96_000 * 4))], [3], 'chunks pass through in order, unchanged')
+    // 960 KB at 96 KB/s = 10 s of reading, never faster.
+    assert.equal(Math.round(t), 10_000)
+    assert.equal(waits.length, 10)
+  })
+
+  test('0 = unpaced: the same stream comes back (fat links untouched)', () => {
+    const rs = chunks(1, 10)
+    assert.equal(pacedBody(rs, 0), rs)
+  })
+
+  test('a paced spool still lands byte-identical', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'spool-paced-'))
+    const body = Buffer.from(Array.from({ length: 40_000 }, (_, i) => i % 251))
+    ensureSpool(dir, 'paced', 'http://hub/audio/p', fetchServing(body), 20_000_000)
+    let ready = null
+    for (let i = 0; i < 100 && !ready; i++) { await new Promise((r) => setTimeout(r, 10)); ready = await spoolReady(dir, 'paced') }
+    assert.ok(ready, 'paced spool landed')
+    assert.ok((await readFile(ready.file)).equals(body))
+  })
 })
