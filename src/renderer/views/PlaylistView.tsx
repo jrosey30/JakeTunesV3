@@ -76,6 +76,9 @@ const ALL_COLUMN_DEFS: ColDef[] = [
 
 const ALWAYS_VISIBLE = new Set(['playing', 'title'])
 
+/** How long a suggestion strip must stay unchanged before it counts as shown. */
+const STRIP_SETTLE_MS = 1500
+
 export default function PlaylistView() {
   const { state, dispatch } = useLibrary()
   const { state: pb, dispatch: pbDispatch } = usePlayback()
@@ -322,13 +325,20 @@ export default function PlaylistView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [playlist?.id, suggestions.map((t) => t.id).join('-')],
   )
+  // A batch counts only once it has SETTLED on screen (2026-10-19, found on
+  // the installed build): opening a playlist passes through placeholder
+  // strips inside a second — the metadata fallback while the brain's pool
+  // loads, then a re-pick when the strip memory lands — and each was being
+  // logged as five impressions the eye never registered.
   useEffect(() => {
     if (!playlist || !suggestBatch) return
-    ledger(suggestions.map((sg, rank) => ({
+    const rows = suggestions.map((sg, rank) => ({
       surface: 'strip', verdict: 'shown',
       key: { trackId: sg.id, playlistId: playlist.id },
       ctx: { ...(suggestDiag.current.get(sg.id) ?? {}), rank, batch: suggestBatch },
-    })))
+    }))
+    const t = window.setTimeout(() => ledger(rows), STRIP_SETTLE_MS)
+    return () => window.clearTimeout(t)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [suggestBatch])
   const suggestArtIndex = useMemo(() => buildNormalizedArtworkIndex(state.artworkMap), [state.artworkMap])
