@@ -80,6 +80,7 @@ import { registerReleaseKindsIpc } from './ipc/release-kinds-ipc.ts'
 import { startReleaseKindsJob, effectiveAlbumRows, releaseKindsPath } from './release-kinds.ts'
 import { guardCredits, type CreditTrack } from './ai/credit-guard.ts'
 import { registerYirIpc } from './ipc/yir-ipc.ts'
+import { registerSyncedPicksIpc } from './ipc/synced-picks-ipc.ts'
 import { createArtistPhotos, nameKey as photoNameKey } from './artist-photo.ts'
 import { phoneOverlayFields } from '../common/genre-vocab.ts'
 import { registerPreviewRefreshIpc } from './ipc/preview-refresh-ipc.ts'
@@ -9521,6 +9522,7 @@ registerGenreFilerIpc(ipc, { libraryTracks: async () => ((await libraryCache.get
 registerRockDnaIpc(ipc)
 registerReleaseKindsIpc(ipc, { file: () => releaseKindsPath(STATE_DIR) })
 registerYirIpc(ipc)
+registerSyncedPicksIpc(ipc)
 registerPreviewRefreshIpc(ipc)
 registerSyncHistoryIpc(ipc, { stateDir: STATE_DIR })
 

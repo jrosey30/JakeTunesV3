@@ -1088,6 +1088,12 @@ declare global {
       // cache in main; both fields null on no-result so UI can fall
       // back to photo + name only.
       getArtistWiki: (artist: string) => Promise<{ ok: boolean; extract: string | null; pageUrl: string | null }>
+      // 2026-10-18 — synced picks (Island Albums + Favorite Artists) via
+      // homemini; see src/common/synced-picks.ts + renderer/syncedPicks.ts.
+      syncedPicksGet?: (kind: import('../common/synced-picks').PicksKind) => Promise<import('../common/synced-picks').PicksReply>
+      syncedPicksRefresh?: (kind: import('../common/synced-picks').PicksKind) => Promise<import('../common/synced-picks').PicksReply>
+      syncedPicksSave?: (kind: import('../common/synced-picks').PicksKind, values: unknown[]) => Promise<import('../common/synced-picks').PicksReply>
+      onSyncedPicksUpdated?: (callback: (state: import('../common/synced-picks').AnyPicksState) => void) => () => void
     }
   }
 }
