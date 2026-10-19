@@ -182,8 +182,10 @@ export interface FilerDeps {
 /** One remembered origin answer per artist credit (originCacheKey).
  *  origin: a country = known; null = nobody knows (ask again after
  *  ORIGIN_RETRY_MS); absent = never answered. failedAt = the last BUSY try —
- *  an ordering hint only, never a reason to skip. */
-export interface OriginCacheEntry { origin?: string | null; at?: number; source?: OriginSource; mbid?: string; note?: string; failedAt?: number }
+ *  an ordering hint only, never a reason to skip. source / via / mbid /
+ *  note say how an answer was reached, so a source can be audited and its
+ *  origins reverted (every 'mb-lone-name' answer, say). */
+export interface OriginCacheEntry { origin?: string | null; at?: number; source?: OriginSource; via?: 'mb' | 'mb-lone-name'; mbid?: string; note?: string; failedAt?: number }
 export type OriginCache = Record<string, OriginCacheEntry>
 export const ORIGIN_RETRY_MS = 60 * 24 * 3600 * 1000
 /** v2 → v3: its known answers carry over; its "unknown"s don't — they were
@@ -337,9 +339,9 @@ export async function fillOrigins(deps: FilerDeps, tracks: FilerTrack[], _homes:
         cache[g.key] = { ...cache[g.key], failedAt: now }
         deps.log?.(`[genre-filer] origin: ${g.name} — lookup busy (${r.note}); asking again next sweep`)
       } else if (r.kind === 'found') {
-        cache[g.key] = { origin: r.origin, at: now, source: r.source, mbid: r.mbid, note: r.evidence }
+        cache[g.key] = { origin: r.origin, at: now, source: r.source, ...(r.via ? { via: r.via } : {}), mbid: r.mbid, note: r.evidence }
         origin = r.origin
-        how = `${r.source}, ${r.evidence}`
+        how = `${r.source}${r.via ? ` via ${r.via}` : ''}, ${r.evidence}`
       } else {
         cache[g.key] = { origin: null, at: now, ...(r.mbid ? { mbid: r.mbid } : {}), note: r.note }
         if (!HEBREW.test(g.name)) deps.log?.(`[genre-filer] origin: ${g.name} — unknown (${r.note})`)

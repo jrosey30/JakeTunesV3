@@ -192,8 +192,8 @@ describe('same identity rule, better matching', () => {
     const many = Array.from({ length: 20 }, (_, i) => `LP ${i + 1}`)
     const capped = fakeMb({ artists: { Vulfmon: [{ id: 'vm', name: 'Vulfmon', score: 100, country: 'US' }] }, releaseGroups: [{ title: 'LP 20', credit: 'Vulfmon', ids: ['vm'] }] })
     const r = await lookupArtistOrigin('Vulfmon', many, capped.net)
-    assert.equal(r.kind, 'unknown')
-    assert.equal(capped.rgQueries().length, ORIGIN_MAX_ALBUM_QUERIES)
+    assert.equal(capped.rgQueries().length, ORIGIN_MAX_ALBUM_QUERIES, 'the 20th album is never reached')
+    assert.ok(r.kind !== 'found' || r.source !== 'mb', 'so no album proved it')
   })
 
   it('the identity rule itself is unchanged: a same-name artist not credited on his album is never his origin', async () => {

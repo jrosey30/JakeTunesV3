@@ -165,5 +165,11 @@ export const areaCodes = (a: MbAreaCodes | null | undefined): string[] =>
  *  non-countries (XW worldwide, XE Europe) give no origin. */
 export function countryName(code: string | undefined): string | undefined {
   if (!code || !/^[A-Z]{2}$/.test(code) || code.startsWith('X')) return undefined
+  if (LIBRARY_SPELLING[code]) return LIBRARY_SPELLING[code]
   try { const n = new Intl.DisplayNames(['en'], { type: 'region' }).of(code); return n && n !== code ? n : undefined } catch { return undefined }
 }
+/** Where the library already spells a country its own way, that spelling —
+ *  Get Info autocompletes Origin from the library so one country reads one
+ *  way. Checked against every origin in the library on 10/18: only these two
+ *  differ from Intl ("Hong Kong SAR China", "Trinidad & Tobago"). */
+const LIBRARY_SPELLING: Record<string, string> = { HK: 'Hong Kong', TT: 'Trinidad and Tobago' }
