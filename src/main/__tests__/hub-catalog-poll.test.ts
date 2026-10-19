@@ -106,7 +106,7 @@ function fakeHub(state: HubState) {
         json: async () => body,
       }
     }
-    if (u.endsWith('/api/library-version')) {
+    if (u.includes('/api/library-version')) {
       return respond({ library: 'L', tracks: '9', stars: 'S', plays: state.plays })
     }
     if (u.includes('/api/phone-sidecars/')) {
@@ -231,7 +231,7 @@ describe('hub catalog poll notices phone-side changes', () => {
         },
         json: async () => body,
       })
-      if (u.endsWith('/api/library-version')) {
+      if (u.includes('/api/library-version')) {
         return pack(200, {}, { library: 'L', tracks: '9', stars: 'S', plays: 'P' })
       }
       if (u.includes(PHONE_EDIT_SIDECAR)) {
@@ -325,5 +325,85 @@ describe('hub catalog poll notices phone-side changes', () => {
       methods.forEach((m, i) => { console[m] = prev[i] })
       hub.stop()
     }
+  })
+})
+
+// 2026-10-19 — "why arent the full live concerts on the workmini??". The hub's
+// default list hid all 171 concert rows; the replica now asks for the include
+// view. ⚠️ TWIN: ~/JakeTunesMobile backend/src/util/catalogView.ts
+describe('replica asks the hub for the include view (concerts kept)', () => {
+  function includeHub(opts: { honoursView: boolean; deltaFor: (url: string) => Record<string, unknown> }) {
+    const urls: string[] = []
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      const u = String(url)
+      const method = (init?.method ?? 'GET').toUpperCase()
+      urls.push(`${method} ${u}`)
+      const pack = (body: unknown, status = 200) => ({
+        ok: status >= 200 && status < 300, status, headers: new Headers(),
+        text: async () => JSON.stringify(body), json: async () => body,
+      })
+      if (u.includes('/api/library-version')) {
+        const include = opts.honoursView && u.includes('concerts=include')
+        return pack({ ...(include ? { view: 'include' } : {}), library: 'L', tracks: include ? 11676 : 11505, stars: 'S', plays: 'P' })
+      }
+      if (u.includes('/api/phone-sidecars/')) return method === 'HEAD' ? pack(null) : pack({ mtimeMs: 1, body: '{}' })
+      if (u.endsWith('/api/live-sets')) return method === 'HEAD' ? pack(null) : pack({ mtimeMs: 1 })
+      if (u.includes('/api/tracks/delta')) return pack(opts.deltaFor(u))
+      return pack({ error: u }, 500)
+    }) as typeof fetch
+    return { urls, fetchImpl }
+  }
+
+  it('library-version and tracks/delta both carry ?concerts=include', async () => {
+    const hub = includeHub({ honoursView: true, deltaFor: () => ({ unchanged: true, version: 'libci-1' }) })
+    const dir = await mkdtemp(join(tmpdir(), 'hub-include-'))
+    const h = startHubCatalogPoll({ stateDir: dir, hubBase: async () => 'http://hub', send: () => true, isLocked: () => null, fetchImpl: hub.fetchImpl, intervalMs: 3_600_000 })
+    try {
+      await h.tick()
+      const lv = hub.urls.find((u) => u.includes('/api/library-version'))
+      const d = hub.urls.find((u) => u.includes('/api/tracks/delta'))
+      assert.ok(lv?.includes('?concerts=include'), lv)
+      assert.ok(d?.includes('&concerts=include'), d)
+      assert.match(d!, /since=[^&]*&concerts=include$/)
+    } finally { h.stop() }
+  })
+
+  it('the hub starting to honour the view moves the key, so a running replica re-fetches', async () => {
+    // An already-running replica; the hub deploys under it. Nothing in the
+    // library changed — only `view` (and the include count) appear.
+    const opts = { honoursView: false, deltaFor: () => ({ unchanged: true, version: opts.honoursView ? 'libci-1' : 'libc-1' }) }
+    const hub = includeHub(opts)
+    const dir = await mkdtemp(join(tmpdir(), 'hub-include-'))
+    const h = startHubCatalogPoll({ stateDir: dir, hubBase: async () => 'http://hub', send: () => true, isLocked: () => null, fetchImpl: hub.fetchImpl, intervalMs: 3_600_000 })
+    const deltas = () => hub.urls.filter((u) => u.includes('/api/tracks/delta')).length
+    try {
+      await h.tick()
+      await h.tick()
+      assert.equal(deltas(), 1, 'an old hub ignores the parameter: unchanged, no refetch loop')
+      opts.honoursView = true
+      await h.tick()
+      assert.equal(deltas(), 2, 'the hub deploy alone moves the key and fetches the delta')
+      await h.tick()
+      assert.equal(deltas(), 2, 'and then settles')
+    } finally { h.stop() }
+  })
+
+  it('a FULL include reply carrying concert rows is handed to the renderer whole', async () => {
+    const concert = [{ id: 9290, title: 'Go to Nassau — Full Set', artist: 'Grateful Dead' }, { id: 9267, title: 'Jack Straw', artist: 'Grateful Dead' }]
+    const regular = [{ id: 1, title: 'A', artist: 'X' }]
+    const hub = includeHub({ honoursView: true, deltaFor: () => ({ full: true, version: 'libci-2', total: 3, items: [...regular, ...concert] }) })
+    const dir = await mkdtemp(join(tmpdir(), 'hub-include-'))
+    const payloads: Array<{ full: boolean; version: string; upserts: Array<{ id: number | string }> }> = []
+    const h = startHubCatalogPoll({
+      stateDir: dir, hubBase: async () => 'http://hub', isLocked: () => null, fetchImpl: hub.fetchImpl, intervalMs: 3_600_000,
+      send: (_ch, p) => { payloads.push(p as unknown as { full: boolean; version: string; upserts: Array<{ id: number | string }> }); return true },
+    })
+    try {
+      await h.tick()
+      assert.equal(payloads.length, 1)
+      assert.equal(payloads[0].full, true)
+      assert.equal(payloads[0].version, 'libci-2')
+      assert.deepEqual(payloads[0].upserts.map((u) => u.id).sort((a, b) => Number(a) - Number(b)), [1, 9267, 9290])
+    } finally { h.stop() }
   })
 })
