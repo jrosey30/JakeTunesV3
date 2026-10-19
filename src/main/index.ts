@@ -74,6 +74,8 @@ import { registerArtworkIpc } from './ipc/artwork-ipc.ts'
 import { registerRecommendations, MOBILE_BACKEND_URL, type RecoSource, type RecommendationRecord } from './ipc/recommendations-ipc.ts'
 import { registerTasteIpc, TASTE_LEDGER_PATH } from './ipc/taste-ipc.ts'
 import { registerGenreFilerIpc } from './ipc/genre-filer-ipc.ts'
+import { startTaxonomyStagedApply } from './taxonomy-staged.ts'
+import { trackFingerprint } from './genre-filer.ts'
 import { registerRockDnaIpc } from './ipc/rock-dna-ipc.ts'
 import { registerReleaseKindsIpc } from './ipc/release-kinds-ipc.ts'
 import { startReleaseKindsJob, effectiveAlbumRows, releaseKindsPath } from './release-kinds.ts'
@@ -9454,6 +9456,7 @@ const sweepFriendImports = (): Promise<number> => moduleSweepFriendImports(sweep
 // Taste ledger + weights extracted to ipc/taste-ipc.ts (6.0 Phase 1).
 registerTasteIpc(ipc)
 registerGenreFilerIpc(ipc, { libraryTracks: async () => ((await libraryCache.get()) as { tracks?: [] }).tracks ?? [], overrides: async () => (await overridesCache.get()) as Record<string, { fp?: string; fields?: Record<string, string> }>, persist: (id, fields, fp) => persistOverrideFields(id, fields, fp).then(() => triggerSync('metadata-edit')), send: (ch, p) => sendToRenderer(ch, p), claude: async (system, user) => { const r = await claudeCall('genre-filer', { model: MODEL_SMART, max_tokens: 2000, system, messages: [{ role: 'user', content: user }] }); const b = r.content[0]; return b && b.type === 'text' ? b.text : '' }, mbThrottle, userAgent: `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)` })
+startTaxonomyStagedApply({ stateDir: STATE_DIR, libraryTracks: async () => ((await libraryCache.get()) as { tracks?: [] }).tracks ?? [], updateOverrides: (m) => writeOverridesSerialized(m), flushOverrides: () => overridesCache.flush(), overrideFlushStats: () => overridesCache.flushStats(), onApplied: (updates) => { sendToRenderer('genre-filer:applied', { updates }); triggerSync('metadata-edit') }, fingerprint: trackFingerprint, log: (m) => console.warn(m) })
 registerRockDnaIpc(ipc)
 registerReleaseKindsIpc(ipc, { file: () => releaseKindsPath(STATE_DIR) })
 registerYirIpc(ipc)

@@ -31,7 +31,21 @@ app is running at write time leaves taxonomy-deferred.json {at,
 pendingCount} beside the overrides + exits 3 (deferred) instead of the old
 silent exit 0 — silent deferral ends. Dry-run writes ONLY its /tmp preview:
 no deferred file, no backup rotation, no live writes.
-Exit codes: 0 = written / fully classified / dry-run; 3 = deferred (app running).
+Exit codes: 0 = written / handed to the app / fully classified / dry-run;
+3 = deferred (the app started mid-write, or the hand-off file could not be written).
+
+2026-10-19 (taste-engine repairs): the app is open around the clock, so the
+deferral above became permanent — 104 of 110 nights deferred, nothing written
+after 2026-09-06, 1,220 songs waiting. When the app is running the script now
+HANDS the staged subgenres to it: `taxonomy-staged.json` beside the overrides,
+which the app folds in through its own serialized writer within ~5 minutes
+(src/main/taxonomy-staged.ts — ⚠️ TWIN of merge_staged below). The overrides
+file keeps one writer. The quit-app direct write is unchanged.
+
+The --reembed-all that used to follow a write is gone: the main brain is
+plain since 2026-10-10 (no subgenre line — PR #66) and homemini owns and
+rebuilds it; this laptop re-embed only rewrote a local copy that brain-pull
+replaces from the NAS.
 """
 import json, os, re, struct, time, sys, subprocess, shutil, datetime
 import numpy as np
@@ -270,11 +284,34 @@ if DRY:
     log(f"DRY-RUN: preview at /tmp/overrides-preview.json (live file untouched — no deferred marker, no backup rotation)")
     sys.exit(0)
 
+STAGED = os.path.join(SD, 'taxonomy-staged.json')
+
+def stage_for_app():
+    """Hand every pending subgenre to the running app (src/main/taxonomy-staged.ts).
+    The file always carries the WHOLE pending set, so a newer run simply
+    replaces an older, still-unapplied one."""
+    entries = {}
+    for tid, a in cache.items():
+        if tid in byid and a.get('subgenre') and not has_subgenre_in(ov, tid):
+            e = {'subgenre': a['subgenre'], 'subgenrePath': a.get('path') or a['subgenre']}
+            if a.get('lean'): e['subgenreLean'] = a['lean']
+            entries[tid] = e
+    tmp = STAGED + '.tmp'
+    json.dump({'version': 1, 'at': datetime.datetime.now().isoformat(timespec='seconds'), 'entries': entries},
+              open(tmp, 'w'))
+    os.replace(tmp, STAGED)
+    return len(entries)
+
 if app_running():
-    log(f"JakeTunes is RUNNING — deferring write of {staged_preview} subgenre(s) to a run when it's quit "
-        f"(a live app clobbers external override writes). Classifications are cached; will write next eligible run.")
-    write_deferred(staged_preview)
-    sys.exit(3)   # distinct code: deferred is not success (Brief 182)
+    write_deferred(staged_preview)   # cleared by the app once it has applied the hand-off
+    try:
+        n = stage_for_app()
+    except Exception as e:
+        log(f"JakeTunes is RUNNING and the hand-off file could not be written ({e}) — deferring {staged_preview} subgenre(s).")
+        sys.exit(3)
+    log(f"JakeTunes is RUNNING — handed {n} subgenre(s) to the app (taxonomy-staged.json); "
+        f"it files them through its own writer within ~5 minutes.")
+    sys.exit(0)
 
 # Brief 182: RE-READ the overrides from disk and merge onto the CURRENT
 # file. The classify above ran for minutes over the load-time copy; any
@@ -315,10 +352,6 @@ os.replace(tmp, OVP)
 clear_deferred()
 log(f"wrote {staged} subgenre(s) into metadata-overrides.json (backups: .bak-classify + .1-.4 rotations)")
 
-# fold the new subgenres into embeddings via the existing (subgenre-aware) re-embed
-log("re-embedding so the new subgenres land in the brain...")
-node_bin = shutil.which('node') or '/opt/homebrew/bin/node'   # launchd PATH can be sparse
-r = subprocess.run([node_bin, os.path.join(HERE, 'brain-trainer.mjs'), '--reembed-all'],
-                   capture_output=True, text=True)
-sys.stdout.write(r.stdout[-400:]); sys.stderr.write(r.stderr[-400:])
-log("done." if r.returncode == 0 else f"re-embed exited {r.returncode} (subgenres still written; next nightly trainer will fold them)")
+# A direct write supersedes any older hand-off the app has not picked up yet.
+try: os.remove(os.path.join(SD, 'taxonomy-staged.json'))
+except FileNotFoundError: pass
