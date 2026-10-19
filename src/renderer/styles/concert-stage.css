@@ -193,5 +193,34 @@
 .concert-row-blurb { font-family: "Iowan Old Style", "Palatino", Georgia, serif; font-size: 14.5px; line-height: 1.5; color: #2a2a28; margin: 10px 0 0; max-width: 72ch; }
 .concert-row-stat { margin-top: 8px; font-size: 11.5px; color: #9a9a9a; font-variant-numeric: tabular-nums; letter-spacing: 0.06em; }
 
+/* ── Poster tile: one show on the artist page's Live wall (2026-10-18) ───
+ * The rows' tokens in portrait: art at 3:4 (aspect-fill + clip, like the
+ * phone's ConcertPosterThumb), the phone's orange LIVE capsule, then band /
+ * serif title / venue line. Every line wraps — names never clip. */
+.concert-tile {
+  display: flex; flex-direction: column; align-items: stretch; gap: 0;
+  background: transparent; border: none; padding: 0; margin: 0; font: inherit; color: inherit;
+  text-align: left; cursor: pointer; min-width: 0;
+  transition: transform 0.14s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.concert-tile:hover { transform: translateY(-2px); }
+.concert-tile:focus-visible { outline: 2px solid var(--brand-orange, #FC5501); outline-offset: 2px; border-radius: 6px; }
+.concert-tile-art {
+  position: relative; width: 100%; aspect-ratio: 3 / 4; border-radius: 6px; overflow: hidden; background: #dedede;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.18), 0 0 0 1px rgba(0,0,0,0.08);
+  transition: box-shadow 120ms ease-out;
+}
+.concert-tile:hover .concert-tile-art { box-shadow: 0 12px 26px rgba(0,0,0,0.24), 0 0 0 1px rgba(0,0,0,0.10); }
+.concert-tile-img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.concert-tile-noart { width: 100%; height: 100%; background: #dedede; }
+.concert-tile-live {
+  position: absolute; top: 8px; left: 8px; padding: 3px 6px 3px 7px; border-radius: 999px;
+  background: var(--brand-orange, #FC5501); color: #fff; font-size: 9px; font-weight: 800; letter-spacing: 0.11em; line-height: 1;
+}
+.concert-tile-band { margin-top: 10px; font-size: 10.5px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--brand-orange, #FC5501); font-weight: 800; line-height: 1.3; overflow-wrap: anywhere; }
+.concert-tile-show { font-family: "Iowan Old Style", "Palatino", Georgia, serif; font-size: 15px; font-weight: 700; line-height: 1.15; margin: 3px 0 4px; color: #1d1d1f; overflow-wrap: anywhere; }
+.concert-tile-where { font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: #7b7b7b; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; }
+.concert-tile-where b { color: #1d1d1f; }
+
 /* Release — a footnote, not a fact on the ticket. */
 .cd-footnote { margin: 26px 2px 0; font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; color: #9a9a9a; }

@@ -24,6 +24,11 @@ import { normTitle } from '../utils/normTitle'
 import { classifyRelease, RELEASE_KIND_LABEL, type ReleaseKind } from '../../common/release-kind'
 import { collectAlbumFacts, groupByReleaseKind, releaseKindForRows, releaseKindRank } from '../../common/release-sections'
 import { subscribeReleaseKinds, getReleaseKindsSnapshot, refreshReleaseKinds, foldName } from '../releaseKinds'
+import { subscribeLiveSets, getLiveSetsSnapshot } from '../liveSets'
+import { setConcertKey } from '../concertNav'
+import { declaredConcerts, concertTrackIds } from '../../common/concert-meta'
+import { withoutConcertTracks, concertsByPersona, withLiveWall } from '../../common/artist-live-wall'
+import ConcertPosterTile from '../components/ConcertPosterTile'
 
 // 4.5: hierarchy page for one artist. Reached from ArtistsView via a
 // VIEW_ARTIST_DETAIL dispatch (sets currentView + activeArtist on the
@@ -90,7 +95,8 @@ function relationLabel(rel: string): string {
 export default function ArtistDetailView() {
   const { state: lib, dispatch } = useLibrary()
   // A full live concert is its OWN thing, not an album of the artist — exclude
-  // its tracks from this artist's album grouping (they live in Live Concerts).
+  // its tracks from this artist's album grouping; it shows once, as its
+  // poster on the Live wall below (and in Live Concerts).
   const regularTracks = useRegularLibraryTracks(lib.tracks)
   const { dispatch: pbDispatch } = usePlayback()
   const { playTrack } = useAudio()
@@ -134,6 +140,31 @@ export default function ArtistDetailView() {
   // & Wings" tracks land on the "Paul McCartney" page — then SPLIT by
   // the raw tag so each persona keeps its own discography.
   const aliasVersion = useSyncExternalStore(subscribeAliases, getAliasVersion)
+
+  // Declared live concerts of this artist (2026-10-18, Jake on the Geese
+  // page: "needs to be displayed via poster presentation"). A concert's
+  // tracks are projected out of regularTracks, so it never groups as an
+  // album; the Live section shows it once, as its poster. Same band /
+  // show / venue reading as the Live Concerts page (common/concert-meta).
+  const liveSnap = useSyncExternalStore(subscribeLiveSets, getLiveSetsSnapshot)
+  const trackById = useMemo(() => {
+    const m = new Map<number, Track>()
+    for (const t of lib.tracks) m.set(t.id, t)
+    return m
+  }, [lib.tracks])
+  const artistConcerts = useMemo(() => {
+    if (!artist) return []
+    const canonicalActive = canonicalArtist(artist)
+    return declaredConcerts(liveSnap.sets, (id) => trackById.get(id))
+      .filter((c) => isSameArtist(c.band, canonicalActive))
+  }, [liveSnap, trackById, artist, aliasVersion])
+  // Every track a concert owns — promoted songs included — so a show the
+  // user reimported song-by-song is still ONE tile (its concert poster).
+  const concertIds = useMemo(
+    () => concertTrackIds(liveSnap.sets, (id) => trackById.has(id)),
+    [liveSnap, trackById],
+  )
+
   const personas = useMemo<Persona[]>(() => {
     if (!artist) return []
     const canonicalActive = canonicalArtist(artist)
@@ -193,8 +224,22 @@ export default function ArtistDetailView() {
       const bMin = b.albums.reduce((m, g) => Math.min(m, Number(g.year) || Infinity), Infinity)
       return aMin - bMin
     })
+    // An artist whose only music here is a declared concert still gets a
+    // chapter, so the concert's poster has a Live section to sit in.
+    if (out.length === 0 && artistConcerts.length > 0) {
+      out.push({ name: artistConcerts[0].band || artist, yearRange: '', albums: [] })
+    }
     return out
-  }, [regularTracks, artist, aliasVersion])
+  }, [regularTracks, artist, aliasVersion, artistConcerts])
+
+  const concertsForPersona = useMemo(
+    () => concertsByPersona(artistConcerts, personas.map((p) => p.name)),
+    [artistConcerts, personas],
+  )
+  const openConcert = useCallback((albumKey: string) => {
+    setConcertKey(albumKey)
+    dispatch({ type: 'SET_VIEW', view: 'concert-detail' })
+  }, [dispatch])
 
   // Flattened album list — kept for hero stats + genre chips.
   const albums = useMemo<AlbumGroup[]>(
@@ -627,7 +672,13 @@ export default function ArtistDetailView() {
           .sort((a, b) => releaseKindRank(a.g) - releaseKindRank(b.g) || (b.album.year || '').localeCompare(a.album.year || ''))
         // Sub-headers whenever they say something: more than one kind, or a
         // library of this artist that is all EPs / singles / live / comps.
-        const ownedSections = groupByReleaseKind(persona.albums, a => kindByAlbum.get(a) as ReleaseKind)
+        // Live is a poster wall: this persona's declared concerts + its live
+        // albums, one tile per show (promoted concert songs fold into it).
+        const shownAlbums = withoutConcertTracks(persona.albums, concertIds)
+        const ownedSections = withLiveWall(
+          groupByReleaseKind(shownAlbums, a => kindByAlbum.get(a) ?? kindOfAlbum(a)),
+          concertsForPersona.get(persona.name) ?? [],
+        )
         const showOwnedHeads = ownedSections.length > 1 || (ownedSections.length === 1 && ownedSections[0].kind !== 'album')
         return (
           <div key={persona.name} className={`artist-detail-chapter ${isMulti ? 'artist-detail-chapter--multi' : ''}`}>
@@ -644,11 +695,42 @@ export default function ArtistDetailView() {
               <h2 className="artist-detail-section-title">
                 {isMulti ? 'In your library' : 'Albums in your library'}
               </h2>
-              {ownedSections.map(({ kind, label, items: albums }) => (
+              {ownedSections.map(({ kind, label, items: albums, wall }) => (
                 <Fragment key={kind}>
                   {showOwnedHeads && (
                     <div className="artist-detail-album-subhead">{label}</div>
                   )}
+                  {wall ? (
+                    <div className="artist-detail-album-grid artist-detail-live-wall">
+                      {wall.map(tile => tile.type === 'concert' ? (
+                        <ConcertPosterTile
+                          key={tile.key}
+                          albumKey={tile.concert.albumKey}
+                          artHash={tile.concert.poster || findArtHash(tile.concert.band, tile.concert.show)}
+                          band={tile.concert.band}
+                          title={tile.concert.show}
+                          venue={tile.concert.venue}
+                          city={tile.concert.city}
+                          date={tile.concert.date}
+                          tooltip={`${tile.concert.show} — ${tile.concert.band}`}
+                          onOpen={() => openConcert(tile.concert.albumKey)}
+                        />
+                      ) : (
+                        <ConcertPosterTile
+                          key={tile.key}
+                          artHash={findArtHash(persona.name, tile.album.name)}
+                          band={persona.name}
+                          title={tile.album.name}
+                          venue={tile.venue}
+                          date={tile.date}
+                          tooltip={`Open ${tile.album.name}`}
+                          onOpen={() => dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyFromStrings(persona.name, tile.album.name) })}
+                          onContextMenu={(e) => { e.preventDefault(); setAlbumCtx({ x: e.clientX, y: e.clientY, name: tile.album.name, tracks: tile.album.tracks }) }}
+                          onDragStart={(e) => setAlbumDragPayload(e, sortAlbumTracks(tile.album.tracks).map(t => t.id))}
+                        />
+                      ))}
+                    </div>
+                  ) : (
                   <div className="artist-detail-album-grid">
                 {albums.map(album => {
                   const hash = findArtHash(persona.name, album.name)
@@ -684,6 +766,7 @@ export default function ArtistDetailView() {
                   )
                 })}
                   </div>
+                  )}
                 </Fragment>
               ))}
             </section>

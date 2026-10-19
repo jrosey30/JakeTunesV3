@@ -13,6 +13,7 @@ import { buildNormalizedArtworkIndex, lookupArtwork } from '../utils/artworkLook
 import AlbumArtImage from '../components/AlbumArtImage'
 import { setConcertKey } from '../concertNav'
 import type { LiveSetEntry } from '../types'
+import { declaredConcerts } from '../../common/concert-meta'
 import '../styles/albums.css'
 import '../styles/concerts.css'
 import '../styles/concert-stage.css'
@@ -40,34 +41,6 @@ interface ConcertRow {
   when: number   // sortable date (ms); NaN-safe
 }
 
-function parseConcertMeta(
-  showName: string,
-  sampleTitle: string,
-  override?: { venue?: string; city?: string; date?: string },
-): { venue?: string; date?: string } {
-  if (override && (override.venue || override.date)) return { venue: override.venue, date: override.date }
-  let venue: string | undefined
-  let date: string | undefined
-  const m = /\(live\s+(?:at|from)\s+([^,]+),\s*(.+?)\)\s*$/i.exec(sampleTitle || '')
-  if (m) { venue = m[1].trim(); date = m[2].trim() }
-  if (!date) {
-    const d = /([A-Z][a-z]+\.?\s+\d[\d\s&,–-]*\d{4})/.exec(showName || '')
-    if (d) date = d[1].trim()
-  }
-  return { venue, date }
-}
-
-const MONTHS: Record<string, number> = { january: 0, february: 1, march: 2, april: 3, may: 4, june: 5, july: 6, august: 7, september: 8, october: 9, november: 10, december: 11 }
-/** "July 17, 18 & 21, 2009" → the FIRST night, as ms; unparseable → +∞ (sorts last). */
-export function firstNightMs(date?: string): number {
-  if (!date) return Number.POSITIVE_INFINITY
-  const y = /(\d{4})/.exec(date)?.[1]
-  const mo = /([A-Za-z]+)/.exec(date)?.[1]?.toLowerCase()
-  const d = /\b(\d{1,2})\b/.exec(date)?.[1]
-  if (!y) return Number.POSITIVE_INFINITY
-  const month = mo && MONTHS[mo] != null ? MONTHS[mo] : 0
-  return Date.UTC(Number(y), month, d ? Number(d) : 1)
-}
 /** Sort key for the band: drop a leading "The " so The Postal Service files under P. */
 function bandKey(band: string): string {
   return band.toLowerCase().replace(/^the\s+/, '').trim()
@@ -79,19 +52,13 @@ export default function ConcertsView() {
   const normalizedArtIndex = useMemo(() => buildNormalizedArtworkIndex(lib.artworkMap), [lib.artworkMap])
 
   const concerts = useMemo((): ConcertRow[] => {
-    const liveIds = new Set(lib.tracks.map((t) => t.id))
-    const out: ConcertRow[] = []
-    for (const [albumKey, entry] of Object.entries(snap.sets)) {
-      if (!liveIds.has(entry.mergedTrackId)) continue
-      const src = lib.tracks.find((t) => t.id === entry.cues[0]?.trackId)
-        ?? lib.tracks.find((t) => t.id === entry.mergedTrackId)
-      const band = entry.cues[0]?.artist || src?.artist || ''
-      const show = src?.album?.replace(/\s*\(Live Set\)\s*$/i, '') || albumKey.split('|||')[1] || 'Live Concert'
-      const artHash = lookupArtwork(lib.artworkMap, normalizedArtIndex, band, show)
-      const { venue, date } = parseConcertMeta(show, entry.cues[0]?.title || '', entry.concert)
-      const blurb = entry.concert?.blurb || entry.concert?.facts?.[0]
-      out.push({ albumKey, entry, band, show, venue, city: entry.concert?.city, date, artHash: entry.concert?.poster || artHash, blurb, when: firstNightMs(date) })
-    }
+    // Band / show / venue / date come from the shared reading the artist
+    // page's Live wall uses too (common/concert-meta.ts).
+    const byId = new Map(lib.tracks.map((t) => [t.id, t] as const))
+    const out: ConcertRow[] = declaredConcerts(snap.sets, (id) => byId.get(id)).map((c) => ({
+      albumKey: c.albumKey, entry: c.entry, band: c.band, show: c.show, venue: c.venue, city: c.city, date: c.date,
+      artHash: c.poster || lookupArtwork(lib.artworkMap, normalizedArtIndex, c.band, c.show), blurb: c.blurb, when: c.when,
+    }))
     return out.sort((a, b) => bandKey(a.band).localeCompare(bandKey(b.band)) || (a.when - b.when) || a.show.localeCompare(b.show))
   }, [snap, lib.tracks, lib.artworkMap, normalizedArtIndex])
 
