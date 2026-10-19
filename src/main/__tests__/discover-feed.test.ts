@@ -19,7 +19,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   baseTitleKey, filterFeed, applyQualityFloor, cardKey,
-  restKeyFor, hasShopIdRests, migrateShopIdRests,
+  restKeyFor, hasShopIdRests, migrateShopIdRests, isResting, ROTATE_VIEWS, ROTATE_REST_MS,
   BRAIN_FLOOR, BRAIN_HARD_FLOOR, BRAIN_LANE_MIN,
   type FeedCard,
 } from '../discover-feed.ts'
@@ -199,7 +199,7 @@ describe('filterFeed — a "Not for me" rest on an owned artist lands (2026-10-1
   const shopId = (c: { artist: string; title: string }) => `disc|${c.artist}|${c.title}`.toLowerCase()
   const DAY = 24 * 3600 * 1000
   const now = 1_000 * DAY
-  const rest = { first: now, last: now, views: 99 }
+  const rest = { first: now, last: now, views: 99, vetoed: true as const }
   const heligoland = card({ type: 'album', artist: 'Massive Attack', title: 'Heligoland' })
 
   test('the shop id itself is not a key filterFeed reads (the bug)', () => {
@@ -237,6 +237,47 @@ describe('filterFeed — a "Not for me" rest on an owned artist lands (2026-10-1
   })
 })
 
+// The veto is for good; rotation keeps its two-week rest (Jake, 2026-10-18).
+describe('isResting — a veto is for good, a rotation rest lasts two weeks', () => {
+  const DAY = 24 * 3600 * 1000
+  const now = 1_000 * DAY
+
+  test('no ledger entry: not resting', () => {
+    assert.equal(isResting(undefined, now), false)
+  })
+  test('a veto holds at any age, whatever its views', () => {
+    for (const ageDays of [0, 13, 14, 51, 400]) {
+      assert.equal(isResting({ views: 99, last: now - ageDays * DAY, vetoed: true }, now), true, `${ageDays}d`)
+    }
+    assert.equal(isResting({ views: 0, last: now - 400 * DAY, vetoed: true }, now), true)
+  })
+  test('rotation: rests from ROTATE_VIEWS views, for ROTATE_REST_MS, then comes back', () => {
+    assert.equal(ROTATE_VIEWS, 4)
+    assert.equal(ROTATE_REST_MS, 14 * DAY)
+    assert.equal(isResting({ views: 3, last: now }, now), false)
+    assert.equal(isResting({ views: 4, last: now }, now), true)
+    assert.equal(isResting({ views: 4, last: now - 14 * DAY + 1 }, now), true)
+    assert.equal(isResting({ views: 4, last: now - 14 * DAY }, now), false)
+  })
+  test('views 99 without the flag is still only a rotation rest', () => {
+    assert.equal(isResting({ views: 99, last: now - 15 * DAY }, now), false)
+  })
+
+  test('filterFeed: a vetoed card stays out two months on; a rotation rest has expired', () => {
+    const vetoed = card({ type: 'album', artist: 'Massive Attack', title: 'Heligoland' })
+    const rotated = card({ type: 'album', artist: 'Geese', title: 'Getting Killed' })
+    const out = filterFeed([vetoed, rotated], {
+      ...baseOpts(),
+      now: now + 60 * DAY,
+      served: {
+        [cardKey(vetoed)]: { views: 99, last: now, vetoed: true },
+        [cardKey(rotated)]: { views: 9, last: now },
+      },
+    })
+    assert.deepEqual(out.map((c) => c.artist), ['Geese'])
+  })
+})
+
 describe('migrateShopIdRests — the rests already written under the shop id', () => {
   const DAY = 24 * 3600 * 1000
   const now = 1_000 * DAY
@@ -255,6 +296,8 @@ describe('migrateShopIdRests — the rests already written under the shop id', (
       'diana ross|i m coming out', 'geese|getting killed', 'massive attack|heligoland', 'wednesday|bleeds',
     ])
     assert.equal(out['massive attack|heligoland'].views, 99)
+    assert.equal(out['massive attack|heligoland'].vetoed, true)
+    assert.equal(out['diana ross|i m coming out'].vetoed, true)
     assert.equal(hasShopIdRests(out), false)
   })
 
@@ -263,6 +306,7 @@ describe('migrateShopIdRests — the rests already written under the shop id', (
     const out = migrateShopIdRests(before)
     assert.deepEqual(out['geese|getting killed'], before['geese|getting killed'])
     assert.deepEqual(out['wednesday|bleeds'], before['wednesday|bleeds'])
+    assert.equal('vetoed' in out['geese|getting killed'], false)
   })
 
   test('after migration filterFeed keeps the vetoed cards out and the rest in', () => {
@@ -275,12 +319,24 @@ describe('migrateShopIdRests — the rests already written under the shop id', (
     assert.deepEqual(out.map((c) => c.artist), ['Wednesday'])
   })
 
-  test('merges with an entry already under cardKey: most views, latest last, earliest first', () => {
+  test('the live vetoes were 42-51 days old: migrated, they still keep the cards out', () => {
+    const served = migrateShopIdRests({
+      'disc|massive attack|heligoland': { first: now - 51 * DAY, last: now - 51 * DAY, views: 99 },
+      "disc|diana ross|i'm coming out": { first: now - 42 * DAY, last: now - 42 * DAY, views: 99 },
+    })
+    const out = filterFeed([
+      card({ type: 'album', artist: 'Massive Attack', title: 'Heligoland' }),
+      card({ type: 'song', artist: 'Diana Ross', title: "I'm Coming Out" }),
+    ], { ...baseOpts(), now, served })
+    assert.equal(out.length, 0)
+  })
+
+  test('merges with an entry already under cardKey: most views, latest last, earliest first, vetoed', () => {
     const out = migrateShopIdRests({
       'disc|massive attack|heligoland': { first: now - 50 * DAY, last: now - 50 * DAY, views: 99 },
       'massive attack|heligoland': { first: now - 60 * DAY, last: now - DAY, views: 2 },
     })
-    assert.deepEqual(out, { 'massive attack|heligoland': { first: now - 60 * DAY, last: now - DAY, views: 99 } })
+    assert.deepEqual(out, { 'massive attack|heligoland': { first: now - 60 * DAY, last: now - DAY, views: 99, vetoed: true } })
   })
 
   test('a key that cannot be split for sure stays where it is — and does not re-trigger', () => {
@@ -313,6 +369,14 @@ describe('WIRING — main writes and reads the rest under cardKey', () => {
     assert.ok(handler.length > 0, 'discovery-not-for-me handler not found')
     assert.ok(handler.includes('.restKeyFor('), 'the handler no longer turns the shop id into cardKey — owned-artist vetoes go dead again')
     assert.ok(!/served\[String\(cardKey\)\]/.test(handler), 'the handler writes the raw shop id into the served ledger again')
+    assert.ok(/served\[restKey\] = \{[^}]*vetoed: true/.test(handler), 'the owned-artist rest is no longer a veto — the card comes back after two weeks')
+  })
+
+  test('the radar reads the served ledger through isResting (vetoes hold there too)', () => {
+    const radar = idx.slice(idx.indexOf("ipc.handle('get-new-music-radar'"))
+    const filter = radar.slice(0, radar.indexOf('brainMatchCandidates'))
+    assert.ok(filter.includes('isResting('), 'the radar has its own rest rule again — vetoed cards expire there')
+    assert.ok(!/views >= ROTATE_VIEWS/.test(filter), 'the radar re-inlined the rotation check')
   })
 
   test('feed generation migrates disc| rests before filterFeed reads the ledger', () => {

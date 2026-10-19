@@ -191,6 +191,25 @@ export const normKey = (s: string): string => storedNameKey(s, legacyNormKey)
 export const foldKey = (s: string): string => nameKey(s)
 export const cardKey = (c: { artist: string; title: string }) => `${normKey(c.artist)}|${normKey(c.title)}`
 
+/** One served-ledger entry. `views`/`last` drive rotation: a card served
+ *  ROTATE_VIEWS+ times without a bite rests ROTATE_REST_MS, then comes back.
+ *  `vetoed` is "Not for me" on a card by an artist Jake owns — the artist
+ *  stays, that card is gone for good (2026-10-18). views 99 is kept on a veto
+ *  so a build that predates the flag still rests the card. */
+export interface ServedEntry { first: number; last: number; views: number; vetoed?: true }
+export const ROTATE_VIEWS = 4
+export const ROTATE_REST_MS = 14 * 24 * 3600 * 1000
+
+/** Is this card out of the feed right now? A veto always; a rotation rest
+ *  only inside its window. The one rule for filterFeed and the radar. */
+export function isResting(
+  sv: Pick<ServedEntry, 'views' | 'last' | 'vetoed'> | undefined,
+  now: number, rv = ROTATE_VIEWS, rr = ROTATE_REST_MS,
+): boolean {
+  if (!sv) return false
+  return sv.vetoed === true || (sv.views >= rv && now - sv.last < rr)
+}
+
 /** The shop page's own card id is `disc|artist|title`, lowercased. ⚠️ TWIN:
  *  src/renderer/views/NewForYouView.tsx cardId. It is a renderer id, never a
  *  ledger key: the served ledger is read by cardKey (filterFeed, the radar). */
@@ -218,23 +237,22 @@ export const hasShopIdRests = (served: Record<string, unknown>): boolean =>
   Object.keys(served).some((k) => splitShopId(k) !== null)
 
 /** Re-file the rests already written under the shop's id onto cardKey, so the
- *  vetoes Jake gave before the fix are read too. Only `disc|` keys move; every
- *  rotation entry is left as it is. If cardKey already has an entry, the two
- *  merge (most views, latest last, earliest first). A key with a `|` inside
- *  the artist or title can't be split for sure, so it stays where it is.
- *  Returns a new ledger. */
-export function migrateShopIdRests<S extends { first: number; last: number; views: number }>(
-  served: Record<string, S>,
-): Record<string, S> {
-  const out: Record<string, S> = { ...served }
+ *  vetoes Jake gave before the fix are read too — and marked vetoed: the
+ *  owned-artist "Not for me" was the only writer of `disc|` keys (since
+ *  2026-08-09). Only `disc|` keys move; every rotation entry is left as it
+ *  is. If cardKey already has an entry, the two merge (most views, latest
+ *  last, earliest first, vetoed). A key with a `|` inside the artist or title
+ *  can't be split for sure, so it stays where it is. Returns a new ledger. */
+export function migrateShopIdRests(served: Record<string, ServedEntry>): Record<string, ServedEntry> {
+  const out: Record<string, ServedEntry> = { ...served }
   for (const [k, v] of Object.entries(served)) {
     const card = splitShopId(k)
     if (!card) continue
     const key = cardKey(card)
     const have = out[key]
     out[key] = have
-      ? { ...have, first: Math.min(have.first, v.first), last: Math.max(have.last, v.last), views: Math.max(have.views, v.views) }
-      : v
+      ? { ...have, first: Math.min(have.first, v.first), last: Math.max(have.last, v.last), views: Math.max(have.views, v.views), vetoed: true }
+      : { ...v, vetoed: true }
     delete out[k]
   }
   return out
@@ -278,7 +296,7 @@ export function filterFeed(
     /** `artistNorm|baseTitleKey` of every owned track title + album. */
     ownedBaseKeys?: Set<string>
     notForMe: Record<string, unknown>
-    served: Record<string, { views: number; last: number }>
+    served: Record<string, Pick<ServedEntry, 'views' | 'last' | 'vetoed'>>
     now: number
     rotateViews?: number
     rotateRestMs?: number
@@ -288,8 +306,8 @@ export function filterFeed(
   },
 ): FeedCard[] {
   const seen = new Set<string>()
-  const rv = opts.rotateViews ?? 4
-  const rr = opts.rotateRestMs ?? 14 * 24 * 3600 * 1000
+  const rv = opts.rotateViews ?? ROTATE_VIEWS
+  const rr = opts.rotateRestMs ?? ROTATE_REST_MS
   return cards.filter((c) => {
     const ak = normKey(c.artist)
     const key = cardKey(c)
@@ -310,8 +328,7 @@ export function filterFeed(
       const bt = baseTitleKey(c.title)
       if (opts.ownedBaseKeys && bt && bt !== ak && opts.ownedBaseKeys.has(`${ak}|${bt}`)) return false
     }
-    const sv = opts.served[key]
-    if (sv && sv.views >= rv && opts.now - sv.last < rr) return false
+    if (isResting(opts.served[key], opts.now, rv, rr)) return false
     return true
   })
 }

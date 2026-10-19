@@ -1539,9 +1539,9 @@ ipc.handle('discovery-not-for-me', async (_e, artist: string, cardKey?: string) 
 
   await discoveryFeedbackCache.update((cur) => {
     if (owned) {
-      // Rest this card hard rather than blacklisting an artist Jake plays —
+      // Veto this card for good rather than blacklisting an artist Jake plays —
       // under cardKey, the key filterFeed reads, not the shop's `disc|` id.
-      if (restKey) cur.served[restKey] = { first: Date.now(), last: Date.now(), views: 99 }
+      if (restKey) cur.served[restKey] = { first: Date.now(), last: Date.now(), views: 99, vetoed: true }
     } else {
       cur.notForMe[key] = { artist: String(artist), at: Date.now() }
     }
@@ -2075,16 +2075,14 @@ ipc.handle('get-new-music-radar', async (_e, force?: boolean) => {
     // Rank generously (24), then let the BRAIN and Jake's verdicts cut it down.
     const ranked = rankCandidates(fp, parseCandidates(text), 24, isOnList, anchors)
 
-    // Jake's verdicts: "not for me" artists never come back; cards served 4+
-    // times without a bite rotate out for two weeks (no more month-long squatters).
+    // Jake's verdicts: "not for me" artists and vetoed cards never come back;
+    // cards served 4+ times without a bite rotate out for two weeks (isResting).
     const fb = await discoveryFeedbackCache.get()
     const nowMs = Date.now()
-    const ROTATE_VIEWS = 4, ROTATE_REST_MS = 14 * 24 * 3600 * 1000
+    const { isResting } = await import('./discover-feed.ts')
     const visible = ranked.filter((c) => {
       if (fb.notForMe[normArtistKey(c.artist)]) return false
-      const sv = fb.served[`${normArtistKey(c.artist)}|${normArtistKey(c.title)}`]
-      if (sv && sv.views >= ROTATE_VIEWS && nowMs - sv.last < ROTATE_REST_MS) return false
-      return true
+      return !isResting(fb.served[`${normArtistKey(c.artist)}|${normArtistKey(c.title)}`], nowMs)
     })
 
     // The real match %: candidates embedded into the library's own vector
@@ -3862,7 +3860,7 @@ const lyricsCache = new JsonFileCache<Record<string, LyricsRecord>>(
 // rotate out instead of squatting for weeks (the Vince Staples bug).
 interface DiscoveryFeedback {
   notForMe: Record<string, { artist: string; at: number }>
-  served: Record<string, { first: number; last: number; views: number }>
+  served: Record<string, import('./discover-feed.ts').ServedEntry>
 }
 const discoveryFeedbackCache = new JsonFileCache<DiscoveryFeedback>(
   () => join(STATE_DIR, 'discovery-feedback.json'),
