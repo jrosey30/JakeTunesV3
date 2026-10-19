@@ -41,14 +41,14 @@ import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, 
 import { writeJsonAtomic } from './atomic-write'
 import { resolveContainedPath, isSafeCacheKey, isPathInside } from './path-safety'
 import { isHomeminiPlaybackClient, mayFollowPlaybackSymlink } from './stream-playback'
-import { streamVariant, normalizeStreamKbps, STREAM_KBPS_DEFAULT } from './stream-format'
+import { homeminiStreamTarget, readStreamCompressedCached } from './stream-format'
 import { parseRangeHeader } from './range-header.ts'
 import { getBuildProvenance, formatBuildProvenance } from './build-provenance.ts'
 import {
   phonePlaylistSidecarsNeverPushFromDesktop,
   assertNoDesktopBluntPush,
 } from './sidecar-contracts.ts'
-import { fetchHeadersWithin } from './fetch-headers'; import { withBodyInactivityTimeout } from './stream-body-timeout.ts'; import { spoolAwareServe, spoolPaceFor, pacedBody } from './stream-spool.ts'; import { refreshPhoneMirrors, ensureMobileImportAudio } from './phone-mirrors.ts'; import { safeIpcError } from './safe-ipc-error.ts'
+import { fetchHeadersWithin } from './fetch-headers'; import { withBodyInactivityTimeout } from './stream-body-timeout.ts'; import { spoolAwareServe, spoolPaceFor, pacedBody, spoolLimitsFor, SPOOL_DIR_NAME } from './stream-spool.ts'; import { startOvernightPreload } from './overnight-preload.ts'; import { refreshPhoneMirrors, ensureMobileImportAudio } from './phone-mirrors.ts'; import { safeIpcError } from './safe-ipc-error.ts'
 import { computeDeletedPaths } from './library-deletions'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
 import { createPlayCache } from './play-cache.ts'
@@ -4406,7 +4406,7 @@ async function writePins(pinned: string[]): Promise<void> {
 // ── Streaming migration helpers (hoisted to module scope 2026-07-09) ────────
 // homemini serves audio by library id; these map a track ↔ id and pull bytes
 // over HTTP. Shared by the ipod-audio:// protocol handler (playback), the
-// download/pin IPC, and the ingestion redirect. See project_jaketunes_streaming.
+// download/pin IPC, and the ingestion redirect. See project_jaketunes_streaming. ⚠️ TWIN (path→id): overnight-preload.ts buildPreloadPlan.
 const HOMEMINI_AUDIO_BASE = process.env.JAKETUNES_MOBILE_BACKEND
   ? `${process.env.JAKETUNES_MOBILE_BACKEND}/audio`
   : 'http://homemini:3000/audio'
@@ -4428,27 +4428,6 @@ async function trackIdForAbsPath(absPath: string): Promise<string | number | nul
   } catch { return null }
   return streamTrackIdByColonPath.get(colon) ?? null
 }
-// Compressed-stream marker: a machine on a link too thin for lossless
-// carries ~/.config/jaketunes/stream-compressed (optionally containing a
-// kbps number). Cached like streamSource — this is the playback hot path.
-// Absent = unchanged behaviour, which is what every machine but workmini
-// wants.
-let _streamCompressedCache: { on: boolean; kbps: number; t: number } | null = null
-async function readStreamCompressedCached(): Promise<{ on: boolean; kbps: number }> {
-  const now = Date.now()
-  if (_streamCompressedCache && now - _streamCompressedCache.t < 5000) return _streamCompressedCache
-  let on = false
-  let kbps = STREAM_KBPS_DEFAULT
-  try {
-    const raw = await readFile(join(process.env.HOME || '', '.config/jaketunes/stream-compressed'), 'utf8')
-    on = true
-    const n = parseInt(raw.trim(), 10)
-    if (Number.isFinite(n)) kbps = normalizeStreamKbps(n)
-  } catch { /* no marker — fat link, serve the original */ }
-  _streamCompressedCache = { on, kbps, t: now }
-  return _streamCompressedCache
-}
-
 async function fetchAudioFromHomemini(
   id: string | number,
   rangeHeader: string | null,
@@ -4467,11 +4446,10 @@ async function fetchAudioFromHomemini(
   // after ~10s of zero bytes, which surfaces as a load failure (and, in the
   // renderer, as Brief 160's advance-to-next ending) instead of a hang.
   const compressed = await readStreamCompressedCached()
-  const variant = streamVariant({ compressed: compressed.on, kbps: compressed.kbps, wantFlac })
+  const { variant, url, spoolKey } = homeminiStreamTarget(HOMEMINI_AUDIO_BASE, id, { compressed: compressed.on, kbps: compressed.kbps, wantFlac })
   const headerBudgetMs = variant.transcoding ? 25_000 : 12_000
-  const url = `${HOMEMINI_AUDIO_BASE}/${encodeURIComponent(String(id))}${variant.query}`
   // Spool ("do the deeper buffering thing", 2026-08-28): a landed local copy serves every range from disk — WAN jitter can't reach a playing song. Not landed yet: kick the full download, live-proxy this request as before.
-  const viaSpool = await spoolAwareServe(join(app.getPath('userData'), 'stream-spool'), `${id}${variant.spoolSuffix}`, url, rangeHeader, undefined, compressed.on ? spoolPaceFor(compressed.kbps) : 0); if (viaSpool) return viaSpool
+  const viaSpool = await spoolAwareServe(join(app.getPath('userData'), SPOOL_DIR_NAME), spoolKey, url, rangeHeader, undefined, compressed.on ? spoolPaceFor(compressed.kbps) : 0, spoolLimitsFor(compressed.on)); if (viaSpool) return viaSpool
 
   const once = async (): Promise<Response | null> => {
     try {
@@ -10253,6 +10231,9 @@ app.whenReady().then(async () => {
   // Streaming/cache-farm machines (workmini): fail loud at boot if homemini
   // is down, instead of discovering it as "stuck at 0:00" with no error.
   void probeHomeminiReachability()
+  // Thin links only (workmini): overnight, pre-load the songs most likely to play into the stream spool — see overnight-preload.ts.
+  void startOvernightPreload({ userData: app.getPath('userData'), audioBase: HOMEMINI_AUDIO_BASE, isPlaying: () => playbackActive, streamCompressed: readStreamCompressedCached, isStreamingClient: isHomeminiPlaybackClientCached,
+    library: () => libraryCache.get(), playlists: () => playlistsCache.get(), playEventsPath: getPlayEventsPath() }).catch((err) => console.warn('[preload] schedule failed:', err instanceof Error ? err.message : err))
   // 4.5.0-114 — local SSD is canonical; NAS is async backup mirror only.
   const nasUp = await nasAvailable()
   console.log(`[state] storage mode: ${STATE_IS_NAS ? 'NAS' : 'local-primary'} — dir=${STATE_DIR}${nasUp ? ` (NAS backup mirror at ${NAS_STATE_DIR_PATH})` : ` (NAS backup unavailable — ${NAS_STATE_DIR_PATH} not mounted)`}`)

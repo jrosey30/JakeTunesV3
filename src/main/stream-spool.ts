@@ -28,12 +28,52 @@ import { join } from 'path'
 import { Readable } from 'stream'
 import { withCompanionInit } from './hub-companion.ts'
 import { writeWebBodyToFile } from './web-body-to-file.ts'
+import { withBodyInactivityTimeout } from './stream-body-timeout.ts'
+import { writeJsonAtomic } from './atomic-write.ts'
 
 export interface SpoolMeta { contentType: string; total: number }
 export interface SpoolReady { file: string; contentType: string; total: number }
 
+/** userData/<this> — the one spool directory (playback and the overnight pre-load). */
+export const SPOOL_DIR_NAME = 'stream-spool'
 const SPOOL_CAP_BYTES = 6 * 1024 * 1024 * 1024   // 6 GB LRU — replays stay free
 const RETRY_COOLDOWN_MS = 60_000
+
+// ── Thin links: a bigger spool, and pre-loaded tracks are pinned ─────────
+//
+// 2026-10-19 (Jake: "workmini downloads the songs you're most likely to play
+// … I'd use up to about 30 GB"). On a stream-compressed machine the spool is
+// also where the overnight pre-load (overnight-preload.ts) lands tonight's
+// tracks, so the cap grows to 30 GB, and the keys the pre-load picked are
+// written to preload-pins.json in the spool dir. The cap pass skips pinned
+// keys: a random daytime track can push out other daytime tracks, never the
+// pre-load. Each night rewrites the pin list from scratch, so a song that
+// falls off the priority list becomes an ordinary evictable spool again.
+// Fat links keep 6 GB and ignore the pin file entirely — even a stale one.
+export const THIN_LINK_SPOOL_CAP_BYTES = 30e9
+export const PRELOAD_PINS_FILE = 'preload-pins.json'
+export interface SpoolLimits { capBytes: number; honorPins: boolean }
+const FAT_LINK_LIMITS: SpoolLimits = { capBytes: SPOOL_CAP_BYTES, honorPins: false }
+
+/** Cap + pin policy for this machine's spool (thin = the stream-compressed marker). */
+export function spoolLimitsFor(thinLink: boolean): SpoolLimits {
+  return thinLink ? { capBytes: THIN_LINK_SPOOL_CAP_BYTES, honorPins: true } : FAT_LINK_LIMITS
+}
+
+/** Keys the overnight pre-load protects from eviction (empty when none). */
+export async function readPreloadPins(dir: string): Promise<Set<string>> {
+  try {
+    const raw = JSON.parse(await readFile(join(dir, PRELOAD_PINS_FILE), 'utf-8')) as { keys?: unknown }
+    return new Set(Array.isArray(raw?.keys) ? raw.keys.filter((k): k is string => typeof k === 'string') : [])
+  } catch {
+    return new Set()   // no pin file = nothing pinned (every fat-link machine)
+  }
+}
+
+export async function writePreloadPins(dir: string, keys: readonly string[]): Promise<void> {
+  await mkdir(dir, { recursive: true })
+  await writeJsonAtomic(join(dir, PRELOAD_PINS_FILE), { v: 1, keys: [...keys], writtenAt: new Date().toISOString() }, false)
+}
 
 const inFlight = new Map<string, Promise<void>>()
 const failedAt = new Map<string, number>()
@@ -141,9 +181,44 @@ export function pacedBody(
   }))
 }
 
+/** A non-2xx from homemini (404 = not there yet; 5xx = homemini trouble). */
+class SpoolHttpError extends Error {
+  readonly status: number
+  constructor(status: number) { super(`spool fetch ${status}`); this.status = status }
+}
+
+/** Download one track to `${key}.done` + meta. Throws on any failure, after
+ *  removing its .part — a torn spool is never left behind or served. */
+async function landSpool(
+  dir: string, key: string, url: string, fetchFn: typeof fetch, paceBytesPerSec: number,
+  signal: AbortSignal, stallMs = 0, onHeaders?: () => void,
+): Promise<number> {
+  const part = join(dir, `${key}.part.${process.pid}`)
+  try {
+    const res = await fetchFn(url, withCompanionInit({ signal }))
+    onHeaders?.()
+    if (!res.ok || !res.body) throw new SpoolHttpError(res.status)
+    const total = Number(res.headers.get('content-length')) || 0
+    const contentType = res.headers.get('content-type') || 'audio/mpeg'
+    const raw = res.body as unknown as ReadableStream<Uint8Array>
+    // pipeline via writeWebBodyToFile: a dropped connection now rejects into
+    // the catch below (cooldown + .part cleanup) instead of an uncaught
+    // exception dialog and a spool slot that never frees (2026-10-17).
+    await writeWebBodyToFile(pacedBody(stallMs > 0 ? withBodyInactivityTimeout(raw, stallMs) : raw, paceBytesPerSec) as typeof res.body, part)
+    const written = (await stat(part)).size
+    if (total > 0 && written !== total) throw new Error(`spool short: ${written}/${total}`)
+    await writeFile(metaPath(dir, key), JSON.stringify({ contentType, total: written } satisfies SpoolMeta))
+    await rename(part, donePath(dir, key))
+    return written
+  } catch (err) {
+    try { await unlink(part) } catch { /* never landed */ }
+    throw err
+  }
+}
+
 /** Kick a full-file download (single-flight, cooldown after failure).
  *  `paceBytesPerSec` > 0 caps the read rate (thin links); 0 = wire speed. */
-export function ensureSpool(dir: string, key: string, url: string, fetchFn: typeof fetch = fetch, paceBytesPerSec = 0): void {
+export function ensureSpool(dir: string, key: string, url: string, fetchFn: typeof fetch = fetch, paceBytesPerSec = 0, limits: SpoolLimits = FAT_LINK_LIMITS): void {
   if (inFlight.has(key)) return
   const lastFail = failedAt.get(key)
   if (lastFail && Date.now() - lastFail < RETRY_COOLDOWN_MS) return
@@ -158,26 +233,13 @@ export function ensureSpool(dir: string, key: string, url: string, fetchFn: type
     try {
     await mkdir(dir, { recursive: true })
     if (await spoolReady(dir, key)) return
-    const part = join(dir, `${key}.part.${process.pid}`)
     try {
-      const res = await fetchFn(url, withCompanionInit({ signal: AbortSignal.timeout(10 * 60_000) }))
-      if (!res.ok || !res.body) throw new Error(`spool fetch ${res.status}`)
-      const total = Number(res.headers.get('content-length')) || 0
-      const contentType = res.headers.get('content-type') || 'audio/mpeg'
-      // pipeline via writeWebBodyToFile: a dropped connection now rejects into
-      // the catch below (cooldown + .part cleanup) instead of an uncaught
-      // exception dialog and a spool slot that never frees (2026-10-17).
-      await writeWebBodyToFile(pacedBody(res.body as unknown as ReadableStream<Uint8Array>, paceBytesPerSec) as typeof res.body, part)
-      const written = (await stat(part)).size
-      if (total > 0 && written !== total) throw new Error(`spool short: ${written}/${total}`)
-      await writeFile(metaPath(dir, key), JSON.stringify({ contentType, total: written } satisfies SpoolMeta))
-      await rename(part, donePath(dir, key))
+      const written = await landSpool(dir, key, url, fetchFn, paceBytesPerSec, AbortSignal.timeout(10 * 60_000))
       failedAt.delete(key)
       console.log(`[stream-spool] landed ${key} (${(written / 1e6).toFixed(1)} MB) — serving local from here`)
-      void enforceSpoolCap(dir)
+      void enforceSpoolCap(dir, limits.capBytes, limits.honorPins)
     } catch (err) {
       failedAt.set(key, Date.now())
-      try { await unlink(part) } catch { /* never landed */ }
       console.warn(`[stream-spool] ${key} failed (live proxy continues):`, err instanceof Error ? err.message : err)
     }
     } finally {
@@ -190,9 +252,12 @@ export function ensureSpool(dir: string, key: string, url: string, fetchFn: type
   pumpSpools()
 }
 
-/** Oldest spooled tracks fall off past the cap. .part files are never touched. */
-export async function enforceSpoolCap(dir: string, cap = SPOOL_CAP_BYTES): Promise<void> {
+/** Oldest spooled tracks fall off past the cap. .part files are never touched.
+ *  `honorPins` (thin links only): keys in preload-pins.json are never evicted —
+ *  they still count toward the total, so daytime tracks make room around them. */
+export async function enforceSpoolCap(dir: string, cap = SPOOL_CAP_BYTES, honorPins = false): Promise<void> {
   try {
+    const pins = honorPins ? await readPreloadPins(dir) : new Set<string>()
     const entries: Array<{ key: string; size: number; mtime: number }> = []
     for (const name of await readdir(dir)) {
       if (!name.endsWith('.done')) continue
@@ -205,6 +270,7 @@ export async function enforceSpoolCap(dir: string, cap = SPOOL_CAP_BYTES): Promi
     if (total <= cap) return
     for (const e of entries.sort((a, b) => a.mtime - b.mtime)) {
       if (total <= cap) break
+      if (pins.has(e.key)) continue   // tonight's pre-load stays put
       try {
         await unlink(donePath(dir, e.key))
         await unlink(metaPath(dir, e.key)).catch(() => undefined)
@@ -261,9 +327,76 @@ export async function spoolAwareServe(
   rangeHeader: string | null,
   fetchFn: typeof fetch = fetch,
   paceBytesPerSec = 0,
+  limits: SpoolLimits = FAT_LINK_LIMITS,
 ): Promise<Response | null> {
   const ready = await spoolReady(dir, key)
   if (ready) return serveSpoolRange(ready, rangeHeader)
-  if (rangeHeader) ensureSpool(dir, key, url, fetchFn, paceBytesPerSec)
+  if (rangeHeader) ensureSpool(dir, key, url, fetchFn, paceBytesPerSec, limits)
   return null
+}
+
+// ── Overnight pre-load: one awaitable download through the same slot ─────
+//
+// overnight-preload.ts walks a list one track at a time and needs to know
+// how each one went. It shares the spool's single download slot
+// (ACTIVE_LIMIT) but only takes it when NOTHING else is spooling or waiting:
+// playback interest always goes first, and a busy slot comes back as 'busy'
+// for the caller to wait out — the pre-load never queues behind (or ahead
+// of) a playing song. Same files, same keys, same .part/.done rules.
+export type PreloadOutcome =
+  | { kind: 'landed'; bytes: number }
+  | { kind: 'local'; bytes: number }
+  | { kind: 'busy' }
+  | { kind: 'missing'; status: number }
+  | { kind: 'aborted' }
+  | { kind: 'failed'; reason: string }
+
+export interface PreloadSpoolOptions {
+  fetchFn?: typeof fetch
+  paceBytesPerSec: number
+  /** Caller's stop (playback started, window closed). */
+  signal?: AbortSignal
+  /** Zero bytes this long mid-body = a stalled link. */
+  stallMs: number
+  /** homemini transcodes the whole file before its first header. */
+  headerTimeoutMs: number
+  /** The whole download, headers to last byte — a trickle is a bad link too. */
+  deadlineMs: number
+  limits: SpoolLimits
+}
+
+export async function preloadSpool(dir: string, key: string, url: string, opts: PreloadSpoolOptions): Promise<PreloadOutcome> {
+  // Take the slot synchronously (no await before this) so a playback spool
+  // can't slip into the same slot between the check and the claim.
+  if (inFlight.has(key) || activeSpools >= ACTIVE_LIMIT || waiting.length > 0) return { kind: 'busy' }
+  activeSpools++
+  let release = (): void => {}
+  inFlight.set(key, new Promise<void>((resolve) => { release = resolve }))
+  const ac = new AbortController()
+  const stop = (): void => ac.abort()
+  if (opts.signal?.aborted) ac.abort()
+  opts.signal?.addEventListener('abort', stop, { once: true })
+  const headerTimer = setTimeout(stop, opts.headerTimeoutMs)
+  const deadline = setTimeout(stop, opts.deadlineMs)
+  try {
+    await mkdir(dir, { recursive: true })
+    const ready = await spoolReady(dir, key)
+    if (ready) return { kind: 'local', bytes: ready.total }
+    const bytes = await landSpool(dir, key, url, opts.fetchFn ?? fetch, opts.paceBytesPerSec, ac.signal, opts.stallMs, () => clearTimeout(headerTimer))
+    failedAt.delete(key)
+    await enforceSpoolCap(dir, opts.limits.capBytes, opts.limits.honorPins)
+    return { kind: 'landed', bytes }
+  } catch (err) {
+    if (opts.signal?.aborted) return { kind: 'aborted' }
+    if (err instanceof SpoolHttpError && err.status >= 400 && err.status < 500) return { kind: 'missing', status: err.status }
+    return { kind: 'failed', reason: ac.signal.aborted ? 'timed out (no headers, or too slow)' : err instanceof Error ? err.message : String(err) }
+  } finally {
+    clearTimeout(headerTimer)
+    clearTimeout(deadline)
+    opts.signal?.removeEventListener('abort', stop)
+    activeSpools--
+    inFlight.delete(key)
+    release()
+    pumpSpools()
+  }
 }

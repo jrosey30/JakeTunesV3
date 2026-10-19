@@ -24,7 +24,9 @@ import { queueNoticeText, type QueueMode } from '../../common/queue-notice'
  *  ⚠️ TWIN: consumed by components/sidebar/Sidebar.tsx for the PLAYLISTS
  *  section. Defined here so the sidebar list and the menu list are the same
  *  list; if these two ever disagree, the menu offers a playlist the user
- *  cannot see. */
+ *  cannot see.
+ *  ⚠️ TWIN: src/main/overnight-preload.ts manualPlaylistFilter mirrors this set
+ *  (main cannot import the renderer) — change both. */
 export const SMART_PLAYLIST_NAMES = new Set([
   `Best of ${new Date().getFullYear()}`,
   'Recently Added', 'Recently Played', 'Top 25 Most Played', 'My Top Rated', 'Starred',
