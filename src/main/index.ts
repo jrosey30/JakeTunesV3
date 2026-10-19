@@ -147,6 +147,7 @@ import { ARCHETYPES, buildArchetypeBlock, type ArchetypeId } from './archetypes'
 import { join, relative } from 'path'
 import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted, nasAvailable, isSaveLocked, startNasReconnectWatcher } from './state-dir'
 import { startBrainPull } from './brain-pull'
+import { startTasteStatePull } from './taste-state.ts'
 import { machineBehindNas } from './stale-push-guard'
 import { snapshotLibrary, maybeAutoSnapshot } from './backup'
 import { shouldRefuseSave, mayUnlinkDeletions, UNLINK_CAP } from './save-guards'
@@ -10224,6 +10225,7 @@ app.whenReady().then(async () => {
   // mirror to the NAS without ever surfacing a "go push it" banner.
   setInterval(() => { void autoBackupStateToNas() }, 120_000)
   startBrainPull(async () => new Set((((await libraryCache.get()) as { tracks?: Array<{ id: number }> }).tracks || []).map((t) => Number(t.id))), nasUp, STATE_FILE_NAMES) // NAS→laptop, never back
+  startTasteStatePull({ localDir: STATE_DIR, nasDir: NAS_STATE_DIR_PATH, nasAvailable, log: (m) => console.warn(m) }) // NAS→laptop learned taste (taste-engine)
   // 4.5: auto-index new songs into RAG (Jake: "every new song to auto index").
   // Boot + every 30s — embeds anything imported that lacks a vector, so RAG /
   // mixes / chat can use it within seconds, not at the nightly trainer pass.

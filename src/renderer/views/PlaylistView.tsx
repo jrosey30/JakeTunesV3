@@ -237,6 +237,14 @@ export default function PlaylistView() {
       if (pl) setTasteWeights(pl)
     })
   }, [])
+  // The nightly taste engine's learned percentile per song — only present
+  // while its ranking is promoted and fresh (src/main/taste-state.ts).
+  const [learnedTaste, setLearnedTaste] = useState<Map<number, number> | undefined>(undefined)
+  useEffect(() => {
+    void window.electronAPI.getTasteState?.().then((r) => {
+      if (r?.usable && r.pct) setLearnedTaste(new Map(Object.entries(r.pct).map(([id, v]) => [Number(id), v])))
+    })
+  }, [])
   const ledger = (events: Array<{ surface: string; verdict: string; key?: Record<string, unknown>; ctx?: Record<string, unknown> }>) => {
     void window.electronAPI.tasteLedgerAppend?.(events)
   }
@@ -269,10 +277,10 @@ export default function PlaylistView() {
       suggestDiag.current = new Map()
       return vibeHits.length
         ? suggestFromVibeHits(allPlaylistTracks, suggestPool, vibeHits, 5, suggestRotate, vibeClusterSeeds,
-            (playlist ? tasteWeights[playlist.id] : undefined) ?? {}, suggestDiag.current)
+            (playlist ? tasteWeights[playlist.id] : undefined) ?? {}, suggestDiag.current, learnedTaste)
         : suggestForPlaylist(allPlaylistTracks, suggestPool, 5, suggestRotate)
     },
-    [allPlaylistTracks, suggestPool, vibeHits, vibeClusterSeeds, suggestRotate, tasteWeights, playlist],
+    [allPlaylistTracks, suggestPool, vibeHits, vibeClusterSeeds, suggestRotate, tasteWeights, playlist, learnedTaste],
   )
   const suggestArtIndex = useMemo(() => buildNormalizedArtworkIndex(state.artworkMap), [state.artworkMap])
   const quickAddExclude = useMemo(() => new Set(playlist?.trackIds ?? []), [plMembershipKey])

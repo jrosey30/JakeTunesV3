@@ -195,7 +195,7 @@ export function suggestForPlaylist<T extends SuggestibleTrack>(
  * Falls back to suggestForPlaylist (metadata) when no embeddings exist.
  */
 export interface SuggestBlendWeights { vibe?: number; genre?: number; taste?: number; era?: number }
-export interface SuggestDiag { vn: number; g: number; b: number; ta: number; e: number }
+export interface SuggestDiag { vn: number; g: number; b: number; ta: number; e: number; tv?: number }
 
 export function suggestFromVibeHits<T extends SuggestibleTrack>(
   playlistTracks: T[],
@@ -210,6 +210,11 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
   // did — the learner needs that to know which dial to turn.
   weights: SuggestBlendWeights = {},
   diagOut?: Map<number, SuggestDiag>,
+  // The nightly taste engine's learned percentile per song (served only while
+  // its ranking is promoted — src/main/taste-state.ts). On held-back strip
+  // verdicts it ranked the songs Jake added at AUC 0.64 vs 0.56 for the
+  // stars/plays term below, which stays the fallback.
+  learnedTaste?: ReadonlyMap<number, number>,
 ): T[] {
   if (playlistTracks.length === 0 || hits.length === 0 || limit <= 0) return []
   // Seat eligibility by SEED SHARE (2026-08-07, Jake: "pool dos sometimes
@@ -347,9 +352,10 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
       // Taste voice (2026-08-07, Jake: "the AI has no feel for playlists"):
       // stars + play history nudge the songs he'd actually ADD above
       // equal-vibe strangers. Small weight — fit still leads.
-      const taste = Math.min(1, ((Number(t.rating) || 0) / 5) * 0.6 + Math.min((Number(t.playCount) || 0) / 8, 1) * 0.4)
+      const lt = learnedTaste?.get(t.id)
+      const taste = lt !== undefined ? lt : Math.min(1, ((Number(t.rating) || 0) / 5) * 0.6 + Math.min((Number(t.playCount) || 0) / 8, 1) * 0.4)
       const eFit = eraFit(t)
-      if (diagOut) diagOut.set(t.id, { vn, g: gFit, b: bpmFit, ta: taste, e: eFit })
+      if (diagOut) diagOut.set(t.id, { vn, g: gFit, b: bpmFit, ta: taste, e: eFit, tv: lt !== undefined ? 1 : 0 })
       const wV = weights.vibe ?? 1, wG = weights.genre ?? 1, wT = weights.taste ?? 1, wE = weights.era ?? 1
       return { t, s: 0.45 * wV * vn + 0.22 * wG * gFit + 0.15 * bpmFit + keyWeight * keyFit + 0.10 * wT * taste + 0.15 * wE * eFit }
     })

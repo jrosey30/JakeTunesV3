@@ -262,6 +262,8 @@ const electronAPI = {
   getFriends: (): Promise<{ ok: boolean; friends: Array<{ name: string; adds: number; got: number; tossed: number; lastAt: number; imported: number }> }> => ipcRenderer.invoke('get-friends'),
   tasteLedgerAppend: (events: Array<{ surface: string; verdict: string; key?: Record<string, unknown>; ctx?: Record<string, unknown> }>): Promise<{ ok: boolean; appended?: number }> =>
     ipcRenderer.invoke('taste-ledger-append', events),
+  getTasteState: (): Promise<{ ok: boolean; usable: boolean; builtAt?: string; why?: string; pct?: Record<string, number> }> =>
+    ipcRenderer.invoke('get-taste-state'),
   getTasteWeights: (): Promise<{ ok: boolean; weights: Record<string, unknown> }> =>
     ipcRenderer.invoke('get-taste-weights'),
   getFriendStandings: (): Promise<{ ok: boolean; standings?: Array<{ name: string; points: number; adds: number; tossed: number; credits: Array<{ status: 'kept' | 'partial' | 'deleted' | 'legacy'; points: number; record: { kind: 'song' | 'album'; label: string; creditedAt: string } }> }>; error?: string }> => ipcRenderer.invoke('get-friend-standings'),

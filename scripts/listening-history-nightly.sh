@@ -23,6 +23,14 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
 with_timeout() { local s="$1"; shift; perl -e 'alarm shift; exec @ARGV' "$s" "$@"; }
 
 log "=== start"
+# Watch the 04:40 taste engine (it watches this job back: it refuses to run on
+# a history older than 30 h). A status older than 30 h means it has stopped.
+TE_STATUS="$UD/taste-engine/taste-engine-status.json"
+if [ -f "$TE_STATUS" ] && [ -n "$(find "$TE_STATUS" -mmin +1800 2>/dev/null)" ]; then
+  log "WARN taste engine has not reported in over 30 h"
+  NTFY_TOPIC=$(cat "$HOME/.config/jaketunes/ntfy-topic" 2>/dev/null || true)
+  [ -n "$NTFY_TOPIC" ] && curl -s -m 10 -d "JakeTunes: the nightly taste engine has not run in over 30 hours" "https://ntfy.sh/$NTFY_TOPIC" >/dev/null 2>&1 || true
+fi
 if [ ! -d "$W/.git" ] && [ ! -f "$W/.git" ]; then
   log "no checkout at $W — run: git -C ~/JakeTunesV3 worktree add --detach $W origin/main"
   exit 1

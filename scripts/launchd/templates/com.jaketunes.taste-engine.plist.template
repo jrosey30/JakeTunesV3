@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 2026-10-19 template — com.jaketunes.taste-engine (the nightly taste-learning
+     exercise, scripts/taste-engine-nightly.sh -> scripts/taste-engine.py) on
+     homemini, 04:40: after the 04:00 listening history it learns from.
+     Path tokens are rendered by install-launchagents.sh. -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.jaketunes.taste-engine</string>
+  <key>ProgramArguments</key><array>
+    <string>/bin/bash</string>
+    <string>__REPO__/scripts/taste-engine-nightly.sh</string>
+  </array>
+  <key>WorkingDirectory</key><string>__HOME__</string>
+  <key>StartCalendarInterval</key><dict>
+    <key>Hour</key><integer>4</integer>
+    <key>Minute</key><integer>40</integer>
+  </dict>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/jaketunes-taste-engine.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/jaketunes-taste-engine.log</string>
+</dict></plist>
