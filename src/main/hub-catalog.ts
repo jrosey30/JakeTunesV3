@@ -18,6 +18,20 @@
 //     hub sends one (that GET never runs); otherwise mtimeMs on
 //     GET /api/live-sets; otherwise the SHA-256 of that body
 //
+// CONCERTS (2026-10-19). The hub's default track list hides every
+// concert-owned row (right for the phone, which reads /api/live-sets), so a
+// replica adopting it lost all 171 concert rows and its Live Concerts section
+// went empty (Jake: "why arent the full live concerts on the workmini??").
+// The replica asks for the INCLUDE view (`?concerts=include`) on both
+// /library-version and /tracks/delta. Its versions live in their own
+// namespace on the hub, so the hidden-view version a replica already holds
+// is unknown there and the first delta after upgrade answers FULL. The hub's
+// include reply to /library-version also carries `view: 'include'`, which
+// is folded into the change key below: a replica that was already running
+// when the hub deployed sees the key move and re-adopts without a restart.
+// An older hub ignores the parameter (no-op: hidden view, as before).
+// ⚠️ TWIN: ~/JakeTunesMobile backend/src/util/catalogView.ts (+ routes/library.ts)
+//
 // Once a response carries an ETag or Last-Modified, the next poll sends
 // it back (If-None-Match, else If-Modified-Since). Express answers 304
 // with no body when the JSON is unchanged. 304 keeps the old stamp. A
@@ -141,12 +155,17 @@ export function liveSetStamp(status: number, header: StampHeaders, body: string)
   return `sha256:${createHash('sha256').update(body).digest('hex')}`
 }
 
-/** The poll's change key. Any one field moving means "fetch the delta". */
+/** The replica's catalog view on the hub: every row, concerts included. */
+export const HUB_CATALOG_VIEW_QUERY = 'concerts=include'
+
+/** The poll's change key. Any one field moving means "fetch the delta".
+ *  `view` is '' from a hub that predates the include view and 'include'
+ *  from one that honours it, so the hub's deploy alone moves the key. */
 export function hubCatalogChangeKey(
   version: Record<string, unknown>,
   stamps: { phoneEdits: string; phoneImports: string; liveSets: string },
 ): string {
-  const core = ['library', 'tracks', 'stars', 'plays'].map((k) => String(version[k] ?? '')).join('|')
+  const core = ['library', 'tracks', 'stars', 'plays', 'view'].map((k) => String(version[k] ?? '')).join('|')
   return `${core}|phone-edits:${stamps.phoneEdits}|phone-imports:${stamps.phoneImports}|live-sets:${stamps.liveSets}`
 }
 
@@ -272,7 +291,7 @@ export function startHubCatalogPoll(deps: HubCatalogDeps): HubCatalogHandle {
 
       const origin = base.replace(/\/$/, '')
       const [ver, editStamp, importStamp, liveStamp] = await Promise.all([
-        getJson<Record<string, unknown>>(`${origin}/api/library-version`),
+        getJson<Record<string, unknown>>(`${origin}/api/library-version?${HUB_CATALOG_VIEW_QUERY}`),
         readSidecarStamp(`${origin}/api/phone-sidecars/${encodeURIComponent(PHONE_EDIT_SIDECAR)}`, phoneSidecarStamp, editValidator),
         readSidecarStamp(`${origin}/api/phone-sidecars/${encodeURIComponent(PHONE_IMPORT_SIDECAR)}`, phoneSidecarStamp, importValidator),
         readLiveSetStamp(`${origin}/api/live-sets`),
@@ -284,7 +303,7 @@ export function startHubCatalogPoll(deps: HubCatalogDeps): HubCatalogHandle {
       if (key === lastKey) return
       const state = await readState()
       const since = encodeURIComponent(state.version)
-      const d = await getJson<Record<string, unknown>>(`${origin}/api/tracks/delta?since=${since}`)
+      const d = await getJson<Record<string, unknown>>(`${origin}/api/tracks/delta?since=${since}&${HUB_CATALOG_VIEW_QUERY}`)
       const version = typeof d.version === 'string' ? d.version : ''
       if (!version) throw new Error('delta reply had no version')
       if (d.unchanged === true) {

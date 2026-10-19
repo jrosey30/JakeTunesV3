@@ -764,6 +764,13 @@ const electronAPI = {
     ipcRenderer.invoke('remove-live-set', albumKey),
   extractConcertCrowd: (mergedTrackId: number, colonPath: string, cueStartsMs: number[], totalMs: number): Promise<{ ok: boolean; error?: string; startSec?: number }> =>
     ipcRenderer.invoke('extract-concert-crowd', mergedTrackId, colonPath, cueStartsMs, totalMs),
+  // 2026-10-19 replica concert mirror: main pulled a new live-sets.json and/or
+  // concert poster keys from the hub (src/main/replica-concerts.ts).
+  onLiveSetsUpdated: (callback: (p: { liveSets: boolean; artwork: Array<{ key: string; hash: string }> }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, p: { liveSets: boolean; artwork: Array<{ key: string; hash: string }> }) => callback(p)
+    ipcRenderer.on('live-sets-updated', handler)
+    return () => { ipcRenderer.removeListener('live-sets-updated', handler) }
+  },
   getConcertCrowd: (mergedTrackId: number): Promise<string | null> =>
     ipcRenderer.invoke('get-concert-crowd', mergedTrackId),
   saveCrowdTuning: (t: Record<string, number>): Promise<{ ok: boolean }> =>

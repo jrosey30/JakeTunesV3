@@ -289,3 +289,34 @@ describe('mergeHubCatalog: Brief 197 — an absorbed phone import survives hub o
     assert.deepEqual(s.protectedIds, ['absorbed:12741'])
   })
 })
+
+// 2026-10-19 — workmini was missing exactly the 171 concert-owned rows (12
+// merged "full set" tracks + 159 setlist songs) because the hub's default list
+// hid them. With the include view, the first full adopt must ADD them and
+// later adopts must keep them; nothing in the merge may treat a concert row
+// specially. (Display hiding is renderer-only: useRegularLibraryTracks.)
+describe('mergeHubCatalog: concert rows from the include view', () => {
+  const regular = [t(1), t(2), t(3)]
+  const concert = [t(9290, { title: 'Go to Nassau (Full Set)', album: 'Go to Nassau (Live Set)' }), t(9267, { title: 'Jack Straw' }), t(9268, { title: 'Franklin’s Tower' })]
+  it('the first include-view full adopt adds every missing concert row', () => {
+    const r = mergeHubCatalog(regular, { full: true, version: 'libci-1', upserts: [...regular, ...concert], removedIds: [] },
+      { seenIds: regular.map((x) => String(x.id)), protectedIds: [], adoptedAt: '2026-10-18T00:00:00.000Z' })
+    assert.equal(r.added, 3)
+    assert.equal(r.removed, 0)
+    for (const id of [9290, 9267, 9268]) assert.ok(r.tracks.some((x) => x.id === id), `kept ${id}`)
+  })
+  it('a later include-view full adopt keeps them (they are in the catalog)', () => {
+    const local = [...regular, ...concert]
+    const r = mergeHubCatalog(local, { full: true, version: 'libci-2', upserts: [...regular, ...concert], removedIds: [] },
+      { seenIds: local.map((x) => String(x.id)), protectedIds: [], adoptedAt: '2026-10-19T00:00:00.000Z' })
+    assert.equal(r.removed, 0)
+    assert.equal(r.tracks.length, 6)
+  })
+  it('an include-view delta that does not name them leaves them alone', () => {
+    const local = [...regular, ...concert]
+    const r = mergeHubCatalog(local, { full: false, version: 'libci-3', upserts: [t(2, { title: 'edited' })], removedIds: [] },
+      { seenIds: local.map((x) => String(x.id)), protectedIds: [], adoptedAt: '2026-10-19T00:00:00.000Z' })
+    assert.equal(r.removed, 0)
+    assert.equal(r.tracks.filter((x) => [9290, 9267, 9268].includes(Number(x.id))).length, 3)
+  })
+})
