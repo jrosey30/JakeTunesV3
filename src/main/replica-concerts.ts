@@ -49,7 +49,14 @@ export interface ReplicaConcertDeps {
     dir: string
     loadIndex: () => Promise<Record<string, string>>
     saveIndex: (index: Record<string, string>) => Promise<void>
+    /** Drop the main-process byte cache + thumbs for a bare after its jpg is
+     *  replaced (invalidateArtBytes). Without it the 400-entry byte cache keeps
+     *  serving the old poster to any request that reaches main. */
+    invalidate?: (bare: string) => void
   }
+  /** True while the FULL artwork mirror (replica-artwork-mirror.ts) is pulling
+   *  from this hub: it covers concert posters first, so this pass stands down. */
+  postersCoveredElsewhere?: () => boolean
   /** userData/concert-crowd */
   crowdDir: string
   /** Tell the renderer: reload live sets, and/or adopt these artwork keys. */
@@ -209,6 +216,22 @@ export function startReplicaConcertSync(deps: ReplicaConcertDeps): ReplicaConcer
     const fetched = await loadFetched()
     let fetchedChanged = false
     const changed: Array<{ key: string; hash: string }> = []
+    // One jpg per bare, but the laptop's index can name it under SEVERAL
+    // versions: Nirvana "MTV Unplugged" is `b5c2053f…_1788389396248` for the
+    // show and plain `b5c2053f…` for its "(Live Set)" row. Comparing the ledger
+    // to each key's version flip-flopped — every pass re-downloaded 3 posters
+    // (Grateful Dead, Nirvana, McCartney; measured on workmini 14:22 → 14:42,
+    // every 2 min). A replacement bumps the suffix of the key it was made for,
+    // so the NEWEST version the laptop names is the file's identity.
+    const epoch = (h: string): number => Number(/_(\d+)$/.exec(h)?.[1] ?? 0)
+    const newest = new Map<string, number>()
+    for (const key of keys) {
+      const h = items[key]
+      if (typeof h !== 'string' || !h) continue
+      const b = h.replace(/_\d+$/, '')
+      newest.set(b, Math.max(newest.get(b) ?? 0, epoch(h)))
+    }
+    const landedNow = new Set<string>()
     for (const key of keys) {
       const hash = items[key]
       // null = the laptop has no art for this key: never delete ours.
@@ -216,9 +239,9 @@ export function startReplicaConcertSync(deps: ReplicaConcertDeps): ReplicaConcer
       const bare = hash.replace(/_\d+$/, '')
       if (!BARE_HASH.test(bare)) continue
       const jpg = join(deps.artwork.dir, `${bare}.jpg`)
-      // Re-download whenever the bytes on disk aren't the version the laptop
-      // names — even if the index already agrees and a file is present.
-      const stale = fetched[bare] !== hash || !(await exists(jpg))
+      // Re-download whenever the bytes on disk aren't the newest version the
+      // laptop names — even if the index already agrees and a file is present.
+      const stale = !landedNow.has(bare) && (fetched[bare] === undefined || epoch(fetched[bare]!) < (newest.get(bare) ?? 0) || !(await exists(jpg)))
       if (!stale && index[key] === hash) continue
       if (stale) {
         const img = await get(`${origin}/artwork/${bare}`, { accept: 'image/*' })
@@ -231,8 +254,11 @@ export function startReplicaConcertSync(deps: ReplicaConcertDeps): ReplicaConcer
         if (bytes.length === 0 || bytes.length > MAX_POSTER_BYTES) continue
         await mkdir(deps.artwork.dir, { recursive: true })
         await writeAtomic(jpg, bytes)
-        fetched[bare] = hash
+        deps.artwork.invalidate?.(bare)
+        // Recorded as the newest version named, whichever key fetched it.
+        fetched[bare] = `${bare}_${newest.get(bare) ?? 0}`
         fetchedChanged = true
+        landedNow.add(bare)
       }
       changed.push({ key, hash })
     }
@@ -262,7 +288,7 @@ export function startReplicaConcertSync(deps: ReplicaConcertDeps): ReplicaConcer
         log(`[replica-concerts] live-sets pull failed (will retry): ${(err as Error)?.message ?? err}`)
       }
       let artwork: Array<{ key: string; hash: string }> = []
-      try { artwork = await pullPosters(origin) } catch (err) {
+      if (!deps.postersCoveredElsewhere?.()) try { artwork = await pullPosters(origin) } catch (err) {
         log(`[replica-concerts] poster pull failed (will retry): ${(err as Error)?.message ?? err}`)
       }
       if (liveChanged || artwork.length) deps.notify({ liveSets: liveChanged, artwork })
