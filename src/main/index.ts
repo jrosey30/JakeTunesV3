@@ -15,8 +15,7 @@
 process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '64'
 
 
-import { getVenueShows, markKnownShows, type VenueShow } from './venues.js'
-import { librarySpellings } from './artist-spellings-store.ts'
+import { registerConcertsIpc } from './ipc/concerts-ipc.ts'
 import { parseHubAdoptAck, startHubCatalogPoll } from './hub-catalog'
 import { ensureCompanionTokenFromEnvFile, withCompanionInit } from './hub-companion.ts'
 // The four persona system prompts — 268 lines of prose, lifted out 2026-08-10.
@@ -123,7 +122,6 @@ import {
   getWikidataArtist, formatWikidataForPrompt,
   getMusicBrainzReleaseMbid, getCoverArtUrlByMbid,
   getMusicNews, getNotableReleases, type MusicNewsItem,
-  getTourDatesForArtists, type TourDate,
   getUpcomingReleasesForArtists, type UpcomingRelease,
 } from './external'
 import {
@@ -2174,15 +2172,11 @@ ipc.handle('get-rediscovery', async (_e, force?: boolean) => {
 
 // App-settings + inbox IPC registered in ipc/settings-ipc.ts
 
-// 4.4.32 — Tour dates per Bandsintown for the user's top library
-// artists. Picks top 60 artists by aggregate playCount (with a +1
-// baseline so library artists with no play count still register),
-// throttles to 8 concurrent Bandsintown requests in `external.ts`,
-// caches results 24h. Returns up to 60 upcoming events sorted by
-// date ascending. Cold-cache call may take ~3-8 sec for a fresh
-// library; warm cache is instant.
+// Concerts (Home › Shows + the Music Man) live in ipc/concerts-ipc.ts —
+// homemini's ranked feed, with Bandsintown + the venue calendars as fallback.
+
 // 4.4.34 — Upcoming releases that haven't come out yet. Same top-60
-// library artists as the tour-dates query. MusicBrainz batched-OR
+// library artists as the concerts fallback's Bandsintown query. MusicBrainz batched-OR
 // queries (3 reqs total for 60 artists) so this resolves in a few
 // seconds even on cold cache; aggregate result cached 24h.
 ipc.handle('get-upcoming-releases-personal', async (): Promise<{ ok: boolean; items: UpcomingRelease[] }> => {
@@ -2208,48 +2202,6 @@ ipc.handle('get-upcoming-releases-personal', async (): Promise<{ ok: boolean; it
     return { ok: true, items: [] }
   }
 }, { refuse: { ok: false, items: [] } })
-
-ipc.handle('get-tour-dates', async (): Promise<{ ok: boolean; dates: TourDate[] }> => {
-  try {
-    const raw = await readFile(LIBRARY_PATH, 'utf-8').catch(() => null)
-    if (!raw) return { ok: true, dates: [] }
-    const lib = JSON.parse(raw) as { tracks?: Array<{ artist?: string; albumArtist?: string; playCount?: number }> }
-    const tracks = lib.tracks || []
-    const byArtist = new Map<string, number>()
-    for (const t of tracks) {
-      const a = (t.albumArtist || t.artist || '').trim()
-      if (!a || a.toLowerCase() === 'unknown artist') continue
-      byArtist.set(a, (byArtist.get(a) || 0) + (Number(t.playCount) || 0) + 1)
-    }
-    const topArtists = Array.from(byArtist.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 60)
-      .map(([a]) => a)
-    const dates = await getTourDatesForArtists(topArtists)
-    return { ok: true, dates: dates.slice(0, 60) }
-  } catch (err) {
-    console.warn('[get-tour-dates] failed:', err)
-    return { ok: true, dates: [] }
-  }
-}, { refuse: { ok: false, dates: [] } })
-
-// 2026-08-08 — "At Your Venues": what's coming to Jake's Brooklyn rooms
-// REGARDLESS of whether the artist is in his library. Bandsintown's free tier
-// can't answer that question (artist-scoped only), so venues.ts asks the rooms
-// directly. Shows whose artist IS in the library are flagged `known` so the
-// renderer can mark them; the rest is the discovery half Jake asked for.
-ipc.handle('get-venue-shows', async (): Promise<{ ok: boolean; shows: VenueShow[] }> => {
-  try {
-    const shows = await getVenueShows()
-    const raw = await readFile(LIBRARY_PATH, 'utf-8').catch(() => null)
-    const lib = raw ? JSON.parse(raw) as { tracks?: Array<{ artist?: string; albumArtist?: string }> } : { tracks: [] }
-    const spellings = await librarySpellings(lib.tracks || [], { throttle: mbThrottle, userAgent: `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)` })
-    return { ok: true, shows: markKnownShows(shows, lib.tracks || [], spellings).slice(0, 120) }
-  } catch (err) {
-    console.warn('[get-venue-shows] failed:', err)
-    return { ok: true, shows: [] }
-  }
-}, { refuse: { ok: false, shows: [] } })
 
 // 4.4.40 — Per-artist photo fetch for the Artists view. Single artist
 // per call; the renderer batches at 6 concurrent. Disk cache is 30 days
@@ -9507,6 +9459,7 @@ registerReleaseKindsIpc(ipc, { file: () => releaseKindsPath(STATE_DIR) })
 registerYirIpc(ipc)
 registerSyncedPicksIpc(ipc)
 registerHomeSpotlightIpc(ipc, { getPlayEventsPath, libraryCache })
+const concerts = registerConcertsIpc(ipc, { libraryCache, mbThrottle })
 registerPreviewRefreshIpc(ipc)
 registerSyncHistoryIpc(ipc, { stateDir: STATE_DIR })
 
@@ -11345,6 +11298,7 @@ app.whenReady().then(async () => {
         parsePlayEvents(await readFile(getPlayEventsPath(), 'utf-8').catch(() => '')),
       llm: recordStoreLlm,
       personaCore: MUSIC_MAN_CORE,
+      concertFeed: concerts.forMusicMan,
     })
   }
 

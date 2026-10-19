@@ -12,8 +12,10 @@
 // Vegan RSS, Bandsintown, MusicBrainz) and is already fail-soft — every
 // fetcher there returns [] / null instead of throwing. This module:
 //   1. fans those fetchers out in parallel,
-//   2. narrows them to what the store cares about (NYC shows in the
-//      next 14 days; library-artist upcoming releases),
+//   2. narrows them to what the store cares about (shows: homemini's
+//      ranked concerts feed, top shows in the next 30 days — or, when the
+//      feed has nothing, library artists' NYC dates in the next 14 days
+//      per Bandsintown; library-artist upcoming releases),
 //   3. adds calendar context (day, part-of-day, season) the picker
 //      uses for "Sunday morning" / seasonal threads,
 //   4. caches the whole snapshot to disk for 6h so opening the store
@@ -38,6 +40,7 @@ import {
   type UpcomingRelease,
 } from '../external'
 import { atomicWriteJson, readJsonOrNull, recordStoreBaseDir } from './cache'
+import { musicManShows, type ConcertItem } from '../../common/concerts-feed.ts'
 
 // ── Public types ─────────────────────────────────────────────────────
 
@@ -56,9 +59,13 @@ export interface StoreShow {
   artist: string
   venue: string
   city: string
-  /** Event datetime, ISO. */
+  /** Event datetime, ISO (Bandsintown) or the local date YYYY-MM-DD (concerts feed). */
   date: string
   url: string
+  /** Concerts feed only: why it ranks ("Heavy rotation: 13 plays in 90 days"). */
+  reason?: string
+  /** Concerts feed only: nights in the run. */
+  nights?: number
 }
 
 export interface StoreRelease {
@@ -88,9 +95,13 @@ export interface ExternalContext {
   press: PressItem[]
   /** Pitchfork "Best New Albums" — the cultural new-release signal. */
   notableReleases: PressItem[]
-  /** Library artists playing the NYC area in the next 14 days. The
-   *  highest-value "cultural" theme source (Brief §3.5). */
+  /** Shows Jake could go to. The highest-value "cultural" theme source
+   *  (Brief §3.5). From homemini's concerts feed: the top-ranked shows in
+   *  the next 30 days, best taste match first. Without it: library artists
+   *  playing NYC in the next 14 days per Bandsintown, by date. */
   shows: StoreShow[]
+  /** Which of the two `shows` is. Absent on snapshots cached before the feed. */
+  showsFrom?: 'concerts-feed' | 'bandsintown'
   /** Upcoming releases by artists already in the library. */
   upcomingReleases: StoreRelease[]
 }
@@ -101,6 +112,10 @@ export interface ExternalContext {
 const CONTEXT_TTL_MS = 6 * 60 * 60 * 1000
 /** Show lookahead window. Brief §1b: Bandsintown "next 14 days". */
 const SHOW_WINDOW_DAYS = 14
+/** The concerts feed is ranked, so the window can be wider and still lead
+ *  with what matters: top shows in the next 30 days. */
+const FEED_SHOW_WINDOW_DAYS = 30
+const FEED_SHOW_LIMIT = 10
 /** How many of the user's top artists to query show/release feeds for.
  *  external.ts already caps Bandsintown at 60 and batches MusicBrainz;
  *  we pass the ranked list and let it slice. */
@@ -242,6 +257,8 @@ export interface GatherInput {
   userDataDir: string
   /** Bypass the 6h cache (the store's "knock to refresh" path). */
   forceRefresh?: boolean
+  /** homemini's ranked concerts feed; null/absent → the Bandsintown path. */
+  concertFeed?: () => Promise<ConcertItem[] | null>
   /** Injectable clock for tests; defaults to now. */
   now?: Date
 }
@@ -268,14 +285,25 @@ export async function gatherExternalContext(input: GatherInput): Promise<Externa
   // on any error), so Promise.all never rejects here. allSettled would
   // be belt-and-suspenders but would also mask a real future regression
   // where a fetcher starts throwing — let it surface in dev instead.
-  const [weather, lastFmChart, news, releases, tourDates, upcoming] = await Promise.all([
+  // The concerts feed never throws into the gather: a failure is the
+  // Bandsintown path, same as no feed at all.
+  const feed = input.concertFeed
+    ? input.concertFeed().catch((err: unknown) => {
+      console.warn('[record-store/external-context] concerts feed failed:', err instanceof Error ? err.message : err)
+      return null
+    })
+    : Promise.resolve(null)
+  const [weather, lastFmChart, news, releases, feedItems, upcoming] = await Promise.all([
     getBrooklynWeather(),
     getLastFmNyChart(),
     getMusicNews(),
     getNotableReleases(),
-    artists.length ? getTourDatesForArtists(artists) : Promise.resolve<TourDate[]>([]),
+    feed,
     artists.length ? getUpcomingReleasesForArtists(artists) : Promise.resolve<UpcomingRelease[]>([]),
   ])
+  const shows: StoreShow[] = feedItems
+    ? musicManShows(feedItems, now.getTime(), { days: FEED_SHOW_WINDOW_DAYS, limit: FEED_SHOW_LIMIT })
+    : narrowShows(artists.length ? await getTourDatesForArtists(artists) : [], now)
 
   const ctx: ExternalContext = {
     fetchedAt: now.getTime(),
@@ -284,7 +312,8 @@ export async function gatherExternalContext(input: GatherInput): Promise<Externa
     lastFmChart,
     press: toPress(news).slice(0, 10),
     notableReleases: toPress(releases).slice(0, 8),
-    shows: narrowShows(tourDates, now),
+    shows,
+    showsFrom: feedItems ? 'concerts-feed' : 'bandsintown',
     upcomingReleases: toReleases(upcoming).slice(0, 12),
   }
 
@@ -317,7 +346,13 @@ export function formatExternalContextForPrompt(ctx: ExternalContext): string {
     lines.push(`Weather: ${ctx.weather.tempF}°F, ${desc.toLowerCase()}.`)
   }
 
-  if (ctx.shows.length) {
+  if (ctx.shows.length && ctx.showsFrom === 'concerts-feed') {
+    lines.push(`Shows near Brooklyn in the next ${FEED_SHOW_WINDOW_DAYS} days, best match for Jake's taste first:`)
+    for (const s of ctx.shows.slice(0, 6)) {
+      const nights = s.nights && s.nights > 1 ? `, ${s.nights} nights` : ''
+      lines.push(`  - ${s.artist} at ${s.venue}, ${s.city} (${s.date.slice(0, 10)}${nights})${s.reason ? ` — ${s.reason}` : ''}`)
+    }
+  } else if (ctx.shows.length) {
     lines.push('Library artists playing NYC in the next two weeks:')
     for (const s of ctx.shows.slice(0, 6)) {
       const when = s.date.slice(0, 10)

@@ -127,9 +127,11 @@ describe('venue shows meet the transliteration', () => {
     assert.deepEqual(markKnownShows(shows, tracks, spellings).map((s) => s.known), [true, true, false, false])
     assert.deepEqual(markKnownShows(shows, tracks).map((s) => s.known), [false, false, false, false], 'without spellings, as before')
   })
-  it('index.ts get-venue-shows passes the library spellings', () => {
-    const src = readFileSync(join(import.meta.dirname, '..', 'index.ts'), 'utf-8')
-    assert.match(src, /const spellings = await librarySpellings\(lib\.tracks \|\| \[\], \{ throttle: mbThrottle, userAgent: /)
-    assert.match(src, /markKnownShows\(shows, lib\.tracks \|\| \[\], spellings\)\.slice\(0, 120\)/)
+  it('the concerts fallback (ipc/concerts-ipc.ts, was index.ts get-venue-shows) passes the library spellings', () => {
+    const src = readFileSync(join(import.meta.dirname, '..', 'ipc', 'concerts-ipc.ts'), 'utf-8')
+    assert.match(src, /const spellings = await librarySpellings\(tracks, \{ throttle: host\.mbThrottle, userAgent: /)
+    assert.match(src, /markKnownShows\(venues, tracks, spellings\)\.slice\(0, 120\)/)
+    const idx = readFileSync(join(import.meta.dirname, '..', 'index.ts'), 'utf-8')
+    assert.match(idx, /registerConcertsIpc\(ipc, \{ libraryCache, mbThrottle \}\)/, 'index.ts hands it the shared MusicBrainz throttle')
   })
 })

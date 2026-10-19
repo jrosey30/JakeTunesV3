@@ -1020,13 +1020,17 @@ const electronAPI = {
   getBrooklynWeather: (): Promise<{ ok: boolean; weather: { tempF: number; condition: string; description: string } | null }> =>
     ipcRenderer.invoke('get-brooklyn-weather'),
 
-  // 4.4.32 — Tour dates per Bandsintown for the user's top library
-  // artists. First call on a cold cache takes a few seconds; subsequent
-  // calls within 24h return instantly from main-side cache.
-  getVenueShows: (): Promise<{ ok: boolean; shows: Array<{ artist: string; date: string; venue: string; venueKey: string; city: string; url: string; known?: boolean }> }> =>
-    ipcRenderer.invoke('get-venue-shows'),
-  getTourDates: (): Promise<{ ok: boolean; dates: Array<{ artist: string; date: string; venue: string; city: string; url: string; imageUrl?: string }> }> =>
-    ipcRenderer.invoke('get-tour-dates'),
+  // 2026-10-19 — Home › Shows: homemini's ranked concerts feed
+  // (GET /api/concerts + /discover), cached in main; Bandsintown + the venue
+  // calendars when homemini and the cache are both away. get = no network;
+  // refresh = one GET pair (throttled). See src/common/concerts-feed.ts.
+  concertsGet: (): Promise<unknown> => ipcRenderer.invoke('concerts:get'),
+  concertsRefresh: (): Promise<unknown> => ipcRenderer.invoke('concerts:refresh'),
+  onConcertsUpdated: (callback: (state: unknown) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state)
+    ipcRenderer.on('concerts-updated', handler)
+    return () => { ipcRenderer.removeListener('concerts-updated', handler) }
+  },
 
   // 4.4.34 — Upcoming releases (not yet out) for the user's top library
   // artists, via MusicBrainz release-group queries. Batched 25-OR
