@@ -740,6 +740,54 @@ export function salvageObjects<T>(body: string): T[] {
 export const QUOTA_LANES = new Set(['fresh-albums', 'fresh-songs'])
 
 /**
+ * "Already in the library" — THE identity check every lane that promises
+ * "not in your library" asks (extracted from supplyLanes 2026-10-18 so the
+ * critic wall asks the very same question). The sets are the normalized
+ * keys index.ts feeds filterFeed, so the answer means the same thing at
+ * harvest time as at filter time.
+ *
+ * Accent bridge: the library sets were keyed with normKey, which turns a
+ * decomposed accent into a SPACE ("Récord" → "re cord"), so an accented
+ * title on one side and a plain one on the other never match. Squashing
+ * spaces out of both sides after folding makes the comparison accent-proof
+ * in BOTH directions without touching normKey (persisted-ledger keys).
+ *
+ * Article bridge (2026-10-18): a leading the/a/an on either side of the
+ * pair is dropped too — "College Dropout" IS "The College Dropout", "White
+ * Stripes" IS "The White Stripes" (the critic sheet writes them both ways).
+ *
+ * Every bridge can only over-match, which only makes the gate stricter —
+ * the safe direction for "I DO NOT HAVE IN MY LIBRARY".
+ */
+export function ownershipChecks(owned: { artists: Set<string>; albumKeys: Set<string>; baseKeys: Set<string> }): {
+  ownsAlbum: (artist: string, album: string) => boolean
+  ownsSong: (artist: string, title: string) => boolean
+  ownsArtist: (artist: string) => boolean
+} {
+  const squash = (k: string): string => k.replace(/ /g, '')
+  const bare = (k: string): string => k.split('|').map((p) => p.replace(/^(?:the|a|an) /, '')).join('|').replace(/ /g, '')
+  const albumSq = new Set([...owned.albumKeys].map(squash))
+  const baseSq = new Set([...owned.baseKeys].map(squash))
+  const artistSq = new Set([...owned.artists].map(squash))
+  const albumBare = new Set([...owned.albumKeys].map(bare))
+  const baseBare = new Set([...owned.baseKeys].map(bare))
+  // Albums and songs share one key space (ownedPairKeys indexes both).
+  const ownsPair = (artist: string, x: string): boolean =>
+    owned.albumKeys.has(`${normKey(artist)}|${normKey(x)}`) ||
+    albumSq.has(squash(`${foldKey(artist)}|${foldKey(x)}`)) ||
+    owned.baseKeys.has(`${normKey(artist)}|${baseTitleKey(x)}`) ||
+    baseSq.has(squash(`${foldKey(artist)}|${baseTitleKey(x)}`)) ||
+    albumBare.has(bare(`${foldKey(artist)}|${foldKey(x)}`)) ||
+    baseBare.has(bare(`${foldKey(artist)}|${baseTitleKey(x)}`))
+  return {
+    ownsAlbum: ownsPair,
+    ownsSong: ownsPair,
+    ownsArtist: (artist: string): boolean =>
+      owned.artists.has(normKey(artist)) || artistSq.has(squash(foldKey(artist))),
+  }
+}
+
+/**
  * Harvest the daily 25/25 from the Deezer related-artist graph and dress
  * the results as feed cards. Ownership closures are built over the SAME
  * normalized-key sets index.ts feeds filterFeed, so "not in my library"
@@ -755,35 +803,13 @@ export async function supplyLanes(
   sleepMs = 120,   // Deezer politeness (50 req / 5 s per IP); tests pass 0
 ): Promise<FeedCard[]> {
   const { buildDailyDiscovery } = await import('./discover-supply.ts')
-  // Accent bridge: the library sets were keyed with normKey, which turns a
-  // decomposed accent into a SPACE ("Récord" → "re cord"), so an accented
-  // title on one side and a plain one on the other never match. Squashing
-  // spaces out of both sides after folding makes the comparison accent-proof
-  // in BOTH directions without touching normKey (persisted-ledger keys).
-  // Over-matching only makes the gate stricter — the safe direction for
-  // "I DO NOT HAVE IN MY LIBRARY".
-  const squash = (k: string): string => k.replace(/ /g, '')
-  const albumSq = new Set([...owned.albumKeys].map(squash))
-  const baseSq = new Set([...owned.baseKeys].map(squash))
-  const artistSq = new Set([...owned.artists].map(squash))
   const deps = {
     fetchJson: async (url: string): Promise<unknown> => {
       if (sleepMs > 0) await new Promise((r) => setTimeout(r, sleepMs))
       const res = await fetchFn(url, { signal: AbortSignal.timeout(10_000) })
       return res.json()
     },
-    ownsAlbum: (artist: string, album: string): boolean =>
-      owned.albumKeys.has(`${normKey(artist)}|${normKey(album)}`) ||
-      albumSq.has(squash(`${foldKey(artist)}|${foldKey(album)}`)) ||
-      owned.baseKeys.has(`${normKey(artist)}|${baseTitleKey(album)}`) ||
-      baseSq.has(squash(`${foldKey(artist)}|${baseTitleKey(album)}`)),
-    ownsSong: (artist: string, title: string): boolean =>
-      owned.albumKeys.has(`${normKey(artist)}|${normKey(title)}`) ||
-      albumSq.has(squash(`${foldKey(artist)}|${foldKey(title)}`)) ||
-      owned.baseKeys.has(`${normKey(artist)}|${baseTitleKey(title)}`) ||
-      baseSq.has(squash(`${foldKey(artist)}|${baseTitleKey(title)}`)),
-    ownsArtist: (artist: string): boolean =>
-      owned.artists.has(normKey(artist)) || artistSq.has(squash(foldKey(artist))),
+    ...ownershipChecks(owned),
   }
   // Curator pool (guarded: state-dir drags electron, which the node test
   // loader cannot resolve — tests run with an empty pool, the app with
