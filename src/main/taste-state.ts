@@ -5,14 +5,22 @@
  * local state dir (one stat per tick — the 11k-song file is only read when the
  * NAS copy changed) and serves it to the renderer.
  *
+ * A Mac with no NAS mount (workmini, a replica — it never mounts the NAS)
+ * asks homemini's backend instead: GET /api/taste-state serves the same file,
+ * with an ETag, so the 10-minute poll downloads it once per nightly build.
+ * Same rules either way: a malformed copy or an older build never replaces
+ * the one in use.
+ *
  * The renderer uses it only while the engine's ranking is PROMOTED (it beat
  * the v5 formula on held-back weeks of real listening) and FRESH (< 72 h);
  * otherwise it falls back — that is the automatic rollback.
  *
- * ⚠️ TWIN: JakeTunesMobile backend/src/util/tasteState.ts (same parse + rules).
+ * ⚠️ TWIN: JakeTunesMobile backend/src/util/tasteState.ts (same parse + rules)
+ * and backend/src/routes/tasteState.ts (GET /api/taste-state, pullFromHub).
  */
 import { join } from 'path'
 import { readFile, stat, writeFile, rename } from 'fs/promises'
+import { withCompanionInit } from './hub-companion.ts'
 
 export const TASTE_STATE_FILE = 'taste-state.json'
 export const TASTE_STATE_FRESH_MS = 72 * 3600 * 1000
@@ -51,11 +59,17 @@ export interface TasteStateHost {
   localDir: string
   nasDir: string
   nasAvailable(): Promise<boolean>
+  /** homemini backend origin (http://homemini:3000): the source while the NAS
+   *  is not mounted. Absent / null = NAS only. */
+  hubBase?: () => string | null
+  fetchImpl?: typeof fetch
   log(msg: string): void
 }
 
 let current: TasteState | null = null
 let lastNasMtime = 0
+let lastHubEtag = ''
+let lastHubProblem = ''
 
 export function currentTasteState(): TasteState | null { return current }
 
@@ -68,8 +82,20 @@ async function loadLocal(host: TasteStateHost): Promise<void> {
   }
 }
 
+/** Write a validated copy into the local state dir and use it — unless it is
+ *  an older build than the one in use. */
+async function adopt(host: TasteStateHost, raw: string, parsed: TasteState, via: string): Promise<boolean> {
+  if (current && parsed.builtAtMs < current.builtAtMs) return false
+  const local = join(host.localDir, TASTE_STATE_FILE)
+  await writeFile(`${local}.tmp`, raw)
+  await rename(`${local}.tmp`, local)
+  current = parsed
+  host.log(`[taste-state] adopted homemini's taste state ${via} (${parsed.tracks.size} songs, ${parsed.promoted ? 'learned ranking ON' : 'v5 fallback'}): ${parsed.why}`)
+  return true
+}
+
 export async function pullTasteStateOnce(host: TasteStateHost): Promise<boolean> {
-  if (!(await host.nasAvailable())) return false
+  if (!(await host.nasAvailable())) return pullFromHub(host)
   const nasPath = join(host.nasDir, TASTE_STATE_FILE)
   let st
   try { st = await stat(nasPath) } catch { return false }   // engine has not published yet
@@ -78,13 +104,38 @@ export async function pullTasteStateOnce(host: TasteStateHost): Promise<boolean>
   const parsed = parseTasteState(raw)
   lastNasMtime = st.mtimeMs
   if (!parsed) { host.log('[taste-state] NAS copy is malformed — keeping the current one'); return false }
-  if (current && parsed.builtAtMs < current.builtAtMs) return false
-  const local = join(host.localDir, TASTE_STATE_FILE)
-  await writeFile(`${local}.tmp`, raw)
-  await rename(`${local}.tmp`, local)
-  current = parsed
-  host.log(`[taste-state] adopted homemini's taste state (${parsed.tracks.size} songs, ${parsed.promoted ? 'learned ranking ON' : 'v5 fallback'}): ${parsed.why}`)
-  return true
+  return adopt(host, raw, parsed, 'from the NAS')
+}
+
+/** Log a hub problem once per change of problem, not every 10-minute tick. */
+function hubProblem(host: TasteStateHost, problem: string): false {
+  if (problem !== lastHubProblem) host.log(`[taste-state] homemini copy unavailable: ${problem}`)
+  lastHubProblem = problem
+  return false
+}
+
+/** No NAS mount: GET /api/taste-state from homemini's backend (304 while the
+ *  build is unchanged). ⚠️ TWIN: JakeTunesMobile backend/src/routes/tasteState.ts. */
+async function pullFromHub(host: TasteStateHost): Promise<boolean> {
+  const base = host.hubBase?.()
+  if (!base) return false
+  const headers: Record<string, string> = { accept: 'application/json' }
+  if (lastHubEtag) headers['If-None-Match'] = lastHubEtag
+  let res: Response
+  let raw: string
+  try {
+    res = await (host.fetchImpl ?? fetch)(`${base}/api/taste-state`, withCompanionInit({ headers, signal: AbortSignal.timeout(30_000) }))
+    if (res.status === 304) { lastHubProblem = ''; return false }
+    if (!res.ok) return hubProblem(host, `HTTP ${res.status}`)   // 404 = backend has not read a copy yet
+    raw = await res.text()
+  } catch (err) {
+    return hubProblem(host, err instanceof Error ? err.message : String(err))   // homemini unreachable — next tick
+  }
+  lastHubProblem = ''
+  lastHubEtag = res.headers.get('etag') ?? ''
+  const parsed = parseTasteState(raw)
+  if (!parsed) { host.log('[taste-state] homemini copy is malformed — keeping the current one'); return false }
+  return adopt(host, raw, parsed, 'from homemini (no NAS mount)')
 }
 
 export function startTasteStatePull(host: TasteStateHost): void {
