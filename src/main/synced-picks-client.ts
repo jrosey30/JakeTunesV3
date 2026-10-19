@@ -336,6 +336,9 @@ export function createSyncedPicksClient<V>(opts: SyncedPicksClientOptions<V>): S
     if (!cache && !pending) {
       return { ok: false, error: 'Not synced with homemini yet — editing unlocks after the first sync.', state: await read() }
     }
+    if (spec.awaitFirstWrite && !pending && cache && cache.doc.updatedAt === null) {
+      return { ok: false, error: 'Waiting for your phone’s picks — open JakeTunes on the phone once to bring them over.', state: await read() }
+    }
     // Nothing to say: the edit IS what homemini already holds (and nothing is
     // queued on top of it) — e.g. an empty list against an empty server.
     if (!pending && cache && sameValues(v.values as Array<V | null>, cache.doc.values as Array<V | null>, spec.keyOf as (x: V) => string)) {

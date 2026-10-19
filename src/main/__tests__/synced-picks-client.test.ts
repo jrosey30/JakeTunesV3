@@ -110,7 +110,9 @@ function setup(opts: { mode?: FakeHub['mode']; doc?: Record<string, unknown> | n
 /** A client that has seen homemini's document once (editing is unlocked),
  *  with the call log and change log cleared. */
 async function seeded(opts: Parameters<typeof setup>[0] = {}) {
-  const t = setup({ ...opts, mode: 'up' })
+  // Default: a document someone has already written (empty) — island editing
+  // waits for that first write (spec.awaitFirstWrite, the phone's migration).
+  const t = setup({ doc: phoneDoc(islands(), '2026-10-18T09:00:00.000Z'), ...opts, mode: 'up' })
   await t.client.sync()
   t.hub.calls.length = 0
   t.states.length = 0
@@ -324,6 +326,21 @@ describe('first run, ETag polling, the single-writer fence', () => {
     assert.equal(await exists(join(dir, OUTBOX)), false)
   })
 
+  it('island albums stay read-only until someone has written the document — the phone\'s migration goes first', async () => {
+    const { hub, client } = setup({ doc: { version: 1, slots: nulls(10), updatedAt: null, updatedBy: null } })
+    await client.sync()
+    hub.calls.length = 0
+    const r = await client.save(islands([0, 'Desktop', 'First']))
+    assert.equal(r.ok, false)
+    if (!r.ok) assert.match(r.error, /Waiting for your phone/)
+    assert.equal(hub.calls.length, 0)
+    hub.doc = phoneDoc(islands([0, 'Migrated', 'Pick']), '2026-10-18T12:01:00.000Z')   // the phone migrates
+    await client.sync()
+    const r2 = await client.save(islands([0, 'Migrated', 'Pick'], [1, 'Desktop', 'Second']))
+    assert.equal(r2.ok, true)
+    assert.deepEqual((hub.doc!.slots as IslandSlot[])[1], { artist: 'Desktop', album: 'Second' })
+  })
+
   it('an empty server + an empty desktop never PUTs an empty list (no-op edits are not sent)', async () => {
     const { hub, client } = await seeded()
     const r = await client.save(nulls(10))
@@ -405,7 +422,7 @@ describe('favorite artists', () => {
 describe('against a real loopback server speaking the contract', () => {
   it('save → PUT lands → a fresh client GETs it back; a phone write shows up on the next refresh', async () => {
     const { createServer } = await import('node:http')
-    let stored: Record<string, unknown> = { version: 1, slots: nulls(10), updatedAt: null, updatedBy: null }
+    let stored: Record<string, unknown> = { version: 1, slots: nulls(10), updatedAt: '2026-10-18T09:00:00.000Z', updatedBy: 'phone' }
     const server = createServer((req, res) => {
       if (req.url !== '/api/island-albums') { res.writeHead(404).end(); return }
       if (req.method === 'GET') { res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(stored)); return }
@@ -439,6 +456,7 @@ describe('against a real loopback server speaking the contract', () => {
       assert.deepEqual(s.values[1], { artist: 'Radiohead', album: 'OK Computer' })
       assert.equal(s.updatedBy, 'phone')
     } finally {
+      server.closeAllConnections()                   // keep-alive sockets would hold close() open
       await new Promise<void>((r) => server.close(() => r()))
     }
   })

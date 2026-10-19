@@ -85,6 +85,12 @@ export interface PicksSpec<V> {
   entry: (raw: unknown) => V | null
   /** Identity key of a filled slot (dedupe). */
   keyOf: (v: NonNullable<V>) => string
+  /** Read-only until SOMEONE has written the document (updatedAt set). Island
+   *  albums: the phone's one-time migration PUTs Jake's ten legacy picks only
+   *  if the server has never been written — a desktop edit first would make
+   *  "server wins" and strand them in the phone's backup. Favorites are new on
+   *  both devices, so either may write first. */
+  awaitFirstWrite: boolean
 }
 
 const isText = (s: unknown): s is string => typeof s === 'string' && s.trim().length > 0
@@ -184,6 +190,7 @@ export const ISLAND_ALBUMS_SPEC: PicksSpec<IslandSlot> = {
     return o && typeof o === 'object' && isText(o.artist) && isText(o.album) ? { artist: o.artist.trim(), album: o.album.trim() } : null
   },
   keyOf: islandAlbumKey,
+  awaitFirstWrite: true,
 }
 
 export const FAVORITE_ARTISTS_SPEC: PicksSpec<FavoriteSlot> = {
@@ -194,6 +201,7 @@ export const FAVORITE_ARTISTS_SPEC: PicksSpec<FavoriteSlot> = {
   validate: validateFavoriteArtists,
   entry: (raw) => (isText(raw) ? raw.trim() : null),
   keyOf: favoriteArtistKey,
+  awaitFirstWrite: false,
 }
 
 export function specFor(kind: PicksKind): PicksSpec<IslandSlot> | PicksSpec<FavoriteSlot> {

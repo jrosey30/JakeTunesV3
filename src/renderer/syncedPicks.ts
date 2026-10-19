@@ -10,7 +10,7 @@
 
 import { useEffect, useSyncExternalStore } from 'react'
 import {
-  ISLAND_SLOT_COUNT, FAVORITE_ARTIST_SLOT_COUNT,
+  ISLAND_SLOT_COUNT, FAVORITE_ARTIST_SLOT_COUNT, specFor,
   type AnyPicksState, type FavoriteSlot, type IslandSlot, type PicksKind, type PicksReply, type PicksState,
 } from '../common/synced-picks'
 
@@ -161,7 +161,10 @@ export function useSyncedPicksLive(kind: PicksKind): void {
  *  that, ten empty slots mean "don't know" — a pick from there would replace
  *  every pick the phone has. Main refuses the same save (synced-picks-client). */
 export function picksEditable(s: AnyPicksState): boolean {
-  return s.syncedAt !== null || s.pending
+  if (s.pending) return true
+  if (s.syncedAt === null) return false
+  // Island albums wait for the phone's one-time migration (spec.awaitFirstWrite).
+  return !(specFor(s.kind).awaitFirstWrite && s.updatedAt === null)
 }
 
 /** Island Albums state, kept live while the calling component is mounted. */
@@ -187,5 +190,8 @@ export function picksStatusLine(s: AnyPicksState): { text: string; tone: 'dim' |
     return { text: `homemini is offline — showing the copy from ${when}`, tone: 'dim' }
   }
   if (s.reachable === false) return { text: 'Waiting for homemini — editing unlocks after the first sync', tone: 'dim' }
+  if (s.syncedAt !== null && s.updatedAt === null && specFor(s.kind).awaitFirstWrite) {
+    return { text: 'Waiting for your phone’s picks — open JakeTunes on the phone once to bring them over', tone: 'dim' }
+  }
   return null
 }
