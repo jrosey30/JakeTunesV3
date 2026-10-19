@@ -60,8 +60,8 @@ describe('venue shows (markKnownShows)', () => {
     assert.deepEqual(markKnownShows([{ artist: 'Molchat Doma' }], tracks).map((s) => s.known), [false])
     assert.deepEqual(markKnownShows([{ artist: 'Molchat Doma' }], tracks, ['Molchat Doma']).map((s) => s.known), [true])
   })
-  it('index.ts get-venue-shows marks through it', () => {
-    const src = readFileSync(join(import.meta.dirname, '..', 'index.ts'), 'utf-8')
-    assert.match(src, /return \{ ok: true, shows: markKnownShows\(shows, lib\.tracks \|\| \[\], spellings\)\.slice\(0, 120\) \}/)
+  it('the concerts fallback (ipc/concerts-ipc.ts, was index.ts get-venue-shows) marks through it', () => {
+    const src = readFileSync(join(import.meta.dirname, '..', 'ipc', 'concerts-ipc.ts'), 'utf-8')
+    assert.match(src, /legacyConcertItems\(tour\.slice\(0, 60\), markKnownShows\(venues, tracks, spellings\)\.slice\(0, 120\), Date\.now\(\)\)/)
   })
 })

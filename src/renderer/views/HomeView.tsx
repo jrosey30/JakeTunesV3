@@ -31,7 +31,9 @@ import YirHomeCard from '../components/yir/YirHomeCard'
 import TonightOnJakeTunes from '../components/TonightOnJakeTunes'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import { libraryStats } from '../utils/libraryStats'
-import type { Track, MusicNewsItem, TourDate, VenueShow, UpcomingRelease, ListeningMemoryData, RediscoveryPick } from '../types'
+import HomeShows from '../components/HomeShows'
+import { asConcertsState, type ConcertsFeedState } from '../../common/concerts-feed'
+import type { Track, MusicNewsItem, UpcomingRelease, ListeningMemoryData, RediscoveryPick } from '../types'
 import '../styles/home.css'
 
 interface AlbumCard {
@@ -165,8 +167,8 @@ function ShelfGlyph({ kind }: { kind: ShelfKind }) {
  *  four keepers — Daily mixes (MadeForYou), Recently Added, Listening Memory,
  *  Rediscover — then, in their original relative order, the Year in Review
  *  card (the only door to that view, Dec 17 reveal included), Today's pick,
- *  Shows (Live Near You / At Your Venues / On the Horizon — kept whole for the
- *  concert upgrade), New This Week, Music News. Jake: "stats move to settings.
+ *  Shows (Live Near You + You'd Like This from homemini's concerts feed —
+ *  components/HomeShows.tsx — then On the Horizon), New This Week, Music News. Jake: "stats move to settings.
  *  keep the others."
  *
  *  Switched off — they only stop RENDERING here (component, IPC and data code
@@ -257,45 +259,13 @@ export default function HomeView() {
     setReleasePreviews((m) => new Map(m).set(item.link, url))
     if (url) togglePreview(item.link, url, item.title, item.artist || '')
   }
-  const [tourDates, setTourDates] = useState<TourDate[] | null>(() => getCached('tour') ?? null)
-  const [venueShows, setVenueShows] = useState<VenueShow[] | null>(() => getCached('venues') ?? null)
   const [upcoming, setUpcoming] = useState<UpcomingRelease[] | null>(() => getCached('upcoming') ?? null)
   const newsRowRef = useRef<HTMLDivElement>(null)
   const releasesRowRef = useRef<HTMLDivElement>(null)
-  const tourDatesRowRef = useRef<HTMLDivElement>(null)
-  const venueRowRef = useRef<HTMLDivElement>(null)
   const upcomingRowRef = useRef<HTMLDivElement>(null)
   useScrollPersistence('home-row-news', newsRowRef)
   useScrollPersistence('home-row-releases', releasesRowRef)
-  useScrollPersistence('home-row-tours', tourDatesRowRef)
-  useScrollPersistence('home-row-venues', venueRowRef)
   useScrollPersistence('home-row-upcoming', upcomingRowRef)
-
-  // 2026-08-08 — Bandsintown lists every NIGHT of a residency as its own
-  // event, so "Live Near You" was showing 20 cards for 6 actual shows
-  // (Olivia Rodrigo alone took 10 slots at Barclays). Collapse consecutive
-  // nights by artist+venue into ONE card that says how many nights it runs.
-  // Grouping key is artist+venue (identity), never the display string.
-  const tourRuns = useMemo(() => {
-    if (!tourDates) return []
-    const byPlace = new Map<string, TourDate[]>()
-    for (const ev of tourDates) {
-      const k = `${(ev.artist || '').toLowerCase().trim()}|${(ev.venue || '').toLowerCase().trim()}`
-      const arr = byPlace.get(k)
-      if (arr) arr.push(ev)
-      else byPlace.set(k, [ev])
-    }
-    const runs: Array<{ ev: TourDate; nights: number; lastDate: string | null }> = []
-    for (const evs of byPlace.values()) {
-      const sorted = [...evs].sort((a, b) => a.date.localeCompare(b.date))
-      runs.push({
-        ev: sorted[0],
-        nights: sorted.length,
-        lastDate: sorted.length > 1 ? sorted[sorted.length - 1].date : null,
-      })
-    }
-    return runs.sort((a, b) => a.ev.date.localeCompare(b.ev.date))
-  }, [tourDates])
 
   // Cache-writing setters: the fetch bodies below are unchanged, they just
   // now persist what they got so the next visit doesn't have to ask
@@ -308,17 +278,18 @@ export default function HomeView() {
   // Every lane Home waits on. Named once so `isWarm` and the settle map can't
   // drift apart — a lane added to one and not the other would either gate
   // forever or paint half-empty.
-  const HOME_LANES = ['memory', 'rediscovery', 'news', 'releases', 'tour', 'venues', 'upcoming', 'weather'] as const
+  const HOME_LANES = ['memory', 'rediscovery', 'news', 'releases', 'concerts', 'upcoming', 'weather'] as const
 
   // ── one-paint gate ────────────────────────────────────────────────────────
   // Home fires six independent fetches (memory, rediscover, news+releases,
-  // tour dates, upcoming, weather) and each card used to pop in whenever its
+  // concerts, upcoming, weather) and each card used to pop in whenever its
   // data landed — the page assembled in random order over seconds (Jake: "the
   // features on every page need to load at same time"). Hold one skeleton
-  // until all slots settle, capped at 2.5s: tour dates can take 3-8s cold
-  // (Bandsintown across 60 artists) and holding the whole Home page on that
-  // would be worse than one late card. Warm visits paint once, instantly.
-  const [homeSettled, setHomeSettled] = useState({ memory: false, rediscovery: false, newsRel: false, tour: false, upcoming: false, weather: false })
+  // until all slots settle, capped at 2.5s: concerts can take 3-8s cold when
+  // homemini and its cache are both away (the Bandsintown fallback across 60
+  // artists) and holding the whole Home page on that would be worse than one
+  // late card. Warm visits paint once, instantly.
+  const [homeSettled, setHomeSettled] = useState({ memory: false, rediscovery: false, newsRel: false, concerts: false, upcoming: false, weather: false })
   const settleHome = useCallback((k: keyof typeof homeSettled) => {
     setHomeSettled((s) => (s[k] ? s : { ...s, [k]: true }))
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -360,6 +331,36 @@ export default function HomeView() {
       .finally(() => { if (!cancelled) settleHome('rediscovery') })
     return () => { cancelled = true }
   }, [])
+  // 2026-10-19 — Shows: homemini's ranked concerts feed, cached in main, with
+  // Bandsintown + the venue calendars as main's fallback (ipc/concerts-ipc.ts).
+  // get = instant from main's cache; refresh = one GET pair, throttled in
+  // main; the push keeps an open Home current. Placed after settleHome.
+  const [concerts, setConcerts] = useState<ConcertsFeedState | null>(() => getCached('concerts') ?? null)
+  useEffect(() => {
+    if (!HOME_SHOWS.shows) { settleHome('concerts'); return }
+    let cancelled = false
+    const take = (raw: unknown): ConcertsFeedState | null => {
+      const s = asConcertsState(raw)
+      if (cancelled || !s) return null
+      setCached('concerts', s)
+      setConcerts(s)
+      return s
+    }
+    void (async () => {
+      try {
+        const first = take((await window.electronAPI.concertsGet?.())?.state)
+        if (first && (first.items.length > 0 || first.discover.length > 0)) settleHome('concerts')
+        take((await window.electronAPI.concertsRefresh?.())?.state)
+      } catch (err) {
+        console.warn('[home] concerts lane failed:', err)
+      } finally {
+        if (!cancelled) settleHome('concerts')
+      }
+    })()
+    const off = window.electronAPI.onConcertsUpdated?.((state) => { take(state) })
+    return () => { cancelled = true; off?.() }
+  }, [])
+
   const playRediscovery = useCallback((pick: RediscoveryPick) => {
     const norm = (s: string) => (s || '').trim().toLowerCase()
     const tracks = lib.tracks.filter((t) => norm(t.albumArtist || t.artist) === norm(pick.artist))
@@ -384,36 +385,6 @@ export default function HomeView() {
         { setCached('news', []); setCached('releases', []); setNews([]); setReleases([]) }
       } finally {
         if (!cancelled) settleHome('newsRel')
-      }
-    })()
-    // 4.4.32: tour dates run separately because the cold-cache call
-    // takes ~3-8 sec (Bandsintown queries up to 60 artists, throttled
-    // 8-concurrent in main). Don't block the news/releases UI on it.
-    void (async () => {
-      try {
-        if (!HOME_SHOWS.shows) return
-        const t = await window.electronAPI.getTourDates()
-        if (cancelled) return
-        { const v = t.ok ? t.dates : []; setCached('tour', v); setTourDates(v) }
-      } catch {
-        if (cancelled) return
-        { setCached('tour', []); setTourDates([]) }
-      } finally {
-        if (!cancelled) settleHome('tour')
-      }
-    })()
-    // 2026-08-08: venue shows — independent of the artist query above, and
-    // deliberately not gated on it. Ten small unofficial venue scrapes; a
-    // rotted one yields [] and the lane just renders fewer rooms.
-    void (async () => {
-      try {
-        if (!HOME_SHOWS.shows) return
-        const v = await window.electronAPI.getVenueShows()
-        if (cancelled) return
-        { const vv = v.ok ? v.shows : []; setCached('venues', vv); setVenueShows(vv) }
-      } catch {
-        if (cancelled) return
-        { setCached('venues', []); setVenueShows([]) }
       }
     })()
     // 4.4.34: upcoming releases also runs separately. MusicBrainz
@@ -1205,94 +1176,16 @@ export default function HomeView() {
             were three headed bands for one idea — the longest stretch of the
             page. Now one "Shows" band with three rows. Each row keeps its own
             data, cap, and ref; only the chrome merged. ─────────────────── */}
-      {HOME_SHOWS.shows && ((tourDates !== null && tourDates.length > 0) || (venueShows !== null && venueShows.length > 0) || (upcoming !== null && upcoming.length > 0)) && (
+      {HOME_SHOWS.shows && ((concerts !== null && (concerts.items.length > 0 || concerts.discover.length > 0)) || (upcoming !== null && upcoming.length > 0)) && (
         <section className="home-section home-section--shows">
           <div className="home-section-header">
             <h2 className="home-section-title">Shows</h2>
           </div>
-        {/* ── 4.4.32: Tour Dates (Bandsintown, 100% library-personalized) ──── */}
-        {tourDates !== null && tourDates.length > 0 && (
-          <div className="home-shows-group">
-            <div className="home-section-subhead">
-              <h3 className="home-section-subtitle">Live Near You</h3>
-              <span className="home-section-source">via Bandsintown</span>
-            </div>
-            <div className="home-card-row" role="list" ref={tourDatesRowRef}>
-              {tourRuns.slice(0, 20).map(({ ev, nights, lastDate }, i) => {
-                const d = new Date(ev.date)
-                const yearSuffix = d.getFullYear() !== new Date().getFullYear() ? `, ${d.getFullYear()}` : ''
-                return (
-                  <div
-                    key={`${ev.url}-${i}`}
-                    className="home-tour-card"
-                    role="listitem"
-                    tabIndex={0}
-                    onClick={() => ev.url && openLink(ev.url)}
-                    onKeyDown={activateOnKey(() => { if (ev.url) openLink(ev.url) })}
-                    title={`${ev.artist} — ${ev.venue}\n${ev.city}\n${nights > 1 && lastDate
-                      ? `${nights} nights: ${d.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })} – ${new Date(lastDate).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}`
-                      : d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}\nOpen in Bandsintown`}
-                  >
-                    <div className="home-tour-date">
-                      <div className="home-tour-date-month">{d.toLocaleDateString(undefined, { month: 'short' }).toUpperCase()}</div>
-                      <div className={`home-tour-date-day${nights > 1 ? ' home-tour-date-day--range' : ''}`}>
-                        {d.getDate()}{nights > 1 && lastDate ? `–${new Date(lastDate).getDate()}` : ''}
-                      </div>
-                      {nights > 1 && <div className="home-tour-date-nights">{nights} nights</div>}
-                    </div>
-                    <div className="home-tour-info">
-                      <div className="home-tour-artist">{ev.artist}</div>
-                      <div className="home-tour-venue">{ev.venue}</div>
-                      <div className="home-tour-city">{ev.city}{typeof ev.miles === 'number' && <span className="home-tour-miles"> · {ev.miles < 1 ? '<1' : Math.round(ev.miles)} mi</span>}{yearSuffix && <span className="home-tour-year"> · {d.getFullYear()}</span>}</div>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* ── 2026-08-08: At Your Venues — the rooms Jake actually goes to,
-              regardless of whether the artist is in his library. Library
-              artists carry a mark so the "don't miss this" signal survives
-              inside the discovery lane. ──────────────────────────────────── */}
-        {venueShows !== null && venueShows.length > 0 && (
-          <div className="home-shows-group">
-            <div className="home-section-subhead">
-              <h3 className="home-section-subtitle">At Your Venues</h3>
-              <span className="home-section-source">Brooklyn rooms</span>
-            </div>
-            <div className="home-card-row" role="list" ref={venueRowRef}>
-              {venueShows.slice(0, 40).map((s, i) => {
-                const d = new Date(s.date)
-                return (
-                  <div
-                    key={`${s.venueKey}-${s.date}-${i}`}
-                    className={`home-tour-card${s.known ? ' home-tour-card--known' : ''}`}
-                    role="listitem"
-                    tabIndex={0}
-                    onClick={() => s.url && openLink(s.url)}
-                    onKeyDown={activateOnKey(() => { if (s.url) openLink(s.url) })}
-                    title={`${s.artist} — ${s.venue}\n${d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}${s.known ? '\nIn your library' : ''}`}
-                  >
-                    <div className="home-tour-date">
-                      <div className="home-tour-date-month">{d.toLocaleDateString(undefined, { month: 'short' }).toUpperCase()}</div>
-                      <div className="home-tour-date-day">{d.getDate()}</div>
-                    </div>
-                    <div className="home-tour-info">
-                      <div className="home-tour-artist">
-                        {s.artist}
-                        {s.known && <span className="home-venue-known" title="In your library"> ★</span>}
-                      </div>
-                      <div className="home-tour-venue">{s.venue}</div>
-                      <div className="home-tour-city">{s.city}</div>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        )}
+        {/* ── 2026-10-19: concerts — homemini's taste-ranked feed + "You'd Like
+              This" (components/HomeShows.tsx). Replaces Live Near You
+              (Bandsintown, top-60 artists) and At Your Venues (6 rooms, first
+              40 by date), whose sources are now main's offline fallback. ── */}
+        {concerts !== null && <HomeShows state={concerts} openLink={openLink} />}
 
         {/* ── 4.4.34: Upcoming Releases (MusicBrainz, library-personalized) ── */}
         {upcoming !== null && upcoming.length > 0 && (

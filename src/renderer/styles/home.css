@@ -837,9 +837,9 @@
   letter-spacing: 0.02em;
 }
 
-/* ── 4.4.32: Tour Date card (Bandsintown, library-personalized) ──────── */
+/* ── 4.4.32: Tour Date card — now the concerts card's stub (2026-10-19) ── */
 /* Visual language: tear-off concert ticket. Big date stamp on the
-   left (MAY / 22), artist + venue + city on the right. Distinct from
+   left (MAY / 22), artist + venue + city on the right (.home-concert-*). Distinct from
    the album/release/news cards so the row reads at a glance as
    "stuff happening live, not articles." */
 .home-tour-card {
@@ -902,31 +902,6 @@
   flex-direction: column;
   justify-content: center;
   gap: 2px;
-}
-.home-tour-artist {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary, #1a1a1a);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.home-tour-venue {
-  font-size: 11.5px;
-  color: var(--text-primary, #444);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.home-tour-city {
-  font-size: 11px;
-  color: var(--text-secondary, #888);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.home-tour-year {
-  opacity: 0.7;
 }
 
 /* ── 4.4.34: Upcoming Release card (MusicBrainz, library-personalized) ─
@@ -1260,12 +1235,6 @@
      prompt-compliant pitches mid-sentence. The row grows instead. */
 }
 
-/* Proximity hint on tour cards — "· 4 mi" from Brooklyn. Slightly more present
-   than the year suffix since distance is the useful bit. */
-.home-tour-miles {
-  opacity: 0.85;
-  font-weight: 600;
-}
 
 /* ── V6 motion: the page ARRIVES. Every section rises in sequence (16px
    fade-up, ~55ms stagger) so landing on Home feels like the app setting
@@ -1361,8 +1330,115 @@
   white-space: nowrap;
 }
 
-.home-venue-known { color: var(--brand-orange, #FC5501); font-size: 10px; }
-.home-tour-card--known .home-tour-date { background: linear-gradient(180deg, #f7ead6, #efdcbe); }
+
+/* ── 2026-10-19: concerts feed cards (components/HomeShows.tsx) ──────────
+   The ticket stub of the old Live Near You card (cream date stamp,
+   brand-orange month), a little wider for the reason line. Every name WRAPS
+   — artist, opener, venue — the stub's date column grows with the card, and
+   cards in a rail stretch to the tallest. Badges are the stub's 8.5px
+   uppercase tag style: "Just announced" solid #FC5501 with white type,
+   "Sold out" a quiet ink tint. On-sale time is brand-orange text. */
+.home-concert-card {
+  flex: 0 0 272px;
+  width: 272px;
+  max-width: 272px;
+}
+/* One stub width for one-offs, runs and NOV–DEC alike, so the text column
+   lines up card to card (the stamp still grows for anything wider). */
+.home-concert-card .home-tour-date {
+  min-width: 80px;
+}
+.home-concert-info {
+  justify-content: flex-start;
+  gap: 1px;
+  padding: 10px 12px 11px 12px;
+}
+.home-concert-artist {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text-primary, #1a1a1a);
+  overflow-wrap: anywhere;
+}
+.home-concert-opening {
+  font-size: 11px;
+  color: var(--text-secondary, #888);
+  overflow-wrap: anywhere;
+}
+.home-concert-venue {
+  margin-top: 2px;
+  font-size: 11.5px;
+  line-height: 1.3;
+  color: var(--text-primary, #444);
+  overflow-wrap: anywhere;
+}
+.home-concert-where {
+  font-size: 11px;
+  color: var(--text-secondary, #888);
+}
+.home-concert-reason {
+  margin-top: 5px;
+  font-size: 11px;
+  font-style: italic;
+  line-height: 1.35;
+  color: var(--text-secondary, #6a6a6a);
+}
+.home-concert-onsale {
+  margin-top: 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--brand-orange, #FC5501);
+}
+.home-concert-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.home-concert-badge {
+  font-size: 8.5px;
+  font-weight: 800;
+  line-height: 1.3;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+.home-concert-badge--new {
+  background: var(--brand-orange, #FC5501);
+  color: #fff;
+}
+.home-concert-badge--soldout {
+  background: rgba(58, 46, 16, 0.08);
+  color: rgba(58, 46, 16, 0.72);
+}
+.home-concert-card--soldout .home-tour-date {
+  background: linear-gradient(180deg, #f3efe8 0%, #e7e1d6 100%);
+}
+.home-concert-year {
+  margin-top: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: rgba(120, 100, 75, 0.9);
+}
+.home-concert-subhead-end {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+/* "See All": the whole list in place, still in rank order, columns filling
+   the width (cards may grow past 272px here, never shrink below it). */
+.home-card-row--concert-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(272px, 1fr));
+  gap: 14px 16px;
+  overflow-x: visible;
+}
+.home-card-row--concert-grid .home-concert-card {
+  width: auto;
+  max-width: none;
+}
 
 @media (max-width: 860px) {
   .home-header { padding: 22px 20px 16px 20px; }

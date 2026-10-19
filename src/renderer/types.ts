@@ -1072,9 +1072,10 @@ declare global {
       openExternalUrl: (url: string) => Promise<{ ok: boolean; error?: string }>
       // 4.4.29 — Brooklyn weather for the Home view greeting.
       getBrooklynWeather: () => Promise<{ ok: boolean; weather: { tempF: number; condition: string; description: string } | null }>
-      // 4.4.32 — Bandsintown tour dates for top library artists.
-      getVenueShows: () => Promise<{ ok: boolean; shows: VenueShow[] }>
-      getTourDates: () => Promise<{ ok: boolean; dates: TourDate[] }>
+      // 2026-10-19 — Home › Shows: homemini's ranked concerts feed; see src/common/concerts-feed.ts.
+      concertsGet?: () => Promise<{ ok: boolean; state?: import('../common/concerts-feed').ConcertsFeedState }>
+      concertsRefresh?: () => Promise<{ ok: boolean; state?: import('../common/concerts-feed').ConcertsFeedState }>
+      onConcertsUpdated?: (callback: (state: import('../common/concerts-feed').ConcertsFeedState) => void) => () => void
       // 4.4.34 — MusicBrainz upcoming releases (not yet out) for top
       // library artists.
       getUpcomingReleasesPersonal: () => Promise<{ ok: boolean; items: UpcomingRelease[] }>
@@ -1114,30 +1115,6 @@ export interface MusicNewsItem {
   /** Release reviews only — enriched from the review page (artist + genre). */
   artist?: string
   genre?: string
-}
-
-// 4.4.32 — Tour date shape from Bandsintown.
-/** A show at one of Jake's rooms, sourced from the venue itself (2026-08-08).
- *  `known` marks artists already in the library — everything else is the
- *  discovery half: the Ceremony-at-Warsaw show he'd otherwise never see. */
-export interface VenueShow {
-  artist: string
-  date: string
-  venue: string
-  venueKey: string
-  city: string
-  url: string
-  known?: boolean
-}
-
-export interface TourDate {
-  artist: string
-  date: string         // ISO
-  venue: string
-  city: string         // "Brooklyn, NY"
-  url: string
-  imageUrl?: string
-  miles?: number       // crow-flies miles from Brooklyn — proximity hint on the card
 }
 
 // 4.4.34 — Upcoming-release shape from MusicBrainz.

@@ -28,6 +28,7 @@ import {
   type RecordStoreLlm,
 } from './shelf-generator'
 import { gatherExternalContext, topLibraryArtists } from './external-context'
+import type { ConcertItem } from '../../common/concerts-feed.ts'
 import { buildItemRelationship, generateBlurb } from './blurb-generator'
 
 // ── Public registration surface ──────────────────────────────────────
@@ -59,6 +60,10 @@ export interface RecordStoreDeps {
   llm: RecordStoreLlm
   /** MUSIC_MAN_CORE persona prompt (index.ts owns it). */
   personaCore: string
+  /** homemini's ranked concerts feed (ipc/concerts-ipc.ts) — null when it,
+   *  its cache and its fallback all have nothing; the day theme then takes
+   *  its own Bandsintown path. */
+  concertFeed?: () => Promise<ConcertItem[] | null>
 }
 
 let registered = false
@@ -133,6 +138,7 @@ export async function resolveShelves(
     artists: topLibraryArtists(tracks),
     userDataDir: deps.userDataDir,
     forceRefresh: opts?.forceRefresh,
+    concertFeed: deps.concertFeed,
   })
   const themeHistory = await cache.getThemeHistory()
   const recentlyPicked = await cache.getRecentlyPickedIds(dateISO, 14)
