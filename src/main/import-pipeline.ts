@@ -34,8 +34,8 @@
  */
 
 import { join } from 'path'
-import { stat, mkdir, copyFile, readFile, lstat, open, rm } from 'fs/promises'
-import { ensureLandedDecodes } from './audio-write-guard.ts'
+import { stat, mkdir, copyFile, readFile, lstat, open, rename, rm } from 'fs/promises'
+import { ensureLandedDecodes, importWorkPath } from './audio-write-guard.ts'
 import {
   IS_WINDOWS,
   convertAudio,
@@ -83,6 +83,9 @@ export interface ImportPipelineDeps {
   prewarmAlacCache: (absPaths: string[]) => Promise<void>
   trashItem: (absPath: string) => Promise<void>
   emitToRenderer: (channel: string, payload: unknown) => void
+  /** The encoder. Missing means platform.ts's convertAudio; tests inject
+   *  a slow one to watch what a reader of the final path can see. */
+  convertAudio?: typeof convertAudio
 }
 
 let deps: ImportPipelineDeps | null = null
@@ -385,6 +388,8 @@ async function importOneFileLocked(
   // far. Declared outside the try so a failed import can release the
   // reservation instead of leaving a 0-byte file squatting on the ID.
   let reservedDestPath: string | null = null
+  // The hidden sibling the audio is being built on, until it is published.
+  let workPath: string | null = null
   try {
     const mm = await import('music-metadata')
     const metadata = await mm.parseFile(srcPath)
@@ -434,10 +439,9 @@ async function importOneFileLocked(
     // any other allocator's findFreeImportedId sees the file and bumps.
     // (In-process allocators are already serialized by the import
     // mutex above; this closes the window against everything else —
-    // including a second app process — too.) The placeholder is
-    // overwritten in place by the convert/copy that follows (ffmpeg
-    // runs with -y; copyFile truncates), and released in the catch
-    // below if the import fails.
+    // including a second app process — too.) The placeholder stays
+    // 0 bytes until the finished file is renamed over it (see
+    // newWork below), and is released in the catch if the import fails.
     const reserveDest = async (wantExt: string): Promise<void> => {
       while (true) {
         id = await findFreeImportedId(id)
@@ -460,6 +464,21 @@ async function importOneFileLocked(
       }
     }
 
+    // 2026-10-18: nothing is written at destPath but the reservation and
+    // then, in one rename, the finished file. Convert/copy, the tag write,
+    // faststart and the decode check (with its redo) all run on a hidden
+    // sibling in the same F-dir. Carriers read the final path while the
+    // import ran: 12804 was copied mid-mutagen, three more mid-encode, and
+    // add-only carriers kept those torn copies (audio-write-guard.ts,
+    // importWorkPath). The CD ripper (ipc/cd-ipc.ts) publishes the same way.
+    const newWork = async (): Promise<string> => {
+      if (workPath) await rm(workPath, { force: true }).catch(() => undefined)
+      workPath = importWorkPath(destPath)
+      return workPath
+    }
+    const convert = D().convertAudio ?? convertAudio
+    let work = ''
+
     const embedTags = {
       title: common.title || srcPath.substring(srcPath.lastIndexOf('/') + 1).replace(/\.[^.]+$/, ''),
       artist: common.artist || '',
@@ -475,10 +494,11 @@ async function importOneFileLocked(
 
     if (doConvert) {
       await reserveDest(extensionForFormat(chosenFmt))
+      work = await newWork()
       try {
-        await convertAudio(srcPath, destPath, chosenFmt, embedTags)
+        await convert(srcPath, work, chosenFmt, embedTags)
         // Old iPods need moov-first; external pipelines often mux moov-last.
-        await ensureFaststart(destPath)
+        await ensureFaststart(work)
         didConvert = true
       } catch (convertErr) {
         console.error(`Conversion failed for ${srcPath}, copying original:`, convertErr)
@@ -490,25 +510,30 @@ async function importOneFileLocked(
           reservedDestPath = null
         }
         if (!reservedDestPath) await reserveDest(ext)
-        await copyFile(srcPath, destPath)
+        work = await newWork()
+        await copyFile(srcPath, work)
       }
     } else {
       await reserveDest(ext)
-      await copyFile(srcPath, destPath)
+      work = await newWork()
+      await copyFile(srcPath, work)
     }
 
     // Never land audio that doesn't decode. A source that won't decode is
     // refused; otherwise one more write. (The Oct 2026 damage came later,
     // from tag write-back; audio-write-guard.ts guards that half.)
-    const landed = await ensureLandedDecodes(srcPath, destPath, async () => {
+    const landed = await ensureLandedDecodes(srcPath, work, async () => {
       if (didConvert) {
-        await convertAudio(srcPath, destPath, chosenFmt, embedTags)
-        await ensureFaststart(destPath)
+        await convert(srcPath, work, chosenFmt, embedTags)
+        await ensureFaststart(work)
       } else {
-        await copyFile(srcPath, destPath)
+        await copyFile(srcPath, work)
       }
     })
     if (!landed.ok) throw new Error(`${landed.error} (${srcPath})`)
+    // Publish: the finished file replaces the 0-byte reservation in one step.
+    await rename(work, destPath)
+    workPath = null
     if (id !== requestedId) {
       console.warn(`import-track: id ${requestedId} collides with existing file imported_${requestedId}.*; bumped to ${id}`)
     }
@@ -607,6 +632,9 @@ async function importOneFileLocked(
     return { ok: true, track, ...(artwork ? { artwork } : {}) }
   } catch (err) {
     console.error(`Failed to import ${srcPath}:`, err)
+    if (workPath) {
+      await rm(workPath, { force: true }).catch(() => undefined)
+    }
     // Brief 170: release the reservation — a failed import must not
     // leave a 0-byte placeholder claiming this ID forever.
     if (reservedDestPath) {

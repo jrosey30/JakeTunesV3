@@ -638,11 +638,18 @@ run_music_rsync() {
 if [ $QUICK_MODE -eq 1 ]; then
   log "rsync music (quick: files modified in last 10 min) → $MOUNT/JakeTunesLibrary/ …"
   TMP_LIST=$(mktemp /tmp/jaketunes-sync-files.XXXXXX)
-  ( cd "$LIBRARY_ROOT" && find . -mmin -10 -type f \
+  # 2026-10-18: `-not -path './.*'` only skips hidden entries at the ROOT.
+  # A hidden FILE deeper down (iPod_Control/Music/F04/.x.tagwrite-ab12.m4a)
+  # was listed, so this leg would carry writeVerified's tag-write clones and
+  # the import's .importing- work files to the NAS while they were being
+  # written. `-not -name '.*'` drops every hidden file, the same class the
+  # full leg's --exclude='.*' drops. `-size +0` skips the import's 0-byte
+  # Brief-170 reservation; the finished file renamed over it was written
+  # seconds earlier, so the next quick run still picks it up.
+  ( cd "$LIBRARY_ROOT" && find . -mmin -10 -type f -size +0 \
       -not -path './.*' \
       -not -path './_pending-imports/*' \
-      -not -name '._*' \
-      -not -name '.DS_Store' \
+      -not -name '.*' \
       -not -name 'Icon?' ) > "$TMP_LIST"
   file_count=$(wc -l < "$TMP_LIST" | tr -d ' ')
   log "quick mode: $file_count files modified in the last 10 min"

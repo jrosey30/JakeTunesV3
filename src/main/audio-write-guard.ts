@@ -163,6 +163,24 @@ export async function writeVerified(
 }
 
 /**
+ * Where an import builds a file before publishing it at `dest`: a hidden
+ * sibling in the same directory (so the final rename stays on one volume
+ * and is atomic), ending in dest's own extension (encoders, the tag writer
+ * and decodeCheck all key on it).
+ *
+ * 2026-10-18: the import encoded, tagged and faststarted straight onto the
+ * final library path, and carriers copied it mid-write. Hop 1 of the
+ * Mobile laptop→homemini sync took 12804 while mutagen was shifting its
+ * mdat, and 11981/12339/12676 while the encode was still growing. Add-only
+ * carriers keep their first copy forever. Readers of the final path must
+ * see either the 0-byte reservation or the finished file, nothing between.
+ * The dot keeps every music-leg rsync off it (they all exclude '.*').
+ */
+export function importWorkPath(dest: string): string {
+  return join(dirname(dest), `.${basename(dest)}.importing-${randomBytes(4).toString('hex')}${extname(dest)}`)
+}
+
+/**
  * Import-side check: the file that landed in the library must decode.
  * If it does not, a source that does not decode either is refused
  * outright. Otherwise the copy/convert runs once more (`redo`), and a
