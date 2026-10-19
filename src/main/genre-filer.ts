@@ -21,6 +21,7 @@
  */
 import { GENRES, GENRE_NAMES, CATCH_ALL, ROCK_FAMILY, PER_ALBUM_ARTISTS, isListGenre } from '../common/genre-vocab.ts'
 import { normName } from './taste-profile.ts'
+import { originNames, type OriginLookup, type OriginSource } from './origin-lookup.ts'
 
 export interface FilerTrack {
   id: number
@@ -166,11 +167,34 @@ export interface FilerDeps {
   log?(msg: string): void
   now?: () => Date
   maxUnits?: number
-  /** Where an artist is from: a country name, null when nobody knows (don't
-   *  ask again soon), undefined when the lookup failed (ask next sweep). */
-  /** Origin confirmed by one of these albums (null = unknown, undefined = try later). */
-  lookupOrigin?(artist: string, albums: string[]): Promise<string | null | undefined>
+  /** Where an artist is from — the NETWORK lookup only (origin-lookup.ts):
+   *  found, unknown (cache it), or busy (cache nothing, ask next sweep).
+   *  Each call is one of the sweep's maxOriginLookups. */
+  lookupOrigin?(artist: string, albums: string[]): Promise<OriginLookup>
+  /** Network lookups per sweep (default 10). Remembered answers are free. */
   maxOriginLookups?: number
+  /** The remembered answers (origin-lookups-v3.json). Absent = nothing remembered. */
+  loadOriginCache?(): Promise<OriginCache>
+  saveOriginCache?(cache: OriginCache): Promise<void>
+  originRetryMs?: number
+}
+
+/** One remembered origin answer per artist credit (originCacheKey).
+ *  origin: a country = known; null = nobody knows (ask again after
+ *  ORIGIN_RETRY_MS); absent = never answered. failedAt = the last BUSY try —
+ *  an ordering hint only, never a reason to skip. */
+export interface OriginCacheEntry { origin?: string | null; at?: number; source?: OriginSource; mbid?: string; note?: string; failedAt?: number }
+export type OriginCache = Record<string, OriginCacheEntry>
+export const ORIGIN_RETRY_MS = 60 * 24 * 3600 * 1000
+/** v2 → v3: its known answers carry over; its "unknown"s don't — they were
+ *  asked the old way (two albums, " - EP" titles, whole multi-artist credits). */
+export function originCacheFromV2(v2: unknown): OriginCache {
+  if (!v2 || typeof v2 !== 'object') return {}
+  const out: OriginCache = {}
+  for (const [k, e] of Object.entries(v2 as Record<string, { origin?: unknown; at?: unknown }>)) {
+    if (typeof e?.origin === 'string' && e.origin) out[k] = { origin: e.origin, at: typeof e.at === 'number' ? e.at : undefined, source: 'mb', note: 'v2' }
+  }
+  return out
 }
 
 /** One sweep: file what the rules can, look up the rest (capped), list the unsure. */
@@ -220,41 +244,123 @@ export async function runFilerSweep(deps: FilerDeps): Promise<{ filed: number; c
   return { filed, checked: decided.filter(([, d]) => !d.genre).length, deferred: needEvidence.length - batch.length, origins }
 }
 
-/**
- * Origin for songs whose genre is already settled but whose Origin is blank —
- * Charley Crockett arrived with a fine "Country" tag, so nothing ever filed him.
- * An artist he already has an origin for is copied with no lookup; the rest
- * are looked up a few per sweep. Never guessed: no answer, no origin.
- */
-export async function fillOrigins(deps: FilerDeps, tracks: FilerTrack[], homes: Map<string, { genre: string; origin?: string }>, alreadySet: Set<number>): Promise<number> {
-  const byArtist = new Map<string, { name: string; tracks: FilerTrack[] }>()
+/** Whose origin a song carries: its album artist — or, on a compilation or a
+ *  Various Artists album, the song's own artist (each song its own performer). */
+export function originArtist(t: FilerTrack): string {
+  const aa = (t.albumArtist || '').trim()
+  return !aa || isVarious(aa) || t.compilation ? (t.artist || '').trim() : aa
+}
+
+export interface OriginGroup {
+  key: string                 // originCacheKey(name)
+  name: string
+  tracks: FilerTrack[]
+  albums: string[]            // his albums by this artist, most songs first
+  /** copy = his other songs say; remembered = the cache knows; waiting = the
+   *  cache says nobody knows, not yet time to ask again; ask = a lookup. */
+  plan: 'copy' | 'remembered' | 'waiting' | 'ask'
+  origin?: string
+}
+
+/** Every artist with songs missing an origin, and what fillOrigins will do for
+ *  each — in the order it will do it (lookups: never-failed first, then most
+ *  songs first). Pure, so a dry run can print it. */
+export function planOrigins(tracks: FilerTrack[], cache: OriginCache, now: number, alreadySet: Set<number> = new Set(), retryMs = ORIGIN_RETRY_MS): OriginGroup[] {
+  const counts = new Map<string, Map<string, number>>()
   for (const t of tracks) {
-    if (t.origin || alreadySet.has(t.id) || !isSettled(t)) continue
-    const a = (t.albumArtist || t.artist || '').trim()
-    if (!a || isVarious(a)) continue
-    const g = byArtist.get(norm(a)) ?? { name: a, tracks: [] }
-    g.tracks.push(t)
-    byArtist.set(norm(a), g)
+    if (!t.origin) continue
+    const k = norm(originArtist(t))
+    if (!k) continue
+    const c = counts.get(k) ?? new Map<string, number>(); c.set(t.origin, (c.get(t.origin) ?? 0) + 1); counts.set(k, c)
   }
+  const known = (name: string): string | undefined => {
+    const c = counts.get(norm(name))
+    return c ? [...c.entries()].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))[0][0] : undefined
+  }
+  const groups = new Map<string, OriginGroup & { albumCount: Map<string, number> }>()
+  for (const t of tracks) {
+    if (t.origin || alreadySet.has(t.id)) continue          // genre doesn't matter: origin is the artist's
+    const name = originArtist(t)
+    if (!name || isVarious(name)) continue
+    const key = originCacheKey(name)
+    const g = groups.get(key) ?? { key, name, tracks: [], albums: [], plan: 'ask' as const, albumCount: new Map<string, number>() }
+    g.tracks.push(t)
+    const al = (t.album || '').trim()
+    if (al) g.albumCount.set(al, (g.albumCount.get(al) ?? 0) + 1)
+    groups.set(key, g)
+  }
+  const out: OriginGroup[] = []
+  for (const { albumCount, ...g } of groups.values()) {
+    g.albums = [...albumCount.entries()].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0])).map(([a]) => a)
+    // His other songs by the same credit — or by its primary artist, featured
+    // guests dropped ("Gorillaz feat. X" is Gorillaz). Never a shorter "&" or
+    // "," part: "Love, DEAN" is not Love.
+    const copied = known(g.name) ?? known(originNames(g.name).primary)
+    const hit = cache[g.key]
+    if (copied) out.push({ ...g, plan: 'copy', origin: copied })
+    else if (hit?.origin) out.push({ ...g, plan: 'remembered', origin: hit.origin })
+    else if (hit?.origin === null && hit.at !== undefined && now - hit.at < retryMs) out.push({ ...g, plan: 'waiting' })
+    else out.push({ ...g, plan: 'ask' })
+  }
+  const failed = (g: OriginGroup): number => cache[g.key]?.failedAt ?? 0
+  return out.sort((a, b) => (a.plan === 'ask' ? 1 : 0) - (b.plan === 'ask' ? 1 : 0)
+    || (a.plan === 'ask' ? failed(a) - failed(b) : 0)
+    || b.tracks.length - a.tracks.length || a.name.localeCompare(b.name))
+}
+
+/**
+ * Origin for every song whose Origin is blank, whatever its genre — Charley
+ * Crockett arrived with a fine "Country" tag, so nothing ever filed him.
+ * Free first: his other songs by that artist, then remembered answers (an
+ * artist nobody knows is skipped until ORIGIN_RETRY_MS — skipped, never
+ * blocking anyone else). Then up to maxOriginLookups real lookups; only those
+ * count (10/18: the 10 remembered unknowns at the head of the walk ate the
+ * whole budget every sweep from 10/12, and 123 artists were never asked).
+ * MusicBrainz busy → this sweep stops asking; nothing is remembered.
+ * Never guessed: no answer, no origin.
+ */
+export async function fillOrigins(deps: FilerDeps, tracks: FilerTrack[], _homes: Map<string, { genre: string; origin?: string }>, alreadySet: Set<number>): Promise<number> {
+  const cache: OriginCache = (await deps.loadOriginCache?.()) ?? {}
+  const now = (deps.now ?? (() => new Date()))().getTime()
+  const groups = planOrigins(tracks, cache, now, alreadySet, deps.originRetryMs)
+  const budget = deps.maxOriginLookups ?? 10
   const updates: Array<{ trackId: number; field: string; newValue: string }> = []
-  let lookups = 0
-  for (const [k, g] of byArtist) {
-    let origin = homes.get(k)?.origin
-    if (!origin && deps.lookupOrigin && lookups < (deps.maxOriginLookups ?? 10)) {
-      lookups++
-      origin = (await deps.lookupOrigin(g.name, [...new Set(g.tracks.map((t) => t.album).filter((a): a is string => !!a))])) ?? undefined
+  let asked = 0, busy = false
+  for (const g of groups) {
+    let origin = g.origin
+    let how = g.plan === 'copy' ? 'his other songs' : 'remembered'
+    if (g.plan === 'ask' && deps.lookupOrigin && !busy && asked < budget) {
+      asked++
+      const r = await deps.lookupOrigin(g.name, g.albums)
+      if (r.kind === 'busy') {
+        busy = true                                  // no hammering: the rest wait for the next sweep
+        cache[g.key] = { ...cache[g.key], failedAt: now }
+        deps.log?.(`[genre-filer] origin: ${g.name} — lookup busy (${r.note}); asking again next sweep`)
+      } else if (r.kind === 'found') {
+        cache[g.key] = { origin: r.origin, at: now, source: r.source, mbid: r.mbid, note: r.evidence }
+        origin = r.origin
+        how = `${r.source}, ${r.evidence}`
+      } else {
+        cache[g.key] = { origin: null, at: now, ...(r.mbid ? { mbid: r.mbid } : {}), note: r.note }
+        if (!HEBREW.test(g.name)) deps.log?.(`[genre-filer] origin: ${g.name} — unknown (${r.note})`)
+      }
+      await deps.saveOriginCache?.(cache)
     }
     // Jake's rule (2026-10-11): a name written in Hebrew is an Israeli artist.
     // Not extended to Cyrillic — that spans Belarus, Russia, Ukraine and more.
-    if (!origin && HEBREW.test(g.name)) origin = 'Israel'
+    if (!origin && HEBREW.test(g.name)) { origin = 'Israel'; how = 'Hebrew name' }
     if (!origin) continue
     for (const t of g.tracks) {
       await deps.persist(t, { origin })
       updates.push({ trackId: t.id, field: 'origin', newValue: origin })
     }
-    deps.log?.(`[genre-filer] origin: ${g.name} → ${origin} (${g.tracks.length} song${g.tracks.length === 1 ? '' : 's'})`)
+    deps.log?.(`[genre-filer] origin: ${g.name} → ${origin} (${how}; ${g.tracks.length} song${g.tracks.length === 1 ? '' : 's'})`)
   }
   if (updates.length) deps.applied(updates)
+  if (asked) {
+    const left = groups.filter((g) => g.plan === 'ask').length - asked + (busy ? 1 : 0)
+    deps.log?.(`[genre-filer] origins: asked ${asked} of ${budget}${busy ? ' (stopped: busy)' : ''}, ${left} artist${left === 1 ? '' : 's'} still to ask`)
+  }
   return updates.length
 }
 

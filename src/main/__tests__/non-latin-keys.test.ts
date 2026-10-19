@@ -186,7 +186,8 @@ describe('origin cache key (origin-lookups.json)', () => {
     assert.notEqual(originCacheKey(`${BERRY} & Rockfour`), originCacheKey(`${MOLCHAT} & Rockfour`))
     assert.equal(originCacheKey(KINO), 'кино')
     assert.equal(originCacheKey('!!!'), '!!!')
-    assert.match(read('main/ipc/genre-filer-ipc.ts'), /const k = originCacheKey\(artist\)/)
+    // 10/18: the cache moved from the IPC wiring into fillOrigins (planOrigins) — same key.
+    assert.match(read('main/genre-filer.ts'), /const key = originCacheKey\(name\)/)
   })
 })
 

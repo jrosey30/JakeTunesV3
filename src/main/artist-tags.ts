@@ -57,7 +57,7 @@ export async function ensureArtistTags(
   return n
 }
 
-type MbArtist = { id?: string; name?: string; score?: number; country?: string; area?: { name?: string }; aliases?: Array<{ name?: string }>; tags?: Array<{ name: string; count?: number }> }
+export type MbArtist = { id?: string; name?: string; score?: number; country?: string; area?: { id?: string; name?: string }; aliases?: Array<{ name?: string }>; tags?: Array<{ name: string; count?: number }> }
 /** Name OR alias — the library may spell an artist the way MusicBrainz lists as
  *  an alias ("Молчат Дома" for Molchat Doma). */
 export const MB_ARTIST_QUERY = (artist: string): string => encodeURIComponent(`artist:"${artist}" OR alias:"${artist}"`)
@@ -108,13 +108,19 @@ export async function musicBrainzAlbum(artist: string, album: string, userAgent:
     })
     if (!res.ok) return null
     const body = (await res.json()) as { 'release-groups'?: Array<{ title?: string; tags?: Array<{ name: string; count?: number }>; 'artist-credit'?: Array<{ artist?: { id?: string } }> }> }
-    const want = normName(album)
-    const hits = (body['release-groups'] ?? []).filter((r) => { const t = normName(r.title); return t === want || (want.length > 4 && (t.includes(want) || want.includes(t))) })
+    const hits = (body['release-groups'] ?? []).filter((r) => releaseGroupTitleMatches(r.title, album))
     return {
       tags: hits[0] ? [...(hits[0].tags ?? [])].sort((a, b) => (b.count ?? 0) - (a.count ?? 0)).slice(0, 8).map((t) => t.name) : [],
       creditIds: [...new Set(hits.flatMap((r) => (r['artist-credit'] ?? []).map((c) => c.artist?.id).filter((x): x is string => !!x)))],
     }
   } catch { return null }
+}
+
+/** A release group titled like Jake's album: the same folded title, or one
+ *  containing the other once the title is long enough to mean something. */
+export function releaseGroupTitleMatches(rgTitle: string | undefined, album: string): boolean {
+  const t = normName(rgTitle), want = normName(album)
+  return t === want || (want.length > 4 && (t.includes(want) || want.includes(t)))
 }
 
 /** The candidate one of Jake's albums is actually credited to — or nobody.
@@ -135,12 +141,23 @@ export async function musicBrainzCountryById(mbid: string, userAgent: string, fe
       headers: { 'User-Agent': userAgent, Accept: 'application/json' }, signal: AbortSignal.timeout(10_000),
     })
     if (!res.ok) return null
-    const d = (await res.json()) as { country?: string; area?: { 'iso-3166-1-codes'?: string[]; 'iso-3166-2-codes'?: string[] }; 'begin-area'?: { 'iso-3166-1-codes'?: string[]; 'iso-3166-2-codes'?: string[] } }
-    const codes = [d.country, ...[d.area, d['begin-area']].flatMap((a) => [...(a?.['iso-3166-1-codes'] ?? []), ...(a?.['iso-3166-2-codes'] ?? [])].map((c) => c.slice(0, 2)))]
-    for (const c of codes) { const n = countryName(c); if (n) return n }
-    return undefined
+    return countryOfMbArtist((await res.json()) as MbCodes)
   } catch { return null }
 }
+
+type MbAreaCodes = { 'iso-3166-1-codes'?: string[]; 'iso-3166-2-codes'?: string[] }
+type MbCodes = { country?: string; area?: MbAreaCodes; 'begin-area'?: MbAreaCodes }
+/** The country an artist lookup states: its country code, else its area's or
+ *  begin-area's ISO codes (3166-2 "GB-ENG" → GB). undefined when none. */
+export function countryOfMbArtist(d: MbCodes | null | undefined): string | undefined {
+  if (!d) return undefined
+  const codes = [d.country, ...[d.area, d['begin-area']].flatMap((a) => areaCodes(a))]
+  for (const c of codes) { const n = countryName(c); if (n) return n }
+  return undefined
+}
+/** An area's ISO codes as country codes, 3166-1 first. */
+export const areaCodes = (a: MbAreaCodes | null | undefined): string[] =>
+  [...(a?.['iso-3166-1-codes'] ?? []), ...(a?.['iso-3166-2-codes'] ?? [])].map((c) => c.slice(0, 2))
 
 /** MusicBrainz's ISO country code → the country's name. The area itself is
  *  often a region ("England" for Pink Floyd, "Long Island" for The Lemon
