@@ -38,7 +38,7 @@ import {
 } from './listener-profile.ts'
 import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, shell, globalShortcut, nativeImage, systemPreferences } from 'electron'
 import { writeJsonAtomic } from './atomic-write'
-import { resolveContainedPath, isSafeCacheKey, isPathInside } from './path-safety'
+import { resolveContainedPath, isPathInside } from './path-safety'
 import { isHomeminiPlaybackClient, mayFollowPlaybackSymlink } from './stream-playback'
 import { homeminiStreamTarget, readStreamCompressedCached } from './stream-format'
 import { parseRangeHeader } from './range-header.ts'
@@ -100,7 +100,8 @@ import {
   pendingArtworkMigrations, bareArtHash, getArtworkLockedBackupDir,
   artworkLookupRebuildPromise, artworkNormIndexMem, artworkSidecarNormMem,
   setArtworkIndexMem, type ParsedPicture, searchDeezerArt,
-} from './artwork-engine.ts'
+  nativeThumbJpeg,
+} from './artwork-engine.ts'; import { createAlbumArtServer, pregenerateThumbs } from './album-art-serve.ts'
 import { registerIpodIpc } from './ipc/ipod-ipc.ts'
 import { registerSyncIpc, type SyncConvertOptions } from './ipc/sync-ipc.ts'
 import { createSyncEngine, type VerifyTrackInput, type VerifyTrackUpdate } from './sync-engine/index.ts'
@@ -9995,8 +9996,9 @@ registerLiveSetsIpc(ipc, {
   liveSetsCache,
   artworkHash,
   loadArtworkIndex,
-  saveArtworkIndex, replicaHubBase, sendToRenderer, // + replica concert mirror (replica-concerts.ts)
+  saveArtworkIndex, replicaHubBase, sendToRenderer, // + replica concert + full artwork mirrors
   libraryTracks: async () => ((await libraryCache.get()) as CachedLibrary).tracks || [],
+  isPlaybackActive: () => playbackActive, linkIsThin: async () => (await readStreamCompressedCached()).on && (await isHomeminiPlaybackClientCached()),
 })
 
 // Artwork IPC extracted to ipc/artwork-ipc.ts (6.0 Phase 1).
@@ -10342,78 +10344,8 @@ app.whenReady().then(async () => {
   // Serve album artwork images — register before createWindow so the
   // renderer's first paint can resolve album-art:// URLs.
   registerPlaylistCoverProtocol()
-  protocol.handle('album-art', async (request) => {
-    const url = request.url.replace('album-art://', '')
-    const [pathPart, queryPart] = url.split('?')
-    const rawHash = decodeURIComponent(pathPart.replace('.jpg', ''))
-    // Strip cache-bust suffix (e.g. "abc123_1713100000000" → "abc123")
-    const hash = rawHash.replace(/_\d+$/, '')
-    // The hash is joined onto the artwork dir below, so it must be one of OUR
-    // keys and not a path. Unvalidated, `album-art://..%2F..%2Fsecret.jpg`
-    // walks straight out of the cache directory.
-    if (!isSafeCacheKey(hash)) {
-      console.warn('[album-art] refused key:', hash.slice(0, 80))
-      return new Response('Forbidden', { status: 403 })
-    }
-    // Thumbnail tier (2026-07-08, "art loads sporadically"): grid cells
-    // were decoding the FULL cover (median ~400KB, some multi-MB) into
-    // 150px tiles, dozens at a time — the pop-in. `?s=NNN` serves a
-    // ~15KB thumb, generated once via nativeImage and cached on disk in
-    // artwork/thumbs. Full-size stays for heroes / Get Info / export.
-    const sMatch = /(?:^|&)s=(\d+)/.exec(queryPart || '')
-    const size = sMatch ? Math.min(1024, Math.max(64, parseInt(sMatch[1], 10))) : 0
-    const cacheKey = size ? `${hash}@${size}` : hash
-    const artHeaders = {
-      'Content-Type': 'image/jpeg',
-      // Versioned hash in the URL busts browser cache on art change;
-      // long max-age makes scroll-back instant within a session.
-      'Cache-Control': 'public, max-age=31536000, immutable',
-    }
-    const cached = getCachedArtBytes(cacheKey)
-    if (cached) return new Response(cached, { headers: artHeaders })
-    const fullPath = join(getArtworkDir(), `${hash}.jpg`)
-    try {
-      let data: Buffer
-      if (size) {
-        const thumbDir = join(getArtworkDir(), 'thumbs')
-        const thumbPath = join(thumbDir, `${hash}_${size}.jpg`)
-        try {
-          data = await readFile(thumbPath)
-        } catch {
-          // Generate once: decode full art, downscale, persist. Some
-          // covers defeat nativeImage (mislabeled PNGs, exotic JPEGs —
-          // e.g. a 7.7MB not-actually-a-jpg found in the wild): fall back
-          // to serving the ORIGINAL bytes, which Chromium decodes fine —
-          // a thumb miss must never 404 art that used to display.
-          const full = await readFile(fullPath)
-          try {
-            const img = nativeImage.createFromBuffer(full)
-            if (img.isEmpty()) throw new Error('undecodable art')
-            const thumb = img.resize({ width: size, quality: 'good' }).toJPEG(82)
-            data = thumb
-            await mkdir(thumbDir, { recursive: true }).catch(() => {})
-            void writeFile(thumbPath, thumb).catch(() => {})
-          } catch {
-            data = full
-          }
-        }
-      } else {
-        data = await readFile(fullPath)
-      }
-      // Buffer<ArrayBufferLike> doesn't satisfy BodyInit's stricter
-      // ArrayBuffer constraint under the latest @types/node — slice into
-      // a fresh ArrayBuffer so the body is unambiguously sized memory
-      // backed by a real ArrayBuffer.
-      const body = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer
-      putArtBytes(cacheKey, body)
-      return new Response(body, { headers: artHeaders })
-    } catch {
-      return new Response('Not found', {
-        status: 404,
-        headers: { 'Cache-Control': 'no-store' },
-      })
-    }
-  })
+  // album-art:// (full covers + ?s= thumbs) lives in album-art-serve.ts.
+  protocol.handle('album-art', createAlbumArtServer({ artworkDir: getArtworkDir, getCached: getCachedArtBytes, putCached: putArtBytes, makeThumb: nativeThumbJpeg }))
 
   // 4.4.40 — Serve cached artist photos. URLs look like
   // `artist-image://{slug}.jpg`. The slug is already filename-safe
@@ -10441,42 +10373,8 @@ app.whenReady().then(async () => {
     }
   })
 
-  // Thumbnail pregeneration (2026-07-08): build the 320px tier for every
-  // cover once, in the background, so grids never pay a first-scroll
-  // generation cost. ~2.4k covers × ~15ms nativeImage decode+resize,
-  // spaced 40ms apart ≈ a few gentle minutes, one time; subsequent boots
-  // skip existing thumbs in one readdir. Runs well after boot so it never
-  // competes with startup.
-  setTimeout(() => {
-    void (async () => {
-      try {
-        const artDir = getArtworkDir()
-        const thumbDir = join(artDir, 'thumbs')
-        await mkdir(thumbDir, { recursive: true })
-        const [arts, thumbs] = await Promise.all([readdir(artDir), readdir(thumbDir)])
-        const have = new Set(thumbs)
-        const todo = arts.filter((f) => /^[^.].*\.jpg$/.test(f) && !have.has(f.replace(/\.jpg$/, '_320.jpg')))
-        if (todo.length === 0) return
-        console.log(`[art-thumbs] pregenerating ${todo.length} thumbnail(s) in background`)
-        let made = 0
-        for (const f of todo) {
-          try {
-            const full = await readFile(join(artDir, f))
-            const img = nativeImage.createFromBuffer(full)
-            if (!img.isEmpty()) {
-              const thumb = img.resize({ width: 320, quality: 'good' }).toJPEG(82)
-              await writeFile(join(thumbDir, f.replace(/\.jpg$/, '_320.jpg')), thumb)
-              made++
-            }
-          } catch { /* skip corrupt art */ }
-          await new Promise((r) => setTimeout(r, 40))
-        }
-        console.log(`[art-thumbs] pregeneration done: ${made}/${todo.length}`)
-      } catch (err) {
-        console.warn('[art-thumbs] pregeneration failed:', err instanceof Error ? err.message : err)
-      }
-    })()
-  }, 25_000)
+  // 320px thumb pregeneration, 25 s after boot: missing OR stale thumbs (album-art-serve.ts).
+  setTimeout(() => { void pregenerateThumbs({ artworkDir: getArtworkDir, makeThumb: nativeThumbJpeg }) }, 25_000)
 
   // 2026-07-08 — the "it is still spinning" capture: the freeze trap
   // recorded the RENDERER suspended for 114 seconds (heartbeat staircase

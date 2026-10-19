@@ -1,4 +1,5 @@
 import React, { useCallback, useRef } from 'react'
+import { albumArtUrl, useArtRevision } from '../artRevision'
 
 interface AlbumArtImageProps {
   hash: string
@@ -37,6 +38,9 @@ export default function AlbumArtImage({
   onLoad,
   onError,
 }: AlbumArtImageProps) {
+  // Bumped by main when this cover's bytes changed under the same name
+  // (replica artwork mirror) — Chromium would otherwise keep the old image.
+  const rev = useArtRevision(hash)
   const fadedRef = useRef(false)
   const refCb = useCallback((el: HTMLImageElement | null) => {
     if (!el || priority) return
@@ -63,7 +67,7 @@ export default function AlbumArtImage({
     <img
       key={`${hash}${size ? `@${size}` : ''}`}
       ref={refCb}
-      src={`album-art://${hash}.jpg${size ? `?s=${size}` : ''}`}
+      src={albumArtUrl(hash, size, rev)}
       alt={alt}
       className={className}
       loading={priority ? 'eager' : 'lazy'}

@@ -771,6 +771,13 @@ const electronAPI = {
     ipcRenderer.on('live-sets-updated', handler)
     return () => { ipcRenderer.removeListener('live-sets-updated', handler) }
   },
+  // 2026-10-19 full artwork mirror (src/main/replica-artwork-mirror.ts): one
+  // event per landed BATCH — index entries to merge + hashes whose bytes changed.
+  onArtworkMirrorUpdated: (callback: (p: { entries: Record<string, string>; bares: string[] }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, p: { entries: Record<string, string>; bares: string[] }) => callback(p)
+    ipcRenderer.on('artwork-mirror-updated', handler)
+    return () => { ipcRenderer.removeListener('artwork-mirror-updated', handler) }
+  },
   getConcertCrowd: (mergedTrackId: number): Promise<string | null> =>
     ipcRenderer.invoke('get-concert-crowd', mergedTrackId),
   saveCrowdTuning: (t: Record<string, number>): Promise<{ ok: boolean }> =>

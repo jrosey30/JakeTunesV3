@@ -14,8 +14,12 @@ import { IS_WINDOWS } from '../platform'
 import { STATE_DIR, NAS_STATE_DIR_PATH } from '../state-dir'
 import { allowImportPaths } from '../import-allowlist.ts'
 import { safeIpcError } from '../safe-ipc-error'
-import { getArtworkDir } from '../artwork-engine.ts'
-import { startReplicaConcertSync } from '../replica-concerts.ts'
+import { getArtworkDir, invalidateArtBytes, nativeThumbJpeg } from '../artwork-engine.ts'
+import { concertArtworkKeys, startReplicaConcertSync, type ReplicaTrackRow } from '../replica-concerts.ts'
+import {
+  startReplicaArtworkMirror, recentAlbumKeys, THIN_LINK_PACE_BYTES_PER_SEC, FAT_LINK_PACE_BYTES_PER_SEC, type RecentRow,
+} from '../replica-artwork-mirror.ts'
+import { pregenerateThumbs } from '../album-art-serve.ts'
 import type { LiveSetEntry } from '../index.ts'
 
 export interface LiveSetsIpcHost {
@@ -35,6 +39,9 @@ export interface LiveSetsIpcHost {
   /** This machine's library rows (each concert's band/show for its poster key). */
   libraryTracks: () => Promise<readonly unknown[]>
   sendToRenderer: (channel: string, ...args: unknown[]) => void
+  /** The full artwork mirror yields to music and paces itself on thin links. */
+  isPlaybackActive: () => boolean
+  linkIsThin: () => Promise<boolean>
 }
 
 /** Why a replica refuses a live-set write: the next hub pull would undo it. */
@@ -43,11 +50,28 @@ export const REPLICA_LIVE_SETS_READ_ONLY = 'live sets on this machine mirror the
 export function registerLiveSetsIpc(ipc: IpcRegistrar, host: LiveSetsIpcHost): void {
   // Replica concert mirror (2026-10-19, Jake: "the workmini should mimic the
   // live concert thing exactly"): inert on the laptop (no hub base).
+  // The FULL artwork mirror (2026-10-19, "eye for eye"): every key + jpg of the
+  // laptop's store through homemini, concert posters first. Inert on the laptop.
+  const artMirror = startReplicaArtworkMirror({
+    hubBase: host.replicaHubBase,
+    artwork: { dir: getArtworkDir(), loadIndex: host.loadArtworkIndex, saveIndex: host.saveArtworkIndex },
+    invalidate: invalidateArtBytes,
+    priorityKeys: async () => {
+      const rows = (await host.libraryTracks()) as ReplicaTrackRow[]
+      return [...concertArtworkKeys(await host.liveSetsCache.get(), rows), ...recentAlbumKeys(rows as RecentRow[])]
+    },
+    isPlaying: host.isPlaybackActive,
+    paceBytesPerSec: async () => ((await host.linkIsThin()) ? THIN_LINK_PACE_BYTES_PER_SEC : FAT_LINK_PACE_BYTES_PER_SEC),
+    notify: (u) => host.sendToRenderer('artwork-mirror-updated', u),
+    onLanded: (bares) => { void pregenerateThumbs({ artworkDir: getArtworkDir, makeThumb: nativeThumbJpeg, only: bares }) },
+  })
+  setTimeout(() => { void artMirror.tick() }, 45_000)
   const replica = startReplicaConcertSync({
     hubBase: host.replicaHubBase,
     liveSets: { get: () => host.liveSetsCache.get(), set: (next) => host.liveSetsCache.set(next as Record<string, LiveSetEntry>) },
     tracks: host.libraryTracks,
-    artwork: { dir: getArtworkDir(), loadIndex: host.loadArtworkIndex, saveIndex: host.saveArtworkIndex },
+    artwork: { dir: getArtworkDir(), loadIndex: host.loadArtworkIndex, saveIndex: host.saveArtworkIndex, invalidate: invalidateArtBytes },
+    postersCoveredElsewhere: artMirror.active,
     crowdDir: join(app.getPath('userData'), 'concert-crowd'),
     notify: (u) => host.sendToRenderer('live-sets-updated', u),
   })

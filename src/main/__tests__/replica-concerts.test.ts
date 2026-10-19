@@ -107,7 +107,7 @@ function fakeFetch(hub: Hub): typeof fetch {
   }) as typeof fetch
 }
 
-async function replica(hub: Hub, opts: { local?: Record<string, ReplicaLiveSet>; index?: Record<string, string>; hubBase?: string | null } = {}) {
+async function replica(hub: Hub, opts: { local?: Record<string, ReplicaLiveSet>; index?: Record<string, string>; hubBase?: string | null; covered?: () => boolean } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'replica-concerts-'))
   const artDir = join(dir, 'artwork')
   const crowdDir = join(dir, 'concert-crowd')
@@ -115,19 +115,21 @@ async function replica(hub: Hub, opts: { local?: Record<string, ReplicaLiveSet>;
   let live: Record<string, ReplicaLiveSet> = opts.local ?? {}
   let index: Record<string, string> = { ...(opts.index ?? {}) }
   const notes: Array<{ liveSets: boolean; artwork: Array<{ key: string; hash: string }> }> = []
+  const invalidated: string[] = []
   let sets = 0
   const handle = startReplicaConcertSync({
     hubBase: async () => (opts.hubBase === undefined ? 'http://hub' : opts.hubBase),
     liveSets: { get: async () => live, set: (next) => { live = next; sets++ } },
     tracks: async () => rows,
-    artwork: { dir: artDir, loadIndex: async () => index, saveIndex: async (next) => { index = next } },
+    artwork: { dir: artDir, loadIndex: async () => index, saveIndex: async (next) => { index = next }, invalidate: (b) => { invalidated.push(b) } },
+    postersCoveredElsewhere: opts.covered,
     crowdDir,
     notify: (u) => { notes.push(u) },
     fetchImpl: fakeFetch(hub),
     log: () => {},
     intervalMs: 3_600_000,
   })
-  return { handle, dir, artDir, crowdDir, notes, live: () => live, index: () => index, setCount: () => sets }
+  return { handle, dir, artDir, crowdDir, notes, invalidated, live: () => live, index: () => index, setCount: () => sets }
 }
 
 const freshHub = (): Hub => ({
@@ -215,6 +217,34 @@ describe('replica pull against the hub', () => {
       await r.handle.tick()
       const again = await readFile(join(r.artDir, 'accd557ecfd5443d7e49d4870e98f375.jpg'))
       assert.equal(again[3], 0xe1, 'a newer poster on the laptop lands on the replica')
+    } finally { r.handle.stop() }
+  })
+
+  it('one jpg named under two versions is fetched ONCE, not on every pass (workmini flip-flop, 2026-10-19)', async () => {
+    // The laptop names the Postal Service bare under two suffixes (show key vs
+    // its "(Live Set)" row, like Nirvana Unplugged's `b5c2053f…_1788389396248`
+    // and plain `b5c2053f…`). The version ledger used to flip between them,
+    // so workmini re-downloaded 3 posters every 2 minutes, forever.
+    const hub = freshHub()
+    hub.index['the postal service|||everything will change (live) (live set)'] = 'accd557ecfd5443d7e49d4870e98f375'
+    const r = await replica(hub, { local: sets })
+    try {
+      await r.handle.tick()
+      const fetches = () => hub.calls.filter((c) => c.startsWith('/artwork/')).length
+      assert.equal(fetches(), 1, 'one file, one download, whichever key asked first')
+      assert.deepEqual(r.invalidated, ['accd557ecfd5443d7e49d4870e98f375'], 'the byte cache + thumbs are dropped for the replaced jpg')
+      await r.handle.tick()
+      await r.handle.tick()
+      assert.equal(fetches(), 1, 'later passes trust the file (mutation: per-key version compare re-downloads here)')
+    } finally { r.handle.stop() }
+  })
+
+  it('stands down while the full artwork mirror covers this hub', async () => {
+    const hub = freshHub()
+    const r = await replica(hub, { local: sets, covered: () => true })
+    try {
+      await r.handle.tick()
+      assert.equal(hub.calls.filter((c) => c.startsWith('/api/live-sets/artwork') || c.startsWith('/artwork/')).length, 0)
     } finally { r.handle.stop() }
   })
 
