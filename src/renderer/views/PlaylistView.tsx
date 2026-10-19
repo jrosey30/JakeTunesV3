@@ -240,6 +240,14 @@ export default function PlaylistView() {
       if (w?.playlists || w?.global) setTasteWeights({ ...(w.global ? { '*': w.global } : {}), ...(w.playlists ?? {}) })
     })
   }, [])
+  // The nightly taste engine's learned percentile per song — only present
+  // while its ranking is promoted and fresh (src/main/taste-state.ts).
+  const [learnedTaste, setLearnedTaste] = useState<Map<number, number> | undefined>(undefined)
+  useEffect(() => {
+    void window.electronAPI.getTasteState?.().then((r) => {
+      if (r?.usable && r.pct) setLearnedTaste(new Map(Object.entries(r.pct).map(([id, v]) => [Number(id), v])))
+    })
+  }, [])
   const ledger = (events: Array<{ surface: string; verdict: string; key?: Record<string, unknown>; ctx?: Record<string, unknown> }>) => {
     void window.electronAPI.tasteLedgerAppend?.(events)
   }
@@ -300,10 +308,10 @@ export default function PlaylistView() {
       suggestDiag.current = new Map()
       return vibeHits.length
         ? suggestFromVibeHits(allPlaylistTracks, suggestPool, vibeHits, 5, suggestRotate, vibeClusterSeeds,
-            (playlist ? tasteWeights[playlist.id] ?? tasteWeights['*'] : undefined) ?? {}, suggestDiag.current, stripHidden)
+            (playlist ? tasteWeights[playlist.id] ?? tasteWeights['*'] : undefined) ?? {}, suggestDiag.current, stripHidden, learnedTaste)
         : suggestForPlaylist(allPlaylistTracks, suggestPool.filter((t) => !stripHidden.has(t.id)), 5, suggestRotate)
     },
-    [allPlaylistTracks, suggestPool, vibeHits, vibeClusterSeeds, suggestRotate, tasteWeights, playlist, stripHidden],
+    [allPlaylistTracks, suggestPool, vibeHits, vibeClusterSeeds, suggestRotate, tasteWeights, playlist, stripHidden, learnedTaste],
   )
   // Every strip the user actually sees is one BATCH: one 'shown' row per
   // suggestion (rank + why it ranked), so the learner can tell an ignored

@@ -136,6 +136,7 @@ describe('WIRING — the tested code is the live code', () => {
     // matches the literal dotted form the bare-call regex would reject.
     { fn: '.applyQualityFloor(', file: 'main/index.ts', minCalls: 1, literal: true, why: 'discovery quality floor — without the wire the shop ships 40% "no signal" cards again' },
     { fn: 'startTaxonomyStagedApply', file: 'main/index.ts', minCalls: 1, why: 'subgenre hand-off — unwired, the nightly classifier defers forever while the app is open (Sep 6 → Oct 19, 1,220 songs)' },
+    { fn: 'startTasteStatePull', file: 'main/index.ts', minCalls: 1, why: 'learned taste — unwired, the strip never sees what the nightly taste engine learned' },
     { fn: 'initFlightRecorder', file: 'main/index.ts', minCalls: 1, why: 'reliability P0 — without the recorder the app goes back to being blind to its own failures' },
     { fn: 'decideSyncMode', file: 'main/sync-orchestrator.ts', minCalls: 1, why: 'WAN full-sync doctrine — unwired, every remote safety-net run burns the 10-min kill-timer again' },
     { fn: 'onNasRecovery', file: 'main/sync-orchestrator.ts', minCalls: 1, why: 'recovery kick — unwired, good windows on a flapping link go back to being harvested by luck' },

@@ -264,6 +264,8 @@ const electronAPI = {
     ipcRenderer.invoke('taste-ledger-append', events),
   stripMemory: (playlistId: string, memberIds: number[]): Promise<{ ok: boolean; hidden: number[]; negatives: number[] }> =>
     ipcRenderer.invoke('strip-memory', playlistId, memberIds),
+  getTasteState: (): Promise<{ ok: boolean; usable: boolean; builtAt?: string; why?: string; pct?: Record<string, number> }> =>
+    ipcRenderer.invoke('get-taste-state'),
   getTasteWeights: (): Promise<{ ok: boolean; weights: Record<string, unknown> }> =>
     ipcRenderer.invoke('get-taste-weights'),
   getFriendStandings: (): Promise<{ ok: boolean; standings?: Array<{ name: string; points: number; adds: number; tossed: number; credits: Array<{ status: 'kept' | 'partial' | 'deleted' | 'legacy'; points: number; record: { kind: 'song' | 'album'; label: string; creditedAt: string } }> }>; error?: string }> => ipcRenderer.invoke('get-friend-standings'),

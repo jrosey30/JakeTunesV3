@@ -719,6 +719,7 @@ declare global {
       getFriends: () => Promise<{ ok: boolean; friends: Array<{ name: string; adds: number; got: number; tossed: number; lastAt: number; imported: number }> }>
       tasteLedgerAppend?: (events: Array<{ surface: string; verdict: string; key?: Record<string, unknown>; ctx?: Record<string, unknown> }>) => Promise<{ ok: boolean; appended?: number }>
       stripMemory?: (playlistId: string, memberIds: number[]) => Promise<{ ok: boolean; hidden: number[]; negatives: number[] }>
+      getTasteState?: () => Promise<{ ok: boolean; usable: boolean; builtAt?: string; why?: string; pct?: Record<string, number> }>
       getTasteWeights?: () => Promise<{ ok: boolean; weights: Record<string, unknown> }>
       getFriendStandings: () => Promise<{ ok: boolean; standings?: Array<{ name: string; points: number; adds: number; tossed: number; credits: Array<{ status: 'kept' | 'partial' | 'deleted' | 'legacy'; points: number; record: { kind: 'song' | 'album'; label: string; creditedAt: string } }> }>; error?: string }>
       sweepFriendImports: () => Promise<{ ok: boolean; credited: number }>

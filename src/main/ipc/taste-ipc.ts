@@ -12,6 +12,7 @@ import { REFUSED_SENDER } from '../ipc-register.ts'
 import { safeIpcError } from '../safe-ipc-error'
 import { stripMemoryFor, negativeExamples, type LedgerRowLike } from '../../common/strip-memory.ts'
 import { makeImpressionDedupe } from '../impression-dedupe.ts'
+import { currentTasteState, isUsable } from '../taste-state.ts'
 
 // ── Taste ledger (2026-08-07, "ok go go go") ─────────────────────────
 // One append-only stream of every silent verdict Jake gives: strip
@@ -83,6 +84,17 @@ export function registerTasteIpc(ipc: IpcRegistrar): void {
     } catch (err) {
       return { ok: false, hidden: [], negatives: [], error: safeIpcError(err, 'unknown') }
     }
+  }, { public: true })
+  // The nightly taste engine's learned ranking (src/main/taste-state.ts):
+  // each song's taste PERCENTILE, served only while the engine's ranking is
+  // promoted and fresh — otherwise usable:false and the strip keeps its own
+  // stars/plays term (the rollback path).
+  ipc.handle('get-taste-state', async () => {
+    const s = currentTasteState()
+    if (!isUsable(s, Date.now()) || !s) return { ok: true, usable: false, why: s?.why ?? 'no taste state yet' }
+    const pct: Record<string, number> = {}
+    for (const [id, row] of s.tracks) pct[id] = row[1]
+    return { ok: true, usable: true, builtAt: new Date(s.builtAtMs).toISOString(), why: s.why, pct }
   }, { public: true })
   // Per-playlist blend weights the nightly learner writes; the suggestion
   // strip multiplies its blend components by these. mtime-cached.

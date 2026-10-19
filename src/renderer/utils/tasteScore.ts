@@ -30,6 +30,10 @@ export interface TasteProfile {
   prior: number
   playMax: number   // max log1p(playCount) across the library — normalizes the playCount signal
   nowMs: number     // snapshot time, for recency
+  /** The nightly taste engine's learned scores (song id -> v5-scale score),
+   *  supplied only while its ranking is promoted and fresh — see
+   *  src/main/taste-state.ts. Absent / null / a song it lacks -> v5 below. */
+  learned?: () => ReadonlyMap<string, number> | null
 }
 
 const isStar = (t: Track): boolean => (Number(t.rating) || 0) > 0
@@ -112,6 +116,13 @@ function monthsOwned(t: Track, nowMs: number): number {
 }
 
 export function tasteScore(t: Track, p: TasteProfile): number {
+  // Learned taste (2026-10-19): promoted only after beating this formula on
+  // held-back weeks of real listening; v5 stays the fallback for everything
+  // else. ⚠️ TWIN: JakeTunesMobile backend/src/util/tasteScore.ts (same check).
+  if (p.learned && t.id != null) {
+    const v = p.learned()?.get(String(t.id))
+    if (v !== undefined) return v
+  }
   const al = p.album.get(albumKey(t)) ?? p.prior
   const ar = p.artist.get(artistKey(t)) ?? p.prior
   const ge = p.genre.get(genreKey(t)) ?? p.prior
