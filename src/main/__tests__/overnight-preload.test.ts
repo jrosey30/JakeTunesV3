@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { mkdtemp, mkdir, readFile, readdir, stat, writeFile, utimes } from 'node:fs/promises'
 import {
   buildPreloadPlan, runPreloadNight, scheduleOvernightPreload, startOvernightPreload, preloadTarget,
-  estimateBytes, inPreloadWindow, DISK_FLOOR_BYTES, PRELOAD_BUDGET_BYTES,
+  estimateBytes, inPreloadWindow, DISK_FLOOR_BYTES, PRELOAD_BUDGET_BYTES, headerTimeoutFor, liveSetsFrom,
   type PlanInputs, type PreloadTrack, type NightDeps, type PlanEntry,
 } from '../overnight-preload.ts'
 import { homeminiStreamTarget, readStreamCompressed } from '../stream-format.ts'
@@ -563,5 +563,60 @@ describe('a machine without the stream-compressed marker', () => {
     assert.deepEqual(await readStreamCompressed(home), { on: true, kbps: 256 })
     await writeFile(join(home, '.config/jaketunes/stream-compressed'), '192\n')
     assert.deepEqual(await readStreamCompressed(home), { on: true, kbps: 192 })
+  })
+})
+
+// ── Full Live Concerts (Jake 2026-10-19: "add concerts to the overnight pre-load") ──
+
+describe('concerts in the overnight pre-load', () => {
+  const show = (id: number, hours: number) => ({ mergedTrackId: id, totalDurationMs: hours * 3_600_000 })
+
+  test('concerts come first, ahead of recent adds, sized by the show length', () => {
+    const plan = buildPreloadPlan(inputs({
+      tracks: [trk(1, { dateAdded: new Date(NOW - DAY).toISOString() }), trk(9290, { codec: 'alac', duration: 9_360_000 })],
+      liveSets: [show(9290, 2.6), show(10926, 0.73)],
+    }))
+    assert.deepEqual(plan.map((e) => [e.streamId, e.tier]), [[9290, 'concert'], [10926, 'concert'], [1, 'recent-add']])
+    // 10926 isn't in this machine's library (workmini today): pre-loaded by id, sized by its length.
+    assert.equal(plan[1].track.duration, 0.73 * 3_600_000)
+    assert.ok(estimateBytes(plan[1].track, 256) > 80e6)
+  })
+
+  test('the key is the one a daytime play of the show asks for', () => {
+    const [e] = buildPreloadPlan(inputs({ liveSets: [show(10926, 0.73)] }))
+    assert.equal(preloadTarget(BASE, 256, e).spoolKey, homeminiStreamTarget(BASE, 10926, { compressed: true, kbps: 256, wantFlac: true }).spoolKey)
+  })
+
+  test('a show whose audio is marked missing is not fetched, and a show is listed once', () => {
+    const plan = buildPreloadPlan(inputs({
+      tracks: [trk(9290, { audioMissing: true })],
+      liveSets: [show(9290, 2.6), show(10926, 1), show(10926, 1)],
+    }))
+    assert.deepEqual(plan.map((e) => e.streamId), [10926])
+  })
+
+  test('a failed concert never ends the night; two failed concerts skip the rest, songs still load', async () => {
+    const h = harness(five, {
+      inputs: async () => inputs({ tracks: five.map((x) => ({ ...x, playCount: 1 })), liveSets: [show(901, 2), show(902, 2), show(903, 2)] }),
+      download: async (k, _u, _s, est) => {
+        h.fetched.push(k)
+        return k.startsWith('90') ? { kind: 'failed', reason: 'transcode timed out' } : { kind: 'landed', bytes: est }
+      },
+    })
+    const r = await runPreloadNight(h.deps)
+    assert.deepEqual(h.fetched, [key(901), key(902), key(1), key(2), key(3), key(4), key(5)], '903 skipped after two concert failures')
+    assert.equal(r.stoppedBy, 'complete')
+    assert.equal(r.tierCounts.concert, 3)
+  })
+
+  test('a show-sized file gets the long header wait; a song keeps the short one', () => {
+    assert.equal(headerTimeoutFor(300e6), 10 * 60_000)
+    assert.equal(headerTimeoutFor(EST), 120_000)
+  })
+
+  test('live-sets.json parses to merged ids; junk is ignored', () => {
+    assert.deepEqual(liveSetsFrom({ 'a|||b': { mergedTrackId: 9290, totalDurationMs: 5 }, 'c|||d': { cues: [] }, e: null }), [{ mergedTrackId: 9290, totalDurationMs: 5 }])
+    assert.deepEqual(liveSetsFrom(null), [])
+    assert.deepEqual(liveSetsFrom([1, 2]), [])
   })
 })
