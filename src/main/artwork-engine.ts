@@ -4,7 +4,7 @@
  * (6.0 Phase 1; the artist-image machinery deliberately stayed behind —
  * it is a different subsystem that merely lived between these blocks).
  */
-import { app } from 'electron'
+import { app, nativeImage } from 'electron'
 import { createHash } from 'crypto'
 import { join } from 'path'
 import { copyFile, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'fs/promises'
@@ -123,6 +123,15 @@ export function invalidateArtBytes(hash: string): void {
         .map((f) => unlink(join(thumbDir, f)).catch(() => {})))
     } catch { /* best-effort */ }
   })()
+}
+
+/** The album-art:// thumb tier's downscaler (album-art-serve.ts MakeThumb):
+ *  width px, JPEG q82. null when nativeImage can't decode the bytes (CMYK
+ *  JPEGs, an HTML page saved as .jpg) — callers then serve the original. */
+export function nativeThumbJpeg(full: Buffer, width: number): Buffer | null {
+  const img = nativeImage.createFromBuffer(full)
+  if (img.isEmpty()) return null
+  return img.resize({ width, quality: 'good' }).toJPEG(82)
 }
 
 export function getCachedArtBytes(hash: string): ArrayBuffer | undefined {

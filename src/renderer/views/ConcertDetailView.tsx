@@ -37,6 +37,7 @@ import type { LiveSetCue, Track } from '../types'
 import '../styles/concerts.css'
 import '../styles/concert-detail.css'
 import '../styles/concert-stage.css'
+import { albumArtUrl, artRevision } from '../artRevision'
 
 function mmss(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000))
@@ -223,7 +224,7 @@ export default function ConcertDetailView() {
   const c = liveSet.concert || {}
   const facts = c.facts || []
   const totalMs = Math.max(1, liveSet.totalDurationMs)
-  const artUrl = meta.artHash ? `album-art://${meta.artHash}.jpg?s=640` : null
+  const artUrl = meta.artHash ? albumArtUrl(meta.artHash, 640, artRevision(meta.artHash)) : null
   const crowdLabel = crowdState === 'preparing' ? 'Preparing the crowd…' : crowdOn ? '◉ Crowd on' : '◎ Crowd'
 
   return (

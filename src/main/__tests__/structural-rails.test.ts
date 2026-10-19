@@ -202,11 +202,15 @@ describe('FORTIFICATIONS — 2026-08-29 ("IT SPEAKS. fortify fortify fortify.")'
   // ── Stream spool: the deeper-buffering doctrine stays wired ──────────
   test('WIRING: art thumbs are served only when newer than their art (never on mere presence)', () => {
     const idx = readFileSync(join(SRC, 'main/index.ts'), 'utf-8')
+    const serve = readFileSync(join(SRC, 'main/album-art-serve.ts'), 'utf-8')
     // workmini 2026-10-19: Jul 10 thumbs outlived the Sep 2 concert posters.
-    assert.ok(/data = await readFreshThumb\(thumbPath, fullPath\)/.test(idx),
-      'the artwork:// protocol reads a cached thumb without checking it is newer than its art — replaced posters show stale')
-    assert.ok(/thumbsToBuild\(artDir, thumbDir,/.test(idx),
-      'thumb pregeneration skips by presence again — copied-in art keeps stale thumbs')
+    // The handler + pregeneration moved to album-art-serve.ts the same day.
+    assert.ok(/protocol\.handle\('album-art', createAlbumArtServer\(/.test(idx),
+      'album-art:// is no longer served by album-art-serve.ts — the freshness rule below may be bypassed')
+    assert.ok(/data = await readFreshThumb\(thumbPath, fullPath\)/.test(serve),
+      'the album-art:// protocol reads a cached thumb without checking it is newer than its art — replaced posters show stale')
+    assert.ok(/thumbsToBuild\(artDir, thumbDir,/.test(serve) && /pregenerateThumbs\(\{/.test(idx),
+      'thumb pregeneration skips by presence again (or is no longer started) — copied-in art keeps stale thumbs')
   })
 
   test('WIRING: spoolAwareServe is live in the homemini fetch path', () => {

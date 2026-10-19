@@ -1,3 +1,5 @@
+import { albumArtUrl, artRevision } from '../artRevision'
+
 /** Hashes we've already kicked off a warm fetch for this session. */
 const prefetched = new Set<string>()
 
@@ -34,7 +36,7 @@ export function prefetchAlbumArtHashes(hashes: Iterable<string | undefined | nul
     const key = size ? `${hash}@${size}` : hash
     if (prefetched.has(key)) continue
     prefetched.add(key)
-    queue.push(`album-art://${hash}.jpg${size ? `?s=${size}` : ''}`)
+    queue.push(albumArtUrl(hash, size, artRevision(hash)))
   }
   drainPrefetchQueue()
 }
