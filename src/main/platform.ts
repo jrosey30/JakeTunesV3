@@ -700,9 +700,17 @@ export async function ensureFaststart(path: string): Promise<void> {
     const { execFile } = await import('child_process')
     const { promisify } = await import('util')
     const execP = promisify(execFile)
+    // Hidden whenever `path` is: the import passes its hidden work file
+    // (importWorkPath), never the final library path.
     const tmp = path + '.faststart.m4a'
-    await execP('ffmpeg', ['-nostdin', '-y', '-i', path, '-map', '0', '-c', 'copy', '-movflags', '+faststart', tmp], { timeout: 120000, maxBuffer: 16 * 1024 * 1024 })
-    await renameFS(tmp, path).catch(async (err) => { await unlinkFS(tmp).catch(() => {}); throw err })
+    try {
+      await execP('ffmpeg', ['-nostdin', '-y', '-i', path, '-map', '0', '-c', 'copy', '-movflags', '+faststart', tmp], { timeout: 120000, maxBuffer: 16 * 1024 * 1024 })
+      await renameFS(tmp, path)
+    } catch (err) {
+      // A failed or timed-out remux leaves ffmpeg's partial output behind.
+      await unlinkFS(tmp).catch(() => {})
+      throw err
+    }
   } catch (err) {
     console.warn(`ensureFaststart: left ${path} as-is:`, err)
   }
