@@ -975,6 +975,7 @@ declare global {
       removeLiveSet: (albumKey: string) => Promise<{ ok: boolean; error?: string }>
       extractConcertCrowd: (mergedTrackId: number, colonPath: string, cueStartsMs: number[], totalMs: number) => Promise<{ ok: boolean; error?: string; startSec?: number }>
       onLiveSetsUpdated?: (callback: (p: { liveSets: boolean; artwork: Array<{ key: string; hash: string }> }) => void) => () => void
+      onArtworkMirrorUpdated?: (callback: (p: { entries: Record<string, string>; bares: string[] }) => void) => () => void
       getConcertCrowd: (mergedTrackId: number) => Promise<string | null>
       saveCrowdTuning: (t: Record<string, number>) => Promise<{ ok: boolean }>
       loadCrowdTuning: () => Promise<Record<string, number> | null>

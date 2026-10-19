@@ -73,6 +73,7 @@ import { mergeHubCatalog, ABSORBED_IMPORT_PREFIX } from '../common/hub-catalog-m
 import { ackVersionAfterSave, hubAdoptAfterMerge, trackIdKey } from '../common/hub-catalog-ack'
 import { phoneOverlayFields } from '../common/genre-vocab'
 import { measuredFileUpdates } from '../common/library-file-sizes'
+import { bumpArtRevisions } from './artRevision'
 
 // Session cap — startup must not walk every missing album via fetchAlbumArt.
 const STARTUP_NETWORK_ART_CAP = 16
@@ -558,6 +559,14 @@ function AppInner() {
   // 'jaketunes-ipod-mounted' on each false→true transition.
   const libStateRef = useRef(libState)
   libStateRef.current = libState
+  // Replicas (2026-10-19): the full artwork mirror (src/main/replica-artwork-
+  // mirror.ts) landed a BATCH — re-request covers whose bytes changed, and
+  // merge the new index entries in ONE dispatch (not one per file). Placed
+  // after libStateRef: the merge reads the current map through it.
+  useEffect(() => window.electronAPI.onArtworkMirrorUpdated?.((u) => {
+    bumpArtRevisions(u.bares)
+    if (Object.keys(u.entries).length) dispatch({ type: 'SET_ARTWORK_MAP', map: { ...libStateRef.current.artworkMap, ...u.entries } })
+  }), [dispatch])
   // Brief 016: playback state ref so closures (the library-external-change
   // reload handler in particular) can read the currently playing track id
   // without staleness. The reload handler protects the playing track's

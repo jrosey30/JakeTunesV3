@@ -9996,8 +9996,9 @@ registerLiveSetsIpc(ipc, {
   liveSetsCache,
   artworkHash,
   loadArtworkIndex,
-  saveArtworkIndex, replicaHubBase, sendToRenderer, // + replica concert mirror (replica-concerts.ts)
+  saveArtworkIndex, replicaHubBase, sendToRenderer, // + replica concert + full artwork mirrors
   libraryTracks: async () => ((await libraryCache.get()) as CachedLibrary).tracks || [],
+  isPlaybackActive: () => playbackActive, linkIsThin: async () => (await readStreamCompressedCached()).on && (await isHomeminiPlaybackClientCached()),
 })
 
 // Artwork IPC extracted to ipc/artwork-ipc.ts (6.0 Phase 1).
