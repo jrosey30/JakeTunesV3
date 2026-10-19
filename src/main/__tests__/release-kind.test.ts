@@ -40,6 +40,9 @@ test('title markers: Apple suffixes, live wording, compilations', () => {
   // Not fooled by look-alikes
   assert.equal(kindFromTitle('Alive & In Person'), null)
   assert.equal(kindFromTitle('Live Through This'), null)
+  assert.equal(kindFromTitle('all my exes live in brooklyn'), null)
+  assert.equal(kindFromTitle('Live at Leeds'), 'live')
+  assert.equal(kindFromTitle('At Folsom Prison - Live at Folsom'), 'live')
   assert.equal(kindFromTitle('Deep Cuts'), null)
   assert.equal(kindFromTitle('Getting Killed'), null)
 })

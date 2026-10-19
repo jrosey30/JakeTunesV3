@@ -20,7 +20,9 @@
  *    "Collection", "Essential", "Singles", "Hits" … (the desktop page's
  *    pre-10/18 list, minus "mixtape" — an artist's own release), or album
  *    artist "Various Artists" → compilation. A bare "live" inside a title
- *    is NOT live ("Live Through This" is a studio album); MusicBrainz, which
+ *    is NOT live ("Live Through This" is a studio album; "all my exes live
+ *    in brooklyn" is a song title — "Live at/in/from/on" counts only at the
+ *    start, in brackets or after a dash); MusicBrainz, which
  *    wins over the title, corrects the rare studio album titled "Singles".
  *  - Shape (only with a DECLARED track count — owning 2 songs of a 12-song
  *    album says nothing): ≤ 3 tracks and under 30 min → single; ≤ 6 and
@@ -79,7 +81,7 @@ export function kindFromMusicBrainz(t: MbReleaseType | null | undefined): Releas
 
 const SINGLE_MARK = /\s[-–—]\s*single\s*$/i
 const EP_MARK = /(?:^|\s[-–—]\s*|\s|\()ep\)?\s*$/i
-const LIVE_MARK = /[([]\s*live\b|\blive\s+(?:at|in|from|on)\b|\bunplugged\b|\blive\s*$|\blive!|\bin concert\b|\bat the bbc\b|\bbbc sessions\b/i
+const LIVE_MARK = /[([]\s*live\b|(?:^|[([:]\s*|\s[-–—]\s*)live\s+(?:at|in|from|on)\b|\bunplugged\b|\blive\s*$|\blive!|\bin concert\b|\bat the bbc\b|\bbbc sessions\b/i
 const COMPILATION_MARK = /\b(?:greatest hits|best of|the very best|anthology|collection|essentials?|retrospective|b-sides|b sides|rarities|past masters|singles|hits|love songs|ballads|compilation)\b/i
 
 export function kindFromTitle(album: string, albumArtist?: string | null): ReleaseKind | null {
