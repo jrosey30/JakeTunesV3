@@ -60,7 +60,7 @@ export const EXA_QUERY_TEMPLATES = {
 
   /** New-music discovery by scene/genre. */
   newMusic: ({ scene, year }: { scene: string; year: string }) =>
-    `The best new music in ${scene} right now — albums, EPs, and singles released in ${year} (and the last few months) getting critical attention from Pitchfork, Stereogum, Resident Advisor, Bandcamp Daily, The Quietus, and Brooklyn Vegan. Name specific artists and specific releases with their titles. Focus on genuinely new/recent releases, not catalog reissues or anniversary editions.`,
+    `The best new music in ${scene} right now — albums, EPs, and singles released in ${year} (and the last few months) getting critical attention from Pitchfork, Stereogum, Resident Advisor, Bandcamp Daily, and The Quietus. Name specific artists and specific releases with their titles. Focus on genuinely new/recent releases, not catalog reissues or anniversary editions.`,
 
   /** New releases for fans of specific artists the listener already loves. */
   newMusicForFans: ({ artists, year }: { artists: string[]; year: string }) =>
