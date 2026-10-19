@@ -195,7 +195,7 @@ export function suggestForPlaylist<T extends SuggestibleTrack>(
  * Falls back to suggestForPlaylist (metadata) when no embeddings exist.
  */
 export interface SuggestBlendWeights { vibe?: number; genre?: number; taste?: number; era?: number }
-export interface SuggestDiag { vn: number; g: number; b: number; ta: number; e: number; tv?: number }
+export interface SuggestDiag { vn: number; g: number; b: number; ta: number; e: number; k?: number; tv?: number }
 
 export function suggestFromVibeHits<T extends SuggestibleTrack>(
   playlistTracks: T[],
@@ -210,6 +210,10 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
   // did — the learner needs that to know which dial to turn.
   weights: SuggestBlendWeights = {},
   diagOut?: Map<number, SuggestDiag>,
+  // Strip memory (src/common/strip-memory.ts): songs this playlist ✕'d, took
+  // back, or refreshed past twice — never served here again (in-session ✕s
+  // land here before main's next pool arrives).
+  exclude: ReadonlySet<number> = new Set(),
   // The nightly taste engine's learned percentile per song (served only while
   // its ranking is promoted — src/main/taste-state.ts). On held-back strip
   // verdicts it ranked the songs Jake added at AUC 0.64 vs 0.56 for the
@@ -313,7 +317,7 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
   for (const h of hits) {
     if (!clusterEligible(h.cluster)) continue
     const t = byId.get(h.trackId)
-    if (!t || inPlaylist.has(t.id) || t.audioMissing || plAlbums.has(albumKey(t))) continue
+    if (!t || inPlaylist.has(t.id) || exclude.has(t.id) || t.audioMissing || plAlbums.has(albumKey(t))) continue
     if (eraCut(t)) continue   // era-centered playlist, wrong decade — out (see above)
     let arr = byCluster.get(h.cluster)
     if (!arr) { arr = []; byCluster.set(h.cluster, arr) }
@@ -355,7 +359,7 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
       const lt = learnedTaste?.get(t.id)
       const taste = lt !== undefined ? lt : Math.min(1, ((Number(t.rating) || 0) / 5) * 0.6 + Math.min((Number(t.playCount) || 0) / 8, 1) * 0.4)
       const eFit = eraFit(t)
-      if (diagOut) diagOut.set(t.id, { vn, g: gFit, b: bpmFit, ta: taste, e: eFit, tv: lt !== undefined ? 1 : 0 })
+      if (diagOut) diagOut.set(t.id, { vn, g: gFit, b: bpmFit, ta: taste, e: eFit, k: keyWeight * keyFit, tv: lt !== undefined ? 1 : 0 })
       const wV = weights.vibe ?? 1, wG = weights.genre ?? 1, wT = weights.taste ?? 1, wE = weights.era ?? 1
       return { t, s: 0.45 * wV * vn + 0.22 * wG * gFit + 0.15 * bpmFit + keyWeight * keyFit + 0.10 * wT * taste + 0.15 * wE * eFit }
     })

@@ -13,7 +13,7 @@ runs Demucs/Spleeter + librosa + FFmpeg locally to isolate, chop, and
 re-sequence those blocks into a reconstructed loop.
 
 Complements scripts/music_engine.py (mixtape stitcher) and
-scripts/nightly_loop.py (taste / prompt orchestrator). Sampling jobs can be
+the (retired 2026-10-19, never scheduled) nightly_loop.py. Sampling jobs can be
 queued as JSON under $JT_STATE_DIR/sampling-inbox/ and rendered overnight via:
 
   python3 scripts/ai_sampler_engine.py nightly-pass

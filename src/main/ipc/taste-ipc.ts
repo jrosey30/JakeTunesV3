@@ -10,6 +10,8 @@ import { appendFile, readFile, stat } from 'fs/promises'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { safeIpcError } from '../safe-ipc-error'
+import { stripMemoryFor, negativeExamples, type LedgerRowLike } from '../../common/strip-memory.ts'
+import { makeImpressionDedupe } from '../impression-dedupe.ts'
 import { currentTasteState, isUsable } from '../taste-state.ts'
 
 // ── Taste ledger (2026-08-07, "ok go go go") ─────────────────────────
@@ -21,21 +23,48 @@ import { currentTasteState, isUsable } from '../taste-state.ts'
 // Desktop main is the single writer.
 export const TASTE_LEDGER_PATH = () => join(app.getPath('userData'), 'taste-ledger.jsonl')
 export const TASTE_WEIGHTS_PATH = () => join(app.getPath('userData'), 'taste-weights.json')
+// Verdicts (2026-10-19, taste-engine repairs): 'shown' is an impression
+// (the strip's batch, a Discovery card that was really on screen), 'refresh'
+// is ↻ pressed while a suggestion was showing, 'reject' is an explicit ✕.
+// 'pass' is the pre-10/19 spelling of 'refresh' — kept readable, no longer
+// written. "Ignored" (shown, nothing done) and "skipped" (shown beside a pick
+// that was taken) are derived from these by the learner, never logged.
+const SURFACES = new Set(['strip', 'discover', 'mm-playlist', 'review-gate'])
+const VERDICTS = new Set(['accept', 'reject', 'pass', 'refresh', 'shown'])
 type TasteEvent = {
   surface: 'strip' | 'discover' | 'mm-playlist' | 'review-gate'
-  verdict: 'accept' | 'reject' | 'pass'
+  verdict: 'accept' | 'reject' | 'pass' | 'refresh' | 'shown'
   key?: Record<string, unknown>
   ctx?: Record<string, unknown>
+}
+const isDuplicateImpression = makeImpressionDedupe()
+
+// Strip rows parsed from the ledger, cached by file size+mtime (the ledger is
+// append-only; a few MB at most).
+let stripRowsCache: { size: number; mtime: number; rows: LedgerRowLike[] } | null = null
+async function stripRows(): Promise<LedgerRowLike[]> {
+  const st = await stat(TASTE_LEDGER_PATH()).catch(() => null)
+  if (!st) return []
+  if (stripRowsCache && stripRowsCache.size === st.size && stripRowsCache.mtime === st.mtimeMs) return stripRowsCache.rows
+  const rows: LedgerRowLike[] = []
+  for (const line of (await readFile(TASTE_LEDGER_PATH(), 'utf-8')).split('\n')) {
+    if (!line.includes('"strip"')) continue
+    try { rows.push(JSON.parse(line) as LedgerRowLike) } catch { /* a torn last line is skipped, not fatal */ }
+  }
+  stripRowsCache = { size: st.size, mtime: st.mtimeMs, rows }
+  return rows
 }
 export function registerTasteIpc(ipc: IpcRegistrar): void {
   ipc.handle('taste-ledger-append', async (_e, events: TasteEvent[]) => {
     if (suppressListeningWrites()) return { ok: true, appended: 0, suppressed: 'dev-review' }
     try {
       if (!Array.isArray(events) || events.length === 0) return { ok: true, appended: 0 }
+      const now = new Date().toISOString()
       const lines = events
-        .filter((ev) => ev && typeof ev === 'object' && ev.surface && ev.verdict)
+        .filter((ev) => ev && typeof ev === 'object' && SURFACES.has(ev.surface) && VERDICTS.has(ev.verdict))
         .slice(0, 50)
-        .map((ev) => JSON.stringify({ ts: new Date().toISOString(), surface: ev.surface, verdict: ev.verdict, key: ev.key ?? {}, ctx: ev.ctx ?? {} }))
+        .filter((ev) => !isDuplicateImpression(ev, now))
+        .map((ev) => JSON.stringify({ ts: now, surface: ev.surface, verdict: ev.verdict, key: ev.key ?? {}, ctx: ev.ctx ?? {} }))
       if (lines.length === 0) return { ok: true, appended: 0 }
       await appendFile(TASTE_LEDGER_PATH(), lines.join('\n') + '\n', 'utf-8')
       return { ok: true, appended: lines.length }
@@ -43,6 +72,19 @@ export function registerTasteIpc(ipc: IpcRegistrar): void {
       return { ok: false, error: safeIpcError(err, 'unknown') }
     }
   }, { refuse: REFUSED_SENDER })
+  // What the strip remembers for one playlist (src/common/strip-memory.ts):
+  // the songs to keep off it, and the explicit "didn't belong" examples the
+  // brain uses as negatives. The renderer passes the current members.
+  ipc.handle('strip-memory', async (_e, playlistId: string, memberIds: number[]) => {
+    try {
+      if (typeof playlistId !== 'string' || !playlistId) return { ok: false, hidden: [], negatives: [] }
+      const members = new Set((Array.isArray(memberIds) ? memberIds : []).map(Number))
+      const memory = stripMemoryFor(await stripRows(), playlistId, members, Date.now())
+      return { ok: true, hidden: [...memory.keys()], negatives: negativeExamples(memory) }
+    } catch (err) {
+      return { ok: false, hidden: [], negatives: [], error: safeIpcError(err, 'unknown') }
+    }
+  }, { public: true })
   // The nightly taste engine's learned ranking (src/main/taste-state.ts):
   // each song's taste PERCENTILE, served only while the engine's ranking is
   // promoted and fresh — otherwise usable:false and the strip keeps its own

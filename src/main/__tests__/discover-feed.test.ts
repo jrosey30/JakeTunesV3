@@ -186,3 +186,13 @@ describe('filterFeed — cover factories never get a card, from any lane (2026-0
     assert.deepEqual(out.map((c) => c.artist), ['Electric Light Orchestra'])
   })
 })
+
+describe('restKeysForCard (2026-10-19)', () => {
+  test('rests both the page card id and the key the feed actually reads', async () => {
+    const { restKeysForCard, cardKey } = await import('../discover-feed.ts')
+    const keys = restKeysForCard('disc|the beatles|abbey road')
+    assert.ok(keys.includes('disc|the beatles|abbey road'))
+    assert.ok(keys.includes(cardKey({ artist: 'the beatles', title: 'abbey road' })))
+    assert.deepEqual(restKeysForCard('something-else'), ['something-else'])
+  })
+})

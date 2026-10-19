@@ -22,6 +22,7 @@ import { albumKeyOf } from '../utils/albumKey'
 import { suggestForPlaylist, suggestFromVibeHits } from '../utils/playlistSuggest'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import AlbumArtImage from '../components/AlbumArtImage'
+import { CloseIcon } from '../components/TransportIcons'
 import { buildNormalizedArtworkIndex, lookupArtwork } from '../utils/artworkLookup'
 import { useCynthia } from '../context/CynthiaContext'
 import { toCynthiaTrack } from '../utils/cynthia'
@@ -233,8 +234,10 @@ export default function PlaylistView() {
   const suggestDiag = useRef(new Map<number, { vn: number; g: number; b: number; ta: number; e: number }>())
   useEffect(() => {
     void window.electronAPI.getTasteWeights?.().then((r) => {
-      const pl = (r?.weights as { playlists?: Record<string, { vibe?: number; genre?: number; taste?: number; era?: number }> })?.playlists
-      if (pl) setTasteWeights(pl)
+      // v2 (2026-10-19) also carries a GLOBAL setting learned from every
+      // playlist pooled; a playlist the learner hasn't seen uses it.
+      const w = r?.weights as { playlists?: Record<string, { vibe?: number; genre?: number; taste?: number; era?: number }>; global?: { vibe?: number; genre?: number; taste?: number; era?: number } }
+      if (w?.playlists || w?.global) setTasteWeights({ ...(w.global ? { '*': w.global } : {}), ...(w.playlists ?? {}) })
     })
   }, [])
   // The nightly taste engine's learned percentile per song — only present
@@ -249,6 +252,25 @@ export default function PlaylistView() {
     void window.electronAPI.tasteLedgerAppend?.(events)
   }
   useEffect(() => { setSuggestRotate(0) }, [state.activePlaylistId])
+  // What the strip remembers for this playlist (src/common/strip-memory.ts):
+  // ✕'d, taken-back, or refreshed-past-twice songs stay off it; the ✕'d and
+  // taken-back ones also steer the brain away from near-copies (negatives).
+  // `stripMemTick` re-reads it after this view writes a verdict.
+  const [stripMem, setStripMem] = useState<{ hidden: Set<number>; negatives: number[] }>({ hidden: new Set(), negatives: [] })
+  const [stripMemTick, setStripMemTick] = useState(0)
+  const [localHidden, setLocalHidden] = useState<Set<number>>(new Set())
+  useEffect(() => { setLocalHidden(new Set()) }, [state.activePlaylistId])
+  useEffect(() => {
+    let cancelled = false
+    const pid = playlist?.id
+    if (!pid || !window.electronAPI.stripMemory) { setStripMem({ hidden: new Set(), negatives: [] }); return }
+    void window.electronAPI.stripMemory(pid, playlist?.trackIds ?? []).then((r) => {
+      if (!cancelled && r?.ok) setStripMem({ hidden: new Set(r.hidden), negatives: r.negatives })
+    })
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.activePlaylistId, (playlist?.trackIds ?? []).join(','), stripMemTick])
+  const stripHidden = useMemo(() => new Set([...stripMem.hidden, ...localHidden]), [stripMem, localHidden])
   // Re-fetch whenever the playlist's MEMBERSHIP changes — adding a song (the +,
   // or manually), removing one, or swapping one for another all re-center the
   // suggestions. Keyed on the full trackIds content: NOT the search-filtered
@@ -263,7 +285,16 @@ export default function PlaylistView() {
     let cancelled = false
     const ids = playlist?.trackIds ?? []
     if (ids.length === 0) { setVibeHits([]); return }
-    window.electronAPI.playlistSimilar(ids, 5, plHint)
+    // This playlist's strip memory rides into the pool fetch (hidden songs
+    // leave before the pool cut; ✕'d/taken-back ones steer away). Read fresh
+    // here, never from state: on a playlist switch the state still holds the
+    // previous playlist's memory. A ✕ mid-visit only swaps its own chip out
+    // (localHidden) — no re-fetch, so the strip never reshuffles a beat later.
+    const pid = playlist?.id
+    const memP = pid && window.electronAPI.stripMemory
+      ? window.electronAPI.stripMemory(pid, ids).then((m) => (m?.ok ? { hidden: m.hidden, negatives: m.negatives } : undefined), () => undefined)
+      : Promise.resolve(undefined)
+    memP.then((mem) => window.electronAPI.playlistSimilar(ids, 5, plHint, mem))
       .then(r => {
         if (cancelled) return
         setVibeHits(r.ok ? r.hits : [])
@@ -277,11 +308,29 @@ export default function PlaylistView() {
       suggestDiag.current = new Map()
       return vibeHits.length
         ? suggestFromVibeHits(allPlaylistTracks, suggestPool, vibeHits, 5, suggestRotate, vibeClusterSeeds,
-            (playlist ? tasteWeights[playlist.id] : undefined) ?? {}, suggestDiag.current, learnedTaste)
-        : suggestForPlaylist(allPlaylistTracks, suggestPool, 5, suggestRotate)
+            (playlist ? tasteWeights[playlist.id] ?? tasteWeights['*'] : undefined) ?? {}, suggestDiag.current, stripHidden, learnedTaste)
+        : suggestForPlaylist(allPlaylistTracks, suggestPool.filter((t) => !stripHidden.has(t.id)), 5, suggestRotate)
     },
-    [allPlaylistTracks, suggestPool, vibeHits, vibeClusterSeeds, suggestRotate, tasteWeights, playlist, learnedTaste],
+    [allPlaylistTracks, suggestPool, vibeHits, vibeClusterSeeds, suggestRotate, tasteWeights, playlist, stripHidden, learnedTaste],
   )
+  // Every strip the user actually sees is one BATCH: one 'shown' row per
+  // suggestion (rank + why it ranked), so the learner can tell an ignored
+  // suggestion from one passed over for a neighbour, and acceptance has a
+  // real denominator. A batch is the playlist + the five ids on screen.
+  const suggestBatch = useMemo(
+    () => (playlist && suggestions.length ? `${playlist.id}:${suggestions.map((t) => t.id).join('-')}:${Date.now()}` : ''),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [playlist?.id, suggestions.map((t) => t.id).join('-')],
+  )
+  useEffect(() => {
+    if (!playlist || !suggestBatch) return
+    ledger(suggestions.map((sg, rank) => ({
+      surface: 'strip', verdict: 'shown',
+      key: { trackId: sg.id, playlistId: playlist.id },
+      ctx: { ...(suggestDiag.current.get(sg.id) ?? {}), rank, batch: suggestBatch },
+    })))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggestBatch])
   const suggestArtIndex = useMemo(() => buildNormalizedArtworkIndex(state.artworkMap), [state.artworkMap])
   const quickAddExclude = useMemo(() => new Set(playlist?.trackIds ?? []), [plMembershipKey])
 
@@ -785,10 +834,10 @@ export default function PlaylistView() {
               className="pl-suggest-refresh"
               onClick={() => {
                 if (playlist) {
-                  ledger(suggestions.map((sg) => ({
-                    surface: 'strip', verdict: 'pass',
+                  ledger(suggestions.map((sg, rank) => ({
+                    surface: 'strip', verdict: 'refresh',
                     key: { trackId: sg.id, playlistId: playlist.id },
-                    ctx: suggestDiag.current.get(sg.id) ?? {},
+                    ctx: { ...(suggestDiag.current.get(sg.id) ?? {}), rank, batch: suggestBatch },
                   })))
                 }
                 setSuggestRotate(r => r + 1)
@@ -807,12 +856,24 @@ export default function PlaylistView() {
             />
           </div>
           {suggestions.length > 0 && <div className="pl-suggest-row">
-            {suggestions.map(s => {
+            {suggestions.map((s, rank) => {
               const hash = lookupArtwork(state.artworkMap, suggestArtIndex, s.albumArtist || s.artist, s.album)
               return (
                 <div key={s.id} className="pl-suggest-chip" title={`${s.title} — ${s.artist}`}>
                   <div className="pl-suggest-art">
                     {hash ? <AlbumArtImage hash={hash} alt="" /> : <span className="pl-suggest-ph">♪</span>}
+                    <button
+                      type="button"
+                      className="pl-suggest-nope"
+                      onClick={() => {
+                        if (!playlist) return
+                        ledger([{ surface: 'strip', verdict: 'reject', key: { trackId: s.id, playlistId: playlist.id }, ctx: { ...(suggestDiag.current.get(s.id) ?? {}), rank, batch: suggestBatch } }])
+                        setLocalHidden((h) => new Set(h).add(s.id))
+                        setStripMemTick((n) => n + 1)
+                      }}
+                      title={`Not for this playlist — never suggest "${s.title}" here again`}
+                      aria-label={`Not for this playlist: ${s.title}`}
+                    ><CloseIcon size={12} /></button>
                   </div>
                   <div className="pl-suggest-meta">
                     <div className="pl-suggest-song">{s.title}</div>
@@ -823,7 +884,7 @@ export default function PlaylistView() {
                     onClick={() => {
                       if (!playlist) return
                       dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: playlist.id, trackIds: [s.id] })
-                      ledger([{ surface: 'strip', verdict: 'accept', key: { trackId: s.id, playlistId: playlist.id }, ctx: suggestDiag.current.get(s.id) ?? {} }])
+                      ledger([{ surface: 'strip', verdict: 'accept', key: { trackId: s.id, playlistId: playlist.id }, ctx: { ...(suggestDiag.current.get(s.id) ?? {}), rank, batch: suggestBatch } }])
                     }}
                     title={`Add "${s.title}" to this playlist`}
                     aria-label={`Add ${s.title}`}

@@ -30,7 +30,34 @@ FLEET_KPI = 'Library/Application Support/JakeTunes/yir/listening-kpi.json'
 
 
 def fleet_listening():
-    """homemini's all-device 28-day scorecard, or None (offline, stale, absent)."""
+    """homemini's all-device 28-day scorecard, or None (offline, stale, absent).
+
+    Retries (2026-10-19): the Sunday run fires the moment the laptop wakes,
+    before Tailscale is back, so a single 8 s attempt failed on 10/11 and
+    10/18 and the report silently fell back to the laptop's raw 55% skip
+    rate (the real all-device rate was 6.8%)."""
+    for attempt in range(3):
+        k = _fleet_once()
+        if k is not None:
+            return k
+        if attempt < 2:
+            time.sleep(20)
+    return None
+
+
+def taste_engine_scorecard():
+    """homemini's nightly taste-engine scorecard (scripts/taste-engine.py) —
+    the per-night learning numbers, folded into this weekly report."""
+    try:
+        r = subprocess.run(['ssh', '-o', 'ConnectTimeout=8', '-o', 'BatchMode=yes', HOMEMINI, 'cat',
+                            '"Library/Application Support/JakeTunes/taste-engine/taste-scorecard.json"'],
+                           capture_output=True, text=True, timeout=30)
+        return json.loads(r.stdout) if r.returncode == 0 else None
+    except Exception:
+        return None
+
+
+def _fleet_once():
     try:
         r = subprocess.run(['ssh', '-o', 'ConnectTimeout=8', '-o', 'BatchMode=yes', HOMEMINI, 'cat', '"%s"' % FLEET_KPI],
                            capture_output=True, text=True, timeout=30)
@@ -44,6 +71,26 @@ def fleet_listening():
     except Exception:
         return None
 WINDOW_DAYS = 28   # trailing window for rate metrics
+MIN_RATE_N = 30    # fewer impressions than this = "insufficient data", not a rate
+
+
+def rate_ci(k, n):
+    """(rate, [lo, hi]) with a 95% Wilson interval; (None, None) when n is
+    too small to say anything — insufficient data is not poor performance."""
+    if n < MIN_RATE_N:
+        return None, None
+    z = 1.96
+    p = k / n
+    d = 1 + z * z / n
+    c = (p + z * z / (2 * n)) / d
+    h = z * ((p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5) / d
+    return round(p, 4), [round(max(0.0, c - h), 4), round(min(1.0, c + h), 4)]
+
+
+def _fold_key(x):
+    import unicodedata
+    x = unicodedata.normalize('NFKD', str(x or '').casefold())
+    return ''.join(c for c in x if not unicodedata.combining(c)).strip()
 
 
 def jread(name, default):
@@ -179,20 +226,60 @@ def main():
     snap['newTracks28d'] = found + hauled
     snap['foundShare'] = round(found / (found + hauled), 4) if (found + hauled) else None
 
-    # ── 7. Suggestion acceptance (taste-ledger.jsonl, 28d) — the number
-    # the nightly weight learner is supposed to move. strip: accepts per
-    # shown-and-refreshed batch; discover: adds vs vetoes. ──
-    cutoff_iso = time.strftime('%Y-%m-%dT%H:%M:%S', time.localtime(now - WINDOW_DAYS * 86400))
+    # ── 7. Suggestion acceptance (taste-ledger.jsonl, 28d) ──
+    # 2026-10-19 (taste-engine repairs): acceptance now has a real
+    # denominator. The strip logs a 'shown' row per suggestion per batch and
+    # Discovery logs a card only once it was really on screen
+    # (hooks/useImpressions.ts). Before that the strip divided by ↻ rows and
+    # Discovery by ✕ rows — which is why Discovery read 100%.
+    # *AcceptRateLegacy keeps the old formulas for continuity; every rate
+    # carries its count and a 95% interval, and reads None (= insufficient
+    # data) under MIN_RATE_N impressions instead of a misleading number.
+    cutoff_iso = time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(now - WINDOW_DAYS * 86400))   # ledger ts are UTC
     tl = defaultdict(int)
+    strip_shown, disc_shown = set(), set()
+    strip_rows = []
     for ev in jlines('taste-ledger.jsonl'):
-        if str(ev.get('ts', '')) >= cutoff_iso:
-            tl[(ev.get('surface'), ev.get('verdict'))] += 1
-    strip_acc, strip_pass = tl[('strip', 'accept')], tl[('strip', 'pass')]
+        if str(ev.get('ts', '')) < cutoff_iso:
+            continue
+        surf, verdict = ev.get('surface'), ev.get('verdict')
+        tl[(surf, verdict)] += 1
+        k = ev.get('key') or {}
+        if surf == 'strip':
+            strip_rows.append(ev)
+            if verdict == 'shown':
+                strip_shown.add((k.get('playlistId'), k.get('trackId'), (ev.get('ctx') or {}).get('batch')))
+        elif surf == 'discover' and verdict == 'shown':
+            disc_shown.add((_fold_key(k.get('artist')), _fold_key(k.get('title')), str(ev.get('ts', ''))[:10]))
+    strip_acc = tl[('strip', 'accept')]
+    strip_pass = tl[('strip', 'pass')] + tl[('strip', 'refresh')]
     disc_acc, disc_rej = tl[('discover', 'accept')], tl[('discover', 'reject')]
-    snap['stripAcceptRate'] = round(strip_acc / (strip_acc + strip_pass), 4) if (strip_acc + strip_pass) else None
+    snap['stripAcceptRateLegacy'] = round(strip_acc / (strip_acc + strip_pass), 4) if (strip_acc + strip_pass) else None
+    snap['stripShown'] = len(strip_shown)
+    snap['stripAccepts'] = strip_acc
+    snap['stripRejects'] = tl[('strip', 'reject')]
+    snap['stripAcceptRate'], snap['stripAcceptCI'] = rate_ci(strip_acc, len(strip_shown))
     snap['stripVerdicts'] = strip_acc + strip_pass
-    snap['discoverAcceptRate'] = round(disc_acc / (disc_acc + disc_rej), 4) if (disc_acc + disc_rej) else None
+    snap['discoverShown'] = len(disc_shown)
+    snap['discoverAccepts'], snap['discoverRejects'] = disc_acc, disc_rej
+    snap['discoverAcceptRate'], snap['discoverAcceptCI'] = rate_ci(disc_acc, len(disc_shown))
+    snap['discoverAcceptVsReject'] = round(disc_acc / (disc_acc + disc_rej), 4) if (disc_acc + disc_rej) else None
     snap['mmPlaylistsKept'] = tl[('mm-playlist', 'accept')] - tl[('mm-playlist', 'reject')]
+    # Songs shown again after the strip-memory rules would have hidden them
+    # (✕'d, or refreshed past twice in 90 days) — 75% of refreshed
+    # impressions on 10/19 before the memory shipped; should be ~0 after.
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('tll', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'taste-ledger-learn.py'))
+        tll = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tll)
+        from datetime import datetime, timezone, timedelta
+        nowdt = datetime.now(timezone.utc)
+        rows120 = list(tll.read_ledger((nowdt - timedelta(days=120)).strftime('%Y-%m-%dT%H:%M:%S')))
+        snap['stripRepeatFailures28d'] = tll.repeat_failures(rows120, nowdt)
+    except Exception as e:
+        snap['stripRepeatFailures28d'] = None
+        snap['stripRepeatFailuresError'] = str(e)[:120]
 
     # ── 8. Became-loved funnel (brain-improvement-2026h2 item 4) — the
     # trust metric: shop accept → imported → playCount ≥ 5 within 60 days.
@@ -219,13 +306,19 @@ def main():
         if ev.get('surface') != 'discover' or ev.get('verdict') != 'accept':
             continue
         k = ev.get('key') or {}
-        lane = (ev.get('ctx') or {}).get('lane')
+        ctx = ev.get('ctx') or {}
         try:
-            ts = time.mktime(time.strptime(str(ev.get('ts',''))[:19], '%Y-%m-%dT%H:%M:%S'))
+            import calendar
+            ts = calendar.timegm(time.strptime(str(ev.get('ts',''))[:19], '%Y-%m-%dT%H:%M:%S'))   # ledger ts are UTC
         except Exception:
             continue
         age_d = (now - ts) / 86400
-        idx = by_album if lane == 'albums' else by_song
+        # 2026-10-19: album cards were matched against SONG titles — the check
+        # read ctx.lane == 'albums', a lane that does not exist (album cards
+        # carry ctx.type 'album', lanes like 'fresh-albums'), so every album
+        # accept missed the library and the funnel read 0 of 40.
+        is_album = ctx.get('type') == 'album' or 'album' in str(ctx.get('lane') or '')
+        idx = by_album if is_album else by_song
         hit = idx.get((_fold(k.get('artist')), _fold(k.get('title'))))
         if age_d < DECIDE_DAYS:
             pending += 1
@@ -262,8 +355,22 @@ def main():
         snap['skipRateSource'] = 'fleet'
     else:
         snap['skipRateSource'] = 'laptop-only'
-    snap['metricsVersion'] = 2
+    te = taste_engine_scorecard()
+    if te:
+        ev = te.get('evaluation') or {}
+        sug = te.get('suggestions') or {}
+        snap['tasteEngine'] = {
+            'at': te.get('at'), 'promoted': te.get('promoted'), 'why': te.get('why'),
+            'aucChallenger': (ev.get('auc') or {}).get('challenger'), 'aucV5': (ev.get('auc') or {}).get('champion_v5'),
+            'mixPlayedThroughRate': (te.get('mixes') or {}).get('playedThroughRate'),
+            'stripAddKeptRate': sug.get('stripAddKeptRate'), 'stripAddPlayedRate': sug.get('stripAddPlayedRate'),
+            'stripDistinctArtistsPer100': sug.get('stripDistinctArtistsPer100'),
+        }
+    snap['metricsVersion'] = 3
 
+    if '--dry-run' in sys.argv:   # print only — no history row
+        print(json.dumps(snap, indent=2))
+        return
     os.makedirs(UD, exist_ok=True)
     with open(HISTORY, 'a') as f:
         f.write(json.dumps(snap) + '\n')

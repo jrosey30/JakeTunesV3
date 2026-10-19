@@ -124,6 +124,16 @@ export interface PoolDiversity {
 const MAX_PER_ARTIST = 2
 /** …and by the playlist's own artists, at most this share of the pool. */
 const PLAYLIST_ARTIST_SHARE = 0.25
+/**
+ * NEGATIVE EXAMPLES (2026-10-19, taste-engine repairs): songs Jake ✕'d on
+ * this playlist, or added and later took back off. "Sounds similar" is not
+ * "belongs here" — a candidate that sits closer to one of those than to its
+ * own sub-vibe is demoted by how much closer it is (plus a small margin), so
+ * the strip stops serving near-copies of what he already turned down. A
+ * candidate nearer its sub-vibe than any negative is untouched.
+ */
+const NEG_W = 1.0
+const NEG_MARGIN = 0.02
 
 /**
  * The full scoring pass: k-means the seed vectors into sub-vibes, assign
@@ -138,6 +148,7 @@ export function scorePlaylistCandidates(
   clusters = 5,
   hint: Float32Array | null = null,
   diversity: PoolDiversity | null = null,
+  negatives: Float32Array[] = [],
 ): { hits: VibeHit[]; clusterSeeds: number[] } {
   if (seeds.length === 0) return { hits: [], clusterSeeds: [] }
   const cents = kmeansCentroids(seeds, Math.max(1, Math.min(clusters, seeds.length)))
@@ -160,7 +171,13 @@ export function scorePlaylistCandidates(
     const gpen = globalCentroid ? LAMBDA * cosine(vec, globalCentroid) : 0
     const hs = hint ? cosine(vec, hint) : 0
     if (hint) { hsSum += hs; hsSq += hs * hs; hsN++ }
-    perCluster[bi].push({ trackId: tid, score: bs - gpen, rawSim: bs, hs, gpen })
+    let npen = 0
+    if (negatives.length) {
+      let ns = -2
+      for (const n of negatives) { const s = cosine(vec, n); if (s > ns) ns = s }
+      if (ns + NEG_MARGIN > bs) npen = NEG_W * (ns + NEG_MARGIN - bs)
+    }
+    perCluster[bi].push({ trackId: tid, score: bs - gpen - npen, rawSim: bs, hs, gpen })
   }
   // Does the music agree with the name? (see HINT_MIN_Z)
   let hintOn = false

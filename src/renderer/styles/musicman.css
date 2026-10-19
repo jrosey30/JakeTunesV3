@@ -2137,6 +2137,31 @@
   justify-content: center;
 }
 .pl-suggest-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* ✕ "not for this playlist" (2026-10-19) — the Discovery card's hover ✕,
+   sized for the 28px art: a full-cover scrim over the art (100% of the tile)
+   with a 12px glyph (~43% of it), invisible until the chip is hovered, so
+   the title and artist keep every pixel they had. Red on hover, the same
+   rgba(150, 30, 20, 0.85) as .store-nope. */
+.pl-suggest-art { position: relative; }
+.pl-suggest-nope {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(20, 16, 12, 0.55);
+  color: rgba(255, 255, 255, 0.92);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+.pl-suggest-chip:hover .pl-suggest-nope,
+.pl-suggest-nope:focus-visible { opacity: 1; }
+.pl-suggest-nope:hover { background: rgba(150, 30, 20, 0.85); }
+.pl-suggest-nope:focus-visible { outline: none; box-shadow: var(--ring-focus); }
 .pl-suggest-ph { color: #b3b3b3; font-size: 13px; }
 .pl-suggest-meta { flex: 1; min-width: 0; line-height: 1.2; }
 .pl-suggest-song {
@@ -2276,7 +2301,7 @@
 }
 .pl-quick-empty { padding: 6px 8px; font-size: var(--font-11); color: var(--text-dim); }
 @media (prefers-reduced-motion: reduce) {
-  .pl-suggest-refresh, .pl-suggest-add, .pl-quick { transition: none; }
+  .pl-suggest-refresh, .pl-suggest-add, .pl-suggest-nope, .pl-quick { transition: none; }
 }
 
 /* ── THE BRAIN — the Music Man's back wall (what he's actually learned) ── */
