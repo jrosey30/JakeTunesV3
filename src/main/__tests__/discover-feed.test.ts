@@ -15,8 +15,11 @@
 
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import {
-  baseTitleKey, filterFeed, applyQualityFloor,
+  baseTitleKey, filterFeed, applyQualityFloor, cardKey,
+  restKeyFor, hasShopIdRests, migrateShopIdRests,
   BRAIN_FLOOR, BRAIN_HARD_FLOOR, BRAIN_LANE_MIN,
   type FeedCard,
 } from '../discover-feed.ts'
@@ -184,5 +187,138 @@ describe('filterFeed — cover factories never get a card, from any lane (2026-0
       baseOpts(),
     )
     assert.deepEqual(out.map((c) => c.artist), ['Electric Light Orchestra'])
+  })
+})
+
+// "Not for me" on a card by an artist Jake owns rests that one card (views 99)
+// instead of vetoing the artist. The shop sends its own card id
+// (`disc|artist|title`, lowercased — NewForYouView cardId) and main filed the
+// rest under it, while filterFeed reads cardKey: the rest was never found and
+// the card came back on the next generation (2026-10-18).
+describe('filterFeed — a "Not for me" rest on an owned artist lands (2026-10-18)', () => {
+  const shopId = (c: { artist: string; title: string }) => `disc|${c.artist}|${c.title}`.toLowerCase()
+  const DAY = 24 * 3600 * 1000
+  const now = 1_000 * DAY
+  const rest = { first: now, last: now, views: 99 }
+  const heligoland = card({ type: 'album', artist: 'Massive Attack', title: 'Heligoland' })
+
+  test('the shop id itself is not a key filterFeed reads (the bug)', () => {
+    const out = filterFeed([heligoland], { ...baseOpts(), now, served: { [shopId(heligoland)]: rest } })
+    assert.equal(out.length, 1)
+  })
+
+  test('restKeyFor turns the shop id into cardKey, and the rest keeps the card out', () => {
+    const k = restKeyFor(heligoland.artist, shopId(heligoland))
+    assert.equal(k, cardKey(heligoland))
+    assert.equal(k, 'massive attack|heligoland')
+    const out = filterFeed([heligoland], { ...baseOpts(), now, served: { [k]: rest } })
+    assert.equal(out.length, 0)
+  })
+
+  test('punctuation, accents and other scripts come out as the same cardKey', () => {
+    for (const c of [
+      { artist: 'Diana Ross', title: "I'm Coming Out" },
+      { artist: 'andhim', title: "Miles to Go - Soundtrack to andhim's Road Movie" },
+      { artist: 'Björk', title: 'Homogenic' },
+      { artist: 'Sigur Rós', title: 'Ágætis byrjun' },
+      { artist: 'КИНО', title: 'Группа крови' },
+      { artist: 'ΟΔΟΣ', title: 'ΣΟΦΙΑ' },
+    ]) assert.equal(restKeyFor(c.artist, shopId(c)), cardKey(c), `${c.artist} — ${c.title}`)
+  })
+
+  test('a title with a pipe in it still resolves (the artist is known)', () => {
+    const c = { artist: 'A', title: 'B | C' }
+    assert.equal(restKeyFor(c.artist, shopId(c)), cardKey(c))
+  })
+
+  test('an id that is not the shop shape for this artist passes through unchanged', () => {
+    assert.equal(restKeyFor('Massive Attack', 'massive attack|heligoland'), 'massive attack|heligoland')
+    assert.equal(restKeyFor('Massive Attack', 'disc|portishead|dummy'), 'disc|portishead|dummy')
+  })
+})
+
+describe('migrateShopIdRests — the rests already written under the shop id', () => {
+  const DAY = 24 * 3600 * 1000
+  const now = 1_000 * DAY
+  const ledger = () => ({
+    // The live ledger's shape on 2026-10-18 (five such keys, all views 99).
+    'disc|massive attack|heligoland': { first: now - DAY, last: now - DAY, views: 99 },
+    "disc|diana ross|i'm coming out": { first: now - 2 * DAY, last: now - 2 * DAY, views: 99 },
+    // Rotation entries for other cards — never touched.
+    'geese|getting killed': { first: now - 9 * DAY, last: now - 3 * DAY, views: 4 },
+    'wednesday|bleeds': { first: now - 5 * DAY, last: now - 5 * DAY, views: 1 },
+  })
+
+  test('moves each disc| rest onto cardKey and drops the old key', () => {
+    const out = migrateShopIdRests(ledger())
+    assert.deepEqual(Object.keys(out).sort(), [
+      'diana ross|i m coming out', 'geese|getting killed', 'massive attack|heligoland', 'wednesday|bleeds',
+    ])
+    assert.equal(out['massive attack|heligoland'].views, 99)
+    assert.equal(hasShopIdRests(out), false)
+  })
+
+  test('rotation entries come through byte for byte', () => {
+    const before = ledger()
+    const out = migrateShopIdRests(before)
+    assert.deepEqual(out['geese|getting killed'], before['geese|getting killed'])
+    assert.deepEqual(out['wednesday|bleeds'], before['wednesday|bleeds'])
+  })
+
+  test('after migration filterFeed keeps the vetoed cards out and the rest in', () => {
+    const served = migrateShopIdRests(ledger())
+    const out = filterFeed([
+      card({ type: 'album', artist: 'Massive Attack', title: 'Heligoland' }),
+      card({ type: 'song', artist: 'Diana Ross', title: "I'm Coming Out" }),
+      card({ type: 'album', artist: 'Wednesday', title: 'Bleeds' }),
+    ], { ...baseOpts(), now, served })
+    assert.deepEqual(out.map((c) => c.artist), ['Wednesday'])
+  })
+
+  test('merges with an entry already under cardKey: most views, latest last, earliest first', () => {
+    const out = migrateShopIdRests({
+      'disc|massive attack|heligoland': { first: now - 50 * DAY, last: now - 50 * DAY, views: 99 },
+      'massive attack|heligoland': { first: now - 60 * DAY, last: now - DAY, views: 2 },
+    })
+    assert.deepEqual(out, { 'massive attack|heligoland': { first: now - 60 * DAY, last: now - DAY, views: 99 } })
+  })
+
+  test('a key that cannot be split for sure stays where it is — and does not re-trigger', () => {
+    const out = migrateShopIdRests({ 'disc|a|b|c': { first: now, last: now, views: 99 } })
+    assert.deepEqual(Object.keys(out), ['disc|a|b|c'])
+    // Otherwise every generation would rewrite the ledger for nothing.
+    assert.equal(hasShopIdRests(out), false)
+  })
+
+  test('returns a new ledger and leaves the input alone', () => {
+    const before = ledger()
+    const snapshot = JSON.parse(JSON.stringify(before))
+    const out = migrateShopIdRests(before)
+    assert.notEqual(out, before)
+    assert.deepEqual(before, snapshot)
+  })
+
+  test('hasShopIdRests sees only disc| keys', () => {
+    assert.equal(hasShopIdRests(ledger()), true)
+    assert.equal(hasShopIdRests({ 'geese|getting killed': {} }), false)
+    assert.equal(hasShopIdRests({}), false)
+  })
+})
+
+describe('WIRING — main writes and reads the rest under cardKey', () => {
+  const idx = readFileSync(join(import.meta.dirname, '../index.ts'), 'utf-8')
+  const handler = idx.slice(idx.indexOf("ipc.handle('discovery-not-for-me'"), idx.indexOf("ipc.handle('discovery-allow-again'"))
+
+  test('the not-for-me handler files the rest through restKeyFor', () => {
+    assert.ok(handler.length > 0, 'discovery-not-for-me handler not found')
+    assert.ok(handler.includes('.restKeyFor('), 'the handler no longer turns the shop id into cardKey — owned-artist vetoes go dead again')
+    assert.ok(!/served\[String\(cardKey\)\]/.test(handler), 'the handler writes the raw shop id into the served ledger again')
+  })
+
+  test('feed generation migrates disc| rests before filterFeed reads the ledger', () => {
+    const mig = idx.indexOf('.migrateShopIdRests(')
+    const filter = idx.indexOf('df.filterFeed(')
+    assert.ok(mig > 0, 'feed generation no longer migrates the disc| rests')
+    assert.ok(mig < filter, 'the migration must run before filterFeed reads served')
   })
 })

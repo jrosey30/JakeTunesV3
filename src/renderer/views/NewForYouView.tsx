@@ -63,6 +63,8 @@ let rediscCache: RediscoveryPick[] | null = null
 // enrichment (art, preview, year, brain %) merges into the open page.
 let pendingFeed: { lanes: Lane[]; generatedAt: number } | null = null
 
+// ⚠️ TWIN: src/main/discover-feed.ts restKeyFor — main turns this id back into
+// cardKey for a "Not for me" rest; a new shape here must be taught there.
 const cardId = (c: FeedCard) => `disc|${c.artist}|${c.title}`.toLowerCase()
 
 // Picks put on the Listen List this session. Main leaves listed cards out of

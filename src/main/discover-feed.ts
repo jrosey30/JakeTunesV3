@@ -191,6 +191,55 @@ export const normKey = (s: string): string => storedNameKey(s, legacyNormKey)
 export const foldKey = (s: string): string => nameKey(s)
 export const cardKey = (c: { artist: string; title: string }) => `${normKey(c.artist)}|${normKey(c.title)}`
 
+/** The shop page's own card id is `disc|artist|title`, lowercased. ⚠️ TWIN:
+ *  src/renderer/views/NewForYouView.tsx cardId. It is a renderer id, never a
+ *  ledger key: the served ledger is read by cardKey (filterFeed, the radar). */
+const SHOP_ID_PREFIX = 'disc|'
+
+/** Where a "Not for me" rest goes in the served ledger. The shop sends its own
+ *  card id; filed under that, filterFeed never found the rest and the card
+ *  came back on the next generation (2026-10-18). An id that isn't the shop's
+ *  shape for this artist passes through unchanged. */
+export function restKeyFor(artist: string, id: string): string {
+  const prefix = `${SHOP_ID_PREFIX}${artist}|`.toLowerCase()
+  return id.startsWith(prefix) ? cardKey({ artist, title: id.slice(prefix.length) }) : id
+}
+
+/** A stored shop id's artist and title — null for any other key, and for a
+ *  shop id with a `|` inside the artist or title (no sure split). */
+function splitShopId(k: string): { artist: string; title: string } | null {
+  if (!k.startsWith(SHOP_ID_PREFIX)) return null
+  const parts = k.slice(SHOP_ID_PREFIX.length).split('|')
+  return parts.length === 2 ? { artist: parts[0], title: parts[1] } : null
+}
+
+/** Is there a rest still filed under the shop's id that can be moved? */
+export const hasShopIdRests = (served: Record<string, unknown>): boolean =>
+  Object.keys(served).some((k) => splitShopId(k) !== null)
+
+/** Re-file the rests already written under the shop's id onto cardKey, so the
+ *  vetoes Jake gave before the fix are read too. Only `disc|` keys move; every
+ *  rotation entry is left as it is. If cardKey already has an entry, the two
+ *  merge (most views, latest last, earliest first). A key with a `|` inside
+ *  the artist or title can't be split for sure, so it stays where it is.
+ *  Returns a new ledger. */
+export function migrateShopIdRests<S extends { first: number; last: number; views: number }>(
+  served: Record<string, S>,
+): Record<string, S> {
+  const out: Record<string, S> = { ...served }
+  for (const [k, v] of Object.entries(served)) {
+    const card = splitShopId(k)
+    if (!card) continue
+    const key = cardKey(card)
+    const have = out[key]
+    out[key] = have
+      ? { ...have, first: Math.min(have.first, v.first), last: Math.max(have.last, v.last), views: Math.max(have.views, v.views) }
+      : v
+    delete out[k]
+  }
+  return out
+}
+
 /** Clip a "why" to at most n words — the feed shows phrases, not paragraphs. */
 export function clipWhy(why: string, maxWords = 9): string {
   const words = String(why || '').replace(/["""]/g, '').trim().split(/\s+/)

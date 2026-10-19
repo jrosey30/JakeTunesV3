@@ -1527,6 +1527,7 @@ ipc.handle('discovery-learned', async () => {
 ipc.handle('discovery-not-for-me', async (_e, artist: string, cardKey?: string) => {
   const key = normArtistKey(artist)
   if (!key) return { ok: false }
+  const restKey = cardKey ? (await import('./discover-feed.ts')).restKeyFor(String(artist), String(cardKey)) : ''
 
   let owned = false
   try {
@@ -1538,8 +1539,9 @@ ipc.handle('discovery-not-for-me', async (_e, artist: string, cardKey?: string) 
 
   await discoveryFeedbackCache.update((cur) => {
     if (owned) {
-      // Rest this card hard rather than blacklisting a artist Jake plays.
-      if (cardKey) cur.served[String(cardKey)] = { first: Date.now(), last: Date.now(), views: 99 }
+      // Rest this card hard rather than blacklisting an artist Jake plays —
+      // under cardKey, the key filterFeed reads, not the shop's `disc|` id.
+      if (restKey) cur.served[restKey] = { first: Date.now(), last: Date.now(), views: 99 }
     } else {
       cur.notForMe[key] = { artist: String(artist), at: Date.now() }
     }
@@ -1833,7 +1835,9 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     const verdicts = discoverVerdicts(await readLedgerRows(TASTE_LEDGER_PATH()))
     for (const a of verdicts.accepts) ownedAlbumKeys.add(`${nk(a.artist)}|${nk(a.title)}`)
 
-    // Jake's verdicts + rotation + ownership + cross-lane dedupe.
+    // Jake's verdicts + rotation + ownership + cross-lane dedupe. Rests once
+    // filed under the shop's `disc|` id move onto cardKey first (one-time).
+    if (df.hasShopIdRests((await discoveryFeedbackCache.get()).served)) await discoveryFeedbackCache.update((cur) => ({ ...cur, served: df.migrateShopIdRests(cur.served) }))
     const fb = await discoveryFeedbackCache.get()
     const nowMs = Date.now()
     const visible = df.filterFeed(cards, { ownedArtists, ownedAlbumKeys, ownedBaseKeys, notForMe: fb.notForMe, served: fb.served, now: nowMs, genreGate: focus.blocks })
