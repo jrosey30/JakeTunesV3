@@ -666,39 +666,89 @@ def grade_mixes(events, now_ms):
     return out
 
 
-def grade_ledger(rows, lib, events, now_ms):
-    """Strip/Discovery adds: kept, and actually played since?"""
-    plays_after = defaultdict(list)
+def grade_ledger(rows, lib, events, now_ms, members=None):
+    """How suggestions turned out (last 90 days unless noted):
+    - strip adds 14+ days old: still on the playlist? played since? skipped
+      2+ times since (a pick that keeps getting skipped)?
+    - Discovery adds: how many; impressions per surface (the denominators,
+      recorded since 2026-10-19).
+    - variety of what the strip SHOWED in the last 28 days: share of
+      impressions by artists already on that playlist, and distinct artists
+      per 100 impressions (refresh/✕/shown rows all mean "it was on screen")."""
+    members = members or {}
+    plays_after, skips_after = defaultdict(list), defaultdict(list)
     for ts, tid, kind in events:
-        if kind == 'play':
-            plays_after[tid].append(ts)
-    strip_acc = strip_played = 0
+        (plays_after if kind == 'play' else skips_after)[tid].append(ts)
+    pl_artists = {pid: {lib[int(t)]['artist'] for t in ids if t.isdigit() and int(t) in lib} for pid, ids in members.items()}
+    strip_acc = strip_played = strip_kept = strip_skipped = 0
     disc_acc = 0
     shown = Counter()
+    seen28, own_artist28, artists28 = 0, 0, set()
     for r in rows:
         surf, v = r.get('surface'), r.get('verdict')
         ts = to_ms(r.get('ts'))
         if ts is None or now_ms - ts > 90 * DAY_MS:
             continue
+        key = r.get('key') or {}
         if v == 'shown':
             shown[surf] += 1
-        if surf == 'strip' and v == 'accept':
-            tid = (r.get('key') or {}).get('trackId')
+        if surf == 'strip' and now_ms - ts <= 28 * DAY_MS and v in ('shown', 'refresh', 'pass', 'reject'):
             try:
-                tid = int(tid)
+                tid = int(key.get('trackId'))
+            except (TypeError, ValueError):
+                tid = None
+            if tid in lib:
+                seen28 += 1
+                artists28.add(lib[tid]['artist'])
+                if lib[tid]['artist'] in pl_artists.get(key.get('playlistId'), ()):
+                    own_artist28 += 1
+        if surf == 'strip' and v == 'accept':
+            try:
+                tid = int(key.get('trackId'))
             except (TypeError, ValueError):
                 continue
             if now_ms - ts < 14 * DAY_MS:
                 continue   # too young to judge
             strip_acc += 1
+            if str(tid) in members.get(key.get('playlistId'), {str(tid)}):
+                strip_kept += 1
             if any(p > ts for p in plays_after.get(tid, [])):
                 strip_played += 1
+            if sum(1 for k in skips_after.get(tid, []) if k > ts) >= 2:
+                strip_skipped += 1
         elif surf == 'discover' and v == 'accept':
             disc_acc += 1
-    out = {'stripAddsJudged': strip_acc, 'stripAddsPlayedSince': strip_played,
-           'discoverAdds90d': disc_acc, 'impressions90d': dict(shown)}
-    out['stripAddPlayedRate'] = round(strip_played / strip_acc, 4) if strip_acc >= 20 else None
+    out = {'stripAddsJudged': strip_acc, 'stripAddsKept': strip_kept, 'stripAddsPlayedSince': strip_played,
+           'stripAddsSkipped2x': strip_skipped, 'discoverAdds90d': disc_acc, 'impressions90d': dict(shown)}
+    ok = strip_acc >= 20
+    out['stripAddKeptRate'] = round(strip_kept / strip_acc, 4) if ok else None
+    out['stripAddPlayedRate'] = round(strip_played / strip_acc, 4) if ok else None
+    out['stripAddSkipped2xRate'] = round(strip_skipped / strip_acc, 4) if ok else None
+    if seen28 >= 100:
+        out['stripShownFromPlaylistArtists28d'] = round(own_artist28 / seen28, 4)
+        out['stripDistinctArtistsPer100'] = round(100 * len(artists28) / seen28, 1)
+    else:
+        out['stripVariety28d'] = 'insufficient data'
     return out
+
+
+def vs_baseline(journal_path, today):
+    """Each headline number next to its first recorded night — "improvement
+    against historical performance". None until there is a first night."""
+    try:
+        with open(journal_path) as f:
+            first = json.loads(f.readline())
+    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+        return None
+    pick = lambda j: {
+        'challengerAuc': (j.get('auc') or {}).get('challenger'),
+        'v5Auc': (j.get('auc') or {}).get('champion_v5'),
+        'mixPlayedThroughRate': (j.get('mixes') or {}).get('playedThroughRate'),
+        'mixSkipRateWhenPlayed': (j.get('mixes') or {}).get('skipRateWhenPlayed'),
+        'stripAddPlayedRate': (j.get('suggestions') or {}).get('stripAddPlayedRate'),
+        'stripAddKeptRate': (j.get('suggestions') or {}).get('stripAddKeptRate'),
+    }
+    return {'since': first.get('at'), 'first': pick(first), 'today': pick(today)}
 
 
 def drift(lib, events, mood, now_ms):
@@ -847,7 +897,7 @@ def main():
 
     # 2–4. drift, grading, mistakes
     mix_grade = grade_mixes(events, now_ms)
-    led = grade_ledger(ledger_rows, lib, events, now_ms)
+    led = grade_ledger(ledger_rows, lib, events, now_ms, members)
     dr = drift(lib, events, mood, now_ms)
 
     weights = {}
@@ -868,6 +918,8 @@ def main():
                  'flags': {k: int(sum(1 for f in flags if f & bit)) for k, bit in state['flagBits'].items()},
                  'inputs': {'songs': len(lib), 'events': len(events), 'soundVectors': len(mood)},
                  'seconds': round(time.time() - started, 1)}
+    scorecard['vsFirstNight'] = vs_baseline(os.path.join(CONFIG['work'], 'taste-journal.jsonl'),
+                                            {'auc': ev_res.get('auc'), 'mixes': mix_grade, 'suggestions': led})
     if dry:
         print(json.dumps(scorecard, indent=2, default=str))
         return 0
@@ -877,6 +929,7 @@ def main():
         f.write(json.dumps({'at': state['builtAt'], 'promoted': state['promoted'], 'wasPromoted': was_promoted,
                             'why': why, 'auc': ev_res.get('auc'), 'gainLowerBound': ev_res.get('gainLowerBound'),
                             'foldsWon': ev_res.get('foldsWon'), 'stripAdds': {k: strip.get(k) for k in ('challenger', 'champion_v5', 'adds')}, 'mixes': {k: mix_grade.get(k) for k in ('served', 'playedThroughRate', 'skipRateWhenPlayed')},
+                            'suggestions': {k: led.get(k) for k in ('stripAddPlayedRate', 'stripAddKeptRate', 'stripAddSkipped2xRate', 'stripShownFromPlaylistArtists28d', 'stripDistinctArtistsPer100')},
                             'drift': {'soundPrefAgreement': dr.get('soundPrefAgreement')}}, default=str) + '\n')
     atomic_json(status_path, {'ok': True, 'at': state['builtAt'], 'promoted': state['promoted'], 'why': why,
                               'seconds': scorecard['seconds']}, indent=2)
