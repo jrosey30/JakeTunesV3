@@ -349,7 +349,9 @@ fi
 
 say "[4/5] Bootstrapping library.json + sidecars"
 ssh $SSH_OPTS "$REMOTE" "mkdir -p '$WM_HOME/Library/Application Support/JakeTunes'"
-SIDECARS=(picks-cache.json mobile-playlists.json playlist-additions.json metadata-overrides.json playlists.json mixtapes.json live-sets.json lyrics.json friends.json mobile-stars.json mobile-plays.json)
+# release-kinds.json (2026-10-18): workmini is a replica and never resolves
+# release kinds itself — its artist page groups by the laptop's answers.
+SIDECARS=(picks-cache.json mobile-playlists.json playlist-additions.json metadata-overrides.json playlists.json mixtapes.json live-sets.json release-kinds.json lyrics.json friends.json mobile-stars.json mobile-plays.json)
 # Phone-authored playlist sidecars: NAS is fresher than a possibly-stale
 # MacBook userData mirror (iOS backend writes via homemini → NAS). Prefer NAS
 # for those two so workmini doesn't inherit an empty/stale clobber copy.

@@ -21,6 +21,9 @@ import '../styles/artist-detail.css'
 import { addToPlaylistEntry, addToIpodPoolEntry, queueMenuEntries } from '../utils/playlistMenu'
 import { setAlbumDragPayload } from '../utils/trackDrag'
 import { normTitle } from '../utils/normTitle'
+import { classifyRelease, RELEASE_KIND_LABEL, type ReleaseKind } from '../../common/release-kind'
+import { collectAlbumFacts, groupByReleaseKind, releaseKindForRows, releaseKindRank } from '../../common/release-sections'
+import { subscribeReleaseKinds, getReleaseKindsSnapshot, refreshReleaseKinds, foldName } from '../releaseKinds'
 
 // 4.5: hierarchy page for one artist. Reached from ArtistsView via a
 // VIEW_ARTIST_DETAIL dispatch (sets currentView + activeArtist on the
@@ -42,6 +45,8 @@ interface DiscographyAlbum {
   title: string
   year: string
   tracks: { title: string; position: number }[]
+  /** MusicBrainz release-group type (main's discography fetch); absent on owned-only rows and old caches. */
+  mb?: { primaryType?: string; secondaryTypes?: string[] }
 }
 
 /**
@@ -64,20 +69,11 @@ interface Persona {
 // too; this avoids even the round-trip on re-open).
 const relatedArtistsCache: Record<string, RelatedArtist[]> = {}
 
-// Spotify-style release-type bucket, inferred from the title. MusicBrainz's
-// types are accurate but the user's owned titles ("Past Masters, Vol. 1") don't
-// reliably match MB's ("Past Masters · Volume One"), so classifying by title is
-// the robust path — covers the common naming and needs no extra lookups.
-function releaseType(title: string): 'album' | 'ep' | 'single' | 'compilation' | 'live' {
-  const t = (title || '').toLowerCase()
-  if (/\blive\b|unplugged|in concert|live at|live from|live in|at the bbc|bbc sessions|live!/.test(t)) return 'live'
-  if (/past masters|greatest hits|\bbest of\b|the best of|\bhits\b|anthology|\bcollection\b|rarities|b-sides|b sides|\bessential\b|the very best|\bsingles\b|love songs|ballads|mixtape|compilation/.test(t)) return 'compilation'
-  if (/\bep\b|-\s*ep$|\(ep\)/.test(t)) return 'ep'
-  if (/-\s*single$|\(single\)|\bsingle\b/.test(t)) return 'single'
-  return 'album'
-}
-// Display sections, in order. index 0=albums, 1=singles/eps, 2=comps, 3=live.
-const DISCO_GROUP_LABELS = ['Albums', 'Singles & EPs', 'Compilations', 'Live']
+// Release sections (2026-10-18): Albums → EPs → Singles → Live →
+// Compilations, from the shared rulebook (common/release-kind.ts, twinned
+// with the phone). Each owned album's kind is its release-kinds.json answer
+// (MusicBrainz, resolved in main) or, until that lands, the rulebook's title
+// and shape rules — the same fallback the resolver stores on a miss.
 
 function relationLabel(rel: string): string {
   switch (rel) {
@@ -204,6 +200,17 @@ export default function ArtistDetailView() {
   const albums = useMemo<AlbumGroup[]>(
     () => personas.flatMap(p => p.albums),
     [personas]
+  )
+
+  // What each album IS. Stored answers re-read on every visit (the
+  // MusicBrainz pass lands them over time); facts span the WHOLE library so
+  // the fallback matches what main would store for the same album.
+  const storedKinds = useSyncExternalStore(subscribeReleaseKinds, getReleaseKindsSnapshot)
+  useEffect(() => { void refreshReleaseKinds() }, [artist])
+  const albumFacts = useMemo(() => collectAlbumFacts(lib.tracks, foldName), [lib.tracks])
+  const kindOfAlbum = useCallback(
+    (g: AlbumGroup): ReleaseKind => releaseKindForRows(g.tracks, storedKinds, albumFacts, foldName),
+    [storedKinds, albumFacts],
   )
   const totalTracks = albums.reduce((s, g) => s + g.tracks.length, 0)
 
@@ -606,27 +613,22 @@ export default function ArtistDetailView() {
         const ownedMissing = ownedDisco.filter(a => !mbTitles.has(normTitle(a.title)))
         const mergedDisco: DiscographyAlbum[] = [...mbKept, ...ownedMissing]
           .sort((a, b) => (b.year || '').localeCompare(a.year || ''))
-        // Spotify-style sections: Albums → Singles & EPs → Compilations → Live,
-        // newest-first within each. Past Masters lands under Compilations.
-        const discoGroup = (title: string): number => {
-          const ty = releaseType(title)
-          return ty === 'album' ? 0 : (ty === 'ep' || ty === 'single') ? 1 : ty === 'compilation' ? 2 : 3
-        }
+        // Release sections, newest-first within each (the order the albums
+        // already come in). An owned album keeps ITS kind in the discography
+        // below too; a record you don't own is classified from MusicBrainz's
+        // release-group type, its title and its tracklist length.
+        const kindByAlbum = new Map(persona.albums.map(a => [a, kindOfAlbum(a)] as const))
+        const ownedKindByTitle = new Map(persona.albums.map(a => [normTitle(a.name), kindByAlbum.get(a) as ReleaseKind] as const))
+        const discoKind = (album: DiscographyAlbum): ReleaseKind =>
+          ownedKindByTitle.get(normTitle(album.title))
+          ?? classifyRelease({ album: album.title, albumArtist: persona.name, declaredTrackCount: album.tracks.length, mb: album.mb ?? null }).kind
         const groupedDisco = mergedDisco
-          .map(album => ({ album, g: discoGroup(album.title) }))
-          .sort((a, b) => a.g - b.g || (b.album.year || '').localeCompare(a.album.year || ''))
-        // Group the owned-albums grid the same way (Past Masters → Compilations),
-        // so it matches the discography below. Sub-headers appear only when the
-        // library actually spans more than one type.
-        const ownedAlbumGroups = (() => {
-          const m = new Map<number, typeof persona.albums>()
-          for (const a of persona.albums) {
-            const g = discoGroup(a.name)
-            const arr = m.get(g)
-            if (arr) arr.push(a); else m.set(g, [a])
-          }
-          return [...m.entries()].sort((a, b) => a[0] - b[0])
-        })()
+          .map(album => ({ album, g: discoKind(album) }))
+          .sort((a, b) => releaseKindRank(a.g) - releaseKindRank(b.g) || (b.album.year || '').localeCompare(a.album.year || ''))
+        // Sub-headers whenever they say something: more than one kind, or a
+        // library of this artist that is all EPs / singles / live / comps.
+        const ownedSections = groupByReleaseKind(persona.albums, a => kindByAlbum.get(a) as ReleaseKind)
+        const showOwnedHeads = ownedSections.length > 1 || (ownedSections.length === 1 && ownedSections[0].kind !== 'album')
         return (
           <div key={persona.name} className={`artist-detail-chapter ${isMulti ? 'artist-detail-chapter--multi' : ''}`}>
             {isMulti && (
@@ -642,10 +644,10 @@ export default function ArtistDetailView() {
               <h2 className="artist-detail-section-title">
                 {isMulti ? 'In your library' : 'Albums in your library'}
               </h2>
-              {ownedAlbumGroups.map(([g, albums]) => (
-                <Fragment key={g}>
-                  {ownedAlbumGroups.length > 1 && (
-                    <div className="artist-detail-album-subhead">{DISCO_GROUP_LABELS[g]}</div>
+              {ownedSections.map(({ kind, label, items: albums }) => (
+                <Fragment key={kind}>
+                  {showOwnedHeads && (
+                    <div className="artist-detail-album-subhead">{label}</div>
                   )}
                   <div className="artist-detail-album-grid">
                 {albums.map(album => {
@@ -712,7 +714,7 @@ export default function ArtistDetailView() {
                     const showHead = i === 0 || groupedDisco[i - 1].g !== g
                     return (
                       <Fragment key={expandKey}>
-                        {showHead && <div className="artist-detail-disco-subhead">{DISCO_GROUP_LABELS[g]}</div>}
+                        {showHead && <div className="artist-detail-disco-subhead">{RELEASE_KIND_LABEL[g]}</div>}
                         <div className={`artist-detail-disco-album ${expanded ? 'artist-detail-disco-album--expanded' : ''} ${fullyOwned ? 'artist-detail-disco-album--owned' : ''}`}>
                         <button
                           className="artist-detail-disco-album-header"

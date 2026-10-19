@@ -45,8 +45,12 @@ const electronAPI = {
   // 4.5: per-artist canonical discography from MusicBrainz, 7-day
   // disk cache. ArtistDetailView drill-down uses this to show
   // "owned vs not owned" per track for each album.
-  getArtistDiscography: (artist: string): Promise<{ ok: boolean; albums?: Array<{ title: string; year: string; tracks: Array<{ title: string; position: number }> }>; error?: string }> =>
+  getArtistDiscography: (artist: string): Promise<{ ok: boolean; albums?: Array<{ title: string; year: string; tracks: Array<{ title: string; position: number }>; mb?: { primaryType?: string; secondaryTypes?: string[] } }>; error?: string }> =>
     ipcRenderer.invoke('get-artist-discography', artist),
+  // 2026-10-18: release-kinds.json — what each album IS (album / EP / single /
+  // live / compilation), resolved in main; the artist page groups by it.
+  loadReleaseKinds: (): Promise<{ ok: boolean; updatedAt: string; albums: Record<string, { kind: 'album' | 'ep' | 'single' | 'live' | 'compilation'; source: 'manual' | 'musicbrainz' | 'title' | 'shape' | 'default'; mbid?: string; checkedAt?: string }> }> =>
+    ipcRenderer.invoke('release-kinds:load'),
   // 4.4.52: which persona the mic button speaks as right now ('mm' or
   // 'megan') — the toolbar speech bubble reads this to attribute and
   // colour itself correctly.
