@@ -16,12 +16,14 @@
  * Pure — no electron, no fs. Validation, tolerant parsing and slot editing
  * live here so main, preload and renderer share one definition.
  *
- * ⚠️ TWIN: JakeTunesMobile backend — the PUT validation of /api/island-albums
- *    and /api/favorite-artists (branch feat/synced-island-favorites). Same
- *    rules both sides: exact slot count, no empty strings, no album twice by
- *    nameKey(albumArtist || artist)|nameKey(album), no artist twice by
- *    nameKey. nameKey itself is already twinned byte-for-byte
- *    (src/common/fold-text.ts ↔ JakeTunesMobile backend/src/util/nameKey.ts).
+ * ⚠️ TWIN: JakeTunesMobile backend/src/util/curatedSlots.ts (validatePut,
+ *    ISLAND_ALBUMS_SPEC / FAVORITE_ARTISTS_SPEC identity, keyOrRaw). Same
+ *    rules both sides: exact slot count, strings non-empty after trimming and
+ *    stored trimmed, no album twice by identity(artist)|identity(album), no
+ *    artist twice by identity(name), identity = nameKey, or the trimmed
+ *    lowercased raw string when nameKey folds a name to "" ("!!!").
+ *    nameKey itself is twinned byte-for-byte (src/common/fold-text.ts ↔
+ *    JakeTunesMobile backend/src/util/nameKey.ts).
  */
 import { nameKey } from './fold-text.ts'
 
@@ -31,7 +33,8 @@ export const FAVORITE_ARTIST_SLOT_COUNT = 5
 export type PicksKind = 'island-albums' | 'favorite-artists'
 export type PicksAuthor = 'phone' | 'desktop'
 
-/** One island pick. `artist` is the album artist (albumArtist || artist). */
+/** One island pick. `artist` is the album's PRIMARY artist (primaryArtistOf):
+ *  the left half of the backend's album key `${primaryArtist}|||${album}`. */
 export interface IslandAlbum { artist: string; album: string }
 export type IslandSlot = IslandAlbum | null
 export type FavoriteSlot = string | null
@@ -88,12 +91,41 @@ const isText = (s: unknown): s is string => typeof s === 'string' && s.trim().le
 
 // ── Keys ─────────────────────────────────────────────────────────────────
 
+/** The backend's identity fold: nameKey, or — when nameKey folds a name to
+ *  "" (an all-punctuation name like "!!!") — the trimmed, lowercased raw
+ *  string, so two different punctuation-only names never collide as "".
+ *  ⚠️ TWIN: JakeTunesMobile backend/src/util/curatedSlots.ts keyOrRaw. */
+export function identityKey(s: string): string {
+  const k = nameKey(s)
+  return k !== '' ? k : s.trim().toLowerCase()
+}
+
 export function islandAlbumKey(a: IslandAlbum): string {
-  return `${nameKey(a.artist)}|${nameKey(a.album)}`
+  return `${identityKey(a.artist)}|${identityKey(a.album)}`
 }
 
 export function favoriteArtistKey(name: string): string {
-  return nameKey(name)
+  return identityKey(name)
+}
+
+/** Collab separators the backend splits a track artist on when there is no
+ *  albumArtist — " & ", " feat. ", " ft. ", " featuring ", " x ", " vs. ".
+ *  Commas deliberately NOT ("Earth, Wind & Fire" stays whole up to the "&").
+ *  ⚠️ TWIN: JakeTunesMobile backend/src/library.ts COLLAB_SEPARATOR. */
+const COLLAB_SEPARATOR = /\s+(?:&|feat\.?|ft\.?|featuring|x|vs\.?)\s+/i
+
+/** An album's primary artist, exactly as the backend keys albums
+ *  (`${primaryArtist}|||${album}`) and the phone writes island slots:
+ *  albumArtist if set, else the track artist before a collab separator,
+ *  else "Unknown Artist".
+ *  ⚠️ TWIN: JakeTunesMobile backend/src/library.ts primaryArtistFor. */
+export function primaryArtistOf(t: { albumArtist?: string | null; artist?: string | null }): string {
+  const albumArtist = t.albumArtist?.trim()
+  if (albumArtist) return albumArtist
+  const artist = t.artist?.trim()
+  if (!artist) return 'Unknown Artist'
+  const first = artist.split(COLLAB_SEPARATOR)[0]?.trim()
+  return first && first.length > 0 ? first : artist
 }
 
 // ── Validation (strict: what the desktop is willing to PUT) ──────────────
@@ -110,7 +142,7 @@ export function validateIslandSlots(raw: unknown): Validation<IslandSlot> {
     if (!o || typeof o !== 'object' || !isText(o.artist) || !isText(o.album)) {
       return { ok: false, error: `slot ${i + 1}: artist and album must be non-empty strings` }
     }
-    const pick = { artist: o.artist, album: o.album }
+    const pick = { artist: o.artist.trim(), album: o.album.trim() }   // stored trimmed, as the backend does
     const key = islandAlbumKey(pick)
     const prior = seen.get(key)
     if (prior !== undefined) return { ok: false, error: `"${pick.album}" is in slots ${prior + 1} and ${i + 1} — one album, one slot` }
@@ -129,11 +161,12 @@ export function validateFavoriteArtists(raw: unknown): Validation<FavoriteSlot> 
     const s = raw[i] as unknown
     if (s === null) { values.push(null); continue }
     if (!isText(s)) return { ok: false, error: `slot ${i + 1}: an artist must be a non-empty string` }
-    const key = favoriteArtistKey(s)
+    const name = s.trim()
+    const key = favoriteArtistKey(name)
     const prior = seen.get(key)
-    if (prior !== undefined) return { ok: false, error: `${s} is in slots ${prior + 1} and ${i + 1} — one artist, one slot` }
+    if (prior !== undefined) return { ok: false, error: `${name} is in slots ${prior + 1} and ${i + 1} — one artist, one slot` }
     seen.set(key, i)
-    values.push(s)
+    values.push(name)
   }
   return { ok: true, values }
 }
@@ -148,7 +181,7 @@ export const ISLAND_ALBUMS_SPEC: PicksSpec<IslandSlot> = {
   validate: validateIslandSlots,
   entry: (raw) => {
     const o = raw as Partial<IslandAlbum> | null
-    return o && typeof o === 'object' && isText(o.artist) && isText(o.album) ? { artist: o.artist, album: o.album } : null
+    return o && typeof o === 'object' && isText(o.artist) && isText(o.album) ? { artist: o.artist.trim(), album: o.album.trim() } : null
   },
   keyOf: islandAlbumKey,
 }
@@ -159,7 +192,7 @@ export const FAVORITE_ARTISTS_SPEC: PicksSpec<FavoriteSlot> = {
   field: 'artists',
   count: FAVORITE_ARTIST_SLOT_COUNT,
   validate: validateFavoriteArtists,
-  entry: (raw) => (isText(raw) ? raw : null),
+  entry: (raw) => (isText(raw) ? raw.trim() : null),
   keyOf: favoriteArtistKey,
 }
 

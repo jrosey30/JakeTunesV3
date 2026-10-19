@@ -48,7 +48,9 @@
       "brain-eval-status.json",
       "brain-status.json",
       "desktop-playlist-hub.json",
-      "mixtape-hub.json"
+      "mixtape-hub.json",
+      "island-albums.json",
+      "favorite-artists.json"
     ],
     "phonePlaylistSidecarsNeverPushFromDesktop": [
       "mobile-playlists.json",
@@ -117,7 +119,9 @@
       "/api/live-sets",
       "/api/mixtapes",
       "/api/ai-report",
-      "/api/brain-eval"
+      "/api/brain-eval",
+      "/api/island-albums",
+      "/api/favorite-artists"
     ]
   },
   "name": "@jaketunes/contracts",

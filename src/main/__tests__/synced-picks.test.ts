@@ -7,7 +7,7 @@ import {
   ISLAND_ALBUMS_SPEC, FAVORITE_ARTISTS_SPEC, ISLAND_SLOT_COUNT, FAVORITE_ARTIST_SLOT_COUNT,
   validateIslandSlots, validateFavoriteArtists, parsePicksDoc, emptyPicksDoc, toWireDoc,
   placeInSlot, clearSlot, moveSlot, slotOf, firstEmptySlot, sameValues,
-  islandAlbumKey, favoriteArtistKey, isPicksKind,
+  islandAlbumKey, favoriteArtistKey, isPicksKind, identityKey, primaryArtistOf,
   type IslandSlot, type FavoriteSlot, type IslandAlbum,
 } from '../../common/synced-picks.ts'
 
@@ -175,5 +175,47 @@ describe('slot editing', () => {
   it('slot counts are the contract', () => {
     assert.equal(ISLAND_SLOT_COUNT, 10)
     assert.equal(FAVORITE_ARTIST_SLOT_COUNT, 5)
+  })
+})
+
+describe('identity — the backend\'s fold (curatedSlots.ts keyOrRaw)', () => {
+  it('nameKey for real names: case, accents, punctuation fold away', () => {
+    assert.equal(identityKey('Beyoncé'), identityKey('BEYONCE'))
+    assert.equal(islandAlbumKey({ artist: 'Sigur Rós', album: 'Ágætis byrjun' }), islandAlbumKey({ artist: 'sigur ros', album: 'agaetis byrjun!' }))
+  })
+  it('a name nameKey folds to "" keeps its raw (trimmed, lowercased) form — "!!!" and "???" are two artists', () => {
+    assert.equal(identityKey('!!!'), '!!!')
+    assert.notEqual(favoriteArtistKey('!!!'), favoriteArtistKey('???'))
+    assert.equal(validateFavoriteArtists(['!!!', '???', null, null, null]).ok, true)
+    assert.equal(validateFavoriteArtists(['!!!', ' !!! ', null, null, null]).ok, false)
+  })
+  it('entries are stored trimmed (as the backend stores them)', () => {
+    const r = validateIslandSlots(islands([0, '  Radiohead ', ' OK Computer  ']))
+    assert.equal(r.ok, true)
+    if (r.ok) assert.deepEqual(r.values[0], { artist: 'Radiohead', album: 'OK Computer' })
+    const f = validateFavoriteArtists([' Björk ', null, null, null, null])
+    if (f.ok) assert.equal(f.values[0], 'Björk')
+  })
+})
+
+describe('primaryArtistOf — the backend\'s album identity (library.ts primaryArtistFor)', () => {
+  it('albumArtist wins', () => {
+    assert.equal(primaryArtistOf({ albumArtist: 'Various Artists', artist: '2Pac & The Notorious B.I.G.' }), 'Various Artists')
+  })
+  it('else the track artist before a collab separator', () => {
+    assert.equal(primaryArtistOf({ artist: '2Pac & The Notorious B.I.G.' }), '2Pac')
+    assert.equal(primaryArtistOf({ artist: 'Drake feat. Rihanna' }), 'Drake')
+    assert.equal(primaryArtistOf({ artist: 'Drake ft Rihanna' }), 'Drake')
+    assert.equal(primaryArtistOf({ artist: 'Kaytranada featuring Kali Uchis' }), 'Kaytranada')
+    assert.equal(primaryArtistOf({ artist: 'Skrillex x Fred again..' }), 'Skrillex')
+    assert.equal(primaryArtistOf({ artist: 'Jay-Z vs. Linkin Park' }), 'Jay-Z')
+  })
+  it('commas are NOT a separator (Earth, Wind & Fire splits only at the "&")', () => {
+    assert.equal(primaryArtistOf({ artist: 'Earth, Wind & Fire' }), 'Earth, Wind')
+    assert.equal(primaryArtistOf({ artist: 'Crosby, Stills, Nash' }), 'Crosby, Stills, Nash')
+  })
+  it('blank → Unknown Artist; whitespace trimmed', () => {
+    assert.equal(primaryArtistOf({ artist: '' }), 'Unknown Artist')
+    assert.equal(primaryArtistOf({ albumArtist: '  ', artist: '  Radiohead ' }), 'Radiohead')
   })
 })

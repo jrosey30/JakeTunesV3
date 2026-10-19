@@ -81,6 +81,7 @@ import { startReleaseKindsJob, effectiveAlbumRows, releaseKindsPath } from './re
 import { guardCredits, type CreditTrack } from './ai/credit-guard.ts'
 import { registerYirIpc } from './ipc/yir-ipc.ts'
 import { registerSyncedPicksIpc } from './ipc/synced-picks-ipc.ts'
+import { assertNoSyncedPicksPush } from './synced-picks-client.ts'
 import { createArtistPhotos, nameKey as photoNameKey } from './artist-photo.ts'
 import { phoneOverlayFields } from '../common/genre-vocab.ts'
 import { registerPreviewRefreshIpc } from './ipc/preview-refresh-ipc.ts'
@@ -4134,6 +4135,7 @@ const STATE_FILE_NAMES = [
   'release-kinds.json',
 ] as const
 assertNoDesktopBluntPush(STATE_FILE_NAMES, 'STATE_FILE_NAMES')
+assertNoSyncedPicksPush([...STATE_FILE_NAMES, ...PHONE_AUTHORED_FILES], 'STATE_FILE_NAMES / PHONE_AUTHORED_FILES')   // island-albums/favorite-artists: homemini is the single writer
 interface StateConflict {
   file: string
   localMtimeMs: number
