@@ -8,7 +8,8 @@
  */
 import { app } from 'electron'
 import { join } from 'path'
-import { mkdir, open, readdir, stat, unlink } from 'fs/promises'
+import { mkdir, open, readdir, rename, stat, unlink } from 'fs/promises'
+import { importWorkPath } from '../audio-write-guard'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { findFreeImportedId, shouldEnqueueStreamConvert } from '../import-pipeline'
@@ -279,6 +280,10 @@ export function registerCdIpc(ipc: IpcRegistrar, host: CdIpcHost): void {
       const destPath = join(destDir, fileName)
 
       const stagedPath = join(app.getPath('temp'), `jaketunes-cdstage-${id}.aiff`)
+      // Twin of importOneFile's publish step: encode and tag a hidden
+      // sibling, then rename the finished file into place, so no carrier
+      // ever copies a half-written rip (audio-write-guard.ts, importWorkPath).
+      const workPath = importWorkPath(destPath)
       try {
         const yearStr = metadata.year ? String(parseInt(metadata.year, 10) || '') : ''
         // Read the track off the disc FIRST with big sequential reads (see
@@ -288,7 +293,7 @@ export function registerCdIpc(ipc: IpcRegistrar, host: CdIpcHost): void {
         // 5 min — slow-but-progressing converts finish, hung encoders die.
         const ripTimeoutMs = Math.max(300000, Math.round((cdTrack.duration || 0) * 1000 * 4) + 120000)
         await stageCdTrackLocally(cdTrack.filePath, stagedPath)
-        await convertAudio(stagedPath, destPath, fmt, {
+        await convertAudio(stagedPath, workPath, fmt, {
           title: cdTrack.title,
           artist: metadata.artist,
           album: metadata.album,
@@ -300,6 +305,7 @@ export function registerCdIpc(ipc: IpcRegistrar, host: CdIpcHost): void {
           discNumber: 1,
           discCount: 1,
         }, { timeoutMs: ripTimeoutMs })
+        await rename(workPath, destPath)
 
         const fileStats = await stat(destPath)
         const cdTrackTime = new Date(cdBatchBaseTime + cdTrackIndex)
@@ -370,6 +376,8 @@ export function registerCdIpc(ipc: IpcRegistrar, host: CdIpcHost): void {
         })
       } finally {
         await unlink(stagedPath).catch(() => {})
+        // Gone already after a successful rename; a failed rip's partial.
+        await unlink(workPath).catch(() => {})
       }
     }
 
