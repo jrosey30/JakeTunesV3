@@ -1049,6 +1049,19 @@ const electronAPI = {
   // 4.5: Wikipedia summary for artist detail page. 24h disk cache.
   getArtistWiki: (artist: string): Promise<{ ok: boolean; extract: string | null; pageUrl: string | null }> =>
     ipcRenderer.invoke('get-artist-wiki', artist),
+  // 2026-10-18 — synced picks (TOP 10 ISLAND ALBUMS + 5 FAVORITE ARTISTS),
+  // shared with the phone through homemini. kind = 'island-albums' |
+  // 'favorite-artists'. get = cache only; refresh = GET + replay a queued
+  // edit; save = queue + PUT. Main pushes 'synced-picks-updated' (the new
+  // state) whenever what the shelf should draw changes.
+  syncedPicksGet: (kind: string): Promise<unknown> => ipcRenderer.invoke('synced-picks:get', kind),
+  syncedPicksRefresh: (kind: string): Promise<unknown> => ipcRenderer.invoke('synced-picks:refresh', kind),
+  syncedPicksSave: (kind: string, values: unknown[]): Promise<unknown> => ipcRenderer.invoke('synced-picks:save', kind, values),
+  onSyncedPicksUpdated: (callback: (state: unknown) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state)
+    ipcRenderer.on('synced-picks-updated', handler)
+    return () => { ipcRenderer.removeListener('synced-picks-updated', handler) }
+  },
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

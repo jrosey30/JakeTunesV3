@@ -1,0 +1,199 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   Synced picks (2026-10-18) — TOP 10 ISLAND ALBUMS (Albums page) and
+   FAVORITE ARTISTS (Artists page), shared with the phone. V6 tokens
+   throughout (type tokens are PX — the app's root is 11px). Orange
+   (#FC5501, --brand-orange) only for the rank badges and what acts.
+   Names wrap, never clip.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.picks-status { font-size: var(--font-11); color: var(--text-dim); }
+.picks-status--warn { color: var(--color-danger); }
+
+/* ── Island shelf ─────────────────────────────────────────────────────────
+   24px side gutter = the grid's 16px padding + the card's 8px, so the shelf's
+   first cover lines up with the first cover of the grid below it. */
+.isl {
+  container-type: inline-size;
+  padding: var(--space-4) var(--space-8) var(--space-2);
+}
+.isl-head {
+  display: flex; align-items: baseline; flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  margin-bottom: var(--space-5);
+}
+.isl-h2 {
+  font-size: var(--font-18);
+  font-weight: var(--fw-heavy);
+  letter-spacing: var(--track-tight);
+  line-height: var(--lh-snug);
+  color: var(--text-primary);
+}
+/* One row of ten (Letterboxd), capped so a wide window doesn't make posters;
+   two rows of five — the phone's layout — when the pane is narrow. */
+.isl-grid {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 128px));
+  gap: var(--space-5);
+}
+@container (max-width: 720px) {
+  .isl-grid { grid-template-columns: repeat(5, minmax(0, 128px)); }
+}
+
+.isl-slot {
+  position: relative;
+  aspect-ratio: 1;
+  appearance: none; border: 0; padding: 0; background: none;
+  font: inherit; color: inherit;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: transform var(--motion-ui) var(--ease-lift);
+}
+.isl-slot:hover { transform: translateY(-2px); }
+.isl-slot:focus-visible { outline: none; box-shadow: var(--ring-focus); }
+.isl-cover {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(135deg, #ddd, #bbb);
+  /* same resting-on-the-page stack as .album-card-art; hover = --shadow-art */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 3px 8px rgba(0, 0, 0, 0.10), var(--ring-inset);
+  transition: box-shadow var(--motion-ui) var(--ease-settle);
+}
+.isl-slot:hover .isl-cover { box-shadow: var(--shadow-art), var(--ring-inset); }
+.isl-cover-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.isl-disc { width: 34%; height: 34%; }
+
+/* Rank badge: the phone's — white numeral on the brand orange, lower left,
+   4px in from the cover's corner. */
+.isl-rank, .fav-rank {
+  position: absolute;
+  min-width: 17px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-xs);
+  background: rgba(var(--brand-orange-rgb), 0.94);
+  color: var(--brand-cream);
+  font-size: var(--font-11);
+  font-weight: var(--fw-bold);
+  font-variant-numeric: var(--num-tabular);
+  line-height: 17px;
+  text-align: center;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+}
+.isl-rank { left: var(--space-2); bottom: var(--space-2); }
+
+/* A pick for an album this Mac doesn't hold (the phone's library can differ). */
+.isl-slot--missing .isl-cover { opacity: 0.45; filter: grayscale(0.6); }
+
+.isl-slot--empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--space-2);
+  border: 1.5px dashed var(--border-light);
+  background: var(--row-alt);
+  color: var(--text-dim);
+  transition: border-color var(--motion-fast) var(--ease-settle), color var(--motion-fast) var(--ease-settle), background var(--motion-fast) var(--ease-settle);
+}
+.isl-slot--empty:hover {
+  transform: none;
+  border-color: rgba(var(--brand-orange-rgb), 0.55);
+  background: rgba(var(--brand-orange-rgb), 0.04);
+  color: var(--brand-orange);
+}
+.isl-empty-rank { font-size: var(--font-16); font-weight: var(--fw-semibold); font-variant-numeric: var(--num-tabular); }
+.isl-plus { opacity: 0; transition: opacity var(--motion-fast) var(--ease-settle); }
+.isl-slot--empty:hover .isl-plus, .isl-slot--empty:focus-visible .isl-plus { opacity: 1; }
+
+/* ── Favorite artists row (sits in the Artists page's .ag-shelf rhythm and
+   reuses its photo circle / name / meta classes) ─────────────────────── */
+.fav-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 var(--space-5); }
+.fav-row {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 150px));
+  gap: 18px;   /* = .ag-row */
+  padding-bottom: var(--space-5);
+}
+.fav-card { width: 100%; }
+.fav-ph-wrap { position: relative; width: 100%; margin-bottom: 6px; }
+.fav-ph-wrap .ag-ph { margin-bottom: 0; }
+/* 2px white ring so the badge reads on top of any photo edge */
+.fav-rank { left: 7%; bottom: 7%; box-shadow: 0 0 0 2px #fff, 0 1px 3px rgba(0, 0, 0, 0.25); }
+.fav-ph--empty {
+  display: flex; align-items: center; justify-content: center;
+  background: var(--row-alt);
+  border: 1.5px dashed var(--border-light);
+  box-shadow: none;
+  color: var(--text-dim);
+  transition: border-color var(--motion-fast) var(--ease-settle), color var(--motion-fast) var(--ease-settle);
+}
+.fav-card--empty:hover .fav-ph--empty { border-color: rgba(var(--brand-orange-rgb), 0.55); color: var(--brand-orange); box-shadow: none; }
+.fav-empty-rank { font-size: var(--font-24); font-weight: var(--fw-semibold); font-variant-numeric: var(--num-tabular); }
+.fav-card--missing .ag-ph { opacity: 0.45; }
+
+/* ── Picker sheet ─────────────────────────────────────────────────────── */
+.picks-overlay {
+  position: fixed; inset: 0;
+  z-index: 9000;   /* the sheet layer (activity/mixtape sheets); ConfirmDialog sits above */
+  display: flex; align-items: center; justify-content: center;
+  padding: var(--space-8);
+  background: rgba(20, 18, 14, 0.45);
+}
+.picks-sheet {
+  width: min(520px, 100%);
+  max-height: min(80vh, 640px);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  background: var(--surface-content);
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-4);
+}
+.picks-sheet-head { padding: var(--space-7) var(--space-7) var(--space-5); border-bottom: 1px solid var(--border-hairline); }
+.picks-sheet-title {
+  margin-bottom: var(--space-1);
+  font-size: var(--font-20);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--track-tight);
+  color: var(--text-primary);
+}
+.picks-sheet-sub { margin-bottom: var(--space-5); font-size: var(--font-12); line-height: var(--lh-normal); color: var(--text-secondary); }
+.picks-field { width: 100%; }
+.picks-list { flex: 1; min-height: 120px; overflow-y: auto; padding: var(--space-2) var(--space-3); }
+.picks-row {
+  display: flex; align-items: center; gap: var(--space-5);
+  width: 100%;
+  padding: var(--space-2) var(--space-4);
+  appearance: none; border: 0; background: none;
+  font: inherit; color: inherit; text-align: left;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.picks-row.is-active { background: rgba(var(--brand-orange-rgb), 0.08); }
+.picks-row-art {
+  flex: 0 0 auto;
+  width: 44px; height: 44px;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+  background: #eceae5;
+  box-shadow: var(--ring-inset);
+}
+.picks-row-art--square { border-radius: var(--radius-xs); }
+.picks-row-art--round { border-radius: var(--radius-round); }
+.picks-row-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.picks-row-art .ag-ini { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: #fff; font-size: var(--font-14); font-weight: var(--fw-bold); }
+.picks-row-art .isl-disc { width: 60%; height: 60%; }
+.picks-row-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.picks-row-title { font-size: var(--font-13); font-weight: var(--fw-semibold); color: var(--text-primary); overflow-wrap: anywhere; }
+.picks-row-sub { font-size: var(--font-11); color: var(--text-secondary); overflow-wrap: anywhere; }
+.picks-empty { padding: var(--space-8) var(--space-5); text-align: center; font-size: var(--font-12); color: var(--text-dim); }
+.picks-sheet-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-5);
+  padding: var(--space-4) var(--space-7);
+  border-top: 1px solid var(--border-hairline);
+}
+.picks-count { font-size: var(--font-11); color: var(--text-dim); font-variant-numeric: var(--num-tabular); }
+
+@media (prefers-reduced-motion: reduce) {
+  .isl-slot, .isl-cover, .isl-slot--empty, .isl-plus, .fav-ph--empty { transition: none; }
+  .isl-slot:hover { transform: none; }
+}

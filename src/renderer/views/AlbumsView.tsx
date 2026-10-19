@@ -27,6 +27,9 @@ import { setNotice } from '../activity'
 import '../styles/albums.css'
 import { addToPlaylistEntry, addToIpodPoolEntry, queueMenuEntries } from '../utils/playlistMenu'
 import { setAlbumDragPayload } from '../utils/trackDrag'
+// 2026-10-18 — TOP 10 ISLAND ALBUMS, synced with the phone through homemini.
+import IslandAlbumsShelf, { islandMenuEntry } from '../components/IslandAlbumsShelf'
+import { getSyncedPicksSnapshot, useSyncedPicksLive } from '../syncedPicks'
 
 export default function AlbumsView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()
@@ -38,6 +41,10 @@ export default function AlbumsView() {
   // deletion; it gets the full ConfirmDialog there, not a one-click menu).
   useEffect(() => { void ensureLiveSetsLoaded() }, [])
   useSyncExternalStore(subscribeLiveSets, getLiveSetsSnapshot)
+  // Island Albums stay fresh while this view is up even when the shelf is
+  // hidden by a filter — the album menu's "Add to Island Albums…" edits the
+  // shared list from the snapshot, so it must not be a stale one.
+  useSyncedPicksLive('island-albums')
   const albumMenuItems = useCallback((album: Album): MenuEntry[] => {
     const ordered = sortAlbumTracks(album.tracks)
     const key = albumKeyFromStrings(album.artist, album.name)
@@ -72,6 +79,8 @@ export default function AlbumsView() {
             },
           }]
     const compCtx = verifyLiveSetCompleteness(ordered)
+    // Read at menu-open time (the menu is rebuilt on every right-click).
+    const islandEntry = islandMenuEntry(album, getSyncedPicksSnapshot().island)
     return [
       ...(compCtx.complete && compCtx.verifiedTotal
         ? [{ label: 'Play Album — front to back', onClick: () => { if (ordered.length) playTrack(ordered[0], ordered, 0, undefined, true, true) } }]
@@ -83,6 +92,7 @@ export default function AlbumsView() {
       ...queueMenuEntries(ordered, pbDispatch),
       addToPlaylistEntry(ordered, lib.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
       addToIpodPoolEntry(ordered),
+      ...(islandEntry ? [islandEntry] : []),
       { separator: true as const },
       { label: 'Go to Artist', onClick: () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(album.artist || '') }) },
     ]
@@ -171,6 +181,11 @@ export default function AlbumsView() {
     return lookupArtwork(lib.artworkMap, normalizedArtIndex, album.artist, album.name)
   }, [lib.artworkMap, normalizedArtIndex])
 
+  // Island shelf: covers for picks this library doesn't group as an album,
+  // and the same idle resolver for any shelf cover the map lacks.
+  const lookupArt = useCallback((artist: string, album: string) => lookupArtwork(lib.artworkMap, normalizedArtIndex, artist, album), [lib.artworkMap, normalizedArtIndex])
+  const requestArt = useCallback((list: Array<{ artist: string; album: string }>) => queueArtworkResolutions(list, libDispatch), [libDispatch])
+
   // Resolve missing covers in small idle batches — never during render.
   useEffect(() => {
     if (lib.currentView !== 'albums') return
@@ -258,6 +273,11 @@ export default function AlbumsView() {
           onClose={find.close}
           placeholder="Find album or artist…"
         />
+      )}
+      {/* Hidden while the search pill or the filter narrows the grid — the
+          results are the point then (same rule as the Artists shelves). */}
+      {!effectiveQuery && !af && (
+        <IslandAlbumsShelf albums={albums} findArtHash={findArtHash} lookupArt={lookupArt} requestArt={requestArt} onOpenAlbum={openAlbum} />
       )}
       {filteredAlbums.length === 0 && (
         <EmptyState query={lib.searchQuery} noun="albums" />

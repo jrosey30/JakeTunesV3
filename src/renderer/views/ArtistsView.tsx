@@ -29,6 +29,8 @@ import { consumeDrillIn } from '../utils/drillIn'
 import { setAlbumDragPayload } from '../utils/trackDrag'
 import EmptyState from '../components/EmptyState'
 import ArtistGroupingModal from '../components/ArtistGroupingModal'
+// 2026-10-18 — 5 FAVORITE ARTISTS, synced with the phone through homemini.
+import FavoriteArtistsRow, { type FavoriteCandidate } from '../components/FavoriteArtistsRow'
 import { Track } from '../types'
 import { artistIdentityKey, canonicalArtist, subscribeAliases, getAliasVersion } from '../utils/artistAlias'
 import { GENRES } from '../../common/genre-vocab'
@@ -134,6 +136,7 @@ export default function ArtistsView(): JSX.Element {
   }, [sort])
 
   const byKey = useMemo(() => new Map(artists.map((a) => [artistIdentityKey(a.name), a])), [artists])
+  const favCandidates = useMemo((): FavoriteCandidate[] => artists.map((a) => ({ name: a.name, albums: a.albums, songs: a.tracks.length })), [artists])
   const shelves = useMemo(() => {
     if (sort !== 'az' || q || lf) return null
     const rotation = heavy.map((h) => ({ card: byKey.get(artistIdentityKey(canonicalArtist(h.artist))), plays: h.plays }))
@@ -325,6 +328,10 @@ export default function ArtistsView(): JSX.Element {
             ))}
           </div>
         </div>
+      )}
+      {/* Top of the page in every sort; hidden only while a filter narrows it. */}
+      {!q && !lf && (
+        <FavoriteArtistsRow artists={favCandidates} onOpenArtist={(name) => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: name })} />
       )}
       {shelves && shelves.rotation.length > 0 && (
         <section className="ag-shelf">

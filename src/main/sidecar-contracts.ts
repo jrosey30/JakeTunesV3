@@ -59,6 +59,8 @@ export const mobileWritable = [
   'brain-status.json',
   'desktop-playlist-hub.json',
   'mixtape-hub.json',
+  'island-albums.json',
+  'favorite-artists.json',
 ] as const
 
 export const phonePlaylistSidecarsNeverPushFromDesktop = [
