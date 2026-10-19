@@ -1,0 +1,453 @@
+/* TONIGHT ON JAKETUNES — launch page "G" (2026-10-18), the top of the Home.
+   Numbers are the approved mockup's (D-Desktop.dc.html) at a 1280px pane;
+   container queries step them down for narrower windows. Colours: white +
+   the mockup's blue-white #DCE6F0 on the art, and ONE orange (--brand-orange,
+   #FC5501) — the caption's peach is that orange mixed with white, not a
+   second orange. */
+
+/* pix Chicago — the phone's display face, from JakeTunesMobile
+   ios/JakeTunesMobile/Fonts/pixChicago.ttf. The Mobile repo ships it with no
+   licence file; its only note is Brief 100b's (ios/project.yml): "pix Chicago
+   is the classic Apple Chicago bitmap font (TTF rendition)". The font's own
+   name table: family "pix Chicago" 1.00, copyright "atn.", no licence string.
+   Mirrored here as the phone carries it.
+   REPACKED, not byte-identical: Chromium's font sanitizer refuses the phone's
+   file ("OTS parsing error: head: misaligned table" — iOS's CoreText doesn't
+   care), so every pixChicago label silently fell back to monospace. The copy
+   here is the same font re-saved with fontTools: tables 4-byte aligned, the
+   one malformed 2-byte stub glyph (U+0100, draws nothing) emptied and
+   unmapped. Glyph outlines, advance widths and the rest of the cmap are
+   unchanged (checked glyph-by-glyph). */
+@font-face {
+  font-family: 'pixChicago';
+  src: url('../assets/fonts/pixChicago.ttf') format('truetype');
+  font-display: block;
+}
+
+.tn {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  container-type: inline-size;
+  color: #FFFFFF;
+  font-family: var(--font-display, -apple-system, 'SF Pro Display', 'Helvetica Neue', sans-serif);
+}
+
+/* ── the art-soaked backdrop ── */
+.tn-art {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  /* under the art while it decodes (the mockup's base) */
+  background: #2C4A66;
+  /* the art dissolves into the Home canvas over the region's last 140px —
+     content stops above it (.tn-inner padding-bottom) */
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 140px), transparent 100%);
+          mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 140px), transparent 100%);
+}
+.tn-art-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  filter: blur(70px) saturate(1.35);
+  transform: scale(1.35);
+  animation: tnDrift 28s ease-in-out infinite;
+  will-change: transform;
+}
+.tn-veil {
+  position: absolute;
+  inset: 0;
+  background: rgba(12, 22, 36, 0.42);
+}
+@keyframes tnDrift {
+  0%   { transform: scale(1.35) translate(0, 0); }
+  50%  { transform: scale(1.45) translate(-2%, 1.5%); }
+  100% { transform: scale(1.35) translate(0, 0); }
+}
+@keyframes tnPulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.3; }
+}
+
+.tn-inner {
+  position: relative;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 72px 88px 140px;
+  display: flex;
+  flex-direction: column;
+  gap: 56px;
+}
+
+/* ── hero ── */
+.tn-hero {
+  display: grid;
+  grid-template-columns: 400px minmax(0, 1fr);
+  gap: 64px;
+  align-items: center;
+}
+.tn-cover {
+  width: 400px;
+  aspect-ratio: 1;
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+}
+.tn-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.tn-cover-ph {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tn-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+.tn-eyebrow {
+  font-family: 'pixChicago', monospace;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: #DCE6F0;
+}
+.tn-headline {
+  margin: 0;
+  font-size: 68px;
+  font-weight: 700;
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  color: #FFFFFF;
+  overflow-wrap: break-word;
+}
+.tn-stats {
+  font-size: 18px;
+  line-height: 1.4;
+  color: #DCE6F0;
+  overflow-wrap: break-word;
+}
+
+/* the Music Man's frosted pill */
+.tn-mm {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 18px;
+  max-width: 560px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  -webkit-backdrop-filter: blur(20px);
+          backdrop-filter: blur(20px);
+}
+.tn-mm-dot {
+  flex: 0 0 8px;
+  width: 8px;
+  height: 8px;
+  margin-top: 7px;
+  border-radius: 4px;
+  background: var(--brand-orange, #FC5501);
+  animation: tnPulse 1.4s ease-in-out infinite;
+}
+/* on air: steady and glowing while he speaks */
+.tn-mm-dot--live {
+  animation: none;
+  box-shadow: 0 0 0 3px rgba(var(--brand-orange-rgb, 252, 85, 1), 0.35);
+}
+.tn-mm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.tn-mm-label {
+  font-family: 'pixChicago', monospace;
+  font-size: 11px;
+  color: #DCE6F0;
+}
+.tn-mm-line {
+  font-size: 17px;
+  line-height: 1.45;
+  overflow-wrap: break-word;
+}
+/* the facts, one quiet line under his quote */
+.tn-mm-stats {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #DCE6F0;
+  overflow-wrap: break-word;
+}
+/* the pill as the intro control: press it and he speaks, then the record plays */
+.tn-mm--action {
+  width: 100%;
+  margin: 0;
+  font-family: inherit;
+  text-align: left;
+  color: #FFFFFF;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+.tn-mm--action:hover { background: rgba(255, 255, 255, 0.2); border-color: rgba(255, 255, 255, 0.32); }
+.tn-mm--on {
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(var(--brand-orange-rgb, 252, 85, 1), 0.55);
+}
+
+.tn-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-top: 4px;
+}
+.tn-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 50px;
+  padding: 8px 22px;
+  border-radius: 25px;
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.25;
+  text-align: left;
+  color: #FFFFFF;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: background-color 140ms ease, border-color 140ms ease, transform 120ms ease;
+}
+.tn-btn:active { transform: translateY(1px); }
+.tn-btn--play {
+  padding: 8px 28px;
+  border: 0;
+  font-weight: 700;
+  background: var(--brand-orange, #FC5501);
+  box-shadow: 0 10px 30px rgba(var(--brand-orange-rgb, 252, 85, 1), 0.35);
+}
+.tn-btn--play svg { flex: 0 0 13px; }
+.tn-btn--play:hover { background: var(--brand-orange-light, #FE7632); }
+
+/* ── section heads ── */
+.tn-sec-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+.tn-h2 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: #FFFFFF;
+}
+.tn-sub {
+  font-size: 13px;
+  color: #DCE6F0;
+}
+
+/* ── island albums: classic Cover Flow ── */
+.tn-islands {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tn-flow {
+  position: relative;
+  height: 330px;
+  overflow: hidden;
+  perspective: 1100px;
+  border-radius: 8px;
+}
+/* Keyboard focus anywhere in G is the app's own ring (reset.css: 2px
+   --brand-orange on :focus-visible) — mouse clicks show none. */
+/* Every cover is a centre-sized box moved by ONE transform (cover-flow.ts):
+   the change of cover runs on the compositor. */
+.tn-flow-cover {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 240px;
+  height: 240px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  transform-origin: 50% 50%;
+  transition: transform 0.55s ease;
+}
+.tn-flow-cover--front { cursor: pointer; }
+.tn-flow-cover--missing { opacity: 0.55; }
+.tn-flow-img,
+.tn-flow-ph {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border-radius: 3px;
+}
+/* The mockup's -webkit-box-reflect (below 3px, transparent 58% → 0.3), drawn
+   as a flipped copy: 30% at the cover's foot, gone 42% of the way down. */
+.tn-flow-reflection {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 3px);
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.3) 0%, transparent 42%);
+          mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.3) 0%, transparent 42%);
+}
+.tn-flow-reflection > * { transform: scaleY(-1); }
+.tn-flow-img { object-fit: cover; }
+.tn-flow-ph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-sizing: border-box;
+}
+.tn-flow-caption {
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  text-align: center;
+}
+.tn-flow-rank {
+  font-family: 'pixChicago', monospace;
+  font-size: 14px;
+  color: color-mix(in srgb, var(--brand-orange, #FC5501) 45%, #FFFFFF);
+}
+.tn-flow-album {
+  font-size: 17px;
+  font-weight: 700;
+  overflow-wrap: break-word;
+}
+.tn-flow-artist {
+  font-size: 14px;
+  color: #DCE6F0;
+  overflow-wrap: break-word;
+}
+
+/* ── now digging: Letterboxd posters ── */
+.tn-digging {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.tn-dig-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 22px;
+}
+.tn-dig {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  color: #FFFFFF;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.tn-poster {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+  background: rgba(255, 255, 255, 0.08);
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+.tn-dig:hover .tn-poster { transform: translateY(-3px); box-shadow: 0 22px 48px rgba(0, 0, 0, 0.42); }
+.tn-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.tn-poster-ini {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 44px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: rgba(255, 255, 255, 0.92);
+}
+.tn-dig-rank {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  font-family: 'pixChicago', monospace;
+  font-size: 22px;
+  color: #FFFFFF;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.6);
+}
+.tn-dig-name {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.tn-dig-meta {
+  margin-top: -8px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #DCE6F0;
+  overflow-wrap: break-word;
+}
+
+/* ── narrower panes ── */
+@container (max-width: 1120px) {
+  .tn-inner { padding: 56px 48px 140px; gap: 48px; }
+  .tn-hero { grid-template-columns: 320px minmax(0, 1fr); gap: 48px; }
+  .tn-cover { width: 320px; }
+  .tn-headline { font-size: 56px; }
+}
+@container (max-width: 860px) {
+  .tn-inner { padding: 44px 28px 140px; gap: 40px; }
+  .tn-hero { grid-template-columns: 240px minmax(0, 1fr); gap: 32px; }
+  .tn-cover { width: 240px; }
+  .tn-headline { font-size: 44px; }
+  .tn-stats { font-size: 16px; }
+  .tn-dig-grid { gap: 14px; }
+}
+@container (max-width: 620px) {
+  .tn-hero { grid-template-columns: minmax(0, 1fr); }
+  .tn-dig-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tn-art-img, .tn-mm-dot { animation: none; }
+  .tn-flow-cover, .tn-poster, .tn-btn, .tn-mm--action { transition: none; }
+}

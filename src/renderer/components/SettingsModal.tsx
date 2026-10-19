@@ -6,6 +6,7 @@ import { getCaptionsOn, setCaptionsOn } from '../activity'
 import '../styles/import-convert.css'
 import MusicSourcesPanel from './MusicSourcesPanel'
 import GenreCheckList from './GenreCheckList'
+import LibraryStatsSection from './LibraryStatsSection'
 
 /**
  * App-level user preferences. Tabbed layout (Playback / Library / Sync /
@@ -663,6 +664,9 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
           )}
           {tab === 'Library' && (
             <>
+              {/* 2026-10-18 — the Home's lifetime stats strip lives here now
+                  (Jake: "stats move to settings"). */}
+              <LibraryStatsSection />
               <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: '#3a3a3a' }}>
                 Default import format
               </label>

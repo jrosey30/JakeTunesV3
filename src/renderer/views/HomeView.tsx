@@ -1,9 +1,12 @@
 /**
  * Home / Dashboard — the desktop launch page (first view after splash).
  *
- * Hierarchy: greeting + invite → library shelves (catalog cards with
- * counts), then the featured pick (or empty-library welcome) and the
- * existing rails (mixes, recents, artists, news).
+ * Hierarchy (2026-10-18, launch page "G"): TONIGHT ON JAKETUNES (the album
+ * you're living in, Island Albums Cover Flow, Now Digging; components/
+ * TonightOnJakeTunes.tsx) → Daily mixes → Recently Added → Listening Memory
+ * → Rediscover → Year in Review card → Today's pick → Shows → New This Week
+ * → Music News. HOME_SHOWS below switches bands on/off (empty library: the
+ * welcome).
  *
  * Aggregation runs in useMemo against lib.tracks — same source as
  * AlbumsView/ArtistsView, no separate state.
@@ -25,7 +28,9 @@ import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
 import AlbumArtImage from '../components/AlbumArtImage'
 import MadeForYou from '../components/MadeForYou'
 import YirHomeCard from '../components/yir/YirHomeCard'
+import TonightOnJakeTunes from '../components/TonightOnJakeTunes'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
+import { libraryStats } from '../utils/libraryStats'
 import type { Track, MusicNewsItem, TourDate, VenueShow, UpcomingRelease, ListeningMemoryData, RediscoveryPick } from '../types'
 import '../styles/home.css'
 
@@ -154,6 +159,31 @@ function ShelfGlyph({ kind }: { kind: ShelfKind }) {
       <path d="M10 6.2V10l2.8 1.8" />
     </svg>
   )
+}
+
+/** What the Home renders under launch page "G" (Jake, 2026-10-18). First the
+ *  four keepers — Daily mixes (MadeForYou), Recently Added, Listening Memory,
+ *  Rediscover — then, in their original relative order, the Year in Review
+ *  card (the only door to that view, Dec 17 reveal included), Today's pick,
+ *  Shows (Live Near You / At Your Venues / On the Horizon — kept whole for the
+ *  concert upgrade), New This Week, Music News. Jake: "stats move to settings.
+ *  keep the others."
+ *
+ *  Switched off — they only stop RENDERING here (component, IPC and data code
+ *  untouched; a hidden band's fetch is skipped):
+ *    header      greeting / date / weather / track count + library shelves —
+ *                G's eyebrow is the greeting now; shelves = the sidebar
+ *    stats       moved to Settings › Library (utils/libraryStats.ts)
+ *    topArtists  Artists › Most played (all-time), Heavy rotation (30 days) */
+const HOME_SHOWS: Readonly<Record<'header' | 'yirCard' | 'featured' | 'stats' | 'topArtists' | 'shows' | 'newThisWeek' | 'news', boolean>> = {
+  header: false,
+  yirCard: true,
+  featured: true,
+  stats: false,
+  topArtists: false,
+  shows: true,
+  newThisWeek: true,
+  news: true,
 }
 
 function formatShelfCount(n: number, singular: string, plural: string): string {
@@ -340,6 +370,7 @@ export default function HomeView() {
     let cancelled = false
     void (async () => {
       try {
+        if (!HOME_SHOWS.news && !HOME_SHOWS.newThisWeek) return   // neither band is on the Home
         // News + releases are short RSS fetches — fire in parallel.
         const [n, r] = await Promise.all([
           window.electronAPI.getMusicNews(),
@@ -360,6 +391,7 @@ export default function HomeView() {
     // 8-concurrent in main). Don't block the news/releases UI on it.
     void (async () => {
       try {
+        if (!HOME_SHOWS.shows) return
         const t = await window.electronAPI.getTourDates()
         if (cancelled) return
         { const v = t.ok ? t.dates : []; setCached('tour', v); setTourDates(v) }
@@ -375,6 +407,7 @@ export default function HomeView() {
     // rotted one yields [] and the lane just renders fewer rooms.
     void (async () => {
       try {
+        if (!HOME_SHOWS.shows) return
         const v = await window.electronAPI.getVenueShows()
         if (cancelled) return
         { const vv = v.ok ? v.shows : []; setCached('venues', vv); setVenueShows(vv) }
@@ -387,6 +420,7 @@ export default function HomeView() {
     // batched-OR queries take ~2-4 sec on cold cache; instant after.
     void (async () => {
       try {
+        if (!HOME_SHOWS.shows) return
         const u = await window.electronAPI.getUpcomingReleasesPersonal()
         if (cancelled) return
         { const uv = u.ok ? u.items : []; setCached('upcoming', uv); setUpcoming(uv) }
@@ -496,6 +530,7 @@ export default function HomeView() {
   // robotic across a long listening day.
   const [weather, setWeather] = useState<{ tempF: number; condition: string; description: string } | null>(() => getCached('weather') ?? null)
   useEffect(() => {
+    if (!HOME_SHOWS.header) { settleHome('weather'); return }   // weather lives in the header
     let cancelled = false
     void window.electronAPI.getBrooklynWeather().then(r => {
       if (!cancelled) { const wv = r.ok ? r.weather : null; setCached('weather', wv); if (wv) setWeather(wv) }
@@ -627,29 +662,8 @@ export default function HomeView() {
 
   // ── 4.4.33: quick lifetime stats for the strip under the hero. All
   // derived from lib.tracks — no extra IPC, recomputes on import. ───
-  const stats = useMemo(() => {
-    let totalPlays = 0
-    let totalDurationMs = 0
-    const byArtist = new Map<string, number>()
-    const byGenre = new Map<string, number>()
-    for (const t of lib.tracks) {
-      const plays = Number(t.playCount) || 0
-      totalPlays += plays
-      totalDurationMs += Number(t.duration) || 0
-      const artist = t.albumArtist || t.artist
-      if (artist) byArtist.set(artist, (byArtist.get(artist) || 0) + plays + 1)
-      if (t.genre) byGenre.set(t.genre, (byGenre.get(t.genre) || 0) + plays + 1)
-    }
-    const topArtist = Array.from(byArtist.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || ''
-    const topGenre = Array.from(byGenre.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || ''
-    const totalHours = totalDurationMs / 3_600_000
-    const hoursLabel =
-      totalHours >= 1000 ? `${(totalHours / 1000).toFixed(1)}k hrs` :
-      totalHours >= 100  ? `${Math.round(totalHours)} hrs` :
-      totalHours >= 10   ? `${totalHours.toFixed(1)} hrs` :
-                           `${totalHours.toFixed(1)} hrs`
-    return { totalPlays, hoursLabel, topArtist, topGenre }
-  }, [lib.tracks])
+  // (The strip itself now lives in Settings › Library — utils/libraryStats.ts.)
+  const stats = useMemo(() => libraryStats(lib.tracks), [lib.tracks])
 
   // Shelf inventory — same regular-library projection Songs/Albums/Artists
   // use, so the counts match the views the cards open. One pass.
@@ -713,7 +727,7 @@ export default function HomeView() {
   useEffect(() => {
     if (lib.currentView !== 'home') return
     const keys = [
-      featuredAlbum?.key,
+      HOME_SHOWS.featured ? featuredAlbum?.key : undefined,
       ...recentAlbums.map(c => c.key),
     ].filter((k): k is string => !!k)
     const missing = keys.filter(k => !artHashForKey(k))
@@ -730,7 +744,7 @@ export default function HomeView() {
   useEffect(() => {
     if (lib.currentView !== 'home') return
     const hashes = [
-      featuredAlbum?.key && artHashForKey(featuredAlbum.key),
+      HOME_SHOWS.featured && featuredAlbum?.key ? artHashForKey(featuredAlbum.key) : undefined,
       ...recentAlbums.map(c => artHashForKey(c.key)),
     ]
     prefetchAlbumArtHashes(hashes, 320)
@@ -759,6 +773,12 @@ export default function HomeView() {
   return (
     <div className="home-view" ref={rootRef}>
       <ScrollTopButton targetRef={rootRef} />
+      {/* 2026-10-18 — launch page "G": tonight's album on an art-soaked
+          backdrop, the Island Albums Cover Flow, Now Digging. Under it: Daily
+          mixes, Recently Added, Listening Memory, Rediscover, then the rest
+          (HOME_SHOWS above says what's on). */}
+      <TonightOnJakeTunes tracks={regularTracks} artworkMap={lib.artworkMap} artIndex={normalizedArtIndex} dispatch={dispatch} playTrack={playTrack} />
+      {HOME_SHOWS.header && (
       <header className="home-header">
         <div className="home-header-copy">
           <p className="home-kicker">Welcome</p>
@@ -833,8 +853,7 @@ export default function HomeView() {
           )}
         </nav>
       </header>
-
-      <YirHomeCard />
+      )}
 
       {libraryEmpty && (
         <section className="home-welcome-empty" aria-label="Start your library">
@@ -861,80 +880,72 @@ export default function HomeView() {
         </section>
       )}
 
-      {/* ── 4.4.33: Featured Album hero — "Today's Pick from Your Library" ── */}
-      {featuredAlbum && (
-        <section className="home-featured">
-          {artHashForKey(featuredAlbum.key) && (
-            <div className="home-featured-bleed" aria-hidden="true">
-              {/* Blurred backdrop — a 320px thumb blurs identically to the full art. */}
-              <AlbumArtImage hash={artHashForKey(featuredAlbum.key)!} alt="" size={320} />
-            </div>
-          )}
-          <div
-            className="home-featured-art"
-            onClick={playFeatured}
-            onKeyDown={activateOnKey(playFeatured)}
-            role="button"
-            tabIndex={0}
-            aria-label={`Play ${featuredAlbum.album} by ${featuredAlbum.artist}`}
-            title={`Play ${featuredAlbum.album} by ${featuredAlbum.artist}`}
-          >
-            {artHashForKey(featuredAlbum.key) ? (
-              <AlbumArtImage
-                hash={artHashForKey(featuredAlbum.key)!}
-                alt={featuredAlbum.album}
-                priority
-                onLoad={(e) => e.currentTarget.classList.add('home-album-art-loaded')}
-              />
-            ) : (
-              <div className="home-album-art-placeholder home-featured-art-placeholder">
-                <svg width="48" height="48" viewBox="0 0 40 40" fill="none" stroke="#999" strokeWidth="1.5">
-                  <circle cx="20" cy="20" r="18" />
-                  <circle cx="20" cy="20" r="6" />
-                  <circle cx="20" cy="20" r="2" fill="#999" />
-                </svg>
-              </div>
-            )}
-            <div className="home-featured-play-overlay" aria-hidden="true">
-              <svg width="32" height="32" viewBox="0 0 32 32" fill="#fff">
-                <path d="M10 7v18l16-9z" />
-              </svg>
-            </div>
-          </div>
-          <div className="home-featured-info">
-            <div className="home-featured-label">Today's pick</div>
-            <h2 className="home-featured-title">{featuredAlbum.album}</h2>
-            <div className="home-featured-artist">{featuredAlbum.artist}</div>
-            <div className="home-featured-meta">
-              {featuredAlbum.tracks.length} track{featuredAlbum.tracks.length === 1 ? '' : 's'}
-              {featuredAlbum.year && <> · {featuredAlbum.year}</>}
-              {featuredAlbum.totalPlays > 0 && <> · {featuredAlbum.totalPlays.toLocaleString()} play{featuredAlbum.totalPlays === 1 ? '' : 's'}</>}
-            </div>
-            <div className="home-featured-actions">
-              <button type="button" className="home-featured-btn home-featured-btn--primary" onClick={playFeatured}>
-                <svg width="12" height="12" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><path d="M10 7v18l16-9z" /></svg>
-                Play Album
-              </button>
-              <button
-                type="button"
-                className="home-featured-btn"
-                onClick={() => {
-                  requestDrillIn('artist', featuredAlbum.artist)
-                  dispatch({ type: 'SET_VIEW', view: 'artists' })
-                }}
-              >
-                More from {featuredAlbum.artist.length > 22 ? `${featuredAlbum.artist.slice(0, 22)}…` : featuredAlbum.artist}
-              </button>
-            </div>
-          </div>
-        </section>
-      )}
-
       {/* ── 4.5: Your Mixes — Spotify-style temporary vibe / daily mixes (below the hero) ── */}
       <MadeForYou />
 
+      {/* ── Recently Added ───────────────────────────────────────────────── */}
+      {recentAlbums.length > 0 && (
+      <section className="home-section">
+        <div className="home-section-header">
+          <h2 className="home-section-title">Recently Added</h2>
+          <button
+            type="button"
+            className="home-section-more"
+            onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: 'recently-added' })}
+          >
+            See All
+          </button>
+        </div>
+          <div className="home-card-row" role="list" ref={recentRowRef}>
+            {recentAlbums.map((card) => {
+              const hash = artHashForKey(card.key)
+              const flashing = flashedKey === card.key
+              const openAlbum = () => dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: card.key })
+              return (
+                <div
+                  key={card.key}
+                  className={`home-album-card${flashing ? ' is-playing-flash' : ''}`}
+                  role="listitem"
+                  tabIndex={0}
+                  onClick={openAlbum}
+                  onKeyDown={activateOnKey(openAlbum)}
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    playAlbum(card)
+                  }}
+                  title={`${card.artist} — ${card.album}\nClick opens the album. Right-click plays it.`}
+                >
+                  <div className="home-album-art">
+                    {hash ? (
+                      <AlbumArtImage
+                        hash={hash}
+                        alt={card.album}
+                        onLoad={(e) => e.currentTarget.classList.add('home-album-art-loaded')}
+                      />
+                    ) : (
+                      <div className="home-album-art-placeholder">
+                        <svg width="32" height="32" viewBox="0 0 40 40" fill="none" stroke="#999" strokeWidth="1.5">
+                          <circle cx="20" cy="20" r="18" />
+                          <circle cx="20" cy="20" r="6" />
+                          <circle cx="20" cy="20" r="2" fill="#999" />
+                        </svg>
+                      </div>
+                    )}
+                  </div>
+                  <div className="home-album-info">
+                    <div className="home-album-title">{card.album}</div>
+                    <div className="home-album-artist">{card.artist}</div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+      </section>
+      )}
+
+
       {/* ── 4.4.33: Quick stats strip — total plays, library duration, top artist, top genre ── */}
-      {lib.tracks.length > 0 && (
+      {HOME_SHOWS.stats && lib.tracks.length > 0 && (
         <section className="home-stats">
           <div className="home-stat">
             <div className="home-stat-value">{stats.totalPlays.toLocaleString()}</div>
@@ -1061,68 +1072,81 @@ export default function HomeView() {
         </section>
       )}
 
-      {/* ── Recently Added ───────────────────────────────────────────────── */}
-      {recentAlbums.length > 0 && (
-      <section className="home-section">
-        <div className="home-section-header">
-          <h2 className="home-section-title">Recently Added</h2>
-          <button
-            type="button"
-            className="home-section-more"
-            onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: 'recently-added' })}
+      {/* ── Below the four keepers, in their original relative order (Jake,
+            2026-10-18: "keep the others") ─────────────────────────────── */}
+      {HOME_SHOWS.yirCard && <YirHomeCard />}
+
+      {/* ── 4.4.33: Featured Album hero — "Today's Pick from Your Library" ── */}
+      {HOME_SHOWS.featured && featuredAlbum && (
+        <section className="home-featured">
+          {artHashForKey(featuredAlbum.key) && (
+            <div className="home-featured-bleed" aria-hidden="true">
+              {/* Blurred backdrop — a 320px thumb blurs identically to the full art. */}
+              <AlbumArtImage hash={artHashForKey(featuredAlbum.key)!} alt="" size={320} />
+            </div>
+          )}
+          <div
+            className="home-featured-art"
+            onClick={playFeatured}
+            onKeyDown={activateOnKey(playFeatured)}
+            role="button"
+            tabIndex={0}
+            aria-label={`Play ${featuredAlbum.album} by ${featuredAlbum.artist}`}
+            title={`Play ${featuredAlbum.album} by ${featuredAlbum.artist}`}
           >
-            See All
-          </button>
-        </div>
-          <div className="home-card-row" role="list" ref={recentRowRef}>
-            {recentAlbums.map((card) => {
-              const hash = artHashForKey(card.key)
-              const flashing = flashedKey === card.key
-              const openAlbum = () => dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: card.key })
-              return (
-                <div
-                  key={card.key}
-                  className={`home-album-card${flashing ? ' is-playing-flash' : ''}`}
-                  role="listitem"
-                  tabIndex={0}
-                  onClick={openAlbum}
-                  onKeyDown={activateOnKey(openAlbum)}
-                  onContextMenu={(e) => {
-                    e.preventDefault()
-                    playAlbum(card)
-                  }}
-                  title={`${card.artist} — ${card.album}\nClick opens the album. Right-click plays it.`}
-                >
-                  <div className="home-album-art">
-                    {hash ? (
-                      <AlbumArtImage
-                        hash={hash}
-                        alt={card.album}
-                        onLoad={(e) => e.currentTarget.classList.add('home-album-art-loaded')}
-                      />
-                    ) : (
-                      <div className="home-album-art-placeholder">
-                        <svg width="32" height="32" viewBox="0 0 40 40" fill="none" stroke="#999" strokeWidth="1.5">
-                          <circle cx="20" cy="20" r="18" />
-                          <circle cx="20" cy="20" r="6" />
-                          <circle cx="20" cy="20" r="2" fill="#999" />
-                        </svg>
-                      </div>
-                    )}
-                  </div>
-                  <div className="home-album-info">
-                    <div className="home-album-title">{card.album}</div>
-                    <div className="home-album-artist">{card.artist}</div>
-                  </div>
-                </div>
-              )
-            })}
+            {artHashForKey(featuredAlbum.key) ? (
+              <AlbumArtImage
+                hash={artHashForKey(featuredAlbum.key)!}
+                alt={featuredAlbum.album}
+                priority
+                onLoad={(e) => e.currentTarget.classList.add('home-album-art-loaded')}
+              />
+            ) : (
+              <div className="home-album-art-placeholder home-featured-art-placeholder">
+                <svg width="48" height="48" viewBox="0 0 40 40" fill="none" stroke="#999" strokeWidth="1.5">
+                  <circle cx="20" cy="20" r="18" />
+                  <circle cx="20" cy="20" r="6" />
+                  <circle cx="20" cy="20" r="2" fill="#999" />
+                </svg>
+              </div>
+            )}
+            <div className="home-featured-play-overlay" aria-hidden="true">
+              <svg width="32" height="32" viewBox="0 0 32 32" fill="#fff">
+                <path d="M10 7v18l16-9z" />
+              </svg>
+            </div>
           </div>
-      </section>
+          <div className="home-featured-info">
+            <div className="home-featured-label">Today's pick</div>
+            <h2 className="home-featured-title">{featuredAlbum.album}</h2>
+            <div className="home-featured-artist">{featuredAlbum.artist}</div>
+            <div className="home-featured-meta">
+              {featuredAlbum.tracks.length} track{featuredAlbum.tracks.length === 1 ? '' : 's'}
+              {featuredAlbum.year && <> · {featuredAlbum.year}</>}
+              {featuredAlbum.totalPlays > 0 && <> · {featuredAlbum.totalPlays.toLocaleString()} play{featuredAlbum.totalPlays === 1 ? '' : 's'}</>}
+            </div>
+            <div className="home-featured-actions">
+              <button type="button" className="home-featured-btn home-featured-btn--primary" onClick={playFeatured}>
+                <svg width="12" height="12" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true"><path d="M10 7v18l16-9z" /></svg>
+                Play Album
+              </button>
+              <button
+                type="button"
+                className="home-featured-btn"
+                onClick={() => {
+                  requestDrillIn('artist', featuredAlbum.artist)
+                  dispatch({ type: 'SET_VIEW', view: 'artists' })
+                }}
+              >
+                More from {featuredAlbum.artist.length > 22 ? `${featuredAlbum.artist.slice(0, 22)}…` : featuredAlbum.artist}
+              </button>
+            </div>
+          </div>
+        </section>
       )}
 
       {/* ── Top Artists ──────────────────────────────────────────────────── */}
-      {topArtists.length > 0 && (
+      {HOME_SHOWS.topArtists && topArtists.length > 0 && (
         <section className="home-section">
           <div className="home-section-header">
             <h2 className="home-section-title">Top Artists</h2>
@@ -1181,7 +1205,7 @@ export default function HomeView() {
             were three headed bands for one idea — the longest stretch of the
             page. Now one "Shows" band with three rows. Each row keeps its own
             data, cap, and ref; only the chrome merged. ─────────────────── */}
-      {((tourDates !== null && tourDates.length > 0) || (venueShows !== null && venueShows.length > 0) || (upcoming !== null && upcoming.length > 0)) && (
+      {HOME_SHOWS.shows && ((tourDates !== null && tourDates.length > 0) || (venueShows !== null && venueShows.length > 0) || (upcoming !== null && upcoming.length > 0)) && (
         <section className="home-section home-section--shows">
           <div className="home-section-header">
             <h2 className="home-section-title">Shows</h2>
@@ -1316,7 +1340,7 @@ export default function HomeView() {
       )}
 
       {/* ── 4.4.28: Notable Releases (Pitchfork Best New Albums) ─────────── */}
-      {releases !== null && releases.length > 0 && (
+      {HOME_SHOWS.newThisWeek && releases !== null && releases.length > 0 && (
         <section className="home-section">
           <div className="home-section-header">
             <h2 className="home-section-title">New This Week</h2>
@@ -1376,7 +1400,7 @@ export default function HomeView() {
       )}
 
       {/* ── 4.4.28 / 4.4.30 / 4.4.31: Music News, 70/30 personalized ─────── */}
-      {personalizedNews !== null && personalizedNews.length > 0 && (
+      {HOME_SHOWS.news && personalizedNews !== null && personalizedNews.length > 0 && (
         <section className="home-section">
           <div className="home-section-header">
             <h2 className="home-section-title">Music News</h2>
