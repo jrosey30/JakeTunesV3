@@ -676,8 +676,6 @@ declare global {
       loadMetadataOverrides: () => Promise<{ ok: boolean; overrides: Record<string, unknown> }>
       saveMetadataOverride: (trackId: number, field: string, value: string, fingerprint?: string) => Promise<{ ok: boolean }>
       loadMobileStars: () => Promise<{ ok: boolean; trackIds: string[] }>
-      loadMobilePlaylists: () => Promise<{ ok: boolean; playlists: Array<{ id: string; name: string; trackIds: string[]; createdAt?: string; source?: string }> }>
-      loadPlaylistAdditions: () => Promise<{ ok: boolean; additions: Record<string, string[]> }>
       // Brief 122 — "Listen to the List". Read mirrors recommendations.json
       // from the NAS state dir; add/delete route through the Mini backend
       // so it stays the single writer (cache-coherent + iTunes-enriched).

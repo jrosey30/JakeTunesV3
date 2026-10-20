@@ -46,6 +46,9 @@ export interface LibraryIpcHost {
   claudeCall: ClaudeCall
   getPlaylists: () => Promise<unknown[]>
   setPlaylists: (playlists: unknown[]) => void
+  /** Runs before load-playlists answers: folds in the phone's playlist edits
+   *  (phone-playlist-sync.ts) so the first sidebar render already has them. */
+  beforeLoadPlaylists?: () => Promise<unknown>
   isSaveLocked: () => string | null
   /** The one reason this module ever sends. Typed as the literal so the
    *  host can keep its narrow SyncReason union — (reason: string) here
@@ -142,6 +145,7 @@ export function registerLibraryIpc(ipc: IpcRegistrar, host: LibraryIpcHost): voi
     suppressListeningWrites() ? { ok: true, suppressed: 'dev-review' } : recordRating(track), { refuse: undefined })
 
   ipc.handle('load-playlists', async () => {
+    await host.beforeLoadPlaylists?.().catch((err) => console.warn('[phone-playlists] launch apply failed (serving saved playlists):', err))
     return { ok: true, playlists: await host.getPlaylists() }
   }, { public: true })
 
