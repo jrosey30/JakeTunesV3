@@ -10,7 +10,7 @@ import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { canonicalArtist } from '../utils/artistAlias'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import { albumCreditReleaseDate, formatReleaseDateDisplay } from '../utils/albumReleaseDate'
-import { albumDetailBackLabel } from '../utils/albumBackLabel'
+import { albumDetailBackLabel, backLabelForLocation } from '../utils/albumBackLabel'
 import { useNavigation } from '../context/NavigationContext'
 import { lookupArtwork, buildNormalizedArtworkIndex, clearArtworkNegativeCache } from '../utils/artworkLookup'
 import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
@@ -85,9 +85,11 @@ export default function AlbumDetailView() {
   const tracklistRef = useRef<HTMLDivElement>(null)
   useScrollPersistence(`album-detail:${albumKey}`, tracklistRef)
 
-  const { canGoBack, goBack: navBack } = useNavigation()
+  const { canGoBack, goBack: navBack, backTo, backToSearch } = useNavigation()
   const returnView = lib.albumDetailReturnView || 'albums'
-  const backLabel = albumDetailBackLabel(lib.albumDetailReturnView)
+  // The label names where the click lands: history when there is history,
+  // else the stored return view — the same two branches as goBack below.
+  const backLabel = (canGoBack && backLabelForLocation(backTo, backToSearch)) || albumDetailBackLabel(lib.albumDetailReturnView)
   // Prefer the real history (so this matches the titlebar ‹ and ⌘[); fall back
   // to the stored return view only when there's nothing to go back to.
   const goBack = useCallback(() => {

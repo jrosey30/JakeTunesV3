@@ -22,6 +22,11 @@ interface NavigationApi {
   canGoForward: boolean
   goBack: () => void
   goForward: () => void
+  /** Where goBack() will land (null at the start of history) — so a back
+   *  button can name the page it actually returns to. */
+  backTo: NavLocation | null
+  /** goBack() will re-open a search instead (detail opened from search). */
+  backToSearch: boolean
   /** Mark that the next navigation opens a detail FROM a search result, so the
    *  first back out of it re-opens the search dropdown with this query. */
   recordSearch: (query: string) => void
@@ -142,6 +147,8 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
     canGoForward: histCanForward(navRef.current),
     goBack,
     goForward,
+    backTo: navRef.current.index > 0 ? navRef.current.history[navRef.current.index - 1] : null,
+    backToSearch: !!searchReturnRef.current && searchReturnRef.current.atIndex === navRef.current.index,
     recordSearch,
   }
 
