@@ -1094,6 +1094,17 @@ const electronAPI = {
     ipcRenderer.on('home-spotlight-updated', handler)
     return () => { ipcRenderer.removeListener('home-spotlight-updated', handler) }
   },
+  // 2026-10-20 — the three Home rows under G (GET /api/home-shelves), cached
+  // in main; with no fresh copy the renderer builds them from this Mac's
+  // library + play history (src/common/home-shelves-doc.ts).
+  homeShelvesGet: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:get'),
+  homeShelvesRefresh: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:refresh'),
+  homeShelvesLocalPlays: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:local-plays'),
+  onHomeShelvesUpdated: (callback: (state: unknown) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state)
+    ipcRenderer.on('home-shelves-updated', handler)
+    return () => { ipcRenderer.removeListener('home-shelves-updated', handler) }
+  },
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

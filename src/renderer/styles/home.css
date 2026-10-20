@@ -733,6 +733,43 @@
   margin-top: 2px;
 }
 
+/* ── The three shelves under G (2026-10-20, components/HomeShelves.tsx) ──
+   The album card above, with one rule changed: names never clip. Title and
+   artist wrap to the lines they need at the card's pinned 156px (the row
+   aligns cards to the top, so a two-line title just makes its card taller),
+   and a third line carries the reason, the play count or the date added. */
+.home-album-card--shelf .home-album-title,
+.home-album-card--shelf .home-album-artist {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+}
+.home-album-card--shelf .home-album-info { overflow: visible; }
+.home-card-row:has(> .home-album-card--shelf) { align-items: flex-start; }
+.home-shelves-note {
+  margin-top: 3px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--text-dim, #8a8378);
+  overflow-wrap: anywhere;
+}
+.home-shelves-note--count {
+  color: rgb(var(--brand-orange-rgb));
+  font-weight: 600;
+}
+/* "See All 10": the ten in place, in order — the same grid-in-place Shows'
+   "See All" opens into. At most five across, so a wide window reads as the
+   five you saw over the five more; a narrow one simply wraps sooner. */
+.home-card-row--shelf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 156px);
+  gap: 22px 16px;
+  overflow-x: visible;
+  max-width: calc(5 * 156px + 4 * 16px + 56px);
+  box-sizing: border-box;
+}
+
 /* ── Artist card (smaller, circular art) ──────────────────────────────── */
 .home-card-row--artists {
   /* slightly tighter gap since artists cards are smaller */

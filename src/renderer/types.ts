@@ -1103,6 +1103,11 @@ declare global {
       homeSpotlightGet?: () => Promise<{ ok: boolean; state?: import('../common/home-spotlight-doc').HomeSpotlightState }>
       homeSpotlightRefresh?: () => Promise<{ ok: boolean; state?: import('../common/home-spotlight-doc').HomeSpotlightState }>
       onHomeSpotlightUpdated?: (callback: (state: import('../common/home-spotlight-doc').HomeSpotlightState) => void) => () => void
+      // 2026-10-20 — the three Home rows under G; see src/common/home-shelves-doc.ts.
+      homeShelvesGet?: () => Promise<{ ok: boolean; state?: import('../common/home-shelves-doc').HomeShelvesState }>
+      homeShelvesRefresh?: () => Promise<{ ok: boolean; state?: import('../common/home-shelves-doc').HomeShelvesState }>
+      homeShelvesLocalPlays?: () => Promise<{ ok: boolean; plays?: Array<{ id: number | string; ts: number }> }>
+      onHomeShelvesUpdated?: (callback: (state: import('../common/home-shelves-doc').HomeShelvesState) => void) => () => void
     }
   }
 }
