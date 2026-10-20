@@ -1108,6 +1108,9 @@ declare global {
       homeShelvesRefresh?: () => Promise<{ ok: boolean; state?: import('../common/home-shelves-doc').HomeShelvesState }>
       homeShelvesLocalPlays?: () => Promise<{ ok: boolean; plays?: Array<{ id: number | string; ts: number }> }>
       onHomeShelvesUpdated?: (callback: (state: import('../common/home-shelves-doc').HomeShelvesState) => void) => () => void
+      // 2026-10-20 — the phone's and workmini's plays, display only; see src/common/plays-elsewhere.ts.
+      playsElsewhereGet?: () => Promise<{ ok: boolean; state?: import('../common/plays-elsewhere').PlaysElsewhereState }>
+      onPlaysElsewhereUpdated?: (callback: (state: import('../common/plays-elsewhere').PlaysElsewhereState) => void) => () => void
     }
   }
 }

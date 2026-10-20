@@ -7,6 +7,8 @@ import { useVirtualScroll } from '../hooks/useVirtualScroll'
 import { useScrollPersistence, getSavedScrollTop } from '../hooks/useScrollPersistence'
 import { getColumnCache, setColumnCache, primeColumnCacheFromUiState, DEFAULT_HIDDEN, orderColumnKeys } from '../utils/columnState'
 import { useSortedTracks } from '../hooks/useSortedTracks'
+import { usePlaysElsewhere } from '../playsElsewhere'
+import { playsEverywhere } from '../../common/plays-elsewhere'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { getSnapshot as recentlyAddedSnapshot, isRecentlyAdded, subscribe as subscribeRecentlyAdded } from '../state/recentlyAdded'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
@@ -169,6 +171,7 @@ const SongRow = memo(function SongRow({
   track, idx, isPlaying, isSelected, isRecent, isFindHit, gridTemplate, visibleCols,
   onClick, onDoubleClick, onContextMenu, onDragStart, onRatingChange, downloaded, downloading,
 }: SongRowProps) {
+  const elsewhere = usePlaysElsewhere()
   return (
     <div
       className={`songs-row ${idx % 2 ? 'songs-row--alt' : ''} ${isPlaying ? 'songs-row--playing' : ''} ${isSelected ? 'songs-row--selected' : ''} ${isRecent ? 'songs-row--recently-added' : ''} ${isFindHit ? 'songs-row--find' : ''}`}
@@ -244,7 +247,7 @@ const SongRow = memo(function SongRow({
           case 'dateAdded':
             return <div key={col.key} className="songs-cell">{formatDateAdded(track.dateAdded)}</div>
           case 'playCount':
-            return <div key={col.key} className="songs-cell songs-cell--plays">{track.playCount || ''}</div>
+            return <div key={col.key} className="songs-cell songs-cell--plays">{playsEverywhere(track, elsewhere) || ''}</div>
           case 'channelMode':
             return <div key={col.key} className="songs-cell">{track.channelMode === 'mono' ? 'Mono' : track.channelMode === 'stereo' ? 'Stereo' : ''}</div>
           case 'bpm': {
@@ -334,7 +337,8 @@ export default function SongsView() {
   // Declared full concerts (merged track + un-promoted constituents) don't
   // appear in the Songs list — they live in the Full Live Concerts section.
   const regularTracks = useRegularLibraryTracks(lib.tracks)
-  const sorted = useSortedTracks(regularTracks, lib.sortColumn, lib.sortDirection, lib.searchQuery)
+  const elsewhere = usePlaysElsewhere()
+  const sorted = useSortedTracks(regularTracks, lib.sortColumn, lib.sortDirection, lib.searchQuery, elsewhere)
   // 4.4.22: seed useVirtualScroll's internal scrollTop from the persisted
   // value so the FIRST render computes startIndex/endIndex correctly.
   // Pair with useScrollPersistence(key, containerRef) which then keeps

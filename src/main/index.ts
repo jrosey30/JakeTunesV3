@@ -9417,8 +9417,8 @@ const mobileReadsApi = registerMobileReadsIpc(ipc, {
   mobilePlaylistsCache,
   ragTrackYearMap,
   playlistAdditionsCache,
+  isReplica: isHomeminiPlaybackClientCached,
 })
-
 
 // Brief 122 — "Listen to the List". recommendations.json is a bare JSON
 // array of Recommendation objects. The Mini backend (homemini) is the

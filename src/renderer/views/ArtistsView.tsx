@@ -35,6 +35,8 @@ import FavoriteArtistsRow, { type FavoriteCandidate } from '../components/Favori
 import { Track } from '../types'
 import { artistIdentityKey, canonicalArtist, subscribeAliases, getAliasVersion } from '../utils/artistAlias'
 import { GENRES } from '../../common/genre-vocab'
+import { playsEverywhere } from '../../common/plays-elsewhere'
+import { usePlaysElsewhere } from '../playsElsewhere'
 import '../styles/artists.css'
 import '../styles/artists-grid.css'
 
@@ -78,6 +80,8 @@ export default function ArtistsView(): JSX.Element {
   const [listFilter, setListFilter] = useState('')
   const aliasVersion = useSyncExternalStore(subscribeAliases, getAliasVersion)
   const regularTracks = useRegularLibraryTracks(lib.tracks)
+  // 2026-10-20 — "Most played" counts the phone's and workmini's plays too. Display only.
+  const elsewhere = usePlaysElsewhere()
   const viewRootRef = useRef<HTMLDivElement>(null)
   useScrollPersistence('artists', viewRootRef)
 
@@ -92,7 +96,7 @@ export default function ArtistsView(): JSX.Element {
         if (t.album) albums.add(t.album)
         if (t.genre) genres.set(t.genre, (genres.get(t.genre) ?? 0) + 1)
         if (t.origin) origins.set(t.origin, (origins.get(t.origin) ?? 0) + 1)
-        plays += Number(t.playCount) || 0
+        plays += playsEverywhere(t, elsewhere)
         const d = String(t.dateAdded || '').slice(0, 10)
         if (d && (!added || d < added)) added = d
       }
@@ -100,7 +104,7 @@ export default function ArtistsView(): JSX.Element {
       return { name, tracks, albums: albums.size, plays, added, genre, family: FAMILY.get(genre) ?? '', origin: top(origins) }
     }).sort((a, b) => compareNames(a.name, b.name))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [regularTracks, aliasVersion])
+  }, [regularTracks, aliasVersion, elsewhere])
 
   // The toolbar search pill + the in-view filter (name, genre, family or country).
   const q = (lib.searchQuery || '').trim().toLowerCase()

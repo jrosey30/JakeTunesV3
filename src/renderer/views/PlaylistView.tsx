@@ -40,6 +40,8 @@ import { songsGridTemplate, songsGridTemplateFixed } from '../utils/songsGridTem
 import '../styles/songs.css'
 import { addToPlaylistEntry, addToIpodPoolEntry, queueMenuEntries } from '../utils/playlistMenu'
 import { getInfoTarget } from '../../common/get-info-target'
+import { playsEverywhere } from '../../common/plays-elsewhere'
+import { usePlaysElsewhere } from '../playsElsewhere'
 
 function formatDuration(ms: number): string {
   if (!ms || ms <= 0) return ''
@@ -81,6 +83,8 @@ const STRIP_SETTLE_MS = 1500
 
 export default function PlaylistView() {
   const { state, dispatch } = useLibrary()
+  // 2026-10-20 — Plays shows the count everywhere (phone + workmini too). Display only.
+  const elsewhere = usePlaysElsewhere()
   const { state: pb, dispatch: pbDispatch } = usePlayback()
   const { playTrack } = useAudio()
   const { openCynthia } = useCynthia()
@@ -356,7 +360,7 @@ export default function PlaylistView() {
         case 'year': av = a.year || 0; bv = b.year || 0; break
         case 'time': av = a.duration || 0; bv = b.duration || 0; break
         case 'dateAdded': av = a.dateAdded || ''; bv = b.dateAdded || ''; break
-        case 'playCount': av = a.playCount || 0; bv = b.playCount || 0; break
+        case 'playCount': { const d = playsEverywhere(a, elsewhere) - playsEverywhere(b, elsewhere); return sortDir === 'asc' ? d : -d }
         case 'rating': av = a.rating || 0; bv = b.rating || 0; break
         case 'channelMode': av = a.channelMode || ''; bv = b.channelMode || ''; break
         default: return 0
@@ -366,7 +370,7 @@ export default function PlaylistView() {
       const cmp = aStr < bStr ? -1 : aStr > bStr ? 1 : 0
       return sortDir === 'asc' ? cmp : -cmp
     })
-  }, [tracks, sortCol, sortDir])
+  }, [tracks, sortCol, sortDir, elsewhere])
 
   // Sort handler
   // 4.5: suppress sort if a column resize just ended — the implicit
@@ -1054,7 +1058,7 @@ export default function PlaylistView() {
                     case 'dateAdded':
                       return <div key={col.key} className="songs-cell songs-cell--time">{formatAppDate(track.dateAdded)}</div>
                     case 'playCount':
-                      return <div key={col.key} className="songs-cell songs-cell--plays">{track.playCount || ''}</div>
+                      return <div key={col.key} className="songs-cell songs-cell--plays">{playsEverywhere(track, elsewhere) || ''}</div>
                     default:
                       return null
                   }
