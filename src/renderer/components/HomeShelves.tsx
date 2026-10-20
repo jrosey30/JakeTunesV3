@@ -9,7 +9,10 @@
  *   You've Been Listening To A Lot  most plays in 30 days, with the count
  *   Recently Added                  newest albums, with the date added
  *
- * Five cards each. "See All 10" opens the two song rows to ten in place (the
+ * Five cards each. You Should Listen To More's "See All" opens Listen More
+ * Weekly (2026-10-20: homemini's weekly playlist, whose first songs the row
+ * is) — or, with no copy of it yet, grows to ten in place like the second
+ * row; "See All 10" opens that row to ten in place (the
  * same grid-in-place Shows uses); Recently Added's "See All" opens the Recently
  * Added playlist, as the old row did (Jake, mid-build: "should bring you to
  * recently added playlist"). Click a song → it plays, with the rest of the row
@@ -27,6 +30,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import AlbumArtImage from './AlbumArtImage'
 import { useHomeShelves } from '../homeShelves'
+import { useListenMoreWeekly } from '../listenMoreWeekly'
 import { albumKeyOf } from '../utils/albumKey'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import { lookupArtwork, queueArtworkResolutions } from '../utils/artworkLookup'
@@ -39,7 +43,7 @@ import type { Track } from '../types'
 
 type ShelfAction =
   | { type: 'VIEW_ALBUM_DETAIL'; albumKey: string }
-  | { type: 'VIEW_SMART_PLAYLIST'; id: 'recently-added' }
+  | { type: 'VIEW_SMART_PLAYLIST'; id: 'recently-added' | 'listen-more-weekly' }
   | { type: 'ADD_ARTWORK'; key: string; hash: string }
 
 interface Props {
@@ -74,12 +78,14 @@ function Placeholder(): JSX.Element {
   )
 }
 
-function SongRow({ title, scrollKey, cards, artFor, playTrack }: {
+function SongRow({ title, scrollKey, cards, artFor, playTrack, openAll }: {
   title: string
   scrollKey: string
   cards: SongCard[]
   artFor: (t: Track) => string | undefined
   playTrack: Props['playTrack']
+  /** When set, "See All" opens this (a playlist) instead of growing the row. */
+  openAll?: () => void
 }): JSX.Element {
   const [all, setAll] = useState(false)
   const menus = useHomeItemMenus()
@@ -98,7 +104,9 @@ function SongRow({ title, scrollKey, cards, artFor, playTrack }: {
     <section className="home-section home-shelves-row" ref={groupRef} aria-label={title}>
       <div className="home-section-header">
         <h2 className="home-section-title">{title}</h2>
-        {more && (
+        {openAll ? (
+          <button type="button" className="home-section-more" onClick={openAll}>See All</button>
+        ) : more && (
           <button type="button" className="home-section-more" onClick={toggle} aria-expanded={all}>
             {all ? `Show Top ${SHELF_SHOWN}` : `See All ${Math.min(cards.length, SHELF_MAX)}`}
           </button>
@@ -139,6 +147,9 @@ function SongRow({ title, scrollKey, cards, artFor, playTrack }: {
 
 export default function HomeShelves({ tracks, regularTracks, artworkMap, artIndex, dispatch, playTrack }: Props): JSX.Element | null {
   const { shelves } = useHomeShelves(tracks, regularTracks)
+  // Listen More Weekly (2026-10-20): the row is the first songs of homemini's
+  // weekly playlist, and "See All" opens it — when this Mac has a copy.
+  const weekly = useListenMoreWeekly()
   const menus = useHomeItemMenus()
   const recentRowRef = useRef<HTMLDivElement>(null)
   useScrollPersistence('home-row-recent', recentRowRef)
@@ -183,7 +194,8 @@ export default function HomeShelves({ tracks, regularTracks, artworkMap, artInde
   return (
     <>
       {gems.length > 0 && (
-        <SongRow title="You Should Listen To More" scrollKey="home-row-listen-more" cards={gems} artFor={artFor} playTrack={playTrack} />
+        <SongRow title="You Should Listen To More" scrollKey="home-row-listen-more" cards={gems} artFor={artFor} playTrack={playTrack}
+          openAll={weekly ? () => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: 'listen-more-weekly' }) : undefined} />
       )}
       {heavy.length > 0 && (
         <SongRow title="You’ve Been Listening To A Lot" scrollKey="home-row-listening-a-lot" cards={heavy} artFor={artFor} playTrack={playTrack} />

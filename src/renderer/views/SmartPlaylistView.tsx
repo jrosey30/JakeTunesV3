@@ -6,10 +6,12 @@ import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { attachClipToBroadcast, detachClipFromBroadcast } from '../audio/eq'
 import { evaluateSmartPlaylist } from '../utils/smartPlaylists'
+import { smartPlaylistCover } from '../utils/playlistCovers'
+import { useListenMoreWeekly } from '../listenMoreWeekly'
 import { isTop25Rankable } from '../../common/top25-rankable'
 import { playsEverywhere } from '../../common/plays-elsewhere'
 import { usePlaysElsewhere, useTracksEverywhere } from '../playsElsewhere'
-import { Track } from '../types'
+import { Track, type SmartPlaylistId } from '../types'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import { downloadMenuEntries, subscribeDownloads, downloadsVersion, isDownloaded, isDownloading } from '../utils/downloadStore'
@@ -43,6 +45,7 @@ function formatDuration(ms: number): string {
 
 const TITLES: Record<string, string> = {
   'best-of-year': `Best of ${new Date().getFullYear()}`,
+  'listen-more-weekly': 'Listen More Weekly',
   'recently-added': 'Recently Added',
   'recently-played': 'Recently Played',
   'top-25': 'Top 25 Most Played',
@@ -343,11 +346,20 @@ export default function SmartPlaylistView() {
   // user hasn't picked an explicit sort column.
   const [starredReversed, setStarredReversed] = useState(false)
 
+  // Listen More Weekly (2026-10-20): homemini's weekly playlist — its song
+  // order, resolved against this Mac's library (shared ids).
+  const weekly = useListenMoreWeekly()
+
   const smartTracks = useMemo(() => {
     if (!playlistId) return []
     // Rank on `everywhere`, hand back the library's own track objects.
     const ownById = everywhere === libState.tracks ? null : new Map(libState.tracks.map(t => [t.id, t]))
     const own = (list: Track[]): Track[] => ownById ? list.map(t => ownById.get(t.id) ?? t) : list
+    if (playlistId === 'listen-more-weekly') {
+      if (!weekly) return []
+      const byId = new Map(libState.tracks.map((t) => [t.id, t]))
+      return weekly.trackIds.map((id) => byId.get(id)).filter((t): t is Track => t !== undefined)
+    }
 
     // 4.4.46: the four built-in smart playlists are now evaluated by
     // the SHARED `evaluateSmartPlaylist` (src/renderer/utils/smartPlaylists.ts)
@@ -404,7 +416,7 @@ export default function SmartPlaylistView() {
         .slice(0, 25))
     }
     return own(evaluateSmartPlaylist(playlistId, everywhere))
-  }, [playlistId, libState.tracks, everywhere, picks, topWindow, windowedCounts])
+  }, [playlistId, libState.tracks, everywhere, picks, topWindow, windowedCounts, weekly])
 
   // Apply search filter — every word must appear somewhere across all fields
   const filteredTracks = useMemo(() => {
@@ -957,6 +969,7 @@ export default function SmartPlaylistView() {
 
   const isPicksView = picksConfig !== null
   const displayName = isPicksView && picks?.name ? picks.name : title
+  const cover = playlistId ? smartPlaylistCover(playlistId as SmartPlaylistId) : null
   const loadingLabel =
     picksConfig?.kind === 'megan'   ? 'Megan is picking tracks…' :
     picksConfig?.kind === 'djhands' ? 'DJ Stephen Hands is picking tracks…' :
@@ -965,6 +978,13 @@ export default function SmartPlaylistView() {
   return (
     <div className="playlist-view">
       <div className="playlist-view-header">
+        {/* The playlists homemini makes get their own art (Jake 2026-10-20:
+            "something noticeable"); the rest keep the plain header. */}
+        {cover && (
+          <div className="playlist-view-cover playlist-view-cover--static">
+            <img src={cover} alt="" className="playlist-view-cover-img" />
+          </div>
+        )}
         <div>
           <h2 className="playlist-view-name">{displayName}</h2>
           <div className="playlist-view-meta">

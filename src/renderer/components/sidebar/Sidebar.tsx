@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react'
 import { SMART_PLAYLIST_NAMES } from '../../utils/playlistMenu'
 import { BEST_OF_YEAR_NAME } from '../../utils/smartPlaylists'
+import { smartPlaylistCover } from '../../utils/playlistCovers'
 import { useLibrary } from '../../context/LibraryContext'
 import { subscribeQueue, getQueue } from '../../views/DownloadStore/downloadQueue'
 import { downloadsPanelRows, panelSummary, downloadsBadge } from '../../../common/downloads-panel-model'
@@ -65,6 +66,9 @@ const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
 // taller rows, and bolder labels — see styles/sidebar.css.
 
 const smartPlaylists: { label: string; id: SmartPlaylistId }[] = [
+  // homemini's weekly playlist (2026-10-20). Sidebar only — not in
+  // BUILTIN_SMART_PLAYLISTS, so it never goes to the iPod.
+  { label: 'Listen More Weekly', id: 'listen-more-weekly' },
   { label: BEST_OF_YEAR_NAME, id: 'best-of-year' },
   { label: 'Recently Added', id: 'recently-added' },
   { label: 'Recently Played', id: 'recently-played' },
@@ -168,6 +172,13 @@ function CassetteIcon() {
       <path d="M10.2 12h3.6" />
     </svg>
   )
+}
+
+/** A smart playlist's icon: its own cover when it has one (Listen More Weekly,
+ *  Best of <year> — Jake: "needs its own distinct logo"), else the gear list. */
+function SmartIcon({ id }: { id: SmartPlaylistId }) {
+  const cover = smartPlaylistCover(id)
+  return cover ? <img src={cover} alt="" className="sidebar-cover-icon" draggable={false} /> : <SmartPlaylistIcon />
 }
 
 function SmartPlaylistIcon() {
@@ -718,7 +729,7 @@ export default function Sidebar() {
               <div key={`pin-${id}`} onContextMenu={(e) => handlePlaylistContextMenu(e, sp.id, sp.label, 'smart')}>
                 <SidebarItem
                   label={sp.label}
-                  icon={<SmartPlaylistIcon />}
+                  icon={<SmartIcon id={sp.id} />}
                   selected={state.currentView === 'smart-playlist' && state.activeSmartPlaylist === sp.id}
                   onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: sp.id })}
                 />
@@ -745,7 +756,7 @@ export default function Sidebar() {
             <div key={sp.id} onContextMenu={(e) => handlePlaylistContextMenu(e, sp.id, sp.label, 'smart')}>
               <SidebarItem
                 label={sp.label}
-                icon={<SmartPlaylistIcon />}
+                icon={<SmartIcon id={sp.id} />}
                 selected={state.currentView === 'smart-playlist' && state.activeSmartPlaylist === sp.id}
                 onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: sp.id })}
               />
