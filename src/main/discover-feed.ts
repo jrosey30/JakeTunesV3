@@ -310,6 +310,34 @@ export function dropListed<L extends { cards: unknown[] }>(
     .filter((l) => l.cards.length > 0)
 }
 
+/** Leave out what Jake said "Not for me" to — an artist (notForMe) or one
+ *  card's hard rest (CARD_REST_VIEWS, 14 days, as in filterFeed) — on THIS
+ *  Mac or the other one (`fb` is main/discovery-feedback.ts
+ *  sharedDiscoveryFeedback). Run on every feed that leaves main, like
+ *  dropListed: a cached feed was filtered when it was built, and a verdict
+ *  from the other Mac arrives after that (2026-10-20). View rotation is NOT
+ *  applied here — it counts serves, and serving is what moves it. A lane
+ *  left empty goes too. */
+export function dropVetoed<L extends { cards: unknown[] }>(
+  lanes: L[],
+  fb: { notForMe: Record<string, unknown>; served: Record<string, { views: number; last: number } | undefined> },
+  now: number,
+  restMs = 14 * 24 * 3600 * 1000,
+): L[] {
+  return lanes
+    .map((l) => ({
+      ...l,
+      cards: l.cards.filter((x) => {
+        const c = x as Partial<FeedCard>
+        if (typeof c.artist !== 'string' || !c.artist) return true
+        if (fb.notForMe[normKey(c.artist)]) return false
+        const sv = fb.served[cardKey({ artist: c.artist, title: c.title ?? '' })]
+        return !(sv && sv.views >= CARD_REST_VIEWS && now - sv.last < restMs)
+      }),
+    }))
+    .filter((l) => l.cards.length > 0)
+}
+
 // ── Quality floor ────────────────────────────────────────────────────
 // The brain's floor for a shelf spot. Below BRAIN_FLOOR the brain doesn't
 // actually believe in the pick; a thin lane may back-fill with its best

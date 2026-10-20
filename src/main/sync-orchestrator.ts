@@ -127,7 +127,7 @@ const SAFETY_NET_INTERVAL_MS = 21_600_000 // 6 h — rare full reconcile (10 min
 const RUN_TIMEOUT_MS = 600_000            // kill a hung sync after 10 min
 
 export type SyncReason =
-  | 'import' | 'metadata-edit' | 'playlist' | 'safety-net' | 'manual' | 'artwork' | 'nas-recovery' | 'startup'
+  | 'import' | 'metadata-edit' | 'playlist' | 'safety-net' | 'manual' | 'artwork' | 'nas-recovery' | 'startup' | 'taste'
 
 let getWindow: (() => BrowserWindow | null) | null = null
 let debounceTimer: NodeJS.Timeout | null = null
@@ -147,7 +147,7 @@ let preempted = false
 // over the whole 73 GB library for one new cover — though the artwork leg
 // runs in every mode.
 const isQuickReason = (r: SyncReason): boolean =>
-  r === 'import' || r === 'metadata-edit' || r === 'playlist' || r === 'nas-recovery' || r === 'artwork' || r === 'startup'
+  r === 'import' || r === 'metadata-edit' || r === 'playlist' || r === 'nas-recovery' || r === 'artwork' || r === 'startup' || r === 'taste'
 
 function armTimer(): void {
   if (debounceTimer) clearTimeout(debounceTimer)
@@ -431,6 +431,7 @@ async function flushDebounce(): Promise<void> {
  *     playlist changes (batched)
  *   - 'playlist' — post-save-playlists (batched)
  *   - 'startup' — the catch-up pass after launch (batched)
+ *   - 'taste' — a taste choice to carry to the other Mac (batched, quick)
  *   - 'safety-net' — periodic full reconcile tick (6 h)
  *   - 'manual' — explicit user action
  */

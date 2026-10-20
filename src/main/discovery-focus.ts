@@ -15,20 +15,33 @@
  *   - blocks(card) also keeps out artists he marked Dislike — unless they
  *     are on a focus playlist (what he put on Rocksurgence beats the quiz)
  * Respect never blocks and never steers. No quiz answers = no-op.
+ * Both Macs' answers count (loadRockDna, 2026-10-20).
  */
 import { join } from 'path'
 import { readFile } from 'fs/promises'
 import { loadTasteProfile, dropExceptionAnchors, exemplarPool, focusAnchors, genreBlocked, normName, type TasteProfile } from './taste-profile.ts'
 import { normalizeDnaState, buildProfile, dnaPromptLine, dislikedArtists, type DnaState } from '../common/rock-dna.ts'
 import { loadTagCache, saveTagCache, ensureArtistTags, cachedTags, musicBrainzTags } from './artist-tags.ts'
+import { elsewhereSources } from './taste-elsewhere.ts'
+import { mergeDnaStates, TASTE_ELSEWHERE_DIR } from '../common/taste-shared.ts'
 
 export const TASTE_PROFILE_FILE = 'taste-profile.json'
 export const ARTIST_TAGS_FILE = 'artist-tags.json'
 export const ROCK_DNA_FILE = 'rock-dna.json'
 
 /** Missing or unreadable = an empty quiz: discovery behaves exactly as before. */
+async function readDna(file: string): Promise<DnaState | null> {
+  try { return normalizeDnaState(JSON.parse(await readFile(file, 'utf8'))) } catch { return null }
+}
+/** The quiz as Jake left it on EITHER Mac (2026-10-20): this Mac's file plus
+ *  the other Mac's copy the sync script pulls into taste-elsewhere/<source>/,
+ *  merged answer by answer (src/common/taste-shared.ts mergeDnaStates). The
+ *  Record Shop's Dislike gate and the quiz screen both read this; a save
+ *  writes this Mac's file only. */
 export async function loadRockDna(dir: string): Promise<DnaState> {
-  try { return normalizeDnaState(JSON.parse(await readFile(join(dir, ROCK_DNA_FILE), 'utf8'))) } catch { return normalizeDnaState(null) }
+  const sources = await elsewhereSources(dir)
+  const states = await Promise.all([join(dir, ROCK_DNA_FILE), ...sources.map((s) => join(dir, TASTE_ELSEWHERE_DIR, s, ROCK_DNA_FILE))].map(readDna))
+  return mergeDnaStates(states)
 }
 /** Only the artist's most-voted tags count — one stray "math rock" vote
  *  among eight tags must not shut a band out. */

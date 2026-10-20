@@ -116,6 +116,7 @@ function reasonLabel(reason: string | null): string {
     case 'safety-net':    return 'Routine backup'
     case 'artwork':       return 'New artwork'
     case 'startup':       return 'Catch-up after launch'
+    case 'taste':         return 'Taste choices'
     case 'manual':        return 'Manual'
     default:              return reason || 'Sync'
   }

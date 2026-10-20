@@ -54,6 +54,32 @@ otherwise. Too few verdicts → "insufficient data", never a score. 7. Publish.
   refused.
 - Scores are quantile-mapped onto v5's distribution, so TASTE_W keeps its meaning.
 
+## Both Macs (2026-10-20)
+Jake's taste choices hold on the MacBook and workmini, wherever he made them:
+Record Shop "Not for me" (+ "Allow again"), strip ✕ / refresh / add, Discovery
+verdicts, the Rock DNA quiz and its Dislikes.
+- Each Mac writes only its own `discovery-feedback.json`, `taste-ledger.jsonl`,
+  `rock-dna.json`. The sync script pushes them to homemini (hub folder, or
+  `replicas/<name>/`) and pulls the OTHER Mac's copies into
+  `userData/taste-elsewhere/<source>/` (`pull_taste_elsewhere`).
+- The app merges those read-only copies in memory (`src/common/taste-shared.ts`,
+  readers in `src/main/taste-elsewhere.ts`): a union, the newest verdict wins
+  (allow vs reject per artist, each quiz answer by its `at`, a retake supersedes
+  the run before it). The strip's rules are unchanged and count both Macs: two
+  refreshes, one on each Mac, hide for 90 days. An add made on the other Mac
+  reads as "taken back" only once it is a day old.
+- The Record Shop applies the merged verdicts when it builds the feed AND every
+  time a feed leaves main (`dropVetoed`), so a cached feed loses a card the
+  moment the other Mac's "Not for me" arrives.
+- `taste-weights.json` and `taste-profile.json` have one writer (the laptop): a
+  replica mirrors the hub's copy into its userData on every sync (valid JSON,
+  newer only) and the workmini deploy carries them in SIDECARS.
+- A taste choice queues a batched `taste` sync (≤ 5 min) so it leaves the Mac
+  without waiting for an unrelated library save.
+- Not shared: the strip learner (08:45) still learns weights from the laptop's
+  own ledger only.
+Tests: `src/main/__tests__/taste-shared.test.ts`, `sync-script-taste-shared.test.ts`.
+
 ## First readings (10/19, real data, out-of-time)
 | test | challenger | v5 |
 |---|---|---|
