@@ -50,10 +50,30 @@ const contentSig = (p: HubPlaylistLike): string =>
 const setSig = (ps: HubPlaylistLike[]): string =>
   JSON.stringify([...ps].map((p) => [String(p.id), contentSig(p), String(p.modifiedAt ?? '')]).sort())
 
+const memberTimes = (raw: unknown): Record<string, number> => {
+  const out: Record<string, number> = {}
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof v === 'number' && Number.isFinite(v)) out[k] = v
+    }
+  }
+  return out
+}
+const memberSet = (p: HubPlaylistLike): Set<string> =>
+  new Set(Array.isArray(p.trackIds) ? p.trackIds.map(String) : [])
+
 /**
  * Stamp modifiedAt across a save: content changed (or brand new) → now;
  * unchanged → carry the PREVIOUS stamp (the renderer round-trips objects
  * without ever knowing about stamps).
+ *
+ * 2026-10-20 — also `memberChangedAt` (trackId → epoch ms): WHEN each
+ * track's membership in this playlist last changed on a desktop. Tracks
+ * that joined or left since the previous save get now; everything else
+ * carries over (newest of the previous and the incoming value). The phone's
+ * playlist edits compare against it per track — newest edit wins
+ * (phone-playlist-edits.ts here; playlistEditRules.ts on homemini). A brand
+ * new playlist starts with none: nothing older can conflict with it.
  */
 export function stampModifiedPlaylists(
   prev: HubPlaylistLike[],
@@ -63,10 +83,22 @@ export function stampModifiedPlaylists(
   const prevById = new Map(prev.map((p) => [String(p.id), p]))
   return next.map((p) => {
     const old = prevById.get(String(p.id))
+    const stamps = memberTimes(old?.memberChangedAt)
+    for (const [k, v] of Object.entries(memberTimes(p.memberChangedAt))) stamps[k] = Math.max(stamps[k] ?? 0, v)
     if (old && contentSig(old) === contentSig(p)) {
-      return { ...p, modifiedAt: String(old.modifiedAt ?? p.modifiedAt ?? '') }
+      const carried = { ...p, modifiedAt: String(old.modifiedAt ?? p.modifiedAt ?? '') }
+      return Object.keys(stamps).length > 0 ? { ...carried, memberChangedAt: stamps } : carried
     }
-    return { ...p, modifiedAt: now() }
+    const stampedAt = now()
+    if (old) {
+      const nowMs = Date.parse(stampedAt) || Date.now()
+      const before = memberSet(old)
+      const after = memberSet(p)
+      for (const id of after) if (!before.has(id)) stamps[id] = nowMs
+      for (const id of before) if (!after.has(id)) stamps[id] = nowMs
+    }
+    const stamped = { ...p, modifiedAt: stampedAt }
+    return Object.keys(stamps).length > 0 ? { ...stamped, memberChangedAt: stamps } : stamped
   })
 }
 

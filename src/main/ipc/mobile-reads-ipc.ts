@@ -1,7 +1,7 @@
 /**
- * Mobile-state read IPC: windowed play counts, phone stars/playlists,
+ * Mobile-state read IPC: windowed play counts, phone stars,
  * homemini daily mixes + vibe mix (with the desktop-side decade/orbit
- * safety net), playlist additions.
+ * safety net). Phone playlists: phone-playlist-sync.ts.
  *
  * Extracted from main/index.ts (6.0 Phase 1 IPC migration) — bodies
  * verbatim; sidecar caches + rag year map arrive via the host.
@@ -23,8 +23,6 @@ import {
 } from '../mobile-stars-merge'
 import { safeIpcError } from '../safe-ipc-error'
 import { withCompanionInit } from '../hub-companion.ts'
-import { tombstonesPath as playlistTombstonesPath, loadTombstones as loadPlaylistTombstones } from '../playlist-tombstones.ts'
-import type { MobilePlaylistRecord } from '../index.ts'
 import { registerPlaysElsewhereIpc } from './plays-elsewhere-ipc.ts'
 import { addWindowed } from '../../common/plays-elsewhere.ts'
 
@@ -38,9 +36,7 @@ export interface MobileReadsIpcHost {
     get: () => Promise<StarSidecarData>
     update: (fn: (current: StarSidecarData) => StarSidecarData) => Promise<void>
   }
-  mobilePlaylistsCache: { get: () => Promise<{ playlists: MobilePlaylistRecord[] }> }
   ragTrackYearMap: () => Promise<Map<number, string | number | undefined>>
-  playlistAdditionsCache: { get: () => Promise<Record<string, string[]>> }
   /** true on a replica (workmini): plays heard elsewhere are not added there. */
   isReplica: () => Promise<boolean>
 }
@@ -131,26 +127,9 @@ export function registerMobileReadsIpc(ipc: IpcRegistrar, host: MobileReadsIpcHo
     return { ok: true, trackIds: Array.from(set) }
   }, { public: true })
 
-  // Brief 121 — read iOS-created playlists. Schema on disk:
-  //   { playlists: [{ id: "mobile:UUID", name, trackIds: string[], createdAt, source: "mobile" }] }
-  // Always returns ok:true with an empty list on missing/torn file — the
-  // JsonFileCache fallback path already handles that, and the renderer
-  // merges whatever it gets into the sidebar playlist list.
-  ipc.handle('read-mobile-playlists', async (): Promise<{ ok: boolean; playlists: MobilePlaylistRecord[] }> => {
-    try {
-      const data = await host.mobilePlaylistsCache.get()
-      const playlists = Array.isArray(data?.playlists) ? data.playlists : []
-      // Tombstone gate (2026-08-28): a mobile playlist Jake deleted on the
-      // desktop must not resurrect on the next boot merge — the Brief-121
-      // append was gated on existence, not deletion ("existence is not
-      // memory"). The mirror stays read-only; only the VIEW filters.
-      const dead = new Set((await loadPlaylistTombstones(playlistTombstonesPath(STATE_DIR))).map((t: { id: string | number }) => String(t.id)))
-      return { ok: true, playlists: playlists.filter((p) => !dead.has(String(p.id))) }
-    } catch {
-      return { ok: true, playlists: [] }
-    }
-  }, { public: true })
-
+  // Brief 121's read-mobile-playlists / read-playlist-additions lived here.
+  // Retired 2026-10-20: main folds the phone's playlist files in itself
+  // (phone-playlist-sync.ts), newest edit wins per track, at launch AND live.
   // 4.5: "Your Mixes" — pull the SAME daily mixes the iOS app shows, from the
   // mobile backend on homemini (single source of truth so desktop ↔ mobile match
   // exactly). The backend themes + caches them daily and merges phone+desktop
@@ -258,24 +237,6 @@ export function registerMobileReadsIpc(ipc: IpcRegistrar, host: MobileReadsIpcHo
       return { ok: false, error: safeIpcError(e, 'api-failed') }
     }
   }, { refuse: REFUSED_SENDER })
-
-  // Brief 121 — read iOS-side additions to V3-owned playlists. Schema:
-  //   { [v3PlaylistId: string]: trackId[] }   (trackIds as strings)
-  // Same error tolerance as mobile-playlists.
-  ipc.handle('read-playlist-additions', async (): Promise<{ ok: boolean; additions: Record<string, string[]> }> => {
-    try {
-      const data = await host.playlistAdditionsCache.get()
-      const additions: Record<string, string[]> = {}
-      if (data && typeof data === 'object') {
-        for (const [k, v] of Object.entries(data)) {
-          if (Array.isArray(v)) additions[k] = v.filter((x): x is string => typeof x === 'string')
-        }
-      }
-      return { ok: true, additions }
-    } catch {
-      return { ok: true, additions: {} }
-    }
-  }, { public: true })
 
   return { writeMobileStarSidecar }
 }

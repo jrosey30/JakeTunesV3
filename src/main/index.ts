@@ -47,7 +47,7 @@ import {
   phonePlaylistSidecarsNeverPushFromDesktop,
   assertNoDesktopBluntPush,
 } from './sidecar-contracts.ts'
-import { fetchHeadersWithin } from './fetch-headers'; import { withBodyInactivityTimeout } from './stream-body-timeout.ts'; import { spoolAwareServe, spoolPaceFor, spoolLimitsFor, SPOOL_DIR_NAME } from './stream-spool.ts'; import { startOvernightPreload } from './overnight-preload.ts'; import { refreshPhoneMirrors, ensureMobileImportAudio } from './phone-mirrors.ts'; import { safeIpcError } from './safe-ipc-error.ts'
+import { fetchHeadersWithin } from './fetch-headers'; import { withBodyInactivityTimeout } from './stream-body-timeout.ts'; import { spoolAwareServe, spoolPaceFor, spoolLimitsFor, SPOOL_DIR_NAME } from './stream-spool.ts'; import { startOvernightPreload } from './overnight-preload.ts'; import { refreshPhoneMirrors, ensureMobileImportAudio } from './phone-mirrors.ts'; import { createPhonePlaylistSync, PHONE_PLAYLIST_FILES, PHONE_PLAYLIST_LEDGERS } from './phone-playlist-sync.ts'; import { safeIpcError } from './safe-ipc-error.ts'
 import { computeDeletedPaths } from './library-deletions'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
 import { createPlayCache } from './play-cache.ts'
@@ -1112,6 +1112,7 @@ registerLibraryIpc(ipc, {
   claudeCall,
   getPlaylists: () => playlistsCache.get(),
   setPlaylists: (playlists) => { playlistsCache.set(playlists) },
+  beforeLoadPlaylists: () => phonePlaylistSync.apply('launch'),
   isSaveLocked,
   triggerSync,
   scanLibraryOrphans: () => scanLibraryOrphans(),
@@ -3849,17 +3850,8 @@ const mobileStarsCache = new JsonFileCache<{ trackIds: string[] }>(
   () => ({ trackIds: [] }),
   'mobile-stars',
 )
-// Brief 121 — read-only mirrors of the iOS-owned playlist sidecars. V3
-// never writes either file (the Mini's backend owns them), so these
-// caches exist purely to keep startup reads off the SMB hot path.
-// Same JsonFileCache contract as mobile-stars: error-fallback locks
-// writes anyway, but we also just never call .update() on these.
-export interface MobilePlaylistRecord { id: string; name: string; trackIds: string[]; createdAt?: string; source?: string }
-const mobilePlaylistsCache = new JsonFileCache<{ playlists: MobilePlaylistRecord[] }>(
-  () => join(STATE_DIR, 'mobile-playlists.json'),
-  () => ({ playlists: [] }),
-  'mobile-playlists',
-)
+// Phone playlist files (Brief 121 + 2026-10-20) are read by
+// phone-playlist-sync.ts (wired below the playlists cache); V3 never writes them.
 // ── Phone-authored state mirrors — NAS → LOCAL refresh ──────────────
 // The iOS app writes these on the NAS (via homemini). STATE_DIR is
 // frozen at boot, so a boot that raced the SMB mount runs the whole
@@ -3879,9 +3871,9 @@ const mobileMetadataOverridesCache = new JsonFileCache<Record<string, { fp?: str
 )
 const PHONE_AUTHORED_FILES = [
   // Phone playlist sidecars — names from @jaketunes/contracts
-  // (sidecars.phonePlaylistSidecarsNeverPushFromDesktop). Pull/mirror only;
-  // never blunt-push. See assertNoDesktopBluntPush(STATE_FILE_NAMES).
-  ...phonePlaylistSidecarsNeverPushFromDesktop,
+  // (sidecars.phonePlaylistSidecarsNeverPushFromDesktop) + the phone's removal
+  // and delete ledgers (never mirrored until 2026-10-20). Pull/mirror only.
+  ...phonePlaylistSidecarsNeverPushFromDesktop, ...PHONE_PLAYLIST_LEDGERS,
   'mobile-stars.json', 'mobile-plays.json',
   // Missing from this list until 2026-08-07 — phone song-info edits landed on
   // the NAS and simply never came down (Jake: "why arent the song info
@@ -3909,10 +3901,9 @@ async function refreshPhoneAuthoredMirrors(): Promise<void> {
     backendUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''),
     nasAvailable,
   })
+  if (refreshedNames.some((n) => (PHONE_PLAYLIST_FILES as readonly string[]).includes(n))) void phonePlaylistSync.apply('phone-mirror')
   if (refreshedNames.length > 0) {
-    mobilePlaylistsCache.invalidate()
     mobileStarsCache.invalidate()
-    playlistAdditionsCache.invalidate()
     mobileMetadataOverridesCache.invalidate()
     console.log(`[phone-mirrors] refreshed ${refreshedNames.length} file(s) from NAS: ${refreshedNames.join(', ')}`)
     // Fresh phone song-info edits — push them to the open window so they
@@ -3993,11 +3984,6 @@ ipc.handle('hub-catalog-adopted', async (_e, raw: unknown) => {
 }, { public: true })
 setTimeout(() => { void hubCatalog.tick() }, 8_000)
 
-const playlistAdditionsCache = new JsonFileCache<Record<string, string[]>>(
-  () => join(STATE_DIR, 'playlist-additions.json'),
-  () => ({}),
-  'playlist-additions',
-)
 const listenerProfileCache = new JsonFileCache<Record<string, unknown>>(
   () => join(STATE_DIR, 'listener-profile.json'),
   () => ({}),
@@ -4026,6 +4012,13 @@ const playlistsCache = new JsonFileCache<unknown[]>(
   () => [],
   'playlists',
 )
+// Phone playlist edits → these playlists, newest edit wins per track (2026-10-20).
+const phonePlaylistSync = createPhonePlaylistSync({
+  mirrorDir: STATE_DIR, tombstonesFile: playlistTombstonesPath(STATE_DIR), isSaveLocked,
+  getPlaylists: () => playlistsCache.get() as Promise<HubPlaylistLike[]>,
+  setPlaylists: (p) => { playlistsCache.set(p as unknown[]) },
+  onChanged: (p, why) => { triggerSync('playlist'); schedulePlaylistHubConverge(); if (why !== 'launch') sendToRenderer('playlists-updated', { playlists: p }) },
+})
 // V5 Live Concert Mode — declared live sets. Key = albumKey
 // (artist|||album, the renderer's canonical key), value = the merged
 // track's id + exact per-song cue offsets. Synced one-way to homemini
@@ -9414,9 +9407,7 @@ const mobileReadsApi = registerMobileReadsIpc(ipc, {
   getPlayEventsPath,
   libraryCache,
   mobileStarsCache,
-  mobilePlaylistsCache,
   ragTrackYearMap,
-  playlistAdditionsCache,
   isReplica: isHomeminiPlaybackClientCached,
 })
 
