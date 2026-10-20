@@ -1078,6 +1078,21 @@ const electronAPI = {
   // 4.5: Wikipedia summary for artist detail page. 24h disk cache.
   getArtistWiki: (artist: string): Promise<{ ok: boolean; extract: string | null; pageUrl: string | null }> =>
     ipcRenderer.invoke('get-artist-wiki', artist),
+  // 2026-10-20 — homemini's pre-built artist profile (bio, facts, members;
+  // src/common/artist-profile.ts), cached in main. get = disk only, instant;
+  // refresh = one GET (ETag) + member photos.
+  artistProfileGet: (name: string): Promise<unknown> => ipcRenderer.invoke('artist-profile:get', name),
+  artistProfileRefresh: (name: string): Promise<unknown> => ipcRenderer.invoke('artist-profile:refresh', name),
+  /** Jake's own photo of a band member: a dropped image File, or null to open a picker. */
+  artistMemberPhotoSet: (artist: string, member: string, file: File | null): Promise<unknown> => {
+    let path: string | null = null
+    if (file) {
+      // webUtils, so a synthetic File (no native path) can't name a file on disk.
+      try { path = webUtils.getPathForFile(file) || null } catch { path = null }
+      if (!path) return Promise.resolve({ ok: false, error: 'That picture has no file on this Mac. Save it first, then drop the file.' })
+    }
+    return ipcRenderer.invoke('artist-profile:set-member-photo', artist, member, path)
+  },
   // 2026-10-18 — synced picks (TOP 10 ISLAND ALBUMS + 5 FAVORITE ARTISTS),
   // shared with the phone through homemini. kind = 'island-albums' |
   // 'favorite-artists'. get = cache only; refresh = GET + replay a queued

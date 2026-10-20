@@ -13,6 +13,7 @@
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { readReleaseKinds } from '../release-kinds.ts'
 import { createReleaseKindsPuller, startReplicaTimer } from '../replica-hub-files.ts'
+import { registerArtistProfileIpc } from './artist-profile-ipc.ts'
 
 export function registerReleaseKindsIpc(ipc: IpcRegistrar, host: { file: () => string; hubBase?: () => Promise<string | null> }): void {
   ipc.handle('release-kinds:load', async () => {
@@ -23,4 +24,8 @@ export function registerReleaseKindsIpc(ipc: IpcRegistrar, host: { file: () => s
     const puller = createReleaseKindsPuller({ file: host.file(), hubBase: host.hubBase, log: (m) => console.warn(m) })
     startReplicaTimer(puller.pull, 20_000)
   }
+  // The artist page's profile (bio, facts, members — 2026-10-20) rides with
+  // its sibling on the same page, so main/index.ts does not grow (its line
+  // ratchet only shrinks).
+  registerArtistProfileIpc(ipc)
 }

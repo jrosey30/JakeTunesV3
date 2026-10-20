@@ -193,34 +193,68 @@
 .concert-row-blurb { font-family: "Iowan Old Style", "Palatino", Georgia, serif; font-size: 14.5px; line-height: 1.5; color: #2a2a28; margin: 10px 0 0; max-width: 72ch; }
 .concert-row-stat { margin-top: 8px; font-size: 11.5px; color: #9a9a9a; font-variant-numeric: tabular-nums; letter-spacing: 0.06em; }
 
-/* ── Poster tile: one show on the artist page's Live wall (2026-10-18) ───
- * The rows' tokens in portrait: art at 3:4 (aspect-fill + clip, like the
- * phone's ConcertPosterThumb), the phone's orange LIVE capsule, then band /
- * serif title / venue line. Every line wraps — names never clip. */
+/* ── Poster tile: one show on the artist page's Live wall ───────────────
+ * 2026-10-20 (Jake's approved design: "as posters, not albums!!!"). A real
+ * poster stands whole at its own aspect, never cropped; a show without one
+ * gets a made poster — band, square cover, an orange rule, the show line —
+ * in the same 961:1292 frame. Caption: venue, then city · date · set. Every
+ * line wraps — names never clip. */
 .concert-tile {
-  display: flex; flex-direction: column; align-items: stretch; gap: 0;
+  display: flex; flex-direction: column; align-items: stretch; gap: 10px;
+  width: 240px;
   background: transparent; border: none; padding: 0; margin: 0; font: inherit; color: inherit;
   text-align: left; cursor: pointer; min-width: 0;
-  transition: transform 0.14s cubic-bezier(0.22, 1, 0.36, 1);
 }
-.concert-tile:hover { transform: translateY(-2px); }
-.concert-tile:focus-visible { outline: 2px solid var(--brand-orange, #FC5501); outline-offset: 2px; border-radius: 6px; }
-.concert-tile-art {
-  position: relative; width: 100%; aspect-ratio: 3 / 4; border-radius: 6px; overflow: hidden; background: #dedede;
-  box-shadow: 0 8px 20px rgba(0,0,0,0.18), 0 0 0 1px rgba(0,0,0,0.08);
-  transition: box-shadow 120ms ease-out;
+.concert-tile:focus-visible { outline: 2px solid var(--brand-orange, #FC5501); outline-offset: 3px; border-radius: 3px; }
+.concert-tile-poster,
+.concert-tile-made {
+  border-radius: 2px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28), 0 0 0 0.5px rgba(0, 0, 0, 0.12);
+  transition: transform 0.22s cubic-bezier(0.2, 0.7, 0.2, 1), box-shadow 0.22s;
 }
-.concert-tile:hover .concert-tile-art { box-shadow: 0 12px 26px rgba(0,0,0,0.24), 0 0 0 1px rgba(0,0,0,0.10); }
-.concert-tile-img { display: block; width: 100%; height: 100%; object-fit: cover; }
-.concert-tile-noart { width: 100%; height: 100%; background: #dedede; }
-.concert-tile-live {
-  position: absolute; top: 8px; left: 8px; padding: 3px 6px 3px 7px; border-radius: 999px;
-  background: var(--brand-orange, #FC5501); color: #fff; font-size: 9px; font-weight: 800; letter-spacing: 0.11em; line-height: 1;
+.concert-tile:hover .concert-tile-poster,
+.concert-tile:hover .concert-tile-made {
+  transform: translateY(-4px);
+  box-shadow: 0 4px 12px rgba(70, 55, 40, 0.10), 0 20px 48px rgba(70, 55, 40, 0.22);
 }
-.concert-tile-band { margin-top: 10px; font-size: 10.5px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--brand-orange, #FC5501); font-weight: 800; line-height: 1.3; overflow-wrap: anywhere; }
-.concert-tile-show { font-family: "Iowan Old Style", "Palatino", Georgia, serif; font-size: 15px; font-weight: 700; line-height: 1.15; margin: 3px 0 4px; color: #1d1d1f; overflow-wrap: anywhere; }
-.concert-tile-where { font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: #7b7b7b; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; }
-.concert-tile-where b { color: #1d1d1f; }
+.concert-tile-poster { width: 100%; overflow: hidden; background: #0B0B0A; }
+.concert-tile-poster-img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.concert-tile-made {
+  box-sizing: border-box;
+  width: 100%;
+  aspect-ratio: 961 / 1292;
+  overflow: hidden;
+  background: var(--brand-ink, #0B0B0A);
+  padding: 16px 16px 14px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.concert-tile-made.is-measuring > * { visibility: hidden; }
+.concert-tile-made-band {
+  flex: none;
+  font-family: var(--font-display, -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif);
+  font-weight: 800; letter-spacing: 0.01em; line-height: 0.9; text-transform: uppercase;
+  color: var(--brand-cream, #FEFDFC); overflow-wrap: anywhere;
+}
+.concert-tile-made-band--xl { font-size: 40px; }
+.concert-tile-made-band--l { font-size: 32px; }
+.concert-tile-made-band--m { font-size: 25px; }
+.concert-tile-made-band--s { font-size: 19px; }
+/* The square cover takes what the frame has left — whole, never cropped. */
+.concert-tile-made-art { flex: 1 1 auto; min-height: 0; display: flex; }
+.concert-tile-made-img { display: block; height: 100%; max-width: 100%; aspect-ratio: 1; object-fit: cover; }
+.concert-tile-made-rule { flex: none; height: 2px; width: 40px; background: var(--brand-orange, #FC5501); }
+.concert-tile-made-show {
+  flex: none;
+  font-size: 11px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; line-height: 1.3;
+  color: var(--brand-cream, #FEFDFC); overflow-wrap: anywhere;
+}
+.concert-tile-noart { width: 100%; height: 100%; aspect-ratio: 1; background: #2a2724; }
+.concert-tile-head { font-size: 12px; font-weight: 700; color: #161312; overflow-wrap: anywhere; }
+.concert-tile-meta { font-size: 11px; color: #555049; overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) {
+  .concert-tile-poster, .concert-tile-made { transition: none; }
+  .concert-tile:hover .concert-tile-poster, .concert-tile:hover .concert-tile-made { transform: none; }
+}
 
 /* Release — a footnote, not a fact on the ticket. */
 .cd-footnote { margin: 26px 2px 0; font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; color: #9a9a9a; }
