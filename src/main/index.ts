@@ -9447,7 +9447,7 @@ const sweepDeps: import('./friend-credit-sweep.ts').SweepDeps = {
   updateFriends: (fn) => friendsCache.update(fn as never),
   creditsCache: friendCreditsCache,
 }
-const sweepFriendImports = (): Promise<number> => moduleSweepFriendImports(sweepDeps)
+const sweepFriendImports = async (): Promise<number> => ((await isHomeminiPlaybackClientCached()) ? 0 : moduleSweepFriendImports(sweepDeps)) // hub-only: a replica re-crediting split the standings (10/20); it gets the hub's friend-credits.json
 /**
  * Standings: friends ranked by deletion-aware points. Points are computed
  * fresh from credit records vs the live library on every call — nothing has
