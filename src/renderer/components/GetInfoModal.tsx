@@ -1,5 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import type { Track } from '../types'
+import { playsEverywhere } from '../../common/plays-elsewhere'
+import { usePlaysElsewhere } from '../playsElsewhere'
 import '../styles/getinfo.css'
 
 interface GetInfoModalProps {
@@ -66,6 +68,8 @@ export default function GetInfoModal({
   const firstInputRef = useRef<HTMLInputElement>(null)
   const isInitialMount = useRef(true)
   const userInteractedRef = useRef(false)
+  // 2026-10-20 — Plays reads the count everywhere (phone + workmini too). Read-only row.
+  const elsewhere = usePlaysElsewhere()
 
   // Index is DERIVED from the id (re-resolved every render), so it follows
   // the song as the list changes. -1 means the song was removed from the list.
@@ -377,7 +381,7 @@ export default function GetInfoModal({
                 <div className="getinfo-file-row">
                   <span className="getinfo-file-label">Plays</span>
                   <span className="getinfo-file-value">
-                    {currentTrack.playCount || 0}
+                    {playsEverywhere(currentTrack, elsewhere)}
                   </span>
                 </div>
                 <div className="getinfo-file-row">

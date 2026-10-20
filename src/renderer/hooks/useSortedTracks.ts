@@ -1,11 +1,14 @@
 import { useMemo } from 'react'
 import { Track, SortColumn, SortDirection } from '../types'
+import { playsEverywhere, type ElsewhereOverlay } from '../../common/plays-elsewhere'
 
 export function useSortedTracks(
   tracks: Track[],
   sortColumn: SortColumn,
   sortDirection: SortDirection,
-  searchQuery: string
+  searchQuery: string,
+  /** 2026-10-20 — Plays sorts by the count everywhere (phone + workmini too). */
+  elsewhere?: ElsewhereOverlay,
 ): Track[] {
   return useMemo(() => {
     let filtered = tracks
@@ -31,8 +34,9 @@ export function useSortedTracks(
       return m ? [Number(m[1]), m[2].toUpperCase()] : [999, 'Z']
     }
     return [...filtered].sort((a, b) => {
-      const av = a[sortColumn] as unknown
-      const bv = b[sortColumn] as unknown
+      const byPlays = sortColumn === 'playCount' && elsewhere
+      const av = byPlays ? playsEverywhere(a, elsewhere) : a[sortColumn] as unknown
+      const bv = byPlays ? playsEverywhere(b, elsewhere) : b[sortColumn] as unknown
       let cmp: number
       if (sortColumn === 'camelotKey') {
         const [an, al] = camelot(av)
@@ -53,5 +57,5 @@ export function useSortedTracks(
       }
       return sortDirection === 'asc' ? cmp : -cmp
     })
-  }, [tracks, sortColumn, sortDirection, searchQuery])
+  }, [tracks, sortColumn, sortDirection, searchQuery, elsewhere])
 }

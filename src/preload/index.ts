@@ -1105,6 +1105,13 @@ const electronAPI = {
     ipcRenderer.on('home-shelves-updated', handler)
     return () => { ipcRenderer.removeListener('home-shelves-updated', handler) }
   },
+  // 2026-10-20 — the phone's and workmini's plays; see src/common/plays-elsewhere.ts.
+  playsElsewhereGet: (): Promise<unknown> => ipcRenderer.invoke('plays-elsewhere:get'),
+  onPlaysElsewhereUpdated: (callback: (state: unknown) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state)
+    ipcRenderer.on('plays-elsewhere-updated', handler)
+    return () => { ipcRenderer.removeListener('plays-elsewhere-updated', handler) }
+  },
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

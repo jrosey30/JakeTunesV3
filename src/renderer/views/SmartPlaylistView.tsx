@@ -7,6 +7,8 @@ import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { attachClipToBroadcast, detachClipFromBroadcast } from '../audio/eq'
 import { evaluateSmartPlaylist } from '../utils/smartPlaylists'
 import { isTop25Rankable } from '../../common/top25-rankable'
+import { playsEverywhere } from '../../common/plays-elsewhere'
+import { usePlaysElsewhere, useTracksEverywhere } from '../playsElsewhere'
 import { Track } from '../types'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
@@ -138,6 +140,10 @@ const ALWAYS_VISIBLE = new Set(['playing', 'title'])
 export default function SmartPlaylistView() {
   const { state: libState, dispatch } = useLibrary()
   const { state: pbState, dispatch: pbDispatch } = usePlayback()
+  // 2026-10-20 — the phone's and workmini's plays count here too. Ranking reads
+  // `everywhere`; rows stay the library's own tracks (display only, never saved).
+  const elsewhere = usePlaysElsewhere()
+  const everywhere = useTracksEverywhere(libState.tracks)
   const { playTrack } = useAudio()
   const { mode: viewMode } = useViewMode()
 
@@ -339,6 +345,9 @@ export default function SmartPlaylistView() {
 
   const smartTracks = useMemo(() => {
     if (!playlistId) return []
+    // Rank on `everywhere`, hand back the library's own track objects.
+    const ownById = everywhere === libState.tracks ? null : new Map(libState.tracks.map(t => [t.id, t]))
+    const own = (list: Track[]): Track[] => ownById ? list.map(t => ownById.get(t.id) ?? t) : list
 
     // 4.4.46: the four built-in smart playlists are now evaluated by
     // the SHARED `evaluateSmartPlaylist` (src/renderer/utils/smartPlaylists.ts)
@@ -389,13 +398,13 @@ export default function SmartPlaylistView() {
       // been logged yet (log starts empty post-upgrade and fills as
       // tracks play). Same shape as the old approximation.
       const cutoff = Date.now() - WINDOW_MS
-      return libState.tracks
+      return own(everywhere
         .filter(t => typeof t.lastPlayedAt === 'number' && t.lastPlayedAt >= cutoff && isTop25Rankable(t))
         .sort((a, b) => (b.playCount || 0) - (a.playCount || 0))
-        .slice(0, 25)
+        .slice(0, 25))
     }
-    return evaluateSmartPlaylist(playlistId, libState.tracks)
-  }, [playlistId, libState.tracks, picks, topWindow, windowedCounts])
+    return own(evaluateSmartPlaylist(playlistId, everywhere))
+  }, [playlistId, libState.tracks, everywhere, picks, topWindow, windowedCounts])
 
   // Apply search filter — every word must appear somewhere across all fields
   const filteredTracks = useMemo(() => {
@@ -584,7 +593,7 @@ export default function SmartPlaylistView() {
         case 'year': av = a.year || 0; bv = b.year || 0; break
         case 'time': av = a.duration || 0; bv = b.duration || 0; break
         case 'dateAdded': av = a.dateAdded || ''; bv = b.dateAdded || ''; break
-        case 'playCount': av = a.playCount || 0; bv = b.playCount || 0; break
+        case 'playCount': { const d = playsEverywhere(a, elsewhere) - playsEverywhere(b, elsewhere); return sortDir === 'asc' ? d : -d }
         case 'rating': av = a.rating || 0; bv = b.rating || 0; break
         case 'channelMode': av = a.channelMode || ''; bv = b.channelMode || ''; break
         default: return 0
@@ -594,7 +603,7 @@ export default function SmartPlaylistView() {
       const cmp = aStr < bStr ? -1 : aStr > bStr ? 1 : 0
       return sortDir === 'asc' ? cmp : -cmp
     })
-  }, [filteredTracks, sortCol, sortDir, playlistId, starredReversed])
+  }, [filteredTracks, sortCol, sortDir, playlistId, starredReversed, elsewhere])
 
   // --- Column resize ---
   const [colWidthMap, setColWidthMap] = useState<Record<string, number>>({})
@@ -1238,7 +1247,7 @@ export default function SmartPlaylistView() {
                   case 'dateAdded':
                     return <div key={col.key} className="songs-cell">{formatAppDate(track.dateAdded)}</div>
                   case 'playCount':
-                    return <div key={col.key} className="songs-cell songs-cell--plays">{track.playCount || ''}</div>
+                    return <div key={col.key} className="songs-cell songs-cell--plays">{playsEverywhere(track, elsewhere) || ''}</div>
                   default:
                     return null
                 }

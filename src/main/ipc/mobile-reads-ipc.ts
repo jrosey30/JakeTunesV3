@@ -25,6 +25,8 @@ import { safeIpcError } from '../safe-ipc-error'
 import { withCompanionInit } from '../hub-companion.ts'
 import { tombstonesPath as playlistTombstonesPath, loadTombstones as loadPlaylistTombstones } from '../playlist-tombstones.ts'
 import type { MobilePlaylistRecord } from '../index.ts'
+import { registerPlaysElsewhereIpc } from './plays-elsewhere-ipc.ts'
+import { addWindowed } from '../../common/plays-elsewhere.ts'
 
 export interface MobileReadsIpcHost {
   getPlayEventsPath: () => string
@@ -39,9 +41,13 @@ export interface MobileReadsIpcHost {
   mobilePlaylistsCache: { get: () => Promise<{ playlists: MobilePlaylistRecord[] }> }
   ragTrackYearMap: () => Promise<Map<number, string | number | undefined>>
   playlistAdditionsCache: { get: () => Promise<Record<string, string[]>> }
+  /** true on a replica (workmini): plays heard elsewhere are not added there. */
+  isReplica: () => Promise<boolean>
 }
 
 export function registerMobileReadsIpc(ipc: IpcRegistrar, host: MobileReadsIpcHost): { writeMobileStarSidecar: (trackId: number, starred: boolean) => Promise<void> } {
+  // 2026-10-20 — the phone's and workmini's plays count here too (display only).
+  const elsewhere = registerPlaysElsewhereIpc(ipc, { isReplica: host.isReplica })
   ipc.handle('get-windowed-play-counts', async (_e, windowMs: number): Promise<{ ok: boolean; counts: Record<string, number> }> => {
     try {
       const cutoff = Date.now() - Math.max(0, windowMs)
@@ -59,7 +65,7 @@ export function registerMobileReadsIpc(ipc: IpcRegistrar, host: MobileReadsIpcHo
         } catch { parseErrors++ }
       }
       if (parseErrors > 0) console.warn(`[play-events] ${parseErrors} malformed lines (skipped)`)
-      return { ok: true, counts }
+      return { ok: true, counts: addWindowed(counts, await elsewhere.windowed(cutoff).catch(() => ({}))) }
     } catch (err) {
       console.warn('[play-events] read failed:', err)
       return { ok: false, counts: {} }
