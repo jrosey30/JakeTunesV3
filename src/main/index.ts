@@ -85,7 +85,7 @@ import { registerSyncedPicksIpc } from './ipc/synced-picks-ipc.ts'
 import { registerHomeSpotlightIpc } from './ipc/home-spotlight-ipc.ts'
 import { assertNoSyncedPicksPush } from './synced-picks-client.ts'
 import { createArtistPhotos, nameKey as photoNameKey } from './artist-photo.ts'
-import { phoneOverlayFields } from '../common/genre-vocab.ts'
+import { phoneOverlayFields } from '../common/genre-vocab.ts'; import { mergeOverrideField } from './override-merge.ts'; import { registerUserEdits } from './ipc/user-edits-ipc.ts'
 import { registerPreviewRefreshIpc } from './ipc/preview-refresh-ipc.ts'
 import { registerSyncHistoryIpc } from './ipc/sync-history-ipc.ts'
 import { registerActivityPoolIpc } from './ipc/activity-pool-ipc.ts'
@@ -3885,10 +3885,12 @@ async function refreshPhoneAuthoredMirrors(): Promise<void> {
     nasDir: '/Volumes/JakeShared/JakeTunesState',
     backendUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''),
     nasAvailable,
+    // Merged, never copied over: a copy wiped stars made here (2026-10-20).
+    merge: { 'mobile-stars.json': (body) => mobileReadsApi.mergeRemoteStars(body) },
   })
   if (refreshedNames.some((n) => (PHONE_PLAYLIST_FILES as readonly string[]).includes(n))) void phonePlaylistSync.apply('phone-mirror')
+  void mobileReadsApi.starPushTick()
   if (refreshedNames.length > 0) {
-    mobileStarsCache.invalidate()
     mobileMetadataOverridesCache.invalidate()
     console.log(`[phone-mirrors] refreshed ${refreshedNames.length} file(s) from NAS: ${refreshedNames.join(', ')}`)
     // Fresh phone song-info edits — push them to the open window so they
@@ -3957,7 +3959,7 @@ const hubCatalog = startHubCatalogPoll({
   hubBase: replicaHubBase,
   send: (channel, payload) => {
     if (!mainWindow || mainWindow.isDestroyed()) return false
-    mainWindow.webContents.send(channel, payload)
+    mainWindow.webContents.send(channel, userEdits.pinPending(payload))   // Jake's not-yet-absorbed edits here survive a full snapshot
     return true
   },
   isLocked: () => isSaveLocked(),
@@ -9395,6 +9397,8 @@ const mobileReadsApi = registerMobileReadsIpc(ipc, {
   ragTrackYearMap,
   isReplica: isHomeminiPlaybackClientCached,
 })
+// 2026-10-20 — stars and Get Info edits made on a replica reach the hub (ipc/user-edits-ipc.ts).
+const userEdits = registerUserEdits({ libraryCache, overridesCache, stars: () => mobileReadsApi, applyOverride: applyMetadataOverrideInternal, send: (ch, p) => sendToRenderer(ch, p), isReplica: isHomeminiPlaybackClientCached, isLocked: () => isSaveLocked() })
 
 // Brief 122 — "Listen to the List". recommendations.json is a bare JSON
 // array of Recommendation objects. The Mini backend (homemini) is the
@@ -9534,6 +9538,10 @@ ipc.handle('load-metadata-overrides', async () => {
   // renderer would skip the stale-fp entry anyway, and desktop entries
   // carry analysis fields worth keeping. Desktop file is NEVER written
   // with phone entries — each device stays the single writer of its file.
+  // 2026-10-20: on a REPLICA, fields the hub catalog carries come from the
+  // hub, not this file or the phone overlay — only its own journaled edits
+  // can beat the hub (user-edits-sync.ts; the stale copy laid 2,452 old
+  // genres back at every workmini boot).
   const base = await overridesCache.get() as Record<string, unknown>
   type OvEntry = { fp?: string; fields?: Record<string, string> }
   const merged: Record<string, unknown> = { ...base }
@@ -9546,7 +9554,7 @@ ipc.handle('load-metadata-overrides', async () => {
       if (cur.fp === entry.fp) merged[id] = { fp: cur.fp, fields: { ...cur.fields, ...phoneOverlayFields(entry.fields) } }
     }
   } catch { /* phone overlay is best-effort; desktop overrides still serve */ }
-  return { ok: true, overrides: merged }
+  return { ok: true, overrides: await userEdits.overlay(merged) }
 }, { public: true })
 
 // Save a metadata override for a single track.
@@ -9570,34 +9578,14 @@ ipc.handle('load-metadata-overrides', async () => {
 // goes through the IDENTICAL serialized pipeline (no twin logic). All
 // semantics preserved verbatim: explicit fp mismatch wipes (re-parse
 // safeguard), no-fp saves merge, fresh writes stamp the fp.
+// The rules themselves live in override-merge.ts (one writer for the
+// replica-edit absorb too).
 async function applyMetadataOverrideInternal(trackId: number, field: string, value: string, fingerprint?: string): Promise<void> {
-  await writeOverridesSerialized((overrides) => {
-    const key = String(trackId)
-    const existing = overrides[key] as { fp?: string; fields?: Record<string, string> } | undefined
-    const isV2 = !!existing && typeof existing === 'object' && 'fields' in existing
-    const hasNewFp = typeof fingerprint === 'string' && fingerprint !== ''
-    const existingFp = isV2 ? (existing!.fp || '') : ''
-    if (isV2 && hasNewFp && existingFp && existingFp !== fingerprint) {
-      // Explicit fingerprint mismatch — track at this ID has changed
-      // identity (re-parse, library shift, etc). Old overrides don't
-      // apply anymore; start fresh with just the new field.
-      overrides[key] = { fp: fingerprint, fields: { [field]: value } }
-    } else if (isV2) {
-      // Same track (matching fp, or one side has no fp). MERGE — never
-      // drop prior fields. Update fp only if a new one was passed.
-      overrides[key] = {
-        fp: hasNewFp ? fingerprint : existingFp,
-        fields: { ...(existing!.fields || {}), [field]: value },
-      }
-    } else {
-      // No prior entry — fresh write.
-      overrides[key] = { fp: fingerprint || '', fields: { [field]: value } }
-    }
-    return overrides
-  })
+  await writeOverridesSerialized((overrides) => mergeOverrideField(overrides, trackId, field, value, fingerprint))
 }
 
 ipc.handle('save-metadata-override', async (_event, trackId: number, field: string, value: string, fingerprint?: string) => {
+  const editAt = Date.now()   // one time for the journal and the star sidecar
   if (suppressListeningWrites() && (field === 'playCount' || field === 'lastPlayedAt' || field === 'skipCount')) return { ok: true, suppressed: 'dev-review' }
   const lockReason = isSaveLocked()
   if (lockReason) {
@@ -9628,6 +9616,9 @@ ipc.handle('save-metadata-override', async (_event, trackId: number, field: stri
   // fingerprint or empty-fp existing entry merges as before.
   void (async () => {
   await applyMetadataOverrideInternal(trackId, field, value, fingerprint)
+  // 2026-10-20: the ONLY journal writer for this Mac's own edits — Jake's
+  // clicks reach this handler; robots, sync and hub adoption never do.
+  void userEdits.record(trackId, field, value, editAt)
   // 4.4.18: metadata edits are a sync trigger — change a track's artist
   // on laptop, homemini reflects it within ~30 sec.
   triggerSync('metadata-edit')
@@ -9678,7 +9669,7 @@ ipc.handle('save-metadata-override', async (_event, trackId: number, field: stri
     // override returns. The chain itself catches its own errors and
     // logs, so this await never throws — worst case the IPC adds a
     // few ms of NAS round-trip.
-    await mobileReadsApi.writeMobileStarSidecar(trackId, Number(value) > 0)
+    await mobileReadsApi.writeMobileStarSidecar(trackId, Number(value) > 0, editAt)
   }
 
   // 4.5.0-51: artwork-key migration on artist/album edit. When the user

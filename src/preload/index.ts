@@ -315,6 +315,13 @@ const electronAPI = {
     ipcRenderer.on('mobile-overrides-updated', handler)
     return () => { ipcRenderer.removeListener('mobile-overrides-updated', handler) }
   },
+  // 2026-10-20 — field values the user-edit journal decided (main/user-edits-sync.ts):
+  // on the hub, a replica's edit just absorbed; on a replica, the hub's verdict.
+  onUserEditsApplied: (callback: (p: { updates: Array<{ id: number; field: string; value: string }> }) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, p: { updates: Array<{ id: number; field: string; value: string }> }) => callback(p)
+    ipcRenderer.on('user-edits-applied', handler)
+    return () => { ipcRenderer.removeListener('user-edits-applied', handler) }
+  },
   onDiscoverFeedUpdated: (callback: (p: { lanes: Array<{ id: string; title: string; cards: Array<{ lane: string; type: 'song' | 'album' | 'artist'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string; brainPct?: number }> }>; generatedAt: number }) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, p: { lanes: Array<{ id: string; title: string; cards: Array<{ lane: string; type: 'song' | 'album' | 'artist'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string; brainPct?: number }> }>; generatedAt: number }) => callback(p)
     ipcRenderer.on('discover-feed-updated', handler)

@@ -188,3 +188,49 @@ describe('ensureMobileImportAudio', () => {
     await assert.rejects(() => stat(join(root, 'iPod_Control/Music/F01/x.flac')))
   })
 })
+
+// 2026-10-20 — mobile-stars.json is MERGED, never copied over the local file:
+// the copy wiped every star workmini made that homemini did not have yet.
+describe('refreshPhoneMirrors: merged files are never copied over', () => {
+  test('a newer source is handed to the merger; the local file is untouched and not reported', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pm-'))
+    await writeFile(join(dir, 'mobile-stars.json'), '{"v":2,"trackIds":["11952"],"removed":{},"added":{"11952":5}}')
+    const merged: string[] = []
+    const refreshed = await refreshPhoneMirrors({
+      files: ['mobile-stars.json'], localDir: dir, nasDir: '/nonexistent',
+      backendUrl: 'http://hub', nasAvailable: async () => true,
+      fetchFn: httpServing({ 'mobile-stars.json': { mtimeMs: Date.now() + 60_000, body: '{"v":2,"trackIds":["1"],"removed":{},"added":{}}' } }),
+      merge: { 'mobile-stars.json': async (body) => { merged.push(body) } },
+    })
+    assert.deepEqual(refreshed, [], 'not reported — no cache is dropped under the merger\'s pending write')
+    assert.equal(merged.length, 1)
+    assert.match(await readFile(join(dir, 'mobile-stars.json'), 'utf-8'), /11952/, 'the local star survives')
+  })
+
+  test('an OLDER source still merges (its tombstones and stars count); the same source merges once', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pm-'))
+    await writeFile(join(dir, 'mobile-stars.json'), '{"trackIds":[]}')
+    let n = 0
+    const deps = {
+      files: ['mobile-stars.json'], localDir: dir, nasDir: '/nonexistent',
+      backendUrl: 'http://hub', nasAvailable: async () => true,
+      fetchFn: httpServing({ 'mobile-stars.json': { mtimeMs: 1000, body: '{"trackIds":["9"]}' } }),
+      merge: { 'mobile-stars.json': async () => { n++ } },
+    }
+    await refreshPhoneMirrors(deps)
+    await refreshPhoneMirrors(deps)
+    assert.equal(n, 1)
+  })
+
+  test('a torn payload never reaches the merger (NAS fallback gets its turn)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pm-'))
+    let n = 0
+    await refreshPhoneMirrors({
+      files: ['mobile-stars.json'], localDir: dir, nasDir: '/nonexistent',
+      backendUrl: 'http://hub', nasAvailable: async () => false,
+      fetchFn: httpServing({ 'mobile-stars.json': { mtimeMs: 77, body: '{"trackIds":["9"' } }),
+      merge: { 'mobile-stars.json': async () => { n++ } },
+    })
+    assert.equal(n, 0)
+  })
+})

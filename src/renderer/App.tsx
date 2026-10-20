@@ -856,6 +856,22 @@ function AppInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // 2026-10-20 — field values the user-edit journal decided (main/user-edits-sync.ts):
+  // on the MacBook, a star or Get Info edit made on workmini; on workmini, the
+  // MacBook's verdict on one. Ids only — the reducer coerces numeric fields.
+  useEffect(() => {
+    const off = window.electronAPI.onUserEditsApplied?.((p) => {
+      const known = new Set(libStateRef.current.tracks.map((t) => t.id))
+      const updates = (p.updates || []).filter((u) => known.has(u.id))
+      if (updates.length) {
+        console.log(`[user-edits] applying ${updates.length} field edit(s) from another Mac`)
+        dispatch({ type: 'UPDATE_TRACKS', updates })
+      }
+    })
+    return () => { off?.() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   useEffect(() => {
     Promise.all([
       window.electronAPI.loadTracks(),

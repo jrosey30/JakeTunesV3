@@ -602,10 +602,9 @@ fi
 #                          JakeTunesState/, V3 merges them into the UI
 #   playlist-additions.json — iPhone "add to playlist" pending writes
 #                          waiting to merge into the canonical playlists
-#   metadata-overrides.json — the genre/artist/title/album correction
-#                          layer V3 merges over library.json (and feeds
-#                          the subgenre Song-View column). Without it
-#                          workmini shows uncorrected tags.
+#   (metadata-overrides.json used to be pushed here — no longer, see
+#    SIDECARS below: the copy erased Jake's workmini edits, and its catalog
+#    fields now come from the hub catalog)
 # embeddings.bin (the ~50 MB semantic "brain") rides along too but is
 # pushed in its own block below — it's BINARY, so it can't go through the
 # validate_json sidecar loop the JSON files share.
@@ -628,7 +627,11 @@ say "[4/5] Bootstrapping library.json + sidecars"
 rsh 30 "mkdir -p '$WM_HOME/Library/Application Support/JakeTunes'"
 # release-kinds.json (2026-10-18): workmini is a replica and never resolves
 # release kinds itself — its artist page groups by the laptop's answers.
-SIDECARS=(picks-cache.json mobile-playlists.json playlist-additions.json metadata-overrides.json playlists.json mixtapes.json live-sets.json release-kinds.json lyrics.json friends.json friend-credits.json mobile-stars.json mobile-plays.json taste-weights.json taste-profile.json)
+# metadata-overrides.json and mobile-stars.json are NOT pushed (2026-10-20):
+# a copy over workmini's erased the stars and Get Info edits Jake made there.
+# Workmini takes catalog fields from the hub catalog, its own edits from its
+# journal (src/common/user-edits.ts), and stars by merge from homemini.
+SIDECARS=(picks-cache.json mobile-playlists.json playlist-additions.json playlists.json mixtapes.json live-sets.json release-kinds.json lyrics.json friends.json friend-credits.json mobile-plays.json taste-weights.json taste-profile.json)
 # Phone-authored playlist sidecars: NAS is fresher than a possibly-stale
 # MacBook userData mirror (iOS backend writes via homemini → NAS). Prefer NAS
 # for those two so workmini doesn't inherit an empty/stale clobber copy.

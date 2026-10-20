@@ -741,6 +741,7 @@ declare global {
   }) => void) => () => void
   hubCatalogAdopted?: (ack: string | { version: string; protectedIds?: string[] }) => Promise<{ ok: boolean }>
   onMobileOverridesUpdated?: (callback: (p: { overrides: Record<string, { fp?: string; fields?: Record<string, string> }> }) => void) => () => void
+  onUserEditsApplied?: (callback: (p: { updates: Array<{ id: number; field: string; value: string }> }) => void) => () => void
       onDiscoverFeedUpdated: (callback: (p: { lanes: Array<{ id: string; title: string; cards: Array<{ lane: string; type: 'song' | 'album' | 'artist'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string; brainPct?: number }> }>; generatedAt: number }) => void) => () => void
       getWindowedPlayCounts: (windowMs: number) => Promise<{ ok: boolean; counts: Record<string, number> }>
       loadPlaylists: () => Promise<{ ok: boolean; playlists: Playlist[] }>

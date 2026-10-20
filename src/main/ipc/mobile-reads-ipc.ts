@@ -20,11 +20,14 @@ import {
   applyStarChange,
   starSidecarForWrite,
   type StarSidecarData,
+  type StarState,
 } from '../mobile-stars-merge'
 import { safeIpcError } from '../safe-ipc-error'
 import { withCompanionInit } from '../hub-companion.ts'
 import { registerPlaysElsewhereIpc } from './plays-elsewhere-ipc.ts'
 import { addWindowed } from '../../common/plays-elsewhere.ts'
+import { createStarHubPush } from '../star-hub-push.ts'
+import { MOBILE_BACKEND_URL } from './recommendations-ipc.ts'
 
 export interface MobileReadsIpcHost {
   getPlayEventsPath: () => string
@@ -41,7 +44,18 @@ export interface MobileReadsIpcHost {
   isReplica: () => Promise<boolean>
 }
 
-export function registerMobileReadsIpc(ipc: IpcRegistrar, host: MobileReadsIpcHost): { writeMobileStarSidecar: (trackId: number, starred: boolean) => Promise<void> } {
+export interface MobileStarsApi {
+  /** A star / un-star made here, at `at` (default now). */
+  writeMobileStarSidecar: (trackId: number, starred: boolean, at?: number) => Promise<void>
+  /** The resolved star state (v2, with every add / removal time). */
+  readStarState: () => Promise<StarState>
+  /** homemini's copy, MERGED into this Mac's (never copied over it). */
+  mergeRemoteStars: (body: string) => Promise<void>
+  /** Mirror tick: a replica pushes its stars if a push is owed. */
+  starPushTick: () => Promise<void>
+}
+
+export function registerMobileReadsIpc(ipc: IpcRegistrar, host: MobileReadsIpcHost): MobileStarsApi {
   // 2026-10-20 — the phone's and workmini's plays count here too (display only).
   const elsewhere = registerPlaysElsewhereIpc(ipc, { isReplica: host.isReplica })
   ipc.handle('get-windowed-play-counts', async (_e, windowMs: number): Promise<{ ok: boolean; counts: Record<string, number> }> => {
@@ -75,16 +89,41 @@ export function registerMobileReadsIpc(ipc: IpcRegistrar, host: MobileReadsIpcHo
     const parsed = await host.mobileStarsCache.get()
     return new Set(normalizeStarSidecar(parsed).trackIds)
   }
-  async function writeMobileStarSidecar(trackId: number, starred: boolean): Promise<void> {
+  // 2026-10-20: a replica's stars go to homemini's shared record (the phone's
+  // file) through the backend's merge — see star-hub-push.ts.
+  const starPush = createStarHubPush({
+    baseUrl: MOBILE_BACKEND_URL,
+    isReplica: host.isReplica,
+    state: async () => starSidecarForWrite(normalizeStarSidecar(await host.mobileStarsCache.get())),
+  })
+  async function writeMobileStarSidecar(trackId: number, starred: boolean, at: number = Date.now()): Promise<void> {
     // Brief 172: an un-star now writes a tombstone (removed[id] = now) and
     // a star writes an add timestamp, so the change survives the sync
     // round-trip instead of resurrecting from the other device's copy.
     // First write also migrates a v1 sidecar to v2 (removed starts {} —
     // removals the old format never recorded stay unknown).
+    // `at` (2026-10-20): the edit's own time, the same one the user-edit
+    // journal records, so a star absorbed from a replica keeps its time.
     await host.mobileStarsCache.update((current) => {
-      const next = applyStarChange(normalizeStarSidecar(current), String(trackId), starred, Date.now())
+      const next = applyStarChange(normalizeStarSidecar(current), String(trackId), starred, at)
       return starSidecarForWrite(next)
     })
+    starPush.changed()
+  }
+  // 2026-10-20: the phone-sidecar mirror used to COPY homemini's file over
+  // this one whenever homemini's was newer — a star made here and not yet
+  // anywhere else was wiped (workmini, every time the phone or the MacBook
+  // starred something). Now it merges, last-writer-wins per song, through
+  // the cache (the app stays the sole writer of the local file).
+  async function mergeRemoteStars(body: string): Promise<void> {
+    const remote = normalizeStarSidecar(JSON.parse(body) as unknown)
+    await host.mobileStarsCache.update((current) => {
+      const local = normalizeStarSidecar(current)
+      const merged = mergeStarStates(local, remote)
+      const out = starSidecarForWrite(merged)
+      return JSON.stringify(out) === JSON.stringify(starSidecarForWrite(local)) ? current : out
+    })
+    await starPush.tick()
   }
 
   // Sync B-pass (2026-06-07) — fold phone-side stars in under local-primary.
@@ -238,5 +277,10 @@ export function registerMobileReadsIpc(ipc: IpcRegistrar, host: MobileReadsIpcHo
     }
   }, { refuse: REFUSED_SENDER })
 
-  return { writeMobileStarSidecar }
+  return {
+    writeMobileStarSidecar,
+    readStarState: async () => normalizeStarSidecar(await host.mobileStarsCache.get()),
+    mergeRemoteStars,
+    starPushTick: () => starPush.tick(),
+  }
 }
