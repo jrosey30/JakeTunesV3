@@ -34,6 +34,30 @@ export interface PhoneMirrorDeps {
   nasAvailable: () => Promise<boolean>
   fetchFn?: typeof fetch
   log?: (m: string) => void
+  /**
+   * Files MERGED into this Mac's state instead of copied over it (2026-10-20:
+   * mobile-stars.json — a copy wiped the stars made here and not yet
+   * anywhere else). The merger owns the local file; it gets the source's
+   * body whenever the source changed since the last merge. Never listed in
+   * the returned names, so no cache is dropped under a pending write.
+   */
+  merge?: Partial<Record<string, (body: string) => Promise<void>>>
+}
+
+/** Source mtime last merged, per local path (process lifetime; the first tick always merges). */
+const mergedSourceMtime = new Map<string, number>()
+
+async function mergeIfChanged(deps: PhoneMirrorDeps, name: string, mtimeMs: number, body: () => Promise<string>): Promise<boolean> {
+  const merger = deps.merge?.[name]
+  if (!merger) return false
+  const key = join(deps.localDir, name)
+  if (mergedSourceMtime.get(key) === mtimeMs) return true
+  const text = await body()
+  JSON.parse(text)   // a torn payload must never reach the merge
+  await merger(text)
+  mergedSourceMtime.set(key, mtimeMs)
+  deps.log?.(`[phone-mirrors] merged ${name} (never copied over the local file)`)
+  return true
 }
 
 /** Returns the placed file's stat, taken BEFORE the rename (rename keeps
@@ -113,6 +137,11 @@ export async function refreshPhoneMirrors(deps: PhoneMirrorDeps): Promise<string
       if (res.ok) {
         const d = await res.json() as { mtimeMs?: number; body?: string }
         if (typeof d.body === 'string' && typeof d.mtimeMs === 'number') {
+          const body = d.body
+          if (await mergeIfChanged(deps, name, d.mtimeMs, async () => body)) {
+            done = true
+            continue
+          }
           const localStat = await stat(localPath).catch(() => null)
           if (sourceIsNewer(d.mtimeMs, localStat, mirrored[name])) {
             JSON.parse(d.body)   // a torn payload must never replace a good mirror
@@ -134,6 +163,7 @@ export async function refreshPhoneMirrors(deps: PhoneMirrorDeps): Promise<string
           const nasPath = join(deps.nasDir, name)
           const localPath = join(deps.localDir, name)
           const nasStat = await stat(nasPath)
+          if (await mergeIfChanged(deps, name, nasStat.mtimeMs, () => readFile(nasPath, 'utf-8'))) continue
           const localStat = await stat(localPath).catch(() => null)
           if (sourceIsNewer(nasStat.mtimeMs, localStat, mirrored[name])) {
             const body = await readFile(nasPath, 'utf-8')

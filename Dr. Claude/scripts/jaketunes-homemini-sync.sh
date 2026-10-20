@@ -39,7 +39,10 @@
 #     them, "one-way synced from the MacBook"); a replica's logs share no
 #     lines with them, so a plain push replaced the MacBook's history.
 #   - Artwork is additive only (--ignore-existing).
-#   - No JakeTunes restart on homemini, no NAS / Plex / stars legs.
+#   - No JakeTunes restart on homemini, no NAS / Plex / stars legs. (A
+#     replica's stars reach the shared record through the app itself —
+#     POST /api/stars/merge, src/main/star-hub-push.ts — and its Get Info
+#     edits through user-edits.json in SYNC_FILES.)
 #   - Notices are logged, not shown: on macOS 26 osascript notifications
 #     open Script Editor, once per song change on a replica.
 # Remote paths are escaped for macOS's /usr/bin/rsync (openrsync), which
@@ -207,7 +210,14 @@ ensure_jakeshared() {
 # src/main/release-kinds.ts). The PHONE reads it from the NAS state dir (the
 # app's LOCAL→NAS mirror carries it there); this push gives homemini's own
 # JakeTunes the laptop's answers so it doesn't re-ask MusicBrainz for them.
-SYNC_FILES=(library.json metadata-overrides.json playlists.json play-events.jsonl listening-log.jsonl live-sets.json release-kinds.json listener-profile.json musicman-memory.json musicman-interactions.jsonl picks-cache.json audio-index.bin activity-pool.json ipod-roundtrip-ledger.jsonl taste-ledger.jsonl discovery-feedback.json rock-dna.json taste-weights.json taste-profile.json)  # taste-ledger.jsonl added 2026-10-19: every suggestion verdict (adds, ✕s, refreshes, Discovery picks), read by homemini's nightly taste engine to grade past recommendations — append-only, laptop-written, copied only, never written there (a replica's lands in replicas/<name>/). audio-index.bin added 2026-09-02: the CLAP ears, laptop-written, read by the Mini's fusion. ipod-roundtrip-ledger.jsonl added 2026-10-10: the iPod's offline plays, read by homemini's nightly listening history (Year in Review) — copied only, never written there
+# 2026-10-20 — added user-edits.json: the stars and Get Info edits a PERSON
+# made on this Mac, each with its time (src/common/user-edits.ts). Written
+# only by the app's save-metadata-override handler; read by homemini's
+# GET /api/user-edits, which the MacBook absorbs replicas' edits from and a
+# replica learns the MacBook's verdicts from. A replica's lands in
+# replicas/<name>/ like its other files — never over the hub's. Copied only;
+# nothing on homemini writes it.
+SYNC_FILES=(library.json metadata-overrides.json playlists.json play-events.jsonl listening-log.jsonl live-sets.json release-kinds.json listener-profile.json musicman-memory.json musicman-interactions.jsonl picks-cache.json audio-index.bin activity-pool.json ipod-roundtrip-ledger.jsonl taste-ledger.jsonl discovery-feedback.json rock-dna.json taste-weights.json taste-profile.json user-edits.json)  # taste-ledger.jsonl added 2026-10-19: every suggestion verdict (adds, ✕s, refreshes, Discovery picks), read by homemini's nightly taste engine to grade past recommendations — append-only, laptop-written, copied only, never written there (a replica's lands in replicas/<name>/). audio-index.bin added 2026-09-02: the CLAP ears, laptop-written, read by the Mini's fusion. ipod-roundtrip-ledger.jsonl added 2026-10-10: the iPod's offline plays, read by homemini's nightly listening history (Year in Review) — copied only, never written there
 # Phone-authored playlist sidecars — pull only, never push via SYNC_FILES.
 PHONE_PLAYLIST_SIDECARS=(mobile-playlists.json playlist-additions.json)
 # 2026-10-20 — Jake's taste choices hold on BOTH Macs, wherever he made them
