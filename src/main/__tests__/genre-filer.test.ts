@@ -6,11 +6,12 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { createHash } from 'node:crypto'
 import {
   unfiledUnits, artistHomes, decideByRules, enforce, runFilerSweep, resolveCheckEntry, trackFingerprint, parseReply,
   type FilerTrack, type CheckEntry, type FilerDeps,
 } from '../genre-filer.ts'
-import { GENRES, GENRE_NAMES, phoneOverlayFields } from '../../common/genre-vocab.ts'
+import { GENRES, GENRE_NAMES, CATCH_ALL, phoneOverlayFields } from '../../common/genre-vocab.ts'
 import { matchMbArtist, confirmedArtist, countryName, musicBrainzCountryById } from '../artist-tags.ts'
 import type { OriginLookup } from '../origin-lookup.ts'
 
@@ -248,6 +249,16 @@ describe('phone edits', () => {
     assert.deepEqual(phoneOverlayFields({ genre: 'Alternative ', albumArtist: 'X' }), { albumArtist: 'X' })
     assert.deepEqual(phoneOverlayFields({ genre: 'Pop, Rock' }), {})
     assert.deepEqual(phoneOverlayFields({ genre: 'Indie Rock', rating: '5' }), { genre: 'Indie Rock', rating: '5' })
+  })
+  // ⚠️ TWIN: JakeTunesMobile backend/src/util/genreVocab.ts (GENRE_VOCAB_DIGEST) and
+  // backend/src/util/__tests__/genreVocab.test.ts pin the same digest: the phone
+  // backend applies this rule with its own copy of the list.
+  it('the list the phone backend copies is unchanged (pinned digest: change both repos together)', () => {
+    const digest = createHash('sha256')
+      .update(JSON.stringify({ names: [...GENRE_NAMES].sort(), catchAll: [...CATCH_ALL].sort() }))
+      .digest('hex')
+    assert.equal(digest, '7164c982c4d991fac87d619e8504d48518fcfd9bde0ac0544b6371cd3a8bdbc5',
+      'genre list changed: copy it to JakeTunesMobile backend/src/util/genreVocab.ts and update the digest in both repos')
   })
   it('applied at load (index.ts) and live (App.tsx)', () => {
     const src = (q: string) => readFileSync(join(import.meta.dirname, '..', '..', q), 'utf8')

@@ -150,7 +150,10 @@ export const GENRES: readonly GenreDef[] = RAW.map(([area, name, definition, str
 export const GENRE_NAMES: ReadonlySet<string> = new Set(GENRES.map((g) => g.name))
 export const isListGenre = (g: string | undefined): boolean => !!g && GENRE_NAMES.has(g.trim())
 
-/** His old catch-all tags: the only list genres the filer may re-file. */
+/** His old catch-all tags: the only list genres the filer may re-file.
+ *  ⚠️ TWIN: JakeTunesMobile backend/src/util/genreVocab.ts copies the genre NAMES
+ *  and this CATCH_ALL — the phone backend applies phoneOverlayFields' rule too.
+ *  Change the list here, then there; both repos' tests pin the same digest. */
 export const CATCH_ALL: ReadonlySet<string> = new Set(['Alternative', 'Rock', 'Classic Rock', 'Pop', 'R&B', 'Punk'])
 /** Every rock, punk and metal shelf, plus Yacht Rock (Soft Rock folded into it). */
 export const ROCK_FAMILY: ReadonlySet<string> = new Set([...GENRES.filter((g) => ['Rock', 'Punk', 'Metal'].includes(g.area)).map((g) => g.name), 'Yacht Rock'])
@@ -162,7 +165,10 @@ export const KEPT_ONE_ARTIST: ReadonlySet<string> = new Set(["Electro Swing", "G
 /** Phone edits layered over the desktop's (2026-10-11): a phone genre only wins
  *  when it's a SPECIFIC genre on the list — old phone tags like "Alternative "
  *  or "Pop, Rock" would otherwise mask the shelf the desktop filed. Every other
- *  field passes. */
+ *  field passes.
+ *  ⚠️ TWIN: JakeTunesMobile backend/src/util/genreVocab.ts phoneOverlayFields —
+ *  the backend applies the same rule to what it serves the phone and workmini
+ *  (2026-10-20: without it 37 songs showed the phone's catch-all there). */
 export function phoneOverlayFields(fields: Record<string, string>): Record<string, string> {
   if (fields.genre === undefined || (isListGenre(fields.genre) && !CATCH_ALL.has(fields.genre.trim()))) return fields
   const { genre: _dropped, ...rest } = fields
