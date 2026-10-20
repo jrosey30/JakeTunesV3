@@ -69,6 +69,80 @@ describe('refreshPhoneMirrors', () => {
     assert.deepEqual(refreshed, [])
     assert.equal(JSON.parse(await readFile(join(dir, 'mobile-imports.json'), 'utf-8')).tracks[0].id, 1)
   })
+
+  // 2026-10-20 (#209 testing): the mirror's mtime is when WE wrote it, so a
+  // phone edit landing <1s later failed "source > local + 1s" — and stayed
+  // invisible until the phone touched that file again.
+  test('HTTP: a source edit landing <1s after a mirror write lands on the next pass', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pm-'))
+    const name = 'playlist-additions.json'
+    const payload = { [name]: { mtimeMs: Date.now() - 60_000, body: '{"additions":[]}' } }
+    const deps = { files: [name], localDir: dir, nasDir: '/nonexistent', backendUrl: 'http://hub', nasAvailable: async () => false, fetchFn: httpServing(payload) }
+    assert.deepEqual(await refreshPhoneMirrors(deps), [name])
+    const mirroredAt = (await stat(join(dir, name))).mtimeMs
+    payload[name] = { mtimeMs: mirroredAt + 100, body: '{"additions":[{"playlistId":"p1","trackId":"42"}]}' }
+    assert.deepEqual(await refreshPhoneMirrors(deps), [name], 'the edit 100 ms after the mirror write must not be skipped')
+    assert.equal(JSON.parse(await readFile(join(dir, name), 'utf-8')).additions[0].trackId, '42')
+    assert.deepEqual(await refreshPhoneMirrors(deps), [], 'unchanged source → no rewrite')
+  })
+
+  test('NAS: a source edit landing <1s after a mirror write lands on the next pass', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pm-'))
+    const nas = join(dir, 'nas'); await mkdir(nas)
+    const name = 'mobile-playlists.json'
+    await writeFile(join(nas, name), '{"playlists":[]}')
+    await utimes(join(nas, name), new Date(Date.now() - 60_000), new Date(Date.now() - 60_000))
+    const deps = { files: [name], localDir: dir, nasDir: nas, backendUrl: 'http://hub', nasAvailable: async () => true, fetchFn: deadFetch }
+    assert.deepEqual(await refreshPhoneMirrors(deps), [name])
+    const mirroredAt = (await stat(join(dir, name))).mtimeMs
+    await writeFile(join(nas, name), '{"playlists":[{"id":"p1","name":"New","trackIds":[]}]}')
+    await utimes(join(nas, name), new Date(mirroredAt + 100), new Date(mirroredAt + 100))
+    assert.deepEqual(await refreshPhoneMirrors(deps), [name])
+    assert.equal(JSON.parse(await readFile(join(dir, name), 'utf-8')).playlists[0].id, 'p1')
+  })
+
+  test('source clock behind ours: every newer source version still lands; an older one never rolls back', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pm-'))
+    const name = 'mobile-imports.json'
+    const payload = { [name]: { mtimeMs: 1000, body: '{"tracks":[]}' } }
+    const deps = { files: [name], localDir: dir, nasDir: '/nonexistent', backendUrl: 'http://hub', nasAvailable: async () => false, fetchFn: httpServing(payload) }
+    assert.deepEqual(await refreshPhoneMirrors(deps), [name])
+    payload[name] = { mtimeMs: 2000, body: '{"tracks":[{"id":2}]}' }
+    assert.deepEqual(await refreshPhoneMirrors(deps), [name], 'newer than what we mirrored, even though far older than our write')
+    payload[name] = { mtimeMs: 1500, body: '{"tracks":[{"id":1}]}' }
+    assert.deepEqual(await refreshPhoneMirrors(deps), [], 'an older source copy must not replace a newer mirror')
+    assert.equal(JSON.parse(await readFile(join(dir, name), 'utf-8')).tracks[0].id, 2)
+  })
+
+  test('a local write by the app (mobile-stars.json) keeps the old guard — never easier to replace', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pm-'))
+    const name = 'mobile-stars.json'
+    const t0 = Date.now() - 60_000
+    const payload = { [name]: { mtimeMs: t0, body: '{"trackIds":["1"]}' } }
+    const deps = { files: [name], localDir: dir, nasDir: '/nonexistent', backendUrl: 'http://hub', nasAvailable: async () => false, fetchFn: httpServing(payload) }
+    assert.deepEqual(await refreshPhoneMirrors(deps), [name])
+    // The app's star cache flushes its own copy after the mirror.
+    const appWroteAt = t0 + 30_000
+    await writeFile(join(dir, name), '{"trackIds":["1","7"]}')
+    await utimes(join(dir, name), new Date(appWroteAt), new Date(appWroteAt))
+    // A source edit newer than what we mirrored but not clearly newer than the app's write.
+    payload[name] = { mtimeMs: appWroteAt + 500, body: '{"trackIds":["1","9"]}' }
+    assert.deepEqual(await refreshPhoneMirrors(deps), [])
+    assert.deepEqual(JSON.parse(await readFile(join(dir, name), 'utf-8')).trackIds, ['1', '7'])
+    payload[name] = { mtimeMs: appWroteAt + 2000, body: '{"trackIds":["1","9"]}' }
+    assert.deepEqual(await refreshPhoneMirrors(deps), [name], 'clearly newer than the app write → same as before')
+  })
+
+  test('an unreadable sources record falls back to the old guard, then heals', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pm-'))
+    const name = 'mobile-plays.json'
+    await writeFile(join(dir, 'phone-mirrors-sources.json'), '{ torn')   // the V3-private record
+    const payload = { [name]: { mtimeMs: Date.now() + 5000, body: '{"plays":{}}' } }
+    const deps = { files: [name], localDir: dir, nasDir: '/nonexistent', backendUrl: 'http://hub', nasAvailable: async () => false, fetchFn: httpServing(payload) }
+    await writeFile(join(dir, name), '{"plays":{"old":1}}')
+    assert.deepEqual(await refreshPhoneMirrors(deps), [name])
+    assert.ok(JSON.parse(await readFile(join(dir, 'phone-mirrors-sources.json'), 'utf-8'))[name], 'record rewritten after a refresh')
+  })
 })
 
 describe('ensureMobileImportAudio', () => {
