@@ -196,6 +196,7 @@ import {
   tagYearStr,
 } from '../common/albumReleaseDate'
 import { foldAccents, nameKey, storedNameKey } from '../common/fold-text.ts'
+import { chooseArtistIdentity, catalogueIsSomeoneElses, type IdentityConfidence } from '../common/artist-identity.ts'
 import { measureLibraryFileSizes, type FileSizeProgress, type FileSizeScan } from '../common/library-file-sizes.ts'
 import { normForOwnership } from './owned-album-key.ts'
 import { explicitWins } from '../common/explicit.ts'
@@ -2897,7 +2898,7 @@ interface DiscographyResult {
 // Bump when the discography shape/filtering changes so old disk caches are
 // ignored. v2: drop regional repackagings / hits comps via tracklist overlap
 // (the US Capitol Beatles albums MusicBrainz doesn't flag as Compilation).
-const DISCO_SCHEMA_VERSION = 2
+const DISCO_SCHEMA_VERSION = 3  // 3: 2026-10-20 identity rule — retires catalogues of the wrong namesake (Geese → Pop Songs / Duck)
 const DISCO_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const MB_RATE_LIMIT_MS = 1100  // MB asks for ≤1 req/sec; pad to 1.1s
 let mbLastRequestAt = 0
@@ -2966,12 +2967,17 @@ interface CanonicalArtist {
   tags: string[]          // top tags, score-sorted, lowercased
   wikiTitle: string | null // canonical wikipedia article title if MB has the relation
   disambiguation: string  // MB's own disambiguation string ("rapper", etc.) when present
+  // 2026-10-20 — how the namesakes were settled (common/artist-identity.ts).
+  // 'ambiguous' = several artists share the name and the library's albums
+  // couldn't tell them apart; catalogue consumers must refuse it.
+  identity?: IdentityConfidence
+  incomplete?: boolean    // MusicBrainz failed during the namesake check; never cached
 }
 const CANONICAL_CACHE_DIR = join(app.getPath('userData'), 'canonical-artist-cache')
 const CANONICAL_TTL_MS = 24 * 60 * 60 * 1000
 async function resolveCanonicalArtist(
   rawName: string,
-  opts?: { libraryGenres?: string[] },
+  opts?: { libraryGenres?: string[]; libraryAlbums?: string[] },
 ): Promise<CanonicalArtist | null> {
   if (!rawName || typeof rawName !== 'string') return null
   const name = rawName.trim()
@@ -2981,7 +2987,12 @@ async function resolveCanonicalArtist(
     .filter(Boolean)
     .sort()
     .join('|')
-  const cacheKey = createHash('md5').update(`${name.toLowerCase()}::${genreHint}`).digest('hex')
+  // Owned albums are the identity evidence (genres can't tell two rock
+  // bands called Geese apart). They join the cache key, which also retires
+  // every entry resolved before the evidence existed.
+  const libraryAlbums = opts?.libraryAlbums ?? await getLibraryAlbumsForArtist(name)
+  const albumHint = [...libraryAlbums].map(a => a.toLowerCase().trim()).sort().join('|')
+  const cacheKey = createHash('md5').update(`${name.toLowerCase()}::${genreHint}::albums=${albumHint}`).digest('hex')
   const cachePath = join(CANONICAL_CACHE_DIR, `${cacheKey}.json`)
   await mkdir(CANONICAL_CACHE_DIR, { recursive: true }).catch(() => {})
   // Cache hit
@@ -3011,6 +3022,7 @@ async function resolveCanonicalArtist(
         disambiguation?: string
         'life-span'?: { begin?: string; end?: string; ended?: boolean }
         tags?: Array<{ name: string; count: number }>
+        aliases?: Array<{ name?: string }>
         relations?: Array<{ type: string; url?: { resource?: string } }>
       }>
     }
@@ -3033,7 +3045,24 @@ async function resolveCanonicalArtist(
       }
       return { c, s }
     }).sort((a, b) => b.s - a.s)
-    const top = scored[0].c
+    // Namesakes are settled by owned-album overlap, not by the genre
+    // ranking above — that ranking only orders the evidence fetches.
+    const chosen = await chooseArtistIdentity({
+      name,
+      ranked: scored.map(({ c }) => ({ ...c, aliases: (c.aliases || []).map(a => a.name || '').filter(Boolean) })),
+      ownedAlbums: libraryAlbums,
+      fold: nameKey,
+      fetchReleaseGroups: async (mbid) => {
+        await mbThrottle()
+        const r = await fetch(`https://musicbrainz.org/ws/2/release-group?artist=${mbid}&type=album|ep&fmt=json&limit=100`, { headers })
+        if (r.status === 404) return []
+        if (!r.ok) throw new Error(`MusicBrainz ${r.status}`)
+        const j = await r.json() as { 'release-groups'?: Array<{ title?: string }> }
+        return (j['release-groups'] || []).map(rg => rg.title || '').filter(Boolean)
+      },
+    })
+    if (!chosen) return null
+    const top = candidates.find(c => c.id === chosen.candidate.id) || scored[0].c
     const wikiRel = (top.relations || []).find(r => r.type === 'wikipedia' && r.url?.resource)
     const wikiTitle = wikiRel?.url?.resource
       ? decodeURIComponent(wikiRel.url.resource.split('/wiki/')[1] || '').replace(/_/g, ' ')
@@ -3050,8 +3079,11 @@ async function resolveCanonicalArtist(
         .map(t => t.name.toLowerCase()),
       wikiTitle,
       disambiguation: top.disambiguation || '',
+      identity: chosen.identity,
+      ...(chosen.incomplete ? { incomplete: true } : {}),
     }
-    await writeFile(cachePath, JSON.stringify(result)).catch((err) => console.warn('[canonical] cache write failed:', err?.message ?? err))
+    if (chosen.identity === 'ambiguous') console.warn(`[canonical] ${name}: namesakes the library can't tell apart${chosen.incomplete ? ' (MusicBrainz failed mid-check — not cached)' : ''} — identity unconfirmed (${top.id})`)
+    if (!chosen.incomplete) await writeFile(cachePath, JSON.stringify(result)).catch((err) => console.warn('[canonical] cache write failed:', err?.message ?? err))
     return result
   } catch (err) {
     console.warn('[resolveCanonicalArtist] failed for', name, err)
@@ -3066,17 +3098,45 @@ async function resolveCanonicalArtist(
 // are tagged "Rap."
 async function getLibraryGenresForArtist(artistName: string): Promise<string[]> {
   try {
-    const raw = await readFile(LIBRARY_PATH, 'utf-8')
-    const lib = JSON.parse(raw) as { tracks?: Array<{ artist?: string; genre?: string }> }
     const norm = artistName.toLowerCase().trim()
     const genres = new Set<string>()
-    for (const t of lib.tracks || []) {
+    for (const t of await readIdentityLibrary()) {
       if ((t.artist || '').toLowerCase().trim() !== norm) continue
       const g = (t.genre || '').trim()
       if (g) genres.add(g)
     }
     return Array.from(genres)
   } catch { return [] }
+}
+
+// The library's album titles for an artist (track artist or album artist,
+// accent/case-folded) — the evidence resolveCanonicalArtist uses to tell
+// namesakes apart.
+async function getLibraryAlbumsForArtist(artistName: string): Promise<string[]> {
+  try {
+    const want = nameKey(artistName, '')
+    if (!want) return []
+    const albums = new Set<string>()
+    for (const t of await readIdentityLibrary()) {
+      if (nameKey(t.artist, '') !== want && nameKey(t.albumArtist, '') !== want) continue
+      const a = (t.album || '').trim()
+      if (a) albums.add(a)
+    }
+    return Array.from(albums)
+  } catch { return [] }
+}
+
+// Both helpers above run on every resolve; library.json is ~12 MB, so
+// keep the four fields they read, re-parsed only when the file changes.
+type IdentityTrack = { artist?: string; albumArtist?: string; album?: string; genre?: string }
+let identityLibCache: { mtimeMs: number; tracks: IdentityTrack[] } | null = null
+async function readIdentityLibrary(): Promise<IdentityTrack[]> {
+  const st = await stat(LIBRARY_PATH)
+  if (identityLibCache && identityLibCache.mtimeMs === st.mtimeMs) return identityLibCache.tracks
+  const lib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8')) as { tracks?: IdentityTrack[] }
+  const tracks = (lib.tracks || []).map(t => ({ artist: t.artist, albumArtist: t.albumArtist, album: t.album, genre: t.genre }))
+  identityLibCache = { mtimeMs: st.mtimeMs, tracks }
+  return tracks
 }
 
 function discoCachePath(artist: string): string {
@@ -3188,9 +3248,25 @@ async function fetchArtistDiscography(artist: string): Promise<DiscographyResult
     //    the wrong "Drake" / "Beck" / "Bush" MBID, giving the user
     //    someone else's discography on common-name artists.
     const libraryGenres = await getLibraryGenresForArtist(artist)
-    const canon = await resolveCanonicalArtist(artist, { libraryGenres })
+    const libraryAlbums = await getLibraryAlbumsForArtist(artist)
+    const canon = await resolveCanonicalArtist(artist, { libraryGenres, libraryAlbums })
     if (!canon) return null
     const mbid = canon.mbid
+    // A stranger's discography is worse than none (Jake, 10/20: "what is
+    // duck and pop songs???"). Cached empty so the page stops asking.
+    const refuse = async (why: string): Promise<DiscographyResult> => {
+      console.warn(`[discography] ${artist}: ${why} — showing none`)
+      const empty: DiscographyResult = { artist, albums: [], fetchedAt: Date.now(), schemaVersion: DISCO_SCHEMA_VERSION }
+      try {
+        await mkdir(join(app.getPath('userData'), 'discography-cache'), { recursive: true })
+        await writeFile(cachePath, JSON.stringify(empty), 'utf-8')
+      } catch (err) { console.warn('[discography] cache write failed:', err) }
+      return empty
+    }
+    if (canon.identity === 'ambiguous') {
+      if (canon.incomplete) return null  // MusicBrainz hiccup — try again next visit, cache nothing
+      return refuse(`namesakes the library can't tell apart (${mbid})`)
+    }
 
     // 2. Fetch release-groups (albums + EPs, sorted by date)
     await mbThrottle()
@@ -3199,6 +3275,9 @@ async function fetchArtistDiscography(artist: string): Promise<DiscographyResult
     if (!rgRes.ok) return null
     const rgData = await rgRes.json() as {
       'release-groups'?: Array<{ id: string; title: string; 'first-release-date'?: string; 'primary-type'?: string; 'secondary-types'?: string[] }>
+    }
+    if (catalogueIsSomeoneElses((rgData['release-groups'] || []).map(rg => rg.title), libraryAlbums)) {
+      return refuse(`none of the ${libraryAlbums.length} library albums are in ${mbid}'s catalogue`)
     }
     // 4.5.0-66 — also filter on secondary-types. Old behavior accepted any
     // release-group whose primary-type was Album/EP, which leaked Compilation/
