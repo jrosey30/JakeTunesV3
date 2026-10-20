@@ -945,13 +945,19 @@ if [ $pull_rc -ne 0 ] && [ $pull_rc -ne 23 ] && [ $pull_rc -ne 24 ]; then
 fi
 # Phone listening stream (2026-08-07 parity: "same page as mobile at all
 # times") — the backend appends {t,ts,ar,ti,al,g,pct,src:mobile} events;
-# desktop KPIs merge them with its own listening-log. Backend writes it
-# next to library.json on homemini's LOCAL state dir.
-# Both locations are tried and BOTH may be absent pre-first-play, so these use
-# rsync_optional: a missing source is normal here and must not log an error.
+# desktop KPIs merge them with its own listening-log. The backend writes it
+# in its STATE_DIR — the NAS share as homemini mounts it. 2026-10-20: this
+# pull only tried homemini's ~/JakeTunesState and App Support, where the file
+# never lives, so the MacBook's copy froze on 9/13 and every run said "not
+# present yet" while the real log (529 KB) grew on the NAS. That path is
+# tried first now; the old two stay as fallbacks.
+# All may be absent pre-first-play, so these use rsync_optional: a missing
+# source is normal here and must not log an error.
+PHONE_STATE_DIR_ON_HOMEMINI="${JT_PHONE_STATE_DIR:-/Volumes/JakeShared/JakeTunesState}"
+rsync_optional "$HOMEMINI:$PHONE_STATE_DIR_ON_HOMEMINI/mobile-listening-log.jsonl" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
 rsync_optional "$HOMEMINI:JakeTunesState/mobile-listening-log.jsonl" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
 rsync_optional "$(rremote "$JT_DATA_REMOTE/mobile-listening-log.jsonl")" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
-  log_hourly /tmp/.jt-phonelog-note "phone listening log not present yet (appears after the first phone play post-deploy)"
+  log_hourly /tmp/.jt-phonelog-note "phone listening log not found on homemini (checked $PHONE_STATE_DIR_ON_HOMEMINI, ~/JakeTunesState, App Support)"
 # Phone playlist sidecars: PULL ONLY (homemini → MacBook local, and NAS when
 # mounted). Never the reverse — see PHONE_PLAYLIST_SIDECARS above. Desktop V3
 # reads these as Brief 121 mirrors; the iOS backend is the writer.
