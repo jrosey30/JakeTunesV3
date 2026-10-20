@@ -3,10 +3,11 @@
  *
  * Hierarchy (2026-10-18, launch page "G"): TONIGHT ON JAKETUNES (the album
  * you're living in, Island Albums Cover Flow, Now Digging; components/
- * TonightOnJakeTunes.tsx) → Daily mixes → Recently Added → Listening Memory
- * → Rediscover → Year in Review card → Today's pick → Shows → New This Week
- * → Music News. HOME_SHOWS below switches bands on/off (empty library: the
- * welcome).
+ * TonightOnJakeTunes.tsx) → the three shelves (2026-10-20: You Should Listen
+ * To More, You've Been Listening To A Lot, Recently Added; components/
+ * HomeShelves.tsx) → Daily mixes → Listening Memory → Rediscover → Year in
+ * Review card → Today's pick → Shows → New This Week → Music News.
+ * HOME_SHOWS below switches bands on/off (empty library: the welcome).
  *
  * Aggregation runs in useMemo against lib.tracks — same source as
  * AlbumsView/ArtistsView, no separate state.
@@ -29,6 +30,7 @@ import AlbumArtImage from '../components/AlbumArtImage'
 import MadeForYou from '../components/MadeForYou'
 import YirHomeCard from '../components/yir/YirHomeCard'
 import TonightOnJakeTunes from '../components/TonightOnJakeTunes'
+import HomeShelves from '../components/HomeShelves'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import { libraryStats } from '../utils/libraryStats'
 import HomeShows from '../components/HomeShows'
@@ -164,8 +166,9 @@ function ShelfGlyph({ kind }: { kind: ShelfKind }) {
 }
 
 /** What the Home renders under launch page "G" (Jake, 2026-10-18). First the
- *  four keepers — Daily mixes (MadeForYou), Recently Added, Listening Memory,
- *  Rediscover — then, in their original relative order, the Year in Review
+ *  three shelves (2026-10-20, components/HomeShelves.tsx — Recently Added moved
+ *  up into them), then the keepers — Daily mixes (MadeForYou), Listening
+ *  Memory, Rediscover — then, in their original relative order, the Year in Review
  *  card (the only door to that view, Dec 17 reveal included), Today's pick,
  *  Shows (Live Near You + You'd Like This from homemini's concerts feed —
  *  components/HomeShows.tsx — then On the Horizon), New This Week, Music News. Jake: "stats move to settings.
@@ -212,11 +215,10 @@ export default function HomeView() {
   useScrollPersistence('home', rootRef)
 
   // 4.4.23: per-row horizontal scroll persistence. Scrolling right
-  // through Recently Added then bouncing to Songs and back used to
-  // reset both rows to leftmost; not anymore.
-  const recentRowRef = useRef<HTMLDivElement>(null)
+  // through a row then bouncing to Songs and back used to reset it to
+  // leftmost; not anymore. (Recently Added's row moved into
+  // components/HomeShelves.tsx with its 'home-row-recent' key.)
   const artistsRowRef = useRef<HTMLDivElement>(null)
-  useScrollPersistence('home-row-recent', recentRowRef)
   useScrollPersistence('home-row-artists', artistsRowRef)
 
   // 4.4.27: removed the JS-based useElasticOverscroll calls — the
@@ -533,49 +535,6 @@ export default function HomeView() {
     dispatch({ type: 'SET_VIEW', view })
   }, [dispatch])
 
-  // ── Recently Added: aggregate by album, sort by newest track dateAdded ─
-  const recentAlbums = useMemo((): AlbumCard[] => {
-    const map = new Map<string, AlbumCard>()
-    for (const t of regularTracks) {
-      const artist = t.albumArtist || t.artist || 'Unknown Artist'
-      const album = t.album || 'Unknown Album'
-      const artistFolded = artist.toLowerCase().trim()
-      const albumFolded = album.toLowerCase().trim()
-      const key = `${artistFolded}|||${albumFolded}`
-      let card = map.get(key)
-      if (!card) {
-        card = {
-          key,
-          artist,
-          artistFolded,
-          album,
-          year: t.year || '',
-          tracks: [],
-          newestAdded: t.dateAdded || '',
-        }
-        map.set(key, card)
-      }
-      card.tracks.push(t)
-      // Track the most recent dateAdded across all tracks in this album.
-      // Re-imports of a single track on an existing album bump the album
-      // back up to the top — feels right ("oh I added that bonus track
-      // last night").
-      if (t.dateAdded && t.dateAdded > card.newestAdded) {
-        card.newestAdded = t.dateAdded
-      }
-      if (!card.year && t.year) card.year = t.year
-    }
-    // Sort tracks within each album the way AlbumsView does so click-to-play
-    // hits track 1 first.
-    for (const card of map.values()) {
-      card.tracks = sortAlbumTracks(card.tracks)
-    }
-    return Array.from(map.values())
-      .filter(c => c.newestAdded)
-      .sort((a, b) => b.newestAdded.localeCompare(a.newestAdded))
-      .slice(0, 12)
-  }, [lib.tracks])
-
   // ── 4.4.33: Featured Album — "Today's Pick" hero. Date-seeded so the
   // same album shows all day, rotates to a different one tomorrow.
   // Picks from the user's top 50 by aggregate play count (filters out
@@ -699,7 +658,6 @@ export default function HomeView() {
     if (lib.currentView !== 'home') return
     const keys = [
       HOME_SHOWS.featured ? featuredAlbum?.key : undefined,
-      ...recentAlbums.map(c => c.key),
     ].filter((k): k is string => !!k)
     const missing = keys.filter(k => !artHashForKey(k))
     if (missing.length === 0) return
@@ -710,22 +668,15 @@ export default function HomeView() {
       }),
       dispatch,
     )
-  }, [lib.currentView, featuredAlbum?.key, recentAlbums, artHashForKey, dispatch])
+  }, [lib.currentView, featuredAlbum?.key, artHashForKey, dispatch])
 
   useEffect(() => {
     if (lib.currentView !== 'home') return
     const hashes = [
       HOME_SHOWS.featured && featuredAlbum?.key ? artHashForKey(featuredAlbum.key) : undefined,
-      ...recentAlbums.map(c => artHashForKey(c.key)),
     ]
     prefetchAlbumArtHashes(hashes, 320)
-  }, [lib.currentView, featuredAlbum?.key, recentAlbums, lib.artworkMap, normalizedArtIndex])
-
-  const playAlbum = (card: AlbumCard) => {
-    if (card.tracks.length === 0) return
-    flashCard(card.key)
-    playTrack(card.tracks[0], card.tracks, 0, undefined, true)
-  }
+  }, [lib.currentView, featuredAlbum?.key, lib.artworkMap, normalizedArtIndex])
 
   const libraryEmpty = lib.tracks.length === 0
   const invite = libraryEmpty
@@ -745,10 +696,14 @@ export default function HomeView() {
     <div className="home-view" ref={rootRef}>
       <ScrollTopButton targetRef={rootRef} />
       {/* 2026-10-18 — launch page "G": tonight's album on an art-soaked
-          backdrop, the Island Albums Cover Flow, Now Digging. Under it: Daily
-          mixes, Recently Added, Listening Memory, Rediscover, then the rest
-          (HOME_SHOWS above says what's on). */}
+          backdrop, the Island Albums Cover Flow, Now Digging. Right under it
+          (2026-10-20) the three shelves — You Should Listen To More, You've
+          Been Listening To A Lot, Recently Added — then Daily mixes, Listening
+          Memory, Rediscover and the rest (HOME_SHOWS above says what's on). */}
       <TonightOnJakeTunes tracks={regularTracks} artworkMap={lib.artworkMap} artIndex={normalizedArtIndex} dispatch={dispatch} playTrack={playTrack} />
+      {!libraryEmpty && (
+        <HomeShelves tracks={lib.tracks} regularTracks={regularTracks} artworkMap={lib.artworkMap} artIndex={normalizedArtIndex} dispatch={dispatch} playTrack={playTrack} />
+      )}
       {HOME_SHOWS.header && (
       <header className="home-header">
         <div className="home-header-copy">
@@ -854,66 +809,7 @@ export default function HomeView() {
       {/* ── 4.5: Your Mixes — Spotify-style temporary vibe / daily mixes (below the hero) ── */}
       <MadeForYou />
 
-      {/* ── Recently Added ───────────────────────────────────────────────── */}
-      {recentAlbums.length > 0 && (
-      <section className="home-section">
-        <div className="home-section-header">
-          <h2 className="home-section-title">Recently Added</h2>
-          <button
-            type="button"
-            className="home-section-more"
-            onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: 'recently-added' })}
-          >
-            See All
-          </button>
-        </div>
-          <div className="home-card-row" role="list" ref={recentRowRef}>
-            {recentAlbums.map((card) => {
-              const hash = artHashForKey(card.key)
-              const flashing = flashedKey === card.key
-              const openAlbum = () => dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: card.key })
-              return (
-                <div
-                  key={card.key}
-                  className={`home-album-card${flashing ? ' is-playing-flash' : ''}`}
-                  role="listitem"
-                  tabIndex={0}
-                  onClick={openAlbum}
-                  onKeyDown={activateOnKey(openAlbum)}
-                  onContextMenu={(e) => {
-                    e.preventDefault()
-                    playAlbum(card)
-                  }}
-                  title={`${card.artist} — ${card.album}\nClick opens the album. Right-click plays it.`}
-                >
-                  <div className="home-album-art">
-                    {hash ? (
-                      <AlbumArtImage
-                        hash={hash}
-                        alt={card.album}
-                        onLoad={(e) => e.currentTarget.classList.add('home-album-art-loaded')}
-                      />
-                    ) : (
-                      <div className="home-album-art-placeholder">
-                        <svg width="32" height="32" viewBox="0 0 40 40" fill="none" stroke="#999" strokeWidth="1.5">
-                          <circle cx="20" cy="20" r="18" />
-                          <circle cx="20" cy="20" r="6" />
-                          <circle cx="20" cy="20" r="2" fill="#999" />
-                        </svg>
-                      </div>
-                    )}
-                  </div>
-                  <div className="home-album-info">
-                    <div className="home-album-title">{card.album}</div>
-                    <div className="home-album-artist">{card.artist}</div>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-      </section>
-      )}
-
+      {/* (Recently Added moved up under G — components/HomeShelves.tsx.) */}
 
       {/* ── 4.4.33: Quick stats strip — total plays, library duration, top artist, top genre ── */}
       {HOME_SHOWS.stats && lib.tracks.length > 0 && (

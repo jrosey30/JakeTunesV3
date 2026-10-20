@@ -19,6 +19,7 @@ import { quietWarn } from '../flight-recorder'
 import { MOBILE_BACKEND_URL } from './recommendations-ipc.ts'
 import { createHomeSpotlightClient } from '../home-spotlight-client.ts'
 import { localSpotlightDoc, parsePlayEvents, spotTracksOf, type HomeSpotlightDoc } from '../../common/home-spotlight-doc.ts'
+import { registerHomeShelvesIpc } from './home-shelves-ipc.ts'
 
 const EVERY_MS = 10 * 60_000
 const FIRST_MS = 5_000
@@ -79,4 +80,8 @@ export function registerHomeSpotlightIpc(ipc: IpcRegistrar, host: HomeSpotlightI
   setTimeout(() => tick(true), FIRST_MS)
   setInterval(() => tick(true), EVERY_MS)
   app.on('browser-window-focus', () => tick(false))
+
+  // The three rows under G (2026-10-20) ride with G: registered here so
+  // main/index.ts does not grow (its line ratchet only shrinks).
+  registerHomeShelvesIpc(ipc, { getPlayEventsPath: host.getPlayEventsPath })
 }

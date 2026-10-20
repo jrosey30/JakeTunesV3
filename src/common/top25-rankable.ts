@@ -11,6 +11,9 @@
  * 2026-10-11: the rule is for EVERY ranking, not just Top 25 — Best of 2026
  * (MUNA's 16-second "...Unless" got in when it grew to 200), Year in Review's
  * top songs and song of the month, and You'd Star use it too.
+ *
+ * ⚠️ TWIN: JakeTunesMobile backend/src/util/top25Rankable.ts — homemini's
+ * copy (the Home shelves rank there for both apps). Same threshold.
  */
 export const TOP_25_MIN_DURATION_MS = 60_000
 export function isTop25Rankable(t: { duration?: number }): boolean {
