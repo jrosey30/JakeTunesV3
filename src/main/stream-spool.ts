@@ -26,9 +26,7 @@ import { createReadStream } from 'fs'
 import { readFile, writeFile, rename, mkdir, stat, readdir, unlink } from 'fs/promises'
 import { join } from 'path'
 import { Readable } from 'stream'
-import { withCompanionInit } from './hub-companion.ts'
-import { writeWebBodyToFile } from './web-body-to-file.ts'
-import { withBodyInactivityTimeout } from './stream-body-timeout.ts'
+import { downloadInRangeChunks, RangeHttpError } from './range-chunk-download.ts'
 import { writeJsonAtomic } from './atomic-write.ts'
 
 export interface SpoolMeta { contentType: string; total: number }
@@ -148,11 +146,16 @@ export async function spoolReady(dir: string, key: string): Promise<SpoolReady |
 // it can't fix "one at full speed" on a link this thin.
 //
 // So on a stream-compressed machine (the marker that already says "this
-// link is thin") the spool reads at 3× the stream's own bitrate: a 256 kbps
+// link is thin") the spool averages 3× the stream's own bitrate: a 256 kbps
 // track spools at 96 KB/s — a 4-minute song lands in ~80 s, while the live
-// proxy and everything else on the tunnel keep their headroom. Reading
-// slower is what slows the sender: the TCP window closes behind us instead
-// of a queue building in the middle. Fat links pass 0 and are untouched.
+// proxy and everything else on the tunnel keep their headroom. Fat links
+// pass 0 and download in one plain request, exactly as before.
+//
+// HOW it paces changed the same evening: #179 read the body slowly
+// (pacedBody), and undici dropped the half-read socket after ~30 s
+// (UND_ERR_SOCKET — failures went from 14/h to 35–45/h). Now the file comes
+// down in Range chunks, each read at wire speed, with the waiting done
+// BETWEEN requests (range-chunk-download.ts).
 export const SPOOL_PACE_MULTIPLE = 3
 
 /** Bytes/second for a spool on a thin link carrying `kbps` streams. */
@@ -160,56 +163,26 @@ export function spoolPaceFor(kbps: number): number {
   return Math.round((kbps * 1000 / 8) * SPOOL_PACE_MULTIPLE)
 }
 
-/** Pass `body` through at no more than `bytesPerSec` (0 = unpaced). */
-export function pacedBody(
-  body: ReadableStream<Uint8Array>,
-  bytesPerSec: number,
-  now: () => number = Date.now,
-  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
-): ReadableStream<Uint8Array> {
-  if (!(bytesPerSec > 0)) return body
-  let start = -1
-  let sent = 0
-  return body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
-    async transform(chunk, controller) {
-      if (start < 0) start = now()
-      sent += chunk.byteLength
-      const wait = start + (sent / bytesPerSec) * 1000 - now()
-      if (wait > 0) await sleep(wait)
-      controller.enqueue(chunk)
-    },
-  }))
-}
-
-/** A non-2xx from homemini (404 = not there yet; 5xx = homemini trouble). */
-class SpoolHttpError extends Error {
-  readonly status: number
-  constructor(status: number) { super(`spool fetch ${status}`); this.status = status }
-}
-
 /** Download one track to `${key}.done` + meta. Throws on any failure, after
- *  removing its .part — a torn spool is never left behind or served. */
+ *  removing its .part — a torn spool is never left behind or served.
+ *  `paceBytesPerSec` > 0: Range chunks averaging that rate; 0: one request. */
 async function landSpool(
   dir: string, key: string, url: string, fetchFn: typeof fetch, paceBytesPerSec: number,
   signal: AbortSignal, stallMs = 0, onHeaders?: () => void,
 ): Promise<number> {
   const part = join(dir, `${key}.part.${process.pid}`)
   try {
-    const res = await fetchFn(url, withCompanionInit({ signal }))
-    onHeaders?.()
-    if (!res.ok || !res.body) throw new SpoolHttpError(res.status)
-    const total = Number(res.headers.get('content-length')) || 0
-    const contentType = res.headers.get('content-type') || 'audio/mpeg'
-    const raw = res.body as unknown as ReadableStream<Uint8Array>
-    // pipeline via writeWebBodyToFile: a dropped connection now rejects into
-    // the catch below (cooldown + .part cleanup) instead of an uncaught
-    // exception dialog and a spool slot that never frees (2026-10-17).
-    await writeWebBodyToFile(pacedBody(stallMs > 0 ? withBodyInactivityTimeout(raw, stallMs) : raw, paceBytesPerSec) as typeof res.body, part)
-    const written = (await stat(part)).size
-    if (total > 0 && written !== total) throw new Error(`spool short: ${written}/${total}`)
-    await writeFile(metaPath(dir, key), JSON.stringify({ contentType, total: written } satisfies SpoolMeta))
+    // A dropped connection rejects into the catch below (cooldown + .part
+    // cleanup) instead of an uncaught exception dialog and a spool slot that
+    // never frees (2026-10-17); downloadInRangeChunks also verifies the size.
+    const got = await downloadInRangeChunks(url, part, {
+      fetchFn, bytesPerSec: paceBytesPerSec, signal, stallMs,
+      onFirstResponse: () => onHeaders?.(),
+    })
+    const contentType = got.contentType || 'audio/mpeg'
+    await writeFile(metaPath(dir, key), JSON.stringify({ contentType, total: got.bytes } satisfies SpoolMeta))
     await rename(part, donePath(dir, key))
-    return written
+    return got.bytes
   } catch (err) {
     try { await unlink(part) } catch { /* never landed */ }
     throw err
@@ -217,7 +190,7 @@ async function landSpool(
 }
 
 /** Kick a full-file download (single-flight, cooldown after failure).
- *  `paceBytesPerSec` > 0 caps the read rate (thin links); 0 = wire speed. */
+ *  `paceBytesPerSec` > 0 caps the average rate (thin links); 0 = wire speed. */
 export function ensureSpool(dir: string, key: string, url: string, fetchFn: typeof fetch = fetch, paceBytesPerSec = 0, limits: SpoolLimits = FAT_LINK_LIMITS): void {
   if (inFlight.has(key)) return
   const lastFail = failedAt.get(key)
@@ -388,7 +361,7 @@ export async function preloadSpool(dir: string, key: string, url: string, opts: 
     return { kind: 'landed', bytes }
   } catch (err) {
     if (opts.signal?.aborted) return { kind: 'aborted' }
-    if (err instanceof SpoolHttpError && err.status >= 400 && err.status < 500) return { kind: 'missing', status: err.status }
+    if (err instanceof RangeHttpError && err.status >= 400 && err.status < 500) return { kind: 'missing', status: err.status }
     return { kind: 'failed', reason: ac.signal.aborted ? 'timed out (no headers, or too slow)' : err instanceof Error ? err.message : String(err) }
   } finally {
     clearTimeout(headerTimer)

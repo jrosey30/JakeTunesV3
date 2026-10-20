@@ -16,9 +16,9 @@
  * counted) instead of silence forever. The timer resets on every
  * chunk, so a slow-but-alive stream is never cut: only a dead one.
  *
- * Playback-path only. The background spool (stream-spool.ts) fills at
- * its own pace for later plays and deliberately does NOT use this —
- * its behaviour is unchanged.
+ * The live proxy uses it on every body. Background downloads
+ * (range-chunk-download.ts) arm it on each Range request too, so a wedged
+ * chunk is cut and resumed instead of holding the spool slot.
  */
 
 export const STREAM_BODY_INACTIVITY_MS = 10_000

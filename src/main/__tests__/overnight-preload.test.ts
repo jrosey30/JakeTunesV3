@@ -462,12 +462,16 @@ describe('preloadSpool', () => {
   test('never takes the slot from a playback spool — "busy"', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'preload-busy-'))
     let release = (): void => {}
+    let entered = false
     const hold = (async () => {
+      entered = true
       await new Promise<void>((r) => { release = r })
       return new Response(new Uint8Array([1]), { status: 200, headers: { 'content-length': '1' } })
     }) as unknown as typeof fetch
     ensureSpool(dir, 'playing', 'http://h/playing', hold)
-    await new Promise((r) => setTimeout(r, 10))
+    // Wait until the playback spool is really mid-request (a loaded machine
+    // can take longer than 10 ms to get there) — releasing before that is a no-op.
+    for (let i = 0; i < 200 && !entered; i++) await new Promise((r) => setTimeout(r, 5))
     const out = await preloadSpool(dir, 'night', 'http://h/night', { ...opts, fetchFn: hold })
     assert.deepEqual(out, { kind: 'busy' })
     release()
@@ -496,6 +500,42 @@ describe('preloadSpool', () => {
     const out = await preloadSpool(dir, 'x', 'http://h/x', { ...opts, fetchFn: slow, signal: ac.signal })
     assert.deepEqual(out, { kind: 'aborted' })
     assert.deepEqual((await readdir(dir)).filter((n) => n.startsWith('x.')), [])
+    assert.deepEqual(spoolQueueState(), { active: 0, waiting: 0 })
+  })
+
+  // Range-chunk pacing (2026-10-19): reading the body slowly got undici's
+  // socket dropped at ~30 s; the night pace is held BETWEEN Range requests.
+  const rangeServing = (body: Buffer, seen: string[]) => (async (_u: string, init?: RequestInit) => {
+    const range = new Headers(init?.headers).get('range') ?? ''
+    seen.push(range)
+    const m = /^bytes=(\d+)-(\d+)$/.exec(range)
+    if (!m) return new Response(body, { status: 200, headers: { 'content-length': String(body.length) } })
+    const start = Number(m[1]), end = Math.min(Number(m[2]), body.length - 1)
+    return new Response(body.subarray(start, end + 1), { status: 206, headers: { 'content-type': 'audio/mp4', 'content-range': `bytes ${start}-${end}/${body.length}` } })
+  }) as unknown as typeof fetch
+
+  test('a paced pre-load comes down in sequential Range chunks and lands byte-identical', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'preload-ranged-'))
+    const body = Buffer.from(Array.from({ length: 2_500_000 }, (_, i) => (i * 13) % 251))
+    const seen: string[] = []
+    const out = await preloadSpool(dir, 'r', 'http://h/r', { ...opts, paceBytesPerSec: 50_000_000, fetchFn: rangeServing(body, seen) })
+    assert.deepEqual(out, { kind: 'landed', bytes: 2_500_000 })
+    assert.deepEqual(seen, ['bytes=0-1048575', 'bytes=1048576-2097151', 'bytes=2097152-2499999'])
+    const ready = await spoolReady(dir, 'r')
+    assert.ok(ready && (await readFile(ready.file)).equals(body))
+    assert.equal(ready.contentType, 'audio/mp4')
+  })
+
+  test('music starting between chunks aborts the pre-load: no .part, no landed file, slot free', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'preload-ranged-abort-'))
+    const body = Buffer.alloc(2_500_000, 4)
+    const seen: string[] = []
+    const ac = new AbortController()
+    setTimeout(() => ac.abort(), 30)   // inside the ~1 s wait after the first 1 MB chunk
+    const out = await preloadSpool(dir, 'm', 'http://h/m', { ...opts, paceBytesPerSec: 1_000_000, fetchFn: rangeServing(body, seen), signal: ac.signal })
+    assert.deepEqual(out, { kind: 'aborted' })
+    assert.equal(seen.length, 1)
+    assert.deepEqual((await readdir(dir)).filter((n) => n.startsWith('m.')), [])
     assert.deepEqual(spoolQueueState(), { active: 0, waiting: 0 })
   })
 

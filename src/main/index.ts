@@ -47,7 +47,7 @@ import {
   phonePlaylistSidecarsNeverPushFromDesktop,
   assertNoDesktopBluntPush,
 } from './sidecar-contracts.ts'
-import { fetchHeadersWithin } from './fetch-headers'; import { withBodyInactivityTimeout } from './stream-body-timeout.ts'; import { spoolAwareServe, spoolPaceFor, pacedBody, spoolLimitsFor, SPOOL_DIR_NAME } from './stream-spool.ts'; import { startOvernightPreload } from './overnight-preload.ts'; import { refreshPhoneMirrors, ensureMobileImportAudio } from './phone-mirrors.ts'; import { safeIpcError } from './safe-ipc-error.ts'
+import { fetchHeadersWithin } from './fetch-headers'; import { withBodyInactivityTimeout } from './stream-body-timeout.ts'; import { spoolAwareServe, spoolPaceFor, spoolLimitsFor, SPOOL_DIR_NAME } from './stream-spool.ts'; import { startOvernightPreload } from './overnight-preload.ts'; import { refreshPhoneMirrors, ensureMobileImportAudio } from './phone-mirrors.ts'; import { safeIpcError } from './safe-ipc-error.ts'
 import { computeDeletedPaths } from './library-deletions'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
 import { createPlayCache } from './play-cache.ts'
@@ -4428,11 +4428,10 @@ async function fetchAudioFromHomemini(
         return null
       }
       if (!res.body) return null
-      // Brief 161: guard the live-proxy body. (The spool path above already
-      // returned for landed copies and is deliberately unguarded — it fills
-      // at its own pace for later plays.)
-      const guardedBody = withBodyInactivityTimeout( // thin link: the live proxy is paced like the spool (stream-spool.ts, 2026-10-19)
-        pacedBody(res.body as unknown as ReadableStream<Uint8Array>, compressed.on ? spoolPaceFor(compressed.kbps) : 0),
+      // Brief 161: guard the live-proxy body. NEVER receive-pace it (a slowly read body got its socket
+      // dropped, workmini 2026-10-19 — #180 reverted): the playing song reads at wire speed.
+      const guardedBody = withBodyInactivityTimeout(
+        res.body as unknown as ReadableStream<Uint8Array>,
         undefined,
         () => console.warn(`[stream] homemini body stalled id=${id} flac=${wantFlac} — aborting as a load failure`),
       )
