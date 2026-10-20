@@ -25,27 +25,48 @@
 }
 
 .tn {
+  --tn-gap: calc(var(--home-section-gap, 44px) + var(--home-row-foot, 8px));
+  /* the containing block for the backdrop — but NOT a stacking context: the
+     backdrop's z-index:-1 lands in .home-view's (home.css), so the section
+     after G paints over the backdrop's overhang instead of under it */
   position: relative;
-  isolation: isolate;
-  overflow: hidden;
   container-type: inline-size;
   color: #FFFFFF;
   font-family: var(--font-display, -apple-system, 'SF Pro Display', 'Helvetica Neue', sans-serif);
 }
 
-/* ── the art-soaked backdrop ── */
+/* ── the art-soaked backdrop ──
+   2026-10-20 (Jake: "fix spacing on desktop home page") — G used to reserve
+   its 140px fade as an empty band under Now Digging. Now G ends at Home's
+   usual section gap (.tn-inner padding-bottom) and the backdrop OVERHANGS
+   G's bottom by --tn-fade, so the landing is drawn behind the next section
+   (the phone's fix, Mobile #464). The fade is front-loaded like the phone's:
+   opaque to the end of G's content, ~60% at G's edge (the next section's
+   divider), ~30% behind its title, a faint tint behind its covers, gone
+   --tn-fade below the edge. */
 .tn-art {
+  --tn-fade: 140px;
   position: absolute;
-  inset: 0;
+  inset: 0 0 calc(-1 * var(--tn-fade)) 0;
   z-index: -1;
   overflow: hidden;
   pointer-events: none;
   /* under the art while it decodes (the mockup's base) */
   background: #2C4A66;
-  /* the art dissolves into the Home canvas over the region's last 140px —
-     content stops above it (.tn-inner padding-bottom) */
-  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 140px), transparent 100%);
-          mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 140px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom,
+    #000 0,
+    #000 calc(100% - var(--tn-fade) - var(--tn-gap)),
+    rgba(0, 0, 0, 0.6) calc(100% - var(--tn-fade)),
+    rgba(0, 0, 0, 0.3) calc(100% - var(--tn-fade) + 26px),
+    rgba(0, 0, 0, 0.12) calc(100% - var(--tn-fade) + 60px),
+    transparent 100%);
+          mask-image: linear-gradient(to bottom,
+    #000 0,
+    #000 calc(100% - var(--tn-fade) - var(--tn-gap)),
+    rgba(0, 0, 0, 0.6) calc(100% - var(--tn-fade)),
+    rgba(0, 0, 0, 0.3) calc(100% - var(--tn-fade) + 26px),
+    rgba(0, 0, 0, 0.12) calc(100% - var(--tn-fade) + 60px),
+    transparent 100%);
 }
 .tn-art-img {
   position: absolute;
@@ -74,11 +95,14 @@
   50%      { opacity: 0.3; }
 }
 
+/* ONE content column with every Home section: the same left and right
+   gutter (--home-gutter, home.css) at every width — no centred max-width, no
+   88px inset. The bottom is Home's section gap (--tn-gap = a card row's 8px
+   foot + .home-section's 44px), so Now Digging's captions sit as far above
+   the next divider as any row's captions do. */
 .tn-inner {
   position: relative;
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 72px 88px 140px;
+  padding: 72px var(--home-gutter, 28px) var(--tn-gap);
   display: flex;
   flex-direction: column;
   gap: 56px;
@@ -117,6 +141,9 @@
   flex-direction: column;
   gap: 18px;
   min-width: 0;
+  /* the cover + headline stay one composition on a wide pane: the copy
+     keeps a readable measure instead of running the full column width */
+  max-width: 760px;
 }
 .tn-eyebrow {
   font-family: 'pixChicago', monospace;
@@ -429,13 +456,13 @@
 
 /* ── narrower panes ── */
 @container (max-width: 1120px) {
-  .tn-inner { padding: 56px 48px 140px; gap: 48px; }
+  .tn-inner { padding-top: 56px; gap: 48px; }
   .tn-hero { grid-template-columns: 320px minmax(0, 1fr); gap: 48px; }
   .tn-cover { width: 320px; }
   .tn-headline { font-size: 56px; }
 }
 @container (max-width: 860px) {
-  .tn-inner { padding: 44px 28px 140px; gap: 40px; }
+  .tn-inner { padding-top: 44px; gap: 40px; }
   .tn-hero { grid-template-columns: 240px minmax(0, 1fr); gap: 32px; }
   .tn-cover { width: 240px; }
   .tn-headline { font-size: 44px; }

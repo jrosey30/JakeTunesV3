@@ -3,11 +3,26 @@
    shadows, plenty of whitespace, no harsh borders. */
 
 .home-view {
+  /* 2026-10-20 — ONE content column: every Home section's left and right
+     gutter, launch page G's inner content included (home-tonight.css). */
+  --home-gutter: 28px;
+  /* ONE section rhythm: 44px from a section's box to the next section's
+     divider (a card row's 8px foot sits inside the box), every section. */
+  --home-section-gap: 44px;
+  /* a card row's foot: 8px of the row's box under the covers/captions (room
+     for their shadows). A panel (Today's pick, Year in Review) has no foot,
+     so it takes the gap PLUS the foot — every visible edge then sits 52px
+     above the next section's divider. */
+  --home-row-foot: 8px;
   height: 100%;
   overflow-y: auto;
   padding: 0 0 40px 0;
   background: var(--surface-canvas, #f0ebe1);
   will-change: scroll-position;
+  /* The stacking context G's backdrop (z-index: -1) paints in: above this
+     canvas, under every section — so its fade can run behind the section
+     that follows G instead of reserving an empty band. */
+  isolation: isolate;
 }
 
 /* Welcome band — greeting + invite, then the library shelf grid.
@@ -260,7 +275,9 @@
 
 /* ── 4.4.33: Featured Album hero ─────────────────────────────────────── */
 .home-featured {
-  margin: 8px 28px 28px 28px;
+  /* a panel, not a headed row: no divider of its own (its border is the
+     edge), but the same gutters and the same gap to whatever follows */
+  margin: 0 var(--home-gutter, 28px) calc(var(--home-section-gap, 44px) + var(--home-row-foot, 8px));
   padding: 22px;
   display: flex;
   gap: 24px;
@@ -463,7 +480,7 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 0;
-  margin: 0 28px 28px 28px;
+  margin: 0 var(--home-gutter, 28px) 28px var(--home-gutter, 28px);
   background: rgba(85, 78, 64, 0.045);
   border: 1px solid rgba(85, 78, 64, 0.10);
   border-radius: 10px;
@@ -528,7 +545,7 @@
    separated by a hairline + consistent rhythm. Kill the second, bold-title
    voice that made the page read as two different apps. */
 .home-section {
-  margin-bottom: 44px;
+  margin-bottom: var(--home-section-gap, 44px);
   /* 2026-09-02 — bands ease in as their data lands (the page no longer waits
      behind a gate), so a late arrival reads as intentional, not as a pop. */
   animation: home-section-in 260ms ease-out both;
@@ -546,8 +563,13 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin: 0 28px;
+  margin: 0 var(--home-gutter, 28px);
   padding: 18px 0 12px 0;
+  /* one height for every header — padding + a 20px line (the tallest thing
+     a header holds is a 12px "See All" / "Make me a vibe" link, ~19px) + the
+     hairline — so every title lands the same 23px under its divider, with
+     or without a link beside it (was 19–23px) */
+  min-height: calc(18px + 20px + 12px + 1px);
   border-top: 1px solid rgba(85, 78, 64, 0.09);
 }
 
@@ -567,7 +589,7 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  margin: 0 28px;
+  margin: 0 var(--home-gutter, 28px);
   padding: 10px 0 6px 0;
 }
 .home-shows-group + .home-shows-group .home-section-subhead {
@@ -611,10 +633,10 @@
 .home-card-row {
   display: flex;
   gap: 16px;
-  padding: 4px 28px 8px 28px;
+  padding: 4px var(--home-gutter, 28px) var(--home-row-foot, 8px) var(--home-gutter, 28px);
   overflow-x: auto;
   overflow-y: visible;            /* shadows aren't clipped vertically */
-  scroll-padding: 28px;
+  scroll-padding: var(--home-gutter, 28px);
   /* 4.4.35 smoother scroll: GPU-layer + contain horizontal overscroll */
   will-change: scroll-position;
   overscroll-behavior-x: contain;
@@ -734,10 +756,39 @@
 }
 
 /* ── The three shelves under G (2026-10-20, components/HomeShelves.tsx) ──
-   The album card above, with one rule changed: names never clip. Title and
-   artist wrap to the lines they need at the card's pinned 156px (the row
-   aligns cards to the top, so a two-line title just makes its card taller),
-   and a third line carries the reason, the play count or the date added. */
+   Home's album card, laid out like Now Digging right above it: a five-column
+   grid across the whole content column — repeat(5, minmax(0, 1fr)) at Now
+   Digging's own gaps (22px, 14px on a narrow pane), so the shelves' columns
+   sit exactly under the posters'. Covers stay square and grow with the
+   column; "See All 10" is the same grid, two rows of five.
+   One rule changed from the album card: names never clip. Title and artist
+   wrap to the lines they need (cards align to the top, so a two-line title
+   just makes its card taller), and a third line carries the reason, the play
+   count or the date added. */
+.home-shelves-row {
+  container: home-shelf / inline-size;
+}
+.home-shelves-row .home-card-row {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 22px;
+  align-items: start;
+  overflow-x: visible;
+}
+@container home-shelf (max-width: 860px) {
+  .home-shelves-row .home-card-row { column-gap: 14px; }
+}
+.home-album-card--shelf {
+  flex: none;
+  width: auto;
+  max-width: none;
+  min-width: 0;
+}
+.home-album-card--shelf .home-album-art {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1 / 1;
+}
 .home-album-card--shelf .home-album-title,
 .home-album-card--shelf .home-album-artist {
   white-space: normal;
@@ -746,7 +797,6 @@
   overflow-wrap: anywhere;
 }
 .home-album-card--shelf .home-album-info { overflow: visible; }
-.home-card-row:has(> .home-album-card--shelf) { align-items: flex-start; }
 .home-shelves-note {
   margin-top: 3px;
   font-size: 11.5px;
@@ -758,16 +808,11 @@
   color: rgb(var(--brand-orange-rgb));
   font-weight: 600;
 }
-/* "See All 10": the ten in place, in order — the same grid-in-place Shows'
-   "See All" opens into. At most five across, so a wide window reads as the
-   five you saw over the five more; a narrow one simply wraps sooner. */
+/* "See All 10": the ten in place, in order — the grid above, now two rows of
+   five (the five you saw over the five more). The modifier stays as the
+   expanded state's hook. */
 .home-card-row--shelf-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, 156px);
-  gap: 22px 16px;
-  overflow-x: visible;
-  max-width: calc(5 * 156px + 4 * 16px + 56px);
-  box-sizing: border-box;
+  row-gap: 22px;
 }
 
 /* ── Artist card (smaller, circular art) ──────────────────────────────── */
@@ -1177,7 +1222,8 @@
   white-space: nowrap;
 }
 .home-stats--memory {
-  margin-bottom: 14px;
+  /* the same foot a card row has, so Memory → next is the page's gap */
+  margin-bottom: var(--home-row-foot, 8px);
 }
 /* 4.5 polish: the memory tiles reuse .home-stat, which made them a carbon copy
    of the library-stats row right above — two near-identical white-card rows
@@ -1199,7 +1245,7 @@
   font-size: 19px;
 }
 .home-memory-obs {
-  margin: 0 28px;
+  margin: 0 var(--home-gutter, 28px);
   padding: 10px 14px;
   border-left: 3px solid var(--brand-orange, #FC5501);
   background: rgba(252, 85, 1, 0.05);
@@ -1325,8 +1371,8 @@
 }
 .home-mixes .home-mixes-row,
 .home-mixes .home-mixes-loading {
-  padding-left: 28px;
-  padding-right: 28px;
+  padding-left: var(--home-gutter, 28px);
+  padding-right: var(--home-gutter, 28px);
 }
 
 .home-section-more:focus-visible,
@@ -1478,6 +1524,7 @@
 }
 
 @media (max-width: 860px) {
+  .home-view { --home-gutter: 20px; }
   .home-header { padding: 22px 20px 16px 20px; }
   .home-title { font-size: 26px; }
   .home-shelves,

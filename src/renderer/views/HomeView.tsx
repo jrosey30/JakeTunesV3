@@ -693,8 +693,8 @@ export default function HomeView() {
   void pageReady
 
   return (
+    <>
     <div className="home-view" ref={rootRef}>
-      <ScrollTopButton targetRef={rootRef} />
       {/* 2026-10-18 — launch page "G": tonight's album on an art-soaked
           backdrop, the Island Albums Cover Flow, Now Digging. Right under it
           (2026-10-20) the three shelves — You Should Listen To More, You've
@@ -1231,5 +1231,10 @@ export default function HomeView() {
         </section>
       )}
     </div>
+    {/* Fixed bottom-right; kept outside .home-view (an isolated stacking
+        context, home.css) so it layers against the queue panel as in every
+        other view. */}
+    <ScrollTopButton targetRef={rootRef} />
+    </>
   )
 }

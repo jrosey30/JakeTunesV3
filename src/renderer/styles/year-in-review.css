@@ -9,7 +9,8 @@
 
 /* ── Home card ─────────────────────────────────────────────── */
 .yir-home {
-  margin: 8px 28px 20px;
+  /* Home's column + rhythm (home.css --home-gutter / --home-section-gap) */
+  margin: 0 var(--home-gutter, 28px) calc(var(--home-section-gap, 44px) + var(--home-row-foot, 8px));
   padding: 18px 22px;
   display: grid;
   grid-template-columns: auto 1fr auto;
