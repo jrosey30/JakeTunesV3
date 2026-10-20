@@ -135,6 +135,7 @@ import { buildCallerSegmentMode } from './cast'
 import { startImessageCapture } from './imessage-capture'
 import { decodeHtmlEntities } from './imessage-capture-core'
 import { sweepFriendImports as moduleSweepFriendImports, noteAttribution } from './friend-credit-sweep.ts'
+import { createArtistWiki } from './artist-wiki.ts'
 import { initPlaylistHubSync, schedulePlaylistHubConverge, type HubPlaylistLike } from './playlist-hub-sync.ts'
 import { initMixtapeHubSync, scheduleMixtapeHubConverge } from './mixtape-hub-sync.ts'
 import { registerSpotifyIpc } from './spotify-ipc.ts'
@@ -2223,126 +2224,9 @@ ipc.handle('get-artist-image', async (_event, artist: string): Promise<{ ok: boo
 // Genre Iceberg: ListenBrainz listener counts (seeded at install) rank a genre's artists, best-known first.
 ipc.handle('artist-listeners', async () => { try { return JSON.parse(await readFile(join(app.getPath('userData'), 'artist-listeners.json'), 'utf8')) as Record<string, number> } catch { return {} } }, { refuse: {} })
 
-// 4.5: Wikipedia summary for the artist detail page. Hits the public
-// REST summary endpoint (en.wikipedia.org/api/rest_v1/page/summary/<title>),
-// caches the parsed extract on disk for 24h. Returns { ok, extract,
-// pageUrl } — extract is the short ~250-word summary the page renders;
-// pageUrl is the canonical wiki URL for a "read more" link. Both null
-// on no-result so the UI can degrade gracefully (just the photo + name).
-const WIKI_CACHE_DIR = join(app.getPath('userData'), 'wiki-cache')
-const WIKI_TTL_MS = 24 * 60 * 60 * 1000
-// 4.5.0-72 — misses get a MUCH shorter TTL than hits. A real artist-
-// has-no-wiki result is rare; a transient miss (network glitch, MB
-// throttle queue overflow, fetch threw mid-flight) is what we've seen
-// in the wild (The Beatles cached as null after a -66 lookup that
-// silently failed, then served null for 24 hours). 1-hour miss TTL
-// means transient failures self-heal within the same listening
-// session.
-const WIKI_MISS_TTL_MS = 60 * 60 * 1000  // 1 hour
-// Try one specific Wikipedia title — REST summary endpoint. Returns
-// { extract, pageUrl, isDisambig } where isDisambig signals the caller
-// to try a different title rather than render the "X may refer to:"
-// text as a bio.
-async function tryWikiTitle(title: string): Promise<{ extract: string | null; pageUrl: string | null; isDisambig: boolean }> {
-  const encoded = encodeURIComponent(title.replace(/ /g, '_'))
-  const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encoded}?redirect=true`
-  const res = await fetch(url, {
-    headers: { 'User-Agent': `JakeTunes/${app.getVersion()} (jakerosenbaum30@gmail.com)` },
-  })
-  if (!res.ok) return { extract: null, pageUrl: null, isDisambig: false }
-  const data = await res.json() as { extract?: string; type?: string; content_urls?: { desktop?: { page?: string } } }
-  const isDisambig = data.type === 'disambiguation'
-  return {
-    extract: !isDisambig && typeof data.extract === 'string' ? data.extract : null,
-    pageUrl: data.content_urls?.desktop?.page || null,
-    isDisambig,
-  }
-}
-async function fetchWikiSummary(artist: string): Promise<{ extract: string | null; pageUrl: string | null }> {
-  await mkdir(WIKI_CACHE_DIR, { recursive: true }).catch(() => {})
-  const key = createHash('md5').update(artist.toLowerCase().trim()).digest('hex')
-  const cachePath = join(WIKI_CACHE_DIR, `${key}.json`)
-  // Disk cache first — survives app restarts.
-  try {
-    const stat0 = await stat(cachePath)
-    const raw = await readFile(cachePath, 'utf-8')
-    const cached = JSON.parse(raw) as { extract: string | null; pageUrl: string | null }
-    // 4.5.0-72 — separate TTLs for hits and misses. A real hit lives
-    // 24 h (cheap to keep, expensive to refetch). A miss lives 1 h so
-    // transient failures (network, MB throttle, fetch threw mid-flight)
-    // self-heal in the same listening session instead of poisoning the
-    // bio for a full day.
-    const ttl = cached.extract ? WIKI_TTL_MS : WIKI_MISS_TTL_MS
-    if (Date.now() - stat0.mtimeMs < ttl) return cached
-  } catch { /* miss */ }
-  // 4.5.0-66 — disambiguation-aware lookup. Old behavior took the raw
-  // artist string and trusted Wikipedia's extract verbatim, leaking
-  // "Drake may refer to:" disambiguation pages into the bio UI for any
-  // artist whose name is shared with non-music entities. New strategy:
-  //
-  //   1. Ask MusicBrainz which entity this artist actually is (with
-  //      library-genre context so the right one wins for common names).
-  //      If MB knows the canonical Wikipedia article title (via its
-  //      url-relations), USE THAT title — it's authoritative.
-  //   2. If MB didn't know the wiki title, try the raw name. If the
-  //      response is a disambiguation page, try qualifier suffixes
-  //      based on the MB type/tags: "(rapper)" for hip-hop, "(band)"
-  //      for groups, "(singer)" for vocalists, "(musician)" generic.
-  //   3. If everything misses, return null extract — UI shows clean
-  //      empty state, not the disambiguation list verbatim.
-  let extract: string | null = null
-  let pageUrl: string | null = null
-  try {
-    const genres = await getLibraryGenresForArtist(artist)
-    const canon = await resolveCanonicalArtist(artist, { libraryGenres: genres })
-    const titlesToTry: string[] = []
-    if (canon?.wikiTitle) titlesToTry.push(canon.wikiTitle)
-    titlesToTry.push(artist.trim())
-    if (canon) {
-      const tagText = canon.tags.join(' ')
-      const isGroup = canon.type === 'Group'
-      const isRap = /\brap|hip[- ]?hop|trap\b/.test(tagText)
-      const isElectronic = /\belectronic|techno|house|dance|edm\b/.test(tagText)
-      const isClassical = /\bclassical|opera|orchestra\b/.test(tagText)
-      // Order matters — most specific first.
-      if (isRap) titlesToTry.push(`${artist.trim()} (rapper)`)
-      if (isGroup) titlesToTry.push(`${artist.trim()} (band)`)
-      if (isElectronic) titlesToTry.push(`${artist.trim()} (DJ)`)
-      if (isClassical) titlesToTry.push(`${artist.trim()} (composer)`)
-      titlesToTry.push(`${artist.trim()} (musician)`)
-      titlesToTry.push(`${artist.trim()} (singer)`)
-    } else {
-      titlesToTry.push(`${artist.trim()} (musician)`, `${artist.trim()} (band)`)
-    }
-    // De-dupe while preserving order.
-    const seen = new Set<string>()
-    const ordered = titlesToTry.filter(t => {
-      const k = t.toLowerCase()
-      if (seen.has(k)) return false
-      seen.add(k)
-      return true
-    })
-    for (const t of ordered) {
-      try {
-        const r = await tryWikiTitle(t)
-        if (r.extract) {
-          extract = r.extract
-          pageUrl = r.pageUrl
-          break
-        }
-        // First-try pageUrl is the best we'll get if every subsequent
-        // try misses — keep it as a "read on wiki" target for the UI
-        // even if no clean summary exists.
-        if (!pageUrl && r.pageUrl && !r.isDisambig) pageUrl = r.pageUrl
-      } catch { /* try next title */ }
-    }
-  } catch (err) {
-    console.warn('[wiki] resolver failed for', artist, err)
-  }
-  const out = { extract, pageUrl }
-  await writeFile(cachePath, JSON.stringify(out)).catch((err) => console.warn('[wiki] summary cache write failed:', err?.message ?? err))
-  return out
-}
+// Artist bio from Wikipedia — validated against the artist (Geese is not the
+// bird; ⚠️ TWIN of the phone's rule). See artist-wiki.ts / common/wiki-artist-bio.ts.
+const { fetchWikiSummary } = createArtistWiki({ dir: app.getPath('userData'), userAgent: `JakeTunes/${app.getVersion()} (jakerosenbaum30@gmail.com)`, canon: async (a) => resolveCanonicalArtist(a, { libraryGenres: await getLibraryGenresForArtist(a) }) })
 ipc.handle('get-artist-wiki', async (_event, artist: string): Promise<{ ok: boolean; extract: string | null; pageUrl: string | null }> => {
   if (!artist || typeof artist !== 'string') return { ok: false, extract: null, pageUrl: null }
   const r = await fetchWikiSummary(artist)
@@ -2939,24 +2823,6 @@ const menuTemplate: Electron.MenuItemConstructorOptions[] = [
   },
 ]
 
-// Search Wikipedia for artist info
-async function searchWikipedia(query: string): Promise<string> {
-  try {
-    const url = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&srlimit=2&origin=*`
-    const res = await fetch(url)
-    if (!res.ok) return ''
-    const data = await res.json() as { query?: { search?: { title: string }[] } }
-    const pages = data.query?.search || []
-    if (pages.length === 0) return ''
-    const summaryUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(pages[0].title)}`
-    const summaryRes = await fetch(summaryUrl)
-    if (!summaryRes.ok) return ''
-    const summary = await summaryRes.json() as { extract?: string }
-    return summary.extract || ''
-  } catch {
-    return ''
-  }
-}
 
 // Search MusicBrainz for accurate music data (genre, country, years
 // active, releases). 4.5.0-66 — routed through resolveCanonicalArtist
@@ -3434,8 +3300,10 @@ async function searchWeb(query: string, album?: string, mode: 'artist' | 'chat' 
   const exaPromise = mode === 'chat'
     ? exaChatContext(query)
     : album ? exaArtistAlbum(artist, album) : exaArtistFacts(artist)
+  // Wikipedia = the artist's validated bio (the same page the artist page shows);
+  // a whole chat message is not an article title, so chat mode skips it.
   const [wiki, mb, exa] = await Promise.all([
-    searchWikipedia(query),
+    mode === 'chat' ? Promise.resolve('') : fetchWikiSummary(artist).then((r) => r.extract ?? '').catch(() => ''),
     searchMusicBrainz(artist, album),
     exaPromise,
   ])
