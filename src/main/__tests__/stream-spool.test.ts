@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { mkdtemp, writeFile, readFile, stat } from 'fs/promises'
-import { spoolReady, ensureSpool, serveSpoolRange, enforceSpoolCap , spoolQueueState, pacedBody, spoolPaceFor } from '../stream-spool.ts'
+import { spoolReady, ensureSpool, serveSpoolRange, enforceSpoolCap , spoolQueueState, spoolPaceFor } from '../stream-spool.ts'
 
 const fakeAudio = (bytes: number) => Buffer.alloc(bytes, 7)
 
@@ -127,39 +127,42 @@ test('a burst of tracks downloads one at a time, newest first', async () => {
 })
 
 // Thin-link pacing (workmini 2026-10-19: one wire-speed spool held the
-// office↔home tunnel at 0.5–2 s round trips; quit → ~60 ms).
+// office↔home tunnel at 0.5–2 s round trips; quit → ~60 ms). The pace is an
+// AVERAGE held between Range requests (range-chunk-download.test.ts covers
+// the mechanism); these pin the spool's side of it.
 describe('thin-link spool pacing', () => {
-  const chunks = (n: number, size: number) => new ReadableStream<Uint8Array>({
-    start(c) { for (let i = 0; i < n; i++) c.enqueue(new Uint8Array(size).fill(i)); c.close() },
-  })
-  const drain = async (rs: ReadableStream<Uint8Array>) => {
-    const parts: Uint8Array[] = []
-    const r = rs.getReader()
-    for (;;) { const { done, value } = await r.read(); if (done) break; parts.push(value) }
-    return Buffer.concat(parts)
-  }
+  /** A homemini-shaped /audio: honours Range with 206 + Content-Range. */
+  const rangeServing = (body: Buffer, seen: string[]) => (async (_url: string, init?: RequestInit) => {
+    const range = new Headers(init?.headers).get('range')
+    seen.push(range ?? '(none)')
+    const m = /^bytes=(\d+)-(\d+)$/.exec(range ?? '')
+    if (!m) return new Response(body, { status: 200, headers: { 'content-type': 'audio/mp4', 'content-length': String(body.length) } })
+    const start = Number(m[1]), end = Math.min(Number(m[2]), body.length - 1)
+    return new Response(body.subarray(start, end + 1), {
+      status: 206,
+      headers: { 'content-type': 'audio/mp4', 'content-length': String(end - start + 1), 'content-range': `bytes ${start}-${end}/${body.length}` },
+    })
+  }) as unknown as typeof fetch
 
   test('a 256 kbps link spools at 3× its stream rate (96 KB/s)', () => {
     assert.equal(spoolPaceFor(256), 96_000)
   })
 
-  test('paces to the rate on a fake clock, bytes untouched', async () => {
-    let t = 0
-    const waits: number[] = []
-    const out = await drain(pacedBody(chunks(10, 96_000), 96_000, () => t, async (ms) => { waits.push(ms); t += ms }))
-    assert.equal(out.length, 960_000)
-    assert.deepEqual([...new Set(out.subarray(96_000 * 3, 96_000 * 4))], [3], 'chunks pass through in order, unchanged')
-    // 960 KB at 96 KB/s = 10 s of reading, never faster.
-    assert.equal(Math.round(t), 10_000)
-    assert.equal(waits.length, 10)
+  test('a paced spool lands byte-identical through sequential Range chunks', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'spool-ranged-'))
+    const body = Buffer.from(Array.from({ length: 2_500_000 }, (_, i) => (i * 7) % 251))
+    const seen: string[] = []
+    ensureSpool(dir, 'ranged', 'http://hub/audio/r', rangeServing(body, seen), 20_000_000)
+    let ready = null
+    for (let i = 0; i < 200 && !ready; i++) { await new Promise((r) => setTimeout(r, 10)); ready = await spoolReady(dir, 'ranged') }
+    assert.ok(ready, 'ranged spool landed')
+    assert.equal(ready.contentType, 'audio/mp4')
+    assert.ok((await readFile(ready.file)).equals(body))
+    // 20 MB/s → 1 MiB requests: three of them, in order, no gaps or overlaps.
+    assert.deepEqual(seen, ['bytes=0-1048575', 'bytes=1048576-2097151', 'bytes=2097152-2499999'])
   })
 
-  test('0 = unpaced: the same stream comes back (fat links untouched)', () => {
-    const rs = chunks(1, 10)
-    assert.equal(pacedBody(rs, 0), rs)
-  })
-
-  test('a paced spool still lands byte-identical', async () => {
+  test('a paced spool against a server without Range support still lands (one 200)', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'spool-paced-'))
     const body = Buffer.from(Array.from({ length: 40_000 }, (_, i) => i % 251))
     ensureSpool(dir, 'paced', 'http://hub/audio/p', fetchServing(body), 20_000_000)
@@ -167,5 +170,16 @@ describe('thin-link spool pacing', () => {
     for (let i = 0; i < 100 && !ready; i++) { await new Promise((r) => setTimeout(r, 10)); ready = await spoolReady(dir, 'paced') }
     assert.ok(ready, 'paced spool landed')
     assert.ok((await readFile(ready.file)).equals(body))
+  })
+
+  test('fat link (0): one plain request, no Range header — exactly as before', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'spool-fat-'))
+    const body = Buffer.alloc(30_000, 3)
+    const seen: string[] = []
+    ensureSpool(dir, 'fat', 'http://hub/audio/f', rangeServing(body, seen), 0)
+    let ready = null
+    for (let i = 0; i < 100 && !ready; i++) { await new Promise((r) => setTimeout(r, 10)); ready = await spoolReady(dir, 'fat') }
+    assert.ok(ready, 'fat-link spool landed')
+    assert.deepEqual(seen, ['(none)'])
   })
 })

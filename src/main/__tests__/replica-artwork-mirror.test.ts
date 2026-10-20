@@ -73,6 +73,7 @@ async function replica(hub: Hub, opts: {
   batchFiles?: number
   dir?: string
   onBody?: (bare: string) => void
+  pace?: number
 } = {}) {
   const dir = opts.dir ?? await mkdtemp(join(tmpdir(), 'art-mirror-'))
   const artDir = join(dir, 'artwork')
@@ -89,7 +90,7 @@ async function replica(hub: Hub, opts: {
     invalidate: (b) => { invalidated.push(b) },
     priorityKeys: async () => opts.priority ?? [],
     isPlaying: opts.playing ?? (() => false),
-    paceBytesPerSec: async () => 0,
+    paceBytesPerSec: async () => opts.pace ?? 0,
     notify: (u) => { notes.push(u) },
     onLanded: (b) => { landed.push(b) },
     fetchImpl: fakeFetch(hub, opts.onBody),
@@ -100,7 +101,7 @@ async function replica(hub: Hub, opts: {
     quietMs: 30_000,
     batchFiles: opts.batchFiles ?? 25,
   })
-  return { handle, dir, artDir, notes, invalidated, landed, index: () => index, advance: (ms: number) => { t += ms } }
+  return { handle, dir, artDir, notes, invalidated, landed, index: () => index, advance: (ms: number) => { t += ms }, now: () => t }
 }
 
 /** The four drift classes + a concert poster + a key only workmini has. */
@@ -230,6 +231,25 @@ describe('a replica pass against the hub', () => {
       assert.equal((await readFile(join(r.artDir, `${H('c')}.jpg`))).toString(), 'nirvana-JUL-10-cover')
       assert.notEqual(r.index()[BYTES], undefined)
       assert.ok(!r.invalidated.includes(H('c')))
+    } finally { r.handle.stop() }
+  })
+
+  it('thin link: each file comes down whole at wire speed, then the mirror waits out its share of the pace', async () => {
+    // homemini's /artwork ignores Range (200, whole file), so the pace is held
+    // BETWEEN files — never by reading a body slowly (workmini 2026-10-19:
+    // the 2.9 MB aa82bc48… read at 96 KB/s lost its socket 2 times in 3).
+    const files = { [H('a')]: Buffer.alloc(96_000, 1), [H('b')]: Buffer.alloc(192_000, 2), [H('c')]: Buffer.alloc(48_000, 3) }
+    const hub = hubFrom(files, { 'x|||a': H('a'), 'x|||b': H('b'), 'x|||c': H('c') })
+    const at: Array<[string, number]> = []
+    let r: Awaited<ReturnType<typeof replica>> | null = null
+    r = await replica(hub, { pace: 96_000, onBody: (bare) => { at.push([bare, r!.now()]) } })
+    try {
+      await r.handle.tick()
+      assert.deepEqual(at.map(([b]) => b), [H('a'), H('b'), H('c')])
+      // 96 KB → 1 s, then 192 KB → 2 s: each request waits for the last file's share.
+      assert.equal(at[1]![1] - at[0]![1], 1_000)
+      assert.equal(at[2]![1] - at[1]![1], 2_000)
+      for (const [b, buf] of Object.entries(files)) assert.ok((await readFile(join(r.artDir, `${b}.jpg`))).equals(buf))
     } finally { r.handle.stop() }
   })
 

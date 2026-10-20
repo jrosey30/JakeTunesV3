@@ -221,12 +221,34 @@ describe('FORTIFICATIONS — 2026-08-29 ("IT SPEAKS. fortify fortify fortify.")'
       'fetchAudioFromHomemini no longer consults the stream spool — WAN jitter reaches playing songs again ("do the deeper buffering thing")')
   })
 
-  test('WIRING: on a thin link the live proxy is paced too, not just the spool', () => {
+  test('WIRING: the live proxy is NOT receive-paced — the playing song reads at wire speed', () => {
     const idx = readFileSync(join(SRC, 'main/index.ts'), 'utf-8')
-    // workmini 2026-10-19: with only the spool paced, the unpaced live proxy
-    // still pulled ~260 KB/s through a ~300 KB/s tunnel and held it at ~1 s.
-    assert.ok(/withBodyInactivityTimeout\([^\n]*\n\s*pacedBody\(res\.body[^\n]*compressed\.on \? spoolPaceFor\(compressed\.kbps\) : 0\)/.test(idx),
-      'the homemini live proxy reads at wire speed again on a thin link — the tunnel jams and playback stalls')
+    // workmini 2026-10-19 (Jake's call, on this measurement): #180 read the
+    // live-proxy body at 96 KB/s, and undici dropped the half-read socket
+    // after ~30 s (UND_ERR_SOCKET) — the 2.9 MB aa82bc48… failed 2 of 3 times
+    // paced, 0 of 3 at full speed; stalls + spool failures went 14/h → 35–45/h.
+    // The guard wraps homemini's body directly, with nothing in between.
+    assert.ok(/withBodyInactivityTimeout\(\s*res\.body as unknown as ReadableStream<Uint8Array>,/.test(idx),
+      'the live proxy body no longer goes straight into the inactivity guard — something sits between them again')
+    const fn = idx.split('async function fetchAudioFromHomemini(')[1]?.split('\nfunction wantsHomeminiFlac')[0] ?? ''
+    assert.ok(fn.length > 0, 'fetchAudioFromHomemini moved — re-point this lock')
+    assert.ok(!/pacedBody|pipeThrough\(/.test(fn),
+      'fetchAudioFromHomemini paces or transforms the live body again — a slowly read socket gets dropped and songs skip')
+  })
+
+  test('BAN: no receive-side pacing — background downloads pace BETWEEN Range requests', () => {
+    // The mechanism that failed: a TransformStream that sleeps inside a fetch
+    // body. Its name is banned from main, and the three background full-file
+    // downloads must go through range-chunk-download.ts instead.
+    const files = walk(join(SRC, 'main'), ['.ts']).filter((f) => !f.includes('/__tests__/') && !f.includes('/_archive/'))
+    const { total, hits } = countAcross(files, new RegExp('\\bpaced' + 'Body\\(', 'g'))
+    assert.equal(total, 0, `receive-side pacing is back in: ${hits.map((h) => `${h.file}(${h.n})`).join(', ')} — pace between Range requests (range-chunk-download.ts)`)
+    const spool = readFileSync(join(SRC, 'main/stream-spool.ts'), 'utf-8')
+    const mirror = readFileSync(join(SRC, 'main/replica-artwork-mirror.ts'), 'utf-8')
+    assert.ok(/await downloadInRangeChunks\(url, part,/.test(spool),
+      'landSpool (playback spool + overnight pre-load) no longer downloads through the range-chunk primitive')
+    assert.ok(/await fetchInRangeChunks\(`\$\{origin\}\/artwork\/\$\{bare\}`/.test(mirror),
+      'the artwork mirror no longer downloads through the range-chunk primitive')
   })
 
   // ── Downloads: the SoundCloud truncation guard stays in the picker ───

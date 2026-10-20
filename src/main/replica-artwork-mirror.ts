@@ -21,7 +21,8 @@
 //   2. verify each local jpg by md5 (cached in artwork/replica-mirror.json by
 //      size+mtime, so only the first run hashes the store)
 //   3. index entries whose bytes already match → one index save
-//   4. changed / missing jpgs → serial downloads from /artwork/:bare, paced,
+//   4. changed / missing jpgs → serial downloads from /artwork/:bare, paced
+//      BETWEEN requests (range-chunk-download.ts — never by reading slowly),
 //      yielding to playback, md5-verified, written atomically, in priority
 //      order (concert keys, then recently added/played albums, then keys
 //      missing here, then the rest). Each landed file drops the main-process
@@ -44,8 +45,7 @@ import { createReadStream } from 'node:fs'
 import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { withCompanionInit } from './hub-companion.ts'
-import { pacedBody } from './stream-spool.ts'
-import { withBodyInactivityTimeout } from './stream-body-timeout.ts'
+import { fetchInRangeChunks } from './range-chunk-download.ts'
 
 export const MANIFEST_PATH = '/api/artwork-mirror/manifest'
 /** artwork/<this>: { v: 1, files: { bare: [size, mtimeMs, md5] } } — what each local jpg IS. */
@@ -57,7 +57,11 @@ const INDEX_VALUE = /^[0-9a-f]{32}(?:_\d+)?$/
 const MAX_ART_BYTES = 64 * 1024 * 1024
 
 /** Office link (workmini, ~300-750 KB/s measured, congested): a third of the
- *  measured floor, so a song can still start while the mirror runs. */
+ *  measured floor, so a song can still start while the mirror runs. An
+ *  AVERAGE: each file arrives at wire speed (homemini's /artwork ignores
+ *  Range, so it is one request), then the mirror waits out the rest of the
+ *  file's share before the next one. Reading the body slowly instead got the
+ *  socket dropped at ~30 s (workmini 2026-10-19: 2/3 of the 2.9 MB aa82bc48…). */
 export const THIN_LINK_PACE_BYTES_PER_SEC = 96_000
 export const FAT_LINK_PACE_BYTES_PER_SEC = 2_000_000
 
@@ -312,7 +316,7 @@ export function startReplicaArtworkMirror(deps: ReplicaArtworkMirrorDeps): Repli
     }
   }
 
-  type Outcome = { kind: 'landed'; bytes: number; mtimeMs: number } | { kind: 'playback' } | { kind: 'mismatch' } | { kind: 'failed'; why: string }
+  type Outcome = ({ kind: 'landed'; bytes: number; mtimeMs: number } | { kind: 'playback' } | { kind: 'mismatch' } | { kind: 'failed'; why: string }) & { paceDebtMs?: number }
 
   async function downloadOne(origin: string, bare: string, want: [number, string]): Promise<Outcome> {
     const ac = new AbortController()
@@ -323,35 +327,39 @@ export function startReplicaArtworkMirror(deps: ReplicaArtworkMirrorDeps): Repli
     // Generous ceiling: the size at the pace, plus slack for a slow start.
     const deadline = setTimeout(() => ac.abort(), Math.max(60_000, pace > 0 ? (want[0] / pace) * 3_000 : 0))
     try {
-      const res = await fetchImpl(`${origin}/artwork/${bare}`, withCompanionInit({ signal: ac.signal, headers: { accept: 'image/*' } }))
-      const type = res.headers.get('content-type') || ''
-      if (!res.ok || !res.body || !type.startsWith('image/')) return { kind: 'failed', why: `HTTP ${res.status} ${type}` }
-      const body = pacedBody(withBodyInactivityTimeout(res.body as unknown as ReadableStream<Uint8Array>, 20_000), pace)
       const chunks: Uint8Array[] = []
-      let n = 0
-      const reader = body.getReader()
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        n += value.byteLength
-        if (n > MAX_ART_BYTES) { ac.abort(); return { kind: 'failed', why: 'oversized' } }
-        chunks.push(value)
-      }
+      const got = await fetchInRangeChunks(`${origin}/artwork/${bare}`, (c) => { chunks.push(c) }, {
+        fetchFn: fetchImpl, bytesPerSec: pace, signal: ac.signal, headers: { accept: 'image/*' },
+        stallMs: 20_000, maxBytes: MAX_ART_BYTES, now, sleep,
+        onFirstResponse: ({ status, contentType }) => {
+          if (status < 200 || status > 299 || !contentType.startsWith('image/')) throw new Error(`HTTP ${status} ${contentType}`)
+        },
+      })
       const bytes = Buffer.concat(chunks)
       const md5 = createHash('md5').update(bytes).digest('hex')
       // Identity gate: only bytes that ARE the laptop's file replace ours.
-      if (bytes.length !== want[0] || md5 !== want[1]) return { kind: 'mismatch' }
+      if (bytes.length !== want[0] || md5 !== want[1]) return { kind: 'mismatch', paceDebtMs: got.paceDebtMs }
       const target = join(dir, `${bare}.jpg`)
       await writeAtomic(target, bytes)
       const st = await stat(target)
-      return { kind: 'landed', bytes: bytes.length, mtimeMs: st.mtimeMs }
+      return { kind: 'landed', bytes: bytes.length, mtimeMs: st.mtimeMs, paceDebtMs: got.paceDebtMs }
     } catch (err) {
       if (why === 'playback') return { kind: 'playback' }
-      return { kind: 'failed', why: (err as Error)?.message ?? String(err) }
+      const msg = (err as Error)?.message ?? String(err)
+      return { kind: 'failed', why: /^oversized/.test(msg) ? 'oversized' : msg }
     } finally {
       clearInterval(watch)
       clearTimeout(deadline)
       current = null
+    }
+  }
+
+  /** Hold the average pace between files (a whole file arrives at wire speed). */
+  async function settle(ms: number): Promise<void> {
+    for (let left = ms; left > 0 && !stopped;) {
+      const step = Math.min(left, pollMs)
+      await sleep(step)
+      left -= step
     }
   }
 
@@ -421,6 +429,7 @@ export function startReplicaArtworkMirror(deps: ReplicaArtworkMirrorDeps): Repli
     let failures = 0
     let consecutive = 0
     let pausedMs = 0
+    let notBefore = 0
     const started = now()
     const flush = async (): Promise<void> => {
       if (!landed.length && !Object.keys(entries).length) return
@@ -444,7 +453,10 @@ export function startReplicaArtworkMirror(deps: ReplicaArtworkMirrorDeps): Repli
       if (waited === 'stopped') break
       pausedMs += waited
       const want = remote.files[bare]!
+      await settle(notBefore - now())                         // the last file's share of the pace
+      if (stopped) break
       const out = await downloadOne(origin, bare, want)
+      notBefore = now() + (out.paceDebtMs ?? 0)
       if (out.kind === 'playback') { i--; continue }          // same file, after the music stops
       if (out.kind === 'landed') {
         consecutive = 0

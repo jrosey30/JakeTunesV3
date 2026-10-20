@@ -33,7 +33,7 @@
  *
  * Electron-free (fetch, clock and sleep injected) so node --test loads it.
  */
-import { open, stat, unlink } from 'node:fs/promises'
+import { open, stat, unlink, type FileHandle } from 'node:fs/promises'
 import { withCompanionInit } from './hub-companion.ts'
 import { withBodyInactivityTimeout } from './stream-body-timeout.ts'
 
@@ -290,21 +290,24 @@ export async function fetchInRangeChunks(url: string, sink: ChunkSink, opts: Ran
  * included — `dest` is removed before the error propagates.
  */
 export async function downloadInRangeChunks(url: string, dest: string, opts: RangeChunkOptions): Promise<RangeChunkResult> {
-  const fh = await open(dest, 'w')
-  let closed = false
+  // Opened on the first byte, not before the request: the fetch goes out
+  // with no extra await in front of it, and a 404 leaves no file at all.
+  const file: { fh: FileHandle | null } = { fh: null }
   try {
     let pos = 0
     const out = await fetchInRangeChunks(url, async (c) => {
-      await fh.write(c, 0, c.byteLength, pos)
+      file.fh ??= await open(dest, 'w')
+      await file.fh.write(c, 0, c.byteLength, pos)
       pos += c.byteLength
     }, opts)
-    await fh.close()
-    closed = true
+    file.fh ??= await open(dest, 'w')   // an empty body still lands as a file
+    await file.fh.close()
+    file.fh = null
     const written = (await stat(dest)).size
     if (written !== out.bytes || (out.total > 0 && written !== out.total)) throw new Error(`download short on disk: ${written}/${out.total}`)
     return out
   } catch (err) {
-    if (!closed) await fh.close().catch(() => undefined)
+    await file.fh?.close().catch(() => undefined)
     await unlink(dest).catch(() => undefined)
     throw err
   }
