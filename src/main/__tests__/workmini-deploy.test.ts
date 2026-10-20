@@ -61,6 +61,36 @@ describe('workmini deploy builds origin/main, never the shared checkout', () => 
     assert.ok(dirs.indexOf('/opt/homebrew/bin') >= 0 && dirs.indexOf('/opt/homebrew/bin') < dirs.indexOf('/usr/local/bin'))
     assert.match(deploy, /node --experimental-strip-types -e 0/, 'the deploy refuses up front when node cannot run the tests')
   })
+
+  // 2026-10-20: one 3-second ping decided the whole day — workmini was awake
+  // and playing, but Tailscale was on a relay and the packet was late.
+  test('reachability is ssh, retried; "not there" exits 75 so the wrapper can try again today', () => {
+    assert.ok(!code.some((l) => /\bping -c1 -t3\b/.test(l)), 'no single ICMP ping decides the run')
+    assert.match(deploy, /reach_workmini\(\) \{[\s\S]*?for i in 1 2 3 4; do[\s\S]*?rsh \d+ true && return 0/)
+    assert.match(deploy, /^EX_UNREACHABLE=75$/m)
+    assert.match(deploy, /die_unreachable "\$HOST is not reachable/)
+    const preflight = deploy.indexOf('if ! reach_workmini; then')
+    assert.ok(preflight > 0 && preflight < deploy.indexOf('WM_HOME="$(rsh 20'), 'reachability is settled before anything uses workmini')
+  })
+
+  test('the wrapper retries ONLY exit 75, at most 5 more times', () => {
+    const run = (codes: number[]) => {
+      const home = mkdtempSync(join(tmpdir(), 'wm-wrapper-'))
+      try {
+        mkdirSync(join(home, 'bin'))
+        // A fake deploy: exits with the next code in the list, counting calls.
+        writeFileSync(join(home, 'bin', 'jaketunes-workmini-deploy.sh'),
+          `#!/bin/bash\nn=$(cat "$HOME/n" 2>/dev/null || echo 0); echo $((n+1)) > "$HOME/n"\ncodes=(${codes.join(' ')})\nlast=\${codes[\${#codes[@]}-1]}\nexit \${codes[$n]:-$last}\n`, { mode: 0o755 })
+        const r = spawnSync('bash', [join(scripts, 'jaketunes-workmini-nightly.sh')], {
+          env: { ...childEnv, HOME: home, WORKMINI_RETRY_EVERY_S: '0' }, encoding: 'utf-8',
+        })
+        return { status: r.status, calls: Number(readFileSync(join(home, 'n'), 'utf-8')) }
+      } finally { rmSync(home, { recursive: true, force: true }) }
+    }
+    assert.deepEqual(run([75, 75, 0]), { status: 0, calls: 3 }, 'asleep at 11:30, awake by the second retry')
+    assert.deepEqual(run([75]), { status: 75, calls: 6 }, 'gives up after 5 retries')
+    assert.deepEqual(run([1]), { status: 1, calls: 1 }, 'a real failure is not retried')
+  })
 })
 
 describe('workmini deploy proves before it swaps', () => {
