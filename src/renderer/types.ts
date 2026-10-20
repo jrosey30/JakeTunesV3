@@ -289,7 +289,7 @@ export interface ItunesSuggestion {
   /** Track length in seconds (from the album-tracks lookup). */
   durationSecs?: number
 }
-export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 'top-rated' | 'youd-star' | 'best-of-year' | 'musicman-picks' | 'megan-picks' | 'dj-hands-picks'
+export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 'top-rated' | 'youd-star' | 'best-of-year' | 'musicman-picks' | 'megan-picks' | 'dj-hands-picks' | 'listen-more-weekly'
 
 export interface ChatConversation {
   id: string
@@ -1111,6 +1111,10 @@ declare global {
       // 2026-10-20 — the phone's and workmini's plays, display only; see src/common/plays-elsewhere.ts.
       playsElsewhereGet?: () => Promise<{ ok: boolean; state?: import('../common/plays-elsewhere').PlaysElsewhereState }>
       onPlaysElsewhereUpdated?: (callback: (state: import('../common/plays-elsewhere').PlaysElsewhereState) => void) => () => void
+      // 2026-10-20 — Listen More Weekly (homemini's weekly playlist); see src/main/listen-more-weekly-client.ts.
+      listenMoreWeeklyGet?: () => Promise<{ ok: boolean; state?: import('../common/listen-more-weekly').ListenMoreWeeklyState }>
+      listenMoreWeeklyRefresh?: () => Promise<{ ok: boolean; state?: import('../common/listen-more-weekly').ListenMoreWeeklyState }>
+      onListenMoreWeeklyUpdated?: (callback: (state: import('../common/listen-more-weekly').ListenMoreWeeklyState) => void) => () => void
     }
   }
 }

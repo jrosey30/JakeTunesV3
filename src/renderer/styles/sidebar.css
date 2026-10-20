@@ -422,3 +422,15 @@
    (one row stays the view's; this one is a drawer's). */
 .sidebar-item--panel-open { background: rgba(59, 90, 143, 0.14); }
 .sidebar-item--panel-open .sidebar-item-label { color: #2f4a78; font-weight: 700; }
+
+/* The playlists homemini makes wear their own cover as the icon (2026-10-20):
+   Listen More Weekly, Best of <year>. Same box as the 12px glyphs, a hair
+   larger so the art reads; square corners like the covers themselves. */
+.sidebar-cover-icon {
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  object-fit: cover;
+  display: block;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.25);
+}

@@ -8,6 +8,10 @@
  *   'home-shelves:local-plays'  → { ok, plays }   this Mac's play history ({id, ts}) for
  *                                                 the renderer's offline rows — read-only
  *   push 'home-shelves-updated' (state)          whenever what the Home draws changes
+ *   'listen-more-weekly:get' / ':refresh'        → { ok, state }  homemini's weekly playlist
+ *                                                 (../listen-more-weekly-client.ts) — the row's
+ *                                                 "See all" and the sidebar's Listen More Weekly
+ *   push 'listen-more-weekly-updated' (state)    when that week's list changes
  *
  * Registered by registerHomeSpotlightIpc (its sibling on the same Home), so
  * main/index.ts does not grow. Refresh cadence: shortly after boot, every 10
@@ -20,6 +24,7 @@ import { REFUSED_SENDER } from '../ipc-register.ts'
 import { quietWarn } from '../flight-recorder'
 import { MOBILE_BACKEND_URL } from './recommendations-ipc.ts'
 import { createHomeShelvesClient } from '../home-shelves-client.ts'
+import { createListenMoreWeeklyClient } from '../listen-more-weekly-client.ts'
 import { parsePlayEvents } from '../../common/home-spotlight-doc.ts'
 
 const EVERY_MS = 10 * 60_000
@@ -62,9 +67,28 @@ export function registerHomeShelvesIpc(ipc: IpcRegistrar, host: HomeShelvesIpcHo
     return { ok: true, plays: parsePlayEvents(text) }
   }, { refuse: REFUSED_SENDER })
 
+  // Listen More Weekly — homemini's weekly playlist, refreshed on the same
+  // ticks as the rows (it turns over on Mondays; the cache bridges absences).
+  const weekly = createListenMoreWeeklyClient({
+    baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''),
+    dir: app.getPath('userData'),
+    warn: (key: string, m: string) => quietWarn(`listen-more-weekly:${key}`, m),
+  })
+  weekly.onChange((state) => {
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send('listen-more-weekly-updated', state)
+    }
+  })
+  ipc.handle('listen-more-weekly:get', async () => ({ ok: true, state: await weekly.read() }), { refuse: REFUSED_SENDER })
+  ipc.handle('listen-more-weekly:refresh', async () => ({ ok: true, state: await weekly.refresh() }), { refuse: REFUSED_SENDER })
+
   const tick = (force: boolean): void => {
     void refresh(force).catch((err: unknown) =>
       quietWarn('home-shelves:tick', '[home-shelves] refresh failed:', err instanceof Error ? err.message : err))
+    if (force) {
+      void weekly.refresh().catch((err: unknown) =>
+        quietWarn('listen-more-weekly:tick', '[listen-more-weekly] refresh failed:', err instanceof Error ? err.message : err))
+    }
   }
   setTimeout(() => tick(true), FIRST_MS)
   setInterval(() => tick(true), EVERY_MS)

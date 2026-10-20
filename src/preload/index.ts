@@ -1112,6 +1112,15 @@ const electronAPI = {
     ipcRenderer.on('plays-elsewhere-updated', handler)
     return () => { ipcRenderer.removeListener('plays-elsewhere-updated', handler) }
   },
+  // 2026-10-20 — Listen More Weekly: homemini's weekly playlist (song ids in
+  // order), cached in main (src/main/listen-more-weekly-client.ts).
+  listenMoreWeeklyGet: (): Promise<unknown> => ipcRenderer.invoke('listen-more-weekly:get'),
+  listenMoreWeeklyRefresh: (): Promise<unknown> => ipcRenderer.invoke('listen-more-weekly:refresh'),
+  onListenMoreWeeklyUpdated: (callback: (state: unknown) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state)
+    ipcRenderer.on('listen-more-weekly-updated', handler)
+    return () => { ipcRenderer.removeListener('listen-more-weekly-updated', handler) }
+  },
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)
