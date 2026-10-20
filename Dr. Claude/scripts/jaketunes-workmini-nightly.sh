@@ -17,9 +17,11 @@
 #   The deploy script's preflight catches the common failure modes
 #   (workmini unreachable, missing DMG, missing library.json, SSH
 #   refused). If preflight fails, the script exits non-zero and
-#   tomorrow's run tries again. No retry logic here by design —
-#   we want consistent daily attempts, not adaptive backoff that
-#   could mask a real workmini outage.
+#   tomorrow's run tries again — EXCEPT exit 75 ("workmini wasn't
+#   there"): that one is retried every 30 minutes, up to 5 more times
+#   (until ~2:00 PM). Added 2026-10-20: one sleepy or relay-slow moment
+#   at 11:30 used to cost the whole day. Every attempt is logged in
+#   full, so a real outage still shows up as a column of failures.
 #
 #   --build (added 2026-08-10): compile a fresh DMG from source before
 #   deploying. Without it this job shipped "the newest DMG in release/",
@@ -57,11 +59,23 @@ echo "=============================================================="
 echo "Run started: $(date '+%Y-%m-%d %H:%M:%S %Z')"
 echo "=============================================================="
 
-"$HOME/bin/jaketunes-workmini-deploy.sh" jacobrosenbaum --with-env
-RC=$?
+RETRIES_LEFT=5
+RETRY_EVERY_S="${WORKMINI_RETRY_EVERY_S:-1800}"   # env override is for the test only
+while :; do
+  "$HOME/bin/jaketunes-workmini-deploy.sh" jacobrosenbaum --with-env
+  RC=$?
 
-echo ""
-echo "Run finished: $(date '+%Y-%m-%d %H:%M:%S %Z') — exit code: $RC"
-echo ""
+  echo ""
+  echo "Run finished: $(date '+%Y-%m-%d %H:%M:%S %Z') — exit code: $RC"
+  echo ""
+
+  [[ $RC -eq 75 && $RETRIES_LEFT -gt 0 ]] || break
+  RETRIES_LEFT=$((RETRIES_LEFT - 1))
+  echo "workmini wasn't reachable — trying again in $((RETRY_EVERY_S / 60)) minutes ($RETRIES_LEFT retries left after that)."
+  sleep "$RETRY_EVERY_S"
+  echo "=============================================================="
+  echo "Retry started: $(date '+%Y-%m-%d %H:%M:%S %Z')"
+  echo "=============================================================="
+done
 
 exit $RC

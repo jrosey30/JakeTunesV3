@@ -133,6 +133,10 @@ STREAMING=false
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 die() { printf '\n\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
+# Exit 75 (EX_TEMPFAIL) = "workmini wasn't there, try again later today".
+# The launchd wrapper retries on it; every other failure waits for tomorrow.
+EX_UNREACHABLE=75
+die_unreachable() { printf '\n\033[31m✗ %s\033[0m\n' "$*" >&2; exit "$EX_UNREACHABLE"; }
 validate_json() {
   python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$1" 2>/dev/null
 }
@@ -308,13 +312,35 @@ node --experimental-strip-types -e 0 >/dev/null 2>&1 \
 echo "  ✓ node $(node -v) ($(command -v node))"
 [[ -f "$LIBJSON_SRC" ]]      || die "library.json not found at $LIBJSON_SRC"
 [[ -d "$LIB_SRC" ]]         || die "Music library not found at $LIB_SRC"
-ping -c1 -t3 "$HOST" >/dev/null 2>&1 || die "$HOST is not reachable on Tailscale (is it awake / on the tailnet?)."
-if ! rsh 20 true; then
-  die "SSH to ${REMOTE} failed.
+# Reachability — ask ssh, patiently. Until 2026-10-20 one ICMP ping with a
+# 3 s timeout decided the whole day: at 11:31 that morning workmini was awake
+# and playing music, but Tailscale had no direct path (relay only) and the
+# first packet didn't make it in 3 s. ssh is what every later step needs, so
+# ssh is the test: 4 tries over ~2 minutes, nudging Tailscale to (re)open the
+# path between tries.
+TS="$(command -v tailscale || echo /Applications/Tailscale.app/Contents/MacOS/Tailscale)"
+reach_workmini() {
+  local i
+  for i in 1 2 3 4; do
+    rsh 25 true && return 0
+    echo "  … no answer from $HOST over ssh (try $i of 4)"
+    if [[ -x "$TS" ]]; then tmo 15 "$TS" ping -c 1 --timeout 10s "$HOST" >/dev/null 2>&1 || true; fi
+    if [[ $i -lt 4 ]]; then sleep 20; fi
+  done
+  return 1
+}
+if ! reach_workmini; then
+  # Tailscale answers but ssh doesn't → a login problem on workmini (tomorrow
+  # won't fix it either). Tailscale doesn't answer → asleep / off the tailnet
+  # (worth another try later today).
+  if [[ -x "$TS" ]] && tmo 15 "$TS" ping -c 1 --timeout 10s "$HOST" >/dev/null 2>&1; then
+    die "SSH to ${REMOTE} failed, though Tailscale reaches it.
     → Enable Remote Login on workmini:
         System Settings → General → Sharing → Remote Login (ON)
     → Double-check the username (run 'whoami' on workmini).
     Then re-run this script."
+  fi
+  die_unreachable "$HOST is not reachable on Tailscale after 4 tries (asleep, or off the tailnet?)."
 fi
 WM_HOME="$(rsh 20 'echo $HOME')"
 [[ -n "$WM_HOME" ]] || die "Couldn't resolve workmini's home directory."
