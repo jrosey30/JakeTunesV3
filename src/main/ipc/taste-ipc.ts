@@ -13,6 +13,9 @@ import { safeIpcError } from '../safe-ipc-error'
 import { stripMemoryFor, negativeExamples, type LedgerRowLike } from '../../common/strip-memory.ts'
 import { makeImpressionDedupe } from '../impression-dedupe.ts'
 import { currentTasteState, isUsable } from '../taste-state.ts'
+import { elsewhereLedgerRows } from '../taste-elsewhere.ts'
+import { unionLedgerRows } from '../../common/taste-shared.ts'
+import { triggerSync } from '../sync-orchestrator'
 
 // ── Taste ledger (2026-08-07, "ok go go go") ─────────────────────────
 // One append-only stream of every silent verdict Jake gives: strip
@@ -42,7 +45,7 @@ const isDuplicateImpression = makeImpressionDedupe()
 // Strip rows parsed from the ledger, cached by file size+mtime (the ledger is
 // append-only; a few MB at most).
 let stripRowsCache: { size: number; mtime: number; rows: LedgerRowLike[] } | null = null
-async function stripRows(): Promise<LedgerRowLike[]> {
+async function localStripRows(): Promise<LedgerRowLike[]> {
   const st = await stat(TASTE_LEDGER_PATH()).catch(() => null)
   if (!st) return []
   if (stripRowsCache && stripRowsCache.size === st.size && stripRowsCache.mtime === st.mtimeMs) return stripRowsCache.rows
@@ -52,6 +55,19 @@ async function stripRows(): Promise<LedgerRowLike[]> {
     try { rows.push(JSON.parse(line) as LedgerRowLike) } catch { /* a torn last line is skipped, not fatal */ }
   }
   stripRowsCache = { size: st.size, mtime: st.mtimeMs, rows }
+  return rows
+}
+// Both Macs (2026-10-20): this Mac's strip rows plus the other Mac's, from
+// the copy the sync script pulls (src/main/taste-elsewhere.ts) — a ✕ or two
+// refreshes on either Mac hide the song on both. Memoized on the cached
+// arrays, so an unchanged pair costs nothing.
+let unionMemo: { local: LedgerRowLike[]; elsewhere: LedgerRowLike[][]; rows: LedgerRowLike[] } | null = null
+async function stripRows(): Promise<LedgerRowLike[]> {
+  const local = await localStripRows()
+  const elsewhere = (await elsewhereLedgerRows(app.getPath('userData'))) as LedgerRowLike[][]
+  if (unionMemo && unionMemo.local === local && unionMemo.elsewhere.length === elsewhere.length && unionMemo.elsewhere.every((a, i) => a === elsewhere[i])) return unionMemo.rows
+  const rows = unionLedgerRows(local, elsewhere.map((a) => a.filter((r) => r.surface === 'strip')))
+  unionMemo = { local, elsewhere, rows }
   return rows
 }
 export function registerTasteIpc(ipc: IpcRegistrar): void {
@@ -67,6 +83,9 @@ export function registerTasteIpc(ipc: IpcRegistrar): void {
         .map((ev) => JSON.stringify({ ts: now, surface: ev.surface, verdict: ev.verdict, key: ev.key ?? {}, ctx: ev.ctx ?? {} }))
       if (lines.length === 0) return { ok: true, appended: 0 }
       await appendFile(TASTE_LEDGER_PATH(), lines.join('\n') + '\n', 'utf-8')
+      // A real verdict (not an impression) heads for the other Mac on the
+      // next batched sync, instead of waiting for an unrelated library save.
+      if (lines.some((l) => !l.includes('"verdict":"shown"'))) triggerSync('taste')
       return { ok: true, appended: lines.length }
     } catch (err) {
       return { ok: false, error: safeIpcError(err, 'unknown') }

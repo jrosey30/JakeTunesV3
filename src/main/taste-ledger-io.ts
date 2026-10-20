@@ -5,7 +5,10 @@
  * chartered pure-and-fs-free, so the file half lives here.
  */
 import { readFile } from 'fs/promises'
+import { dirname } from 'path'
 import type { LedgerRow } from './discovery-learned.ts'
+import { elsewhereLedgerRows } from './taste-elsewhere.ts'
+import { unionLedgerRows } from '../common/taste-shared.ts'
 
 /** Every parseable row; [] when the ledger doesn't exist yet. */
 export async function readLedgerRows(path: string): Promise<LedgerRow[]> {
@@ -17,4 +20,15 @@ export async function readLedgerRows(path: string): Promise<LedgerRow[]> {
   } catch {
     return []
   }
+}
+
+/**
+ * This Mac's rows plus the other Macs' (2026-10-20): the copies the sync
+ * script pulled into <ledger dir>/taste-elsewhere/<source>/taste-ledger.jsonl.
+ * Each verdict once, ordered by time — so Discovery's "latest verdict wins"
+ * and the learned summary hear both Macs. Read-only: nothing is written.
+ */
+export async function readSharedLedgerRows(path: string): Promise<LedgerRow[]> {
+  const [local, elsewhere] = await Promise.all([readLedgerRows(path), elsewhereLedgerRows(dirname(path))])
+  return unionLedgerRows(local, elsewhere as LedgerRow[][])
 }

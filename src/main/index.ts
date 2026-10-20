@@ -200,7 +200,8 @@ import { normForOwnership } from './owned-album-key.ts'
 import { explicitWins } from '../common/explicit.ts'
 import { MODEL_SMART, MODEL_FAST, withModelPolicy } from '../common/ai-models.ts'
 import { summariseLearning, discoverVerdicts, type LedgerRow } from './discovery-learned.ts'
-import { readLedgerRows } from './taste-ledger-io.ts'
+import { readSharedLedgerRows } from './taste-ledger-io.ts'
+import { discoveryFeedbackCache, sharedDiscoveryFeedback, recordNotForMe, recordAllowAgain } from './discovery-feedback.ts'
 import { JsonFileCache, flushAllCaches } from './state-cache'
 import { hashPayload, verifyLandedFile, stagePayloadAndRename } from './save-verify.ts'
 import { decideStagedRecovery, snapshotLibraryFile } from './staged-recovery.ts'
@@ -1490,10 +1491,10 @@ ipc.handle('capture-resolve-link', async (_e, rawUrl: string): Promise<{ ok: boo
  */
 ipc.handle('discovery-learned', async () => {
   try {
-    const rows: LedgerRow[] = await readLedgerRows(TASTE_LEDGER_PATH())
+    const rows: LedgerRow[] = await readSharedLedgerRows(TASTE_LEDGER_PATH())
 
     let notForMe: Record<string, { artist?: string; at?: number }> = {}
-    try { notForMe = (await discoveryFeedbackCache.get())?.notForMe ?? {} } catch { /* none */ }
+    try { notForMe = (await sharedDiscoveryFeedback()).notForMe ?? {} } catch { /* none */ }
 
     let weightsAt: string | undefined
     try {
@@ -1542,15 +1543,8 @@ ipc.handle('discovery-not-for-me', async (_e, artist: string, cardKey?: string) 
   } catch { /* can't read the library: fall through to the old behaviour */ }
 
   const { restKeysForCard } = await import('./discover-feed.ts')
-  await discoveryFeedbackCache.update((cur) => {
-    if (owned) {
-      // Rest this card hard rather than blacklisting a artist Jake plays.
-      if (cardKey) for (const k of restKeysForCard(String(cardKey))) cur.served[k] = { first: Date.now(), last: Date.now(), views: 99 }
-    } else {
-      cur.notForMe[key] = { artist: String(artist), at: Date.now() }
-    }
-    return cur
-  })
+  // Owned: rest this card hard rather than blacklisting an artist Jake plays.
+  await recordNotForMe(key, String(artist), owned ? (cardKey ? restKeysForCard(String(cardKey)) : []) : null)
   if (!owned && radarCache) {
     radarCache.candidates = radarCache.candidates.filter((c: { artist: string }) => normArtistKey(c.artist) !== key)
   }
@@ -1561,7 +1555,7 @@ ipc.handle('discovery-not-for-me', async (_e, artist: string, cardKey?: string) 
 ipc.handle('discovery-allow-again', async (_e, artist: string) => {
   const key = normArtistKey(artist)
   if (!key) return { ok: false }
-  await discoveryFeedbackCache.update((cur) => { delete cur.notForMe[key]; return cur })
+  await recordAllowAgain(key, String(artist))
   return { ok: true }
 }, { refuse: REFUSED_SENDER })
 
@@ -1816,7 +1810,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     const supplyPromise = df.supplyLanes([...anchors.map((a) => a.artist), ...spotifyAnchors, ...focus.anchors(dayN)], dayN, { artists: ownedArtists, albumKeys: ownedAlbumKeys, baseKeys: ownedBaseKeys }).then((cs) => { cards.push(...cs) }).catch((err) => console.warn('[discover] supply lanes failed:', err))
 
     // L5 · Critic wall — a public ratings sheet's 9s/10s he doesn't own, 5 a day, credited; IN ADDITION to the 25/25 and never a taste signal (critic-picks-feed.ts). Unshifted so it wins cross-lane dedupe.
-    const criticPromise = import('./critic-picks-feed.ts').then((m) => m.criticPickCards({ stateDir: STATE_DIR, tracks: tracks as Array<{ artist?: string; albumArtist?: string; album?: string }>, owned: { artists: ownedArtists, albumKeys: ownedAlbumKeys, baseKeys: ownedBaseKeys }, blocks: focus.blocks, feedback: () => discoveryFeedbackCache.get(), isOnList: async () => listenListPredicate(await readRecommendationsFile()) })).then((cs) => { cards.unshift(...cs) }).catch((err) => console.warn('[discover] critic picks failed:', err))
+    const criticPromise = import('./critic-picks-feed.ts').then((m) => m.criticPickCards({ stateDir: STATE_DIR, tracks: tracks as Array<{ artist?: string; albumArtist?: string; album?: string }>, owned: { artists: ownedArtists, albumKeys: ownedAlbumKeys, baseKeys: ownedBaseKeys }, blocks: focus.blocks, feedback: sharedDiscoveryFeedback, isOnList: async () => listenListPredicate(await readRecommendationsFile()) })).then((cs) => { cards.unshift(...cs) }).catch((err) => console.warn('[discover] critic picks failed:', err))
     await Promise.all([radarPromise, missingPromise, scenePromise, llmLanes, supplyPromise, criticPromise])
 
     // Clerk pitches (module pass — Jake: "need you to get deeper than
@@ -1838,11 +1832,11 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     // The verdict stream: accepts retire their cards from circulation (a yes
     // is already on the list — "existence is not memory", the tombstone is
     // the ledger row) and both sides teach the score below.
-    const verdicts = discoverVerdicts(await readLedgerRows(TASTE_LEDGER_PATH()))
+    const verdicts = discoverVerdicts(await readSharedLedgerRows(TASTE_LEDGER_PATH()))
     for (const a of verdicts.accepts) ownedAlbumKeys.add(`${nk(a.artist)}|${nk(a.title)}`)
 
-    // Jake's verdicts + rotation + ownership + cross-lane dedupe.
-    const fb = await discoveryFeedbackCache.get()
+    // Jake's verdicts (both Macs') + rotation + ownership + cross-lane dedupe.
+    const fb = await sharedDiscoveryFeedback()
     const nowMs = Date.now()
     const visible = df.filterFeed(cards, { ownedArtists, ownedAlbumKeys, ownedBaseKeys, notForMe: fb.notForMe, served: fb.served, now: nowMs, genreGate: focus.blocks })
 
@@ -1976,9 +1970,12 @@ async function countFeedServed(lanes: Array<{ id: string; title: string; cards: 
 // Discover is where the radar lives now (its Brand New lanes), and it never
 // checked the Listen List: a pick Jake added came back as "+ List" on the
 // next visit. The radar's guard runs on every feed that leaves main.
+// Same door for "Not for me" (2026-10-20): the cached feed was filtered when it
+// was built, and a verdict from the other Mac arrives after that.
 async function withoutListed<L extends { cards: unknown[] }>(lanes: L[]): Promise<L[]> {
   try {
-    const { dropListed } = await import('./discover-feed.ts')
+    const { dropListed, dropVetoed } = await import('./discover-feed.ts')
+    lanes = dropVetoed(lanes, await sharedDiscoveryFeedback(), Date.now())
     return dropListed(lanes, listenListPredicate(await readRecommendationsFile()))
   } catch (err) {
     console.warn('[discover] Listen List unreadable — serving the feed unguarded:', err)
@@ -2081,7 +2078,7 @@ ipc.handle('get-new-music-radar', async (_e, force?: boolean) => {
 
     // Jake's verdicts: "not for me" artists never come back; cards served 4+
     // times without a bite rotate out for two weeks (no more month-long squatters).
-    const fb = await discoveryFeedbackCache.get()
+    const fb = await sharedDiscoveryFeedback()
     const nowMs = Date.now()
     const ROTATE_VIEWS = 4, ROTATE_REST_MS = 14 * 24 * 3600 * 1000
     const visible = ranked.filter((c) => {
@@ -3814,19 +3811,7 @@ const lyricsCache = new JsonFileCache<Record<string, LyricsRecord>>(
   () => ({}),
   'lyrics',
 )
-// Discovery feedback — the radar's memory of Jake's verdicts. notForMe keys
-// are normalized artist names ("not for me" = that artist never surfaces in
-// Discovery again); served tracks per-candidate view counts so stale cards
-// rotate out instead of squatting for weeks (the Vince Staples bug).
-interface DiscoveryFeedback {
-  notForMe: Record<string, { artist: string; at: number }>
-  served: Record<string, { first: number; last: number; views: number }>
-}
-const discoveryFeedbackCache = new JsonFileCache<DiscoveryFeedback>(
-  () => join(STATE_DIR, 'discovery-feedback.json'),
-  () => ({ notForMe: {}, served: {} }),
-  'discovery-feedback',
-)
+// Discovery feedback (discovery-feedback.json) lives in ./discovery-feedback.ts.
 // Friends ledger — who sends Jake music and how reliable they are. Updated on
 // list adds ('add'), downloads that land ('got'), and tosses ('tossed');
 // the Scouts strip in Listen to the List ranks by hit rate.

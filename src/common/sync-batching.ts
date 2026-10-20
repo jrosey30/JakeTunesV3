@@ -12,10 +12,13 @@
  *     new music, new covers, a sync Jake asked for. 5 s trailing debounce,
  *     as before — an album of 12 imports is still one sync — and it carries
  *     any batched change along with it.
- *   - BATCHED ('metadata-edit', 'playlist', 'startup'): routine state. The
- *     first one opens a 5-minute window; everything inside rides along. The
- *     window never slides, so a steady stream of edits still syncs every
- *     5 minutes instead of waiting for quiet.
+ *   - BATCHED ('metadata-edit', 'playlist', 'startup', 'taste'): routine
+ *     state. The first one opens a 5-minute window; everything inside rides
+ *     along. The window never slides, so a steady stream of edits still syncs
+ *     every 5 minutes instead of waiting for quiet. 'taste' (2026-10-20) is a
+ *     taste choice — a strip ✕ / refresh / add, Record Shop "Not for me", a
+ *     Rock DNA answer — so it reaches the other Mac without waiting for an
+ *     unrelated library save.
  *
  * Pure (no electron, no timers) so the policy is tested directly;
  * src/main/sync-orchestrator.ts owns the clock and the single-flight gate.
@@ -24,7 +27,7 @@
 export const SYNC_URGENT_DELAY_MS = 5_000
 export const SYNC_BATCH_WINDOW_MS = 300_000
 
-const BATCHED: ReadonlySet<string> = new Set(['metadata-edit', 'playlist', 'startup'])
+const BATCHED: ReadonlySet<string> = new Set(['metadata-edit', 'playlist', 'startup', 'taste'])
 
 export function syncUrgency(reason: string): 'urgent' | 'batched' {
   return BATCHED.has(reason) ? 'batched' : 'urgent'

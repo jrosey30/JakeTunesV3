@@ -43,6 +43,9 @@ function replay(triggers: Array<[number, string]>, runMs = 6 * S, until = 60 * M
 describe('which triggers wait', () => {
   it('routine saves batch; new music, covers and asked-for syncs do not', () => {
     for (const r of ['metadata-edit', 'playlist', 'startup']) assert.equal(syncUrgency(r), 'batched', r)
+    // 2026-10-20: a taste choice (strip ✕, Not for me, a quiz answer) rides the
+    // 5-minute window to the other Mac — it never preempts a sync of its own.
+    assert.equal(syncUrgency('taste'), 'batched')
     for (const r of ['import', 'artwork', 'manual', 'nas-recovery', 'safety-net']) assert.equal(syncUrgency(r), 'urgent', r)
   })
 })

@@ -12,6 +12,14 @@
  * Dinner Party. Legacy ledger rows ('pass', written on ↻ before 2026-10-19)
  * are refreshes. Pure — main serves it over IPC, tests bind to it.
  *
+ * Both Macs (2026-10-20): main hands in this Mac's rows AND the other Mac's
+ * (src/common/taste-shared.ts unionLedgerRows), so a ✕, two refreshes or a
+ * take-back on either Mac hide the song on both. One wait: an add made on the
+ * OTHER Mac (row.elsewhere) reads as "taken back" only once it is a day old —
+ * until then this Mac's copy of the playlist may simply not have that add yet
+ * (playlists converge in minutes; a day is a wide margin). It cancels the
+ * refreshes before it at once, as an add here does.
+ *
  * ⚠️ TWIN: scripts/taste-ledger-learn.py (REFRESH_HIDE_COUNT / REFRESH_HIDE_DAYS)
  * counts "repeat failures" with the same rule.
  */
@@ -19,12 +27,17 @@
 export const REFRESH_HIDE_COUNT = 2
 export const REFRESH_HIDE_DAYS = 90
 const DAY_MS = 86_400_000
+/** How long an add made on the other Mac gets to reach this Mac's playlist
+ *  before its absence means "taken back". */
+export const ELSEWHERE_ADD_SETTLE_MS = DAY_MS
 
 export interface LedgerRowLike {
   ts?: string
   surface?: string
   verdict?: string
   key?: { trackId?: unknown; playlistId?: unknown }
+  /** Set on a row from another Mac's ledger (its source name). */
+  elsewhere?: string
 }
 
 export type HideReason = 'rejected' | 'refreshed' | 'taken-back'
@@ -44,6 +57,8 @@ export function stripMemoryFor(
   const refreshes = new Map<number, number[]>()
   const rejected = new Set<number>()
   const accepted = new Map<number, number>()
+  /** Is the latest add of this song one made on the other Mac? */
+  const latestAddElsewhere = new Map<number, boolean>()
   for (const r of rows) {
     if (r.surface !== 'strip' || !r.key || String(r.key.playlistId ?? '') !== playlistId) continue
     const id = Number(r.key.trackId)
@@ -55,11 +70,15 @@ export function stripMemoryFor(
       const list = refreshes.get(id) ?? []
       list.push(t)
       refreshes.set(id, list)
-    } else if (r.verdict === 'accept') accepted.set(id, Math.max(t, accepted.get(id) ?? 0))
+    } else if (r.verdict === 'accept') {
+      if (t >= (accepted.get(id) ?? -Infinity)) latestAddElsewhere.set(id, !!r.elsewhere)
+      accepted.set(id, Math.max(t, accepted.get(id) ?? 0))
+    }
   }
   const out = new Map<number, HiddenEntry>()
   for (const id of rejected) out.set(id, { reason: 'rejected', until: null })
-  for (const [id] of accepted) {
+  for (const [id, t] of accepted) {
+    if (latestAddElsewhere.get(id) && nowMs - t < ELSEWHERE_ADD_SETTLE_MS) continue   // may still be on its way
     if (!members.has(id) && !out.has(id)) out.set(id, { reason: 'taken-back', until: null })
   }
   for (const [id, times] of refreshes) {

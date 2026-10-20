@@ -5,6 +5,10 @@
  * (Angine de Poitrine) so the profile can say why each one is loved.
  * The rules live in src/common/rock-dna.ts; the Record Shop reads the same
  * file in src/main/discovery-focus.ts.
+ *
+ * Both Macs (2026-10-20): load returns the quiz merged with the other Mac's
+ * copy (discovery-focus.ts loadRockDna), so he can carry on wherever he is;
+ * save writes this Mac's file only, and the sync carries it across.
  */
 import { app } from 'electron'
 import { join } from 'path'
@@ -14,6 +18,7 @@ import { REFUSED_SENDER } from '../ipc-register.ts'
 import { normalizeDnaState, type DnaState } from '../../common/rock-dna.ts'
 import { loadTasteProfile } from '../taste-profile.ts'
 import { TASTE_PROFILE_FILE, ROCK_DNA_FILE, loadRockDna } from '../discovery-focus.ts'
+import { triggerSync } from '../sync-orchestrator'
 
 async function saveRockDna(dir: string, raw: unknown): Promise<DnaState> {
   const state = { ...normalizeDnaState(raw), updatedAt: new Date().toISOString() }
@@ -30,6 +35,10 @@ export function registerRockDnaIpc(ipc: IpcRegistrar): void {
     return { state, exceptions: taste.exceptions.map((e) => ({ artist: e.artist, genre: e.genre })) }
   }, { refuse: REFUSED_SENDER })
   ipc.handle('rock-dna:save', async (_e, state: unknown) => {
-    try { return { ok: true, state: await saveRockDna(dir(), state) } } catch (err) { return { ok: false, error: err instanceof Error ? err.message : String(err) } }
+    try {
+      const saved = await saveRockDna(dir(), state)
+      triggerSync('taste')   // the other Mac merges it in on its next pull
+      return { ok: true, state: saved }
+    } catch (err) { return { ok: false, error: err instanceof Error ? err.message : String(err) } }
   }, { refuse: REFUSED_SENDER })
 }

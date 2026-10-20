@@ -207,9 +207,26 @@ ensure_jakeshared() {
 # src/main/release-kinds.ts). The PHONE reads it from the NAS state dir (the
 # app's LOCAL→NAS mirror carries it there); this push gives homemini's own
 # JakeTunes the laptop's answers so it doesn't re-ask MusicBrainz for them.
-SYNC_FILES=(library.json metadata-overrides.json playlists.json play-events.jsonl listening-log.jsonl live-sets.json release-kinds.json listener-profile.json musicman-memory.json musicman-interactions.jsonl picks-cache.json audio-index.bin activity-pool.json ipod-roundtrip-ledger.jsonl taste-ledger.jsonl)  # taste-ledger.jsonl added 2026-10-19: every suggestion verdict (adds, ✕s, refreshes, Discovery picks), read by homemini's nightly taste engine to grade past recommendations — append-only, laptop-written, copied only, never written there (a replica's lands in replicas/<name>/). audio-index.bin added 2026-09-02: the CLAP ears, laptop-written, read by the Mini's fusion. ipod-roundtrip-ledger.jsonl added 2026-10-10: the iPod's offline plays, read by homemini's nightly listening history (Year in Review) — copied only, never written there
+SYNC_FILES=(library.json metadata-overrides.json playlists.json play-events.jsonl listening-log.jsonl live-sets.json release-kinds.json listener-profile.json musicman-memory.json musicman-interactions.jsonl picks-cache.json audio-index.bin activity-pool.json ipod-roundtrip-ledger.jsonl taste-ledger.jsonl discovery-feedback.json rock-dna.json taste-weights.json taste-profile.json)  # taste-ledger.jsonl added 2026-10-19: every suggestion verdict (adds, ✕s, refreshes, Discovery picks), read by homemini's nightly taste engine to grade past recommendations — append-only, laptop-written, copied only, never written there (a replica's lands in replicas/<name>/). audio-index.bin added 2026-09-02: the CLAP ears, laptop-written, read by the Mini's fusion. ipod-roundtrip-ledger.jsonl added 2026-10-10: the iPod's offline plays, read by homemini's nightly listening history (Year in Review) — copied only, never written there
 # Phone-authored playlist sidecars — pull only, never push via SYNC_FILES.
 PHONE_PLAYLIST_SIDECARS=(mobile-playlists.json playlist-additions.json)
+# 2026-10-20 — Jake's taste choices hold on BOTH Macs, wherever he made them
+# ("fix ALL of them"). SYNC_FILES (above) now carries each Mac's own copies to
+# homemini — the hub's into the hub folder, a replica's into replicas/<name>/:
+#   discovery-feedback.json  Record Shop "Not for me" (+ "Allow again")
+#   taste-ledger.jsonl       strip ✕ / refresh / add, Discovery verdicts
+#   rock-dna.json            the Rock DNA quiz, Dislikes
+# and pull_taste_elsewhere (below) brings the OTHER Mac's copies back into
+# userData/taste-elsewhere/<source>/ — "hub" on a replica, each replica's name
+# on the hub. The app reads those read-only and merges them in memory
+# (src/common/taste-shared.ts); a pulled copy never replaces this Mac's own.
+# taste-weights.json (scripts/taste-ledger-learn.py, laptop launchd) and
+# taste-profile.json (Jake's hand edits) have ONE writer, the hub: a replica
+# never pushes them back and mirrors the hub's copy into its userData instead.
+# ⚠️ TWIN: src/common/taste-shared.ts TASTE_ELSEWHERE_DIR, src/main/taste-elsewhere.ts
+TASTE_SHARED=(discovery-feedback.json taste-ledger.jsonl rock-dna.json)
+TASTE_HUB_ONLY=(taste-weights.json taste-profile.json)
+TASTE_ELSEWHERE="$JT_DATA_LOCAL/taste-elsewhere"
 
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"
@@ -339,6 +356,7 @@ if [ "$REPLICA" -eq 1 ]; then
   _kept=()
   for f in "${SYNC_FILES[@]}"; do
     [ "$f" = "library.json" ] && continue
+    case " ${TASTE_HUB_ONLY[*]} " in *" $f "*) continue ;; esac   # the hub's, mirrored here — never published back
     _kept+=("$f")
   done
   SYNC_FILES=("${_kept[@]}")
@@ -608,8 +626,52 @@ sync_artwork_to_homemini() {
   fi
 }
 
+# The other Mac's taste copies → userData/taste-elsewhere/ (see TASTE_SHARED
+# above). Every pass, hub and replica, before the homemini-only exit. Additive:
+# no --delete, so a copy stays honoured if that Mac goes quiet. Never fatal.
+adopt_hub_only() {
+  local src="$TASTE_ELSEWHERE/hub/$1" dst="$JT_DATA_LOCAL/$1"
+  [ -f "$src" ] || return 0
+  if [ -f "$dst" ]; then
+    cmp -s "$src" "$dst" && return 0
+    [ "$src" -nt "$dst" ] || return 0   # the copy here is newer (a deploy put it here) — keep it
+  fi
+  if ! python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if isinstance(d,dict) and len(d)>0 else 1)" "$src" 2>/dev/null; then
+    log_hourly "/tmp/.jt-taste-$1-note" "taste pull: the hub's $1 is not a JSON object — keeping this Mac's copy"
+    return 1
+  fi
+  cp -p "$src" "$dst.taste-incoming" && mv -f "$dst.taste-incoming" "$dst" \
+    && log "taste pull: adopted the hub's $1"
+}
+pull_taste_elsewhere() {
+  local filt=() f err rc from to
+  if [ "$REPLICA" -eq 1 ]; then
+    for f in "${TASTE_SHARED[@]}" "${TASTE_HUB_ONLY[@]}"; do filt+=(--include="/$f"); done
+    from="$JT_DATA_REMOTE/"; to="$TASTE_ELSEWHERE/hub/"
+  else
+    filt=(--include='/*/')
+    for f in "${TASTE_SHARED[@]}"; do filt+=(--include="/*/$f"); done
+    from="$JT_DATA_REMOTE/replicas/"; to="$TASTE_ELSEWHERE/"
+  fi
+  mkdir -p "$to" || return 1
+  err=$(rsync -rtz --no-perms --no-owner --no-group "${filt[@]}" --exclude='*' "$(rremote "$from")" "$to" 2>&1 >/dev/null)
+  rc=$?
+  if [ $rc -ne 0 ]; then
+    case "$err" in
+      *"No such file or directory"*) ;;   # no replica has synced yet — nothing to honour
+      *) log_hourly /tmp/.jt-taste-pull-note "taste pull from homemini failed (rc $rc) — the other Mac's choices wait for the next pass: ${err:0:200}" ;;
+    esac
+    return 1
+  fi
+  if [ "$REPLICA" -eq 1 ]; then
+    for f in "${TASTE_HUB_ONLY[@]}"; do adopt_hub_only "$f" || true; done
+  fi
+  return 0
+}
+
 homemini_rc=0
 push_homemini_state || homemini_rc=$?
+pull_taste_elsewhere || true
 if [ $HOMEMINI_ONLY -eq 1 ]; then
   sync_artwork_to_homemini
   log "homemini-only pass done (state rc=$homemini_rc) — NAS legs skipped"
