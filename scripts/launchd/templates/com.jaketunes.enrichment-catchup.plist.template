@@ -2,17 +2,18 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- Brief 183 template — com.jaketunes.enrichment-catchup (Brief 177's
      scripts/enrichment-catchup.mjs: ledger refresh -> CLAP delta -> lyrics
-     batch, inside a time budget). 04:30 is PROPOSED (see jobs.json).
-     Path tokens are rendered by install-launchagents.sh. -->
+     batch, inside a time budget), daily 04:30 on the laptop. It runs
+     ~/bin/jaketunes-enrichment-nightly.sh (repo: scripts/launchd/
+     enrichment-nightly.sh), which runs origin/main's scripts from its own
+     worktree — never the shared ~/JakeTunesV3 checkout. Install with
+     install-launchagents.sh --apply --only com.jaketunes.enrichment-catchup -->
 <plist version="1.0"><dict>
   <key>Label</key><string>com.jaketunes.enrichment-catchup</string>
   <key>ProgramArguments</key><array>
-    <string>__NODE__</string>
-    <string>__REPO__/scripts/enrichment-catchup.mjs</string>
-    <string>--budget-min</string>
-    <string>60</string>
+    <string>/bin/bash</string>
+    <string>__HOME__/bin/jaketunes-enrichment-nightly.sh</string>
   </array>
-  <key>WorkingDirectory</key><string>__REPO__</string>
+  <key>WorkingDirectory</key><string>__HOME__</string>
   <key>StartCalendarInterval</key><dict>
     <key>Hour</key><integer>4</integer>
     <key>Minute</key><integer>30</integer>

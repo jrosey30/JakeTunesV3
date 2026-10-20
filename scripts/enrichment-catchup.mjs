@@ -25,7 +25,10 @@
  *
  * Usage:
  *   node scripts/enrichment-catchup.mjs [--budget-min 60] [--cap N]
- *     [--lyrics-limit 200] [--python /path/to/python] [--dry-run]
+ *     [--lyrics-limit 200] [--python /path/to/python] [--skip-clap] [--dry-run]
+ *
+ * --skip-clap runs the ledger refresh + lyrics only (the nightly wrapper
+ * passes it while JakeTunes is playing audio — CLAP decoding is CPU-heavy).
  *
  * --dry-run prints the plan (counts, cap source, exact commands) and
  * spawns nothing and writes nothing.
@@ -57,6 +60,7 @@ const STATE_DIR = process.env.JT_STATE_DIR || join(homedir(), 'Library', 'Applic
 const argv = process.argv.slice(2)
 const argVal = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined }
 const DRY = argv.includes('--dry-run')
+const SKIP_CLAP = argv.includes('--skip-clap')
 const BUDGET_MIN = Number(argVal('--budget-min') || 60)
 const LYRICS_LIMIT = Number(argVal('--lyrics-limit') || 200)
 const log = (...a) => console.log(new Date().toISOString(), '[enrichment-catchup]', ...a)
@@ -103,7 +107,7 @@ if (probe?.recommendedNightlyCap && probe?.budgetMin) {
   cap = Number(argVal('--cap') || process.env.CLAP_NIGHTLY_CAP || 300)
   capSource = 'UNMEASURED fallback (run scripts/clap-probe.py on this machine and --write to replace this guess)'
 }
-const clapRun = Math.min(cap, clapTodo.length)
+const clapRun = SKIP_CLAP ? 0 : Math.min(cap, clapTodo.length)
 log(`CLAP: ${clapDoneIds.size} indexed, ${clapTodo.length} in delta, tonight's cap ${cap} (${capSource}) → running ${clapRun}`)
 
 const venvPython = join(HERE, '..', '.venv-clap', 'bin', 'python')
@@ -114,7 +118,7 @@ const lyricsCmd = ['node', join(HERE, 'lyrics-fetch.mjs'), '--limit', String(LYR
 if (DRY) {
   log('DRY-RUN — plan only; nothing spawned, nothing written (ledger refresh above was computed in memory)')
   if (clapRun > 0) log('would run:', clapCmd.join(' '))
-  else log('would skip CLAP (delta empty)')
+  else log(`would skip CLAP (${SKIP_CLAP ? '--skip-clap' : 'delta empty'})`)
   log('would run:', lyricsCmd.join(' '), `(if budget remains after CLAP)`)
   log(`budget: ${BUDGET_MIN} min total`)
   process.exit(0)
@@ -130,7 +134,7 @@ if (clapRun > 0) {
   status.phases.clap = { ran: clapRun, exitCode: r.status, minutes: Math.round(elapsedMin() * 10) / 10 }
   if (r.status !== 0) log(`CLAP phase exited ${r.status} — continuing to lyrics with remaining budget`)
 } else {
-  status.phases.clap = { ran: 0, note: 'delta empty' }
+  status.phases.clap = { ran: 0, note: SKIP_CLAP ? 'skipped (--skip-clap: music was playing)' : 'delta empty' }
 }
 
 if (elapsedMin() < BUDGET_MIN * 0.85) {

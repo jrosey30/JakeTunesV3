@@ -8,6 +8,10 @@
 #   install-launchagents.sh            DRY-RUN (default): render + diff, change nothing
 #   install-launchagents.sh --apply    install changed plists and reload those agents
 #   install-launchagents.sh --status   per-job status (delegates to status.sh)
+#   … --apply --only <label>             install ONE job. The manifest mixes
+#                                        laptop and homemini jobs, and a bare
+#                                        --apply installs every managed job on
+#                                        whichever Mac runs it (2026-10-20).
 #
 # Idempotent: an agent whose rendered plist is byte-identical to the
 # installed one is reported "up to date" and never reloaded.
@@ -32,10 +36,15 @@ if [ "${1:-}" = "--status" ]; then
   exec "$HERE/status.sh"
 fi
 MODE="dry-run"
-if [ "${1:-}" = "--apply" ]; then MODE="apply"; fi
-if [ $# -gt 0 ] && [ "$1" != "--apply" ]; then
-  echo "usage: $0 [--apply | --status]" >&2; exit 2
-fi
+ONLY=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --apply) MODE="apply" ;;
+    --only) ONLY="${2:-}"; [ -n "$ONLY" ] || { echo "--only needs a label" >&2; exit 2; }; shift ;;
+    *) echo "usage: $0 [--apply] [--only <label>] | --status" >&2; exit 2 ;;
+  esac
+  shift
+done
 
 echo "launchd installer — mode: $MODE"
 echo "repo: $REPO_DIR | agents dir: $LA_DIR | node: $NODE_BIN | python3: $PYTHON_BIN"
@@ -43,14 +52,17 @@ echo
 
 # Managed jobs: label <TAB> template, from the manifest (python3 is the
 # JSON parser — it exists on every machine these jobs run on).
-MANAGED="$(python3 - "$HERE/jobs.json" <<'PY'
+MANAGED="$(python3 - "$HERE/jobs.json" "$ONLY" <<'PY'
 import json, sys
 m = json.load(open(sys.argv[1]))
-for j in m["jobs"]:
-    if j["kind"] == "managed":
-        print(f"{j['label']}\t{j['template']}")
+only = sys.argv[2]
+hits = [j for j in m["jobs"] if j["kind"] == "managed" and (not only or j["label"] == only)]
+if only and not hits:
+    sys.exit(f"--only {only}: no managed job with that label in jobs.json")
+for j in hits:
+    print(f"{j['label']}\t{j['template']}")
 PY
-)"
+)" || exit 2
 
 changed=0; current=0
 while IFS=$'\t' read -r label template; do
