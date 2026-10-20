@@ -197,6 +197,7 @@ import {
 } from '../common/albumReleaseDate'
 import { foldAccents, nameKey, storedNameKey } from '../common/fold-text.ts'
 import { chooseArtistIdentity, catalogueIsSomeoneElses, type IdentityConfidence } from '../common/artist-identity.ts'
+import { pickStandardRelease, isHiddenRelease } from '../common/discography-pick.ts'
 import { measureLibraryFileSizes, type FileSizeProgress, type FileSizeScan } from '../common/library-file-sizes.ts'
 import { normForOwnership } from './owned-album-key.ts'
 import { explicitWins } from '../common/explicit.ts'
@@ -2898,7 +2899,7 @@ interface DiscographyResult {
 // Bump when the discography shape/filtering changes so old disk caches are
 // ignored. v2: drop regional repackagings / hits comps via tracklist overlap
 // (the US Capitol Beatles albums MusicBrainz doesn't flag as Compilation).
-const DISCO_SCHEMA_VERSION = 3  // 3: 2026-10-20 identity rule — retires catalogues of the wrong namesake (Geese → Pop Songs / Duck)
+const DISCO_SCHEMA_VERSION = 4  // 3: 2026-10-20 identity rule (Geese → Pop Songs / Duck). 4: standard edition, not a 3-disc bundle (3D Country); Jake's hidden releases
 const DISCO_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const MB_RATE_LIMIT_MS = 1100  // MB asks for ≤1 req/sec; pad to 1.1s
 let mbLastRequestAt = 0
@@ -3288,6 +3289,7 @@ async function fetchArtistDiscography(artist: string): Promise<DiscographyResult
     const rgs = (rgData['release-groups'] || [])
       .filter(rg => rg['primary-type'] === 'Album' || rg['primary-type'] === 'EP')
       .filter(rg => (rg['secondary-types'] || []).every(s => s.toLowerCase() === 'soundtrack'))
+      .filter(rg => !isHiddenRelease(mbid, rg.title))
       .sort((x, y) => (y['first-release-date'] || '').localeCompare(x['first-release-date'] || ''))
       .slice(0, 30)  // cap at 30 release groups per artist — keeps fetch under ~35s worst-case
       // Then process OLDEST-first so the tracklist-overlap dedup below keeps the
@@ -3306,17 +3308,21 @@ async function fetchArtistDiscography(artist: string): Promise<DiscographyResult
     for (const rg of rgs) {
       try {
         await mbThrottle()
-        const relUrl = `https://musicbrainz.org/ws/2/release?release-group=${rg.id}&inc=recordings&fmt=json&limit=1`
+        // Every edition, then pick the plain one — MB's first-listed release can
+        // be a 3-disc bundle (3D Country: album + covers + live, all concatenated).
+        const relUrl = `https://musicbrainz.org/ws/2/release?release-group=${rg.id}&inc=recordings&fmt=json&limit=25`
         const relRes = await fetch(relUrl, { headers })
         if (!relRes.ok) continue
         const relData = await relRes.json() as {
           releases?: Array<{
             id: string
             date?: string
+            status?: string | null
+            disambiguation?: string
             media?: Array<{ tracks?: Array<{ title: string; position: number }> }>
           }>
         }
-        const release = relData.releases?.[0]
+        const release = pickStandardRelease(relData.releases)
         if (!release) continue
         const tracks: { title: string; position: number }[] = []
         for (const m of release.media || []) {
