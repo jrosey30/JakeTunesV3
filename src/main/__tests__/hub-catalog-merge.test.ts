@@ -1,7 +1,9 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { adoptHubCatalogState, mergeHubCatalog, MAX_REMOVALS_PER_DELTA } from '../../common/hub-catalog-merge.ts'
+import {
+  adoptHubCatalogState, mergeHubCatalog, MAX_REMOVALS_PER_DELTA, HUB_CATALOG_FIELDS, HUB_DETAIL_FIELDS, HUB_MAX_FIELDS,
+} from '../../common/hub-catalog-merge.ts'
 import { idsPushedBySave, libraryPublishTargets } from '../../common/replica-library-push.ts'
 
 const t = (id: number, extra: Record<string, unknown> = {}) =>
@@ -318,5 +320,84 @@ describe('mergeHubCatalog: concert rows from the include view', () => {
       { seenIds: local.map((x) => String(x.id)), protectedIds: [], adoptedAt: '2026-10-19T00:00:00.000Z' })
     assert.equal(r.removed, 0)
     assert.equal(r.tracks.filter((x) => [9290, 9267, 9268].includes(Number(x.id))).length, 3)
+  })
+})
+
+// 2026-10-20 — "everything the MacBook knows about songs must reach workmini".
+// The merge used to take only the 17 catalog fields, so a song workmini
+// already had never learned its subgenre (1,212), origin (861), BPM / key
+// (528 newest imports) or starredAt (448). The hub row carried them all along.
+describe('mergeHubCatalog: song details the MacBook works out reach the replica', () => {
+  const details = {
+    subgenre: 'Post-Punk', subgenrePath: 'Rock > Post-Punk', subgenreLean: 'Art Punk', origin: 'United Kingdom',
+    bpm: 128, keyRoot: 'F#', keyMode: 'minor', camelotKey: '11A', keyConfidence: 0.8, audioAnalysisAt: 1787000000000,
+    starredAt: 1788000000000, channelMode: 'mono', codec: 'alac', source: 'bandcamp', contributingArtists: ['Geese'],
+  }
+  it('every detail field the hub row carries fills the local song', () => {
+    const r = mergeHubCatalog([t(12500)], { full: false, version: 'v', upserts: [t(12500, details)], removedIds: [] })
+    assert.equal(r.updated, 1)
+    for (const [k, v] of Object.entries(details)) assert.deepEqual((r.tracks[0] as Record<string, unknown>)[k], v, k)
+  })
+  it('the hub value wins over a stale local one (a re-filed subgenre, a re-measured BPM)', () => {
+    const local = [t(1, { subgenre: 'Indie Rock', bpm: 64, origin: 'Canada' })]
+    const r = mergeHubCatalog(local, { full: false, version: 'v', upserts: [t(1, { subgenre: 'Post-Punk', bpm: 128, origin: 'United Kingdom' })], removedIds: [] })
+    assert.equal(r.tracks[0].subgenre, 'Post-Punk')
+    assert.equal(r.tracks[0].bpm, 128)
+    assert.equal(r.tracks[0].origin, 'United Kingdom')
+  })
+  it('missing is not empty: an absent, null or blank detail never erases the local value', () => {
+    const local = [t(1, { subgenre: 'Post-Punk', origin: 'United Kingdom', bpm: 128, starredAt: 5 })]
+    const r = mergeHubCatalog(local, { full: false, version: 'v', upserts: [t(1, { subgenre: '', origin: null, starredAt: undefined })], removedIds: [] })
+    assert.equal(r.updated, 0)
+    assert.equal(r.changed, false)
+    assert.equal(r.tracks[0].subgenre, 'Post-Punk')
+    assert.equal(r.tracks[0].origin, 'United Kingdom')
+    assert.equal(r.tracks[0].bpm, 128)
+    assert.equal(r.tracks[0].starredAt, 5)
+  })
+  it('a catalog field keeps its old rule: the hub\'s blank album artist is a real edit', () => {
+    const r = mergeHubCatalog([t(1, { albumArtist: 'Old' })], { full: false, version: 'v', upserts: [t(1, { albumArtist: '' })], removedIds: [] })
+    assert.equal(r.tracks[0].albumArtist, '')
+  })
+  it('lastPlayedAt and skipCount: the larger wins, in both directions', () => {
+    const local = [t(1, { lastPlayedAt: 100, skipCount: 1 }), t(2, { lastPlayedAt: 900, skipCount: 7 })]
+    const r = mergeHubCatalog(local, {
+      full: false, version: 'v',
+      upserts: [t(1, { lastPlayedAt: 500, skipCount: 3 }), t(2, { lastPlayedAt: 400, skipCount: 2 })],
+      removedIds: [],
+    })
+    assert.equal(r.tracks[0].lastPlayedAt, 500, 'the MacBook played it later')
+    assert.equal(r.tracks[0].skipCount, 3)
+    assert.equal(r.tracks[1].lastPlayedAt, 900, 'this machine played it later — not undone')
+    assert.equal(r.tracks[1].skipCount, 7)
+    assert.equal(r.updated, 1)
+  })
+  it('a field neither side has is not stamped on (no lastPlayedAt: 0)', () => {
+    const r = mergeHubCatalog([t(1)], { full: false, version: 'v', upserts: [t(1)], removedIds: [] })
+    assert.equal('lastPlayedAt' in r.tracks[0], false)
+    assert.equal('skipCount' in r.tracks[0], false)
+    assert.equal(r.changed, false)
+  })
+  it('an equal contributingArtists array is not a change (no save on every poll)', () => {
+    const r = mergeHubCatalog([t(1, { contributingArtists: ['JAY-Z', 'Linkin Park'] })], {
+      full: false, version: 'v', upserts: [t(1, { contributingArtists: ['JAY-Z', 'Linkin Park'] })], removedIds: [],
+    })
+    assert.equal(r.changed, false)
+    const d = mergeHubCatalog([t(1, { contributingArtists: ['JAY-Z'] })], {
+      full: false, version: 'v', upserts: [t(1, { contributingArtists: ['JAY-Z', 'Linkin Park'] })], removedIds: [],
+    })
+    assert.deepEqual(d.tracks[0].contributingArtists, ['JAY-Z', 'Linkin Park'])
+  })
+  it('this machine\'s audioMissing and the hub-only releaseKind stamp are not hub fields', () => {
+    const r = mergeHubCatalog([t(1, { audioMissing: true })], {
+      full: false, version: 'v', upserts: [t(1, { audioMissing: false, releaseKind: 'ep' })], removedIds: [],
+    })
+    assert.equal(r.changed, false)
+    assert.equal(r.tracks[0].audioMissing, true)
+    assert.equal('releaseKind' in r.tracks[0], false)
+  })
+  it('the 17 catalog fields, the details and the max fields do not overlap', () => {
+    const all = [...HUB_CATALOG_FIELDS, ...HUB_DETAIL_FIELDS, ...HUB_MAX_FIELDS]
+    assert.equal(new Set(all).size, all.length)
   })
 })

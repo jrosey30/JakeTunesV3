@@ -654,6 +654,12 @@ const electronAPI = {
     ipcRenderer.invoke('playlist-cover-copy', fromId, toId),
   clearPlaylistCover: (playlistId: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('playlist-cover-clear', playlistId),
+  // Replica (workmini): a cover mirrored from homemini landed in the folder.
+  onPlaylistCoversUpdated: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('playlist-covers-updated', handler)
+    return () => { ipcRenderer.removeListener('playlist-covers-updated', handler) }
+  },
   gaplessTrim: (absPath: string): Promise<{ delaySamples: number; paddingSamples: number; sampleRate: number; delaySec: number; paddingSec: number; originalSamples?: number } | null> =>
     ipcRenderer.invoke('gapless-trim', absPath),
   saveMixtapeIntro: (data: ArrayBuffer, voiceId?: string): Promise<{ ok: boolean; path?: string; error?: string }> =>

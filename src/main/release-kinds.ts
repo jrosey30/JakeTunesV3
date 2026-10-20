@@ -21,7 +21,8 @@
  * MusicBrainz throttle (≤ 1 per 1.1 s), 10 s timeout, first pass a few minutes
  * after boot, then a cheap re-scan every few minutes for newly imported
  * albums. Progress goes to the log only. Replicas (workmini) never resolve —
- * they adopt the catalog, and this file, from the canonical machine.
+ * they adopt the catalog, and this file, from the canonical machine (pulled
+ * from homemini by src/main/replica-hub-files.ts since 2026-10-20).
  *
  * Every write re-reads the file on disk and merges onto it (never onto a
  * snapshot from the start of the pass), then lands atomically (temp + fsync +
@@ -394,7 +395,8 @@ export function startReleaseKindsJob(deps: ReleaseKindsJobDeps): { stop: () => v
     busy = true
     try {
       if (await deps.isReplica()) {
-        if (!replicaLogged) { replicaLogged = true; log('[release-kinds] replica: not resolving (the canonical machine writes release-kinds.json)') }
+        // The replica's copy is homemini's, pulled by src/main/replica-hub-files.ts.
+        if (!replicaLogged) { replicaLogged = true; log('[release-kinds] replica: not resolving (homemini\'s copy of the canonical file is pulled instead)') }
         return
       }
       await runReleaseKindsPass({ ...deps, outage })

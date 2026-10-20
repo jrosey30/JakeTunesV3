@@ -37,7 +37,16 @@ export async function refreshPlaylistCovers(): Promise<void> {
   } catch { /* no covers is a fine answer */ }
 }
 
+// Replica (workmini, 2026-10-20): main mirrors the MacBook's covers from
+// homemini and says so; re-read the map so the new picture shows without a
+// relaunch. Subscribed once, on first use.
+let mirrorListening = false
+
 export function ensurePlaylistCoversLoaded(): void {
+  if (!mirrorListening) {
+    mirrorListening = true
+    window.electronAPI.onPlaylistCoversUpdated?.(() => { void refreshPlaylistCovers() })
+  }
   if (!loaded) void refreshPlaylistCovers()
 }
 

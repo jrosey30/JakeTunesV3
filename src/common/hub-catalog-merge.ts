@@ -15,6 +15,16 @@ import { isCatastrophicShrink } from './library-shrink.ts'
 //   - a song the hub lists is upserted: catalog fields come from the hub
 //     (it is the laptop's publish + phone edits, i.e. the newest view),
 //     playCount is the MAX of local and hub (plays are never lost here)
+//   - 2026-10-20: the song DETAILS the MacBook works out after import
+//     (subgenre, origin, BPM / key, starredAt, ... — HUB_DETAIL_FIELDS) come
+//     from the hub too. Only the 17 catalog fields used to, so workmini never
+//     learned them for a song it already had: 1,212 songs without a subgenre,
+//     528 newest imports without BPM / key, 448 stars without starredAt.
+//     A detail the hub row lacks (absent, null or '') never blanks the value
+//     this replica already has — missing is not empty.
+//   - lastPlayedAt and skipCount are per-machine clocks / counters, so like
+//     playCount the larger value wins (HUB_MAX_FIELDS): the MacBook's newer
+//     play reaches workmini, and workmini's own newer play is not undone.
 //   - a DELTA removes a song only when removedIds names it. More than
 //     MAX_REMOVALS_PER_DELTA names is a torn publish, not a cleanup:
 //     nothing is removed.
@@ -87,12 +97,49 @@ export interface HubMergeContext {
   adoptedAt?: string | null
 }
 
-/** Catalog fields the hub owns. Anything else on a local row is left alone. */
+// The hub serves library.json rows verbatim (+ phone edits and stars), so
+// every field below is already on the wire; the merge just has to take it.
+// ⚠️ TWIN: ~/JakeTunesMobile backend/src/routes/library.ts canonicalTracks —
+// the rows /api/tracks/delta serves. Never project those rows down to a typed
+// subset: a field dropped there silently stops reaching every replica.
+
+/** Catalog fields the hub owns. The hub's value wins, '' included (a cleared
+ *  album artist is a real edit). Anything not listed here is left alone. */
 export const HUB_CATALOG_FIELDS = [
   'title', 'artist', 'album', 'albumArtist', 'genre', 'year', 'duration',
   'dateAdded', 'trackNumber', 'trackCount', 'discNumber', 'discCount',
   'fileSize', 'rating', 'path', 'artworkHash', 'audioFingerprint',
 ] as const
+
+/**
+ * Song details the MacBook works out after import (AI taxonomy, MusicBrainz
+ * origin, audio analysis, star time, Get Info channel tag, import codec and
+ * store, collab split). The hub's value wins, but a blank one (absent, null,
+ * '') never erases what this replica has. Deliberately NOT here:
+ * audioMissing — that is THIS machine's verifier finding the file, not a fact
+ * about the song; releaseKind — a hub-only stamp, the desktop reads
+ * release-kinds.json instead.
+ */
+export const HUB_DETAIL_FIELDS = [
+  'subgenre', 'subgenrePath', 'subgenreLean', 'origin',
+  'bpm', 'keyRoot', 'keyMode', 'camelotKey', 'keyConfidence', 'audioAnalysisAt',
+  'starredAt', 'channelMode', 'codec', 'source', 'contributingArtists',
+] as const
+
+/** Per-machine clocks and counters: the larger of local and hub wins. */
+export const HUB_MAX_FIELDS = ['playCount', 'lastPlayedAt', 'skipCount'] as const
+
+/** null / undefined / '' — the hub row does not know this detail. */
+function isBlank(v: unknown): boolean {
+  return v === undefined || v === null || v === ''
+}
+
+/** Value equality for JSON values (contributingArtists is an array). */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false
+  return JSON.stringify(a) === JSON.stringify(b)
+}
 
 export interface HubMergeResult<T> {
   tracks: T[]
@@ -315,15 +362,28 @@ export function mergeHubCatalog<T extends LocalTrackLike>(
     let changed = false
     const curRec = cur as unknown as Record<string, unknown>
     const next: Record<string, unknown> = { ...curRec }
+    const hubRec = u as Record<string, unknown>
     for (const f of HUB_CATALOG_FIELDS) {
       if (!(f in u)) continue
-      const v = (u as Record<string, unknown>)[f]
+      const v = hubRec[f]
       if (v === undefined || v === curRec[f]) continue
       next[f] = v
       changed = true
     }
-    const pc = Math.max(num(cur.playCount), num(u.playCount))
-    if (pc !== num(cur.playCount)) { next.playCount = pc; changed = true }
+    for (const f of HUB_DETAIL_FIELDS) {
+      const v = hubRec[f]
+      if (isBlank(v) || sameValue(v, curRec[f])) continue
+      next[f] = v
+      changed = true
+    }
+    for (const f of HUB_MAX_FIELDS) {
+      // A field neither side has stays absent (no playCount: 0 stamped on).
+      if (!(f in u) && !(f in curRec)) continue
+      const m = Math.max(num(curRec[f]), num(hubRec[f]))
+      if (m === num(curRec[f])) continue
+      next[f] = m
+      changed = true
+    }
     if (changed) { replaced.set(key, next as unknown as T); updated++ }
   }
 
