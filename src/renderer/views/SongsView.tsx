@@ -11,15 +11,11 @@ import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { getSnapshot as recentlyAddedSnapshot, isRecentlyAdded, subscribe as subscribeRecentlyAdded } from '../state/recentlyAdded'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
-import { getDeckState, layOnDeck } from '../mixtapes'
-import ConfirmDialog from '../components/ConfirmDialog'
+import DeleteSongsDialog from '../components/DeleteSongsDialog'
 import GetInfoModal from '../components/GetInfoModal'
-import { ratingMenuEntries } from '../components/StarRating'
 import { useCynthia } from '../context/CynthiaContext'
-import { subscribeDownloads, downloadsVersion, isStreamingLibrary, isDownloaded, isDownloading, initDownloads, downloadPaths, removeDownloadPaths } from '../utils/downloadStore'
+import { subscribeDownloads, downloadsVersion, isDownloaded, isDownloading, initDownloads } from '../utils/downloadStore'
 import { formatAppDate } from '../utils/formatDate'
-import { canonicalArtist } from '../utils/artistAlias'
-import { albumKeyOf } from '../utils/albumKey'
 import ScrollTopButton from '../components/ScrollTopButton'
 import SortArrowIcon from '../components/SortArrowIcon'
 import TrackGridView from '../components/TrackGridView'
@@ -27,14 +23,12 @@ import CoverFlowView from './CoverFlowView'
 import { useViewMode } from '../context/ViewModeContext'
 import FindBar from '../components/FindBar'
 import { useFindState } from '../hooks/useFindState'
-import { toCynthiaTrack } from '../utils/cynthia'
-import { clearArtworkNegativeCache } from '../utils/artworkLookup'
+import { useGetInfoHandlers } from '../hooks/useGetInfoHandlers'
 import { songsGridTemplate, songsGridTemplateFixed } from '../utils/songsGridTemplate'
 import type { SortColumn, Track } from '../types'
-import { setNotice } from '../activity'
 import EmptyState from '../components/EmptyState'
 import '../styles/songs.css'
-import { addToPlaylistEntry, addToIpodPoolEntry, queueMenuEntries } from '../utils/playlistMenu'
+import { songMenuEntries } from '../utils/libraryMenus'
 import { hasPendingShowNowPlaying, takePendingShowNowPlaying } from '../nowPlayingNav'
 import { getInfoTarget, type GetInfoTarget } from '../../common/get-info-target'
 
@@ -443,173 +437,29 @@ export default function SongsView() {
     const selectedTracks = lib.selectedTrackIds.size > 1
       ? sorted.filter(t => lib.selectedTrackIds.has(t.id))
       : [track]
-    const count = selectedTracks.length
-    const label = count > 1 ? `${count} Songs` : track.title
-
-    // Collect unique artist+album combos from all selected tracks for batch artwork
-    const artPairs = new Map<string, { artist: string; album: string }>()
-    for (const t of selectedTracks) {
-      if (t.artist && t.album) {
-        const k = `${t.artist.toLowerCase().trim()}|||${t.album.toLowerCase().trim()}`
-        if (!artPairs.has(k)) artPairs.set(k, { artist: t.artist, album: t.album })
-      }
-    }
-
-    const artworkItems: MenuEntry[] = artPairs.size > 0 ? [
-      { separator: true as const },
-      {
-        label: 'Add Artwork…',
-        onClick: async () => {
-          const file = await window.electronAPI.chooseArtworkFile()
-          if (!file.ok || !file.path) return
-          let failed = 0
-          let lastErr = ''
-          for (const { artist, album } of artPairs.values()) {
-            const result = await window.electronAPI.setCustomArtwork(artist, album, file.path)
-            if (result.ok && result.key && result.hash) {
-              libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
-            } else {
-              failed += 1
-              lastErr = result.error || ''
-            }
-          }
-          // 4.4.12: surface failures so the user knows the save didn't stick.
-          if (failed > 0) {
-            setNotice(
-              failed === 1
-                ? (lastErr ? `Couldn't save artwork: ${lastErr}` : "Couldn't save artwork.")
-                : `Couldn't save artwork for ${failed} albums.`,
-              { kind: 'error' }
-            )
-          }
-        },
-      },
-      {
-        label: 'Fetch Artwork from Internet',
-        onClick: async () => {
-          for (const { artist, album } of artPairs.values()) {
-            const result = await window.electronAPI.fetchAlbumArt(artist, album, true)
-            if (result.ok && result.key && result.hash) {
-              libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
-            }
-          }
-        },
-      },
-    ] : []
-
-    // Artist Radio: filter library by this song's artist, dispatch to
-    // Toolbar so it shuffles + starts Radio Mode focused on that artist.
-    // Toolbar listens on 'jaketunes-start-artist-radio'.
-    //
-    // Brief 031 Phase 4c: match by contributingArtists overlap. For a
-    // sole-artist source track ("Lou Reed") this reduces to the
-    // previous behavior — any track contributing to "Lou Reed" gets
-    // included. For a collab source track ("JAY-Z & Linkin Park"
-    // with contributingArtists ["JAY-Z", "Linkin Park"]), Artist
-    // Radio expands to every track involving either canonical
-    // contributor — better UX than matching only the literal
-    // "JAY-Z & Linkin Park" string (which would have returned just
-    // the same 6 collab tracks). Case-insensitive match preserves
-    // the prior tolerance for casing differences.
-    //
-    // trackArtist stays as the displayed menu-label string (the
-    // right-clicked track's `artist` field is what the user sees,
-    // so that's what reads naturally in "Start X Radio").
-    const trackArtist = (track.artist || '').trim()
-    const sourceContribs = (
-      track.contributingArtists && track.contributingArtists.length > 0
-        ? track.contributingArtists
-        : [trackArtist]
-    )
-      .map(s => (s || '').trim().toLowerCase())
-      .filter(s => s.length > 0)
-    const artistTracks = sourceContribs.length
-      ? lib.tracks.filter(t => {
-          const candidates = (t.contributingArtists && t.contributingArtists.length > 0
-            ? t.contributingArtists
-            : [(t.artist || '').trim()]
-          )
-            .map(s => (s || '').trim().toLowerCase())
-            .filter(s => s.length > 0)
-          return candidates.some(c => sourceContribs.includes(c))
+    // The menu itself is shared (utils/libraryMenus.ts) — the Home's song
+    // cards open the same one. What stays here is what's this view's own:
+    // "Play" plays the sorted list, and the Get Info / Delete surfaces.
+    return songMenuEntries({
+      track,
+      tracks: selectedTracks,
+      play: () => playTrack(track, sorted, idx, undefined, true),
+      library: lib.tracks,
+      playlists: lib.playlists,
+      libDispatch,
+      pbDispatch,
+      openGetInfo: () => {
+        setGetInfoState({
+          tracks: selectedTracks,
+          index: idx,
         })
-      : []
-
-    return [
-      { label: `Play "${label}"`, onClick: () => playTrack(track, sorted, idx, undefined, true) },
-      { separator: true as const },
-      ...queueMenuEntries(selectedTracks, pbDispatch),
-      addToPlaylistEntry(selectedTracks, lib.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
-      addToIpodPoolEntry(selectedTracks),
-      ...(getDeckState() ? [
-        {
-          label: `Lay on the tape (${selectedTracks.length} song${selectedTracks.length === 1 ? '' : 's'})`,
-          onClick: () => {
-            void layOnDeck(selectedTracks.map(t => t.id), (id) => selectedTracks.find(t => t.id === id)?.duration || undefined)
-              .then(async (msg) => { const a = await import('../activity'); a.setNotice(msg) })
-          },
-        },
-      ] : []),
-      { separator: true as const },
-      { label: 'Go to Artist', onClick: () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(track.albumArtist || track.artist || '') }) },
-      { label: 'Go to Album', onClick: () => libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyOf(track) }) },
-      ...(trackArtist && artistTracks.length > 0 ? [
-        { separator: true as const },
-        {
-          label: `Start ${trackArtist} Radio`,
-          onClick: () => {
-            window.dispatchEvent(new CustomEvent('jaketunes-start-artist-radio', {
-              detail: { tracks: artistTracks, label: trackArtist },
-            }))
-          },
-        },
-      ] : []),
-      ...ratingMenuEntries(selectedTracks, libDispatch),
-      { separator: true as const },
-      {
-        label: 'Get Info',
-        onClick: () => {
-          setGetInfoState({
-            tracks: selectedTracks,
-            index: idx,
-          })
-        },
       },
-      ...artworkItems,
-      ...(isStreamingLibrary() ? (() => {
-        const dlPaths = selectedTracks.map((t) => t.path).filter(Boolean) as string[]
-        if (!dlPaths.length) return [] as MenuEntry[]
-        const anyDownloading = dlPaths.some((p) => isDownloading(p))
-        const allDownloaded = dlPaths.every((p) => isDownloaded(p))
-        const entry: MenuEntry = anyDownloading
-          ? { label: count > 1 ? `Downloading ${count}…` : 'Downloading…', onClick: () => {}, disabled: true }
-          : allDownloaded
-            ? { label: count > 1 ? `Remove ${count} Downloads` : 'Remove Download', onClick: () => { void removeDownloadPaths(dlPaths) } }
-            : { label: count > 1 ? `Download ${count} Songs` : 'Download', onClick: () => { void downloadPaths(dlPaths) } }
-        return [{ separator: true as const }, entry] as MenuEntry[]
-      })() : []),
-      { separator: true as const },
-      {
-        label: 'Cynthia!!',
-        onClick: () => {
-          openCynthia({
-            x: ctxMenu.x, y: ctxMenu.y,
-            scope: {
-              type: 'tracks',
-              label: count > 1 ? `${count} tracks` : track.title,
-              tracks: selectedTracks.map(toCynthiaTrack),
-            },
-          })
-        },
+      askDelete: () => {
+        setDeleteConfirm({ ids: selectedTracks.map(t => t.id), count: selectedTracks.length })
       },
-      { separator: true as const },
-      {
-        label: count > 1 ? `Delete ${count} Songs` : 'Delete Song',
-        onClick: () => {
-          setDeleteConfirm({ ids: selectedTracks.map(t => t.id), count })
-        },
-      },
-    ]
+      openCynthia,
+      at: { x: ctxMenu.x, y: ctxMenu.y },
+    })
   }, [ctxMenu, lib.selectedTrackIds, sorted, playTrack, pbDispatch, libDispatch, openCynthia])
 
   const handleColResize = useCallback((colKey: string, colIndex: number, e: React.MouseEvent) => {
@@ -639,88 +489,9 @@ export default function SongsView() {
     window.addEventListener('mouseup', onUp)
   }, [colWidths, visibleCols])
 
-  // Save metadata edits from Get Info modal.
-  // 4.4.5: we now snapshot each track's PRE-EDIT fingerprint and pass
-  // it with every override save. The fingerprint is title|artist|
-  // duration computed from the track AS IT WAS BEFORE the user's
-  // edits — so on the next library re-parse, the load-time validator
-  // can confirm the override still applies to the correct track.
-  // Without this snapshot, the post-edit dispatch flips the track's
-  // in-memory state, the next save would compute a different
-  // fingerprint, and the safeguard logic in main would treat
-  // consecutive saves as different identities.
-  const handleGetInfoSave = useCallback(
-    async (updates: { id: number; field: string; value: string }[]) => {
-      // 4.5.0-67 — save-first ordering for artwork-affecting edits.
-      // OLD order: dispatch UPDATE_TRACKS → re-render with new key →
-      // requestArtworkResolution(newKey) fires → main's migration hasn't
-      // run yet → returns null → renderer caches 60s negative → album
-      // tile stays blank until that cache expires even after main
-      // completes the migration.
-      // NEW order: snapshot old (artist, album), await all saves
-      // (migration runs inside save-metadata-override), derive new
-      // (artist, album), explicitly clear the negative cache for those
-      // keys, THEN dispatch UPDATE_TRACKS. The re-render now triggers
-      // a fresh resolveArtwork IPC that finds the migrated entry.
-      const fpById = new Map<number, string>()
-      const oldArtAlbumById = new Map<number, { artist: string; album: string }>()
-      for (const u of updates) {
-        if (fpById.has(u.id)) continue
-        const t = lib.tracks.find(tr => tr.id === u.id)
-        if (!t) continue
-        fpById.set(u.id, `${(t.title || '').toLowerCase().trim()}|${(t.artist || '').toLowerCase().trim()}|${t.duration || 0}`)
-        oldArtAlbumById.set(u.id, { artist: t.artist || '', album: t.album || '' })
-      }
-      for (const u of updates) {
-        await window.electronAPI.saveMetadataOverride(u.id, u.field, u.value, fpById.get(u.id))
-      }
-      const touchesArtwork = updates.some(u => u.field === 'artist' || u.field === 'album')
-      if (touchesArtwork) {
-        const newArtAlbumById = new Map<number, { artist: string; album: string }>()
-        for (const [id, old] of oldArtAlbumById) newArtAlbumById.set(id, { ...old })
-        for (const u of updates) {
-          const cur = newArtAlbumById.get(u.id)
-          if (!cur) continue
-          if (u.field === 'artist') cur.artist = u.value
-          else if (u.field === 'album') cur.album = u.value
-        }
-        for (const v of newArtAlbumById.values()) {
-          clearArtworkNegativeCache(v.artist, v.album)
-        }
-      }
-      libDispatch({ type: 'UPDATE_TRACKS', updates })
-    },
-    [libDispatch, lib.tracks]
-  )
-
-  // Fetch artwork for a track (called from Get Info modal)
-  const handleFetchArt = useCallback(
-    async (artist: string, album: string, force?: boolean): Promise<{ key: string; hash: string } | null> => {
-      const result = await window.electronAPI.fetchAlbumArt(artist, album, force)
-      if (result.ok && result.key && result.hash) {
-        libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
-        return { key: result.key, hash: result.hash }
-      }
-      return null
-    },
-    [libDispatch]
-  )
-
-  const handleSetCustomArt = useCallback(
-    async (artist: string, album: string, imagePath: string): Promise<{ key: string; hash: string } | null> => {
-      const result = await window.electronAPI.setCustomArtwork(artist, album, imagePath)
-      if (result.ok && result.key && result.hash) {
-        libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
-        return { key: result.key, hash: result.hash }
-      }
-      // 4.4.12: surface failure (usually sips conversion) so the user
-      // doesn't think the art stuck just because the Get Info preview
-      // still shows it from localArtHash.
-      setNotice(result.error ? `Couldn't save artwork: ${result.error}` : "Couldn't save artwork.", { kind: 'error' })
-      return null
-    },
-    [libDispatch]
-  )
+  // Get Info's save / fetch-art / custom-art handlers are shared
+  // (hooks/useGetInfoHandlers.ts) — the Home's song menu opens the same sheet.
+  const { onSave: handleGetInfoSave, onFetchArt: handleFetchArt, onSetCustomArt: handleSetCustomArt } = useGetInfoHandlers()
 
   // Set rating for a track (click stars)
   // 4.5: when starring (rating > 0), also stamp starredAt = now so the
@@ -1327,18 +1098,7 @@ function scrollBlankProbe(sc: HTMLDivElement | null): void {
         />
       )}
       {deleteConfirm && (
-        <ConfirmDialog
-          message={deleteConfirm.count === 1
-            ? 'Are you sure you want to delete this song from your library?'
-            : `Are you sure you want to delete ${deleteConfirm.count} songs from your library?`}
-          detail="This will remove them from all playlists. This cannot be undone."
-          confirmLabel="Delete"
-          onConfirm={() => {
-            libDispatch({ type: 'DELETE_TRACKS', ids: deleteConfirm.ids })
-            setDeleteConfirm(null)
-          }}
-          onCancel={() => setDeleteConfirm(null)}
-        />
+        <DeleteSongsDialog ids={deleteConfirm.ids} onClose={() => setDeleteConfirm(null)} />
       )}
     </div>
   )

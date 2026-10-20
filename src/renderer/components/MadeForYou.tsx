@@ -18,6 +18,7 @@ import { setTapeSession } from '../mixtapes'
 import MixArtwork from './MixArtwork'
 import { PlayIcon } from './TransportIcons'
 import { openMix, type VibeMix as Mix } from '../utils/activeMix'
+import { setAlbumDragPayload } from '../utils/trackDrag'
 import type { Track } from '../types'
 import '../styles/home-madeforyou.css'
 
@@ -116,6 +117,10 @@ export default function MadeForYou() {
                 <button
                   className="home-mix-card"
                   onClick={() => { openMix(m, lib.currentView); dispatch({ type: 'SET_VIEW', view: 'mix-detail' }) }}
+                  // Drag the mix — its songs in the mix's order — onto Up Next
+                  // or a playlist, like any run of library songs (2026-10-20).
+                  draggable
+                  onDragStart={(e) => setAlbumDragPayload(e, m.tracks.map((t) => t.id))}
                   title={m.subtitle ? `${m.title} — ${m.subtitle}` : `${m.title} · ${m.tracks.length} songs`}
                 >
                   <div className="home-mix-art">

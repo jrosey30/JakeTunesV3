@@ -14,22 +14,19 @@ import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import EmptyState from '../components/EmptyState'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import { useAudio } from '../hooks/useAudio'
-import { canonicalArtist } from '../utils/artistAlias'
 // V5 facelift: Album type + grouping extracted to utils/albumGroups.ts,
 // shared with TrackGridView (Grid mode) and CoverFlowView.
 import { groupTracksIntoAlbums, type Album } from '../utils/albumGroups'
 // V5 Live Concert Mode — declared-set lookups for the context menu.
 import { useSyncExternalStore } from 'react'
-import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, liveSetFor } from '../liveSets'
-import { declareLiveSet, isDeclareInFlight } from '../liveSetDeclare'
+import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded } from '../liveSets'
 import { verifyLiveSetCompleteness } from '../utils/liveSetCompleteness'
-import { setNotice } from '../activity'
 import '../styles/albums.css'
-import { addToPlaylistEntry, addToIpodPoolEntry, queueMenuEntries } from '../utils/playlistMenu'
+import { albumMenuEntries } from '../utils/libraryMenus'
 import { setAlbumDragPayload } from '../utils/trackDrag'
 // 2026-10-18 — TOP 10 ISLAND ALBUMS, synced with the phone through homemini.
-import IslandAlbumsShelf, { islandMenuEntry } from '../components/IslandAlbumsShelf'
-import { getSyncedPicksSnapshot, useSyncedPicksLive } from '../syncedPicks'
+import IslandAlbumsShelf from '../components/IslandAlbumsShelf'
+import { useSyncedPicksLive } from '../syncedPicks'
 
 export default function AlbumsView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()
@@ -45,58 +42,16 @@ export default function AlbumsView() {
   // hidden by a filter — the album menu's "Add to Island Albums…" edits the
   // shared list from the snapshot, so it must not be a stale one.
   useSyncedPicksLive('island-albums')
-  const albumMenuItems = useCallback((album: Album): MenuEntry[] => {
-    const ordered = sortAlbumTracks(album.tracks)
-    const key = albumKeyFromStrings(album.artist, album.name)
-    const liveSet = album.name.endsWith(' (Live Set)') ? null : liveSetFor(key, lib.tracks)
-    const mergedTrack = liveSet ? (lib.tracks.find(t => t.id === liveSet.mergedTrackId) ?? null) : null
-    const liveEntries: MenuEntry[] = liveSet && mergedTrack
-      ? [{ label: 'Play Live Set', onClick: () => playTrack(mergedTrack, [mergedTrack], 0, undefined, true) }]
-      : album.name.endsWith(' (Live Set)')
-        ? []
-        : [{
-            label: 'Declare Live Concert Mode',
-            onClick: () => {
-              // Jake's rule: complete album only. Pre-check here so the
-              // notice explains; declareLiveSet re-verifies as the gate.
-              const completeness = verifyLiveSetCompleteness(ordered)
-              if (!completeness.complete) {
-                setNotice(`Live Mode needs the complete album — ${completeness.reason}`)
-                return
-              }
-              if (!completeness.verifiedTotal) {
-                // Unproven total needs Jake's explicit confirm — the
-                // dialog lives on the album page, so send him there.
-                setNotice('The files can\'t confirm the total — confirm on the album page')
-                libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: key })
-                return
-              }
-              if (isDeclareInFlight()) { setNotice('A live set is already merging'); return }
-              setNotice(`Merging live set — ${album.name}…`)
-              declareLiveSet({ albumKey: key, name: album.name, artist: album.artist, genre: ordered[0]?.genre, year: album.year, tracks: ordered })
-                .then(() => setNotice(`Live set ready — ${album.name}`))
-                .catch((err) => setNotice(`Live set failed: ${err instanceof Error ? err.message : String(err)}`))
-            },
-          }]
-    const compCtx = verifyLiveSetCompleteness(ordered)
-    // Read at menu-open time (the menu is rebuilt on every right-click).
-    const islandEntry = islandMenuEntry(album, getSyncedPicksSnapshot().island)
-    return [
-      ...(compCtx.complete && compCtx.verifiedTotal
-        ? [{ label: 'Play Album — front to back', onClick: () => { if (ordered.length) playTrack(ordered[0], ordered, 0, undefined, true, true) } }]
-        : []),
-      { label: `Play "${album.name}"`, onClick: () => { if (ordered.length) playTrack(ordered[0], ordered, 0, undefined, true, /* running order is the record */ true) } },
-      { label: 'Shuffle', onClick: () => { const s = [...ordered].sort(() => Math.random() - 0.5); if (s.length) playTrack(s[0], s, 0, undefined, true) } },
-      ...(liveEntries.length ? [{ separator: true as const }, ...liveEntries] : []),
-      { separator: true as const },
-      ...queueMenuEntries(ordered, pbDispatch),
-      addToPlaylistEntry(ordered, lib.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
-      addToIpodPoolEntry(ordered),
-      ...(islandEntry ? [islandEntry] : []),
-      { separator: true as const },
-      { label: 'Go to Artist', onClick: () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(album.artist || '') }) },
-    ]
-  }, [playTrack, pbDispatch, libDispatch, lib.tracks])
+  // The menu itself is shared (utils/libraryMenus.ts) — the Home's album
+  // cards, G's covers and Today's pick open the same one.
+  const albumMenuItems = useCallback((album: Album): MenuEntry[] => albumMenuEntries({
+    album,
+    library: lib.tracks,
+    playlists: lib.playlists,
+    playTrack,
+    libDispatch,
+    pbDispatch,
+  }), [playTrack, pbDispatch, libDispatch, lib.tracks, lib.playlists])
 
   // When returning from AlbumDetailView (← Albums), pendingAlbumKey is still
   // set — scroll that card into view, then clear so a later sidebar visit

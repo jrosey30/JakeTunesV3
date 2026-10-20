@@ -27,6 +27,7 @@ import FindBar from '../components/FindBar'
 import { useFindState } from '../hooks/useFindState'
 import { consumeDrillIn } from '../utils/drillIn'
 import { setAlbumDragPayload } from '../utils/trackDrag'
+import { groupTracksByArtist } from '../utils/artistTracks'
 import EmptyState from '../components/EmptyState'
 import ArtistGroupingModal from '../components/ArtistGroupingModal'
 // 2026-10-18 — 5 FAVORITE ARTISTS, synced with the phone through homemini.
@@ -82,20 +83,8 @@ export default function ArtistsView(): JSX.Element {
 
   // One card per canonical artist; a collab track counts for every contributor.
   const artists = useMemo((): ArtistCard[] => {
-    const map = new Map<string, { name: string; tracks: Track[] }>()
-    for (const t of regularTracks) {
-      const contributors = t.contributingArtists && t.contributingArtists.length > 0 ? t.contributingArtists : [t.artist || 'Unknown Artist']
-      const seen = new Set<string>()
-      for (const raw of contributors) {
-        const display = canonicalArtist(raw || 'Unknown Artist')
-        const key = artistIdentityKey(display)
-        if (seen.has(key)) continue
-        seen.add(key)
-        const g = map.get(key) ?? { name: display, tracks: [] }
-        g.tracks.push(t)
-        map.set(key, g)
-      }
-    }
+    // (the grouping rule lives in utils/artistTracks.ts — shared with the Home)
+    const map = groupTracksByArtist(regularTracks)
     return [...map.values()].map(({ name, tracks }) => {
       const albums = new Set<string>(), genres = new Map<string, number>(), origins = new Map<string, number>()
       let plays = 0, added = ''
