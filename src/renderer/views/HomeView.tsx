@@ -31,7 +31,10 @@ import MadeForYou from '../components/MadeForYou'
 import YirHomeCard from '../components/yir/YirHomeCard'
 import TonightOnJakeTunes from '../components/TonightOnJakeTunes'
 import HomeShelves from '../components/HomeShelves'
+import { HomeItemMenusProvider, useHomeItemMenusHost } from '../components/HomeItemMenus'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
+import { setAlbumDragPayload } from '../utils/trackDrag'
+import { tracksForArtist } from '../utils/artistTracks'
 import { libraryStats } from '../utils/libraryStats'
 import HomeShows from '../components/HomeShows'
 import { asConcertsState, type ConcertsFeedState } from '../../common/concerts-feed'
@@ -205,6 +208,8 @@ export default function HomeView() {
   // Same projection every other list already wraps its source in.
   const regularTracks = useRegularLibraryTracks(lib.tracks)
   const { playTrack } = useAudio()
+  // Right-click menus for the Home's songs and albums (components/HomeItemMenus.tsx).
+  const homeMenus = useHomeItemMenusHost(playTrack)
 
   // 4.4.21 polish: persist scroll position across view switches (4.4.13 hook).
   // The scrollable element is .home-view itself (vertical), but the
@@ -693,7 +698,9 @@ export default function HomeView() {
   void pageReady
 
   return (
-    <>
+    // Right-click + drag on the Home's songs and albums (HomeItemMenus): the
+    // menus and sheets render beside .home-view, outside its stacking context.
+    <HomeItemMenusProvider value={homeMenus.api}>
     <div className="home-view" ref={rootRef}>
       {/* 2026-10-18 — launch page "G": tonight's album on an art-soaked
           backdrop, the Island Albums Cover Flow, Now Digging. Right under it
@@ -916,6 +923,13 @@ export default function HomeView() {
                   key={`${pick.artist}|||${pick.album}`}
                   className="home-rediscover-card"
                   role="listitem"
+                  // An artist pick: drags as the artist's songs, like an Artists tile.
+                  draggable
+                  onDragStart={(e) => {
+                    const ids = tracksForArtist(regularTracks, pick.artist).map((t) => t.id)
+                    if (ids.length) setAlbumDragPayload(e, ids)
+                    else e.preventDefault()
+                  }}
                   title={`${pick.artist}${pick.album ? ` — ${pick.album}` : ''}\nYou own ${pick.ownedTracks}, played ${pick.plays}× here`}
                 >
                   <div className="home-rediscover-art" onClick={() => playRediscovery(pick)} onKeyDown={activateOnKey(() => playRediscovery(pick))} role="button" tabIndex={0} title="Play" aria-label={`Play ${pick.artist}`}>
@@ -945,7 +959,8 @@ export default function HomeView() {
 
       {/* ── 4.4.33: Featured Album hero — "Today's Pick from Your Library" ── */}
       {HOME_SHOWS.featured && featuredAlbum && (
-        <section className="home-featured">
+        // Right-click anywhere on the pick → the Albums view's album menu.
+        <section className="home-featured" onContextMenu={(e) => homeMenus.api.openAlbumMenu(e, featuredAlbum.tracks)}>
           {artHashForKey(featuredAlbum.key) && (
             <div className="home-featured-bleed" aria-hidden="true">
               {/* Blurred backdrop — a 320px thumb blurs identically to the full art. */}
@@ -956,6 +971,8 @@ export default function HomeView() {
             className="home-featured-art"
             onClick={playFeatured}
             onKeyDown={activateOnKey(playFeatured)}
+            draggable
+            onDragStart={(e) => setAlbumDragPayload(e, sortAlbumTracks(featuredAlbum.tracks).map((t) => t.id))}
             role="button"
             tabIndex={0}
             aria-label={`Play ${featuredAlbum.album} by ${featuredAlbum.artist}`}
@@ -1235,6 +1252,7 @@ export default function HomeView() {
         context, home.css) so it layers against the queue panel as in every
         other view. */}
     <ScrollTopButton targetRef={rootRef} />
-    </>
+    {homeMenus.overlays}
+    </HomeItemMenusProvider>
   )
 }

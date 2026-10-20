@@ -20,6 +20,11 @@
  *   digging    NOW DIGGING — five 2:3 artist posters (the app's artist photos,
  *              an initials poster otherwise), click → the artist page.
  *
+ * Like the library (Jake, 2026-10-20): the hero cover and every island cover
+ * you own right-click to the Albums view's album menu (HomeItemMenus) and drag
+ * as the album; a Now Digging poster drags as the artist's songs, the way an
+ * Artists tile does (the library has no artist menu, so neither does this).
+ *
  * Facts come from homemini's merged-history document (renderer/homeSpotlight.ts),
  * this Mac's own history when homemini is away; nothing here is invented, and
  * an empty part hides rather than apologising. Names wrap, never clip.
@@ -35,6 +40,10 @@ import { indexAlbumsForIsland } from '../utils/islandSlots'
 import { albumKeyFromStrings } from '../utils/albumKey'
 import { lookupArtwork, queueArtworkResolutions } from '../utils/artworkLookup'
 import { canonicalArtist } from '../utils/artistAlias'
+import { sortAlbumTracks } from '../utils/albumTrackOrder'
+import { tracksForArtist } from '../utils/artistTracks'
+import { setAlbumDragPayload } from '../utils/trackDrag'
+import { useHomeItemMenus } from './HomeItemMenus'
 import { sessionArtistImages, hashColor, initials } from '../utils/artistPortrait'
 import { audioFromBase64Mpeg } from '../audio/base64-audio'
 import { attachClipToBroadcast, detachClipFromBroadcast } from '../audio/eq'
@@ -123,6 +132,7 @@ const posterInitials = (name: string): string =>
 export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispatch, playTrack }: Props): JSX.Element | null {
   const spot = useHomeSpotlight()
   const island = useIslandAlbums()
+  const menus = useHomeItemMenus()
   const doc = spot.doc
   const living = doc?.livingIn ?? null
 
@@ -284,7 +294,14 @@ export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispa
       <div className="tn-inner">
         {living && (
           <div className="tn-hero">
-            <div className="tn-cover">
+            <div
+              className="tn-cover"
+              {...(livingAlbum ? {
+                onContextMenu: (e: React.MouseEvent) => menus?.openAlbumMenu(e, livingAlbum.tracks),
+                draggable: true,
+                onDragStart: (e: React.DragEvent) => setAlbumDragPayload(e, sortAlbumTracks(livingAlbum.tracks).map((t) => t.id)),
+              } : {})}
+            >
               {livingHash
                 ? <AlbumArtImage hash={livingHash} alt={`${living.album} by ${living.artist}`} priority onError={onLivingArtError} />
                 : <div className="tn-cover-ph"><DiscGlyph size={72} /></div>}
@@ -365,6 +382,11 @@ export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispa
                     className={`tn-flow-cover${front ? ' tn-flow-cover--front' : ''}${f.album ? '' : ' tn-flow-cover--missing'}`}
                     style={style}
                     onClick={() => (front ? openFlow(i) : setActive(i))}
+                    {...(f.album ? {
+                      onContextMenu: (e: React.MouseEvent) => menus?.openAlbumMenu(e, f.album!.tracks),
+                      draggable: true,
+                      onDragStart: (e: React.DragEvent) => setAlbumDragPayload(e, sortAlbumTracks(f.album!.tracks).map((t) => t.id)),
+                    } : {})}
                     aria-label={`No. ${f.slot + 1}: ${f.pick.album} by ${f.pick.artist}${front ? ' — open the album' : ''}`}
                     title={front ? `Open ${f.pick.album}` : `${f.pick.album} — ${f.pick.artist}`}
                   >
@@ -409,6 +431,12 @@ export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispa
                     type="button"
                     className="tn-dig"
                     onClick={() => dispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(d.artist) })}
+                    draggable
+                    onDragStart={(e) => {
+                      const ids = tracksForArtist(tracks, d.artist).map((t) => t.id)
+                      if (ids.length) setAlbumDragPayload(e, ids)
+                      else e.preventDefault()
+                    }}
                     aria-label={`Number ${i + 1}: ${d.artist}, ${plural(d.plays30, 'play', 'plays')} in 30 days`}
                   >
                     <span className="tn-poster" style={slug ? undefined : { background: hashColor(d.artist) }}>

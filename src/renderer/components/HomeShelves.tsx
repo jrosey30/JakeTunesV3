@@ -13,8 +13,12 @@
  * same grid-in-place Shows uses); Recently Added's "See All" opens the Recently
  * Added playlist, as the old row did (Jake, mid-build: "should bring you to
  * recently added playlist"). Click a song → it plays, with the rest of the row
- * queued behind it in order; click an album → the album opens (right-click
- * plays it, as before).
+ * queued behind it in order; click an album → the album opens.
+ *
+ * Like a library row (Jake, 2026-10-20): right-click a song for the Songs
+ * view's song menu, an album for the Albums view's album menu
+ * (HomeItemMenus); drag either onto Up Next, a sidebar playlist or the iPod
+ * Pool (the library's drag payload, utils/trackDrag.ts).
  *
  * The rows come from homemini's merged-history document (renderer/
  * homeShelves.ts), this Mac's own when homemini is away. The cards are Home's
@@ -28,6 +32,8 @@ import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import { lookupArtwork, queueArtworkResolutions } from '../utils/artworkLookup'
 import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
+import { useHomeItemMenus } from './HomeItemMenus'
+import { setTrackDragPayload, setAlbumDragPayload } from '../utils/trackDrag'
 import { SHELF_SHOWN, SHELF_MAX, playsLabel, addedLabel } from '../../common/home-shelves'
 import type { Track } from '../types'
 
@@ -76,6 +82,7 @@ function SongRow({ title, scrollKey, cards, artFor, playTrack }: {
   playTrack: Props['playTrack']
 }): JSX.Element {
   const [all, setAll] = useState(false)
+  const menus = useHomeItemMenus()
   const groupRef = useRef<HTMLElement>(null)
   const rowRef = useRef<HTMLDivElement>(null)
   useScrollPersistence(scrollKey, rowRef)
@@ -109,6 +116,9 @@ function SongRow({ title, scrollKey, cards, artFor, playTrack }: {
               tabIndex={0}
               onClick={play}
               onKeyDown={activateOnKey(play)}
+              onContextMenu={(e) => menus?.openSongMenu(e, c.track, play, queue, i)}
+              draggable
+              onDragStart={(e) => setTrackDragPayload(e, c.track.id)}
               title={`${c.track.title} — ${c.track.artist}\nClick plays it, with the rest of this row after it.`}
             >
               <div className="home-album-art">
@@ -129,6 +139,7 @@ function SongRow({ title, scrollKey, cards, artFor, playTrack }: {
 
 export default function HomeShelves({ tracks, regularTracks, artworkMap, artIndex, dispatch, playTrack }: Props): JSX.Element | null {
   const { shelves } = useHomeShelves(tracks, regularTracks)
+  const menus = useHomeItemMenus()
   const recentRowRef = useRef<HTMLDivElement>(null)
   useScrollPersistence('home-row-recent', recentRowRef)
 
@@ -197,8 +208,10 @@ export default function HomeShelves({ tracks, regularTracks, artworkMap, artInde
                   tabIndex={0}
                   onClick={open}
                   onKeyDown={activateOnKey(open)}
-                  onContextMenu={(e) => { e.preventDefault(); playTrack(card.tracks[0]!, card.tracks, 0, undefined, true) }}
-                  title={`${card.artist} — ${card.album}\nClick opens the album. Right-click plays it.`}
+                  onContextMenu={(e) => menus?.openAlbumMenu(e, card.tracks)}
+                  draggable
+                  onDragStart={(e) => setAlbumDragPayload(e, card.tracks.map((t) => t.id))}
+                  title={`${card.artist} — ${card.album}\nClick opens the album.`}
                 >
                   <div className="home-album-art">
                     {hash ? <AlbumArtImage hash={hash} alt={card.album} onLoad={(e) => e.currentTarget.classList.add('home-album-art-loaded')} /> : <Placeholder />}
