@@ -22,6 +22,7 @@
  * Electron-free: deps injected, node --test loads it.
  */
 import { readFile, writeFile, rename, stat, mkdir } from 'fs/promises'
+import type { Stats } from 'fs'
 import { join, dirname } from 'path'
 import { withCompanionInit } from './hub-companion.ts'
 
@@ -35,11 +36,59 @@ export interface PhoneMirrorDeps {
   log?: (m: string) => void
 }
 
-async function writeAtomic(dest: string, body: string | Buffer): Promise<void> {
+/** Returns the placed file's stat, taken BEFORE the rename (rename keeps
+ *  mtime and size), so a writer racing in right after can't pass as ours. */
+async function writeAtomic(dest: string, body: string | Buffer): Promise<Stats> {
   await mkdir(dirname(dest), { recursive: true })
   const tmp = `${dest}.${process.pid}.${Date.now()}.tmp`
   await writeFile(tmp, body)
+  const placed = await stat(tmp)
   await rename(tmp, dest)
+  return placed
+}
+
+// ── Which source version each mirror holds (2026-10-20) ─────────────
+// A mirror's own mtime is when WE wrote it, not the source's mtime, so
+// "source newer than local + 1s" skipped a phone edit landing within a
+// second after a mirror write — and kept skipping it until the phone
+// touched that file again (found testing phone playlist sync, #209).
+// Compare like with like: remember the source mtime we mirrored, plus the
+// local mtime + size we produced. While the local copy is still exactly
+// that, any newer source mtime wins. Anything else (no record yet, or the
+// app wrote the file itself — it does write mobile-stars.json) keeps the
+// old guard, so a local write is never made easier to replace.
+//
+// V3-private and local-only: never in STATE_FILE_NAMES or the sync lists.
+// We never utimes() the mirrors instead — the homemini sync script pushes
+// some of them with `rsync --update`, which reads those mtimes.
+const MIRROR_SOURCES_FILE = 'phone-mirrors-sources.json'
+
+interface MirroredSource { sourceMtimeMs: number; localMtimeMs: number; size: number }
+
+/** Should a source at `sourceMtimeMs` replace the local mirror? */
+function sourceIsNewer(
+  sourceMtimeMs: number,
+  local: { mtimeMs: number; size: number } | null,
+  mirrored: MirroredSource | undefined,
+): boolean {
+  if (!local) return true
+  if (mirrored && mirrored.localMtimeMs === local.mtimeMs && mirrored.size === local.size) {
+    return sourceMtimeMs > mirrored.sourceMtimeMs
+  }
+  return sourceMtimeMs > local.mtimeMs + 1000
+}
+
+async function readMirroredSources(path: string): Promise<Record<string, MirroredSource>> {
+  const out: Record<string, MirroredSource> = {}
+  let raw: unknown
+  try { raw = JSON.parse(await readFile(path, 'utf-8')) } catch { return out }   // none yet / unreadable → old guard everywhere
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out
+  for (const [name, v] of Object.entries(raw as Record<string, Partial<MirroredSource>>)) {
+    if (Number.isFinite(v?.sourceMtimeMs) && Number.isFinite(v?.localMtimeMs) && Number.isFinite(v?.size)) {
+      out[name] = { sourceMtimeMs: v.sourceMtimeMs!, localMtimeMs: v.localMtimeMs!, size: v.size! }
+    }
+  }
+  return out
 }
 
 /** Mirror every phone-authored file that is newer at the source. HTTP
@@ -48,20 +97,26 @@ export async function refreshPhoneMirrors(deps: PhoneMirrorDeps): Promise<string
   const fetchFn = deps.fetchFn ?? fetch
   const refreshed: string[] = []
   const viaNas: string[] = []
+  const sourcesPath = join(deps.localDir, MIRROR_SOURCES_FILE)
+  const mirrored = await readMirroredSources(sourcesPath)
+  const place = async (name: string, body: string, sourceMtimeMs: number): Promise<void> => {
+    const placed = await writeAtomic(join(deps.localDir, name), body)
+    mirrored[name] = { sourceMtimeMs, localMtimeMs: placed.mtimeMs, size: placed.size }
+    refreshed.push(name)
+  }
 
   for (const name of deps.files) {
     const localPath = join(deps.localDir, name)
-    const localStat = await stat(localPath).catch(() => null)
     let done = false
     try {
       const res = await fetchFn(`${deps.backendUrl}/api/phone-sidecars/${encodeURIComponent(name)}`, withCompanionInit({ signal: AbortSignal.timeout(8000) }))
       if (res.ok) {
         const d = await res.json() as { mtimeMs?: number; body?: string }
         if (typeof d.body === 'string' && typeof d.mtimeMs === 'number') {
-          if (!localStat || d.mtimeMs > localStat.mtimeMs + 1000) {
+          const localStat = await stat(localPath).catch(() => null)
+          if (sourceIsNewer(d.mtimeMs, localStat, mirrored[name])) {
             JSON.parse(d.body)   // a torn payload must never replace a good mirror
-            await writeAtomic(localPath, d.body)
-            refreshed.push(name)
+            await place(name, d.body, d.mtimeMs)
           }
           done = true   // HTTP answered authoritatively (fresh or already-current)
         }
@@ -80,17 +135,22 @@ export async function refreshPhoneMirrors(deps: PhoneMirrorDeps): Promise<string
           const localPath = join(deps.localDir, name)
           const nasStat = await stat(nasPath)
           const localStat = await stat(localPath).catch(() => null)
-          if (!localStat || nasStat.mtimeMs > localStat.mtimeMs + 1000) {
+          if (sourceIsNewer(nasStat.mtimeMs, localStat, mirrored[name])) {
             const body = await readFile(nasPath, 'utf-8')
             JSON.parse(body)
-            await writeAtomic(localPath, body)
-            refreshed.push(name)
+            await place(name, body, nasStat.mtimeMs)
           }
         } catch { /* per-file best effort */ }
       }
     } catch { /* NAS asleep — keep what we have */ }
   }
-  if (refreshed.length > 0) deps.log?.(`[phone-mirrors] refreshed ${refreshed.length} file(s): ${refreshed.join(', ')}`)
+  if (refreshed.length > 0) {
+    // Losing this write only costs the old guard next pass: a stale entry's
+    // local mtime no longer matches, so sourceIsNewer falls back.
+    await writeAtomic(sourcesPath, JSON.stringify(mirrored, null, 2))
+      .catch((err) => deps.log?.(`[phone-mirrors] could not record mirrored sources: ${err instanceof Error ? err.message : err}`))
+    deps.log?.(`[phone-mirrors] refreshed ${refreshed.length} file(s): ${refreshed.join(', ')}`)
+  }
   return refreshed
 }
 
