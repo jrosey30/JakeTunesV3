@@ -469,7 +469,9 @@ export default function ArtistDetailView() {
     if (!disco || disco === 'loading' || disco === 'empty') return []
     // Your library is ground truth: an MB release with an owned album's title
     // is that album; an unowned MB "album" that just repackages songs you own
-    // (the US Capitol Beatles comps) drops out. The rest is discovery.
+    // (the US Capitol Beatles comps) drops out. The rest is discovery. Jake's
+    // hidden releases and the plain-edition tracklists are main's job
+    // (fetchArtistDiscography + common/discography-pick.ts).
     const ownedTitles = new Set(persona.albums.map((a) => normTitle(a.name)))
     for (const g of rowsOwned) ownedTitles.add(normTitle(g.name))
     const ownedSongs = new Set<string>()
@@ -478,7 +480,11 @@ export default function ArtistDetailView() {
       .filter((album) => {
         if (ownedTitles.has(normTitle(album.title))) return false
         const titles = album.tracks.map(t => normTitle(t.title)).filter(Boolean)
-        if (titles.length >= 4 && titles.filter(t => ownedSongs.has(t)).length / titles.length > 0.5) return false
+        const have = titles.filter(t => ownedSongs.has(t)).length
+        if (titles.length >= 4 && have / titles.length > 0.5) return false
+        // An EP whose every song is already here (Geese's 2018 "EP" = three
+        // A Beautiful Memory songs) is no more music.
+        if (titles.length > 0 && have === titles.length) return false
         return true
       })
       .map((album) => ({
