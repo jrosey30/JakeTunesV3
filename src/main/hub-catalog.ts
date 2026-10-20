@@ -32,6 +32,16 @@
 // An older hub ignores the parameter (no-op: hidden view, as before).
 // ⚠️ TWIN: ~/JakeTunesMobile backend/src/util/catalogView.ts (+ routes/library.ts)
 //
+// FIRST POLL OF EACH LAUNCH IS A FULL SNAPSHOT (2026-10-20). At boot the
+// renderer lays this machine's own metadata-overrides.json over library.json.
+// On workmini that file is a copy the deploy left behind, so a boot re-planted
+// old values (measured: 2,479 genres from before the 10-18 re-file) and a
+// delta only re-sends songs that changed on the hub — the stale values stayed
+// until the next backend restart happened to answer full. So the first delta
+// of each launch asks with since='' (the hub answers full), and every later
+// poll is a normal delta once that full snapshot has been acked. Costs one
+// catalog download per launch (~1.2 MB gzipped, measured 10-20).
+//
 // Once a response carries an ETag or Last-Modified, the next poll sends
 // it back (If-None-Match, else If-Modified-Since). Express answers 304
 // with no body when the JSON is unchanged. 304 keeps the old stamp. A
@@ -188,8 +198,11 @@ export function startHubCatalogPoll(deps: HubCatalogDeps): HubCatalogHandle {
 
   let inFlight = false
   let lastKey: string | null = null
-  let pending: { version: string; sentAt: number; hubIds: string[] } | null = null
+  let pending: { version: string; sentAt: number; hubIds: string[]; full: boolean } | null = null
   let stopped = false
+  // False until a FULL snapshot has been acked in this process (see header:
+  // the boot overrides apply can re-plant stale values a delta never revisits).
+  let reconciledThisLaunch = false
   // Last good sidecar / live-set stamps. A failed probe keeps these so a
   // blip does not look like a change and does not wipe a real one.
   let phoneEdits = ''
@@ -302,12 +315,13 @@ export function startHubCatalogPoll(deps: HubCatalogDeps): HubCatalogHandle {
       const key = hubCatalogChangeKey(ver, { phoneEdits, phoneImports, liveSets })
       if (key === lastKey) return
       const state = await readState()
-      const since = encodeURIComponent(state.version)
+      const since = reconciledThisLaunch ? encodeURIComponent(state.version) : ''
       const d = await getJson<Record<string, unknown>>(`${origin}/api/tracks/delta?since=${since}&${HUB_CATALOG_VIEW_QUERY}`)
       const version = typeof d.version === 'string' ? d.version : ''
       if (!version) throw new Error('delta reply had no version')
       if (d.unchanged === true) {
         lastKey = key
+        reconciledThisLaunch = true
         if (state.version !== version) {
           await writeState({
             version,
@@ -331,7 +345,7 @@ export function startHubCatalogPoll(deps: HubCatalogDeps): HubCatalogHandle {
         log('[hub-catalog] no window to receive the catalog — will retry')
         return
       }
-      pending = { version, sentAt: Date.now(), hubIds: payload.upserts.map((u) => String(u.id)) }
+      pending = { version, sentAt: Date.now(), hubIds: payload.upserts.map((u) => String(u.id)), full }
       lastKey = key
       log(`[hub-catalog] sent ${full ? 'FULL' : 'delta'} ${version}: ${payload.upserts.length} upsert(s), ${removedIds.length} removal(s)`)
     } catch (err) {
@@ -347,7 +361,10 @@ export function startHubCatalogPoll(deps: HubCatalogDeps): HubCatalogHandle {
     adopted: async (version: string, protectedIds?: string[]) => {
       const state = await readState()
       const hubIds = pending && pending.version === version ? pending.hubIds : []
-      if (pending && pending.version === version) pending = null
+      if (pending && pending.version === version) {
+        if (pending.full) reconciledThisLaunch = true
+        pending = null
+      }
       const next = adoptHubCatalogState(state, {
         version,
         hubIds,

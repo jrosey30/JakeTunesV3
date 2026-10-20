@@ -930,6 +930,7 @@ declare global {
       pickPlaylistCover?: (playlistId: string) => Promise<{ ok: boolean; path?: string; stamp?: number; canceled?: boolean; error?: string }>
       copyPlaylistCover?: (fromId: string, toId: string) => Promise<{ ok: boolean; copied?: boolean; error?: string }>
       clearPlaylistCover?: (playlistId: string) => Promise<{ ok: boolean; error?: string }>
+      onPlaylistCoversUpdated?: (callback: () => void) => () => void
       gaplessTrim?: (absPath: string) => Promise<{ delaySamples: number; paddingSamples: number; sampleRate: number; delaySec: number; paddingSec: number; originalSamples?: number } | null>
       saveMixtapeIntro?: (data: ArrayBuffer, voiceId?: string) => Promise<{ ok: boolean; path?: string; error?: string }>
       listMixtapeVoices?: () => Promise<{ ok: boolean; voices: Array<{ id: string; name: string }> }>

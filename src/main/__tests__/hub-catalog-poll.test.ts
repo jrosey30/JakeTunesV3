@@ -407,3 +407,70 @@ describe('replica asks the hub for the include view (concerts kept)', () => {
     } finally { h.stop() }
   })
 })
+
+// 2026-10-20 — at boot the renderer lays the replica's own (stale, deploy-copied)
+// metadata-overrides.json over library.json; a delta never revisits the songs it
+// re-planted (measured: 2,479 genres from before the 10-18 re-file). So the
+// first delta of each launch asks with since='' and the hub answers FULL.
+describe('first poll of each launch re-reads the whole hub catalog', () => {
+  function fullHub() {
+    const deltaUrls: string[] = []
+    let gen = 1
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      const u = String(url)
+      const method = (init?.method ?? 'GET').toUpperCase()
+      const pack = (body: unknown) => ({ ok: true, status: 200, headers: new Headers(), text: async () => JSON.stringify(body), json: async () => body })
+      if (u.includes('/api/library-version')) return pack({ library: `L${gen}`, tracks: '1', stars: 'S', plays: 'P' })
+      if (u.includes('/api/phone-sidecars/')) return method === 'HEAD' ? pack(null) : pack({ mtimeMs: 1, body: '{}' })
+      if (u.endsWith('/api/live-sets')) return method === 'HEAD' ? pack(null) : pack({ mtimeMs: 1 })
+      if (u.includes('/api/tracks/delta')) {
+        deltaUrls.push(u)
+        const since = new URL(u).searchParams.get('since') ?? ''
+        if (!since) return pack({ full: true, version: `v${gen}`, total: 1, items: [{ id: 1, title: 'A', artist: 'X' }] })
+        return pack({ full: false, unchanged: false, version: `v${gen}`, upserts: [{ id: 1, title: 'A2', artist: 'X' }], removedIds: [] })
+      }
+      return pack({ error: u })
+    }) as typeof fetch
+    return { deltaUrls, fetchImpl, bump: () => { gen++ } }
+  }
+  const sinceOf = (u: string) => new URL(u).searchParams.get('since')
+
+  it('asks since="" even with an adopted version on disk, then deltas from the acked version', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'hub-full-boot-'))
+    const { writeFile } = await import('node:fs/promises')
+    await writeFile(join(dir, 'hub-catalog-state.json'), JSON.stringify({ version: 'v0-from-last-launch', adoptedAt: '2026-10-19T00:00:00.000Z', seenIds: ['1'] }))
+    const hub = fullHub()
+    const sent: Array<{ full: boolean; version: string }> = []
+    const h = startHubCatalogPoll({
+      stateDir: dir, hubBase: async () => 'http://hub', isLocked: () => null, fetchImpl: hub.fetchImpl, intervalMs: 3_600_000,
+      send: (_c, p) => { sent.push({ full: p.full, version: p.version }); return true },
+    })
+    try {
+      await h.tick()
+      assert.equal(sinceOf(hub.deltaUrls[0]), '', 'first poll of the launch ignores the stored cursor')
+      assert.deepEqual(sent[0], { full: true, version: 'v1' })
+      await h.adopted('v1')
+      hub.bump()
+      await h.tick()
+      assert.equal(sinceOf(hub.deltaUrls[1]), 'v1', 'after the full ack, a normal delta from the acked version')
+      assert.equal(sent[1].full, false)
+    } finally { h.stop() }
+  })
+
+  it('keeps asking for the full snapshot until one is acked', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'hub-full-unacked-'))
+    const hub = fullHub()
+    const h = startHubCatalogPoll({
+      stateDir: dir, hubBase: async () => 'http://hub', isLocked: () => null, fetchImpl: hub.fetchImpl, intervalMs: 3_600_000,
+      // No window yet (the renderer is still booting): nothing is delivered.
+      send: () => false,
+    })
+    try {
+      await h.tick()
+      hub.bump()
+      await h.tick()
+      assert.equal(hub.deltaUrls.length, 2)
+      assert.ok(hub.deltaUrls.every((u) => sinceOf(u) === ''), 'an undelivered full snapshot is asked for again, whole')
+    } finally { h.stop() }
+  })
+})

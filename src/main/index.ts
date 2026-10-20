@@ -4117,7 +4117,7 @@ async function detectStateConflicts(): Promise<void> {
   const localDir = app.getPath('userData')
   const CONFLICT_THRESHOLD_MS = 2_000 // NAS copies carry the local mtime (utimes after publish), so 2s = SMB timestamp granularity
   for (const f of STATE_FILE_NAMES) {
-    if (f === 'library.json' && !pushLibrary) continue
+    if ((f === 'library.json' || f === 'release-kinds.json') && !pushLibrary) continue  // a replica's release-kinds.json IS homemini's copy (replica-hub-files.ts)
     const localPath = join(localDir, f)
     const nasPath = join(NAS_STATE_DIR_PATH, f)
     try {
@@ -8841,7 +8841,7 @@ registerActivityPoolIpc(ipc)
 
 // Mixtapes — songs → a real C60/C90/C120 cassette with Jake's voice on it
 registerGaplessTrimIpc(ipc)
-registerPlaylistCoverIpc(ipc, () => mainWindow)
+registerPlaylistCoverIpc(ipc, () => mainWindow, { hubBase: replicaHubBase })  // replica: mirror the MacBook's covers from homemini
 registerMixtapesIpc({
   ipc,
   claudeCall,
@@ -9462,7 +9462,7 @@ registerTasteIpc(ipc)
 registerGenreFilerIpc(ipc, { libraryTracks: async () => ((await libraryCache.get()) as { tracks?: [] }).tracks ?? [], overrides: async () => (await overridesCache.get()) as Record<string, { fp?: string; fields?: Record<string, string> }>, persist: (id, fields, fp) => persistOverrideFields(id, fields, fp).then(() => triggerSync('metadata-edit')), send: (ch, p) => sendToRenderer(ch, p), claude: async (system, user) => { const r = await claudeCall('genre-filer', { model: MODEL_SMART, max_tokens: 2000, system, messages: [{ role: 'user', content: user }] }); const b = r.content[0]; return b && b.type === 'text' ? b.text : '' }, mbThrottle, userAgent: `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)` })
 startTaxonomyStagedApply({ stateDir: STATE_DIR, libraryTracks: async () => ((await libraryCache.get()) as { tracks?: [] }).tracks ?? [], updateOverrides: (m) => writeOverridesSerialized(m), flushOverrides: () => overridesCache.flush(), overrideFlushStats: () => overridesCache.flushStats(), onApplied: (updates) => { sendToRenderer('genre-filer:applied', { updates }); triggerSync('metadata-edit') }, fingerprint: trackFingerprint, log: (m) => console.warn(m) })
 registerRockDnaIpc(ipc)
-registerReleaseKindsIpc(ipc, { file: () => releaseKindsPath(STATE_DIR) })
+registerReleaseKindsIpc(ipc, { file: () => releaseKindsPath(STATE_DIR), hubBase: replicaHubBase })  // replica: homemini's copy, never resolved here
 registerYirIpc(ipc)
 registerSyncedPicksIpc(ipc)
 registerHomeSpotlightIpc(ipc, { getPlayEventsPath, libraryCache })

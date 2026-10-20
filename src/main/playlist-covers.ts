@@ -32,6 +32,7 @@ import { promisify } from 'util'
 import { mkdir, unlink, copyFile, stat, readdir, readFile, writeFile, rename } from 'fs/promises'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
+import { COVER_MIRROR_RECORD, createCoverMirror, startReplicaTimer } from './replica-hub-files.ts'
 
 const execP = promisify(execFile)
 
@@ -86,7 +87,25 @@ async function loadNotes(): Promise<Record<string, string>> {
 export function registerPlaylistCoverIpc(
   ipc: IpcRegistrar,
   getMainWindow: () => BrowserWindow | null,
+  replica?: { hubBase: () => Promise<string | null> },
 ): void {
+  // 2026-10-20 — a replica (workmini) mirrors the MacBook's covers from
+  // homemini into this same folder (src/main/replica-hub-files.ts), then tells
+  // the renderer to re-read its cover map. Inert on the MacBook (no hub base).
+  if (replica) {
+    const mirror = createCoverMirror({
+      dir: COVERS_DIR(),
+      recordFile: join(app.getPath('userData'), COVER_MIRROR_RECORD),
+      hubBase: replica.hubBase,
+      notify: () => {
+        const win = getMainWindow()
+        if (win && !win.isDestroyed()) win.webContents.send('playlist-covers-updated')
+      },
+      log: (m) => console.warn(m),
+    })
+    startReplicaTimer(mirror.tick, 30_000)
+  }
+
   /**
    * Playlist descriptions (2026-08-09). Jake: "id like abolity to write a
    * description for each playlist if i want."
