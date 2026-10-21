@@ -311,7 +311,8 @@ describe('index.ts keys (main process — checked at the source)', () => {
     for (const n of [BERRY, MOLCHAT]) assert.equal(normKey(n), nameKey(n))
   })
   it('the discography cache gives each Hebrew artist its own file', () => {
-    assert.match(index, /const safe = Array\.from\(nameKey\(artist, '_'\)\)\.slice\(0, 80\)\.join\(''\) \|\|/)
+    // discoCachePath moved to main/artist-discography.ts with the release gate (2026-10-20).
+    assert.match(read('main/artist-discography.ts'), /const safe = Array\.from\(nameKey\(artist, '_'\)\)\.slice\(0, 80\)\.join\(''\) \|\|/)
     assert.equal(nameKey(BERRY, '_'), 'ברי_סחרוף')
     assert.notEqual(nameKey(BERRY, '_'), nameKey(HADAG, '_'))
   })
