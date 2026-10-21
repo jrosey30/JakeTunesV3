@@ -31,6 +31,7 @@
 import { readFile, writeFile, appendFile, stat } from 'fs/promises'
 import { join } from 'path'
 import { parseLogLines, computeListeningMemory, type PlayEvent } from './listening-memory.ts'
+import { listeningQuote, listeningQuoteFacts } from '../common/listening-quote.ts'
 import { safeIpcError } from './safe-ipc-error.ts'
 // NOTE: nothing here may import electron, directly or transitively. That is
 // what keeps buildTasteProfile reachable from `node --test`, and it is easy to
@@ -198,21 +199,30 @@ export async function recordRating(track: { title: string; artist: string; album
   return { ok: true }
 }
 
-/** Insights for the Home listening card. */
-export async function getListeningMemory(): Promise<unknown> {
+/** Insights for the Home listening card, and the Music Man's one-line quote
+ *  (common/listening-quote.ts): homemini's line when it answers — the same
+ *  line the phone shows, over both devices' plays — else the same rule over
+ *  this Mac's own log. */
+export async function getListeningMemory(opts?: { hubQuote?: () => Promise<{ answered: boolean; text: string | null }> }): Promise<unknown> {
   try {
     await seedListeningLogOnce()
     if (!listeningLogCache) {
       const raw = await readFile(listeningLogPath(), 'utf-8').catch(() => '')
       listeningLogCache = parseLogLines(raw)
     }
-    const insights = computeListeningMemory(listeningLogCache, new Date())
+    const now = new Date()
+    const insights = computeListeningMemory(listeningLogCache, now)
     const p = await loadListenerProfile()
+    const hub = opts?.hubQuote ? await opts.hubQuote().catch(() => ({ answered: false, text: null })) : { answered: false, text: null }
+    const quote = hub.answered
+      ? hub.text
+      : listeningQuote(listeningQuoteFacts(listeningLogCache.map((e) => ({ ms: Date.parse(e.ts), artist: e.ar })), now))
     return {
       ok: true,
       insights,
       lifetime: { totalPlays: p.totalPlays, firstSeen: p.firstSeen },
       observations: p.observations.slice(-5).reverse(),
+      quote,
     }
   } catch (err) {
     return { ok: false, error: safeIpcError(err, 'io-failed') }

@@ -1213,51 +1213,31 @@
   }
 }
 
-/* ── Listening Memory (brain #1) ─────────────────────────────────────────
- * Fact tiles reuse .home-stat; only the since-label and Music Man's
- * observation quote are new. */
-.home-memory-since {
-  font-size: 12px;
-  color: var(--text-secondary, #8a8a8a);
-  white-space: nowrap;
-}
-.home-stats--memory {
-  /* the same foot a card row has, so Memory → next is the page's gap */
-  margin-bottom: var(--home-row-foot, 8px);
-}
-/* 4.5 polish: the memory tiles reuse .home-stat, which made them a carbon copy
-   of the library-stats row right above — two near-identical white-card rows
-   reading as one idea printed twice. Drop them to a quieter FLAT treatment: a
-   faint warm wash, no elevation, slightly smaller — so Listening Memory reads as
-   its own softer "memory" strip beneath the primary, elevated stat cards. */
-.home-stats--memory .home-stat {
-  background: rgba(85, 78, 64, 0.045);
-  border-color: rgba(85, 78, 64, 0.09);
-  box-shadow: none;
-  padding: 12px 15px;
-}
-.home-stats--memory .home-stat:hover {
-  background: rgba(85, 78, 64, 0.08);
-  box-shadow: none;
-  transform: none;
-}
-.home-stats--memory .home-stat-value {
-  font-size: 19px;
-}
+/* ── Listening Memory — the Music Man's one line (the phone's quote) ─────
+ * The phone's memorySection: a 3px accent rule, the line, and the credit
+ * under it. The full line always shows — names never clip, and the line is
+ * one short deterministic sentence (common/listening-quote.ts). */
 .home-memory-obs {
-  margin: 0 var(--home-gutter, 28px);
+  margin: 0 var(--home-gutter, 28px) var(--home-row-foot, 8px);
   padding: 10px 14px;
   border-left: 3px solid var(--brand-orange, #FC5501);
   background: rgba(252, 85, 1, 0.05);
   border-radius: 0 6px 6px 0;
   font-size: 13px;
   font-style: italic;
+  font-weight: 500;
   color: var(--text-primary, #1a1a1a);
   line-height: 1.45;
 }
+.home-memory-quote {
+  display: block;
+}
 .home-memory-obs cite {
+  display: block;
+  margin-top: 3px;
   font-style: normal;
-  font-size: 12px;
+  font-weight: 400;
+  font-size: 11px;
   color: var(--text-secondary, #8a8a8a);
 }
 
@@ -1336,14 +1316,6 @@
 .home-stats { animation-delay: 40ms; }
 .home-mixes { animation-delay: 25ms; }
 
-/* Notebook quote: three lines, not an essay — the full thought lives in
-   Music Man's own view. Clamp keeps the dashboard scannable. */
-.home-memory-obs {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
 
 /* New This Week: 30s preview of a song off the album, in place (2026-08-07).
    Same disc grammar as Discover's .df-play; appears on hover so the

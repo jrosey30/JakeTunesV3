@@ -844,67 +844,18 @@ export default function HomeView() {
         </section>
       )}
 
-      {/* ── Listening Memory (brain #1) — habits from the local play log:
-            streak, golden hour, this week's artist, comebacks, binges —
-            plus Music Man's latest observation about the listener. ──── */}
-      {memory && memory.insights.totals.plays > 0 && (
+      {/* ── Listening Memory — the Music Man's one line, the phone's quote.
+            Jake on the phone's memory block (2026-06-09): "no need for those
+            new cards but i like the quote." So no stat cards here either —
+            just his line (homemini's, over both devices' plays; this Mac's
+            own log while homemini is away). The numbers still reach the
+            Artists view's heavy rotation through the same payload. ──── */}
+      {memory?.quote && (
         <section className="home-section home-memory">
-          <div className="home-section-header">
-            <h2 className="home-section-title">Listening Memory</h2>
-            <span className="home-memory-since">
-              {memory.insights.totals.daysActive} active day{memory.insights.totals.daysActive === 1 ? '' : 's'}
-            </span>
-          </div>
-          <div className="home-stats home-stats--memory">
-            <div className="home-stat">
-              <div className="home-stat-value">
-                {memory.insights.streak.currentDays > 0
-                  ? `${memory.insights.streak.currentDays} day${memory.insights.streak.currentDays === 1 ? '' : 's'}`
-                  : '—'}
-              </div>
-              <div className="home-stat-label">Current Streak</div>
-              <div className="home-stat-sub">{memory.insights.streak.bestDays > 1 ? `Best: ${memory.insights.streak.bestDays} days` : ' '}</div>
-            </div>
-            {memory.insights.clock.peakHourLabel && (
-              <div className="home-stat">
-                <div className="home-stat-value">{memory.insights.clock.peakHourLabel}</div>
-                <div className="home-stat-label">Golden Hour</div>
-                <div className="home-stat-sub">{' '}</div>
-              </div>
-            )}
-            {memory.insights.clock.peakWeekdayLabel && (
-              <div className="home-stat">
-                <div className="home-stat-value">{memory.insights.clock.peakWeekdayLabel}</div>
-                <div className="home-stat-label">Biggest Day</div>
-                <div className="home-stat-sub">{' '}</div>
-              </div>
-            )}
-            {memory.insights.topArtists7d[0] && (
-              <div className="home-stat">
-                <div className="home-stat-value home-stat-value--name" title={memory.insights.topArtists7d[0].artist}>{memory.insights.topArtists7d[0].artist}</div>
-                <div className="home-stat-label">This Week</div>
-                <div className="home-stat-sub">{memory.insights.topArtists7d[0].plays} play{memory.insights.topArtists7d[0].plays === 1 ? '' : 's'}</div>
-              </div>
-            )}
-            {memory.insights.comeback && (
-              <div className="home-stat">
-                <div className="home-stat-value home-stat-value--name" title={memory.insights.comeback.artist}>{memory.insights.comeback.artist}</div>
-                <div className="home-stat-label">Comeback</div>
-                <div className="home-stat-sub">{memory.insights.comeback.gapDays} days away</div>
-              </div>
-            )}
-            {memory.insights.binge && (
-              <div className="home-stat">
-                <div className="home-stat-value home-stat-value--name" title={memory.insights.binge.artist}>{memory.insights.binge.artist}</div>
-                <div className="home-stat-label">Binge Record</div>
-                <div className="home-stat-sub">{memory.insights.binge.plays} in one day</div>
-              </div>
-            )}
-          </div>
-          {/* Music Man's notebook was here — removed 2026-07-14. LLM prose
-              can't be safely clipped (a "sentence" boundary landed inside a
-              quoted song title). The full notebook lives in Music Man's view;
-              the dashboard shows numbers, not essays. */}
+          <blockquote className="home-memory-obs">
+            <span className="home-memory-quote">{'\u201C'}{memory.quote}{'\u201D'}</span>
+            <cite>— the Music Man</cite>
+          </blockquote>
         </section>
       )}
 

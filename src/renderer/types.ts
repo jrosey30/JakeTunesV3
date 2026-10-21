@@ -602,6 +602,9 @@ export interface ListeningMemoryData {
   }
   lifetime: { totalPlays: number; firstSeen: string }
   observations: string[]
+  /** The Music Man's one-line Listening Memory quote — the phone's line
+   *  (common/listening-quote.ts); null while there's nothing to say. */
+  quote?: string | null
 }
 
 export type SortColumn = 'title' | 'artist' | 'album' | 'genre' | 'origin' | 'subgenre' | 'year' | 'dateAdded' | 'playCount' | 'rating' | 'channelMode' | 'bpm' | 'camelotKey'
