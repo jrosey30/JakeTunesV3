@@ -362,6 +362,10 @@ describe('rules', () => {
     assert.equal(gate.storeTitleMatches('Benjor (Remasterizado)', 'Benjor', match), true)
     assert.equal(gate.storeTitleMatches('The Family Way (Original Soundtrack Recording)', 'The Family Way', match), true)
     assert.equal(gate.storeTitleMatches('Toy (Toy:Box)', 'Toy', match), false, 'a box set is not the album')
+    assert.equal(gate.storeTitleMatches('Pearl Jam Twenty Original Motion Picture Soundtrack', 'Pearl Jam Twenty', match), true, 'unbracketed edition words')
+    assert.equal(gate.storeTitleMatches('Vapor Trails Remixed', 'Vapor Trails', match), false)
+    assert.equal(gate.storeTitleMatches('The Marshall Mathers LP', 'The Marshall Mathers LP 2', match), false, 'a sequel is not the original')
+    assert.equal(gate.storeTitleMatches('The Marshall Mathers LP 2', 'The Marshall Mathers LP', match), false)
     assert.equal(gate.storeTitleMatches('Frank Sinatra - Sus Mejores Años Vol. 1', 'Frank Sinatra', match), false)
     assert.equal(gate.storeTitleMatches('The Complete Hits 1943-62, Vol. 1', 'The Complete Hits 1943-62', match), false, 'one volume is not the set')
   })
@@ -431,7 +435,7 @@ describe('twin lock', () => {
   // The body of release-gate.ts / releaseGate.ts (from the first export to
   // the end) must hash to this in BOTH repos. Changing a rule means changing
   // this number here AND in the twin, in the same change set.
-  const TWIN_BODY_SHA256 = 'c93684f9d980e99928ee8681a9f75f824324a443373a2739ff9d36c7233da6bb'
+  const TWIN_BODY_SHA256 = '3e236120543a4e95ea03208ca431323963add69975db4dfb5b33d8a8392ccf5a'
   it('the gate body matches its twin', () => {
     const src = readFileSync(GATE_SOURCE, 'utf-8')
     const body = src.slice(src.indexOf('export type ReleaseSection'))

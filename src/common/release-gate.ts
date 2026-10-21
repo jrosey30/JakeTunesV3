@@ -292,14 +292,22 @@ function prepTitle(title: string): string {
 
 /// The keys a title is known by, spaces squashed: its twin-normalized form
 /// (normAlbumTitle drops brackets and subtitles), and the whole title with
-/// subtitle marks read as spaces. A title that is nothing but brackets
-/// keeps its words ("[Led Zeppelin IV]").
+/// subtitle marks read as spaces, and that without trailing edition words.
+/// A title that is nothing but brackets keeps its words ("[Led Zeppelin IV]").
 function titleKeys(title: string, normTitle: (s: string) => string): string[] {
   const t = prepTitle(title)
   const squash = (x: string) => normTitle(x).replace(/ /g, '')
   const base = squash(t) || squash(t.replace(/[[\]()]/g, ' '))
-  const whole = squash(t.replace(/\([^)]*\)|\[[^\]]*\]/g, ' ').replace(/\s*[:–—]\s*|\s+-\s+/g, ' '))
-  return [...new Set([base, whole].filter(Boolean))]
+  const wholeWords = normTitle(t.replace(/\([^)]*\)|\[[^\]]*\]/g, ' ').replace(/\s*[:–—]\s*|\s+-\s+/g, ' ')).split(' ').filter(Boolean)
+  // And without trailing edition words a store didn't bracket: "Pearl Jam
+  // Twenty Original Motion Picture Soundtrack" is "Pearl Jam Twenty".
+  // Only descriptive words go: never a number, "LP", "EP" or "Vol." ("The
+  // Marshall Mathers LP 2" must not become "The Marshall Mathers").
+  let end = wholeWords.length
+  while (end > 1 && isTrailingEditionWord(wholeWords[end - 1]!)) end--
+  const whole = wholeWords.join('')
+  const trimmed = wholeWords.slice(0, end).join('')
+  return [...new Set([base, whole, trimmed].filter(Boolean))]
 }
 
 /// Is `other` (a library or store title) the same release as the
@@ -336,8 +344,14 @@ const EDITION_WORDS = new Set([
   'track', 'tracks', 'digital', 'explicit', 'clean', 'mono', 'stereo', 'ep', 'single', 'lp', 'original',
   'motion', 'picture', 'film', 'score', 'tv', 'soundtrack', 'music', 'recording', 'recordings', 'inspired',
   'series', 'special', 'collector', 'collectors', 'super', 'standard', 'reissue',
-  'the', 'and', 'of', 'a', 'an', 'from', 'with', 'by', 'in', 'to', 'vol',
+  'the', 'and', 'of', 'a', 'an', 'from', 'with', 'by', 'in', 'to',
 ])
+const TRAILING_EDITION = new Set([
+  'deluxe', 'edition', 'expanded', 'anniversary', 'version', 'bonus', 'definitive', 'tracks', 'explicit', 'clean',
+  'original', 'motion', 'picture', 'film', 'tv', 'soundtrack', 'music', 'recording', 'series', 'special',
+  'collector', 'collectors', 'super', 'standard', 'reissue',
+])
+const isTrailingEditionWord = (w: string) => TRAILING_EDITION.has(w) || /^remaster/.test(w)
 /// Remastered in any language ("Remasterizado", "Remasterisé"), and years or
 /// ordinals ("2009", "40th").
 const isEditionWord = (w: string) => EDITION_WORDS.has(w) || /^remaster/.test(w) || /^\d+(st|nd|rd|th|s)?$/.test(w)
