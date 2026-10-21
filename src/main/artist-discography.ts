@@ -129,7 +129,21 @@ async function writeCache(path: string, result: DiscographyResult): Promise<void
   }
 }
 
-export async function fetchArtistDiscography(artist: string): Promise<DiscographyResult | null> {
+/// A cold run takes a while (MusicBrainz at 1 req/s, then the stores, then
+/// the tracklists): the artist page and the Discover lane asking for the
+/// same artist meanwhile join it instead of starting a second.
+const inFlight = new Map<string, Promise<DiscographyResult | null>>()
+
+export function fetchArtistDiscography(artist: string): Promise<DiscographyResult | null> {
+  const key = nameKey(artist, '_') || artist
+  const running = inFlight.get(key)
+  if (running) return running
+  const run = fetchArtistDiscographyOnce(artist).finally(() => inFlight.delete(key))
+  inFlight.set(key, run)
+  return run
+}
+
+async function fetchArtistDiscographyOnce(artist: string): Promise<DiscographyResult | null> {
   const w = need()
   const cachePath = discoCachePath(artist)
   // Cache hit

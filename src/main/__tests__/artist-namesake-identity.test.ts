@@ -176,7 +176,7 @@ describe('wiring — the desktop resolver and discography use the rule', () => {
   })
   it('fetchArtistDiscography refuses ambiguous identities and foreign catalogues', () => {
     const disco = readFileSync(join(import.meta.dirname, '..', 'artist-discography.ts'), 'utf-8')
-    const body = disco.slice(disco.indexOf('export async function fetchArtistDiscography('))
+    const body = disco.slice(disco.indexOf('async function fetchArtistDiscographyOnce('))
     assert.match(body, /identity === 'ambiguous'/)
     assert.match(body, /canon\.incomplete/)
     assert.match(body, /gateReleaseGroups\(/, 'the release gate judges identity (and the foreign-catalogue guard) for every release')

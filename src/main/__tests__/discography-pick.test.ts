@@ -57,13 +57,17 @@ describe('Jake\'s hidden releases', () => {
 describe('wiring', () => {
   const body = (() => {
     const src = readFileSync(join(import.meta.dirname, '..', 'artist-discography.ts'), 'utf-8')
-    return src.slice(src.indexOf('export async function fetchArtistDiscography('))
+    return src.slice(src.indexOf('async function fetchArtistDiscographyOnce('))
   })()
   it('the discography picks the standard edition and honours hidden releases (through the release gate)', () => {
     assert.match(body, /pickStandardRelease\(relData\.releases\)/)
     assert.doesNotMatch(body, /relData\.releases\?\.\[0\]/)
     assert.match(body, /gateReleaseGroups\(/)
     assert.match(body, /\.filter\(\(v\) => v\.admitted\)/)
+  })
+  it('a second request for the same artist joins the running fetch', () => {
+    const src = readFileSync(join(import.meta.dirname, '..', 'artist-discography.ts'), 'utf-8')
+    assert.match(src, /const running = inFlight\.get\(key\)\n\s+if \(running\) return running/)
   })
   it('a result the gate could not finish is never cached (an outage is not a fact)', () => {
     assert.match(body, /let incomplete = !browse\.complete \|\| !gate\.complete/)
