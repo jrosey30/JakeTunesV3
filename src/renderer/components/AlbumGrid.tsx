@@ -156,8 +156,18 @@ const AlbumGrid = forwardRef<AlbumGridHandle, AlbumGridProps>(function AlbumGrid
     if (!first) return viewRef.current.geo
     const cs = getComputedStyle(grid)
     const cols = Math.max(1, cs.gridTemplateColumns.split(' ').filter((t) => t && t !== 'none').length)
-    const below = grid.children[cols] as HTMLElement | undefined
-    const rowStride = below ? below.offsetTop - first.offsetTop : first.offsetHeight + (parseFloat(cs.rowGap) || 0)
+    // Fractional, and averaged across every mounted row. The true stride is
+    // fractional (≈210.4 px on Jake's screen); measuring it from two rows'
+    // integer offsetTop alternated 210 / 211 depending on WHICH rows were
+    // mounted — each answer picked the window that measured the other, and the
+    // grid re-rendered itself into React's update-depth limit (#185) on a
+    // restored deep position (caught in the harness, 2026-10-21).
+    const firstTop = first.getBoundingClientRect().top
+    const lastRowStart = Math.floor((grid.children.length - 1) / cols) * cols
+    const rowsSpanned = lastRowStart / cols
+    const rowStride = rowsSpanned >= 1
+      ? ((grid.children[lastRowStart] as HTMLElement).getBoundingClientRect().top - firstTop) / rowsSpanned
+      : first.getBoundingClientRect().height + (parseFloat(cs.rowGap) || 0)
     if (!(rowStride > 0)) return viewRef.current.geo
     const scTop = sc.getBoundingClientRect().top + sc.clientTop
     const gridTop = wrap.getBoundingClientRect().top - scTop + sc.scrollTop + (parseFloat(cs.paddingTop) || 0)
@@ -183,18 +193,25 @@ const AlbumGrid = forwardRef<AlbumGridHandle, AlbumGridProps>(function AlbumGrid
 
   // After every render of this grid: measure what was just laid out (the first
   // render's slice, a new column count, content above the grid that moved).
+  // Loop guard: a commit may re-measure itself into a new window a few times
+  // (first slice → measured → restored position), never indefinitely — if
+  // the measurement ever disagrees with itself again, the current window
+  // stands until the next scroll or resize.
+  const layoutSyncsRef = useRef(0)
   useLayoutEffect(() => {
     committingRef.current = true
+    if (layoutSyncsRef.current >= 4) return
+    layoutSyncsRef.current++
     sync(false)
   })
-  useEffect(() => { committingRef.current = false })
+  useEffect(() => { committingRef.current = false; layoutSyncsRef.current = 0 })
 
   // Scroll + resize, bound to the CURRENT scroller (identity-checked every
   // render — an observer bound once is a latent half-blank, 2026-07-08).
   const boundRef = useRef<HTMLElement | null>(null)
   const roRef = useRef<ResizeObserver | null>(null)
   const onScrollRef = useRef<() => void>(() => {})
-  onScrollRef.current = () => sync(true)
+  onScrollRef.current = () => { layoutSyncsRef.current = 0; sync(true) }
   const handlerRef = useRef<(() => void) | null>(null)
   if (!handlerRef.current) handlerRef.current = () => onScrollRef.current()
   useLayoutEffect(() => {
