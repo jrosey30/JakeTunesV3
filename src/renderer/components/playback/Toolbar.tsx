@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { audioFromBase64Mpeg } from '../../audio/base64-audio'
 import { usePlayback } from '../../context/PlaybackContext'
+import NowPlayingActions from './NowPlayingActions'
 import { useLibrary } from '../../context/LibraryContext'
 import { useAudio, setAutoDjMode } from '../../hooks/useAudio'
 import { attachClipToBroadcast, attachAnnouncerToBroadcast, detachClipFromBroadcast, startRecording, stopRecording } from '../../audio/eq'
@@ -1745,7 +1746,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
     <div className="toolbar" ref={toolbarRef}>
       <TransportControls />
       <div className="now-playing-group">
-        <NowPlaying />
+        <NowPlayingActions><NowPlaying /></NowPlayingActions>
         <div className="dj-btn-wrapper">
           <button
             className={`transport-toggle dj-btn ${djActive && !djModeActive ? 'dj-btn--active' : ''} ${djLoading && !djModeActive ? 'dj-btn--loading' : ''}`}

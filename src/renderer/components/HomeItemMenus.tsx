@@ -27,6 +27,7 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useCynthia } from '../context/CynthiaContext'
 import { useGetInfoHandlers } from '../hooks/useGetInfoHandlers'
 import { songMenuEntries, albumMenuEntries } from '../utils/libraryMenus'
+import { withSongMenuExtras, type SongMenuExtras } from '../utils/songMenuExtras'
 import { groupTracksIntoAlbums } from '../utils/albumGroups'
 import { ensureLiveSetsLoaded } from '../liveSets'
 import type { GetInfoTarget } from '../../common/get-info-target'
@@ -37,7 +38,7 @@ type PlayTrack = (track: Track, queue?: Track[], queueIndex?: number, djTransiti
 export interface HomeItemMenusApi {
   /** A song card. `play` is what "Play" does — the same thing the card's
    *  click does; `row` + `index` let Get Info step through the row. */
-  openSongMenu: (e: React.MouseEvent, track: Track, play: () => void, row: Track[], index: number) => void
+  openSongMenu: (e: React.MouseEvent, track: Track, play: () => void, row: Track[], index: number, extras?: SongMenuExtras) => void
   /** An album (any of its tracks; grouped the way the Albums view groups). */
   openAlbumMenu: (e: React.MouseEvent, tracks: Track[]) => void
 }
@@ -63,26 +64,25 @@ export function useHomeItemMenusHost(playTrack: PlayTrack): { api: HomeItemMenus
   const [getInfo, setGetInfo] = useState<GetInfoTarget<Track> | null>(null)
   const [deleteIds, setDeleteIds] = useState<number[] | null>(null)
 
-  const openSongMenu = useCallback((e: React.MouseEvent, track: Track, play: () => void, row: Track[], index: number) => {
+  const openSongMenu = useCallback((e: React.MouseEvent, track: Track, play: () => void, row: Track[], index: number, extras?: SongMenuExtras) => {
     e.preventDefault()
     e.stopPropagation()
     const at = { x: e.clientX, y: e.clientY }
-    setMenu({
-      ...at,
-      items: songMenuEntries({
-        track,
-        tracks: [track],
-        play,
-        library: lib.tracks,
-        playlists: lib.playlists,
-        libDispatch,
-        pbDispatch,
-        openGetInfo: () => setGetInfo({ tracks: [track], index: Math.max(0, index), allTracks: row.length ? row : [track] }),
-        askDelete: () => setDeleteIds([track.id]),
-        openCynthia,
-        at,
-      }),
+    const askDelete = (): void => setDeleteIds([track.id])
+    const items = songMenuEntries({
+      track,
+      tracks: [track],
+      play,
+      library: lib.tracks,
+      playlists: lib.playlists,
+      libDispatch,
+      pbDispatch,
+      openGetInfo: () => setGetInfo({ tracks: [track], index: Math.max(0, index), allTracks: row.length ? row : [track] }),
+      askDelete,
+      openCynthia,
+      at,
     })
+    setMenu({ ...at, items: withSongMenuExtras(items, askDelete, extras) })
   }, [lib.tracks, lib.playlists, libDispatch, pbDispatch, openCynthia])
 
   const openAlbumMenu = useCallback((e: React.MouseEvent, tracks: Track[]) => {
