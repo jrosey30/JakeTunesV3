@@ -48,7 +48,7 @@ import {
   assertNoDesktopBluntPush,
 } from './sidecar-contracts.ts'
 import { fetchHeadersWithin } from './fetch-headers'; import { withBodyInactivityTimeout } from './stream-body-timeout.ts'; import { spoolAwareServe, spoolPaceFor, spoolLimitsFor, SPOOL_DIR_NAME } from './stream-spool.ts'; import { startOvernightPreload } from './overnight-preload.ts'; import { refreshPhoneMirrors, ensureMobileImportAudio } from './phone-mirrors.ts'; import { createPhonePlaylistSync, PHONE_PLAYLIST_FILES, PHONE_PLAYLIST_LEDGERS } from './phone-playlist-sync.ts'; import { safeIpcError } from './safe-ipc-error.ts'
-import { computeDeletedPaths } from './library-deletions'
+import { computeDeletedPaths } from './library-deletions'; import { createPhoneImportGuard } from './phone-import-guard.ts'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
 import { createPlayCache } from './play-cache.ts'
 import { createStreamAlacCache, downloadUrlToFile, ffmpegAlacToFlac, localFileNeedsStreamAlacDecode } from './stream-alac-cache.ts'
@@ -3826,6 +3826,8 @@ const PHONE_AUTHORED_FILES = [
   // backend then drops absorbed rows from its sidecar automatically.
   'mobile-imports.json',
 ]
+// 2026-10-20 — a song deleted here stays deleted: tombstones to homemini + the absorb filter, and freed ids never reissued (phone-import-guard.ts).
+const phoneImportGuard = createPhoneImportGuard({ dir: app.getPath('userData'), baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), libraryTracks: async () => (await libraryCache.get()).tracks as never, warn: quietWarn })
 async function refreshPhoneAuthoredMirrors(): Promise<void> {
   // 2026-08-30 ("do a better job of adding the songs i download on mobile
   // to the library"): mirroring moved to phone-mirrors.ts — HTTP from the
@@ -3842,7 +3844,7 @@ async function refreshPhoneAuthoredMirrors(): Promise<void> {
     merge: { 'mobile-stars.json': (body) => mobileReadsApi.mergeRemoteStars(body) },
   })
   if (refreshedNames.some((n) => (PHONE_PLAYLIST_FILES as readonly string[]).includes(n))) void phonePlaylistSync.apply('phone-mirror')
-  void mobileReadsApi.starPushTick()
+  void mobileReadsApi.starPushTick(); void phoneImportGuard.tombstones.tick()
   if (refreshedNames.length > 0) {
     mobileMetadataOverridesCache.invalidate()
     console.log(`[phone-mirrors] refreshed ${refreshedNames.length} file(s) from NAS: ${refreshedNames.join(', ')}`)
@@ -3862,9 +3864,7 @@ async function refreshPhoneAuthoredMirrors(): Promise<void> {
   // Jake restarted, nothing absorbed, "is it though????").
   if (refreshedNames.includes('mobile-imports.json')) {
     try {
-      const raw = await readFile(join(app.getPath('userData'), 'mobile-imports.json'), 'utf-8')
-      const parsed = JSON.parse(raw) as { tracks?: unknown[] }
-      const tracks = Array.isArray(parsed?.tracks) ? parsed.tracks : []
+      const tracks = await phoneImportGuard.absorbableImports(join(app.getPath('userData'), 'mobile-imports.json'))   // never a row deleted here
       if (tracks.length > 0 && mainWindow) {
         // Audio FIRST (pulled straight from homemini — no rsync, no NAS),
         // so the absorb always lands rows whose bytes are already on disk.
@@ -3883,9 +3883,7 @@ ipc.handle('get-mobile-imports', async () => {
   let overrides: Record<string, { fp?: string; fields?: Record<string, string> }> = {}
   try { overrides = await mobileMetadataOverridesCache.get() } catch { /* none yet */ }
   try {
-    const raw = await readFile(join(app.getPath('userData'), 'mobile-imports.json'), 'utf-8')
-    const parsed = JSON.parse(raw) as { tracks?: unknown[] }
-    const tracks = Array.isArray(parsed?.tracks) ? parsed.tracks : []
+    const tracks = await phoneImportGuard.absorbableImports(join(app.getPath('userData'), 'mobile-imports.json'))   // never a row deleted here
     if (tracks.length > 0) await ensureMobileImportAudio(tracks as never, { libraryRoot: MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, ''), backendUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, '') })
     return { tracks, overrides }
   } catch {
@@ -5214,6 +5212,7 @@ async function saveLibraryImpl(tracks: unknown[], playlists?: unknown[], force?:
     // forget — never blocks the save, never affects local, so a flaky/torn
     // NAS write here is harmless (the app never reads the NAS).
     void mirrorLibraryToNas(library)
+    void phoneImportGuard.afterSave(prevTracks as never, tracks as never, { adoption, force })   // 2026-10-20: what this save deleted → tombstones; ids stay spent
     // 4.5.0-117: throttled local backup snapshot (Phase 0). Best-effort, off
     // the hot path — keeps a rotating restore history (≤1 snapshot / 30 min).
     void maybeAutoSnapshot('save')
@@ -10007,6 +10006,7 @@ app.whenReady().then(async () => {
     prewarmAlacCache,
     trashItem: (abs) => shell.trashItem(abs),
     emitToRenderer: (channel, payload) => { sendToRenderer(channel, payload) },
+    idHighWater: phoneImportGuard.idHighWater,   // 2026-10-20: a freed id is never reissued
   })
 
   // ── Pass-through eviction (2026-08-15, Jake: "files i download are not

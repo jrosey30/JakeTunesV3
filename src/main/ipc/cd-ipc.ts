@@ -12,7 +12,7 @@ import { mkdir, open, readdir, rename, stat, unlink } from 'fs/promises'
 import { importWorkPath } from '../audio-write-guard'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
-import { findFreeImportedId, shouldEnqueueStreamConvert } from '../import-pipeline'
+import { findFreeImportedId, shouldEnqueueStreamConvert, spendImportedId } from '../import-pipeline'
 import {
   IS_MAC, type AudioFormat, convertAudio, DEFAULT_IMPORT_FORMAT, ejectOpticalMedia, extensionForFormat,
   hasOpticalMedia, listMountPoints, volumeNameFromMount,
@@ -254,7 +254,7 @@ export function registerCdIpc(ipc: IpcRegistrar, host: CdIpcHost): void {
     // Centralizes the scan so we don't ship two versions that drift apart.
     let id = await findFreeImportedId(nextId)
     if (id !== nextId) {
-      console.warn(`rip-cd-tracks: nextId ${nextId} collides with existing file imported_${nextId}.*; bumped to ${id}`)
+      console.warn(`rip-cd-tracks: nextId ${nextId} is taken (a file imported_${nextId}.* exists, or the id was spent — track-id-high-water.ts); bumped to ${id}`)
     }
 
     // Validate and default the format.
@@ -272,6 +272,7 @@ export function registerCdIpc(ipc: IpcRegistrar, host: CdIpcHost): void {
       // has now been written and we're about to land on a slot a parallel
       // process took. Cheap (single stat per ext when no collision).
       id = await findFreeImportedId(id)
+      await spendImportedId(id)   // 2026-10-20: a freed id is never reissued (track-id-high-water.ts)
       const subDir = `F${String(id % 50).padStart(2, '0')}`
       const destDir = join(host.getMusicDir(), subDir)
       await mkdir(destDir, { recursive: true })
