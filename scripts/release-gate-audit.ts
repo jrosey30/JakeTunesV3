@@ -294,8 +294,9 @@ function summarize(rows: ArtistOut[], crossCheckPath?: string): string {
       const realRejected: string[] = []
       for (const o of other) {
         const r = ok.find((x) => x.name === o.name)
-        const all = [...(r?.desktop?.verdicts ?? []), ...(r?.phone?.verdicts ?? [])]
-        const refused = r && r.identityOk === false
+        if (!r) continue
+        const all = [...(r.desktop?.verdicts ?? []), ...(r.phone?.verdicts ?? [])]
+        const refused = r.identityOk === false
         for (const p of o.phony ?? []) {
           phonyN++
           const vs = all.filter((v) => key(v.title) === key(p.title))
@@ -309,7 +310,7 @@ function summarize(rows: ArtistOut[], crossCheckPath?: string): string {
           realN++
           const vs = all.filter((v) => key(v.title) === key(t))
           if (vs.some((v) => v.admitted)) { realAdmitted++; continue }
-          realRejected.push(`${o.name}: ${t} (${refused ? `identity: ${r?.identityWhy}` : vs.length ? [...new Set(vs.map((v) => v.reasons.join('+')))].join(' / ') : 'not in the gate lists'})`)
+          realRejected.push(`${o.name}: ${t} (${refused ? `identity: ${r.identityWhy}` : vs.length ? [...new Set(vs.map((v) => v.reasons.join('+')))].join(' / ') : 'not in the gate lists'})`)
         }
       }
       lines.push('## Cross-check: the per-group phony verification (recheck.json)', '')
