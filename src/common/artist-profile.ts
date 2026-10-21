@@ -26,7 +26,9 @@
 export const ARTIST_PROFILE_VERSION = 1
 
 export type ArtistKind = 'person' | 'group' | 'other'
-export type MemberPhotoSource = 'jake' | 'commons' | 'wikidata' | 'discogs' | 'library'
+/** Where a photo came from. 'unknown' is this client's catch-all for a source a
+ *  newer builder adds — read leniently, never a reason to drop the photo. */
+export type MemberPhotoSource = 'jake' | 'commons' | 'wikidata' | 'discogs' | 'deezer' | 'library' | 'unknown'
 
 export interface ArtistProfilePhoto {
   /** "/api/artist-photo/<file>" on homemini. */
@@ -45,6 +47,9 @@ export interface ArtistProfileMember {
   /** Exact library artist name when this member is also an artist in Jake's library. */
   libraryArtist?: string
   photo?: ArtistProfilePhoto
+  /** No photo passed Jake's bar (contract addition 10/20): the tile keeps its
+   *  initials and shows the "Set photo" drop target plainly so he can fill it. */
+  needsPhoto?: boolean
 }
 
 export interface ArtistProfileFact { label: string; value: string; url?: string }
@@ -55,9 +60,15 @@ export interface ArtistProfile {
   mbid?: string
   kind: ArtistKind
   oneLiner?: string
-  origin?: { place: string; since?: string }
+  /** `until` (contract addition 10/20): the year an act ended — the eyebrow
+   *  then reads "1987–1994" instead of "Since 1987". */
+  origin?: { place: string; since?: string; until?: string }
   /** The app's existing artist-image slug. */
   heroPhoto?: string
+  /** A credited header photo the builder chose when the app's own image failed
+   *  its photo gates (contract addition 10/20). Preferred over heroPhoto; not
+   *  square — the header's own aspect. */
+  hero?: ArtistProfilePhoto
   bio?: {
     lede: string
     body: string
@@ -162,8 +173,8 @@ function parsePhoto(v: unknown): ArtistProfilePhoto | undefined {
   const p = v as Record<string, unknown>
   const url = str(p.url, 400)
   if (!url || !artistPhotoFileOf(url)) return undefined
-  const sources: MemberPhotoSource[] = ['jake', 'commons', 'wikidata', 'discogs', 'library']
-  const source = sources.includes(p.source as MemberPhotoSource) ? p.source as MemberPhotoSource : 'library'
+  const sources: MemberPhotoSource[] = ['jake', 'commons', 'wikidata', 'discogs', 'deezer', 'library']
+  const source = sources.includes(p.source as MemberPhotoSource) ? p.source as MemberPhotoSource : 'unknown'
   const out: ArtistProfilePhoto = { url, source }
   const credit = str(p.credit, 300)
   if (credit) out.credit = credit
@@ -188,6 +199,7 @@ function parseMember(v: unknown): ArtistProfileMember | null {
   if (libraryArtist) out.libraryArtist = libraryArtist
   const photo = parsePhoto(m.photo)
   if (photo) out.photo = photo
+  if (m.needsPhoto === true) out.needsPhoto = true
   return out
 }
 
@@ -211,10 +223,18 @@ export function parseArtistProfile(body: unknown): ArtistProfile | null {
   if (b.origin && typeof b.origin === 'object') {
     const o = b.origin as Record<string, unknown>
     const place = str(o.place, 200)
-    if (place) out.origin = { place, ...(str(o.since, 20) ? { since: str(o.since, 20) } : {}) }
+    if (place) {
+      out.origin = { place }
+      const since = str(o.since, 20)
+      const until = str(o.until, 20)
+      if (since) out.origin.since = since
+      if (until) out.origin.until = until
+    }
   }
   const hero = str(b.heroPhoto, 120)
   if (hero && /^[a-z0-9-]+$/.test(hero)) out.heroPhoto = hero
+  const credited = parsePhoto(b.hero)
+  if (credited) out.hero = credited
   if (b.bio && typeof b.bio === 'object') {
     const bio = b.bio as Record<string, unknown>
     const lede = str(bio.lede, 600)
@@ -262,6 +282,13 @@ export function parseArtistProfile(body: unknown): ArtistProfile | null {
 export function memberPhotoUrls(p: ArtistProfile | null | undefined): string[] {
   const out: string[] = []
   for (const m of p?.members?.people ?? []) if (m.photo?.url && !out.includes(m.photo.url)) out.push(m.photo.url)
+  return out
+}
+
+/** Every photo a profile draws from homemini: the credited header photo, then the members'. */
+export function profilePhotoUrls(p: ArtistProfile | null | undefined): string[] {
+  const out = memberPhotoUrls(p)
+  if (p?.hero?.url && !out.includes(p.hero.url)) out.unshift(p.hero.url)
   return out
 }
 

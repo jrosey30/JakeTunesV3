@@ -18,6 +18,9 @@ export interface MemberTileProps {
   member: ArtistProfileMember
   /** artist-image:// slug the photo is saved under on this Mac, if it is. */
   photoSlug?: string
+  /** No photo passed Jake's bar (profile needsPhoto): the "Set photo" hint
+   *  stays up on the initials tile, so the empty ones are easy to fill. */
+  needsPhoto?: boolean
   /** The library artist to open when this member is also one. */
   soloArtist?: string
   onOpenSolo: (name: string) => void
@@ -31,7 +34,7 @@ function initials(name: string): string {
   return (first + last).toUpperCase()
 }
 
-export default function MemberTile({ artist, member, photoSlug, soloArtist, onOpenSolo, onPhotoSet }: MemberTileProps) {
+export default function MemberTile({ artist, member, photoSlug, needsPhoto, soloArtist, onOpenSolo, onPhotoSet }: MemberTileProps) {
   const [busy, setBusy] = useState(false)
   const [drag, setDrag] = useState(false)
   const [error, setError] = useState('')
@@ -67,12 +70,12 @@ export default function MemberTile({ artist, member, photoSlug, soloArtist, onOp
     <div className="ad-member">
       <button
         type="button"
-        className={`ad-member-photo ad-lift${drag ? ' is-drag' : ''}${busy ? ' is-busy' : ''}`}
+        className={`ad-member-photo ad-lift${drag ? ' is-drag' : ''}${busy ? ' is-busy' : ''}${needsPhoto ? ' is-needed' : ''}`}
         onClick={() => { void setPhoto(null) }}
         onDragOver={(e) => { e.preventDefault(); if (!drag) setDrag(true) }}
         onDragLeave={() => setDrag(false)}
         onDrop={onDrop}
-        title={`Click to choose a photo of ${member.name}, or drop one here`}
+        title={needsPhoto ? `No photo of ${member.name} yet — click to choose one, or drop one here` : `Click to choose a photo of ${member.name}, or drop one here`}
         aria-label={`Set photo of ${member.name}`}
       >
         {photoSlug
