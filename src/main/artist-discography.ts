@@ -23,7 +23,7 @@ import { foldAccents, nameKey } from '../common/fold-text.ts'
 import { albumTitlesMatch, normAlbumTitle, type IdentityConfidence } from '../common/artist-identity.ts'
 import { pickStandardRelease } from '../common/discography-pick.ts'
 import {
-  gateReleaseGroups, httpGateSources, fetchReleaseGroupsForGate, describeGate,
+  gateReleaseGroups, displayReleaseTitle, httpGateSources, fetchReleaseGroupsForGate, describeGate,
   type GetJson, type ReleaseSection,
 } from '../common/release-gate.ts'
 
@@ -263,7 +263,7 @@ async function fetchArtistDiscographyOnce(artist: string): Promise<DiscographyRe
         if (titles.length >= 4 && overlap / titles.length > 0.3) continue
         for (const t of titles) seenTitles.add(t)
         const year = (rg.firstReleaseDate || release.date || '').slice(0, 4)
-        albums.push({ title: rg.title, year, tracks, mb: { primaryType: rg.primaryType ?? undefined, secondaryTypes: rg.secondaryTypes } })
+        albums.push({ title: displayReleaseTitle(rg.title), year, tracks, mb: { primaryType: rg.primaryType ?? undefined, secondaryTypes: rg.secondaryTypes } })
       } catch { incomplete = true /* skip this release group; the result isn't cached, so it's retried */ }
     }
 

@@ -100,8 +100,8 @@ describe('regression fixtures: Daft Punk (phone "More from" listed bootlegs)', (
     assert.equal(alive.admitted, false, 'owning a live album does not put it in the album list')
     assert.deepEqual(alive.reasons, ['live-outside-live-list'])
   })
-  it('a Soundtrack album is allowed (TRON: Legacy)', async () => {
-    const { verdict } = await run({ artist: 'Daft Punk', mbid: DAFT_PUNK, identity: 'single', sections: DESKTOP, ownedAlbums: JAKES_DAFT_PUNK })
+  it('a Soundtrack album is allowed (TRON: Legacy, with Jake\'s hidden list off)', async () => {
+    const { verdict } = await run({ artist: 'Daft Punk', mbid: DAFT_PUNK, identity: 'single', sections: DESKTOP, ownedAlbums: JAKES_DAFT_PUNK, hiddenReleases: {} })
     assert.equal(verdict('TRON: Legacy').admitted, true)
   })
   it('a Various Artists compilation is rejected for the credit too', async () => {
@@ -233,7 +233,7 @@ describe('fail closed', () => {
     assert.equal(result.complete, false)
   })
   it('owned releases still pass while the stores are down (they are never asked)', async () => {
-    const { verdict, result } = await run({ artist: 'Daft Punk', mbid: DAFT_PUNK, identity: 'single', sections: PHONE, ownedAlbums: JAKES_DAFT_PUNK }, down)
+    const { verdict, result } = await run({ artist: 'Daft Punk', mbid: DAFT_PUNK, identity: 'single', sections: PHONE, ownedAlbums: JAKES_DAFT_PUNK, hiddenReleases: {} }, down)
     assert.equal(verdict('Homework').admitted, true)
     assert.equal(verdict('TRON: Legacy').transient, true, 'the unowned soundtrack waits for the stores')
     assert.equal(result.complete, false)
@@ -439,10 +439,22 @@ describe('twin lock', () => {
   // The body of release-gate.ts / releaseGate.ts (from the first export to
   // the end) must hash to this in BOTH repos. Changing a rule means changing
   // this number here AND in the twin, in the same change set.
-  const TWIN_BODY_SHA256 = '7efd14f4822a2cbcef8ac3fdcea1e5b0d51aa21dba5aad3b12cadb80d1f4ce2e'
+  const TWIN_BODY_SHA256 = '408365b7f84f48baf98805eae95ebb33f018d55db271f9f6e694e3052a9e7f34'
   it('the gate body matches its twin', () => {
     const src = readFileSync(GATE_SOURCE, 'utf-8')
     const body = src.slice(src.indexOf('export type ReleaseSection'))
     assert.equal(createHash('sha256').update(body).digest('hex'), TWIN_BODY_SHA256)
+  })
+})
+
+describe('Jake 2026-10-21: no TRON, and untitled records match', () => {
+  it('Daft Punk "TRON: Legacy" is on the hidden list', () => {
+    assert.equal(gate.isHiddenRelease('056e4f3e-d505-4dad-8ec1-d04f521cbb56', 'TRON: Legacy'), true)
+    assert.equal(gate.isHiddenRelease('056e4f3e-d505-4dad-8ec1-d04f521cbb56', 'Discovery'), false)
+  })
+  it('MusicBrainz brackets on an untitled record are dropped for display and matching', () => {
+    assert.equal(gate.displayReleaseTitle('[Led Zeppelin IV]'), 'Led Zeppelin IV')
+    assert.equal(gate.displayReleaseTitle('Led Zeppelin IV'), 'Led Zeppelin IV')
+    assert.equal(gate.displayReleaseTitle('Nevermind [Remastered]'), 'Nevermind [Remastered]')
   })
 })
