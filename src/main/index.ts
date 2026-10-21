@@ -3827,7 +3827,7 @@ const PHONE_AUTHORED_FILES = [
   'mobile-imports.json',
 ]
 // 2026-10-20 — a song deleted here stays deleted: tombstones to homemini + the absorb filter, and freed ids never reissued (phone-import-guard.ts).
-const phoneImportGuard = createPhoneImportGuard({ dir: app.getPath('userData'), baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), libraryTracks: async () => (await libraryCache.get()).tracks as never })
+const phoneImportGuard = createPhoneImportGuard({ dir: app.getPath('userData'), baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), libraryTracks: async () => (await libraryCache.get()).tracks as never, warn: quietWarn })
 async function refreshPhoneAuthoredMirrors(): Promise<void> {
   // 2026-08-30 ("do a better job of adding the songs i download on mobile
   // to the library"): mirroring moved to phone-mirrors.ts — HTTP from the
