@@ -344,6 +344,8 @@ describe('rules', () => {
     assert.equal(gate.sameRelease('The Beatles (The White Album)', 'The Beatles’ Hits', match), false, 'a prefix is not the same record')
     assert.equal(gate.sameRelease('Sgt. Pepper\'s Lonely Hearts Club Band (Remastered)', 'Sgt. Pepper’s Lonely Hearts Club Band', match), true)
     assert.equal(gate.storeTitleMatches('4D Country - EP', '4D Country', match), true)
+    assert.equal(gate.storeTitleMatches('40oz. To Freedom', '40 oz. to Freedom', match), true, 'spacing is not a different record')
+    assert.equal(gate.storeTitleMatches('The Marshall Mathers LP2 (Deluxe)', 'The Marshall Mathers LP 2', match), true)
   })
   it('owning a record does not make every title containing its words owned', () => {
     assert.equal(gate.ownsRelease('The Alternate A Hard Day\'s Night', ['A Hard Day\'s Night'], match), false)
@@ -411,7 +413,7 @@ describe('twin lock', () => {
   // The body of release-gate.ts / releaseGate.ts (from the first export to
   // the end) must hash to this in BOTH repos. Changing a rule means changing
   // this number here AND in the twin, in the same change set.
-  const TWIN_BODY_SHA256 = 'ec32a2bb44ffab67cac1eb9f175abc9f4a0d80f8a9e7da73554a5d4354d65e7b'
+  const TWIN_BODY_SHA256 = '7695a371b50b86e5c62cb5b011c6524cbcd5dd026fd04a40feb17d7fe83fa547'
   it('the gate body matches its twin', () => {
     const src = readFileSync(GATE_SOURCE, 'utf-8')
     const body = src.slice(src.indexOf('export type ReleaseSection'))

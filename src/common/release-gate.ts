@@ -276,7 +276,7 @@ export function decorationWords(title: string, fold: Fold): string[] {
 /// Is `other` (a library or store title) the same release as the
 /// MusicBrainz title `rgTitle`? Equal under the twin title normalizer
 /// (normAlbumTitle: case, accents, punctuation, a leading "The", brackets
-/// and subtitles dropped), and the words the release adds in brackets or
+/// and subtitles dropped; spaces ignored), and the words the release adds in brackets or
 /// after a subtitle mark must be in the other title too.
 /// Deliberately stricter than albumTitlesMatch, whose prefix and word-subset
 /// rules suit owned-vs-catalogue counting but here admit junk: "The
@@ -289,8 +289,11 @@ export function sameRelease(other: string, rgTitle: string, deps: Pick<GateDeps,
   // Bowie's "★" normalizes to nothing.
   const plain = (t: string) => t.normalize('NFKC').trim().toLowerCase()
   if (plain(other) && plain(other) === plain(rgTitle)) return true
-  const a = deps.normTitle(other)
-  if (!a || a !== deps.normTitle(rgTitle)) return false
+  // Spacing doesn't make a different record: Sublime's "40 oz. to Freedom"
+  // is the stores' "40oz. To Freedom", Eminem's "LP 2" their "LP2".
+  const squash = (t: string) => deps.normTitle(t).replace(/ /g, '')
+  const a = squash(other)
+  if (!a || a !== squash(rgTitle)) return false
   const extra = decorationWords(rgTitle, deps.fold)
   if (extra.length === 0) return true
   const have = new Set(deps.fold(other, ' ').split(' ').filter(Boolean))
