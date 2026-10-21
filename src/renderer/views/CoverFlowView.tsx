@@ -17,6 +17,8 @@ import '../styles/coverflow.css'
 import { addToPlaylistEntry, addToIpodPoolEntry, queueMenuEntries } from '../utils/playlistMenu'
 import { JUKEBOX_WHEEL_OPTIONS } from '../../common/cover-flow-wheel'
 import { useCoverFlowWheel } from '../hooks/useCoverFlowWheel'
+import { useArrowKeyOwner } from '../hooks/useArrowKeyOwner'
+import { overlayOpen } from '../utils/arrowKeyOwner'
 
 /// V5 facelift: Cover Flow — reimagined as THE JUKEBOX ARC (Jake's pick
 /// over the classic Apple side-scroll rolodex). Same capability —
@@ -181,7 +183,13 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
   // arrow press flips the mechanism AND skips the song / moves the volume
   // (the same arrows-bleed bug SongsView fixed 2026-06-24; caught live
   // here too). ↑↓ are first-class here — the jukebox flips vertically.
+  // Unfocused, the on-screen flow still owns plain ←/→ (utils/arrowKeyOwner.ts,
+  // the iTunes way); ↑/↓ stay the volume until you click in, ⌘←/⌘→ the track.
+  useArrowKeyOwner(stageRef, { step: (d) => go(d) }, albums.length > 0)
   const onKeyDown = useCallback((e: React.KeyboardEvent) => {
+    // ⌘/Ctrl/⌥ + arrow is the transport's (previous / next track); with a
+    // menu or dialog open the flow keeps its hands off.
+    if (e.metaKey || e.ctrlKey || e.altKey || overlayOpen()) return
     if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); go(-1) }
     else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); go(1) }
     else if (e.key === 'Enter') {

@@ -91,6 +91,14 @@ export default function AlbumDetailView() {
   // The label names where the click lands: history when there is history,
   // else the stored return view — the same two branches as goBack below.
   const backLabel = (canGoBack && backLabelForLocation(backTo, backToSearch)) || albumDetailBackLabel(lib.albumDetailReturnView)
+  // On its way out (the Island Albums disc handoff holds this page on screen
+  // for the frame its View Transition captures — discHandoff.ts) the history
+  // has already moved: show the label you clicked, or "← Home" flips to the
+  // page before Home inside the shrinking snapshot. While the page is up
+  // (currentView is the album page) it IS backLabel.
+  const shownBackLabelRef = useRef(backLabel)
+  if (lib.currentView === 'album-detail') shownBackLabelRef.current = backLabel
+  const shownBackLabel = shownBackLabelRef.current
   // Prefer the real history (so this matches the titlebar ‹ and ⌘[); fall back
   // to the stored return view only when there's nothing to go back to.
   const goBack = useCallback(() => {
@@ -510,7 +518,7 @@ export default function AlbumDetailView() {
     return (
       <div className="album-page album-page--empty">
         <div className="album-page-topbar">
-          <button type="button" className="album-page-back" onClick={goBack}>{backLabel}</button>
+          <button type="button" className="album-page-back" onClick={goBack}>{shownBackLabel}</button>
         </div>
         <p className="album-page-notfound">That album isn't in your library anymore.</p>
       </div>
@@ -537,7 +545,7 @@ export default function AlbumDetailView() {
   return (
     <div className="album-page">
       <div className="album-page-topbar">
-        <button type="button" className="album-page-back" onClick={goBack}>{backLabel}</button>
+        <button type="button" className="album-page-back" onClick={goBack}>{shownBackLabel}</button>
         {siblingAlbums.length > 1 && curIdx >= 0 && (
           <div className="album-page-flip" title={`${albumArtist} — album ${curIdx + 1} of ${siblingAlbums.length}`}>
             <button

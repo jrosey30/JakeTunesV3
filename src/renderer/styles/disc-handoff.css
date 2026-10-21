@@ -1,0 +1,31 @@
+/* The disc ↔ album page handoff (renderer/discHandoff.ts): while the View
+   Transition runs, the Home's jewel-case disc and the album page's cover are
+   the same thing, `jt-disc` — the disc grows into the cover (open) or the
+   cover shrinks into the disc (back). Named ONLY during the transition
+   (:root.jt-disc-vt) so nothing else in the app ever carries the name.
+   --jt-disc-morph is set from common/jewel-case.ts for each run. */
+:root.jt-disc-vt .tn-case-disc,
+:root.jt-disc-vt .album-page-cover {
+  view-transition-name: jt-disc;
+}
+
+:root.jt-disc-vt::view-transition-group(jt-disc),
+:root.jt-disc-vt::view-transition-old(jt-disc),
+:root.jt-disc-vt::view-transition-new(jt-disc) {
+  animation-duration: var(--jt-disc-morph, 420ms);
+  /* out of the disc: quick off the hub, a soft landing on the page */
+  animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+/* back into the disc: lands crisply — the disc drops onto the hub the
+   moment it arrives, no long tail */
+:root.jt-disc-vt--back::view-transition-group(jt-disc),
+:root.jt-disc-vt--back::view-transition-old(jt-disc),
+:root.jt-disc-vt--back::view-transition-new(jt-disc) {
+  animation-timing-function: cubic-bezier(0.35, 0, 0.2, 1);
+}
+/* the pages crossfade under it, a little quicker than the morph */
+:root.jt-disc-vt::view-transition-old(root),
+:root.jt-disc-vt::view-transition-new(root) {
+  animation-duration: calc(var(--jt-disc-morph, 420ms) * 0.8);
+  animation-timing-function: ease;
+}

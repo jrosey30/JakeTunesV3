@@ -17,8 +17,12 @@
  *              classic glossy Cover Flow (common/cover-flow.ts) — click a side
  *              cover to bring it forward, ←/→ when focused, the mouse's side
  *              wheel or the trackpad's two-finger side swipe over it
- *              (common/cover-flow-wheel.ts), click the centred cover to open
- *              the album.
+ *              (common/cover-flow-wheel.ts). The centred cover sits in a CD
+ *              jewel case (JewelCase.tsx, the phone's twin): click it (or
+ *              Enter) and the lid pops, swings open on its left hinge, the
+ *              disc lifts and the album page comes out of the disc; back from
+ *              that page it shrinks into the disc and the lid snaps shut
+ *              (discHandoff.ts). Reduce Motion: straight to the album.
  *   digging    NOW DIGGING — five 2:3 artist posters (the app's artist photos,
  *              an initials poster otherwise), click → the artist page.
  *
@@ -31,14 +35,19 @@
  * this Mac's own history when homemini is away; nothing here is invented, and
  * an empty part hides rather than apologising. Names wrap, never clip.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import AlbumArtImage from './AlbumArtImage'
+import JewelCase, { type JewelCaseMode } from './JewelCase'
+import { armDiscOpen, discHandoffSupported, endReturningCase, peekReturningCase, prefersReducedMotion } from '../discHandoff'
+import { albumArtUrl, artRevision } from '../artRevision'
 import { useHomeSpotlight } from '../homeSpotlight'
 import { useIslandAlbums } from '../syncedPicks'
 import { islandAlbumKey } from '../../common/synced-picks'
-import { coverFlowPoses, stepCover, coverFlowKeyDelta, clampCoverIndex } from '../../common/cover-flow'
+import { coverFlowPoses, stepCover, coverFlowKeyDelta, clampCoverIndex, COVER_FLOW_DEFAULTS } from '../../common/cover-flow'
 import { COVER_WHEEL_DEFAULTS } from '../../common/cover-flow-wheel'
 import { useCoverFlowWheel } from '../hooks/useCoverFlowWheel'
+import { useArrowKeyOwner } from '../hooks/useArrowKeyOwner'
+import { overlayOpen } from '../utils/arrowKeyOwner'
 import { groupTracksIntoAlbums, type Album } from '../utils/albumGroups'
 import { indexAlbumsForIsland } from '../utils/islandSlots'
 import { albumKeyFromStrings } from '../utils/albumKey'
@@ -128,6 +137,23 @@ function waitForDuck(): Promise<void> {
   })
 }
 
+/** The jewel case's run on the front cover: opening, back open on Home, or snapping shut. */
+interface CaseRun { key: string; mode: 'open' | 'held-open' | 'close' }
+/** A cover's identity in the flow (the React key too). */
+const flowKeyOf = (f: { slot: number; pick: { artist: string; album: string } }): string => `${f.slot}|${islandAlbumKey(f.pick)}`
+/** A step's case plastic: off the old front (tnCasePlasticOut, 220 ms), up on the new (tnCasePlasticIn, 330 + 220 ms). */
+const CASE_LEAVE_MS = 240
+const CASE_ARRIVE_MS = 580
+
+/** Warm the album page's full-size cover while the case opens (the transition waits for it to load). */
+function warmAlbumCover(hash: string | undefined): void {
+  if (!hash) return
+  const img = new Image()
+  img.decoding = 'async'
+  img.src = albumArtUrl(hash, undefined, artRevision(hash))
+  img.decode().then(() => undefined, () => undefined)
+}
+
 const plural = (n: number, one: string, many: string): string => `${n.toLocaleString()} ${n === 1 ? one : many}`
 /** "Oden & Fatzo" → "OF", "The Beatles" → "B": words with a letter or digit only. */
 const posterInitials = (name: string): string =>
@@ -170,6 +196,13 @@ export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispa
   const onLivingArtError = useCallback(() => {
     if (living?.artworkHash && living.artworkHash !== localLivingHash) setRefusedHash(living.artworkHash)
   }, [living, localLivingHash])
+  // The hero cover opens its album, as the phone's does (Jake's parity audit,
+  // 2026-10-21); right-click and drag stay the library's.
+  const openLiving = useCallback(() => {
+    if (!living) return
+    if (livingAlbum) dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyFromStrings(livingAlbum.artist, livingAlbum.name) })
+    else setNotice(`${living.album} by ${living.artist} isn’t in this library`)
+  }, [living, livingAlbum, dispatch])
 
   // Island picks in rank order; the rank is the slot (No. 1 … No. 10).
   const flow = useMemo(() => island.values
@@ -227,11 +260,49 @@ export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispa
   }, [doc])
 
   // ── Cover Flow ───────────────────────────────────────────────────────
-  const [active, setActive] = useState(0)
+  // Back from an album page that came out of the case's disc, the case comes
+  // back OPEN on that cover (discHandoff.ts) — the page shrinks into its disc,
+  // then it shuts. Pure reads here (StrictMode runs initializers twice).
+  const [caseRun, setCaseRun] = useState<CaseRun | null>(() => {
+    const r = peekReturningCase()
+    return r && flow.some((f) => flowKeyOf(f) === r.flowKey) ? { key: r.flowKey, mode: 'held-open' } : null
+  })
+  const [active, setActive] = useState(() => {
+    const r = peekReturningCase()
+    const i = r ? flow.findIndex((f) => flowKeyOf(f) === r.flowKey) : -1
+    return i >= 0 ? i : 0
+  })
   const at = clampCoverIndex(active, flow.length)
-  const stageRef = useRef<HTMLDivElement>(null)
-  const [stageWidth, setStageWidth] = useState(1104)
+  // While the case runs the flow holds still: no steps, no second open.
+  const caseBusyRef = useRef(false)
+  caseBusyRef.current = caseRun !== null
+  // The case's plastic sits on the front cover only: a step fades it off the
+  // old front and up on the new one (derived during render, so the new front
+  // never flashes its plastic before the fade).
+  const [shownAt, setShownAt] = useState(at)
+  const [stepped, setStepped] = useState<{ arrive: string; leave: string | null } | null>(null)
+  if (shownAt !== at) {
+    setShownAt(at)
+    const from = flow[shownAt]
+    const to = flow[at]
+    setStepped(to ? { arrive: flowKeyOf(to), leave: from ? flowKeyOf(from) : null } : null)
+  }
   useEffect(() => {
+    if (!stepped) return
+    // The old front's plastic is gone; the new front's has come up (then it
+    // is plain 'rest' again, so a later class change never replays the fade).
+    const t1 = stepped.leave ? window.setTimeout(() => setStepped((s) => (s === stepped ? { ...s, leave: null } : s)), CASE_LEAVE_MS) : 0
+    const t2 = window.setTimeout(() => setStepped((s) => (s && s.arrive === stepped.arrive ? null : s)), CASE_ARRIVE_MS)
+    return () => { window.clearTimeout(t1); window.clearTimeout(t2) }
+  }, [stepped])
+
+  const stageRef = useRef<HTMLDivElement>(null)
+  const frontReflectionRef = useRef<HTMLSpanElement>(null)
+  const getFrontReflection = useCallback(() => frontReflectionRef.current, [])
+  const [stageWidth, setStageWidth] = useState(1104)
+  // Measured before paint: the case coming back open must be where the
+  // album page's cover shrinks to on the transition's first frame.
+  useLayoutEffect(() => {
     const el = stageRef.current
     if (!el) return
     const ro = new ResizeObserver(() => setStageWidth(el.clientWidth || 1104))
@@ -242,6 +313,7 @@ export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispa
   // Side wheel / side swipe: horizontal gestures step the covers (and never
   // scroll the page); vertical ones scroll the Home as before.
   useCoverFlowWheel(stageRef, (steps) => {
+    if (caseBusyRef.current) return
     setActive((cur) => stepCover(clampCoverIndex(cur, flow.length), steps, flow.length))
   }, COVER_WHEEL_DEFAULTS, flow.length > 0)
   const poses = useMemo(() => coverFlowPoses(flow.length, at, { width: stageWidth }), [flow.length, at, stageWidth])
@@ -253,20 +325,82 @@ export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispa
     else setNotice(`${f.pick.album} by ${f.pick.artist} isn’t in this library`)
   }, [flow, dispatch])
 
+  // The front cover: open its jewel case, then the album page comes out of
+  // the disc (JewelCase → onDiscUp). Reduce Motion, or nothing to open: the
+  // plain way.
+  const openFront = useCallback((i: number) => {
+    if (caseBusyRef.current) return
+    const f = flow[i]
+    if (!f) return
+    if (!f.album || prefersReducedMotion()) { openFlow(i); return }
+    warmAlbumCover(f.hash)
+    setCaseRun({ key: flowKeyOf(f), mode: 'open' })
+  }, [flow, openFlow])
+  const onDiscUp = useCallback(() => {
+    const f = caseRun ? flow.find((x) => flowKeyOf(x) === caseRun.key) : undefined
+    if (!f?.album) { setCaseRun(null); return }
+    const albumKey = albumKeyFromStrings(f.album.artist, f.album.name)
+    // MainContent turns this navigation into the disc → page transition.
+    if (discHandoffSupported()) armDiscOpen(albumKey, flowKeyOf(f))
+    dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey })
+  }, [caseRun, flow, dispatch])
+  // Back on Home with the case open: once the page has shrunk into the disc,
+  // the disc drops and the lid snaps shut.
+  useEffect(() => {
+    if (caseRun?.mode !== 'held-open') return
+    const r = peekReturningCase()
+    let live = true
+    const shut = (): void => {
+      if (live) setCaseRun((c) => (c && c.mode === 'held-open' ? { ...c, mode: 'close' } : c))
+    }
+    if (r) void r.finished.then(shut)
+    else shut()
+    return () => { live = false }
+  }, [caseRun?.mode])
+  const onShut = useCallback(() => {
+    endReturningCase(peekReturningCase())
+    setCaseRun(null)
+  }, [])
+  // The island list changed under a running case (a sync from the phone):
+  // its cover isn't in front any more — drop the run so the flow isn't held.
+  const frontKey = flow[at] ? flowKeyOf(flow[at]) : null
+  useEffect(() => {
+    if (caseRun && caseRun.key !== frontKey) {
+      if (caseRun.mode !== 'open') endReturningCase(peekReturningCase())
+      setCaseRun(null)
+    }
+  }, [caseRun, frontKey])
+
+  // While the flow is on screen it owns plain ←/→ and Enter even unfocused
+  // (utils/arrowKeyOwner.ts, the iTunes way — Jake 10/21: "i have to click
+  // inside the home page for it to cover flow. come on!!!!"). ⌘←/⌘→ stay
+  // previous / next track.
+  useArrowKeyOwner(stageRef, {
+    step: (d) => {
+      if (caseBusyRef.current) return
+      setActive((cur) => stepCover(clampCoverIndex(cur, flow.length), d, flow.length))
+    },
+    enter: () => openFront(at),
+  }, flow.length > 0)
+
   const onFlowKey = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
+    // ⌘/Ctrl/⌥ + arrow is the transport's (previous / next track), focused or
+    // not; and with a menu or dialog open the flow keeps its hands off.
+    if (e.metaKey || e.ctrlKey || e.altKey || overlayOpen()) return
     const d = coverFlowKeyDelta(e.key)
     if (d !== 0) {
       // stopPropagation is LOAD-BEARING: App.tsx's document-level transport
       // handler takes ←/→ as previous/next track (the CoverFlowView lesson).
       e.preventDefault()
       e.stopPropagation()
+      if (caseBusyRef.current) return
       setActive((cur) => stepCover(clampCoverIndex(cur, flow.length), d, flow.length))
     } else if (e.key === 'Enter' && e.target === e.currentTarget) {
       e.preventDefault()
       e.stopPropagation()
-      openFlow(at)
+      openFront(at)
     }
-  }, [flow.length, at, openFlow])
+  }, [flow.length, at, openFront])
 
   // ── Now Digging portraits ────────────────────────────────────────────
   const digging: DiggingCard[] = doc?.nowDigging ?? []
@@ -305,6 +439,17 @@ export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispa
           <div className="tn-hero">
             <div
               className="tn-cover"
+              role="button"
+              tabIndex={0}
+              aria-label={`Open ${living.album} by ${living.artist}`}
+              title={`Open ${living.album}`}
+              onClick={openLiving}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter' || e.target !== e.currentTarget) return
+                e.preventDefault()
+                e.stopPropagation()
+                openLiving()
+              }}
               {...(livingAlbum ? {
                 onContextMenu: (e: React.MouseEvent) => menus?.openAlbumMenu(e, livingAlbum.tracks),
                 draggable: true,
@@ -378,19 +523,30 @@ export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispa
                 const p = poses[i]
                 if (!p) return null
                 const front = i === at
+                const key = flowKeyOf(f)
                 const style: CSSProperties = {
                   transform: `translate3d(${p.tx}px, ${p.ty}px, 0) rotateY(${p.rotateY}deg) scale(${p.scale})`,
                   zIndex: p.zIndex,
                   visibility: p.onStage ? 'visible' : 'hidden',
                 }
+                const run = front && caseRun?.key === key ? caseRun : null
+                const caseMode: JewelCaseMode | null = run
+                  ? run.mode
+                  : front
+                    ? (stepped?.arrive === key ? 'arrive' : 'rest')
+                    : (stepped?.leave === key ? 'leave' : null)
                 return (
                   <button
-                    key={`${f.slot}|${islandAlbumKey(f.pick)}`}
+                    key={key}
                     type="button"
                     tabIndex={-1}
-                    className={`tn-flow-cover${front ? ' tn-flow-cover--front' : ''}${f.album ? '' : ' tn-flow-cover--missing'}`}
+                    className={`tn-flow-cover${front ? ' tn-flow-cover--front' : ''}${f.album ? '' : ' tn-flow-cover--missing'}${run?.mode === 'held-open' ? ' tn-flow-cover--case-open' : ''}`}
                     style={style}
-                    onClick={() => (front ? openFlow(i) : setActive(i))}
+                    onClick={() => {
+                      if (caseBusyRef.current) return
+                      if (front) openFront(i)
+                      else setActive(i)
+                    }}
                     {...(f.album ? {
                       onContextMenu: (e: React.MouseEvent) => menus?.openAlbumMenu(e, f.album!.tracks),
                       draggable: true,
@@ -406,11 +562,21 @@ export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispa
                         button so it turns with it (-webkit-box-reflect on 3D-turned
                         covers drops whole covers mid-move — CoverFlowView's
                         "no per-card reflections" lesson). */}
-                    <span className="tn-flow-reflection" aria-hidden="true">
+                    <span className="tn-flow-reflection" aria-hidden="true" ref={front ? frontReflectionRef : undefined}>
                       {f.hash
                         ? <AlbumArtImage hash={f.hash} alt="" size={480} className="tn-flow-img" />
                         : <span className="tn-flow-ph"><DiscGlyph size={64} /></span>}
                     </span>
+                    {caseMode && (
+                      <JewelCase
+                        hash={f.hash}
+                        artPx={COVER_FLOW_DEFAULTS.centerSize}
+                        mode={caseMode}
+                        reflection={front ? getFrontReflection : undefined}
+                        onDiscUp={front ? onDiscUp : undefined}
+                        onShut={front ? onShut : undefined}
+                      />
+                    )}
                   </button>
                 )
               })}
