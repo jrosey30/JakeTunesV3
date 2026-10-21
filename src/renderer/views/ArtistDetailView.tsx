@@ -35,7 +35,7 @@ import { playsEverywhere } from '../../common/plays-elsewhere'
 import { useArtistProfile } from '../artistProfile'
 import {
   topSongs, mostPlayedRecord, earliestAdded, monthYear, dayMonthYear, clock, lengthLabel, plural,
-  RELEASE_KIND_SINGULAR, heroEyebrow, heroNameSize, writtenFrom,
+  RELEASE_KIND_SINGULAR, heroEyebrow, heroNameSize, writtenFrom, albumTileMeta,
 } from '../../common/artist-page'
 import MemberTile from '../components/artist/MemberTile'
 import MoreFromList, { type MoreFromRelease } from '../components/artist/MoreFromList'
@@ -550,8 +550,10 @@ export default function ArtistDetailView() {
 
   const cover = (personaName: string, g: AlbumGroup, kind: ReleaseKind, showKind: boolean) => {
     const hash = findArtHash(personaName, g.name)
-    const plays = g.tracks.reduce((s, t) => s + playsOf(t), 0)
-    const meta = [showKind ? RELEASE_KIND_SINGULAR[kind] : '', g.year ? String(g.year) : '', plays > 0 ? plural(plays, 'play') : plural(g.tracks.length, 'song')].filter(Boolean).join(' · ')
+    // Kind · year only ("2025", "EP · 2023"). Jake, 10/20: "i also dont need
+    // to see the amount of plays next to each album" — plays live in the
+    // header, the Your <Artist> table and the Most played record card.
+    const meta = albumTileMeta(showKind ? RELEASE_KIND_SINGULAR[kind] : '', g.year)
     return (
       <button
         key={g.name}
@@ -569,7 +571,7 @@ export default function ArtistDetailView() {
           {hash ? <AlbumArtImage hash={hash} alt={`${g.name} cover`} size={480} /> : <span className="ad-cover-blank" aria-hidden="true" />}
         </span>
         <span className="ad-cover-title">{g.name}</span>
-        <span className="ad-cover-meta">{meta}</span>
+        {meta && <span className="ad-cover-meta">{meta}</span>}
       </button>
     )
   }
