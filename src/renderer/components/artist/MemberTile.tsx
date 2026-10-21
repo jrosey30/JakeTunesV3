@@ -12,6 +12,9 @@ import type { ArtistProfileMember, ArtistProfileState } from '../../../common/ar
  * click to choose one, to make it that member's photo ("Jake's own pick always
  * wins"). Same hover hint and interaction as a custom playlist cover. It goes
  * to homemini, so the phone shows it too; a failure says so right here.
+ *
+ * A sourced photo's credit is never printed (Jake: no footnotes); it rides
+ * only as the picture's hover title.
  */
 export interface MemberTileProps {
   artist: string
@@ -79,7 +82,7 @@ export default function MemberTile({ artist, member, photoSlug, needsPhoto, solo
         aria-label={`Set photo of ${member.name}`}
       >
         {photoSlug
-          ? <img src={`artist-image://${photoSlug}.jpg`} alt={member.name} className="ad-member-img" draggable={false} />
+          ? <img src={`artist-image://${photoSlug}.jpg`} alt={member.name} className="ad-member-img" draggable={false} title={member.photo?.credit ? `${member.name} photo: ${member.photo.credit}` : undefined} />
           : <span className="ad-member-mono" aria-hidden="true">{initials(member.name)}</span>}
         <span className="ad-member-hint">{busy ? 'Saving…' : drag ? 'Drop photo' : 'Set photo'}</span>
       </button>

@@ -162,14 +162,6 @@ export function heroNameSize(name: string): 'xl' | 'l' | 'm' | 's' {
   return 's'
 }
 
-/** "Written from Wikipedia and MusicBrainz" / "Written from Wikipedia, MusicBrainz and Pitchfork". */
-export function writtenFrom(labels: readonly string[]): string {
-  const u = [...new Set(labels.filter(Boolean))]
-  if (u.length === 0) return ''
-  if (u.length === 1) return `Written from ${u[0]}`
-  return `Written from ${u.slice(0, -1).join(', ')} and ${u[u.length - 1]}`
-}
-
 const LONG_MONTHS: Record<string, string> = {
   january: 'Jan', february: 'Feb', march: 'Mar', april: 'Apr', may: 'May', june: 'Jun', july: 'Jul',
   august: 'Aug', september: 'Sep', sept: 'Sep', october: 'Oct', november: 'Nov', december: 'Dec',
