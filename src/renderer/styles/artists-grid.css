@@ -26,13 +26,19 @@
 .ag-ph img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .ag-card:hover .ag-ph { box-shadow: 0 6px 16px rgba(0, 0, 0, 0.16); }
 .ag-ini { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 26px; font-weight: 700; letter-spacing: 0.04em; }
-/* Play disc: 32×32 in the photo's lower right; the 12×13 triangle sits optically centred. */
-.ag-play { position: absolute; right: 7%; bottom: 7%; width: 32px; height: 32px; border-radius: 50%; border: 0; background: var(--brand-orange, #FC5501); color: #fff; display: flex; align-items: center; justify-content: center; padding-left: 2px; cursor: pointer; opacity: 0; transform: translateY(3px); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25); transition: opacity 120ms ease, transform 120ms ease; }
-.ag-card:hover .ag-play, .ag-play:focus-visible { opacity: 1; transform: none; }
+/* Hover play (option A, Jake 2026-10-21): a light scrim over the photo and a
+   white disc dead centre with the brand-orange play. The disc is centred with
+   inset + margin:auto (no transform, so the hover lift can't shift it off
+   centre); the triangle is optically centred by a 1/12-width nudge. */
+.ag-scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.22); opacity: 0; transition: opacity 120ms ease; pointer-events: none; }
+.ag-play { position: absolute; inset: 0; margin: auto; width: clamp(36px, 30%, 48px); height: clamp(36px, 30%, 48px); border-radius: 50%; border: 0; padding: 0; background: #fff; color: var(--brand-orange, #FC5501); display: flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3); transition: opacity 120ms ease; }
+.ag-play-tri { display: block; transform: translateX(1.33px); }
+.ag-card:hover .ag-scrim, .ag-card:hover .ag-play, .ag-play:focus-visible { opacity: 1; }
+.ag-play:focus-visible { outline: 2px solid var(--brand-orange, #FC5501); outline-offset: 2px; }
 .ag-name { font-size: 13px; font-weight: 650; line-height: 1.25; color: #1c1c1e; text-wrap: balance; overflow-wrap: anywhere; }
 .ag-meta { font-size: 11px; line-height: 1.3; color: #8a857c; }
 .ag-chip { margin-top: 1px; font-size: 10.5px; font-weight: 700; color: var(--brand-orange, #FC5501); font-variant-numeric: tabular-nums; }
-@media (prefers-reduced-motion: reduce) { .ag-play, .ag-ph { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .ag-play, .ag-scrim, .ag-ph { transition: none; } }
 /* The hint names all three things the filter matches — give it room so it
    never clips ("Filter by artist, genre or cc", 10/11). */
 .ag-tools .list-filter { width: 300px; max-width: 46vw; }

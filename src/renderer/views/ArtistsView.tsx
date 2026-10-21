@@ -273,9 +273,15 @@ export default function ArtistsView(): JSX.Element {
           {slug
             ? <img src={`artist-image://${slug}.jpg`} alt="" draggable={false} loading="lazy" decoding="async" />
             : <div className="ag-ini" style={{ background: hashColor(a.name) }}>{initials(a.name.replace(/^the\s+/i, ''))}</div>}
+          {/* Hover play (Jake 2026-10-21, option A of three he was shown): the
+              photo dims a touch and a white disc with the orange play sits in
+              its exact centre. The triangle's box is centred, then nudged right
+              by 1/12 of its width so it LOOKS centred (a triangle's mass sits
+              left of its box centre). */}
+          <span className="ag-scrim" aria-hidden="true" />
           <button type="button" className="ag-play" aria-label={`Play ${a.name}`} title={`Play ${a.name}`}
             onClick={(e) => { e.stopPropagation(); playArtist(a) }} onKeyDown={(e) => e.stopPropagation()}>
-            <svg width="12" height="13" viewBox="0 0 12 13" aria-hidden="true"><path d="M1.5 1l9.5 5.5-9.5 5.5z" fill="currentColor" /></svg>
+            <svg className="ag-play-tri" width="16" height="18" viewBox="0 0 16 18" aria-hidden="true"><path d="M0 0L16 9L0 18Z" fill="currentColor" /></svg>
           </button>
         </div>
         <div className="ag-name">{a.name}</div>
