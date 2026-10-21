@@ -8,7 +8,9 @@
  *     a ticket stub for nights + set. Play / Crowd / Undeclare.
  *   • THE SHOW, START TO FINISH: a timeline strip — one segment per song,
  *     sized by length; played segments toned, the current one lit; hover
- *     names the song, click seeks there.
+ *     names the song. It is a MAP, not a seek bar: a click starts the show
+ *     from the top (common/concert-start.ts — Jake 8/8, "it should start
+ *     from track 1 thats it"), exactly like a setlist row.
  *   • THE PROGRAM: the same spine + rows (cs-/cj- classes, shared with the
  *     album page's setlist), with `concert.segments` dividers, in a two-
  *     column body next to a sticky companion: The night, At a glance, Your
@@ -24,6 +26,7 @@
 import React, { useMemo, useEffect, useState, useRef, useSyncExternalStore, useCallback } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
+import { planConcertStart } from '../../common/concert-start'
 import { useAudio } from '../hooks/useAudio'
 import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, liveSetFor, cueAt, promoteTrackToLibrary, unregisterLiveSet, updateConcertMeta, cleanLiveTitle as cleanTitle } from '../liveSets'
 import { attachConcert, detachConcert, subscribeConcertCrowd, isConcertCrowdEnabled, setConcertCrowdEnabled } from '../concertCrowd'
@@ -69,8 +72,8 @@ function stripTicks(totalMs: number): number[] {
 
 export default function ConcertDetailView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()
-  const { state: pb } = usePlayback()
-  const { playTrack, seek } = useAudio()
+  const { state: pb, dispatch: pbDispatch } = usePlayback()
+  const { playTrack } = useAudio()
   useEffect(() => { void ensureLiveSetsLoaded() }, [])
   useSyncExternalStore(subscribeLiveSets, getLiveSetsSnapshot)
   const albumKey = useSyncExternalStore(subscribeConcertKey, getConcertKey)
@@ -94,34 +97,24 @@ export default function ConcertDetailView() {
   const setPlaying = !!(mergedTrack && pb.nowPlaying?.id === mergedTrack.id)
   const activeCue = liveSet && setPlaying ? cueAt(liveSet, pb.position * 1000) : null
 
-  const pendingSeekRef = useRef<number | null>(null)
-  const playLiveSet = useCallback((startFrac?: number) => {
+  // A concert starts at the top. Full stop. Every click on this page's songs
+  // (a setlist row, a strip segment, the Play button) runs this one rule —
+  // the phone's LiveConcertsView startShow(): not playing → play the show
+  // from 0:00 (playTrack builds a fresh player at the top); already the
+  // current track → nothing.
+  const startShow = useCallback(() => {
     if (!mergedTrack) return
+    const plan = planConcertStart({ showIsCurrent: setPlaying, repeat: pb.repeat })
+    if (plan.action === 'none') return
+    // A stale repeat-one would loop the entire merged set.
+    if (plan.clearRepeatOne) pbDispatch({ type: 'SET_REPEAT', mode: 'off' })
     const sets = Object.values(getLiveSetsSnapshot().sets)
       .filter((e) => lib.tracks.some((t) => t.id === e.mergedTrackId))
       .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
     const queue = sets.map((e) => lib.tracks.find((t) => t.id === e.mergedTrackId)).filter(Boolean) as Track[]
     const idx = Math.max(0, queue.findIndex((t) => t.id === mergedTrack.id))
-    pendingSeekRef.current = startFrac ?? null
     playTrack(mergedTrack, queue.length ? queue : [mergedTrack], idx, undefined, true)
-  }, [mergedTrack, lib.tracks, playTrack])
-  useEffect(() => {
-    if (setPlaying && pendingSeekRef.current != null) {
-      const f = pendingSeekRef.current
-      pendingSeekRef.current = null
-      const t = setTimeout(() => seek(f), 400)
-      return () => clearTimeout(t)
-    }
-  }, [setPlaying, seek])
-  const seekFrac = useCallback((frac: number) => {
-    const f = Math.max(0, Math.min(0.9999, frac))
-    if (setPlaying) seek(f)
-    else playLiveSet(f)   // start the show AT the point you picked
-  }, [setPlaying, seek, playLiveSet])
-  const jumpTo = useCallback((cue: LiveSetCue) => {
-    if (!liveSet) return
-    seekFrac(liveSet.totalDurationMs > 0 ? cue.startMs / liveSet.totalDurationMs : 0)
-  }, [liveSet, seekFrac])
+  }, [mergedTrack, setPlaying, pb.repeat, pbDispatch, lib.tracks, playTrack])
 
   // ── Crowd: readiness + attach ─────────────────────────────────────────
   const crowdOn = useSyncExternalStore(subscribeConcertCrowd, isConcertCrowdEnabled)
@@ -194,15 +187,6 @@ export default function ConcertDetailView() {
     libDispatch({ type: 'SET_VIEW', view: 'concerts' })
   }, [liveSet, albumKey, libDispatch])
 
-  const stripRef = useRef<HTMLDivElement>(null)
-  const onStripClick = useCallback((e: React.MouseEvent) => {
-    const el = stripRef.current
-    if (!el) return
-    const r = el.getBoundingClientRect()
-    if (r.width <= 0) return
-    seekFrac((e.clientX - r.left) / r.width)
-  }, [seekFrac])
-
   if (!liveSet || !mergedTrack) {
     return (
       <div className="concert-detail cd-stage" ref={concertPageRef}>
@@ -264,8 +248,7 @@ export default function ConcertDetailView() {
             <div><span>{liveSet.cues.length} songs · {hms(liveSet.totalDurationMs)}</span></div>
           </div>
           <div className="cd-actions">
-            {/* Wrapped, NOT passed directly: React's MouseEvent would land in startFrac. */}
-            <button className="cd-btn cd-btn--play" onClick={() => playLiveSet()}>▶ {setPlaying ? 'Playing' : 'Play the show'}</button>
+            <button className="cd-btn cd-btn--play" onClick={startShow}>▶ {setPlaying ? 'Playing' : 'Play the show'}</button>
             <button
               className={`cd-btn cd-btn--crowd${crowdOn ? ' is-on' : ''}${crowdState === 'preparing' ? ' is-busy' : ''}`}
               onClick={() => { if (crowdState !== 'preparing') toggleCrowd() }}
@@ -281,13 +264,14 @@ export default function ConcertDetailView() {
         </div>
       </section>
 
-      {/* The show, start to finish — one segment per song, click to seek. */}
+      {/* The show, start to finish — one segment per song. A map of where you
+          are, not a seek bar: a click starts the show from the top. */}
       <section className="cd-strip" aria-label="The show, start to finish">
         <div className="cd-strip-head">
           <span>The show, start to finish</span>
           <span>{activeCue ? <><b>{cleanTitle(activeCue.cue.title)}</b> · {hms(posMs)}</> : hms(liveSet.totalDurationMs)}</span>
         </div>
-        <div className="cd-bar" ref={stripRef} onClick={onStripClick} role="slider" aria-valuemin={0} aria-valuemax={totalMs} aria-valuenow={setPlaying ? Math.round(posMs) : 0}>
+        <div className="cd-bar" onClick={startShow} role="progressbar" aria-valuemin={0} aria-valuemax={totalMs} aria-valuenow={setPlaying ? Math.round(posMs) : 0}>
           {liveSet.cues.map((cue, i) => {
             const state = activeCue ? (i < activeCue.index ? 'done' : i === activeCue.index ? 'now' : 'todo') : 'todo'
             return (
@@ -336,10 +320,10 @@ export default function ConcertDetailView() {
                   )}
                   <div
                     className={`cj-row cj-row--${state}`}
-                    onClick={() => jumpTo(cue)}
+                    onClick={startShow}
                     onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setCueCtx({ x: e.clientX, y: e.clientY, cue }) }}
                     role="button"
-                    title={setPlaying ? `Jump to "${cleanTitle(cue.title)}"` : 'Play the show — right-click a song to add it to your library'}
+                    title={setPlaying ? 'Right-click a song to add it to your library' : 'Play the show from the top — right-click a song to add it to your library'}
                   >
                     <div className="cj-rail">
                       <div className="cj-line cj-line--top" />
