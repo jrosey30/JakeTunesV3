@@ -749,6 +749,27 @@ function AppInner() {
   // persists via the ack is exactly the set the merge still protects.
   const absorbedImportIdsRef = useRef<Set<string>>(new Set())
 
+  // 2026-10-20 ("i deleted it"): fingerprints of tracks that just LEFT the
+  // library, held 15s. Main filters deleted phone downloads out of every
+  // absorb (track-tombstones.ts), but it learns of a delete only when the
+  // debounced save lands — a phone-import push inside that second would
+  // otherwise absorb the song straight back. Deps declared above (libState, line 89).
+  const goneFingerprintsRef = useRef<Map<string, number>>(new Map())
+  const prevTracksForGoneRef = useRef<typeof libState.tracks | null>(null)
+  useEffect(() => {
+    const prev = prevTracksForGoneRef.current
+    prevTracksForGoneRef.current = libState.tracks
+    if (!prev || prev === libState.tracks) return
+    const now = Date.now()
+    for (const [fp, at] of goneFingerprintsRef.current) if (now - at > 15_000) goneFingerprintsRef.current.delete(fp)
+    if (libState.tracks.length >= prev.length) return
+    const ids = new Set(libState.tracks.map((t) => t.id))
+    for (const t of prev) {
+      const fp = typeof t.audioFingerprint === 'string' ? t.audioFingerprint : ''
+      if (fp && !ids.has(t.id)) goneFingerprintsRef.current.set(fp, now)
+    }
+  }, [libState.tracks])
+
   // Phone Qobuz DOWNLOADS arriving from the NAS sidecar (main mirrors +
   // pushes every 5 minutes and once at boot). Absorb any track the library
   // doesn't have — by id AND path, so a row whose id was independently
@@ -761,10 +782,11 @@ function AppInner() {
     try {
       const existingIds = new Set(libStateRef.current.tracks.map((t) => t.id))
       const existingPaths = new Set(libStateRef.current.tracks.map((t) => t.path))
+      const justDeleted = (fp: unknown) => typeof fp === 'string' && Date.now() - (goneFingerprintsRef.current.get(fp) ?? 0) < 15_000
       let eligible = (rows || []).filter((raw): raw is import('./types').Track => {
-        const t = raw as { id?: unknown; path?: unknown }
+        const t = raw as { id?: unknown; path?: unknown; audioFingerprint?: unknown }
         return typeof t?.id === 'number' && typeof t?.path === 'string' &&
-          !existingIds.has(t.id) && !existingPaths.has(t.path as string)
+          !existingIds.has(t.id) && !existingPaths.has(t.path as string) && !justDeleted(t.audioFingerprint)
       })
       // Phone Get Info edits ride in with the absorb (boot-pull path): the
       // boot overlay ran BEFORE these tracks existed, so without this the

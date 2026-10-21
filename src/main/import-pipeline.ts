@@ -47,6 +47,7 @@ import {
 } from './platform.ts'
 import { safeIpcError } from './safe-ipc-error.ts'
 import { searchTitle } from './streamrip-match.ts'
+import { nextIdAbove, type IdHighWater } from './track-id-high-water.ts'
 
 export interface SingleImportResult {
   ok: boolean
@@ -86,6 +87,10 @@ export interface ImportPipelineDeps {
   /** The encoder. Missing means platform.ts's convertAudio; tests inject
    *  a slow one to watch what a reader of the final path can see. */
   convertAudio?: typeof convertAudio
+  /** 2026-10-20: the persisted id high-water mark (track-id-high-water.ts) —
+   *  every allocator starts above it, so a freed id is never reissued.
+   *  Missing means no mark (tests). */
+  idHighWater?: IdHighWater
 }
 
 let deps: ImportPipelineDeps | null = null
@@ -261,9 +266,17 @@ export async function loadLibraryTracksLite(): Promise<LibraryTrackLite[]> {
  * helper and had the fix locally; we extracted it here so
  * `import-track` and the CD ripper share one source of truth).
  */
+//
+// 2026-10-20: the disk probe alone let a FREED id back out — deleting the
+// newest track removes both its library id and its file, so the next import
+// got the same number (12915: a deleted phone download came back through
+// homemini's sidecar). The scan now starts above the persisted high-water
+// mark (track-id-high-water.ts); the caller raises it with spendImportedId
+// once the slot is really taken, so a re-check of its own slot is not bumped.
 export async function findFreeImportedId(startId: number): Promise<number> {
   const exts = ['.m4a', '.mp3', '.aac', '.flac', '.alac', '.wav', '.aif', '.aiff']
-  let id = startId
+  const mark = D().idHighWater
+  let id = mark ? Math.max(startId, (await mark.floor()) + 1) : startId
   while (true) {
     const subDir = join(D().musicDir(), `F${String(id % 50).padStart(2, '0')}`)
     let collide = false
@@ -274,6 +287,12 @@ export async function findFreeImportedId(startId: number): Promise<number> {
     if (!collide) return id
     id++
   }
+}
+
+/** An allocator took `id` (its file is reserved on disk): it is spent for good,
+ *  even if the track is deleted before any save-library sees it. */
+export async function spendImportedId(id: number): Promise<void> {
+  await D().idHighWater?.raise([id])
 }
 
 const LOSSLESS_SOURCE_EXTS = new Set(['.flac', '.wav', '.wave', '.aiff', '.aif', '.alac'])
@@ -460,6 +479,7 @@ async function importOneFileLocked(
         fileName = `imported_${id}${wantExt}`
         destPath = candidate
         reservedDestPath = candidate
+        await spendImportedId(id)
         return
       }
     }
@@ -535,7 +555,7 @@ async function importOneFileLocked(
     await rename(work, destPath)
     workPath = null
     if (id !== requestedId) {
-      console.warn(`import-track: id ${requestedId} collides with existing file imported_${requestedId}.*; bumped to ${id}`)
+      console.warn(`import-track: id ${requestedId} is taken (a file imported_${requestedId}.* exists, or the id was spent — track-id-high-water.ts); bumped to ${id}`)
     }
 
     // The play-cache branches on === 'alac'. A copied MP3 must not be
@@ -646,13 +666,9 @@ async function importOneFileLocked(
 
 // Brief 170: the pure half of nextLibraryId — max numeric id + 1.
 // Junk ids (strings that aren't numbers, nulls) don't count.
-export function computeNextLibraryId(tracks: Array<{ id?: unknown }> | undefined): number {
-  let max = 0
-  for (const t of tracks || []) {
-    const n = Number(t?.id)
-    if (Number.isFinite(n)) max = Math.max(max, n)
-  }
-  return max + 1
+// 2026-10-20: and never at or below the high-water mark (a freed id stays spent).
+export function computeNextLibraryId(tracks: Array<{ id?: unknown }> | undefined, highWater = 0): number {
+  return nextIdAbove((tracks || []).map((t) => t?.id), highWater)
 }
 
 export async function nextLibraryId(): Promise<number> {
@@ -677,7 +693,7 @@ export async function nextLibraryId(): Promise<number> {
   if (!lib || typeof lib !== 'object' || (lib.tracks !== undefined && !Array.isArray(lib.tracks))) {
     throw new Error(`nextLibraryId: library at ${D().libraryPath()} has an unexpected shape — refusing to allocate id 1 over it`)
   }
-  return computeNextLibraryId(lib.tracks)
+  return computeNextLibraryId(lib.tracks, await D().idHighWater?.floor() ?? 0)
 }
 
 export async function importDownloadedFiles(absPaths: string[], source?: string): Promise<{ tracks: Array<Record<string, unknown>>; dupeCount: number; errorCount: number; dupes: Array<{ src: string; matchedTitle: string; matchedArtist: string }> }> {
