@@ -180,9 +180,12 @@ async function fetchArtistDiscographyOnce(artist: string): Promise<DiscographyRe
       await writeCache(cachePath, empty)
       return empty
     }
-    if (canon.identity === 'ambiguous') {
+    // The gate admits nothing without a confirmed identity, so don't page a
+    // namesake's whole catalogue to be told so (a 'weak' SebastiAn resolves
+    // to a classical giant with thousands of release groups).
+    if (canon.identity === 'ambiguous' || canon.identity === 'weak' || !canon.identity) {
       if (canon.incomplete) return null  // MusicBrainz hiccup — try again next visit, cache nothing
-      return refuse(`namesakes the library can't tell apart (${mbid})`)
+      return refuse(canon.identity === 'ambiguous' ? `namesakes the library can't tell apart (${mbid})` : `no MusicBrainz artist claims this exact name (best guess ${mbid})`)
     }
 
     // 2. Every Album/EP release group (with artist credits), then the gate:

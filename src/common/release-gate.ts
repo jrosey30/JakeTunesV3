@@ -268,7 +268,8 @@ const meaningful = (w: string) => w.length >= 3 && !FILLER.has(w)
 
 /// The words a release title adds in brackets or after a subtitle mark:
 /// "(Beta Version)", "[Live]", ": Remixes".
-export function decorationWords(title: string, fold: Fold): string[] {
+export function decorationWords(raw: string, fold: Fold): string[] {
+  const title = prepTitle(raw)
   const parts: string[] = []
   for (const m of title.matchAll(/\(([^)]*)\)|\[([^\]]*)\]/g)) parts.push(m[1] ?? m[2] ?? '')
   const bare = title.replace(/\([^)]*\)|\[[^\]]*\]/g, ' ')
@@ -277,14 +278,24 @@ export function decorationWords(title: string, fold: Fold): string[] {
   return parts.flatMap((p) => fold(p, ' ').split(' ')).filter(Boolean)
 }
 
+/// Spellings that don't make a different title: "&" is "and" ("The
+/// Captain & The Kid" is the stores' "The Captain and The Kid"), "Volume" is
+/// "Vol." ("Shut Down, Volume 2"), "E.P." is "EP", and a bracketed
+/// featured-artist credit ("[feat. Fat Joe]") is a credit, not a title.
+function prepTitle(title: string): string {
+  return title
+    .replace(/[(\[]\s*(?:feat\.?|ft\.?|featuring|with)\s[^)\]]*[)\]]/gi, ' ')
+    .replace(/\s*[&+]\s*/g, ' and ')
+    .replace(/\bvolume\b|\bvol\b\.?/gi, 'vol ')
+    .replace(/\bE\.\s?P\b\.?/gi, 'EP')
+}
+
 /// The keys a title is known by, spaces squashed: its twin-normalized form
 /// (normAlbumTitle drops brackets and subtitles), and the whole title with
-/// subtitle marks read as spaces. "&" reads as "and" ("The Captain & The
-/// Kid" is the stores' "The Captain and The Kid"), "Volume" reads "Vol."
-/// ("Shut Down, Volume 2"); a title that is nothing
-/// but brackets keeps its words ("[Led Zeppelin IV]").
+/// subtitle marks read as spaces. A title that is nothing but brackets
+/// keeps its words ("[Led Zeppelin IV]").
 function titleKeys(title: string, normTitle: (s: string) => string): string[] {
-  const t = title.replace(/\s*[&+]\s*/g, ' and ').replace(/\bvolume\b|\bvol\b\.?/gi, 'vol ')
+  const t = prepTitle(title)
   const squash = (x: string) => normTitle(x).replace(/ /g, '')
   const base = squash(t) || squash(t.replace(/[[\]()]/g, ' '))
   const whole = squash(t.replace(/\([^)]*\)|\[[^\]]*\]/g, ' ').replace(/\s*[:–—]\s*|\s+-\s+/g, ' '))
@@ -312,7 +323,7 @@ export function sameRelease(other: string, rgTitle: string, deps: Pick<GateDeps,
   if (!titleKeys(other, deps.normTitle).some((k) => mine.includes(k))) return false
   const extra = decorationWords(rgTitle, deps.fold).filter(meaningful)
   if (extra.length === 0) return true
-  const have = new Set(deps.fold(other, ' ').split(' ').filter(Boolean))
+  const have = new Set(deps.fold(prepTitle(other), ' ').split(' ').filter(Boolean))
   return extra.every((w) => have.has(w))
 }
 
@@ -321,24 +332,37 @@ export function sameRelease(other: string, rgTitle: string, deps: Pick<GateDeps,
 /// album a different record: "Human After All (Remixes)" is not proof that
 /// "Human After All" is in the store.
 const EDITION_WORDS = new Set([
-  'remaster', 'remastered', 'remasters', 'deluxe', 'edition', 'expanded', 'anniversary', 'version', 'bonus',
+  'deluxe', 'edition', 'expanded', 'anniversary', 'version', 'bonus', 'definitive', 'mix',
   'track', 'tracks', 'digital', 'explicit', 'clean', 'mono', 'stereo', 'ep', 'single', 'lp', 'original',
-  'motion', 'picture', 'soundtrack', 'music', 'series', 'special', 'collector', 'collectors', 'super', 'standard',
-  'reissue', 'the', 'and', 'of', 'a', 'an', 'from', 'with', 'by', 'in', 'to', 'vol', 'volume',
+  'motion', 'picture', 'film', 'score', 'tv', 'soundtrack', 'music', 'recording', 'recordings', 'inspired',
+  'series', 'special', 'collector', 'collectors', 'super', 'standard', 'reissue',
+  'the', 'and', 'of', 'a', 'an', 'from', 'with', 'by', 'in', 'to', 'vol',
 ])
-const isEditionWord = (w: string) => EDITION_WORDS.has(w) || /^\d+(st|nd|rd|th|s)?$/.test(w)
+/// Remastered in any language ("Remasterizado", "Remasterisé"), and years or
+/// ordinals ("2009", "40th").
+const isEditionWord = (w: string) => EDITION_WORDS.has(w) || /^remaster/.test(w) || /^\d+(st|nd|rd|th|s)?$/.test(w)
 
 /// A store's album is this release: the same release by sameRelease, adding
 /// only edition words. Or the store files it under a presenter ("Future
 /// Hndrxx Presents: The WIZRD") and the part after the colon is the title.
 export function storeTitleMatches(storeTitle: string, rgTitle: string, deps: Pick<GateDeps, 'fold' | 'normTitle'>): boolean {
-  const words = (t: string) => deps.fold(t.replace(/\s*[&+]\s*/g, ' and ').replace(/\bvolume\b/gi, 'vol'), ' ').split(' ').filter(Boolean)
+  const words = (t: string) => deps.fold(prepTitle(t), ' ').split(' ').filter(Boolean)
   if (sameRelease(storeTitle, rgTitle, deps)) {
-    // The release's own words, and runs of them written together ("40 oz" → "40oz").
+    // Every store word is the release's own, written together or apart
+    // ("40 oz" / "40oz", "Homo Sapiens" / "Homosapiens"), or an edition word.
     const rg = words(rgTitle)
     const mine = new Set(rg)
     for (let i = 0; i < rg.length; i++) for (let n = 2; n <= 3 && i + n <= rg.length; n++) mine.add(rg.slice(i, i + n).join(''))
-    return words(storeTitle).every((w) => mine.has(w) || isEditionWord(w))
+    const store = words(storeTitle)
+    let i = 0
+    walk: while (i < store.length) {
+      for (let n = 3; n >= 1; n--) {
+        if (i + n <= store.length && mine.has(store.slice(i, i + n).join(''))) { i += n; continue walk }
+      }
+      if (!isEditionWord(store[i]!)) return false
+      i++
+    }
+    return true
   }
   const presented = storeTitle.match(/^(.*\bpresents?\b[^:]*):\s*(.+)$/i)
   return !!presented && storeTitleMatches(presented[2]!, rgTitle, deps)

@@ -355,6 +355,14 @@ describe('rules', () => {
     assert.equal(gate.storeTitleMatches('Alive 2007 (Live)', 'Alive 2007', match), false)
     assert.equal(gate.storeTitleMatches('Magical Mystery Tour (Remastered 2009)', 'Magical Mystery Tour', match), true)
     assert.equal(gate.storeTitleMatches('Shut Down, Vol. 2 (Remastered)', 'Shut Down, Volume 2', match), true, '"Volume" is "Vol."')
+    assert.equal(gate.storeTitleMatches('The Blueprint 2: The Gift & The Curse', 'The Blueprint²: The Gift & The Curse', match), true)
+    assert.equal(gate.storeTitleMatches('Homo Sapiens', 'Homosapiens', match), true)
+    assert.equal(gate.storeTitleMatches('Brilliant Adventure E.P.', 'Brilliant Adventure EP', match), true)
+    assert.equal(gate.storeTitleMatches("Twinz (Deep Cover '98) [feat. Fat Joe] EP", 'Twinz (Deep Cover ’98) EP', match), true, 'a featured credit is not a title')
+    assert.equal(gate.storeTitleMatches('Benjor (Remasterizado)', 'Benjor', match), true)
+    assert.equal(gate.storeTitleMatches('The Family Way (Original Soundtrack Recording)', 'The Family Way', match), true)
+    assert.equal(gate.storeTitleMatches('Toy (Toy:Box)', 'Toy', match), false, 'a box set is not the album')
+    assert.equal(gate.storeTitleMatches('Frank Sinatra - Sus Mejores Años Vol. 1', 'Frank Sinatra', match), false)
     assert.equal(gate.storeTitleMatches('The Complete Hits 1943-62, Vol. 1', 'The Complete Hits 1943-62', match), false, 'one volume is not the set')
   })
   it('owning a record does not make every title containing its words owned', () => {
@@ -423,7 +431,7 @@ describe('twin lock', () => {
   // The body of release-gate.ts / releaseGate.ts (from the first export to
   // the end) must hash to this in BOTH repos. Changing a rule means changing
   // this number here AND in the twin, in the same change set.
-  const TWIN_BODY_SHA256 = '78ccd25cb378527da3cf66752bf0b9c4557191ba595db164b921904badabac95'
+  const TWIN_BODY_SHA256 = 'c93684f9d980e99928ee8681a9f75f824324a443373a2739ff9d36c7233da6bb'
   it('the gate body matches its twin', () => {
     const src = readFileSync(GATE_SOURCE, 'utf-8')
     const body = src.slice(src.indexOf('export type ReleaseSection'))
