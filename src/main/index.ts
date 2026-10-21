@@ -305,6 +305,7 @@ import { parsePlayEvents } from './record-store/shelf-generator'
 import type { CandTrack } from './record-store/candidate-pool'
 import { registerWorkoutSyncIpc } from './workout-sync-ipc'
 import { registerMixtapesIpc } from './mixtapes'
+import { wireHistoryGestures } from './history-gestures'
 import {
   getActivityPromptBlockSync,
   getActivityBrainContextSync,
@@ -2506,6 +2507,7 @@ async function createWindow(): Promise<void> {
   }
   mainWindow.on('resize', debouncedSave)
   mainWindow.on('move', debouncedSave)
+  wireHistoryGestures(mainWindow, sendToRenderer)   // trackpad swipe / app-command → back, forward
   mainWindow.on('close', () => {
     if (mainWindow && !mainWindow.isDestroyed()) saveWindowState(mainWindow)
   })
