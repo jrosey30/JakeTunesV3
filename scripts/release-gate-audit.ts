@@ -263,7 +263,11 @@ function summarize(rows: ArtistOut[], crossCheckPath?: string): string {
   lines.push('| List | Old rules showed | Gate admits | Old entries the gate rejects | Admitted now, not shown before |', '|---|---:|---:|---:|---:|')
   lines.push(`| Desktop discography (albums + EPs) | ${d.oldN} | ${d.gateN} | ${d.oldRejected} | ${d.newlyAdmitted} |`)
   lines.push(`| Phone discography (albums) | ${p.oldN} | ${p.gateN} | ${p.oldRejected} | ${p.newlyAdmitted} |`)
-  lines.push(`| Phone "More from" (albums not owned) | ${mfOld} | ${mfGate} | ${mfOld - ok.reduce((n, r) => n + (r.phone?.moreFromOld ?? []).filter((t) => (r.phone?.gate ?? []).includes(t)).length, 0)} | |`, '')
+  const mfRejected = ok.reduce((n, r) => {
+    const mf = new Set(r.phone?.moreFromOld ?? [])
+    return n + (r.phone?.verdicts ?? []).filter((v) => v.oldShown && !v.admitted && mf.has(v.title)).length
+  }, 0)
+  lines.push(`| Phone "More from" (albums not owned) | ${mfOld} | ${mfGate} | ${mfRejected} | |`, '')
   for (const [label, s] of [['Desktop', d], ['Phone', p]] as const) {
     lines.push(`## ${label}: why old entries were rejected`, '')
     lines.push('| Reason | Primary (first that applies) | Any |', '|---|---:|---:|')
