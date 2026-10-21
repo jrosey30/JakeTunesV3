@@ -75,6 +75,8 @@ describe('the header', () => {
   it('eyebrow says only what the profile grounds', () => {
     assert.equal(heroEyebrow({ place: 'Brooklyn, New York', since: '2016' }), 'Artist · Brooklyn, New York · Since 2016')
     assert.equal(heroEyebrow(null), 'Artist')
+    assert.equal(heroEyebrow({ place: 'Aberdeen, Washington', since: '1987', until: '1994' }), 'Artist · Aberdeen, Washington · 1987–1994')
+    assert.equal(heroEyebrow({ place: 'Somewhere', until: '1994' }), 'Artist · Somewhere · Until 1994')
   })
   it('a long name steps down a size instead of clipping', () => {
     assert.equal(heroNameSize('Geese'), 'xl')
@@ -107,7 +109,8 @@ describe('live posters', () => {
   it('a made poster prints the venue name, city and year', () => {
     assert.equal(posterShowLine({ venue: posterVenue('The Diamond Mine Recording Studio'), city: 'Queens, NY', date: '2023 (exact date not published)' }), 'The Diamond Mine · Queens, NY · 2023')
     assert.equal(posterShowLine({ year: 1991 }), '1991')
-    assert.equal(posterVenue('Abbey Road Studios'), 'Abbey Road')
+    assert.equal(posterVenue('Abbey Road Studios'), 'Abbey Road Studios')
+    assert.equal(posterVenue('Sony Music Studios'), 'Sony Music Studios', 'Unplugged was taped at Sony Music Studios, not at a label')
     assert.equal(posterVenue('Forest Hills Stadium'), 'Forest Hills Stadium')
   })
 })

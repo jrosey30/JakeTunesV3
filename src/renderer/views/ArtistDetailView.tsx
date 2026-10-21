@@ -400,9 +400,17 @@ export default function ArtistDetailView() {
     }
     return undefined
   })()
-  const heroSrc = heroSlug && !photoFailed
-    ? `artist-image://${heroSlug}.jpg`
-    : fallbackHash ? albumArtUrl(fallbackHash) : null
+  // A credited header photo from the profile (chosen because the app's own
+  // image failed homemini's photo gates) wins once it is saved on this Mac;
+  // its credit shows under it, like the members' photo credits.
+  const [brokenHero, setBrokenHero] = useState<string | null>(null)
+  const creditedHero = profile?.hero && profileState.photos[profile.hero.url] && brokenHero !== profile.hero.url ? profile.hero : null
+  const creditedHeroSlug = creditedHero ? profileState.photos[creditedHero.url] : null
+  const heroSrc = creditedHeroSlug
+    ? `artist-image://${creditedHeroSlug}.jpg`
+    : heroSlug && !photoFailed
+      ? `artist-image://${heroSlug}.jpg`
+      : fallbackHash ? albumArtUrl(fallbackHash) : null
 
   // Related-artists graph (associate, not merge): this artist's band(s),
   // bandmates, side projects + key collaborators. The ones you OWN are
@@ -589,10 +597,14 @@ export default function ArtistDetailView() {
               src={heroSrc}
               alt={artist}
               draggable={false}
-              onError={() => { if (heroSlug && !photoFailed) setPhotoEntry({ name: lookupName, slug: photoSlug, failed: true }) }}
+              onError={() => {
+                if (creditedHero) setBrokenHero(creditedHero.url)
+                else if (heroSlug && !photoFailed) setPhotoEntry({ name: lookupName, slug: photoSlug, failed: true })
+              }}
             />
             <div className="ad-hero-fade-x" />
             <div className="ad-hero-fade-y" />
+            {creditedHero?.credit && <p className="ad-hero-credit">{artist} photo: {creditedHero.credit}</p>}
           </div>
         )}
         <div className="ad-hero-text">
@@ -739,6 +751,7 @@ export default function ArtistDetailView() {
                   artist={lookupName}
                   member={m}
                   photoSlug={m.photo ? profileState.photos[m.photo.url] : undefined}
+                  needsPhoto={!!m.needsPhoto && !(m.photo && profileState.photos[m.photo.url])}
                   soloArtist={m.libraryArtist && libraryHas(m.libraryArtist) && artistIdentityKey(canonicalArtist(m.libraryArtist)) !== artistIdentityKey(lookupName) ? m.libraryArtist : undefined}
                   onOpenSolo={openArtist}
                   onPhotoSet={replaceProfile}

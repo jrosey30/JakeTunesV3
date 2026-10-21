@@ -118,11 +118,16 @@ export function albumTileMeta(kindLabel: string, year: number | string | null | 
   return [kindLabel, y].filter(Boolean).join(' · ')
 }
 
-/** "Artist · Brooklyn, New York · Since 2016" — only what the profile grounds. */
-export function heroEyebrow(origin?: { place?: string; since?: string } | null): string {
+/**
+ * "Artist · Brooklyn, New York · Since 2016" — only what the profile grounds.
+ * An act that ended shows its span: "Artist · Aberdeen, Washington · 1987–1994".
+ */
+export function heroEyebrow(origin?: { place?: string; since?: string; until?: string } | null): string {
   const parts = ['Artist']
   if (origin?.place) parts.push(origin.place)
-  if (origin?.since) parts.push(`Since ${origin.since}`)
+  if (origin?.since && origin?.until) parts.push(origin.since === origin.until ? origin.since : `${origin.since}–${origin.until}`)
+  else if (origin?.since) parts.push(`Since ${origin.since}`)
+  else if (origin?.until) parts.push(`Until ${origin.until}`)
   return parts.join(' · ')
 }
 
@@ -192,10 +197,12 @@ export function posterShowLine(c: { venue?: string; city?: string; date?: string
 
 /**
  * A venue name the way a poster prints it: drops a trailing "Recording
- * Studio" / "Studios" so "The Diamond Mine Recording Studio" sets as
- * "The Diamond Mine" — the name, not the description.
+ * Studio(s)" so "The Diamond Mine Recording Studio" sets as "The Diamond
+ * Mine". A bare "Studios" is part of the name and stays — "Sony Music
+ * Studios" (Nirvana's Unplugged) is not "Sony Music", and "Abbey Road
+ * Studios" stays whole.
  */
 export function posterVenue(venue?: string): string {
   if (!venue) return ''
-  return venue.replace(/\s+(recording\s+)?studios?$/i, '').trim() || venue
+  return venue.replace(/\s+recording\s+studios?$/i, '').trim() || venue
 }

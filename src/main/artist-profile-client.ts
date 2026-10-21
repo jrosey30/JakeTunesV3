@@ -25,7 +25,7 @@ import { join } from 'node:path'
 import { writeJsonAtomic } from './atomic-write.ts'
 import { withCompanionInit } from './hub-companion.ts'
 import {
-  artistPhotoFileOf, artistProfilePath, emptyProfileState, memberPhotoPath, memberPhotoUrls, parseArtistProfile, photoCacheSlug, profileCacheFile, ARTIST_PHOTO_PREFIX,
+  artistPhotoFileOf, artistProfilePath, emptyProfileState, memberPhotoPath, profilePhotoUrls, parseArtistProfile, photoCacheSlug, profileCacheFile, ARTIST_PHOTO_PREFIX,
   type ArtistProfile, type ArtistProfileState,
 } from '../common/artist-profile.ts'
 
@@ -104,7 +104,7 @@ export function createArtistProfileClient(opts: ArtistProfileClientOptions): Art
 
   async function savedPhotos(profile: ArtistProfile | null): Promise<Record<string, string>> {
     const out: Record<string, string> = {}
-    for (const url of memberPhotoUrls(profile)) {
+    for (const url of profilePhotoUrls(profile)) {
       const file = artistPhotoFileOf(url)
       if (!file) continue
       const slug = photoCacheSlug(file)
@@ -182,10 +182,10 @@ export function createArtistProfileClient(opts: ArtistProfileClientOptions): Art
     await writeCache(n, { doc: body, etag: res.headers?.get('etag') ?? null })
   }
 
-  /** Each member photo once; immutable, so a saved file is never fetched again. */
+  /** Each photo once (the credited header photo + the members'); immutable, so a saved file is never fetched again. */
   async function fetchPhotos(n: string): Promise<void> {
     const cache = await readCache(n)
-    for (const url of memberPhotoUrls(cache?.profile)) {
+    for (const url of profilePhotoUrls(cache?.profile)) {
       const file = artistPhotoFileOf(url)
       if (!file) continue
       const dest = photoPath(photoCacheSlug(file))

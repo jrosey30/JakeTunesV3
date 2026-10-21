@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  artistPhotoFileOf, parseArtistProfile, photoCacheSlug, profileCacheFile, memberPhotoPath, artistProfilePath,
+  artistPhotoFileOf, parseArtistProfile, photoCacheSlug, profileCacheFile, memberPhotoPath, artistProfilePath, profilePhotoUrls,
 } from '../../common/artist-profile.ts'
 import { createArtistProfileClient, PROFILE_MIN_GAP_MS, type ProfileFetchLike } from '../artist-profile-client.ts'
 
@@ -66,6 +66,27 @@ describe('the profile document', () => {
     assert.equal(p.members?.people.length, 1, 'a member with no name is dropped')
     assert.equal(p.members?.people[0].photo, undefined, 'a photo that is not /api/artist-photo/ is dropped')
     assert.deepEqual(p.bio?.sources, [])
+  })
+  it('contract additions 10/20 (#490): origin.until, needsPhoto, a credited hero, deezer', () => {
+    const p = parseArtistProfile({
+      ...GEESE,
+      name: 'Nirvana',
+      origin: { place: 'Aberdeen, Washington', since: '1987', until: '1994' },
+      hero: { url: '/api/artist-photo/1857f06283720e62.jpg', source: 'commons', credit: 'The Come Up Show, Wikimedia Commons, CC BY 2.0' },
+      members: { mode: 'classic', era: '1991–1994', people: [
+        { name: 'Kurt Cobain', roles: ['Lead vocals'], photo: { url: '/api/artist-photo/d7523d1e47db9d5b.jpg', source: 'deezer' } },
+        { name: 'Brad Petering', roles: ['Lead vocals'], needsPhoto: true },
+        { name: 'Someone', roles: [], photo: { url: '/api/artist-photo/0123456789abcdef.jpg', source: 'a-source-from-2027' } },
+      ] },
+    })!
+    assert.deepEqual(p.origin, { place: 'Aberdeen, Washington', since: '1987', until: '1994' })
+    assert.equal(p.hero?.credit, 'The Come Up Show, Wikimedia Commons, CC BY 2.0')
+    assert.equal(p.members?.people[0].photo?.source, 'deezer')
+    assert.equal(p.members?.people[1].needsPhoto, true)
+    assert.equal(p.members?.people[1].photo, undefined)
+    assert.equal(p.members?.people[2].photo?.source, 'unknown', 'an unknown source keeps the photo')
+    assert.deepEqual(profilePhotoUrls(p), ['/api/artist-photo/1857f06283720e62.jpg', '/api/artist-photo/d7523d1e47db9d5b.jpg', '/api/artist-photo/0123456789abcdef.jpg'])
+    assert.equal(parseArtistProfile({ ...GEESE, hero: { url: 'http://elsewhere/x.jpg', source: 'commons' } })?.hero, undefined, 'a hero off the photo route is dropped')
   })
   it('a photo url names a FILE — never a host or a path out of the folder', () => {
     assert.equal(artistPhotoFileOf('/api/artist-photo/face-cameron.jpg'), 'face-cameron.jpg')
@@ -170,6 +191,13 @@ describe('artist profile client', () => {
     const again = await c.refresh('Geese')
     assert.equal(again.source, 'homemini')
     assert.deepEqual(hub.calls.map((x) => [x.method, x.ifNoneMatch]), [['GET', '"v1"']])
+  })
+
+  it('the credited hero photo is saved with the member photos', async () => {
+    hub.body = { ...GEESE, hero: { url: '/api/artist-photo/1857f06283720e62.jpg', source: 'commons', credit: 'X, Wikimedia Commons, CC BY 2.0' } }
+    const s = await make().refresh('Geese')
+    assert.equal(s.photos['/api/artist-photo/1857f06283720e62.jpg'], photoCacheSlug('1857f06283720e62.jpg'))
+    assert.equal(Object.keys(s.photos).length, 3)
   })
 
   it('a new client paints from the disk cache instantly', async () => {
