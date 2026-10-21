@@ -25,7 +25,7 @@ import RecordStoreView from '../views/RecordStore'
 import YearInReviewView from '../views/YearInReviewView'
 import ViewModeToggle from './ViewModeToggle'
 import { useDiscHandoffView } from '../discHandoff'
-import { useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { nextKeptRoot, type KeptRoot } from '../keptView'
 import { takeHistoryNavigation } from '../navIntent'
 import '../styles/main-content.css'
@@ -92,6 +92,13 @@ export default function MainContent() {
   const keptArrivalRef = useRef<{ root: KeptRoot; kind: 'return' | 'arrive' } | null>(null)
   if (wantKept && keptActive && keptArrivalRef.current?.root !== wantKept) keptArrivalRef.current = { root: wantKept, kind: arrival }
   if (!wantKept) keptArrivalRef.current = null
+  // Parking a page must not leave keyboard focus on one of its cards — Space /
+  // Enter on a hidden artist card would navigate from under the detail page.
+  const keptBoxRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const el = document.activeElement
+    if (!keptActive && el instanceof HTMLElement && keptBoxRef.current?.contains(el)) el.blur()
+  }, [keptActive])
 
   // Brief 023: MusicManView stays MOUNTED across navigation — its
   // wrapper is just toggled visible/hidden based on currentView. This
@@ -155,6 +162,7 @@ export default function MainContent() {
         <div
           className={`main-content-view main-content-view--kept${keptActive ? '' : ' main-content-view--parked'}`}
           key={`kept:${wantKept}`}
+          ref={keptBoxRef}
           data-nav={keptArrivalRef.current?.kind === 'return' ? 'return' : undefined}
           aria-hidden={keptActive ? undefined : true}
         >
