@@ -15,8 +15,10 @@
  *              (launch/musicManIntro.ts). Jake, mid-build: "calm the page".
  *   islands    the synced TOP 10 ISLAND ALBUMS (renderer/syncedPicks.ts) as a
  *              classic glossy Cover Flow (common/cover-flow.ts) — click a side
- *              cover to bring it forward, ←/→ when focused, click the centred
- *              cover to open the album.
+ *              cover to bring it forward, ←/→ when focused, the mouse's side
+ *              wheel or the trackpad's two-finger side swipe over it
+ *              (common/cover-flow-wheel.ts), click the centred cover to open
+ *              the album.
  *   digging    NOW DIGGING — five 2:3 artist posters (the app's artist photos,
  *              an initials poster otherwise), click → the artist page.
  *
@@ -35,6 +37,8 @@ import { useHomeSpotlight } from '../homeSpotlight'
 import { useIslandAlbums } from '../syncedPicks'
 import { islandAlbumKey } from '../../common/synced-picks'
 import { coverFlowPoses, stepCover, coverFlowKeyDelta, clampCoverIndex } from '../../common/cover-flow'
+import { COVER_WHEEL_DEFAULTS } from '../../common/cover-flow-wheel'
+import { useCoverFlowWheel } from '../hooks/useCoverFlowWheel'
 import { groupTracksIntoAlbums, type Album } from '../utils/albumGroups'
 import { indexAlbumsForIsland } from '../utils/islandSlots'
 import { albumKeyFromStrings } from '../utils/albumKey'
@@ -235,6 +239,11 @@ export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispa
     setStageWidth(el.clientWidth || 1104)
     return () => ro.disconnect()
   }, [flow.length > 0])
+  // Side wheel / side swipe: horizontal gestures step the covers (and never
+  // scroll the page); vertical ones scroll the Home as before.
+  useCoverFlowWheel(stageRef, (steps) => {
+    setActive((cur) => stepCover(clampCoverIndex(cur, flow.length), steps, flow.length))
+  }, COVER_WHEEL_DEFAULTS, flow.length > 0)
   const poses = useMemo(() => coverFlowPoses(flow.length, at, { width: stageWidth }), [flow.length, at, stageWidth])
 
   const openFlow = useCallback((i: number) => {

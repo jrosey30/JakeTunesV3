@@ -15,6 +15,8 @@ import { groupTracksIntoAlbums, type Album } from '../utils/albumGroups'
 import type { Track } from '../types'
 import '../styles/coverflow.css'
 import { addToPlaylistEntry, addToIpodPoolEntry, queueMenuEntries } from '../utils/playlistMenu'
+import { JUKEBOX_WHEEL_OPTIONS } from '../../common/cover-flow-wheel'
+import { useCoverFlowWheel } from '../hooks/useCoverFlowWheel'
 
 /// V5 facelift: Cover Flow — reimagined as THE JUKEBOX ARC (Jake's pick
 /// over the classic Apple side-scroll rolodex). Same capability —
@@ -32,13 +34,13 @@ import { addToPlaylistEntry, addToIpodPoolEntry, queueMenuEntries } from '../uti
 /// so covers REPOSITION rather than remount).
 ///
 /// Interaction model stays DISCRETE-STEP + snap transition (the snap IS
-/// the mechanism's feel). Wheel and VERTICAL drag accumulate into
-/// whole-page flips; ←→ and ↑↓ step; clicking a peeking page jumps to
-/// it; double-clicking the focused cover plays the album.
+/// the mechanism's feel). Wheel (either axis — common/cover-flow-wheel.ts,
+/// one notch = one page) and VERTICAL drag accumulate into whole-page
+/// flips; ←→ and ↑↓ step; clicking a peeking page jumps to it;
+/// double-clicking the focused cover plays the album.
 
 const WINDOW_RADIUS = 8      // covers mounted each side of center
 const MAX_VISIBLE = 4        // pages shown in the mechanism before fading out
-const WHEEL_STEP_PX = 48     // accumulated wheel delta per page flip
 const DRAG_STEP_PX = 70      // vertical drag distance per page flip
 
 function formatDuration(ms: number): string {
@@ -140,22 +142,16 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
   // and the global transport own their own keys), wheel, and drag all
   // accumulate into discrete cover steps.
   const rootRef = useRef<HTMLDivElement>(null)
-  const wheelAcc = useRef(0)
-  const lastStepAt = useRef(0)
-  const onWheel = useCallback((e: React.WheelEvent) => {
-    // Horizontal intent wins when present (trackpads); vertical scrolls
-    // over the stage also flip covers, like iTunes.
-    const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY
-    wheelAcc.current += delta
-    // Mechanical damping: at most one flip per 70ms — trackpad momentum
-    // reads as deliberate page-flips instead of a machine-gun blur (part
-    // of the anti-glitch pass; the old accumulator could fire 4-5 steps
-    // in a single frame and the transitions never resolved).
-    const now = performance.now()
-    if (now - lastStepAt.current < 70) return
-    if (wheelAcc.current >= WHEEL_STEP_PX) { wheelAcc.current = 0; lastStepAt.current = now; go(1) }
-    else if (wheelAcc.current <= -WHEEL_STEP_PX) { wheelAcc.current = 0; lastStepAt.current = now; go(-1) }
-  }, [go])
+  // Wheel over the stage: either axis flips (horizontal intent wins when it
+  // dominates; vertical scrolls flip too, like iTunes), 48 px of smooth
+  // travel per page, a lone notch = one page, and mechanical damping — at
+  // most one flip per 70 ms, so trackpad momentum reads as deliberate
+  // page-flips instead of a machine-gun blur (the anti-glitch pass: the
+  // old accumulator could fire 4-5 steps in a single frame and the
+  // transitions never resolved). A native non-passive listener, so the
+  // stage owns the gesture (React's onWheel can't preventDefault).
+  const stageRef = useRef<HTMLDivElement>(null)
+  useCoverFlowWheel(stageRef, go, JUKEBOX_WHEEL_OPTIONS, albums.length > 0)
 
   // Jukebox arc: the natural drag axis is VERTICAL (you flip pages up and
   // over). Dominant-axis detection keeps horizontal trackpad habits alive.
@@ -232,8 +228,8 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
       onKeyDown={onKeyDown}
     >
       <div
+        ref={stageRef}
         className="coverflow-stage"
-        onWheel={onWheel}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
