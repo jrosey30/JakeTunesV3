@@ -375,6 +375,267 @@
   overflow-wrap: break-word;
 }
 
+/* ── the jewel case on the front cover (components/JewelCase.tsx) ──
+   ⚠️ TWIN: JakeTunesMobile LaunchPageG.swift CaseLid / FlowCaseTray (Mobile
+   #519). Sizes are the phone's points × --jc-k (240/160 = 1.5 here); the
+   case's own box comes from common/jewel-case.ts as --jc-* custom properties.
+   Colours are the phone's: SwiftUI Color(white: v) = rgb(v·255). The lid has
+   its own camera (perspective + origin on the art's centre, 25pt below the
+   case top), so its free edge grows DOWNWARD toward you and the face flips
+   where a real one would. Everything that moves is a Web Animation on
+   transform / opacity. */
+.tn-case {
+  position: absolute;
+  left: calc(-1 * var(--jc-spine));
+  top: calc(-1 * var(--jc-rim));
+  width: var(--jc-w);
+  height: var(--jc-h);
+  pointer-events: none;
+  perspective: var(--jc-cam);
+  perspective-origin: var(--jc-cam-x) var(--jc-cam-y);
+}
+.tn-case > *,
+.tn-case-tray > *,
+.tn-case-lid > *,
+.tn-case-face > *,
+.tn-case-base > *,
+.tn-case-disc > * {
+  position: absolute;
+  display: block;
+}
+/* the base under the lid: the back inlay's dark spine seen through the
+   hinge, the hinge knuckles at its ends, the base's clear edge */
+.tn-case-base {
+  inset: 0;
+  border-radius: var(--jc-r);
+  box-shadow: inset 0 0 0 calc(0.75px * var(--jc-k)) rgba(255, 255, 255, 0.18);
+}
+.tn-case-base-spine {
+  left: 0;
+  top: 0;
+  width: var(--jc-spine);
+  height: 100%;
+  border-radius: calc(2px * var(--jc-k));
+  background: linear-gradient(to right, rgb(31, 31, 31), rgb(10, 10, 10));
+}
+.tn-case-knuckle {
+  left: calc(0.5px * var(--jc-k));
+  width: calc(3px * var(--jc-k));
+  height: calc(11px * var(--jc-k));
+  border-radius: calc(1.5px * var(--jc-k));
+  background: rgba(153, 153, 153, 0.75);
+}
+/* the black tray under the booklet: recess, finger notches, rosette hub, disc */
+.tn-case-tray {
+  left: var(--jc-spine);
+  top: var(--jc-rim);
+  width: var(--jc-art);
+  height: var(--jc-art);
+  border-radius: calc(1.5px * var(--jc-k));
+  background: linear-gradient(to bottom, rgb(33, 33, 33), rgb(13, 13, 13));
+}
+.tn-case-notch {
+  left: calc(2px * var(--jc-k));
+  right: calc(2px * var(--jc-k));
+  top: calc(50% - 17px * var(--jc-k));
+  height: calc(34px * var(--jc-k));
+  border-radius: 999px;
+  background: rgb(8, 8, 8);
+}
+.tn-case-recess {
+  left: calc(50% - var(--jc-disc) / 2 - 2px * var(--jc-k));
+  top: calc(50% - var(--jc-disc) / 2 - 2px * var(--jc-k));
+  width: calc(var(--jc-disc) + 4px * var(--jc-k));
+  height: calc(var(--jc-disc) + 4px * var(--jc-k));
+  border-radius: 50%;
+  background: rgb(9, 9, 9);
+  box-shadow: inset 0 0 0 calc(0.75px * var(--jc-k)) rgba(255, 255, 255, 0.06);
+}
+.tn-case-hub {
+  left: calc(50% - 14px * var(--jc-k));
+  top: calc(50% - 14px * var(--jc-k));
+}
+/* the disc and its shadow (black 55%: radius 1.5 → 8, y 1 → 5 as it lifts) */
+.tn-case-disc,
+.tn-case-disc-shadow {
+  left: calc(50% - var(--jc-disc) / 2);
+  top: calc(50% - var(--jc-disc) / 2);
+  width: var(--jc-disc);
+  height: var(--jc-disc);
+  border-radius: 50%;
+}
+.tn-case-disc-shadow { box-shadow: 0 calc(1px * var(--jc-k)) calc(3px * var(--jc-k)) rgba(0, 0, 0, 0.55); }
+.tn-case-disc-shadow--lifted {
+  opacity: 0;
+  box-shadow: 0 calc(5px * var(--jc-k)) calc(16px * var(--jc-k)) rgba(0, 0, 0, 0.55);
+}
+/* a pressed CD: silver/iridescent data ring (r 62–75 of 75) with two bright
+   spokes, the label printed with the cover (24–62), a mirror band (17–24),
+   the clear clamping ring (9.5–17) the hub shows through, the hole. It never
+   turns. */
+.tn-case-disc-data,
+.tn-case-disc-spokes {
+  inset: 0;
+  border-radius: 50%;
+  -webkit-mask-image: radial-gradient(closest-side, transparent 22.6%, #000 23%);
+          mask-image: radial-gradient(closest-side, transparent 22.6%, #000 23%);
+}
+.tn-case-disc-data {
+  background: conic-gradient(from 90deg,
+    rgb(235, 235, 235), rgb(219, 199, 242), rgb(191, 191, 191), rgb(189, 230, 242),
+    rgb(242, 242, 242), rgb(245, 230, 184), rgb(235, 235, 235));
+}
+.tn-case-disc-spokes {
+  background: conic-gradient(from 50deg,
+    rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.5) 11%, rgba(255, 255, 255, 0) 22%,
+    rgba(255, 255, 255, 0) 50%, rgba(255, 255, 255, 0.4) 61%, rgba(255, 255, 255, 0) 72%,
+    rgba(255, 255, 255, 0) 100%);
+}
+.tn-case .tn-case-disc-label {
+  left: calc(50% - 62px * var(--jc-k));
+  top: calc(50% - 62px * var(--jc-k));
+  width: calc(124px * var(--jc-k));
+  height: calc(124px * var(--jc-k));
+  border-radius: 50%;
+  object-fit: cover;
+  -webkit-mask-image: radial-gradient(closest-side, transparent 38.5%, #000 39%);
+          mask-image: radial-gradient(closest-side, transparent 38.5%, #000 39%);
+}
+.tn-case-disc-label--plain { background: radial-gradient(circle, rgb(70, 76, 86), rgb(36, 40, 48)); }
+.tn-case-disc-mirror {
+  left: calc(50% - 24px * var(--jc-k));
+  top: calc(50% - 24px * var(--jc-k));
+  width: calc(48px * var(--jc-k));
+  height: calc(48px * var(--jc-k));
+  border-radius: 50%;
+  background: linear-gradient(to bottom right, rgb(224, 224, 224), rgb(158, 158, 158));
+  -webkit-mask-image: radial-gradient(closest-side, transparent 70.6%, #000 71%);
+          mask-image: radial-gradient(closest-side, transparent 70.6%, #000 71%);
+}
+.tn-case-disc-clear {
+  left: calc(50% - 17px * var(--jc-k));
+  top: calc(50% - 17px * var(--jc-k));
+  width: calc(34px * var(--jc-k));
+  height: calc(34px * var(--jc-k));
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 0 0 calc(0.6px * var(--jc-k)) rgba(255, 255, 255, 0.45);
+  -webkit-mask-image: radial-gradient(closest-side, transparent 55.6%, #000 56%);
+          mask-image: radial-gradient(closest-side, transparent 55.6%, #000 56%);
+}
+.tn-case-disc-hole {
+  left: calc(50% - 9.5px * var(--jc-k));
+  top: calc(50% - 9.5px * var(--jc-k));
+  width: calc(19px * var(--jc-k));
+  height: calc(19px * var(--jc-k));
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 calc(0.5px * var(--jc-k)) rgba(255, 255, 255, 0.3);
+}
+.tn-case-disc-rim {
+  inset: 0;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 calc(0.75px * var(--jc-k)) rgba(255, 255, 255, 0.55);
+}
+/* the lid's shadow on the tray: from the hinge to where the free edge's
+   shadow lands (light from the front-left) — scaleX from the hinge */
+.tn-case-shadow {
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  transform-origin: 0 50%;
+  opacity: 0;
+  background: linear-gradient(to right, rgba(0, 0, 0, 0.5) 0%, rgba(0, 0, 0, 0.3) 80%, rgba(0, 0, 0, 0) 100%);
+}
+/* the lid: hinged on the case's LEFT edge; CSS rotateY(−θ) brings the free
+   edge toward you. Two faces, neither ever mirrored: outside = the booklet's
+   cover under clear plastic, inside = the booklet's back page (paper) held
+   by the two tabs on the free edge. */
+.tn-case-lid {
+  inset: 0;
+  transform-origin: 0 50%;
+  transform-style: preserve-3d;
+}
+.tn-case-face {
+  inset: 0;
+  border-radius: var(--jc-r);
+  overflow: hidden;
+  -webkit-backface-visibility: hidden;
+          backface-visibility: hidden;
+}
+/* drawn in its own coordinates turned 180°: the hinge is on ITS right */
+.tn-case-face--inside { transform: rotateY(180deg); }
+.tn-case-plate {
+  inset: 0;
+  background: rgba(255, 255, 255, 0.05);
+}
+.tn-case-plate--inside { background: rgba(255, 255, 255, 0.06); }
+/* ribs: 0.5pt lines every 1.8pt from x = 2 to spine − 1.5 */
+.tn-case-ribs {
+  left: calc(2px * var(--jc-k));
+  width: calc(var(--jc-spine) - 3.5px * var(--jc-k) + 0.5px * var(--jc-k));
+  top: calc(1.5px * var(--jc-k));
+  bottom: calc(1.5px * var(--jc-k));
+  background: repeating-linear-gradient(to right,
+    rgba(255, 255, 255, 0.16) 0, rgba(255, 255, 255, 0.16) calc(0.5px * var(--jc-k)),
+    transparent calc(0.5px * var(--jc-k)), transparent calc(1.8px * var(--jc-k)));
+}
+.tn-case-ribs--inside { left: auto; right: calc(2px * var(--jc-k)); }
+.tn-case .tn-case-art {
+  left: var(--jc-spine);
+  top: var(--jc-rim);
+  width: var(--jc-art);
+  height: var(--jc-art);
+  border-radius: 3px;
+  object-fit: cover;
+}
+/* the gloss streak (white 16%), its peak sliding 0.30 → 0.65 along the
+   diagonal as the lid turns: a band on a double-size layer, translated */
+.tn-case-gloss {
+  left: -50%;
+  top: -50%;
+  width: 200%;
+  height: 200%;
+  background: linear-gradient(to bottom right, rgba(255, 255, 255, 0) 33%, rgba(255, 255, 255, 0.16) 40%, rgba(255, 255, 255, 0) 45%);
+}
+.tn-case-edge {
+  inset: 0;
+  border-radius: var(--jc-r);
+  box-shadow: inset 0 0 0 calc(0.75px * var(--jc-k)) rgba(255, 255, 255, 0.32);
+}
+.tn-case-shade {
+  inset: 0;
+  background: #000;
+  opacity: 0;
+}
+.tn-case-paper {
+  left: var(--jc-rim);
+  top: var(--jc-rim);
+  width: var(--jc-art);
+  height: var(--jc-art);
+  /* the logo's white (the phone's JakeTunesTheme.base, #FCFAFB), the
+     booklet's spine fold in the hinge's shade */
+  background:
+    linear-gradient(to left, rgba(0, 0, 0, 0.14), rgba(0, 0, 0, 0) 10%),
+    var(--brand-cream, #FEFDFC);
+}
+.tn-case-tab {
+  left: var(--jc-rim);
+  width: calc(7px * var(--jc-k));
+  height: calc(17px * var(--jc-k));
+  border-radius: calc(1.5px * var(--jc-k));
+  background: rgba(199, 199, 199, 0.55);
+  box-shadow: inset 0 0 0 calc(0.5px * var(--jc-k)) rgba(0, 0, 0, 0.22);
+}
+/* the plastic shows only on the front cover: it comes up over the end of a
+   step and goes over its start (the art itself never fades) */
+.tn-case--arrive .tn-case-plastic { animation: tnCasePlasticIn 220ms ease-out 330ms both; }
+.tn-case--leave .tn-case-plastic { animation: tnCasePlasticOut 220ms ease-in both; }
+@keyframes tnCasePlasticIn { from { opacity: 0; } }
+@keyframes tnCasePlasticOut { to { opacity: 0; } }
+/* back on Home with the case open: the shut cover's reflection stays gone */
+.tn-flow-cover--case-open .tn-flow-reflection { opacity: 0; }
+
 /* ── now digging: Letterboxd posters ── */
 .tn-digging {
   display: flex;
@@ -475,6 +736,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tn-art-img, .tn-mm-dot { animation: none; }
+  .tn-art-img, .tn-mm-dot, .tn-case-plastic { animation: none; }
   .tn-flow-cover, .tn-poster, .tn-btn, .tn-mm--action { transition: none; }
 }

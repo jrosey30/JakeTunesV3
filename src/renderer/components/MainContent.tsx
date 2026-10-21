@@ -24,6 +24,7 @@ import ScotusView from '../views/ScotusView'
 import RecordStoreView from '../views/RecordStore'
 import YearInReviewView from '../views/YearInReviewView'
 import ViewModeToggle from './ViewModeToggle'
+import { useDiscHandoffView } from '../discHandoff'
 import '../styles/main-content.css'
 
 // V5 facelift: views that get the List / Grid / Cover Flow mode bar.
@@ -35,14 +36,24 @@ export default function MainContent() {
   const { state } = useLibrary()
   const isMusicMan = state.currentView === 'musicman'
 
+  // The view on screen. Normally the current one; for the Island Albums
+  // disc handoff (Home ↔ the album page that came out of the jewel case's
+  // disc) the previous view is held for the frame the View Transition
+  // captures it, then swapped inside the transition (discHandoff.ts).
+  const shown = useDiscHandoffView({
+    view: state.currentView,
+    albumKey: state.currentView === 'album-detail' ? state.pendingAlbumKey : null,
+  })
+  const view = shown.view
+
   // For PlaylistView and SmartPlaylistView the "identity" of the view
   // is the active playlist id — we want a fresh fade-in when the user
   // clicks a different playlist, not just when they switch view type.
   const transitionKey =
-    state.currentView === 'playlist' ? `playlist:${state.activePlaylistId}` :
-    state.currentView === 'smart-playlist' ? `smart:${state.activeSmartPlaylist}` :
-    state.currentView === 'album-detail' ? `album:${state.pendingAlbumKey}` :
-    state.currentView
+    view === 'playlist' ? `playlist:${state.activePlaylistId}` :
+    view === 'smart-playlist' ? `smart:${state.activeSmartPlaylist}` :
+    view === 'album-detail' ? `album:${shown.albumKey}` :
+    view
 
   // Brief 023: MusicManView stays MOUNTED across navigation — its
   // wrapper is just toggled visible/hidden based on currentView. This
@@ -56,7 +67,7 @@ export default function MainContent() {
   // and unmount-on-switch keeps the React tree from accumulating
   // background work in views the user isn't looking at.
   let viewElement: JSX.Element | null = null
-  switch (state.currentView) {
+  switch (view) {
     case 'home': viewElement = <HomeView />; break
     case 'songs': viewElement = <SongsView />; break
     case 'artists': viewElement = <ArtistsView />; break
@@ -99,7 +110,7 @@ export default function MainContent() {
     <>
       {viewElement !== null && (
         <div className="main-content-view" key={transitionKey}>
-          {MODE_ELIGIBLE.has(state.currentView) ? (
+          {MODE_ELIGIBLE.has(view) ? (
             // V5 facelift: thin chrome strip above the view hosting the
             // segmented view-mode toggle, right-aligned (iTunes 10 kept
             // this control top-right). Flex column so the view below
