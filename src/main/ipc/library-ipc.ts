@@ -29,6 +29,8 @@ import {
   recordRating,
 } from '../listener-profile.ts'
 import { MODEL_SMART } from '../../common/ai-models.ts'
+import { MOBILE_BACKEND_URL } from './recommendations-ipc.ts'
+import { createHubListeningQuote } from '../listening-quote-hub.ts'
 
 function aliasesPath(): string {
   return join(STATE_DIR, 'artist-aliases.json')
@@ -132,7 +134,10 @@ export function registerLibraryIpc(ipc: IpcRegistrar, host: LibraryIpcHost): voi
     }
   }, { refuse: REFUSED_SENDER })
 
-  ipc.handle('get-listening-memory', async () => getListeningMemory(), { public: true })
+  // The Home's Listening Memory quote: homemini's line first (the phone's,
+  // over both devices' plays), this Mac's own log while it is away.
+  const hubQuote = createHubListeningQuote({ baseUrl: MOBILE_BACKEND_URL })
+  ipc.handle('get-listening-memory', async () => getListeningMemory({ hubQuote: hubQuote.get }), { public: true })
 
   // Review mode (JT_DEV_REVIEW=1): listening activity is acknowledged, not written.
   ipc.handle('record-play', async (_event, track: { title: string; artist: string; album: string; genre: string; pct?: number }) =>
