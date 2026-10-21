@@ -108,6 +108,15 @@ const AlbumGridCard = memo(function AlbumGridCard({ item, onOpen, onContextMenu,
   )
 })
 
+/** The nearest ancestor that scrolls vertically. */
+function scrollParent(el: HTMLElement | null): HTMLElement | null {
+  for (let n = el?.parentElement ?? null; n; n = n.parentElement) {
+    const oy = getComputedStyle(n).overflowY
+    if (oy === 'auto' || oy === 'scroll') return n
+  }
+  return null
+}
+
 /** Geometry per grid for the session: a remount windows correctly on its first render. */
 const geometryCache = new Map<string, GridGeometry>()
 
@@ -132,8 +141,16 @@ const AlbumGrid = forwardRef<AlbumGridHandle, AlbumGridProps>(function AlbumGrid
   // flushed before paint there anyway.
   const committingRef = useRef(false)
 
+  // The scroller, resolved from the DOM when the caller's ref isn't attached
+  // yet: React runs this grid's layout effects BEFORE it attaches an
+  // ancestor's ref, so on mount scrollRef.current is still null — binding to it
+  // silently bound nothing, and the window never followed the scroll until
+  // some unrelated re-render (caught in the harness: 0 of 35 cards visible at
+  // 48,000 px). The wrapper is ours, so it is attached by then.
+  const getScroller = useCallback((): HTMLElement | null => scrollRef.current ?? scrollParent(wrapRef.current), [scrollRef])
+
   const readGeometry = useCallback((): GridGeometry | null => {
-    const sc = scrollRef.current, grid = gridRef.current, wrap = wrapRef.current
+    const sc = getScroller(), grid = gridRef.current, wrap = wrapRef.current
     if (!sc || !grid || !wrap) return null
     const first = grid.firstElementChild as HTMLElement | null
     if (!first) return viewRef.current.geo
@@ -145,11 +162,11 @@ const AlbumGrid = forwardRef<AlbumGridHandle, AlbumGridProps>(function AlbumGrid
     const scTop = sc.getBoundingClientRect().top + sc.clientTop
     const gridTop = wrap.getBoundingClientRect().top - scTop + sc.scrollTop + (parseFloat(cs.paddingTop) || 0)
     return { cols, rowStride, gridTop, viewportH: sc.clientHeight }
-  }, [scrollRef])
+  }, [getScroller])
 
   /** Recompute from the live DOM; update (synchronously if a hole would paint). */
   const sync = useCallback((allowFlush: boolean) => {
-    const sc = scrollRef.current
+    const sc = getScroller()
     if (!sc) return
     const prev = viewRef.current
     const measured = readGeometry()
@@ -162,7 +179,7 @@ const AlbumGrid = forwardRef<AlbumGridHandle, AlbumGridProps>(function AlbumGrid
     const hole = !!geo && !windowCovers(winRef.current, geo, st)
     if (hole && allowFlush && !committingRef.current) flushSync(apply)
     else apply()
-  }, [scrollRef, readGeometry, geometryKey])
+  }, [getScroller, readGeometry, geometryKey])
 
   // After every render of this grid: measure what was just laid out (the first
   // render's slice, a new column count, content above the grid that moved).
@@ -181,7 +198,7 @@ const AlbumGrid = forwardRef<AlbumGridHandle, AlbumGridProps>(function AlbumGrid
   const handlerRef = useRef<(() => void) | null>(null)
   if (!handlerRef.current) handlerRef.current = () => onScrollRef.current()
   useLayoutEffect(() => {
-    const sc = scrollRef.current
+    const sc = getScroller()
     if (sc === boundRef.current) return
     const handler = handlerRef.current!
     if (boundRef.current) {
@@ -214,7 +231,7 @@ const AlbumGrid = forwardRef<AlbumGridHandle, AlbumGridProps>(function AlbumGrid
   })
   useImperativeHandle(ref, () => ({
     reveal(index, block, onCard) {
-      const sc = scrollRef.current
+      const sc = getScroller()
       const item = itemsRef.current[index]
       const geo = readGeometry() ?? viewRef.current.geo
       if (!sc || !item || !geo) return
@@ -227,7 +244,7 @@ const AlbumGrid = forwardRef<AlbumGridHandle, AlbumGridProps>(function AlbumGrid
       if (el) onCard(el)
       else pendingRevealRef.current = { key: item.key, cb: onCard }
     },
-  }), [scrollRef, readGeometry])
+  }), [getScroller, readGeometry])
 
   return (
     <div ref={wrapRef} className="album-grid-window" style={{ paddingTop: win.padTop, paddingBottom: win.padBottom }}>
