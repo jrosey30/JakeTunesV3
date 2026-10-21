@@ -46,6 +46,8 @@ import { islandAlbumKey } from '../../common/synced-picks'
 import { coverFlowPoses, stepCover, coverFlowKeyDelta, clampCoverIndex, COVER_FLOW_DEFAULTS } from '../../common/cover-flow'
 import { COVER_WHEEL_DEFAULTS } from '../../common/cover-flow-wheel'
 import { useCoverFlowWheel } from '../hooks/useCoverFlowWheel'
+import { useArrowKeyOwner } from '../hooks/useArrowKeyOwner'
+import { overlayOpen } from '../utils/arrowKeyOwner'
 import { groupTracksIntoAlbums, type Album } from '../utils/albumGroups'
 import { indexAlbumsForIsland } from '../utils/islandSlots'
 import { albumKeyFromStrings } from '../utils/albumKey'
@@ -369,7 +371,22 @@ export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispa
     }
   }, [caseRun, frontKey])
 
+  // While the flow is on screen it owns plain ←/→ and Enter even unfocused
+  // (utils/arrowKeyOwner.ts, the iTunes way — Jake 10/21: "i have to click
+  // inside the home page for it to cover flow. come on!!!!"). ⌘←/⌘→ stay
+  // previous / next track.
+  useArrowKeyOwner(stageRef, {
+    step: (d) => {
+      if (caseBusyRef.current) return
+      setActive((cur) => stepCover(clampCoverIndex(cur, flow.length), d, flow.length))
+    },
+    enter: () => openFront(at),
+  }, flow.length > 0)
+
   const onFlowKey = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
+    // ⌘/Ctrl/⌥ + arrow is the transport's (previous / next track), focused or
+    // not; and with a menu or dialog open the flow keeps its hands off.
+    if (e.metaKey || e.ctrlKey || e.altKey || overlayOpen()) return
     const d = coverFlowKeyDelta(e.key)
     if (d !== 0) {
       // stopPropagation is LOAD-BEARING: App.tsx's document-level transport

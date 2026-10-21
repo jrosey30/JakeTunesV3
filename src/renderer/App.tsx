@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { LibraryProvider, useLibrary } from './context/LibraryContext'
 import { shouldYieldToClaim } from './input-mode'
+import { handleOwnedArrowKey } from './utils/arrowKeyOwner'
 import { primeColumnCacheFromUiState } from './utils/columnState'
 import { PlaybackProvider, usePlayback } from './context/PlaybackContext'
 import { CynthiaProvider } from './context/CynthiaContext'
@@ -655,6 +656,8 @@ function AppInner() {
         return
       }
       if (typing) return
+      // An on-screen Cover Flow owns plain ←/→/Enter (utils/arrowKeyOwner.ts).
+      if (handleOwnedArrowKey(e)) return
 
       // Dedicated media keys (some keyboards deliver these to the renderer).
       if (e.key === 'MediaPlayPause' || e.code === 'MediaPlayPause') {
