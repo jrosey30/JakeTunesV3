@@ -198,15 +198,19 @@
 .now-playing-info--stacked {
   line-height: 1.12;
 }
+/* Names never clip (Jake's rule): no "…" on these three lines. A name that
+ * outruns the pill shrinks a touch or ticks past like the phone's iPod-mini
+ * ticker — components/playback/lcdTicker.ts decides (common/lcd-ticker.ts)
+ * and marks the line data-lcd="shrink" | "ticker". */
 .now-playing-line-primary {
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
 }
 .now-playing-line-secondary {
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
   font-size: calc(var(--font-body) - 1px);
   opacity: 0.78;
   margin-top: 1px;
@@ -215,9 +219,20 @@
 .now-playing-line-tertiary {
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
   font-size: calc(var(--font-body) - 1px);
   opacity: 0.66;
+}
+/* Scrolling: read left to right from the start of the name; the name slides
+ * out under a 22px fade at the right edge (TickerText's mask). */
+.now-playing-info--stacked [data-lcd="ticker"] {
+  text-align: left;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent);
+}
+.now-playing-info--stacked [data-lcd="ticker"] > * {
+  display: inline-block;
+  will-change: transform;
 }
 
 .now-playing-empty { height: 100%; }

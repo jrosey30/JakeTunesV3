@@ -8,6 +8,7 @@ import { playStinger, randomPreStinger, randomEndStinger, STINGER_DURATIONS } fr
 import { RadioEngine, type SegmentRequest } from '../../radio/RadioEngine'
 import TransportControls from './TransportControls'
 import NowPlaying from './NowPlaying'
+import { useLcdTicker } from './lcdTicker'
 import VolumeSlider from './VolumeSlider'
 import SearchPill from './SearchPill'
 import { setNotice, setBroadcast, streamBroadcast, setBroadcastTimed, setRadio, getBroadcast } from '../../activity'
@@ -198,6 +199,10 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
   // artist-facts lookup so a real click finds the cache already warm.
   const micHoverTimer = useRef<number | null>(null)
   const lastPrefetchedTrackId = useRef<number | null>(null)
+  // Names never clip on the LCD: long song / artist / album names shrink or
+  // tick past like the phone's (lcdTicker.ts). Refs only — no state deps.
+  const toolbarRef = useRef<HTMLDivElement>(null)
+  useLcdTicker(toolbarRef)
 
   // The active volume fade lives in a ref so cancel/restore paths can stop
   // it — a local setInterval (the old code) kept ramping after a cancel
@@ -1737,7 +1742,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
   }, [djModeActive, autoDj, startDjSet])
 
   return (
-    <div className="toolbar">
+    <div className="toolbar" ref={toolbarRef}>
       <TransportControls />
       <div className="now-playing-group">
         <NowPlaying />
