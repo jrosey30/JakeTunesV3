@@ -217,14 +217,18 @@ export default function ArtistsView(): JSX.Element {
   const autoScrollAtRef = useRef(0)
   const noteActivity = useCallback(() => { if (Date.now() - autoScrollAtRef.current > 200) lastActivityRef.current = Date.now() }, [])
   const flashCard = useCallback((name: string, block: ScrollLogicalPosition = 'center') => {
-    const el = viewRootRef.current?.querySelector(`.ag-card[data-artist-name="${CSS.escape(name)}"]`) as HTMLElement | null
+    // The artist's place in the list, not its copy in a shelf at the top
+    // (Heavy rotation / New in your library) — a follow used to yank the page
+    // up to the shelf (2026-10-21, measured: back landed at 694 px from 48,694).
+    const sel = `.ag-card[data-artist-name="${CSS.escape(name)}"]`
+    const el = (viewRootRef.current?.querySelector(`.ag-sec ${sel}`) ?? viewRootRef.current?.querySelector(sel)) as HTMLElement | null
     if (!el) return
     autoScrollAtRef.current = Date.now()
     el.scrollIntoView({ block })
     el.classList.add('find-hit')
     window.setTimeout(() => el.classList.remove('find-hit'), 1400)
   }, [])
-  const find = useFindState()
+  const find = useFindState(lib.currentView === 'artists')   // a kept-alive (hidden) grid never answers ⌘F
   const findMatches = useMemo(() => {
     const t = find.query.trim().toLowerCase()
     return t ? visible.filter((a) => a.name.toLowerCase().includes(t)).map((a) => a.name) : []
@@ -245,7 +249,15 @@ export default function ArtistsView(): JSX.Element {
     if (hit) requestAnimationFrame(() => flashCard(hit.name, 'start'))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+  // Follow the playing artist when the TRACK CHANGES while this page is up and
+  // idle — never on mount or on a return. The activity clock starts at 0 on
+  // every mount, so the old "idle for 5 s" test passed instantly and every back
+  // to Artists jumped away from the restored position (2026-10-21).
+  const followedIdRef = useRef(pb.nowPlaying?.id)
   useEffect(() => {
+    const id = pb.nowPlaying?.id
+    if (id === followedIdRef.current) return
+    followedIdRef.current = id
     if (lib.currentView !== 'artists' || !pb.nowPlaying || Date.now() - lastActivityRef.current < 5000) return
     const name = canonicalArtist(pb.nowPlaying.artist || '')
     if (visible.some((a) => a.name === name)) requestAnimationFrame(() => flashCard(name, 'nearest'))

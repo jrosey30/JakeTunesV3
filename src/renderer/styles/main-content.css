@@ -38,6 +38,38 @@
   }
 }
 
+/* 2026-10-21 — the browse page kept alive under an artist / album page
+   (keptView.ts). One stable full-size box whether shown or parked, so parking
+   never rebuilds its layout. Parked = not painted, not hit-tested, out of the
+   a11y tree, and its laid-out DOM + scroll position preserved
+   (content-visibility: hidden keeps the rendering state; unhide measured
+   <1 ms vs 70–93 ms for display:none). */
+.main-content-view--kept {
+  display: block;
+  position: absolute;
+  inset: 0;
+}
+.main-content-view--parked {
+  visibility: hidden;
+  content-visibility: hidden;
+  pointer-events: none;
+}
+
+/* Back / forward RETURNS to a page (navIntent.ts): no entrance choreography.
+   Every one of these starts at opacity 0 — replayed on a return they read as
+   the page blanking and reappearing (measured: ~400 ms of white on back to an
+   artist page, 13 blank frames on back to Home). Continuous motion (the artist
+   photo's Ken Burns drift) is not listed and keeps running. */
+.main-content-view[data-nav='return'] > *,
+.main-content-view[data-nav='return'] :is(
+  .ad-rise,
+  .home-featured, .home-stats, .home-section,
+  .home-album-card, .home-artist-card, .home-tour-card,
+  .home-upcoming-card, .home-release-card, .home-news-card
+) {
+  animation: none;
+}
+
 /* ── V5 facelift: view-mode bar (List / Grid / Cover Flow) ──
    Thin chrome strip above the flat-table views. Same surface language
    as the existing .view-search-bar (identical gradient + border) so it

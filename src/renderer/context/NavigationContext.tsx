@@ -4,6 +4,7 @@ import type { ViewName, SmartPlaylistId } from '../types'
 import { recordLocation, canGoBack as histCanBack, canGoForward as histCanForward } from '../nav-history'
 import type { NavLocation, NavHistory } from '../nav-history'
 import { reopenSearch } from '../searchNav'
+import { markHistoryNavigation } from '../navIntent'
 
 /**
  * Browser-style back/forward history for the app's views.
@@ -109,6 +110,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
       if (s.index > 0) {
         navRef.current = { history: s.history, index: s.index - 1 }
         repaint()
+        markHistoryNavigation()
         restore(navRef.current.history[navRef.current.index])
       }
       reopenSearch(sr.query)
@@ -118,6 +120,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
     searchReturnRef.current = null
     navRef.current = { history: s.history, index: s.index - 1 }
     repaint()
+    markHistoryNavigation()
     restore(navRef.current.history[navRef.current.index])
   }, [restore, repaint])
 
@@ -126,6 +129,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
     if (s.index >= s.history.length - 1) return
     navRef.current = { history: s.history, index: s.index + 1 }
     repaint()
+    markHistoryNavigation()
     restore(navRef.current.history[navRef.current.index])
   }, [restore, repaint])
 

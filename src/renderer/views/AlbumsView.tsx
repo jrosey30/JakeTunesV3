@@ -53,18 +53,16 @@ export default function AlbumsView() {
     pbDispatch,
   }), [playTrack, pbDispatch, libDispatch, lib.tracks, lib.playlists])
 
-  // When returning from AlbumDetailView (← Albums), pendingAlbumKey is still
-  // set — scroll that card into view, then clear so a later sidebar visit
-  // doesn't jump again.
+  // Returning from AlbumDetailView leaves pendingAlbumKey set — clear it.
+  // 2026-10-21: no longer scrolls to that album's card. The page you return to
+  // is the page you left (kept alive under the album page, scroll intact), so
+  // the card you opened from the grid is already in view; the scroll only ever
+  // MOVED you — a 200–350 px smooth drift after every back, and an album opened
+  // from the Island shelf at the top threw the page 53,000 px down the grid.
   useEffect(() => {
     if (lib.currentView !== 'albums') return
     if (!lib.pendingAlbumKey) return
-    const key = lib.pendingAlbumKey
     libDispatch({ type: 'CLEAR_PENDING_ALBUM_KEY' })
-    window.setTimeout(() => {
-      const card = document.querySelector(`.album-card[data-album-key="${CSS.escape(key)}"]`)
-      if (card) card.scrollIntoView({ block: 'center', behavior: 'smooth' })
-    }, 60)
   }, [lib.pendingAlbumKey, lib.currentView, libDispatch])
 
   // Declared full concerts (both the "(Live Set)" merged album tile AND the raw
@@ -94,7 +92,7 @@ export default function AlbumsView() {
 
   // ⌘F find-in-view: jump to an album card + flash it (cards carry
   // data-album-key, all in the DOM).
-  const find = useFindState()
+  const find = useFindState(lib.currentView === 'albums')   // a kept-alive (hidden) grid never answers ⌘F
   const findMatches = useMemo(() => {
     const q = find.query.trim().toLowerCase()
     if (!q) return [] as string[]
@@ -173,7 +171,13 @@ export default function AlbumsView() {
     }
   }, [])
 
+  // Follow the playing album when the TRACK CHANGES while this page is up and
+  // idle — never on mount or on a return (same rule as Artists, 2026-10-21).
+  const followedIdRef = useRef(pb.nowPlaying?.id)
   useEffect(() => {
+    const id = pb.nowPlaying?.id
+    if (id === followedIdRef.current) return
+    followedIdRef.current = id
     if (lib.currentView !== 'albums') return
     if (!pb.nowPlaying) return
     if (Date.now() - lastUserActivityAtRef.current < FOLLOW_IDLE_MS) return
