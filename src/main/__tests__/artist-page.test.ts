@@ -4,9 +4,11 @@
 // captions, and a long name stepping down instead of clipping.
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   topSongs, mostPlayedRecord, earliestAdded, monthYear, dayMonthYear, clock, lengthLabel, heroEyebrow,
-  heroNameSize, writtenFrom, posterDate, posterYear, liveCaption, posterShowLine, posterVenue,
+  heroNameSize, writtenFrom, posterDate, posterYear, liveCaption, posterShowLine, posterVenue, albumTileMeta,
 } from '../../common/artist-page.ts'
 
 const t = (id: number, plays: number, extra: Record<string, unknown> = {}) => ({ id, title: `Song ${id}`, duration: 200_000, playCount: plays, dateAdded: '2026-08-09T17:00:00.000Z', ...extra })
@@ -51,6 +53,21 @@ describe('dates and lengths', () => {
     assert.equal(clock(3_725_000), '1:02:05')
     assert.equal(lengthLabel(2_745_000), '46 min')
     assert.equal(lengthLabel(4_860_000), '1 hr 21 min')
+  })
+})
+
+describe('album tiles', () => {
+  it('kind · year only — never a play count (Jake 10/20)', () => {
+    assert.equal(albumTileMeta('', 2025), '2025')
+    assert.equal(albumTileMeta('EP', '2023'), 'EP · 2023')
+    assert.equal(albumTileMeta('Single', ''), 'Single')
+    assert.equal(albumTileMeta('', 0), '')
+  })
+  it('the artist page builds tile lines with it and puts no plays next to an album', () => {
+    const view = readFileSync(join(import.meta.dirname, '../../renderer/views/ArtistDetailView.tsx'), 'utf-8')
+    const cover = view.slice(view.indexOf('const cover = ('), view.indexOf('return (', view.indexOf('const cover = (')))
+    assert.match(cover, /albumTileMeta\(/)
+    assert.doesNotMatch(cover, /playsOf\(|plural\([^)]*'play'/, 'an album tile line counts plays again')
   })
 })
 

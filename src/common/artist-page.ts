@@ -108,6 +108,16 @@ export const RELEASE_KIND_SINGULAR: Readonly<Record<ReleaseKind, string>> = {
   album: 'Album', ep: 'EP', single: 'Single', live: 'Live', compilation: 'Compilation',
 }
 
+/**
+ * The line under an album tile: kind · year, nothing else — "2025",
+ * "EP · 2023", "Single · 2024". No play counts (Jake, 10/20: "i also dont
+ * need to see the amount of plays next to each album"). Empty when neither is known.
+ */
+export function albumTileMeta(kindLabel: string, year: number | string | null | undefined): string {
+  const y = Number(year) > 0 ? String(year) : ''
+  return [kindLabel, y].filter(Boolean).join(' · ')
+}
+
 /** "Artist · Brooklyn, New York · Since 2016" — only what the profile grounds. */
 export function heroEyebrow(origin?: { place?: string; since?: string } | null): string {
   const parts = ['Artist']
