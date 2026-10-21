@@ -35,7 +35,7 @@ import { playsEverywhere } from '../../common/plays-elsewhere'
 import { useArtistProfile } from '../artistProfile'
 import {
   topSongs, mostPlayedRecord, earliestAdded, monthYear, dayMonthYear, clock, lengthLabel, plural,
-  RELEASE_KIND_SINGULAR, heroEyebrow, heroNameSize, writtenFrom, albumTileMeta, headerPhotoChoice,
+  RELEASE_KIND_SINGULAR, heroEyebrow, heroNameSize, albumTileMeta, headerPhotoChoice,
 } from '../../common/artist-page'
 import MemberTile from '../components/artist/MemberTile'
 import MoreFromList, { type MoreFromRelease } from '../components/artist/MoreFromList'
@@ -46,9 +46,10 @@ import { albumArtUrl } from '../artRevision'
 // VIEW_ARTIST_DETAIL dispatch. Top to bottom:
 //   - header: the band photo full-bleed on the right, fading into ink; eyebrow
 //     (origin · since), the name, a one-line description, stats, Play / Shuffle
-//   - About: homemini's pre-built bio (lede + body, every fact sourced) beside
-//     the facts panel. No profile yet (404) or homemini away with nothing
-//     cached → the validated Wikipedia summary, as before, with no members
+//   - About: homemini's pre-built bio (lede + body; its sources stay in the
+//     data, nothing is printed under it — Jake: no footnotes) beside the facts
+//     panel. No profile yet (404) or homemini away with nothing cached → the
+//     validated Wikipedia summary, as before, with no members
 //   - "Your <Artist>": top-5 songs (plays everywhere) + the most played record
 //   - Members: clear face photos, legal names, solo links; Jake can set a photo
 //   - Discography: Albums / EPs & Singles (/ Compilations) rows, newest first,
@@ -402,8 +403,8 @@ export default function ArtistDetailView() {
   })()
   // The header's picture (common/artist-page.ts headerPhotoChoice, twinned
   // with the phone): a credited header photo from the profile wins once it is
-  // saved on this Mac, its credit shown under it like the members' photo
-  // credits; with heroNeedsPhoto the app's artist image shows the wrong
+  // saved on this Mac — its credit rides only as the image's hover title,
+  // never printed (Jake: no footnotes); with heroNeedsPhoto the app's artist image shows the wrong
   // line-up, so the record cover takes the slot; otherwise the artist image.
   const headerChoice = headerPhotoChoice(profile)
   const [brokenHero, setBrokenHero] = useState<string | null>(null)
@@ -548,8 +549,6 @@ export default function ArtistDetailView() {
 
   const isMulti = personas.length > 1
   const members = profile?.members
-  const memberCredit = members?.photoCredit
-    || (members?.people ?? []).filter((p) => p.photo?.credit).map((p) => `${p.name} photo: ${p.photo!.credit}`).join(' · ')
   const bioParas = (text: string) => text.split(/\n{2,}|\n/).map((s) => s.trim()).filter(Boolean)
   const openExternal = (url: string) => (e: React.MouseEvent) => {
     e.preventDefault()
@@ -602,6 +601,7 @@ export default function ArtistDetailView() {
               className="ad-drift"
               src={heroSrc}
               alt={artist}
+              title={creditedHero?.credit ? `${artist} photo: ${creditedHero.credit}` : undefined}
               draggable={false}
               onError={() => {
                 if (creditedHero) setBrokenHero(creditedHero.url)
@@ -610,7 +610,6 @@ export default function ArtistDetailView() {
             />
             <div className="ad-hero-fade-x" />
             <div className="ad-hero-fade-y" />
-            {creditedHero?.credit && <p className="ad-hero-credit">{artist} photo: {creditedHero.credit}</p>}
           </div>
         )}
         <div className="ad-hero-text">
@@ -639,26 +638,13 @@ export default function ArtistDetailView() {
               <>
                 {profile.bio.lede && <p className="ad-lede">{profile.bio.lede}</p>}
                 {bioParas(profile.bio.body).map((p, i) => <p key={i} className="ad-body">{p}</p>)}
-                {profile.bio.sources.length > 0 && (
-                  <p className="ad-source">
-                    {writtenFrom(profile.bio.sources.map((s) => s.label))} · every fact sourced ·{' '}
-                    <a href={profile.bio.sources[0].url} onClick={openExternal(profile.bio.sources[0].url)}>{profile.bio.sources[0].label}</a>
-                  </p>
-                )}
               </>
             ) : profile ? (
               profile.facts.length === 0 && <p className="ad-body ad-body--quiet">No biography yet.</p>
             ) : aboutLoadingShown ? (
               <p className="ad-body ad-body--quiet">Looking up {artist}…</p>
             ) : wiki?.extract ? (
-              <>
-                {bioParas(wiki.extract).map((p, i) => <p key={i} className="ad-body">{p}</p>)}
-                <p className="ad-source">
-                  From Wikipedia
-                  {wiki.pageUrl && <> · <a href={wiki.pageUrl} onClick={openExternal(wiki.pageUrl)}>Wikipedia</a></>}
-                  {' · '}<a href={`https://musicbrainz.org/search?type=artist&query=${encodeURIComponent(artist)}`} onClick={openExternal(`https://musicbrainz.org/search?type=artist&query=${encodeURIComponent(artist)}`)}>MusicBrainz</a>
-                </p>
-              </>
+              bioParas(wiki.extract).map((p, i) => <p key={i} className="ad-body">{p}</p>)
             ) : wiki ? (
               // Better empty than wrong: no validated page → no bio, and a way to look.
               <p className="ad-body ad-body--quiet">
@@ -718,7 +704,6 @@ export default function ArtistDetailView() {
                   )
                 })}
               </div>
-              <p className="ad-footnote">{elsewhere.counts.size > 0 ? 'Plays from this Mac, workmini and your phone.' : 'Plays from this Mac.'}</p>
             </div>
             {record && (
               <div className="ad-yours-record">
@@ -764,7 +749,6 @@ export default function ArtistDetailView() {
                 />
               ))}
             </div>
-            {memberCredit && <p className="ad-credit">{memberCredit}</p>}
           </section>
         )}
 

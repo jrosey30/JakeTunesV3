@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   topSongs, mostPlayedRecord, earliestAdded, monthYear, dayMonthYear, clock, lengthLabel, heroEyebrow,
-  heroNameSize, writtenFrom, posterDate, posterYear, liveCaption, posterShowLine, posterVenue, albumTileMeta, headerPhotoChoice,
+  heroNameSize, posterDate, posterYear, liveCaption, posterShowLine, posterVenue, albumTileMeta, headerPhotoChoice,
 } from '../../common/artist-page.ts'
 
 const t = (id: number, plays: number, extra: Record<string, unknown> = {}) => ({ id, title: `Song ${id}`, duration: 200_000, playCount: plays, dateAdded: '2026-08-09T17:00:00.000Z', ...extra })
@@ -101,11 +101,6 @@ describe('the header', () => {
     assert.equal(heroNameSize('Red Hot Chili Peppers'), 'l')
     assert.equal(heroNameSize('Godspeed You! Black Emperor'), 'm')
     assert.equal(heroNameSize('King Gizzard & the Lizard Wizard and Friends of the Lizard'), 's')
-  })
-  it('the bio credits its sources in plain words', () => {
-    assert.equal(writtenFrom(['Wikipedia', 'MusicBrainz']), 'Written from Wikipedia and MusicBrainz')
-    assert.equal(writtenFrom(['Wikipedia']), 'Written from Wikipedia')
-    assert.equal(writtenFrom([]), '')
   })
 })
 

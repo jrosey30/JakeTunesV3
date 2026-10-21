@@ -93,15 +93,6 @@
   height: 140px;
   background: linear-gradient(180deg, rgba(11, 11, 10, 0), rgba(11, 11, 10, 0.75));
 }
-/* A credited header photo's credit — the members' credit line, set on the
-   photo's own dark bottom edge. */
-.ad-hero-credit {
-  position: absolute; right: 20px; bottom: 10px; left: 30%;
-  margin: 0;
-  font-size: 10px; line-height: 1.35; text-align: right;
-  color: rgba(254, 253, 252, 0.62);
-  overflow-wrap: anywhere;
-}
 .ad-hero-text {
   position: relative;
   box-sizing: border-box;
@@ -208,7 +199,6 @@
 .ad-lede { margin: 0; font-family: var(--ad-display); font-size: 17px; line-height: 1.5; font-weight: 600; color: var(--ad-text); }
 .ad-body { margin: 0; font-size: 13px; line-height: 1.6; color: #2b2622; }
 .ad-body--quiet { color: var(--ad-text-3); }
-.ad-source { margin: 2px 0 0; font-size: 11px; color: var(--ad-text-3); }
 .ad-facts {
   margin: 30px 0 0;
   display: grid;
@@ -267,7 +257,6 @@
 .ad-bar { flex: 1; height: 5px; border-radius: 3px; background: #ebe5dc; overflow: hidden; display: block; }
 .ad-bar > span { display: block; height: 100%; background: var(--ad-orange); }
 .ad-plays-n { min-width: 18px; text-align: right; font-weight: 700; color: var(--ad-text); font-variant-numeric: tabular-nums; }
-.ad-footnote { margin: 8px 0 0; font-size: 11px; color: var(--ad-text-3); }
 
 .ad-record {
   flex: 1;
@@ -353,7 +342,6 @@
 }
 .ad-member-solo:hover { color: var(--ad-orange-border); text-decoration: underline; }
 .ad-member-error { margin-top: 6px; font-size: 11px; line-height: 1.4; color: #b3261e; font-weight: 600; }
-.ad-credit { margin: 0; font-size: 10px; color: var(--ad-text-3); }
 
 /* ── Discography ── */
 .ad-disco { display: flex; flex-direction: column; gap: 14px; }
