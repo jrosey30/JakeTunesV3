@@ -482,8 +482,8 @@ export default function ArtistDetailView() {
     // Your library is ground truth: an MB release with an owned album's title
     // is that album; an unowned MB "album" that just repackages songs you own
     // (the US Capitol Beatles comps) drops out. The rest is discovery. Jake's
-    // hidden releases and the plain-edition tracklists are main's job
-    // (fetchArtistDiscography + common/discography-pick.ts).
+    // hidden releases, the release gate and the plain-edition tracklists are
+    // main's job (main/artist-discography.ts + common/release-gate.ts).
     const ownedTitles = new Set(persona.albums.map((a) => normTitle(a.name)))
     for (const g of rowsOwned) ownedTitles.add(normTitle(g.name))
     const ownedSongs = new Set<string>()

@@ -195,9 +195,9 @@ import {
   sanitizeAlbumCredits,
   tagYearStr,
 } from '../common/albumReleaseDate'
-import { foldAccents, nameKey, storedNameKey } from '../common/fold-text.ts'
-import { chooseArtistIdentity, catalogueIsSomeoneElses, type IdentityConfidence } from '../common/artist-identity.ts'
-import { pickStandardRelease, isHiddenRelease } from '../common/discography-pick.ts'
+import { nameKey, storedNameKey } from '../common/fold-text.ts'
+import { chooseArtistIdentity, type IdentityConfidence } from '../common/artist-identity.ts'
+import { fetchArtistDiscography, initArtistDiscography } from './artist-discography.ts'
 import { measureLibraryFileSizes, type FileSizeProgress, type FileSizeScan } from '../common/library-file-sizes.ts'
 import { normForOwnership } from './owned-album-key.ts'
 import { explicitWins } from '../common/explicit.ts'
@@ -2869,38 +2869,8 @@ async function searchMusicBrainz(artist: string, album?: string): Promise<string
   }
 }
 
-// ── MusicBrainz discography fetcher (4.5) ───────────────────────────
-// Used by ArtistDetailView's per-album drill-down to show the
-// canonical tracklist with owned-vs-not badges. Returns the artist's
-// release-group catalog (albums + EPs) with each album's tracklist
-// (track titles + positions). Cached to disk for 7 days per artist,
-// MusicBrainz ToS limits us to ~1 req/sec so a typical 12-album
-// artist takes ~15s on a cold lookup; cached lookups are instant.
-//
-// Returned shape:
-//   { albums: [{ title, year, tracks: [{ title, position }] }] }
-//
-// Renderer matches each canonical track to the user's library by
-// (artist + normalized title) to compute the owned/not-owned dots.
-
-interface DiscographyAlbum {
-  title: string
-  year: string  // 4-digit, or '' if unknown
-  tracks: { title: string; position: number }[]
-  mb?: { primaryType?: string; secondaryTypes?: string[] }  // release-group type → the artist page's sections (release-kind.ts)
-}
-interface DiscographyResult {
-  artist: string
-  albums: DiscographyAlbum[]
-  fetchedAt: number
-  schemaVersion?: number
-}
-
-// Bump when the discography shape/filtering changes so old disk caches are
-// ignored. v2: drop regional repackagings / hits comps via tracklist overlap
-// (the US Capitol Beatles albums MusicBrainz doesn't flag as Compilation).
-const DISCO_SCHEMA_VERSION = 4  // 3: 2026-10-20 identity rule (Geese → Pop Songs / Duck). 4: standard edition, not a 3-disc bundle (3D Country); Jake's hidden releases
-const DISCO_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+// ── MusicBrainz discography: ./artist-discography.ts (through the release
+// gate, common/release-gate.ts). The shared MusicBrainz throttle stays here.
 const MB_RATE_LIMIT_MS = 1100  // MB asks for ≤1 req/sec; pad to 1.1s
 let mbLastRequestAt = 0
 
@@ -3140,12 +3110,6 @@ async function readIdentityLibrary(): Promise<IdentityTrack[]> {
   return tracks
 }
 
-function discoCachePath(artist: string): string {
-  // Any script: [a-z0-9] put every Hebrew artist in one file, '_.json' — one artist's discography for all.
-  const safe = Array.from(nameKey(artist, '_')).slice(0, 80).join('') || `_${createHash('md5').update(artist).digest('hex').slice(0, 12)}`
-  return join(app.getPath('userData'), 'discography-cache', `${safe}.json`)
-}
-
 // ── Scene-graph reach (2026-08-07, the Ceremony problem) ─────────────
 // Jake found Ceremony because a record-store manager played them — a
 // SCENE connection (labels, splits, bandmates), not a sonic one. Sonic
@@ -3226,141 +3190,14 @@ async function fetchSceneNeighbors(anchor: string): Promise<Array<{ name: string
   return [...out.entries()].map(([name, v]) => ({ name, connection: v.connection, sampleTitle: v.sampleTitle }))
 }
 
-async function fetchArtistDiscography(artist: string): Promise<DiscographyResult | null> {
-  const cachePath = discoCachePath(artist)
-  // Cache hit
-  try {
-    const raw = await readFile(cachePath, 'utf-8')
-    const cached = JSON.parse(raw) as DiscographyResult
-    if (cached.schemaVersion === DISCO_SCHEMA_VERSION && cached.fetchedAt && Date.now() - cached.fetchedAt < DISCO_CACHE_TTL_MS) {
-      return cached
-    }
-  } catch { /* miss */ }
-
-  const headers = {
-    'User-Agent': `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)`,
-    'Accept': 'application/json',
-  }
-
-  try {
-    // 1. Resolve artist MBID via the canonical resolver — uses library
-    //    genre context to pick the right entity for common names. Old
-    //    in-line `.find(exact-name-match) ?? first` consistently picked
-    //    the wrong "Drake" / "Beck" / "Bush" MBID, giving the user
-    //    someone else's discography on common-name artists.
-    const libraryGenres = await getLibraryGenresForArtist(artist)
-    const libraryAlbums = await getLibraryAlbumsForArtist(artist)
-    const canon = await resolveCanonicalArtist(artist, { libraryGenres, libraryAlbums })
-    if (!canon) return null
-    const mbid = canon.mbid
-    // A stranger's discography is worse than none (Jake, 10/20: "what is
-    // duck and pop songs???"). Cached empty so the page stops asking.
-    const refuse = async (why: string): Promise<DiscographyResult> => {
-      console.warn(`[discography] ${artist}: ${why} — showing none`)
-      const empty: DiscographyResult = { artist, albums: [], fetchedAt: Date.now(), schemaVersion: DISCO_SCHEMA_VERSION }
-      try {
-        await mkdir(join(app.getPath('userData'), 'discography-cache'), { recursive: true })
-        await writeFile(cachePath, JSON.stringify(empty), 'utf-8')
-      } catch (err) { console.warn('[discography] cache write failed:', err) }
-      return empty
-    }
-    if (canon.identity === 'ambiguous') {
-      if (canon.incomplete) return null  // MusicBrainz hiccup — try again next visit, cache nothing
-      return refuse(`namesakes the library can't tell apart (${mbid})`)
-    }
-
-    // 2. Fetch release-groups (albums + EPs, sorted by date)
-    await mbThrottle()
-    const rgUrl = `https://musicbrainz.org/ws/2/release-group?artist=${mbid}&type=album|ep&fmt=json&limit=100`
-    const rgRes = await fetch(rgUrl, { headers })
-    if (!rgRes.ok) return null
-    const rgData = await rgRes.json() as {
-      'release-groups'?: Array<{ id: string; title: string; 'first-release-date'?: string; 'primary-type'?: string; 'secondary-types'?: string[] }>
-    }
-    if (catalogueIsSomeoneElses((rgData['release-groups'] || []).map(rg => rg.title), libraryAlbums)) {
-      return refuse(`none of the ${libraryAlbums.length} library albums are in ${mbid}'s catalogue`)
-    }
-    // 4.5.0-66 — also filter on secondary-types. Old behavior accepted any
-    // release-group whose primary-type was Album/EP, which leaked Compilation/
-    // Live/Remix/DJ-mix entries into the list. Studio albums only — but ALLOW
-    // Soundtrack, so a band's own film-soundtrack ALBUMS (A Hard Day's Night,
-    // Help!) survive; the tracklist-overlap dedup below catches the comps that
-    // MB mislabels as plain "Album".
-    const rgs = (rgData['release-groups'] || [])
-      .filter(rg => rg['primary-type'] === 'Album' || rg['primary-type'] === 'EP')
-      .filter(rg => (rg['secondary-types'] || []).every(s => s.toLowerCase() === 'soundtrack'))
-      .filter(rg => !isHiddenRelease(mbid, rg.title))
-      .sort((x, y) => (y['first-release-date'] || '').localeCompare(x['first-release-date'] || ''))
-      .slice(0, 30)  // cap at 30 release groups per artist — keeps fetch under ~35s worst-case
-      // Then process OLDEST-first so the tracklist-overlap dedup below keeps the
-      // ORIGINAL album and drops later repackagings of it.
-      .sort((x, y) => (x['first-release-date'] || '').localeCompare(y['first-release-date'] || ''))
-
-    const albums: DiscographyAlbum[] = []
-    // Tracklist-overlap dedup: MusicBrainz tags the US Capitol/Vee-Jay Beatles
-    // albums (Meet The Beatles!, Beatles VI, …) as plain "Album", so type alone
-    // can't catch them. Track which song titles we've already kept (oldest-
-    // first); if a later album is mostly the same songs, it's a repackaging.
-    const seenTitles = new Set<string>()
-    const normTrackTitle = (s: string) => foldAccents(s).replace(/[^a-z0-9]/g, '')
-    // 3. For each release group, fetch one release with recordings (the
-    // tracklist). Sequential because of the rate limit.
-    for (const rg of rgs) {
-      try {
-        await mbThrottle()
-        // Every edition, then pick the plain one — MB's first-listed release can
-        // be a 3-disc bundle (3D Country: album + covers + live, all concatenated).
-        const relUrl = `https://musicbrainz.org/ws/2/release?release-group=${rg.id}&inc=recordings&fmt=json&limit=25`
-        const relRes = await fetch(relUrl, { headers })
-        if (!relRes.ok) continue
-        const relData = await relRes.json() as {
-          releases?: Array<{
-            id: string
-            date?: string
-            status?: string | null
-            disambiguation?: string
-            media?: Array<{ tracks?: Array<{ title: string; position: number }> }>
-          }>
-        }
-        const release = pickStandardRelease(relData.releases)
-        if (!release) continue
-        const tracks: { title: string; position: number }[] = []
-        for (const m of release.media || []) {
-          for (const t of m.tracks || []) {
-            tracks.push({ title: t.title, position: t.position })
-          }
-        }
-        if (tracks.length === 0) continue
-        // If ≥30% of this album's songs already appeared on earlier albums,
-        // it's a repackaging/hits comp — not a new studio record. Skip it.
-        // 0.3 sits in the clean gap measured on the Beatles' catalog: real
-        // studio albums score 0.00–0.14 overlap, the US Capitol comps 0.36+.
-        const titles = tracks.map(t => normTrackTitle(t.title)).filter(Boolean)
-        const overlap = titles.filter(t => seenTitles.has(t)).length
-        if (titles.length >= 4 && overlap / titles.length > 0.3) continue
-        for (const t of titles) seenTitles.add(t)
-        const year = (rg['first-release-date'] || release.date || '').slice(0, 4)
-        albums.push({ title: rg.title, year, tracks, mb: { primaryType: rg['primary-type'], secondaryTypes: rg['secondary-types'] } })
-      } catch { /* skip this release group */ }
-    }
-
-    // Restore newest-first for display.
-    albums.sort((a, b) => (b.year || '').localeCompare(a.year || ''))
-
-    const result: DiscographyResult = { artist, albums, fetchedAt: Date.now(), schemaVersion: DISCO_SCHEMA_VERSION }
-    // Persist to disk
-    try {
-      await mkdir(join(app.getPath('userData'), 'discography-cache'), { recursive: true })
-      await writeFile(cachePath, JSON.stringify(result), 'utf-8')
-    } catch (err) {
-      console.warn('[discography] cache write failed:', err)
-    }
-    return result
-  } catch (err) {
-    console.warn('[discography] fetch failed:', err)
-    return null
-  }
-}
+initArtistDiscography({
+  userDataDir: () => app.getPath('userData'),
+  appVersion: () => app.getVersion(),
+  mbThrottle,
+  resolveCanonicalArtist,
+  getLibraryGenresForArtist,
+  getLibraryAlbumsForArtist,
+})
 
 ipc.handle('get-artist-discography', async (_e, artist: string) => {
   if (!artist || typeof artist !== 'string') return { ok: false, error: 'No artist' }

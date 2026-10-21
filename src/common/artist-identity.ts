@@ -159,17 +159,3 @@ export async function chooseArtistIdentity<C extends MbArtistCandidate>(input: {
   }
   return { candidate: qualifiers[0]!, identity: 'ambiguous', ...(incomplete ? { incomplete } : {}) }
 }
-
-/// Wrong-entity guard for a fetched catalogue: when the library holds
-/// comparable albums by this artist and NONE of them appear in the
-/// catalogue, the catalogue belongs to somebody else. Owned titles that
-/// normalize to nothing (non-Latin scripts) can't testify either way, so
-/// a library made only of those skips the guard.
-export function catalogueIsSomeoneElses(
-  releaseGroupTitles: readonly string[],
-  ownedAlbums: readonly string[],
-): boolean {
-  const owned = ownedAlbums.filter((t) => normAlbumTitle(t))
-  if (owned.length === 0) return false
-  return albumOverlap(releaseGroupTitles, owned) === 0
-}

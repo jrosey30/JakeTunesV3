@@ -36,20 +36,6 @@ export function pickStandardRelease<R extends MbReleaseLite>(releases: readonly 
   )[0]!
 }
 
-/// Releases Jake ruled out, keyed by the artist's MusicBrainz id. Each entry
-/// carries his reason. The ArtistProfile builder's "More from" list honours
-/// the same entries (see artist-build SPEC).
-export const HIDDEN_RELEASES: Record<string, { titles: string[]; why: string }> = {
-  // Geese (Brooklyn)
-  'e0c97a4d-c392-41a9-a374-57af3e3eeab3': {
-    titles: ['Bottomless Pink Lagoon'],
-    why: 'Jake 2026-10-20: "take bottomless pink lagoon out from geese it isnt anywhere"',
-  },
-}
-
-export function isHiddenRelease(mbid: string, title: string): boolean {
-  const entry = HIDDEN_RELEASES[mbid]
-  if (!entry) return false
-  const t = title.trim().toLowerCase()
-  return entry.titles.some((h) => h.trim().toLowerCase() === t)
-}
+// Jake's hidden releases (HIDDEN_RELEASES / isHiddenRelease) moved to
+// common/release-gate.ts on 2026-10-20: the gate is the one place a release
+// is admitted or turned away.

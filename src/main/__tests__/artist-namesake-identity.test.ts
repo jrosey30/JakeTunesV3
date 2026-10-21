@@ -13,11 +13,12 @@ import { join } from 'node:path'
 import {
   pickDiscographyArtist,
   chooseArtistIdentity,
-  catalogueIsSomeoneElses,
   albumTitlesMatch,
   type MbArtistCandidate,
 } from '../../common/artist-identity.ts'
 import { nameKey } from '../../common/fold-text.ts'
+import { identityVerdict } from '../../common/release-gate.ts'
+import { normAlbumTitle } from '../../common/artist-identity.ts'
 
 const fold = (s: string | null | undefined, sep = ' ') => nameKey(s, sep)
 
@@ -144,15 +145,19 @@ describe('chooseArtistIdentity — the desktop resolver step', () => {
   })
 })
 
-describe('catalogueIsSomeoneElses — the discography guard', () => {
+// The foreign-catalogue guard lives in the release gate now
+// (common/release-gate.ts identityVerdict, which replaced
+// catalogueIsSomeoneElses on 2026-10-20 with the same rule).
+describe('the foreign-catalogue guard (release-gate identityVerdict)', () => {
+  const deps = { normTitle: normAlbumTitle, albumMatch: albumTitlesMatch }
   it('the shoegaze Geese catalogue is not Jake\'s Geese', () => {
-    assert.equal(catalogueIsSomeoneElses(CATALOGUES[SHOEGAZE]!, jakesGeese), true)
+    assert.equal(identityVerdict('single', CATALOGUES[SHOEGAZE]!, jakesGeese, deps).ok, false)
   })
   it('the Brooklyn catalogue is', () => {
-    assert.equal(catalogueIsSomeoneElses(CATALOGUES[BROOKLYN]!, jakesGeese), false)
+    assert.equal(identityVerdict('confirmed', CATALOGUES[BROOKLYN]!, jakesGeese, deps).ok, true)
   })
   it('owned titles with no Latin letters cannot testify, so the guard stands down', () => {
-    assert.equal(catalogueIsSomeoneElses(['Этажи', 'Монумент'], ['Этажи']), false)
+    assert.equal(identityVerdict('single', ['Этажи', 'Монумент'], ['Этажи'], deps).ok, true)
   })
   it('deluxe and remaster suffixes still match', () => {
     assert.equal(albumTitlesMatch('3D Country (Deluxe)', '3D Country'), true)
@@ -170,9 +175,14 @@ describe('wiring — the desktop resolver and discography use the rule', () => {
     assert.match(body, /if \(!chosen\.incomplete\)/, 'an incomplete resolve is never written to the cache')
   })
   it('fetchArtistDiscography refuses ambiguous identities and foreign catalogues', () => {
-    const body = src.slice(src.indexOf('async function fetchArtistDiscography('), src.indexOf("ipc.handle('get-artist-discography'"))
+    const disco = readFileSync(join(import.meta.dirname, '..', 'artist-discography.ts'), 'utf-8')
+    const body = disco.slice(disco.indexOf('async function fetchArtistDiscographyOnce('))
     assert.match(body, /identity === 'ambiguous'/)
     assert.match(body, /canon\.incomplete/)
-    assert.match(body, /catalogueIsSomeoneElses\(/)
+    assert.match(body, /gateReleaseGroups\(/, 'the release gate judges identity (and the foreign-catalogue guard) for every release')
+    assert.match(body, /if \(!gate\.identity\.ok\)/)
+  })
+  it('index.ts wires the discography module', () => {
+    assert.match(src, /initArtistDiscography\(\{/)
   })
 })
