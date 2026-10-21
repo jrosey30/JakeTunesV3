@@ -14,7 +14,7 @@
  * initials disc — never album art in a circle (Jake, twice: "that's an album
  * picture not an artist").
  */
-import { useState, useMemo, useCallback, useRef, useEffect, useSyncExternalStore } from 'react'
+import { useState, useMemo, useCallback, useRef, useEffect, useSyncExternalStore, memo } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
@@ -66,6 +66,59 @@ const plural = (n: number, w: string): string => `${n.toLocaleString()} ${w}${n 
 const top = (m: Map<string, number>): string => [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? ''
 const monthOf = (d: string): string => (d ? new Date(`${d.slice(0, 10)}T12:00:00`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : 'Date unknown')
 const PHOTO_CONCURRENCY = 4
+
+interface ArtistCardProps {
+  a: ArtistCard
+  slug: string | null | undefined
+  chip?: string
+  wide?: boolean
+  hideOrigin: boolean
+  observe: (el: HTMLElement | null) => void
+  onOpen: (name: string) => void
+  onPlay: (a: ArtistCard) => void
+}
+
+/** One artist card. Memoized (2026-10-21): a playback tick or one arriving
+ *  photo used to re-render all ~1,940 cards (26 ms per tick; 30–120 ms per
+ *  photo burst while scrolling into unseen letters) — now only the card whose
+ *  photo arrived re-renders. */
+const ArtistCardView = memo(function ArtistCardView({ a, slug, chip, wide, hideOrigin, observe, onOpen, onPlay }: ArtistCardProps) {
+  const meta = [a.genre, hideOrigin ? '' : a.origin].filter(Boolean).join(' · ')
+  return (
+    <div
+      ref={observe}
+      className={`ag-card${wide ? ' ag-card--shelf' : ''}`}
+      data-artist-name={a.name}
+      role="button"
+      tabIndex={0}
+      title={a.name}
+      onClick={() => onOpen(a.name)}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(a.name) } }}
+      draggable
+      onDragStart={(e) => setAlbumDragPayload(e, a.tracks.map((t) => t.id))}
+    >
+      <div className="ag-ph">
+        {slug
+          ? <img src={`artist-image://${slug}.jpg`} alt="" draggable={false} loading="lazy" decoding="async" />
+          : <div className="ag-ini" style={{ background: hashColor(a.name) }}>{initials(a.name.replace(/^the\s+/i, ''))}</div>}
+        {/* Hover play (Jake 2026-10-21, option A of three he was shown): the
+            photo dims a touch and a white disc with the orange play sits in
+            its exact centre. The triangle's box is centred, then nudged right
+            by 1/12 of its width so it LOOKS centred (a triangle's mass sits
+            left of its box centre). */}
+        <span className="ag-scrim" aria-hidden="true" />
+        <button type="button" className="ag-play" aria-label={`Play ${a.name}`} title={`Play ${a.name}`}
+          onClick={(e) => { e.stopPropagation(); onPlay(a) }} onKeyDown={(e) => e.stopPropagation()}>
+          <svg className="ag-play-tri" width="16" height="18" viewBox="0 0 16 18" aria-hidden="true"><path d="M0 0L16 9L0 18Z" fill="currentColor" /></svg>
+        </button>
+      </div>
+      <div className="ag-name">{a.name}</div>
+      {meta && <div className="ag-meta">{meta}</div>}
+      <div className="ag-meta">{a.albums ? `${plural(a.albums, 'album')} · ` : ''}{plural(a.tracks.length, 'song')}</div>
+      {chip && <div className="ag-chip">{chip}</div>}
+    </div>
+  )
+})
 
 export default function ArtistsView(): JSX.Element {
   const { state: lib, dispatch: libDispatch } = useLibrary()
@@ -168,6 +221,21 @@ export default function ArtistsView(): JSX.Element {
   }, [sort, visible, fans])
 
   // ── Photos, requested as cards come near the viewport ──
+  // Arrivals are batched (2026-10-21): photos resolve four at a time as you
+  // scroll into unseen letters, and each one used to be its own full re-render.
+  const pendingPhotosRef = useRef(new Map<string, string | null>())
+  const photoFlushRef = useRef(0)
+  const queuePhoto = useCallback((name: string, slug: string | null) => {
+    pendingPhotosRef.current.set(name, slug)
+    if (photoFlushRef.current) return
+    photoFlushRef.current = window.setTimeout(() => {
+      photoFlushRef.current = 0
+      const batch = pendingPhotosRef.current
+      pendingPhotosRef.current = new Map()
+      setPhotos((prev) => { const next = new Map(prev); for (const [n, sl] of batch) next.set(n, sl); return next })
+    }, 80)
+  }, [])
+  useEffect(() => () => { if (photoFlushRef.current) clearTimeout(photoFlushRef.current) }, [])
   const queueRef = useRef<string[]>([])
   const askedRef = useRef(new Set<string>(sessionArtistImages.keys()))
   const activeRef = useRef(0)
@@ -178,10 +246,10 @@ export default function ArtistsView(): JSX.Element {
       activeRef.current++
       api.getArtistImage(name).then((r) => r.ok ? r.slug : null).catch(() => null).then((slug) => {
         sessionArtistImages.set(name, slug)
-        setPhotos((prev) => new Map(prev).set(name, slug))
+        queuePhoto(name, slug)
       }).finally(() => { activeRef.current--; pump() })
     }
-  }, [])
+  }, [queuePhoto])
   const observerRef = useRef<IntersectionObserver | null>(null)
   // Card refs run before effects: cards that mount first wait here for the observer.
   const pendingRef = useRef(new Set<HTMLElement>())
@@ -264,45 +332,39 @@ export default function ArtistsView(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pb.nowPlaying?.id, lib.currentView])
 
-  const card = (a: ArtistCard, chip?: string, wide?: boolean): JSX.Element => {
-    const slug = photos.get(a.name)
-    const meta = [a.genre, sort === 'country' ? '' : a.origin].filter(Boolean).join(' · ')
-    return (
-      <div
-        key={a.name}
-        ref={observe}
-        className={`ag-card${wide ? ' ag-card--shelf' : ''}`}
-        data-artist-name={a.name}
-        role="button"
-        tabIndex={0}
-        title={a.name}
-        onClick={() => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: a.name })}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: a.name }) } }}
-        draggable
-        onDragStart={(e) => setAlbumDragPayload(e, a.tracks.map((t) => t.id))}
-      >
-        <div className="ag-ph">
-          {slug
-            ? <img src={`artist-image://${slug}.jpg`} alt="" draggable={false} loading="lazy" decoding="async" />
-            : <div className="ag-ini" style={{ background: hashColor(a.name) }}>{initials(a.name.replace(/^the\s+/i, ''))}</div>}
-          {/* Hover play (Jake 2026-10-21, option A of three he was shown): the
-              photo dims a touch and a white disc with the orange play sits in
-              its exact centre. The triangle's box is centred, then nudged right
-              by 1/12 of its width so it LOOKS centred (a triangle's mass sits
-              left of its box centre). */}
-          <span className="ag-scrim" aria-hidden="true" />
-          <button type="button" className="ag-play" aria-label={`Play ${a.name}`} title={`Play ${a.name}`}
-            onClick={(e) => { e.stopPropagation(); playArtist(a) }} onKeyDown={(e) => e.stopPropagation()}>
-            <svg className="ag-play-tri" width="16" height="18" viewBox="0 0 16 18" aria-hidden="true"><path d="M0 0L16 9L0 18Z" fill="currentColor" /></svg>
-          </button>
-        </div>
-        <div className="ag-name">{a.name}</div>
-        {meta && <div className="ag-meta">{meta}</div>}
-        <div className="ag-meta">{a.albums ? `${plural(a.albums, 'album')} · ` : ''}{plural(a.tracks.length, 'song')}</div>
-        {chip && <div className="ag-chip">{chip}</div>}
-      </div>
-    )
-  }
+  const openArtist = useCallback((name: string) => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: name }), [libDispatch])
+  const hideOrigin = sort === 'country'
+  const card = (a: ArtistCard, chip?: string, wide?: boolean): JSX.Element => (
+    <ArtistCardView key={a.name} a={a} slug={photos.get(a.name)} chip={chip} wide={wide} hideOrigin={hideOrigin}
+      observe={observe} onOpen={openArtist} onPlay={playArtist} />
+  )
+  // The shelves + A–Z sections as ONE memoized element tree (2026-10-21): a
+  // render for any other reason (a playback tick, the find bar) reuses it, so
+  // React skips all ~1,940 cards instead of diffing them.
+  const body = useMemo(() => (
+    <>
+      {shelves && shelves.rotation.length > 0 && (
+        <section className="ag-shelf">
+          <h2 className="ag-h2">Heavy rotation <small>last 30 days</small></h2>
+          <div className="ag-row">{shelves.rotation.map(({ card: a, plays }) => card(a, plural(plays, 'play'), true))}</div>
+        </section>
+      )}
+      {shelves && shelves.fresh.length > 0 && (
+        <section className="ag-shelf">
+          <h2 className="ag-h2">New in your library</h2>
+          <div className="ag-row">{shelves.fresh.map((a) => card(a, new Date(`${a.added}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), true))}</div>
+        </section>
+      )}
+      {sections.map((s) => (
+        <section key={s.title} className="ag-sec" data-letter={s.id}>
+          <h2 className="ag-h2">{s.title} <small>{s.sub ? `${s.sub} · ` : ''}{plural(s.items.length, 'artist')}</small></h2>
+          <div className="ag-grid">{s.items.map((a) => card(a, s.chip?.(a)))}</div>
+        </section>
+      ))}
+    </>
+    // card() closes over exactly these:
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), [shelves, sections, photos, hideOrigin, observe, openArtist, playArtist])
 
   return (
     <div className="artists-view ag" ref={viewRootRef} onClickCapture={noteActivity} onWheelCapture={noteActivity} onKeyDownCapture={noteActivity}>
@@ -344,24 +406,7 @@ export default function ArtistsView(): JSX.Element {
       {!q && !lf && (
         <FavoriteArtistsRow artists={favCandidates} onOpenArtist={(name) => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: name })} />
       )}
-      {shelves && shelves.rotation.length > 0 && (
-        <section className="ag-shelf">
-          <h2 className="ag-h2">Heavy rotation <small>last 30 days</small></h2>
-          <div className="ag-row">{shelves.rotation.map(({ card: a, plays }) => card(a, plural(plays, 'play'), true))}</div>
-        </section>
-      )}
-      {shelves && shelves.fresh.length > 0 && (
-        <section className="ag-shelf">
-          <h2 className="ag-h2">New in your library</h2>
-          <div className="ag-row">{shelves.fresh.map((a) => card(a, new Date(`${a.added}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), true))}</div>
-        </section>
-      )}
-      {sections.map((s) => (
-        <section key={s.title} className="ag-sec" data-letter={s.id}>
-          <h2 className="ag-h2">{s.title} <small>{s.sub ? `${s.sub} · ` : ''}{plural(s.items.length, 'artist')}</small></h2>
-          <div className="ag-grid">{s.items.map((a) => card(a, s.chip?.(a)))}</div>
-        </section>
-      ))}
+      {body}
       {groupingOpen && <ArtistGroupingModal onClose={() => setGroupingOpen(false)} />}
     </div>
   )

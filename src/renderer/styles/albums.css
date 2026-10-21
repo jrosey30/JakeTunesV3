@@ -18,6 +18,13 @@
   overscroll-behavior: contain;
 }
 
+/* 2026-10-21 windowed grid (components/AlbumGrid.tsx): the wrapper carries the
+   spacers above/below the mounted rows; it must never shrink inside the
+   flex-column scroller. */
+.album-grid-window {
+  flex-shrink: 0;
+}
+
 .albums-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
@@ -95,6 +102,13 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Every card the same height, empty lines included: the windowed grid measures
+   one row stride and spaces the unmounted rows with it. */
+.album-card-title,
+.album-card-artist {
+  min-height: 1lh;
 }
 
 /* In-view filter bar (styles for .list-filter live in artists.css, loaded
