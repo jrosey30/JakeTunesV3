@@ -18,6 +18,18 @@
  *   album  none present                        → −1
  *   legacy (pre-standings credit, no identity) → +1 flat, never negative —
  *          we can't honestly say a song we never fingerprinted was deleted.
+ *
+ * Renamed, not deleted (2026-10-21, Jake: "why did jack lose a point"): Jack
+ * Orlan's credit is for "Above (Deluxe Edition)" by Mad Season. All 14 tracks
+ * are still in the library, but a metadata override renamed the album "Above",
+ * so the stored key `abovedeluxeedition|madseason` met nothing and the credit
+ * read as deleted (−1 instead of +5). Any credited album or song that later
+ * gains or loses an edition tag ("(Deluxe Edition)", "[2011 Remaster]",
+ * "- Anniversary Edition", "(Remastered 2009)") lost its friend the same way.
+ * So a credit is matched exactly FIRST, and only when nothing carries the
+ * credited name does it match by the editionless name (editionlessTitle, the
+ * radar's album compare) on BOTH sides — the artist never folds, so a match
+ * never crosses artists. Stored keys are never rewritten.
  */
 
 // recoIdNorm, not recoNorm (2026-10-11): these keys are STORED — in
@@ -28,6 +40,7 @@
 // credit or show on the standings. Live state on 10/11: 0 such entries in
 // any of the four friend files, so nothing stored changes.
 import { recoIdNorm } from './reco-match.ts'
+import { editionlessTitle } from './radar-core.ts'
 
 export type CreditKind = 'song' | 'album'
 
@@ -66,6 +79,11 @@ export interface EvaluatedCredit {
 export interface LibraryIndex {
   pairKeys: Set<string>
   albumCounts: Map<string, number>
+  /** The same keys with edition words dropped from the title side
+   *  (editionlessTitle) — the fallback for a credited name that was renamed.
+   *  Compared only, never stored. */
+  editionlessPairKeys: Set<string>
+  editionlessAlbumCounts: Map<string, number>
 }
 
 /** ⚠️ TWIN: src/renderer/views/ListenToTheListView.tsx recoType() — same
@@ -85,39 +103,96 @@ export function albumKeyOfStrings(album: string, artist: string): string | null 
   return al && ar ? `${al}|${ar}` : null
 }
 
-export function buildLibraryIndex(tracks: StandingsTrackLite[]): LibraryIndex {
+/** `title|artist` (or `album|artist`) with edition words dropped from the
+ *  title side. The artist side is the stored identity, unfolded. */
+function editionlessKeyOfStrings(title: string, artist: string): string | null {
+  return albumKeyOfStrings(editionlessTitle(title), artist)
+}
+
+/** `foldArtists`: the artist keys whose tracks need the editionless fold —
+ *  computeStandings passes the credited artists, since a credit only ever
+ *  looks up `…|<its own artist>` (the fold is ~3× the cost of the exact
+ *  index over a whole library). Omitted = fold every track. */
+export function buildLibraryIndex(tracks: StandingsTrackLite[], foldArtists?: ReadonlySet<string>): LibraryIndex {
   const pairKeys = new Set<string>()
   const albumCounts = new Map<string, number>()
+  const editionlessPairKeys = new Set<string>()
+  const editionlessAlbumCounts = new Map<string, number>()
+  // An album's name repeats on every one of its tracks — fold it once.
+  const folded = new Map<string, string>()
+  const bare = (raw: string): string => {
+    let k = folded.get(raw)
+    if (k === undefined) { k = recoIdNorm(editionlessTitle(raw)); folded.set(raw, k) }
+    return k
+  }
+  const bump = (m: Map<string, number>, k: string): void => { m.set(k, (m.get(k) ?? 0) + 1) }
   for (const t of tracks) {
     const title = recoIdNorm(t.title || '')
     const album = recoIdNorm(t.album || '')
-    for (const artistRaw of [t.artist, t.albumArtist]) {
-      const a = recoIdNorm(artistRaw || '')
-      if (!a) continue
+    // artist AND albumArtist both index the track, but a track counts ONCE
+    // per album key. (This compared the raw strings, so a track whose
+    // albumArtist is its artist — most of them — counted twice, and half an
+    // album could be deleted while the credit still read intact. The sweep's
+    // n0 snapshot counts each track once, so the live count must too.)
+    const artists = new Set([recoIdNorm(t.artist || ''), recoIdNorm(t.albumArtist || '')])
+    artists.delete('')
+    const fold = !foldArtists || [...artists].some((a) => foldArtists.has(a))
+    const bareTitle = fold && title ? bare(t.title || '') : ''
+    const bareAlbum = fold && album ? bare(t.album || '') : ''
+    for (const a of artists) {
       if (title) pairKeys.add(`${title}|${a}`)
-      if (album) {
-        const k = `${album}|${a}`
-        // A track indexed under both artist and albumArtist must count ONCE —
-        // count per track, not per index entry.
-        if (artistRaw === t.artist || recoIdNorm(t.artist || '') !== a) {
-          albumCounts.set(k, (albumCounts.get(k) ?? 0) + 1)
-        }
-      }
+      if (album) bump(albumCounts, `${album}|${a}`)
+      if (foldArtists && !foldArtists.has(a)) continue
+      if (bareTitle) editionlessPairKeys.add(`${bareTitle}|${a}`)
+      if (bareAlbum) bump(editionlessAlbumCounts, `${bareAlbum}|${a}`)
     }
   }
-  return { pairKeys, albumCounts }
+  return { pairKeys, albumCounts, editionlessPairKeys, editionlessAlbumCounts }
+}
+
+/** The raw title and artist a stored key was made from, read back off the
+ *  credit's label ("Above (Deluxe Edition) — Mad Season"). Trusted only when
+ *  it reproduces the stored key exactly; every " — " is tried as the split,
+ *  since a title can carry one ("Above — Expanded — Mad Season"). */
+function labelPartsFor(label: string, key: string): { title: string; artist: string } | null {
+  const SEP = ' — '
+  for (let i = label.indexOf(SEP); i >= 0; i = label.indexOf(SEP, i + 1)) {
+    const title = label.slice(0, i)
+    const artist = label.slice(i + SEP.length)
+    if (albumKeyOfStrings(title, artist) === key) return { title, artist }
+  }
+  return null
+}
+
+/** A stored key's editionless twin. The edition words are gone from the
+ *  squashed key, so the fold needs the raw text — the label, when it
+ *  reproduces the key. Otherwise the key stands for itself: a key whose raw
+ *  name carried no edition words is its own fold, and one whose did simply
+ *  gets no fallback (fail closed). */
+function editionlessCreditKey(label: string, key: string): string {
+  const parts = labelPartsFor(label || '', key)
+  return (parts && editionlessKeyOfStrings(parts.title, parts.artist)) || key
 }
 
 export function evaluateCredit(record: CreditRecord, lib: LibraryIndex): EvaluatedCredit {
   if (record.legacy) return { record, status: 'legacy', points: 1 }
   if (record.kind === 'song') {
-    const present = (record.keys || []).some((k) => lib.pairKeys.has(k))
+    const keys = record.keys || []
+    // The exact song first; then the same song under a title that gained or
+    // lost edition words ("(Remastered 2009)").
+    const present = keys.some((k) => lib.pairKeys.has(k))
+      || keys.some((k) => lib.editionlessPairKeys.has(editionlessCreditKey(record.label, k)))
     return present
       ? { record, status: 'kept', points: 1 }
       : { record, status: 'deleted', points: -1 }
   }
-  // album
-  const cur = record.albumKey ? (lib.albumCounts.get(record.albumKey) ?? 0) : 0
+  // album — the credited name first. Only when NO track still carries it does
+  // the editionless name count: exact-first, so a half-deleted deluxe can't
+  // borrow tracks from a standard edition owned beside it.
+  let cur = record.albumKey ? (lib.albumCounts.get(record.albumKey) ?? 0) : 0
+  if (cur === 0 && record.albumKey) {
+    cur = lib.editionlessAlbumCounts.get(editionlessCreditKey(record.label, record.albumKey)) ?? 0
+  }
   const n0 = record.n0 ?? 1
   if (cur === 0) return { record, status: 'deleted', points: -1 }
   if (cur < n0) return { record, status: 'partial', points: 1 }
@@ -138,7 +213,11 @@ export function computeStandings(
   ledger: Record<string, { name: string; adds?: number; tossed?: number }>,
   tracks: StandingsTrackLite[],
 ): StandingRow[] {
-  const lib = buildLibraryIndex(tracks)
+  const creditedArtists = new Set<string>()
+  for (const r of records) {
+    for (const k of [...(r.keys || []), ...(r.albumKey ? [r.albumKey] : [])]) creditedArtists.add(k.slice(k.lastIndexOf('|') + 1))
+  }
+  const lib = buildLibraryIndex(tracks, creditedArtists)
   const byFriend = new Map<string, EvaluatedCredit[]>()
   for (const r of records) {
     const key = r.friend.trim().toLowerCase()

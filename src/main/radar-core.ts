@@ -62,9 +62,11 @@ function isAlbumRow(r: ListenListRow): boolean {
   return !title && Boolean(album)
 }
 
-// Edition words in any language, for the radar's album compare ONLY.
+// Edition words in any language, for COMPARES only: the radar's album
+// compare, and the friend standings' rename fallback (editionlessTitle).
 // searchTitle (English) also builds download-search queries, so widening it
-// would move what a Get asks Qobuz for; this list never leaves the radar.
+// would move what a Get asks Qobuz for; this list never builds a query and
+// never makes a stored key.
 //
 // Same shape as searchTitle's English rule (".*edition.*" unless a version
 // marker): a group that names an EDITION is metadata whatever else it says —
@@ -159,6 +161,20 @@ export function stripEditionWords(title: string): string {
 }
 
 /**
+ * A title without its edition words, in any language: stripEditionWords,
+ * then searchTitle's English rule. "Above (Deluxe Edition)" is "Above",
+ * "Rat Saw God - 2011 Remaster" is "Rat Saw God", "- EP"/"- Single" fall
+ * away; "(Live)"/"(Remix)" survive — those are other recordings. For
+ * COMPARING two titles, never for storing one or building a query. The
+ * radar's album key and the friend standings (a credited album or song the
+ * library later renamed) both fold through this one function.
+ */
+export function editionlessTitle(title: string): string {
+  const base = stripEditionWords(title)
+  return searchTitle(base) || base
+}
+
+/**
  * The `isOnList` predicate for rankCandidates, built from the Listen List
  * rows: song|artist from the same fields the list keys by (raw fields first,
  * iTunes-matched as fallback). ⚠️ The key is SONG first — the radar hands us
@@ -175,10 +191,10 @@ export function stripEditionWords(title: string): string {
  * way (album|artist, raw names, then the iTunes ones). A song row that names
  * its album doesn't hide the album — one saved song isn't the record.
  *
- * Albums compare WITHOUT edition words on both sides (searchTitle — the
- * same strip albumKey uses): "Rat Saw God (Deluxe Edition)" on the list
- * hides "Rat Saw God", and "- EP"/"- Single" fall away. "(Live)"/"(Remix)"
- * survive — those are other recordings. This is a hide-from-radar compare,
+ * Albums compare WITHOUT edition words on both sides (editionlessTitle):
+ * "Rat Saw God (Deluxe Edition)" on the list hides "Rat Saw God", and
+ * "- EP"/"- Single" fall away. "(Live)"/"(Remix)" survive — those are other
+ * recordings. This is a hide-from-radar compare,
  * never stored; the persisted identity keys keep editions apart. Edition
  * words in other languages go first (stripEditionWords): "Этажи (Делюкс)",
  * "(Edición Aniversario)", "【初回限定盤】".
@@ -196,10 +212,8 @@ export function listenListPredicate(records: ListenListRow[]): (artist: string, 
     const a = nameKey(artist, '')
     return n && a ? `${n}|${a}` : null
   }
-  const albumKey = (album: string | undefined, artist: string | undefined): string | null => {
-    const base = album && stripEditionWords(album)
-    return pairKey(base && (searchTitle(base) || base), artist)
-  }
+  const albumKey = (album: string | undefined, artist: string | undefined): string | null =>
+    pairKey(album && editionlessTitle(album), artist)
   const add = (set: Set<string>, k: string | null): void => { if (k) set.add(k) }
   for (const r of records) {
     add(songKeys, pairKey(r.song || r.matchedTitle, r.artist || r.matchedArtist))
