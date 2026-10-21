@@ -374,24 +374,28 @@ describe('rules', () => {
     assert.equal(gate.ownsRelease('Studio 2 Sessions at Abbey Road, Vol. 4', ['Abbey Road'], match), false)
     assert.equal(gate.ownsRelease('Help! Back To Basics', ['Help!'], match), false)
     assert.equal(gate.ownsRelease('Abbey Road', ['Abbey Road (Super Deluxe Edition)'], match), true)
+    assert.equal(gate.ownsRelease('Pearl Jam Twenty', ['Pearl Jam Twenty Original Motion Picture Soundtrack'], match), true)
+    assert.equal(gate.ownsRelease('White Blood Cells Bonus Tracks', ['White Blood Cells'], match), false, 'the release keeps its whole title')
   })
   it('an owned-excused group loses to a clean group with the same title (the bootleg "The Beatles")', async () => {
     const credit = [{ artistId: 'b', name: 'The Beatles', joinphrase: '' }]
     const groups = [
       { id: 'white', title: 'The Beatles', primaryType: 'Album', secondaryTypes: [], credit },
       { id: 'boot', title: 'The Beatles', primaryType: 'Album', secondaryTypes: [], credit },
+      { id: 'bootep', title: 'The Beatles', primaryType: 'EP', secondaryTypes: [], credit },
     ]
-    const r = await gate.gateReleaseGroups({ artist: 'The Beatles', mbid: 'b', identity: 'single', sections: PHONE, releaseGroups: groups, ownedAlbums: ['The Beatles'] }, {
+    const r = await gate.gateReleaseGroups({ artist: 'The Beatles', mbid: 'b', identity: 'single', sections: DESKTOP, releaseGroups: groups, ownedAlbums: ['The Beatles'] }, {
       ...match,
       browseOfficial: async () => ({ ok: true, releaseGroupIds: ['white'], releaseCount: 1, total: 1 }),
       officialInGroup: async () => ({ ok: false }),
       deezerAlbums: async () => ({ ok: false }),
       itunesAlbums: async () => ({ ok: false }),
     })
-    const [white, boot] = r.verdicts
+    const [white, boot, bootEp] = r.verdicts
     assert.equal(white!.admitted, true)
     assert.equal(boot!.admitted, false)
     assert.deepEqual(boot!.reasons, ['no-official-release', 'duplicate'])
+    assert.deepEqual(bootEp!.reasons, ['no-official-release', 'duplicate'], 'in any section (The Soft Bulletin EP beside the album)')
     assert.equal(gate.storeTitleMatches('Random Access Memories (10th Anniversary Edition)', 'Random Access Memories', match), true)
   })
   it('store artist names: fold, optional "The", collaboration members', () => {
@@ -435,7 +439,7 @@ describe('twin lock', () => {
   // The body of release-gate.ts / releaseGate.ts (from the first export to
   // the end) must hash to this in BOTH repos. Changing a rule means changing
   // this number here AND in the twin, in the same change set.
-  const TWIN_BODY_SHA256 = '3e236120543a4e95ea03208ca431323963add69975db4dfb5b33d8a8392ccf5a'
+  const TWIN_BODY_SHA256 = '7efd14f4822a2cbcef8ac3fdcea1e5b0d51aa21dba5aad3b12cadb80d1f4ce2e'
   it('the gate body matches its twin', () => {
     const src = readFileSync(GATE_SOURCE, 'utf-8')
     const body = src.slice(src.indexOf('export type ReleaseSection'))

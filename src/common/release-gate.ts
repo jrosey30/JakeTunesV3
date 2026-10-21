@@ -294,7 +294,7 @@ function prepTitle(title: string): string {
 /// (normAlbumTitle drops brackets and subtitles), and the whole title with
 /// subtitle marks read as spaces, and that without trailing edition words.
 /// A title that is nothing but brackets keeps its words ("[Led Zeppelin IV]").
-function titleKeys(title: string, normTitle: (s: string) => string): string[] {
+function titleKeys(title: string, normTitle: (s: string) => string, trimEditions: boolean): string[] {
   const t = prepTitle(title)
   const squash = (x: string) => normTitle(x).replace(/ /g, '')
   const base = squash(t) || squash(t.replace(/[[\]()]/g, ' '))
@@ -304,7 +304,7 @@ function titleKeys(title: string, normTitle: (s: string) => string): string[] {
   // Only descriptive words go: never a number, "LP", "EP" or "Vol." ("The
   // Marshall Mathers LP 2" must not become "The Marshall Mathers").
   let end = wholeWords.length
-  while (end > 1 && isTrailingEditionWord(wholeWords[end - 1]!)) end--
+  while (trimEditions && end > 1 && isTrailingEditionWord(wholeWords[end - 1]!)) end--
   const whole = wholeWords.join('')
   const trimmed = wholeWords.slice(0, end).join('')
   return [...new Set([base, whole, trimmed].filter(Boolean))]
@@ -327,8 +327,11 @@ export function sameRelease(other: string, rgTitle: string, deps: Pick<GateDeps,
   // Bowie's "★" normalizes to nothing.
   const plain = (t: string) => t.normalize('NFKC').trim().toLowerCase()
   if (plain(other) && plain(other) === plain(rgTitle)) return true
-  const mine = titleKeys(rgTitle, deps.normTitle)
-  if (!titleKeys(other, deps.normTitle).some((k) => mine.includes(k))) return false
+  // Only the other side drops trailing edition words: the release's own
+  // title stays whole, or a "White Blood Cells Bonus Tracks" bootleg would
+  // pass as Jake's "White Blood Cells".
+  const mine = titleKeys(rgTitle, deps.normTitle, false)
+  if (!titleKeys(other, deps.normTitle, true).some((k) => mine.includes(k))) return false
   const extra = decorationWords(rgTitle, deps.fold).filter(meaningful)
   if (extra.length === 0) return true
   const have = new Set(deps.fold(prepTitle(other), ' ').split(' ').filter(Boolean))
@@ -737,10 +740,11 @@ export async function gateReleaseGroups(input: GateInput, deps: GateDeps): Promi
   })
   // Ownership excuses a release for being real to Jake, not for being the
   // copy he owns: when a group with the same title passed every check on its
-  // own, an excused namesake group (a bootleg called "The Beatles") goes.
+  // own, in any section, an excused namesake group goes (a bootleg called
+  // "The Beatles"; a "The Soft Bulletin" EP beside the album).
   for (const v of verdicts) {
     if (!v.admitted || v.reasons.length === 0) continue
-    const clean = verdicts.find((o) => o !== v && o.admitted && o.reasons.length === 0 && o.section === v.section && sameRelease(o.title, v.title, deps))
+    const clean = verdicts.find((o) => o !== v && o.admitted && o.reasons.length === 0 && sameRelease(o.title, v.title, deps))
     if (!clean) continue
     v.admitted = false
     v.reasons = ordered([...v.reasons, 'duplicate'])
