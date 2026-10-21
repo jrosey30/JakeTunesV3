@@ -33,6 +33,7 @@ import '../styles/songs.css'
 import '../styles/album-page.css'
 import { addToPlaylistEntry, addToIpodPoolEntry, queueMenuEntries } from '../utils/playlistMenu'
 import { getInfoTarget, type GetInfoTarget } from '../../common/get-info-target'
+import { planConcertStart } from '../../common/concert-start'
 
 function formatDuration(ms: number): string {
   if (!ms || ms <= 0) return ''
@@ -75,7 +76,7 @@ const GRID_COLS = '40px minmax(0, 1fr) 52px'
 export default function AlbumDetailView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()
   const { state: pb, dispatch: pbDispatch } = usePlayback()
-  const { playTrack, seek } = useAudio()
+  const { playTrack } = useAudio()
   const { openCynthia } = useCynthia()
 
   const albumKeyRef = useRef<string>('')
@@ -185,9 +186,6 @@ export default function AlbumDetailView() {
     if (completeness.verifiedTotal) void runDeclare(false)
     else setCompletenessConfirm(true)
   }, [completeness, runDeclare])
-  const playLiveSet = useCallback(() => {
-    if (mergedTrack) playTrack(mergedTrack, [mergedTrack], 0, undefined, true)
-  }, [mergedTrack, playTrack])
   const handleUndeclare = useCallback(async () => {
     if (!liveSet) return
     // Identity-gated: only the exact merged track id recorded at declare
@@ -213,14 +211,18 @@ export default function AlbumDetailView() {
     void attachConcert(crowdMergedId, crowdCues.map((c) => c.startMs / 1000), crowdTotalMs / 1000)
     return () => { detachConcert() }
   }, [crowdMergedId, crowdCues, crowdTotalMs])
-  const seekToCue = useCallback((cue: LiveSetCue) => {
-    if (!liveSet) return
-    if (setPlaying && liveSet.totalDurationMs > 0) {
-      seek(cue.startMs / liveSet.totalDurationMs)
-    } else {
-      playLiveSet()
-    }
-  }, [liveSet, setPlaying, seek, playLiveSet])
+  // A concert starts at the top. Full stop (common/concert-start.ts — the
+  // phone's LiveConcertsView startShow()). The setlist below is a map, not a
+  // menu: a row click, like Play Live Set, starts the show from 0:00, and
+  // does nothing while this show is already the current track.
+  const startShow = useCallback(() => {
+    if (!mergedTrack) return
+    const plan = planConcertStart({ showIsCurrent: setPlaying, repeat: pb.repeat })
+    if (plan.action === 'none') return
+    // A stale repeat-one would loop the entire merged set.
+    if (plan.clearRepeatOne) pbDispatch({ type: 'SET_REPEAT', mode: 'off' })
+    playTrack(mergedTrack, [mergedTrack], 0, undefined, true)
+  }, [mergedTrack, setPlaying, pb.repeat, pbDispatch, playTrack])
 
   // Factual credits (MusicBrainz + iTunes) and the Music Man blurb. Both
   // fetched per-album, fail-soft (sections just stay hidden on error).
@@ -583,7 +585,7 @@ export default function AlbumDetailView() {
                 (every track present, verified against declared counts). */}
             {!isLiveSetAlbumPage && (liveSet && mergedTrack ? (
               <>
-                <button type="button" className="album-page-play album-page-liveset-play" onClick={playLiveSet} title="Play the whole show as one continuous set">♪ Play Live Set</button>
+                <button type="button" className="album-page-play album-page-liveset-play" onClick={startShow} title="Play the whole show as one continuous set">♪ Play Live Set</button>
                 <button
                   type="button"
                   className={`album-page-shuffle album-page-liveset-crowd${crowdOn ? ' album-page-liveset-crowd--on' : ''}`}
@@ -663,8 +665,9 @@ export default function AlbumDetailView() {
       </div>
 
       {/* V5 Live Concert Mode — the set list. Active song highlights while
-          the merged set plays; clicking jumps the playing set to that song
-          (or starts the set from the top when it isn't playing). */}
+          the merged set plays. A click starts the set from the top when it
+          isn't playing, and never jumps around in it (Jake 8/8: "it should
+          start from track 1 thats it"). */}
       {liveSet && mergedTrack && (() => {
         // The printed setlist sheet — same prop as ConcertDetailView (shared
         // .concert-sheet / .cj-* language from concert-detail.css), minus the
@@ -708,9 +711,9 @@ export default function AlbumDetailView() {
                     )}
                     <div
                       className={`cj-song aps-row${state ? ` aps-row${state}` : ''}`}
-                      onClick={() => seekToCue(cue)}
+                      onClick={startShow}
                       onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setCueCtx({ x: e.clientX, y: e.clientY, cue }) }}
-                      title={setPlaying ? `Jump to "${cleanLiveTitle(cue.title)}"` : 'Play the live set — right-click a song to add it to your library'}
+                      title={setPlaying ? 'Right-click a song to add it to your library' : 'Play the live set from the top — right-click a song to add it to your library'}
                       role="button"
                     >
                       <span className="cj-num">{String(i + 1).padStart(2, '0')}</span>
