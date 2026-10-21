@@ -180,6 +180,20 @@ export const HIDDEN_RELEASES: Record<string, { titles: string[]; why: string }> 
     titles: ['Bottomless Pink Lagoon'],
     why: 'Jake 2026-10-20: "take bottomless pink lagoon out from geese it isnt anywhere"',
   },
+  // Daft Punk
+  '056e4f3e-d505-4dad-8ec1-d04f521cbb56': {
+    titles: ['TRON: Legacy'],
+    why: 'Jake 2026-10-21, on Daft Punk\'s "More from" list: "No tron."',
+  },
+}
+
+/// MusicBrainz writes an untitled record's common name in square brackets
+/// ("[Led Zeppelin IV]"). Shown that way it reads like a typo, and the
+/// title matchers drop bracketed text, so Jake's own Led Zeppelin IV never
+/// matched it and it showed under "More from" as if he didn't own it.
+export function displayReleaseTitle(title: string): string {
+  const m = /^\s*\[([^\]]+)\]\s*$/.exec(title)
+  return m ? m[1]!.trim() : title
 }
 
 export function isHiddenRelease(mbid: string, title: string, hidden: Record<string, { titles: string[]; why: string }> = HIDDEN_RELEASES): boolean {
@@ -679,7 +693,7 @@ function ordered(reasons: Iterable<RejectReason>): RejectReason[] {
 /// cheap checks left standing, and stores are asked only about groups
 /// that passed everything else and that Jake doesn't own.
 export async function gateReleaseGroups(input: GateInput, deps: GateDeps): Promise<GateResult> {
-  const groups = input.releaseGroups
+  const groups = input.releaseGroups.map((g) => ({ ...g, title: displayReleaseTitle(g.title) }))
   const identity = identityVerdict(input.identity, groups.map((g) => g.title), input.ownedAlbums, deps)
   if (!identity.ok) {
     return {
