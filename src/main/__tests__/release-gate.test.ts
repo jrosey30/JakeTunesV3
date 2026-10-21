@@ -354,6 +354,8 @@ describe('rules', () => {
     assert.equal(gate.storeTitleMatches('TRON: Legacy Reconfigured', 'TRON: Legacy', match), false, 'a store title adding a non-edition word is another record')
     assert.equal(gate.storeTitleMatches('Alive 2007 (Live)', 'Alive 2007', match), false)
     assert.equal(gate.storeTitleMatches('Magical Mystery Tour (Remastered 2009)', 'Magical Mystery Tour', match), true)
+    assert.equal(gate.storeTitleMatches('Shut Down, Vol. 2 (Remastered)', 'Shut Down, Volume 2', match), true, '"Volume" is "Vol."')
+    assert.equal(gate.storeTitleMatches('The Complete Hits 1943-62, Vol. 1', 'The Complete Hits 1943-62', match), false, 'one volume is not the set')
   })
   it('owning a record does not make every title containing its words owned', () => {
     assert.equal(gate.ownsRelease('The Alternate A Hard Day\'s Night', ['A Hard Day\'s Night'], match), false)
@@ -421,7 +423,7 @@ describe('twin lock', () => {
   // The body of release-gate.ts / releaseGate.ts (from the first export to
   // the end) must hash to this in BOTH repos. Changing a rule means changing
   // this number here AND in the twin, in the same change set.
-  const TWIN_BODY_SHA256 = '4ad8e276b431b14b84356130244f279b257180233c1df94d021a3e763147de13'
+  const TWIN_BODY_SHA256 = '78ccd25cb378527da3cf66752bf0b9c4557191ba595db164b921904badabac95'
   it('the gate body matches its twin', () => {
     const src = readFileSync(GATE_SOURCE, 'utf-8')
     const body = src.slice(src.indexOf('export type ReleaseSection'))

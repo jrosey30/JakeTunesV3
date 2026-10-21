@@ -280,10 +280,11 @@ export function decorationWords(title: string, fold: Fold): string[] {
 /// The keys a title is known by, spaces squashed: its twin-normalized form
 /// (normAlbumTitle drops brackets and subtitles), and the whole title with
 /// subtitle marks read as spaces. "&" reads as "and" ("The Captain & The
-/// Kid" is the stores' "The Captain and The Kid"); a title that is nothing
+/// Kid" is the stores' "The Captain and The Kid"), "Volume" reads "Vol."
+/// ("Shut Down, Volume 2"); a title that is nothing
 /// but brackets keeps its words ("[Led Zeppelin IV]").
 function titleKeys(title: string, normTitle: (s: string) => string): string[] {
-  const t = title.replace(/\s*[&+]\s*/g, ' and ')
+  const t = title.replace(/\s*[&+]\s*/g, ' and ').replace(/\bvolume\b|\bvol\b\.?/gi, 'vol ')
   const squash = (x: string) => normTitle(x).replace(/ /g, '')
   const base = squash(t) || squash(t.replace(/[[\]()]/g, ' '))
   const whole = squash(t.replace(/\([^)]*\)|\[[^\]]*\]/g, ' ').replace(/\s*[:–—]\s*|\s+-\s+/g, ' '))
@@ -331,7 +332,7 @@ const isEditionWord = (w: string) => EDITION_WORDS.has(w) || /^\d+(st|nd|rd|th|s
 /// only edition words. Or the store files it under a presenter ("Future
 /// Hndrxx Presents: The WIZRD") and the part after the colon is the title.
 export function storeTitleMatches(storeTitle: string, rgTitle: string, deps: Pick<GateDeps, 'fold' | 'normTitle'>): boolean {
-  const words = (t: string) => deps.fold(t.replace(/\s*[&+]\s*/g, ' and '), ' ').split(' ').filter(Boolean)
+  const words = (t: string) => deps.fold(t.replace(/\s*[&+]\s*/g, ' and ').replace(/\bvolume\b/gi, 'vol'), ' ').split(' ').filter(Boolean)
   if (sameRelease(storeTitle, rgTitle, deps)) {
     // The release's own words, and runs of them written together ("40 oz" → "40oz").
     const rg = words(rgTitle)
