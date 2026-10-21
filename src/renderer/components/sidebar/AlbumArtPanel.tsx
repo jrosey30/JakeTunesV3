@@ -4,14 +4,22 @@ import { useLibrary } from '../../context/LibraryContext'
 import { buildNormalizedArtworkIndex, lookupArtwork, requestArtworkResolution } from '../../utils/artworkLookup'
 import AlbumArtImage from '../AlbumArtImage'
 import { setNotice } from '../../activity'
-import ContextMenu from '../ContextMenu'
 import ConfirmDialog from '../ConfirmDialog'
+import { createPortal } from 'react-dom'
+import { useAudio } from '../../hooks/useAudio'
+import { useHomeItemMenusHost } from '../HomeItemMenus'
+import { mergedTrackIndex } from '../../liveSets'
 
 export default function AlbumArtPanel({ onNewPlaylist }: { onNewPlaylist?: () => void }) {
   const { state } = usePlayback()
   const { state: libState, dispatch: libDispatch } = useLibrary()
+  const { playTrack } = useAudio()
+  // The now-playing cover's right-click is the library's song menu (the
+  // phone's cover menu: Star, Add to Playlist, Get Info, Go to Album /
+  // Artist…) plus this panel's Remove Artwork — utils/libraryMenus.ts via
+  // HomeItemMenus, the same menu a library row opens.
+  const { api: songMenus, overlays: songMenuOverlays } = useHomeItemMenusHost(playTrack)
   const fetchedRef = useRef<Set<string>>(new Set())
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [djModeActive, setDjModeActive] = useState(false)
   // 4.5.0-80 — confirm-on-locked-remove. Holds the (artist, album)
@@ -68,20 +76,6 @@ export default function AlbumArtPanel({ onNewPlaylist }: { onNewPlaylist?: () =>
     return () => window.clearTimeout(timer)
   }, [artKey, artHash, artist, album, state.nowPlaying, libDispatch])
 
-  const handleAddArtwork = useCallback(async () => {
-    if (!artist || !album) return
-    const file = await window.electronAPI.chooseArtworkFile()
-    if (!file.ok || !file.path) return
-    const result = await window.electronAPI.setCustomArtwork(artist, album, file.path)
-    if (result.ok && result.key && result.hash) {
-      libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
-      fetchedRef.current.delete(artKey || '')
-    } else {
-      // 4.4.12: surface failure (usually sips conversion).
-      setNotice(result.error ? `Couldn't save artwork: ${result.error}` : "Couldn't save artwork.", { kind: 'error' })
-    }
-  }, [artist, album, artKey, libDispatch])
-
   const handleRemoveArtwork = useCallback(async () => {
     if (!artist || !album || !artKey) return
     // 4.5.0-80 — main-side now refuses to silently nuke a user-locked
@@ -111,15 +105,6 @@ export default function AlbumArtPanel({ onNewPlaylist }: { onNewPlaylist?: () =>
     }
   }, [lockedRemoveConfirm, libDispatch])
 
-  const handleRefetch = useCallback(async () => {
-    if (!artist || !album) return
-    fetchedRef.current.delete(artKey || '')
-    const result = await window.electronAPI.fetchAlbumArt(artist, album, true)
-    if (result.ok && result.key && result.hash) {
-      libDispatch({ type: 'ADD_ARTWORK', key: result.key, hash: result.hash })
-    }
-  }, [artist, album, artKey, libDispatch])
-
   // Drag-and-drop image onto the art panel
   const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault()
@@ -141,17 +126,24 @@ export default function AlbumArtPanel({ onNewPlaylist }: { onNewPlaylist?: () =>
     }
   }, [artist, album, artKey, libDispatch])
 
+  // Add Artwork… / Fetch Artwork from Internet come with the song menu (the
+  // same IPC calls this panel's own two entries made); Remove Artwork — with
+  // its locked-cover confirmation — stays this panel's.
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
-    if (!state.nowPlaying) return
-    setCtxMenu({ x: e.clientX, y: e.clientY })
-  }, [state.nowPlaying])
-
-  const ctxItems = [
-    { label: 'Add Artwork...', onClick: () => { setCtxMenu(null); handleAddArtwork() }, disabled: !artist || !album },
-    { label: 'Fetch from Internet', onClick: () => { setCtxMenu(null); handleRefetch() }, disabled: !artist || !album },
-    ...(artHash ? [{ label: 'Remove Artwork', onClick: () => { setCtxMenu(null); handleRemoveArtwork() } }] : []),
-  ]
+    const playing = state.nowPlaying
+    if (!playing) return
+    // The library's copy: the playing snapshot doesn't see a Star or an edit
+    // made since it started.
+    const track = libState.tracks.find((t) => t.id === playing.id) ?? playing
+    const queue = state.queue.length ? state.queue : [track]
+    const at = Math.max(0, queue.findIndex((t) => t.id === track.id))
+    songMenus.openSongMenu(e, track, () => playTrack(track, queue, at), [track], 0, {
+      // A live concert's merged recording: removing the show is the concert page's job.
+      omitDelete: mergedTrackIndex().has(track.id),
+      extra: artHash ? [{ label: 'Remove Artwork', onClick: () => { void handleRemoveArtwork() } }] : [],
+    })
+  }, [state.nowPlaying, state.queue, libState.tracks, songMenus, playTrack, artHash, handleRemoveArtwork])
 
   return (
     <div className="album-art-panel">
@@ -225,14 +217,7 @@ export default function AlbumArtPanel({ onNewPlaylist }: { onNewPlaylist?: () =>
         ><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="10" cy="10" r="8.5" strokeWidth="1.5" /><circle cx="10" cy="10" r="6.5" opacity="0.55" /><circle cx="10" cy="10" r="4.5" opacity="0.4" /><circle cx="10" cy="10" r="2.8" fill="currentColor" stroke="none" /><circle cx="10" cy="10" r="0.8" fill="#fff" stroke="none" /></svg></button>
       </div>
 
-      {ctxMenu && (
-        <ContextMenu
-          x={ctxMenu.x}
-          y={ctxMenu.y}
-          items={ctxItems}
-          onClose={() => setCtxMenu(null)}
-        />
-      )}
+      {createPortal(songMenuOverlays, document.body)}
       {lockedRemoveConfirm && (
         <ConfirmDialog
           message={`Remove the locked cover for "${lockedRemoveConfirm.album}"?`}

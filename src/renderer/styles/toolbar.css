@@ -1403,3 +1403,18 @@
   pointer-events: none;
   user-select: none;
 }
+
+/* Act on what's playing (components/playback/NowPlayingActions.tsx): the
+ * wrapper around the pill draws no box, so the pill's flex layout is
+ * exactly as before. While the pill shows the playing song, the artist and
+ * album read as links on hover — click opens the page, like the phone. */
+.np-actions { display: contents; }
+.np-actions[data-np-actions="song"] .now-playing-pill:not(.now-playing-pill--activity) .now-playing-info--stacked .now-playing-artist,
+.np-actions[data-np-actions="song"] .now-playing-pill:not(.now-playing-pill--activity) .now-playing-info--stacked .now-playing-album {
+  cursor: pointer;
+}
+.np-actions[data-np-actions="song"] .now-playing-pill:not(.now-playing-pill--activity) .now-playing-info--stacked .now-playing-artist:hover,
+.np-actions[data-np-actions="song"] .now-playing-pill:not(.now-playing-pill--activity) .now-playing-info--stacked .now-playing-album:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
