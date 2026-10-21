@@ -194,6 +194,14 @@ export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispa
   const onLivingArtError = useCallback(() => {
     if (living?.artworkHash && living.artworkHash !== localLivingHash) setRefusedHash(living.artworkHash)
   }, [living, localLivingHash])
+  // The hero cover opens its album, as the phone's does (Jake's parity audit,
+  // 2026-10-21); right-click and drag stay the library's.
+  const openLiving = useCallback(() => {
+    if (!living) return
+    if (livingAlbum) dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyFromStrings(livingAlbum.artist, livingAlbum.name) })
+    else setNotice(`${living.album} by ${living.artist} isn’t in this library`)
+  }, [living, livingAlbum, dispatch])
+
   // Island picks in rank order; the rank is the slot (No. 1 … No. 10).
   const flow = useMemo(() => island.values
     .map((pick, slot) => {
@@ -414,6 +422,17 @@ export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispa
           <div className="tn-hero">
             <div
               className="tn-cover"
+              role="button"
+              tabIndex={0}
+              aria-label={`Open ${living.album} by ${living.artist}`}
+              title={`Open ${living.album}`}
+              onClick={openLiving}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter' || e.target !== e.currentTarget) return
+                e.preventDefault()
+                e.stopPropagation()
+                openLiving()
+              }}
               {...(livingAlbum ? {
                 onContextMenu: (e: React.MouseEvent) => menus?.openAlbumMenu(e, livingAlbum.tracks),
                 draggable: true,
