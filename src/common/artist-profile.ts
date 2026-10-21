@@ -69,6 +69,10 @@ export interface ArtistProfile {
    *  its photo gates (contract addition 10/20). Preferred over heroPhoto; not
    *  square — the header's own aspect. */
   hero?: ArtistProfilePhoto
+  /** No header photo shows the right line-up (contract addition 10/21 — e.g.
+   *  Sublime's own image is the 2023 band with Jakob Nowell): never show the
+   *  app's artist image; the header takes the most played record's cover. */
+  heroNeedsPhoto?: boolean
   bio?: {
     lede: string
     body: string
@@ -235,6 +239,7 @@ export function parseArtistProfile(body: unknown): ArtistProfile | null {
   if (hero && /^[a-z0-9-]+$/.test(hero)) out.heroPhoto = hero
   const credited = parsePhoto(b.hero)
   if (credited) out.hero = credited
+  if (b.heroNeedsPhoto === true) out.heroNeedsPhoto = true
   if (b.bio && typeof b.bio === 'object') {
     const bio = b.bio as Record<string, unknown>
     const lede = str(bio.lede, 600)
@@ -285,10 +290,11 @@ export function memberPhotoUrls(p: ArtistProfile | null | undefined): string[] {
   return out
 }
 
-/** Every photo a profile draws from homemini: the credited header photo, then the members'. */
+/** Every photo a profile draws from homemini: the credited header photo, then the members'.
+ *  A 'library' hero is the app's own artist image, which this Mac already has. */
 export function profilePhotoUrls(p: ArtistProfile | null | undefined): string[] {
   const out = memberPhotoUrls(p)
-  if (p?.hero?.url && !out.includes(p.hero.url)) out.unshift(p.hero.url)
+  if (p?.hero?.url && p.hero.source !== 'library' && !out.includes(p.hero.url)) out.unshift(p.hero.url)
   return out
 }
 

@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   topSongs, mostPlayedRecord, earliestAdded, monthYear, dayMonthYear, clock, lengthLabel, heroEyebrow,
-  heroNameSize, writtenFrom, posterDate, posterYear, liveCaption, posterShowLine, posterVenue, albumTileMeta,
+  heroNameSize, writtenFrom, posterDate, posterYear, liveCaption, posterShowLine, posterVenue, albumTileMeta, headerPhotoChoice,
 } from '../../common/artist-page.ts'
 
 const t = (id: number, plays: number, extra: Record<string, unknown> = {}) => ({ id, title: `Song ${id}`, duration: 200_000, playCount: plays, dateAdded: '2026-08-09T17:00:00.000Z', ...extra })
@@ -68,6 +68,23 @@ describe('album tiles', () => {
     const cover = view.slice(view.indexOf('const cover = ('), view.indexOf('return (', view.indexOf('const cover = (')))
     assert.match(cover, /albumTileMeta\(/)
     assert.doesNotMatch(cover, /playsOf\(|plural\([^)]*'play'/, 'an album tile line counts plays again')
+  })
+})
+
+describe('the header photo (twin of the phone, Mobile #501)', () => {
+  it('a credited hero, then heroNeedsPhoto → the record cover, else the artist image', () => {
+    assert.equal(headerPhotoChoice({ hero: { source: 'commons' } }), 'hero')
+    assert.equal(headerPhotoChoice({ hero: { source: 'commons' }, heroNeedsPhoto: true }), 'hero')
+    assert.equal(headerPhotoChoice({ heroNeedsPhoto: true }), 'cover', 'Sublime: the app image is the wrong line-up')
+    assert.equal(headerPhotoChoice({ hero: { source: 'library' }, heroNeedsPhoto: true }), 'cover')
+    assert.equal(headerPhotoChoice({ hero: { source: 'library' } }), 'artistImage', 'a library hero is the picture the page already has')
+    assert.equal(headerPhotoChoice({}), 'artistImage')
+    assert.equal(headerPhotoChoice(null), 'artistImage')
+  })
+  it('the page never draws the artist image when the choice is the cover', () => {
+    const view = readFileSync(join(import.meta.dirname, '../../renderer/views/ArtistDetailView.tsx'), 'utf-8')
+    assert.match(view, /headerPhotoChoice\(profile\)/)
+    assert.match(view, /headerChoice === 'cover'\s*\?\s*coverSrc/)
   })
 })
 

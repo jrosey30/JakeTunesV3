@@ -132,6 +132,23 @@ export function heroEyebrow(origin?: { place?: string; since?: string; until?: s
 }
 
 /**
+ * Which picture the header shows (⚠️ TWIN: JakeTunesMobile ios ArtistPage
+ * `heroSource`, Mobile #501 — same order, same rule):
+ *  1. 'hero' — a credited header photo homemini chose. One sourced from the
+ *     app's own artist image ('library') is that same picture, so it doesn't
+ *     count: the page shows the artist image it already has.
+ *  2. 'cover' — `heroNeedsPhoto`: no photo shows the right line-up (Sublime's
+ *     own image is the 2023 band). Never the artist image; the most played
+ *     record's cover, else the newest record's.
+ *  3. 'artistImage' — today's artist image (the cover only if it has none).
+ */
+export function headerPhotoChoice(p: { hero?: { source?: string } | null; heroNeedsPhoto?: boolean } | null | undefined): 'hero' | 'cover' | 'artistImage' {
+  if (p?.hero && p.hero.source !== 'library') return 'hero'
+  if (p?.heroNeedsPhoto) return 'cover'
+  return 'artistImage'
+}
+
+/**
  * The name's type size step. Names never truncate (Jake's rule), so a long
  * one steps down instead of running off the band: 84 px for "Geese", smaller
  * for "Godspeed You! Black Emperor".

@@ -35,7 +35,7 @@ import { playsEverywhere } from '../../common/plays-elsewhere'
 import { useArtistProfile } from '../artistProfile'
 import {
   topSongs, mostPlayedRecord, earliestAdded, monthYear, dayMonthYear, clock, lengthLabel, plural,
-  RELEASE_KIND_SINGULAR, heroEyebrow, heroNameSize, writtenFrom, albumTileMeta,
+  RELEASE_KIND_SINGULAR, heroEyebrow, heroNameSize, writtenFrom, albumTileMeta, headerPhotoChoice,
 } from '../../common/artist-page'
 import MemberTile from '../components/artist/MemberTile'
 import MoreFromList, { type MoreFromRelease } from '../components/artist/MoreFromList'
@@ -400,17 +400,23 @@ export default function ArtistDetailView() {
     }
     return undefined
   })()
-  // A credited header photo from the profile (chosen because the app's own
-  // image failed homemini's photo gates) wins once it is saved on this Mac;
-  // its credit shows under it, like the members' photo credits.
+  // The header's picture (common/artist-page.ts headerPhotoChoice, twinned
+  // with the phone): a credited header photo from the profile wins once it is
+  // saved on this Mac, its credit shown under it like the members' photo
+  // credits; with heroNeedsPhoto the app's artist image shows the wrong
+  // line-up, so the record cover takes the slot; otherwise the artist image.
+  const headerChoice = headerPhotoChoice(profile)
   const [brokenHero, setBrokenHero] = useState<string | null>(null)
-  const creditedHero = profile?.hero && profileState.photos[profile.hero.url] && brokenHero !== profile.hero.url ? profile.hero : null
+  const creditedHero = headerChoice === 'hero' && profile?.hero && profileState.photos[profile.hero.url] && brokenHero !== profile.hero.url ? profile.hero : null
   const creditedHeroSlug = creditedHero ? profileState.photos[creditedHero.url] : null
+  const coverSrc = fallbackHash ? albumArtUrl(fallbackHash) : null
   const heroSrc = creditedHeroSlug
     ? `artist-image://${creditedHeroSlug}.jpg`
-    : heroSlug && !photoFailed
-      ? `artist-image://${heroSlug}.jpg`
-      : fallbackHash ? albumArtUrl(fallbackHash) : null
+    : headerChoice === 'cover'
+      ? coverSrc
+      : heroSlug && !photoFailed
+        ? `artist-image://${heroSlug}.jpg`
+        : coverSrc
 
   // Related-artists graph (associate, not merge): this artist's band(s),
   // bandmates, side projects + key collaborators. The ones you OWN are
