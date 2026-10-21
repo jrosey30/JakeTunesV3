@@ -413,7 +413,7 @@ describe('twin lock', () => {
   // The body of release-gate.ts / releaseGate.ts (from the first export to
   // the end) must hash to this in BOTH repos. Changing a rule means changing
   // this number here AND in the twin, in the same change set.
-  const TWIN_BODY_SHA256 = '7695a371b50b86e5c62cb5b011c6524cbcd5dd026fd04a40feb17d7fe83fa547'
+  const TWIN_BODY_SHA256 = '39fc73be83727d37fd6a1eb4ce0e173cb4c664f7cf7a642123465d3d40c5d72f'
   it('the gate body matches its twin', () => {
     const src = readFileSync(GATE_SOURCE, 'utf-8')
     const body = src.slice(src.indexOf('export type ReleaseSection'))

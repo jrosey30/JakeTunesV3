@@ -573,12 +573,13 @@ export function httpGateSources(getJson: GetJson, sections: readonly ReleaseSect
 }
 
 /// Every release group of these sections' types for an artist, paged.
-/// `complete` is false when a page failed or the cap was hit.
+/// `complete` is false when a page failed or the cap was hit (2,500 groups:
+/// Pearl Jam's official live bootlegs alone pass 1,000).
 export async function fetchReleaseGroupsForGate(
   mbid: string,
   sections: readonly ReleaseSection[],
   getJson: GetJson,
-  maxPages = 10,
+  maxPages = 25,
 ): Promise<{ groups: GateReleaseGroup[]; complete: boolean }> {
   const types = mbTypesFor(sections)
   const groups: GateReleaseGroup[] = []
