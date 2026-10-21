@@ -2,7 +2,9 @@
 // (src/common/release-gate.ts) and print every admitted release and every
 // rejection with its reasons, next to what the OLD rules showed.
 //
-//   node --experimental-strip-types scripts/release-gate-audit.ts <artists.json> <out.json> [--limit N]
+//   node --experimental-strip-types scripts/release-gate-audit.ts <artists.json> <out.json> [--limit N] [--workers N] [--memo memo.json]
+//   (--memo keeps every successful response on disk, so a re-run after a rule
+//   change asks the network only for what it hasn't seen)
 //   node --experimental-strip-types scripts/release-gate-audit.ts --summary <out.json> <out.md> [<recheck.json>]
 //
 // <artists.json>: [{ name, genre?, albums: [{ title }] }] — names plus the
@@ -337,13 +339,22 @@ if (args[0] === '--summary') {
   if (!inPath || !outPath) { console.error('usage: release-gate-audit.ts <artists.json> <out.json> [--limit N] [--workers N]'); process.exit(2) }
   const limitAt = args.indexOf('--limit')
   const workersAt = args.indexOf('--workers')
+  const memoAt = args.indexOf('--memo')
+  const memoPath = memoAt > 0 ? args[memoAt + 1] : undefined
+  if (memoPath) {
+    try { for (const [k, v] of Object.entries(JSON.parse(readFileSync(memoPath, 'utf-8')) as Record<string, unknown>)) memo.set(k, v) } catch { /* first run */ }
+    console.log(`memo: ${memo.size} responses`)
+  }
   const limit = limitAt > 0 ? Number(args[limitAt + 1]) : 200
   const workers = workersAt > 0 ? Number(args[workersAt + 1]) : 3
   const artists = (JSON.parse(readFileSync(inPath, 'utf-8')) as ArtistIn[]).slice(0, limit)
   const results: ArtistOut[] = new Array(artists.length)
   let next = 0
   let done = 0
-  const save = () => writeFileSync(outPath, JSON.stringify({ generatedAt: new Date().toISOString(), stats, artists: results.filter(Boolean) }, null, 1))
+  const save = () => {
+    writeFileSync(outPath, JSON.stringify({ generatedAt: new Date().toISOString(), stats, artists: results.filter(Boolean) }, null, 1))
+    if (memoPath) writeFileSync(memoPath, JSON.stringify(Object.fromEntries(memo)))
+  }
   await Promise.all(Array.from({ length: workers }, async () => {
     for (;;) {
       const i = next++

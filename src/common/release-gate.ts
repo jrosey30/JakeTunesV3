@@ -262,6 +262,10 @@ export const BOOTLEG_TITLE = /\b(beta version|beta|demos?|bootleg|unreleased|lea
 
 // ── Titles ────────────────────────────────────────────────────────────
 
+/// Short words that carry no identity ("a", "by", "the", "of").
+const FILLER = new Set(['the', 'and', 'for', 'from', 'with', 'feat'])
+const meaningful = (w: string) => w.length >= 3 && !FILLER.has(w)
+
 /// The words a release title adds in brackets or after a subtitle mark:
 /// "(Beta Version)", "[Live]", ": Remixes".
 export function decorationWords(title: string, fold: Fold): string[] {
@@ -273,44 +277,70 @@ export function decorationWords(title: string, fold: Fold): string[] {
   return parts.flatMap((p) => fold(p, ' ').split(' ')).filter(Boolean)
 }
 
+/// The keys a title is known by, spaces squashed: its twin-normalized form
+/// (normAlbumTitle drops brackets and subtitles), and the whole title with
+/// subtitle marks read as spaces. "&" reads as "and" ("The Captain & The
+/// Kid" is the stores' "The Captain and The Kid"); a title that is nothing
+/// but brackets keeps its words ("[Led Zeppelin IV]").
+function titleKeys(title: string, normTitle: (s: string) => string): string[] {
+  const t = title.replace(/\s*[&+]\s*/g, ' and ')
+  const squash = (x: string) => normTitle(x).replace(/ /g, '')
+  const base = squash(t) || squash(t.replace(/[[\]()]/g, ' '))
+  const whole = squash(t.replace(/\([^)]*\)|\[[^\]]*\]/g, ' ').replace(/\s*[:–—]\s*|\s+-\s+/g, ' '))
+  return [...new Set([base, whole].filter(Boolean))]
+}
+
 /// Is `other` (a library or store title) the same release as the
-/// MusicBrainz title `rgTitle`? Equal under the twin title normalizer
-/// (normAlbumTitle: case, accents, punctuation, a leading "The", brackets
-/// and subtitles dropped; spaces ignored), and the words the release adds in brackets or
-/// after a subtitle mark must be in the other title too.
+/// MusicBrainz title `rgTitle`? They share a title key (normAlbumTitle,
+/// spaces ignored: Sublime's "40 oz. to Freedom" is the stores' "40oz. To
+/// Freedom", Eminem's "LP 2" their "LP2"), and the meaningful words the
+/// release adds in brackets or after a subtitle mark are in the other title
+/// too. The bracket rule is why "Discovery (Beta Version)", a leak, is not
+/// Jake's "Discovery".
 /// Deliberately stricter than albumTitlesMatch, whose prefix and word-subset
 /// rules suit owned-vs-catalogue counting but here admit junk: "The
 /// Alternate A Hard Day's Night" (a bootleg) would pass as owned because
 /// Jake owns "A Hard Day's Night", and "The Beatles' Hits" would be proven
-/// by the store's "The Beatles (The White Album)". The bracket rule is why
-/// "Discovery (Beta Version)", a leak, is not Jake's "Discovery".
+/// by the store's "The Beatles (The White Album)".
 export function sameRelease(other: string, rgTitle: string, deps: Pick<GateDeps, 'fold' | 'normTitle'>): boolean {
   // The same characters are the same title, even with no letters to fold:
   // Bowie's "★" normalizes to nothing.
   const plain = (t: string) => t.normalize('NFKC').trim().toLowerCase()
   if (plain(other) && plain(other) === plain(rgTitle)) return true
-  // Spacing doesn't make a different record: Sublime's "40 oz. to Freedom"
-  // is the stores' "40oz. To Freedom", Eminem's "LP 2" their "LP2".
-  const squash = (t: string) => deps.normTitle(t).replace(/ /g, '')
-  const a = squash(other)
-  if (!a || a !== squash(rgTitle)) return false
-  const extra = decorationWords(rgTitle, deps.fold)
+  const mine = titleKeys(rgTitle, deps.normTitle)
+  if (!titleKeys(other, deps.normTitle).some((k) => mine.includes(k))) return false
+  const extra = decorationWords(rgTitle, deps.fold).filter(meaningful)
   if (extra.length === 0) return true
   const have = new Set(deps.fold(other, ' ').split(' ').filter(Boolean))
   return extra.every((w) => have.has(w))
 }
 
-/// Words that make a store title a different recording, not an edition of
-/// the same one: "Human After All (Remixes)" is not proof that "Human After
-/// All" is in the store.
-const OTHER_RECORDING = /\b(remix(es)?|remixed|live|demos?|karaoke|tribute|instrumentals?|acoustic|covers?|commentary|interview|takes?|alternate|sessions?|rehearsals?|outtakes?|mixdowns?)\b/i
+/// Words a store adds for an edition of the same recording. Anything else
+/// it adds ("Remixes", "Live", "Reconfigured", "Instrumental") makes its
+/// album a different record: "Human After All (Remixes)" is not proof that
+/// "Human After All" is in the store.
+const EDITION_WORDS = new Set([
+  'remaster', 'remastered', 'remasters', 'deluxe', 'edition', 'expanded', 'anniversary', 'version', 'bonus',
+  'track', 'tracks', 'digital', 'explicit', 'clean', 'mono', 'stereo', 'ep', 'single', 'lp', 'original',
+  'motion', 'picture', 'soundtrack', 'music', 'series', 'special', 'collector', 'collectors', 'super', 'standard',
+  'reissue', 'the', 'and', 'of', 'a', 'an', 'from', 'with', 'by', 'in', 'to', 'vol', 'volume',
+])
+const isEditionWord = (w: string) => EDITION_WORDS.has(w) || /^\d+(st|nd|rd|th|s)?$/.test(w)
 
-/// A store's album is this release: the same release by sameRelease, and
-/// it adds no other-recording marker the MusicBrainz title lacks.
+/// A store's album is this release: the same release by sameRelease, adding
+/// only edition words. Or the store files it under a presenter ("Future
+/// Hndrxx Presents: The WIZRD") and the part after the colon is the title.
 export function storeTitleMatches(storeTitle: string, rgTitle: string, deps: Pick<GateDeps, 'fold' | 'normTitle'>): boolean {
-  if (!sameRelease(storeTitle, rgTitle, deps)) return false
-  const added = decorationWords(storeTitle, deps.fold).join(' ')
-  return !OTHER_RECORDING.test(added) || OTHER_RECORDING.test(rgTitle)
+  const words = (t: string) => deps.fold(t.replace(/\s*[&+]\s*/g, ' and '), ' ').split(' ').filter(Boolean)
+  if (sameRelease(storeTitle, rgTitle, deps)) {
+    // The release's own words, and runs of them written together ("40 oz" → "40oz").
+    const rg = words(rgTitle)
+    const mine = new Set(rg)
+    for (let i = 0; i < rg.length; i++) for (let n = 2; n <= 3 && i + n <= rg.length; n++) mine.add(rg.slice(i, i + n).join(''))
+    return words(storeTitle).every((w) => mine.has(w) || isEditionWord(w))
+  }
+  const presented = storeTitle.match(/^(.*\bpresents?\b[^:]*):\s*(.+)$/i)
+  return !!presented && storeTitleMatches(presented[2]!, rgTitle, deps)
 }
 
 /// Does Jake own this release group? (The bypass for the reality checks.)

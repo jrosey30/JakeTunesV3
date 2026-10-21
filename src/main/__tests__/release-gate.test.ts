@@ -346,6 +346,14 @@ describe('rules', () => {
     assert.equal(gate.storeTitleMatches('4D Country - EP', '4D Country', match), true)
     assert.equal(gate.storeTitleMatches('40oz. To Freedom', '40 oz. to Freedom', match), true, 'spacing is not a different record')
     assert.equal(gate.storeTitleMatches('The Marshall Mathers LP2 (Deluxe)', 'The Marshall Mathers LP 2', match), true)
+    assert.equal(gate.storeTitleMatches('The Captain and The Kid', 'The Captain & The Kid', match), true, '"&" is "and"')
+    assert.equal(gate.storeTitleMatches('Led Zeppelin IV (Remaster)', '[Led Zeppelin IV]', match), true, 'a title that is all brackets keeps its words')
+    assert.equal(gate.storeTitleMatches('The Idol Episode 1 (Music from the Original Series)', 'The Idol: Episode 1', match), true, 'a subtitle mark is a space')
+    assert.equal(gate.storeTitleMatches('Moonage Daydream – A Brett Morgen Film', 'Moonage Daydream: A Film by Brett Morgen', match), true)
+    assert.equal(gate.storeTitleMatches('Future Hndrxx Presents: The WIZRD', 'The Wizrd', match), true, 'a presenter prefix')
+    assert.equal(gate.storeTitleMatches('TRON: Legacy Reconfigured', 'TRON: Legacy', match), false, 'a store title adding a non-edition word is another record')
+    assert.equal(gate.storeTitleMatches('Alive 2007 (Live)', 'Alive 2007', match), false)
+    assert.equal(gate.storeTitleMatches('Magical Mystery Tour (Remastered 2009)', 'Magical Mystery Tour', match), true)
   })
   it('owning a record does not make every title containing its words owned', () => {
     assert.equal(gate.ownsRelease('The Alternate A Hard Day\'s Night', ['A Hard Day\'s Night'], match), false)
@@ -413,7 +421,7 @@ describe('twin lock', () => {
   // The body of release-gate.ts / releaseGate.ts (from the first export to
   // the end) must hash to this in BOTH repos. Changing a rule means changing
   // this number here AND in the twin, in the same change set.
-  const TWIN_BODY_SHA256 = '39fc73be83727d37fd6a1eb4ce0e173cb4c664f7cf7a642123465d3d40c5d72f'
+  const TWIN_BODY_SHA256 = '4ad8e276b431b14b84356130244f279b257180233c1df94d021a3e763147de13'
   it('the gate body matches its twin', () => {
     const src = readFileSync(GATE_SOURCE, 'utf-8')
     const body = src.slice(src.indexOf('export type ReleaseSection'))
