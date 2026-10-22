@@ -925,6 +925,10 @@ declare global {
       buildMixtape?: (tracks: unknown[], dedication?: string, note?: string) => Promise<{ ok: boolean; title?: string; commentary?: string; tracks?: number[]; linerNotes?: Array<{ id: number; note: string }>; leftovers?: number[]; error?: string }>
       saveMixtape?: (tape: Mixtape) => Promise<{ ok: boolean; error?: string }>
       deleteMixtape?: (id: string) => Promise<{ ok: boolean; error?: string }>
+      aiMixtapesGet?: () => Promise<{ ok: boolean; state?: import('../common/ai-mixtapes').AiMixtapesState }>
+      aiMixtapesRefresh?: (force?: boolean) => Promise<{ ok: boolean; state?: import('../common/ai-mixtapes').AiMixtapesState }>
+      aiMixtapesKeep?: (id: string, kept: boolean) => Promise<{ ok: boolean; error?: string }>
+      onAiMixtapesUpdated?: (callback: (state: import('../common/ai-mixtapes').AiMixtapesState) => void) => () => void
       dubMixtape?: (payload: { title: string; sides: Array<{ label: 'A' | 'B'; songs: Array<{ absPath: string; cutMs?: number }>; talkovers: Array<{ atMs: number; path: string }>; introPath?: string }> }) => Promise<{ ok: boolean; outputs?: string[]; dir?: string; error?: string }>
       playlistNotesGet?: () => Promise<{ ok: boolean; notes: Record<string, string> }>
       playlistNoteSet?: (playlistId: string, text: string) => Promise<{ ok: boolean; error?: string }>

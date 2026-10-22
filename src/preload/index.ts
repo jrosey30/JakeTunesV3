@@ -637,6 +637,17 @@ const electronAPI = {
     ipcRenderer.invoke('mixtape-save', tape),
   deleteMixtape: (id: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('mixtape-delete', id),
+  // 2026-10-22 — homemini's daily AI tapes (the phone's rail + Keep). The
+  // client and its cache live in main (src/main/ai-mixtapes-client.ts).
+  aiMixtapesGet: (): Promise<unknown> => ipcRenderer.invoke('ai-mixtapes:get'),
+  aiMixtapesRefresh: (force?: boolean): Promise<unknown> => ipcRenderer.invoke('ai-mixtapes:refresh', force === true),
+  aiMixtapesKeep: (id: string, kept: boolean): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('ai-mixtapes:keep', id, kept),
+  onAiMixtapesUpdated: (callback: (state: unknown) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state)
+    ipcRenderer.on('ai-mixtapes-updated', handler)
+    return () => { ipcRenderer.removeListener('ai-mixtapes-updated', handler) }
+  },
   dubMixtape: (payload: unknown): Promise<{ ok: boolean; outputs?: string[]; dir?: string; error?: string }> =>
     ipcRenderer.invoke('dub-mixtape', payload),
   // Encoder priming for a file (iTunSMPB) so the seam scheduler can skip

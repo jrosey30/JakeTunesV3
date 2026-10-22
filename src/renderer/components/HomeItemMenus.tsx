@@ -30,6 +30,8 @@ import { songMenuEntries, albumMenuEntries } from '../utils/libraryMenus'
 import { withSongMenuExtras, type SongMenuExtras } from '../utils/songMenuExtras'
 import { groupTracksIntoAlbums } from '../utils/albumGroups'
 import { ensureLiveSetsLoaded } from '../liveSets'
+import { toggleAiTapeKept } from '../aiMixtapes'
+import type { AiMixtape } from '../../common/ai-mixtapes'
 import type { GetInfoTarget } from '../../common/get-info-target'
 import type { Track } from '../types'
 
@@ -41,6 +43,9 @@ export interface HomeItemMenusApi {
   openSongMenu: (e: React.MouseEvent, track: Track, play: () => void, row: Track[], index: number, extras?: SongMenuExtras) => void
   /** An album (any of its tracks; grouped the way the Albums view groups). */
   openAlbumMenu: (e: React.MouseEvent, tracks: Track[]) => void
+  /** A daily AI tape on the Mixtapes row (2026-10-22): Keep / Kept — the
+   *  phone rail's long-press menu (MixesSection.swift), nothing else. */
+  openTapeMenu: (e: React.MouseEvent, tape: AiMixtape) => void
 }
 
 const HomeItemMenusContext = createContext<HomeItemMenusApi | null>(null)
@@ -97,7 +102,17 @@ export function useHomeItemMenusHost(playTrack: PlayTrack): { api: HomeItemMenus
     })
   }, [lib.tracks, lib.playlists, playTrack, libDispatch, pbDispatch])
 
-  const api = useMemo(() => ({ openSongMenu, openAlbumMenu }), [openSongMenu, openAlbumMenu])
+  const openTapeMenu = useCallback((e: React.MouseEvent, tape: AiMixtape) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [{ label: tape.kept ? 'Kept' : 'Keep', onClick: () => { void toggleAiTapeKept(tape, !tape.kept) } }],
+    })
+  }, [])
+
+  const api = useMemo(() => ({ openSongMenu, openAlbumMenu, openTapeMenu }), [openSongMenu, openAlbumMenu, openTapeMenu])
   const overlays = (
     <>
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}

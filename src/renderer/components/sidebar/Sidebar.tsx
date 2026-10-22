@@ -17,6 +17,8 @@ import ConfirmDialog from '../ConfirmDialog'
 import type { ViewName, SmartPlaylistId, Track } from '../../types'
 import { setNotice } from '../../activity'
 import { setMixtapeId, getMixtapeId, getMixtapes, subscribeMixtapes, refreshMixtapes } from '../../mixtapes'
+import { getAiMixtapes, subscribeAiMixtapes, ensureAiMixtapesLoaded, removeKeptAiTape } from '../../aiMixtapes'
+import { keptAiTapes, type AiMixtape } from '../../../common/ai-mixtapes'
 import { getPoolIds, subscribePool, refreshPool, addTracksToPool, usePoolHealth } from '../../activityPool'
 import { CD_PRESENCE_START, stepCdPresence } from '../../../common/auto-nav'
 import { autoNavBlocked } from '../../utils/autoNavGuard'
@@ -289,8 +291,17 @@ export default function Sidebar() {
   const mixtapes = useSyncExternalStore(subscribeMixtapes, getMixtapes)
   const activeMixtapeId = useSyncExternalStore(subscribeMixtapes, getMixtapeId)
   const [showBlankTape, setShowBlankTape] = useState(false)
+  // 2026-10-22 — the shelf also carries homemini's daily tapes kept on this
+  // Mac or the phone (the phone shelf's KEPT FROM THE DAILIES band, after
+  // the tapes dubbed here — the phone's band order).
+  const aiTapes = useSyncExternalStore(subscribeAiMixtapes, getAiMixtapes)
+  const keptTapes = keptAiTapes(aiTapes)
+  // Right-click on a shelf tape — the phone shelf's long-press menu.
+  const [tapeCtxMenu, setTapeCtxMenu] = useState<{ x: number; y: number; own?: { id: string; title: string }; kept?: AiMixtape } | null>(null)
+  const [tapeDeleteConfirm, setTapeDeleteConfirm] = useState<{ id: string; title: string } | null>(null)
 
   useEffect(() => { void refreshMixtapes() }, [])
+  useEffect(() => { ensureAiMixtapesLoaded() }, [])
   // iPod Pool (2026-09-02): the hand-built activity set. Count rides the
   // sidebar badge; drops onto the row add to it (iTunes: drag to the iPod).
   const poolIds = useSyncExternalStore(subscribePool, getPoolIds)
@@ -688,13 +699,24 @@ export default function Sidebar() {
             onClick={() => setShowBlankTape(true)}
           />
           {mixtapes.map((m) => (
-            <SidebarItem
-              key={m.id}
-              label={m.title}
-              icon={<CassetteIcon />}
-              selected={state.currentView === 'mixtape-detail' && activeMixtapeId === m.id}
-              onClick={() => { setMixtapeId(m.id); dispatch({ type: 'SET_VIEW', view: 'mixtape-detail' }) }}
-            />
+            <div key={m.id} onContextMenu={(e) => { e.preventDefault(); setTapeCtxMenu({ x: e.clientX, y: e.clientY, own: { id: m.id, title: m.title } }) }}>
+              <SidebarItem
+                label={m.title}
+                icon={<CassetteIcon />}
+                selected={state.currentView === 'mixtape-detail' && activeMixtapeId === m.id}
+                onClick={() => { setMixtapeId(m.id); dispatch({ type: 'SET_VIEW', view: 'mixtape-detail' }) }}
+              />
+            </div>
+          ))}
+          {keptTapes.map((t) => (
+            <div key={t.id} onContextMenu={(e) => { e.preventDefault(); setTapeCtxMenu({ x: e.clientX, y: e.clientY, kept: t }) }}>
+              <SidebarItem
+                label={t.title}
+                icon={<CassetteIcon />}
+                selected={state.currentView === 'mixtape-detail' && activeMixtapeId === t.id}
+                onClick={() => { setMixtapeId(t.id); dispatch({ type: 'SET_VIEW', view: 'mixtape-detail' }) }}
+              />
+            </div>
           ))}
         </SidebarSection>
 
@@ -837,6 +859,37 @@ export default function Sidebar() {
             ] : []),
           ]}
           onClose={() => setPlCtxMenu(null)}
+        />
+      )}
+      {tapeCtxMenu && (
+        <ContextMenu
+          x={tapeCtxMenu.x}
+          y={tapeCtxMenu.y}
+          items={tapeCtxMenu.kept
+            // A kept daily tape leaves the shelf by un-keeping: it rejoins
+            // the dailies and the next batch clears it — said plainly,
+            // never called "delete" (homemini refuses to delete daily tapes).
+            ? [{ label: 'Remove from Mixtapes', onClick: () => { const t = tapeCtxMenu.kept; if (t) void removeKeptAiTape(t) } }]
+            : [{ label: 'Delete Tape…', onClick: () => { if (tapeCtxMenu.own) setTapeDeleteConfirm(tapeCtxMenu.own) } }]}
+          onClose={() => setTapeCtxMenu(null)}
+        />
+      )}
+      {tapeDeleteConfirm && (
+        // The tape page's own delete, word for word (MixtapeView): gated on
+        // the tape's stable id, tombstoned so it stays gone everywhere.
+        <ConfirmDialog
+          message={`Throw out “${tapeDeleteConfirm.title}”?`}
+          detail="The tape and its recorded intro are deleted. The songs stay in your library."
+          confirmLabel="Throw it out"
+          onConfirm={() => {
+            const { id } = tapeDeleteConfirm
+            setTapeDeleteConfirm(null)
+            const wasOpen = state.currentView === 'mixtape-detail' && getMixtapeId() === id
+            void window.electronAPI.deleteMixtape?.(id)
+              .then(() => refreshMixtapes())
+              .then(() => { if (wasOpen) dispatch({ type: 'SET_VIEW', view: 'home' }) })
+          }}
+          onCancel={() => setTapeDeleteConfirm(null)}
         />
       )}
       {showBlankTape && <NewMixtapeSheet onClose={() => setShowBlankTape(false)} />}
