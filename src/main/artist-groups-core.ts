@@ -79,6 +79,11 @@ export function computeArtistCandidates(
 }
 
 // ── Related-artists graph (associate, don't merge) ───────────────────────
+// ⚠️ TWIN: JakeTunesMobile backend/src/util/relatedArtists.ts — homemini asks
+// the question for BOTH devices (GET /api/artist/:name/related) with a copy of
+// this parse and the whitelist; main/related-artists.ts reads that route first
+// and asks locally (same prompt, same parse) only when homemini is away.
+// Change the prompt or the rules in both or neither.
 export interface RelatedArtist { name: string; relation: string }
 
 // Relation kinds we keep. Small models (Haiku) ignore an exclusion list, so we
