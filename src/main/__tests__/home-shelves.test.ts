@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   listeningALot, recentlyAddedAlbums, hiddenGems, isGemEligible, tallyPlays, dailyShuffle, localDayKey,
-  addedLabel, playsLabel, DAY_MS, SHELF_MAX, RECENT_ALBUMS_MAX,
+  addedLabel, playsLabel, recentlyAddedSongs, recentlyAddedPlay, RECENT_SONGS_QUEUE, DAY_MS, SHELF_MAX, RECENT_ALBUMS_MAX,
   type ShelfTrack, type ShelfPlay, type ShelfRules,
 } from '../../common/home-shelves.ts'
 import { isTop25Rankable } from '../../common/top25-rankable.ts'
@@ -223,4 +223,35 @@ test('hidden gems: concerts, sub-minute songs and recent adds never appear, what
   ]
   const out = hiddenGems(tracks, [], NOW, rules([2]), () => 1, { day: 'd' })
   assert.deepEqual(out, [])
+})
+
+// ── Recently added songs (click plays it, the newest 25 queue behind) ──────
+
+test('recently added songs: newest first, capped at 25, concerts and fragments left out', () => {
+  const tracks = [
+    ...Array.from({ length: 30 }, (_, i) => song(i + 1, { album: `Single ${i + 1}`, dateAdded: daysAgo(30 - i) })),
+    song(100, { dateAdded: daysAgo(0) }),
+    song(101, { dateAdded: daysAgo(0), duration: 20_000 }),
+    song(102, { dateAdded: null }),
+  ]
+  const out = recentlyAddedSongs(tracks, rules([100]))
+  assert.equal(out.length, RECENT_SONGS_QUEUE)
+  assert.deepEqual(out.slice(0, 3).map((t) => t.id), [30, 29, 28])
+  assert.ok(!out.some((t) => [100, 101, 102].includes(t.id as number)))
+})
+
+test('recently added songs: same-day adds break ties by the higher id', () => {
+  const d = daysAgo(1)
+  const out = recentlyAddedSongs([song(1, { dateAdded: d }), song(3, { dateAdded: d }), song(2, { dateAdded: d })], rules())
+  assert.deepEqual(out.map((t) => t.id), [3, 2, 1])
+})
+
+test('recently added click: plays THAT song with the whole list queued, not just its album', () => {
+  const recent = recentlyAddedSongs(Array.from({ length: 25 }, (_, i) => song(i + 1, { album: `Single ${i + 1}`, dateAdded: daysAgo(100 - i) })), rules())
+  const go = recentlyAddedPlay(recent, 2)!
+  assert.equal(go.queue[go.start]!.id, recent[2]!.id)
+  assert.deepEqual(go.queue.map((t) => t.id), recent.map((t) => t.id))
+  assert.equal(go.queue.length - go.start - 1, 22)
+  assert.equal(recentlyAddedPlay(recent, 25), null)
+  assert.equal(recentlyAddedPlay([], 0), null)
 })

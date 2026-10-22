@@ -54,11 +54,10 @@ describe('one song menu, one album menu', () => {
 })
 
 describe('the Home\'s items right-click and drag like library items', () => {
-  it('shelf songs: the song menu + a track drag; Recently Added: the album menu + an album drag', () => {
+  it('every shelf row (Recently Added too, now songs) gets the song menu + a track drag', () => {
     assert.match(shelves, /onContextMenu=\{\(e\) => menus\?\.openSongMenu\(e, c\.track, play, queue, i\)\}/)
     assert.match(shelves, /onDragStart=\{\(e\) => setTrackDragPayload\(e, c\.track\.id\)\}/)
-    assert.match(shelves, /onContextMenu=\{\(e\) => menus\?\.openAlbumMenu\(e, card\.tracks\)\}/)
-    assert.match(shelves, /onDragStart=\{\(e\) => setAlbumDragPayload\(e, card\.tracks\.map/)
+    assert.match(shelves, /title="Recently Added" scrollKey="home-row-recent"/)
   })
   it('G: the hero and island covers are albums; Now Digging drags as the artist, like an Artists tile', () => {
     assert.equal((g.match(/menus\?\.openAlbumMenu\(/g) ?? []).length, 2)

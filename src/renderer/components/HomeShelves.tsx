@@ -7,7 +7,8 @@
  *                                   picks you've barely played, each with a
  *                                   reason from real stars / plays / genre
  *   You've Been Listening To A Lot  most plays in 30 days, with the count
- *   Recently Added                  newest albums, with the date added
+ *   Recently Added                  newest songs, with the date added (a click
+ *                                   plays it with the newest 25 queued behind)
  *
  * Five cards each. You Should Listen To More's "See All" opens Listen More
  * Weekly (2026-10-20: homemini's weekly playlist, whose first songs the row
@@ -16,7 +17,8 @@
  * same grid-in-place Shows uses); Recently Added's "See All" opens the Recently
  * Added playlist, as the old row did (Jake, mid-build: "should bring you to
  * recently added playlist"). Click a song → it plays, with the rest of the row
- * queued behind it in order; click an album → the album opens.
+ * queued behind it in order (Recently Added queues its newest 25, not just
+ * the 5 shown); the album is one right-click away (Go to Album).
  *
  * Like a library row (Jake, 2026-10-20): right-click a song for the Songs
  * view's song menu, an album for the Albums view's album menu
@@ -32,17 +34,16 @@ import AlbumArtImage from './AlbumArtImage'
 import { useHomeShelves } from '../homeShelves'
 import { useListenMoreWeekly } from '../listenMoreWeekly'
 import { albumKeyOf } from '../utils/albumKey'
-import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import { lookupArtwork, queueArtworkResolutions } from '../utils/artworkLookup'
 import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { useHomeItemMenus } from './HomeItemMenus'
-import { setTrackDragPayload, setAlbumDragPayload } from '../utils/trackDrag'
-import { SHELF_SHOWN, SHELF_MAX, playsLabel, addedLabel } from '../../common/home-shelves'
+import { setTrackDragPayload } from '../utils/trackDrag'
+import { SHELF_SHOWN, SHELF_MAX, playsLabel, addedLabel, recentlyAddedSongs, recentlyAddedPlay } from '../../common/home-shelves'
+import { isTop25Rankable } from '../../common/top25-rankable'
 import type { Track } from '../types'
 
 type ShelfAction =
-  | { type: 'VIEW_ALBUM_DETAIL'; albumKey: string }
   | { type: 'VIEW_SMART_PLAYLIST'; id: 'recently-added' | 'listen-more-weekly' }
   | { type: 'ADD_ARTWORK'; key: string; hash: string }
 
@@ -58,7 +59,6 @@ interface Props {
 }
 
 interface SongCard { track: Track; note: string; count: boolean }
-interface AlbumShelfCard { key: string; artist: string; album: string; added: string; tracks: Track[] }
 
 function activateOnKey(action: () => void) {
   return (e: React.KeyboardEvent) => {
@@ -78,7 +78,7 @@ function Placeholder(): JSX.Element {
   )
 }
 
-function SongRow({ title, scrollKey, cards, artFor, playTrack, openAll }: {
+function SongRow({ title, scrollKey, cards, artFor, playTrack, openAll, fullQueue }: {
   title: string
   scrollKey: string
   cards: SongCard[]
@@ -86,6 +86,8 @@ function SongRow({ title, scrollKey, cards, artFor, playTrack, openAll }: {
   playTrack: Props['playTrack']
   /** When set, "See All" opens this (a playlist) instead of growing the row. */
   openAll?: () => void
+  /** Click queues this whole list (the row shows its first few); default: the shown cards. */
+  fullQueue?: Track[]
 }): JSX.Element {
   const [all, setAll] = useState(false)
   const menus = useHomeItemMenus()
@@ -99,7 +101,7 @@ function SongRow({ title, scrollKey, cards, artFor, playTrack, openAll }: {
     if (all) requestAnimationFrame(() => groupRef.current?.scrollIntoView({ block: 'nearest' }))
     setAll(!all)
   }, [all])
-  const queue = shown.map((c) => c.track)
+  const queue = fullQueue ?? shown.map((c) => c.track)
   return (
     <section className="home-section home-shelves-row" ref={groupRef} aria-label={title}>
       <div className="home-section-header">
@@ -115,7 +117,8 @@ function SongRow({ title, scrollKey, cards, artFor, playTrack, openAll }: {
       <div className={`home-card-row${all ? ' home-card-row--shelf-grid' : ''}`} role="list" ref={rowRef}>
         {shown.map((c, i) => {
           const hash = artFor(c.track)
-          const play = () => playTrack(c.track, queue, i, undefined, true, true)
+          const go = recentlyAddedPlay(queue, i)
+          const play = () => { if (go) playTrack(go.queue[go.start]!, go.queue, go.start, undefined, true, true) }
           return (
             <div
               key={c.track.id}
@@ -150,9 +153,6 @@ export default function HomeShelves({ tracks, regularTracks, artworkMap, artInde
   // Listen More Weekly (2026-10-20): the row is the first songs of homemini's
   // weekly playlist, and "See All" opens it — when this Mac has a copy.
   const weekly = useListenMoreWeekly()
-  const menus = useHomeItemMenus()
-  const recentRowRef = useRef<HTMLDivElement>(null)
-  useScrollPersistence('home-row-recent', recentRowRef)
 
   const byId = useMemo(() => {
     const m = new Map<number, Track>()
@@ -172,25 +172,27 @@ export default function HomeShelves({ tracks, regularTracks, artworkMap, artInde
   const heavy = useMemo((): SongCard[] => (shelves?.listeningALot ?? [])
     .map((h) => { const track = byId.get(h.id); return track ? { track, note: playsLabel(h.plays), count: true } : null })
     .filter((c): c is SongCard => c !== null), [shelves, byId])
-  const albums = useMemo((): AlbumShelfCard[] => (shelves?.recentlyAdded ?? [])
-    .map((a) => {
-      const own = a.trackIds.map((id) => byId.get(id)).filter((t): t is Track => t !== undefined)
-      const first = own[0]
-      if (!first) return null
-      return { key: albumKeyOf(first), artist: first.albumArtist || first.artist || a.artist, album: first.album || a.album, added: addedLabel(Date.parse(a.dateAdded)), tracks: sortAlbumTracks(own) }
-    })
-    .filter((c): c is AlbumShelfCard => c !== null), [shelves, byId])
+  // Recently Added is SONGS (Jake, 2026-10-22): the newest 25 by date added;
+  // the row draws 5 and a click queues all 25. Computed from the library, so
+  // it is the same list whether or not homemini's document has arrived.
+  // Phone twin: ios/JakeTunesMobile/HomeShelves.swift RecentlyAddedShelf.
+  const recentSongs = useMemo((): Track[] => recentlyAddedSongs(
+    regularTracks, { hidden: new Set<string>(), rankable: (t) => isTop25Rankable(t) },
+  ), [regularTracks])
+  const recent = useMemo((): SongCard[] => recentSongs.map((track) => ({
+    track, note: addedLabel(Date.parse(track.dateAdded || '')), count: false,
+  })), [recentSongs])
 
   // Covers the artwork map doesn't know yet: ask main to resolve them, and
   // warm the ones it does (the same two steps the old Recently Added row took).
   useEffect(() => {
-    const firsts = [...gems.map((c) => c.track), ...heavy.map((c) => c.track), ...albums.map((a) => a.tracks[0]!)]
+    const firsts = [...gems.map((c) => c.track), ...heavy.map((c) => c.track), ...recent.slice(0, SHELF_SHOWN).map((c) => c.track)]
     const missing = firsts.filter((t) => !artFor(t)).map((t) => ({ artist: t.albumArtist || t.artist || '', album: t.album || '' }))
     if (missing.length) queueArtworkResolutions(missing, dispatch)
     prefetchAlbumArtHashes(firsts.map(artFor), 320)
-  }, [gems, heavy, albums, artFor, dispatch])
+  }, [gems, heavy, recent, artFor, dispatch])
 
-  if (gems.length === 0 && heavy.length === 0 && albums.length === 0) return null
+  if (gems.length === 0 && heavy.length === 0 && recent.length === 0) return null
   return (
     <>
       {gems.length > 0 && (
@@ -200,44 +202,9 @@ export default function HomeShelves({ tracks, regularTracks, artworkMap, artInde
       {heavy.length > 0 && (
         <SongRow title="You’ve Been Listening To A Lot" scrollKey="home-row-listening-a-lot" cards={heavy} artFor={artFor} playTrack={playTrack} />
       )}
-      {albums.length > 0 && (
-        <section className="home-section home-shelves-row" aria-label="Recently Added">
-          <div className="home-section-header">
-            <h2 className="home-section-title">Recently Added</h2>
-            <button type="button" className="home-section-more" onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: 'recently-added' })}>
-              See All
-            </button>
-          </div>
-          <div className="home-card-row" role="list" ref={recentRowRef}>
-            {albums.map((card) => {
-              const hash = artFor(card.tracks[0]!)
-              const open = () => dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: card.key })
-              return (
-                <div
-                  key={card.key}
-                  className="home-album-card home-album-card--shelf"
-                  role="listitem"
-                  tabIndex={0}
-                  onClick={open}
-                  onKeyDown={activateOnKey(open)}
-                  onContextMenu={(e) => menus?.openAlbumMenu(e, card.tracks)}
-                  draggable
-                  onDragStart={(e) => setAlbumDragPayload(e, card.tracks.map((t) => t.id))}
-                  title={`${card.artist} — ${card.album}\nClick opens the album.`}
-                >
-                  <div className="home-album-art">
-                    {hash ? <AlbumArtImage hash={hash} alt={card.album} onLoad={(e) => e.currentTarget.classList.add('home-album-art-loaded')} /> : <Placeholder />}
-                  </div>
-                  <div className="home-album-info">
-                    <div className="home-album-title">{card.album}</div>
-                    <div className="home-album-artist">{card.artist}</div>
-                    <div className="home-shelves-note">{card.added}</div>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </section>
+      {recent.length > 0 && (
+        <SongRow title="Recently Added" scrollKey="home-row-recent" cards={recent} artFor={artFor} playTrack={playTrack}
+          fullQueue={recentSongs} openAll={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: 'recently-added' })} />
       )}
     </>
   )
