@@ -46,6 +46,8 @@ const artistImageDir = (): string => join(app.getPath('userData'), 'artist-image
  * read. sips refusing the file is a refusal here (unlike playlist covers,
  * which keep the raw bytes): only something macOS can open as an image is
  * ever sent to homemini.
+ * ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/MemberPhotoPick.swift jpeg(from:)
+ * — the phone's copy of these limits (JPEG q88, ≤ 1800 px, 60 MB) and words.
  */
 async function normalizeToJpeg(src: string): Promise<{ ok: true; bytes: Uint8Array } | { ok: false; error: string }> {
   const ext = extname(src).slice(1).toLowerCase()
