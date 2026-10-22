@@ -2,6 +2,8 @@
  * One picture for a Year in Review fact: a song's or album's cover from the
  * artwork store, an artist's confirmed photo (artist-photo.ts; initials when
  * there is none, never album art in a circle), or a concert's poster.
+ *
+ * ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/YirImage.swift (the phone's pictures + lookups).
  */
 import { useEffect, useState } from 'react'
 import { lookupArtwork } from '../../utils/artworkLookup'

@@ -2,6 +2,8 @@
  * The Year in Review on the Home page (Jake 10/11: "Home page card"): the
  * year so far until December 17, then the reveal. Hidden until this Mac has
  * the nightly facts.
+ *
+ * ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/YirHomeCard.swift (the phone's Home card).
  */
 import { useLibrary } from '../../context/LibraryContext'
 import { useYirFacts } from './yirData'

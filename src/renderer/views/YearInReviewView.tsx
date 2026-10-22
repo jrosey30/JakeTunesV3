@@ -3,6 +3,8 @@
  * slides for the December 17 reveal, and the whole year on one page to
  * browse. Opened from the Home card. Facts: the nightly homemini build,
  * mirrored here (src/main/yir-mirror.ts); cards: src/common/yir-story.ts.
+ *
+ * ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/YirPageView.swift (YearInReviewPage) + YirStoryView.swift.
  */
 import { useMemo, useState } from 'react'
 import { useLibrary } from '../context/LibraryContext'
