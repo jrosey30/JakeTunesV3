@@ -14,7 +14,7 @@
 import type { MenuEntry } from '../components/ContextMenu'
 import type { Playlist, Track } from '../types'
 import { setNotice } from '../activity'
-import { addTracksToPoolDirect } from '../activityPool'
+import { addTracksToPoolDirect, getPoolReadOnly } from '../activityPool'
 import { queueNoticeText, type QueueMode } from '../../common/queue-notice'
 
 /** iPod-imported playlists whose names duplicate the built-in smart playlists.
@@ -125,7 +125,8 @@ export function addToIpodPoolEntry(tracks: Track[]): MenuEntry {
   const n = tracks.length
   return {
     label: n === 1 ? 'Add to iPod Pool' : `Add ${n} songs to iPod Pool`,
-    disabled: n === 0,
+    // A replica (workmini) only mirrors the MacBook's pool — it can't be edited here.
+    disabled: n === 0 || getPoolReadOnly(),
     onClick: () => { void addTracksToPoolDirect(tracks) },
   }
 }

@@ -8594,7 +8594,7 @@ registerWorkoutSyncIpc({
 })
 // iPod Pool — the hand-built sync set (drag songs/albums/artists/playlists
 // onto the sidebar row); build-workout-sync-set reads it in pool mode.
-registerActivityPoolIpc(ipc)
+registerActivityPoolIpc(ipc, { hubBase: replicaHubBase })
 
 // Mixtapes — songs → a real C60/C90/C120 cassette with Jake's voice on it
 registerGaplessTrimIpc(ipc)
