@@ -16,6 +16,8 @@ import DeckBar from './components/DeckBar'
 import Visualizer from './components/Visualizer'
 import SplashScreen from './components/SplashScreen'
 import QueuePanel, { type QueuePanelHandle } from './components/playback/QueuePanel'
+import LyricsPanel, { type LyricsPanelHandle } from './components/playback/LyricsPanel'
+import { lyricsFor } from './lyricsStore'
 import MusicManDrawer, { type MusicManDrawerHandle } from './components/MusicManDrawer'
 import DownloadsPanel, { DOWNLOADS_PANEL_EVENT, setDownloadsPanelOpen, type DownloadsPanelHandle } from './components/DownloadsPanel'
 import { OPEN_PREFERENCES_EVENT } from './views/DownloadStore/credential-notice-store'
@@ -103,6 +105,10 @@ function AppInner() {
   // Next — opening one closes the other.
   const [showMusicMan, setShowMusicMan] = useState(false)
   const musicManRef = useRef<MusicManDrawerHandle>(null)
+  // Lyrics (parity audit #6): the phone's Now Playing lyric sheet, in the
+  // same right-hand slot — still one drawer at a time.
+  const [showLyrics, setShowLyrics] = useState(false)
+  const lyricsRef = useRef<LyricsPanelHandle>(null)
   // Downloads panel (Record Shop step 5 slice 3): one right-hand drawer at a
   // time — opening it closes the play queue / Music Man, and vice versa.
   const [showDownloads, setShowDownloads] = useState(false)
@@ -116,12 +122,22 @@ function AppInner() {
       const cur = showDownloadsRef.current
       const next = action === 'toggle' ? !cur : action === 'open'
       if (next === cur) return
-      if (next) { queueRef.current?.requestClose(); musicManRef.current?.requestClose(); setShowDownloads(true) }
+      if (next) { queueRef.current?.requestClose(); musicManRef.current?.requestClose(); lyricsRef.current?.requestClose(); setShowDownloads(true) }
       else downloadsRef.current?.requestClose()
     }
     window.addEventListener(DOWNLOADS_PANEL_EVENT, onToggle)
     return () => window.removeEventListener(DOWNLOADS_PANEL_EVENT, onToggle)
   }, [])
+  // Toolbar Lyrics button and View → Lyrics (⇧⌘L). Like the phone's button,
+  // it opens only when the playing song has a sheet; open, it always closes.
+  const toggleLyrics = () => {
+    if (showLyrics) { lyricsRef.current?.requestClose(); return }
+    if (lyricsFor(pbState.nowPlaying?.id) == null) return
+    queueRef.current?.requestClose(); musicManRef.current?.requestClose(); downloadsRef.current?.requestClose()
+    setShowLyrics(true)
+  }
+  const toggleLyricsRef = useRef(toggleLyrics)
+  toggleLyricsRef.current = toggleLyrics
   const [importConvertOpen, setImportConvertOpen] = useState(false)
   const [alacCompatOpen, setAlacCompatOpen] = useState(false)
   const [playCacheMode, setPlayCacheMode] = useState<'prepare' | 'prune' | null>(null)
@@ -1581,9 +1597,10 @@ function AppInner() {
         case 'toggle-dj-mode': window.dispatchEvent(new CustomEvent('toggle-dj-mode')); break
         case 'toggle-music-man': {
           if (showMusicMan) musicManRef.current?.requestClose()
-          else { if (showQueue) queueRef.current?.requestClose(); setShowMusicMan(true) }
+          else { if (showQueue) queueRef.current?.requestClose(); lyricsRef.current?.requestClose(); setShowMusicMan(true) }
           break
         }
+        case 'toggle-lyrics': toggleLyricsRef.current(); break
         case 'open-import-convert': setImportConvertOpen(true); break
         case 'fix-ipod-compat':     setAlacCompatOpen(true); break
         case 'prepare-alac-cache':  setPlayCacheMode('prepare'); break
@@ -1782,8 +1799,9 @@ function AppInner() {
         return
       }
 
-      // Cmd+L = scroll to now-playing track
-      if ((e.metaKey || e.ctrlKey) && e.key === 'l') {
+      // Cmd+L = scroll to now-playing track. Not with Shift: ⇧⌘L is View →
+      // Lyrics (the menu accelerator), and one press must do one thing.
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 'l') {
         e.preventDefault()
         window.dispatchEvent(new Event('jaketunes-show-now-playing'))
         return
@@ -2025,15 +2043,17 @@ function AppInner() {
         <Toolbar
           onToggleQueue={() => {
             if (showQueue) queueRef.current?.requestClose()
-            else { if (showMusicMan) musicManRef.current?.requestClose(); if (showDownloads) downloadsRef.current?.requestClose(); setShowQueue(true) }
+            else { if (showMusicMan) musicManRef.current?.requestClose(); if (showDownloads) downloadsRef.current?.requestClose(); lyricsRef.current?.requestClose(); setShowQueue(true) }
           }}
-          onOpenQueue={() => { if (showMusicMan) musicManRef.current?.requestClose(); if (showDownloads) downloadsRef.current?.requestClose(); setShowQueue(true) }}
+          onOpenQueue={() => { if (showMusicMan) musicManRef.current?.requestClose(); if (showDownloads) downloadsRef.current?.requestClose(); lyricsRef.current?.requestClose(); setShowQueue(true) }}
           showQueue={showQueue}
           onToggleMusicMan={() => {
             if (showMusicMan) musicManRef.current?.requestClose()
-            else { if (showQueue) queueRef.current?.requestClose(); if (showDownloads) downloadsRef.current?.requestClose(); setShowMusicMan(true) }
+            else { if (showQueue) queueRef.current?.requestClose(); if (showDownloads) downloadsRef.current?.requestClose(); lyricsRef.current?.requestClose(); setShowMusicMan(true) }
           }}
           showMusicMan={showMusicMan}
+          onToggleLyrics={toggleLyrics}
+          showLyrics={showLyrics}
         />
       </div>
       <div className="sidebar-area" style={{ width: sidebarWidth }}>
@@ -2048,6 +2068,7 @@ function AppInner() {
         {showQueue && <QueuePanel ref={queueRef} onClose={() => setShowQueue(false)} />}
         {showMusicMan && <MusicManDrawer ref={musicManRef} onClose={() => setShowMusicMan(false)} />}
         {showDownloads && <DownloadsPanel ref={downloadsRef} onClose={() => setShowDownloads(false)} />}
+        {showLyrics && <LyricsPanel ref={lyricsRef} onClose={() => setShowLyrics(false)} />}
         {importConvertOpen && <ImportConvertModal onClose={() => setImportConvertOpen(false)} />}
         {alacCompatOpen && <LibraryMaintenanceModal mode="alac" onClose={() => setAlacCompatOpen(false)} />}
         {playCacheMode && <PlayCacheModal mode={playCacheMode} onClose={() => setPlayCacheMode(null)} />}
