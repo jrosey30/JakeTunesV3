@@ -34,7 +34,7 @@ import { usePlaysElsewhere } from '../playsElsewhere'
 import { playsEverywhere } from '../../common/plays-elsewhere'
 import { useArtistProfile } from '../artistProfile'
 import {
-  topSongs, mostPlayedRecord, earliestAdded, monthYear, dayMonthYear, clock, lengthLabel, plural,
+  topSongs, mostPlayedRecord, earliestAdded, dayMonthYear, clock, lengthLabel, plural,
   RELEASE_KIND_SINGULAR, heroEyebrow, heroNameSize, albumTileMeta, headerPhotoChoice, heroPhotoFit,
 } from '../../common/artist-page'
 import MemberTile from '../components/artist/MemberTile'
@@ -320,7 +320,6 @@ export default function ArtistDetailView() {
   const songCount = useMemo(() => artistAllTracks.filter((t) => !mergedConcertIds.has(t.id)).length, [artistAllTracks, mergedConcertIds])
   const totalPlays = useMemo(() => artistAllTracks.reduce((s, t) => s + playsOf(t), 0), [artistAllTracks, playsOf])
   const releaseCount = ownedReleases.filter((g) => kindOfAlbum(g) !== 'live').length + wallTiles.length
-  const sinceMs = useMemo(() => earliestAdded(artistAllTracks), [artistAllTracks])
 
   // ── "Your <Artist>" ──
   const top = useMemo(() => topSongs(ownedReleases.flatMap((g) => g.tracks), playsOf, 5), [ownedReleases, playsOf])
@@ -648,7 +647,6 @@ export default function ArtistDetailView() {
             <div className="ad-stat"><span className="ad-stat-num">{songCount.toLocaleString('en-US')}</span><span className="ad-stat-label">{songCount === 1 ? 'Song' : 'Songs'}</span></div>
             <div className="ad-stat"><span className="ad-stat-num">{releaseCount.toLocaleString('en-US')}</span><span className="ad-stat-label">{releaseCount === 1 ? 'Release' : 'Releases'}</span></div>
             <div className="ad-stat"><span className="ad-stat-num">{totalPlays.toLocaleString('en-US')}</span><span className="ad-stat-label">{totalPlays === 1 ? 'Play' : 'Plays'}</span></div>
-            {sinceMs != null && <div className="ad-stat"><span className="ad-stat-num">{monthYear(sinceMs)}</span><span className="ad-stat-label">In your library since</span></div>}
           </div>
           <div className="ad-hero-actions ad-rise ad-d5">
             <button type="button" className="ad-btn ad-btn--play" onClick={() => playQueue(pageQueue)} disabled={pageQueue.length === 0}><PlayGlyph />Play</button>

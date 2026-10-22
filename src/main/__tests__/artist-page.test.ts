@@ -7,7 +7,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  topSongs, mostPlayedRecord, earliestAdded, monthYear, dayMonthYear, clock, lengthLabel, heroEyebrow,
+  topSongs, mostPlayedRecord, earliestAdded, dayMonthYear, clock, lengthLabel, heroEyebrow,
   heroNameSize, posterDate, posterYear, liveCaption, posterShowLine, posterVenue, albumTileMeta, headerPhotoChoice, heroPhotoFit,
 } from '../../common/artist-page.ts'
 
@@ -41,12 +41,10 @@ describe('most played record', () => {
 })
 
 describe('dates and lengths', () => {
-  it('in your library since: the earliest add, as month + year that never splits', () => {
+  it('the record line\'s earliest add, as a day that never splits', () => {
     const ms = earliestAdded([t(1, 0, { dateAdded: '2026-09-27T10:00:00Z' }), t(2, 0, { dateAdded: '2026-08-09T17:03:47.923Z' }), t(3, 0, { dateAdded: '' })])
-    assert.equal(monthYear(ms), 'Aug 2026')
     assert.equal(dayMonthYear(ms), 'Aug 9, 2026')
     assert.equal(earliestAdded([]), null)
-    assert.equal(monthYear(null), '')
   })
   it('song time floors seconds like SongsView; record length uses the album page formula', () => {
     assert.equal(clock(210_946), '3:30')
