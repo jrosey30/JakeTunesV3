@@ -4,6 +4,8 @@ import type { ViewName, SmartPlaylistId } from '../types'
 import { recordLocation, canGoBack as histCanBack, canGoForward as histCanForward } from '../nav-history'
 import type { NavLocation, NavHistory } from '../nav-history'
 import { reopenSearch } from '../searchNav'
+import { markHistoryNavigation } from '../navIntent'
+import { HistorySwipeTracker, mouseButtonNav } from '../historySwipe'
 
 /**
  * Browser-style back/forward history for the app's views.
@@ -109,6 +111,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
       if (s.index > 0) {
         navRef.current = { history: s.history, index: s.index - 1 }
         repaint()
+        markHistoryNavigation()
         restore(navRef.current.history[navRef.current.index])
       }
       reopenSearch(sr.query)
@@ -118,6 +121,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
     searchReturnRef.current = null
     navRef.current = { history: s.history, index: s.index - 1 }
     repaint()
+    markHistoryNavigation()
     restore(navRef.current.history[navRef.current.index])
   }, [restore, repaint])
 
@@ -126,6 +130,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
     if (s.index >= s.history.length - 1) return
     navRef.current = { history: s.history, index: s.index + 1 }
     repaint()
+    markHistoryNavigation()
     restore(navRef.current.history[navRef.current.index])
   }, [restore, repaint])
 
@@ -142,6 +147,48 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [goBack, goForward])
 
+  // 2026-10-21 — parity with the phone's swipe-back. Every input below runs
+  // the same goBack/goForward as ‹ › and ⌘[ ⌘] (so the same smooth return).
+  useEffect(() => {
+    const go = (d: 'back' | 'forward' | null): void => { if (d === 'back') goBack(); else if (d === 'forward') goForward() }
+    // Mouse side buttons (MX Master's thumb buttons): button 3 / 4. Swallow
+    // the press too, so Chromium's own history default never runs.
+    const onMouseDown = (e: MouseEvent): void => { if (mouseButtonNav(e.button)) e.preventDefault() }
+    const onMouseUp = (e: MouseEvent): void => {
+      const d = mouseButtonNav(e.button)
+      if (!d) return
+      e.preventDefault()
+      go(d)
+    }
+    // Two-finger horizontal swipe (historySwipe.ts has the rules). Never when
+    // the gesture belongs to something under the pointer: Cover Flow's side
+    // scroll preventDefaults it, and horizontal carousels scroll it.
+    const tracker = new HistorySwipeTracker()
+    const onWheel = (e: WheelEvent): void => {
+      if (e.ctrlKey) return   // pinch-zoom
+      // Only a sideways-dominant event pays for the ancestor walk (it reads
+      // layout) — ordinary vertical scrolling stays free.
+      const sideways = Math.abs(e.deltaX) > Math.abs(e.deltaY)
+      const consumed = e.defaultPrevented || (sideways && insideHorizontalScroller(e.target))
+      go(tracker.push({ t: e.timeStamp, dx: e.deltaX, dy: e.deltaY, consumed }))
+    }
+    // Main relays the older-style macOS 'swipe' (and Windows/Linux
+    // browser-backward/forward app-commands) as menu actions.
+    const offMenu = window.electronAPI.onMenuAction?.((action: string) => {
+      if (action === 'history-back') goBack()
+      else if (action === 'history-forward') goForward()
+    })
+    window.addEventListener('mousedown', onMouseDown)
+    window.addEventListener('mouseup', onMouseUp)
+    window.addEventListener('wheel', onWheel, { passive: true })
+    return () => {
+      window.removeEventListener('mousedown', onMouseDown)
+      window.removeEventListener('mouseup', onMouseUp)
+      window.removeEventListener('wheel', onWheel)
+      offMenu?.()
+    }
+  }, [goBack, goForward])
+
   const api: NavigationApi = {
     canGoBack: histCanBack(navRef.current),
     canGoForward: histCanForward(navRef.current),
@@ -153,6 +200,17 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
   }
 
   return <NavigationContext.Provider value={api}>{children}</NavigationContext.Provider>
+}
+
+/** Is `target` inside something that scrolls sideways (a carousel, a shelf row)? */
+function insideHorizontalScroller(target: EventTarget | null): boolean {
+  for (let el = target instanceof Element ? target : null; el && el !== document.body; el = el.parentElement) {
+    if (el.scrollWidth > el.clientWidth + 1) {
+      const ox = getComputedStyle(el).overflowX
+      if (ox === 'auto' || ox === 'scroll') return true
+    }
+  }
+  return false
 }
 
 export function useNavigation(): NavigationApi {

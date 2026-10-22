@@ -14,12 +14,13 @@
  * initials disc — never album art in a circle (Jake, twice: "that's an album
  * picture not an artist").
  */
-import { useState, useMemo, useCallback, useRef, useEffect, useSyncExternalStore } from 'react'
+import { useState, useMemo, useCallback, useRef, useEffect, useSyncExternalStore, memo } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
+import { useScrollingClass } from '../hooks/useScrollingClass'
 import { sessionArtistImages, hashColor, initials } from '../utils/artistPortrait'
 import { compareNames, artistSectionLetter } from '../utils/artistSort'
 import ScrollTopButton from '../components/ScrollTopButton'
@@ -50,6 +51,10 @@ type SortId = 'az' | 'played' | 'added' | 'genre' | 'country' | 'depth'
 const SORTS: Array<[SortId, string]> = [['az', 'A–Z'], ['played', 'Most played'], ['added', 'Recently added'], ['genre', 'Genre'], ['country', 'Country'], ['depth', 'Depth']]
 /** The sort survives leaving the view (MainContent unmounts it). */
 let lastSort: SortId = 'az'
+/** Heavy rotation survives leaving the view too (2026-10-21): it loads async,
+ *  and a shelf that pops in ABOVE the A–Z list after the scroll restore pushed
+ *  every return through the sidebar one row past where you left. */
+let lastHeavy: Array<{ artist: string; plays: number }> = []
 
 interface ArtistCard {
   name: string
@@ -67,6 +72,59 @@ const top = (m: Map<string, number>): string => [...m.entries()].sort((a, b) => 
 const monthOf = (d: string): string => (d ? new Date(`${d.slice(0, 10)}T12:00:00`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : 'Date unknown')
 const PHOTO_CONCURRENCY = 4
 
+interface ArtistCardProps {
+  a: ArtistCard
+  slug: string | null | undefined
+  chip?: string
+  wide?: boolean
+  hideOrigin: boolean
+  observe: (el: HTMLElement | null) => void
+  onOpen: (name: string) => void
+  onPlay: (a: ArtistCard) => void
+}
+
+/** One artist card. Memoized (2026-10-21): a playback tick or one arriving
+ *  photo used to re-render all ~1,940 cards (26 ms per tick; 30–120 ms per
+ *  photo burst while scrolling into unseen letters) — now only the card whose
+ *  photo arrived re-renders. */
+const ArtistCardView = memo(function ArtistCardView({ a, slug, chip, wide, hideOrigin, observe, onOpen, onPlay }: ArtistCardProps) {
+  const meta = [a.genre, hideOrigin ? '' : a.origin].filter(Boolean).join(' · ')
+  return (
+    <div
+      ref={observe}
+      className={`ag-card${wide ? ' ag-card--shelf' : ''}`}
+      data-artist-name={a.name}
+      role="button"
+      tabIndex={0}
+      title={a.name}
+      onClick={() => onOpen(a.name)}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(a.name) } }}
+      draggable
+      onDragStart={(e) => setAlbumDragPayload(e, a.tracks.map((t) => t.id))}
+    >
+      <div className="ag-ph">
+        {slug
+          ? <img src={`artist-image://${slug}.jpg`} alt="" draggable={false} loading="lazy" decoding="async" />
+          : <div className="ag-ini" style={{ background: hashColor(a.name) }}>{initials(a.name.replace(/^the\s+/i, ''))}</div>}
+        {/* Hover play (Jake 2026-10-21, option A of three he was shown): the
+            photo dims a touch and a white disc with the orange play sits in
+            its exact centre. The triangle's box is centred, then nudged right
+            by 1/12 of its width so it LOOKS centred (a triangle's mass sits
+            left of its box centre). */}
+        <span className="ag-scrim" aria-hidden="true" />
+        <button type="button" className="ag-play" aria-label={`Play ${a.name}`} title={`Play ${a.name}`}
+          onClick={(e) => { e.stopPropagation(); onPlay(a) }} onKeyDown={(e) => e.stopPropagation()}>
+          <svg className="ag-play-tri" width="16" height="18" viewBox="0 0 16 18" aria-hidden="true"><path d="M0 0L16 9L0 18Z" fill="currentColor" /></svg>
+        </button>
+      </div>
+      <div className="ag-name">{a.name}</div>
+      {meta && <div className="ag-meta">{meta}</div>}
+      <div className="ag-meta">{a.albums ? `${plural(a.albums, 'album')} · ` : ''}{plural(a.tracks.length, 'song')}</div>
+      {chip && <div className="ag-chip">{chip}</div>}
+    </div>
+  )
+})
+
 export default function ArtistsView(): JSX.Element {
   const { state: lib, dispatch: libDispatch } = useLibrary()
   const { state: pb } = usePlayback()
@@ -75,7 +133,7 @@ export default function ArtistsView(): JSX.Element {
   const setSort = (s: SortId): void => { lastSort = s; setSortState(s) }
   const [photos, setPhotos] = useState<Map<string, string | null>>(() => new Map(sessionArtistImages))
   const [fans, setFans] = useState<Record<string, number>>({})   // ListenBrainz listeners, for Depth
-  const [heavy, setHeavy] = useState<Array<{ artist: string; plays: number }>>([])
+  const [heavy, setHeavy] = useState<Array<{ artist: string; plays: number }>>(lastHeavy)
   const [groupingOpen, setGroupingOpen] = useState(false)
   const [listFilter, setListFilter] = useState('')
   const aliasVersion = useSyncExternalStore(subscribeAliases, getAliasVersion)
@@ -84,6 +142,19 @@ export default function ArtistsView(): JSX.Element {
   const elsewhere = usePlaysElsewhere()
   const viewRootRef = useRef<HTMLDivElement>(null)
   useScrollPersistence('artists', viewRootRef)
+  // Scroll cost (2026-10-21, measured off-screen at 120 Hz on the Artists
+  // flick: 92 fps → 117 with both): hover is off while scrolling
+  // (useScrollingClass), and letter sections out of view skip rendering
+  // (content-visibility, artists-grid.css). Sections render fully on mount —
+  // the scroll restore lands exactly and every section's real height is
+  // remembered (contain-intrinsic-size: auto) — and only then start skipping.
+  useScrollingClass(viewRootRef)
+  const [skipOffscreen, setSkipOffscreen] = useState(false)
+  useEffect(() => {
+    let r2 = 0
+    const r1 = requestAnimationFrame(() => { r2 = requestAnimationFrame(() => setSkipOffscreen(true)) })
+    return () => { cancelAnimationFrame(r1); cancelAnimationFrame(r2) }
+  }, [])
 
   // One card per canonical artist; a collab track counts for every contributor.
   const artists = useMemo((): ArtistCard[] => {
@@ -117,7 +188,7 @@ export default function ArtistsView(): JSX.Element {
   // Heavy rotation: the last 30 days of plays (listening memory), mapped onto cards.
   useEffect(() => {
     let live = true
-    window.electronAPI.getListeningMemory?.().then((m) => { const top = m.ok ? m.insights?.topArtists30d : undefined; if (live && top) setHeavy(top) }).catch(() => {})
+    window.electronAPI.getListeningMemory?.().then((m) => { const top = m.ok ? m.insights?.topArtists30d : undefined; if (live && top) { lastHeavy = top; setHeavy(top) } }).catch(() => {})
     return () => { live = false }
   }, [])
   // Depth reads the ListenBrainz listener counts (artist-listeners.json).
@@ -167,7 +238,53 @@ export default function ArtistsView(): JSX.Element {
     return AZ_LETTERS.filter((L) => m.has(L)).map((L) => ({ id: L, title: L, items: m.get(L)! }))
   }, [sort, visible, fans])
 
+  // Chromium decides a content-visibility:auto section is on screen one frame
+  // LATE: a far jump (the smooth scroll-to-top, a scrollbar drag) painted
+  // sections still skipped — 2 empty frames per jump, 12 on scroll-to-top
+  // (off-screen harness, 2026-10-22). Sections within a screen of the
+  // viewport are marked .ag-sec--near synchronously on every scroll event
+  // (scroll events run before paint, in the same frame) and render whatever
+  // Chromium's relevance says.
+  useEffect(() => {
+    const root = viewRootRef.current
+    if (!root || !skipOffscreen) return
+    let near = new Set<Element>()
+    const update = (): void => {
+      const rt = root.getBoundingClientRect().top
+      const vh = root.clientHeight
+      const next = new Set<Element>()
+      for (const sec of root.querySelectorAll('.ag-sec')) {
+        const r = sec.getBoundingClientRect()
+        if (r.bottom - rt > -vh && r.top - rt < 2 * vh) next.add(sec)
+      }
+      for (const sec of near) if (!next.has(sec)) sec.classList.remove('ag-sec--near')
+      for (const sec of next) if (!near.has(sec)) sec.classList.add('ag-sec--near')
+      near = next
+    }
+    update()
+    root.addEventListener('scroll', update, { passive: true })
+    return () => {
+      root.removeEventListener('scroll', update)
+      for (const sec of near) sec.classList.remove('ag-sec--near')
+    }
+  }, [skipOffscreen, sections])
+
   // ── Photos, requested as cards come near the viewport ──
+  // Arrivals are batched (2026-10-21): photos resolve four at a time as you
+  // scroll into unseen letters, and each one used to be its own full re-render.
+  const pendingPhotosRef = useRef(new Map<string, string | null>())
+  const photoFlushRef = useRef(0)
+  const queuePhoto = useCallback((name: string, slug: string | null) => {
+    pendingPhotosRef.current.set(name, slug)
+    if (photoFlushRef.current) return
+    photoFlushRef.current = window.setTimeout(() => {
+      photoFlushRef.current = 0
+      const batch = pendingPhotosRef.current
+      pendingPhotosRef.current = new Map()
+      setPhotos((prev) => { const next = new Map(prev); for (const [n, sl] of batch) next.set(n, sl); return next })
+    }, 80)
+  }, [])
+  useEffect(() => () => { if (photoFlushRef.current) clearTimeout(photoFlushRef.current) }, [])
   const queueRef = useRef<string[]>([])
   const askedRef = useRef(new Set<string>(sessionArtistImages.keys()))
   const activeRef = useRef(0)
@@ -178,10 +295,10 @@ export default function ArtistsView(): JSX.Element {
       activeRef.current++
       api.getArtistImage(name).then((r) => r.ok ? r.slug : null).catch(() => null).then((slug) => {
         sessionArtistImages.set(name, slug)
-        setPhotos((prev) => new Map(prev).set(name, slug))
+        queuePhoto(name, slug)
       }).finally(() => { activeRef.current--; pump() })
     }
-  }, [])
+  }, [queuePhoto])
   const observerRef = useRef<IntersectionObserver | null>(null)
   // Card refs run before effects: cards that mount first wait here for the observer.
   const pendingRef = useRef(new Set<HTMLElement>())
@@ -217,14 +334,18 @@ export default function ArtistsView(): JSX.Element {
   const autoScrollAtRef = useRef(0)
   const noteActivity = useCallback(() => { if (Date.now() - autoScrollAtRef.current > 200) lastActivityRef.current = Date.now() }, [])
   const flashCard = useCallback((name: string, block: ScrollLogicalPosition = 'center') => {
-    const el = viewRootRef.current?.querySelector(`.ag-card[data-artist-name="${CSS.escape(name)}"]`) as HTMLElement | null
+    // The artist's place in the list, not its copy in a shelf at the top
+    // (Heavy rotation / New in your library) — a follow used to yank the page
+    // up to the shelf (2026-10-21, measured: back landed at 694 px from 48,694).
+    const sel = `.ag-card[data-artist-name="${CSS.escape(name)}"]`
+    const el = (viewRootRef.current?.querySelector(`.ag-sec ${sel}`) ?? viewRootRef.current?.querySelector(sel)) as HTMLElement | null
     if (!el) return
     autoScrollAtRef.current = Date.now()
     el.scrollIntoView({ block })
     el.classList.add('find-hit')
     window.setTimeout(() => el.classList.remove('find-hit'), 1400)
   }, [])
-  const find = useFindState()
+  const find = useFindState(lib.currentView === 'artists')   // a kept-alive (hidden) grid never answers ⌘F
   const findMatches = useMemo(() => {
     const t = find.query.trim().toLowerCase()
     return t ? visible.filter((a) => a.name.toLowerCase().includes(t)).map((a) => a.name) : []
@@ -245,55 +366,57 @@ export default function ArtistsView(): JSX.Element {
     if (hit) requestAnimationFrame(() => flashCard(hit.name, 'start'))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+  // Follow the playing artist when the TRACK CHANGES while this page is up and
+  // idle — never on mount or on a return. The activity clock starts at 0 on
+  // every mount, so the old "idle for 5 s" test passed instantly and every back
+  // to Artists jumped away from the restored position (2026-10-21).
+  const followedIdRef = useRef(pb.nowPlaying?.id)
   useEffect(() => {
+    const id = pb.nowPlaying?.id
+    if (id === followedIdRef.current) return
+    followedIdRef.current = id
     if (lib.currentView !== 'artists' || !pb.nowPlaying || Date.now() - lastActivityRef.current < 5000) return
     const name = canonicalArtist(pb.nowPlaying.artist || '')
     if (visible.some((a) => a.name === name)) requestAnimationFrame(() => flashCard(name, 'nearest'))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pb.nowPlaying?.id, lib.currentView])
 
-  const card = (a: ArtistCard, chip?: string, wide?: boolean): JSX.Element => {
-    const slug = photos.get(a.name)
-    const meta = [a.genre, sort === 'country' ? '' : a.origin].filter(Boolean).join(' · ')
-    return (
-      <div
-        key={a.name}
-        ref={observe}
-        className={`ag-card${wide ? ' ag-card--shelf' : ''}`}
-        data-artist-name={a.name}
-        role="button"
-        tabIndex={0}
-        title={a.name}
-        onClick={() => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: a.name })}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: a.name }) } }}
-        draggable
-        onDragStart={(e) => setAlbumDragPayload(e, a.tracks.map((t) => t.id))}
-      >
-        <div className="ag-ph">
-          {slug
-            ? <img src={`artist-image://${slug}.jpg`} alt="" draggable={false} loading="lazy" decoding="async" />
-            : <div className="ag-ini" style={{ background: hashColor(a.name) }}>{initials(a.name.replace(/^the\s+/i, ''))}</div>}
-          {/* Hover play (Jake 2026-10-21, option A of three he was shown): the
-              photo dims a touch and a white disc with the orange play sits in
-              its exact centre. The triangle's box is centred, then nudged right
-              by 1/12 of its width so it LOOKS centred (a triangle's mass sits
-              left of its box centre). */}
-          <span className="ag-scrim" aria-hidden="true" />
-          <button type="button" className="ag-play" aria-label={`Play ${a.name}`} title={`Play ${a.name}`}
-            onClick={(e) => { e.stopPropagation(); playArtist(a) }} onKeyDown={(e) => e.stopPropagation()}>
-            <svg className="ag-play-tri" width="16" height="18" viewBox="0 0 16 18" aria-hidden="true"><path d="M0 0L16 9L0 18Z" fill="currentColor" /></svg>
-          </button>
-        </div>
-        <div className="ag-name">{a.name}</div>
-        {meta && <div className="ag-meta">{meta}</div>}
-        <div className="ag-meta">{a.albums ? `${plural(a.albums, 'album')} · ` : ''}{plural(a.tracks.length, 'song')}</div>
-        {chip && <div className="ag-chip">{chip}</div>}
-      </div>
-    )
-  }
+  const openArtist = useCallback((name: string) => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: name }), [libDispatch])
+  const hideOrigin = sort === 'country'
+  const card = (a: ArtistCard, chip?: string, wide?: boolean): JSX.Element => (
+    <ArtistCardView key={a.name} a={a} slug={photos.get(a.name)} chip={chip} wide={wide} hideOrigin={hideOrigin}
+      observe={observe} onOpen={openArtist} onPlay={playArtist} />
+  )
+  // The shelves + A–Z sections as ONE memoized element tree (2026-10-21): a
+  // render for any other reason (a playback tick, the find bar) reuses it, so
+  // React skips all ~1,940 cards instead of diffing them.
+  const body = useMemo(() => (
+    <>
+      {shelves && shelves.rotation.length > 0 && (
+        <section className="ag-shelf">
+          <h2 className="ag-h2">Heavy rotation <small>last 30 days</small></h2>
+          <div className="ag-row">{shelves.rotation.map(({ card: a, plays }) => card(a, plural(plays, 'play'), true))}</div>
+        </section>
+      )}
+      {shelves && shelves.fresh.length > 0 && (
+        <section className="ag-shelf">
+          <h2 className="ag-h2">New in your library</h2>
+          <div className="ag-row">{shelves.fresh.map((a) => card(a, new Date(`${a.added}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), true))}</div>
+        </section>
+      )}
+      {sections.map((s) => (
+        <section key={s.title} className="ag-sec" data-letter={s.id}>
+          <h2 className="ag-h2">{s.title} <small>{s.sub ? `${s.sub} · ` : ''}{plural(s.items.length, 'artist')}</small></h2>
+          <div className="ag-grid">{s.items.map((a) => card(a, s.chip?.(a)))}</div>
+        </section>
+      ))}
+    </>
+    // card() closes over exactly these:
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), [shelves, sections, photos, hideOrigin, observe, openArtist, playArtist])
 
   return (
-    <div className="artists-view ag" ref={viewRootRef} onClickCapture={noteActivity} onWheelCapture={noteActivity} onKeyDownCapture={noteActivity}>
+    <div className={`artists-view ag${skipOffscreen ? ' ag--skip-offscreen' : ''}`} ref={viewRootRef} onClickCapture={noteActivity} onWheelCapture={noteActivity} onKeyDownCapture={noteActivity}>
       <div className="ag-head">
         <h1 className="ag-title">Artists<span>{plural(visible.length, 'artist')}</span></h1>
         <div className="artists-toolbar ag-tools">
@@ -332,24 +455,7 @@ export default function ArtistsView(): JSX.Element {
       {!q && !lf && (
         <FavoriteArtistsRow artists={favCandidates} onOpenArtist={(name) => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: name })} />
       )}
-      {shelves && shelves.rotation.length > 0 && (
-        <section className="ag-shelf">
-          <h2 className="ag-h2">Heavy rotation <small>last 30 days</small></h2>
-          <div className="ag-row">{shelves.rotation.map(({ card: a, plays }) => card(a, plural(plays, 'play'), true))}</div>
-        </section>
-      )}
-      {shelves && shelves.fresh.length > 0 && (
-        <section className="ag-shelf">
-          <h2 className="ag-h2">New in your library</h2>
-          <div className="ag-row">{shelves.fresh.map((a) => card(a, new Date(`${a.added}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), true))}</div>
-        </section>
-      )}
-      {sections.map((s) => (
-        <section key={s.title} className="ag-sec" data-letter={s.id}>
-          <h2 className="ag-h2">{s.title} <small>{s.sub ? `${s.sub} · ` : ''}{plural(s.items.length, 'artist')}</small></h2>
-          <div className="ag-grid">{s.items.map((a) => card(a, s.chip?.(a)))}</div>
-        </section>
-      ))}
+      {body}
       {groupingOpen && <ArtistGroupingModal onClose={() => setGroupingOpen(false)} />}
     </div>
   )

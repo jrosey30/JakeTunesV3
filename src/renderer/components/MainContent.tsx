@@ -25,7 +25,28 @@ import RecordStoreView from '../views/RecordStore'
 import YearInReviewView from '../views/YearInReviewView'
 import ViewModeToggle from './ViewModeToggle'
 import { useDiscHandoffView } from '../discHandoff'
+import { useLayoutEffect, useRef, useState } from 'react'
+import { nextKeptRoot, type KeptRoot } from '../keptView'
+import { takeHistoryNavigation } from '../navIntent'
 import '../styles/main-content.css'
+
+/** Arrive vs return, decided ONCE per mounted page (its key) and then held
+ *  for that page's lifetime — flipping data-nav later would restart the very
+ *  entrance animations the return switched off. */
+function useNavArrival(key: string): 'return' | 'arrive' {
+  const ref = useRef<{ key: string; kind: 'return' | 'arrive' } | null>(null)
+  if (!ref.current || ref.current.key !== key) {
+    ref.current = { key, kind: takeHistoryNavigation() ? 'return' : 'arrive' }
+  }
+  return ref.current.kind
+}
+
+function renderKeptRoot(root: KeptRoot): JSX.Element {
+  switch (root) {
+    case 'artists': return <ArtistsView />
+    case 'albums': return <AlbumsView />
+  }
+}
 
 // V5 facelift: views that get the List / Grid / Cover Flow mode bar.
 // Only the flat-table views — Albums is already the grid metaphor;
@@ -55,6 +76,30 @@ export default function MainContent() {
     view === 'album-detail' ? `album:${shown.albumKey}` :
     view
 
+  // 2026-10-21: the grid you came from (Artists / Albums) stays mounted,
+  // hidden, under the artist and album pages — back is an unhide, not a
+  // rebuild (keptView.ts has the measurements). Follows the view ON SCREEN
+  // (the disc handoff may hold the previous one for a frame). Derived during
+  // render ("adjust state while rendering"), so the very first render of a
+  // new view already knows what to keep.
+  const [kept, setKept] = useState<KeptRoot | null>(() => nextKeptRoot(view, null))
+  const wantKept = nextKeptRoot(view, kept)
+  if (wantKept !== kept) setKept(wantKept)
+  const keptActive = wantKept !== null && view === wantKept
+  const activeKey = keptActive ? `kept:${wantKept}` : transitionKey
+  const arrival = useNavArrival(activeKey)
+  // The kept page's data-nav is fixed at ITS mount (see useNavArrival).
+  const keptArrivalRef = useRef<{ root: KeptRoot; kind: 'return' | 'arrive' } | null>(null)
+  if (wantKept && keptActive && keptArrivalRef.current?.root !== wantKept) keptArrivalRef.current = { root: wantKept, kind: arrival }
+  if (!wantKept) keptArrivalRef.current = null
+  // Parking a page must not leave keyboard focus on one of its cards — Space /
+  // Enter on a hidden artist card would navigate from under the detail page.
+  const keptBoxRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const el = document.activeElement
+    if (!keptActive && el instanceof HTMLElement && keptBoxRef.current?.contains(el)) el.blur()
+  }, [keptActive])
+
   // Brief 023: MusicManView stays MOUNTED across navigation — its
   // wrapper is just toggled visible/hidden based on currentView. This
   // preserves chat history, in-flight analysis state, caller selection,
@@ -67,7 +112,7 @@ export default function MainContent() {
   // and unmount-on-switch keeps the React tree from accumulating
   // background work in views the user isn't looking at.
   let viewElement: JSX.Element | null = null
-  switch (view) {
+  if (!keptActive) switch (view) {
     case 'home': viewElement = <HomeView />; break
     case 'songs': viewElement = <SongsView />; break
     case 'artists': viewElement = <ArtistsView />; break
@@ -108,8 +153,25 @@ export default function MainContent() {
   // preservation > re-fade on every visit.
   return (
     <>
+      {wantKept && (
+        // Always the same box (absolute, full size) whether shown or parked:
+        // swapping display types on park would rebuild its layout, and
+        // display:none costs a full relayout on unhide (measured 93 ms on
+        // Artists, 70 ms on Albums). Parked = visibility:hidden — the laid-out
+        // page stays, scroll intact (main-content.css says why not
+        // content-visibility).
+        <div
+          className={`main-content-view main-content-view--kept${keptActive ? '' : ' main-content-view--parked'}`}
+          key={`kept:${wantKept}`}
+          ref={keptBoxRef}
+          data-nav={keptArrivalRef.current?.kind === 'return' ? 'return' : undefined}
+          aria-hidden={keptActive ? undefined : true}
+        >
+          {renderKeptRoot(wantKept)}
+        </div>
+      )}
       {viewElement !== null && (
-        <div className="main-content-view" key={transitionKey}>
+        <div className="main-content-view" key={transitionKey} data-nav={arrival === 'return' ? 'return' : undefined}>
           {MODE_ELIGIBLE.has(view) ? (
             // V5 facelift: thin chrome strip above the view hosting the
             // segmented view-mode toggle, right-aligned (iTunes 10 kept

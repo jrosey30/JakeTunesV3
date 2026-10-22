@@ -1,10 +1,10 @@
-import { useState, useMemo, useCallback, useEffect } from 'react'
+import { useState, useMemo, useCallback, useEffect, useRef, type MouseEvent as ReactMouseEvent } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import { buildNormalizedArtworkIndex, lookupArtwork, queueArtworkResolutions } from '../utils/artworkLookup'
 import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
-import AlbumArtImage from '../components/AlbumArtImage'
+import AlbumGrid, { type AlbumGridItem } from './AlbumGrid'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import EmptyState from '../components/EmptyState'
 import { albumKeyFromStrings } from '../utils/albumKey'
@@ -76,45 +76,32 @@ export default function TrackGridView({ tracks, emptyNoun }: TrackGridViewProps)
     ]
   }, [playTrack, pbDispatch, libDispatch])
 
+  // 2026-10-21: the same windowed, memoized wall as Albums (components/
+  // AlbumGrid.tsx) — only rows near the viewport are mounted, and a playback
+  // tick re-renders no cards. Play order on double-click stays album.tracks
+  // (the caller's order), as before.
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const gridItems = useMemo((): AlbumGridItem[] => albums.map((album) => ({
+    key: albumKeyFromStrings(album.artist, album.name), album, artHash: findArtHash(album), ordered: album.tracks,
+  })), [albums, findArtHash])
+  const openAlbum = useCallback((key: string) => libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: key }), [libDispatch])
+  const openMenu = useCallback((e: ReactMouseEvent, album: Album) => setCtxMenu({ x: e.clientX, y: e.clientY, album }), [])
+  const playAlbum = useCallback((album: Album) => { if (album.tracks.length) playTrack(album.tracks[0], album.tracks, 0, undefined, true) }, [playTrack])
+
   if (albums.length === 0) {
     return <EmptyState query={lib.searchQuery} noun={emptyNoun} />
   }
 
   return (
-    <div className="track-grid-view">
-      <div className="albums-grid">
-        {albums.map((album) => {
-          const key = albumKeyFromStrings(album.artist, album.name)
-          const artHash = findArtHash(album)
-          return (
-            <div
-              key={key}
-              className="album-card"
-              data-album-key={key}
-              onClick={() => libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: key })}
-              onDoubleClick={() => { if (album.tracks.length) playTrack(album.tracks[0], album.tracks, 0, undefined, true) }}
-              onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, album }) }}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: key }) } }}
-              role="button"
-              tabIndex={0}
-            >
-              <div className="album-card-art">
-                {artHash ? (
-                  <AlbumArtImage hash={artHash} alt={album.name} className="album-card-img" size={320} />
-                ) : (
-                  <svg width="32" height="32" viewBox="0 0 32 32" fill="#bbb">
-                    <circle cx="16" cy="16" r="14" fill="none" stroke="#bbb" strokeWidth="1" />
-                    <circle cx="16" cy="16" r="5" fill="none" stroke="#bbb" strokeWidth="1" />
-                    <circle cx="16" cy="16" r="1.5" fill="#bbb" />
-                  </svg>
-                )}
-              </div>
-              <div className="album-card-title">{album.name}</div>
-              <div className="album-card-artist">{album.artist}</div>
-            </div>
-          )
-        })}
-      </div>
+    <div className="track-grid-view" ref={scrollRef}>
+      <AlbumGrid
+        items={gridItems}
+        scrollRef={scrollRef}
+        geometryKey="track-grid"
+        onOpen={openAlbum}
+        onContextMenu={openMenu}
+        onDoubleClick={playAlbum}
+      />
       {ctxMenu && (
         <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={albumMenuItems(ctxMenu.album)} onClose={() => setCtxMenu(null)} />
       )}

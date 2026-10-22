@@ -1,11 +1,12 @@
-import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react'
+import { useState, useMemo, useCallback, useRef, useEffect, type MouseEvent as ReactMouseEvent } from 'react'
+import type { Track } from '../types'
 import { useLibrary } from '../context/LibraryContext'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { usePlayback } from '../context/PlaybackContext'
 import { buildNormalizedArtworkIndex, lookupArtwork, queueArtworkResolutions } from '../utils/artworkLookup'
 import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
-import AlbumArtImage from '../components/AlbumArtImage'
-import { useScrollPersistence } from '../hooks/useScrollPersistence'
+import AlbumGrid, { type AlbumGridHandle, type AlbumGridItem } from '../components/AlbumGrid'
+import { useScrollPersistence, getSavedScrollTop } from '../hooks/useScrollPersistence'
 import { albumKeyOf, albumKeyFromStrings } from '../utils/albumKey'
 import ScrollTopButton from '../components/ScrollTopButton'
 import FindBar from '../components/FindBar'
@@ -23,7 +24,6 @@ import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded } from '..
 import { verifyLiveSetCompleteness } from '../utils/liveSetCompleteness'
 import '../styles/albums.css'
 import { albumMenuEntries } from '../utils/libraryMenus'
-import { setAlbumDragPayload } from '../utils/trackDrag'
 // 2026-10-18 — TOP 10 ISLAND ALBUMS, synced with the phone through homemini.
 import IslandAlbumsShelf from '../components/IslandAlbumsShelf'
 import { useSyncedPicksLive } from '../syncedPicks'
@@ -53,18 +53,16 @@ export default function AlbumsView() {
     pbDispatch,
   }), [playTrack, pbDispatch, libDispatch, lib.tracks, lib.playlists])
 
-  // When returning from AlbumDetailView (← Albums), pendingAlbumKey is still
-  // set — scroll that card into view, then clear so a later sidebar visit
-  // doesn't jump again.
+  // Returning from AlbumDetailView leaves pendingAlbumKey set — clear it.
+  // 2026-10-21: no longer scrolls to that album's card. The page you return to
+  // is the page you left (kept alive under the album page, scroll intact), so
+  // the card you opened from the grid is already in view; the scroll only ever
+  // MOVED you — a 200–350 px smooth drift after every back, and an album opened
+  // from the Island shelf at the top threw the page 53,000 px down the grid.
   useEffect(() => {
     if (lib.currentView !== 'albums') return
     if (!lib.pendingAlbumKey) return
-    const key = lib.pendingAlbumKey
     libDispatch({ type: 'CLEAR_PENDING_ALBUM_KEY' })
-    window.setTimeout(() => {
-      const card = document.querySelector(`.album-card[data-album-key="${CSS.escape(key)}"]`)
-      if (card) card.scrollIntoView({ block: 'center', behavior: 'smooth' })
-    }, 60)
   }, [lib.pendingAlbumKey, lib.currentView, libDispatch])
 
   // Declared full concerts (both the "(Live Set)" merged album tile AND the raw
@@ -94,7 +92,7 @@ export default function AlbumsView() {
 
   // ⌘F find-in-view: jump to an album card + flash it (cards carry
   // data-album-key, all in the DOM).
-  const find = useFindState()
+  const find = useFindState(lib.currentView === 'albums')   // a kept-alive (hidden) grid never answers ⌘F
   const findMatches = useMemo(() => {
     const q = find.query.trim().toLowerCase()
     if (!q) return [] as string[]
@@ -102,15 +100,18 @@ export default function AlbumsView() {
       .filter(a => a.name.toLowerCase().includes(q) || a.artist.toLowerCase().includes(q))
       .map(a => albumKeyFromStrings(a.artist, a.name))
   }, [filteredAlbums, find.query])
+  // The grid is windowed: the match may not be mounted — reveal it by index.
+  const gridHandleRef = useRef<AlbumGridHandle>(null)
   const jumpToFind = useCallback((c: number) => {
     const key = findMatches[c]
     if (!key) return
-    const el = viewRootRef.current?.querySelector(`[data-album-key="${CSS.escape(key)}"]`) as HTMLElement | null
-    if (!el) return
-    el.scrollIntoView({ block: 'center' })
-    el.classList.add('find-hit')
-    window.setTimeout(() => el.classList.remove('find-hit'), 1400)
-  }, [findMatches])
+    const index = filteredAlbums.findIndex(a => albumKeyFromStrings(a.artist, a.name) === key)
+    if (index < 0) return
+    gridHandleRef.current?.reveal(index, 'center', (el) => {
+      el.classList.add('find-hit')
+      window.setTimeout(() => el.classList.remove('find-hit'), 1400)
+    })
+  }, [findMatches, filteredAlbums])
   useEffect(() => {
     if (!find.open || findMatches.length === 0) return
     jumpToFind(Math.min(find.cursor, findMatches.length - 1))
@@ -162,6 +163,23 @@ export default function AlbumsView() {
     libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: key })
   }, [libDispatch])
 
+  // Per-album work done ONCE per album list, not per card per render (it used
+  // to run for all 2,579 cards on every playback tick). Running order + the
+  // Album Mode gate: the ▶ Album button appears ONLY when the record is
+  // verifiably complete — the same completeness doctrine the live-set merge
+  // uses (one definition, no twin).
+  const albumMeta = useMemo(() => filteredAlbums.map((album) => {
+    const ordered = sortAlbumTracks(album.tracks)
+    const comp = verifyLiveSetCompleteness(ordered)
+    return { key: albumKeyFromStrings(album.artist, album.name), album, ordered, fullAlbum: !!(comp.complete && comp.verifiedTotal) }
+  }), [filteredAlbums])
+  // Covers resolve while you browse (artworkMap changes) — a cheap second pass.
+  const gridItems = useMemo((): AlbumGridItem[] => albumMeta.map((m) => ({ ...m, artHash: findArtHash(m.album) })), [albumMeta, findArtHash])
+  const openAlbumMenu = useCallback((e: ReactMouseEvent, album: Album) => setCtxMenu({ x: e.clientX, y: e.clientY, album }), [])
+  const playFullAlbum = useCallback((ordered: Track[]) => {
+    if (ordered.length) playTrack(ordered[0], ordered, 0, undefined, true, /* an album's running order IS the record */ true)
+  }, [playTrack])
+
   const viewRootRef = useRef<HTMLDivElement>(null)
   useScrollPersistence('albums', viewRootRef)
   const lastUserActivityAtRef = useRef<number>(0)
@@ -173,20 +191,21 @@ export default function AlbumsView() {
     }
   }, [])
 
+  // Follow the playing album when the TRACK CHANGES while this page is up and
+  // idle — never on mount or on a return (same rule as Artists, 2026-10-21).
+  const followedIdRef = useRef(pb.nowPlaying?.id)
   useEffect(() => {
+    const id = pb.nowPlaying?.id
+    if (id === followedIdRef.current) return
+    followedIdRef.current = id
     if (lib.currentView !== 'albums') return
     if (!pb.nowPlaying) return
     if (Date.now() - lastUserActivityAtRef.current < FOLLOW_IDLE_MS) return
     const key = albumKeyOf(pb.nowPlaying)
-    const exists = filteredAlbums.some(a => albumKeyFromStrings(a.artist, a.name) === key)
-    if (!exists) return
+    const index = filteredAlbums.findIndex(a => albumKeyFromStrings(a.artist, a.name) === key)
+    if (index < 0) return
     isAutoScrollAtRef.current = Date.now()
-    requestAnimationFrame(() => {
-      const root = viewRootRef.current
-      if (!root) return
-      const card = root.querySelector(`[data-album-key="${CSS.escape(key)}"]`) as HTMLElement | null
-      if (card) card.scrollIntoView({ block: 'nearest', behavior: 'auto' })
-    })
+    requestAnimationFrame(() => gridHandleRef.current?.reveal(index, 'nearest'))
   }, [pb.nowPlaying?.id, lib.currentView, filteredAlbums])
 
   return (
@@ -237,56 +256,17 @@ export default function AlbumsView() {
       {filteredAlbums.length === 0 && (
         <EmptyState query={lib.searchQuery} noun="albums" />
       )}
-      <div className="albums-grid">
-        {filteredAlbums.map((album) => {
-          const key = albumKeyFromStrings(album.artist, album.name)
-          const artHash = findArtHash(album)
-          // Album Mode gate (2026-08-23): the Play Album button appears ONLY
-          // when the record is verifiably complete — the same completeness
-          // doctrine the live-set merge uses (one definition, no twin).
-          const ordered = sortAlbumTracks(album.tracks)
-          const comp = verifyLiveSetCompleteness(ordered)
-          const fullAlbum = comp.complete && comp.verifiedTotal
-          return (
-            <div
-              key={key}
-              className="album-card"
-              data-album-key={key}
-              onClick={() => openAlbum(key)}
-              onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, album }) }}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAlbum(key) } }}
-              role="button"
-              tabIndex={0}
-              draggable
-              /* Drag a whole album onto a playlist. In running order, not the
-                 grouping order, so the playlist reads the way the record does. */
-              onDragStart={(e) => setAlbumDragPayload(e, sortAlbumTracks(album.tracks).map(t => t.id))}
-            >
-              <div className="album-card-art">
-                {fullAlbum && (
-                  <button
-                    type="button"
-                    className="album-play-full"
-                    title={`Play ${album.name} — front to back, in order, gapless`}
-                    onClick={(e) => { e.stopPropagation(); if (ordered.length) playTrack(ordered[0], ordered, 0, undefined, true, /* an album's running order IS the record */ true) }}
-                  >▶ Album</button>
-                )}
-                {artHash ? (
-                  <AlbumArtImage hash={artHash} alt={album.name} className="album-card-img" size={320} />
-                ) : (
-                  <svg width="32" height="32" viewBox="0 0 32 32" fill="#bbb">
-                    <circle cx="16" cy="16" r="14" fill="none" stroke="#bbb" strokeWidth="1" />
-                    <circle cx="16" cy="16" r="5" fill="none" stroke="#bbb" strokeWidth="1" />
-                    <circle cx="16" cy="16" r="1.5" fill="#bbb" />
-                  </svg>
-                )}
-              </div>
-              <div className="album-card-title">{album.name}</div>
-              <div className="album-card-artist">{album.artist}</div>
-            </div>
-          )
-        })}
-      </div>
+      <AlbumGrid
+        ref={gridHandleRef}
+        items={gridItems}
+        scrollRef={viewRootRef}
+        geometryKey="albums"
+        initialScrollTop={getSavedScrollTop('albums')}
+        onOpen={openAlbum}
+        onContextMenu={openAlbumMenu}
+        onPlayAlbum={playFullAlbum}
+        draggable
+      />
       {ctxMenu && (
         <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={albumMenuItems(ctxMenu.album)} onClose={() => setCtxMenu(null)} />
       )}
