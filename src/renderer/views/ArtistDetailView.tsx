@@ -35,7 +35,7 @@ import { playsEverywhere } from '../../common/plays-elsewhere'
 import { useArtistProfile } from '../artistProfile'
 import {
   topSongs, mostPlayedRecord, earliestAdded, monthYear, dayMonthYear, clock, lengthLabel, plural,
-  RELEASE_KIND_SINGULAR, heroEyebrow, heroNameSize, albumTileMeta, headerPhotoChoice,
+  RELEASE_KIND_SINGULAR, heroEyebrow, heroNameSize, albumTileMeta, headerPhotoChoice, heroPhotoFit,
 } from '../../common/artist-page'
 import MemberTile from '../components/artist/MemberTile'
 import MoreFromList, { type MoreFromRelease } from '../components/artist/MoreFromList'
@@ -419,6 +419,25 @@ export default function ArtistDetailView() {
         ? `artist-image://${heroSlug}.jpg`
         : coverSrc
 
+  // How the photo meets its window (common/artist-page.ts heroPhotoFit): a
+  // group's photo in a window narrower than the photo is shown whole instead
+  // of cropped at its sides, and a tall one whole instead of sliced through
+  // its rows of faces. Needs the window's size (it follows the page's width)
+  // and the photo's own proportions (once it has loaded).
+  const heroPhotoRef = useRef<HTMLDivElement | null>(null)
+  const [heroBox, setHeroBox] = useState<{ width: number; height: number } | null>(null)
+  const [heroNatural, setHeroNatural] = useState<{ src: string; width: number; height: number } | null>(null)
+  useEffect(() => {
+    const el = heroPhotoRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const measure = () => setHeroBox((prev) => (prev && prev.width === el.clientWidth && prev.height === el.clientHeight ? prev : { width: el.clientWidth, height: el.clientHeight }))
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [heroSrc])
+  const heroFit = heroSrc && heroBox && heroNatural && heroNatural.src === heroSrc ? heroPhotoFit(profile?.kind, heroBox, heroNatural, !!creditedHero) : 'cover'
+
   // Related-artists graph (associate, not merge): this artist's band(s),
   // bandmates, side projects + key collaborators. The ones you OWN are
   // clickable; the rest show as connections you don't have yet.
@@ -601,11 +620,15 @@ export default function ArtistDetailView() {
 
       <header className="ad-hero">
         {heroSrc && (
-          <div className="ad-hero-photo">
+          <div className={`ad-hero-photo${heroFit === 'width' ? ' ad-hero-photo--whole' : heroFit === 'height' ? ' ad-hero-photo--tall' : ''}`} ref={heroPhotoRef}>
             <img
               className="ad-drift"
               src={heroSrc}
               alt={artist}
+              onLoad={(e) => {
+                const im = e.currentTarget
+                setHeroNatural({ src: heroSrc, width: im.naturalWidth, height: im.naturalHeight })
+              }}
               title={creditedHero?.credit ? `${artist} photo: ${creditedHero.credit}` : undefined}
               draggable={false}
               onError={() => {

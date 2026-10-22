@@ -84,6 +84,24 @@
   object-position: 50% 22%;
   display: block;
 }
+/* A group's photo in a window narrower than the photo (heroPhotoFit): the
+ * whole picture by its width, anchored to the top, dissolving into the ink
+ * below instead of being cropped at its sides. */
+.ad-hero-photo--whole img {
+  height: auto;
+  -webkit-mask-image: linear-gradient(180deg, #000 62%, transparent 100%);
+  mask-image: linear-gradient(180deg, #000 62%, transparent 100%);
+  animation-name: ad-drift-whole;
+}
+/* A group's tall header photo in a much wider window (heroPhotoFit): the
+ * whole picture by its height, right-aligned, its left edge dissolving. */
+.ad-hero-photo--tall img {
+  width: auto;
+  margin-left: auto;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 14%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 14%);
+  animation-name: ad-drift-whole;
+}
 .ad-hero-fade-x {
   position: absolute; inset: 0;
   background: linear-gradient(90deg, #0B0B0A 0%, rgba(11, 11, 10, 0.82) 18%, rgba(11, 11, 10, 0.25) 46%, rgba(11, 11, 10, 0) 70%);
@@ -484,8 +502,13 @@ button.ad-more-track:hover .ad-more-track-title { color: var(--ad-orange-dark); 
   transform: translateY(-4px);
   box-shadow: 0 4px 12px rgba(70, 55, 40, 0.10), 0 20px 48px rgba(70, 55, 40, 0.16);
 }
+/* A whole photo drifts less: the zoom is what would take its outer members back out of view. */
+@keyframes ad-drift-whole {
+  from { transform: scale(1); }
+  to { transform: scale(1.05) translate(-1%, 1%); }
+}
 @media (prefers-reduced-motion: reduce) {
-  .ad-drift, .ad-rise { animation: none; }
+  .ad-drift, .ad-rise, .ad-hero-photo--whole img, .ad-hero-photo--tall img { animation: none; }
   .ad-lift, .ad-chev, .ad-member-hint { transition: none; }
   .ad-lift:hover, .ad-cover:hover .ad-lift { transform: none; }
 }
