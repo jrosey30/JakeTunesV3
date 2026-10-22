@@ -1,0 +1,77 @@
+/* Lyrics panel (parity audit #6) — the phone's lyric sheet in the right-hand
+   panel slot. Chrome (width, header, slide, reduced motion) is the Up Next
+   panel's own (.queue-panel / .queue-header in queue.css); this file is only
+   the sheet. Sizes are the phone card's: 17 / 19 lines, 16 plain, 18 side
+   margin, 8 between lines (⚠️ TWIN: JakeTunesMobile Lyrics.swift LyricsCard). */
+
+.lyrics-sheet {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--white);
+}
+
+.lyrics-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  position: relative;          /* lines measure their offsetTop against this */
+  scrollbar-width: none;       /* the phone shows no indicators */
+}
+.lyrics-scroll::-webkit-scrollbar { display: none; }
+
+.lyrics-scroll--synced {
+  container-type: size;        /* the pads below are fractions of the sheet */
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 18px;
+}
+.lyrics-scroll--synced > * { flex-shrink: 0; }
+
+.lyrics-pad--top { height: 36cqh; }
+.lyrics-pad--bottom { height: 40cqh; }
+.lyrics-gap { height: 6px; }
+
+.lyrics-line {
+  font-size: 17px;
+  line-height: 1.38;
+  color: var(--text-primary);
+  opacity: 0.85;
+  cursor: pointer;
+  overflow-wrap: anywhere;     /* a long line wraps, never clips */
+}
+.lyrics-line--sung { opacity: 0.45; }
+.lyrics-line--now {
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--brand-orange);
+  opacity: 1;
+}
+
+.lyrics-plain {
+  padding: 18px;
+  font-size: 16px;
+  line-height: 1.45;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.lyrics-note {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 18px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.lyrics-note--none {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-dim);
+}

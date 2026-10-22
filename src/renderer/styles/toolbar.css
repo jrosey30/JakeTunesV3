@@ -1388,6 +1388,9 @@
   height: 28px;
 }
 .queue-toggle--active { opacity: 1; color: var(--selection-top); }
+/* Lyrics with no sheet for the playing song: dimmed, inert (the phone's 0.35). */
+.lyrics-toggle--none,
+.lyrics-toggle--none:hover { opacity: 0.35; cursor: default; }
 
 /* B+C hybrid: inside the LCD the scrubber goes olive — the bronze fill
  * belonged to the amber pill. Scoped so tape counters and other scrubber

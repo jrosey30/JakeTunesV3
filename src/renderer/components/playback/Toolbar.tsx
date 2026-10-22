@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { audioFromBase64Mpeg } from '../../audio/base64-audio'
 import { usePlayback } from '../../context/PlaybackContext'
 import NowPlayingActions from './NowPlayingActions'
+import LyricsToggle from './LyricsToggle'
 import { useLibrary } from '../../context/LibraryContext'
 import { useAudio, setAutoDjMode } from '../../hooks/useAudio'
 import { attachClipToBroadcast, attachAnnouncerToBroadcast, detachClipFromBroadcast, startRecording, stopRecording } from '../../audio/eq'
@@ -113,7 +114,7 @@ const BUBBLE_SPEAKER_VERB: Record<BubbleSpeaker, string> = {
   djhands: 'is on the decks',
 }
 
-export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggleMusicMan, showMusicMan }: { onToggleQueue: () => void; onOpenQueue: () => void; showQueue: boolean; onToggleMusicMan: () => void; showMusicMan: boolean }) {
+export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggleMusicMan, showMusicMan, onToggleLyrics, showLyrics }: { onToggleQueue: () => void; onOpenQueue: () => void; showQueue: boolean; onToggleMusicMan: () => void; showMusicMan: boolean; onToggleLyrics: () => void; showLyrics: boolean }) {
   const { state: pb, dispatch: pbDispatch } = usePlayback()
   const { state: lib } = useLibrary()
   const { setVolume, playTrack, stopPlayback } = useAudio()
@@ -1820,7 +1821,8 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
       {/* 2011 facelift (Jake 9/2): the Visualizer lives in View → Visualizer
           (⌘T); the three panel buttons — AirPlay, the Music Man, Up Next —
           sit as ONE evenly-spaced group behind a hairline, so the right
-          end of the toolbar reads as three things, not a pile. */}
+          end of the toolbar reads as three things, not a pile. Lyrics
+          (parity audit #6) joins them, between the Music Man and Up Next. */}
       <div className="toolbar-panels">
       <div className="airplay-wrapper" ref={airplayRef}>
         <button
@@ -1893,6 +1895,9 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
           <path d="M6 7.5h8M6 10h5" />
         </svg>
       </button>
+      {/* Lyrics (parity audit #6): the phone's Now Playing Lyrics button —
+          opens the song's sheet in the right-hand panel slot. */}
+      <LyricsToggle open={showLyrics} onToggle={onToggleLyrics} />
       <button
         className={`transport-toggle queue-toggle ${showQueue ? 'queue-toggle--active' : ''}`}
         onClick={onToggleQueue}
