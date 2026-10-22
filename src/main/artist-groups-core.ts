@@ -80,8 +80,9 @@ export function computeArtistCandidates(
 
 // ── Related-artists graph (associate, don't merge) ───────────────────────
 // ⚠️ TWIN: JakeTunesMobile backend/src/util/relatedArtists.ts — homemini asks
-// the same question for the phone (GET /api/artist/:name/related) with a copy
-// of this parse, the whitelist, and get-related-artists' prompt in index.ts.
+// the question for BOTH devices (GET /api/artist/:name/related) with a copy of
+// this parse and the whitelist; main/related-artists.ts reads that route first
+// and asks locally (same prompt, same parse) only when homemini is away.
 // Change the prompt or the rules in both or neither.
 export interface RelatedArtist { name: string; relation: string }
 

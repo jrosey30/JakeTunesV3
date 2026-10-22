@@ -99,7 +99,7 @@ const ROW_LABEL: Record<RowKey, string> = { album: RELEASE_KIND_LABEL['album'], 
 type WallTile = LiveWallTile<ReturnType<typeof declaredConcerts>[number], AlbumGroup> & { persona: string }
 
 // Related artists cached per canonical name across visits (main caches a day
-// too; this avoids even the round-trip on re-open).
+// too; this avoids even the round-trip on re-open). homemini's list only.
 const relatedArtistsCache: Record<string, RelatedArtist[]> = {}
 
 function relationLabel(rel: string): string {
@@ -423,7 +423,8 @@ export default function ArtistDetailView() {
   // bandmates, side projects + key collaborators. The ones you OWN are
   // clickable; the rest show as connections you don't have yet.
   // ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/RelatedArtists.swift (the
-  // chips, relationLabel, the owned match), last on the phone's page too.
+  // chips, relationLabel, the owned match), last on the phone's page too. The
+  // list itself is homemini's, the same one the phone shows (main/related-artists.ts).
   const [related, setRelated] = useState<RelatedArtist[]>(() => relatedArtistsCache[lookupName] || [])
   const [relatedLoading, setRelatedLoading] = useState(false)
   const ownedArtistKeys = useMemo(() => {
@@ -443,7 +444,9 @@ export default function ArtistDetailView() {
     window.electronAPI.getRelatedArtists?.(lookupName).then((r) => {
       if (cancelled) return
       const list = (r?.ok && r.related) ? r.related : []
-      relatedArtistsCache[lookupName] = list
+      // Only homemini's list is kept for the session: a local fallback (homemini
+      // away) is shown but not remembered, so the next visit asks homemini again.
+      if (r?.source !== 'local') relatedArtistsCache[lookupName] = list
       setRelated(list)
     }).catch((err: unknown) => { console.warn('[artist-detail] related artists failed:', err instanceof Error ? err.message : err) })
       .finally(() => { if (!cancelled) setRelatedLoading(false) })

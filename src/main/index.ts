@@ -160,14 +160,13 @@ import type { TrackLike } from './taste-model'
 import { parseCandidates, rankCandidates, listenListPredicate } from './radar-core'
 import type { RankedCandidate } from './radar-core'
 import { mergeStarIds } from './mobile-stars-merge'
-import { parseRelatedArtists } from './artist-groups-core'
+import { createRelatedArtistsClient, RELATED_MAX_TOKENS } from './related-artists.ts'
 // Cynthia overhaul — deterministic scanner types + background sweep.
 import { type CynthiaFinding, type CynthiaScanTrack } from './cynthia-scan'
 import {
   startCynthiaSweep, enqueueAlbumsForSweep,
   revertLedgerEntry, albumKeyOfMain,
 } from './cynthia-sweep'
-import type { RelatedArtist } from './artist-groups-core'
 import { normalize } from './normalize'
 import { assessDeadTrackRemoval } from './reconcile-guard'
 import {
@@ -1325,34 +1324,20 @@ function appSettingsPath(): string {
   return join(app.getPath('userData'), 'app-settings.json')
 }
 
-// Metadata hierarchy — related-artists graph (associate, don't merge). On-demand
-// per artist page, cached a day (band lineups don't change). Claude (Haiku —
-// factual + cheap) names the band(s), bandmates, side projects + key collabs;
-// the renderer cross-references which are in the library.
-const relatedArtistsCache = new Map<string, { related: RelatedArtist[]; at: number }>()
-const RELATED_TTL_MS = 24 * 60 * 60 * 1000
-ipc.handle('get-related-artists', async (_e, artist: string): Promise<{ ok: boolean; related?: RelatedArtist[]; error?: string }> => {
-  const name = String(artist || '').trim()
-  if (!name) return { ok: true, related: [] }
-  const key = name.toLowerCase()
-  const cached = relatedArtistsCache.get(key)
-  if (cached && Date.now() - cached.at < RELATED_TTL_MS) return { ok: true, related: cached.related }
-  try {
-    const reply = await claudeCall('related-artists', {
-      model: MODEL_FAST,
-      max_tokens: 800,
-      system: 'You are a precise music encyclopedia listing artists a fan should explore. Return only real, well-established MUSICAL artists related to the subject — bands, their NOTABLE members (ones with real recording careers of their own), those members\' own bands/side projects, and a few genuinely similar or closely-allied recording artists. NEVER include producers, engineers, managers, songwriters-for-hire, or minor/early former members who left before the act\'s success or had no recording career of their own (e.g. for the Beatles: exclude George Martin, Pete Best, Stuart Sutcliffe). Never invent a relationship.',
-      messages: [{ role: 'user', content: `List the recording artists most directly related to "${name}" — for a fan who likes them and wants similar or adjacent artists to explore. Include: the band(s) they are/were in, that band's NOTABLE members (the ones with real careers of their own), those members' side projects/aliases/other bands, and a few genuinely similar artists. EXCLUDE producers, engineers, managers, and minor/early members. Return ONLY JSON — an array of {"name","relation"} where relation is one of "band","member","sideProject","similar" (use "similar" for similar/adjacent artists). 6–12 entries, most relevant first. No prose, no code fence.` }],
-    })
+// Related-artists graph (associate, don't merge). Reads homemini's list (the one
+// the phone shows — GET /api/artist/:name/related) and asks Claude here only
+// when homemini can't answer; cached a day. All of it lives in related-artists.ts.
+const relatedArtists = createRelatedArtistsClient({
+  baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''),
+  askLocal: async (system, user) => {
+    const reply = await claudeCall('related-artists', { model: MODEL_FAST, max_tokens: RELATED_MAX_TOKENS, system, messages: [{ role: 'user', content: user }] })
     const block = reply.content[0]
-    const text = block && block.type === 'text' ? block.text : ''
-    const related = parseRelatedArtists(text).slice(0, 16)
-    relatedArtistsCache.set(key, { related, at: Date.now() })
-    return { ok: true, related }
-  } catch (err) {
-    return { ok: false, error: safeIpcError(err, 'unknown') }
-  }
-}, { refuse: REFUSED_SENDER })
+    return block && block.type === 'text' ? block.text : ''
+  },
+  warn: (key, m) => quietWarn(`related:${key}`, m),
+  errorText: (err) => safeIpcError(err, 'unknown'),
+})
+ipc.handle('get-related-artists', (_e, artist: string) => relatedArtists.get(artist), { refuse: REFUSED_SENDER })
 
 // 4.5.0-118 — Discovery Brain Phase 1: the taste fingerprint (taste-model.ts).
 // Pure compute over the current library; Phase 2's radar grounds + ranks with it.

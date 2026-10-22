@@ -710,7 +710,8 @@ declare global {
       loadArtistAliases: () => Promise<{ ok: boolean; aliases: Record<string, string> }>
       saveArtistAliases: (aliases: Record<string, string>) => Promise<{ ok: boolean; error?: string }>
       classifyArtistGroups: () => Promise<{ ok: boolean; proposals?: ArtistGroupProposal[]; candidateCount?: number; error?: string }>
-      getRelatedArtists: (artist: string) => Promise<{ ok: boolean; related?: RelatedArtist[]; error?: string }>
+      // source: 'homemini' = the list both devices share; 'local' = this Mac's own ask, used only while homemini is away.
+      getRelatedArtists: (artist: string) => Promise<{ ok: boolean; related?: RelatedArtist[]; source?: 'homemini' | 'local'; error?: string }>
       // 4.5.0-118 — Discovery Brain Phase 2: new-music radar. anchor/anchors/
       // fingerprintSummary feed the "Seeded from" chips + "because you play X" reasoning.
       getNewMusicRadar: (force?: boolean) => Promise<{ ok: boolean; candidates?: Array<{ artist: string; title: string; genre: string; year: string; why: string; anchor?: string; score: number; brainPct?: number; reasons: string[] }>; generatedAt?: number; cached?: boolean; fingerprintSummary?: string; anchors?: Array<{ artist: string; plays: number; tracks: number; primaryGenre: string }>; error?: string }>
