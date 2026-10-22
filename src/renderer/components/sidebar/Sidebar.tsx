@@ -345,6 +345,9 @@ export default function Sidebar() {
     return () => window.removeEventListener('jaketunes-new-playlist', handler)
   }, [handleNewPlaylist])
 
+  // ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/PlaylistsView.swift
+  // createPlaylist (the New Playlist row) — an empty phone playlist this Mac
+  // adopts from mobile-playlists.json (main/phone-playlist-edits.ts).
   const handleNewPlaylistSubmit = useCallback((name: string) => {
     setCreatingPlaylist(false)
     if (!name.trim()) return
@@ -379,6 +382,8 @@ export default function Sidebar() {
     setPlCtxMenu(null)
   }, [plCtxMenu])
 
+  // ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/PlaylistsView.swift
+  // PlaylistsView.commitRename (a row's long-press "Rename…").
   const handleRenameSubmit = useCallback((id: string, name: string) => {
     setEditingPlaylistId(null)
     if (!name.trim()) return

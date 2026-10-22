@@ -15,6 +15,17 @@
  * and hand the renderer the hub's answer only when it differs. homemini
  * unreachable = silent skip; local remains truth-in-waiting.
  *
+ * 2026-10-22 — the PHONE writes hub copies too: a rename or reorder made on
+ * the phone is a newer wholesale copy (every other field carried over), and
+ * deleting a phone playlist that is on the hub writes a hub tombstone. Both
+ * reach this Mac through the converge below, unchanged. homemini builds a
+ * phone edit only on a hub copy at least as new as its library.json, so a
+ * save from here that reached library.json but not the hub is never stamped
+ * over (the phone is told to try again). A save that reached neither — this
+ * Mac offline — loses to a later phone edit of the same playlist, exactly as
+ * it would to a later edit on the other Mac (newest wins wholesale).
+ * ⚠️ TWIN: JakeTunesMobile backend/src/util/playlistEditRules.ts planPhoneEdit.
+ *
  * Electron-free: deps injected, node --test loads it.
  */
 import { loadTombstones, saveTombstones, type PlaylistTombstone } from './playlist-tombstones.ts'
