@@ -71,6 +71,8 @@ export const SHELF_SHOWN = 5
 /** What "See All" opens to (Recently Added opens its playlist instead). */
 export const SHELF_MAX = 10
 export const RECENT_ALBUMS_MAX = 5
+/** How many of the newest songs Recently Added fetches, and queues behind a click. */
+export const RECENT_SONGS_QUEUE = 25
 export const LOT_WINDOW_DAYS = 30
 export const LOT_MIN_PLAYS = 2
 export const GEM_MAX_PLAYS = 2
@@ -226,6 +228,30 @@ export function recentlyAddedAlbums<T extends ShelfTrack>(
     .sort((a, b) => b.addedMs - a.addedMs || order(a.key, b.key))
     .slice(0, limit)
     .map(({ key, artist, album, addedMs: ms, ids }) => ({ key, artist, album, addedMs: ms, ids }))
+}
+
+/**
+ * RECENTLY ADDED's songs: the newest RECENT_SONGS_QUEUE songs by dateAdded
+ * (newest first, ties → higher id), minus a declared concert's songs and
+ * sub-minute fragments. The row draws the first SHELF_SHOWN; a click queues
+ * the whole list (Jake, 2026-10-22).
+ * ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/HomeShelves.swift RecentlyAddedShelf
+ */
+export function recentlyAddedSongs<T extends ShelfTrack>(
+  tracks: readonly T[],
+  rules: ShelfRules,
+  limit: number = RECENT_SONGS_QUEUE,
+): T[] {
+  return tracks
+    .filter((t) => !rules.hidden.has(sid(t.id)) && addedMs(t) != null && rules.rankable(t))
+    .sort((a, b) => (addedMs(b) as number) - (addedMs(a) as number) || Number(b.id) - Number(a.id))
+    .slice(0, limit)
+}
+
+/** What a click on chip `index` hands the player: the whole list, starting there. */
+export function recentlyAddedPlay<T>(songs: readonly T[], index: number): { queue: T[]; start: number } | null {
+  if (!Number.isInteger(index) || index < 0 || index >= songs.length) return null
+  return { queue: [...songs], start: index }
 }
 
 // ── You should listen to more (hidden gems) ─────────────────────────────────
