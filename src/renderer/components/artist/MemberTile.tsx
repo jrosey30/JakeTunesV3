@@ -15,6 +15,10 @@ import type { ArtistProfileMember, ArtistProfileState } from '../../../common/ar
  *
  * A sourced photo's credit is never printed (Jake: no footnotes); it rides
  * only as the picture's hover title.
+ *
+ * ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/ArtistPage.swift ArtistMemberTile
+ * (tap the photo → PhotosPicker; same "Set photo" / "Saving…" hint, same
+ * inline errors) — both send to the same homemini route and store.
  */
 export interface MemberTileProps {
   artist: string

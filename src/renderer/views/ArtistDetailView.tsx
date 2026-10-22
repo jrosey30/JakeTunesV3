@@ -422,6 +422,8 @@ export default function ArtistDetailView() {
   // Related-artists graph (associate, not merge): this artist's band(s),
   // bandmates, side projects + key collaborators. The ones you OWN are
   // clickable; the rest show as connections you don't have yet.
+  // ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/RelatedArtists.swift (the
+  // chips, relationLabel, the owned match), last on the phone's page too.
   const [related, setRelated] = useState<RelatedArtist[]>(() => relatedArtistsCache[lookupName] || [])
   const [relatedLoading, setRelatedLoading] = useState(false)
   const ownedArtistKeys = useMemo(() => {
