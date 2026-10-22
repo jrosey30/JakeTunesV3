@@ -20,6 +20,7 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
+import { useScrollingClass } from '../hooks/useScrollingClass'
 import { sessionArtistImages, hashColor, initials } from '../utils/artistPortrait'
 import { compareNames, artistSectionLetter } from '../utils/artistSort'
 import ScrollTopButton from '../components/ScrollTopButton'
@@ -137,6 +138,19 @@ export default function ArtistsView(): JSX.Element {
   const elsewhere = usePlaysElsewhere()
   const viewRootRef = useRef<HTMLDivElement>(null)
   useScrollPersistence('artists', viewRootRef)
+  // Scroll cost (2026-10-21, measured off-screen at 120 Hz on the Artists
+  // flick: 92 fps → 117 with both): hover is off while scrolling
+  // (useScrollingClass), and letter sections out of view skip rendering
+  // (content-visibility, artists-grid.css). Sections render fully on mount —
+  // the scroll restore lands exactly and every section's real height is
+  // remembered (contain-intrinsic-size: auto) — and only then start skipping.
+  useScrollingClass(viewRootRef)
+  const [skipOffscreen, setSkipOffscreen] = useState(false)
+  useEffect(() => {
+    let r2 = 0
+    const r1 = requestAnimationFrame(() => { r2 = requestAnimationFrame(() => setSkipOffscreen(true)) })
+    return () => { cancelAnimationFrame(r1); cancelAnimationFrame(r2) }
+  }, [])
 
   // One card per canonical artist; a collab track counts for every contributor.
   const artists = useMemo((): ArtistCard[] => {
@@ -367,7 +381,7 @@ export default function ArtistsView(): JSX.Element {
   ), [shelves, sections, photos, hideOrigin, observe, openArtist, playArtist])
 
   return (
-    <div className="artists-view ag" ref={viewRootRef} onClickCapture={noteActivity} onWheelCapture={noteActivity} onKeyDownCapture={noteActivity}>
+    <div className={`artists-view ag${skipOffscreen ? ' ag--skip-offscreen' : ''}`} ref={viewRootRef} onClickCapture={noteActivity} onWheelCapture={noteActivity} onKeyDownCapture={noteActivity}>
       <div className="ag-head">
         <h1 className="ag-title">Artists<span>{plural(visible.length, 'artist')}</span></h1>
         <div className="artists-toolbar ag-tools">

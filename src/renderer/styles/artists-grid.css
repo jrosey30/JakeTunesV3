@@ -14,6 +14,19 @@
 
 .ag-shelf { padding: 16px 44px 4px 22px; }
 .ag-sec { padding: 14px 44px 6px 22px; scroll-margin-top: 4px; }
+/* Scroll cost (2026-10-21, measured: Artists flick 92 → 117 fps at 120 Hz).
+   A letter section out of view skips style/layout/paint — but only after the
+   page's first layout (ArtistsView adds .ag--skip-offscreen two frames after
+   mount), so the scroll restore lands exactly and every section's real height
+   is remembered (auto) before any section is skipped. 600px is only the
+   fallback for a section never laid out at this width. */
+.ag-sec { contain-intrinsic-size: auto 600px; }
+/* content-visibility implies paint containment: let a hovered card's shadow
+   (0 6px 16px) still paint past the section's 6px bottom padding. */
+.ag--skip-offscreen .ag-sec { content-visibility: auto; overflow-clip-margin: 28px; }
+/* No hover while scrolling: cards sliding under a parked pointer restarted
+   their hover transitions every few frames (useScrollingClass). */
+.ag.is-scrolling .ag-card { pointer-events: none; }
 .ag-h2 { margin: 0 0 12px; display: flex; align-items: baseline; gap: 8px; font-size: 17px; font-weight: 800; letter-spacing: -0.2px; color: #1c1c1e; }
 .ag-h2 small { font-size: 11.5px; font-weight: 500; letter-spacing: 0; color: #8a857c; }
 .ag-row { display: grid; grid-auto-flow: column; grid-auto-columns: 150px; gap: 18px; overflow-x: auto; padding-bottom: 12px; }
