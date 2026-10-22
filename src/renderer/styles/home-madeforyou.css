@@ -74,6 +74,22 @@
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
+/* Daily AI tapes (2026-10-22, the phone's rail): the same card as a mix, with
+   the tape page's cassette badge on the art's corner and the title BELOW the
+   art, wrapped in full. Names never clip, so the title is not laid over the
+   art the way the mix card's is. */
+.home-tape-title {
+  margin-top: 8px;
+  padding: 0 2px;
+  text-align: left;
+  font-size: 13px;
+  line-height: 1.25;
+  font-weight: 600;
+  color: var(--text-primary, #1a1a1a);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 /* 16px PlayIcon in a 44px orange disc (~0.36, the TransportIcons ratio);
    the icon is optically centred itself, so no padding nudge. Centred on
    the art (the cell is exactly the card, which is exactly the art) and

@@ -647,6 +647,12 @@
 .mixtape-link--danger { color: var(--text-secondary); font-weight: 500; }
 .mixtape-link--danger:hover { color: #a3301b; }
 .mixtape-link:disabled { opacity: 0.5; cursor: default; }
+/* Keep / Kept on a daily AI tape (2026-10-22): the link with its bookmark
+   mark, 11px glyph to 11.5px text, filled once kept (the phone's
+   bookmark.fill). A daily tape's cover is homemini's mosaic, so it is not a
+   button you can pick a picture with. */
+.mixtape-link--keep { display: inline-flex; align-items: center; gap: 4px; }
+.mixtape-cover--fixed { cursor: default; }
 /* REW / FF / STOP shapes */
 
 /* the counter window — mechanical odometer vibes */

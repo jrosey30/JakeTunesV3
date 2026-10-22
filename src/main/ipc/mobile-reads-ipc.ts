@@ -25,6 +25,7 @@ import {
 import { safeIpcError } from '../safe-ipc-error'
 import { withCompanionInit } from '../hub-companion.ts'
 import { registerPlaysElsewhereIpc } from './plays-elsewhere-ipc.ts'
+import { registerAiMixtapesIpc } from './ai-mixtapes-ipc.ts'
 import { addWindowed } from '../../common/plays-elsewhere.ts'
 import { createStarHubPush } from '../star-hub-push.ts'
 import { MOBILE_BACKEND_URL } from './recommendations-ipc.ts'
@@ -58,6 +59,8 @@ export interface MobileStarsApi {
 export function registerMobileReadsIpc(ipc: IpcRegistrar, host: MobileReadsIpcHost): MobileStarsApi {
   // 2026-10-20 — the phone's and workmini's plays count here too (display only).
   const elsewhere = registerPlaysElsewhereIpc(ipc, { isReplica: host.isReplica })
+  // 2026-10-22 — the phone's daily AI tapes (Home rail + Keep + the shelf).
+  registerAiMixtapesIpc(ipc)
   ipc.handle('get-windowed-play-counts', async (_e, windowMs: number): Promise<{ ok: boolean; counts: Record<string, number> }> => {
     try {
       const cutoff = Date.now() - Math.max(0, windowMs)
@@ -181,7 +184,10 @@ export function registerMobileReadsIpc(ipc: IpcRegistrar, host: MobileReadsIpcHo
   //   2. Orbit quality floor — "orbit of X" / "Because You Played Y" → re-score
   //      neighbors against the seed embedding and drop weak false matches
   //      (RHCP in a Robson Jorge orbit). Same lesson as playlist-vibes SOAD floor.
-  const MOBILE_MIXES_BACKEND = 'http://homemini:3000'
+  // Same origin as every other homemini read (MOBILE_BACKEND_URL defaults to
+  // http://homemini:3000), so a scratch backend can stand in for it in tests.
+  // The AI tapes this call mints are read by ai-mixtapes-ipc.ts.
+  const MOBILE_MIXES_BACKEND = MOBILE_BACKEND_URL.replace(/\/audio$/, '')
 
   async function applyOrbitQualityFloor(
     title: string,

@@ -9,12 +9,29 @@
  * to local Track objects so playback uses the desktop's own files. Ephemeral —
  * cards play, nothing is saved. Design mirrors ios/JakeTunesMobile/MixesSection.swift
  * (cover-art cards + gradient + title; "Make me a vibe" sheet with mood chips).
+ *
+ * 2026-10-22 (parity gap #9) — the phone's rail: homemini mints each day's
+ * mixes into AI MIXTAPES, and the row shows TODAY'S TAPES (the daily batch
+ * not kept) instead of the mix cards, falling back to the mix cards only when
+ * there are none. Right-click a tape → Keep: it leaves the row on this frame
+ * and lands on the MIXTAPES shelf in the sidebar, where tapes kept on the
+ * phone already are. A tape plays by the tape rules (MixtapeView): from the
+ * top, no skipping, one clock.
+ *
+ * ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/MixesSection.swift — `dailyTapes`,
+ *   the header ("MIXTAPES" once there are tapes, else "YOUR MIXES"), the
+ *   Keep context menu, "Dubbing today’s tapes…", and the mix-card fallback.
  */
-import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { useLibrary } from '../context/LibraryContext'
+import { usePlayback } from '../context/PlaybackContext'
 import { useAudio } from '../hooks/useAudio'
-import { setTapeSession } from '../mixtapes'
+import { setTapeSession, getTapeSession, setMixtapeId, getMixtapes, subscribeMixtapes } from '../mixtapes'
+import { getAiMixtapes, subscribeAiMixtapes, ensureAiMixtapesLoaded, refreshAiMixtapes } from '../aiMixtapes'
+import { dailyAiTapes, type AiMixtape } from '../../common/ai-mixtapes'
+import { CassetteSvg, CASSETTE_BADGE_INK } from '../views/MixtapeView'
+import { useHomeItemMenus } from './HomeItemMenus'
 import MixArtwork from './MixArtwork'
 import { PlayIcon } from './TransportIcons'
 import { openMix, type VibeMix as Mix } from '../utils/activeMix'
@@ -29,7 +46,14 @@ const VIBE_PRESETS = ['Chill', 'Hype', 'Late night', 'Focus', 'Throwback', 'Sunn
 
 export default function MadeForYou() {
   const { state: lib, dispatch } = useLibrary()
+  const { state: pb } = usePlayback()
   const { playTrack } = useAudio()
+  const aiTapes = useSyncExternalStore(subscribeAiMixtapes, getAiMixtapes)
+  const localTapes = useSyncExternalStore(subscribeMixtapes, getMixtapes)
+  // Re-render when a tape starts or stops, so the playing tape's reels turn.
+  const tapeSession = useSyncExternalStore(subscribeMixtapes, getTapeSession)
+  // The Home's one menu host (HomeItemMenus): Keep on a daily tape.
+  const menus = useHomeItemMenus()
 
   // Resolve backend track ids → the desktop's own Track objects (local files).
   const byId = useMemo(() => new Map(lib.tracks.map(t => [t.id, t])), [lib.tracks])
@@ -53,8 +77,15 @@ export default function MadeForYou() {
         if (built.length) { sessionMixes = built; setMixes(built) }
       }
     } catch { /* homemini backend unreachable → section degrades silently */ }
-    finally { setLoading(false) }
+    // /api/mixes is what MINTS today's tapes on homemini, so the tapes are
+    // read straight after it (the phone's MixesSection.load() order). A failed
+    // read keeps the cached tapes; homemini away → the row quietly shows
+    // what it had, or the mix cards, or nothing.
+    try { await refreshAiMixtapes(true) } finally { setLoading(false) }
   }, [resolve])
+
+  // Paint the cached tapes at once (main's cache), before any network.
+  useEffect(() => { ensureAiMixtapesLoaded() }, [])
 
   // Cache-first paint, then refresh — mirrors the iOS MixesSection.load().
   const didInit = useRef(false)
@@ -91,22 +122,66 @@ export default function MadeForYou() {
     finally { setBuilding(false) }
   }, [building, resolve, playMix])
 
+  // TODAY'S TAPES — the disposable daily batch only, resolved to this Mac's
+  // own files. Keeping a tape makes it permanent and moves it to the shelf
+  // (the sidebar's MIXTAPES), which is what makes Keep visible the moment
+  // it is pressed: the tape leaves this row.
+  const dailyTapes = useMemo(() => dailyAiTapes(aiTapes)
+    .map((tape) => ({ tape, tracks: resolve(tape.trackIds) }))
+    .filter((d) => d.tracks.length > 0), [aiTapes, resolve])
+  const hasTapes = aiTapes.length > 0 || localTapes.length > 0
+
   if (lib.tracks.length === 0) return null
   // Don't leave a hollow "Your Mixes" chapter when the backend is down
   // or the day's mixes haven't arrived — the header with nothing under
   // it made Home look unfinished.
-  if (!loading && mixes.length === 0) return null
+  if (!loading && mixes.length === 0 && dailyTapes.length === 0) return null
+
+  const openTape = (tape: AiMixtape): void => {
+    setMixtapeId(tape.id)
+    dispatch({ type: 'SET_VIEW', view: 'mixtape-detail' })
+  }
 
   return (
     <section className="home-section home-mixes">
       <div className="home-section-header">
-        <h2 className="home-section-title">Your Mixes</h2>
+        <h2 className="home-section-title">{hasTapes ? 'Mixtapes' : 'Your Mixes'}</h2>
         <button type="button" className="home-mixes-vibe-btn" onClick={() => setSheetOpen(true)} disabled={building}>
           <span className="home-mixes-spark" aria-hidden="true">✦</span> Make me a vibe
         </button>
       </div>
 
-      {mixes.length > 0 && (
+      {dailyTapes.length > 0 && (
+        <div className="home-mixes-row">
+          {dailyTapes.map(({ tape, tracks }) => {
+            // The reels turn only while THIS tape is the one playing.
+            const rolling = tapeSession?.mixtapeId === tape.id && pb.isPlaying
+            return (
+              <div key={tape.id} className="home-mix-cell">
+                <button
+                  type="button"
+                  className="home-mix-card"
+                  onClick={() => openTape(tape)}
+                  // Right-click is the desktop's long-press (the phone's
+                  // context menu on the rail): Keep.
+                  onContextMenu={(e) => menus?.openTapeMenu(e, tape)}
+                  title={tape.commentary ? `${tape.title} — ${tape.commentary}` : `${tape.title} · ${tracks.length} songs`}
+                >
+                  <div className="home-mix-art">
+                    <MixArtwork tracks={tracks} alt={tape.title} />
+                    <span className="mixtape-cover-badge" aria-hidden="true">
+                      <CassetteSvg ink={CASSETTE_BADGE_INK} spinning={rolling} />
+                    </span>
+                  </div>
+                  {/* Below the art and wrapped in full: names never clip. */}
+                  <div className="home-tape-title">{tape.title}</div>
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {dailyTapes.length === 0 && mixes.length > 0 && (
         <div className="home-mixes-row">
           {mixes.map((m) => {
             // The play button is a SIBLING laid over the art, not a child —
@@ -143,8 +218,8 @@ export default function MadeForYou() {
           })}
         </div>
       )}
-      {loading && mixes.length === 0 && (
-        <div className="home-mixes-loading">Cooking up today’s mixes…</div>
+      {loading && mixes.length === 0 && dailyTapes.length === 0 && (
+        <div className="home-mixes-loading">Dubbing today’s tapes…</div>
       )}
 
       {sheetOpen && createPortal(

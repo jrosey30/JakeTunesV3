@@ -10,6 +10,14 @@
  * that is physically what they are.
  *
  * Play Tape: Jake's 1979 intro first (if recorded), then the tape.
+ *
+ * 2026-10-22 (parity gap #9): homemini's daily AI tapes open here too — from
+ * Home's rail, or from the sidebar shelf once kept on either device. They
+ * play by the same tape rules (from the top, no skipping, one clock), but
+ * they are homemini's, not this Mac's: no REC / MIC / deck, no rename, no
+ * cover, no delete. Their one switch is Keep / Kept, as on the phone.
+ * ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/MixtapesView.swift
+ *   `MixtapeDetailView` — Keep / Kept for AI tapes, Delete only for Jake's own.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
@@ -24,6 +32,7 @@ import {
   playlistCoverSrc, pickPlaylistCover, clearPlaylistCover, refreshPlaylistCovers,
 } from '../playlistCovers'
 import { getMixtapeId, getMixtapes, getDeckState, subscribeMixtapes, refreshMixtapes, pickInk, setTapeSession, setDeckState, liveTapeCounter, spoolTarget, setPendingTapeSeek, setWindDisplay } from '../mixtapes'
+import { getAiMixtapes, subscribeAiMixtapes, ensureAiMixtapesLoaded, aiTapeAsMixtape, toggleAiTapeKept } from '../aiMixtapes'
 import { startWindSound, stopWindSound, mechanicalSound, tapeMotorPause } from '../tapeDeck'
 import { effectiveDurationFn, tapeTracks, tapeCutMs, tapePlayIds, dubTalkovers } from '../../common/tape-physics'
 import type { Track, Mixtape } from '../types'
@@ -33,6 +42,9 @@ function fmt(ms: number): string {
   const s = Math.round(ms / 1000)
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
+
+/** The cassette badge's ink on a tape cover (this page, Home's tape cards). */
+export const CASSETTE_BADGE_INK = '#6d6858'
 
 /**
  * The cassette mark — a QUIET nod, not a prop.
@@ -84,6 +96,8 @@ export default function MixtapeView() {
   const mixtapes = useSyncExternalStore(subscribeMixtapes, getMixtapes)
   const mixtapeId = useSyncExternalStore(subscribeMixtapes, getMixtapeId)
   const deckState = useSyncExternalStore(subscribeMixtapes, getDeckState)
+  const aiTapes = useSyncExternalStore(subscribeAiMixtapes, getAiMixtapes)
+  useEffect(() => { ensureAiMixtapesLoaded() }, [])
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [confirmDropCover, setConfirmDropCover] = useState(false)
   const mixPageRef = useRef<HTMLDivElement>(null)
@@ -114,7 +128,14 @@ export default function MixtapeView() {
     if (introRef.current) { introRef.current.pause(); introRef.current = null }
   }, [])
 
-  const tape: Mixtape | undefined = mixtapes.find((m) => m.id === mixtapeId)
+  // This Mac's own tape first; otherwise one of homemini's daily AI tapes.
+  const aiTape = useMemo(
+    () => (mixtapes.some((m) => m.id === mixtapeId) ? undefined : aiTapes.find((t) => t.id === mixtapeId)),
+    [mixtapes, aiTapes, mixtapeId],
+  )
+  const aiAsTape = useMemo(() => (aiTape ? aiTapeAsMixtape(aiTape) : undefined), [aiTape])
+  const tape: Mixtape | undefined = mixtapes.find((m) => m.id === mixtapeId) ?? aiAsTape
+  const isAi = !!aiTape
 
   const byId = useMemo(() => new Map(lib.tracks.map((t) => [t.id, t])), [lib.tracks])
   const sideATracks = useMemo(() => (tape?.sideA || []).map((id) => byId.get(id)).filter((t): t is Track => !!t), [tape, byId])
@@ -313,10 +334,12 @@ export default function MixtapeView() {
             which is where a tape feel belongs: a detail, not the furniture. */}
         <button
           type="button"
-          className="mixtape-cover"
-          title={tapeCover ? 'Click to replace this cover · right-click for the album mosaic' : 'Click to choose a cover'}
-          onClick={() => { void pickPlaylistCover(tape.id).then(() => refreshPlaylistCovers()) }}
-          onContextMenu={(e) => { e.preventDefault(); if (tapeCover) setConfirmDropCover(true) }}
+          className={`mixtape-cover${isAi ? ' mixtape-cover--fixed' : ''}`}
+          // A daily AI tape is homemini's: it wears its songs' mosaic, no
+          // cover of this Mac's choosing (the phone draws it the same way).
+          title={isAi ? undefined : tapeCover ? 'Click to replace this cover · right-click for the album mosaic' : 'Click to choose a cover'}
+          onClick={isAi ? undefined : () => { void pickPlaylistCover(tape.id).then(() => refreshPlaylistCovers()) }}
+          onContextMenu={isAi ? undefined : (e) => { e.preventDefault(); if (tapeCover) setConfirmDropCover(true) }}
         >
           {/* A tape wears the same cover system playlists do — its own
               picture if it has one (inherited from the playlist it came
@@ -325,11 +348,13 @@ export default function MixtapeView() {
             ? <img src={tapeCover} alt="" className="mixtape-cover-img" />
             : <MixArtwork tracks={allTracks} alt={tape.title} priority />}
           <span className="mixtape-cover-badge" title="Mixtape">
-            <CassetteSvg ink="#6d6858" spinning={tapeActive} wind={winding?.dir} />
+            <CassetteSvg ink={CASSETTE_BADGE_INK} spinning={tapeActive} wind={winding?.dir} />
           </span>
         </button>
         <div className="mixtape-hero-info">
-          {renaming !== null ? (
+          {isAi ? (
+            <h1 className="mixtape-title">{tape.title}</h1>
+          ) : renaming !== null ? (
             <input
               className="mixtape-title mixtape-title--edit"
               value={renaming}
@@ -447,15 +472,19 @@ export default function MixtapeView() {
                     <span className="fp-counter-sub">
                       {winding
                         ? (winding.dir > 0 ? '›› winding' : '‹‹ winding')
-                        : counter.songsLeft === 0
+                        // Room to record is only news on a tape you can
+                        // record onto — never on a daily AI tape.
+                        : !isAi && counter.songsLeft === 0
                           ? 'tape full'
-                          : pb.isPlaying && currentOnTape ? 'left' : `${counter.songsLeft} more fit`}
+                          : pb.isPlaying && currentOnTape ? 'left' : isAi ? '' : `${counter.songsLeft} more fit`}
                     </span>
                   </div>
-                  <button className={`fp-key fp-key--rec${armed ? ' is-down' : ''}`} onClick={() => { mechanicalSound('rec'); load({ recArmed: !armed }) }}
+                  {/* A daily AI tape is homemini's — nothing records onto it, so
+                      it has no REC, MIC or EJECT (it never goes in the deck). */}
+                  {!isAi && <button className={`fp-key fp-key--rec${armed ? ' is-down' : ''}`} onClick={() => { mechanicalSound('rec'); load({ recArmed: !armed }) }}
                     title="RECORD — whatever plays goes on this tape. Press mid-song and it records from right there.">
                     <span className="fp-shape fp-shape--circle" /><span className="fp-label">REC</span>
-                  </button>
+                  </button>}
                   <button className={`fp-key${winding?.dir === -1 ? ' is-down' : ''}`} disabled={armed}
                     onMouseDown={() => startWind(-1)} onMouseUp={finishWind} onMouseLeave={finishWind}
                     title="REWIND — hold it down and the tape winds back, screaming past the song joins. Let go to drop back in. Locked while REC is down.">
@@ -470,14 +499,14 @@ export default function MixtapeView() {
                     title="FAST-FORWARD — hold it down and the tape winds ahead, straight through the middle of songs. Let go to drop back in. Locked while REC is down.">
                     <span className="fp-shape fp-shape--ff" /><span className="fp-label">FF</span>
                   </button>
-                  <button className={`fp-key fp-key--mic${micOn ? ' is-down' : ''}`} onClick={() => { mechanicalSound('mic'); load({ micOn: !micOn }) }}
+                  {!isAi && <button className={`fp-key fp-key--mic${micOn ? ' is-down' : ''}`} onClick={() => { mechanicalSound('mic'); load({ micOn: !micOn }) }}
                     title="MIC — mic on means mic ready. Your voice records onto the tape only while REC is down.">
                     <span className="fp-shape fp-shape--mic"><MicShape /></span><span className="fp-label">MIC</span>
-                  </button>
-                  <button className="fp-key fp-key--eject" onClick={() => { if (loaded) { mechanicalSound('eject'); setDeckState(null) } }} disabled={!loaded}
+                  </button>}
+                  {!isAi && <button className="fp-key fp-key--eject" onClick={() => { if (loaded) { mechanicalSound('eject'); setDeckState(null) } }} disabled={!loaded}
                     title="EJECT — take the tape out of the deck">
                     <span className="fp-shape fp-shape--eject" /><span className="fp-label">EJECT</span>
-                  </button>
+                  </button>}
                 </div>
                 {/* Only while the MIC is on. A voice picker sitting there
                     permanently was one more control competing for attention
@@ -495,20 +524,37 @@ export default function MixtapeView() {
                     ))}
                   </select>
                 </div>}
-                <div className={`fp-status${rolling ? ' fp-status--recording' : armed ? ' fp-status--armed' : ''}`}>
+                {!isAi && <div className={`fp-status${rolling ? ' fp-status--recording' : armed ? ' fp-status--armed' : ''}`}>
                   {rolling ? `● RECORDING — ${String(pb.nowPlaying?.title || '').slice(0, 30)} → tape${micOn ? ' · MIC LIVE' : ''}`
                     : armed ? 'REC DOWN — press PLAY'
                     : loaded ? 'in the deck — not recording'
                     : 'on the shelf — press REC to record onto it'}
-                </div>
+                </div>}
               </>
             )
           })()}
-          <div className="mixtape-smallrow">
-            <button className="mixtape-link" onClick={() => setRemixing(true)}>Open on the deck</button>
-            <button className="mixtape-link" disabled={dubbing} onClick={() => { void dubToCassette() }}>{dubbing ? 'Exporting…' : 'Export as one file'}</button>
-            <button className="mixtape-link mixtape-link--danger" onClick={() => setConfirmDelete(true)}>Delete Tape</button>
-          </div>
+          {aiTape ? (
+            <div className="mixtape-smallrow">
+              {/* Keep / Kept — the phone's tape page: a daily tape rolls over
+                  with tomorrow's batch unless kept. Kept tapes sit on the
+                  MIXTAPES shelf in the sidebar; Kept again puts it back. */}
+              <button
+                className="mixtape-link mixtape-link--keep"
+                aria-pressed={aiTape.kept}
+                onClick={() => { void toggleAiTapeKept(aiTape, !aiTape.kept) }}
+                title={aiTape.kept ? 'Kept — it won’t roll over. Click to put it back in the dailies.' : 'Keep this tape — it moves to your Mixtapes and won’t roll over.'}
+              >
+                <BookmarkShape filled={aiTape.kept} />{aiTape.kept ? 'Kept' : 'Keep'}
+              </button>
+              <button className="mixtape-link" disabled={dubbing} onClick={() => { void dubToCassette() }}>{dubbing ? 'Exporting…' : 'Export as one file'}</button>
+            </div>
+          ) : (
+            <div className="mixtape-smallrow">
+              <button className="mixtape-link" onClick={() => setRemixing(true)}>Open on the deck</button>
+              <button className="mixtape-link" disabled={dubbing} onClick={() => { void dubToCassette() }}>{dubbing ? 'Exporting…' : 'Export as one file'}</button>
+              <button className="mixtape-link mixtape-link--danger" onClick={() => setConfirmDelete(true)}>Delete Tape</button>
+            </div>
+          )}
           {dubNotice && <div className="mixtape-dub-notice">{dubNotice}</div>}
         </div>
       </div>
@@ -547,6 +593,15 @@ export default function MixtapeView() {
   )
 }
 
+
+/** Keep's mark — the phone's bookmark / bookmark.fill: 11×11 in an 11.5px link (≈1:1). */
+function BookmarkShape({ filled }: { filled: boolean }) {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2.6" strokeLinejoin="round" aria-hidden>
+      <path d="M6 3h12v18l-6-4.5L6 21z" />
+    </svg>
+  )
+}
 
 function MicShape() {
   return (
