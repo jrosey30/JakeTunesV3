@@ -19,6 +19,10 @@ import { REFUSED_SENDER } from '../ipc-register.ts'
 import { mergeIntoPool, removeFromPool, POOL_MAX, type PoolCandidate } from '../activity-pool.ts'
 import { swapInPool, type PoolName } from '../../common/pool-health.ts'
 import { isSkitOrIntro } from '../workout-sync.ts'
+import { createHubPoolMirror } from '../hub-pool-mirror.ts'
+
+/** A replica (workmini) shows the MacBook's pool read-only; it never edits one. */
+const REPLICA_READ_ONLY = 'The iPod Pool is edited on the MacBook — this Mac only shows it.'
 
 const POOL_FILE = () => join(app.getPath('userData'), 'activity-pool.json')
 const LEDGER_FILE = () => join(app.getPath('userData'), 'activity-sync-ledger.jsonl')
@@ -79,8 +83,16 @@ async function backfillNamesFromLedger(ids: number[], names: Record<string, Pool
   return changed
 }
 
-export function registerActivityPoolIpc(ipc: IpcRegistrar): void {
+export function registerActivityPoolIpc(ipc: IpcRegistrar, opts: { hubBase?: () => Promise<string | null> } = {}): void {
+  // Replica mode: the pool comes from the hub (homemini), read-only. The local
+  // activity-pool.json is never read or written there. Twin of the phone's
+  // built-in "iPod Pool" playlist (see common/hub-pool.ts).
+  const hub = createHubPoolMirror({ stateDir: app.getPath('userData'), hubBase: opts.hubBase ?? (async () => null) })
+  const replicaIds = (): Promise<number[] | null> => hub.get()
+
   ipc.handle('activity-pool-get', async () => {
+    const hubIds = await replicaIds()
+    if (hubIds) return { ok: true, ids: hubIds, names: {} as Record<string, PoolName>, max: POOL_MAX, readOnly: true }
     const file = await loadPoolFile()
     if (await backfillNamesFromLedger(file.ids, file.names)) await saveActivityPool(file.ids, file.names)
     return { ok: true, ids: file.ids, names: file.names, max: POOL_MAX }
@@ -89,6 +101,7 @@ export function registerActivityPoolIpc(ipc: IpcRegistrar): void {
   // Swap a dead id for its re-added copy, in place — the pool page's
   // "Use the new copy". Order is the pool's order; it is preserved.
   ipc.handle('activity-pool-swap', async (_e, args: { oldId: number; newId: number; name?: PoolName }) => {
+    if (await replicaIds()) return { ok: false, error: REPLICA_READ_ONLY }
     const oldId = Number(args?.oldId)
     const newId = Number(args?.newId)
     if (!Number.isFinite(oldId) || !Number.isFinite(newId)) return { ok: false, error: 'Bad ids.' }
@@ -103,6 +116,7 @@ export function registerActivityPoolIpc(ipc: IpcRegistrar): void {
   }, { refuse: REFUSED_SENDER })
 
   ipc.handle('activity-pool-add', async (_e, candidates: PoolCandidate[]) => {
+    if (await replicaIds()) return { ok: false, error: REPLICA_READ_ONLY }
     if (!Array.isArray(candidates) || candidates.length === 0) {
       return { ok: false, error: 'Nothing to add.' }
     }
@@ -124,6 +138,7 @@ export function registerActivityPoolIpc(ipc: IpcRegistrar): void {
   }, { refuse: REFUSED_SENDER })
 
   ipc.handle('activity-pool-remove', async (_e, ids: number[]) => {
+    if (await replicaIds()) return { ok: false, error: REPLICA_READ_ONLY }
     const file = await loadPoolFile()
     const next = removeFromPool(file.ids, Array.isArray(ids) ? ids : [])
     await saveActivityPool(next, file.names)
@@ -131,6 +146,7 @@ export function registerActivityPoolIpc(ipc: IpcRegistrar): void {
   }, { refuse: REFUSED_SENDER })
 
   ipc.handle('activity-pool-clear', async () => {
+    if (await replicaIds()) return { ok: false, error: REPLICA_READ_ONLY }
     await saveActivityPool([], {})
     return { ok: true, ids: [] as number[] }
   }, { refuse: REFUSED_SENDER })

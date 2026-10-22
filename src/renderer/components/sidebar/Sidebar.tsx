@@ -19,7 +19,7 @@ import { setNotice } from '../../activity'
 import { setMixtapeId, getMixtapeId, getMixtapes, subscribeMixtapes, refreshMixtapes } from '../../mixtapes'
 import { getAiMixtapes, subscribeAiMixtapes, ensureAiMixtapesLoaded, removeKeptAiTape } from '../../aiMixtapes'
 import { keptAiTapes, type AiMixtape } from '../../../common/ai-mixtapes'
-import { getPoolIds, subscribePool, refreshPool, addTracksToPool, usePoolHealth } from '../../activityPool'
+import { getPoolIds, subscribePool, refreshPool, addTracksToPool, usePoolHealth, usePoolReadOnly } from '../../activityPool'
 import { CD_PRESENCE_START, stepCdPresence } from '../../../common/auto-nav'
 import { autoNavBlocked } from '../../utils/autoNavGuard'
 import NewMixtapeSheet from '../NewMixtapeSheet'
@@ -305,6 +305,7 @@ export default function Sidebar() {
   // iPod Pool (2026-09-02): the hand-built activity set. Count rides the
   // sidebar badge; drops onto the row add to it (iTunes: drag to the iPod).
   const poolIds = useSyncExternalStore(subscribePool, getPoolIds)
+  const poolReadOnly = usePoolReadOnly()   // workmini: the MacBook's pool, display-only
   // The badge is what will SYNC, not what was dropped (2026-09-19: 1,000
   // in the badge, 992 at the sheet). Pool page names the difference.
   const poolHealthInfo = usePoolHealth(state.tracks)
@@ -682,7 +683,7 @@ export default function Sidebar() {
             badge={poolIds.length > 0 ? poolHealthInfo.syncable.length.toLocaleString() : undefined}
             selected={state.currentView === 'activity-pool'}
             onClick={() => dispatch({ type: 'SET_VIEW', view: 'activity-pool' })}
-            droppable
+            droppable={!poolReadOnly}
             onDrop={(trackIds) => { void addTracksToPool(trackIds, new Map(state.tracks.map((t) => [t.id, t]))) }}
           />
         </SidebarSection>
