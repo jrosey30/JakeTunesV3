@@ -290,11 +290,12 @@ export function memberPhotoUrls(p: ArtistProfile | null | undefined): string[] {
   return out
 }
 
-/** Every photo a profile draws from homemini: the credited header photo, then the members'.
- *  A 'library' hero is the app's own artist image, which this Mac already has. */
+/** Every photo a profile draws from homemini: the header photo, then the members'.
+ *  A 'library' hero is the app's own artist image re-framed for the wide header
+ *  (common/artist-page.ts headerPhotoChoice), a file of its own, so it is drawn too. */
 export function profilePhotoUrls(p: ArtistProfile | null | undefined): string[] {
   const out = memberPhotoUrls(p)
-  if (p?.hero?.url && p.hero.source !== 'library' && !out.includes(p.hero.url)) out.unshift(p.hero.url)
+  if (p?.hero?.url && !out.includes(p.hero.url)) out.unshift(p.hero.url)
   return out
 }
 

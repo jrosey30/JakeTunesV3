@@ -89,7 +89,7 @@ describe('the profile document', () => {
     assert.equal(p.members?.people[2].photo?.source, 'unknown', 'an unknown source keeps the photo')
     assert.deepEqual(profilePhotoUrls(p), ['/api/artist-photo/1857f06283720e62.jpg', '/api/artist-photo/d7523d1e47db9d5b.jpg', '/api/artist-photo/0123456789abcdef.jpg'])
     assert.equal(parseArtistProfile({ ...GEESE, hero: { url: 'http://elsewhere/x.jpg', source: 'commons' } })?.hero, undefined, 'a hero off the photo route is dropped')
-    assert.deepEqual(profilePhotoUrls(parseArtistProfile({ ...GEESE, members: undefined, hero: { url: '/api/artist-photo/d1ed927a4829beaf.jpg', source: 'library' } })), [], 'a library hero is the image this Mac already has')
+    assert.deepEqual(profilePhotoUrls(parseArtistProfile({ ...GEESE, members: undefined, hero: { url: '/api/artist-photo/d1ed927a4829beaf.jpg', source: 'library' } })), ['/api/artist-photo/d1ed927a4829beaf.jpg'], 'a library hero is the app image re-framed for the wide header: its own file')
   })
   it('a photo url names a FILE — never a host or a path out of the folder', () => {
     assert.equal(artistPhotoFileOf('/api/artist-photo/face-cameron.jpg'), 'face-cameron.jpg')

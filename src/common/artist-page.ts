@@ -133,17 +133,23 @@ export function heroEyebrow(origin?: { place?: string; since?: string; until?: s
 
 /**
  * Which picture the header shows (⚠️ TWIN: JakeTunesMobile ios ArtistPage
- * `heroSource`, Mobile #501 — same order, same rule):
- *  1. 'hero' — a credited header photo homemini chose. One sourced from the
- *     app's own artist image ('library') is that same picture, so it doesn't
- *     count: the page shows the artist image it already has.
+ * `heroSource`, Mobile #501 — same order; one difference, below):
+ *  1. 'hero' — a header photo homemini chose. One sourced from the app's own
+ *     artist image ('library') counts too: homemini stores one only when the
+ *     artist image as it stands puts a face under this header's bottom fade
+ *     or outside its window, and the stored file is that image re-framed for
+ *     THIS wide header (Mobile backend buildHero/frameHero; QA 10/22: Fat
+ *     Dog, Jurassic 5, Guided By Voices, The Chemical Brothers showed faces
+ *     under the fade). The phone keeps today's artist image for it, framed
+ *     for its own tall header — the wide crop would cut a band to its middle
+ *     members there (ArtistPageModel.heroSource).
  *  2. 'cover' — `heroNeedsPhoto`: no photo shows the right line-up (Sublime's
  *     own image is the 2023 band). Never the artist image; the most played
  *     record's cover, else the newest record's.
  *  3. 'artistImage' — today's artist image (the cover only if it has none).
  */
 export function headerPhotoChoice(p: { hero?: { source?: string } | null; heroNeedsPhoto?: boolean } | null | undefined): 'hero' | 'cover' | 'artistImage' {
-  if (p?.hero && p.hero.source !== 'library') return 'hero'
+  if (p?.hero) return 'hero'
   if (p?.heroNeedsPhoto) return 'cover'
   return 'artistImage'
 }
