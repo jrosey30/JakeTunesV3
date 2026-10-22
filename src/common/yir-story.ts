@@ -6,6 +6,10 @@
  *
  * Before December 17 the story is "so far"; from the 17th it is the reveal.
  * Pure: the renderer resolves images and playback (YirStory.tsx).
+ *
+ * ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/YirStory.swift — the phone's story, a line-for-line
+ * port (same cards, order, words and Dec 17 gate). Its YirStoryTests compare
+ * every card to this file's output for the test fixture; change both together.
  */
 import { localParts, YIR_TIME_ZONE, type YearInReview, type Ranked } from './year-in-review.ts'
 

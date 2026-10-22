@@ -13,6 +13,10 @@
  * Calendar facts (days, hours, weekdays) are in Jake's zone, America/New_York.
  *
  * Pure: no I/O. scripts/year-in-review.mts feeds it the files.
+ *
+ * ⚠️ TWIN (shape): JakeTunesMobile ios/JakeTunesMobile/YearInReview.swift YirFacts — the phone decodes
+ * the same nightly file (GET /api/year-in-review/:year). A field rename or
+ * removal here breaks the phone; additions are safe.
  */
 import type { Listen } from './listening-history.ts'
 import { isTop25Rankable } from './top25-rankable.ts'

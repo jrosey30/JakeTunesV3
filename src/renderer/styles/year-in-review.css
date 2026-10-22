@@ -1,5 +1,7 @@
 /* Year in Review (2026-10-12): the story card, the whole-year page, the Home
-   card. Palette from the approved mockup: JakeTunes orange on ink and cream. */
+   card. Palette from the approved mockup: JakeTunes orange on ink and cream.
+   ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/YirImage.swift YirPalette (ink/cream on the phone's
+   textPrimary/base tokens; the iceberg blues copied from here). */
 :root {
   --yir-orange: #fd5601;
   --yir-ink: #141210;

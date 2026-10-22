@@ -4,6 +4,8 @@
  * names a song or a record plays it through the regular player, so the
  * music stays when the story closes. ← / → step, Esc closes; the keys are
  * claimed here so App.tsx's transport doesn't also skip the song.
+ *
+ * ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/YirStoryView.swift (taps for clicks, swipes for the keys).
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAudio } from '../../hooks/useAudio'

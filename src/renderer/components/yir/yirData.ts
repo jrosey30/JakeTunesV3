@@ -2,6 +2,8 @@
  * Year in Review, renderer side (2026-10-12): the nightly facts (yir:get),
  * the concerts the story can show, and the lookups that turn a fact's
  * artist + title into a real library song (to play it and show its cover).
+ *
+ * ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/YearInReview.swift (YirStore) + YirImage.swift (YirLibrary).
  */
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { subscribeLiveSets, getLiveSetsSnapshot } from '../../liveSets'

@@ -2,6 +2,8 @@
  * The whole year on one page (2026-10-12): the story's facts and the rest of
  * the review to browse after the reveal. Every heading is computed from the
  * facts; nothing here is a sentence the numbers don't carry.
+ *
+ * ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/YirPageView.swift (the phone's whole-year page).
  */
 import { useAudio } from '../../hooks/useAudio'
 import YirImg, { type YirCtx } from './YirImg'
