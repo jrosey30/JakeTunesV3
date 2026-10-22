@@ -69,13 +69,6 @@ export function earliestAdded(tracks: Iterable<PageTrackLike>): number | null {
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-/** "Aug 2026" — in local time, like every other date the app shows; non-breaking, so a date never splits across lines. */
-export function monthYear(ms: number | null): string {
-  if (ms == null || !Number.isFinite(ms)) return ''
-  const d = new Date(ms)
-  return `${MONTHS[d.getMonth()]}\u00a0${d.getFullYear()}`
-}
-
 /** "Aug 9, 2026". */
 export function dayMonthYear(ms: number | null): string {
   if (ms == null || !Number.isFinite(ms)) return ''
