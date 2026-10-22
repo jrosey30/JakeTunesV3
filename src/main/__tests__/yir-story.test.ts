@@ -60,6 +60,25 @@ describe('the story', () => {
     assert.equal(big(before, 'Your artist of the year'), 'TV Girl.')
   })
 
+  it('a year whose log starts late has no "Where it started" card (Jake 10/22)', () => {
+    // The fixture's history begins June 1: January–May are in no log.
+    assert.deepEqual(y.coverage.monthsBeforeHistory, ['01', '02', '03', '04', '05'])
+    assert.equal(before.some((x) => 'eyebrow' in x && x.eyebrow === 'Where it started'), false)
+    assert.equal(after.some((x) => 'eyebrow' in x && x.eyebrow === 'Where it started'), false)
+    assert.equal(before[0].kind === 'cover' && before[0].note, 'Since June 1, the day JakeTunes started keeping score.')
+  })
+
+  it('a year logged from January keeps "Where it started"', () => {
+    const jan = buildYearInReview({ year: 2026, listens: [L('2026-01-02T15:30:00Z', 'Geese', 'Taxes'), ...listens], library: [] })
+    assert.deepEqual(jan.coverage.monthsBeforeHistory, [])
+    const slides = buildStory(jan, { now: new Date(2026, 9, 12) })
+    const s = slides.find((x) => x.kind === 'art' && x.eyebrow === 'Where it started')
+    assert.ok(s && s.kind === 'art')
+    assert.equal(s.big, 'Taxes')
+    assert.equal(s.line, 'Geese · Friday, January 2 at 10:30 AM')
+    assert.equal(slides[0].kind === 'cover' && slides[0].note, undefined)
+  })
+
   it('formats hours like a person says them', () => {
     assert.deepEqual([0, 2, 12, 23].map(hour12), ['midnight', '2 AM', 'noon', '11 PM'])
   })
