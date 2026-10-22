@@ -13,8 +13,8 @@ import type { Message, MessageCreateParamsNonStreaming } from '@anthropic-ai/sdk
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { STATE_DIR } from '../state-dir.ts'
-import { recordPlaylistSave, tombstonesPath } from '../playlist-tombstones.ts'
-import { stampModifiedPlaylists, schedulePlaylistHubConverge } from '../playlist-hub-sync.ts'
+import { tombstonesPath } from '../playlist-tombstones.ts'
+import { commitLocalPlaylistSave, schedulePlaylistHubConverge } from '../playlist-hub-sync.ts'
 import { safeIpcError } from '../safe-ipc-error.ts'
 import {
   computeArtistCandidates,
@@ -160,19 +160,17 @@ export function registerLibraryIpc(ipc: IpcRegistrar, host: LibraryIpcHost): voi
       console.warn(`[save-playlists] refused (saves locked): ${lockReason}`)
       return { ok: false, error: 'state-save-locked', reason: lockReason }
     }
-    // Deletion ledger (2026-08-28): the diff between consecutive saves IS the
-    // delete event — a dropped ID becomes a tombstone so no sync path can
-    // resurrect it ("existence is not memory"). Fire-and-forget: a ledger
-    // failure must never fail the save.
-    const prev = (await host.getPlaylists()) as Array<{ id?: unknown; name?: unknown }>
-    // Hub stamps (final-form sync): content changed → modifiedAt = now,
-    // untouched → carry the previous stamp. The renderer never sees stamps;
-    // this diff is where they're minted.
-    const stamped = stampModifiedPlaylists(prev as never, playlists as never)
-    host.setPlaylists(stamped)
+    // Stamp + store + deletion ledger (2026-08-28) — all in commitLocalPlaylistSave,
+    // which also moves the local-change generations the playlist hub client
+    // checks before it adopts a reply (A02, 2026-10-22). Fire-and-forget
+    // ledger: a ledger failure must never fail the save.
+    await commitLocalPlaylistSave({
+      playlists,
+      getPlaylists: () => host.getPlaylists(),
+      setPlaylists: (p) => host.setPlaylists(p),
+      tombstonesFile: tombstonesPath(STATE_DIR),
+    })
     host.triggerSync('playlist')
-    void recordPlaylistSave(prev, playlists as Array<{ id?: unknown }>, tombstonesPath(STATE_DIR))
-      .catch((err) => console.warn('[playlist-tombstones] record failed:', err))
     schedulePlaylistHubConverge()
     return { ok: true }
   }, { refuse: REFUSED_SENDER })

@@ -33,8 +33,12 @@ import { isSkitOrIntro, isIntroTitled } from './workout-sync.ts'
 // machinery playlists use, pointed at mixtape-tombstones.json, so a tape
 // deleted on either machine stays deleted everywhere (the harvest unions
 // and applies both files). "Existence is not memory."
-import { loadTombstones, saveTombstones } from './playlist-tombstones.ts'
 import { scheduleMixtapeHubConverge } from './mixtape-hub-sync.ts'
+// Every LOCAL write of the shelf goes through mixtape-store-writes.ts: one lock
+// shared with the hub client, plus the generations it checks before adopting a
+// hub reply (audit A02, 2026-10-22) — a tape saved, edited or deleted during a
+// sync request can no longer be undone by the older answer.
+import { upsertMixtape, removeMixtape, mutateMixtapeStore } from './mixtape-store-writes.ts'
 import { MODEL_SMART } from '../common/ai-models.ts'
 import { pitchShiftMp3, pitchSemitonesFromEnv, speedFromEnv } from './voice-pitch'
 
@@ -119,6 +123,8 @@ interface MixtapeInputTrack {
 const MIXTAPES_FILE = () => join(app.getPath('userData'), 'mixtapes.json')
 const MIXTAPE_TOMBSTONES_FILE = () => join(app.getPath('userData'), 'mixtape-tombstones.json')
 const INTROS_DIR = () => join(app.getPath('userData'), 'mixtape-intros')
+/** The shelf as mixtape-store-writes.ts sees it. */
+const MIXTAPE_STORE_IO = () => ({ load: loadMixtapes, save: saveMixtapes, tombstonesFile: MIXTAPE_TOMBSTONES_FILE() })
 const MAX_INPUT_SONGS = 150
 // TRUE tape limits (Jake: "absolutely true time limits... if i run out of
 // space, too bad"). The physics live in src/common/tape-physics.ts — the
@@ -544,10 +550,14 @@ async function maybeDubSeasonTape(host: MixtapesHost): Promise<void> {
     inkColor: INKS_SEASON[prevStart.getMonth() % INKS_SEASON.length],
     seasonal: key,
   }
-  const cur = await loadMixtapes()
-  if (cur.some((m) => m.seasonal === key)) return // raced another writer
-  cur.unshift(tape)
-  await saveMixtapes(cur)
+  const wrote = await mutateMixtapeStore(MIXTAPE_TOMBSTONES_FILE(), async () => {
+    const cur = await loadMixtapes()
+    if (cur.some((m) => m.seasonal === key)) return false // raced another writer
+    cur.unshift(tape)
+    await saveMixtapes(cur)
+    return true
+  })
+  if (!wrote) return
   // Written AFTER the tape lands: a crash between the two costs a re-dub,
   // which is recoverable. The other order would lose the month silently.
   await rememberDubbedSeason(key)
@@ -603,19 +613,11 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
       if (hasNew && (tape.tracks as number[]).length > MAX_TAPE_SONGS) {
         return { ok: false, error: `A tape holds ${MAX_TAPE_SONGS} songs.` }
       }
-      const all = await loadMixtapes()
-      tape.modifiedAt = new Date().toISOString()   // hub merge keys on this
-      const idx = all.findIndex((m) => m.id === tape.id)
-      if (idx >= 0) all[idx] = tape
-      else all.unshift(tape)
-      await saveMixtapes(all)
+      // Locked read-modify-write + tombstone clear (a saved tape is alive by the
+      // owner's word, so a deliberate re-creation isn't re-deleted by the next
+      // sync) — mixtape-store-writes.ts.
+      await upsertMixtape(MIXTAPE_STORE_IO(), tape)
       scheduleMixtapeHubConverge()
-      // A saved tape is alive by the owner's word — clear any tombstone for
-      // its id so a deliberate re-creation isn't re-deleted by the next sync.
-      const ts = await loadTombstones(MIXTAPE_TOMBSTONES_FILE())
-      if (ts.some((t) => t.id === tape.id)) {
-        await saveTombstones(ts.filter((t) => t.id !== tape.id), MIXTAPE_TOMBSTONES_FILE())
-      }
       return { ok: true }
     } catch (err) {
       return { ok: false, error: safeIpcError(err, 'io-failed') }
@@ -626,18 +628,13 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
   // renderer confirms with the user first (ConfirmDialog).
   ipc.handle('mixtape-delete', async (_e, id: string) => {
     try {
-      const all = await loadMixtapes()
-      const gone = all.find((m) => m.id === id)
-      const next = all.filter((m) => m.id !== id)
-      if (next.length === all.length) return { ok: false, error: 'No mixtape with that id.' }
-      await saveMixtapes(next)
-      // Durable record of the deletion — the harvest unions this with
-      // workmini's so the tape stays dead everywhere and can never be
-      // resurrected by a sync ("existence is not memory").
-      const ts = await loadTombstones(MIXTAPE_TOMBSTONES_FILE())
-      if (!ts.some((t) => t.id === id)) {
-        await saveTombstones([...ts, { id, name: gone?.title ?? '', deletedAt: new Date().toISOString() }], MIXTAPE_TOMBSTONES_FILE())
-      }
+      // Durable record of the deletion — the hub and the harvest union it so
+      // the tape stays dead everywhere and can never be resurrected by a sync
+      // ("existence is not memory"). Locked, and a hub reply computed before
+      // this can't undo it (mixtape-store-writes.ts).
+      const removed = await removeMixtape(MIXTAPE_STORE_IO(), id)
+      if (!removed) return { ok: false, error: 'No mixtape with that id.' }
+      const { gone } = removed
       scheduleMixtapeHubConverge()
       if (gone?.introPath) await unlink(gone.introPath).catch(() => {})
       // The merged tape audio goes with the tape — otherwise every deleted

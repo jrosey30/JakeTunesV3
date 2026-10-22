@@ -18,6 +18,7 @@
  */
 import { readFile, writeFile, rename, mkdir } from 'fs/promises'
 import { join, dirname } from 'path'
+import { bumpLocalGen, withLocalLock, lockKeys } from './hub-local-state.ts'
 
 export interface PlaylistTombstone {
   id: string
@@ -93,6 +94,13 @@ export async function loadTombstones(file: string): Promise<PlaylistTombstone[]>
   }
 }
 
+/** Same stones? (order-free; id + deletedAt + name decide.) */
+export function sameTombstoneSet(a: PlaylistTombstone[], b: PlaylistTombstone[]): boolean {
+  const key = (list: PlaylistTombstone[]): string =>
+    JSON.stringify(list.map((t) => [String(t.id), String(t.deletedAt ?? ''), String(t.name ?? '')]).sort())
+  return key(a) === key(b)
+}
+
 export async function saveTombstones(list: PlaylistTombstone[], file: string): Promise<void> {
   await mkdir(dirname(file), { recursive: true })
   const tmp = `${file}.tmp`
@@ -104,6 +112,11 @@ export async function saveTombstones(list: PlaylistTombstone[], file: string): P
  * The save-path hook: derive deletions from prev vs next, record them,
  * clear tombstones for anything resurrected. Fire-and-forget from the
  * IPC handler — a tombstone failure must never fail the save itself.
+ *
+ * A LOCAL writer of the playlist tombstone file (hub-local-state.ts): it
+ * bumps the generation when called and again when the write has landed, and
+ * its read-modify-write holds the file's lock — so a hub reply can neither
+ * overwrite the stone this records nor interleave with it.
  */
 export async function recordPlaylistSave(
   prev: Array<{ id?: unknown; name?: unknown }>,
@@ -111,18 +124,25 @@ export async function recordPlaylistSave(
   file: string,
   now: () => string = () => new Date().toISOString(),
 ): Promise<{ added: number; cleared: number; guarded: string | null }> {
+  bumpLocalGen('playlistTombstones')
   const { deletions, guarded } = derivePlaylistDeletions(prev, next)
   if (guarded) console.warn(`[playlist-tombstones] GUARDED: ${guarded}`)
-  const existing = await loadTombstones(file)
-  const afterClear = clearResurrected(existing, next)
-  const cleared = existing.length - afterClear.length
-  const known = new Set(afterClear.map((t) => t.id))
-  const fresh = deletions
-    .filter((d) => !known.has(d.id))
-    .map((d) => ({ ...d, deletedAt: now() }))
-  if (fresh.length || cleared) {
-    await saveTombstones([...afterClear, ...fresh], file)
-    if (fresh.length) console.log(`[playlist-tombstones] recorded ${fresh.length} deletion(s): ${fresh.map((f) => f.name || f.id).join(', ')}`)
-  }
-  return { added: fresh.length, cleared, guarded }
+  return withLocalLock(lockKeys.tombstones(file), async () => {
+    try {
+      const existing = await loadTombstones(file)
+      const afterClear = clearResurrected(existing, next)
+      const cleared = existing.length - afterClear.length
+      const known = new Set(afterClear.map((t) => t.id))
+      const fresh = deletions
+        .filter((d) => !known.has(d.id))
+        .map((d) => ({ ...d, deletedAt: now() }))
+      if (fresh.length || cleared) {
+        await saveTombstones([...afterClear, ...fresh], file)
+        if (fresh.length) console.log(`[playlist-tombstones] recorded ${fresh.length} deletion(s): ${fresh.map((f) => f.name || f.id).join(', ')}`)
+      }
+      return { added: fresh.length, cleared, guarded }
+    } finally {
+      bumpLocalGen('playlistTombstones')
+    }
+  })
 }

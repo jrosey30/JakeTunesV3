@@ -18,6 +18,7 @@
  */
 import { readFile, writeFile, rename } from 'fs/promises'
 import { join } from 'path'
+import { bumpLocalGen, withLocalLock, lockKeys } from './hub-local-state.ts'
 
 export interface PlaylistPins {
   /** Raw ids, max 3 — user playlists and smart ids never collide. */
@@ -61,4 +62,23 @@ export async function savePins(pins: PlaylistPins, file: string): Promise<void> 
   const tmp = `${file}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 10)}.tmp`
   await writeFile(tmp, JSON.stringify(pins, null, 2), 'utf-8')
   await rename(tmp, file)
+}
+
+/**
+ * The LOCAL writer — what a user's pin change goes through (ui-state-ipc.ts
+ * save-playlist-pins). Bumps the pins generation when called and again once
+ * the file is down, and writes under the pins lock, so a hub reply that was
+ * computed from older pins can neither overwrite this write nor interleave
+ * with it (hub-local-state.ts, audit A02). The hub client's own adoption
+ * calls plain savePins, under the same lock.
+ */
+export async function saveLocalPins(pins: PlaylistPins, file: string): Promise<void> {
+  bumpLocalGen('pins')
+  await withLocalLock(lockKeys.pins(file), async () => {
+    try {
+      await savePins(pins, file)
+    } finally {
+      bumpLocalGen('pins')
+    }
+  })
 }
