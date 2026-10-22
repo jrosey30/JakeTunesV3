@@ -268,7 +268,12 @@ export function buildYearInReview(input: YirInput): YearInReview {
   // (StarRating.tsx, 4.5.2): any rating > 0 reads as starred, same as the
   // Starred playlist. Jake 10/12: "you either get a star or you dont".
   const starred = input.library.filter((t) => (t.rating ?? 0) > 0 && isFound(t))
+  // "The ones you came back to most" is a ranking, so a song under a minute
+  // never takes a slot (Jake 10/11: nothing under 1 minute in ANY ranking).
+  // It used to sink to the bottom with 0 plays instead; now it is dropped.
+  // The count above is a tally of starred finds, not a ranking, and keeps it.
   const starredTop = starred
+    .filter((t) => isTop25Rankable(t))
     .map((t) => ({ name: t.title || '', artist: t.artist || '', plays: songs.get(`${norm(t.artist)}|${norm(t.title)}`)?.plays ?? 0 }))
     .sort((a, b) => b.plays - a.plays)
     .slice(0, top)

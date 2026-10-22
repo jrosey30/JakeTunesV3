@@ -117,6 +117,24 @@ describe('nothing under a minute ranks (Jake 9/2 for Top 25; every ranking 10/11
   })
 })
 
+describe('the starred class ranks no song under a minute (Jake 10/11)', () => {
+  it('a starred 16-second find is left off the list entirely, not sunk to the bottom — the tally still counts it', () => {
+    const library = [
+      { id: 1, title: '...Unless', artist: 'MUNA', album: 'Dancing on the Wall', duration: 16000, dateAdded: '2026-06-01T12:00:00Z', rating: 5, source: 'streamrip' },
+      { id: 2, title: 'Silk Chiffon', artist: 'MUNA', album: 'MUNA', duration: 205000, dateAdded: '2026-06-01T12:00:00Z', rating: 5, source: 'streamrip' },
+      // Unknown length stays rankable (never punish missing metadata).
+      { id: 3, title: 'Mystery', artist: 'MUNA', album: 'MUNA', dateAdded: '2026-06-01T12:00:00Z', rating: 5, source: 'streamrip' },
+    ]
+    const listens: Listen[] = [
+      ...[1, 2, 3, 4, 5].map((d) => L(`2026-06-0${d}T16:00:00Z`, 'MUNA', '...Unless', 'play', { trackId: 1 })),
+      L('2026-06-06T16:00:00Z', 'MUNA', 'Silk Chiffon', 'play', { trackId: 2 }),
+    ]
+    const y = buildYearInReview({ year: 2026, listens, library })
+    assert.deepEqual(y.starredClass.top.map((s) => s.name), ['Silk Chiffon', 'Mystery'])
+    assert.equal(y.starredClass.count, 3, 'the tally of starred finds is not a ranking')
+  })
+})
+
 describe('the story slides\' facts (10/12)', () => {
   it('how deep: each play lands on its genre\'s iceberg layer; Soundtrack and untagged sit off the berg', () => {
     const listens = [
