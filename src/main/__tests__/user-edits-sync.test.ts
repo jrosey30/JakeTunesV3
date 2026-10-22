@@ -193,3 +193,90 @@ describe('a replica learns the hub\'s verdicts', () => {
     assert.equal(parseUserEditsReply({ version: 2, replicas: [] }), null)
   })
 })
+
+// ── 2026-10-22 — "unstar everywhere" (Jake): applyPhoneUnstars ────────────────
+describe('the hub lowers a rating the phone un-starred (applyPhoneUnstars)', () => {
+  const ratedRows = new Map<string, RowLike>([
+    ['1', { id: 1, title: 'Roxanne', artist: 'The Police', duration: 192_000, rating: 5, genre: 'Rock' }],
+    ['2', { id: 2, title: 'F.M.', artist: 'Steely Dan', duration: 307_000, rating: 3, genre: 'Classic Rock' }],
+  ])
+  function hub(role: UserEditsRole = 'hub', opts: { locked?: string | null; removed?: Record<string, number>; trackIds?: string[]; added?: Record<string, number> } = {}) {
+    const h = harness(role, { locked: opts.locked })
+    h.host.rows = async () => ratedRows
+    h.stars = { trackIds: opts.trackIds ?? [], removed: opts.removed ?? { '1': NOW - 1000 }, added: opts.added ?? {} }
+    h.host.stars = async () => h.stars
+    return h
+  }
+
+  test('writes rating 0 through the override writer, journals it at the un-star\'s time (from: phone), tells the window, publishes', async () => {
+    const h = hub()
+    const sync = createUserEditsSync(h.host)
+    assert.equal(await sync.applyPhoneUnstars(), 1)
+    await sync.flush()
+    assert.deepEqual((h.overrides['1'] as { fields: Record<string, string> }).fields, { rating: '0' })
+    assert.equal((h.overrides['1'] as { fp: string }).fp, rowFingerprint(ratedRows.get('1')!))
+    assert.deepEqual(h.applied, [[{ id: 1, field: 'rating', value: '0' }]])
+    assert.equal(h.published, 1)
+    assert.deepEqual(readJournal(h.dir).edits['1'].rating, { v: '0', at: NOW - 1000, from: 'phone', dur: 192_000 })
+    assert.deepEqual(h.starCalls, [], 'the tombstone is already in the star record — nothing is re-written there')
+    assert.equal(h.overrides['2'], undefined, 'a song with no tombstone is untouched')
+  })
+
+  test('idempotent: the next pass (and the next merge) changes nothing', async () => {
+    const h = hub()
+    const sync = createUserEditsSync(h.host)
+    await sync.applyPhoneUnstars()
+    assert.equal(await sync.applyPhoneUnstars(), 0)
+    assert.equal(h.published, 1)
+    assert.equal(h.applied.length, 1)
+  })
+
+  test('concurrent calls (the star merge and the 5-minute tick) lower it once', async () => {
+    const h = hub()
+    const sync = createUserEditsSync(h.host)
+    const r = await Promise.all([sync.applyPhoneUnstars(), sync.applyPhoneUnstars(), sync.tick()])
+    assert.equal(r[0] + r[1], 1)
+    assert.equal(h.applied.length, 1)
+  })
+
+  test('the hub\'s own newer star stands (journal), and a star made after the un-star keeps the sidecar\'s verdict', async () => {
+    const h = hub()
+    const sync = createUserEditsSync(h.host)
+    await sync.record(1, 'rating', '5', NOW)   // Jake starred it on this Mac AFTER the phone un-starred it
+    assert.equal(await sync.applyPhoneUnstars(), 0)
+    assert.equal(h.overrides['1'], undefined)
+    const h2 = hub('hub', { trackIds: ['1'], added: { '1': NOW }, removed: { '1': NOW - 1000 } })
+    assert.equal(await createUserEditsSync(h2.host).applyPhoneUnstars(), 0)
+  })
+
+  test('only the MacBook (hub) does it: a replica, homemini\'s own app and a locked save change nothing', async () => {
+    for (const [role, locked] of [['replica', null], ['off', null], ['hub', 'ipod-sync']] as Array<[UserEditsRole, string | null]>) {
+      const h = hub(role, { locked })
+      assert.equal(await createUserEditsSync(h.host).applyPhoneUnstars(), 0, `${role}/${locked}`)
+      assert.deepEqual(h.overrides, {})
+      assert.equal(h.published, 0)
+    }
+  })
+
+  test('the tick runs it before the absorb, with no replicas and no network', async () => {
+    const h = hub()
+    h.setReply(500)   // homemini unreachable
+    const sync = createUserEditsSync(h.host)
+    await sync.tick()
+    assert.deepEqual((h.overrides['1'] as { fields: Record<string, string> }).fields, { rating: '0' })
+  })
+
+  test('a failing override write is reported, not thrown, and the next pass retries', async () => {
+    const h = hub()
+    const warns: string[] = []
+    h.host.warn = (_k, m) => { warns.push(m) }
+    let fail = true
+    const write = h.host.writeOverride
+    h.host.writeOverride = async (...a) => { if (fail) throw new Error('disk full'); return write(...a) }
+    const sync = createUserEditsSync(h.host)
+    assert.equal(await sync.applyPhoneUnstars(), 0)
+    assert.match(warns.join('\n'), /could not lower 1/)
+    fail = false
+    assert.equal(await sync.applyPhoneUnstars(), 1)
+  })
+})

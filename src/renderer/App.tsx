@@ -995,8 +995,11 @@ function AppInner() {
       // iOS side, hooked from save-metadata-override on desktop). Any
       // trackId in the set gets its rating bumped to ≥ 1 so the
       // existing Starred smart-playlist filter (rating > 0) and inline
-      // star widget light up. Doesn't lower ratings (mobile is
-      // additive-only), so multi-star desktop ratings are preserved.
+      // star widget light up. This pass only RAISES, so multi-star desktop
+      // ratings are preserved. Un-stars ("unstar everywhere", 2026-10-22) are
+      // lowered in main — user-edits-sync.ts applyPhoneUnstars writes rating 0
+      // through the override writer and pushes it here — and a song with a
+      // newer tombstone is not in this set, so nothing re-raises it at boot.
       if (mobileStarsResult?.ok && Array.isArray(mobileStarsResult.trackIds) && mobileStarsResult.trackIds.length > 0) {
         const mobileStarred = new Set(mobileStarsResult.trackIds.map(String))
         let mobileBumped = 0

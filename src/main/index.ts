@@ -3664,7 +3664,7 @@ async function refreshPhoneAuthoredMirrors(): Promise<void> {
     backendUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''),
     nasAvailable,
     // Merged, never copied over: a copy wiped stars made here (2026-10-20).
-    merge: { 'mobile-stars.json': (body) => mobileReadsApi.mergeRemoteStars(body) },
+    merge: { 'mobile-stars.json': async (body) => { await mobileReadsApi.mergeRemoteStars(body); await userEdits.applyPhoneUnstars() } },   // an un-star from the phone / another Mac lowers the rating here too (user-edits-sync.ts)
   })
   if (refreshedNames.some((n) => (PHONE_PLAYLIST_FILES as readonly string[]).includes(n))) void phonePlaylistSync.apply('phone-mirror')
   void mobileReadsApi.starPushTick(); void phoneImportGuard.tombstones.tick()
