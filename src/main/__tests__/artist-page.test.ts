@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   topSongs, mostPlayedRecord, earliestAdded, monthYear, dayMonthYear, clock, lengthLabel, heroEyebrow,
-  heroNameSize, posterDate, posterYear, liveCaption, posterShowLine, posterVenue, albumTileMeta, headerPhotoChoice,
+  heroNameSize, posterDate, posterYear, liveCaption, posterShowLine, posterVenue, albumTileMeta, headerPhotoChoice, heroPhotoFit,
 } from '../../common/artist-page.ts'
 
 const t = (id: number, plays: number, extra: Record<string, unknown> = {}) => ({ id, title: `Song ${id}`, duration: 200_000, playCount: plays, dateAdded: '2026-08-09T17:00:00.000Z', ...extra })
@@ -85,6 +85,58 @@ describe('the header photo (twin of the phone, Mobile #501)', () => {
     const view = readFileSync(join(import.meta.dirname, '../../renderer/views/ArtistDetailView.tsx'), 'utf-8')
     assert.match(view, /headerPhotoChoice\(profile\)/)
     assert.match(view, /headerChoice === 'cover'\s*\?\s*coverSrc/)
+  })
+})
+
+describe('the header photo window (twin of the phone, Mobile ArtistHeroFraming)', () => {
+  const twoToOne = { width: 1800, height: 900 }
+  it('a group photo is shown whole once the window is narrower than the photo', () => {
+    // The narrowest desktop window (900): the photo's window is 72% of the page, 541 × 440.
+    assert.equal(heroPhotoFit('group', { width: 541, height: 440 }, twoToOne), 'width')
+    assert.equal(heroPhotoFit('group', { width: 610, height: 440 }, twoToOne), 'width', '1000-wide page: 61% of it')
+    assert.equal(heroPhotoFit('group', { width: 793, height: 440 }, twoToOne), 'width', '1300-wide page: still 10% of the photo cropped')
+  })
+  it('keeps the full-height cover the builder framed for, and the wider windows', () => {
+    // 1440-wide window: 878 × 440, the builder\'s own model. Wider: the crop is only vertical.
+    assert.equal(heroPhotoFit('group', { width: 878, height: 440 }, twoToOne), 'cover')
+    assert.equal(heroPhotoFit('group', { width: 1037, height: 440 }, twoToOne), 'cover')
+    // Three percent off the photo\'s own proportions is rounding, not cropping.
+    assert.equal(heroPhotoFit('group', { width: 860, height: 440 }, twoToOne), 'cover')
+  })
+  it('a person always fills the window; so does anything it cannot measure', () => {
+    assert.equal(heroPhotoFit('person', { width: 541, height: 440 }, twoToOne), 'cover')
+    assert.equal(heroPhotoFit(' Person ', { width: 300, height: 440 }, twoToOne), 'cover')
+    assert.equal(heroPhotoFit('person', { width: 878, height: 440 }, { width: 600, height: 520 }), 'cover')
+    assert.equal(heroPhotoFit('group', { width: 0, height: 440 }, twoToOne), 'cover')
+    assert.equal(heroPhotoFit('group', { width: 541, height: 440 }, { width: 0, height: 0 }), 'cover')
+  })
+  it('anything that is not a person is a group; a profile without a kind too', () => {
+    assert.equal(heroPhotoFit('other', { width: 541, height: 440 }, twoToOne), 'width')
+    assert.equal(heroPhotoFit(undefined, { width: 541, height: 440 }, twoToOne), 'width')
+  })
+  it('a tall group portrait is shown whole by its height, not sliced through its rows of faces (Camper Van Beethoven, served 600 × 520)', () => {
+    const camper = { width: 600, height: 520 }
+    assert.equal(heroPhotoFit('group', { width: 878, height: 440 }, camper), 'height', 'the builder\'s 878 × 440 model: cover keeps 58% of the height')
+    assert.equal(heroPhotoFit('group', { width: 788, height: 440 }, camper), 'height', 'a 1440-wide window (the 148px sidebar takes its share)')
+    assert.equal(heroPhotoFit('group', { width: 1037, height: 440 }, camper), 'height')
+    // A narrower window than the photo\'s own proportions: the sides first.
+    assert.equal(heroPhotoFit('group', { width: 400, height: 440 }, camper), 'width')
+    // A near-2:1 photo is not tall: cover keeps 90%.
+    assert.equal(heroPhotoFit('group', { width: 878, height: 440 }, { width: 1800, height: 1012 }), 'cover')
+  })
+  it('the app\'s own artist image keeps its cover however tall it is (not a header photo)', () => {
+    assert.equal(heroPhotoFit(undefined, { width: 878, height: 440 }, { width: 1000, height: 1000 }, false), 'cover')
+    assert.equal(heroPhotoFit('group', { width: 878, height: 440 }, { width: 1000, height: 1000 }, true), 'height')
+  })
+  it('the page measures its window and the photo, and the stylesheet draws the whole one', () => {
+    const view = readFileSync(join(import.meta.dirname, '../../renderer/views/ArtistDetailView.tsx'), 'utf-8')
+    assert.match(view, /heroPhotoFit\(profile\?\.kind, heroBox, heroNatural, !!creditedHero\)/)
+    assert.match(view, /ad-hero-photo--whole/)
+    assert.match(view, /ad-hero-photo--tall/)
+    const css = readFileSync(join(import.meta.dirname, '../../renderer/styles/artist-detail.css'), 'utf-8')
+    assert.match(css, /\.ad-hero-photo--whole img\s*\{[^}]*height:\s*auto/)
+    assert.match(css, /\.ad-hero-photo--tall img\s*\{[^}]*width:\s*auto/)
+    assert.match(css, /\.ad-drift, \.ad-rise, \.ad-hero-photo--whole img, \.ad-hero-photo--tall img \{ animation: none; \}/, 'reduced motion stops the whole photo\'s drift too')
   })
 })
 

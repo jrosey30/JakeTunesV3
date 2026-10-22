@@ -155,6 +155,62 @@ export function headerPhotoChoice(p: { hero?: { source?: string } | null; heroNe
 }
 
 /**
+ * How the header photo meets its window (Jake, 2026-10-22, on the phone: "some
+ * of the artist headers cut off band members or a member").
+ *
+ * The window is `object-fit: cover`: a wide band photo in a window narrower
+ * than the photo is cropped at its sides, and the outer members go. The
+ * builder frames every header it picks at about 2:1 for a 1440-wide window
+ * (878 × 440), so that is right at that width and wrong below it: at the
+ * narrowest window (900) the photo's window is 541 × 440 and only 61% of a 2:1
+ * photo shows. A TALL group portrait (Camper Van Beethoven: five men in two
+ * rows, served 600 × 520 on purpose) is the other way round: cover keeps a
+ * 440px slice of it and the slice runs through the foreheads of one row or
+ * the chins of the other.
+ *
+ *   'cover'  — the window is as wide as the photo's proportions, or wider and
+ *              the photo is not much taller than it (the crop is only
+ *              vertical, and the builder kept every face inside it), or the
+ *              act is a person (one face: the crop is what fills the header).
+ *   'width'  — a group in a window narrower than its photo: the picture by its
+ *              whole width, anchored to the top, dissolving into the ink
+ *              below. No member is cropped out; the window's spare height is
+ *              the ink the name and stats already sit on.
+ *   'height' — a group's tall header photo in a much wider window: the
+ *              picture by its whole height, right-aligned (the left of the
+ *              window is already ink under the name and the fade), its left
+ *              edge dissolving. Every row of faces is shown.
+ *
+ * `framed` is true for a header photo the profile chose (its builder framed or
+ * Jake picked it for this window); the app's own artist image (a generic
+ * square portrait) keeps its cover however tall it is.
+ *
+ * Phone twin: JakeTunesMobile ios/JakeTunesMobile/ArtistHeroFraming.swift. The phone's
+ * window is always narrower than a band photo, so it decides by the kind and
+ * the picture's shape alone (a person's wide photo fills; anything else shows
+ * whole).
+ */
+export type HeroPhotoFit = 'cover' | 'width' | 'height'
+
+export function heroPhotoFit(
+  kind: string | null | undefined,
+  box: { width: number; height: number },
+  image: { width: number; height: number },
+  framed = true,
+): HeroPhotoFit {
+  if (String(kind || '').trim().toLowerCase() === 'person') return 'cover'
+  if (!(box.width > 0) || !(box.height > 0) || !(image.width > 0) || !(image.height > 0)) return 'cover'
+  const boxAspect = box.width / box.height
+  const imageAspect = image.width / image.height
+  // Three percent is rounding, not cropping: a window that is that close to
+  // the photo's own proportions stays a full-height cover.
+  if (boxAspect < imageAspect * 0.97) return 'width'
+  // Cover would keep less than 70% of the picture's height.
+  if (framed && imageAspect < boxAspect * 0.7) return 'height'
+  return 'cover'
+}
+
+/**
  * The name's type size step. Names never truncate (Jake's rule), so a long
  * one steps down instead of running off the band: 84 px for "Geese", smaller
  * for "Godspeed You! Black Emperor".
