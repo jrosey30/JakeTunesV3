@@ -22,3 +22,4 @@
 {"at": "2026-10-19T21:00:00", "event": "closed", "id": "PROPOSAL-taste-weights-refresh-v4", "outcome": "superseded", "ref": "JakeTunesV3#117 + JakeTunesMobile#408", "summary": "Superseded by E5/E9 (taste v5, shipped 10-13): its 'current' line is the old v4 W and its candidate was fit to v4's intensity feature, so applying it now would overwrite v5 with mismatched weights. Do not apply."}
 {"at": "2026-10-20T03:08:05", "event": "picked", "id": null, "mode": "idle", "checked": [{"id": "E1", "eligible": false}, {"id": "E2", "eligible": false}]}
 {"at": "2026-10-21T03:07:52", "event": "picked", "id": null, "mode": "idle", "checked": [{"id": "E1", "eligible": false}, {"id": "E2", "eligible": false}]}
+{"at": "2026-10-22T03:06:15", "event": "picked", "id": null, "mode": "idle", "checked": [{"id": "E1", "eligible": false}, {"id": "E2", "eligible": false}]}
