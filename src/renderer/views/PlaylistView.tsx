@@ -569,6 +569,10 @@ export default function PlaylistView() {
   const mins = totalMins % 60
   const timeStr = hours > 0 ? `${hours} hr ${mins} min` : `${mins} min`
 
+  // ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/PlaylistsView.swift
+  // PlaylistDetailView.commitRename (tap the name) — the phone's rename goes
+  // to the playlist hub as a newer copy (PATCH /api/playlists/:id), and this
+  // Mac adopts it on its next converge (main/playlist-hub-sync.ts).
   const commitRename = () => {
     const trimmed = editName.trim()
     if (trimmed && trimmed !== playlist.name) {
@@ -738,6 +742,8 @@ export default function PlaylistView() {
   }
 
   // Drag reorder is only enabled when in natural order (no sort, no search)
+  // ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/PlaylistsView.swift
+  // PlaylistDetailView.move (Edit → drag handles) — same hub path as rename.
   const canDragReorder = !state.searchQuery && !sortCol
 
   return (
