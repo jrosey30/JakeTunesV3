@@ -51,6 +51,10 @@ type SortId = 'az' | 'played' | 'added' | 'genre' | 'country' | 'depth'
 const SORTS: Array<[SortId, string]> = [['az', 'A–Z'], ['played', 'Most played'], ['added', 'Recently added'], ['genre', 'Genre'], ['country', 'Country'], ['depth', 'Depth']]
 /** The sort survives leaving the view (MainContent unmounts it). */
 let lastSort: SortId = 'az'
+/** Heavy rotation survives leaving the view too (2026-10-21): it loads async,
+ *  and a shelf that pops in ABOVE the A–Z list after the scroll restore pushed
+ *  every return through the sidebar one row past where you left. */
+let lastHeavy: Array<{ artist: string; plays: number }> = []
 
 interface ArtistCard {
   name: string
@@ -129,7 +133,7 @@ export default function ArtistsView(): JSX.Element {
   const setSort = (s: SortId): void => { lastSort = s; setSortState(s) }
   const [photos, setPhotos] = useState<Map<string, string | null>>(() => new Map(sessionArtistImages))
   const [fans, setFans] = useState<Record<string, number>>({})   // ListenBrainz listeners, for Depth
-  const [heavy, setHeavy] = useState<Array<{ artist: string; plays: number }>>([])
+  const [heavy, setHeavy] = useState<Array<{ artist: string; plays: number }>>(lastHeavy)
   const [groupingOpen, setGroupingOpen] = useState(false)
   const [listFilter, setListFilter] = useState('')
   const aliasVersion = useSyncExternalStore(subscribeAliases, getAliasVersion)
@@ -184,7 +188,7 @@ export default function ArtistsView(): JSX.Element {
   // Heavy rotation: the last 30 days of plays (listening memory), mapped onto cards.
   useEffect(() => {
     let live = true
-    window.electronAPI.getListeningMemory?.().then((m) => { const top = m.ok ? m.insights?.topArtists30d : undefined; if (live && top) setHeavy(top) }).catch(() => {})
+    window.electronAPI.getListeningMemory?.().then((m) => { const top = m.ok ? m.insights?.topArtists30d : undefined; if (live && top) { lastHeavy = top; setHeavy(top) } }).catch(() => {})
     return () => { live = false }
   }, [])
   // Depth reads the ListenBrainz listener counts (artist-listeners.json).
