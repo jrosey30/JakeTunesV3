@@ -165,6 +165,8 @@ describe('WIRING — the tested code is the live code', () => {
     { fn: 'withModelPolicy', file: 'main/index.ts', minCalls: 3, why: 'model upgrade — unwired, a 5.x call 400s on temperature or spends its budget thinking and returns no text' },
     { fn: 'armGlobalNets', file: 'renderer/main.tsx', minCalls: 1, why: 'reliability P0 — the renderer crash net must arm before first render or grey screens go unrecorded again' },
     { fn: 'claimTransportKeys', file: 'renderer/views/ListenToTheListView.tsx', minCalls: 1, why: 'unwired, Space in the Listen List previews AND toggles the music, and ↑/↓ nudge the volume while you triage' },
+    { fn: 'userEdits.applyPhoneUnstars(', file: 'main/index.ts', minCalls: 1, literal: true,
+      why: 'unstar everywhere (2026-10-22) — unwired, an un-star from the phone or another Mac never lowers the rating this Mac holds, and the boot pass re-stars the song' },
     // Passed by REFERENCE (importDownloaded: importDownloadedFiles), never
     // called directly in index — so this wire matches the reference form.
     { fn: 'importDownloaded: importDownloadedFiles', file: 'main/index.ts', minCalls: 2, literal: true,

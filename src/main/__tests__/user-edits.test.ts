@@ -12,7 +12,7 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   emptyUserEdits, parseUserEdits, recordUserEdit, seedStarsFromOverrides, planHubAbsorb,
-  replicaOverlay, replicaLiveUpdates, rowFingerprint, sameValue, isUserEditField, pinPendingEdits,
+  replicaOverlay, replicaLiveUpdates, rowFingerprint, sameValue, isUserEditField, pinPendingEdits, planPhoneUnstars, PHONE_UNSTAR_CAP,
   type UserEditsDoc, type RowLike,
 } from '../../common/user-edits.ts'
 import { HUB_CATALOG_FIELDS, HUB_DETAIL_FIELDS, mergeHubCatalog } from '../../common/hub-catalog-merge.ts'
@@ -303,5 +303,110 @@ describe('a replica: its stale copy can never beat the hub', () => {
     assert.deepEqual(replicaLiveUpdates(next, next, mine, CARRIED), [])
     const absorbed = recordUserEdit(prev, 2, 'rating', '5', SINCE + 1000, { from: 'workmini' })
     assert.deepEqual(replicaLiveUpdates(prev, absorbed, mine, CARRIED), [], 'absorbed = what it already shows')
+  })
+})
+
+// ── 2026-10-22 — "unstar everywhere" (Jake) ───────────────────────────────────
+// ⚠️ TWIN: ~/JakeTunesMobile backend/src/util/__tests__/starOverlay.test.ts —
+// the same cases, the same answers: what the MacBook writes to its overrides
+// and what homemini serves the phone must agree.
+describe('a phone un-star lowers the hub\'s rating (planPhoneUnstars)', () => {
+  const rows = new Map<string, RowLike>([
+    row(1, { rating: 5 }), row(2, { rating: 5 }), row(3, { rating: 0 }), row(4, { rating: 3 }), row(5, {}), row(6, { rating: 5, starredAt: 9000 }),
+  ])
+  const hub = emptyUserEdits(SINCE)
+  const stars = (o: { trackIds?: string[]; removed?: Record<string, number>; added?: Record<string, number> }) =>
+    ({ trackIds: o.trackIds ?? [], removed: o.removed ?? {}, added: o.added ?? {} })
+  const plan = (o: Parameters<typeof stars>[0], extra: Partial<Parameters<typeof planPhoneUnstars>[0]> = {}) =>
+    planPhoneUnstars({ stars: stars(o), overrides: {}, rows, hub, ...extra })
+  const ids = (p: ReturnType<typeof planPhoneUnstars>) => p.writes.map((w) => w.id)
+
+  test('a song rated in library.json that the sidecar never held is lowered by a tombstone, at the tombstone\'s own time', () => {
+    const p = plan({ removed: { '2': 1000 } })
+    assert.deepEqual(p.writes, [{ id: '2', at: 1000 }])
+    assert.equal(p.counts.lowered, 1)
+  })
+
+  test('a multi-star rating is lowered by an explicit un-star, and by nothing else', () => {
+    assert.deepEqual(ids(plan({ removed: { '4': 1 } })), ['4'])
+    assert.deepEqual(ids(plan({})), [], 'no tombstones: no rated song is touched')
+    assert.deepEqual(ids(plan({ trackIds: ['1', '2', '4'] })), [])
+  })
+
+  test('already un-starred, unknown to the hub, or starred again: nothing to write', () => {
+    const p = plan({ removed: { '3': 5, '5': 5, '404': 5, '1': 5 }, trackIds: ['1'] })
+    assert.deepEqual(p.writes, [])
+    assert.deepEqual(p.counts, { 'already-unstarred': 2, 'not-on-hub': 1, 'starred-now': 1 })
+  })
+
+  test('the override outranks the row: a song the hub already set to 0 is not lowered twice', () => {
+    const overrides = { '2': { fp: fpOf(rows.get('2')!), fields: { rating: '0' } } }
+    assert.deepEqual(ids(plan({ removed: { '2': 1000 } }, { overrides })), [])
+    // and an override that STARS a song the row shows unrated is lowered
+    const starredByOverride = { '3': { fp: fpOf(rows.get('3')!), fields: { rating: '5' } } }
+    assert.deepEqual(ids(plan({ removed: { '3': 1000 } }, { overrides: starredByOverride })), ['3'])
+  })
+
+  test('the hub\'s own newer star stands: journal, override stamp or row stamp; a tie goes to the tombstone', () => {
+    const journal = (at: number, v = '5', extra: Record<string, unknown> = {}) => recordUserEdit(hub, 2, 'rating', v, at, extra)
+    assert.deepEqual(ids(plan({ removed: { '2': 1000 } }, { hub: journal(1001) })), [], 'journal star after the un-star')
+    assert.deepEqual(ids(plan({ removed: { '2': 1000 } }, { hub: journal(999) })), ['2'], 'journal star before it')
+    assert.deepEqual(ids(plan({ removed: { '2': 1000 } }, { hub: journal(1000) })), ['2'], 'a tie')
+    assert.deepEqual(ids(plan({ removed: { '2': 1000 } }, { hub: recordUserEdit(hub, 2, 'starredAt', '1', 1500) })), [], 'starredAt stamp in the journal')
+    const stamped = { '2': { fp: fpOf(rows.get('2')!), fields: { rating: '5', starredAt: '2000' } } }
+    assert.deepEqual(ids(plan({ removed: { '2': 1500 } }, { overrides: stamped })), [], 'starredAt in the override')
+    assert.deepEqual(ids(plan({ removed: { '6': 8000 } })), [], 'starredAt on the row: starred at 9000, un-starred at 8000')
+    assert.deepEqual(ids(plan({ removed: { '6': 9500 } })), ['6'])
+  })
+
+  test('a journal rating of 0 and a verdict the hub wrote itself are not evidence of a newer star', () => {
+    assert.deepEqual(ids(plan({ removed: { '2': 1000 } }, { hub: journalOf(2, '0', 5000) })), ['2'])
+    assert.deepEqual(ids(plan({ removed: { '2': 1000 } }, { hub: journalOf(2, '5', 5000, { kept: true }) })), ['2'])
+    // a star made on workmini and absorbed (from: workmini) IS the hub\'s star
+    assert.deepEqual(ids(plan({ removed: { '2': 1000 } }, { hub: journalOf(2, '5', 5000, { from: 'workmini' }) })), [])
+  })
+
+  test('at most one pass\'s worth, oldest first; the rest wait', () => {
+    const many = new Map<string, RowLike>()
+    const removed: Record<string, number> = {}
+    for (let i = 1; i <= 130; i++) { const [k, r] = row(i, { rating: 5 }); many.set(k, r); removed[k] = 10_000 - i }
+    const p = planPhoneUnstars({ stars: stars({ removed }), overrides: {}, rows: many, hub })
+    assert.equal(p.writes.length, PHONE_UNSTAR_CAP)
+    assert.equal(p.deferred, 130 - PHONE_UNSTAR_CAP)
+    assert.ok(p.writes[0].at < p.writes[p.writes.length - 1].at, 'oldest first')
+    const small = planPhoneUnstars({ stars: stars({ removed }), overrides: {}, rows: many, hub, cap: 5 })
+    assert.equal(small.writes.length, 5)
+  })
+
+  test('today\'s real shape: tombstones the hub itself wrote (override already 0) flip nothing', () => {
+    const rated = new Map<string, RowLike>([row(9, { rating: 5 }), row(10, { rating: 5 })])
+    const overrides = {
+      '9': { fp: fpOf(rated.get('9')!), fields: { rating: '0' } },
+      '10': { fp: fpOf(rated.get('10')!), fields: { rating: '0', starredAt: '1700000000000' } },
+    }
+    const p = planPhoneUnstars({ stars: stars({ removed: { '9': 100, '10': 200 } }), overrides, rows: rated, hub })
+    assert.deepEqual(p.writes, [])
+  })
+
+  function journalOf(id: number, v: string, at: number, extra: Record<string, unknown> = {}): UserEditsDoc {
+    return recordUserEdit(emptyUserEdits(SINCE), id, 'rating', v, at, extra)
+  }
+})
+
+describe('a replica holding an older star learns of the un-star from the hub journal', () => {
+  test('the hub\'s rating-0 verdict at the un-star\'s time beats the replica\'s own older star at boot, and is not pinned over the catalog', () => {
+    const rows = new Map<string, RowLike>([row(2, { rating: 0 })])   // the catalog already carries the un-star
+    const mine = recordUserEdit(emptyUserEdits(SINCE - DAY), 2, 'rating', '5', 500, { dur: 200_002 })
+    // before the hub journals the verdict: the replica\'s older star would be put back
+    const before = replicaOverlay({}, { hubFields: HUB_FIELDS, rows, mine, hub: emptyUserEdits(SINCE) }).overrides as Record<string, { fields: Record<string, string> }>
+    assert.equal(before['2'].fields.rating, '5')
+    // once the hub has journaled the phone\'s un-star (applyPhoneUnstars): the verdict wins
+    const hub = recordUserEdit(emptyUserEdits(SINCE), 2, 'rating', '0', 1000, { from: 'phone' })
+    const after = replicaOverlay({}, { hubFields: HUB_FIELDS, rows, mine, hub }).overrides as Record<string, { fields: Record<string, string> }>
+    assert.equal(after['2'].fields.rating, '0')
+    const pinned = pinPendingEdits([{ id: 2, rating: 0 }], mine, hub, CARRIED)
+    assert.equal(pinned.pinned, 0, 'the replica\'s older star is no longer pinned over the hub catalog')
+    const live = replicaLiveUpdates(emptyUserEdits(SINCE), hub, mine, CARRIED)
+    assert.deepEqual(live, [{ id: '2', field: 'rating', value: '0' }])
   })
 })

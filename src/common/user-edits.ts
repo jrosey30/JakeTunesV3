@@ -332,6 +332,95 @@ export function planHubAbsorb(input: AbsorbInput): AbsorbPlan {
   return { writes, hub, counts }
 }
 
+// ── a phone un-star lowers the hub's rating ────────────────────────────────
+
+/** Songs one pass may lower. A bigger backlog is finished by the next pass, 5 minutes on. */
+export const PHONE_UNSTAR_CAP = 100
+
+export interface PhoneUnstarInput {
+  /** the hub's star sidecar AFTER the phone's copy was merged in (mobile-stars.json v2) */
+  stars: StarEventsLike
+  /** the hub's metadata-overrides.json */
+  overrides: Record<string, unknown>
+  /** the hub's library rows by id (library.json as saved) */
+  rows: ReadonlyMap<string, RowLike>
+  /** the hub's own journal */
+  hub: UserEditsDoc
+  /** songs one pass may lower (default PHONE_UNSTAR_CAP) */
+  cap?: number
+}
+
+export type PhoneUnstarDecision = 'lowered' | 'starred-now' | 'not-on-hub' | 'already-unstarred' | 'hub-star-newer'
+
+export interface PhoneUnstarPlan {
+  /** rating → '0' at the tombstone's own time, oldest first */
+  writes: Array<{ id: string; at: number }>
+  /** more songs than the cap: left for the next pass */
+  deferred: number
+  counts: Partial<Record<PhoneUnstarDecision, number>>
+}
+
+/**
+ * "Unstar everywhere" (Jake, 2026-10-22): an un-star on the phone, or on a
+ * Mac, un-stars the song on every device, newest event wins.
+ *
+ * The star sidecar already settles WHETHER a song is starred, per song, newest
+ * event first. What it could not do was lower a rating this Mac already held:
+ * a song rated in library.json or an override stayed rated, whatever the phone
+ * said, because the renderer's boot pass only ever RAISES ratings and nothing
+ * turned a tombstone into a lower rating. This is that step, planned purely.
+ *
+ * A song is lowered to 0 when ALL of:
+ *   - the sidecar holds a tombstone for it and it is not starred now (a newer
+ *     star, here or elsewhere, already won);
+ *   - this Mac still shows it rated (its override, else its row);
+ *   - this Mac's own latest star is not newer than the tombstone. Evidence of
+ *     that star: the journal (a rating above 0 or a starredAt stamp; the
+ *     entries the hub wrote itself as verdicts, `kept`, carry an artificial
+ *     time and do not count), the override's starredAt, the row's starredAt. A
+ *     tie goes to the tombstone.
+ * A song with no tombstone is never touched: nothing un-starred it, so
+ * multi-star ratings survive and a misread file cannot wipe the library. At
+ * most `cap` songs per pass.
+ *
+ * ⚠️ TWIN: ~/JakeTunesMobile backend/src/util/starOverlay.ts applyStarOverlay —
+ * the phone and workmini read the same rule from homemini in the meantime.
+ * Change the rule in one place, change it in both.
+ */
+export function planPhoneUnstars(input: PhoneUnstarInput): PhoneUnstarPlan {
+  const counts: PhoneUnstarPlan['counts'] = {}
+  const count = (d: PhoneUnstarDecision) => { counts[d] = (counts[d] ?? 0) + 1 }
+  const listed = new Set(input.stars.trackIds)
+  const ordered = Object.entries(input.stars.removed)
+    .filter(([id, at]) => !!id && isTime(at))
+    .sort((a, b) => a[1] - b[1] || (a[0] < b[0] ? -1 : 1))
+  const cap = Math.max(0, input.cap ?? PHONE_UNSTAR_CAP)
+  const writes: PhoneUnstarPlan['writes'] = []
+  let deferred = 0
+
+  for (const [id, at] of ordered) {
+    if (listed.has(id)) { count('starred-now'); continue }
+    const row = input.rows.get(id)
+    if (!row) { count('not-on-hub'); continue }
+    const fields = v2(input.overrides[id])?.fields
+    const has = (k: string) => !!fields && Object.prototype.hasOwnProperty.call(fields, k)
+    const shown = has('rating') ? fields!.rating : row.rating
+    if (!(Number(shown) > 0)) { count('already-unstarred'); continue }
+    const journalStar = (field: string): number => {
+      const e = getUserEdit(input.hub, id, field)
+      if (!e || e.kept) return 0
+      return field === 'rating' && !(Number(e.v) > 0) ? 0 : e.at
+    }
+    const stamp = (x: unknown): number => { const n = Number(x); return Number.isFinite(n) && n > 0 ? n : 0 }
+    const hubStar = Math.max(journalStar('rating'), journalStar('starredAt'), stamp(has('starredAt') ? fields!.starredAt : 0), stamp(row.starredAt))
+    if (hubStar > at) { count('hub-star-newer'); continue }
+    if (writes.length >= cap) { deferred++; continue }
+    writes.push({ id, at })
+    count('lowered')
+  }
+  return { writes, deferred, counts }
+}
+
 // ── a replica's view ───────────────────────────────────────────────────────
 
 /** The value a replica shows for a journaled field, or undefined (the hub's rules). */
