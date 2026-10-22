@@ -38,12 +38,15 @@
   }
 }
 
-/* 2026-10-21 — the browse page kept alive under an artist / album page
+/* 2026-10-21 — the grid kept alive under an artist / album page
    (keptView.ts). One stable full-size box whether shown or parked, so parking
    never rebuilds its layout. Parked = not painted, not hit-tested, out of the
-   a11y tree, and its laid-out DOM + scroll position preserved
-   (content-visibility: hidden keeps the rendering state; unhide measured
-   <1 ms vs 70–93 ms for display:none). */
+   a11y tree, its laid-out DOM + scroll position preserved: unhide is a
+   repaint (display:none was measured at 70–93 ms of relayout).
+   visibility, NOT content-visibility:hidden: under content-visibility the
+   Artists letter sections (content-visibility:auto) all lost their
+   on-screen status while parked and the first frame back showed them
+   skipped — one blank frame per back (caught off-screen, 2026-10-22). */
 .main-content-view--kept {
   display: block;
   position: absolute;
@@ -51,7 +54,6 @@
 }
 .main-content-view--parked {
   visibility: hidden;
-  content-visibility: hidden;
   pointer-events: none;
 }
 

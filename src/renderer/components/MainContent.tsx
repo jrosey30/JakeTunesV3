@@ -157,8 +157,9 @@ export default function MainContent() {
         // Always the same box (absolute, full size) whether shown or parked:
         // swapping display types on park would rebuild its layout, and
         // display:none costs a full relayout on unhide (measured 93 ms on
-        // Artists, 70 ms on Albums) where content-visibility:hidden keeps the
-        // laid-out page and unhides in under a millisecond, scroll intact.
+        // Artists, 70 ms on Albums). Parked = visibility:hidden — the laid-out
+        // page stays, scroll intact (main-content.css says why not
+        // content-visibility).
         <div
           className={`main-content-view main-content-view--kept${keptActive ? '' : ' main-content-view--parked'}`}
           key={`kept:${wantKept}`}
