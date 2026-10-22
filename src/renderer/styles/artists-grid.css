@@ -23,7 +23,7 @@
 .ag-sec { contain-intrinsic-size: auto 600px; }
 /* content-visibility implies paint containment: let a hovered card's shadow
    (0 6px 16px) still paint past the section's 6px bottom padding. */
-.ag--skip-offscreen .ag-sec { content-visibility: auto; overflow-clip-margin: 28px; }
+.ag--skip-offscreen .ag-sec:not(.ag-sec--near) { content-visibility: auto; overflow-clip-margin: 28px; }
 /* No hover while scrolling: cards sliding under a parked pointer restarted
    their hover transitions every few frames (useScrollingClass). */
 .ag.is-scrolling .ag-card { pointer-events: none; }

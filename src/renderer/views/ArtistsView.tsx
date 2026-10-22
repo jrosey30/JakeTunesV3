@@ -238,6 +238,37 @@ export default function ArtistsView(): JSX.Element {
     return AZ_LETTERS.filter((L) => m.has(L)).map((L) => ({ id: L, title: L, items: m.get(L)! }))
   }, [sort, visible, fans])
 
+  // Chromium decides a content-visibility:auto section is on screen one frame
+  // LATE: a far jump (the smooth scroll-to-top, a scrollbar drag) painted
+  // sections still skipped — 2 empty frames per jump, 12 on scroll-to-top
+  // (off-screen harness, 2026-10-22). Sections within a screen of the
+  // viewport are marked .ag-sec--near synchronously on every scroll event
+  // (scroll events run before paint, in the same frame) and render whatever
+  // Chromium's relevance says.
+  useEffect(() => {
+    const root = viewRootRef.current
+    if (!root || !skipOffscreen) return
+    let near = new Set<Element>()
+    const update = (): void => {
+      const rt = root.getBoundingClientRect().top
+      const vh = root.clientHeight
+      const next = new Set<Element>()
+      for (const sec of root.querySelectorAll('.ag-sec')) {
+        const r = sec.getBoundingClientRect()
+        if (r.bottom - rt > -vh && r.top - rt < 2 * vh) next.add(sec)
+      }
+      for (const sec of near) if (!next.has(sec)) sec.classList.remove('ag-sec--near')
+      for (const sec of next) if (!near.has(sec)) sec.classList.add('ag-sec--near')
+      near = next
+    }
+    update()
+    root.addEventListener('scroll', update, { passive: true })
+    return () => {
+      root.removeEventListener('scroll', update)
+      for (const sec of near) sec.classList.remove('ag-sec--near')
+    }
+  }, [skipOffscreen, sections])
+
   // ── Photos, requested as cards come near the viewport ──
   // Arrivals are batched (2026-10-21): photos resolve four at a time as you
   // scroll into unseen letters, and each one used to be its own full re-render.
