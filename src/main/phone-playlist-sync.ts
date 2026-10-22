@@ -29,6 +29,7 @@ import {
 } from './phone-playlist-edits.ts'
 import { stampModifiedPlaylists, type HubPlaylistLike } from './playlist-hub-sync.ts'
 import { loadTombstones, recordPlaylistSave } from './playlist-tombstones.ts'
+import { bumpLocalGen } from './hub-local-state.ts'
 
 /**
  * The phone's playlist ledgers that are NOT in the contracts' never-push
@@ -103,6 +104,10 @@ export function createPhonePlaylistSync(deps: PhonePlaylistSyncDeps): { apply: (
     if (!changed) return report
     const stamped = stampModifiedPlaylists(prev, next, deps.now)
     deps.setPlaylists(stamped)
+    // A local writer like save-playlists: a hub reply computed before this
+    // lands must not replace it (hub-local-state.ts, audit A02). The
+    // recordPlaylistSave below moves the tombstone generation.
+    bumpLocalGen('playlists')
     // Phone deletions become desktop tombstones, so the hub (and workmini)
     // drop the playlist too instead of handing it back on the next converge.
     await recordPlaylistSave(prev, stamped, deps.tombstonesFile, deps.now)

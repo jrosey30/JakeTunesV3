@@ -7,12 +7,23 @@
  * name is derived from paths under OUR mixtape-intros dir (a tape's JSON
  * can never aim the copier anywhere else).
  *
+ * 2026-10-22 (audit A02) — same guard as the playlist client: a hub reply is
+ * adopted only if no local writer (mixtape-save, mixtape-delete, the monthly
+ * season tape — mixtape-store-writes.ts) moved the shelf since the snapshot we
+ * sent, checked under the shelf's lock. Otherwise the reply is dropped and the
+ * converge runs again at once; the hub already merged the snapshot, so nothing
+ * is lost, and a tape deleted / edited / recorded during the request can no
+ * longer be undone by an older answer (see hub-local-state.ts).
+ *
  * Electron-free: deps injected, node --test loads it.
  */
 import { basename, join } from 'path'
 import { readFile, writeFile, rename, mkdir, access } from 'fs/promises'
-import { loadTombstones, saveTombstones } from './playlist-tombstones.ts'
+import { loadTombstones, saveTombstones, sameTombstoneSet } from './playlist-tombstones.ts'
 import { withCompanionInit } from './hub-companion.ts'
+import {
+  bumpLocalGen, snapshotLocalGens, movedGens, withLocalLock, lockKeys, MIXTAPE_HUB_COLLECTIONS,
+} from './hub-local-state.ts'
 
 export interface HubTapeLike {
   id?: unknown
@@ -63,13 +74,32 @@ export interface MixtapeConvergeResult {
   audioPulled: number
   audioPushed: number
   error?: string
+  /** Every attempt was overtaken by a newer local change; nothing adopted. */
+  deferred?: boolean
 }
 
+/** Attempts per converge (the first plus immediate re-converges). */
+const MAX_ATTEMPTS = 4
+
+type Attempt = MixtapeConvergeResult & { stale?: boolean }
+
 export async function convergeMixtapeHub(deps: MixtapeHubDeps): Promise<MixtapeConvergeResult> {
+  const log = deps.log ?? ((m: string) => console.log(m))
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const r = await convergeOnce(deps)
+    if (!r.stale) return r
+    log(`[mixtape-hub] a local change landed while the hub was answering (attempt ${attempt}/${MAX_ATTEMPTS}) — dropped that reply, converging again`)
+  }
+  return { ok: true, changed: false, audioPulled: 0, audioPushed: 0, deferred: true }
+}
+
+async function convergeOnce(deps: MixtapeHubDeps): Promise<Attempt> {
   const fetchFn = deps.fetchFn ?? fetch
   const log = deps.log ?? ((m: string) => console.log(m))
   const none = { audioPulled: 0, audioPushed: 0 }
   try {
+    // Generations FIRST, then the reads (see hub-local-state.ts).
+    const since = snapshotLocalGens()
     const [tapes, tombstones] = await Promise.all([
       deps.getMixtapes(),
       loadTombstones(deps.tombstonesFile),
@@ -84,17 +114,31 @@ export async function convergeMixtapeHub(deps: MixtapeHubDeps): Promise<MixtapeC
     const merged = await res.json() as { ok?: boolean; mixtapes?: HubTapeLike[]; tombstones?: Array<{ id: string; name: string; deletedAt: string }> }
     if (!merged?.ok || !Array.isArray(merged.mixtapes)) return { ok: false, changed: false, ...none, error: 'bad hub reply' }
 
-    const changed = sig(merged.mixtapes) !== sig(tapes)
-    if (changed) {
-      await deps.setMixtapes(merged.mixtapes)
-      log(`[mixtape-hub] adopted hub state: ${merged.mixtapes.length} tapes (was ${tapes.length})`)
-    }
-    if (Array.isArray(merged.tombstones)) await saveTombstones(merged.tombstones, deps.tombstonesFile)
+    const hubTapes = merged.mixtapes
+    const changed = sig(hubTapes) !== sig(tapes)
+
+    // Under the shelf's lock — the one every local tape writer takes — check
+    // that nothing local moved since the snapshot, then adopt.
+    const outcome = await withLocalLock(lockKeys.mixtapeStore(deps.tombstonesFile), async (): Promise<'stale' | 'adopted'> => {
+      if (movedGens(since, MIXTAPE_HUB_COLLECTIONS).length > 0) return 'stale'
+      if (changed) {
+        await deps.setMixtapes(hubTapes)
+        bumpLocalGen('mixtapes')
+        log(`[mixtape-hub] adopted hub state: ${hubTapes.length} tapes (was ${tapes.length})`)
+      }
+      if (Array.isArray(merged.tombstones)) {
+        const current = await loadTombstones(deps.tombstonesFile)
+        await saveTombstones(merged.tombstones, deps.tombstonesFile)
+        if (!sameTombstoneSet(current, merged.tombstones)) bumpLocalGen('mixtapeTombstones')
+      }
+      return 'adopted'
+    })
+    if (outcome === 'stale') return { ok: true, changed: false, ...none, stale: true }
 
     // ── Voice-audio heal (never overwrites, either side) ──
     let audioPulled = 0
     let audioPushed = 0
-    const wanted = referencedAudioNames(merged.mixtapes, deps.introsDir)
+    const wanted = referencedAudioNames(hubTapes, deps.introsDir)
     if (wanted.length) {
       const invRes = await fetchFn(`${deps.hubUrl}/api/desktop-mixtapes/audio`, withCompanionInit({ signal: AbortSignal.timeout(10_000) }))
       const hubNames = new Set(invRes.ok ? ((await invRes.json() as { names?: string[] }).names ?? []) : [])
@@ -136,9 +180,14 @@ export async function convergeMixtapeHub(deps: MixtapeHubDeps): Promise<MixtapeC
 let bound: MixtapeHubDeps | null = null
 let timer: ReturnType<typeof setTimeout> | null = null
 let running = false
+/** Asked for while one was in flight, or the last one was overtaken by local
+ *  changes on every attempt: run once more when it ends (never drop it). */
+let rerun = false
+let rerunDelayMs = 1_000
 
-export function initMixtapeHubSync(deps: MixtapeHubDeps): void {
+export function initMixtapeHubSync(deps: MixtapeHubDeps, opts?: { rerunDelayMs?: number }): void {
   bound = deps
+  rerunDelayMs = opts?.rerunDelayMs ?? 1_000
 }
 
 export function scheduleMixtapeHubConverge(delayMs = 5_000): void {
@@ -146,8 +195,23 @@ export function scheduleMixtapeHubConverge(delayMs = 5_000): void {
   if (timer) clearTimeout(timer)
   timer = setTimeout(() => {
     timer = null
-    if (running || !bound) return
-    running = true
-    void convergeMixtapeHub(bound).finally(() => { running = false })
+    void runScheduledConverge()
   }, delayMs)
+}
+
+async function runScheduledConverge(): Promise<void> {
+  const deps = bound
+  if (!deps) return
+  if (running) { rerun = true; return }
+  running = true
+  try {
+    const r = await convergeMixtapeHub(deps)
+    if (r.deferred) rerun = true
+  } finally {
+    running = false
+  }
+  if (rerun) {
+    rerun = false
+    scheduleMixtapeHubConverge(rerunDelayMs)
+  }
 }

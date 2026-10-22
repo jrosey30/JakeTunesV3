@@ -10,7 +10,7 @@ import { join } from 'path'
 import { readFile, writeFile } from 'fs/promises'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
-import { loadPins, savePins, normalizePins, pinsPath } from '../playlist-pins.ts'
+import { loadPins, saveLocalPins, normalizePins, pinsPath } from '../playlist-pins.ts'
 
 function uiStatePath(): string {
   return join(app.getPath('userData'), 'ui-state.json')
@@ -130,7 +130,9 @@ export function registerUiStateIpc(ipc: IpcRegistrar): void {
   ipc.handle('save-playlist-pins', async (_e, pinnedPlaylists: unknown) => {
     const pins = normalizePins({ pinnedPlaylists, updatedAt: new Date().toISOString() })
     if (!pins) return { ok: false, error: 'bad-shape' }
-    await savePins(pins, pinsPath(app.getPath('userData')))
+    // saveLocalPins: bumps the pins generation + writes under the pins lock,
+    // so a hub reply built from older pins can't overwrite it (A02).
+    await saveLocalPins(pins, pinsPath(app.getPath('userData')))
     return { ok: true }
   }, { refuse: REFUSED_SENDER })
 }
