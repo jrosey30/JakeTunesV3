@@ -82,7 +82,12 @@ export function buildStory(y: YearInReview, opts: { now: Date; concerts?: StoryC
     note: startedLate ? `Since ${dayName(localParts(y.coverage.firstListen!).date)}, the day JakeTunes started keeping score.` : undefined,
   })
 
-  if (y.firstPlay) {
+  // Where it started: only when the log reaches back to the start of the
+  // year. When JakeTunes began keeping score mid-year (startedLate), the
+  // first logged play is just the first thing the log caught, not where the
+  // year started (Jake 10/22: "Illegal being on the year in review makes no
+  // sense to me"). firstPlay stays in the facts; it is honest data.
+  if (y.firstPlay && !startedLate) {
     const p = localParts(y.firstPlay.ts)
     slides.push({
       kind: 'art', eyebrow: 'Where it started', big: y.firstPlay.title,

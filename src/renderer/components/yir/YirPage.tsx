@@ -30,6 +30,7 @@ export default function YirPage({ y, ctx, onStory }: { y: YirFacts; ctx: YirCtx;
   const revealed = isRevealed(y.year, new Date())
   const T = y.totals, C = y.coverage, H = y.honesty, D = y.discoveries
   const first = C.firstListen ? localParts(C.firstListen) : null
+  const startedLate = C.monthsBeforeHistory.length > 0 && !!C.firstListen
   const last = C.lastListen ? localParts(C.lastListen) : null
   const loudest = y.months.length ? y.months.reduce((a, b) => (b.plays > a.plays ? b : a)) : null
   const peakH = argMax(y.clock.byHour), peakW = argMax(y.clock.byWeekday)
@@ -58,7 +59,9 @@ export default function YirPage({ y, ctx, onStory }: { y: YirFacts; ctx: YirCtx;
         <button type="button" className="yir-p-story" onClick={onStory}>Play the story</button>
       </section>
 
-      {y.firstPlay && (
+      {/* Only when the log reaches back to the year's start (the story's rule,
+          yir-story.ts): a mid-year first play is not where the year started. */}
+      {y.firstPlay && !startedLate && (
         <section>
           <div className="yir-p-eyebrow">Where it started</div>
           <h2>The first song on the record was <em>{y.firstPlay.title}</em>.</h2>
