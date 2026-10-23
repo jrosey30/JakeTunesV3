@@ -24,8 +24,9 @@
  * you ask me about certain songs it feels like i am deciding between
  * children" — "i like heats....but when we gotta make tough
  * decisions....bracket one on one duels"). homemini serves HEATS — up to five
- * undecided songs; tap the covers (or 1–5) of the ones that make the 1000,
- * exactly as many as it asks for, then Lock them in (Enter) — and DUELS for
+ * undecided songs; tap the covers (or 1–5) of the ones that move on, exactly
+ * as many as it asks for, then Move them on (Enter) — moving on isn't making
+ * the 1000, and a song is only out after two losses — and DUELS for
  * the songs still on the line after their heat: one on one, no "love both".
  * Every undecided song gets one heat a round; the meter shows the round and
  * what is left of it.
@@ -69,7 +70,8 @@ const PROMPT: Record<Exclude<QuizQuestion['kind'], 'heat'>, string> = {
 }
 
 function promptFor(q: QuizQuestion): string {
-  if (q.kind === 'heat') return `Pick the ${q.quota} that make your 1000`
+  // Jake: "just because i pick songs to go to the next round doesnt mean they make the 1000".
+  if (q.kind === 'heat') return `Which ${q.quota} move on?`
   return PROMPT[q.kind]
 }
 
@@ -96,7 +98,7 @@ function describeAnswer({ q, choice, picked }: SentAnswer): string {
   if (q.kind === 'heat' && choice === 'picked' && picked) {
     const inSongs = q.songs.filter((s) => picked.includes(s.id))
     const outSongs = q.songs.filter((s) => !picked.includes(s.id))
-    return `In: ${inSongs.map(quoted).join(', ')} · out: ${outSongs.map(quoted).join(', ')}`
+    return `Moved on: ${inSongs.map(quoted).join(', ')} · another shot next round: ${outSongs.map(quoted).join(', ')}`
   }
   switch (choice) {
     case 'skip': return 'Skipped'
@@ -385,7 +387,7 @@ export default function Top1000QuizView(): JSX.Element {
       <div className={`t1k-art${isPicked ? ' is-picked' : ''}`}>
         {hash ? <AlbumArtImage hash={hash} alt={s.album || s.title} size={320} /> : <div className="t1k-art-empty" />}
         {choosable && <span className="t1k-key" aria-hidden="true">{i + 1}</span>}
-        {isPicked && <span className="t1k-in" aria-hidden="true">In</span>}
+        {isPicked && <span className="t1k-in" aria-hidden="true">Moves on</span>}
       </div>
     )
     // Only the cover picks. The words under it are plain text, so a near-miss
@@ -399,8 +401,8 @@ export default function Top1000QuizView(): JSX.Element {
             disabled={saving}
             onClick={(e) => { if (ready(e)) { if (isHeat) toggleHeat(q, s); else choose(q, s) } }}
             aria-pressed={isHeat ? isPicked : undefined}
-            aria-label={isHeat ? `“${s.title}” by ${s.artist} makes the 1000 (${i + 1})` : `Choose “${s.title}” by ${s.artist} (${i + 1})`}
-            title={isHeat ? `In or out: “${s.title}” (${i + 1})` : `Choose “${s.title}” (${i + 1})`}
+            aria-label={isHeat ? `“${s.title}” by ${s.artist} moves on (${i + 1})` : `Choose “${s.title}” by ${s.artist} (${i + 1})`}
+            title={isHeat ? `Move on: “${s.title}” (${i + 1})` : `Choose “${s.title}” (${i + 1})`}
           >
             {art}
           </button>
@@ -427,7 +429,7 @@ export default function Top1000QuizView(): JSX.Element {
             <button type="button" role="tab" aria-selected={tab === 'list'} className={tab === 'list' ? 'is-on' : ''} onClick={() => setTab('list')}>The list</button>
           </div>
         </div>
-        <p className="t1k-lede">Finding your 1000 favorite songs, the ones the Original iPod carries. A tournament: in each heat, pick the songs that make your 1000; the tough calls go one on one. Every round, the decided songs drop out. Stop whenever you like.</p>
+        <p className="t1k-lede">Finding your 1000 favorite songs, the ones the Original iPod carries. A tournament: in each heat, pick the songs that move on; the tough calls go one on one. A song is only out after two losses, and the decided ones drop out each round. Stop whenever you like.</p>
         {progress && (
           <div className="t1k-progress" aria-label="Progress">
             <div className="t1k-meter"><div className="t1k-meter-fill" style={{ width: `${settledPct}%` }} /></div>
@@ -457,9 +459,9 @@ export default function Top1000QuizView(): JSX.Element {
                 {phase.q.kind === 'heat' && (
                   <>
                     <button type="button" className="t1k-btn t1k-btn--yes" disabled={saving || picked.length !== phase.q.quota} onClick={(e) => { if (ready(e)) lockIn(phase.q) }}>
-                      Lock them in<kbd className="t1k-kbd">↵</kbd>
+                      Move them on<kbd className="t1k-kbd">↵</kbd>
                     </button>
-                    <span className="t1k-count">{picked.length} of {phase.q.quota} picked</span>
+                    <span className="t1k-count">{picked.length} of {phase.q.quota} picked · moving on isn’t making the 1000, and nobody is cut in one heat: it takes two losses</span>
                   </>
                 )}
                 {phase.q.kind === 'pick' && (
