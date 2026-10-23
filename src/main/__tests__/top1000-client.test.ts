@@ -25,6 +25,17 @@ describe('top1000 doc', () => {
     assert.deepEqual(parseQuizNext({ question: null, progress }), { question: null, progress })
   })
 
+  it('parses heats (with their quota) and duels; refuses a heat without a sensible quota', () => {
+    const songs = (n: number) => Array.from({ length: n }, (_, i) => ({ track: track(i + 1), hookMs: 0 }))
+    const heat = parseQuizNext({ question: { kind: 'heat', songs: songs(5), quota: 3 }, progress: { ...progress, round: 2, heatsLeft: 31, duelsLeft: 0 } })
+    assert.equal(heat?.question?.quota, 3)
+    assert.equal(heat?.progress.round, 2)
+    assert.equal(heat?.progress.heatsLeft, 31)
+    assert.equal(parseQuizNext({ question: { kind: 'heat', songs: songs(5), quota: 5 }, progress }), null)
+    assert.equal(parseQuizNext({ question: { kind: 'heat', songs: songs(2), quota: 1 }, progress }), null)
+    assert.equal(parseQuizNext({ question: { kind: 'duel', songs: songs(2) }, progress })?.question?.kind, 'duel')
+  })
+
   it('reads the seats the lists hold and the songs competing — and older homeminis without them', () => {
     const now = parseProgress({ answered: 3465, settled: 612, moving: 388, fixed: 252, contenders: 250 })
     assert.deepEqual(now, { answered: 3465, settled: 612, moving: 388, fixed: 252, contenders: 250 })
@@ -51,7 +62,7 @@ describe('top1000 client', () => {
       baseUrl: 'http://homemini:3000/',
       warn: () => {},
       fetchImpl: fake({
-        '/api/top1000/next': { status: 200, body: { question: { kind: 'inout', songs: [{ track: track(9), hookMs: 50000 }] }, progress } },
+        '/api/top1000/next?mode=tournament': { status: 200, body: { question: { kind: 'inout', songs: [{ track: track(9), hookMs: 50000 }] }, progress } },
         '/api/top1000/answer': { status: 200, body: { ok: true, progress: { ...progress, answered: 4 } } },
       }, seen),
     })
@@ -62,7 +73,7 @@ describe('top1000 client', () => {
     const post = seen.find((s) => s.url.endsWith('/answer'))!
     assert.equal(post.init?.method, 'POST')
     assert.deepEqual(JSON.parse(String(post.init?.body)), { kind: 'inout', ids: ['9'], choice: 'in' })
-    assert.equal(seen[0]!.url, 'http://homemini:3000/api/top1000/next')
+    assert.equal(seen[0]!.url, 'http://homemini:3000/api/top1000/next?mode=tournament')
   })
 
   it('says plainly when an answer was not saved', async () => {

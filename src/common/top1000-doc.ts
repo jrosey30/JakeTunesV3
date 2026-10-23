@@ -1,8 +1,8 @@
 /**
  * The Top 1000 Quiz wire contract (2026-10-23) — what homemini serves:
  *
- *   GET  /api/top1000/next   → { question: { kind, songs: [{ track, hookMs }] } | null, progress }
- *   POST /api/top1000/answer { kind, ids, choice, reasons? } → { ok, progress }
+ *   GET  /api/top1000/next?mode=tournament → { question: { kind, songs: [{ track, hookMs }], quota? } | null, progress }
+ *   POST /api/top1000/answer { kind, ids, choice, reasons?, picked?, quota? } → { ok, progress }
  *   POST /api/top1000/undo   {} → { ok, undone: { kind, ids, choice } | null, question | null, progress }
  *   GET  /api/top1000        → { version: 1, progress, list: [{ id, rank, pIn }] }
  *
@@ -11,7 +11,8 @@
  * desktop only asks and draws. Pure — node --test loads it.
  */
 
-export type QuizKind = 'pick' | 'inout' | 'still' | 'best'
+/** heat = pick the `quota` songs that make the 1000; duel = a tough call, one on one (homemini ≥ #594). */
+export type QuizKind = 'pick' | 'inout' | 'still' | 'best' | 'heat' | 'duel'
 
 export const QUIZ_REASONS = [
   { id: 'voice', label: 'The voice' },
@@ -33,7 +34,7 @@ export interface QuizSongRef {
   hookMs: number
 }
 
-export interface QuizQuestion { kind: QuizKind; songs: QuizSongRef[] }
+export interface QuizQuestion { kind: QuizKind; songs: QuizSongRef[]; quota?: number }
 export interface QuizProgress {
   answered: number
   settled: number
@@ -42,11 +43,17 @@ export interface QuizProgress {
   fixed?: number
   /** songs without a seat that could still win one (homemini ≥ #593) */
   contenders?: number
+  /** the tournament (homemini ≥ #594): the round and what is left of it */
+  round?: number
+  heatsLeft?: number
+  duelsLeft?: number
 }
 export interface QuizNext { question: QuizQuestion | null; progress: QuizProgress }
 
-const KINDS = new Set<QuizKind>(['pick', 'inout', 'still', 'best'])
-const SIZE: Record<QuizKind, number> = { pick: 2, inout: 1, still: 1, best: 3 }
+const KINDS = new Set<QuizKind>(['pick', 'inout', 'still', 'best', 'heat', 'duel'])
+const SIZE: Record<Exclude<QuizKind, 'heat'>, number> = { pick: 2, inout: 1, still: 1, best: 3, duel: 2 }
+const HEAT_MIN = 3
+const HEAT_MAX = 6
 
 function num(v: unknown): number | null {
   const n = Number(v)
@@ -60,9 +67,12 @@ export function parseProgress(raw: unknown): QuizProgress | null {
   const settled = num(r.settled)
   const moving = num(r.moving)
   if (answered === null || settled === null || moving === null) return null
-  const fixed = num(r.fixed)
-  const contenders = num(r.contenders)
-  return { answered, settled, moving, ...(fixed !== null ? { fixed } : {}), ...(contenders !== null ? { contenders } : {}) }
+  const out: QuizProgress = { answered, settled, moving }
+  for (const k of ['fixed', 'contenders', 'round', 'heatsLeft', 'duelsLeft'] as const) {
+    const v = num(r[k])
+    if (v !== null) out[k] = v
+  }
+  return out
 }
 
 /** One question in /next's shape; null when it is malformed. */
@@ -82,6 +92,11 @@ function parseQuestion(raw: unknown): QuizQuestion | null {
       album: String(t.album ?? ''),
       hookMs: Math.max(0, num((s as { hookMs?: unknown }).hookMs) ?? 0),
     })
+  }
+  if (kind === 'heat') {
+    const quota = num(q.quota)
+    if (songs.length < HEAT_MIN || songs.length > HEAT_MAX || quota === null || quota < 1 || quota >= songs.length) return null
+    return { kind, songs, quota }
   }
   if (songs.length !== SIZE[kind]) return null
   return { kind, songs }
@@ -127,6 +142,9 @@ export interface QuizAnswerInput {
   ids: string[]
   choice: QuizChoice
   reasons?: QuizReason[]
+  /** heat: the songs he picked (exactly `quota` of them) */
+  picked?: string[]
+  quota?: number
 }
 
 export interface QuizListEntry { id: number; rank: number; pIn: number }

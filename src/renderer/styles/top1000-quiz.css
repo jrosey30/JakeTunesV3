@@ -134,3 +134,15 @@
 @media (prefers-reduced-motion: reduce) {
   .t1k-art, .t1k-meter-fill { transition: none; }
 }
+
+/* The tournament: heats of up to five (tap the ones that make the 1000), duels of two. */
+.t1k-songs--4 { grid-template-columns: repeat(4, minmax(0, 180px)); }
+.t1k-songs--5 { grid-template-columns: repeat(5, minmax(0, 160px)); }
+.t1k-songs--6 { grid-template-columns: repeat(6, minmax(0, 140px)); }
+/* Picked for the 1000: the brand orange ring (#FC5501, 3px) — the same orange as the meter. */
+.t1k-art.is-picked { box-shadow: 0 0 0 3px var(--brand-orange, #FC5501), 0 4px 12px rgba(0, 0, 0, 0.2); }
+.t1k-in {
+  position: absolute; right: 6px; bottom: 6px; padding: 1px 7px; border-radius: 8px;
+  background: var(--brand-orange, #FC5501); color: #fff; font-size: 11px; font-weight: 600;
+}
+.t1k-count { font-size: 12px; color: var(--text-secondary, #555049); font-variant-numeric: tabular-nums; }
