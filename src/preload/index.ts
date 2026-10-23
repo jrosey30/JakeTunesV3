@@ -1145,6 +1145,7 @@ const electronAPI = {
   // The Top 1000 Quiz (2026-10-23) — homemini's /api/top1000.
   top1000Next: (): Promise<unknown> => ipcRenderer.invoke('top1000:next'),
   top1000Answer: (input: { kind: string; ids: string[]; choice: string; reasons?: string[] }): Promise<unknown> => ipcRenderer.invoke('top1000:answer', input),
+  top1000Undo: (): Promise<unknown> => ipcRenderer.invoke('top1000:undo'),
   top1000List: (): Promise<unknown> => ipcRenderer.invoke('top1000:list'),
   homeShelvesGet: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:get'),
   homeShelvesRefresh: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:refresh'),

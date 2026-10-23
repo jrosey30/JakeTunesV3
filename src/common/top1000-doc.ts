@@ -3,6 +3,7 @@
  *
  *   GET  /api/top1000/next   → { question: { kind, songs: [{ track, hookMs }] } | null, progress }
  *   POST /api/top1000/answer { kind, ids, choice, reasons? } → { ok, progress }
+ *   POST /api/top1000/undo   {} → { ok, undone: { kind, ids, choice } | null, question | null, progress }
  *   GET  /api/top1000        → { version: 1, progress, list: [{ id, rank, pIn }] }
  *
  * The model, the question picking and the answers file all live on homemini
@@ -54,13 +55,9 @@ export function parseProgress(raw: unknown): QuizProgress | null {
   return { answered, settled, moving }
 }
 
-export function parseQuizNext(raw: unknown): QuizNext | null {
-  if (!raw || typeof raw !== 'object') return null
-  const r = raw as Record<string, unknown>
-  const progress = parseProgress(r.progress)
-  if (!progress) return null
-  if (r.question === null) return { question: null, progress }
-  const q = r.question as Record<string, unknown> | undefined
+/** One question in /next's shape; null when it is malformed. */
+function parseQuestion(raw: unknown): QuizQuestion | null {
+  const q = raw as Record<string, unknown> | undefined
   if (!q || !KINDS.has(q.kind as QuizKind) || !Array.isArray(q.songs)) return null
   const kind = q.kind as QuizKind
   const songs: QuizSongRef[] = []
@@ -77,7 +74,39 @@ export function parseQuizNext(raw: unknown): QuizNext | null {
     })
   }
   if (songs.length !== SIZE[kind]) return null
-  return { question: { kind, songs }, progress }
+  return { kind, songs }
+}
+
+export function parseQuizNext(raw: unknown): QuizNext | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  const progress = parseProgress(r.progress)
+  if (!progress) return null
+  if (r.question === null) return { question: null, progress }
+  const question = parseQuestion(r.question)
+  return question ? { question, progress } : null
+}
+
+/** The answer an undo took back. */
+export interface QuizUndone { kind: QuizKind; ids: string[]; choice: string }
+/**
+ * What undo returns. `question` is the undone question, asked again; both are
+ * null when there is nothing left to undo.
+ */
+export interface QuizUndo { undone: QuizUndone | null; question: QuizQuestion | null; progress: QuizProgress }
+
+export function parseQuizUndo(raw: unknown): QuizUndo | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  const progress = parseProgress(r.progress)
+  if (!progress || r.ok !== true) return null
+  if (r.undone === null || r.undone === undefined) return { undone: null, question: null, progress }
+  const u = r.undone as Record<string, unknown>
+  if (!KINDS.has(u.kind as QuizKind) || !Array.isArray(u.ids) || typeof u.choice !== 'string') return null
+  const undone: QuizUndone = { kind: u.kind as QuizKind, ids: u.ids.map(String), choice: u.choice }
+  if (r.question === null || r.question === undefined) return { undone, question: null, progress }
+  const question = parseQuestion(r.question)
+  return question ? { undone, question, progress } : null
 }
 
 /** The choices each kind accepts, besides a song id (pick / best). */
