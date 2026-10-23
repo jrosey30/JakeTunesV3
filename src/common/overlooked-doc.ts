@@ -16,8 +16,10 @@
  */
 export interface OverlookedItem { id: number; reason: string }
 export interface OverlookedLane {
-  /** null = the Best bets lane */
+  /** null = the Best Bets lane; otherwise the broad genre family ("Rock") */
   genre: string | null
+  /** "Like your Geese, Jigitz and Fat Dog" — what the lane was learned from */
+  subtitle: string | null
   items: OverlookedItem[]
 }
 export interface Overlooked {
@@ -35,6 +37,7 @@ export function parseOverlooked(raw: unknown): Overlooked | null {
   for (const l of raw.lanes) {
     if (!isRecord(l) || !Array.isArray(l.items)) continue
     const genre = typeof l.genre === 'string' && l.genre.trim() ? l.genre.trim() : null
+    const subtitle = typeof l.subtitle === 'string' && l.subtitle.trim() ? l.subtitle.trim() : null
     const items: OverlookedItem[] = []
     for (const it of l.items) {
       if (!isRecord(it) || !isRecord(it.track)) continue
@@ -43,7 +46,7 @@ export function parseOverlooked(raw: unknown): Overlooked | null {
       if (typeof id !== 'number' || !Number.isFinite(id) || !reason) continue
       items.push({ id, reason })
     }
-    if (items.length) lanes.push({ genre, items })
+    if (items.length) lanes.push({ genre, subtitle, items })
   }
   if (!lanes.length) return null
   return {
