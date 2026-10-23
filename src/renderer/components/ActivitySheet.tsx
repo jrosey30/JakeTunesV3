@@ -125,7 +125,7 @@ export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
   const split = splitHalfAndHalf(poolIds, target, pinned.ids)
   const pinnedOn = split.pinnedCount
   const missingPinned = pinned.lists.filter((l) => !l.found && !l.locked).map((l) => l.name)
-  // "Geese — 3D Country + Getting Killed, Greenpoint Greatest Hits, … and Rocksurgence" — from the
+  // "Geese — 3D Country + Getting Killed, Greenpoint Greatest Hits, … and Bops" — from the
   // resolver, so a new locked set or pinned list names itself here.
   const pinnedNames = pinned.lists.filter((l) => l.found).map((l) => l.name)
   const pinnedLabel = pinnedNames.length <= 1 ? (pinnedNames[0] || 'your pinned lists') : `${pinnedNames.slice(0, -1).join(', ')} and ${pinnedNames[pinnedNames.length - 1]}`
