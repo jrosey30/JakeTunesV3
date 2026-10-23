@@ -50,15 +50,19 @@ function plistString(plist, key) {
   return m ? m[1] : null
 }
 
-/** Minimal asar reader: returns the bytes of one entry, or null. Never throws. */
+/**
+ * Minimal asar reader: returns the bytes of one entry, or null. Never throws.
+ * Layout: [u32 4][u32 headerSize], then the header pickle
+ * [u32 payloadSize][u32 jsonLen][json…]; file data starts at 8 + headerSize.
+ */
 function readAsarEntry(asarPath, entryPath) {
   try {
     const buf = readFileSync(asarPath)
     if (buf.length < 16) return null
     const headerPickleSize = buf.readUInt32LE(4)
     const headerPickle = buf.subarray(8, 8 + headerPickleSize)
-    const jsonLen = headerPickle.readUInt32LE(0)
-    const header = JSON.parse(headerPickle.subarray(4, 4 + jsonLen).toString('utf8'))
+    const jsonLen = headerPickle.readUInt32LE(4)
+    const header = JSON.parse(headerPickle.subarray(8, 8 + jsonLen).toString('utf8'))
     let node = header
     for (const part of entryPath.split('/')) {
       node = node?.files?.[part]
