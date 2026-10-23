@@ -23,6 +23,7 @@ import DownloadView from '../views/DownloadStore'
 import ScotusView from '../views/ScotusView'
 import RecordStoreView from '../views/RecordStore'
 import YearInReviewView from '../views/YearInReviewView'
+import OverlookedView from '../views/OverlookedView'
 import ViewModeToggle from './ViewModeToggle'
 import { useDiscHandoffView } from '../discHandoff'
 import { useLayoutEffect, useRef, useState } from 'react'
@@ -121,6 +122,7 @@ export default function MainContent() {
     case 'album-detail': viewElement = <AlbumDetailView />; break
     case 'concerts': viewElement = <ConcertsView />; break
     case 'year-in-review': viewElement = <YearInReviewView />; break
+    case 'overlooked': viewElement = <OverlookedView />; break
     case 'concert-detail': viewElement = <ConcertDetailView />; break
     case 'mixtape-detail': viewElement = <MixtapeView />; break
     case 'activity-pool': viewElement = <ActivityPoolView />; break
