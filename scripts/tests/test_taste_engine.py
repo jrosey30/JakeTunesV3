@@ -36,7 +36,8 @@ class EngineTest(unittest.TestCase):
         self.d = tempfile.mkdtemp(prefix='te-')
         self.te = load({'JT_TE_NOTIFY': '0', 'JT_TE_UD': self.d, 'JT_TE_STATE': self.d, 'JT_TE_WORK': os.path.join(self.d, 'work'),
                         'JT_TE_HISTORY': os.path.join(self.d, 'h.jsonl'), 'JT_TE_LIBRARY': os.path.join(self.d, 'library.json'),
-                        'JT_TE_MIXES': os.path.join(self.d, 'mixes.json'), 'JT_TE_LEDGERS': os.path.join(self.d, 'ledger.jsonl')})
+                        'JT_TE_MIXES': os.path.join(self.d, 'mixes.json'), 'JT_TE_LEDGERS': os.path.join(self.d, 'ledger.jsonl'),
+                        'JT_TE_QUIZ': os.path.join(self.d, 'top1000-answers.jsonl')})
         self.now = 1_790_000_000_000
 
     def lib(self, n=600, bulk_day=None):
@@ -92,6 +93,45 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(got[2], 0.0)
         self.assertNotIn(3, got)   # a tie carries no verdict
 
+    def write_quiz(self, rows):
+        with open(os.path.join(self.d, 'top1000-answers.jsonl'), 'w') as f:
+            for r in rows:
+                f.write(json.dumps(r) + '\n')
+
+    def test_quiz_verdicts(self):
+        self.lib(n=20)
+        lib = self.te.load_library(os.path.join(self.d, 'library.json'))
+        t = lambda d: iso(self.now - d * DAY)
+        self.write_quiz([
+            {'v': 1, 'kind': 'inout', 'at': t(9), 'ids': ['1'], 'choice': 'in'},
+            {'v': 1, 'kind': 'pick', 'at': t(8), 'ids': ['2', '3'], 'choice': 'both', 'reasons': ['hook']},
+            {'v': 1, 'kind': 'pick', 'at': t(7), 'ids': ['4', '5'], 'choice': '4', 'reasons': ['voice']},   # a pick is not a verdict
+            {'v': 1, 'kind': 'best', 'at': t(6), 'ids': ['6', '7', '8'], 'choice': 'none'},
+            {'v': 1, 'kind': 'still', 'at': t(5), 'ids': ['9'], 'choice': 'no'},
+            {'v': 1, 'kind': 'inout', 'at': t(4), 'ids': ['10'], 'choice': 'skip'},
+            {'v': 1, 'kind': 'inout', 'at': t(3), 'ids': ['11'], 'choice': 'in'},
+            {'v': 1, 'kind': 'undo', 'at': t(2), 'target': t(3)},                                           # retracts song 11
+            {'v': 1, 'kind': 'inout', 'at': t(1), 'ids': ['9999'], 'choice': 'in'},                          # not in the library
+            'junk',
+        ])
+        timeline, reasons, standing = self.te.load_quiz(os.path.join(self.d, 'top1000-answers.jsonl'), lib)
+        got = {tid: v for _, tid, v in timeline}
+        self.assertEqual(got, {1: 1.0, 2: 1.0, 3: 1.0, 6: -1.0, 7: -1.0, 8: -1.0, 9: -1.0})
+        self.assertEqual(reasons, {'hook': 1, 'voice': 1})
+        self.assertEqual(standing, 7)
+        self.assertEqual(self.te.load_quiz(os.path.join(self.d, 'nope.jsonl'), lib), ([], {}, 0))
+
+    def test_a_verdict_given_later_is_never_seen_earlier(self):
+        self.lib(n=20)
+        lib = self.te.load_library(os.path.join(self.d, 'library.json'))
+        verdicts = [(self.now - 10 * DAY, 3, 1.0), (self.now - 1 * DAY, 4, -1.0)]
+        s = self.te.Snapshot(lib, [], self.now - 5 * DAY, verdicts)
+        self.assertEqual(s.verdict.get(3), 1.0)
+        self.assertNotIn(4, s.verdict)   # given after the snapshot
+        X = self.te.features(s, [3, 4, 5], {})
+        col = X[:, self.te.FEATURES.index('quiz_verdict')]
+        self.assertEqual(list(col), [0.5, 0.0, 0.0])
+
     def test_promotion_and_rollback(self):
         f = lambda a, b: {'verdict': 'measured', 'challenger': a, 'champion_v5': b}
         good = {'verdict': 'measured', 'auc': {'challenger': 0.61, 'champion_v5': 0.50}, 'meanGain': 0.11, 'gainLowerBound': 0.07,
@@ -139,6 +179,36 @@ class EngineTest(unittest.TestCase):
         self.assertTrue(all(0 <= v[0] <= 1 and 0 <= v[1] <= 1 for v in st['tracks'].values()))
         status = json.load(open(os.path.join(self.d, 'work', 'taste-engine-status.json')))
         self.assertTrue(status['ok'])
+        self.assertEqual(sc['quiz']['verdicts'], 0)
+        self.assertEqual(sc['weights']['quiz_verdict'], 0.0)   # no quiz → the column is inert
+
+    def test_old_quiz_verdicts_are_learned_and_their_worth_is_measured(self):
+        """Verdicts given before every window, matching where his taste really
+        is: the model weighs them and the scorecard shows what they added."""
+        tracks = self.lib(n=900)
+        self.mood([t['id'] for t in tracks])
+        rng = np.random.default_rng(4)
+        love = {t['id']: rng.random() < 0.5 for t in tracks}
+        rows = []
+        start = self.now - 150 * DAY
+        for day in range(150):
+            for _ in range(40):
+                tid = int(rng.integers(1, 901))
+                kind = 'play' if rng.random() < (0.95 if love[tid] else 0.6) else 'skip'
+                rows.append({'ts': iso(start + day * DAY + int(rng.integers(0, DAY))), 'device': 'laptop', 'kind': kind, 'pct': 40 if kind == 'skip' else 100, 'trackId': tid})
+        with open(os.path.join(self.d, 'h.jsonl'), 'w') as f:
+            for r in sorted(rows, key=lambda r: r['ts']):
+                f.write(json.dumps(r) + '\n')
+        self.write_quiz([{'v': 1, 'kind': 'inout', 'at': iso(start - DAY + i), 'ids': [str(tid)], 'choice': 'in' if love[tid] else 'out'}
+                         for i, tid in enumerate(range(1, 901, 2))])
+        self.te.time.time = lambda: self.now / 1000
+        self.assertEqual(self.te.main(), 0)
+        sc = json.load(open(os.path.join(self.d, 'work', 'taste-scorecard.json')))
+        self.assertEqual(sc['quiz']['verdicts'], 450)
+        self.assertGreater(sc['weights']['quiz_verdict'], 0.0)
+        self.assertIn('quizGain', sc['evaluation'])
+        self.assertGreater(sc['evaluation']['quizGain'], 0.0)
+        self.assertTrue(all('challenger_withoutQuiz' in f for f in sc['evaluation']['folds'] if f['verdict'] == 'measured'))
 
 
 if __name__ == '__main__':

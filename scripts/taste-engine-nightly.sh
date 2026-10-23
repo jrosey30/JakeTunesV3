@@ -47,6 +47,7 @@ fi
 
 JT_TE_NOTIFY="${JT_TE_NOTIFY:-1}" JT_TE_UD="$UD" JT_TE_STATE="$IN" JT_TE_WORK="$WORK" \
 JT_TE_LIBRARY="$LOCAL_STATE/library.json" JT_TE_MIXES="$LOCAL_STATE/mixes-cache.json" \
+JT_TE_QUIZ="$LOCAL_STATE/top1000-answers.jsonl" \
   with_timeout 900 "$PY" "$W/scripts/taste-engine.py" >> "$LOG" 2>&1
 RC=$?
 
