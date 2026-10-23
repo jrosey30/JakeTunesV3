@@ -69,6 +69,8 @@ function describeAnswer({ q, choice }: SentAnswer): string {
       : `${quoted(a)} — don’t know it well enough`
     case 'both': return `Both in: ${quoted(a)} and ${quoted(b)}`
     case 'neither': return `Neither: ${quoted(a)} and ${quoted(b)}`
+    case 'all': return `All three in: ${q.songs.map(quoted).join(', ')}`
+    case 'none': return `None of them: ${q.songs.map(quoted).join(', ')}`
     case 'in': return `${quoted(a)} — in`
     case 'out': return `${quoted(a)} — out`
     case 'yes': return `${quoted(a)} — still love it`
@@ -269,7 +271,7 @@ export default function Top1000QuizView(): JSX.Element {
     setPhase({ kind: 'ask', q: phase.q })
   }, [phase, saving])
 
-  // Keys: 1 / 2 / 3 pick the matching card, B both, N neither, Backspace undo.
+  // Keys: 1 / 2 / 3 pick the matching card, B both / all three, N neither / none, Backspace undo.
   useEffect(() => {
     if (tab !== 'quiz') return
     const onKey = (e: KeyboardEvent) => {
@@ -291,6 +293,8 @@ export default function Top1000QuizView(): JSX.Element {
       if ((q.kind === 'pick' || q.kind === 'best') && n >= 1 && n <= q.songs.length) act = () => choose(q, q.songs[n - 1]!)
       else if (q.kind === 'pick' && key === 'b') act = () => { void send(q, 'both') }
       else if (q.kind === 'pick' && key === 'n') act = () => { void send(q, 'neither') }
+      else if (q.kind === 'best' && key === 'b') act = () => { void send(q, 'all') }
+      else if (q.kind === 'best' && key === 'n') act = () => { void send(q, 'none') }
       if (!act) return
       e.preventDefault()
       // Holding a key never answers several questions.
@@ -393,6 +397,12 @@ export default function Top1000QuizView(): JSX.Element {
                   <>
                     <button type="button" className="t1k-btn" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, 'both') }}>Both are top 1000<kbd className="t1k-kbd">B</kbd></button>
                     <button type="button" className="t1k-btn" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, 'neither') }}>Neither<kbd className="t1k-kbd">N</kbd></button>
+                  </>
+                )}
+                {phase.q.kind === 'best' && (
+                  <>
+                    <button type="button" className="t1k-btn" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, 'all') }}>All three are top 1000<kbd className="t1k-kbd">B</kbd></button>
+                    <button type="button" className="t1k-btn" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, 'none') }}>None of them<kbd className="t1k-kbd">N</kbd></button>
                   </>
                 )}
                 {phase.q.kind === 'inout' && (
