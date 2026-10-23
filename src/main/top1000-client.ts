@@ -43,7 +43,8 @@ export function createTop1000Client(opts: Top1000ClientOptions) {
 
   return {
     async next(): Promise<Result<QuizNext>> {
-      const r = await call('/next', { method: 'GET' })
+      // The tournament (heats + duels) — this desktop can show them (homemini ≥ #594; older ones ignore the mode).
+      const r = await call('/next?mode=tournament', { method: 'GET' })
       if (!r) return { ok: false, error: OFFLINE }
       const doc = r.status === 200 ? parseQuizNext(r.body) : null
       return doc ? { ok: true, value: doc } : { ok: false, error: 'The quiz sent back something unexpected. Try again in a moment.' }

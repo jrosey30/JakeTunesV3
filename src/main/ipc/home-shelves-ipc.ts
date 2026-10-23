@@ -73,7 +73,7 @@ export function registerHomeShelvesIpc(ipc: IpcRegistrar, host: HomeShelvesIpcHo
   })
   ipc.handle('top1000:next', async () => top1000.next(), { refuse: REFUSED_SENDER })
   ipc.handle('top1000:answer', async (_e: unknown, input: unknown) => {
-    const i = (input ?? {}) as { kind?: unknown; ids?: unknown; choice?: unknown; reasons?: unknown }
+    const i = (input ?? {}) as { kind?: unknown; ids?: unknown; choice?: unknown; reasons?: unknown; picked?: unknown; quota?: unknown }
     if (typeof i.kind !== 'string' || !Array.isArray(i.ids) || typeof i.choice !== 'string') {
       return { ok: false, error: 'That answer was incomplete.' }
     }
@@ -82,6 +82,8 @@ export function registerHomeShelvesIpc(ipc: IpcRegistrar, host: HomeShelvesIpcHo
       ids: i.ids.map(String),
       choice: i.choice,
       reasons: Array.isArray(i.reasons) ? (i.reasons.map(String) as never[]) : undefined,
+      picked: Array.isArray(i.picked) ? i.picked.map(String) : undefined,
+      quota: typeof i.quota === 'number' ? i.quota : undefined,
     })
   }, { refuse: REFUSED_SENDER })
   ipc.handle('top1000:undo', async () => top1000.undo(), { refuse: REFUSED_SENDER })

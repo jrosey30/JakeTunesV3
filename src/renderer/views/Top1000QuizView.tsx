@@ -19,6 +19,16 @@
  * press that started before the question appeared, any answer in its first
  * 250 ms, and held-down keys never count. The last answer is echoed under the
  * question with Undo (Backspace), back through this session's answers.
+ *
+ * The tournament (Jake: "it has to almost work like a tournament....the more
+ * you ask me about certain songs it feels like i am deciding between
+ * children" — "i like heats....but when we gotta make tough
+ * decisions....bracket one on one duels"). homemini serves HEATS — up to five
+ * undecided songs; tap the covers (or 1–5) of the ones that make the 1000,
+ * exactly as many as it asks for, then Lock them in (Enter) — and DUELS for
+ * the songs still on the line after their heat: one on one, no "love both".
+ * Every undecided song gets one heat a round; the meter shows the round and
+ * what is left of it.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import AlbumArtImage from '../components/AlbumArtImage'
@@ -48,8 +58,9 @@ type Phase =
   | { kind: 'ask'; q: QuizQuestion }
   | { kind: 'why'; q: QuizQuestion; winner: QuizSongRef }
 
-const PROMPT: Record<QuizQuestion['kind'], string> = {
+const PROMPT: Record<Exclude<QuizQuestion['kind'], 'heat'>, string> = {
   pick: 'Which do you love more?',
+  duel: 'Tough call — only one gets the seat. Which advances?',
   // Jake (2026-10-23): "is this song in your top 1000" is a bad question — his yes means
   // "I love it". homemini asks it only when that is still open; seats come from this-or-that.
   inout: 'Do you love this song?',
@@ -57,21 +68,34 @@ const PROMPT: Record<QuizQuestion['kind'], string> = {
   best: 'Best of this sound?',
 }
 
-/** The meter in plain words: seats decided (and how many your lists hold), seats still open, and who is competing for them. */
-function meterLine(p: QuizProgress): string {
-  const n = (x: number) => x.toLocaleString()
-  const fixed = p.fixed ? ` (${n(p.fixed)} by your lists)` : ''
-  const competing = p.contenders !== undefined ? ` · ${n(p.contenders)} songs competing for them` : ''
-  return `${n(p.settled)} seats decided${fixed} · ${n(p.moving)} still open${competing} · ${n(p.answered)} answered`
+function promptFor(q: QuizQuestion): string {
+  if (q.kind === 'heat') return `Pick the ${q.quota} that make your 1000`
+  return PROMPT[q.kind]
 }
 
-interface SentAnswer { q: QuizQuestion; choice: string }
+/** The meter in plain words: the round, seats decided (and how many your lists hold), seats still open, who is competing for them. */
+function meterLine(p: QuizProgress): string {
+  const n = (x: number) => x.toLocaleString()
+  const round = p.round !== undefined
+    ? `Round ${n(p.round)} · ${p.heatsLeft ? `${n(p.heatsLeft)} heat${p.heatsLeft === 1 ? '' : 's'} left` : `${n(p.duelsLeft ?? 0)} tough call${p.duelsLeft === 1 ? '' : 's'} left`} · `
+    : ''
+  const fixed = p.fixed ? ` (${n(p.fixed)} by your lists)` : ''
+  const competing = p.contenders !== undefined ? ` · ${n(p.contenders)} songs competing for them` : ''
+  return `${round}${n(p.settled)} seats decided${fixed} · ${n(p.moving)} still open${competing} · ${n(p.answered)} answered`
+}
+
+interface SentAnswer { q: QuizQuestion; choice: string; picked?: number[] }
 
 const quoted = (s: QuizSongRef | undefined): string => `“${s?.title ?? ''}”`
 
 /** The answer just saved, in plain words. */
-function describeAnswer({ q, choice }: SentAnswer): string {
+function describeAnswer({ q, choice, picked }: SentAnswer): string {
   const [a, b] = q.songs
+  if (q.kind === 'heat' && choice === 'picked' && picked) {
+    const inSongs = q.songs.filter((s) => picked.includes(s.id))
+    const outSongs = q.songs.filter((s) => !picked.includes(s.id))
+    return `In: ${inSongs.map(quoted).join(', ')} · out: ${outSongs.map(quoted).join(', ')}`
+  }
   switch (choice) {
     case 'skip': return 'Skipped'
     case 'unknown': return q.songs.length > 1
@@ -88,6 +112,7 @@ function describeAnswer({ q, choice }: SentAnswer): string {
   }
   const winner = q.songs.find((s) => String(s.id) === choice)
   if (!winner) return 'Saved'
+  if (q.kind === 'duel') return `${quoted(winner)} advances over ${quoted(q.songs.find((s) => s !== winner))}`
   return `You picked ${quoted(winner)} over ${q.songs.filter((s) => s !== winner).map(quoted).join(' and ')}`
 }
 
@@ -114,6 +139,8 @@ export default function Top1000QuizView(): JSX.Element {
   /** This session's saved answers, newest last — what Undo walks back through. */
   const [history, setHistory] = useState<SentAnswer[]>([])
   const [undoNote, setUndoNote] = useState<string | null>(null)
+  /** A heat's covers he has tapped so far (song ids). */
+  const [picked, setPicked] = useState<number[]>([])
   const decisivePicks = useRef(0)
   /** When the current question appeared, and when the last press started (performance.now()). */
   const shownAt = useRef(0)
@@ -207,7 +234,7 @@ export default function Top1000QuizView(): JSX.Element {
     return true
   }, [])
 
-  const send = useCallback(async (q: QuizQuestion, choice: string, why?: QuizReason[]) => {
+  const send = useCallback(async (q: QuizQuestion, choice: string, why?: QuizReason[], heatPicks?: number[]) => {
     if (saving) return
     setSaving(true)
     setUndoNote(null)
@@ -215,6 +242,7 @@ export default function Top1000QuizView(): JSX.Element {
     try {
       const r = await window.electronAPI.top1000Answer?.({
         kind: q.kind, ids: q.songs.map((s) => String(s.id)), choice, reasons: why?.length ? why : undefined,
+        ...(q.kind === 'heat' ? { picked: (heatPicks ?? []).map(String), quota: q.quota } : {}),
       }).catch(() => null)
       if (!r || !r.ok) {
         setPhase({ kind: 'error', message: r && !r.ok ? r.error : 'That answer wasn’t saved.' })
@@ -222,16 +250,17 @@ export default function Top1000QuizView(): JSX.Element {
       }
       setProgress(r.value)
       setToday((n) => n + 1)
-      setHistory((h) => [...h, { q, choice }].slice(-UNDO_DEPTH))
+      setHistory((h) => [...h, { q, choice, picked: heatPicks }].slice(-UNDO_DEPTH))
       await fetchNext()
     } finally {
       setSaving(false)
     }
   }, [saving, stopSnippet, fetchNext])
 
-  /** A song chosen on a pick / best question — sometimes ask why first. */
+  /** A song chosen on a pick / best question — sometimes ask why first. A duel just advances it. */
   const choose = useCallback((q: QuizQuestion, winner: QuizSongRef) => {
     if (saving) return
+    if (q.kind === 'duel') { void send(q, String(winner.id)); return }
     decisivePicks.current++
     if (decisivePicks.current % REASON_EVERY === 0) {
       stopSnippet()
@@ -281,7 +310,21 @@ export default function Top1000QuizView(): JSX.Element {
     setPhase({ kind: 'ask', q: phase.q })
   }, [phase, saving])
 
-  // Keys: 1 / 2 / 3 pick the matching card, B both / all three, N neither / none, Backspace undo.
+  // A new question starts with nothing tapped.
+  useEffect(() => { if (phase.kind === 'ask') setPicked([]) }, [phase])
+
+  /** Tap a heat cover: in, or back out. Never more than the quota. */
+  const toggleHeat = useCallback((q: QuizQuestion, song: QuizSongRef) => {
+    if (saving || q.kind !== 'heat') return
+    setPicked((cur) => (cur.includes(song.id) ? cur.filter((x) => x !== song.id) : cur.length < (q.quota ?? 0) ? [...cur, song.id] : cur))
+  }, [saving])
+
+  const lockIn = useCallback((q: QuizQuestion) => {
+    if (q.kind !== 'heat' || picked.length !== q.quota) return
+    void send(q, 'picked', undefined, picked)
+  }, [picked, send])
+
+  // Keys: 1–5 pick (a heat: tap) the matching card, Enter locks a heat in, B both / all three, N neither / none, Backspace undo.
   useEffect(() => {
     if (tab !== 'quiz') return
     const onKey = (e: KeyboardEvent) => {
@@ -300,7 +343,9 @@ export default function Top1000QuizView(): JSX.Element {
       const key = e.key.toLowerCase()
       const n = Number(e.key)
       let act: (() => void) | null = null
-      if ((q.kind === 'pick' || q.kind === 'best') && n >= 1 && n <= q.songs.length) act = () => choose(q, q.songs[n - 1]!)
+      if (q.kind === 'heat' && n >= 1 && n <= q.songs.length) act = () => toggleHeat(q, q.songs[n - 1]!)
+      else if (q.kind === 'heat' && e.key === 'Enter') act = () => lockIn(q)
+      else if ((q.kind === 'pick' || q.kind === 'best' || q.kind === 'duel') && n >= 1 && n <= q.songs.length) act = () => choose(q, q.songs[n - 1]!)
       else if (q.kind === 'pick' && key === 'b') act = () => { void send(q, 'both') }
       else if (q.kind === 'pick' && key === 'n') act = () => { void send(q, 'neither') }
       else if (q.kind === 'best' && key === 'b') act = () => { void send(q, 'all') }
@@ -313,7 +358,7 @@ export default function Top1000QuizView(): JSX.Element {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [tab, phase, choose, send, undo, backFromWhy, ready])
+  }, [tab, phase, choose, send, undo, backFromWhy, ready, toggleHeat, lockIn])
 
   // ── the list ──
   useEffect(() => {
@@ -332,10 +377,13 @@ export default function Top1000QuizView(): JSX.Element {
   const songCard = (q: QuizQuestion, s: QuizSongRef, i: number, choosable: boolean) => {
     const t = byId.get(s.id)
     const hash = artFor(t)
+    const isHeat = q.kind === 'heat'
+    const isPicked = isHeat && picked.includes(s.id)
     const art = (
-      <div className="t1k-art">
+      <div className={`t1k-art${isPicked ? ' is-picked' : ''}`}>
         {hash ? <AlbumArtImage hash={hash} alt={s.album || s.title} size={320} /> : <div className="t1k-art-empty" />}
         {choosable && <span className="t1k-key" aria-hidden="true">{i + 1}</span>}
+        {isPicked && <span className="t1k-in" aria-hidden="true">In</span>}
       </div>
     )
     // Only the cover picks. The words under it are plain text, so a near-miss
@@ -347,9 +395,10 @@ export default function Top1000QuizView(): JSX.Element {
             type="button"
             className="t1k-song-pick"
             disabled={saving}
-            onClick={(e) => { if (ready(e)) choose(q, s) }}
-            aria-label={`Choose “${s.title}” by ${s.artist} (${i + 1})`}
-            title={`Choose “${s.title}” (${i + 1})`}
+            onClick={(e) => { if (ready(e)) { if (isHeat) toggleHeat(q, s); else choose(q, s) } }}
+            aria-pressed={isHeat ? isPicked : undefined}
+            aria-label={isHeat ? `“${s.title}” by ${s.artist} makes the 1000 (${i + 1})` : `Choose “${s.title}” by ${s.artist} (${i + 1})`}
+            title={isHeat ? `In or out: “${s.title}” (${i + 1})` : `Choose “${s.title}” (${i + 1})`}
           >
             {art}
           </button>
@@ -376,7 +425,7 @@ export default function Top1000QuizView(): JSX.Element {
             <button type="button" role="tab" aria-selected={tab === 'list'} className={tab === 'list' ? 'is-on' : ''} onClick={() => setTab('list')}>The list</button>
           </div>
         </div>
-        <p className="t1k-lede">Finding your 1000 favorite songs, the ones the Original iPod carries. “Love it” tells the brain what you love; “which do you love more” decides who gets the 1000 seats. Stop whenever you like.</p>
+        <p className="t1k-lede">Finding your 1000 favorite songs, the ones the Original iPod carries. A tournament: in each heat, pick the songs that make your 1000; the tough calls go one on one. Every round, the decided songs drop out. Stop whenever you like.</p>
         {progress && (
           <div className="t1k-progress" aria-label="Progress">
             <div className="t1k-meter"><div className="t1k-meter-fill" style={{ width: `${settledPct}%` }} /></div>
@@ -398,11 +447,19 @@ export default function Top1000QuizView(): JSX.Element {
 
           {phase.kind === 'ask' && (
             <>
-              <h2 className="t1k-prompt">{PROMPT[phase.q.kind]}</h2>
+              <h2 className="t1k-prompt">{promptFor(phase.q)}</h2>
               <div className={`t1k-songs t1k-songs--${phase.q.songs.length}`}>
-                {phase.q.songs.map((s, i) => songCard(phase.q, s, i, phase.q.kind === 'pick' || phase.q.kind === 'best'))}
+                {phase.q.songs.map((s, i) => songCard(phase.q, s, i, ['pick', 'best', 'duel', 'heat'].includes(phase.q.kind)))}
               </div>
               <div className="t1k-actions">
+                {phase.q.kind === 'heat' && (
+                  <>
+                    <button type="button" className="t1k-btn t1k-btn--yes" disabled={saving || picked.length !== phase.q.quota} onClick={(e) => { if (ready(e)) lockIn(phase.q) }}>
+                      Lock them in<kbd className="t1k-kbd">↵</kbd>
+                    </button>
+                    <span className="t1k-count">{picked.length} of {phase.q.quota} picked</span>
+                  </>
+                )}
                 {phase.q.kind === 'pick' && (
                   <>
                     <button type="button" className="t1k-btn" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, 'both') }}>Love both<kbd className="t1k-kbd">B</kbd></button>
