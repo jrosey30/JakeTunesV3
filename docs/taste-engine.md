@@ -27,6 +27,14 @@ The 04:00 and 04:40 jobs watch each other (30 h staleness → phone alert / loud
   artist — loving Geese never raises a band because it sounds like Geese.
 - Suggestion verdicts (taste-ledger.jsonl, synced to homemini) and the daily-mix
   songs served (mixes-cache.json).
+- **Top 1000 Quiz verdicts** (homemini `top1000-answers.jsonl`: in/out, still love it,
+  both/neither, all three/none) as one more feature, counted only as of each snapshot,
+  so a window is never graded with a verdict given after it started. Until the newest
+  training window starts after his first answer (2026-11-20) the column is zero and
+  changes nothing; then the held-back test decides its worth, and the scorecard's
+  `quiz.gain` shows what it added. Using the verdicts as extra training LABELS was
+  tried on 2026-10-23 and failed the test: held-back AUC 0.589 → 0.47, below v5.
+  "One of my 1000 favorites" is a different question from "will he finish it next month".
 
 ## The nightly exercise
 1. Ingest behavior. 2. Measure preference drift (recent vs long-run sound

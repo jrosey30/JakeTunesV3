@@ -22,6 +22,15 @@ WHAT IT LEARNS FROM (Jake's call: stars + behavior)
   - suggestion verdicts (taste-ledger.jsonl, synced from the laptop) and the
     mixes it served (mixes-cache.json servedHistory) — to grade past
     recommendations against what actually happened.
+  - his Top 1000 Quiz verdicts (top1000-answers.jsonl on homemini) as one more
+    feature, AS OF each snapshot: only answers given before it count, so a
+    window is never graded with a verdict given after it started. Until the
+    newest training window starts after his first answer the column is all
+    zero and changes nothing; from then on the held-back test decides what it
+    is worth. (2026-10-23: using the verdicts as extra TRAINING LABELS was
+    tried and failed this test — "one of my 1000 favorites" is a different
+    question from "will he finish it next month", and mixing them dropped the
+    challenger's held-back AUC from 0.589 to 0.47, below v5.)
 
 THE EXERCISE, EVERY NIGHT
   1. Ingest new behavior and feedback.
@@ -81,6 +90,7 @@ CONFIG = {
     'mixes': os.environ.get('JT_TE_MIXES') or os.path.join(HOME, 'JakeTunesState', 'mixes-cache.json'),
     'work': os.environ.get('JT_TE_WORK') or os.path.join(UD, 'taste-engine'),
     'ledgers': os.environ.get('JT_TE_LEDGERS'),   # ':'-separated; default = laptop copy + replicas
+    'quiz': os.environ.get('JT_TE_QUIZ') or os.path.join(HOME, 'JakeTunesState', 'top1000-answers.jsonl'),
 }
 DAY_MS = 86_400_000
 HOLDOUT_DAYS = 28            # the outcome window each evaluation grades
@@ -88,7 +98,7 @@ HALF_LIFE_DAYS = 120         # how fast old listening fades (changing taste)
 RECENT_HALF_LIFE_DAYS = 30   # "what he's into lately"
 RETURN_GAP_DAYS = 45         # a play after this long a break = he came back
 MOOD_DIMS = 32               # PCA of the sound/mood vectors
-L2 = 30.0                    # logistic regression ridge (17 features, ~100 skips a window)
+L2 = 30.0                    # logistic regression ridge (18 features, ~100 skips a window)
 MIN_EVAL_TRACKS = 150        # fewer labeled songs than this = insufficient data
 MIN_EVAL_NEG = 25
 MIN_GAIN = 0.01              # promote only on at least this AUC gain…
@@ -215,6 +225,62 @@ def load_ledgers():
     return rows
 
 
+def load_quiz(path, lib):
+    """Jake's Top 1000 Quiz answers (homemini top1000-answers.jsonl).
+
+    A verdict is an answer about a song against the line: in/out, still love
+    it yes/no, "both"/"neither" on this-or-that, "all three"/"none" on
+    best-of-three. Which of two songs he picked says nothing about the line,
+    so picks are not verdicts. Undo lines retract the answer they name.
+    ⚠️ TWIN: JakeTunesMobile backend/src/util/top1000Hints.ts hintLabels — the
+    same verdict rule, which the quiz's own hints model learns from.
+
+    Returns (timeline [(ms, tid, +1/-1)], reason-chip counts, standing answers)."""
+    rows, gone = [], set()
+    try:
+        for line in open(path):
+            try:
+                a = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(a, dict):
+                continue
+            if a.get('kind') == 'undo':
+                gone.add(a.get('target'))
+            else:
+                rows.append(a)
+    except FileNotFoundError:
+        return [], Counter(), 0
+    timeline, reasons, standing = [], Counter(), 0
+    for a in rows:
+        ts = to_ms(a.get('at'))
+        if ts is None or a.get('at') in gone:
+            continue
+        standing += 1
+        kind, choice, ids = a.get('kind'), a.get('choice'), a.get('ids') or []
+        for r in a.get('reasons') or []:
+            reasons[str(r)] += 1
+        if kind == 'inout' and choice in ('in', 'out'):
+            verdicts = [(ids[0], choice == 'in')]
+        elif kind == 'still' and choice in ('yes', 'no'):
+            verdicts = [(ids[0], choice == 'yes')]
+        elif kind == 'pick' and choice in ('both', 'neither'):
+            verdicts = [(i, choice == 'both') for i in ids]
+        elif kind == 'best' and choice in ('all', 'none'):
+            verdicts = [(i, choice == 'all') for i in ids]
+        else:
+            continue
+        for tid, yes in verdicts:
+            try:
+                tid = int(tid)
+            except (TypeError, ValueError):
+                continue
+            if tid in lib:
+                timeline.append((ts, tid, 1.0 if yes else -1.0))
+    timeline.sort()
+    return timeline, reasons, standing
+
+
 def playlist_members():
     try:
         d = json.load(open(os.path.join(CONFIG['state'], 'playlists.json')))
@@ -263,8 +329,13 @@ def v5_scores(lib, ids, at_ms, star_at, plays_at, last_at):
 class Snapshot:
     """Everything known about Jake's listening at `at_ms` — nothing after it."""
 
-    def __init__(self, lib, events, at_ms):
+    def __init__(self, lib, events, at_ms, verdicts=()):
         self.lib, self.at = lib, at_ms
+        # Top 1000 Quiz verdicts given before `at` (net in − out per song)
+        self.verdict = defaultdict(float)
+        for ts, tid, v in verdicts:
+            if ts < at_ms:
+                self.verdict[tid] += v
         self.plays, self.skips = defaultdict(float), defaultdict(float)
         self.recent_plays, self.recent_skips = defaultdict(float), defaultdict(float)
         self.raw_plays, self.raw_skips = Counter(), Counter()
@@ -358,7 +429,7 @@ def ridge_pref(snap, ids, mood, recent=False):
 
 FEATURES = ('star', 'track_completion', 'track_plays', 'track_skips', 'distinct_days', 'returns',
             'intensity', 'recency', 'artist_star', 'artist_completion', 'artist_plays', 'album_star',
-            'album_completion', 'genre_completion', 'sound_pref', 'sound_pref_recent', 'owned_months')
+            'album_completion', 'genre_completion', 'sound_pref', 'sound_pref_recent', 'owned_months', 'quiz_verdict')
 
 
 def features(snap, ids, mood):
@@ -409,6 +480,7 @@ def features(snap, ids, mood):
             sp_of.get(tid, 0.0),
             spr_of.get(tid, 0.0),
             math.log(months),
+            max(-2.0, min(2.0, snap.verdict.get(tid, 0.0))) / 2.0,
         ]
     return X
 
@@ -500,7 +572,7 @@ def bootstrap_gain(a, b, y, w, seed=7):
 FOLDS = 3                    # rolling-origin windows (most recent first)
 
 
-def window_train(lib, events, mood, cut_ms, windows=1):
+def window_train(lib, events, mood, cut_ms, windows=1, verdicts=()):
     """Fit on the `windows` 28-day windows that END at cut_ms (features as of
     each window's start, outcomes inside it). Nothing at or after cut_ms."""
     Xs, ys, ws = [], [], []
@@ -510,7 +582,7 @@ def window_train(lib, events, mood, cut_ms, windows=1):
         ids, y, w = outcomes(lib, events, start, end)
         if not ids:
             continue
-        Xs.append(features(Snapshot(lib, events, start), ids, mood))
+        Xs.append(features(Snapshot(lib, events, start, verdicts), ids, mood))
         ys.append(y)
         ws.append(w)
     if not Xs:
@@ -521,28 +593,35 @@ def window_train(lib, events, mood, cut_ms, windows=1):
     return fit_logistic(np.vstack(Xs), y, np.concatenate(ws)), len(y), int(len(y) - y.sum())
 
 
-def evaluate(lib, events, mood, now_ms):
+def evaluate(lib, events, mood, now_ms, verdicts=()):
     """Rolling-origin out-of-time test. For each of the last FOLDS 28-day
     windows: fit the challenger on the window before it, then grade it and
     the champion (v5, scored as of the window's start) on what Jake actually
     did inside it — finished or skipped, starred or not. Nothing graded was
     seen when the model was built. Folds are judged separately (scores from
     different months are not on one scale) and combined as a mean gain with
-    a fold-stratified bootstrap."""
+    a fold-stratified bootstrap.
+
+    A fold whose training snapshot already holds quiz verdicts also grades a
+    twin fitted without them, so the scorecard shows what the verdicts added."""
     folds = []
     for k in range(1, FOLDS + 1):
         cut = now_ms - k * HOLDOUT_DAYS * DAY_MS
         te_ids, te_y, te_w = outcomes(lib, events, cut, cut + HOLDOUT_DAYS * DAY_MS)
-        model, n_tr, neg_tr = window_train(lib, events, mood, cut)
+        model, n_tr, neg_tr = window_train(lib, events, mood, cut, verdicts=verdicts)
         f = {'window': k, 'testSongs': len(te_ids), 'testNo': int(len(te_y) - te_y.sum()), 'trainSongs': n_tr}
         if model is None or len(te_ids) < MIN_EVAL_TRACKS or f['testNo'] < MIN_EVAL_NEG:
             f['verdict'] = 'insufficient data'
             folds.append(f)
             continue
-        snap = Snapshot(lib, events, cut)
+        snap = Snapshot(lib, events, cut, verdicts)
         ch = predict(model, features(snap, te_ids, mood))
         v5 = v5_scores(lib, te_ids, cut, snap.star, snap.play_count, snap.last_played)
         f.update({'challenger': round(wauc(ch, te_y, te_w), 4), 'champion_v5': round(wauc(v5, te_y, te_w), 4), 'verdict': 'measured'})
+        if any(ts < cut - HOLDOUT_DAYS * DAY_MS for ts, _, _ in verdicts):
+            plain, _, _ = window_train(lib, events, mood, cut)
+            if plain is not None:
+                f['challenger_withoutQuiz'] = round(wauc(predict(plain, features(Snapshot(lib, events, cut), te_ids, mood)), te_y, te_w), 4)
         f['_arrays'] = (ch, v5, te_y, te_w)
         folds.append(f)
     measured = [f for f in folds if f['verdict'] == 'measured']
@@ -555,6 +634,9 @@ def evaluate(lib, events, mood, now_ms):
     res['foldsWon'] = sum(1 for g in gains if g > 0)
     res['auc'] = {'challenger': round(float(np.mean([f['challenger'] for f in measured])), 4),
                   'champion_v5': round(float(np.mean([f['champion_v5'] for f in measured])), 4)}
+    twins = [f for f in measured if 'challenger_withoutQuiz' in f]
+    if twins:
+        res['quizGain'] = round(float(np.mean([f['challenger'] - f['challenger_withoutQuiz'] for f in twins])), 4)
     rnd = np.random.default_rng(11)
     boots = []
     for _ in range(BOOTSTRAP):
@@ -573,16 +655,16 @@ def evaluate(lib, events, mood, now_ms):
     return res
 
 
-def strip_check(lib, events, mood, now_ms, ledger_rows, members):
+def strip_check(lib, events, mood, now_ms, ledger_rows, members, verdicts=()):
     """Secondary check on a different decision: of the playlist suggestions
     shown in the last 56 days, did the songs Jake ADDED (and kept) score
     higher than the ones he passed over? Challenger and v5 are both frozen
     as of 56 days ago, so the adds were never seen."""
     T = now_ms - 2 * HOLDOUT_DAYS * DAY_MS
-    model, _, _ = window_train(lib, events, mood, T)
+    model, _, _ = window_train(lib, events, mood, T, verdicts=verdicts)
     if model is None:
         return {'verdict': 'insufficient data'}
-    snap = Snapshot(lib, events, T)
+    snap = Snapshot(lib, events, T, verdicts)
     ids = sorted(lib)
     ch = dict(zip(ids, predict(model, features(snap, ids, mood))))
     v5 = dict(zip(ids, v5_scores(lib, ids, T, snap.star, snap.play_count, snap.last_played)))
@@ -871,10 +953,15 @@ def main():
 
     ledger_rows = load_ledgers()
     members = playlist_members()
+    verdicts, quiz_reasons, quiz_answers = load_quiz(CONFIG['quiz'], lib)
+    quiz_active_from = (verdicts[0][0] + HOLDOUT_DAYS * DAY_MS) if verdicts else None
+    if verdicts:
+        log(f'Top 1000 Quiz: {quiz_answers} answers, {len(verdicts)} verdicts; the model can use them from '
+            f'{datetime.fromtimestamp(quiz_active_from / 1000, tz=timezone.utc):%Y-%m-%d}')
 
     # 5–6. champion vs challenger on held-back time
-    ev_res = evaluate(lib, events, mood, now_ms)
-    strip = strip_check(lib, events, mood, now_ms, ledger_rows, members)
+    ev_res = evaluate(lib, events, mood, now_ms, verdicts=verdicts)
+    strip = strip_check(lib, events, mood, now_ms, ledger_rows, members, verdicts=verdicts)
     ev_res['stripAdds'] = strip
     prev = previous_state(state_path)
     was_promoted = bool(prev.get('promoted'))
@@ -884,9 +971,9 @@ def main():
     # production fit: the two most recent windows (features as of each
     # window's start -> what happened inside it)
     ids = sorted(lib)
-    snap_now = Snapshot(lib, events, now_ms)
+    snap_now = Snapshot(lib, events, now_ms, verdicts)
     v5_now = v5_scores(lib, ids, now_ms, snap_now.star, snap_now.play_count, snap_now.last_played)
-    model, _, _ = window_train(lib, events, mood, now_ms, windows=2)
+    model, _, _ = window_train(lib, events, mood, now_ms, windows=2, verdicts=verdicts)
     X_now = features(snap_now, ids, mood)
     raw = predict(model, X_now) if model is not None else v5_now
     if not np.isfinite(raw).all():
@@ -917,6 +1004,9 @@ def main():
                  'weights': weights, 'mixes': mix_grade, 'suggestions': led, 'drift': dr,
                  'flags': {k: int(sum(1 for f in flags if f & bit)) for k, bit in state['flagBits'].items()},
                  'inputs': {'songs': len(lib), 'events': len(events), 'soundVectors': len(mood)},
+                 'quiz': {'answers': quiz_answers, 'verdicts': len(verdicts),
+                          'activeFrom': datetime.fromtimestamp(quiz_active_from / 1000, tz=timezone.utc).strftime('%Y-%m-%d') if quiz_active_from else None,
+                          'gain': ev_res.get('quizGain'), 'reasons': dict(quiz_reasons.most_common())},
                  'seconds': round(time.time() - started, 1)}
     scorecard['vsFirstNight'] = vs_baseline(os.path.join(CONFIG['work'], 'taste-journal.jsonl'),
                                             {'auc': ev_res.get('auc'), 'mixes': mix_grade, 'suggestions': led})
@@ -928,7 +1018,8 @@ def main():
     with open(os.path.join(CONFIG['work'], 'taste-journal.jsonl'), 'a') as f:
         f.write(json.dumps({'at': state['builtAt'], 'promoted': state['promoted'], 'wasPromoted': was_promoted,
                             'why': why, 'auc': ev_res.get('auc'), 'gainLowerBound': ev_res.get('gainLowerBound'),
-                            'foldsWon': ev_res.get('foldsWon'), 'stripAdds': {k: strip.get(k) for k in ('challenger', 'champion_v5', 'adds')}, 'mixes': {k: mix_grade.get(k) for k in ('served', 'playedThroughRate', 'skipRateWhenPlayed')},
+                            'foldsWon': ev_res.get('foldsWon'),
+                            'quiz': {'verdicts': len(verdicts), 'gain': ev_res.get('quizGain')}, 'stripAdds': {k: strip.get(k) for k in ('challenger', 'champion_v5', 'adds')}, 'mixes': {k: mix_grade.get(k) for k in ('served', 'playedThroughRate', 'skipRateWhenPlayed')},
                             'suggestions': {k: led.get(k) for k in ('stripAddPlayedRate', 'stripAddKeptRate', 'stripAddSkipped2xRate', 'stripShownFromPlaylistArtists28d', 'stripDistinctArtistsPer100')},
                             'drift': {'soundPrefAgreement': dr.get('soundPrefAgreement')}}, default=str) + '\n')
     atomic_json(status_path, {'ok': True, 'at': state['builtAt'], 'promoted': state['promoted'], 'why': why,
