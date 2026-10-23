@@ -34,7 +34,15 @@ export interface QuizSongRef {
 }
 
 export interface QuizQuestion { kind: QuizKind; songs: QuizSongRef[] }
-export interface QuizProgress { answered: number; settled: number; moving: number }
+export interface QuizProgress {
+  answered: number
+  settled: number
+  moving: number
+  /** seats held by the locked albums and pinned lists (homemini ≥ #593) */
+  fixed?: number
+  /** songs without a seat that could still win one (homemini ≥ #593) */
+  contenders?: number
+}
 export interface QuizNext { question: QuizQuestion | null; progress: QuizProgress }
 
 const KINDS = new Set<QuizKind>(['pick', 'inout', 'still', 'best'])
@@ -52,7 +60,9 @@ export function parseProgress(raw: unknown): QuizProgress | null {
   const settled = num(r.settled)
   const moving = num(r.moving)
   if (answered === null || settled === null || moving === null) return null
-  return { answered, settled, moving }
+  const fixed = num(r.fixed)
+  const contenders = num(r.contenders)
+  return { answered, settled, moving, ...(fixed !== null ? { fixed } : {}), ...(contenders !== null ? { contenders } : {}) }
 }
 
 /** One question in /next's shape; null when it is malformed. */

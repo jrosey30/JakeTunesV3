@@ -50,9 +50,19 @@ type Phase =
 
 const PROMPT: Record<QuizQuestion['kind'], string> = {
   pick: 'Which do you love more?',
-  inout: 'Is this in your top 1000?',
+  // Jake (2026-10-23): "is this song in your top 1000" is a bad question — his yes means
+  // "I love it". homemini asks it only when that is still open; seats come from this-or-that.
+  inout: 'Do you love this song?',
   still: 'You starred this a while ago. Still love it?',
   best: 'Best of this sound?',
+}
+
+/** The meter in plain words: seats decided (and how many your lists hold), seats still open, and who is competing for them. */
+function meterLine(p: QuizProgress): string {
+  const n = (x: number) => x.toLocaleString()
+  const fixed = p.fixed ? ` (${n(p.fixed)} by your lists)` : ''
+  const competing = p.contenders !== undefined ? ` · ${n(p.contenders)} songs competing for them` : ''
+  return `${n(p.settled)} seats decided${fixed} · ${n(p.moving)} still open${competing} · ${n(p.answered)} answered`
 }
 
 interface SentAnswer { q: QuizQuestion; choice: string }
@@ -67,12 +77,12 @@ function describeAnswer({ q, choice }: SentAnswer): string {
     case 'unknown': return q.songs.length > 1
       ? `Didn’t know ${q.songs.map(quoted).join(' or ')} well enough`
       : `${quoted(a)} — don’t know it well enough`
-    case 'both': return `Both in: ${quoted(a)} and ${quoted(b)}`
+    case 'both': return `Love both: ${quoted(a)} and ${quoted(b)}`
     case 'neither': return `Neither: ${quoted(a)} and ${quoted(b)}`
-    case 'all': return `All three in: ${q.songs.map(quoted).join(', ')}`
+    case 'all': return `Love all three: ${q.songs.map(quoted).join(', ')}`
     case 'none': return `None of them: ${q.songs.map(quoted).join(', ')}`
-    case 'in': return `${quoted(a)} — in`
-    case 'out': return `${quoted(a)} — out`
+    case 'in': return `${quoted(a)} — love it`
+    case 'out': return `${quoted(a)} — not really`
     case 'yes': return `${quoted(a)} — still love it`
     case 'no': return `${quoted(a)} — not anymore`
   }
@@ -366,11 +376,11 @@ export default function Top1000QuizView(): JSX.Element {
             <button type="button" role="tab" aria-selected={tab === 'list'} className={tab === 'list' ? 'is-on' : ''} onClick={() => setTab('list')}>The list</button>
           </div>
         </div>
-        <p className="t1k-lede">Finding your 1000 favorite songs, the ones the Original iPod carries. Every answer teaches the brain; stop whenever you like.</p>
+        <p className="t1k-lede">Finding your 1000 favorite songs, the ones the Original iPod carries. “Love it” tells the brain what you love; “which do you love more” decides who gets the 1000 seats. Stop whenever you like.</p>
         {progress && (
           <div className="t1k-progress" aria-label="Progress">
             <div className="t1k-meter"><div className="t1k-meter-fill" style={{ width: `${settledPct}%` }} /></div>
-            <span><b>{progress.settled.toLocaleString()}</b> settled · {progress.moving.toLocaleString()} still moving · {progress.answered.toLocaleString()} answered{today > 0 ? ` (${today} today)` : ''}</span>
+            <span>{meterLine(progress)}{today > 0 ? ` (${today} today)` : ''}</span>
           </div>
         )}
       </header>
@@ -395,20 +405,20 @@ export default function Top1000QuizView(): JSX.Element {
               <div className="t1k-actions">
                 {phase.q.kind === 'pick' && (
                   <>
-                    <button type="button" className="t1k-btn" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, 'both') }}>Both are top 1000<kbd className="t1k-kbd">B</kbd></button>
+                    <button type="button" className="t1k-btn" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, 'both') }}>Love both<kbd className="t1k-kbd">B</kbd></button>
                     <button type="button" className="t1k-btn" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, 'neither') }}>Neither<kbd className="t1k-kbd">N</kbd></button>
                   </>
                 )}
                 {phase.q.kind === 'best' && (
                   <>
-                    <button type="button" className="t1k-btn" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, 'all') }}>All three are top 1000<kbd className="t1k-kbd">B</kbd></button>
+                    <button type="button" className="t1k-btn" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, 'all') }}>Love all three<kbd className="t1k-kbd">B</kbd></button>
                     <button type="button" className="t1k-btn" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, 'none') }}>None of them<kbd className="t1k-kbd">N</kbd></button>
                   </>
                 )}
                 {phase.q.kind === 'inout' && (
                   <>
-                    <button type="button" className="t1k-btn t1k-btn--yes" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, 'in') }}>In</button>
-                    <button type="button" className="t1k-btn t1k-btn--no" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, 'out') }}>Out</button>
+                    <button type="button" className="t1k-btn t1k-btn--yes" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, 'in') }}>Love it</button>
+                    <button type="button" className="t1k-btn t1k-btn--no" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, 'out') }}>Not really</button>
                   </>
                 )}
                 {phase.q.kind === 'still' && (

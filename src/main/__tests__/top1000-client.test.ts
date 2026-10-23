@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { createTop1000Client, type FetchLike } from '../top1000-client.ts'
-import { parseQuizNext, parseQuizUndo } from '../../common/top1000-doc.ts'
+import { parseProgress, parseQuizNext, parseQuizUndo } from '../../common/top1000-doc.ts'
 
 const progress = { answered: 3, settled: 200, moving: 800 }
 const track = (id: number) => ({ id, title: `Song ${id}`, artist: 'A', album: 'B', duration: 200000 })
@@ -23,6 +23,13 @@ describe('top1000 doc', () => {
     assert.equal(parseQuizNext({ question: { kind: 'pick', songs: [{ track: track(1), hookMs: 1 }] }, progress }), null)
     assert.equal(parseQuizNext({ question: { kind: 'nope', songs: [] }, progress }), null)
     assert.deepEqual(parseQuizNext({ question: null, progress }), { question: null, progress })
+  })
+
+  it('reads the seats the lists hold and the songs competing — and older homeminis without them', () => {
+    const now = parseProgress({ answered: 3465, settled: 612, moving: 388, fixed: 252, contenders: 250 })
+    assert.deepEqual(now, { answered: 3465, settled: 612, moving: 388, fixed: 252, contenders: 250 })
+    assert.deepEqual(parseProgress(progress), progress)
+    assert.equal(parseProgress({ answered: 1, settled: 'x', moving: 2 }), null)
   })
 
   it('parses an undo: the undone answer and its question asked again', () => {
