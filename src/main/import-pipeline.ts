@@ -564,7 +564,14 @@ async function importOneFileLocked(
 
     const fileStats = await stat(destPath)
     const trackTime = dateOverride || new Date()
-    const durationMs = Math.round((format.duration || 0) * 1000)
+    // The source's tags can omit a duration (no STREAMINFO / odd container),
+    // which stored 0 and left a blank Time cell on a track that plays fine.
+    // The file we just wrote always knows its own length, so ask it.
+    let durSec = Number(format.duration || 0)
+    if (!(durSec > 0)) {
+      try { durSec = Number((await mm.parseFile(destPath)).format.duration || 0) } catch { /* keep 0 */ }
+    }
+    const durationMs = Math.round(durSec * 1000)
 
     // Stable per-file identity. Stored at import and used by the silent
     // post-sync verifier to detect cross-linked paths without resorting
