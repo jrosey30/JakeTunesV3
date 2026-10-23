@@ -36,6 +36,12 @@ const LIBRARY_ICONS: Record<string, JSX.Element> = {
     </svg>
   ),
   genres: <GenresIcon />,
+  overlooked: (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="7" cy="7" r="4.5" />
+      <path d="M10.4 10.4L14 14" />
+    </svg>
+  ),
   discovery: (
     <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
       <circle cx="8" cy="8" r="6.5" fill="#b87333" />
@@ -54,6 +60,7 @@ const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
   { label: 'Albums', view: 'albums' },
   { label: 'Live Concerts', view: 'concerts' },
   { label: 'Genres', view: 'genres' },
+  { label: 'Overlooked', view: 'overlooked' },
   // Backlog 2026-06-06: "Listen to the List" + "New for You" merged into one
   // teal "Discovery" entry (two-tab toggle inside). Teal is distinct from the
   // Music Man's #FC5501 below, which used to clash with New for You's orange.

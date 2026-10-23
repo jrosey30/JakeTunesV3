@@ -25,6 +25,7 @@ import { quietWarn } from '../flight-recorder'
 import { MOBILE_BACKEND_URL } from './recommendations-ipc.ts'
 import { createHomeShelvesClient } from '../home-shelves-client.ts'
 import { createListenMoreWeeklyClient } from '../listen-more-weekly-client.ts'
+import { createOverlookedClient } from '../overlooked-client.ts'
 import { parsePlayEvents } from '../../common/home-spotlight-doc.ts'
 
 const EVERY_MS = 10 * 60_000
@@ -56,6 +57,13 @@ export function registerHomeShelvesIpc(ipc: IpcRegistrar, host: HomeShelvesIpcHo
     lastAttempt = Date.now()
     return client.refresh()
   }
+
+  // The Overlooked page (2026-10-22): homemini's brain-ranked song lanes.
+  const overlooked = createOverlookedClient({
+    baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''),
+    warn: (m: string) => quietWarn('overlooked', m),
+  })
+  ipc.handle('overlooked:get', async (_e: unknown, force?: unknown) => ({ ok: true, state: await overlooked.get(force === true) }), { refuse: REFUSED_SENDER })
 
   ipc.handle('home-shelves:get', async () => ({ ok: true, state: await client.read() }), { refuse: REFUSED_SENDER })
   ipc.handle('home-shelves:refresh', async () => ({ ok: true, state: await refresh(false) }), { refuse: REFUSED_SENDER })

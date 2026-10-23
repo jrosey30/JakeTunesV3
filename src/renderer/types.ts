@@ -137,7 +137,7 @@ export interface Mixtape {
   seasonal?: string
 }
 
-export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'download' | 'scotus' | 'recordstore' |'listen-to-the-list' | 'new-for-you' | 'discovery' | 'mix-detail' | 'concerts' | 'concert-detail' | 'mixtape-detail' | 'dj' | 'activity-pool' | 'year-in-review'
+export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'download' | 'scotus' | 'recordstore' |'listen-to-the-list' | 'new-for-you' | 'discovery' | 'mix-detail' | 'concerts' | 'concert-detail' | 'mixtape-detail' | 'dj' | 'activity-pool' | 'year-in-review' | 'overlooked'
 
 // V5 Live Concert Mode — a declared album's merged "live set". Key'd by
 // albumKey (artist|||album) in live-sets.json; the merged file is a REAL
@@ -1117,6 +1117,7 @@ declare global {
       homeSpotlightRefresh?: () => Promise<{ ok: boolean; state?: import('../common/home-spotlight-doc').HomeSpotlightState }>
       onHomeSpotlightUpdated?: (callback: (state: import('../common/home-spotlight-doc').HomeSpotlightState) => void) => () => void
       // 2026-10-20 — the three Home rows under G; see src/common/home-shelves-doc.ts.
+      overlookedGet?: (force?: boolean) => Promise<{ ok: boolean; state?: { doc: import('../common/overlooked-doc').Overlooked | null; source: 'homemini' | 'memo' | 'none' } }>
       homeShelvesGet?: () => Promise<{ ok: boolean; state?: import('../common/home-shelves-doc').HomeShelvesState }>
       homeShelvesRefresh?: () => Promise<{ ok: boolean; state?: import('../common/home-shelves-doc').HomeShelvesState }>
       homeShelvesLocalPlays?: () => Promise<{ ok: boolean; plays?: Array<{ id: number | string; ts: number }> }>
