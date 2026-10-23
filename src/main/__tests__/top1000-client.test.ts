@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { createTop1000Client, type FetchLike } from '../top1000-client.ts'
-import { parseQuizNext } from '../../common/top1000-doc.ts'
+import { parseQuizNext, parseQuizUndo } from '../../common/top1000-doc.ts'
 
 const progress = { answered: 3, settled: 200, moving: 800 }
 const track = (id: number) => ({ id, title: `Song ${id}`, artist: 'A', album: 'B', duration: 200000 })
@@ -23,6 +23,17 @@ describe('top1000 doc', () => {
     assert.equal(parseQuizNext({ question: { kind: 'pick', songs: [{ track: track(1), hookMs: 1 }] }, progress }), null)
     assert.equal(parseQuizNext({ question: { kind: 'nope', songs: [] }, progress }), null)
     assert.deepEqual(parseQuizNext({ question: null, progress }), { question: null, progress })
+  })
+
+  it('parses an undo: the undone answer and its question asked again', () => {
+    const q = { kind: 'pick', songs: [{ track: track(1), hookMs: 1 }, { track: track(2), hookMs: 2 }] }
+    const u = parseQuizUndo({ ok: true, undone: { kind: 'pick', ids: [1, 2], choice: '2' }, question: q, progress })
+    assert.deepEqual(u?.undone, { kind: 'pick', ids: ['1', '2'], choice: '2' })
+    assert.equal(u?.question?.songs[1]?.id, 2)
+    assert.deepEqual(parseQuizUndo({ ok: true, undone: null, question: null, progress }), { undone: null, question: null, progress })
+    assert.equal(parseQuizUndo({ ok: true, undone: { kind: 'pick', ids: ['1', '2'], choice: '2' }, question: { kind: 'pick', songs: [] }, progress }), null)
+    assert.equal(parseQuizUndo({ ok: false, progress }), null)
+    assert.equal(parseQuizUndo({ ok: true, undone: { kind: 'nope', ids: [], choice: 'x' }, progress }), null)
   })
 })
 
@@ -56,5 +67,20 @@ describe('top1000 client', () => {
     assert.ok(!b.ok && /no longer in the quiz/.test(b.error))
     const n = await offline.next()
     assert.ok(!n.ok && /homemini/.test(n.error))
+  })
+
+  it('undo posts and returns the undone question; a 404 means not deployed yet', async () => {
+    const seen: Array<{ url: string; init?: Record<string, unknown> }> = []
+    const body = { ok: true, undone: { kind: 'inout', ids: ['9'], choice: 'in' }, question: { kind: 'inout', songs: [{ track: track(9), hookMs: 0 }] }, progress }
+    const c = createTop1000Client({ baseUrl: 'http://x', warn: () => {}, fetchImpl: fake({ '/api/top1000/undo': { status: 200, body } }, seen) })
+    const u = await c.undo()
+    assert.ok(u.ok && u.value.undone?.choice === 'in' && u.value.question?.songs[0]?.id === 9)
+    assert.equal(seen[0]!.init?.method, 'POST')
+    const old = createTop1000Client({ baseUrl: 'http://x', warn: () => {}, fetchImpl: fake({ '/undo': { status: 404, body: null } }) })
+    const n = await old.undo()
+    assert.ok(!n.ok && n.error === 'Undo isn’t available yet.')
+    const offline = createTop1000Client({ baseUrl: 'http://x', warn: () => {}, fetchImpl: fake({}) })
+    const o = await offline.undo()
+    assert.ok(!o.ok && /homemini/.test(o.error))
   })
 })

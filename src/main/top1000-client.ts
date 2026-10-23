@@ -7,8 +7,8 @@
  */
 import { withCompanionInit } from './hub-companion.ts'
 import {
-  parseProgress, parseQuizList, parseQuizNext,
-  type QuizAnswerInput, type QuizListEntry, type QuizNext, type QuizProgress,
+  parseProgress, parseQuizList, parseQuizNext, parseQuizUndo,
+  type QuizAnswerInput, type QuizListEntry, type QuizNext, type QuizProgress, type QuizUndo,
 } from '../common/top1000-doc.ts'
 
 export interface FetchReply { ok: boolean; status: number; json(): Promise<unknown> }
@@ -60,6 +60,21 @@ export function createTop1000Client(opts: Top1000ClientOptions) {
       const progress = parseProgress(body?.progress)
       if (r.status === 200 && body?.ok && progress) return { ok: true, value: progress }
       return { ok: false, error: body?.error ? `That answer wasn’t saved: ${body.error}.` : 'That answer wasn’t saved.' }
+    },
+
+    /** Take back the last answer (repeatable). A 404 means homemini predates undo. */
+    async undo(): Promise<Result<QuizUndo>> {
+      const r = await call('/undo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      })
+      if (!r) return { ok: false, error: 'Nothing was undone — homemini isn’t answering.' }
+      if (r.status === 404) return { ok: false, error: 'Undo isn’t available yet.' }
+      const doc = r.status === 200 ? parseQuizUndo(r.body) : null
+      if (doc) return { ok: true, value: doc }
+      const err = (r.body as { error?: unknown } | null)?.error
+      return { ok: false, error: typeof err === 'string' ? `Nothing was undone: ${err}.` : 'Nothing was undone.' }
     },
 
     async list(): Promise<Result<{ progress: QuizProgress; list: QuizListEntry[] }>> {

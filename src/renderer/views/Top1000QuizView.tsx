@@ -12,6 +12,13 @@
  * Tap to hear: a 20-second snippet from about a third of the way in (no hook
  * detection yet), through the same ipod-audio:// path the player uses, so it
  * works on every Mac. Starting a snippet pauses whatever is playing.
+ *
+ * Wrong clicks (Jake, after 2,634 answers: "i feel like i may have accidently
+ * hit the wrong songs sometimes"): only the cover picks a song — the title
+ * block used to be part of the pick button, right on top of "Hear it". A
+ * press that started before the question appeared, any answer in its first
+ * 250 ms, and held-down keys never count. The last answer is echoed under the
+ * question with Undo (Backspace), back through this session's answers.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import AlbumArtImage from '../components/AlbumArtImage'
@@ -27,6 +34,10 @@ import type { Track } from '../types'
 import '../styles/top1000-quiz.css'
 
 const SNIPPET_MS = 20_000
+/** A click or key landing this soon after a question appears was meant for the one before. */
+const CARRY_OVER_GUARD_MS = 250
+/** Undo walks back at most this many of this session's answers (homemini keeps the same limit). */
+const UNDO_DEPTH = 25
 /** Ask "what got you?" after every Nth decisive pick — often enough to teach, rare enough not to nag. */
 const REASON_EVERY = 4
 
@@ -42,6 +53,30 @@ const PROMPT: Record<QuizQuestion['kind'], string> = {
   inout: 'Is this in your top 1000?',
   still: 'You starred this a while ago. Still love it?',
   best: 'Best of this sound?',
+}
+
+interface SentAnswer { q: QuizQuestion; choice: string }
+
+const quoted = (s: QuizSongRef | undefined): string => `“${s?.title ?? ''}”`
+
+/** The answer just saved, in plain words. */
+function describeAnswer({ q, choice }: SentAnswer): string {
+  const [a, b] = q.songs
+  switch (choice) {
+    case 'skip': return 'Skipped'
+    case 'unknown': return q.songs.length > 1
+      ? `Didn’t know ${q.songs.map(quoted).join(' or ')} well enough`
+      : `${quoted(a)} — don’t know it well enough`
+    case 'both': return `Both in: ${quoted(a)} and ${quoted(b)}`
+    case 'neither': return `Neither: ${quoted(a)} and ${quoted(b)}`
+    case 'in': return `${quoted(a)} — in`
+    case 'out': return `${quoted(a)} — out`
+    case 'yes': return `${quoted(a)} — still love it`
+    case 'no': return `${quoted(a)} — not anymore`
+  }
+  const winner = q.songs.find((s) => String(s.id) === choice)
+  if (!winner) return 'Saved'
+  return `You picked ${quoted(winner)} over ${q.songs.filter((s) => s !== winner).map(quoted).join(' and ')}`
 }
 
 let musicRoot: string | null = null
@@ -64,7 +99,13 @@ export default function Top1000QuizView(): JSX.Element {
   const [hearing, setHearing] = useState<number | null>(null)
   const [list, setList] = useState<QuizListEntry[] | null>(null)
   const [listError, setListError] = useState<string | null>(null)
+  /** This session's saved answers, newest last — what Undo walks back through. */
+  const [history, setHistory] = useState<SentAnswer[]>([])
+  const [undoNote, setUndoNote] = useState<string | null>(null)
   const decisivePicks = useRef(0)
+  /** When the current question appeared, and when the last press started (performance.now()). */
+  const shownAt = useRef(0)
+  const downAt = useRef(0)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const stopTimer = useRef<number | null>(null)
 
@@ -135,9 +176,29 @@ export default function Top1000QuizView(): JSX.Element {
     if (missing.length) queueArtworkResolutions(missing, dispatch)
   }, [phase, byId, artFor, dispatch])
 
+  // ── wrong-click guards ──
+  useEffect(() => {
+    if (phase.kind === 'ask' || phase.kind === 'why') shownAt.current = performance.now()
+  }, [phase])
+
+  useEffect(() => {
+    const onDown = () => { downAt.current = performance.now() }
+    window.addEventListener('pointerdown', onDown, true)
+    return () => window.removeEventListener('pointerdown', onDown, true)
+  }, [])
+
+  /** False for an answer meant for the previous question. Pass the click; keys pass nothing. */
+  const ready = useCallback((click?: { detail: number }): boolean => {
+    if (performance.now() - shownAt.current < CARRY_OVER_GUARD_MS) return false
+    // detail 0 = a click made with the keyboard, which has no press to check
+    if (click && click.detail > 0 && downAt.current < shownAt.current) return false
+    return true
+  }, [])
+
   const send = useCallback(async (q: QuizQuestion, choice: string, why?: QuizReason[]) => {
     if (saving) return
     setSaving(true)
+    setUndoNote(null)
     stopSnippet()
     try {
       const r = await window.electronAPI.top1000Answer?.({
@@ -149,6 +210,7 @@ export default function Top1000QuizView(): JSX.Element {
       }
       setProgress(r.value)
       setToday((n) => n + 1)
+      setHistory((h) => [...h, { q, choice }].slice(-UNDO_DEPTH))
       await fetchNext()
     } finally {
       setSaving(false)
@@ -157,6 +219,7 @@ export default function Top1000QuizView(): JSX.Element {
 
   /** A song chosen on a pick / best question — sometimes ask why first. */
   const choose = useCallback((q: QuizQuestion, winner: QuizSongRef) => {
+    if (saving) return
     decisivePicks.current++
     if (decisivePicks.current % REASON_EVERY === 0) {
       stopSnippet()
@@ -165,22 +228,78 @@ export default function Top1000QuizView(): JSX.Element {
       return
     }
     void send(q, String(winner.id))
-  }, [send, stopSnippet])
+  }, [saving, send, stopSnippet])
 
-  // 1 / 2 / 3 pick the matching card.
+  /** Take back the last saved answer and ask its question again. */
+  const undo = useCallback(async () => {
+    if (saving || history.length === 0) return
+    setSaving(true)
+    setUndoNote(null)
+    stopSnippet()
+    try {
+      const r = await window.electronAPI.top1000Undo?.().catch((err: unknown) => {
+        console.warn('[top1000] undo failed:', err)
+        return null
+      })
+      if (!r) { setUndoNote('Undo isn’t available yet.'); return }
+      if (!r.ok) { setUndoNote(r.error); return }
+      setProgress(r.value.progress)
+      const { undone, question } = r.value
+      if (!undone) { setHistory([]); return }
+      setToday((n) => Math.max(0, n - 1))
+      // Only step this session's list back when homemini undid the answer it
+      // shows; anything else (another Mac answered in between) clears it.
+      setHistory((h) => {
+        const top = h[h.length - 1]
+        const same = !!top && top.choice === undone.choice && top.q.kind === undone.kind
+          && top.q.songs.map((x) => String(x.id)).join(',') === undone.ids.join(',')
+        return same ? h.slice(0, -1) : []
+      })
+      if (question) { setReasons([]); setPhase({ kind: 'ask', q: question }) }
+    } finally {
+      setSaving(false)
+    }
+  }, [saving, history.length, stopSnippet])
+
+  /** "What got you?" comes before the pick is saved: undo there just un-picks. */
+  const backFromWhy = useCallback(() => {
+    if (phase.kind !== 'why' || saving) return
+    decisivePicks.current = Math.max(0, decisivePicks.current - 1)
+    setReasons([])
+    setPhase({ kind: 'ask', q: phase.q })
+  }, [phase, saving])
+
+  // Keys: 1 / 2 / 3 pick the matching card, B both, N neither, Backspace undo.
   useEffect(() => {
-    if (tab !== 'quiz' || phase.kind !== 'ask' || (phase.q.kind !== 'pick' && phase.q.kind !== 'best')) return
-    const q = phase.q
+    if (tab !== 'quiz') return
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
       if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.key === 'Backspace') {
+        e.preventDefault()
+        if (e.repeat) return
+        if (phase.kind === 'why') backFromWhy()
+        else void undo()
+        return
+      }
+      if (phase.kind !== 'ask') return
+      const q = phase.q
+      const key = e.key.toLowerCase()
       const n = Number(e.key)
-      if (n >= 1 && n <= q.songs.length) { e.preventDefault(); choose(q, q.songs[n - 1]!) }
+      let act: (() => void) | null = null
+      if ((q.kind === 'pick' || q.kind === 'best') && n >= 1 && n <= q.songs.length) act = () => choose(q, q.songs[n - 1]!)
+      else if (q.kind === 'pick' && key === 'b') act = () => { void send(q, 'both') }
+      else if (q.kind === 'pick' && key === 'n') act = () => { void send(q, 'neither') }
+      if (!act) return
+      e.preventDefault()
+      // Holding a key never answers several questions.
+      if (e.repeat || !ready()) return
+      act()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [tab, phase, choose])
+  }, [tab, phase, choose, send, undo, backFromWhy, ready])
 
   // ── the list ──
   useEffect(() => {
@@ -199,23 +318,33 @@ export default function Top1000QuizView(): JSX.Element {
   const songCard = (q: QuizQuestion, s: QuizSongRef, i: number, choosable: boolean) => {
     const t = byId.get(s.id)
     const hash = artFor(t)
+    const art = (
+      <div className="t1k-art">
+        {hash ? <AlbumArtImage hash={hash} alt={s.album || s.title} size={320} /> : <div className="t1k-art-empty" />}
+        {choosable && <span className="t1k-key" aria-hidden="true">{i + 1}</span>}
+      </div>
+    )
+    // Only the cover picks. The words under it are plain text, so a near-miss
+    // on "Hear it" lands on nothing.
     return (
       <div key={s.id} className={`t1k-song${choosable ? ' t1k-song--choosable' : ''}`}>
-        <button
-          type="button"
-          className="t1k-song-pick"
-          disabled={!choosable || saving}
-          onClick={() => choose(q, s)}
-          title={choosable ? `Choose “${s.title}” (${i + 1})` : undefined}
-        >
-          <div className="t1k-art">
-            {hash ? <AlbumArtImage hash={hash} alt={s.album || s.title} size={320} /> : <div className="t1k-art-empty" />}
-            {choosable && <span className="t1k-key" aria-hidden="true">{i + 1}</span>}
-          </div>
+        {choosable ? (
+          <button
+            type="button"
+            className="t1k-song-pick"
+            disabled={saving}
+            onClick={(e) => { if (ready(e)) choose(q, s) }}
+            aria-label={`Choose “${s.title}” by ${s.artist} (${i + 1})`}
+            title={`Choose “${s.title}” (${i + 1})`}
+          >
+            {art}
+          </button>
+        ) : art}
+        <div className="t1k-meta">
           <div className="t1k-title">{s.title}</div>
           <div className="t1k-artist">{s.artist}</div>
           {s.album && <div className="t1k-album">{s.album}{t?.year ? ` · ${t.year}` : ''}</div>}
-        </button>
+        </div>
         <button type="button" className={`t1k-hear${hearing === s.id ? ' is-on' : ''}`} onClick={() => { void hear(s) }} disabled={!t?.path}>
           {hearing === s.id ? 'Stop' : 'Hear it'}
         </button>
@@ -262,27 +391,27 @@ export default function Top1000QuizView(): JSX.Element {
               <div className="t1k-actions">
                 {phase.q.kind === 'pick' && (
                   <>
-                    <button type="button" className="t1k-btn" disabled={saving} onClick={() => { void send(phase.q, 'both') }}>Both are top 1000</button>
-                    <button type="button" className="t1k-btn" disabled={saving} onClick={() => { void send(phase.q, 'neither') }}>Neither</button>
+                    <button type="button" className="t1k-btn" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, 'both') }}>Both are top 1000<kbd className="t1k-kbd">B</kbd></button>
+                    <button type="button" className="t1k-btn" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, 'neither') }}>Neither<kbd className="t1k-kbd">N</kbd></button>
                   </>
                 )}
                 {phase.q.kind === 'inout' && (
                   <>
-                    <button type="button" className="t1k-btn t1k-btn--yes" disabled={saving} onClick={() => { void send(phase.q, 'in') }}>In</button>
-                    <button type="button" className="t1k-btn t1k-btn--no" disabled={saving} onClick={() => { void send(phase.q, 'out') }}>Out</button>
+                    <button type="button" className="t1k-btn t1k-btn--yes" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, 'in') }}>In</button>
+                    <button type="button" className="t1k-btn t1k-btn--no" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, 'out') }}>Out</button>
                   </>
                 )}
                 {phase.q.kind === 'still' && (
                   <>
-                    <button type="button" className="t1k-btn t1k-btn--yes" disabled={saving} onClick={() => { void send(phase.q, 'yes') }}>Still love it</button>
-                    <button type="button" className="t1k-btn t1k-btn--no" disabled={saving} onClick={() => { void send(phase.q, 'no') }}>Not anymore</button>
+                    <button type="button" className="t1k-btn t1k-btn--yes" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, 'yes') }}>Still love it</button>
+                    <button type="button" className="t1k-btn t1k-btn--no" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, 'no') }}>Not anymore</button>
                   </>
                 )}
                 <span className="t1k-actions-gap" />
-                <button type="button" className="t1k-link" disabled={saving} onClick={() => { void send(phase.q, 'unknown') }}>
+                <button type="button" className="t1k-link" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, 'unknown') }}>
                   {phase.q.songs.length > 1 ? 'I don’t know these well enough' : 'I don’t know it well enough'}
                 </button>
-                <button type="button" className="t1k-link" disabled={saving} onClick={() => { void send(phase.q, 'skip') }}>Ask me later</button>
+                <button type="button" className="t1k-link" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, 'skip') }}>Ask me later</button>
               </div>
             </>
           )}
@@ -307,10 +436,22 @@ export default function Top1000QuizView(): JSX.Element {
                 })}
               </div>
               <div className="t1k-actions">
-                <button type="button" className="t1k-btn t1k-btn--yes" disabled={saving} onClick={() => { void send(phase.q, String(phase.winner.id), reasons) }}>Save</button>
-                <button type="button" className="t1k-link" disabled={saving} onClick={() => { void send(phase.q, String(phase.winner.id)) }}>Just the pick</button>
+                <button type="button" className="t1k-btn t1k-btn--yes" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, String(phase.winner.id), reasons) }}>Save</button>
+                <button type="button" className="t1k-link" disabled={saving} onClick={(e) => { if (ready(e)) void send(phase.q, String(phase.winner.id)) }}>Just the pick</button>
+                <span className="t1k-actions-gap" />
+                <button type="button" className="t1k-link" disabled={saving} onClick={backFromWhy}>Wrong song? Undo<kbd className="t1k-kbd">⌫</kbd></button>
               </div>
             </>
+          )}
+
+          {phase.kind !== 'why' && phase.kind !== 'loading' && (history.length > 0 || undoNote) && (
+            <p className="t1k-last">
+              {history.length > 0 && <span>{describeAnswer(history[history.length - 1]!)}</span>}
+              {history.length > 0 && (
+                <button type="button" className="t1k-link" disabled={saving} onClick={() => { void undo() }}>Undo<kbd className="t1k-kbd">⌫</kbd></button>
+              )}
+              {undoNote && <span className="t1k-last-note">{undoNote}</span>}
+            </p>
           )}
         </section>
       )}
