@@ -10,6 +10,10 @@
  * ("Justification", "Justification II", "JUSTIFICATION IV: A NEW STREAM", …)
  * in series order, so the next one joins without a code change.
  *
+ * Later the same day (Jake): Rocksurgence comes off too — "a bias to keep it
+ * on there....sure but not locked". Its songs lean toward the Original
+ * through the Top 1000 ranking instead of being pinned.
+ *
  * Priority order matters only when the pinned lists alone overflow your half
  * of a small sync (see src/common/activity-split.ts): earlier lists win.
  * Locked albums (common/pool-locked-albums.ts — Geese's studio albums) go
@@ -18,7 +22,7 @@
 import type { Track, Playlist } from '../types'
 import { resolveLockedAlbumIds } from '../../common/pool-locked-albums'
 
-export const ALWAYS_IN_POOL = ['Greenpoint Greatest Hits', 'Justification', 'Bops', 'Rocksurgence'] as const
+export const ALWAYS_IN_POOL = ['Greenpoint Greatest Hits', 'Justification', 'Bops'] as const
 
 /** Names in ALWAYS_IN_POOL that stand for every playlist in a numbered series. */
 const SERIES = new Set<string>(['Justification'])
