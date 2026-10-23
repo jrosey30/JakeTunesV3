@@ -108,6 +108,7 @@ import { registerIpodIpc } from './ipc/ipod-ipc.ts'
 import { registerSyncIpc, type SyncConvertOptions } from './ipc/sync-ipc.ts'
 import { createSyncEngine, type VerifyTrackInput, type VerifyTrackUpdate } from './sync-engine/index.ts'
 import { ingestIpodRoundTrip } from './sync-engine/roundtrip.ts'
+import { refuseUnlessOriginalIpod } from './ipod-identity.ts'
 import { registerAiIpc } from './ipc/ai-ipc.ts'
 import {
   registerCynthiaIpc,
@@ -1131,8 +1132,11 @@ registerIpodIpc(ipc, {
   },
   runPythonRestore: (args, stdinData) => runPythonRestore(args, stdinData),
   isSyncInFlight: () => syncEngine.isSyncInFlight(),
-  onMountDetected: (mount) => {
-    void ingestIpodRoundTrip(mount, {
+  onMountDetected: (mount) => void refuseUnlessOriginalIpod(mount, STATE_DIR).then((notOriginal) => {
+    sendToRenderer('ipod-device-changed', null)
+    // Another iPod's plays would map through the original's manifest (wrong songs, double counts).
+    if (notOriginal) return console.log(`[roundtrip] skipped — ${notOriginal}`)
+    return ingestIpodRoundTrip(mount, {
       stateDir: STATE_DIR,
       getLibraryTracks: async () =>
         (((await libraryCache.get()) as { tracks?: Array<{ id: number; playCount?: number; lastPlayedAt?: number }> }).tracks) || [],
@@ -1142,7 +1146,7 @@ registerIpodIpc(ipc, {
       sendToRenderer,
       isSyncInFlight: () => syncEngine.isSyncInFlight(),
     })
-  },
+  }),
 })
 registerSyncIpc(ipc, {
   requestSyncCancel: () => syncEngine.requestSyncCancel(),
@@ -4756,6 +4760,8 @@ function scheduleDbRebuild(deletedPaths: string[]) {
     if (sync?.autoRemoveDeletedFromIpod !== true) {
       return
     }
+    const notOriginal = await refuseUnlessOriginalIpod(detectedIpodMount, STATE_DIR)
+    if (notOriginal) return console.log(`[delete-sync] skipped — ${notOriginal}`)
     try {
       const ipodMount = detectedIpodMount
       const { unlink: unlinkFS } = await import('fs/promises')

@@ -23,7 +23,7 @@
  *     drop not fit (its earliest songs, same oldest-first rule) — reported
  *     as `overflow`
  *   • drop order is kept — the pool syncs in the order it was built
- *   • the pinned lists (Recently Added, Bops, Rocksurgence) are resolved
+ *   • the pinned lists (renderer/utils/poolPinnedLists.ts) are resolved
  *     separately at sync time; they never count against the pool
  */
 

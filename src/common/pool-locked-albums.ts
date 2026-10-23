@@ -4,13 +4,12 @@
  * (renderer/utils/poolPinnedLists.ts), they are resolved live from the
  * library at every sync — they are not pool drops, so the 1,000 roll-off
  * can never push them out — and they come FIRST in the pinned order, ahead
- * of Recently Added / Bops / Rocksurgence.
+ * of the always-in lists.
  *
- * Geese studio albums = MusicBrainz release groups typed Album with no
- * secondary type (artist e0c97a4d-c392-41a9-a374-57af3e3eeab3, checked
- * 2026-10-18). Not included: 4D Country (EP), Alive & In Person and the
- * Getting Killed Again live sets, singles. A new studio album gets added
- * here.
+ * 2026-10-23 (Jake): "lock in geese's getting killed and 3d country into
+ * the ipod mini original. those 2 albums only". A Beautiful Memory and
+ * Projector are no longer locked. Not included either: 4D Country (EP),
+ * Alive & In Person and the Getting Killed Again live sets, singles.
  *
  * Album titles match EXACTLY (folded) — "Getting Killed Again (Live …)"
  * must not ride along with "Getting Killed".
@@ -28,7 +27,7 @@ export interface LockedAlbumSet {
 }
 
 export const LOCKED_IN_POOL: LockedAlbumSet[] = [
-  { label: 'Geese studio albums', artist: 'Geese', albums: ['A Beautiful Memory', 'Projector', '3D Country', 'Getting Killed'] },
+  { label: 'Geese — 3D Country + Getting Killed', artist: 'Geese', albums: ['3D Country', 'Getting Killed'] },
 ]
 
 export interface LockedTrackLike {

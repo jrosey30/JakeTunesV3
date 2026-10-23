@@ -15,7 +15,8 @@ import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { safeIpcError } from '../safe-ipc-error.ts'
 import { withDisplayAwake } from '../sync-keep-awake.ts'
-import { STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted } from '../state-dir.ts'
+import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted } from '../state-dir.ts'
+import { refuseUnlessOriginalIpod } from '../ipod-identity.ts'
 import { parseTsaSeal, tsaInspectSeal, tsaRelFromColon, tsaNormalizeColonPath } from '../ipod-sync-tsa.ts'
 
 export interface StateConflict {
@@ -206,6 +207,11 @@ export function registerSyncIpc(ipc: IpcRegistrar, host: SyncIpcHost): void {
         return { ok: true, sealed: false, drifted: false, target: 0, present: 0, missing: [] as Array<{ id: number; destPath: string; reason: string }> }
       }
       const mount = host.getIpodMount()
+      // The seal describes the ORIGINAL iPod's last Activity Sync. Checked
+      // against any other iPod it reads as "drifted" — a false alarm.
+      if (mount && await refuseUnlessOriginalIpod(mount, STATE_DIR)) {
+        return { ok: true, sealed: false, drifted: false, target: 0, present: 0, missing: [] as Array<{ id: number; destPath: string; reason: string }> }
+      }
       if (!mount) {
         return { ok: true, sealed: true, drifted: false, unmounted: true, target: seal.target, present: 0, missing: [] as Array<{ id: number; destPath: string; reason: string }> }
       }

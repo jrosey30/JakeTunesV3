@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import type { IpodDeviceMarker, IpodIdentity } from '../common/ipod-identity'
 
 const electronAPI = {
   loadTracks: (): Promise<{ tracks: unknown[]; playlists: { name: string; trackIds: number[] }[] }> => ipcRenderer.invoke('load-tracks'),
@@ -277,6 +278,16 @@ const electronAPI = {
     missing: Array<{ id: number; destPath: string; reason: string }>
     error?: string
   }> => ipcRenderer.invoke('inspect-ipod-tsa-seal'),
+  // Which iPod is plugged in (2026-10-23, one Pool per iPod — step 1).
+  getIpodDevice: (): Promise<{ ok: boolean; mounted?: boolean; identity?: IpodIdentity; error?: string }> =>
+    ipcRenderer.invoke('get-ipod-device'),
+  registerIpodDevice: (input: { asOriginal: boolean; name?: string; color?: string; purpose?: string }): Promise<{ ok: true; device: IpodDeviceMarker } | { ok: false; error: string }> =>
+    ipcRenderer.invoke('register-ipod-device', input),
+  onIpodDeviceChanged: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('ipod-device-changed', handler)
+    return () => { ipcRenderer.removeListener('ipod-device-changed', handler) }
+  },
   onIpodSyncIncomplete: (callback: (info: { phase: string; at?: string }) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, info: { phase: string; at?: string }) => callback(info)
     ipcRenderer.on('ipod-sync-incomplete', handler)
