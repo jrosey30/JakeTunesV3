@@ -17,8 +17,8 @@ test('parse: keeps good songs, drops songs without an id or a reason and empty l
     { genre: ' Pop ', items: [item(5, 'c')] },
   ]))
   assert.deepEqual(out?.lanes, [
-    { genre: null, items: [{ id: 1, reason: 'a' }, { id: 4, reason: 'why' }] },
-    { genre: 'Pop', items: [{ id: 5, reason: 'c' }] },
+    { genre: null, subtitle: null, items: [{ id: 1, reason: 'a' }, { id: 4, reason: 'why' }] },
+    { genre: 'Pop', subtitle: null, items: [{ id: 5, reason: 'c' }] },
   ])
 })
 
@@ -66,4 +66,12 @@ test('client: a reply that is not a document never replaces a good one', async (
   const c = createOverlookedClient({ baseUrl: 'http://h', fetchImpl, now: () => t, warn: () => {} })
   await c.get(); bad = true; t += MEMO_MS + 1
   assert.equal((await c.get()).doc?.lanes[0]?.items[0]?.id, 7)
+})
+
+test('parse: a lane subtitle rides along, blank ones are dropped', () => {
+  const out = parseOverlooked(doc([
+    { genre: 'Rock', subtitle: ' Like your Geese and Jigitz ', items: [item(1, 'a')] },
+    { genre: null, subtitle: '  ', items: [item(2, 'b')] },
+  ]))
+  assert.deepEqual(out?.lanes.map((l) => l.subtitle), ['Like your Geese and Jigitz', null])
 })

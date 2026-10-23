@@ -63,6 +63,7 @@ export default function OverlookedView(): JSX.Element {
   // Lanes resolved to this Mac's own songs; a song the library no longer has is skipped.
   const lanes = useMemo(() => (load.phase !== 'ready' ? [] : load.doc.lanes.map((lane) => ({
     genre: lane.genre,
+    subtitle: lane.subtitle,
     cards: lane.items.flatMap((it) => { const track = byId.get(it.id); return track ? [{ track, reason: it.reason }] : [] }),
   })).filter((l) => l.cards.length > 0)), [load, byId])
 
@@ -80,7 +81,7 @@ export default function OverlookedView(): JSX.Element {
           <h2 className="home-section-title">Overlooked</h2>
           <button type="button" className="home-section-more" onClick={() => { setLoad({ phase: 'loading' }); void fetchDoc(true) }}>Refresh</button>
         </div>
-        <p className="overlooked-lede">Songs you own but have barely played, picked by the brain from what you already love. A fresh set every morning.</p>
+        <p className="overlooked-lede">Songs you own but have barely played, matched to what you’re playing lately: artists you’ve never touched, and deep cuts from ones you know. A fresh set every morning.</p>
       </section>
       {load.phase === 'loading' && <p className="overlooked-note">Finding songs…</p>}
       {load.phase === 'empty' && <p className="overlooked-note">Nothing to show yet. Overlooked comes from homemini, and it isn’t answering right now.</p>}
@@ -91,6 +92,7 @@ export default function OverlookedView(): JSX.Element {
           <section key={title} className="home-section home-shelves-row" aria-label={title}>
             <div className="home-section-header">
               <h2 className="home-section-title">{title}</h2>
+              {lane.subtitle && <span className="overlooked-sub">{lane.subtitle}</span>}
               <button type="button" className="home-section-more" onClick={() => playTrack(queue[0]!, queue, 0, undefined, true, true)}>Play All</button>
             </div>
             <div className="home-card-row" role="list">
