@@ -80,7 +80,9 @@ function meterLine(p: QuizProgress): string {
     ? `Round ${n(p.round)} · ${p.heatsLeft ? `${n(p.heatsLeft)} heat${p.heatsLeft === 1 ? '' : 's'} left` : `${n(p.duelsLeft ?? 0)} tough call${p.duelsLeft === 1 ? '' : 's'} left`} · `
     : ''
   const fixed = p.fixed ? ` (${n(p.fixed)} by your lists)` : ''
-  const competing = p.contenders !== undefined ? ` · ${n(p.contenders)} songs competing for them` : ''
+  // Everyone still undecided is in the running: the songs holding an open seat for now plus the
+  // challengers without one (Jake: "only 33 songs competing for 369 seats??!!!").
+  const competing = p.contenders !== undefined ? ` · ${n(p.moving + p.contenders)} songs in the running` : ''
   return `${round}${n(p.settled)} seats decided${fixed} · ${n(p.moving)} still open${competing} · ${n(p.answered)} answered`
 }
 
