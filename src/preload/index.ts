@@ -1142,6 +1142,10 @@ const electronAPI = {
   // in main; with no fresh copy the renderer builds them from this Mac's
   // library + play history (src/common/home-shelves-doc.ts).
   overlookedGet: (force?: boolean): Promise<unknown> => ipcRenderer.invoke('overlooked:get', force === true),
+  // The Top 1000 Quiz (2026-10-23) — homemini's /api/top1000.
+  top1000Next: (): Promise<unknown> => ipcRenderer.invoke('top1000:next'),
+  top1000Answer: (input: { kind: string; ids: string[]; choice: string; reasons?: string[] }): Promise<unknown> => ipcRenderer.invoke('top1000:answer', input),
+  top1000List: (): Promise<unknown> => ipcRenderer.invoke('top1000:list'),
   homeShelvesGet: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:get'),
   homeShelvesRefresh: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:refresh'),
   homeShelvesLocalPlays: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:local-plays'),

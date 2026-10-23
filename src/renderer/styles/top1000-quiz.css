@@ -1,0 +1,122 @@
+/* Top 1000 Quiz. Same paper and type as Home (home.css): the white page, the
+   uppercase eyebrow labels, the Lion selection blue for anything chosen. The
+   one warm note is brand orange on the progress meter, which is the point of
+   the page: how close the 1000 is to settled. */
+.t1k-view {
+  height: 100%;
+  overflow-y: auto;
+  background: var(--white, #fff);
+  color: var(--text-primary, #161312);
+  padding: 26px 32px 60px;
+  box-sizing: border-box;
+}
+
+.t1k-head { max-width: 760px; display: flex; flex-direction: column; gap: 10px; }
+.t1k-head-row { display: flex; align-items: center; gap: 18px; }
+.t1k-h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+.t1k-lede { margin: 0; color: var(--text-secondary, #555049); font-size: 13px; line-height: 1.45; max-width: 62ch; }
+
+.t1k-tabs { display: inline-flex; border: 1px solid #b4b4b4; border-radius: 5px; overflow: hidden; }
+.t1k-tabs button {
+  border: 0;
+  background: linear-gradient(to bottom, #fdfdfd, #e6e6e6);
+  font-size: 11px;
+  padding: 3px 12px;
+  color: #333;
+  cursor: default;
+}
+.t1k-tabs button + button { border-left: 1px solid #b4b4b4; }
+.t1k-tabs button.is-on {
+  background: linear-gradient(to bottom, var(--selection-top, #7f97ba), var(--selection-bottom, #5f79a4));
+  color: #fff;
+}
+
+.t1k-progress { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--text-secondary, #555049); font-variant-numeric: tabular-nums; }
+.t1k-progress b { color: var(--text-primary, #161312); }
+.t1k-meter { flex: 0 0 180px; height: 6px; border-radius: 3px; background: #e4e1dc; overflow: hidden; }
+.t1k-meter-fill { height: 100%; background: var(--brand-orange, #FC5501); border-radius: 3px; transition: width 300ms ease; }
+
+.t1k-stage { margin-top: 30px; max-width: 760px; }
+.t1k-prompt { margin: 0 0 16px; font-size: 17px; font-weight: 600; text-wrap: balance; }
+.t1k-sub { margin: -8px 0 14px; font-size: 12px; color: var(--text-dim, #8a8378); }
+.t1k-note { color: var(--text-secondary, #555049); font-size: 13px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.t1k-note p { margin: 0; }
+
+.t1k-songs { display: grid; gap: 22px; grid-template-columns: repeat(2, minmax(0, 220px)); }
+.t1k-songs--1 { grid-template-columns: minmax(0, 240px); }
+.t1k-songs--3 { grid-template-columns: repeat(3, minmax(0, 200px)); }
+
+.t1k-song { display: flex; flex-direction: column; gap: 8px; }
+.t1k-song-pick {
+  all: unset;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  cursor: default;
+  border-radius: 6px;
+}
+.t1k-song--choosable .t1k-song-pick { cursor: pointer; }
+.t1k-song-pick:focus-visible { outline: 2px solid var(--selection-bottom, #5f79a4); outline-offset: 4px; }
+.t1k-art { position: relative; aspect-ratio: 1; border-radius: 4px; overflow: hidden; background: #ece9e4; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18); transition: box-shadow 160ms ease, transform 160ms ease; margin-bottom: 6px; }
+.t1k-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.t1k-art-empty { width: 100%; height: 100%; background: linear-gradient(135deg, #efece7, #dcd8d1); }
+.t1k-song--choosable .t1k-song-pick:hover .t1k-art { box-shadow: 0 0 0 3px var(--selection-top, #7f97ba), 0 4px 12px rgba(0, 0, 0, 0.2); transform: translateY(-1px); }
+.t1k-song--choosable .t1k-song-pick:active .t1k-art { transform: scale(0.985); }
+.t1k-key {
+  position: absolute; top: 6px; left: 6px;
+  min-width: 18px; height: 18px; padding: 0 4px; box-sizing: border-box;
+  border-radius: 9px; background: rgba(0, 0, 0, 0.55); color: #fff;
+  font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;
+}
+.t1k-title { font-size: 13px; font-weight: 600; line-height: 1.3; }
+.t1k-artist { font-size: 12px; color: var(--text-secondary, #555049); }
+.t1k-album { font-size: 11px; color: var(--text-dim, #8a8378); }
+
+.t1k-hear, .t1k-btn {
+  align-self: flex-start;
+  font-size: 12px;
+  padding: 3px 12px;
+  border: 1px solid #a8a8a8;
+  border-radius: 11px;
+  background: linear-gradient(to bottom, #ffffff, #e3e3e3);
+  color: #222;
+  cursor: default;
+}
+.t1k-hear.is-on { background: linear-gradient(to bottom, var(--selection-top, #7f97ba), var(--selection-bottom, #5f79a4)); border-color: #4d6590; color: #fff; }
+.t1k-btn--yes { border-color: #4d6590; background: linear-gradient(to bottom, var(--selection-top, #7f97ba), var(--selection-bottom, #5f79a4)); color: #fff; }
+.t1k-hear:disabled, .t1k-btn:disabled { opacity: 0.5; }
+.t1k-hear:focus-visible, .t1k-btn:focus-visible, .t1k-link:focus-visible, .t1k-chip:focus-visible { outline: 2px solid var(--selection-bottom, #5f79a4); outline-offset: 2px; }
+
+.t1k-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 24px; }
+.t1k-actions-gap { flex: 1 1 auto; }
+.t1k-link { border: 0; background: transparent; color: #3b5a8f; font-size: 12px; padding: 2px 4px; cursor: default; }
+.t1k-link:disabled { opacity: 0.5; }
+
+.t1k-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.t1k-chip {
+  font-size: 12px; padding: 4px 12px; border-radius: 13px;
+  border: 1px solid #b9b5ad; background: #faf9f7; color: #333; cursor: default;
+}
+.t1k-chip.is-on { background: linear-gradient(to bottom, var(--selection-top, #7f97ba), var(--selection-bottom, #5f79a4)); border-color: #4d6590; color: #fff; }
+
+.t1k-list { margin-top: 22px; max-width: 760px; }
+.t1k-rows { list-style: none; margin: 0; padding: 0; border-top: 1px solid #e2dfda; }
+.t1k-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1.4fr) minmax(0, 1fr) 70px;
+  gap: 12px;
+  align-items: baseline;
+  padding: 5px 6px;
+  font-size: 12px;
+  border-bottom: 1px solid #efece8;
+}
+.t1k-row:nth-child(even) { background: var(--row-alt, #f3f6f9); }
+.t1k-rank { color: var(--text-dim, #8a8378); font-variant-numeric: tabular-nums; text-align: right; }
+.t1k-row-title { font-weight: 600; }
+.t1k-row-artist { color: var(--text-secondary, #555049); }
+.t1k-state { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim, #8a8378); text-align: right; }
+.t1k-state.is-settled { color: #3e7a3a; }
+
+@media (prefers-reduced-motion: reduce) {
+  .t1k-art, .t1k-meter-fill { transition: none; }
+}

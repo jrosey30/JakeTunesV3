@@ -42,6 +42,14 @@ const LIBRARY_ICONS: Record<string, JSX.Element> = {
       <path d="M10.4 10.4L14 14" />
     </svg>
   ),
+  // Top 1000 Quiz: two bars facing off (this or that).
+  top1000: (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2" y="6" width="4" height="8" rx="0.8" />
+      <rect x="10" y="2" width="4" height="12" rx="0.8" />
+      <path d="M8 4v8" strokeDasharray="1.2 1.6" />
+    </svg>
+  ),
   discovery: (
     <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
       <circle cx="8" cy="8" r="6.5" fill="#b87333" />
@@ -61,6 +69,7 @@ const libraryItems: { label: string; view: ViewName; highlight?: string }[] = [
   { label: 'Live Concerts', view: 'concerts' },
   { label: 'Genres', view: 'genres' },
   { label: 'Overlooked', view: 'overlooked' },
+  { label: 'Top 1000 Quiz', view: 'top1000' },
   // Backlog 2026-06-06: "Listen to the List" + "New for You" merged into one
   // teal "Discovery" entry (two-tab toggle inside). Teal is distinct from the
   // Music Man's #FC5501 below, which used to clash with New for You's orange.

@@ -26,6 +26,7 @@ import { MOBILE_BACKEND_URL } from './recommendations-ipc.ts'
 import { createHomeShelvesClient } from '../home-shelves-client.ts'
 import { createListenMoreWeeklyClient } from '../listen-more-weekly-client.ts'
 import { createOverlookedClient } from '../overlooked-client.ts'
+import { createTop1000Client } from '../top1000-client.ts'
 import { parsePlayEvents } from '../../common/home-spotlight-doc.ts'
 
 const EVERY_MS = 10 * 60_000
@@ -64,6 +65,26 @@ export function registerHomeShelvesIpc(ipc: IpcRegistrar, host: HomeShelvesIpcHo
     warn: (m: string) => quietWarn('overlooked', m),
   })
   ipc.handle('overlooked:get', async (_e: unknown, force?: unknown) => ({ ok: true, state: await overlooked.get(force === true) }), { refuse: REFUSED_SENDER })
+
+  // The Top 1000 Quiz (2026-10-23): homemini asks, ranks and keeps the answers.
+  const top1000 = createTop1000Client({
+    baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''),
+    warn: (m: string) => quietWarn('top1000', m),
+  })
+  ipc.handle('top1000:next', async () => top1000.next(), { refuse: REFUSED_SENDER })
+  ipc.handle('top1000:answer', async (_e: unknown, input: unknown) => {
+    const i = (input ?? {}) as { kind?: unknown; ids?: unknown; choice?: unknown; reasons?: unknown }
+    if (typeof i.kind !== 'string' || !Array.isArray(i.ids) || typeof i.choice !== 'string') {
+      return { ok: false, error: 'That answer was incomplete.' }
+    }
+    return top1000.answer({
+      kind: i.kind as 'pick',
+      ids: i.ids.map(String),
+      choice: i.choice,
+      reasons: Array.isArray(i.reasons) ? (i.reasons.map(String) as never[]) : undefined,
+    })
+  }, { refuse: REFUSED_SENDER })
+  ipc.handle('top1000:list', async () => top1000.list(), { refuse: REFUSED_SENDER })
 
   ipc.handle('home-shelves:get', async () => ({ ok: true, state: await client.read() }), { refuse: REFUSED_SENDER })
   ipc.handle('home-shelves:refresh', async () => ({ ok: true, state: await refresh(false) }), { refuse: REFUSED_SENDER })
