@@ -1,0 +1,59 @@
+/* Which iPod is plugged in — strip above the Device page. Sits on the same
+   silver chrome as the view-mode bar so it reads as part of the window, not
+   an alert. The unknown state gets the pale-yellow note iTunes used for
+   "this iPod needs attention". */
+.ipod-id-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 9px 40px;
+  background: linear-gradient(to bottom, var(--chrome-top), var(--chrome-bottom));
+  border-bottom: 1px solid #b4b4b4;
+  font-size: 12px;
+  color: #333;
+  flex: 0 0 auto;
+}
+.ipod-id-bar--unknown {
+  background: #fdf6d3;
+  border-bottom-color: #d8c97a;
+}
+.ipod-id-sticker {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25), 0 1px 0 rgba(255, 255, 255, 0.6);
+  flex: 0 0 auto;
+}
+.ipod-id-name { font-weight: 600; }
+.ipod-id-purpose { color: #555; }
+.ipod-id-purpose::before { content: '·'; margin-right: 12px; color: #999; }
+.ipod-id-note { color: #666; }
+.ipod-id-note--strong { color: #4a4220; }
+.ipod-id-actions { display: flex; gap: 8px; align-items: center; margin-left: auto; }
+.ipod-id-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 16px; width: 100%; }
+.ipod-id-field { display: flex; flex-direction: column; gap: 4px; }
+.ipod-id-field > span { font-size: 11px; color: #5c5530; letter-spacing: 0.02em; }
+.ipod-id-field input {
+  font-size: 12px;
+  padding: 4px 6px;
+  border: 1px solid #b9b39a;
+  border-radius: 3px;
+  background: #fff;
+  min-width: 140px;
+}
+.ipod-id-field--wide input { min-width: 260px; }
+.ipod-id-field input:focus-visible { outline: 2px solid var(--selection-bottom); outline-offset: 0; }
+.ipod-id-swatches { display: flex; gap: 6px; padding: 3px 0; }
+.ipod-id-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 0;
+  padding: 0;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+  cursor: default;
+}
+.ipod-id-swatch.is-on { box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25), 0 0 0 2px #fdf6d3, 0 0 0 4px #4a4220; }
+.ipod-id-swatch:focus-visible { outline: 2px solid var(--selection-bottom); outline-offset: 2px; }
+.ipod-id-error { width: 100%; color: #a0261c; }

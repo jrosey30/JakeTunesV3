@@ -78,7 +78,7 @@ export async function buildWorkoutIpodSyncPayload(
   // activity-split.ts). The pool always rides along; an empty pool simply
   // means Music Man picks the whole set. DeviceView (do-not-touch) never
   // learns the difference — this util reads the pool.
-  // Bops / Rocksurgence / Recently Added ride along PINNED, resolved live
+  // The pinned lists (poolPinnedLists.ts) ride along PINNED, resolved live
   // from the library right now (poolPinnedLists.ts).
   const poolIds = getPoolIds()
   const pinnedIds = resolvePinnedPoolIds(allTracks, regularPlaylists).ids

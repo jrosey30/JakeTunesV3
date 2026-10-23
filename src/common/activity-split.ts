@@ -5,8 +5,8 @@
  * pool updated as i update those lists").
  *
  * Every sync of N songs:
- *   • YOUR half (N/2): first the PINNED lists — Recently Added, Bops,
- *     Rocksurgence, resolved live at sync time so they follow your edits —
+ *   • YOUR half (N/2): first the PINNED lists — Greenpoint Greatest Hits, the
+ *     Justification series, Bops, Rocksurgence, resolved live at sync time so they follow your edits —
  *     then your NEWEST pool drops fill what is left of the half. The pool
  *     keeps drop order with new drops appended; older drops wait their turn.
  *     If the pinned lists alone exceed the half (only at small sizes), the

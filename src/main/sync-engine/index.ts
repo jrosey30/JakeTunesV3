@@ -23,6 +23,7 @@ import { writeJsonAtomic } from '../atomic-write'
 import { safeIpcError } from '../safe-ipc-error'
 import { normalize } from '../normalize'
 import { refuseIpodSyncUnlessUserClick, type IpodSyncOpts } from '../ipod-sync-origin'
+import { refuseUnlessOriginalIpod } from '../ipod-identity.ts'
 import type { SyncConvertOptions } from '../ipc/sync-ipc.ts'
 import { bindActivityReplacements, runActivitySync } from '../ipod-activity-engine.ts'
 import { ensureContiguousDb } from '../ipod-db-contiguity.ts'
@@ -104,6 +105,11 @@ export function createSyncEngine(host: SyncEngineHost) {
 
   async function handleSyncIpodFromDevice(existingIds: number[]): Promise<unknown> {
     try {
+      // Importing songs off any iPod but the original would pull another
+      // iPod's catalog into the library (2026-10-23, multi-iPod step 1).
+      const fromMount = host.getMount() || await findIpodMount()
+      const notOriginal = fromMount ? await refuseUnlessOriginalIpod(fromMount, STATE_DIR) : null
+      if (notOriginal) return { ok: false, error: notOriginal, tracks: [], playlists: [] }
       const ipodData = await readIpodDatabase()
       const knownIds = new Set(existingIds)
       const newTracks = ipodData.tracks.filter(t => !knownIds.has(t.id as number))
@@ -308,6 +314,17 @@ export function createSyncEngine(host: SyncEngineHost) {
     if (refused) {
       console.error(`sync-to-ipod: REFUSED — ${refused.error}`)
       return refused
+    }
+    // Only the original iPod has a Pool and sync state today. Any other iPod
+    // (the red Mini, an unknown one) is left untouched until step 2 gives it
+    // its own (2026-10-23).
+    const gateMount = host.getMount() || await findIpodMount()
+    if (gateMount) {
+      const notOriginal = await refuseUnlessOriginalIpod(gateMount, STATE_DIR)
+      if (notOriginal) {
+        console.error(`sync-to-ipod: REFUSED — ${notOriginal}`)
+        return { ok: false, copied: 0, error: notOriginal }
+      }
     }
     syncCancelRequested = false
     if (syncOpts?.origin === 'activity-click') {

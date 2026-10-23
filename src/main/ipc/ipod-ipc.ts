@@ -13,6 +13,8 @@ import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { safeIpcError } from '../safe-ipc-error.ts'
 import { findIpodMount, isIpodMount, volumeNameFromMount, ejectVolume, IS_MAC } from '../platform.ts'
+import { STATE_DIR } from '../state-dir.ts'
+import { identifyIpod, registerIpod } from '../ipod-identity.ts'
 
 export interface IpodMountSnapshot {
   mount: string | null
@@ -111,9 +113,12 @@ export function registerIpodIpc(ipc: IpcRegistrar, host: IpodIpcHost): void {
       }
       if (mount) {
         const volume = volumeNameFromMount(mount)
-        const wasAbsent = !state.mount
+        // A different mount is a different iPod (unplug one, plug the other
+        // inside the miss grace window): treat it as a fresh plug-in so its
+        // identity is checked before anything reads it.
+        const isNew = !state.mount || state.mount !== mount
         host.setMount({ mount, volume, missStreak: 0 })
-        if (wasAbsent) host.onMountDetected?.(mount)
+        if (isNew) host.onMountDetected?.(mount)
         return { mounted: true, name: volume }
       }
       // No mount this poll. Ride out a brief flap rather than yanking the
@@ -147,6 +152,34 @@ export function registerIpodIpc(ipc: IpcRegistrar, host: IpodIpcHost): void {
       // constant the UI then prefixes into "Eject failed: Eject failed".
       const why = err instanceof Error ? err.message : ''
       return { ok: false, error: why || 'the disk did not respond to eject' }
+    }
+  }, { refuse: REFUSED_SENDER })
+
+  // Which iPod is this (2026-10-23, one Pool per iPod — step 1).
+  ipc.handle('get-ipod-device', async () => {
+    try {
+      const { mount } = host.getMount()
+      if (!mount) return { ok: true, mounted: false }
+      return { ok: true, mounted: true, identity: await identifyIpod(mount, STATE_DIR) }
+    } catch (err) {
+      return { ok: false, error: safeIpcError(err, 'io-failed') }
+    }
+  }, { public: true })
+
+  ipc.handle('register-ipod-device', async (_e, input: { asOriginal?: boolean; name?: unknown; color?: unknown; purpose?: unknown }) => {
+    try {
+      if (host.isSyncInFlight?.()) return { ok: false, error: 'Wait for the sync to finish.' }
+      const { mount } = host.getMount()
+      if (!mount) return { ok: false, error: 'No iPod detected' }
+      const r = await registerIpod(mount, STATE_DIR, {
+        asOriginal: input?.asOriginal === true,
+        name: input?.name, color: input?.color, purpose: input?.purpose,
+      })
+      // Newly identified as the original: its plays can come home now.
+      if (r.ok && r.device.primary) host.onMountDetected?.(mount)
+      return r
+    } catch (err) {
+      return { ok: false, error: safeIpcError(err, 'io-failed') }
     }
   }, { refuse: REFUSED_SENDER })
 

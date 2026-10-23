@@ -16,6 +16,7 @@ import MusicManView from '../views/MusicManView'
 import PlaylistView from '../views/PlaylistView'
 import SmartPlaylistView from '../views/SmartPlaylistView'
 import DeviceView from '../views/DeviceView'
+import IpodIdentityBar from './IpodIdentityBar'
 import ActivityPoolView from '../views/ActivityPoolView'
 import CDImportView from '../views/CDImportView'
 import StoreView from '../views/BandcampStore'
@@ -138,7 +139,13 @@ export default function MainContent() {
     case 'musicman': break  // handled by the always-mounted wrapper below
     case 'playlist': viewElement = <PlaylistView />; break
     case 'smart-playlist': viewElement = <SmartPlaylistView />; break
-    case 'device': viewElement = <DeviceView />; break
+    // Which iPod this is sits above the Device page (DeviceView is do-not-touch).
+    case 'device': viewElement = (
+      <div className="view-with-mode-bar">
+        <IpodIdentityBar />
+        <div className="view-mode-bar-content"><DeviceView /></div>
+      </div>
+    ); break
     case 'cd-import': viewElement = <CDImportView />; break
     case 'store': viewElement = <StoreView />; break
     case 'download': viewElement = <DownloadView />; break

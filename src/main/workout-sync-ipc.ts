@@ -409,7 +409,7 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
         reserveIds = selected.reserveIds
         name = selected.name
         commentary = manualIds.length > 0
-          ? `${selected.commentary} Half and half: ${split.pinnedCount} from Recently Added / Bops / Rocksurgence + your ${manualIds.length - split.pinnedCount} newest pool drop${manualIds.length - split.pinnedCount === 1 ? '' : 's'} + ${fillIds.length} Music Man pick${fillIds.length === 1 ? '' : 's'}.${split.waitingIds.length > 0 ? ` ${split.waitingIds.length} older pool song${split.waitingIds.length === 1 ? '' : 's'} sit this one out.` : ''}`
+          ? `${selected.commentary} Half and half: ${split.pinnedCount} from your pinned lists + your ${manualIds.length - split.pinnedCount} newest pool drop${manualIds.length - split.pinnedCount === 1 ? '' : 's'} + ${fillIds.length} Music Man pick${fillIds.length === 1 ? '' : 's'}.${split.waitingIds.length > 0 ? ` ${split.waitingIds.length} older pool song${split.waitingIds.length === 1 ? '' : 's'} sit this one out.` : ''}`
           : selected.commentary
       } else {
         name = (brief.profileName || '').trim() || 'iPod Pool'
