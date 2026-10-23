@@ -47,6 +47,12 @@ export interface QuizProgress {
   round?: number
   heatsLeft?: number
   duelsLeft?: number
+  /** the finish line (homemini, 2026-10-23 late): rounds before the 1000 is set, how far through this
+   *  round (0–1, only forward), songs knocked out, how sure the brain is of the 1000 (0–1) */
+  totalRounds?: number
+  roundDone?: number
+  out?: number
+  sure?: number
 }
 export interface QuizNext { question: QuizQuestion | null; progress: QuizProgress }
 
@@ -68,7 +74,7 @@ export function parseProgress(raw: unknown): QuizProgress | null {
   const moving = num(r.moving)
   if (answered === null || settled === null || moving === null) return null
   const out: QuizProgress = { answered, settled, moving }
-  for (const k of ['fixed', 'contenders', 'round', 'heatsLeft', 'duelsLeft'] as const) {
+  for (const k of ['fixed', 'contenders', 'round', 'heatsLeft', 'duelsLeft', 'totalRounds', 'roundDone', 'out', 'sure'] as const) {
     const v = num(r[k])
     if (v !== null) out[k] = v
   }
