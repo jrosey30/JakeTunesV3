@@ -39,6 +39,8 @@ describe('top1000 doc', () => {
   it('reads the seats the lists hold and the songs competing — and older homeminis without them', () => {
     const now = parseProgress({ answered: 3465, settled: 612, moving: 388, fixed: 252, contenders: 250 })
     assert.deepEqual(now, { answered: 3465, settled: 612, moving: 388, fixed: 252, contenders: 250 })
+    const fin = parseProgress({ answered: 1, settled: 2, moving: 3, round: 2, totalRounds: 3, heatsLeft: 35, duelsLeft: 0, roundDone: 0.41, out: 412, sure: 0.91 })
+    assert.deepEqual(fin, { answered: 1, settled: 2, moving: 3, round: 2, totalRounds: 3, heatsLeft: 35, duelsLeft: 0, roundDone: 0.41, out: 412, sure: 0.91 })
     assert.deepEqual(parseProgress(progress), progress)
     assert.equal(parseProgress({ answered: 1, settled: 'x', moving: 2 }), null)
   })

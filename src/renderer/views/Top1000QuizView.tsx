@@ -75,17 +75,40 @@ function promptFor(q: QuizQuestion): string {
   return PROMPT[q.kind]
 }
 
-/** The meter in plain words: the round, seats decided (and how many your lists hold), seats still open, who is competing for them. */
+/**
+ * The meter in plain words. Jake (after "seats decided" kept jumping): a countdown that only
+ * goes down — the round of three and what is left of it — songs out (only up), and how sure the
+ * brain is of the whole 1000 (the steady number). After the last round the 1000 is set and the
+ * quiz keeps sharpening the close calls. An older homemini without the finish line gets the
+ * round line it had.
+ */
 function meterLine(p: QuizProgress): string {
   const n = (x: number) => x.toLocaleString()
-  const round = p.round !== undefined
-    ? `Round ${n(p.round)} · ${p.heatsLeft ? `${n(p.heatsLeft)} heat${p.heatsLeft === 1 ? '' : 's'} left` : `${n(p.duelsLeft ?? 0)} tough call${p.duelsLeft === 1 ? '' : 's'} left`} · `
-    : ''
-  const fixed = p.fixed ? ` (${n(p.fixed)} by your lists)` : ''
-  // Everyone still undecided is in the running: the songs holding an open seat for now plus the
-  // challengers without one (Jake: "only 33 songs competing for 369 seats??!!!").
-  const competing = p.contenders !== undefined ? ` · ${n(p.moving + p.contenders)} songs in the running` : ''
-  return `${round}${n(p.settled)} seats decided${fixed} · ${n(p.moving)} still open${competing} · ${n(p.answered)} answered`
+  const plural = (k: number, one: string, many: string) => `${n(k)} ${k === 1 ? one : many}`
+  const parts: string[] = []
+  if (p.round !== undefined) {
+    const left = p.heatsLeft ? `${plural(p.heatsLeft, 'heat', 'heats')} left` : `${plural(p.duelsLeft ?? 0, 'tough call', 'tough calls')} left`
+    if (p.totalRounds === undefined) parts.push(`Round ${n(p.round)} · ${left}`)
+    else if (p.round <= p.totalRounds) parts.push(`Round ${n(p.round)} of ${n(p.totalRounds)} · ${left}`)
+    else parts.push(`Your 1000 is set · sharpening round ${n(p.round - p.totalRounds)} · ${plural(p.duelsLeft ?? 0, 'close call', 'close calls')} left`)
+  }
+  if (p.out !== undefined) parts.push(`${n(p.out)} songs out`)
+  if (p.sure !== undefined) parts.push(`the brain is ${Math.round(p.sure * 100)}% sure of the 1000`)
+  if (p.round === undefined || p.totalRounds === undefined) {
+    const fixed = p.fixed ? ` (${n(p.fixed)} by your lists)` : ''
+    parts.push(`${n(p.settled)} seats decided${fixed}`, `${n(p.moving)} still open`)
+  }
+  parts.push(`${n(p.answered)} answered`)
+  return parts.join(' · ')
+}
+
+/** The bar: how far through the tournament (rounds of three); after the finish line, how sure the brain is. */
+function meterPct(p: QuizProgress): number {
+  if (p.round !== undefined && p.totalRounds !== undefined && p.roundDone !== undefined) {
+    if (p.round <= p.totalRounds) return Math.round((100 * ((p.round - 1) + p.roundDone)) / p.totalRounds)
+    return Math.round(100 * (p.sure ?? 1))
+  }
+  return Math.round((p.settled / Math.max(1, p.settled + p.moving)) * 100)
 }
 
 interface SentAnswer { q: QuizQuestion; choice: string; picked?: number[] }
@@ -376,7 +399,7 @@ export default function Top1000QuizView(): JSX.Element {
     return () => { alive = false }
   }, [tab])
 
-  const settledPct = progress ? Math.round((progress.settled / Math.max(1, progress.settled + progress.moving)) * 100) : 0
+  const settledPct = progress ? meterPct(progress) : 0
 
   const songCard = (q: QuizQuestion, s: QuizSongRef, i: number, choosable: boolean) => {
     const t = byId.get(s.id)
@@ -429,7 +452,7 @@ export default function Top1000QuizView(): JSX.Element {
             <button type="button" role="tab" aria-selected={tab === 'list'} className={tab === 'list' ? 'is-on' : ''} onClick={() => setTab('list')}>The list</button>
           </div>
         </div>
-        <p className="t1k-lede">Finding your 1000 favorite songs, the ones the Original iPod carries. A tournament: in each heat, pick the songs that move on; the tough calls go one on one. A song is only out after two losses, and the decided ones drop out each round. Stop whenever you like.</p>
+        <p className="t1k-lede">Finding your 1000 favorite songs, the ones the Original iPod carries. A tournament in three rounds: in each heat, pick the songs that move on; the tough calls go one on one. A song is only out after two losses. After round three your 1000 is set, and the quiz keeps sharpening the close calls. Stop whenever you like.</p>
         {progress && (
           <div className="t1k-progress" aria-label="Progress">
             <div className="t1k-meter"><div className="t1k-meter-fill" style={{ width: `${settledPct}%` }} /></div>
