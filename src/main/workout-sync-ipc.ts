@@ -33,7 +33,8 @@ import { buildActivityQueryText } from './activity-context-core.ts'
 import { computeActivityBrainFit, type BrainFitResult } from './activity-brain.ts'
 import { pickTasteExemplars } from './discovery-brain.ts'
 import { getEmbeddingsMap, embedTexts } from './ai/embeddings.ts'
-import { splitHalfAndHalf } from '../common/activity-split'
+import { halfAndHalfLine, splitHalfAndHalf } from '../common/activity-split'
+import { pickFromTop1000 } from '../common/top1000-sync.ts'
 
 type ClaudeCall = (callKey: string, params: MessageCreateParamsNonStreaming) => Promise<Message>
 
@@ -46,6 +47,10 @@ export interface WorkoutSyncHost {
    *  2026-07-20: MM picked 4 concert tracks → "exactly 1000" silently
    *  synced as 996). */
   getIneligibleTrackIds?: () => Promise<Set<number>>
+  /** The Original's brain half: homemini's Top 1000, ranked best first —
+   *  null when the plugged-in iPod isn't the Original or homemini isn't
+   *  answering, and Music Man picks instead (top1000-sync-source.ts). */
+  top1000ForSync?: () => Promise<number[] | null>
 }
 
 const WORKOUT_TARGET = 1000
@@ -314,12 +319,37 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
         await saveActivityProfile(brief).catch(() => {})
       }
 
+      // ── THE ORIGINAL'S BRAIN HALF = THE TOP 1000 (2026-10-23) ────────
+      // The Original is "my top 1000 songs": the brain half goes straight
+      // down the quiz's ranked list (common/top1000-sync.ts), skipping your
+      // half. Music Man only picks what the list can't cover — all of it
+      // when homemini isn't answering or this isn't the Original.
+      let topIds: number[] = []
+      let topReserve: number[] = []
+      if (wantBrain && host.top1000ForSync) {
+        const ranked = await host.top1000ForSync().catch((err) => {
+          console.warn('[workout-sync] Top 1000 lookup failed — Music Man picks:', err instanceof Error ? err.message : err)
+          return null
+        })
+        if (ranked && ranked.length > 0) {
+          const got = pickFromTop1000(ranked, {
+            gap,
+            exclude: new Set([...poolIds, ...pinnedIds]),
+            syncable: (id) => { const t = byId.get(id); return !!t && syncable(t) },
+          })
+          topIds = got.picked
+          topReserve = got.reserve
+          console.log(`[workout-sync] Top 1000: ${topIds.length}/${gap} of the brain half from the ranked list`)
+        }
+      }
+      const musicManGap = gap - topIds.length
+
       const prev = await loadState()
       let fillIds: number[] = []
       let reserveIds: number[] = []
       let name = ''
       let commentary = ''
-      if (wantBrain) {
+      if (musicManGap > 0) {
         // Learn from history: edits Jake made in review for THIS activity.
         // Removed tracks get demoted hard; added tracks get boosted. The
         // vibe prompt also sees a compact digest so Music Man's framing
@@ -385,13 +415,13 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
         // turn rather than sneak in), and the artist cap starts from the pool
         // half actually going on (same key function).
         const seedArtistCounts = new Map<string, number>()
-        for (const id of manualIds) {
+        for (const id of [...manualIds, ...topIds]) {
           const k = artistCapKey(byId.get(id)?.artist)
           seedArtistCounts.set(k, (seedArtistCounts.get(k) || 0) + 1)
         }
 
         const selected = selectWorkoutSyncSet(tracks, {
-          target: gap,
+          target: musicManGap,
           previousIds: prev?.trackIds,
           recentCounts,
           vibe,
@@ -402,27 +432,32 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
           boostIds,
           brainFitById: brainFit?.fitById,
           tasteById: brainFit?.tasteById,
-          excludeIds: [...poolIds, ...pinnedIds],
+          excludeIds: [...poolIds, ...pinnedIds, ...topIds],
           seedArtistCounts,
         })
         fillIds = selected.trackIds
         reserveIds = selected.reserveIds
         name = selected.name
-        commentary = manualIds.length > 0
-          ? `${selected.commentary} Half and half: ${split.pinnedCount} from your pinned lists + your ${manualIds.length - split.pinnedCount} newest pool drop${manualIds.length - split.pinnedCount === 1 ? '' : 's'} + ${fillIds.length} Music Man pick${fillIds.length === 1 ? '' : 's'}.${split.waitingIds.length > 0 ? ` ${split.waitingIds.length} older pool song${split.waitingIds.length === 1 ? '' : 's'} sit this one out.` : ''}`
+        commentary = manualIds.length > 0 || topIds.length > 0
+          ? `${selected.commentary} ${halfAndHalfLine(split, manualIds.length, topIds.length, fillIds.length)}`
           : selected.commentary
+      } else if (topIds.length > 0) {
+        name = (brief.profileName || '').trim() || 'Top 1000'
+        commentary = halfAndHalfLine(split, manualIds.length, topIds.length, 0)
       } else {
         name = (brief.profileName || '').trim() || 'iPod Pool'
         commentary = `Hand-built pool — ${poolIds.length} songs, in the order you dropped them.`
       }
 
+      fillIds = [...topIds, ...fillIds]
+      reserveIds = [...topReserve, ...reserveIds]
       const trackIds = [...manualIds, ...fillIds]
       if (trackIds.length === 0) {
         return { ok: false, error: 'Could not build an activity set from this library.' }
       }
       let alacCount = 0
       for (const id of trackIds) if (isAlacCodec(byId.get(id)?.codec)) alacCount++
-      console.log(`[workout-sync] half and half: ${split.pinnedCount} pinned + ${manualIds.length - split.pinnedCount} pool drops (newest of ${poolIds.length}) + ${fillIds.length} Music Man = ${trackIds.length}/${target}`)
+      console.log(`[workout-sync] half and half: ${split.pinnedCount} pinned + ${manualIds.length - split.pinnedCount} pool drops (newest of ${poolIds.length}) + ${topIds.length} Top 1000 + ${fillIds.length - topIds.length} Music Man = ${trackIds.length}/${target}`)
       // #47 (fill-to-N): a hand-built pool is its own N; a brain-built set is
       // short only when the library could not fill the requested target.
       const requested = wantBrain ? target : trackIds.length

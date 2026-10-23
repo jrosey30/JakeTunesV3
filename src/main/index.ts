@@ -108,7 +108,7 @@ import { registerIpodIpc } from './ipc/ipod-ipc.ts'
 import { registerSyncIpc, type SyncConvertOptions } from './ipc/sync-ipc.ts'
 import { createSyncEngine, type VerifyTrackInput, type VerifyTrackUpdate } from './sync-engine/index.ts'
 import { ingestIpodRoundTrip } from './sync-engine/roundtrip.ts'
-import { refuseUnlessOriginalIpod } from './ipod-identity.ts'
+import { identifyIpod, refuseUnlessOriginalIpod } from './ipod-identity.ts'
 import { registerAiIpc } from './ipc/ai-ipc.ts'
 import {
   registerCynthiaIpc,
@@ -305,6 +305,8 @@ import { registerRecordStoreIntegration } from './record-store'
 import { parsePlayEvents } from './record-store/shelf-generator'
 import type { CandTrack } from './record-store/candidate-pool'
 import { registerWorkoutSyncIpc } from './workout-sync-ipc'
+import { createTop1000SyncSource } from './top1000-sync-source.ts'
+import { createTop1000Client } from './top1000-client.ts'
 import { registerMixtapesIpc } from './mixtapes'
 import { wireHistoryGestures } from './history-gestures'
 import {
@@ -8597,6 +8599,12 @@ registerWorkoutSyncIpc({
   claudeCall,
   musicManCore: MUSIC_MAN_CORE,
   getIneligibleTrackIds: getConcertOwnedTrackIds,
+  // The Original's brain half = the Top 1000 Quiz list (2026-10-23)
+  top1000ForSync: createTop1000SyncSource({
+    getMount: () => detectedIpodMount,
+    identify: (mount) => identifyIpod(mount, STATE_DIR),
+    list: () => createTop1000Client({ baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, '') }).list(),
+  }),
 })
 // iPod Pool — the hand-built sync set (drag songs/albums/artists/playlists
 // onto the sidebar row); build-workout-sync-set reads it in pool mode.

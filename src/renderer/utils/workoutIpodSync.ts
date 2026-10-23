@@ -74,9 +74,10 @@ export async function buildWorkoutIpodSyncPayload(
   brief?: ActivityBrief | null,
 ): Promise<{ ok: true; payload: WorkoutSyncPayload } | { ok: false; error: string }> {
   // HALF AND HALF (2026-10-16): every sync takes the newest half-set from
-  // the hand-built iPod Pool and Music Man picks the rest (main's
+  // the hand-built iPod Pool and the Top 1000 fills the rest (main's
   // activity-split.ts). The pool always rides along; an empty pool simply
-  // means Music Man picks the whole set. DeviceView (do-not-touch) never
+  // means the Top 1000 fills the whole set (Music Man when homemini is away,
+  // workout-sync-ipc.ts). DeviceView (do-not-touch) never
   // learns the difference — this util reads the pool.
   // The pinned lists (poolPinnedLists.ts) ride along PINNED, resolved live
   // from the library right now (poolPinnedLists.ts).
