@@ -6,7 +6,7 @@
  * is in the pool, how long it runs, remove one, clear all, and hand off to
  * the Device page to sync it. No picking happens here. Every Activity Sync
  * is half and half (2026-10-16): the newest half-set of this pool goes on,
- * and Music Man picks the other half.
+ * and the Top 1000 Quiz list fills the other half (Music Man when homemini is away).
  */
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { useLibrary } from '../context/LibraryContext'
@@ -89,7 +89,7 @@ export default function ActivityPoolView() {
               ? (() => {
                   const split = splitHalfAndHalf(health.syncable, max, pinned.ids)
                   const dropsOn = split.manualIds.length - split.pinnedCount
-                  return <>{rows.length.toLocaleString()} dropped in · a {max.toLocaleString()}-song sync takes those lists + your newest {dropsOn.toLocaleString()} drops, Music Man picks the other {split.brainTarget.toLocaleString()} · {fmtLong(totalMs)}{cantSync > 0 ? <> · <strong className="pool-sub-warn">{cantSync} can’t</strong></> : ''}</>
+                  return <>{rows.length.toLocaleString()} dropped in · a {max.toLocaleString()}-song sync takes those lists + your newest {dropsOn.toLocaleString()} drops, your Top 1000 fills the other {split.brainTarget.toLocaleString()} · {fmtLong(totalMs)}{cantSync > 0 ? <> · <strong className="pool-sub-warn">{cantSync} can’t</strong></> : ''}</>
                 })()
               : <>No songs dropped in yet — right-click songs and choose “Add to iPod Pool”, or drag songs, albums, artists or playlists onto this page.</>}
           </div>
@@ -106,7 +106,7 @@ export default function ActivityPoolView() {
               // notice still said "press Activity Sync"). No iPod → stay here.
               // (Every sync is half and half, so there is no pool "mode" to
               // hand over any more — the Activity sheet ignored it.)
-              const tail = 'half the set comes from your newest pool drops, Music Man picks the rest.'
+              const tail = 'half the set comes from your newest pool drops, your Top 1000 fills the rest.'
               void window.electronAPI.checkIpodMounted().then((r) => r.mounted, () => false).then((mounted) => {
                 if (!mounted) {
                   setNotice(`Plug in the iPod, then press Activity Sync — ${tail}`, { kind: 'info', durationMs: 6000 })

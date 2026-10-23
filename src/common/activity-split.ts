@@ -56,3 +56,25 @@ export function splitHalfAndHalf(
     waitingIds: [...pinnedWaiting, ...drops.slice(0, cut)],
   }
 }
+
+/** The review sheet's plain-words split of a half-and-half set. Your half,
+ *  then the brain half: the Top 1000 for the Original (top1000-sync.ts),
+ *  Music Man for whatever it can't cover. */
+export function halfAndHalfLine(
+  split: { pinnedCount: number; waitingIds: readonly number[] },
+  manualCount: number,
+  topCount: number,
+  musicManCount: number,
+): string {
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
+  const parts = [
+    `${split.pinnedCount} from your pinned lists`,
+    `your ${plural(manualCount - split.pinnedCount, 'newest pool drop', 'newest pool drops')}`,
+  ]
+  if (topCount > 0) parts.push(`${topCount} from your Top 1000, best first`)
+  if (musicManCount > 0) parts.push(plural(musicManCount, 'Music Man pick', 'Music Man picks'))
+  const waiting = split.waitingIds.length > 0
+    ? ` ${plural(split.waitingIds.length, 'older pool song sits', 'older pool songs sit')} this one out.`
+    : ''
+  return `Half and half: ${parts.join(' + ')}.${waiting}`
+}
