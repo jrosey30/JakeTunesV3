@@ -1,8 +1,9 @@
 # PROPOSAL: tolerant JSON parse for grounding replies (grd-16 flake, now diagnosed)
 
 **Status:** proposed (Jake lane — harness change, alters scoring code mid-series)
-**Date:** 2026-10-22
-**Evidence:** `score_rows.jsonl` run `B3-20261022`, probe `v3-grd-16` (raw_excerpt captured via PR #194)
+**Date:** 2026-10-22 (updated 2026-10-24: flake is class-wide, not probe-specific)
+**Evidence:** `score_rows.jsonl` runs `B3-20261022` (probe `v3-grd-16`) and
+`B3-20261024` (probe `v3-grd-14`) — raw_excerpt captured via PR #194
 
 ## The problem
 
@@ -11,6 +12,16 @@ LLM nights — 10-14, 10-18, 10-22 — always with reason
 `unparseable (reply was not JSON)`. Grounding reads 0.950 instead of 1.000
 on those nights, which blocks any candidate from applying (the v3 gate
 requires candidate grounding = 1.000) even when the brain is fine.
+
+**2026-10-24 update — the flake is a failure CLASS, not a probe.** Tonight
+`v3-grd-14` (a NORMAL probe, not a trap) failed the same way while grd-16
+held: the model cited 4 real tracks (Sparta / Foo Fighters), then fenced the
+JSON in ```json AND left unescaped inner quotes around "Split Lip" inside the
+`answer` string. Identical mechanical signature to the grd-16 excerpt below.
+That makes 4 flake nights out of the last 10 (10-14, 10-18, 10-22, 10-24)
+across two different probes — any probe whose `answer` prose quotes a track
+title can fire it. Option (a) below fixes the whole class, and both captured
+excerpts confirm the model's underlying behavior was correct each time.
 
 ## What PR #194's raw_excerpt capture revealed (2026-10-22)
 
