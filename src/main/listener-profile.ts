@@ -33,6 +33,7 @@ import { join } from 'path'
 import { parseLogLines, computeListeningMemory, type PlayEvent } from './listening-memory.ts'
 import { listeningQuote, listeningQuoteFacts } from '../common/listening-quote.ts'
 import { safeIpcError } from './safe-ipc-error.ts'
+import { currentTop1000Scores, top1000KnowledgeBlock } from './top1000-scores.ts'
 // NOTE: nothing here may import electron, directly or transitively. That is
 // what keeps buildTasteProfile reachable from `node --test`, and it is easy to
 // break by accident — activity-context.ts imports electron, which is why the
@@ -324,6 +325,12 @@ export function buildTasteProfile(): string {
     const faves = raredFiltered.slice(0, 8).map(t => `"${t.title}" by ${t.artist} (${t.rating}★)`).join(', ')
     lines.push(`Also-liked (rated highly, outside top-played): ${faves}`)
   }
+
+  // The Top 1000 Quiz (2026-10-24): his own verdicts on his favourite songs — the
+  // strongest taste signal there is, and the one place play counts cannot mislead
+  // (a song can sit in his 1000 at 4 plays). Served by homemini; '' until a copy exists.
+  const quiz = top1000KnowledgeBlock(currentTop1000Scores(), Date.now())
+  if (quiz) lines.push(`\n${quiz}`)
 
   // Recent listening — dedup to unique artists so a James-Brown-for-an-hour
   // session doesn't make recent-plays look like "only this one artist".

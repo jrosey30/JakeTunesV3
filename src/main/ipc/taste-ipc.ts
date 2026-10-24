@@ -13,6 +13,7 @@ import { safeIpcError } from '../safe-ipc-error'
 import { stripMemoryFor, negativeExamples, type LedgerRowLike } from '../../common/strip-memory.ts'
 import { makeImpressionDedupe } from '../impression-dedupe.ts'
 import { currentTasteState, isUsable } from '../taste-state.ts'
+import { currentTop1000Scores, isTop1000Usable } from '../top1000-scores.ts'
 import { elsewhereLedgerRows } from '../taste-elsewhere.ts'
 import { unionLedgerRows } from '../../common/taste-shared.ts'
 import { triggerSync } from '../sync-orchestrator'
@@ -114,6 +115,16 @@ export function registerTasteIpc(ipc: IpcRegistrar): void {
     const pct: Record<string, number> = {}
     for (const [id, row] of s.tracks) pct[id] = row[1]
     return { ok: true, usable: true, builtAt: new Date(s.builtAtMs).toISOString(), why: s.why, pct }
+  }, { public: true })
+  // The Top 1000 Quiz's standings (src/main/top1000-scores.ts): each song's place by his
+  // own verdicts plus the brain's belief, 1 = the song he loves most. Leads the strip's
+  // taste term when usable; usable:false → the taste engine / stars decide as before.
+  ipc.handle('get-top1000-scores', async () => {
+    const s = currentTop1000Scores()
+    if (!isTop1000Usable(s, Date.now()) || !s) return { ok: true, usable: false }
+    const pct: Record<string, number> = {}
+    for (const [id, row] of s.tracks) pct[id] = row[0]
+    return { ok: true, usable: true, builtAt: new Date(s.builtAtMs).toISOString(), answered: s.answered, pct }
   }, { public: true })
   // Per-playlist blend weights the nightly learner writes; the suggestion
   // strip multiplies its blend components by these. mtime-cached.

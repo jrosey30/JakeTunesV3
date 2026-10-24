@@ -21,6 +21,7 @@
 import { join } from 'path'
 import { readFile, stat, writeFile, rename } from 'fs/promises'
 import { withCompanionInit } from './hub-companion.ts'
+import { startTop1000ScoresPull } from './top1000-scores.ts'
 
 export const TASTE_STATE_FILE = 'taste-state.json'
 export const TASTE_STATE_FRESH_MS = 72 * 3600 * 1000
@@ -139,6 +140,9 @@ async function pullFromHub(host: TasteStateHost): Promise<boolean> {
 }
 
 export function startTasteStatePull(host: TasteStateHost): void {
+  // The Top 1000 Quiz's standings ride the same host (hub origin, local state dir): the other
+  // learned taste signal from homemini (top1000-scores.ts).
+  startTop1000ScoresPull(host)
   void loadLocal(host).then(() => pullTasteStateOnce(host)).catch((err) => host.log(`[taste-state] pull failed: ${err instanceof Error ? err.message : String(err)}`))
   setInterval(() => {
     void pullTasteStateOnce(host).catch((err) => host.log(`[taste-state] pull failed: ${err instanceof Error ? err.message : String(err)}`))

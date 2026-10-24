@@ -255,6 +255,14 @@ export default function PlaylistView() {
       if (r?.usable && r.pct) setLearnedTaste(new Map(Object.entries(r.pct).map(([id, v]) => [Number(id), v])))
     })
   }, [])
+  // The Top 1000 Quiz's standings (src/main/top1000-scores.ts): his own verdicts, 1 = the
+  // song he loves most. Leads the strip's taste term when present.
+  const [quizLove, setQuizLove] = useState<Map<number, number> | undefined>(undefined)
+  useEffect(() => {
+    void window.electronAPI.getTop1000Scores?.().then((r) => {
+      if (r?.usable && r.pct) setQuizLove(new Map(Object.entries(r.pct).map(([id, v]) => [Number(id), v])))
+    })
+  }, [])
   const ledger = (events: Array<{ surface: string; verdict: string; key?: Record<string, unknown>; ctx?: Record<string, unknown> }>) => {
     void window.electronAPI.tasteLedgerAppend?.(events)
   }
@@ -315,10 +323,10 @@ export default function PlaylistView() {
       suggestDiag.current = new Map()
       return vibeHits.length
         ? suggestFromVibeHits(allPlaylistTracks, suggestPool, vibeHits, 5, suggestRotate, vibeClusterSeeds,
-            (playlist ? tasteWeights[playlist.id] ?? tasteWeights['*'] : undefined) ?? {}, suggestDiag.current, stripHidden, learnedTaste)
+            (playlist ? tasteWeights[playlist.id] ?? tasteWeights['*'] : undefined) ?? {}, suggestDiag.current, stripHidden, learnedTaste, quizLove)
         : suggestForPlaylist(allPlaylistTracks, suggestPool.filter((t) => !stripHidden.has(t.id)), 5, suggestRotate)
     },
-    [allPlaylistTracks, suggestPool, vibeHits, vibeClusterSeeds, suggestRotate, tasteWeights, playlist, stripHidden, learnedTaste],
+    [allPlaylistTracks, suggestPool, vibeHits, vibeClusterSeeds, suggestRotate, tasteWeights, playlist, stripHidden, learnedTaste, quizLove],
   )
   // Every strip the user actually sees is one BATCH: one 'shown' row per
   // suggestion (rank + why it ranked), so the learner can tell an ignored
