@@ -290,6 +290,8 @@ export interface ItunesSuggestion {
   durationSecs?: number
 }
 export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 'top-rated' | 'youd-star' | 'best-of-year' | 'musicman-picks' | 'megan-picks' | 'dj-hands-picks' | 'listen-more-weekly'
+  // 2026-10-24 — one per month of this year's releases ('month-2026-09'; src/common/release-months.ts)
+  | `month-${string}`
 
 export interface ChatConversation {
   id: string
@@ -724,6 +726,8 @@ declare global {
       stripMemory?: (playlistId: string, memberIds: number[]) => Promise<{ ok: boolean; hidden: number[]; negatives: number[] }>
       getTasteState?: () => Promise<{ ok: boolean; usable: boolean; builtAt?: string; why?: string; pct?: Record<string, number> }>
       getTop1000Scores?: () => Promise<{ ok: boolean; usable: boolean; builtAt?: string; answered?: number; pct?: Record<string, number> }>
+      // 2026-10-24 — this year's releases by month (src/main/release-months.ts) for the sidebar's month playlists.
+      getReleaseMonths?: () => Promise<{ ok: boolean; builtAt?: string; months: string[]; tracks: Array<[string, string, string, 'mb' | 'added']> }>
       getTasteWeights?: () => Promise<{ ok: boolean; weights: Record<string, unknown> }>
       getFriendStandings: () => Promise<{ ok: boolean; standings?: Array<{ name: string; points: number; adds: number; tossed: number; credits: Array<{ status: 'kept' | 'partial' | 'deleted' | 'legacy'; points: number; record: { kind: 'song' | 'album'; label: string; creditedAt: string } }> }>; error?: string }>
       sweepFriendImports: () => Promise<{ ok: boolean; credited: number }>

@@ -14,7 +14,10 @@ import SidebarItem from './SidebarItem'
 import AlbumArtPanel from './AlbumArtPanel'
 import ContextMenu from '../ContextMenu'
 import ConfirmDialog from '../ConfirmDialog'
-import type { ViewName, SmartPlaylistId, Track } from '../../types'
+import type { ViewName, SmartPlaylistId, Track, Playlist } from '../../types'
+import { isJustificationPlaylist, sortJustifications } from '../../utils/justification'
+import { useReleaseMonths } from '../../releaseMonths'
+import { monthPlaylistId, monthPlaylistName, yearsOf } from '../../../common/release-months'
 import { setNotice } from '../../activity'
 import { setMixtapeId, getMixtapeId, getMixtapes, subscribeMixtapes, refreshMixtapes } from '../../mixtapes'
 import { getAiMixtapes, subscribeAiMixtapes, ensureAiMixtapesLoaded, removeKeptAiTape } from '../../aiMixtapes'
@@ -273,6 +276,8 @@ export default function Sidebar() {
   const currentViewRef = useRef(state.currentView)
   currentViewRef.current = state.currentView
   const [plCtxMenu, setPlCtxMenu] = useState<{ x: number; y: number; playlistId: string; playlistName: string; kind: 'user' | 'smart' } | null>(null)
+  // This year's releases by month (2026-10-24): a section per year, a smart playlist per month.
+  const releaseMonths = useReleaseMonths()
   // Pinned playlists (2026-08-07, Jake: "pin 3 and only 3 playlists to the
   // very tippy top above defaults....i can absolutely pin a default").
   // Raw ids — user playlists ('pl-…'/'mm-…') and smart ids never collide.
@@ -392,6 +397,43 @@ export default function Sidebar() {
     e.stopPropagation()
     setPlCtxMenu({ x: e.clientX, y: e.clientY, playlistId: id, playlistName: name, kind })
   }, [])
+
+  // One row of a hand-made playlist (rename inline, drop, drag, context menu) — the PLAYLISTS
+  // section and the JUSTIFICATION section (2026-10-24) draw the same row.
+  const userPlaylistRow = (pl: Playlist) => (
+    editingPlaylistId === pl.id ? (
+      <div key={pl.id} className="sidebar-item" style={{ paddingLeft: 22 }}>
+        <span className="sidebar-item-icon"><PlaylistIcon /></span>
+        <input
+          ref={renameRef}
+          className="sidebar-inline-input"
+          defaultValue={pl.name}
+          autoFocus
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleRenameSubmit(pl.id, e.currentTarget.value)
+            if (e.key === 'Escape') setEditingPlaylistId(null)
+          }}
+          onBlur={(e) => handleRenameSubmit(pl.id, e.currentTarget.value)}
+        />
+      </div>
+    ) : (
+      <div key={pl.id} onContextMenu={(e) => handlePlaylistContextMenu(e, pl.id, pl.name)}>
+        <SidebarItem
+          label={pl.name}
+          icon={<PlaylistIcon />}
+          selected={state.currentView === 'playlist' && state.activePlaylistId === pl.id}
+          onClick={() => dispatch({ type: 'VIEW_PLAYLIST', id: pl.id })}
+          onDoubleClick={() => playPlaylist(pl.id)}
+          droppable
+          onDrop={(trackIds) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pl.id, trackIds })}
+          dragTrackIds={pl.trackIds}
+        />
+      </div>
+    )
+  )
+  // JUSTIFICATION (Jake, 2026-10-24): his "I would never have found this on Spotify" playlists,
+  // still regular playlists, grouped in their own section in numeral order. A pin moves one up.
+  const justifications = sortJustifications(state.playlists.filter(pl => isJustificationPlaylist(pl.name) && pl.category !== 'synced-set' && !pinned.includes(pl.id)))
 
   const handleRenamePlaylist = useCallback(() => {
     if (!plCtxMenu) return
@@ -762,6 +804,29 @@ export default function Sidebar() {
           </SidebarSection>
         )}
 
+        {justifications.length > 0 && (
+          <SidebarSection title="JUSTIFICATION">
+            {justifications.map(userPlaylistRow)}
+          </SidebarSection>
+        )}
+
+        {/* This year's releases month by month (2026-10-24): homemini dates every album on
+            MusicBrainz (singles off an unreleased album sit in the album's month). One section
+            per year, months in order, a smart playlist each. Sidebar only — not synced to the iPod. */}
+        {yearsOf(releaseMonths).map((year) => (
+          <SidebarSection key={year} title={year}>
+            {(releaseMonths?.months ?? []).filter((ym) => ym.startsWith(year)).map((ym) => (
+              <SidebarItem
+                key={ym}
+                label={monthPlaylistName(ym)}
+                icon={<SmartPlaylistIcon />}
+                selected={state.currentView === 'smart-playlist' && state.activeSmartPlaylist === monthPlaylistId(ym)}
+                onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: monthPlaylistId(ym) })}
+              />
+            ))}
+          </SidebarSection>
+        ))}
+
         <SidebarSection title="PLAYLISTS">
           {/* Pinned first (max 3, any mix of defaults + user playlists),
               then the remaining defaults, then user playlists A–Z. A pin
@@ -807,40 +872,10 @@ export default function Sidebar() {
             </div>
           ))}
           {state.playlists
-            .filter(pl => !SMART_PLAYLIST_NAMES.has(pl.name) && pl.category !== 'synced-set' && !pinned.includes(pl.id))
+            .filter(pl => !SMART_PLAYLIST_NAMES.has(pl.name) && pl.category !== 'synced-set' && !pinned.includes(pl.id) && !isJustificationPlaylist(pl.name))
             .slice()
             .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
-            .map((pl) => (
-            editingPlaylistId === pl.id ? (
-              <div key={pl.id} className="sidebar-item" style={{ paddingLeft: 22 }}>
-                <span className="sidebar-item-icon"><PlaylistIcon /></span>
-                <input
-                  ref={renameRef}
-                  className="sidebar-inline-input"
-                  defaultValue={pl.name}
-                  autoFocus
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleRenameSubmit(pl.id, e.currentTarget.value)
-                    if (e.key === 'Escape') setEditingPlaylistId(null)
-                  }}
-                  onBlur={(e) => handleRenameSubmit(pl.id, e.currentTarget.value)}
-                />
-              </div>
-            ) : (
-              <div key={pl.id} onContextMenu={(e) => handlePlaylistContextMenu(e, pl.id, pl.name)}>
-                <SidebarItem
-                  label={pl.name}
-                  icon={<PlaylistIcon />}
-                  selected={state.currentView === 'playlist' && state.activePlaylistId === pl.id}
-                  onClick={() => dispatch({ type: 'VIEW_PLAYLIST', id: pl.id })}
-                  onDoubleClick={() => playPlaylist(pl.id)}
-                  droppable
-                  onDrop={(trackIds) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pl.id, trackIds })}
-                  dragTrackIds={pl.trackIds}
-                />
-              </div>
-            )
-          ))}
+            .map(userPlaylistRow)}
           {creatingPlaylist && (
             <div className="sidebar-item" style={{ paddingLeft: 22 }}>
               <span className="sidebar-item-icon"><PlaylistIcon /></span>

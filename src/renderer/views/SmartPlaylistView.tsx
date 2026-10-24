@@ -8,6 +8,8 @@ import { attachClipToBroadcast, detachClipFromBroadcast } from '../audio/eq'
 import { evaluateSmartPlaylist } from '../utils/smartPlaylists'
 import { smartPlaylistCover } from '../utils/playlistCovers'
 import { useListenMoreWeekly } from '../listenMoreWeekly'
+import { useReleaseMonths } from '../releaseMonths'
+import { monthPlaylistName, monthTrackIds, parseMonthPlaylistId } from '../../common/release-months'
 import { isTop25Rankable } from '../../common/top25-rankable'
 import { playsEverywhere } from '../../common/plays-elsewhere'
 import { usePlaysElsewhere, useTracksEverywhere } from '../playsElsewhere'
@@ -151,7 +153,8 @@ export default function SmartPlaylistView() {
   const { mode: viewMode } = useViewMode()
 
   const playlistId = libState.activeSmartPlaylist
-  const title = playlistId ? TITLES[playlistId] || playlistId : ''
+  const monthYm = playlistId ? parseMonthPlaylistId(playlistId) : null
+  const title = playlistId ? TITLES[playlistId] || (monthYm ? monthPlaylistName(monthYm) : playlistId) : ''
 
   // 4.2.18: per-persona weekly picks state. Both Music Man and Megan
   // get their own 25-track rotation that resets every Friday at 00:00.
@@ -349,6 +352,9 @@ export default function SmartPlaylistView() {
   // Listen More Weekly (2026-10-20): homemini's weekly playlist — its song
   // order, resolved against this Mac's library (shared ids).
   const weekly = useListenMoreWeekly()
+  // This year's releases by month (2026-10-24): homemini's rows, in release order,
+  // resolved against this Mac's library (shared ids).
+  const releaseMonths = useReleaseMonths()
 
   const smartTracks = useMemo(() => {
     if (!playlistId) return []
@@ -359,6 +365,10 @@ export default function SmartPlaylistView() {
       if (!weekly) return []
       const byId = new Map(libState.tracks.map((t) => [t.id, t]))
       return weekly.trackIds.map((id) => byId.get(id)).filter((t): t is Track => t !== undefined)
+    }
+    if (monthYm) {
+      const byId = new Map(libState.tracks.map((t) => [t.id, t]))
+      return monthTrackIds(releaseMonths, monthYm).map((id) => byId.get(id)).filter((t): t is Track => t !== undefined)
     }
 
     // 4.4.46: the four built-in smart playlists are now evaluated by
@@ -416,7 +426,7 @@ export default function SmartPlaylistView() {
         .slice(0, 25))
     }
     return own(evaluateSmartPlaylist(playlistId, everywhere))
-  }, [playlistId, libState.tracks, everywhere, picks, topWindow, windowedCounts, weekly])
+  }, [playlistId, libState.tracks, everywhere, picks, topWindow, windowedCounts, weekly, monthYm, releaseMonths])
 
   // Apply search filter — every word must appear somewhere across all fields
   const filteredTracks = useMemo(() => {
