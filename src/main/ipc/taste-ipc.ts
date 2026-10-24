@@ -14,6 +14,7 @@ import { stripMemoryFor, negativeExamples, type LedgerRowLike } from '../../comm
 import { makeImpressionDedupe } from '../impression-dedupe.ts'
 import { currentTasteState, isUsable } from '../taste-state.ts'
 import { currentTop1000Scores, isTop1000Usable } from '../top1000-scores.ts'
+import { currentReleaseMonths } from '../release-months.ts'
 import { elsewhereLedgerRows } from '../taste-elsewhere.ts'
 import { unionLedgerRows } from '../../common/taste-shared.ts'
 import { triggerSync } from '../sync-orchestrator'
@@ -125,6 +126,12 @@ export function registerTasteIpc(ipc: IpcRegistrar): void {
     const pct: Record<string, number> = {}
     for (const [id, row] of s.tracks) pct[id] = row[0]
     return { ok: true, usable: true, builtAt: new Date(s.builtAtMs).toISOString(), answered: s.answered, pct }
+  }, { public: true })
+  // This year's releases by month (release-months.ts) for the sidebar's month playlists.
+  ipc.handle('get-release-months', async () => {
+    const r = currentReleaseMonths()
+    if (!r) return { ok: true, months: [], tracks: [] }
+    return { ok: true, builtAt: new Date(r.builtAtMs).toISOString(), from: r.from, months: r.months, tracks: r.tracks, pending: r.pending }
   }, { public: true })
   // Per-playlist blend weights the nightly learner writes; the suggestion
   // strip multiplies its blend components by these. mtime-cached.
