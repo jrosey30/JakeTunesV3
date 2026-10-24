@@ -275,6 +275,33 @@ test('a suppressed vibe weight demotes the pure-vibe pick', () => {
   assert.equal(weighted[0]?.id, 2, 'genre-fit candidate must lead under learned weights')
 })
 
+// ── The Top 1000 Quiz's love term (2026-10-24) ─────────────────────────
+// ⚠️ TWIN: the standings come from JakeTunesMobile backend/src/routes/top1000.ts GET /scores
+// via src/main/top1000-scores.ts; `ta` in the diag is what the nightly learner's `taste` dial scales.
+test('quiz love leads the taste term: it beats stars/plays and the taste engine, and steps aside without them', () => {
+  const playlist: SuggestibleTrack[] = Array.from({ length: 6 }, (_, i) => (
+    { id: 3000 + i, title: `p${i}`, artist: `pl${i}`, subgenrePath: 'Rock › Indie' }
+  ))
+  const starred: SuggestibleTrack = { id: 1, title: 'starred', artist: 'A', subgenrePath: 'Rock › Indie', rating: 5, playCount: 40 }
+  const plain: SuggestibleTrack = { id: 2, title: 'plain', artist: 'B', subgenrePath: 'Rock › Indie', rating: 0, playCount: 0 }
+  const decoy: SuggestibleTrack = { id: 3, title: 'decoy', artist: 'C', subgenrePath: 'Jazz › Bebop' }   // spreads the vibe range so 1 and 2 tie on vibe
+  const hits = [{ trackId: 1, score: 0.7, cluster: 0 }, { trackId: 2, score: 0.7, cluster: 0 }, { trackId: 3, score: 0.3, cluster: 0 }]
+  const lib = [starred, plain, decoy]
+  const pick = (engine?: Map<number, number>, quiz?: Map<number, number>, diag?: Map<number, SuggestDiag>) =>
+    suggestFromVibeHits(playlist, lib, hits, 3, 0, [6], {}, diag, new Set(), engine, quiz)[0]?.id
+  assert.equal(pick(), 1, 'fixture: stars + plays lead without the quiz')
+  const quiz = new Map([[1, 0.1], [2, 0.98]])
+  assert.equal(pick(undefined, quiz), 2, 'the quiz says he loves the plain one')
+  const engine = new Map([[1, 0.99], [2, 0.01], [3, 0.5]])
+  assert.equal(pick(engine, quiz), 2, 'the quiz outranks the taste engine')
+  assert.equal(pick(engine), 1, 'without the quiz the engine decides')
+  const diag = new Map<number, SuggestDiag>()
+  pick(engine, quiz, diag)
+  assert.equal(diag.get(2)?.ta, 0.98, 'the diag carries the quiz value as the taste component')
+  assert.equal(diag.get(2)?.tv, 2, 'and says the quiz spoke')
+  assert.equal(diag.get(3)?.tv, 1, 'a song the quiz has no standing for falls back to the engine')
+})
+
 // ── Era fit (2026-09-04) ──────────────────────────────────────────────
 function vibeHits(ids: number[]) { return ids.map(id => ({ trackId: id, score: 0.7, cluster: 0 })) }
 
