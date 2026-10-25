@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { splitHalfAndHalf } from '../../common/activity-split.ts'
+import { halfAndHalfLine, splitHalfAndHalf } from '../../common/activity-split.ts'
 
 const range = (a: number, b: number): number[] => Array.from({ length: b - a + 1 }, (_, i) => a + i)
 
@@ -68,5 +68,14 @@ describe('pinned lists (Recently Added, Bops, Rocksurgence) are always in your h
     assert.equal(s.manualIds.length, 500)
     assert.deepEqual(s.manualIds.slice(272), range(773, 1000))
     assert.equal(s.brainTarget, 500)
+  })
+})
+
+describe('no pinned lists, no locked albums (2026-10-25)', () => {
+  it('the review line names only your drops and the Top 1000 when nothing is pinned', () => {
+    const s = splitHalfAndHalf([1, 2, 3, 4, 5, 6], 10)
+    assert.equal(s.pinnedCount, 0)
+    assert.equal(halfAndHalfLine(s, s.manualIds.length, 5, 0), 'Half and half: your 5 newest pool drops + 5 from your Top 1000, best first. 1 older pool song sits this one out.')
+    assert.equal(halfAndHalfLine(splitHalfAndHalf([], 10), 0, 10, 0), 'Half and half: your 0 newest pool drops + 10 from your Top 1000, best first.')
   })
 })

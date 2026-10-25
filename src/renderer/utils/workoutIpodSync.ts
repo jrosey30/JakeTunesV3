@@ -9,7 +9,6 @@ import type { Track, Playlist } from '../types'
 import { buildSmartPlaylistsForSync } from './smartPlaylists'
 import type { ActivityBrief } from '../components/ActivitySheet'
 import { getPoolIds } from '../activityPool'
-import { resolvePinnedPoolIds } from './poolPinnedLists'
 
 export interface WorkoutSyncPayload {
   tracks: Track[]
@@ -79,11 +78,10 @@ export async function buildWorkoutIpodSyncPayload(
   // means the Top 1000 fills the whole set (Music Man when homemini is away,
   // workout-sync-ipc.ts). DeviceView (do-not-touch) never
   // learns the difference — this util reads the pool.
-  // The pinned lists (poolPinnedLists.ts) ride along PINNED, resolved live
-  // from the library right now (poolPinnedLists.ts).
+  // No pinned lists, no locked albums (Jake, 2026-10-25: "strip the locks and
+  // pins from the ipod pool too"): nothing rides along unasked.
   const poolIds = getPoolIds()
-  const pinnedIds = resolvePinnedPoolIds(allTracks, regularPlaylists).ids
-  const pool = poolIds.length > 0 || pinnedIds.length > 0 ? { ids: poolIds, pinnedIds, fill: true } : undefined
+  const pool = poolIds.length > 0 ? { ids: poolIds, fill: true } : undefined
   const res = await window.electronAPI.buildWorkoutSyncSet?.(
     allTracks.map(toWorkoutTrack),
     brief ? { brief, saveProfile: true, target: brief.target ?? 1000, pool } : undefined,

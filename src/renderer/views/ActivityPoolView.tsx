@@ -18,7 +18,6 @@ import {
   addTracksToPool, removeFromPool, clearPool, swapInPool,
 } from '../activityPool'
 import '../styles/activity-pool.css'
-import { resolvePinnedPoolIds } from '../utils/poolPinnedLists'
 import { splitHalfAndHalf } from '../../common/activity-split'
 
 function fmtClock(ms: number): string {
@@ -45,8 +44,6 @@ export default function ActivityPoolView() {
   useEffect(() => { void refreshPool() }, [])
 
   const byId = useMemo(() => new Map(state.tracks.map((t) => [t.id, t])), [state.tracks])
-  // Always-in lists (2026-10-16), resolved live — the same helper the sync uses.
-  const pinned = useMemo(() => resolvePinnedPoolIds(state.tracks, state.playlists), [state.tracks, state.playlists])
   // The rows are what will SYNC — the same count the sidebar badge and the
   // Activity sheet show. What can't sync is listed underneath, by name,
   // with the fix beside it (2026-09-19: "1000 in the pool, 992 at the sync").
@@ -77,9 +74,6 @@ export default function ActivityPoolView() {
       <div className="pool-head">
         <div>
           <h1 className="pool-title">iPod Pool</h1>
-          {!readOnly && <div className="pool-sub">
-            Always in, live: {pinned.lists.map((l) => l.found ? `${l.name} (${l.count.toLocaleString()})` : `${l.name} (${l.locked ? 'none in your library' : 'no playlist by that name'})`).join(' · ')}
-          </div>}
           <div className="pool-sub">
             {readOnly
               ? (ids.length > 0
@@ -87,9 +81,9 @@ export default function ActivityPoolView() {
                   : <>Empty — the pool is built on the MacBook.</>)
               : ids.length > 0
               ? (() => {
-                  const split = splitHalfAndHalf(health.syncable, max, pinned.ids)
-                  const dropsOn = split.manualIds.length - split.pinnedCount
-                  return <>{rows.length.toLocaleString()} dropped in · a {max.toLocaleString()}-song sync takes those lists + your newest {dropsOn.toLocaleString()} drops, your Top 1000 fills the other {split.brainTarget.toLocaleString()} · {fmtLong(totalMs)}{cantSync > 0 ? <> · <strong className="pool-sub-warn">{cantSync} can’t</strong></> : ''}</>
+                  const split = splitHalfAndHalf(health.syncable, max)
+                  const dropsOn = split.manualIds.length
+                  return <>{rows.length.toLocaleString()} dropped in · a {max.toLocaleString()}-song sync takes your newest {dropsOn.toLocaleString()} drops, your Top 1000 fills the other {split.brainTarget.toLocaleString()} · {fmtLong(totalMs)}{cantSync > 0 ? <> · <strong className="pool-sub-warn">{cantSync} can’t</strong></> : ''}</>
                 })()
               : <>No songs dropped in yet — right-click songs and choose “Add to iPod Pool”, or drag songs, albums, artists or playlists onto this page.</>}
           </div>
