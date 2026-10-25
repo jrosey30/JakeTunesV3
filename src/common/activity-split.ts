@@ -5,14 +5,19 @@
  * pool updated as i update those lists").
  *
  * Every sync of N songs:
- *   • YOUR half (N/2): first the PINNED lists — Greenpoint Greatest Hits, the
- *     Justification series, Bops, resolved live at sync time so they follow your edits —
- *     then your NEWEST pool drops fill what is left of the half. The pool
- *     keeps drop order with new drops appended; older drops wait their turn.
- *     If the pinned lists alone exceed the half (only at small sizes), the
- *     earlier pinned entries win (caller passes them in priority order).
- *   • MUSIC MAN's half: the rest. A short pool means Music Man covers the
- *     shortfall, so the sync is still N.
+ *   • YOUR half (N/2): your NEWEST pool drops. The pool keeps drop order with
+ *     new drops appended; older drops wait their turn.
+ *   • THE TOP 1000's half: the rest (top1000-sync.ts; Music Man when homemini
+ *     is away). A short pool means the brain covers the shortfall, so the
+ *     sync is still N.
+ *
+ * No pinned lists, no locked albums (Jake, 2026-10-25: "strip the locks and
+ * pins from the ipod pool too" — the Original is the Top 1000 plus his own
+ * drops, nothing rides along unasked). Until then Greenpoint Greatest Hits,
+ * the Justification series, Bops and Geese's 3D Country + Getting Killed went
+ * on first (renderer/utils/poolPinnedLists.ts, common/pool-locked-albums.ts,
+ * both removed). `pinnedIdsInPriority` stays for main's call (workout-sync-ipc.ts,
+ * which is never fed any now) until the sync engine drops it.
  *
  * Shared by main (builds the set) and the Activity sheet (shows the split),
  * so the two can never disagree. Pure — node --test loads it.
@@ -68,7 +73,7 @@ export function halfAndHalfLine(
 ): string {
   const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
   const parts = [
-    `${split.pinnedCount} from your pinned lists`,
+    ...(split.pinnedCount > 0 ? [`${split.pinnedCount} from your pinned lists`] : []),
     `your ${plural(manualCount - split.pinnedCount, 'newest pool drop', 'newest pool drops')}`,
   ]
   if (topCount > 0) parts.push(`${topCount} from your Top 1000, best first`)

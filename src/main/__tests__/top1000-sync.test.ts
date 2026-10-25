@@ -28,8 +28,9 @@ describe('the Original’s brain half from the Top 1000', () => {
     const split = { pinnedCount: 257, waitingIds: [1, 2] }
     assert.equal(halfAndHalfLine(split, 500, 500, 0),
       'Half and half: 257 from your pinned lists + your 243 newest pool drops + 500 from your Top 1000, best first. 2 older pool songs sit this one out.')
+    // no pinned lists since 2026-10-25: the line names only what is there
     assert.equal(halfAndHalfLine({ pinnedCount: 0, waitingIds: [] }, 1, 0, 1),
-      'Half and half: 0 from your pinned lists + your 1 newest pool drop + 1 Music Man pick.')
+      'Half and half: your 1 newest pool drop + 1 Music Man pick.')
   })
 })
 

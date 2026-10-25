@@ -23,8 +23,9 @@
  *     drop not fit (its earliest songs, same oldest-first rule) — reported
  *     as `overflow`
  *   • drop order is kept — the pool syncs in the order it was built
- *   • the pinned lists (renderer/utils/poolPinnedLists.ts) are resolved
- *     separately at sync time; they never count against the pool
+ *   • no pinned lists, no locked albums (Jake, 2026-10-25: "strip the locks
+ *     and pins from the ipod pool too") — the Original is the Top 1000 plus
+ *     these drops, nothing rides along unasked
  */
 
 export const POOL_MAX = 1000

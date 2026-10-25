@@ -1,9 +1,11 @@
 /**
  * New arrivals (2026-10-17) — what happens after songs LAND in the library
  * from an import batch or a phone-download absorb:
- *   • one toast that says how many landed and whether they ride the next
- *     Activity Sync (Recently Added is a pinned pool list —
- *     renderer/utils/poolPinnedLists.ts), with the duplicate/failed counts
+ *   • one toast that says how many landed, with the duplicate/failed counts
+ *     (until 2026-10-25 it also said whether they rode the next Activity
+ *     Sync — Recently Added was a pinned pool list; there are no pinned
+ *     lists or locked albums any more: the Original is the Top 1000 plus
+ *     Jake's own pool drops)
  *   • a cover-art pass for the albums that arrived without art
  *
  * Pure — node --test loads it. The renderer gathers the live facts.

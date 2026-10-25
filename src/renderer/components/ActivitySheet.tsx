@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { refreshPool, consumePoolModeRequest, usePoolHealth } from '../activityPool'
 import { splitHalfAndHalf } from '../../common/activity-split'
 import { newestProfile, profileChips, detachChangedProfile } from '../../common/activity-profiles'
-import { resolvePinnedPoolIds } from '../utils/poolPinnedLists'
 import { useLibrary } from '../context/LibraryContext'
 import '../styles/activity-sheet.css'
 
@@ -121,14 +120,8 @@ export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
   const poolUnsyncable = poolHealthInfo.dead.length + poolHealthInfo.concert.length + poolHealthInfo.unsyncable.length
   // Always half and half (2026-10-16, Jake: "50% automated 50% manual",
   // newest drops first) — the SAME function main uses to build the set.
-  const pinned = useMemo(() => resolvePinnedPoolIds(lib.tracks, lib.playlists), [lib.tracks, lib.playlists])
-  const split = splitHalfAndHalf(poolIds, target, pinned.ids)
-  const pinnedOn = split.pinnedCount
-  const missingPinned = pinned.lists.filter((l) => !l.found && !l.locked).map((l) => l.name)
-  // "Geese — 3D Country + Getting Killed, Greenpoint Greatest Hits, … and Bops" — from the
-  // resolver, so a new locked set or pinned list names itself here.
-  const pinnedNames = pinned.lists.filter((l) => l.found).map((l) => l.name)
-  const pinnedLabel = pinnedNames.length <= 1 ? (pinnedNames[0] || 'your pinned lists') : `${pinnedNames.slice(0, -1).join(', ')} and ${pinnedNames[pinnedNames.length - 1]}`
+  // No pinned lists, no locked albums (2026-10-25): your half is your drops.
+  const split = splitHalfAndHalf(poolIds, target)
   const poolHalf = split.manualIds.length
   const brainHalf = split.brainTarget
   const poolWaiting = split.waitingIds.length
@@ -251,8 +244,7 @@ export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
           <div className="activity-pool-status">
             {poolHalf === 0
               ? `Your iPod Pool is empty, so your Top 1000 fills all ${target.toLocaleString()}. Right-click any song and choose “Add to iPod Pool” to claim half.`
-              : `Your half: ${pinnedOn.toLocaleString()} from ${pinnedLabel} + your ${(poolHalf - pinnedOn).toLocaleString()} newest pool drops. Your Top 1000 fills the other ${brainHalf.toLocaleString()}, best first.${poolWaiting > 0 ? ` ${poolWaiting.toLocaleString()} older pool song${poolWaiting === 1 ? '' : 's'} sit this one out.` : ''}`}
-            {missingPinned.length > 0 && <span className="activity-pool-warn"> No playlist named {missingPinned.join(' or ')}, so it isn't pinned.</span>}
+              : `Your half: your ${poolHalf.toLocaleString()} newest pool drops. Your Top 1000 fills the other ${brainHalf.toLocaleString()}, best first.${poolWaiting > 0 ? ` ${poolWaiting.toLocaleString()} older pool song${poolWaiting === 1 ? '' : 's'} sit this one out.` : ''}`}
             {poolUnsyncable > 0 && <span className="activity-pool-warn"> {poolUnsyncable} pooled song{poolUnsyncable === 1 ? '' : 's'} can't sync — see the iPod Pool page.</span>}
           </div>
         </div>
