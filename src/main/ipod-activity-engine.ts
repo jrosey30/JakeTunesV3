@@ -35,7 +35,6 @@ import {
   fileSizeForItunesDb,
   ipodFirmwareWillList,
   ipodPlayableDestPath,
-  ipodPathExtension,
   needsIpodAlacTranscode,
   sampleRateForItunesDb,
 } from './ipod-reconcile.ts'
@@ -463,7 +462,19 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   // Deciding first means a mirror that cannot be built refuses the sync
   // with the card untouched, and — the point — the keep plan below can
   // compare what WOULD be written against what is already there.
-  const pathRewrites: Array<{ id: number; newPath: string }> = []
+  //
+  // Card names never reach the library (2026-10-26). Every path this engine
+  // changes below — .flac/FAT-temp → .m4a, the 8.3 stem, an AAC or ALAC
+  // mirror — is the CARD's name for a file whose library master is never
+  // renamed or converted (mirrors are staged temps; the library file stays).
+  // The 8/31 rule still exported a rewrite whenever the EXTENSION changed
+  // ("flac → m4a, the mechanism's original purpose"), and the 2026-09-19
+  // Activity Sync wrote 8 FLAC imports into library.json as `F04:12004.m4a`,
+  // a name that exists only on the card, so every player 404'd them for five
+  // weeks. track.path still becomes the card path (the DB payload and TSA
+  // read it); the result carries NO library path rewrites. cardOnlyIds only
+  // counts, for the log.
+  const cardOnlyIds = new Set<number>()
   interface CopyPlanEntry {
     i: number
     id: number
@@ -501,14 +512,9 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     const rawColon = String(track.path || '')
     const destColon = ipodPlayableDestPath(rawColon)
     if (destColon !== rawColon) {
-      // track.path becomes the CARD path (DB payload + TSA read it), but a
-      // rewrite is only exported to the LIBRARY when the extension changed
-      // (flac/FAT-temp → m4a, the mechanism's original purpose). The 8.3
-      // stem shortening is card-only — exporting it rewrote 702 library
-      // rows to names that exist nowhere in the farm (2026-08-31).
-      if (ipodPathExtension(rawColon) !== ipodPathExtension(destColon)) {
-        pathRewrites.push({ id, newPath: destColon })
-      }
+      // CARD path only (DB payload + TSA read it). Never exported to the
+      // library — see cardOnlyIds above (2026-08-31: 702 rows; 2026-09-19: 8).
+      cardOnlyIds.add(id)
       track.path = destColon
     }
     const localFile = join(LOCAL_MOUNT, rawColon.replace(/:/g, pathSep))
@@ -568,7 +574,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
               const newRel = dstToCopy.slice(IPOD_MOUNT.length + 1)
               const newColon = ':' + newRel.split(pathSep).join(':')
               track.path = newColon
-              pathRewrites.push({ id, newPath: newColon })
+              cardOnlyIds.add(id)
             }
           }
         } catch (err) {
@@ -598,13 +604,9 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
           const newRel = dstToCopy.startsWith(IPOD_MOUNT) ? dstToCopy.slice(IPOD_MOUNT.length + 1) : dstToCopy
           track.path = tsaNormalizeColonPath(newRel)
           track.codec = 'alac'
-          // Exported to the LIBRARY only when the extension changed (.flac →
-          // .m4a). A hi-res .m4a stays .m4a, and its card path may carry the
-          // card-only 8.3 stem — exporting that is the 702-row bug (see the
-          // destColon rewrite above).
-          if (ipodPathExtension(rawColon) !== ipodPathExtension(String(track.path))) {
-            pathRewrites.push({ id, newPath: String(track.path) })
-          }
+          // The mirror is the card's copy; the library master is untouched,
+          // so this name is never exported (see cardOnlyIds above).
+          cardOnlyIds.add(id)
         } catch (err) {
           console.error(`activity-sync: FLAC→ALAC failed for ${title}:`, err)
           if (i >= target) { console.warn(`activity-sync: reserve "${title}" skipped`); continue }
@@ -1234,6 +1236,9 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     console.warn('activity-sync: ledger result append failed (non-blocking):', err)
   }
 
+  if (cardOnlyIds.size > 0) {
+    console.log(`activity-sync: ${cardOnlyIds.size} song(s) ride under a card-only name (converted or 8.3 stem); library.json untouched`)
+  }
   return {
     ok: sealedOk,
     copied,
@@ -1243,7 +1248,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     landed: target,
     shortfall: sealedOk ? 0 : target,
     verifyAttempts,
-    pathRewrites: pathRewrites.map((r) => ({ id: r.id, newPath: r.newPath })),
+    // No pathRewrites: card names never reach the library (see cardOnlyIds).
     ...(unconvertible.length > 0 ? { unconvertible } : {}),
     error: sealedOk ? undefined : `Activity set of ${target} did not seal. Not calling this a success.`,
   }

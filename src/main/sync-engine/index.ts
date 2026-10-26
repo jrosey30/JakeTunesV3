@@ -1231,6 +1231,14 @@ export function createSyncEngine(host: SyncEngineHost) {
     // One last filesystem-wide flush so the DB write and the eject start from
     // a clean slate — nothing of the audio left in the page cache to lose.
     await flushCardCaches()
+    // Only smart-match re-links may reach library.json: each names an
+    // existing on-card copy. Converted and playable-name rewrites are CARD
+    // names for masters the library never renamed or converted — the twin of
+    // the Activity Sync bug that wrote 8 FLAC imports into library.json as
+    // `F04:12004.m4a` (2026-09-19, found 2026-10-26). Snapshot before the
+    // merges below; the merged list still drives the iTunesDB payload and
+    // the post-sync verify set.
+    const libraryPathRewrites = pathRewrites.map(r => ({ id: r.id, newPath: r.newPath }))
     // Merge the convert-driven path rewrites into the existing array
     // so the smart-match block below picks them up alongside its own.
     if (convertedPathRewrites.length > 0) {
@@ -2226,9 +2234,9 @@ export function createSyncEngine(host: SyncEngineHost) {
                 : `${verifiedLanded} files looked present but did not hold across two remounts — that is the N/N → 33 roulette. Not calling this a success. Sync again without unplugging.`)
               : undefined,
             ipodOrphansDeleted,
-            // Return the path rewrites so the renderer can update
-            // library.json to match what actually ended up on the iPod.
-            pathRewrites: pathRewrites.map(r => ({ id: r.id, newPath: r.newPath })),
+            // Return ONLY the smart-match re-links so the renderer can update
+            // library.json; converted / playable card names stay on the card.
+            pathRewrites: libraryPathRewrites,
             // Fingerprint backfills, silent path heals, and audioMissing
             // flags from the post-sync verifier. Renderer applies these
             // as UPDATE_TRACKS so library.json reflects the verified
