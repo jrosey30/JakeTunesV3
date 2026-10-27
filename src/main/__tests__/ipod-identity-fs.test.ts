@@ -1,10 +1,10 @@
 /** Which iPod is plugged in — the fs half, against fake cards in a temp dir. */
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile, readFile } from 'fs/promises'
+import { mkdtemp, mkdir, writeFile, readFile, stat } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { identifyIpod, registerIpod, refuseUnlessOriginalIpod } from '../ipod-identity.ts'
+import { identifyIpod, registerIpod, refuseUnlessOriginalIpod, resolveIpodState } from '../ipod-identity.ts'
 
 // Same synthetic iTunesDB as ipod-roundtrip.test.ts (catalog paths only).
 function db(paths: string[]): Buffer {
@@ -63,13 +63,17 @@ describe('identifying iPods', () => {
     const claim = await registerIpod(red, state, { asOriginal: true })
     assert.equal(claim.ok, false)
 
-    // Set up as a new iPod: known, not primary, still refused for writes.
+    // Set up as a new iPod: known, not primary — synced with its own state, never imported from.
     const r = await registerIpod(red, state, { asOriginal: false, name: 'Red', color: 'red', purpose: '' })
     assert.equal(r.ok, true)
     const ri = await identifyIpod(red, state)
     assert.equal(ri.status === 'known' && ri.device.name, 'Red')
     assert.equal(ri.status === 'known' && ri.device.primary, false)
-    assert.match(await refuseUnlessOriginalIpod(red, state) || '', /Red has its own Pool/)
+    assert.match(await refuseUnlessOriginalIpod(red, state) || '', /Red isn’t the Original/)
+    const redState = await resolveIpodState(red, state)
+    assert.equal(redState.refusal, null)
+    assert.equal(redState.stateDir, join(state, 'ipod-pools', r.ok ? r.device.id : ''))
+    assert.ok((await stat(redState.stateDir)).isDirectory(), "Red's own state dir was not created")
 
     // Both are in this Mac's list.
     const reg = JSON.parse(await readFile(join(state, 'ipod-devices.json'), 'utf-8'))

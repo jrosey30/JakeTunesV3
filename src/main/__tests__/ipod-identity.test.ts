@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  buildDeviceMarker, catalogMatchesManifest, ipodWriteRefusal, parseDeviceMarker, shouldAutoAdoptOriginal,
+  buildDeviceMarker, catalogMatchesManifest, ipodImportRefusal, ipodWriteRefusal, parseDeviceMarker, shouldAutoAdoptOriginal,
 } from '../../common/ipod-identity.ts'
 
 const now = '2026-10-23T12:00:00.000Z'
@@ -47,12 +47,16 @@ describe('recognising the original by its last sync', () => {
   })
 })
 
-describe('only the original iPod is written to', () => {
-  it('refuses unknown and non-original iPods, allows the original', () => {
+describe('only a KNOWN iPod is written to; only the Original is imported from', () => {
+  it('refuses an unknown card; any known iPod may be synced and have its plays read (step 2b)', () => {
     assert.match(ipodWriteRefusal({ status: 'unknown', canBeOriginal: true }) || '', /doesn’t know this iPod/)
     const red = buildDeviceMarker({ id: 'abc12345-red', name: 'Red', primary: false, now })!
-    assert.match(ipodWriteRefusal({ status: 'known', device: red }) || '', /Red has its own Pool/)
+    assert.equal(ipodWriteRefusal({ status: 'known', device: red }), null)
     const orig = buildDeviceMarker({ id: 'original-1234', name: 'Original', primary: true, now })!
     assert.equal(ipodWriteRefusal({ status: 'known', device: orig }), null)
+    // Importing songs INTO the library stays Original-only: another iPod's card is never a source.
+    assert.match(ipodImportRefusal({ status: 'unknown', canBeOriginal: false }) || '', /doesn’t know this iPod/)
+    assert.match(ipodImportRefusal({ status: 'known', device: red }) || '', /Red isn’t the Original/)
+    assert.equal(ipodImportRefusal({ status: 'known', device: orig }), null)
   })
 })

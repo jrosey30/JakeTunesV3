@@ -117,23 +117,37 @@ export function shouldAutoAdoptOriginal(input: {
   return !input.registryHasPrimary && input.catalogMatch
 }
 
-/** Only the original iPod may be synced or have its plays read, for now. */
+/** Any KNOWN iPod may be synced and have its plays read — each with its own state (step 2b,
+ *  2026-10-27). An unknown card fails closed: nothing written to it, nothing read off it. */
 export function ipodWriteRefusal(identity: IpodIdentity): string | null {
   if (identity.status === 'unknown') {
     return 'JakeTunes doesn’t know this iPod yet. Set it up on the Device page first — nothing on it was changed.'
   }
-  if (!identity.device.primary) {
-    return `${identity.device.name} has its own Pool, but JakeTunes can’t sync it yet — that comes next. Nothing on it was changed.`
+  return null
+}
+
+/** Songs are only ever imported INTO the library from the Original (another iPod's card is its
+ *  own set of library songs, never a source). */
+export function ipodImportRefusal(identity: IpodIdentity): string | null {
+  const refusal = ipodWriteRefusal(identity)
+  if (refusal) return refusal
+  if (identity.status === 'known' && !identity.device.primary) {
+    return `${identity.device.name} isn’t the Original — songs are only imported from the Original. Nothing was changed.`
   }
   return null
 }
 
 /**
- * ONE POOL PER iPOD (step 2, 2026-10-27). Where an iPod's Pool lives, relative to the state
- * dir: the Original (or no known iPod) keeps the legacy root file exactly where it is; any
- * other iPod has its own folder, keyed by its marker id. Pure so the rule is testable.
+ * ONE POOL — AND ONE SYNC STATE — PER iPOD (step 2, 2026-10-27). Where an iPod's state lives,
+ * relative to the state dir: the Original (or no known iPod) keeps every legacy root file
+ * exactly where it is; any other iPod has its own folder, keyed by its marker id, holding its
+ * pool, last-sync manifest, TSA seal, sync journal and reports, activity ledger, round-trip
+ * state and workout-sync state. Pure so the rule is testable.
  */
 export const IPOD_POOLS_DIR = 'ipod-pools'
+export function ipodStateRel(device: { id: string; primary: boolean } | null): string[] {
+  return !device || device.primary ? [] : [IPOD_POOLS_DIR, device.id]
+}
 export function ipodPoolRel(device: { id: string; primary: boolean } | null): string[] {
-  return !device || device.primary ? ['activity-pool.json'] : [IPOD_POOLS_DIR, device.id, 'activity-pool.json']
+  return [...ipodStateRel(device), 'activity-pool.json']
 }

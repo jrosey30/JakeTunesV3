@@ -11,12 +11,12 @@
  * iPods fail closed: nothing is written to them, nothing read from them is
  * applied to the library.
  */
-import { readFile, writeFile, rename, stat, unlink } from 'fs/promises'
+import { mkdir, readFile, writeFile, rename, stat, unlink } from 'fs/promises'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import {
   IPOD_MARKER_REL, ORIGINAL_DEFAULTS, buildDeviceMarker, catalogMatchesManifest,
-  ipodPoolRel, ipodWriteRefusal, parseDeviceMarker, shouldAutoAdoptOriginal,
+  ipodImportRefusal, ipodPoolRel, ipodStateRel, ipodWriteRefusal, parseDeviceMarker, shouldAutoAdoptOriginal,
   type IpodDeviceMarker, type IpodIdentity,
 } from '../common/ipod-identity.ts'
 import { parseCatalogPaths } from './sync-engine/roundtrip.ts'
@@ -70,6 +70,40 @@ const loadRegistry = loadIpodRegistry
  *  known iPod, = the legacy root activity-pool.json; any other iPod = ipod-pools/<id>/. */
 export function poolFileFor(stateDir: string, device: IpodDeviceMarker | null): string {
   return join(stateDir, ...ipodPoolRel(device))
+}
+
+/** Where an iPod's sync state lives (manifest, seal, journal, reports, ledgers, round-trip,
+ *  workout-sync state): the root state dir for the Original, ipod-pools/<id>/ for any other. */
+export function ipodStateDirFor(stateDir: string, device: IpodDeviceMarker | null): string {
+  return join(stateDir, ...ipodStateRel(device))
+}
+
+export interface IpodState {
+  /** Why the card must not be touched, or null when it may be (any known iPod). */
+  refusal: string | null
+  device: IpodDeviceMarker | null
+  /** The state dir every sync-side file of THIS iPod lives in (created when it is its own). */
+  stateDir: string
+}
+
+/**
+ * Which iPod is this, and where does its state live (step 2b). Every card-writing path (sync,
+ * delete mirror) and every card-reading path that writes Jake's data (play-count round trip, the
+ * TSA seal check) asks this first. Unknown cards fail closed; a known second iPod gets its own
+ * folder; the Original keeps the root.
+ */
+export async function resolveIpodState(mount: string, stateDir: string): Promise<IpodState> {
+  let identity: IpodIdentity
+  try {
+    identity = await identifyIpod(mount, stateDir)
+  } catch {
+    return { refusal: 'JakeTunes couldn’t tell which iPod this is, so it left it alone.', device: null, stateDir }
+  }
+  const refusal = ipodWriteRefusal(identity)
+  const device = identity.status === 'known' ? identity.device : null
+  const dir = ipodStateDirFor(stateDir, device)
+  if (!refusal && dir !== stateDir) await mkdir(dir, { recursive: true }).catch(logRegistryFail)
+  return { refusal, device, stateDir: dir }
 }
 
 async function rememberDevice(stateDir: string, marker: IpodDeviceMarker): Promise<void> {
@@ -178,10 +212,11 @@ export async function registerIpod(
   return { ok: true, device: marker }
 }
 
-/** null = this is the original iPod; otherwise why it must not be touched. */
+/** null = this is the original iPod; otherwise why songs must not be imported off it (the one
+ *  path that stays Original-only after step 2b: another iPod's card is never a source). */
 export async function refuseUnlessOriginalIpod(mount: string, stateDir: string): Promise<string | null> {
   try {
-    return ipodWriteRefusal(await identifyIpod(mount, stateDir))
+    return ipodImportRefusal(await identifyIpod(mount, stateDir))
   } catch {
     return 'JakeTunes couldn’t tell which iPod this is, so it left it alone.'
   }

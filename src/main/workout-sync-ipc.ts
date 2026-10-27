@@ -51,11 +51,16 @@ export interface WorkoutSyncHost {
    *  null when the plugged-in iPod isn't the Original or homemini isn't
    *  answering, and Music Man picks instead (top1000-sync-source.ts). */
   top1000ForSync?: () => Promise<number[] | null>
+  /** The plugged-in iPod's own state dir (step 2b: the root for the Original or no iPod,
+   *  ipod-pools/<id>/ for any other known iPod); null = an unknown card, whose state is
+   *  never written. index.ts resolves it through resolveIpodState. */
+  ipodStateDir?: () => Promise<string | null>
 }
 
 const WORKOUT_TARGET = 1000
-const STATE_FILE = () => join(app.getPath('userData'), 'workout-sync-state.json')
-const HISTORY_FILE = () => join(app.getPath('userData'), 'workout-sync-history.json')
+const ROOT_STATE_DIR = () => app.getPath('userData')
+const STATE_FILE = (dir: string) => join(dir, 'workout-sync-state.json')
+const HISTORY_FILE = (dir: string) => join(dir, 'workout-sync-history.json')
 // Best-effort NAS mirror so the nightly brain jobs on homemini
 // (JT_STATE_DIR = /Volumes/JakeShared/JakeTunesState) can ingest the
 // sync history — this is how activity syncs feed the brain over time.
@@ -78,9 +83,9 @@ export interface SyncHistoryEntry {
   removed: SyncHistoryEdit[]
 }
 
-async function loadSyncHistory(): Promise<SyncHistoryEntry[]> {
+async function loadSyncHistory(dir: string): Promise<SyncHistoryEntry[]> {
   try {
-    const raw = await readFile(HISTORY_FILE(), 'utf-8')
+    const raw = await readFile(HISTORY_FILE(dir), 'utf-8')
     const arr = JSON.parse(raw)
     return Array.isArray(arr) ? arr : []
   } catch {
@@ -88,11 +93,14 @@ async function loadSyncHistory(): Promise<SyncHistoryEntry[]> {
   }
 }
 
-async function appendSyncHistory(entry: SyncHistoryEntry): Promise<void> {
-  const cur = await loadSyncHistory()
+async function appendSyncHistory(dir: string, entry: SyncHistoryEntry): Promise<void> {
+  const cur = await loadSyncHistory(dir)
   const next = [entry, ...cur].slice(0, HISTORY_CAP)
   const json = JSON.stringify(next, null, 2)
-  await writeFile(HISTORY_FILE(), json)
+  await writeFile(HISTORY_FILE(dir), json)
+  // Only the Original's history feeds the brain on homemini (step 2b: a second iPod's
+  // syncs are its own business, never mirrored).
+  if (dir !== ROOT_STATE_DIR()) return
   try {
     // Never existsSync on JakeShared — sync SMB probe beachballs the main
     // process on workmini. Circuit breaker decides; write is best-effort.
@@ -117,9 +125,9 @@ interface WorkoutSyncState {
   brief?: ActivityBrief
 }
 
-async function loadState(): Promise<WorkoutSyncState | null> {
+async function loadState(dir: string): Promise<WorkoutSyncState | null> {
   try {
-    const raw = await readFile(STATE_FILE(), 'utf-8')
+    const raw = await readFile(STATE_FILE(dir), 'utf-8')
     const parsed = JSON.parse(raw) as WorkoutSyncState
     if (!parsed || !Array.isArray(parsed.trackIds)) return null
     return parsed
@@ -128,9 +136,9 @@ async function loadState(): Promise<WorkoutSyncState | null> {
   }
 }
 
-async function saveState(state: WorkoutSyncState): Promise<void> {
+async function saveState(dir: string, state: WorkoutSyncState): Promise<void> {
   try {
-    await writeFile(STATE_FILE(), JSON.stringify(state, null, 2))
+    await writeFile(STATE_FILE(dir), JSON.stringify(state, null, 2))
   } catch (err) {
     console.warn('[workout-sync] state write failed:', err)
   }
@@ -344,7 +352,9 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
       }
       const musicManGap = gap - topIds.length
 
-      const prev = await loadState()
+      // This iPod's own last set and history (step 2b); an unknown card reads as nothing.
+      const stateDir = (await host.ipodStateDir?.()) ?? ROOT_STATE_DIR()
+      const prev = await loadState(stateDir)
       let fillIds: number[] = []
       let reserveIds: number[] = []
       let name = ''
@@ -354,7 +364,7 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
         // Removed tracks get demoted hard; added tracks get boosted. The
         // vibe prompt also sees a compact digest so Music Man's framing
         // improves sync over sync.
-        const history = await loadSyncHistory()
+        const history = await loadSyncHistory(stateDir)
         const sameActivity = history.filter((h) => h?.brief?.activity === brief.activity).slice(0, 20)
         const demoteIds = [...new Set(sameActivity.flatMap((h) => (h.removed || []).map((e) => e.id)))]
         const boostIds = [...new Set(sameActivity.flatMap((h) => (h.added || []).map((e) => e.id)))]
@@ -518,7 +528,10 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
         convertOptions: payload.convertOptions,
         brief: payload.brief,
       }
-      await saveState(state)
+      // Recorded with the iPod it was synced to (step 2b). A sync to an unknown card
+      // cannot have happened (the engine refuses it), so there is nothing to record.
+      const stateDir = await host.ipodStateDir?.() ?? ROOT_STATE_DIR()
+      await saveState(stateDir, state)
       // Taste ledger (2026-08-07): the review gate is the purest verdict
       // stream there is — Jake literally marking wrong picks. Append the
       // edits so the nightly learner and the acceptance KPI see them.
@@ -537,7 +550,7 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
       // Ledger every confirmed sync (with Jake's review edits) — feeds
       // the next build's demote/boost lists, the vibe prompt digest, and
       // (via the NAS mirror) the nightly brain jobs on homemini.
-      await appendSyncHistory({
+      await appendSyncHistory(stateDir, {
         syncedAt: state.syncedAt,
         name: state.name,
         brief: payload.brief,
@@ -562,7 +575,7 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
   }, { refuse: REFUSED_SENDER })
 
   ipc.handle('get-workout-sync-state', async () => {
-    const s = await loadState()
+    const s = await loadState((await host.ipodStateDir?.()) ?? ROOT_STATE_DIR())
     return { ok: true, state: s }
   }, { public: true })
 
