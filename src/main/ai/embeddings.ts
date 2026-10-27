@@ -159,7 +159,7 @@ export function serializeEmbeddingsBlob(map: Map<number, Float32Array>): Buffer 
 // instead of duplicating 50MB of copies. Callers may freely mix in
 // standalone Float32Arrays via setEmbedding.
 // ⚠️ TWIN: scripts/brain-trainer.mjs readEmb and
-// ~/JakeTunesMobile/backend/src/util/rag.ts parse this same format.
+// ~/JakeTunesMobile/backend/src/util/embeddingsBlob.ts parseEmbeddingsBlob parse this same format.
 // Truncation is FATAL here, exactly as in the trainer's readEmb: when the
 // header's declared count/dimension needs more payload than the buffer
 // holds, this throws instead of returning a partial map. (Brief 180 —
