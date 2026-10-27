@@ -159,7 +159,7 @@ if (!KEY) fatal('no OPENAI_API_KEY (checked ~/JakeTunesV3/.env and env)')
 
 // ── embeddings.bin (EMBD binary format, shared with src/main/ai/embeddings.ts) ──
 // ⚠️ TWIN: src/main/ai/embeddings.ts parseEmbeddingsBlob (desktop) and
-// ~/JakeTunesMobile/backend/src/util/rag.ts readBrain (phone backend) parse
+// ~/JakeTunesMobile/backend/src/util/embeddingsBlob.ts parseEmbeddingsBlob (phone backend) parse
 // this same format — a format or guard change here must be mirrored there.
 function readEmb(path) {
   const buf = readFileSync(path)
