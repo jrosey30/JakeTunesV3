@@ -10,7 +10,7 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, readdir, utimes, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createAlbumArtServer, parseAlbumArtUrl, pregenerateThumbs, type MakeThumb } from '../album-art-serve.ts'
@@ -41,6 +41,15 @@ function server(dir: string) {
     return { status: res.status, source: res.headers.get('x-art-source'), body: Buffer.from(await res.arrayBuffer()).toString() }
   }
   return { get, cache }
+}
+
+/** The handler persists a built thumb with a fire-and-forget writeAtomic;
+ *  wait for that rename to land before touching the thumb (bounded, ~2 s). */
+async function thumbLanded(path: string): Promise<void> {
+  for (let i = 0; i < 400; i++) {
+    try { await stat(path); return } catch { await new Promise((r) => setTimeout(r, 5)) }
+  }
+  throw new Error(`thumb never landed: ${path}`)
 }
 
 const JUL10 = new Date('2026-07-10T12:00:00Z')
@@ -77,10 +86,15 @@ describe('the Concerts-page discrepancy (workmini, 2026-10-19)', () => {
   })
 
   it('a replaced jpg must be invalidated in the byte cache: the cache answers before the disk', async () => {
-    const { dir } = await store()
+    const { dir, thumbs } = await store()
     await writeFile(join(dir, `${RUSH}.jpg`), 'poster-v1')
     const s = server(dir)
     assert.equal((await s.get(`album-art://${RUSH_V}.jpg?s=320`)).body, 'thumb320<poster-v1>')
+    // The v1 thumb lands in the background: let it, then backdate it before v2
+    // is written. Otherwise it can land AFTER v2 (or share v2's mtime tick on a
+    // fast CI disk) and thumbIsFresh's `>=` hands the v1 thumb back (PR #267 CI).
+    await thumbLanded(join(thumbs, `${RUSH}_320.jpg`))
+    await utimes(join(thumbs, `${RUSH}_320.jpg`), JUL10, JUL10)
     await writeFile(join(dir, `${RUSH}.jpg`), 'poster-v2')
     const cached = await s.get(`album-art://${RUSH_V}.jpg?s=320&r=1`)
     assert.equal(cached.source, 'memory', 'without invalidation the old bytes keep coming (why the mirror calls invalidateArtBytes)')
