@@ -1,6 +1,6 @@
 // Listen More Weekly — renderer store (2026-10-20). Jake: "turn you should
 // listen to more into like how spotify has discover weekly. see all should
-// take me to a new playlist". homemini mints the week (35 songs, one per
+// take me to a new playlist". homemini mints the week (50 songs since 2026-10-27, one per
 // artist, new every Monday 05:00 Eastern); main fetches and caches it
 // (src/main/listen-more-weekly-client.ts); this store holds the song ids for
 // the sidebar's Listen More Weekly, the Home row's "See all" and the view.
