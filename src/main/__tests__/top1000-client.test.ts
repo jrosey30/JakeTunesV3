@@ -45,6 +45,25 @@ describe('top1000 doc', () => {
     assert.equal(parseProgress({ answered: 1, settled: 'x', moving: 2 }), null)
   })
 
+  it('reads the genre brackets: which bracket a question is from, the two genres of a final, and the tour in the progress', () => {
+    const songs = (n: number) => Array.from({ length: n }, (_, i) => ({ track: track(i + 1), hookMs: 0 }))
+    const tour = { ...progress, round: 7, totalRounds: 3, stage: 'brackets', bracket: { name: 'Post-Punk', index: 4, total: 31 }, duelsLeft: 2 }
+    const heat = parseQuizNext({ question: { kind: 'heat', songs: songs(5), quota: 2, stage: 'bracket', bracket: 'Post-Punk' }, progress: tour })
+    assert.equal(heat?.question?.stage, 'bracket')
+    assert.equal(heat?.question?.bracket, 'Post-Punk')
+    assert.deepEqual(heat?.progress.bracket, { name: 'Post-Punk', index: 4, total: 31 })
+    assert.equal(heat?.progress.stage, 'brackets')
+    const fin = parseQuizNext({ question: { kind: 'duel', songs: songs(2), stage: 'final', brackets: ['Classic Rock', 'House'] }, progress: { ...progress, round: 7, totalRounds: 3, stage: 'finals', finalsLeft: 9 } })
+    assert.equal(fin?.question?.stage, 'final')
+    assert.deepEqual(fin?.question?.brackets, ['Classic Rock', 'House'])
+    assert.equal(fin?.progress.stage, 'finals')
+    assert.equal(fin?.progress.finalsLeft, 9)
+    // junk is dropped, never fatal: an unknown stage, genres that don't line up with the songs, a bracket without a name
+    const odd = parseQuizNext({ question: { kind: 'duel', songs: songs(2), stage: 'semi', brackets: ['Rock'] }, progress: { ...progress, stage: 'later', bracket: { index: 1, total: 2 } } })
+    assert.deepEqual(odd?.question, { kind: 'duel', songs: odd!.question!.songs })
+    assert.deepEqual(odd?.progress, progress)
+  })
+
   it('parses an undo: the undone answer and its question asked again', () => {
     const q = { kind: 'pick', songs: [{ track: track(1), hookMs: 1 }, { track: track(2), hookMs: 2 }] }
     const u = parseQuizUndo({ ok: true, undone: { kind: 'pick', ids: [1, 2], choice: '2' }, question: q, progress })
