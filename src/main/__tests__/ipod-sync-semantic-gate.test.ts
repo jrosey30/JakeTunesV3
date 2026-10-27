@@ -62,13 +62,32 @@ test('activity engine refuses a catalog row the Mini will not list', () => {
   assert.match(engine, /ipodFirmwareWillList/)
   assert.match(engine, /needsIpodAlacTranscode/)
   assert.match(engine, /ipodPlayableDestPath/)
-  // 2026-08-31 locks: the sync ledger must exist (picks + result entries),
-  // and card-only 8.3 stem shortenings must never be exported as library
-  // path rewrites (702-row corruption incident).
+  // 2026-08-31 locks: the sync ledger must exist (picks + result entries).
   assert.match(engine, /activity-sync-ledger\.jsonl/)
   assert.match(engine, /kind: 'picks'/)
   assert.match(engine, /kind: 'result'/)
-  assert.match(engine, /ipodPathExtension\(rawColon\) !== ipodPathExtension\(destColon\)/)
+  // 2026-10-26: card names never reach the library. The 8/31 guard kept
+  // exporting a rewrite when the EXTENSION changed, and the 2026-09-19 sync
+  // wrote 8 FLAC imports into library.json as `F04:12004.m4a` (five weeks of
+  // 404s). The engine still sets track.path to the card path for the DB
+  // payload; its result carries no library path rewrites at all.
+  assert.match(engine, /Card names never reach the library/)
+  assert.doesNotMatch(engine, /pathRewrites\.push/)
+  assert.doesNotMatch(engine, /pathRewrites: pathRewrites/)
+})
+
+test('the full sync returns only smart-match re-links, never converted or playable card names (twin of the activity engine)', () => {
+  // 2026-10-26: convertedPathRewrites / playablePathRewrites are the card's
+  // names for masters the library never renamed; they drive the iTunesDB
+  // payload and the verify set, not library.json. The library snapshot must
+  // be taken BEFORE those merges and be the only thing returned.
+  const snapshot = syncEngine.indexOf('const libraryPathRewrites = pathRewrites.map(')
+  const mergeConverted = syncEngine.indexOf('pathRewrites.push(...convertedPathRewrites)')
+  const mergePlayable = syncEngine.indexOf('pathRewrites.push(...playablePathRewrites)')
+  assert.ok(snapshot >= 0, 'library snapshot of the smart-match rewrites is missing')
+  assert.ok(mergeConverted > snapshot && mergePlayable > snapshot, 'the snapshot must be taken before the card-name merges')
+  assert.match(syncEngine, /pathRewrites: libraryPathRewrites,/)
+  assert.doesNotMatch(syncEngine, /pathRewrites: pathRewrites\.map/)
 })
 
 test('catalog ids are conformed to firmware binary-search order before the md5 proof', () => {
@@ -175,9 +194,9 @@ test('activity sync converts hi-res / multichannel ALAC, not only .flac (twin of
   assert.match(engine, /needsIpodAlacTranscode\(localFile\) \|\| overCeiling\)/)
   assert.match(engine, /\|\| \(overCeiling && srcToCopy === localFile\)\)/)
   assert.match(syncEngine, /exceedsIpodPlayableCeiling/)
-  // The mirror path is the card only: a .m4a → .m4a mirror never rewrites
-  // the library path (the 8.3 stem is card-only).
-  assert.match(engine, /if \(ipodPathExtension\(rawColon\) !== ipodPathExtension\(String\(track\.path\)\)\) \{\n\s+pathRewrites\.push/)
+  // The mirror path is the card only: no mirror rewrites the library path,
+  // not even when the extension changed (2026-10-26).
+  assert.match(engine, /track\.codec = 'alac'\n(\s+\/\/.*\n)*\s+cardOnlyIds\.add\(id\)/)
 })
 
 test('a damaged song is skipped and replaced from reserve, not the reason a sync stops', () => {
