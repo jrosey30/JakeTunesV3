@@ -1540,9 +1540,3 @@
     animation: none;
   }
 }
-
-/* Overlooked (2026-10-22) — the lede and status lines under the page title. */
-.overlooked-lede { margin: 2px 0 0; max-width: 60ch; font-size: 13px; line-height: 1.45; color: var(--text-secondary, #6b6b6b); }
-.overlooked-note { margin: 18px 0; font-size: 13px; color: var(--text-secondary, #6b6b6b); }
-
-.overlooked-sub { flex: 1; margin-left: 12px; font-size: 12px; color: var(--text-secondary, #6b6b6b); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
