@@ -10,8 +10,13 @@
  *   1. REFRESH the enrichment ledger from the source stores (read-only):
  *      lyricsDone from lyrics.json, taxonomyDone from
  *      metadata-overrides.json (tracks carrying a subgenre).
- *   2. CLAP delta: count library tracks missing from audio-index.bin,
- *      then run scripts/audio-embed.py with --limit = tonight's cap.
+ *   2. LYRICS batch FIRST: scripts/lyrics-fetch.mjs --limit (default 200).
+ *      Network-light (~1.2 s a song), so it is minutes — it used to run
+ *      after CLAP "with whatever budget remains", and on 10/26 + 10/27 the
+ *      CLAP phase ate the whole window two nights running (2026-10-27).
+ *   3. CLAP delta with the remaining budget: count library tracks missing
+ *      from audio-index.bin, then run scripts/audio-embed.py with
+ *      --limit = tonight's cap; skipped only if lyrics ate the window.
  *      audio-embed itself consults the ledger (fresh first, recently
  *      failed deferred to the back, 30-day retry TTL).
  *      THE CAP: from clap-probe.json in the state dir when the probe has
@@ -19,8 +24,6 @@
  *      run's budget; otherwise the --cap / CLAP_NIGHTLY_CAP fallback
  *      (default 300) — and the summary SAYS which, because an unmeasured
  *      cap is a placeholder, not a fact.
- *   3. LYRICS batch: scripts/lyrics-fetch.mjs --limit (default 200) with
- *      whatever budget remains; skipped if the CLAP phase ate the window.
  *   4. Write enrichment-status.json (state dir) + print a summary.
  *
  * Usage:
@@ -117,9 +120,9 @@ const lyricsCmd = ['node', join(HERE, 'lyrics-fetch.mjs'), '--limit', String(LYR
 
 if (DRY) {
   log('DRY-RUN — plan only; nothing spawned, nothing written (ledger refresh above was computed in memory)')
-  if (clapRun > 0) log('would run:', clapCmd.join(' '))
+  log('would run:', lyricsCmd.join(' '), '(first — network-light, minutes)')
+  if (clapRun > 0) log('would run:', clapCmd.join(' '), '(after lyrics, with the remaining budget)')
   else log(`would skip CLAP (${SKIP_CLAP ? '--skip-clap' : 'delta empty'})`)
-  log('would run:', lyricsCmd.join(' '), `(if budget remains after CLAP)`)
   log(`budget: ${BUDGET_MIN} min total`)
   process.exit(0)
 }
@@ -129,21 +132,27 @@ const status = { at: new Date().toISOString(), budgetMin: BUDGET_MIN, cap, capSo
 const t0 = Date.now()
 const elapsedMin = () => (Date.now() - t0) / 60000
 
-if (clapRun > 0) {
-  const r = spawnSync(clapCmd[0], clapCmd.slice(1), { stdio: 'inherit', env: { ...process.env, JT_STATE_DIR: STATE_DIR } })
-  status.phases.clap = { ran: clapRun, exitCode: r.status, minutes: Math.round(elapsedMin() * 10) / 10 }
-  if (r.status !== 0) log(`CLAP phase exited ${r.status} — continuing to lyrics with remaining budget`)
-} else {
-  status.phases.clap = { ran: 0, note: SKIP_CLAP ? 'skipped (--skip-clap: music was playing)' : 'delta empty' }
+// Lyrics FIRST (2026-10-27). Lyrics are network-light — ~1.2 s per song, a
+// 200-song batch is minutes — while a 300-song CLAP run at the UNMEASURED
+// cap took 112 and 139 minutes on 10/26 and 10/27 against a 60-min budget,
+// so lyrics were "skipped, front of tomorrow's run" two nights running and
+// tomorrow's run put CLAP first again. The cheap phase goes first and the
+// heavy one gets whatever budget is left; the old promise is now the order.
+{
+  const r = spawnSync(lyricsCmd[0], lyricsCmd.slice(1), { stdio: 'inherit', env: { ...process.env, JT_STATE_DIR: STATE_DIR } })
+  status.phases.lyrics = { limit: LYRICS_LIMIT, exitCode: r.status, minutes: Math.round(elapsedMin() * 10) / 10 }
+  if (r.status !== 0) log(`lyrics phase exited ${r.status} — continuing to CLAP with the remaining budget`)
 }
 
-if (elapsedMin() < BUDGET_MIN * 0.85) {
+if (clapRun === 0) {
+  status.phases.clap = { ran: 0, note: SKIP_CLAP ? 'skipped (--skip-clap: music was playing)' : 'delta empty' }
+} else if (elapsedMin() < BUDGET_MIN * 0.85) {
   const before = elapsedMin()
-  const r = spawnSync(lyricsCmd[0], lyricsCmd.slice(1), { stdio: 'inherit', env: { ...process.env, JT_STATE_DIR: STATE_DIR } })
-  status.phases.lyrics = { limit: LYRICS_LIMIT, exitCode: r.status, minutes: Math.round((elapsedMin() - before) * 10) / 10 }
+  const r = spawnSync(clapCmd[0], clapCmd.slice(1), { stdio: 'inherit', env: { ...process.env, JT_STATE_DIR: STATE_DIR } })
+  status.phases.clap = { ran: clapRun, exitCode: r.status, minutes: Math.round((elapsedMin() - before) * 10) / 10 }
 } else {
-  status.phases.lyrics = { skipped: `budget ${BUDGET_MIN} min effectively consumed by the CLAP phase` }
-  log('lyrics phase skipped — CLAP consumed the window; lyrics keep their place at the front of tomorrow\'s run')
+  status.phases.clap = { ran: 0, skipped: `budget ${BUDGET_MIN} min consumed by the lyrics phase` }
+  log('CLAP phase skipped — lyrics consumed the window; the delta waits for tomorrow')
 }
 
 const statusPath = join(STATE_DIR, 'enrichment-status.json')

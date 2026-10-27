@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # enrichment-nightly.sh — launchd wrapper for com.jaketunes.enrichment-catchup
-# (Brief 177's driver: ledger refresh → CLAP delta → lyrics batch). Installed
+# (Brief 177's driver: ledger refresh → lyrics batch → CLAP delta). Installed
 # as ~/bin/jaketunes-enrichment-nightly.sh; the plist runs that copy.
 #
 # 2026-10-20: lyrics.json had not been written since 9/1 and the CLAP audio

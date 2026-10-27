@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- Brief 183 template — com.jaketunes.enrichment-catchup (Brief 177's
-     scripts/enrichment-catchup.mjs: ledger refresh -> CLAP delta -> lyrics
-     batch, inside a time budget), daily 04:30 on the laptop. It runs
+     scripts/enrichment-catchup.mjs: ledger refresh -> lyrics batch -> CLAP
+     delta, inside a time budget), daily 04:30 on the laptop. It runs
      ~/bin/jaketunes-enrichment-nightly.sh (repo: scripts/launchd/
      enrichment-nightly.sh), which runs origin/main's scripts from its own
      worktree — never the shared ~/JakeTunesV3 checkout. Install with
