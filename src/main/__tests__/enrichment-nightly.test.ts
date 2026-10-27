@@ -51,6 +51,29 @@ describe('enrichment nightly', () => {
     } finally { rmSync(state, { recursive: true, force: true }) }
   })
 
+  // 2026-10-27: on 10/26 and 10/27 the 300-song CLAP phase took 112 and 139
+  // minutes against a 60-minute budget, so lyrics were "skipped — front of
+  // tomorrow's run" two nights running, and tomorrow ran CLAP first again.
+  // The cheap, network-light lyrics batch now runs FIRST; CLAP gets the rest.
+  test('lyrics run before CLAP, in the plan and in the code', () => {
+    const state = mkdtempSync(join(tmpdir(), 'enrich-'))
+    try {
+      writeFileSync(join(state, 'library.json'), JSON.stringify({ tracks: [{ id: 1, title: 'A', artist: 'B', duration: 200000 }] }))
+      const plan = spawnSync(process.execPath, [join(repoRoot, 'scripts', 'enrichment-catchup.mjs'), '--dry-run'], {
+        env: { ...childEnv, JT_STATE_DIR: state }, encoding: 'utf-8',
+      })
+      assert.equal(plan.status, 0, plan.stderr)
+      const lyricsAt = plan.stdout.indexOf('lyrics-fetch.mjs')
+      const clapAt = plan.stdout.indexOf('audio-embed.py')
+      assert.ok(lyricsAt >= 0 && clapAt >= 0 && lyricsAt < clapAt, `plan lists lyrics before CLAP:\n${plan.stdout}`)
+    } finally { rmSync(state, { recursive: true, force: true }) }
+    const driver = readFileSync(join(repoRoot, 'scripts', 'enrichment-catchup.mjs'), 'utf-8')
+    const lyricsSpawn = driver.indexOf('spawnSync(lyricsCmd[0]')
+    const clapSpawn = driver.indexOf('spawnSync(clapCmd[0]')
+    assert.ok(lyricsSpawn >= 0 && clapSpawn >= 0 && lyricsSpawn < clapSpawn, 'the lyrics phase is spawned before the CLAP phase')
+    assert.doesNotMatch(driver, /lyrics phase skipped/, 'lyrics are never the phase that gets skipped')
+  })
+
   test('install-launchagents --only installs one job; an unknown label is refused', () => {
     const agents = mkdtempSync(join(tmpdir(), 'agents-'))
     try {
