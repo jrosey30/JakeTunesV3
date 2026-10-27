@@ -85,7 +85,7 @@ export default function IpodIdentityBar() {
         <span className="ipod-id-name">{d.name}</span>
         {d.purpose && <span className="ipod-id-purpose">{d.purpose}</span>}
         {!d.primary && (
-          <span className="ipod-id-note">Its own Pool is coming next. Until then JakeTunes won’t sync it or read its play counts.</span>
+          <span className="ipod-id-note">It has its own Pool — drop songs on the sidebar’s iPod Pool while it’s plugged in. Syncing it comes next; until then JakeTunes won’t sync it or read its play counts.</span>
         )}
       </div>
     )

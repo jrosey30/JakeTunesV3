@@ -8608,7 +8608,15 @@ registerWorkoutSyncIpc({
 })
 // iPod Pool — the hand-built sync set (drag songs/albums/artists/playlists
 // onto the sidebar row); build-workout-sync-set reads it in pool mode.
-registerActivityPoolIpc(ipc, { hubBase: replicaHubBase })
+registerActivityPoolIpc(ipc, {
+  hubBase: replicaHubBase,
+  // One Pool per iPod (step 2): the plugged-in iPod's pool; the Original, or no known iPod, = the legacy file.
+  currentIpod: async () => {
+    if (!detectedIpodMount) return null
+    const id = await identifyIpod(detectedIpodMount, STATE_DIR)
+    return id.status === 'known' ? id.device : null
+  },
+})
 
 // Mixtapes — songs → a real C60/C90/C120 cassette with Jake's voice on it
 registerGaplessTrimIpc(ipc)

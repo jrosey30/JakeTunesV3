@@ -20,6 +20,10 @@ let max = 1000
  *  hub for display. Every edit door checks this; main refuses edits there too. */
 let readOnly = false
 let hubPoll: ReturnType<typeof setInterval> | null = null
+/** Whose pool this is (one Pool per iPod, step 2): the plugged-in iPod's, else the Original's. */
+export interface PoolDevice { id: string | null; name: string; primary: boolean }
+let device: PoolDevice | null = null
+let deviceWatch = false
 /** RETIRED 2026-10-16 with pool "mode" — every sync is half and half. The
  *  pool page no longer raises it; DeviceView's "Sync the Pool" button
  *  (Do-Not-Touch) still does, and the Activity sheet consumes and ignores
@@ -34,6 +38,8 @@ export function getPoolNames(): Record<string, PoolName> { return names }
 export function getPoolMax(): number { return max }
 export function getPoolReadOnly(): boolean { return readOnly }
 export function usePoolReadOnly(): boolean { return useSyncExternalStore(subscribePool, getPoolReadOnly) }
+export function getPoolDevice(): PoolDevice | null { return device }
+export function usePoolDevice(): PoolDevice | null { return useSyncExternalStore(subscribePool, getPoolDevice) }
 
 /**
  * The one count every surface shows (2026-09-19). The sidebar badge, the
@@ -68,6 +74,11 @@ export function consumePoolModeRequest(): boolean {
 }
 
 export async function refreshPool(): Promise<number[]> {
+  // The pool follows the plugged-in iPod: re-read it whenever the iPod changes.
+  if (!deviceWatch && window.electronAPI.onIpodDeviceChanged) {
+    deviceWatch = true
+    window.electronAPI.onIpodDeviceChanged(() => { void refreshPool() })
+  }
   try {
     const r = await window.electronAPI.getActivityPool?.()
     if (r?.ok && Array.isArray(r.ids)) {
@@ -75,6 +86,7 @@ export async function refreshPool(): Promise<number[]> {
       if (r.names && typeof r.names === 'object') names = r.names
       if (typeof r.max === 'number') max = r.max
       readOnly = r.readOnly === true
+      device = r.device && typeof r.device === 'object' ? { id: r.device.id ?? null, name: String(r.device.name ?? ''), primary: r.device.primary === true } : null
       // A mirror follows the MacBook: re-read every 5 minutes (the hub's own
       // mirror cadence). The MacBook never polls — it is the writer.
       if (readOnly && !hubPoll) hubPoll = setInterval(() => { void refreshPool() }, 5 * 60_000)
@@ -109,10 +121,18 @@ export async function addTracksToPool(dropped: number[], byId: Map<number, Track
   parts.push(`Added ${(r.added ?? 0).toLocaleString()}${rolled}`)
   if (r.dupes) parts.push(`${r.dupes} already in the pool`)
   if (r.skits) parts.push(`${r.skits} skit${r.skits === 1 ? '' : 's'}/intro${r.skits === 1 ? '' : 's'} skipped`)
+  // No song rides two iPods (one Pool per iPod, step 2): say which iPod has them.
+  const blocked = Array.isArray(r.blocked) ? r.blocked : []
+  if (blocked.length) {
+    const byIpod = new Map<string, number>()
+    for (const b of blocked) byIpod.set(b.by, (byIpod.get(b.by) ?? 0) + 1)
+    parts.push([...byIpod].map(([by, n]) => `${n} already on ${by}`).join(', ') + ' — a song rides one iPod')
+  }
   if (r.overflow) parts.push(`the first ${r.overflow.toLocaleString()} of this drop didn’t fit — the pool holds ${cap.toLocaleString()}`)
-  setNotice(`iPod Pool: ${parts.join(' · ')} (${ids.length.toLocaleString()} / ${cap.toLocaleString()})`, {
-    kind: 'success',
-    durationMs: r.overflow || r.rolledOff || r.skits ? 6000 : 3500,
+  const label = device && !device.primary ? `${device.name}’s Pool` : 'iPod Pool'
+  setNotice(`${label}: ${parts.join(' · ')} (${ids.length.toLocaleString()} / ${cap.toLocaleString()})`, {
+    kind: blocked.length && !r.added ? 'error' : 'success',
+    durationMs: r.overflow || r.rolledOff || r.skits || blocked.length ? 6000 : 3500,
   })
 }
 

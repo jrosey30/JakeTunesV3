@@ -51,7 +51,7 @@ describe('only the original iPod is written to', () => {
   it('refuses unknown and non-original iPods, allows the original', () => {
     assert.match(ipodWriteRefusal({ status: 'unknown', canBeOriginal: true }) || '', /doesn’t know this iPod/)
     const red = buildDeviceMarker({ id: 'abc12345-red', name: 'Red', primary: false, now })!
-    assert.match(ipodWriteRefusal({ status: 'known', device: red }) || '', /Red doesn’t have its own Pool/)
+    assert.match(ipodWriteRefusal({ status: 'known', device: red }) || '', /Red has its own Pool/)
     const orig = buildDeviceMarker({ id: 'original-1234', name: 'Original', primary: true, now })!
     assert.equal(ipodWriteRefusal({ status: 'known', device: orig }), null)
   })

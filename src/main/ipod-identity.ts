@@ -16,7 +16,7 @@ import { join } from 'path'
 import { randomUUID } from 'crypto'
 import {
   IPOD_MARKER_REL, ORIGINAL_DEFAULTS, buildDeviceMarker, catalogMatchesManifest,
-  ipodWriteRefusal, parseDeviceMarker, shouldAutoAdoptOriginal,
+  ipodPoolRel, ipodWriteRefusal, parseDeviceMarker, shouldAutoAdoptOriginal,
   type IpodDeviceMarker, type IpodIdentity,
 } from '../common/ipod-identity.ts'
 import { parseCatalogPaths } from './sync-engine/roundtrip.ts'
@@ -54,7 +54,8 @@ interface Registry { devices: IpodDeviceMarker[] }
 
 const logRegistryFail = (e: unknown) => console.warn('[ipod-identity] could not update ipod-devices.json:', e instanceof Error ? e.message : e)
 
-async function loadRegistry(stateDir: string): Promise<Registry> {
+/** This Mac's list of iPods it has met (ipod-devices.json); missing or torn = none. */
+export async function loadIpodRegistry(stateDir: string): Promise<Registry> {
   try {
     const raw = JSON.parse(await readFile(join(stateDir, REGISTRY_FILE), 'utf-8')) as { devices?: unknown[] }
     const devices = (raw.devices || []).map(parseDeviceMarker).filter((d): d is IpodDeviceMarker => d !== null)
@@ -62,6 +63,13 @@ async function loadRegistry(stateDir: string): Promise<Registry> {
   } catch {
     return { devices: [] }
   }
+}
+const loadRegistry = loadIpodRegistry
+
+/** Where an iPod's Pool file lives (common/ipod-identity.ts ipodPoolRel): the Original, or no
+ *  known iPod, = the legacy root activity-pool.json; any other iPod = ipod-pools/<id>/. */
+export function poolFileFor(stateDir: string, device: IpodDeviceMarker | null): string {
+  return join(stateDir, ...ipodPoolRel(device))
 }
 
 async function rememberDevice(stateDir: string, marker: IpodDeviceMarker): Promise<void> {
