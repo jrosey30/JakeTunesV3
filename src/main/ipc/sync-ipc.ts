@@ -16,7 +16,7 @@ import { REFUSED_SENDER } from '../ipc-register.ts'
 import { safeIpcError } from '../safe-ipc-error.ts'
 import { withDisplayAwake } from '../sync-keep-awake.ts'
 import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted } from '../state-dir.ts'
-import { refuseUnlessOriginalIpod } from '../ipod-identity.ts'
+import { resolveIpodState } from '../ipod-identity.ts'
 import { parseTsaSeal, tsaInspectSeal, tsaRelFromColon, tsaNormalizeColonPath } from '../ipod-sync-tsa.ts'
 
 export interface StateConflict {
@@ -74,12 +74,22 @@ export interface SyncIpcHost {
   getCodecHint: (absPath: string) => string
 }
 
-function ipodSyncJournalPath(): string {
-  return join(app.getPath('userData'), 'ipod-sync-journal.json')
+/** The journal of THIS iPod's sync (step 2b: the root for the Original, its own folder for any other). */
+function ipodSyncJournalPath(stateDir: string): string {
+  return join(stateDir, 'ipod-sync-journal.json')
 }
 
-function ipodTsaSealPath(): string {
-  return join(app.getPath('userData'), 'ipod-activity-tsa-seal.json')
+/** Where the plugged-in iPod's sync state lives; the root when nothing is plugged in or the card is unknown. */
+async function pluggedIpodStateDir(host: SyncIpcHost): Promise<string> {
+  const mount = host.getIpodMount()
+  if (!mount) return STATE_DIR
+  const ipod = await resolveIpodState(mount, STATE_DIR)
+  return ipod.refusal ? STATE_DIR : ipod.stateDir
+}
+
+/** The seal of THIS iPod's last Activity Sync: the root for the Original, its own folder for any other (step 2b). */
+function ipodTsaSealPath(stateDir: string): string {
+  return join(stateDir, 'ipod-activity-tsa-seal.json')
 }
 
 /**
@@ -188,7 +198,7 @@ export function registerSyncIpc(ipc: IpcRegistrar, host: SyncIpcHost): void {
   // UI is actually mounted.
   ipc.handle('get-ipod-sync-journal', async (): Promise<{ phase: string; at?: string } | null> => {
     try {
-      const j = JSON.parse(await readFile(ipodSyncJournalPath(), 'utf-8')) as { phase?: string; at?: string }
+      const j = JSON.parse(await readFile(ipodSyncJournalPath(await pluggedIpodStateDir(host)), 'utf-8')) as { phase?: string; at?: string }
       return j?.phase ? { phase: j.phase, at: j.at } : null
     } catch { return null }
   }, { public: true })
@@ -196,20 +206,21 @@ export function registerSyncIpc(ipc: IpcRegistrar, host: SyncIpcHost): void {
   // Read-only: did the sealed activity set drift? Never copies, never repairs.
   ipc.handle('inspect-ipod-tsa-seal', async () => {
     try {
+      const mount = host.getIpodMount()
+      // Each iPod's seal describes ITS last Activity Sync (step 2b): read the plugged-in
+      // iPod's own; an unknown card has none to check. Unplugged = the Original's.
+      const ipod = mount ? await resolveIpodState(mount, STATE_DIR) : null
+      if (ipod?.refusal) {
+        return { ok: true, sealed: false, drifted: false, target: 0, present: 0, missing: [] as Array<{ id: number; destPath: string; reason: string }> }
+      }
       let raw: unknown
       try {
-        raw = JSON.parse(await readFile(ipodTsaSealPath(), 'utf-8'))
+        raw = JSON.parse(await readFile(ipodTsaSealPath(ipod?.stateDir ?? STATE_DIR), 'utf-8'))
       } catch {
         return { ok: true, sealed: false, drifted: false, target: 0, present: 0, missing: [] as Array<{ id: number; destPath: string; reason: string }> }
       }
       const seal = parseTsaSeal(raw)
       if (!seal) {
-        return { ok: true, sealed: false, drifted: false, target: 0, present: 0, missing: [] as Array<{ id: number; destPath: string; reason: string }> }
-      }
-      const mount = host.getIpodMount()
-      // The seal describes the ORIGINAL iPod's last Activity Sync. Checked
-      // against any other iPod it reads as "drifted" — a false alarm.
-      if (mount && await refuseUnlessOriginalIpod(mount, STATE_DIR)) {
         return { ok: true, sealed: false, drifted: false, target: 0, present: 0, missing: [] as Array<{ id: number; destPath: string; reason: string }> }
       }
       if (!mount) {

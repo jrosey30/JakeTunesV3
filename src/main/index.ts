@@ -108,7 +108,7 @@ import { registerIpodIpc } from './ipc/ipod-ipc.ts'
 import { registerSyncIpc, type SyncConvertOptions } from './ipc/sync-ipc.ts'
 import { createSyncEngine, type VerifyTrackInput, type VerifyTrackUpdate } from './sync-engine/index.ts'
 import { ingestIpodRoundTrip } from './sync-engine/roundtrip.ts'
-import { identifyIpod, refuseUnlessOriginalIpod } from './ipod-identity.ts'
+import { identifyIpod, resolveIpodState } from './ipod-identity.ts'
 import { registerAiIpc } from './ipc/ai-ipc.ts'
 import {
   registerCynthiaIpc,
@@ -1134,12 +1134,12 @@ registerIpodIpc(ipc, {
   },
   runPythonRestore: (args, stdinData) => runPythonRestore(args, stdinData),
   isSyncInFlight: () => syncEngine.isSyncInFlight(),
-  onMountDetected: (mount) => void refuseUnlessOriginalIpod(mount, STATE_DIR).then((notOriginal) => {
+  onMountDetected: (mount) => void resolveIpodState(mount, STATE_DIR).then((ipod) => {
     sendToRenderer('ipod-device-changed', null)
-    // Another iPod's plays would map through the original's manifest (wrong songs, double counts).
-    if (notOriginal) return console.log(`[roundtrip] skipped — ${notOriginal}`)
+    // Each iPod's plays map through ITS own manifest (step 2b); an unknown card is left alone.
+    if (ipod.refusal) return console.log(`[roundtrip] skipped — ${ipod.refusal}`)
     return ingestIpodRoundTrip(mount, {
-      stateDir: STATE_DIR,
+      stateDir: ipod.stateDir,
       getLibraryTracks: async () =>
         (((await libraryCache.get()) as { tracks?: Array<{ id: number; playCount?: number; lastPlayedAt?: number }> }).tracks) || [],
       appendPlayEvents: async (trackId, count, tsMs) => {
@@ -4762,8 +4762,8 @@ function scheduleDbRebuild(deletedPaths: string[]) {
     if (sync?.autoRemoveDeletedFromIpod !== true) {
       return
     }
-    const notOriginal = await refuseUnlessOriginalIpod(detectedIpodMount, STATE_DIR)
-    if (notOriginal) return console.log(`[delete-sync] skipped — ${notOriginal}`)
+    const ipod = await resolveIpodState(detectedIpodMount, STATE_DIR)
+    if (ipod.refusal) return console.log(`[delete-sync] skipped — ${ipod.refusal}`)
     try {
       const ipodMount = detectedIpodMount
       const { unlink: unlinkFS } = await import('fs/promises')
@@ -8605,6 +8605,12 @@ registerWorkoutSyncIpc({
     identify: (mount) => identifyIpod(mount, STATE_DIR),
     list: () => createTop1000Client({ baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, '') }).list(),
   }),
+  // Each iPod's workout-sync state lives with its other sync state (step 2b).
+  ipodStateDir: async () => {
+    if (!detectedIpodMount) return STATE_DIR
+    const ipod = await resolveIpodState(detectedIpodMount, STATE_DIR)
+    return ipod.refusal ? null : ipod.stateDir
+  },
 })
 // iPod Pool — the hand-built sync set (drag songs/albums/artists/playlists
 // onto the sidebar row); build-workout-sync-set reads it in pool mode.

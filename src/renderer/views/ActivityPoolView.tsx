@@ -84,7 +84,7 @@ export default function ActivityPoolView() {
                   : <>Empty — the pool is built on the MacBook.</>)
               : otherIpod
               ? (ids.length > 0
-                  ? <>{rows.length.toLocaleString()} dropped in · {fmtLong(totalMs)} · {otherIpod.name}’s own pool — a song rides one iPod, never two · syncing {otherIpod.name} comes next{cantSync > 0 ? <> · <strong className="pool-sub-warn">{cantSync} can’t</strong></> : ''}</>
+                  ? <>{rows.length.toLocaleString()} dropped in · {fmtLong(totalMs)} · {otherIpod.name}’s own pool — a song rides one iPod, never two · a {max.toLocaleString()}-song sync takes these drops, Music Man fills the rest{cantSync > 0 ? <> · <strong className="pool-sub-warn">{cantSync} can’t</strong></> : ''}</>
                   : <>{otherIpod.name} is plugged in: this is its own pool. Drop songs, albums, artists or playlists here — anything already on another iPod stays there.</>)
               : ids.length > 0
               ? (() => {

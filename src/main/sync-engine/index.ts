@@ -23,7 +23,7 @@ import { writeJsonAtomic } from '../atomic-write'
 import { safeIpcError } from '../safe-ipc-error'
 import { normalize } from '../normalize'
 import { refuseIpodSyncUnlessUserClick, type IpodSyncOpts } from '../ipod-sync-origin'
-import { refuseUnlessOriginalIpod } from '../ipod-identity.ts'
+import { refuseUnlessOriginalIpod, resolveIpodState } from '../ipod-identity.ts'
 import type { SyncConvertOptions } from '../ipc/sync-ipc.ts'
 import { bindActivityReplacements, runActivitySync } from '../ipod-activity-engine.ts'
 import { ensureContiguousDb } from '../ipod-db-contiguity.ts'
@@ -260,8 +260,13 @@ export function createSyncEngine(host: SyncEngineHost) {
    * the comparison: identical failures point at those files, a different set
    * every run points at the card dropping writes.
    */
-  const IPOD_SYNC_REPORT_FILE = () => join(app.getPath('userData'), 'last-sync-report.json')
-  const IPOD_SYNC_REPORT_PREV = () => join(app.getPath('userData'), 'prev-sync-report.json')
+  /** ONE SYNC STATE PER iPOD (step 2b, 2026-10-27): every file below lives in the plugged-in
+   *  iPod's state dir — the root for the Original, ipod-pools/<id>/ for any other — set at the
+   *  top of each sync from its identity (resolveIpodState). Syncs never overlap (isSyncInFlight),
+   *  so one slot is enough. */
+  let syncStateDir = STATE_DIR
+  const IPOD_SYNC_REPORT_FILE = () => join(syncStateDir, 'last-sync-report.json')
+  const IPOD_SYNC_REPORT_PREV = () => join(syncStateDir, 'prev-sync-report.json')
   async function writeSyncReport(r: SyncReport): Promise<void> {
     try {
       await copyFile(IPOD_SYNC_REPORT_FILE(), IPOD_SYNC_REPORT_PREV()).catch(() => {})
@@ -275,8 +280,8 @@ export function createSyncEngine(host: SyncEngineHost) {
   // confirmWriteOnCard / remountVerifyEntries / retireIpodFirmwareScratch live
   // in ipod-sync-card.ts (shared by activity rebuild and full-library sync).
 
-  const IPOD_SYNC_JOURNAL_FILE = () => join(app.getPath('userData'), 'ipod-sync-journal.json')
-  const IPOD_TSA_SEAL_FILE = () => join(app.getPath('userData'), 'ipod-activity-tsa-seal.json')
+  const IPOD_SYNC_JOURNAL_FILE = () => join(syncStateDir, 'ipod-sync-journal.json')
+  const IPOD_TSA_SEAL_FILE = () => join(syncStateDir, 'ipod-activity-tsa-seal.json')
 
   async function clearTsaSeal(): Promise<void> {
     try { await unlink(IPOD_TSA_SEAL_FILE()) } catch { /* no prior seal */ }
@@ -290,7 +295,7 @@ export function createSyncEngine(host: SyncEngineHost) {
   }
 
   async function writeLastSyncManifest(payload: Record<string, unknown>): Promise<void> {
-    const manifestPath = join(STATE_DIR, 'last-sync-manifest.json')
+    const manifestPath = join(syncStateDir, 'last-sync-manifest.json')
     const tmp = `${manifestPath}.${process.pid}.tmp`
     await writeFile(tmp, JSON.stringify(payload, null, 1), 'utf-8')
     await rename(tmp, manifestPath)
@@ -315,16 +320,19 @@ export function createSyncEngine(host: SyncEngineHost) {
       console.error(`sync-to-ipod: REFUSED — ${refused.error}`)
       return refused
     }
-    // Only the original iPod has a Pool and sync state today. Any other iPod
-    // (the red Mini, an unknown one) is left untouched until step 2 gives it
-    // its own (2026-10-23).
+    // Which iPod, and where its sync state lives (step 2b, 2026-10-27): the Original keeps
+    // the root files; a known second iPod (the red Mini) syncs with its own manifest, seal,
+    // journal, reports and ledger under ipod-pools/<id>/; an unknown card is refused.
     const gateMount = host.getMount() || await findIpodMount()
+    syncStateDir = STATE_DIR
     if (gateMount) {
-      const notOriginal = await refuseUnlessOriginalIpod(gateMount, STATE_DIR)
-      if (notOriginal) {
-        console.error(`sync-to-ipod: REFUSED — ${notOriginal}`)
-        return { ok: false, copied: 0, error: notOriginal }
+      const ipod = await resolveIpodState(gateMount, STATE_DIR)
+      if (ipod.refusal) {
+        console.error(`sync-to-ipod: REFUSED — ${ipod.refusal}`)
+        return { ok: false, copied: 0, error: ipod.refusal }
       }
+      syncStateDir = ipod.stateDir
+      if (ipod.device && !ipod.device.primary) console.log(`sync-to-ipod: ${ipod.device.name} — its own sync state lives in ${ipod.stateDir}`)
     }
     syncCancelRequested = false
     if (syncOpts?.origin === 'activity-click') {
@@ -333,7 +341,7 @@ export function createSyncEngine(host: SyncEngineHost) {
         pythonHint: PYTHON_INSTALL_HINT,
         coreScript: (rel) => join(app.isPackaged ? process.resourcesPath : app.getAppPath(), rel),
         tempDir: app.getPath('temp'),
-        stateDir: STATE_DIR,
+        stateDir: syncStateDir,
         pid: process.pid,
         musicDir: host.getMusicDir(),
         pathSep: IS_WINDOWS ? '\\' : '/',
@@ -482,7 +490,7 @@ export function createSyncEngine(host: SyncEngineHost) {
       try {
         const prevIds = new Set<number>()
         try {
-          const prev = JSON.parse(await readFile(join(STATE_DIR, 'last-sync-manifest.json'), 'utf-8')) as { tracks?: Array<{ id: number }> }
+          const prev = JSON.parse(await readFile(join(syncStateDir, 'last-sync-manifest.json'), 'utf-8')) as { tracks?: Array<{ id: number }> }
           for (const x of prev.tracks || []) prevIds.add(x.id)
         } catch { /* first manifest */ }
         const curIds = new Set(tracks.map((t) => Number(t.id)))
