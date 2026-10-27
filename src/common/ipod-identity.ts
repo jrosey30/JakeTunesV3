@@ -123,7 +123,17 @@ export function ipodWriteRefusal(identity: IpodIdentity): string | null {
     return 'JakeTunes doesn’t know this iPod yet. Set it up on the Device page first — nothing on it was changed.'
   }
   if (!identity.device.primary) {
-    return `${identity.device.name} doesn’t have its own Pool yet, so JakeTunes won’t sync it. Nothing on it was changed.`
+    return `${identity.device.name} has its own Pool, but JakeTunes can’t sync it yet — that comes next. Nothing on it was changed.`
   }
   return null
+}
+
+/**
+ * ONE POOL PER iPOD (step 2, 2026-10-27). Where an iPod's Pool lives, relative to the state
+ * dir: the Original (or no known iPod) keeps the legacy root file exactly where it is; any
+ * other iPod has its own folder, keyed by its marker id. Pure so the rule is testable.
+ */
+export const IPOD_POOLS_DIR = 'ipod-pools'
+export function ipodPoolRel(device: { id: string; primary: boolean } | null): string[] {
+  return !device || device.primary ? ['activity-pool.json'] : [IPOD_POOLS_DIR, device.id, 'activity-pool.json']
 }

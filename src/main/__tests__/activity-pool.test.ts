@@ -2,7 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { mergeIntoPool, removeFromPool, POOL_MAX } from '../activity-pool.ts'
+import { blockedByOtherIpods, mergeIntoPool, removeFromPool, POOL_MAX } from '../activity-pool.ts'
 
 const never = () => false
 const range = (a: number, b: number): number[] => Array.from({ length: b - a + 1 }, (_, i) => a + i)
@@ -101,5 +101,20 @@ describe('pool page', () => {
   it('no copy says the sync stops and asks you to trim — half and half never trims or stops', () => {
     assert.doesNotMatch(view, /asks you to trim/)
     assert.doesNotMatch(view, /sync stops/)
+  })
+})
+
+describe('no song rides two iPods (one Pool per iPod, step 2)', () => {
+  it('blocks what already lives on another iPod and names it; the rest is allowed, in order', () => {
+    const r = blockedByOtherIpods(cands([1, 2, 3, 4, 5]), [{ name: 'Red', ids: [2, 4] }, { name: 'Original', ids: [5] }])
+    assert.deepEqual(r.allowed.map((c) => c.id), [1, 3])
+    assert.deepEqual(r.blocked, [{ id: 2, by: 'Red' }, { id: 4, by: 'Red' }, { id: 5, by: 'Original' }])
+  })
+  it('with no other iPod (or empty pools) everything is allowed — today’s behaviour', () => {
+    assert.deepEqual(blockedByOtherIpods(cands([1, 2]), []).allowed.map((c) => c.id), [1, 2])
+    assert.deepEqual(blockedByOtherIpods(cands([1, 2]), [{ name: 'Red', ids: [] }]).blocked, [])
+  })
+  it('the first iPod listed owns a song two of them (wrongly) share', () => {
+    assert.deepEqual(blockedByOtherIpods(cands([9]), [{ name: 'Red', ids: [9] }, { name: 'Blue', ids: [9] }]).blocked, [{ id: 9, by: 'Red' }])
   })
 })

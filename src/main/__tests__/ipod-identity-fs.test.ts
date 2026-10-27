@@ -69,7 +69,7 @@ describe('identifying iPods', () => {
     const ri = await identifyIpod(red, state)
     assert.equal(ri.status === 'known' && ri.device.name, 'Red')
     assert.equal(ri.status === 'known' && ri.device.primary, false)
-    assert.match(await refuseUnlessOriginalIpod(red, state) || '', /Red doesn’t have its own Pool/)
+    assert.match(await refuseUnlessOriginalIpod(red, state) || '', /Red has its own Pool/)
 
     // Both are in this Mac's list.
     const reg = JSON.parse(await readFile(join(state, 'ipod-devices.json'), 'utf-8'))

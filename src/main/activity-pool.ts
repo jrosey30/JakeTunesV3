@@ -108,3 +108,29 @@ export function removeFromPool(existing: number[], remove: number[]): number[] {
   const gone = new Set(remove.map(Number))
   return existing.filter((id) => !gone.has(id))
 }
+
+export interface OtherIpodPool { name: string; ids: readonly number[] }
+export interface PoolGateResult {
+  allowed: PoolCandidate[]
+  /** Songs that already live on another iPod, and which one. */
+  blocked: Array<{ id: number; by: string }>
+}
+
+/**
+ * NO OVERLAP (Jake 2026-10-23, one Pool per iPod: "no song on two iPods"): a song already
+ * in another iPod's Pool is not added to this one, and the app says where it lives. Pure;
+ * the IPC loads the other iPods' pools and applies this before the merge.
+ */
+export function blockedByOtherIpods(incoming: PoolCandidate[], others: readonly OtherIpodPool[]): PoolGateResult {
+  const owner = new Map<number, string>()
+  for (const o of others) for (const id of o.ids) if (!owner.has(Number(id))) owner.set(Number(id), o.name)
+  const allowed: PoolCandidate[] = []
+  const blocked: Array<{ id: number; by: string }> = []
+  for (const c of incoming) {
+    const id = Number(c?.id)
+    const by = owner.get(id)
+    if (by !== undefined) blocked.push({ id, by })
+    else allowed.push(c)
+  }
+  return { allowed, blocked }
+}

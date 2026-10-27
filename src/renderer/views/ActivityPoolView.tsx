@@ -14,7 +14,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import { TRACK_DRAG_TYPE } from '../utils/trackDrag'
 import { setNotice } from '../activity'
 import {
-  getPoolIds, getPoolMax, subscribePool, refreshPool, usePoolHealth, usePoolReadOnly,
+  getPoolIds, getPoolMax, subscribePool, refreshPool, usePoolHealth, usePoolReadOnly, usePoolDevice,
   addTracksToPool, removeFromPool, clearPool, swapInPool,
 } from '../activityPool'
 import '../styles/activity-pool.css'
@@ -38,6 +38,9 @@ export default function ActivityPoolView() {
   // workmini: this is the MacBook's pool, mirrored for display. Same list, same
   // order; nothing here can edit it (main refuses edits on a replica too).
   const readOnly = usePoolReadOnly()
+  // One Pool per iPod (step 2): the plugged-in iPod's pool, else the Original's.
+  const device = usePoolDevice()
+  const otherIpod = device && !device.primary ? device : null
   const [dragOver, setDragOver] = useState(false)
   const [confirmClear, setConfirmClear] = useState(false)
 
@@ -73,12 +76,16 @@ export default function ActivityPoolView() {
     >
       <div className="pool-head">
         <div>
-          <h1 className="pool-title">iPod Pool</h1>
+          <h1 className="pool-title">{otherIpod ? `${otherIpod.name}’s Pool` : 'iPod Pool'}</h1>
           <div className="pool-sub">
             {readOnly
               ? (ids.length > 0
                   ? <>{rows.length.toLocaleString()} songs · {fmtLong(totalMs)} · the MacBook’s pool, shown here as it stands there</>
                   : <>Empty — the pool is built on the MacBook.</>)
+              : otherIpod
+              ? (ids.length > 0
+                  ? <>{rows.length.toLocaleString()} dropped in · {fmtLong(totalMs)} · {otherIpod.name}’s own pool — a song rides one iPod, never two · syncing {otherIpod.name} comes next{cantSync > 0 ? <> · <strong className="pool-sub-warn">{cantSync} can’t</strong></> : ''}</>
+                  : <>{otherIpod.name} is plugged in: this is its own pool. Drop songs, albums, artists or playlists here — anything already on another iPod stays there.</>)
               : ids.length > 0
               ? (() => {
                   const split = splitHalfAndHalf(health.syncable, max)
