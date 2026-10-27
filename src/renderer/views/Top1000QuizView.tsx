@@ -70,8 +70,16 @@ const PROMPT: Record<Exclude<QuizQuestion['kind'], 'heat'>, string> = {
 }
 
 function promptFor(q: QuizQuestion): string {
+  // The genre brackets (Jake 2026-10-26: "super genre focused … the best songs of those genres
+  // advancing into a battle against the winners of other genres"): a bracket's question names
+  // its genre; a final names the two genres meeting.
+  if (q.stage === 'final') {
+    const [a, b] = q.brackets ?? []
+    return a && b && a !== b ? `The finals: ${a} vs ${b}. Which song wins?` : 'The finals. Which song wins?'
+  }
   // Jake: "just because i pick songs to go to the next round doesnt mean they make the 1000".
-  if (q.kind === 'heat') return `Which ${q.quota} move on?`
+  if (q.kind === 'heat') return q.bracket ? `${q.bracket}: which ${q.quota} move on?` : `Which ${q.quota} move on?`
+  if (q.kind === 'duel' && q.bracket) return `${q.bracket} — tough call, only one gets the seat. Which advances?`
   return PROMPT[q.kind]
 }
 
@@ -90,6 +98,9 @@ function meterLine(p: QuizProgress): string {
     const left = p.heatsLeft ? `${plural(p.heatsLeft, 'heat', 'heats')} left` : `${plural(p.duelsLeft ?? 0, 'tough call', 'tough calls')} left`
     if (p.totalRounds === undefined) parts.push(`Round ${n(p.round)} · ${left}`)
     else if (p.round <= p.totalRounds) parts.push(`Round ${n(p.round)} of ${n(p.totalRounds)} · ${left}`)
+    // After the finish line (homemini ≥ 2026-10-27): the tour of the genre brackets, then the finals.
+    else if (p.stage === 'finals') parts.push(`Your 1000 is set · round ${n(p.round - p.totalRounds)} · the finals · ${plural(p.finalsLeft ?? p.duelsLeft ?? 0, 'duel', 'duels')} left`)
+    else if (p.bracket) parts.push(`Your 1000 is set · round ${n(p.round - p.totalRounds)} · ${p.bracket.name} (genre ${n(p.bracket.index)} of ${n(p.bracket.total)}) · ${plural(p.duelsLeft ?? 0, 'close call', 'close calls')} left`)
     else parts.push(`Your 1000 is set · sharpening round ${n(p.round - p.totalRounds)} · ${plural(p.duelsLeft ?? 0, 'close call', 'close calls')} left`)
   }
   if (p.out !== undefined) parts.push(`${n(p.out)} songs out`)
@@ -139,6 +150,7 @@ function describeAnswer({ q, choice, picked }: SentAnswer): string {
   }
   const winner = q.songs.find((s) => String(s.id) === choice)
   if (!winner) return 'Saved'
+  if (q.kind === 'duel' && q.stage === 'final') return `${quoted(winner)} takes the final over ${quoted(q.songs.find((s) => s !== winner))}`
   if (q.kind === 'duel') return `${quoted(winner)} advances over ${quoted(q.songs.find((s) => s !== winner))}`
   return `You picked ${quoted(winner)} over ${q.songs.filter((s) => s !== winner).map(quoted).join(' and ')}`
 }
@@ -452,7 +464,7 @@ export default function Top1000QuizView(): JSX.Element {
             <button type="button" role="tab" aria-selected={tab === 'list'} className={tab === 'list' ? 'is-on' : ''} onClick={() => setTab('list')}>The list</button>
           </div>
         </div>
-        <p className="t1k-lede">Finding your 1000 favorite songs, the ones the Original iPod carries. A tournament in three rounds: in each heat, pick the songs that move on; the tough calls go one on one. A song is only out after two losses. After round three your 1000 is set, and the quiz keeps sharpening the close calls. Stop whenever you like.</p>
+        <p className="t1k-lede">Finding your 1000 favorite songs, the ones the Original iPod carries. A tournament in three rounds: in each heat, pick the songs that move on; the tough calls go one on one. A song is only out after two losses. After round three your 1000 is set, and the quiz goes genre by genre: each genre’s close calls and never-asked songs, then its best songs against the best of the other genres in the finals. Stop whenever you like.</p>
         {progress && (
           <div className="t1k-progress" aria-label="Progress">
             <div className="t1k-meter"><div className="t1k-meter-fill" style={{ width: `${settledPct}%` }} /></div>

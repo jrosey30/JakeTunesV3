@@ -34,7 +34,16 @@ export interface QuizSongRef {
   hookMs: number
 }
 
-export interface QuizQuestion { kind: QuizKind; songs: QuizSongRef[]; quota?: number }
+export interface QuizQuestion {
+  kind: QuizKind
+  songs: QuizSongRef[]
+  quota?: number
+  /** after the finish line (homemini, 2026-10-27): a genre bracket's question (`bracket` = the genre),
+   *  or a champions' final between two genres (`brackets` = each song's genre, in `songs` order) */
+  stage?: 'bracket' | 'final'
+  bracket?: string
+  brackets?: string[]
+}
 export interface QuizProgress {
   answered: number
   settled: number
@@ -53,6 +62,11 @@ export interface QuizProgress {
   roundDone?: number
   out?: number
   sure?: number
+  /** the genre brackets (homemini, 2026-10-27): the tour of the genres — which bracket is up, of
+   *  how many — then the finals and how many champions' duels are left */
+  stage?: 'brackets' | 'finals'
+  bracket?: { name: string; index: number; total: number }
+  finalsLeft?: number
 }
 export interface QuizNext { question: QuizQuestion | null; progress: QuizProgress }
 
@@ -74,9 +88,16 @@ export function parseProgress(raw: unknown): QuizProgress | null {
   const moving = num(r.moving)
   if (answered === null || settled === null || moving === null) return null
   const out: QuizProgress = { answered, settled, moving }
-  for (const k of ['fixed', 'contenders', 'round', 'heatsLeft', 'duelsLeft', 'totalRounds', 'roundDone', 'out', 'sure'] as const) {
+  for (const k of ['fixed', 'contenders', 'round', 'heatsLeft', 'duelsLeft', 'totalRounds', 'roundDone', 'out', 'sure', 'finalsLeft'] as const) {
     const v = num(r[k])
     if (v !== null) out[k] = v
+  }
+  if (r.stage === 'brackets' || r.stage === 'finals') out.stage = r.stage
+  const b = r.bracket as Record<string, unknown> | undefined
+  if (b && typeof b === 'object' && typeof b.name === 'string' && b.name) {
+    const index = num(b.index)
+    const total = num(b.total)
+    if (index !== null && total !== null) out.bracket = { name: b.name, index, total }
   }
   return out
 }
@@ -99,13 +120,20 @@ function parseQuestion(raw: unknown): QuizQuestion | null {
       hookMs: Math.max(0, num((s as { hookMs?: unknown }).hookMs) ?? 0),
     })
   }
+  // The genre brackets (homemini, 2026-10-27): which bracket a question belongs to, or the two
+  // genres of a final (one per song, in order — dropped if they don't line up with the songs).
+  const stage: QuizQuestion['stage'] = q.stage === 'bracket' || q.stage === 'final' ? q.stage : undefined
+  const bracket = typeof q.bracket === 'string' && q.bracket ? q.bracket : undefined
+  const brackets = Array.isArray(q.brackets) && q.brackets.length === songs.length && q.brackets.every((x) => typeof x === 'string' && x)
+    ? (q.brackets as string[]) : undefined
+  const genre = { ...(stage ? { stage } : {}), ...(bracket ? { bracket } : {}), ...(brackets ? { brackets } : {}) }
   if (kind === 'heat') {
     const quota = num(q.quota)
     if (songs.length < HEAT_MIN || songs.length > HEAT_MAX || quota === null || quota < 1 || quota >= songs.length) return null
-    return { kind, songs, quota }
+    return { kind, songs, quota, ...genre }
   }
   if (songs.length !== SIZE[kind]) return null
-  return { kind, songs }
+  return { kind, songs, ...genre }
 }
 
 export function parseQuizNext(raw: unknown): QuizNext | null {
