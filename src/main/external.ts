@@ -375,6 +375,8 @@ async function fetchStructuredFeed(url: string, source: string, isReleaseReview:
  *   - Stereogum New Music   — release/single announcements, not the
  *                             main feed that has the clickbait
  *   - Brooklyn Vegan        — tour + release news, indie/rock heavy
+ *                             (removed 2026-10-19 — the site stopped
+ *                             publishing; see the source list below)
  *   - Consequence           — broad music news
  *
  * Pitchfork drives the cover-led "New This Week" releases row.
@@ -441,7 +443,11 @@ async function getStructuredFeeds(): Promise<MusicNewsItem[]> {
     // pinned to the post-301 target).
     { name: 'Pitchfork',       url: 'https://pitchfork.com/feed/feed-news/rss',               isReleaseReview: false },
     { name: 'Stereogum',       url: 'https://www.stereogum.com/category/new-music/feed/',     isReleaseReview: false },
-    { name: 'Brooklyn Vegan',  url: 'https://www.brooklynvegan.com/feed/',                    isReleaseReview: false },
+    // Brooklyn Vegan was removed 2026-10-19: its staff was laid off on
+    // 2026-08-04 and the site has nearly stopped publishing (newest post
+    // 2026-10-06), so its feed still answers 200 but serves the same
+    // stale handful of headlines. Same removal as JakeTunesMobile's
+    // backend/src/util/musicNews.ts (Mobile #457).
     // 4.4.31: swapped from main /feed/ which includes TV/celebrity
     // (Pete Davidson roast, Kimmel political jokes) to the
     // music-only category.
@@ -459,7 +465,8 @@ async function getStructuredFeeds(): Promise<MusicNewsItem[]> {
 }
 
 // ─── 4.5.0: collapse duplicate stories in the Music News row ───
-// Four outlets cover the same beat, so one big story (a festival
+// Several outlets cover the same beat (four at the time; three since
+// Brooklyn Vegan was dropped 2026-10-19), so one big story (a festival
 // announcement, say) showed up 3-4 times back-to-back, crowding out
 // everything else — exactly the recycled-headlines complaint. We group
 // items that are clearly the SAME story and keep one per group (the

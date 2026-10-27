@@ -8,8 +8,8 @@
 // read.
 //
 // It is a thin AGGREGATOR over src/main/external.ts, which already
-// owns the actual network code (Last.fm, Pitchfork/Stereogum/Brooklyn
-// Vegan RSS, Bandsintown, MusicBrainz) and is already fail-soft — every
+// owns the actual network code (Last.fm, Pitchfork/Stereogum/Consequence
+// RSS, Bandsintown, MusicBrainz) and is already fail-soft — every
 // fetcher there returns [] / null instead of throwing. This module:
 //   1. fans those fetchers out in parallel,
 //   2. narrows them to what the store cares about (shows: homemini's

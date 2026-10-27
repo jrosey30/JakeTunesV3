@@ -2243,7 +2243,7 @@ ipc.handle('get-brooklyn-weather', async (): Promise<{ ok: boolean; weather: { t
 
 // 4.4.28 — Home view: music news + notable releases.
 // Both back-ends are in src/main/external.ts and share a single
-// one-hour parsed cache across all 5 RSS feeds (4.4.29 swap), so
+// one-hour parsed cache across all 4 RSS feeds (BV dropped 2026-10-19), so
 // even though HomeView calls both handlers, there's only ONE
 // network round-trip per hour.
 ipc.handle('get-music-news', async (): Promise<{ ok: boolean; items: MusicNewsItem[] }> => {
