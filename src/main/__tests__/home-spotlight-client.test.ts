@@ -22,7 +22,7 @@ const REMOTE = {
   livingIn: { artist: 'Geese', album: 'Getting Killed', artworkHash: 'abc123', plays: 41, windowDays: 14 },
   spotlight: {
     artist: 'Geese', plays30: 81, topSong: { title: 'Taxes', plays: 22 }, firstHeard: '2026-08-09T12:00:00.000Z',
-    days: Array.from({ length: 30 }, (_, i) => i % 4), headline: 'Geese has your attention.',
+    days: Array.from({ length: 30 }, (_, i) => i % 4), headline: 'Geese have your attention.',
     statsLine: '81 plays in 30 days · “Taxes” on repeat · with you since Aug 9',
   },
   musicMan: { line: 'You keep coming back to Getting Killed. Tonight we do it properly — whole record, front to back.', generatedAt: '2026-10-18T21:55:00.000Z', source: 'ai' },
@@ -114,7 +114,7 @@ describe('home spotlight client', () => {
     const s = await c.refresh()
     assert.equal(hub.calls[1].ifNoneMatch, '"v1"')
     assert.equal(s.source, 'homemini')
-    assert.equal(s.doc?.spotlight?.headline, 'Geese has your attention.')
+    assert.equal(s.doc?.spotlight?.headline, 'Geese have your attention.')
     const file = JSON.parse(await readFile(join(dir, HOME_SPOTLIGHT_CACHE_FILE), 'utf-8'))
     assert.equal(file.confirmedAt, NOW + 10 * 60_000)
   })

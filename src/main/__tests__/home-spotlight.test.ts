@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { livingInAlbum, artistFacts, nowDigging, headlineFor, statsLine, DAY_MS, type SpotTrack, type SpotPlay } from '../../common/home-spotlight.ts'
+import { livingInAlbum, artistFacts, nowDigging, headlineFor, pluralArtistName, statsLine, DAY_MS, type SpotTrack, type SpotPlay } from '../../common/home-spotlight.ts'
 
 const NOW = Date.UTC(2026, 9, 18, 22, 0, 0)
 const T: SpotTrack[] = [
@@ -55,9 +55,31 @@ test('now digging: new + not legacy + ≥3 plays, ranked by plays; legacy and ol
 })
 
 test('copy is deterministic and only states the facts', () => {
-  assert.equal(headlineFor('Geese', 81), 'Geese has your attention.')
+  assert.equal(headlineFor('Geese', 81), 'Geese have your attention.')
   assert.equal(headlineFor('Geese', 16), "You can't stop playing Geese.")
   assert.equal(headlineFor('Geese', 6), "Lately, it's Geese.")
   const line = statsLine(artistFacts(T, P, NOW, 'Geese'))
   assert.equal(line, '8 plays in 30 days · “Taxes” on repeat · with you since Aug 9')
+})
+
+test('plural-form names take "have"; everything else keeps "has" (fail closed)', () => {
+  // Jake 2026-10-27: "The Avalanches has your attention" → "shouldn't it be have instead of has??"
+  const have = [
+    'The Avalanches', 'The Strokes', "The B-52's", 'The Beach Boys', 'The Smashing Pumpkins', 'The All-American Rejects',
+    'Geese', 'Beastie Boys', 'Foo Fighters', 'Talking Heads', 'Red Hot Chili Peppers', 'Alice In Chains', 'Meat Puppets',
+    'Pixies', 'Ramones', "Guns N' Roses", 'Foster The People', 'They Might Be Giants', 'Cocteau Twins', 'Boyz II Men',
+    'Matt & Kim', 'Belle and Sebastian', 'Crosby, Stills & Nash', 'Eminem, Dr. Dre & 50 Cent', 'Simon & Garfunkel',
+  ]
+  const has = [
+    'Sublime', 'Radiohead', 'Miles Davis', 'Bill Withers', 'Hayley Williams', 'Nia Archives', 'Frankie Cosmos', 'Primus',
+    'Genesis', 'The Boss', 'The Weeknd', 'The National', 'The Clash', 'Tyler, The Creator', 'Florence + the Machine',
+    'Sly and the Family Stone', 'Bob Marley & The Wailers', 'Iron & Wine', 'Kings of Leon', 'Queens of the Stone Age', '',
+  ]
+  for (const a of have) assert.equal(pluralArtistName(a), true, `"${a}" should take "have"`)
+  for (const a of has) assert.equal(pluralArtistName(a), false, `"${a}" should keep "has"`)
+  assert.equal(headlineFor('The Avalanches', 40), 'The Avalanches have your attention.')
+  assert.equal(headlineFor('Sublime', 40), 'Sublime has your attention.')
+  // the other two headlines never conjugate, so they are unchanged for both shapes
+  assert.equal(headlineFor('The Avalanches', 16), "You can't stop playing The Avalanches.")
+  assert.equal(headlineFor('The Avalanches', 6), "Lately, it's The Avalanches.")
 })

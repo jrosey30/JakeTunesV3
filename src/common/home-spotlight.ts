@@ -186,8 +186,52 @@ export function nowDigging(tracks: readonly SpotTrack[], plays: readonly SpotPla
     .slice(0, limit)
 }
 
+/**
+ * Plural-form artist names take a plural verb — "The Avalanches have your
+ * attention", "Geese have", "Matt & Kim have" (Jake, 2026-10-27: "shouldn't
+ * it be have instead of has??"). The rule fails closed: only the sure shapes
+ * flip to the plural and everything else keeps the singular, so a person whose
+ * surname ends in s (Bill Withers, Hayley Williams, Nia Archives) is never
+ * made plural. Sure shapes:
+ *  - "The …s": a definite article and a last word ending in s (The Strokes,
+ *    The B-52's), minus -ss/-us/-is singulars (The Boss).
+ *  - a last word that is itself a plural noun bands are named after (Foo
+ *    Fighters, Talking Heads, Beastie Boys, Pixies, Foster The People).
+ *  - two or more names joined by "&", "and" or "+" (Matt & Kim; Crosby,
+ *    Stills & Nash) — but not "X and the Y" (Sly and the Family Stone), and
+ *    not the solo acts that only sound like a pair (Iron & Wine).
+ */
+const PLURAL_LAST_WORDS = new Set([
+  'animals', 'angels', 'artists', 'bears', 'beasts', 'beatles', 'bees', 'birds', 'bones', 'boys', 'boyz',
+  'breakers', 'brothers', 'buzzcocks', 'byrds', 'cars', 'cats', 'chains', 'children', 'cowboys', 'creatures',
+  'daughters', 'demons', 'descendants', 'descendents', 'devils', 'dogs', 'dolls', 'doors', 'dreamers', 'eagles',
+  'fathers', 'fighters', 'friends', 'geese', 'ghosts', 'giants', 'girls', 'girlz', 'guns', 'heads', 'hearts',
+  'hives', 'kids', 'killers', 'kings', 'kinks', 'lands', 'lions', 'lips', 'lovers', 'machines', 'makers',
+  'men', 'monkees', 'monkeys', 'monsters', 'mothers', 'nights', 'outlaws', 'people', 'peppers', 'pirates',
+  'pistols', 'pixies', 'pools', 'projectors', 'pumpkins', 'puppets', 'queens', 'raiders', 'ramones', 'rangers',
+  'rebels', 'riders', 'robots', 'roots', 'roses', 'saints', 'sharks', 'sisters', 'sons', 'stars', 'stones',
+  'stooges', 'straits', 'strangers', 'strokes', 'surfers', 'swimmers', 'thieves', 'tigers', 'twins', 'vines',
+  'wolves', 'women',
+])
+const SINGULAR_EXCEPTIONS = new Set(['iron & wine', 'iron and wine'])
+
+export function pluralArtistName(name: string): boolean {
+  const n = name.trim().replace(/\s+/g, ' ')
+  if (!n) return false
+  const lower = n.toLowerCase()
+  if (SINGULAR_EXCEPTIONS.has(lower)) return false
+  if (/\s(&|and|\+)\s+the\s/i.test(n)) return false
+  if (/\s(&|and|\+)\s/i.test(n)) return true
+  const words = lower.split(' ')
+  const last = (words[words.length - 1] ?? '').replace(/[^\p{L}\p{N}'’]+$/u, '').replace(/['’]s$/, 's')
+  if (!last) return false
+  if (PLURAL_LAST_WORDS.has(last)) return true
+  if (words[0] === 'the' && words.length >= 2 && last.endsWith('s') && !/(ss|us|is)$/.test(last)) return true
+  return false
+}
+
 export function headlineFor(artist: string, plays30: number): string {
-  if (plays30 >= 40) return `${artist} has your attention.`
+  if (plays30 >= 40) return `${artist} ${pluralArtistName(artist) ? 'have' : 'has'} your attention.`
   if (plays30 >= 15) return `You can't stop playing ${artist}.`
   return `Lately, it's ${artist}.`
 }
