@@ -1,10 +1,13 @@
 /**
  * Brief 195 — version-parity.mjs against fixture .app trees.
  *
- * Builds fake installs (Info.plist + a minimal real-layout app.asar
- * carrying out/main/build-info.json, Brief 192's stamp) in a temp dir
- * and runs the actual script: matching → silent exit 0; stale version,
- * missing install, and same-version/different-build each report.
+ * Builds fake installs (Info.plist + an app.asar carrying
+ * out/main/build-info.json, Brief 192's stamp) in a temp dir and runs
+ * the actual script: matching → silent exit 0; stale version, missing
+ * install, and same-version/different-build each report. The asar is
+ * packed by @electron/asar itself, not hand-rolled: a hand-rolled
+ * fixture once shared the reader's 4-byte header error, so the tests
+ * passed while every real install read buildSha null.
  * The GitHub Release lookup is seamed off via JT_PARITY_RELEASE_JSON.
  */
 import { describe, it } from 'node:test'
@@ -16,17 +19,17 @@ import { tmpdir } from 'node:os'
 
 const repoRoot = join(import.meta.dirname, '..', '..', '..')
 const scriptPath = join(repoRoot, 'scripts', 'version-parity.mjs')
+const asarCli = join(repoRoot, 'node_modules', '@electron', 'asar', 'bin', 'asar.js')
 
-function makeAsar(buildInfo: string): Buffer {
-  const content = Buffer.from(buildInfo)
-  const files = { out: { files: { main: { files: { 'build-info.json': { size: content.length, offset: '0' } } } } } }
-  const headerJson = JSON.stringify({ files })
-  const strLen = Buffer.alloc(4); strLen.writeUInt32LE(Buffer.byteLength(headerJson))
-  const payload = Buffer.concat([strLen, Buffer.from(headerJson)])
-  const pickle = Buffer.concat([payload, Buffer.alloc((4 - (payload.length % 4)) % 4)])
-  const f1 = Buffer.alloc(4); f1.writeUInt32LE(pickle.length)
-  const f2 = Buffer.alloc(4); f2.writeUInt32LE(pickle.length)
-  return Buffer.concat([f1, f2, pickle, content, Buffer.alloc(64)])
+function packAsar(dir: string, buildInfo: string, out: string): void {
+  const src = mkdtempSync(join(dir, 'asar-src-'))
+  mkdirSync(join(src, 'out', 'main'), { recursive: true })
+  // Sorts ahead of build-info.json, so the entry sits at a non-zero data offset as in a real app.
+  writeFileSync(join(src, 'out', 'main', 'assets.js'), 'module.exports = {}\n'.repeat(50))
+  writeFileSync(join(src, 'out', 'main', 'build-info.json'), buildInfo)
+  writeFileSync(join(src, 'package.json'), '{"name":"jaketunes","main":"out/main/index.js"}')
+  const pack = spawnSync(process.execPath, [asarCli, 'pack', src, out], { encoding: 'utf8' })
+  assert.equal(pack.status, 0, pack.stderr)
 }
 
 function makeApp(dir: string, name: string, version: string, sha: string): string {
@@ -34,8 +37,8 @@ function makeApp(dir: string, name: string, version: string, sha: string): strin
   mkdirSync(join(app, 'Contents', 'Resources'), { recursive: true })
   writeFileSync(join(app, 'Contents', 'Info.plist'),
     `<?xml version="1.0"?><plist><dict><key>CFBundleShortVersionString</key>\n<string>${version}</string></dict></plist>`)
-  writeFileSync(join(app, 'Contents', 'Resources', 'app.asar'),
-    makeAsar(JSON.stringify({ sha, builtAt: '2026-10-14T12:00:00.000Z', version })))
+  packAsar(dir, JSON.stringify({ sha, builtAt: '2026-10-14T12:00:00.000Z', version }),
+    join(app, 'Contents', 'Resources', 'app.asar'))
   return app
 }
 
