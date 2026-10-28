@@ -15,7 +15,12 @@
  *      music press when MusicBrainz is thin (the Telescreens lesson — never a
  *      guess from a band's name). The AI picks ONLY from the list.
  *   4. Rock stays rock: a song tagged Rock / Classic Rock only moves to a rock shelf.
- *   5. Unsure → his check list (Settings → Library), never a guess.
+ *   5. Unsure → his check list (Settings → Library). Since 2026-10-28 (Jake,
+ *      after "Myatt's Song" sat for a day as "Alternatif et Indé, Rock, Pop":
+ *      "genre not updated boooo") an unsure album is FILED under the filer's
+ *      suggestion (on the list, rock-stays-rock still enforced) and STAYS on the
+ *      check list, marked filedAs, so he can change it. A raw store tag never
+ *      sits on a song waiting for him.
  *
  * Pure decisions + injected effects, so the rules are tested directly.
  */
@@ -69,6 +74,18 @@ export function trackFingerprint(t: FilerTrack): string {
 /** A genre that needs no filing: a specific list genre, or a catch-all he approved. */
 export function isSettled(t: FilerTrack): boolean {
   return isListGenre(t.genre) && (!!t.genreApproved || !CATCH_ALL.has(t.genre!.trim()))
+}
+
+/** Is a check-list entry still Jake's to look at? Yes while any song is
+ *  unsettled, or still wears the suggestion the filer wrote (filedAs). A song
+ *  on another list genre means he filed it himself (Get Info). */
+export function checkEntryOpen(c: CheckEntry, byId: Map<number, FilerTrack>): boolean {
+  return c.ids.some((id) => {
+    const t = byId.get(id)
+    if (!t) return false
+    if (!isSettled(t)) return true
+    return !!c.filedAs && (t.genre || '').trim() === c.filedAs
+  })
 }
 
 /** Songs to file — off the list, or an unapproved catch-all — one unit per album (compilations per song). */
@@ -154,7 +171,21 @@ export function parseReply(text: string): Array<{ id: string; genre?: string; co
   } catch { return [] }
 }
 
-export interface CheckEntry { key: string; artist: string; album: string; ids: number[]; tag: string; suggested?: string; why: string; at: string }
+export interface CheckEntry { key: string; artist: string; album: string; ids: number[]; tag: string; suggested?: string; why: string; at: string
+  /** The suggestion the filer wrote onto the songs (2026-10-28). The entry stays
+   *  listed until Jake confirms or changes it; a different genre on the songs
+   *  (Get Info) means he already did. */
+  filedAs?: string }
+
+/** The suggestion an unsure album can be filed under: on his list, and never
+ *  moving a Rock / Classic Rock album off the rock shelves (rule 4). */
+export function fileableSuggestion(tag: string, suggested: string | undefined): string | null {
+  const g = (suggested || '').trim()
+  if (!g || !GENRE_NAMES.has(g)) return null
+  const t = (tag || '').trim()
+  if ((t === 'Rock' || t === 'Classic Rock') && !ROCK_FAMILY.has(g)) return null
+  return g
+}
 
 export interface FilerDeps {
   tracks(): Promise<FilerTrack[]>                 // effective tracks (overrides applied)
@@ -203,14 +234,34 @@ export function originCacheFromV2(v2: unknown): OriginCache {
 }
 
 /** One sweep: file what the rules can, look up the rest (capped), list the unsure. */
-export async function runFilerSweep(deps: FilerDeps): Promise<{ filed: number; checked: number; deferred: number; origins: number }> {
+export async function runFilerSweep(deps: FilerDeps): Promise<{ filed: number; checked: number; deferred: number; backfilled: number; origins: number }> {
   const tracks = await deps.tracks()
   const byId = new Map(tracks.map((t) => [t.id, t]))
   const check = await deps.loadCheck()
+  // Albums already on the check list that were never filed (listed before
+  // 2026-10-28): file them under their suggestion now. Songs Jake has since
+  // settled himself are left alone.
+  const backfill: Array<{ trackId: number; field: string; newValue: string }> = []
+  let backfilled = 0
+  for (const c of check) {
+    if (c.filedAs) continue
+    const g = fileableSuggestion(c.tag, c.suggested)
+    if (!g) continue
+    let wrote = false
+    for (const id of c.ids) {
+      const t = byId.get(id)
+      if (!t || isSettled(t)) continue
+      await deps.persist(t, { genre: g })
+      backfill.push({ trackId: id, field: 'genre', newValue: g })
+      wrote = true
+    }
+    if (wrote) { c.filedAs = g; backfilled++; deps.log?.(`[genre-filer] ${c.artist} — ${c.album}: → ${g} (suggestion; stays on the check list)`) }
+  }
+  if (backfill.length) { deps.applied(backfill); await deps.saveCheck(check) }
   const listed = new Set(check.map((c) => c.key))
   const units = unfiledUnits(tracks).filter((u) => !listed.has(u.key))
   const homes = artistHomes(tracks)
-  if (!units.length) return { filed: 0, checked: 0, deferred: 0, origins: await fillOrigins(deps, tracks, homes, new Set()) }
+  if (!units.length) return { filed: 0, checked: 0, deferred: 0, backfilled, origins: await fillOrigins(deps, tracks, homes, new Set()) }
   const decided: Array<[FilerUnit, Decision]> = []
   const needEvidence: FilerUnit[] = []
   for (const u of units) {
@@ -233,20 +284,22 @@ export async function runFilerSweep(deps: FilerDeps): Promise<{ filed: number; c
       const t = byId.get(id)
       if (!t) continue
       const fields: Record<string, string> = {}
-      if (d.genre) fields.genre = d.genre
+      const genre = d.genre ?? fileableSuggestion(u.tag, d.suggested)
+      if (genre) fields.genre = genre
       if (d.origin && !t.origin) fields.origin = d.origin
       if (!Object.keys(fields).length) continue
       await deps.persist(t, fields)
       for (const [field, newValue] of Object.entries(fields)) updates.push({ trackId: id, field, newValue })
     }
+    const filedAs = d.genre ? undefined : fileableSuggestion(u.tag, d.suggested) ?? undefined
     if (d.genre) filed++
-    else check.push({ key: u.key, artist: u.artist, album: u.comp ? (u.title || u.album) : u.album, ids: u.ids, tag: u.tag, suggested: d.suggested, why: d.why, at: now })
-    deps.log?.(`[genre-filer] ${u.artist} — ${u.album}: ${d.genre ? `→ ${d.genre} (${d.how})` : `check list (${d.why})`}`)
+    else check.push({ key: u.key, artist: u.artist, album: u.comp ? (u.title || u.album) : u.album, ids: u.ids, tag: u.tag, suggested: d.suggested, why: d.why, at: now, ...(filedAs ? { filedAs } : {}) })
+    deps.log?.(`[genre-filer] ${u.artist} — ${u.album}: ${d.genre ? `→ ${d.genre} (${d.how})` : filedAs ? `→ ${filedAs} (suggestion; stays on the check list: ${d.why})` : `check list (${d.why})`}`)
   }
   if (updates.length) deps.applied(updates)
   if (decided.some(([, d]) => !d.genre)) await deps.saveCheck(check)
   const origins = await fillOrigins(deps, tracks, homes, new Set(updates.filter((u) => u.field === 'origin').map((u) => u.trackId)))
-  return { filed, checked: decided.filter(([, d]) => !d.genre).length, deferred: needEvidence.length - batch.length, origins }
+  return { filed, checked: decided.filter(([, d]) => !d.genre).length, deferred: needEvidence.length - batch.length, backfilled, origins }
 }
 
 /** Whose origin a song carries: its album artist — or, on a compilation or a

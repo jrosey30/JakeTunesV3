@@ -10,7 +10,7 @@ import { join } from 'path'
 import { readFile, writeFile, rename } from 'fs/promises'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
-import { runFilerSweep, resolveCheckEntry, trackFingerprint, isSettled, type FilerTrack, type FilerDeps, type CheckEntry, type Evidence, type OriginCache, originCacheFromV2 } from '../genre-filer.ts'
+import { runFilerSweep, resolveCheckEntry, trackFingerprint, checkEntryOpen, type FilerTrack, type FilerDeps, type CheckEntry, type Evidence, type OriginCache, originCacheFromV2 } from '../genre-filer.ts'
 import { musicBrainzArtistCandidates, musicBrainzAlbum, confirmedArtist, musicBrainzCountryById } from '../artist-tags.ts'
 import { lookupArtistOrigin, cleanAlbumTitle } from '../origin-lookup.ts'
 import { exaSearch } from '../exa.ts'
@@ -108,7 +108,7 @@ export function startGenreFiler(host: GenreFilerHost): void {
     running = true
     try {
       const r = await runFilerSweep(deps(host))
-      if (r.filed || r.checked || r.origins) console.warn(`[genre-filer] sweep: filed ${r.filed}, to check ${r.checked}, waiting ${r.deferred}, origins ${r.origins}`)
+      if (r.filed || r.checked || r.origins || r.backfilled) console.warn(`[genre-filer] sweep: filed ${r.filed}, to check ${r.checked}, waiting ${r.deferred}, origins ${r.origins}${r.backfilled ? `, check-list albums filed by suggestion ${r.backfilled}` : ''}`)
     } catch (err) {
       console.warn('[genre-filer] sweep failed:', err instanceof Error ? err.message : err)
     } finally { running = false }
@@ -121,7 +121,7 @@ export function registerGenreFilerIpc(ipc: IpcRegistrar, host: GenreFilerHost): 
   ipc.handle('genre-check:list', async () => {
     const list = await loadCheck()
     const byId = new Map((await effectiveTracks(host)).map((t) => [t.id, t]))
-    const open = list.filter((c) => c.ids.some((id) => byId.has(id) && !isSettled(byId.get(id)!)))
+    const open = list.filter((c) => checkEntryOpen(c, byId))
     if (open.length !== list.length) await saveCheck(open)
     return open
   }, { refuse: REFUSED_SENDER })

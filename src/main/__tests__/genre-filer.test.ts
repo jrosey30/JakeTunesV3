@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import {
   unfiledUnits, artistHomes, decideByRules, enforce, runFilerSweep, resolveCheckEntry, trackFingerprint, parseReply,
+  fileableSuggestion, checkEntryOpen,
   type FilerTrack, type CheckEntry, type FilerDeps,
 } from '../genre-filer.ts'
 import { GENRES, GENRE_NAMES, CATCH_ALL, phoneOverlayFields } from '../../common/genre-vocab.ts'
@@ -121,8 +122,11 @@ describe('a sweep', () => {
     assert.equal(genreOf(9), 'Garage Rock', 'Rock → a rock shelf is allowed')
     assert.ok(!f.classified.join('\n').includes('Telescreens'), 'a known artist never costs a lookup')
     assert.ok(f.classified.join('\n').includes('press: London punk-funk'), 'press is evidence when MusicBrainz is thin')
-    assert.ok(f.check.some((c) => c.artist === 'King Gizzard & The Lizard Wizard'), 'the default low pick lands on the check list')
-    assert.equal(genreOf(7), undefined, 'unsure songs keep their genre')
+    const kg = f.check.find((c) => c.artist === 'King Gizzard & The Lizard Wizard')
+    assert.ok(kg, 'the default low pick lands on the check list')
+    // 2026-10-28: unsure = filed under the suggestion, and still on the list for Jake.
+    assert.equal(genreOf(7), 'Indie Rock', 'an unsure album is filed under its suggestion')
+    assert.equal(kg!.filedAs, 'Indie Rock', 'and the entry says what it was filed as')
     assert.ok(f.applied.some((u) => u.trackId === 2 && u.field === 'genre' && u.newValue === 'Indie Rock'), 'the screen is told')
     assert.ok(r.filed >= 3)
   })
@@ -227,6 +231,39 @@ describe('MusicBrainz identity is proven by an album (MESH, 10/11)', () => {
     f.deps.lookupOrigin = async (a, albums) => { seen.push([a, albums]); return found('United States') }
     await runFilerSweep(f.deps)
     assert.deepEqual(seen, [['MESH', ['No Fun At All']]])
+  })
+})
+
+describe('unsure albums are filed under the suggestion (2026-10-28, "genre not updated boooo")', () => {
+  it('only a suggestion on his list, and rock stays rock', () => {
+    assert.equal(fileableSuggestion('Alternatif et Indé, Rock, Pop', 'Indie Rock'), 'Indie Rock')
+    assert.equal(fileableSuggestion('Dance, Électronique', 'Punk-Funk'), null, 'not on the list')
+    assert.equal(fileableSuggestion('Rock', 'Alternative R&B'), null, 'a Rock album never leaves the rock shelves')
+    assert.equal(fileableSuggestion('Rock', 'Indie Rock'), 'Indie Rock')
+    assert.equal(fileableSuggestion('Pop, Rock', undefined), null)
+  })
+  it('albums already waiting on the check list are filed on the next sweep, and stay listed', async () => {
+    const lib = [T(31, 'Silica', "Myatt's Song", 'Alternatif et Indé, Rock, Pop'), T(32, 'Viuta', 'Refer To Judgement', 'Soul, Funk, R&B'), T(33, 'Mine', 'Already', 'Dream Pop', { genreApproved: true })]
+    const f = fakeDeps(lib, {})
+    await f.deps.saveCheck([
+      { key: 'album:silica|myatt s song', artist: 'Silica', album: "Myatt's Song", ids: [31], tag: 'Alternatif et Indé, Rock, Pop', suggested: 'Indie Rock', why: 'press covers Silica Gel', at: '' },
+      { key: 'album:viuta|refer to judgement', artist: 'Viuta', album: 'Refer To Judgement', ids: [32], tag: 'Soul, Funk, R&B', suggested: 'Not A Genre', why: '', at: '' },
+      { key: 'album:mine|already', artist: 'Mine', album: 'Already', ids: [33], tag: 'x', suggested: 'Indie Rock', why: '', at: '' },
+    ])
+    const r = await runFilerSweep(f.deps)
+    assert.deepEqual(f.persisted.filter(([, fl]) => fl.genre).map(([id, fl]) => [id, fl.genre]), [[31, 'Indie Rock']], 'only the fileable, unsettled one')
+    assert.equal(r.backfilled, 1)
+    assert.equal(f.check.find((c) => c.artist === 'Silica')!.filedAs, 'Indie Rock')
+    assert.equal(f.check.length, 3, 'nothing leaves the list by being filed')
+    await runFilerSweep(f.deps)
+    assert.equal(f.persisted.filter(([id]) => id === 31).length, 1, 'filed once')
+  })
+  it('a filed entry stays open until he changes or confirms it', () => {
+    const c: CheckEntry = { key: 'k', artist: 'Silica', album: 'x', ids: [1], tag: 'Pop', suggested: 'Indie Rock', why: '', at: '', filedAs: 'Indie Rock' }
+    assert.equal(checkEntryOpen(c, new Map([[1, T(1, 'Silica', 'x', 'Indie Rock', { genreApproved: true })]])), true, 'still wears the suggestion')
+    assert.equal(checkEntryOpen(c, new Map([[1, T(1, 'Silica', 'x', 'Shoegaze', { genreApproved: true })]])), false, 'he filed it himself')
+    assert.equal(checkEntryOpen({ ...c, filedAs: undefined }, new Map([[1, T(1, 'Silica', 'x', 'Pop, Rock')]])), true, 'unfiled + junk tag')
+    assert.equal(checkEntryOpen(c, new Map()), false, 'the song is gone')
   })
 })
 

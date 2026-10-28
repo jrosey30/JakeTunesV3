@@ -1,12 +1,13 @@
 /**
  * Settings → Library: albums the genre filer wasn't sure about (2026-10-11).
- * Unsure songs keep their genre until Jake picks one here — the filer never
- * guesses. Picks come only from his list (src/common/genre-vocab.ts).
+ * Since 2026-10-28 an unsure album is filed under the filer's suggestion right
+ * away (filedAs) and stays here until Jake confirms or changes it. Picks come
+ * only from his list (src/common/genre-vocab.ts).
  */
 import { useEffect, useState } from 'react'
 import { GENRES } from '../../common/genre-vocab'
 
-type Entry = { key: string; artist: string; album: string; ids: number[]; tag: string; suggested?: string; why: string; at: string }
+type Entry = { key: string; artist: string; album: string; ids: number[]; tag: string; suggested?: string; why: string; at: string; filedAs?: string }
 
 const AREAS = [...new Set(GENRES.map((g) => g.area))]
 
@@ -21,7 +22,7 @@ export default function GenreCheckList(): JSX.Element | null {
     window.electronAPI.genreCheckList?.().then((list) => {
       if (!live) return
       setEntries(list)
-      setPicks(Object.fromEntries(list.map((e) => [e.key, e.suggested || ''])))
+      setPicks(Object.fromEntries(list.map((e) => [e.key, e.filedAs || e.suggested || ''])))
     }).catch(() => { if (live) setEntries([]) })
     return () => { live = false }
   }, [])
@@ -47,14 +48,14 @@ export default function GenreCheckList(): JSX.Element | null {
       ) : (
         <>
           <p className="imp-help" style={{ marginTop: 0 }}>
-            The filer wasn&rsquo;t sure about {entries.length === 1 ? 'this album' : `these ${entries.length} albums`}, so they keep their genre until you pick one.
+            The filer wasn&rsquo;t sure about {entries.length === 1 ? 'this album' : `these ${entries.length} albums`}. Each is filed under its best guess until you confirm or change it.
           </p>
           <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
             {entries.map((e) => (
               <div key={e.key} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 8, alignItems: 'center', fontSize: 12.5 }}>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 600, color: '#2a2a2a' }}>{e.artist}</div>
-                  <div style={{ color: '#6a6a6a' }}>{e.album}{e.tag ? ` · now “${e.tag}”` : ''}</div>
+                  <div style={{ color: '#6a6a6a' }}>{e.album}{e.filedAs ? ` · filed as ${e.filedAs}${e.tag ? ` (was “${e.tag}”)` : ''}` : e.tag ? ` · now “${e.tag}”` : ''}</div>
                   {e.why && <div style={{ color: '#8a8a8a', fontSize: 11.5 }}>{e.why}</div>}
                 </div>
                 <select
@@ -71,7 +72,7 @@ export default function GenreCheckList(): JSX.Element | null {
                   ))}
                 </select>
                 <button type="button" className="imp-btn" disabled={!picks[e.key] || busy === e.key} onClick={() => { void file(e) }}>
-                  {busy === e.key ? 'Filing…' : 'File'}
+                  {busy === e.key ? 'Filing…' : e.filedAs && picks[e.key] === e.filedAs ? 'Keep' : 'File'}
                 </button>
               </div>
             ))}
