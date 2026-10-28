@@ -32,6 +32,7 @@ describe('enrichment nightly', () => {
     assert.ok(lines.some((l) => /checkout --quiet --force --detach origin\/main/.test(l)))
     assert.ok(!lines.some((l) => /cd "\$REPO"/.test(l)), 'never cd into the shared checkout')
     assert.ok(lines.some((l) => /"\$NODE" "\$WT\/scripts\/enrichment-catchup\.mjs"/.test(l)), 'runs the worktree copy')
+    assert.ok(lines.some((l) => /^\/usr\/bin\/caffeinate -i "\$NODE" "\$WT\/scripts\/enrichment-catchup\.mjs"/.test(l)), 'keeps the Mac awake while the driver runs')
     assert.match(wrapper, /grep -q "Playing audio"[\s\S]*?ARGS\+=\(--skip-clap\)/)
   })
 

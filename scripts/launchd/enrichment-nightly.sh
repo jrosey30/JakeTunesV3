@@ -47,7 +47,12 @@ if pmset -g assertions 2>/dev/null | grep -i jaketunes | grep -q "Playing audio"
 fi
 
 cd "$WT" || exit 1
-"$NODE" "$WT/scripts/enrichment-catchup.mjs" "${ARGS[@]}" "$@"   # "$@": e.g. --dry-run when testing by hand
+# Keep the Mac awake for the whole run (2026-10-27): on 10/26 and 10/27 the
+# laptop slept and woke 20+ times mid-run on battery, stretching a ~5-minute
+# CLAP pass to 112 and 139 minutes (measured rate: 55 tracks/min awake).
+# caffeinate -i holds an idle-sleep assertion only while the driver runs; a
+# closed lid on battery still sleeps, which no script can prevent.
+/usr/bin/caffeinate -i "$NODE" "$WT/scripts/enrichment-catchup.mjs" "${ARGS[@]}" "$@"   # "$@": e.g. --dry-run when testing by hand
 RC=$?
 log "finished — exit $RC"
 exit $RC
