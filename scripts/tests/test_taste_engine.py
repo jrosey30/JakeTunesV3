@@ -132,8 +132,13 @@ class EngineTest(unittest.TestCase):
         col = X[:, self.te.FEATURES.index('quiz_verdict')]
         self.assertEqual(list(col), [0.5, 0.0, 0.0])
 
+    NEUTRAL_QUIZ = {'verdict': 'measured', 'challenger': 0.6, 'champion_v5': 0.59, 'gain': 0.01,
+                    'gainLowerBound': -0.01, 'gainUpperBound': 0.03, 'questions': 7600}
+
     def test_promotion_and_rollback(self):
         f = lambda a, b: {'verdict': 'measured', 'challenger': a, 'champion_v5': b}
+        dp = self.te.decide_promotion
+        self.te.decide_promotion = lambda e, s, w, q=self.NEUTRAL_QUIZ: dp(e, s, w, q)
         good = {'verdict': 'measured', 'auc': {'challenger': 0.61, 'champion_v5': 0.50}, 'meanGain': 0.11, 'gainLowerBound': 0.07,
                 'foldsWon': 3, 'folds': [f(.6, .5), f(.62, .5), f(.6, .5)]}
         p, why = self.te.decide_promotion(good, {'verdict': 'insufficient data'}, False)
@@ -149,6 +154,7 @@ class EngineTest(unittest.TestCase):
         self.assertIn('ROLLED BACK', why)
         p, why = self.te.decide_promotion({'verdict': 'insufficient data', 'folds': []}, {}, True)
         self.assertFalse(p)
+        self.te.decide_promotion = dp
 
     def test_quiz_pairs_from_heats_duels_and_picks(self):
         self.lib(n=20)
@@ -175,7 +181,8 @@ class EngineTest(unittest.TestCase):
             [(8, 9)],
             sorted([(12, 10), (12, 11)]),
         ])
-        self.assertEqual(self.te.load_quiz_questions(os.path.join(self.d, 'nope.jsonl'), lib), [])
+        with self.assertRaises(FileNotFoundError):
+            self.te.load_quiz_questions(os.path.join(self.d, 'nope.jsonl'), lib)
 
     def test_quiz_agreement_counts_pairs_and_ties(self):
         qs = [(0, [(1, 2), (1, 3)]), (1, [(4, 5)]), (2, [(6, 7)])]
@@ -192,7 +199,7 @@ class EngineTest(unittest.TestCase):
     def test_quiz_check_needs_enough_choices(self):
         self.lib(n=20)
         lib = self.te.load_library(os.path.join(self.d, 'library.json'))
-        r = self.te.quiz_check(lib, [], {}, [(self.now, [(1, 2)])] * 499)
+        r = self.te.quiz_check(lib, [], {}, [(self.now - DAY, [(1, 2)])] * 499, self.now)
         self.assertEqual(r['verdict'], 'insufficient data')
 
     def test_quiz_overrides_or_vetoes_the_strip(self):
@@ -202,11 +209,17 @@ class EngineTest(unittest.TestCase):
         strip_bad = {'verdict': 'measured', 'challenger': 0.585, 'champion_v5': 0.627, 'adds': 126}
         q = lambda a, b, lb, ub: {'verdict': 'measured', 'challenger': a, 'champion_v5': b, 'gain': a - b,
                                   'gainLowerBound': lb, 'gainUpperBound': ub, 'questions': 7600}
-        # quiz insufficient → today's behaviour: the strip vetoes
+        # quiz could not grade → fail closed, whatever the strip says
         for quiz in (None, {'verdict': 'insufficient data', 'questions': 12}):
-            p, why = self.te.decide_promotion(good, strip_bad, False, quiz)
-            self.assertFalse(p)
-            self.assertIn('ranks suggestion adds worse', why)
+            for strip in (strip_bad, {'verdict': 'insufficient data'}):
+                p, why = self.te.decide_promotion(good, strip, False, quiz)
+                self.assertFalse(p)
+                self.assertIn('quiz judge could not grade', why)
+                self.assertIn('v5 kept', why)
+        # a measured quiz with no clear answer leaves today's strip veto in place
+        p, why = self.te.decide_promotion(good, strip_bad, False, q(0.60, 0.59, -0.01, 0.03))
+        self.assertFalse(p)
+        self.assertIn('ranks suggestion adds worse', why)
         # a reliable quiz win overrides the strip veto
         p, why = self.te.decide_promotion(good, strip_bad, False, q(0.63, 0.58, 0.03, 0.07))
         self.assertTrue(p, why)
@@ -324,6 +337,156 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(qz['frozenAt'], iso(self.now - 3 * DAY)[:19] + 'Z')
         self.assertGreater(qz['challenger'], 0.5)   # it learned what he loves from behavior alone
 
+
+    # ── the quiz judge as a required gate (2026-10-27, Jake: "the models absolutely cannot be getting worse") ──
+
+    def world(self, n=900):
+        """Synthetic listening where half the library is loved (finished 95%
+        vs 60%); returns (lib, events, mood, love)."""
+        tracks = self.lib(n=n)
+        self.mood([t['id'] for t in tracks])
+        rng = np.random.default_rng(4)
+        love = {t['id']: rng.random() < 0.5 for t in tracks}
+        rows = []
+        start = self.now - 150 * DAY
+        for day in range(150):
+            for _ in range(40):
+                tid = int(rng.integers(1, n + 1))
+                kind = 'play' if rng.random() < (0.95 if love[tid] else 0.6) else 'skip'
+                rows.append({'ts': iso(start + day * DAY + int(rng.integers(0, DAY))), 'device': 'laptop', 'kind': kind, 'pct': 40 if kind == 'skip' else 100, 'trackId': tid})
+        with open(os.path.join(self.d, 'h.jsonl'), 'w') as f:
+            for r in sorted(rows, key=lambda r: r['ts']):
+                f.write(json.dumps(r) + '\n')
+        lib = self.te.load_library(os.path.join(self.d, 'library.json'))
+        events = self.te.load_history(os.path.join(self.d, 'h.jsonl'), lib)
+        mood = self.te.mood_basis(self.te.load_mood(os.path.join(self.d, 'mood-index.bin'), lib.keys())[0])
+        return lib, events, mood, love
+
+    def duels(self, love, count, at_ms, seed=1):
+        rng = np.random.default_rng(seed)
+        loved = [t for t in love if love[t]]
+        unloved = [t for t in love if not love[t]]
+        out = []
+        for i in range(count):
+            a, b = int(rng.choice(loved)), int(rng.choice(unloved))
+            out.append({'v': 1, 'kind': 'duel', 'at': iso(at_ms + i * 1000), 'ids': [str(b), str(a)], 'choice': str(a)})
+        return out
+
+    GOOD = {'verdict': 'measured', 'auc': {'challenger': 0.597, 'champion_v5': 0.486}, 'meanGain': 0.111, 'gainLowerBound': 0.071,
+            'foldsWon': 3, 'folds': [{'verdict': 'measured'}] * 3}
+
+    def assert_fails_closed(self, quiz, verdict):
+        self.assertEqual(quiz['verdict'], verdict, quiz)
+        for was in (False, True):
+            p, why = self.te.decide_promotion(self.GOOD, {'verdict': 'insufficient data'}, was, quiz)
+            self.assertFalse(p, why)
+            self.assertIn('quiz judge could not grade: ' + verdict, why)
+            self.assertIn('ROLLED BACK to v5' if was else 'v5 kept', why)
+
+    def test_fail_closed_insufficient(self):
+        lib, events, mood, love = self.world()
+        self.write_quiz(self.duels(love, 499, self.now - 3 * DAY))
+        self.assert_fails_closed(self.te.run_quiz_check(lib, events, mood, self.now), 'insufficient data')
+
+    def test_fail_closed_missing_file(self):
+        self.lib(n=20)
+        lib = self.te.load_library(os.path.join(self.d, 'library.json'))
+        self.assert_fails_closed(self.te.run_quiz_check(lib, [], {}, self.now), 'no answers file')
+
+    def test_fail_closed_parse_error(self):
+        lib, events, mood, love = self.world()
+        rows = self.duels(love, 600, self.now - 3 * DAY)
+        rows.insert(300, '{"v":1,"kind":"duel","at":')   # a torn line in the MIDDLE of the file
+        with open(os.path.join(self.d, 'top1000-answers.jsonl'), 'w') as f:
+            for r in rows:
+                f.write((r if isinstance(r, str) else json.dumps(r)) + '\n')
+        self.assert_fails_closed(self.te.run_quiz_check(lib, events, mood, self.now), 'parse error')
+        # a torn LAST line is an append in progress, not corruption
+        with open(os.path.join(self.d, 'top1000-answers.jsonl'), 'w') as f:
+            for r in rows[:300] + rows[301:]:
+                f.write(json.dumps(r) + '\n')
+            f.write('{"v":1,"kind":"du')
+        self.assertEqual(self.te.run_quiz_check(lib, events, mood, self.now)['verdict'], 'measured')
+
+    def test_fail_closed_invalid_utf8(self):
+        self.lib(n=20)
+        lib = self.te.load_library(os.path.join(self.d, 'library.json'))
+        with open(os.path.join(self.d, 'top1000-answers.jsonl'), 'wb') as f:
+            f.write(b'\xff\xfe\x00garbage\n')
+        self.assert_fails_closed(self.te.run_quiz_check(lib, [], {}, self.now), 'error')
+
+    def test_fail_closed_exception(self):
+        lib, events, mood, love = self.world()
+        self.write_quiz(self.duels(love, 600, self.now - 3 * DAY))
+        def boom(*a, **k):
+            raise ValueError('singular matrix')
+        self.te.window_train = boom
+        q = self.te.run_quiz_check(lib, events, mood, self.now)
+        self.assert_fails_closed(q, 'error')
+        self.assertIn('singular matrix', q['why'])
+
+    def test_fail_closed_leakage(self):
+        """A Snapshot that ignores the as-of rule (sees every verdict) is caught."""
+        lib, events, mood, love = self.world()
+        self.write_quiz(self.duels(love, 600, self.now - 3 * DAY))
+        verdicts = [(self.now - 2 * DAY, tid, 1.0 if love[tid] else -1.0) for tid in range(1, 200)]   # given INSIDE the graded window
+        Real = self.te.Snapshot
+        class Leaky(Real):
+            def __init__(self, lib, events, at_ms, verdicts=()):
+                super().__init__(lib, events, at_ms + 365 * DAY, verdicts)   # sees the future
+                self.at = at_ms
+        self.te.Snapshot = Leaky
+        self.assert_fails_closed(self.te.run_quiz_check(lib, events, mood, self.now, verdicts), 'leakage refused')
+        self.te.Snapshot = Real
+        self.assertEqual(self.te.run_quiz_check(lib, events, mood, self.now, verdicts)['verdict'], 'measured')
+
+    def test_keep_rolls_back_on_quiz_loss(self):
+        loss = {'verdict': 'measured', 'challenger': 0.48, 'champion_v5': 0.59, 'gain': -0.11,
+                'gainLowerBound': -0.12, 'gainUpperBound': -0.09, 'questions': 7544}
+        p, why = self.te.decide_promotion(self.GOOD, {'verdict': 'insufficient data'}, True, loss)
+        self.assertFalse(p)
+        self.assertTrue(why.startswith('ROLLED BACK to v5'), why)
+        self.assertIn('the quiz vetoes', why)
+        p, why = self.te.decide_promotion(self.GOOD, {'verdict': 'insufficient data'}, True, self.NEUTRAL_QUIZ)
+        self.assertTrue(p, why)   # not worse on the quiz, holdout fine → kept
+
+    def test_after_verdicts_mature_the_judge_grades_only_held_out_choices(self):
+        """Simulated 2026-11-20 onward: verdicts given more than 28 days ago
+        count as a feature; the judge grades only the last 28 days of choices
+        on a challenger whose verdicts all predate them."""
+        lib, events, mood, love = self.world()
+        old_v = [{'v': 1, 'kind': 'inout', 'at': iso(self.now - 100 * DAY + i * 1000), 'ids': [str(tid)], 'choice': 'in' if love[tid] else 'out'}
+                 for i, tid in enumerate(range(1, 901, 2))]
+        new_v = [{'v': 1, 'kind': 'inout', 'at': iso(self.now - 5 * DAY + i * 1000), 'ids': [str(tid)], 'choice': 'in' if love[tid] else 'out'}
+                 for i, tid in enumerate(range(2, 901, 2))]
+        old_q = self.duels(love, 400, self.now - 60 * DAY, seed=2)
+        new_q = self.duels(love, 550, self.now - 20 * DAY, seed=3)
+        self.write_quiz(old_v + old_q + new_v + new_q)
+        path = os.path.join(self.d, 'top1000-answers.jsonl')
+        verdicts, _, _ = self.te.load_quiz(path, lib)
+        self.assertLess(verdicts[0][0] + 28 * DAY, self.now)   # the verdicts have matured into training
+        q = self.te.run_quiz_check(lib, events, mood, self.now, verdicts)
+        self.assertEqual(q['verdict'], 'measured', q)
+        self.assertEqual(q['questions'], 550)                   # only the held-out window is graded
+        self.assertEqual(q['frozenAt'], iso(self.now - 28 * DAY)[:19] + 'Z')
+        self.assertEqual(q['verdictsTrainedOn'], 450)           # the old verdicts, none of the 450 recent ones
+        # and the training really excluded the held-out window
+        seen = []
+        Real = self.te.Snapshot
+        class Spy(Real):
+            def __init__(self, lib, events, at_ms, verdicts=()):
+                super().__init__(lib, events, at_ms, verdicts)
+                seen.append((at_ms, set(self.verdict)))
+        self.te.Snapshot = Spy
+        self.te.run_quiz_check(lib, events, mood, self.now, verdicts)
+        self.te.Snapshot = Real
+        recent_ids = set(range(2, 901, 2))
+        self.assertTrue(seen)
+        self.assertTrue(all(at <= self.now - 28 * DAY for at, _ in seen))
+        self.assertTrue(all(not (ids & recent_ids) for _, ids in seen))
+        # with fewer than 500 choices in the held-out window it fails closed, even with 950 in all
+        self.write_quiz(old_v + old_q + self.duels(love, 499, self.now - 20 * DAY, seed=3))
+        self.assert_fails_closed(self.te.run_quiz_check(lib, events, mood, self.now, verdicts), 'insufficient data')
 
 if __name__ == '__main__':
     unittest.main()
