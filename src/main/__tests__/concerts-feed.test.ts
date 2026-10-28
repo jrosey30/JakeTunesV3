@@ -1,6 +1,6 @@
 // Concerts feed rules (src/common/concerts-feed.ts) — Home › Shows and the
 // Music Man. Items are shaped like homemini's live GET /api/concerts answer of
-// 2026-10-19 (trimmed): parsing, the backend's rank order kept, run folding on
+// 2026-10-19 (trimmed): parsing, date order + New York City only (2026-10-28), run folding on
 // the card, the badge rules (7-day "Just announced", future on-sale only), the
 // "You'd like this" reason, the offline fallback's shape, and the Music Man's
 // 30-day narrowing.
@@ -8,7 +8,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   asConcertsState, cardBill, cardReason, concertBadges, formatOnSale, formatShowTime, legacyConcertItems,
-  localYmd, musicManShows, nyDate, parseConcertItem, parseConcertsReply, pruneToUpcoming, runNightsLine,
+  cityBorough, compareConcerts, inNyc, listConcerts, localYmd, musicManShows, nyDate, parseConcertItem, parseConcertsReply, pruneToUpcoming, runNightsLine,
   runStamp, ticketUrl, whereLine, DAY_MS, type ConcertItem,
 } from '../../common/concerts-feed.ts'
 
@@ -79,16 +79,17 @@ describe('parsing homemini\'s answer', () => {
     assert.equal(ticketUrl(t), 'https://us.atgtickets.com/events/thundercat/kings-theatre-brooklyn')
   })
 
-  it('keeps the backend\'s rank order — never re-sorts by date', () => {
-    // ranks 1, 4, 7, 17, 19 have dates 10-23, 11-16, 11-30, 11-01, 10-30: a date sort would scramble them.
+  it('parses in wire order; the rows draw it by date (2026-10-28: "never in date order")', () => {
+    // ranks 1, 4, 7, 17, 19 have dates 10-23, 11-16, 11-30, 11-01, 10-30 — an older homemini's taste order.
     const reply = parseConcertsReply({ items: [THUNDERCAT, ANGINE, LCD_STEEL, PROSPA_SUPPORT, MAN_WOMAN], total: 5, discoverTotal: 2, generatedAt: '2026-10-19T14:06:37.315Z', home: { label: 'Williamsburg' } })
     assert.ok(reply)
     assert.deepEqual(reply.items.map((i) => i.rank), [1, 4, 7, 17, 19])
     assert.deepEqual(reply.items.map((i) => i.date), ['2026-10-23', '2026-11-16', '2026-11-30', '2026-11-01', '2026-10-30'])
     assert.equal(reply.home, 'Williamsburg')
-    // …and so does every later step.
-    assert.deepEqual(pruneToUpcoming(reply.items, TODAY).map((i) => i.rank), [1, 4, 7, 17, 19])
-    assert.deepEqual(musicManShows(reply.items, NOW, { days: 365 }).map((s) => s.artist), ['Thundercat', 'Angine de Poitrine', 'LCD Soundsystem', 'Prospa', 'Man/Woman/Chainsaw'])
+    assert.deepEqual(pruneToUpcoming(reply.items, TODAY).map((i) => i.rank), [1, 4, 7, 17, 19], 'pruning alone keeps the order')
+    // What the rows and the Music Man draw: soonest first.
+    assert.deepEqual(listConcerts(reply.items, TODAY).map((i) => i.date), ['2026-10-23', '2026-10-30', '2026-11-01', '2026-11-16', '2026-11-30'])
+    assert.deepEqual(musicManShows(reply.items, NOW, { days: 365 }).map((s) => s.artist), ['Thundercat', 'Man/Woman/Chainsaw', 'Prospa', 'Angine de Poitrine', 'LCD Soundsystem'])
   })
 
   it('drops an item it cannot draw, not the document', () => {
@@ -248,15 +249,67 @@ describe('the offline fallback (Bandsintown + venue calendars) as feed items', (
 })
 
 describe('the Music Man hears the top of the feed', () => {
-  it('top-ranked shows in the next 30 days, best first, with why', () => {
+  it('the best-ranked shows in the next 30 days, told soonest first, with why', () => {
     const items = [THUNDERCAT, ANGINE, LCD_STEEL, PROSPA_SUPPORT, MAN_WOMAN].map(parse)
     const shows = musicManShows(items, NOW)
-    assert.deepEqual(shows.map((s) => s.artist), ['Thundercat', 'Angine de Poitrine', 'Prospa', 'Man/Woman/Chainsaw'], 'LCD on Nov 30 is past the 30-day horizon (Nov 18); rank order, not date order')
+    assert.deepEqual(shows.map((s) => s.artist), ['Thundercat', 'Man/Woman/Chainsaw', 'Prospa', 'Angine de Poitrine'], 'LCD on Nov 30 is past the 30-day horizon (Nov 18); date order')
     assert.deepEqual(shows[0], { artist: 'Thundercat', venue: 'Kings Theatre', city: 'Brooklyn', date: '2026-10-23', url: 'https://us.atgtickets.com/events/thundercat/kings-theatre-brooklyn', reason: 'Heavy rotation: 7 plays in 90 days', nights: 1 })
-    assert.deepEqual(musicManShows(items, NOW, { days: 14 }).map((s) => s.date), ['2026-10-23', '2026-11-01', '2026-10-30'], '14 days ends Nov 2')
-    assert.equal(musicManShows(items, NOW, { days: 60, limit: 2 }).length, 2)
+    assert.deepEqual(musicManShows(items, NOW, { days: 14 }).map((s) => s.date), ['2026-10-23', '2026-10-30', '2026-11-01'], '14 days ends Nov 2')
+    // Taste picks WHICH (ranks 1 and 4, not the two soonest), the date orders them.
+    assert.deepEqual(musicManShows(items, NOW, { days: 60, limit: 2 }).map((s) => s.artist), ['Thundercat', 'Angine de Poitrine'])
+    assert.ok(!musicManShows([...items, parse({ ...THUNDERCAT, id: 'nj', rank: 0, city: 'Newark', state: 'NJ', borough: null })], NOW).some((s) => s.city === 'Newark, NJ'), 'New York City only')
   })
   it('an empty feed is an empty list, not an error', () => {
     assert.deepEqual(musicManShows([] as ConcertItem[], NOW), [])
+  })
+})
+
+describe('date order and New York City only (2026-10-28)', () => {
+  const at = (id: string, date: string, extra: Record<string, unknown> = {}) =>
+    parse({ ...THUNDERCAT, id, name: id, headliners: [id], artists: [id], date, runDates: [date], runNights: 1, runShows: [night(id, date)], ...extra })
+  it('soonest first; within a date North Brooklyn, then nearer, unknown distance last, then start time, then taste', () => {
+    const d = '2026-10-31'
+    const out = listConcerts([
+      at('later', '2026-11-02', { northBrooklyn: true, distanceMiles: 0.3, rank: 1 }),
+      at('lic', d, { northBrooklyn: false, distanceMiles: 2.1, rank: 2 }),
+      at('tba', d, { northBrooklyn: false, distanceMiles: null, rank: 3, borough: 'Manhattan' }),
+      at('bushwick', d, { northBrooklyn: true, distanceMiles: 2.4, rank: 9 }),
+      at('greenpoint', d, { northBrooklyn: true, distanceMiles: 0.8, rank: 8 }),
+      at('les-late', d, { northBrooklyn: false, distanceMiles: 1.9, time: '22:00:00', rank: 4 }),
+      at('les-early', d, { northBrooklyn: false, distanceMiles: 1.9, time: '19:00:00', rank: 5 }),
+    ], TODAY)
+    assert.deepEqual(out.map((i) => i.id), ['greenpoint', 'bushwick', 'les-early', 'les-late', 'lic', 'tba', 'later'])
+    assert.ok(compareConcerts(out[0], out[out.length - 1]) < 0)
+  })
+  it('a multi-night run sits at its next upcoming night', () => {
+    const run = parse(ANGINE)                       // Brooklyn Steel, Nov 16–18
+    const before = at('before', '2026-11-16')
+    const after = at('after', '2026-11-18', { northBrooklyn: false })
+    // Nov 17: the run's first night has passed; it stands at Nov 17, between the two.
+    const out = listConcerts([after, run, before], '2026-11-17')
+    assert.deepEqual(out.map((i) => [i.id, i.date, i.runNights]), [['ang2', '2026-11-17', 2], ['after', '2026-11-18', 1]])
+    assert.deepEqual(listConcerts([after, run, before], '2026-11-15').map((i) => i.id), ['ang1', 'before', 'after'], 'before its first night it sits at Nov 16')
+  })
+  it('past shows never appear', () => {
+    assert.deepEqual(listConcerts([at('gone', '2026-10-18'), at('tonight', TODAY)], TODAY).map((i) => i.id), ['tonight'])
+  })
+  it('the five boroughs only — homemini\'s borough, else the city (an older answer, the fallback)', () => {
+    const keep = [at('msg', '2026-11-01', { city: 'New York', state: 'NY' }), at('lic', '2026-11-01', { city: 'Long Island City', state: 'NY' }), at('lehman', '2026-11-01', { city: 'Bronx', state: 'NY' })]
+    const drop = [
+      at('pony', '2026-11-01', { city: 'Asbury Park', state: 'NJ' }), at('loews', '2026-11-01', { city: 'Jersey City', state: 'NJ' }),
+      at('ubs', '2026-11-01', { city: 'Belmont Park', state: 'NY' }), at('westbury', '2026-11-01', { city: 'Westbury', state: 'NY' }),
+    ]
+    assert.deepEqual(listConcerts([...drop, ...keep], TODAY).map((i) => i.id).sort(), ['lehman', 'lic', 'msg'])
+    // A null-distance TBA room homemini placed by its city keeps its place.
+    const tba = at('tba', '2026-11-01', { city: 'New York', state: 'NY', distanceMiles: null, borough: 'Manhattan', venue: 'TBA - Secret Manhattan Location' })
+    assert.equal(inNyc(tba), true)
+    assert.equal(tba.distanceMiles, null)
+  })
+  it('city names, including Bandsintown\'s "City, ST"', () => {
+    assert.equal(cityBorough('Brooklyn, NY', null), 'Brooklyn')
+    assert.equal(cityBorough('Brooklyn, OH', null), null)
+    assert.equal(cityBorough('Maspeth', 'NY'), 'Queens')
+    assert.equal(cityBorough('Long Island', 'NY'), null)
+    assert.equal(cityBorough('New York', 'NJ'), null)
   })
 })

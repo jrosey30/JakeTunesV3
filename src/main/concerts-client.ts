@@ -28,7 +28,7 @@ import { join } from 'node:path'
 import { writeJsonAtomic } from './atomic-write.ts'
 import { withCompanionInit } from './hub-companion.ts'
 import {
-  DAY_MS, nyDate, parseConcertsReply, pruneToUpcoming,
+  DAY_MS, listConcerts, nyDate, parseConcertsReply,
   type ConcertItem, type ConcertsFeedState, type ConcertsSource,
 } from '../common/concerts-feed.ts'
 
@@ -114,8 +114,8 @@ export function createConcertsClient(opts: ConcertsClientOptions): ConcertsClien
     const d = cache.discover ? parseConcertsReply(cache.discover.body) : null
     return {
       source,
-      items: pruneToUpcoming(c.items, today),
-      discover: pruneToUpcoming(d?.items ?? [], today),
+      items: listConcerts(c.items, today),
+      discover: listConcerts(d?.items ?? [], today),
       generatedAt: c.generatedAt, home: c.home,
       fetchedAt: cache.confirmedAt || null, reachable,
     }
@@ -130,7 +130,7 @@ export function createConcertsClient(opts: ConcertsClientOptions): ConcertsClien
       if (drawable(s)) return s
     }
     if (legacyMemo && legacyMemo.items.length) {
-      return { source: 'fallback', items: pruneToUpcoming(legacyMemo.items, nyDate(now())), discover: [], generatedAt: null, home: null, fetchedAt: null, reachable }
+      return { source: 'fallback', items: listConcerts(legacyMemo.items, nyDate(now())), discover: [], generatedAt: null, home: null, fetchedAt: null, reachable }
     }
     if (cache) {
       const s = fromCache(cache, 'cache')       // older than a week, still better than an empty section

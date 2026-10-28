@@ -2,7 +2,7 @@
  * Concerts feed — the desktop's half of homemini's show collector
  * (Jake, 2026-10-19: "need to be better at concerts!!!").
  *
- *   GET {MOBILE_BACKEND_URL}/api/concerts           Jake's artists, ranked best first
+ *   GET {MOBILE_BACKEND_URL}/api/concerts           Jake's artists, NYC only, soonest first
  *   GET {MOBILE_BACKEND_URL}/api/concerts/discover  "You'd like this": related artists he doesn't own
  *
  * The wire contract is ~/JakeTunesMobile docs/concerts-api-contract.md; the
@@ -13,9 +13,13 @@
  * ipc/concerts-ipc.ts, record-store/external-context.ts) and the renderer
  * (components/HomeShows.tsx) both read it.
  *
- * RANK IS THE BACKEND'S. Nothing here sorts the feed — `items` arrive best
- * first and stay in that order. The old Home sorted by date and cut at 40
- * cards, which is how starred library shows ended up at card 57.
+ * DATE ORDER, NEW YORK CITY ONLY (Jake, 2026-10-28: "concert suggestions are
+ * never in date order. i need more focus on new york city/brooklyn near
+ * 11211"). Taste picks the shows (tiers) and writes the reason line; it never
+ * orders them. Every list the app draws goes through listConcerts(): past
+ * nights pruned, the five boroughs only, soonest first (compareConcerts) — a
+ * homemini answer already is; a cached copy from an older homemini, or the
+ * Bandsintown + venue-calendar fallback, is made so here.
  */
 import { nameKey } from './fold-text.ts'
 
@@ -66,6 +70,11 @@ export interface ConcertItem {
   firstSeenAt: string | null
   neighbourhood: string | null
   northBrooklyn: boolean
+  /** Miles from home (Williamsburg), null when the room has no point. */
+  distanceMiles: number | null
+  /** The room's borough; homemini sends it for every item since 2026-10-28.
+   *  Null from an older answer or the fallback — inNyc decides by city then. */
+  borough: string | null
   room: string | null
   links: ConcertLink[]
   rsvp: 'going' | 'not' | null
@@ -166,6 +175,8 @@ export function parseConcertItem(raw: unknown, fallbackRank = 0): ConcertItem | 
     firstSeenAt: str(r.firstSeenAt),
     neighbourhood: str(r.neighbourhood),
     northBrooklyn: r.northBrooklyn === true,
+    distanceMiles: num(r.distanceMiles),
+    borough: str(r.borough),
     room: str(r.room),
     links: (Array.isArray(r.links) ? r.links : [])
       .map((l) => (l && typeof l === 'object' ? { source: str((l as Record<string, unknown>).source) ?? '', url: link((l as Record<string, unknown>).url) } : null))
@@ -180,7 +191,7 @@ export function parseConcertItem(raw: unknown, fallbackRank = 0): ConcertItem | 
 /** A /api/concerts or /api/concerts/discover body → ConcertsReply, or null
  *  when the body isn't one (HTML from a proxy, the 503 warming-up error,
  *  torn JSON). Items that don't parse are dropped, not the document. Order
- *  is the wire's: best first. */
+ *  is the wire's; listConcerts() makes it date order for drawing. */
 export function parseConcertsReply(body: unknown): ConcertsReply | null {
   if (!body || typeof body !== 'object') return null
   const b = body as Record<string, unknown>
@@ -258,6 +269,66 @@ export function pruneToUpcoming(items: ConcertItem[], today: string): ConcertIte
     })
   }
   return out
+}
+
+// ── order + New York City only (2026-10-28) ─────────────────────────────
+
+/** Soonest first. Within one date: North Brooklyn rooms first, then nearer
+ *  rooms (no known distance last), then the earlier start (no time last),
+ *  then taste rank. A run is one item at its next night and sorts by it.
+ *  ⚠️ TWIN: ~/JakeTunesMobile backend/src/util/concertsOrder.ts
+ *  compareConcerts and ios/JakeTunesMobile/Concerts.swift ConcertOrder —
+ *  same keys, same order; change all three together. */
+export function compareConcerts(a: ConcertItem, b: ConcertItem): number {
+  return a.date.localeCompare(b.date) ||
+    Number(b.northBrooklyn) - Number(a.northBrooklyn) ||
+    (a.distanceMiles ?? Infinity) - (b.distanceMiles ?? Infinity) ||
+    (a.time ?? '99').localeCompare(b.time ?? '99') ||
+    a.rank - b.rank ||
+    a.id.localeCompare(b.id)
+}
+
+/** The city names sources print for rooms in the five boroughs.
+ *  ⚠️ TWIN: ~/JakeTunesMobile backend/src/util/concertsVenues.ts
+ *  CITY_BOROUGH and the phone's ConcertOrder.cityBoroughs — same list. */
+const CITY_BOROUGH: Readonly<Record<string, string>> = {
+  'new york': 'Manhattan', 'new york city': 'Manhattan', nyc: 'Manhattan', manhattan: 'Manhattan',
+  brooklyn: 'Brooklyn',
+  bronx: 'Bronx', 'the bronx': 'Bronx',
+  'staten island': 'Staten Island',
+  queens: 'Queens', 'long island city': 'Queens', astoria: 'Queens', flushing: 'Queens', corona: 'Queens',
+  ridgewood: 'Queens', 'forest hills': 'Queens', jamaica: 'Queens', 'jackson heights': 'Queens',
+  sunnyside: 'Queens', woodside: 'Queens', elmhurst: 'Queens', maspeth: 'Queens', glendale: 'Queens',
+  'middle village': 'Queens', 'rockaway park': 'Queens', 'rockaway beach': 'Queens', 'far rockaway': 'Queens',
+  'kew gardens': 'Queens', 'richmond hill': 'Queens', 'ozone park': 'Queens', 'howard beach': 'Queens',
+  bayside: 'Queens', whitestone: 'Queens', 'college point': 'Queens', 'fresh meadows': 'Queens',
+}
+
+/** The borough a city name means, when the state is New York (or not
+ *  given). Takes "Brooklyn" + "NY", or Bandsintown's one string "Brooklyn, NY". */
+export function cityBorough(city: string | null, state: string | null): string | null {
+  let c = String(city ?? '')
+  let st = String(state ?? '')
+  if (!st && c.includes(',')) {
+    const i = c.lastIndexOf(',')
+    st = c.slice(i + 1)
+    c = c.slice(0, i)
+  }
+  st = st.trim().toUpperCase()
+  if (st && st !== 'NY' && st !== 'NEW YORK') return null
+  return CITY_BOROUGH[c.trim().toLowerCase().replace(/\s+/g, ' ')] ?? null
+}
+
+/** In the five boroughs: homemini's borough when it sent one (it lists New
+ *  York City only), else the item's city. */
+export function inNyc(item: ConcertItem): boolean {
+  return !!item.borough || cityBorough(item.city, item.state) !== null
+}
+
+/** What a concerts row draws: the nights still ahead (pruneToUpcoming), New
+ *  York City only, soonest first. */
+export function listConcerts(items: ConcertItem[], today: string): ConcertItem[] {
+  return pruneToUpcoming(items, today).filter(inNyc).sort(compareConcerts)
 }
 
 // ── badges ──────────────────────────────────────────────────────────────
@@ -394,10 +465,13 @@ export const RUN_GAP_DAYS = 7
 
 /**
  * The pre-feed sources as ConcertItems, so the Home draws one shape however
- * the data arrived. Order: Bandsintown's library-artist shows in its own
- * order (the city first, clubs before arenas, sooner first), then venue-
- * calendar shows by library artists, then everything else at the rooms —
- * by date. Nights of the same act at the same room fold into runs, split
+ * the data arrived. `rank` (the taste stand-in): Bandsintown's library-artist
+ * shows in its own order, then venue-calendar shows by library artists,
+ * then everything else at the rooms. The rows draw them through
+ * listConcerts() like homemini's — New York City only, by date — so
+ * Bandsintown's Jersey and Long Island dates never show.
+ * ⚠️ TWIN: homemini's feed (~/JakeTunesMobile backend concertsService.ts):
+ * same filter, same order, reached by listConcerts. Nights of the same act at the same room fold into runs, split
  * where nights are more than RUN_GAP_DAYS apart.
  */
 export function legacyConcertItems(tour: LegacyShow[], venues: LegacyShow[], nowMs: number): ConcertItem[] {
@@ -447,7 +521,7 @@ export function legacyConcertItems(tour: LegacyShow[], venues: LegacyShow[], now
       matchedArtist: run.show.artist, matchRole: 'headliner', relatedTo: null,
       headliners: [run.show.artist], support: [],
       onSale: null, soldOut: false, justAnnounced: false, firstSeenAt: null,
-      neighbourhood: null, northBrooklyn: false, room: null,
+      neighbourhood: null, northBrooklyn: false, distanceMiles: null, borough: null, room: null,
       links: url ? [{ source: run.source, url }] : [], rsvp: null,
       runNights: runShows.length, runDates: runShows.map((n) => n.date), runShows,
     }
@@ -458,15 +532,19 @@ export function legacyConcertItems(tour: LegacyShow[], venues: LegacyShow[], now
 
 export interface MusicManShow { artist: string; venue: string; city: string; date: string; url: string; reason: string; nights: number }
 
-/** What the Record Store's day-theme prompt hears about: the top-ranked shows
- *  in the next `days` (default 30), best taste match first — not the 14 days
- *  of top-60 Bandsintown dates it used to get. */
+/** What the Record Store's day-theme prompt hears about: the `limit` (10)
+ *  best taste matches in New York City in the next `days` (default 30),
+ *  told soonest first. Taste picks which shows, the date orders them (Jake,
+ *  2026-10-28) — the soonest ten would be whatever is on this week, however
+ *  far down his taste. */
 export function musicManShows(items: ConcertItem[], nowMs: number, opts: { days?: number; limit?: number } = {}): MusicManShow[] {
   const today = nyDate(nowMs)
   const horizon = addDays(today, opts.days ?? 30)
-  return pruneToUpcoming(items, today)
+  return listConcerts(items, today)
     .filter((i) => i.date <= horizon)
+    .sort((a, b) => a.rank - b.rank)
     .slice(0, opts.limit ?? 10)
+    .sort(compareConcerts)
     .map((i) => ({
       artist: cardBill(i).artist,
       venue: i.venue,

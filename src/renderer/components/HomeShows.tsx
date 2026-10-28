@@ -3,12 +3,14 @@
  * concerts!!!"). Two rows above On the Horizon, both from homemini's show
  * collector (src/common/concerts-feed.ts):
  *
- *   Live Near You    his artists, in the backend's taste order — never re-sorted
+ *   Live Near You    his artists in New York City, soonest first
  *   You'd Like This  related artists he doesn't own yet, "Because you play Geese"
  *
- * Each row is a rail of the top of the list with "See All N", which opens the
- * whole list in place as a wrapped grid, still in rank order — the old row
- * sorted by date and stopped at card 40 (around Oct 31). Cards keep the ticket-
+ * Both rows are in DATE order (Jake, 2026-10-28: "concert suggestions are
+ * never in date order"): taste picks the shows and writes the reason line,
+ * the date orders them — main hands over listConcerts() output, so nothing
+ * here re-sorts. Each row is a rail of the first cards with "See All N",
+ * which opens the whole list in place as a wrapped grid. Cards keep the ticket-
  * stub look of the old Live Near You cards; names wrap, never clip. Clicking a
  * card opens its ticket link, as before.
  */
@@ -35,9 +37,9 @@ function activateOnKey(action: () => void) {
 function sourceLabel(state: ConcertsFeedState, nowMs: number): string {
   if (state.source === 'fallback') return 'via Bandsintown + venue calendars'
   if (state.source === 'cache' && state.fetchedAt && nowMs - state.fetchedAt > SAY_AGE_AFTER_MS) {
-    return `Ranked by your taste · as of ${new Date(state.fetchedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+    return `Picked by your taste · as of ${new Date(state.fetchedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
   }
-  return 'Ranked by your taste'
+  return 'Picked by your taste'
 }
 
 interface CardProps {
@@ -134,7 +136,7 @@ function ConcertRail({ title, source, items, kind, cap, scrollKey, nowMs, today,
           <span className="home-section-source">{source}</span>
           {more && (
             <button type="button" className="home-section-more" onClick={toggle} aria-expanded={all}>
-              {all ? `Show Top ${cap}` : `See All ${items.length}`}
+              {all ? `Show First ${cap}` : `See All ${items.length}`}
             </button>
           )}
         </div>
