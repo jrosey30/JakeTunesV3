@@ -419,3 +419,504 @@
   color: var(--text-dim);
   font-style: italic;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Direction D (Jake 2026-10-27: "build D") — record-sleeve header on
+   brushed metal over a classic iTunes table. AlbumDetailView only:
+   MixDetailView still uses the plain .album-page-* layout above, so every
+   D rule hangs off .album-page--d / .apd-*.
+   The whole page scrolls as one sheet (header → setlist → table); the
+   column header sticks; the status line stays put under it.
+   ═══════════════════════════════════════════════════════════════════════ */
+.album-page--d {
+  background: var(--white);
+  container-type: inline-size;
+  container-name: apd-page;
+}
+
+.apd-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* ── Brushed-metal header ─────────────────────────────────────────────── */
+.apd-head {
+  padding: 0 0 26px;
+  background:
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.06) 0 1px, rgba(0, 0, 0, 0.025) 1px 2px, rgba(255, 255, 255, 0) 2px 4px),
+    linear-gradient(180deg, #ececec 0%, #dcdcdc 55%, #cfcfcf 100%);
+  border-bottom: 1px solid #9a9a9a;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  container-type: inline-size;
+  container-name: apd-head;
+}
+
+.album-page-topbar.apd-top {
+  padding: 12px 32px 0;
+}
+
+.album-page-back.apd-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 11px 0 7px;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.10);
+  background: rgba(255, 255, 255, 0.7);
+  color: #2a2510;
+}
+.album-page-back.apd-back svg { flex: none; }
+
+/* "More by <Artist> ‹ 1 of N ›" */
+.apd-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #555;
+  min-width: 0;
+}
+.apd-more-label {
+  text-align: right;
+  overflow-wrap: anywhere;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+.apd-pager {
+  flex: none;
+  display: inline-flex;
+  height: 22px;
+  border: 1px solid #7e7e7e;
+  border-radius: 4px;
+  overflow: hidden;
+  background: linear-gradient(180deg, #fdfdfd, #e2e2e2);
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.15);
+}
+.album-page-flip-btn.apd-pager-btn {
+  width: 26px;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #222;
+  display: grid;
+  place-items: center;
+}
+.album-page-flip-btn.apd-pager-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.8); color: #000; }
+.album-page-flip-btn.apd-pager-btn:disabled { opacity: 1; color: #aaa; }
+.album-page-flip-pos.apd-pager-pos {
+  font-size: 11px;
+  color: #333;
+  display: flex;
+  align-items: center;
+  padding: 0 9px;
+  min-width: 0;
+  border-left: 1px solid #a6a6a6;
+  border-right: 1px solid #a6a6a6;
+  white-space: nowrap;
+}
+
+/* ── The sleeve: 340px cover, a record peeking out behind it ─────────── */
+.apd-sleeve {
+  display: grid;
+  grid-template-columns: 340px 56px minmax(0, 1fr);
+  padding: 18px 32px 0;
+  align-items: start;
+}
+.apd-art {
+  position: relative;
+  width: 340px;
+  height: 340px;
+  isolation: isolate;
+}
+.apd-disc {
+  position: absolute;
+  top: 8px;
+  left: 66px;
+  width: 324px;
+  height: 324px;
+  border-radius: 50%;
+  z-index: 0;
+  background: radial-gradient(circle, #d9cbb8 0 7px, #2a2622 8px 48px, #c4a06e 49px 80px, #1d1a17 81px 82px, #141210 83px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.30);
+}
+.apd-disc::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(from 200deg, transparent 0 20deg, rgba(255, 255, 255, 0.12) 40deg, transparent 70deg 200deg, rgba(255, 255, 255, 0.08) 230deg, transparent 260deg);
+}
+.album-page-cover.apd-cover {
+  position: relative;
+  z-index: 1;
+  width: 340px;
+  height: 340px;
+  border-radius: 2px;
+  border: 1px solid #6f6f6f;
+  background: #e3e1db;
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.30), 0 2px 6px rgba(0, 0, 0, 0.18);
+}
+.apd-cover-placeholder { color: #b3b0a8; }
+
+.apd-meta {
+  grid-column: 3;
+  min-width: 0;
+  container-type: inline-size;
+  container-name: apd-meta;
+}
+
+/* Artist — orange small caps; links to the artist page. Small text →
+   the text-safe orange (--accent-text), never the brand fill orange. */
+.apd-artist {
+  appearance: none;
+  display: inline;
+  border: 0;
+  background: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--accent-text);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.apd-artist:hover { text-decoration: underline; }
+
+.apd-title {
+  margin: 6px 0 8px;
+  font: 700 46px/1.04 var(--font-display);
+  letter-spacing: -0.028em;
+  color: var(--text-primary);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.7);
+  overflow-wrap: anywhere;
+}
+
+.apd-facts {
+  font-size: 12.5px;
+  color: #3f3f3f;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
+  font-variant-numeric: tabular-nums;
+}
+.apd-facts span + span::before {
+  content: "·";
+  margin: 0 7px;
+  color: #888;
+}
+
+/* Small glossy real buttons (aqua), orange for Play. */
+.apd-ctrls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+  margin: 16px 0 18px;
+}
+.apd-ctrls-gap { width: 10px; }
+.apd-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 14px;
+  border-radius: 13px;
+  border: 1px solid #7e7e7e;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1d1d1d;
+  white-space: nowrap;
+  cursor: pointer;
+  background: linear-gradient(180deg, #fdfdfd 0%, #ececec 48%, #dcdcdc 52%, #f1f1f1 100%);
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.18), inset 0 1px 0 #fff;
+}
+.apd-btn svg { flex: none; }
+.apd-btn:hover:not(:disabled) { filter: brightness(1.03); }
+.apd-btn:active:not(:disabled) {
+  background: linear-gradient(180deg, #d9d9d9 0%, #cfcfcf 50%, #c4c4c4 52%, #d6d6d6 100%);
+}
+.apd-btn--orange {
+  border-color: var(--brand-orange-border);
+  color: #fff;
+  text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.25);
+  background: linear-gradient(180deg, #ffb07e 0%, var(--brand-orange-light) 48%, #e05200 52%, #fc6a1a 100%);
+  box-shadow: 0 1px 2px rgba(150, 50, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+.apd-btn--orange:active:not(:disabled) {
+  background: linear-gradient(180deg, #f08a4c 0%, #e8601c 48%, #c94401 52%, #e2600f 100%);
+}
+.apd-btn:disabled { cursor: default; color: #6a6a6a; }
+.apd-btn.album-page-liveset-declare:disabled { opacity: 0.8; font-style: italic; }
+.apd-btn.album-page-liveset-undeclare { color: #8a4030; }
+.apd-btn.album-page-liveset-crowd { color: #4a4a48; }
+.apd-btn.album-page-liveset-crowd--on {
+  color: var(--accent-text);
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.18), inset 0 0 0 1px var(--brand-orange);
+}
+.album-page-liveset-blocked.apd-blocked {
+  margin: -10px 0 16px;
+  color: #5f5a52;
+}
+
+/* A rule, then the full history (serif, comfortable measure) beside the
+   credits. Never clamped. */
+.apd-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 230px;
+  gap: 34px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(0, 0, 0, 0.14);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6) inset;
+}
+.apd-text { min-width: 0; }
+.apd-bio {
+  margin: 0;
+  max-width: 66ch;
+  font: 14.5px/1.6 "Iowan Old Style", "Palatino", "Georgia", serif;
+  color: #25221e;
+  overflow-wrap: break-word;
+}
+.album-page-loading.apd-status-note { margin: 0; color: #6f6a62; }
+
+/* The Music Man's take — an open card, his voice in serif. */
+.apd-take {
+  margin-top: 14px;
+  max-width: calc(66ch + 26px);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 6px;
+  box-shadow: inset 0 1px 0 #fff, 0 1px 2px rgba(0, 0, 0, 0.08);
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  gap: 2px 10px;
+  align-items: start;
+}
+.apd-take-mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  background: linear-gradient(180deg, var(--brand-orange-light), var(--brand-orange-dark));
+  display: grid;
+  place-items: center;
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+.apd-take-title {
+  margin: 0;
+  font: 700 12px/22px var(--font-family);
+  color: var(--text-primary);
+}
+.apd-take-more {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0 2px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--accent-text);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.apd-take-more:hover { text-decoration: underline; }
+.apd-take-more svg { transition: transform 160ms ease; }
+.apd-take-more.is-open svg { transform: rotate(180deg); }
+.apd-take-text,
+.apd-take-status {
+  grid-column: 2 / 4;
+  margin: 0;
+  font: 14.5px/1.5 "Iowan Old Style", "Palatino", "Georgia", serif;
+  color: #25221e;
+}
+.apd-take-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.apd-take-text.is-open {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+.apd-take-status { color: #6f6a62; font-style: italic; }
+
+/* Credits — small-caps labels, values wrap (never ellipsize). */
+.apd-cred {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px 12px;
+  font-size: 12px;
+  align-content: start;
+  color: var(--text-primary);
+}
+.apd-cred dt {
+  color: #5f5f5f;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding-top: 2px;
+}
+.apd-cred dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Narrow windows: credits drop under the history; the sleeve shrinks. */
+@container apd-meta (max-width: 620px) {
+  .apd-body { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+}
+@container apd-head (max-width: 900px) {
+  .apd-sleeve { grid-template-columns: 240px 44px minmax(0, 1fr); }
+  .apd-art, .album-page-cover.apd-cover { width: 240px; height: 240px; }
+  .apd-disc { top: 6px; left: 46px; width: 228px; height: 228px; }
+  .apd-title { font-size: 36px; }
+}
+
+/* ── Setlist (declared concerts) sits between the sleeve and the table ── */
+.album-page--d .album-page-sheet { margin: 18px 32px 14px; }
+/* Song names wrap here, never ellipsize (the shared sheet clips them). */
+.album-page--d .album-page-sheet .cj-name { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
+
+/* ── The classic iTunes table ─────────────────────────────────────────── */
+.apd-table {
+  border-top: 1px solid #fff;
+  background: var(--white);
+}
+.apd-thead,
+.apd-row {
+  display: grid;
+}
+.apd-thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  height: 21px;
+  background: linear-gradient(180deg, #efefef, #e1e1e1);
+  border-bottom: 1px solid #a9a9a9;
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.5);
+  font-size: 11px;
+  color: #333;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.apd-th {
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  border-right: 1px solid #c4c4c4;
+  white-space: nowrap;
+  min-width: 0;
+}
+.apd-th:last-child { border-right: 0; }
+/* Last column keeps clear of the page's scroll thumb (macOS overlays it). */
+.apd-th:last-child,
+.apd-row .apd-td--time { padding-right: 16px; }
+.apd-th--r { justify-content: flex-end; }
+.apd-th--c { justify-content: center; }
+.apd-th--sorted {
+  background: linear-gradient(180deg, #c9d7ec, #a9bedf);
+  color: #111;
+  font-weight: 700;
+}
+
+.apd-row {
+  min-height: 22px;
+  align-items: start;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--white);
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: background-color 90ms ease-out;
+  scroll-margin-top: 22px;
+  scroll-margin-bottom: 4px;
+}
+.apd-row--alt { background: var(--row-alt); }
+.apd-row:hover { background: rgba(var(--selection-top-rgb), 0.11); }
+.apd-row--selected,
+.apd-row--selected:hover { background: #4577d3; color: #fff; }
+.apd-row--playing .apd-name-text { font-weight: 700; }
+
+.apd-td {
+  padding: 3px 6px;
+  min-width: 0;
+  line-height: 16px;
+  display: flex;
+  align-items: flex-start;
+  /* names never ellipsize — they wrap */
+  overflow-wrap: anywhere;
+}
+.apd-td--r { justify-content: flex-end; text-align: right; font-variant-numeric: tabular-nums; }
+.apd-td--c { justify-content: center; text-align: center; }
+.apd-td--num { color: #7b7b7b; font-variant-numeric: tabular-nums; }
+.apd-td--num svg { margin-top: 1px; }
+.apd-td--dim { color: #7b7b7b; }
+.apd-td--artist { color: #3a3a3a; }
+.apd-td--name .songs-cell-missing-badge { margin-top: 1px; }
+.apd-name-text { min-width: 0; }
+.apd-row--selected .apd-td--num,
+.apd-row--selected .apd-td--dim,
+.apd-row--selected .apd-td--artist { color: #e5ecf9; }
+
+.apd-star {
+  appearance: none;
+  width: 18px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  color: #b9b2a6;
+  cursor: pointer;
+  transition: color 0.12s ease, transform 0.1s ease;
+}
+.apd-star:hover { color: var(--brand-orange); transform: scale(1.15); }
+.apd-star--on { color: var(--brand-orange); }
+.apd-row--selected .apd-star { color: #fff; }
+
+/* ── Status line ──────────────────────────────────────────────────────── */
+.apd-statusbar {
+  flex: none;
+  height: 24px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px;
+  border-top: 1px solid #a9a9a9;
+  background: linear-gradient(180deg, #e9e9e9, #d2d2d2);
+  font-size: 11px;
+  color: #333;
+}
+.apd-statusbar-hint {
+  white-space: nowrap;
+  overflow: hidden;
+  color: #4a4a4a;
+}
+.apd-statusbar-total {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+/* The hint is help text, not data — on a narrow page it steps aside
+   rather than clip; the count always stays. */
+@container apd-page (max-width: 1000px) {
+  .apd-statusbar-hint { visibility: hidden; }
+}
