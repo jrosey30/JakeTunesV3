@@ -19,6 +19,10 @@
  *     edits wait for home; nothing is lost, and nothing burns 600s to
  *     learn what the mount table already said.
  *
+ * ⚠️ TWIN: Dr. Claude/scripts/jaketunes-homemini-sync.sh jakeshared_server()
+ * + is_tailnet_host() read the same mount table in bash to move a tailnet
+ * JakeShared mount back to the LAN path at home — keep the range identical.
+ *
  * Sibling (not twin): platform.ts macNetworkMountSet() parses the same
  * `mount` table to EXCLUDE network mounts from the iPod scan. Same source,
  * different question — this asks WHICH HOST serves a specific volume.
