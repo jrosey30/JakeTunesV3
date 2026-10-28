@@ -31,24 +31,26 @@
  *       node scripts/lyrics-fetch.mjs --dry --limit 20   (network only, no write)
  *       node scripts/lyrics-fetch.mjs --stats      (coverage report, no fetch)
  * Cost: free (LRCLIB has no key and no enforced rate limit — we stay polite:
- *       descriptive User-Agent, 10s timeout, small delay, cached/resumable).
+ *       descriptive User-Agent, 20s timeout, small delay, cached/resumable).
+ *
+ * Fallback (2026-10-27): when BOTH LRCLIB paths miss, lyrics.ovh is asked —
+ * gated (no remix/edit/dub/live/… titles, ≥80 chars, 1 req/s, 8 s timeout).
+ * A double miss on a likely-instrumental track (house/techno/score genres or
+ * an "Instrumental"/"Dub" title) is stored as a MISS with likelyInstrumental
+ * and retried after 180 days instead of 30 — never claimed as instrumental.
+ * Rules + shapes: scripts/lyrics-sources.mjs.
  */
 import { readFileSync, writeFileSync, existsSync, renameSync } from 'node:fs'
 import { loadLedger, saveLedger, ledgerPath, markLyricsDone, markLyricsAttempted } from './enrichment-ledger.mjs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { createLyricsFetcher, missTtlMs } from './lyrics-sources.mjs'
 
 const STATE_DIR = process.env.JT_STATE_DIR || join(homedir(), 'Library', 'Application Support', 'JakeTunes')
 const LIB = join(STATE_DIR, 'library.json')
 const LYRICS = join(STATE_DIR, 'lyrics.json')
 
-const BASE = 'https://lrclib.net'
-// Etiquette: LRCLIB asks for a descriptive User-Agent so the maintainer can
-// identify heavy clients (mirrors the reference client lrcget's shape).
-const UA = 'JakeTunes/1.0 (personal music library; +https://github.com/jaketunes)'
-const TIMEOUT_MS = 20000   // LRCLIB latency is variable; be patient before aborting
 const DELAY_MS = Number(process.env.LYRICS_DELAY_MS || 250)   // polite gap between calls
-const MISS_TTL_MS = 30 * 24 * 3600 * 1000                     // re-check a known miss after 30 days
 const log = (...a) => console.log(new Date().toISOString(), '[lyrics-fetch]', ...a)
 
 const argv = process.argv.slice(2)
@@ -58,97 +60,10 @@ const ONLY_IDS = (getArg('--ids') || '').split(',').map(s => s.trim()).filter(Bo
 const DRY = argv.includes('--dry')
 const STATS = argv.includes('--stats')
 const FORCE = argv.includes('--force')   // re-fetch stored misses regardless of TTL
-
-// ── Query normalization (boosts the precise-lookup hit rate; storage always
-// keys by track id and never depends on this, so over-cleaning only costs a
-// match, never data integrity). Strips feat credits + remaster/version tags. ──
-function cleanTitle(s) {
-  return String(s || '')
-    .replace(/\s*[([](feat\.?|ft\.?|featuring|with)\b[^)\]]*[)\]]/ig, '')
-    .replace(/\s*[([][^)\]]*\b(remaster(ed)?|mono|stereo|deluxe|anniversary|bonus|reissue)\b[^)\]]*[)\]]/ig, '')
-    .replace(/\s*-\s*(\d{4}\s+)?remaster(ed)?\b.*$/i, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim()
-}
-function cleanArtist(s) {
-  // Strip a trailing "feat./ft./featuring X" credit. The leading \s+ is
-  // LOAD-BEARING: with \s* (zero-width ok), "ft" matches INSIDE words like
-  // "Daft Punk" ("Da" + "ft Punk") → mangles the artist to "Da". Requiring
-  // real whitespace before the token makes it only match a standalone word.
-  return String(s || '').replace(/\s+(?:feat|ft|featuring)\.?\s+.*$/i, '').trim()
-}
-const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
-
-// GET with a timeout + transient-retry. LRCLIB latency is variable and it can
-// briefly 5xx/stall under load; retry aborts/network-errors/5xx up to 3 attempts
-// with backoff so a slow window doesn't turn a real track into a missed fetch.
-async function httpGet(url, attempt = 1) {
-  const ctrl = new AbortController()
-  const to = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
-  try {
-    const r = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: ctrl.signal })
-    if (r.status >= 500 && attempt < 3) { await sleep(1000 * attempt); return httpGet(url, attempt + 1) }
-    return r
-  } catch (e) {
-    if (attempt < 3) { await sleep(1500 * attempt); return httpGet(url, attempt + 1) }
-    throw e
-  } finally { clearTimeout(to) }
-}
-
-// Precise lookup: single object on 200, { notFound } on 404, throw on transient.
-// LRCLIB can return a COLD-CACHE 404 on a track's first-ever lookup and then
-// serve it 200 on the next call — so a bare 404 is not trustworthy. Retry once
-// after a beat before believing "not found". Only genuine misses pay this cost.
-async function lrclibGet(title, artist, durSec) {
-  const p = new URLSearchParams({ track_name: title, artist_name: artist })
-  if (durSec >= 1 && durSec <= 3600) p.set('duration', String(durSec))
-  const url = `${BASE}/api/get?${p.toString()}`
-  let r = await httpGet(url)
-  if (r.status === 200) return { hit: await r.json() }
-  if (r.status === 404) {
-    await sleep(1200)
-    r = await httpGet(url)
-    if (r.status === 200) return { hit: await r.json() }
-    if (r.status === 404) return { notFound: true }
-  }
-  throw new Error(`get ${r.status}`)
-}
-
-// Fallback: array (may be []); /api/search has NO duration filter so we re-rank.
-async function lrclibSearch(title, artist) {
-  const p = new URLSearchParams({ track_name: title, artist_name: artist })
-  const r = await httpGet(`${BASE}/api/search?${p.toString()}`)
-  if (r.status !== 200) return []
-  const arr = await r.json()
-  return Array.isArray(arr) ? arr : []
-}
-
-// Pick the search candidate whose duration is within ±2s AND whose artist
-// matches — never trust result[0] blindly (LRCLIB has junk/mislabeled rows).
-function pickCandidate(arr, durSec, artist) {
-  const na = norm(artist)
-  let best = null, bestScore = Infinity
-  for (const c of arr) {
-    const cd = Number(c.duration) || 0
-    if (durSec && Math.abs(cd - durSec) > 2) continue
-    const naC = norm(c.artistName)
-    if (!(na && naC && (naC.includes(na) || na.includes(naC)))) continue
-    const score = durSec ? Math.abs(cd - durSec) : 0
-    if (score < bestScore) { bestScore = score; best = c }
-  }
-  return best
-}
-
-// Turn an LRCLIB object into a grounded store record (or null if it has no
-// usable lyrics). Instrumental hits are a definitive "no lyrics".
-function recordFrom(obj) {
-  if (obj && obj.instrumental) return { instrumental: true, source: 'lrclib', lrclibId: obj.id, fetchedAt: Date.now() }
-  const plain = typeof obj?.plainLyrics === 'string' && obj.plainLyrics.trim() ? obj.plainLyrics : undefined
-  const synced = typeof obj?.syncedLyrics === 'string' && obj.syncedLyrics.trim() ? obj.syncedLyrics : undefined
-  if (!plain && !synced) return null
-  return { plain, synced, source: 'lrclib', lrclibId: obj.id, fetchedAt: Date.now() }
-}
+// LRCLIB get/search + the gated lyrics.ovh fallback live in lyrics-sources.mjs
+// (injectable fetch → unit-tested without the network).
+const fetcher = createLyricsFetcher({ log })
 
 // ── main ──
 const libRaw = JSON.parse(readFileSync(LIB, 'utf8'))
@@ -162,21 +77,21 @@ const now = Date.now()
 function needsFetch(id) {
   const rec = store[String(id)]
   if (!rec) return true
-  if (rec.miss) return FORCE || (now - (rec.fetchedAt || 0)) > MISS_TTL_MS   // re-check stale misses
+  if (rec.miss) return FORCE || (now - (rec.fetchedAt || 0)) > missTtlMs(rec)   // re-check stale misses (30 d; 180 d if likely instrumental)
   return false                                                      // hit / instrumental → done
 }
 
 if (STATS) {
-  let hit = 0, instr = 0, miss = 0, unfetched = 0
+  let hit = 0, ovh = 0, instr = 0, miss = 0, likely = 0, unfetched = 0
   for (const t of tracks) {
     const rec = store[String(t.id)]
     if (!rec) unfetched++
     else if (rec.instrumental) instr++
-    else if (rec.miss) miss++
-    else hit++
+    else if (rec.miss) { miss++; if (rec.likelyInstrumental) likely++ }
+    else { hit++; if (rec.source === 'lyrics.ovh') ovh++ }
   }
   const total = tracks.length
-  log(`STATS over ${total} tracks: lyrics=${hit} (${(100 * hit / total).toFixed(1)}%)  instrumental=${instr}  miss=${miss}  unfetched=${unfetched}`)
+  log(`STATS over ${total} tracks: lyrics=${hit} (${(100 * hit / total).toFixed(1)}%, ${ovh} from lyrics.ovh)  instrumental=${instr}  miss=${miss} (${likely} likely-instrumental)  unfetched=${unfetched}`)
   process.exit(0)
 }
 
@@ -208,6 +123,7 @@ function persistLedger() {
 }
 
 let processed = 0, hits = 0, instrumentals = 0, misses = 0, skipped = 0, errors = 0
+let ovhHits = 0, ovhErrors = 0, likelyInstr = 0
 log(`start: ${tracks.length} candidate tracks, store has ${Object.keys(store).length} entries${DRY ? ' (DRY — no writes)' : ''}`)
 
 for (const t of tracks) {
@@ -215,33 +131,30 @@ for (const t of tracks) {
   const id = String(t.id)
   if (!needsFetch(id)) { skipped++; continue }
 
-  const title = cleanTitle(t.title), artist = cleanArtist(t.artist)
-  const durSec = Math.round((Number(t.duration) || 0) / 1000)
   processed++
   try {
-    let rec = null
-    const g = await lrclibGet(title, artist, durSec)
-    if (g.hit) {
-      rec = recordFrom(g.hit)
-    } else if (g.notFound) {
-      const cand = pickCandidate(await lrclibSearch(title, artist), durSec, artist)
-      if (cand) rec = recordFrom(cand)
-    }
-    if (rec) {
+    const { rec, via, ovhError } = await fetcher.lookup(t)
+    store[id] = rec
+    if (via === 'lrclib') {
       if (rec.instrumental) instrumentals++; else hits++
-      store[id] = rec
+      recordLedger(id, 'done')
+    } else if (via === 'lyrics.ovh') {
+      ovhHits++
+      log(`ovh hit id=${id} "${t.artist} — ${t.title}" (${rec.plain.length} chars)`)   // unverified-duration source: keep it auditable
       recordLedger(id, 'done')
     } else {
-      store[id] = { miss: true, source: 'lrclib', fetchedAt: Date.now() }
       misses++
+      if (ovhError) ovhErrors++
+      if (rec.likelyInstrumental) likelyInstr++
       recordLedger(id, 'attempted')
     }
   } catch (e) {
     errors++   // transient (timeout / 5xx) — do NOT store a miss; retry next run
     log(`err id=${id} "${t.artist} — ${t.title}": ${e.message || e}`)
   }
-  if (processed % 25 === 0) { if (!DRY) persist(); log(`… ${processed} (lyrics=${hits} instr=${instrumentals} miss=${misses} err=${errors})`) }
+  if (processed % 25 === 0) { if (!DRY) persist(); log(`… ${processed} (lrclib=${hits} ovh=${ovhHits} instr=${instrumentals} miss=${misses} err=${errors})`) }
   await sleep(DELAY_MS)
 }
 if (!DRY) persist()
-log(`DONE processed=${processed} lyrics=${hits} instrumentals=${instrumentals} misses=${misses} skipped=${skipped} errors=${errors} | store=${Object.keys(store).length}`)
+log(`likely-instrumental misses marked this run: ${likelyInstr} (retry after 180 days, never shown as Instrumental)`)
+log(`DONE processed=${processed} lyrics=${hits + ovhHits} (lrclib=${hits} lyrics.ovh=${ovhHits}) instrumentals=${instrumentals} misses=${misses} (ovh errors=${ovhErrors}) skipped=${skipped} errors=${errors} | store=${Object.keys(store).length}`)
