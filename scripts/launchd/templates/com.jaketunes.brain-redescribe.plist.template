@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 2026-10-27 template — com.jaketunes.brain-redescribe (homemini only).
+     The staged gemma4:12b re-describe (scripts/brain-redescribe.mjs): every
+     night 02:30-07:00, after the 02:00 trainer, it stages descriptors in
+     brain-descriptors.next.json and never writes the live store. 12b pushes
+     homemini's swap to ~14 GB, so it runs only while nobody is up; it yields
+     to music streams and to critical memory pressure. Once everything is
+     staged it is a no-op each night (0 candidates) apart from the new adds the
+     02:00 trainer describes with its own model. Unload this agent after
+     --promote-next has run and the trainer's GEMMA_MODEL is switched.
+     Path tokens are rendered by install-launchagents.sh. -->
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.jaketunes.brain-redescribe</string>
+  <key>ProgramArguments</key><array>
+    <string>__NODE__</string>
+    <string>__REPO__/scripts/brain-trainer.mjs</string>
+    <string>--redescribe-all</string>
+    <string>--until</string>
+    <string>07:00</string>
+  </array>
+  <key>EnvironmentVariables</key><dict>
+    <key>GEMMA_MODEL</key><string>gemma4:12b</string>
+    <key>GEMMA_URL</key><string>http://127.0.0.1:11434/api/generate</string>
+    <key>JT_STATE_DIR</key><string>/Volumes/JakeShared/JakeTunesState</string>
+    <key>PATH</key><string>__HOME__/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>WorkingDirectory</key><string>__REPO__</string>
+  <key>StartCalendarInterval</key><dict>
+    <key>Hour</key><integer>2</integer>
+    <key>Minute</key><integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/jaketunes-brain-redescribe.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/jaketunes-brain-redescribe.log</string>
+</dict></plist>
