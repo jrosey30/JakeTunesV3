@@ -100,8 +100,20 @@ MOUNT="${JT_MOUNT:-/Volumes/JakeShared}"
 # /Volumes/JakeShared-1, and chasing the canonical path forever meant a
 # pill error on every save. If the share is mounted under any name, use
 # that mount; the canonical path is a preference, not a requirement.
+# Tools the mount ladder runs. Absolute paths, because the app's child PATH
+# is thin. JT_MOUNT_TOOLS_FROM_PATH=1 (tests only) resolves them from PATH
+# instead, so a test can shim mount/ping/smbutil/osascript/lsof/diskutil
+# without touching a real mount.
+if [ "${JT_MOUNT_TOOLS_FROM_PATH:-0}" = "1" ]; then
+  MOUNT_BIN=mount PING_BIN=ping SMBUTIL_BIN=smbutil OSASCRIPT_BIN=osascript LSOF_BIN=lsof DISKUTIL_BIN=diskutil
+else
+  MOUNT_BIN=/sbin/mount PING_BIN=/sbin/ping SMBUTIL_BIN=/usr/bin/smbutil OSASCRIPT_BIN=/usr/bin/osascript
+  LSOF_BIN=/usr/sbin/lsof DISKUTIL_BIN=/usr/sbin/diskutil
+fi
+NAS_LAN_IP="192.168.1.223"
+NAS_TAILNET_IP="100.117.19.93"
 resolve_jakeshared() {
-  /sbin/mount | /usr/bin/sed -n 's|^//[^ ]*/JakeShared on \([^ ]*\) (smbfs.*|\1|p' | /usr/bin/head -1
+  "$MOUNT_BIN" | /usr/bin/sed -n 's|^//[^ ]*/JakeShared on \([^ ]*\) (smbfs.*|\1|p' | /usr/bin/head -1
 }
 LIVE=$(resolve_jakeshared)
 if [ -n "$LIVE" ] && [ -d "$LIVE/JakeTunesLibrary" ]; then
@@ -122,35 +134,133 @@ JT_DATA_REMOTE='Library/Application Support/JakeTunes'
 # often, and a drop between the startup check and the music rsync used to
 # kill the whole sync with the "sync script exited 2" banner.
 is_ds225() {
-  /usr/bin/perl -e 'alarm 12; exec @ARGV' /usr/bin/smbutil view -N "//jakerosenbaum@$1" 2>/dev/null | grep -q JakeShared
+  /usr/bin/perl -e 'alarm 12; exec @ARGV' "$SMBUTIL_BIN" view -N "//jakerosenbaum@$1" 2>/dev/null | grep -q JakeShared
 }
-ensure_jakeshared() {
-  # Mounted anywhere (canonical OR suffix-drifted) = mounted. Adopt it.
-  local live
-  live=$(resolve_jakeshared)
-  if [ -n "$live" ] && [ -d "$live/JakeTunesLibrary" ]; then MOUNT="$live"; return 0; fi
-  [ -d "$MOUNT/JakeTunesLibrary" ] && return 0
-  MHOST=""
-  if /sbin/ping -c1 -W1000 ds225.local >/dev/null 2>&1 && is_ds225 ds225.local; then
-    MHOST="ds225.local"
-  elif is_ds225 192.168.1.223; then
-    MHOST="192.168.1.223"
-  elif is_ds225 100.117.19.93; then
-    MHOST="100.117.19.93"
-  fi
-  if [ -z "$MHOST" ]; then
-    log "NAS unreachable on every path (mDNS/LAN/tailnet) — no mount attempt (no dialog)"
+# The server a JakeShared mountpoint came from, read from `mount`
+# ("//user@HOST/JakeShared on MP (smbfs, …" → HOST). Exact mountpoint match.
+# ⚠️ TWIN: src/main/sync-mode.ts mountHostFor() + isTailnetHost() — the app's
+# reading of the same mount table; keep the tailnet range identical.
+jakeshared_server() {
+  "$MOUNT_BIN" | /usr/bin/awk -v mp="$1" '$2 == "on" && $3 == mp && $1 ~ /\/JakeShared$/ {
+    s = $1; sub(/^\/\//, "", s); sub(/\/JakeShared$/, "", s); sub(/^.*@/, "", s); print s; exit }'
+}
+# Tailscale CGNAT space 100.64.0.0/10 (same range as TAILNET_HOST_RE).
+is_tailnet_host() {
+  [[ "$1" =~ ^100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\. ]]
+}
+# The LAN host that proves it is the DS225 (mDNS, then the LAN IP), or
+# nothing. Each candidate is ping-gated (1 s) so an away run on a foreign
+# network pays ~2 s, not two 12 s smbutil alarms.
+lan_ds225_host() {
+  if "$PING_BIN" -c1 -W1000 ds225.local >/dev/null 2>&1 && is_ds225 ds225.local; then
+    echo ds225.local
+  elif "$PING_BIN" -c1 -W1000 "$NAS_LAN_IP" >/dev/null 2>&1 && is_ds225 "$NAS_LAN_IP"; then
+    echo "$NAS_LAN_IP"
+  else
     return 1
   fi
-  log "mounting smb://jakerosenbaum@$MHOST/JakeShared …"
+}
+# What holds files open on mountpoint $1 (lsof, alarm-capped at 20 s).
+# Prints the holders and returns 0 when busy; returns 1 only when lsof
+# PROVED nothing but itself is open there. A timeout or an lsof error counts
+# as busy — unknown is not safe to unmount under.
+mount_holders() {
+  local out rc rows
+  out=$(/usr/bin/perl -e 'alarm 20; exec @ARGV' "$LSOF_BIN" -n "$1" 2>/dev/null); rc=$?
+  case $rc in
+    0|1) ;;
+    142) echo "lsof timed out after 20 s"; return 0 ;;
+    *) echo "lsof exit $rc"; return 0 ;;
+  esac
+  rows=$(printf '%s\n' "$out" | /usr/bin/awk 'NF && $1 != "COMMAND" && $1 != "lsof" { print $1 "(" $2 ")" }' | /usr/bin/sort -u | /usr/bin/head -5 | /usr/bin/tr '\n' ' ')
+  [ -n "$rows" ] || return 1
+  echo "$rows"
+  return 0
+}
+# 2026-10-27: prefer the LAN path over a tailnet mount once home again.
+# ensure_jakeshared adopts ANY live mount, so a mount made over Tailscale while
+# Jake was away stayed in use at home forever — and the tailnet SMB session
+# drops on every wake from sleep (28 of 33 NAS-breaker trips on 10/26-27 were
+# within a minute of a wake; the same shape as the torn-rename incident).
+# Switch tailnet → LAN only when ALL hold: the live mount's server is a
+# tailnet address, the DS225 proves itself on the LAN, this run holds the sync lock,
+# and nothing has files open on the mount. Unmount is `diskutil unmount`,
+# never force; if it fails, keep the tailnet mount. Never LAN → tailnet.
+# Returns 0 ONLY when the tailnet mount was released and the caller must
+# mount $LAN_SWITCH_HOST; 1 = keep the current mount. Decides once per run.
+LAN_SWITCH_CHECKED=0
+LAN_SWITCH_HOST=""
+prefer_lan_mount() {
+  local mp="$1" server host holders
+  [ "$LAN_SWITCH_CHECKED" -eq 1 ] && return 1
+  LAN_SWITCH_CHECKED=1
+  server=$(jakeshared_server "$mp")
+  is_tailnet_host "$server" || return 1   # LAN (or unknown) mount: untouched
+  if ! host=$(lan_ds225_host); then
+    log "NAS: $mp is the tailnet mount ($server) and the DS225 is not on the LAN — away, keeping it"
+    return 1
+  fi
+  if [ "$(cat "$LOCK.pid" 2>/dev/null)" != "$$" ]; then
+    log "NAS: DS225 is on the LAN ($host) but $mp is the tailnet mount and this run does not hold the sync lock — keeping it"
+    return 1
+  fi
+  if holders=$(mount_holders "$mp"); then
+    log "NAS: DS225 is on the LAN ($host) but the tailnet mount $mp is busy (${holders% }) — keeping it this run"
+    return 1
+  fi
+  if ! /usr/bin/perl -e 'alarm 30; exec @ARGV' "$DISKUTIL_BIN" unmount "$mp" >/dev/null 2>&1; then
+    if [ -n "$(jakeshared_server "$mp")" ]; then
+      log "NAS: DS225 is on the LAN ($host) but unmounting the tailnet mount $mp failed — keeping it"
+      return 1
+    fi
+  fi
+  log "NAS: released the tailnet mount $mp (DS225 on the LAN at $host, nothing open) — mounting the LAN path"
+  LAN_SWITCH_HOST="$host"
+  return 0
+}
+# osascript `mount volume` (keychain, no dialog), then wait up to 10 s for it.
+mount_jakeshared_from() {
+  local live
   /bin/rmdir "$MOUNT" 2>/dev/null || true   # stale dir would suffix-drift the mount
-  /usr/bin/perl -e 'alarm 45; exec @ARGV' /usr/bin/osascript -e "mount volume \"smb://jakerosenbaum@$MHOST/JakeShared\"" >> "$LOG" 2>&1 || true
+  /usr/bin/perl -e 'alarm 45; exec @ARGV' "$OSASCRIPT_BIN" -e "mount volume \"smb://jakerosenbaum@$1/JakeShared\"" >> "$LOG" 2>&1 || true
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     live=$(resolve_jakeshared)
     if [ -n "$live" ] && [ -d "$live/JakeTunesLibrary" ]; then MOUNT="$live"; return 0; fi
     sleep 1
   done
   return 1
+}
+ensure_jakeshared() {
+  # Mounted anywhere (canonical OR suffix-drifted) = mounted. Adopt it —
+  # unless it is the tailnet mount and the LAN path is home (prefer_lan_mount).
+  local live
+  live=$(resolve_jakeshared)
+  if [ -n "$live" ] && [ -d "$live/JakeTunesLibrary" ]; then
+    MOUNT="$live"
+    prefer_lan_mount "$live" || return 0
+    log "mounting smb://jakerosenbaum@$LAN_SWITCH_HOST/JakeShared …"
+    if mount_jakeshared_from "$LAN_SWITCH_HOST"; then
+      log "NAS: now on the LAN mount $MOUNT ($LAN_SWITCH_HOST)"
+      return 0
+    fi
+    log "NAS: the LAN mount from $LAN_SWITCH_HOST did not come up — falling back to the mount ladder"
+  elif [ -d "$MOUNT/JakeTunesLibrary" ]; then
+    return 0
+  fi
+  MHOST=""
+  if "$PING_BIN" -c1 -W1000 ds225.local >/dev/null 2>&1 && is_ds225 ds225.local; then
+    MHOST="ds225.local"
+  elif is_ds225 "$NAS_LAN_IP"; then
+    MHOST="$NAS_LAN_IP"
+  elif is_ds225 "$NAS_TAILNET_IP"; then
+    MHOST="$NAS_TAILNET_IP"
+  fi
+  if [ -z "$MHOST" ]; then
+    log "NAS unreachable on every path (mDNS/LAN/tailnet) — no mount attempt (no dialog)"
+    return 1
+  fi
+  log "mounting smb://jakerosenbaum@$MHOST/JakeShared …"
+  mount_jakeshared_from "$MHOST"
 }
 # 4.5.0-90 Phase 2 — when the app is in NAS-source mode, the freshest
 # copies of the SYNC_FILES live at JT_STATE_NAS, NOT in JT_DATA_LOCAL
