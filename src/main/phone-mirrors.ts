@@ -44,6 +44,25 @@ export interface PhoneMirrorDeps {
   merge?: Partial<Record<string, (body: string) => Promise<void>>>
 }
 
+/**
+ * Mirrors that travel to homemini over their own routes, never by NAS copy
+ * (2026-10-28). Stars: /api/stars/merge (star-hub-push.ts) or the sync
+ * script's staged merge. Plays: the sync script's push; V3 never writes the
+ * file at all. Every mirror refresh rewrites the local copy a couple of
+ * minutes after homemini wrote the NAS one, so an mtime check called them
+ * "ORPHANED LOCAL EDITS" every 10 minutes with byte-identical content, and
+ * auto-backup then copied the mirror back over homemini's newer file.
+ */
+export const HUB_ROUTED_MIRRORS = ['mobile-stars.json', 'mobile-plays.json'] as const
+
+/** Boot-time fence: a desktop NAS push list that names one of these is a boot error. */
+export function assertNoMirrorNasPush(files: readonly string[], label: string): void {
+  const hits = files.filter((f) => (HUB_ROUTED_MIRRORS as readonly string[]).includes(f))
+  if (hits.length > 0) {
+    throw new Error(`[phone-mirrors] ${label} must not push ${hits.join(', ')} to the NAS: they reach homemini by their own routes (see HUB_ROUTED_MIRRORS)`)
+  }
+}
+
 /** Source mtime last merged, per local path (process lifetime; the first tick always merges). */
 const mergedSourceMtime = new Map<string, number>()
 

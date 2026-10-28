@@ -47,7 +47,7 @@ import {
   phonePlaylistSidecarsNeverPushFromDesktop,
   assertNoDesktopBluntPush,
 } from './sidecar-contracts.ts'
-import { fetchHeadersWithin } from './fetch-headers'; import { withBodyInactivityTimeout } from './stream-body-timeout.ts'; import { spoolAwareServe, spoolPaceFor, spoolLimitsFor, SPOOL_DIR_NAME } from './stream-spool.ts'; import { startOvernightPreload } from './overnight-preload.ts'; import { refreshPhoneMirrors, ensureMobileImportAudio } from './phone-mirrors.ts'; import { createPhonePlaylistSync, PHONE_PLAYLIST_FILES, PHONE_PLAYLIST_LEDGERS } from './phone-playlist-sync.ts'; import { safeIpcError } from './safe-ipc-error.ts'
+import { fetchHeadersWithin } from './fetch-headers'; import { withBodyInactivityTimeout } from './stream-body-timeout.ts'; import { spoolAwareServe, spoolPaceFor, spoolLimitsFor, SPOOL_DIR_NAME } from './stream-spool.ts'; import { startOvernightPreload } from './overnight-preload.ts'; import { refreshPhoneMirrors, ensureMobileImportAudio, assertNoMirrorNasPush } from './phone-mirrors.ts'; import { createPhonePlaylistSync, PHONE_PLAYLIST_FILES, PHONE_PLAYLIST_LEDGERS } from './phone-playlist-sync.ts'; import { safeIpcError } from './safe-ipc-error.ts'
 import { computeDeletedPaths } from './library-deletions'; import { createPhoneImportGuard } from './phone-import-guard.ts'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
 import { createPlayCache } from './play-cache.ts'
@@ -3827,8 +3827,9 @@ const STATE_FILE_NAMES = [
   'discovery-feedback.json',
   'friends.json',
   'playlists.json',
-  'mobile-stars.json',
-  'mobile-plays.json',
+  // mobile-stars.json + mobile-plays.json ABSENT on purpose (2026-10-28): hub-routed
+  // mirrors (phone-mirrors.ts HUB_ROUTED_MIRRORS) that always looked "local newer" —
+  // a false ORPHANED warning, and auto-backup copied them over homemini's file.
   // Phone playlist sidecars (sidecars.phonePlaylistSidecarsNeverPushFromDesktop
   // in @jaketunes/contracts) are deliberately ABSENT (2026-08-12): same
   // single-writer contract as recommendations.json. The iOS backend on homemini
@@ -3856,6 +3857,7 @@ const STATE_FILE_NAMES = [
   'release-kinds.json',
 ] as const
 assertNoDesktopBluntPush(STATE_FILE_NAMES, 'STATE_FILE_NAMES')
+assertNoMirrorNasPush(STATE_FILE_NAMES, 'STATE_FILE_NAMES')
 assertNoSyncedPicksPush([...STATE_FILE_NAMES, ...PHONE_AUTHORED_FILES], 'STATE_FILE_NAMES / PHONE_AUTHORED_FILES')   // island-albums/favorite-artists: homemini is the single writer
 interface StateConflict {
   file: string
