@@ -66,7 +66,11 @@ function fakeFetch(hub: Hub): FetchLike {
   }
 }
 
-const LEGACY_TOUR = [{ artist: 'Geese', date: '2026-12-11T01:00:00.000Z', venue: 'Brooklyn Paramount', city: 'Brooklyn, NY', url: 'https://bit/1' }]
+const LEGACY_TOUR = [
+  { artist: 'Geese', date: '2026-12-11T01:00:00.000Z', venue: 'Brooklyn Paramount', city: 'Brooklyn, NY', url: 'https://bit/1' },
+  // Bandsintown reaches 18 mi into New Jersey; the rows are New York City only.
+  { artist: 'Geese', date: '2026-11-06T00:00:00.000Z', venue: 'The Stone Pony', city: 'Asbury Park, NJ', url: 'https://bit/2' },
+]
 const LEGACY_VENUES = [{ artist: 'Chat Pile', date: '2026-11-10', venue: 'Brooklyn Steel', venueKey: 'brooklyn-steel', city: 'Brooklyn, NY', url: 'https://v/1', known: false }]
 
 describe('concerts client — the fallback chain', () => {
@@ -100,7 +104,7 @@ describe('concerts client — the fallback chain', () => {
     assert.deepEqual(hub.calls.map((c) => c.url).sort(), ['http://homemini:3000/api/concerts', 'http://homemini:3000/api/concerts/discover'])
     assert.equal(s.source, 'homemini')
     assert.equal(s.reachable, true)
-    assert.deepEqual(names(s), ['Thundercat', 'After', 'Jalen Ngonda'], 'rank order, not date order')
+    assert.deepEqual(names(s), ['After', 'Thundercat', 'Jalen Ngonda'], 'date order, not rank order (2026-10-28)')
     assert.deepEqual(s.discover.map((i) => i.name), ['Friko'])
     assert.equal(s.home, 'Williamsburg')
     const file = JSON.parse(await readFile(join(dir, CONCERTS_CACHE_FILE), 'utf-8'))
@@ -117,7 +121,7 @@ describe('concerts client — the fallback chain', () => {
     const s = await c.refresh()
     assert.deepEqual(hub.calls.slice(2).map((x) => x.ifNoneMatch).sort(), ['W/"v1"', 'W/"v1"-d'])
     assert.equal(s.source, 'homemini')
-    assert.deepEqual(names(s), ['Thundercat', 'After', 'Jalen Ngonda'])
+    assert.deepEqual(names(s), ['After', 'Thundercat', 'Jalen Ngonda'])
     const file = JSON.parse(await readFile(join(dir, CONCERTS_CACHE_FILE), 'utf-8'))
     assert.equal(file.confirmedAt, NOW + 30 * 60_000)
   })
@@ -132,7 +136,7 @@ describe('concerts client — the fallback chain', () => {
     const s = await c.refresh()
     assert.equal(s.source, 'cache')
     assert.equal(s.reachable, false)
-    assert.deepEqual(names(s), ['Thundercat', 'Jalen Ngonda'], "Oct 21's show has passed; the rest keep their rank")
+    assert.deepEqual(names(s), ['Thundercat', 'Jalen Ngonda'], "Oct 21's show has passed; the rest stay in date order")
     assert.deepEqual(s.discover.map((i) => i.name), ['Friko'])
     assert.equal(s.fetchedAt, NOW)
     assert.equal(legacyCalls, 0)
@@ -144,8 +148,8 @@ describe('concerts client — the fallback chain', () => {
     assert.equal((await c.read()).source, 'none', 'read alone never touches the network')
     const s = await c.refresh()
     assert.equal(s.source, 'fallback')
-    assert.deepEqual(names(s), ['Geese', 'Chat Pile'])
-    assert.deepEqual(s.items.map((i) => i.reason), ['In your library', 'At one of your rooms'])
+    assert.deepEqual(names(s), ['Chat Pile', 'Geese'], 'by date; the Asbury Park date is not New York City')
+    assert.deepEqual(s.items.map((i) => i.reason), ['At one of your rooms', 'In your library'])
     assert.deepEqual(s.discover, [])
     assert.equal(legacyCalls, 1)
     await c.refresh()
@@ -161,7 +165,7 @@ describe('concerts client — the fallback chain', () => {
     clock = NOW + MAX_CACHE_AGE_MS + 60_000           // Oct 26: Thundercat and After have passed
     const s = await make().refresh()
     assert.equal(s.source, 'fallback')
-    assert.deepEqual(names(s), ['Geese', 'Chat Pile'])
+    assert.deepEqual(names(s), ['Chat Pile', 'Geese'], 'by date; the Asbury Park date is not New York City')
 
     legacyItems = () => []
     const t = await make().refresh()
@@ -189,7 +193,7 @@ describe('concerts client — the fallback chain', () => {
       hub.mode = mode
       const s = await make().refresh()
       assert.equal(s.source, 'cache', mode)
-      assert.deepEqual(names(s), ['Thundercat', 'After', 'Jalen Ngonda'], mode)
+      assert.deepEqual(names(s), ['After', 'Thundercat', 'Jalen Ngonda'], mode)
       assert.equal(legacyCalls, 0, `${mode}: a fresh cache means no fallback`)
     }
     const file = JSON.parse(await readFile(join(dir, CONCERTS_CACHE_FILE), 'utf-8'))
@@ -204,11 +208,11 @@ describe('concerts client — the fallback chain', () => {
   it('/discover failing alone keeps the last "You\'d like this" and still counts as live', async () => {
     await make().refresh()
     hub.mode = 'discover-down'
-    hub.concerts = { ...CONCERTS, items: [CONCERTS.items[2], CONCERTS.items[0]] }   // the ranking moved
+    hub.concerts = { ...CONCERTS, items: [CONCERTS.items[2], CONCERTS.items[0]] }   // an older homemini, ranked
     hub.etag = 'W/"v2"'
     const s = await make().refresh()
     assert.equal(s.source, 'homemini')
-    assert.deepEqual(names(s), ['Jalen Ngonda', 'Thundercat'])
+    assert.deepEqual(names(s), ['Thundercat', 'Jalen Ngonda'], 'drawn by date whatever order the wire had')
     assert.deepEqual(s.discover.map((i) => i.name), ['Friko'])
   })
 
