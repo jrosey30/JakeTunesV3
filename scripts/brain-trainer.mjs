@@ -29,6 +29,7 @@ import { planMoodPrune } from './brain-prune.mjs'
 import { writeBrainStatus } from './brain-status.mjs'
 import { comparePurity, gateDecision, PURITY_MAX_REGRESSION } from './brain-purity.mjs'
 import { pickBatch } from './brain-batch.mjs'
+import { musicStreamActive, untilMs, redescribeCandidates, candidateDescriptors, promoteNext } from './brain-redescribe.mjs'
 import { baseText, moodText, tempoEnergy } from '../src/common/embedding-text.ts'   // Brief 181: the text twins' ONE source of truth (the app imports it too)
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -45,6 +46,7 @@ const LIB = join(STATE_DIR, 'library.json')
 const EMB = join(STATE_DIR, 'embeddings.bin')
 const MOOD = join(STATE_DIR, 'mood-index.bin')
 const DESC = join(STATE_DIR, 'brain-descriptors.json')
+const DESC_NEXT = join(STATE_DIR, 'brain-descriptors.next.json')   // staged re-describe (scripts/brain-redescribe.mjs)
 const LYRICS = join(STATE_DIR, 'lyrics.json')   // grounded LRCLIB lyrics (scripts/lyrics-fetch.mjs)
 const ENV = join(homedir(), 'JakeTunesV3', '.env')
 const GEMMA_URL = process.env.GEMMA_URL || 'http://homemini:11434/api/generate'
@@ -571,20 +573,31 @@ async function main() {
     return
   }
 
-  // Force re-describe with the CURRENT model (2026-08-23, Jake: "if the e4b
-  // wins upgrade the whole library overnight"). Every store entry records
-  // which model wrote it (`gm`); this mode regenerates any entry whose gm
-  // differs from GEMMA_MODEL — idempotent + resumable by construction, so a
-  // multi-night run just continues. YIELD RULE: this is the always-on
-  // serving box — before every call we check for active transcodes, and the
-  // moment one appears the model is UNLOADED (9.6GB back to the streams)
-  // until the coast is clear. Run --reembed-all afterwards to fold the new
-  // descriptors into the vectors (that mode has the backup+verify+restore).
+  // Re-describe with the CURRENT model (2026-08-23, Jake: "if the e4b wins
+  // upgrade the whole library overnight"; STAGED since 2026-10-27, see
+  // scripts/brain-redescribe.mjs). Writes brain-descriptors.next.json ONLY —
+  // the live store and both indexes are untouched until `--promote-next`,
+  // which runs after the brain-eval harness has scored a candidate mood index
+  // (`--mood-candidate`) against the baseline ("the models absolutely cannot
+  // be getting worse"). Resumable: every staged entry records its model (`gm`),
+  // so a multi-night run continues where it stopped. `--until HH:MM` ends the
+  // night's window. YIELD RULE: this is the always-on serving box — before
+  // every call we check for a MUSIC transcode (cable playout's video ffmpeg
+  // runs 24/7 and does not count) and for critical memory pressure; either
+  // one unloads the model until the coast is clear.
   if (process.argv.includes('--redescribe-all')) {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-    const playbackActive = () => {
-      try { return execFileSync('/usr/bin/pgrep', ['-x', 'ffmpeg']).toString().trim().length > 0 }
-      catch { return false }   // pgrep exits 1 when none — that IS idle
+    const ua = process.argv.indexOf('--until')
+    const stopAt = ua > 0 ? untilMs(process.argv[ua + 1]) : Infinity
+    const busy = () => {
+      let ps = ''
+      try { ps = execFileSync('/bin/ps', ['-axo', 'command']).toString() } catch { /* can't tell → not busy */ }
+      if (musicStreamActive(ps)) return 'music is streaming'
+      try {
+        const lvl = Number(execFileSync('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level']).toString().trim())
+        if (lvl >= 4) return 'memory pressure is critical'
+      } catch { /* not macOS / no sysctl → skip */ }
+      return null
     }
     const gemmaUnload = async () => {
       try {
@@ -592,36 +605,82 @@ async function main() {
           body: JSON.stringify({ model: GEMMA_MODEL, keep_alive: 0 }), signal: AbortSignal.timeout(15000) })
       } catch { /* best-effort */ }
     }
-    const persistDesc = () => { writeFileSync(DESC + '.tmp', JSON.stringify(desc)); renameSync(DESC + '.tmp', DESC) }
-    const cands = tracks.filter(t => (t.artist || t.title) && (desc[String(t.id)]?.gm !== GEMMA_MODEL))
-    log(`redescribe-all: ${cands.length} track(s) need ${GEMMA_MODEL} descriptors`)
-    let n = 0, fails = 0
+    const next = existsSync(DESC_NEXT) ? JSON.parse(readFileSync(DESC_NEXT, 'utf8')) : {}
+    const persistNext = () => { writeFileSync(DESC_NEXT + '.tmp', JSON.stringify(next)); renameSync(DESC_NEXT + '.tmp', DESC_NEXT) }
+    const cands = redescribeCandidates(tracks, desc, next, GEMMA_MODEL)
+    log(`redescribe-all: ${cands.length} track(s) need ${GEMMA_MODEL} descriptors (staged in ${DESC_NEXT}${Number.isFinite(stopAt) ? `, window ends ${new Date(stopAt).toLocaleTimeString()}` : ''})`)
+    let n = 0, fails = 0, stopped = false
     const t0 = Date.now()
     for (const t of cands) {
-      while (playbackActive()) {
-        log('playback active — yielding (model unloaded), rechecking in 5 min')
-        persistDesc()
+      if (Date.now() >= stopAt) { stopped = true; break }
+      let why
+      while ((why = busy())) {
+        log(`${why} — yielding (model unloaded), rechecking in 2 min`)
+        persistNext()
         await gemmaUnload()
-        await sleep(300000)
+        await sleep(120000)
+        if (Date.now() >= stopAt) break
       }
+      if (Date.now() >= stopAt) { stopped = true; break }
       try {
         const d = await gemmaDescribe(t)
-        if (d) {
-          const e = desc[String(t.id)] || {}
-          desc[String(t.id)] = { ...e, d, gm: GEMMA_MODEL }
-          n++
-        } else fails++
+        if (d) { next[String(t.id)] = { d, gm: GEMMA_MODEL, at: new Date().toISOString() }; n++ } else fails++
       } catch (err) { fails++; log(`describe failed id=${t.id}: ${err.message}`) }
       if ((n + fails) % 50 === 0) {
-        persistDesc()
+        persistNext()
         const rate = (Date.now() - t0) / Math.max(1, n + fails)
-        log(`redescribe-all: ${n + fails}/${cands.length} (${fails} fails) · ${Math.round(rate)}ms/track · ~${Math.round((cands.length - n - fails) * rate / 3600000 * 10) / 10}h left`)
+        log(`redescribe-all: ${n + fails}/${cands.length} (${fails} fails) · ${Math.round(rate)}ms/track · ~${Math.round((cands.length - n - fails) * rate / 3600000 * 10) / 10}h of work left`)
       }
     }
-    persistDesc()
+    persistNext()
     await gemmaUnload()
-    writeStatus({ ok: true, mode: 'redescribe-all', model: GEMMA_MODEL, rewritten: n, fails, of: cands.length })
-    log(`redescribe-all DONE: ${n}/${cands.length} rewritten with ${GEMMA_MODEL} (${fails} fails). Next: --reembed-all.`)
+    const left = cands.length - n - fails
+    writeStatus({ ok: true, mode: 'redescribe-all', model: GEMMA_MODEL, staged: n, fails, left, of: cands.length })
+    log(stopped
+      ? `redescribe-all: window over — ${n} staged tonight (${fails} fails), ${left} left for the next night.`
+      : `redescribe-all DONE: ${n}/${cands.length} staged with ${GEMMA_MODEL} (${fails} fails). Next: --mood-candidate, score it, then --promote-next.`)
+    return
+  }
+
+  // Candidate mood index for the eval gate: `--mood-candidate <file>` builds a
+  // full mood index from the live descriptors with the staged ones laid over
+  // them (`--use-current` = live only, the like-for-like baseline) and writes
+  // it to <file>. Never touches mood-index.bin. One OpenAI embed pass.
+  const mc = process.argv.indexOf('--mood-candidate')
+  if (mc > 0) {
+    const out = process.argv[mc + 1]
+    if (!out || out.startsWith('--')) fatal('--mood-candidate needs an output file')
+    if (out === MOOD) fatal('--mood-candidate must not write the live mood-index.bin')
+    const next = existsSync(DESC_NEXT) ? JSON.parse(readFileSync(DESC_NEXT, 'utf8')) : {}
+    const dmap = candidateDescriptors(desc, next, { useCurrent: process.argv.includes('--use-current') })
+    const entries = tracks.filter(t => t.artist || t.title)
+      .map(t => ({ id: t.id, text: moodText(t, dmap[String(t.id)]) })).filter(e => e.text)
+    log(`mood-candidate: embedding ${entries.length} tracks (${Object.keys(next).length} staged descriptors${process.argv.includes('--use-current') ? ' IGNORED, --use-current' : ''})`)
+    const vecs = await openaiEmbed(entries.map(e => e.text))
+    const cmap = new Map()
+    for (let i = 0; i < entries.length; i++) if (vecs[i]) cmap.set(Number(entries[i].id), vecs[i])
+    const written = writeEmb(out, cmap)
+    log(`mood-candidate: wrote ${written} vectors to ${out}`)
+    return
+  }
+
+  // Publish the staged descriptors (only after the candidate passed the eval):
+  // merge them into the live store (backup first) and re-embed their mood
+  // vectors through updateMoodIndex's backup + verify + restore.
+  if (process.argv.includes('--promote-next')) {
+    if (!existsSync(DESC_NEXT)) fatal(`--promote-next: nothing staged (${DESC_NEXT} missing)`)
+    const next = JSON.parse(readFileSync(DESC_NEXT, 'utf8'))
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    if (existsSync(DESC)) copyFileSync(DESC, `${DESC}.pre-promote-${stamp}.bak`)
+    const changed = promoteNext(desc, next)
+    writeFileSync(DESC + '.tmp', JSON.stringify(desc)); renameSync(DESC + '.tmp', DESC)
+    const byId = new Map(tracks.map(t => [String(t.id), t]))
+    const entries = changed.filter(id => byId.has(id))
+      .map(id => ({ id, text: moodText(byId.get(id), desc[id]?.d) })).filter(e => e.text)
+    const n = await updateMoodIndex(entries, 'promote-next')
+    renameSync(DESC_NEXT, `${DESC_NEXT}.promoted-${stamp}`)
+    writeStatus({ ok: true, mode: 'promote-next', promoted: changed.length, moodVectors: n })
+    log(`promote-next: ${changed.length} descriptor(s) promoted, ${n} mood vector(s) re-embedded. Backup: ${DESC}.pre-promote-${stamp}.bak`)
     return
   }
 
