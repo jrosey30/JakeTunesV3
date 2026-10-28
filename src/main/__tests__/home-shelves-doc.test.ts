@@ -82,3 +82,24 @@ test('local fallback: the same rulebook over this Mac\'s library + plays; no tas
   assert.deepEqual(d.recentlyAdded.map((a) => [a.album, a.trackIds]), [['New', [4]], ['Getting Killed', [1, 2, 3]]], 'an all-sub-minute album never shows')
   assert.equal(localHomeShelves({ ...base, score: null }).listenMore, null)
 })
+
+// On Repeat (2026-10-28): the playlist homemini publishes beside the row —
+// the same ranking ON_REPEAT_SIZE deep, whose head the row is.
+test('parse: On Repeat is listeningALot.playlist.trackIds; an older document falls back to the row', () => {
+  const ids = Array.from({ length: 40 }, (_, i) => i + 1)
+  const d = parseHomeShelves({
+    ...DOC,
+    listeningALot: { ...DOC.listeningALot, playlist: { id: 'jaketunes-on-repeat', name: 'On Repeat', trackIds: [...ids.map(String), 'bad', 3] } },
+  })
+  assert.deepEqual(d?.onRepeat, ids.slice(0, 30), 'distinct numeric ids, in order, capped at ON_REPEAT_SIZE')
+  assert.deepEqual(parseHomeShelves(DOC)?.onRepeat, [1], 'no playlist yet: the row\'s own songs')
+})
+
+test('local fallback: On Repeat runs the same ranking deeper; the row is its head', () => {
+  const NOW = Date.UTC(2026, 9, 20, 16)
+  const tracks: ShelfTrack[] = Array.from({ length: 14 }, (_, i) => ({ id: i + 1, title: `S${i}`, artist: `A${i}`, album: `B${i}`, duration: 200_000 }))
+  const plays = tracks.flatMap((t, i) => Array.from({ length: 20 - i }, (_, k) => ({ id: t.id, ts: NOW - (k + 1) * 60_000 })))
+  const d = localHomeShelves({ tracks, plays, now: NOW, rules: { hidden: new Set<string>(), rankable: (x: ShelfTrack) => isTop25Rankable(x) }, score: null, albumKeyOf: () => null })
+  assert.deepEqual(d.onRepeat, tracks.map((t) => t.id))
+  assert.deepEqual(d.listeningALot.map((h) => h.id), d.onRepeat.slice(0, 10))
+})

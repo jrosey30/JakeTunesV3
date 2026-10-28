@@ -16,7 +16,8 @@
  *    carries a reason built only from real stars, plays and genre; a song
  *    with no groundable reason is not shown.
  *  - listeningALot — most plays in the last LOT_WINDOW_DAYS (at least
- *    LOT_MIN_PLAYS), ties → the most recent play.
+ *    LOT_MIN_PLAYS), ties → the most recent play. The same ranking
+ *    ON_REPEAT_SIZE deep is the On Repeat playlist the row's "See all" opens.
  *  - recentlyAdded — newest albums by dateAdded (an album's newest song), one
  *    entry per album exactly as each app groups albums (the key is
  *    INJECTED), never a bucket of untitled loose songs.
@@ -75,6 +76,11 @@ export const RECENT_ALBUMS_MAX = 5
 export const RECENT_SONGS_QUEUE = 25
 export const LOT_WINDOW_DAYS = 30
 export const LOT_MIN_PLAYS = 2
+/** The On Repeat playlist (Jake, 2026-10-28: "on repeat needs its own
+ *  playlist and see all needs to take you to that playlist"): the same
+ *  listeningALot ranking, this many deep. The ON REPEAT row is its first
+ *  songs, so the row and the playlist can never disagree. */
+export const ON_REPEAT_SIZE = 30
 export const GEM_MAX_PLAYS = 2
 export const GEM_QUIET_DAYS = 90
 export const GEM_NEW_DAYS = 30

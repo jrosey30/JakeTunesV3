@@ -289,7 +289,7 @@ export interface ItunesSuggestion {
   /** Track length in seconds (from the album-tracks lookup). */
   durationSecs?: number
 }
-export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 'top-rated' | 'youd-star' | 'best-of-year' | 'musicman-picks' | 'megan-picks' | 'dj-hands-picks' | 'listen-more-weekly'
+export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 'top-rated' | 'youd-star' | 'best-of-year' | 'musicman-picks' | 'megan-picks' | 'dj-hands-picks' | 'listen-more-weekly' | 'on-repeat'
   // 2026-10-24 — one per month of this year's releases ('month-2026-09'; src/common/release-months.ts)
   | `month-${string}`
 
