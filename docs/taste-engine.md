@@ -94,6 +94,16 @@ Tests: `src/main/__tests__/taste-shared.test.ts`, `sync-script-taste-shared.test
 | finished vs skipped, 3 windows | 0.608 (0.595 / 0.649 / 0.580) | 0.501 (0.542 / 0.453 / 0.510) |
 | strip adds vs passes (frozen 56 d ago) | 0.639 | 0.610 (strip's old stars/plays term: 0.558) |
 
+## Paired strip test + the shadow (2026-10-27)
+The strip gate is `strip_paired_check`: each kept add vs the songs shown and
+passed over in the same strip context (batch id, else playlist + UTC day),
+per-group agreement averaged over groups, 1,000-group bootstrap, >= 40 groups
+or 'insufficient data' — then the old pooled AUC (`tests.stripAdds`, still
+logged) keeps its veto so the gate is never looser. Candidate #12 from the
+taste lab (v5 + λ·pairwise taste model) runs every night as a SHADOW: its three
+tests + a favourites check go to `taste-shadow.jsonl` and `tests.shadow`. It is
+never published and never promotes (`JT_TE_SHADOW=0` turns it off).
+
 ## Ready for "Discover Weekly from my library" (not built)
 taste-state.json carries per-song flags: underplayed favorite, forgotten
 (starred/5+ plays, silent 180 d — fills in as play dates accumulate; history
@@ -101,7 +111,7 @@ starts 2026-05-25), overlooked album track, never played, matches recent sound.
 
 ## Files
 `~/Library/Application Support/JakeTunes/taste-engine/` on homemini:
-`taste-scorecard.json` (latest), `taste-journal.jsonl` (history),
+`taste-scorecard.json` (latest), `taste-journal.jsonl` (history), `taste-shadow.jsonl` (the shadow, one line a night),
 `taste-engine-status.json` (staleness). Log: `~/Library/Logs/jaketunes-taste-engine.log`.
 Tests: `python3 scripts/tests/test_taste_engine.py`, `src/main/__tests__/taste-state.test.ts`,
 JakeTunesMobile `backend/src/util/__tests__/tasteState.test.ts` + `backend/src/routes/__tests__/tasteState.test.ts`.

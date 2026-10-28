@@ -47,7 +47,8 @@ THE EXERCISE, EVERY NIGHT
      and a 5th-percentile gain > 0); stay promoted while not worse; demote
      otherwise. "Insufficient data" is reported as such, never as a score.
      Two checks on other decisions can veto: the suggestion strip (did his
-     adds score higher than what he passed over?) and the quiz judge (do
+     adds score higher than what he passed over IN THE SAME STRIP — the
+     paired check, 2026-10-27; the old pooled AUC is still logged) and the quiz judge (do
      the models agree with his Top 1000 Quiz choices — heats, duels,
      this-or-that — scored on models that never saw an answer?). When the
      quiz judge is measured it outranks the strip: a reliable quiz win
@@ -745,19 +746,35 @@ def evaluate(lib, events, mood, now_ms, verdicts=()):
     return res
 
 
-def strip_check(lib, events, mood, now_ms, ledger_rows, members, verdicts=()):
-    """Secondary check on a different decision: of the playlist suggestions
-    shown in the last 56 days, did the songs Jake ADDED (and kept) score
-    higher than the ones he passed over? Challenger and v5 are both frozen
-    as of 56 days ago, so the adds were never seen."""
-    T = now_ms - 2 * HOLDOUT_DAYS * DAY_MS
+STRIP_FROZEN_DAYS = 2 * HOLDOUT_DAYS   # both strip checks grade models frozen this long ago
+
+
+def strip_frozen(lib, events, mood, now_ms, verdicts=()):
+    """Challenger and v5 frozen at T = now − 56 days, scored over the whole
+    library — shared by both strip checks. None when the challenger cannot
+    be fitted there."""
+    T = now_ms - STRIP_FROZEN_DAYS * DAY_MS
     model, _, _ = window_train(lib, events, mood, T, verdicts=verdicts)
     if model is None:
-        return {'verdict': 'insufficient data'}
+        return None
     snap = Snapshot(lib, events, T, verdicts)
     ids = sorted(lib)
-    ch = dict(zip(ids, predict(model, features(snap, ids, mood))))
-    v5 = dict(zip(ids, v5_scores(lib, ids, T, snap.star, snap.play_count, snap.last_played)))
+    return {'T': T, 'snap': snap,
+            'ch': dict(zip(ids, predict(model, features(snap, ids, mood)))),
+            'v5': dict(zip(ids, v5_scores(lib, ids, T, snap.star, snap.play_count, snap.last_played)))}
+
+
+def strip_check(lib, events, mood, now_ms, ledger_rows, members, verdicts=(), frozen=None):
+    """The OLD strip check, kept for comparison (2026-10-27: no longer the
+    gate — strip_paired_check is). Of the playlist suggestions shown in the
+    last 56 days, did the songs Jake ADDED (and kept) score higher than the
+    ones he passed over? One AUC over every impression, pooled across
+    playlists and days. Challenger and v5 are both frozen as of 56 days
+    ago, so the adds were never seen."""
+    frozen = frozen if frozen is not None else strip_frozen(lib, events, mood, now_ms, verdicts)
+    if frozen is None:
+        return {'verdict': 'insufficient data'}
+    T, ch, v5 = frozen['T'], frozen['ch'], frozen['v5']
     rows = []
     for r in ledger_rows:
         if r.get('surface') != 'strip' or r.get('verdict') not in ('accept', 'pass', 'refresh', 'reject'):
@@ -776,8 +793,104 @@ def strip_check(lib, events, mood, now_ms, ledger_rows, members, verdicts=()):
         return {'verdict': 'insufficient data', 'impressions': len(rows)}
     a = np.array(rows)
     w = np.ones(len(a))
+    if a[:, 2].sum() == len(a):
+        return {'verdict': 'insufficient data', 'impressions': len(rows), 'why': 'no passed-over suggestions'}
     return {'verdict': 'measured', 'impressions': len(rows), 'adds': int(a[:, 2].sum()),
             'challenger': round(wauc(a[:, 0], a[:, 2], w), 4), 'champion_v5': round(wauc(a[:, 1], a[:, 2], w), 4)}
+
+
+STRIP_MIN_GROUPS = 40        # fewer strip contexts with a kept add than this = insufficient data
+STRIP_BOOTSTRAP = 1000       # resamples of GROUPS (one strip context is one decision)
+STRIP_SEED = 19
+STRIP_SEEN = ('shown', 'accept', 'pass', 'refresh', 'reject')   # every verdict that means "it was on screen"
+
+
+def strip_groups(ledger_rows, members, lib, t_from, t_to=float('inf')):
+    """The suggestion strip as Jake saw it, one group per strip context in
+    [t_from, t_to). The context key:
+      - the shown batch id (ctx.batch, logged on every strip row since
+        2026-10-19 — one strip of five songs on one playlist), when the row
+        has one;
+      - otherwise (older rows, which never carry a batch) the playlist and
+        the UTC day.
+    In each group: KEPT = songs he added and that are still on the playlist
+    (an unknown playlist counts as kept, as in strip_check); PASSED = songs
+    shown in that group that he did not add. A song added and later removed
+    is neither — it is not a clean "yes" and was not passed over. Groups with
+    no kept add or no passed song carry no pair and are dropped.
+    Returns [(key, [kept tids], [passed tids])], sorted by key."""
+    g = defaultdict(lambda: (set(), set(), set()))   # kept, added (any), seen
+    for r in ledger_rows:
+        if not isinstance(r, dict) or r.get('surface') != 'strip' or r.get('verdict') not in STRIP_SEEN:
+            continue
+        ts = to_ms(r.get('ts'))
+        k = r.get('key') or {}
+        try:
+            tid = int(k.get('trackId'))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if ts is None or not (t_from <= ts < t_to) or tid not in lib:
+            continue
+        ctx = r.get('ctx')
+        batch = ctx.get('batch') if isinstance(ctx, dict) else None
+        key = ('batch', str(batch)) if batch else ('day', str(k.get('playlistId')), int(ts // DAY_MS))
+        kept, added, seen = g[key]
+        seen.add(tid)
+        if r['verdict'] == 'accept':
+            added.add(tid)
+            if str(tid) in members.get(k.get('playlistId'), {str(tid)}):
+                kept.add(tid)
+    out = []
+    for key in sorted(g, key=str):
+        kept, added, seen = g[key]
+        passed = seen - added
+        if kept and passed:
+            out.append((key, sorted(kept), sorted(passed)))
+    return out
+
+
+def paired_agreement(groups, a, b, seed=STRIP_SEED):
+    """Per-group pairwise agreement of two score maps with the strip: in each
+    group, the share of (kept add, passed song) pairs where the model scores
+    the kept add higher (a tie counts half); then the plain mean over groups
+    (every strip context weighs the same, however many songs it showed). The
+    bootstrap resamples whole GROUPS, STRIP_BOOTSTRAP times with a fixed
+    seed; the interval is the 5th / 95th percentile of (a − b)."""
+    ga, gb = np.zeros(len(groups)), np.zeros(len(groups))
+    pairs = 0
+    for i, (_, kept, passed) in enumerate(groups):
+        for s, out in ((a, ga), (b, gb)):
+            d = np.subtract.outer(np.array([s[t] for t in kept], float), np.array([s[t] for t in passed], float))
+            out[i] = float(np.mean((d > 0) + 0.5 * (d == 0)))
+        pairs += len(kept) * len(passed)
+    rnd = np.random.default_rng(seed)
+    idx = rnd.integers(0, len(groups), (STRIP_BOOTSTRAP, len(groups)))
+    gains = np.sort(ga[idx].mean(axis=1) - gb[idx].mean(axis=1))
+    return {'a': float(ga.mean()), 'b': float(gb.mean()), 'gain': float(ga.mean() - gb.mean()),
+            'lb': float(gains[int(0.05 * STRIP_BOOTSTRAP)]), 'ub': float(gains[int(0.95 * STRIP_BOOTSTRAP) - 1]),
+            'pairs': pairs, 'groups': len(groups)}
+
+
+def strip_paired_check(lib, events, mood, now_ms, ledger_rows, members, verdicts=(), frozen=None):
+    """The suggestion-strip GATE (2026-10-27, replaces the pooled AUC of
+    strip_check, which stays computed and logged for comparison): each kept
+    add is compared only with the songs shown and passed over in the SAME
+    strip context (strip_groups), so a model is not rewarded for ranking one
+    playlist's suggestions above another's. Same frozen-time rule: challenger
+    and v5 frozen 56 days ago, graded on strip contexts since then. Needs
+    STRIP_MIN_GROUPS groups with a kept add."""
+    frozen = frozen if frozen is not None else strip_frozen(lib, events, mood, now_ms, verdicts)
+    if frozen is None:
+        return {'verdict': 'insufficient data', 'why': 'no challenger can be fitted at the freeze'}
+    groups = strip_groups(ledger_rows, members, lib, frozen['T'])
+    if len(groups) < STRIP_MIN_GROUPS:
+        return {'verdict': 'insufficient data', 'groups': len(groups),
+                'why': f'{len(groups)} strip contexts with a kept add (need {STRIP_MIN_GROUPS})'}
+    r = paired_agreement(groups, frozen['ch'], frozen['v5'])
+    return {'verdict': 'measured', 'groups': r['groups'], 'adds': sum(len(k) for _, k, _ in groups), 'pairs': r['pairs'],
+            'challenger': round(r['a'], 4), 'champion_v5': round(r['b'], 4), 'gain': round(r['gain'], 4),
+            'gainLowerBound': round(r['lb'], 4), 'gainUpperBound': round(r['ub'], 4),
+            'frozenAt': datetime.fromtimestamp(frozen['T'] / 1000, tz=timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}
 
 
 QUIZ_MIN_QUESTIONS = 500     # fewer scorable quiz choices than this = insufficient data
@@ -890,7 +1003,7 @@ def run_quiz_check(lib, events, mood, now_ms, verdicts=(), path=None):
         return {'verdict': 'error', 'why': f'{type(e).__name__}: {e}'[:300]}
 
 
-def decide_promotion(ev_res, strip, was_promoted, quiz=None):
+def decide_promotion(ev_res, strip, was_promoted, quiz=None, strip_fallback=None):
     """Promote on a reliable win, keep while not worse, demote otherwise.
     The suggestion-strip check may veto, never promote on its own.
     The quiz judge (Jake's ~10k direct choices vs ~126 strip adds) is a
@@ -904,6 +1017,12 @@ def decide_promotion(ev_res, strip, was_promoted, quiz=None):
     for promoting AND for keeping (a promoted challenger is rolled back the
     first night it loses on the quiz)."""
     quiz = quiz or {'verdict': 'not run', 'why': 'the quiz judge did not run'}
+    # 2026-10-27: when the paired strip test cannot grade (fewer than
+    # STRIP_MIN_GROUPS strip contexts — he builds playlists in bursts, so this
+    # is common), the old pooled check keeps the veto it had: switching tests
+    # must never loosen the gate
+    if strip.get('verdict') != 'measured' and strip_fallback and strip_fallback.get('verdict') == 'measured':
+        strip = strip_fallback
     if ev_res.get('verdict') != 'measured':
         return False, ev_res.get('verdict', 'insufficient data') + (' — v5 stays' if not was_promoted else ' — ROLLED BACK to v5 until there is enough data again')
     if quiz.get('verdict') != 'measured':
@@ -912,7 +1031,12 @@ def decide_promotion(ev_res, strip, was_promoted, quiz=None):
     a, b = ev_res['auc']['challenger'], ev_res['auc']['champion_v5']
     lb, won = ev_res.get('gainLowerBound'), ev_res['foldsWon']
     n = len([f for f in ev_res['folds'] if f['verdict'] == 'measured'])
-    strip_ok = strip.get('verdict') != 'measured' or strip['challenger'] >= strip['champion_v5'] - 0.02
+    # the strip is the PAIRED check (strip_paired_check): it vetoes when the
+    # challenger is more than 0.02 below v5, or reliably below it (the 95th
+    # percentile of the gain under 0)
+    strip_ok = strip.get('verdict') != 'measured' or (
+        strip['challenger'] >= strip['champion_v5'] - 0.02
+        and not (strip.get('gainUpperBound') is not None and strip['gainUpperBound'] < 0))
     q_measured = quiz.get('verdict') == 'measured'
     q_wins = q_measured and quiz['gain'] > 0 and quiz['gainLowerBound'] > 0
     q_veto = q_measured and quiz['gainUpperBound'] < 0
@@ -939,6 +1063,425 @@ def decide_promotion(ev_res, strip, was_promoted, quiz=None):
         return False, f'ROLLED BACK to v5: challenger {a:.3f} vs v5 {b:.3f}' + why + tail
     why = '' if (ok or q_veto) else '; ranks suggestion adds worse'
     return False, f'not promoted: {a:.3f} vs v5 {b:.3f} (won {won}/{n} windows, gain lower bound {lb})' + why + tail
+
+
+# ── the SHADOW: candidate #12, measured nightly, NEVER published ────────────
+#
+# 2026-10-27 (Jake: "Go shadow go!"; the taste lab, candidate #12): v5 + λ·m,
+# where m is a pairwise taste model — Bradley–Terry on feature differences,
+# weights >= 0, only the features whose direction agrees with the quiz
+# (univariate agreement >= 0.52 on the quiz pairs it may train on, signs fixed
+# by it), trained on three kinds of pairs:
+#   quiz   his heat / duel / this-or-that / best-of-three choices (winner > loser)
+#   strip  kept add > passed song in the same strip context (strip_groups)
+#   plays  loved in a 28-day window (>= 2 play days and no skip, or starred)
+#          > skipped in it (more skips than plays), features at the window start
+# score = z(v5 logit) + λ·z(m), λ picked from SHADOW_LAMBDAS on TRAINING data
+# only: an inner 80/20 split of every source, and the λ whose WORST held-out
+# gain over v5 across the sources is largest (ties → the smaller λ; λ = 0 is
+# v5 itself, so the pick is never worse than v5 on any training source).
+#
+# Each night it gets the live model's three tests plus a favourites check, each
+# with its own leakage rule (from the lab):
+#   holdout  per fold: fitted as of the cut; quiz pairs touching any song the
+#            fold grades are dropped (the quiz postdates every fold, so only
+#            global weights carry over — the lab's flagged small leak)
+#   strip    frozen 56 days ago; strip pairs only from before the freeze; quiz
+#            pairs touching any graded strip song dropped
+#   quiz     the judge's held-out window [T, now). Choices before T always
+#            train; choices inside it are graded out-of-fold by question group
+#            (5 folds; a group = the same set of songs, so a rematch never
+#            straddles train and test) — every graded choice comes from a model
+#            that never trained on it. Features frozen at T.
+# It is written to taste-shadow.jsonl and tests.shadow; it never touches the
+# published scores, `promoted` or `why`, and any failure is caught and logged.
+
+SHADOW_NAME = '#12 v5 + λ·multi-pairwise (quiz + strip + plays, taste features, w >= 0), λ nested maximin'
+SHADOW_FEATURES = tuple(f for f in FEATURES if f != 'quiz_verdict') + (
+    'v5_album', 'v5_artist', 'v5_genre', 'v5_decade', 'v5_plays', 'v5_recency')
+SHADOW_LAMBDAS = (0.0, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0)
+SHADOW_AGREE = 0.52          # a feature joins m only if it agrees with the training quiz pairs this well (either way)
+SHADOW_SOURCE_W = {'quiz': 1.0, 'strip': 0.5, 'plays': 0.25}   # relative to the quiz pair count
+SHADOW_L2 = 10.0
+SHADOW_QFOLDS = 5
+SHADOW_PLAY_CAP = 4000       # sampled play pairs per window
+SHADOW_MIN_VALID = 50        # an inner-validation source needs this many pairs to vote on λ
+SHADOW_BUDGET_S = 420        # the nightly job has a 900 s timeout; the shadow gives up long before
+SHADOW_BOOTSTRAP = 1000
+
+
+class ShadowUnavailable(RuntimeError):
+    pass
+
+
+def fast_wauc(score, y, w):
+    """wauc, vectorised (ties count half) — equal to wauc (tested)."""
+    u, inv = np.unique(score, return_inverse=True)
+    pw = np.bincount(inv, weights=w * (y == 1), minlength=len(u))
+    nw = np.bincount(inv, weights=w * (y == 0), minlength=len(u))
+    P, N = pw.sum(), nw.sum()
+    if P <= 0 or N <= 0:
+        return None
+    below = np.cumsum(nw) - nw
+    return float((pw * (below + 0.5 * nw)).sum() / (P * N))
+
+
+def _zs(v):
+    v = np.asarray(v, float)
+    return (v - v.mean()) / (v.std() + 1e-12)
+
+
+def _agree(s, idx):
+    d = s[idx[:, 0]] - s[idx[:, 1]]
+    return float((np.sum(d > 0) + 0.5 * np.sum(d == 0)) / len(d))
+
+
+class Shadow:
+    def __init__(self, lib, events, mood, ledger_rows, members, questions, deadline):
+        self.lib, self.events, self.mood = lib, events, mood
+        self.ledger_rows, self.members, self.questions = ledger_rows, members, questions
+        self.deadline = deadline
+        self.ids = sorted(lib)
+        self.pos = {t: i for i, t in enumerate(self.ids)}
+        self._snap = {}
+        # question groups → folds (a group = the same set of songs)
+        keys = [tuple(sorted({t for p in pairs for t in p})) for _, pairs in questions]
+        uniq = sorted(set(keys))
+        perm = np.random.default_rng(29).permutation(np.arange(len(uniq)) % SHADOW_QFOLDS)
+        fold_of = dict(zip(uniq, perm))
+        self.qfold = np.array([fold_of[k] for k in keys], dtype=int)
+
+    def tick(self):
+        if time.time() > self.deadline:
+            raise ShadowUnavailable(f'over its {SHADOW_BUDGET_S}s time budget')
+
+    def snap(self, at):
+        """Full-library features (+ v5's parts) and v5's logit as of `at`.
+        No quiz verdicts: the quiz reaches m only as pairs, never as a column."""
+        if at in self._snap:
+            return self._snap[at]
+        self.tick()
+        lib = self.lib
+        snap = Snapshot(lib, self.events, at, ())
+        X = features(snap, self.ids, self.mood)
+        if np.any(X[:, FEATURES.index('quiz_verdict')] != 0):
+            raise ShadowUnavailable('a quiz verdict reached the shadow as a feature')
+        X = X[:, [FEATURES.index(f) for f in FEATURES if f != 'quiz_verdict']]
+        z, parts = v5_logit_parts(lib, self.ids, at, snap.star, snap.play_count, snap.last_played)
+        self._snap[at] = {'X': np.hstack([X, parts[:, :6]]), 'v5z': z, 'snap': snap}
+        return self._snap[at]
+
+    # ── training pairs ──
+    def quiz_idx(self, qset, exclude=frozenset()):
+        return np.array([(self.pos[w], self.pos[l]) for qi in qset for w, l in self.questions[qi][1]
+                         if w not in exclude and l not in exclude], dtype=int).reshape(-1, 2), \
+            np.array([self.qfold[qi] for qi in qset for w, l in self.questions[qi][1]
+                      if w not in exclude and l not in exclude], dtype=int)
+
+    def strip_idx(self, before):
+        pairs = [(k, p) for _, kept, passed in strip_groups(self.ledger_rows, self.members, self.lib, 0, before)
+                 for k in kept for p in passed]
+        return np.array([(self.pos[a], self.pos[b]) for a, b in pairs], dtype=int).reshape(-1, 2)
+
+    def play_idx(self, cut, windows=2, seed=3):
+        rnd = np.random.default_rng(seed)
+        out = []
+        for i in range(windows):
+            end = cut - i * HOLDOUT_DAYS * DAY_MS
+            start = end - HOLDOUT_DAYS * DAY_MS
+            days, pl, sk = defaultdict(set), Counter(), Counter()
+            for ts, tid, k in self.events:
+                if start <= ts < end:
+                    if k == 'play':
+                        pl[tid] += 1
+                        days[tid].add(int(ts // DAY_MS))
+                    else:
+                        sk[tid] += 1
+            starred = {tid for tid, t in self.lib.items() if t['rating'] > 0 and t['starredAt'] and start <= t['starredAt'] < end}
+            good = sorted({t for t in pl if len(days[t]) >= 2 and sk[t] == 0} | starred)
+            bad = sorted(t for t in set(pl) | set(sk) if sk[t] > pl[t] and t not in starred)
+            if not good or not bad:
+                continue
+            n = min(SHADOW_PLAY_CAP, len(good) * len(bad))
+            gi, bi = rnd.integers(0, len(good), n), rnd.integers(0, len(bad), n)
+            out.append((start, np.array([(self.pos[good[a]], self.pos[bad[b]]) for a, b in zip(gi, bi)], dtype=int)))
+        return out
+
+    def sources(self, at, qset, exclude, quiz_at):
+        """[(name, feature time, pair index array, quiz fold per pair or None)]: the
+        training data allowed for a test frozen at `at`."""
+        qi, qg = self.quiz_idx(qset, exclude)
+        out = [('quiz', quiz_at, qi, qg)]
+        sp = self.strip_idx(at)
+        if len(sp):
+            out.append(('strip', at, sp, None))
+        for start, pp in self.play_idx(at):
+            out.append(('plays', start, pp, None))
+        return out
+
+    # ── fitting ──
+    def fit_pairs(self, blocks, cols, sign):
+        """Pairwise logistic on feature differences with weights >= 0 (an
+        active set: a weight that comes out negative is pinned at 0 and the
+        rest refitted). Returns weights over `cols` of the raw features."""
+        sg = np.asarray(sign, float)
+        Ds, Ws = [], []
+        for X, idx, wt in blocks:
+            if len(idx):
+                d = (X[idx[:, 0]][:, cols] - X[idx[:, 1]][:, cols]) * sg
+                Ds.append(d)
+                Ws.append(np.full(len(d), wt))
+        D = np.vstack(Ds)
+        Z = np.vstack([D, -D])
+        y = np.concatenate([np.ones(len(D)), np.zeros(len(D))])
+        w = np.concatenate(Ws + Ws)
+        live = list(range(len(cols)))
+        while True:
+            self.tick()
+            m = fit_logistic(Z[:, live], y, w, SHADOW_L2)
+            neg = [(m['beta'][1 + j], c) for j, c in enumerate(live) if m['beta'][1 + j] < 0]
+            if not neg or len(live) == 1:
+                break
+            live.remove(min(neg)[1])
+        beta = np.zeros(len(cols))
+        beta[live] = np.maximum(0.0, m['beta'][1:]) / m['sd']
+        return beta * sg
+
+    def fit_m(self, srcs):
+        q = srcs[0]
+        if len(q[2]) < SHADOW_MIN_VALID:
+            raise ShadowUnavailable(f'{len(q[2])} quiz pairs to train on')
+        Xq = self.snap(q[1])['X']
+        cols, sg = [], []
+        for c in range(Xq.shape[1]):
+            a = _agree(Xq[:, c], q[2])
+            if a >= SHADOW_AGREE or a <= 1 - SHADOW_AGREE:
+                cols.append(c)
+                sg.append(1.0 if a >= 0.5 else -1.0)
+        if not cols:
+            raise ShadowUnavailable('no feature agrees with the quiz')
+        nq = len(q[2])
+        blocks = [(self.snap(t)['X'], idx, SHADOW_SOURCE_W[n] * nq / len(idx)) for n, t, idx, _ in srcs if len(idx)]
+        return cols, self.fit_pairs(blocks, cols, sg)
+
+    def blend(self, at, qset, exclude=frozenset(), quiz_at=None):
+        """Candidate #12 fitted on the data allowed for a test frozen at `at`;
+        returns (score over the library as of `at`, info)."""
+        srcs = self.sources(at, qset, exclude, quiz_at if quiz_at is not None else at)
+        rnd = np.random.default_rng(5)
+        tr, va = [], []
+        for n, t, idx, grp in srcs:
+            if n == 'quiz' and len(set(grp.tolist())) > 1:
+                m = grp == rnd.choice(sorted(set(grp.tolist())), 1)[0]
+            else:
+                m = rnd.random(len(idx)) < 0.2
+            tr.append((n, t, idx[~m], None))
+            va.append((n, t, idx[m]))
+        cols, beta = self.fit_m(tr)
+        worst = {}
+        for lam in SHADOW_LAMBDAS:
+            g = []
+            for n, t, idx in va:
+                if len(idx) < SHADOW_MIN_VALID:
+                    continue
+                v = _zs(self.snap(t)['v5z'])
+                mm = _zs(self.snap(t)['X'][:, cols] @ beta)
+                g.append(_agree(v + lam * mm, idx) - _agree(v, idx))
+            worst[lam] = round(min(g), 4) if g else 0.0
+        lam = max(SHADOW_LAMBDAS, key=lambda l_: (worst[l_], -l_))
+        cols, beta = self.fit_m(srcs)
+        s = self.snap(at)
+        score = _zs(s['v5z']) + lam * _zs(s['X'][:, cols] @ beta)
+        info = {'lambda': lam, 'innerWorstGain': worst[lam],
+                'pairs': {n: int(sum(len(i) for nn, _, i, _ in srcs if nn == n)) for n in ('quiz', 'strip', 'plays')},
+                'weights': {SHADOW_FEATURES[c]: round(float(b), 3) for c, b in zip(cols, beta) if b}}
+        return score, info
+
+
+def v5_logit_parts(lib, ids, at_ms, star_at, plays_at, last_at):
+    """v5's logit z and its seven parts (album, artist, genre, decade, plays,
+    recency, intensity) — the same arithmetic as v5_scores, which stays the
+    only v5 the live engine uses (1 / (1 + e^−z) == v5_scores, tested)."""
+    stars = {tid: star_at(tid) for tid in lib}
+    prior = sum(stars.values()) / max(1, len(lib))
+
+    def rate(keyf):
+        s, n = Counter(), Counter()
+        for tid, t in lib.items():
+            k = keyf(t)
+            n[k] += 1
+            s[k] += stars[tid]
+        return {k: (s[k] + 4 * prior) / (n[k] + 4) for k in n}
+    dec = lambda t: (int(t['year']) // 10 * 10) if str(t.get('year') or '').isdigit() and int(t['year']) > 0 else 0
+    al, ar, ge, de = rate(lambda t: t['album']), rate(lambda t: t['artist']), rate(lambda t: t['genre']), rate(dec)
+    play_max = max((math.log1p(plays_at(tid)) for tid in lib), default=0.0)
+    P = np.zeros((len(ids), 7))
+    for i, tid in enumerate(ids):
+        t = lib[tid]
+        pc = plays_at(tid)
+        lp = last_at(tid)
+        days_ago = (at_ms - lp) / DAY_MS if lp else 3650
+        months = max(1.0, (at_ms - t['dateAdded']) / (30 * DAY_MS)) if t['dateAdded'] else 24.0
+        P[i] = [al.get(t['album'], prior), ar.get(t['artist'], prior), ge.get(t['genre'], prior), de.get(dec(t), prior),
+                math.log1p(pc) / play_max if play_max > 0 else 0.0, 1 - min(days_ago, 3650) / 3650,
+                math.log1p(pc) / math.sqrt(months)]
+    W = V5_W
+    z = (W['bias'] + W['album'] * P[:, 0] + W['artist'] * P[:, 1] + W['genre'] * P[:, 2] + W['decade'] * P[:, 3]
+         + W['plays'] * P[:, 4] + W['recency'] * P[:, 5] + W['intensity'] * P[:, 6])
+    return z, P
+
+
+def _sigmoid(z):
+    return 1 / (1 + np.exp(-z))
+
+
+def shadow_holdout(sh, now_ms):
+    """The holdout folds of evaluate(), graded on the shadow. v5 is scored as
+    the live test scores it, so champion_v5 matches tests.holdout."""
+    folds, arrays = [], []
+    for k in range(1, FOLDS + 1):
+        cut = now_ms - k * HOLDOUT_DAYS * DAY_MS
+        te_ids, y, w = outcomes(sh.lib, sh.events, cut, cut + HOLDOUT_DAYS * DAY_MS)
+        if len(te_ids) < MIN_EVAL_TRACKS or (len(y) - y.sum()) < MIN_EVAL_NEG:
+            folds.append({'window': k, 'verdict': 'insufficient data'})
+            continue
+        s, info = sh.blend(cut, range(len(sh.questions)), exclude=frozenset(te_ids), quiz_at=sh.quiz_at)
+        r = np.array([sh.pos[t] for t in te_ids])
+        a, b = s[r], _sigmoid(sh.snap(cut)['v5z'][r])
+        folds.append({'window': k, 'verdict': 'measured', 'shadow': round(wauc(a, y, w), 4),
+                      'champion_v5': round(wauc(b, y, w), 4), 'lambda': info['lambda'], 'quizPairs': info['pairs']['quiz']})
+        arrays.append((a, b, y, w))
+    if len(arrays) < 2:
+        return {'verdict': 'insufficient data', 'folds': folds}
+    rnd = np.random.default_rng(11)
+    boots = []
+    for _ in range(SHADOW_BOOTSTRAP):
+        g = []
+        for a, b, y, w in arrays:
+            i = rnd.integers(0, len(y), len(y))
+            ga, gb = fast_wauc(a[i], y[i], w[i]), fast_wauc(b[i], y[i], w[i])
+            if ga is not None and gb is not None:
+                g.append(ga - gb)
+        if g:
+            boots.append(float(np.mean(g)))
+    boots.sort()
+    m = [f for f in folds if f['verdict'] == 'measured']
+    sa, sb = float(np.mean([f['shadow'] for f in m])), float(np.mean([f['champion_v5'] for f in m]))
+    return {'verdict': 'measured', 'shadow': round(sa, 4), 'champion_v5': round(sb, 4), 'gain': round(sa - sb, 4),
+            'gainLowerBound': round(boots[int(0.05 * len(boots))], 4), 'gainUpperBound': round(boots[int(0.95 * len(boots)) - 1], 4),
+            'foldsWon': sum(1 for f in m if f['shadow'] > f['champion_v5']), 'folds': folds}
+
+
+def shadow_strip(sh, frozen):
+    """The paired strip gate, graded on the shadow (v5 = the live frozen v5)."""
+    if frozen is None:
+        return {'verdict': 'insufficient data', 'why': 'no frozen models'}
+    T = frozen['T']
+    groups = strip_groups(sh.ledger_rows, sh.members, sh.lib, T)
+    if len(groups) < STRIP_MIN_GROUPS:
+        return {'verdict': 'insufficient data', 'groups': len(groups)}
+    graded = frozenset(t for _, k, p in groups for t in k + p)
+    s, info = sh.blend(T, range(len(sh.questions)), exclude=graded, quiz_at=sh.quiz_at)
+    r = paired_agreement(groups, dict(zip(sh.ids, s)), frozen['v5'])
+    return {'verdict': 'measured', 'shadow': round(r['a'], 4), 'champion_v5': round(r['b'], 4), 'gain': round(r['gain'], 4),
+            'gainLowerBound': round(r['lb'], 4), 'gainUpperBound': round(r['ub'], 4), 'groups': r['groups'],
+            'lambda': info['lambda'], 'quizPairs': info['pairs']['quiz'], 'stripPairs': info['pairs']['strip']}
+
+
+def shadow_quiz(sh, now_ms):
+    """The quiz judge's held-out window, graded on the shadow out-of-fold."""
+    qs = sh.questions
+    if not qs:
+        return {'verdict': 'insufficient data', 'why': 'no scorable choices'}
+    T = sh.quiz_at
+    graded = [i for i, q in enumerate(qs) if q[0] >= T]
+    if len(graded) < QUIZ_MIN_QUESTIONS:
+        return {'verdict': 'insufficient data', 'questions': len(graded)}
+    before = [i for i, q in enumerate(qs) if q[0] < T]
+    n = np.array([len(qs[i][1]) for i in graded], float)
+    ach, av5 = np.zeros(len(graded)), np.zeros(len(graded))
+    v5 = _sigmoid(sh.snap(T)['v5z'])
+    agree = lambda d: 1.0 if d > 0 else (0.5 if d == 0 else 0.0)
+    lams = []
+    for f in range(SHADOW_QFOLDS):
+        test = [j for j, i in enumerate(graded) if sh.qfold[i] == f]
+        if not test:
+            continue
+        train = before + [i for i in graded if sh.qfold[i] != f]
+        s, info = sh.blend(T, train, quiz_at=T)
+        lams.append(info['lambda'])
+        if any(qs[i][0] >= T and sh.qfold[i] == f for i in train):
+            raise ShadowUnavailable('a graded choice is in its own training fold')
+        for j in test:
+            pairs = qs[graded[j]][1]
+            ach[j] = sum(agree(s[sh.pos[w]] - s[sh.pos[l]]) for w, l in pairs)
+    for j, i in enumerate(graded):
+        av5[j] = sum(agree(v5[sh.pos[w]] - v5[sh.pos[l]]) for w, l in qs[i][1])
+    a, b = float(ach.sum() / n.sum()), float(av5.sum() / n.sum())
+    rnd = np.random.default_rng(QUIZ_SEED)
+    idx = rnd.integers(0, len(graded), (QUIZ_BOOTSTRAP, len(graded)))
+    nn = n[idx].sum(axis=1)
+    gains = np.sort(ach[idx].sum(axis=1) / nn - av5[idx].sum(axis=1) / nn)
+    return {'verdict': 'measured', 'shadow': round(a, 4), 'champion_v5': round(b, 4), 'gain': round(a - b, 4),
+            'gainLowerBound': round(float(gains[int(0.05 * QUIZ_BOOTSTRAP)]), 4),
+            'gainUpperBound': round(float(gains[int(0.95 * QUIZ_BOOTSTRAP) - 1]), 4),
+            'questions': len(graded), 'pairs': int(n.sum()), 'trainedBeforeWindow': len(before),
+            'frozenAt': datetime.fromtimestamp(T / 1000, tz=timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), 'lambdas': lams}
+
+
+def shadow_favourites(sh, now_ms, live_raw):
+    """Mean library percentile (1 = top) of the songs starred as of now under
+    the shadow fitted on everything up to now, next to v5 and the live model.
+    A sanity check, not a test: stars are one of m's features."""
+    s, info = sh.blend(now_ms, range(len(sh.questions)), quiz_at=now_ms)
+    stars = np.array([sh.snap(now_ms)['snap'].star(t) > 0 for t in sh.ids])
+    if not stars.any():
+        return {'verdict': 'no starred songs'}, info
+    pct = lambda v: float((np.argsort(np.argsort(v, kind='mergesort'), kind='mergesort') / max(1, len(v) - 1))[stars].mean())
+    out = {'starred': int(stars.sum()), 'shadow': round(pct(s), 4), 'champion_v5': round(pct(sh.snap(now_ms)['v5z']), 4)}
+    if live_raw is not None:
+        out['challenger'] = round(pct(np.asarray(live_raw)), 4)
+    return out, info
+
+
+def run_shadow(lib, events, mood, now_ms, ledger_rows, members, frozen, live_raw=None, quiz_path=None):
+    """Every shadow test, never raising: any failure comes back as
+    {'verdict': 'error' | 'unavailable', 'why': …}. Reads its inputs only."""
+    started = time.time()
+    try:
+        questions = load_quiz_questions(quiz_path or CONFIG['quiz'], lib)
+        sh = Shadow(lib, events, mood, ledger_rows, members, questions, started + SHADOW_BUDGET_S)
+        # the quiz judge's freeze; quiz pairs for the holdout and strip tests use the features as of it
+        sh.quiz_at = max(questions[0][0], now_ms - QUIZ_GRADE_DAYS * DAY_MS) if questions else now_ms
+        out = {'candidate': SHADOW_NAME, 'verdict': 'measured', 'published': False, 'promotes': False}
+        out['holdout'] = shadow_holdout(sh, now_ms)
+        out['stripPaired'] = shadow_strip(sh, frozen)
+        out['quizChoices'] = shadow_quiz(sh, now_ms)
+        out['favourites'], now_info = shadow_favourites(sh, now_ms, live_raw)
+        out['lambda'], out['weights'], out['pairs'] = now_info['lambda'], now_info['weights'], now_info['pairs']
+        tests = [out[k] for k in ('holdout', 'stripPaired', 'quizChoices')]
+        out['clearsAll'] = all(t.get('verdict') == 'measured' and t['gainLowerBound'] > 0 for t in tests)
+        out['seconds'] = round(time.time() - started, 1)
+        return out
+    except ShadowUnavailable as e:
+        return {'candidate': SHADOW_NAME, 'verdict': 'unavailable', 'why': str(e), 'seconds': round(time.time() - started, 1)}
+    except FileNotFoundError:
+        return {'candidate': SHADOW_NAME, 'verdict': 'unavailable', 'why': 'no Top 1000 Quiz answers file',
+                'seconds': round(time.time() - started, 1)}
+    except Exception as e:   # noqa: BLE001 — the shadow must never fail the nightly run
+        return {'candidate': SHADOW_NAME, 'verdict': 'error', 'why': f'{type(e).__name__}: {e}'[:300],
+                'seconds': round(time.time() - started, 1)}
+
+
+def shadow_summary(sh):
+    if sh.get('verdict') != 'measured':
+        return f"{sh.get('verdict')} — {sh.get('why', '')}"
+    part = lambda name, t: (f"{name} {t['shadow']:.3f} vs v5 {t['champion_v5']:.3f} [{t['gainLowerBound']:+.3f}, {t['gainUpperBound']:+.3f}]"
+                            if t.get('verdict') == 'measured' else f"{name} {t.get('verdict')}")
+    fav = sh.get('favourites') or {}
+    return (f"λ={sh['lambda']} · " + ' · '.join(part(n, sh[k]) for n, k in (('holdout', 'holdout'), ('strip', 'stripPaired'), ('quiz', 'quizChoices')))
+            + (f" · ★ pct {fav['shadow']:.2f} (v5 {fav['champion_v5']:.2f})" if 'shadow' in fav else '')
+            + f" · clears all three: {'YES' if sh['clearsAll'] else 'no'} · {sh['seconds']}s")
 
 
 # ── grading past recommendations ────────────────────────────────────────────
@@ -1198,8 +1741,17 @@ def main():
 
     # 5–6. champion vs challenger on held-back time
     ev_res = evaluate(lib, events, mood, now_ms, verdicts=verdicts)
-    strip = strip_check(lib, events, mood, now_ms, ledger_rows, members, verdicts=verdicts)
-    ev_res['stripAdds'] = strip
+    frozen = strip_frozen(lib, events, mood, now_ms, verdicts)
+    strip_auc = strip_check(lib, events, mood, now_ms, ledger_rows, members, verdicts=verdicts, frozen=frozen)
+    strip = strip_paired_check(lib, events, mood, now_ms, ledger_rows, members, verdicts=verdicts, frozen=frozen)
+    ev_res['stripAdds'] = strip_auc     # the old pooled AUC — logged for comparison, not a gate
+    ev_res['stripPaired'] = strip       # the gate
+    log('strip (paired, the gate): ' + (f"challenger {strip['challenger']:.3f} vs v5 {strip['champion_v5']:.3f} on {strip['groups']} strip contexts "
+                                       f"({strip['adds']} kept adds, {strip['pairs']} pairs), gain {strip['gain']:+.3f} "
+                                       f"[{strip['gainLowerBound']:+.3f}, {strip['gainUpperBound']:+.3f}]"
+                                       if strip['verdict'] == 'measured' else strip['verdict'] + (f" — {strip['why']}" if strip.get('why') else ''))
+        + ' · old pooled AUC: ' + (f"challenger {strip_auc['challenger']:.3f} vs v5 {strip_auc['champion_v5']:.3f} on {strip_auc['impressions']} impressions"
+                                   if strip_auc.get('verdict') == 'measured' else strip_auc.get('verdict', '?')))
     quiz = run_quiz_check(lib, events, mood, now_ms, verdicts)
     ev_res['quizChoices'] = quiz
     log('quiz judge: ' + (f"challenger {quiz['challenger']:.3f} vs v5 {quiz['champion_v5']:.3f} on {quiz['questions']} choices "
@@ -1207,7 +1759,7 @@ def main():
                           if quiz['verdict'] == 'measured' else f"could not grade: {quiz['verdict']}" + (f" — {quiz['why']}" if quiz.get('why') else '')))
     prev = previous_state(state_path)
     was_promoted = bool(prev.get('promoted'))
-    promoted, why = decide_promotion(ev_res, strip, was_promoted, quiz)
+    promoted, why = decide_promotion(ev_res, strip, was_promoted, quiz, strip_fallback=strip_auc)
     log(why)
 
     # production fit: the two most recent windows (features as of each
@@ -1237,10 +1789,12 @@ def main():
         'model': 'behavior-v1' if model is not None else 'v5',
         'promoted': bool(promoted and model is not None),
         'why': why,
-        # the three tests behind the decision (holdout windows, suggestion strip, quiz judge)
+        # the three tests behind the decision (holdout windows, paired suggestion
+        # strip, quiz judge) + the old pooled strip AUC, kept for comparison only
         'tests': {
             'holdout': {k: ev_res.get(k) for k in ('verdict', 'auc', 'meanGain', 'gainLowerBound', 'foldsWon')},
-            'stripAdds': strip,
+            'stripPaired': strip,
+            'stripAdds': strip_auc,
             'quizChoices': quiz,
         },
         'flagBits': {'underplayedFavorite': FLAG_UNDERPLAYED, 'forgotten': FLAG_FORGOTTEN,
@@ -1258,6 +1812,24 @@ def main():
                  'seconds': round(time.time() - started, 1)}
     scorecard['vsFirstNight'] = vs_baseline(os.path.join(CONFIG['work'], 'taste-journal.jsonl'),
                                             {'auc': ev_res.get('auc'), 'mixes': mix_grade, 'suggestions': led})
+    # the shadow (candidate #12): measured AFTER everything above is final, so
+    # it cannot change the published scores, `promoted` or `why`; it only adds
+    # tests.shadow, scorecard.shadow and a line in taste-shadow.jsonl
+    shadow = None
+    if os.environ.get('JT_TE_SHADOW', '1') != '0':
+        try:
+            shadow = run_shadow(lib, events, mood, now_ms, ledger_rows, members, frozen, live_raw=raw)
+            shadow['at'] = state['builtAt']
+            shadow['live'] = {'holdout': {k: (ev_res.get('auc') or {}).get(k) for k in ('challenger', 'champion_v5')},
+                              'stripPaired': {k: strip.get(k) for k in ('challenger', 'champion_v5')},
+                              'quizChoices': {k: quiz.get(k) for k in ('challenger', 'champion_v5')},
+                              'promoted': state['promoted']}
+            log('shadow (never published): ' + shadow_summary(shadow))
+        except Exception as e:   # noqa: BLE001 — never fail the nightly run over the shadow
+            shadow = {'candidate': SHADOW_NAME, 'verdict': 'error', 'why': f'{type(e).__name__}: {e}'[:300]}
+            log(f'shadow failed (ignored): {shadow["why"]}')
+        state['tests']['shadow'] = shadow
+        scorecard['shadow'] = shadow
     if dry:
         print(json.dumps(scorecard, indent=2, default=str))
         return 0
@@ -1267,9 +1839,15 @@ def main():
         f.write(json.dumps({'at': state['builtAt'], 'promoted': state['promoted'], 'wasPromoted': was_promoted,
                             'why': why, 'auc': ev_res.get('auc'), 'gainLowerBound': ev_res.get('gainLowerBound'),
                             'foldsWon': ev_res.get('foldsWon'),
-                            'quiz': {'verdicts': len(verdicts), 'gain': ev_res.get('quizGain')}, 'stripAdds': {k: strip.get(k) for k in ('challenger', 'champion_v5', 'adds')}, 'quizChoices': {k: quiz.get(k) for k in ('verdict', 'challenger', 'champion_v5', 'gainLowerBound', 'gainUpperBound', 'questions')}, 'mixes': {k: mix_grade.get(k) for k in ('served', 'playedThroughRate', 'skipRateWhenPlayed')},
+                            'quiz': {'verdicts': len(verdicts), 'gain': ev_res.get('quizGain')}, 'stripAdds': {k: strip_auc.get(k) for k in ('challenger', 'champion_v5', 'adds')}, 'stripPaired': {k: strip.get(k) for k in ('verdict', 'challenger', 'champion_v5', 'gainLowerBound', 'gainUpperBound', 'groups')},'quizChoices': {k: quiz.get(k) for k in ('verdict', 'challenger', 'champion_v5', 'gainLowerBound', 'gainUpperBound', 'questions')}, 'mixes': {k: mix_grade.get(k) for k in ('served', 'playedThroughRate', 'skipRateWhenPlayed')},
                             'suggestions': {k: led.get(k) for k in ('stripAddPlayedRate', 'stripAddKeptRate', 'stripAddSkipped2xRate', 'stripShownFromPlaylistArtists28d', 'stripDistinctArtistsPer100')},
                             'drift': {'soundPrefAgreement': dr.get('soundPrefAgreement')}}, default=str) + '\n')
+    if shadow is not None:
+        try:
+            with open(os.path.join(CONFIG['work'], 'taste-shadow.jsonl'), 'a') as f:
+                f.write(json.dumps(shadow, default=str) + '\n')
+        except Exception as e:   # noqa: BLE001
+            log(f'taste-shadow.jsonl not written (ignored): {type(e).__name__}: {e}')
     atomic_json(status_path, {'ok': True, 'at': state['builtAt'], 'promoted': state['promoted'], 'why': why,
                               'seconds': scorecard['seconds']}, indent=2)
     if state['promoted'] != was_promoted:
