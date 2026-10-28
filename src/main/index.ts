@@ -3581,14 +3581,14 @@ const overridesCache = new JsonFileCache<Record<string, unknown>>(
 // below) carries it to homemini so the nightly brain-trainer's "meaning" pass can
 // read it. The laptop fetcher is the SINGLE writer. NEVER fabricated: a genuine
 // not-found is { miss:true }, an instrumental { instrumental:true }.
-// ⚠️ Schema mirror: scripts/lyrics-fetch.mjs recordFrom() writes this exact shape.
+// ⚠️ Schema mirror: scripts/lyrics-sources.mjs (recordFrom + lookup) writes this exact shape.
 export interface LyricsRecord {
   plain?: string
   synced?: string
   instrumental?: boolean
-  miss?: boolean
-  source?: string
-  lrclibId?: number
+  miss?: boolean; likelyInstrumental?: boolean   // likely = still a MISS (180-day retry), never shown as Instrumental
+  source?: string   // 'lrclib' | 'lyrics.ovh' (plain-only fallback) | 'lrclib+ovh' (double miss)
+  lrclibId?: number // absent on lyrics.ovh hits
   fetchedAt?: number
 }
 const lyricsCache = new JsonFileCache<Record<string, LyricsRecord>>(
