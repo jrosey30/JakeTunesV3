@@ -46,6 +46,12 @@ THE EXERCISE, EVERY NIGHT
   6. Compare with a bootstrap: promote only on a reliable gain (>= MIN_GAIN
      and a 5th-percentile gain > 0); stay promoted while not worse; demote
      otherwise. "Insufficient data" is reported as such, never as a score.
+     Two checks on other decisions can veto: the suggestion strip (did his
+     adds score higher than what he passed over?) and the quiz judge (do
+     the models agree with his Top 1000 Quiz choices — heats, duels,
+     this-or-that — scored on models that never saw an answer?). When the
+     quiz judge is measured it outranks the strip: a reliable quiz win
+     overrides a strip veto, a reliable quiz loss vetoes on its own.
   7. Publish per-song taste state (taste-state.json) — consumers use the
      challenger's ranking only while `promoted` is true and the file is
      fresh, and fall back to the v5 formula otherwise (automatic rollback).
@@ -279,6 +285,70 @@ def load_quiz(path, lib):
                 timeline.append((ts, tid, 1.0 if yes else -1.0))
     timeline.sort()
     return timeline, reasons, standing
+
+
+def load_quiz_questions(path, lib):
+    """Jake's Top 1000 Quiz CHOICES as pairwise preferences, for the quiz
+    judge (quiz_check). Only questions where he chose between songs:
+      - heat  (choice 'picked'): every picked song > every song not picked
+      - duel / pick (this-or-that) with a song id: the winner > the other
+      - best (best of three) with a song id: the winner > each of the two others
+    Absolute answers (in/out, still love it, both/neither, all/none) are NOT
+    pairs: they say where a song sits against his love line, and the two
+    models' scores are on different scales, so there is no shared neutral
+    point to compare them against. unknown/skip carry nothing. Undo lines
+    retract the answer whose `at` they name (⚠️ TWIN: JakeTunesMobile
+    backend/src/util/top1000.ts standingAnswers; validation follows its
+    parseAnswer). Songs no longer in the library drop out of a pair.
+
+    Returns [(ms, [(winner_tid, loser_tid), ...])], one entry per question
+    with at least one pair, oldest first."""
+    rows, gone = [], set()
+    try:
+        for line in open(path):
+            try:
+                a = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(a, dict):
+                continue
+            if a.get('kind') == 'undo':
+                gone.add(a.get('target'))
+            else:
+                rows.append(a)
+    except FileNotFoundError:
+        return []
+
+    def tid_of(x):
+        try:
+            t = int(x)
+        except (TypeError, ValueError):
+            return None
+        return t if t in lib else None
+
+    out = []
+    for a in rows:
+        ts = to_ms(a.get('at'))
+        if ts is None or a.get('at') in gone:
+            continue
+        kind, choice = a.get('kind'), a.get('choice')
+        ids = [str(i) for i in (a.get('ids') or [])]
+        if len(set(ids)) != len(ids):
+            continue
+        if kind == 'heat' and choice == 'picked':
+            picked = list(dict.fromkeys(str(i) for i in (a.get('picked') or [])))
+            if not picked or len(picked) >= len(ids) or not all(p in ids for p in picked):
+                continue
+            winners, losers = picked, [i for i in ids if i not in picked]
+        elif (kind in ('duel', 'pick') and len(ids) == 2 and choice in ids) or (kind == 'best' and len(ids) == 3 and choice in ids):
+            winners, losers = [choice], [i for i in ids if i != choice]
+        else:
+            continue
+        pairs = [(w, l) for w in map(tid_of, winners) for l in map(tid_of, losers) if w is not None and l is not None]
+        if pairs:
+            out.append((ts, pairs))
+    out.sort(key=lambda q: q[0])
+    return out
 
 
 def playlist_members():
@@ -690,22 +760,105 @@ def strip_check(lib, events, mood, now_ms, ledger_rows, members, verdicts=()):
             'challenger': round(wauc(a[:, 0], a[:, 2], w), 4), 'champion_v5': round(wauc(a[:, 1], a[:, 2], w), 4)}
 
 
-def decide_promotion(ev_res, strip, was_promoted):
+QUIZ_MIN_QUESTIONS = 500     # fewer scorable quiz choices than this = insufficient data
+QUIZ_BOOTSTRAP = 1000        # resamples of QUESTIONS (a heat is one decision, not k×(n−k))
+QUIZ_SEED = 13
+
+
+def quiz_agreement(questions, ch, v5):
+    """Pairwise agreement of two score maps with Jake's quiz choices: the
+    share of (picked > not picked) pairs where the model scores the picked
+    song higher (a tie counts half). Pooled over pairs; the bootstrap
+    resamples whole questions, QUIZ_BOOTSTRAP times with a fixed seed, and
+    reports the 5th / 95th percentiles of (challenger − v5)."""
+    n = np.zeros(len(questions))
+    ach = np.zeros(len(questions))
+    av5 = np.zeros(len(questions))
+    agree = lambda d: 1.0 if d > 0 else (0.5 if d == 0 else 0.0)
+    for q, (_, pairs) in enumerate(questions):
+        n[q] = len(pairs)
+        ach[q] = sum(agree(ch[w] - ch[l]) for w, l in pairs)
+        av5[q] = sum(agree(v5[w] - v5[l]) for w, l in pairs)
+    a, b = float(ach.sum() / n.sum()), float(av5.sum() / n.sum())
+    rnd = np.random.default_rng(QUIZ_SEED)
+    idx = rnd.integers(0, len(questions), (QUIZ_BOOTSTRAP, len(questions)))
+    nn = n[idx].sum(axis=1)
+    gains = np.sort(ach[idx].sum(axis=1) / nn - av5[idx].sum(axis=1) / nn)
+    return {'challenger': round(a, 4), 'champion_v5': round(b, 4), 'gain': round(a - b, 4),
+            'gainLowerBound': round(float(gains[int(0.05 * QUIZ_BOOTSTRAP)]), 4),
+            'gainUpperBound': round(float(gains[int(0.95 * QUIZ_BOOTSTRAP) - 1]), 4),
+            'questions': len(questions), 'pairs': int(n.sum())}
+
+
+def quiz_check(lib, events, mood, questions):
+    """Third check — the quiz judge (2026-10-27, Jake: "i want it now"): do
+    the challenger and v5 agree with the choices Jake made in the Top 1000
+    Quiz (heats, duels, this-or-that, best of three)?
+
+    Both models are frozen as of his FIRST standing quiz choice and the
+    challenger is fitted the way the live model is (the two 28-day windows
+    ending there) with NO quiz verdicts — so nothing either model saw was
+    caused by, or happened after, the answers it is graded on."""
+    if len(questions) < QUIZ_MIN_QUESTIONS:
+        return {'verdict': 'insufficient data', 'questions': len(questions)}
+    T = questions[0][0]
+    model, _, _ = window_train(lib, events, mood, T, windows=2, verdicts=())
+    if model is None:
+        return {'verdict': 'insufficient data', 'questions': len(questions), 'why': 'no training data before the first answer'}
+    snap = Snapshot(lib, events, T, ())
+    ids = sorted({t for _, pairs in questions for p in pairs for t in p})
+    X = features(snap, ids, mood)
+    # the guarantee, checked: the quiz column is empty, so no answer leaked in
+    if snap.verdict or np.any(X[:, FEATURES.index('quiz_verdict')] != 0):
+        raise RuntimeError('quiz judge: the challenger saw quiz verdicts — refusing to grade it on the quiz')
+    ch = dict(zip(ids, predict(model, X)))
+    v5 = dict(zip(ids, v5_scores(lib, ids, T, snap.star, snap.play_count, snap.last_played)))
+    res = quiz_agreement(questions, ch, v5)
+    res['frozenAt'] = datetime.fromtimestamp(T / 1000, tz=timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    res['verdict'] = 'measured'
+    return res
+
+
+def decide_promotion(ev_res, strip, was_promoted, quiz=None):
     """Promote on a reliable win, keep while not worse, demote otherwise.
-    The suggestion-strip check may veto, never promote on its own."""
+    The suggestion-strip check may veto, never promote on its own.
+    The quiz check (Jake's ~10k direct choices vs ~126 strip adds) never
+    promotes on its own either, but when it is measured it outranks the
+    strip: a reliable quiz win (bootstrap lower bound > 0) overrides the
+    strip's veto, and a reliable quiz loss (upper bound < 0) is a veto of its own."""
+    quiz = quiz or {}
     if ev_res.get('verdict') != 'measured':
         return False, ev_res.get('verdict', 'insufficient data') + (' — v5 stays' if not was_promoted else ' — ROLLED BACK to v5 until there is enough data again')
     a, b = ev_res['auc']['challenger'], ev_res['auc']['champion_v5']
     lb, won = ev_res.get('gainLowerBound'), ev_res['foldsWon']
     n = len([f for f in ev_res['folds'] if f['verdict'] == 'measured'])
     strip_ok = strip.get('verdict') != 'measured' or strip['challenger'] >= strip['champion_v5'] - 0.02
-    if (not was_promoted) and ev_res['meanGain'] >= MIN_GAIN and lb is not None and lb > 0 and won * 2 > n and strip_ok:
-        return True, f'promoted: {a:.3f} vs v5 {b:.3f} (won {won}/{n} windows, gain >= {lb:+.3f} at 95%)'
-    if was_promoted and ev_res['meanGain'] >= 0 and strip_ok:
-        return True, f'kept: {a:.3f} vs v5 {b:.3f} (won {won}/{n} windows)'
+    q_measured = quiz.get('verdict') == 'measured'
+    q_wins = q_measured and quiz['gain'] > 0 and quiz['gainLowerBound'] > 0
+    q_veto = q_measured and quiz['gainUpperBound'] < 0
+    override = q_wins and not strip_ok
+    ok = (strip_ok or q_wins) and not q_veto
+    s_txt = f"suggestion-strip check ({strip.get('challenger', 0):.3f} vs {strip.get('champion_v5', 0):.3f})"
+    q_txt = (f"quiz {'agrees' if q_wins else 'says'} {quiz['challenger']:.3f} vs {quiz['champion_v5']:.3f} "
+             f"(lb {quiz['gainLowerBound']:+.3f}, ub {quiz['gainUpperBound']:+.3f}, {quiz['questions']} choices)") if q_measured else None
+    tail = ''
+    if override:
+        tail = f'; {q_txt} — overrides the {s_txt}'
+    elif q_veto:
+        tail = f'; {q_txt} — the quiz vetoes'
+    elif q_txt:
+        tail = f'; {q_txt}'
+    if (not was_promoted) and ev_res['meanGain'] >= MIN_GAIN and lb is not None and lb > 0 and won * 2 > n and ok:
+        if override:
+            return True, f'PROMOTED: challenger {a:.3f} vs v5 {b:.3f} (won {won}/{n} windows, gain >= {lb:+.3f} at 95%){tail}'
+        return True, f'promoted: {a:.3f} vs v5 {b:.3f} (won {won}/{n} windows, gain >= {lb:+.3f} at 95%)' + tail
+    if was_promoted and ev_res['meanGain'] >= 0 and ok:
+        return True, f'kept: {a:.3f} vs v5 {b:.3f} (won {won}/{n} windows)' + tail
     if was_promoted:
-        return False, f'ROLLED BACK to v5: challenger {a:.3f} vs v5 {b:.3f}' + ('' if strip_ok else ' (and it ranked suggestion adds worse)')
-    return False, f'not promoted: {a:.3f} vs v5 {b:.3f} (won {won}/{n} windows, gain lower bound {lb})' + ('' if strip_ok else '; ranks suggestion adds worse')
+        why = '' if (ok or q_veto) else ' (and it ranked suggestion adds worse)'
+        return False, f'ROLLED BACK to v5: challenger {a:.3f} vs v5 {b:.3f}' + why + tail
+    why = '' if (ok or q_veto) else '; ranks suggestion adds worse'
+    return False, f'not promoted: {a:.3f} vs v5 {b:.3f} (won {won}/{n} windows, gain lower bound {lb})' + why + tail
 
 
 # ── grading past recommendations ────────────────────────────────────────────
@@ -963,9 +1116,14 @@ def main():
     ev_res = evaluate(lib, events, mood, now_ms, verdicts=verdicts)
     strip = strip_check(lib, events, mood, now_ms, ledger_rows, members, verdicts=verdicts)
     ev_res['stripAdds'] = strip
+    quiz = quiz_check(lib, events, mood, load_quiz_questions(CONFIG['quiz'], lib))
+    ev_res['quizChoices'] = quiz
+    log('quiz judge: ' + (f"challenger {quiz['challenger']:.3f} vs v5 {quiz['champion_v5']:.3f} on {quiz['questions']} choices "
+                          f"({quiz['pairs']} pairs), gain {quiz['gain']:+.3f} [{quiz['gainLowerBound']:+.3f}, {quiz['gainUpperBound']:+.3f}]"
+                          if quiz['verdict'] == 'measured' else f"{quiz['verdict']} ({quiz.get('questions', 0)} choices)"))
     prev = previous_state(state_path)
     was_promoted = bool(prev.get('promoted'))
-    promoted, why = decide_promotion(ev_res, strip, was_promoted)
+    promoted, why = decide_promotion(ev_res, strip, was_promoted, quiz)
     log(why)
 
     # production fit: the two most recent windows (features as of each
@@ -995,6 +1153,12 @@ def main():
         'model': 'behavior-v1' if model is not None else 'v5',
         'promoted': bool(promoted and model is not None),
         'why': why,
+        # the three tests behind the decision (holdout windows, suggestion strip, quiz judge)
+        'tests': {
+            'holdout': {k: ev_res.get(k) for k in ('verdict', 'auc', 'meanGain', 'gainLowerBound', 'foldsWon')},
+            'stripAdds': strip,
+            'quizChoices': quiz,
+        },
         'flagBits': {'underplayedFavorite': FLAG_UNDERPLAYED, 'forgotten': FLAG_FORGOTTEN,
                      'overlookedAlbumTrack': FLAG_OVERLOOKED, 'neverPlayed': FLAG_NEVER, 'matchesRecentSound': FLAG_RECENT_SOUND},
         # id -> [score mapped onto v5's scale, percentile 0..1, flags]
@@ -1019,7 +1183,7 @@ def main():
         f.write(json.dumps({'at': state['builtAt'], 'promoted': state['promoted'], 'wasPromoted': was_promoted,
                             'why': why, 'auc': ev_res.get('auc'), 'gainLowerBound': ev_res.get('gainLowerBound'),
                             'foldsWon': ev_res.get('foldsWon'),
-                            'quiz': {'verdicts': len(verdicts), 'gain': ev_res.get('quizGain')}, 'stripAdds': {k: strip.get(k) for k in ('challenger', 'champion_v5', 'adds')}, 'mixes': {k: mix_grade.get(k) for k in ('served', 'playedThroughRate', 'skipRateWhenPlayed')},
+                            'quiz': {'verdicts': len(verdicts), 'gain': ev_res.get('quizGain')}, 'stripAdds': {k: strip.get(k) for k in ('challenger', 'champion_v5', 'adds')}, 'quizChoices': {k: quiz.get(k) for k in ('verdict', 'challenger', 'champion_v5', 'gainLowerBound', 'gainUpperBound', 'questions')}, 'mixes': {k: mix_grade.get(k) for k in ('served', 'playedThroughRate', 'skipRateWhenPlayed')},
                             'suggestions': {k: led.get(k) for k in ('stripAddPlayedRate', 'stripAddKeptRate', 'stripAddSkipped2xRate', 'stripShownFromPlaylistArtists28d', 'stripDistinctArtistsPer100')},
                             'drift': {'soundPrefAgreement': dr.get('soundPrefAgreement')}}, default=str) + '\n')
     atomic_json(status_path, {'ok': True, 'at': state['builtAt'], 'promoted': state['promoted'], 'why': why,

@@ -150,6 +150,85 @@ class EngineTest(unittest.TestCase):
         p, why = self.te.decide_promotion({'verdict': 'insufficient data', 'folds': []}, {}, True)
         self.assertFalse(p)
 
+    def test_quiz_pairs_from_heats_duels_and_picks(self):
+        self.lib(n=20)
+        lib = self.te.load_library(os.path.join(self.d, 'library.json'))
+        t = lambda d: iso(self.now - d * DAY)
+        self.write_quiz([
+            {'v': 1, 'kind': 'heat', 'at': t(9), 'ids': ['1', '2', '3', '4', '5'], 'choice': 'picked', 'picked': ['1', '3'], 'quota': 2},
+            {'v': 1, 'kind': 'duel', 'at': t(8), 'ids': ['6', '7'], 'choice': '7', 'round': 1},
+            {'v': 1, 'kind': 'pick', 'at': t(7), 'ids': ['8', '9'], 'choice': '8'},
+            {'v': 1, 'kind': 'best', 'at': t(6), 'ids': ['10', '11', '12'], 'choice': '12'},
+            {'v': 1, 'kind': 'pick', 'at': t(5), 'ids': ['13', '14'], 'choice': 'both'},       # absolute: no pair
+            {'v': 1, 'kind': 'inout', 'at': t(5.5), 'ids': ['15'], 'choice': 'in'},           # absolute: no pair
+            {'v': 1, 'kind': 'duel', 'at': t(4), 'ids': ['6', '8'], 'choice': 'skip'},        # skip: nothing
+            {'v': 1, 'kind': 'heat', 'at': t(3.5), 'ids': ['1', '2', '3'], 'choice': 'picked', 'picked': ['9'], 'quota': 1},  # invalid pick
+            {'v': 1, 'kind': 'duel', 'at': t(3), 'ids': ['16', '9999'], 'choice': '16'},      # loser gone from library
+            {'v': 1, 'kind': 'duel', 'at': t(2), 'ids': ['17', '18'], 'choice': '17'},
+            {'v': 1, 'kind': 'undo', 'at': t(1.9), 'target': t(2)},                         # retracts the 17>18 duel
+            'junk',
+        ])
+        qs = self.te.load_quiz_questions(os.path.join(self.d, 'top1000-answers.jsonl'), lib)
+        self.assertEqual([sorted(p) for _, p in qs], [
+            sorted([(1, 2), (1, 4), (1, 5), (3, 2), (3, 4), (3, 5)]),
+            [(7, 6)],
+            [(8, 9)],
+            sorted([(12, 10), (12, 11)]),
+        ])
+        self.assertEqual(self.te.load_quiz_questions(os.path.join(self.d, 'nope.jsonl'), lib), [])
+
+    def test_quiz_agreement_counts_pairs_and_ties(self):
+        qs = [(0, [(1, 2), (1, 3)]), (1, [(4, 5)]), (2, [(6, 7)])]
+        ch = {1: .9, 2: .1, 3: .2, 4: .5, 5: .5, 6: .1, 7: .9}
+        v5 = {1: .1, 2: .9, 3: .2, 4: .9, 5: .1, 6: .5, 7: .5}
+        r = self.te.quiz_agreement(qs, ch, v5)
+        self.assertEqual(r['pairs'], 4)
+        self.assertEqual(r['challenger'], round((1 + 1 + 0.5 + 0) / 4, 4))
+        self.assertEqual(r['champion_v5'], round((0 + 0 + 1 + 0.5) / 4, 4))
+        self.assertLessEqual(r['gainLowerBound'], r['gain'])
+        self.assertGreaterEqual(r['gainUpperBound'], r['gain'])
+        self.assertEqual(r, self.te.quiz_agreement(qs, ch, v5))   # fixed seed
+
+    def test_quiz_check_needs_enough_choices(self):
+        self.lib(n=20)
+        lib = self.te.load_library(os.path.join(self.d, 'library.json'))
+        r = self.te.quiz_check(lib, [], {}, [(self.now, [(1, 2)])] * 499)
+        self.assertEqual(r['verdict'], 'insufficient data')
+
+    def test_quiz_overrides_or_vetoes_the_strip(self):
+        f = lambda a, b: {'verdict': 'measured', 'challenger': a, 'champion_v5': b}
+        good = {'verdict': 'measured', 'auc': {'challenger': 0.597, 'champion_v5': 0.486}, 'meanGain': 0.111, 'gainLowerBound': 0.071,
+                'foldsWon': 3, 'folds': [f(.6, .5), f(.6, .5), f(.6, .5)]}
+        strip_bad = {'verdict': 'measured', 'challenger': 0.585, 'champion_v5': 0.627, 'adds': 126}
+        q = lambda a, b, lb, ub: {'verdict': 'measured', 'challenger': a, 'champion_v5': b, 'gain': a - b,
+                                  'gainLowerBound': lb, 'gainUpperBound': ub, 'questions': 7600}
+        # quiz insufficient → today's behaviour: the strip vetoes
+        for quiz in (None, {'verdict': 'insufficient data', 'questions': 12}):
+            p, why = self.te.decide_promotion(good, strip_bad, False, quiz)
+            self.assertFalse(p)
+            self.assertIn('ranks suggestion adds worse', why)
+        # a reliable quiz win overrides the strip veto
+        p, why = self.te.decide_promotion(good, strip_bad, False, q(0.63, 0.58, 0.03, 0.07))
+        self.assertTrue(p, why)
+        self.assertIn('PROMOTED', why)
+        self.assertIn('overrides the suggestion-strip check (0.585 vs 0.627)', why)
+        # …and keeps a promoted model on
+        self.assertTrue(self.te.decide_promotion(good, strip_bad, True, q(0.63, 0.58, 0.03, 0.07))[0])
+        # a quiz win that is not reliable does not override
+        self.assertFalse(self.te.decide_promotion(good, strip_bad, False, q(0.60, 0.59, -0.01, 0.03))[0])
+        # a reliable quiz loss vetoes even when the strip is fine
+        p, why = self.te.decide_promotion(good, {'verdict': 'insufficient data'}, False, q(0.55, 0.60, -0.07, -0.02))
+        self.assertFalse(p)
+        self.assertIn('the quiz vetoes', why)
+        p, why = self.te.decide_promotion(good, {'verdict': 'insufficient data'}, True, q(0.55, 0.60, -0.07, -0.02))
+        self.assertFalse(p)
+        self.assertIn('ROLLED BACK', why)
+        # an unclear quiz leaves a fine strip alone
+        self.assertTrue(self.te.decide_promotion(good, {'verdict': 'insufficient data'}, False, q(0.60, 0.59, -0.01, 0.03))[0])
+        # the quiz never promotes on its own
+        weak = dict(good, gainLowerBound=-0.01)
+        self.assertFalse(self.te.decide_promotion(weak, {}, False, q(0.63, 0.58, 0.03, 0.07))[0])
+
     def test_end_to_end_learns_taste_that_lives_in_the_sound(self):
         tracks = self.lib(n=900)
         vecs = self.mood([t['id'] for t in tracks])
@@ -209,6 +288,41 @@ class EngineTest(unittest.TestCase):
         self.assertIn('quizGain', sc['evaluation'])
         self.assertGreater(sc['evaluation']['quizGain'], 0.0)
         self.assertTrue(all('challenger_withoutQuiz' in f for f in sc['evaluation']['folds'] if f['verdict'] == 'measured'))
+
+    def test_end_to_end_quiz_judge_is_measured_and_recorded(self):
+        """Duels that follow where his taste really is: the judge is measured
+        on models frozen at the first choice, and all three tests land in
+        taste-state.json."""
+        tracks = self.lib(n=900)
+        self.mood([t['id'] for t in tracks])
+        rng = np.random.default_rng(4)
+        love = {t['id']: rng.random() < 0.5 for t in tracks}
+        rows = []
+        start = self.now - 150 * DAY
+        for day in range(150):
+            for _ in range(40):
+                tid = int(rng.integers(1, 901))
+                kind = 'play' if rng.random() < (0.95 if love[tid] else 0.6) else 'skip'
+                rows.append({'ts': iso(start + day * DAY + int(rng.integers(0, DAY))), 'device': 'laptop', 'kind': kind, 'pct': 40 if kind == 'skip' else 100, 'trackId': tid})
+        with open(os.path.join(self.d, 'h.jsonl'), 'w') as f:
+            for r in sorted(rows, key=lambda r: r['ts']):
+                f.write(json.dumps(r) + '\n')
+        loved = [t for t in love if love[t]]
+        unloved = [t for t in love if not love[t]]
+        duels = []
+        for i in range(600):
+            a, b = int(rng.choice(loved)), int(rng.choice(unloved))
+            duels.append({'v': 1, 'kind': 'duel', 'at': iso(self.now - 3 * DAY + i * 1000), 'ids': [str(b), str(a)], 'choice': str(a)})
+        self.write_quiz(duels)
+        self.te.time.time = lambda: self.now / 1000
+        self.assertEqual(self.te.main(), 0)
+        st = json.load(open(os.path.join(self.d, 'taste-state.json')))
+        self.assertEqual(set(st['tests']), {'holdout', 'stripAdds', 'quizChoices'})
+        qz = st['tests']['quizChoices']
+        self.assertEqual(qz['verdict'], 'measured')
+        self.assertEqual(qz['questions'], 600)
+        self.assertEqual(qz['frozenAt'], iso(self.now - 3 * DAY)[:19] + 'Z')
+        self.assertGreater(qz['challenger'], 0.5)   # it learned what he loves from behavior alone
 
 
 if __name__ == '__main__':
