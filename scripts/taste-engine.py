@@ -51,7 +51,8 @@ THE EXERCISE, EVERY NIGHT
      the models agree with his Top 1000 Quiz choices — heats, duels,
      this-or-that — scored on models that never saw an answer?). When the
      quiz judge is measured it outranks the strip: a reliable quiz win
-     overrides a strip veto, a reliable quiz loss vetoes on its own.
+     overrides a strip veto, a reliable quiz loss vetoes on its own. The
+     quiz judge is REQUIRED: if it cannot grade, v5 stays or returns.
   7. Publish per-song taste state (taste-state.json) — consumers use the
      challenger's ranking only while `promoted` is true and the file is
      fresh, and fall back to the v5 formula otherwise (automatic rollback).
@@ -287,6 +288,10 @@ def load_quiz(path, lib):
     return timeline, reasons, standing
 
 
+class QuizUnreadable(ValueError):
+    pass
+
+
 def load_quiz_questions(path, lib):
     """Jake's Top 1000 Quiz CHOICES as pairwise preferences, for the quiz
     judge (quiz_check). Only questions where he chose between songs:
@@ -302,22 +307,37 @@ def load_quiz_questions(path, lib):
     parseAnswer). Songs no longer in the library drop out of a pair.
 
     Returns [(ms, [(winner_tid, loser_tid), ...])], one entry per question
-    with at least one pair, oldest first."""
+    with at least one pair, oldest first.
+
+    FAILS LOUDLY (the judge is a required gate, 2026-10-27): a missing file
+    raises FileNotFoundError, and an unreadable line anywhere but the last
+    raises QuizUnreadable. Only a torn LAST line (an append in progress) is
+    tolerated — anything else means the file is not what we think it is."""
     rows, gone = [], set()
-    try:
-        for line in open(path):
-            try:
-                a = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(a, dict):
-                continue
-            if a.get('kind') == 'undo':
-                gone.add(a.get('target'))
-            else:
-                rows.append(a)
-    except FileNotFoundError:
-        return []
+    with open(path, encoding='utf-8') as f:
+        lines = f.read().split('\n')
+    while lines and not lines[-1].strip():
+        lines.pop()
+    bad = []
+    for n, line in enumerate(lines):
+        if not line.strip():
+            continue
+        try:
+            a = json.loads(line)
+        except json.JSONDecodeError:
+            if n != len(lines) - 1:
+                bad.append(n + 1)
+            continue
+        if not isinstance(a, dict):
+            if n != len(lines) - 1:
+                bad.append(n + 1)
+            continue
+        if a.get('kind') == 'undo':
+            gone.add(a.get('target'))
+        else:
+            rows.append(a)
+    if bad:
+        raise QuizUnreadable(f'{len(bad)} unreadable line(s) in the answers file (first: line {bad[0]})')
 
     def tid_of(x):
         try:
@@ -790,45 +810,105 @@ def quiz_agreement(questions, ch, v5):
             'questions': len(questions), 'pairs': int(n.sum())}
 
 
-def quiz_check(lib, events, mood, questions):
-    """Third check — the quiz judge (2026-10-27, Jake: "i want it now"): do
-    the challenger and v5 agree with the choices Jake made in the Top 1000
-    Quiz (heats, duels, this-or-that, best of three)?
+QUIZ_GRADE_DAYS = HOLDOUT_DAYS   # the judge grades on the most recent 28 days of choices
 
-    Both models are frozen as of his FIRST standing quiz choice and the
-    challenger is fitted the way the live model is (the two 28-day windows
-    ending there) with NO quiz verdicts — so nothing either model saw was
-    caused by, or happened after, the answers it is graded on."""
-    if len(questions) < QUIZ_MIN_QUESTIONS:
-        return {'verdict': 'insufficient data', 'questions': len(questions)}
-    T = questions[0][0]
-    model, _, _ = window_train(lib, events, mood, T, windows=2, verdicts=())
+
+class QuizLeak(RuntimeError):
+    pass
+
+
+def quiz_check(lib, events, mood, questions, now_ms, verdicts=()):
+    """Third check — the quiz judge (2026-10-27, Jake: "i want it now"; then
+    "the models absolutely cannot be getting worse"): do the challenger and
+    v5 agree with the choices Jake made in the Top 1000 Quiz (heats, duels,
+    this-or-that, best of three)?
+
+    HELD-OUT TIME, like every other test here. The graded choices are the
+    ones made in [T, now), T = max(his first standing choice, now − 28 days).
+    Both models are frozen at T, and the challenger is fitted the way the
+    live model is (the two 28-day windows ending at T) with the quiz
+    verdicts AS OF T — so once the verdicts start counting as a feature
+    (2026-11-20, see quiz_active_from in main) it is still graded only on
+    choices made after everything it learned from. Until then T is his first
+    choice and no verdict is older than T, so the quiz column is empty.
+    (A random split by question was rejected: the verdict feature is per
+    SONG, so a song answered in a training question would carry its answer
+    into a graded one.)
+
+    Raises QuizLeak if the frozen snapshot holds any verdict given at or
+    after T, or the quiz column disagrees with the as-of-T verdicts."""
+    if not questions:
+        return {'verdict': 'insufficient data', 'questions': 0, 'why': 'no scorable choices (heats, duels, this-or-that, best of three)'}
+    T = max(questions[0][0], now_ms - QUIZ_GRADE_DAYS * DAY_MS)
+    graded = [q for q in questions if q[0] >= T]
+    if len(graded) < QUIZ_MIN_QUESTIONS:
+        return {'verdict': 'insufficient data', 'questions': len(graded),
+                'why': f'{len(graded)} choices in the held-out window (need {QUIZ_MIN_QUESTIONS})'}
+    model, _, _ = window_train(lib, events, mood, T, windows=2, verdicts=verdicts)
     if model is None:
-        return {'verdict': 'insufficient data', 'questions': len(questions), 'why': 'no training data before the first answer'}
-    snap = Snapshot(lib, events, T, ())
-    ids = sorted({t for _, pairs in questions for p in pairs for t in p})
+        return {'verdict': 'insufficient data', 'questions': len(graded), 'why': 'no training data before the held-out window'}
+    snap = Snapshot(lib, events, T, verdicts)
+    ids = sorted({t for _, pairs in graded for p in pairs for t in p})
     X = features(snap, ids, mood)
-    # the guarantee, checked: the quiz column is empty, so no answer leaked in
-    if snap.verdict or np.any(X[:, FEATURES.index('quiz_verdict')] != 0):
-        raise RuntimeError('quiz judge: the challenger saw quiz verdicts — refusing to grade it on the quiz')
+    # the guarantee, checked: the challenger knows exactly the verdicts given
+    # before T — none from the held-out window — and the graded choices are
+    # all inside it
+    allowed = defaultdict(float)
+    for ts, tid, v in verdicts:
+        if ts < T:
+            allowed[tid] += v
+    seen = {k: v for k, v in snap.verdict.items() if v}
+    if seen != {k: v for k, v in allowed.items() if v}:
+        raise QuizLeak('the challenger saw quiz verdicts from the held-out window — refusing to grade it on the quiz')
+    want = np.array([max(-2.0, min(2.0, allowed.get(t, 0.0))) / 2.0 for t in ids])
+    if not np.allclose(X[:, FEATURES.index('quiz_verdict')], want) or any(q[0] < T for q in graded):
+        raise QuizLeak('the quiz column does not match the verdicts before the held-out window — refusing to grade it on the quiz')
     ch = dict(zip(ids, predict(model, X)))
     v5 = dict(zip(ids, v5_scores(lib, ids, T, snap.star, snap.play_count, snap.last_played)))
-    res = quiz_agreement(questions, ch, v5)
+    res = quiz_agreement(graded, ch, v5)
     res['frozenAt'] = datetime.fromtimestamp(T / 1000, tz=timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    res['verdictsTrainedOn'] = sum(1 for ts, _, _ in verdicts if ts < T)
     res['verdict'] = 'measured'
     return res
+
+
+def run_quiz_check(lib, events, mood, now_ms, verdicts=(), path=None):
+    """The quiz judge, never raising: any failure (missing or unreadable
+    answers file, leakage refusal, any exception) comes back as a verdict
+    that is not 'measured' — and decide_promotion keeps or returns v5 on
+    anything but 'measured' (fail closed)."""
+    try:
+        questions = load_quiz_questions(path or CONFIG['quiz'], lib)
+        return quiz_check(lib, events, mood, questions, now_ms, verdicts)
+    except FileNotFoundError:
+        return {'verdict': 'no answers file', 'why': 'no Top 1000 Quiz answers file'}
+    except QuizUnreadable as e:
+        return {'verdict': 'parse error', 'why': str(e)}
+    except QuizLeak as e:
+        return {'verdict': 'leakage refused', 'why': str(e)}
+    except Exception as e:   # noqa: BLE001 — fail closed on anything
+        return {'verdict': 'error', 'why': f'{type(e).__name__}: {e}'[:300]}
 
 
 def decide_promotion(ev_res, strip, was_promoted, quiz=None):
     """Promote on a reliable win, keep while not worse, demote otherwise.
     The suggestion-strip check may veto, never promote on its own.
-    The quiz check (Jake's ~10k direct choices vs ~126 strip adds) never
-    promotes on its own either, but when it is measured it outranks the
-    strip: a reliable quiz win (bootstrap lower bound > 0) overrides the
-    strip's veto, and a reliable quiz loss (upper bound < 0) is a veto of its own."""
-    quiz = quiz or {}
+    The quiz judge (Jake's ~10k direct choices vs ~126 strip adds) is a
+    REQUIRED gate (2026-10-27, Jake: "the models absolutely cannot be
+    getting worse"): if it could not grade — too few held-out choices, a
+    leakage refusal, an unreadable or missing answers file, any error — the
+    challenger is neither promoted nor kept, v5 stays or returns. When it is
+    measured it never promotes on its own, but it outranks the strip: a
+    reliable quiz win (bootstrap lower bound > 0) overrides the strip's
+    veto, and a reliable quiz loss (upper bound < 0) is a veto of its own —
+    for promoting AND for keeping (a promoted challenger is rolled back the
+    first night it loses on the quiz)."""
+    quiz = quiz or {'verdict': 'not run', 'why': 'the quiz judge did not run'}
     if ev_res.get('verdict') != 'measured':
         return False, ev_res.get('verdict', 'insufficient data') + (' — v5 stays' if not was_promoted else ' — ROLLED BACK to v5 until there is enough data again')
+    if quiz.get('verdict') != 'measured':
+        reason = quiz.get('verdict', 'unknown') + (f" — {quiz['why']}" if quiz.get('why') else '')
+        return False, f'quiz judge could not grade: {reason}; ' + ('v5 kept' if not was_promoted else 'ROLLED BACK to v5')
     a, b = ev_res['auc']['challenger'], ev_res['auc']['champion_v5']
     lb, won = ev_res.get('gainLowerBound'), ev_res['foldsWon']
     n = len([f for f in ev_res['folds'] if f['verdict'] == 'measured'])
@@ -1106,7 +1186,11 @@ def main():
 
     ledger_rows = load_ledgers()
     members = playlist_members()
-    verdicts, quiz_reasons, quiz_answers = load_quiz(CONFIG['quiz'], lib)
+    try:
+        verdicts, quiz_reasons, quiz_answers = load_quiz(CONFIG['quiz'], lib)
+    except Exception as e:   # noqa: BLE001 — the quiz judge below fails closed on the same file
+        log(f'Top 1000 Quiz answers unreadable ({type(e).__name__}: {e}) — no verdicts')
+        verdicts, quiz_reasons, quiz_answers = [], Counter(), 0
     quiz_active_from = (verdicts[0][0] + HOLDOUT_DAYS * DAY_MS) if verdicts else None
     if verdicts:
         log(f'Top 1000 Quiz: {quiz_answers} answers, {len(verdicts)} verdicts; the model can use them from '
@@ -1116,11 +1200,11 @@ def main():
     ev_res = evaluate(lib, events, mood, now_ms, verdicts=verdicts)
     strip = strip_check(lib, events, mood, now_ms, ledger_rows, members, verdicts=verdicts)
     ev_res['stripAdds'] = strip
-    quiz = quiz_check(lib, events, mood, load_quiz_questions(CONFIG['quiz'], lib))
+    quiz = run_quiz_check(lib, events, mood, now_ms, verdicts)
     ev_res['quizChoices'] = quiz
     log('quiz judge: ' + (f"challenger {quiz['challenger']:.3f} vs v5 {quiz['champion_v5']:.3f} on {quiz['questions']} choices "
                           f"({quiz['pairs']} pairs), gain {quiz['gain']:+.3f} [{quiz['gainLowerBound']:+.3f}, {quiz['gainUpperBound']:+.3f}]"
-                          if quiz['verdict'] == 'measured' else f"{quiz['verdict']} ({quiz.get('questions', 0)} choices)"))
+                          if quiz['verdict'] == 'measured' else f"could not grade: {quiz['verdict']}" + (f" — {quiz['why']}" if quiz.get('why') else '')))
     prev = previous_state(state_path)
     was_promoted = bool(prev.get('promoted'))
     promoted, why = decide_promotion(ev_res, strip, was_promoted, quiz)
