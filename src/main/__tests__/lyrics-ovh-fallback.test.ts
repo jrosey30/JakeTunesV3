@@ -62,14 +62,30 @@ describe('lyrics.ovh fallback', () => {
 
   test('remix / dub / edit / live titles (or albums) never take an ovh hit', async () => {
     for (const over of [{ title: 'River Song (Dub)' }, { title: 'River Song - Extended Mix' }, { title: 'River Song (Radio Edit)' },
-      { title: 'River Song (Remixed)' }, { title: 'Intro' }, { title: 'River Song' , album: 'Live at the Banks' }]) {
+      { title: 'River Song (Remixed)' }, { title: 'River Song (Live)' }, { title: 'River Song - Radio Edit' },
+      { title: 'River Song [Live at Wembley]' }, { title: 'River Song - Interlude' }, { title: 'River Song (Instrumental)' },
+      { title: 'River Song', album: 'Live at the Banks' }, { title: 'River Song', album: 'Banks (Live)' }]) {
       const h = harness({ ovh: { status: 200, body: { lyrics: LONG } } })
       const { rec } = await h.fetcher.lookup(track(over))
       assert.equal(rec.miss, true, JSON.stringify(over))
       assert.equal(h.ovhCalls().length, 0, `ovh not asked for ${JSON.stringify(over)}`)
     }
     assert.equal(ovhTitleBlocked('Remixing Society', ''), false, 'word boundary: a word merely containing "mix" passes')
+    assert.equal(ovhTitleBlocked('Song (Live)', ''), true)
+    assert.equal(ovhTitleBlocked('Song - Radio Edit', ''), true)
     assert.equal(ovhTitleBlocked('Credit', ''), false, '"edit" inside a word passes')
+  })
+
+  test('a song merely TITLED with a block word is not a version: "Live Forever", "Mix Tape" ask ovh', async () => {
+    for (const title of ['Live Forever', 'Mix Tape', 'Live and Let Die', 'Intro']) {
+      assert.equal(ovhTitleBlocked(title, 'Definitely Maybe'), false, title)
+      const h = harness({ ovh: { status: 200, body: { lyrics: LONG } } })
+      const { rec, via } = await h.fetcher.lookup(track({ title, genre: 'Rock' }))
+      assert.equal(via, 'lyrics.ovh', title)
+      assert.equal(rec.source, 'lyrics.ovh')
+      assert.equal(h.ovhCalls().length, 1)
+    }
+    assert.equal(ovhTitleBlocked('Song', 'Live Through This'), false, 'an album merely starting with "Live" is not a live album')
   })
 
   test('short or placeholder ovh text is rejected', async () => {

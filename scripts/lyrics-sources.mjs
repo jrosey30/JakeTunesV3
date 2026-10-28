@@ -10,7 +10,8 @@
  *      LRCLIB misses it hit 4 (10%) and one of those was the ORIGINAL song's
  *      words handed back for a dub edit. So it is gated hard: any remix / mix /
  *      edit / dub / version / instrumental / live / intro / interlude / skit
- *      title (or album) never asks it, and text under 80 characters (after
+ *      VERSION MARKER in the title or album ("(Live)", "- Radio Edit")
+ *      never asks it, and text under 80 characters (after
  *      stripping its "Paroles de la chanson …" header) is not lyrics.
  *      Max 1 request/second, 8 s timeout, no retries; a network error from it
  *      leaves an ordinary LRCLIB miss and never fails the batch.
@@ -92,11 +93,21 @@ export function missTtlMs(rec) {
   return rec && rec.likelyInstrumental ? LIKELY_INSTRUMENTAL_MISS_TTL_MS : MISS_TTL_MS
 }
 
-// lyrics.ovh has no duration check, so any title/album naming a different cut
-// than the song's words could be the wrong lyrics. Word-boundary, case-insensitive.
-const OVH_BLOCK_RE = /\b(remix(?:e[sd])?|mix(?:e[sd])?|edit|dub|version|instrumental|live|intro|interlude|skit)\b/i
+// lyrics.ovh has no duration check, so a title/album naming a different CUT
+// than the song's words could be the wrong lyrics. Only a VERSION MARKER
+// blocks: the word inside (…)/[…], or in a trailing " - …" suffix — "Song
+// (Live)", "[Live at …]", "Song - Radio Edit", "(Instrumental)". A song that is
+// simply CALLED "Live Forever", "Live and Let Die", "Intro" or "Mix Tape" is
+// not a version and may ask. Albums: the same markers, plus a whole-album
+// "Live at/from/in/on …" (or just "Live"). Word-boundary, case-insensitive.
+const OVH_WORDS = '(?:remix(?:e[sd])?|mix(?:e[sd])?|edit|dub|version|instrumental|live|intro|interlude|skit)'
+const OVH_BRACKET_RE = new RegExp(`[([][^)\\]]*\\b${OVH_WORDS}\\b[^)\\]]*[)\\]]`, 'i')
+const OVH_DASH_RE = new RegExp(`\\s[-\u2013\u2014]\\s[^-\u2013\u2014]*\\b${OVH_WORDS}\\b[^-\u2013\u2014]*$`, 'i')
+const OVH_LIVE_ALBUM_RE = /^\s*live(?:\s+(?:at|from|in|on)\b.*)?\s*$/i
+const isVersionMarked = (s) => OVH_BRACKET_RE.test(s) || OVH_DASH_RE.test(s)
 export function ovhTitleBlocked(title, album) {
-  return OVH_BLOCK_RE.test(String(title || '')) || OVH_BLOCK_RE.test(String(album || ''))
+  const t = String(title || ''), a = String(album || '')
+  return isVersionMarked(t) || isVersionMarked(a) || OVH_LIVE_ALBUM_RE.test(a)
 }
 
 /** lyrics.ovh text → clean lyrics, or null if it is a placeholder / too short. */
