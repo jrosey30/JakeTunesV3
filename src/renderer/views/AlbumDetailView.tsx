@@ -23,6 +23,8 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import RemoveConcertDialog, { REMOVE_CONCERT_LABEL } from '../components/RemoveConcertDialog'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import { setNotice } from '../activity'
+import { usePlaysElsewhere } from '../playsElsewhere'
+import { playsEverywhere } from '../../common/plays-elsewhere'
 // V5 Live Concert Mode — declared-set store + declare orchestration.
 import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, liveSetFor, unregisterLiveSet, cueAt, promoteTrackToLibrary, cleanLiveTitle } from '../liveSets'
 import { attachConcert, detachConcert, subscribeConcertCrowd, isConcertCrowdEnabled, setConcertCrowdEnabled } from '../concertCrowd'
@@ -70,21 +72,60 @@ function startClock(ms: number): string {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}` : `${m}:${String(r).padStart(2, '0')}`
 }
 
-// Album tracklist — #, name, duration only.
-const GRID_COLS = '40px minmax(0, 1fr) 52px'
+/** Status-line clock for the whole record — 35:05, 1:12:40. */
+function totalClock(ms: number): string {
+  return startClock(Math.max(0, ms))
+}
+
+// Album table (direction D, 2026-10-27): the classic iTunes columns —
+// #, Name, [Artist only on multi-artist albums], Plays, Star, Time.
+function gridCols(multiArtist: boolean): string {
+  return multiArtist
+    ? '48px minmax(0, 1.4fr) minmax(0, 1fr) 64px 52px 64px'
+    : '48px minmax(0, 1fr) 64px 52px 64px'
+}
+
+const ICON_PLAY = (
+  <svg width="10" height="11" viewBox="0 0 10 11" aria-hidden="true"><path d="M1.5 1.2v8.6L9 5.5z" fill="currentColor" /></svg>
+)
+const ICON_SHUFFLE = (
+  <svg width="14" height="11" viewBox="0 0 14 11" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M1 2.5h2.5c2.5 0 3.5 6 6 6H13M1 8.5h2.5c1.1 0 1.9-1.1 2.6-2.4M8.2 4.3c.5-1 1.1-1.8 2-1.8H13M11 .8l2 1.7-2 1.7M11 6.8l2 1.7-2 1.7" /></svg>
+)
+const ICON_MIC = (
+  <svg width="11" height="13" viewBox="0 0 11 13" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" aria-hidden="true"><rect x="3.3" y="1" width="4.4" height="7" rx="2.2" /><path d="M1.3 6.2a4.2 4.2 0 008.4 0M5.5 10.4V12" /></svg>
+)
+const ICON_BACK = (
+  <svg width="9" height="10" viewBox="0 0 9 10" aria-hidden="true"><path d="M6 1L2 5l4 4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+)
+const ICON_LEFT = (
+  <svg width="7" height="10" viewBox="0 0 7 10" aria-hidden="true"><path d="M5 1L1.5 5 5 9" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+)
+const ICON_RIGHT = (
+  <svg width="7" height="10" viewBox="0 0 7 10" aria-hidden="true"><path d="M2 1l3.5 4L2 9" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+)
+const ICON_NOTE = (
+  <svg width="12" height="13" viewBox="0 0 12 13" aria-hidden="true"><path d="M4.5 1.5l6-1.2v8.2a2 2 0 11-1.3-1.9V3L5.8 3.7v6.8a2 2 0 11-1.3-1.9z" fill="currentColor" /></svg>
+)
+const ICON_NOTE_BIG = (
+  <svg width="84" height="91" viewBox="0 0 12 13" aria-hidden="true"><path d="M4.5 1.5l6-1.2v8.2a2 2 0 11-1.3-1.9V3L5.8 3.7v6.8a2 2 0 11-1.3-1.9z" fill="currentColor" /></svg>
+)
 
 export default function AlbumDetailView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()
   const { state: pb, dispatch: pbDispatch } = usePlayback()
   const { playTrack } = useAudio()
   const { openCynthia } = useCynthia()
+  const elsewhere = usePlaysElsewhere()
 
   const albumKeyRef = useRef<string>('')
   if (lib.pendingAlbumKey) albumKeyRef.current = lib.pendingAlbumKey
   const albumKey = albumKeyRef.current || lib.pendingAlbumKey || ''
   // Page memory, per album — reopening the same record lands where you left.
+  // Direction D: the whole page scrolls as one sheet (header, setlist, table);
+  // the table header sticks under it.
   const tracklistRef = useRef<HTMLDivElement>(null)
   useScrollPersistence(`album-detail:${albumKey}`, tracklistRef)
+  const tableRef = useRef<HTMLDivElement>(null)
 
   const { canGoBack, goBack: navBack, backTo, backToSearch } = useNavigation()
   const returnView = lib.albumDetailReturnView || 'albums'
@@ -144,7 +185,6 @@ export default function AlbumDetailView() {
     if (artHash) prefetchAlbumArtHashes([artHash])
   }, [artHash])
 
-  const [blurbExpanded, setBlurbExpanded] = useState(false)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; idx: number } | null>(null)
   // Right-click a setlist song → reimport that one track into the regular
   // library (promote). The concert stays intact; only that song re-appears.
@@ -238,15 +278,18 @@ export default function AlbumDetailView() {
   const [blurb, setBlurb] = useState<string>('')
   const [infoLoading, setInfoLoading] = useState(false)
   const [infoError, setInfoError] = useState(false)
-  const [blurbOverflows, setBlurbOverflows] = useState(false)
-  // The Music Man's take — opt-in opinion, lazily fetched when the user opens it.
+  // The Music Man's take — an open block under the history (direction D):
+  // fetched with the album info, shown clamped, "Read all" opens the rest.
   const [take, setTake] = useState<string>('')
-  const [takeOpen, setTakeOpen] = useState(false)
+  const [takeExpanded, setTakeExpanded] = useState(false)
+  const [takeOverflows, setTakeOverflows] = useState(false)
   const [takeLoading, setTakeLoading] = useState(false)
   const [takeError, setTakeError] = useState(false)
 
   const lastClickedIdx = useRef<number>(-1)
-  const blurbRef = useRef<HTMLParagraphElement>(null)
+  // Keyboard cursor in the table (↑/↓/Return — see the keydown effect below).
+  const focusedIdx = useRef<number>(-1)
+  const takeRef = useRef<HTMLParagraphElement>(null)
 
   const handleClick = useCallback((id: number, idx: number, e: React.MouseEvent) => {
     window.getSelection()?.removeAllRanges()
@@ -258,6 +301,7 @@ export default function AlbumDetailView() {
       libDispatch({ type: 'SELECT_TRACK', id, multi: e.metaKey || e.ctrlKey })
       lastClickedIdx.current = idx
     }
+    focusedIdx.current = idx
   }, [tracks, libDispatch])
 
   const handleDoubleClick = useCallback((idx: number) => {
@@ -452,9 +496,20 @@ export default function AlbumDetailView() {
   useEffect(() => {
     if (tracks.length === 0) return
     let cancelled = false
-    setCredits(null); setBlurb(''); setInfoLoading(true); setInfoError(false); setBlurbExpanded(false); setBlurbOverflows(false)
-    setTake(''); setTakeOpen(false); setTakeLoading(false); setTakeError(false)
+    setCredits(null); setBlurb(''); setInfoLoading(true); setInfoError(false)
+    setTake(''); setTakeExpanded(false); setTakeOverflows(false); setTakeLoading(true); setTakeError(false)
     const timer = window.setTimeout(() => {
+      // The take rides beside the facts, never in front of them: its own
+      // promise, so a slow opinion can't hold the history back.
+      const takeCall = window.electronAPI.getAlbumTake?.(albumArtist, albumName, String(year || ''))
+      if (takeCall) {
+        takeCall
+          .then((r) => { if (cancelled) return; if (r?.ok && r.take) setTake(r.take); else setTakeError(true) })
+          .catch(() => { if (!cancelled) setTakeError(true) })
+          .finally(() => { if (!cancelled) setTakeLoading(false) })
+      } else {
+        setTakeLoading(false); setTakeError(true)
+      }
       void (async () => {
         try {
           const [info, b] = await Promise.all([
@@ -473,25 +528,14 @@ export default function AlbumDetailView() {
     return () => { cancelled = true; window.clearTimeout(timer) }
   }, [albumArtist, albumName, year, tracks.length])
 
-  // Lazily fetch the Music Man's take the first time the user opens it.
-  const handleToggleTake = useCallback(() => {
-    if (!takeOpen && !take && !takeLoading) {
-      setTakeLoading(true); setTakeError(false)
-      window.electronAPI.getAlbumTake?.(albumArtist, albumName, String(year || ''))
-        .then((r) => { if (r?.ok && r.take) setTake(r.take); else setTakeError(true) })
-        .catch(() => setTakeError(true))
-        .finally(() => setTakeLoading(false))
-    }
-    setTakeOpen((v) => !v)
-  }, [takeOpen, take, takeLoading, albumArtist, albumName])
-
-  // Show Read more / Show less only when the 3-line clamp actually hides text.
+  // Show Read all / Show less only when the take's clamp actually hides text.
+  // (The history above is never clamped — direction D shows it in full.)
   useEffect(() => {
-    if (!blurb || isWeakBlurb(blurb) || blurbExpanded) return
-    const el = blurbRef.current
+    if (!take || takeExpanded) return
+    const el = takeRef.current
     if (!el) return
     const check = () => {
-      setBlurbOverflows(el.scrollHeight > el.clientHeight + 1)
+      setTakeOverflows(el.scrollHeight > el.clientHeight + 1)
     }
     check()
     const raf = requestAnimationFrame(check)
@@ -501,7 +545,7 @@ export default function AlbumDetailView() {
       cancelAnimationFrame(raf)
       ro.disconnect()
     }
-  }, [blurb, blurbExpanded])
+  }, [take, takeExpanded])
 
   // Drag-to-queue from the album page. This view never set the drag payload,
   // so dragging a song into the queue silently did nothing — the "works
@@ -514,6 +558,59 @@ export default function AlbumDetailView() {
     e.dataTransfer.effectAllowed = 'copy'
   }, [lib.selectedTrackIds, tracks])
 
+  // Keyboard in the table — the same keys as the Songs list (SongsView's
+  // handler): ↑/↓ move the selection (⇧ extends it), Return plays the
+  // highlighted song. Capture phase + stopPropagation on ↑/↓ so App.tsx's
+  // global volume nudge doesn't ALSO fire while you arrow through the record.
+  useEffect(() => { focusedIdx.current = -1 }, [albumKey])
+  const scrollRowIntoView = useCallback((idx: number) => {
+    const el = tableRef.current?.querySelector<HTMLElement>(`[data-row-idx="${idx}"]`)
+    el?.scrollIntoView({ block: 'nearest' })
+  }, [])
+  useEffect(() => {
+    if (lib.currentView !== 'album-detail' || tracks.length === 0) return
+    const onKey = (e: KeyboardEvent) => {
+      if (document.querySelector('.getinfo-overlay')) return
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault()
+        e.stopPropagation()
+        const dir = e.key === 'ArrowDown' ? 1 : -1
+        let cur = focusedIdx.current
+        if (cur < 0) cur = tracks.findIndex((t) => lib.selectedTrackIds.has(t.id))
+        let next = cur < 0 ? (dir > 0 ? 0 : tracks.length - 1) : cur + dir
+        next = Math.max(0, Math.min(tracks.length - 1, next))
+        focusedIdx.current = next
+        const track = tracks[next]
+        if (!track) return
+        if (e.shiftKey) {
+          const anchor = lastClickedIdx.current >= 0 ? lastClickedIdx.current : next
+          const from = Math.min(anchor, next)
+          const to = Math.max(anchor, next)
+          libDispatch({ type: 'SELECT_RANGE', ids: tracks.slice(from, to + 1).map((t) => t.id) })
+        } else {
+          libDispatch({ type: 'SELECT_TRACK', id: track.id })
+          lastClickedIdx.current = next
+        }
+        scrollRowIntoView(next)
+        return
+      }
+      if (e.key === 'Enter') {
+        // A focused button (Play, Read all…) answers Return itself.
+        if (tag === 'BUTTON' || tag === 'A') return
+        const idx = focusedIdx.current >= 0 ? focusedIdx.current : tracks.findIndex((t) => lib.selectedTrackIds.has(t.id))
+        const track = idx >= 0 ? tracks[idx] : null
+        if (!track) return
+        e.preventDefault()
+        playTrack(track, tracks, idx, undefined, true)
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [lib.currentView, lib.selectedTrackIds, tracks, libDispatch, playTrack, scrollRowIntoView])
+
   if (tracks.length === 0) {
     return (
       <div className="album-page album-page--empty">
@@ -525,17 +622,28 @@ export default function AlbumDetailView() {
     )
   }
 
-  const hasCredits = credits && (credits.released || credits.label || credits.producer || credits.recorded)
+  const hasCredits = !!(credits && (credits.released || credits.label || credits.producer || credits.recorded))
 
   const releaseDisplay = albumCreditReleaseDate(year, credits?.released)
 
-  const creditLine = hasCredits
-    ? [
-        releaseDisplay && `Released ${formatReleaseDateDisplay(releaseDisplay)}`,
-        credits!.label && credits!.label,
-        credits!.producer && `Produced by ${credits!.producer}`,
-      ].filter(Boolean).join(' · ')
-    : ''
+  // Right-hand credits (direction D): the facts we have, in a fixed order.
+  // Genre + Length are local, so the list is never empty.
+  const creditRows: Array<[string, string]> = [
+    ...(releaseDisplay ? [['Released', formatReleaseDateDisplay(releaseDisplay)] as [string, string]] : []),
+    ...(credits?.label ? [['Label', credits.label] as [string, string]] : []),
+    ...(credits?.producer ? [['Producer', credits.producer] as [string, string]] : []),
+    ...(genre ? [['Genre', genre] as [string, string]] : []),
+    ['Length', `${totalClock(totalMs)} · ${tracks.length} song${tracks.length === 1 ? '' : 's'}`],
+  ]
+
+  const showBlurb = !!blurb && !isWeakBlurb(blurb)
+
+  // Artist column only when the record really has more than one artist.
+  const multiArtist = new Set(tracks.map((t) => (t.artist || '').trim().toLowerCase())).size > 1
+  const cols = gridCols(multiArtist)
+
+  // "‹ Albums" — the chevron is drawn, so drop the label's text arrow.
+  const backText = shownBackLabel.replace(/^[←‹]\s*/, '')
 
   // 2026-09-02 — no whole-page gate: the tracks are in memory, so the album
   // paints on frame one; the history blurb lands in its own line, with a
@@ -543,250 +651,285 @@ export default function AlbumDetailView() {
   void pageReady
 
   return (
-    <div className="album-page">
-      <div className="album-page-topbar">
-        <button type="button" className="album-page-back" onClick={goBack}>{shownBackLabel}</button>
-        {siblingAlbums.length > 1 && curIdx >= 0 && (
-          <div className="album-page-flip" title={`${albumArtist} — album ${curIdx + 1} of ${siblingAlbums.length}`}>
-            <button
-              type="button"
-              className="album-page-flip-btn"
-              disabled={!prevAlbum}
-              onClick={() => prevAlbum && libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: prevAlbum.key })}
-              title={prevAlbum ? `Newer: ${prevAlbum.name}${prevAlbum.year ? ` (${prevAlbum.year})` : ''}` : 'Newest album'}
-              aria-label="Newer album"
-            >‹</button>
-            <span className="album-page-flip-pos">{curIdx + 1} / {siblingAlbums.length}</span>
-            <button
-              type="button"
-              className="album-page-flip-btn"
-              disabled={!nextAlbum}
-              onClick={() => nextAlbum && libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: nextAlbum.key })}
-              title={nextAlbum ? `Older: ${nextAlbum.name}${nextAlbum.year ? ` (${nextAlbum.year})` : ''}` : 'Oldest album'}
-              aria-label="Older album"
-            >›</button>
+    <div className="album-page album-page--d">
+      <div className="apd-scroll" ref={tracklistRef}>
+        <div className="apd-head">
+          <div className="album-page-topbar apd-top">
+            <button type="button" className="album-page-back apd-back" onClick={goBack} aria-label={backText}>{ICON_BACK}<span>{backText}</span></button>
+            {siblingAlbums.length > 1 && curIdx >= 0 && (
+              <div className="album-page-flip apd-more" title={`${albumArtist} — album ${curIdx + 1} of ${siblingAlbums.length}`}>
+                <span className="apd-more-label">More by {albumArtist}</span>
+                <span className="apd-pager">
+                  <button
+                    type="button"
+                    className="album-page-flip-btn apd-pager-btn"
+                    disabled={!prevAlbum}
+                    onClick={() => prevAlbum && libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: prevAlbum.key })}
+                    title={prevAlbum ? `Newer: ${prevAlbum.name}${prevAlbum.year ? ` (${prevAlbum.year})` : ''}` : 'Newest album'}
+                    aria-label="Newer album"
+                  >{ICON_LEFT}</button>
+                  <span className="album-page-flip-pos apd-pager-pos">{curIdx + 1} of {siblingAlbums.length}</span>
+                  <button
+                    type="button"
+                    className="album-page-flip-btn apd-pager-btn"
+                    disabled={!nextAlbum}
+                    onClick={() => nextAlbum && libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: nextAlbum.key })}
+                    title={nextAlbum ? `Older: ${nextAlbum.name}${nextAlbum.year ? ` (${nextAlbum.year})` : ''}` : 'Oldest album'}
+                    aria-label="Older album"
+                  >{ICON_RIGHT}</button>
+                </span>
+              </div>
+            )}
           </div>
-        )}
-      </div>
-      <div className="album-page-hero">
-        <div className="album-page-cover">
-          {artHash
-            ? <AlbumArtImage hash={artHash} alt={albumName} priority />
-            : <div className="album-page-cover-placeholder">♫</div>}
-        </div>
-        <div className="album-page-meta">
-          <div
-            className={`album-page-artist${albumArtist ? ' album-page-artist--link' : ''}`}
-            onClick={albumArtist ? () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: albumArtist }) : undefined}
-            role={albumArtist ? 'button' : undefined}
-            title={albumArtist ? `Go to ${albumArtist}` : undefined}
-          >{albumArtist}</div>
-          <h1 className="album-page-title">{albumName}</h1>
-          <div className="album-page-facts">
-            {[year && String(year), `${tracks.length} song${tracks.length === 1 ? '' : 's'}`, formatTotalDuration(totalMs), genre].filter(Boolean).join(' · ')}
-          </div>
-          <div className="album-page-actions">
-            <button type="button" className="album-page-play" onClick={() => playTrack(tracks[0], tracks, 0, undefined, true)}>▶ Play</button>
-            <button type="button" className="album-page-shuffle" onClick={() => { const s = tracks.slice().sort(() => Math.random() - 0.5); if (s.length) playTrack(s[0], s, 0, undefined, true) }}>⤮ Shuffle</button>
-            {/* V5 Live Concert Mode — declare / play-set / undeclare.
-                Declaring is allowed IF AND ONLY IF the album is complete
-                (every track present, verified against declared counts). */}
-            {!isLiveSetAlbumPage && (liveSet && mergedTrack ? (
-              <>
-                <button type="button" className="album-page-play album-page-liveset-play" onClick={startShow} title="Play the whole show as one continuous set">♪ Play Live Set</button>
+
+          <div className="apd-sleeve">
+            {/* The record sleeve: cover with the disc peeking out behind it.
+                .album-page-cover stays on the square alone — the disc handoff
+                (discHandoff.ts / disc-handoff.css) morphs exactly that box. */}
+            <div className="apd-art">
+              <div className="apd-disc" aria-hidden="true" />
+              <div className="album-page-cover apd-cover">
+                {artHash
+                  ? <AlbumArtImage hash={artHash} alt={albumName} priority />
+                  : <div className="album-page-cover-placeholder apd-cover-placeholder">{ICON_NOTE_BIG}</div>}
+              </div>
+            </div>
+
+            <div className="apd-meta">
+              {albumArtist ? (
                 <button
                   type="button"
-                  className={`album-page-shuffle album-page-liveset-crowd${crowdOn ? ' album-page-liveset-crowd--on' : ''}`}
-                  onClick={() => setConcertCrowdEnabled(!crowdOn)}
-                  title="Swell that night's crowd in the gaps between songs — off by default"
-                >
-                  {crowdOn ? '◉ Crowd on' : '◎ Crowd'}
-                </button>
-                <button type="button" className="album-page-shuffle album-page-liveset-undeclare" onClick={() => setUndeclareConfirm(true)} title="Remove this concert — the songs are unaffected">{REMOVE_CONCERT_LABEL}</button>
-              </>
-            ) : (
-              <button
-                type="button"
-                className="album-page-shuffle album-page-liveset-declare"
-                onClick={handleDeclare}
-                disabled={mergeBusy || !completeness.complete}
-                title={!completeness.complete
-                  ? `Live Mode needs the complete album — ${completeness.reason}`
-                  : completeness.verifiedTotal
-                    ? "Copy + merge this album's tracks into one continuous live set"
-                    : "The files can't confirm the total — you'll be asked to confirm the show is complete"}
-              >
-                {mergeBusy ? (mergeLabel || 'Merging…') : 'Declare Live Concert Mode'}
-              </button>
-            ))}
-          </div>
-          {!isLiveSetAlbumPage && !liveSet && !completeness.complete && (
-            <div className="album-page-liveset-blocked">
-              Live Mode needs the complete album — {completeness.reason}
-            </div>
-          )}
-          {creditLine && <div className="album-page-creditline">{creditLine}</div>}
-          {infoLoadingShown && !blurb && !creditLine && (
-            <p className="album-page-loading">Loading album history…</p>
-          )}
-          {infoError && !infoLoading && !blurb && !creditLine && (
-            <p className="album-page-loading">Couldn&apos;t load album info.</p>
-          )}
-        </div>
-      </div>
-
-      {blurb && !isWeakBlurb(blurb) && (
-        <div className={`album-page-about ${blurbExpanded ? 'album-page-about--expanded' : ''}`}>
-          <p ref={blurbRef} className="album-page-blurb">{blurb}</p>
-          {blurbOverflows && (
-            <button
-              type="button"
-              className="album-page-blurb-toggle"
-              onClick={() => setBlurbExpanded((v) => !v)}
-            >
-              {blurbExpanded ? 'Show less' : 'Read more'}
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* The Music Man's take — opt-in opinion, separate from the factual
-          history above. Collapsed by default; his voice lives behind a click. */}
-      <div className="album-page-take">
-        <button
-          type="button"
-          className={`album-page-take-toggle ${takeOpen ? 'is-open' : ''}`}
-          onClick={handleToggleTake}
-          aria-expanded={takeOpen}
-        >
-          <span className="album-page-take-icon" aria-hidden="true">♪</span>
-          The Music Man’s take
-          <span className="album-page-take-caret" aria-hidden="true">›</span>
-        </button>
-        {takeOpen && (
-          <div className="album-page-take-body">
-            {takeLoading && !take && <p className="album-page-take-status">The Music Man’s mulling it over…</p>}
-            {take && <p className="album-page-take-text">{take}</p>}
-            {takeError && !take && <p className="album-page-take-status">Couldn’t get his take right now.</p>}
-          </div>
-        )}
-      </div>
-
-      {/* V5 Live Concert Mode — the set list. Active song highlights while
-          the merged set plays. A click starts the set from the top when it
-          isn't playing, and never jumps around in it (Jake 8/8: "it should
-          start from track 1 thats it"). */}
-      {liveSet && mergedTrack && (() => {
-        // The printed setlist sheet — same prop as ConcertDetailView (shared
-        // .concert-sheet / .cj-* language from concert-detail.css), minus the
-        // journey rail. Length bars scale to the night's longest song; the ✓
-        // renders only when it distinguishes rows; guest cues get a chip.
-        const promoted = new Set(liveSet.promotedTrackIds || [])
-        const allPromoted = liveSet.cues.every((c) => promoted.has(c.trackId))
-        const maxDurMs = Math.max(1, ...liveSet.cues.map((c) => c.durationMs))
-        const artistLc = albumArtist.toLowerCase().trim()
-        const dividers = new Map<number, string>()
-        for (const s of liveSet.concert?.segments || []) {
-          if (s && typeof s.before === 'number' && s.label) dividers.set(s.before, s.label)
-        }
-        return (
-          <div className="concert-sheet album-page-sheet">
-            <div className="cs-head">
-              <span className="cs-head-title">Set List</span>
-              <span className="cs-head-rule" aria-hidden="true" />
-              <span className="cs-head-stat">
-                {liveSet.cues.length} songs · {formatTotalDuration(liveSet.totalDurationMs)}
-                {setPlaying && activeCue ? ` · now ${activeCue.index + 1}/${liveSet.cues.length}` : ''}
-              </span>
-            </div>
-            <div className="cs-cols cs-cols--norail" aria-hidden="true">
-              <span className="cs-cols-song">Song</span>
-              <span className="cs-cols-len">Length</span>
-              <span className="cs-cols-at">At</span>
-            </div>
-            <div className="aps-rows">
-              {liveSet.cues.map((cue, i) => {
-                const inLibrary = !allPromoted && promoted.has(cue.trackId)
-                const guest = (cue.artist || '').toLowerCase().trim() !== artistLc ? cue.artist : null
-                const state = activeCue ? (activeCue.index === i ? '--active' : i < activeCue.index ? '--played' : '') : ''
-                const divider = dividers.get(i + 1)
-                return (
-                  <React.Fragment key={`${cue.trackId}-${i}`}>
-                    {divider && (
-                      <div className="cs-divider cs-divider--norail" aria-label={divider}>
-                        <span className="cs-divider-rule" /><span className="cs-divider-label">{divider}</span><span className="cs-divider-rule" />
-                      </div>
-                    )}
-                    <div
-                      className={`cj-song aps-row${state ? ` aps-row${state}` : ''}`}
-                      onClick={startShow}
-                      onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setCueCtx({ x: e.clientX, y: e.clientY, cue }) }}
-                      title={setPlaying ? 'Right-click a song to add it to your library' : 'Play the live set from the top — right-click a song to add it to your library'}
-                      role="button"
-                    >
-                      <span className="cj-num">{String(i + 1).padStart(2, '0')}</span>
-                      <span className="cj-name">
-                        <span className="cj-name-text">{cleanLiveTitle(cue.title)}</span>
-                        {guest && <span className="cj-guest">{guest}</span>}
-                        {inLibrary && <span className="cj-inlib" title="In your library">✓</span>}
-                      </span>
-                      <span className="cj-lane" aria-hidden="true"><span className="cj-lane-bar" style={{ width: `${Math.max(6, Math.round((cue.durationMs / maxDurMs) * 100))}%` }} /></span>
-                      <span className="cj-len">{formatDuration(cue.durationMs)}</span>
-                      <span className="cj-at" title="Starts at this point in the show">{startClock(cue.startMs)}</span>
-                    </div>
-                  </React.Fragment>
-                )
-              })}
-            </div>
-          </div>
-        )
-      })()}
-
-      <div className="album-page-tracklist songs-view" ref={tracklistRef}>
-        <div className="songs-header" style={{ gridTemplateColumns: GRID_COLS }}>
-          <div className="songs-header-cell" style={{ textAlign: 'center', justifyContent: 'center' }}>#</div>
-          <div className="songs-header-cell">Name</div>
-          <div className="songs-header-cell">Time</div>
-        </div>
-        <div className="album-page-track-body">
-        {tracks.map((track, idx) => {
-          const isPlaying = pb.nowPlaying?.id === track.id
-          const isSelected = lib.selectedTrackIds.has(track.id)
-          const starred = (Number(track.rating) || 0) > 0
-          return (
-            <div
-              key={track.id}
-              className={`songs-row ${idx % 2 ? 'songs-row--alt' : ''} ${isPlaying ? 'songs-row--playing' : ''} ${isSelected ? 'songs-row--selected' : ''}`}
-              style={{ gridTemplateColumns: GRID_COLS }}
-              onClick={(e) => handleClick(track.id, idx, e)}
-              onDoubleClick={() => handleDoubleClick(idx)}
-              onMouseEnter={() => prefetchTrackForPlay(track)}
-              onMouseDown={() => prefetchTrackImmediate(track)}
-              onContextMenu={(e) => handleContextMenu(e, track, idx)}
-              draggable
-              onDragStart={(e) => handleRowDragStart(track, e)}
-            >
-              <div className="songs-cell songs-cell--icon">{isPlaying ? <SpeakerPlayingIcon /> : <span className="album-page-tracknum">{track.trackNumber || idx + 1}</span>}</div>
-              <div className="songs-cell songs-cell--title">
-                {track.audioMissing && <span className="songs-cell-missing-badge" title="Audio file missing — re-import to restore playback." aria-label="Audio file missing">!</span>}
-                <span className="title-row-text">{track.title || ''}</span>
-                <button
-                  className={`title-row-star ${starred ? 'title-row-star--filled' : ''}`}
-                  onClick={(e) => { e.stopPropagation(); handleRatingChange(track.id, starred ? 0 : 5) }}
-                  onDoubleClick={(e) => e.stopPropagation()}
-                  title={starred ? 'Unstar' : 'Star'}
-                  aria-label={starred ? 'Unstar' : 'Star'}
-                >
-                  <svg width="10" height="10" viewBox="0 0 10 10" fill={starred ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="0.8" strokeLinejoin="round">
-                    <polygon points="5,1 6.2,3.8 9.5,4.1 7.1,6.2 7.9,9.5 5,7.8 2.1,9.5 2.9,6.2 0.5,4.1 3.8,3.8" />
-                  </svg>
-                </button>
+                  className="apd-artist"
+                  onClick={() => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: albumArtist })}
+                  title={`Go to ${albumArtist}`}
+                >{albumArtist}</button>
+              ) : null}
+              <h1 className="apd-title">{albumName}</h1>
+              <div className="apd-facts">
+                {[year && String(year), `${tracks.length} song${tracks.length === 1 ? '' : 's'}`, formatTotalDuration(totalMs), genre].filter(Boolean).map((f, i) => (
+                  <span key={i}>{f}</span>
+                ))}
               </div>
-              <div className="songs-cell songs-cell--time">{formatDuration(track.duration)}</div>
+              <div className="apd-ctrls">
+                <button type="button" className="apd-btn apd-btn--orange" onClick={() => playTrack(tracks[0], tracks, 0, undefined, true)}>{ICON_PLAY}Play</button>
+                <button type="button" className="apd-btn" onClick={() => { const s = tracks.slice().sort(() => Math.random() - 0.5); if (s.length) playTrack(s[0], s, 0, undefined, true) }}>{ICON_SHUFFLE}Shuffle</button>
+                {/* V5 Live Concert Mode — declare / play-set / undeclare.
+                    Declaring is allowed IF AND ONLY IF the album is complete
+                    (every track present, verified against declared counts). */}
+                {!isLiveSetAlbumPage && <span className="apd-ctrls-gap" aria-hidden="true" />}
+                {!isLiveSetAlbumPage && (liveSet && mergedTrack ? (
+                  <>
+                    <button type="button" className="apd-btn apd-btn--orange album-page-liveset-play" onClick={startShow} title="Play the whole show as one continuous set">{ICON_PLAY}Play Live Set</button>
+                    <button
+                      type="button"
+                      className={`apd-btn album-page-liveset-crowd${crowdOn ? ' album-page-liveset-crowd--on' : ''}`}
+                      onClick={() => setConcertCrowdEnabled(!crowdOn)}
+                      title="Swell that night's crowd in the gaps between songs — off by default"
+                    >
+                      {crowdOn ? '◉ Crowd on' : '◎ Crowd'}
+                    </button>
+                    <button type="button" className="apd-btn album-page-liveset-undeclare" onClick={() => setUndeclareConfirm(true)} title="Remove this concert — the songs are unaffected">{REMOVE_CONCERT_LABEL}</button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="apd-btn album-page-liveset-declare"
+                    onClick={handleDeclare}
+                    disabled={mergeBusy || !completeness.complete}
+                    title={!completeness.complete
+                      ? `Live Mode needs the complete album — ${completeness.reason}`
+                      : completeness.verifiedTotal
+                        ? "Copy + merge this album's tracks into one continuous live set"
+                        : "The files can't confirm the total — you'll be asked to confirm the show is complete"}
+                  >
+                    {ICON_MIC}{mergeBusy ? (mergeLabel || 'Merging…') : 'Declare Live Concert Mode'}
+                  </button>
+                ))}
+              </div>
+              {!isLiveSetAlbumPage && !liveSet && !completeness.complete && (
+                <div className="album-page-liveset-blocked apd-blocked">
+                  Live Mode needs the complete album — {completeness.reason}
+                </div>
+              )}
+
+              <div className="apd-body">
+                <div className="apd-text">
+                  {showBlurb && <p className="apd-bio">{blurb}</p>}
+                  {infoLoadingShown && !blurb && (
+                    <p className="album-page-loading apd-status-note">Loading album history…</p>
+                  )}
+                  {infoError && !infoLoading && !blurb && !hasCredits && (
+                    <p className="album-page-loading apd-status-note">Couldn&apos;t load album info.</p>
+                  )}
+
+                  {/* The Music Man's take — his opinion, kept apart from the
+                      factual history above. Open by default; Read all
+                      un-clamps it when it runs long. */}
+                  <section className="apd-take" aria-label="The Music Man’s take">
+                    <div className="apd-take-mark" aria-hidden="true">{ICON_NOTE}</div>
+                    <h4 className="apd-take-title">The Music Man’s take</h4>
+                    {take && (takeOverflows || takeExpanded) ? (
+                      <button
+                        type="button"
+                        className={`apd-take-more${takeExpanded ? ' is-open' : ''}`}
+                        onClick={() => setTakeExpanded((v) => !v)}
+                        aria-expanded={takeExpanded}
+                      >
+                        {takeExpanded ? 'Show less' : 'Read all'}
+                        <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><path d="M2 3l2 2 2-2" fill="none" stroke="currentColor" strokeWidth="1.4" /></svg>
+                      </button>
+                    ) : <span />}
+                    {take && <p ref={takeRef} className={`apd-take-text${takeExpanded ? ' is-open' : ''}`}>{take}</p>}
+                    {!take && takeLoading && <p className="apd-take-status">The Music Man’s mulling it over…</p>}
+                    {!take && !takeLoading && takeError && <p className="apd-take-status">Couldn’t get his take right now.</p>}
+                  </section>
+                </div>
+
+                <dl className="apd-cred">
+                  {creditRows.map(([k, v]) => (
+                    <React.Fragment key={k}>
+                      <dt>{k}</dt>
+                      <dd>{v}</dd>
+                    </React.Fragment>
+                  ))}
+                </dl>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* V5 Live Concert Mode — the set list. Active song highlights while
+            the merged set plays. A click starts the set from the top when it
+            isn't playing, and never jumps around in it (Jake 8/8: "it should
+            start from track 1 thats it"). */}
+        {liveSet && mergedTrack && (() => {
+          // The printed setlist sheet — same prop as ConcertDetailView (shared
+          // .concert-sheet / .cj-* language from concert-detail.css), minus the
+          // journey rail. Length bars scale to the night's longest song; the ✓
+          // renders only when it distinguishes rows; guest cues get a chip.
+          const promoted = new Set(liveSet.promotedTrackIds || [])
+          const allPromoted = liveSet.cues.every((c) => promoted.has(c.trackId))
+          const maxDurMs = Math.max(1, ...liveSet.cues.map((c) => c.durationMs))
+          const artistLc = albumArtist.toLowerCase().trim()
+          const dividers = new Map<number, string>()
+          for (const s of liveSet.concert?.segments || []) {
+            if (s && typeof s.before === 'number' && s.label) dividers.set(s.before, s.label)
+          }
+          return (
+            <div className="concert-sheet album-page-sheet">
+              <div className="cs-head">
+                <span className="cs-head-title">Set List</span>
+                <span className="cs-head-rule" aria-hidden="true" />
+                <span className="cs-head-stat">
+                  {liveSet.cues.length} songs · {formatTotalDuration(liveSet.totalDurationMs)}
+                  {setPlaying && activeCue ? ` · now ${activeCue.index + 1}/${liveSet.cues.length}` : ''}
+                </span>
+              </div>
+              <div className="cs-cols cs-cols--norail" aria-hidden="true">
+                <span className="cs-cols-song">Song</span>
+                <span className="cs-cols-len">Length</span>
+                <span className="cs-cols-at">At</span>
+              </div>
+              <div className="aps-rows">
+                {liveSet.cues.map((cue, i) => {
+                  const inLibrary = !allPromoted && promoted.has(cue.trackId)
+                  const guest = (cue.artist || '').toLowerCase().trim() !== artistLc ? cue.artist : null
+                  const state = activeCue ? (activeCue.index === i ? '--active' : i < activeCue.index ? '--played' : '') : ''
+                  const divider = dividers.get(i + 1)
+                  return (
+                    <React.Fragment key={`${cue.trackId}-${i}`}>
+                      {divider && (
+                        <div className="cs-divider cs-divider--norail" aria-label={divider}>
+                          <span className="cs-divider-rule" /><span className="cs-divider-label">{divider}</span><span className="cs-divider-rule" />
+                        </div>
+                      )}
+                      <div
+                        className={`cj-song aps-row${state ? ` aps-row${state}` : ''}`}
+                        onClick={startShow}
+                        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setCueCtx({ x: e.clientX, y: e.clientY, cue }) }}
+                        title={setPlaying ? 'Right-click a song to add it to your library' : 'Play the live set from the top — right-click a song to add it to your library'}
+                        role="button"
+                      >
+                        <span className="cj-num">{String(i + 1).padStart(2, '0')}</span>
+                        <span className="cj-name">
+                          <span className="cj-name-text">{cleanLiveTitle(cue.title)}</span>
+                          {guest && <span className="cj-guest">{guest}</span>}
+                          {inLibrary && <span className="cj-inlib" title="In your library">✓</span>}
+                        </span>
+                        <span className="cj-lane" aria-hidden="true"><span className="cj-lane-bar" style={{ width: `${Math.max(6, Math.round((cue.durationMs / maxDurMs) * 100))}%` }} /></span>
+                        <span className="cj-len">{formatDuration(cue.durationMs)}</span>
+                        <span className="cj-at" title="Starts at this point in the show">{startClock(cue.startMs)}</span>
+                      </div>
+                    </React.Fragment>
+                  )
+                })}
+              </div>
             </div>
           )
-        })}
+        })()}
+
+        <div className="apd-table" ref={tableRef} role="grid" aria-label={`${albumName} songs`}>
+          <div className="apd-thead" style={{ gridTemplateColumns: cols }} role="row">
+            <div className="apd-th apd-th--c apd-th--sorted" role="columnheader">#</div>
+            <div className="apd-th" role="columnheader">Name</div>
+            {multiArtist && <div className="apd-th" role="columnheader">Artist</div>}
+            <div className="apd-th apd-th--r" role="columnheader">Plays</div>
+            <div className="apd-th apd-th--c" role="columnheader">Star</div>
+            <div className="apd-th apd-th--r" role="columnheader">Time</div>
+          </div>
+          {tracks.map((track, idx) => {
+            const isPlaying = pb.nowPlaying?.id === track.id
+            const isSelected = lib.selectedTrackIds.has(track.id)
+            const starred = (Number(track.rating) || 0) > 0
+            return (
+              <div
+                key={track.id}
+                data-row-idx={idx}
+                role="row"
+                aria-selected={isSelected}
+                className={`apd-row${idx % 2 ? ' apd-row--alt' : ''}${isPlaying ? ' apd-row--playing' : ''}${isSelected ? ' apd-row--selected' : ''}`}
+                style={{ gridTemplateColumns: cols }}
+                onClick={(e) => handleClick(track.id, idx, e)}
+                onDoubleClick={() => handleDoubleClick(idx)}
+                onMouseEnter={() => prefetchTrackForPlay(track)}
+                onMouseDown={() => prefetchTrackImmediate(track)}
+                onContextMenu={(e) => handleContextMenu(e, track, idx)}
+                draggable
+                onDragStart={(e) => handleRowDragStart(track, e)}
+              >
+                <div className="apd-td apd-td--c apd-td--num">{isPlaying ? <SpeakerPlayingIcon /> : (track.trackNumber || idx + 1)}</div>
+                <div className="apd-td apd-td--name">
+                  {track.audioMissing && <span className="songs-cell-missing-badge" title="Audio file missing — re-import to restore playback." aria-label="Audio file missing">!</span>}
+                  <span className="apd-name-text">{track.title || ''}</span>
+                </div>
+                {multiArtist && <div className="apd-td apd-td--artist">{track.artist || ''}</div>}
+                <div className="apd-td apd-td--r apd-td--dim">{playsEverywhere(track, elsewhere)}</div>
+                <div className="apd-td apd-td--c">
+                  <button
+                    type="button"
+                    className={`apd-star${starred ? ' apd-star--on' : ''}`}
+                    onClick={(e) => { e.stopPropagation(); handleRatingChange(track.id, starred ? 0 : 5) }}
+                    onDoubleClick={(e) => e.stopPropagation()}
+                    title={starred ? 'Unstar' : 'Star'}
+                    aria-label={starred ? 'Unstar' : 'Star'}
+                    aria-pressed={starred}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 10 10" fill={starred ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="0.8" strokeLinejoin="round" aria-hidden="true">
+                      <polygon points="5,1 6.2,3.8 9.5,4.1 7.1,6.2 7.9,9.5 5,7.8 2.1,9.5 2.9,6.2 0.5,4.1 3.8,3.8" />
+                    </svg>
+                  </button>
+                </div>
+                <div className="apd-td apd-td--r apd-td--time">{formatDuration(track.duration)}</div>
+              </div>
+            )
+          })}
         </div>
+      </div>
+
+      <div className="apd-statusbar">
+        <span className="apd-statusbar-hint">Double-click a song to play from there · right-click for the full song menu</span>
+        <span className="apd-statusbar-total">{tracks.length} song{tracks.length === 1 ? '' : 's'}, {totalClock(totalMs)} total time</span>
+        <span aria-hidden="true" />
       </div>
 
       {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={getContextMenuItems()} onClose={() => setCtxMenu(null)} />}

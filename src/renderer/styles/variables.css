@@ -67,6 +67,12 @@
   --brand-orange-light:  #FE7632;       /* gradient tops + hover */
   --brand-orange-dark:   #C94401;       /* gradient bottoms */
   --brand-orange-border: #9B3401;       /* button borders (darkest) */
+  /* Small orange TEXT only (Jake 2026-10-22, design audit D02): the brand
+     orange is ~3.2:1 on white — below 4.5:1 for text under ~18px. This is
+     the lightest shade that passes on white AND on the album page's
+     brushed metal (#cfcfcf: 4.7:1). Fills, big type and icons keep
+     --brand-orange. */
+  --accent-text:         #C14201;
   --brand-cream:         #FEFDFC;       /* the logo note's white */
   --brand-cream-rgb:     254, 253, 252;
   --brand-ink:           #0B0B0A;       /* the note's outline black */
