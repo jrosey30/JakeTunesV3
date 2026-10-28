@@ -47,7 +47,8 @@ THE EXERCISE, EVERY NIGHT
      and a 5th-percentile gain > 0); stay promoted while not worse; demote
      otherwise. "Insufficient data" is reported as such, never as a score.
      Two checks on other decisions can veto: the suggestion strip (did his
-     adds score higher than what he passed over?) and the quiz judge (do
+     adds score higher than what he passed over IN THE SAME STRIP — the
+     paired check, 2026-10-27; the old pooled AUC is still logged) and the quiz judge (do
      the models agree with his Top 1000 Quiz choices — heats, duels,
      this-or-that — scored on models that never saw an answer?). When the
      quiz judge is measured it outranks the strip: a reliable quiz win
@@ -745,19 +746,35 @@ def evaluate(lib, events, mood, now_ms, verdicts=()):
     return res
 
 
-def strip_check(lib, events, mood, now_ms, ledger_rows, members, verdicts=()):
-    """Secondary check on a different decision: of the playlist suggestions
-    shown in the last 56 days, did the songs Jake ADDED (and kept) score
-    higher than the ones he passed over? Challenger and v5 are both frozen
-    as of 56 days ago, so the adds were never seen."""
-    T = now_ms - 2 * HOLDOUT_DAYS * DAY_MS
+STRIP_FROZEN_DAYS = 2 * HOLDOUT_DAYS   # both strip checks grade models frozen this long ago
+
+
+def strip_frozen(lib, events, mood, now_ms, verdicts=()):
+    """Challenger and v5 frozen at T = now − 56 days, scored over the whole
+    library — shared by both strip checks. None when the challenger cannot
+    be fitted there."""
+    T = now_ms - STRIP_FROZEN_DAYS * DAY_MS
     model, _, _ = window_train(lib, events, mood, T, verdicts=verdicts)
     if model is None:
-        return {'verdict': 'insufficient data'}
+        return None
     snap = Snapshot(lib, events, T, verdicts)
     ids = sorted(lib)
-    ch = dict(zip(ids, predict(model, features(snap, ids, mood))))
-    v5 = dict(zip(ids, v5_scores(lib, ids, T, snap.star, snap.play_count, snap.last_played)))
+    return {'T': T, 'snap': snap,
+            'ch': dict(zip(ids, predict(model, features(snap, ids, mood)))),
+            'v5': dict(zip(ids, v5_scores(lib, ids, T, snap.star, snap.play_count, snap.last_played)))}
+
+
+def strip_check(lib, events, mood, now_ms, ledger_rows, members, verdicts=(), frozen=None):
+    """The OLD strip check, kept for comparison (2026-10-27: no longer the
+    gate — strip_paired_check is). Of the playlist suggestions shown in the
+    last 56 days, did the songs Jake ADDED (and kept) score higher than the
+    ones he passed over? One AUC over every impression, pooled across
+    playlists and days. Challenger and v5 are both frozen as of 56 days
+    ago, so the adds were never seen."""
+    frozen = frozen if frozen is not None else strip_frozen(lib, events, mood, now_ms, verdicts)
+    if frozen is None:
+        return {'verdict': 'insufficient data'}
+    T, ch, v5 = frozen['T'], frozen['ch'], frozen['v5']
     rows = []
     for r in ledger_rows:
         if r.get('surface') != 'strip' or r.get('verdict') not in ('accept', 'pass', 'refresh', 'reject'):
@@ -776,8 +793,104 @@ def strip_check(lib, events, mood, now_ms, ledger_rows, members, verdicts=()):
         return {'verdict': 'insufficient data', 'impressions': len(rows)}
     a = np.array(rows)
     w = np.ones(len(a))
+    if a[:, 2].sum() == len(a):
+        return {'verdict': 'insufficient data', 'impressions': len(rows), 'why': 'no passed-over suggestions'}
     return {'verdict': 'measured', 'impressions': len(rows), 'adds': int(a[:, 2].sum()),
             'challenger': round(wauc(a[:, 0], a[:, 2], w), 4), 'champion_v5': round(wauc(a[:, 1], a[:, 2], w), 4)}
+
+
+STRIP_MIN_GROUPS = 40        # fewer strip contexts with a kept add than this = insufficient data
+STRIP_BOOTSTRAP = 1000       # resamples of GROUPS (one strip context is one decision)
+STRIP_SEED = 19
+STRIP_SEEN = ('shown', 'accept', 'pass', 'refresh', 'reject')   # every verdict that means "it was on screen"
+
+
+def strip_groups(ledger_rows, members, lib, t_from, t_to=float('inf')):
+    """The suggestion strip as Jake saw it, one group per strip context in
+    [t_from, t_to). The context key:
+      - the shown batch id (ctx.batch, logged on every strip row since
+        2026-10-19 — one strip of five songs on one playlist), when the row
+        has one;
+      - otherwise (older rows, which never carry a batch) the playlist and
+        the UTC day.
+    In each group: KEPT = songs he added and that are still on the playlist
+    (an unknown playlist counts as kept, as in strip_check); PASSED = songs
+    shown in that group that he did not add. A song added and later removed
+    is neither — it is not a clean "yes" and was not passed over. Groups with
+    no kept add or no passed song carry no pair and are dropped.
+    Returns [(key, [kept tids], [passed tids])], sorted by key."""
+    g = defaultdict(lambda: (set(), set(), set()))   # kept, added (any), seen
+    for r in ledger_rows:
+        if not isinstance(r, dict) or r.get('surface') != 'strip' or r.get('verdict') not in STRIP_SEEN:
+            continue
+        ts = to_ms(r.get('ts'))
+        k = r.get('key') or {}
+        try:
+            tid = int(k.get('trackId'))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if ts is None or not (t_from <= ts < t_to) or tid not in lib:
+            continue
+        ctx = r.get('ctx')
+        batch = ctx.get('batch') if isinstance(ctx, dict) else None
+        key = ('batch', str(batch)) if batch else ('day', str(k.get('playlistId')), int(ts // DAY_MS))
+        kept, added, seen = g[key]
+        seen.add(tid)
+        if r['verdict'] == 'accept':
+            added.add(tid)
+            if str(tid) in members.get(k.get('playlistId'), {str(tid)}):
+                kept.add(tid)
+    out = []
+    for key in sorted(g, key=str):
+        kept, added, seen = g[key]
+        passed = seen - added
+        if kept and passed:
+            out.append((key, sorted(kept), sorted(passed)))
+    return out
+
+
+def paired_agreement(groups, a, b, seed=STRIP_SEED):
+    """Per-group pairwise agreement of two score maps with the strip: in each
+    group, the share of (kept add, passed song) pairs where the model scores
+    the kept add higher (a tie counts half); then the plain mean over groups
+    (every strip context weighs the same, however many songs it showed). The
+    bootstrap resamples whole GROUPS, STRIP_BOOTSTRAP times with a fixed
+    seed; the interval is the 5th / 95th percentile of (a − b)."""
+    ga, gb = np.zeros(len(groups)), np.zeros(len(groups))
+    pairs = 0
+    for i, (_, kept, passed) in enumerate(groups):
+        for s, out in ((a, ga), (b, gb)):
+            d = np.subtract.outer(np.array([s[t] for t in kept], float), np.array([s[t] for t in passed], float))
+            out[i] = float(np.mean((d > 0) + 0.5 * (d == 0)))
+        pairs += len(kept) * len(passed)
+    rnd = np.random.default_rng(seed)
+    idx = rnd.integers(0, len(groups), (STRIP_BOOTSTRAP, len(groups)))
+    gains = np.sort(ga[idx].mean(axis=1) - gb[idx].mean(axis=1))
+    return {'a': float(ga.mean()), 'b': float(gb.mean()), 'gain': float(ga.mean() - gb.mean()),
+            'lb': float(gains[int(0.05 * STRIP_BOOTSTRAP)]), 'ub': float(gains[int(0.95 * STRIP_BOOTSTRAP) - 1]),
+            'pairs': pairs, 'groups': len(groups)}
+
+
+def strip_paired_check(lib, events, mood, now_ms, ledger_rows, members, verdicts=(), frozen=None):
+    """The suggestion-strip GATE (2026-10-27, replaces the pooled AUC of
+    strip_check, which stays computed and logged for comparison): each kept
+    add is compared only with the songs shown and passed over in the SAME
+    strip context (strip_groups), so a model is not rewarded for ranking one
+    playlist's suggestions above another's. Same frozen-time rule: challenger
+    and v5 frozen 56 days ago, graded on strip contexts since then. Needs
+    STRIP_MIN_GROUPS groups with a kept add."""
+    frozen = frozen if frozen is not None else strip_frozen(lib, events, mood, now_ms, verdicts)
+    if frozen is None:
+        return {'verdict': 'insufficient data', 'why': 'no challenger can be fitted at the freeze'}
+    groups = strip_groups(ledger_rows, members, lib, frozen['T'])
+    if len(groups) < STRIP_MIN_GROUPS:
+        return {'verdict': 'insufficient data', 'groups': len(groups),
+                'why': f'{len(groups)} strip contexts with a kept add (need {STRIP_MIN_GROUPS})'}
+    r = paired_agreement(groups, frozen['ch'], frozen['v5'])
+    return {'verdict': 'measured', 'groups': r['groups'], 'adds': sum(len(k) for _, k, _ in groups), 'pairs': r['pairs'],
+            'challenger': round(r['a'], 4), 'champion_v5': round(r['b'], 4), 'gain': round(r['gain'], 4),
+            'gainLowerBound': round(r['lb'], 4), 'gainUpperBound': round(r['ub'], 4),
+            'frozenAt': datetime.fromtimestamp(frozen['T'] / 1000, tz=timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}
 
 
 QUIZ_MIN_QUESTIONS = 500     # fewer scorable quiz choices than this = insufficient data
@@ -912,7 +1025,12 @@ def decide_promotion(ev_res, strip, was_promoted, quiz=None):
     a, b = ev_res['auc']['challenger'], ev_res['auc']['champion_v5']
     lb, won = ev_res.get('gainLowerBound'), ev_res['foldsWon']
     n = len([f for f in ev_res['folds'] if f['verdict'] == 'measured'])
-    strip_ok = strip.get('verdict') != 'measured' or strip['challenger'] >= strip['champion_v5'] - 0.02
+    # the strip is the PAIRED check (strip_paired_check): it vetoes when the
+    # challenger is more than 0.02 below v5, or reliably below it (the 95th
+    # percentile of the gain under 0)
+    strip_ok = strip.get('verdict') != 'measured' or (
+        strip['challenger'] >= strip['champion_v5'] - 0.02
+        and not (strip.get('gainUpperBound') is not None and strip['gainUpperBound'] < 0))
     q_measured = quiz.get('verdict') == 'measured'
     q_wins = q_measured and quiz['gain'] > 0 and quiz['gainLowerBound'] > 0
     q_veto = q_measured and quiz['gainUpperBound'] < 0
@@ -1198,8 +1316,17 @@ def main():
 
     # 5–6. champion vs challenger on held-back time
     ev_res = evaluate(lib, events, mood, now_ms, verdicts=verdicts)
-    strip = strip_check(lib, events, mood, now_ms, ledger_rows, members, verdicts=verdicts)
-    ev_res['stripAdds'] = strip
+    frozen = strip_frozen(lib, events, mood, now_ms, verdicts)
+    strip_auc = strip_check(lib, events, mood, now_ms, ledger_rows, members, verdicts=verdicts, frozen=frozen)
+    strip = strip_paired_check(lib, events, mood, now_ms, ledger_rows, members, verdicts=verdicts, frozen=frozen)
+    ev_res['stripAdds'] = strip_auc     # the old pooled AUC — logged for comparison, not a gate
+    ev_res['stripPaired'] = strip       # the gate
+    log('strip (paired, the gate): ' + (f"challenger {strip['challenger']:.3f} vs v5 {strip['champion_v5']:.3f} on {strip['groups']} strip contexts "
+                                       f"({strip['adds']} kept adds, {strip['pairs']} pairs), gain {strip['gain']:+.3f} "
+                                       f"[{strip['gainLowerBound']:+.3f}, {strip['gainUpperBound']:+.3f}]"
+                                       if strip['verdict'] == 'measured' else strip['verdict'] + (f" — {strip['why']}" if strip.get('why') else ''))
+        + ' · old pooled AUC: ' + (f"challenger {strip_auc['challenger']:.3f} vs v5 {strip_auc['champion_v5']:.3f} on {strip_auc['impressions']} impressions"
+                                   if strip_auc.get('verdict') == 'measured' else strip_auc.get('verdict', '?')))
     quiz = run_quiz_check(lib, events, mood, now_ms, verdicts)
     ev_res['quizChoices'] = quiz
     log('quiz judge: ' + (f"challenger {quiz['challenger']:.3f} vs v5 {quiz['champion_v5']:.3f} on {quiz['questions']} choices "
@@ -1237,10 +1364,12 @@ def main():
         'model': 'behavior-v1' if model is not None else 'v5',
         'promoted': bool(promoted and model is not None),
         'why': why,
-        # the three tests behind the decision (holdout windows, suggestion strip, quiz judge)
+        # the three tests behind the decision (holdout windows, paired suggestion
+        # strip, quiz judge) + the old pooled strip AUC, kept for comparison only
         'tests': {
             'holdout': {k: ev_res.get(k) for k in ('verdict', 'auc', 'meanGain', 'gainLowerBound', 'foldsWon')},
-            'stripAdds': strip,
+            'stripPaired': strip,
+            'stripAdds': strip_auc,
             'quizChoices': quiz,
         },
         'flagBits': {'underplayedFavorite': FLAG_UNDERPLAYED, 'forgotten': FLAG_FORGOTTEN,
@@ -1267,7 +1396,7 @@ def main():
         f.write(json.dumps({'at': state['builtAt'], 'promoted': state['promoted'], 'wasPromoted': was_promoted,
                             'why': why, 'auc': ev_res.get('auc'), 'gainLowerBound': ev_res.get('gainLowerBound'),
                             'foldsWon': ev_res.get('foldsWon'),
-                            'quiz': {'verdicts': len(verdicts), 'gain': ev_res.get('quizGain')}, 'stripAdds': {k: strip.get(k) for k in ('challenger', 'champion_v5', 'adds')}, 'quizChoices': {k: quiz.get(k) for k in ('verdict', 'challenger', 'champion_v5', 'gainLowerBound', 'gainUpperBound', 'questions')}, 'mixes': {k: mix_grade.get(k) for k in ('served', 'playedThroughRate', 'skipRateWhenPlayed')},
+                            'quiz': {'verdicts': len(verdicts), 'gain': ev_res.get('quizGain')}, 'stripAdds': {k: strip_auc.get(k) for k in ('challenger', 'champion_v5', 'adds')}, 'stripPaired': {k: strip.get(k) for k in ('verdict', 'challenger', 'champion_v5', 'gainLowerBound', 'gainUpperBound', 'groups')},'quizChoices': {k: quiz.get(k) for k in ('verdict', 'challenger', 'champion_v5', 'gainLowerBound', 'gainUpperBound', 'questions')}, 'mixes': {k: mix_grade.get(k) for k in ('served', 'playedThroughRate', 'skipRateWhenPlayed')},
                             'suggestions': {k: led.get(k) for k in ('stripAddPlayedRate', 'stripAddKeptRate', 'stripAddSkipped2xRate', 'stripShownFromPlaylistArtists28d', 'stripDistinctArtistsPer100')},
                             'drift': {'soundPrefAgreement': dr.get('soundPrefAgreement')}}, default=str) + '\n')
     atomic_json(status_path, {'ok': True, 'at': state['builtAt'], 'promoted': state['promoted'], 'why': why,

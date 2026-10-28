@@ -330,7 +330,7 @@ class EngineTest(unittest.TestCase):
         self.te.time.time = lambda: self.now / 1000
         self.assertEqual(self.te.main(), 0)
         st = json.load(open(os.path.join(self.d, 'taste-state.json')))
-        self.assertEqual(set(st['tests']), {'holdout', 'stripAdds', 'quizChoices'})
+        self.assertEqual(set(st['tests']), {'holdout', 'stripPaired', 'stripAdds', 'quizChoices'})
         qz = st['tests']['quizChoices']
         self.assertEqual(qz['verdict'], 'measured')
         self.assertEqual(qz['questions'], 600)
@@ -487,6 +487,127 @@ class EngineTest(unittest.TestCase):
         # with fewer than 500 choices in the held-out window it fails closed, even with 950 in all
         self.write_quiz(old_v + old_q + self.duels(love, 499, self.now - 20 * DAY, seed=3))
         self.assert_fails_closed(self.te.run_quiz_check(lib, events, mood, self.now, verdicts), 'insufficient data')
+
+    # ── the paired suggestion-strip test (2026-10-27) ──
+
+    def srow(self, ms, verdict, tid, pl, batch=None):
+        r = {'ts': iso(ms), 'surface': 'strip', 'verdict': verdict, 'key': {'trackId': tid, 'playlistId': pl}, 'ctx': {}}
+        if batch:
+            r['ctx']['batch'] = batch
+        return r
+
+    def test_strip_groups_by_batch_else_playlist_and_day(self):
+        self.lib(n=40)
+        lib = self.te.load_library(os.path.join(self.d, 'library.json'))
+        T = self.now - 56 * DAY
+        d0 = T + 3 * DAY + 3_600_000   # 01:00 on a UTC day after T
+        rows = [
+            # old-style: playlist A, one day — 1 kept add, 3 passes (one of them the add itself, passed earlier)
+            self.srow(d0, 'pass', 1, 'A'), self.srow(d0 + 1, 'pass', 2, 'A'), self.srow(d0 + 2, 'refresh', 3, 'A'),
+            self.srow(d0 + 3, 'accept', 1, 'A'),
+            # same playlist, NEXT day: a different group
+            self.srow(d0 + DAY, 'accept', 4, 'A'), self.srow(d0 + DAY, 'pass', 5, 'A'),
+            # same day, other playlist: a different group; add later removed from the playlist = neither side
+            self.srow(d0, 'accept', 6, 'B'), self.srow(d0, 'accept', 7, 'B'), self.srow(d0, 'reject', 8, 'B'),
+            # batch era: a batch is one group even across midnight; 'shown' counts as on screen
+            self.srow(d0 + 2 * DAY + 22 * 3_600_000, 'shown', 10, 'A', 'A:10-11-12:1'),
+            self.srow(d0 + 2 * DAY + 22 * 3_600_000, 'shown', 11, 'A', 'A:10-11-12:1'),
+            self.srow(d0 + 2 * DAY + 22 * 3_600_000, 'shown', 12, 'A', 'A:10-11-12:1'),
+            self.srow(d0 + 3 * DAY, 'accept', 11, 'A', 'A:10-11-12:1'),
+            # a group with a kept add but nothing passed: no pair, dropped
+            self.srow(d0 + 5 * DAY, 'accept', 13, 'C'),
+            # a group with passes and no add: dropped
+            self.srow(d0 + 6 * DAY, 'pass', 14, 'C'), self.srow(d0 + 6 * DAY, 'pass', 15, 'C'),
+            # before the freeze: ignored
+            self.srow(T - DAY, 'accept', 16, 'A'), self.srow(T - DAY, 'pass', 17, 'A'),
+            # not the strip / unknown song / junk
+            {'ts': iso(d0), 'surface': 'discover', 'verdict': 'accept', 'key': {'trackId': 18}},
+            self.srow(d0, 'pass', 9999, 'A'), {'surface': 'strip'}, 'junk',
+        ]
+        members = {'A': {'1', '4', '11', '16'}, 'B': {'6'}, 'C': {'13'}}
+        g = self.te.strip_groups(rows, members, lib, T)
+        day = lambda ms: int(ms // DAY)
+        self.assertEqual(g, sorted([
+            (('day', 'A', day(d0)), [1], [2, 3]),
+            (('day', 'A', day(d0 + DAY)), [4], [5]),
+            (('day', 'B', day(d0)), [6], [8]),
+            (('batch', 'A:10-11-12:1'), [11], [10, 12]),
+        ], key=lambda x: str(x[0])))
+
+    def test_paired_agreement_per_group_mean_and_ties(self):
+        groups = [('g1', [1], [2, 3]), ('g2', [4, 5], [6]), ('g3', [7], [8])]
+        a = {1: .9, 2: .1, 3: .95, 4: .5, 5: .2, 6: .5, 7: .1, 8: .9}
+        b = {1: .1, 2: .9, 3: .2, 4: .9, 5: .9, 6: .1, 7: .5, 8: .5}
+        r = self.te.paired_agreement(groups, a, b)
+        # a: g1 = (1 + 0)/2, g2 = (0.5 + 0)/2, g3 = 0 → mean over GROUPS (not pairs)
+        self.assertAlmostEqual(r['a'], (0.5 + 0.25 + 0.0) / 3)
+        # b: g1 = (0 + 0)/2, g2 = 1, g3 = 0.5
+        self.assertAlmostEqual(r['b'], (0.0 + 1.0 + 0.5) / 3)
+        self.assertEqual(r['pairs'], 5)
+        self.assertEqual(r['groups'], 3)
+        self.assertLessEqual(r['lb'], r['gain'])
+        self.assertGreaterEqual(r['ub'], r['gain'])
+        self.assertEqual(r, self.te.paired_agreement(groups, a, b))   # fixed seed
+
+    def strip_world(self, n_groups, kept_loved=True):
+        """Synthetic listening + a strip ledger after the freeze: each group =
+        one playlist-day with one kept add and four passed songs."""
+        lib, events, mood, love = self.world()
+        rng = np.random.default_rng(8)
+        loved = [t for t in love if love[t]]
+        unloved = [t for t in love if not love[t]]
+        rows = []
+        for gi in range(n_groups):
+            ms = self.now - 50 * DAY + gi * DAY // 2
+            pl = f'pl-{gi % 3}'
+            add = int(rng.choice(loved if kept_loved else unloved))
+            rows.append(self.srow(ms, 'accept', add, pl, batch=f'{pl}:{gi}'))
+            for t in rng.choice(unloved if kept_loved else loved, 4, replace=False):
+                rows.append(self.srow(ms, 'shown', int(t), pl, batch=f'{pl}:{gi}'))
+            rows.append(self.srow(ms, 'refresh', int(t), pl, batch=f'{pl}:{gi}'))   # one passed song refreshed away
+        return lib, events, mood, rows
+
+    def test_strip_paired_check_needs_40_groups(self):
+        lib, events, mood, rows = self.strip_world(39)
+        r = self.te.strip_paired_check(lib, events, mood, self.now, rows, {})
+        self.assertEqual(r['verdict'], 'insufficient data')
+        self.assertEqual(r['groups'], 39)
+
+    def test_strip_paired_check_measures_frozen_models(self):
+        lib, events, mood, rows = self.strip_world(45)
+        r = self.te.strip_paired_check(lib, events, mood, self.now, rows, {})
+        self.assertEqual(r['verdict'], 'measured', r)
+        self.assertEqual((r['groups'], r['adds'], r['pairs']), (45, 45, 180))
+        self.assertEqual(r['frozenAt'], iso(self.now - 56 * DAY)[:19] + 'Z')
+        self.assertGreater(r['challenger'], 0.5)   # the challenger learned what he loves
+        self.assertLessEqual(r['gainLowerBound'], r['gain'])
+        self.assertGreaterEqual(r['gainUpperBound'], r['gain'])
+        self.assertEqual(r, self.te.strip_paired_check(lib, events, mood, self.now, rows, {}))   # fixed seed
+
+    def test_the_gate_uses_the_paired_strip(self):
+        paired = lambda a, b, lb, ub: {'verdict': 'measured', 'challenger': a, 'champion_v5': b, 'gain': a - b,
+                                       'gainLowerBound': lb, 'gainUpperBound': ub, 'groups': 60}
+        dp = lambda strip: self.te.decide_promotion(self.GOOD, strip, False, self.NEUTRAL_QUIZ)
+        self.assertTrue(dp(paired(0.62, 0.61, -0.01, 0.03))[0])
+        self.assertFalse(dp(paired(0.58, 0.61, -0.05, -0.01))[0])     # more than 0.02 below
+        self.assertFalse(dp(paired(0.60, 0.61, -0.018, -0.002))[0])   # within 0.02 but reliably below
+        self.assertTrue(dp({'verdict': 'insufficient data', 'groups': 12})[0])
+
+    def test_end_to_end_records_both_strip_checks(self):
+        lib, events, mood, rows = self.strip_world(45)
+        with open(os.path.join(self.d, 'ledger.jsonl'), 'w') as f:
+            for r in rows:
+                f.write(json.dumps(r) + '\n')
+        self.write_quiz(self.duels({t: t % 2 == 0 for t in lib}, 600, self.now - 3 * DAY))
+        self.te.time.time = lambda: self.now / 1000
+        self.assertEqual(self.te.main(), 0)
+        st = json.load(open(os.path.join(self.d, 'taste-state.json')))
+        self.assertEqual(st['tests']['stripPaired']['verdict'], 'measured')
+        self.assertEqual(st['tests']['stripPaired']['groups'], 45)
+        self.assertEqual(st['tests']['stripAdds']['verdict'], 'measured')   # the old pooled AUC, still there
+        self.assertEqual(st['tests']['stripAdds']['impressions'], 90)       # adds + refreshes; it never saw 'shown' rows
+        j = [json.loads(l) for l in open(os.path.join(self.d, 'work', 'taste-journal.jsonl'))]
+        self.assertEqual(j[-1]['stripPaired']['groups'], 45)
 
 if __name__ == '__main__':
     unittest.main()
