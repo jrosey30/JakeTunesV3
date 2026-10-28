@@ -8,6 +8,8 @@ import { attachClipToBroadcast, detachClipFromBroadcast } from '../audio/eq'
 import { evaluateSmartPlaylist } from '../utils/smartPlaylists'
 import { smartPlaylistCover } from '../utils/playlistCovers'
 import { useListenMoreWeekly } from '../listenMoreWeekly'
+import { useHomeShelves } from '../homeShelves'
+import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { useReleaseMonths } from '../releaseMonths'
 import { monthPlaylistName, monthTrackIds, parseMonthPlaylistId } from '../../common/release-months'
 import { isTop25Rankable } from '../../common/top25-rankable'
@@ -48,6 +50,7 @@ function formatDuration(ms: number): string {
 const TITLES: Record<string, string> = {
   'best-of-year': `Best of ${new Date().getFullYear()}`,
   'listen-more-weekly': 'Listen More Weekly',
+  'on-repeat': 'On Repeat',
   'recently-added': 'Recently Added',
   'recently-played': 'Recently Played',
   'top-25': 'Top 25 Most Played',
@@ -352,6 +355,10 @@ export default function SmartPlaylistView() {
   // Listen More Weekly (2026-10-20): homemini's weekly playlist — its song
   // order, resolved against this Mac's library (shared ids).
   const weekly = useListenMoreWeekly()
+  // On Repeat (2026-10-28): the Home shelves document's list — the same
+  // rows the Home's ON REPEAT row draws (its head), resolved here.
+  const regularTracks = useRegularLibraryTracks(libState.tracks)
+  const { shelves: onRepeat } = useHomeShelves(libState.tracks, regularTracks)
   // This year's releases by month (2026-10-24): homemini's rows, in release order,
   // resolved against this Mac's library (shared ids).
   const releaseMonths = useReleaseMonths()
@@ -365,6 +372,10 @@ export default function SmartPlaylistView() {
       if (!weekly) return []
       const byId = new Map(libState.tracks.map((t) => [t.id, t]))
       return weekly.trackIds.map((id) => byId.get(id)).filter((t): t is Track => t !== undefined)
+    }
+    if (playlistId === 'on-repeat') {
+      const byId = new Map(libState.tracks.map((t) => [t.id, t]))
+      return (onRepeat?.onRepeat ?? []).map((id) => byId.get(id)).filter((t): t is Track => t !== undefined)
     }
     if (monthYm) {
       const byId = new Map(libState.tracks.map((t) => [t.id, t]))
@@ -426,7 +437,7 @@ export default function SmartPlaylistView() {
         .slice(0, 25))
     }
     return own(evaluateSmartPlaylist(playlistId, everywhere))
-  }, [playlistId, libState.tracks, everywhere, picks, topWindow, windowedCounts, weekly, monthYm, releaseMonths])
+  }, [playlistId, libState.tracks, everywhere, picks, topWindow, windowedCounts, weekly, onRepeat, monthYm, releaseMonths])
 
   // Apply search filter — every word must appear somewhere across all fields
   const filteredTracks = useMemo(() => {

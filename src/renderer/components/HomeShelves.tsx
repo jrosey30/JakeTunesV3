@@ -12,9 +12,11 @@
  *
  * Five cards each. You Should Listen To More's "See All" opens Listen More
  * Weekly (2026-10-20: homemini's weekly playlist, whose first songs the row
- * is) — or, with no copy of it yet, grows to ten in place like the second
- * row; "See All 10" opens that row to ten in place (the
- * same grid-in-place Shows uses); Recently Added's "See All" opens the Recently
+ * is) — or, with no copy of it yet, grows to ten in place (the same
+ * grid-in-place Shows uses); You've Been Listening To A Lot's "See All" opens
+ * On Repeat (2026-10-28, Jake: "on repeat needs its own playlist and see all
+ * needs to take you to that playlist" — the same ranking 30 deep, whose
+ * first songs the row is); Recently Added's "See All" opens the Recently
  * Added playlist, as the old row did (Jake, mid-build: "should bring you to
  * recently added playlist"). Click a song → it plays, with the rest of the row
  * queued behind it in order (Recently Added queues its newest 25, not just
@@ -44,7 +46,7 @@ import { isTop25Rankable } from '../../common/top25-rankable'
 import type { Track } from '../types'
 
 type ShelfAction =
-  | { type: 'VIEW_SMART_PLAYLIST'; id: 'recently-added' | 'listen-more-weekly' }
+  | { type: 'VIEW_SMART_PLAYLIST'; id: 'recently-added' | 'listen-more-weekly' | 'on-repeat' }
   | { type: 'ADD_ARTWORK'; key: string; hash: string }
 
 interface Props {
@@ -200,7 +202,8 @@ export default function HomeShelves({ tracks, regularTracks, artworkMap, artInde
           openAll={weekly ? () => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: 'listen-more-weekly' }) : undefined} />
       )}
       {heavy.length > 0 && (
-        <SongRow title="You’ve Been Listening To A Lot" scrollKey="home-row-listening-a-lot" cards={heavy} artFor={artFor} playTrack={playTrack} />
+        <SongRow title="You’ve Been Listening To A Lot" scrollKey="home-row-listening-a-lot" cards={heavy} artFor={artFor} playTrack={playTrack}
+          openAll={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: 'on-repeat' })} />
       )}
       {recent.length > 0 && (
         <SongRow title="Recently Added" scrollKey="home-row-recent" cards={recent} artFor={artFor} playTrack={playTrack}

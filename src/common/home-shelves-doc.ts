@@ -5,7 +5,8 @@
  *   GET {MOBILE_BACKEND_URL}/api/home-shelves   (ETag; If-None-Match → 304)
  *   → { version: 1, generatedAt, day,
  *       listenMore: { items: [{ track, reason }] } | null,
- *       listeningALot: { windowDays: 30, items: [{ track, plays, lastPlayedAt }] },
+ *       listeningALot: { windowDays: 30, items: [{ track, plays, lastPlayedAt }],
+ *                        playlist: { id, name, trackCount, …, trackIds } | null },
  *       recentlyAdded: { items: [{ album, dateAdded, trackIds }], playlist: { id, name } | null } }
  *
  * homemini computes it from the MERGED play history (desktop + phone) with the
@@ -14,6 +15,12 @@
  * opens straight from them). The desktop reads ids, counts, reasons and dates
  * and draws its OWN library rows for them. Contract as the backend ships it:
  * JakeTunesMobile backend/src/util/homeShelvesDoc.ts.
+ *
+ * On Repeat (2026-10-28, Jake: "on repeat needs its own playlist and see all
+ * needs to take you to that playlist"): listeningALot.playlist.trackIds is the
+ * same ranking ON_REPEAT_SIZE deep — the sidebar's On Repeat and the row's
+ * "See All" — and the row is its head, so the two never disagree. A document
+ * from before then has no playlist; `onRepeat` falls back to the row's songs.
  *
  * When homemini can't be reached and nothing fresh is cached, the desktop
  * builds the same rows from this Mac's own history with the same rulebook
@@ -26,7 +33,7 @@
  * Pure and import-light (the rulebook only) — main, preload and renderer share it.
  */
 import {
-  listeningALot, recentlyAddedAlbums, hiddenGems, localDayKey, SHELF_MAX, RECENT_ALBUMS_MAX,
+  listeningALot, recentlyAddedAlbums, hiddenGems, localDayKey, SHELF_MAX, RECENT_ALBUMS_MAX, ON_REPEAT_SIZE,
   type ShelfTrack, type ShelfPlay, type ShelfRules,
 } from './home-shelves.ts'
 
@@ -48,6 +55,8 @@ export interface HomeShelves {
   /** null = no taste signal: the row hides */
   listenMore: GemRef[] | null
   listeningALot: HeavyRef[]
+  /** The On Repeat playlist's song ids, in order (its head is listeningALot). */
+  onRepeat: number[]
   recentlyAdded: AddedAlbumRef[]
 }
 
@@ -109,18 +118,33 @@ function parseAdded(v: unknown): AddedAlbumRef | null {
 
 const keep = <T,>(list: Array<T | null>): T[] => list.filter((x): x is T => x !== null)
 
+/** listeningALot.playlist.trackIds → distinct ids in order, at most ON_REPEAT_SIZE. */
+function parseOnRepeat(v: unknown): number[] {
+  const pl = obj(obj(v)?.playlist)
+  const raw = pl && Array.isArray(pl.trackIds) ? pl.trackIds : []
+  const out: number[] = []
+  for (const id of raw.map(trackId)) {
+    if (id !== null && !out.includes(id)) out.push(id)
+    if (out.length >= ON_REPEAT_SIZE) break
+  }
+  return out
+}
+
 /** The backend's reply → the rows, or null when it isn't one (wrong version,
  *  not an object). A bad row drops on its own. */
 export function parseHomeShelves(raw: unknown): HomeShelves | null {
   const o = obj(raw)
   if (!o || o.version !== 1) return null
   const day = text(o.day)
+  const heavy = keep(items(o.listeningALot).map(parseHeavy)).slice(0, SHELF_MAX)
+  const onRepeat = parseOnRepeat(o.listeningALot)
   return {
     version: 1,
     generatedAt: iso(o.generatedAt),
     day: day && /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : null,
     listenMore: o.listenMore === null || !obj(o.listenMore) ? null : keep(items(o.listenMore).map(parseGem)).slice(0, SHELF_MAX),
-    listeningALot: keep(items(o.listeningALot).map(parseHeavy)).slice(0, SHELF_MAX),
+    listeningALot: heavy,
+    onRepeat: onRepeat.length > 0 ? onRepeat : heavy.map((h) => h.id),
     recentlyAdded: keep(items(o.recentlyAdded).map(parseAdded)).slice(0, RECENT_ALBUMS_MAX),
   }
 }
@@ -154,6 +178,11 @@ export function localHomeShelves<T extends ShelfTrack>(input: LocalShelvesInput<
   for (const t of tracks) byId.set(String(t.id), t)
   const num = (id: string): number | null => trackId(byId.get(id)?.id ?? id)
   const day = localDayKey(now)
+  // One ranking for the row and the On Repeat playlist: the row is its head.
+  const lot = keep(listeningALot(tracks, plays, now, rules, ON_REPEAT_SIZE).map((e) => {
+    const id = num(e.id)
+    return id === null ? null : { id, plays: e.plays }
+  }))
   return {
     version: 1,
     generatedAt: new Date(now).toISOString(),
@@ -164,10 +193,8 @@ export function localHomeShelves<T extends ShelfTrack>(input: LocalShelvesInput<
         return id === null ? null : { id, reason: g.reason }
       }))
       : null,
-    listeningALot: keep(listeningALot(tracks, plays, now, rules).map((e) => {
-      const id = num(e.id)
-      return id === null ? null : { id, plays: e.plays }
-    })),
+    listeningALot: lot.slice(0, SHELF_MAX),
+    onRepeat: lot.map((e) => e.id),
     recentlyAdded: recentlyAddedAlbums(tracks, rules, input.albumKeyOf).map((a) => ({
       artist: a.artist,
       album: a.album,

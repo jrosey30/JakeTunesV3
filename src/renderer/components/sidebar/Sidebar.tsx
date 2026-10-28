@@ -83,6 +83,10 @@ const smartPlaylists: { label: string; id: SmartPlaylistId }[] = [
   // homemini's weekly playlist (2026-10-20). Sidebar only — not in
   // BUILTIN_SMART_PLAYLISTS, so it never goes to the iPod.
   { label: 'Listen More Weekly', id: 'listen-more-weekly' },
+  // On Repeat (2026-10-28): homemini's ON REPEAT row, 30 deep — the Home
+  // row's "See All". Sidebar only, like Listen More Weekly: never to the iPod.
+  // ⚠️ TWIN: JakeTunesMobile ios PlaylistGroups.smartOrder (same order).
+  { label: 'On Repeat', id: 'on-repeat' },
   { label: BEST_OF_YEAR_NAME, id: 'best-of-year' },
   { label: 'Recently Added', id: 'recently-added' },
   { label: 'Recently Played', id: 'recently-played' },
