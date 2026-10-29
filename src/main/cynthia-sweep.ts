@@ -82,6 +82,10 @@ export interface CynthiaSweepHooks {
   fetchMbRelease(artist: string, album: string): Promise<string>
   /** Write one override through the existing serialized pipeline. */
   applyOverride(trackId: number, field: string, value: string, fingerprint: string): Promise<void>
+  /** May this Mac auto-apply a provable fix to `field`? A replica never
+   *  auto-writes a field the hub catalog owns — the fix waits for Jake
+   *  (replica-auto-writes.ts). Absent = yes. */
+  mayAutoApply?(field: string): Promise<boolean>
   /** True when it's safe to burn CPU/network (nothing playing). */
   isIdle(): boolean
   /** Progress + applied-fix events for the renderer. */
@@ -204,7 +208,7 @@ async function runLibraryConsistencyPass(): Promise<void> {
       const home = albumKeyByTrack.get(f.trackId)
       const track = byId.get(f.trackId)
       if (!home || !track) continue
-      if (f.provable && hooks.isIdle() && appliedCount < LIBRARY_PASS_APPLY_CAP) {
+      if (f.provable && hooks.isIdle() && appliedCount < LIBRARY_PASS_APPLY_CAP && (await hooks.mayAutoApply?.(f.field) ?? true)) {
         try {
           await hooks.applyOverride(f.trackId, f.field, f.newValue, fingerprintOf(track))
           appliedCount++
@@ -364,7 +368,7 @@ async function sweepOneAlbum(
 
   for (const f of all) {
     const track = byId.get(f.trackId)
-    if (f.provable && track && appliedCount < AUTO_APPLY_CAP_PER_TICK) {
+    if (f.provable && track && appliedCount < AUTO_APPLY_CAP_PER_TICK && (await hooks.mayAutoApply?.(f.field) ?? true)) {
       try {
         await hooks.applyOverride(f.trackId, f.field, f.newValue, fingerprintOf(track))
         appliedCount++

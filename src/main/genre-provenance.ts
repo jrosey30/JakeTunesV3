@@ -41,9 +41,9 @@ export type FilerHow =
 
 export interface ProvenanceEntry {
   genre: string
-  /** filer = this app's genre filer; jake = filed by him from the check list */
+  /** filer = this app's genre filer; jake = filed by him from the check list, or his ruling (genre-rulings.ts) */
   by: 'filer' | 'jake'
-  how: FilerHow | 'check-list'
+  how: FilerHow | 'check-list' | 'ruling'
   confidence?: 'high' | 'medium' | 'low'
   /** title|artist|duration of the song when written (trackFingerprint) */
   fp: string

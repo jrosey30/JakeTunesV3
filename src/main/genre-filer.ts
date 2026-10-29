@@ -71,7 +71,7 @@ export interface FilerTrack {
 }
 
 /** Why a genre is being written — the provenance record (by: filer unless Jake filed it). */
-export interface GenreWhy { by: 'filer' | 'jake'; how: FilerHow | 'check-list'; confidence?: 'high' | 'medium' | 'low' }
+export interface GenreWhy { by: 'filer' | 'jake'; how: FilerHow | 'check-list' | 'ruling'; confidence?: 'high' | 'medium' | 'low' }
 
 export interface FilerUnit { key: string; artist: string; album: string; title?: string; comp: boolean; ids: number[]; tag: string }
 

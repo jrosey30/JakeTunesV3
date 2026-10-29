@@ -15,6 +15,8 @@ import { PROVENANCE_FILE, parseProvenance, genreOwner, type ProvenanceDoc } from
 import { readUserEditsJournal } from '../user-edits-sync.ts'
 import { writeJsonAtomic } from '../atomic-write.ts'
 import { runGenreCorrections } from '../genre-corrections.ts'
+import { runGenreRulings } from '../genre-rulings.ts'
+import { filerRole, genreFilerPass, runReplicaGenreRepair } from '../genre-replica.ts'
 import { musicBrainzArtistCandidates, musicBrainzAlbum, confirmedArtist, musicBrainzCountryById } from '../artist-tags.ts'
 import { lookupArtistOrigin, cleanAlbumTitle } from '../origin-lookup.ts'
 import { exaSearch } from '../exa.ts'
@@ -30,8 +32,13 @@ export interface GenreFilerHost {
   /** Flush the edits file to disk (the corrections pass backs it up first). */
   flushOverrides?(): Promise<void>
   /** workmini: its genres come from the hub catalog (the MacBook), so the
-   *  one-time corrections pass runs on the hub only. */
+   *  filer — sweep, corrections, rulings, check list — runs on the hub only
+   *  (genre-replica.ts). */
   isReplica?(): Promise<boolean>
+  /** The app's serialized override writer (the replica's one-time repair). */
+  updateOverrides?(mutate: (cur: Record<string, unknown>) => Record<string, unknown>): Promise<void>
+  /** His edit into the user-edits journal — the Get Info path (rulings). */
+  recordEdit?(trackId: number, field: string, value: string, at: number): Promise<void>
   persist(trackId: number, fields: Record<string, string>, fingerprint: string): Promise<void>
   send(channel: string, payload: unknown): void
   claude(system: string, user: string): Promise<string>
@@ -124,6 +131,9 @@ async function persistWithProvenance(host: GenreFilerHost, t: FilerTrack, fields
   await host.persist(t.id, fields, fp)
   if (fields.genre === undefined || !why) return
   const at = new Date().toISOString()
+  // His choice (a check-list File, a ruling) is journaled like a Get Info
+  // edit, so every device takes it and no filer moves it.
+  if (why.by === 'jake') await host.recordEdit?.(t.id, 'genre', fields.genre, Date.parse(at))
   await updateProvenance((doc) => {
     doc.tracks[String(t.id)] = { genre: fields.genre, by: why.by, how: why.how, fp, at, ...(why.confidence ? { confidence: why.confidence } : {}) }
   })
@@ -179,22 +189,37 @@ function deps(host: GenreFilerHost): FilerDeps {
 export function startGenreFiler(host: GenreFilerHost): void {
   let running = false
   let correctionsTried = false
+  let replicaTried = false
+  let saidReplica = false
+  const hubPass = async (): Promise<void> => {
+    // The one-time passes run before the first sweep — idempotent (markers),
+    // so a later launch only finds them done. Rulings after corrections:
+    // his ruling supersedes anything the audit put back.
+    if (!correctionsTried) {
+      correctionsTried = true
+      await runGenreCorrections({ ...deps(host), userData: app.getPath('userData'), flushOverrides: host.flushOverrides, updateProvenance })
+        .catch((err) => console.warn('[genre-corrections] failed:', err instanceof Error ? err.message : err))
+      if (host.recordEdit) {
+        await runGenreRulings({ ...deps(host), userData: app.getPath('userData'), flushOverrides: host.flushOverrides, recordEdit: host.recordEdit })
+          .catch((err) => console.warn('[genre-rulings] failed:', err instanceof Error ? err.message : err))
+      }
+    }
+    const r = await runFilerSweep(deps(host))
+    if (r.filed || r.checked || r.origins || r.backfilled || r.rejudged) console.warn(`[genre-filer] sweep: filed ${r.filed}, to check ${r.checked}, waiting ${r.deferred}, origins ${r.origins}${r.backfilled ? `, check-list albums filed by suggestion ${r.backfilled}` : ''}${r.rejudged ? `, re-judged ${r.rejudged}` : ''}`)
+  }
+  // A replica never files: its genres are the hub catalog's (genre-replica.ts).
+  const replicaPass = async (): Promise<void> => {
+    if (!saidReplica) { saidReplica = true; console.warn('[genre-filer] replica: not filing here — genres come from the hub (the MacBook files for every device)') }
+    if (replicaTried || !host.updateOverrides) return
+    replicaTried = true
+    await runReplicaGenreRepair({ userData: app.getPath('userData'), flushOverrides: host.flushOverrides, updateOverrides: host.updateOverrides, journalGenres: loadJournalGenres, log: (m) => console.warn(m) })
+      .catch((err) => console.warn('[genre-replica] repair failed:', err instanceof Error ? err.message : err))
+  }
   const sweep = async (): Promise<void> => {
     if (running) return
     running = true
     try {
-      // The one-time corrections pass (genre-corrections.ts) runs before the
-      // first sweep — idempotent, so a later launch only finds it done.
-      if (!correctionsTried) {
-        correctionsTried = true
-        const replica = (await host.isReplica?.().catch(() => true)) ?? false
-        if (!replica) {
-          await runGenreCorrections({ ...deps(host), userData: app.getPath('userData'), flushOverrides: host.flushOverrides, updateProvenance })
-            .catch((err) => console.warn('[genre-corrections] failed:', err instanceof Error ? err.message : err))
-        }
-      }
-      const r = await runFilerSweep(deps(host))
-      if (r.filed || r.checked || r.origins || r.backfilled || r.rejudged) console.warn(`[genre-filer] sweep: filed ${r.filed}, to check ${r.checked}, waiting ${r.deferred}, origins ${r.origins}${r.backfilled ? `, check-list albums filed by suggestion ${r.backfilled}` : ''}${r.rejudged ? `, re-judged ${r.rejudged}` : ''}`)
+      await genreFilerPass({ isReplica: host.isReplica, hub: hubPass, replica: replicaPass })
     } catch (err) {
       console.warn('[genre-filer] sweep failed:', err instanceof Error ? err.message : err)
     } finally { running = false }
@@ -204,13 +229,19 @@ export function startGenreFiler(host: GenreFilerHost): void {
 
 export function registerGenreFilerIpc(ipc: IpcRegistrar, host: GenreFilerHost): void {
   // The check list, minus anything Jake has since filed himself (Get Info).
+  // A replica's list is empty: the questions are the hub's, and answering them
+  // there is what reaches every device (genre-replica.ts).
   ipc.handle('genre-check:list', async () => {
+    if ((await filerRole(host.isReplica)) === 'replica') return []
     const list = await loadCheck()
     const byId = new Map((await effectiveTracks(host)).map((t) => [t.id, t]))
     const open = list.filter((c) => checkEntryOpen(c, byId))
     if (open.length !== list.length) await saveCheck(open)
     return open
   }, { refuse: REFUSED_SENDER })
-  ipc.handle('genre-check:resolve', async (_e, key: string, genre: string) => resolveCheckEntry(deps(host), String(key), String(genre)), { refuse: REFUSED_SENDER })
+  ipc.handle('genre-check:resolve', async (_e, key: string, genre: string) => {
+    if ((await filerRole(host.isReplica)) === 'replica') return { ok: false, error: 'the check list lives on the MacBook' }
+    return resolveCheckEntry(deps(host), String(key), String(genre))
+  }, { refuse: REFUSED_SENDER })
   startGenreFiler(host)
 }
