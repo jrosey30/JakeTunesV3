@@ -818,7 +818,10 @@ export default function AlbumDetailView() {
           return (
             <div className="concert-sheet album-page-sheet">
               <div className="cs-head">
-                <span className="cs-head-title">Set List</span>
+                {/* "Songs in this show", not "Set List": Jake 2026-10-28 couldn't tell
+                    what "Setlist" was, and setlist.fm's "What they've been
+                    playing" / "What they played" now live on the concert cards. */}
+                <span className="cs-head-title">Songs in this show</span>
                 <span className="cs-head-rule" aria-hidden="true" />
                 <span className="cs-head-stat">
                   {liveSet.cues.length} songs · {formatTotalDuration(liveSet.totalDurationMs)}

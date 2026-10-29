@@ -293,7 +293,7 @@ export default function ConcertDetailView() {
         {/* The program: the same spine + rows the album page's setlist uses. */}
         <div className="concert-sheet">
           <div className="cs-head">
-            <span className="cs-head-title">Set list</span>
+            <span className="cs-head-title">Songs in this show</span>
             <span className="cs-head-rule" aria-hidden="true" />
           </div>
           <div className="cs-cols" aria-hidden="true">
