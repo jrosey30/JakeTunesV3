@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- 2026-10-27 template — com.jaketunes.brain-redescribe (homemini only).
      The staged gemma4:12b re-describe (scripts/brain-redescribe.mjs): every
-     night 02:30-07:00, after the 02:00 trainer, it stages descriptors in
+     night 02:30-08:15 (extended 10/29 to make up for the retry pass of #294), after the 02:00 trainer, it stages descriptors in
      brain-descriptors.next.json and never writes the live store. 12b pushes
      homemini's swap to ~14 GB, so it runs only while nobody is up; it yields
      to music streams and to critical memory pressure. Once everything is
@@ -17,7 +17,7 @@
     <string>__REPO__/scripts/brain-trainer.mjs</string>
     <string>--redescribe-all</string>
     <string>--until</string>
-    <string>07:00</string>
+    <string>08:15</string>
   </array>
   <key>EnvironmentVariables</key><dict>
     <key>GEMMA_MODEL</key><string>gemma4:12b</string>
