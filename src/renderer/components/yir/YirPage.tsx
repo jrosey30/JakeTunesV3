@@ -219,7 +219,7 @@ export default function YirPage({ y, ctx, onStory }: { y: YirFacts; ctx: YirCtx;
         <p className="yir-p-lede">Found and downloaded through JakeTunes this year: found by you, not fed to you. The old collection moving in doesn't count.</p>
         <div className="yir-p-split">
           <div>
-            <div className="yir-p-stat">{n(D.newArtistCount)}</div><span>artists joined your library</span>
+            <div className="yir-p-stat">{n(D.newArtistCount)}</div><span>artists you found</span>
             <div className="yir-p-found">{fbm.map(([m, v]) => <div key={m}><span className={v === fMax ? 'hot' : ''} style={{ height: pct(v, fMax) }} title={`${monthName(m)} · ${n(v)}`} /><small>{monthName(m).slice(0, 3)}</small></div>)}</div>
           </div>
           <div>

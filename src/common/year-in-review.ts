@@ -46,6 +46,64 @@ export interface YirTrack {
  *  a 2026 add date. The source field is what tells a find from a move. */
 export const FOUND_SOURCES: ReadonlySet<string> = new Set(['streamrip', 'bandcamp', 'squid'])
 
+/** One piece of evidence that a JakeTunes surface put an artist in front of
+ *  Jake and he took it: a Discover card he accepted, a Listen List entry, a
+ *  friend's "from". `via` names the surface (shown nowhere yet; it is what the
+ *  audit reads). */
+export interface YirFindEvidence { artist: string; at: string; via: string }
+
+/** How famous an artist is, from Deezer: `fans` = the artist's nb_fan,
+ *  `trackRank` = the highest Deezer rank among their songs in the library
+ *  (top1000-fame.json). Either may be missing. */
+export interface YirFame { fans?: number; trackRank?: number }
+
+/** What tells a found artist from one Jake already knew (2026-10-29; Jake chose
+ *  "Not famous + new"). Evidence is a plus, never required: it only rescues a
+ *  borderline-famous artist, and only when it predates the download. */
+export interface YirDiscoveryInput {
+  evidence?: readonly YirFindEvidence[]
+  /** Keyed by the artist's lower-cased name. */
+  fame?: Readonly<Record<string, YirFame>>
+  /** Times he told JakeTunes he knew an artist (a Rock DNA pick or rating, a
+   *  Top 1000 answer): known from `at` on. Any spelling; compared on letters and digits. */
+  known?: readonly YirFindEvidence[]
+}
+
+/** A household name: this many Deezer fans or more. Calibrated on Jake's own
+ *  library (10/29) — Paramore 3.1M, Future 4.0M, Red Hot Chili Peppers 7.7M,
+ *  The Beatles 8.1M, Drake 24M sit far above; Visitor Coach 520, Dogpark 814,
+ *  Geese 17.5K below. 25K also catches the legacy acts whose Deezer counts run
+ *  low (The Zombies 49K, Afrika Bambaataa 25K) so the list stays honest. */
+export const HOUSEHOLD_FANS = 25_000
+/** Or one of their songs is this high in Deezer's rank: a song everybody
+ *  knows makes the name known even when the fan count is small (Wheatus
+ *  843K) or missing. Future 826K, Paramore 775K; Geese 592K, Visitor Coach
+ *  273K, Dogpark 259K. */
+export const HOUSEHOLD_TRACK_RANK = 750_000
+
+/** Famous, but only just: under 100,000 fans (or no count) and no song past
+ *  rank 850,000. Discovery evidence from before the download can rescue these
+ *  (The Avalanches 43K, The Zombies 49K); never Future (4.0M) or Paramore (3.1M). */
+export const BORDERLINE_FANS = 100_000
+export const BORDERLINE_TRACK_RANK = 850_000
+export function isBorderlineFame(f: YirFame | undefined): boolean {
+  return isHouseholdName(f) && (f?.fans ?? 0) < BORDERLINE_FANS && (f?.trackRank ?? 0) < BORDERLINE_TRACK_RANK
+}
+
+export function isHouseholdName(f: YirFame | undefined): boolean {
+  if (!f) return false
+  return (f.fans ?? 0) >= HOUSEHOLD_FANS || (f.trackRank ?? 0) >= HOUSEHOLD_TRACK_RANK
+}
+
+/** "Future feat. Drake" also counts as evidence for Future. */
+const artistKeys = (s: string | undefined): string[] => {
+  const k = (s || '').toLowerCase().trim()
+  const lead = k.split(/\s+(?:feat\.?|ft\.?|featuring)\s+/)[0].trim()
+  return lead && lead !== k ? [k, lead] : [k]
+}
+/** Rock DNA stores slugs ("red-hot-chili-peppers"); compare letters and digits only. */
+const compact = (s: string | undefined): string => (s || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]/g, '')
+
 export interface YirConcert {
   artist: string
   album: string
@@ -80,6 +138,8 @@ export interface YirInput {
   concerts?: readonly YirConcert[]
   mixtapes?: readonly YirMixtape[]
   attended?: readonly YirAttendedInput[]
+  /** Absent → no artist counts as found (honest beats big). */
+  discovery?: YirDiscoveryInput
   top?: number
 }
 
@@ -136,15 +196,20 @@ export interface YearInReview {
   /** The most plays one song got inside any 7-day stretch. */
   onRepeat: { artist: string; title: string; plays: number; weekOf: string } | null
   discoveries: {
-    /** Artists who entered the library through a JakeTunes find this year
-     *  (their earliest library song is store-sourced and dated this year). */
+    /** Artists Jake FOUND this year ("Not famous + new"): their earliest
+     *  library song is a JakeTunes acquisition dated this year, nothing says he
+     *  knew them before (plays, a Rock DNA pick or Top 1000 answer, or a show
+     *  before the add), and they are not a household name — unless a JakeTunes
+     *  surface showed a borderline one to him before the download. Owning first through JakeTunes alone is
+     *  not finding: Jake 10/29, "future shouldnt be considered a found
+     *  artist....i knew about him obviously". */
     newArtists: Ranked[]
     newArtistCount: number
     /** Songs found through JakeTunes this year, by month. */
     foundByMonth: Record<string, number>
     foundTotal: number
   }
-  /** Found through JakeTunes this year AND starred. */
+  /** Found through JakeTunes this year AND starred, household names' songs left out. */
   starredClass: { count: number; top: Ranked[] }
   concerts: Array<YirConcert & { plays: number }>
   mixtapes: YirMixtape[]
@@ -407,14 +472,57 @@ export function buildYearInReview(input: YirInput): YearInReview {
       foundTotal++
     }
   }
-  const newArtistKeys = new Set([...earliest.entries()].filter(([, t]) => isFound(t)).map(([a]) => a))
+  const disc = input.discovery ?? {}
+  const evidenceAt = new Map<string, number[]>()
+  for (const e of disc.evidence ?? []) {
+    const at = Date.parse(e.at)
+    if (!Number.isFinite(at)) continue
+    for (const k of artistKeys(e.artist)) evidenceAt.set(k, [...(evidenceAt.get(k) ?? []), at])
+  }
+  const firstPlay = new Map<string, number>()
+  for (const l of input.listens) {
+    if (l.kind !== 'play') continue
+    const at = Date.parse(l.ts), k = norm(l.artist)
+    if (Number.isFinite(at) && at < (firstPlay.get(k) ?? Infinity)) firstPlay.set(k, at)
+  }
+  const knownAt = new Map<string, number>()
+  for (const k of disc.known ?? []) {
+    const at = Date.parse(k.at), c = compact(k.artist)
+    if (c && Number.isFinite(at) && at < (knownAt.get(c) ?? Infinity)) knownAt.set(c, at)
+  }
+  const firstShow = new Map<string, number>()
+  for (const a of input.attended ?? []) {
+    const at = Date.parse(a.date ?? '')
+    if (!Number.isFinite(at)) continue
+    const heads = Array.isArray(a.headliners) ? a.headliners : a.headliners ? [a.headliners] : []
+    for (const who of [a.artist, ...heads]) { const k = norm(who); if (k && at < (firstShow.get(k) ?? Infinity)) firstShow.set(k, at) }
+  }
+  // Famous unless discovery evidence from BEFORE the first download rescues a borderline name.
+  const isFamous = (a: string): boolean => {
+    const f = disc.fame?.[a]
+    if (!isHouseholdName(f)) return false
+    const first = earliest.get(a)?.dateAdded
+    const added = first ? Date.parse(first) : NaN
+    return !(isBorderlineFame(f) && Number.isFinite(added) && (evidenceAt.get(a) ?? []).some((at) => at < added))
+  }
+  const isFoundArtist = (a: string, t: YirTrack): boolean => {
+    if (!isFound(t)) return false
+    const added = Date.parse(t.dateAdded!)
+    if ((firstPlay.get(a) ?? Infinity) < added - 3_600_000) return false
+    if ((firstShow.get(a) ?? Infinity) < added) return false
+    const name = t.albumArtist || t.artist
+    if (Math.min(knownAt.get(compact(name)) ?? Infinity, knownAt.get(compact(a)) ?? Infinity) < added) return false
+    return !isFamous(a)
+  }
+  const newArtistKeys = new Set([...earliest.entries()].filter(([a, t]) => isFoundArtist(a, t)).map(([a]) => a))
   const newArtists = [...newArtistKeys].map((k) => artists.get(k) ?? { name: earliest.get(k)!.albumArtist || earliest.get(k)!.artist || k, plays: 0 })
     .sort((a, b) => b.plays - a.plays)
 
   // Starred class: found this year and starred. JakeTunes' star is binary
   // (StarRating.tsx, 4.5.2): any rating > 0 reads as starred, same as the
   // Starred playlist. Jake 10/12: "you either get a star or you dont".
-  const starred = input.library.filter((t) => (t.rating ?? 0) > 0 && isFound(t))
+  // A famous artist's song is not a find either ("Teardrop", "Midnight City"): same fame guard.
+  const starred = input.library.filter((t) => (t.rating ?? 0) > 0 && isFound(t) && !isFamous(norm(t.albumArtist || t.artist)))
   // "The ones you came back to most" is a ranking, so a song under a minute
   // never takes a slot (Jake 10/11: nothing under 1 minute in ANY ranking).
   // It used to sink to the bottom with 0 plays instead; now it is dropped.
