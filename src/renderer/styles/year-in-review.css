@@ -7,6 +7,8 @@
   --yir-ink: #141210;
   --yir-cream: #f6f1ea;
   --yir-stage: #0e0d0c;
+  /* Small orange text on cream: the logo orange is 3.1:1 there, this is 4.9:1. */
+  --yir-orange-text: #c14201;
 }
 
 /* ── Home card ─────────────────────────────────────────────── */
@@ -139,7 +141,7 @@
 .yir-lane--lead .yir-lane-img { outline: 3px solid var(--yir-orange); outline-offset: 3px; }
 .yir-lane b { display: block; font-size: clamp(17px, 2.6cqb, 24px); font-weight: 900; letter-spacing: -0.3px; line-height: 1.1; }
 .yir-track { height: 8px; border-radius: 4px; background: rgba(255, 255, 255, 0.14); overflow: hidden; margin: 9px 0 7px; }
-.yir-track i { display: block; height: 100%; border-radius: 4px; background: rgba(246, 241, 234, 0.85); }
+.yir-track i { display: block; height: 100%; width: var(--w, 0%); border-radius: 4px; background: rgba(246, 241, 234, 0.85); transform-origin: left center; }
 .yir-lane--lead .yir-track i { background: var(--yir-orange); }
 .yir-lane small { font-size: 13px; opacity: 0.78; font-variant-numeric: tabular-nums; }
 
@@ -251,10 +253,225 @@
 .yir-p-tapes li { display: grid; background: #fff; border: 1px solid #e2e4e8; border-radius: 10px; padding: 10px 14px; }
 .yir-p-tapes i { font-style: normal; color: #555a61; font-size: 12px; }
 
-.yir-p-honest { display: grid; grid-template-columns: auto 1fr; gap: 22px; align-items: center; }
-.yir-p-devs { display: grid; gap: 6px; margin-top: 8px; }
-.yir-p-devs div { display: grid; grid-template-columns: 1fr; position: relative; height: 22px; align-items: center; }
-.yir-p-devs span { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(252, 85, 1, 0.14); border-radius: 4px; }
-.yir-p-devs em { position: relative; font-style: normal; padding-left: 8px; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.yir-p-h3 { margin: 26px 0 10px; font-size: 18px; font-weight: 850; letter-spacing: -0.3px; }
+.yir-p-wink { margin-top: 14px; }
+.yir-p-t1k .yir-p-moments { margin: 6px 0 4px; }
+.yir-p-t1k .yir-p-num small { font-weight: 600; color: #555a61; font-size: 11.5px; }
+.yir-p-seats { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; }
+.yir-p-seats li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
+.yir-p-seats b { font-weight: 700; }
+.yir-p-seats span { font-variant-numeric: tabular-nums; color: #555a61; }
 .yir-p-end { border-bottom: 0 !important; }
 .yir-p-end h2 { color: var(--yir-orange); }
+.yir-p-t1k .yir-p-chart button { grid-template-columns: 46px 44px minmax(0, 1fr) auto; }
+.yir-p-t1k .yir-p-big3 { grid-template-columns: repeat(3, auto); justify-content: start; column-gap: 48px; }
+.yir-p-t1k .yir-p-big3 b { white-space: nowrap; }
+
+/* ── 2026-10-29: pictures and motion on every card ────────────────────────
+   Jake: "too many words not enough visuals" / "more music and artist visuals and album" /
+   "more animations. more fun." Every visual is his covers and photos; every motion is
+   transform/opacity (compositor-only), and all of it sits inside no-preference: Reduce Motion
+   gets the finished card and a crossfade. --d = an element's start delay. */
+.yir-tile { appearance: none; border: 0; padding: 0; background: none; cursor: pointer; display: block; position: relative; min-width: 0; }
+span.yir-tile { cursor: default; }
+.yir-tile-img { width: 100%; height: 100%; aspect-ratio: 1; object-fit: cover; display: block; border-radius: 6px; background: rgba(255, 255, 255, 0.08); }
+.yir-tile-img.yir-img-empty { display: grid; place-items: center; font-weight: 800; color: rgba(246, 241, 234, 0.8); font-size: 12px; }
+.yir-tile-label { position: absolute; left: 4px; bottom: 4px; right: 4px; font-size: 9px; font-weight: 800; letter-spacing: 0.6px; text-transform: uppercase; color: #fff; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9); text-align: left; }
+.yir-body button.yir-tile, .yir-body .yir-champ { pointer-events: auto; }
+
+/* Cover card: the year's records behind the year. */
+.yir-cover-wall { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px; }
+.yir-cover-wall .yir-tile-img { box-shadow: 0 6px 16px rgba(20, 18, 16, 0.25); }
+.yir-k-cover .yir-body { justify-content: flex-end; }
+.yir-k-cover .yir-year { font-size: clamp(80px, 26cqi, 170px); }
+
+/* Mosaics: covers / photos in a grid; the round flavour is artists. */
+.yir-mosaic { display: grid; grid-template-columns: repeat(var(--cols, 4), 1fr); gap: 6px; margin-bottom: 14px; }
+.yir-mosaic--round .yir-tile-img { border-radius: 50%; }
+.yir-chips { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.yir-chips span { font-size: 11.5px; font-weight: 800; padding: 4px 9px; border-radius: 12px; background: rgba(20, 18, 16, 0.18); }
+
+/* June 14, hour by hour: each hour's top cover rides its bar; a playhead runs the day. */
+.yir-hours { position: relative; display: grid; grid-template-columns: repeat(24, 1fr); gap: 2px; align-items: end; height: 34cqb; margin-bottom: 26px; }
+.yir-hour { height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: stretch; gap: 3px; min-width: 0; }
+.yir-hour i { display: block; background: rgba(20, 18, 16, 0.75); border-radius: 2px 2px 0 0; transform-origin: bottom; }
+.yir-hour-cover { width: 100%; aspect-ratio: 1; }
+.yir-hour-cover .yir-tile-img { border-radius: 2px; }
+.yir-hour-cover--none { display: block; }
+.yir-hours-axis { grid-column: 1 / -1; position: absolute; left: 0; right: 0; bottom: -20px; display: flex; justify-content: space-between; font-size: 10px; font-weight: 700; opacity: 0.75; }
+.yir-playhead { position: absolute; top: 0; bottom: 0; left: 0; width: 2px; background: var(--yir-ink); opacity: 0; }
+
+/* When you listen: the hours and the week. */
+.yir-clock { position: relative; margin-bottom: 14px; }
+.yir-clock-hours { display: flex; gap: 2px; align-items: flex-end; height: 22cqb; }
+.yir-clock-hours i, .yir-clock-week i { flex: 1; display: block; background: rgba(20, 18, 16, 0.3); border-radius: 2px 2px 0 0; transform-origin: bottom; }
+.yir-clock .hot { background: var(--yir-ink) !important; }
+.yir-clock .yir-hours-axis { position: static; margin-top: 4px; }
+.yir-clock-week { display: flex; gap: 6px; align-items: flex-end; height: 11cqb; margin-top: 16px; }
+.yir-clock-week div { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 3px; }
+.yir-clock-week i { width: 100%; flex: none; }
+.yir-clock-week small { font-size: 10px; font-weight: 800; }
+
+/* The streak: a calendar of covers, stamped day by day. */
+.yir-cal { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; margin-bottom: 14px; }
+.yir-cal-day { position: relative; }
+.yir-cal-cover { width: 100%; aspect-ratio: 1; }
+.yir-cal-cover--none { display: block; background: rgba(20, 18, 16, 0.2); border-radius: 4px; }
+.yir-cal-day small { position: absolute; top: 2px; left: 4px; font-size: 9px; font-weight: 900; color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9); pointer-events: none; }
+
+/* The Top 1000 as a flow, each stage a little stack of covers. */
+.yir-pipe { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 9px; }
+.yir-pipe li { display: grid; grid-template-columns: 96px 1fr; gap: 14px; align-items: center; position: relative; }
+.yir-pipe li + li::before { content: ''; position: absolute; left: 46px; top: -9px; height: 9px; width: 2px; background: currentColor; opacity: 0.5; }
+.yir-pipe-stack { position: relative; height: 46px; }
+.yir-pipe-cover { position: absolute; top: 0; left: calc(var(--k, 0) * 22px); width: 46px; height: 46px; }
+.yir-pipe-cover .yir-tile-img { box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35); }
+.yir-pipe-text b { display: block; font-size: 22px; font-weight: 900; letter-spacing: -0.5px; line-height: 1; }
+.yir-pipe-text small { font-size: 12px; font-weight: 700; opacity: 0.85; }
+
+/* Does it work: one dial; the lead sweeps past the other marker. */
+.yir-gauge { margin-bottom: 8px; }
+.yir-gauge svg { width: 100%; max-width: 360px; display: block; overflow: visible; }
+.yir-gauge-track { fill: none; stroke: rgba(20, 18, 16, 0.18); stroke-width: 18; stroke-linecap: round; }
+.yir-gauge-fill { fill: none; stroke: var(--yir-ink); stroke-width: 18; stroke-linecap: round; stroke-dashoffset: var(--off); }
+.yir-gauge-mark { stroke: #fff; stroke-width: 4; stroke-linecap: round; }
+.yir-gauge-num { font-size: 44px; font-weight: 900; fill: var(--yir-ink); letter-spacing: -1.5px; }
+.yir-gauge-key { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12.5px; font-weight: 700; }
+.yir-gauge-key i { display: inline-block; width: 12px; height: 4px; margin-right: 6px; vertical-align: middle; background: #fff; border-radius: 2px; }
+.yir-gauge-key i.lead { background: var(--yir-ink); }
+
+/* The seat map: 1,000 seats by rank. */
+.yir-seats { margin-bottom: 12px; }
+.yir-seat-grid { display: grid; grid-template-columns: repeat(var(--cols), 1fr); gap: 1px; }
+.yir-seat-grid i { display: block; aspect-ratio: 1; border-radius: 1px; }
+.yir-seat-key { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 10px; font-size: 13px; font-weight: 700; }
+.yir-seat-key i { display: inline-block; width: 11px; height: 11px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.yir-seat-key .hot { color: var(--yir-orange); }
+
+/* Number ones: one row a genre — the cover flips over, then the genre, the song, its overall
+   rank (12 px and up: readable on a phone-sized Story). */
+.yir-champs { display: grid; gap: 9px; margin: 6px 0 12px; perspective: 800px; }
+.yir-champ { appearance: none; border: 0; background: none; color: inherit; font: inherit; padding: 0; text-align: left; cursor: pointer; display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; column-gap: 12px; align-items: center; }
+.yir-flip { display: block; width: 56px; height: 56px; grid-row: span 2; }
+.yir-champ em { font-style: normal; font-size: 12px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: var(--yir-orange); align-self: end; }
+.yir-champ b { font-size: 16px; font-weight: 850; line-height: 1.15; overflow-wrap: anywhere; align-self: start; }
+.yir-champ small { grid-column: 3; grid-row: 1 / span 2; font-size: 12.5px; font-weight: 700; opacity: 0.8; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* The record of the year spins like vinyl while it plays. */
+.yir-vinyl { position: relative; width: min(100%, 52cqb); aspect-ratio: 1; margin: 0 auto 18px; border-radius: 50%; overflow: hidden; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55), 0 0 0 10px #0b0a09; }
+.yir-vinyl-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.yir-vinyl i { position: absolute; left: 50%; top: 50%; width: 9%; height: 9%; margin: -4.5% 0 0 -4.5%; border-radius: 50%; background: #0b0a09; box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.18); }
+.yir-art-wrap { width: 100%; }
+.yir-art-wrap .yir-art { margin-bottom: 18px; }
+.yir-k-art .yir-art-wrap .yir-poster { display: block; margin: 0 auto 14px; }
+
+/* The card that carried in from the last one. */
+.yir-carry { position: absolute; left: 50%; top: 40%; width: 34%; aspect-ratio: 1; margin-left: -17%; z-index: 6; pointer-events: none; opacity: 0; }
+
+/* Story share buttons. */
+.yir-share { position: absolute; top: 14px; right: 54px; z-index: 10; height: 30px; padding: 0 12px; border-radius: 15px; border: 0; cursor: pointer; font: 700 12px -apple-system, BlinkMacSystemFont, sans-serif; background: rgba(246, 241, 234, 0.12); color: var(--yir-cream); display: flex; align-items: center; gap: 6px; }
+.yir-share svg { width: 12px; height: 12px; }
+.yir-share:hover { background: rgba(246, 241, 234, 0.22); }
+.yir-share-status { position: absolute; top: 50px; right: 16px; z-index: 10; font-size: 11.5px; color: var(--yir-cream); background: rgba(14, 13, 12, 0.85); padding: 6px 10px; border-radius: 8px; max-width: 320px; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .yir-card { animation: yir-card-in 520ms cubic-bezier(.2, .8, .2, 1) both; transform-origin: 50% 60%; }
+  .yir-fly { animation: yir-fly 560ms cubic-bezier(.2, .9, .3, 1.15) both; animation-delay: var(--d, 0ms); }
+  .yir-stamp { animation: yir-stamp 380ms cubic-bezier(.3, 1.4, .5, 1) both; animation-delay: var(--d, 0ms); }
+  .yir-flip { animation: yir-flip 620ms cubic-bezier(.2, .8, .3, 1) both; animation-delay: var(--d, 0ms); backface-visibility: hidden; }
+  .yir-grow, .yir-clock-hours i, .yir-clock-week i { animation: yir-grow-y 700ms cubic-bezier(.2, .8, .2, 1) both; animation-delay: var(--d, 0ms); }
+  .yir-berg .yir-grow { animation-name: yir-grow-x; transform-origin: left; }
+  .yir-hour { animation: yir-fade 260ms ease-out both; animation-delay: var(--d, 0ms); }
+  .yir-hour i { animation: yir-grow-y 420ms cubic-bezier(.2, .8, .2, 1) both; animation-delay: var(--d, 0ms); }
+  .yir-playhead { animation: yir-playhead 1680ms linear 60ms both; }
+  .yir-track i { animation: yir-grow-x 1800ms cubic-bezier(.45, .05, .25, 1) 250ms both; }
+  .yir-lane--lead .yir-lane-img { animation: yir-flash 700ms ease-out 2100ms both; }
+  .yir-reveal { animation: yir-fade 500ms ease-out 2150ms both; }
+  .yir-gauge-fill { animation: yir-sweep 1400ms cubic-bezier(.3, .7, .2, 1) 200ms both; }
+  .yir-seat-grid i { animation: yir-burst 420ms cubic-bezier(.2, .9, .3, 1.2) both; animation-delay: var(--d, 0ms); }
+  .yir-seat-grid i.hot { animation: yir-burst 420ms cubic-bezier(.2, .9, .3, 1.2) var(--d, 0ms) both, yir-pulse 1100ms ease-in-out 1500ms infinite; }
+  .yir-vinyl--on { animation: yir-spin 3.6s linear infinite; }
+  .yir-beat .yir-art, .yir-beat .yir-poster { animation: yir-beat var(--beat, 500ms) ease-out infinite; }
+  .yir-carry { animation: yir-carry 700ms cubic-bezier(.3, .6, .2, 1) both; }
+  .yir-confetti .yir-tile { animation: yir-confetti 1300ms cubic-bezier(.25, .8, .3, 1) both; animation-delay: var(--d, 0ms); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .yir-card { animation: yir-fade 260ms ease-out both; }
+  .yir-carry { display: none; }
+}
+@keyframes yir-card-in { from { opacity: 0; transform: perspective(1200px) translateX(36px) rotateY(-10deg) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes yir-fly { from { opacity: 0; transform: translateY(26px) scale(.6) rotate(-6deg); } to { opacity: 1; transform: none; } }
+@keyframes yir-stamp { 0% { opacity: 0; transform: scale(1.7) rotate(-8deg); } 70% { opacity: 1; transform: scale(.94); } 100% { opacity: 1; transform: none; } }
+@keyframes yir-flip { from { opacity: 0; transform: rotateY(90deg); } to { opacity: 1; transform: none; } }
+@keyframes yir-grow-y { from { transform: scaleY(0); } to { transform: none; } }
+@keyframes yir-grow-x { from { transform: scaleX(0); } to { transform: none; } }
+@keyframes yir-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes yir-playhead { 0% { opacity: .9; transform: translateX(0); } 95% { opacity: .9; } 100% { opacity: 0; transform: translateX(var(--to, 100cqi)); } }
+@keyframes yir-flash { 0% { box-shadow: 0 0 0 0 rgba(253, 86, 1, .9); filter: brightness(1.8); } 100% { box-shadow: 0 0 0 26px rgba(253, 86, 1, 0); filter: none; } }
+@keyframes yir-sweep { from { stroke-dashoffset: var(--len); } to { stroke-dashoffset: var(--off); } }
+@keyframes yir-burst { from { opacity: 0; transform: scale(0); } to { opacity: 1; transform: none; } }
+@keyframes yir-pulse { 0%, 100% { transform: none; } 50% { transform: scale(1.7); } }
+@keyframes yir-spin { to { transform: rotate(360deg); } }
+@keyframes yir-beat { 0% { transform: scale(1.02); } 35% { transform: none; } }
+@keyframes yir-carry { from { opacity: .95; transform: translate(-120%, -40%) scale(1.3) rotate(-8deg); } to { opacity: 0; transform: translate(40%, -140%) scale(.35) rotate(10deg); } }
+@keyframes yir-confetti { 0% { opacity: 0; transform: translate(calc(var(--x, 0) * 14px), -120cqb) rotate(var(--r, 0deg)) scale(.7); } 75% { opacity: 1; } 100% { opacity: 1; transform: rotate(calc(var(--r, 0deg) / 6)); } }
+/* A number card with a picture: the picture leads, the words step down. */
+.yir-card[class*="yir-v-"] .yir-big { font-size: clamp(30px, min(7cqb, 10cqi), 60px); letter-spacing: -1.5px; }
+.yir-card[class*="yir-v-"] .yir-line { font-size: 16px; }
+.yir-card[class*="yir-v-"] .yir-body { justify-content: flex-end; }
+.yir-v-seats { background: var(--yir-ink); color: var(--yir-cream); }
+.yir-v-seats .yir-bars i { background: rgba(255, 255, 255, 0.28); }
+.yir-v-seats .yir-bars i b { background: #fff; }
+.yir-playhead { --to: calc(100cqi - 62px); }
+.yir-k-end .yir-mosaic { margin-bottom: 18px; }
+
+/* Instagram Story frames (YirStoryExport.tsx): 540×960 CSS px rendered at 2× = 1080×1920.
+   Nothing but the background in IG's covered bands (top 125 / bottom 170 CSS px). */
+.yir-export-stage { width: 540px; height: 960px; overflow: hidden; background: #000; }
+.yir-card.yir-export { width: 540px; height: 960px; aspect-ratio: auto; border-radius: 0; box-shadow: none; }
+.yir-export .yir-body { padding: 143px 36px 224px; -webkit-mask-image: linear-gradient(to bottom, transparent 0, transparent 125px, #000 125px, #000 790px, transparent 790px); mask-image: linear-gradient(to bottom, transparent 0, transparent 125px, #000 125px, #000 790px, transparent 790px); }
+.yir-export-mark { position: absolute; right: 30px; bottom: 182px; z-index: 5; display: flex; align-items: center; gap: 7px; color: rgba(255, 255, 255, 0.85); font: 800 15px -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: 2.5px; white-space: nowrap; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.35); }
+.yir-export-mark--dark { color: rgba(20, 18, 16, 0.85); text-shadow: none; }
+.yir-export-mark--dark i { background: radial-gradient(circle, rgba(102, 102, 102, 0.95) 0 32%, rgba(158, 158, 158, 0.95) 33%) !important; }
+.yir-export-mark i { width: 17px; height: 17px; border-radius: 50%; background: radial-gradient(circle, rgba(199, 199, 199, 0.9) 0 32%, rgba(237, 237, 237, 0.9) 33%); }
+.yir-last-actions { display: flex; gap: 8px; flex-wrap: wrap; pointer-events: auto; }
+.yir-seeall--quiet { background: rgba(246, 241, 234, 0.14); }
+/* Live: every show he went to — poster or photo, where and when, a few songs of the setlist. */
+.yir-shows { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 10px; }
+.yir-shows li { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 12px; align-items: center; }
+.yir-show-img { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; display: block; }
+.yir-show-img--round { border-radius: 50%; }
+.yir-show-who { display: grid; min-width: 0; }
+.yir-show-who b { font-size: 16px; font-weight: 900; line-height: 1.15; overflow-wrap: anywhere; }
+.yir-show-who small { font-size: 12px; opacity: 0.8; }
+.yir-show-songs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.yir-show-song { appearance: none; border: 0; cursor: pointer; font: 700 10.5px -apple-system, BlinkMacSystemFont, sans-serif; color: inherit; padding: 3px 8px; border-radius: 10px; background: rgba(20, 18, 16, 0.18); pointer-events: auto; }
+/* The Story frame's safe area is shorter than the story card: the pictures step down so every
+   line lands inside it. */
+.yir-export .yir-art-wrap .yir-art { width: 360px; margin: 0 0 14px; }
+.yir-export .yir-vinyl { width: 330px; }
+.yir-export .yir-poster { max-height: 330px; }
+.yir-export .yir-lane-img { width: 96px; }
+.yir-export .yir-row { --art: 72px; }
+.yir-export .yir-list { gap: 12px; }
+/* A Story clip starts on the card itself: no card-to-card entrance (it would show the stage
+   at the edges of the frame). */
+.yir-card.yir-export { animation: none !important; }
+
+/* The iPods count (2026-10-29): an iPod with its most-played covers on the screen. */
+.yir-ipod { position: relative; display: grid; justify-items: center; gap: 10px; margin-bottom: 12px; }
+.yir-ipod-body { width: min(52%, 24cqb); border-radius: 22px; padding: 7% 7% 9%; background: linear-gradient(160deg, #f4f4f4, #cfcfcf); box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.9); display: grid; grid-template-rows: auto 1fr; }
+.yir-ipod-screen { border-radius: 6px; background: #10100f; padding: 6px; box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.5); }
+.yir-ipod-covers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; }
+.yir-ipod-covers .yir-tile-img { border-radius: 2px; }
+.yir-ipod-count { margin-top: 6px; text-align: center; color: #f6f1ea; font-size: 12px; font-weight: 700; }
+.yir-ipod-count b { font-size: 20px; font-weight: 900; color: var(--yir-orange); font-variant-numeric: tabular-nums; margin-right: 4px; }
+.yir-ipod-wheel { position: relative; align-self: center; justify-self: center; margin-top: 9%; width: 64%; aspect-ratio: 1; border-radius: 50%; background: linear-gradient(160deg, #fbfbfb, #e2e2e2); box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.12); display: grid; place-items: center; }
+.yir-ipod-wheel span { position: absolute; top: 9%; font-size: 9px; font-weight: 700; color: #8c8c8c; letter-spacing: 0.5px; }
+.yir-ipod-wheel i { width: 38%; aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle at 40% 35%, #fdfdfd, #e3e3e3); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08); }
+.yir-ipod-mark { display: flex; align-items: center; gap: 6px; font: 800 11px -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: 2.5px; opacity: 0.85; }
+.yir-ipod-mark i { width: 12px; height: 12px; border-radius: 50%; background: radial-gradient(circle, rgba(199, 199, 199, 0.95) 0 32%, rgba(237, 237, 237, 0.95) 33%); }
+.yir-k-ipod { background: var(--yir-ink); color: var(--yir-cream); }
+.yir-k-ipod .yir-body { justify-content: flex-end; }
+.yir-k-ipod .yir-big { font-size: clamp(30px, min(7cqb, 10cqi), 60px); letter-spacing: -1.5px; }
+.yir-export .yir-ipod-body { width: 160px; }

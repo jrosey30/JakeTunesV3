@@ -1112,6 +1112,15 @@ const electronAPI = {
   artistListeners: (): Promise<Record<string, number>> => ipcRenderer.invoke('artist-listeners'),
   // Year in Review: the nightly facts from homemini, mirrored locally (yir-mirror.ts).
   yirGet: (year?: number): Promise<Record<string, unknown> | null> => ipcRenderer.invoke('yir:get', year),
+  // The Review's check on a saved artist photo (common/yir-photo.ts): size, detail, focus.
+  // Instagram Story files (src/main/yir-export.ts): one card's index, or 'all'.
+  yirExport: (which: number[] | 'all'): Promise<{ ok: boolean; dir?: string; stills?: string[]; videos?: string[]; note?: string; error?: string }> => ipcRenderer.invoke('yir:export', which),
+  onYirExportProgress: (cb: (p: { done: number; total: number }) => void): (() => void) => {
+    const h = (_e: unknown, p: { done: number; total: number }): void => cb(p)
+    ipcRenderer.on('yir:export-progress', h)
+    return () => { ipcRenderer.removeListener('yir:export-progress', h) }
+  },
+  yirPhotoQuality: (slug: string): Promise<{ width: number; height: number; detail: number; focus: number; ok: boolean } | null> => ipcRenderer.invoke('yir:photo-quality', slug),
   // 4.5: Wikipedia summary for artist detail page. 24h disk cache.
   getArtistWiki: (artist: string): Promise<{ ok: boolean; extract: string | null; pageUrl: string | null }> =>
     ipcRenderer.invoke('get-artist-wiki', artist),

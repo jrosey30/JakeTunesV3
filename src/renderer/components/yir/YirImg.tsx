@@ -1,13 +1,19 @@
 /**
  * One picture for a Year in Review fact: a song's or album's cover from the
- * artwork store, an artist's confirmed photo (artist-photo.ts; initials when
- * there is none, never album art in a circle), or a concert's poster.
+ * artwork store, an artist's photo, or a concert's poster.
+ *
+ * An artist's photo is the artist PAGE's header photo (homemini's profile, Jake's picks
+ * included) when there is one, else the app's Deezer photo only if it passes the Review's
+ * size + focus check (common/yir-photo.ts — Deezer's Drake is a 1000-pixel blur). Initials
+ * when neither will do; never album art in a circle.
  *
  * ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/YirImage.swift (the phone's pictures + lookups).
  */
 import { useEffect, useState } from 'react'
 import { lookupArtwork } from '../../utils/artworkLookup'
 import { findSong } from './yirData'
+import { useArtistProfile } from '../../artistProfile'
+import { chooseArtistPhoto } from '../../../common/yir-photo'
 import type { StoryImage, StoryConcert } from '../../../common/yir-story'
 import type { Track } from '../../types'
 
@@ -19,6 +25,7 @@ export interface YirCtx {
 }
 
 const photoSlugs = new Map<string, string | null>()
+const photoOk = new Map<string, boolean>()
 
 function coverHash(image: StoryImage, ctx: YirCtx): string | undefined {
   const look = (artist: string, album: string): string | undefined => lookupArtwork(ctx.artworkMap, ctx.artIndex, artist, album) || undefined
@@ -35,17 +42,36 @@ function coverHash(image: StoryImage, ctx: YirCtx): string | undefined {
 export function useYirImage(image: StoryImage | undefined, ctx: YirCtx, size = 600): string | null {
   const name = image?.kind === 'artist' ? image.name : ''
   const [slug, setSlug] = useState<string | null>(name ? photoSlugs.get(name) ?? null : null)
+  const [ok, setOk] = useState<boolean | null>(slug ? photoOk.get(slug) ?? null : null)
+  const { state: profile } = useArtistProfile(name)
   useEffect(() => {
-    if (!name || photoSlugs.has(name)) { setSlug(name ? photoSlugs.get(name) ?? null : null); return }
     let live = true
+    const measure = (s: string | null): void => {
+      if (!s || photoOk.has(s)) { setOk(s ? photoOk.get(s)! : null); return }
+      setOk(null)
+      void (window.electronAPI.yirPhotoQuality?.(s) ?? Promise.resolve(null)).catch(() => null).then((q) => {
+        photoOk.set(s, !!q?.ok)
+        if (live) setOk(!!q?.ok)
+      })
+    }
+    if (!name || photoSlugs.has(name)) {
+      const s = name ? photoSlugs.get(name) ?? null : null
+      setSlug(s)
+      measure(s)
+      return () => { live = false }
+    }
     window.electronAPI.getArtistImage(name).then((r) => (r.ok ? r.slug : null)).catch(() => null).then((s) => {
       photoSlugs.set(name, s)
-      if (live) setSlug(s)
+      if (live) { setSlug(s); measure(s) }
     })
     return () => { live = false }
   }, [name])
   if (!image) return null
-  if (image.kind === 'artist') return slug ? `artist-image://${slug}.jpg` : null
+  if (image.kind === 'artist') {
+    const hero = profile.profile?.hero ? profile.photos[profile.profile.hero.url] ?? null : null
+    const chosen = chooseArtistPhoto({ heroSlug: hero, appSlug: slug, appOk: ok })
+    return chosen ? `artist-image://${chosen}.jpg` : null
+  }
   const hash = coverHash(image, ctx)
   return hash ? `album-art://${hash}.jpg?s=${size}` : null
 }

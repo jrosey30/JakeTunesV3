@@ -1110,6 +1110,9 @@ declare global {
       getArtistImage: (artist: string) => Promise<{ ok: boolean; slug: string | null }>
       artistListeners?: () => Promise<Record<string, number>>
       yirGet?: (year?: number) => Promise<(import('../common/year-in-review').YearInReview & { builtAt?: string }) | null>
+      yirExport?: (which: number[] | 'all') => Promise<{ ok: boolean; dir?: string; stills?: string[]; videos?: string[]; note?: string; error?: string }>
+      onYirExportProgress?: (cb: (p: { done: number; total: number }) => void) => () => void
+      yirPhotoQuality?: (slug: string) => Promise<{ width: number; height: number; detail: number; focus: number; ok: boolean } | null>
       // 4.5 — Wikipedia summary for the artist detail page. 24h disk
       // cache in main; both fields null on no-result so UI can fall
       // back to photo + name only.

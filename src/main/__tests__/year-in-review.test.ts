@@ -47,6 +47,41 @@ describe('the facts', () => {
     mixtapes: [{ title: 'METAL VOL 1', createdAt: '2026-08-09T00:00:00Z', songs: 19 }, { title: 'old', createdAt: '2025-01-01T00:00:00Z', songs: 3 }],
   })
 
+  it('range: artists and current-tag genres played, and the widest day (Jake 10/29: variety)', () => {
+    // Plays: Geese ×4 (Jun 2, 3, 4 ×2), Beatles ×1 (Jun 10). Every listen is tagged Rock in the
+    // log; the library carries no genre, so the logged tag counts.
+    assert.equal(yir.range.artists, 2)
+    assert.equal(yir.range.genres, 1)
+    // June 4 has two Geese plays, June 10 one Beatles play: both one genre, one artist each → the earlier day.
+    assert.deepEqual(yir.range.widestDay, { date: '2026-06-02', genres: 1, artists: 1, plays: 1 })
+    const wide = buildYearInReview({
+      year: 2026, library: [{ id: 7, title: 'Song', artist: 'X', genre: 'Shoegaze' }],
+      listens: [
+        L('2026-07-01T16:00:00Z', 'A', 'a', 'play', { genre: 'Rock' }),
+        L('2026-07-02T16:00:00Z', 'A', 'a', 'play', { genre: 'Rock' }),
+        L('2026-07-02T17:00:00Z', 'B', 'b', 'play', { genre: 'Jazz' }),
+        // The song's current tag wins over the retired one in the log.
+        L('2026-07-02T18:00:00Z', 'X', 'Song', 'play', { genre: 'Rock', trackId: 7 }),
+        L('2026-07-02T19:00:00Z', 'B', 'b', 'skip', { genre: 'Polka' }),
+      ],
+    })
+    assert.deepEqual(wide.range, { artists: 3, genres: 3, widestDay: { date: '2026-07-02', genres: 3, artists: 3, plays: 3 } })
+  })
+
+  it('the iPods: every play recorded offline and carried home, and its most played', () => {
+    const y2 = buildYearInReview({
+      year: 2026, library: [],
+      listens: [
+        L('2026-09-01T14:00:00Z', 'The Walkmen', 'The Rat', 'play', { device: 'ipod' }),
+        L('2026-09-01T15:00:00Z', 'The Walkmen', 'The Rat', 'play', { device: 'ipod' }),
+        L('2026-09-01T16:00:00Z', 'Alex Lahey', 'Money', 'play', { device: 'ipod' }),
+        L('2026-09-01T17:00:00Z', 'Geese', 'Taxes', 'play', { device: 'phone' }),
+        L('2026-09-01T18:00:00Z', 'Geese', 'Taxes', 'skip', { device: 'ipod' }),
+      ],
+    })
+    assert.deepEqual(y2.ipod, { plays: 3, songs: 2, top: [{ name: 'The Rat', artist: 'The Walkmen', plays: 2 }, { name: 'Money', artist: 'Alex Lahey', plays: 1 }] })
+  })
+
   it('counts plays only, this year only', () => {
     assert.equal(yir.totals.plays, 5)
     assert.deepEqual(yir.honesty, { skips: 1, glances: 1, mechanical: 1, realSkipRate: Math.round((1 / 6) * 10000) / 10000 })
@@ -63,7 +98,22 @@ describe('the facts', () => {
   it('days, streak and the biggest day', () => {
     assert.equal(yir.totals.daysListened, 4)
     assert.deepEqual(yir.totals.longestStreak, { days: 3, from: '2026-06-02', to: '2026-06-04' })
-    assert.deepEqual(yir.totals.biggestDay, { date: '2026-06-04', plays: 2, firstHour: 12, lastHour: 13 })
+    const { byHour, topByHour, top, ...day } = yir.totals.biggestDay
+    assert.deepEqual(day, { date: '2026-06-04', plays: 2, firstHour: 12, lastHour: 13 })
+    // The hour strip: that day's plays by local hour, each hour's top song (12:00 Taxes, 13:00 Cobra).
+    assert.equal(byHour?.length, 24)
+    assert.equal(byHour?.[12], 1)
+    assert.equal(byHour?.[13], 1)
+    assert.deepEqual(topByHour?.[12], { artist: 'Geese', title: 'Taxes' })
+    assert.deepEqual(topByHour?.[13], { artist: 'Geese', title: 'Cobra' })
+    assert.equal(topByHour?.[3], null)
+    assert.deepEqual(top, { artist: 'Geese', title: 'Taxes' }, 'a tie keeps the first played')
+  })
+
+  it('the calendar: every day with music, its plays and its most-played song', () => {
+    assert.deepEqual(yir.calendar?.['2026-06-04'], { plays: 2, artist: 'Geese', title: 'Taxes' })
+    assert.deepEqual(yir.calendar?.['2026-06-10'], { plays: 1, artist: 'The Beatles', title: 'Hey Jude' })
+    assert.deepEqual(Object.keys(yir.calendar ?? {}), ['2026-06-02', '2026-06-03', '2026-06-04', '2026-06-10'])
   })
 
   it('on repeat: the most plays one song got inside a week', () => {
