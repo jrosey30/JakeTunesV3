@@ -119,7 +119,8 @@ test('activity engine runs TSA by identity and does not auto-delete after the ca
 
 test('after writing iTunesDB, Play Counts is retired before the Mini can boot onto the catalog', () => {
   const written = engine.indexOf("title: 'iTunesDB written'")
-  const scratch = engine.indexOf('retireIpodFirmwareScratch', written)
+  // retireScratch = retireIpodFirmwareScratch with this iPod's state dir (archive first, 2026-10-28).
+  const scratch = engine.indexOf('retireScratch(', written)
   const remount = engine.indexOf('remountVolume(IPOD_MOUNT)', scratch)
   assert.ok(written >= 0, 'catalog write no longer announces iTunesDB written')
   assert.ok(scratch > written, 'Play Counts must be retired after the catalog write')
