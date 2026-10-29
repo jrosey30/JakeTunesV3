@@ -37,6 +37,20 @@ export function musicStreamActive(psText) {
 }
 
 /**
+ * Is the regular nightly trainer (02:00, gemma3:4b, a few minutes) running?
+ * Takes `ps -axo command` text. The re-describe window starts before it
+ * (Jake 10/29: "extend it as much as possible... I'm sleeping"), so it steps
+ * aside rather than hold a second model in memory beside the trainer's.
+ * Our own process carries --redescribe-all and never counts.
+ */
+export function nightlyTrainerActive(psText) {
+  return String(psText || '').split('\n').some((line) => {
+    const l = line.trim()
+    return /(^|\/|\s)brain-trainer\.mjs(\s|$)/.test(l) && /(^|\/)node(\s|$)/.test(l.split(/\s+/, 1)[0] || '') && !/\s--redescribe-all(\s|$)/.test(l)
+  })
+}
+
+/**
  * Epoch ms of the next local HH:MM at or after `now` (today if still ahead,
  * else tomorrow). Throws on a malformed value so a typo can't mean "forever".
  */

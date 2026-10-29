@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  musicStreamActive, untilMs, redescribeCandidates, candidateDescriptors, promoteNext,
+  musicStreamActive, nightlyTrainerActive, untilMs, redescribeCandidates, candidateDescriptors, promoteNext,
 } from '../../../scripts/brain-redescribe.mjs'
 
 const CABLE = '/opt/homebrew/bin/ffmpeg -nostdin -hide_banner -loglevel warning -re -ss 0.33 -t 2518.15 -i /Volumes/JakeShared/Cable Library/The Outer Limits/ep.mp4 -vf scale=1920:1080:force_original_aspect_ratio=decrease -c:v h264_videotoolbox -f mpegts pipe:1'
@@ -94,5 +94,18 @@ describe('the trainer wiring', () => {
   it('no longer yields on any ffmpeg (the cable channels never stop)', () => {
     assert.doesNotMatch(block, /pgrep/)
     assert.match(block, /musicStreamActive/)
+  })
+})
+
+describe('stepping aside for the 02:00 trainer', () => {
+  const NODE = '/opt/homebrew/bin/node'
+  const TRAINER = `${NODE} /Users/jakerosenbaumnas/JakeTunesV3/scripts/brain-trainer.mjs`
+  it('sees the nightly trainer, never its own --redescribe-all process', () => {
+    assert.equal(nightlyTrainerActive([CABLE, `${TRAINER} --redescribe-all --until 08:15`].join('\n')), false)
+    assert.equal(nightlyTrainerActive([CABLE, `${TRAINER} --redescribe-all --until 08:15`, TRAINER].join('\n')), true)
+  })
+  it('ignores an editor or grep that merely mentions the file', () => {
+    assert.equal(nightlyTrainerActive('/usr/bin/grep brain-trainer.mjs\nvim scripts/brain-trainer.mjs'), false)
+    assert.equal(nightlyTrainerActive(''), false)
   })
 })
