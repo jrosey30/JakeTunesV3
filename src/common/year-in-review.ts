@@ -123,6 +123,63 @@ export interface YearInReview {
   starredClass: { count: number; top: Ranked[] }
   concerts: Array<YirConcert & { plays: number }>
   mixtapes: YirMixtape[]
+  /** How wide the year ran (Jake 10/29: "how do we show more variety?"): different artists and
+   *  genres played, and the day that covered the most genres (ties: more artists, then earlier). */
+  range: {
+    artists: number
+    genres: number
+    widestDay: { date: string; genres: number; artists: number; plays: number } | null
+  }
+  /** The Top 1000 chapter. NOT built here: homemini's backend measures it next to the quiz
+   *  model it grades (JakeTunesMobile backend/src/util/top1000Review.ts) and folds it into
+   *  these facts as it serves them (GET /api/year-in-review/:year). Absent in the nightly
+   *  file and its NAS copy; the story and the page leave the chapter out without it. */
+  top1000?: Top1000Review
+}
+
+/** Calls the model made before seeing the answer, and how many his answer agreed with. */
+export interface Top1000Tally { n: number; called: number }
+
+/**
+ * The Top 1000 chapter as homemini serves it.
+ * ⚠️ TWIN (shape): JakeTunesMobile backend/src/util/top1000Review.ts (Top1000Proof,
+ * Top1000Variety) + routes/top1000.ts Top1000Chapter; ios/JakeTunesMobile/YearInReview.swift.
+ */
+export interface Top1000Review {
+  builtAt: string
+  /** the model's confidence in today's 1000, 0–1 */
+  sure: number
+  proof: {
+    /** songs in the running */
+    pool?: number
+    answers: number
+    decisions: number
+    songsJudged: number
+    heats: number
+    duels: number
+    calls: Top1000Tally
+    headToHead: Top1000Tally
+    sureCalls: Top1000Tally
+    heatCalls: Top1000Tally & { chance: number }
+    tasteAlone: Top1000Tally
+    overruled: number
+    rechecks: { n: number; same: number }
+    firstAnswer: string | null
+    lastAnswer: string | null
+  }
+  variety: {
+    seats: number
+    artists: number
+    topArtists: Array<{ name: string; seats: number }>
+    brackets: number
+    bracketsTotal: number
+    genres: number
+    decades: Array<{ decade: string; seats: number }>
+    oldest: { title: string; artist: string; year: number } | null
+    newest: { title: string; artist: string; year: number } | null
+    numberOne: { title: string; artist: string } | null
+    bracketChampions: Array<{ bracket: string; seats: number; title: string; artist: string; rank: number }>
+  }
 }
 
 const dateParts = new Intl.DateTimeFormat('en-CA', { timeZone: YIR_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23', weekday: 'short' })
@@ -168,6 +225,9 @@ export function buildYearInReview(input: YirInput): YearInReview {
   let offBerg = 0
   const byWeekday = new Array<number>(7).fill(0)
   const byDevice: Record<string, number> = {}
+  const dayArtists = new Map<string, Set<string>>()
+  const dayGenres = new Map<string, Set<string>>()
+  const rangeGenres = new Set<string>()
   let minutes = 0
   let known = 0
 
@@ -199,6 +259,10 @@ export function buildYearInReview(input: YirInput): YearInReview {
     if (artistName) bump(monthArtists.get(lp.month)!, norm(artistName), () => ({ name: artistName, plays: 0 }))
     if (rankable) bump(monthSongs.get(lp.month)!, songKey, () => ({ name: l.title, artist: artistName, plays: 0 }))
     days.set(lp.date, (days.get(lp.date) ?? 0) + 1)
+    if (artistName) { const set = dayArtists.get(lp.date) ?? new Set<string>(); set.add(norm(artistName)); dayArtists.set(lp.date, set) }
+    // Range counts the song's CURRENT tag, as the berg does (the logged one is often a retired broad tag).
+    const tag = t?.genre || genre
+    if (tag) { rangeGenres.add(norm(tag)); const set = dayGenres.get(lp.date) ?? new Set<string>(); set.add(norm(tag)); dayGenres.set(lp.date, set) }
     byHour[lp.hour]++
     byWeekday[lp.weekday]++
     byDevice[l.device] = (byDevice[l.device] ?? 0) + 1
@@ -220,6 +284,14 @@ export function buildYearInReview(input: YirInput): YearInReview {
     if (p.date !== biggestDay.date) continue
     if (biggestDay.firstHour === null) biggestDay.firstHour = p.hour
     biggestDay.lastHour = p.hour
+  }
+
+  // The widest day: the most genres in one day; more artists, then the earlier day, break ties.
+  let widestDay: YearInReview['range']['widestDay'] = null
+  for (const d of dayList) {
+    const g = dayGenres.get(d)?.size ?? 0, a = dayArtists.get(d)?.size ?? 0
+    if (g === 0) continue
+    if (!widestDay || g > widestDay.genres || (g === widestDay.genres && a > widestDay.artists)) widestDay = { date: d, genres: g, artists: a, plays: days.get(d) ?? 0 }
   }
 
   // One song's best 7-day stretch.
@@ -316,5 +388,6 @@ export function buildYearInReview(input: YirInput): YearInReview {
     starredClass: { count: starred.length, top: starredTop },
     concerts,
     mixtapes,
+    range: { artists: artists.size, genres: rangeGenres.size, widestDay },
   }
 }

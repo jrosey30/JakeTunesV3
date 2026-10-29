@@ -7,6 +7,8 @@
   --yir-ink: #141210;
   --yir-cream: #f6f1ea;
   --yir-stage: #0e0d0c;
+  /* Small orange text on cream: the logo orange is 3.1:1 there, this is 4.9:1. */
+  --yir-orange-text: #c14201;
 }
 
 /* ── Home card ─────────────────────────────────────────────── */
@@ -151,6 +153,30 @@
 .yir-berg em { font-style: normal; text-align: right; font-variant-numeric: tabular-nums; opacity: 0.85; }
 .yir-berg-0 { background: #ffffff; } .yir-berg-1 { background: #cfe3ee; } .yir-berg-2 { background: #8fbcd6; } .yir-berg-3 { background: #4f8db2; } .yir-berg-4 { background: #1d4a6b; }
 
+/* Where the plays happened (2026-10-29): his machines, one bar each. */
+.yir-devs { display: grid; gap: 14px; margin: 18px 0 10px; }
+.yir-devs > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; align-items: baseline; }
+.yir-devs b { font-size: clamp(17px, 2.6cqb, 24px); font-weight: 900; letter-spacing: -0.3px; }
+.yir-devs small { grid-column: 2; grid-row: 1; font-size: 13px; opacity: 0.8; font-variant-numeric: tabular-nums; }
+.yir-devs .yir-track { grid-column: 1 / -1; grid-row: 2; display: block; margin: 6px 0 0; }
+.yir-devs .lead .yir-track i { background: var(--yir-orange); }
+
+/* The Top 1000's numbers: cream like the cover, the chapter's own stage. */
+.yir-k-stats { background: var(--yir-cream); color: var(--yir-ink); }
+.yir-k-stats .yir-bars i { background: rgba(20, 18, 16, 0.18); }
+.yir-k-stats .yir-bars i b { background: var(--yir-ink); }
+.yir-k-stats .yir-big { font-size: clamp(36px, min(9cqb, 11cqi), 84px); letter-spacing: -2px; }
+.yir-k-stats .yir-stats { grid-template-columns: repeat(3, auto); justify-content: start; column-gap: 24px; }
+.yir-k-stats .yir-stats b { color: var(--yir-orange-text); white-space: nowrap; font-size: clamp(20px, 5.6cqi, 30px); }
+.yir-k-stats .yir-stats span { opacity: 0.78; }
+.yir-k-stats .yir-line { font-size: 17px; }
+
+/* Number ones by genre: the genre on top, the song, its overall rank. */
+.yir-champs { gap: 14px; }
+.yir-champs .yir-row { grid-template-columns: var(--art) minmax(0, 1fr) auto; --art: clamp(52px, 10cqb, 96px); }
+.yir-champs .yir-row-who em { display: block; font-style: normal; font-size: 11px; font-weight: 800; letter-spacing: 1.4px; text-transform: uppercase; color: var(--yir-orange); }
+.yir-champs .yir-row-c { font-size: 16px; opacity: 0.8; }
+
 .yir-seeall {
   align-self: flex-start; margin-top: 14px; padding: 9px 16px; border-radius: 18px; border: 0; cursor: pointer;
   font: inherit; font-size: 13px; font-weight: 800; background: var(--yir-orange); color: var(--yir-cream);
@@ -251,10 +277,21 @@
 .yir-p-tapes li { display: grid; background: #fff; border: 1px solid #e2e4e8; border-radius: 10px; padding: 10px 14px; }
 .yir-p-tapes i { font-style: normal; color: #555a61; font-size: 12px; }
 
-.yir-p-honest { display: grid; grid-template-columns: auto 1fr; gap: 22px; align-items: center; }
 .yir-p-devs { display: grid; gap: 6px; margin-top: 8px; }
 .yir-p-devs div { display: grid; grid-template-columns: 1fr; position: relative; height: 22px; align-items: center; }
 .yir-p-devs span { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(252, 85, 1, 0.14); border-radius: 4px; }
-.yir-p-devs em { position: relative; font-style: normal; padding-left: 8px; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.yir-p-devs span.hot { background: rgba(252, 85, 1, 0.28); }
+.yir-p-devs em { position: relative; font-style: normal; padding-left: 8px; font-size: 12.5px; font-variant-numeric: tabular-nums; color: #16181b; }
+.yir-p-h3 { margin: 26px 0 10px; font-size: 18px; font-weight: 850; letter-spacing: -0.3px; }
+.yir-p-wink { margin-top: 14px; }
+.yir-p-t1k .yir-p-moments { margin: 6px 0 4px; }
+.yir-p-t1k .yir-p-num small { font-weight: 600; color: #555a61; font-size: 11.5px; }
+.yir-p-seats { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; }
+.yir-p-seats li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
+.yir-p-seats b { font-weight: 700; }
+.yir-p-seats span { font-variant-numeric: tabular-nums; color: #555a61; }
 .yir-p-end { border-bottom: 0 !important; }
 .yir-p-end h2 { color: var(--yir-orange); }
+.yir-p-t1k .yir-p-chart button { grid-template-columns: 46px 44px minmax(0, 1fr) auto; }
+.yir-p-t1k .yir-p-big3 { grid-template-columns: repeat(3, auto); justify-content: start; column-gap: 48px; }
+.yir-p-t1k .yir-p-big3 b { white-space: nowrap; }

@@ -47,6 +47,27 @@ describe('the facts', () => {
     mixtapes: [{ title: 'METAL VOL 1', createdAt: '2026-08-09T00:00:00Z', songs: 19 }, { title: 'old', createdAt: '2025-01-01T00:00:00Z', songs: 3 }],
   })
 
+  it('range: artists and current-tag genres played, and the widest day (Jake 10/29: variety)', () => {
+    // Plays: Geese ×4 (Jun 2, 3, 4 ×2), Beatles ×1 (Jun 10). Every listen is tagged Rock in the
+    // log; the library carries no genre, so the logged tag counts.
+    assert.equal(yir.range.artists, 2)
+    assert.equal(yir.range.genres, 1)
+    // June 4 has two Geese plays, June 10 one Beatles play: both one genre, one artist each → the earlier day.
+    assert.deepEqual(yir.range.widestDay, { date: '2026-06-02', genres: 1, artists: 1, plays: 1 })
+    const wide = buildYearInReview({
+      year: 2026, library: [{ id: 7, title: 'Song', artist: 'X', genre: 'Shoegaze' }],
+      listens: [
+        L('2026-07-01T16:00:00Z', 'A', 'a', 'play', { genre: 'Rock' }),
+        L('2026-07-02T16:00:00Z', 'A', 'a', 'play', { genre: 'Rock' }),
+        L('2026-07-02T17:00:00Z', 'B', 'b', 'play', { genre: 'Jazz' }),
+        // The song's current tag wins over the retired one in the log.
+        L('2026-07-02T18:00:00Z', 'X', 'Song', 'play', { genre: 'Rock', trackId: 7 }),
+        L('2026-07-02T19:00:00Z', 'B', 'b', 'skip', { genre: 'Polka' }),
+      ],
+    })
+    assert.deepEqual(wide.range, { artists: 3, genres: 3, widestDay: { date: '2026-07-02', genres: 3, artists: 3, plays: 3 } })
+  })
+
   it('counts plays only, this year only', () => {
     assert.equal(yir.totals.plays, 5)
     assert.deepEqual(yir.honesty, { skips: 1, glances: 1, mechanical: 1, realSkipRate: Math.round((1 / 6) * 10000) / 10000 })

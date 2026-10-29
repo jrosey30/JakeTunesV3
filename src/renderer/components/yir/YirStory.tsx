@@ -123,6 +123,51 @@ function SlideBody({ slide, ctx, playing, onPlayRow }: { slide: Slide; ctx: YirC
         </>
       )
     }
+    case 'devices': {
+      const max = Math.max(1, ...slide.rows.map((r) => r.plays))
+      return (
+        <>
+          <div className="yir-eyebrow">{slide.eyebrow}</div>
+          <div className="yir-big">{slide.big}</div>
+          <div className="yir-devs">
+            {slide.rows.map((r, k) => (
+              <div key={r.name} className={k === 0 ? 'lead' : ''}>
+                <b>{r.name}</b>
+                <span className="yir-track"><i style={{ width: `${Math.max(2, (r.plays / max) * 100)}%` }} /></span>
+                <small>{r.plays.toLocaleString('en-US')} · {r.pct}%</small>
+              </div>
+            ))}
+          </div>
+          <div className="yir-line">{slide.line}</div>
+        </>
+      )
+    }
+    case 'stats':
+      return (
+        <>
+          <div className="yir-eyebrow">{slide.eyebrow}</div>
+          <div className="yir-big">{slide.big}</div>
+          <div className="yir-stats">{slide.stats.map(([v, l]) => <div key={l}><b>{v}</b><span>{l}</span></div>)}</div>
+          {slide.line && <div className="yir-line">{slide.line}</div>}
+        </>
+      )
+    case 'champions':
+      return (
+        <>
+          <div className="yir-eyebrow">{slide.eyebrow}</div>
+          <div className="yir-big">{slide.big}</div>
+          <div className="yir-list yir-champs">
+            {slide.rows.map((r) => (
+              <button key={r.bracket} type="button" className="yir-row" onClick={() => onPlayRow(r.play)} title={`Play ${r.title}`}>
+                <YirImg image={r.image} ctx={ctx} className="yir-row-img" size={240} />
+                <span className="yir-row-who"><em>{r.bracket}</em><b>{r.title}</b><small>{r.artist}</small></span>
+                <span className="yir-row-c" title="Rank in the Top 1000">#{r.rank}</span>
+              </button>
+            ))}
+          </div>
+          {slide.line && <div className="yir-line">{slide.line}</div>}
+        </>
+      )
     default:
       return (
         <>

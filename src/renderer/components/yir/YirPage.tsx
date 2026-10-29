@@ -8,7 +8,7 @@
 import { useAudio } from '../../hooks/useAudio'
 import YirImg, { type YirCtx } from './YirImg'
 import { findSong, albumSongs } from './yirData'
-import { n, dayName, hour12, isRevealed } from '../../../common/yir-story'
+import { n, dayName, hour12, isRevealed, deviceRows, pctOf } from '../../../common/yir-story'
 import { localParts } from '../../../common/year-in-review'
 import type { YirFacts } from './yirData'
 
@@ -30,7 +30,7 @@ export default function YirPage({ y, ctx, onStory }: { y: YirFacts; ctx: YirCtx;
     if (songs.length) playTrack(songs[0], songs, 0, undefined, true)
   }
   const revealed = isRevealed(y.year, new Date())
-  const T = y.totals, C = y.coverage, H = y.honesty, D = y.discoveries
+  const T = y.totals, C = y.coverage, D = y.discoveries, R = y.range, K = y.top1000
   const first = C.firstListen ? localParts(C.firstListen) : null
   const startedLate = C.monthsBeforeHistory.length > 0 && !!C.firstListen
   const last = C.lastListen ? localParts(C.lastListen) : null
@@ -39,8 +39,11 @@ export default function YirPage({ y, ctx, onStory }: { y: YirFacts; ctx: YirCtx;
   const hMax = Math.max(...y.clock.byHour), wMax = Math.max(...y.clock.byWeekday)
   const fbm = Object.entries(D.foundByMonth).sort(([a], [b]) => a.localeCompare(b))
   const fMax = Math.max(1, ...fbm.map(([, v]) => v))
-  const devs = Object.entries(C.playsByDevice).sort((a, b) => b[1] - a[1])
-  const devTot = devs.reduce((s, [, v]) => s + v, 0) || 1
+  const devs = deviceRows(C.playsByDevice ?? {})
+  const ipod = devs.find((d) => d.name === 'iPods')
+  const aoty = y.topArtists[0]?.name.trim().toLowerCase()
+  const seatsOfAoty = K?.variety.topArtists.find((a) => a.name.trim().toLowerCase() === aoty)
+  const decMax = Math.max(1, ...(K?.variety.decades.map((d) => d.seats) ?? []))
   const top3 = y.topArtists.slice(0, 3)
   const yy = String(y.year)
 
@@ -49,7 +52,7 @@ export default function YirPage({ y, ctx, onStory }: { y: YirFacts; ctx: YirCtx;
       <section className="yir-p-hero">
         <div className="yir-p-eyebrow">JakeTunes · Year in Review</div>
         <h1 className="yir-p-year">{yy.slice(0, 2)}<span>{yy.slice(2)}</span></h1>
-        <div className="yir-p-sofar">{revealed ? 'Your year in music.' : 'So far.'}</div>
+        <div className="yir-p-sofar">{revealed ? 'Your year in music. None of it rented.' : 'So far. None of it rented.'}</div>
         <div className="yir-p-big3">
           <div><b>{n(T.plays)}</b><span>songs played</span></div>
           <div><b>{n(Math.round(T.minutes / 60))}</b><span>hours of music</span></div>
@@ -75,7 +78,7 @@ export default function YirPage({ y, ctx, onStory }: { y: YirFacts; ctx: YirCtx;
         <section>
           <div className="yir-p-eyebrow">Your top songs</div>
           <h2><em>{y.topSongs[0].name}</em>, {n(y.topSongs[0].plays)} times.</h2>
-          <p className="yir-p-lede">Counted only when the song actually played: never a skip, never a glance. Click one to play it.</p>
+          <p className="yir-p-lede">Elsewhere, thirty seconds counts as a play. Here a skip never does, and neither does a glance. Click one to play it.</p>
           <ol className="yir-p-chart">
             {y.topSongs.slice(0, 10).map((s, k) => (
               <li key={`${s.artist}|${s.name}`}>
@@ -126,6 +129,18 @@ export default function YirPage({ y, ctx, onStory }: { y: YirFacts; ctx: YirCtx;
         </section>
       )}
 
+      {devs.length >= 2 && (
+        <section>
+          <div className="yir-p-eyebrow">Your world</div>
+          <h2>{devs.length} devices. <em>One library</em> you own.</h2>
+          <p className="yir-p-lede">Every play was music on your own drives.{ipod ? ` The iPods logged ${n(ipod.plays)} of them with no signal and no subscription.` : ''}</p>
+          <div className="yir-p-devs">
+            {devs.map((d, k) => <div key={d.name}><span className={k === 0 ? 'hot' : ''} style={{ width: pct(d.plays, devs[0].plays) }} /><em><b>{d.name}</b> {n(d.plays)} · {d.pct}%</em></div>)}
+          </div>
+          <p className="yir-p-foot">Where the plays happened.</p>
+        </section>
+      )}
+
       {loudest && (
         <section>
           <div className="yir-p-eyebrow">Month by month</div>
@@ -164,6 +179,14 @@ export default function YirPage({ y, ctx, onStory }: { y: YirFacts; ctx: YirCtx;
         </section>
       )}
 
+      {R && R.artists > 0 && (
+        <section>
+          <div className="yir-p-eyebrow">Range</div>
+          <h2><em>{n(R.artists)}</em> artists. <em>{n(R.genres)}</em> genres.</h2>
+          <p className="yir-p-lede">{R.widestDay ? `Your widest day was ${dayName(R.widestDay.date)}: ${n(R.widestDay.artists)} artists across ${n(R.widestDay.genres)} genres in ${n(R.widestDay.plays)} plays. ` : ''}No label paid to be on any of it.</p>
+        </section>
+      )}
+
       <section>
         <div className="yir-p-eyebrow">Moments</div>
         <h2>The ones that stood out.</h2>
@@ -186,7 +209,7 @@ export default function YirPage({ y, ctx, onStory }: { y: YirFacts; ctx: YirCtx;
       <section>
         <div className="yir-p-eyebrow">What you found</div>
         <h2>You brought <em>{n(D.foundTotal)}</em> songs home.</h2>
-        <p className="yir-p-lede">Found and downloaded through JakeTunes this year. The old collection moving in doesn't count.</p>
+        <p className="yir-p-lede">Found and downloaded through JakeTunes this year: found by you, not fed to you. The old collection moving in doesn't count.</p>
         <div className="yir-p-split">
           <div>
             <div className="yir-p-stat">{n(D.newArtistCount)}</div><span>artists joined your library</span>
@@ -207,7 +230,7 @@ export default function YirPage({ y, ctx, onStory }: { y: YirFacts; ctx: YirCtx;
         <section>
           <div className="yir-p-eyebrow">The starred class</div>
           <h2><em>{n(y.starredClass.count)}</em> new finds got your star.</h2>
-          <p className="yir-p-lede">The ones you came back to most.</p>
+          <p className="yir-p-lede">The ones you came back to most. No expiring license can take them back.</p>
           <ol className="yir-p-chart">
             {y.starredClass.top.slice(0, 6).map((s, k) => (
               <li key={`${s.artist}|${s.name}`}>
@@ -255,25 +278,79 @@ export default function YirPage({ y, ctx, onStory }: { y: YirFacts; ctx: YirCtx;
         </section>
       )}
 
-      {H.realSkipRate !== null && (
-        <section>
-          <div className="yir-p-eyebrow">Straight talk</div>
-          <h2>You skipped <em>{n(H.skips)}</em> songs for real.</h2>
-          <div className="yir-p-honest">
-            <div className="yir-p-stat">{(H.realSkipRate * 100).toFixed(1)}%</div>
-            <p className="yir-p-lede">That's your real skip rate. The {n(H.glances)} times you left a song in its first few seconds don't count, and neither do the {n(H.mechanical)} rapid-fire skips while hunting for something. Those aren't verdicts.</p>
+      {K && K.proof.answers > 0 && (
+        <section className="yir-p-t1k">
+          <div className="yir-p-eyebrow">The Top 1000</div>
+          <h2>An algorithm you built, and <em>it works</em>.</h2>
+          <p className="yir-p-lede">A tournament over {K.proof.pool ? `${n(K.proof.pool)} of your songs` : 'your whole library'}: heats where you pick who moves on, one-on-one duels, genre brackets, then finals between each genre's champions. A brain learns from your plays, stars and skips, plus how famous each song is, and guesses your answer before you give it. Every seat is earned answer by answer, nobody pays for one, and the 1,000 help pick what rides on your Original iPod.</p>
+          <div className="yir-p-moments">
+            {K.proof.sureCalls.n > 0 && (
+              <div><span className="k">When it was sure</span><span className="v">{pctOf(K.proof.sureCalls.called, K.proof.sureCalls.n)}% <small>right</small></span>
+                <p>It called {n(K.proof.sureCalls.n)} duels at 80% or more before you answered, and got {n(K.proof.sureCalls.called)} of them.</p></div>
+            )}
+            {K.proof.headToHead.n > 0 && (
+              <div><span className="k">Every one-on-one</span><span className="v">{pctOf(K.proof.headToHead.called, K.proof.headToHead.n)}% <small>called</small></span>
+                <p>{n(K.proof.headToHead.called)} of {n(K.proof.headToHead.n)}, each called before your answer.{K.proof.tasteAlone.n > 0 ? ` Plays and stars alone: ${pctOf(K.proof.tasteAlone.called, K.proof.tasteAlone.n)}%.` : ''} It asks the close ones on purpose.</p></div>
+            )}
+            {K.proof.heatCalls.n > 0 && (
+              <div><span className="k">Heats</span><span className="v">{pctOf(K.proof.heatCalls.called, K.proof.heatCalls.n)}% <small>exactly right</small></span>
+                <p>Named exactly who moves on in {n(K.proof.heatCalls.called)} of {n(K.proof.heatCalls.n)} heats. Guessing gets {Math.round(K.proof.heatCalls.chance * 100)}%.</p></div>
+            )}
           </div>
-          <div className="yir-p-devs">
-            {devs.map(([k, v]) => <div key={k}><span style={{ width: pct(v, devs[0][1]) }} /><em><b>{k}</b> {n(v)} · {Math.round((v / devTot) * 100)}%</em></div>)}
-          </div>
-          <p className="yir-p-foot">Where the plays happened.</p>
+          <p className="yir-p-foot">
+            {n(K.proof.answers)} answers, {n(K.proof.songsJudged)} songs judged. You overruled it {n(K.proof.overruled)} times; every answer moves it.
+            {K.proof.rechecks.n > 0 ? ` When a question came back later, you gave the same answer ${pctOf(K.proof.rechecks.same, K.proof.rechecks.n)}% of the time (${n(K.proof.rechecks.same)} of ${n(K.proof.rechecks.n)}): the close calls are close for a reason.` : ''}
+            {` Today it is ${Math.round(K.sure * 100)}% sure of the whole list.`}
+          </p>
+
+          {K.variety.seats > 0 && (
+            <>
+              <h3 className="yir-p-h3">Who holds a seat</h3>
+              <div className="yir-p-big3">
+                <div><b>{n(K.variety.artists)}</b><span>artists</span></div>
+                <div><b>{K.variety.brackets} of {K.variety.bracketsTotal}</b><span>genre brackets</span></div>
+                {K.variety.oldest && K.variety.newest && <div><b>{K.variety.oldest.year}–{K.variety.newest.year}</b><span>oldest seat to newest</span></div>}
+              </div>
+              {seatsOfAoty && K.variety.topArtists[0] && seatsOfAoty.name !== K.variety.topArtists[0].name && (
+                <p className="yir-p-lede yir-p-wink">Artist of the year {seatsOfAoty.name}? {n(seatsOfAoty.seats)} seats, {((100 * seatsOfAoty.seats) / K.variety.seats).toFixed(1)}% of the {n(K.variety.seats)}. {K.variety.topArtists[0].name}? {n(K.variety.topArtists[0].seats)}. Love isn't a monopoly.</p>
+              )}
+              <div className="yir-p-split">
+                <div>
+                  <div className="yir-p-eyebrow">Seats by decade</div>
+                  <div className="yir-p-found">{K.variety.decades.map((d) => <div key={d.decade}><span className={d.seats === decMax ? 'hot' : ''} style={{ height: pct(d.seats, decMax) }} title={`${d.decade} · ${n(d.seats)} seats`} /><small>{d.decade.slice(2)}</small></div>)}</div>
+                </div>
+                <div>
+                  <div className="yir-p-eyebrow">Most seats</div>
+                  <ol className="yir-p-seats">{K.variety.topArtists.slice(0, 6).map((a) => <li key={a.name}><b>{a.name}</b><span>{n(a.seats)}</span></li>)}</ol>
+                </div>
+              </div>
+              {K.variety.bracketChampions.length > 0 && (
+                <>
+                  <h3 className="yir-p-h3">Number one, everywhere</h3>
+                  <ol className="yir-p-chart">
+                    {K.variety.bracketChampions.map((c) => (
+                      <li key={c.bracket}>
+                        <button type="button" onClick={() => playSong(c.artist, c.title)} title={`Play ${c.title}`}>
+                          <span className="yir-p-rank">#{c.rank}</span>
+                          <YirImg image={{ kind: 'song', artist: c.artist, title: c.title }} ctx={ctx} className="yir-p-sm" size={120} />
+                          <span className="yir-p-who"><b>{c.title}</b><i>{c.artist} · #1 in {c.bracket}</i></span>
+                          <span className="yir-p-num">{n(c.seats)} <small>seats</small></span>
+                        </button>
+                      </li>
+                    ))}
+                  </ol>
+                  {K.variety.numberOne && <p className="yir-p-foot">Number one of all {n(K.variety.seats)}: {K.variety.numberOne.title}, {K.variety.numberOne.artist}.</p>}
+                </>
+              )}
+            </>
+          )}
         </section>
       )}
 
       <section className="yir-p-end">
         <div className="yir-p-eyebrow">{revealed ? 'Happy birthday' : 'To be continued'}</div>
         <h2>{revealed ? `That was ${y.year}.` : `The rest of ${y.year} is still being written.`}</h2>
-        <p className="yir-p-lede">{last ? `Facts through ${dayName(last.date)}. ` : ''}Every number on this page is a count of real plays or library records.</p>
+        <p className="yir-p-lede">{last ? `Facts through ${dayName(last.date)}. ` : ''}Every number on this page is a count of real plays, library records or your own answers. None of it rented.</p>
       </section>
     </div>
   )

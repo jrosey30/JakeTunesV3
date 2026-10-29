@@ -4,23 +4,10 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildStory, hour12, isRevealed } from '../../common/yir-story.ts'
+import { buildStory, deviceRows, hour12, isRevealed } from '../../common/yir-story.ts'
 import { buildYearInReview } from '../../common/year-in-review.ts'
-import type { Listen } from '../../common/listening-history.ts'
+import { L, listens, y, concerts } from './yir-story-fixture.ts'
 
-const L = (ts: string, artist: string, title: string, extra: Partial<Listen> = {}): Listen =>
-  ({ ts, device: 'laptop', kind: 'play', pct: 100, artist, title, album: `${title} LP`, genre: 'Rock', ...extra })
-
-const listens: Listen[] = [
-  ...['06-01', '06-02', '06-03', '07-20', '07-21', '07-22', '07-23'].map((d) => L(`2026-${d}T16:00:00Z`, 'TV Girl', 'Pantyhose', { genre: 'Indie Pop' })),
-  ...['06-04', '06-05', '06-06'].map((d) => L(`2026-${d}T16:00:00Z`, 'Geese', 'Taxes', { genre: 'Garage Punk' })),
-  L('2026-06-07T16:00:00Z', 'Drake', 'Hotline Bling', { genre: 'Hip-Hop' }),
-]
-const y = buildYearInReview({ year: 2026, listens, library: [] })
-const concerts = [
-  { albumKey: 'geese|||forest hills', band: 'Geese', show: 'Forest Hills', venue: 'Forest Hills Stadium', date: 'October 3, 2026', notes: 'I was there.' },
-  { albumKey: 'grateful dead|||nassau', band: 'Grateful Dead', show: 'Nassau', venue: 'Nassau Coliseum', date: 'May 15-16, 1980' },
-]
 const before = buildStory(y, { now: new Date(2026, 9, 12), concerts })
 const after = buildStory(y, { now: new Date(2026, 11, 17, 0, 0, 1), concerts })
 const big = (slides: typeof before, eyebrow: string): string | undefined => {
@@ -32,8 +19,8 @@ describe('the story', () => {
   it('is "so far" until December 17, then the reveal', () => {
     assert.equal(isRevealed(2026, new Date(2026, 11, 16, 23, 59)), false)
     assert.equal(isRevealed(2026, new Date(2026, 11, 17)), true)
-    assert.equal(before[0].kind === 'cover' && before[0].line, 'So far.')
-    assert.equal(after[0].kind === 'cover' && after[0].line, 'Your year in music.')
+    assert.equal(before[0].kind === 'cover' && before[0].line, 'So far. None of it rented.')
+    assert.equal(after[0].kind === 'cover' && after[0].line, 'Your year in music. None of it rented.')
     assert.match(String(big(before, 'December 17')), /still being written/)
     assert.equal(big(after, 'Happy birthday'), 'That was 2026.')
   })
@@ -77,6 +64,50 @@ describe('the story', () => {
     assert.equal(s.big, 'Taxes')
     assert.equal(s.line, 'Geese · Friday, January 2 at 10:30 AM')
     assert.equal(slides[0].kind === 'cover' && slides[0].note, undefined)
+  })
+
+  it('the card list, in order — and no skips card, ever (Jake 10/29: "take skips out")', () => {
+    assert.deepEqual(after.map((x) => `${x.kind}:${x.eyebrow}`), [
+      'cover:JakeTunes · Year in Review', 'art:Your song of the year', 'list:The rest of the top 3', 'lanes:Your artist of the year',
+      'art:Record of the year', 'devices:Where the plays happened', 'number:The day it never stopped', 'number:When you listen',
+      'number:Longest streak', 'iceberg:How deep you went', 'number:Range', 'art:Live in 2026',
+      'number:The Top 1000', 'stats:Does it work?', 'stats:Who holds a seat', 'champions:Number one, everywhere', 'number:Why it matters',
+      'end:Happy birthday',
+    ])
+    for (const s of [...before, ...after]) assert.doesNotMatch(JSON.stringify(s), /skip rate|real skips|Honest numbers/i)
+  })
+
+  it('where the plays happened: his own devices, biggest first, whole percents', () => {
+    assert.deepEqual(deviceRows({ laptop: 2960, workmini: 5205, phone: 648, ipod: 689 }).map((d) => [d.name, d.plays, d.pct]),
+      [['workmini', 5205, 55], ['Laptop', 2960, 31], ['iPods', 689, 7], ['Phone', 648, 7]])
+    const d = after.find((x) => x.kind === 'devices')
+    assert.ok(d && d.kind === 'devices')
+    assert.equal(d.big, 'Three devices. One library you own.')
+    assert.equal(d.line, 'Laptop played 64% of it. The iPods logged 1 play with no signal and no subscription.')
+  })
+
+  it('the Top 1000 chapter is the measured numbers, nothing else', () => {
+    const work = after.find((x) => x.eyebrow === 'Does it work?')
+    assert.ok(work && work.kind === 'stats')
+    assert.equal(work.big, '87% right when it was sure.')   // 1,335 / 1,526
+    assert.deepEqual(work.stats, [['10,611', 'answers you gave'], ['6,122', 'songs judged'], ['63%', 'one-on-ones called before you answered']])
+    assert.equal(work.line, 'Plays and stars alone would call 56% of them. You overruled it 3,685 times. It took notes.')
+    const seats = after.find((x) => x.eyebrow === 'Who holds a seat')
+    assert.ok(seats && seats.kind === 'stats')
+    assert.equal(seats.big, '462 artists made the cut.')
+    // The artist of the year (TV Girl here) gets the honest share, with the leader beside it.
+    assert.equal(seats.line, "Artist of the year TV Girl? 16 seats, 1.6% of the 1,000. The Beatles? 56. Love isn't a monopoly.")
+    const champs = after.find((x) => x.kind === 'champions')
+    assert.ok(champs && champs.kind === 'champions')
+    assert.equal(champs.big, 'Two genres, two number ones.')
+    assert.deepEqual(champs.rows.map((r) => [r.bracket, r.title, r.rank]), [['Classic Rock', 'Jane', 17], ['Rock', 'Au Pays du Cocaine', 3]])
+    assert.match(String(big(after, 'Why it matters')), /Earned, not placed/)
+    assert.match(String(after.find((x) => x.eyebrow === 'Why it matters' && x.kind === 'number')?.line), /92% sure of all 1,000/)
+  })
+
+  it('no chapter without homemini\'s measurement (the nightly file and the NAS copy)', () => {
+    const bare = buildStory({ ...y, top1000: undefined }, { now: new Date(2026, 11, 17, 1) })
+    assert.equal(bare.some((x) => x.eyebrow === 'The Top 1000' || x.kind === 'stats' || x.kind === 'champions'), false)
   })
 
   it('formats hours like a person says them', () => {

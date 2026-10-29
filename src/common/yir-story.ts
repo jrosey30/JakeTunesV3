@@ -23,6 +23,12 @@ export type StoryPlay = { kind: 'song'; artist: string; title: string } | { kind
 
 export interface StoryRow { name: string; sub: string; plays: number; image: StoryImage; play?: StoryPlay }
 
+/** One device's share of the plays (the "where the plays happened" card). */
+export interface DeviceRow { name: string; plays: number; pct: number }
+
+/** The best-ranked Top 1000 song of one genre bracket. */
+export interface ChampionRow { bracket: string; title: string; artist: string; rank: number; image: StoryImage; play: StoryPlay }
+
 export type Slide =
   | { kind: 'cover'; eyebrow: string; year: number; line: string; stats: Array<[string, string]>; note?: string }
   | { kind: 'art'; eyebrow: string; big: string; line: string; image: StoryImage; play?: StoryPlay; poster?: boolean }
@@ -30,6 +36,9 @@ export type Slide =
   | { kind: 'lanes'; eyebrow: string; big: string; rows: StoryRow[]; line: string }
   | { kind: 'number'; eyebrow: string; big: string; line: string }
   | { kind: 'iceberg'; eyebrow: string; big: string; layers: number[]; line: string }
+  | { kind: 'devices'; eyebrow: string; big: string; rows: DeviceRow[]; line: string }
+  | { kind: 'stats'; eyebrow: string; big: string; stats: Array<[string, string]>; line: string }
+  | { kind: 'champions'; eyebrow: string; big: string; rows: ChampionRow[]; line: string }
   | { kind: 'end'; eyebrow: string; big: string; line: string }
 
 /** A declared concert, as the renderer's live-sets store knows it. */
@@ -50,6 +59,11 @@ export function hour12(h: number): string {
   if (h === 12) return 'noon'
   return `${h % 12} ${h < 12 ? 'AM' : 'PM'}`
 }
+/** The plays log's device keys, as the card names them. */
+export const DEVICE_NAMES: Record<string, string> = { workmini: 'workmini', laptop: 'Laptop', ipod: 'iPods', phone: 'Phone' }
+export const deviceName = (key: string): string => DEVICE_NAMES[key] ?? key
+/** Whole percent of a total, rounded like Math.round. */
+export const pctOf = (v: number, total: number): number => (total > 0 ? Math.round((100 * v) / total) : 0)
 const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
 const hours = (r: Ranked): number => Math.round((r.minutes ?? 0) / 60)
 const argMax = (a: number[]): number => a.reduce((best, v, i) => (v > a[best] ? i : best), 0)
@@ -73,6 +87,77 @@ function race(top: Ranked[]): { big: string; line: string } {
   return { big, line: `${a.name} on plays, ${byTime[0].name} on time: ${hours(byTime[0])} hours to ${hours(a)}.` }
 }
 
+/** Devices by plays, most first, each with its whole-percent share. */
+export function deviceRows(byDevice: Record<string, number>): DeviceRow[] {
+  const total = Object.values(byDevice).reduce((a, b) => a + b, 0)
+  return Object.entries(byDevice)
+    .filter(([, v]) => v > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([k, v]) => ({ name: deviceName(k), plays: v, pct: pctOf(v, total) }))
+}
+
+const fold = (s: string | undefined): string => (s ?? '').trim().toLowerCase()
+const pct1 = (v: number, total: number): string => (total > 0 ? ((100 * v) / total).toFixed(1) : '0.0')
+
+/** The Top 1000 chapter's cards (Jake 10/29: "show off that this algorithm I made works and
+ *  works elite"). Every number is homemini's measurement (top1000Review.ts); a card whose
+ *  numbers are missing is left out. */
+function top1000Cards(y: YearInReview): Slide[] {
+  const c = y.top1000
+  if (!c || c.proof.answers <= 0) return []
+  const P = c.proof, V = c.variety
+  const out: Slide[] = []
+  out.push({
+    kind: 'number', eyebrow: 'The Top 1000', big: 'An algorithm you built.',
+    line: `A tournament over ${P.pool ? `${n(P.pool)} of your songs` : 'your whole library'}: heats, one-on-one duels, genre brackets, then finals between the champions. A brain learns from your plays, stars and skips, plus how famous each song is, and guesses your answer before you give it.`,
+  })
+  if (P.headToHead.n > 0) {
+    const h2h = pctOf(P.headToHead.called, P.headToHead.n)
+    const sure = P.sureCalls.n > 0 ? pctOf(P.sureCalls.called, P.sureCalls.n) : null
+    const taste = P.tasteAlone.n > 0 ? pctOf(P.tasteAlone.called, P.tasteAlone.n) : null
+    out.push({
+      kind: 'stats', eyebrow: 'Does it work?',
+      big: sure !== null ? `${sure}% right when it was sure.` : `${h2h}% called in advance.`,
+      stats: [[n(P.answers), 'answers you gave'], [n(P.songsJudged), 'songs judged'], [`${h2h}%`, 'one-on-ones called before you answered']],
+      line: [
+        taste !== null ? `Plays and stars alone would call ${taste}% of them.` : '',
+        P.overruled > 0 ? `You overruled it ${n(P.overruled)} times. It took notes.` : '',
+      ].filter(Boolean).join(' '),
+    })
+  }
+  if (V.seats > 0 && V.topArtists.length > 0) {
+    const leader = V.topArtists[0]
+    const aoty = y.topArtists[0]?.name
+    const mine = aoty ? V.topArtists.find((a) => fold(a.name) === fold(aoty)) : undefined
+    const span = V.oldest && V.newest && V.oldest.year !== V.newest.year ? `${V.oldest.year}–${V.newest.year}` : ''
+    const stats: Array<[string, string]> = [[`${V.brackets} of ${V.bracketsTotal}`, 'genre brackets with a seat']]
+    if (span) stats.push([span, 'oldest seat to newest'])
+    if (V.decades.length > 1) stats.push([n(V.decades.length), 'decades'])
+    let line: string
+    if (mine && fold(mine.name) !== fold(leader.name)) line = `Artist of the year ${mine.name}? ${n(mine.seats)} seats, ${pct1(mine.seats, V.seats)}% of the ${n(V.seats)}. ${leader.name}? ${n(leader.seats)}. Love isn't a monopoly.`
+    else if (mine) line = `Most seats: ${leader.name}, ${n(leader.seats)} of the ${n(V.seats)}.${V.topArtists[1] ? ` Then ${V.topArtists[1].name}, ${n(V.topArtists[1].seats)}.` : ''}`
+    else line = `Most seats: ${leader.name}, ${n(leader.seats)} of the ${n(V.seats)}. Nobody else comes close to a monopoly.`
+    out.push({ kind: 'stats', eyebrow: 'Who holds a seat', big: `${n(V.artists)} artists made the cut.`, stats, line })
+  }
+  const champs = V.bracketChampions.slice(0, 5)
+  if (champs.length >= 2) {
+    const k = WORDS[champs.length] ?? n(champs.length)
+    out.push({
+      kind: 'champions', eyebrow: 'Number one, everywhere', big: `${k} genres, ${k.toLowerCase()} number ones.`,
+      rows: champs.map((ch) => ({
+        bracket: ch.bracket, title: ch.title, artist: ch.artist, rank: ch.rank,
+        image: { kind: 'song', artist: ch.artist, title: ch.title }, play: { kind: 'song', artist: ch.artist, title: ch.title },
+      })),
+      line: V.numberOne ? `And number one of all ${n(V.seats)}: ${V.numberOne.title}, ${V.numberOne.artist}.` : '',
+    })
+  }
+  out.push({
+    kind: 'number', eyebrow: 'Why it matters', big: 'Earned, not placed.',
+    line: `Every seat was won answer by answer, and nobody paid for one. Today it is ${Math.round(c.sure * 100)}% sure of all ${n(V.seats || 1000)}, and they help pick what rides on your Original iPod.`,
+  })
+  return out
+}
+
 export function buildStory(y: YearInReview, opts: { now: Date; concerts?: StoryConcert[] }): Slide[] {
   const revealed = isRevealed(y.year, opts.now)
   const T = y.totals
@@ -81,7 +166,7 @@ export function buildStory(y: YearInReview, opts: { now: Date; concerts?: StoryC
   const startedLate = y.coverage.monthsBeforeHistory.length > 0 && y.coverage.firstListen
   slides.push({
     kind: 'cover', eyebrow: 'JakeTunes · Year in Review', year: y.year,
-    line: revealed ? 'Your year in music.' : 'So far.',
+    line: revealed ? 'Your year in music. None of it rented.' : 'So far. None of it rented.',
     stats: [[n(T.plays), 'songs played'], [n(Math.round(T.minutes / 60)), 'hours of music'], [n(T.daysListened), 'days with music']],
     note: startedLate ? `Since ${dayName(localParts(y.coverage.firstListen!).date)}, the day JakeTunes started keeping score.` : undefined,
   })
@@ -134,15 +219,27 @@ export function buildStory(y: YearInReview, opts: { now: Date; concerts?: StoryC
   const album = y.topAlbums[0]
   if (album) {
     slides.push({
-      kind: 'art', eyebrow: 'Record of the year', big: album.name, line: `${album.artist ?? ''} · ${n(album.plays)} plays`,
+      kind: 'art', eyebrow: 'Record of the year', big: album.name, line: `${album.artist ?? ''} · ${n(album.plays)} plays. Yours to keep.`,
       image: { kind: 'album', artist: album.artist ?? '', album: album.name },
       play: { kind: 'album', artist: album.artist ?? '', album: album.name },
     })
   }
 
+  // Where the plays happened: his own machines, one library (Jake 10/29: keep the split, out
+  // of the skips — the skips are gone).
+  const devices = deviceRows(y.coverage.playsByDevice ?? {})
+  if (devices.length >= 2) {
+    const k = devices.length
+    const ipod = devices.find((d) => d.name === DEVICE_NAMES.ipod)
+    slides.push({
+      kind: 'devices', eyebrow: 'Where the plays happened', big: `${WORDS[k] ?? n(k)} devices. One library you own.`, rows: devices,
+      line: `${devices[0].name} played ${devices[0].pct}% of it.${ipod ? ` The iPods logged ${n(ipod.plays)} play${ipod.plays === 1 ? '' : 's'} with no signal and no subscription.` : ''}`,
+    })
+  }
+
   const bd = T.biggestDay
   if (bd.date && bd.firstHour !== null && bd.lastHour !== null) {
-    slides.push({ kind: 'number', eyebrow: 'The day it never stopped', big: dayName(bd.date), line: `${n(bd.plays)} songs, from ${hour12(bd.firstHour)} to ${hour12(bd.lastHour)}.` })
+    slides.push({ kind: 'number', eyebrow: 'The day it never stopped', big: dayName(bd.date), line: `${n(bd.plays)} songs, from ${hour12(bd.firstHour)} to ${hour12(bd.lastHour)}. Zero ad breaks.` })
   }
 
   // Busiest hour and busiest weekday are measured separately, so the card
@@ -154,7 +251,7 @@ export function buildStory(y: YearInReview, opts: { now: Date; concerts?: StoryC
 
   const st = T.longestStreak
   if (st.days >= 2 && st.from && st.to) {
-    slides.push({ kind: 'number', eyebrow: 'Longest streak', big: `${n(st.days)} days`, line: `${dayName(st.from)} to ${dayName(st.to)} without a day off.` })
+    slides.push({ kind: 'number', eyebrow: 'Longest streak', big: `${n(st.days)} days`, line: `${dayName(st.from)} to ${dayName(st.to)} without a day off. Nobody had to send you a reminder.` })
   }
 
   const layers = y.depth?.layers
@@ -165,6 +262,16 @@ export function buildStory(y: YearInReview, opts: { now: Date; concerts?: StoryC
     slides.push({
       kind: 'iceberg', eyebrow: 'How deep you went', big: below >= 40 && below < 50 ? 'Almost half went deep.' : `${below}% went deep.`, layers,
       line: `${below}% of your plays came from genres at "Below" or deeper on your genre iceberg. ${deep}% from deep water and the abyss.`,
+    })
+  }
+
+  // Range (Jake 10/29: "how do we show more variety?"): what the year covered, and its widest day.
+  const R = y.range
+  if (R && R.artists > 0 && R.genres > 0) {
+    const wd = R.widestDay
+    slides.push({
+      kind: 'number', eyebrow: 'Range', big: `${n(R.artists)} artists. ${n(R.genres)} genres.`,
+      line: wd ? `Your widest day was ${dayName(wd.date)}: ${n(wd.artists)} artists across ${n(wd.genres)} genres. No label paid to be on it.` : 'No label paid to be on any of it.',
     })
   }
 
@@ -182,19 +289,18 @@ export function buildStory(y: YearInReview, opts: { now: Date; concerts?: StoryC
   if (disc.newArtists.length > 0) {
     slides.push({
       kind: 'lanes', eyebrow: 'Artists you found this year', big: `${n(disc.newArtistCount)} new artist${disc.newArtistCount === 1 ? '' : 's'}.`,
-      line: disc.newArtists.length >= 3 ? 'Your three most played of them.' : 'Your most played of them.',
+      line: `${disc.newArtists.length >= 3 ? 'Your three most played of them.' : 'Your most played of them.'} Found by you, not fed to you.`,
       rows: disc.newArtists.slice(0, 3).map((a) => ({ name: a.name, sub: `${n(a.plays)} plays`, plays: a.plays, image: { kind: 'artist', name: a.name } })),
     })
   }
   if (y.starredClass.count > 0) {
-    slides.push({ kind: 'number', eyebrow: 'The keepers', big: n(y.starredClass.count), line: `new find${y.starredClass.count === 1 ? '' : 's'} got your star.` })
-  }
-  if (y.honesty.realSkipRate !== null) {
-    slides.push({ kind: 'number', eyebrow: 'Honest numbers', big: `${n(y.honesty.skips)} real skips`, line: `${(y.honesty.realSkipRate * 100).toFixed(1)}% of what you started. Glances and button-mashing don't count.` })
+    slides.push({ kind: 'number', eyebrow: 'The keepers', big: n(y.starredClass.count), line: `new find${y.starredClass.count === 1 ? '' : 's'} got your star, and no expiring license can take ${y.starredClass.count === 1 ? 'it' : 'them'} back.` })
   }
 
+  slides.push(...top1000Cards(y))
+
   slides.push(revealed
-    ? { kind: 'end', eyebrow: 'Happy birthday', big: `That was ${y.year}.`, line: 'Every number here is a count of real plays.' }
+    ? { kind: 'end', eyebrow: 'Happy birthday', big: `That was ${y.year}.`, line: 'Every number here is a count of real plays, on music you own.' }
     : { kind: 'end', eyebrow: 'December 17', big: `The rest of ${y.year} is still being written.`, line: 'The final cut drops on your birthday.' })
   return slides
 }

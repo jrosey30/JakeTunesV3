@@ -1101,6 +1101,8 @@ const electronAPI = {
   artistListeners: (): Promise<Record<string, number>> => ipcRenderer.invoke('artist-listeners'),
   // Year in Review: the nightly facts from homemini, mirrored locally (yir-mirror.ts).
   yirGet: (year?: number): Promise<Record<string, unknown> | null> => ipcRenderer.invoke('yir:get', year),
+  // The Review's check on a saved artist photo (common/yir-photo.ts): size, detail, focus.
+  yirPhotoQuality: (slug: string): Promise<{ width: number; height: number; detail: number; focus: number; ok: boolean } | null> => ipcRenderer.invoke('yir:photo-quality', slug),
   // 4.5: Wikipedia summary for artist detail page. 24h disk cache.
   getArtistWiki: (artist: string): Promise<{ ok: boolean; extract: string | null; pageUrl: string | null }> =>
     ipcRenderer.invoke('get-artist-wiki', artist),
