@@ -4,7 +4,7 @@
 //     [--attended <concerts-attended.json>] \
 //     [--taste-ledger <taste-ledger.jsonl>] [--recommendations <recommendations.json>] \
 //     [--reco-attributions <reco-attributions.json>] [--rock-dna <rock-dna.json>] \
-//     [--top1000-answers <top1000-answers.jsonl>] \
+//     [--top1000-answers <top1000-answers.jsonl>] [--known-artists <yir-known-artists.json>] \
 //     [--artist-fans <artist-deezer.json>] [--fame <top1000-fame.json>] [--no-fan-lookup] \
 //     --out <dir> [--year 2026]
 // Writes <out>/year-in-review-<year>.json, plus <out>/artist-fans-cache.json (Deezer
@@ -108,6 +108,22 @@ if (existsSync(t1kPath)) {
     } catch { /* torn line */ }
   }
 }
+// Jake's "I already knew them" list: beats every rule. ~/JakeTunesState/yir-known-artists.json and
+// its NAS mirror, both read (a name in either counts); --known-artists replaces both. Shape:
+// ["The Shins", …] or { "artists": [...] }. The engine's built-in seed applies regardless.
+const alreadyKnew: string[] = []
+const knownPaths = flag('known-artists') ? [flag('known-artists')!] : [
+  join(homedir(), 'JakeTunesState', 'yir-known-artists.json'),
+  join(process.env.JT_NAS_STATE || '/Volumes/JakeShared/JakeTunesState', 'yir-known-artists.json'),
+]
+for (const p of knownPaths) {
+  const raw = readJson<unknown>(p)
+  const list = Array.isArray(raw) ? raw : (raw as { artists?: unknown[] } | undefined)?.artists ?? []
+  for (const e of list) {
+    const name = typeof e === 'string' ? e : (e as { name?: string; artist?: string })?.name ?? (e as { artist?: string })?.artist
+    if (name) alreadyKnew.push(name)
+  }
+}
 // Fame: Deezer fans (the artist-photo cache on the laptop, else this script's own lookups),
 // and the top song's Deezer rank from the Top 1000 fame file as the fallback.
 const fame: Record<string, YirFame> = {}
@@ -175,9 +191,9 @@ if (!args.includes('--no-fan-lookup')) {
   await Promise.all([worker(), worker(), worker(), worker()])
   if (looked) { mkdirSync(out, { recursive: true }); writeFileSync(fansCachePath, JSON.stringify(fansCache)) }
 }
-console.log(`found-artist evidence: ${evidence.length} (${new Set(evidence.map((e) => key(e.artist))).size} artists) · known ${known.length} · fame ${Object.keys(fame).length}`)
+console.log(`found-artist evidence: ${evidence.length} (${new Set(evidence.map((e) => key(e.artist))).size} artists) · known ${known.length} · already knew ${alreadyKnew.length} (+ seed) · fame ${Object.keys(fame).length}`)
 
-const yir = buildYearInReview({ year, listens, library, concerts, mixtapes, attended, discovery: { evidence, known, fame } })
+const yir = buildYearInReview({ year, listens, library, concerts, mixtapes, attended, discovery: { evidence, known, fame, alreadyKnew } })
 mkdirSync(out, { recursive: true })
 writeFileSync(join(out, `year-in-review-${year}.json`), JSON.stringify({ builtAt: new Date().toISOString(), ...yir }, null, 2))
 

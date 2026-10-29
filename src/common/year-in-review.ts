@@ -67,7 +67,36 @@ export interface YirDiscoveryInput {
   /** Times he told JakeTunes he knew an artist (a Rock DNA pick or rating, a
    *  Top 1000 answer): known from `at` on. Any spelling; compared on letters and digits. */
   known?: readonly YirFindEvidence[]
+  /** Jake's own "I already knew them" list (JakeTunesState/yir-known-artists.json).
+   *  Always wins over every other rule; YIR_KNOWN_ARTISTS_SEED applies on top. */
+  alreadyKnew?: readonly string[]
 }
+
+/** The artists Jake has said he already knew (10/29: Future, Paramore, The
+ *  Beatles, RHCP, Drake; then, reviewing the rescues, "the shins, wheatus,
+ *  screaming trees and clipse are not discoveries"). Built in so they hold even
+ *  when the state file is missing; the file adds names without a code change. */
+export const YIR_KNOWN_ARTISTS_SEED: readonly string[] = [
+  'Future', 'Paramore', 'The Beatles', 'Red Hot Chili Peppers', 'Drake',
+  'The Shins', 'Wheatus', 'Screaming Trees', 'Clipse',
+]
+
+/** One spelling for the known list: case, "&" = "and", a leading "The", and
+ *  punctuation never matter ("Shins" = "The Shins", "Simon & Garfunkel" =
+ *  "simon and garfunkel"). */
+export const knownArtistKey = (s: string | undefined): string =>
+  (s || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/&/g, ' and ').trim()
+    .replace(/^the\s+/, '').replace(/[^a-z0-9]/g, '')
+
+/** Discover lanes that reach OUTSIDE his orbit: this year's releases from
+ *  music journalism (brand-new) and the staff picks wall (critic-picks). Not the
+ *  "Neighbors with …" lanes (fresh-albums, fresh-songs), the scene orbits, Time
+ *  Machine or Songs to Try — those are built from artists he already plays —
+ *  and never You're Missing. */
+export const RESCUE_LANES: ReadonlySet<string> = new Set(['brand-new', 'critic-picks'])
+/** A rescue's accept must come at least this long before the download: an
+ *  accept the same day is him grabbing a name he knew when it went by. */
+export const RESCUE_LEAD_MS = 7 * 86_400_000
 
 /** A household name: this many Deezer fans or more. Calibrated on Jake's own
  *  library (10/29) — Paramore 3.1M, Future 4.0M, Red Hot Chili Peppers 7.7M,
@@ -82,8 +111,10 @@ export const HOUSEHOLD_FANS = 25_000
 export const HOUSEHOLD_TRACK_RANK = 750_000
 
 /** Famous, but only just: under 100,000 fans (or no count) and no song past
- *  rank 850,000. Discovery evidence from before the download can rescue these
- *  (The Avalanches 43K, The Zombies 49K); never Future (4.0M) or Paramore (3.1M). */
+ *  rank 850,000. A Discover accept from a discovery lane a week or more before
+ *  the download can rescue these (RESCUE_LANES, RESCUE_LEAD_MS); never Future
+ *  (4.0M) or Paramore (3.1M). Jake 10/29 struck 4 of the first 16 rescues, so
+ *  a plain accept is not enough. */
 export const BORDERLINE_FANS = 100_000
 export const BORDERLINE_TRACK_RANK = 850_000
 export function isBorderlineFame(f: YirFame | undefined): boolean {
@@ -473,12 +504,18 @@ export function buildYearInReview(input: YirInput): YearInReview {
     }
   }
   const disc = input.discovery ?? {}
-  const evidenceAt = new Map<string, number[]>()
+  // Only a Discover accept from a discovery lane can rescue (Listen List and friend
+  // credits stay a plus in the facts, but are not proof he did not know the name).
+  const rescueAt = new Map<string, number[]>()
   for (const e of disc.evidence ?? []) {
     const at = Date.parse(e.at)
-    if (!Number.isFinite(at)) continue
-    for (const k of artistKeys(e.artist)) evidenceAt.set(k, [...(evidenceAt.get(k) ?? []), at])
+    const lane = e.via.startsWith('discover:') ? e.via.slice('discover:'.length) : ''
+    if (!Number.isFinite(at) || !RESCUE_LANES.has(lane)) continue
+    for (const k of artistKeys(e.artist)) rescueAt.set(k, [...(rescueAt.get(k) ?? []), at])
   }
+  const alreadyKnew = new Set([...YIR_KNOWN_ARTISTS_SEED, ...(disc.alreadyKnew ?? [])].map(knownArtistKey).filter(Boolean))
+  const jakeKnew = (a: string, t?: YirTrack): boolean =>
+    alreadyKnew.has(knownArtistKey(a)) || (!!t && alreadyKnew.has(knownArtistKey(t.albumArtist || t.artist)))
   const firstPlay = new Map<string, number>()
   for (const l of input.listens) {
     if (l.kind !== 'play') continue
@@ -503,10 +540,10 @@ export function buildYearInReview(input: YirInput): YearInReview {
     if (!isHouseholdName(f)) return false
     const first = earliest.get(a)?.dateAdded
     const added = first ? Date.parse(first) : NaN
-    return !(isBorderlineFame(f) && Number.isFinite(added) && (evidenceAt.get(a) ?? []).some((at) => at < added))
+    return !(isBorderlineFame(f) && Number.isFinite(added) && (rescueAt.get(a) ?? []).some((at) => at <= added - RESCUE_LEAD_MS))
   }
   const isFoundArtist = (a: string, t: YirTrack): boolean => {
-    if (!isFound(t)) return false
+    if (!isFound(t) || jakeKnew(a, t)) return false
     const added = Date.parse(t.dateAdded!)
     if ((firstPlay.get(a) ?? Infinity) < added - 3_600_000) return false
     if ((firstShow.get(a) ?? Infinity) < added) return false
@@ -522,7 +559,7 @@ export function buildYearInReview(input: YirInput): YearInReview {
   // (StarRating.tsx, 4.5.2): any rating > 0 reads as starred, same as the
   // Starred playlist. Jake 10/12: "you either get a star or you dont".
   // A famous artist's song is not a find either ("Teardrop", "Midnight City"): same fame guard.
-  const starred = input.library.filter((t) => (t.rating ?? 0) > 0 && isFound(t) && !isFamous(norm(t.albumArtist || t.artist)))
+  const starred = input.library.filter((t) => (t.rating ?? 0) > 0 && isFound(t) && !isFamous(norm(t.albumArtist || t.artist)) && !jakeKnew(norm(t.albumArtist || t.artist), t))
   // "The ones you came back to most" is a ranking, so a song under a minute
   // never takes a slot (Jake 10/11: nothing under 1 minute in ANY ranking).
   // It used to sink to the bottom with 0 plays instead; now it is dropped.

@@ -4,7 +4,7 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildYearInReview, localParts, isHouseholdName, isBorderlineFame, HOUSEHOLD_FANS, HOUSEHOLD_TRACK_RANK, type YirDiscoveryInput, type YirTrack, type YirAttendedInput } from '../../common/year-in-review.ts'
+import { buildYearInReview, localParts, isHouseholdName, isBorderlineFame, knownArtistKey, YIR_KNOWN_ARTISTS_SEED, RESCUE_LANES, RESCUE_LEAD_MS, HOUSEHOLD_FANS, HOUSEHOLD_TRACK_RANK, type YirDiscoveryInput, type YirTrack, type YirAttendedInput } from '../../common/year-in-review.ts'
 import type { Listen } from '../../common/listening-history.ts'
 
 const L = (ts: string, artist: string, title: string, kind: Listen['kind'] = 'play', extra: Partial<Listen> = {}): Listen =>
@@ -291,14 +291,56 @@ describe('a found artist is not famous and new to Jake (Jake 10/29)', () => {
     assert.ok(!isBorderlineFame({ fans: 30_000, trackRank: 850_000 }))
   })
 
-  it('evidence rescues a borderline name ONLY when it predates the download', () => {
+  it('a rescue needs a Discover accept from a discovery lane, a week or more before the download', () => {
     const lib = [track(1, 'The Avalanches')]
+    const at = (days: number): string => new Date(Date.parse(ADD) - days * 86_400_000).toISOString()
+    const accept = (lane: string, days: number, artist = 'The Avalanches'): YirDiscoveryInput => ({ fame: FAME, evidence: [{ artist, at: at(days), via: `discover:${lane}` }] })
     assert.deepEqual(found(lib, { fame: FAME }), [])
-    assert.deepEqual(found(lib, { evidence: ev(BEFORE, 'The Avalanches'), fame: FAME }), ['The Avalanches'])
-    assert.deepEqual(found(lib, { evidence: ev(AFTER, 'The Avalanches'), fame: FAME }), [])
-    assert.deepEqual(found(lib, { evidence: [{ artist: 'The Avalanches', at: BEFORE, via: 'listen-list' }], fame: FAME }), ['The Avalanches'])
-    assert.deepEqual(found(lib, { evidence: [{ artist: 'The Avalanches', at: BEFORE, via: 'friend:Lorin Bloom' }], fame: FAME }), ['The Avalanches'])
-    assert.deepEqual(found(lib, { evidence: ev(BEFORE, 'The Avalanches feat. Someone'), fame: FAME }), ['The Avalanches'], '"feat." counts for the lead artist')
+    assert.deepEqual(found(lib, accept('brand-new', 8)), ['The Avalanches'])
+    assert.deepEqual(found(lib, accept('critic-picks', 7)), ['The Avalanches'], 'exactly a week counts')
+    assert.deepEqual(found(lib, accept('brand-new', 6)), [], 'under a week is grabbing a name he knew')
+    assert.deepEqual(found(lib, accept('brand-new', -30)), [], 'after the download')
+    for (const lane of ['fresh-songs', 'fresh-albums', 'scene', 'time-machine', 'songs', 'missing']) {
+      assert.deepEqual(found(lib, accept(lane, 30)), [], `${lane} is built from artists he already plays`)
+    }
+    for (const via of ['listen-list', 'friend:Lorin Bloom']) {
+      assert.deepEqual(found(lib, { fame: FAME, evidence: [{ artist: 'The Avalanches', at: at(30), via }] }), [], via)
+    }
+    assert.deepEqual(found(lib, accept('brand-new', 8, 'The Avalanches feat. Someone')), ['The Avalanches'], '"feat." counts for the lead artist')
+    assert.equal(RESCUE_LEAD_MS, 7 * 86_400_000)
+    assert.deepEqual([...RESCUE_LANES].sort(), ['brand-new', 'critic-picks'])
+  })
+
+  // Jake 10/29, on the first 16 rescues: "the shins, wheatus, screaming trees and clipse are not discoveries".
+  const STRUCK = ['The Shins', 'Wheatus', 'Screaming Trees', 'Clipse']
+  for (const name of [...STRUCK, ...MUST_NOT]) {
+    it(`${name} is on Jake's "already knew them" list, which beats every rule`, () => {
+      assert.ok(YIR_KNOWN_ARTISTS_SEED.includes(name))
+      // Small, new, no plays, and a staff pick a month before the download: still not a find.
+      const best: YirDiscoveryInput = { fame: { [name.toLowerCase()]: { fans: 900 } }, evidence: [{ artist: name, at: '2026-06-15T00:00:00Z', via: 'discover:critic-picks' }] }
+      assert.deepEqual(found([track(1, name)], best), [])
+    })
+  }
+
+  it('the state file adds names without a code change', () => {
+    assert.deepEqual(found([track(1, 'Dogpark')], { fame: FAME }), ['Dogpark'])
+    assert.deepEqual(found([track(1, 'Dogpark')], { fame: FAME, alreadyKnew: ['Dogpark'] }), [])
+  })
+
+  it('the known list matches any spelling: case, "&"/"and", a leading "The"', () => {
+    assert.equal(knownArtistKey('The Shins'), knownArtistKey('shins'))
+    assert.equal(knownArtistKey('THE SHINS'), knownArtistKey('The Shins'))
+    assert.equal(knownArtistKey('Simon & Garfunkel'), knownArtistKey('Simon and Garfunkel'))
+    assert.equal(knownArtistKey('Red Hot Chili Peppers'), knownArtistKey('red hot chili peppers'))
+    assert.notEqual(knownArtistKey('Theo Parrish'), knownArtistKey('o Parrish'), '"The" only as its own word')
+    assert.deepEqual(found([track(1, 'Shins')], { fame: FAME }), [])
+    assert.deepEqual(found([track(1, 'Peaches & Herb')], { fame: FAME, alreadyKnew: ['Peaches and Herb'] }), [])
+  })
+
+  it('a song by an artist he already knew is not a starred find', () => {
+    const lib = [{ ...track(1, 'The Shins', ADD, 5), title: 'New Slang' }, { ...track(2, 'Geese', ADD, 5), title: 'Taxes' }]
+    const y = buildYearInReview({ year: 2026, listens: [], library: lib, discovery: { fame: FAME } })
+    assert.deepEqual(y.starredClass.top.map((t) => t.name), ['Taxes'])
   })
 
   it('plays before the first download mean he already knew them', () => {
