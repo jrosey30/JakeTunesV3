@@ -37,19 +37,24 @@ export interface GenreRuling {
   why: string
 }
 
-export const RULINGS_ID = 'genre-rulings-2026-10-29'
+// 'b' (10/29, later the same day): his first ruling (Mashup) was overruled
+// before it ever ran on any Mac. A new id, so a Mac that somehow applied the
+// Mashup table still runs this one (its marker holds the old id) and the songs
+// wearing Mashup are written to Plunderphonics.
+export const RULINGS_ID = 'genre-rulings-2026-10-29b-plunderphonics'
 
 export const RULINGS: GenreRuling[] = [
   {
-    // Jake 10/29: neither "Electronic" nor "Nu Disco" — "on you to find out".
-    // RYM: Sound Collage first (then Nu-Disco, Plunderphonics); Wikipedia: the
-    // band is plunderphonics' exponent; Far Out: "sampledelia" built from old
-    // ads. The list's shelf for records built from other records is Mashup.
-    // Supersedes the corrections pass's restore of his 10/20 "Electronic".
+    // Jake 10/29: neither "Electronic" nor "Nu Disco" — and not Mashup either
+    // (Mashup is Girl Talk stacking whole songs). He added a shelf for it:
+    // Plunderphonics. RYM: Sound Collage first (then Nu-Disco, Plunderphonics);
+    // Wikipedia: the band is plunderphonics' exponent; Far Out: "sampledelia"
+    // built from old ads. Supersedes the corrections pass's restore of his
+    // 10/20 "Electronic".
     artist: 'The Avalanches', album: 'No Bad Memories',
     ids: [12774, 12775, 12776, ...Array.from({ length: 28 }, (_, i) => 12882 + i)],
-    genre: 'Mashup',
-    why: 'Jake 10/29 ruling: sound collage / plunderphonics (RYM, Wikipedia, Far Out) — built from other records',
+    genre: 'Plunderphonics',
+    why: 'Jake 10/29 ruling: a collage of samples — plunderphonics (RYM, Wikipedia, Far Out); his new shelf',
   },
 ]
 
