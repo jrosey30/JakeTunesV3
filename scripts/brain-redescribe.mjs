@@ -128,7 +128,11 @@ export function staleStaged(next, pv = PROMPT_VERSION) {
  * (tempoEnergy), so a guessed tempo word only adds noise or contradicts it.
  *
  * Fix: no slot list; describe THIS recording (the real arrangement, vocal,
- * dynamics — a ballad stays a ballad whatever the band's usual sound);
+ * dynamics) and, when unsure, stay with what artist/album/genre make likely
+ * — a first draft that said "a quiet ballad by a loud band is a quiet
+ * ballad" made the model INVENT acoustic ballads for fast punk songs
+ * (blink-182, Buzzcocks, Sublime, 10/29 A/B), so the prompt now forbids an
+ * invented contrast instead;
  * ground it in the analyser's facts (BPM, length); lead with the
  * most distinctive sound, not an adjective pair; tempo words only when pace
  * is the defining trait. Then a cheap deterministic post-check: an output
@@ -199,7 +203,7 @@ export function describePrompt(t, retry = null) {
     ...(facts ? [facts] : []),
     '',
     'In ONE line (max 20 words), describe how THIS recording sounds and feels.',
-    '- Describe this specific song, not the artist\'s usual style: if you know it, say what is actually on the record (arrangement, lead instrument, vocal delivery, dynamics). A quiet ballad by a loud band is a quiet ballad.',
+    '- Describe this specific recording: if you know it, say what is actually on the record (arrangement, lead instrument, vocal delivery, dynamics). If you do not know it well, stay with what the artist, album and genre make likely — never invent a contrast with the artist\'s usual sound.',
     '- Start with the most distinctive sound or the feeling of the song — never with a comma-separated pair of adjectives.',
     '- Tempo is stored separately: do not mention tempo or pace unless it is the defining trait of the song.',
     '- Use exact, concrete words; avoid stock filler such as gritty, mid-tempo, driving, shimmering, late-night, high-octane.',
