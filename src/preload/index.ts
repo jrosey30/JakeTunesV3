@@ -1077,6 +1077,12 @@ const electronAPI = {
   // refresh = one GET pair (throttled). See src/common/concerts-feed.ts.
   concertsGet: (): Promise<unknown> => ipcRenderer.invoke('concerts:get'),
   concertsRefresh: (): Promise<unknown> => ipcRenderer.invoke('concerts:refresh'),
+  // 2026-10-29 — Going / I went + "What they've been playing" (setlist.fm),
+  // on homemini (src/common/concerts-going.ts).
+  concertsRsvps: (): Promise<unknown> => ipcRenderer.invoke('concerts:rsvps'),
+  concertsSetGoing: (eventId: string, going: boolean, show?: unknown): Promise<unknown> => ipcRenderer.invoke('concerts:set-going', eventId, going, show),
+  concertsSetAttended: (eventId: string, answer: 'yes' | 'no' | null): Promise<unknown> => ipcRenderer.invoke('concerts:set-attended', eventId, answer),
+  concertsLately: (artist: string): Promise<unknown> => ipcRenderer.invoke('concerts:lately', artist),
   onConcertsUpdated: (callback: (state: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, state: unknown) => callback(state)
     ipcRenderer.on('concerts-updated', handler)

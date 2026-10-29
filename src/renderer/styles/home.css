@@ -1540,3 +1540,286 @@
     animation: none;
   }
 }
+
+/* ── 2026-10-29: Going / I went + "What they've been playing" ────────────
+   (components/HomeShows.tsx; twin of the phone's ConcertGoing.swift). The
+   card is unchanged; the Going pill sits under it, outside the ticket click.
+   Pill 22px tall, 12×12 icon: off = white with a hairline and accent text
+   #C14201, on = solid brand orange #FC5501 with white. */
+.home-concert-wrap {
+  flex: 0 0 272px;
+  width: 272px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.home-concert-wrap .home-concert-card { flex: 1 1 auto; }
+.home-card-row--concert-grid .home-concert-wrap { width: auto; }
+.home-concert-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+.home-concert-going {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 9px 0 7px;
+  border-radius: 11px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  background: var(--white, #fff);
+  color: var(--accent-text, #C14201);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.home-concert-going--on {
+  background: var(--brand-orange, #FC5501);
+  border-color: var(--brand-orange, #FC5501);
+  color: #fff;
+}
+.home-concert-lately-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 18px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text, #C14201);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+.home-concert-lately-link:hover span { text-decoration: underline; }
+
+/* "Were you there?" — a quiet stub-coloured band above Live Near You. */
+.home-concert-ask {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin: 10px var(--home-gutter, 28px) 4px;
+  padding: 12px 14px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 6px;
+  background: linear-gradient(180deg, #fbf8f3 0%, #f3eee5 100%);
+}
+.home-concert-ask-q {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary, #2b2823);
+}
+.home-concert-ask-show { display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; margin-top: 2px; }
+.home-concert-ask-where { font-size: 11px; color: var(--text-secondary, #6a6a6a); }
+.home-concert-ask-buttons { display: flex; gap: 8px; }
+.home-concert-ask-yes,
+.home-concert-ask-no {
+  height: 24px;
+  padding: 0 12px;
+  border-radius: 12px;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.home-concert-ask-yes { border: 1px solid var(--brand-orange, #FC5501); background: var(--brand-orange, #FC5501); color: #fff; }
+.home-concert-ask-no { border: 1px solid rgba(0, 0, 0, 0.14); background: var(--white, #fff); color: var(--text-secondary, #555); }
+
+/* "What they've been playing" — opens under Live Near You. */
+.home-concert-lately {
+  margin: 12px var(--home-gutter, 28px) 4px;
+  padding: 14px 16px 12px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 6px;
+  background: var(--white, #fff);
+}
+.home-concert-lately-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.home-concert-lately-eyebrow { font-size: 9px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent-text, #C14201); }
+.home-concert-lately-artist { font-size: 15px; font-weight: 700; color: var(--text-primary, #1a1a1a); overflow-wrap: anywhere; }
+.home-concert-lately-from { font-size: 11px; color: var(--text-secondary, #6a6a6a); }
+.home-concert-lately-actions { display: flex; align-items: center; gap: 12px; }
+.home-concert-lately-play {
+  height: 26px;
+  padding: 0 14px;
+  border-radius: 13px;
+  border: 0;
+  background: var(--brand-orange, #FC5501);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.home-concert-lately-list { list-style: none; margin: 10px 0 0; padding: 0; columns: 2 260px; column-gap: 24px; }
+.home-concert-lately-list li {
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  column-gap: 6px;
+  padding: 4px 0;
+  break-inside: avoid;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+.home-concert-lately-mark { grid-row: span 2; color: var(--brand-orange, #FC5501); padding-top: 1px; }
+.home-concert-lately-name { font-size: 12.5px; color: var(--text-primary, #1a1a1a); overflow-wrap: anywhere; }
+.home-concert-lately-song--owned .home-concert-lately-name { font-weight: 600; }
+.home-concert-lately-detail { font-size: 10.5px; color: var(--text-secondary, #777); }
+.home-concert-lately-credit { margin-top: 8px; font-size: 10.5px; color: var(--text-secondary, #777); }
+.home-concert-lately-credit a { color: var(--accent-text, #C14201); }
+
+/* ── 2026-10-29: "make the concerts row more fun" (twin: ConcertFun.swift) ──
+   Same card width (272px) and rail; the act's photo is the hero band on top
+   (272×132), the ticket stub of the date stays beside the text. On the photo:
+   a stub-shaped date tag (white with #C14201 type; "TONIGHT" solid #FC5501
+   with a soft breathing glow) that flips down into place; while a snippet
+   plays, a 3-bar equalizer in an orange disc (22×22); a "GOING" rubber stamp
+   (3px #FC5501 border, rotated −11°) slams in when the card is marked. The
+   photo drifts ±14px with the rail's scroll (scroll-driven, no JS). */
+.home-concert-card { flex-wrap: wrap; align-content: flex-start; }
+.home-concert-photo {
+  position: relative;
+  flex: 0 0 100%;
+  height: 132px;
+  overflow: hidden;
+  background: linear-gradient(180deg, #ece6dc 0%, #e2dbcf 100%);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+.home-concert-photo-img {
+  position: absolute;
+  top: 0;
+  left: -14px;
+  width: calc(100% + 28px);
+  height: 100%;
+  object-fit: cover;
+  transition: opacity 200ms ease-out;
+}
+.home-concert-photo-img--checking { opacity: 0; }
+@supports (animation-timeline: view()) {
+  .home-concert-photo-img {
+    animation: home-concert-drift linear both;
+    animation-timeline: view(inline);
+  }
+}
+@keyframes home-concert-drift {
+  from { transform: translateX(14px); }
+  to { transform: translateX(-14px); }
+}
+.home-concert-photo-initials {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 34px;
+  font-weight: 800;
+  color: rgba(58, 46, 16, 0.28);
+}
+.home-concert-stub {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  height: 20px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: var(--accent-text, #C14201);
+  background: #fff;
+  /* the stub's notches: a bite out of each short end */
+  -webkit-mask: radial-gradient(circle 4px at 0 50%, transparent 98%, #000) left / 51% 100% no-repeat,
+                radial-gradient(circle 4px at 100% 50%, transparent 98%, #000) right / 51% 100% no-repeat;
+  border-radius: 3px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  transform-origin: top center;
+  animation: home-concert-stub-in 420ms cubic-bezier(0.3, 1.5, 0.5, 1) 80ms both;
+}
+.home-concert-stub--tonight {
+  color: #fff;
+  background: var(--brand-orange, #FC5501);
+  animation: home-concert-stub-in 420ms cubic-bezier(0.3, 1.5, 0.5, 1) 80ms both,
+             home-concert-glow 1.4s ease-in-out 600ms infinite alternate;
+}
+@keyframes home-concert-stub-in {
+  from { transform: perspective(300px) rotateX(-88deg); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes home-concert-glow {
+  from { box-shadow: 0 0 3px rgba(252, 85, 1, 0.3); }
+  to { box-shadow: 0 0 10px rgba(252, 85, 1, 0.8); }
+}
+.home-concert-eq {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--brand-orange, #FC5501);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
+  padding-bottom: 6px;
+  box-sizing: border-box;
+}
+.home-concert-eq i {
+  width: 3px;
+  height: 10px;
+  border-radius: 1.5px;
+  background: #fff;
+  transform-origin: bottom;
+  animation: home-concert-eq 380ms ease-in-out infinite alternate;
+}
+.home-concert-eq i:nth-child(2) { animation-duration: 310ms; animation-delay: -120ms; }
+.home-concert-eq i:nth-child(3) { animation-duration: 440ms; animation-delay: -220ms; }
+@keyframes home-concert-eq {
+  from { transform: scaleY(0.35); }
+  to { transform: scaleY(1); }
+}
+.home-concert-card--playing { box-shadow: 0 0 0 2px var(--brand-orange, #FC5501); }
+.home-concert-stamp {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  padding: 4px 12px;
+  border: 3px solid var(--brand-orange, #FC5501);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--brand-orange, #FC5501);
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  pointer-events: none;
+  animation: home-concert-stamp 1.3s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+@keyframes home-concert-stamp {
+  0% { transform: translate(-50%, -50%) rotate(-11deg) scale(1.9); opacity: 0; }
+  18% { transform: translate(-50%, -50%) rotate(-11deg) scale(1); opacity: 1; }
+  78% { transform: translate(-50%, -50%) rotate(-11deg) scale(1); opacity: 1; }
+  100% { transform: translate(-50%, -50%) rotate(-11deg) scale(1); opacity: 0; }
+}
+.home-concert-tickets {
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 11px;
+  border: 0;
+  background: var(--brand-orange, #FC5501);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-concert-photo-img { animation: none; left: 0; width: 100%; }
+  .home-concert-stub, .home-concert-stub--tonight { animation: none; }
+  .home-concert-stub--tonight { box-shadow: 0 0 6px rgba(252, 85, 1, 0.55); }
+  .home-concert-eq i { animation: none; }
+  .home-concert-eq i:nth-child(1) { transform: scaleY(0.5); }
+  .home-concert-eq i:nth-child(3) { transform: scaleY(0.7); }
+  .home-concert-stamp { animation: home-concert-stamp-fade 1.3s ease both; transform: translate(-50%, -50%) rotate(-11deg); }
+  @keyframes home-concert-stamp-fade { 0%, 100% { opacity: 0; } 15%, 80% { opacity: 1; } }
+}

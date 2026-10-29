@@ -1095,6 +1095,10 @@ declare global {
       getBrooklynWeather: () => Promise<{ ok: boolean; weather: { tempF: number; condition: string; description: string } | null }>
       // 2026-10-19 — Home › Shows: homemini's ranked concerts feed; see src/common/concerts-feed.ts.
       concertsGet?: () => Promise<{ ok: boolean; state?: import('../common/concerts-feed').ConcertsFeedState }>
+      concertsRsvps?: () => Promise<{ ok: boolean; items: import('../common/concerts-going').RsvpEntry[] }>
+      concertsSetGoing?: (eventId: string, going: boolean, show?: import('../common/concerts-going').RsvpShow) => Promise<{ ok: boolean }>
+      concertsSetAttended?: (eventId: string, answer: 'yes' | 'no' | null) => Promise<{ ok: boolean }>
+      concertsLately?: (artist: string) => Promise<{ ok: boolean; lately: import('../common/concerts-going').Lately | null }>
       concertsRefresh?: () => Promise<{ ok: boolean; state?: import('../common/concerts-feed').ConcertsFeedState }>
       onConcertsUpdated?: (callback: (state: import('../common/concerts-feed').ConcertsFeedState) => void) => () => void
       // 4.4.34 — MusicBrainz upcoming releases (not yet out) for top

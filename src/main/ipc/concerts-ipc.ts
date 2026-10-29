@@ -11,6 +11,13 @@
  * with library artists marked — is now the offline fallback, reshaped into
  * feed items by legacyConcertItems(), so the section never goes empty.
  *
+ * Going / I went (2026-10-29) — ../concerts-going-client.ts, rules in
+ * ../../common/concerts-going.ts; answers live on homemini only:
+ *   'concerts:rsvps'          → { ok, items }   every RSVP (the "Were you there?" ask included)
+ *   'concerts:set-going'      (eventId, going: boolean, show?) → { ok }
+ *   'concerts:set-attended'   (eventId, 'yes' | 'no' | null)   → { ok }
+ *   'concerts:lately'         (artist) → { ok, lately }  "What they've been playing"; null = draw nothing
+ *
  * Refresh cadence: shortly after boot, every 30 minutes (the collector runs a
  * few times a day; most polls are a 304), and when a JakeTunes window gains
  * focus (at most every 5 minutes). Read-only toward homemini.
@@ -21,6 +28,8 @@ import { REFUSED_SENDER } from '../ipc-register.ts'
 import { quietWarn } from '../flight-recorder'
 import { MOBILE_BACKEND_URL } from './recommendations-ipc.ts'
 import { createConcertsClient } from '../concerts-client.ts'
+import { createConcertsGoingClient } from '../concerts-going-client.ts'
+import type { AttendedAnswer, RsvpShow } from '../../common/concerts-going.ts'
 import { getTourDatesForArtists } from '../external'
 import { getVenueShows, markKnownShows } from '../venues'
 import { librarySpellings } from '../artist-spellings-store.ts'
@@ -97,6 +106,33 @@ export function registerConcertsIpc(ipc: IpcRegistrar, host: ConcertsIpcHost): C
   }
 
   ipc.handle('concerts:get', async () => ({ ok: true, state: await client.read() }), { refuse: REFUSED_SENDER })
+
+  const going = createConcertsGoingClient({ baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, '') })
+  const text = (v: unknown, max = 300): string | null => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null)
+  ipc.handle('concerts:rsvps', async () => {
+    const items = await going.rsvps()
+    return items ? { ok: true, items } : { ok: false, items: [] }
+  }, { refuse: REFUSED_SENDER })
+  ipc.handle('concerts:set-going', async (_e, eventId: unknown, on: unknown, show: unknown) => {
+    const id = text(eventId)
+    if (!id) return { ok: false }
+    const snap = show && typeof show === 'object' && text((show as RsvpShow).artist) && text((show as RsvpShow).venue) && text((show as RsvpShow).date, 10)
+      ? (show as RsvpShow) : null
+    const ok = await going.setGoing(id, on === true ? 'going' : null, snap)
+    // The feed carries `rsvp` per item: re-read it so the cards agree.
+    if (ok) tick(true)
+    return { ok }
+  }, { refuse: REFUSED_SENDER })
+  ipc.handle('concerts:set-attended', async (_e, eventId: unknown, answer: unknown) => {
+    const id = text(eventId)
+    if (!id) return { ok: false }
+    const a: AttendedAnswer | null = answer === 'yes' || answer === 'no' ? answer : null
+    return { ok: await going.setAttended(id, a) }
+  }, { refuse: REFUSED_SENDER })
+  ipc.handle('concerts:lately', async (_e, artist: unknown) => {
+    const a = text(artist, 200)
+    return { ok: true, lately: a ? await going.lately(a) : null }
+  }, { refuse: REFUSED_SENDER })
   ipc.handle('concerts:refresh', async () => ({ ok: true, state: await refresh(false) }), { refuse: REFUSED_SENDER })
 
   const tick = (force: boolean): void => {
