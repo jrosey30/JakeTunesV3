@@ -429,8 +429,10 @@ span.yir-tile { cursor: default; }
    Nothing but the background in IG's covered bands (top 125 / bottom 170 CSS px). */
 .yir-export-stage { width: 540px; height: 960px; overflow: hidden; background: #000; }
 .yir-card.yir-export { width: 540px; height: 960px; aspect-ratio: auto; border-radius: 0; box-shadow: none; }
-.yir-export .yir-body { padding: 143px 36px 210px; -webkit-mask-image: linear-gradient(to bottom, transparent 0, transparent 125px, #000 125px, #000 790px, transparent 790px); mask-image: linear-gradient(to bottom, transparent 0, transparent 125px, #000 125px, #000 790px, transparent 790px); }
+.yir-export .yir-body { padding: 143px 36px 224px; -webkit-mask-image: linear-gradient(to bottom, transparent 0, transparent 125px, #000 125px, #000 790px, transparent 790px); mask-image: linear-gradient(to bottom, transparent 0, transparent 125px, #000 125px, #000 790px, transparent 790px); }
 .yir-export-mark { position: absolute; right: 30px; bottom: 182px; z-index: 5; display: flex; align-items: center; gap: 7px; color: rgba(255, 255, 255, 0.85); font: 800 15px -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: 2.5px; white-space: nowrap; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.35); }
+.yir-export-mark--dark { color: rgba(20, 18, 16, 0.85); text-shadow: none; }
+.yir-export-mark--dark i { background: radial-gradient(circle, rgba(102, 102, 102, 0.95) 0 32%, rgba(158, 158, 158, 0.95) 33%) !important; }
 .yir-export-mark i { width: 17px; height: 17px; border-radius: 50%; background: radial-gradient(circle, rgba(199, 199, 199, 0.9) 0 32%, rgba(237, 237, 237, 0.9) 33%); }
 .yir-last-actions { display: flex; gap: 8px; flex-wrap: wrap; pointer-events: auto; }
 .yir-seeall--quiet { background: rgba(246, 241, 234, 0.14); }

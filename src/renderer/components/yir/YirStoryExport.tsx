@@ -9,7 +9,7 @@
  *
  * ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/YirStoryExport.swift (same frame, same bands).
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { buildStory, type Slide } from '../../../common/yir-story'
 import { STORY_SAFE } from '../../../common/friend-share-card'
 import { buildNormalizedArtworkIndex } from '../../utils/artworkLookup'
@@ -33,17 +33,33 @@ declare global {
 /** Instagram's covered bands (friend-share's STORY_SAFE), in the frame's CSS pixels (540×960 at 2×). */
 export const YIR_STORY_BANDS = { top: STORY_SAFE.top / 2, bottom: STORY_SAFE.bottom / 2 }
 
+/** Relative luminance (0–1) of a CSS rgb()/rgba() color; null when it isn't one. */
+export function cssLuminance(color: string): number | null {
+  const m = /rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)/.exec(color)
+  if (!m || (m[4] !== undefined && Number(m[4]) === 0)) return null
+  const lin = (v: number): number => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4 }
+  return 0.2126 * lin(+m[1]) + 0.7152 * lin(+m[2]) + 0.0722 * lin(+m[3])
+}
+
 export function YirStoryFrame({ slide, ctx, ms, card }: { slide: Slide; ctx: YirCtx; ms: number; card: number }): JSX.Element {
+  // The mark takes the ink that reads on the card's ground: dark on light cards (the cream cover
+  // hid a white mark — 2026-10-29), light everywhere else.
+  const ref = useRef<HTMLDivElement>(null)
+  const [darkMark, setDarkMark] = useState(false)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (el) setDarkMark((cssLuminance(getComputedStyle(el).backgroundColor) ?? 0) > 0.5)
+  }, [slide])
   return (
     <YirClock.Provider value={ms}>
-      <div data-card={card} className={`yir-card yir-export yir-k-${slide.kind}${slide.kind === 'number' && slide.viz ? ` yir-v-${slide.viz.kind}` : ''}`}>
+      <div ref={ref} data-card={card} className={`yir-card yir-export yir-k-${slide.kind}${slide.kind === 'number' && slide.viz ? ` yir-v-${slide.viz.kind}` : ''}`}>
         <Backdrop slide={slide} ctx={ctx} />
         <div className="yir-body">
           <SlideBody slide={slide} ctx={ctx} playing={null} beat={null} onPlayRow={() => {}} />
         </div>
         {/* The one JakeTunes Story mark (JakeTunesMobile StoryShare.signed): the click-wheel dot and
             the JAKETUNES wordmark, bottom right, just inside Instagram's safe zone. */}
-        <div className="yir-export-mark" aria-hidden="true"><i />JAKETUNES</div>
+        <div className={`yir-export-mark${darkMark ? ' yir-export-mark--dark' : ''}`} aria-hidden="true"><i />JAKETUNES</div>
       </div>
     </YirClock.Provider>
   )
