@@ -36,14 +36,42 @@ export function px(v: number, screenWidth: number): number {
   return Math.round(v * (screenWidth / 640))
 }
 
+/** A longer name steps down once more before it wraps; it never truncates
+ *  (Jake's rule: names never clip). */
 export function titleSize(title: string, screenWidth: number): number {
-  return px(title.length <= 12 ? 31 : title.length <= 22 ? 26 : 23, screenWidth)
+  const n = title.length
+  return px(n <= 12 ? 31 : n <= 22 ? 26 : n <= 40 ? 23 : 20, screenWidth)
 }
 export function artistSize(artist: string, screenWidth: number): number {
-  return px(artist.length <= 14 ? 27 : 23, screenWidth)
+  const n = artist.length
+  return px(n <= 14 ? 27 : n <= 30 ? 23 : 20, screenWidth)
 }
 export function detailSize(detail: string, screenWidth: number): number {
-  return px(detail.length <= 14 ? 26 : 22, screenWidth)
+  const n = detail.length
+  return px(n <= 14 ? 26 : n <= 30 ? 22 : 19, screenWidth)
+}
+
+/** The square can't grow, so it steps down until the screen fits: the
+ *  eyebrow goes, the cover shrinks (a wider text column needs fewer lines),
+ *  the QR gets smaller, and last the scrubber goes. Names never truncate.
+ *  ⚠️ TWIN: the phone's SquareShareCard.steps. */
+export interface SquareStep { eyebrow: boolean; screen: number; art: number; qr: number; top: number; pad: number; progress: boolean }
+export const SQUARE_STEPS: SquareStep[] = [
+  { eyebrow: true, screen: 700, art: 1, qr: 130, top: 36, pad: 30, progress: true },
+  { eyebrow: false, screen: 740, art: 0.75, qr: 120, top: 40, pad: 30, progress: true },
+  { eyebrow: false, screen: 800, art: 0.55, qr: 100, top: 32, pad: 24, progress: true },
+  { eyebrow: false, screen: 820, art: 0.42, qr: 96, top: 28, pad: 20, progress: true },
+  { eyebrow: false, screen: 840, art: 0.34, qr: 84, top: 18, pad: 16, progress: true },
+  { eyebrow: false, screen: 840, art: 0.34, qr: 84, top: 18, pad: 16, progress: false },
+]
+/** Everything on the square but the screen. */
+export function squareChrome(s: SquareStep): number {
+  return (s.eyebrow ? 52 + 44 : 0) + s.top + 2 * s.pad + 24 + (s.qr + 24 + 10 + 26) + 48 + 24
+}
+/** The first step whose screen (measured by drawing it) fits the square. */
+export function pickSquareStep(screenHeight: (s: SquareStep) => number): number {
+  for (let i = 0; i < SQUARE_STEPS.length; i++) if (screenHeight(SQUARE_STEPS[i]) + squareChrome(SQUARE_STEPS[i]) <= 1080) return i
+  return SQUARE_STEPS.length - 1
 }
 
 export function counterText(counter: { index: number; total: number } | null | undefined): string | null {

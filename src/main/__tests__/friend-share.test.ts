@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseShareInfo, offlineShareText } from '../../common/friend-share-doc.ts'
 import { createFriendShareClient } from '../friend-share-client.ts'
-import { counterText, scrubTimes, wrapText, titleSize, px, cardFileName, cardName, CARD_SIZE, STORY_SAFE, SCREEN_WIDTH } from '../../common/friend-share-card.ts'
+import { counterText, scrubTimes, wrapText, titleSize, artistSize, detailSize, px, cardFileName, cardName, CARD_SIZE, STORY_SAFE, SCREEN_WIDTH, SQUARE_STEPS, squareChrome, pickSquareStep } from '../../common/friend-share-card.ts'
 
 const answer = {
   v: 1, kind: 'song', title: 'I Can See For Miles', artist: 'The Who', album: 'Best Of The Who',
@@ -77,4 +77,31 @@ test('card file names are safe', () => {
   assert.equal(cardFileName(cardName('I Can See For Miles', 'The Who', 'story')), 'The Who - I Can See For Miles (Story).png')
   assert.equal(cardFileName('../../etc/passwd'), 'etc passwd.png')
   assert.equal(cardFileName(''), 'JakeTunes.png')
+})
+
+// The longest real names in Jake's library (2026-10-29): album 132 chars,
+// title 103, artist 91. Names never clip: they step down a size, then wrap
+// as far as they need — never an ellipsis.
+const LONGEST_ALBUM = 'Dancefloor Fever 2016 (The Best of Clubbing Music: Electro, Techno, Deep-House. Including a Special House Mix By Yellow Productions)'
+const LONGEST_TITLE = '2122 & Now I Wanna Sniff Some Glue by The Ramones (Live from Forest Hills, New York, October 3rd, 2026)'
+const LONGEST_ARTIST = 'Spiller, Sophie Ellis-Bextor, William Kiss, Jordan Brando, Luke Alessi, not without friends'
+
+test('names never clip: a long name steps down, then wraps in full', () => {
+  const m = (s: string) => s.length * 11
+  for (const name of [LONGEST_ALBUM, LONGEST_TITLE, LONGEST_ARTIST, '20th Century Masters: The Millennium Collection: Best Of The Who']) {
+    const lines = wrapText(name, 290, 99, m)
+    assert.equal(lines.join(' '), name.split(/\s+/).join(' '), 'every word survives, in order')
+    assert.ok(!lines.some((l) => l.endsWith('…')), 'no ellipsis')
+  }
+  assert.equal(titleSize(LONGEST_TITLE, 640), 20)
+  assert.equal(artistSize(LONGEST_ARTIST, 640), 20)
+  assert.equal(detailSize(LONGEST_ALBUM, 640), 19)
+})
+
+test('square steps down until the screen fits, eyebrow first', () => {
+  assert.equal(SQUARE_STEPS[0].eyebrow, true)
+  assert.equal(pickSquareStep(() => 400), 0)
+  const big = (s: typeof SQUARE_STEPS[number]) => 1080 - squareChrome(s) + (s.art > 0.5 ? 1 : 0)
+  assert.equal(SQUARE_STEPS[pickSquareStep(big)].art <= 0.5, true)
+  assert.equal(pickSquareStep(() => 5000), SQUARE_STEPS.length - 1)
 })

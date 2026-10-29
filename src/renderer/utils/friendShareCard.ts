@@ -8,7 +8,7 @@
 import qrcode from 'qrcode-generator'
 import chicagoUrl from '../assets/fonts/pixChicago.ttf?url'
 import {
-  CARD_SIZE, SCREEN_WIDTH, STORY_SAFE, px, titleSize, artistSize, detailSize, counterText, scrubTimes, wrapText,
+  CARD_SIZE, SCREEN_WIDTH, STORY_SAFE, SQUARE_STEPS, pickSquareStep, px, titleSize, artistSize, detailSize, counterText, scrubTimes, wrapText,
   type CardFormat,
 } from '../../common/friend-share-card'
 
@@ -79,22 +79,22 @@ function drawQR(ctx: CanvasRenderingContext2D, link: string, x: number, y: numbe
 }
 
 /** Returns the bottom y of the screen. */
-function drawScreen(ctx: CanvasRenderingContext2D, c: CardContent, art: HTMLImageElement | null, x: number, y: number, w: number): number {
+function drawScreen(ctx: CanvasRenderingContext2D, c: CardContent, art: HTMLImageElement | null, x: number, y: number, w: number, opts: { artScale?: number; progress?: boolean } = {}): number {
   const k = (v: number) => px(v, w)
   const barH = k(62)
   const pad = k(30)
-  const artS = k(252)
+  const artS = Math.round(252 * (w / 640) * (opts.artScale ?? 1))
   const counter = counterText(c.counter)
-  const times = scrubTimes(c.durationMs)
+  const times = opts.progress === false ? null : scrubTimes(c.durationMs)
   const counterH = counter ? k(20) + k(22) : 0
   const bodyTop = y + barH + counterH + (counter ? k(18) : k(34))
   // Lay the text out first: a long name can make the text taller than the art.
   const tw = w - pad - (pad + artS + k(30))
   const ts = titleSize(c.title, w), as = artistSize(c.artist, w), ds = c.detail ? detailSize(c.detail, w) : 0
   const measureAt = (f: string) => (t: string) => { ctx.font = f; return ctx.measureText(t).width }
-  const titleLines = wrapText(c.title, tw, 3, measureAt(font(ts, 'bold')))
-  const artistLines = wrapText(c.artist, tw, 2, measureAt(font(as)))
-  const detailLines = c.detail ? wrapText(c.detail, tw, 2, measureAt(font(ds))) : []
+  const titleLines = wrapText(c.title, tw, 99, measureAt(font(ts, 'bold')))
+  const artistLines = wrapText(c.artist, tw, 99, measureAt(font(as)))
+  const detailLines = c.detail ? wrapText(c.detail, tw, 99, measureAt(font(ds))) : []
   const textH = k(10) + titleLines.length * Math.round(ts * LINE) + k(16) - Math.round(ts * 0.25)
     + artistLines.length * Math.round(as * LINE) + (detailLines.length ? k(16) - Math.round(as * 0.25) + detailLines.length * Math.round(ds * LINE) : 0)
   const bodyH = Math.max(artS, textH) + k(34)
@@ -149,7 +149,7 @@ function drawScreen(ctx: CanvasRenderingContext2D, c: CardContent, art: HTMLImag
     ctx.fillStyle = ORANGE; ctx.beginPath(); ctx.arc(ax + artS / 2, bodyTop + artS / 2, artS * 0.14, 0, Math.PI * 2); ctx.fill()
   }
 
-  // Text, top-aligned beside the art (names never clip: 3 / 2 / 2 lines)
+  // Text, top-aligned beside the art (names never clip: as many lines as they need)
   const tx = ax + artS + k(30)
   let ty = bodyTop + k(10)
   ctx.font = font(ts, 'bold'); ctx.fillStyle = '#141414'
@@ -235,15 +235,17 @@ export async function renderShareCard(c: CardContent, format: CardFormat): Promi
   const glow = ctx.createRadialGradient(W / 2, H * 0.4, 60, W / 2, H * 0.4, 800)
   glow.addColorStop(0, 'rgba(253,86,1,0.28)'); glow.addColorStop(1, 'rgba(253,86,1,0)')
   ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H)
-  // Eyebrow
-  ctx.fillStyle = ORANGE; ctx.textAlign = 'center'; ctx.textBaseline = 'top'
-  ctx.font = font(format === 'story' ? 34 : 30, 'bold')
-  ctx.letterSpacing = format === 'story' ? '10px' : '9px'
-  ctx.fillText('NOW SPINNING', W / 2, format === 'story' ? STORY_SAFE.top + 12 : 52)
-  ctx.letterSpacing = '0px'
+  const eyebrow = () => {
+    ctx.fillStyle = ORANGE; ctx.textAlign = 'center'; ctx.textBaseline = 'top'
+    ctx.font = font(format === 'story' ? 34 : 30, 'bold')
+    ctx.letterSpacing = format === 'story' ? '10px' : '9px'
+    ctx.fillText('NOW SPINNING', W / 2, format === 'story' ? STORY_SAFE.top + 12 : 52)
+    ctx.letterSpacing = '0px'
+  }
 
   const sw = SCREEN_WIDTH[format]
   if (format === 'story') {
+    eyebrow()
     // Inside Instagram's safe zone (STORY_SAFE), like the phone's card.
     const bodyW = sw + 120
     const bodyX = (W - bodyW) / 2
@@ -253,9 +255,12 @@ export async function renderShareCard(c: CardContent, format: CardFormat): Promi
     // canvas, paint the body under it, then lay the screen on top.
     const scratch = document.createElement('canvas'); scratch.width = W; scratch.height = H
     const screenBottom = drawScreen(scratch.getContext('2d')!, c, art, bodyX + 60, screenY, sw)
-    const R = 200
+    // The wheel gives up height when long names make the screen tall, so the
+    // story never spills under Instagram's bars (the phone's FlexibleClickWheel).
+    const footerTop = H - STORY_SAFE.bottom - 16 - 130 - 48 - 20
+    const R = Math.round(Math.min(200, Math.max(80, (footerTop - (screenBottom + 48) - 44) / 2)))
     const wheelCY = screenBottom + 48 + R
-    const bodyH = wheelCY + R + 56 - bodyY
+    const bodyH = wheelCY + R + 44 - bodyY
     ctx.save()
     ctx.shadowColor = 'rgba(0,0,0,0.55)'; ctx.shadowBlur = 120; ctx.shadowOffsetY = 30
     const bg2 = ctx.createLinearGradient(bodyX, bodyY, bodyX + bodyW, bodyY + bodyH)
@@ -266,21 +271,26 @@ export async function renderShareCard(c: CardContent, format: CardFormat): Promi
     drawWheel(ctx, W / 2, wheelCY, R)
     drawFooter(ctx, c, W, H - STORY_SAFE.bottom - 16, 110, 130)
   } else {
-    const plate = 30
-    const sx = (W - sw) / 2
-    const sy = 52 + 40 + 36 + plate
-    // plate first (screen height is known only after drawing, so draw to a scratch pass)
+    // Measure each step's screen on a scratch canvas; take the first that fits.
+    const measure = (st: typeof SQUARE_STEPS[number]) => {
+      const m = document.createElement('canvas'); m.width = W; m.height = H * 2
+      return drawScreen(m.getContext('2d')!, c, art, 0, 0, st.screen, { artScale: st.art, progress: st.progress })
+    }
+    const st = SQUARE_STEPS[pickSquareStep(measure)]
+    const plate = st.pad
+    const sx = (W - st.screen) / 2
+    const sy = (st.eyebrow ? 52 + 44 : 0) + st.top + plate
     const scratch = document.createElement('canvas'); scratch.width = W; scratch.height = H
-    const sctx = scratch.getContext('2d')!
-    const screenBottom = drawScreen(sctx, c, art, sx, sy, sw)
+    const screenBottom = drawScreen(scratch.getContext('2d')!, c, art, sx, sy, st.screen, { artScale: st.art, progress: st.progress })
     ctx.save()
     ctx.shadowColor = 'rgba(0,0,0,0.55)'; ctx.shadowBlur = 100; ctx.shadowOffsetY = 28
-    const pg = ctx.createLinearGradient(sx - plate, sy - plate, sx + sw + plate, screenBottom + plate)
+    const pg = ctx.createLinearGradient(sx - plate, sy - plate, sx + st.screen + plate, screenBottom + plate)
     pg.addColorStop(0, '#dbdbdb'); pg.addColorStop(1, '#b3b3b3')
-    ctx.fillStyle = pg; roundRect(ctx, sx - plate, sy - plate, sw + plate * 2, screenBottom - sy + plate * 2, 44); ctx.fill()
+    ctx.fillStyle = pg; roundRect(ctx, sx - plate, sy - plate, st.screen + plate * 2, screenBottom - sy + plate * 2, 44); ctx.fill()
     ctx.restore()
     ctx.drawImage(scratch, 0, 0)
-    drawFooter(ctx, c, W, H - 30, 84, 130)
+    if (st.eyebrow) eyebrow()
+    drawFooter(ctx, c, W, H - 30, 84, st.qr)
   }
   return canvas.toDataURL('image/png')
 }
