@@ -1668,3 +1668,158 @@
 .home-concert-lately-detail { font-size: 10.5px; color: var(--text-secondary, #777); }
 .home-concert-lately-credit { margin-top: 8px; font-size: 10.5px; color: var(--text-secondary, #777); }
 .home-concert-lately-credit a { color: var(--accent-text, #C14201); }
+
+/* ── 2026-10-29: "make the concerts row more fun" (twin: ConcertFun.swift) ──
+   Same card width (272px) and rail; the act's photo is the hero band on top
+   (272×132), the ticket stub of the date stays beside the text. On the photo:
+   a stub-shaped date tag (white with #C14201 type; "TONIGHT" solid #FC5501
+   with a soft breathing glow) that flips down into place; while a snippet
+   plays, a 3-bar equalizer in an orange disc (22×22); a "GOING" rubber stamp
+   (3px #FC5501 border, rotated −11°) slams in when the card is marked. The
+   photo drifts ±14px with the rail's scroll (scroll-driven, no JS). */
+.home-concert-card { flex-wrap: wrap; align-content: flex-start; }
+.home-concert-photo {
+  position: relative;
+  flex: 0 0 100%;
+  height: 132px;
+  overflow: hidden;
+  background: linear-gradient(180deg, #ece6dc 0%, #e2dbcf 100%);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+.home-concert-photo-img {
+  position: absolute;
+  top: 0;
+  left: -14px;
+  width: calc(100% + 28px);
+  height: 100%;
+  object-fit: cover;
+  transition: opacity 200ms ease-out;
+}
+.home-concert-photo-img--checking { opacity: 0; }
+@supports (animation-timeline: view()) {
+  .home-concert-photo-img {
+    animation: home-concert-drift linear both;
+    animation-timeline: view(inline);
+  }
+}
+@keyframes home-concert-drift {
+  from { transform: translateX(14px); }
+  to { transform: translateX(-14px); }
+}
+.home-concert-photo-initials {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 34px;
+  font-weight: 800;
+  color: rgba(58, 46, 16, 0.28);
+}
+.home-concert-stub {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  height: 20px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: var(--accent-text, #C14201);
+  background: #fff;
+  /* the stub's notches: a bite out of each short end */
+  -webkit-mask: radial-gradient(circle 4px at 0 50%, transparent 98%, #000) left / 51% 100% no-repeat,
+                radial-gradient(circle 4px at 100% 50%, transparent 98%, #000) right / 51% 100% no-repeat;
+  border-radius: 3px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  transform-origin: top center;
+  animation: home-concert-stub-in 420ms cubic-bezier(0.3, 1.5, 0.5, 1) 80ms both;
+}
+.home-concert-stub--tonight {
+  color: #fff;
+  background: var(--brand-orange, #FC5501);
+  animation: home-concert-stub-in 420ms cubic-bezier(0.3, 1.5, 0.5, 1) 80ms both,
+             home-concert-glow 1.4s ease-in-out 600ms infinite alternate;
+}
+@keyframes home-concert-stub-in {
+  from { transform: perspective(300px) rotateX(-88deg); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes home-concert-glow {
+  from { box-shadow: 0 0 3px rgba(252, 85, 1, 0.3); }
+  to { box-shadow: 0 0 10px rgba(252, 85, 1, 0.8); }
+}
+.home-concert-eq {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--brand-orange, #FC5501);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
+  padding-bottom: 6px;
+  box-sizing: border-box;
+}
+.home-concert-eq i {
+  width: 3px;
+  height: 10px;
+  border-radius: 1.5px;
+  background: #fff;
+  transform-origin: bottom;
+  animation: home-concert-eq 380ms ease-in-out infinite alternate;
+}
+.home-concert-eq i:nth-child(2) { animation-duration: 310ms; animation-delay: -120ms; }
+.home-concert-eq i:nth-child(3) { animation-duration: 440ms; animation-delay: -220ms; }
+@keyframes home-concert-eq {
+  from { transform: scaleY(0.35); }
+  to { transform: scaleY(1); }
+}
+.home-concert-card--playing { box-shadow: 0 0 0 2px var(--brand-orange, #FC5501); }
+.home-concert-stamp {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  padding: 4px 12px;
+  border: 3px solid var(--brand-orange, #FC5501);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--brand-orange, #FC5501);
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  pointer-events: none;
+  animation: home-concert-stamp 1.3s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+@keyframes home-concert-stamp {
+  0% { transform: translate(-50%, -50%) rotate(-11deg) scale(1.9); opacity: 0; }
+  18% { transform: translate(-50%, -50%) rotate(-11deg) scale(1); opacity: 1; }
+  78% { transform: translate(-50%, -50%) rotate(-11deg) scale(1); opacity: 1; }
+  100% { transform: translate(-50%, -50%) rotate(-11deg) scale(1); opacity: 0; }
+}
+.home-concert-tickets {
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 11px;
+  border: 0;
+  background: var(--brand-orange, #FC5501);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+@media (prefers-reduced-motion: reduce) {
+  .home-concert-photo-img { animation: none; left: 0; width: 100%; }
+  .home-concert-stub, .home-concert-stub--tonight { animation: none; }
+  .home-concert-stub--tonight { box-shadow: 0 0 6px rgba(252, 85, 1, 0.55); }
+  .home-concert-eq i { animation: none; }
+  .home-concert-eq i:nth-child(1) { transform: scaleY(0.5); }
+  .home-concert-eq i:nth-child(3) { transform: scaleY(0.7); }
+  .home-concert-stamp { animation: home-concert-stamp-fade 1.3s ease both; transform: translate(-50%, -50%) rotate(-11deg); }
+  @keyframes home-concert-stamp-fade { 0%, 100% { opacity: 0; } 15%, 80% { opacity: 1; } }
+}

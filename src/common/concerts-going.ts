@@ -133,3 +133,40 @@ export function latelyDetail(s: LatelySong, shows: number): string {
 export function latelyPlayLabel(owned: number): string {
   return owned === 1 ? 'Play the 1 you own' : `Play the ${owned} you own, in set order`
 }
+
+// ── "More fun" (2026-10-29) ─────────────────────────────────────────────
+// ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/ConcertFun.swift
+// (ConcertFormat.stubLabel, ConcertSnippet.song).
+
+const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
+const DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT']
+
+/** The ticket-stub word on a card's photo: "TONIGHT", the weekday inside a
+ *  week ("SAT"), else "NOV 7". Calendar dates (YYYY-MM-DD), no time zone. */
+export function stubLabel(date: string, today: string): string | null {
+  const p = (s: string) => { const [y, m, d] = s.split('-').map(Number); return Number.isFinite(y) && m && d ? Date.UTC(y!, m - 1, d) : NaN }
+  const d = p(date), t = p(today)
+  if (!Number.isFinite(d) || !Number.isFinite(t)) return null
+  const days = Math.round((d - t) / 86_400_000)
+  const when = new Date(d)
+  if (days <= 0) return 'TONIGHT'
+  if (days < 7) return DAYS[when.getUTCDay()]!
+  return `${MONTHS[when.getUTCMonth()]} ${when.getUTCDate()}`
+}
+
+export interface SnippetTrackLike { id: number; artist?: string; albumArtist?: string; playCount?: number; duration?: number }
+
+/** The act's most-played song he owns (a merged live show, 20+ minutes,
+ *  never counts); ties go to the lower id. `fold` is the identity key. */
+export function snippetTrack<T extends SnippetTrackLike>(act: string, tracks: readonly T[], fold: (s: string) => string): T | null {
+  const want = fold(act)
+  if (!want) return null
+  let best: T | null = null
+  for (const t of tracks) {
+    const dur = Number(t.duration) || 0
+    if (dur <= 0 || dur >= 20 * 60_000) continue
+    if (fold(t.albumArtist ?? '') !== want && fold(t.artist ?? '') !== want) continue
+    if (!best || (t.playCount ?? 0) > (best.playCount ?? 0) || ((t.playCount ?? 0) === (best.playCount ?? 0) && t.id < best.id)) best = t
+  }
+  return best
+}

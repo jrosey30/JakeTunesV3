@@ -23,14 +23,19 @@
  * one click plays those in the band's order. Nothing about setlist.fm draws
  * when homemini has no key.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { useLibrary } from '../context/LibraryContext'
 import { useAudio } from '../hooks/useAudio'
 import {
-  goingAfterTap, latelyDetail, latelyPlayLabel, nextAsk,
+  goingAfterTap, latelyDetail, latelyPlayLabel, nextAsk, snippetTrack, stubLabel,
   type Lately, type RsvpEntry, type RsvpShow, type RsvpStatus,
 } from '../../common/concerts-going'
+import { nameKey } from '../../common/fold-text'
+import { useArtistProfile } from '../artistProfile'
+import { initials } from '../utils/artistPortrait'
+import { snippetPlaying, stopSnippet, subscribeSnippet, toggleSnippet } from '../concertSnippet'
+import { usePlayback } from '../context/PlaybackContext'
 import type { Track } from '../types'
 import {
   cardBill, cardReason, concertBadges, formatOnSale, formatShowTime, longDate, nyDate,
@@ -74,6 +79,60 @@ interface CardProps {
   going: Going
 }
 
+// ── "More fun" (2026-10-29; twin of the phone's ConcertFun.swift) ─────────
+// The photo is the hero (the artist page's header photo, else the app's
+// photo when its short side is 500+ px, else initials); a ticket stub on it
+// ("TONIGHT" glows); a click plays 15 s of his most-played song by the act
+// (equalizer; stops when the card leaves the screen); Going lands a "GOING"
+// stamp; the photo drifts with the rail (CSS scroll timeline). Reduce Motion
+// (prefers-reduced-motion) stills all of it (home.css).
+
+const appPhotoSlugs = new Map<string, string | null>()
+const PHOTO_MIN_SIDE = 500
+
+function ConcertPhoto({ name }: { name: string }) {
+  const { state: profile } = useArtistProfile(name)
+  const hero = profile.profile?.hero ? profile.photos[profile.profile.hero.url] ?? null : null
+  const [app, setApp] = useState<string | null>(appPhotoSlugs.get(name) ?? null)
+  const [big, setBig] = useState<boolean | null>(null)
+  useEffect(() => {
+    if (hero || appPhotoSlugs.has(name)) return
+    let live = true
+    window.electronAPI.getArtistImage(name).then((r) => (r.ok ? r.slug : null)).catch(() => null).then((s) => {
+      appPhotoSlugs.set(name, s)
+      if (live) setApp(s)
+    })
+    return () => { live = false }
+  }, [name, hero])
+  const slug = hero ?? app
+  if (slug && (hero || big !== false)) {
+    return (
+      <img
+        className={`home-concert-photo-img${hero || big ? '' : ' home-concert-photo-img--checking'}`}
+        src={`artist-image://${slug}.jpg`}
+        alt=""
+        draggable={false}
+        decoding="async"
+        onLoad={(e) => {
+          if (hero) return
+          const i = e.currentTarget
+          setBig(Math.min(i.naturalWidth, i.naturalHeight) >= PHOTO_MIN_SIDE)
+        }}
+        onError={() => setBig(false)}
+      />
+    )
+  }
+  return <span className="home-concert-photo-initials" aria-hidden="true">{initials(name)}</span>
+}
+
+function Equalizer() {
+  return (
+    <span className="home-concert-eq" aria-label="Playing a snippet">
+      <i /><i /><i />
+    </span>
+  )
+}
+
 /** 12×12 in the 22px-tall pill: a check (going) or a plus (not yet). */
 function GoingIcon({ on }: { on: boolean }) {
   return (
@@ -94,23 +153,57 @@ function ListIcon() {
   )
 }
 
-function ShowConcertCard({ item, kind, nowMs, today, openLink, going }: CardProps) {
+function ShowConcertCard({ item, kind, nowMs, today, openLink, going, snippet }: CardProps & { snippet: Snippet }) {
   const on = going.status(item) === 'going'
   const lately = on ? going.lately(item) : null
+  const url = ticketUrl(item)
+  const [stamped, setStamped] = useState(0)
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const [seen, setSeen] = useState(false)
+  const playing = snippet.playing === item.id
+  // Photos load once a card comes near the screen; a playing snippet stops
+  // once its card has left it.
+  useEffect(() => {
+    const el = wrapRef.current
+    if (!el) return
+    const io = new IntersectionObserver((es) => {
+      for (const e of es) {
+        if (e.isIntersecting) setSeen(true)
+        else stopSnippet(item.id)
+      }
+    }, { rootMargin: '0px 300px' })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [item.id])
+  useEffect(() => () => stopSnippet(item.id), [item.id])
+  useEffect(() => {
+    if (!stamped) return
+    const t = window.setTimeout(() => setStamped(0), 1300)
+    return () => window.clearTimeout(t)
+  }, [stamped])
   return (
-    <div className="home-concert-wrap" role="listitem">
-      <ConcertCard item={item} kind={kind} nowMs={nowMs} today={today} openLink={openLink} />
+    <div className="home-concert-wrap" role="listitem" ref={wrapRef}>
+      <ConcertCard
+        item={item} kind={kind} nowMs={nowMs} today={today}
+        photo={seen ? <ConcertPhoto name={cardBill(item).artist} /> : null}
+        playing={playing}
+        stamped={stamped}
+        onPlay={() => snippet.toggle(item)}
+      />
       <div className="home-concert-actions">
         <button
           type="button"
           className={`home-concert-going${on ? ' home-concert-going--on' : ''}`}
           aria-pressed={on}
           title={on ? 'You\u2019re going (click to undo)' : 'Mark as going'}
-          onClick={() => going.toggle(item)}
+          onClick={() => { if (!on) setStamped(Date.now()); going.toggle(item) }}
         >
           <GoingIcon on={on} />
           <span>Going</span>
         </button>
+        {url && (
+          <button type="button" className="home-concert-tickets" onClick={() => openLink(url)}>Tickets</button>
+        )}
         {lately && (
           <button type="button" className="home-concert-lately-link" onClick={() => going.openLately(item)}>
             <ListIcon />
@@ -122,31 +215,47 @@ function ShowConcertCard({ item, kind, nowMs, today, openLink, going }: CardProp
   )
 }
 
-function ConcertCard({ item, kind, nowMs, today, openLink }: Omit<CardProps, 'going'>) {
+interface Snippet {
+  playing: string | null
+  toggle: (item: ConcertItem) => void
+}
+
+function ConcertCard({ item, kind, nowMs, today, photo, playing, stamped, onPlay }: Omit<CardProps, 'going' | 'openLink'> & {
+  photo: JSX.Element | null
+  playing: boolean
+  stamped: number
+  onPlay: () => void
+}) {
   const stamp = runStamp(item, today)
   const badges = concertBadges(item, nowMs)
   const bill = cardBill(item)
   const reason = cardReason(item, kind)
   const where = whereLine(item)
-  const url = ticketUrl(item)
-  const open = () => { if (url) openLink(url) }
+  const open = onPlay
   const time = formatShowTime(item.time)
+  const stub = stubLabel(item.date, today)
   const others = item.artists.filter((a) => a !== bill.artist)
   const title = [
     others.length ? `${bill.artist} with ${others.slice(0, 4).join(', ')}` : bill.artist,
     [item.venue, item.room, where].filter(Boolean).join(' · '),
     runNightsLine(item) ?? [longDate(item.date), time].filter(Boolean).join(' · '),
     reason,
-    url ? 'Open tickets' : '',
+    playing ? 'Click to stop the snippet' : 'Click to hear their song you play most',
   ].filter(Boolean).join('\n')
   return (
     <div
-      className={`home-tour-card home-concert-card${badges.soldOut === 'all' ? ' home-concert-card--soldout' : ''}`}
+      className={`home-tour-card home-concert-card${badges.soldOut === 'all' ? ' home-concert-card--soldout' : ''}${playing ? ' home-concert-card--playing' : ''}`}
       tabIndex={0}
       onClick={open}
       onKeyDown={activateOnKey(open)}
       title={title}
     >
+      <div className="home-concert-photo">
+        {photo}
+        {stub && <span className={`home-concert-stub${stub === 'TONIGHT' ? ' home-concert-stub--tonight' : ''}`}>{stub}</span>}
+        {playing && <Equalizer />}
+        {stamped > 0 && <span key={stamped} className="home-concert-stamp" aria-hidden="true">GOING</span>}
+      </div>
       <div className="home-tour-date">
         <div className="home-tour-date-month">{stamp.month}</div>
         <div className={`home-tour-date-day${stamp.nights > 1 ? ' home-tour-date-day--range' : ''}`}>{stamp.day}</div>
@@ -186,9 +295,10 @@ interface RailProps {
   today: string
   openLink: (url: string) => void
   going: Going
+  snippet: Snippet
 }
 
-function ConcertRail({ title, source, items, kind, cap, scrollKey, nowMs, today, openLink, going }: RailProps) {
+function ConcertRail({ title, source, items, kind, cap, scrollKey, nowMs, today, openLink, going, snippet }: RailProps) {
   const [all, setAll] = useState(false)
   const groupRef = useRef<HTMLDivElement>(null)
   const rowRef = useRef<HTMLDivElement>(null)
@@ -215,7 +325,7 @@ function ConcertRail({ title, source, items, kind, cap, scrollKey, nowMs, today,
       </div>
       <div className={`home-card-row${all ? ' home-card-row--concert-grid' : ''}`} role="list" ref={rowRef}>
         {shown.map((item) => (
-          <ShowConcertCard key={`${item.id}|${item.rank}`} item={item} kind={kind} nowMs={nowMs} today={today} openLink={openLink} going={going} />
+          <ShowConcertCard key={`${item.id}|${item.rank}`} item={item} kind={kind} nowMs={nowMs} today={today} openLink={openLink} going={going} snippet={snippet} />
         ))}
       </div>
     </div>
@@ -309,7 +419,7 @@ export default function HomeShows({ state, openLink }: { state: ConcertsFeedStat
 
   const reload = useCallback(async () => {
     const r = await window.electronAPI.concertsRsvps?.().catch(() => null)
-    if (r?.ok) { setEntries(r.items); setMine({}) }
+    if (r?.ok) { setEntries([...r.items]); setMine({}) }
   }, [])
   // Re-read on mount and whenever the feed changes (a Mac or the phone may
   // have answered since).
@@ -352,6 +462,21 @@ export default function HomeShows({ state, openLink }: { state: ConcertsFeedStat
     openLately: (item) => setOpenFor(cardBill(item).artist),
   }
 
+  // Snippets: the act's most-played song he owns; the user's music pauses first.
+  const { state: libState } = useLibrary()
+  const { state: pb } = usePlayback()
+  const { togglePlayPause } = useAudio()
+  const playingSnippet = useSyncExternalStore(subscribeSnippet, snippetPlaying)
+  const fold = useCallback((s: string) => nameKey(s, ''), [])
+  const snippet: Snippet = {
+    playing: playingSnippet,
+    toggle: (item) => {
+      const t = snippetTrack(cardBill(item).artist, libState.tracks, fold)
+      void toggleSnippet(item.id, t, () => { if (pb.isPlaying) togglePlayPause() })
+    },
+  }
+  useEffect(() => () => stopSnippet(), [])
+
   const ask = entries ? nextAsk(entries) : null
   const answer = (a: 'yes' | 'no') => {
     if (!ask) return
@@ -368,14 +493,14 @@ export default function HomeShows({ state, openLink }: { state: ConcertsFeedStat
       {state.items.length > 0 && (
         <ConcertRail
           title="Live Near You" source={sourceLabel(state, nowMs)} items={state.items} kind="ranked"
-          cap={RANKED_RAIL} scrollKey="home-row-concerts" nowMs={nowMs} today={today} openLink={openLink} going={going}
+          cap={RANKED_RAIL} scrollKey="home-row-concerts" nowMs={nowMs} today={today} openLink={openLink} going={going} snippet={snippet}
         />
       )}
       {panel}
       {state.discover.length > 0 && (
         <ConcertRail
           title="You'd Like This" source="Not in your library yet" items={state.discover} kind="discover"
-          cap={DISCOVER_RAIL} scrollKey="home-row-concerts-discover" nowMs={nowMs} today={today} openLink={openLink} going={going}
+          cap={DISCOVER_RAIL} scrollKey="home-row-concerts-discover" nowMs={nowMs} today={today} openLink={openLink} going={going} snippet={snippet}
         />
       )}
     </>

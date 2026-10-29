@@ -103,3 +103,28 @@ describe('concerts-going client', () => {
     assert.equal(await c.lately('Man/Woman/Chainsaw'), null)
   })
 })
+
+describe('concert cards, more fun (2026-10-29)', () => {
+  it('stub words: TONIGHT, the weekday inside a week, else the date', async () => {
+    const { stubLabel } = await import('../../common/concerts-going.ts')
+    assert.equal(stubLabel('2026-10-29', '2026-10-29'), 'TONIGHT')
+    assert.equal(stubLabel('2026-10-28', '2026-10-29'), 'TONIGHT', 'a cached past night never says a weekday')
+    assert.equal(stubLabel('2026-10-31', '2026-10-29'), 'SAT')
+    assert.equal(stubLabel('2026-11-04', '2026-10-29'), 'WED')
+    assert.equal(stubLabel('2026-11-07', '2026-10-29'), 'NOV 7')
+    assert.equal(stubLabel('nope', '2026-10-29'), null)
+  })
+  it('snippet song: the act\'s most-played song he owns; a merged live show never', async () => {
+    const { snippetTrack } = await import('../../common/concerts-going.ts')
+    const { nameKey } = await import('../../common/fold-text.ts')
+    const fold = (s: string) => nameKey(s, '')
+    const tracks = [
+      { id: 1, artist: 'Geese', duration: 200_000, playCount: 5 },
+      { id: 2, artist: 'Geese', duration: 90 * 60_000, playCount: 99 },
+      { id: 3, artist: 'Geese feat. X', albumArtist: 'Geese', duration: 180_000, playCount: 7 },
+      { id: 4, artist: 'Fat Dog', duration: 180_000, playCount: 50 },
+    ]
+    assert.equal(snippetTrack('GEESE', tracks, fold)?.id, 3)
+    assert.equal(snippetTrack('Nobody', tracks, fold), null)
+  })
+})
