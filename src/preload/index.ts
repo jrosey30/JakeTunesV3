@@ -187,6 +187,11 @@ const electronAPI = {
   genreCheckResolve: (key: string, genre: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('genre-check:resolve', key, genre),
   // Rock DNA (Rocksurgence step 2): userData/rock-dna.json, saved after every answer.
+  // Friend share (2026-10-29): the message + links from homemini, and macOS's Share menu / clipboard / save for the card.
+  friendShareInfo: (trackId: string | number, kind: 'song' | 'album'): Promise<unknown> => ipcRenderer.invoke('friend-share:info', trackId, kind),
+  friendShareShare: (item: { text?: string; png?: string; name?: string }): Promise<{ ok: boolean }> => ipcRenderer.invoke('friend-share:share', item),
+  friendShareCopy: (item: { text?: string; png?: string }): Promise<{ ok: boolean }> => ipcRenderer.invoke('friend-share:copy', item),
+  friendShareSave: (item: { png: string; name?: string }): Promise<{ ok: boolean; path?: string; canceled?: boolean }> => ipcRenderer.invoke('friend-share:save', item),
   rockDnaLoad: (): Promise<{ state: unknown; exceptions: Array<{ artist: string; genre: string }> }> =>
     ipcRenderer.invoke('rock-dna:load'),
   rockDnaSave: (state: unknown): Promise<{ ok: boolean; state?: unknown; error?: string }> =>
