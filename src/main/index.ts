@@ -107,8 +107,9 @@ import {
 import { registerIpodIpc } from './ipc/ipod-ipc.ts'
 import { registerSyncIpc, type SyncConvertOptions } from './ipc/sync-ipc.ts'
 import { createSyncEngine, type VerifyTrackInput, type VerifyTrackUpdate } from './sync-engine/index.ts'
-import { ingestIpodRoundTrip } from './sync-engine/roundtrip.ts'
+import { ingestIpodRoundTrip, type RoundTripHost } from './sync-engine/roundtrip.ts'
 import { identifyIpod, resolveIpodState } from './ipod-identity.ts'
+import { manifestForCatalog, securePlaysBeforeSync } from './ipod-plays-archive.ts'
 import { registerAiIpc } from './ipc/ai-ipc.ts'
 import {
   registerCynthiaIpc,
@@ -1125,6 +1126,33 @@ registerLibraryIpc(ipc, {
   scanLibraryOrphans: () => scanLibraryOrphans(),
   purgeLibraryOrphans: () => purgeLibraryOrphans(),
 })
+// The plays round trip for one iPod's state dir — plug-in and the pre-sync gate share it.
+function roundTripHostFor(stateDir: string): RoundTripHost {
+  return {
+    stateDir,
+    getLibraryTracks: async () =>
+      (((await libraryCache.get()) as { tracks?: Array<{ id: number; playCount?: number; lastPlayedAt?: number }> }).tracks) || [],
+    appendPlayEvents: async (trackId, count, tsMs) => {
+      for (let i = 0; i < count; i++) await appendPlayEvent(trackId, tsMs)
+    },
+    sendToRenderer,
+    isSyncInFlight: () => syncEngine.isSyncInFlight(),
+    fallbackManifest: (catalogSha1) => manifestForCatalog(stateDir, catalogSha1),
+  }
+}
+// Each iPod's plays map through ITS own manifest (step 2b); an unknown card is left alone.
+// resolveIpodState waits out an in-flight ID adoption (ipod-identity serializes per mount);
+// a refusal still gets one retry, so a first plug-in can't skip the round trip (2026-10-28).
+async function roundTripOnMount(mount: string): Promise<void> {
+  let ipod = await resolveIpodState(mount, STATE_DIR)
+  sendToRenderer('ipod-device-changed', null)
+  if (ipod.refusal) {
+    await new Promise((r) => setTimeout(r, 3000))
+    ipod = await resolveIpodState(mount, STATE_DIR)
+  }
+  if (ipod.refusal) return void console.warn(`[roundtrip] plug-in: skipped: ${ipod.refusal}`)
+  await ingestIpodRoundTrip(mount, roundTripHostFor(ipod.stateDir))
+}
 registerIpodIpc(ipc, {
   getMount: () => ({ mount: detectedIpodMount, volume: detectedIpodVolume, missStreak: ipodMissStreak }),
   setMount: (next) => {
@@ -1134,21 +1162,7 @@ registerIpodIpc(ipc, {
   },
   runPythonRestore: (args, stdinData) => runPythonRestore(args, stdinData),
   isSyncInFlight: () => syncEngine.isSyncInFlight(),
-  onMountDetected: (mount) => void resolveIpodState(mount, STATE_DIR).then((ipod) => {
-    sendToRenderer('ipod-device-changed', null)
-    // Each iPod's plays map through ITS own manifest (step 2b); an unknown card is left alone.
-    if (ipod.refusal) return console.log(`[roundtrip] skipped — ${ipod.refusal}`)
-    return ingestIpodRoundTrip(mount, {
-      stateDir: ipod.stateDir,
-      getLibraryTracks: async () =>
-        (((await libraryCache.get()) as { tracks?: Array<{ id: number; playCount?: number; lastPlayedAt?: number }> }).tracks) || [],
-      appendPlayEvents: async (trackId, count, tsMs) => {
-        for (let i = 0; i < count; i++) await appendPlayEvent(trackId, tsMs)
-      },
-      sendToRenderer,
-      isSyncInFlight: () => syncEngine.isSyncInFlight(),
-    })
-  }),
+  onMountDetected: (mount) => void roundTripOnMount(mount).catch((err) => console.warn('[roundtrip] plug-in failed:', err instanceof Error ? err.message : err)),
 })
 registerSyncIpc(ipc, {
   requestSyncCancel: () => syncEngine.requestSyncCancel(),
@@ -4766,6 +4780,9 @@ function scheduleDbRebuild(deletedPaths: string[]) {
     }
     const ipod = await resolveIpodState(detectedIpodMount, STATE_DIR)
     if (ipod.refusal) return console.log(`[delete-sync] skipped — ${ipod.refusal}`)
+    // This rewrites the card's iTunesDB: plays first, same gate as every sync.
+    const plays = await securePlaysBeforeSync(detectedIpodMount, roundTripHostFor(ipod.stateDir), 'delete mirror')
+    if (!plays.ok) return console.warn(`[delete-sync] skipped — ${plays.error}`)
     try {
       const ipodMount = detectedIpodMount
       const { unlink: unlinkFS } = await import('fs/promises')
@@ -5236,6 +5253,7 @@ const syncEngine = createSyncEngine({
   computeAudioFingerprint, getConcertOwnedTrackIds, getLibraryTracks: () => libraryCache.get() as Promise<{ tracks?: Array<Record<string, unknown>> }>, isStreamedTrackFile,
   probeHomeminiTrack, stageLibraryTrack, freeBytes: laptopFreeBytes, readIpodDatabase, resolveTrackAbsPath, scheduleDbRebuild,
   sendToRenderer, verifyAndHealTracks, walkAudioFilesUnder,
+  roundTripHost: roundTripHostFor,
 })
 const { handleSyncToIpod, handleSyncIpodFromDevice } = syncEngine
 

@@ -262,6 +262,9 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     return fail({ copied: 0, error: 'iPod is not mounted' })
   }
   const IPOD_MOUNT = mount
+  // Every scratch retire keeps a copy in THIS iPod's state dir first (2026-10-28).
+  const retireScratch = (m: string, why: string): Promise<number> =>
+    retireIpodFirmwareScratch(m, { stateDir: host.stateDir, reason: `activity sync: ${why}` })
   const LOCAL_MOUNT = host.musicDir.replace(/[/\\]iPod_Control[/\\]Music$/, '')
 
   // ── 1. Preflight: names, then homemini-pull anything eviction removed ──
@@ -713,7 +716,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
         target,
       })
     }
-    await retireIpodFirmwareScratch(IPOD_MOUNT)
+    await retireScratch(IPOD_MOUNT, 'after wipe')
     console.log(`activity-sync: WIPE deleted ${wiped} file(s) — card holds exactly the ${keepAbs.size} kept, rebuilding to ${target}`)
   } catch (e) {
     return fail({
@@ -728,7 +731,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
       for (const p of await listIpodMusicFiles(IPOD_MOUNT)) {
         try { await unlink(p) } catch { /* best effort */ }
       }
-      await retireIpodFirmwareScratch(IPOD_MOUNT)
+      await retireScratch(IPOD_MOUNT, 'abort after wipe')
     } catch { /* best effort */ }
     console.error(`activity-sync: abort after wipe — re-emptied Music so Mini cannot index a ${why.landed ?? 'partial'} set. ${why.error}`)
     // Say so in the result: the screen used to claim "the new songs are on
@@ -985,7 +988,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   const conform = await conformCatalogIdOrder(localDb)
   if (!conform.ok) {
     try { await unlink(localDb) } catch { /* temp */ }
-    await retireIpodFirmwareScratch(IPOD_MOUNT)
+    await retireScratch(IPOD_MOUNT, 'catalog order conform failed')
     return rewipeAndStop(fail({
       copied, copyErrors, target,
       error: `The catalog could not be conformed to firmware id order (${conform.error}). Previous catalog is untouched. Sync again.`,
@@ -996,7 +999,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   console.log(`activity-sync: ${contig.summary}`)
   if (!contig.ok) {
     try { await unlink(localDb) } catch { /* temp */ }
-    await retireIpodFirmwareScratch(IPOD_MOUNT)
+    await retireScratch(IPOD_MOUNT, 'catalog contiguity failed')
     return rewipeAndStop(fail({
       copied, copyErrors, target,
       error: `The catalog was written but could not be laid down as one piece (${contig.error}). Previous catalog is untouched. Sync again.`,
@@ -1025,10 +1028,10 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
         continue
       }
     }
-    await retireIpodFirmwareScratch(IPOD_MOUNT)
+    await retireScratch(IPOD_MOUNT, 'after catalog copy')
     const flush = await remountVolume(IPOD_MOUNT)
     if (!flush.ok) {
-      await retireIpodFirmwareScratch(IPOD_MOUNT)
+      await retireScratch(IPOD_MOUNT, 'remount failed after catalog copy')
       try { await unlink(localDb) } catch { /* temp */ }
       return fail({
         copied, copyErrors, target, landed: 0, shortfall: target, verifyAttempts,
@@ -1036,7 +1039,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
       })
     }
     host.setDetectedMount(flush.mountPoint || IPOD_MOUNT)
-    await retireIpodFirmwareScratch(flush.mountPoint || IPOD_MOUNT)
+    await retireScratch(flush.mountPoint || IPOD_MOUNT, 'after remount')
     let onCard: Buffer
     try {
       onCard = await readFile(ipodDb)
@@ -1207,7 +1210,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     })
   }
 
-  await retireIpodFirmwareScratch(IPOD_MOUNT)
+  await retireScratch(IPOD_MOUNT, 'after seal')
   const sealedOk = tsaActivityOk({
     target,
     boarded: tsaBoarded.length,

@@ -19,7 +19,7 @@ import {
   ipodImportRefusal, ipodPoolRel, ipodStateRel, ipodWriteRefusal, parseDeviceMarker, shouldAutoAdoptOriginal,
   type IpodDeviceMarker, type IpodIdentity,
 } from '../common/ipod-identity.ts'
-import { parseCatalogPaths } from './sync-engine/roundtrip.ts'
+import { parseCatalogPaths, uniqueTmpPath } from './sync-engine/roundtrip.ts'
 
 const REGISTRY_FILE = 'ipod-devices.json'
 
@@ -37,7 +37,7 @@ export async function readDeviceMarker(mount: string): Promise<IpodDeviceMarker 
 
 async function writeDeviceMarker(mount: string, marker: IpodDeviceMarker): Promise<void> {
   const path = markerPath(mount)
-  const tmp = `${path}.${process.pid}.tmp`
+  const tmp = uniqueTmpPath(path)
   try {
     await writeFile(tmp, JSON.stringify(marker, null, 2), 'utf-8')
     await rename(tmp, path)
@@ -113,7 +113,7 @@ async function rememberDevice(stateDir: string, marker: IpodDeviceMarker): Promi
   if (i >= 0) reg.devices[i] = marker
   else reg.devices.push(marker)
   const path = join(stateDir, REGISTRY_FILE)
-  const tmp = `${path}.${process.pid}.tmp`
+  const tmp = uniqueTmpPath(path)
   await writeFile(tmp, JSON.stringify(reg, null, 2), 'utf-8')
   await rename(tmp, path)
 }
@@ -146,7 +146,25 @@ async function catalogKey(mount: string): Promise<string> {
   }
 }
 
-export async function identifyIpod(mount: string, stateDir: string): Promise<IpodIdentity> {
+/**
+ * One identify per mount at a time (2026-10-28). The mount poll, the plug-in
+ * round trip and the device view all ask at plug-in; two concurrent first
+ * looks at an unmarked Original both decided to adopt it, wrote the same
+ * pid-named tmp file, and one lost with ENOENT — so that caller saw an
+ * unknown card and the round trip was skipped. Now the second caller waits
+ * and reads the marker the first one wrote.
+ */
+const identifyQueue = new Map<string, Promise<unknown>>()
+export function identifyIpod(mount: string, stateDir: string): Promise<IpodIdentity> {
+  const prev = identifyQueue.get(mount) || Promise.resolve()
+  const run = prev.then(() => identifyIpodNow(mount, stateDir), () => identifyIpodNow(mount, stateDir))
+  const tail = run.then(() => undefined, () => undefined)
+  identifyQueue.set(mount, tail)
+  void tail.then(() => { if (identifyQueue.get(mount) === tail) identifyQueue.delete(mount) })
+  return run
+}
+
+async function identifyIpodNow(mount: string, stateDir: string): Promise<IpodIdentity> {
   const marker = await readDeviceMarker(mount)
   if (marker) {
     unknownCache.delete(mount)

@@ -34,6 +34,8 @@ import {
   exceedsIpodPlayableCeiling, ipodPlayableDestPath, needsIpodAlacTranscode, sampleRateForItunesDb,
 } from '../ipod-reconcile.ts'
 import { confirmWriteOnCard, flushCardCaches, remountVerifyEntries, retireIpodFirmwareScratch } from '../ipod-sync-card.ts'
+import { securePlaysBeforeSync } from '../ipod-plays-archive.ts'
+import { uniqueTmpPath, type RoundTripHost } from './roundtrip.ts'
 import {
   tsaActivityOk, tsaAllClear, tsaBoardPassenger, tsaDestCollisions,
   tsaNormalizeColonPath, tsaRelFromColon, tsaScreen, tsaSealFromScreen,
@@ -92,6 +94,8 @@ export interface SyncEngineHost {
   sendToRenderer: (channel: string, ...args: unknown[]) => void
   verifyAndHealTracks: (inputs: VerifyTrackInput[], mounts: string[]) => Promise<VerifyTrackUpdate[]>
   walkAudioFilesUnder: (root: string) => Promise<string[]>
+  /** The plays round trip, pointed at one iPod's state dir (the pre-sync gate uses it). */
+  roundTripHost: (stateDir: string) => RoundTripHost
 }
 
 export function createSyncEngine(host: SyncEngineHost) {
@@ -279,6 +283,9 @@ export function createSyncEngine(host: SyncEngineHost) {
 
   // confirmWriteOnCard / remountVerifyEntries / retireIpodFirmwareScratch live
   // in ipod-sync-card.ts (shared by activity rebuild and full-library sync).
+  // Every retire keeps a copy in THIS iPod's state dir first (2026-10-28).
+  const retireScratch = (m: string, why: string): Promise<number> =>
+    retireIpodFirmwareScratch(m, { stateDir: syncStateDir, reason: `sync: ${why}` })
 
   const IPOD_SYNC_JOURNAL_FILE = () => join(syncStateDir, 'ipod-sync-journal.json')
   const IPOD_TSA_SEAL_FILE = () => join(syncStateDir, 'ipod-activity-tsa-seal.json')
@@ -289,14 +296,14 @@ export function createSyncEngine(host: SyncEngineHost) {
 
   async function writeTsaSealFile(seal: { version: 1; sealedAt: string; target: number; passengers: unknown[] }): Promise<void> {
     const path = IPOD_TSA_SEAL_FILE()
-    const tmp = `${path}.${process.pid}.tmp`
+    const tmp = uniqueTmpPath(path)
     await writeFile(tmp, JSON.stringify(seal, null, 2), 'utf-8')
     await rename(tmp, path)
   }
 
   async function writeLastSyncManifest(payload: Record<string, unknown>): Promise<void> {
     const manifestPath = join(syncStateDir, 'last-sync-manifest.json')
-    const tmp = `${manifestPath}.${process.pid}.tmp`
+    const tmp = uniqueTmpPath(manifestPath)
     await writeFile(tmp, JSON.stringify(payload, null, 1), 'utf-8')
     await rename(tmp, manifestPath)
   }
@@ -333,6 +340,12 @@ export function createSyncEngine(host: SyncEngineHost) {
       }
       syncStateDir = ipod.stateDir
       if (ipod.device && !ipod.device.primary) console.log(`sync-to-ipod: ${ipod.device.name} — its own sync state lives in ${ipod.stateDir}`)
+      // Plays first (2026-10-28): keep a copy of Play Counts/OTG + the pre-sync
+      // catalog and manifest, bring the plays home, and confirm they are
+      // recorded — BEFORE either engine below wipes or rewrites the card.
+      const plays = await securePlaysBeforeSync(gateMount, host.roundTripHost(syncStateDir),
+        syncOpts?.origin === 'activity-click' ? 'Activity Sync' : 'library sync')
+      if (!plays.ok) return { ok: false, copied: 0, error: plays.error }
     }
     syncCancelRequested = false
     if (syncOpts?.origin === 'activity-click') {
@@ -655,7 +668,7 @@ export function createSyncEngine(host: SyncEngineHost) {
             error: `Activity wipe could not empty the iPod (${remaining} leftover file${remaining === 1 ? '' : 's'}). macOS is not listing the card consistently. Reseat the cable and sync again — nothing new was copied.`,
           }
         }
-        await retireIpodFirmwareScratch(IPOD_MOUNT)
+        await retireScratch(IPOD_MOUNT, 'after wipe')
         console.log(`sync-to-ipod: WIPE-FIRST deleted ${wiped} existing file(s) — rebuilding clean to ${tracks.length}`)
       } catch (e) {
         console.error('sync-to-ipod: wipe-first failed — refusing to copy onto a dirty card:', e)
@@ -1696,7 +1709,7 @@ export function createSyncEngine(host: SyncEngineHost) {
           // on refusal the previous catalog is left untouched.
           const conform = await conformCatalogIdOrder(localDb)
           if (!conform.ok) {
-            await retireIpodFirmwareScratch(IPOD_MOUNT)
+            await retireScratch(IPOD_MOUNT, 'catalog order conform failed')
             try { await unlink(localDb) } catch { /* temp */ }
             resolve({
               ok: false,
@@ -1720,7 +1733,7 @@ export function createSyncEngine(host: SyncEngineHost) {
           const contig = await ensureContiguousDb(localDb, PYTHON_CMD ?? 'python3')
           console.log(`sync-to-ipod: ${contig.summary}`)
           if (!contig.ok) {
-            await retireIpodFirmwareScratch(IPOD_MOUNT)
+            await retireScratch(IPOD_MOUNT, 'catalog contiguity failed')
             try { await unlink(localDb) } catch { /* temp */ }
             resolve({
               ok: false,
@@ -1850,10 +1863,10 @@ export function createSyncEngine(host: SyncEngineHost) {
                 continue
               }
             }
-            await retireIpodFirmwareScratch(IPOD_MOUNT)
+            await retireScratch(IPOD_MOUNT, 'after catalog copy')
             const flush = await remountVolume(IPOD_MOUNT)
             if (!flush.ok) {
-              await retireIpodFirmwareScratch(IPOD_MOUNT)
+              await retireScratch(IPOD_MOUNT, 'remount failed after catalog copy')
               try { await unlink(localDb) } catch { /* temp */ }
               resolve({
                 ok: false,
@@ -1862,7 +1875,7 @@ export function createSyncEngine(host: SyncEngineHost) {
               })
               return
             }
-            await retireIpodFirmwareScratch(IPOD_MOUNT)
+            await retireScratch(IPOD_MOUNT, 'after remount')
             let onCard: Buffer
             try {
               onCard = await readFile(ipodDb)
@@ -2182,10 +2195,10 @@ export function createSyncEngine(host: SyncEngineHost) {
             }
             // Third pass: Mini may have rewritten Play Counts during this
             // readback window. iTunes deletes these every sync.
-            await retireIpodFirmwareScratch(IPOD_MOUNT)
+            await retireScratch(IPOD_MOUNT, 'readback third pass')
           } catch (rbErr) {
             console.warn('sync-to-ipod: readback failed (treating as sync failure):', rbErr)
-            await retireIpodFirmwareScratch(IPOD_MOUNT)
+            await retireScratch(IPOD_MOUNT, 'readback failed')
             resolve({
               ok: false,
               error: `Sync verify failed: could not read the iPod's catalog back (${rbErr instanceof Error ? rbErr.message : String(rbErr)}). Sync again before unplugging.`,

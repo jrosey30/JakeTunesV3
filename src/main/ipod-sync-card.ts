@@ -10,12 +10,8 @@ import { spawn } from 'child_process'
 import { copyFile, mkdir, readdir, stat, unlink } from 'fs/promises'
 import { join } from 'path'
 import { fullFsync, remountVolume } from './platform.ts'
-import {
-  IPOD_FIRMWARE_SCRATCH_NAMES,
-  isIpodFirmwareScratchName,
-  partitionLanded,
-  type IntendedTrack,
-} from './ipod-reconcile.ts'
+import { partitionLanded, type IntendedTrack } from './ipod-reconcile.ts'
+import { ensureScratchArchived } from './ipod-plays-archive.ts'
 
 export async function confirmWriteOnCard(src: string, dst: string): Promise<{ ok: boolean; reason?: string }> {
   try {
@@ -107,23 +103,41 @@ export async function remountVerifyEntries(
  * iTunes/libgpod doctrine: after writing iTunesDB, Play Counts and OTG
  * must not be on the card when the Mini next boots. A leftover Play Counts
  * from a partial index is how a 500-row catalog became Songs 450.
+ *
+ * 2026-10-28: and nothing leaves the card without a copy. `keep.stateDir` is
+ * the iPod's own state dir (resolveIpodState); ensureScratchArchived copies
+ * the scratch files there first (or finds the pre-sync gate's copy of these
+ * exact bytes). If the copy fails, NOTHING is deleted and this returns 0 —
+ * it does not throw, because several callers sit inside spawn callbacks where
+ * a throw would hang the sync. Plays outrank a tidy card: the pre-sync gate
+ * already kept the pre-sync bytes, so this only bites if NEW bytes appear
+ * mid-sync and this Mac can't write a copy.
  */
-export async function retireIpodFirmwareScratch(mount: string): Promise<number> {
+export async function retireIpodFirmwareScratch(
+  mount: string,
+  keep: { stateDir: string; reason: string },
+): Promise<number> {
   const itunes = join(mount, 'iPod_Control', 'iTunes')
-  const names = new Set<string>(IPOD_FIRMWARE_SCRATCH_NAMES)
+  let present: string[]
+  let archiveDir: string | null
   try {
-    for (const n of await readdir(itunes)) {
-      if (isIpodFirmwareScratchName(n)) names.add(n)
-    }
-  } catch { /* iTunes dir missing — nothing to retire */ }
+    ({ present, archiveDir } = await ensureScratchArchived(mount, keep.stateDir, keep.reason))
+  } catch (err) {
+    console.error(`ipod-card: NOT retiring firmware scratch — could not keep a copy first (${err instanceof Error ? err.message : err}); ${keep.reason}`)
+    return 0
+  }
   let retired = 0
-  for (const name of names) {
+  for (const name of present) {
     try {
       await unlink(join(itunes, name))
       retired++
     } catch { /* already absent */ }
   }
-  console.log(`ipod-card: firmware scratch retired (${retired} file(s) gone) — Mini cannot merge Play Counts into this catalog`)
+  if (retired > 0) {
+    console.warn(`ipod-card: firmware scratch retired (${present.join(', ')}) — ${keep.reason}; copy kept in ${archiveDir}`)
+  } else {
+    console.log(`ipod-card: firmware scratch retired (0 file(s) gone) — ${keep.reason}`)
+  }
   return retired
 }
 
