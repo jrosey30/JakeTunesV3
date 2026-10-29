@@ -13,9 +13,25 @@
  * which opens the whole list in place as a wrapped grid. Cards keep the ticket-
  * stub look of the old Live Near You cards; names wrap, never clip. Clicking a
  * card opens its ticket link, as before.
+ *
+ * Going / I went (2026-10-29, twin of the phone's ConcertGoing.swift): a
+ * "Going" pill on each card marks the show (one click, again to undo); the day
+ * after a show he was going to, "Were you there?" sits above Live Near You
+ * (Yes / No). Both answers live on homemini, so the phone and both Macs agree
+ * and the latest click wins. A Going card offers "What they've been playing"
+ * (setlist.fm): the band's most played songs lately, the owned ones marked,
+ * one click plays those in the band's order. Nothing about setlist.fm draws
+ * when homemini has no key.
  */
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
+import { useLibrary } from '../context/LibraryContext'
+import { useAudio } from '../hooks/useAudio'
+import {
+  goingAfterTap, latelyDetail, latelyPlayLabel, nextAsk,
+  type Lately, type RsvpEntry, type RsvpShow, type RsvpStatus,
+} from '../../common/concerts-going'
+import type { Track } from '../types'
 import {
   cardBill, cardReason, concertBadges, formatOnSale, formatShowTime, longDate, nyDate,
   runNightsLine, runStamp, ticketUrl, whereLine,
@@ -42,15 +58,71 @@ function sourceLabel(state: ConcertsFeedState, nowMs: number): string {
   return 'Picked by your taste'
 }
 
+interface Going {
+  status: (item: ConcertItem) => RsvpStatus | null
+  toggle: (item: ConcertItem) => void
+  lately: (item: ConcertItem) => Lately | null
+  openLately: (item: ConcertItem) => void
+}
+
 interface CardProps {
   item: ConcertItem
   kind: 'ranked' | 'discover'
   nowMs: number
   today: string
   openLink: (url: string) => void
+  going: Going
 }
 
-function ConcertCard({ item, kind, nowMs, today, openLink }: CardProps) {
+/** 12×12 in the 22px-tall pill: a check (going) or a plus (not yet). */
+function GoingIcon({ on }: { on: boolean }) {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+      {on
+        ? <path d="M2.5 6.2 5 8.6l4.6-5.2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        : <path d="M6 2.5v7M2.5 6h7" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />}
+    </svg>
+  )
+}
+
+/** "Show me the list" lines, 12×12 in its 18px row. */
+function ListIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+      <path d="M2 3h8M2 6h8M2 9h5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function ShowConcertCard({ item, kind, nowMs, today, openLink, going }: CardProps) {
+  const on = going.status(item) === 'going'
+  const lately = on ? going.lately(item) : null
+  return (
+    <div className="home-concert-wrap" role="listitem">
+      <ConcertCard item={item} kind={kind} nowMs={nowMs} today={today} openLink={openLink} />
+      <div className="home-concert-actions">
+        <button
+          type="button"
+          className={`home-concert-going${on ? ' home-concert-going--on' : ''}`}
+          aria-pressed={on}
+          title={on ? 'You\u2019re going (click to undo)' : 'Mark as going'}
+          onClick={() => going.toggle(item)}
+        >
+          <GoingIcon on={on} />
+          <span>Going</span>
+        </button>
+        {lately && (
+          <button type="button" className="home-concert-lately-link" onClick={() => going.openLately(item)}>
+            <ListIcon />
+            <span>What they've been playing</span>
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ConcertCard({ item, kind, nowMs, today, openLink }: Omit<CardProps, 'going'>) {
   const stamp = runStamp(item, today)
   const badges = concertBadges(item, nowMs)
   const bill = cardBill(item)
@@ -70,7 +142,6 @@ function ConcertCard({ item, kind, nowMs, today, openLink }: CardProps) {
   return (
     <div
       className={`home-tour-card home-concert-card${badges.soldOut === 'all' ? ' home-concert-card--soldout' : ''}`}
-      role="listitem"
       tabIndex={0}
       onClick={open}
       onKeyDown={activateOnKey(open)}
@@ -114,9 +185,10 @@ interface RailProps {
   nowMs: number
   today: string
   openLink: (url: string) => void
+  going: Going
 }
 
-function ConcertRail({ title, source, items, kind, cap, scrollKey, nowMs, today, openLink }: RailProps) {
+function ConcertRail({ title, source, items, kind, cap, scrollKey, nowMs, today, openLink, going }: RailProps) {
   const [all, setAll] = useState(false)
   const groupRef = useRef<HTMLDivElement>(null)
   const rowRef = useRef<HTMLDivElement>(null)
@@ -143,8 +215,84 @@ function ConcertRail({ title, source, items, kind, cap, scrollKey, nowMs, today,
       </div>
       <div className={`home-card-row${all ? ' home-card-row--concert-grid' : ''}`} role="list" ref={rowRef}>
         {shown.map((item) => (
-          <ConcertCard key={`${item.id}|${item.rank}`} item={item} kind={kind} nowMs={nowMs} today={today} openLink={openLink} />
+          <ShowConcertCard key={`${item.id}|${item.rank}`} item={item} kind={kind} nowMs={nowMs} today={today} openLink={openLink} going={going} />
         ))}
+      </div>
+    </div>
+  )
+}
+
+/** The show for an RSVP, from the card (homemini keeps its own snapshot
+ *  when its table still has the show; this is the fallback). */
+function showOf(item: ConcertItem): RsvpShow {
+  return {
+    artist: cardBill(item).artist, headliners: item.headliners, support: item.support,
+    venue: item.venue, neighbourhood: item.neighbourhood, borough: item.borough,
+    date: item.date, time: item.time, url: item.url,
+  }
+}
+
+/** "Were you there?" — the oldest unanswered past show he was going to. */
+function WereYouThere({ entry, answer }: { entry: RsvpEntry; answer: (a: 'yes' | 'no') => void }) {
+  const show = entry.show!
+  return (
+    <div className="home-concert-ask" role="group" aria-label="Were you there?">
+      <div className="home-concert-ask-text">
+        <div className="home-concert-ask-q">Were you there?</div>
+        <div className="home-concert-ask-show">
+          <span className="home-concert-artist">{show.artist}</span>
+          <span className="home-concert-ask-where">{show.venue} · {longDate(show.date)}</span>
+        </div>
+      </div>
+      <div className="home-concert-ask-buttons">
+        <button type="button" className="home-concert-ask-yes" onClick={() => answer('yes')}>Yes, I went</button>
+        <button type="button" className="home-concert-ask-no" onClick={() => answer('no')}>No</button>
+      </div>
+    </div>
+  )
+}
+
+/** "What they've been playing" — opened from a Going card, under its row. */
+function LatelyPanel({ artist, lately, close, openLink }: { artist: string; lately: Lately; close: () => void; openLink: (url: string) => void }) {
+  const { state: lib } = useLibrary()
+  const { playTrack } = useAudio()
+  const byId = useMemo(() => new Map(lib.tracks.map((t) => [String(t.id), t])), [lib.tracks])
+  const owned = lately.ownedInSetOrder.map((id) => byId.get(id)).filter((t): t is Track => !!t)
+  return (
+    <div className="home-concert-lately" role="region" aria-label={`What ${artist} have been playing`}>
+      <div className="home-concert-lately-head">
+        <div>
+          <div className="home-concert-lately-eyebrow">What they've been playing</div>
+          <div className="home-concert-lately-artist">{artist}</div>
+          <div className="home-concert-lately-from">{lately.shows === 1 ? 'From their last show' : `From their last ${lately.shows} shows`}</div>
+        </div>
+        <div className="home-concert-lately-actions">
+          {owned.length > 0 && (
+            <button
+              type="button"
+              className="home-concert-lately-play"
+              // The band's running order IS the point: preserveOrder, like a mix.
+              onClick={() => playTrack(owned[0], owned, 0, undefined, true, true)}
+            >
+              {latelyPlayLabel(owned.length)}
+            </button>
+          )}
+          <button type="button" className="home-section-more" onClick={close}>Close</button>
+        </div>
+      </div>
+      <ol className="home-concert-lately-list">
+        {lately.songs.map((s) => (
+          <li key={s.name} className={s.trackId ? 'home-concert-lately-song--owned' : undefined}>
+            <span className="home-concert-lately-mark" aria-hidden="true">{s.trackId ? <GoingIcon on /> : null}</span>
+            <span className="home-concert-lately-name">{s.name}</span>
+            <span className="home-concert-lately-detail">{latelyDetail(s, lately.shows)}</span>
+          </li>
+        ))}
+      </ol>
+      <div className="home-concert-lately-credit">
+        Setlists via {lately.url
+          ? <a href={lately.url} onClick={(e) => { e.preventDefault(); openLink(lately.url!) }}>setlist.fm</a>
+          : 'setlist.fm'}
       </div>
     </div>
   )
@@ -153,18 +301,81 @@ function ConcertRail({ title, source, items, kind, cap, scrollKey, nowMs, today,
 export default function HomeShows({ state, openLink }: { state: ConcertsFeedState; openLink: (url: string) => void }) {
   const nowMs = Date.now()
   const today = nyDate(nowMs)
+  const [entries, setEntries] = useState<RsvpEntry[] | null>(null)
+  const [mine, setMine] = useState<Record<string, RsvpStatus | null>>({})
+  const [latelyBy, setLatelyBy] = useState<Record<string, Lately | null>>({})
+  const [openFor, setOpenFor] = useState<string | null>(null)
+  const asked = useRef(new Set<string>())
+
+  const reload = useCallback(async () => {
+    const r = await window.electronAPI.concertsRsvps?.().catch(() => null)
+    if (r?.ok) { setEntries(r.items); setMine({}) }
+  }, [])
+  // Re-read on mount and whenever the feed changes (a Mac or the phone may
+  // have answered since).
+  useEffect(() => { void reload() }, [reload, state])
+
+  const byId = useMemo(() => new Map((entries ?? []).map((e) => [e.eventId, e])), [entries])
+  const status = useCallback((item: ConcertItem): RsvpStatus | null => {
+    if (item.id in mine) return mine[item.id] ?? null
+    return byId.get(item.id)?.status ?? item.rsvp ?? null
+  }, [mine, byId])
+
+  const toggle = useCallback((item: ConcertItem) => {
+    const next = goingAfterTap(status(item))
+    setMine((m) => ({ ...m, [item.id]: next }))
+    void window.electronAPI.concertsSetGoing?.(item.id, next === 'going', showOf(item))
+      .then((r) => (r?.ok ? reload() : setMine((m) => { const c = { ...m }; delete c[item.id]; return c })))
+      .catch(() => setMine((m) => { const c = { ...m }; delete c[item.id]; return c }))
+  }, [status, reload])
+
+  // "What they've been playing" for the Going acts (homemini refuses others).
+  const goingActs = useMemo(() => {
+    const acts = new Set<string>()
+    for (const item of [...state.items, ...state.discover]) if (status(item) === 'going') acts.add(cardBill(item).artist)
+    return [...acts]
+  }, [state, status])
+  useEffect(() => {
+    for (const act of goingActs) {
+      if (asked.current.has(act)) continue
+      asked.current.add(act)
+      void window.electronAPI.concertsLately?.(act)
+        .then((r) => setLatelyBy((m) => ({ ...m, [act]: r?.lately ?? null })))
+        .catch(() => undefined)
+    }
+  }, [goingActs])
+
+  const going: Going = {
+    status,
+    toggle,
+    lately: (item) => latelyBy[cardBill(item).artist] ?? null,
+    openLately: (item) => setOpenFor(cardBill(item).artist),
+  }
+
+  const ask = entries ? nextAsk(entries) : null
+  const answer = (a: 'yes' | 'no') => {
+    if (!ask) return
+    setEntries((es) => (es ?? []).map((e) => (e.eventId === ask.eventId ? { ...e, attended: a, ask: false } : e)))
+    void window.electronAPI.concertsSetAttended?.(ask.eventId, a).then(() => reload()).catch(() => reload())
+  }
+
+  const panel = openFor && latelyBy[openFor]
+    ? <LatelyPanel artist={openFor} lately={latelyBy[openFor]!} close={() => setOpenFor(null)} openLink={openLink} />
+    : null
   return (
     <>
+      {ask && <WereYouThere entry={ask} answer={answer} />}
       {state.items.length > 0 && (
         <ConcertRail
           title="Live Near You" source={sourceLabel(state, nowMs)} items={state.items} kind="ranked"
-          cap={RANKED_RAIL} scrollKey="home-row-concerts" nowMs={nowMs} today={today} openLink={openLink}
+          cap={RANKED_RAIL} scrollKey="home-row-concerts" nowMs={nowMs} today={today} openLink={openLink} going={going}
         />
       )}
+      {panel}
       {state.discover.length > 0 && (
         <ConcertRail
           title="You'd Like This" source="Not in your library yet" items={state.discover} kind="discover"
-          cap={DISCOVER_RAIL} scrollKey="home-row-concerts-discover" nowMs={nowMs} today={today} openLink={openLink}
+          cap={DISCOVER_RAIL} scrollKey="home-row-concerts-discover" nowMs={nowMs} today={today} openLink={openLink} going={going}
         />
       )}
     </>

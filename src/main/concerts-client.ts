@@ -17,7 +17,8 @@
  *
  * A reply that isn't a concerts document (the 503 "warming up" error, HTML
  * from a proxy, torn JSON) never replaces a good cache. Read-only toward
- * homemini: GET only — RSVPs stay the phone's.
+ * homemini: GET only. (Going / I went writes go through
+ * concerts-going-client.ts, 2026-10-29.)
  *
  * Pure of electron — fetch, the directory, the clock and the fallback are
  * injected, so it runs under node:test (__tests__/concerts-client.test.ts).
