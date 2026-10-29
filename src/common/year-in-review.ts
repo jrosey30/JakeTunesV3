@@ -155,6 +155,10 @@ export interface YearInReview {
     genres: number
     widestDay: { date: string; genres: number; artists: number; plays: number } | null
   }
+  /** The iPods (Jake 10/29: "it should brag that it does count the ipod"): plays recorded
+   *  offline on any iPod and carried home on sync, the different songs, and the most played. The
+   *  history does not say which iPod a play came from, so this is all of them together. */
+  ipod?: { plays: number; songs: number; top: Ranked[] }
   /** Every show he went to this year, oldest first (absent until the attended file exists). */
   attended?: YirShow[]
   /** The Top 1000 chapter. NOT built here: homemini's backend measures it next to the quiz
@@ -264,6 +268,8 @@ export function buildYearInReview(input: YirInput): YearInReview {
   const byWeekday = new Array<number>(7).fill(0)
   const byDevice: Record<string, number> = {}
   const daySongs = new Map<string, Map<string, { artist: string; title: string; n: number }>>()
+  const ipodSongs = new Map<string, Ranked>()
+  let ipodPlays = 0
   const dayArtists = new Map<string, Set<string>>()
   const dayGenres = new Map<string, Set<string>>()
   const rangeGenres = new Set<string>()
@@ -282,6 +288,10 @@ export function buildYearInReview(input: YirInput): YearInReview {
     // ranked slot (Jake's Top 25 rule, applied to every ranking 10/11).
     const rankable = isTop25Rankable({ duration: dur })
     if (rankable) bump(songs, songKey, () => ({ name: l.title, artist: artistName, plays: 0 }), min)
+    if (l.device === 'ipod') {
+      ipodPlays++
+      if (rankable) bump(ipodSongs, songKey, () => ({ name: l.title, artist: artistName, plays: 0 }))
+    }
     if (artistName) bump(artists, norm(artistName), () => ({ name: artistName, plays: 0 }), min)
     const album = l.album || t?.album || ''
     if (album) bump(albums, `${norm(t?.albumArtist || artistName)}|${norm(album)}`, () => ({ name: album, artist: t?.albumArtist || artistName, plays: 0 }), min)
@@ -450,6 +460,7 @@ export function buildYearInReview(input: YirInput): YearInReview {
     concerts,
     mixtapes,
     range: { artists: artists.size, genres: rangeGenres.size, widestDay },
+    ipod: { plays: ipodPlays, songs: ipodSongs.size, top: rank(ipodSongs, 9) },
     attended: (input.attended ?? [])
       .filter((a) => typeof a.date === 'string' && a.date.startsWith(String(year)))
       .map((a) => ({

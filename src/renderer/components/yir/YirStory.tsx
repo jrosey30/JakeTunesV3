@@ -185,6 +185,26 @@ function VizView({ viz, ctx, onPlay, finale }: { viz: Viz; ctx: YirCtx; onPlay: 
   }
 }
 
+/** An iPod: its most-played covers on the screen, the play count ticking up under them, the
+ *  click wheel, and the JakeTunes mark (the same wordmark-and-wheel as every Story frame). */
+function IpodView({ plays, tiles, ctx, onPlay }: { plays: number; tiles: Tile[]; ctx: YirCtx; onPlay: (p: StoryPlay | undefined) => void }): JSX.Element {
+  const v = useCountUp(plays, 1600, 300)
+  return (
+    <div className="yir-ipod" role="img" aria-label={`An iPod: ${plays.toLocaleString('en-US')} plays`}>
+      <div className="yir-ipod-body yir-fly">
+        <div className="yir-ipod-screen">
+          <div className="yir-ipod-covers">
+            {tiles.slice(0, 9).map((t, i) => <TileButton key={i} tile={t} ctx={ctx} onPlay={onPlay} className="yir-fly" size={120} style={delay(i, 70, 250)} />)}
+          </div>
+          <div className="yir-ipod-count"><b>{v.toLocaleString('en-US')}</b> plays</div>
+        </div>
+        <div className="yir-ipod-wheel"><span>MENU</span><i /></div>
+      </div>
+      <div className="yir-ipod-mark"><i />JAKETUNES</div>
+    </div>
+  )
+}
+
 /** One dial: the lead number sweeps in and passes the others' markers. */
 function Gauges({ items }: { items: Array<{ pct: number; label: string; lead: boolean }> }): JSX.Element {
   const lead = items.find((g) => g.lead) ?? items[0]
@@ -324,25 +344,16 @@ export function SlideBody({ slide, ctx, playing, beat, onPlayRow }: { slide: Sli
         </>
       )
     }
-    case 'devices': {
-      const max = Math.max(1, ...slide.rows.map((r) => r.plays))
+    case 'ipod':
       return (
         <>
+          <IpodView plays={slide.plays} tiles={slide.tiles} ctx={ctx} onPlay={onPlayRow} />
           <div className="yir-eyebrow">{slide.eyebrow}</div>
           <div className="yir-big">{slide.big}</div>
-          <div className="yir-devs">
-            {slide.rows.map((r, k) => (
-              <div key={r.name} className={k === 0 ? 'lead' : ''}>
-                <b>{r.name}</b>
-                <span className="yir-track"><i style={{ ['--w' as string]: `${Math.max(2, (r.plays / max) * 100)}%` }} /></span>
-                <small>{r.plays.toLocaleString('en-US')} · {r.pct}%</small>
-              </div>
-            ))}
-          </div>
           <div className="yir-line">{slide.line}</div>
+          {nowPlaying}
         </>
       )
-    }
     case 'champions':
       return (
         <>

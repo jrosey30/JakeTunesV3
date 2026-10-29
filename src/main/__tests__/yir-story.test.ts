@@ -4,7 +4,7 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildStory, deviceRows, hour12, isRevealed } from '../../common/yir-story.ts'
+import { buildStory, hour12, isRevealed } from '../../common/yir-story.ts'
 import { buildYearInReview } from '../../common/year-in-review.ts'
 import { L, listens, y, concerts } from './yir-story-fixture.ts'
 
@@ -83,7 +83,7 @@ describe('the story', () => {
   it('the card list, in order — and no skips card, ever (Jake 10/29: "take skips out")', () => {
     assert.deepEqual(after.map((x) => `${x.kind}:${x.eyebrow}`), [
       'cover:JakeTunes · Year in Review', 'art:Your song of the year', 'list:The rest of the top 3', 'lanes:Your artist of the year',
-      'art:Record of the year', 'devices:Where the plays happened', 'number:The day it never stopped', 'number:When you listen',
+      'art:Record of the year', 'ipod:Off the grid', 'number:The day it never stopped', 'number:When you listen',
       'number:Longest streak', 'iceberg:How deep you went', 'number:Range', 'number:Live in 2026',
       'number:The Top 1000', 'number:Does it work?', 'number:Who holds a seat', 'champions:Number one, everywhere', 'number:Why it matters',
       'end:Happy birthday',
@@ -91,13 +91,17 @@ describe('the story', () => {
     for (const s of [...before, ...after]) assert.doesNotMatch(JSON.stringify(s), /skip rate|real skips|Honest numbers/i)
   })
 
-  it('where the plays happened: his own devices, biggest first, whole percents', () => {
-    assert.deepEqual(deviceRows({ laptop: 2960, workmini: 5205, phone: 648, ipod: 689 }).map((d) => [d.name, d.plays, d.pct]),
-      [['workmini', 5205, 55], ['Laptop', 2960, 31], ['iPods', 689, 7], ['Phone', 648, 7]])
-    const d = after.find((x) => x.kind === 'devices')
-    assert.ok(d && d.kind === 'devices')
-    assert.equal(d.big, 'Three devices. One library you own.')
-    assert.equal(d.line, 'iPods: 1 play. No signal. No subscription.')
+  it('the iPods count: no device split, just the iPod plays carried home (Jake 10/29)', () => {
+    const c = after.find((x) => x.kind === 'ipod')
+    assert.ok(c && c.kind === 'ipod')
+    assert.equal(c.big, 'Even the iPod counts.')
+    assert.equal(c.line, '1 play, no signal, no subscription, all carried home.')
+    assert.equal(c.plays, 1)
+    assert.deepEqual(c.tiles.map((t) => t.play), [{ kind: 'song', artist: 'Drake', title: 'Hotline Bling' }])
+    assert.deepEqual(c.play, { kind: 'song', artist: 'Drake', title: 'Hotline Bling' })
+    assert.doesNotMatch(JSON.stringify(after), /workmini|Laptop|devices\./, 'no workmini / laptop / phone split anywhere')
+    const none = buildStory({ ...y, ipod: { plays: 0, songs: 0, top: [] } }, { now: new Date(2026, 11, 17, 1), concerts })
+    assert.equal(none.some((x) => x.kind === 'ipod'), false, 'no iPod plays, no card')
   })
 
   it('the Top 1000 chapter is the measured numbers, nothing else', () => {

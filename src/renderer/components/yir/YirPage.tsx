@@ -8,7 +8,7 @@
 import { useAudio } from '../../hooks/useAudio'
 import YirImg, { type YirCtx } from './YirImg'
 import { findSong, albumSongs } from './yirData'
-import { n, dayName, hour12, isRevealed, deviceRows, pctOf } from '../../../common/yir-story'
+import { n, dayName, hour12, isRevealed, pctOf } from '../../../common/yir-story'
 import { localParts } from '../../../common/year-in-review'
 import type { YirFacts } from './yirData'
 
@@ -39,8 +39,7 @@ export default function YirPage({ y, ctx, onStory }: { y: YirFacts; ctx: YirCtx;
   const hMax = Math.max(...y.clock.byHour), wMax = Math.max(...y.clock.byWeekday)
   const fbm = Object.entries(D.foundByMonth).sort(([a], [b]) => a.localeCompare(b))
   const fMax = Math.max(1, ...fbm.map(([, v]) => v))
-  const devs = deviceRows(C.playsByDevice ?? {})
-  const ipod = devs.find((d) => d.name === 'iPods')
+  const ipod = y.ipod
   const aoty = y.topArtists[0]?.name.trim().toLowerCase()
   const seatsOfAoty = K?.variety.topArtists.find((a) => a.name.trim().toLowerCase() === aoty)
   const decMax = Math.max(1, ...(K?.variety.decades.map((d) => d.seats) ?? []))
@@ -129,15 +128,23 @@ export default function YirPage({ y, ctx, onStory }: { y: YirFacts; ctx: YirCtx;
         </section>
       )}
 
-      {devs.length >= 2 && (
+      {ipod && ipod.plays > 0 && (
         <section>
-          <div className="yir-p-eyebrow">Your world</div>
-          <h2>{devs.length} devices. <em>One library</em> you own.</h2>
-          <p className="yir-p-lede">Every play was music on your own drives.{ipod ? ` The iPods logged ${n(ipod.plays)} of them with no signal and no subscription.` : ''}</p>
-          <div className="yir-p-devs">
-            {devs.map((d, k) => <div key={d.name}><span className={k === 0 ? 'hot' : ''} style={{ width: pct(d.plays, devs[0].plays) }} /><em><b>{d.name}</b> {n(d.plays)} · {d.pct}%</em></div>)}
-          </div>
-          <p className="yir-p-foot">Where the plays happened.</p>
+          <div className="yir-p-eyebrow">Off the grid</div>
+          <h2>Even the <em>iPod</em> counts.</h2>
+          <p className="yir-p-lede">{n(ipod.plays)} plays on your iPods, {n(ipod.songs)} different songs: no signal, no subscription, all carried home to one JakeTunes.</p>
+          <ol className="yir-p-chart">
+            {ipod.top.slice(0, 5).map((s, k) => (
+              <li key={`${s.artist}|${s.name}`}>
+                <button type="button" onClick={() => playSong(s.artist ?? '', s.name)} title={`Play ${s.name}`}>
+                  <span className="yir-p-rank">{k + 1}</span>
+                  <YirImg image={{ kind: 'song', artist: s.artist ?? '', title: s.name }} ctx={ctx} className="yir-p-sm" size={120} />
+                  <span className="yir-p-who"><b>{s.name}</b><i>{s.artist}</i></span>
+                  <span className="yir-p-num">{s.plays}</span>
+                </button>
+              </li>
+            ))}
+          </ol>
         </section>
       )}
 

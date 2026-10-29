@@ -153,14 +153,6 @@
 .yir-berg em { font-style: normal; text-align: right; font-variant-numeric: tabular-nums; opacity: 0.85; }
 .yir-berg-0 { background: #ffffff; } .yir-berg-1 { background: #cfe3ee; } .yir-berg-2 { background: #8fbcd6; } .yir-berg-3 { background: #4f8db2; } .yir-berg-4 { background: #1d4a6b; }
 
-/* Where the plays happened (2026-10-29): his machines, one bar each. */
-.yir-devs { display: grid; gap: 14px; margin: 18px 0 10px; }
-.yir-devs > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; align-items: baseline; }
-.yir-devs b { font-size: clamp(17px, 2.6cqb, 24px); font-weight: 900; letter-spacing: -0.3px; }
-.yir-devs small { grid-column: 2; grid-row: 1; font-size: 13px; opacity: 0.8; font-variant-numeric: tabular-nums; }
-.yir-devs .yir-track { grid-column: 1 / -1; grid-row: 2; display: block; margin: 6px 0 0; }
-.yir-devs .lead .yir-track i { background: var(--yir-orange); }
-
 .yir-seeall {
   align-self: flex-start; margin-top: 14px; padding: 9px 16px; border-radius: 18px; border: 0; cursor: pointer;
   font: inherit; font-size: 13px; font-weight: 800; background: var(--yir-orange); color: var(--yir-cream);
@@ -261,11 +253,6 @@
 .yir-p-tapes li { display: grid; background: #fff; border: 1px solid #e2e4e8; border-radius: 10px; padding: 10px 14px; }
 .yir-p-tapes i { font-style: normal; color: #555a61; font-size: 12px; }
 
-.yir-p-devs { display: grid; gap: 6px; margin-top: 8px; }
-.yir-p-devs div { display: grid; grid-template-columns: 1fr; position: relative; height: 22px; align-items: center; }
-.yir-p-devs span { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(252, 85, 1, 0.14); border-radius: 4px; }
-.yir-p-devs span.hot { background: rgba(252, 85, 1, 0.28); }
-.yir-p-devs em { position: relative; font-style: normal; padding-left: 8px; font-size: 12.5px; font-variant-numeric: tabular-nums; color: #16181b; }
 .yir-p-h3 { margin: 26px 0 10px; font-size: 18px; font-weight: 850; letter-spacing: -0.3px; }
 .yir-p-wink { margin-top: 14px; }
 .yir-p-t1k .yir-p-moments { margin: 6px 0 4px; }
@@ -357,17 +344,18 @@ span.yir-tile { cursor: default; }
 .yir-seats { margin-bottom: 12px; }
 .yir-seat-grid { display: grid; grid-template-columns: repeat(var(--cols), 1fr); gap: 1px; }
 .yir-seat-grid i { display: block; aspect-ratio: 1; border-radius: 1px; }
-.yir-seat-key { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 10px; font-size: 11.5px; font-weight: 700; }
-.yir-seat-key i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.yir-seat-key { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 10px; font-size: 13px; font-weight: 700; }
+.yir-seat-key i { display: inline-block; width: 11px; height: 11px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
 .yir-seat-key .hot { color: var(--yir-orange); }
 
-/* Number ones: covers that flip over one by one. */
-.yir-champs { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 10px; margin: 6px 0 12px; perspective: 800px; }
-.yir-champ { appearance: none; border: 0; background: none; color: inherit; font: inherit; padding: 0; text-align: left; cursor: pointer; display: grid; gap: 2px; min-width: 0; }
-.yir-flip { display: block; width: 100%; aspect-ratio: 1; }
-.yir-champ em { font-style: normal; font-size: 9.5px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: var(--yir-orange); margin-top: 4px; }
-.yir-champ b { font-size: 13px; font-weight: 850; line-height: 1.15; overflow-wrap: anywhere; }
-.yir-champ small { font-size: 11px; opacity: 0.75; font-variant-numeric: tabular-nums; }
+/* Number ones: one row a genre — the cover flips over, then the genre, the song, its overall
+   rank (12 px and up: readable on a phone-sized Story). */
+.yir-champs { display: grid; gap: 9px; margin: 6px 0 12px; perspective: 800px; }
+.yir-champ { appearance: none; border: 0; background: none; color: inherit; font: inherit; padding: 0; text-align: left; cursor: pointer; display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; column-gap: 12px; align-items: center; }
+.yir-flip { display: block; width: 56px; height: 56px; grid-row: span 2; }
+.yir-champ em { font-style: normal; font-size: 12px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: var(--yir-orange); align-self: end; }
+.yir-champ b { font-size: 16px; font-weight: 850; line-height: 1.15; overflow-wrap: anywhere; align-self: start; }
+.yir-champ small { grid-column: 3; grid-row: 1 / span 2; font-size: 12.5px; font-weight: 700; opacity: 0.8; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* The record of the year spins like vinyl while it plays. */
 .yir-vinyl { position: relative; width: min(100%, 52cqb); aspect-ratio: 1; margin: 0 auto 18px; border-radius: 50%; overflow: hidden; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55), 0 0 0 10px #0b0a09; }
@@ -442,8 +430,8 @@ span.yir-tile { cursor: default; }
 .yir-export-stage { width: 540px; height: 960px; overflow: hidden; background: #000; }
 .yir-card.yir-export { width: 540px; height: 960px; aspect-ratio: auto; border-radius: 0; box-shadow: none; }
 .yir-export .yir-body { padding: 143px 36px 210px; -webkit-mask-image: linear-gradient(to bottom, transparent 0, transparent 125px, #000 125px, #000 790px, transparent 790px); mask-image: linear-gradient(to bottom, transparent 0, transparent 125px, #000 125px, #000 790px, transparent 790px); }
-.yir-export-mark { position: absolute; left: 50%; bottom: 173px; transform: translateX(-50%); z-index: 5; display: flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 14px; background: rgba(0, 0, 0, 0.45); color: rgba(255, 255, 255, 0.92); font: 800 10px -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: 0.6px; white-space: nowrap; }
-.yir-export-mark svg { width: 9px; height: 11px; }
+.yir-export-mark { position: absolute; right: 30px; bottom: 182px; z-index: 5; display: flex; align-items: center; gap: 7px; color: rgba(255, 255, 255, 0.85); font: 800 15px -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: 2.5px; white-space: nowrap; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.35); }
+.yir-export-mark i { width: 17px; height: 17px; border-radius: 50%; background: radial-gradient(circle, rgba(199, 199, 199, 0.9) 0 32%, rgba(237, 237, 237, 0.9) 33%); }
 .yir-last-actions { display: flex; gap: 8px; flex-wrap: wrap; pointer-events: auto; }
 .yir-seeall--quiet { background: rgba(246, 241, 234, 0.14); }
 /* Live: every show he went to — poster or photo, where and when, a few songs of the setlist. */
@@ -467,3 +455,21 @@ span.yir-tile { cursor: default; }
 /* A Story clip starts on the card itself: no card-to-card entrance (it would show the stage
    at the edges of the frame). */
 .yir-card.yir-export { animation: none !important; }
+
+/* The iPods count (2026-10-29): an iPod with its most-played covers on the screen. */
+.yir-ipod { position: relative; display: grid; justify-items: center; gap: 10px; margin-bottom: 12px; }
+.yir-ipod-body { width: min(52%, 24cqb); border-radius: 22px; padding: 7% 7% 9%; background: linear-gradient(160deg, #f4f4f4, #cfcfcf); box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.9); display: grid; grid-template-rows: auto 1fr; }
+.yir-ipod-screen { border-radius: 6px; background: #10100f; padding: 6px; box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.5); }
+.yir-ipod-covers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; }
+.yir-ipod-covers .yir-tile-img { border-radius: 2px; }
+.yir-ipod-count { margin-top: 6px; text-align: center; color: #f6f1ea; font-size: 12px; font-weight: 700; }
+.yir-ipod-count b { font-size: 20px; font-weight: 900; color: var(--yir-orange); font-variant-numeric: tabular-nums; margin-right: 4px; }
+.yir-ipod-wheel { position: relative; align-self: center; justify-self: center; margin-top: 9%; width: 64%; aspect-ratio: 1; border-radius: 50%; background: linear-gradient(160deg, #fbfbfb, #e2e2e2); box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.12); display: grid; place-items: center; }
+.yir-ipod-wheel span { position: absolute; top: 9%; font-size: 9px; font-weight: 700; color: #8c8c8c; letter-spacing: 0.5px; }
+.yir-ipod-wheel i { width: 38%; aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle at 40% 35%, #fdfdfd, #e3e3e3); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08); }
+.yir-ipod-mark { display: flex; align-items: center; gap: 6px; font: 800 11px -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: 2.5px; opacity: 0.85; }
+.yir-ipod-mark i { width: 12px; height: 12px; border-radius: 50%; background: radial-gradient(circle, rgba(199, 199, 199, 0.95) 0 32%, rgba(237, 237, 237, 0.95) 33%); }
+.yir-k-ipod { background: var(--yir-ink); color: var(--yir-cream); }
+.yir-k-ipod .yir-body { justify-content: flex-end; }
+.yir-k-ipod .yir-big { font-size: clamp(30px, min(7cqb, 10cqi), 60px); letter-spacing: -1.5px; }
+.yir-export .yir-ipod-body { width: 160px; }

@@ -11,6 +11,7 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 import { buildStory, type Slide } from '../../../common/yir-story'
+import { STORY_SAFE } from '../../../common/friend-share-card'
 import { buildNormalizedArtworkIndex } from '../../utils/artworkLookup'
 import { useStoryConcerts } from './yirData'
 import { ensureLiveSetsLoaded } from '../../liveSets'
@@ -29,8 +30,8 @@ declare global {
   }
 }
 
-/** Instagram's covered bands, in the frame's CSS pixels (the frame is 540×960 at 2×). */
-export const YIR_STORY_BANDS = { top: 125, bottom: 170 }
+/** Instagram's covered bands (friend-share's STORY_SAFE), in the frame's CSS pixels (540×960 at 2×). */
+export const YIR_STORY_BANDS = { top: STORY_SAFE.top / 2, bottom: STORY_SAFE.bottom / 2 }
 
 export function YirStoryFrame({ slide, ctx, ms, card }: { slide: Slide; ctx: YirCtx; ms: number; card: number }): JSX.Element {
   return (
@@ -40,11 +41,9 @@ export function YirStoryFrame({ slide, ctx, ms, card }: { slide: Slide; ctx: Yir
         <div className="yir-body">
           <SlideBody slide={slide} ctx={ctx} playing={null} beat={null} onPlayRow={() => {}} />
         </div>
-        {/* Stand-in for the shared desktop Story exporter's mark (friend-share): one mark, swap it in when it lands. */}
-        <div className="yir-export-mark" aria-hidden="true">
-          <svg viewBox="0 0 10 12"><path d="M4 0h6v3H6v6.5A2.5 2.5 0 1 1 4 7.6z" fill="#fd5601" /></svg>
-          JakeTunes · Year in Review
-        </div>
+        {/* The one JakeTunes Story mark (JakeTunesMobile StoryShare.signed): the click-wheel dot and
+            the JAKETUNES wordmark, bottom right, just inside Instagram's safe zone. */}
+        <div className="yir-export-mark" aria-hidden="true"><i />JAKETUNES</div>
       </div>
     </YirClock.Provider>
   )

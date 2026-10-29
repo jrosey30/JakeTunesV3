@@ -68,6 +68,20 @@ describe('the facts', () => {
     assert.deepEqual(wide.range, { artists: 3, genres: 3, widestDay: { date: '2026-07-02', genres: 3, artists: 3, plays: 3 } })
   })
 
+  it('the iPods: every play recorded offline and carried home, and its most played', () => {
+    const y2 = buildYearInReview({
+      year: 2026, library: [],
+      listens: [
+        L('2026-09-01T14:00:00Z', 'The Walkmen', 'The Rat', 'play', { device: 'ipod' }),
+        L('2026-09-01T15:00:00Z', 'The Walkmen', 'The Rat', 'play', { device: 'ipod' }),
+        L('2026-09-01T16:00:00Z', 'Alex Lahey', 'Money', 'play', { device: 'ipod' }),
+        L('2026-09-01T17:00:00Z', 'Geese', 'Taxes', 'play', { device: 'phone' }),
+        L('2026-09-01T18:00:00Z', 'Geese', 'Taxes', 'skip', { device: 'ipod' }),
+      ],
+    })
+    assert.deepEqual(y2.ipod, { plays: 3, songs: 2, top: [{ name: 'The Rat', artist: 'The Walkmen', plays: 2 }, { name: 'Money', artist: 'Alex Lahey', plays: 1 }] })
+  })
+
   it('counts plays only, this year only', () => {
     assert.equal(yir.totals.plays, 5)
     assert.deepEqual(yir.honesty, { skips: 1, glances: 1, mechanical: 1, realSkipRate: Math.round((1 / 6) * 10000) / 10000 })

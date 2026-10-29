@@ -23,8 +23,6 @@ export type StoryPlay = { kind: 'song'; artist: string; title: string } | { kind
 
 export interface StoryRow { name: string; sub: string; plays: number; image: StoryImage; play?: StoryPlay }
 
-/** One device's share of the plays (the "where the plays happened" card). */
-export interface DeviceRow { name: string; plays: number; pct: number }
 
 /** The best-ranked Top 1000 song of one genre bracket; `rank` is its place in the whole 1000. */
 export interface ChampionRow { bracket: string; title: string; artist: string; rank: number; image: StoryImage; play: StoryPlay }
@@ -60,7 +58,9 @@ export type Slide =
   | { kind: 'lanes'; eyebrow: string; big: string; rows: StoryRow[]; line: string }
   | { kind: 'number'; eyebrow: string; big: string; line: string; viz?: Viz; play?: StoryPlay }
   | { kind: 'iceberg'; eyebrow: string; big: string; layers: number[]; line: string }
-  | { kind: 'devices'; eyebrow: string; big: string; rows: DeviceRow[]; line: string }
+  /** The iPods count (Jake 10/29): an iPod whose screen shows its most-played covers and the
+   *  play count ticking up. */
+  | { kind: 'ipod'; eyebrow: string; big: string; line: string; plays: number; tiles: Tile[]; play?: StoryPlay }
   | { kind: 'champions'; eyebrow: string; big: string; rows: ChampionRow[]; line: string; play?: StoryPlay }
   | { kind: 'end'; eyebrow: string; big: string; line: string; viz?: Viz }
 
@@ -87,9 +87,6 @@ export function hour12(h: number): string {
   if (h === 12) return 'noon'
   return `${h % 12} ${h < 12 ? 'AM' : 'PM'}`
 }
-/** The plays log's device keys, as the card names them. */
-export const DEVICE_NAMES: Record<string, string> = { workmini: 'workmini', laptop: 'Laptop', ipod: 'iPods', phone: 'Phone' }
-export const deviceName = (key: string): string => DEVICE_NAMES[key] ?? key
 /** Whole percent of a total, rounded like Math.round. */
 export const pctOf = (v: number, total: number): number => (total > 0 ? Math.round((100 * v) / total) : 0)
 const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
@@ -113,15 +110,6 @@ function race(top: Ranked[]): { big: string; line: string } {
   const byTime = [...field].sort((x, y) => (y.minutes ?? 0) - (x.minutes ?? 0))
   if (byTime[0] === a) return { big, line: `Tiebreak on time: ${a.name}, ${hours(a)} hours to ${hours(byTime[1])}.` }
   return { big, line: `${a.name} on plays, ${byTime[0].name} on time: ${hours(byTime[0])} hours to ${hours(a)}.` }
-}
-
-/** Devices by plays, most first, each with its whole-percent share. */
-export function deviceRows(byDevice: Record<string, number>): DeviceRow[] {
-  const total = Object.values(byDevice).reduce((a, b) => a + b, 0)
-  return Object.entries(byDevice)
-    .filter(([, v]) => v > 0)
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([k, v]) => ({ name: deviceName(k), plays: v, pct: pctOf(v, total) }))
 }
 
 const fold = (s: string | undefined): string => (s ?? '').trim().toLowerCase()
@@ -282,14 +270,16 @@ export function buildStory(y: YearInReview, opts: { now: Date; concerts?: StoryC
     })
   }
 
-  // Where the plays happened: his own machines, one library (out of the skips — the skips are gone).
-  const devices = deviceRows(y.coverage.playsByDevice ?? {})
-  if (devices.length >= 2) {
-    const k = devices.length
-    const ipod = devices.find((d) => d.name === DEVICE_NAMES.ipod)
+  // The iPods count (Jake 10/29: "the 4 devices are dumb. but, it should brag that it does count
+  // the ipod"): phone, MacBook, homemini and workmini are one JakeTunes; the iPods play offline
+  // and every play still comes home.
+  const ip = y.ipod
+  if (ip && ip.plays > 0) {
+    const tiles = varied(ip.top.map((s) => songTile(s.artist ?? '', s.name)), 9)
     slides.push({
-      kind: 'devices', eyebrow: 'Where the plays happened', big: `${WORDS[k] ?? n(k)} devices. One library you own.`, rows: devices,
-      line: ipod ? `iPods: ${n(ipod.plays)} play${ipod.plays === 1 ? '' : 's'}. No signal. No subscription.` : `${devices[0].name} played ${devices[0].pct}%.`,
+      kind: 'ipod', eyebrow: 'Off the grid', big: `Even the iPod counts.`,
+      line: `${n(ip.plays)} play${ip.plays === 1 ? '' : 's'}, no signal, no subscription, all carried home.`,
+      plays: ip.plays, tiles, play: tiles[0]?.play,
     })
   }
 
