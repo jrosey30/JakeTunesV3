@@ -61,7 +61,7 @@ export const GENRE_DEPTH: Readonly<Record<string, 1 | 2 | 3 | 4>> = {
   "Darkwave": 4, "Disco House": 4, "Dub-Hop": 4, "Electro Swing": 4, "Future Funk": 4, "Garage Punk": 4,
   "Global Psych": 4, "Indie Groove": 4, "Israeli Hip-Hop": 4, "Italo Disco": 4, "Jangle Pop": 4, "Jazz Pop": 4,
   "Latin House": 4, "Latin Jazz": 4, "Latin Rock": 4, "MPB": 4, "Nu Disco": 4, "Nu Funk": 4, "Nu Jazz": 4,
-  "Old School Hip-Hop": 4, "Tech House": 4,
+  "Old School Hip-Hop": 4, "Plunderphonics": 4, "Tech House": 4,
 }
 
 const FAMILY = new Map(GENRES.map((g) => [g.name, g.area]))
