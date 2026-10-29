@@ -81,20 +81,19 @@ interface CardProps {
 
 // ── "More fun" (2026-10-29; twin of the phone's ConcertFun.swift) ─────────
 // The photo is the hero (the artist page's header photo, else the app's
-// photo when its short side is 500+ px, else initials); a ticket stub on it
+// usual photo, else initials); a ticket stub on it
 // ("TONIGHT" glows); a click plays 15 s of his most-played song by the act
 // (equalizer; stops when the card leaves the screen); Going lands a "GOING"
 // stamp; the photo drifts with the rail (CSS scroll timeline). Reduce Motion
 // (prefers-reduced-motion) stills all of it (home.css).
 
 const appPhotoSlugs = new Map<string, string | null>()
-const PHOTO_MIN_SIDE = 500
 
 function ConcertPhoto({ name }: { name: string }) {
   const { state: profile } = useArtistProfile(name)
   const hero = profile.profile?.hero ? profile.photos[profile.profile.hero.url] ?? null : null
   const [app, setApp] = useState<string | null>(appPhotoSlugs.get(name) ?? null)
-  const [big, setBig] = useState<boolean | null>(null)
+  const [failed, setFailed] = useState(false)
   useEffect(() => {
     if (hero || appPhotoSlugs.has(name)) return
     let live = true
@@ -105,20 +104,19 @@ function ConcertPhoto({ name }: { name: string }) {
     return () => { live = false }
   }, [name, hero])
   const slug = hero ?? app
-  if (slug && (hero || big !== false)) {
+  // Never worse than before the fun row (Jake 10/29 "where are the
+  // images??!!!"): the artist page's header photo is preferred, but the app's
+  // usual photo always shows when there is one — a small photo is not dropped
+  // for initials. Initials only when the act has no photo at all.
+  if (slug && !failed) {
     return (
       <img
-        className={`home-concert-photo-img${hero || big ? '' : ' home-concert-photo-img--checking'}`}
+        className="home-concert-photo-img"
         src={`artist-image://${slug}.jpg`}
         alt=""
         draggable={false}
         decoding="async"
-        onLoad={(e) => {
-          if (hero) return
-          const i = e.currentTarget
-          setBig(Math.min(i.naturalWidth, i.naturalHeight) >= PHOTO_MIN_SIDE)
-        }}
-        onError={() => setBig(false)}
+        onError={() => setFailed(true)}
       />
     )
   }
