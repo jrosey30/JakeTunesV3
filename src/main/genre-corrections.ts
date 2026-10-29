@@ -15,7 +15,8 @@
  *   3. Put back his own Get Info choices the filer filed over (the journal
  *      has his value and time; the song must still wear the filer's word).
  *   4. Corrections, per song still wearing the audited genre:
- *        his (Get Info, phone, or nobody recorded who) → never written; a
+ *        his (Get Info, phone, a check-list File) → untouched, not even listed;
+ *        nobody recorded who (treated as his) → never written; a
  *          high-confidence one goes on his check list as a suggestion (review);
  *        the filer's or the store's → high confidence: filed; medium: filed
  *          under the suggestion and put on the check list (filedAs), so he
@@ -126,8 +127,12 @@ export async function runGenreCorrections(deps: CorrectionsDeps): Promise<Correc
   let checkChanged = false
   for (const c of table.corrections) {
     if (!GENRE_NAMES.has(c.to)) { result.skipped.push({ artist: c.artist, album: c.album, reason: `${c.to} is not on the list` }); continue }
-    const songs = byAlbum(c.artist, c.album).filter((t) => (t.genre || '').trim() === c.from)
+    const all = byAlbum(c.artist, c.album)
+    const songs = all.filter((t) => (t.genre || '').trim() === c.from)
     if (!songs.length) { result.skipped.push({ artist: c.artist, album: c.album, reason: `no song still on ${c.from}` }); continue }
+    // An album he set himself (Get Info, phone, a check-list File) is his
+    // answer already — not even a suggestion (Yard Act "Rock", 10/22).
+    if (all.some((t) => t.genreBy === 'jake' || t.genreBy === 'phone')) { result.skipped.push({ artist: c.artist, album: c.album, reason: `he set it himself (${c.from})` }); continue }
     const his = songs.filter((t) => isHis(t.genreBy) || (!t.genreBy && isSettled(t) && t.genreApproved))
     const ours = songs.filter((t) => !his.includes(t))
     if (ours.length) {

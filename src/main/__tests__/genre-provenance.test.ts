@@ -228,6 +228,13 @@ describe('the audit corrections pass', () => {
     assert.equal(again.ran, false)
     assert.equal(s.persisted.length, n, 'idempotent')
   })
+  it('an album he set himself is not even suggested (Yard Act, Rock via Get Info)', async () => {
+    const s = setup()
+    s.lib[1].genreBy = 'jake'
+    const r = await runGenreCorrections(s.d)
+    assert.ok(!s.check.some((e) => e.ids.includes(2)))
+    assert.ok(r.skipped.some((x) => x.artist === 'Yard Act' && /himself/.test(x.reason)))
+  })
   it('a review entry stays open while his songs wear the old genre; Keep closes it', () => {
     const e: CheckEntry = { key: 'review:x', artist: 'Yard Act', album: 'U', ids: [2], tag: 'Rock', suggested: 'Post-Punk', why: '', at: '', review: true }
     assert.ok(checkEntryOpen(e, new Map([[2, T(2, 'Yard Act', 'U', 'Rock', { genreBy: 'unknown', genreApproved: true })]])))
