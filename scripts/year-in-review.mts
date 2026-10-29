@@ -2,12 +2,18 @@
 //   node scripts/year-in-review.mts --history <listening-history.jsonl> \
 //     --library <library.json> [--live-sets <live-sets.json>] [--mixtapes <mixtapes.json>] \
 //     [--attended <concerts-attended.json>] \
+//     [--taste-ledger <taste-ledger.jsonl>] [--recommendations <recommendations.json>] \
+//     [--reco-attributions <reco-attributions.json>] [--rock-dna <rock-dna.json>] \
+//     [--artist-fans <artist-deezer.json>] [--fame <top1000-fame.json>] [--no-fan-lookup] \
 //     --out <dir> [--year 2026]
-// Writes <out>/year-in-review-<year>.json. Reads its inputs only.
+// Writes <out>/year-in-review-<year>.json, plus <out>/artist-fans-cache.json (Deezer
+// fan counts it looked up for the found-artist fame guard). Reads its other inputs only.
+// The discovery inputs default to the files beside --library (the app's userData), and
+// --fame to ~/JakeTunesState/top1000-fame.json; any that is missing is simply left out.
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
 import { homedir } from 'node:os'
-import { buildYearInReview, type YirConcert, type YirMixtape, type YirAttendedInput } from '../src/common/year-in-review.ts'
+import { buildYearInReview, type YirConcert, type YirMixtape, type YirAttendedInput, type YirFindEvidence, type YirFame } from '../src/common/year-in-review.ts'
 import { tapeTracks } from '../src/common/tape-physics.ts'
 import type { Listen } from '../src/common/listening-history.ts'
 
@@ -53,7 +59,87 @@ if (existsSync(atPath)) {
   } catch { console.warn(`attended shows unreadable at ${atPath}; leaving them out`) }
 }
 
-const yir = buildYearInReview({ year, listens, library, concerts, mixtapes, attended })
+// Found artists (2026-10-29; Jake: "future shouldnt be considered a found artist....i knew
+// about him obviously"). A find needs positive evidence that a JakeTunes surface put the
+// artist in front of him: a Discover card he accepted (not the "You're Missing" lane — that
+// one is for artists he already owns), a Listen List entry, a friend's "from".
+const ud = dirname(libPath)
+const readJson = <T,>(p: string | undefined): T | undefined => {
+  if (!p || !existsSync(p)) return undefined
+  try { return JSON.parse(readFileSync(p, 'utf8')) as T } catch { console.warn(`unreadable: ${p}; leaving it out`); return undefined }
+}
+const evidence: YirFindEvidence[] = []
+const ledgerPath = flag('taste-ledger') ?? join(ud, 'taste-ledger.jsonl')
+if (existsSync(ledgerPath)) {
+  for (const line of readFileSync(ledgerPath, 'utf8').split('\n')) {
+    if (!line.includes('"discover"')) continue
+    try {
+      const e = JSON.parse(line) as { ts?: string; surface?: string; verdict?: string; key?: { artist?: string }; ctx?: { lane?: string } }
+      if (e.surface === 'discover' && e.verdict === 'accept' && e.key?.artist && e.ts && e.ctx?.lane !== 'missing') evidence.push({ artist: e.key.artist, at: e.ts, via: `discover:${e.ctx?.lane ?? ''}` })
+    } catch { /* a torn line is not evidence */ }
+  }
+}
+for (const r of readJson<Array<{ artist?: string; createdAt?: string }>>(flag('recommendations') ?? join(ud, 'recommendations.json')) ?? []) {
+  if (r?.artist && r.createdAt) evidence.push({ artist: r.artist, at: r.createdAt, via: 'listen-list' })
+}
+for (const r of readJson<{ attributions?: Array<{ artist?: string; at?: string; friend?: string }> }>(flag('reco-attributions') ?? join(ud, 'reco-attributions.json'))?.attributions ?? []) {
+  if (r?.artist && r.at) evidence.push({ artist: r.artist, at: r.at, via: `friend:${r.friend ?? ''}` })
+}
+// Rock DNA: an artist he picked or rated (anything but "unfamiliar") is one he knew from then on.
+const known: YirFindEvidence[] = []
+const dna = readJson<{ startedAt?: string; completedAt?: string; answers?: Record<string, { picks?: string[]; at?: string }>; ratings?: Record<string, string> }>(flag('rock-dna') ?? join(ud, 'rock-dna.json'))
+if (dna) {
+  // a-/b- questions pick an artist; the others pick traits, eras, albums or songs.
+  for (const [q, a] of Object.entries(dna.answers ?? {})) if (/^[ab]-/.test(q) && a?.at) for (const p of a.picks ?? []) known.push({ artist: p, at: a.at, via: 'rock-dna' })
+  const at = dna.completedAt || dna.startedAt
+  if (at) for (const [artist, r] of Object.entries(dna.ratings ?? {})) if (r !== 'unfamiliar') known.push({ artist, at, via: 'rock-dna' })
+}
+// Fame: Deezer fans (the artist-photo cache on the laptop, else this script's own lookups),
+// and the top song's Deezer rank from the Top 1000 fame file as the fallback.
+const fame: Record<string, YirFame> = {}
+const key = (s: string | undefined): string => (s || '').toLowerCase().trim()
+const fansCachePath = join(out, 'artist-fans-cache.json')
+const fansCache = readJson<Record<string, { fans: number | null; at: string }>>(fansCachePath) ?? {}
+for (const [name, f] of Object.entries(readJson<Record<string, { fans?: number }>>(flag('artist-fans') ?? join(ud, 'artist-deezer.json')) ?? {})) {
+  if (typeof f?.fans === 'number') fame[key(name)] = { fans: f.fans }
+}
+for (const [name, c] of Object.entries(fansCache)) if (typeof c?.fans === 'number' && !fame[name]) fame[name] = { fans: c.fans }
+const ranks = readJson<{ ranks?: Record<string, [number, number]> }>(flag('fame') ?? join(homedir(), 'JakeTunesState', 'top1000-fame.json'))?.ranks ?? {}
+for (const t of library as Array<{ id: number; artist?: string; albumArtist?: string }>) {
+  const r = ranks[String(t.id)]?.[0]
+  if (typeof r !== 'number') continue
+  const k = key(t.albumArtist || t.artist)
+  fame[k] = { ...fame[k], trackRank: Math.max(fame[k]?.trackRank ?? 0, r) }
+}
+// Look up fans for artists with evidence and no count yet (cached 60 days; best effort).
+if (!args.includes('--no-fan-lookup')) {
+  const stale = Date.now() - 60 * 86_400_000
+  const todo = [...new Set(evidence.map((e) => key(e.artist)))]
+    .filter((k) => k && typeof fame[k]?.fans !== 'number' && !(fansCache[k] && Date.parse(fansCache[k].at) > stale))
+    .slice(0, 400)
+  const deadline = Date.now() + 90_000
+  let looked = 0
+  const worker = async (): Promise<void> => {
+    for (let k = todo.shift(); k !== undefined && Date.now() < deadline; k = todo.shift()) {
+      try {
+        const res = await fetch(`https://api.deezer.com/search/artist?q=${encodeURIComponent(k)}&limit=10`, { signal: AbortSignal.timeout(8000) })
+        const body = await res.json() as { data?: Array<{ name?: string; nb_fan?: number }>; error?: unknown }
+        if (!res.ok || body.error) continue
+        // Same name, several artists ("Love"): the biggest one, so a famous act is never missed.
+        const fans = (body.data ?? []).filter((a) => key(a.name) === k).map((a) => a.nb_fan ?? 0)
+        fansCache[k] = { fans: fans.length ? Math.max(...fans) : null, at: new Date().toISOString() }
+        if (fans.length) fame[k] = { ...fame[k], fans: Math.max(...fans) }
+        looked++
+      } catch { /* offline: the track-rank fallback stands */ }
+      await new Promise((r) => setTimeout(r, 450)) // four workers ≈ 8 a second, under Deezer's 50 per 5 s
+    }
+  }
+  await Promise.all([worker(), worker(), worker(), worker()])
+  if (looked) { mkdirSync(out, { recursive: true }); writeFileSync(fansCachePath, JSON.stringify(fansCache)) }
+}
+console.log(`found-artist evidence: ${evidence.length} (${new Set(evidence.map((e) => key(e.artist))).size} artists) · known ${known.length} · fame ${Object.keys(fame).length}`)
+
+const yir = buildYearInReview({ year, listens, library, concerts, mixtapes, attended, discovery: { evidence, known, fame } })
 mkdirSync(out, { recursive: true })
 writeFileSync(join(out, `year-in-review-${year}.json`), JSON.stringify({ builtAt: new Date().toISOString(), ...yir }, null, 2))
 
