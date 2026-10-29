@@ -1,0 +1,44 @@
+/* Share Song / Share Album (2026-10-29) — brushed-metal sheet like the
+   confirm dialog; orange #FD5601 is the only accent (text uses #C14201). */
+.fshare-overlay {
+  position: fixed; inset: 0; z-index: 9400;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex; align-items: center; justify-content: center;
+}
+.fshare-dialog {
+  width: min(760px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px); overflow: auto;
+  background: linear-gradient(180deg, #ececec 0%, #d6d6d6 100%);
+  border: 1px solid #777; border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  padding: 14px 18px 18px;
+}
+.fshare-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.fshare-eyebrow { font-family: 'pixChicago', var(--font-family); font-size: 13px; letter-spacing: 3px; color: #C14201; }
+.fshare-close, .fshare-row button, .fshare-seg button {
+  font: 600 12px var(--font-family); color: #222;
+  background: linear-gradient(180deg, #fdfdfd 0%, #e2e2e2 100%);
+  border: 1px solid #8a8a8a; border-radius: 6px; padding: 6px 12px; cursor: default;
+}
+.fshare-row button:disabled { opacity: 0.5; }
+.fshare-row button.primary { background: linear-gradient(180deg, #FE6E25 0%, #E64D00 100%); color: #fff; border-color: #b33c00; }
+.fshare-body { display: flex; gap: 18px; align-items: flex-start; }
+.fshare-preview { flex: none; background: #151515; border-radius: 10px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.fshare-preview--story { width: 236px; height: 420px; }
+.fshare-preview--square { width: 300px; height: 300px; }
+.fshare-preview img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.fshare-wait { color: #9a9a9a; font-size: 12px; }
+.fshare-side { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.fshare-seg { display: flex; }
+.fshare-seg button { border-radius: 0; flex: 1; }
+.fshare-seg button:first-child { border-radius: 6px 0 0 6px; }
+.fshare-seg button:last-child { border-radius: 0 6px 6px 0; border-left: none; }
+.fshare-seg button.on { background: linear-gradient(180deg, #FE6E25 0%, #E64D00 100%); color: #fff; border-color: #b33c00; }
+.fshare-label { font-family: 'pixChicago', var(--font-family); font-size: 11px; letter-spacing: 2px; color: #C14201; }
+.fshare-text {
+  margin: 0; padding: 10px 12px; background: #fff; border: 1px solid #b5b5b5; border-radius: 6px;
+  font: 12px/1.5 var(--font-family); color: #1a1a1a; white-space: pre-wrap; overflow-wrap: anywhere;
+  user-select: text; -webkit-user-select: text;
+}
+.fshare-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.fshare-note { font-size: 11px; color: #444; }

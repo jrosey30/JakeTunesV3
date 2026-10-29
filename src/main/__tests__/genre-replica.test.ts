@@ -12,10 +12,10 @@ import { mergeHubCatalog } from '../../common/hub-catalog-merge.ts'
 import { replicaOverlay, pinPendingEdits, recordUserEdit, emptyUserEdits, replicaLiveUpdates, type UserEditsDoc } from '../../common/user-edits.ts'
 import { HUB_OWNED_FIELDS, HUB_DETAIL_OWNED, HUB_CARRIED_FIELDS } from '../user-edits-sync.ts'
 import { filerRole, genreFilerPass, stripReplicaGenres, runReplicaGenreRepair, REPLICA_REPAIR_MARKER } from '../genre-replica.ts'
-import { runGenreRulings, RULINGS, RULINGS_MARKER, type GenreRuling } from '../genre-rulings.ts'
+import { runGenreRulings, RULINGS, RULINGS_ID, RULINGS_MARKER, type GenreRuling } from '../genre-rulings.ts'
 import { genreOwner } from '../genre-provenance.ts'
 import { isSettled, unfiledUnits, trackFingerprint, type FilerTrack, type CheckEntry, type GenreWhy } from '../genre-filer.ts'
-import { GENRE_NAMES } from '../../common/genre-vocab.ts'
+import { GENRE_NAMES, KEPT_ONE_ARTIST } from '../../common/genre-vocab.ts'
 import { robotMayWrite, autoWriteGate } from '../replica-auto-writes.ts'
 import { readFileSync as readSrc } from 'node:fs'
 
@@ -115,13 +115,34 @@ describe('the one-time replica repair', () => {
   })
 })
 
-describe("Jake's ruling: The Avalanches — No Bad Memories is Mashup", () => {
+describe("Jake's ruling: The Avalanches — No Bad Memories is Plunderphonics", () => {
   it('the table names a shelf on his list, all 31 songs', () => {
     const r = RULINGS.find((x) => x.album === 'No Bad Memories')!
-    assert.equal(r.genre, 'Mashup')
-    assert.ok(GENRE_NAMES.has('Mashup'))
+    assert.equal(r.genre, 'Plunderphonics')
+    assert.ok(GENRE_NAMES.has('Plunderphonics'))
     assert.equal(r.ids.length, 31)
     assert.deepEqual([r.ids[0], r.ids[2], r.ids[3], r.ids[30]], [12774, 12776, 12882, 12909])
+  })
+
+  it('Plunderphonics is a new shelf he kept for one band on purpose; Mashup stays Girl Talk', () => {
+    assert.ok(KEPT_ONE_ARTIST.has('Plunderphonics'))
+    assert.ok(GENRE_NAMES.has('Mashup'), 'Mashup is still on the list')
+    assert.ok(!RULINGS.some((r) => r.genre === 'Mashup'), 'the overruled Mashup ruling is gone')
+    assert.notEqual(RULINGS_ID, 'genre-rulings-2026-10-29', 'a new id: a Mac holding the Mashup marker still runs this one')
+  })
+
+  it('the new ruling applies over the overruled Mashup one, even where that one had run', async () => {
+    const tracks: FilerTrack[] = [
+      { id: 1, title: 'a', artist: 'The Avalanches', album: 'No Bad Memories', genre: 'Mashup', duration: 1, genreBy: 'jake' },
+      { id: 2, title: 'b', artist: 'The Avalanches', album: 'No Bad Memories', genre: 'Mashup', duration: 2, genreBy: 'jake' },
+    ]
+    const h = harness(tracks)
+    writeFileSync(join(h.dir, RULINGS_MARKER), JSON.stringify({ id: 'genre-rulings-2026-10-29' }))
+    const r = await runGenreRulings({ ...h.deps, table: { id: RULINGS_ID, rulings: [{ ...RULINGS[0], ids: [1, 2] }] } })
+    assert.equal(r.ran, true)
+    assert.deepEqual(h.persisted.map((p) => p.genre), ['Plunderphonics', 'Plunderphonics'])
+    assert.deepEqual(h.journal.map((j) => j.value), ['Plunderphonics', 'Plunderphonics'])
+    assert.ok(readFileSync(join(h.dir, RULINGS_MARKER), 'utf8').includes(RULINGS_ID))
   })
 
   function harness(tracks: FilerTrack[], check: CheckEntry[] = []) {
@@ -139,7 +160,7 @@ describe("Jake's ruling: The Avalanches — No Bad Memories is Mashup", () => {
       applied: (u: unknown[]) => { applied.push(...u) },
       loadCheck: async () => check,
       saveCheck: async (c: CheckEntry[]) => { saved = c },
-      table: { id: 'test-rulings', rulings: [{ artist: 'The Avalanches', album: 'No Bad Memories', ids: [1, 2], genre: 'Mashup', why: 'test' }] as GenreRuling[] },
+      table: { id: 'test-rulings', rulings: [{ artist: 'The Avalanches', album: 'No Bad Memories', ids: [1, 2], genre: 'Plunderphonics', why: 'test' }] as GenreRuling[] },
     }
     return { dir, deps, persisted, journal, applied, saved: () => saved }
   }
@@ -154,8 +175,8 @@ describe("Jake's ruling: The Avalanches — No Bad Memories is Mashup", () => {
     const h = harness(tracks, check)
     const r = await runGenreRulings(h.deps)
     assert.equal(r.ran, true)
-    assert.deepEqual(h.persisted.map((p) => [p.id, p.genre, p.why?.by, p.why?.how]), [[1, 'Mashup', 'jake', 'ruling'], [2, 'Mashup', 'jake', 'ruling']])
-    assert.deepEqual(h.journal, [{ id: 1, field: 'genre', value: 'Mashup' }, { id: 2, field: 'genre', value: 'Mashup' }])
+    assert.deepEqual(h.persisted.map((p) => [p.id, p.genre, p.why?.by, p.why?.how]), [[1, 'Plunderphonics', 'jake', 'ruling'], [2, 'Plunderphonics', 'jake', 'ruling']])
+    assert.deepEqual(h.journal, [{ id: 1, field: 'genre', value: 'Plunderphonics' }, { id: 2, field: 'genre', value: 'Plunderphonics' }])
     assert.equal(tracks[2].genre, 'Electronic', 'another album is untouched')
     assert.equal(h.applied.length, 2)
     assert.deepEqual(h.saved(), [])
@@ -168,8 +189,8 @@ describe("Jake's ruling: The Avalanches — No Bad Memories is Mashup", () => {
 
   it('once journaled it is his: the filer never moves it again', () => {
     const fp = 'together|the avalanches|198640'
-    assert.equal(genreOwner({ genre: 'Mashup', fp, duration: 198640, inOverrides: true, journal: { v: 'Mashup', at: 5, dur: 198640 } }), 'jake')
-    const t: FilerTrack = { id: 12882, title: 'Together', artist: 'The Avalanches', album: 'No Bad Memories', genre: 'Mashup', duration: 198640, genreApproved: true, genreBy: 'jake' }
+    assert.equal(genreOwner({ genre: 'Plunderphonics', fp, duration: 198640, inOverrides: true, journal: { v: 'Plunderphonics', at: 5, dur: 198640 } }), 'jake')
+    const t: FilerTrack = { id: 12882, title: 'Together', artist: 'The Avalanches', album: 'No Bad Memories', genre: 'Plunderphonics', duration: 198640, genreApproved: true, genreBy: 'jake' }
     assert.ok(isSettled(t))
     assert.deepEqual(unfiledUnits([t]), [])
     assert.equal(trackFingerprint(t), fp)
@@ -178,12 +199,12 @@ describe("Jake's ruling: The Avalanches — No Bad Memories is Mashup", () => {
   it('the replica shows the ruling: hub catalog + hub journal, over an older Electronic typed on workmini', () => {
     const r = { ...row(12882, 'The Avalanches', 'No Bad Memories', 'Electronic') }
     const mine: UserEditsDoc = recordUserEdit(emptyUserEdits(1), r.id, 'genre', 'Electronic', 1_000, { dur: r.duration })
-    const hub = recordUserEdit(emptyUserEdits(1), r.id, 'genre', 'Mashup', 9_000, { dur: r.duration })
-    const pinned = pinPendingEdits([{ ...r, genre: 'Mashup' }], mine, hub, HUB_CARRIED_FIELDS)
-    assert.equal(pinned.upserts[0].genre, 'Mashup', 'his older workmini edit is not pinned over the newer ruling')
+    const hub = recordUserEdit(emptyUserEdits(1), r.id, 'genre', 'Plunderphonics', 9_000, { dur: r.duration })
+    const pinned = pinPendingEdits([{ ...r, genre: 'Plunderphonics' }], mine, hub, HUB_CARRIED_FIELDS)
+    assert.equal(pinned.upserts[0].genre, 'Plunderphonics', 'his older workmini edit is not pinned over the newer ruling')
     const merged = mergeHubCatalog([r], { full: false, version: 'v', upserts: pinned.upserts, removedIds: [] }, { seenIds: ['12882'] })
     const ov = replicaOverlay({ '12882': { fp: fpOf(r), fields: { genre: 'Experimental' } } }, { hubFields: HUB_OWNED_FIELDS, hubDetailFields: HUB_DETAIL_OWNED, rows: rowsMap(merged.tracks as Row[]), mine, hub })
-    assert.equal(shown(merged.tracks[0] as Row, ov.overrides), 'Mashup')
+    assert.equal(shown(merged.tracks[0] as Row, ov.overrides), 'Plunderphonics')
   })
 })
 

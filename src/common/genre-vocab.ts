@@ -1,5 +1,5 @@
 /**
- * Jake's genre list (2026-10-11): 132 genres, one per album, one shelf per
+ * Jake's genre list (2026-10-11; Plunderphonics added 10/29): 133 genres, one per album, one shelf per
  * artist. Approved by him shelf by shelf — the genre filer may ONLY choose from
  * this list, never invent. Generated from the practice run's vocab.py; edit here.
  *
@@ -123,6 +123,7 @@ const RAW: Array<[string, string, string, boolean]> = [
   ["Electronic & Dance", "Electro Swing", "Swing samples on dance beats", false],
   ["Electronic & Dance", "Experimental", "Defies genre on purpose", false],
   ["Electronic & Dance", "Mashup", "Built from other records: Girl Talk", false],
+  ["Electronic & Dance", "Plunderphonics", "Songs built from a collage of samples: The Avalanches", false],
   ["Country, Folk & Blues", "Country", "All country, kept general: classic, outlaw and today's", false],
   ["Country, Folk & Blues", "Folk", "Acoustic folk", false],
   ["Country, Folk & Blues", "Singer-Songwriter", "Song-first storytellers: Jim Croce, Neil Young", false],
@@ -160,7 +161,7 @@ export const ROCK_FAMILY: ReadonlySet<string> = new Set([...GENRES.filter((g) =>
 /** Filed album by album, on purpose (Jake 10/11: King Gizzard changes genre every record). */
 export const PER_ALBUM_ARTISTS: ReadonlySet<string> = new Set(['King Gizzard & The Lizard Wizard'])
 /** One-band genres he kept by choice — never flagged as artist-shaped. */
-export const KEPT_ONE_ARTIST: ReadonlySet<string> = new Set(["Electro Swing", "Geordie Jazz", "Israeli Hip-Hop", "Space Rock"])
+export const KEPT_ONE_ARTIST: ReadonlySet<string> = new Set(["Electro Swing", "Geordie Jazz", "Israeli Hip-Hop", "Plunderphonics", "Space Rock"])
 
 /** Phone edits layered over the desktop's (2026-10-11): a phone genre only wins
  *  when it's a SPECIFIC genre on the list — old phone tags like "Alternative "

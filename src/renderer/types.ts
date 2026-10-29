@@ -1095,6 +1095,10 @@ declare global {
       getBrooklynWeather: () => Promise<{ ok: boolean; weather: { tempF: number; condition: string; description: string } | null }>
       // 2026-10-19 — Home › Shows: homemini's ranked concerts feed; see src/common/concerts-feed.ts.
       concertsGet?: () => Promise<{ ok: boolean; state?: import('../common/concerts-feed').ConcertsFeedState }>
+      concertsRsvps?: () => Promise<{ ok: boolean; items: import('../common/concerts-going').RsvpEntry[] }>
+      concertsSetGoing?: (eventId: string, going: boolean, show?: import('../common/concerts-going').RsvpShow) => Promise<{ ok: boolean }>
+      concertsSetAttended?: (eventId: string, answer: 'yes' | 'no' | null) => Promise<{ ok: boolean }>
+      concertsLately?: (artist: string) => Promise<{ ok: boolean; lately: import('../common/concerts-going').Lately | null }>
       concertsRefresh?: () => Promise<{ ok: boolean; state?: import('../common/concerts-feed').ConcertsFeedState }>
       onConcertsUpdated?: (callback: (state: import('../common/concerts-feed').ConcertsFeedState) => void) => () => void
       // 4.4.34 — MusicBrainz upcoming releases (not yet out) for top
@@ -1129,6 +1133,11 @@ declare global {
       homeSpotlightRefresh?: () => Promise<{ ok: boolean; state?: import('../common/home-spotlight-doc').HomeSpotlightState }>
       onHomeSpotlightUpdated?: (callback: (state: import('../common/home-spotlight-doc').HomeSpotlightState) => void) => () => void
       // 2026-10-20 — the three Home rows under G; see src/common/home-shelves-doc.ts.
+      // 2026-10-29 — friend share; see src/common/friend-share-doc.ts.
+      friendShareInfo?: (trackId: string | number, kind: 'song' | 'album') => Promise<{ ok: true; value: import('../common/friend-share-doc').ShareInfo } | { ok: false; error: string }>
+      friendShareShare?: (item: { text?: string; png?: string; name?: string }) => Promise<{ ok: boolean }>
+      friendShareCopy?: (item: { text?: string; png?: string }) => Promise<{ ok: boolean }>
+      friendShareSave?: (item: { png: string; name?: string }) => Promise<{ ok: boolean; path?: string; canceled?: boolean }>
       top1000Next?: () => Promise<{ ok: true; value: import('../common/top1000-doc').QuizNext } | { ok: false; error: string }>
       top1000Answer?: (input: import('../common/top1000-doc').QuizAnswerInput) => Promise<{ ok: true; value: import('../common/top1000-doc').QuizProgress } | { ok: false; error: string }>
       top1000Undo?: () => Promise<{ ok: true; value: import('../common/top1000-doc').QuizUndo } | { ok: false; error: string }>

@@ -42,6 +42,7 @@ import { declareLiveSet, isDeclareInFlight } from '../liveSetDeclare'
 import { verifyLiveSetCompleteness } from './liveSetCompleteness'
 import { islandMenuEntry } from '../components/IslandAlbumsShelf'
 import { getSyncedPicksSnapshot } from '../syncedPicks'
+import { openFriendShare } from '../components/FriendShareDialog'
 
 type LibraryDispatch = ReturnType<typeof useLibrary>['dispatch']
 type PlaybackDispatch = ReturnType<typeof usePlayback>['dispatch']
@@ -196,6 +197,8 @@ export function songMenuEntries(o: SongMenuOptions): MenuEntry[] {
     ...ratingMenuEntries(selectedTracks, libDispatch),
     { separator: true as const },
     { label: 'Get Info', onClick: o.openGetInfo },
+    // Friend share (2026-10-29): the message (signature + Spotify + Apple Music) and the iPod card.
+    ...(count === 1 ? [{ label: 'Share Song…', onClick: () => openFriendShare({ kind: 'song', track }) }] : []),
     ...artworkItems,
     ...(isStreamingLibrary() ? (() => {
       const dlPaths = selectedTracks.map((t) => t.path).filter(Boolean) as string[]
@@ -293,6 +296,7 @@ export function albumMenuEntries(o: AlbumMenuOptions): MenuEntry[] {
     addToPlaylistEntry(ordered, o.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
     addToIpodPoolEntry(ordered),
     ...(islandEntry ? [islandEntry] : []),
+    ...(ordered.length ? [{ label: 'Share Album…', onClick: () => openFriendShare({ kind: 'album', track: ordered[0], albumTracks: ordered }) }] : []),
     { separator: true as const },
     { label: 'Go to Artist', onClick: () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(album.artist || '') }) },
   ]

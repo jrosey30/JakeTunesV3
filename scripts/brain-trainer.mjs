@@ -29,7 +29,7 @@ import { planMoodPrune } from './brain-prune.mjs'
 import { writeBrainStatus } from './brain-status.mjs'
 import { comparePurity, gateDecision, PURITY_MAX_REGRESSION } from './brain-purity.mjs'
 import { pickBatch } from './brain-batch.mjs'
-import { musicStreamActive, untilMs, redescribeCandidates, candidateDescriptors, promoteNext } from './brain-redescribe.mjs'
+import { musicStreamActive, nightlyTrainerActive, untilMs, redescribeCandidates, candidateDescriptors, promoteNext, staleStaged, describeTrack, PROMPT_VERSION } from './brain-redescribe.mjs'
 import { baseText, moodText, tempoEnergy } from '../src/common/embedding-text.ts'   // Brief 181: the text twins' ONE source of truth (the app imports it too)
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -232,8 +232,11 @@ async function updateMoodIndex(entries, label) {
   }
 }
 
-async function gemmaDescribe(t) {
-  const prompt = `You are a precise music cataloguer. In ONE line (max 18 words), describe the SOUND and MOOD of this track: energy level, tempo feel, instrumentation, emotional tone, and the setting it fits. Name concrete sonic traits and instruments; vary your vocabulary; avoid generic filler. Output ONLY the descriptor, no preamble.\n\nTrack: ${t.artist || '?'} — ${t.title || '?'}\nAlbum: ${t.album || '?'} (${t.year || '?'})\nGenre: ${t.genre || '?'}`
+// The prompt, the stock-word post-check and its one retry live in
+// scripts/brain-redescribe.mjs (describeTrack / describePrompt, PROMPT_VERSION)
+// so tests and scratch A/Bs run the exact same flow without this file's
+// import-time checks. Here: only the Ollama call.
+async function gemmaGenerate(prompt) {
   const r = await fetch(GEMMA_URL, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     // think:false — thinking models (qwen3) otherwise spend the whole token
@@ -242,8 +245,11 @@ async function gemmaDescribe(t) {
     signal: AbortSignal.timeout(GEMMA_MODEL === 'gemma3:4b' ? 30000 : 120000),
   })
   if (!r.ok) throw new Error(`gemma ${r.status}`)
-  let d = String((await r.json()).response || '').trim().replace(/\s+/g, ' ').replace(/^["']|["']$/g, '')
-  return (d.length >= 8 && d.length <= 400) ? d : null
+  return (await r.json()).response
+}
+
+async function gemmaDescribe(t) {
+  return describeTrack(t, gemmaGenerate)
 }
 
 // The main brain's text for a track. Until 2026-10-10 this appended Gemma's
@@ -583,8 +589,8 @@ async function main() {
   // so a multi-night run continues where it stopped. `--until HH:MM` ends the
   // night's window. YIELD RULE: this is the always-on serving box — before
   // every call we check for a MUSIC transcode (cable playout's video ffmpeg
-  // runs 24/7 and does not count) and for critical memory pressure; either
-  // one unloads the model until the coast is clear.
+  // runs 24/7 and does not count), for the 02:00 nightly trainer, and for
+  // critical memory pressure; any one unloads the model until the coast is clear.
   if (process.argv.includes('--redescribe-all')) {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
     const ua = process.argv.indexOf('--until')
@@ -593,6 +599,7 @@ async function main() {
       let ps = ''
       try { ps = execFileSync('/bin/ps', ['-axo', 'command']).toString() } catch { /* can't tell → not busy */ }
       if (musicStreamActive(ps)) return 'music is streaming'
+      if (nightlyTrainerActive(ps)) return 'the nightly trainer is running'
       try {
         const lvl = Number(execFileSync('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level']).toString().trim())
         if (lvl >= 4) return 'memory pressure is critical'
@@ -608,7 +615,8 @@ async function main() {
     const next = existsSync(DESC_NEXT) ? JSON.parse(readFileSync(DESC_NEXT, 'utf8')) : {}
     const persistNext = () => { writeFileSync(DESC_NEXT + '.tmp', JSON.stringify(next)); renameSync(DESC_NEXT + '.tmp', DESC_NEXT) }
     const cands = redescribeCandidates(tracks, desc, next, GEMMA_MODEL)
-    log(`redescribe-all: ${cands.length} track(s) need ${GEMMA_MODEL} descriptors (staged in ${DESC_NEXT}${Number.isFinite(stopAt) ? `, window ends ${new Date(stopAt).toLocaleTimeString()}` : ''})`)
+    const redo = staleStaged(next).length
+    log(`redescribe-all: ${cands.length} track(s) need ${GEMMA_MODEL} descriptors from prompt v${PROMPT_VERSION}${redo ? ` (${redo} staged by an older prompt go first)` : ''} (staged in ${DESC_NEXT}${Number.isFinite(stopAt) ? `, window ends ${new Date(stopAt).toLocaleTimeString()}` : ''})`)
     let n = 0, fails = 0, stopped = false
     const t0 = Date.now()
     for (const t of cands) {
@@ -624,7 +632,7 @@ async function main() {
       if (Date.now() >= stopAt) { stopped = true; break }
       try {
         const d = await gemmaDescribe(t)
-        if (d) { next[String(t.id)] = { d, gm: GEMMA_MODEL, at: new Date().toISOString() }; n++ } else fails++
+        if (d) { next[String(t.id)] = { d, gm: GEMMA_MODEL, pv: PROMPT_VERSION, at: new Date().toISOString() }; n++ } else fails++
       } catch (err) { fails++; log(`describe failed id=${t.id}: ${err.message}`) }
       if ((n + fails) % 50 === 0) {
         persistNext()
@@ -655,7 +663,7 @@ async function main() {
     const dmap = candidateDescriptors(desc, next, { useCurrent: process.argv.includes('--use-current') })
     const entries = tracks.filter(t => t.artist || t.title)
       .map(t => ({ id: t.id, text: moodText(t, dmap[String(t.id)]) })).filter(e => e.text)
-    log(`mood-candidate: embedding ${entries.length} tracks (${Object.keys(next).length} staged descriptors${process.argv.includes('--use-current') ? ' IGNORED, --use-current' : ''})`)
+    log(`mood-candidate: embedding ${entries.length} tracks (${Object.keys(next).length - staleStaged(next).length} staged descriptors at prompt v${PROMPT_VERSION}${process.argv.includes('--use-current') ? ' IGNORED, --use-current' : ''})`)
     const vecs = await openaiEmbed(entries.map(e => e.text))
     const cmap = new Map()
     for (let i = 0; i < entries.length; i++) if (vecs[i]) cmap.set(Number(entries[i].id), vecs[i])
@@ -673,13 +681,17 @@ async function main() {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')
     if (existsSync(DESC)) copyFileSync(DESC, `${DESC}.pre-promote-${stamp}.bak`)
     const changed = promoteNext(desc, next)
+    // Staged by an older prompt (e.g. night 1's "Gritty, mid-tempo" lines):
+    // never promoted. Their tracks stay to-do for --redescribe-all.
+    const skipped = staleStaged(next)
+    if (skipped.length) log(`promote-next: skipping ${skipped.length} staged descriptor(s) from an older prompt (current v${PROMPT_VERSION})`)
     writeFileSync(DESC + '.tmp', JSON.stringify(desc)); renameSync(DESC + '.tmp', DESC)
     const byId = new Map(tracks.map(t => [String(t.id), t]))
     const entries = changed.filter(id => byId.has(id))
       .map(id => ({ id, text: moodText(byId.get(id), desc[id]?.d) })).filter(e => e.text)
     const n = await updateMoodIndex(entries, 'promote-next')
     renameSync(DESC_NEXT, `${DESC_NEXT}.promoted-${stamp}`)
-    writeStatus({ ok: true, mode: 'promote-next', promoted: changed.length, moodVectors: n })
+    writeStatus({ ok: true, mode: 'promote-next', promoted: changed.length, skippedStalePrompt: skipped.length, moodVectors: n })
     log(`promote-next: ${changed.length} descriptor(s) promoted, ${n} mood vector(s) re-embedded. Backup: ${DESC}.pre-promote-${stamp}.bak`)
     return
   }

@@ -294,7 +294,7 @@ describe('phone edits', () => {
     const digest = createHash('sha256')
       .update(JSON.stringify({ names: [...GENRE_NAMES].sort(), catchAll: [...CATCH_ALL].sort() }))
       .digest('hex')
-    assert.equal(digest, '7164c982c4d991fac87d619e8504d48518fcfd9bde0ac0544b6371cd3a8bdbc5',
+    assert.equal(digest, '92cd8500c59edfd248cea2ab205ea013eeeb1a6ef0bc74ada083e9b6978ace34',
       'genre list changed: copy it to JakeTunesMobile backend/src/util/genreVocab.ts and update the digest in both repos')
   })
   it('applied at load (index.ts) and live (App.tsx)', () => {
@@ -310,10 +310,10 @@ describe('locks', () => {
     assert.ok(app.includes("`${(t.title || '').toLowerCase().trim()}|${(t.artist || '').toLowerCase().trim()}|${t.duration || 0}`"))
     assert.equal(trackFingerprint({ id: 1, title: ' Taxes ', artist: 'Geese', duration: 197000 }), 'taxes|geese|197000')
   })
-  it('his list: 132 genres, every name unique, the shelves he chose', () => {
-    assert.equal(GENRES.length, 132)
-    assert.equal(GENRE_NAMES.size, 132)
-    for (const g of ['Midwest Rap', 'Club Rap', 'Math Rock', 'Electro Swing', 'Space Rock', 'Geordie Jazz', 'Israeli Hip-Hop', 'Indie Sleaze']) assert.ok(GENRE_NAMES.has(g), g)
+  it('his list: 133 genres, every name unique, the shelves he chose', () => {
+    assert.equal(GENRES.length, 133)
+    assert.equal(GENRE_NAMES.size, 133)
+    for (const g of ['Midwest Rap', 'Club Rap', 'Math Rock', 'Electro Swing', 'Space Rock', 'Geordie Jazz', 'Israeli Hip-Hop', 'Indie Sleaze', 'Plunderphonics']) assert.ok(GENRE_NAMES.has(g), g)
     for (const g of ['Samba', 'Soul Rock', 'Emo', 'Funk Metal', 'World', 'Electronic', 'Dance', 'Rap', 'Hip-Hop']) assert.ok(!GENRE_NAMES.has(g), `${g} was cut`)
   })
   it('wired: index.ts starts it, App.tsx mirrors it, Settings shows the check list', () => {
