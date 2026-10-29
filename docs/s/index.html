@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JakeTunes</title>
+<meta property="og:title" content="A song from JakeTunes">
+<meta property="og:description" content="Open it in Spotify, Apple Music, YouTube Music or Deezer.">
+<meta name="robots" content="noindex">
+<!--
+  Friend share chooser (2026-10-29). OFF until Jake turns on GitHub Pages for
+  this repo (Settings > Pages > main /docs) and sets SHARE_PAGE_BASE on homemini.
+  Everything about the share rides in the URL FRAGMENT (#k=s&s=<spotify>&i=<apple>
+  &d=<deezer>&t=<title>&r=<artist>), which browsers never send to a server.
+  No music here, no tracking: buttons to public streaming services only,
+  Spotify first. The rules that build the link live in JakeTunesMobile
+  backend/src/util/shareLink.ts (chooserUrl).
+-->
+<style>
+@font-face { font-family: 'pixChicago'; src: url('pixChicago.ttf') format('truetype'); font-display: block; }
+:root { --base: #FCFAFB; --ink: #1a1a1a; --dim: #666; --orange: #FD5601; --orange-text: #C14201; --rule: #d8d8d8; --card: #fff; }
+@media (prefers-color-scheme: dark) { :root { --base: #121212; --ink: #f2f2f2; --dim: #a8a8a8; --orange-text: #FF8A4C; --rule: #333; --card: #1d1d1d; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--base); color: var(--ink); font: 16px/1.4 -apple-system, "Helvetica Neue", sans-serif; }
+main { max-width: 420px; margin: 0 auto; padding: 32px 16px 40px; }
+.eyebrow { font-family: pixChicago, -apple-system, sans-serif; color: var(--orange-text); letter-spacing: 3px; font-size: 13px; }
+.art { width: 100%; aspect-ratio: 1; border-radius: 12px; background: #222 center/cover; margin: 14px 0 16px; box-shadow: 0 10px 30px rgba(0,0,0,.25); }
+h1 { font-family: pixChicago, -apple-system, sans-serif; font-size: 22px; margin: 0 0 4px; overflow-wrap: anywhere; }
+.artist { color: var(--dim); margin: 0 0 22px; overflow-wrap: anywhere; }
+a.svc { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; margin-bottom: 10px; border-radius: 12px; background: var(--card); border: 1px solid var(--rule); color: var(--ink); text-decoration: none; font-weight: 600; }
+a.svc:first-of-type { background: var(--orange); border-color: var(--orange); color: #fff; }
+a.svc span { font-weight: 400; opacity: .75; font-size: 14px; }
+footer { margin-top: 28px; display: flex; align-items: center; gap: 10px; color: var(--dim); font-size: 13px; }
+.wheel { width: 22px; height: 22px; border-radius: 50%; background: radial-gradient(circle, var(--base) 0 30%, #cfcfcf 31% 100%); border: 1px solid var(--rule); }
+.mark { font-family: pixChicago, -apple-system, sans-serif; letter-spacing: 3px; color: var(--ink); }
+.empty { color: var(--dim); }
+</style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">NOW SPINNING</div>
+  <div class="art" id="art" role="img" aria-label="Cover"></div>
+  <h1 id="title">A song from JakeTunes</h1>
+  <p class="artist" id="artist"></p>
+  <nav id="links"></nav>
+  <footer><div class="wheel" aria-hidden="true"></div><span class="mark">JAKETUNES</span><span>from Jake's library</span></footer>
+</main>
+<script>
+(function () {
+  var p = new URLSearchParams(location.hash.slice(1));
+  var kind = p.get('k') === 'a' ? 'album' : 'track';
+  var title = p.get('t') || '', artist = p.get('r') || '';
+  var sp = p.get('s'), am = p.get('i'), dz = p.get('d');
+  var ok = function (v) { return v && /^[A-Za-z0-9]+$/.test(v); };
+  if (title) { document.getElementById('title').textContent = title; document.title = title + ' by ' + artist; }
+  document.getElementById('artist').textContent = artist;
+  var links = [];
+  if (ok(sp)) links.push(['Spotify', 'https://open.spotify.com/' + kind + '/' + sp]);
+  if (ok(am)) links.push(['Apple Music', kind === 'track' ? 'https://music.apple.com/us/song/' + am : 'https://music.apple.com/us/album/' + am]);
+  if (title) links.push(['YouTube Music', 'https://music.youtube.com/search?q=' + encodeURIComponent(artist + ' ' + title), 'search']);
+  if (ok(dz)) links.push(['Deezer', 'https://www.deezer.com/' + kind + '/' + dz]);
+  var nav = document.getElementById('links');
+  if (!links.length) { nav.innerHTML = '<p class="empty">This link is missing its song.</p>'; return; }
+  links.forEach(function (l) {
+    var a = document.createElement('a');
+    a.className = 'svc'; a.href = l[1]; a.rel = 'noopener';
+    a.textContent = l[0];
+    var s = document.createElement('span'); s.textContent = l[2] ? 'search' : 'open';
+    a.appendChild(s); nav.appendChild(a);
+  });
+  // Cover art from Apple's public lookup (JSONP; no key, nothing sent but the id).
+  if (ok(am)) {
+    window.jtCover = function (r) {
+      var x = r && r.results && r.results[0];
+      if (x && x.artworkUrl100) document.getElementById('art').style.backgroundImage = 'url("' + x.artworkUrl100.replace('100x100bb', '600x600bb') + '")';
+    };
+    var sc = document.createElement('script');
+    sc.src = 'https://itunes.apple.com/lookup?id=' + am + '&callback=jtCover';
+    document.body.appendChild(sc);
+  }
+})();
+</script>
+</body>
+</html>

@@ -78,6 +78,7 @@ import { autoWriteGate } from './replica-auto-writes.ts'
 import { startTaxonomyStagedApply } from './taxonomy-staged.ts'
 import { trackFingerprint } from './genre-filer.ts'
 import { registerRockDnaIpc } from './ipc/rock-dna-ipc.ts'
+import { registerFriendShareIpc } from './ipc/friend-share-ipc.ts'
 import { registerReleaseKindsIpc } from './ipc/release-kinds-ipc.ts'
 import { startReleaseKindsJob, effectiveAlbumRows, releaseKindsPath } from './release-kinds.ts'
 import { guardCredits, type CreditTrack } from './ai/credit-guard.ts'
@@ -9269,6 +9270,7 @@ registerTasteIpc(ipc)
 registerGenreFilerIpc(ipc, { libraryTracks: async () => ((await libraryCache.get()) as { tracks?: [] }).tracks ?? [], overrides: async () => (await overridesCache.get()) as Record<string, { fp?: string; fields?: Record<string, string> }>, phoneOverrides: () => mobileMetadataOverridesCache.get(), flushOverrides: () => overridesCache.flush(), isReplica: isHomeminiPlaybackClientCached, updateOverrides: (m) => writeOverridesSerialized(m), recordEdit: (id, field, value, at) => userEdits.record(id, field, value, at), persist: (id, fields, fp) => persistOverrideFields(id, fields, fp).then(() => triggerSync('metadata-edit')), send: (ch, p) => sendToRenderer(ch, p), claude: async (system, user) => { const r = await claudeCall('genre-filer', { model: MODEL_SMART, max_tokens: 2000, system, messages: [{ role: 'user', content: user }] }); const b = r.content[0]; return b && b.type === 'text' ? b.text : '' }, mbThrottle, userAgent: `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)` })
 startTaxonomyStagedApply({ stateDir: STATE_DIR, libraryTracks: async () => ((await libraryCache.get()) as { tracks?: [] }).tracks ?? [], updateOverrides: (m) => writeOverridesSerialized(m), flushOverrides: () => overridesCache.flush(), overrideFlushStats: () => overridesCache.flushStats(), onApplied: (updates) => { sendToRenderer('genre-filer:applied', { updates }); triggerSync('metadata-edit') }, fingerprint: trackFingerprint, log: (m) => console.warn(m) })
 registerRockDnaIpc(ipc)
+registerFriendShareIpc(ipc, { getMainWindow: () => mainWindow })  // Share Song / Share Album (homemini builds the links)
 registerReleaseKindsIpc(ipc, { file: () => releaseKindsPath(STATE_DIR), hubBase: replicaHubBase })  // replica: homemini's copy, never resolved here
 registerYirIpc(ipc)
 registerSyncedPicksIpc(ipc)

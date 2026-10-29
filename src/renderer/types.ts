@@ -1126,6 +1126,11 @@ declare global {
       homeSpotlightRefresh?: () => Promise<{ ok: boolean; state?: import('../common/home-spotlight-doc').HomeSpotlightState }>
       onHomeSpotlightUpdated?: (callback: (state: import('../common/home-spotlight-doc').HomeSpotlightState) => void) => () => void
       // 2026-10-20 — the three Home rows under G; see src/common/home-shelves-doc.ts.
+      // 2026-10-29 — friend share; see src/common/friend-share-doc.ts.
+      friendShareInfo?: (trackId: string | number, kind: 'song' | 'album') => Promise<{ ok: true; value: import('../common/friend-share-doc').ShareInfo } | { ok: false; error: string }>
+      friendShareShare?: (item: { text?: string; png?: string; name?: string }) => Promise<{ ok: boolean }>
+      friendShareCopy?: (item: { text?: string; png?: string }) => Promise<{ ok: boolean }>
+      friendShareSave?: (item: { png: string; name?: string }) => Promise<{ ok: boolean; path?: string; canceled?: boolean }>
       top1000Next?: () => Promise<{ ok: true; value: import('../common/top1000-doc').QuizNext } | { ok: false; error: string }>
       top1000Answer?: (input: import('../common/top1000-doc').QuizAnswerInput) => Promise<{ ok: true; value: import('../common/top1000-doc').QuizProgress } | { ok: false; error: string }>
       top1000Undo?: () => Promise<{ ok: true; value: import('../common/top1000-doc').QuizUndo } | { ok: false; error: string }>

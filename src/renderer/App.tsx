@@ -33,6 +33,7 @@ import ImportQueuePanel from './components/ImportQueuePanel'
 import Breadcrumb from './components/chrome/Breadcrumb'
 import StatusBar from './components/chrome/StatusBar'
 import ConfirmDialog from './components/ConfirmDialog'
+import { FriendShareHost } from './components/FriendShareDialog'
 import BandcampImportToast from './components/BandcampImportToast'
 import { initRecentlyAdded, isRecentlyAdded } from './state/recentlyAdded'
 import {
@@ -2320,6 +2321,7 @@ function AppInner() {
         </div>
       )}
       <BandcampImportToast />
+      <FriendShareHost />
       <Visualizer />
     </div>
   )
