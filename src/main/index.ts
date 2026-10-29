@@ -74,6 +74,7 @@ import { registerArtworkIpc } from './ipc/artwork-ipc.ts'
 import { registerRecommendations, MOBILE_BACKEND_URL, type RecoSource, type RecommendationRecord } from './ipc/recommendations-ipc.ts'
 import { registerTasteIpc, TASTE_LEDGER_PATH } from './ipc/taste-ipc.ts'
 import { registerGenreFilerIpc } from './ipc/genre-filer-ipc.ts'
+import { autoWriteGate } from './replica-auto-writes.ts'
 import { startTaxonomyStagedApply } from './taxonomy-staged.ts'
 import { trackFingerprint } from './genre-filer.ts'
 import { registerRockDnaIpc } from './ipc/rock-dna-ipc.ts'
@@ -7225,6 +7226,7 @@ function buildCynthiaSweepHooks() {
   return {
     getAlbums: cynthiaGetAlbumsSnapshot,
     fetchMbRelease: musicBrainzAlbumLookup,
+    mayAutoApply: autoWriteGate(isHomeminiPlaybackClientCached),   // replica: hub-owned fixes wait for Jake
     applyOverride: async (trackId: number, field: string, value: string, fingerprint: string) => {
       await applyMetadataOverrideInternal(trackId, field, value, fingerprint)
       triggerSync('metadata-edit')

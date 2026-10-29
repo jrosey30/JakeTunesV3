@@ -16,6 +16,8 @@ import { runGenreRulings, RULINGS, RULINGS_MARKER, type GenreRuling } from '../g
 import { genreOwner } from '../genre-provenance.ts'
 import { isSettled, unfiledUnits, trackFingerprint, type FilerTrack, type CheckEntry, type GenreWhy } from '../genre-filer.ts'
 import { GENRE_NAMES } from '../../common/genre-vocab.ts'
+import { robotMayWrite, autoWriteGate } from '../replica-auto-writes.ts'
+import { readFileSync as readSrc } from 'node:fs'
 
 type Row = { id: number; title: string; artist: string; album: string; genre: string; duration: number; [k: string]: unknown }
 const row = (id: number, artist: string, album: string, genre: string): Row => ({ id, title: `t${id}`, artist, album, genre, duration: 200000 + id })
@@ -182,5 +184,32 @@ describe("Jake's ruling: The Avalanches — No Bad Memories is Mashup", () => {
     const merged = mergeHubCatalog([r], { full: false, version: 'v', upserts: pinned.upserts, removedIds: [] }, { seenIds: ['12882'] })
     const ov = replicaOverlay({ '12882': { fp: fpOf(r), fields: { genre: 'Experimental' } } }, { hubFields: HUB_OWNED_FIELDS, hubDetailFields: HUB_DETAIL_OWNED, rows: rowsMap(merged.tracks as Row[]), mine, hub })
     assert.equal(shown(merged.tracks[0] as Row, ov.overrides), 'Mashup')
+  })
+})
+
+describe('no robot writes hub-owned fields on a replica (Cynthia sweep)', () => {
+  it('a replica auto-writes only fields the hub does not carry', () => {
+    for (const f of ['genre', 'albumArtist', 'album', 'title', 'year', 'trackCount', 'discCount', 'trackNumber', 'subgenre', 'origin']) {
+      assert.equal(robotMayWrite('replica', f), false, `${f} is the hub's`)
+      assert.equal(robotMayWrite('hub', f), true, `the hub still fixes ${f}`)
+    }
+    assert.equal(robotMayWrite('replica', 'lyricsNote'), true, 'a field the hub never carries is still fixable here')
+  })
+
+  it("the gate: replica no, hub yes, can't tell → no", async () => {
+    assert.equal(await autoWriteGate(async () => true)('albumArtist'), false)
+    assert.equal(await autoWriteGate(async () => false)('albumArtist'), true)
+    assert.equal(await autoWriteGate(async () => { throw new Error('settings unreadable') })('genre'), false)
+  })
+
+  it('both Cynthia auto-apply sites ask the gate, and the app wires it with the replica check', () => {
+    const here = new URL('.', import.meta.url).pathname
+    const sweep = readSrc(join(here, '..', 'cynthia-sweep.ts'), 'utf-8')
+    const sites = sweep.match(/if \(f\.provable && [^\n]*\{/g) ?? []
+    assert.equal(sites.length, 2)
+    for (const s of sites) assert.match(s, /await hooks\.mayAutoApply\?\.\(f\.field\) \?\? true/)
+    assert.equal((sweep.match(/hooks\.applyOverride\(/g) ?? []).length, 2, 'no third auto-apply site slipped past the gate')
+    const idx = readSrc(join(here, '..', 'index.ts'), 'utf-8')
+    assert.match(idx, /mayAutoApply: autoWriteGate\(isHomeminiPlaybackClientCached\)/)
   })
 })
