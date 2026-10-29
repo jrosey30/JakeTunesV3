@@ -4,16 +4,17 @@
 //     [--attended <concerts-attended.json>] \
 //     [--taste-ledger <taste-ledger.jsonl>] [--recommendations <recommendations.json>] \
 //     [--reco-attributions <reco-attributions.json>] [--rock-dna <rock-dna.json>] \
+//     [--top1000-answers <top1000-answers.jsonl>] \
 //     [--artist-fans <artist-deezer.json>] [--fame <top1000-fame.json>] [--no-fan-lookup] \
 //     --out <dir> [--year 2026]
 // Writes <out>/year-in-review-<year>.json, plus <out>/artist-fans-cache.json (Deezer
 // fan counts it looked up for the found-artist fame guard). Reads its other inputs only.
 // The discovery inputs default to the files beside --library (the app's userData), and
-// --fame to ~/JakeTunesState/top1000-fame.json; any that is missing is simply left out.
+// --fame and --top1000-answers to ~/JakeTunesState/; any that is missing is simply left out.
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { homedir } from 'node:os'
-import { buildYearInReview, type YirConcert, type YirMixtape, type YirAttendedInput, type YirFindEvidence, type YirFame } from '../src/common/year-in-review.ts'
+import { buildYearInReview, FOUND_SOURCES, type YirConcert, type YirMixtape, type YirAttendedInput, type YirFindEvidence, type YirFame } from '../src/common/year-in-review.ts'
 import { tapeTracks } from '../src/common/tape-physics.ts'
 import type { Listen } from '../src/common/listening-history.ts'
 
@@ -60,9 +61,10 @@ if (existsSync(atPath)) {
 }
 
 // Found artists (2026-10-29; Jake: "future shouldnt be considered a found artist....i knew
-// about him obviously"). A find needs positive evidence that a JakeTunes surface put the
-// artist in front of him: a Discover card he accepted (not the "You're Missing" lane — that
-// one is for artists he already owns), a Listen List entry, a friend's "from".
+// about him obviously"). Jake chose "Not famous + new": first downloaded this year, not a
+// household name, nothing saying he knew them before. Discovery evidence — a Discover card he
+// accepted (not the "You're Missing" lane, which is for artists he already owns), a Listen
+// List entry, a friend's "from" — is a plus: from before the download it rescues a borderline name.
 const ud = dirname(libPath)
 const readJson = <T,>(p: string | undefined): T | undefined => {
   if (!p || !existsSync(p)) return undefined
@@ -94,6 +96,18 @@ if (dna) {
   const at = dna.completedAt || dna.startedAt
   if (at) for (const [artist, r] of Object.entries(dna.ratings ?? {})) if (r !== 'unfamiliar') known.push({ artist, at, via: 'rock-dna' })
 }
+// Top 1000: every song he judged (both sides of a pick) says he knew that artist from then on.
+const t1kPath = flag('top1000-answers') ?? join(homedir(), 'JakeTunesState', 'top1000-answers.jsonl')
+if (existsSync(t1kPath)) {
+  const byId = new Map((library as Array<{ id: number; artist?: string; albumArtist?: string }>).map((t) => [String(t.id), t.albumArtist || t.artist || '']))
+  for (const line of readFileSync(t1kPath, 'utf8').split('\n')) {
+    if (!line.trim()) continue
+    try {
+      const a = JSON.parse(line) as { at?: string; ids?: Array<string | number> }
+      if (a.at) for (const id of a.ids ?? []) { const artist = byId.get(String(id)); if (artist) known.push({ artist, at: a.at, via: 'top1000' }) }
+    } catch { /* torn line */ }
+  }
+}
 // Fame: Deezer fans (the artist-photo cache on the laptop, else this script's own lookups),
 // and the top song's Deezer rank from the Top 1000 fame file as the fallback.
 const fame: Record<string, YirFame> = {}
@@ -111,27 +125,51 @@ for (const t of library as Array<{ id: number; artist?: string; albumArtist?: st
   const k = key(t.albumArtist || t.artist)
   fame[k] = { ...fame[k], trackRank: Math.max(fame[k]?.trackRank ?? 0, r) }
 }
-// Look up fans for artists with evidence and no count yet (cached 60 days; best effort).
+// Look up fans for every artist with a store download this year and no count yet (cached
+// 60 days, so after the first night only newcomers are looked up; best effort).
 if (!args.includes('--no-fan-lookup')) {
   const stale = Date.now() - 60 * 86_400_000
-  const todo = [...new Set(evidence.map((e) => key(e.artist)))]
+  const storeArtists = (library as Array<{ artist?: string; albumArtist?: string; source?: string; dateAdded?: string }>)
+    .filter((t) => FOUND_SOURCES.has(t.source ?? '') && (t.dateAdded ?? '').startsWith(String(year)))
+    .map((t) => key(t.albumArtist || t.artist))
+  // Most-played first: if the budget runs out on a cold cache, the artists the Review
+  // actually shows are already checked; the rest fill in on the next night.
+  const plays = new Map<string, number>()
+  for (const l of listens) if (l.kind === 'play') plays.set(key(l.artist), (plays.get(key(l.artist)) ?? 0) + 1)
+  const todo = [...new Set(storeArtists)]
     .filter((k) => k && typeof fame[k]?.fans !== 'number' && !(fansCache[k] && Date.parse(fansCache[k].at) > stale))
-    .slice(0, 400)
-  const deadline = Date.now() + 90_000
+    .sort((x, y) => (plays.get(y) ?? 0) - (plays.get(x) ?? 0))
+    .slice(0, 2000)
+  const deadline = Date.now() + 150_000
   let looked = 0
+  // "Angels & Airwaves" on the shelf is "Angels and Airwaves" on Deezer: compare letters and digits.
+  const same = (s: string | undefined): string => (s || '').toLowerCase().replace(/&/g, 'and').normalize('NFKD').replace(/[^a-z0-9]/g, '')
+  const pause = (): Promise<void> => new Promise((r) => setTimeout(r, 450)) // four workers ≈ 8 a second, under Deezer's 50 per 5 s
+  // undefined = the lookup failed (try again next night); null = Deezer has no such artist.
+  const lookup = async (name: string): Promise<number | null | undefined> => {
+    try {
+      const res = await fetch(`https://api.deezer.com/search/artist?q=${encodeURIComponent(name)}&limit=10`, { signal: AbortSignal.timeout(8000) })
+      const body = await res.json() as { data?: Array<{ name?: string; nb_fan?: number }>; error?: unknown }
+      if (!res.ok || body.error) return undefined
+      // Same name, several artists ("Love"): the biggest one, so a famous act is never missed.
+      const fans = (body.data ?? []).filter((a) => same(a.name) === same(name)).map((a) => a.nb_fan ?? 0)
+      return fans.length ? Math.max(...fans) : null
+    } catch { return undefined } finally { await pause() }
+  }
   const worker = async (): Promise<void> => {
     for (let k = todo.shift(); k !== undefined && Date.now() < deadline; k = todo.shift()) {
-      try {
-        const res = await fetch(`https://api.deezer.com/search/artist?q=${encodeURIComponent(k)}&limit=10`, { signal: AbortSignal.timeout(8000) })
-        const body = await res.json() as { data?: Array<{ name?: string; nb_fan?: number }>; error?: unknown }
-        if (!res.ok || body.error) continue
-        // Same name, several artists ("Love"): the biggest one, so a famous act is never missed.
-        const fans = (body.data ?? []).filter((a) => key(a.name) === k).map((a) => a.nb_fan ?? 0)
-        fansCache[k] = { fans: fans.length ? Math.max(...fans) : null, at: new Date().toISOString() }
-        if (fans.length) fame[k] = { ...fame[k], fans: Math.max(...fans) }
-        looked++
-      } catch { /* offline: the track-rank fallback stands */ }
-      await new Promise((r) => setTimeout(r, 450)) // four workers ≈ 8 a second, under Deezer's 50 per 5 s
+      let fans = await lookup(k)
+      // A billing Deezer doesn't list ("Kanye West & JAY-Z"): as famous as its most famous name.
+      const parts = k.split(/\s*(?:&|,|\+|\/|\bx\b|\bwith\b|\bfeat\.?|\bft\.?)\s*/).map((x) => x.trim()).filter(Boolean)
+      if (fans === null && parts.length > 1) {
+        const each = await Promise.all(parts.slice(0, 4).map(lookup))
+        if (each.some((f) => f === undefined)) fans = undefined
+        else { const got = each.filter((f): f is number => typeof f === 'number'); fans = got.length ? Math.max(...got) : null }
+      }
+      if (fans === undefined) continue // offline or throttled: the song-rank fallback stands
+      fansCache[k] = { fans, at: new Date().toISOString() }
+      if (fans !== null) fame[k] = { ...fame[k], fans }
+      looked++
     }
   }
   await Promise.all([worker(), worker(), worker(), worker()])
