@@ -59,12 +59,27 @@ export interface YirConcert {
 
 export interface YirMixtape { title: string; createdAt?: string; songs: number }
 
+/** A show he went to (JakeTunesMobile concerts, yir/concerts-attended.json — Mobile #648). */
+export interface YirAttendedInput {
+  artist?: string
+  headliners?: string[] | string
+  venue?: string
+  neighbourhood?: string
+  borough?: string
+  date?: string
+  setlist?: { songs?: Array<{ name?: string; encore?: boolean; cover?: boolean }> } | null
+}
+
+/** A show in the facts: who, where, when, and the first songs of its setlist. */
+export interface YirShow { artist: string; venue: string; place: string; date: string; songs: string[] }
+
 export interface YirInput {
   year: number
   listens: readonly Listen[]
   library: readonly YirTrack[]
   concerts?: readonly YirConcert[]
   mixtapes?: readonly YirMixtape[]
+  attended?: readonly YirAttendedInput[]
   top?: number
 }
 
@@ -91,8 +106,18 @@ export interface YearInReview {
     /** The busiest calendar day, with its first and last play (local hour).
      *  A 255-play day is the music never stopping, not 255 choices, so the
      *  span travels with the count and the page can say which it was. */
-    biggestDay: { date: string | null; plays: number; firstHour: number | null; lastHour: number | null }
+    biggestDay: {
+      date: string | null; plays: number; firstHour: number | null; lastHour: number | null
+      /** That day's plays per local hour, and each hour's most-played song (the hour strip). */
+      byHour?: number[]
+      topByHour?: Array<{ artist: string; title: string } | null>
+      /** That day's most-played song. */
+      top?: { artist: string; title: string } | null
+    }
   }
+  /** Every day with music (local 'YYYY-MM-DD'): its plays and its most-played song (the
+   *  streak's calendar of covers). */
+  calendar?: Record<string, { plays: number; artist: string; title: string }>
   honesty: { skips: number; glances: number; mechanical: number; realSkipRate: number | null }
   topSongs: Ranked[]
   /** The song of the year's own best 7-day stretch ("seven of them in one
@@ -130,6 +155,8 @@ export interface YearInReview {
     genres: number
     widestDay: { date: string; genres: number; artists: number; plays: number } | null
   }
+  /** Every show he went to this year, oldest first (absent until the attended file exists). */
+  attended?: YirShow[]
   /** The Top 1000 chapter. NOT built here: homemini's backend measures it next to the quiz
    *  model it grades (JakeTunesMobile backend/src/util/top1000Review.ts) and folds it into
    *  these facts as it serves them (GET /api/year-in-review/:year). Absent in the nightly
@@ -178,6 +205,10 @@ export interface Top1000Review {
     oldest: { title: string; artist: string; year: number } | null
     newest: { title: string; artist: string; year: number } | null
     numberOne: { title: string; artist: string } | null
+    /** The top seats in rank order (the cover wall). */
+    wall?: Array<{ title: string; artist: string }>
+    /** Every seat by rank, as its artist's index in topArtists (-1 = anyone else): the seat map. */
+    seatArtists?: number[]
     bracketChampions: Array<{ bracket: string; seats: number; title: string; artist: string; rank: number }>
   }
 }
@@ -194,6 +225,13 @@ export function localParts(iso: string): { year: number; month: string; date: st
 const norm = (s: string | undefined): string => (s || '').toLowerCase().trim()
 const dayMs = 86400000
 const dayIndex = (date: string): number => Date.parse(`${date}T00:00:00Z`) / dayMs
+
+/** The most-played entry of a count map (first seen wins a tie: Map keeps insertion order). */
+function topOf<T extends { n: number }>(m: Map<string, T> | undefined): T | null {
+  let best: T | null = null
+  for (const v of m?.values() ?? []) if (!best || v.n > best.n) best = v
+  return best
+}
 
 function rank(counts: Map<string, Ranked>, top: number): Ranked[] {
   return [...counts.values()].sort((a, b) => b.plays - a.plays || (b.minutes ?? 0) - (a.minutes ?? 0)).slice(0, top)
@@ -225,6 +263,7 @@ export function buildYearInReview(input: YirInput): YearInReview {
   let offBerg = 0
   const byWeekday = new Array<number>(7).fill(0)
   const byDevice: Record<string, number> = {}
+  const daySongs = new Map<string, Map<string, { artist: string; title: string; n: number }>>()
   const dayArtists = new Map<string, Set<string>>()
   const dayGenres = new Map<string, Set<string>>()
   const rangeGenres = new Set<string>()
@@ -259,6 +298,13 @@ export function buildYearInReview(input: YirInput): YearInReview {
     if (artistName) bump(monthArtists.get(lp.month)!, norm(artistName), () => ({ name: artistName, plays: 0 }))
     if (rankable) bump(monthSongs.get(lp.month)!, songKey, () => ({ name: l.title, artist: artistName, plays: 0 }))
     days.set(lp.date, (days.get(lp.date) ?? 0) + 1)
+    if (rankable) {
+      const m = daySongs.get(lp.date) ?? new Map<string, { artist: string; title: string; n: number }>()
+      const e = m.get(songKey) ?? { artist: artistName, title: l.title, n: 0 }
+      e.n++
+      m.set(songKey, e)
+      daySongs.set(lp.date, m)
+    }
     if (artistName) { const set = dayArtists.get(lp.date) ?? new Set<string>(); set.add(norm(artistName)); dayArtists.set(lp.date, set) }
     // Range counts the song's CURRENT tag, as the berg does (the logged one is often a retired broad tag).
     const tag = t?.genre || genre
@@ -279,11 +325,26 @@ export function buildYearInReview(input: YirInput): YearInReview {
   }
   let biggestDay: YearInReview['totals']['biggestDay'] = { date: null, plays: 0, firstHour: null, lastHour: null }
   for (const [d, n] of days) if (n > biggestDay.plays || (n === biggestDay.plays && biggestDay.date !== null && d < biggestDay.date)) biggestDay = { date: d, plays: n, firstHour: null, lastHour: null }
+  const bdHours = new Array<number>(24).fill(0)
+  const bdHourSongs = Array.from({ length: 24 }, () => new Map<string, { artist: string; title: string; n: number }>())
   for (const l of plays) {
     const p = localParts(l.ts)
     if (p.date !== biggestDay.date) continue
     if (biggestDay.firstHour === null) biggestDay.firstHour = p.hour
     biggestDay.lastHour = p.hour
+    bdHours[p.hour]++
+    const t = l.trackId !== undefined ? byId.get(l.trackId) : undefined
+    if (!isTop25Rankable({ duration: t?.duration })) continue
+    const k = `${norm(l.artist)}|${norm(l.title)}`
+    const e = bdHourSongs[p.hour].get(k) ?? { artist: l.artist || t?.artist || '', title: l.title, n: 0 }
+    e.n++
+    bdHourSongs[p.hour].set(k, e)
+  }
+  if (biggestDay.date) {
+    biggestDay.byHour = bdHours
+    biggestDay.topByHour = bdHourSongs.map((m) => { const b = topOf(m); return b ? { artist: b.artist, title: b.title } : null })
+    const d = topOf(daySongs.get(biggestDay.date))
+    biggestDay.top = d ? { artist: d.artist, title: d.title } : null
   }
 
   // The widest day: the most genres in one day; more artists, then the earlier day, break ties.
@@ -389,5 +450,17 @@ export function buildYearInReview(input: YirInput): YearInReview {
     concerts,
     mixtapes,
     range: { artists: artists.size, genres: rangeGenres.size, widestDay },
+    attended: (input.attended ?? [])
+      .filter((a) => typeof a.date === 'string' && a.date.startsWith(String(year)))
+      .map((a) => ({
+        artist: (a.artist || (Array.isArray(a.headliners) ? a.headliners[0] : a.headliners) || '').trim(),
+        venue: (a.venue ?? '').trim(),
+        place: [a.neighbourhood, a.borough].filter(Boolean).join(', '),
+        date: a.date!.slice(0, 10),
+        songs: (a.setlist?.songs ?? []).map((x) => (x.name ?? '').trim()).filter(Boolean).slice(0, 5),
+      }))
+      .filter((a) => a.artist)
+      .sort((a, b) => a.date.localeCompare(b.date)),
+    calendar: Object.fromEntries(dayList.map((d) => { const b = topOf(daySongs.get(d)); return [d, { plays: days.get(d) ?? 0, artist: b?.artist ?? '', title: b?.title ?? '' }] })),
   }
 }

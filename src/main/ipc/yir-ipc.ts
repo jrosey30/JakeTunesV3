@@ -3,7 +3,9 @@
  * facts for a year (src/main/yir-mirror.ts); the mirror refreshes shortly
  * after boot and then every 30 minutes (the facts change once a night).
  */
-import { app, nativeImage } from 'electron'
+import { app, nativeImage, BrowserWindow, shell } from 'electron'
+import { execFile } from 'node:child_process'
+import { exportYirStory, ffmpegStoryArgs, type ExportPage } from '../yir-export.ts'
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { photoDetail, photoPasses, toGray, PHOTO_SAMPLE, type PhotoQuality } from '../../common/yir-photo.ts'
@@ -48,7 +50,54 @@ async function photoQuality(slug: string): Promise<(PhotoQuality & { ok: boolean
   return q
 }
 
+/** A hidden, offscreen 1080×1920 window showing only the story frame page (YirStoryExport.tsx). */
+async function openExportPage(): Promise<ExportPage> {
+  const win = new BrowserWindow({
+    show: false, width: 1080, height: 1920, useContentSize: true, frame: false,
+    webPreferences: { offscreen: true, preload: join(__dirname, '../preload/index.js'), nodeIntegration: false, contextIsolation: true },
+  })
+  win.webContents.setFrameRate(60)
+  if (process.env['ELECTRON_RENDERER_URL']) await win.loadURL(`${process.env['ELECTRON_RENDERER_URL']}#yir-export`)
+  else await win.loadFile(join(__dirname, '../renderer/index.html'), { hash: 'yir-export' })
+  win.webContents.setZoomFactor(2)
+  return {
+    run: (js) => win.webContents.executeJavaScript(js),
+    capture: async () => {
+      win.webContents.invalidate()   // offscreen: paint this moment before it is captured
+      await new Promise((r) => setTimeout(r, 34))
+      return (await win.webContents.capturePage({ x: 0, y: 0, width: 1080, height: 1920 })).resize({ width: 1080, height: 1920 }).toPNG()
+    },
+    close: () => { if (!win.isDestroyed()) win.destroy() },
+  }
+}
+
+const ffmpeg = (dir: string, out: string, fps: number): Promise<boolean> => new Promise((resolve) => {
+  execFile('ffmpeg', ffmpegStoryArgs(dir, out, fps), { timeout: 120_000 }, (err) => resolve(!err))
+})
+
 export function registerYirIpc(ipc: IpcRegistrar): void {
+  // Instagram Story files for one card, or the whole year (src/main/yir-export.ts), saved to
+  // Downloads and shown in Finder. Progress goes back to the asking window.
+  let exporting = false
+  ipc.handle('yir:export', async (e, which: unknown) => {
+    if (exporting) return { ok: false, error: 'An export is already running.' }
+    exporting = true
+    try {
+      const cards = which === 'all' ? 'all' as const : Array.isArray(which) ? which.map(Number).filter(Number.isInteger) : []
+      const outDir = join(app.getPath('downloads'), `JakeTunes Year in Review ${new Date().getFullYear()}`)
+      const r = await exportYirStory({
+        open: openExportPage, encode: ffmpeg, outDir,
+        progress: (done, total) => { if (!e.sender.isDestroyed()) e.sender.send('yir:export-progress', { done, total }) },
+      }, cards)
+      const first = r.videos[0] ?? r.stills[0]
+      if (first) shell.showItemInFolder(first)
+      return { ok: true, ...r }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    } finally {
+      exporting = false
+    }
+  }, { refuse: REFUSED_SENDER })
   ipc.handle('yir:photo-quality', async (_e, slug: unknown) => (typeof slug === 'string' ? photoQuality(slug).catch(() => null) : null), { refuse: REFUSED_SENDER })
   const thisYear = (): number => new Date().getFullYear()
   ipc.handle('yir:get', async (_e, year?: number) => {

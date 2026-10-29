@@ -84,7 +84,22 @@ describe('the facts', () => {
   it('days, streak and the biggest day', () => {
     assert.equal(yir.totals.daysListened, 4)
     assert.deepEqual(yir.totals.longestStreak, { days: 3, from: '2026-06-02', to: '2026-06-04' })
-    assert.deepEqual(yir.totals.biggestDay, { date: '2026-06-04', plays: 2, firstHour: 12, lastHour: 13 })
+    const { byHour, topByHour, top, ...day } = yir.totals.biggestDay
+    assert.deepEqual(day, { date: '2026-06-04', plays: 2, firstHour: 12, lastHour: 13 })
+    // The hour strip: that day's plays by local hour, each hour's top song (12:00 Taxes, 13:00 Cobra).
+    assert.equal(byHour?.length, 24)
+    assert.equal(byHour?.[12], 1)
+    assert.equal(byHour?.[13], 1)
+    assert.deepEqual(topByHour?.[12], { artist: 'Geese', title: 'Taxes' })
+    assert.deepEqual(topByHour?.[13], { artist: 'Geese', title: 'Cobra' })
+    assert.equal(topByHour?.[3], null)
+    assert.deepEqual(top, { artist: 'Geese', title: 'Taxes' }, 'a tie keeps the first played')
+  })
+
+  it('the calendar: every day with music, its plays and its most-played song', () => {
+    assert.deepEqual(yir.calendar?.['2026-06-04'], { plays: 2, artist: 'Geese', title: 'Taxes' })
+    assert.deepEqual(yir.calendar?.['2026-06-10'], { plays: 1, artist: 'The Beatles', title: 'Hey Jude' })
+    assert.deepEqual(Object.keys(yir.calendar ?? {}), ['2026-06-02', '2026-06-03', '2026-06-04', '2026-06-10'])
   })
 
   it('on repeat: the most plays one song got inside a week', () => {

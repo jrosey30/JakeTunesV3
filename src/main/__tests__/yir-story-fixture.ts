@@ -31,13 +31,22 @@ export const T1K: Top1000Review = {
     oldest: { title: "Surfin' Safari", artist: 'The Beach Boys', year: 1962 },
     newest: { title: 'Fabienk', artist: 'Angine de Poitrine', year: 2026 },
     numberOne: { title: "Take What's Given", artist: 'BADBADNOTGOOD' },
+    wall: [{ title: "Take What's Given", artist: 'BADBADNOTGOOD' }, { title: 'Au Pays du Cocaine', artist: 'Geese' }, { title: 'Jane', artist: 'Jefferson Starship' }],
+    // Ten seats: Beatles, Beatles, RHCP, TV Girl, anyone, Beatles, TV Girl, RHCP, anyone, Beatles.
+    seatArtists: [0, 0, 1, 2, -1, 0, 2, 1, -1, 0],
     bracketChampions: [
       { bracket: 'Classic Rock', seats: 143, title: 'Jane', artist: 'Jefferson Starship', rank: 17 },
       { bracket: 'Rock', seats: 70, title: 'Au Pays du Cocaine', artist: 'Geese', rank: 3 },
     ],
   },
 }
-export const y = { ...buildYearInReview({ year: 2026, listens, library: [] }), top1000: T1K }
+/** Shows he went to (Mobile #648's attended list): one last year (left out), two this year. */
+export const attended = [
+  { artist: 'Geese', venue: 'Forest Hills Stadium', borough: 'Queens', date: '2026-10-03', setlist: { songs: [{ name: 'Taxes' }, { name: 'Cobra' }, { name: 'Au Pays du Cocaine' }, { name: 'Trinidad' }] } },
+  { artist: 'TV Girl', venue: 'Brooklyn Paramount', date: '2026-06-12', setlist: null },
+  { artist: 'Old Band', venue: 'Somewhere', date: '2025-12-30' },
+]
+export const y = { ...buildYearInReview({ year: 2026, listens, library: [], attended }), top1000: T1K }
 export const concerts = [
   { albumKey: 'geese|||forest hills', band: 'Geese', show: 'Forest Hills', venue: 'Forest Hills Stadium', date: 'October 3, 2026', notes: 'I was there.' },
   { albumKey: 'grateful dead|||nassau', band: 'Grateful Dead', show: 'Nassau', venue: 'Nassau Coliseum', date: 'May 15-16, 1980' },

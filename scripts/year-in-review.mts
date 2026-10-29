@@ -1,11 +1,13 @@
 // Year in Review facts (Class A) from the one listening history.
 //   node scripts/year-in-review.mts --history <listening-history.jsonl> \
 //     --library <library.json> [--live-sets <live-sets.json>] [--mixtapes <mixtapes.json>] \
+//     [--attended <concerts-attended.json>] \
 //     --out <dir> [--year 2026]
 // Writes <out>/year-in-review-<year>.json. Reads its inputs only.
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { buildYearInReview, type YirConcert, type YirMixtape } from '../src/common/year-in-review.ts'
+import { homedir } from 'node:os'
+import { buildYearInReview, type YirConcert, type YirMixtape, type YirAttendedInput } from '../src/common/year-in-review.ts'
 import { tapeTracks } from '../src/common/tape-physics.ts'
 import type { Listen } from '../src/common/listening-history.ts'
 
@@ -40,7 +42,18 @@ if (mtPath && existsSync(mtPath)) {
   for (const t of (Array.isArray(raw) ? raw : raw.mixtapes ?? [])) mixtapes.push({ title: t.title, createdAt: t.createdAt, songs: tapeTracks(t).length })
 }
 
-const yir = buildYearInReview({ year, listens, library, concerts, mixtapes })
+// Shows he went to (JakeTunesMobile concerts, Mobile #648): --attended, else homemini's own copy
+// beside the other quiz/concert state (~/JakeTunesState/yir). Absent → no attended list.
+const attended: YirAttendedInput[] = []
+const atPath = flag('attended') ?? join(homedir(), 'JakeTunesState', 'yir', 'concerts-attended.json')
+if (existsSync(atPath)) {
+  try {
+    const raw = JSON.parse(readFileSync(atPath, 'utf8'))
+    for (const a of (Array.isArray(raw) ? raw : raw.items ?? [])) if (a && typeof a === 'object') attended.push(a)
+  } catch { console.warn(`attended shows unreadable at ${atPath}; leaving them out`) }
+}
+
+const yir = buildYearInReview({ year, listens, library, concerts, mixtapes, attended })
 mkdirSync(out, { recursive: true })
 writeFileSync(join(out, `year-in-review-${year}.json`), JSON.stringify({ builtAt: new Date().toISOString(), ...yir }, null, 2))
 
@@ -59,6 +72,7 @@ console.log(`discoveries: ${yir.discoveries.newArtistCount} new artists; top:`, 
 console.log(`found through JakeTunes: ${yir.discoveries.foundTotal} by month ${JSON.stringify(yir.discoveries.foundByMonth)}`)
 console.log(`starred class: ${yir.starredClass.count}; top:`, yir.starredClass.top.slice(0, 5).map((s) => `${s.artist} – ${s.name} ${s.plays}`).join(' · '))
 console.log('concerts:', yir.concerts.map((c) => `${c.artist} – ${c.album}${c.notes ? ' [' + c.notes + ']' : ''} (${c.plays} plays)`).join(' · '))
+console.log('attended:', (yir.attended ?? []).map((a) => `${a.artist} @ ${a.venue} ${a.date}`).join(' · ') || 'none')
 console.log('tapes:', yir.mixtapes.map((m) => `${m.title} (${m.songs})`).join(' · '))
 const peakHour = yir.clock.byHour.indexOf(Math.max(...yir.clock.byHour))
 const peakDay = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][yir.clock.byWeekday.indexOf(Math.max(...yir.clock.byWeekday))]

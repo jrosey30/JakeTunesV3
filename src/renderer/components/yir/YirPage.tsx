@@ -282,7 +282,7 @@ export default function YirPage({ y, ctx, onStory }: { y: YirFacts; ctx: YirCtx;
         <section className="yir-p-t1k">
           <div className="yir-p-eyebrow">The Top 1000</div>
           <h2>An algorithm you built, and <em>it works</em>.</h2>
-          <p className="yir-p-lede">A tournament over {K.proof.pool ? `${n(K.proof.pool)} of your songs` : 'your whole library'}: heats where you pick who moves on, one-on-one duels, genre brackets, then finals between each genre's champions. A brain learns from your plays, stars and skips, plus how famous each song is, and guesses your answer before you give it. Every seat is earned answer by answer, nobody pays for one, and the 1,000 help pick what rides on your Original iPod.</p>
+          <p className="yir-p-lede">A tournament over {K.proof.pool ? `${n(K.proof.pool)} of your songs` : 'your whole library'}: heats, one-on-ones, genre brackets, finals. A brain learns from your plays, stars and skips and guesses your answer first. Nobody pays for a seat, and the 1,000 help fill your Original iPod.</p>
           <div className="yir-p-moments">
             {K.proof.sureCalls.n > 0 && (
               <div><span className="k">When it was sure</span><span className="v">{pctOf(K.proof.sureCalls.called, K.proof.sureCalls.n)}% <small>right</small></span>
@@ -298,8 +298,8 @@ export default function YirPage({ y, ctx, onStory }: { y: YirFacts; ctx: YirCtx;
             )}
           </div>
           <p className="yir-p-foot">
-            {n(K.proof.answers)} answers, {n(K.proof.songsJudged)} songs judged. You overruled it {n(K.proof.overruled)} times; every answer moves it.
-            {K.proof.rechecks.n > 0 ? ` When a question came back later, you gave the same answer ${pctOf(K.proof.rechecks.same, K.proof.rechecks.n)}% of the time (${n(K.proof.rechecks.same)} of ${n(K.proof.rechecks.n)}): the close calls are close for a reason.` : ''}
+            {n(K.proof.answers)} answers, {n(K.proof.songsJudged)} songs judged.
+            {K.proof.rechecks.n > 0 ? ` Asked again later, you answered the same way ${pctOf(K.proof.rechecks.same, K.proof.rechecks.n)}% of the time.` : ''}
             {` Today it is ${Math.round(K.sure * 100)}% sure of the whole list.`}
           </p>
 
