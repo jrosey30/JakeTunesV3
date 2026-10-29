@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  musicStreamActive, untilMs, redescribeCandidates, candidateDescriptors, promoteNext,
+  musicStreamActive, nightlyTrainerActive, untilMs, redescribeCandidates, candidateDescriptors, promoteNext,
   staleStaged, PROMPT_VERSION, stockHits, formulaOpener, stockScore, needsRetry, pickDescriptor,
   describePrompt, describeTrack, audioFacts, cleanDescriptor,
 } from '../../../scripts/brain-redescribe.mjs'
@@ -217,5 +217,18 @@ describe('the trainer wiring', () => {
   it('no longer yields on any ffmpeg (the cable channels never stop)', () => {
     assert.doesNotMatch(block, /pgrep/)
     assert.match(block, /musicStreamActive/)
+  })
+})
+
+describe('stepping aside for the 02:00 trainer', () => {
+  const NODE = '/opt/homebrew/bin/node'
+  const TRAINER = `${NODE} /Users/jakerosenbaumnas/JakeTunesV3/scripts/brain-trainer.mjs`
+  it('sees the nightly trainer, never its own --redescribe-all process', () => {
+    assert.equal(nightlyTrainerActive([CABLE, `${TRAINER} --redescribe-all --until 08:15`].join('\n')), false)
+    assert.equal(nightlyTrainerActive([CABLE, `${TRAINER} --redescribe-all --until 08:15`, TRAINER].join('\n')), true)
+  })
+  it('ignores an editor or grep that merely mentions the file', () => {
+    assert.equal(nightlyTrainerActive('/usr/bin/grep brain-trainer.mjs\nvim scripts/brain-trainer.mjs'), false)
+    assert.equal(nightlyTrainerActive(''), false)
   })
 })

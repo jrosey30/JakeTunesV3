@@ -29,7 +29,7 @@ import { planMoodPrune } from './brain-prune.mjs'
 import { writeBrainStatus } from './brain-status.mjs'
 import { comparePurity, gateDecision, PURITY_MAX_REGRESSION } from './brain-purity.mjs'
 import { pickBatch } from './brain-batch.mjs'
-import { musicStreamActive, untilMs, redescribeCandidates, candidateDescriptors, promoteNext, staleStaged, describeTrack, PROMPT_VERSION } from './brain-redescribe.mjs'
+import { musicStreamActive, nightlyTrainerActive, untilMs, redescribeCandidates, candidateDescriptors, promoteNext, staleStaged, describeTrack, PROMPT_VERSION } from './brain-redescribe.mjs'
 import { baseText, moodText, tempoEnergy } from '../src/common/embedding-text.ts'   // Brief 181: the text twins' ONE source of truth (the app imports it too)
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -589,8 +589,8 @@ async function main() {
   // so a multi-night run continues where it stopped. `--until HH:MM` ends the
   // night's window. YIELD RULE: this is the always-on serving box — before
   // every call we check for a MUSIC transcode (cable playout's video ffmpeg
-  // runs 24/7 and does not count) and for critical memory pressure; either
-  // one unloads the model until the coast is clear.
+  // runs 24/7 and does not count), for the 02:00 nightly trainer, and for
+  // critical memory pressure; any one unloads the model until the coast is clear.
   if (process.argv.includes('--redescribe-all')) {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
     const ua = process.argv.indexOf('--until')
@@ -599,6 +599,7 @@ async function main() {
       let ps = ''
       try { ps = execFileSync('/bin/ps', ['-axo', 'command']).toString() } catch { /* can't tell → not busy */ }
       if (musicStreamActive(ps)) return 'music is streaming'
+      if (nightlyTrainerActive(ps)) return 'the nightly trainer is running'
       try {
         const lvl = Number(execFileSync('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level']).toString().trim())
         if (lvl >= 4) return 'memory pressure is critical'
