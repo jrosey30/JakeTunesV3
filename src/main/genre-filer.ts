@@ -473,6 +473,27 @@ export async function runFilerSweep(deps: FilerDeps): Promise<{ filed: number; c
     deps.log?.(`[genre-filer] repaired ${t.artist} — ${t.album} (${t.id}): its ${g} was missing from the edits file${t.overrideFpSeen ? ` (entry fp "${t.overrideFpSeen}" ≠ song "${trackFingerprint(t)}")` : ''}; put back, not re-judged`)
   }
   const listed = new Set(check.map((c) => c.key))
+  // New songs of an album already on the check list join its entry (and its
+  // filedAs suggestion) — they used to sit on the store tag, unseen.
+  const joined: Array<{ trackId: number; field: string; newValue: string }> = []
+  let entriesGrew = false
+  for (const u of unfiledUnits(tracks)) {
+    const c = check.find((e) => e.key === u.key && !e.review)
+    if (!c) continue
+    const fresh = u.ids.filter((id) => !c.ids.includes(id))
+    if (!fresh.length) continue
+    c.ids = [...c.ids, ...fresh]
+    entriesGrew = true
+    if (c.filedAs) {
+      for (const id of fresh) {
+        await deps.persist(byId.get(id)!, { genre: c.filedAs }, { by: 'filer', how: 'suggestion', confidence: 'low' })
+        joined.push({ trackId: id, field: 'genre', newValue: c.filedAs })
+      }
+    }
+    deps.log?.(`[genre-filer] ${c.artist} — ${c.album}: ${fresh.length} new song${fresh.length === 1 ? '' : 's'} joined its check-list entry${c.filedAs ? ` (→ ${c.filedAs}, suggestion)` : ''}`)
+  }
+  if (joined.length) deps.applied(joined)
+  if (entriesGrew) await deps.saveCheck(check)
   const units = unfiledUnits(tracks).filter((u) => !listed.has(u.key))
   const homes = artistHomes(tracks)
   const albums = albumHomes(tracks)

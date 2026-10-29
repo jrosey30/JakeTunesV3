@@ -119,6 +119,18 @@ describe('the re-filing bug', () => {
     assert.equal(f.classified.length, 0)
     assert.deepEqual(f.persisted.map(([id, fl, w]) => [id, fl.genre, w?.how, w?.confidence]), [[13383, 'Rock', 'album-sibling', 'medium'], [13384, 'Rock', 'album-sibling', 'medium']])
   })
+  it("new songs of an album already on the check list join its entry under its suggestion (Sam Gellaitry's IV)", async () => {
+    const lib = [
+      T(13380, 'Sam Gellaitry', 'IV', 'EDM', { genreApproved: true, genreBy: 'filer', filerPick: { how: 'suggestion', confidence: 'low' } }),
+      T(13500, 'Sam Gellaitry', 'IV', 'Dance, Électronique'),
+    ]
+    const f = deps(lib)
+    await f.d.saveCheck([{ key: 'album:sam gellaitry|iv', artist: 'Sam Gellaitry', album: 'IV', ids: [13380], tag: 'Dance, Électronique', suggested: 'EDM', filedAs: 'EDM', why: '', at: '', evidence: 2 }])
+    await runFilerSweep(f.d)
+    assert.deepEqual(f.check[0].ids, [13380, 13500])
+    assert.deepEqual(f.persisted, [[13500, { genre: 'EDM' }, { by: 'filer', how: 'suggestion', confidence: 'low' }]])
+    assert.equal(f.classified.length, 0)
+  })
   it('an evidence pick is recorded as the filer’s with its confidence; a Jake File is recorded as his', async () => {
     const f = deps([T(1, 'Gramme', 'Fascination', 'Alternatif et Indé')], { Gramme: { genre: 'Dance-Punk', confidence: 'high' } })
     await runFilerSweep(f.d)
