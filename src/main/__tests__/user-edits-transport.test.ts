@@ -116,7 +116,16 @@ describe('in the app', () => {
 
   it('the save-metadata-override handler is the only journal writer for this Mac\'s edits', () => {
     const records = idx.match(/userEdits\.record\(/g) ?? []
-    assert.equal(records.length, 1)
+    // 2026-10-29: the second is the genre filer's recordEdit — HIS genre
+    // choices made on the filer's surface (a check-list File, a ruling in
+    // genre-rulings.ts), journaled so they travel like a Get Info edit.
+    // The filer's own picks never reach it (locked below).
+    assert.equal(records.length, 2)
+    assert.match(idx, /recordEdit: \(id, field, value, at\) => userEdits\.record\(id, field, value, at\)/)
+    const filer = readFileSync(join(repoRoot, 'src', 'main', 'ipc', 'genre-filer-ipc.ts'), 'utf-8')
+    const calls = filer.match(/host\.recordEdit\?\.\(/g) ?? []
+    assert.equal(calls.length, 1)
+    assert.match(filer, /if \(why\.by === 'jake'\) await host\.recordEdit\?\.\(/, 'only his choices are journaled, never a filer pick')
     const start = idx.indexOf("ipc.handle('save-metadata-override'")
     const end = idx.indexOf('ipc.handle(', start + 10)
     const body = idx.slice(start, end)
