@@ -246,9 +246,9 @@ describe('unsure albums are filed under the suggestion (2026-10-28, "genre not u
     const lib = [T(31, 'Silica', "Myatt's Song", 'Alternatif et Indé, Rock, Pop'), T(32, 'Viuta', 'Refer To Judgement', 'Soul, Funk, R&B'), T(33, 'Mine', 'Already', 'Dream Pop', { genreApproved: true })]
     const f = fakeDeps(lib, {})
     await f.deps.saveCheck([
-      { key: 'album:silica|myatt s song', artist: 'Silica', album: "Myatt's Song", ids: [31], tag: 'Alternatif et Indé, Rock, Pop', suggested: 'Indie Rock', why: 'press covers Silica Gel', at: '' },
-      { key: 'album:viuta|refer to judgement', artist: 'Viuta', album: 'Refer To Judgement', ids: [32], tag: 'Soul, Funk, R&B', suggested: 'Not A Genre', why: '', at: '' },
-      { key: 'album:mine|already', artist: 'Mine', album: 'Already', ids: [33], tag: 'x', suggested: 'Indie Rock', why: '', at: '' },
+      { key: 'album:silica|myatt s song', artist: 'Silica', album: "Myatt's Song", ids: [31], tag: 'Alternatif et Indé, Rock, Pop', suggested: 'Indie Rock', why: 'press covers Silica Gel', at: '', evidence: 2 },
+      { key: 'album:viuta|refer to judgement', artist: 'Viuta', album: 'Refer To Judgement', ids: [32], tag: 'Soul, Funk, R&B', suggested: 'Not A Genre', why: '', at: '', evidence: 2 },
+      { key: 'album:mine|already', artist: 'Mine', album: 'Already', ids: [33], tag: 'x', suggested: 'Indie Rock', why: '', at: '', evidence: 2 },
     ])
     const r = await runFilerSweep(f.deps)
     assert.deepEqual(f.persisted.filter(([, fl]) => fl.genre).map(([id, fl]) => [id, fl.genre]), [[31, 'Indie Rock']], 'only the fileable, unsettled one')

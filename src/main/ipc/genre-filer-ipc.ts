@@ -14,6 +14,9 @@ import { runFilerSweep, resolveCheckEntry, trackFingerprint, checkEntryOpen, typ
 import { musicBrainzArtistCandidates, musicBrainzAlbum, confirmedArtist, musicBrainzCountryById } from '../artist-tags.ts'
 import { lookupArtistOrigin, cleanAlbumTitle } from '../origin-lookup.ts'
 import { exaSearch } from '../exa.ts'
+import { deezerAlbumGenres, discogsAlbumStyles } from '../genre-external-tags.ts'
+import { getAudioIndexMap } from '../ai/audio-index.ts'
+import { getMoodIndexMap } from '../ai/mood-index.ts'
 
 export interface GenreFilerHost {
   libraryTracks(): Promise<FilerTrack[]>
@@ -82,12 +85,23 @@ function deps(host: GenreFilerHost): FilerDeps {
       const albumTags = album?.tags ?? []
       const artistTags = a?.tags ?? []
       // Press only when MusicBrainz is thin — the Telescreens lesson.
-      const press = artistTags.length + albumTags.length >= 3 ? '' : await exaSearch(`${u.artist} ${u.comp ? u.title : u.album} band music review`, {
+      // "music review", not "band music review": a producer (Sam Gellaitry)
+      // is not a band, and the old query found other people's pages.
+      const press = artistTags.length + albumTags.length >= 3 ? '' : await exaSearch(`${u.artist} ${u.comp ? u.title : u.album} music review`, {
         numResults: 3, summaryQuery: `What genre or style of music does ${u.artist} play? Answer in under 15 words naming the genres, or say "unknown" if this page is not about that artist.`,
       }).catch(() => '')
-      return { artistTags, albumTags, origin: a?.origin, press }
+      // More outside tags (2026-10-28) — evidence lines, never answers.
+      const title = cleanAlbumTitle(u.comp ? (u.title || '') : u.album)
+      const [deezer, discogs] = await Promise.all([
+        deezerAlbumGenres(u.artist, title),
+        discogsAlbumStyles(u.artist, title, process.env.DISCOGS_API_TOKEN),
+      ])
+      return { artistTags, albumTags, origin: a?.origin, press, deezer, discogs }
     },
     classify: (system, user) => host.claude(system, user),
+    // The sound-alike vote's spaces (genre-sound-alike.ts): both loaders are
+    // mtime-cached and return an empty map when the file is absent.
+    vectors: async () => ({ audio: await getAudioIndexMap(), mood: await getMoodIndexMap() }),
     // Network only — the cache and the per-sweep budget live in fillOrigins.
     lookupOrigin: (artist, albums) => lookupArtistOrigin(artist, albums, { throttle: host.mbThrottle, userAgent: host.userAgent }),
     loadOriginCache,
@@ -108,7 +122,7 @@ export function startGenreFiler(host: GenreFilerHost): void {
     running = true
     try {
       const r = await runFilerSweep(deps(host))
-      if (r.filed || r.checked || r.origins || r.backfilled) console.warn(`[genre-filer] sweep: filed ${r.filed}, to check ${r.checked}, waiting ${r.deferred}, origins ${r.origins}${r.backfilled ? `, check-list albums filed by suggestion ${r.backfilled}` : ''}`)
+      if (r.filed || r.checked || r.origins || r.backfilled || r.rejudged) console.warn(`[genre-filer] sweep: filed ${r.filed}, to check ${r.checked}, waiting ${r.deferred}, origins ${r.origins}${r.backfilled ? `, check-list albums filed by suggestion ${r.backfilled}` : ''}${r.rejudged ? `, re-judged ${r.rejudged}` : ''}`)
     } catch (err) {
       console.warn('[genre-filer] sweep failed:', err instanceof Error ? err.message : err)
     } finally { running = false }

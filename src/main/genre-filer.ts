@@ -21,12 +21,22 @@
  *      suggestion (on the list, rock-stays-rock still enforced) and STAYS on the
  *      check list, marked filedAs, so he can change it. A raw store tag never
  *      sits on a song waiting for him.
+ *   6. No dumping grounds (2026-10-28, Sam Gellaitry's "IV" → Experimental
+ *      while House, Nu Disco, French House sat right there): a catch-all
+ *      shelf (DUMPING_GROUNDS) only when the evidence itself says so;
+ *      otherwise the closest real shelf, or low confidence.
+ *   7. Evidence is real (2026-10-28): besides MusicBrainz and press, the
+ *      sound-alike vote from his own library (genre-sound-alike.ts) and the
+ *      store/Discogs tags (genre-external-tags.ts). Check-list albums judged
+ *      on the old, thinner evidence get ONE re-judgement (EVIDENCE_VERSION);
+ *      a song Jake set himself is never touched.
  *
  * Pure decisions + injected effects, so the rules are tested directly.
  */
 import { GENRES, GENRE_NAMES, CATCH_ALL, ROCK_FAMILY, PER_ALBUM_ARTISTS, isListGenre } from '../common/genre-vocab.ts'
 import { normName } from './taste-profile.ts'
 import { originNames, type OriginLookup, type OriginSource } from './origin-lookup.ts'
+import { soundAlikeFor, soundAlikeLeader, soundAlikeText, type ShelfTrack, type SoundAlike } from './genre-sound-alike.ts'
 
 export interface FilerTrack {
   id: number
@@ -54,7 +64,39 @@ export interface Decision {
   suggested?: string
 }
 
-export interface Evidence { artistTags: string[]; albumTags: string[]; origin?: string; press: string }
+export interface Evidence {
+  artistTags: string[]; albumTags: string[]; origin?: string; press: string
+  /** Deezer's genres for this album (keyless). */
+  deezer?: string[]
+  /** Discogs genres + styles (only with a token). */
+  discogs?: string[]
+  /** His nearest settled songs' shelves — filled by the sweep, not the fetcher. */
+  soundAlike?: SoundAlike | null
+}
+
+/** Which evidence a check-list entry was judged on. 1 = MusicBrainz + press
+ *  (to 2026-10-28); 2 = + sound-alike vote, Deezer, Discogs, no dumping
+ *  grounds. An open entry below this gets one re-judgement. */
+export const EVIDENCE_VERSION = 2
+
+/** Catch-all shelves (Jake 2026-10-28: "Experimental" means "Defies genre on
+ *  purpose", not "nothing fit"). A pick here stands only when the evidence
+ *  itself says so. Store tags count; the sound-alike vote does not (a shelf
+ *  name in the vote is the list's word, not the evidence's). */
+export const DUMPING_GROUNDS: ReadonlyMap<string, RegExp> = new Map([
+  ['Experimental', /\b(experimental|avant[- ]?garde|noise(?![- ]?(?:pop|rock))|musique concr[eè]te|sound art|sound collage|free improv\w*|electroacoustic)\b/i],
+])
+
+/** The words the evidence actually says — store tag, MusicBrainz, Deezer, Discogs, press. */
+export function evidenceWords(tag: string, e: Partial<Evidence> | undefined): string {
+  return [tag, ...(e?.albumTags ?? []), ...(e?.artistTags ?? []), ...(e?.deezer ?? []), ...(e?.discogs ?? []), e?.press ?? ''].join(' | ')
+}
+
+/** May this genre be picked on this evidence? Only a dumping ground needs the evidence to say it. */
+export function dumpingGroundAllowed(genre: string, tag: string, e: Partial<Evidence> | undefined): boolean {
+  const re = DUMPING_GROUNDS.get(genre)
+  return !re || re.test(evidenceWords(tag, e))
+}
 
 // Artist/album keys keep every script — see normName (Молчат Дома ≠ ברי סחרוף).
 const norm = (s: string | undefined): string => normName(s)
@@ -131,12 +173,31 @@ export function decideByRules(u: FilerUnit, homes: Map<string, { genre: string; 
   return null
 }
 
-/** Rules 4 and 5 applied to the AI's pick. */
-export function enforce(u: FilerUnit, pick: { genre?: string; confidence?: string; why?: string }, origin?: string): Decision {
+export interface AiPick { genre?: string; confidence?: string; why?: string; alt?: string }
+
+const isRockTag = (tag: string): boolean => tag === 'Rock' || tag === 'Classic Rock'
+
+/** Rules 4, 5 and 6 applied to the AI's pick. `ev` is the evidence it saw
+ *  (a bare string is the old origin-only call). */
+export function enforce(u: FilerUnit, pick: AiPick, ev?: Partial<Evidence> | string): Decision {
+  const e: Partial<Evidence> | undefined = typeof ev === 'string' ? { origin: ev } : ev
+  const origin = e?.origin
   const g = (pick.genre || '').trim()
   const why = String(pick.why || '').slice(0, 140)
   if (!GENRE_NAMES.has(g)) return { genre: null, origin, how: 'check', why: `not on the list: ${g || 'no answer'}`, suggested: undefined }
-  if ((u.tag === 'Rock' || u.tag === 'Classic Rock') && !ROCK_FAMILY.has(g)) return { genre: null, origin, how: 'check', why: `rock stays rock (suggested ${g})`, suggested: g }
+  if (isRockTag(u.tag) && !ROCK_FAMILY.has(g)) {
+    // A rock alt is the useful suggestion; otherwise the pick is recorded and
+    // fileableSuggestion keeps it off the songs.
+    const alt = (pick.alt || '').trim()
+    return { genre: null, origin, how: 'check', why: `rock stays rock (suggested ${g})`, suggested: GENRE_NAMES.has(alt) && ROCK_FAMILY.has(alt) ? alt : g }
+  }
+  if (!dumpingGroundAllowed(g, u.tag, e)) {
+    // Rule 6: never a dumping ground the evidence doesn't name. The AI's
+    // closest real shelf, else his own shelves' plurality — or nothing.
+    const fallback = [pick.alt, soundAlikeLeader(e?.soundAlike)].map((x) => (x || '').trim())
+      .find((x) => GENRE_NAMES.has(x) && !DUMPING_GROUNDS.has(x) && (!isRockTag(u.tag) || ROCK_FAMILY.has(x)))
+    return { genre: null, origin, how: 'check', why: `${g} needs evidence that says so${fallback ? ` — closest real shelf ${fallback}` : ''}${why ? ` (${why})` : ''}`.slice(0, 200), suggested: fallback }
+  }
   if (pick.confidence === 'low') return { genre: null, origin, how: 'check', why: why || 'not sure', suggested: g }
   return { genre: g, origin, how: 'evidence', why }
 }
@@ -146,8 +207,9 @@ export function filerSystemPrompt(): string {
   const list = GENRES.map((g) => { const head = g.area !== area ? `\n## ${(area = g.area)}\n` : ''; return `${head}- ${g.name}: ${g.strict ? 'STRICT — ' : ''}${g.definition}` }).join('\n')
   return `You file new albums into Jake's record collection. Each album gets EXACTLY ONE genre from his list — copy the name exactly; never invent or combine.
 Rules: ROCK IS CONSERVATIVE (an album tagged Rock or Classic Rock stays on a rock, punk or metal shelf). Alternative, Pop and R&B are STRICT (Alternative = real 80s–90s alternative rock only). Rap is shelved by region or style. Judge the artist's mainstream identity and this record's sound: what would most music listeners file it under?
-Evidence, most trusted first: MusicBrainz album tags, MusicBrainz artist tags (the FIRST tags describe the artist; a minor tag never wins), music press. If the evidence is thin or contradictory, answer confidence "low" — never guess from a band's name.
-Answer with ONLY a JSON array: [{"id": "<id>", "genre": "<exact list name>", "confidence": "high"|"medium"|"low", "why": "<12 words max, name the evidence>"}]
+Evidence, most trusted first: MusicBrainz album tags, MusicBrainz artist tags (the FIRST tags describe the artist; a minor tag never wins), Discogs styles, music press, Deezer genres (coarse store genres). "sounds like Jake's shelves" counts the shelves of the songs in HIS library that sound nearest to this album: strong evidence of which of his shelves it sits beside — weigh it with the tags, it is not the answer by itself (the mood-index version is weaker).
+NO DUMPING GROUNDS: Experimental means "defies genre on purpose". Pick it ONLY when the evidence itself says experimental / avant-garde / noise. When no shelf fits perfectly, pick the CLOSEST real shelf (e.g. future bass or melodic electronic → the nearest Electronic & Dance shelf his sound-alikes point to) or answer confidence "low". If the evidence is thin or contradictory, answer confidence "low" — never guess from a band's name.
+Answer with ONLY a JSON array: [{"id": "<id>", "genre": "<exact list name>", "alt": "<second-closest exact list name>", "confidence": "high"|"medium"|"low", "why": "<12 words max, name the evidence>"}]
 
 JAKE'S GENRE LIST
 ${list}`
@@ -157,12 +219,15 @@ export function evidenceLine(id: string, u: FilerUnit, e: Evidence): string {
   const parts = [`id=${id}`, `${u.artist} — "${u.comp ? u.title : u.album}"`, `store tag: ${u.tag || '(none)'}`]
   if (e.albumTags.length) parts.push(`MB album tags: ${e.albumTags.slice(0, 6).join(', ')}`)
   if (e.artistTags.length) parts.push(`MB artist tags (most-voted first): ${e.artistTags.slice(0, 6).join(', ')}`)
+  if (e.discogs?.length) parts.push(`Discogs: ${e.discogs.slice(0, 8).join(', ')}`)
+  if (e.deezer?.length) parts.push(`Deezer: ${e.deezer.slice(0, 4).join(', ')}`)
+  if (e.soundAlike) parts.push(soundAlikeText(e.soundAlike))
   if (e.press) parts.push(`press: ${e.press.replace(/\s+/g, ' ').slice(0, 600)}`)
-  if (!e.albumTags.length && !e.artistTags.length && !e.press) parts.push('no evidence found')
+  if (!e.albumTags.length && !e.artistTags.length && !e.press && !e.discogs?.length && !e.deezer?.length && !e.soundAlike) parts.push('no evidence found')
   return parts.join(' | ')
 }
 
-export function parseReply(text: string): Array<{ id: string; genre?: string; confidence?: string; why?: string }> {
+export function parseReply(text: string): Array<AiPick & { id: string }> {
   const m = text.match(/\[[\s\S]*\]/)
   if (!m) return []
   try {
@@ -175,7 +240,11 @@ export interface CheckEntry { key: string; artist: string; album: string; ids: n
   /** The suggestion the filer wrote onto the songs (2026-10-28). The entry stays
    *  listed until Jake confirms or changes it; a different genre on the songs
    *  (Get Info) means he already did. */
-  filedAs?: string }
+  filedAs?: string
+  /** EVIDENCE_VERSION it was last judged on (absent = 1). */
+  evidence?: number
+  /** When the one re-judgement on newer evidence ran. */
+  rejudgedAt?: string }
 
 /** The suggestion an unsure album can be filed under: on his list, and never
  *  moving a Rock / Classic Rock album off the rock shelves (rule 4). */
@@ -208,6 +277,43 @@ export interface FilerDeps {
   loadOriginCache?(): Promise<OriginCache>
   saveOriginCache?(cache: OriginCache): Promise<void>
   originRetryMs?: number
+  /** The vector spaces for the sound-alike vote: CLAP audio, and the mood
+   *  index as the fallback. Absent = no vote (tests, or no index files). */
+  vectors?(): Promise<{ audio?: Map<number, Float32Array>; mood?: Map<number, Float32Array> }>
+}
+
+/** His shelves for the sound-alike vote: settled songs, minus everything on
+ *  an open check-list entry (a filedAs suggestion is not his decision yet —
+ *  Experimental-filed albums must not vote for Experimental). */
+export function shelfTracks(tracks: FilerTrack[], check: CheckEntry[]): Map<number, ShelfTrack> {
+  const byId = new Map(tracks.map((t) => [t.id, t]))
+  const pending = new Set(check.filter((c) => checkEntryOpen(c, byId)).flatMap((c) => c.ids))
+  const out = new Map<number, ShelfTrack>()
+  for (const t of tracks) {
+    if (!isSettled(t) || pending.has(t.id)) continue
+    out.set(t.id, { genre: t.genre!.trim(), artist: (t.albumArtist || t.artist || '').trim() })
+  }
+  return out
+}
+
+/** Open check-list entries judged on older evidence: each gets ONE re-judgement. */
+export function needsRejudge(c: CheckEntry, byId: Map<number, FilerTrack>): boolean {
+  return (c.evidence ?? 1) < EVIDENCE_VERSION && checkEntryOpen(c, byId)
+}
+
+/** A check-list entry's songs the filer may still write: unsettled, or still
+ *  wearing the suggestion it wrote. A song Jake set himself is never touched. */
+export function rewritableIds(c: CheckEntry, byId: Map<number, FilerTrack>): number[] {
+  return c.ids.filter((id) => {
+    const t = byId.get(id)
+    if (!t) return false
+    return !isSettled(t) || (!!c.filedAs && (t.genre || '').trim() === c.filedAs)
+  })
+}
+
+const entryUnit = (c: CheckEntry): FilerUnit => {
+  const comp = c.key.startsWith('song:')
+  return { key: c.key, artist: c.artist, album: comp ? '' : c.album, title: comp ? c.album : undefined, comp, ids: c.ids, tag: c.tag }
 }
 
 /** One remembered origin answer per artist credit (originCacheKey).
@@ -234,7 +340,7 @@ export function originCacheFromV2(v2: unknown): OriginCache {
 }
 
 /** One sweep: file what the rules can, look up the rest (capped), list the unsure. */
-export async function runFilerSweep(deps: FilerDeps): Promise<{ filed: number; checked: number; deferred: number; backfilled: number; origins: number }> {
+export async function runFilerSweep(deps: FilerDeps): Promise<{ filed: number; checked: number; deferred: number; backfilled: number; origins: number; rejudged: number }> {
   const tracks = await deps.tracks()
   const byId = new Map(tracks.map((t) => [t.id, t]))
   const check = await deps.loadCheck()
@@ -247,6 +353,8 @@ export async function runFilerSweep(deps: FilerDeps): Promise<{ filed: number; c
     if (c.filedAs) continue
     const g = fileableSuggestion(c.tag, c.suggested)
     if (!g) continue
+    // An unvetted catch-all suggestion waits for its re-judgement (rule 6).
+    if (DUMPING_GROUNDS.has(g) && (c.evidence ?? 1) < EVIDENCE_VERSION) continue
     let wrote = false
     for (const id of c.ids) {
       const t = byId.get(id)
@@ -261,24 +369,44 @@ export async function runFilerSweep(deps: FilerDeps): Promise<{ filed: number; c
   const listed = new Set(check.map((c) => c.key))
   const units = unfiledUnits(tracks).filter((u) => !listed.has(u.key))
   const homes = artistHomes(tracks)
-  if (!units.length) return { filed: 0, checked: 0, deferred: 0, backfilled, origins: await fillOrigins(deps, tracks, homes, new Set()) }
+  const rejudge = check.filter((c) => needsRejudge(c, byId))
+  if (!units.length && !rejudge.length) return { filed: 0, checked: 0, deferred: 0, backfilled, origins: await fillOrigins(deps, tracks, homes, new Set()), rejudged: 0 }
   const decided: Array<[FilerUnit, Decision]> = []
   const needEvidence: FilerUnit[] = []
   for (const u of units) {
     const d = decideByRules(u, homes)
     if (d) decided.push([u, d]); else needEvidence.push(u)
   }
-  const batch = needEvidence.slice(0, deps.maxUnits ?? 8)
-  if (batch.length) {
+  const max = deps.maxUnits ?? 8
+  const batch = needEvidence.slice(0, max)
+  // Re-judgements share the sweep's budget, after the new albums.
+  const rejudgeBatch = rejudge.slice(0, Math.max(0, max - batch.length))
+  const rejudged: Array<[CheckEntry, Decision]> = []
+  const now = (deps.now ?? (() => new Date()))().toISOString()
+  if (batch.length || rejudgeBatch.length) {
+    const spaces = (await deps.vectors?.().catch(() => undefined)) ?? {}
+    const shelf = shelfTracks(tracks, check)
+    const judge: Array<{ u: FilerUnit; entry?: CheckEntry }> = [...batch.map((u) => ({ u })), ...rejudgeBatch.map((c) => ({ u: entryUnit(c), entry: c }))]
     const ev = new Map<string, Evidence>()
-    for (const u of batch) ev.set(u.key, await deps.evidence(u))
-    const reply = parseReply(await deps.classify(filerSystemPrompt(), 'Albums:\n' + batch.map((u, i) => evidenceLine(String(i), u, ev.get(u.key)!)).join('\n')))
+    for (const { u, entry } of judge) {
+      if (!u.artist.trim() && !u.album.trim() && !u.title?.trim()) { ev.set(u.key, { artistTags: [], albumTags: [], press: '' }); continue }
+      const e = await deps.evidence(u)
+      // Mood vectors carry the song's genre line: for an album already wearing
+      // the filer's suggestion they would echo it back, so audio only.
+      e.soundAlike = soundAlikeFor(u.ids, spaces, shelf, !entry?.filedAs)
+      ev.set(u.key, e)
+    }
+    const reply = parseReply(await deps.classify(filerSystemPrompt(), 'Albums:\n' + judge.map(({ u }, i) => evidenceLine(String(i), u, ev.get(u.key)!)).join('\n')))
     const got = new Map(reply.map((r) => [r.id, r]))
-    batch.forEach((u, i) => decided.push([u, enforce(u, got.get(String(i)) ?? {}, ev.get(u.key)?.origin)]))
+    judge.forEach(({ u, entry }, i) => {
+      const d = enforce(u, got.get(String(i)) ?? {}, ev.get(u.key))
+      // A re-judgement with no answer (API failure, bad JSON) isn't spent:
+      // it runs again next sweep. Only a real answer stamps the entry.
+      if (entry) { if (got.has(String(i))) rejudged.push([entry, d]) } else decided.push([u, d])
+    })
   }
   const updates: Array<{ trackId: number; field: string; newValue: string }> = []
   let filed = 0
-  const now = (deps.now ?? (() => new Date()))().toISOString()
   for (const [u, d] of decided) {
     for (const id of u.ids) {
       const t = byId.get(id)
@@ -293,13 +421,39 @@ export async function runFilerSweep(deps: FilerDeps): Promise<{ filed: number; c
     }
     const filedAs = d.genre ? undefined : fileableSuggestion(u.tag, d.suggested) ?? undefined
     if (d.genre) filed++
-    else check.push({ key: u.key, artist: u.artist, album: u.comp ? (u.title || u.album) : u.album, ids: u.ids, tag: u.tag, suggested: d.suggested, why: d.why, at: now, ...(filedAs ? { filedAs } : {}) })
+    else check.push({ key: u.key, artist: u.artist, album: u.comp ? (u.title || u.album) : u.album, ids: u.ids, tag: u.tag, suggested: d.suggested, why: d.why, at: now, evidence: EVIDENCE_VERSION, ...(filedAs ? { filedAs } : {}) })
     deps.log?.(`[genre-filer] ${u.artist} — ${u.album}: ${d.genre ? `→ ${d.genre} (${d.how})` : filedAs ? `→ ${filedAs} (suggestion; stays on the check list: ${d.why})` : `check list (${d.why})`}`)
   }
+  // Re-judgements (rule 7): once per entry, on the newer evidence. Only songs
+  // still unsettled or wearing the filer's own suggestion are rewritten.
+  const resolved = new Set<string>()
+  for (const [c, d] of rejudged) {
+    const before = c.filedAs
+    const g = d.genre ?? fileableSuggestion(c.tag, d.suggested)
+    if (g) {
+      for (const id of rewritableIds(c, byId)) {
+        const t = byId.get(id)!
+        if ((t.genre || '').trim() === g && isSettled(t)) continue
+        await deps.persist(t, { genre: g })
+        updates.push({ trackId: id, field: 'genre', newValue: g })
+      }
+    }
+    c.evidence = EVIDENCE_VERSION
+    c.rejudgedAt = now
+    if (d.genre) { resolved.add(c.key); filed++ }
+    else {
+      c.why = d.why
+      c.suggested = d.suggested
+      if (g) c.filedAs = g
+      // No fileable answer: the songs keep what they wear (never made worse),
+      // and the entry stays on his list.
+    }
+    deps.log?.(`[genre-filer] re-judged ${c.artist} — ${c.album}: ${before ?? c.tag} → ${d.genre ? `${d.genre} (${d.how}; off the check list)` : g ? `${g} (suggestion; stays on the check list: ${d.why})` : `unchanged, on the check list (${d.why})`}`)
+  }
   if (updates.length) deps.applied(updates)
-  if (decided.some(([, d]) => !d.genre)) await deps.saveCheck(check)
+  if (decided.some(([, d]) => !d.genre) || rejudged.length) await deps.saveCheck(resolved.size ? check.filter((c) => !resolved.has(c.key)) : check)
   const origins = await fillOrigins(deps, tracks, homes, new Set(updates.filter((u) => u.field === 'origin').map((u) => u.trackId)))
-  return { filed, checked: decided.filter(([, d]) => !d.genre).length, deferred: needEvidence.length - batch.length, backfilled, origins }
+  return { filed, checked: decided.filter(([, d]) => !d.genre).length, deferred: needEvidence.length - batch.length, backfilled, origins, rejudged: rejudged.length }
 }
 
 /** Whose origin a song carries: its album artist — or, on a compilation or a
