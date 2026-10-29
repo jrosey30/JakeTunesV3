@@ -182,7 +182,7 @@ const electronAPI = {
     ipcRenderer.on('genre-filer:applied', handler)
     return () => { ipcRenderer.removeListener('genre-filer:applied', handler) }
   },
-  genreCheckList: (): Promise<Array<{ key: string; artist: string; album: string; ids: number[]; tag: string; suggested?: string; why: string; at: string; filedAs?: string }>> =>
+  genreCheckList: (): Promise<Array<{ key: string; artist: string; album: string; ids: number[]; tag: string; suggested?: string; why: string; at: string; filedAs?: string; review?: boolean }>> =>
     ipcRenderer.invoke('genre-check:list'),
   genreCheckResolve: (key: string, genre: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('genre-check:resolve', key, genre),

@@ -30,6 +30,13 @@
  *      store/Discogs tags (genre-external-tags.ts). Check-list albums judged
  *      on the old, thinner evidence get ONE re-judgement (EVIDENCE_VERSION);
  *      a song Jake set himself is never touched.
+ *   8. Who set it counts (2026-10-28, genre-provenance.ts): his own Get Info
+ *      choice stands even OFF the list (The Avalanches "Electronic" was
+ *      filed over three times on 10/20); the filer's own picks are recorded,
+ *      so they are never re-filed every sweep yet CAN be re-judged; new songs
+ *      of an album already filed join that album's shelf (album-sibling); and
+ *      an artist's "home" is built only from shelves someone trusted chose —
+ *      never a filer guess, a dumping ground or a catch-all it picked.
  *
  * Pure decisions + injected effects, so the rules are tested directly.
  */
@@ -37,6 +44,7 @@ import { GENRES, GENRE_NAMES, CATCH_ALL, ROCK_FAMILY, PER_ALBUM_ARTISTS, isListG
 import { normName } from './taste-profile.ts'
 import { originNames, type OriginLookup, type OriginSource } from './origin-lookup.ts'
 import { soundAlikeFor, soundAlikeLeader, soundAlikeText, type ShelfTrack, type SoundAlike } from './genre-sound-alike.ts'
+import { isHis, type GenreOwner, type FilerHow } from './genre-provenance.ts'
 
 export interface FilerTrack {
   id: number
@@ -52,16 +60,29 @@ export interface FilerTrack {
    *  this filer. A catch-all genre ("Rock") only counts as filed when approved;
    *  the same word straight from a store gets filed. */
   genreApproved?: boolean
+  /** Who set the genre (genre-provenance.ts). Absent = the old rule (tests,
+   *  callers without a record): genreApproved decides. */
+  genreBy?: GenreOwner
+  /** When genreBy is 'filer': how it got there. */
+  filerPick?: { how: string; confidence?: string }
+  /** The fp of the overrides entry when it does NOT match this song (a
+   *  wipe/re-measure trace for the repair log). */
+  overrideFpSeen?: string
 }
+
+/** Why a genre is being written — the provenance record (by: filer unless Jake filed it). */
+export interface GenreWhy { by: 'filer' | 'jake'; how: FilerHow | 'check-list'; confidence?: 'high' | 'medium' | 'low' }
 
 export interface FilerUnit { key: string; artist: string; album: string; title?: string; comp: boolean; ids: number[]; tag: string }
 
 export interface Decision {
   genre: string | null          // null = leave the genre alone (on the check list)
   origin?: string
-  how: 'artist-home' | 'specific-tag' | 'evidence' | 'check'
+  how: 'artist-home' | 'album-sibling' | 'specific-tag' | 'evidence' | 'check'
   why: string
   suggested?: string
+  /** The AI's confidence, or the inherited one (artist-home / album-sibling). */
+  confidence?: 'high' | 'medium' | 'low'
 }
 
 export interface Evidence {
@@ -113,20 +134,34 @@ export function trackFingerprint(t: FilerTrack): string {
   return `${String(t.title || '').toLowerCase().trim()}|${String(t.artist || '').toLowerCase().trim()}|${t.duration || 0}`
 }
 
-/** A genre that needs no filing: a specific list genre, or a catch-all he approved. */
+/** A genre that needs no filing: his own choice (on the list or not), a list
+ *  genre the filer wrote, a specific list genre, or a catch-all he approved. */
 export function isSettled(t: FilerTrack): boolean {
+  if (isHis(t.genreBy) && t.genreBy !== 'unknown') return !!(t.genre || '').trim()
+  if (t.genreBy === 'filer') return isListGenre(t.genre)
   return isListGenre(t.genre) && (!!t.genreApproved || !CATCH_ALL.has(t.genre!.trim()))
+}
+
+/** May this song's genre be rewritten by the filer (a re-judgement, a
+ *  correction)? Only when the filer put it there or nobody chose it. */
+export function filerMayRewrite(t: FilerTrack): boolean {
+  if (t.genreBy) return t.genreBy === 'filer' || t.genreBy === 'store'
+  return !isSettled(t)
 }
 
 /** Is a check-list entry still Jake's to look at? Yes while any song is
  *  unsettled, or still wears the suggestion the filer wrote (filedAs). A song
  *  on another list genre means he filed it himself (Get Info). */
 export function checkEntryOpen(c: CheckEntry, byId: Map<number, FilerTrack>): boolean {
+  if (c.review) return c.ids.some((id) => (byId.get(id)?.genre || '').trim() === c.tag)
   return c.ids.some((id) => {
     const t = byId.get(id)
     if (!t) return false
     if (!isSettled(t)) return true
-    return !!c.filedAs && (t.genre || '').trim() === c.filedAs
+    if (isHis(t.genreBy)) return false
+    // Still the filer's: its suggestion (filedAs), or any pick it recorded
+    // for an entry he never answered.
+    return (!!c.filedAs && (t.genre || '').trim() === c.filedAs) || (t.genreBy === 'filer' && t.filerPick?.how === 'suggestion')
   })
 }
 
@@ -145,7 +180,49 @@ export function unfiledUnits(tracks: FilerTrack[]): FilerUnit[] {
   return [...units.values()]
 }
 
-/** Each artist's shelf (most common list genre across their songs) and origin. */
+/** Filer picks that may NOT seed an artist's home: a suggestion or anything
+ *  low-confidence, a copy (artist-home / album-sibling — no chains), a
+ *  dumping ground, or a catch-all it chose (2026-10-28: Father of Peace went
+ *  Rock on two songs' thin evidence, then 14 more songs followed it). */
+export function trustedForHome(t: FilerTrack): boolean {
+  if (!isSettled(t) || !isListGenre(t.genre)) return false
+  if (t.genreBy !== 'filer') return true
+  const g = t.genre!.trim()
+  const p = t.filerPick
+  if (!p || p.confidence === 'low') return false
+  if (!['evidence', 'specific-tag', 'rejudge', 'correction'].includes(p.how)) return false
+  return !DUMPING_GROUNDS.has(g) && !CATCH_ALL.has(g)
+}
+
+const albumKeyOf = (t: FilerTrack): string | null => {
+  const albumArtist = (t.albumArtist || t.artist || '').trim()
+  if (t.compilation || isVarious(albumArtist)) return null
+  return `album:${norm(albumArtist)}|${norm(t.album)}`
+}
+
+/** An album's shelf from its songs already settled — new songs of the same
+ *  album join it (one genre per album), carrying the pick's own provenance. */
+export function albumHomes(tracks: FilerTrack[]): Map<string, { genre: string; by?: GenreOwner; pick?: { how: string; confidence?: string } }> {
+  const c = new Map<string, Map<string, { n: number; t: FilerTrack }>>()
+  for (const t of tracks) {
+    if (!isSettled(t) || !isListGenre(t.genre)) continue
+    const k = albumKeyOf(t)
+    if (!k) continue
+    const m = c.get(k) ?? new Map<string, { n: number; t: FilerTrack }>()
+    const g = t.genre!.trim()
+    const cur = m.get(g) ?? { n: 0, t }
+    cur.n++
+    m.set(g, cur); c.set(k, m)
+  }
+  const out = new Map<string, { genre: string; by?: GenreOwner; pick?: { how: string; confidence?: string } }>()
+  for (const [k, m] of c) {
+    const [g, v] = [...m.entries()].sort((x, y) => y[1].n - x[1].n || x[0].localeCompare(y[0]))[0]
+    out.set(k, { genre: g, by: v.t.genreBy, pick: v.t.filerPick })
+  }
+  return out
+}
+
+/** Each artist's shelf (most common TRUSTED list genre across their songs) and origin. */
 export function artistHomes(tracks: FilerTrack[]): Map<string, { genre: string; origin?: string }> {
   const g = new Map<string, Map<string, number>>()
   const o = new Map<string, Map<string, number>>()
@@ -155,7 +232,7 @@ export function artistHomes(tracks: FilerTrack[]): Map<string, { genre: string; 
   for (const t of tracks) {
     const a = (t.albumArtist || t.artist || '').trim()
     if (!a || isVarious(a)) continue
-    if (isSettled(t)) bump(g, norm(a), t.genre!.trim())   // homes come from settled genres only
+    if (trustedForHome(t)) bump(g, norm(a), t.genre!.trim())   // homes come from trusted shelves only
     if (t.origin) bump(o, norm(a), t.origin)
   }
   const top = (c: Map<string, number> | undefined): string | undefined =>
@@ -166,9 +243,16 @@ export function artistHomes(tracks: FilerTrack[]): Map<string, { genre: string; 
 }
 
 /** Rules 1 and 2: decisions that need no lookup. null = needs evidence. */
-export function decideByRules(u: FilerUnit, homes: Map<string, { genre: string; origin?: string }>): Decision | null {
+export function decideByRules(u: FilerUnit, homes: Map<string, { genre: string; origin?: string }>, albums?: Map<string, { genre: string; by?: GenreOwner; pick?: { how: string; confidence?: string } }>): Decision | null {
   const home = homes.get(norm(u.artist))
-  if (home && !PER_ALBUM_ARTISTS.has(u.artist)) return { genre: home.genre, origin: home.origin, how: 'artist-home', why: `${u.artist} already lives on ${home.genre}` }
+  // New songs of an album already on a shelf (a download still landing, a
+  // single that became an album) join it — no lookup, no new judgement.
+  const sib = u.comp ? undefined : albums?.get(u.key)
+  if (sib) {
+    const c = sib.by === 'filer' ? sib.pick?.confidence : 'high'
+    return { genre: sib.genre, origin: home?.origin, how: 'album-sibling', why: `the rest of the album is on ${sib.genre}`, confidence: c === 'high' || c === 'medium' || c === 'low' ? c : undefined }
+  }
+  if (home && !PER_ALBUM_ARTISTS.has(u.artist)) return { genre: home.genre, origin: home.origin, how: 'artist-home', why: `${u.artist} already lives on ${home.genre}`, confidence: 'high' }
   if (isListGenre(u.tag) && !CATCH_ALL.has(u.tag)) return { genre: u.tag, origin: home?.origin, how: 'specific-tag', why: 'its tag is already a specific genre on the list' }
   return null
 }
@@ -198,8 +282,8 @@ export function enforce(u: FilerUnit, pick: AiPick, ev?: Partial<Evidence> | str
       .find((x) => GENRE_NAMES.has(x) && !DUMPING_GROUNDS.has(x) && (!isRockTag(u.tag) || ROCK_FAMILY.has(x)))
     return { genre: null, origin, how: 'check', why: `${g} needs evidence that says so${fallback ? ` — closest real shelf ${fallback}` : ''}${why ? ` (${why})` : ''}`.slice(0, 200), suggested: fallback }
   }
-  if (pick.confidence === 'low') return { genre: null, origin, how: 'check', why: why || 'not sure', suggested: g }
-  return { genre: g, origin, how: 'evidence', why }
+  if (pick.confidence === 'low') return { genre: null, origin, how: 'check', why: why || 'not sure', suggested: g, confidence: 'low' }
+  return { genre: g, origin, how: 'evidence', why, confidence: pick.confidence === 'high' ? 'high' : 'medium' }
 }
 
 export function filerSystemPrompt(): string {
@@ -244,7 +328,11 @@ export interface CheckEntry { key: string; artist: string; album: string; ids: n
   /** EVIDENCE_VERSION it was last judged on (absent = 1). */
   evidence?: number
   /** When the one re-judgement on newer evidence ran. */
-  rejudgedAt?: string }
+  rejudgedAt?: string
+  /** A suggestion for songs he set (or nobody recorded who set): nothing is
+   *  written until he files it. `tag` is what they wear now. Open while they
+   *  still wear it. (The 2026-10-28 audit.) */
+  review?: boolean }
 
 /** The suggestion an unsure album can be filed under: on his list, and never
  *  moving a Rock / Classic Rock album off the rock shelves (rule 4). */
@@ -258,7 +346,8 @@ export function fileableSuggestion(tag: string, suggested: string | undefined): 
 
 export interface FilerDeps {
   tracks(): Promise<FilerTrack[]>                 // effective tracks (overrides applied)
-  persist(t: FilerTrack, fields: Record<string, string>): Promise<void>
+  /** `why` is given whenever fields.genre is: the host records it (genre-provenance.ts). */
+  persist(t: FilerTrack, fields: Record<string, string>, why?: GenreWhy): Promise<void>
   applied(updates: Array<{ trackId: number; field: string; newValue: string }>): void
   evidence(u: FilerUnit): Promise<Evidence>
   classify(system: string, user: string): Promise<string>
@@ -287,7 +376,7 @@ export interface FilerDeps {
  *  Experimental-filed albums must not vote for Experimental). */
 export function shelfTracks(tracks: FilerTrack[], check: CheckEntry[]): Map<number, ShelfTrack> {
   const byId = new Map(tracks.map((t) => [t.id, t]))
-  const pending = new Set(check.filter((c) => checkEntryOpen(c, byId)).flatMap((c) => c.ids))
+  const pending = new Set(check.filter((c) => !c.review && checkEntryOpen(c, byId)).flatMap((c) => c.ids))
   const out = new Map<number, ShelfTrack>()
   for (const t of tracks) {
     if (!isSettled(t) || pending.has(t.id)) continue
@@ -298,7 +387,7 @@ export function shelfTracks(tracks: FilerTrack[], check: CheckEntry[]): Map<numb
 
 /** Open check-list entries judged on older evidence: each gets ONE re-judgement. */
 export function needsRejudge(c: CheckEntry, byId: Map<number, FilerTrack>): boolean {
-  return (c.evidence ?? 1) < EVIDENCE_VERSION && checkEntryOpen(c, byId)
+  return !c.review && (c.evidence ?? 1) < EVIDENCE_VERSION && checkEntryOpen(c, byId)
 }
 
 /** A check-list entry's songs the filer may still write: unsettled, or still
@@ -307,8 +396,17 @@ export function rewritableIds(c: CheckEntry, byId: Map<number, FilerTrack>): num
   return c.ids.filter((id) => {
     const t = byId.get(id)
     if (!t) return false
+    if (t.genreBy) return filerMayRewrite(t)
     return !isSettled(t) || (!!c.filedAs && (t.genre || '').trim() === c.filedAs)
   })
+}
+
+/** Songs wearing a genre the filer recorded whose overrides entry is gone
+ *  or no longer matches (10/28: The Police and Social Distortion were judged
+ *  twice because their catch-all override vanished between sweeps). Put it
+ *  back as it was — no new judgement — and say what was found. */
+export function repairsNeeded(tracks: FilerTrack[]): FilerTrack[] {
+  return tracks.filter((t) => t.genreBy === 'filer' && !t.genreApproved && isListGenre(t.genre))
 }
 
 const entryUnit = (c: CheckEntry): FilerUnit => {
@@ -350,7 +448,7 @@ export async function runFilerSweep(deps: FilerDeps): Promise<{ filed: number; c
   const backfill: Array<{ trackId: number; field: string; newValue: string }> = []
   let backfilled = 0
   for (const c of check) {
-    if (c.filedAs) continue
+    if (c.filedAs || c.review) continue
     const g = fileableSuggestion(c.tag, c.suggested)
     if (!g) continue
     // An unvetted catch-all suggestion waits for its re-judgement (rule 6).
@@ -359,22 +457,52 @@ export async function runFilerSweep(deps: FilerDeps): Promise<{ filed: number; c
     for (const id of c.ids) {
       const t = byId.get(id)
       if (!t || isSettled(t)) continue
-      await deps.persist(t, { genre: g })
+      await deps.persist(t, { genre: g }, { by: 'filer', how: 'suggestion', confidence: 'low' })
       backfill.push({ trackId: id, field: 'genre', newValue: g })
       wrote = true
     }
     if (wrote) { c.filedAs = g; backfilled++; deps.log?.(`[genre-filer] ${c.artist} — ${c.album}: → ${g} (suggestion; stays on the check list)`) }
   }
   if (backfill.length) { deps.applied(backfill); await deps.saveCheck(check) }
+  // Rule 8: a pick the filer recorded whose override went missing is put back
+  // as it was (and the trace logged), never judged again.
+  for (const t of repairsNeeded(tracks)) {
+    const g = t.genre!.trim()
+    await deps.persist(t, { genre: g }, { by: 'filer', how: (t.filerPick?.how as FilerHow) ?? 'evidence', ...(t.filerPick?.confidence ? { confidence: t.filerPick.confidence as 'high' | 'medium' | 'low' } : {}) })
+    t.genreApproved = true
+    deps.log?.(`[genre-filer] repaired ${t.artist} — ${t.album} (${t.id}): its ${g} was missing from the edits file${t.overrideFpSeen ? ` (entry fp "${t.overrideFpSeen}" ≠ song "${trackFingerprint(t)}")` : ''}; put back, not re-judged`)
+  }
   const listed = new Set(check.map((c) => c.key))
+  // New songs of an album already on the check list join its entry (and its
+  // filedAs suggestion) — they used to sit on the store tag, unseen.
+  const joined: Array<{ trackId: number; field: string; newValue: string }> = []
+  let entriesGrew = false
+  for (const u of unfiledUnits(tracks)) {
+    const c = check.find((e) => e.key === u.key && !e.review)
+    if (!c) continue
+    const fresh = u.ids.filter((id) => !c.ids.includes(id))
+    if (!fresh.length) continue
+    c.ids = [...c.ids, ...fresh]
+    entriesGrew = true
+    if (c.filedAs) {
+      for (const id of fresh) {
+        await deps.persist(byId.get(id)!, { genre: c.filedAs }, { by: 'filer', how: 'suggestion', confidence: 'low' })
+        joined.push({ trackId: id, field: 'genre', newValue: c.filedAs })
+      }
+    }
+    deps.log?.(`[genre-filer] ${c.artist} — ${c.album}: ${fresh.length} new song${fresh.length === 1 ? '' : 's'} joined its check-list entry${c.filedAs ? ` (→ ${c.filedAs}, suggestion)` : ''}`)
+  }
+  if (joined.length) deps.applied(joined)
+  if (entriesGrew) await deps.saveCheck(check)
   const units = unfiledUnits(tracks).filter((u) => !listed.has(u.key))
   const homes = artistHomes(tracks)
+  const albums = albumHomes(tracks)
   const rejudge = check.filter((c) => needsRejudge(c, byId))
   if (!units.length && !rejudge.length) return { filed: 0, checked: 0, deferred: 0, backfilled, origins: await fillOrigins(deps, tracks, homes, new Set()), rejudged: 0 }
   const decided: Array<[FilerUnit, Decision]> = []
   const needEvidence: FilerUnit[] = []
   for (const u of units) {
-    const d = decideByRules(u, homes)
+    const d = decideByRules(u, homes, albums)
     if (d) decided.push([u, d]); else needEvidence.push(u)
   }
   const max = deps.maxUnits ?? 8
@@ -416,7 +544,8 @@ export async function runFilerSweep(deps: FilerDeps): Promise<{ filed: number; c
       if (genre) fields.genre = genre
       if (d.origin && !t.origin) fields.origin = d.origin
       if (!Object.keys(fields).length) continue
-      await deps.persist(t, fields)
+      const how: FilerHow = !d.genre ? 'suggestion' : d.how === 'check' ? 'suggestion' : d.how
+      await deps.persist(t, fields, genre ? { by: 'filer', how, ...(d.genre ? (d.confidence ? { confidence: d.confidence } : {}) : { confidence: 'low' as const }) } : undefined)
       for (const [field, newValue] of Object.entries(fields)) updates.push({ trackId: id, field, newValue })
     }
     const filedAs = d.genre ? undefined : fileableSuggestion(u.tag, d.suggested) ?? undefined
@@ -433,8 +562,8 @@ export async function runFilerSweep(deps: FilerDeps): Promise<{ filed: number; c
     if (g) {
       for (const id of rewritableIds(c, byId)) {
         const t = byId.get(id)!
-        if ((t.genre || '').trim() === g && isSettled(t)) continue
-        await deps.persist(t, { genre: g })
+        if ((t.genre || '').trim() === g && isSettled(t) && t.genreBy !== 'store') continue
+        await deps.persist(t, { genre: g }, { by: 'filer', how: d.genre ? 'rejudge' : 'suggestion', confidence: d.genre ? (d.confidence ?? 'medium') : 'low' })
         updates.push({ trackId: id, field: 'genre', newValue: g })
       }
     }
@@ -589,7 +718,7 @@ export async function resolveCheckEntry(deps: Pick<FilerDeps, 'tracks' | 'persis
   for (const id of entry.ids) {
     const t = byId.get(id)
     if (!t) continue
-    await deps.persist(t, { genre })
+    await deps.persist(t, { genre }, { by: 'jake', how: 'check-list' })
     updates.push({ trackId: id, field: 'genre', newValue: genre })
   }
   if (updates.length) deps.applied(updates)

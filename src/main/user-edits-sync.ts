@@ -374,3 +374,9 @@ export function createUserEditsSync(host: UserEditsHost): UserEditsSync {
     },
   }
 }
+
+/** The journal, read-only (the genre filer reads who set a genre). Never
+ *  writes; null when absent or unreadable. */
+export async function readUserEditsJournal(dir: string): Promise<UserEditsDoc | null> {
+  try { return parseUserEdits(JSON.parse(await readFile(join(dir, USER_EDITS_FILE), 'utf8'))) } catch { return null }
+}
