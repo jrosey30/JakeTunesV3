@@ -7,7 +7,7 @@
 import { useEffect, useState } from 'react'
 import { GENRES } from '../../common/genre-vocab'
 
-type Entry = { key: string; artist: string; album: string; ids: number[]; tag: string; suggested?: string; why: string; at: string; filedAs?: string }
+type Entry = { key: string; artist: string; album: string; ids: number[]; tag: string; suggested?: string; why: string; at: string; filedAs?: string; review?: boolean }
 
 const AREAS = [...new Set(GENRES.map((g) => g.area))]
 
@@ -55,7 +55,7 @@ export default function GenreCheckList(): JSX.Element | null {
               <div key={e.key} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 8, alignItems: 'center', fontSize: 12.5 }}>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 600, color: '#2a2a2a' }}>{e.artist}</div>
-                  <div style={{ color: '#6a6a6a' }}>{e.album}{e.filedAs ? ` · filed as ${e.filedAs}${e.tag ? ` (was “${e.tag}”)` : ''}` : e.tag ? ` · now “${e.tag}”` : ''}</div>
+                  <div style={{ color: '#6a6a6a' }}>{e.album}{e.review ? ` · now “${e.tag}”, suggested ${e.suggested}` : e.filedAs ? ` · filed as ${e.filedAs}${e.tag ? ` (was “${e.tag}”)` : ''}` : e.tag ? ` · now “${e.tag}”` : ''}</div>
                   {e.why && <div style={{ color: '#8a8a8a', fontSize: 11.5 }}>{e.why}</div>}
                 </div>
                 <select
@@ -72,7 +72,7 @@ export default function GenreCheckList(): JSX.Element | null {
                   ))}
                 </select>
                 <button type="button" className="imp-btn" disabled={!picks[e.key] || busy === e.key} onClick={() => { void file(e) }}>
-                  {busy === e.key ? 'Filing…' : e.filedAs && picks[e.key] === e.filedAs ? 'Keep' : 'File'}
+                  {busy === e.key ? 'Filing…' : (e.filedAs && picks[e.key] === e.filedAs) || (e.review && picks[e.key] === e.tag) ? 'Keep' : 'File'}
                 </button>
               </div>
             ))}

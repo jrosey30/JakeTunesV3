@@ -10,7 +10,11 @@ import { join } from 'path'
 import { readFile, writeFile, rename } from 'fs/promises'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
-import { runFilerSweep, resolveCheckEntry, trackFingerprint, checkEntryOpen, type FilerTrack, type FilerDeps, type CheckEntry, type Evidence, type OriginCache, originCacheFromV2 } from '../genre-filer.ts'
+import { runFilerSweep, resolveCheckEntry, trackFingerprint, checkEntryOpen, type FilerTrack, type FilerDeps, type CheckEntry, type Evidence, type OriginCache, type GenreWhy, originCacheFromV2 } from '../genre-filer.ts'
+import { PROVENANCE_FILE, parseProvenance, genreOwner, type ProvenanceDoc } from '../genre-provenance.ts'
+import { readUserEditsJournal } from '../user-edits-sync.ts'
+import { writeJsonAtomic } from '../atomic-write.ts'
+import { runGenreCorrections } from '../genre-corrections.ts'
 import { musicBrainzArtistCandidates, musicBrainzAlbum, confirmedArtist, musicBrainzCountryById } from '../artist-tags.ts'
 import { lookupArtistOrigin, cleanAlbumTitle } from '../origin-lookup.ts'
 import { exaSearch } from '../exa.ts'
@@ -21,6 +25,13 @@ import { getMoodIndexMap } from '../ai/mood-index.ts'
 export interface GenreFilerHost {
   libraryTracks(): Promise<FilerTrack[]>
   overrides(): Promise<Record<string, { fp?: string; fields?: Record<string, string> } | undefined>>
+  /** The phone's edits (mobile-metadata-overrides.json) — a genre there is his. */
+  phoneOverrides?(): Promise<Record<string, { fp?: string; fields?: Record<string, string> } | undefined>>
+  /** Flush the edits file to disk (the corrections pass backs it up first). */
+  flushOverrides?(): Promise<void>
+  /** workmini: its genres come from the hub catalog (the MacBook), so the
+   *  one-time corrections pass runs on the hub only. */
+  isReplica?(): Promise<boolean>
   persist(trackId: number, fields: Record<string, string>, fingerprint: string): Promise<void>
   send(channel: string, payload: unknown): void
   claude(system: string, user: string): Promise<string>
@@ -37,6 +48,7 @@ const CHECK_FILE = (): string => join(app.getPath('userData'), 'genre-check.json
 // known answers carry over.
 const ORIGIN_FILE = (): string => join(app.getPath('userData'), 'origin-lookups-v3.json')
 const ORIGIN_FILE_V2 = (): string => join(app.getPath('userData'), 'origin-lookups-v2.json')
+const PROV_FILE = (): string => join(app.getPath('userData'), PROVENANCE_FILE)
 const SWEEP_MS = 5 * 60_000
 const FIRST_SWEEP_MS = 90_000
 
@@ -58,20 +70,69 @@ async function saveOriginCache(cache: OriginCache): Promise<void> {
   await writeFile(tmp, JSON.stringify(cache)); await rename(tmp, ORIGIN_FILE())
 }
 
-/** Library tracks with the desktop overrides' genre/origin applied (same fp rule as App.tsx). */
-async function effectiveTracks(host: GenreFilerHost): Promise<FilerTrack[]> {
-  const [tracks, ov] = await Promise.all([host.libraryTracks(), host.overrides()])
-  return tracks.map((t) => {
-    const e = ov[String(t.id)]
-    if (!e?.fields || (e.fp && e.fp !== trackFingerprint(t))) return t
-    return { ...t, genre: e.fields.genre ?? t.genre, origin: e.fields.origin ?? t.origin, genreApproved: e.fields.genre !== undefined }
+/** The provenance record. One writer (this module), every write merged onto
+ *  a FRESH read and serialized — never a held snapshot saved back. */
+let provChain: Promise<unknown> = Promise.resolve()
+async function loadProvenance(): Promise<ProvenanceDoc> {
+  try { return parseProvenance(JSON.parse(await readFile(PROV_FILE(), 'utf8'))) } catch { return parseProvenance(null) }
+}
+export function updateProvenance(mutate: (doc: ProvenanceDoc) => void): Promise<void> {
+  const run = provChain.then(async () => {
+    const doc = await loadProvenance()
+    mutate(doc)
+    await writeJsonAtomic(PROV_FILE(), doc)
+  })
+  provChain = run.catch(() => undefined)
+  return run
+}
+async function loadJournalGenres(): Promise<Map<string, { v: string; at: number; dur?: number }>> {
+  const out = new Map<string, { v: string; at: number; dur?: number }>()
+  try {
+    const doc = await readUserEditsJournal(app.getPath('userData'))
+    for (const [id, f] of Object.entries(doc?.edits ?? {})) if (f.genre) out.set(id, { v: f.genre.v, at: f.genre.at, dur: f.genre.dur })
+  } catch { /* no journal yet */ }
+  return out
+}
+
+/** Library tracks with the desktop overrides' genre/origin applied (same fp
+ *  rule as App.tsx), and who set each genre (genre-provenance.ts). */
+export async function effectiveTracks(host: GenreFilerHost): Promise<FilerTrack[]> {
+  const [tracks, ov, phone, prov, journal] = await Promise.all([
+    host.libraryTracks(), host.overrides(), host.phoneOverrides?.().catch(() => ({})) ?? Promise.resolve({}), loadProvenance(), loadJournalGenres(),
+  ])
+  return tracks.map((t0) => {
+    const fp = trackFingerprint(t0)
+    const e = ov[String(t0.id)]
+    const valid = !!e?.fields && !(e.fp && e.fp !== fp)
+    const t: FilerTrack = valid
+      ? { ...t0, genre: e!.fields!.genre ?? t0.genre, origin: e!.fields!.origin ?? t0.origin, genreApproved: e!.fields!.genre !== undefined }
+      : { ...t0, ...(e?.fields?.genre !== undefined && e.fp ? { overrideFpSeen: e.fp } : {}) }
+    const pe = (phone as Record<string, { fp?: string; fields?: Record<string, string> } | undefined>)[String(t0.id)]
+    const p = prov.tracks[String(t0.id)]
+    t.genreBy = genreOwner({
+      genre: t.genre, fp, duration: t0.duration, inOverrides: !!t.genreApproved, prov: p, journal: journal.get(String(t0.id)),
+      phone: pe?.fields?.genre !== undefined && (!pe.fp || pe.fp === fp) ? pe.fields.genre : undefined,
+    })
+    if (t.genreBy === 'filer' && p) t.filerPick = { how: p.how, ...(p.confidence ? { confidence: p.confidence } : {}) }
+    return t
+  })
+}
+
+/** Persist through the app's override writer, then record who set the genre. */
+async function persistWithProvenance(host: GenreFilerHost, t: FilerTrack, fields: Record<string, string>, why?: GenreWhy): Promise<void> {
+  const fp = trackFingerprint(t)
+  await host.persist(t.id, fields, fp)
+  if (fields.genre === undefined || !why) return
+  const at = new Date().toISOString()
+  await updateProvenance((doc) => {
+    doc.tracks[String(t.id)] = { genre: fields.genre, by: why.by, how: why.how, fp, at, ...(why.confidence ? { confidence: why.confidence } : {}) }
   })
 }
 
 function deps(host: GenreFilerHost): FilerDeps {
   return {
     tracks: () => effectiveTracks(host),
-    persist: (t, fields) => host.persist(t.id, fields, trackFingerprint(t)),
+    persist: (t, fields, why) => persistWithProvenance(host, t, fields, why),
     applied: (updates) => host.send('genre-filer:applied', { updates }),
     evidence: async (u): Promise<Evidence> => {
       await host.mbThrottle()
@@ -117,10 +178,21 @@ function deps(host: GenreFilerHost): FilerDeps {
 
 export function startGenreFiler(host: GenreFilerHost): void {
   let running = false
+  let correctionsTried = false
   const sweep = async (): Promise<void> => {
     if (running) return
     running = true
     try {
+      // The one-time corrections pass (genre-corrections.ts) runs before the
+      // first sweep — idempotent, so a later launch only finds it done.
+      if (!correctionsTried) {
+        correctionsTried = true
+        const replica = (await host.isReplica?.().catch(() => true)) ?? false
+        if (!replica) {
+          await runGenreCorrections({ ...deps(host), userData: app.getPath('userData'), flushOverrides: host.flushOverrides, updateProvenance })
+            .catch((err) => console.warn('[genre-corrections] failed:', err instanceof Error ? err.message : err))
+        }
+      }
       const r = await runFilerSweep(deps(host))
       if (r.filed || r.checked || r.origins || r.backfilled || r.rejudged) console.warn(`[genre-filer] sweep: filed ${r.filed}, to check ${r.checked}, waiting ${r.deferred}, origins ${r.origins}${r.backfilled ? `, check-list albums filed by suggestion ${r.backfilled}` : ''}${r.rejudged ? `, re-judged ${r.rejudged}` : ''}`)
     } catch (err) {

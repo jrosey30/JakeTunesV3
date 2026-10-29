@@ -669,7 +669,7 @@ declare global {
       cynthiaRevertLedgerEntry: (id: string) => Promise<{ ok: boolean; error?: string }>
       cynthiaSweepStatus: () => Promise<{ ok: boolean; swept: number; queued: number; withFindings: number; autoAppliedTotal: number; lastSweptAt: number | null }>
       onGenreFilerApplied?: (callback: (p: { updates: Array<{ trackId: number; field: string; newValue: string }> }) => void) => () => void
-      genreCheckList?: () => Promise<Array<{ key: string; artist: string; album: string; ids: number[]; tag: string; suggested?: string; why: string; at: string; filedAs?: string }>>
+      genreCheckList?: () => Promise<Array<{ key: string; artist: string; album: string; ids: number[]; tag: string; suggested?: string; why: string; at: string; filedAs?: string; review?: boolean }>>
       genreCheckResolve?: (key: string, genre: string) => Promise<{ ok: boolean; error?: string }>
       rockDnaLoad?: () => Promise<{ state: unknown; exceptions: Array<{ artist: string; genre: string }> }>
       rockDnaSave?: (state: unknown) => Promise<{ ok: boolean; state?: unknown; error?: string }>
