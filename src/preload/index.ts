@@ -486,6 +486,12 @@ const electronAPI = {
     ipcRenderer.invoke('choose-artwork-file'),
   getTrackLyrics: (trackId: number): Promise<{ ok: boolean; plain?: string; synced?: string; instrumental?: boolean }> =>
     ipcRenderer.invoke('get-track-lyrics', trackId),
+  // Replica (workmini): homemini's lyrics.json landed (main/ipc/lyrics-ipc.ts).
+  onLyricsUpdated: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('lyrics-updated', handler)
+    return () => { ipcRenderer.removeListener('lyrics-updated', handler) }
+  },
   loadArtworkMap: (): Promise<{ ok: boolean; map: Record<string, string> }> =>
     ipcRenderer.invoke('load-artwork-map'),
   // 4.5.0-51: server-authoritative artwork resolver — used when the
