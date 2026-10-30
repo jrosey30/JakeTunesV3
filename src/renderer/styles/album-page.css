@@ -492,21 +492,31 @@
 
 /* ── The sleeve: 340px cover, a record peeking out behind it ─────────── */
 /* ── The CD jewel case ────────────────────────────────────────────────────
-   Closed, straight on (Jake 2026-10-30: "an authentic tangible CD case …
-   really realistic"). Bottom to top: the black tray (its edge shows round the
-   booklet through the lid's clear rim) with the tray card's printed spine on
-   the left and the two hinge pins; the booklet = the cover; the clear lid —
-   a cool tint, the ribbed hinge strip, a gloss, two latch slots on the right,
-   the lid's edge. Numbers are the phone's case (common/jewel-case.ts, points
-   at cover = 160) × --apd-k, like the Home jewel case. .album-page-cover stays
+   A photograph of a real case (Jake 2026-10-30: "the cd cases also look
+   cartoonish. im serious when i say make it look real"), closed, straight
+   on, cut into layers — assets/jewel-case/, credits in docs/credits.md.
+   Bottom to top: the contact shadow; the frame (the ribbed hinge strip's
+   dark floor on the left, the clear rims, the booklet window cut out) with
+   the spine text printed on the strip; the booklet = the cover; the lid's
+   optics over everything (the ribs' lighting over the text, the lid's sheen
+   and scratches over the cover, the walls' shadow on its edges). Sizes are
+   the photo's proportions, fractions of the cover (the booklet) — the
+   --apd-f-* vars come from common/jewel-case-photo.ts, set on the sleeve by
+   the view; the Home jewel case is the same photo. .album-page-cover stays
    the plain square: the disc handoff morphs exactly that box. */
 .apd-sleeve {
   --apd-cover: 340px;
   --apd-k: 2.125;
-  --apd-spine: calc(9px * var(--apd-k));
-  --apd-rim: calc(2.5px * var(--apd-k));
-  --apd-r: calc(2.5px * var(--apd-k));
-  --apd-case-w: calc(var(--apd-spine) + var(--apd-cover) + var(--apd-rim));
+  --apd-spine: calc(var(--apd-cover) * var(--apd-f-win-left));
+  --apd-rim: calc(var(--apd-cover) * var(--apd-f-win-top));
+  --apd-r: calc(var(--apd-cover) * var(--apd-f-corner-r));
+  --apd-case-w: calc(var(--apd-cover) * var(--apd-f-case-w));
+  --apd-case-h: calc(var(--apd-cover) * var(--apd-f-case-h));
+  --apd-strip-x: calc(var(--apd-cover) * var(--apd-f-strip-left));
+  --apd-strip-w: calc(var(--apd-cover) * (var(--apd-f-strip-right) - var(--apd-f-strip-left)));
+  --apd-strip-top: calc(var(--apd-cover) * var(--apd-f-strip-top));
+  --apd-strip-bottom: calc(var(--apd-cover) * var(--apd-f-strip-bottom));
+  --apd-shadow-m: calc(var(--apd-cover) * var(--apd-f-shadow-margin));
   display: grid;
   /* the case's width, not auto: an auto track takes the free space first */
   grid-template-columns: var(--apd-case-w) minmax(0, 1fr);
@@ -517,40 +527,36 @@
 .apd-art {
   position: relative;
   width: var(--apd-case-w);
-  height: calc(var(--apd-cover) + 2 * var(--apd-rim));
+  height: var(--apd-case-h);
   isolation: isolate;
 }
 .apd-case,
-.apd-case-lid {
+.apd-case-lid,
+.apd-case-shadow {
   position: absolute;
   inset: 0;
-  border-radius: var(--apd-r);
   pointer-events: none;
 }
-.apd-case > *,
-.apd-case-lid > * {
+.apd-case > * {
   position: absolute;
   display: block;
 }
-/* the base: black polystyrene, its clear edge, the case's outline on the
-   metal and its weight */
-.apd-case {
-  background: linear-gradient(to bottom, #2b2b2b, #141414);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.10),
-    0 0 0 1px rgba(0, 0, 0, 0.45),
-    0 1px 2px rgba(0, 0, 0, 0.35),
-    0 10px 22px rgba(0, 0, 0, 0.30),
-    0 24px 44px rgba(0, 0, 0, 0.22);
+/* the case's weight on the page: a contact shadow, wider than the case */
+.apd-case-shadow {
+  inset: calc(-1 * var(--apd-shadow-m));
+  background: url('../assets/jewel-case/case-shadow.png') center / 100% 100% no-repeat;
 }
-/* the tray card's spine behind the hinge, printed black, the title on it */
+/* the frame: the photo's plastic with the booklet window cut out */
+.apd-case {
+  background: url('../assets/jewel-case/case-frame.png') center / 100% 100% no-repeat;
+}
+/* the spine text, printed on the hinge strip's floor; the ribs (the lid
+   layer) light it from above */
 .apd-case-spine {
-  left: 0;
-  top: 0;
-  width: var(--apd-spine);
-  height: 100%;
-  border-radius: var(--apd-r) 0 0 var(--apd-r);
-  background: linear-gradient(to right, #1c1c1c, #090909 70%, #000);
+  left: var(--apd-strip-x);
+  top: var(--apd-strip-top);
+  width: var(--apd-strip-w);
+  height: calc(var(--apd-strip-bottom) - var(--apd-strip-top));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -558,22 +564,21 @@
 .apd-case-spine-text {
   position: static;
   writing-mode: vertical-rl;
-  font: 600 calc(4.6px * var(--apd-k)) / 1 var(--font-family);
+  font: 600 calc(var(--apd-cover) * 0.034) / 1 var(--font-family);
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.78);
+  color: rgba(255, 255, 255, 0.9);
   white-space: nowrap;
 }
+/* the hinge pins: the strip's two ends. Zero-size marks — the view measures
+   them to fit the spine text between the pins (AlbumDetailView spineIdx). */
 .apd-case-knuckle {
-  left: calc(0.5px * var(--apd-k));
-  width: calc(3px * var(--apd-k));
-  height: calc(11px * var(--apd-k));
-  border-radius: calc(1.5px * var(--apd-k));
-  background: linear-gradient(to right, #c6c6c6, #767676);
-  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.45);
+  left: var(--apd-strip-x);
+  width: 0;
+  height: 0;
 }
-.apd-case-knuckle--top { top: calc(2px * var(--apd-k)); }
-.apd-case-knuckle--bottom { bottom: calc(2px * var(--apd-k)); }
+.apd-case-knuckle--top { top: var(--apd-strip-top); }
+.apd-case-knuckle--bottom { top: var(--apd-strip-bottom); }
 /* the booklet under the lid */
 .album-page-cover.apd-cover {
   position: absolute;
@@ -582,62 +587,15 @@
   z-index: 1;
   width: var(--apd-cover);
   height: var(--apd-cover);
-  border-radius: 1px;
+  border-radius: 0;
   background: #e3e1db;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.10), 0 0 0 1px rgba(0, 0, 0, 0.35);
+  box-shadow: none;
 }
 .apd-cover-placeholder { color: #b3b0a8; }
-/* the clear lid: a cool tint that shades toward the bottom-right */
+/* the clear lid, over the booklet and the strip */
 .apd-case-lid {
   z-index: 2;
-  overflow: hidden;
-  background: linear-gradient(165deg,
-    rgba(255, 255, 255, 0.20) 0%, rgba(255, 255, 255, 0.07) 28%, rgba(255, 255, 255, 0) 48%,
-    rgba(0, 0, 0, 0.04) 78%, rgba(0, 0, 0, 0.10) 100%);
-}
-/* the ribbed hinge strip: thicker plastic over the spine (ribs 0.5 wide every
-   1.8, from x = 2 to spine − 1.5), its shade on the booklet */
-.apd-case-ribs {
-  left: 0;
-  top: 0;
-  width: var(--apd-spine);
-  height: 100%;
-  background:
-    repeating-linear-gradient(to right,
-      rgba(255, 255, 255, 0.24) 0, rgba(255, 255, 255, 0.24) calc(0.5px * var(--apd-k)),
-      rgba(255, 255, 255, 0) calc(0.5px * var(--apd-k)), rgba(255, 255, 255, 0) calc(1.8px * var(--apd-k))),
-    linear-gradient(to right, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.03));
-  background-position: calc(2px * var(--apd-k)) 0, 0 0;
-  background-size: calc(var(--apd-spine) - 3.5px * var(--apd-k)) 100%, 100% 100%;
-  background-repeat: no-repeat;
-  box-shadow: calc(1px * var(--apd-k)) 0 calc(4px * var(--apd-k)) rgba(0, 0, 0, 0.35);
-}
-/* the gloss: a catch-light in the top-left corner, a streak across the diagonal */
-.apd-case-gloss {
-  inset: 0;
-  background:
-    linear-gradient(to bottom right, rgba(255, 255, 255, 0.34) 0%, rgba(255, 255, 255, 0) 16%),
-    linear-gradient(to bottom right,
-      rgba(255, 255, 255, 0) 34%, rgba(255, 255, 255, 0.20) 41%, rgba(255, 255, 255, 0.06) 44%, rgba(255, 255, 255, 0) 50%);
-}
-/* the two latch slots on the free edge (at the booklet tabs' heights) */
-.apd-case-latch {
-  right: 0;
-  width: var(--apd-rim);
-  height: calc(17px * var(--apd-k));
-  background: linear-gradient(to right, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0.25));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), inset 0 -1px 0 rgba(255, 255, 255, 0.25);
-}
-.apd-case-latch--top { top: calc(27% - 8.5px * var(--apd-k)); }
-.apd-case-latch--bottom { top: calc(73% - 8.5px * var(--apd-k)); }
-/* the lid's edge: a bright lip, a refraction line inside it */
-.apd-case-edge {
-  inset: 0;
-  border-radius: var(--apd-r);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.62),
-    inset 0 0 0 2px rgba(0, 0, 0, 0.10),
-    inset 1px 1px 0 1px rgba(255, 255, 255, 0.35);
+  background: url('../assets/jewel-case/case-lid.png') center / 100% 100% no-repeat;
 }
 
 .apd-meta {

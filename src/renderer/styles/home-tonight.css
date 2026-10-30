@@ -379,13 +379,19 @@
 
 /* ── the jewel case on the front cover (components/JewelCase.tsx) ──
    ⚠️ TWIN: JakeTunesMobile LaunchPageG.swift CaseLid / FlowCaseTray (Mobile
-   #519). Sizes are the phone's points × --jc-k (240/160 = 1.5 here); the
-   case's own box comes from common/jewel-case.ts as --jc-* custom properties.
-   Colours are the phone's: SwiftUI Color(white: v) = rgb(v·255). The lid has
-   its own camera (perspective + origin on the art's centre, 25pt below the
-   case top), so its free edge grows DOWNWARD toward you and the face flips
-   where a real one would. Everything that moves is a Web Animation on
-   transform / opacity. */
+   #519). The plastic is a photograph of a real case — the album page's
+   layers (assets/jewel-case/, docs/credits.md): the frame (the ribbed hinge
+   strip's floor, the clear rims, the booklet window cut out) is the lid's
+   front face around the art AND the base under the lid; the lid's optics
+   (ribs' lighting, sheen, scratches, the walls' shadow on the booklet) sit
+   over the art; the tray is the photo's. The case's box comes from
+   common/jewel-case-photo.ts as --jc-* custom properties (the photo's
+   proportions); the disc, the tabs and everything that moves are the
+   phone's points × --jc-k (240/160 = 1.5 here). The lid has its own camera
+   (perspective + origin on the art's centre, 25pt below the case top), so
+   its free edge grows DOWNWARD toward you and the face flips where a real
+   one would. Everything that moves is a Web Animation on transform /
+   opacity. */
 .tn-case {
   position: absolute;
   left: calc(-1 * var(--jc-spine));
@@ -405,57 +411,26 @@
   position: absolute;
   display: block;
 }
-/* the base under the lid: the back inlay's dark spine seen through the
-   hinge, the hinge knuckles at its ends, the base's clear edge */
+/* the base under the lid: the photo's frame — the tray's black extension
+   under the hinge, the clear rims — with the hinge pins at the strip's ends */
 .tn-case-base {
   inset: 0;
-  border-radius: var(--jc-r);
-  box-shadow: inset 0 0 0 calc(0.75px * var(--jc-k)) rgba(255, 255, 255, 0.18);
-}
-.tn-case-base-spine {
-  left: 0;
-  top: 0;
-  width: var(--jc-spine);
-  height: 100%;
-  border-radius: calc(2px * var(--jc-k));
-  background: linear-gradient(to right, rgb(31, 31, 31), rgb(10, 10, 10));
+  background: url('../assets/jewel-case/case-frame.png') center / 100% 100% no-repeat;
 }
 .tn-case-knuckle {
   left: calc(0.5px * var(--jc-k));
   width: calc(3px * var(--jc-k));
   height: calc(11px * var(--jc-k));
   border-radius: calc(1.5px * var(--jc-k));
-  background: rgba(153, 153, 153, 0.75);
+  background: rgba(153, 153, 153, 0.35);
 }
-/* the black tray under the booklet: recess, finger notches, rosette hub, disc */
+/* the black tray under the booklet: the photo's (recess, rosette hub), the disc on it */
 .tn-case-tray {
   left: var(--jc-spine);
   top: var(--jc-rim);
   width: var(--jc-art);
   height: var(--jc-art);
-  border-radius: calc(1.5px * var(--jc-k));
-  background: linear-gradient(to bottom, rgb(33, 33, 33), rgb(13, 13, 13));
-}
-.tn-case-notch {
-  left: calc(2px * var(--jc-k));
-  right: calc(2px * var(--jc-k));
-  top: calc(50% - 17px * var(--jc-k));
-  height: calc(34px * var(--jc-k));
-  border-radius: 999px;
-  background: rgb(8, 8, 8);
-}
-.tn-case-recess {
-  left: calc(50% - var(--jc-disc) / 2 - 2px * var(--jc-k));
-  top: calc(50% - var(--jc-disc) / 2 - 2px * var(--jc-k));
-  width: calc(var(--jc-disc) + 4px * var(--jc-k));
-  height: calc(var(--jc-disc) + 4px * var(--jc-k));
-  border-radius: 50%;
-  background: rgb(9, 9, 9);
-  box-shadow: inset 0 0 0 calc(0.75px * var(--jc-k)) rgba(255, 255, 255, 0.06);
-}
-.tn-case-hub {
-  left: calc(50% - 14px * var(--jc-k));
-  top: calc(50% - 14px * var(--jc-k));
+  background: url('../assets/jewel-case/case-tray.webp') center / 100% 100% no-repeat;
 }
 /* the disc and its shadow (black 55%: radius 1.5 → 8, y 1 → 5 as it lifts) */
 .tn-case-disc,
@@ -567,6 +542,25 @@
 }
 /* drawn in its own coordinates turned 180°: the hinge is on ITS right */
 .tn-case-face--inside { transform: rotateY(180deg); }
+/* the front face: the booklet (the art), the photo's frame round it (its
+   window cut out), the lid's optics over both */
+.tn-case .tn-case-art {
+  left: var(--jc-spine);
+  top: var(--jc-rim);
+  width: var(--jc-art);
+  height: var(--jc-art);
+  border-radius: 0;
+  object-fit: cover;
+}
+.tn-case-frame {
+  inset: 0;
+  background: url('../assets/jewel-case/case-frame.png') center / 100% 100% no-repeat;
+}
+.tn-case-glass {
+  inset: 0;
+  background: url('../assets/jewel-case/case-lid.png') center / 100% 100% no-repeat;
+}
+/* the inside face: the lid's plate and ribs, drawn (the photo shows only the front) */
 .tn-case-plate {
   inset: 0;
   background: rgba(255, 255, 255, 0.05);
@@ -583,21 +577,16 @@
     transparent calc(0.5px * var(--jc-k)), transparent calc(1.8px * var(--jc-k)));
 }
 .tn-case-ribs--inside { left: auto; right: calc(2px * var(--jc-k)); }
-.tn-case .tn-case-art {
-  left: var(--jc-spine);
-  top: var(--jc-rim);
-  width: var(--jc-art);
-  height: var(--jc-art);
-  border-radius: 3px;
-  object-fit: cover;
-}
 /* the gloss streak (white 16%), its peak sliding 0.30 → 0.65 along the
-   diagonal as the lid turns: a band on a double-size layer, translated */
+   diagonal as the lid turns: a band on a double-size layer, translated. It
+   comes up as the lid lifts (JewelCase glossOpacity): shut, the photo's own
+   sheen is the lid's light. */
 .tn-case-gloss {
   left: -50%;
   top: -50%;
   width: 200%;
   height: 200%;
+  opacity: 0;
   background: linear-gradient(to bottom right, rgba(255, 255, 255, 0) 33%, rgba(255, 255, 255, 0.16) 40%, rgba(255, 255, 255, 0) 45%);
 }
 .tn-case-edge {

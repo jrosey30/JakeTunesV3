@@ -3,13 +3,21 @@
  * hoping the cd animation would be for all devices involved here not just
  * phone"). Drawn INSIDE the front cover's button, around its art: the art
  * keeps its exact place (the booklet under the lid IS the cover) and the
- * case's plastic grows out around it — the ribbed hinge strip and knuckles on
- * the LEFT, a thin clear rim on the other three sides.
+ * case's plastic grows out around it — the ribbed hinge strip on the LEFT,
+ * the clear rims on the other three sides.
+ *
+ * The plastic is a photograph of a real case (Jake 2026-10-30: "im serious
+ * when i say make it look real"), the same layers as the album page's case —
+ * assets/jewel-case/, proportions in common/jewel-case-photo.ts: the lid's
+ * front face is the art under the photo's frame (window cut out) under the
+ * lid's optics; the base under the lid is the same frame; the tray is the
+ * photo's black tray. The disc is still drawn (no photograph of one).
  *
  * ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/LaunchPageG.swift — `CaseLid`
  * (the lid, its own camera, inside face, shading, lid shadow) and
- * `FlowCaseTray` (tray, rosette hub, the pressed disc). Numbers live in
- * common/jewel-case.ts, the phone's × 240/160.
+ * `FlowCaseTray` (tray, rosette hub, the pressed disc). The motion, the
+ * camera, the disc and the tabs are the phone's numbers in
+ * common/jewel-case.ts × 240/160; the case's box is the photo's.
  *
  * Modes:
  *   rest       the closed case (plastic only shows on the front cover)
@@ -31,9 +39,10 @@ import { useLayoutEffect, useRef, type CSSProperties } from 'react'
 import AlbumArtImage from './AlbumArtImage'
 import {
   JEWEL_CASE, JEWEL_CASE_MOTION, EASE_IN, EASE_OUT,
-  cssLidAngle, jewelCaseGeometry, lidClosingFrames, lidOpenLook, lidOpeningFrames,
+  cssLidAngle, lidClosingFrames, lidOpenLook, lidOpeningFrames,
   type LidFrame,
 } from '../../common/jewel-case'
+import { photoCaseGeometry } from '../../common/jewel-case-photo'
 
 export type JewelCaseMode = 'rest' | 'arrive' | 'leave' | 'open' | 'held-open' | 'close'
 
@@ -52,36 +61,11 @@ interface Props {
 
 const OPEN_FRAMES_MS = 520
 const bezier = (b: readonly number[]): string => `cubic-bezier(${b.join(', ')})`
-
-/** The rosette hub: a crown of prongs (a ring cut by 8 slits) round a raised button. */
-function Rosette({ size }: { size: number }): JSX.Element {
-  const r = JEWEL_CASE.rosette
-  const c = r.frame / 2
-  const slits = Array.from({ length: r.slits }, (_, k) => {
-    const a = (k / r.slits) * 2 * Math.PI + Math.PI / r.slits
-    return <line key={k} x1={c + r.inner * Math.cos(a)} y1={c + r.inner * Math.sin(a)} x2={c + r.outer * Math.cos(a)} y2={c + r.outer * Math.sin(a)} />
-  })
-  return (
-    <svg className="tn-case-hub" width={size} height={size} viewBox={`0 0 ${r.frame} ${r.frame}`} aria-hidden="true">
-      <defs>
-        <linearGradient id="tnCaseHubG" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="rgb(87,87,87)" />
-          <stop offset="1" stopColor="rgb(41,41,41)" />
-        </linearGradient>
-      </defs>
-      <path
-        d={`M ${c - r.outer} ${c} a ${r.outer} ${r.outer} 0 1 0 ${2 * r.outer} 0 a ${r.outer} ${r.outer} 0 1 0 ${-2 * r.outer} 0 Z M ${c - r.inner} ${c} a ${r.inner} ${r.inner} 0 1 0 ${2 * r.inner} 0 a ${r.inner} ${r.inner} 0 1 0 ${-2 * r.inner} 0 Z`}
-        fill="url(#tnCaseHubG)"
-        fillRule="evenodd"
-      />
-      <g stroke="rgb(10,10,10)" strokeWidth={1.1}>{slits}</g>
-      <circle cx={c} cy={c} r={r.button / 2} fill="rgb(97,97,97)" />
-    </svg>
-  )
-}
+/** The gloss streak shows as the lid lifts (a shut lid is the photo's own sheen). */
+const glossOpacity = (f: LidFrame): number => Math.min(1, Math.max(0, f.deg / 15))
 
 export default function JewelCase({ hash, artPx, mode, reflection, onDiscUp, onShut }: Props): JSX.Element {
-  const g = jewelCaseGeometry(artPx)
+  const g = photoCaseGeometry(artPx)
   const k = g.scale
   const running = mode === 'open' || mode === 'held-open' || mode === 'close'
 
@@ -121,7 +105,7 @@ export default function JewelCase({ hash, artPx, mode, reflection, onDiscUp, onS
       play(lidRef.current, frames.map((f) => ({ offset: at(f), transform: `rotateY(${cssLidAngle(f.deg)}deg)` })), opts)
       play(frontShadeRef.current, frames.map((f) => ({ offset: at(f), opacity: f.frontShade })), opts)
       play(insideShadeRef.current, frames.map((f) => ({ offset: at(f), opacity: f.insideShade })), opts)
-      play(glossRef.current, frames.map((f) => ({ offset: at(f), transform: glossShift(f) })), opts)
+      play(glossRef.current, frames.map((f) => ({ offset: at(f), transform: glossShift(f), opacity: glossOpacity(f) })), opts)
       play(shadowRef.current, frames.map((f) => ({ offset: at(f), transform: `scaleX(${f.shadowWidth.toFixed(4)})`, opacity: f.shadowOpacity })), opts)
       play(reflectionRef.current?.(), frames.map((f) => ({ offset: at(f), opacity: f.reflection })), opts)
     }
@@ -177,9 +161,6 @@ export default function JewelCase({ hash, artPx, mode, reflection, onDiscUp, onS
     <span className={`tn-case tn-case--${mode}`} style={vars} aria-hidden="true">
       {running && (
         <span className="tn-case-tray">
-          <span className="tn-case-notch" />
-          <span className="tn-case-recess" />
-          <Rosette size={JEWEL_CASE.rosette.frame * k} />
           <span ref={discRestShadowRef} className="tn-case-disc-shadow" style={held ? { opacity: 0 } : undefined} />
           <span ref={discLiftShadowRef} className="tn-case-disc-shadow tn-case-disc-shadow--lifted" style={held ? { opacity: 1, transform: lifted } : undefined} />
           <span ref={discRef} className="tn-case-disc" style={held ? { transform: lifted } : undefined}>
@@ -196,7 +177,6 @@ export default function JewelCase({ hash, artPx, mode, reflection, onDiscUp, onS
         </span>
       )}
       <span className="tn-case-base tn-case-plastic">
-        <span className="tn-case-base-spine" />
         <span className="tn-case-knuckle" style={{ top: `${JEWEL_CASE.knuckle.top * k}px` }} />
         <span className="tn-case-knuckle" style={{ top: `${g.height - JEWEL_CASE.knuckle.bottomFromEnd * k}px` }} />
       </span>
@@ -209,13 +189,12 @@ export default function JewelCase({ hash, artPx, mode, reflection, onDiscUp, onS
       )}
       <span ref={lidRef} className="tn-case-lid" style={held ? { transform: `rotateY(${cssLidAngle(held.deg)}deg)` } : undefined}>
         <span className="tn-case-face tn-case-face--front">
-          <span className="tn-case-plate tn-case-plastic" />
-          <span className="tn-case-ribs tn-case-plastic" />
           {hash
             ? <AlbumArtImage hash={hash} alt="" size={480} priority className="tn-case-art" />
             : <span className="tn-case-art tn-flow-ph" />}
-          <span ref={glossRef} className="tn-case-gloss tn-case-plastic" />
-          <span className="tn-case-edge tn-case-plastic" />
+          <span className="tn-case-frame tn-case-plastic" />
+          <span className="tn-case-glass tn-case-plastic" />
+          <span ref={glossRef} className="tn-case-gloss tn-case-plastic" style={held ? { transform: glossShift(held), opacity: glossOpacity(held) } : undefined} />
           <span ref={frontShadeRef} className="tn-case-shade" style={held ? { opacity: held.frontShade } : undefined} />
         </span>
         {running && (

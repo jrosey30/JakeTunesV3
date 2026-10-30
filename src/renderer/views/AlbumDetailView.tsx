@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useCallback, useMemo, useState, useEffect, useRef, useSyncExternalStore } from 'react'
+import React, { useLayoutEffect, useCallback, useMemo, useState, useEffect, useRef, useSyncExternalStore, type CSSProperties } from 'react'
 import { sentencePreview } from '../../common/sentences'
 import { isWeakBlurb } from '../../common/weak-blurb'
 import { nameKey } from '../../common/fold-text'
@@ -42,6 +42,10 @@ import '../styles/album-page.css'
 import { addToPlaylistEntry, addToIpodPoolEntry, queueMenuEntries } from '../utils/playlistMenu'
 import { getInfoTarget, type GetInfoTarget } from '../../common/get-info-target'
 import { planConcertStart } from '../../common/concert-start'
+import { jewelCasePhotoVars } from '../../common/jewel-case-photo'
+
+/** The jewel case's proportions (fractions of the cover) for album-page.css. */
+const SLEEVE_VARS = jewelCasePhotoVars('--apd-f-') as CSSProperties
 
 function formatDuration(ms: number): string {
   if (!ms || ms <= 0) return ''
@@ -752,16 +756,18 @@ export default function AlbumDetailView() {
             )}
           </div>
 
-          <div className="apd-sleeve">
-            {/* A CD jewel case, closed, straight on: the cover is the booklet
-                under the clear lid; the black tray shows round it through the
-                lid's rim; on the left the lid's ribbed hinge over the tray
-                card's printed spine, with the two hinge pins; two latch slots
-                on the right edge. .album-page-cover stays the plain square —
-                the disc handoff (discHandoff.ts / disc-handoff.css) morphs
-                exactly that box. Sizes: album-page.css (the phone's case
-                points from common/jewel-case.ts × the cover / 160). */}
+          <div className="apd-sleeve" style={SLEEVE_VARS}>
+            {/* A photographed CD jewel case, closed, straight on (the layers
+                in assets/jewel-case/, their proportions in
+                common/jewel-case-photo.ts): the contact shadow; the frame —
+                the plastic with the booklet window cut out — with the spine
+                text printed on its ribbed hinge strip and the two hinge-pin
+                marks the spine measurement needs; the cover = the booklet in
+                the window; the lid's optics over all of it. .album-page-cover
+                stays the plain square — the disc handoff (discHandoff.ts /
+                disc-handoff.css) morphs exactly that box, and names the lid. */}
             <div className="apd-art">
+              <span className="apd-case-shadow" aria-hidden="true" />
               <div className="apd-case" aria-hidden="true">
                 <span className="apd-case-spine">
                   {spineText && <span ref={spineRef} className="apd-case-spine-text">{spineText}</span>}
@@ -774,13 +780,7 @@ export default function AlbumDetailView() {
                   ? <AlbumArtImage hash={artHash} alt={albumName} priority />
                   : <div className="album-page-cover-placeholder apd-cover-placeholder">{ICON_NOTE_BIG}</div>}
               </div>
-              <div className="apd-case-lid" aria-hidden="true">
-                <span className="apd-case-ribs" />
-                <span className="apd-case-gloss" />
-                <span className="apd-case-latch apd-case-latch--top" />
-                <span className="apd-case-latch apd-case-latch--bottom" />
-                <span className="apd-case-edge" />
-              </div>
+              <div className="apd-case-lid" aria-hidden="true" />
             </div>
 
             <div className="apd-meta">
