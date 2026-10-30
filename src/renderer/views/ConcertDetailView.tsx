@@ -31,6 +31,9 @@ import { useAudio } from '../hooks/useAudio'
 import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded, liveSetFor, cueAt, promoteTrackToLibrary, unregisterLiveSet, updateConcertMeta, cleanLiveTitle as cleanTitle } from '../liveSets'
 import { attachConcert, detachConcert, subscribeConcertCrowd, isConcertCrowdEnabled, setConcertCrowdEnabled } from '../concertCrowd'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
+import { useNavigation } from '../context/NavigationContext'
+import { useBackLabel } from '../hooks/useBackLabel'
+import BackButton from '../components/chrome/BackButton'
 import { getConcertKey, subscribeConcertKey } from '../concertNav'
 import { buildNormalizedArtworkIndex, lookupArtwork } from '../utils/artworkLookup'
 import AlbumArtImage from '../components/AlbumArtImage'
@@ -187,10 +190,23 @@ export default function ConcertDetailView() {
     libDispatch({ type: 'SET_VIEW', view: 'concerts' })
   }, [liveSet, albumKey, libDispatch])
 
+  // Back names and returns to the page you came from — the artist page that
+  // opened this show, or the Live Concerts list — the way the album and artist
+  // pages do (10/20: the label comes from the history step the click uses;
+  // useBackLabel is the one naming every back pill shares). With no history,
+  // the list, as before.
+  const { canGoBack, goBack: navBack } = useNavigation()
+  const navBackLabel = useBackLabel()
+  const backLabel = (canGoBack && navBackLabel) || '← Live Concerts'
+  const goBack = useCallback(() => {
+    if (canGoBack) navBack()
+    else libDispatch({ type: 'SET_VIEW', view: 'concerts' })
+  }, [canGoBack, navBack, libDispatch])
+
   if (!liveSet || !mergedTrack) {
     return (
       <div className="concert-detail cd-stage" ref={concertPageRef}>
-        <button className="concert-back" onClick={() => libDispatch({ type: 'SET_VIEW', view: 'concerts' })}>← Live Concerts</button>
+        <BackButton label={backLabel} onClick={goBack} className="concert-back" />
         <div className="concerts-empty">This concert is no longer available.</div>
       </div>
     )
@@ -213,7 +229,7 @@ export default function ConcertDetailView() {
 
   return (
     <div className="concert-detail cd-stage" ref={concertPageRef}>
-      <button className="concert-back" onClick={() => libDispatch({ type: 'SET_VIEW', view: 'concerts' })}>← Live Concerts</button>
+      <BackButton label={backLabel} onClick={goBack} className="concert-back" />
 
       <section className="cd-hero">
         {artUrl && <div className="cd-hero-wash" style={{ backgroundImage: `url("${artUrl}")` }} aria-hidden="true" />}

@@ -58,6 +58,25 @@ export const BUILTIN_SMART_PLAYLISTS: ReadonlyArray<{ id: SmartPlaylistId; name:
   // gracefully; SMART_PLAYLIST_NAMES keeps the name to hide iPod dupes.
 ]
 
+/** Every smart playlist's display title by id — the page's heading
+ *  (SmartPlaylistView) and the back pill's name for it (hooks/useBackLabel.ts)
+ *  read this ONE map. The sidebar-only lists (Listen More Weekly, On Repeat),
+ *  the picks and the retired id are here too, so stale state still names
+ *  itself. */
+export const SMART_PLAYLIST_TITLES: Record<string, string> = {
+  'best-of-year': BEST_OF_YEAR_NAME,
+  'listen-more-weekly': 'Listen More Weekly',
+  'on-repeat': 'On Repeat',
+  'recently-added': 'Recently Added',
+  'recently-played': 'Recently Played',
+  'top-25': 'Top 25 Most Played',
+  'top-rated': 'Starred',
+  'youd-star': "Songs You'd Star",
+  'musicman-picks': 'The Music Man Picks',
+  'megan-picks': 'Megan Picks',
+  'dj-hands-picks': 'DJ Stephen Hands Picks',
+}
+
 // Selection limits — ONE place. Display and sync read the same numbers
 // so the iPod playlist is exactly what the app shows.
 const RECENTLY_ADDED_LIMIT  = 50

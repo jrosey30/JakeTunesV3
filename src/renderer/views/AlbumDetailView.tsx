@@ -14,7 +14,9 @@ import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { canonicalArtist } from '../utils/artistAlias'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import { albumCreditReleaseDate, formatReleaseDateDisplay } from '../utils/albumReleaseDate'
-import { albumDetailBackLabel, backLabelForLocation } from '../utils/albumBackLabel'
+import { albumDetailBackLabel } from '../utils/albumBackLabel'
+import { useBackLabel } from '../hooks/useBackLabel'
+import BackButton from '../components/chrome/BackButton'
 import { useNavigation } from '../context/NavigationContext'
 import { lookupArtwork, buildNormalizedArtworkIndex, clearArtworkNegativeCache } from '../utils/artworkLookup'
 import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
@@ -88,9 +90,6 @@ const ICON_SHUFFLE = (
 const ICON_MIC = (
   <svg width="11" height="13" viewBox="0 0 11 13" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" aria-hidden="true"><rect x="3.3" y="1" width="4.4" height="7" rx="2.2" /><path d="M1.3 6.2a4.2 4.2 0 008.4 0M5.5 10.4V12" /></svg>
 )
-const ICON_BACK = (
-  <svg width="9" height="10" viewBox="0 0 9 10" aria-hidden="true"><path d="M6 1L2 5l4 4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
-)
 const ICON_LEFT = (
   <svg width="7" height="10" viewBox="0 0 7 10" aria-hidden="true"><path d="M5 1L1.5 5 5 9" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
 )
@@ -149,11 +148,13 @@ export default function AlbumDetailView() {
   useScrollPersistence(`album-detail:${albumKey}`, tracklistRef)
   const tableRef = useRef<HTMLDivElement>(null)
 
-  const { canGoBack, goBack: navBack, backTo, backToSearch } = useNavigation()
+  const { canGoBack, goBack: navBack } = useNavigation()
+  const navBackLabel = useBackLabel()
   const returnView = lib.albumDetailReturnView || 'albums'
-  // The label names where the click lands: history when there is history,
-  // else the stored return view — the same two branches as goBack below.
-  const backLabel = (canGoBack && backLabelForLocation(backTo, backToSearch)) || albumDetailBackLabel(lib.albumDetailReturnView)
+  // The label names where the click lands: history when there is history
+  // (useBackLabel — the one naming every back pill shares), else the stored
+  // return view — the same two branches as goBack below.
+  const backLabel = (canGoBack && navBackLabel) || albumDetailBackLabel(lib.albumDetailReturnView)
   // On its way out (the Island Albums disc handoff holds this page on screen
   // for the frame its View Transition captures — discHandoff.ts) the history
   // has already moved: show the label you clicked, or "← Home" flips to the
@@ -688,7 +689,7 @@ export default function AlbumDetailView() {
     return (
       <div className="album-page album-page--empty">
         <div className="album-page-topbar">
-          <button type="button" className="album-page-back" onClick={goBack}>{shownBackLabel}</button>
+          <BackButton label={shownBackLabel} onClick={goBack} />
         </div>
         <p className="album-page-notfound">That album isn't in your library anymore.</p>
       </div>
@@ -714,9 +715,6 @@ export default function AlbumDetailView() {
   const multiArtist = new Set(tracks.map((t) => (t.artist || '').trim().toLowerCase())).size > 1
   const cols = gridCols(multiArtist)
 
-  // "‹ Albums" — the chevron is drawn, so drop the label's text arrow.
-  const backText = shownBackLabel.replace(/^[←‹]\s*/, '')
-
   // 2026-09-02 — no whole-page gate: the tracks are in memory, so the album
   // paints on frame one; the history blurb lands in its own line, with a
   // placeholder only after 400 ms (see ArtistDetailView for the why).
@@ -727,7 +725,7 @@ export default function AlbumDetailView() {
       <div className="apd-scroll" ref={tracklistRef}>
         <div className="apd-head" ref={headRef}>
           <div className="album-page-topbar apd-top">
-            <button type="button" className="album-page-back apd-back" onClick={goBack} aria-label={backText}>{ICON_BACK}<span>{backText}</span></button>
+            <BackButton label={shownBackLabel} onClick={goBack} />
             {siblingAlbums.length > 1 && curIdx >= 0 && (
               <div className="album-page-flip apd-more" title={`${albumArtist} — album ${curIdx + 1} of ${siblingAlbums.length}`}>
                 <span className="apd-more-label">More by {albumArtist}</span>

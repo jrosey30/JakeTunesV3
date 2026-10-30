@@ -32,6 +32,12 @@ interface NavigationApi {
   /** Mark that the next navigation opens a detail FROM a search result, so the
    *  first back out of it re-opens the search dropdown with this query. */
   recordSearch: (query: string) => void
+  /** The UI is up (App.tsx, uiReady): the page showing now is the FIRST page.
+   *  Forgets the placeholder recorded before the saved page was restored (the
+   *  reducer's initial view, which only ever showed behind the splash) —
+   *  otherwise every launch offers Back, and the back pill, to a page nobody
+   *  saw. */
+  beginHistory: () => void
 }
 
 const NavigationContext = createContext<NavigationApi | null>(null)
@@ -57,6 +63,17 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
   const recordSearch = useCallback((query: string) => {
     searchReturnRef.current = { query, atIndex: navRef.current.index + 1 }
   }, [])
+
+  // The latest location, for beginHistory — called from a child's effect,
+  // which runs before this provider's own recording effect in the same commit,
+  // so the entry it starts from is the restored page.
+  const locRef = useRef(loc)
+  locRef.current = loc
+  const beginHistory = useCallback(() => {
+    navRef.current = { history: [locRef.current], index: 0 }
+    searchReturnRef.current = null
+    repaint()
+  }, [repaint])
 
   // One rule for re-entering a page (nav-history.ts) — shared with the startup
   // restore in App.tsx, so a history entry and a saved page land identically.
@@ -170,6 +187,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
     backTo: navRef.current.index > 0 ? navRef.current.history[navRef.current.index - 1] : null,
     backToSearch: !!searchReturnRef.current && searchReturnRef.current.atIndex === navRef.current.index,
     recordSearch,
+    beginHistory,
   }
 
   return <NavigationContext.Provider value={api}>{children}</NavigationContext.Provider>

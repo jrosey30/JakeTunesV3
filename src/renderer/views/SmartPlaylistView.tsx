@@ -5,7 +5,7 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { attachClipToBroadcast, detachClipFromBroadcast } from '../audio/eq'
-import { evaluateSmartPlaylist } from '../utils/smartPlaylists'
+import { evaluateSmartPlaylist, SMART_PLAYLIST_TITLES as TITLES } from '../utils/smartPlaylists'
 import { smartPlaylistCover } from '../utils/playlistCovers'
 import { useListenMoreWeekly } from '../listenMoreWeekly'
 import { useHomeShelves } from '../homeShelves'
@@ -47,19 +47,8 @@ function formatDuration(ms: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
-const TITLES: Record<string, string> = {
-  'best-of-year': `Best of ${new Date().getFullYear()}`,
-  'listen-more-weekly': 'Listen More Weekly',
-  'on-repeat': 'On Repeat',
-  'recently-added': 'Recently Added',
-  'recently-played': 'Recently Played',
-  'top-25': 'Top 25 Most Played',
-  'top-rated': 'Starred',
-  'youd-star': "Songs You'd Star",
-  'musicman-picks': 'The Music Man Picks',
-  'megan-picks': 'Megan Picks',
-  'dj-hands-picks': 'DJ Stephen Hands Picks',
-}
+// Titles: SMART_PLAYLIST_TITLES (utils/smartPlaylists.ts) — one map for this
+// page's heading and the back pill's name for it.
 
 export interface PicksData {
   name: string

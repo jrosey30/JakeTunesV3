@@ -13,7 +13,9 @@ import { canonicalArtist, isSameArtist, artistIdentityKey, subscribeAliases, get
 import type { RelatedArtist } from '../types'
 import ScrollTopButton from '../components/ScrollTopButton'
 import { albumKeyFromStrings } from '../utils/albumKey'
-import { albumDetailBackLabel, backLabelForLocation } from '../utils/albumBackLabel'
+import { albumDetailBackLabel } from '../utils/albumBackLabel'
+import { useBackLabel } from '../hooks/useBackLabel'
+import BackButton from '../components/chrome/BackButton'
 import { useNavigation } from '../context/NavigationContext'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
@@ -159,11 +161,13 @@ export default function ArtistDetailView() {
   // Contextual back navigation. Artist detail is reachable from Artists,
   // the Bandcamp Store, and Search — mirror AlbumDetailView so "back"
   // returns to wherever the user came from instead of always Artists.
-  const { canGoBack, goBack: navBack, backTo, backToSearch } = useNavigation()
+  const { canGoBack, goBack: navBack } = useNavigation()
+  const navBackLabel = useBackLabel()
   const artistReturnView = lib.artistDetailReturnView || 'artists'
-  // The label names where the click lands: history when there is history,
-  // else the stored return view — the same two branches as goBack below.
-  const backLabel = (canGoBack && backLabelForLocation(backTo, backToSearch)) || albumDetailBackLabel(artistReturnView)
+  // The label names where the click lands: history when there is history
+  // (useBackLabel — the one naming every back pill shares), else the stored
+  // return view — the same two branches as goBack below.
+  const backLabel = (canGoBack && navBackLabel) || albumDetailBackLabel(artistReturnView)
   // Prefer real history (matches the titlebar ‹ and ⌘[); fall back to the
   // stored return view only when there's nothing to go back to.
   const goBack = useCallback(() => {
@@ -564,7 +568,7 @@ export default function ArtistDetailView() {
   if (!artist) {
     return (
       <div className="artist-detail">
-        <button className="artist-detail-back" onClick={goBack}>{backLabel}</button>
+        <BackButton label={backLabel} onClick={goBack} className="artist-detail-back" />
         <div className="artist-detail-empty">No artist selected.</div>
       </div>
     )
@@ -615,7 +619,7 @@ export default function ArtistDetailView() {
   return (
     <div className="artist-detail" ref={scrollRef}>
       <ScrollTopButton targetRef={scrollRef} />
-      <button className="artist-detail-back" onClick={goBack}>{backLabel}</button>
+      <BackButton label={backLabel} onClick={goBack} className="artist-detail-back" />
 
       <header className="ad-hero">
         {heroSrc && (
