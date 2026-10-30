@@ -511,6 +511,17 @@ export interface AppSettings {
     enabled: boolean
     path: string
   }
+  // 2026-10-30 — pause for video calls. Main watches which processes are
+  // using the microphone (CoreAudio per-process state via native/micwatch,
+  // so FaceTime / Zoom / Teams / Webex / Meet-in-a-browser all count, and
+  // JakeTunes' own mic use never does). While this is on, music that was
+  // playing pauses when a call starts and resumes once the call is
+  // confirmed over. A missing key reads as ON (older settings files). Main
+  // stands down while audio.callRouteEnabled + a speaker are set — the user
+  // asked for the music to MOVE during calls, not stop.
+  calls: {
+    pauseForCalls: boolean
+  }
   // 4.4.51 — auto-route-on-call. When `callRouteEnabled` is on and music
   // is playing, JakeTunes watches the mic; when a call starts it routes
   // its OWN audio output (AudioContext.setSinkId — system default
@@ -551,6 +562,7 @@ export interface AppSettings {
 // truth at runtime is whichever is more permissive (the eq module).
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   crossfade: { enabled: false, seconds: 6 },
+  calls: { pauseForCalls: true },
   library: { defaultImportFormat: 'alac', offloadAudioToHomemini: false },
   sync: { autoSyncOnConnect: false, autoRemoveDeletedFromIpod: false },
   ai: { musicManVoiceEnabled: true, claudeDailyCeiling: 200, aiHost: 'mm', exaApiKey: '', exaConfigured: false },
@@ -645,6 +657,7 @@ declare global {
       loadTracks: () => Promise<{ tracks: Track[]; playlists: { name: string; trackIds: number[] }[] }>
       getAppVersion: () => Promise<string>
       onMenuAction: (callback: (action: string) => void) => () => void
+      onAppNotice: (callback: (notice: { text: string; kind?: 'error' | 'info' | 'success'; durationMs?: number }) => void) => () => void
       setLibraryContext: (ctx: string) => Promise<void>
       musicmanChat: (messages: { role: string; content: string }[], context?: string) => Promise<{ ok: boolean; text: string; textRaw: string; createdPlaylist?: { name: string; trackIds: number[] } | null }>
       musicmanSpeak: (text: string, fast?: boolean, voiceId?: string) => Promise<{ ok: boolean; audio?: string; error?: string }>

@@ -44,3 +44,8 @@ __pycache__/
 # Diagnostic captures (Brief 017 — vern)
 diagnostics/*
 !diagnostics/.gitkeep
+
+# Native helpers compiled by scripts/build-native.sh (part of npm run build);
+# electron-builder ships the directory as Resources/bin.
+native/bin/*
+!native/bin/.gitkeep
