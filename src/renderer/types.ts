@@ -343,6 +343,10 @@ export interface AlbumPerson {
   /** Recordings on the release this person is credited on. 0 = credited on
    *  the release as a whole only (mastering, say). */
   tracks: number
+  /** A member of the album's artist (artist-members.json, MusicBrainz-grounded)
+   *  or the artist themselves — the sleeve lists the band first. Set when read,
+   *  never cached. */
+  member?: boolean
 }
 export interface AlbumPersonnel {
   ok: boolean

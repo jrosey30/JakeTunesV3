@@ -630,7 +630,7 @@ describe('wiring — the registrar, the preload and the renderer twin', () => {
     for (const name of ['AlbumPerson', 'AlbumPersonnel']) {
       assert.equal(body(renderer, name), body(main, name), `${name} drifted between main and renderer`)
     }
-    assert.equal(body(main, 'AlbumPerson'), 'name: string roles: string[] tracks: number')
+    assert.equal(body(main, 'AlbumPerson'), 'name: string roles: string[] tracks: number member?: boolean')
     assert.equal(body(main, 'AlbumPersonnel'), 'ok: boolean people: AlbumPerson[] releaseMbid?: string error?: string')
   })
 

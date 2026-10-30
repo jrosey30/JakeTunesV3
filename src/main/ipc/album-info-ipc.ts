@@ -9,6 +9,11 @@ import { REFUSED_SENDER } from '../ipc-register.ts'
 import { pickAlbumReleaseDate, sanitizeAlbumCredits, tagYearStr } from '../../common/albumReleaseDate'
 import { itunesAlbumTracks, pickItunesAlbumRow, searchItunesSuggestions } from '../download-search'
 import { safeIpcError } from '../safe-ipc-error'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { STATE_DIR } from '../state-dir'
+import { nameKey } from '../../common/fold-text'
+import { mbReleaseLabel } from '../album-label'
 import { createAlbumPersonnelService, type AlbumPersonnel } from '../album-personnel.ts'
 import { registerRecordShopIpc } from './record-shop-ipc.ts'
 import { registerNearEditionIpc } from './near-edition-ipc.ts'
@@ -18,6 +23,25 @@ import { registerNearEditionIpc } from './near-edition-ipc.ts'
  *  is worth passing so the album page and the background jobs take turns at
  *  MusicBrainz's one-request-a-second door instead of each keeping its own. */
 export interface AlbumInfoHost { mbThrottle?: () => Promise<void> }
+
+// The band's members (artist-members.json, MusicBrainz-grounded) so the album
+// page lists the band before guests and production. Re-read at most once a
+// minute; no file = no members known.
+let membersCache: { at: number; map: Map<string, string[]> } | null = null
+async function artistMembers(artist: string): Promise<readonly string[] | null> {
+  const now = Date.now()
+  if (!membersCache || now - membersCache.at > 60_000) {
+    const map = new Map<string, string[]>()
+    try {
+      const raw = JSON.parse(await readFile(join(STATE_DIR, 'artist-members.json'), 'utf-8')) as Record<string, { members?: string[] }>
+      for (const [name, v] of Object.entries(raw)) if (Array.isArray(v?.members)) map.set(nameKey(name), v.members)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') console.warn('[album-personnel] artist-members.json unreadable:', err instanceof Error ? err.message : String(err))
+    }
+    membersCache = { at: now, map }
+  }
+  return membersCache.map.get(nameKey(artist)) ?? null
+}
 
 export function registerAlbumInfoIpc(ipc: IpcRegistrar, host: AlbumInfoHost = {}): void {
   // Brief 122 Phase 2 — autocomplete source for the add-recommendation form.
@@ -39,7 +63,10 @@ export function registerAlbumInfoIpc(ipc: IpcRegistrar, host: AlbumInfoHost = {}
       const res = await fetch(url)
       if (!res.ok) return null
       const data = await res.json() as { results?: Array<{ collectionName?: string; releaseDate?: string; copyright?: string }> }
-      const best = pickItunesAlbumRow(data.results || [], album)
+      // This artist's row only — "Nirvana Nevermind" leads with a tribute
+      // album on another label (Jake 2026-10-30: "isnt nevermind on sub pop
+      // not robotic empire??"); no row of theirs = no iTunes answer.
+      const best = pickItunesAlbumRow(data.results || [], album, artist)
       if (!best) return null
       const released = best.releaseDate ? best.releaseDate.slice(0, 10) : undefined
       let label: string | undefined
@@ -55,14 +82,16 @@ export function registerAlbumInfoIpc(ipc: IpcRegistrar, host: AlbumInfoHost = {}
     } catch { return null }
   }
 
-  async function fetchMusicBrainzAlbumCredits(artist: string, album: string): Promise<{ released?: string; producer?: string } | null> {
+  async function fetchMusicBrainzAlbumCredits(artist: string, album: string): Promise<{ released?: string; producer?: string; label?: string } | null> {
     // Separate from searchMusicBrainz() (that returns a prose facts string for
     // the persona); this pulls STRUCTURED release-group data. Best-effort,
-    // single timeout-bounded pass. MB asks for a descriptive User-Agent.
-    const headers = { 'User-Agent': 'JakeTunes/4.5 ( jakerosenbaum30@gmail.com )' }
+    // single timeout-bounded pass. MB asks for a descriptive User-Agent, and
+    // for one request a second: every call waits its turn at the shared door.
+    const headers = { 'User-Agent': `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)` }
+    const mb = async (url: string): Promise<Response> => { await host.mbThrottle?.(); return fetch(url, { headers }) }
     try {
       const q = `releasegroup:"${album}" AND artist:"${artist}"`
-      const rgRes = await fetch(`https://musicbrainz.org/ws/2/release-group?query=${encodeURIComponent(q)}&fmt=json&limit=1`, { headers })
+      const rgRes = await mb(`https://musicbrainz.org/ws/2/release-group?query=${encodeURIComponent(q)}&fmt=json&limit=1`)
       if (!rgRes.ok) return null
       const rg = await rgRes.json() as { 'release-groups'?: Array<{ id: string; 'first-release-date'?: string }> }
       const group = rg['release-groups']?.[0]
@@ -70,14 +99,24 @@ export function registerAlbumInfoIpc(ipc: IpcRegistrar, host: AlbumInfoHost = {}
       const released = group['first-release-date'] || undefined
       let producer: string | undefined
       try {
-        const relRes = await fetch(`https://musicbrainz.org/ws/2/release-group/${group.id}?inc=artist-rels&fmt=json`, { headers })
+        const relRes = await mb(`https://musicbrainz.org/ws/2/release-group/${group.id}?inc=artist-rels&fmt=json`)
         if (relRes.ok) {
           const rel = await relRes.json() as { relations?: Array<{ type?: string; artist?: { name?: string } }> }
           const prod = (rel.relations || []).find((r) => /producer/i.test(r.type || ''))
           if (prod?.artist?.name) producer = prod.artist.name
         }
       } catch { /* relations are a bonus; ignore */ }
-      return { released, producer }
+      // The label of the earliest official release (Nevermind → DGC): the
+      // record's own label, not whatever iTunes row the search led with.
+      let label: string | undefined
+      try {
+        const relsRes = await mb(`https://musicbrainz.org/ws/2/release?release-group=${group.id}&inc=labels&fmt=json&limit=25`)
+        if (relsRes.ok) {
+          const rels = await relsRes.json() as { releases?: Array<{ status?: string; date?: string; 'label-info'?: Array<{ label?: { name?: string } }> }> }
+          label = mbReleaseLabel(rels.releases || [])
+        }
+      } catch { /* the label is a bonus; iTunes may still have it */ }
+      return { released, producer, label }
     } catch { return null }
   }
 
@@ -94,7 +133,8 @@ export function registerAlbumInfoIpc(ipc: IpcRegistrar, host: AlbumInfoHost = {}
       const merged: AlbumCredits = {}
       const released = pickAlbumReleaseDate(tagYear, mb?.released, it?.released)
       if (released) merged.released = released
-      if (it?.label) merged.label = it.label
+      if (mb?.label) merged.label = mb.label
+      else if (it?.label) merged.label = it.label
       if (mb?.producer) merged.producer = mb.producer
       const sanitized = sanitizeAlbumCredits(tagYear, merged)
       albumInfoCache.set(key, sanitized)
@@ -114,6 +154,7 @@ export function registerAlbumInfoIpc(ipc: IpcRegistrar, host: AlbumInfoHost = {}
     dir: app.getPath('userData'),
     userAgent: `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)`,
     throttle: host.mbThrottle,
+    membersOf: artistMembers,
   })
   ipc.handle('get-album-personnel', async (_e, artist: string, album: string): Promise<AlbumPersonnel> => personnel.get(artist, album),
     { refuse: { ok: false, people: [], error: REFUSED_SENDER.error } })

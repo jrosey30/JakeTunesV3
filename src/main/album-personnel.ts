@@ -53,6 +53,10 @@ export interface AlbumPerson {
   /** Recordings on the release this person is credited on. 0 = credited on
    *  the release as a whole only (mastering, say). */
   tracks: number
+  /** A member of the album's artist (artist-members.json, MusicBrainz-grounded)
+   *  or the artist themselves — the sleeve lists the band first. Set when read,
+   *  never cached. */
+  member?: boolean
 }
 export interface AlbumPersonnel {
   ok: boolean
@@ -426,6 +430,8 @@ export interface AlbumPersonnelServiceDeps extends LookupDeps {
   /** Directory holding album-personnel.json — the app's userData. */
   dir: string
   now?: () => number
+  /** The members of a group act (artist-members.json), null when unknown. */
+  membersOf?: (artist: string) => Promise<readonly string[] | null>
 }
 
 export interface AlbumPersonnelService {
@@ -472,7 +478,21 @@ export function createAlbumPersonnelService(deps: AlbumPersonnelServiceDeps): Al
   // Two album-page mounts asking at once share one lookup.
   const inflight = new Map<string, Promise<AlbumPersonnel>>()
 
-  async function get(artist: string, album: string): Promise<AlbumPersonnel> {
+  // The sleeve lists the band first: members of the album's artist (or the
+  // artist themselves) are flagged when read, never in the cache.
+  const withMembers = async (artist: string, r: AlbumPersonnel): Promise<AlbumPersonnel> => {
+    if (!r.ok || !r.people.length) return r
+    let members: readonly string[] | null = null
+    try {
+      members = (await deps.membersOf?.(artist)) ?? null
+    } catch (err) {
+      log(`[album-personnel] members of ${artist} unavailable: ${err instanceof Error ? err.message : String(err)}`)
+    }
+    const keys = new Set([nameKey(artist), ...(members ?? []).map((m) => nameKey(m))])
+    return { ...r, people: r.people.map((p) => (keys.has(nameKey(p.name)) ? { ...p, member: true } : p)) }
+  }
+
+  async function getRaw(artist: string, album: string): Promise<AlbumPersonnel> {
     if (typeof artist !== 'string' || typeof album !== 'string') return { ok: false, people: [], error: 'invalid-input' }
     if (!artist.trim() || !album.trim()) return { ok: true, people: [] }
     const key = personnelCacheKey(artist, album)
@@ -498,5 +518,5 @@ export function createAlbumPersonnelService(deps: AlbumPersonnelServiceDeps): Al
     return pending
   }
 
-  return { get, flush: () => writeChain }
+  return { get: async (artist, album) => withMembers(artist, await getRaw(artist, album)), flush: () => writeChain }
 }
