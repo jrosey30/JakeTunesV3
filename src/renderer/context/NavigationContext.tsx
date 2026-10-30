@@ -1,7 +1,6 @@
 import { createContext, useContext, useRef, useState, useEffect, useCallback, ReactNode } from 'react'
 import { useLibrary } from './LibraryContext'
-import type { ViewName, SmartPlaylistId } from '../types'
-import { recordLocation, canGoBack as histCanBack, canGoForward as histCanForward } from '../nav-history'
+import { recordLocation, locationOf, restoreActionFor, canGoBack as histCanBack, canGoForward as histCanForward } from '../nav-history'
 import type { NavLocation, NavHistory } from '../nav-history'
 import { reopenSearch } from '../searchNav'
 import { markHistoryNavigation } from '../navIntent'
@@ -13,10 +12,11 @@ import { HistorySwipeTracker, mouseButtonNav } from '../historySwipe'
  * Deliberately an OBSERVER on top of LibraryContext (do-not-touch): it watches
  * the navigable fields of lib.state, records a history stack (pure logic in
  * nav-history.ts), and replays entries via the EXISTING actions (SET_VIEW /
- * VIEW_PLAYLIST / VIEW_SMART_PLAYLIST / VIEW_ARTIST_DETAIL / VIEW_ALBUM_DETAIL).
- * No reducer changes. goBack/goForward move the index first, then dispatch a
- * restore — so the resulting location change is recognized as a landing
- * (recordLocation returns the same state) rather than a new push.
+ * VIEW_PLAYLIST / VIEW_SMART_PLAYLIST / VIEW_ARTIST_DETAIL / VIEW_ALBUM_DETAIL —
+ * restoreActionFor, the same step the startup restore in App.tsx reopens the
+ * saved page with). No reducer changes. goBack/goForward move the index first,
+ * then dispatch a restore — so the resulting location change is recognized as
+ * a landing (recordLocation returns the same state) rather than a new push.
  */
 
 interface NavigationApi {
@@ -38,18 +38,10 @@ const NavigationContext = createContext<NavigationApi | null>(null)
 
 export function NavigationProvider({ children }: { children: ReactNode }) {
   const { state: lib, dispatch } = useLibrary()
-  // Capture each key ONLY when its view is active. The reducer leaves
-  // pendingAlbumKey / activeArtist / activePlaylistId lingering after you
-  // navigate away (SET_VIEW only swaps currentView), so reading them
-  // unconditionally would make two visits to e.g. "Albums" look like
-  // different locations and corrupt the back/forward stack.
-  const loc: NavLocation = {
-    view: lib.currentView,
-    playlistId: lib.currentView === 'playlist' ? lib.activePlaylistId : null,
-    smartPlaylistId: lib.currentView === 'smart-playlist' ? lib.activeSmartPlaylist : null,
-    artist: lib.currentView === 'artist-detail' ? lib.activeArtist : null,
-    albumKey: lib.currentView === 'album-detail' ? lib.pendingAlbumKey : null,
-  }
+  // Each subject is captured ONLY while its view is showing (locationOf says
+  // why: the reducer leaves pendingAlbumKey / activeArtist / activePlaylistId
+  // lingering after you navigate away).
+  const loc: NavLocation = locationOf(lib)
 
   // History in a ref (synchronous read/write across the observer + handlers);
   // `tick` just forces a repaint so derived canGoBack/Forward update.
@@ -66,28 +58,9 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
     searchReturnRef.current = { query, atIndex: navRef.current.index + 1 }
   }, [])
 
-  const restore = useCallback((t: NavLocation) => {
-    switch (t.view) {
-      case 'playlist':
-        if (t.playlistId) dispatch({ type: 'VIEW_PLAYLIST', id: t.playlistId })
-        else dispatch({ type: 'SET_VIEW', view: 'songs' })
-        break
-      case 'smart-playlist':
-        if (t.smartPlaylistId) dispatch({ type: 'VIEW_SMART_PLAYLIST', id: t.smartPlaylistId as SmartPlaylistId })
-        else dispatch({ type: 'SET_VIEW', view: 'songs' })
-        break
-      case 'artist-detail':
-        if (t.artist) dispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: t.artist })
-        else dispatch({ type: 'SET_VIEW', view: 'artists' })
-        break
-      case 'album-detail':
-        if (t.albumKey) dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: t.albumKey })
-        else dispatch({ type: 'SET_VIEW', view: 'albums' })
-        break
-      default:
-        dispatch({ type: 'SET_VIEW', view: t.view as ViewName })
-    }
-  }, [dispatch])
+  // One rule for re-entering a page (nav-history.ts) — shared with the startup
+  // restore in App.tsx, so a history entry and a saved page land identically.
+  const restore = useCallback((t: NavLocation) => { dispatch(restoreActionFor(t)) }, [dispatch])
 
   // Record location changes. recordLocation returns the SAME object on a
   // back/forward landing (index already moved) or a no-op → identity check

@@ -80,6 +80,7 @@ import { trackFingerprint } from './genre-filer.ts'
 import { registerRockDnaIpc } from './ipc/rock-dna-ipc.ts'
 import { registerFriendShareIpc } from './ipc/friend-share-ipc.ts'
 import { registerReleaseKindsIpc } from './ipc/release-kinds-ipc.ts'
+import { registerLyricsIpc } from './ipc/lyrics-ipc.ts'
 import { startReleaseKindsJob, effectiveAlbumRows, releaseKindsPath } from './release-kinds.ts'
 import { guardCredits, type CreditTrack } from './ai/credit-guard.ts'
 import { registerYirIpc } from './ipc/yir-ipc.ts'
@@ -3591,27 +3592,7 @@ const overridesCache = new JsonFileCache<Record<string, unknown>>(
   () => ({}),
   'overrides',
 )
-// Lyrics sidecar (lyrics.json) — grounded lyrics from LRCLIB, written by
-// scripts/lyrics-fetch.mjs and keyed by String(track.id). The desktop reads it
-// LOCALLY for the Get Info Lyrics section; the LOCAL→NAS mirror (STATE_FILE_NAMES
-// below) carries it to homemini so the nightly brain-trainer's "meaning" pass can
-// read it. The laptop fetcher is the SINGLE writer. NEVER fabricated: a genuine
-// not-found is { miss:true }, an instrumental { instrumental:true }.
-// ⚠️ Schema mirror: scripts/lyrics-sources.mjs (recordFrom + lookup) writes this exact shape.
-export interface LyricsRecord {
-  plain?: string
-  synced?: string
-  instrumental?: boolean
-  miss?: boolean; likelyInstrumental?: boolean   // likely = still a MISS (180-day retry), never shown as Instrumental
-  source?: string   // 'lrclib' | 'lyrics.ovh' (plain-only fallback) | 'lrclib+ovh' (double miss)
-  lrclibId?: number // absent on lyrics.ovh hits
-  fetchedAt?: number
-}
-const lyricsCache = new JsonFileCache<Record<string, LyricsRecord>>(
-  () => join(STATE_DIR, 'lyrics.json'),
-  () => ({}),
-  'lyrics',
-)
+// Lyrics sidecar (lyrics.json): Get Info's reader + the replica pull live in ./ipc/lyrics-ipc.ts.
 // Discovery feedback (discovery-feedback.json) lives in ./discovery-feedback.ts.
 // Friends ledger — who sends Jake music and how reliable they are. Updated on
 // list adds ('add'), downloads that land ('got'), and tosses ('tossed');
@@ -3897,7 +3878,7 @@ async function detectStateConflicts(): Promise<void> {
   const localDir = app.getPath('userData')
   const CONFLICT_THRESHOLD_MS = 2_000 // NAS copies carry the local mtime (utimes after publish), so 2s = SMB timestamp granularity
   for (const f of STATE_FILE_NAMES) {
-    if ((f === 'library.json' || f === 'release-kinds.json') && !pushLibrary) continue  // a replica's release-kinds.json IS homemini's copy (replica-hub-files.ts)
+    if ((f === 'library.json' || f === 'release-kinds.json' || f === 'lyrics.json') && !pushLibrary) continue  // a replica's release-kinds.json + lyrics.json ARE homemini's copies (replica-hub-files.ts)
     const localPath = join(localDir, f)
     const nasPath = join(NAS_STATE_DIR_PATH, f)
     try {
@@ -9813,16 +9794,7 @@ registerArtworkIpc(ipc, {
   liveSetsCache,
 })
 
-ipc.handle('get-track-lyrics', async (_e, trackId: number): Promise<{ ok: boolean; plain?: string; synced?: string; instrumental?: boolean }> => {
-  try {
-    const store = await lyricsCache.get()
-    const rec = store[String(trackId)]
-    if (!rec || rec.miss) return { ok: true }
-    return { ok: true, plain: rec.plain, synced: rec.synced, instrumental: rec.instrumental }
-  } catch {
-    return { ok: true }
-  }
-}, { public: true })
+registerLyricsIpc(ipc, { file: () => join(STATE_DIR, 'lyrics.json'), hubBase: replicaHubBase, notify: () => sendToRenderer('lyrics-updated') })  // replica: homemini's copy, never fetched here
 
 
 // ── CD Drive Detection & Import ── (extracted to ipc/cd-ipc.ts, 6.0 Phase 1)

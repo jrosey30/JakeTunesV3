@@ -866,6 +866,7 @@ declare global {
       removeArtwork: (artist: string, album: string, force?: boolean) => Promise<{ ok: boolean; key?: string; locked?: boolean; error?: string }>
       chooseArtworkFile: () => Promise<{ ok: boolean; path?: string }>
       getTrackLyrics: (trackId: number) => Promise<{ ok: boolean; plain?: string; synced?: string; instrumental?: boolean }>
+      onLyricsUpdated?: (callback: () => void) => () => void
       loadArtworkMap: () => Promise<{ ok: boolean; map: Record<string, string> }>
       resolveArtwork: (artist: string, album: string) => Promise<{ ok: boolean; hash: string | null }>
       migrateArtworkKey: (oldArtist: string, oldAlbum: string, newArtist: string, newAlbum: string) => Promise<{ ok: boolean; migrated?: boolean; hash?: string }>
