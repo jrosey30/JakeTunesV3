@@ -29,6 +29,9 @@ import {
 } from '../cynthia-sweep.ts'
 import type Anthropic from '@anthropic-ai/sdk'
 import { MODEL_SMART, MODEL_FAST } from '../../common/ai-models.ts'
+import { wholeSentences } from '../../common/sentences.ts'
+import { albumNotesKey, createAlbumNotesStore, type AlbumNotesStore } from '../album-notes.ts'
+import { isWeakBlurb } from '../../common/weak-blurb.ts'
 import { pitchShiftMp3, pitchSemitonesFromEnv, speedFromEnv } from '../voice-pitch'
 
 export interface AiIpcHost {
@@ -82,11 +85,12 @@ function cleanAiProse(raw: string, title?: string): string {
   return t.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
 }
 
-const albumCacheKey = (artist: string, album: string) =>
-  `${(artist || '').toLowerCase().trim()}|${(album || '').toLowerCase().trim()}`
-
-const albumBlurbCache = new Map<string, string>()
-const albumTakeCache = new Map<string, string>()
+// The history and the take live on disk (album-notes.ts): the same words
+// every time the page opens.
+let albumNotes: AlbumNotesStore | null = null
+function albumNotesStore(): AlbumNotesStore {
+  return (albumNotes ??= createAlbumNotesStore(join(app.getPath('userData'), 'album-notes.json')))
+}
 const ttsRateBucket = new Map<string, number[]>()
 
 export function registerAiIpc(ipc: IpcRegistrar, host: AiIpcHost): void {
@@ -284,9 +288,9 @@ export function registerAiIpc(ipc: IpcRegistrar, host: AiIpcHost): void {
   ipc.handle('get-album-blurb', async (_e, artist: string, album: string, year?: string | number): Promise<{ ok: boolean; blurb?: string; error?: string }> => {
     if (!album) return { ok: true, blurb: '' }
     const yr = year ? String(year).trim() : ''
-    const key = albumCacheKey(artist, album) + (yr ? `|${yr}` : '')
-    const cached = albumBlurbCache.get(key)
-    if (cached !== undefined) return { ok: true, blurb: cached }
+    const key = albumNotesKey(artist, album, yr)
+    const cached = await albumNotesStore().get('blurbs', key)
+    if (cached) return { ok: true, blurb: cached }
     try {
       const search = await host.searchWebCached(`${artist} "${album}"${yr ? ` ${yr}` : ''} album`, album).catch(() => '')
       const user = [
@@ -300,13 +304,20 @@ export function registerAiIpc(ipc: IpcRegistrar, host: AiIpcHost): void {
       ].filter(Boolean).join('\n')
       const reply = await host.claudeCall('album-blurb', {
         model: MODEL_SMART,
-        max_tokens: 300,
+        max_tokens: 700,
         system: 'You are a precise, neutral music historian. Ground every claim in the provided search results and the known release year. NEVER invent dates, deaths, lineup changes, or events you are not certain of — omit rather than guess. No ratings, rankings, or opinions.',
         messages: [{ role: 'user', content: user }],
       })
       const block = reply.content[0]
-      const text = cleanAiProse(block && block.type === 'text' ? block.text : '', album)
-      albumBlurbCache.set(key, text)
+      let text = cleanAiProse(block && block.type === 'text' ? block.text : '', album)
+      // Out of room → it stopped mid-sentence (Jake 2026-10-30: Perfecth's
+      // history ended on "Where). Keep the finished sentences; never cache a
+      // cut-off answer.
+      const cut = reply.stop_reason === 'max_tokens'
+      if (cut) text = wholeSentences(text)
+      // A "drawing a blank" answer is never kept: kept, it would hide the
+      // history for good; unkept, the next open asks again.
+      if (!cut && !isWeakBlurb(text)) void albumNotesStore().set('blurbs', key, text)
       return { ok: true, blurb: text }
     } catch (err) {
       return { ok: false, error: safeIpcError(err, 'unknown') }
@@ -316,9 +327,9 @@ export function registerAiIpc(ipc: IpcRegistrar, host: AiIpcHost): void {
   ipc.handle('get-album-take', async (_e, artist: string, album: string, year?: string | number): Promise<{ ok: boolean; take?: string; error?: string }> => {
     if (!album) return { ok: true, take: '' }
     const yr = year ? String(year).trim() : ''
-    const key = albumCacheKey(artist, album) + (yr ? `|${yr}` : '')
-    const cached = albumTakeCache.get(key)
-    if (cached !== undefined) return { ok: true, take: cached }
+    const key = albumNotesKey(artist, album, yr)
+    const cached = await albumNotesStore().get('takes', key)
+    if (cached) return { ok: true, take: cached }
     try {
       const user = [
         `Give your take on the album "${album}" by ${artist}${yr ? ` (${yr})` : ''}.`,
@@ -329,13 +340,18 @@ export function registerAiIpc(ipc: IpcRegistrar, host: AiIpcHost): void {
       ].filter(Boolean).join('\n')
       const reply = await host.claudeCall('album-take', {
         model: MODEL_FAST,
-        max_tokens: 220,
+        max_tokens: 450,
         system: MUSIC_MAN_CORE,
         messages: [{ role: 'user', content: user }],
       })
       const block = reply.content[0]
-      const text = cleanAiProse(block && block.type === 'text' ? block.text : '', album)
-      albumTakeCache.set(key, text)
+      let text = cleanAiProse(block && block.type === 'text' ? block.text : '', album)
+      // Out of room → it stopped mid-sentence (Jake 2026-10-30: Perfecth's
+      // history ended on "Where). Keep the finished sentences; never cache a
+      // cut-off answer.
+      const cut = reply.stop_reason === 'max_tokens'
+      if (cut) text = wholeSentences(text)
+      if (!cut && !isWeakBlurb(text)) void albumNotesStore().set('takes', key, text)
       return { ok: true, take: text }
     } catch (err) {
       return { ok: false, error: safeIpcError(err, 'api-failed') }

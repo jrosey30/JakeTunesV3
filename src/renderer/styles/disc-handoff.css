@@ -23,6 +23,18 @@
 :root.jt-disc-vt--back::view-transition-new(jt-disc) {
   animation-timing-function: cubic-bezier(0.35, 0, 0.2, 1);
 }
+/* The jewel case's lid sits over the album page's cover (album-page.css
+   .apd-case-lid). Left in the root snapshot it would snap on when the cover
+   lands; named too, it fades in at its final place while the cover grows
+   into it (and fades out first on the way back). */
+:root.jt-disc-vt .apd-case-lid {
+  view-transition-name: jt-disc-lid;
+}
+:root.jt-disc-vt::view-transition-group(jt-disc-lid),
+:root.jt-disc-vt::view-transition-old(jt-disc-lid),
+:root.jt-disc-vt::view-transition-new(jt-disc-lid) {
+  animation-duration: var(--jt-disc-morph, 420ms);
+}
 /* the pages crossfade under it, a little quicker than the morph */
 :root.jt-disc-vt::view-transition-old(root),
 :root.jt-disc-vt::view-transition-new(root) {

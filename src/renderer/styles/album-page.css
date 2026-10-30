@@ -519,50 +519,156 @@
 }
 
 /* ── The sleeve: 340px cover, a record peeking out behind it ─────────── */
+/* ── The CD jewel case ────────────────────────────────────────────────────
+   Closed, straight on (Jake 2026-10-30: "an authentic tangible CD case …
+   really realistic"). Bottom to top: the black tray (its edge shows round the
+   booklet through the lid's clear rim) with the tray card's printed spine on
+   the left and the two hinge pins; the booklet = the cover; the clear lid —
+   a cool tint, the ribbed hinge strip, a gloss, two latch slots on the right,
+   the lid's edge. Numbers are the phone's case (common/jewel-case.ts, points
+   at cover = 160) × --apd-k, like the Home jewel case. .album-page-cover stays
+   the plain square: the disc handoff morphs exactly that box. */
 .apd-sleeve {
+  --apd-cover: 340px;
+  --apd-k: 2.125;
+  --apd-spine: calc(9px * var(--apd-k));
+  --apd-rim: calc(2.5px * var(--apd-k));
+  --apd-r: calc(2.5px * var(--apd-k));
+  --apd-case-w: calc(var(--apd-spine) + var(--apd-cover) + var(--apd-rim));
   display: grid;
-  grid-template-columns: 340px 56px minmax(0, 1fr);
+  /* the case's width, not auto: an auto track takes the free space first */
+  grid-template-columns: var(--apd-case-w) minmax(0, 1fr);
+  column-gap: 40px;
   padding: 18px 32px 0;
   align-items: start;
 }
 .apd-art {
   position: relative;
-  width: 340px;
-  height: 340px;
+  width: var(--apd-case-w);
+  height: calc(var(--apd-cover) + 2 * var(--apd-rim));
   isolation: isolate;
 }
-.apd-disc {
-  position: absolute;
-  top: 8px;
-  left: 66px;
-  width: 324px;
-  height: 324px;
-  border-radius: 50%;
-  z-index: 0;
-  background: radial-gradient(circle, #d9cbb8 0 7px, #2a2622 8px 48px, #c4a06e 49px 80px, #1d1a17 81px 82px, #141210 83px);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.30);
-}
-.apd-disc::after {
-  content: "";
+.apd-case,
+.apd-case-lid {
   position: absolute;
   inset: 0;
-  border-radius: 50%;
-  background: conic-gradient(from 200deg, transparent 0 20deg, rgba(255, 255, 255, 0.12) 40deg, transparent 70deg 200deg, rgba(255, 255, 255, 0.08) 230deg, transparent 260deg);
+  border-radius: var(--apd-r);
+  pointer-events: none;
 }
+.apd-case > *,
+.apd-case-lid > * {
+  position: absolute;
+  display: block;
+}
+/* the base: black polystyrene, its clear edge, the case's outline on the
+   metal and its weight */
+.apd-case {
+  background: linear-gradient(to bottom, #2b2b2b, #141414);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.10),
+    0 0 0 1px rgba(0, 0, 0, 0.45),
+    0 1px 2px rgba(0, 0, 0, 0.35),
+    0 10px 22px rgba(0, 0, 0, 0.30),
+    0 24px 44px rgba(0, 0, 0, 0.22);
+}
+/* the tray card's spine behind the hinge, printed black, the title on it */
+.apd-case-spine {
+  left: 0;
+  top: 0;
+  width: var(--apd-spine);
+  height: 100%;
+  border-radius: var(--apd-r) 0 0 var(--apd-r);
+  background: linear-gradient(to right, #1c1c1c, #090909 70%, #000);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.apd-case-spine-text {
+  position: static;
+  writing-mode: vertical-rl;
+  font: 600 calc(4.6px * var(--apd-k)) / 1 var(--font-family);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.78);
+  white-space: nowrap;
+}
+.apd-case-knuckle {
+  left: calc(0.5px * var(--apd-k));
+  width: calc(3px * var(--apd-k));
+  height: calc(11px * var(--apd-k));
+  border-radius: calc(1.5px * var(--apd-k));
+  background: linear-gradient(to right, #c6c6c6, #767676);
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.45);
+}
+.apd-case-knuckle--top { top: calc(2px * var(--apd-k)); }
+.apd-case-knuckle--bottom { bottom: calc(2px * var(--apd-k)); }
+/* the booklet under the lid */
 .album-page-cover.apd-cover {
-  position: relative;
+  position: absolute;
+  left: var(--apd-spine);
+  top: var(--apd-rim);
   z-index: 1;
-  width: 340px;
-  height: 340px;
-  border-radius: 2px;
-  border: 1px solid #6f6f6f;
+  width: var(--apd-cover);
+  height: var(--apd-cover);
+  border-radius: 1px;
   background: #e3e1db;
-  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.30), 0 2px 6px rgba(0, 0, 0, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.10), 0 0 0 1px rgba(0, 0, 0, 0.35);
 }
 .apd-cover-placeholder { color: #b3b0a8; }
+/* the clear lid: a cool tint that shades toward the bottom-right */
+.apd-case-lid {
+  z-index: 2;
+  overflow: hidden;
+  background: linear-gradient(165deg,
+    rgba(255, 255, 255, 0.20) 0%, rgba(255, 255, 255, 0.07) 28%, rgba(255, 255, 255, 0) 48%,
+    rgba(0, 0, 0, 0.04) 78%, rgba(0, 0, 0, 0.10) 100%);
+}
+/* the ribbed hinge strip: thicker plastic over the spine (ribs 0.5 wide every
+   1.8, from x = 2 to spine − 1.5), its shade on the booklet */
+.apd-case-ribs {
+  left: 0;
+  top: 0;
+  width: var(--apd-spine);
+  height: 100%;
+  background:
+    repeating-linear-gradient(to right,
+      rgba(255, 255, 255, 0.24) 0, rgba(255, 255, 255, 0.24) calc(0.5px * var(--apd-k)),
+      rgba(255, 255, 255, 0) calc(0.5px * var(--apd-k)), rgba(255, 255, 255, 0) calc(1.8px * var(--apd-k))),
+    linear-gradient(to right, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.03));
+  background-position: calc(2px * var(--apd-k)) 0, 0 0;
+  background-size: calc(var(--apd-spine) - 3.5px * var(--apd-k)) 100%, 100% 100%;
+  background-repeat: no-repeat;
+  box-shadow: calc(1px * var(--apd-k)) 0 calc(4px * var(--apd-k)) rgba(0, 0, 0, 0.35);
+}
+/* the gloss: a catch-light in the top-left corner, a streak across the diagonal */
+.apd-case-gloss {
+  inset: 0;
+  background:
+    linear-gradient(to bottom right, rgba(255, 255, 255, 0.34) 0%, rgba(255, 255, 255, 0) 16%),
+    linear-gradient(to bottom right,
+      rgba(255, 255, 255, 0) 34%, rgba(255, 255, 255, 0.20) 41%, rgba(255, 255, 255, 0.06) 44%, rgba(255, 255, 255, 0) 50%);
+}
+/* the two latch slots on the free edge (at the booklet tabs' heights) */
+.apd-case-latch {
+  right: 0;
+  width: var(--apd-rim);
+  height: calc(17px * var(--apd-k));
+  background: linear-gradient(to right, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0.25));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), inset 0 -1px 0 rgba(255, 255, 255, 0.25);
+}
+.apd-case-latch--top { top: calc(27% - 8.5px * var(--apd-k)); }
+.apd-case-latch--bottom { top: calc(73% - 8.5px * var(--apd-k)); }
+/* the lid's edge: a bright lip, a refraction line inside it */
+.apd-case-edge {
+  inset: 0;
+  border-radius: var(--apd-r);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.62),
+    inset 0 0 0 2px rgba(0, 0, 0, 0.10),
+    inset 1px 1px 0 1px rgba(255, 255, 255, 0.35);
+}
 
 .apd-meta {
-  grid-column: 3;
   min-width: 0;
   container-type: inline-size;
   container-name: apd-meta;
@@ -666,12 +772,10 @@
   color: #5f5a52;
 }
 
-/* A rule, then the full history (serif, comfortable measure) beside the
-   credits. Never clamped. */
+/* A rule, then the history (serif, comfortable measure): its first whole
+   sentences, Read more for the rest. Unclamped, a long history pushed the
+   songs below the window (Jake 2026-10-30). The credits sit under it. */
 .apd-body {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 230px;
-  gap: 34px;
   padding-top: 16px;
   border-top: 1px solid rgba(0, 0, 0, 0.14);
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6) inset;
@@ -679,16 +783,17 @@
 .apd-text { min-width: 0; }
 .apd-bio {
   margin: 0;
-  max-width: 66ch;
+  max-width: 78ch;
   font: 14.5px/1.6 "Iowan Old Style", "Palatino", "Georgia", serif;
   color: #25221e;
   overflow-wrap: break-word;
 }
+.apd-take-more.apd-bio-more { margin-top: 4px; padding: 0; }
 .album-page-loading.apd-status-note { margin: 0; color: #6f6a62; }
 
-/* The Music Man's take — an open card, his voice in serif. */
+/* The Music Man's take — an open card, his voice in serif, under the songs. */
 .apd-take {
-  margin-top: 14px;
+  margin: 18px 32px 10px;
   max-width: calc(66ch + 26px);
   background: rgba(255, 255, 255, 0.72);
   border: 1px solid rgba(0, 0, 0, 0.14);
@@ -753,23 +858,24 @@
 }
 .apd-take-status { color: #6f6a62; font-style: italic; }
 
-/* Credits — small-caps labels, values wrap (never ellipsize). */
+/* Credits — one row of small-caps labels over values, under the history;
+   values wrap (never ellipsize), items wrap to a second row when narrow. */
 .apd-cred {
-  margin: 0;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 8px 12px;
+  margin: 14px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 32px;
   font-size: 12px;
-  align-content: start;
   color: var(--text-primary);
 }
+.apd-cred-item { min-width: 0; max-width: 100%; }
 .apd-cred dt {
   color: #5f5f5f;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  padding-top: 2px;
+  margin-bottom: 3px;
 }
 .apd-cred dd {
   margin: 0;
@@ -777,14 +883,42 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Narrow windows: credits drop under the history; the sleeve shrinks. */
-@container apd-meta (max-width: 620px) {
-  .apd-body { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+/* Personnel — who played and who made it (MusicBrainz, never the AI), one
+   wrapped line of names with their parts; nothing when it isn't known.
+   Names wrap, never clip. */
+.apd-people {
+  margin-top: 14px;
+  max-width: calc(78ch + 26px);
+  font-size: 12px;
+  color: var(--text-primary);
 }
+.apd-people-label {
+  margin: 0 0 4px;
+  color: #5f5f5f;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.apd-people-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  line-height: 1.55;
+}
+.apd-person { display: inline; overflow-wrap: anywhere; }
+.apd-person + .apd-person::before {
+  content: "·";
+  margin: 0 7px;
+  color: #888;
+}
+.apd-person-name { font-weight: 600; }
+.apd-person-roles { color: #5f5a52; }
+.apd-take-more.apd-people-more { margin-top: 2px; padding: 0; }
+
+/* Narrow windows: credits drop under the history; the sleeve shrinks. */
 @container apd-head (max-width: 900px) {
-  .apd-sleeve { grid-template-columns: 240px 44px minmax(0, 1fr); }
-  .apd-art, .album-page-cover.apd-cover { width: 240px; height: 240px; }
-  .apd-disc { top: 6px; left: 46px; width: 228px; height: 228px; }
+  .apd-sleeve { --apd-cover: 240px; --apd-k: 1.5; column-gap: 28px; }
   .apd-title { font-size: 36px; }
 }
 
