@@ -1,5 +1,7 @@
-import React, { useCallback, useMemo, useState, useEffect, useRef, useSyncExternalStore } from 'react'
+import React, { useLayoutEffect, useCallback, useMemo, useState, useEffect, useRef, useSyncExternalStore } from 'react'
 import { sentencePreview } from '../../common/sentences'
+import { isWeakBlurb } from '../../common/weak-blurb'
+import { nameKey } from '../../common/fold-text'
 import type { AlbumPerson } from '../types'
 import { useDelayedFlag } from '../hooks/useDelayedFlag'
 import { useLibrary } from '../context/LibraryContext'
@@ -48,16 +50,6 @@ function formatDuration(ms: number): string {
 }
 
 /** Music Man sometimes returns a meta "I don't know this album" riff — hide it. */
-function isWeakBlurb(text: string): boolean {
-  const lower = text.toLowerCase()
-  return (
-    lower.includes('drawing a blank')
-    || lower.includes("didn't stick")
-    || lower.includes('pulling a name')
-    || lower.includes('land a take worth hearing')
-  )
-}
-
 function formatTotalDuration(ms: number): string {
   const totalSecs = Math.floor(ms / 1000)
   const hrs = Math.floor(totalSecs / 3600)
@@ -112,35 +104,32 @@ const ICON_NOTE_BIG = (
   <svg width="84" height="91" viewBox="0 0 12 13" aria-hidden="true"><path d="M4.5 1.5l6-1.2v8.2a2 2 0 11-1.3-1.9V3L5.8 3.7v6.8a2 2 0 11-1.3-1.9z" fill="currentColor" /></svg>
 )
 
-/** What the tray card's spine says through the case's hinge: "ARTIST · ALBUM"
- *  when it fits the case's height, the album alone when only that fits —
- *  nothing rather than a clipped word. A short label fits the narrow (240px)
- *  case too (album-page.css hides --mid there). */
-const SPINE_SHORT = 24
-const SPINE_MID = 36
+/** What the tray card's spine can say through the case's hinge, longest
+ *  first: "ARTIST · ALBUM", then the album alone. The page measures the
+ *  rendered text against the run between the hinge pins and falls back —
+ *  nothing rather than a clipped word (house rule: names never clip). */
+function spineCandidates(artist: string, album: string): string[] {
+  const both = [artist, album].filter(Boolean).join(' · ')
+  return [...new Set([both, album].filter(Boolean))]
+}
 /** Personnel shown before "All N": the band and the producer, not every guest. */
 const PEOPLE_SHOWN = 8
-const foldName = (s: string): string => s.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim()
+/** The head's narrow branch (album-page.css `@container apd-head`): the 240px
+ *  case, four people, a shorter history preview — so the songs stay in view
+ *  in a 600px-tall window. */
+const NARROW_HEAD_PX = 900
 /** The people worth a line. MusicBrainz credits some members as a bare
  *  "performer" (In Rainbows: all five), which says nothing — the name alone
  *  reads fine; and it credits a band as itself, which is not a person. */
 function presentablePeople(people: AlbumPerson[], albumArtist: string): AlbumPerson[] {
-  const self = foldName(albumArtist)
+  const self = nameKey(albumArtist)
   const out: AlbumPerson[] = []
   for (const p of people) {
     const roles = p.roles.filter((r) => r !== 'performer')
-    if (!roles.length && foldName(p.name) === self) continue
+    if (!roles.length && nameKey(p.name) === self) continue
     out.push(roles.length === p.roles.length ? p : { ...p, roles })
   }
   return out
-}
-function spineLabel(artist: string, album: string): { text: string; size: 'short' | 'mid' } | null {
-  for (const text of [[artist, album].filter(Boolean).join(' · '), album]) {
-    if (!text) continue
-    if (text.length <= SPINE_SHORT) return { text, size: 'short' }
-    if (text.length <= SPINE_MID) return { text, size: 'mid' }
-  }
-  return null
 }
 
 export default function AlbumDetailView() {
@@ -324,6 +313,46 @@ export default function AlbumDetailView() {
   // it's known, nothing when it isn't.
   const [people, setPeople] = useState<AlbumPerson[]>([])
   const [peopleAll, setPeopleAll] = useState(false)
+  // The head's width decides the narrow branch (see NARROW_HEAD_PX) — the
+  // same threshold as the CSS container query, known to the page too.
+  const headRef = useRef<HTMLDivElement>(null)
+  const [narrow, setNarrow] = useState(false)
+  useLayoutEffect(() => {
+    const el = headRef.current
+    if (!el) return
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width ?? 0
+      setNarrow(w > 0 && w <= NARROW_HEAD_PX)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  // The history opens on its first whole sentences and never cuts one short
+  // (Jake 2026-10-30: "the description stops mid sentence"); Read more shows
+  // the rest. Unclamped, a long history pushed the songs below the window.
+  // (Hooks stay above the empty-album return below: the page must not crash
+  // when its last song is deleted.)
+  const bioPreview = useMemo(() => sentencePreview(blurb, narrow ? 200 : 330), [blurb, narrow])
+  const bioHasMore = bioPreview.length < blurb.length
+  const peopleShown = narrow ? 4 : PEOPLE_SHOWN
+  // The spine text must sit between the hinge pins: the rendered candidate is
+  // measured (vertical text — its height is its length) and the next one
+  // tried; past the last, the spine stays blank.
+  const spineOptions = useMemo(() => spineCandidates(albumArtist, albumName), [albumArtist, albumName])
+  const [spineIdx, setSpineIdx] = useState(0)
+  const spineRef = useRef<HTMLSpanElement>(null)
+  const knuckleTopRef = useRef<HTMLSpanElement>(null)
+  const knuckleBottomRef = useRef<HTMLSpanElement>(null)
+  useLayoutEffect(() => { setSpineIdx(0) }, [spineOptions, narrow])
+  useLayoutEffect(() => {
+    const el = spineRef.current
+    const top = knuckleTopRef.current
+    const bottom = knuckleBottomRef.current
+    if (!el || !top || !bottom) return
+    const free = bottom.getBoundingClientRect().top - top.getBoundingClientRect().bottom - 12
+    if (el.getBoundingClientRect().height > free) setSpineIdx((i) => i + 1)
+  }, [spineIdx, spineOptions, narrow])
+  const spineText = spineOptions[spineIdx]
 
   const lastClickedIdx = useRef<number>(-1)
   // Keyboard cursor in the table (↑/↓/Return — see the keydown effect below).
@@ -676,17 +705,10 @@ export default function AlbumDetailView() {
     ...(releaseDisplay ? [['Released', formatReleaseDateDisplay(releaseDisplay)] as [string, string]] : []),
     ...(credits?.label ? [['Label', credits.label] as [string, string]] : []),
     ...(credits?.producer ? [['Producer', credits.producer] as [string, string]] : []),
-    ...(genre ? [['Genre', genre] as [string, string]] : []),
-    ['Length', `${totalClock(totalMs)} · ${tracks.length} song${tracks.length === 1 ? '' : 's'}`],
+    // Genre and length are on the facts line just above — once is enough.
   ]
 
   const showBlurb = !!blurb && !isWeakBlurb(blurb)
-  // The history opens on its first whole sentences and never cuts one short
-  // (Jake 2026-10-30: "the description stops mid sentence"); Read more shows
-  // the rest. Unclamped, a long history pushed the songs below the window.
-  const bioPreview = useMemo(() => sentencePreview(blurb), [blurb])
-  const bioHasMore = bioPreview.length < blurb.length
-  const spine = spineLabel(albumArtist, albumName)
 
   // Artist column only when the record really has more than one artist.
   const multiArtist = new Set(tracks.map((t) => (t.artist || '').trim().toLowerCase())).size > 1
@@ -703,7 +725,7 @@ export default function AlbumDetailView() {
   return (
     <div className="album-page album-page--d">
       <div className="apd-scroll" ref={tracklistRef}>
-        <div className="apd-head">
+        <div className="apd-head" ref={headRef}>
           <div className="album-page-topbar apd-top">
             <button type="button" className="album-page-back apd-back" onClick={goBack} aria-label={backText}>{ICON_BACK}<span>{backText}</span></button>
             {siblingAlbums.length > 1 && curIdx >= 0 && (
@@ -744,10 +766,10 @@ export default function AlbumDetailView() {
             <div className="apd-art">
               <div className="apd-case" aria-hidden="true">
                 <span className="apd-case-spine">
-                  {spine && <span className={`apd-case-spine-text apd-case-spine-text--${spine.size}`}>{spine.text}</span>}
+                  {spineText && <span ref={spineRef} className="apd-case-spine-text">{spineText}</span>}
                 </span>
-                <span className="apd-case-knuckle apd-case-knuckle--top" />
-                <span className="apd-case-knuckle apd-case-knuckle--bottom" />
+                <span ref={knuckleTopRef} className="apd-case-knuckle apd-case-knuckle--top" />
+                <span ref={knuckleBottomRef} className="apd-case-knuckle apd-case-knuckle--bottom" />
               </div>
               <div className="album-page-cover apd-cover">
                 {artHash
@@ -857,14 +879,14 @@ export default function AlbumDetailView() {
                   <section className="apd-people" aria-label="Personnel">
                     <h4 className="apd-people-label">Personnel</h4>
                     <ul className="apd-people-list">
-                      {(peopleAll ? people : people.slice(0, PEOPLE_SHOWN)).map((p) => (
-                        <li className="apd-person" key={p.name}>
+                      {(peopleAll ? people : people.slice(0, peopleShown)).map((p, i) => (
+                        <li className="apd-person" key={`${p.name}#${i}`}>
                           <span className="apd-person-name">{p.name}</span>
                           {p.roles.length > 0 && <span className="apd-person-roles"> {p.roles.join(', ')}</span>}
                         </li>
                       ))}
                     </ul>
-                    {people.length > PEOPLE_SHOWN && (
+                    {people.length > peopleShown && (
                       <button
                         type="button"
                         className={`apd-take-more apd-people-more${peopleAll ? ' is-open' : ''}`}

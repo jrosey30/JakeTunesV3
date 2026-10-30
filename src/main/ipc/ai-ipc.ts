@@ -30,7 +30,8 @@ import {
 import type Anthropic from '@anthropic-ai/sdk'
 import { MODEL_SMART, MODEL_FAST } from '../../common/ai-models.ts'
 import { wholeSentences } from '../../common/sentences.ts'
-import { createAlbumNotesStore, type AlbumNotesStore } from '../album-notes.ts'
+import { albumNotesKey, createAlbumNotesStore, type AlbumNotesStore } from '../album-notes.ts'
+import { isWeakBlurb } from '../../common/weak-blurb.ts'
 import { pitchShiftMp3, pitchSemitonesFromEnv, speedFromEnv } from '../voice-pitch'
 
 export interface AiIpcHost {
@@ -83,9 +84,6 @@ function cleanAiProse(raw: string, title?: string): string {
     .replace(/^#+\s*/gm, '')
   return t.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
 }
-
-const albumCacheKey = (artist: string, album: string) =>
-  `${(artist || '').toLowerCase().trim()}|${(album || '').toLowerCase().trim()}`
 
 // The history and the take live on disk (album-notes.ts): the same words
 // every time the page opens.
@@ -290,7 +288,7 @@ export function registerAiIpc(ipc: IpcRegistrar, host: AiIpcHost): void {
   ipc.handle('get-album-blurb', async (_e, artist: string, album: string, year?: string | number): Promise<{ ok: boolean; blurb?: string; error?: string }> => {
     if (!album) return { ok: true, blurb: '' }
     const yr = year ? String(year).trim() : ''
-    const key = albumCacheKey(artist, album) + (yr ? `|${yr}` : '')
+    const key = albumNotesKey(artist, album, yr)
     const cached = await albumNotesStore().get('blurbs', key)
     if (cached) return { ok: true, blurb: cached }
     try {
@@ -317,7 +315,9 @@ export function registerAiIpc(ipc: IpcRegistrar, host: AiIpcHost): void {
       // cut-off answer.
       const cut = reply.stop_reason === 'max_tokens'
       if (cut) text = wholeSentences(text)
-      if (!cut) void albumNotesStore().set('blurbs', key, text)
+      // A "drawing a blank" answer is never kept: kept, it would hide the
+      // history for good; unkept, the next open asks again.
+      if (!cut && !isWeakBlurb(text)) void albumNotesStore().set('blurbs', key, text)
       return { ok: true, blurb: text }
     } catch (err) {
       return { ok: false, error: safeIpcError(err, 'unknown') }
@@ -327,7 +327,7 @@ export function registerAiIpc(ipc: IpcRegistrar, host: AiIpcHost): void {
   ipc.handle('get-album-take', async (_e, artist: string, album: string, year?: string | number): Promise<{ ok: boolean; take?: string; error?: string }> => {
     if (!album) return { ok: true, take: '' }
     const yr = year ? String(year).trim() : ''
-    const key = albumCacheKey(artist, album) + (yr ? `|${yr}` : '')
+    const key = albumNotesKey(artist, album, yr)
     const cached = await albumNotesStore().get('takes', key)
     if (cached) return { ok: true, take: cached }
     try {
@@ -351,7 +351,7 @@ export function registerAiIpc(ipc: IpcRegistrar, host: AiIpcHost): void {
       // cut-off answer.
       const cut = reply.stop_reason === 'max_tokens'
       if (cut) text = wholeSentences(text)
-      if (!cut) void albumNotesStore().set('takes', key, text)
+      if (!cut && !isWeakBlurb(text)) void albumNotesStore().set('takes', key, text)
       return { ok: true, take: text }
     } catch (err) {
       return { ok: false, error: safeIpcError(err, 'api-failed') }

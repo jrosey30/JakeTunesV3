@@ -597,8 +597,8 @@
   width: calc(3px * var(--apd-k));
   height: calc(11px * var(--apd-k));
   border-radius: calc(1.5px * var(--apd-k));
-  background: linear-gradient(to right, #dedede, #8c8c8c);
-  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.5);
+  background: linear-gradient(to right, #c6c6c6, #767676);
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.45);
 }
 .apd-case-knuckle--top { top: calc(2px * var(--apd-k)); }
 .apd-case-knuckle--bottom { bottom: calc(2px * var(--apd-k)); }
@@ -919,7 +919,6 @@
 /* Narrow windows: credits drop under the history; the sleeve shrinks. */
 @container apd-head (max-width: 900px) {
   .apd-sleeve { --apd-cover: 240px; --apd-k: 1.5; column-gap: 28px; }
-  .apd-case-spine-text--mid { display: none; }
   .apd-title { font-size: 36px; }
 }
 

@@ -27,6 +27,10 @@ test('sentenceEnds: an ellipsis or a period mid-sentence is not an end; abbrevia
   assert.deepEqual(sentenceEnds('It follows In Times New Roman… (2023), and more. Next.'), [48, 54])
   assert.deepEqual(sentenceEnds('With J. Dilla on the beat. Then (feat. Common) too.'), [26, 51])
   assert.deepEqual(sentenceEnds('Wait... what? Nothing.'), [13, 22])
+  // Review 2026-10-30: months, Mt., Jr., initial chains.
+  assert.deepEqual(sentenceEnds('Released on Nov. 5, 2026 by J.J. Cale. Next.'), [38, 44])
+  assert.deepEqual(sentenceEnds('A split with Mt. Eerie and Kenny G Jr. came later. Then.'), [50, 56])
+  assert.equal(sentencePreview('Released on Nov. 5, 2026 by J.J. Cale and Mt. Eerie in the U.S. market. A second sentence.', 40), 'Released on Nov. 5, 2026 by J.J. Cale and Mt. Eerie in the U.S. market.')
 })
 
 test('sentencePreview: the opening whole sentences that fit, never a cut one', () => {

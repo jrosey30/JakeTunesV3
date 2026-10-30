@@ -13,12 +13,14 @@
  * An end is . ! ? or an ellipsis, optionally followed by a closing quote or
  * bracket, then whitespace or the end of the text. "In Times New Roman… (2023),
  * and" is NOT an end: an ellipsis or a period only ends a sentence when the
- * next word starts a new one (capital, digit or opening quote), which also
- * steps over "feat." / "Mr." / "J. Dilla".
+ * next word starts a new one (capital, digit or opening quote), and an
+ * abbreviation or an initial ("feat.", "Mr.", "Nov. 5", "J.J. Cale") never
+ * ends one.
  */
 
 const END = /[.!?…]+["”’)\]]*(?=\s|$)/g
-const ABBREVIATION = /(?:^|[\s("“‘'])(?:feat|ft|vs|mr|mrs|ms|dr|st|no|vol|pt|[A-Za-z])\.$/i
+/** Not an end: "feat.", "Mr.", "Nov. 5", "Mt. Eerie", "Vol. 2", initials ("J.", "J.J.", "U.S."). */
+const ABBREVIATION = /(?:^|[\s("“‘'])(?:feat|ft|vs|mr|mrs|ms|dr|st|mt|jr|sr|inc|ltd|vol|pt|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec|(?:[A-Za-z]\.)*[A-Za-z])\.$/i
 /** What may start the next sentence: a capital, a digit, a quote, a bracket … */
 const NEXT_START = /^[\p{Lu}\p{N}"“‘'(\[]/u
 /** … but after an ellipsis only a capital or a quote ("Roman… (2023), and" carries on). */
