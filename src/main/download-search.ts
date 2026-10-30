@@ -155,8 +155,16 @@ export function explicitMapKey(albumName: string): string {
 /** The iTunes album row that IS `album` (folded in any script), else Apple's
  *  first row. Folded to [a-z0-9], every Hebrew album was '' and the first
  *  Hebrew row won, whatever it was. Shared with album-info-ipc. */
-export function pickItunesAlbumRow<T extends { collectionName?: string }>(results: T[], album: string): T | undefined {
+export function pickItunesAlbumRow<T extends { collectionName?: string; artistName?: string }>(results: T[], album: string, artist?: string): T | undefined {
   const want = nameKey(album, '')
+  if (artist) {
+    // With the artist known (the album page's credits), only their rows count
+    // and there is no first-row fallback: "Nirvana Nevermind" leads with a
+    // tribute album by Various Artists on another label.
+    const a = nameKey(artist, '')
+    const own = results.filter((r) => { const k = nameKey(r.artistName || '', ''); return !!a && !!k && (k === a || k.includes(a)) })
+    return own.find((r) => nameKey(r.collectionName || '', '') === want) || own.find((r) => nameKey(r.collectionName || '', '').includes(want))
+  }
   return results.find((r) => nameKey(r.collectionName || '', '') === want) || results[0]
 }
 

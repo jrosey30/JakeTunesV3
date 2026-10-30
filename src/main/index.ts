@@ -69,6 +69,7 @@ import { registerLibraryIpc } from './ipc/library-ipc.ts'
 import { registerCdIpc } from './ipc/cd-ipc.ts'
 import { registerAudioOutputIpc } from './ipc/audio-output-ipc.ts'
 import { startPauseForCalls } from './pause-for-calls.ts'
+import { startUpdateReadyWatcher } from './update-ready.ts'
 import { registerLiveSetsIpc } from './ipc/live-sets-ipc.ts'
 import { registerMobileReadsIpc } from './ipc/mobile-reads-ipc.ts'
 import { registerArtworkIpc } from './ipc/artwork-ipc.ts'
@@ -10186,6 +10187,8 @@ app.whenReady().then(async () => {
   // Pause for video calls (2026-10-30): per-process mic watcher → pause/play through the media-key path. Module: pause-for-calls.ts.
   startPauseForCalls({ sendAction: sendMediaKeyAction, notify: (n) => sendToRenderer('app-notice', n), record: (tag, detail) => flightRecorder.record('info', tag, detail), settingsPath: appSettingsPath })
   startLibraryWatcher()
+  // Update ready (2026-10-30): the install gate's update-ready.json → status-bar "Update ready · Install"; the click pauses via the media-key path and writes update-go. Module: update-ready.ts.
+  startUpdateReadyWatcher({ ipc, userData: app.getPath('userData'), runningSha: getBuildProvenance(app.getVersion()).buildSha, send: (s) => sendToRenderer('update-ready', s), sendAction: sendMediaKeyAction, record: (tag, detail) => flightRecorder.record('info', tag, detail) })
 
   void (async () => {
     try {

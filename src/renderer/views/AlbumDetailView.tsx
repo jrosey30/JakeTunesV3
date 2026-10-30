@@ -1,6 +1,7 @@
 import React, { useLayoutEffect, useCallback, useMemo, useState, useEffect, useRef, useSyncExternalStore, type CSSProperties } from 'react'
 import { sentencePreview } from '../../common/sentences'
 import { isWeakBlurb } from '../../common/weak-blurb'
+import { arrangePersonnel, personnelPreview } from '../../common/personnel-roles'
 import { nameKey } from '../../common/fold-text'
 import type { AlbumPerson } from '../types'
 import { useDelayedFlag } from '../hooks/useDelayedFlag'
@@ -115,8 +116,8 @@ function spineCandidates(artist: string, album: string): string[] {
   const both = [artist, album].filter(Boolean).join(' · ')
   return [...new Set([both, album].filter(Boolean))]
 }
-/** Personnel shown before "All N": the band and the producer, not every guest. */
-const PEOPLE_SHOWN = 8
+/** Personnel lines shown before "All N": the band and the producer, not every guest. */
+const PEOPLE_SHOWN = 6
 /** The head's narrow branch (album-page.css `@container apd-head`): the 240px
  *  case, four people, a shorter history preview — so the songs stay in view
  *  in a 600px-tall window. */
@@ -340,6 +341,9 @@ export default function AlbumDetailView() {
   const bioPreview = useMemo(() => sentencePreview(blurb, narrow ? 200 : 330), [blurb, narrow])
   const bioHasMore = bioPreview.length < blurb.length
   const peopleShown = narrow ? 4 : PEOPLE_SHOWN
+  // The sleeve's lines: band, guests, production; parts summarised
+  // (common/personnel-roles.ts — Jake 2026-10-30: "this is no way to list personnel").
+  const personnelLines = useMemo(() => arrangePersonnel(people), [people])
   // The spine text must sit between the hinge pins: the rendered candidate is
   // measured (vertical text — its height is its length) and the next one
   // tried; past the last, the spine stays blank.
@@ -873,25 +877,29 @@ export default function AlbumDetailView() {
                     ))}
                   </dl>
                 )}
-                {people.length > 0 && (
+                {personnelLines.length > 0 && (
                   <section className="apd-people" aria-label="Personnel">
                     <h4 className="apd-people-label">Personnel</h4>
                     <ul className="apd-people-list">
-                      {(peopleAll ? people : people.slice(0, peopleShown)).map((p, i) => (
-                        <li className="apd-person" key={`${p.name}#${i}`}>
-                          <span className="apd-person-name">{p.name}</span>
-                          {p.roles.length > 0 && <span className="apd-person-roles"> {p.roles.join(', ')}</span>}
+                      {(peopleAll ? personnelLines : personnelPreview(personnelLines, peopleShown)).map((l, i, arr) => (
+                        <li
+                          className={`apd-person apd-person--${l.group}${i > 0 && arr[i - 1]!.group !== l.group ? ' apd-person--group-start' : ''}`}
+                          key={`${l.name}#${i}`}
+                          title={l.allRoles.length > l.roles.length ? l.allRoles.join(', ') : undefined}
+                        >
+                          <span className="apd-person-name">{l.name}</span>
+                          <span className="apd-person-roles">{l.roles.join(', ')}</span>
                         </li>
                       ))}
                     </ul>
-                    {people.length > peopleShown && (
+                    {personnelLines.length > peopleShown && (
                       <button
                         type="button"
                         className={`apd-take-more apd-people-more${peopleAll ? ' is-open' : ''}`}
                         onClick={() => setPeopleAll((v) => !v)}
                         aria-expanded={peopleAll}
                       >
-                        {peopleAll ? 'Fewer' : `All ${people.length}`}
+                        {peopleAll ? 'Fewer' : `All ${personnelLines.length}`}
                         <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><path d="M2 3l2 2 2-2" fill="none" stroke="currentColor" strokeWidth="1.4" /></svg>
                       </button>
                     )}

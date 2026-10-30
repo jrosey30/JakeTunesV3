@@ -813,9 +813,9 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Personnel — who played and who made it (MusicBrainz, never the AI), one
-   wrapped line of names with their parts; nothing when it isn't known.
-   Names wrap, never clip. */
+/* Personnel the way a sleeve prints it (MusicBrainz, never the AI): one line
+   per person, name then parts; the band, then guests, then production, each
+   group a touch apart. Names and parts wrap, never clip. */
 .apd-people {
   margin-top: 14px;
   max-width: calc(78ch + 26px);
@@ -823,7 +823,7 @@
   color: var(--text-primary);
 }
 .apd-people-label {
-  margin: 0 0 4px;
+  margin: 0 0 5px;
   color: #5f5f5f;
   font-size: 10px;
   font-weight: 700;
@@ -834,16 +834,16 @@
   margin: 0;
   padding: 0;
   list-style: none;
-  line-height: 1.55;
+  display: grid;
+  grid-template-columns: fit-content(42%) minmax(0, 1fr);
+  column-gap: 14px;
+  row-gap: 3px;
+  line-height: 1.45;
 }
-.apd-person { display: inline; overflow-wrap: anywhere; }
-.apd-person + .apd-person::before {
-  content: "·";
-  margin: 0 7px;
-  color: #888;
-}
-.apd-person-name { font-weight: 600; }
-.apd-person-roles { color: #5f5a52; }
+.apd-person { display: contents; }
+.apd-person--group-start > * { margin-top: 7px; }
+.apd-person-name { font-weight: 600; overflow-wrap: anywhere; }
+.apd-person-roles { color: #5f5a52; overflow-wrap: anywhere; }
 .apd-take-more.apd-people-more { margin-top: 2px; padding: 0; }
 
 /* Narrow windows: credits drop under the history; the sleeve shrinks. */
