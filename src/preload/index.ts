@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { IpodDeviceMarker, IpodIdentity } from '../common/ipod-identity'
+import type { UpdateReadyState } from '../common/update-ready'
 
 const electronAPI = {
   loadTracks: (): Promise<{ tracks: unknown[]; playlists: { name: string; trackIds: number[] }[] }> => ipcRenderer.invoke('load-tracks'),
@@ -21,6 +22,20 @@ const electronAPI = {
     ipcRenderer.on('app-notice', handler)
     return () => { ipcRenderer.removeListener('app-notice', handler) }
   },
+  // 2026-10-30 — "Update ready". The install gate (scripts/install/
+  // jaketunes-install-gate.sh) stages a new build and writes update-ready.json
+  // while it waits for a quiet moment; main (src/main/update-ready.ts) watches
+  // it and pushes { sha, version, note } — or null once it stops counting.
+  // installUpdateNow() pauses the music through the media-key path and writes
+  // update-go, so the gate installs without waiting for 120 s of idle.
+  // ⚠️ TWIN: src/renderer/types.ts (Window.electronAPI) declares these three.
+  onUpdateReady: (callback: (state: UpdateReadyState | null) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: UpdateReadyState | null) => callback(state)
+    ipcRenderer.on('update-ready', handler)
+    return () => { ipcRenderer.removeListener('update-ready', handler) }
+  },
+  getUpdateReady: (): Promise<{ ok: boolean; state: UpdateReadyState | null }> => ipcRenderer.invoke('update-ready:get'),
+  installUpdateNow: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('install-update-now'),
   setLibraryContext: (ctx: string): Promise<void> => ipcRenderer.invoke('set-library-context', ctx),
   musicmanChat: (messages: { role: string; content: string }[], context?: string): Promise<{ ok: boolean; text: string; textRaw: string; createdPlaylist?: { name: string; trackIds: number[] } | null }> =>
     ipcRenderer.invoke('musicman-chat', messages, context),
