@@ -1,0 +1,4937 @@
+{
+ "recordedAt": "2026-10-30",
+ "note": "Recorded from the MusicBrainz WS2 JSON API on 2026-10-30 and trimmed to the fields src/main/album-personnel.ts reads. Three requests in order: the release-group search, the browse of the accepted group's releases (inc=labels, so the label rides along), and the lookup of the release pickRelease() chooses with inc=artist-rels+recordings+recording-level-rels. Relations are kept only where the target is an artist (the module reads nothing else).",
+ "artist": "The Beatles",
+ "album": "Abbey Road",
+ "groupId": "9162580e-5df4-32de-80cc-f45a8d8a9b1d",
+ "releaseId": "d6010be3-98f8-422c-a6c9-787e2e491e58",
+ "search": {
+  "count": 22,
+  "release-groups": [
+   {
+    "id": "9162580e-5df4-32de-80cc-f45a8d8a9b1d",
+    "title": "Abbey Road",
+    "score": 100,
+    "primary-type": "Album",
+    "secondary-types": [],
+    "first-release-date": "1969-09-26",
+    "artist-credit": [
+     {
+      "name": "The Beatles",
+      "joinphrase": "",
+      "artist": {
+       "id": "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d",
+       "name": "The Beatles"
+      }
+     }
+    ]
+   },
+   {
+    "id": "4b65927f-9611-48b2-a9da-61c72055683a",
+    "title": "Abbey Road Interactions",
+    "score": 92,
+    "primary-type": "Other",
+    "secondary-types": [
+     "Remix"
+    ],
+    "first-release-date": "2020",
+    "artist-credit": [
+     {
+      "name": "The Beatles",
+      "joinphrase": "",
+      "artist": {
+       "id": "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d",
+       "name": "The Beatles"
+      }
+     }
+    ]
+   },
+   {
+    "id": "99a0636c-e69f-3099-85f1-e6049b24946c",
+    "title": "Abbey Road Companion",
+    "score": 92,
+    "primary-type": "Other",
+    "secondary-types": [],
+    "first-release-date": "",
+    "artist-credit": [
+     {
+      "name": "The Beatles",
+      "joinphrase": "",
+      "artist": {
+       "id": "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d",
+       "name": "The Beatles"
+      }
+     }
+    ]
+   },
+   {
+    "id": "42ef6001-3113-440c-ae7c-3667c7351e35",
+    "title": "Abbey Road Remix",
+    "score": 92,
+    "primary-type": "Album",
+    "secondary-types": [
+     "Remix"
+    ],
+    "first-release-date": "2012",
+    "artist-credit": [
+     {
+      "name": "The Beatles",
+      "joinphrase": "",
+      "artist": {
+       "id": "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d",
+       "name": "The Beatles"
+      }
+     }
+    ]
+   },
+   {
+    "id": "1624c19c-c4c5-31fd-96fe-b0c77def7a7b",
+    "title": "The Alternate Abbey Road",
+    "score": 86,
+    "primary-type": "Other",
+    "secondary-types": [],
+    "first-release-date": "2000",
+    "artist-credit": [
+     {
+      "name": "The Beatles",
+      "joinphrase": "",
+      "artist": {
+       "id": "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d",
+       "name": "The Beatles"
+      }
+     }
+    ]
+   },
+   {
+    "id": "827951f1-205f-4949-8e78-79dc57e20a30",
+    "title": "The Alternate Abbey Road",
+    "score": 86,
+    "primary-type": "Album",
+    "secondary-types": [],
+    "first-release-date": "2000",
+    "artist-credit": [
+     {
+      "name": "The Beatles",
+      "joinphrase": "",
+      "artist": {
+       "id": "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d",
+       "name": "The Beatles"
+      }
+     }
+    ]
+   },
+   {
+    "id": "a19fb65c-75de-411c-b148-ac591975f36f",
+    "title": "Abbey Road Working Version",
+    "score": 86,
+    "primary-type": "Album",
+    "secondary-types": [],
+    "first-release-date": "",
+    "artist-credit": [
+     {
+      "name": "The Beatles",
+      "joinphrase": "",
+      "artist": {
+       "id": "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d",
+       "name": "The Beatles"
+      }
+     }
+    ]
+   },
+   {
+    "id": "a265b37e-9c6e-3c84-9acd-f95b9625988c",
+    "title": "No. 3 Abbey Road NW8",
+    "score": 86,
+    "primary-type": "Other",
+    "secondary-types": [],
+    "first-release-date": "1991",
+    "artist-credit": [
+     {
+      "name": "The Beatles",
+      "joinphrase": "",
+      "artist": {
+       "id": "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d",
+       "name": "The Beatles"
+      }
+     }
+    ]
+   },
+   {
+    "id": "775810ca-d1fc-457d-8da3-4599882c09c1",
+    "title": "Abbey Road Show 1983",
+    "score": 86,
+    "primary-type": "Album",
+    "secondary-types": [
+     "Compilation"
+    ],
+    "first-release-date": "2011",
+    "artist-credit": [
+     {
+      "name": "The Beatles",
+      "joinphrase": "",
+      "artist": {
+       "id": "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d",
+       "name": "The Beatles"
+      }
+     }
+    ]
+   },
+   {
+    "id": "06ac1fd4-1a1c-3740-882a-5174d000bb96",
+    "title": "Abbey Road Video Show",
+    "score": 86,
+    "primary-type": "Other",
+    "secondary-types": [],
+    "first-release-date": "1999",
+    "artist-credit": [
+     {
+      "name": "The Beatles",
+      "joinphrase": "",
+      "artist": {
+       "id": "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d",
+       "name": "The Beatles"
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "releases": {
+  "release-count": 73,
+  "releases": [
+   {
+    "id": "02fb1dd7-4256-40a8-a0a8-551314a0b5d4",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "",
+    "country": "XE",
+    "disambiguation": "EMI Swindon / PM:520 / Apple logo on back",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "df7d1c7f-ef95-425f-8eef-445b3d7bcbd9",
+       "name": "Parlophone"
+      }
+     },
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "df7d1c7f-ef95-425f-8eef-445b3d7bcbd9",
+       "name": "Parlophone"
+      }
+     }
+    ]
+   },
+   {
+    "id": "03437e02-835f-3a0a-a37c-48a36c2e852a",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1969",
+    "country": "ES",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "40eff784-c102-4045-b32d-f74d1449756d",
+       "name": "Odeon"
+      }
+     }
+    ]
+   },
+   {
+    "id": "05e77dbd-1c4f-4e5e-8461-caac6e5fbae7",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1969-09-26",
+    "country": "GB",
+    "disambiguation": "First press variation. Apple logo is misaligned with the rest of the text on the back sleeve.",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "18c0f5cc-539a-48d9-9884-c7aeae200cc9",
+    "title": "Abbey Road (twenty20)",
+    "status": "Bootleg",
+    "date": "2017-10-14",
+    "country": "XW",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "157afde4-4bf5-4039-8ad2-5a15acc85176",
+       "name": "[no label]"
+      }
+     }
+    ]
+   },
+   {
+    "id": "209df33f-cafb-4882-b929-dcb028950fe4",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1987-10-19",
+    "country": "JP",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "c029628b-6633-439e-bcee-ed02e8a338f7",
+       "name": "EMI"
+      }
+     },
+     {
+      "label": {
+       "id": "40eff784-c102-4045-b32d-f74d1449756d",
+       "name": "Odeon"
+      }
+     }
+    ]
+   },
+   {
+    "id": "27f534f7-12c5-4c56-8dda-39fbdad10c17",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1980-01",
+    "country": "US",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "abea2d3e-eabf-4480-ab24-9382dd642c73",
+       "name": "Capitol Records"
+      }
+     },
+     {
+      "label": {
+       "id": "abea2d3e-eabf-4480-ab24-9382dd642c73",
+       "name": "Capitol Records"
+      }
+     },
+     {
+      "label": {
+       "id": "edd54e2f-2eef-46b1-a9b5-bedfe5ed33be",
+       "name": "Mobile Fidelity Sound Lab"
+      }
+     }
+    ]
+   },
+   {
+    "id": "2a3b4a10-d35c-4a93-8ffb-52bea55cd657",
+    "title": "Abbey Road (Super Deluxe Edition)",
+    "status": "Official",
+    "date": "2019-09-27",
+    "country": "XW",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "b8c6b988-f0da-4813-89f2-5774fb7a2eee",
+       "name": "UMC"
+      }
+     }
+    ]
+   },
+   {
+    "id": "2e0542d1-5c0b-4600-ab77-64870cc619de",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "2009-09-09",
+    "country": "US",
+    "disambiguation": "2009 stereo remaster",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "abea2d3e-eabf-4480-ab24-9382dd642c73",
+       "name": "Capitol Records"
+      }
+     },
+     {
+      "label": {
+       "id": "df7d1c7f-ef95-425f-8eef-445b3d7bcbd9",
+       "name": "Parlophone"
+      }
+     }
+    ]
+   },
+   {
+    "id": "31765b9f-e969-4257-855f-c7ea1f657b2a",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "2015-12-24",
+    "country": "XW",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "ad4aeb00-9557-4a95-a111-5d422e65b1c6",
+       "name": "EMI Catalogue"
+      }
+     }
+    ]
+   },
+   {
+    "id": "369401e2-af27-4e48-b22a-ddb482069195",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1994",
+    "country": "US",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "df7d1c7f-ef95-425f-8eef-445b3d7bcbd9",
+       "name": "Parlophone"
+      }
+     },
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "df7d1c7f-ef95-425f-8eef-445b3d7bcbd9",
+       "name": "Parlophone"
+      }
+     }
+    ]
+   },
+   {
+    "id": "372f7e64-08dd-3ffb-913a-f29e5fe2b9d5",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "",
+    "country": "CA",
+    "disambiguation": "1987 remaster, issued after 1993",
+    "label-info": [
+     {
+      "label": {
+       "id": "095b5fc8-724e-4357-9eab-ee89196afc8e",
+       "name": "EMI Music Canada"
+      }
+     },
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "df7d1c7f-ef95-425f-8eef-445b3d7bcbd9",
+       "name": "Parlophone"
+      }
+     }
+    ]
+   },
+   {
+    "id": "3c2cfb3b-063e-4742-bb88-6699ef674589",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "2012-11-12",
+    "country": "XE",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "406b03b5-b5ee-4efe-a644-ccbcfa6b7d26",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "2025-10-10",
+    "country": "US",
+    "disambiguation": "",
+    "label-info": []
+   },
+   {
+    "id": "446abb00-2ffb-38bb-b544-512c70df7c97",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1979",
+    "country": "DE",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "46264b17-694c-468a-8233-6b79bbb1b8b5",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1975",
+    "country": "IT",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "4ae7e4df-dd1e-4624-bcd8-c9a0b8a66fab",
+    "title": "Abbey Road",
+    "status": null,
+    "date": "2014",
+    "country": "FR",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "53e9fb0d-b10a-4317-8702-47eb9b727dee",
+    "title": "Abbey Road (2CD Anniversary Edition)",
+    "status": "Official",
+    "date": "2019-09-27",
+    "country": "US",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "abea2d3e-eabf-4480-ab24-9382dd642c73",
+       "name": "Capitol Records"
+      }
+     },
+     {
+      "label": {
+       "id": "93ba13c1-5d3f-4618-a8e7-17aeffff1da6",
+       "name": "UMe"
+      }
+     }
+    ]
+   },
+   {
+    "id": "53f352b2-983c-4af2-b19d-577dec0f9f4a",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1973",
+    "country": "JP",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "54fe3b07-ac27-405d-b2b4-f16426547c40",
+    "title": "Abbey Road (2019 mix)",
+    "status": "Official",
+    "date": "2019-09-27",
+    "country": "",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "b8c6b988-f0da-4813-89f2-5774fb7a2eee",
+       "name": "UMC"
+      }
+     }
+    ]
+   },
+   {
+    "id": "5c700b4e-949e-40a4-a363-7841d8195a50",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "2019-09-27",
+    "country": "US",
+    "disambiguation": "anniversary super deluxe edition",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "edaafb43-0124-4732-a2e3-f7a9936c8bd4",
+       "name": "Universal Music Group International"
+      }
+     }
+    ]
+   },
+   {
+    "id": "60ddd099-9aef-4205-a843-6f02bd204b2a",
+    "title": "アビイ・ロード",
+    "status": "Official",
+    "date": "2014-12-17",
+    "country": "JP",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "13a464dc-b9fd-4d16-a4f4-d4316f6a46c7",
+       "name": "Universal Music"
+      }
+     }
+    ]
+   },
+   {
+    "id": "630bce3e-cb1d-4e0c-bfd4-ba164cd2847a",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1987-10",
+    "country": "FR",
+    "disambiguation": "digitally re‐mastered, BIEM/MCPS, made in UK, no Apple logo",
+    "label-info": [
+     {
+      "label": {
+       "id": "df7d1c7f-ef95-425f-8eef-445b3d7bcbd9",
+       "name": "Parlophone"
+      }
+     },
+     {
+      "label": {
+       "id": "df7d1c7f-ef95-425f-8eef-445b3d7bcbd9",
+       "name": "Parlophone"
+      }
+     }
+    ]
+   },
+   {
+    "id": "6bb3793b-f991-378e-9bff-0bd3117f2298",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1983-05-21",
+    "country": "JP",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "3b6781a7-7733-4f04-8f0b-a41dfb8d6401",
+       "name": "EMI‐Odeon"
+      }
+     }
+    ]
+   },
+   {
+    "id": "6c88f825-6e5e-48ea-964a-6bf6b02cf7ed",
+    "title": "Abbey Road: Deluxe Edition",
+    "status": "Bootleg",
+    "date": "2007",
+    "country": "",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "5800ecd1-c3d6-40ff-bfe9-810568e3c11a",
+       "name": "Purple Chick"
+      }
+     }
+    ]
+   },
+   {
+    "id": "72db542f-9bcc-4fc4-9191-6a487c1d4853",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1992",
+    "country": "GB",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "df7d1c7f-ef95-425f-8eef-445b3d7bcbd9",
+       "name": "Parlophone"
+      }
+     },
+     {
+      "label": {
+       "id": "df7d1c7f-ef95-425f-8eef-445b3d7bcbd9",
+       "name": "Parlophone"
+      }
+     },
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "76b369c5-f380-490b-8f24-df0d5d68b50a",
+    "title": "Abbey Road (super deluxe edition)",
+    "status": "Official",
+    "date": "2019-09-27",
+    "country": "AU",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "edaafb43-0124-4732-a2e3-f7a9936c8bd4",
+       "name": "Universal Music Group International"
+      }
+     }
+    ]
+   },
+   {
+    "id": "7a2075a2-ab80-4225-b20d-63b6b9c6a20d",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "2019-09-27",
+    "country": "XE",
+    "disambiguation": "anniversary edition",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "7b0dd6ec-208a-4cc9-be34-b4914cd2d7cd",
+    "title": "Abbey Road (super deluxe edition)",
+    "status": "Official",
+    "date": "2019-09-27",
+    "country": "XW",
+    "disambiguation": "24-Bit 96.0 kHz",
+    "label-info": [
+     {
+      "label": {
+       "id": "b8c6b988-f0da-4813-89f2-5774fb7a2eee",
+       "name": "UMC"
+      }
+     }
+    ]
+   },
+   {
+    "id": "7de840f4-00b3-4184-b476-c702cf2213f4",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "2010-11-16",
+    "country": "XW",
+    "disambiguation": "2009 stereo remaster",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "c029628b-6633-439e-bcee-ed02e8a338f7",
+       "name": "EMI"
+      }
+     }
+    ]
+   },
+   {
+    "id": "81470366-b15a-4621-b391-10ba291e5067",
+    "title": "Abbey Road",
+    "status": "Bootleg",
+    "date": "2005",
+    "country": "US",
+    "disambiguation": "stereo DESS bootleg",
+    "label-info": [
+     {
+      "label": {
+       "id": "a32ef841-8030-4d1b-b023-78ef4b5a68be",
+       "name": "Dr. Ebbetts Sound Systems"
+      }
+     }
+    ]
+   },
+   {
+    "id": "885ddfe3-e68d-4a8e-8570-2975318db1df",
+    "title": "Abbey Road",
+    "status": null,
+    "date": "1969",
+    "country": "",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "88f2ae2e-0a47-45db-bdf3-c15a54a5454a",
+    "title": "Abbey Road (2019 mix)",
+    "status": "Official",
+    "date": "2019-09-27",
+    "country": "",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "b8c6b988-f0da-4813-89f2-5774fb7a2eee",
+       "name": "UMC"
+      }
+     }
+    ]
+   },
+   {
+    "id": "8c6a00d5-8673-4aad-8192-5fe8649b5efa",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "2019-09-27",
+    "country": "XE",
+    "disambiguation": "2 CD Anniversary Edition",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "edaafb43-0124-4732-a2e3-f7a9936c8bd4",
+       "name": "Universal Music Group International"
+      }
+     }
+    ]
+   },
+   {
+    "id": "8e044bb7-c6ae-46a1-be8b-205278f0ebb4",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "",
+    "country": "US",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "964e8152-d86d-4b88-9b79-2f561db6c124",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1978-06-05",
+    "country": "JP",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "96e230f3-7f79-4a84-9902-b6d8de499d6e",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1987",
+    "country": "CA",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "df7d1c7f-ef95-425f-8eef-445b3d7bcbd9",
+       "name": "Parlophone"
+      }
+     }
+    ]
+   },
+   {
+    "id": "982b992e-c783-43e3-a999-dae2123bd862",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1992",
+    "country": "XE",
+    "disambiguation": "Europe reissue, made in Holland",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "df7d1c7f-ef95-425f-8eef-445b3d7bcbd9",
+       "name": "Parlophone"
+      }
+     },
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "df7d1c7f-ef95-425f-8eef-445b3d7bcbd9",
+       "name": "Parlophone"
+      }
+     }
+    ]
+   },
+   {
+    "id": "9e53c190-5621-3848-8ae4-39ad9f7d9ace",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1987-10-20",
+    "country": "GB",
+    "disambiguation": "Apple logo on back cover",
+    "label-info": [
+     {
+      "label": {
+       "id": "df7d1c7f-ef95-425f-8eef-445b3d7bcbd9",
+       "name": "Parlophone"
+      }
+     }
+    ]
+   },
+   {
+    "id": "9fcd541a-a9ab-41c0-a6aa-13979c93301d",
+    "title": "Abbey Road (2019 mix)",
+    "status": "Official",
+    "date": "2019-08-08",
+    "country": "US",
+    "disambiguation": "catch‐all for digital releases without barcodes.",
+    "label-info": [
+     {
+      "label": {
+       "id": "b8c6b988-f0da-4813-89f2-5774fb7a2eee",
+       "name": "UMC"
+      }
+     }
+    ]
+   },
+   {
+    "id": "a5746e22-9b9a-4623-97c7-66480ba2a1fb",
+    "title": "Abbey Road (super deluxe edition)",
+    "status": "Official",
+    "date": "2019-09-27",
+    "country": "XW",
+    "disambiguation": "24 bit/96.0 kHz",
+    "label-info": [
+     {
+      "label": {
+       "id": "b8c6b988-f0da-4813-89f2-5774fb7a2eee",
+       "name": "UMC"
+      }
+     }
+    ]
+   },
+   {
+    "id": "aa01f277-ec68-459a-ba29-0cf971d0c663",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "2019",
+    "country": "",
+    "disambiguation": "Dolby Atmos mix",
+    "label-info": [
+     {
+      "label": {
+       "id": "b8c6b988-f0da-4813-89f2-5774fb7a2eee",
+       "name": "UMC"
+      }
+     }
+    ]
+   },
+   {
+    "id": "aef3424c-5433-462d-973a-b2602fc37cbf",
+    "title": "Abbey Road (2019 mix)",
+    "status": "Official",
+    "date": "2019-09-27",
+    "country": "XW",
+    "disambiguation": "hi‐res audio",
+    "label-info": [
+     {
+      "label": {
+       "id": "b8c6b988-f0da-4813-89f2-5774fb7a2eee",
+       "name": "UMC"
+      }
+     }
+    ]
+   },
+   {
+    "id": "afdff14e-7716-4c5c-bd2f-bf69a5d6dbde",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "2019-09-27",
+    "country": "",
+    "disambiguation": "Dolby Atmos mix",
+    "label-info": [
+     {
+      "label": {
+       "id": "b8c6b988-f0da-4813-89f2-5774fb7a2eee",
+       "name": "UMC"
+      }
+     }
+    ]
+   },
+   {
+    "id": "b185d950-2cb4-4da3-809f-cd3efed1a2fc",
+    "title": "Abbey Road",
+    "status": "Bootleg",
+    "date": "2008",
+    "country": "US",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "7d5169b3-4420-4584-9de8-86f1df7e5279",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "7d5169b3-4420-4584-9de8-86f1df7e5279",
+       "name": "Apple Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "b25a1e5d-3247-41ea-9920-f93c58a6e479",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "2019-09-27",
+    "country": "JP",
+    "disambiguation": "2CD anniversary edition",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "baf55e8b-5649-45de-a995-c9907775bf33",
+    "title": "Abbey Road (super deluxe edition)",
+    "status": "Official",
+    "date": "2019-09-27",
+    "country": "XW",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "b8c6b988-f0da-4813-89f2-5774fb7a2eee",
+       "name": "UMC"
+      }
+     }
+    ]
+   },
+   {
+    "id": "c15a59e7-194c-437d-b8b0-c2eaebd806c2",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1976",
+    "country": "US",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "abea2d3e-eabf-4480-ab24-9382dd642c73",
+       "name": "Capitol Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "c4783e19-c30e-400f-bd5a-4d7209c22ba0",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "2019-09-27",
+    "country": "US",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "abea2d3e-eabf-4480-ab24-9382dd642c73",
+       "name": "Capitol Records"
+      }
+     },
+     {
+      "label": {
+       "id": "93ba13c1-5d3f-4618-a8e7-17aeffff1da6",
+       "name": "UMe"
+      }
+     }
+    ]
+   },
+   {
+    "id": "c71188b3-bd27-4b8a-a123-058d912002c1",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "",
+    "country": "US",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "abea2d3e-eabf-4480-ab24-9382dd642c73",
+       "name": "Capitol Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "c93e1d4c-89fa-3139-9c65-8542a39f07d1",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "2009-09-09",
+    "country": "XE",
+    "disambiguation": "2009 stereo remaster",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "df7d1c7f-ef95-425f-8eef-445b3d7bcbd9",
+       "name": "Parlophone"
+      }
+     }
+    ]
+   },
+   {
+    "id": "cf754b8b-fc50-47b5-b460-a94c61b2fef3",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "2019-09-27",
+    "country": "XW",
+    "disambiguation": "remastered",
+    "label-info": [
+     {
+      "label": {
+       "id": "b8c6b988-f0da-4813-89f2-5774fb7a2eee",
+       "name": "UMC"
+      }
+     }
+    ]
+   },
+   {
+    "id": "d02efe1b-edce-3957-aafb-345e1a0a4844",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1987-10-20",
+    "country": "US",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "abea2d3e-eabf-4480-ab24-9382dd642c73",
+       "name": "Capitol Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "d22a8ade-c223-4550-9775-265e0788a4b2",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1982-10",
+    "country": "US",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "edd54e2f-2eef-46b1-a9b5-bedfe5ed33be",
+       "name": "Mobile Fidelity Sound Lab"
+      }
+     }
+    ]
+   },
+   {
+    "id": "d4fba576-d0bb-4390-a267-7f39efbb2429",
+    "title": "Abbey Road",
+    "status": "Bootleg",
+    "date": "",
+    "country": "CN",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "df7d1c7f-ef95-425f-8eef-445b3d7bcbd9",
+       "name": "Parlophone"
+      }
+     }
+    ]
+   },
+   {
+    "id": "d5625820-d8fb-403a-a920-c40d62c406fe",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1986",
+    "country": "US",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "abea2d3e-eabf-4480-ab24-9382dd642c73",
+       "name": "Capitol Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "d5f3d527-edb8-4534-a1c6-1e433262e5c1",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1976",
+    "country": "CA",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "abea2d3e-eabf-4480-ab24-9382dd642c73",
+       "name": "Capitol Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "d6010be3-98f8-422c-a6c9-787e2e491e58",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1969-09-26",
+    "country": "GB",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "d605cd91-5a6a-4bcb-89c6-e545dc313729",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "2009-09-09",
+    "country": "XE",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "d767bd8f-d503-4a4f-be8a-e495f854db6f",
+    "title": "Abbey Road",
+    "status": "Bootleg",
+    "date": "",
+    "country": "XW",
+    "disambiguation": "MFSL Ebbetts",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "da056866-c5f8-43f3-b563-8f25fb96b86a",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1992",
+    "country": "XE",
+    "disambiguation": "made in Holland, “Beatles”,“Apple” and the Apple logos are trademarks of Apple Corps.Ltd.",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "df7d1c7f-ef95-425f-8eef-445b3d7bcbd9",
+       "name": "Parlophone"
+      }
+     },
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "df7d1c7f-ef95-425f-8eef-445b3d7bcbd9",
+       "name": "Parlophone"
+      }
+     }
+    ]
+   },
+   {
+    "id": "daa1e44b-2b25-4453-b3b0-675dde47e0b5",
+    "title": "Abbey Road (anniversary edition)",
+    "status": "Official",
+    "date": "2019-09-27",
+    "country": "JP",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "e1233b3c-76e0-4559-af15-bd069268a6b2",
+    "title": "Abbey Road (anniversary edition)",
+    "status": "Official",
+    "date": "2019-09-27",
+    "country": "XE",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "19d052fa-570a-4b17-9a3d-8f2f029b7b57",
+       "name": "Universal Music Group"
+      }
+     }
+    ]
+   },
+   {
+    "id": "e12f53a3-e912-321d-bdc7-ed17ec525ec0",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1995-12-05",
+    "country": "US",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "abea2d3e-eabf-4480-ab24-9382dd642c73",
+       "name": "Capitol Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "e388ff19-63ef-40d4-8870-37046cfb6a78",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1992",
+    "country": "US",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "abea2d3e-eabf-4480-ab24-9382dd642c73",
+       "name": "Capitol Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "e3e99a28-628b-31a2-9579-36cd98d8bb64",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "2004-01-21",
+    "country": "JP",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "e50d234a-3737-4f57-a363-0ce3b083d80f",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1992",
+    "country": "XE",
+    "disambiguation": "Europe reissue; Made in UK",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "df7d1c7f-ef95-425f-8eef-445b3d7bcbd9",
+       "name": "Parlophone"
+      }
+     }
+    ]
+   },
+   {
+    "id": "eca8996a-a637-3259-ba07-d2573c601a1b",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1969-11-09",
+    "country": "DE",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "ecd965f4-f75f-4360-9dde-26f31dc44f46",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "2012-11-13",
+    "country": "US",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "ed787f95-6668-4767-889c-0e4a720c739f",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1970",
+    "country": "GB",
+    "disambiguation": "3rd Pressing",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     }
+    ]
+   },
+   {
+    "id": "fb70321f-78df-30ff-92de-21a4bc9ca16c",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1987-10-20",
+    "country": "US",
+    "disambiguation": "no Apple logo on back",
+    "label-info": [
+     {
+      "label": {
+       "id": "df7d1c7f-ef95-425f-8eef-445b3d7bcbd9",
+       "name": "Parlophone"
+      }
+     },
+     {
+      "label": {
+       "id": "df7d1c7f-ef95-425f-8eef-445b3d7bcbd9",
+       "name": "Parlophone"
+      }
+     }
+    ]
+   },
+   {
+    "id": "fb8422c6-e6c8-405c-b713-2b22485a812a",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "2025-10-10",
+    "country": "",
+    "disambiguation": "green",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "edaafb43-0124-4732-a2e3-f7a9936c8bd4",
+       "name": "Universal Music Group International"
+      }
+     },
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "edaafb43-0124-4732-a2e3-f7a9936c8bd4",
+       "name": "Universal Music Group International"
+      }
+     }
+    ]
+   },
+   {
+    "id": "fc48d851-5dd4-3080-9f7f-a57bbe5c4c61",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1998-03-11",
+    "country": "JP",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "df7d1c7f-ef95-425f-8eef-445b3d7bcbd9",
+       "name": "Parlophone"
+      }
+     },
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     },
+     {
+      "label": {
+       "id": "fd1b4d3d-98dd-454b-8a1b-cb52de62a38c",
+       "name": "EMI"
+      }
+     }
+    ]
+   },
+   {
+    "id": "ffd6ebf5-10c1-3cca-915e-04c0aba926f3",
+    "title": "Abbey Road",
+    "status": "Official",
+    "date": "1969-10-01",
+    "country": "US",
+    "disambiguation": "",
+    "label-info": [
+     {
+      "label": {
+       "id": "cf7fc5cf-e011-4ef4-b511-cd0188537910",
+       "name": "Apple Records"
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "release": {
+  "id": "d6010be3-98f8-422c-a6c9-787e2e491e58",
+  "title": "Abbey Road",
+  "status": "Official",
+  "date": "1969-09-26",
+  "country": "GB",
+  "relations": [
+   {
+    "type": "photography",
+    "direction": "backward",
+    "target-type": "artist",
+    "attributes": [],
+    "artist": {
+     "id": "7355050b-879d-4f10-b3b9-9a0d288786f0",
+     "name": "Iain MacMillan"
+    },
+    "target-credit": ""
+   },
+   {
+    "type": "producer",
+    "direction": "backward",
+    "target-type": "artist",
+    "attributes": [],
+    "artist": {
+     "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+     "name": "George Martin"
+    },
+    "target-credit": ""
+   }
+  ],
+  "media": [
+   {
+    "position": 1,
+    "format": "12\" Vinyl",
+    "track-count": 17,
+    "tracks": [
+     {
+      "position": 1,
+      "number": "A1",
+      "title": "Come Together",
+      "recording": {
+       "id": "485bbe7f-d0f7-4ffe-8adb-0f1093dd2dbf",
+       "title": "Come Together",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "3ff7a3d9-a800-4de4-94a6-41a35c96c0ae",
+          "name": "Geoff Emerick"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "91e7ebdb-07b3-4819-b269-08dab097e0ba",
+          "name": "Phil McDonald"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "tambourine"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric bass guitar"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric piano"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "handclaps"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "maracas"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+          "name": "George Martin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals",
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 2,
+      "number": "A2",
+      "title": "Something",
+      "recording": {
+       "id": "b849acd4-0638-49ea-8e40-7391613d4890",
+       "title": "Something",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "3ff7a3d9-a800-4de4-94a6-41a35c96c0ae",
+          "name": "Geoff Emerick"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "b3daedfa-9f92-49f3-9dd8-9d29c110406f",
+          "name": "Jeff Jarratt"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "9bea300f-ad94-4c0b-b0e2-f41776b53af0",
+          "name": "Glyn Johns"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "91e7ebdb-07b3-4819-b269-08dab097e0ba",
+          "name": "Phil McDonald"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "piano"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "Hammond organ"
+         ],
+         "artist": {
+          "id": "8a7cf497-dc5c-4523-932d-3fcbc9a69d38",
+          "name": "Billy Preston"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric bass guitar"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "handclaps"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "handclaps"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "handclaps"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument arranger",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "strings"
+         ],
+         "artist": {
+          "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+          "name": "George Martin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+          "name": "George Martin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "2a25263b-54ad-42c5-acea-e50b3913369c",
+          "name": "Chris Thomas"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 3,
+      "number": "A3",
+      "title": "Maxwell’s Silver Hammer",
+      "recording": {
+       "id": "a92380e6-f10d-4407-aceb-5825b17fed5a",
+       "title": "Maxwell’s Silver Hammer",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "91e7ebdb-07b3-4819-b269-08dab097e0ba",
+          "name": "Phil McDonald"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric bass guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "piano"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "Hammond organ"
+         ],
+         "artist": {
+          "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+          "name": "George Martin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "piano"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "anvil"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "Moog"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+          "name": "George Martin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals",
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 4,
+      "number": "A4",
+      "title": "Oh! Darling",
+      "recording": {
+       "id": "de896c41-463d-4eaa-8fe4-d826e2afa0f8",
+       "title": "Oh! Darling",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "3ff7a3d9-a800-4de4-94a6-41a35c96c0ae",
+          "name": "Geoff Emerick"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "b3daedfa-9f92-49f3-9dd8-9d29c110406f",
+          "name": "Jeff Jarratt"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "91e7ebdb-07b3-4819-b269-08dab097e0ba",
+          "name": "Phil McDonald"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric bass guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "piano"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+          "name": "George Martin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "2a25263b-54ad-42c5-acea-e50b3913369c",
+          "name": "Chris Thomas"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 5,
+      "number": "A5",
+      "title": "Octopus’s Garden",
+      "recording": {
+       "id": "15127932-c879-466e-b0f8-a1c5022d16e7",
+       "title": "Octopus’s Garden",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "b3daedfa-9f92-49f3-9dd8-9d29c110406f",
+          "name": "Jeff Jarratt"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "91e7ebdb-07b3-4819-b269-08dab097e0ba",
+          "name": "Phil McDonald"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric bass guitar"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "piano"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "piano"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "effects"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+          "name": "George Martin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "2a25263b-54ad-42c5-acea-e50b3913369c",
+          "name": "Chris Thomas"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 6,
+      "number": "A6",
+      "title": "I Want You (She’s So Heavy)",
+      "recording": {
+       "id": "a9a83384-3da3-4c84-af6d-33fcdb1c3e27",
+       "title": "I Want You (She’s So Heavy)",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "3ff7a3d9-a800-4de4-94a6-41a35c96c0ae",
+          "name": "Geoff Emerick"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "91e7ebdb-07b3-4819-b269-08dab097e0ba",
+          "name": "Phil McDonald"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "01de9ea2-3ec6-46e7-a475-701aeedfbff8",
+          "name": "Barry Sheffield"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "Hammond organ"
+         ],
+         "artist": {
+          "id": "8a7cf497-dc5c-4523-932d-3fcbc9a69d38",
+          "name": "Billy Preston"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric bass guitar"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "organ"
+         ],
+         "artist": {
+          "id": "8a7cf497-dc5c-4523-932d-3fcbc9a69d38",
+          "name": "Billy Preston"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "congas"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "Moog"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "9bea300f-ad94-4c0b-b0e2-f41776b53af0",
+          "name": "Glyn Johns"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+          "name": "George Martin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "2a25263b-54ad-42c5-acea-e50b3913369c",
+          "name": "Chris Thomas"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 7,
+      "number": "B1",
+      "title": "Here Comes the Sun",
+      "recording": {
+       "id": "440f60e8-0b25-4ec4-abb1-c6beec624ab0",
+       "title": "Here Comes the Sun",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "3ff7a3d9-a800-4de4-94a6-41a35c96c0ae",
+          "name": "Geoff Emerick"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "91e7ebdb-07b3-4819-b269-08dab097e0ba",
+          "name": "Phil McDonald"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "acoustic guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric bass guitar"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "handclaps"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "handclaps"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "handclaps"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "synthesizer"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+          "name": "George Martin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals",
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 8,
+      "number": "B2",
+      "title": "Because",
+      "recording": {
+       "id": "1e1d1f33-346c-4f9a-ad05-03aa715c2f37",
+       "title": "Because",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "3ff7a3d9-a800-4de4-94a6-41a35c96c0ae",
+          "name": "Geoff Emerick"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "91e7ebdb-07b3-4819-b269-08dab097e0ba",
+          "name": "Phil McDonald"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "harpsichord"
+         ],
+         "artist": {
+          "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+          "name": "George Martin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric bass guitar"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "Moog"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+          "name": "George Martin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 9,
+      "number": "B3",
+      "title": "You Never Give Me Your Money",
+      "recording": {
+       "id": "474546e9-0b30-4881-9269-c6c1c8bbf07b",
+       "title": "You Never Give Me Your Money",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "3ff7a3d9-a800-4de4-94a6-41a35c96c0ae",
+          "name": "Geoff Emerick"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "9bea300f-ad94-4c0b-b0e2-f41776b53af0",
+          "name": "Glyn Johns"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "91e7ebdb-07b3-4819-b269-08dab097e0ba",
+          "name": "Phil McDonald"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "piano"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "tubular bells"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "tambourine"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "piano"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric bass guitar"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+          "name": "George Martin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 10,
+      "number": "B4",
+      "title": "Sun King",
+      "recording": {
+       "id": "d057c75d-04eb-438f-be0b-74f629f2953c",
+       "title": "Sun King",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "3ff7a3d9-a800-4de4-94a6-41a35c96c0ae",
+          "name": "Geoff Emerick"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "91e7ebdb-07b3-4819-b269-08dab097e0ba",
+          "name": "Phil McDonald"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric bass guitar"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "piano"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electronic organ"
+         ],
+         "artist": {
+          "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+          "name": "George Martin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "maracas"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "tambourine"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+          "name": "George Martin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 11,
+      "number": "B5",
+      "title": "Mean Mr. Mustard",
+      "recording": {
+       "id": "99c004fb-ba87-41be-afd4-e0157b40516a",
+       "title": "Mean Mr. Mustard",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "3ff7a3d9-a800-4de4-94a6-41a35c96c0ae",
+          "name": "Geoff Emerick"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "91e7ebdb-07b3-4819-b269-08dab097e0ba",
+          "name": "Phil McDonald"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric bass guitar"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "piano"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "maracas"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "tambourine"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+          "name": "George Martin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals",
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 12,
+      "number": "B6",
+      "title": "Polythene Pam",
+      "recording": {
+       "id": "65ca55c8-d857-4a3b-9246-835b1e54fe4d",
+       "title": "Polythene Pam",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "3ff7a3d9-a800-4de4-94a6-41a35c96c0ae",
+          "name": "Geoff Emerick"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "91e7ebdb-07b3-4819-b269-08dab097e0ba",
+          "name": "Phil McDonald"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "12 string guitar"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric bass guitar"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "percussion"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "maracas"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "tambourine"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+          "name": "George Martin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 13,
+      "number": "B7",
+      "title": "She Came In Through the Bathroom Window",
+      "recording": {
+       "id": "c19db4d3-6640-4732-a0b2-e358ed80c5c4",
+       "title": "She Came In Through the Bathroom Window",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "3ff7a3d9-a800-4de4-94a6-41a35c96c0ae",
+          "name": "Geoff Emerick"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "91e7ebdb-07b3-4819-b269-08dab097e0ba",
+          "name": "Phil McDonald"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "12 string guitar"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric bass guitar"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "percussion"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "maracas"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "tambourine"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+          "name": "George Martin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 14,
+      "number": "B8",
+      "title": "Golden Slumbers",
+      "recording": {
+       "id": "3d7f2000-123d-4cac-862b-e04ead24c5f2",
+       "title": "Golden Slumbers",
+       "relations": [
+        {
+         "type": "conductor",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+          "name": "George Martin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "3ff7a3d9-a800-4de4-94a6-41a35c96c0ae",
+          "name": "Geoff Emerick"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "91e7ebdb-07b3-4819-b269-08dab097e0ba",
+          "name": "Phil McDonald"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric bass guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "piano"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument arranger",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "brass",
+          "strings"
+         ],
+         "artist": {
+          "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+          "name": "George Martin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+          "name": "George Martin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 15,
+      "number": "B9",
+      "title": "Carry That Weight",
+      "recording": {
+       "id": "daaee15a-8a4c-4275-a7c1-5b6211f0ec69",
+       "title": "Carry That Weight",
+       "relations": [
+        {
+         "type": "conductor",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+          "name": "George Martin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "3ff7a3d9-a800-4de4-94a6-41a35c96c0ae",
+          "name": "Geoff Emerick"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "91e7ebdb-07b3-4819-b269-08dab097e0ba",
+          "name": "Phil McDonald"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric bass guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "piano"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+          "name": "George Martin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 16,
+      "number": "B10",
+      "title": "The End",
+      "recording": {
+       "id": "5ad78393-77c2-451e-beb1-074df7e06e57",
+       "title": "The End",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "3ff7a3d9-a800-4de4-94a6-41a35c96c0ae",
+          "name": "Geoff Emerick"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "91e7ebdb-07b3-4819-b269-08dab097e0ba",
+          "name": "Phil McDonald"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric bass guitar"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric guitar"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "electric bass guitar"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "piano"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+          "name": "George Martin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "42a8f507-8412-4611-854f-926571049fa0",
+          "name": "George Harrison"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "4d5447d7-c61c-4120-ba1b-d7f471d385b9",
+          "name": "John Lennon"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "300c4c73-33ac-4255-9d57-4e32627f5e13",
+          "name": "Ringo Starr"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 17,
+      "number": "B11",
+      "title": "Her Majesty",
+      "recording": {
+       "id": "ed8d1b3b-8757-447a-baba-3efe027f2765",
+       "title": "Her Majesty",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "91e7ebdb-07b3-4819-b269-08dab097e0ba",
+          "name": "Phil McDonald"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "acoustic guitar"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "26fa8b67-6c7f-406c-ad64-a1d070092df2",
+          "name": "George Martin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "ba550d0e-adac-4864-b88b-407cab5e76af",
+          "name": "Paul McCartney"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     }
+    ]
+   }
+  ]
+ }
+}

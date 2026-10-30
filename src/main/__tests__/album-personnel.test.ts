@@ -1,10 +1,12 @@
 /**
  * Album personnel (Jake, 2026-10-30: "mention the album personnel somewhere").
  *
- * MusicBrainz is never called: every answer is the recorded fixture
+ * MusicBrainz is never called: every answer is a recorded fixture
  * (fixtures/album-personnel-2026-10-30.json — Queens of the Stone Age, Songs
- * for the Deaf, recorded 2026-10-30 and trimmed to the fields the module
- * reads) or a hand-built shape. The disk cache runs in a temp dir.
+ * for the Deaf; fixtures/album-personnel-abbey-road-2026-10-30.json — The
+ * Beatles, Abbey Road, with the labels on the browse; both recorded
+ * 2026-10-30 and trimmed to the fields the module reads) or a hand-built
+ * shape. The disk cache runs in a temp dir.
  */
 import assert from 'node:assert/strict'
 import test, { describe } from 'node:test'
@@ -12,27 +14,31 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } fro
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  peopleFromRelease, relationRoles, instrumentLabel, pickRelease, pickReleaseGroup, impliedPrimaryType, dateKey,
+  peopleFromRelease, releaseTrackCount, relationRoles, instrumentLabel, pickRelease, pickReleaseGroup, impliedPrimaryType, dateKey,
   lookupAlbumPersonnel, createAlbumPersonnelService, createMbThrottle, normalizePersonnelCache, readPersonnelCache,
   isPersonnelStale, personnelCacheKey, personnelCachePath, mbReleasesUrl, mbReleaseUrl,
-  PERSONNEL_EMPTY_RECHECK_MS, MAX_PEOPLE, MB_MIN_GAP_MS, PERSONNEL_CACHE_FILE,
+  PERSONNEL_EMPTY_RECHECK_MS, MAX_PEOPLE, MB_MIN_GAP_MS, BACKGROUND_GAP_MS, PERSONNEL_CACHE_FILE,
   type MbRelation, type MbReleaseDetail, type MbReleaseSummary, type MbSearchGroup, type AlbumPersonnel, type PersonnelCacheFile,
 } from '../album-personnel.ts'
 import { releaseGroupSearchUrl } from '../release-kinds.ts'
 import { assertIpcRegisterOptions } from '../ipc-register.ts'
 
 const SRC = join(import.meta.dirname, '../..')
-const FIXTURE = JSON.parse(readFileSync(join(import.meta.dirname, 'fixtures', 'album-personnel-2026-10-30.json'), 'utf-8')) as {
+interface RecordedLookup {
   artist: string
   album: string
   search: { 'release-groups': MbSearchGroup[] }
   releases: { releases: MbReleaseSummary[] }
   release: MbReleaseDetail
 }
+const FIXTURE = JSON.parse(readFileSync(join(import.meta.dirname, 'fixtures', 'album-personnel-2026-10-30.json'), 'utf-8')) as RecordedLookup
 const ARTIST = FIXTURE.artist
 const ALBUM = FIXTURE.album
 const GROUP_ID = 'cbffb669-c390-3a4d-b46f-1be8ea934b03'
 const RELEASE_ID = 'd4fe720d-595a-4e2a-8ada-0fe0aa943046'
+const ABBEY = JSON.parse(readFileSync(join(import.meta.dirname, 'fixtures', 'album-personnel-abbey-road-2026-10-30.json'), 'utf-8')) as RecordedLookup & { groupId: string; releaseId: string }
+/** 1..n */
+const upTo = (n: number): number[] => Array.from({ length: n }, (_, i) => i + 1)
 const NOW = Date.parse('2026-10-30T12:00:00Z')
 const DAY = 24 * 3600 * 1000
 const quiet = (): void => {}
@@ -139,15 +145,32 @@ describe('roles — one relationship to its labels', () => {
 describe('people from the recorded Songs for the Deaf release', () => {
   const people = peopleFromRelease(FIXTURE.release)
 
-  test('the first six: the band and its guests, by how many recordings they are on', () => {
+  test('the first six: the band and its guests, by how many recordings they are on — each role with its track numbers', () => {
     assert.deepEqual(people.slice(0, 6), [
-      { name: 'Josh Homme', roles: ['guitar', 'lead vocals', 'producer'], tracks: 16 },
-      { name: 'Dave Grohl', roles: ['drums', 'percussion'], tracks: 14 },
-      { name: 'Nick Oliveri', roles: ['bass guitar', 'lead vocals', 'background vocals'], tracks: 14 },
-      { name: 'Alain Johannes', roles: ['keyboard', 'theremin', 'organ', 'guitar', 'piano', 'mixing', 'recording'], tracks: 7 },
-      { name: 'Gene Trautmann', roles: ['drums'], tracks: 4 },
-      { name: 'Mark Lanegan', roles: ['lead vocals'], tracks: 4 },
+      { name: 'Josh Homme', roles: ['guitar', 'lead vocals', 'producer'], tracks: 16, credits: [
+        { role: 'guitar', tracks: [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] }, { role: 'lead vocals', tracks: [2, 3, 5, 8, 10, 13, 14] }, { role: 'producer', tracks: upTo(16) },
+      ] },
+      { name: 'Dave Grohl', roles: ['drums', 'percussion'], tracks: 14, credits: [{ role: 'drums', tracks: upTo(14) }, { role: 'percussion', tracks: [14] }] },
+      { name: 'Nick Oliveri', roles: ['bass guitar', 'lead vocals', 'background vocals'], tracks: 14, credits: [
+        { role: 'bass guitar', tracks: upTo(14) }, { role: 'lead vocals', tracks: [1, 6, 9, 12] }, { role: 'background vocals', tracks: [3, 8] },
+      ] },
+      { name: 'Alain Johannes', roles: ['keyboard', 'theremin', 'organ', 'guitar', 'piano', 'mixing', 'recording'], tracks: 7, credits: [
+        { role: 'keyboard', tracks: [2, 3, 7] }, { role: 'theremin', tracks: [6] }, { role: 'organ', tracks: [12] }, { role: 'guitar', tracks: [14] }, { role: 'piano', tracks: [14] }, { role: 'mixing', tracks: [16] }, { role: 'recording', tracks: [16] },
+      ] },
+      { name: 'Gene Trautmann', roles: ['drums'], tracks: 4, credits: [{ role: 'drums', tracks: [1, 8, 10, 14] }] },
+      { name: 'Mark Lanegan', roles: ['lead vocals'], tracks: 4, credits: [{ role: 'lead vocals', tracks: [4, 7, 11, 13] }] },
     ])
+    assert.equal(releaseTrackCount(FIXTURE.release), 17)
+  })
+
+  test('the credits mirror the roles: same labels, same order, every track number within the release', () => {
+    for (const p of people) {
+      assert.deepEqual(p.credits.map((c) => c.role), p.roles, p.name)
+      for (const c of p.credits) {
+        assert.deepEqual(c.tracks, [...c.tracks].sort((a, b) => a - b), `${p.name} ${c.role} ascending`)
+        assert.ok(c.tracks.every((n) => n >= 1 && n <= 17), `${p.name} ${c.role} within 1..17`)
+      }
+    }
   })
 
   test('seventeen people in a fixed order: performers by tracks then name, then production-only people', () => {
@@ -173,7 +196,42 @@ describe('people from the recorded Songs for the Deaf release', () => {
       assert.deepEqual(p.roles, [...new Set(p.roles)], p.name)
       for (const r of p.roles) assert.equal(r, r.toLowerCase(), p.name)
     }
-    assert.deepEqual(people.find((p) => p.name === 'Joe Marlett'), { name: 'Joe Marlett', roles: ['engineer'], tracks: 14 })
+    assert.deepEqual(people.find((p) => p.name === 'Joe Marlett'), { name: 'Joe Marlett', roles: ['engineer'], tracks: 14, credits: [{ role: 'engineer', tracks: upTo(14) }] })
+  })
+})
+
+describe('people from the recorded Abbey Road release — the per-track credits Jake asked for', () => {
+  const people = peopleFromRelease(ABBEY.release)
+  const by = (name: string) => people.find((p) => p.name === name)!
+
+  test('17 tracks across one medium; Ringo sings lead on Octopus\'s Garden (5) and Carry That Weight (15), drums on 15 of 17', () => {
+    assert.equal(releaseTrackCount(ABBEY.release), 17)
+    assert.deepEqual(by('Ringo Starr').credits.find((c) => c.role === 'lead vocals'), { role: 'lead vocals', tracks: [5, 15] })
+    assert.deepEqual(by('Ringo Starr').credits.find((c) => c.role === 'drums'), { role: 'drums', tracks: [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16] })
+    assert.equal(by('Ringo Starr').tracks, 15)
+  })
+
+  test('George Martin: producer on the release itself (tracks: [] — the whole record) as well as on every recording; "instrument arranger" reads as arranger', () => {
+    const gm = by('George Martin')
+    assert.deepEqual(gm.roles, ['conductor', 'hammond organ', 'harpsichord', 'electronic organ', 'producer', 'arranger'])
+    assert.deepEqual(gm.credits.find((c) => c.role === 'producer'), { role: 'producer', tracks: [] })
+    assert.deepEqual(gm.credits.find((c) => c.role === 'arranger'), { role: 'arranger', tracks: [2, 14] })
+    assert.deepEqual(gm.credits.find((c) => c.role === 'conductor'), { role: 'conductor', tracks: [14, 15] })
+    assert.deepEqual(relationRoles({ type: 'instrument arranger', artist: { name: 'A' } }), { performer: false, labels: ['arranger'] })
+    assert.deepEqual(relationRoles({ type: 'orchestrator', artist: { name: 'A' } }), { performer: false, labels: ['arranger'] })
+  })
+
+  test('Paul\'s lead vocals and bass, George\'s four bass songs, Billy Preston\'s two', () => {
+    assert.deepEqual(by('Paul McCartney').credits.find((c) => c.role === 'lead vocals')!.tracks, [3, 4, 8, 9, 10, 13, 14, 15, 16, 17])
+    assert.deepEqual(by('Paul McCartney').credits.find((c) => c.role === 'electric bass guitar')!.tracks, [1, 2, 5, 6, 7, 8, 9, 10, 11, 12, 13, 16])
+    assert.deepEqual(by('George Harrison').credits.find((c) => c.role === 'electric bass guitar')!.tracks, [3, 4, 14, 15])
+    assert.deepEqual(by('Billy Preston').credits, [{ role: 'hammond organ', tracks: [2, 6] }, { role: 'organ', tracks: [6] }])
+    assert.deepEqual(people.map((p) => p.name), ['George Martin', 'Paul McCartney', 'George Harrison', 'Ringo Starr', 'John Lennon', 'Billy Preston', 'Phil McDonald', 'Geoff Emerick', 'Chris Thomas', 'Glyn Johns', 'Jeff Jarratt', 'Barry Sheffield'])
+  })
+
+  test('a photographer credited on the release is ignored, not mislabelled', () => {
+    assert.ok(ABBEY.release.relations!.some((r) => r.type === 'photography'))
+    assert.ok(!people.some((p) => p.name === 'Iain MacMillan'))
   })
 })
 
@@ -181,10 +239,26 @@ describe('people — ordering, dedupe and the cap (hand-built releases)', () => 
   test('a person credited on the release as a whole has 0 tracks and, as production-only, follows the performers', () => {
     const people = peopleFromRelease(releaseOf([[rel('instrument', 'Guitarist', ['guitar'])]], [rel('mastering', 'Masterer'), rel('producer', 'Exec', ['executive'])]))
     assert.deepEqual(people, [
-      { name: 'Guitarist', roles: ['guitar'], tracks: 1 },
-      { name: 'Exec', roles: ['producer'], tracks: 0 },
-      { name: 'Masterer', roles: ['mastering'], tracks: 0 },
+      { name: 'Guitarist', roles: ['guitar'], tracks: 1, credits: [{ role: 'guitar', tracks: [1] }] },
+      { name: 'Exec', roles: ['producer'], tracks: 0, credits: [{ role: 'producer', tracks: [] }] },
+      { name: 'Masterer', roles: ['mastering'], tracks: 0, credits: [{ role: 'mastering', tracks: [] }] },
     ])
+  })
+
+  test('track numbers run on across media: disc 2, track 1 of a 2×3 release is track 4', () => {
+    const release: MbReleaseDetail = {
+      media: [
+        { position: 1, tracks: [{ position: 1, recording: { id: 'a' } }, { position: 2, recording: { id: 'b' } }, { position: 3, recording: { id: 'c' } }] },
+        { position: 2, tracks: [{ position: 1, recording: { id: 'd', relations: [rel('instrument', 'A', ['cello'])] } }, { position: 2, recording: { id: 'e' } }, { position: 3, recording: { id: 'f', relations: [rel('instrument', 'A', ['cello'])] } }] },
+      ],
+    }
+    assert.equal(releaseTrackCount(release), 6)
+    assert.deepEqual(peopleFromRelease(release), [{ name: 'A', roles: ['cello'], tracks: 2, credits: [{ role: 'cello', tracks: [4, 6] }] }])
+  })
+
+  test('a role credited both on the release and on some recordings covers the whole record', () => {
+    const [p] = peopleFromRelease(releaseOf([[rel('producer', 'P')], [], [rel('producer', 'P')]], [rel('producer', 'P')]))
+    assert.deepEqual(p, { name: 'P', roles: ['producer'], tracks: 2, credits: [{ role: 'producer', tracks: [] }] })
   })
 
   test('one person, many credits: deduped by artist id, performer roles first, tracks counted once per recording', () => {
@@ -193,7 +267,9 @@ describe('people — ordering, dedupe and the cap (hand-built releases)', () => 
       [rel('instrument', 'Josh', ['guitar']), rel('instrument', 'Josh', ['piano'])],
       [rel('producer', 'Josh')],
     ]))
-    assert.deepEqual(people, [{ name: 'Josh', roles: ['guitar', 'lead vocals', 'piano', 'producer'], tracks: 3 }])
+    assert.deepEqual(people, [{ name: 'Josh', roles: ['guitar', 'lead vocals', 'piano', 'producer'], tracks: 3, credits: [
+      { role: 'guitar', tracks: [1, 2] }, { role: 'lead vocals', tracks: [1] }, { role: 'piano', tracks: [2] }, { role: 'producer', tracks: [1, 3] },
+    ] }])
   })
 
   test('within a bucket the most frequent role comes first; ties keep first-seen order', () => {
@@ -232,17 +308,17 @@ describe('people — ordering, dedupe and the cap (hand-built releases)', () => 
       [{ type: 'instrument', attributes: ['guitar'], artist: { name: 'Björk' } }],
       [{ type: 'instrument', attributes: ['guitar'], artist: { name: 'bjork' } }],
     ]))
-    assert.deepEqual(people, [{ name: 'Björk', roles: ['guitar'], tracks: 2 }])
+    assert.deepEqual(people, [{ name: 'Björk', roles: ['guitar'], tracks: 2, credits: [{ role: 'guitar', tracks: [1, 2] }] }])
   })
 
   test('people with only ignored credits are absent; relations without a name are skipped', () => {
     const people = peopleFromRelease(releaseOf([[rel('composer', 'Writer'), rel('design/illustration', 'Designer'), { type: 'producer', artist: {} }, rel('producer', 'Prod')]]))
-    assert.deepEqual(people, [{ name: 'Prod', roles: ['producer'], tracks: 1 }])
+    assert.deepEqual(people, [{ name: 'Prod', roles: ['producer'], tracks: 1, credits: [{ role: 'producer', tracks: [1] }] }])
   })
 
   test('recordings without an id still count as distinct tracks', () => {
     const release: MbReleaseDetail = { media: [{ tracks: [{ position: 1, recording: { relations: [rel('instrument', 'A', ['guitar'])] } }, { position: 2, recording: { relations: [rel('instrument', 'A', ['guitar'])] } }] }] }
-    assert.deepEqual(peopleFromRelease(release), [{ name: 'A', roles: ['guitar'], tracks: 2 }])
+    assert.deepEqual(peopleFromRelease(release), [{ name: 'A', roles: ['guitar'], tracks: 2, credits: [{ role: 'guitar', tracks: [1, 2] }] }])
   })
 
   test(`at most ${MAX_PEOPLE} people — the performers on the most recordings survive the cut`, () => {
@@ -352,30 +428,58 @@ describe('the lookup — three requests on recorded answers', () => {
       assert.equal(r.releaseMbid, RELEASE_ID)
       assert.equal(r.people.length, 17)
       assert.equal(r.people[0].name, 'Josh Homme')
+      assert.equal(r.trackCount, 17)
+      assert.equal(r.released, '2002-08-17', 'the group\'s first-release-date rides along')
+      assert.equal(r.label, undefined, 'this fixture\'s browse was recorded before inc=labels')
     }
   })
 
-  test('the request URLs are MusicBrainz WS2 JSON with the credits included', () => {
-    assert.equal(mbReleasesUrl(GROUP_ID), `https://musicbrainz.org/ws/2/release?release-group=${GROUP_ID}&fmt=json&limit=100`)
+  test('the request URLs are MusicBrainz WS2 JSON with the credits included — and the labels on the browse', () => {
+    assert.equal(mbReleasesUrl(GROUP_ID), `https://musicbrainz.org/ws/2/release?release-group=${GROUP_ID}&inc=labels&fmt=json&limit=100`)
     assert.equal(mbReleaseUrl(RELEASE_ID), `https://musicbrainz.org/ws/2/release/${RELEASE_ID}?inc=artist-rels+recordings+recording-level-rels&fmt=json`)
     assert.match(releaseGroupSearchUrl(ALBUM, ARTIST), /^https:\/\/musicbrainz\.org\/ws\/2\/release-group\?query=releasegroup%3A%22Songs%20for%20the%20Deaf%22%20AND%20artist%3A%22Queens%20of%20the%20Stone%20Age%22&fmt=json&limit=10$/)
   })
 
+  test('Abbey Road, recorded with the labels: the 1969 UK release, Apple Records, 26 September 1969, 17 tracks — three requests', async () => {
+    const calls: string[] = []
+    const fetchFn = (async (url: string) => {
+      calls.push(url)
+      if (url === releaseGroupSearchUrl(ABBEY.album, ABBEY.artist)) return jsonResponse(ABBEY.search)
+      if (url === mbReleasesUrl(ABBEY.groupId)) return jsonResponse(ABBEY.releases)
+      if (url === mbReleaseUrl(ABBEY.releaseId)) return jsonResponse(ABBEY.release)
+      return jsonResponse({ error: 'Not Found' }, 404)
+    }) as unknown as typeof fetch
+    const r = await lookupAlbumPersonnel(ABBEY.artist, ABBEY.album, lookupDeps(fetchFn))
+    assert.equal(calls.length, 3)
+    assert.ok(r.ok)
+    if (r.ok) {
+      assert.equal(r.releaseMbid, 'd6010be3-98f8-422c-a6c9-787e2e491e58')
+      assert.equal(r.trackCount, 17)
+      assert.equal(r.label, 'Apple Records')
+      assert.equal(r.released, '1969-09-26')
+      assert.equal(r.people.length, 12)
+    }
+    // The search returned ten groups named around Abbey Road; only the album itself is this album.
+    assert.equal(ABBEY.search['release-groups'].length, 10)
+    assert.equal(pickReleaseGroup(ABBEY.search['release-groups'], ABBEY.album, ABBEY.artist)?.id, ABBEY.groupId)
+    assert.equal(ABBEY.releases.releases.length, 73)
+  })
+
   test('wrong artist: a group credited to someone else is nobody, and the lookup stops after the search', async () => {
     const { fetchFn, calls } = recordedFetch({ search: { 'release-groups': [group('Songs for the Deaf', 'Kyuss', 'Album', '2002-08-17', GROUP_ID)] } })
-    assert.deepEqual(await lookupAlbumPersonnel(ARTIST, ALBUM, lookupDeps(fetchFn)), { ok: true, people: [] })
+    assert.deepEqual(await lookupAlbumPersonnel(ARTIST, ALBUM, lookupDeps(fetchFn)), { ok: true, people: [], trackCount: 0 })
     assert.equal(calls.length, 1)
   })
 
-  test('no release group at all, or a group with no releases, is a real empty answer', async () => {
+  test('no release group at all, or a group with no releases, is a real empty answer (the group\'s date still known)', async () => {
     const none = recordedFetch({ search: { 'release-groups': [] } })
-    assert.deepEqual(await lookupAlbumPersonnel(ARTIST, ALBUM, lookupDeps(none.fetchFn)), { ok: true, people: [] })
+    assert.deepEqual(await lookupAlbumPersonnel(ARTIST, ALBUM, lookupDeps(none.fetchFn)), { ok: true, people: [], trackCount: 0 })
     assert.equal(none.calls.length, 1)
     const bare = recordedFetch({ browse: { releases: [] } })
-    assert.deepEqual(await lookupAlbumPersonnel(ARTIST, ALBUM, lookupDeps(bare.fetchFn)), { ok: true, people: [] })
+    assert.deepEqual(await lookupAlbumPersonnel(ARTIST, ALBUM, lookupDeps(bare.fetchFn)), { ok: true, people: [], trackCount: 0, released: '2002-08-17' })
     assert.equal(bare.calls.length, 2)
     const odd = recordedFetch({ search: 'not an object' })
-    assert.deepEqual(await lookupAlbumPersonnel(ARTIST, ALBUM, lookupDeps(odd.fetchFn)), { ok: true, people: [] })
+    assert.deepEqual(await lookupAlbumPersonnel(ARTIST, ALBUM, lookupDeps(odd.fetchFn)), { ok: true, people: [], trackCount: 0 })
   })
 
   test('a busy MusicBrainz (503) is retried once and then reported as rate-limited, never as an answer', async () => {
@@ -466,10 +570,12 @@ describe('the disk cache', () => {
     const file = personnelCachePath(dir)
     assert.equal(file, join(dir, PERSONNEL_CACHE_FILE))
     const onDisk = JSON.parse(readFileSync(file, 'utf-8')) as PersonnelCacheFile
-    assert.equal(onDisk.v, 1)
+    assert.equal(onDisk.v, 2)
     const entry = onDisk.entries[personnelCacheKey(ARTIST, ALBUM)]
     assert.equal(personnelCacheKey(ARTIST, ALBUM), 'queens of the stone age|songs for the deaf')
-    assert.deepEqual(entry, { people: first.people, releaseMbid: RELEASE_ID, at: NOW })
+    assert.deepEqual(entry, { people: first.people, trackCount: 17, releaseMbid: RELEASE_ID, released: '2002-08-17', at: NOW })
+    assert.equal(first.trackCount, 17)
+    assert.deepEqual(await a.peek(ARTIST, ALBUM), entry, 'peek is the entry, facts and all')
     assert.deepEqual(readdirSync(dir).filter((f) => f.endsWith('.tmp')), [], 'no staging litter')
 
     // "Restart": a new service over the same directory, with a fetch that must never be reached.
@@ -496,18 +602,18 @@ describe('the disk cache', () => {
     let clock = NOW
     const { fetchFn, calls } = recordedFetch({ search: { 'release-groups': [] } })
     const svc = createAlbumPersonnelService({ dir, userAgent: 'JakeTunes/test', fetchFn, throttle: async () => {}, retryDelayMs: 0, now: () => clock, log: quiet })
-    assert.deepEqual(await svc.get(ARTIST, ALBUM), { ok: true, people: [] })
+    assert.deepEqual(await svc.get(ARTIST, ALBUM), { ok: true, people: [], trackCount: 0 })
     assert.equal(calls.length, 1)
     await svc.flush()
     const onDisk = JSON.parse(readFileSync(personnelCachePath(dir), 'utf-8')) as PersonnelCacheFile
-    assert.deepEqual(onDisk.entries[personnelCacheKey(ARTIST, ALBUM)], { people: [], at: NOW })
+    assert.deepEqual(onDisk.entries[personnelCacheKey(ARTIST, ALBUM)], { people: [], trackCount: 0, at: NOW })
 
     clock = NOW + 29 * DAY
-    assert.deepEqual(await svc.get(ARTIST, ALBUM), { ok: true, people: [] })
+    assert.deepEqual(await svc.get(ARTIST, ALBUM), { ok: true, people: [], trackCount: 0 })
     assert.equal(calls.length, 1, 'still remembered at 29 days')
 
     clock = NOW + PERSONNEL_EMPTY_RECHECK_MS + DAY
-    assert.deepEqual(await svc.get(ARTIST, ALBUM), { ok: true, people: [] })
+    assert.deepEqual(await svc.get(ARTIST, ALBUM), { ok: true, people: [], trackCount: 0 })
     assert.equal(calls.length, 2, 'asked again after 30 days')
     await svc.flush()
     const later = JSON.parse(readFileSync(personnelCachePath(dir), 'utf-8')) as PersonnelCacheFile
@@ -515,9 +621,9 @@ describe('the disk cache', () => {
   })
 
   test('isPersonnelStale: only an empty answer goes stale, and only after 30 days', () => {
-    assert.equal(isPersonnelStale({ people: [], at: NOW }, NOW + 29 * DAY), false)
-    assert.equal(isPersonnelStale({ people: [], at: NOW }, NOW + 31 * DAY), true)
-    assert.equal(isPersonnelStale({ people: [{ name: 'A', roles: ['guitar'], tracks: 1 }], at: NOW }, NOW + 1000 * DAY), false)
+    assert.equal(isPersonnelStale({ people: [], trackCount: 0, at: NOW }, NOW + 29 * DAY), false)
+    assert.equal(isPersonnelStale({ people: [], trackCount: 0, at: NOW }, NOW + 31 * DAY), true)
+    assert.equal(isPersonnelStale({ people: [{ name: 'A', roles: ['guitar'], tracks: 1, credits: [{ role: 'guitar', tracks: [1] }] }], trackCount: 1, at: NOW }, NOW + 1000 * DAY), false)
     assert.equal(PERSONNEL_EMPTY_RECHECK_MS, 30 * DAY)
   })
 
@@ -530,9 +636,10 @@ describe('the disk cache', () => {
       [mbReleaseUrl(RELEASE_ID)]: [jsonResponse(FIXTURE.release)],
     })
     const svc = createAlbumPersonnelService({ dir, userAgent: 'JakeTunes/test', fetchFn, throttle: async () => {}, retryDelayMs: 0, now: () => NOW, log: quiet })
-    assert.deepEqual(await svc.get(ARTIST, ALBUM), { ok: false, people: [], error: 'rate-limited' })
+    assert.deepEqual(await svc.get(ARTIST, ALBUM), { ok: false, people: [], trackCount: 0, error: 'rate-limited' })
     await svc.flush()
     assert.equal(existsSync(personnelCachePath(dir)), false, 'nothing written for a failure')
+    assert.equal(await svc.peek(ARTIST, ALBUM), undefined)
     const second = await svc.get(ARTIST, ALBUM)
     assert.equal(second.ok, true)
     assert.equal(second.people.length, 17)
@@ -552,10 +659,12 @@ describe('the disk cache', () => {
 
   test('bad input never reaches the network: non-strings are invalid-input, blanks are nobody', async () => {
     const svc = createAlbumPersonnelService({ dir: tempDir(), userAgent: 'JakeTunes/test', fetchFn: neverFetch, throttle: async () => {}, log: quiet })
-    assert.deepEqual(await svc.get(undefined as unknown as string, ALBUM), { ok: false, people: [], error: 'invalid-input' })
-    assert.deepEqual(await svc.get(ARTIST, 42 as unknown as string), { ok: false, people: [], error: 'invalid-input' })
-    assert.deepEqual(await svc.get(ARTIST, '  '), { ok: true, people: [] })
-    assert.deepEqual(await svc.get('', ALBUM), { ok: true, people: [] })
+    assert.deepEqual(await svc.get(undefined as unknown as string, ALBUM), { ok: false, people: [], trackCount: 0, error: 'invalid-input' })
+    assert.deepEqual(await svc.get(ARTIST, 42 as unknown as string), { ok: false, people: [], trackCount: 0, error: 'invalid-input' })
+    assert.deepEqual(await svc.get(ARTIST, '  '), { ok: true, people: [], trackCount: 0 })
+    assert.deepEqual(await svc.get('', ALBUM), { ok: true, people: [], trackCount: 0 })
+    assert.equal(await svc.peek(undefined as unknown as string, ALBUM), undefined)
+    assert.equal(svc.busy(), false)
   })
 
   test('a corrupt cache file is moved aside (kept), the service starts fresh and writes a new one', async () => {
@@ -576,23 +685,127 @@ describe('the disk cache', () => {
   })
 
   test('a missing file is simply empty; junk entries in a file are dropped, not trusted', async () => {
-    assert.deepEqual(await readPersonnelCache(join(tempDir(), 'nope.json'), quiet), { v: 1, entries: {} })
-    const good = { people: [{ name: 'A', roles: ['guitar'], tracks: 2 }], releaseMbid: 'm', at: NOW }
+    assert.deepEqual(await readPersonnelCache(join(tempDir(), 'nope.json'), quiet), { v: 2, entries: {} })
+    const good = { people: [{ name: 'A', roles: ['guitar'], tracks: 2, credits: [{ role: 'guitar', tracks: [1, 2] }] }], trackCount: 2, releaseMbid: 'm', released: '1999', label: 'L', at: NOW }
     const norm = normalizePersonnelCache({
-      v: 1,
+      v: 2,
       entries: {
         good,
-        'no-at': { people: [] },
-        'people-not-array': { people: 'Josh', at: NOW },
-        'bad-person': { people: [{ name: 'A', roles: 'guitar', tracks: 1 }], at: NOW },
-        'extra-fields': { people: [{ name: 'B', roles: [], tracks: 0, extra: true }], at: NOW, releaseMbid: '' },
+        'no-at': { people: [], trackCount: 0 },
+        'people-not-array': { people: 'Josh', trackCount: 1, at: NOW },
+        'bad-person': { people: [{ name: 'A', roles: 'guitar', tracks: 1, credits: [] }], trackCount: 1, at: NOW },
+        'bad-credit-tracks': { people: [{ name: 'A', roles: ['guitar'], tracks: 1, credits: [{ role: 'guitar', tracks: [0] }] }], trackCount: 1, at: NOW },
+        'extra-fields': { people: [{ name: 'B', roles: [], tracks: 0, credits: [], extra: true }], trackCount: 3, at: NOW, releaseMbid: '', released: '', label: 7 },
         'null': null,
       },
     })
-    assert.deepEqual(norm, { v: 1, entries: { good, 'extra-fields': { people: [{ name: 'B', roles: [], tracks: 0 }], at: NOW } } })
-    assert.deepEqual(normalizePersonnelCache(null), { v: 1, entries: {} })
-    assert.deepEqual(normalizePersonnelCache([]), { v: 1, entries: {} })
-    assert.deepEqual(normalizePersonnelCache({ entries: 'x' }), { v: 1, entries: {} })
+    assert.deepEqual(norm, { v: 2, entries: { good, 'extra-fields': { people: [{ name: 'B', roles: [], tracks: 0, credits: [] }], trackCount: 3, at: NOW } } })
+    assert.deepEqual(normalizePersonnelCache(null), { v: 2, entries: {} })
+    assert.deepEqual(normalizePersonnelCache([]), { v: 2, entries: {} })
+    assert.deepEqual(normalizePersonnelCache({ entries: 'x' }), { v: 2, entries: {} })
+  })
+
+  test('a v1 file (before per-track credits) is dropped at load, entry by entry, so Jake\'s cache refills with the richer answer', async () => {
+    const v1 = {
+      v: 1,
+      entries: {
+        'queens of the stone age|songs for the deaf': { people: [{ name: 'Josh Homme', roles: ['guitar'], tracks: 16 }], releaseMbid: RELEASE_ID, at: NOW },
+        'nobody|nothing': { people: [], at: NOW },
+      },
+    }
+    assert.deepEqual(normalizePersonnelCache(v1), { v: 2, entries: {} })
+    // The service over such a file asks MusicBrainz again and rewrites the file as v2.
+    const dir = tempDir()
+    writeFileSync(personnelCachePath(dir), JSON.stringify(v1))
+    const { fetchFn, calls } = recordedFetch()
+    const svc = createAlbumPersonnelService({ dir, userAgent: 'JakeTunes/test', fetchFn, throttle: async () => {}, retryDelayMs: 0, now: () => NOW, log: quiet })
+    const r = await svc.get(ARTIST, ALBUM)
+    assert.equal(calls.length, 3)
+    assert.equal(r.ok, true)
+    assert.equal(r.people[0]!.credits.length, 3)
+    await svc.flush()
+    const onDisk = JSON.parse(readFileSync(personnelCachePath(dir), 'utf-8')) as PersonnelCacheFile
+    assert.equal(onDisk.v, 2)
+    assert.deepEqual(Object.keys(onDisk.entries), [personnelCacheKey(ARTIST, ALBUM)])
+  })
+})
+
+describe('two kinds of caller — a page goes first, the prefetch keeps its distance', () => {
+  // A fetch whose answers are released by hand, so the order of requests is observable.
+  function gatedFetch(answers: Record<string, unknown>): { fetchFn: typeof fetch; calls: string[]; release: () => void } {
+    const calls: string[] = []
+    let waiting: Array<() => void> = []
+    const fetchFn = (async (url: string) => {
+      calls.push(url)
+      await new Promise<void>((r) => { waiting.push(r) })
+      const body = answers[url]
+      return body === undefined ? jsonResponse({ error: 'Not Found' }, 404) : jsonResponse(body)
+    }) as unknown as typeof fetch
+    return { fetchFn, calls, release: () => { const w = waiting; waiting = []; for (const r of w) r() } }
+  }
+  const tick = (): Promise<void> => new Promise((r) => setImmediate(r))
+  const settle = async (n = 6): Promise<void> => { for (let i = 0; i < n; i++) await tick() }
+  const QOTSA = { [releaseGroupSearchUrl(ALBUM, ARTIST)]: FIXTURE.search, [mbReleasesUrl(GROUP_ID)]: FIXTURE.releases, [mbReleaseUrl(RELEASE_ID)]: FIXTURE.release }
+  const BEATLES = { [releaseGroupSearchUrl(ABBEY.album, ABBEY.artist)]: ABBEY.search, [mbReleasesUrl(ABBEY.groupId)]: ABBEY.releases, [mbReleaseUrl(ABBEY.releaseId)]: ABBEY.release }
+
+  test('busy() is true while a page\'s lookup is in flight, never for a background one', async () => {
+    const { fetchFn, release } = gatedFetch(QOTSA)
+    const svc = createAlbumPersonnelService({ dir: tempDir(), userAgent: 'JakeTunes/test', fetchFn, throttle: async () => {}, retryDelayMs: 0, now: () => NOW, wait: async () => { await tick() }, log: quiet })
+    const page = svc.get(ARTIST, ALBUM)
+    await settle()
+    assert.equal(svc.busy(), true)
+    for (let i = 0; i < 3; i++) { release(); await settle() }
+    assert.equal((await page).ok, true)
+    assert.equal(svc.busy(), false)
+    const { fetchFn: bgFetch, release: bgRelease } = gatedFetch(BEATLES)
+    const svc2 = createAlbumPersonnelService({ dir: tempDir(), userAgent: 'JakeTunes/test', fetchFn: bgFetch, throttle: async () => {}, retryDelayMs: 0, now: () => NOW, wait: async () => { await tick() }, log: quiet })
+    const bg = svc2.get(ABBEY.artist, ABBEY.album, { background: true })
+    await settle()
+    assert.equal(svc2.busy(), false, 'a background lookup is nobody waiting')
+    for (let i = 0; i < 3; i++) { bgRelease(); await settle() }
+    assert.equal((await bg).ok, true)
+  })
+
+  test('a background lookup\'s requests wait while a page is on another album, then keep 2.5 s between themselves on top of the app throttle', async () => {
+    let clock = NOW
+    const waits: number[] = []
+    const wait = async (ms: number): Promise<void> => { waits.push(ms); clock += ms; await tick() }
+    let throttled = 0
+    const { fetchFn, calls, release } = gatedFetch({ ...QOTSA, ...BEATLES })
+    const svc = createAlbumPersonnelService({ dir: tempDir(), userAgent: 'JakeTunes/test', fetchFn, throttle: async () => { throttled++ }, retryDelayMs: 0, now: () => clock, wait, log: quiet })
+    const page = svc.get(ARTIST, ALBUM)                                  // the page's three requests
+    await settle()
+    const bg = svc.get(ABBEY.artist, ABBEY.album, { background: true })  // arrives while the page is busy
+    await settle(20)
+    assert.deepEqual(calls, [releaseGroupSearchUrl(ALBUM, ARTIST)], 'the background search has not gone out')
+    for (let i = 0; i < 3; i++) { release(); await settle(20) }
+    assert.equal((await page).ok, true)
+    assert.equal(calls.filter((u) => u in QOTSA).length, 3)
+    for (let i = 0; i < 3; i++) { release(); await settle(20) }
+    const r = await bg
+    assert.equal(r.ok, true)
+    assert.equal(r.trackCount, 17)
+    assert.deepEqual(calls.slice(3), [releaseGroupSearchUrl(ABBEY.album, ABBEY.artist), mbReleasesUrl(ABBEY.groupId), mbReleaseUrl(ABBEY.releaseId)], 'the background requests all came after the page\'s')
+    assert.equal(throttled, 6, 'every request, page or background, took the app throttle')
+    assert.ok(waits.includes(BACKGROUND_GAP_MS), `the background requests kept their own spacing: ${waits.join(',')}`)
+    assert.ok(waits.some((ms) => ms < BACKGROUND_GAP_MS), 'and polled while the page was busy')
+  })
+
+  test('a page asking for the album the prefetch is already on shares the lookup — and never waits on itself', async () => {
+    const { fetchFn, calls, release } = gatedFetch(BEATLES)
+    const svc = createAlbumPersonnelService({ dir: tempDir(), userAgent: 'JakeTunes/test', fetchFn, throttle: async () => {}, retryDelayMs: 0, now: () => NOW, wait: async () => { await tick() }, log: quiet })
+    const bg = svc.get(ABBEY.artist, ABBEY.album, { background: true })
+    await settle()
+    const page = svc.get(ABBEY.artist, ABBEY.album)
+    await settle()
+    assert.equal(svc.busy(), true)
+    const guard = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('deadlock: the background gate waited on the page waiting on it')), 2000).unref())
+    for (let i = 0; i < 3; i++) { release(); await settle(20) }
+    const [a, b] = await Promise.race([Promise.all([bg, page]), guard])
+    assert.deepEqual(a, b)
+    assert.equal(a.people.length, 12)
+    assert.equal(calls.length, 3, 'one lookup for both')
+    assert.equal(svc.busy(), false)
   })
 })
 
@@ -603,7 +816,7 @@ describe('wiring — the registrar, the preload and the renderer twin', () => {
   const renderer = readFileSync(join(SRC, 'renderer/types.ts'), 'utf-8')
 
   test('get-album-personnel is registered inside registerAlbumInfoIpc through the registrar with a full-shape refusal', () => {
-    assert.match(ipc, /ipc\.handle\('get-album-personnel', async \(_e, artist: string, album: string\): Promise<AlbumPersonnel> => personnel\.get\(artist, album\),\s*\{ refuse: \{ ok: false, people: \[\], error: REFUSED_SENDER\.error \} \}\)/)
+    assert.match(ipc, /ipc\.handle\('get-album-personnel', async \(_e, artist: string, album: string\): Promise<AlbumPersonnel> => personnel\.get\(artist, album\),\s*\{ refuse: \{ ok: false, people: \[\], trackCount: 0, error: REFUSED_SENDER\.error \} \}\)/)
     assert.doesNotMatch(ipc, /ipcMain\.handle/)
     assert.match(ipc, /createAlbumPersonnelService\(\{[\s\S]*?dir: app\.getPath\('userData'\),[\s\S]*?userAgent: `JakeTunes\/\$\{app\.getVersion\(\)\} \(jacobrosenbaum@gmail\.com\)`,[\s\S]*?throttle: host\.mbThrottle,[\s\S]*?\}\)/)
     assert.match(ipc, /export function registerAlbumInfoIpc\(ipc: IpcRegistrar, host: AlbumInfoHost = \{\}\)/, 'index.ts keeps its one-argument call')
@@ -630,8 +843,16 @@ describe('wiring — the registrar, the preload and the renderer twin', () => {
     for (const name of ['AlbumPerson', 'AlbumPersonnel']) {
       assert.equal(body(renderer, name), body(main, name), `${name} drifted between main and renderer`)
     }
-    assert.equal(body(main, 'AlbumPerson'), 'name: string roles: string[] tracks: number member?: boolean')
-    assert.equal(body(main, 'AlbumPersonnel'), 'ok: boolean people: AlbumPerson[] releaseMbid?: string error?: string')
+    assert.equal(body(main, 'AlbumPerson'), 'name: string roles: string[] tracks: number credits: Array<{ role: string; tracks: number[] }> member?: boolean')
+    assert.equal(body(main, 'AlbumPersonnel'), 'ok: boolean people: AlbumPerson[] trackCount: number releaseMbid?: string error?: string')
+  })
+
+  test('the credits line reads the personnel lookup\'s facts and is remembered on disk; the loose lookup only when the strict one found nothing', () => {
+    assert.match(ipc, /const credits = createAlbumCreditsStore\(app\.getPath\('userData'\)/)
+    assert.doesNotMatch(ipc, /new Map<string, AlbumCredits>/, 'the per-session Map is gone')
+    assert.match(ipc, /const \[facts, it\] = await Promise\.all\(\[personnelFacts\(artist, album\), fetchItunesAlbum\(artist, album\)\]\)/)
+    assert.match(ipc, /const mb = facts \? null : await fetchMusicBrainzAlbumCredits\(artist, album\)/)
+    assert.match(ipc, /void credits\.set\(key, sanitized\)/)
   })
 
   test('the module never touches Electron — it is testable under plain Node', () => {

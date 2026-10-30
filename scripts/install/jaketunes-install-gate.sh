@@ -78,14 +78,23 @@ write_ready() {
 go_sha() { head -c 200 "$GO" 2>/dev/null | tr -d '[:space:]'; }
 
 # True when the app asked for THIS build. A go-file for another build is
-# removed so it cannot linger into a later gate.
+# removed so it cannot linger into a later gate — taken aside first, so a
+# file the app replaces in the same instant is never the one removed (a
+# read-then-delete lost the right go-file under load, 2026-10-30, and the
+# gate then waited its whole 45 minutes). An empty file is a write in
+# progress: left alone until the next look.
 go_requested() {
   [ "$markers_on" = 1 ] || return 1
   [ -f "$GO" ] || return 1
   local want; want=$(go_sha)
   [ "$want" = "$SHA" ] && return 0
-  echo "$(date +%H:%M:%S) ignoring update-go for another build (${want:-empty}) — removed"
-  rm -f "$GO"
+  [ -n "$want" ] || return 1
+  local aside="$GO.ignored.$$"
+  mv -f "$GO" "$aside" 2>/dev/null || return 1
+  local got; got=$(head -c 200 "$aside" 2>/dev/null | tr -d '[:space:]')
+  if [ "$got" = "$SHA" ]; then mv -f "$aside" "$GO"; return 0; fi
+  rm -f "$aside"
+  echo "$(date +%H:%M:%S) ignoring update-go for another build (${got:-empty}) — removed"
   return 1
 }
 

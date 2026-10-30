@@ -131,7 +131,7 @@ function presentablePeople(people: AlbumPerson[], albumArtist: string): AlbumPer
   for (const p of people) {
     const roles = p.roles.filter((r) => r !== 'performer')
     if (!roles.length && nameKey(p.name) === self) continue
-    out.push(roles.length === p.roles.length ? p : { ...p, roles })
+    out.push(roles.length === p.roles.length ? p : { ...p, roles, credits: (p.credits ?? []).filter((c) => c.role !== 'performer') })
   }
   return out
 }
@@ -318,6 +318,9 @@ export default function AlbumDetailView() {
   // Jake 2026-10-30: "mention the album personnel somewhere"). Nothing until
   // it's known, nothing when it isn't.
   const [people, setPeople] = useState<AlbumPerson[]>([])
+  // The release's track total — what "on every track" is measured against
+  // when a part carries its track numbers ("lead vocals (5, 15)").
+  const [peopleTrackCount, setPeopleTrackCount] = useState(0)
   const [peopleAll, setPeopleAll] = useState(false)
   // The head's width decides the narrow branch (see NARROW_HEAD_PX) — the
   // same threshold as the CSS container query, known to the page too.
@@ -341,9 +344,11 @@ export default function AlbumDetailView() {
   const bioPreview = useMemo(() => sentencePreview(blurb, narrow ? 200 : 330), [blurb, narrow])
   const bioHasMore = bioPreview.length < blurb.length
   const peopleShown = narrow ? 4 : PEOPLE_SHOWN
-  // The sleeve's lines: band, guests, production; parts summarised
-  // (common/personnel-roles.ts — Jake 2026-10-30: "this is no way to list personnel").
-  const personnelLines = useMemo(() => arrangePersonnel(people), [people])
+  // The sleeve's lines: band, guests, production; parts summarised, each with
+  // its track numbers when it is not on the whole record (common/personnel-roles.ts
+  // — Jake 2026-10-30: "this is no way to list personnel"; "i want to know
+  // which personnel sings on which tracks").
+  const personnelLines = useMemo(() => arrangePersonnel(people, peopleTrackCount), [people, peopleTrackCount])
   // The spine text must sit between the hinge pins: the rendered candidate is
   // measured (vertical text — its height is its length) and the next one
   // tried; past the last, the spine stays blank.
@@ -575,12 +580,16 @@ export default function AlbumDetailView() {
     let cancelled = false
     setCredits(null); setBlurb(''); setBioExpanded(false); setInfoLoading(true); setInfoError(false)
     setTake(''); setTakeExpanded(false); setTakeOverflows(false); setTakeLoading(true); setTakeError(false)
-    setPeople([]); setPeopleAll(false)
+    setPeople([]); setPeopleTrackCount(0); setPeopleAll(false)
     const timer = window.setTimeout(() => {
       // Personnel rides on its own promise too: a cold MusicBrainz lookup is
       // a few seconds; the page never waits for it.
       window.electronAPI.getAlbumPersonnel?.(albumArtist, albumName)
-        .then((r) => { if (!cancelled && r?.ok && r.people?.length) setPeople(presentablePeople(r.people, albumArtist)) })
+        .then((r) => {
+          if (cancelled || !r?.ok || !r.people?.length) return
+          setPeople(presentablePeople(r.people, albumArtist))
+          setPeopleTrackCount(typeof r.trackCount === 'number' && r.trackCount > 0 ? r.trackCount : 0)
+        })
         .catch(() => { /* unknown reads as nothing, like the credits */ })
       // The take rides beside the facts, never in front of them: its own
       // promise, so a slow opinion can't hold the history back.
@@ -885,7 +894,7 @@ export default function AlbumDetailView() {
                         <li
                           className={`apd-person apd-person--${l.group}${i > 0 && arr[i - 1]!.group !== l.group ? ' apd-person--group-start' : ''}`}
                           key={`${l.name}#${i}`}
-                          title={l.allRoles.length > l.roles.length ? l.allRoles.join(', ') : undefined}
+                          title={l.allRoles.join(', ') !== l.roles.join(', ') ? l.allRoles.join(', ') : undefined}
                         >
                           <span className="apd-person-name">{l.name}</span>
                           <span className="apd-person-roles">{l.roles.join(', ')}</span>

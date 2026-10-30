@@ -94,7 +94,7 @@ import { phoneOverlayFields } from '../common/genre-vocab.ts'; import { mergeOve
 import { registerPreviewRefreshIpc } from './ipc/preview-refresh-ipc.ts'
 import { registerSyncHistoryIpc } from './ipc/sync-history-ipc.ts'
 import { registerActivityPoolIpc } from './ipc/activity-pool-ipc.ts'
-import { registerAlbumInfoIpc } from './ipc/album-info-ipc.ts'
+import { registerAlbumInfoIpc, rankLibraryAlbums } from './ipc/album-info-ipc.ts'
 import {
   initRagRetrieval, ragIndexedCountForTracks, ragLibraryArtistSet, pickRetrievalIndex,
   ragTrackYearMap, ragRetrieveByQuery, buildRagPoolForPicks, buildRetrievalForQuery,
@@ -9334,7 +9334,7 @@ setInterval(() => { scheduleMixtapeHubConverge(0) }, 10 * 60_000)
 
 
 // Album info + iTunes search extracted to ipc/album-info-ipc.ts (6.0 Phase 1).
-registerAlbumInfoIpc(ipc, { mbThrottle })   // personnel shares the app-wide MusicBrainz pacing
+registerAlbumInfoIpc(ipc, { mbThrottle, listAlbums: async () => rankLibraryAlbums((await libraryCache.get()).tracks) })   // personnel shares the app-wide MusicBrainz pacing; the credits prefetch walks the library's albums, most-wanted first
 
 
 ipc.handle('load-metadata-overrides', async () => {

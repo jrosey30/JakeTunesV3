@@ -128,6 +128,7 @@ describe('WIRING — the tested code is the live code', () => {
     { fn: 'sweepOnce', file: 'main/index.ts', minCalls: 1, why: 'pass-through eviction — without the wire the laptop silently hoards again' },
     { fn: 'initPersonaPrompts', file: 'main/index.ts', minCalls: 1, why: 'supplier injection — a missing init freezes activeHost at boot value' },
     { fn: 'searchItunesSuggestions', file: 'main/ipc/album-info-ipc.ts', minCalls: 1, why: 'P1C3 — the search shim must call the module (moved with the album-info cut)' },
+    { fn: 'startAlbumPersonnelPrefetch', file: 'main/ipc/album-info-ipc.ts', minCalls: 1, why: 'album credits "already there" (2026-10-30) — unwired, every album page loads its personnel from MusicBrainz again' },
     { fn: 'itunesAlbumTracks', file: 'main/ipc/album-info-ipc.ts', minCalls: 1, why: 'P1C3 — the album-expand shim must call the module (moved with the album-info cut)' },
     { fn: 'initImportPipeline', file: 'main/index.ts', minCalls: 1, why: 'P1C1 — the pipeline is dead weight without its world wired in' },
     { fn: 'initRagRetrieval', file: 'main/index.ts', minCalls: 1, why: 'P1 rag cut — retrieval throws on first call if its world is never wired in' },

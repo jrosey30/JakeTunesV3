@@ -223,6 +223,7 @@ function makeWorld(o: WorldOpts = {}): World {
   if (o.backupExists) mkdirSync(join(home, BK))
 
   const goFile = join(dataDir, 'update-go')
+  const spawned: ChildProcess[] = []
   return {
     root, home, dataDir, fake, installedApp, stagedApp, goFile,
     marker: join(dataDir, 'update-ready.json'),
@@ -232,7 +233,9 @@ function makeWorld(o: WorldOpts = {}): World {
     writeGo: (sha) => { const tmp = `${goFile}.${process.pid}.tmp`; writeFileSync(tmp, `${sha}\n`); renameSync(tmp, goFile) },
     setAudio: (a) => writeFileSync(join(fake, 'assertions'), ASSERTIONS[a]),
     setIdle: (s) => writeFileSync(join(fake, 'idle_ns'), String(s * 1_000_000_000)),
-    run: ({ sha, note, maxMin = 45 }) => {
+    // One minute, not the script's 45: a gate that never clears is a failed
+    // test in 60 s, not a 45-minute CI wall (2026-10-30).
+    run: ({ sha, note, maxMin = 1 }) => {
       const args = [scriptPath, stagedApp, BK, String(maxMin)]
       if (sha !== undefined) args.push(sha)
       if (note !== undefined) args.push(note)
@@ -250,6 +253,7 @@ function makeWorld(o: WorldOpts = {}): World {
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       })
+      spawned.push(child)
       let out = ''
       child.stdout?.setEncoding('utf8')
       child.stderr?.setEncoding('utf8')
@@ -260,7 +264,12 @@ function makeWorld(o: WorldOpts = {}): World {
       })
       return { child, out: () => out, exited }
     },
-    cleanup: () => rmSync(root, { recursive: true, force: true }),
+    // A gate still waiting when a test gives up is killed here: left alone it
+    // held the stdio pipes (and node:test) for its whole max-wait (2026-10-30).
+    cleanup: () => {
+      for (const c of spawned) if (c.exitCode === null && c.signalCode === null) c.kill('SIGKILL')
+      rmSync(root, { recursive: true, force: true })
+    },
   }
 }
 
