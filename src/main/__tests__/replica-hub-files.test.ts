@@ -10,7 +10,7 @@ import { mkdtemp, readFile, writeFile, mkdir, stat, readdir } from 'node:fs/prom
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  adoptHubReleaseKinds, coversToFetch, createCoverMirror, createReleaseKindsPuller, parseHubCoverList, COVER_MIRROR_RECORD,
+  adoptHubLyrics, adoptHubReleaseKinds, coversToFetch, createCoverMirror, createLyricsPuller, createReleaseKindsPuller, parseHubCoverList, parseHubLyrics, COVER_MIRROR_RECORD,
 } from '../replica-hub-files.ts'
 import { emptyReleaseKinds } from '../release-kinds.ts'
 import type { ReleaseKindsFile } from '../../common/release-kind.ts'
@@ -105,6 +105,93 @@ describe('release kinds: a replica adopts homemini\'s copy', () => {
     const src = await readFile(join(import.meta.dirname, '..', 'index.ts'), 'utf-8')
     assert.match(src, /registerReleaseKindsIpc\(ipc, \{[^\n]*hubBase: replicaHubBase/)
     assert.match(src, /registerPlaylistCoverIpc\(ipc, [^\n]*hubBase: replicaHubBase/)
+  })
+})
+
+describe('lyrics: a replica adopts homemini\'s lyrics.json (workmini froze 10-26, 43 behind)', () => {
+  const sheet = (plain: string, fetchedAt = 1) => ({ plain, source: 'lrclib', fetchedAt })
+
+  it('pure: hub entries win track by track, a track only this machine has is kept', () => {
+    const local = { '1': sheet('old words'), '9': sheet('only here') }
+    const hub = { '1': sheet('new words', 2), '2': { miss: true, source: 'lrclib', fetchedAt: 3 } }
+    const next = adoptHubLyrics(local, hub)!
+    assert.equal(next.file['1'].plain, 'new words')
+    assert.equal(next.file['2'].miss, true)
+    assert.equal(next.file['9'].plain, 'only here', 'missing is not empty')
+    assert.deepEqual([next.added, next.changed], [1, 1])
+  })
+  it('pure: an empty hub copy changes nothing; an identical one needs no write; junk rows are dropped', () => {
+    const local = { '1': sheet('a') }
+    assert.equal(adoptHubLyrics(local, {}), null)
+    assert.equal(adoptHubLyrics(local, { '1': sheet('a') }), null)
+    assert.deepEqual(Object.keys(parseHubLyrics({ '1': sheet('a'), '2': 'x', '3': null, '4': [] })!), ['1'])
+    assert.equal(parseHubLyrics([]), null)
+    assert.equal(parseHubLyrics('nope'), null)
+  })
+
+  it('pulls, writes the file atomically, drops the reader cache, then sends the ETag back and a 304 leaves the file alone', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ly-pull-'))
+    const file = join(dir, 'lyrics.json')
+    await writeFile(file, JSON.stringify({ '9': sheet('only here') }))
+    const hubFile = { '101': sheet('line one'), '102': { instrumental: true, source: 'lrclib', fetchedAt: 1 } }
+    const hub = fakeFetch((u, h) => {
+      assert.ok(u.endsWith('/api/lyrics-file'), u)
+      return h.get('if-none-match') === '"ly1"' ? { status: 304 } : { status: 200, body: hubFile, etag: '"ly1"' }
+    })
+    let invalidated = 0
+    const lines: string[] = []
+    const p = createLyricsPuller({ file, hubBase: async () => 'http://hub:3000/', fetchImpl: hub.fetchImpl, onAdopted: () => { invalidated++ }, log: (m) => lines.push(m) })
+    assert.equal(await p.pull(), true)
+    const onDisk = JSON.parse(await readFile(file, 'utf-8')) as Record<string, { plain?: string }>
+    assert.deepEqual(Object.keys(onDisk).sort(), ['101', '102', '9'])
+    assert.equal(onDisk['101'].plain, 'line one')
+    assert.equal(invalidated, 1, 'the in-memory cache is dropped so Get Info reads the new file')
+    assert.equal(lines.filter((l) => l.startsWith('[lyrics] adopted')).length, 1)
+    assert.deepEqual((await readdir(dir)).sort(), ['lyrics.json'], 'no staging file left behind')
+    const before = (await stat(file)).mtimeMs
+    assert.equal(await p.pull(), false)
+    assert.equal(hub.calls[1].inm, '"ly1"')
+    assert.equal((await stat(file)).mtimeMs, before)
+    assert.equal(invalidated, 1)
+  })
+
+  it('inert on the MacBook (no hub base): no request at all', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ly-inert-'))
+    const hub = fakeFetch(() => { throw new Error('must not fetch') })
+    const p = createLyricsPuller({ file: join(dir, 'lyrics.json'), hubBase: async () => null, fetchImpl: hub.fetchImpl, log: () => {} })
+    assert.equal(await p.pull(), false)
+    assert.equal(hub.calls.length, 0)
+  })
+
+  it('a 404, a malformed body or an empty copy never blanks the local file; a problem is logged once', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ly-keep-'))
+    const file = join(dir, 'lyrics.json')
+    await writeFile(file, JSON.stringify({ '1': sheet('keep me') }))
+    let reply: Reply = { status: 404, body: { ok: false, error: 'missing' } }
+    const hub = fakeFetch(() => reply)
+    const lines: string[] = []
+    let invalidated = 0
+    const p = createLyricsPuller({ file, hubBase: async () => 'http://hub', fetchImpl: hub.fetchImpl, onAdopted: () => { invalidated++ }, log: (m) => lines.push(m) })
+    await p.pull()
+    await p.pull()
+    assert.equal(lines.filter((l) => l.includes('HTTP 404')).length, 1, 'logged once, not every tick')
+    reply = { status: 200, body: {} }
+    assert.equal(await p.pull(), false)
+    reply = { status: 200, body: [1, 2] }
+    assert.equal(await p.pull(), false)
+    reply = { status: 200, body: 'not json at all' }
+    assert.equal(await p.pull(), false)
+    const onDisk = JSON.parse(await readFile(file, 'utf-8')) as Record<string, { plain?: string }>
+    assert.deepEqual(onDisk, { '1': sheet('keep me') })
+    assert.equal(invalidated, 0)
+  })
+
+  it('wired: registerLyricsIpc starts the pull with the replica hub base and tells the renderer', async () => {
+    const src = await readFile(join(import.meta.dirname, '..', 'index.ts'), 'utf-8')
+    assert.match(src, /registerLyricsIpc\(ipc, \{[^\n]*hubBase: replicaHubBase[^\n]*notify: \(\) => sendToRenderer\('lyrics-updated'\)/)
+    assert.match(src, /f === 'lyrics\.json'\) && !pushLibrary\) continue/, 'a replica never pushes its lyrics.json as a local-newer conflict')
+    const ipcSrc = await readFile(join(import.meta.dirname, '..', 'ipc', 'lyrics-ipc.ts'), 'utf-8')
+    assert.match(ipcSrc, /onAdopted: \(\) => \{ lyricsCache\.invalidate\(\); host\.notify\?\.\(\) \}/)
   })
 })
 

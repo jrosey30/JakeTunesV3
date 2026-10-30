@@ -15,9 +15,14 @@
  *     sync already carries them and the phone shows them; workmini had no
  *     folder at all. GET /api/playlist-covers lists homemini's copies, and
  *     each changed one is fetched from /api/playlist-cover/<id>.
+ *   • lyrics.json (2026-10-29) — the MacBook's grounded lyrics (its nightly
+ *     enrichment is the single writer). workmini's copy froze on 10-26, 43
+ *     songs behind, because only the deploy ever copied it.
+ *     GET /api/lyrics-file serves homemini's copy (the NAS file the phone's
+ *     /api/lyrics/:id reads); landing it drops Get Info's in-memory cache.
  *
- * Rules, both legs:
- *   • the hub's copy wins — a hub entry or cover replaces this machine's;
+ * Rules, every leg:
+ *   • the hub's copy wins — a hub entry, cover or lyric replaces this machine's;
  *   • missing is not empty — a hub reply that lacks an album or a cover
  *     never removes one this machine has, and an empty or unreadable reply
  *     changes nothing;
@@ -26,7 +31,7 @@
  *
  * Nothing here is on the playback path, and nothing reads the NAS.
  *
- * ⚠️ TWIN: ~/JakeTunesMobile backend/src/routes/replicaFiles.ts (the two
+ * ⚠️ TWIN: ~/JakeTunesMobile backend/src/routes/replicaFiles.ts (the
  * routes) + backend/src/util/replicaFiles.ts (their pure halves).
  */
 import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
@@ -39,6 +44,8 @@ import type { ReleaseKindsFile } from '../common/release-kind.ts'
 /** How often a replica re-asks. Conditional, so an unchanged hub costs a 304. */
 export const REPLICA_HUB_FILES_INTERVAL_MS = 2 * 60_000
 const REQUEST_TIMEOUT_MS = 30_000
+/** lyrics.json is ~30 MB over the tailnet: a longer cap than the small files. */
+const LYRICS_TIMEOUT_MS = 120_000
 
 type Log = (msg: string) => void
 
@@ -129,6 +136,114 @@ export function createReleaseKindsPuller(deps: ReleaseKindsPullDeps): ReleaseKin
       return true
     } catch (err) {
       log(`[release-kinds] pull failed (will retry): ${err instanceof Error ? err.message : String(err)}`)
+      return false
+    } finally {
+      busy = false
+    }
+  }
+  return { pull }
+}
+
+// ── lyrics ─────────────────────────────────────────────────────────────────
+
+/** lyrics.json: String(track.id) → a record (ipc/lyrics-ipc.ts LyricsRecord). The
+ *  merge never looks inside a record, so it stays shape-agnostic. */
+export type LyricsFile = Record<string, Record<string, unknown>>
+
+/** Pure: the hub's body, validated — a plain object; rows that are not
+ *  records are dropped. Null = not a lyrics file at all. */
+export function parseHubLyrics(raw: unknown): LyricsFile | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const out: LyricsFile = {}
+  for (const [id, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (v && typeof v === 'object' && !Array.isArray(v)) out[id] = v as Record<string, unknown>
+  }
+  return out
+}
+
+/**
+ * Pure: the file a replica keeps after the hub answered. Hub entries win
+ * track by track; a track only this machine has is kept. Null = nothing to
+ * write (the hub copy is empty, or matches what this machine has).
+ * ⚠️ TWIN: Mobile util/replicaFiles.ts isLyricsBody (refuses an empty body).
+ */
+export function adoptHubLyrics(local: LyricsFile, hub: LyricsFile): { file: LyricsFile; added: number; changed: number } | null {
+  const ids = Object.keys(hub)
+  if (ids.length === 0) return null
+  const file: LyricsFile = { ...local }
+  let added = 0
+  let changed = 0
+  for (const id of ids) {
+    const cur = file[id]
+    if (!cur) added++
+    else if (JSON.stringify(cur) !== JSON.stringify(hub[id])) changed++
+    file[id] = hub[id]
+  }
+  return added || changed ? { file, added, changed } : null
+}
+
+/** This machine's lyrics.json; a missing or unreadable one is empty (the
+ *  hub's copy is the MacBook's, so adopting it over a torn file is right). */
+async function readLyricsFile(file: string, log: Log): Promise<LyricsFile> {
+  try {
+    return parseHubLyrics(JSON.parse(await readFile(file, 'utf-8'))) ?? {}
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') log(`[lyrics] this machine's copy is unreadable — adopting homemini's: ${err instanceof Error ? err.message : String(err)}`)
+    return {}
+  }
+}
+
+export interface LyricsPullDeps {
+  /** Absolute path of this machine's lyrics.json (STATE_DIR). */
+  file: string
+  /** Hub origin on a replica; null on the canonical MacBook. */
+  hubBase: () => Promise<string | null>
+  /** The file was rewritten: drop any in-memory copy (Get Info's cache). */
+  onAdopted?: () => void
+  fetchImpl?: typeof fetch
+  log?: Log
+}
+
+export function createLyricsPuller(deps: LyricsPullDeps): { pull: () => Promise<boolean> } {
+  const log = deps.log ?? ((m: string) => console.log(m))
+  const problem = problemLogger(log, 'lyrics')
+  let etag = ''
+  let busy = false
+  async function pull(): Promise<boolean> {
+    if (busy) return false
+    busy = true
+    try {
+      const base = await deps.hubBase()
+      if (!base) return false
+      const headers: Record<string, string> = { accept: 'application/json' }
+      if (etag) headers['If-None-Match'] = etag
+      let res: Response
+      let raw: string
+      try {
+        // ~30 MB, but only when the MacBook rewrote it; every other poll is a 304.
+        res = await (deps.fetchImpl ?? fetch)(`${base.replace(/\/$/, '')}/api/lyrics-file`, withCompanionInit({ headers, signal: AbortSignal.timeout(LYRICS_TIMEOUT_MS) }))
+        if (res.status === 304) { problem(''); return false }
+        if (!res.ok) { problem(`HTTP ${res.status}`); return false }   // 404 = no copy yet, or a hub older than the route
+        raw = await res.text()
+      } catch (err) {
+        problem(err instanceof Error ? err.message : String(err))
+        return false
+      }
+      problem('')
+      let hub: LyricsFile | null
+      try { hub = parseHubLyrics(JSON.parse(raw)) } catch { hub = null }
+      if (!hub) { log('[lyrics] homemini copy did not parse — keeping this machine\'s'); return false }
+      const next = adoptHubLyrics(await readLyricsFile(deps.file, log), hub)
+      // Remember the validator only once the body has been dealt with, so a
+      // failed write is retried with a full download, not answered 304.
+      if (!next) { etag = res.headers.get('etag') ?? ''; return false }
+      await writeJsonAtomic(deps.file, next.file, false)   // compact, like scripts/lyrics-fetch.mjs
+      etag = res.headers.get('etag') ?? ''
+      deps.onAdopted?.()
+      log(`[lyrics] adopted homemini's copy: ${Object.keys(next.file).length} tracks (+${next.added} new, ${next.changed} changed)`)
+      return true
+    } catch (err) {
+      log(`[lyrics] pull failed (will retry): ${err instanceof Error ? err.message : String(err)}`)
       return false
     } finally {
       busy = false

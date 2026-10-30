@@ -22,7 +22,16 @@ const subs = new Set<() => void>()
 
 function emit(): void { for (const f of subs) f() }
 
+// Replica (workmini, 2026-10-29): main pulled homemini's lyrics.json and says
+// so. Forget every answer (a "none" included) so the playing song re-asks.
+// Subscribed once, on first use.
+let replicaListening = false
+
 export function subscribeLyrics(fn: () => void): () => void {
+  if (!replicaListening) {
+    replicaListening = true
+    window.electronAPI.onLyricsUpdated?.(() => { cache.clear(); emit() })
+  }
   subs.add(fn)
   return () => { subs.delete(fn) }
 }

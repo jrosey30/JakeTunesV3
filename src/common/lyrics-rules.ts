@@ -34,7 +34,7 @@ export interface TrackLyrics {
   instrumental: boolean
 }
 
-/** What `get-track-lyrics` hands back (main/index.ts LyricsRecord, minus bookkeeping). */
+/** What `get-track-lyrics` hands back (main/ipc/lyrics-ipc.ts LyricsRecord, minus bookkeeping). */
 export interface StoredLyrics {
   plain?: string
   synced?: string
