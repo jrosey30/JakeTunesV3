@@ -57,6 +57,7 @@ import { setUserAliases } from './utils/artistAlias'
 import { initDownloads } from './utils/downloadStore'
 import { ensureLiveSetsLoaded, reloadLiveSets } from './liveSets'
 import { hydrateScrollCacheFromUiState } from './hooks/useScrollPersistence'
+import { restoreActionFor, savedLocation } from './nav-history'
 import { AppSettings, DEFAULT_APP_SETTINGS, type Playlist, type Track } from './types'
 import { setNotice } from './activity'
 import { autoNavBlocked } from './utils/autoNavGuard'
@@ -1054,27 +1055,25 @@ function AppInner() {
       if (uiResult.ok && uiResult.state) {
         const ui = uiResult.state
         if (typeof ui.sidebarWidth === 'number') setSidebarWidth(ui.sidebarWidth)
-        if (typeof ui.currentView === 'string') {
-          // 4.5.0-63: if a prior session left the user on the now-hidden
-          // Record Store view (Brief 037 placeholder), fall back to
-          // Songs on relaunch so they don't open into a dead view with
-          // no sidebar entry to navigate away from.
-          const restoredView = ui.currentView === 'recordstore' ? 'songs' : ui.currentView
-          // Acceptance harness: #stepInside boots into the game so a run can
-          // be driven and recorded. Dev-only — main never sets this hash in
-          // a packaged app.
-          const harness = typeof window !== 'undefined' && /stepInside/i.test(window.location.hash)
-          dispatch({ type: 'SET_VIEW', view: (harness ? 'recordstore' : restoredView) as import('./types').ViewName })
-        } else {
-          // First open (no saved view): land on Home, the welcome dashboard.
-          dispatch({ type: 'SET_VIEW', view: 'home' })
-        }
-        if (typeof ui.activePlaylistId === 'string') {
-          dispatch({ type: 'VIEW_PLAYLIST', id: ui.activePlaylistId })
-        }
-        if (typeof ui.activeSmartPlaylist === 'string') {
-          dispatch({ type: 'VIEW_SMART_PLAYLIST', id: ui.activeSmartPlaylist as import('./types').SmartPlaylistId })
-        }
+        // Reopen on the page you were on, with the SAME step Back / Forward use
+        // to re-enter a history entry (nav-history.ts restoreActionFor): an
+        // album page comes back as that album (its key is saved below), an
+        // artist page as that artist, a playlist as that playlist. First open
+        // (no saved view) lands on Home, the welcome dashboard; the hidden
+        // Record Store placeholder (Brief 037) reopens on Songs (4.5.0-63).
+        //
+        // Until 2026-10-30 this replayed the view by NAME, then VIEW_PLAYLIST
+        // for whatever activePlaylistId was saved — an id that lingers in the
+        // state long after you leave the playlist. Reopening the window from
+        // an album page therefore landed on a playlist visited earlier, behind
+        // an album entry with no album under it: Back could only reach Albums.
+        // Jake: "page memory sucks … no way of going back to the Perfecth page."
+        //
+        // Acceptance harness: #stepInside boots into the game so a run can be
+        // driven and recorded. Dev-only — main never sets this hash in a
+        // packaged app.
+        const harness = typeof window !== 'undefined' && /stepInside/i.test(window.location.hash)
+        dispatch(harness ? { type: 'SET_VIEW', view: 'recordstore' } : restoreActionFor(savedLocation(ui)))
         if (typeof ui.sortColumn === 'string') {
           // Restore sort state — dispatch twice if needed to match saved direction
           dispatch({ type: 'SET_SORT', column: ui.sortColumn as import('./types').SortColumn })
@@ -1386,6 +1385,11 @@ function AppInner() {
         ...existing,
         sidebarWidth,
         currentView: libState.currentView,
+        // The subjects of the pages that have one, so the saved page reopens
+        // as ITSELF (nav-history.ts savedLocation reads each only for the
+        // view that was showing — they linger in the state after you leave).
+        pendingAlbumKey: libState.pendingAlbumKey,
+        activeArtist: libState.activeArtist,
         activePlaylistId: libState.activePlaylistId,
         activeSmartPlaylist: libState.activeSmartPlaylist,
         sortColumn: libState.sortColumn,
@@ -1394,7 +1398,7 @@ function AppInner() {
       }
       window.electronAPI.saveUiState(uiState)
     }, 500)
-  }, [uiReady, sidebarWidth, libState.currentView, libState.activePlaylistId, libState.activeSmartPlaylist, libState.sortColumn, libState.sortDirection, libState.deletedIpodPlaylistNames])
+  }, [uiReady, sidebarWidth, libState.currentView, libState.pendingAlbumKey, libState.activeArtist, libState.activePlaylistId, libState.activeSmartPlaylist, libState.sortColumn, libState.sortDirection, libState.deletedIpodPlaylistNames])
 
   // Expose saveUiState for SongsView to piggyback column state
   useEffect(() => {
