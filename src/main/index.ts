@@ -9351,7 +9351,7 @@ setInterval(() => { scheduleMixtapeHubConverge(0) }, 10 * 60_000)
 
 
 // Album info + iTunes search extracted to ipc/album-info-ipc.ts (6.0 Phase 1).
-registerAlbumInfoIpc(ipc)
+registerAlbumInfoIpc(ipc, { mbThrottle })   // personnel shares the app-wide MusicBrainz pacing
 
 
 ipc.handle('load-metadata-overrides', async () => {

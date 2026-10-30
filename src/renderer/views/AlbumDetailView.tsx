@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useState, useEffect, useRef, useSyncExternalStore } from 'react'
 import { sentencePreview } from '../../common/sentences'
+import type { AlbumPerson } from '../types'
 import { useDelayedFlag } from '../hooks/useDelayedFlag'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
@@ -117,6 +118,22 @@ const ICON_NOTE_BIG = (
  *  case too (album-page.css hides --mid there). */
 const SPINE_SHORT = 24
 const SPINE_MID = 36
+/** Personnel shown before "All N": the band and the producer, not every guest. */
+const PEOPLE_SHOWN = 8
+const foldName = (s: string): string => s.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim()
+/** The people worth a line. MusicBrainz credits some members as a bare
+ *  "performer" (In Rainbows: all five), which says nothing — the name alone
+ *  reads fine; and it credits a band as itself, which is not a person. */
+function presentablePeople(people: AlbumPerson[], albumArtist: string): AlbumPerson[] {
+  const self = foldName(albumArtist)
+  const out: AlbumPerson[] = []
+  for (const p of people) {
+    const roles = p.roles.filter((r) => r !== 'performer')
+    if (!roles.length && foldName(p.name) === self) continue
+    out.push(roles.length === p.roles.length ? p : { ...p, roles })
+  }
+  return out
+}
 function spineLabel(artist: string, album: string): { text: string; size: 'short' | 'mid' } | null {
   for (const text of [[artist, album].filter(Boolean).join(' · '), album]) {
     if (!text) continue
@@ -302,6 +319,11 @@ export default function AlbumDetailView() {
   const [bioExpanded, setBioExpanded] = useState(false)
   const [takeLoading, setTakeLoading] = useState(false)
   const [takeError, setTakeError] = useState(false)
+  // Personnel — who played and who made it, from MusicBrainz (never the AI;
+  // Jake 2026-10-30: "mention the album personnel somewhere"). Nothing until
+  // it's known, nothing when it isn't.
+  const [people, setPeople] = useState<AlbumPerson[]>([])
+  const [peopleAll, setPeopleAll] = useState(false)
 
   const lastClickedIdx = useRef<number>(-1)
   // Keyboard cursor in the table (↑/↓/Return — see the keydown effect below).
@@ -515,7 +537,13 @@ export default function AlbumDetailView() {
     let cancelled = false
     setCredits(null); setBlurb(''); setBioExpanded(false); setInfoLoading(true); setInfoError(false)
     setTake(''); setTakeExpanded(false); setTakeOverflows(false); setTakeLoading(true); setTakeError(false)
+    setPeople([]); setPeopleAll(false)
     const timer = window.setTimeout(() => {
+      // Personnel rides on its own promise too: a cold MusicBrainz lookup is
+      // a few seconds; the page never waits for it.
+      window.electronAPI.getAlbumPersonnel?.(albumArtist, albumName)
+        .then((r) => { if (!cancelled && r?.ok && r.people?.length) setPeople(presentablePeople(r.people, albumArtist)) })
+        .catch(() => { /* unknown reads as nothing, like the credits */ })
       // The take rides beside the facts, never in front of them: its own
       // promise, so a slow opinion can't hold the history back.
       const takeCall = window.electronAPI.getAlbumTake?.(albumArtist, albumName, String(year || ''))
@@ -824,6 +852,30 @@ export default function AlbumDetailView() {
                       </div>
                     ))}
                   </dl>
+                )}
+                {people.length > 0 && (
+                  <section className="apd-people" aria-label="Personnel">
+                    <h4 className="apd-people-label">Personnel</h4>
+                    <ul className="apd-people-list">
+                      {(peopleAll ? people : people.slice(0, PEOPLE_SHOWN)).map((p) => (
+                        <li className="apd-person" key={p.name}>
+                          <span className="apd-person-name">{p.name}</span>
+                          {p.roles.length > 0 && <span className="apd-person-roles"> {p.roles.join(', ')}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                    {people.length > PEOPLE_SHOWN && (
+                      <button
+                        type="button"
+                        className={`apd-take-more apd-people-more${peopleAll ? ' is-open' : ''}`}
+                        onClick={() => setPeopleAll((v) => !v)}
+                        aria-expanded={peopleAll}
+                      >
+                        {peopleAll ? 'Fewer' : `All ${people.length}`}
+                        <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><path d="M2 3l2 2 2-2" fill="none" stroke="currentColor" strokeWidth="1.4" /></svg>
+                      </button>
+                    )}
+                  </section>
                 )}
               </div>
             </div>
