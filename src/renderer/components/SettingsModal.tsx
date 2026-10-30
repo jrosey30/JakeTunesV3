@@ -419,6 +419,30 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
                   {draft.crossfade.seconds} second{draft.crossfade.seconds === 1 ? '' : 's'}
                 </div>
               </div>
+              {/* 2026-10-30 — pause for video calls. Main-side watcher
+                  (native/micwatch: CoreAudio per-process mic state) pauses
+                  music when another app starts using the microphone and
+                  resumes once the call is confirmed over. Default on. The
+                  decision rules live in src/main/pause-for-calls-core.ts. */}
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 16, marginBottom: 4 }}>
+                <input
+                  type="checkbox"
+                  checked={draft.calls?.pauseForCalls ?? DEFAULT_APP_SETTINGS.calls.pauseForCalls}
+                  onChange={(e) => setDraft({
+                    ...draft,
+                    calls: { ...DEFAULT_APP_SETTINGS.calls, ...draft.calls, pauseForCalls: e.target.checked },
+                  })}
+                />
+                <span>Pause for video calls</span>
+              </label>
+              <p className="imp-help" style={{ marginTop: 0 }}>
+                Pauses when a call starts (FaceTime, Zoom, Teams, Webex, Meet…) and resumes when it's over.
+              </p>
+              {draft.audio.callRouteEnabled && draft.audio.callRouteDeviceLabel && (
+                <p className="imp-help" style={{ marginTop: 4, fontSize: 10, color: '#888' }}>
+                  Not used while music is set to move to {draft.audio.callRouteDeviceLabel} during calls (Audio tab) — that keeps the music going instead.
+                </p>
+              )}
               <p className="imp-help" style={{ marginTop: 16 }}>
                 Gapless playback (preload + instant start) is always on; no setting needed.
               </p>

@@ -68,6 +68,7 @@ import { registerImportIpc, resolveAudioPaths } from './ipc/import-ipc.ts'
 import { registerLibraryIpc } from './ipc/library-ipc.ts'
 import { registerCdIpc } from './ipc/cd-ipc.ts'
 import { registerAudioOutputIpc } from './ipc/audio-output-ipc.ts'
+import { startPauseForCalls } from './pause-for-calls.ts'
 import { registerLiveSetsIpc } from './ipc/live-sets-ipc.ts'
 import { registerMobileReadsIpc } from './ipc/mobile-reads-ipc.ts'
 import { registerArtworkIpc } from './ipc/artwork-ipc.ts'
@@ -10182,6 +10183,8 @@ app.whenReady().then(async () => {
   // us ~3s before playback needs ipod-audio://.
   createWindow()
   registerMediaKeyShortcuts()
+  // Pause for video calls (2026-10-30): per-process mic watcher → pause/play through the media-key path. Module: pause-for-calls.ts.
+  startPauseForCalls({ sendAction: sendMediaKeyAction, notify: (n) => sendToRenderer('app-notice', n), record: (tag, detail) => flightRecorder.record('info', tag, detail), settingsPath: appSettingsPath })
   startLibraryWatcher()
 
   void (async () => {

@@ -13,6 +13,14 @@ const electronAPI = {
     ipcRenderer.on('menu-action', handler)
     return () => { ipcRenderer.removeListener('menu-action', handler) }
   },
+  // Main → renderer transient notice, shown in the same strip as the queue
+  // notices (App.tsx → setNotice). Pause-for-calls uses it: "Paused for your
+  // Zoom call — it'll resume when the call ends" / "Call over — resumed".
+  onAppNotice: (callback: (notice: { text: string; kind?: 'error' | 'info' | 'success'; durationMs?: number }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, notice: { text: string; kind?: 'error' | 'info' | 'success'; durationMs?: number }) => callback(notice)
+    ipcRenderer.on('app-notice', handler)
+    return () => { ipcRenderer.removeListener('app-notice', handler) }
+  },
   setLibraryContext: (ctx: string): Promise<void> => ipcRenderer.invoke('set-library-context', ctx),
   musicmanChat: (messages: { role: string; content: string }[], context?: string): Promise<{ ok: boolean; text: string; textRaw: string; createdPlaylist?: { name: string; trackIds: number[] } | null }> =>
     ipcRenderer.invoke('musicman-chat', messages, context),

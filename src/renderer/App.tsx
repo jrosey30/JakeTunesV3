@@ -100,6 +100,11 @@ function AppInner() {
   // effect for the full rationale.
   const { togglePlayPause, nextTrack, prevTrack, seek, setVolume, stopPlayback } = useAudio({ primary: true })
   const { state: pbState } = usePlayback()
+  // Live isPlaying for the 'pause' / 'play' menu actions below (pause-for-
+  // calls in main sends those and expects them to be idempotent; useAudio
+  // only exposes the toggle, so the branch happens here on fresh state).
+  const isPlayingRef = useRef(pbState.isPlaying)
+  isPlayingRef.current = pbState.isPlaying
   const [sidebarWidth, setSidebarWidth] = useState(170)
   const [showQueue, setShowQueue] = useState(false)
   const queueRef = useRef<QueuePanelHandle>(null)
@@ -206,6 +211,7 @@ function AppInner() {
         eq:        { ...DEFAULT_APP_SETTINGS.eq,        ...(raw.eq || {}) },
         inbox:     { ...DEFAULT_APP_SETTINGS.inbox,     ...(raw.inbox || {}) },
         audio:     { ...DEFAULT_APP_SETTINGS.audio,     ...(raw.audio || {}) },
+        calls:     { ...DEFAULT_APP_SETTINGS.calls,     ...(raw.calls || {}) },
       }
       setAppSettings(merged)
       setCrossfadeSettings(merged.crossfade)
@@ -1584,6 +1590,10 @@ function AppInner() {
     const cleanup = window.electronAPI.onMenuAction((action: string) => {
       switch (action) {
         case 'play-pause': togglePlayPause(); break
+        // Distinct, idempotent pause / play — sent by pause-for-calls (main)
+        // through the same media-key path a hardware key uses.
+        case 'pause': if (isPlayingRef.current) togglePlayPause(); break
+        case 'play': if (!isPlayingRef.current) togglePlayPause(); break
         case 'next-track': nextTrack(); break
         case 'prev-track': prevTrack(); break
         case 'volume-up': setVolume(Math.min(1, pbState.volume + 0.1)); break
@@ -1776,6 +1786,16 @@ function AppInner() {
       unsubExt()
     }
   }, [togglePlayPause, nextTrack, prevTrack, setVolume, dispatch])
+
+  // Transient notices pushed from main (pause-for-calls: "Paused for your
+  // Zoom call — it'll resume when the call ends"). Same strip the queue
+  // notices use — nothing new on screen.
+  useEffect(() => {
+    const off = window.electronAPI.onAppNotice?.((n) => {
+      setNotice(n.text, { kind: n.kind ?? 'info', durationMs: n.durationMs })
+    })
+    return () => { off?.() }
+  }, [])
 
   // Global keyboard shortcuts
   const toggleRef = useRef(togglePlayPause)
