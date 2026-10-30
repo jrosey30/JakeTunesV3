@@ -30,6 +30,10 @@ import { useDiscHandoffView } from '../discHandoff'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { nextKeptRoot, type KeptRoot } from '../keptView'
 import { takeHistoryNavigation } from '../navIntent'
+import { useNavigation } from '../context/NavigationContext'
+import { useBackLabel } from '../hooks/useBackLabel'
+import { showsSharedBack } from '../backPill'
+import BackButton from './chrome/BackButton'
 import '../styles/main-content.css'
 
 /** Arrive vs return, decided ONCE per mounted page (its key) and then held
@@ -68,6 +72,16 @@ export default function MainContent() {
     albumKey: state.currentView === 'album-detail' ? state.pendingAlbumKey : null,
   })
   const view = shown.view
+
+  // Jake, 2026-10-30 ("never used those arrows. make going back obvious on
+  // every page"): the shared back pill, in a strip above whatever view is
+  // showing, on every page without a back control of its own (backPill.ts) —
+  // hidden when there is nothing to go back to. Its label is the page Back
+  // lands on (useBackLabel: ONE naming with the album / artist / concert
+  // pages' own pills).
+  const { canGoBack, goBack } = useNavigation()
+  const backLabel = useBackLabel()
+  const backStrip = showsSharedBack(view, canGoBack) && backLabel !== null
 
   // For PlaylistView and SmartPlaylistView the "identity" of the view
   // is the active playlist id — we want a fresh fade-in when the user
@@ -160,45 +174,56 @@ export default function MainContent() {
   // have a transition key — it never re-mounts after first render, so
   // its fade-in fires once at app start and that's it. State
   // preservation > re-fade on every visit.
+  // The shell is a flex column: the back strip (flex: none) ABOVE the view's
+  // box (flex: 1 1 auto, min-height: 0), so the view's own height: 100% root
+  // keeps scrolling itself and the kept grid's absolute box sits under the
+  // strip, never behind it (main-content.css).
   return (
-    <>
-      {wantKept && (
-        // Always the same box (absolute, full size) whether shown or parked:
-        // swapping display types on park would rebuild its layout, and
-        // display:none costs a full relayout on unhide (measured 93 ms on
-        // Artists, 70 ms on Albums). Parked = visibility:hidden — the laid-out
-        // page stays, scroll intact (main-content.css says why not
-        // content-visibility).
+    <div className="main-content-shell">
+      {backStrip && (
+        <div className="view-back-strip">
+          <BackButton label={backLabel} onClick={goBack} />
+        </div>
+      )}
+      <div className="main-content-shell-view">
+        {wantKept && (
+          // Always the same box (absolute, full size) whether shown or parked:
+          // swapping display types on park would rebuild its layout, and
+          // display:none costs a full relayout on unhide (measured 93 ms on
+          // Artists, 70 ms on Albums). Parked = visibility:hidden — the laid-out
+          // page stays, scroll intact (main-content.css says why not
+          // content-visibility).
+          <div
+            className={`main-content-view main-content-view--kept${keptActive ? '' : ' main-content-view--parked'}`}
+            key={`kept:${wantKept}`}
+            ref={keptBoxRef}
+            data-nav={keptArrivalRef.current?.kind === 'return' ? 'return' : undefined}
+            aria-hidden={keptActive ? undefined : true}
+          >
+            {renderKeptRoot(wantKept)}
+          </div>
+        )}
+        {viewElement !== null && (
+          <div className="main-content-view" key={transitionKey} data-nav={arrival === 'return' ? 'return' : undefined}>
+            {MODE_ELIGIBLE.has(view) ? (
+              // V5 facelift: thin chrome strip above the view hosting the
+              // segmented view-mode toggle, right-aligned (iTunes 10 kept
+              // this control top-right). Flex column so the view below
+              // keeps its height:100% behavior.
+              <div className="view-with-mode-bar">
+                <div className="view-mode-bar"><ViewModeToggle /></div>
+                <div className="view-mode-bar-content">{viewElement}</div>
+              </div>
+            ) : viewElement}
+          </div>
+        )}
         <div
-          className={`main-content-view main-content-view--kept${keptActive ? '' : ' main-content-view--parked'}`}
-          key={`kept:${wantKept}`}
-          ref={keptBoxRef}
-          data-nav={keptArrivalRef.current?.kind === 'return' ? 'return' : undefined}
-          aria-hidden={keptActive ? undefined : true}
+          className="main-content-view"
+          style={isMusicMan ? undefined : { display: 'none' }}
         >
-          {renderKeptRoot(wantKept)}
+          <MusicManView />
         </div>
-      )}
-      {viewElement !== null && (
-        <div className="main-content-view" key={transitionKey} data-nav={arrival === 'return' ? 'return' : undefined}>
-          {MODE_ELIGIBLE.has(view) ? (
-            // V5 facelift: thin chrome strip above the view hosting the
-            // segmented view-mode toggle, right-aligned (iTunes 10 kept
-            // this control top-right). Flex column so the view below
-            // keeps its height:100% behavior.
-            <div className="view-with-mode-bar">
-              <div className="view-mode-bar"><ViewModeToggle /></div>
-              <div className="view-mode-bar-content">{viewElement}</div>
-            </div>
-          ) : viewElement}
-        </div>
-      )}
-      <div
-        className="main-content-view"
-        style={isMusicMan ? undefined : { display: 'none' }}
-      >
-        <MusicManView />
       </div>
-    </>
+    </div>
   )
 }

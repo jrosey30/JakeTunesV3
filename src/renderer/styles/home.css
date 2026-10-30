@@ -25,6 +25,27 @@
   isolation: isolate;
 }
 
+/* The back pill (components/chrome/BackButton.tsx; Jake 2026-10-30: "make
+   going back obvious on every page"). Home carries its own, over the hero's
+   empty top band, at the same spot the shell's strip puts it on every other
+   page (16px, 6px), so the launch page doesn't move down 36px when there is
+   a page to go back to. A zero-height row at the top of the scroll content:
+   the pill scrolls away with the hero. With no hero on the page (an empty
+   library — launch page G needs an album, an island or a digging card), the
+   row takes the strip's 36px instead, so the pill never sits on the first
+   section's heading. */
+.home-back {
+  position: relative;
+  z-index: 3;
+  height: 0;
+}
+.home-back .back-pill {
+  position: absolute;
+  top: 6px;
+  left: 16px;
+}
+.home-view:not(:has(.tn)) .home-back { height: 36px; }
+
 /* Welcome band — greeting + invite, then the library shelf grid.
    Shelves live in this band so they read as the shop directory under
    the sign, not a second sidebar or a leftover chip row. */

@@ -92,7 +92,7 @@ let hubCatalogMayApply = false
 
 function AppInner() {
   const { state: libState, dispatch } = useLibrary()
-  const { canGoBack, canGoForward, goBack, goForward } = useNavigation()
+  const { canGoBack, canGoForward, goBack, goForward, beginHistory } = useNavigation()
   // Brief 033c: App is the single "primary" useAudio consumer — it owns
   // the heartbeat diagnostic/recovery interval. App never unmounts, so
   // exactly one interval runs regardless of how many other components
@@ -176,6 +176,11 @@ function AppInner() {
   // 4.5: the "local state is ahead of NAS" banner is gone — the NAS backup now
   // pushes automatically + silently in the background (main: autoBackupStateToNas).
   const [uiReady, setUiReady] = useState(false)
+  // The page the startup restore lands on is the FIRST page: the history
+  // forgets the reducer's initial view, which only ever showed behind the
+  // splash — otherwise every launch offers Back (and the back pill) to a page
+  // nobody saw. Runs in the commit that reveals the UI, after the restore.
+  useEffect(() => { if (uiReady) beginHistory() }, [uiReady, beginHistory])
   // 4.4.39: minimum splash display time. Even on a warm cache where the
   // library Promise.all settles in <500ms, we hold the splash for ≥1400ms
   // so the wordmark/greeting/EQ-bars actually get to land — otherwise

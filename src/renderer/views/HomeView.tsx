@@ -31,6 +31,9 @@ import MadeForYou from '../components/MadeForYou'
 import YirHomeCard from '../components/yir/YirHomeCard'
 import TonightOnJakeTunes from '../components/TonightOnJakeTunes'
 import HomeShelves from '../components/HomeShelves'
+import { useNavigation } from '../context/NavigationContext'
+import { useBackLabel } from '../hooks/useBackLabel'
+import BackButton from '../components/chrome/BackButton'
 import { HomeItemMenusProvider, useHomeItemMenusHost } from '../components/HomeItemMenus'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
 import { setAlbumDragPayload } from '../utils/trackDrag'
@@ -210,6 +213,15 @@ export default function HomeView() {
   const { playTrack } = useAudio()
   // Right-click menus for the Home's songs and albums (components/HomeItemMenus.tsx).
   const homeMenus = useHomeItemMenusHost(playTrack)
+
+  // Jake, 2026-10-30 ("make going back obvious on every page"): Home carries
+  // its own back pill, over the hero's empty top band — at the same spot the
+  // shell's strip puts it on every other page (16px, 6px; backPill.ts) — so
+  // the launch page doesn't move down when there is a page to go back to.
+  // Hidden when there is none. The label is the page Back lands on
+  // (useBackLabel: one naming with every other pill).
+  const { canGoBack: canNavBack, goBack: navBack } = useNavigation()
+  const navBackLabel = useBackLabel()
 
   // 4.4.21 polish: persist scroll position across view switches (4.4.13 hook).
   // The scrollable element is .home-view itself (vertical), but the
@@ -702,6 +714,11 @@ export default function HomeView() {
     // menus and sheets render beside .home-view, outside its stacking context.
     <HomeItemMenusProvider value={homeMenus.api}>
     <div className="home-view" ref={rootRef}>
+      {canNavBack && navBackLabel !== null && (
+        // A zero-height row at the top of the scroll content (home.css), so
+        // the pill overlays the hero and scrolls away with it.
+        <div className="home-back"><BackButton label={navBackLabel} onClick={navBack} /></div>
+      )}
       {/* 2026-10-18 — launch page "G": tonight's album on an art-soaked
           backdrop, the Island Albums Cover Flow, Now Digging. Right under it
           (2026-10-20) the three shelves — You Should Listen To More, You've

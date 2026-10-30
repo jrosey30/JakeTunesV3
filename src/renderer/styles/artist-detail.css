@@ -43,24 +43,13 @@
 .artist-detail a { color: var(--ad-orange-dark); text-decoration: underline; text-underline-offset: 1px; }
 .artist-detail a:hover { color: var(--ad-orange-border); }
 
-/* Back pill over the dark header. */
+/* The back pill over the dark header — the shared pill (styles/back-pill.css),
+   this rule only places it where the page's own dark one sat. */
 .artist-detail-back {
   position: absolute;
   top: 14px; left: 18px;
   z-index: 3;
-  padding: 5px 12px 5px 10px;
-  border-radius: 14px;
-  border: 1px solid rgba(254, 253, 252, 0.18);
-  background: rgba(11, 11, 10, 0.42);
-  color: var(--ad-cream);
-  font-size: var(--font-body, 11.25px);
-  font-weight: 600;
-  cursor: pointer;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  transition: background 0.12s ease, transform 0.12s ease;
 }
-.artist-detail-back:hover { background: rgba(11, 11, 10, 0.62); transform: translateX(-1px); }
 .artist-detail-empty { color: var(--ad-text-3); font-style: italic; padding: 24px 28px; }
 
 /* ── Header: the band photo full-bleed on the right, fading into ink ── */

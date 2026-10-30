@@ -8,11 +8,6 @@
    show — poster + blurb — bands A→Z, ties by date. ═══ */
 
 .concert-detail.cd-stage { padding: 12px 22px 48px; }
-.cd-stage .concert-back {
-  border: 1px solid #c9c9c9;
-  background: linear-gradient(#fff, #efefef);
-  color: #444;
-}
 
 /* ── Hero ─────────────────────────────────────────────────────────────── */
 .cd-hero {

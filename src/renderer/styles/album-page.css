@@ -59,23 +59,8 @@
   flex-direction: column;
 }
 
-.album-page-back {
-  appearance: none;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  background: rgba(255, 255, 255, 0.65);
-  color: #2a2510;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 5px 12px 5px 10px;
-  border-radius: 14px;
-  cursor: pointer;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
-  transition: background 0.12s ease, transform 0.12s ease;
-}
-.album-page-back:hover {
-  background: rgba(255, 255, 255, 0.92);
-  transform: translateX(-1px);
-}
+/* The back pill is the shared one (components/chrome/BackButton.tsx,
+   styles/back-pill.css) — its look used to live here as .album-page-back. */
 
 .album-page-artist {
   font-size: 12px;
@@ -456,19 +441,6 @@
 .album-page-topbar.apd-top {
   padding: 12px 32px 0;
 }
-
-.album-page-back.apd-back {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 24px;
-  padding: 0 11px 0 7px;
-  border-radius: 12px;
-  border: 1px solid rgba(0, 0, 0, 0.10);
-  background: rgba(255, 255, 255, 0.7);
-  color: #2a2510;
-}
-.album-page-back.apd-back svg { flex: none; }
 
 /* "More by <Artist> ‹ 1 of N ›" */
 .apd-more {
