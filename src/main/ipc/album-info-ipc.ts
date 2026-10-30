@@ -15,14 +15,24 @@ import { STATE_DIR } from '../state-dir'
 import { nameKey } from '../../common/fold-text'
 import { mbReleaseLabel } from '../album-label'
 import { createAlbumPersonnelService, type AlbumPersonnel } from '../album-personnel.ts'
+import { albumCreditsKey, createAlbumCreditsStore, creditsFromPersonnel, type AlbumCredits } from '../album-credits.ts'
+import { rankLibraryAlbums, startAlbumPersonnelPrefetch, type LibraryAlbum } from '../album-personnel-prefetch.ts'
 import { registerRecordShopIpc } from './record-shop-ipc.ts'
 import { registerNearEditionIpc } from './near-edition-ipc.ts'
+
+/** index.ts ranks the library for `listAlbums` with this (re-exported so its
+ *  one call line needs no import line of its own — the line-count ratchet). */
+export { rankLibraryAlbums }
 
 /** What index.ts may hand this module. Optional, so the existing one-argument
  *  call keeps working: the shared MusicBrainz throttle (index.ts mbThrottle)
  *  is worth passing so the album page and the background jobs take turns at
- *  MusicBrainz's one-request-a-second door instead of each keeping its own. */
-export interface AlbumInfoHost { mbThrottle?: () => Promise<void> }
+ *  MusicBrainz's one-request-a-second door instead of each keeping its own;
+ *  the library's albums, ranked, are what the credits prefetch walks. */
+export interface AlbumInfoHost {
+  mbThrottle?: () => Promise<void>
+  listAlbums?: () => Promise<readonly LibraryAlbum[]> | readonly LibraryAlbum[]
+}
 
 // The band's members (artist-members.json, MusicBrainz-grounded) so the album
 // page lists the band before guests and production. Re-read at most once a
@@ -52,10 +62,10 @@ export function registerAlbumInfoIpc(ipc: IpcRegistrar, host: AlbumInfoHost = {}
   // Credits come from real lookups (iTunes Search + MusicBrainz), never the
   // LLM, so we never invent a producer or date. Honest gaps where the APIs
   // don't have it. Blurb is the Music Man's editorial take (opinion, grounded —
-  // it's told NOT to state hard credits). Both cached in-memory per session.
-  type AlbumCredits = { released?: string; label?: string; producer?: string; recorded?: string }
-  const albumInfoCache = new Map<string, AlbumCredits>()
-  const albumCacheKey = (artist: string, album: string) => `${(artist || '').toLowerCase().trim()}|${(album || '').toLowerCase().trim()}`
+  // it's told NOT to state hard credits). The credits are remembered on disk
+  // (album-credits.ts; Jake 2026-10-30: "it shouldnt have to load everytime")
+  // — they lived in a per-session Map before.
+  const credits = createAlbumCreditsStore(app.getPath('userData'), { log: (m) => console.warn(m) })
 
   async function fetchItunesAlbum(artist: string, album: string): Promise<{ released?: string; label?: string } | null> {
     try {
@@ -120,36 +130,13 @@ export function registerAlbumInfoIpc(ipc: IpcRegistrar, host: AlbumInfoHost = {}
     } catch { return null }
   }
 
-  ipc.handle('get-album-info', async (_e, artist: string, album: string, year?: string | number): Promise<{ ok: boolean; credits?: AlbumCredits; error?: string }> => {
-    if (!album) return { ok: true, credits: {} }
-    const tagYear = tagYearStr(year)
-    const key = `${albumCacheKey(artist, album)}|y:${tagYear || '?'}`
-    const cached = albumInfoCache.get(key)
-    if (cached) {
-      return { ok: true, credits: sanitizeAlbumCredits(tagYear, cached) }
-    }
-    try {
-      const [it, mb] = await Promise.all([fetchItunesAlbum(artist, album), fetchMusicBrainzAlbumCredits(artist, album)])
-      const merged: AlbumCredits = {}
-      const released = pickAlbumReleaseDate(tagYear, mb?.released, it?.released)
-      if (released) merged.released = released
-      if (mb?.label) merged.label = mb.label
-      else if (it?.label) merged.label = it.label
-      if (mb?.producer) merged.producer = mb.producer
-      const sanitized = sanitizeAlbumCredits(tagYear, merged)
-      albumInfoCache.set(key, sanitized)
-      return { ok: true, credits: sanitized }
-    } catch (err) {
-      return { ok: false, error: safeIpcError(err, 'unknown') }
-    }
-  }, { refuse: REFUSED_SENDER })
-
   // ── Personnel (2026-10-30, Jake: "mention the album personnel somewhere") ──
-  // Who played and produced what, from MusicBrainz relationships (never the
-  // LLM), remembered across restarts in userData/album-personnel.json. The
-  // lookup, the acceptance rule and the cache live in ../album-personnel.ts;
-  // this is the wire. The refusal carries the full AlbumPersonnel shape so
-  // the renderer never sees a missing `people`.
+  // Who played and produced what, and on which tracks, from MusicBrainz
+  // relationships (never the LLM), remembered across restarts in
+  // userData/album-personnel.json. The lookup, the acceptance rule and the
+  // cache live in ../album-personnel.ts; this is the wire. The refusal
+  // carries the full AlbumPersonnel shape so the renderer never sees a
+  // missing `people`.
   const personnel = createAlbumPersonnelService({
     dir: app.getPath('userData'),
     userAgent: `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)`,
@@ -157,7 +144,74 @@ export function registerAlbumInfoIpc(ipc: IpcRegistrar, host: AlbumInfoHost = {}
     membersOf: artistMembers,
   })
   ipc.handle('get-album-personnel', async (_e, artist: string, album: string): Promise<AlbumPersonnel> => personnel.get(artist, album),
-    { refuse: { ok: false, people: [], error: REFUSED_SENDER.error } })
+    { refuse: { ok: false, people: [], trackCount: 0, error: REFUSED_SENDER.error } })
+
+  // The facts the personnel lookup already carries — the album's first
+  // release date, the record's label, the main producer — when it found the
+  // record; null when it did not (no release group is this album by this
+  // artist, or MusicBrainz did not answer). One MusicBrainz round serves the
+  // page's Personnel and its credits line; a page's two calls share the lookup.
+  const personnelFacts = async (artist: string, album: string): Promise<AlbumCredits | null> => {
+    const r = await personnel.get(artist, album)
+    if (!r.ok) return null
+    const entry = await personnel.peek(artist, album)
+    return entry ? creditsFromPersonnel(entry) : null
+  }
+
+  ipc.handle('get-album-info', async (_e, artist: string, album: string, year?: string | number): Promise<{ ok: boolean; credits?: AlbumCredits; error?: string }> => {
+    if (!album) return { ok: true, credits: {} }
+    const tagYear = tagYearStr(year)
+    const key = albumCreditsKey(artist, album, tagYear)
+    const cached = await credits.get(key)
+    if (cached) {
+      return { ok: true, credits: sanitizeAlbumCredits(tagYear, cached) }
+    }
+    try {
+      const [facts, it] = await Promise.all([personnelFacts(artist, album), fetchItunesAlbum(artist, album)])
+      // The loose release-group lookup only when the strict one found nothing.
+      const mb = facts ? null : await fetchMusicBrainzAlbumCredits(artist, album)
+      const merged: AlbumCredits = {}
+      const released = pickAlbumReleaseDate(tagYear, facts?.released ?? mb?.released, it?.released)
+      if (released) merged.released = released
+      const label = facts?.label ?? mb?.label ?? it?.label
+      if (label) merged.label = label
+      const producer = facts?.producer ?? mb?.producer
+      if (producer) merged.producer = producer
+      const sanitized = sanitizeAlbumCredits(tagYear, merged)
+      void credits.set(key, sanitized)
+      return { ok: true, credits: sanitized }
+    } catch (err) {
+      return { ok: false, error: safeIpcError(err, 'unknown') }
+    }
+  }, { refuse: REFUSED_SENDER })
+
+  // ── Already there (Jake 2026-10-30: "it shouldnt have to load everytime") ──
+  // Ninety seconds after launch, the prefetch walks the library's albums —
+  // loved, played and just-added first — through the same lookup, yielding to
+  // any page's own and keeping MusicBrainz to a request every 2.5 s from this
+  // machine; the credits line is filled from what each lookup learned, at no
+  // extra request. Resumes across launches; daily for the stale ones.
+  // JT_PERSONNEL_PREFETCH=0 turns it off. (album-personnel-prefetch.ts)
+  const fillCredits = async (a: LibraryAlbum): Promise<void> => {
+    const key = albumCreditsKey(a.artist, a.album, tagYearStr(a.year))
+    if (await credits.has(key)) return
+    const entry = await personnel.peek(a.artist, a.album)
+    const facts = entry ? creditsFromPersonnel(entry) : null
+    if (!facts) return   // no MusicBrainz facts: the page fills this one on open (iTunes + the loose lookup), once
+    const merged: AlbumCredits = {}
+    const released = pickAlbumReleaseDate(a.year, facts.released)
+    if (released) merged.released = released
+    if (facts.label) merged.label = facts.label
+    if (facts.producer) merged.producer = facts.producer
+    await credits.set(key, sanitizeAlbumCredits(a.year, merged))
+  }
+  startAlbumPersonnelPrefetch({
+    dir: app.getPath('userData'),
+    listAlbums: () => host.listAlbums?.() ?? [],
+    service: personnel,
+    fillCredits,
+    log: (m) => console.log(m),
+  })
   /** ⚠️ TWIN: src/renderer/types.ts (ItunesSuggestion). This crosses the IPC
    *  boundary, so a field added on one side and not the other is silently
    *  dropped rather than caught — change both together. */

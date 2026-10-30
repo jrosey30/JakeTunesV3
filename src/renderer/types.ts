@@ -343,6 +343,11 @@ export interface AlbumPerson {
   /** Recordings on the release this person is credited on. 0 = credited on
    *  the release as a whole only (mastering, say). */
   tracks: number
+  /** Each role's tracks: the same label as in `roles`, and the 1-based track
+   *  numbers it is credited on, counted across the release's media in order
+   *  (the album's track numbers), ascending. [] = credited on the release as
+   *  a whole — the part covers the whole record. */
+  credits: Array<{ role: string; tracks: number[] }>
   /** A member of the album's artist (artist-members.json, MusicBrainz-grounded)
    *  or the artist themselves — the sleeve lists the band first. Set when read,
    *  never cached. */
@@ -351,6 +356,9 @@ export interface AlbumPerson {
 export interface AlbumPersonnel {
   ok: boolean
   people: AlbumPerson[]
+  /** How many tracks the release has — what "on every track" is measured
+   *  against. 0 when nothing is known. */
+  trackCount: number
   /** The MusicBrainz release the credits were read from. */
   releaseMbid?: string
   /** Stable renderer-safe code ('api-failed', 'rate-limited', 'invalid-input'). */
