@@ -1,4 +1,8 @@
-import React, { useCallback, useMemo, useState, useEffect, useRef, useSyncExternalStore } from 'react'
+import React, { useLayoutEffect, useCallback, useMemo, useState, useEffect, useRef, useSyncExternalStore } from 'react'
+import { sentencePreview } from '../../common/sentences'
+import { isWeakBlurb } from '../../common/weak-blurb'
+import { nameKey } from '../../common/fold-text'
+import type { AlbumPerson } from '../types'
 import { useDelayedFlag } from '../hooks/useDelayedFlag'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
@@ -48,16 +52,6 @@ function formatDuration(ms: number): string {
 }
 
 /** Music Man sometimes returns a meta "I don't know this album" riff — hide it. */
-function isWeakBlurb(text: string): boolean {
-  const lower = text.toLowerCase()
-  return (
-    lower.includes('drawing a blank')
-    || lower.includes("didn't stick")
-    || lower.includes('pulling a name')
-    || lower.includes('land a take worth hearing')
-  )
-}
-
 function formatTotalDuration(ms: number): string {
   const totalSecs = Math.floor(ms / 1000)
   const hrs = Math.floor(totalSecs / 3600)
@@ -108,6 +102,34 @@ const ICON_NOTE = (
 const ICON_NOTE_BIG = (
   <svg width="84" height="91" viewBox="0 0 12 13" aria-hidden="true"><path d="M4.5 1.5l6-1.2v8.2a2 2 0 11-1.3-1.9V3L5.8 3.7v6.8a2 2 0 11-1.3-1.9z" fill="currentColor" /></svg>
 )
+
+/** What the tray card's spine can say through the case's hinge, longest
+ *  first: "ARTIST · ALBUM", then the album alone. The page measures the
+ *  rendered text against the run between the hinge pins and falls back —
+ *  nothing rather than a clipped word (house rule: names never clip). */
+function spineCandidates(artist: string, album: string): string[] {
+  const both = [artist, album].filter(Boolean).join(' · ')
+  return [...new Set([both, album].filter(Boolean))]
+}
+/** Personnel shown before "All N": the band and the producer, not every guest. */
+const PEOPLE_SHOWN = 8
+/** The head's narrow branch (album-page.css `@container apd-head`): the 240px
+ *  case, four people, a shorter history preview — so the songs stay in view
+ *  in a 600px-tall window. */
+const NARROW_HEAD_PX = 900
+/** The people worth a line. MusicBrainz credits some members as a bare
+ *  "performer" (In Rainbows: all five), which says nothing — the name alone
+ *  reads fine; and it credits a band as itself, which is not a person. */
+function presentablePeople(people: AlbumPerson[], albumArtist: string): AlbumPerson[] {
+  const self = nameKey(albumArtist)
+  const out: AlbumPerson[] = []
+  for (const p of people) {
+    const roles = p.roles.filter((r) => r !== 'performer')
+    if (!roles.length && nameKey(p.name) === self) continue
+    out.push(roles.length === p.roles.length ? p : { ...p, roles })
+  }
+  return out
+}
 
 export default function AlbumDetailView() {
   const { state: lib, dispatch: libDispatch } = useLibrary()
@@ -284,8 +306,54 @@ export default function AlbumDetailView() {
   const [take, setTake] = useState<string>('')
   const [takeExpanded, setTakeExpanded] = useState(false)
   const [takeOverflows, setTakeOverflows] = useState(false)
+  const [bioExpanded, setBioExpanded] = useState(false)
   const [takeLoading, setTakeLoading] = useState(false)
   const [takeError, setTakeError] = useState(false)
+  // Personnel — who played and who made it, from MusicBrainz (never the AI;
+  // Jake 2026-10-30: "mention the album personnel somewhere"). Nothing until
+  // it's known, nothing when it isn't.
+  const [people, setPeople] = useState<AlbumPerson[]>([])
+  const [peopleAll, setPeopleAll] = useState(false)
+  // The head's width decides the narrow branch (see NARROW_HEAD_PX) — the
+  // same threshold as the CSS container query, known to the page too.
+  const headRef = useRef<HTMLDivElement>(null)
+  const [narrow, setNarrow] = useState(false)
+  useLayoutEffect(() => {
+    const el = headRef.current
+    if (!el) return
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width ?? 0
+      setNarrow(w > 0 && w <= NARROW_HEAD_PX)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  // The history opens on its first whole sentences and never cuts one short
+  // (Jake 2026-10-30: "the description stops mid sentence"); Read more shows
+  // the rest. Unclamped, a long history pushed the songs below the window.
+  // (Hooks stay above the empty-album return below: the page must not crash
+  // when its last song is deleted.)
+  const bioPreview = useMemo(() => sentencePreview(blurb, narrow ? 200 : 330), [blurb, narrow])
+  const bioHasMore = bioPreview.length < blurb.length
+  const peopleShown = narrow ? 4 : PEOPLE_SHOWN
+  // The spine text must sit between the hinge pins: the rendered candidate is
+  // measured (vertical text — its height is its length) and the next one
+  // tried; past the last, the spine stays blank.
+  const spineOptions = useMemo(() => spineCandidates(albumArtist, albumName), [albumArtist, albumName])
+  const [spineIdx, setSpineIdx] = useState(0)
+  const spineRef = useRef<HTMLSpanElement>(null)
+  const knuckleTopRef = useRef<HTMLSpanElement>(null)
+  const knuckleBottomRef = useRef<HTMLSpanElement>(null)
+  useLayoutEffect(() => { setSpineIdx(0) }, [spineOptions, narrow])
+  useLayoutEffect(() => {
+    const el = spineRef.current
+    const top = knuckleTopRef.current
+    const bottom = knuckleBottomRef.current
+    if (!el || !top || !bottom) return
+    const free = bottom.getBoundingClientRect().top - top.getBoundingClientRect().bottom - 12
+    if (el.getBoundingClientRect().height > free) setSpineIdx((i) => i + 1)
+  }, [spineIdx, spineOptions, narrow])
+  const spineText = spineOptions[spineIdx]
 
   const lastClickedIdx = useRef<number>(-1)
   // Keyboard cursor in the table (↑/↓/Return — see the keydown effect below).
@@ -497,9 +565,15 @@ export default function AlbumDetailView() {
   useEffect(() => {
     if (tracks.length === 0) return
     let cancelled = false
-    setCredits(null); setBlurb(''); setInfoLoading(true); setInfoError(false)
+    setCredits(null); setBlurb(''); setBioExpanded(false); setInfoLoading(true); setInfoError(false)
     setTake(''); setTakeExpanded(false); setTakeOverflows(false); setTakeLoading(true); setTakeError(false)
+    setPeople([]); setPeopleAll(false)
     const timer = window.setTimeout(() => {
+      // Personnel rides on its own promise too: a cold MusicBrainz lookup is
+      // a few seconds; the page never waits for it.
+      window.electronAPI.getAlbumPersonnel?.(albumArtist, albumName)
+        .then((r) => { if (!cancelled && r?.ok && r.people?.length) setPeople(presentablePeople(r.people, albumArtist)) })
+        .catch(() => { /* unknown reads as nothing, like the credits */ })
       // The take rides beside the facts, never in front of them: its own
       // promise, so a slow opinion can't hold the history back.
       const takeCall = window.electronAPI.getAlbumTake?.(albumArtist, albumName, String(year || ''))
@@ -530,7 +604,6 @@ export default function AlbumDetailView() {
   }, [albumArtist, albumName, year, tracks.length])
 
   // Show Read all / Show less only when the take's clamp actually hides text.
-  // (The history above is never clamped — direction D shows it in full.)
   useEffect(() => {
     if (!take || takeExpanded) return
     const el = takeRef.current
@@ -633,8 +706,7 @@ export default function AlbumDetailView() {
     ...(releaseDisplay ? [['Released', formatReleaseDateDisplay(releaseDisplay)] as [string, string]] : []),
     ...(credits?.label ? [['Label', credits.label] as [string, string]] : []),
     ...(credits?.producer ? [['Producer', credits.producer] as [string, string]] : []),
-    ...(genre ? [['Genre', genre] as [string, string]] : []),
-    ['Length', `${totalClock(totalMs)} · ${tracks.length} song${tracks.length === 1 ? '' : 's'}`],
+    // Genre and length are on the facts line just above — once is enough.
   ]
 
   const showBlurb = !!blurb && !isWeakBlurb(blurb)
@@ -651,7 +723,7 @@ export default function AlbumDetailView() {
   return (
     <div className="album-page album-page--d">
       <div className="apd-scroll" ref={tracklistRef}>
-        <div className="apd-head">
+        <div className="apd-head" ref={headRef}>
           <div className="album-page-topbar apd-top">
             <BackButton label={shownBackLabel} onClick={goBack} />
             {siblingAlbums.length > 1 && curIdx >= 0 && (
@@ -681,15 +753,33 @@ export default function AlbumDetailView() {
           </div>
 
           <div className="apd-sleeve">
-            {/* The record sleeve: cover with the disc peeking out behind it.
-                .album-page-cover stays on the square alone — the disc handoff
-                (discHandoff.ts / disc-handoff.css) morphs exactly that box. */}
+            {/* A CD jewel case, closed, straight on: the cover is the booklet
+                under the clear lid; the black tray shows round it through the
+                lid's rim; on the left the lid's ribbed hinge over the tray
+                card's printed spine, with the two hinge pins; two latch slots
+                on the right edge. .album-page-cover stays the plain square —
+                the disc handoff (discHandoff.ts / disc-handoff.css) morphs
+                exactly that box. Sizes: album-page.css (the phone's case
+                points from common/jewel-case.ts × the cover / 160). */}
             <div className="apd-art">
-              <div className="apd-disc" aria-hidden="true" />
+              <div className="apd-case" aria-hidden="true">
+                <span className="apd-case-spine">
+                  {spineText && <span ref={spineRef} className="apd-case-spine-text">{spineText}</span>}
+                </span>
+                <span ref={knuckleTopRef} className="apd-case-knuckle apd-case-knuckle--top" />
+                <span ref={knuckleBottomRef} className="apd-case-knuckle apd-case-knuckle--bottom" />
+              </div>
               <div className="album-page-cover apd-cover">
                 {artHash
                   ? <AlbumArtImage hash={artHash} alt={albumName} priority />
                   : <div className="album-page-cover-placeholder apd-cover-placeholder">{ICON_NOTE_BIG}</div>}
+              </div>
+              <div className="apd-case-lid" aria-hidden="true">
+                <span className="apd-case-ribs" />
+                <span className="apd-case-gloss" />
+                <span className="apd-case-latch apd-case-latch--top" />
+                <span className="apd-case-latch apd-case-latch--bottom" />
+                <span className="apd-case-edge" />
               </div>
             </div>
 
@@ -752,45 +842,61 @@ export default function AlbumDetailView() {
 
               <div className="apd-body">
                 <div className="apd-text">
-                  {showBlurb && <p className="apd-bio">{blurb}</p>}
+                  {showBlurb && <p className="apd-bio">{bioExpanded ? blurb : bioPreview}</p>}
+                  {showBlurb && bioHasMore && (
+                    <button
+                      type="button"
+                      className={`apd-take-more apd-bio-more${bioExpanded ? ' is-open' : ''}`}
+                      onClick={() => setBioExpanded((v) => !v)}
+                      aria-expanded={bioExpanded}
+                    >
+                      {bioExpanded ? 'Show less' : 'Read more'}
+                      <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><path d="M2 3l2 2 2-2" fill="none" stroke="currentColor" strokeWidth="1.4" /></svg>
+                    </button>
+                  )}
                   {infoLoadingShown && !blurb && (
                     <p className="album-page-loading apd-status-note">Loading album history…</p>
                   )}
                   {infoError && !infoLoading && !blurb && !hasCredits && (
                     <p className="album-page-loading apd-status-note">Couldn&apos;t load album info.</p>
                   )}
-
-                  {/* The Music Man's take — his opinion, kept apart from the
-                      factual history above. Open by default; Read all
-                      un-clamps it when it runs long. */}
-                  <section className="apd-take" aria-label="The Music Man’s take">
-                    <div className="apd-take-mark" aria-hidden="true">{ICON_NOTE}</div>
-                    <h4 className="apd-take-title">The Music Man’s take</h4>
-                    {take && (takeOverflows || takeExpanded) ? (
+                </div>
+                {/* Credits as one row under the history: as a column beside it
+                    (or under the sleeve) they left dead space (Jake 2026-10-30). */}
+                {creditRows.length > 0 && (
+                  <dl className="apd-cred">
+                    {creditRows.map(([k, v]) => (
+                      <div className="apd-cred-item" key={k}>
+                        <dt>{k}</dt>
+                        <dd>{v}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                )}
+                {people.length > 0 && (
+                  <section className="apd-people" aria-label="Personnel">
+                    <h4 className="apd-people-label">Personnel</h4>
+                    <ul className="apd-people-list">
+                      {(peopleAll ? people : people.slice(0, peopleShown)).map((p, i) => (
+                        <li className="apd-person" key={`${p.name}#${i}`}>
+                          <span className="apd-person-name">{p.name}</span>
+                          {p.roles.length > 0 && <span className="apd-person-roles"> {p.roles.join(', ')}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                    {people.length > peopleShown && (
                       <button
                         type="button"
-                        className={`apd-take-more${takeExpanded ? ' is-open' : ''}`}
-                        onClick={() => setTakeExpanded((v) => !v)}
-                        aria-expanded={takeExpanded}
+                        className={`apd-take-more apd-people-more${peopleAll ? ' is-open' : ''}`}
+                        onClick={() => setPeopleAll((v) => !v)}
+                        aria-expanded={peopleAll}
                       >
-                        {takeExpanded ? 'Show less' : 'Read all'}
+                        {peopleAll ? 'Fewer' : `All ${people.length}`}
                         <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><path d="M2 3l2 2 2-2" fill="none" stroke="currentColor" strokeWidth="1.4" /></svg>
                       </button>
-                    ) : <span />}
-                    {take && <p ref={takeRef} className={`apd-take-text${takeExpanded ? ' is-open' : ''}`}>{take}</p>}
-                    {!take && takeLoading && <p className="apd-take-status">The Music Man’s mulling it over…</p>}
-                    {!take && !takeLoading && takeError && <p className="apd-take-status">Couldn’t get his take right now.</p>}
+                    )}
                   </section>
-                </div>
-
-                <dl className="apd-cred">
-                  {creditRows.map(([k, v]) => (
-                    <React.Fragment key={k}>
-                      <dt>{k}</dt>
-                      <dd>{v}</dd>
-                    </React.Fragment>
-                  ))}
-                </dl>
+                )}
               </div>
             </div>
           </div>
@@ -925,6 +1031,28 @@ export default function AlbumDetailView() {
             )
           })}
         </div>
+
+        {/* The Music Man's take — his opinion, kept apart from the
+            factual history. Under the songs: the songs come first (Jake
+            2026-10-30). Read all un-clamps it when it runs long. */}
+        <section className="apd-take" aria-label="The Music Man’s take">
+          <div className="apd-take-mark" aria-hidden="true">{ICON_NOTE}</div>
+          <h4 className="apd-take-title">The Music Man’s take</h4>
+          {take && (takeOverflows || takeExpanded) ? (
+            <button
+              type="button"
+              className={`apd-take-more${takeExpanded ? ' is-open' : ''}`}
+              onClick={() => setTakeExpanded((v) => !v)}
+              aria-expanded={takeExpanded}
+            >
+              {takeExpanded ? 'Show less' : 'Read all'}
+              <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><path d="M2 3l2 2 2-2" fill="none" stroke="currentColor" strokeWidth="1.4" /></svg>
+            </button>
+          ) : <span />}
+          {take && <p ref={takeRef} className={`apd-take-text${takeExpanded ? ' is-open' : ''}`}>{take}</p>}
+          {!take && takeLoading && <p className="apd-take-status">The Music Man’s mulling it over…</p>}
+          {!take && !takeLoading && takeError && <p className="apd-take-status">Couldn’t get his take right now.</p>}
+        </section>
       </div>
 
       <div className="apd-statusbar">

@@ -327,6 +327,32 @@ export interface CynthiaFix {
   confidence?: 'high' | 'medium'
 }
 
+// Album page Personnel (2026-10-30): who played and produced what on an album,
+// from MusicBrainz relationships, as 'get-album-personnel' returns it.
+// ⚠️ TWIN: src/main/album-personnel.ts AlbumPerson / AlbumPersonnel (main-side
+// originals). Crosses IPC — a field added on one side only is silently
+// dropped, never caught. Change both together.
+export interface AlbumPerson {
+  /** As credited on this release when MusicBrainz records that ("Natasha
+   *  Shneider"), else the MusicBrainz artist name (which may be in another
+   *  script — "Наташа Шнайдер"). */
+  name: string
+  /** Lowercase, deduped. Performer roles ("guitar", "lead vocals") come before
+   *  production roles ("producer", "mixing"); within each, the most frequent first. */
+  roles: string[]
+  /** Recordings on the release this person is credited on. 0 = credited on
+   *  the release as a whole only (mastering, say). */
+  tracks: number
+}
+export interface AlbumPersonnel {
+  ok: boolean
+  people: AlbumPerson[]
+  /** The MusicBrainz release the credits were read from. */
+  releaseMbid?: string
+  /** Stable renderer-safe code ('api-failed', 'rate-limited', 'invalid-input'). */
+  error?: string
+}
+
 // Cynthia overhaul — background-sweep surface types.
 // ⚠️ TWIN: src/main/cynthia-scan.ts CynthiaFinding / cynthia-sweep.ts
 // CynthiaAlbumFindings + CynthiaLedgerEntry (main-side originals).
@@ -702,6 +728,11 @@ declare global {
       // Album detail page (4.5.0-115): factual credits (MusicBrainz + iTunes,
       // honest gaps where unknown) and a grounded Music Man blurb.
       getAlbumInfo: (artist: string, album: string, year?: string) => Promise<{ ok: boolean; credits?: { released?: string; label?: string; producer?: string; recorded?: string }; error?: string }>
+      // Album page Personnel (2026-10-30): MusicBrainz credits, remembered across
+      // restarts. people is always present ([] = none known); ok:false = MusicBrainz
+      // did not answer this time (nothing cached, the next visit retries).
+      // ⚠️ TWIN: src/main/album-personnel.ts AlbumPersonnel (the handler's return type).
+      getAlbumPersonnel: (artist: string, album: string) => Promise<AlbumPersonnel>
       getAlbumBlurb: (artist: string, album: string, year?: string | number) => Promise<{ ok: boolean; blurb?: string; error?: string }>
       getAlbumTake: (artist: string, album: string, year?: string | number) => Promise<{ ok: boolean; take?: string; error?: string }>
       // 4.5.0-117 — library backup/restore (Phase 0).

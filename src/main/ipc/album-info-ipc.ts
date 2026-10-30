@@ -3,15 +3,23 @@
  * MusicBrainz, never LLM) and the add-recommendation autocomplete
  * shims. Extracted from main/index.ts (6.0 Phase 1) — bodies verbatim.
  */
+import { app } from 'electron'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { pickAlbumReleaseDate, sanitizeAlbumCredits, tagYearStr } from '../../common/albumReleaseDate'
 import { itunesAlbumTracks, pickItunesAlbumRow, searchItunesSuggestions } from '../download-search'
 import { safeIpcError } from '../safe-ipc-error'
+import { createAlbumPersonnelService, type AlbumPersonnel } from '../album-personnel.ts'
 import { registerRecordShopIpc } from './record-shop-ipc.ts'
 import { registerNearEditionIpc } from './near-edition-ipc.ts'
 
-export function registerAlbumInfoIpc(ipc: IpcRegistrar): void {
+/** What index.ts may hand this module. Optional, so the existing one-argument
+ *  call keeps working: the shared MusicBrainz throttle (index.ts mbThrottle)
+ *  is worth passing so the album page and the background jobs take turns at
+ *  MusicBrainz's one-request-a-second door instead of each keeping its own. */
+export interface AlbumInfoHost { mbThrottle?: () => Promise<void> }
+
+export function registerAlbumInfoIpc(ipc: IpcRegistrar, host: AlbumInfoHost = {}): void {
   // Brief 122 Phase 2 — autocomplete source for the add-recommendation form.
   // iTunes Search is public + key-less; hit it straight from the main process
   // (no CORS, and no per-keystroke round-trip to the Mini backend). Returns a
@@ -95,6 +103,20 @@ export function registerAlbumInfoIpc(ipc: IpcRegistrar): void {
       return { ok: false, error: safeIpcError(err, 'unknown') }
     }
   }, { refuse: REFUSED_SENDER })
+
+  // ── Personnel (2026-10-30, Jake: "mention the album personnel somewhere") ──
+  // Who played and produced what, from MusicBrainz relationships (never the
+  // LLM), remembered across restarts in userData/album-personnel.json. The
+  // lookup, the acceptance rule and the cache live in ../album-personnel.ts;
+  // this is the wire. The refusal carries the full AlbumPersonnel shape so
+  // the renderer never sees a missing `people`.
+  const personnel = createAlbumPersonnelService({
+    dir: app.getPath('userData'),
+    userAgent: `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)`,
+    throttle: host.mbThrottle,
+  })
+  ipc.handle('get-album-personnel', async (_e, artist: string, album: string): Promise<AlbumPersonnel> => personnel.get(artist, album),
+    { refuse: { ok: false, people: [], error: REFUSED_SENDER.error } })
   /** ⚠️ TWIN: src/renderer/types.ts (ItunesSuggestion). This crosses the IPC
    *  boundary, so a field added on one side and not the other is silently
    *  dropped rather than caught — change both together. */
