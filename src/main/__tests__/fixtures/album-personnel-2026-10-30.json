@@ -1,0 +1,2740 @@
+{
+ "recordedAt": "2026-10-30",
+ "note": "Recorded from the MusicBrainz WS2 JSON API on 2026-10-30 and trimmed to the fields src/main/album-personnel.ts reads. Three requests in order: the release-group search, the browse of the accepted group's releases, and the lookup of the release pickRelease() chooses (Official, 2002-08-17, JP) with inc=artist-rels+recordings+recording-level-rels.",
+ "artist": "Queens of the Stone Age",
+ "album": "Songs for the Deaf",
+ "search": {
+  "count": 2,
+  "release-groups": [
+   {
+    "id": "cbffb669-c390-3a4d-b46f-1be8ea934b03",
+    "title": "Songs for the Deaf",
+    "score": 100,
+    "primary-type": "Album",
+    "secondary-types": [],
+    "first-release-date": "2002-08-17",
+    "artist-credit": [
+     {
+      "name": "Queens of the Stone Age",
+      "joinphrase": "",
+      "artist": {
+       "id": "7dc8f5bd-9d0b-4087-9f73-dc164950bbd8",
+       "name": "Queens of the Stone Age"
+      }
+     }
+    ]
+   },
+   {
+    "id": "488c4880-fcf5-4573-b6b2-4168fcdd84aa",
+    "title": "Rated R + Songs for the Deaf",
+    "score": 88,
+    "primary-type": "Album",
+    "secondary-types": [
+     "Compilation"
+    ],
+    "first-release-date": "2010-05-11",
+    "artist-credit": [
+     {
+      "name": "Queens of the Stone Age",
+      "joinphrase": "",
+      "artist": {
+       "id": "7dc8f5bd-9d0b-4087-9f73-dc164950bbd8",
+       "name": "Queens of the Stone Age"
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "releases": {
+  "release-count": 32,
+  "releases": [
+   {
+    "id": "02aaae93-42fb-4ae9-8064-20645c9396db",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2002-08-27",
+    "country": "XE",
+    "disambiguation": ""
+   },
+   {
+    "id": "1134d16e-355c-46f8-940b-09435e219291",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "",
+    "country": "XE",
+    "disambiguation": "made in Germany by EDC"
+   },
+   {
+    "id": "2622f72c-73ae-4a8c-b533-c1d995d260e8",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2002-08-27",
+    "country": "XW",
+    "disambiguation": ""
+   },
+   {
+    "id": "2ce90653-3b94-44ff-b7e8-5cf1faa505ba",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2009-12-03",
+    "country": "JP",
+    "disambiguation": ""
+   },
+   {
+    "id": "31693384-dd99-3f52-9d7a-a555c57a6139",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2002-08-26",
+    "country": "GB",
+    "disambiguation": ""
+   },
+   {
+    "id": "42b34b57-1e9b-4600-ae72-9bfe1ec0446c",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2002-08-26",
+    "country": "GB",
+    "disambiguation": "special edition"
+   },
+   {
+    "id": "4d060455-e6cb-4863-b6c7-c36c4b56183c",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2007-07-10",
+    "country": "CA",
+    "disambiguation": "explicit"
+   },
+   {
+    "id": "4eaf109d-be3f-46c3-9b80-86873dc89c8a",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2002",
+    "country": "US",
+    "disambiguation": ""
+   },
+   {
+    "id": "571a8ecc-5478-4e57-9c03-c3afe67e2bfe",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2002-08-27",
+    "country": "US",
+    "disambiguation": "limited edition"
+   },
+   {
+    "id": "5ea5bad0-b187-40cd-ad87-c9649efe6040",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2002-08-17",
+    "country": "XE",
+    "disambiguation": "limited edition"
+   },
+   {
+    "id": "6c550572-70a7-4bb9-9486-b5fcea89848c",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2002-08-27",
+    "country": "CA",
+    "disambiguation": ""
+   },
+   {
+    "id": "79108d9b-c04f-48a6-a61a-8076b780a5e1",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2002",
+    "country": "US",
+    "disambiguation": "clean version"
+   },
+   {
+    "id": "7ace2705-0133-4771-a64b-975730eb1c63",
+    "title": "Songs for the Deaf",
+    "status": "Promotion",
+    "date": "2002",
+    "country": null,
+    "disambiguation": ""
+   },
+   {
+    "id": "862b47d5-b803-4c41-a7d8-884cb28d98b8",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2003-06-02",
+    "country": "GB",
+    "disambiguation": "tour edition"
+   },
+   {
+    "id": "87b1dcbd-8da6-4900-be90-7d85a429b9f6",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2017",
+    "country": "XE",
+    "disambiguation": "repress; optimal media GmbH"
+   },
+   {
+    "id": "944a5f8f-e476-4d40-a4bd-a7636267f9bc",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2003-06-02",
+    "country": "XE",
+    "disambiguation": "limited edition, tour edition"
+   },
+   {
+    "id": "989e8e77-6263-45e6-a8e5-8228fed65532",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2007-07-10",
+    "country": null,
+    "disambiguation": "clean"
+   },
+   {
+    "id": "9d73dbea-c63c-401e-b887-5c32365c5600",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2019-11-22",
+    "country": "XE",
+    "disambiguation": ""
+   },
+   {
+    "id": "9f43d159-8ae1-4e5b-bf9b-c5077993728e",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "",
+    "country": "US",
+    "disambiguation": ""
+   },
+   {
+    "id": "ab9e6f50-b248-4ed2-a591-1f175e609e44",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2002-08-26",
+    "country": "XE",
+    "disambiguation": "matte booklet"
+   },
+   {
+    "id": "ae7f23bd-3651-4c07-8f28-23f6b97d4ceb",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2003",
+    "country": "AU",
+    "disambiguation": "Australian tour edition"
+   },
+   {
+    "id": "be297c99-f9dc-4d85-ba38-a6ab70972ccd",
+    "title": "Songs for the Deaf Demos",
+    "status": "Bootleg",
+    "date": "",
+    "country": null,
+    "disambiguation": ""
+   },
+   {
+    "id": "c166b514-8c42-3e3e-b3d0-832347339414",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2002-08-26",
+    "country": "AU",
+    "disambiguation": ""
+   },
+   {
+    "id": "c44d38af-7f57-469a-b4ba-5426b94cfc38",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2002",
+    "country": "ZA",
+    "disambiguation": ""
+   },
+   {
+    "id": "c5729b32-d992-4283-9d86-d38bcb814a14",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2002-08-27",
+    "country": "US",
+    "disambiguation": "first pressing"
+   },
+   {
+    "id": "ca1cbca3-e7a5-44ac-953f-9a84b22ab333",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2002",
+    "country": "XE",
+    "disambiguation": ""
+   },
+   {
+    "id": "ce626a4e-5080-4946-b793-a47c3c155a85",
+    "title": "Songs for the Deaf",
+    "status": "Promotion",
+    "date": "2002",
+    "country": "US",
+    "disambiguation": ""
+   },
+   {
+    "id": "d4fe720d-595a-4e2a-8ada-0fe0aa943046",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2002-08-17",
+    "country": "JP",
+    "disambiguation": ""
+   },
+   {
+    "id": "d9e78b16-fa49-4730-978a-d9fb43c72858",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2007-07-10",
+    "country": "US",
+    "disambiguation": ""
+   },
+   {
+    "id": "daadf4ac-8153-43b2-94e4-f15ba7d9da73",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2009-07-14",
+    "country": "MX",
+    "disambiguation": "explicit"
+   },
+   {
+    "id": "f5440c37-c62c-46c0-bfd4-b5e077578347",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2002-08-27",
+    "country": "XE",
+    "disambiguation": "glossy booklet"
+   },
+   {
+    "id": "fc14e2e9-db32-4394-8a61-8f1cfd523571",
+    "title": "Songs for the Deaf",
+    "status": "Official",
+    "date": "2003-07-29",
+    "country": "US",
+    "disambiguation": "red translucent vinyl"
+   }
+  ]
+ },
+ "release": {
+  "id": "d4fe720d-595a-4e2a-8ada-0fe0aa943046",
+  "title": "Songs for the Deaf",
+  "status": "Official",
+  "date": "2002-08-17",
+  "country": "JP",
+  "relations": [],
+  "media": [
+   {
+    "position": 1,
+    "format": "CD",
+    "tracks": [
+     {
+      "position": 1,
+      "title": "You Think I Ain’t Worth a Dollar, but I Feel Like a Millionaire",
+      "recording": {
+       "id": "4d2224d8-ad44-4f12-8cdd-5450618fa75f",
+       "title": "You Think I Ain’t Worth a Dollar, but I Feel Like a Millionaire",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "166a9b47-3494-4c8c-a60b-53aad88e8796",
+          "name": "Joe Marlett"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "f294d4d7-8d86-4699-9fdd-27bc24742e81",
+          "name": "Kevin Szymanski"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "4d5f891d-9bce-45ae-ad86-912dd27252fa",
+          "name": "Dave Grohl"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "guitar"
+         ],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "bass guitar"
+         ],
+         "artist": {
+          "id": "f3907034-e3db-499b-b46e-0d485ce3dbf7",
+          "name": "Nick Oliveri"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "4f101d2a-ba9f-48f8-bdb4-c26130fbf17c",
+          "name": "Gene Trautmann"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "mix",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "29599574-f3f3-447b-97db-23bb82fd2d04",
+          "name": "Eric Valentine"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "f3907034-e3db-499b-b46e-0d485ce3dbf7",
+          "name": "Nick Oliveri"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 2,
+      "title": "No One Knows",
+      "recording": {
+       "id": "2a559871-96d4-410d-b8cd-5cd2f2b2459e",
+       "title": "No One Knows",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "166a9b47-3494-4c8c-a60b-53aad88e8796",
+          "name": "Joe Marlett"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "f294d4d7-8d86-4699-9fdd-27bc24742e81",
+          "name": "Kevin Szymanski"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "4d5f891d-9bce-45ae-ad86-912dd27252fa",
+          "name": "Dave Grohl"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "guitar"
+         ],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "keyboard"
+         ],
+         "artist": {
+          "id": "89df2e69-b89b-410d-b792-00898f4e5abc",
+          "name": "Alain Johannes"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "strings"
+         ],
+         "artist": {
+          "id": "bc2ce40d-a5fc-425e-86e9-343246fec679",
+          "name": "Ana Lenchantin"
+         },
+         "target-credit": "Anna Lenchantin"
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "strings"
+         ],
+         "artist": {
+          "id": "45b1e8a0-0757-4b0f-99e2-bbba94af1557",
+          "name": "Paz Lenchantin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "bass guitar"
+         ],
+         "artist": {
+          "id": "f3907034-e3db-499b-b46e-0d485ce3dbf7",
+          "name": "Nick Oliveri"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "mix",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "29599574-f3f3-447b-97db-23bb82fd2d04",
+          "name": "Eric Valentine"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 3,
+      "title": "First It Giveth",
+      "recording": {
+       "id": "7e347f84-a0e7-48de-9277-06afd5f84d24",
+       "title": "First It Giveth",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "166a9b47-3494-4c8c-a60b-53aad88e8796",
+          "name": "Joe Marlett"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "f294d4d7-8d86-4699-9fdd-27bc24742e81",
+          "name": "Kevin Szymanski"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "29599574-f3f3-447b-97db-23bb82fd2d04",
+          "name": "Eric Valentine"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "4d5f891d-9bce-45ae-ad86-912dd27252fa",
+          "name": "Dave Grohl"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "guitar"
+         ],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "keyboard"
+         ],
+         "artist": {
+          "id": "89df2e69-b89b-410d-b792-00898f4e5abc",
+          "name": "Alain Johannes"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "keyboard"
+         ],
+         "artist": {
+          "id": "b44018de-2efc-46ce-bc1c-c084b8fce38b",
+          "name": "Brendon McNichol"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "bass guitar"
+         ],
+         "artist": {
+          "id": "f3907034-e3db-499b-b46e-0d485ce3dbf7",
+          "name": "Nick Oliveri"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "mix",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "29599574-f3f3-447b-97db-23bb82fd2d04",
+          "name": "Eric Valentine"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "f3907034-e3db-499b-b46e-0d485ce3dbf7",
+          "name": "Nick Oliveri"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 4,
+      "title": "A Song for the Dead",
+      "recording": {
+       "id": "17827920-23c0-45de-af4f-698160f744a3",
+       "title": "A Song for the Dead",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "166a9b47-3494-4c8c-a60b-53aad88e8796",
+          "name": "Joe Marlett"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "f294d4d7-8d86-4699-9fdd-27bc24742e81",
+          "name": "Kevin Szymanski"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "4d5f891d-9bce-45ae-ad86-912dd27252fa",
+          "name": "Dave Grohl"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "bass guitar"
+         ],
+         "artist": {
+          "id": "f3907034-e3db-499b-b46e-0d485ce3dbf7",
+          "name": "Nick Oliveri"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "mix",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "29599574-f3f3-447b-97db-23bb82fd2d04",
+          "name": "Eric Valentine"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "a9126556-f555-4920-9617-6e013f8228a7",
+          "name": "Mark Lanegan"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 5,
+      "title": "The Sky Is Fallin’",
+      "recording": {
+       "id": "a4c9a39c-ff20-41d6-adde-fce206e9137b",
+       "title": "The Sky Is Fallin’",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "166a9b47-3494-4c8c-a60b-53aad88e8796",
+          "name": "Joe Marlett"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "f294d4d7-8d86-4699-9fdd-27bc24742e81",
+          "name": "Kevin Szymanski"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "4d5f891d-9bce-45ae-ad86-912dd27252fa",
+          "name": "Dave Grohl"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "guitar"
+         ],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "bass guitar"
+         ],
+         "artist": {
+          "id": "f3907034-e3db-499b-b46e-0d485ce3dbf7",
+          "name": "Nick Oliveri"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "mix",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 6,
+      "title": "Six Shooter",
+      "recording": {
+       "id": "cee0b9f8-7ffd-4582-ac5a-ed0a8dc05015",
+       "title": "Six Shooter",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "166a9b47-3494-4c8c-a60b-53aad88e8796",
+          "name": "Joe Marlett"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "f294d4d7-8d86-4699-9fdd-27bc24742e81",
+          "name": "Kevin Szymanski"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "4d5f891d-9bce-45ae-ad86-912dd27252fa",
+          "name": "Dave Grohl"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "guitar"
+         ],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "theremin"
+         ],
+         "artist": {
+          "id": "89df2e69-b89b-410d-b792-00898f4e5abc",
+          "name": "Alain Johannes"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "bass guitar"
+         ],
+         "artist": {
+          "id": "f3907034-e3db-499b-b46e-0d485ce3dbf7",
+          "name": "Nick Oliveri"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "guitar"
+         ],
+         "artist": {
+          "id": "526c5b19-e016-49bc-a8c3-5b196a0e47f4",
+          "name": "Dean Ween"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "mix",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "29599574-f3f3-447b-97db-23bb82fd2d04",
+          "name": "Eric Valentine"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "f3907034-e3db-499b-b46e-0d485ce3dbf7",
+          "name": "Nick Oliveri"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 7,
+      "title": "Hangin’ Tree",
+      "recording": {
+       "id": "78e376ae-4bbb-4040-be8f-b1b183f45803",
+       "title": "Hangin’ Tree",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "166a9b47-3494-4c8c-a60b-53aad88e8796",
+          "name": "Joe Marlett"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "f294d4d7-8d86-4699-9fdd-27bc24742e81",
+          "name": "Kevin Szymanski"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "4d5f891d-9bce-45ae-ad86-912dd27252fa",
+          "name": "Dave Grohl"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "guitar"
+         ],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "keyboard"
+         ],
+         "artist": {
+          "id": "89df2e69-b89b-410d-b792-00898f4e5abc",
+          "name": "Alain Johannes"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "bass guitar"
+         ],
+         "artist": {
+          "id": "f3907034-e3db-499b-b46e-0d485ce3dbf7",
+          "name": "Nick Oliveri"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "mix",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "29599574-f3f3-447b-97db-23bb82fd2d04",
+          "name": "Eric Valentine"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "a9126556-f555-4920-9617-6e013f8228a7",
+          "name": "Mark Lanegan"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 8,
+      "title": "Go With the Flow",
+      "recording": {
+       "id": "585a4874-4225-4cea-9e3f-151c5d5ad26e",
+       "title": "Go With the Flow",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "166a9b47-3494-4c8c-a60b-53aad88e8796",
+          "name": "Joe Marlett"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "f294d4d7-8d86-4699-9fdd-27bc24742e81",
+          "name": "Kevin Szymanski"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "4d5f891d-9bce-45ae-ad86-912dd27252fa",
+          "name": "Dave Grohl"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "guitar"
+         ],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "guitar"
+         ],
+         "artist": {
+          "id": "b44018de-2efc-46ce-bc1c-c084b8fce38b",
+          "name": "Brendon McNichol"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "bass guitar"
+         ],
+         "artist": {
+          "id": "f3907034-e3db-499b-b46e-0d485ce3dbf7",
+          "name": "Nick Oliveri"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "4f101d2a-ba9f-48f8-bdb4-c26130fbf17c",
+          "name": "Gene Trautmann"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "mix",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "29599574-f3f3-447b-97db-23bb82fd2d04",
+          "name": "Eric Valentine"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "f3907034-e3db-499b-b46e-0d485ce3dbf7",
+          "name": "Nick Oliveri"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 9,
+      "title": "Gonna Leave You",
+      "recording": {
+       "id": "cf40b50c-351c-454c-b2d3-8f8c7b76821b",
+       "title": "Gonna Leave You",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "166a9b47-3494-4c8c-a60b-53aad88e8796",
+          "name": "Joe Marlett"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "f294d4d7-8d86-4699-9fdd-27bc24742e81",
+          "name": "Kevin Szymanski"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "4d5f891d-9bce-45ae-ad86-912dd27252fa",
+          "name": "Dave Grohl"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "guitar"
+         ],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "bass guitar"
+         ],
+         "artist": {
+          "id": "f3907034-e3db-499b-b46e-0d485ce3dbf7",
+          "name": "Nick Oliveri"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "guitar"
+         ],
+         "artist": {
+          "id": "526c5b19-e016-49bc-a8c3-5b196a0e47f4",
+          "name": "Dean Ween"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "mix",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "29599574-f3f3-447b-97db-23bb82fd2d04",
+          "name": "Eric Valentine"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "f3907034-e3db-499b-b46e-0d485ce3dbf7",
+          "name": "Nick Oliveri"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 10,
+      "title": "Do It Again",
+      "recording": {
+       "id": "2d0c2adf-589d-4fc9-a382-8b972b979713",
+       "title": "Do It Again",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "166a9b47-3494-4c8c-a60b-53aad88e8796",
+          "name": "Joe Marlett"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "f294d4d7-8d86-4699-9fdd-27bc24742e81",
+          "name": "Kevin Szymanski"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "4d5f891d-9bce-45ae-ad86-912dd27252fa",
+          "name": "Dave Grohl"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "guitar"
+         ],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "bass guitar"
+         ],
+         "artist": {
+          "id": "f3907034-e3db-499b-b46e-0d485ce3dbf7",
+          "name": "Nick Oliveri"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "4f101d2a-ba9f-48f8-bdb4-c26130fbf17c",
+          "name": "Gene Trautmann"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "mix",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "background vocals"
+         ],
+         "artist": {
+          "id": "09386e0e-92b8-482f-9d6d-7bc08a16faa7",
+          "name": "Chris Goss"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 11,
+      "title": "God Is in the Radio",
+      "recording": {
+       "id": "75e0616a-b563-4948-a1b4-c430cca2a25b",
+       "title": "God Is in the Radio",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "166a9b47-3494-4c8c-a60b-53aad88e8796",
+          "name": "Joe Marlett"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "f294d4d7-8d86-4699-9fdd-27bc24742e81",
+          "name": "Kevin Szymanski"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "4d5f891d-9bce-45ae-ad86-912dd27252fa",
+          "name": "Dave Grohl"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "guitar"
+         ],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "bass guitar"
+         ],
+         "artist": {
+          "id": "f3907034-e3db-499b-b46e-0d485ce3dbf7",
+          "name": "Nick Oliveri"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "mix",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "29599574-f3f3-447b-97db-23bb82fd2d04",
+          "name": "Eric Valentine"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "a9126556-f555-4920-9617-6e013f8228a7",
+          "name": "Mark Lanegan"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 12,
+      "title": "Another Love Song",
+      "recording": {
+       "id": "41d7bad7-8f90-427c-b668-25eabd2eaaaf",
+       "title": "Another Love Song",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "166a9b47-3494-4c8c-a60b-53aad88e8796",
+          "name": "Joe Marlett"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "f294d4d7-8d86-4699-9fdd-27bc24742e81",
+          "name": "Kevin Szymanski"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "4d5f891d-9bce-45ae-ad86-912dd27252fa",
+          "name": "Dave Grohl"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "guitar"
+         ],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "organ"
+         ],
+         "artist": {
+          "id": "89df2e69-b89b-410d-b792-00898f4e5abc",
+          "name": "Alain Johannes"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "bass guitar"
+         ],
+         "artist": {
+          "id": "f3907034-e3db-499b-b46e-0d485ce3dbf7",
+          "name": "Nick Oliveri"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "keyboard"
+         ],
+         "artist": {
+          "id": "e9f36ff5-9d0d-4511-84a9-99a7e3c8d65e",
+          "name": "Наташа Шнайдер"
+         },
+         "target-credit": "Natasha Shneider"
+        },
+        {
+         "type": "mix",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "29599574-f3f3-447b-97db-23bb82fd2d04",
+          "name": "Eric Valentine"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "f3907034-e3db-499b-b46e-0d485ce3dbf7",
+          "name": "Nick Oliveri"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 13,
+      "title": "A Song for the Deaf / Feel Good Hit of the Summer (reprise)",
+      "recording": {
+       "id": "aabac2d9-bc28-4606-bdd3-ce39652dc014",
+       "title": "A Song for the Deaf / Feel Good Hit of the Summer (reprise)",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "166a9b47-3494-4c8c-a60b-53aad88e8796",
+          "name": "Joe Marlett"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "f294d4d7-8d86-4699-9fdd-27bc24742e81",
+          "name": "Kevin Szymanski"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "4d5f891d-9bce-45ae-ad86-912dd27252fa",
+          "name": "Dave Grohl"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "guitar"
+         ],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "bass guitar"
+         ],
+         "artist": {
+          "id": "f3907034-e3db-499b-b46e-0d485ce3dbf7",
+          "name": "Nick Oliveri"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "mix",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "29599574-f3f3-447b-97db-23bb82fd2d04",
+          "name": "Eric Valentine"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "a9126556-f555-4920-9617-6e013f8228a7",
+          "name": "Mark Lanegan"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 14,
+      "title": "Mosquito Song",
+      "recording": {
+       "id": "1eca06b7-fc28-4b67-a00f-57d076277d46",
+       "title": "Mosquito Song",
+       "relations": [
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "166a9b47-3494-4c8c-a60b-53aad88e8796",
+          "name": "Joe Marlett"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "engineer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "assistant"
+         ],
+         "artist": {
+          "id": "f294d4d7-8d86-4699-9fdd-27bc24742e81",
+          "name": "Kevin Szymanski"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "4d5f891d-9bce-45ae-ad86-912dd27252fa",
+          "name": "Dave Grohl"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "percussion"
+         ],
+         "artist": {
+          "id": "4d5f891d-9bce-45ae-ad86-912dd27252fa",
+          "name": "Dave Grohl"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "guitar"
+         ],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "guitar",
+          "piano"
+         ],
+         "artist": {
+          "id": "89df2e69-b89b-410d-b792-00898f4e5abc",
+          "name": "Alain Johannes"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "guitar"
+         ],
+         "artist": {
+          "id": "bc2ce40d-a5fc-425e-86e9-343246fec679",
+          "name": "Ana Lenchantin"
+         },
+         "target-credit": "Anna Lenchantin"
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "guitar"
+         ],
+         "artist": {
+          "id": "45b1e8a0-0757-4b0f-99e2-bbba94af1557",
+          "name": "Paz Lenchantin"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "accordion"
+         ],
+         "artist": {
+          "id": "439dea99-a1c4-4d83-bf2a-4120bf2edb97",
+          "name": "Molly McGuire"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "bass guitar"
+         ],
+         "artist": {
+          "id": "f3907034-e3db-499b-b46e-0d485ce3dbf7",
+          "name": "Nick Oliveri"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "keyboard"
+         ],
+         "artist": {
+          "id": "e9f36ff5-9d0d-4511-84a9-99a7e3c8d65e",
+          "name": "Наташа Шнайдер"
+         },
+         "target-credit": "Natasha Shneider"
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "drums (drum set)"
+         ],
+         "artist": {
+          "id": "4f101d2a-ba9f-48f8-bdb4-c26130fbf17c",
+          "name": "Gene Trautmann"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "instrument",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "guitar"
+         ],
+         "artist": {
+          "id": "526c5b19-e016-49bc-a8c3-5b196a0e47f4",
+          "name": "Dean Ween"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "mix",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "f5ae53ea-9d7b-4463-857d-b4bc09d7e441",
+          "name": "Adam Kasper"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "29599574-f3f3-447b-97db-23bb82fd2d04",
+          "name": "Eric Valentine"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "vocal",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [
+          "lead vocals"
+         ],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 15,
+      "title": "The Lost Art of Keeping a Secret (live)",
+      "recording": {
+       "id": "3b0ca090-c600-490a-be38-1dd7349a9a1f",
+       "title": "The Lost Art of Keeping a Secret",
+       "relations": [
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 16,
+      "title": "Everybody’s Gonna Be Happy (Non-LP version)",
+      "recording": {
+       "id": "c6061dab-462f-4b21-ab0f-05e7f5e430d7",
+       "title": "Everybody’s Gonna Be Happy",
+       "relations": [
+        {
+         "type": "mix",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "89df2e69-b89b-410d-b792-00898f4e5abc",
+          "name": "Alain Johannes"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "dbecd515-aac9-4e7b-808e-bca22809c316",
+          "name": "Josh Homme"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "producer",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "29599574-f3f3-447b-97db-23bb82fd2d04",
+          "name": "Eric Valentine"
+         },
+         "target-credit": ""
+        },
+        {
+         "type": "recording",
+         "direction": "backward",
+         "target-type": "artist",
+         "attributes": [],
+         "artist": {
+          "id": "89df2e69-b89b-410d-b792-00898f4e5abc",
+          "name": "Alain Johannes"
+         },
+         "target-credit": ""
+        }
+       ]
+      }
+     },
+     {
+      "position": 17,
+      "title": "Gonna Leave You (Spanish version)",
+      "recording": {
+       "id": "5a702f51-b85a-4fa7-accc-d2f384acd37a",
+       "title": "Gonna Leave You (Spanish version)",
+       "relations": []
+      }
+     }
+    ]
+   }
+  ]
+ }
+}
