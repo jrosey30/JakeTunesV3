@@ -465,8 +465,10 @@ describe('pauseForCallsEnabled — the setting as read from app-settings.json', 
     assert.equal(pauseForCallsEnabled({ calls: { pauseForCalls: false } }), false)
   })
   test('OFF while "move music to another speaker during calls" is configured', () => {
-    assert.equal(pauseForCallsEnabled({ audio: { callRouteEnabled: true, callRouteDeviceLabel: 'Kitchen HomePod' } }), false)
-    assert.equal(pauseForCallsEnabled({ audio: { callRouteEnabled: true, callRouteDeviceLabel: '' } }), true, 'enabled but no speaker picked = not configured')
+    // Pausing wins over "move music to another speaker during calls" (Jake's
+    // Mac has that on): the setting alone decides.
+    assert.equal(pauseForCallsEnabled({ audio: { callRouteEnabled: true, callRouteDeviceLabel: 'Kitchen HomePod' } }), true)
+    assert.equal(pauseForCallsEnabled({ calls: { pauseForCalls: false }, audio: { callRouteEnabled: true, callRouteDeviceLabel: 'Kitchen HomePod' } }), false)
     assert.equal(pauseForCallsEnabled({ audio: { callRouteEnabled: false, callRouteDeviceLabel: 'Kitchen HomePod' } }), true)
   })
 })

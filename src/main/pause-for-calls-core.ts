@@ -364,10 +364,9 @@ export function respawnDelay(attempt: number): number | null {
 export function pauseForCallsEnabled(settings: unknown): boolean {
   const s = (settings && typeof settings === 'object' ? settings : {}) as Record<string, unknown>
   const calls = (s.calls && typeof s.calls === 'object' ? s.calls : {}) as Record<string, unknown>
-  if (calls.pauseForCalls === false) return false
-  const audio = (s.audio && typeof s.audio === 'object' ? s.audio : {}) as Record<string, unknown>
-  const routing = audio.callRouteEnabled === true
-    && typeof audio.callRouteDeviceLabel === 'string'
-    && audio.callRouteDeviceLabel.trim().length > 0
-  return !routing
+  // The setting alone decides. "Move music to another speaker during calls"
+  // (audio.callRouteEnabled) does not stand this down: Jake's own Mac has
+  // that on (BoomAudio), and he asked for pausing, default on — with both
+  // on, the music pauses, and the route feature has nothing left to move.
+  return calls.pauseForCalls !== false
 }
