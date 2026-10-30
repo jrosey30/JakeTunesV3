@@ -575,6 +575,45 @@
   font-size: var(--font-label);
   color: #3a3a3a;
 }
+/* The bar's one child fills the row so the summary keeps its exact centre
+   while the update indicator sits at the right edge (2026-10-30). */
+.statusbar {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.statusbar-info {
+  white-space: nowrap;
+}
+/* "Update ready · Install" — text-only, the text-safe orange (--accent-text,
+   #C14201; the brand fill orange is ~3.2:1 at this size), same type as the
+   rest of the bar. A real <button>, so Tab reaches it and Enter/Space press it. */
+.statusbar-update {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  margin: 0;
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--accent-text, #C14201);
+  white-space: nowrap;
+  cursor: default;
+  -webkit-app-region: no-drag;
+}
+.statusbar-update:hover { text-decoration: underline; }
+.statusbar-update:focus-visible {
+  outline: 2px solid var(--brand-orange, #FC5501);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+.statusbar-update--busy,
+.statusbar-update--busy:hover { text-decoration: none; }
 
 /* Titlebar breadcrumb — replaces the static "JakeTunes" label. Left-aligned
    right after the ‹ › history buttons; opts out of the window drag region so

@@ -484,7 +484,9 @@ export type ImportFormatChoice = 'aac-128' | 'aac-256' | 'aac-320' | 'alac' | 'a
 // runtime dep on howler.
 import type { EqSettings } from './audio/eq'
 import type { IpodDeviceMarker, IpodIdentity } from '../common/ipod-identity'
+import type { UpdateReadyState } from '../common/update-ready'
 export type { EqSettings } from './audio/eq'
+export type { UpdateReadyState } from '../common/update-ready'
 
 export interface AppSettings {
   crossfade: {
@@ -670,6 +672,11 @@ declare global {
       getAppVersion: () => Promise<string>
       onMenuAction: (callback: (action: string) => void) => () => void
       onAppNotice: (callback: (notice: { text: string; kind?: 'error' | 'info' | 'success'; durationMs?: number }) => void) => () => void
+      // 2026-10-30 — "Update ready": a staged build waiting at the install gate.
+      // ⚠️ TWIN: src/preload/index.ts (onUpdateReady / getUpdateReady / installUpdateNow).
+      onUpdateReady: (callback: (state: UpdateReadyState | null) => void) => () => void
+      getUpdateReady: () => Promise<{ ok: boolean; state: UpdateReadyState | null }>
+      installUpdateNow: () => Promise<{ ok: boolean; error?: string }>
       setLibraryContext: (ctx: string) => Promise<void>
       musicmanChat: (messages: { role: string; content: string }[], context?: string) => Promise<{ ok: boolean; text: string; textRaw: string; createdPlaylist?: { name: string; trackIds: number[] } | null }>
       musicmanSpeak: (text: string, fast?: boolean, voiceId?: string) => Promise<{ ok: boolean; audio?: string; error?: string }>
