@@ -175,6 +175,20 @@ if (typeof window !== 'undefined') {
 // Howler doesn't surface. Attached to the underlying <audio> element
 // once Howler has loaded (we grab it from howl._sounds[0]._node).
 const NATIVE_AUDIO_EVENTS = ['stalled', 'suspend', 'waiting', 'error', 'emptied', 'abort', 'canplay', 'playing'] as const
+// Howler hands out <audio> elements from Howler._html5AudioPool, so the
+// element behind a new Howl is usually one an earlier Howl used, with our
+// listeners from that earlier attach still on it. Attach once per element,
+// or every event logs N identical lines (1 → 8 per burst over one session,
+// audio-events.log 2026-10-31).
+const nativeListenersAttached = new WeakSet<HTMLAudioElement>()
+// Howl.unload() parks the element on a 0-second silent WAV data: URL
+// (howler.js _clearSound) to drop the old media resource. The CSP
+// media-src has no data:, so Chromium refuses that placeholder load
+// (MediaError code 4, "Media load rejected by URL safety check"). The old
+// resource is already gone (abort + emptied precede the refusal) and the
+// element is discarded, so this is an expected outcome, not an error. The
+// renderer never plays media from a data: URL (structural rail), so a
+// data: src on a Howler element can only be that placeholder.
 function attachNativeListeners(howl: Howl, label: string) {
   type HowlInternal = Howl & { _sounds?: Array<{ _node?: HTMLAudioElement }> }
   const node = (howl as HowlInternal)._sounds?.[0]?._node
@@ -182,10 +196,19 @@ function attachNativeListeners(howl: Howl, label: string) {
     logAudioEvent(`${label}.no-native-node`)
     return
   }
+  if (nativeListenersAttached.has(node)) return
+  nativeListenersAttached.add(node)
   for (const ev of NATIVE_AUDIO_EVENTS) {
     node.addEventListener(ev, () => {
-      const detail = ev === 'error' ? { code: node.error?.code, msg: node.error?.message } : undefined
-      logAudioEvent(`${label}.native:${ev}`, detail)
+      if (ev !== 'error') {
+        logAudioEvent(`${label}.native:${ev}`)
+        return
+      }
+      if (node.src.startsWith('data:')) {
+        logAudioEvent(`${label}.native:unload-placeholder`)
+        return
+      }
+      logAudioEvent(`${label}.native:${ev}`, { code: node.error?.code, msg: node.error?.message })
     })
   }
 }
