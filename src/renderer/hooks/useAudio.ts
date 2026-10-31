@@ -523,18 +523,41 @@ export function prefetchTrackImmediate(track: Track) {
   })
 }
 
+// 2026-10-31 — ONE playback snapshot for every useAudio() instance.
+// The Howl callbacks, the rAF loop and runNaturalEnd belong to whichever
+// instance's playTrack started the current lineage — a VIEW's instance,
+// since that is where the click lands (AlbumDetailView, SongsView…). Each
+// instance used to keep its own per-instance ref, refreshed only while that
+// instance rendered. Navigate away from the view and its ref froze at the
+// last render while its closures kept driving playback for the rest of
+// the album: the gapless preload read queue[frozenIndex + 1] — the song
+// already playing — so at the seam gaplessNextTrack never matched the
+// real next track and runNaturalEnd fell to standard-advance: the wrong
+// buffer, already started, was hard-stopped and the next song loaded
+// cold (~0.5 s of silence; Perfecth seams 21 + 22). Every instance
+// consumes the same PlaybackProvider, so one module-wide snapshot written
+// by every mounted instance on render always holds the latest committed
+// state, and a frozen instance's closures read it like a live one.
+// App.tsx's primary instance never unmounts, so it is never stale.
+// Same for the library tracks the natural-end play count reads.
+type PlaybackSnapshot = ReturnType<typeof usePlayback>['state']
+let sharedStateRef: { current: PlaybackSnapshot } | null = null
+let sharedTracksRef: { current: Track[] } | null = null
 
 export function useAudio(opts?: { primary?: boolean }) {
   const { state, dispatch } = usePlayback()
   const { state: libState, dispatch: libDispatch } = useLibrary()
   const dispatchRef = useRef(dispatch)
   dispatchRef.current = dispatch
-  const stateRef = useRef(state)
-  stateRef.current = state
+  // Shared across instances, not per instance — see sharedStateRef above.
+  if (sharedStateRef) sharedStateRef.current = state
+  else sharedStateRef = { current: state }
+  const stateRef = sharedStateRef
   const libDispatchRef = useRef(libDispatch)
   libDispatchRef.current = libDispatch
-  const tracksRef = useRef(libState.tracks)
-  tracksRef.current = libState.tracks
+  if (sharedTracksRef) sharedTracksRef.current = libState.tracks
+  else sharedTracksRef = { current: libState.tracks }
+  const tracksRef = sharedTracksRef
 
   // Brief 015c: track dispatchRef freshness. useReducer's dispatch is
   // referentially stable, so this useEffect should fire exactly ONCE
@@ -1099,6 +1122,7 @@ export function useAudio(opts?: { primary?: boolean }) {
             const el = elementOf(sharedHowl)
             sdx('arm', {
               out: stateRef.current.nowPlaying?.title?.slice(0, 24),
+              in: gaplessNextTrack ? gaplessNextTrack.title.slice(0, 24) : null,
               remainingMs: Math.round(remaining * 1000),
               msUntilEnd: Math.round(msUntilEnd),
               tailTrimMs: Math.round(tailTrimSecForUrl(outgoingUrl) * 1000),
@@ -1771,6 +1795,16 @@ export function useAudio(opts?: { primary?: boolean }) {
         // gets the same treatment for symmetry / defense in depth.
         const promotedQueueIndex = ni
         next.once('end', () => {
+          {
+            const el = elementOf(next)
+            sdx('onend', {
+              out: nt.title.slice(0, 24),
+              src: 'gapless-promote',
+              elT: el ? +el.currentTime.toFixed(3) : null,
+              elDur: el ? +el.duration.toFixed(3) : null,
+              scheduledStartAt: seamScheduled ? +seamScheduled.scheduledStartAt.toFixed(4) : null,
+            })
+          }
           runNaturalEndRef.current?.(nt, next, nextEndedHolder, promotedQueueIndex)
         })
         // REMOVED in 4.0.12: the matching auto-resume handler on the
@@ -2000,7 +2034,14 @@ export function useAudio(opts?: { primary?: boolean }) {
       }
 
       // Standard advance — preload didn't match (or wasn't ready).
-      sdx('branch', { path: 'standard-advance', hadPreload: !!gaplessNextHowl, bufReady: !!seamIncomingBuffer })
+      sdx('branch', {
+        path: 'standard-advance',
+        hadPreload: !!gaplessNextHowl,
+        preload: gaplessNextTrack ? gaplessNextTrack.title.slice(0, 24) : null,
+        next: nextTrack.title.slice(0, 24),
+        bufReady: !!seamIncomingBuffer,
+        scheduled: !!seamScheduled,
+      })
       cleanupGaplessPreload()
       dx('playtrack.dispatch', {
         site: 'standard-advance',
