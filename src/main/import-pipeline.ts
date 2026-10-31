@@ -374,6 +374,22 @@ export function codecForCopiedSource(ext: string, probedCodec: string): string {
 // function they all share.
 let importChain: Promise<unknown> = Promise.resolve()
 
+/**
+ * A numeric tag (disc number / disc count) as the library stores it: the
+ * tag's value when it is a positive number, otherwise BLANK — never a
+ * stand-in 0.
+ *
+ * music-metadata reports `disk.no: null` for a file with no disc tag, and
+ * this importer stored that as 0 (983 rows by 2026-10-31). Readers that sort
+ * by disc read that 0 as "disc 0" and floated an untagged song above disc 1
+ * — QOTSA "Perfecth" opened with track 9 on the phone. Every reader now
+ * treats 0 as blank; new rows simply carry no disc fields (JSON drops
+ * undefined), the same shape a tag re-read (tag-writer.ts) stores.
+ */
+export function numberTagOrBlank(v: number | null | undefined): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined
+}
+
 export function runImportExclusive<T>(fn: () => Promise<T>): Promise<T> {
   const run = importChain.then(fn, fn)
   importChain = run.then(
@@ -508,8 +524,8 @@ async function importOneFileLocked(
       year: common.year ? String(common.year) : '',
       trackNumber: common.track?.no || 0,
       trackCount: common.track?.of || 0,
-      discNumber: common.disk?.no || 0,
-      discCount: common.disk?.of || 0,
+      discNumber: numberTagOrBlank(common.disk?.no),
+      discCount: numberTagOrBlank(common.disk?.of),
     }
 
     if (doConvert) {
@@ -590,8 +606,8 @@ async function importOneFileLocked(
       path: `:iPod_Control:Music:${subDir}:${fileName}`,
       trackNumber: common.track?.no || 0,
       trackCount: common.track?.of || 0,
-      discNumber: common.disk?.no || 0,
-      discCount: common.disk?.of || 0,
+      discNumber: numberTagOrBlank(common.disk?.no),
+      discCount: numberTagOrBlank(common.disk?.of),
       playCount: 0,
       dateAdded: trackTime.toISOString(),
       fileSize: fileStats.size,

@@ -26,6 +26,7 @@ import {
   importOneFile,
   initImportPipeline,
   nextLibraryId,
+  numberTagOrBlank,
   computeNextLibraryId,
   runImportExclusive,
   shouldEnqueueStreamConvert,
@@ -316,5 +317,41 @@ describe('Brief 170 — import ID allocation', () => {
       const rel = String(r.track?.path).replace(/:/g, '/').replace(/^\/iPod_Control\/Music\//, '')
       assert.ok(existsSync(join(musicDir, rel.split('/').slice(-2).join('/'))), `destination exists for id ${String(r.track?.id)}`)
     }
+  })
+})
+
+describe('disc tags on import (2026-10-31: "why is perfecth out of order")', () => {
+  test('a missing, null or 0 disc tag is blank — never a stand-in 0', () => {
+    assert.equal(numberTagOrBlank(undefined), undefined)
+    assert.equal(numberTagOrBlank(null), undefined)
+    assert.equal(numberTagOrBlank(0), undefined)
+    assert.equal(numberTagOrBlank(NaN), undefined)
+    assert.equal(numberTagOrBlank(-1), undefined)
+    assert.equal(numberTagOrBlank(1), 1)
+    assert.equal(numberTagOrBlank(2), 2)
+  })
+
+  test('importOneFile stores no disc fields for a file with no disc tag', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jt-disc-blank-'))
+    const musicDir = join(dir, 'iPod_Control/Music')
+    mkdirSync(musicDir, { recursive: true })
+    const src = join(dir, 'untagged.alac')
+    writeFileSync(src, pcm16Wav(44100, 4410))
+    initImportPipeline(minimalDeps({
+      musicDir: () => musicDir,
+      libraryPath: () => join(dir, 'library.json'),
+      computeAudioFingerprint: async () => 'sha1:disc0|100',
+    }))
+    const r = await importOneFile(src, 7, 'alac', new Set())
+    assert.equal(r.ok, true)
+    const row = r.track as unknown as Record<string, unknown>
+    assert.equal(row.discNumber, undefined, 'discNumber must be blank, not 0')
+    assert.equal(row.discCount, undefined, 'discCount must be blank, not 0')
+    // What library.json will hold: no disc keys at all.
+    const json = JSON.parse(JSON.stringify(row)) as Record<string, unknown>
+    assert.equal('discNumber' in json, false)
+    assert.equal('discCount' in json, false)
+    // The track number pair is untouched by this change.
+    assert.equal(row.trackNumber, 0)
   })
 })
