@@ -40,6 +40,7 @@ import type { Track, Playlist, SmartPlaylistId } from '../types'
 import { isTop25Rankable } from '../../common/top25-rankable'
 import { buildTasteProfile, tasteScore } from './tasteScore'
 import { pickBestOfYear } from '../../common/best-of-year'
+import { SOURCE_PLAYLISTS, sourcePlaylistTracks } from '../../common/source-playlists'
 
 /** The four built-in, sync-eligible smart playlists and their iPod /
  *  sidebar display names. Keep these names in lockstep with
@@ -56,6 +57,8 @@ export const BUILTIN_SMART_PLAYLISTS: ReadonlyArray<{ id: SmartPlaylistId; name:
   // 'youd-star' RETIRED from the roster (2026-08-07, Jake: "songs id star
   // should be eliminated") — evaluator case kept so stale state degrades
   // gracefully; SMART_PLAYLIST_NAMES keeps the name to hide iPod dupes.
+  // TikTok / Bandcamp / Savant (2026-11-01) are sidebar-only, like Listen More
+  // Weekly: where-a-song-came-from lists, not something the iPod needs.
 ]
 
 /** Every smart playlist's display title by id — the page's heading
@@ -71,6 +74,9 @@ export const SMART_PLAYLIST_TITLES: Record<string, string> = {
   'recently-played': 'Recently Played',
   'top-25': 'Top 25 Most Played',
   'top-rated': 'Starred',
+  // Where a song came from (2026-11-01): TikTok / Bandcamp / Savant — one
+  // definition in src/common/source-playlists.ts (⚠️ TWIN of homemini's).
+  ...Object.fromEntries(SOURCE_PLAYLISTS.map((p) => [p.key, p.name])),
   'youd-star': "Songs You'd Star",
   'musicman-picks': 'The Music Man Picks',
   'megan-picks': 'Megan Picks',
@@ -79,8 +85,11 @@ export const SMART_PLAYLIST_TITLES: Record<string, string> = {
 
 // Selection limits — ONE place. Display and sync read the same numbers
 // so the iPod playlist is exactly what the app shows.
-const RECENTLY_ADDED_LIMIT  = 50
-const RECENTLY_PLAYED_LIMIT = 50
+// 2026-11-01 Jake: "100 recently played songs. recently added should be expanded
+// to 100." ⚠️ TWIN: JakeTunesMobile backend/src/util/playlistOverrides.ts
+// RECENTLY_ADDED_LIMIT / RECENTLY_PLAYED_LIMIT — the phone shows the same 100.
+const RECENTLY_ADDED_LIMIT  = 100
+const RECENTLY_PLAYED_LIMIT = 100
 const TOP_25_LIMIT          = 25
 const YOUD_STAR_LIMIT       = 50
 const YOUD_STAR_PER_ARTIST  = 4   // diversity cap so the list spreads across artists
@@ -159,6 +168,13 @@ export function evaluateSmartPlaylist(id: SmartPlaylistId, tracks: Track[]): Tra
       }
       return out
     }
+
+    case 'tiktok':
+    case 'bandcamp':
+    case 'savant':
+      // Where a song came from (2026-11-01). Newest import first, no cap.
+      // Sidebar-only: not in BUILTIN_SMART_PLAYLISTS, so never to the iPod.
+      return sourcePlaylistTracks(tracks, id)
 
     default:
       // AI picks (musicman/megan/dj-hands) + anything unknown.

@@ -92,6 +92,12 @@ const smartPlaylists: { label: string; id: SmartPlaylistId }[] = [
   { label: 'Recently Played', id: 'recently-played' },
   { label: 'Top 25 Most Played', id: 'top-25' },
   { label: 'Starred', id: 'top-rated' },
+  // Where a song came from (2026-11-01): TikTok / Bandcamp / Savant, newest
+  // import first (src/common/source-playlists.ts). Sidebar only — never to
+  // the iPod. ⚠️ TWIN: JakeTunesMobile ios PlaylistGroups.smartOrder (same order).
+  { label: 'TikTok', id: 'tiktok' },
+  { label: 'Bandcamp', id: 'bandcamp' },
+  { label: 'Savant', id: 'savant' },
 ]
 
 // iPod playlists with these names duplicate the built-in smart playlists — hide them.
