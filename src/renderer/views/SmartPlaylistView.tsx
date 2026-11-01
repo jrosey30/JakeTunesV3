@@ -446,6 +446,9 @@ export default function SmartPlaylistView() {
   const defaultHidden = useMemo(() => {
     switch (playlistId) {
       case 'recently-added':  return new Set(['playCount', 'channelMode'])             // show dateAdded
+      case 'tiktok':
+      case 'bandcamp':
+      case 'savant':          return new Set(['playCount', 'channelMode'])             // newest import first: show dateAdded
       case 'recently-played': return new Set(['dateAdded', 'playCount', 'channelMode']) // recency-driven; both noisy
       case 'top-25':          return new Set(['dateAdded', 'channelMode'])              // playCount drives the list, keep it visible
       case 'top-rated':       return new Set(['dateAdded', 'playCount', 'channelMode']) // Starred is binary; counts add noise

@@ -31,6 +31,7 @@ export const SMART_PLAYLIST_NAMES = new Set([
   `Best of ${new Date().getFullYear()}`,
   'Recently Added', 'Recently Played', 'Top 25 Most Played', 'My Top Rated', 'Starred',
   "Songs You'd Star",
+  'TikTok', 'Bandcamp', 'Savant',   // where a song came from (2026-11-01)
   'Classical Music', // empty iPod smart playlist
 ])
 

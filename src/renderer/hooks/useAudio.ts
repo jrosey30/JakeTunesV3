@@ -1622,14 +1622,23 @@ export function useAudio(opts?: { primary?: boolean }) {
       // Increment play count (look up latest count from tracks ref)
       const latest = tracksRef.current.find(tr => tr.id === track.id)
       const newCount = (Number(latest?.playCount ?? track.playCount) || 0) + 1
+      // 4.0 background signal: epoch ms of natural completion. One stamp for
+      // the session's tracks AND the overrides file.
+      const playedAt = Date.now()
       libDispatchRef.current({
         type: 'UPDATE_TRACKS',
-        updates: [{ id: track.id, field: 'playCount', value: String(newCount) }],
+        updates: [
+          { id: track.id, field: 'playCount', value: String(newCount) },
+          // 2026-11-01 (Jake: "recently played needs to show recently played"):
+          // lastPlayedAt reached only metadata-overrides.json, never this
+          // session's tracks, so Recently Played (utils/smartPlaylists.ts reads
+          // Track.lastPlayedAt) showed nothing played since the last launch.
+          { id: track.id, field: 'lastPlayedAt', value: String(playedAt) },
+        ],
       })
       window.electronAPI.saveMetadataOverride(track.id, 'playCount', String(newCount))
-      // 4.0 background signal: epoch ms of natural completion.
       const playedFp = `${(track.title || '').toLowerCase().trim()}|${(track.artist || '').toLowerCase().trim()}|${track.duration || 0}`
-      window.electronAPI.saveMetadataOverride(track.id, 'lastPlayedAt', String(Date.now()), playedFp)
+      window.electronAPI.saveMetadataOverride(track.id, 'lastPlayedAt', String(playedAt), playedFp)
       window.electronAPI.recordPlay?.({ title: track.title, artist: track.artist, album: track.album, genre: track.genre, pct: 100 })
 
       const s = stateRef.current

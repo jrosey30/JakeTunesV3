@@ -87,6 +87,15 @@ export interface Track {
   // bottom (undefined → 0). Updated on every star action (per-cell
   // toggle, right-click bulk Star, Get Info checkbox).
   starredAt?: number
+  // Where the song came from (2026-11-01; src/common/source-playlists.ts).
+  // `source` = the store the desktop importer pulled the file from
+  // ('bandcamp' | 'streamrip' | 'squid'; main/import-pipeline.ts stamps it).
+  // `addedVia` = how it was asked for on the phone ('tiktok' | 'instagram' |
+  // 'savant' | 'search' | …), stamped by homemini on the import row and
+  // absorbed with it. Both feed the TikTok / Bandcamp / Savant playlists.
+  // ⚠️ TWIN: JakeTunesMobile backend/src/types.ts Track.source / addedVia.
+  source?: string
+  addedVia?: string
 }
 
 export interface Playlist {
@@ -290,6 +299,8 @@ export interface ItunesSuggestion {
   durationSecs?: number
 }
 export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 'top-rated' | 'youd-star' | 'best-of-year' | 'musicman-picks' | 'megan-picks' | 'dj-hands-picks' | 'listen-more-weekly' | 'on-repeat'
+  // 2026-11-01 — where a song came from (src/common/source-playlists.ts)
+  | 'tiktok' | 'bandcamp' | 'savant'
   // 2026-10-24 — one per month of this year's releases ('month-2026-09'; src/common/release-months.ts)
   | `month-${string}`
 
