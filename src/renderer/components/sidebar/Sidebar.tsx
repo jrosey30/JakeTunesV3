@@ -91,6 +91,10 @@ const smartPlaylists: { label: string; id: SmartPlaylistId }[] = [
   { label: 'Recently Added', id: 'recently-added' },
   { label: 'Recently Played', id: 'recently-played' },
   { label: 'Top 25 Most Played', id: 'top-25' },
+  // The Top 1000 Quiz's ranking as a playlist (2026-11-02, Jake: "why isnt the top 1000 a
+  // playlist i can listen to"): homemini's list, rank 1 first (src/renderer/top1000List.ts).
+  // Sidebar only — the Original iPod already gets the 1000 as its pool.
+  { label: 'Top 1000', id: 'top-1000' },
   { label: 'Starred', id: 'top-rated' },
   // Where a song came from (2026-11-01): TikTok / Bandcamp / Savant, newest
   // import first (src/common/source-playlists.ts). Sidebar only — never to

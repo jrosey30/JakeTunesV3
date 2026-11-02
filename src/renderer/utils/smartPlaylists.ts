@@ -73,6 +73,8 @@ export const SMART_PLAYLIST_TITLES: Record<string, string> = {
   'recently-added': 'Recently Added',
   'recently-played': 'Recently Played',
   'top-25': 'Top 25 Most Played',
+  // The Top 1000 Quiz's ranking (2026-11-02): homemini's list, resolved in SmartPlaylistView.
+  'top-1000': 'Top 1000',
   'top-rated': 'Starred',
   // Where a song came from (2026-11-01): TikTok / Bandcamp / Savant — one
   // definition in src/common/source-playlists.ts (⚠️ TWIN of homemini's).

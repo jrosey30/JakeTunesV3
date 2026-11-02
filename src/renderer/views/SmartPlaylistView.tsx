@@ -8,6 +8,7 @@ import { attachClipToBroadcast, detachClipFromBroadcast } from '../audio/eq'
 import { evaluateSmartPlaylist, SMART_PLAYLIST_TITLES as TITLES } from '../utils/smartPlaylists'
 import { smartPlaylistCover } from '../utils/playlistCovers'
 import { useListenMoreWeekly } from '../listenMoreWeekly'
+import { useTop1000List } from '../top1000List'
 import { useHomeShelves } from '../homeShelves'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { useReleaseMonths } from '../releaseMonths'
@@ -344,6 +345,8 @@ export default function SmartPlaylistView() {
   // Listen More Weekly (2026-10-20): homemini's weekly playlist — its song
   // order, resolved against this Mac's library (shared ids).
   const weekly = useListenMoreWeekly()
+  // Top 1000 (2026-11-02): the quiz's ranked list from homemini, rank 1 first.
+  const top1000 = useTop1000List()
   // On Repeat (2026-10-28): the Home shelves document's list — the same
   // rows the Home's ON REPEAT row draws (its head), resolved here.
   const regularTracks = useRegularLibraryTracks(libState.tracks)
@@ -369,6 +372,12 @@ export default function SmartPlaylistView() {
     if (monthYm) {
       const byId = new Map(libState.tracks.map((t) => [t.id, t]))
       return monthTrackIds(releaseMonths, monthYm).map((id) => byId.get(id)).filter((t): t is Track => t !== undefined)
+    }
+    if (playlistId === 'top-1000') {
+      // The Top 1000 Quiz's ranking (2026-11-02): homemini's list in rank order, resolved here.
+      if (!top1000) return []
+      const byId = new Map(libState.tracks.map((t) => [t.id, t]))
+      return top1000.map((id) => byId.get(id)).filter((t): t is Track => t !== undefined)
     }
 
     // 4.4.46: the four built-in smart playlists are now evaluated by
@@ -426,7 +435,7 @@ export default function SmartPlaylistView() {
         .slice(0, 25))
     }
     return own(evaluateSmartPlaylist(playlistId, everywhere))
-  }, [playlistId, libState.tracks, everywhere, picks, topWindow, windowedCounts, weekly, onRepeat, monthYm, releaseMonths])
+  }, [playlistId, libState.tracks, everywhere, picks, topWindow, windowedCounts, weekly, onRepeat, monthYm, releaseMonths, top1000])
 
   // Apply search filter — every word must appear somewhere across all fields
   const filteredTracks = useMemo(() => {
@@ -451,6 +460,7 @@ export default function SmartPlaylistView() {
       case 'savant':          return new Set(['playCount', 'channelMode'])             // newest import first: show dateAdded
       case 'recently-played': return new Set(['dateAdded', 'playCount', 'channelMode']) // recency-driven; both noisy
       case 'top-25':          return new Set(['dateAdded', 'channelMode'])              // playCount drives the list, keep it visible
+      case 'top-1000':        return new Set(['dateAdded', 'channelMode'])              // rank order from the quiz; plays stay visible
       case 'top-rated':       return new Set(['dateAdded', 'playCount', 'channelMode']) // Starred is binary; counts add noise
       case 'best-of-year':    return new Set(['dateAdded', 'channelMode'])              // the signals that ranked it stay visible
       default:                return new Set(['dateAdded', 'playCount', 'channelMode']) // picks views — meta-light

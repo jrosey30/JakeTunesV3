@@ -15,6 +15,7 @@ import onRepeatCover from '../assets/playlist-covers/on-repeat.jpg'
 import recentlyAddedCover from '../assets/playlist-covers/recently-added.jpg'
 import recentlyPlayedCover from '../assets/playlist-covers/recently-played.jpg'
 import top25Cover from '../assets/playlist-covers/top-25.jpg'
+import top1000Cover from '../assets/playlist-covers/top-1000.jpg'
 import starredCover from '../assets/playlist-covers/top-rated.jpg'
 import tiktokCover from '../assets/playlist-covers/tiktok.jpg'
 import bandcampCover from '../assets/playlist-covers/bandcamp.jpg'
@@ -32,6 +33,7 @@ const FIXED_COVERS: Readonly<Partial<Record<SmartPlaylistId, string>>> = {
   'recently-added': recentlyAddedCover,
   'recently-played': recentlyPlayedCover,
   'top-25': top25Cover,
+  'top-1000': top1000Cover,
   'top-rated': starredCover,
   'tiktok': tiktokCover,
   'bandcamp': bandcampCover,
