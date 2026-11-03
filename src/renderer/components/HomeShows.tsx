@@ -225,8 +225,10 @@ function ShowConcertCard({ item, kind, nowMs, today, openLink, going, snippet }:
         stamped={stamped}
         onPlay={() => snippet.toggle(item)}
       />
+      {/* A night that has passed is a record: no marks, no tickets, no set lists (2026-11-03, the
+          phone twin's review). */}
+      {canMark(item, today) && (
       <div className="home-concert-actions">
-        {canMark(item, today) && <>
         <button
           type="button"
           className={`home-concert-interested${marked.interested ? ' home-concert-interested--on' : ''}`}
@@ -251,7 +253,6 @@ function ShowConcertCard({ item, kind, nowMs, today, openLink, going, snippet }:
           <GoingIcon on={on} />
           <span>Going</span>
         </button>
-        </>}
         {/* Several nights: each night's own tickets are in the sheet, so its pill takes this slot
             and every card's pills stay on one line. */}
         {several ? (
@@ -268,6 +269,7 @@ function ShowConcertCard({ item, kind, nowMs, today, openLink, going, snippet }:
           </button>
         )}
       </div>
+      )}
     </div>
   )
 }

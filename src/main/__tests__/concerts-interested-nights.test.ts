@@ -137,7 +137,8 @@ describe('the Interested / Going filter', () => {
     assert.equal(canMark({ date: '2026-11-03' }, '2026-11-03'), true)
     assert.equal(canMark({ date: '2026-11-19' }, '2026-11-03'), true)
     const shows = readFileSync(new URL('../../renderer/components/HomeShows.tsx', import.meta.url), 'utf-8')
-    assert.match(shows, /\{canMark\(item, today\) && <>/)
+    // the whole action row: no Interested / Going, no Tickets, no "What they've been playing"
+    assert.match(shows, /\{canMark\(item, today\) && \(\n      <div className="home-concert-actions">/)
   })
 
     it('the click not yet confirmed counts: un-marking a night takes it out at once', () => {
