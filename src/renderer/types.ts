@@ -1173,7 +1173,7 @@ declare global {
       // 2026-10-19 — Home › Shows: homemini's ranked concerts feed; see src/common/concerts-feed.ts.
       concertsGet?: () => Promise<{ ok: boolean; state?: import('../common/concerts-feed').ConcertsFeedState }>
       concertsRsvps?: () => Promise<{ ok: boolean; items: import('../common/concerts-going').RsvpEntry[] }>
-      concertsSetGoing?: (eventId: string, going: boolean, show?: import('../common/concerts-going').RsvpShow) => Promise<{ ok: boolean }>
+      concertsSetGoing?: (eventId: string, status: boolean | 'going' | 'interested' | null, show?: import('../common/concerts-going').RsvpShow) => Promise<{ ok: boolean }>
       concertsSetAttended?: (eventId: string, answer: 'yes' | 'no' | null) => Promise<{ ok: boolean }>
       concertsLately?: (artist: string) => Promise<{ ok: boolean; lately: import('../common/concerts-going').Lately | null }>
       concertsRefresh?: () => Promise<{ ok: boolean; state?: import('../common/concerts-feed').ConcertsFeedState }>

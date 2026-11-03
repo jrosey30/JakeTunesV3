@@ -36,8 +36,10 @@ import {
 export interface FetchReply { ok: boolean; status: number; json(): Promise<unknown>; headers?: { get(name: string): string | null } }
 export type FetchLike = (url: string, init?: Record<string, unknown>) => Promise<FetchReply>
 
-export const CONCERTS_PATH = '/api/concerts'
-export const CONCERTS_DISCOVER_PATH = '/api/concerts/discover'
+// ?with=interested (2026-11-03): homemini shows the 'interested' RSVP only to an app that asks;
+// older phones can't read it.
+export const CONCERTS_PATH = '/api/concerts?with=interested'
+export const CONCERTS_DISCOVER_PATH = '/api/concerts/discover?with=interested'
 export const CONCERTS_CACHE_FILE = 'concerts.desktop-cache.json'
 /** A cached copy older than this (since homemini last confirmed it) has missed
  *  a week of announcements — the fallback asks the sources itself instead. */

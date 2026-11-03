@@ -14,7 +14,7 @@
  * Going / I went (2026-10-29) — ../concerts-going-client.ts, rules in
  * ../../common/concerts-going.ts; answers live on homemini only:
  *   'concerts:rsvps'          → { ok, items }   every RSVP (the "Were you there?" ask included)
- *   'concerts:set-going'      (eventId, going: boolean, show?) → { ok }
+ *   'concerts:set-going'      (eventId, status: 'going' | 'interested' | true | null, show?) → { ok }
  *   'concerts:set-attended'   (eventId, 'yes' | 'no' | null)   → { ok }
  *   'concerts:lately'         (artist) → { ok, lately }  "What they've been playing"; null = draw nothing
  *
@@ -118,7 +118,9 @@ export function registerConcertsIpc(ipc: IpcRegistrar, host: ConcertsIpcHost): C
     if (!id) return { ok: false }
     const snap = show && typeof show === 'object' && text((show as RsvpShow).artist) && text((show as RsvpShow).venue) && text((show as RsvpShow).date, 10)
       ? (show as RsvpShow) : null
-    const ok = await going.setGoing(id, on === true ? 'going' : null, snap)
+    // true is the older renderer's "going"; 'interested' since 2026-11-03.
+    const status = on === true || on === 'going' ? 'going' : on === 'interested' ? 'interested' : null
+    const ok = await going.setGoing(id, status, snap)
     // The feed carries `rsvp` per item: re-read it so the cards agree.
     if (ok) tick(true)
     return { ok }

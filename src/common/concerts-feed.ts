@@ -22,6 +22,7 @@
  * Bandsintown + venue-calendar fallback, is made so here.
  */
 import { nameKey } from './fold-text.ts'
+import { parseRsvpStatus, type RsvpShow, type RsvpStatus } from './concerts-going.ts'
 
 export const DAY_MS = 86_400_000
 /** The badge lasts a week from when the collector first saw the show.
@@ -40,6 +41,8 @@ export interface RunNight {
   url: string | null
   soldOut: boolean
   onSale: string | null
+  /** This night's RSVP as homemini found it (under any of its ids); absent from older answers. */
+  rsvp?: RsvpStatus | null
 }
 
 export interface ConcertLink { source: string; url: string }
@@ -77,10 +80,23 @@ export interface ConcertItem {
   borough: string | null
   room: string | null
   links: ConcertLink[]
-  rsvp: 'going' | 'not' | null
+  rsvp: RsvpStatus | null
   runNights: number
   runDates: string[]
   runShows: RunNight[]
+  /** Every NYC night of this card's act, all its runs, soonest first (homemini 2026-11-03;
+   *  empty for a one-off, or from an older homemini). Read it through nightsOf(). */
+  actNights: ActNight[]
+}
+
+/** One night of an act, offered as its own option (Jake 2026-11-03: "for anything saying '3 or 4
+ *  nights' I should be able to see each night as an option"). Its id is its RSVP key. */
+export interface ActNight extends RunNight {
+  venue: string
+  neighbourhood: string | null
+  borough: string | null
+  /** The headliner, when the act opens that night. */
+  openingFor: string | null
 }
 
 export interface ConcertsReply {
@@ -122,13 +138,23 @@ const link = (v: unknown): string | null => {
   return s && /^https?:\/\//i.test(s) ? s : null
 }
 
+function parseActNight(raw: unknown): ActNight | null {
+  const n = parseNight(raw)
+  if (!n) return null
+  const r = raw as Record<string, unknown>
+  const venue = str(r.venue)
+  if (!venue) return null
+  return { ...n, venue, neighbourhood: str(r.neighbourhood), borough: str(r.borough), openingFor: str(r.openingFor) }
+}
+
 function parseNight(raw: unknown): RunNight | null {
   if (!raw || typeof raw !== 'object') return null
   const r = raw as Record<string, unknown>
   const id = str(r.id)
   const date = str(r.date)
   if (!id || !date || !YMD.test(date)) return null
-  return { id, date, time: str(r.time), url: link(r.url), soldOut: r.soldOut === true, onSale: str(r.onSale) }
+  const rsvp = parseRsvpStatus(r.rsvp)
+  return { id, date, time: str(r.time), url: link(r.url), soldOut: r.soldOut === true, onSale: str(r.onSale), ...(rsvp ? { rsvp } : {}) }
 }
 
 /** One wire item → ConcertItem, or null when it isn't a show we can draw.
@@ -159,7 +185,8 @@ export function parseConcertItem(raw: unknown, fallbackRank = 0): ConcertItem | 
       : { id: `${id}#${d}`, date: d, time: null, url, soldOut: false, onSale: null }))
   if (!runShows.some((n) => n.date === date)) runShows.unshift({ id, date, time, url, soldOut, onSale })
   runShows.sort((a, b) => a.date.localeCompare(b.date))
-  const rsvp = r.rsvp === 'going' || r.rsvp === 'not' ? r.rsvp : null
+  const rsvp = parseRsvpStatus(r.rsvp)
+  const actNights = (Array.isArray(r.actNights) ? r.actNights : []).map(parseActNight).filter((n): n is ActNight => n !== null)
   return {
     id, name, url, date, time, venue,
     city: str(r.city), state: str(r.state),
@@ -185,6 +212,7 @@ export function parseConcertItem(raw: unknown, fallbackRank = 0): ConcertItem | 
     runNights: runShows.length,
     runDates: runShows.map((n) => n.date),
     runShows,
+    actNights: actNights.length > 1 ? actNights : [],
   }
 }
 
@@ -260,12 +288,15 @@ export function pruneToUpcoming(items: ConcertItem[], today: string): ConcertIte
   for (const it of items) {
     const ahead = it.runShows.filter((n) => n.date >= today)
     if (ahead.length === 0) continue
-    if (ahead.length === it.runShows.length && it.date >= today) { out.push(it); continue }
+    // The act's other nights pass too (a list of one is no list: a one-off carries none).
+    const actAhead = it.actNights.filter((n) => n.date >= today)
+    const actNights = actAhead.length > 1 ? actAhead : []
+    if (ahead.length === it.runShows.length && it.date >= today) { out.push(actAhead.length === it.actNights.length ? it : { ...it, actNights }); continue }
     const next = ahead[0]
     out.push({
       ...it, id: next.id, date: next.date, time: next.time, url: next.url ?? it.url,
       soldOut: next.soldOut, onSale: next.onSale,
-      runShows: ahead, runDates: ahead.map((n) => n.date), runNights: ahead.length,
+      runShows: ahead, runDates: ahead.map((n) => n.date), runNights: ahead.length, actNights,
     })
   }
   return out
@@ -453,6 +484,117 @@ export function nightUrl(item: ConcertItem, night: RunNight): string | null {
   return night.url ?? ticketUrl(item)
 }
 
+// ── each night as its own option (Jake, 2026-11-03) ─────────────────────
+// "add all LCD soundsystem shows in queens and in brooklyn, same with angine in brooklyn.
+// Honestly for anything saying '3 or 4 nights' I should be able to see each night as an
+// option. And I want a button to indicate that I am interested in going. And a filter to see
+// what I am interested in going, actually going to, keep track of it."
+// ⚠️ TWIN: JakeTunesMobile ios Concerts.swift (the night sheet and the rail's filter).
+
+/** Every night a card offers: its act's nights across all its runs (homemini's actNights),
+ *  else its own run's nights (an older homemini, or a one-off). */
+export function nightsOf(item: ConcertItem): ActNight[] {
+  if (item.actNights.length > 1) return item.actNights
+  const openingFor = cardBill(item).openingFor
+  return item.runShows.map((n) => ({
+    ...n, rsvp: n.rsvp ?? (n.id === item.id ? item.rsvp : null),
+    venue: item.venue, neighbourhood: item.neighbourhood, borough: item.borough, openingFor,
+  }))
+}
+
+/** "Thu, Nov 19 · 8 PM" — one night in the picker. Read as a calendar date, no zone math. */
+export function nightWhen(ymd: string, time: string | null): string {
+  const { y, m, d } = ymdParts(ymd)
+  const day = new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' })
+  const t = formatShowTime(time)
+  return t ? `${day} · ${t}` : day
+}
+
+/** A picker's nights in rooms: consecutive nights at one room are one group, in date order
+ *  (LCD Soundsystem's residency: Knockdown Center, Brooklyn Steel, Knockdown Center again). */
+export function nightsByRoom(nights: readonly ActNight[]): Array<{ venue: string; where: string | null; nights: ActNight[] }> {
+  const out: Array<{ venue: string; where: string | null; nights: ActNight[] }> = []
+  for (const n of nights) {
+    const last = out[out.length - 1]
+    if (last && last.venue === n.venue) last.nights.push(n)
+    else out.push({ venue: n.venue, where: n.borough ?? n.neighbourhood, nights: [n] })
+  }
+  return out
+}
+
+/** The card for one night of an item: that night's id, date, time, link and room, one night long. */
+export function nightCard(item: ConcertItem, night: ActNight): ConcertItem {
+  const sameRoom = night.venue === item.venue
+  return {
+    ...item,
+    id: night.id, date: night.date, time: night.time, url: night.url ?? (sameRoom ? item.url : null),
+    soldOut: night.soldOut, onSale: night.onSale, rsvp: night.rsvp ?? null,
+    venue: night.venue, neighbourhood: night.neighbourhood, borough: night.borough,
+    room: sameRoom ? item.room : null,
+    links: night.url ? [{ source: 'night', url: night.url }] : sameRoom ? item.links : [],
+    runNights: 1, runDates: [night.date],
+    runShows: [{ id: night.id, date: night.date, time: night.time, url: night.url, soldOut: night.soldOut, onSale: night.onSale }],
+    actNights: [],
+  }
+}
+
+/** A card from homemini's snapshot of a marked night that is in neither list any more (it has
+ *  passed, or the feed dropped it). Its line is the "Were you there?" answer, when there is one;
+ *  a ticket link only if the snapshot kept one. */
+export function snapshotCard(eventId: string, show: RsvpShow, status: RsvpStatus | null, attended?: 'yes' | 'no'): ConcertItem {
+  const url = link(show.url)
+  const headliners = show.headliners?.length ? show.headliners : [show.artist]
+  const opening = !headliners.some((h) => nameKey(h) === nameKey(show.artist))
+  return {
+    id: eventId, name: show.artist, url, date: show.date, time: show.time ?? null, venue: show.venue,
+    city: null, state: null, artists: [...headliners, ...(show.support ?? [])], rank: 0, tier: 6,
+    reason: attended === 'yes' ? 'You went' : attended === 'no' ? 'You didn\u2019t go' : '',
+    matchedArtist: show.artist, matchRole: opening ? 'support' : 'headliner', relatedTo: null,
+    headliners, support: show.support ?? [], onSale: null, soldOut: false, justAnnounced: false, firstSeenAt: null,
+    neighbourhood: show.neighbourhood ?? null, northBrooklyn: false, distanceMiles: null, borough: show.borough ?? null, room: null,
+    links: url ? [{ source: 'snapshot', url }] : [], rsvp: status,
+    runNights: 1, runDates: [show.date], runShows: [{ id: eventId, date: show.date, time: show.time ?? null, url, soldOut: false, onSale: null }],
+    actNights: [],
+  }
+}
+
+export type MarkFilter = 'interested' | 'going'
+
+/**
+ * The nights marked `filter`, each as its own card: the ones still to come, soonest first, then
+ * the ones that have passed (kept by homemini's snapshot), newest first. `statusOf` is the one
+ * answer per night the Home draws (a click not yet confirmed, else homemini's).
+ */
+export function markedNights(
+  filter: MarkFilter,
+  lists: ReadonlyArray<ReadonlyArray<ConcertItem>>,
+  entries: ReadonlyArray<{ eventId: string; show?: RsvpShow; attended?: 'yes' | 'no' }>,
+  statusOf: (night: { id: string; rsvp?: RsvpStatus | null }) => RsvpStatus | null,
+  today: string,
+): { upcoming: ConcertItem[]; past: ConcertItem[] } {
+  const seen = new Set<string>()
+  const cards: ConcertItem[] = []
+  for (const list of lists) {
+    for (const item of list) {
+      for (const night of nightsOf(item)) {
+        if (seen.has(night.id) || statusOf(night) !== filter) continue
+        seen.add(night.id)
+        cards.push(nightCard(item, night))
+      }
+    }
+  }
+  for (const e of entries) {
+    if (seen.has(e.eventId) || !e.show || statusOf({ id: e.eventId }) !== filter) continue
+    seen.add(e.eventId)
+    cards.push(snapshotCard(e.eventId, e.show, filter, e.attended))
+  }
+  const key = (c: ConcertItem) => `${c.date} ${c.time ?? ''}`
+  return {
+    upcoming: cards.filter((c) => c.date >= today).sort((a, b) => key(a).localeCompare(key(b))),
+    past: cards.filter((c) => c.date < today).sort((a, b) => key(b).localeCompare(key(a))),
+  }
+}
+
 // ── offline fallback (the pre-feed path, reshaped) ──────────────────────
 
 /** Bandsintown's shape (external.ts TourDate) and venues.ts's VenueShow. */
@@ -523,7 +665,7 @@ export function legacyConcertItems(tour: LegacyShow[], venues: LegacyShow[], now
       onSale: null, soldOut: false, justAnnounced: false, firstSeenAt: null,
       neighbourhood: null, northBrooklyn: false, distanceMiles: null, borough: null, room: null,
       links: url ? [{ source: run.source, url }] : [], rsvp: null,
-      runNights: runShows.length, runDates: runShows.map((n) => n.date), runShows,
+      runNights: runShows.length, runDates: runShows.map((n) => n.date), runShows, actNights: [],
     }
   })
 }
