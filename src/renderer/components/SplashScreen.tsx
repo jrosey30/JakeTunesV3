@@ -1,22 +1,30 @@
 /**
- * THE COLD BOOT — retargeted to the 2.0 mark (2026-08-09).
+ * THE COLD BOOT — now the LINEAGE (2026-11-02).
  *
- * The app doesn't fade a logo in; it powers the mark on, and the animation is
- * driven by the logo's own pixels rather than by CSS on a rectangle:
+ * Jake: "make the jaketunes intro page an evolution of all the logos we have
+ * used for jaketunes." So the app no longer powers on one mark; it powers on
+ * the first mark we ever had and walks forward through every one since,
+ * landing on the mark that ships. The marks and their dates are the ones git
+ * remembers (src/common/splash-eras.ts has the list and the timeline):
  *
  *   0.00s  dark. a single scanline snaps on and expands — CRT/LCD power-on.
- *   0.15s  the mark COMES INTO FOCUS: the real logo bitmap, drawn smooth
- *          (anti-aliased from the 1024px art), resolves out of a soft blur
- *          while it scales up a hair and a warm sheen passes over it. One
- *          continuous motion — no grid, no cells. (2026-09-02: the 2.0 boot
- *          assembled the tile from 9px cells with per-cell ignition flashes
- *          and a CRT scanline overlay; Jake: "a little blocky for some
- *          reason… deserves to be more elegant". It was blocky on purpose,
- *          and the purpose was wrong.)
- *   1.05s  the NOTE lights: a bloom rises off the glyph itself, so the note
+ *   0.15s  April 2026, the portrait, COMES INTO FOCUS the way the old boot
+ *          resolved its one mark: the real bitmap, drawn smooth, out of a
+ *          soft blur while it scales up a hair.
+ *          then May's cream note, August's brush J, the pixel iPod — each
+ *          dissolving in over the one before it and holding a beat, with its
+ *          month and name captioned under the stage.
+ *   2.19s  the pixel note — the shipping mark — lands, and a warm sheen
+ *          passes over it as it does.
+ *   2.43s  the NOTE lights: a bloom rises off the glyph itself, so the note
  *          reads as struck-and-ringing rather than printed.
- *   1.45s  settle. the chord blooms (playIntroStinger), the wordmark springs,
- *          the EQ starts dancing, progress runs.
+ *   2.63s  settle. the chord blooms (playIntroStinger, started late enough
+ *          to land here), the wordmark springs, the EQ starts dancing,
+ *          progress runs. The caption clears: the settled frame is the mark.
+ *
+ * Every tile is clipped to the plate's squircle when it is baked, so five
+ * marks drawn across seven months with four different corner radii share one
+ * silhouette; whatever a mark leaves bare in a corner shows the plate's ink.
  *
  * ⚠️ WHY THE GLYPH IS MEASURED, NOT HARDCODED. The 5.0 version of this file
  * was written around the OLD mark (a pixel iPod) and carried its anatomy as
@@ -25,19 +33,26 @@
  * both aimed at nothing — a cream smudge and a spinning ring floating over
  * solid orange. So the bloom now finds the glyph at load time by flooding the
  * outer paper from the border (see markGlyph) and lighting whatever bright
- * shape is left. Change the logo again and this follows it.
+ * shape is left. Change the logo again and this follows it — and the old
+ * marks are back on screen now, which is exactly why the bloom lights only
+ * the shipping one.
  *
  * WHY CANVAS: a pixel-art mark deserves a pixel-native reveal. Reading the
- * bitmap once and compositing cells is one draw call per frame with no DOM
- * churn, and it scales with the art instead of faking it with masks.
+ * bitmaps once and compositing is one draw call per frame with no DOM churn,
+ * and it scales with the art instead of faking it with masks.
  *
  * ACCESSIBILITY: prefers-reduced-motion jumps straight to the settled frame —
- * no sweep, no ignition, no shake.
+ * no sweep, no lineage, no shake.
  */
 
 import { useEffect, useRef, useState } from 'react'
 import logoUrl from '../assets/jaketunes-logo.png'
 import wordmarkUrl from '../assets/jaketunes-wordmark.png'
+import portraitUrl from '../assets/logo-history/2026-04-portrait.png'
+import creamNoteUrl from '../assets/logo-history/2026-05-cream-note.png'
+import brushJUrl from '../assets/logo-history/2026-08-brush-j.png'
+import pixelIpodUrl from '../assets/logo-history/2026-08-pixel-ipod.png'
+import { ERA_STEP_MS, LINEAGE_MS, SPLASH_ERAS, eraAt, eraLabelAt, type SplashEra } from '../../common/splash-eras'
 import { playIntroStinger } from '../utils/introStinger'
 
 const STAGES = [
@@ -48,20 +63,37 @@ const STAGES = [
   'Almost there…',
 ]
 
-// Boot choreography, ms from mount. The stinger's chord blooms at ~0.9s, so
-// assembly finishes just before it and the settle lands on the bloom.
-const T_POWER_ON = 150     // scanline expand completes
-const T_ASSEMBLE = 1050    // last pixel cell lands
-const T_LIT = 1250         // the note's bloom reaches full
-const T_SETTLE = 1450      // boot complete, hand off to the settled frame
-const FOCUS_BLUR_PX = 7    // how soft the mark starts before it resolves
+/** Every mark in the lineage, keyed as splash-eras.ts names them. The last
+ *  one is the shipping mark — the same asset the rest of the app uses. */
+const ERA_URLS: Record<SplashEra['key'], string> = {
+  portrait: portraitUrl,
+  'cream-note': creamNoteUrl,
+  'brush-j': brushJUrl,
+  'pixel-ipod': pixelIpodUrl,
+  'pixel-note': logoUrl,
+}
+
+// Boot choreography, ms from mount.
+const T_POWER_ON = 150                      // scanline expand completes
+const T_LINEAGE = T_POWER_ON                // the first mark starts dissolving in
+const T_ASSEMBLE = T_LINEAGE + LINEAGE_MS   // the shipping mark is fully on screen
+const T_LIT = T_ASSEMBLE + 240              // the note's bloom reaches full
+const T_SETTLE = T_LIT + 200                // boot complete, hand off to the settled frame
+// The stinger's chord blooms ~0.9 s after it starts; when the boot was one
+// mark it was started at mount and the bloom (T_LIT = 1250) landed on it.
+// Start it later by exactly the lineage's length so the chord still lands
+// on the shipping mark's bloom.
+const T_STINGER = Math.max(0, T_LIT - 1250)
+/** When the shipping mark begins to dissolve in — the sheen rides this. */
+const T_LAST_ERA = T_LINEAGE + (SPLASH_ERAS.length - 1) * ERA_STEP_MS
+const FOCUS_BLUR_PX = 7    // how soft the first mark starts before it resolves
 const FOCUS_SCALE = 0.955  // how far in it starts before settling at 1
 
-/** The dark "screen off" field the mark ignites against. Matches the shape of
+/** The dark "screen off" field the marks ignite against. Matches the shape of
  *  the art exactly: since brand/make-icons.py the in-app mark is a full-canvas
  *  tile with only its corners cut away, on the same squircle proportion Apple
- *  uses (0.225 of the side). Any mismatch here shows as a dark fringe peeking
- *  out from behind the tile during assembly. */
+ *  uses (0.225 of the side). Every mark in the lineage is clipped to this same
+ *  shape when it is baked (see below). */
 const PLATE_INK = '#261208'
 const PLATE_INSET = 0
 const PLATE_RADIUS = 0.225
@@ -128,6 +160,15 @@ function markGlyph(px: Uint8ClampedArray, size: number): Glyph | null {
   return { cx: sx / n, cy: sy / n, w: maxX - minX + 1, h: maxY - minY + 1 }
 }
 
+function loadImage(src: string): Promise<HTMLImageElement | null> {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = () => resolve(null)
+    img.src = src
+  })
+}
+
 interface Props {
   /** True when App.tsx's load chain settles: progress snaps to 100%. */
   isReady: boolean
@@ -138,9 +179,13 @@ export default function SplashScreen({ isReady }: Props) {
   const [progress, setProgress] = useState(5)
   const [greeting] = useState(getGreeting)
   const [phase, setPhase] = useState<'boot' | 'settled'>('boot')
+  const [caption, setCaption] = useState('')
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
-  useEffect(() => { playIntroStinger() }, [])
+  useEffect(() => {
+    const id = window.setTimeout(() => playIntroStinger(), T_STINGER)
+    return () => window.clearTimeout(id)
+  }, [])
 
   // ── the boot itself ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -154,55 +199,74 @@ export default function SplashScreen({ isReady }: Props) {
     const ctx = canvas.getContext('2d')
     if (!ctx) return
     ctx.scale(dpr, dpr)
-    ctx.imageSmoothingEnabled = true    // the 1024px art downsamples smooth — no blocks
+    ctx.imageSmoothingEnabled = true    // the art downsamples smooth — no blocks
     ctx.imageSmoothingQuality = 'high'
 
     let raf = 0
     let cancelled = false
-    const img = new Image()
-    img.src = logoUrl
-    img.onload = () => {
+    void Promise.all(SPLASH_ERAS.map((e) => loadImage(ERA_URLS[e.key]))).then((imgs) => {
       if (cancelled) return
-      // Bake the mark once at display size; every frame composites from here.
-      // Baked at device resolution so the settled frame is crisp on Retina.
-      const off = document.createElement('canvas')
-      off.width = SIZE * dpr
-      off.height = SIZE * dpr
-      const octx = off.getContext('2d')
-      if (!octx) return
-      octx.imageSmoothingEnabled = true
-      octx.imageSmoothingQuality = 'high'
-      octx.drawImage(img, 0, 0, SIZE * dpr, SIZE * dpr)
-      const drawMark = (): void => { ctx.drawImage(off, 0, 0, SIZE, SIZE) }
+      const shipping = imgs[imgs.length - 1]
+      if (!shipping) return   // nothing to boot into; the app's own chrome follows anyway
 
-      // Find the glyph now, off the same buffer every frame composites from,
-      // so the bloom can never drift from the art it is lighting.
+      // Bake every mark once at display size, at device resolution so the
+      // settled frame is crisp on Retina, and clipped to the plate's squircle
+      // so the whole lineage shares one silhouette. A mark that failed to
+      // load is simply skipped by the dissolve (its slot shows the plate).
+      const bake = (img: HTMLImageElement | null): HTMLCanvasElement | null => {
+        if (!img) return null
+        const off = document.createElement('canvas')
+        off.width = SIZE * dpr
+        off.height = SIZE * dpr
+        const octx = off.getContext('2d')
+        if (!octx) return null
+        octx.imageSmoothingEnabled = true
+        octx.imageSmoothingQuality = 'high'
+        octx.beginPath()
+        octx.roundRect(0, 0, SIZE * dpr, SIZE * dpr, SIZE * dpr * PLATE_RADIUS)
+        octx.clip()
+        octx.drawImage(img, 0, 0, SIZE * dpr, SIZE * dpr)
+        return off
+      }
+      const baked = imgs.map(bake)
+      const drawEra = (i: number): void => {
+        const b = baked[i]
+        if (b) ctx.drawImage(b, 0, 0, SIZE, SIZE)
+      }
+      const drawMark = (): void => drawEra(baked.length - 1)
+
+      // Find the shipping mark's glyph now, off the same art every frame
+      // composites from, so the bloom can never drift from what it lights.
       let glyph: Glyph | null = null
       try {
         // Measure off a CSS-pixel copy so the glyph box is in draw units.
         const m = document.createElement('canvas')
         m.width = SIZE; m.height = SIZE
         const mctx = m.getContext('2d')
-        if (mctx) { mctx.drawImage(img, 0, 0, SIZE, SIZE); glyph = markGlyph(mctx.getImageData(0, 0, SIZE, SIZE).data, SIZE) }
+        if (mctx) { mctx.drawImage(shipping, 0, 0, SIZE, SIZE); glyph = markGlyph(mctx.getImageData(0, 0, SIZE, SIZE).data, SIZE) }
       } catch { glyph = null }   // tainted canvas: skip the bloom, keep the boot
 
       if (reduce) {
         ctx.clearRect(0, 0, SIZE, SIZE)
         drawMark()
+        setCaption('')
         setPhase('settled')
         return
       }
 
       const start = performance.now()
+      let captionShown = ''
       const draw = (now: number): void => {
         if (cancelled) return
         const t = now - start
         ctx.clearRect(0, 0, SIZE, SIZE)
 
-        // 0. The dark "screen off" plate the device ignites against. Without
-        //    it the boot was invisible — the splash field is warm off-white,
-        //    so a cream power-on line drew cream-on-cream (caught on the
-        //    first screencast, 2026-08-08).
+        // 0. The dark "screen off" plate the marks ignite against. It stays
+        //    under the whole lineage (the first mark dissolves in over it,
+        //    and it shows through any corner a mark leaves bare) and fades
+        //    as the shipping mark lands. Without it the boot was invisible —
+        //    the splash field is warm off-white, so a cream power-on line
+        //    drew cream-on-cream (caught on the first screencast, 2026-08-08).
         const plateFade = Math.min(1, Math.max(0, (t - (T_ASSEMBLE - 220)) / 420))
         if (plateFade < 1) {
           ctx.save()
@@ -229,26 +293,39 @@ export default function SplashScreen({ isReady }: Props) {
           return
         }
 
-        // 2. Focus: the whole mark resolves out of a soft blur while it eases
-        //    up from FOCUS_SCALE to 1 — one continuous, anti-aliased motion.
-        //    A warm sheen (a soft diagonal band) passes over it once as it
-        //    lands, so the tile reads as lit rather than switched on.
-        const ap = Math.min(1, (t - T_POWER_ON) / (T_ASSEMBLE - T_POWER_ON))
-        const eased = 1 - Math.pow(1 - ap, 3)
-        const blur = FOCUS_BLUR_PX * (1 - eased)
-        const scale = FOCUS_SCALE + (1 - FOCUS_SCALE) * eased
+        // 2. The lineage: each mark dissolves in over the one before it and
+        //    holds a beat (src/common/splash-eras.ts owns the timing). The
+        //    first mark also resolves out of a soft blur while it eases up
+        //    from FOCUS_SCALE to 1 — the old boot's focus, now the opening.
+        const frame = eraAt(t - T_LINEAGE)
+        if (frame.under !== null) drawEra(frame.under)
         ctx.save()
-        ctx.globalAlpha = Math.min(1, ap * 1.6)
-        ctx.filter = blur > 0.15 ? `blur(${blur.toFixed(2)}px)` : 'none'
-        ctx.translate(SIZE / 2, SIZE / 2)
-        ctx.scale(scale, scale)
-        ctx.translate(-SIZE / 2, -SIZE / 2)
-        drawMark()
+        if (frame.index === 0) {
+          const eased = 1 - Math.pow(1 - frame.blend, 3)
+          const blur = FOCUS_BLUR_PX * (1 - eased)
+          const scale = FOCUS_SCALE + (1 - FOCUS_SCALE) * eased
+          ctx.globalAlpha = Math.min(1, frame.blend * 1.6)
+          ctx.filter = blur > 0.15 ? `blur(${blur.toFixed(2)}px)` : 'none'
+          ctx.translate(SIZE / 2, SIZE / 2)
+          ctx.scale(scale, scale)
+          ctx.translate(-SIZE / 2, -SIZE / 2)
+        } else {
+          ctx.globalAlpha = frame.blend
+        }
+        drawEra(frame.index)
         ctx.restore()
-        if (ap > 0.35 && ap < 1) {
-          // sheen: a soft light band sweeping top-left → bottom-right, clipped
-          // to the tile's squircle so it never spills onto the paper.
-          const sp = (ap - 0.35) / 0.65
+
+        // The caption names whichever mark owns the screen; it clears with
+        // the settle (the settled frame is the mark alone).
+        const label = eraLabelAt(t - T_LINEAGE)
+        if (label !== captionShown) { captionShown = label; setCaption(label) }
+
+        // 3. Sheen: as the shipping mark dissolves in and lands, a soft light
+        //    band sweeps top-left → bottom-right once, clipped to the tile's
+        //    squircle so it never spills onto the paper — the tile reads as
+        //    lit rather than switched on.
+        const sp = (t - T_LAST_ERA) / (T_ASSEMBLE + 200 - T_LAST_ERA)
+        if (sp > 0 && sp < 1) {
           const x = -SIZE * 0.6 + sp * SIZE * 2.2
           const g = ctx.createLinearGradient(x, 0, x + SIZE * 0.55, SIZE * 0.55)
           g.addColorStop(0, 'rgba(255, 244, 220, 0)')
@@ -264,7 +341,7 @@ export default function SplashScreen({ isReady }: Props) {
           ctx.restore()
         }
 
-        // 3. The note lights. Centred on the glyph the loader measured, and
+        // 4. The note lights. Centred on the glyph the loader measured, and
         //    reaching a little past it, so the light reads as coming OFF the
         //    note rather than sitting on top of it. Composited with 'lighter'
         //    so it brightens the mark instead of washing a pale film over it —
@@ -292,10 +369,10 @@ export default function SplashScreen({ isReady }: Props) {
         }
 
         if (t < T_SETTLE + 260) raf = requestAnimationFrame(draw)
-        else { ctx.clearRect(0, 0, SIZE, SIZE); drawMark(); setPhase('settled') }
+        else { ctx.clearRect(0, 0, SIZE, SIZE); drawMark(); setCaption(''); setPhase('settled') }
       }
       raf = requestAnimationFrame(draw)
-    }
+    })
     return () => { cancelled = true; cancelAnimationFrame(raf) }
   }, [])
 
@@ -329,16 +406,19 @@ export default function SplashScreen({ isReady }: Props) {
       <div className="app-splash-bg-glow" />
       <div className="app-splash-inner">
         <div className="app-splash-stage" aria-hidden="true">
-          {/* Canvas paints the assembly and the note's own light; the scanline
-              and halo overlays sit on top so they can bloom independently.
-              (A click-wheel sweep used to live here too — it belonged to the
+          {/* Canvas paints the lineage and the note's own light; the halo
+              overlay sits on top so it can bloom independently. (A
+              click-wheel sweep used to live here too — it belonged to the
               old iPod mark and had nothing to sweep once the mark became a
-              note.) */}
+              note. That mark is back on screen for a beat now, as history;
+              the light is for the one that ships.) */}
           <canvas ref={canvasRef} className="app-splash-canvas" width={240} height={240} />
-          {/* (The CRT scanline overlay is gone with the cell assembly — it was
-              the other half of the blockiness.) */}
           <div className="app-splash-device-glow" />
         </div>
+        {/* The era under the stage: the month and the name of the mark on
+            screen while the lineage plays. Empty once settled, so the frame
+            the app appears over is the mark alone. */}
+        <div className="app-splash-era" aria-hidden="true">{caption}</div>
         {/* The wordmark IS the logo's wordmark — the same pixels lifted off
             the device's screen (Jake: "the text below the ipod logo needs to
             match the wordmark in the logo"), recolored to brand orange so it
@@ -351,7 +431,7 @@ export default function SplashScreen({ isReady }: Props) {
             <div
               key={i}
               className="app-splash-eq-bar"
-              style={{ animationDelay: `${1.55 + i * 0.11}s`, animationDuration: `${0.78 + (i % 3) * 0.14}s` }}
+              style={{ animationDelay: `${2.75 + i * 0.11}s`, animationDuration: `${0.78 + (i % 3) * 0.14}s` }}
             />
           ))}
         </div>
