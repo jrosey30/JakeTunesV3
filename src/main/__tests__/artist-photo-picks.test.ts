@@ -105,6 +105,25 @@ describe('artist photo picks', () => {
     } finally { t.done() }
   })
 
+  it('a pick homemini drops takes its saved photo with it (only while that file is still the pick), so the usual photo comes back', async () => {
+    const t = tmp()
+    try {
+      await createArtistPhotoPicks({ baseUrl: 'http://homemini:3000', dir: t.dir, stateFile: t.stateFile, fetchImpl: hub().fetchImpl, ...quiet }).pull()
+      assert.ok(existsSync(join(t.dir, 'cameron-winter.jpg')))
+      // homemini's ETag changes with the list, so the shorter list comes back as a 200.
+      const gone = hub({ list: { v: 1, picks: [] }, status: 200 })
+      const picks = createArtistPhotoPicks({ baseUrl: 'http://homemini:3000', dir: t.dir, stateFile: t.stateFile, fetchImpl: gone.fetchImpl, ...quiet })
+      await picks.pull()
+      assert.equal(existsSync(join(t.dir, 'cameron-winter.jpg')), false, 'the picked photo went with the pick')
+      assert.equal(picks.isPicked('cameron-winter'), false)
+      // Not the pick's bytes any more (Deezer's came back already): left alone.
+      await createArtistPhotoPicks({ baseUrl: 'http://homemini:3000', dir: t.dir, stateFile: t.stateFile, fetchImpl: hub({ status: 200 }).fetchImpl, ...quiet }).pull()
+      writeFileSync(join(t.dir, 'cameron-winter.jpg'), selfie)
+      await createArtistPhotoPicks({ baseUrl: 'http://homemini:3000', dir: t.dir, stateFile: t.stateFile, fetchImpl: gone.fetchImpl, ...quiet }).pull()
+      assert.deepEqual(readFileSync(join(t.dir, 'cameron-winter.jpg')), selfie)
+    } finally { t.done() }
+  })
+
   it('ready() never holds a launch longer than the cap when homemini hangs', async () => {
     const t = tmp()
     try {

@@ -10,7 +10,10 @@
  *   2. saves each picked photo as that act's artist-image (<slug>.jpg) from GET
  *      /api/artist-photo/<file>, only when the bytes on disk are not already it. The file name is
  *      the photo's content address, so a download is checked against it;
- *   3. answers isPicked(slug) for artist-photo.ts, whose Deezer refresh leaves a picked act alone.
+ *   3. answers isPicked(slug) for artist-photo.ts, whose Deezer refresh leaves a picked act alone;
+ *   4. when a pick goes from the list, removes the picked photo it saved (only if that file is still
+ *      the pick), so artist-photo.ts fetches Deezer's again on the next look, as homemini and the phone
+ *      do at once. Without this the Mac kept the old pick until Deezer's 30-day refresh.
  * Photos asked for in the first moments of a launch wait for the first pull (ready(), capped at
  * 1.5 s), so the picked face is the first one drawn.
  *
@@ -135,6 +138,17 @@ export function createArtistPhotoPicks(opts: ArtistPhotoPicksOptions) {
     return true
   }
 
+  /** A pick homemini no longer lists: drop the photo it saved, if that is still what <slug>.jpg holds. */
+  const unpick = async (p: ArtistPhotoPick): Promise<void> => {
+    const jpg = join(opts.dir, `${p.slug}.jpg`)
+    const have = await readFile(jpg).catch(() => null)
+    if (!have || photoFileOf(have) !== p.file) return
+    await unlink(jpg).catch((err: NodeJS.ErrnoException) => {
+      if (err?.code !== 'ENOENT') warn(`[artist-photo-picks] ${p.slug}.jpg could not be removed (${err?.message ?? err})`)
+    })
+    log(`[artist-photo-picks] ${p.artist}: pick removed on homemini; the usual photo comes back on the next look`)
+  }
+
   /** One pull: the list (304 while nothing moved), then every picked photo onto disk. Returns the slugs that changed. */
   const pull = async (): Promise<string[]> => {
     await load()
@@ -147,10 +161,12 @@ export function createArtistPhotoPicks(opts: ArtistPhotoPicksOptions) {
         if (!list) {
           problem('homemini sent a picks list this desktop cannot read; keeping the saved one')
         } else {
+          const gone = [...picks.values()].filter((p) => !list.some((q) => q.slug === p.slug))
           picks = new Map(list.map((p) => [p.slug, p]))
           etag = res.headers.get('etag') ?? ''
           lastProblem = ''
           await save().catch((err) => problem(`saving the list failed (${(err as Error)?.message ?? err})`))
+          for (const p of gone) await unpick(p)
         }
       } else if (res.status === 304) {
         lastProblem = ''
