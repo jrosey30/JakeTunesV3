@@ -64,6 +64,8 @@ import { createMusicManIntro, type IntroPhase, type MusicManIntro } from '../lau
 import { setNotice } from '../activity'
 import type { Track } from '../types'
 import type { DiggingCard } from '../../common/home-spotlight-doc'
+import { usePlayback } from '../context/PlaybackContext'
+import { nameKey } from '../../common/fold-text'
 import '../styles/home-tonight.css'
 
 type HomeAction =
@@ -158,6 +160,20 @@ const plural = (n: number, one: string, many: string): string => `${n.toLocaleSt
 /** "Oden & Fatzo" → "OF", "The Beatles" → "B": words with a letter or digit only. */
 const posterInitials = (name: string): string =>
   initials(name.replace(/^the\s+/i, '').split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).join(' ') || name)
+
+/**
+ * The concert cards' equalizer (home.css .home-concert-eq) on the poster of the act playing right
+ * now (2026-11-03, Jake: "The animation for the concert area is very very cool. Try to mimic that
+ * throughout the home page wherever it makes the most sense. Like not album art. But other
+ * things."). Its own component: playback state ticks with the position, and only this redraws.
+ */
+function DigPlaying({ artist }: { artist: string }): JSX.Element | null {
+  const { state: pb } = usePlayback()
+  const now = pb.nowPlaying
+  const key = nameKey(artist, '')
+  const on = pb.isPlaying && !!now && [now.artist, now.albumArtist].some((a) => !!a && nameKey(canonicalArtist(a), '') === key)
+  return on ? <span className="home-concert-eq tn-dig-eq" role="img" aria-label="Playing now"><i /><i /><i /></span> : null
+}
 
 export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispatch, playTrack }: Props): JSX.Element | null {
   const spot = useHomeSpotlight()
@@ -618,7 +634,8 @@ export default function TonightOnJakeTunes({ tracks, artworkMap, artIndex, dispa
                       {slug
                         ? <img src={`artist-image://${slug}.jpg`} alt="" draggable={false} decoding="async" />
                         : <span className="tn-poster-ini">{posterInitials(d.artist)}</span>}
-                      <span className="tn-dig-rank">{i + 1}</span>
+                      <span className="tn-dig-rank" style={{ '--i': i } as CSSProperties}>{i + 1}</span>
+                      <DigPlaying artist={d.artist} />
                     </span>
                     <span className="tn-dig-name">{d.artist}</span>
                     <span className="tn-dig-meta">{plural(d.plays30, 'play', 'plays')}{d.topSong ? <> · “{d.topSong.title}”</> : null}</span>
