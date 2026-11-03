@@ -956,7 +956,10 @@
   background: var(--white);
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 6px;
-  overflow: hidden;
+  /* clip, not hidden (2026-11-03): an overflow:hidden box is a scroll container, so the concert
+     photo's drift timeline (view(inline), below) followed this card instead of the rail and never
+     moved. clip clips the same and lets the timeline find the rail. */
+  overflow: clip;
   transition:
     box-shadow 180ms cubic-bezier(0.2, 0.65, 0.3, 1),
     transform 180ms cubic-bezier(0.2, 0.65, 0.3, 1),
@@ -1861,7 +1864,7 @@
   position: relative;
   flex: 0 0 100%;
   aspect-ratio: 4 / 3;
-  overflow: hidden;
+  overflow: clip;   /* not hidden: see .home-tour-card — the drift must follow the rail */
   background: linear-gradient(180deg, #ece6dc 0%, #e2dbcf 100%);
   border-bottom: 1px solid rgba(0, 0, 0, 0.06);
 }

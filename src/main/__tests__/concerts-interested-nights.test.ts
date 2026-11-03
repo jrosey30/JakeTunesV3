@@ -154,6 +154,17 @@ describe('the Home draws it', () => {
     assert.ok(!/localStorage/.test(shows), 'localStorage is banned in this renderer')
   })
 
+  it('the photo drifts with the rail: no box between it and the rail is a scroll container', () => {
+    // overflow:hidden makes a box a scroll container, and view(inline) follows the nearest one:
+    // the card's and the photo band's hidden overflow held the drift at 0 since 2026-10-29.
+    const rule = (sel: string) => css.match(new RegExp(`\\n${sel.replace('.', '\\.')} \\{[^}]*\\}`))?.[0] ?? ''
+    for (const sel of ['.home-tour-card', '.home-concert-photo']) {
+      assert.match(rule(sel), /overflow: clip;/, `${sel} clips without becoming a scroller`)
+      assert.doesNotMatch(rule(sel), /overflow: hidden;/)
+    }
+    assert.match(css, /animation-timeline: view\(inline\);/)
+  })
+
   it('the photos are 4:3 (272 × 204 on the rail, still 4:3 in See All)', () => {
     assert.match(css, /\.home-concert-photo \{\n  position: relative;\n  flex: 0 0 100%;\n  aspect-ratio: 4 \/ 3;/)
   })
