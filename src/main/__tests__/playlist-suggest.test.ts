@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { suggestForPlaylist, suggestFromVibeHits, type SuggestibleTrack } from '../../renderer/utils/playlistSuggest.ts'
+import { suggestForPlaylist, suggestFromVibeHits, keepStripSteady, suggestableOn, type SuggestibleTrack } from '../../renderer/utils/playlistSuggest.ts'
 
 let nextId = 1
 function t(over: Partial<SuggestibleTrack>): SuggestibleTrack {
@@ -452,3 +452,48 @@ test('a candidate whose tag the playlist never uses cannot ride a wrong AI label
   assert.ok(at('The Logical Song') >= 0 && at('The Logical Song') < at("It's Alright To Cry"), `real ${at('The Logical Song')} vs kids ${at("It's Alright To Cry")}`)
   assert.ok(at("It's Alright To Cry") >= 5, 'the kids song is not on the first strip')
 })
+
+// 2026-11-03 — "why is it when i add a song, the whole row refreshes?"
+test('adding a song replaces only its card; the other four keep their slots', () => {
+  const pl = [t({ artist: 'Playlist Band', album: 'P' })]
+  const [a, b, c, d, e] = ['A', 'B', 'C', 'D', 'E'].map((x) => t({ artist: x, album: `${x}1` }))
+  const fresh = t({ artist: 'F', album: 'F1' })
+  const shown = [a, b, c, d, e]
+  // He added c: it is on the playlist now. The re-centred pool ranks differently.
+  const after = [...pl, c]
+  const candidates = [fresh, e, d, b, a]
+  const strip = keepStripSteady(shown, candidates, suggestableOn(after, new Set()), 5)
+  assert.deepEqual(strip.map((x) => x.id), [a.id, b.id, fresh.id, d.id, e.id], 'c\'s slot took the next pick in place')
+})
+
+test('the refill is by an artist not already on the strip; any artist only when none is left', () => {
+  const [a, b] = ['A', 'B'].map((x) => t({ artist: x, album: `${x}1` }))
+  const added = t({ artist: 'C', album: 'C1' })
+  const anotherA = t({ artist: 'A', album: 'A2' })
+  const g = t({ artist: 'G', album: 'G1' })
+  const ok = suggestableOn([added], new Set())
+  assert.deepEqual(keepStripSteady([a, b, added], [anotherA, g], ok, 3).map((x) => x.id), [a.id, b.id, g.id])
+  assert.deepEqual(keepStripSteady([a, b, added], [anotherA], ok, 3).map((x) => x.id), [a.id, b.id, anotherA.id])
+})
+
+test('a ✕ empties its slot, and a song from an album now on the playlist leaves too', () => {
+  const [a, b, c] = ['A', 'B', 'C'].map((x) => t({ artist: x, album: `${x}1` }))
+  const sameAlbumAsC = t({ artist: 'C', album: 'C1' })
+  const refill = [t({ artist: 'X', album: 'X1' }), t({ artist: 'Y', album: 'Y1' })]
+  // ✕ on b
+  const afterNope = keepStripSteady([a, b, c], refill, suggestableOn([], new Set([b.id])), 3)
+  assert.deepEqual(afterNope.map((x) => x.id), [a.id, refill[0].id, c.id])
+  // he added sameAlbumAsC: c (same album) is no longer suggestable here
+  const afterAdd = keepStripSteady([a, b, c], refill, suggestableOn([sameAlbumAsC], new Set()), 3)
+  assert.deepEqual(afterAdd.map((x) => x.id), [a.id, b.id, refill[0].id])
+})
+
+test('take returns more picks from the same page start, so the strip itself does not move', () => {
+  const pl = [t({ artist: 'Turnstile', genre: 'Hardcore', year: 2021 })]
+  const lib = Array.from({ length: 40 }, (_, i) => t({ artist: `Band ${i}`, genre: 'Hardcore', year: 2021 }))
+  const five = suggestForPlaylist(pl, lib, 5, 1)
+  const fifteen = suggestForPlaylist(pl, lib, 5, 1, 15)
+  assert.equal(fifteen.length, 15)
+  assert.deepEqual(fifteen.slice(0, 5).map((x) => x.id), five.map((x) => x.id))
+})
+

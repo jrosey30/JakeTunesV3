@@ -105,6 +105,9 @@ export function suggestForPlaylist<T extends SuggestibleTrack>(
   library: T[],
   limit = 5,
   rotate = 0,
+  // How many picks to return (default `limit`): the page still starts at
+  // rotate × limit; more than `limit` gives keepStripSteady its refills.
+  take = limit,
 ): T[] {
   if (playlistTracks.length === 0 || library.length === 0 || limit <= 0) return []
   const inPlaylist = new Set(playlistTracks.map(t => t.id))
@@ -169,11 +172,12 @@ export function suggestForPlaylist<T extends SuggestibleTrack>(
   // too artist-poor to reach `limit` do we relax the cap by one and pass again
   // (→ 2 each, then 3…), so a playlist dominated by a few artists still fills.
   // No uncapped backfill — that was what produced same-artist clusters.
+  const want = Math.max(limit, take)
   const picks: T[] = []
   const perArtist = new Map<string, number>()
-  for (let cap = 1; picks.length < limit && cap <= limit; cap++) {
+  for (let cap = 1; picks.length < want && cap <= want; cap++) {
     for (const { t } of rotated) {
-      if (picks.length >= limit) break
+      if (picks.length >= want) break
       if (picks.includes(t)) continue
       const a = norm(t.albumArtist || t.artist)
       if ((perArtist.get(a) || 0) >= cap) continue
@@ -224,6 +228,9 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
   // this" signal there is, so it leads the taste term; the engine, then stars/plays,
   // are the fallbacks. Diag `tv` says which one spoke: 0 stars/plays, 1 engine, 2 quiz.
   quizLove?: ReadonlyMap<number, number>,
+  // How many picks to return (default `limit`): the page still starts at
+  // rotate × limit; more than `limit` gives keepStripSteady its refills.
+  take = limit,
 ): T[] {
   if (playlistTracks.length === 0 || hits.length === 0 || limit <= 0) return []
   // Seat eligibility by SEED SHARE (2026-08-07, Jake: "pool dos sometimes
@@ -420,9 +427,56 @@ export function suggestFromVibeHits<T extends SuggestibleTrack>(
   if (pool.length === 0) return []
   if (pool.length <= limit) return pool
   const start = (rotate * limit) % pool.length
+  const want = Math.max(limit, take)
   const picks: T[] = []
-  for (let i = 0; i < pool.length && picks.length < limit; i++) {
+  for (let i = 0; i < pool.length && picks.length < want; i++) {
     picks.push(pool[(start + i) % pool.length])
   }
   return picks
+}
+
+/**
+ * May `t` still be suggested on this playlist? The exclusions every pick
+ * passes (suggestFromVibeHits): not on it, not ✕'d / taken back (`hidden`),
+ * playable, and not from an album already on it.
+ */
+export function suggestableOn<T extends SuggestibleTrack>(playlistTracks: readonly T[], hidden: ReadonlySet<number>): (t: T) => boolean {
+  const albumKey = (t: T): string => norm(t.albumArtist || t.artist) + ' ' + norm(t.album)
+  const inPlaylist = new Set(playlistTracks.map((t) => t.id))
+  const albums = new Set(playlistTracks.map(albumKey).filter((k) => k.length > 1))
+  return (t) => !inPlaylist.has(t.id) && !hidden.has(t.id) && !t.audioMissing && !albums.has(albumKey(t))
+}
+
+/**
+ * The strip after the playlist changed under it (2026-11-03, Jake: "why is
+ * it when i add a song, the whole row refreshes? its like ok but annoying,
+ * there must be a better way"). Adding a song re-centred the pool and
+ * rebuilt all five cards. Now every card that may still be suggested keeps
+ * its slot; only a slot that emptied (the song he added, one he ✕'d, one the
+ * playlist now rules out) takes the best candidate not already showing, by
+ * an artist not already showing (any artist when no fresh one is left). ↻ is
+ * still how he asks for five new ones. `candidates` are the recomputed picks,
+ * best first, deeper than the strip.
+ */
+export function keepStripSteady<T extends SuggestibleTrack>(
+  shown: readonly T[],
+  candidates: readonly T[],
+  stillOk: (t: T) => boolean,
+  limit: number,
+): T[] {
+  const artistKey = (t: T): string => norm(t.albumArtist || t.artist)
+  const slots: Array<T | null> = shown.slice(0, limit).map((t) => (stillOk(t) ? t : null))
+  while (slots.length < limit) slots.push(null)
+  const ids = new Set(slots.filter((t): t is T => t !== null).map((t) => t.id))
+  const artists = new Set(slots.filter((t): t is T => t !== null).map(artistKey))
+  const usable = candidates.filter((c) => !ids.has(c.id) && stillOk(c))
+  for (let i = 0; i < slots.length; i++) {
+    if (slots[i] !== null) continue
+    const pick = usable.find((c) => !ids.has(c.id) && !artists.has(artistKey(c))) ?? usable.find((c) => !ids.has(c.id))
+    if (!pick) continue
+    slots[i] = pick
+    ids.add(pick.id)
+    artists.add(artistKey(pick))
+  }
+  return slots.filter((t): t is T => t !== null)
 }

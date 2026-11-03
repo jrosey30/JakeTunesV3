@@ -19,7 +19,7 @@ import { downloadMenuEntries, subscribeDownloads, downloadsVersion, isDownloaded
 import { formatAppDate } from '../utils/formatDate'
 import { canonicalArtist } from '../utils/artistAlias'
 import { albumKeyOf } from '../utils/albumKey'
-import { suggestForPlaylist, suggestFromVibeHits } from '../utils/playlistSuggest'
+import { suggestForPlaylist, suggestFromVibeHits, keepStripSteady, suggestableOn } from '../utils/playlistSuggest'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import AlbumArtImage from '../components/AlbumArtImage'
 import { CloseIcon } from '../components/TransportIcons'
@@ -235,6 +235,10 @@ export default function PlaylistView() {
   const [suggestRotate, setSuggestRotate] = useState(0)
   const [vibeHits, setVibeHits] = useState<Array<{ trackId: number; score: number; cluster: number }>>([])
   const [vibeClusterSeeds, setVibeClusterSeeds] = useState<number[]>([])
+  // Which playlist the hits were fetched for (2026-11-03): right after a
+  // switch they still belong to the last one, and the strip must not keep a
+  // row built from them (keepStripSteady below).
+  const [vibeHitsPid, setVibeHitsPid] = useState<string | undefined>(undefined)
   // Taste-ledger loop: learned per-playlist blend weights + the diag map
   // (each shown candidate's blend components) that verdict events carry.
   const [tasteWeights, setTasteWeights] = useState<Record<string, { vibe?: number; genre?: number; taste?: number; era?: number }>>({})
@@ -299,7 +303,7 @@ export default function PlaylistView() {
   useEffect(() => {
     let cancelled = false
     const ids = playlist?.trackIds ?? []
-    if (ids.length === 0) { setVibeHits([]); return }
+    if (ids.length === 0) { setVibeHits([]); setVibeHitsPid(playlist?.id); return }
     // This playlist's strip memory rides into the pool fetch (hidden songs
     // leave before the pool cut; ✕'d/taken-back ones steer away). Read fresh
     // here, never from state: on a playlist switch the state still holds the
@@ -314,45 +318,88 @@ export default function PlaylistView() {
         if (cancelled) return
         setVibeHits(r.ok ? r.hits : [])
         setVibeClusterSeeds(r.ok ? (r.clusterSeeds ?? []) : [])
+        setVibeHitsPid(pid)
       })
       .catch(() => { if (!cancelled) { setVibeHits([]); setVibeClusterSeeds([]) } })
     return () => { cancelled = true }
   }, [state.activePlaylistId, plMembershipKey, plHint])
-  const suggestions = useMemo(
+  const hitsHere = vibeHits.length > 0 && vibeHitsPid === playlist?.id
+  // The page's picks, best first, three strips deep: the strip shows the
+  // first five, and the rest refill a card he adds or ✕'s.
+  const STRIP = 5
+  const candidates = useMemo(
     () => {
       suggestDiag.current = new Map()
-      return vibeHits.length
-        ? suggestFromVibeHits(allPlaylistTracks, suggestPool, vibeHits, 5, suggestRotate, vibeClusterSeeds,
-            (playlist ? tasteWeights[playlist.id] ?? tasteWeights['*'] : undefined) ?? {}, suggestDiag.current, stripHidden, learnedTaste, quizLove)
-        : suggestForPlaylist(allPlaylistTracks, suggestPool.filter((t) => !stripHidden.has(t.id)), 5, suggestRotate)
+      return hitsHere
+        ? suggestFromVibeHits(allPlaylistTracks, suggestPool, vibeHits, STRIP, suggestRotate, vibeClusterSeeds,
+            (playlist ? tasteWeights[playlist.id] ?? tasteWeights['*'] : undefined) ?? {}, suggestDiag.current, stripHidden, learnedTaste, quizLove, STRIP * 3)
+        : suggestForPlaylist(allPlaylistTracks, suggestPool.filter((t) => !stripHidden.has(t.id)), STRIP, suggestRotate, STRIP * 3)
     },
-    [allPlaylistTracks, suggestPool, vibeHits, vibeClusterSeeds, suggestRotate, tasteWeights, playlist, stripHidden, learnedTaste, quizLove],
+    [allPlaylistTracks, suggestPool, hitsHere, vibeHits, vibeClusterSeeds, suggestRotate, tasteWeights, playlist, stripHidden, learnedTaste, quizLove],
   )
+  // The strip stays put (2026-11-03, Jake: "why is it when i add a song, the
+  // whole row refreshes?"). Adding a song re-fetches and re-centres the pool;
+  // the cards he didn't touch now keep their slots and only the emptied one
+  // takes the next pick (keepStripSteady). A new strip only on ↻, a playlist
+  // switch, or when the brain's hits replace the tag-match fallback.
+  const stripMemo = useRef<{ key: string; ids: number[] } | null>(null)
+  const suggestions = useMemo(() => {
+    const key = `${playlist?.id ?? ''}:${suggestRotate}:${hitsHere ? 'vibe' : 'tags'}`
+    const prev = stripMemo.current
+    let strip: Track[]
+    if (prev && prev.key === key && prev.ids.length > 0) {
+      const byId = new Map(suggestPool.map((t) => [t.id, t]))
+      const shown = prev.ids.map((id) => byId.get(id)).filter((t): t is Track => t !== undefined)
+      strip = keepStripSteady(shown, candidates, suggestableOn(allPlaylistTracks, stripHidden), STRIP)
+    } else {
+      strip = candidates.slice(0, STRIP)
+    }
+    stripMemo.current = { key, ids: strip.map((t) => t.id) }
+    return strip
+  }, [candidates, playlist?.id, suggestRotate, hitsHere, suggestPool, allPlaylistTracks, stripHidden])
   // Every strip the user actually sees is one BATCH: one 'shown' row per
   // suggestion (rank + why it ranked), so the learner can tell an ignored
   // suggestion from one passed over for a neighbour, and acceptance has a
-  // real denominator. A batch is the playlist + the five ids on screen.
-  const suggestBatch = useMemo(
-    () => (playlist && suggestions.length ? `${playlist.id}:${suggestions.map((t) => t.id).join('-')}:${Date.now()}` : ''),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [playlist?.id, suggestions.map((t) => t.id).join('-')],
-  )
-  // A batch counts only once it has SETTLED on screen (2026-10-19, found on
-  // the installed build): opening a playlist passes through placeholder
-  // strips inside a second — the metadata fallback while the brain's pool
-  // loads, then a re-pick when the strip memory lands — and each was being
-  // logged as five impressions the eye never registered.
+  // real denominator. Since the strip stays put (2026-11-03) a batch is ONE
+  // STEADY STRIP: it starts with ↻, a playlist switch, or the brain's pool
+  // replacing the fallback, and lasts while cards are refilled in place — so
+  // a card passed over while he adds two others is one "skipped", not two
+  // (scripts/taste-ledger-learn.py labels every card once per batch).
+  const stripKey = `${playlist?.id ?? ''}:${suggestRotate}:${hitsHere ? 'vibe' : 'tags'}`
+  const stripSession = useRef<{ key: string; batch: string; logged: Set<number> } | null>(null)
+  const suggestBatch = useMemo(() => {
+    if (!playlist || suggestions.length === 0) return ''
+    const cur = stripSession.current
+    if (cur && cur.key === stripKey) return cur.batch
+    const batch = `${playlist.id}:${suggestions.map((t) => t.id).join('-')}:${Date.now()}`
+    stripSession.current = { key: stripKey, batch, logged: new Set() }
+    return batch
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playlist?.id, stripKey, suggestions.length > 0])
+  const shownIds = suggestions.map((t) => t.id).join('-')
+  // A card counts as shown only once it has SETTLED on screen (2026-10-19,
+  // found on the installed build): opening a playlist passes through
+  // placeholder strips inside a second — the metadata fallback while the
+  // brain's pool loads, then a re-pick when the strip memory lands — and each
+  // was being logged as five impressions the eye never registered. Within a
+  // batch each card is logged once, the first time it settles (a refill).
   useEffect(() => {
-    if (!playlist || !suggestBatch) return
-    const rows = suggestions.map((sg, rank) => ({
+    const session = stripSession.current
+    if (!playlist || !suggestBatch || !session || session.batch !== suggestBatch) return
+    const fresh = suggestions.map((sg, rank) => ({ sg, rank })).filter(({ sg }) => !session.logged.has(sg.id))
+    if (fresh.length === 0) return
+    const rows = fresh.map(({ sg, rank }) => ({
       surface: 'strip', verdict: 'shown',
       key: { trackId: sg.id, playlistId: playlist.id },
       ctx: { ...(suggestDiag.current.get(sg.id) ?? {}), rank, batch: suggestBatch },
     }))
-    const t = window.setTimeout(() => ledger(rows), STRIP_SETTLE_MS)
+    const t = window.setTimeout(() => {
+      for (const { sg } of fresh) session.logged.add(sg.id)
+      ledger(rows)
+    }, STRIP_SETTLE_MS)
     return () => window.clearTimeout(t)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [suggestBatch])
+  }, [suggestBatch, shownIds])
   const suggestArtIndex = useMemo(() => buildNormalizedArtworkIndex(state.artworkMap), [state.artworkMap])
   const quickAddExclude = useMemo(() => new Set(playlist?.trackIds ?? []), [plMembershipKey])
 
