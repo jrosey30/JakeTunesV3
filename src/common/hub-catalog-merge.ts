@@ -15,6 +15,13 @@ import { isCatastrophicShrink } from './library-shrink.ts'
 //   - a song the hub lists is upserted: catalog fields come from the hub
 //     (it is the laptop's publish + phone edits, i.e. the newest view),
 //     playCount is the MAX of local and hub (plays are never lost here)
+//   - 2026-11-03: a catalog field a song can legitimately LACK (album
+//     artist, disc number, cover hash ... HUB_CLEARABLE_FIELDS) and the hub's
+//     row lacks is dropped here too. An absent key used to be skipped, so a
+//     value the MacBook had cleared lived on in the replica forever: workmini
+//     filed the Catacombs live set under album artist "Rihanna" (its id had
+//     been a Rihanna download first) and kept stale disc numbers and cover
+//     hashes on three songs, one hash shared by two different albums.
 //   - 2026-10-20: the song DETAILS the MacBook works out after import
 //     (subgenre, origin, BPM / key, starredAt, ... — HUB_DETAIL_FIELDS) come
 //     from the hub too. Only the 17 catalog fields used to, so workmini never
@@ -125,6 +132,19 @@ export const HUB_DETAIL_FIELDS = [
   'bpm', 'keyRoot', 'keyMode', 'camelotKey', 'keyConfidence', 'audioAnalysisAt',
   'starredAt', 'channelMode', 'codec', 'source', 'contributingArtists',
 ] as const
+
+/**
+ * HUB_CATALOG_FIELDS a real row can lack. When the hub's row lacks one, the
+ * MacBook's row lacks it (the hub serves library.json rows verbatim), so the
+ * replica drops its own copy. The identity fields (title, artist, album,
+ * duration, path, dateAdded) are never cleared: every real row has them, so
+ * their absence means a malformed row, not a cleared value.
+ */
+export const HUB_CLEARABLE_FIELDS = [
+  'albumArtist', 'genre', 'year', 'trackNumber', 'trackCount', 'discNumber', 'discCount',
+  'fileSize', 'rating', 'artworkHash', 'audioFingerprint',
+] as const
+const CLEARABLE = new Set<string>(HUB_CLEARABLE_FIELDS)
 
 /** Per-machine clocks and counters: the larger of local and hub wins. */
 export const HUB_MAX_FIELDS = ['playCount', 'lastPlayedAt', 'skipCount'] as const
@@ -364,7 +384,11 @@ export function mergeHubCatalog<T extends LocalTrackLike>(
     const next: Record<string, unknown> = { ...curRec }
     const hubRec = u as Record<string, unknown>
     for (const f of HUB_CATALOG_FIELDS) {
-      if (!(f in u)) continue
+      if (!(f in u)) {
+        // Missing on the hub's row = cleared on the MacBook (see HUB_CLEARABLE_FIELDS).
+        if (CLEARABLE.has(f) && curRec[f] !== undefined) { delete next[f]; changed = true }
+        continue
+      }
       const v = hubRec[f]
       if (v === undefined || v === curRec[f]) continue
       next[f] = v

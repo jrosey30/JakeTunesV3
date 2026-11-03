@@ -421,6 +421,79 @@ export function planPhoneUnstars(input: PhoneUnstarInput): PhoneUnstarPlan {
   return { writes, deferred, counts }
 }
 
+// ── a phone star raises the hub's rating ───────────────────────────────────
+
+/** Songs one pass may raise. A bigger backlog is finished by the next pass, 5 minutes on. */
+export const PHONE_STAR_CAP = 100
+
+export type PhoneStarDecision = 'raised' | 'already-starred' | 'not-on-hub' | 'hub-unstar-newer'
+
+export interface PhoneStarPlan {
+  /** rating → '5' and starredAt → the star's own time, oldest first */
+  writes: Array<{ id: string; at: number }>
+  /** more songs than the cap: left for the next pass */
+  deferred: number
+  counts: Partial<Record<PhoneStarDecision, number>>
+}
+
+/**
+ * The other half of "latest wins" for stars (2026-11-03, Jake: "There's been a
+ * lot of glitchy sync issues please audit and tackle now!"). A star made on
+ * the phone (or on another Mac, through homemini's shared record) while this
+ * Mac's app is open reaches this Mac's rating NOW. Until today only the
+ * renderer's boot pass raised a rating — in memory, never journaled — so:
+ *   - three This is Lorelei songs starred on the phone at 09:46-09:56 stayed
+ *     unstarred on the MacBook until its next launch;
+ *   - workmini's older un-star of BLINDED (11-02 11:09) kept beating the
+ *     phone's newer star (13:23) there, because a replica's own edit loses
+ *     only to a newer entry in THIS journal, and nothing wrote one.
+ *
+ * A song is raised to 5 when ALL of:
+ *   - the sidecar lists it as starred now, WITH the time of that star
+ *     (`added`). Stars older than the sidecar's timestamps carry no time and
+ *     stay with the boot pass, as before;
+ *   - this Mac shows it unrated (its override, else its row): a rating of any
+ *     size already counts as starred and is never touched;
+ *   - this Mac's own latest un-star is not newer than the star. Evidence: the
+ *     journal's rating of 0 (a click here, a replica's un-star absorbed here,
+ *     a phone un-star planPhoneUnstars applied). The verdicts the hub wrote
+ *     itself (`kept`) carry an artificial time and do not count. A tie goes to
+ *     the star, as the sidecar resolves one.
+ * At most `cap` songs per pass. The writes are journaled at the star's own
+ * time (from: 'phone'), which is what tells a replica holding an older
+ * un-star of its own that the song was starred since.
+ *
+ * ⚠️ TWIN: ~/JakeTunesMobile backend/src/util/starOverlay.ts applyStarOverlay —
+ * the hub already serves a listed star as starred to the phone and workmini.
+ */
+export function planPhoneStars(input: PhoneUnstarInput): PhoneStarPlan {
+  const counts: PhoneStarPlan['counts'] = {}
+  const count = (d: PhoneStarDecision) => { counts[d] = (counts[d] ?? 0) + 1 }
+  const listed = new Set(input.stars.trackIds)
+  const ordered = Object.entries(input.stars.added)
+    .filter(([id, at]) => !!id && isTime(at) && listed.has(id))
+    .sort((a, b) => a[1] - b[1] || (a[0] < b[0] ? -1 : 1))
+  const cap = Math.max(0, input.cap ?? PHONE_STAR_CAP)
+  const writes: PhoneStarPlan['writes'] = []
+  let deferred = 0
+
+  for (const [id, at] of ordered) {
+    const row = input.rows.get(id)
+    if (!row) { count('not-on-hub'); continue }
+    const fields = v2(input.overrides[id])?.fields
+    const has = (k: string) => !!fields && Object.prototype.hasOwnProperty.call(fields, k)
+    const shown = has('rating') ? fields!.rating : row.rating
+    if (Number(shown) > 0) { count('already-starred'); continue }
+    const e = getUserEdit(input.hub, id, 'rating')
+    const unstarAt = e && !e.kept && !(Number(e.v) > 0) ? e.at : 0
+    if (unstarAt > at) { count('hub-unstar-newer'); continue }
+    if (writes.length >= cap) { deferred++; continue }
+    writes.push({ id, at })
+    count('raised')
+  }
+  return { writes, deferred, counts }
+}
+
 // ── a replica's view ───────────────────────────────────────────────────────
 
 /** The value a replica shows for a journaled field, or undefined (the hub's rules). */

@@ -2,7 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
-  adoptHubCatalogState, mergeHubCatalog, MAX_REMOVALS_PER_DELTA, HUB_CATALOG_FIELDS, HUB_DETAIL_FIELDS, HUB_MAX_FIELDS,
+  adoptHubCatalogState, mergeHubCatalog, MAX_REMOVALS_PER_DELTA, HUB_CATALOG_FIELDS, HUB_DETAIL_FIELDS, HUB_MAX_FIELDS, HUB_CLEARABLE_FIELDS,
 } from '../../common/hub-catalog-merge.ts'
 import { idsPushedBySave, libraryPublishTargets } from '../../common/replica-library-push.ts'
 
@@ -399,5 +399,45 @@ describe('mergeHubCatalog: song details the MacBook works out reach the replica'
   it('the 17 catalog fields, the details and the max fields do not overlap', () => {
     const all = [...HUB_CATALOG_FIELDS, ...HUB_DETAIL_FIELDS, ...HUB_MAX_FIELDS]
     assert.equal(new Set(all).size, all.length)
+  })
+})
+
+// 2026-11-03 sync audit: workmini kept values the MacBook had cleared.
+describe('mergeHubCatalog: a field the hub row lacks is cleared here too', () => {
+  it('the Catacombs live set loses "Rihanna" (its id was a Rihanna download first) and the stale disc and cover', () => {
+    const local = [t(13851, { title: 'Alive in the Catacombs — Full Set', artist: 'Queens of the Stone Age', albumArtist: 'Rihanna', discNumber: 1, discCount: 1, artworkHash: '2eee499ee774d0dcb337d1efdd92cae1' })]
+    const hub = t(13851, { title: 'Alive in the Catacombs — Full Set', artist: 'Queens of the Stone Age' })
+    const r = mergeHubCatalog(local, { full: false, version: 'v', upserts: [hub], removedIds: [] })
+    assert.equal(r.updated, 1)
+    const row = r.tracks[0] as Record<string, unknown>
+    for (const f of ['albumArtist', 'discNumber', 'discCount', 'artworkHash']) assert.equal(f in row, false, f)
+    assert.equal(row.title, 'Alive in the Catacombs — Full Set')
+  })
+  it('a full snapshot clears them the same way, and a second pass changes nothing', () => {
+    const local = [t(13830, { discNumber: 1, discCount: 1, artworkHash: '180dc1eeb95eac1fb626448881210354' })]
+    const once = mergeHubCatalog(local, { full: true, version: 'v1', upserts: [t(13830)], removedIds: [] })
+    assert.equal(once.updated, 1)
+    const twice = mergeHubCatalog(once.tracks, { full: true, version: 'v2', upserts: [t(13830)], removedIds: [] })
+    assert.equal(twice.updated, 0)
+    assert.equal(twice.changed, false)
+  })
+  it('the identity fields are never cleared by a row that lacks them', () => {
+    const local = [t(1, { album: 'Kept Album', dateAdded: '2026-10-01T00:00:00Z', duration: 200000 })]
+    const r = mergeHubCatalog(local, { full: false, version: 'v', upserts: [{ id: 1, playCount: 0 }], removedIds: [] })
+    const row = r.tracks[0] as Record<string, unknown>
+    for (const f of ['title', 'artist', 'album', 'path', 'dateAdded', 'duration']) assert.ok(row[f] !== undefined, f)
+  })
+  it('a value the hub row carries still wins, and details (subgenre, BPM) are not cleared by a blank', () => {
+    const local = [t(2, { albumArtist: 'Old', subgenre: 'Dream Pop', bpm: 120 })]
+    const r = mergeHubCatalog(local, { full: false, version: 'v', upserts: [t(2, { albumArtist: 'New' })], removedIds: [] })
+    const row = r.tracks[0] as Record<string, unknown>
+    assert.equal(row.albumArtist, 'New')
+    assert.equal(row.subgenre, 'Dream Pop')
+    assert.equal(row.bpm, 120)
+  })
+  it('every clearable field is a catalog field, and none is an identity field', () => {
+    const catalog = new Set<string>(HUB_CATALOG_FIELDS)
+    for (const f of HUB_CLEARABLE_FIELDS) assert.ok(catalog.has(f), f)
+    for (const f of ['title', 'artist', 'album', 'path', 'dateAdded', 'duration']) assert.ok(!(HUB_CLEARABLE_FIELDS as readonly string[]).includes(f), f)
   })
 })

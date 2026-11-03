@@ -13,6 +13,7 @@ import assert from 'node:assert/strict'
 import {
   emptyUserEdits, parseUserEdits, recordUserEdit, seedStarsFromOverrides, planHubAbsorb,
   replicaOverlay, replicaLiveUpdates, rowFingerprint, sameValue, isUserEditField, pinPendingEdits, planPhoneUnstars, PHONE_UNSTAR_CAP,
+  planPhoneStars, PHONE_STAR_CAP,
   type UserEditsDoc, type RowLike,
 } from '../../common/user-edits.ts'
 import { HUB_CATALOG_FIELDS, HUB_DETAIL_FIELDS, mergeHubCatalog } from '../../common/hub-catalog-merge.ts'
@@ -391,6 +392,72 @@ describe('a phone un-star lowers the hub\'s rating (planPhoneUnstars)', () => {
   function journalOf(id: number, v: string, at: number, extra: Record<string, unknown> = {}): UserEditsDoc {
     return recordUserEdit(emptyUserEdits(SINCE), id, 'rating', v, at, extra)
   }
+})
+
+// 2026-11-03 — a phone star lands on the open MacBook (the audit's
+// This is Lorelei 13853-13855 and workmini's BLINDED, 13678).
+describe('a phone star raises the hub\'s rating (planPhoneStars)', () => {
+  const rows = new Map<string, RowLike>([
+    row(1, { rating: 0 }), row(2, {}), row(3, { rating: 3 }), row(4, { rating: 5 }), row(5, { rating: 0 }),
+  ])
+  const hub = emptyUserEdits(SINCE)
+  const stars = (o: { trackIds?: string[]; removed?: Record<string, number>; added?: Record<string, number> }) =>
+    ({ trackIds: o.trackIds ?? [], removed: o.removed ?? {}, added: o.added ?? {} })
+  const plan = (o: Parameters<typeof stars>[0], extra: Partial<Parameters<typeof planPhoneStars>[0]> = {}) =>
+    planPhoneStars({ stars: stars(o), overrides: {}, rows, hub, ...extra })
+  const ids = (p: ReturnType<typeof planPhoneStars>) => p.writes.map((w) => w.id)
+
+  test('a listed star with a time raises an unrated song, at the star\'s own time', () => {
+    const p = plan({ trackIds: ['1', '2'], added: { '1': 2000, '2': 1000 } })
+    assert.deepEqual(p.writes, [{ id: '2', at: 1000 }, { id: '1', at: 2000 }], 'oldest first')
+    assert.equal(p.counts.raised, 2)
+  })
+
+  test('a song already rated, at any size, is never touched; neither is one the hub does not have', () => {
+    const p = plan({ trackIds: ['3', '4', '404'], added: { '3': 5, '4': 5, '404': 5 } })
+    assert.deepEqual(p.writes, [])
+    assert.deepEqual(p.counts, { 'already-starred': 2, 'not-on-hub': 1 })
+  })
+
+  test('a star with no time (v1-era) and an add the sidecar no longer lists are left alone', () => {
+    assert.deepEqual(ids(plan({ trackIds: ['1'] })), [], 'no time: the boot pass keeps those')
+    assert.deepEqual(ids(plan({ trackIds: [], added: { '1': 2000 }, removed: { '1': 3000 } })), [], 'un-starred since')
+  })
+
+  test('the override outranks the row', () => {
+    const zeroed = { '4': { fp: fpOf(rows.get('4')!), fields: { rating: '0' } } }
+    assert.deepEqual(ids(plan({ trackIds: ['4'], added: { '4': 2000 } }, { overrides: zeroed })), ['4'], 'the row says 5, the override says 0')
+    const starred = { '1': { fp: fpOf(rows.get('1')!), fields: { rating: '5' } } }
+    assert.deepEqual(ids(plan({ trackIds: ['1'], added: { '1': 2000 } }, { overrides: starred })), [])
+  })
+
+  test('this Mac\'s own newer un-star stands; an older one, a verdict and a tie go to the star', () => {
+    const unstar = (at: number, extra: Record<string, unknown> = {}) => recordUserEdit(hub, 1, 'rating', '0', at, extra)
+    const p = (h: UserEditsDoc) => ids(plan({ trackIds: ['1'], added: { '1': 2000 } }, { hub: h }))
+    assert.deepEqual(p(unstar(2001)), [], 'un-starred here after the star')
+    assert.deepEqual(p(unstar(1999)), ['1'], 'un-starred before it')
+    assert.deepEqual(p(unstar(2000)), ['1'], 'a tie')
+    assert.deepEqual(p(unstar(5000, { kept: true })), ['1'], 'the hub\'s own verdict is not an un-star')
+    assert.deepEqual(p(unstar(1500, { from: 'workmini' })), ['1'], 'BLINDED: workmini\'s 11:09 un-star loses to the 13:23 star')
+  })
+
+  test('at most one pass\'s worth, oldest first; the rest wait', () => {
+    const many = new Map<string, RowLike>()
+    const added: Record<string, number> = {}
+    for (let i = 1; i <= 130; i++) { const [k, r] = row(i, { rating: 0 }); many.set(k, r); added[k] = 10_000 - i }
+    const p = planPhoneStars({ stars: stars({ trackIds: Object.keys(added), added }), overrides: {}, rows: many, hub })
+    assert.equal(p.writes.length, PHONE_STAR_CAP)
+    assert.equal(p.deferred, 130 - PHONE_STAR_CAP)
+    assert.ok(p.writes[0].at < p.writes[p.writes.length - 1].at)
+  })
+
+  test('stars and un-stars never fight over one song: a song is listed or it is not', () => {
+    const s = stars({ trackIds: ['1'], added: { '1': 2000 }, removed: { '5': 3000 } })
+    const raise = planPhoneStars({ stars: s, overrides: {}, rows, hub })
+    const lower = planPhoneUnstars({ stars: s, overrides: {}, rows, hub })
+    const both = new Set([...raise.writes.map((w) => w.id)].filter((id) => lower.writes.some((w) => w.id === id)))
+    assert.equal(both.size, 0)
+  })
 })
 
 describe('a replica holding an older star learns of the un-star from the hub journal', () => {

@@ -149,8 +149,9 @@ describe('in the app', () => {
     const start = idx.indexOf('async function refreshPhoneAuthoredMirrors')
     const body = idx.slice(start, idx.indexOf('\n}\n', start))
     // Merged, never copied — and (2026-10-22, unstar everywhere) the hub then lowers any rating an
-    // un-star from the phone / another Mac made stale (user-edits-sync.ts applyPhoneUnstars).
-    assert.match(body, /merge: \{ 'mobile-stars\.json': async \(body\) => \{ await mobileReadsApi\.mergeRemoteStars\(body\); await userEdits\.applyPhoneUnstars\(\) \} \}/)
+    // un-star from the phone / another Mac made stale (user-edits-sync.ts applyPhoneUnstars), and
+    // (2026-11-03) raises one a newer star made stale (applyPhoneStars) — live, not at the next launch.
+    assert.match(body, /merge: \{ 'mobile-stars\.json': async \(body\) => \{ await mobileReadsApi\.mergeRemoteStars\(body\); await userEdits\.applyPhoneUnstars\(\); await userEdits\.applyPhoneStars\(\) \} \}/)
     assert.equal(body.includes('mobileStarsCache.invalidate()'), false)
   })
 

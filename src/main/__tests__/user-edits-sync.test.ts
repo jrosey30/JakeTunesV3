@@ -280,3 +280,65 @@ describe('the hub lowers a rating the phone un-starred (applyPhoneUnstars)', () 
     assert.equal(await sync.applyPhoneUnstars(), 1)
   })
 })
+
+// ── 2026-11-03 — a phone star lands on the open MacBook: applyPhoneStars ────
+describe('the hub raises a rating the phone starred (applyPhoneStars)', () => {
+  function hub(role: UserEditsRole = 'hub', opts: { locked?: string | null; added?: Record<string, number>; trackIds?: string[]; removed?: Record<string, number> } = {}) {
+    const h = harness(role, { locked: opts.locked })
+    h.stars = { trackIds: opts.trackIds ?? ['1'], removed: opts.removed ?? {}, added: opts.added ?? { '1': NOW - 1000 } }
+    h.host.stars = async () => h.stars
+    return h
+  }
+
+  test('writes rating 5 and the star\'s time through the override writer, journals both (from: phone), tells the window, publishes', async () => {
+    const h = hub()
+    const sync = createUserEditsSync(h.host)
+    assert.equal(await sync.applyPhoneStars(), 1)
+    await sync.flush()
+    assert.deepEqual((h.overrides['1'] as { fields: Record<string, string> }).fields, { rating: '5', starredAt: String(NOW - 1000) })
+    assert.deepEqual(h.applied, [[{ id: 1, field: 'rating', value: '5' }, { id: 1, field: 'starredAt', value: String(NOW - 1000) }]])
+    assert.equal(h.published, 1)
+    const j = readJournal(h.dir).edits['1']
+    assert.deepEqual(j.rating, { v: '5', at: NOW - 1000, from: 'phone', dur: 192_000 })
+    assert.deepEqual(j.starredAt, { v: String(NOW - 1000), at: NOW - 1000, from: 'phone', dur: 192_000 })
+    assert.deepEqual(h.starCalls, [], 'the star is already in the star record')
+    assert.equal(h.overrides['2'], undefined)
+  })
+
+  test('idempotent, and the 5-minute tick runs it too', async () => {
+    const h = hub()
+    const sync = createUserEditsSync(h.host)
+    await sync.tick()
+    assert.equal((h.overrides['1'] as { fields: Record<string, string> }).fields.rating, '5', 'the tick raised it')
+    assert.equal(await sync.applyPhoneStars(), 0)
+    assert.equal(h.applied.length, 1)
+  })
+
+  test('an un-star Jake made here after the phone\'s star stands', async () => {
+    const h = hub()
+    const sync = createUserEditsSync(h.host)
+    await sync.record(1, 'rating', '0', NOW)   // un-starred on this Mac after the phone starred it
+    assert.equal(await sync.applyPhoneStars(), 0)
+    assert.equal(h.overrides['1'], undefined)
+  })
+
+  test('only the MacBook (hub) does it: a replica, homemini\'s own app and a locked save change nothing', async () => {
+    for (const [role, locked] of [['replica', null], ['off', null], ['hub', 'ipod-sync']] as Array<[UserEditsRole, string | null]>) {
+      const h = hub(role, { locked })
+      assert.equal(await createUserEditsSync(h.host).applyPhoneStars(), 0, `${role}/${locked}`)
+      assert.deepEqual(h.overrides, {})
+    }
+  })
+
+  test('the replica learns of it: the hub journal\'s phone star beats its own older un-star', async () => {
+    // workmini's BLINDED: un-starred there at 11:09, starred on the phone at 13:23
+    const { replicaJournalValue } = await import('../../common/user-edits.ts')
+    const mine = { v: '0', at: NOW - 5000 }
+    const h = hub()
+    const sync = createUserEditsSync(h.host)
+    await sync.applyPhoneStars()
+    await sync.flush()
+    const hubEdit = readJournal(h.dir).edits['1'].rating
+    assert.equal(replicaJournalValue(mine, hubEdit, true), '5')
+  })
+})

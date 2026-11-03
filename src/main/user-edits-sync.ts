@@ -26,8 +26,13 @@
  * what tells a replica that still holds an older star of its own that the song
  * was un-starred since.
  *
+ * And the other way (2026-11-03): a star made on the phone after this Mac's own
+ * latest un-star raises the rating here while the app is open
+ * (applyPhoneStars) — rating 5 and starredAt at the star's own time, journaled
+ * the same way, so a replica holding an older un-star learns of it too.
+ *
  * The journal file is written only by record() (the save-metadata-override
- * handler), by the hub's absorb and by applyPhoneUnstars. A journal that
+ * handler), by the hub's absorb, by applyPhoneUnstars and by applyPhoneStars. A journal that
  * exists but does not parse stops all three and is never overwritten.
  *
  * Electron-free: every dependency is injected (__tests__/user-edits-sync.test.ts).
@@ -39,7 +44,7 @@ import { withCompanionInit } from './hub-companion.ts'
 import { HUB_CATALOG_FIELDS, HUB_DETAIL_FIELDS, type HubCatalogPayload } from '../common/hub-catalog-merge.ts'
 import {
   USER_EDITS_FILE, USER_EDITS_HUB_CACHE_FILE, USER_EDITS_PATH,
-  PHONE_UNSTAR_CAP, emptyUserEdits, isUserEditField, parseUserEdits, pinPendingEdits, planHubAbsorb, planPhoneUnstars, recordUserEdit,
+  PHONE_STAR_CAP, PHONE_UNSTAR_CAP, emptyUserEdits, isUserEditField, parseUserEdits, pinPendingEdits, planHubAbsorb, planPhoneStars, planPhoneUnstars, recordUserEdit,
   replicaLiveUpdates, replicaOverlay, rowFingerprint, seedStarsFromOverrides,
   type RowLike, type StarEventsLike, type UserEditsDoc,
 } from '../common/user-edits.ts'
@@ -105,6 +110,12 @@ export interface UserEditsSync {
    * how many songs it lowered (0 on a replica, 'off' or while saves are locked).
    */
   applyPhoneUnstars(): Promise<number>
+  /**
+   * hub: a star newer than this Mac's own un-star raises the song's rating
+   * here (planPhoneStars). Same contract as applyPhoneUnstars: state-based,
+   * idempotent, never throws; returns how many songs it raised.
+   */
+  applyPhoneStars(): Promise<number>
   /**
    * Replica: the hub catalog's payload with this replica's standing edits
    * pinned onto its rows (sync; uses the journals loaded at boot — before
@@ -316,6 +327,57 @@ export function createUserEditsSync(host: UserEditsHost): UserEditsSync {
     }
   }
 
+  function applyStars(): Promise<number> {
+    const run = unstarChain.then(applyStarsOnce)
+    unstarChain = run
+    return run
+  }
+
+  async function applyStarsOnce(): Promise<number> {
+    try {
+      if ((await host.role()) !== 'hub') return 0
+      if (host.isLocked()) return 0
+      if (!(await loadMine('hub'))) return 0
+      const [overrides, rows, stars] = await Promise.all([host.overrides(), host.rows(), host.stars()])
+      const plan = planPhoneStars({ stars, overrides, rows, hub: mine!, cap: PHONE_STAR_CAP })
+      if (plan.writes.length === 0) {
+        if (plan.deferred > 0) log(`[user-edits] ${plan.deferred} star(s) from another device wait for the next pass`)
+        return 0
+      }
+      const done: Array<{ id: number; field: string; value: string }> = []
+      let raised = 0
+      for (const w of plan.writes) {
+        const row = rows.get(w.id)
+        if (!row) continue
+        const fp = absorbFingerprint(overrides, w.id, row)
+        const stamp = String(w.at)
+        try {
+          await host.writeOverride(Number(w.id), 'rating', '5', fp)
+          await host.writeOverride(Number(w.id), 'starredAt', stamp, fp)
+        } catch (err) {
+          warn('star-write', `[user-edits] could not raise ${w.id} after a star elsewhere: ${err instanceof Error ? err.message : String(err)}`)
+          continue
+        }
+        // No await between reading `mine` and replacing it (see applyUnstarsOnce).
+        const dur = Number(row.duration) || 0
+        const extra = { from: 'phone', ...(dur > 0 ? { dur } : {}) }
+        mine = recordUserEdit(mine!, w.id, 'rating', '5', w.at, extra)
+        mine = recordUserEdit(mine!, w.id, 'starredAt', stamp, w.at, extra)
+        done.push({ id: Number(w.id), field: 'rating', value: '5' }, { id: Number(w.id), field: 'starredAt', value: stamp })
+        raised++
+      }
+      if (raised === 0) return 0
+      persist()
+      host.applied(done)
+      host.publish()
+      log(`[user-edits] starred elsewhere: ${raised} song(s) raised to a star${plan.deferred > 0 ? `, ${plan.deferred} more wait for the next pass` : ''}: ${plan.writes.slice(0, 8).map((w) => w.id).join(' ')}`)
+      return raised
+    } catch (err) {
+      warn('star', `[user-edits] could not apply stars from another device: ${err instanceof Error ? err.message : String(err)}`)
+      return 0
+    }
+  }
+
   async function replicaTick(): Promise<void> {
     const reply = await fetchReply()
     if (!reply || reply === 'unchanged') return
@@ -360,10 +422,11 @@ export function createUserEditsSync(host: UserEditsHost): UserEditsSync {
     },
     async tick() {
       const role = await host.role()
-      if (role === 'hub') { await applyUnstars(); await hubTick() }
+      if (role === 'hub') { await applyUnstars(); await applyStars(); await hubTick() }
       else if (role === 'replica') await replicaTick()
     },
     applyPhoneUnstars: applyUnstars,
+    applyPhoneStars: applyStars,
     async flush() { await writeChain },
     pinPending(payload) {
       if (!overlaidRole || !mine || !Array.isArray(payload.upserts)) return payload
