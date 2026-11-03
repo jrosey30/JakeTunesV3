@@ -23,6 +23,7 @@
  *   Keep context menu, "Dubbing today’s tapes…", and the mix-card fallback.
  */
 import { useState, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
+import { vibeFailureLine } from '../../common/vibe-failure'
 import { createPortal } from 'react-dom'
 import { useLibrary } from '../context/LibraryContext'
 import { usePlayback } from '../context/PlaybackContext'
@@ -64,6 +65,8 @@ export default function MadeForYou() {
   const [loading, setLoading] = useState(false)
   const [sheetOpen, setSheetOpen] = useState(false)
   const [building, setBuilding] = useState(false)
+  // Why the last vibe failed — said in the sheet, never silent (2026-11-03).
+  const [vibeError, setVibeError] = useState<string | null>(null)
   const [custom, setCustom] = useState('')
 
   const loadMixes = useCallback(async () => {
@@ -107,6 +110,7 @@ export default function MadeForYou() {
   const pickVibe = useCallback(async (vibe: string) => {
     if (building) return
     setBuilding(true)
+    setVibeError(null)
     try {
       const res = await window.electronAPI.getMobileVibeMix?.(vibe)
       if (res?.ok && res.mix) {
@@ -116,10 +120,16 @@ export default function MadeForYou() {
           setMixes(prev => [m, ...prev.filter(p => p.id !== m.id)])
           setSheetOpen(false); setCustom('')
           playMix(m)
+          return
         }
+        setVibeError(vibeFailureLine('none-here'))
+        return
       }
-    } catch { /* keep the sheet open for a retry */ }
-    finally { setBuilding(false) }
+      setVibeError(vibeFailureLine(res?.error))
+    } catch {
+      // keep the sheet open for a retry, and say so
+      setVibeError(vibeFailureLine(undefined))
+    } finally { setBuilding(false) }
   }, [building, resolve, playMix])
 
   // TODAY'S TAPES — the disposable daily batch only, resolved to this Mac's
@@ -146,7 +156,7 @@ export default function MadeForYou() {
     <section className="home-section home-mixes">
       <div className="home-section-header">
         <h2 className="home-section-title">{hasTapes ? 'Mixtapes' : 'Your Mixes'}</h2>
-        <button type="button" className="home-mixes-vibe-btn" onClick={() => setSheetOpen(true)} disabled={building}>
+        <button type="button" className="home-mixes-vibe-btn" onClick={() => { setVibeError(null); setSheetOpen(true) }} disabled={building}>
           <span className="home-mixes-spark" aria-hidden="true">✦</span> Make me a vibe
         </button>
       </div>
@@ -249,7 +259,12 @@ export default function MadeForYou() {
             </div>
             {building
               ? <div className="home-vibe-building">Building your set…</div>
-              : <button className="home-vibe-cancel" onClick={() => setSheetOpen(false)}>Cancel</button>}
+              : (
+                <>
+                  {vibeError && <div className="home-vibe-error" role="status">{vibeError}</div>}
+                  <button className="home-vibe-cancel" onClick={() => setSheetOpen(false)}>Cancel</button>
+                </>
+              )}
           </div>
         </div>,
         document.body,
