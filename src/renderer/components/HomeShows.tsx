@@ -22,13 +22,23 @@
  * (setlist.fm): the band's most played songs lately, the owned ones marked,
  * one click plays those in the band's order. Nothing about setlist.fm draws
  * when homemini has no key.
+ *
+ * Interested + each night as its own option (2026-11-03, Jake: "for anything saying '3 or 4
+ * nights' I should be able to see each night as an option. And I want a button to indicate
+ * that I am interested in going. And a filter to see what I am interested in going, actually
+ * going to, keep track of it."): an Interested pill beside Going; a card whose act plays several
+ * NYC nights (LCD Soundsystem's 12, Queens and Brooklyn) opens "Pick a night" under its row, one
+ * line per night with its own Interested / Going / Tickets; and Live Near You's All · Interested ·
+ * Going filter lists the marked nights one card each, the past ones (homemini keeps a snapshot)
+ * after them. A night is going OR interested, never both. Photos are 4:3 (home.css).
  */
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { createPortal } from 'react-dom'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { useLibrary } from '../context/LibraryContext'
 import { useAudio } from '../hooks/useAudio'
 import {
-  goingAfterTap, latelyDetail, latelyPlayLabel, nextAsk, snippetTrack, stubLabel,
+  latelyDetail, latelyPlayLabel, nextAsk, nightsMarked, snippetTrack, statusAfterTap, stubLabel,
   type Lately, type RsvpEntry, type RsvpShow, type RsvpStatus,
 } from '../../common/concerts-going'
 import { nameKey } from '../../common/fold-text'
@@ -38,9 +48,9 @@ import { snippetPlaying, stopSnippet, subscribeSnippet, toggleSnippet } from '..
 import { usePlayback } from '../context/PlaybackContext'
 import type { Track } from '../types'
 import {
-  cardBill, cardReason, concertBadges, formatOnSale, formatShowTime, longDate, nyDate,
-  runNightsLine, runStamp, ticketUrl, whereLine,
-  type ConcertItem, type ConcertsFeedState,
+  cardBill, cardReason, concertBadges, formatOnSale, formatShowTime, longDate, markedNights, nightCard, nightsByRoom,
+  nightsOf, nightWhen, nyDate, runNightsLine, runStamp, ticketUrl, whereLine,
+  type ActNight, type ConcertItem, type ConcertsFeedState, type MarkFilter,
 } from '../../common/concerts-feed'
 
 /** How much of each list the rail shows before "See All". */
@@ -48,6 +58,9 @@ const RANKED_RAIL = 24
 const DISCOVER_RAIL = 20
 /** A saved copy older than this says when it's from. */
 const SAY_AGE_AFTER_MS = 12 * 60 * 60 * 1000
+/** Live Near You's filter, kept per Mac in ui-state (merged onto a fresh copy). */
+const FILTER_KEY = 'homeConcertsFilter'
+type ConcertFilter = 'all' | MarkFilter
 
 function activateOnKey(action: () => void) {
   return (e: React.KeyboardEvent) => {
@@ -64,10 +77,14 @@ function sourceLabel(state: ConcertsFeedState, nowMs: number): string {
 }
 
 interface Going {
-  status: (item: ConcertItem) => RsvpStatus | null
-  toggle: (item: ConcertItem) => void
+  /** One night's answer: a click not yet confirmed, else homemini's. */
+  night: (night: { id: string; rsvp?: RsvpStatus | null }) => RsvpStatus | null
+  /** Mark (or clear) one night of `item`'s act. */
+  mark: (item: ConcertItem, night: ActNight, tapped: 'going' | 'interested') => void
   lately: (item: ConcertItem) => Lately | null
   openLately: (item: ConcertItem) => void
+  /** Open "Pick a night" for a card whose act plays several nights. */
+  openNights: (item: ConcertItem) => void
 }
 
 interface CardProps {
@@ -131,6 +148,18 @@ function Equalizer() {
   )
 }
 
+/** 12×12 in the 22px-tall pill: a star, filled when interested. */
+function StarIcon({ on }: { on: boolean }) {
+  return (
+    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+      <path
+        d="M6 1.4l1.4 2.9 3.2.45-2.3 2.25.55 3.15L6 8.65 3.15 10.15l.55-3.15L1.4 4.75l3.2-.45z"
+        fill={on ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 /** 12×12 in the 22px-tall pill: a check (going) or a plus (not yet). */
 function GoingIcon({ on }: { on: boolean }) {
   return (
@@ -152,7 +181,15 @@ function ListIcon() {
 }
 
 function ShowConcertCard({ item, kind, nowMs, today, openLink, going, snippet }: CardProps & { snippet: Snippet }) {
-  const on = going.status(item) === 'going'
+  // Several nights (the act's, across its runs): the pills say whether any is marked and open
+  // "Pick a night"; one night: they mark it.
+  const nights = nightsOf(item)
+  const several = nights.length > 1
+  const own = nights.find((n) => n.id === item.id) ?? nights[0]
+  const marked = several
+    ? nightsMarked(nights.map(going.night))
+    : { interested: going.night(own) === 'interested', going: going.night(own) === 'going' }
+  const on = marked.going
   const lately = on ? going.lately(item) : null
   const url = ticketUrl(item)
   const [stamped, setStamped] = useState(0)
@@ -191,15 +228,35 @@ function ShowConcertCard({ item, kind, nowMs, today, openLink, going, snippet }:
       <div className="home-concert-actions">
         <button
           type="button"
+          className={`home-concert-interested${marked.interested ? ' home-concert-interested--on' : ''}`}
+          aria-pressed={several ? undefined : marked.interested}
+          title={several ? 'Pick the nights you\u2019re interested in' : marked.interested ? 'You\u2019re interested (click to undo)' : 'Mark as interested'}
+          onClick={() => (several ? going.openNights(item) : going.mark(item, own, 'interested'))}
+        >
+          <StarIcon on={marked.interested} />
+          <span>Interested</span>
+        </button>
+        <button
+          type="button"
           className={`home-concert-going${on ? ' home-concert-going--on' : ''}`}
-          aria-pressed={on}
-          title={on ? 'You\u2019re going (click to undo)' : 'Mark as going'}
-          onClick={() => { if (!on) setStamped(Date.now()); going.toggle(item) }}
+          aria-pressed={several ? undefined : on}
+          title={several ? 'Pick the nights you\u2019re going to' : on ? 'You\u2019re going (click to undo)' : 'Mark as going'}
+          onClick={() => {
+            if (several) { going.openNights(item); return }
+            if (!on) setStamped(Date.now())
+            going.mark(item, own, 'going')
+          }}
         >
           <GoingIcon on={on} />
           <span>Going</span>
         </button>
-        {url && (
+        {/* Several nights: each night's own tickets are in the sheet, so its pill takes this slot
+            and every card's pills stay on one line. */}
+        {several ? (
+          <button type="button" className="home-concert-pick" title={`${nights.length} nights in New York`} onClick={() => going.openNights(item)}>
+            Pick a night
+          </button>
+        ) : url && (
           <button type="button" className="home-concert-tickets" onClick={() => openLink(url)}>Tickets</button>
         )}
         {lately && (
@@ -294,9 +351,15 @@ interface RailProps {
   openLink: (url: string) => void
   going: Going
   snippet: Snippet
+  /** Live Near You's All · Interested · Going (its own subhead control). */
+  filterBar?: JSX.Element
+  /** Filtered: where the nights that have passed begin (a "Past" mark goes there). */
+  pastFrom?: number
+  /** Filtered and nothing marked: what to say in place of the row. */
+  empty?: string
 }
 
-function ConcertRail({ title, source, items, kind, cap, scrollKey, nowMs, today, openLink, going, snippet }: RailProps) {
+function ConcertRail({ title, source, items, kind, cap, scrollKey, nowMs, today, openLink, going, snippet, filterBar, pastFrom, empty }: RailProps) {
   const [all, setAll] = useState(false)
   const groupRef = useRef<HTMLDivElement>(null)
   const rowRef = useRef<HTMLDivElement>(null)
@@ -313,6 +376,7 @@ function ConcertRail({ title, source, items, kind, cap, scrollKey, nowMs, today,
       <div className="home-section-subhead">
         <h3 className="home-section-subtitle">{title}</h3>
         <div className="home-concert-subhead-end">
+          {filterBar}
           <span className="home-section-source">{source}</span>
           {more && (
             <button type="button" className="home-section-more" onClick={toggle} aria-expanded={all}>
@@ -321,11 +385,18 @@ function ConcertRail({ title, source, items, kind, cap, scrollKey, nowMs, today,
           )}
         </div>
       </div>
-      <div className={`home-card-row${all ? ' home-card-row--concert-grid' : ''}`} role="list" ref={rowRef}>
-        {shown.map((item) => (
-          <ShowConcertCard key={`${item.id}|${item.rank}`} item={item} kind={kind} nowMs={nowMs} today={today} openLink={openLink} going={going} snippet={snippet} />
-        ))}
-      </div>
+      {items.length === 0 && empty
+        ? <p className="home-concert-empty">{empty}</p>
+        : (
+          <div className={`home-card-row${all ? ' home-card-row--concert-grid' : ''}`} role="list" ref={rowRef}>
+            {shown.map((item, i) => (
+              <Fragment key={`${item.id}|${item.rank}`}>
+                {i === pastFrom && <div className="home-concert-past" role="separator" aria-label="Nights that have passed">Past</div>}
+                <ShowConcertCard item={item} kind={kind} nowMs={nowMs} today={today} openLink={openLink} going={going} snippet={snippet} />
+              </Fragment>
+            ))}
+          </div>
+        )}
     </div>
   )
 }
@@ -357,6 +428,91 @@ function WereYouThere({ entry, answer }: { entry: RsvpEntry; answer: (a: 'yes' |
         <button type="button" className="home-concert-ask-no" onClick={() => answer('no')}>No</button>
       </div>
     </div>
+  )
+}
+
+/** "Pick a night" — every NYC night of the act, one line each with its own Interested / Going /
+ *  Tickets, in rooms (consecutive nights at one room together). A sheet over the Home (beside
+ *  .home-view, outside its stacking context), so it opens next to the card wherever it is. */
+function NightsSheet({ item, going, openLink, close }: { item: ConcertItem; going: Going; openLink: (url: string) => void; close: () => void }) {
+  const bill = cardBill(item)
+  const nights = nightsOf(item)
+  const closeRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    closeRef.current?.focus()
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      close()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [close])
+  return createPortal(
+    <div className="home-concert-nights-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) close() }}>
+    <div className="home-concert-nights-sheet" role="dialog" aria-modal="true" aria-label={`Every night of ${bill.artist} in New York`}>
+      <div className="home-concert-lately-head">
+        <div>
+          <div className="home-concert-lately-eyebrow">Pick a night</div>
+          <div className="home-concert-lately-artist">{bill.artist}</div>
+          <div className="home-concert-lately-from">{nights.length} nights in New York</div>
+        </div>
+        <div className="home-concert-lately-actions">
+          <button type="button" className="home-section-more" onClick={close} ref={closeRef}>Close</button>
+        </div>
+      </div>
+      <div className="home-concert-nights-rooms">
+        {nightsByRoom(nights).map((room) => (
+          <section key={`${room.venue}|${room.nights[0].id}`} className="home-concert-nights-room">
+            <h4 className="home-concert-nights-room-name">{room.venue}{room.where && <span> · {room.where}</span>}</h4>
+            <ol className="home-concert-nights-list">
+              {room.nights.map((n) => {
+                const s = going.night(n)
+                return (
+                  <li key={n.id} className="home-concert-night">
+                    <span className="home-concert-night-when">{nightWhen(n.date, n.time)}</span>
+                    <span className="home-concert-night-buttons">
+                      <button
+                        type="button"
+                        className={`home-concert-interested${s === 'interested' ? ' home-concert-interested--on' : ''}`}
+                        aria-pressed={s === 'interested'}
+                        title={s === 'interested' ? 'You\u2019re interested (click to undo)' : 'Mark this night as interested'}
+                        onClick={() => going.mark(item, n, 'interested')}
+                      >
+                        <StarIcon on={s === 'interested'} />
+                        <span>Interested</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={`home-concert-going${s === 'going' ? ' home-concert-going--on' : ''}`}
+                        aria-pressed={s === 'going'}
+                        title={s === 'going' ? 'You\u2019re going (click to undo)' : 'Mark this night as going'}
+                        onClick={() => going.mark(item, n, 'going')}
+                      >
+                        <GoingIcon on={s === 'going'} />
+                        <span>Going</span>
+                      </button>
+                      {n.url && (
+                        <button type="button" className="home-concert-tickets" onClick={() => openLink(n.url!)}>Tickets</button>
+                      )}
+                    </span>
+                    {(n.soldOut || n.openingFor) && (
+                      <span className="home-concert-night-tags">
+                        {n.soldOut && <span className="home-concert-badge home-concert-badge--soldout">Sold out</span>}
+                        {n.openingFor && <span className="home-concert-night-opening">Opening for {n.openingFor}</span>}
+                      </span>
+                    )}
+                  </li>
+                )
+              })}
+            </ol>
+          </section>
+        ))}
+      </div>
+    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -413,6 +569,9 @@ export default function HomeShows({ state, openLink }: { state: ConcertsFeedStat
   const [mine, setMine] = useState<Record<string, RsvpStatus | null>>({})
   const [latelyBy, setLatelyBy] = useState<Record<string, Lately | null>>({})
   const [openFor, setOpenFor] = useState<string | null>(null)
+  const [nightsFor, setNightsFor] = useState<ConcertItem | null>(null)
+  const closeNights = useCallback(() => setNightsFor(null), [])
+  const [filter, setFilter] = useState<ConcertFilter>('all')
   const asked = useRef(new Set<string>())
 
   const reload = useCallback(async () => {
@@ -423,26 +582,46 @@ export default function HomeShows({ state, openLink }: { state: ConcertsFeedStat
   // have answered since).
   useEffect(() => { void reload() }, [reload, state])
 
+  // The filter is per Mac: ui-state, merged onto a fresh read (many writers).
+  useEffect(() => {
+    let live = true
+    window.electronAPI.loadUiState().then((r) => {
+      const v = r.ok && r.state ? (r.state as Record<string, unknown>)[FILTER_KEY] : null
+      if (live && (v === 'interested' || v === 'going' || v === 'all')) setFilter(v)
+    }).catch(() => undefined)
+    return () => { live = false }
+  }, [])
+  const chooseFilter = useCallback((f: ConcertFilter) => {
+    setFilter(f)
+    window.electronAPI.loadUiState()
+      .then((r) => window.electronAPI.saveUiState({ ...(r.ok && r.state ? r.state : {}), [FILTER_KEY]: f }))
+      .catch(() => undefined)
+  }, [])
+
   const byId = useMemo(() => new Map((entries ?? []).map((e) => [e.eventId, e])), [entries])
-  const status = useCallback((item: ConcertItem): RsvpStatus | null => {
-    if (item.id in mine) return mine[item.id] ?? null
-    return byId.get(item.id)?.status ?? item.rsvp ?? null
+  const night = useCallback((n: { id: string; rsvp?: RsvpStatus | null }): RsvpStatus | null => {
+    if (n.id in mine) return mine[n.id] ?? null
+    return byId.get(n.id)?.status ?? n.rsvp ?? null
   }, [mine, byId])
 
-  const toggle = useCallback((item: ConcertItem) => {
-    const next = goingAfterTap(status(item))
-    setMine((m) => ({ ...m, [item.id]: next }))
-    void window.electronAPI.concertsSetGoing?.(item.id, next === 'going', showOf(item))
-      .then((r) => (r?.ok ? reload() : setMine((m) => { const c = { ...m }; delete c[item.id]; return c })))
-      .catch(() => setMine((m) => { const c = { ...m }; delete c[item.id]; return c }))
-  }, [status, reload])
+  // A night is going OR interested: a click marks the one clicked, or clears it when it was that.
+  const mark = useCallback((item: ConcertItem, n: ActNight, tapped: 'going' | 'interested') => {
+    const next = statusAfterTap(night(n), tapped)
+    const undo = () => setMine((m) => { const c = { ...m }; delete c[n.id]; return c })
+    setMine((m) => ({ ...m, [n.id]: next }))
+    void window.electronAPI.concertsSetGoing?.(n.id, next === 'going' || next === 'interested' ? next : null, showOf(nightCard(item, n)))
+      .then((r) => (r?.ok ? reload() : undo()))
+      .catch(undo)
+  }, [night, reload])
 
   // "What they've been playing" for the Going acts (homemini refuses others).
   const goingActs = useMemo(() => {
     const acts = new Set<string>()
-    for (const item of [...state.items, ...state.discover]) if (status(item) === 'going') acts.add(cardBill(item).artist)
+    for (const item of [...state.items, ...state.discover]) {
+      if (nightsOf(item).some((n) => night(n) === 'going')) acts.add(cardBill(item).artist)
+    }
     return [...acts]
-  }, [state, status])
+  }, [state, night])
   useEffect(() => {
     for (const act of goingActs) {
       if (asked.current.has(act)) continue
@@ -454,11 +633,34 @@ export default function HomeShows({ state, openLink }: { state: ConcertsFeedStat
   }, [goingActs])
 
   const going: Going = {
-    status,
-    toggle,
+    night,
+    mark,
     lately: (item) => latelyBy[cardBill(item).artist] ?? null,
     openLately: (item) => setOpenFor(cardBill(item).artist),
+    openNights: (item) => setNightsFor(item),
   }
+
+  // Live Near You's filter: the marked nights, one card each (both lists + homemini's snapshots).
+  const lists = useMemo(() => [state.items, state.discover], [state])
+  const markedOf = useCallback((f: MarkFilter) => markedNights(f, lists, entries ?? [], night, today), [lists, entries, night, today])
+  const counts = useMemo(() => {
+    const n = (f: MarkFilter) => { const m = markedOf(f); return m.upcoming.length + m.past.length }
+    return { interested: n('interested'), going: n('going') }
+  }, [markedOf])
+  const marked = filter === 'all' ? null : markedOf(filter)
+  const filterBar = (
+    <div className="home-concert-filter" role="group" aria-label="Show">
+      {(['all', 'interested', 'going'] as const).map((f) => {
+        const count = f === 'all' ? 0 : counts[f]
+        const label = f === 'all' ? 'All' : f === 'interested' ? 'Interested' : 'Going'
+        return (
+          <button key={f} type="button" aria-pressed={filter === f} onClick={() => chooseFilter(f)}>
+            {label}{count > 0 && <span className="home-concert-filter-count">{count}</span>}
+          </button>
+        )
+      })}
+    </div>
+  )
 
   // Snippets: the act's most-played song he owns; the user's music pauses first.
   const { state: libState } = useLibrary()
@@ -485,13 +687,17 @@ export default function HomeShows({ state, openLink }: { state: ConcertsFeedStat
   const panel = openFor && latelyBy[openFor]
     ? <LatelyPanel artist={openFor} lately={latelyBy[openFor]!} close={() => setOpenFor(null)} openLink={openLink} />
     : null
+  const rankedItems = marked ? [...marked.upcoming, ...marked.past] : state.items
   return (
     <>
       {ask && <WereYouThere entry={ask} answer={answer} />}
-      {state.items.length > 0 && (
+      {(state.items.length > 0 || filter !== 'all') && (
         <ConcertRail
-          title="Live Near You" source={sourceLabel(state, nowMs)} items={state.items} kind="ranked"
+          title="Live Near You" source={sourceLabel(state, nowMs)} items={rankedItems} kind="ranked"
           cap={RANKED_RAIL} scrollKey="home-row-concerts" nowMs={nowMs} today={today} openLink={openLink} going={going} snippet={snippet}
+          filterBar={filterBar}
+          pastFrom={marked && marked.past.length > 0 ? marked.upcoming.length : undefined}
+          empty={filter === 'interested' ? 'Nothing marked Interested yet. Click Interested on a show.' : filter === 'going' ? 'Nothing marked Going yet.' : undefined}
         />
       )}
       {panel}
@@ -501,6 +707,7 @@ export default function HomeShows({ state, openLink }: { state: ConcertsFeedStat
           cap={DISCOVER_RAIL} scrollKey="home-row-concerts-discover" nowMs={nowMs} today={today} openLink={openLink} going={going} snippet={snippet}
         />
       )}
+      {nightsFor && <NightsSheet item={nightsFor} going={going} openLink={openLink} close={closeNights} />}
     </>
   )
 }

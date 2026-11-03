@@ -42,7 +42,7 @@ export function createConcertsGoingClient(opts: { baseUrl: string; fetchImpl?: G
   return {
     async rsvps() {
       try {
-        const res = await f(`${base}/api/rsvps`, init())
+        const res = await f(`${base}/api/rsvps?with=interested`, init())
         return res.ok ? parseRsvps(await res.json()) : null
       } catch {
         return null

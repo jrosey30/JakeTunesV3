@@ -54,7 +54,7 @@ function fakeFetch(hub: Hub): FetchLike {
   return async (url, init) => {
     hub.calls.push({ url, ifNoneMatch: headerOf(init, 'If-None-Match') })
     if (hub.hold) await hub.hold
-    const isDiscover = url.endsWith('/api/concerts/discover')
+    const isDiscover = url.includes('/api/concerts/discover')
     if (hub.mode === 'down') throw new Error('connect ECONNREFUSED homemini:3000')
     if (hub.mode === 'warming') return { ok: false, status: 503, json: async () => ({ error: 'Concerts are warming up …' }) }
     if (hub.mode === 'garbage') return { ok: true, status: 200, json: async () => '<html>captive portal</html>', headers: { get: () => null } }
@@ -101,7 +101,7 @@ describe('concerts client — the fallback chain', () => {
 
   it('homemini: GETs both routes, caches them with their ETags, draws the ranked feed in its order', async () => {
     const s = await make().refresh()
-    assert.deepEqual(hub.calls.map((c) => c.url).sort(), ['http://homemini:3000/api/concerts', 'http://homemini:3000/api/concerts/discover'])
+    assert.deepEqual(hub.calls.map((c) => c.url).sort(), ['http://homemini:3000/api/concerts/discover?with=interested', 'http://homemini:3000/api/concerts?with=interested'])
     assert.equal(s.source, 'homemini')
     assert.equal(s.reachable, true)
     assert.deepEqual(names(s), ['After', 'Thundercat', 'Jalen Ngonda'], 'date order, not rank order (2026-10-28)')

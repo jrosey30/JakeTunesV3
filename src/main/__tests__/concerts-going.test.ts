@@ -108,7 +108,9 @@ describe('concert cards, more fun (2026-10-29)', () => {
   it('stub words: TONIGHT, the weekday inside a week, else the date', async () => {
     const { stubLabel } = await import('../../common/concerts-going.ts')
     assert.equal(stubLabel('2026-10-29', '2026-10-29'), 'TONIGHT')
-    assert.equal(stubLabel('2026-10-28', '2026-10-29'), 'TONIGHT', 'a cached past night never says a weekday')
+    // A night that has passed has no stub: never a weekday, and since the Interested / Going
+    // filter lists past nights (2026-11-03), never TONIGHT either.
+    assert.equal(stubLabel('2026-10-28', '2026-10-29'), null)
     assert.equal(stubLabel('2026-10-31', '2026-10-29'), 'SAT')
     assert.equal(stubLabel('2026-11-04', '2026-10-29'), 'WED')
     assert.equal(stubLabel('2026-11-07', '2026-10-29'), 'NOV 7')

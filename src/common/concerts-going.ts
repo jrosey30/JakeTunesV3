@@ -4,8 +4,8 @@
  * JakeTunesMobile backend util/rsvps.ts) so the phone and both Macs agree;
  * the LATEST tap wins (each write carries when it was tapped).
  *
- *   GET  /api/rsvps                         every entry; `ask` = ask "Were you there?" now
- *   PUT  /api/rsvps/:id        {status, at}  going / not / clear
+ *   GET  /api/rsvps?with=interested         every entry; `ask` = ask "Were you there?" now
+ *   PUT  /api/rsvps/:id        {status, at}  going / interested / not / clear
  *   PUT  /api/rsvps/:id/attended {answer, at} yes / no / clear
  *   GET  /api/concerts/lately?artist=        "What they've been playing" (setlist.fm);
  *                                            { enabled: false } without a key → draw nothing
@@ -17,7 +17,14 @@
  * RsvpStore in Concerts.swift). Pure — no electron, no fetch.
  */
 
-export type RsvpStatus = 'going' | 'not'
+/** 'interested' (2026-11-03, Jake: "I want a button to indicate that I am interested in going"):
+ *  a maybe beside going, per night. homemini shows it only to an app that asks (?with=interested). */
+export type RsvpStatus = 'going' | 'interested' | 'not'
+
+/** A status off the wire; anything this desktop doesn't know is null, never an error. */
+export function parseRsvpStatus(v: unknown): RsvpStatus | null {
+  return v === 'going' || v === 'interested' || v === 'not' ? v : null
+}
 export type AttendedAnswer = 'yes' | 'no'
 
 export interface RsvpShow {
@@ -79,7 +86,7 @@ export function parseRsvps(body: unknown): RsvpEntry[] {
   for (const r of items) {
     if (!isObj(r)) continue
     const eventId = str(r.eventId)
-    const status = r.status === 'going' || r.status === 'not' ? r.status : null
+    const status = parseRsvpStatus(r.status)
     if (!eventId || !status) continue
     const e: RsvpEntry = { eventId, status, at: str(r.at) ?? '' }
     if (isObj(r.show) && str(r.show.artist) && str(r.show.venue) && str(r.show.date)) e.show = r.show as unknown as RsvpShow
@@ -118,7 +125,18 @@ export function nextAsk(entries: readonly RsvpEntry[]): RsvpEntry | null {
 
 /** A tap on Going: going ↔ clear. */
 export function goingAfterTap(current: RsvpStatus | null | undefined): RsvpStatus | null {
-  return current === 'going' ? null : 'going'
+  return statusAfterTap(current, 'going')
+}
+
+/** A tap on Going or Interested: the one tapped, or clear when it was already that. The two
+ *  never stand together on a night (marking one replaces the other). */
+export function statusAfterTap(current: RsvpStatus | null | undefined, tapped: 'going' | 'interested'): RsvpStatus | null {
+  return current === tapped ? null : tapped
+}
+
+/** What a card of several nights shows: whether any of them is marked each way. */
+export function nightsMarked(statuses: ReadonlyArray<RsvpStatus | null | undefined>): { interested: boolean; going: boolean } {
+  return { interested: statuses.includes('interested'), going: statuses.includes('going') }
 }
 
 /** "Every show" / "3 of 4 shows" · "Ramones cover" · in your library or not. */
@@ -149,7 +167,9 @@ export function stubLabel(date: string, today: string): string | null {
   if (!Number.isFinite(d) || !Number.isFinite(t)) return null
   const days = Math.round((d - t) / 86_400_000)
   const when = new Date(d)
-  if (days <= 0) return 'TONIGHT'
+  // A night that has passed (the Interested / Going filter keeps them) has no stub.
+  if (days < 0) return null
+  if (days === 0) return 'TONIGHT'
   if (days < 7) return DAYS[when.getUTCDay()]!
   return `${MONTHS[when.getUTCMonth()]} ${when.getUTCDate()}`
 }

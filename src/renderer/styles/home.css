@@ -956,7 +956,10 @@
   background: var(--white);
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 6px;
-  overflow: hidden;
+  /* clip, not hidden (2026-11-03): an overflow:hidden box is a scroll container, so the concert
+     photo's drift timeline (view(inline), below) followed this card instead of the rail and never
+     moved. clip clips the same and lets the timeline find the rail. */
+  overflow: clip;
   transition:
     box-shadow 180ms cubic-bezier(0.2, 0.65, 0.3, 1),
     transform 180ms cubic-bezier(0.2, 0.65, 0.3, 1),
@@ -1601,6 +1604,162 @@
   border-color: var(--brand-orange, #FC5501);
   color: #fff;
 }
+/* Interested (2026-11-03): the Going pill's shape; on = an orange ring and a filled star, so it
+   never reads as Going. */
+.home-concert-interested {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 9px 0 7px;
+  border-radius: 11px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  background: var(--white, #fff);
+  color: var(--accent-text, #C14201);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.home-concert-interested--on {
+  border-color: var(--brand-orange, #FC5501);
+  box-shadow: inset 0 0 0 1px var(--brand-orange, #FC5501);
+  background: #fff4ec;
+}
+.home-concert-interested--on svg { color: var(--brand-orange, #FC5501); }
+.home-concert-interested:focus-visible,
+.home-concert-going:focus-visible,
+.home-concert-filter button:focus-visible {
+  outline: 2px solid var(--brand-orange, #FC5501);
+  outline-offset: 2px;
+}
+
+/* "Pick a night": a card whose act plays several nights opens the sheet (in the Tickets slot). */
+.home-concert-pick {
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 11px;
+  border: 1px solid var(--brand-orange, #FC5501);
+  background: var(--white, #fff);
+  color: var(--accent-text, #C14201);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.home-concert-pick:hover { background: #fff4ec; }
+.home-concert-pick:focus-visible {
+  outline: 2px solid var(--brand-orange, #FC5501);
+  outline-offset: 2px;
+}
+
+/* Live Near You's All · Interested · Going. */
+.home-concert-filter { display: inline-flex; align-items: center; gap: 4px; align-self: center; }
+.home-concert-filter button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 11px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  background: var(--white, #fff);
+  color: var(--text-secondary, #555);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.home-concert-filter button[aria-pressed="true"] {
+  background: var(--brand-orange, #FC5501);
+  border-color: var(--brand-orange, #FC5501);
+  color: #fff;
+}
+.home-concert-filter-count { font-variant-numeric: tabular-nums; opacity: 0.85; }
+.home-concert-empty {
+  margin: 4px var(--home-gutter, 28px) 10px;
+  font-size: 12px;
+  color: var(--text-secondary, #6a6a6a);
+}
+/* Filtered: the nights that have passed come after a quiet "Past" mark. */
+.home-concert-past {
+  flex: 0 0 auto;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  padding: 0 4px 0 10px;
+  border-left: 1px solid rgba(0, 0, 0, 0.12);
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-secondary, #777);
+}
+.home-card-row--concert-grid .home-concert-past {
+  grid-column: 1 / -1;
+  writing-mode: horizontal-tb;
+  transform: none;
+  border-left: 0;
+  border-top: 1px solid rgba(0, 0, 0, 0.12);
+  padding: 8px 0 0;
+}
+
+/* "Pick a night" — a sheet over the Home (the phone's is a sheet too), so it opens beside the
+   card wherever it is: the rail, or deep in See All's grid. */
+.home-concert-nights-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(2px);
+  animation: home-concert-nights-fade 160ms ease both;
+}
+.home-concert-nights-sheet {
+  width: min(820px, 92vw);
+  max-height: min(660px, 86vh);
+  overflow-y: auto;
+  padding: 18px 22px 16px;
+  border-radius: 14px;
+  background: var(--white, #fdfbf7);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  animation: home-concert-nights-rise 200ms cubic-bezier(0.2, 0.65, 0.3, 1) both;
+}
+@keyframes home-concert-nights-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes home-concert-nights-rise { from { opacity: 0; transform: translateY(12px) scale(0.98); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .home-concert-nights-backdrop, .home-concert-nights-sheet { animation: none; }
+}
+.home-concert-nights-rooms {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(370px, 1fr));
+  gap: 12px 28px;
+  margin-top: 12px;
+}
+.home-concert-nights-room-name {
+  margin: 0 0 2px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-primary, #2b2823);
+}
+.home-concert-nights-room-name span { font-weight: 600; color: var(--text-secondary, #6a6a6a); }
+.home-concert-nights-list { list-style: none; margin: 0; padding: 0; }
+.home-concert-night {
+  display: grid;
+  grid-template-columns: max-content auto;
+  justify-content: space-between;
+  align-items: center;
+  gap: 2px 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+.home-concert-night-when { font-size: 12.5px; font-weight: 600; color: var(--text-primary, #1a1a1a); font-variant-numeric: tabular-nums; }
+.home-concert-night-buttons { grid-column: 2; grid-row: 1 / span 2; display: flex; align-items: center; gap: 6px; }
+.home-concert-night-tags { grid-column: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.home-concert-night-opening { font-size: 10.5px; color: var(--text-secondary, #777); }
 .home-concert-lately-link {
   display: inline-flex;
   align-items: center;
@@ -1692,7 +1851,9 @@
 
 /* ── 2026-10-29: "make the concerts row more fun" (twin: ConcertFun.swift) ──
    Same card width (272px) and rail; the act's photo is the hero band on top
-   (272×132), the ticket stub of the date stays beside the text. On the photo:
+   (4:3 since 2026-11-03, Jake: "I'd make the concert artist photos more 4:3
+   ratio": 272×204 on the rail, still 4:3 when See All widens the cards; it
+   was 272×132), the ticket stub of the date stays beside the text. On the photo:
    a stub-shaped date tag (white with #C14201 type; "TONIGHT" solid #FC5501
    with a soft breathing glow) that flips down into place; while a snippet
    plays, a 3-bar equalizer in an orange disc (22×22); a "GOING" rubber stamp
@@ -1702,8 +1863,8 @@
 .home-concert-photo {
   position: relative;
   flex: 0 0 100%;
-  height: 132px;
-  overflow: hidden;
+  aspect-ratio: 4 / 3;
+  overflow: clip;   /* not hidden: see .home-tour-card — the drift must follow the rail */
   background: linear-gradient(180deg, #ece6dc 0%, #e2dbcf 100%);
   border-bottom: 1px solid rgba(0, 0, 0, 0.06);
 }
