@@ -7,7 +7,7 @@
  */
 import { withCompanionInit } from './hub-companion.ts'
 import {
-  parseProgress, parseQuizList, parseQuizNext, parseQuizUndo,
+  parseProgress, parseQuizList, parseQuizNext, parseQuizTies, parseQuizUndo,
   type QuizAnswerInput, type QuizListEntry, type QuizNext, type QuizProgress, type QuizUndo,
 } from '../common/top1000-doc.ts'
 
@@ -76,6 +76,16 @@ export function createTop1000Client(opts: Top1000ClientOptions) {
       if (doc) return { ok: true, value: doc }
       const err = (r.body as { error?: unknown } | null)?.error
       return { ok: false, error: typeof err === 'string' ? `Nothing was undone: ${err}.` : 'Nothing was undone.' }
+    },
+
+    /** How many genuine ties are open (homemini, 2026-11-03): the sidebar offers the quiz only while
+     *  there are any. null: homemini predates ties (404), so the quiz stays as it was. */
+    async ties(): Promise<Result<number | null>> {
+      const r = await call('/ties', { method: 'GET' })
+      if (!r) return { ok: false, error: OFFLINE }
+      if (r.status === 404) return { ok: true, value: null }
+      const n = r.status === 200 ? parseQuizTies(r.body) : null
+      return n !== null ? { ok: true, value: n } : { ok: false, error: 'The tie count came back unreadable.' }
     },
 
     async list(): Promise<Result<{ progress: QuizProgress; list: QuizListEntry[] }>> {

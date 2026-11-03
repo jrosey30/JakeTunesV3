@@ -24,6 +24,7 @@ import { getAiMixtapes, subscribeAiMixtapes, ensureAiMixtapesLoaded, removeKeptA
 import { keptAiTapes, type AiMixtape } from '../../../common/ai-mixtapes'
 import { getPoolIds, subscribePool, refreshPool, addTracksToPool, usePoolHealth, usePoolReadOnly } from '../../activityPool'
 import { CD_PRESENCE_START, stepCdPresence } from '../../../common/auto-nav'
+import { quizDoorShown } from '../../../common/top1000-doc'
 import { autoNavBlocked } from '../../utils/autoNavGuard'
 import NewMixtapeSheet from '../NewMixtapeSheet'
 
@@ -292,6 +293,25 @@ export default function Sidebar() {
   // playlist-pins.json sidecar ("same pins" across machines — the workmini
   // harvest exchanges it, newest save wins). load-playlist-pins migrates a
   // machine's old ui-state pins on first read, so nothing is lost.
+  // The quiz door (2026-11-03, Jake: "the quiz should only be an option to me when theres a genuine
+  // tie between songs"): homemini counts the open ties; the row shows only while there is one
+  // (common/top1000-doc.ts quizDoorShown). Read on launch, every 10 minutes, on focus, and on the way
+  // in and out of the quiz, so the row goes once he has settled the last tie.
+  const onQuiz = state.currentView === 'top1000'
+  const [quizTies, setQuizTies] = useState<number | null | undefined>(undefined)
+  useEffect(() => {
+    let live = true
+    const read = () => {
+      void window.electronAPI.top1000Ties?.()
+        .then((r) => { if (live && r?.ok) setQuizTies(r.value) })
+        .catch(() => {})
+    }
+    read()
+    const every = window.setInterval(read, 10 * 60_000)
+    window.addEventListener('focus', read)
+    return () => { live = false; window.clearInterval(every); window.removeEventListener('focus', read) }
+  }, [onQuiz])
+
   const [pinned, setPinned] = useState<string[]>([])
   useEffect(() => {
     void window.electronAPI.loadPlaylistPins().then((r) => {
@@ -563,7 +583,7 @@ export default function Sidebar() {
     <div className="sidebar">
       <div className="sidebar-scroll">
         <SidebarSection title="LIBRARY">
-          {libraryItems.map((item) => (
+          {libraryItems.filter((item) => item.view !== 'top1000' || quizDoorShown(quizTies, onQuiz)).map((item) => (
             <SidebarItem
               key={item.view}
               label={item.label}

@@ -1201,6 +1201,7 @@ const electronAPI = {
   top1000Answer: (input: { kind: string; ids: string[]; choice: string; reasons?: string[] }): Promise<unknown> => ipcRenderer.invoke('top1000:answer', input),
   top1000Undo: (): Promise<unknown> => ipcRenderer.invoke('top1000:undo'),
   top1000List: (): Promise<unknown> => ipcRenderer.invoke('top1000:list'),
+  top1000Ties: (): Promise<unknown> => ipcRenderer.invoke('top1000:ties'),
   homeShelvesGet: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:get'),
   homeShelvesRefresh: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:refresh'),
   homeShelvesLocalPlays: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:local-plays'),
