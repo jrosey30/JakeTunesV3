@@ -90,6 +90,10 @@ export interface PhotoDeps {
   fetchJson(url: string): Promise<unknown>        // undefined on any failure
   download(url: string): Promise<Buffer | null>
   now?: () => number
+  /** A photo Jake picked on homemini (artist-photo-picks.ts): never refreshed from Deezer. */
+  picked?: (slug: string) => boolean
+  /** Waited on before each look, so a launch's first photos come after the first picks pull. */
+  ready?: () => Promise<void>
 }
 
 export function createArtistPhotos(deps: PhotoDeps): {
@@ -131,9 +135,11 @@ export function createArtistPhotos(deps: PhotoDeps): {
     const running = inFlight.get(slug)
     if (running) return running
     const task = (async (): Promise<string | null> => {
+      await deps.ready?.()                                           // never rejects (artist-photo-picks.ts)
       const jpg = join(deps.dir, `${slug}.jpg`), miss = join(deps.dir, `${slug}.miss`)
       await mkdir(deps.dir, { recursive: true }).catch(() => {})
       const have = await exists(jpg)
+      if (have && deps.picked?.(slug)) return slug                    // Jake's pick: Deezer never replaces it
       if (have && await fresh(jpg, PHOTO_MAX_AGE_MS)) return slug
       if (await fresh(miss, MISS_TTL_MS)) return have ? slug : null
       const f = await factFor(artist)

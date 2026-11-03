@@ -90,6 +90,7 @@ import { registerSyncedPicksIpc } from './ipc/synced-picks-ipc.ts'
 import { registerHomeSpotlightIpc } from './ipc/home-spotlight-ipc.ts'
 import { assertNoSyncedPicksPush } from './synced-picks-client.ts'
 import { createArtistPhotos, nameKey as photoNameKey } from './artist-photo.ts'
+import { createArtistPhotoPicks } from './artist-photo-picks.ts'
 import { phoneOverlayFields } from '../common/genre-vocab.ts'; import { mergeOverrideField } from './override-merge.ts'; import { registerUserEdits } from './ipc/user-edits-ipc.ts'
 import { registerPreviewRefreshIpc } from './ipc/preview-refresh-ipc.ts'
 import { registerSyncHistoryIpc } from './ipc/sync-history-ipc.ts'
@@ -6174,9 +6175,18 @@ function getArtistImageDir(): string {
 // hiding a photo on disk (artist-photo.ts — the old Bandsintown/TheAudioDB
 // sources died and stale photos vanished, 2026-10-11).
 let deezerGate = Promise.resolve()
+// Photos Jake picked on homemini beat Deezer's, and Deezer never refreshes over them (artist-photo-picks.ts).
+const artistPhotoPicks = createArtistPhotoPicks({
+  baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''),
+  dir: getArtistImageDir(),
+  stateFile: join(app.getPath('userData'), 'artist-photo-picks.json'),
+})
+artistPhotoPicks.start()
 const artistPhotos = createArtistPhotos({
   dir: getArtistImageDir(),
   factsFile: join(app.getPath('userData'), 'artist-deezer.json'),
+  picked: (slug) => artistPhotoPicks.isPicked(slug),
+  ready: () => artistPhotoPicks.ready(),
   owned: async (artist) => {
     const k = photoNameKey(artist), albums = new Set<string>(), titles = new Set<string>()
     for (const t of (((await libraryCache.get()) as { tracks?: TrackLike[] }).tracks ?? []) as Array<{ artist?: string; albumArtist?: string; album?: string; title?: string; contributingArtists?: string[] }>) {
