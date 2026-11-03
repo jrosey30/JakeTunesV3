@@ -351,8 +351,11 @@ export function createUserEditsSync(host: UserEditsHost): UserEditsSync {
         if (!row) continue
         const fp = absorbFingerprint(overrides, w.id, row)
         const stamp = String(w.at)
+        // A song already starred here keeps its rating (w.shown); only its
+        // star time and the journal follow the star (planPhoneStars 'journaled').
+        const rating = w.shown ?? '5'
         try {
-          await host.writeOverride(Number(w.id), 'rating', '5', fp)
+          if (w.shown === undefined) await host.writeOverride(Number(w.id), 'rating', rating, fp)
           await host.writeOverride(Number(w.id), 'starredAt', stamp, fp)
         } catch (err) {
           warn('star-write', `[user-edits] could not raise ${w.id} after a star elsewhere: ${err instanceof Error ? err.message : String(err)}`)
@@ -361,16 +364,17 @@ export function createUserEditsSync(host: UserEditsHost): UserEditsSync {
         // No await between reading `mine` and replacing it (see applyUnstarsOnce).
         const dur = Number(row.duration) || 0
         const extra = { from: 'phone', ...(dur > 0 ? { dur } : {}) }
-        mine = recordUserEdit(mine!, w.id, 'rating', '5', w.at, extra)
+        mine = recordUserEdit(mine!, w.id, 'rating', rating, w.at, extra)
         mine = recordUserEdit(mine!, w.id, 'starredAt', stamp, w.at, extra)
-        done.push({ id: Number(w.id), field: 'rating', value: '5' }, { id: Number(w.id), field: 'starredAt', value: stamp })
+        if (w.shown === undefined) done.push({ id: Number(w.id), field: 'rating', value: rating })
+        done.push({ id: Number(w.id), field: 'starredAt', value: stamp })
         raised++
       }
       if (raised === 0) return 0
       persist()
       host.applied(done)
       host.publish()
-      log(`[user-edits] starred elsewhere: ${raised} song(s) raised to a star${plan.deferred > 0 ? `, ${plan.deferred} more wait for the next pass` : ''}: ${plan.writes.slice(0, 8).map((w) => w.id).join(' ')}`)
+      log(`[user-edits] starred elsewhere: ${raised} song(s) raised or journaled as a star${plan.deferred > 0 ? `, ${plan.deferred} more wait for the next pass` : ''}: ${plan.writes.slice(0, 8).map((w) => w.id).join(' ')}`)
       return raised
     } catch (err) {
       warn('star', `[user-edits] could not apply stars from another device: ${err instanceof Error ? err.message : String(err)}`)
