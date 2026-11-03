@@ -291,10 +291,9 @@ export default function YirPage({ y, ctx, onStory }: { y: YirFacts; ctx: YirCtx;
           <h2>An algorithm you built, and <em>it works</em>.</h2>
           <p className="yir-p-lede">A tournament over {K.proof.pool ? `${n(K.proof.pool)} of your songs` : 'your whole library'}: heats, one-on-ones, genre brackets, finals. A brain learns from your plays, stars and skips and guesses your answer first. Nobody pays for a seat, and the 1,000 help fill your Original iPod.</p>
           <div className="yir-p-moments">
-            {K.proof.sureCalls.n > 0 && (
-              <div><span className="k">When it was sure</span><span className="v">{pctOf(K.proof.sureCalls.called, K.proof.sureCalls.n)}% <small>right</small></span>
-                <p>It called {n(K.proof.sureCalls.n)} duels at 80% or more before you answered, and got {n(K.proof.sureCalls.called)} of them.</p></div>
-            )}
+            {/* The ONE "sure" number (Jake 2026-11-03, "just do 92%"): the list's, not the duels'. */}
+            <div><span className="k">How sure it is</span><span className="v">{Math.round(K.sure * 100)}% <small>sure</small></span>
+              <p>Averaged over the 1,000 seats: how sure it is that each song belongs.</p></div>
             {K.proof.headToHead.n > 0 && (
               <div><span className="k">Every one-on-one</span><span className="v">{pctOf(K.proof.headToHead.called, K.proof.headToHead.n)}% <small>called</small></span>
                 <p>{n(K.proof.headToHead.called)} of {n(K.proof.headToHead.n)}, each called before your answer.{K.proof.tasteAlone.n > 0 ? ` Plays and stars alone: ${pctOf(K.proof.tasteAlone.called, K.proof.tasteAlone.n)}%.` : ''} It asks the close ones on purpose.</p></div>
@@ -307,7 +306,6 @@ export default function YirPage({ y, ctx, onStory }: { y: YirFacts; ctx: YirCtx;
           <p className="yir-p-foot">
             {n(K.proof.answers)} answers, {n(K.proof.songsJudged)} songs judged.
             {K.proof.rechecks.n > 0 ? ` Asked again later, you answered the same way ${pctOf(K.proof.rechecks.same, K.proof.rechecks.n)}% of the time.` : ''}
-            {` Today it is ${Math.round(K.sure * 100)}% sure of the whole list.`}
           </p>
 
           {K.variety.seats > 0 && (
