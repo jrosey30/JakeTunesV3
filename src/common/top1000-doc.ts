@@ -39,8 +39,9 @@ export interface QuizQuestion {
   songs: QuizSongRef[]
   quota?: number
   /** after the finish line (homemini, 2026-10-27): a genre bracket's question (`bracket` = the genre),
-   *  or a champions' final between two genres (`brackets` = each song's genre, in `songs` order) */
-  stage?: 'bracket' | 'final'
+   *  or a champions' final between two genres (`brackets` = each song's genre, in `songs` order);
+   *  `tie` (2026-11-03): a genuine tie at the #1000 line, the only question homemini asks now */
+  stage?: 'bracket' | 'final' | 'tie'
   bracket?: string
   brackets?: string[]
 }
@@ -63,10 +64,12 @@ export interface QuizProgress {
   out?: number
   sure?: number
   /** the genre brackets (homemini, 2026-10-27): the tour of the genres — which bracket is up, of
-   *  how many — then the finals and how many champions' duels are left */
-  stage?: 'brackets' | 'finals'
+   *  how many — then the finals and how many champions' duels are left. `ties` (2026-11-03): genuine
+   *  ties only, and `ties` is how many are open */
+  stage?: 'brackets' | 'finals' | 'ties'
   bracket?: { name: string; index: number; total: number }
   finalsLeft?: number
+  ties?: number
 }
 export interface QuizNext { question: QuizQuestion | null; progress: QuizProgress }
 
@@ -88,11 +91,11 @@ export function parseProgress(raw: unknown): QuizProgress | null {
   const moving = num(r.moving)
   if (answered === null || settled === null || moving === null) return null
   const out: QuizProgress = { answered, settled, moving }
-  for (const k of ['fixed', 'contenders', 'round', 'heatsLeft', 'duelsLeft', 'totalRounds', 'roundDone', 'out', 'sure', 'finalsLeft'] as const) {
+  for (const k of ['fixed', 'contenders', 'round', 'heatsLeft', 'duelsLeft', 'totalRounds', 'roundDone', 'out', 'sure', 'finalsLeft', 'ties'] as const) {
     const v = num(r[k])
     if (v !== null) out[k] = v
   }
-  if (r.stage === 'brackets' || r.stage === 'finals') out.stage = r.stage
+  if (r.stage === 'brackets' || r.stage === 'finals' || r.stage === 'ties') out.stage = r.stage
   const b = r.bracket as Record<string, unknown> | undefined
   if (b && typeof b === 'object' && typeof b.name === 'string' && b.name) {
     const index = num(b.index)
@@ -122,7 +125,7 @@ function parseQuestion(raw: unknown): QuizQuestion | null {
   }
   // The genre brackets (homemini, 2026-10-27): which bracket a question belongs to, or the two
   // genres of a final (one per song, in order — dropped if they don't line up with the songs).
-  const stage: QuizQuestion['stage'] = q.stage === 'bracket' || q.stage === 'final' ? q.stage : undefined
+  const stage: QuizQuestion['stage'] = q.stage === 'bracket' || q.stage === 'final' || q.stage === 'tie' ? q.stage : undefined
   const bracket = typeof q.bracket === 'string' && q.bracket ? q.bracket : undefined
   const brackets = Array.isArray(q.brackets) && q.brackets.length === songs.length && q.brackets.every((x) => typeof x === 'string' && x)
     ? (q.brackets as string[]) : undefined
@@ -134,6 +137,25 @@ function parseQuestion(raw: unknown): QuizQuestion | null {
   }
   if (songs.length !== SIZE[kind]) return null
   return { kind, songs, ...genre }
+}
+
+/** GET /api/top1000/ties (homemini, 2026-11-03): how many genuine ties are open; null when unreadable. */
+export function parseQuizTies(raw: unknown): number | null {
+  const t = (raw as { ties?: unknown } | null)?.ties
+  return typeof t === 'number' && Number.isFinite(t) && t >= 0 ? Math.floor(t) : null
+}
+
+/**
+ * Whether the sidebar offers the quiz (2026-11-03, Jake: "the quiz should only be an option to me
+ * when theres a genuine tie between songs ... im afraid that if it is there 24/7, then the top 1000
+ * will change more than it needs to"). Shown while a tie is open, and while he is on the quiz so the
+ * row he is on never vanishes under him. `ties` is undefined until homemini has answered (hidden:
+ * the quiz cannot ask without it) and null when homemini predates ties (the quiz as it was).
+ * ⚠️ TWIN: JakeTunesMobile ios Top1000QuizEntryRow (the Home door, shown while ties > 0).
+ */
+export function quizDoorShown(ties: number | null | undefined, onQuiz: boolean): boolean {
+  if (onQuiz || ties === null) return true
+  return (ties ?? 0) > 0
 }
 
 export function parseQuizNext(raw: unknown): QuizNext | null {

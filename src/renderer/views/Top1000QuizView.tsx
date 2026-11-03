@@ -98,6 +98,8 @@ function meterLine(p: QuizProgress): string {
     const left = p.heatsLeft ? `${plural(p.heatsLeft, 'heat', 'heats')} left` : `${plural(p.duelsLeft ?? 0, 'tough call', 'tough calls')} left`
     if (p.totalRounds === undefined) parts.push(`Round ${n(p.round)} · ${left}`)
     else if (p.round <= p.totalRounds) parts.push(`Round ${n(p.round)} of ${n(p.totalRounds)} · ${left}`)
+    // Genuine ties only (homemini, 2026-11-03): no rounds or brackets to count, just what is open.
+    else if (p.stage === 'ties') parts.push(`Your 1000 is set · ${plural(p.ties ?? p.duelsLeft ?? 0, 'genuine tie', 'genuine ties')} to settle`)
     // After the finish line (homemini ≥ 2026-10-27): the tour of the genre brackets, then the finals.
     else if (p.stage === 'finals') parts.push(`Your 1000 is set · round ${n(p.round - p.totalRounds)} · the finals · ${plural(p.finalsLeft ?? p.duelsLeft ?? 0, 'duel', 'duels')} left`)
     else if (p.bracket) parts.push(`Your 1000 is set · round ${n(p.round - p.totalRounds)} · ${p.bracket.name} (genre ${n(p.bracket.index)} of ${n(p.bracket.total)}) · ${plural(p.duelsLeft ?? 0, 'close call', 'close calls')} left`)
@@ -482,7 +484,7 @@ export default function Top1000QuizView(): JSX.Element {
               <button type="button" className="t1k-btn" onClick={() => { setPhase({ kind: 'loading' }); void fetchNext() }}>Try again</button>
             </div>
           )}
-          {phase.kind === 'done' && <p className="t1k-note">No questions left right now — come back after a few more plays.</p>}
+          {phase.kind === 'done' && <p className="t1k-note">No ties to settle right now — the quiz comes back when two songs are neck and neck.</p>}
 
           {phase.kind === 'ask' && (
             <>

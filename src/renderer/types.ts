@@ -1219,6 +1219,7 @@ declare global {
       top1000Answer?: (input: import('../common/top1000-doc').QuizAnswerInput) => Promise<{ ok: true; value: import('../common/top1000-doc').QuizProgress } | { ok: false; error: string }>
       top1000Undo?: () => Promise<{ ok: true; value: import('../common/top1000-doc').QuizUndo } | { ok: false; error: string }>
       top1000List?: () => Promise<{ ok: true; value: { progress: import('../common/top1000-doc').QuizProgress; list: import('../common/top1000-doc').QuizListEntry[] } } | { ok: false; error: string }>
+      top1000Ties?: () => Promise<{ ok: true; value: number | null } | { ok: false; error: string }>
       homeShelvesGet?: () => Promise<{ ok: boolean; state?: import('../common/home-shelves-doc').HomeShelvesState }>
       homeShelvesRefresh?: () => Promise<{ ok: boolean; state?: import('../common/home-shelves-doc').HomeShelvesState }>
       homeShelvesLocalPlays?: () => Promise<{ ok: boolean; plays?: Array<{ id: number | string; ts: number }> }>

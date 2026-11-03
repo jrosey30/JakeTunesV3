@@ -1,7 +1,8 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { createTop1000Client, type FetchLike } from '../top1000-client.ts'
-import { parseProgress, parseQuizNext, parseQuizUndo } from '../../common/top1000-doc.ts'
+import { parseProgress, parseQuizNext, parseQuizTies, parseQuizUndo, quizDoorShown } from '../../common/top1000-doc.ts'
 
 const progress = { answered: 3, settled: 200, moving: 800 }
 const track = (id: number) => ({ id, title: `Song ${id}`, artist: 'A', album: 'B', duration: 200000 })
@@ -64,6 +65,32 @@ describe('top1000 doc', () => {
     assert.deepEqual(odd?.progress, progress)
   })
 
+  it('reads genuine ties (2026-11-03): a tie question, how many are open, and the door that shows only while one is', () => {
+    const songs = [{ track: track(1), hookMs: 0 }, { track: track(2), hookMs: 0 }]
+    const tie = parseQuizNext({ question: { kind: 'duel', songs, stage: 'tie' }, progress: { ...progress, round: 9, totalRounds: 3, stage: 'ties', heatsLeft: 0, duelsLeft: 4, ties: 4 } })
+    assert.equal(tie?.question?.stage, 'tie')
+    assert.equal(tie?.progress.stage, 'ties')
+    assert.equal(tie?.progress.ties, 4)
+    assert.equal(parseQuizTies({ ties: 3, answered: 9000 }), 3)
+    assert.equal(parseQuizTies({ ties: 0 }), 0)
+    for (const junk of [null, {}, { ties: null }, { ties: '3' }, { ties: -1 }]) assert.equal(parseQuizTies(junk), null)
+    // shown while a tie is open or he is on the quiz; hidden until homemini answers; an older homemini keeps it
+    assert.equal(quizDoorShown(2, false), true)
+    assert.equal(quizDoorShown(0, false), false)
+    assert.equal(quizDoorShown(undefined, false), false)
+    assert.equal(quizDoorShown(0, true), true)
+    assert.equal(quizDoorShown(null, false), true)
+  })
+
+  it('the sidebar row goes through the door, and the quiz says why it has nothing to ask', () => {
+    const sidebar = readFileSync(new URL('../../renderer/components/sidebar/Sidebar.tsx', import.meta.url), 'utf-8')
+    assert.match(sidebar, /item\.view !== 'top1000' \|\| quizDoorShown\(quizTies, onQuiz\)/)
+    assert.match(sidebar, /top1000Ties\?\.\(\)/)
+    const view = readFileSync(new URL('../../renderer/views/Top1000QuizView.tsx', import.meta.url), 'utf-8')
+    assert.ok(view.includes('No ties to settle right now — the quiz comes back when two songs are neck and neck.'))
+    assert.ok(view.includes("p.stage === 'ties'"))
+  })
+
   it('parses an undo: the undone answer and its question asked again', () => {
     const q = { kind: 'pick', songs: [{ track: track(1), hookMs: 1 }, { track: track(2), hookMs: 2 }] }
     const u = parseQuizUndo({ ok: true, undone: { kind: 'pick', ids: [1, 2], choice: '2' }, question: q, progress })
@@ -121,5 +148,19 @@ describe('top1000 client', () => {
     const offline = createTop1000Client({ baseUrl: 'http://x', warn: () => {}, fetchImpl: fake({}) })
     const o = await offline.undo()
     assert.ok(!o.ok && /homemini/.test(o.error))
+  })
+
+  it('ties → the open count; a 404 means an older homemini (the quiz as it was); offline or junk is an error', async () => {
+    const seen: Array<{ url: string; init?: Record<string, unknown> }> = []
+    const c = createTop1000Client({ baseUrl: 'http://homemini:3000', warn: () => {}, fetchImpl: fake({ '/api/top1000/ties': { status: 200, body: { ties: 2, answered: 9000 } } }, seen) })
+    assert.deepEqual(await c.ties(), { ok: true, value: 2 })
+    assert.equal(seen[0]!.url, 'http://homemini:3000/api/top1000/ties')
+    const old = createTop1000Client({ baseUrl: 'http://x', warn: () => {}, fetchImpl: fake({ '/ties': { status: 404, body: null } }) })
+    assert.deepEqual(await old.ties(), { ok: true, value: null })
+    const offline = createTop1000Client({ baseUrl: 'http://x', warn: () => {}, fetchImpl: fake({}) })
+    const o = await offline.ties()
+    assert.ok(!o.ok && /homemini/.test(o.error))
+    const junk = createTop1000Client({ baseUrl: 'http://x', warn: () => {}, fetchImpl: fake({ '/ties': { status: 200, body: { ties: 'many' } } }) })
+    assert.equal((await junk.ties()).ok, false)
   })
 })

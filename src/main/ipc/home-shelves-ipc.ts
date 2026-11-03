@@ -80,6 +80,7 @@ export function registerHomeShelvesIpc(ipc: IpcRegistrar, host: HomeShelvesIpcHo
   }, { refuse: REFUSED_SENDER })
   ipc.handle('top1000:undo', async () => top1000.undo(), { refuse: REFUSED_SENDER })
   ipc.handle('top1000:list', async () => top1000.list(), { refuse: REFUSED_SENDER })
+  ipc.handle('top1000:ties', async () => top1000.ties(), { refuse: REFUSED_SENDER })
 
   ipc.handle('home-shelves:get', async () => ({ ok: true, state: await client.read() }), { refuse: REFUSED_SENDER })
   ipc.handle('home-shelves:refresh', async () => ({ ok: true, state: await refresh(false) }), { refuse: REFUSED_SENDER })
