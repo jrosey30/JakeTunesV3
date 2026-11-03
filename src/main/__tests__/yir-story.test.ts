@@ -107,9 +107,9 @@ describe('the story', () => {
   it('the Top 1000 chapter is the measured numbers, nothing else', () => {
     const work = after.find((x) => x.eyebrow === 'Does it work?')
     assert.ok(work && work.kind === 'number' && work.viz?.kind === 'gauges')
-    assert.equal(work.big, '87% right when it was sure.')   // 1,335 / 1,526
+    assert.equal(work.big, '92% sure.')   // the list's own number (sure 0.918), the only one
     assert.equal(work.line, 'Plays and stars alone: 56%.')
-    assert.deepEqual(work.viz.items.map((g) => [g.pct, g.lead]), [[87, true], [56, false]])
+    assert.deepEqual(work.viz.items.map((g) => [g.pct, g.lead]), [[92, true], [56, false]])
     assert.doesNotMatch(JSON.stringify(after), /overruled/i, 'Jake 10/29: it read as "39% wrong"')
     const seats = after.find((x) => x.eyebrow === 'Who holds a seat')
     assert.ok(seats && seats.kind === 'number' && seats.viz?.kind === 'seats')
@@ -127,7 +127,7 @@ describe('the story', () => {
     assert.deepEqual(what.viz.steps.map((s) => [s.value, s.label]), [['1,772', 'heats'], ['6,987', 'one-on-ones'], ['77', 'genre brackets'], ['Finals', 'champions duel'], ['1,000', 'seats']])
     const why = after.find((x) => x.eyebrow === 'Why it matters')
     assert.ok(why && why.kind === 'number')
-    assert.equal(why.line, '92% sure. Nobody paid for a seat.')
+    assert.equal(why.line, 'Nobody paid for a seat.')
   })
 
   it('word budget: headline ≤ 8 words, one line ≤ 12 (Jake 10/29: "too many words")', () => {

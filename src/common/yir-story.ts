@@ -175,14 +175,15 @@ function top1000Cards(y: YearInReview): Slide[] {
     play: one,
   })
   if (P.headToHead.n > 0) {
-    const h2h = pctOf(P.headToHead.called, P.headToHead.n)
-    const sure = P.sureCalls.n > 0 ? pctOf(P.sureCalls.called, P.sureCalls.n) : null
+    // ONE "sure" number in the story, the list's own (Jake 2026-11-03: "it is 88% sure, then goes on to
+    // say it was 92% sure.....stupid" → "just do 92%. that is the marketable number").
+    const sure = Math.round(c.sure * 100)
     const taste = P.tasteAlone.n > 0 ? pctOf(P.tasteAlone.called, P.tasteAlone.n) : null
-    const items = [{ pct: sure ?? h2h, label: sure !== null ? 'When it was sure' : 'Called in advance', lead: true }]
+    const items = [{ pct: sure, label: 'Sure of the 1,000', lead: true }]
     if (taste !== null) items.push({ pct: taste, label: 'Plays and stars alone', lead: false })
     out.push({
       kind: 'number', eyebrow: 'Does it work?',
-      big: sure !== null ? `${sure}% right when it was sure.` : `${h2h}% called in advance.`,
+      big: `${sure}% sure.`,
       line: taste !== null ? `Plays and stars alone: ${taste}%.` : `${n(P.answers)} answers, every one called first.`,
       viz: { kind: 'gauges', items },
     })
@@ -210,7 +211,7 @@ function top1000Cards(y: YearInReview): Slide[] {
   }
   out.push({
     kind: 'number', eyebrow: 'Why it matters', big: 'Earned, not placed.',
-    line: `${Math.round(c.sure * 100)}% sure. Nobody paid for a seat.`,
+    line: 'Nobody paid for a seat.',
     viz: wall.length ? { kind: 'mosaic', tiles: wallTiles(0, 48) } : undefined,
     play: wall[0] ? song(wall[0].artist, wall[0].title).play : undefined,
   })
