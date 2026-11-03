@@ -919,25 +919,6 @@
   .app-splash--settled .app-splash-canvas { animation: none; }
 }
 
-/* The era under the stage (2026-11-02): the month and the name of the mark
-   on screen while the lineage plays; empty once settled. Fixed height so the
-   wordmark never shifts when the caption clears. */
-.app-splash-era {
-  height: 16px;
-  margin-top: 10px;
-  font-size: 11px;
-  line-height: 16px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #9a8a76;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-@media (prefers-reduced-motion: reduce) {
-  .app-splash-era { visibility: hidden; }
-}
-
 /* The splash wordmark is the logo's own pixel lettering, not a font. */
 .app-splash-wordmark-img {
   display: block;

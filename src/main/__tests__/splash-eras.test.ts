@@ -7,16 +7,14 @@ import {
   LINEAGE_MS,
   SPLASH_ERAS,
   eraAt,
-  eraLabelAt,
 } from '../../common/splash-eras.ts'
+import { readFileSync } from 'node:fs'
 
 // The intro page walks every JakeTunes logo, oldest first, and lands on the
 // one that ships (2026-11-02). The timeline is pure; SplashScreen.tsx draws it.
 
 test('five marks, oldest first, the shipping pixel note last', () => {
   assert.deepEqual(SPLASH_ERAS.map((e) => e.key), ['portrait', 'cream-note', 'brush-j', 'pixel-ipod', 'pixel-note'])
-  assert.equal(SPLASH_ERAS[SPLASH_ERAS.length - 1]!.label, 'August 2026 · the pixel note')
-  for (const e of SPLASH_ERAS) assert.match(e.label, /^(April|May|August) 2026 · the /)
 })
 
 test('the whole lineage is just over two seconds', () => {
@@ -49,9 +47,9 @@ test('the last mark lands and stays', () => {
   assert.deepEqual(eraAt(LINEAGE_MS + 60_000), { index: last, blend: 1, under: null, done: true })
 })
 
-test('the caption follows whichever mark owns the screen', () => {
-  assert.equal(eraLabelAt(0), 'April 2026 · the portrait')
-  assert.equal(eraLabelAt(ERA_STEP_MS + ERA_FADE_MS * 0.25), 'April 2026 · the portrait', 'the next mark is still faint')
-  assert.equal(eraLabelAt(ERA_STEP_MS + ERA_FADE_MS * 0.75), 'May 2026 · the note')
-  assert.equal(eraLabelAt(LINEAGE_MS + 1), 'August 2026 · the pixel note')
+test('no caption under the logos (Jake, 2026-11-03)', () => {
+  const splash = readFileSync(new URL('../../renderer/components/SplashScreen.tsx', import.meta.url), 'utf-8')
+  const css = readFileSync(new URL('../../renderer/styles/app.css', import.meta.url), 'utf-8')
+  assert.equal(splash.includes('app-splash-era'), false, 'the splash renders no era caption')
+  assert.equal(css.includes('.app-splash-era'), false, 'and keeps no style for one')
 })
