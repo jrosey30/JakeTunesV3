@@ -146,6 +146,8 @@
 }
 .home-vibe-go:disabled { opacity: 0.45; cursor: default; }
 .home-vibe-building { margin-top: 14px; font-size: 13px; font-style: italic; color: rgba(var(--brand-orange-rgb), 0.95); }
+/* A vibe that failed says why (2026-11-03); the chips stay up for another try. */
+.home-vibe-error { margin-top: 14px; font-size: 13px; color: var(--text, #333); }
 .home-vibe-cancel {
   margin-top: 14px; background: none; border: none; cursor: pointer;
   font-size: 13px; color: var(--text-secondary, #888);

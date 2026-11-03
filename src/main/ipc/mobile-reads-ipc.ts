@@ -23,6 +23,7 @@ import {
   type StarState,
 } from '../mobile-stars-merge'
 import { safeIpcError } from '../safe-ipc-error'
+import { VIBE_WAIT_MS, vibeFailureCode } from '../../common/vibe-failure.ts'
 import { withCompanionInit } from '../hub-companion.ts'
 import { registerPlaysElsewhereIpc } from './plays-elsewhere-ipc.ts'
 import { registerAiMixtapesIpc } from './ai-mixtapes-ipc.ts'
@@ -259,17 +260,24 @@ export function registerMobileReadsIpc(ipc: IpcRegistrar, host: MobileReadsIpcHo
       return { ok: false, error: safeIpcError(e, 'api-failed') }
     }
   }, { refuse: REFUSED_SENDER })
+  // 2026-11-03 ("making a vibe never works"): 25 s was shorter than a cold
+  // hub took, and a miss came back silent. Wait VIBE_WAIT_MS, log every miss
+  // to main.log, and hand the sheet a reason code (src/common/vibe-failure.ts).
   ipc.handle('get-mobile-vibe-mix', async (_e, vibe: string): Promise<{ ok: boolean; mix?: { id: string; title: string; subtitle: string; trackIds: number[] }; error?: string }> => {
+    const asked = String(vibe ?? '').slice(0, 200)
+    const started = Date.now()
+    const secs = (): string => ((Date.now() - started) / 1000).toFixed(1)
     try {
       const res = await fetch(`${MOBILE_MIXES_BACKEND}/api/mixes/vibe`, withCompanionInit({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vibe: String(vibe ?? '').slice(0, 200) }),
-        signal: AbortSignal.timeout(25000),
+        body: JSON.stringify({ vibe: asked }),
+        signal: AbortSignal.timeout(VIBE_WAIT_MS),
       }))
       if (!res.ok) {
         const err = await res.json().catch(() => ({})) as { error?: string }
-        return { ok: false, error: err.error || `backend ${res.status}` }
+        console.warn(`[vibe] "${asked}": the hub answered ${res.status} after ${secs()} s${err.error ? ` (${err.error})` : ''}`)
+        return { ok: false, error: vibeFailureCode({ status: res.status }) }
       }
       const m = await res.json() as { id?: string; title?: string; subtitle?: string; tracks?: Array<{ id?: string | number }> }
       return { ok: true, mix: {
@@ -279,7 +287,9 @@ export function registerMobileReadsIpc(ipc: IpcRegistrar, host: MobileReadsIpcHo
         trackIds: (m.tracks || []).map(t => Number(t.id)).filter(n => Number.isFinite(n)),
       } }
     } catch (e) {
-      return { ok: false, error: safeIpcError(e, 'api-failed') }
+      const code = vibeFailureCode({ error: e })
+      console.warn(`[vibe] "${asked}": ${code === 'timeout' ? `no set after ${VIBE_WAIT_MS / 1000} s` : `the hub could not be reached (${safeIpcError(e, 'api-failed')})`}`)
+      return { ok: false, error: code }
     }
   }, { refuse: REFUSED_SENDER })
 
