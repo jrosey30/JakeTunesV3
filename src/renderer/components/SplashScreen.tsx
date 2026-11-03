@@ -17,10 +17,16 @@
  *   2.19s  the pixel note — the shipping mark — lands, and a warm sheen
  *          passes over it as it does.
  *   2.43s  the NOTE lights: a bloom rises off the glyph itself, so the note
- *          reads as struck-and-ringing rather than printed.
- *   2.63s  settle. the chord blooms (playIntroStinger, started late enough
- *          to land here), the wordmark springs, the EQ starts dancing,
- *          progress runs. The caption clears: the settled frame is the mark.
+ *          reads as struck-and-ringing rather than printed — and the chord
+ *          peaks with it.
+ *   2.63s  settle. the wordmark springs, the EQ starts dancing, progress
+ *          runs. The caption clears: the settled frame is the mark.
+ *
+ * THE SONG (2026-11-03) is scored to this timeline (common/splash-score.ts):
+ * each mark has its note on the beat it dissolves in — E3 · G#3 · B3 · E4 ·
+ * G#4, in that era's colour — and the E major(add9) bloom peaks on the light.
+ * It is started on the boot's own clock (playIntroStinger(start)), so a mark
+ * and its note cannot drift.
  *
  * Every tile is clipped to the plate's squircle when it is baked, so five
  * marks drawn across seven months with four different corner radii share one
@@ -52,8 +58,10 @@ import portraitUrl from '../assets/logo-history/2026-04-portrait.png'
 import creamNoteUrl from '../assets/logo-history/2026-05-cream-note.png'
 import brushJUrl from '../assets/logo-history/2026-08-brush-j.png'
 import pixelIpodUrl from '../assets/logo-history/2026-08-pixel-ipod.png'
-import { ERA_STEP_MS, LINEAGE_MS, SPLASH_ERAS, eraAt, eraLabelAt, type SplashEra } from '../../common/splash-eras'
-import { playIntroStinger } from '../utils/introStinger'
+import {
+  SPLASH_ERAS, T_ASSEMBLE, T_LINEAGE, T_LIT, T_POWER_ON, T_SETTLE, eraAt, eraLabelAt, eraStartMs, type SplashEra,
+} from '../../common/splash-eras'
+import { playIntroStinger, primeIntroStinger } from '../utils/introStinger'
 
 const STAGES = [
   'Reading your library…',
@@ -73,19 +81,10 @@ const ERA_URLS: Record<SplashEra['key'], string> = {
   'pixel-note': logoUrl,
 }
 
-// Boot choreography, ms from mount.
-const T_POWER_ON = 150                      // scanline expand completes
-const T_LINEAGE = T_POWER_ON                // the first mark starts dissolving in
-const T_ASSEMBLE = T_LINEAGE + LINEAGE_MS   // the shipping mark is fully on screen
-const T_LIT = T_ASSEMBLE + 240              // the note's bloom reaches full
-const T_SETTLE = T_LIT + 200                // boot complete, hand off to the settled frame
-// The stinger's chord blooms ~0.9 s after it starts; when the boot was one
-// mark it was started at mount and the bloom (T_LIT = 1250) landed on it.
-// Start it later by exactly the lineage's length so the chord still lands
-// on the shipping mark's bloom.
-const T_STINGER = Math.max(0, T_LIT - 1250)
+// Boot choreography: T_POWER_ON, T_LINEAGE, T_ASSEMBLE, T_LIT, T_SETTLE come
+// from common/splash-eras.ts — ONE clock for the picture and the launch song.
 /** When the shipping mark begins to dissolve in — the sheen rides this. */
-const T_LAST_ERA = T_LINEAGE + (SPLASH_ERAS.length - 1) * ERA_STEP_MS
+const T_LAST_ERA = eraStartMs(SPLASH_ERAS.length - 1)
 const FOCUS_BLUR_PX = 7    // how soft the first mark starts before it resolves
 const FOCUS_SCALE = 0.955  // how far in it starts before settling at 1
 
@@ -182,22 +181,23 @@ export default function SplashScreen({ isReady }: Props) {
   const [caption, setCaption] = useState('')
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
-  useEffect(() => {
-    const id = window.setTimeout(() => playIntroStinger(), T_STINGER)
-    return () => window.clearTimeout(id)
-  }, [])
-
   // ── the boot itself ───────────────────────────────────────────────────────
+  // The launch song starts HERE, on the boot's own clock (2026-11-03): every
+  // mark has its note on the beat it dissolves in (common/splash-score.ts),
+  // so the song is started at the instant the boot's clock reads 0 — after
+  // the marks have loaded, not on a timer from mount. Every early exit still
+  // plays it, so the welcome is never lost to a missing canvas or mark.
   useEffect(() => {
+    primeIntroStinger()   // open the audio device while the marks load, not at the boot's 0
     const canvas = canvasRef.current
-    if (!canvas) return
+    if (!canvas) { playIntroStinger(); return }
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     const SIZE = 240
     const dpr = Math.min(2, window.devicePixelRatio || 1)
     canvas.width = SIZE * dpr
     canvas.height = SIZE * dpr
     const ctx = canvas.getContext('2d')
-    if (!ctx) return
+    if (!ctx) { playIntroStinger(); return }
     ctx.scale(dpr, dpr)
     ctx.imageSmoothingEnabled = true    // the art downsamples smooth — no blocks
     ctx.imageSmoothingQuality = 'high'
@@ -207,7 +207,7 @@ export default function SplashScreen({ isReady }: Props) {
     void Promise.all(SPLASH_ERAS.map((e) => loadImage(ERA_URLS[e.key]))).then((imgs) => {
       if (cancelled) return
       const shipping = imgs[imgs.length - 1]
-      if (!shipping) return   // nothing to boot into; the app's own chrome follows anyway
+      if (!shipping) { playIntroStinger(); return }   // nothing to boot into; the app's own chrome follows anyway
 
       // Bake every mark once at display size, at device resolution so the
       // settled frame is crisp on Retina, and clipped to the plate's squircle
@@ -251,10 +251,12 @@ export default function SplashScreen({ isReady }: Props) {
         drawMark()
         setCaption('')
         setPhase('settled')
+        playIntroStinger()   // the welcome is sound, not motion: it still plays
         return
       }
 
       const start = performance.now()
+      playIntroStinger(start)   // one clock: the song's 0 is the boot's 0
       let captionShown = ''
       const draw = (now: number): void => {
         if (cancelled) return

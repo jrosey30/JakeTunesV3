@@ -46,6 +46,27 @@ export const ERA_STEP_MS = ERA_FADE_MS + ERA_HOLD_MS
 /** When the last mark is fully on screen, measured from the lineage's start. */
 export const LINEAGE_MS = (SPLASH_ERAS.length - 1) * ERA_STEP_MS + ERA_FADE_MS
 
+// ── The boot's clock, in ms from the boot's start (2026-11-03) ────────────
+// One clock for the picture AND the launch song (common/splash-score.ts), so a
+// mark and its note can never drift apart. SplashScreen.tsx draws on it;
+// introStinger.ts plays on it, started at the same instant.
+
+/** The scanline power-on completes; the first mark starts dissolving in. */
+export const T_POWER_ON = 150
+/** The lineage's start on the boot's clock. */
+export const T_LINEAGE = T_POWER_ON
+/** The shipping mark is fully on screen. */
+export const T_ASSEMBLE = T_LINEAGE + LINEAGE_MS
+/** The note's light reaches full. */
+export const T_LIT = T_ASSEMBLE + 240
+/** Boot complete: the settled frame takes over. */
+export const T_SETTLE = T_LIT + 200
+
+/** When era `i` begins to dissolve in, on the boot's clock. */
+export function eraStartMs(i: number): number {
+  return T_LINEAGE + i * ERA_STEP_MS
+}
+
 export interface EraFrame {
   /** The era dissolving in (or holding). */
   index: number
