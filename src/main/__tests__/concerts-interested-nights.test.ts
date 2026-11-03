@@ -7,7 +7,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
-  markedNights, nightCard, nightsByRoom, nightsOf, nightWhen, parseConcertItem, pruneToUpcoming, snapshotCard, type ConcertItem,
+  canMark, markedNights, nightCard, nightsByRoom, nightsOf, nightWhen, parseConcertItem, pruneToUpcoming, snapshotCard, type ConcertItem,
 } from '../../common/concerts-feed.ts'
 import { nightsMarked, parseRsvps, parseRsvpStatus, statusAfterTap, stubLabel, type RsvpStatus } from '../../common/concerts-going.ts'
 
@@ -132,7 +132,15 @@ describe('the Interested / Going filter', () => {
     assert.equal(c.runNights, 1)
   })
 
-  it('the click not yet confirmed counts: un-marking a night takes it out at once', () => {
+  it('a night that has passed can no longer be marked (it is the record of what he went to), tonight still can', () => {
+    assert.equal(canMark({ date: '2026-10-20' }, '2026-11-03'), false)
+    assert.equal(canMark({ date: '2026-11-03' }, '2026-11-03'), true)
+    assert.equal(canMark({ date: '2026-11-19' }, '2026-11-03'), true)
+    const shows = readFileSync(new URL('../../renderer/components/HomeShows.tsx', import.meta.url), 'utf-8')
+    assert.match(shows, /\{canMark\(item, today\) && <>/)
+  })
+
+    it('the click not yet confirmed counts: un-marking a night takes it out at once', () => {
     const mine: Record<string, RsvpStatus | null> = { kq1: null }
     const live = (n: { id: string; rsvp?: RsvpStatus | null }) => (n.id in mine ? mine[n.id] ?? null : statusOf(n))
     const m = markedNights('interested', [[LCD_STEEL, GEESE], []], entries, live, '2026-11-03')
