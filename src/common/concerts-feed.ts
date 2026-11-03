@@ -560,6 +560,13 @@ export function snapshotCard(eventId: string, show: RsvpShow, status: RsvpStatus
 
 export type MarkFilter = 'interested' | 'going'
 
+/** Can a card's night still be marked Interested / Going? Not once it has passed: those cards
+ *  are the record of what he went to (the filter's Past), and clearing Going there would drop the
+ *  night from it. ⚠️ TWIN: JakeTunesMobile ios Concerts.swift (past cards have no star or Going). */
+export function canMark(item: Pick<ConcertItem, 'date'>, today: string): boolean {
+  return item.date >= today
+}
+
 /**
  * The nights marked `filter`, each as its own card: the ones still to come, soonest first, then
  * the ones that have passed (kept by homemini's snapshot), newest first. `statusOf` is the one

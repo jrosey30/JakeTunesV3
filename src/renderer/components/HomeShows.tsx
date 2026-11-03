@@ -48,7 +48,7 @@ import { snippetPlaying, stopSnippet, subscribeSnippet, toggleSnippet } from '..
 import { usePlayback } from '../context/PlaybackContext'
 import type { Track } from '../types'
 import {
-  cardBill, cardReason, concertBadges, formatOnSale, formatShowTime, longDate, markedNights, nightCard, nightsByRoom,
+  canMark, cardBill, cardReason, concertBadges, formatOnSale, formatShowTime, longDate, markedNights, nightCard, nightsByRoom,
   nightsOf, nightWhen, nyDate, runNightsLine, runStamp, ticketUrl, whereLine,
   type ActNight, type ConcertItem, type ConcertsFeedState, type MarkFilter,
 } from '../../common/concerts-feed'
@@ -226,6 +226,7 @@ function ShowConcertCard({ item, kind, nowMs, today, openLink, going, snippet }:
         onPlay={() => snippet.toggle(item)}
       />
       <div className="home-concert-actions">
+        {canMark(item, today) && <>
         <button
           type="button"
           className={`home-concert-interested${marked.interested ? ' home-concert-interested--on' : ''}`}
@@ -250,6 +251,7 @@ function ShowConcertCard({ item, kind, nowMs, today, openLink, going, snippet }:
           <GoingIcon on={on} />
           <span>Going</span>
         </button>
+        </>}
         {/* Several nights: each night's own tickets are in the sheet, so its pill takes this slot
             and every card's pills stay on one line. */}
         {several ? (
