@@ -658,7 +658,9 @@
   display: block;
   width: 100%;
   aspect-ratio: 2 / 3;
-  overflow: hidden;
+  /* clip, not hidden: an overflow:hidden box is a scroll container, and the photo's drift
+     timeline (view(), below) would follow this poster instead of the Home's scroll. */
+  overflow: clip;
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.2);
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
@@ -672,6 +674,37 @@
   object-fit: cover;
   display: block;
 }
+/* The concert cards' motion, on the one other place Home shows artist photos (2026-11-03, Jake:
+   "The animation for the concert area is very very cool. Try to mimic that throughout the home
+   page wherever it makes the most sense. Like not album art. But other things."). Album art never
+   moves; these are the app's artist photos. Three of the concert card's moves:
+   - the photo drifts ±14px as the Home scrolls (scroll-driven, no JS), as a concert photo drifts
+     with its rail (home.css .home-concert-photo-img);
+   - the rank flips down into place like the concert card's date stub, one poster after another;
+   - the poster of the act playing right now shows the concert card's equalizer (DigPlaying). */
+@supports (animation-timeline: view()) {
+  .tn-poster img {
+    height: calc(100% + 28px);
+    margin-top: -14px;
+    animation: tn-poster-drift linear both;
+    animation-timeline: view();
+  }
+}
+@keyframes tn-poster-drift {
+  from { transform: translateY(14px); }
+  to { transform: translateY(-14px); }
+}
+.tn-dig-rank {
+  transform-origin: top center;
+  animation: tn-rank-in 420ms cubic-bezier(0.3, 1.5, 0.5, 1) both;
+  animation-delay: calc(80ms + var(--i, 0) * 70ms);
+}
+@keyframes tn-rank-in {
+  from { transform: perspective(300px) rotateX(-88deg); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+/* The equalizer disc (home.css) sits bottom-right, clear of the rank at bottom-left. */
+.tn-poster .tn-dig-eq { right: 10px; bottom: 10px; }
 .tn-poster-ini {
   position: absolute;
   inset: 0;
@@ -729,4 +762,6 @@
 @media (prefers-reduced-motion: reduce) {
   .tn-art-img, .tn-mm-dot, .tn-case-plastic { animation: none; }
   .tn-flow-cover, .tn-poster, .tn-btn, .tn-mm--action { transition: none; }
+  .tn-poster img { animation: none; height: 100%; margin-top: 0; }
+  .tn-dig-rank { animation: none; }
 }
