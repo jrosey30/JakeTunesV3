@@ -232,7 +232,7 @@
   font-size: 13.5px;
   font-weight: 600;
   color: #8a6f5c;
-  animation: splash-fade-up 0.5s ease-out 1.49s both;
+  animation: splash-fade-up 0.5s ease-out 2.69s both;
 }
 
 .app-splash-greeting {
@@ -240,7 +240,7 @@
   font-size: 14.5px;
   font-weight: 700;
   color: #FC5501;
-  animation: splash-fade-up 0.5s ease-out 1.63s both;
+  animation: splash-fade-up 0.5s ease-out 2.83s both;
 }
 
 @keyframes splash-fade-up {
@@ -255,7 +255,7 @@
   gap: 5px;
   height: 30px;
   margin-top: 20px;
-  animation: splash-fade-up 0.4s ease-out 1.43s both;
+  animation: splash-fade-up 0.4s ease-out 2.63s both;
 }
 
 .app-splash-eq-bar {
@@ -284,7 +284,7 @@
   border-radius: 3px;
   background: rgba(252, 85, 1, 0.14);
   overflow: hidden;
-  animation: splash-fade-up 0.4s ease-out 1.73s both;
+  animation: splash-fade-up 0.4s ease-out 2.93s both;
 }
 
 .app-splash-progress-fill {
@@ -307,7 +307,7 @@
   font-weight: 600;
   letter-spacing: 0.02em;
   color: #9a8a76;
-  animation: splash-fade-up 0.4s ease-out 1.79s both;
+  animation: splash-fade-up 0.4s ease-out 2.99s both;
 }
 
 /* Reduced motion: everything lands settled and still. */
@@ -850,6 +850,9 @@
 .pg-dot { width: 26px; height: 26px; border-radius: 6px; flex: 0 0 auto; }
 
 /* ═══ 5.0 COLD BOOT splash (2026-08-08) — the device powers on ═══
+   2026-11-02: the boot is the LINEAGE (SplashScreen.tsx / common/splash-eras.ts)
+   and settles ~1.2 s later than the one-mark boot did; every delay below and
+   in the splash-fade-up rules above moved with it (+1.2 s).
    Canvas paints the pixel assembly; these layers add the CRT/LCD dressing
    that canvas shouldn't waste frames on. */
 .app-splash-canvas {
@@ -893,7 +896,7 @@
   border-radius: 28%;
   background: radial-gradient(circle at 50% 45%, rgba(249, 138, 78, 0.32), rgba(249, 138, 78, 0) 62%);
   opacity: 0;
-  animation: splash-device-bloom 700ms ease-out 1400ms forwards;
+  animation: splash-device-bloom 700ms ease-out 2580ms forwards;
 }
 @keyframes splash-device-bloom {
   0% { opacity: 0; transform: scale(0.9); }
@@ -916,6 +919,25 @@
   .app-splash--settled .app-splash-canvas { animation: none; }
 }
 
+/* The era under the stage (2026-11-02): the month and the name of the mark
+   on screen while the lineage plays; empty once settled. Fixed height so the
+   wordmark never shifts when the caption clears. */
+.app-splash-era {
+  height: 16px;
+  margin-top: 10px;
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #9a8a76;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-splash-era { visibility: hidden; }
+}
+
 /* The splash wordmark is the logo's own pixel lettering, not a font. */
 .app-splash-wordmark-img {
   display: block;
@@ -926,7 +948,7 @@
      into ragged steps; smooth downsampling keeps the pixel look and the edges. */
   image-rendering: auto;
   opacity: 0;
-  animation: splash-wordmark-in 420ms cubic-bezier(0.2, 0.9, 0.25, 1) 1500ms forwards;
+  animation: splash-wordmark-in 420ms cubic-bezier(0.2, 0.9, 0.25, 1) 2700ms forwards;
 }
 @keyframes splash-wordmark-in {
   0%   { opacity: 0; transform: translateY(9px) scale(0.97); }

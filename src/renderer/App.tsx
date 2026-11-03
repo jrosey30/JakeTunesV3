@@ -198,7 +198,10 @@ function AppInner() {
     // halo pulse, and floating notes to actually read as a scene.
     // Library still loads in parallel; this just holds the splash for
     // the visual beat to land before AppInner shows.
-    const t = window.setTimeout(() => setSplashMinElapsed(true), 2800)
+    // 2026-11-02: 2800 → 3600ms. The boot walks every logo we have had
+    // (SplashScreen.tsx, the lineage) and settles at ~2.9 s; the settled
+    // mark gets most of a second before AppInner shows, as it did before.
+    const t = window.setTimeout(() => setSplashMinElapsed(true), 3600)
     return () => window.clearTimeout(t)
   }, [])
 
