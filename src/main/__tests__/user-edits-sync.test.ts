@@ -342,3 +342,29 @@ describe('the hub raises a rating the phone starred (applyPhoneStars)', () => {
     assert.equal(replicaJournalValue(mine, hubEdit, true), '5')
   })
 })
+
+describe('a song already starred here whose journal ends on an older un-star (BLINDED, 2026-11-03)', () => {
+  test('journals the phone star and stamps its time, never rewrites the rating, and the replica learns it', async () => {
+    const starredRows = new Map<string, RowLike>([['1', { id: 1, title: 'BLINDED', artist: 'Roxferry', duration: 192_000, rating: 5, genre: 'Rock' }]])
+    const h = harness('hub')
+    h.host.rows = async () => starredRows
+    const unstarAt = NOW - 9000, starAt = NOW - 1000
+    h.stars = { trackIds: ['1'], removed: { '1': unstarAt }, added: { '1': starAt } }
+    h.host.stars = async () => h.stars
+    // the hub had absorbed workmini's un-star
+    writeFileSync(join(h.dir, USER_EDITS_FILE), JSON.stringify(recordUserEdit(emptyUserEdits(NOW - 99_000), 1, 'rating', '0', unstarAt, { from: 'workmini' })))
+    const sync = createUserEditsSync(h.host)
+    assert.equal(await sync.applyPhoneStars(), 1)
+    await sync.flush()
+    const fields = (h.overrides['1'] as { fields: Record<string, string> }).fields
+    assert.equal(fields.rating, undefined, 'the rating it shows is left alone')
+    assert.equal(fields.starredAt, String(starAt))
+    assert.deepEqual(h.applied, [[{ id: 1, field: 'starredAt', value: String(starAt) }]])
+    assert.equal(h.published, 1)
+    const j = readJournal(h.dir).edits['1']
+    assert.deepEqual(j.rating, { v: '5', at: starAt, from: 'phone', dur: 192_000 })
+    const { replicaJournalValue } = await import('../../common/user-edits.ts')
+    assert.equal(replicaJournalValue({ v: '0', at: unstarAt }, j.rating, true), '5', 'workmini now shows the star')
+    assert.equal(await sync.applyPhoneStars(), 0, 'and the next pass has nothing to do')
+  })
+})

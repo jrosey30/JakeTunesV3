@@ -441,6 +441,20 @@ describe('a phone star raises the hub\'s rating (planPhoneStars)', () => {
     assert.deepEqual(p(unstar(1500, { from: 'workmini' })), ['1'], 'BLINDED: workmini\'s 11:09 un-star loses to the 13:23 star')
   })
 
+  test('BLINDED: starred here, but the journal ends on an older un-star — the journal gets the star, the rating stays', () => {
+    // workmini starred it at 11:09:55 and un-starred it at 11:09:57 (absorbed here); the phone starred it at 13:23
+    const blinded = recordUserEdit(hub, 4, 'rating', '0', 1000, { from: 'workmini' })
+    const p = plan({ trackIds: ['4'], added: { '4': 2000 }, removed: { '4': 1000 } }, { hub: blinded })
+    assert.deepEqual(p.writes, [{ id: '4', at: 2000, shown: '5' }])
+    assert.equal(p.counts.journaled, 1)
+    // a multi-star song is journaled at the rating it shows, never rewritten to 5
+    const three = recordUserEdit(hub, 3, 'rating', '0', 1000, { from: 'workmini' })
+    assert.deepEqual(plan({ trackIds: ['3'], added: { '3': 2000 } }, { hub: three }).writes, [{ id: '3', at: 2000, shown: '3' }])
+    // a journal whose latest rating is a star, or a verdict, needs nothing
+    assert.deepEqual(plan({ trackIds: ['4'], added: { '4': 2000 } }, { hub: recordUserEdit(hub, 4, 'rating', '5', 1000) }).writes, [])
+    assert.deepEqual(plan({ trackIds: ['4'], added: { '4': 2000 } }, { hub: recordUserEdit(hub, 4, 'rating', '0', 1000, { kept: true }) }).writes, [])
+  })
+
   test('at most one pass\'s worth, oldest first; the rest wait', () => {
     const many = new Map<string, RowLike>()
     const added: Record<string, number> = {}

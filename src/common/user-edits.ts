@@ -426,11 +426,16 @@ export function planPhoneUnstars(input: PhoneUnstarInput): PhoneUnstarPlan {
 /** Songs one pass may raise. A bigger backlog is finished by the next pass, 5 minutes on. */
 export const PHONE_STAR_CAP = 100
 
-export type PhoneStarDecision = 'raised' | 'already-starred' | 'not-on-hub' | 'hub-unstar-newer'
+export type PhoneStarDecision = 'raised' | 'journaled' | 'already-starred' | 'not-on-hub' | 'hub-unstar-newer'
 
 export interface PhoneStarPlan {
-  /** rating → '5' and starredAt → the star's own time, oldest first */
-  writes: Array<{ id: string; at: number }>
+  /**
+   * Oldest first. rating → '5' and starredAt → the star's own time; or, when
+   * `shown` is set, the song already shows that rating here and only the
+   * journal (that rating, at the star's time) and the starredAt stamp are
+   * written.
+   */
+  writes: Array<{ id: string; at: number; shown?: string }>
   /** more songs than the cap: left for the next pass */
   deferred: number
   counts: Partial<Record<PhoneStarDecision, number>>
@@ -463,6 +468,14 @@ export interface PhoneStarPlan {
  * time (from: 'phone'), which is what tells a replica holding an older
  * un-star of its own that the song was starred since.
  *
+ * A song this Mac already shows starred still gets that journal entry when
+ * the journal's latest rating is an older un-star ('journaled'): BLINDED on
+ * 2026-11-03 — starred and un-starred on workmini two seconds apart (11-02
+ * 11:09), starred on the phone at 13:23. The MacBook showed it starred; its
+ * journal still ended on workmini's absorbed un-star, so workmini, which
+ * reads only the journal for a field it edited, kept the un-star. Its rating
+ * is never rewritten (a 3-star stays 3): the journal records what it shows.
+ *
  * ⚠️ TWIN: ~/JakeTunesMobile backend/src/util/starOverlay.ts applyStarOverlay —
  * the hub already serves a listed star as starred to the phone and workmini.
  */
@@ -483,13 +496,14 @@ export function planPhoneStars(input: PhoneUnstarInput): PhoneStarPlan {
     const fields = v2(input.overrides[id])?.fields
     const has = (k: string) => !!fields && Object.prototype.hasOwnProperty.call(fields, k)
     const shown = has('rating') ? fields!.rating : row.rating
-    if (Number(shown) > 0) { count('already-starred'); continue }
     const e = getUserEdit(input.hub, id, 'rating')
     const unstarAt = e && !e.kept && !(Number(e.v) > 0) ? e.at : 0
     if (unstarAt > at) { count('hub-unstar-newer'); continue }
+    const starredHere = Number(shown) > 0
+    if (starredHere && unstarAt === 0) { count('already-starred'); continue }
     if (writes.length >= cap) { deferred++; continue }
-    writes.push({ id, at })
-    count('raised')
+    if (starredHere) { writes.push({ id, at, shown: String(shown) }); count('journaled') }
+    else { writes.push({ id, at }); count('raised') }
   }
   return { writes, deferred, counts }
 }
