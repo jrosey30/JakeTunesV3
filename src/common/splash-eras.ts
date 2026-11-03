@@ -24,16 +24,16 @@
 export interface SplashEra {
   /** Asset key; the last one is the shipping mark (SplashScreen's logoUrl). */
   key: 'portrait' | 'cream-note' | 'brush-j' | 'pixel-ipod' | 'pixel-note'
-  /** The caption shown under the mark while this era is on screen. */
-  label: string
 }
 
+// No captions (Jake, 2026-11-03: "on launch page, no need to put a caption
+// under each logo"): an era is its mark, and the dates live in the list above.
 export const SPLASH_ERAS: readonly SplashEra[] = [
-  { key: 'portrait', label: 'April 2026 · the portrait' },
-  { key: 'cream-note', label: 'May 2026 · the note' },
-  { key: 'brush-j', label: 'August 2026 · the brush J' },
-  { key: 'pixel-ipod', label: 'August 2026 · the pixel iPod' },
-  { key: 'pixel-note', label: 'August 2026 · the pixel note' },
+  { key: 'portrait' },
+  { key: 'cream-note' },
+  { key: 'brush-j' },
+  { key: 'pixel-ipod' },
+  { key: 'pixel-note' },
 ]
 
 /** How long each earlier mark holds, fully shown, before the next dissolves in. */
@@ -96,9 +96,3 @@ export function eraAt(t: number): EraFrame {
   }
 }
 
-/** The caption for a frame: the era that owns most of the screen. */
-export function eraLabelAt(t: number): string {
-  const f = eraAt(t)
-  const shown = f.blend >= 0.5 || f.under === null ? f.index : f.under
-  return SPLASH_ERAS[shown]!.label
-}

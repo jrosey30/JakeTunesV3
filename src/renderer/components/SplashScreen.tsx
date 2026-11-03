@@ -12,15 +12,16 @@
  *          resolved its one mark: the real bitmap, drawn smooth, out of a
  *          soft blur while it scales up a hair.
  *          then May's cream note, August's brush J, the pixel iPod — each
- *          dissolving in over the one before it and holding a beat, with its
- *          month and name captioned under the stage.
+ *          dissolving in over the one before it and holding a beat. No
+ *          caption under them (Jake, 2026-11-03: "on launch page, no need to
+ *          put a caption under each logo"): the marks speak for themselves.
  *   2.19s  the pixel note — the shipping mark — lands, and a warm sheen
  *          passes over it as it does.
  *   2.43s  the NOTE lights: a bloom rises off the glyph itself, so the note
  *          reads as struck-and-ringing rather than printed — and the chord
  *          peaks with it.
  *   2.63s  settle. the wordmark springs, the EQ starts dancing, progress
- *          runs. The caption clears: the settled frame is the mark.
+ *          runs. The settled frame is the mark.
  *
  * THE SONG (2026-11-03) is scored to this timeline (common/splash-score.ts):
  * each mark has its note on the beat it dissolves in — E3 · G#3 · B3 · E4 ·
@@ -59,7 +60,7 @@ import creamNoteUrl from '../assets/logo-history/2026-05-cream-note.png'
 import brushJUrl from '../assets/logo-history/2026-08-brush-j.png'
 import pixelIpodUrl from '../assets/logo-history/2026-08-pixel-ipod.png'
 import {
-  SPLASH_ERAS, T_ASSEMBLE, T_LINEAGE, T_LIT, T_POWER_ON, T_SETTLE, eraAt, eraLabelAt, eraStartMs, type SplashEra,
+  SPLASH_ERAS, T_ASSEMBLE, T_LINEAGE, T_LIT, T_POWER_ON, T_SETTLE, eraAt, eraStartMs, type SplashEra,
 } from '../../common/splash-eras'
 import { playIntroStinger, primeIntroStinger } from '../utils/introStinger'
 
@@ -178,7 +179,6 @@ export default function SplashScreen({ isReady }: Props) {
   const [progress, setProgress] = useState(5)
   const [greeting] = useState(getGreeting)
   const [phase, setPhase] = useState<'boot' | 'settled'>('boot')
-  const [caption, setCaption] = useState('')
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   // ── the boot itself ───────────────────────────────────────────────────────
@@ -249,7 +249,6 @@ export default function SplashScreen({ isReady }: Props) {
       if (reduce) {
         ctx.clearRect(0, 0, SIZE, SIZE)
         drawMark()
-        setCaption('')
         setPhase('settled')
         playIntroStinger()   // the welcome is sound, not motion: it still plays
         return
@@ -257,7 +256,6 @@ export default function SplashScreen({ isReady }: Props) {
 
       const start = performance.now()
       playIntroStinger(start)   // one clock: the song's 0 is the boot's 0
-      let captionShown = ''
       const draw = (now: number): void => {
         if (cancelled) return
         const t = now - start
@@ -317,11 +315,6 @@ export default function SplashScreen({ isReady }: Props) {
         drawEra(frame.index)
         ctx.restore()
 
-        // The caption names whichever mark owns the screen; it clears with
-        // the settle (the settled frame is the mark alone).
-        const label = eraLabelAt(t - T_LINEAGE)
-        if (label !== captionShown) { captionShown = label; setCaption(label) }
-
         // 3. Sheen: as the shipping mark dissolves in and lands, a soft light
         //    band sweeps top-left → bottom-right once, clipped to the tile's
         //    squircle so it never spills onto the paper — the tile reads as
@@ -371,7 +364,7 @@ export default function SplashScreen({ isReady }: Props) {
         }
 
         if (t < T_SETTLE + 260) raf = requestAnimationFrame(draw)
-        else { ctx.clearRect(0, 0, SIZE, SIZE); drawMark(); setCaption(''); setPhase('settled') }
+        else { ctx.clearRect(0, 0, SIZE, SIZE); drawMark(); setPhase('settled') }
       }
       raf = requestAnimationFrame(draw)
     })
@@ -417,10 +410,6 @@ export default function SplashScreen({ isReady }: Props) {
           <canvas ref={canvasRef} className="app-splash-canvas" width={240} height={240} />
           <div className="app-splash-device-glow" />
         </div>
-        {/* The era under the stage: the month and the name of the mark on
-            screen while the lineage plays. Empty once settled, so the frame
-            the app appears over is the mark alone. */}
-        <div className="app-splash-era" aria-hidden="true">{caption}</div>
         {/* The wordmark IS the logo's wordmark — the same pixels lifted off
             the device's screen (Jake: "the text below the ipod logo needs to
             match the wordmark in the logo"), recolored to brand orange so it
