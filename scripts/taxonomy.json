@@ -3084,6 +3084,18 @@
        ]
       }
      ]
+    },
+    {
+     "name": "Dancehall",
+     "children": [
+      {
+       "name": "Classic Dancehall",
+       "anchors": [
+        "Sister Nancy",
+        "Jimmy Riley"
+       ]
+      }
+     ]
     }
    ]
   }
