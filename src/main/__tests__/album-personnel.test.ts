@@ -731,57 +731,78 @@ describe('the disk cache', () => {
 })
 
 describe('two kinds of caller — a page goes first, the prefetch keeps its distance', () => {
-  // A fetch whose answers are released by hand, so the order of requests is observable.
-  function gatedFetch(answers: Record<string, unknown>): { fetchFn: typeof fetch; calls: string[]; release: () => void } {
+  // A fetch whose answers are given out by hand, so the order of requests is
+  // observable. answerNext() waits for a request to be parked before it lets one
+  // go: the first request only leaves once the service has read its cache file,
+  // real disk I/O that no count of event-loop turns can outlast. An answer sent
+  // before its request arrived would be lost, that request would park for good,
+  // and with nothing holding the event loop open node:test cancels the rest of
+  // the file ("Promise resolution is still pending…", a loaded Mac, 2026-11-03).
+  function gatedFetch(answers: Record<string, unknown>): { fetchFn: typeof fetch; calls: string[]; requestParked: () => Promise<void>; answerNext: () => Promise<void> } {
     const calls: string[] = []
-    let waiting: Array<() => void> = []
+    const parked: Array<() => void> = []
+    let wake = (): void => {}
     const fetchFn = (async (url: string) => {
       calls.push(url)
-      await new Promise<void>((r) => { waiting.push(r) })
+      await new Promise<void>((r) => { parked.push(r); wake() })
       const body = answers[url]
       return body === undefined ? jsonResponse({ error: 'Not Found' }, 404) : jsonResponse(body)
     }) as unknown as typeof fetch
-    return { fetchFn, calls, release: () => { const w = waiting; waiting = []; for (const r of w) r() } }
+    const requestParked = async (): Promise<void> => { while (parked.length === 0) await new Promise<void>((r) => { wake = r }) }
+    return { fetchFn, calls, requestParked, answerNext: async () => { await requestParked(); parked.shift()!() } }
   }
   const tick = (): Promise<void> => new Promise((r) => setImmediate(r))
   const settle = async (n = 6): Promise<void> => { for (let i = 0; i < n; i++) await tick() }
+  // The service's sleep: one turn of the event loop. A gate that never opens polls
+  // forever and keeps the loop alive doing it, so it is cut off by a count of
+  // looks, never by a clock, and a busy machine cannot trip it: once the cache is
+  // read, nothing these tests wait on is real time.
+  const MAX_LOOKS = 1000
+  function sleepByTurns(onLook: (ms: number) => void = () => {}): (ms: number) => Promise<void> {
+    let looks = 0
+    return async (ms) => {
+      if (++looks > MAX_LOOKS) throw new Error(`deadlock: the background gate was still waiting after ${MAX_LOOKS} looks`)
+      onLook(ms)
+      await tick()
+    }
+  }
   const QOTSA = { [releaseGroupSearchUrl(ALBUM, ARTIST)]: FIXTURE.search, [mbReleasesUrl(GROUP_ID)]: FIXTURE.releases, [mbReleaseUrl(RELEASE_ID)]: FIXTURE.release }
   const BEATLES = { [releaseGroupSearchUrl(ABBEY.album, ABBEY.artist)]: ABBEY.search, [mbReleasesUrl(ABBEY.groupId)]: ABBEY.releases, [mbReleaseUrl(ABBEY.releaseId)]: ABBEY.release }
 
   test('busy() is true while a page\'s lookup is in flight, never for a background one', async () => {
-    const { fetchFn, release } = gatedFetch(QOTSA)
-    const svc = createAlbumPersonnelService({ dir: tempDir(), userAgent: 'JakeTunes/test', fetchFn, throttle: async () => {}, retryDelayMs: 0, now: () => NOW, wait: async () => { await tick() }, log: quiet })
+    const { fetchFn, requestParked, answerNext } = gatedFetch(QOTSA)
+    const svc = createAlbumPersonnelService({ dir: tempDir(), userAgent: 'JakeTunes/test', fetchFn, throttle: async () => {}, retryDelayMs: 0, now: () => NOW, wait: sleepByTurns(), log: quiet })
     const page = svc.get(ARTIST, ALBUM)
-    await settle()
+    await requestParked()
     assert.equal(svc.busy(), true)
-    for (let i = 0; i < 3; i++) { release(); await settle() }
+    for (let i = 0; i < 3; i++) await answerNext()
     assert.equal((await page).ok, true)
     assert.equal(svc.busy(), false)
-    const { fetchFn: bgFetch, release: bgRelease } = gatedFetch(BEATLES)
-    const svc2 = createAlbumPersonnelService({ dir: tempDir(), userAgent: 'JakeTunes/test', fetchFn: bgFetch, throttle: async () => {}, retryDelayMs: 0, now: () => NOW, wait: async () => { await tick() }, log: quiet })
+    const { fetchFn: bgFetch, requestParked: bgRequestParked, answerNext: bgAnswerNext } = gatedFetch(BEATLES)
+    const svc2 = createAlbumPersonnelService({ dir: tempDir(), userAgent: 'JakeTunes/test', fetchFn: bgFetch, throttle: async () => {}, retryDelayMs: 0, now: () => NOW, wait: sleepByTurns(), log: quiet })
     const bg = svc2.get(ABBEY.artist, ABBEY.album, { background: true })
-    await settle()
+    await bgRequestParked()
     assert.equal(svc2.busy(), false, 'a background lookup is nobody waiting')
-    for (let i = 0; i < 3; i++) { bgRelease(); await settle() }
+    for (let i = 0; i < 3; i++) await bgAnswerNext()
     assert.equal((await bg).ok, true)
   })
 
   test('a background lookup\'s requests wait while a page is on another album, then keep 2.5 s between themselves on top of the app throttle', async () => {
     let clock = NOW
     const waits: number[] = []
-    const wait = async (ms: number): Promise<void> => { waits.push(ms); clock += ms; await tick() }
+    const wait = sleepByTurns((ms) => { waits.push(ms); clock += ms })
     let throttled = 0
-    const { fetchFn, calls, release } = gatedFetch({ ...QOTSA, ...BEATLES })
+    const { fetchFn, calls, requestParked, answerNext } = gatedFetch({ ...QOTSA, ...BEATLES })
     const svc = createAlbumPersonnelService({ dir: tempDir(), userAgent: 'JakeTunes/test', fetchFn, throttle: async () => { throttled++ }, retryDelayMs: 0, now: () => clock, wait, log: quiet })
     const page = svc.get(ARTIST, ALBUM)                                  // the page's three requests
-    await settle()
+    await requestParked()
     const bg = svc.get(ABBEY.artist, ABBEY.album, { background: true })  // arrives while the page is busy
     await settle(20)
     assert.deepEqual(calls, [releaseGroupSearchUrl(ALBUM, ARTIST)], 'the background search has not gone out')
-    for (let i = 0; i < 3; i++) { release(); await settle(20) }
+    for (let i = 0; i < 3; i++) await answerNext()
     assert.equal((await page).ok, true)
     assert.equal(calls.filter((u) => u in QOTSA).length, 3)
-    for (let i = 0; i < 3; i++) { release(); await settle(20) }
+    for (let i = 0; i < 3; i++) await Promise.race([answerNext(), bg])
     const r = await bg
     assert.equal(r.ok, true)
     assert.equal(r.trackCount, 17)
@@ -792,19 +813,19 @@ describe('two kinds of caller — a page goes first, the prefetch keeps its dist
   })
 
   test('a page asking for the album the prefetch is already on shares the lookup — and never waits on itself', async () => {
-    const { fetchFn, calls, release } = gatedFetch(BEATLES)
-    const svc = createAlbumPersonnelService({ dir: tempDir(), userAgent: 'JakeTunes/test', fetchFn, throttle: async () => {}, retryDelayMs: 0, now: () => NOW, wait: async () => { await tick() }, log: quiet })
+    const { fetchFn, calls, requestParked, answerNext } = gatedFetch(BEATLES)
+    const svc = createAlbumPersonnelService({ dir: tempDir(), userAgent: 'JakeTunes/test', fetchFn, throttle: async () => {}, retryDelayMs: 0, now: () => NOW, wait: sleepByTurns(), log: quiet })
     const bg = svc.get(ABBEY.artist, ABBEY.album, { background: true })
-    await settle()
+    await requestParked()
     const page = svc.get(ABBEY.artist, ABBEY.album)
     await settle()
     assert.equal(svc.busy(), true)
-    const guard = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('deadlock: the background gate waited on the page waiting on it')), 2000).unref())
-    for (let i = 0; i < 3; i++) { release(); await settle(20) }
-    const [a, b] = await Promise.race([Promise.all([bg, page]), guard])
+    const both = Promise.all([bg, page])
+    for (let i = 0; i < 3; i++) await Promise.race([answerNext(), both])
+    assert.equal(calls.length, 3, 'one lookup for both')
+    const [a, b] = await both
     assert.deepEqual(a, b)
     assert.equal(a.people.length, 12)
-    assert.equal(calls.length, 3, 'one lookup for both')
     assert.equal(svc.busy(), false)
   })
 })
