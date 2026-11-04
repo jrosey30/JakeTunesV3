@@ -200,11 +200,12 @@ export function nowDigging(tracks: readonly SpotTrack[], plays: readonly SpotPla
  *  - so is a last word that is a plural noun bands are named after (Foo Fighters);
  *  - PLURAL_NAMES are the plural names those shapes can't see (Kings Of Leon,
  *    Gorillaz, The Fratellis);
- *  - SINGULAR_NAMES are what the shapes get wrong: one person's project (Iron &
+ *  - SINGULAR_NAMES holds what the shapes get wrong, one person's project (Iron &
  *    Wine, Hotel Pools), a phrase (Foster The People), a comma inside one name
- *    (Tyler, The Creator), and Geese.
- * Any other name keeps the singular, so a person whose surname ends in s (Bill
- * Withers, Hayley Williams, Nia Archives) is never made plural.
+ *    (Tyler, The Creator), and Geese, plus every other library name with a word
+ *    that could read as plural (Bill Withers, Nia Archives, Yes, Genesis).
+ * Any other name keeps the singular. A name that could read as plural and is on
+ * no list is new to the library: see pluralUnsure.
  */
 const PLURAL_LAST_WORDS = new Set([
   'angels', 'animals', 'artists', 'bears', 'beasts', 'beatles', 'bees', 'birds', 'bones', 'boys', 'boyz', 'breakers',
@@ -244,9 +245,33 @@ const PLURAL_NAMES = new Set([
   'vlads', 'yeah yeah yeahs',
 ])
 const SINGULAR_NAMES = new Set([
-  'black country, new road', 'does it offend you, yeah?', 'florence + the machine', 'foster the people',
-  'gears, inc.', 'geese', 'grover washington, jr', 'hotel pools', 'iron & wine', 'like roses', 'love, dean',
-  'mirror people', 'paperclip people', 'tyler, the creator',
+  'a flock of seagulls', 'alexis harte', 'alexsucks', 'alicia keys', 'aly-us', 'anders osborne',
+  'antonio carlos jobim', 'atticus roness', 'banana gold records', 'ben folds five', 'bill withers',
+  'black country, new road', 'boris brejcha', 'boz scaggs', 'brandon flowers', 'bus crush', 'byron the aquarius',
+  'caldwell plus', 'calvin harris', 'campthehills', 'candi jenkins', 'cassius', 'cecilia greaves', 'chris cornell',
+  'chris lorenzo', 'chris rainbow', 'conor burns', 'cortis', 'curtis mayfield', 'cut worms', 'daryl johns',
+  'death lens', 'dillon francis', 'does it offend you, yeah?', 'edwyn collins', 'elvis costello', 'entrañas',
+  'etta james', 'fabolous', 'filous', 'flamingosis', 'floating points', 'florence + the machine', 'flowidus',
+  'flying lotus', 'foster the people', 'frankie cosmos', 'frankie knuckles', 'gabriel rios', 'gallus',
+  'gang of youths', 'gans', 'gears, inc.', 'geese', 'general elektriks', 'genesis', 'gnarls barkley',
+  'gracie abrams', 'grandmas house', 'grey oakes', 'grimes', 'groove cartel records', 'grover washington, jr',
+  'guided by voices', 'harry styles', 'hayley williams', 'hotel pools', 'hurricane chris', 'ideasforconversations',
+  'idris muhammad', 'if i was a pony', 'inxs', 'iron & wine', 'it looks sad.', 'james', 'james allison',
+  'james brown', 'james taylor', 'james the seventh', "jerry big's world famous band", 'jibbs', 'joey quinones',
+  'john williams', 'johnny blue skies', 'jonas blue', 'judas priest', 'jules tropicana', 'julien denis',
+  'jw francis', 'kacey musgraves', 'kenny loggins', 'kurtis blow', "l'indécis", 'larry heard presents mr. white',
+  'leon bridges', 'life of surprises', 'like roses', 'lipps inc.', 'louis armstrong', 'louis the child', 'louis xiv',
+  'love, dean', 'ludacris', 'lyn collins', 'macgregor burns', 'maggie rogers', 'malik hendricks', 'mei semones',
+  'midas', 'mike jones', 'mims', 'mind enterprises', 'minus the bear', 'mirror people', 'mood edits', 'moon boots',
+  'mr. dinkles', 'nas', 'neal francis', 'nexus', 'nia archives', 'ninetoes', 'noah parks', 'norah jones',
+  'ohmega watts', 'olive jones', 'opus kink', 'paperclip people', 'peaches', 'phil collins', 'polaris', 'primus',
+  'q lazzarus', 'quincy jones', 'rick james', 'rob thomas', 'rolling blackouts coastal fever', 'roy ayers ubiquity',
+  'roy woods', 'ruckus', 'rupert holmes', 'rüfüs du sol', 'shakey graves', 'sharp pins', 'shuggie otis',
+  'super sometimes', 'tavares', 'tenacious d', 'tennis', 'terry malts', 'the alan parsons project',
+  'the allman brothers band', 'the bures band', 'the minus 5', 'the notorious b.i.g.', 'the s.o.s. band',
+  'the sir douglas quintet', 'theophilus london', 'this is lorelei', 'this is the kit', 'thumpasaurus', 'tigers jaw',
+  'tom jones', 'travis scott', 'ttrruuces', 'tyler, the creator', 'victor jones', 'vinyl williams',
+  'water from your eyes', 'wheatus', 'wicca phase springs eternal', 'world news', 'x minus 1', 'yes',
 ])
 
 export function pluralArtistName(name: string): boolean {
@@ -264,8 +289,22 @@ export function pluralArtistName(name: string): boolean {
   return false
 }
 
-export function headlineFor(artist: string, plays30: number): string {
-  if (plays30 >= 40) return `${artist} ${pluralArtistName(artist) ? 'have' : 'has'} your attention.`
+const IRREGULAR_PLURALS = new Set(['men', 'women', 'people', 'children', 'mice', 'geese'])
+
+/** A name that could read as plural with nothing above deciding it. Only a name new
+ *  to the library can land here, and homemini asks Claude about it once
+ *  (backend util/artistVerbs.ts). */
+export function pluralUnsure(name: string): boolean {
+  const lower = name.trim().replace(/\s+/g, ' ').toLowerCase()
+  if (!lower || SINGULAR_NAMES.has(lower) || pluralArtistName(lower)) return false
+  return lower.split(' ').some((raw) => {
+    const w = raw.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}'’]+$/gu, '')
+    return (w.length > 2 && w.endsWith('s') && !w.endsWith('ss') && !/['’]s$/.test(w)) || IRREGULAR_PLURALS.has(w)
+  })
+}
+
+export function headlineFor(artist: string, plays30: number, plural = pluralArtistName(artist)): string {
+  if (plays30 >= 40) return `${artist} ${plural ? 'have' : 'has'} your attention.`
   if (plays30 >= 15) return `You can't stop playing ${artist}.`
   return `Lately, it's ${artist}.`
 }

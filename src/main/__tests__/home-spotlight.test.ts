@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { livingInAlbum, artistFacts, nowDigging, headlineFor, pluralArtistName, statsLine, DAY_MS, type SpotTrack, type SpotPlay } from '../../common/home-spotlight.ts'
+import { livingInAlbum, artistFacts, nowDigging, headlineFor, pluralArtistName, pluralUnsure, statsLine, DAY_MS, type SpotTrack, type SpotPlay } from '../../common/home-spotlight.ts'
 
 const NOW = Date.UTC(2026, 9, 18, 22, 0, 0)
 const T: SpotTrack[] = [
@@ -60,6 +60,24 @@ test('copy is deterministic and only states the facts', () => {
   assert.equal(headlineFor('Geese', 6), "Lately, it's Geese.")
   const line = statsLine(artistFacts(T, P, NOW, 'Geese'))
   assert.equal(line, '8 plays in 30 days · “Taxes” on repeat · with you since Aug 9')
+})
+
+test('only a name new to the library, that could read as plural, is unsure', () => {
+  for (const a of ['Cloud Nothings', 'Beach Fossils', 'Sleaford Mods', 'Some Men Dancing', 'Fleet Foxes']) assert.equal(pluralUnsure(a), true, a)
+  for (const a of [
+    // on a list, decided either way
+    'Geese', 'Bill Withers', 'Yes', 'Floating Points', 'Foals', 'Kings Of Leon',
+    // a shape decides it
+    'The Avalanches', 'Matt & Kim', 'Foo Fighters',
+    // nothing in it reads as plural
+    'Radiohead', 'Wednesday', 'Wet Leg', "Jane's Addiction", 'The Boss', 'Grass', '',
+  ]) assert.equal(pluralUnsure(a), false, a)
+})
+
+test('headlineFor takes a verdict from outside, and works it out itself without one', () => {
+  assert.equal(headlineFor('Cloud Nothings', 40, true), 'Cloud Nothings have your attention.')
+  assert.equal(headlineFor('Cloud Nothings', 40), 'Cloud Nothings has your attention.')
+  assert.equal(headlineFor('Geese', 40), 'Geese has your attention.')
 })
 
 test('plural-form names take "have"; everything else keeps "has" (fail closed)', () => {
