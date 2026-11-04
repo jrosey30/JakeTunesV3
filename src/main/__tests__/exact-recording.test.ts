@@ -221,3 +221,58 @@ describe('the requested-recording identity contract', () => {
     assert.deepEqual(requestedVersionMarkers('Layla'), [])
   })
 })
+
+describe('the judge, brought level with the phone (2026-11-03)', () => {
+  const beat = (aliases?: string[]) => buildRequestedRecording({ artist: 'The English Beat', artistAliases: aliases, title: 'Save It for Later', durationMs: 213_900, durationTolSec: 30 })
+
+  it('a file tagged with another name MusicBrainz knows the artist by is the artist; compared whole', () => {
+    const real = qz({ title: 'Save It for Later (2012 Remaster)', artist: 'The Beat', album: 'Special Beat Service (Expanded)', durationSec: 213.9 })
+    assert.equal(verifyCandidate(beat(['The Beat', 'English Beat']), real).verdict, 'exact')
+    const without = verifyCandidate(beat(), real)
+    assert.equal(without.verdict === 'reject' && without.kind, 'artist')
+    const stranger = verifyCandidate(beat(['The Beat']), qz({ title: 'Save It for Later', artist: 'The Beat Happening', durationSec: 213.9 }))
+    assert.equal(stranger.verdict === 'reject' && stranger.kind, 'artist')
+  })
+
+  it('a cover act is refused though its name holds the artist\'s; on the album too; unless the request asks for one', () => {
+    const req = buildRequestedRecording({ artist: 'Rihanna', title: 'We Found Love', durationTolSec: 5 })
+    const band = verifyCandidate(req, qz({ title: 'We Found Love', artist: 'Rihanna Cover Band', album: 'Hits' }))
+    assert.equal(band.verdict === 'reject' && band.kind, 'version')
+    const tribute = verifyCandidate(req, qz({ title: 'We Found Love', artist: 'Rihanna', album: 'We Found Love (Rihanna feat. Calvin Harris Tribute) - Single' }))
+    assert.equal(tribute.verdict, 'reject')
+    const namedTribute = verifyCandidate(req, qz({ title: 'We Found Love', artist: 'Rihanna', album: 'A Tribute to Rihanna' }))
+    assert.equal(namedTribute.verdict === 'reject' && namedTribute.kind, 'version', 'no bracket: only the cover test sees it')
+    const karaoke = buildRequestedRecording({ artist: 'Karaoke Hits', title: 'We Found Love (Karaoke Version)', durationTolSec: 5 })
+    assert.equal(verifyCandidate(karaoke, qz({ title: 'We Found Love (Karaoke Version)', artist: 'Karaoke Hits', album: 'Karaoke Hits of 2011' })).verdict, 'exact')
+  })
+
+  it('an "[Amended]" row is how Apple lists the song, not a request for the clean edit', () => {
+    const mo = buildRequestedRecording({ artist: 'The Notorious B.I.G.', title: 'Mo Money Mo Problems (feat. Ma$e & Puff Daddy) [Amended]', durationMs: 258_000, durationTolSec: 30 })
+    assert.deepEqual(mo.requestedMarkers, [])
+    assert.equal(verifyCandidate(mo, qz({ title: 'Mo Money Mo Problems (feat. Puff Daddy & Mase)', artist: 'The Notorious B.I.G.', album: 'Life After Death', durationSec: 251 })).verdict, 'exact')
+    const hyp = buildRequestedRecording({ artist: 'The Notorious B.I.G.', title: 'Hypnotize [Amended]', durationTolSec: 30 })
+    assert.equal(verifyCandidate(hyp, qz({ title: 'Hypnotize (2014 Remaster)', artist: 'The Notorious B.I.G.', album: 'Life After Death' })).verdict, 'exact')
+    assert.equal(verifyCandidate(hyp, qz({ title: 'Hypnotize (Clean)', artist: 'The Notorious B.I.G.' })).verdict, 'reject', 'the clean file is still not asked for')
+    const live = buildRequestedRecording({ artist: 'The Who', title: 'Who Are You (Live)', durationTolSec: 5 })
+    assert.deepEqual(live.requestedMarkers, ['live'], 'a version named on purpose stays named')
+  })
+
+  it('a different song that holds the title is not the song; "Artist - Title" is', () => {
+    const love = buildRequestedRecording({ artist: 'Lana Del Rey', title: 'Love', durationTolSec: 5 })
+    const v = verifyCandidate(love, qz({ title: 'Love Song', artist: 'Lana Del Rey' }))
+    assert.equal(v.verdict === 'reject' && v.kind, 'title')
+    const vibe = buildRequestedRecording({ artist: 'Villanova', title: 'Mr Vibe', durationTolSec: 5 })
+    assert.equal(verifyCandidate(vibe, sc({ title: 'Villanova - Mr Vibe', artist: 'Indie House Records' })).verdict, 'exact')
+    const prefix = verifyCandidate(vibe, sc({ title: 'Someone Else - Mr Vibe', artist: 'Villanova' }))
+    assert.equal(prefix.verdict === 'reject' && prefix.kind, 'title', 'only when what precedes the dash names the artist')
+  })
+
+  it('an album NAMED with a marker word is not a version; one that says it is, is', () => {
+    const doll = buildRequestedRecording({ artist: 'Hole', title: 'Doll Parts', durationTolSec: 5 })
+    assert.equal(verifyCandidate(doll, qz({ title: 'Doll Parts', artist: 'Hole', album: 'Live Through This' })).verdict, 'exact')
+    const help = buildRequestedRecording({ artist: 'The Beatles', title: 'With a Little Help from My Friends', durationTolSec: 5 })
+    assert.equal(verifyCandidate(help, qz({ title: 'With a Little Help from My Friends', artist: 'The Beatles', album: "Sgt. Pepper's Lonely Hearts Club Band" })).verdict, 'exact')
+    const girl = buildRequestedRecording({ artist: 'Nirvana', title: 'About a Girl', durationTolSec: 5 })
+    assert.equal(verifyCandidate(girl, qz({ title: 'About a Girl', artist: 'Nirvana', album: 'MTV Unplugged In New York' })).verdict, 'reject')
+  })
+})

@@ -8,6 +8,7 @@
  * (MusicBrainz busy) is not cached, so it is asked again next time.
  */
 import { join } from 'path'
+import { nameKey } from '../common/fold-text.ts'
 import { STATE_DIR } from './state-dir.ts'
 import { JsonFileCache } from './state-cache.ts'
 import {
@@ -16,6 +17,21 @@ import {
 
 const spellingsCache = new JsonFileCache<SpellingCache>(() => join(STATE_DIR, 'artist-spellings.json'), () => ({}), 'artist-spellings')
 let filling: Promise<void> | null = null
+
+/** Every other name MusicBrainz knows this artist by, for the downloader
+ *  (2026-11-03): Qobuz files The English Beat as "The Beat". Unlike the rest of
+ *  this file it waits on the network, because the download is waiting anyway, at
+ *  most once per artist per TTL. A busy MusicBrainz answers the stale entry or
+ *  nothing, and is asked again next time.
+ *  ⚠️ TWIN: JakeTunesMobile/backend/src/util/artistSpellingsStore.ts artistAliases. */
+export async function artistAliases(artist: string, deps: { throttle: () => Promise<void>; userAgent: string }): Promise<string[]> {
+  const name = artist.trim()
+  if (!nameKey(name)) return []
+  const work: SpellingCache = { ...(await spellingsCache.get()) }
+  const answered = await ensureSpellings([name], work, { fetchSpellings: (a) => musicBrainzSpellings(a, deps.userAgent), throttle: deps.throttle, now: Date.now() })
+  if (answered > 0) await spellingsCache.update((cur) => ({ ...cur, [nameKey(name)]: work[nameKey(name)] }))
+  return cachedSpellings(work, [name])
+}
 
 /** Other spellings of the library's non-Latin artists ("Molchat Doma" for
  *  "Молчат Дома"), as far as they are known right now. */

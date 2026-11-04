@@ -2,7 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { foldAccents, withinEditDistance, typoBudget } from '../../common/fold-text.ts'
 import { recoArtistMatches, recoTitleMatches } from '../reco-match.ts'
-import { pickBestStreamripMatch, pickBestSoundcloudMatch, rankStreamripCandidates, unwantedVersionOf , searchTitle, maskedTitleMatches, searchQueryTitle, editionSubstituted, subtitleVariantMatches, applyExplicitGate, liveBrandMarker } from '../streamrip-match.ts'
+import { pickBestStreamripMatch, pickBestSoundcloudMatch, rankStreamripCandidates, unwantedVersionOf , searchTitle, maskedTitleMatches, searchQueryTitle, editionSubstituted, subtitleVariantMatches, applyExplicitGate, liveBrandMarker, hitsByAnotherName, rankWithArtistAliases, isCoverAct, isMaskedToken, albumVersionOf, titleReads, requestedVersionMarkers } from '../streamrip-match.ts'
 
 function hit(id: string, desc: string) {
   return { source: 'qobuz', mediaType: 'track', id, desc }
@@ -245,6 +245,14 @@ describe('subtitle variants — catalogues disagree about parentheticals', () =>
     assert.equal(subtitleVariantMatches('Lady (Hear Me Tonight)', 'Ladies Night'), false)
   })
 
+  it('a dash tail is the same decoration as a bracket (2026-11-03)', () => {
+    assert.equal(subtitleVariantMatches('Stars', 'Stars - Mono'), true)
+    assert.equal(subtitleVariantMatches('Stars - Mono', 'Stars'), true)
+    assert.equal(subtitleVariantMatches('Love Song', 'Love - Song'), false, 'not when the words differ')
+    assert.equal(titleReads('Stars', 'Stars - Mono'), true)
+    assert.deepEqual(rankStreamripCandidates('Stars', 'Hum', [hit('1', 'Stars - Mono by Hum')]).ranked.map((r) => r.id), ['1'])
+  })
+
   it('picks Modjo\'s original over the remix, from the real Qobuz listing', () => {
     const results = [
       { source: 'qobuz', mediaType: 'track', id: 'real',  desc: 'Lady by Modjo' },
@@ -397,5 +405,181 @@ describe('searchTitle — reissue packaging is not the album’s name', () => {
     assert.equal(searchTitle('Ray of Light (Remix)'), 'Ray of Light (Remix)')
     // VERSION_MARKER is checked before EDITION_GROUP, so this is NOT packaging.
     assert.equal(searchTitle('MTV Unplugged (Live Edition)'), 'MTV Unplugged (Live Edition)')
+  })
+})
+
+// 2026-11-03: Qobuz files The English Beat as "The Beat", and every hit fell to the
+// artist test. ⚠️ TWIN: JakeTunesMobile backend/src/util/__tests__/streamripMatch.test.ts
+// holds the same listing (`rip search … "The English Beat Save It for Later"`).
+describe('another name for the artist, from MusicBrainz (the phone\'s, 2026-11-03)', () => {
+  const beat = [
+    hit('234377348', 'Save It for Later (2012 Remaster) by The Beat'),
+    hit('236890901', 'Save It for Later by The Beat'),
+    hit('400743677', 'Save It For Later by Elias Colt'),
+  ]
+  const NAMES = ['The Beat', 'English Beat']
+
+  it('without their names no hit survives; with them the real hits do, the plain title first, a cover still out', () => {
+    assert.deepEqual(rankStreamripCandidates('Save It for Later', 'The English Beat', beat).ranked, [])
+    assert.deepEqual(rankStreamripCandidates('Save It for Later', 'The English Beat', beat, 'track', NAMES).ranked.map((r) => r.id), ['236890901', '234377348'])
+  })
+
+  it('an alias is a whole name, never part of one', () => {
+    const results = [hit('1', 'Save It for Later by The Beat Happening')]
+    assert.deepEqual(rankStreamripCandidates('Save It for Later', 'The English Beat', results, 'track', ['The Beat']).ranked, [])
+  })
+
+  it('an alias-only hit is the artist, as good as their own name', () => {
+    const results = [hit('contains', 'Song by The English Beat & Friends'), hit('alias', 'Song by The Beat')]
+    assert.deepEqual(rankStreamripCandidates('Song', 'The English Beat', results, 'track', ['The Beat']).ranked.map((r) => r.id), ['alias', 'contains'])
+  })
+
+  it('looks up only when a hit would have ranked but for its artist', () => {
+    assert.equal(hitsByAnotherName('Save It for Later', 'The English Beat', beat), true)
+    assert.equal(hitsByAnotherName('Till It\'s Over', '3DDY', [hit('1', 'Till It\'s Over by 3ddy')]), false, 'their own name needs no lookup')
+    assert.equal(hitsByAnotherName('Song', '', [hit('1', 'Song by Someone')]), false, 'no artist asked for')
+    assert.equal(hitsByAnotherName('Song', 'Artist', [hit('1', 'Song by Karaoke Hits')]), false, 'a cover act is no other name')
+    assert.equal(hitsByAnotherName('Song', 'Artist', [hit('1', 'Song (Live) by Someone')]), false, 'a version is no other name')
+    assert.equal(hitsByAnotherName('Song', 'Artist', [hit('1', 'Song (The Ed Sullivan Show) by Someone')]), false, 'nor a show brand')
+    assert.equal(hitsByAnotherName('Karma Police', 'Artist', [hit('1', 'Creep by Someone')]), false, 'another song')
+    assert.equal(hitsByAnotherName('Lady (Hear Me Tonight)', 'Yann Destal', [hit('1', 'Lady by Modjo')]), true, 'a dropped subtitle still reads as the song')
+    const album = { source: 'qobuz', mediaType: 'album', id: 'a', desc: 'Special Beat Service by The Beat' }
+    assert.equal(hitsByAnotherName('Special Beat Service', 'The English Beat', [album]), false, 'the media type asked for')
+    assert.equal(hitsByAnotherName('Special Beat Service', 'The English Beat', [album], 'album'), true)
+  })
+
+  it('asks MusicBrainz once, only when needed, and hands the names on for the judge', async () => {
+    const asked: string[] = []
+    const lookup = async (a: string) => { asked.push(a); return NAMES }
+    const found = await rankWithArtistAliases('Save It for Later', 'The English Beat', beat, 'track', lookup)
+    assert.deepEqual(asked, ['The English Beat'])
+    assert.deepEqual(found.aliases, NAMES)
+    assert.deepEqual(found.ranked.map((r) => r.id), ['236890901', '234377348'])
+
+    asked.length = 0
+    const own = await rankWithArtistAliases('Save It for Later', 'The Beat', beat, 'track', lookup)
+    assert.deepEqual(asked, [], 'the artist has hits under their own name')
+    assert.deepEqual(own.aliases, [])
+    const other = await rankWithArtistAliases('Karma Police', 'Radiohead', beat, 'track', lookup)
+    assert.deepEqual(asked, [], 'nothing reads as the song')
+    assert.deepEqual(other.ranked, [])
+  })
+
+  it('a busy or empty MusicBrainz leaves the answer as it was, rejected versions included', async () => {
+    const results = [hit('live', 'Save It for Later (Live) by The English Beat'), hit('beat', 'Save It for Later by The Beat')]
+    const none = await rankWithArtistAliases('Save It for Later', 'The English Beat', results, 'track', async () => [])
+    assert.deepEqual(none.ranked, [])
+    assert.deepEqual(none.aliases, [])
+    assert.deepEqual(none.rejectedVersions, ['Save It for Later (Live)'])
+  })
+})
+
+describe('cover acts never stand in for the artist (the phone\'s, 2026-11-02)', () => {
+  it('the cover band listed first loses to the artist listed second, and is reported as a version', () => {
+    const results = [hit('cover', 'We Found Love (feat. Calvin Harris) by Rihanna Cover Band'), hit('real', 'We Found Love (feat. Calvin Harris) by Rihanna')]
+    const { ranked, rejectedVersions } = rankStreamripCandidates('We Found Love (feat. Calvin Harris)', 'Rihanna', results)
+    assert.deepEqual(ranked.map((r) => r.id), ['real'])
+    assert.deepEqual(rejectedVersions, ['We Found Love (feat. Calvin Harris)'])
+  })
+  it('with only a cover, karaoke or tribute hit there is no match at all', () => {
+    for (const d of ['We Found Love by Rihanna Cover Band', 'We Found Love by Rihanna Tribute Band', 'We Found Love (In the Style of Rihanna) by Rihanna Hits']) {
+      assert.equal(pickBestStreamripMatch('We Found Love', 'Rihanna', [hit('1', d)]), null, d)
+    }
+  })
+  it('a request that names one still finds one; a real name holding the word is not one', () => {
+    assert.equal(pickBestStreamripMatch('We Found Love (Karaoke Version)', 'Karaoke Hits', [hit('1', 'We Found Love (Karaoke Version) by Karaoke Hits')])?.id, '1')
+    assert.equal(pickBestStreamripMatch('Under Cover of Darkness', 'The Strokes', [hit('1', 'Under Cover of Darkness by The Strokes')])?.id, '1')
+    assert.equal(isCoverAct('Song', 'Discover'), false, 'whole words only')
+  })
+  it("the artist's own name outranks a name that merely contains it", () => {
+    const results = [hit('friends', 'Umbrella by Rihanna & Friends'), hit('real', 'Umbrella by Rihanna')]
+    assert.deepEqual(rankStreamripCandidates('Umbrella', 'Rihanna', results).ranked.map((r) => r.id), ['real', 'friends'])
+  })
+})
+
+describe('what a mask is, and what it is not (2026-11-03)', () => {
+  it('a title with no mask is not a masked match: "Love Song" is not "Love"', () => {
+    assert.equal(maskedTitleMatches('Lady', 'Lady Marmalade'), false)
+    assert.equal(maskedTitleMatches('Love', 'Love Song'), false)
+    assert.equal(maskedTitleMatches('Bleed', 'Niggas Bleed'), false)
+    assert.deepEqual(rankStreamripCandidates('Love', 'Lana Del Rey', [hit('other', 'Love Song by Lana Del Rey')]).ranked, [])
+  })
+  it('a word that ends in punctuation is a word, not a mask', () => {
+    for (const w of ['Oh!', 'Help!', 'Yeah!!', '100%', '#1', '(Yeah!)', 'Wow,']) assert.equal(isMaskedToken(w), false, w)
+    for (const w of ['N****s', 'F!*@', 'S**t', 'F***', 'Sh!t', 'N***as', '(N****s']) assert.equal(isMaskedToken(w), true, w)
+    assert.equal(searchQueryTitle('Oh! Darling'), 'Oh! Darling')
+    assert.equal(editionSubstituted('Oh! Darling'), false)
+  })
+  it('a title that differs only in its label outranks a subtitle: a remaster before a reprise', () => {
+    const results = [hit('reprise', 'Hello (Reprise) by Adele'), hit('remaster', 'Hello (2009 Remaster) by Adele')]
+    assert.deepEqual(rankStreamripCandidates('Hello', 'Adele', results).ranked.map((r) => r.id), ['remaster', 'reprise'])
+  })
+  it('a label on the hit does not hide a dropped subtitle', () => {
+    assert.deepEqual(rankStreamripCandidates('Lady (Hear Me Tonight)', 'Modjo', [hit('1', 'Lady (2012 Remaster) by Modjo')]).ranked.map((r) => r.id), ['1'])
+  })
+  it('the titles that only passed through the old hole still read', () => {
+    for (const t of ['?', ':(', '///']) {
+      assert.equal(titleReads(t, t), true, t)
+      assert.deepEqual(rankStreamripCandidates(t, 'Outkast', [hit('1', `${t} by Outkast`)]).ranked.map((r) => r.id), ['1'], t)
+    }
+    assert.equal(titleReads('?', '///'), false, 'nothing is not the same as nothing')
+    assert.deepEqual(rankStreamripCandidates('?', 'Outkast', [hit('1', '/// by Outkast')]).ranked, [])
+    assert.deepEqual(rankStreamripCandidates('Hello', 'Adele', [hit('1', 'Hello - 2009 Remaster by Adele')]).ranked.map((r) => r.id), ['1'])
+    assert.equal(titleReads('Hello', 'Hello - 2009 Remaster'), true)
+    assert.equal(titleReads('Hypnotize [Amended]', 'Hypnotize (2014 Remaster)'), true)
+    assert.equal(titleReads('Mo Money Mo Problems (feat. Ma$e & Puff Daddy) [Amended]', 'Mo Money Mo Problems (feat. Puff Daddy & Mase)'), true)
+    assert.equal(titleReads('Love', 'Love Song'), false)
+    assert.equal(titleReads('Lady (Hear Me Tonight)', 'Lady (2012 Remaster)'), true, 'a label does not hide a dropped subtitle')
+  })
+})
+
+describe('markers the phone already refused (2026-11-03)', () => {
+  it('refuses them', () => {
+    assert.equal(unwantedVersionOf('We Found Love', 'We Found Love (Cahill Club)'), 'club')
+    assert.equal(unwantedVersionOf('Song', 'Song (Megamix)'), 'megamix')
+    assert.equal(unwantedVersionOf('Song', 'Song (Re-Edit)'), 'reedit')
+    assert.equal(unwantedVersionOf('Song', 'Song (Sped-Up)'), 'spedup')
+    assert.equal(unwantedVersionOf('Song', 'Song (A Cappella)'), 'acapella')
+    assert.equal(unwantedVersionOf('Song', 'Song (Acappella)'), 'acapella')
+    assert.equal(unwantedVersionOf('Love Story', "Love Story (Taylor's Version)"), 'rerecord')
+    assert.equal(unwantedVersionOf('Love Story', 'Love Story (Taylor’s Version)'), 'rerecord')
+    assert.equal(unwantedVersionOf('Song', 'Song (Re-recordings)'), 'rerecordings')
+  })
+  it('a request that carries them, or a song named with them, stays itself', () => {
+    assert.equal(unwantedVersionOf('Club Foot', 'Club Foot'), null)
+    assert.equal(unwantedVersionOf("Love Story (Taylor's Version)", 'Love Story (Taylor’s Version)'), null)
+    assert.equal(unwantedVersionOf('Song (A Cappella)', 'Song (Acapella)'), null)
+    assert.equal(unwantedVersionOf('Song', 'Song (Album Version)'), null, 'an ordinary label is no owner')
+    assert.equal(unwantedVersionOf('Song', 'Song (Single Version)'), null)
+    assert.deepEqual(requestedVersionMarkers('Club Foot'), ['club'])
+  })
+})
+
+// ⚠️ TWIN FIXTURES: the same albums in the phone's streamripMatch.test.ts.
+describe('albumVersionOf: an album says what it is in its label, or in a few phrases (2026-11-03)', () => {
+  it('refuses live, acoustic and remix albums', () => {
+    for (const a of ['MTV Unplugged In New York', 'Live at Carnegie Hall', 'Unplugged (Live at the Majestic Theatre)', 'Quadrophenia: Live In London', "Let's Go (Remixes)", 'Don Carlos Remixes', 'Peace Is The Mission: Extended', 'The Acoustic Sessions', 'Greatest Hits Re-Recorded', 'The Concert in Central Park', 'isolation demos - EP', 'Life After Death [Amended Version]', 'The Bootleg Series Vol. 1']) {
+      assert.ok(albumVersionOf('Song', a), a)
+    }
+  })
+  it('never refuses an album whose NAME happens to hold the word: real albums from Jake\'s library', () => {
+    for (const a of ["Sgt. Pepper's Lonely Hearts Club Band", 'Turn The Radio Off', 'Come Clean', 'LONG.LIVE.A$AP', 'Live Through This', 'Beyond The Mix', 'Gangbusters Melody Club', 'Compton - A Soundtrack By Dr. Dre (Explicit Version)', 'Greatest Hits (International Explicit Version)', 'The Beautiful Letdown (Deluxe Version)', 'Modjo (Remastered)', 'Boots (Bonus Tracks Edition)', 'The Sun Sessions', 'Dark Lane Demo Tapes', 'Dub Housing']) {
+      assert.equal(albumVersionOf('Song', a), null, a)
+    }
+  })
+  it('a word the request carries is not a marker, however many places the album says it', () => {
+    assert.equal(albumVersionOf('About a Girl MTV Unplugged In New York', 'MTV Unplugged In New York'), null)
+    assert.equal(albumVersionOf('Who Are You (Live)', 'Live at Leeds'), null)
+    assert.equal(albumVersionOf('Drive My Car (Live)', 'Good Evening New York City (Live At Citi Field, NYC, 2009)'), null)
+    assert.equal(albumVersionOf('N.Y. State of Mind (Live)', 'Luv(Sic) Hexalogy [OMA and Shing02 Live at Liquidroom]'), null)
+    assert.equal(albumVersionOf('Song (Live)', 'Live at Carnegie Hall (Live Set)'), null, 'an album in Jake\'s library that says it twice')
+    assert.equal(albumVersionOf('What You Need (Don Carlos Ambient Mix)', 'Don Carlos Remixes'), null, 'one family, however it is worded')
+    assert.equal(albumVersionOf('Song (Live)', 'MTV Unplugged In New York'), null)
+    assert.ok(albumVersionOf('Song (Live)', 'Song (Remixes)'), 'a different family is still a different recording')
+  })
+  it('a bracket of more than five words is a blurb, not a label; a phrase still counts inside one', () => {
+    assert.equal(albumVersionOf('Aloha', 'Dancefloor Fever 2016 (The Best of Clubbing Music: Electro, Techno, Deep-House. Including a Special House Mix By Yellow Productions)'), null)
+    assert.ok(albumVersionOf('Song', 'Good Evening New York City (Live At Citi Field, NYC, 2009)'))
+    assert.ok(albumVersionOf('Song', 'Dah Instrumentalz'), 'the stem, however the record spells it')
   })
 })

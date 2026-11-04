@@ -60,13 +60,11 @@
  * editions.
  *
  * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamrip.ts has no album path at
- * all (its downloadByQuery rips a Qobuz pick and imports); the phone's
- * downloader stays explicitly INCOMPLETE on identity — closing it is a
- * mobile-phase change, not a desktop one.
+ * all (its downloadByQuery rips a Qobuz pick and imports).
  */
-import { recoArtistMatches, recoNorm, recoTitleMatches } from './reco-match.ts'
+import { artistOrAlias, recoNorm, recoTitleMatches } from './reco-match.ts'
 import { foldAccents } from '../common/fold-text.ts'
-import { maskedTitleMatches, requestedVersionMarkers, searchTitle, subtitleVariantMatches, unwantedVersionOf } from './streamrip-match.ts'
+import { maskedTitleMatches, requestedVersionMarkers, searchTitle, subtitleVariantMatches, titleReads, unwantedVersionOf } from './streamrip-match.ts'
 import type { Provider, RequestedAlbum, RequestedAlbumTrack } from '../common/acquisition-identity.ts'
 export type { RequestedAlbum, RequestedAlbumTrack } from '../common/acquisition-identity.ts'
 
@@ -148,6 +146,8 @@ export function packagingMarkersOf(title: string, version?: string | null): stri
 
 export interface AlbumRequestOpts {
   artist?: string
+  /** Other names MusicBrainz knows the artist by (RequestedAlbum.artistAliases). */
+  artistAliases?: string[]
   title?: string
   trackCount?: number
   discCount?: number
@@ -167,6 +167,7 @@ export function buildRequestedAlbum(o: AlbumRequestOpts): RequestedAlbum {
   const discCount = o.discCount ?? (tracks.length ? Math.max(...discs) : undefined)
   return {
     artist,
+    artistAliases: o.artistAliases,
     title,
     baseTitle: searchTitle(title) || title,
     packaging: packagingMarkersOf(title),
@@ -272,11 +273,7 @@ export function unwantedVersionForTrack(want: string, got: string, wantDur?: num
   return null
 }
 
-function trackTitleReads(want: string, got: string): boolean {
-  const w = searchTitle(want) || want, g = searchTitle(got) || got
-  return recoTitleMatches(w, g) || maskedTitleMatches(w, g) || subtitleVariantMatches(w, g)
-    || recoTitleMatches(want, got) || maskedTitleMatches(want, got) || subtitleVariantMatches(want, got)
-}
+const trackTitleReads = titleReads
 
 /**
  * Judge one candidate album against the request. The first failing witness
@@ -287,7 +284,7 @@ export function verifyAlbumCandidate(req: RequestedAlbum, cand: CandidateAlbum, 
   const candTitle = (cand.title || '').trim()
 
   // 5. Artist and base title gate everything.
-  if (req.artist && cand.artist && !recoArtistMatches(req.artist, cand.artist)) {
+  if (req.artist && cand.artist && !artistOrAlias(req.artist, cand.artist, req.artistAliases)) {
     return { verdict: 'reject', kind: 'artist', reason: `is by “${cand.artist}”, not ${req.artist}` }
   }
   if (cand.artist) evidence.push(`artist “${cand.artist}”`)
@@ -394,7 +391,7 @@ export interface Ownership {
  * every "(2001 Digital Remaster)" stamp and re-imported a complete album.
  */
 export function matchLibraryOwnership(req: RequestedAlbum, library: LibraryTrackLite[], tolSec = ALBUM_TRACK_TOLERANCE_SEC): Ownership {
-  const pool = library.filter((l) => l.title && (!req.artist || !l.artist || recoArtistMatches(req.artist, l.artist)))
+  const pool = library.filter((l) => l.title && (!req.artist || !l.artist || artistOrAlias(req.artist, l.artist, req.artistAliases)))
   const used = new Set<number>()
   const owned: Ownership['owned'] = []
   const missing: number[] = []
@@ -466,7 +463,7 @@ export function reconcileAlbumCompletion(inp: CompletionInput, tolSec = ALBUM_TR
       if (claimed.has(i)) continue
       const w = wanted[i]
       if (!trackTitleReads(w.title, d.title) || unwantedVersionForTrack(w.title, d.title, w.durationSec, d.durationSec)) continue
-      if (inp.req.artist && d.artist && !recoArtistMatches(inp.req.artist, d.artist)) { reason = `“${d.title}” in your library is by ${d.artist}`; continue }
+      if (inp.req.artist && d.artist && !artistOrAlias(inp.req.artist, d.artist, inp.req.artistAliases)) { reason = `“${d.title}” in your library is by ${d.artist}`; continue }
       if (w.durationSec && d.durationSec && Math.abs(w.durationSec - d.durationSec) > tolSec) { reason = `“${d.title}” in your library runs ${fmt(d.durationSec)}, this edition's runs ${fmt(w.durationSec)}`; continue }
       claimed.add(i); ok = true; break
     }

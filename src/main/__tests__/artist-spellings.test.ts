@@ -87,6 +87,52 @@ describe('reading spellings off MusicBrainz', () => {
   })
 })
 
+describe('the downloader asks for a Latin name too (2026-11-03)', () => {
+  // MusicBrainz's answer for "The English Beat", as it came back that day.
+  // ⚠️ TWIN: the same artist in the phone's artistSpellings.test.ts.
+  const ENGLISH_BEAT: MbArtistNames[] = [{
+    id: 'beat', name: 'The Beat', 'sort-name': 'Beat, The', score: 100,
+    aliases: [{ name: 'The Beat starring Dave Wakeling' }, { name: 'English Beat' }, { name: 'The English Beat' }, { name: 'The Beat' }, { name: 'The British Beat' }],
+  }]
+
+  it('The English Beat is The Beat, the name Qobuz files them under', () => {
+    const spellings = spellingsOf(ENGLISH_BEAT, 'The English Beat')
+    assert.equal(spellings[0], 'The Beat')
+    assert.ok(spellings.includes('English Beat'))
+    assert.ok(!spellings.includes('The English Beat'), 'the name asked about is not one of its own other names')
+  })
+
+  it('the wiring: the shared throttle reaches the store, and the names reach the ranking and the judge', () => {
+    const idx = readFileSync(join(import.meta.dirname, '..', 'index.ts'), 'utf-8')
+    assert.match(idx, /registerStreamripStore\(\{[\s\S]{0,200}?mbThrottle,[\s\S]{0,120}?mbUserAgent:/)
+    const store = readFileSync(join(import.meta.dirname, '..', 'streamrip-store', 'index.ts'), 'utf-8')
+    assert.match(store, /await rankWithArtistAliases\(lookFor \|\| query, artist, qsearch\.results, mediaType, \(a\) => artistAliases\(a, \{ throttle: deps\.mbThrottle, userAgent: deps\.mbUserAgent \}\)\)/)
+    assert.match(store, /buildRequestedRecording\(\{\s+artist, artistAliases: aliases,/)
+    assert.match(store, /buildRequestedAlbum\(\{\s+artist, artistAliases: aliases,/)
+    assert.match(store, /rankStreamripCandidates\(albName, artist, asearch\.results, 'album', aliases\)/)
+    const own = readFileSync(join(import.meta.dirname, '..', 'artist-spellings-store.ts'), 'utf-8')
+    assert.match(own, /export async function artistAliases\(artist: string, deps: \{ throttle: \(\) => Promise<void>; userAgent: string \}\)/)
+    assert.match(own, /await ensureSpellings\(\[name\], work, \{ fetchSpellings:/, 'the same throttled, never-cache-a-failure path as the rest of the file')
+  })
+
+  it('that path: once per artist per TTL, a busy MusicBrainz answers the stale entry or nothing', async () => {
+    const now = 1_800_000_000_000
+    const key = 'the english beat'
+    const fresh: SpellingCache = { [key]: { spellings: ['The Beat'], at: now - 1000 } }
+    let asked = 0
+    const opts = { now, throttle: async () => {}, fetchSpellings: async () => { asked++; return ['The Beat', 'English Beat'] } }
+    assert.equal(await ensureSpellings(['The English Beat'], fresh, opts), 0)
+    assert.equal(asked, 0, 'cached: no network')
+    const stale: SpellingCache = { [key]: { spellings: ['The Beat'], at: now - SPELLING_TTL_MS - 1 } }
+    await ensureSpellings(['The English Beat'], stale, { ...opts, fetchSpellings: async () => null })
+    assert.deepEqual(cachedSpellings(stale, ['The English Beat']), ['The Beat'], 'busy: the stale names still count')
+    const none: SpellingCache = {}
+    await ensureSpellings(['The English Beat'], none, { ...opts, fetchSpellings: async () => null })
+    assert.deepEqual(cachedSpellings(none, ['The English Beat']), [], 'busy and never asked: nothing, and asked again next time')
+    assert.equal(none[key], undefined)
+  })
+})
+
 describe('which artists, and when', () => {
   it('only names with another script are looked up, once each', () => {
     assert.deepEqual(otherScriptArtists(['Молчат Дома', 'МОЛЧАТ ДОМА', 'Radiohead', 'Sigur Rós', 'הדג נחש', '', '!!!']), ['Молчат Дома', 'הדג נחש'])

@@ -32,7 +32,7 @@ import { trackQueryId, albumQueryId } from '../../renderer/views/DownloadStore/d
 import { normalize as searchNormalize, buildIndex, search } from '../../renderer/utils/searchIndex.ts'
 import type { Track } from '../../renderer/types.ts'
 import { recordIdentityKeys, recoDedupeKey, recoIdNorm, recoNorm, isTombstonedRecord, RECO_IDENTITY_PREFIX } from '../reco-match.ts'
-import { maskedTitleMatches } from '../streamrip-match.ts'
+import { maskedTitleMatches, titleReads } from '../streamrip-match.ts'
 import { buildRequestedRecording, verifyCandidate, textNamesArtist } from '../exact-recording.ts'
 import { getTasteAnchors, computeTasteFingerprint, scoreCandidate } from '../taste-model.ts'
 import { rankCandidates } from '../radar-core.ts'
@@ -369,7 +369,8 @@ describe('Get: the recording guard (maskedTitleMatches, verifyCandidate)', () =>
   it('a Hebrew title no longer reads as every other Hebrew title', () => {
     assert.equal(maskedTitleMatches('שיר', 'למה הים כחול'), false)
     assert.equal(maskedTitleMatches('Группа крови', 'Звезда по имени Солнце'), false)
-    assert.equal(maskedTitleMatches('שיר', 'שיר (Live)'), true, 'its own title still reads, decoration and all')
+    assert.equal(titleReads('שיר', 'שיר (Live)'), true, 'its own title still reads, decoration and all')
+    assert.equal(maskedTitleMatches('שיר', 'שיר אהבה'), false, 'a title with no mask is not a masked match (2026-11-03): "Love Song" is not "Love"')
     assert.equal(maskedTitleMatches('N****s in Paris', 'Niggas in Paris'), true, 'masked profanity unchanged')
   })
   it('the wrong Hebrew song by the right artist is refused on its title', () => {
@@ -524,8 +525,9 @@ describe('Music Man verification', () => {
 describe('Get: Qobuz, SoundCloud and the recording guard', () => {
   const q = (id: string, desc: string) => ({ source: 'qobuz', mediaType: 'track', id, desc })
   it('Qobuz: the Hebrew artist ranks, the stranger is out, and only the exact title gets the exact bonus', () => {
-    const { ranked } = rankStreamripCandidates('שיר', BERRY, [q('1', `שיר אהבה by ${BERRY}`), q('2', `שיר by ${BERRY}`), q('3', `שיר by ${HADAG}`)])
+    const { ranked } = rankStreamripCandidates('שיר של אהבה', BERRY, [q('1', `שיר של אהבה ישנה by ${BERRY}`), q('2', `שיר של אהבה by ${BERRY}`), q('3', `שיר של אהבה by ${HADAG}`)])
     assert.deepEqual(ranked.map((r) => r.id), ['2', '1'])
+    assert.deepEqual(rankStreamripCandidates('שיר', BERRY, [q('1', `שיר אהבה by ${BERRY}`), q('2', `שיר by ${BERRY}`)]).ranked.map((r) => r.id), ['2'], 'a short title is not every title that holds it')
   })
   it('the right Hebrew recording verifies; the same title by another Hebrew artist does not', () => {
     const req = buildRequestedRecording({ artist: BERRY, title: 'שיר', durationTolSec: 3, durationMs: 200_000 })
