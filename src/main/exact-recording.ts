@@ -18,8 +18,9 @@
  *      same recording and pass.
  *   3. The file's own tags are witnesses: title must read as the song,
  *      artist must be the artist (SoundCloud's uploader tag is allowed to be
- *      a label when the artist is in the title), album must not name a
- *      different recording, a TV/venue show brand is a different recording.
+ *      a label when the artist is in the title, and Qobuz may write the credit
+ *      another way: creditHolds), album must not name a different recording, a
+ *      TV/venue show brand is a different recording.
  *   4. Runtime within tolerance of the version Jake clicked, when known. A
  *      clean row's length is not known (requestedLength, 2026-11-04).
  *   5. No duration does NOT switch verification off — the tags still judge.
@@ -39,7 +40,7 @@ import type { Provider, RequestedRecording, Alternative, DownloadOutcome } from 
 export type { Provider, RequestedRecording, Alternative, DownloadOutcome } from '../common/acquisition-identity.ts'
 
 import { artistOrAlias, recoNorm, recoTitleMatches } from './reco-match.ts'
-import { albumVersionOf, carriesCensorStamp, editionSubstituted, isCoverAct, liveBrandMarker, searchTitle, titleReads, unwantedVersionOf, requestedVersionMarkers, withoutCensorStamp } from './streamrip-match.ts'
+import { albumVersionOf, carriesCensorStamp, creditHolds, editionSubstituted, isCoverAct, liveBrandMarker, searchTitle, titleReads, unwantedVersionOf, requestedVersionMarkers, withoutCensorStamp } from './streamrip-match.ts'
 import { nameKey } from '../common/fold-text.ts'
 
 /** Does free text (a SoundCloud title/desc) name the artist? Folded in any
@@ -215,10 +216,15 @@ export function verifyCandidate(req: RequestedRecording, ev: CandidateEvidence):
 
   // 4. The artist. A same-title song by someone else is a different song.
   //    SoundCloud's artist tag is often the uploader (a label), so there the
-  //    artist may instead appear in the title/desc.
+  //    artist may instead appear in the title/desc. Qobuz can write the credit
+  //    another way ("Oma" for "OMA & SitarNik"): that needs the exact title, and
+  //    a part of a joint credit a length on both sides, because step 5 only
+  //    checks what both sides know.
   if (req.artist && ev.artist) {
     const inText = textNamesArtist(`${ev.title ?? ''} ${ev.desc ?? ''}`, req.artist)
+    const clocked = req.durationSec > 0 && (ev.durationSec ?? 0) > 0
     const ok = artistOrAlias(req.artist, ev.artist, req.artistAliases) || (ev.provider === 'soundcloud' && inText)
+      || (ev.provider === 'qobuz' && creditHolds(req, clocked, { title: ev.title ?? '', artist: ev.artist }))
     if (!ok) return { verdict: 'reject', kind: 'artist', reason: `is by “${ev.artist}”, not ${req.artist}` }
     evidence.push(`artist “${ev.artist}”`)
   } else if (req.artist && ev.provider === 'soundcloud' && (ev.title || ev.desc)) {
