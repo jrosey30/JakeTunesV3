@@ -15,7 +15,7 @@
 //  user's library format (iPod-safe), same as every other import.
 // ════════════════════════════════════════════════════════════════════════
 
-import { BrowserWindow } from 'electron'
+import type { BrowserWindow } from 'electron'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { safeIpcError } from '../safe-ipc-error.ts'
@@ -23,20 +23,20 @@ import { execFile } from 'child_process'
 import { createHash } from 'crypto'
 import { join } from 'path'
 import { homedir, tmpdir } from 'os'
-import { mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
-import { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
+import { lstat, mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
+import type { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
 import { rankStreamripCandidates, rankWithArtistAliases, searchTitle, searchQueryTitle, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, isNoResultsMessage, parseStreamripDesc, type QobuzTrackMeta } from '../streamrip-match.ts'
 import { buildRequestedAlbum, verifyAlbumCandidate, reconcileAlbumCompletion, describeCompletion, albumAlternativeDesc, orderTracks, parseCountTag, matchLibraryOwnership, ladderBudgetMs, type RequestedAlbum, type CandidateAlbum, type AlbumVerdict, type Ownership, type LibraryTrackLite } from '../album-identity.ts'
 import { loadLibraryTracksLite } from '../import-pipeline.ts'
-import { itunesAlbumTracks, itunesFindAlbum } from '../download-search'
-import { buildRequestedRecording, verifyCandidate, finalOutcome, describeOutcome, type Alternative, type CandidateEvidence, type DownloadOutcome, type Provider } from '../exact-recording.ts'
+import { itunesAlbumTracks, itunesFindAlbum } from '../download-search.ts'
+import { buildRequestedRecording, verifyCandidate, finalOutcome, describeOutcome, soundcloudSearchNote, type Alternative, type CandidateEvidence, type DownloadOutcome, type Provider } from '../exact-recording.ts'
 import { requestFromSourceEdition, verifySourceEdition } from '../source-edition-verify.ts'
 import type { SourceEdition } from '../../common/source-edition.ts'
 import { shareSourceKey } from '../../common/source-playlists.ts'
 import { recoTitleMatches, recoArtistMatches } from '../reco-match.ts'
-import { isAllowedStreamripUrl } from '../url-safety'
+import { isAllowedStreamripUrl } from '../url-safety.ts'
 import { artistAliases } from '../artist-spellings-store.ts'
-import { quietWarn } from '../flight-recorder'
+import { quietWarn } from '../flight-recorder.ts'
 
 export interface StreamripDeps {
   ipc: IpcRegistrar
@@ -55,6 +55,14 @@ function ripBinary(): string {
   return join(homedir(), '.local', 'bin', 'rip')
 }
 
+// Same pipx folder on the MacBook. A bare 'yt-dlp' there was ENOENT whenever the
+// app was opened normally: 15 of the 15 Bandcamp fetches in main.log since 10/22
+// (Brief 224). homemini's comes from Homebrew, which index.ts adds to PATH, so a
+// bare 'yt-dlp' is the fallback. workmini has neither.
+function ytDlpBinary(): string {
+  return join(homedir(), '.local', 'bin', 'yt-dlp')
+}
+
 const AUDIO_EXT = new Set(['.flac', '.m4a', '.mp3', '.aac', '.alac', '.ogg', '.opus', '.wav', '.aiff', '.aif'])
 
 // A failed Qobuz transfer can leave a ZERO-BYTE stub with a healthy
@@ -66,10 +74,14 @@ const AUDIO_EXT = new Set(['.flac', '.m4a', '.mp3', '.aac', '.alac', '.ogg', '.o
 // ladder's designed fallbacks (next candidate, Bandcamp, SoundCloud)
 // actually get their turn.
 const MIN_AUDIO_BYTES = 64 * 1024
+// A Bandcamp file stays the MP3 it was served as, 16 KB a second at 128k, so the
+// floor above would refuse any track under 4.1 s (and with it the album it is on).
+// yt-dlp only names the audio once the transfer finished, so half a second is enough.
+const MIN_BANDCAMP_AUDIO_BYTES = 8 * 1024
 
 /** Recursively collect REAL audio files streamrip wrote under the staging
- *  dir — stubs below MIN_AUDIO_BYTES are logged and refused. */
-async function collectAudio(dir: string): Promise<string[]> {
+ *  dir — stubs below the floor are logged and refused. */
+async function collectAudio(dir: string, minBytes = MIN_AUDIO_BYTES): Promise<string[]> {
   const out: string[] = []
   async function walk(d: string): Promise<void> {
     let entries
@@ -83,7 +95,7 @@ async function collectAudio(dir: string): Promise<string[]> {
         try {
           const { stat } = await import('fs/promises')
           const st = await stat(p)
-          if (st.size < MIN_AUDIO_BYTES) {
+          if (st.size < minBytes) {
             console.warn(`[streamrip] refusing ${st.size}-byte stub: ${e.name}`)
             continue
           }
@@ -260,7 +272,7 @@ async function sweepOrphanedStaging(): Promise<void> {
 }
 
 export function registerStreamripStore(deps: StreamripDeps): void {
-  setTimeout(() => { void sweepOrphanedStaging() }, 30_000)
+  setTimeout(() => { void sweepOrphanedStaging() }, 30_000).unref()
   const { ipc } = deps
   /** outcome + alternatives (6.0 Phase 1): the structured verdict behind the
    *  message — 'exact-not-found' with the candidates that were judged and
@@ -324,7 +336,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       }
       await wipeStaging(staging)
       if (cancelRequested) return { ok: false, error: 'canceled' }
-      return { ok: false, error: tailMessage(res) || `streamrip downloaded nothing (exit ${res.code}). That service may need login in streamrip’s config.` }
+      return { ok: false, error: tailMessage(res) || `streamrip downloaded nothing (exit ${res.code}).${ripSubcmd[1] === 'soundcloud' ? '' : ' That service may need login in streamrip’s config.'}` }
     } catch (err) {
       if (staging) await rm(staging, { recursive: true, force: true }).catch(() => {})
       return { ok: false, error: safeIpcError(err, 'tool-failed') }
@@ -343,7 +355,12 @@ export function registerStreamripStore(deps: StreamripDeps): void {
   // beats a failed download"), and the scene bands Jake hunts live here
   // when Qobuz has never heard of them. matchDesc says "Bandcamp stream"
   // so the tier is never hidden.
-  async function bandcampSearch(text: string, kind: 'a' | 't'): Promise<Array<{ name: string; band: string; url: string }>> {
+  // `noAnswer` is not "nothing on Bandcamp". A bot check comes back as 200 and an HTML
+  // page titled "Client Challenge" (2026-11-04: 23 of 24 calls from plain Node across
+  // the three machines, none of 3 from Electron, none from curl), and reading that as
+  // zero results made the verdict say Bandcamp had nothing when it had the song. This
+  // reports it. It does not try to get past it.
+  async function bandcampSearch(text: string, kind: 'a' | 't'): Promise<{ hits: Array<{ name: string; band: string; url: string }> } | { noAnswer: string }> {
     try {
       const res = await fetch('https://bandcamp.com/api/bcsearch_public_api/1/autocomplete_elastic', {
         method: 'POST',
@@ -351,21 +368,40 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         body: JSON.stringify({ search_text: text, search_filter: kind, fan_id: null, full_page: false }),
         signal: AbortSignal.timeout(8000),
       })
-      if (!res.ok) return []
+      if (!res.ok) return { noAnswer: `HTTP ${res.status}` }
+      if (!(res.headers.get('content-type') || '').includes('json')) return { noAnswer: 'a web page instead of results' }
       const d = await res.json() as { auto?: { results?: Array<{ type?: string; name?: string; band_name?: string; item_url_path?: string }> } }
-      return (d.auto?.results || [])
-        .filter((r) => r.type === kind && r.name && r.band_name && r.item_url_path)
-        .map((r) => ({ name: String(r.name), band: String(r.band_name), url: String(r.item_url_path) }))
-    } catch { return [] }
+      return {
+        hits: (d.auto?.results || [])
+          .filter((r) => r.type === kind && r.name && r.band_name && r.item_url_path)
+          .map((r) => ({ name: String(r.name), band: String(r.band_name), url: String(r.item_url_path) })),
+      }
+    } catch (err) { return { noAnswer: err instanceof Error ? err.message : 'no answer' } }
   }
 
   async function stageBandcamp(url: string): Promise<{ ok: true; staged: StagedRip } | { ok: false; error: string }> {
     let staging = ''
     try {
       staging = await mkdtemp(join(tmpdir(), 'jaketunes-bc-'))
-      const res = await run('yt-dlp', ['-x', '--audio-format', 'm4a', '--audio-quality', '0', '--embed-metadata',
-        '-o', join(staging, '%(playlist_index|00)02d - %(title)s.%(ext)s'), url], 1000 * 60 * 20)
-      const files = await collectAudio(staging)
+      // The file as Bandcamp serves it (Brief 224). `-x --audio-format m4a` turned
+      // 128k MP3s into AACs of 345k and up: about three times the bytes, no better
+      // sound, and files that then looked high quality (44 are in the library). The
+      // import copies MP3 and AAC untouched and converts lossless
+      // (shouldConvertOnImport), so nothing downstream needs m4a. Never
+      // --allow-unplayable-formats: a locked upload stays refused.
+      const args = ['--embed-metadata', '-o', join(staging, '%(playlist_index|00)02d - %(title)s.%(ext)s'), url]
+      let res = await run(ytDlpBinary(), args, 1000 * 60 * 20)
+      if (res.enoent) res = await run('yt-dlp', args, 1000 * 60 * 20)
+      if (res.enoent) {
+        await rm(staging, { recursive: true, force: true }).catch(() => {})
+        // A pipx launcher whose Python is gone is ENOENT too, and "install it" would
+        // answer "already installed" and send Jake in a circle (see ripDiagnosis).
+        const launcherThere = await lstat(ytDlpBinary()).then(() => true, () => false)
+        return { ok: false, error: launcherThere
+          ? 'yt-dlp is installed but can’t start: the Python it runs on is gone. Run: pipx reinstall yt-dlp'
+          : 'yt-dlp isn’t installed on this Mac, so Bandcamp can’t be fetched here. Run: pipx install yt-dlp' }
+      }
+      const files = await collectAudio(staging, MIN_BANDCAMP_AUDIO_BYTES)
       if (files.length === 0) {
         await rm(staging, { recursive: true, force: true }).catch(() => {})
         return { ok: false, error: tailMessage(res) || `Bandcamp fetch produced nothing (exit ${res.code}).` }
@@ -598,7 +634,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         // "No search results found for query …" is the catalogue answering
         // "nothing here" — an EMPTY result, not a failed provider.
         if (isNoResultsMessage(why)) return { ok: true, results: [] }
-        return { ok: false, error: why || `No results (exit ${res.code}). ${source} may need login in streamrip’s config.` }
+        return { ok: false, error: why || `No results (exit ${res.code}).${source === 'soundcloud' ? '' : ` ${source} may need login in streamrip’s config.`}` }
       }
       const parsed = JSON.parse(raw) as Array<{ source?: string; media_type?: string; id?: string; desc?: string }>
       const results: SearchResult[] = parsed
@@ -1032,18 +1068,20 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     // much used by me too. use both equally"). Scene bands live here when
     // Qobuz has never heard of them. Full-track stream tier; the store view
     // stays the checkout for buying the record properly. Same judge.
-    const bcResults = await bandcampSearch(query, wantAlbum ? 'a' : 't')
-    trace.push(`bandcamp: ${bcResults.length} results`)
-    const bcPicks = bcResults.filter((r) =>
+    const bcSearch = await bandcampSearch(query, wantAlbum ? 'a' : 't')
+    const bandcampNoAnswer = 'noAnswer' in bcSearch ? bcSearch.noAnswer : null
+    trace.push('hits' in bcSearch ? `bandcamp: ${bcSearch.hits.length} results` : `bandcamp search: no answer (${bcSearch.noAnswer})`)
+    const bcPicks = ('hits' in bcSearch ? bcSearch.hits : []).filter((r) =>
       (!artist || recoArtistMatches(artist, r.band)) &&
       recoTitleMatches(title, r.name) &&
       !unwantedVersionOf(title, r.name) &&
       !liveBrandMarker(title, r.name)).slice(0, 2)
+    let bandcampFailure: string | null = null
     for (const bcPick of bcPicks) {
       if (cancelRequested) return { ok: false, error: 'canceled', outcome: 'canceled' }
       anyMatched = true
       const st = await stageBandcamp(bcPick.url)
-      if (!st.ok) { trace.push(`bandcamp stage: ${st.error}`); continue }
+      if (!st.ok) { trace.push(`bandcamp stage: ${st.error}`); bandcampFailure = st.error; continue }
       const desc = `${bcPick.name} — ${bcPick.band} (Bandcamp stream)`
       if (reqAlbum) {
         // Same contract, staged files only — Bandcamp has no listing endpoint.
@@ -1071,21 +1109,29 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     // (~128k MP3 — lossy but complete). Single tracks only. It is NEVER a
     // silent substitute: the walk tries a few uploads and each must pass
     // the same judge as Qobuz — the 5 Years Time remix died here.
-    let scSearchErr = ''
+    //
+    // This lane's trouble is its own news, never the song's verdict (Brief 224):
+    // streamrip's search dies on nearly every query now, and "Check the login in
+    // Setup" was all 16 PROVIDER UNAVAILABLEs in main.log. Only a file it delivered
+    // and the judge ruled on counts. stageRip clears lastStageFailure, so Qobuz's
+    // is kept from here on.
+    const stageFailureBeforeSoundcloud = lastStageFailure
+    let soundcloudSearchError: string | null = null
+    let soundcloudStageFailure: string | null = null
     if (!wantAlbum) {
       const ssearch = await searchCatalog({ query, source: 'soundcloud', mediaType: 'track', numResults: 15 })
       trace.push(`soundcloud search: ${ssearch.ok ? `${ssearch.results?.length ?? 0} results` : `ERR ${ssearch.error}`}`)
-      if (!ssearch.ok) scSearchErr = ssearch.error || 'search failed'
+      if (!ssearch.ok) soundcloudSearchError = ssearch.error || 'its search failed'
       const spicks = ssearch.ok && ssearch.results?.length
         ? rankSoundcloudCandidates(title || query, artist, ssearch.results).slice(0, 3)
         : []
       for (const spick of spicks) {
         if (cancelRequested) return { ok: false, error: 'canceled', outcome: 'canceled' }
         if (clock.expired()) return { ...gaveUp(), outcome: 'provider-failed' }
-        anyMatched = true
         console.log(`[download] Qobuz had no exact match for "${query}" — trying SoundCloud: ${spick.desc}`)
         const st = await stageRip(['id', spick.source, spick.mediaType, spick.id], clock.remaining())
-        if (!st.ok) { trace.push(`soundcloud stage “${spick.desc}”: ${st.error}`); continue }
+        if (!st.ok) { trace.push(`soundcloud stage “${spick.desc}”: ${st.error}`); soundcloudStageFailure = st.error; continue }
+        anyMatched = true
         const desc = `${spick.desc} (SoundCloud)`
         // The file's own clock and tags are the only trustworthy witnesses
         // here (2026-08-29, the TopKnot case) — probed explicitly in this
@@ -1108,10 +1154,21 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     // nothing was the exact recording", which stays distinct from "nothing
     // resembled it at all". Prefer "Exact version not found" over a false
     // success every time.
-    const searchFailure = (!qsearch.ok ? (qsearch.error || 'Qobuz search failed') : null) ?? (scSearchErr || null)
-    const ripFailure = lastStageFailure
+    const searchFailure = !qsearch.ok ? (qsearch.error || 'Qobuz search failed') : null
+    const ripFailure = stageFailureBeforeSoundcloud ?? bandcampFailure
+    const ripFailureIsBandcamp = !stageFailureBeforeSoundcloud && Boolean(bandcampFailure)
     const outcome = finalOutcome({ alternatives, ripFailure, searchFailure, anyMatched, unverifiable: sawUnverifiable })
-    const { primary, detail } = describeOutcome(outcome, { title, artist, query, alternatives, ripFailure, searchFailure, otherVersions: rejectedVersions, wantAlbum })
+    // Whatever went wrong that the verdict's own sentence does not say.
+    const laneNotes = [
+      searchFailure && outcome !== 'provider-unavailable' ? `Qobuz wasn’t searched: ${searchFailure}.` : null,
+      bandcampNoAnswer ? `Bandcamp wasn’t searched (${bandcampNoAnswer}), so it may still have this.` : null,
+      bandcampFailure && !(outcome === 'provider-failed' && ripFailureIsBandcamp) ? `Bandcamp has a match that could not be fetched: ${bandcampFailure}.` : null,
+      // The same words as Qobuz's failure (no rip on this Mac) are already said.
+      soundcloudSearchError && soundcloudSearchError !== searchFailure ? soundcloudSearchNote(soundcloudSearchError) : null,
+      soundcloudStageFailure ? `SoundCloud has a match that could not be fetched: ${soundcloudStageFailure}.` : null,
+    ].filter((n): n is string => Boolean(n))
+    const unasked = [...(bandcampNoAnswer ? ['Bandcamp'] : []), ...(soundcloudSearchError ? ['SoundCloud'] : [])]
+    const { primary, detail } = describeOutcome(outcome, { title, artist, query, alternatives, ripFailure, loginlessRipFailure: ripFailureIsBandcamp, searchFailure, otherVersions: rejectedVersions, wantAlbum, unasked, laneNotes })
     console.warn(`[download] ${primary.toUpperCase()} “${title}” — ${artist}: ${detail.replace(/\n/g, ' | ')}`)
     return { ok: false, outcome, alternatives, primary, detail, error: `${primary}: ${detail.split('\n')[0]}` }
   }, { refuse: REFUSED_SENDER })
