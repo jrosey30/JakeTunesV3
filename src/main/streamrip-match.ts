@@ -394,6 +394,50 @@ export function titleReads(want: string, got: string): boolean {
     || recoTitleMatches(want, got) || maskedTitleMatches(want, got) || subtitleVariantMatches(want, got)
 }
 
+/**
+ * Another way of writing the same credit, for when recoArtistMatches says no (JakeTunesMobile
+ * Brief 225):
+ *   'order': the same words in another order. Qobuz lists Richard F. as "F. Richard", and a
+ *            joint credit comes in any order ("Mr. Kris & Eric Faria").
+ *   'part':  one whole name of a joint credit, too short for recoArtistMatches' containment
+ *            test. Qobuz lists "OMA & SitarNik" as "Oma".
+ * Only "&" and "," join credits: "/" and "+" sit inside names (AC/DC, C+C Music Factory).
+ * "Sly & the Family Stone" is one band, "Sammy Davis, Jr." one man, and a lone letter no name.
+ * There is no spelling rule: 18 artist pairs in Jake's library are one letter apart, and all 18
+ * are different acts (David Bowie, David Zowie).
+ * A name alone does not make it the song: see creditHolds.
+ * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts otherCredit, verbatim.
+ */
+export function otherCredit(want: string, got: string): 'order' | 'part' | null {
+  const wordsOf = (name: string): string[] => name.split(/[\s,&]+/).map(recoFold).filter(Boolean)
+  const w = wordsOf(want), g = wordsOf(got)
+  if (w.join(' ') !== g.join(' ') && [...w].sort().join(' ') === [...g].sort().join(' ')) return 'order'
+  const credits = want.split(/[,&]/).map((c) => c.trim()).filter(Boolean)
+  const name = recoFold(got)
+  if (credits.length < 2 || name.length < 2 || credits.some((c) => /^(?:the\s|[js]r\b)/i.test(c))) return null
+  return credits.some((c) => recoFold(c) === name) ? 'part' : null
+}
+
+/**
+ * Whether another way of writing the credit is this song. The title has to be the request's
+ * exactly, without its edition labels. A search summary hides the version ("Feels Alright" for
+ * the Vocal Mix), so there the name without its brackets will do (`summary`), and the file's
+ * tags are held to the whole title. A part of a joint credit also needs a clock: "Oma" alone
+ * says little, so the row Jake clicked has to say how long the song runs.
+ * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts creditHolds.
+ */
+export function creditHolds(
+  want: { title: string; artist: string },
+  clocked: boolean,
+  found: { title: string; artist: string },
+  summary = false,
+): boolean {
+  const kind = otherCredit(want.artist, found.artist)
+  if (!kind || (kind === 'part' && !clocked)) return false
+  const key = (t: string): string => recoFold(summary ? bareTitle(searchTitle(t)) : searchTitle(t))
+  return key(want.title) !== '' && key(want.title) === key(found.title)
+}
+
 /** Rank every eligible Qobuz hit for a reco title + artist, best first.
  *  `wantMediaType` gates which result rows are eligible — 'track' for a song
  *  query, 'album' for an album query. This MUST match what the caller searched
@@ -408,15 +452,24 @@ export function titleReads(want: string, got: string): boolean {
  *    high title score must not float a cover band above "not found"
  *  - exact title equality beats loose containment; fewer extra title tokens
  *    beats more (the undecorated original outranks "(Single Version)" etc.)
- *  - ties keep Qobuz's own order */
+ *  - ties keep Qobuz's own order
+ *
+ *  `credit` lets another way of writing the artist's name count (creditHolds), and says
+ *  whether the row has a length to hold a file to. Left out, it does not count: a whole
+ *  album goes to verifyAlbumCandidate, which holds to the name.
+ *  Such a hit is a last resort, unlike on the phone: this scoring puts a stranger's "Daylight"
+ *  by Kim above Matt & Kim's own "Daylight (Album Version)", and a stranger whose length happens
+ *  to fit could then be imported, or vouch for an explicit master (judgeHitsByMeta). So it ranks
+ *  only when nothing else does. */
 export function rankStreamripCandidates(
   wantTitle: string,
   wantArtist: string,
   results: StreamripSearchHit[],
   wantMediaType: 'track' | 'album' = 'track',
   aliases: string[] = [],
+  credit?: { clocked: boolean },
 ): { ranked: StreamripSearchHit[]; rejectedVersions: string[] } {
-  const scored: Array<{ r: StreamripSearchHit; score: number; i: number }> = []
+  const scored: Array<{ r: StreamripSearchHit; score: number; i: number; otherName: boolean }> = []
   const rejectedVersions: string[] = []
   const wantsCover = isCoverAct(wantTitle, wantArtist)
   const nWant = recoFold(wantTitle)   // compared only. recoNorm made every Hebrew title '' and gave each the exact-title bonus
@@ -437,6 +490,7 @@ export function rankStreamripCandidates(
     const brand = liveBrandMarker(wantTitle, r.desc)
     if (brand) { rejectedVersions.push(`${title} [${brand}]`); continue }
     let score = 2
+    let otherName = false
     // A subtitle-dropped match is real but weaker evidence than a title that
     // actually reads the same, so it never outranks one that does.
     if (subtitleOnly) score -= 3
@@ -447,6 +501,7 @@ export function rankStreamripCandidates(
       if (recoFold(wantArtist) === recoFold(artist)) score += 6
       else if (recoArtistMatches(wantArtist, artist)) score += 5
       else if (artistOrAlias(wantArtist, artist, aliases)) score += 6
+      else if (credit && creditHolds({ title: wantTitle, artist: wantArtist }, credit.clocked, { title, artist }, true)) otherName = true
       else continue
     } else if (artist) {
       score += 1
@@ -455,10 +510,12 @@ export function rankStreamripCandidates(
     if (recoFold(title) === nWant) score += 6
     const extras = titleTokens(title).filter((w) => !wantToks.has(w)).length
     score -= Math.min(4, extras)
-    scored.push({ r, score, i })
+    scored.push({ r, score, i, otherName })
   }
-  scored.sort((a, b) => b.score - a.score || a.i - b.i)
-  return { ranked: scored.map((s) => s.r), rejectedVersions }
+  const underTheName = scored.filter((s) => !s.otherName)
+  const pool = underTheName.length ? underTheName : scored
+  pool.sort((a, b) => b.score - a.score || a.i - b.i)
+  return { ranked: pool.map((s) => s.r), rejectedVersions }
 }
 
 /** True when the store has the song under a name for the artist that the request
@@ -493,8 +550,9 @@ export async function rankWithArtistAliases(
   results: StreamripSearchHit[],
   wantMediaType: 'track' | 'album',
   lookup: (artist: string) => Promise<string[]>,
+  credit?: { clocked: boolean },
 ): Promise<{ ranked: StreamripSearchHit[]; rejectedVersions: string[]; aliases: string[] }> {
-  const first = rankStreamripCandidates(wantTitle, wantArtist, results, wantMediaType)
+  const first = rankStreamripCandidates(wantTitle, wantArtist, results, wantMediaType, [], credit)
   if (first.ranked.length > 0 || !hitsByAnotherName(wantTitle, wantArtist, results, wantMediaType)) return { ...first, aliases: [] }
   const aliases = await lookup(wantArtist)
   if (aliases.length === 0) return { ...first, aliases: [] }

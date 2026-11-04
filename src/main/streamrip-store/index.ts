@@ -29,7 +29,7 @@ import { rankStreamripCandidates, rankWithArtistAliases, searchTitle, searchQuer
 import { buildRequestedAlbum, verifyAlbumCandidate, reconcileAlbumCompletion, describeCompletion, albumAlternativeDesc, orderTracks, parseCountTag, matchLibraryOwnership, ladderBudgetMs, type RequestedAlbum, type CandidateAlbum, type AlbumVerdict, type Ownership, type LibraryTrackLite } from '../album-identity.ts'
 import { loadLibraryTracksLite } from '../import-pipeline.ts'
 import { itunesAlbumTracks, itunesFindAlbum } from '../download-search.ts'
-import { buildRequestedRecording, judgeHitsByMeta, verifyCandidate, finalOutcome, describeOutcome, soundcloudSearchNote, type Alternative, type CandidateEvidence, type DownloadOutcome, type Provider } from '../exact-recording.ts'
+import { buildRequestedRecording, judgeHitsByMeta, requestedLength, verifyCandidate, finalOutcome, describeOutcome, soundcloudSearchNote, type Alternative, type CandidateEvidence, type DownloadOutcome, type Provider } from '../exact-recording.ts'
 import { requestFromSourceEdition, verifySourceEdition } from '../source-edition-verify.ts'
 import type { SourceEdition } from '../../common/source-edition.ts'
 import { shareSourceKey } from '../../common/source-playlists.ts'
@@ -713,8 +713,11 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     // 2026-11-03: Qobuz files The English Beat as "The Beat". When only another
     // name for the artist stands in the way, MusicBrainz is asked once; the same
     // names then let the staged file's tags through the judge.
+    // A song may also come back under another way of writing its credit ("Oma" for
+    // "OMA & SitarNik"). The judge below reads the same length: a clean row has none.
+    const clocked = requestedLength({ title, album: opts?.album, durationMs, cleanedSource: opts?.cleanedSource }).durationSec > 0
     const { ranked, rejectedVersions, aliases } = qsearch.ok && qsearch.results?.length
-      ? await rankWithArtistAliases(lookFor || query, artist, qsearch.results, mediaType, (a) => artistAliases(a, { throttle: deps.mbThrottle, userAgent: deps.mbUserAgent }))
+      ? await rankWithArtistAliases(lookFor || query, artist, qsearch.results, mediaType, (a) => artistAliases(a, { throttle: deps.mbThrottle, userAgent: deps.mbUserAgent }), wantAlbum ? undefined : { clocked })
       : { ranked: [], rejectedVersions: [], aliases: [] as string[] }
       if (aliases.length) trace.push(`“${artist}” also goes by ${aliases.slice(0, 4).map((a) => `“${a}”`).join(', ')} (MusicBrainz)`)
       trace.push(`ranked ${ranked.length}${rejectedVersions.length ? `, rejected versions ${rejectedVersions.length}` : ''}${ranked[0] ? ` — top “${ranked[0].desc}”` : ''}`)
@@ -1050,7 +1053,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       const albName = (opts!.album as string).trim()
       const asearch = await searchCatalog({ query: [artist, searchTitle(albName) || albName].filter(Boolean).join(' '), source: 'qobuz', mediaType: 'album', numResults: 10 })
       const albRanked = asearch.ok && asearch.results?.length
-        ? rankStreamripCandidates(albName, artist, asearch.results, 'album', aliases).ranked
+        ? rankStreamripCandidates(albName, artist, asearch.results, 'album', aliases, { clocked: false }).ranked
         : []
       for (const alb of albRanked.slice(0, 2)) {
         const tl = await qobuzAlbumTrackList(alb.id)
