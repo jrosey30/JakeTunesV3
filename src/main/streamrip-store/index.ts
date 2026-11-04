@@ -25,11 +25,11 @@ import { join } from 'path'
 import { homedir, tmpdir } from 'os'
 import { lstat, mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
 import type { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
-import { rankStreamripCandidates, rankWithArtistAliases, searchTitle, searchQueryTitle, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, isNoResultsMessage, parseStreamripDesc, type QobuzTrackMeta } from '../streamrip-match.ts'
+import { rankStreamripCandidates, rankWithArtistAliases, searchTitle, searchQueryTitle, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, isNoResultsMessage, isQobuzNoSuchItem, parseStreamripDesc, qobuzTrackMetaOf, type QobuzTrackMeta } from '../streamrip-match.ts'
 import { buildRequestedAlbum, verifyAlbumCandidate, reconcileAlbumCompletion, describeCompletion, albumAlternativeDesc, orderTracks, parseCountTag, matchLibraryOwnership, ladderBudgetMs, type RequestedAlbum, type CandidateAlbum, type AlbumVerdict, type Ownership, type LibraryTrackLite } from '../album-identity.ts'
 import { loadLibraryTracksLite } from '../import-pipeline.ts'
 import { itunesAlbumTracks, itunesFindAlbum } from '../download-search.ts'
-import { buildRequestedRecording, verifyCandidate, finalOutcome, describeOutcome, soundcloudSearchNote, type Alternative, type CandidateEvidence, type DownloadOutcome, type Provider } from '../exact-recording.ts'
+import { buildRequestedRecording, judgeHitsByMeta, verifyCandidate, finalOutcome, describeOutcome, soundcloudSearchNote, type Alternative, type CandidateEvidence, type DownloadOutcome, type Provider } from '../exact-recording.ts'
 import { requestFromSourceEdition, verifySourceEdition } from '../source-edition-verify.ts'
 import type { SourceEdition } from '../../common/source-edition.ts'
 import { shareSourceKey } from '../../common/source-playlists.ts'
@@ -522,25 +522,35 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     } catch { return null }
   }
 
-  async function qobuzAlbumMeta(ids: string[]): Promise<Map<string, QobuzTrackMeta>> {
+  /** One metadata call. 'gone' only on Qobuz's own 404; any other trouble is null,
+   *  which is no answer, and no answer is unjudged. A redirect would carry the token
+   *  with it, so that is no answer too. */
+  async function qobuzGet(path: string, creds: { appId: string; token: string }, timeoutMs: number): Promise<{ body: unknown } | 'gone' | null> {
+    try {
+      const res = await fetch(
+        'https://www.qobuz.com/api.json/0.2/' + path + '&app_id=' + creds.appId,
+        { headers: { 'X-User-Auth-Token': creds.token, 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(timeoutMs), redirect: 'error' },
+      )
+      if (res.status === 404) return isQobuzNoSuchItem(await res.json().catch(() => null)) ? 'gone' : null
+      return res.ok ? { body: await res.json() } : null
+    } catch { return null }
+  }
+
+  async function qobuzAlbumMeta(ids: string[], gone?: Set<string>): Promise<Map<string, QobuzTrackMeta>> {
     const out = new Map<string, QobuzTrackMeta>()
     const creds = await readQobuzCreds()
     if (!creds || ids.length === 0) return out
     await Promise.all(ids.map(async (id) => {
-      try {
-        const res = await fetch(
-          'https://www.qobuz.com/api.json/0.2/album/get?album_id=' + encodeURIComponent(id) + '&app_id=' + creds.appId,
-          { headers: { 'X-User-Auth-Token': creds.token, 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(6000) },
-        )
-        if (!res.ok) return
-        const d = await res.json() as { parental_warning?: boolean; tracks_count?: number; version?: string | null; title?: string }
-        out.set(id, {
-          parentalWarning: typeof d.parental_warning === 'boolean' ? d.parental_warning : undefined,
-          durationSec: undefined,
-          album: d.title,
-          version: d.version ?? null,
-        })
-      } catch { /* absent entry = unjudged */ }
+      const answer = await qobuzGet('album/get?album_id=' + encodeURIComponent(id), creds, 6000)
+      if (answer === 'gone') { gone?.add(id); return }
+      if (!answer) return
+      const d = answer.body as { parental_warning?: boolean; tracks_count?: number; version?: string | null; title?: string }
+      out.set(id, {
+        parentalWarning: typeof d.parental_warning === 'boolean' ? d.parental_warning : undefined,
+        durationSec: undefined,
+        album: d.title,
+        version: d.version ?? null,
+      })
     }))
     return out
   }
@@ -559,12 +569,9 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     const creds = await readQobuzCreds()
     if (!creds) return { tracks: [] }
     try {
-      const res = await fetch(
-        'https://www.qobuz.com/api.json/0.2/album/get?album_id=' + encodeURIComponent(albumId) + '&app_id=' + creds.appId,
-        { headers: { 'X-User-Auth-Token': creds.token, 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(8000) },
-      )
-      if (!res.ok) return { tracks: [] }
-      const d = await res.json() as { title?: string; version?: string | null; artist?: { name?: string }; tracks_count?: number; media_count?: number; upc?: string; parental_warning?: boolean; release_date_original?: string; release_date_stream?: string; tracks?: { items?: Array<{ id?: number | string; title?: string; version?: string | null; duration?: number; streamable?: boolean; track_number?: number; media_number?: number; parental_warning?: boolean }> } }
+      const answer = await qobuzGet('album/get?album_id=' + encodeURIComponent(albumId), creds, 8000)
+      if (!answer || answer === 'gone') return { tracks: [] }
+      const d = answer.body as { title?: string; version?: string | null; artist?: { name?: string }; tracks_count?: number; media_count?: number; upc?: string; parental_warning?: boolean; release_date_original?: string; release_date_stream?: string; tracks?: { items?: Array<{ id?: number | string; title?: string; version?: string | null; duration?: number; streamable?: boolean; track_number?: number; media_number?: number; parental_warning?: boolean }> } }
       const releaseDate = typeof d.release_date_stream === 'string' ? d.release_date_stream : undefined
       const original = typeof d.release_date_original === 'string' ? d.release_date_original : releaseDate
       return {
@@ -586,25 +593,14 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     } catch { return { tracks: [] } }
   }
 
-  async function qobuzTrackMeta(ids: string[]): Promise<Map<string, QobuzTrackMeta>> {
+  async function qobuzTrackMeta(ids: string[], gone?: Set<string>): Promise<Map<string, QobuzTrackMeta>> {
     const out = new Map<string, QobuzTrackMeta>()
     const creds = await readQobuzCreds()
     if (!creds || ids.length === 0) return out
     await Promise.all(ids.map(async (id) => {
-      try {
-        const res = await fetch(
-          'https://www.qobuz.com/api.json/0.2/track/get?track_id=' + encodeURIComponent(id) + '&app_id=' + creds.appId,
-          { headers: { 'X-User-Auth-Token': creds.token, 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(6000) },
-        )
-        if (!res.ok) return
-        const d = await res.json() as { parental_warning?: boolean; duration?: number; version?: string | null; album?: { title?: string } }
-        out.set(id, {
-          parentalWarning: typeof d.parental_warning === 'boolean' ? d.parental_warning : undefined,
-          durationSec: typeof d.duration === 'number' ? d.duration : undefined,
-          album: d.album?.title,
-          version: d.version ?? null,
-        })
-      } catch { /* absent entry = unjudged */ }
+      const answer = await qobuzGet('track/get?track_id=' + encodeURIComponent(id), creds, 6000)
+      if (answer === 'gone') { gone?.add(id); return }
+      if (answer) out.set(id, qobuzTrackMetaOf(answer.body as Parameters<typeof qobuzTrackMetaOf>[0]))
     }))
     return out
   }
@@ -722,62 +718,6 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       : { ranked: [], rejectedVersions: [], aliases: [] as string[] }
       if (aliases.length) trace.push(`“${artist}” also goes by ${aliases.slice(0, 4).map((a) => `“${a}”`).join(', ')} (MusicBrainz)`)
       trace.push(`ranked ${ranked.length}${rejectedVersions.length ? `, rejected versions ${rejectedVersions.length}` : ''}${ranked[0] ? ` — top “${ranked[0].desc}”` : ''}`)
-      // ── The clean-version gate (2026-08-16). Explicitness is an identity
-      // axis resolved BEFORE any byte downloads: when the clicked row was
-      // explicit, candidates Qobuz itself flags clean are refused, and if
-      // every candidate is clean the download fails LOUDLY — a censored
-      // file must never silently satisfy a request for the record.
-      let ranked2 = ranked
-      // Qobuz's search index outlives its catalog (2026-09-04, Vampire
-      // Weekend: search returns album alk4osa4lhi6a and tracks 60132045…
-      // that album/get + track/get answer 404 "No result matching given
-      // argument"). The metadata probe below is also an availability probe:
-      // an id we asked about and got nothing back for is skipped, and the
-      // pick walks the next candidates instead of one-shotting the first.
-      const probed = new Set<string>()
-      let metaMap: Map<string, QobuzTrackMeta> = new Map()
-      if (ranked.length) {
-        const fetchMeta = mediaType === 'album' ? qobuzAlbumMeta : qobuzTrackMeta
-        const meta = await fetchMeta(ranked.slice(0, 6).map((c) => c.id))
-        for (const c of ranked.slice(0, 6)) probed.add(c.id)
-        metaMap = meta
-        // 2026-09-04 (Jake: "why do these clean versions keep appearing???"):
-        // explicit wins by DEFAULT, not only when the clicked row said so.
-        // Apple's listing was the clean edition of Watch the Throne, so
-        // explicitSource was false, the gate stayed off, and Qobuz's edited
-        // edition was eligible. Now: among the top candidates, Qobuz's own
-        // explicit flag orders them explicit-first, and when an explicit
-        // master exists the clean ones are refused outright. A record with
-        // no explicit edition anywhere (parental_warning false across the
-        // board) still downloads — that is a genuinely clean record.
-        if (!opts?.explicitSource) {
-          const top = ranked.slice(0, 6)
-          const explicitExists = top.some((c) => meta.get(c.id)?.parentalWarning === true)
-          if (explicitExists) {
-            const kept = top.filter((c) => meta.get(c.id)?.parentalWarning !== false)
-            const refused = top.length - kept.length
-            trace.push(`explicit-first: kept ${kept.length}, refused clean ${refused}`)
-            if (refused > 0) console.log('[streamrip] explicit-first refused ' + refused + ' clean candidate(s) for "' + title + '" — an explicit master exists')
-            ranked2 = [...kept, ...ranked.slice(6)]
-          }
-        }
-        if (opts?.explicitSource) {
-          const gate = applyExplicitGate(ranked.slice(0, 6), meta, true)
-          if (gate.kept.length === 0 && gate.refusedClean.length > 0) {
-            return {
-              ok: false,
-              outcome: 'exact-not-found',
-              alternatives: gate.refusedClean.map((c) => ({ provider: 'qobuz' as const, desc: c.desc, reason: 'is the clean edition; the explicit record was asked for' })),
-              error: 'Qobuz only carries the CLEAN edition of this ' + (mediaType === 'album' ? 'album' : 'track') + ' (' + gate.refusedClean.length + ' candidate' + (gate.refusedClean.length > 1 ? 's' : '') + ' refused). Not substituting censorship — try the album download, or another source.',
-            }
-          }
-          trace.push(`explicit gate: kept ${gate.kept.length}, refused clean ${gate.refusedClean.length}`)
-          if (gate.refusedClean.length > 0) {
-            console.log('[streamrip] explicit gate refused ' + gate.refusedClean.length + ' clean candidate(s) for "' + title + '"')
-          }
-          ranked2 = [...gate.kept, ...ranked.slice(6)]
-        }
-      }
     // ── The identity contract (6.0 Phase 1). ONE judge for every lane:
     // the clicked row's identity, and each staged file must prove it is
     // that recording before it can touch the library. Every rejection is
@@ -808,6 +748,71 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       trace.push(`${provider} “${desc}”: ${verdict.verdict} — ${verdict.reason}`)
       console.log(`[download] ${verdict.verdict === 'reject' ? 'rejected' : 'could not verify'} ${provider} candidate for “${title}”: “${desc}” ${verdict.reason}`)
     }
+
+      // ── The clean-version gate (2026-08-16). Explicitness is an identity
+      // axis resolved BEFORE any byte downloads: when the clicked row was
+      // explicit, candidates Qobuz itself flags clean are refused, and if
+      // every candidate is clean the download fails LOUDLY — a censored
+      // file must never silently satisfy a request for the record.
+      let ranked2 = ranked
+      // Qobuz's search index outlives its catalog (2026-09-04, Vampire
+      // Weekend: search returns album alk4osa4lhi6a and tracks 60132045…
+      // that album/get + track/get answer 404 "No result matching given
+      // argument"). The metadata probe below is also an availability probe:
+      // an id Qobuz answers that for is skipped, so the pick walks the next
+      // candidates instead of one-shotting the first. A timeout is no answer,
+      // and a hit with no answer still gets its turn.
+      const probed = new Set<string>()
+      let metaMap: Map<string, QobuzTrackMeta> = new Map()
+      const onlyCleanFailure = (refused: typeof ranked): DownloadResult & { matchDesc?: string } => ({
+        ok: false,
+        outcome: 'exact-not-found',
+        alternatives: refused.map((c) => ({ provider: 'qobuz' as const, desc: c.desc, reason: 'is the clean edition; the explicit record was asked for' })),
+        error: 'Qobuz only carries the CLEAN edition of this ' + (mediaType === 'album' ? 'album' : 'track') + ' (' + refused.length + ' candidate' + (refused.length > 1 ? 's' : '') + ' refused). Not substituting censorship — try the album download, or another source.',
+      })
+      if (ranked.length) {
+        const top = ranked.slice(0, 6)
+        const gone = new Set<string>()
+        const meta = await (mediaType === 'album' ? qobuzAlbumMeta : qobuzTrackMeta)(top.map((c) => c.id), gone)
+        for (const c of top) probed.add(c.id)
+        metaMap = meta
+        for (const c of top) if (gone.has(c.id)) trace.push(`skip “${c.desc}”: gone from Qobuz's catalog (404)`)
+        if (mediaType === 'track') {
+          // 2026-09-04 (Jake: "why do these clean versions keep appearing???"):
+          // explicit wins by DEFAULT, not only when the clicked row said so.
+          // Apple's listing was the clean edition of Watch the Throne, so
+          // explicitSource was false, the gate stayed off, and Qobuz's edited
+          // edition was eligible. Now: when an explicit master exists the clean
+          // ones are refused outright. A record with no explicit edition anywhere
+          // (parental_warning false across the board) still downloads — that is a
+          // genuinely clean record. What counts as the master: judgeHitsByMeta.
+          const v = judgeHitsByMeta(req, top, meta, gone)
+          for (const r of v.wrongRecording) noteReject('qobuz', r.hit.desc, r.verdict)
+          for (const c of v.nothingToCensor) meta.set(c.id, { ...meta.get(c.id), parentalWarning: undefined })
+          if (v.explicitMaster) {
+            trace.push(`${opts?.explicitSource ? 'explicit gate' : 'explicit-first'}: kept ${v.kept.length}, refused clean ${v.refusedClean.length}`)
+            if (v.refusedClean.length > 0) console.log('[streamrip] refused ' + v.refusedClean.length + ' clean candidate(s) for "' + title + '" — an explicit master exists')
+            // From here on this is a request for the explicit record: a hit past the
+            // sixth and the album door hear Qobuz's flag the same way.
+            req.explicit = 'explicit'
+          }
+          if (v.kept.length === 0 && v.refusedClean.length > 0) return onlyCleanFailure(v.refusedClean)
+          ranked2 = [...v.kept, ...ranked.slice(6)]
+        } else {
+          ranked2 = ranked.filter((c) => !gone.has(c.id))
+          // An album request with no explicit row is judged further down, once the
+          // album contract exists to say which edition is this one.
+          if (opts?.explicitSource) {
+            const gate = applyExplicitGate(top.filter((c) => !gone.has(c.id)), meta, true)
+            if (gate.kept.length === 0 && gate.refusedClean.length > 0) return onlyCleanFailure(gate.refusedClean)
+            trace.push(`explicit gate: kept ${gate.kept.length}, refused clean ${gate.refusedClean.length}`)
+            if (gate.refusedClean.length > 0) {
+              console.log('[streamrip] explicit gate refused ' + gate.refusedClean.length + ' clean candidate(s) for "' + title + '"')
+            }
+            ranked2 = [...gate.kept, ...ranked.slice(6)]
+          }
+        }
+      }
 
     // ── The ALBUM identity contract (6.0 Phase 1, final slice). The row Jake
     // clicked names an EDITION; its ordered tracklist comes from the same
@@ -938,35 +943,50 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       return finishAlbum(st.staged, stagedAlbum, desc, post.evidence)
     }
 
+    /** What Qobuz's own listing says about a candidate album. */
+    const albumListing = async (cand: (typeof ranked)[number]): Promise<CandidateAlbum> => {
+      const meta = metaMap.get(cand.id)
+      const tl = await qobuzAlbumTrackList(cand.id)
+      const parsed = parseStreamripDesc(cand.desc)
+      return {
+        provider: 'qobuz', desc: cand.desc, id: cand.id,
+        title: tl.title ?? parsed.title, artist: tl.artist ?? parsed.artist, version: tl.version ?? meta?.version ?? null,
+        trackCount: tl.tracksCount ?? (tl.tracks.length || undefined), discCount: tl.mediaCount,
+        tracks: tl.tracks.length ? tl.tracks.map((t) => ({ title: t.title, trackNumber: t.trackNumber, discNumber: t.discNumber, durationSec: t.durationSec })) : undefined,
+        releaseYear: tl.releaseYear, upc: tl.upc, parentalWarning: tl.parentalWarning ?? meta?.parentalWarning,
+      }
+    }
+    // Explicit-first for a record (2026-09-04), and the same rule as for a song: only
+    // this edition can prove a clean one is censored. A Deluxe flagged explicit threw
+    // out the edition Jake picked and then failed the contract itself: Ants From Up
+    // There (19 tracks, he picked 10), Fancy Footwork (24, he picked 11), If You Insist
+    // (main.log, 2026-10). A contract that cannot tell keeps the flag's word.
+    if (reqAlbum && !opts?.explicitSource) {
+      for (const c of ranked2.filter((x) => metaMap.get(x.id)?.parentalWarning === true)) {
+        if (verifyAlbumCandidate(reqAlbum, await albumListing(c)).verdict === 'reject') continue
+        const kept = ranked2.filter((x) => metaMap.get(x.id)?.parentalWarning !== false)
+        trace.push(`explicit-first: kept ${kept.length}, refused clean ${ranked2.length - kept.length}`)
+        if (kept.length < ranked2.length) console.log('[streamrip] explicit-first refused ' + (ranked2.length - kept.length) + ' clean candidate(s) for "' + title + '" — an explicit edition of it exists')
+        ranked2 = kept
+        break
+      }
+    }
+
     if (ranked2.length) {
       // Qobuz: try the top candidates in rank order. Every staged file is
       // judged — with a known runtime AND without one (the old "no duration"
       // path went stage → import with no witness at all). A clean file from
       // the WRONG album (a compilation carrying the same master) is held as
       // a fallback while a canonical-album copy is looked for.
-      const probeAnswered = metaMap.size > 0
       let fallback: { staged: StagedRip; desc: string } | null = null
       let lastRipErr = ''
       for (const cand of ranked2.slice(0, 3)) {
         if (cancelRequested) return { ok: false, error: 'canceled', outcome: 'canceled' }
         if (clock.expired()) return { ...gaveUp(), outcome: 'provider-failed' }
-        if (probeAnswered && probed.has(cand.id) && !metaMap.has(cand.id)) {
-          trace.push(`skip “${cand.desc}”: gone from Qobuz's catalog (404)`)
-          continue
-        }
         if (reqAlbum) {
           // Pre-stage: the provider's own listing must not contradict the
           // edition (cheap refusal); the staged files then have to prove it.
-          const meta = metaMap.get(cand.id)
-          const tl = await qobuzAlbumTrackList(cand.id)
-          const parsed = parseStreamripDesc(cand.desc)
-          const listing: CandidateAlbum = {
-            provider: 'qobuz', desc: cand.desc, id: cand.id,
-            title: tl.title ?? parsed.title, artist: tl.artist ?? parsed.artist, version: tl.version ?? meta?.version ?? null,
-            trackCount: tl.tracksCount ?? (tl.tracks.length || undefined), discCount: tl.mediaCount,
-            tracks: tl.tracks.length ? tl.tracks.map((t) => ({ title: t.title, trackNumber: t.trackNumber, discNumber: t.discNumber, durationSec: t.durationSec })) : undefined,
-            releaseYear: tl.releaseYear, upc: tl.upc, parentalWarning: tl.parentalWarning ?? meta?.parentalWarning,
-          }
+          const listing = await albumListing(cand)
           const pre = verifyAlbumCandidate(reqAlbum, listing)
           trace.push(`album listing “${cand.desc}”: ${pre.verdict}${pre.verdict === 'exact' ? ` (${pre.evidence.join(', ')})` : ` — ${pre.reason}`}`)
           if (pre.verdict === 'reject') { noteAlbumReject('qobuz', listing, pre); continue }

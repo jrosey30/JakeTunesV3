@@ -32,14 +32,14 @@
  *
  * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts unwantedVersion is
  * the phone's copy of this judge: the same witnesses since 2026-11-03, the phone
- * reading its runtimes off iTunes (nobody clicks a row there). It has no explicit
- * axis yet, because it never asks Qobuz's metadata endpoint.
+ * reading its runtimes off iTunes (nobody clicks a row there). Its explicit axis
+ * sits beside it, in judgeHitsByMeta (Brief 223), the twin of the one below.
  */
 import type { Provider, RequestedRecording, Alternative, DownloadOutcome } from '../common/acquisition-identity.ts'
 export type { Provider, RequestedRecording, Alternative, DownloadOutcome } from '../common/acquisition-identity.ts'
 
 import { artistOrAlias, recoNorm, recoTitleMatches } from './reco-match.ts'
-import { albumVersionOf, carriesCensorStamp, editionSubstituted, isCoverAct, liveBrandMarker, searchTitle, titleReads, unwantedVersionOf, requestedVersionMarkers, withoutCensorStamp } from './streamrip-match.ts'
+import { albumVersionOf, carriesCensorStamp, editionSubstituted, isCoverAct, liveBrandMarker, parseStreamripDesc, saysExplicit, searchTitle, titleReads, titleWithVersion, unwantedVersionOf, requestedVersionMarkers, withoutCensorStamp, type QobuzTrackMeta } from './streamrip-match.ts'
 import { nameKey } from '../common/fold-text.ts'
 
 /** Does free text (a SoundCloud title/desc) name the artist? Folded in any
@@ -240,8 +240,8 @@ export function verifyCandidate(req: RequestedRecording, ev: CandidateEvidence):
   // 6. Explicitness — symmetric. The explicit record was asked for and the
   //    provider says this one is clean → out; a CLEAN record was asked for
   //    and the provider says this one is explicit → out. Unknown on either
-  //    side is never a mismatch.
-  if (req.explicit === 'explicit' && ev.parentalWarning === false) {
+  //    side is never a mismatch, and neither is a copy that says it is the explicit cut.
+  if (req.explicit === 'explicit' && ev.parentalWarning === false && !saysExplicit(ev.title, ev.version)) {
     return { verdict: 'reject', kind: 'explicit', reason: 'is the clean edition; the explicit record was asked for' }
   }
   if (req.explicit === 'clean' && ev.parentalWarning === true) {
@@ -256,6 +256,81 @@ export function verifyCandidate(req: RequestedRecording, ev: CandidateEvidence):
 
   const albumMatches = !req.album || !ev.album || recoTitleMatches(req.album, ev.album)
   return { verdict: 'exact', evidence, albumMatches }
+}
+
+export type RejectVerdict = Extract<Verdict, { verdict: 'reject' }>
+
+export interface MetaVerdicts<T> {
+  /** Still worth a fetch, in rank order. */
+  kept: T[]
+  /** Qobuz says it has no such item (a 404 of its own). */
+  gone: T[]
+  /** Another recording than the request, by the judge a staged file faces. */
+  wrongRecording: Array<{ hit: T; verdict: RejectVerdict }>
+  /** Qobuz flags it clean, and an explicit master of this recording exists. */
+  refusedClean: T[]
+  /** In `kept`: flagged clean on an album flagged explicit, with no explicit copy of the
+   *  song on Qobuz. Its flag says nothing about censorship, so nothing should judge by it. */
+  nothingToCensor: T[]
+  explicitMaster: boolean
+}
+
+/**
+ * Judges the top Qobuz hits on what the metadata says, before a byte moves. A hit with
+ * no answer passes through unjudged: an API hiccup must not brick downloads.
+ *
+ * Only a hit that IS this recording can prove an explicit master exists. Asking any top
+ * hit threw out the right file: The Rolling Stones' "Can't You Hear Me Knocking"
+ * (main.log, 2026-11-01) logged "explicit-first: kept 1, refused clean 5", and all three
+ * stages it then tried were live cuts. Warmduscher's "I Got Friends" (2026-10-22) kept a
+ * remix and a live version and refused the rest. So a hit goes through verifyCandidate
+ * first, without its flag, and only what passes may vouch for anything.
+ *
+ * A clean flag on a track from an album flagged explicit means two different things.
+ * With an explicit copy of the song on Qobuz, it is a clean edit, like the Single Version
+ * on A Bay Bay's album, and it is refused. With only the row saying the song is explicit,
+ * it may be a song with nothing to censor: N.W.A's "Express Yourself" never swears, and
+ * Apple's rows call it cleaned. That goes on unjudged.
+ *
+ * A clean flag on a copy whose own name says Explicit is not believed (saysExplicit), and
+ * the name alone proves no master: only one album in the phone's live check does this.
+ *
+ * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts judgeHitsByMeta.
+ */
+export function judgeHitsByMeta<T extends { id: string; desc: string }>(
+  req: RequestedRecording,
+  hits: T[],
+  meta: Map<string, QobuzTrackMeta>,
+  goneIds: Set<string>,
+): MetaVerdicts<T> {
+  const gone: T[] = []
+  const wrongRecording: MetaVerdicts<T>['wrongRecording'] = []
+  const passing: T[] = []
+  for (const hit of hits) {
+    if (goneIds.has(hit.id)) { gone.push(hit); continue }
+    const m = meta.get(hit.id)
+    if (!m) { passing.push(hit); continue }
+    const { title, artist } = parseStreamripDesc(hit.desc)
+    const verdict = verifyCandidate(req, {
+      provider: 'qobuz',
+      desc: hit.desc,
+      title: titleWithVersion(m.title || title, m.version),
+      artist,
+      album: m.album,
+      durationSec: m.durationSec,
+    })
+    if (verdict.verdict === 'reject') wrongRecording.push({ hit, verdict })
+    else passing.push(hit)
+  }
+  const onQobuz = passing.some((h) => meta.get(h.id)?.parentalWarning === true)
+  const explicitMaster = req.explicit === 'explicit' || (req.explicit !== 'clean' && onQobuz)
+  const flaggedClean = explicitMaster ? passing.filter((h) => {
+    const m = meta.get(h.id)
+    return m?.parentalWarning === false && !saysExplicit(m.title, m.version)
+  }) : []
+  const nothingToCensor = onQobuz ? [] : flaggedClean.filter((h) => meta.get(h.id)?.albumParentalWarning === true)
+  const refusedClean = flaggedClean.filter((h) => !nothingToCensor.includes(h))
+  return { kept: passing.filter((h) => !refusedClean.includes(h)), gone, wrongRecording, refusedClean, nothingToCensor, explicitMaster }
 }
 
 /** Decide the honest final outcome once every lane has had its turn.
