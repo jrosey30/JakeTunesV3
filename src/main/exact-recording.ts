@@ -39,7 +39,7 @@ import type { Provider, RequestedRecording, Alternative, DownloadOutcome } from 
 export type { Provider, RequestedRecording, Alternative, DownloadOutcome } from '../common/acquisition-identity.ts'
 
 import { artistOrAlias, recoNorm, recoTitleMatches } from './reco-match.ts'
-import { albumVersionOf, carriesCensorStamp, editionSubstituted, isCoverAct, liveBrandMarker, parseStreamripDesc, searchTitle, titleReads, titleWithVersion, unwantedVersionOf, requestedVersionMarkers, withoutCensorStamp, type QobuzTrackMeta } from './streamrip-match.ts'
+import { albumVersionOf, carriesCensorStamp, editionSubstituted, isCoverAct, liveBrandMarker, parseStreamripDesc, saysExplicit, searchTitle, titleReads, titleWithVersion, unwantedVersionOf, requestedVersionMarkers, withoutCensorStamp, type QobuzTrackMeta } from './streamrip-match.ts'
 import { nameKey } from '../common/fold-text.ts'
 
 /** Does free text (a SoundCloud title/desc) name the artist? Folded in any
@@ -240,8 +240,8 @@ export function verifyCandidate(req: RequestedRecording, ev: CandidateEvidence):
   // 6. Explicitness — symmetric. The explicit record was asked for and the
   //    provider says this one is clean → out; a CLEAN record was asked for
   //    and the provider says this one is explicit → out. Unknown on either
-  //    side is never a mismatch.
-  if (req.explicit === 'explicit' && ev.parentalWarning === false) {
+  //    side is never a mismatch, and neither is a copy that says it is the explicit cut.
+  if (req.explicit === 'explicit' && ev.parentalWarning === false && !saysExplicit(ev.title, ev.version)) {
     return { verdict: 'reject', kind: 'explicit', reason: 'is the clean edition; the explicit record was asked for' }
   }
   if (req.explicit === 'clean' && ev.parentalWarning === true) {
@@ -292,6 +292,9 @@ export interface MetaVerdicts<T> {
  * it may be a song with nothing to censor: N.W.A's "Express Yourself" never swears, and
  * Apple's rows call it cleaned. That goes on unjudged.
  *
+ * A clean flag on a copy whose own name says Explicit is not believed (saysExplicit), and
+ * the name alone proves no master: only one album in the phone's live check does this.
+ *
  * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts judgeHitsByMeta.
  */
 export function judgeHitsByMeta<T extends { id: string; desc: string }>(
@@ -321,7 +324,10 @@ export function judgeHitsByMeta<T extends { id: string; desc: string }>(
   }
   const onQobuz = passing.some((h) => meta.get(h.id)?.parentalWarning === true)
   const explicitMaster = req.explicit === 'explicit' || (req.explicit !== 'clean' && onQobuz)
-  const flaggedClean = explicitMaster ? passing.filter((h) => meta.get(h.id)?.parentalWarning === false) : []
+  const flaggedClean = explicitMaster ? passing.filter((h) => {
+    const m = meta.get(h.id)
+    return m?.parentalWarning === false && !saysExplicit(m.title, m.version)
+  }) : []
   const nothingToCensor = onQobuz ? [] : flaggedClean.filter((h) => meta.get(h.id)?.albumParentalWarning === true)
   const refusedClean = flaggedClean.filter((h) => !nothingToCensor.includes(h))
   return { kept: passing.filter((h) => !refusedClean.includes(h)), gone, wrongRecording, refusedClean, nothingToCensor, explicitMaster }

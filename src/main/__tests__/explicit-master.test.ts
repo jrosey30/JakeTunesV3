@@ -21,8 +21,8 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildRequestedRecording, judgeHitsByMeta } from '../exact-recording.ts'
-import { isQobuzNoSuchItem, qobuzTrackMetaOf, titleWithVersion, type QobuzTrackMeta } from '../streamrip-match.ts'
+import { buildRequestedRecording, judgeHitsByMeta, verifyCandidate } from '../exact-recording.ts'
+import { isQobuzNoSuchItem, qobuzTrackMetaOf, saysExplicit, titleWithVersion, type QobuzTrackMeta } from '../streamrip-match.ts'
 
 // The store reaches state-dir.ts, which asks electron for userData. The same stub the
 // headless scripts use; state-dir reads it once, at import.
@@ -172,6 +172,99 @@ describe('judgeHitsByMeta: what Qobuz says, before a byte moves', () => {
       const v = judge(req({ explicitSource: true }), two, { x: { parentalWarning: false }, y: { parentalWarning: false, albumParentalWarning: false } })
       assert.deepEqual(ids(v.refusedClean), ['x', 'y'])
     })
+  })
+})
+
+// The phone's live check against real Qobuz (Brief 223 §6, 2026-11-04). These answers are
+// recorded ones: Paris, Tokyo's own album carries it flagged clean under the version
+// "Explicit Album Version", and the only copies flagged explicit are on compilations.
+describe('a copy that says it is the explicit cut is not the clean edition', () => {
+  const paris = () => buildRequestedRecording({ artist: 'Lupe Fiasco', title: 'Paris, Tokyo', album: "Lupe Fiasco's The Cool" })
+  const judge = (r: ReturnType<typeof paris>, hits: ReturnType<typeof hit>[], meta: Record<string, QobuzTrackMeta>) =>
+    judgeHitsByMeta(r, hits, new Map(Object.entries(meta)), new Set())
+  const ids = (hs: Array<{ id: string }>): string[] => hs.map((h) => h.id)
+  const parisHit = (id: string) => hit(id, 'Paris, Tokyo by Lupe Fiasco')
+
+  test('its own name, not any word that holds the letters', () => {
+    for (const version of ['Explicit Album Version', 'feat. Nikki Jean   Explicit Album Version', 'album version (EXPLICIT)']) assert.equal(saysExplicit(undefined, version), true, version)
+    for (const version of ['Non-Explicit Version', 'Non Explicit', 'Not Explicit', 'not-explicit', 'Inexplicit', 'Explicitly Yours', 'Album Version (Edited)', '', null]) assert.equal(saysExplicit(undefined, version), false, String(version))
+    assert.equal(saysExplicit('Song (Non-Explicit Version)'), false)
+    assert.equal(saysExplicit(), false)
+  })
+
+  test('Paris, Tokyo: the album\'s own copy stays, its clean twin does not', () => {
+    const v = judge(paris(), ['own', 'clean', 'comp', 'hits'].map(parisHit), {
+      own: { parentalWarning: false, albumParentalWarning: true, version: 'Explicit Album Version', album: "Lupe Fiasco's The Cool" },
+      clean: { parentalWarning: false, albumParentalWarning: false, album: "Lupe Fiasco's The Cool" },
+      comp: { parentalWarning: true, albumParentalWarning: true, album: 'late night hip-hop' },
+      hits: { parentalWarning: false, albumParentalWarning: true, album: '00s Hip Hop Jams' },
+    })
+    assert.deepEqual(ids(v.kept), ['own', 'comp'])
+    assert.deepEqual(ids(v.refusedClean), ['clean', 'hits'])
+    assert.equal(v.explicitMaster, true)
+  })
+
+  test('a bracket in its title can say so as well as its version', () => {
+    const v = judge(paris(), ['own', 'square', 'clean', 'comp'].map(parisHit), {
+      own: { parentalWarning: false, title: 'Paris, Tokyo (Explicit)' },
+      square: { parentalWarning: false, title: 'Paris, Tokyo [Explicit Version]' },
+      clean: { parentalWarning: false, title: 'Paris, Tokyo (Non-Explicit Version)' },
+      comp: { parentalWarning: true },
+    })
+    assert.deepEqual(ids(v.kept), ['own', 'square', 'comp'])
+    assert.deepEqual(ids(v.refusedClean), ['clean'])
+  })
+
+  test('a song named with the word has said nothing: its clean edit is refused as before', () => {
+    const named = buildRequestedRecording({ artist: 'Band', title: 'Explicit Content' })
+    const songHit = (id: string) => hit(id, 'Explicit Content by Band')
+    const v = judge(named, ['edit', 'labelled', 'master'].map(songHit), {
+      edit: { parentalWarning: false, title: 'Explicit Content' },
+      labelled: { parentalWarning: false, title: 'Explicit Content (Explicit)' },
+      master: { parentalWarning: true, title: 'Explicit Content' },
+    })
+    assert.deepEqual(ids(v.refusedClean), ['edit'])
+    assert.deepEqual(ids(v.kept), ['labelled', 'master'])
+    assert.equal(saysExplicit('Explicit Content (Clean Version)'), false)
+  })
+
+  test('the name alone proves no master: only one album in the check does this', () => {
+    const v = judge(paris(), ['own', 'clean'].map(parisHit), {
+      own: { parentalWarning: false, version: 'Explicit Album Version' },
+      clean: { parentalWarning: false },
+    })
+    assert.equal(v.explicitMaster, false)
+    assert.deepEqual(ids(v.kept), ['own', 'clean'])
+  })
+
+  test('the file faces the same rule, by either name', () => {
+    const asked = paris()
+    asked.explicit = 'explicit'
+    const verdict = (ev: Partial<Parameters<typeof verifyCandidate>[1]>) => verifyCandidate(asked, { provider: 'qobuz', artist: 'Lupe Fiasco', album: "Lupe Fiasco's The Cool", parentalWarning: false, ...ev }).verdict
+    assert.equal(verdict({ title: 'Paris, Tokyo (Explicit Album Version)' }), 'exact', 'by the tag')
+    assert.equal(verdict({ title: 'Paris, Tokyo', version: 'Explicit Album Version' }), 'exact', 'by the version field')
+    assert.equal(verdict({ title: 'Paris, Tokyo' }), 'reject', 'no such word')
+    assert.equal(verdict({ title: 'Paris, Tokyo', version: 'Non-Explicit Version' }), 'reject')
+    const named = buildRequestedRecording({ artist: 'Band', title: 'Explicit Content' })
+    named.explicit = 'explicit'
+    assert.equal(verifyCandidate(named, { provider: 'qobuz', artist: 'Band', title: 'Explicit Content', parentalWarning: false }).verdict, 'reject', 'the song\'s own name')
+  })
+})
+
+describe('labels from Qobuz\'s own version fields: the check found these refused on the phone', () => {
+  const verdict = (title: string, artist: string, label: string) => {
+    const r = buildRequestedRecording({ artist, title })
+    return verifyCandidate(r, { provider: 'qobuz', title: `${title} (${label})`, artist, version: label })
+  }
+  test('each is the album cut here', () => {
+    for (const [title, artist, label] of [
+      ['Ups & Downs', 'Snoop Dogg', 'Album Version (Explicit) w/o interlude'],
+      ['A Milli', 'Lil Wayne', '2008 Re-mastered Version'],
+      ['Pinball Wizard', 'The Who', 'Original Album Version'],
+    ]) assert.equal(verdict(title, artist, label).verdict, 'exact', label)
+  })
+  test('and a clean edit named the same way is still a clean edit', () => {
+    assert.deepEqual(verdict('Ups & Downs', 'Snoop Dogg', 'Album Version (Edited) w/o interlude').verdict, 'reject')
   })
 })
 
@@ -474,6 +567,37 @@ describe('the walk, a song: what the gate is still for', () => {
     assert.deepEqual(importedIds(), ['album'])
   })
 
+  test("Paris, Tokyo: the album's own \"Explicit Album Version\" comes in, not a compilation's copy (the live check, in its real order)", async () => {
+    // Flagged clean, so it was refused beside the compilations' flagged copies, and one of those went in.
+    const parisHit = 'Paris, Tokyo by Lupe Fiasco'
+    hits('track', ['own', 'clean', 'live', 'comp1', 'comp2', 'comp3', 'hits'].map((id): [string, string] => [id, parisHit]))
+    answers.own = { parental_warning: false, duration: 270, version: 'Explicit Album Version', album: { title: "Lupe Fiasco's The Cool", parental_warning: true } }
+    answers.clean = { parental_warning: false, duration: 270, album: { title: "Lupe Fiasco's The Cool", parental_warning: false } }
+    answers.live = { parental_warning: false, duration: 314, version: 'Live from Miami Beach', album: { title: 'Lupe Fiasco x Nu Deco Ensemble', parental_warning: true } }
+    answers.comp1 = { parental_warning: true, duration: 270, album: { title: 'late night hip-hop', parental_warning: true } }
+    answers.comp2 = { parental_warning: true, duration: 270, album: { title: 'Cooking Music', parental_warning: true } }
+    answers.comp3 = { parental_warning: true, duration: 270, album: { title: 'Coffee Shop Rap', parental_warning: true } }
+    answers.hits = { parental_warning: false, duration: 270, album: { title: '00s Hip Hop Jams', parental_warning: true } }
+    tags('own', { title: 'Paris, Tokyo (Explicit Album Version)', artist: 'Lupe Fiasco', album: "Lupe Fiasco's The Cool", duration: 270.7 })
+    const { walk, importedIds } = store()
+    const r = await walk({ artist: 'Lupe Fiasco', title: 'Paris, Tokyo', album: "Lupe Fiasco's The Cool" })
+    assert.equal(r.outcome, 'imported', r.error)
+    assert.deepEqual(fetched(), ['own'])
+    assert.deepEqual(importedIds(), ['own'])
+  })
+
+  test('an explicit row whose only explicit copy is flagged clean but says so downloads it', async () => {
+    hits('track', [['clean', maskHit], ['own', maskHit]])
+    answers.clean = { parental_warning: false, album: { title: 'FUTURE', parental_warning: false } }
+    answers.own = { parental_warning: false, version: 'Explicit Album Version', album: { title: 'FUTURE', parental_warning: false } }
+    tags('own', { title: 'Mask Off (Explicit Album Version)', artist: 'Future', album: 'FUTURE' })
+    const { walk, importedIds } = store()
+    const r = await walk({ ...MASK, explicitSource: true })
+    assert.equal(r.outcome, 'imported', r.error)
+    assert.deepEqual(fetched(), ['own'])
+    assert.deepEqual(importedIds(), ['own'])
+  })
+
   describe('once an explicit master is proven, the rest of the walk knows', () => {
     const provenButBroken = (): void => {
       // The master arrives as something else, so the walk goes looking further.
@@ -505,6 +629,17 @@ describe('the walk, a song: what the gate is still for', () => {
       await walk({ ...MASK, album: 'FUTURE' })
       assert.deepEqual(fetched(), ['master'], 'the door found nothing it could take')
       assert.deepEqual(importedIds(), [])
+    })
+
+    test('a track through the album door that says it is the explicit cut is taken', async () => {
+      hits('track', [['master', maskHit]])
+      provenButBroken()
+      hits('album', [['alb', 'FUTURE by Future']])
+      answers.alb = { title: 'FUTURE', artist: { name: 'Future' }, tracks_count: 1, tracks: { items: [{ id: 'door', title: 'Mask Off', version: 'Explicit Album Version', parental_warning: false, duration: 204 }] } }
+      tags('door', { title: 'Mask Off (Explicit Album Version)', artist: 'Future', album: 'FUTURE' })
+      const { walk, importedIds } = store()
+      await walk({ ...MASK, album: 'FUTURE' })
+      assert.deepEqual(importedIds(), ['door'])
     })
 
     test('with no master the same door is open', async () => {

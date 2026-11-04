@@ -737,6 +737,17 @@ export function titleWithVersion(title: string, version?: string | null): string
   return v && !title.includes(v) ? `${title} (${v})` : title
 }
 
+/** Does this copy say it is the explicit cut? Its version field can, or a bracket in its
+ *  title. "Non-Explicit" does not, and a song named "Explicit Content" has said nothing.
+ *  Qobuz's flag can be wrong about a copy that says so: "Paris, Tokyo (Explicit Album
+ *  Version)" on Lupe Fiasco's The Cool is flagged clean, and it sits beside the album's
+ *  clean edit, flagged the same (the phone's live check, 2026-11-04, Brief 223 §6).
+ *  ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts saysExplicit. */
+export function saysExplicit(title?: string | null, version?: string | null): boolean {
+  const label = `${version ?? ''} ${/[([].*[)\]]/.exec(title ?? '')?.[0] ?? ''}`
+  return /(?<!\b(?:non|not)[- ])\bexplicit\b/i.test(label)
+}
+
 export interface ExplicitGateResult<T> {
   kept: T[]
   /** Candidates refused because Qobuz flags them clean. */
