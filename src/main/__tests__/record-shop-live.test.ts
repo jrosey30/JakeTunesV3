@@ -62,6 +62,7 @@ describe('the live Record Shop session', () => {
     assert.equal(r.collectionId, 9990003); assert.equal(r.trackCount, 12); assert.equal(r.releaseYear, 1980)
     assert.deepEqual(r.origin, { recommendationIds: ['r-album'], sourceKind: 'person', sourceLabel: 'Sam' })
     const song = shopSnapshot({ itemId: 'legacy-recommendation:r-song', kind: 'recording' as const, display: { title: 'x' }, selection: recordingSelectionFromJot(songJot)! })
+    assert.equal(queueResultForSelection(item, { recommendationIds: ['r-album'], addedVia: 'tiktok' }, ids)!.origin?.addedVia, 'tiktok', 'the shop\'s Get keeps the row\'s share source')
     const t = queueResultForSelection(song, { recommendationIds: ['r-song'] }, ids)!
     assert.equal(t.mediaType, 'track'); assert.equal(t.id, 'q|track|Talking Heads|Once in a Lifetime'); assert.equal(t.album, 'Remain in Light')
   })

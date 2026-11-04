@@ -968,9 +968,9 @@ const electronAPI = {
     ipcRenderer.invoke('streamrip:download', url),
   streamripSearch: (opts: { query: string; source?: string; mediaType?: string; numResults?: number }): Promise<{ ok: boolean; results?: Array<{ source: string; mediaType: string; id: string; desc: string }>; error?: string }> =>
     ipcRenderer.invoke('streamrip:search', opts),
-  streamripDownloadId: (source: string, mediaType: string, id: string): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }> =>
-    ipcRenderer.invoke('streamrip:download-id', source, mediaType, id),
-  streamripDownloadByQuery: (opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number; sourceEdition?: unknown }): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }> }> =>
+  streamripDownloadId: (source: string, mediaType: string, id: string, addedVia?: string): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }> =>
+    ipcRenderer.invoke('streamrip:download-id', source, mediaType, id, addedVia),
+  streamripDownloadByQuery: (opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number; sourceEdition?: unknown; addedVia?: string }): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }> }> =>
     ipcRenderer.invoke('streamrip:download-by-query', opts),
   streamripCancelActive: (): Promise<{ ok: boolean; killed: number }> =>
     ipcRenderer.invoke('streamrip:cancel-active'),

@@ -32,6 +32,7 @@ import { itunesAlbumTracks, itunesFindAlbum } from '../download-search'
 import { buildRequestedRecording, verifyCandidate, finalOutcome, describeOutcome, type Alternative, type CandidateEvidence, type DownloadOutcome, type Provider } from '../exact-recording.ts'
 import { requestFromSourceEdition, verifySourceEdition } from '../source-edition-verify.ts'
 import type { SourceEdition } from '../../common/source-edition.ts'
+import { shareSourceKey } from '../../common/source-playlists.ts'
 import { recoTitleMatches, recoArtistMatches } from '../reco-match.ts'
 import { isAllowedStreamripUrl } from '../url-safety'
 import { artistAliases } from '../artist-spellings-store.ts'
@@ -40,8 +41,9 @@ import { quietWarn } from '../flight-recorder'
 export interface StreamripDeps {
   ipc: IpcRegistrar
   getMainWindow: () => BrowserWindow | null
-  /** Same importer Bandcamp uses; we pass source='streamrip'. */
-  importDownloaded: (absPaths: string[], source?: string) => Promise<ImportedTrackRecord[] | BatchSummary>
+  /** Same importer Bandcamp uses; we pass source='streamrip', plus the Listen
+   *  List row's share source when this job answers one (the row's addedVia). */
+  importDownloaded: (absPaths: string[], source?: string, addedVia?: string) => Promise<ImportedTrackRecord[] | BatchSummary>
   /** The app's MusicBrainz identity and shared throttle (index.ts mbThrottle). */
   mbThrottle: () => Promise<void>
   mbUserAgent: string
@@ -404,11 +406,11 @@ export function registerStreamripStore(deps: StreamripDeps): void {
   }
 
   // Download stage 2: import staged audio into the library + tell the renderer.
-  async function importStaged(staged: StagedRip, only?: string[]): Promise<DownloadResult> {
+  async function importStaged(staged: StagedRip, opts: { only?: string[]; addedVia?: string } = {}): Promise<DownloadResult> {
     try {
       // `only` = the album contract's pick of files whose tracks are NOT
       // already owned; everything else in staging is discarded with it.
-      const summary = await deps.importDownloaded(only ?? staged.files, 'streamrip')
+      const summary = await deps.importDownloaded(opts.only ?? staged.files, 'streamrip', opts.addedVia)
       const importedTracks: Array<Record<string, unknown>> = Array.isArray(summary)
         ? (summary as unknown as Array<Record<string, unknown>>)
         : ((summary as unknown as { tracks?: Array<Record<string, unknown>> }).tracks ?? [])
@@ -435,10 +437,10 @@ export function registerStreamripStore(deps: StreamripDeps): void {
   // pasted-link and picked-id paths, where the user chose the exact catalog
   // item themselves. Quality 4 = max the service allows; the app's own import
   // step converts to the user's library format afterward.
-  async function runDownload(ripSubcmd: string[]): Promise<DownloadResult> {
+  async function runDownload(ripSubcmd: string[], addedVia?: string): Promise<DownloadResult> {
     const st = await stageRip(ripSubcmd)
     if (!st.ok) return { ok: false, error: st.error }
-    return importStaged(st.staged)
+    return importStaged(st.staged, { addedVia })
   }
 
   // Abort every in-flight rip process (download or search). The queue marks
@@ -639,9 +641,10 @@ export function registerStreamripStore(deps: StreamripDeps): void {
    *  still tight enough to refuse a 9-minute megamix or a 90-second interlude. */
   const CLEANED_TOLERANCE_SEC = 30
   const fmtDur = (s: number | null): string => s == null ? 'unknown length' : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`
-  ipc.handle('streamrip:download-by-query', async (_e, opts: { sourceEdition?: SourceEdition; artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number }): Promise<DownloadResult & { matchDesc?: string }> => {
+  ipc.handle('streamrip:download-by-query', async (_e, opts: { sourceEdition?: SourceEdition; artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number; addedVia?: string }): Promise<DownloadResult & { matchDesc?: string }> => {
     cancelRequested = false            // new attempt = clean slate
     lastStageFailure = null            // never let an OLD rip's error explain THIS request
+    const addedVia = shareSourceKey(opts?.addedVia)   // every import below lands with it
     const artist = (opts?.artist || '').trim()
     // album set WITHOUT a title -> resolve a whole ALBUM on Qobuz; else a single track.
     const wantAlbum = Boolean((opts?.album || '').trim()) && !(opts?.title || opts?.song)
@@ -881,7 +884,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       const ownedIdx = new Set((ownership?.owned ?? []).map((o) => o.index))
       const only = ownership && cand.tracks?.length ? cand.tracks.map((t, i) => (ownedIdx.has(i) ? null : t.file)).filter((f): f is string => Boolean(f)) : undefined
       if (only) trace.push(`import ${only.length} of ${staged.files.length} staged files (${ownedIdx.size} already owned)`)
-      const dl = await importStaged(staged, only)
+      const dl = await importStaged(staged, { only, addedVia })
       if (!dl.ok || !reqAlbum) return { ...dl, matchDesc: desc, outcome: dl.ok ? 'imported' : 'provider-failed' }
       const dupes = [
         ...(ownership?.owned ?? []).map((o) => ({ title: o.track.title, artist: o.track.artist, durationSec: o.track.durationSec })),
@@ -976,7 +979,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
           if (verdict.albumMatches) {
             if (fallback) await discardStaged(fallback.staged)
             trace.push(`exact: “${cand.desc}” (${verdict.evidence.join(', ')})`)
-            const dl = await importStaged(st.staged)
+            const dl = await importStaged(st.staged, { addedVia })
             return { ...dl, matchDesc: cand.desc, outcome: dl.ok ? 'imported' : 'provider-failed' }
           }
           if (!fallback) { fallback = { staged: st.staged, desc: cand.desc }; continue }
@@ -988,7 +991,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       }
       if (fallback) {
         console.log(`[download] no canonical-album copy of “${title}” on Qobuz — importing verified off-album master (“${fallback.desc}”)`)
-        const dl = await importStaged(fallback.staged)
+        const dl = await importStaged(fallback.staged, { addedVia })
         return { ...dl, matchDesc: fallback.desc, outcome: dl.ok ? 'imported' : 'provider-failed' }
       }
       if (lastRipErr) trace.push(`qobuz rips failed — last: ${lastRipErr}`)
@@ -1029,7 +1032,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         if (!st.ok) { trace.push(`album door stage: ${st.error}`); continue }
         const verdict = await judgeStaged('qobuz', st.staged, `${hit.title} — via album “${alb.desc}”`)
         if (verdict.verdict === 'exact') {
-          const dl = await importStaged(st.staged)
+          const dl = await importStaged(st.staged, { addedVia })
           return { ...dl, matchDesc: `${hit.title} — via album “${alb.desc}”`, outcome: dl.ok ? 'imported' : 'provider-failed' }
         }
         await discardStaged(st.staged)
@@ -1068,7 +1071,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       const verdict = await judgeStaged('bandcamp', st.staged, desc, { artist: bcPick.band })
       if (verdict.verdict === 'exact') {
         console.log(`[download] Bandcamp resolved “${query}” → ${bcPick.url}`)
-        const dl = await importStaged(st.staged)
+        const dl = await importStaged(st.staged, { addedVia })
         return { ...dl, matchDesc: desc, outcome: dl.ok ? 'imported' : 'provider-failed' }
       }
       await discardStaged(st.staged)
@@ -1106,7 +1109,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
           ? verifyCandidate(req, { provider: 'soundcloud', desc: spick.desc, title: probe.title, album: probe.album, artist: probe.artist, durationSec: probe.durSec })
           : await judgeStaged('soundcloud', st.staged, spick.desc)
         if (verdict.verdict === 'exact') {
-          const dl = await importStaged(st.staged)
+          const dl = await importStaged(st.staged, { addedVia })
           return { ...dl, matchDesc: desc, outcome: dl.ok ? 'imported' : 'provider-failed' }
         }
         await discardStaged(st.staged)
@@ -1128,7 +1131,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
   }, { refuse: REFUSED_SENDER })
 
   // Download a picked search result by its streamrip id.
-  ipc.handle('streamrip:download-id', async (_e, source: string, mediaType: string, id: string): Promise<DownloadResult> => {
+  ipc.handle('streamrip:download-id', async (_e, source: string, mediaType: string, id: string, addedVia?: string): Promise<DownloadResult> => {
     cancelRequested = false
     if (!source || !mediaType || !id) return { ok: false, error: 'Nothing selected to download.' }
     // IDs from search results are opaque store ids — reject path-like junk.
@@ -1141,7 +1144,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     if (!/^(track|album|playlist|artist)$/i.test(String(mediaType))) {
       return { ok: false, error: 'Unsupported media type.' }
     }
-    return runDownload(['id', source, mediaType, id])
+    return runDownload(['id', source, mediaType, id], shareSourceKey(addedVia))
   }, { refuse: REFUSED_SENDER })
 
   // Download a pasted streaming link directly.

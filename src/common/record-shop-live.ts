@@ -20,7 +20,7 @@ export const recommendationIdOf = (itemId: string): string | null => itemId.star
 
 /** Structural twin of the scheduler's QueueOrigin / QResult / QItem — the
  *  fields the shop reads. Kept structural so common never imports renderer. */
-export interface QueueOriginLike { recommendationIds: readonly string[]; entryId?: string; sourceKind?: string; sourceLabel?: string
+export interface QueueOriginLike { recommendationIds: readonly string[]; entryId?: string; sourceKind?: string; sourceLabel?: string; addedVia?: string
   chosenInsteadOf?: { parentKey: string; label: string }
   group?: { parentKey: string; label: string; of: number; position: number; notAcquired: Array<{ position: number; title: string; reason: string
 }>; skippedOwned: number; collectionId?: number }

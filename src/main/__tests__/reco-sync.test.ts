@@ -240,3 +240,11 @@ test('scrubOutboxAgainstBackend drops tombstoned/live-dupe adds, keeps novel add
   assert.deepEqual(kept.map((o) => (o.op === 'add' ? o.localId : 'del')), ['a3', 'del'])
   assert.equal(dropped.length, 2)
 })
+
+test('the share source survives the mirror: a row\'s via and note reach the renderer, or a desktop download could not stamp them', () => {
+  const backend = [{ id: 'a', song: 'Bliss', artist: 'Chalk', note: 'via TikTok', via: 'tiktok', link: 'https://www.tiktok.com/t/x/', createdAt: '2026-11-03T21:12:00Z' }]
+  const { merged } = computeMirror({ backend, local: [], ops: [] })
+  assert.equal(merged[0].via, 'tiktok')
+  assert.equal(merged[0].note, 'via TikTok')
+  assert.equal(computeMirror({ backend, local: merged, ops: [] }).merged[0].via, 'tiktok', 'again on the next sync, from the local copy')
+})

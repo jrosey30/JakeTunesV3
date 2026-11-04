@@ -9,10 +9,11 @@
  *                  stamps it on the library row).
  *   - `addedVia` — how the song was ASKED for on the phone ('tiktok' |
  *                  'instagram' | 'savant' | 'search' | 'spotify' | …): the share
- *                  source of the Listen List row it came from, stamped by
- *                  homemini on the import row when that row is downloaded
- *                  (JakeTunesMobile backend util/streamrip.ts → mobileImports.ts)
- *                  and absorbed here with the rest of the row.
+ *                  source of the Listen List row it came from. Whoever downloads
+ *                  that row stamps it: homemini on the import row (JakeTunesMobile
+ *                  backend util/streamrip.ts → mobileImports.ts), absorbed here
+ *                  with the rest of the row; or this app on the library row
+ *                  (renderer ltlDownload.ts recoOrigin → main/import-pipeline.ts).
  *
  * Order: newest import first (dateAdded desc), like Recently Added — these are
  * "what did I just bring in from X" lists. No cap. Pure and import-free so the
@@ -61,4 +62,32 @@ export function byNewestAdded(a: SourcedTrack, b: SourcedTrack): number {
 /** The playlist: every song from `key`, newest import first. */
 export function sourcePlaylistTracks<T extends SourcedTrack>(tracks: readonly T[], key: SourcePlaylistKey): T[] {
   return tracks.filter((t) => isFromSource(t, key)).sort(byNewestAdded)
+}
+
+/** The phone's share sources, by key (what "via <Label>" notes say).
+ *  ⚠️ TWIN: JakeTunesMobile backend/src/util/shareResolve.ts ADD_SOURCE_LABEL. */
+export const ADD_SOURCE_LABEL: Record<string, string> = {
+  spotify: 'Spotify', apple: 'Apple Music', youtube: 'YouTube', deezer: 'Deezer', shazam: 'Shazam',
+  tiktok: 'TikTok', instagram: 'Instagram', soundcloud: 'SoundCloud', bandcamp: 'Bandcamp',
+  savant: 'Savant', search: 'Search',
+}
+
+/** A share source key as the phone sends it ('tiktok', 'savant', …): trimmed,
+ *  lowercased, short and plain — or nothing.
+ *  ⚠️ TWIN: JakeTunesMobile backend/src/util/sourcePlaylists.ts shareSourceKey. */
+export function shareSourceKey(v: unknown): string | undefined {
+  const s = norm(v)
+  return s && /^[a-z][a-z0-9-]{1,30}$/.test(s) ? s : undefined
+}
+
+/** The share source key a Listen List row carries, as the imported row's
+ *  `addedVia`: the row's own `via` (2026-11-01+), else the "via <Label>" note
+ *  older rows carry. `labels` is ADD_SOURCE_LABEL.
+ *  ⚠️ TWIN: JakeTunesMobile backend/src/util/sourcePlaylists.ts addedViaOf. */
+export function addedViaOf(rec: { via?: string; note?: string }, labels: Record<string, string>): string | undefined {
+  const via = shareSourceKey(rec.via)
+  if (via) return via
+  const m = /^via (.+)$/.exec((rec.note ?? '').trim())
+  if (!m) return undefined
+  return Object.entries(labels).find(([, label]) => label === m[1])?.[0]
 }

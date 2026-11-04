@@ -91,8 +91,9 @@ export interface Track {
   // `source` = the store the desktop importer pulled the file from
   // ('bandcamp' | 'streamrip' | 'squid'; main/import-pipeline.ts stamps it).
   // `addedVia` = how it was asked for on the phone ('tiktok' | 'instagram' |
-  // 'savant' | 'search' | …), stamped by homemini on the import row and
-  // absorbed with it. Both feed the TikTok / Bandcamp / Savant playlists.
+  // 'savant' | 'search' | …), stamped by whoever downloads the Listen List
+  // row: homemini on the import row (absorbed with it), or this app on import.
+  // Both feed the TikTok / Bandcamp / Savant playlists.
   // ⚠️ TWIN: JakeTunesMobile backend/src/types.ts Track.source / addedVia.
   source?: string
   addedVia?: string
@@ -243,6 +244,11 @@ export interface Recommendation {
   ownedAt?: string
   ownedVia?: string
   ownedDesc?: string
+  // Where the phone's add came from (2026-11-01): the share source key
+  // ('tiktok' | 'savant' | …, common/source-playlists.ts). A download of this
+  // row stamps it on the library row as `addedVia`.
+  // ⚠️ TWIN: JakeTunesMobile backend/src/util/recoTypes.ts Recommendation.via.
+  via?: string
 }
 
 // Brief 126 — sync state the UI renders instead of silent empty lists.
@@ -1133,8 +1139,8 @@ declare global {
       streamripStatus: () => Promise<{ ok: boolean; installed?: boolean; version?: string; reason?: string }>
       streamripDownload: (url: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
       streamripSearch?: (opts: { query: string; source?: string; mediaType?: string; numResults?: number }) => Promise<{ ok: boolean; results?: Array<{ source: string; mediaType: string; id: string; desc: string }>; error?: string }>
-      streamripDownloadId?: (source: string, mediaType: string, id: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
-      streamripDownloadByQuery?: (opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number ; sourceEdition?: import('../common/source-edition').SourceEdition }) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }> }>
+      streamripDownloadId?: (source: string, mediaType: string, id: string, addedVia?: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
+      streamripDownloadByQuery?: (opts: { artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number ; sourceEdition?: import('../common/source-edition').SourceEdition; addedVia?: string }) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }> }>
       streamripCancelActive?: () => Promise<{ ok: boolean; killed: number }>
       streamripGetQobuz?: () => Promise<{ ok: boolean; configured: boolean; email?: string }>
       streamripSetQobuz?: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>

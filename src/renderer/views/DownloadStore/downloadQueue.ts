@@ -25,6 +25,9 @@ export interface QueueOrigin {
   /** 'user' | 'mm' | 'radar' — the list's own vocabulary; a person's name when known. */
   sourceKind?: string
   sourceLabel?: string
+  /** The Listen List row's share source key ('tiktok', 'savant', …): main
+   *  stamps it on every row this job imports as `addedVia`. */
+  addedVia?: string
   /** Matching-track Gets (Compare editions, action A): this song job is one
    *  of a group recovered from a refused album request. The group hangs off
    *  the refused album job (`parentKey`) in the Downloads panel; it carries
@@ -138,6 +141,7 @@ export function mergeOrigin(into: QResult, from?: QueueOrigin): void {
   for (const id of from.recommendationIds) if (!into.origin.recommendationIds.includes(id)) into.origin.recommendationIds.push(id)
   if (!into.origin.entryId && from.entryId) into.origin.entryId = from.entryId
   if (!into.origin.sourceLabel && from.sourceLabel) { into.origin.sourceLabel = from.sourceLabel; into.origin.sourceKind = from.sourceKind }
+  if (!into.origin.addedVia && from.addedVia) into.origin.addedVia = from.addedVia
 }
 
 export function queueSummary(): { active: number; queued: number; done: number; failed: number } {
@@ -242,8 +246,8 @@ async function pump(): Promise<void> {
       emit()
       try {
         const r: { ok: boolean; imported?: number; dupes?: number; error?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string; tracks?: Array<{ title: string; trackNumber?: number; discNumber?: number; durationSec?: number | null }>; trackCount?: number; url?: string }>; primary?: string; detail?: string; matchDesc?: string; completion?: string } | undefined = it.result.kind === 'query'
-          ? await window.electronAPI.streamripDownloadByQuery?.({ artist: it.result.artist, title: it.result.title, album: it.result.album, durationMs: it.result.durationMs, cleanedSource: it.result.cleanedSource, explicitSource: it.result.explicitSource, releaseYear: it.result.releaseYear, collectionId: it.result.collectionId, trackCount: it.result.trackCount, sourceEdition: it.result.sourceEdition })
-          : await window.electronAPI.streamripDownloadId?.(it.result.source, it.result.mediaType, it.result.id)
+          ? await window.electronAPI.streamripDownloadByQuery?.({ artist: it.result.artist, title: it.result.title, album: it.result.album, durationMs: it.result.durationMs, cleanedSource: it.result.cleanedSource, explicitSource: it.result.explicitSource, releaseYear: it.result.releaseYear, collectionId: it.result.collectionId, trackCount: it.result.trackCount, sourceEdition: it.result.sourceEdition, addedVia: it.result.origin?.addedVia })
+          : await window.electronAPI.streamripDownloadId?.(it.result.source, it.result.mediaType, it.result.id, it.result.origin?.addedVia)
         // Read through a widened alias. TypeScript narrows it.status to
         // 'downloading' before the await and cannot see that cancel() mutates
         // it DURING the await, so it calls this comparison unreachable. The

@@ -26,6 +26,7 @@ export interface MatchingTrackRequest {
     recommendationIds: string[]
     sourceKind?: string
     sourceLabel?: string
+    addedVia?: string
     group: { parentKey: string; label: string; of: number; position: number; notAcquired: Array<{ position: number; title: string; reason: string }>; skippedOwned: number; collectionId?: number }
   }
 }
@@ -44,7 +45,7 @@ export interface MatchingTrackPlan {
 // so they collapsed into one queued job.
 const norm = (s: string): string => nameKey(s, '')
 
-export function planMatchingTrackGets(cmp: CompareEditionsResult, ctx: { parentKey: string; artist: string; album: string; releaseYear?: number; sourceKind?: string; sourceLabel?: string }): MatchingTrackPlan {
+export function planMatchingTrackGets(cmp: CompareEditionsResult, ctx: { parentKey: string; artist: string; album: string; releaseYear?: number; sourceKind?: string; sourceLabel?: string; addedVia?: string }): MatchingTrackPlan {
   const exact = cmp.rows.filter((r) => r.verdict === 'exact')
   const skippedOwned = exact.filter((r) => r.owned)
   const notAcquired = cmp.rows.filter((r) => r.verdict !== 'exact').map((r) => ({ position: r.n, title: r.wantTitle, reason: r.reason ?? 'unknown', pickedSec: r.wantSec, ownedVariantSec: r.ownedVariantSec ?? null }))
@@ -56,7 +57,7 @@ export function planMatchingTrackGets(cmp: CompareEditionsResult, ctx: { parentK
     artist: ctx.artist, title: r.wantTitle, album: ctx.album,
     durationMs: r.wantSec != null ? Math.round(r.wantSec * 1000) : undefined,
     releaseYear: ctx.releaseYear,
-    origin: { recommendationIds: [], sourceKind: ctx.sourceKind, sourceLabel: ctx.sourceLabel, group: { ...group, position: r.n } },
+    origin: { recommendationIds: [], sourceKind: ctx.sourceKind, sourceLabel: ctx.sourceLabel, ...(ctx.addedVia ? { addedVia: ctx.addedVia } : {}), group: { ...group, position: r.n } },
   }))
   const n = jobs.length
   const sentence = n === 0

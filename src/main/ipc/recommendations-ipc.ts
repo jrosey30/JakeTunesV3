@@ -66,6 +66,9 @@ export interface RecommendationRecord {
   ownedAt?: string
   ownedVia?: string
   ownedDesc?: string
+  // The phone's share source key; passes through to the renderer, whose
+  // download of this row stamps it as the library row's addedVia.
+  via?: string
 }
 
 export interface RecommendationsHost {
