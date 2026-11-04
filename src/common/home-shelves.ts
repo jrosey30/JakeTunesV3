@@ -72,8 +72,10 @@ export const SHELF_SHOWN = 5
 /** What "See All" opens to (Recently Added opens its playlist instead). */
 export const SHELF_MAX = 10
 export const RECENT_ALBUMS_MAX = 5
-/** How many of the newest songs Recently Added fetches, and queues behind a click. */
-export const RECENT_SONGS_QUEUE = 25
+/** How many of the newest songs Recently Added queues behind a click: the whole
+ *  Recently Added playlist (smartPlaylists.ts RECENTLY_ADDED_LIMIT, the phone's
+ *  RecentlyAddedShelf.queueLimit). */
+export const RECENT_SONGS_QUEUE = 100
 export const LOT_WINDOW_DAYS = 30
 export const LOT_MIN_PLAYS = 2
 /** The On Repeat playlist (Jake, 2026-10-28: "on repeat needs its own
@@ -258,6 +260,24 @@ export function recentlyAddedSongs<T extends ShelfTrack>(
 export function recentlyAddedPlay<T>(songs: readonly T[], index: number): { queue: T[]; start: number } | null {
   if (!Number.isInteger(index) || index < 0 || index >= songs.length) return null
   return { queue: [...songs], start: index }
+}
+
+/**
+ * What a click on a You Should Listen To More or Listening To A Lot card queues:
+ * the row's songs, then the rest of its playlist, so music runs on past the cards
+ * (Jake, 2026-11-03, on the phone: "Why is on repeat and listening more only 1 of
+ * 5????"). The row comes first so a card's index stays that song's place in the queue.
+ * ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/HomeShelves.swift HomeShelfQueue
+ */
+export function shelfQueue<T extends { id: number | string }>(row: readonly T[], playlist: readonly T[]): T[] {
+  const seen = new Set(row.map((t) => sid(t.id)))
+  const queue = [...row]
+  for (const t of playlist) {
+    if (seen.has(sid(t.id))) continue
+    seen.add(sid(t.id))
+    queue.push(t)
+  }
+  return queue
 }
 
 // ── You should listen to more (hidden gems) ─────────────────────────────────
