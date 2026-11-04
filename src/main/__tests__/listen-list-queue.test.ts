@@ -34,6 +34,10 @@ const settle = async () => { for (let i = 0; i < 40; i++) { await sleep(5); if (
       if (typeof a !== 'function') return a
       return new Promise<Answer>((res) => { inFlight.add(res); void a().then((v) => { inFlight.delete(res); res(v) }) })
     },
+    streamripDownloadId: async (source: string, mediaType: string, id: string, addedVia?: string) => {
+      calls.push({ source, mediaType, id, addedVia })
+      return { ok: true, imported: 1, dupes: 0 }
+    },
     streamripCancelActive: async () => { cancelCalls++; for (const res of inFlight) res({ ok: false, error: 'canceled', outcome: 'canceled' }); inFlight.clear() },
   },
   dispatchEvent: () => true,
@@ -58,6 +62,49 @@ describe('the Listen List rides the one Downloads scheduler', () => {
     // the identity key is what the Download view builds for the same click
     const fromView: QResult = { kind: 'query', source: 'qobuz', mediaType: 'track', id: trackQueryId('XTC ', 'Helicopter!'), desc: 'x' }
     assert.equal(queueKey(fromView), queueKey(d.result))
+  })
+
+  // 2026-11-03: Chalk "Bliss", shared from TikTok, downloaded from this list,
+  // landed with source 'streamrip' and no addedVia, so the TikTok playlist
+  // never saw it. The phone's download of the same row stamped it.
+  it('a share source on the row reaches main with the job, so the imported row keeps it', async () => {
+    answers.set('Bliss', { ok: true, imported: 1, dupes: 0 })
+    const r = rec({ song: 'Bliss', artist: 'Chalk', note: 'via TikTok', via: 'tiktok' })
+    const d = queueRecoDownload(r)
+    assert.equal(d.kind, 'queue')
+    await settle()
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].addedVia, 'tiktok')
+  })
+
+  it('older rows have only the "via <Label>" note; a friend credit or a plain jot is not a share source', () => {
+    assert.equal(recoOrigin(rec({ song: 'a', artist: 'b', note: 'via Savant' })).addedVia, 'savant')
+    assert.equal(recoOrigin(rec({ song: 'a', artist: 'b', note: 'from Alex · https://x.y/z' })).addedVia, undefined)
+    assert.equal('addedVia' in recoOrigin(rec({ song: 'a', artist: 'b', source: 'radar' })), false)
+  })
+
+  it('a job with no share source sends main none', async () => {
+    answers.set('Plain', { ok: true, imported: 1, dupes: 0 })
+    queueRecoDownload(rec({ song: 'Plain', artist: 'A' }))
+    await settle()
+    assert.equal(calls[0].addedVia, undefined)
+  })
+
+  it('a picked-id job hands main the share source too', async () => {
+    enqueue({ kind: 'id', source: 'qobuz', mediaType: 'track', id: '12345', desc: 'x', origin: { recommendationIds: ['r1'], addedVia: 'instagram' } })
+    await settle()
+    assert.deepEqual(calls[0], { source: 'qobuz', mediaType: 'track', id: '12345', addedVia: 'instagram' })
+  })
+
+  it('a job already queued from the Download view adopts the row’s share source, and never swaps one for another', () => {
+    const job: QResult = { kind: 'query', source: 'qobuz', mediaType: 'track', id: trackQueryId('A', 'B'), desc: 'x' }
+    mergeOrigin(job, { recommendationIds: ['r1'] })
+    assert.equal(job.origin?.addedVia, undefined)
+    mergeOrigin(job, { recommendationIds: ['r2'], addedVia: 'tiktok' })
+    assert.equal(job.origin?.addedVia, 'tiktok')
+    mergeOrigin(job, { recommendationIds: ['r3'], addedVia: 'savant' })
+    assert.equal(job.origin?.addedVia, 'tiktok')
+    assert.deepEqual(job.origin?.recommendationIds, ['r1', 'r2', 'r3'])
   })
 
   it('a loose album is sent to edition selection; artists and concerts are browse-only; nothing is downloaded blind', () => {

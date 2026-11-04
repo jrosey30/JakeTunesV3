@@ -270,6 +270,26 @@ describe('FORTIFICATIONS — 2026-08-29 ("IT SPEAKS. fortify fortify fortify.")'
       'the SoundCloud lane imports without staging witnesses again — "the file\'s own clock is the only trustworthy witness"')
   })
 
+  // ── Listen List → library: the share source reaches every import door ──
+  test('WIRING: every streamrip import carries the job\'s addedVia', () => {
+    const store = readFileSync(join(SRC, 'main/streamrip-store/index.ts'), 'utf-8')
+    const doors = store.match(/importStaged\((?!staged: StagedRip)[^)]*\)/g) ?? []
+    assert.ok(doors.length >= 7, `expected the ladder's import doors, found ${doors.length}`)
+    for (const door of doors) {
+      assert.ok(door.includes('addedVia'), `${door} drops the Listen List row's share source — a TikTok share downloaded here never reaches the TikTok playlist (2026-11-03)`)
+    }
+    assert.ok(store.includes("deps.importDownloaded(opts.only ?? staged.files, 'streamrip', opts.addedVia)"),
+      'importStaged stopped handing addedVia to the importer')
+    assert.ok(store.includes("runDownload(['id', source, mediaType, id], shareSourceKey(addedVia))"),
+      'the picked-id door dropped the share source')
+    const preload = readFileSync(join(SRC, 'preload/index.ts'), 'utf-8')
+    assert.ok(preload.includes("ipcRenderer.invoke('streamrip:download-id', source, mediaType, id, addedVia)"),
+      'the preload bridge dropped the share source on the picked-id door')
+    const panel = readFileSync(join(SRC, 'renderer/components/DownloadsPanel.tsx'), 'utf-8')
+    assert.ok(panel.includes('addedVia: q?.result.origin?.addedVia'),
+      'songs rescued from a refused album lost the share source')
+  })
+
   // ── Cache warm: not home = no warm ───────────────────────────────────
   test('WIRING: cache-manager.py keeps the home-LAN gate', () => {
     const cm = readFileSync(join(SRC, '../Dr. Claude/scripts/cache-manager.py'), 'utf-8')

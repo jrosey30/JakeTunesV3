@@ -17,6 +17,7 @@
  * Get carries the recommendation id back so the list still sees it land.
  */
 import { requestDiscoveryTab } from '../views/discoveryTab.ts'
+import { ADD_SOURCE_LABEL, addedViaOf } from '../../common/source-playlists.ts'
 import type { Recommendation } from '../types.ts'
 import {
   enqueue, cancel, retry, subscribeQueue, getQueue, itemForRecommendation,
@@ -65,10 +66,12 @@ function friendOf(rec: Recommendation): string | null {
 }
 
 /** Provenance that rides on the job: the recommendation id (the list's
- *  stable UUID), who sent it, and which lane. Never the catalogue provider. */
+ *  stable UUID), who sent it, which lane, and the share source the imported
+ *  row keeps as `addedVia`. Never the catalogue provider. */
 export function recoOrigin(rec: Recommendation): QueueOrigin {
   const friend = friendOf(rec)
-  return { recommendationIds: [rec.id], entryId: rec.id, sourceKind: friend ? 'person' : rec.source, sourceLabel: friend ?? undefined }
+  const addedVia = addedViaOf(rec, ADD_SOURCE_LABEL)
+  return { recommendationIds: [rec.id], entryId: rec.id, sourceKind: friend ? 'person' : rec.source, sourceLabel: friend ?? undefined, ...(addedVia ? { addedVia } : {}) }
 }
 
 export type RecoQueueDecision =

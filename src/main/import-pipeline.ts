@@ -406,8 +406,9 @@ export async function importOneFile(
   dupeFingerprints: Set<string>,
   dateOverride?: Date,
   source?: string,
+  addedVia?: string,
 ): Promise<SingleImportResult> {
-  return runImportExclusive(() => importOneFileLocked(srcPath, id, chosenFmt, dupeFingerprints, dateOverride, source))
+  return runImportExclusive(() => importOneFileLocked(srcPath, id, chosenFmt, dupeFingerprints, dateOverride, source, addedVia))
 }
 
 async function importOneFileLocked(
@@ -417,6 +418,7 @@ async function importOneFileLocked(
   dupeFingerprints: Set<string>,
   dateOverride?: Date,
   source?: string,
+  addedVia?: string,
 ): Promise<SingleImportResult> {
   const ext = srcPath.substring(srcPath.lastIndexOf('.')).toLowerCase()
   // Brief 170: the destination this import reserved, if it got that
@@ -627,6 +629,9 @@ async function importOneFileLocked(
       codec: storedCodec,
       ...(audioFingerprint ? { audioFingerprint } : {}),
       ...(source ? { source } : {}),
+      // The share source of the Listen List row this download answers
+      // (common/source-playlists.ts): the TikTok / Savant playlists read it.
+      ...(addedVia ? { addedVia } : {}),
     }
 
     // 4.4.85: populate the in-memory codec map so the protocol handler
@@ -719,7 +724,7 @@ export async function nextLibraryId(): Promise<number> {
   return computeNextLibraryId(lib.tracks, await D().idHighWater?.floor() ?? 0)
 }
 
-export async function importDownloadedFiles(absPaths: string[], source?: string): Promise<{ tracks: Array<Record<string, unknown>>; dupeCount: number; errorCount: number; dupes: Array<{ src: string; matchedTitle: string; matchedArtist: string }> }> {
+export async function importDownloadedFiles(absPaths: string[], source?: string, addedVia?: string): Promise<{ tracks: Array<Record<string, unknown>>; dupeCount: number; errorCount: number; dupes: Array<{ src: string; matchedTitle: string; matchedArtist: string }> }> {
   const validFormats: AudioFormat[] = ['aac-128', 'aac-256', 'aac-320', 'alac', 'aiff', 'wav']
   const preferred = await D().defaultImportFormat()
   const userPreferred: AudioFormat = validFormats.includes(preferred as AudioFormat)
@@ -756,7 +761,7 @@ export async function importDownloadedFiles(absPaths: string[], source?: string)
     D().emitToRenderer('bandcamp:batch-progress', {
       current: done, total, trackTitle, errors, running: true,
     })
-    const r = await importOneFile(p, id, chosenFmt, dupeFingerprints, undefined, source)
+    const r = await importOneFile(p, id, chosenFmt, dupeFingerprints, undefined, source, addedVia)
     if (r.ok && r.track) {
       tracks.push(r.track)
       // BPM/key analysis starts the moment the song lands — same as drag-drop.

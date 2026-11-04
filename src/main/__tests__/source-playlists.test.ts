@@ -3,7 +3,7 @@
  *  backend's util/__tests__/sourcePlaylists.test.ts — same cases. */
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { SOURCE_PLAYLISTS, isFromSource, isSourcePlaylistKey, sourcePlaylistTracks } from '../../common/source-playlists.ts'
+import { ADD_SOURCE_LABEL, SOURCE_PLAYLISTS, addedViaOf, isFromSource, isSourcePlaylistKey, shareSourceKey, sourcePlaylistTracks } from '../../common/source-playlists.ts'
 
 const tracks = [
   { id: 1, title: 'old bandcamp', source: 'bandcamp', dateAdded: '2026-04-23' },
@@ -41,5 +41,26 @@ describe('source playlists', () => {
     const before = tracks.map((t) => t.id)
     sourcePlaylistTracks(tracks, 'bandcamp')
     assert.deepEqual(tracks.map((t) => t.id), before)
+  })
+  test('addedViaOf: the row’s via, else the old "via <Label>" note, else nothing', () => {
+    const labels = { tiktok: 'TikTok', savant: 'Savant', apple: 'Apple Music' }
+    assert.equal(addedViaOf({ via: 'savant' }, labels), 'savant')
+    assert.equal(addedViaOf({ via: ' TikTok ', note: 'via Savant' }, labels), 'tiktok', 'the row’s own key wins, normalised')
+    assert.equal(addedViaOf({ note: 'via TikTok' }, labels), 'tiktok')
+    assert.equal(addedViaOf({ note: 'via Apple Music' }, labels), 'apple')
+    assert.equal(addedViaOf({ note: 'from Dan · great song' }, labels), undefined)
+    assert.equal(addedViaOf({ via: 'not a key!' }, labels), undefined)
+    assert.equal(addedViaOf({}, labels), undefined)
+  })
+  test('shareSourceKey: trimmed and lowercased, or nothing', () => {
+    assert.equal(shareSourceKey(' TikTok '), 'tiktok')
+    assert.equal(shareSourceKey('apple-music2'), 'apple-music2')
+    assert.equal(shareSourceKey('not a key!'), undefined)
+    assert.equal(shareSourceKey(''), undefined)
+    assert.equal(shareSourceKey(42), undefined)
+  })
+  test('the label table is the phone’s: every note the phone writes maps back to its key', () => {
+    assert.deepEqual(Object.keys(ADD_SOURCE_LABEL).sort(), ['apple', 'bandcamp', 'deezer', 'instagram', 'savant', 'search', 'shazam', 'soundcloud', 'spotify', 'tiktok', 'youtube'])
+    for (const [key, label] of Object.entries(ADD_SOURCE_LABEL)) assert.equal(addedViaOf({ note: `via ${label}` }, ADD_SOURCE_LABEL), key)
   })
 })

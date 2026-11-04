@@ -56,6 +56,8 @@ describe('action A — matching-track Gets', () => {
     assert.ok(!plan.jobs.some((j) => j.title === 'Here We Go' || j.title === 'The Music' || j.title === 'Looking Beyond'))
     const j = plan.jobs[0]
     assert.equal(j.mediaType, 'track'); assert.equal(j.title, 'Straylight'); assert.equal(j.durationMs, 400_000); assert.equal(j.album, 'Chocolate Chords')
+    assert.equal('addedVia' in j.origin, false)
+    assert.equal(planMatchingTrackGets(cmpFixture([2, 7]), { ...ctx, addedVia: 'tiktok' }).jobs[0].origin.addedVia, 'tiktok', 'songs rescued from a shared album keep the share source')
     assert.deepEqual(j.origin.recommendationIds, []); assert.equal(j.origin.group.parentKey, ctx.parentKey); assert.equal(j.origin.group.position, 1); assert.equal(j.origin.group.skippedOwned, 2)
     assert.match(plan.sentence, /^Gets 9 songs now \(2 already in your library skipped\); 1 not acquired\./)
     assert.equal(planMatchingTrackGets(cmpFixture([1,2,3,5,6,7,8,9,10,11,12]), ctx).jobs.length, 0)

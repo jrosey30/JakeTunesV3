@@ -23,6 +23,7 @@ import {
   addSessionImportedFingerprint,
   clearSessionImportedFingerprints,
   findFreeImportedId,
+  importDownloadedFiles,
   importOneFile,
   initImportPipeline,
   nextLibraryId,
@@ -213,6 +214,36 @@ describe('ALAC is enqueued for stream convert', () => {
     await importOneFile(src3, 3, 'alac', new Set())
     assert.equal(queued.length, 1)
     assert.equal(queued[0].fp, 'sha1:abc123|100')
+  })
+})
+
+describe('a download that answers a Listen List row', () => {
+  function world() {
+    const dir = mkdtempSync(join(tmpdir(), 'jt-addedvia-'))
+    const musicDir = join(dir, 'iPod_Control/Music')
+    mkdirSync(musicDir, { recursive: true })
+    const lib = join(dir, 'library.json')
+    writeFileSync(lib, JSON.stringify({ tracks: [] }))
+    clearSessionImportedFingerprints()
+    initImportPipeline(minimalDeps({ musicDir: () => musicDir, libraryPath: () => lib }))
+    return dir
+  }
+
+  test('keeps the row\'s share source as addedVia, beside the store it came from', async () => {
+    const src = join(world(), 'shared.alac')
+    writeFileSync(src, pcm16Wav(44100, 4410))
+    const batch = await importDownloadedFiles([src], 'streamrip', 'tiktok')
+    assert.equal(batch.tracks.length, 1)
+    assert.equal(batch.tracks[0].source, 'streamrip')
+    assert.equal(batch.tracks[0].addedVia, 'tiktok')
+  })
+
+  test('a download with no share source writes no addedVia at all', async () => {
+    const src = join(world(), 'plain.alac')
+    writeFileSync(src, pcm16Wav(44100, 4410))
+    const batch = await importDownloadedFiles([src], 'streamrip')
+    assert.equal(batch.tracks[0].source, 'streamrip')
+    assert.equal('addedVia' in batch.tracks[0], false)
   })
 })
 
