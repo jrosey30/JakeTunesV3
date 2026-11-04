@@ -20,6 +20,7 @@ import {
   enforceSpoolCap, ensureSpool, preloadSpool, readPreloadPins, spoolAwareServe, spoolLimitsFor, spoolQueueState,
   spoolReady, writePreloadPins, THIN_LINK_SPOOL_CAP_BYTES, PRELOAD_PINS_FILE, type PreloadOutcome,
 } from '../stream-spool.ts'
+import { waitFor } from './wait-for.ts'
 
 const BASE = 'http://homemini:3000/audio'
 const DAY = 86_400_000
@@ -427,8 +428,9 @@ describe('pinned pre-loads survive the cap pass', () => {
     await writePreloadPins(dir, ['p1', 'p2'])
     const fetchFn = (async () => new Response(Buffer.alloc(1000, 2), { status: 200, headers: { 'content-length': '1000' } })) as unknown as typeof fetch
     ensureSpool(dir, 'day2', 'http://h/day2', fetchFn, 0, { capBytes: 3000, honorPins: true })
-    for (let i = 0; i < 100 && !(await spoolReady(dir, 'day2')); i++) await new Promise((r) => setTimeout(r, 10))
-    await new Promise((r) => setTimeout(r, 30))
+    await waitFor(() => spoolReady(dir, 'day2'), 'day2 to land')
+    // The cap pass runs detached after the landing: four files, then three.
+    await waitFor(async () => (await left(dir)).length === 3, 'the cap pass')
     assert.deepEqual(await left(dir), ['day2', 'p1', 'p2'])
   })
 
@@ -471,11 +473,11 @@ describe('preloadSpool', () => {
     ensureSpool(dir, 'playing', 'http://h/playing', hold)
     // Wait until the playback spool is really mid-request (a loaded machine
     // can take longer than 10 ms to get there) — releasing before that is a no-op.
-    for (let i = 0; i < 200 && !entered; i++) await new Promise((r) => setTimeout(r, 5))
+    await waitFor(() => entered, 'the playback spool to be mid-request')
     const out = await preloadSpool(dir, 'night', 'http://h/night', { ...opts, fetchFn: hold })
     assert.deepEqual(out, { kind: 'busy' })
     release()
-    for (let i = 0; i < 50 && spoolQueueState().active > 0; i++) await new Promise((r) => setTimeout(r, 10))
+    await waitFor(() => spoolQueueState().active === 0, 'the playback spool to finish')
     assert.deepEqual(spoolQueueState(), { active: 0, waiting: 0 })
   })
 

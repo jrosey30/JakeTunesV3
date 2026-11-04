@@ -4,7 +4,8 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync, existsSync, utimesSync, readFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, existsSync, utimesSync, readFileSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { artistSlug, findDeezerArtist, createArtistPhotos } from '../artist-photo.ts'
@@ -15,6 +16,12 @@ const fake = (routes: Routes, log: string[] = []) => async (url: string): Promis
   for (const [k, v] of Object.entries(routes)) if (url.includes(k)) return v
   return { data: [] }
 }
+
+// get() saves the Deezer facts into this folder in the background, with nothing to wait
+// on: a save landing mid-delete is ENOTEMPTY on a busy Mac (2026-11-04). The async rm's
+// retries start the delete over, 0 failures in 2,000 tries; rmSync's never list the folder
+// again, 302 in 4,000. The save swallows its own failure once the folder is gone.
+const removeTemp = (root: string): Promise<void> => rm(root, { recursive: true, force: true, maxRetries: 5 })
 
 describe('slugs', () => {
   it('keeps old slugs for Latin names; non-Latin names get their own stable slug, never "unknown"', () => {
@@ -77,7 +84,7 @@ describe('the photo cache', () => {
       utimesSync(join(dir, '2pac.jpg'), old, old)
       assert.equal(await photos.get('2Pac'), '2pac', 'stale but shown')
       assert.ok(!existsSync(join(dir, '2pac.miss')), 'no miss written over a real photo')
-    } finally { rmSync(root, { recursive: true, force: true }) }
+    } finally { await removeTemp(root) }
   })
   it('a confirmed artist is downloaded once', async () => {
     const { root, dir, factsFile } = setup()
@@ -93,7 +100,7 @@ describe('the photo cache', () => {
       const calls = log.length
       assert.equal(await photos.get('Geese'), 'geese')
       assert.equal(log.length, calls, 'second ask is the disk cache')
-    } finally { rmSync(root, { recursive: true, force: true }) }
+    } finally { await removeTemp(root) }
   })
   it('seeded facts (confirmed earlier) skip the lookup', async () => {
     const { root, dir, factsFile } = setup()
@@ -103,7 +110,7 @@ describe('the photo cache', () => {
       const photos = createArtistPhotos({ dir, factsFile, owned: async () => ({ albums: [], titles: [] }), fetchJson: fake({}, log), download: async () => Buffer.from('x') })
       assert.equal(await photos.get('Fat Dog'), 'fat-dog')
       assert.equal(log.length, 0)
-    } finally { rmSync(root, { recursive: true, force: true }) }
+    } finally { await removeTemp(root) }
   })
 })
 

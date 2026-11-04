@@ -15,6 +15,7 @@ import {
   isSaneTrimSamples,
   readGaplessTrim,
 } from '../gapless-trim.ts'
+import { HUNG_MS } from './wait-for.ts'
 
 describe('parseSMPB (iTunSMPB)', () => {
   it('reads delay, padding, and original sample count from the canonical hex string', () => {
@@ -120,7 +121,7 @@ describe('readGaplessTrim on a real LAME MP3', () => {
       execFileSync('ffmpeg', [
         '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.4',
         '-c:a', 'libmp3lame', '-q:a', '4', mp3,
-      ], { stdio: 'ignore', timeout: 15000 })
+      ], { stdio: 'ignore', timeout: HUNG_MS })
       const trim = await readGaplessTrim(mp3)
       assert.ok(trim, 'libmp3lame should write a LAME Info tag')
       assert.ok(trim.delaySamples > 0 && trim.delaySamples < 3000, `delay ${trim.delaySamples}`)

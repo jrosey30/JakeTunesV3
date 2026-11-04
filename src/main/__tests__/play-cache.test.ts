@@ -8,6 +8,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { createPlayCache } from '../play-cache.ts'
 import { playCacheName, pathHashFor, isEntryFor } from '../play-cache-name.ts'
+import { waitFor } from './wait-for.ts'
 
 let root = ''
 before(async () => { root = await mkdtemp(join(tmpdir(), 'jt-play-cache-')) })
@@ -91,15 +92,22 @@ describe('play cache', () => {
   test('cap: oldest entries fall off, never the one just written', async () => {
     const { pc } = harness('alac', { capBytes: 2500 })   // three 1000-byte entries overflow
     await pc.ensureDir()
-    const a = await pc.cachePathFor('/x/f1.m4a', 1, 1)
-    await utimes(a!, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000))
-    const b = await pc.cachePathFor('/x/f2.m4a', 1, 1)
-    await utimes(b!, new Date(Date.now() - 30_000), new Date(Date.now() - 30_000))
+    // The two older entries go straight on disk. Through pc, each landing starts a cap
+    // pass, and a landing during a pass gets none of its own (`enforcingCap`): on a busy
+    // Mac the third could leave the cache over its cap until a fourth landed, and none does.
+    const older = async (name: string, ageMs: number): Promise<void> => {
+      await writeFile(join(pc.dir, name), Buffer.alloc(1000, 1))
+      await utimes(join(pc.dir, name), new Date(Date.now() - ageMs), new Date(Date.now() - ageMs))
+    }
+    await older('older-a.flac', 60_000)
+    await older('older-b.flac', 30_000)
     const c = await pc.cachePathFor('/x/f3.m4a', 1, 1)
-    await new Promise((r) => setTimeout(r, 50))   // enforceCacheCap runs detached
-    const left = (await readdir(pc.dir)).filter((n) => n.endsWith('.flac'))
+    const flacs = async (): Promise<string[]> => (await readdir(pc.dir)).filter((n) => n.endsWith('.flac'))
+    // enforceCacheCap runs detached, one file at a time; the cap holds two entries
+    await waitFor(async () => (await flacs()).length <= 2, 'the cap pass')
+    await new Promise((r) => setTimeout(r, 50))   // room for a wrong extra eviction
+    const left = await flacs()
     assert.ok(left.includes(c!.split('/').pop()!), 'just-written entry must survive')
-    assert.ok(!left.includes(a!.split('/').pop()!), 'oldest entry must be evicted')
-    assert.ok(left.length <= 2)
+    assert.ok(!left.includes('older-a.flac'), 'oldest entry must be evicted')
   })
 })

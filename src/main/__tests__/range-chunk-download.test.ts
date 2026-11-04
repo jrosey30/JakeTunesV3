@@ -274,22 +274,21 @@ describe('downloadInRangeChunks (to a .part file)', () => {
     assert.deepEqual(await readdir(dir), [])
   })
 
-  test('abort mid-chunk: rejects promptly and the .part is gone', async () => {
+  test('abort mid-chunk: rejects with the abort, not the stall guard, and the .part is gone', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'rcd-abort-'))
     const body = fileOf(900_000)
     const ac = new AbortController()
     // The second chunk's body sends a little, then hangs until aborted.
     const tweak = (k: number, start: number, end: number): Response | null => {
       if (k !== 1) return null
-      setTimeout(() => ac.abort(), 20)
+      setTimeout(() => ac.abort(new Error('the caller gave up')), 20)
       const rs = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new Uint8Array(body.subarray(start, start + 500))) } })
       return new Response(rs, { status: 206, headers: { 'content-range': `bytes ${start}-${end}/${body.length}` } })
     }
-    const t0 = Date.now()
+    // If a hung body held up the abort, this would reject 20 s later with the stall guard's error.
     await assert.rejects(downloadInRangeChunks('http://hub/a', join(dir, 'a.part'), {
       fetchFn: rangeServer(body, [], Date.now, tweak), bytesPerSec: 50_000_000, chunkBytes: 200_000, signal: ac.signal,
-    }))
-    assert.ok(Date.now() - t0 < 2_000, 'abort is not held up by a hung body')
+    }), /the caller gave up/)
     assert.deepEqual(await readdir(dir), [])
   })
 
@@ -298,13 +297,13 @@ describe('downloadInRangeChunks (to a .part file)', () => {
     const body = fileOf(900_000)
     const ac = new AbortController()
     const served: Served[] = []
-    // The wait after chunk 1 never ends on its own; only the abort ends it.
-    setTimeout(() => ac.abort(), 30)
-    const t0 = Date.now()
+    // The wait after chunk 1 never ends on its own, and the abort comes from inside
+    // it: rejecting at all is the proof, on a Mac however busy. A frozen clock, or a
+    // slow first write could use up the wait and skip it.
     await assert.rejects(downloadInRangeChunks('http://hub/w', join(dir, 'w.part'), {
-      fetchFn: rangeServer(body, served), bytesPerSec: 96_000, signal: ac.signal, sleep: () => new Promise<void>(() => {}),
-    }))
-    assert.ok(Date.now() - t0 < 1_000, 'the sleep between requests is abortable')
+      fetchFn: rangeServer(body, served), bytesPerSec: 96_000, now: () => 0, signal: ac.signal,
+      sleep: () => { setImmediate(() => ac.abort(new Error('the caller gave up'))); return new Promise<void>(() => {}) },
+    }), /the caller gave up/)
     assert.equal(served.length, 1)
     assert.deepEqual(await readdir(dir), [])
   })

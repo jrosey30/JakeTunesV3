@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createAlbumArtServer, parseAlbumArtUrl, pregenerateThumbs, type MakeThumb } from '../album-art-serve.ts'
 import { albumArtUrl, artRevision, bumpArtRevisions } from '../../renderer/artRevision.ts'
+import { waitFor } from './wait-for.ts'
 
 const RUSH = '6d1e807b3183a35fba8cce9fff2a1054'
 const RUSH_V = `${RUSH}_1788390804464`
@@ -44,12 +45,9 @@ function server(dir: string) {
 }
 
 /** The handler persists a built thumb with a fire-and-forget writeAtomic;
- *  wait for that rename to land before touching the thumb (bounded, ~2 s). */
+ *  wait for that rename to land before touching the thumb. */
 async function thumbLanded(path: string): Promise<void> {
-  for (let i = 0; i < 400; i++) {
-    try { await stat(path); return } catch { await new Promise((r) => setTimeout(r, 5)) }
-  }
-  throw new Error(`thumb never landed: ${path}`)
+  await waitFor(() => stat(path).then(() => true, () => false), `the thumb to land: ${path}`)
 }
 
 const JUL10 = new Date('2026-07-10T12:00:00Z')
@@ -78,8 +76,7 @@ describe('the Concerts-page discrepancy (workmini, 2026-10-19)', () => {
     assert.equal(row.body, 'thumb320<massey-hall-poster>', 'the row draws the poster, not the Jul 10 cover (mutation: serve-if-exists fails here)')
     assert.equal(row.source, 'thumb-built')
     // Rebuilt atomically on disk; the next cold read uses it.
-    await new Promise((r) => setTimeout(r, 30))
-    assert.equal((await readFile(join(thumbs, `${RUSH}_320.jpg`))).toString(), 'thumb320<massey-hall-poster>')
+    await waitFor(async () => (await readFile(join(thumbs, `${RUSH}_320.jpg`))).toString() === 'thumb320<massey-hall-poster>', 'the rebuilt thumb to land')
     assert.deepEqual((await readdir(thumbs)).filter((f) => f.endsWith('.tmp')), [])
     const fresh = await server(dir).get(`album-art://${RUSH_V}.jpg?s=320`)
     assert.equal(fresh.source, 'thumb')

@@ -11,6 +11,7 @@ import { execFileSync } from 'child_process'
 import { backfillAlacFingerprints, planLocalAlacMigration } from '../alac-stream-migrate.ts'
 import { classifyActivitySyncTracks } from '../activity-boardable.ts'
 import { stageTrackForSync } from '../ipod-sync-materialize.ts'
+import { waitFor } from './wait-for.ts'
 
 async function freshDir(name: string): Promise<string> {
   return mkdtemp(join(tmpdir(), name))
@@ -39,7 +40,8 @@ describe('streamed ALAC decode cache', () => {
     const pending = cache.serve(42, 'bytes=4-7')
     let settled = false
     void pending.then(() => { settled = true }, () => { settled = true })
-    await new Promise((r) => setTimeout(r, 30))
+    await waitFor(() => transcodes === 1, 'the decode to start')
+    await new Promise((r) => setTimeout(r, 30))   // room for a wrong early answer
     assert.equal(settled, false, 'a seek during decode must not be answered from a partial file')
     assert.equal(transcodes, 1)
     release()

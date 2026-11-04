@@ -9,8 +9,11 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { mkdtemp, writeFile, readFile, stat } from 'fs/promises'
 import { spoolReady, ensureSpool, serveSpoolRange, enforceSpoolCap , spoolQueueState, spoolPaceFor } from '../stream-spool.ts'
+import { waitFor } from './wait-for.ts'
 
 const fakeAudio = (bytes: number) => Buffer.alloc(bytes, 7)
+
+const queueEmpty = (): boolean => { const q = spoolQueueState(); return q.active === 0 && q.waiting === 0 }
 
 const fetchServing = (body: Buffer, headers: Record<string, string> = {}) => (async () => ({
   ok: true,
@@ -23,9 +26,7 @@ describe('ensureSpool → spoolReady', () => {
     const dir = await mkdtemp(join(tmpdir(), 'spool-'))
     const body = fakeAudio(50_000)
     ensureSpool(dir, 't1', 'http://hub/audio/1', fetchServing(body))
-    await new Promise((r) => setTimeout(r, 300))
-    const ready = await spoolReady(dir, 't1')
-    assert.ok(ready, 'spool should have landed')
+    const ready = await waitFor(() => spoolReady(dir, 't1'), 'the spool to land')
     assert.equal(ready.total, 50_000)
     assert.equal(ready.contentType, 'audio/flac')
     assert.equal((await readFile(ready.file)).length, 50_000)
@@ -35,7 +36,7 @@ describe('ensureSpool → spoolReady', () => {
     const dir = await mkdtemp(join(tmpdir(), 'spool-'))
     const short = fakeAudio(10_000)
     ensureSpool(dir, 't2', 'http://hub/audio/2', fetchServing(short, { 'content-length': '99999' }))
-    await new Promise((r) => setTimeout(r, 300))
+    await waitFor(queueEmpty, 'the short download to end')
     assert.equal(await spoolReady(dir, 't2'), null)
   })
 
@@ -44,9 +45,10 @@ describe('ensureSpool → spoolReady', () => {
     let calls = 0
     const failing = (async () => { calls++; throw new Error('down') }) as unknown as typeof fetch
     ensureSpool(dir, 't3', 'http://hub/audio/3', failing)
-    await new Promise((r) => setTimeout(r, 150))
+    await waitFor(queueEmpty, 'the first try to fail')
+    assert.equal(calls, 1)
     ensureSpool(dir, 't3', 'http://hub/audio/3', failing)
-    await new Promise((r) => setTimeout(r, 150))
+    await waitFor(queueEmpty, 'the second kick to finish')
     assert.equal(calls, 1, 'second kick inside the cooldown must not refetch')
   })
 })
@@ -101,29 +103,27 @@ test('a burst of tracks downloads one at a time, newest first', async () => {
     })
   }) as unknown as typeof fetch
 
-  for (const id of ['a', 'b', 'c', 'd']) ensureSpool(dir, id, `http://h/${id}`, fetchFn)
-  await new Promise((r) => setTimeout(r, 20))
+  try {
+    for (const id of ['a', 'b', 'c', 'd']) ensureSpool(dir, id, `http://h/${id}`, fetchFn)
+    await waitFor(() => started.length > 0, 'the first download to start')
+    await new Promise((r) => setTimeout(r, 20))   // room for a wrong second one to start
 
-  // The whole point: a burst must not put the link into four-way contention.
-  assert.equal(started.length, 1, 'only one download may run at a time')
-  assert.equal(started[0], 'a', 'a lone request never waits — it takes the free slot')
-  assert.equal(spoolQueueState().active, 1)
-  assert.equal(spoolQueueState().waiting, 3)
+    // The whole point: a burst must not put the link into four-way contention.
+    assert.equal(started.length, 1, 'only one download may run at a time')
+    assert.equal(started[0], 'a', 'a lone request never waits — it takes the free slot')
+    assert.equal(spoolQueueState().active, 1)
+    assert.equal(spoolQueueState().waiting, 3)
 
-  // The backlog drains NEWEST first: by the time a slot frees, the track the
-  // listener is on is the one most recently asked for, not the stalest.
-  finish.get('a')!()
-  await new Promise((r) => setTimeout(r, 30))
-  assert.equal(started.length, 2)
-  assert.equal(started[1], 'd', 'newest interest wins the freed slot')
-
-  // Release every waiter as its turn comes (c, then b) — the spool queue is
-  // module state, so a download left hanging here would block later tests.
-  for (let round = 0; round < 4; round++) {
-    for (const [, f] of finish) f()
-    await new Promise((r) => setTimeout(r, 30))
+    // The backlog drains NEWEST first: by the time a slot frees, the track the
+    // listener is on is the one most recently asked for, not the stalest.
+    finish.get('a')!()
+    await waitFor(() => started.length > 1, 'the freed slot to be taken')
+    assert.equal(started[1], 'd', 'newest interest wins the freed slot')
+  } finally {
+    // Release every waiter as its turn comes (c, then b) — the spool queue is
+    // module state, so a download left hanging here would block later tests.
+    await waitFor(() => { for (const [, f] of finish) f(); return queueEmpty() }, 'the backlog to drain')
   }
-  assert.deepEqual(spoolQueueState(), { active: 0, waiting: 0 })
 })
 
 // Thin-link pacing (workmini 2026-10-19: one wire-speed spool held the
@@ -153,9 +153,7 @@ describe('thin-link spool pacing', () => {
     const body = Buffer.from(Array.from({ length: 2_500_000 }, (_, i) => (i * 7) % 251))
     const seen: string[] = []
     ensureSpool(dir, 'ranged', 'http://hub/audio/r', rangeServing(body, seen), 20_000_000)
-    let ready = null
-    for (let i = 0; i < 200 && !ready; i++) { await new Promise((r) => setTimeout(r, 10)); ready = await spoolReady(dir, 'ranged') }
-    assert.ok(ready, 'ranged spool landed')
+    const ready = await waitFor(() => spoolReady(dir, 'ranged'), 'the ranged spool to land')
     assert.equal(ready.contentType, 'audio/mp4')
     assert.ok((await readFile(ready.file)).equals(body))
     // 20 MB/s → 1 MiB requests: three of them, in order, no gaps or overlaps.
@@ -166,9 +164,7 @@ describe('thin-link spool pacing', () => {
     const dir = await mkdtemp(join(tmpdir(), 'spool-paced-'))
     const body = Buffer.from(Array.from({ length: 40_000 }, (_, i) => i % 251))
     ensureSpool(dir, 'paced', 'http://hub/audio/p', fetchServing(body), 20_000_000)
-    let ready = null
-    for (let i = 0; i < 100 && !ready; i++) { await new Promise((r) => setTimeout(r, 10)); ready = await spoolReady(dir, 'paced') }
-    assert.ok(ready, 'paced spool landed')
+    const ready = await waitFor(() => spoolReady(dir, 'paced'), 'the paced spool to land')
     assert.ok((await readFile(ready.file)).equals(body))
   })
 
@@ -177,9 +173,7 @@ describe('thin-link spool pacing', () => {
     const body = Buffer.alloc(30_000, 3)
     const seen: string[] = []
     ensureSpool(dir, 'fat', 'http://hub/audio/f', rangeServing(body, seen), 0)
-    let ready = null
-    for (let i = 0; i < 100 && !ready; i++) { await new Promise((r) => setTimeout(r, 10)); ready = await spoolReady(dir, 'fat') }
-    assert.ok(ready, 'fat-link spool landed')
+    await waitFor(() => spoolReady(dir, 'fat'), 'the fat-link spool to land')
     assert.deepEqual(seen, ['(none)'])
   })
 })

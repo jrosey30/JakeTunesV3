@@ -12,10 +12,12 @@
  */
 import assert from 'node:assert/strict'
 import { after, afterEach, beforeEach, describe, mock, test } from 'node:test'
+import { execFileSync } from 'node:child_process'
 import { register } from 'node:module'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { extname, join } from 'node:path'
+import { HUNG_MS } from './wait-for.ts'
 
 // The store reaches state-dir.ts, which asks electron for userData. The same stub
 // the headless scripts use; state-dir reads it once, at import.
@@ -89,10 +91,27 @@ const realFetch = globalThis.fetch
 const savedEnv = { HOME: process.env.HOME, PATH: process.env.PATH, TMPDIR: process.env.TMPDIR }
 
 const put = (name: string, body: string | Uint8Array): void => writeFileSync(join(world, name), body)
+// Each fake is written once, run once, and hard-linked into every test's world. A
+// brand-new executable's first run is the slow one: macOS checks it, 277 ms against
+// 5.5 ms for the next run at load ~290, and one has outlasted the store's 10 s for
+// `rip --version` (2026-11-04). The check follows the file: a link is free, a copy pays again.
+const fakesDir = mkdtempSync(join(tmpdir(), 'jt-lanes-fakes-'))
+after(() => rmSync(fakesDir, { recursive: true, force: true }))
+const fakes = new Map<string, string>()
 function install(dir: string, name: string, script: string): void {
   mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, name), script)
-  chmodSync(join(dir, name), 0o755)
+  let fake = fakes.get(script)
+  if (!fake) {
+    fake = join(fakesDir, `fake-${fakes.size}`)
+    writeFileSync(fake, script)
+    chmodSync(fake, 0o755)
+    try {
+      execFileSync(fake, ['--version'], { cwd: fakesDir, env: { ...process.env, FAKE_WORLD: fakesDir }, stdio: 'ignore', timeout: HUNG_MS })
+    } catch { /* the bad-interpreter fake, or nothing to copy: only the first run counts */ }
+    fakes.set(script, fake)
+  }
+  rmSync(join(dir, name), { force: true })
+  linkSync(fake, join(dir, name))
 }
 const pipxBin = (): string => join(home, '.local', 'bin')
 const calls = (program: string): string[] => existsSync(join(world, 'calls.log'))

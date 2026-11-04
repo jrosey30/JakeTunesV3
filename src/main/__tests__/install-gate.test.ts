@@ -14,19 +14,20 @@
  * What it proves:
  *  - the "update ready" protocol: update-ready.json is written the moment
  *    the wait begins; update-go with OUR sha clears the gate without idle
- *    and within the 2 s cadence; a go-file for another sha is ignored and
+ *    and with no heavy check due; a go-file for another sha is ignored and
  *    deleted; the audio hard stop still blocks with a go-file present
  *  - both markers are removed on success, on every ABORT, on timeout and
  *    on a TERM kill
  *  - the pre-protocol behaviour is unchanged: messages, exit codes, the
  *    idle path, the no-sha call, the dev-machine (no data folder) call
  */
-import { describe, it } from 'node:test'
+import { after, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawn, type ChildProcess } from 'node:child_process'
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { HUNG_MS, waitFor } from './wait-for.ts'
 
 const repoRoot = join(import.meta.dirname, '..', '..', '..')
 const scriptPath = join(repoRoot, 'scripts', 'install', 'jaketunes-install-gate.sh')
@@ -38,15 +39,6 @@ const OLD_ASAR = 'old build asar bytes'
 const NEW_ASAR = 'new build asar bytes — longer'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
-
-async function waitFor(cond: () => boolean, what: string, timeoutMs = 10_000): Promise<void> {
-  const until = Date.now() + timeoutMs
-  while (Date.now() < until) {
-    if (cond()) return
-    await sleep(25)
-  }
-  assert.fail(`timed out waiting for ${what}`)
-}
 
 const FAKES: Record<string, string> = {
   pmset: `#!/bin/bash
@@ -122,6 +114,19 @@ exit 0
 `,
 }
 
+// One folder of fakes for the whole file, not one per test. Their state lives in
+// $JT_FAKE, so worlds stay apart, and a brand-new executable's first run is the slow
+// one: macOS checks it, 277 ms against 5.5 ms for the next run at load ~290
+// (2026-11-04). Fourteen of those per test used up the 15 s this file failed on.
+const bin = mkdtempSync(join(tmpdir(), 'jt-gate-bin-'))
+for (const [name, body] of Object.entries(FAKES)) {
+  writeFileSync(join(bin, name), body)
+  chmodSync(join(bin, name), 0o755)
+}
+// The one the gate holds to a limit of its own (alarm 20): never its first run.
+execFileSync(join(bin, 'osascript'), { env: { ...process.env, JT_FAKE: bin } })
+after(() => rmSync(bin, { recursive: true, force: true }))
+
 const ASSERTIONS = {
   none: `Assertions status system-wide:
    PreventUserIdleSystemSleep       0
@@ -193,15 +198,9 @@ function makeWorld(o: WorldOpts = {}): World {
   const home = join(root, 'home')
   const dataDir = join(home, DATA_REL)
   const fake = join(root, 'fake')
-  const bin = join(root, 'bin')
   mkdirSync(home, { recursive: true })
   if (o.dataDir !== false) mkdirSync(dataDir, { recursive: true })
   mkdirSync(fake)
-  mkdirSync(bin)
-  for (const [name, body] of Object.entries(FAKES)) {
-    writeFileSync(join(bin, name), body)
-    chmodSync(join(bin, name), 0o755)
-  }
   writeFileSync(join(fake, 'assertions'), ASSERTIONS[o.audio ?? 'none'])
   writeFileSync(join(fake, 'idle_ns'), String((o.idleS ?? 10) * 1_000_000_000))
   writeFileSync(join(fake, 'ps_4242'), 'JakeTunes\n')
@@ -233,9 +232,10 @@ function makeWorld(o: WorldOpts = {}): World {
     writeGo: (sha) => { const tmp = `${goFile}.${process.pid}.tmp`; writeFileSync(tmp, `${sha}\n`); renameSync(tmp, goFile) },
     setAudio: (a) => writeFileSync(join(fake, 'assertions'), ASSERTIONS[a]),
     setIdle: (s) => writeFileSync(join(fake, 'idle_ns'), String(s * 1_000_000_000)),
-    // One minute, not the script's 45: a gate that never clears is a failed
-    // test in 60 s, not a 45-minute CI wall (2026-10-30).
-    run: ({ sha, note, maxMin = 1 }) => {
+    // Five minutes, not the script's 45: the runner's own limit, so being slow never
+    // trips this ABORT, and a gate that outlives its test goes soon after instead of
+    // holding a CI run for 45 minutes (2026-10-30).
+    run: ({ sha, note, maxMin = 5 }) => {
       const args = [scriptPath, stagedApp, BK, String(maxMin)]
       if (sha !== undefined) args.push(sha)
       if (note !== undefined) args.push(note)
@@ -266,8 +266,13 @@ function makeWorld(o: WorldOpts = {}): World {
     },
     // A gate still waiting when a test gives up is killed here: left alone it
     // held the stdio pipes (and node:test) for its whole max-wait (2026-10-30).
+    // The pipes go too: a stuck child of the gate outlives the kill and holds them.
     cleanup: () => {
-      for (const c of spawned) if (c.exitCode === null && c.signalCode === null) c.kill('SIGKILL')
+      for (const c of spawned) {
+        if (c.exitCode === null && c.signalCode === null) c.kill('SIGKILL')
+        c.stdout?.destroy()
+        c.stderr?.destroy()
+      }
       rmSync(root, { recursive: true, force: true })
     },
   }
@@ -277,8 +282,8 @@ function readMarker(path: string): Record<string, unknown> {
   return JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
 }
 
-async function finished(g: Gate, timeoutMs = 15_000): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
-  // The timer is cleared on exit — a live 15 s timer would keep the test
+async function finished(g: Gate, timeoutMs = HUNG_MS): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+  // The timer is cleared on exit — a live timer this long would keep the test
   // process alive long after the last scenario.
   let handle: ReturnType<typeof setTimeout> | null = null
   const timer = new Promise<never>((_, reject) => {
@@ -295,6 +300,7 @@ describe('install gate — the update-ready protocol', () => {
   it('writes update-ready.json the moment it starts waiting; a TERM kill removes it', async () => {
     const w = makeWorld({ idleS: 10 })
     try {
+      const startedAt = Date.now()
       const g = w.run({ sha: SHA, note: NOTE })
       await waitFor(() => existsSync(w.marker), 'update-ready.json')
       const m = readMarker(w.marker)
@@ -303,7 +309,9 @@ describe('install gate — the update-ready protocol', () => {
       assert.equal(m['version'], '6.0.0', 'version comes from the STAGED app\'s Info.plist')
       assert.equal(m['note'], NOTE, 'the note survives JSON escaping of its quotes')
       assert.equal(m['gatePid'], g.child.pid)
-      assert.ok(Math.abs(Date.parse(String(m['stagedAt'])) - Date.now()) < 60_000, `stagedAt is now-ish: ${String(m['stagedAt'])}`)
+      // Between starting the gate and reading its marker; the stamp is whole seconds.
+      const stagedAt = Date.parse(String(m['stagedAt']))
+      assert.ok(stagedAt >= startedAt - 1_000 && stagedAt <= Date.now(), `stagedAt is now: ${String(m['stagedAt'])}`)
       await waitFor(() => /waiting: in use 10s ago/.test(g.out()), 'the idle wait line')
       assert.match(g.out(), /update-ready\.json written for 0123456789abcdef/)
       assert.doesNotMatch(g.out(), /gate clear/)
@@ -318,19 +326,17 @@ describe('install gate — the update-ready protocol', () => {
     } finally { w.cleanup() }
   })
 
-  it('a go-file with OUR sha clears the gate without idle, at the 2 s cadence, and installs; both markers are removed', async () => {
-    // Heavy checks every 30 s: only the go-file path can clear this in time.
-    const w = makeWorld({ idleS: 10, pollS: 30 })
+  it('a go-file with OUR sha clears the gate without idle, with no heavy check due, and installs; both markers are removed', async () => {
+    // The first heavy check has run and the next is an hour off: if the 2 s go-file
+    // check did not do this on its own, the gate would sit until HUNG_MS fails the test.
+    const w = makeWorld({ idleS: 10, pollS: 3600 })
     try {
       const g = w.run({ sha: SHA, note: NOTE })
       await waitFor(() => existsSync(w.marker), 'update-ready.json')
       await waitFor(() => /waiting: in use 10s ago/.test(g.out()), 'the idle wait line')
-      const t0 = Date.now()
       w.writeGo(SHA)
       const r = await finished(g)
-      const took = Date.now() - t0
       assert.equal(r.code, 0, g.out())
-      assert.ok(took < 8_000, `cleared ${took} ms after the go-file — the 2 s check, not the 15 s one`)
       assert.match(g.out(), /gate clear \(install clicked in the app, no audio\)/)
       assert.doesNotMatch(g.out(), /clear \(idle/)
 
