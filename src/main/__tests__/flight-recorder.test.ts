@@ -16,13 +16,14 @@ import { mkdtemp, readFile, stat, writeFile } from 'fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { initFlightRecorder, serializeDetail, sanitizeCrashPayload, createStormGate } from '../flight-recorder.ts'
+import { HUNG_MS } from './wait-for.ts'
 
 const tmp = async () => mkdtemp(join(tmpdir(), 'fr-test-'))
 // Poll-until-true, never a fixed sleep: fixed waits flaked the gate the
 // first time the suite ran alongside a build (2026-08-22, # fail 1 under
-// load). 2s ceiling = load-proof; passes in ~10ms when idle.
+// load). The ceiling means stuck, not slow; passes in ~10ms when idle.
 const settle = async (done?: () => Promise<boolean>) => {
-  const until = Date.now() + 2000
+  const until = Date.now() + HUNG_MS
   for (;;) {
     if (done) { try { if (await done()) return } catch { /* keep polling */ } }
     else await new Promise((r) => setTimeout(r, 30))

@@ -29,6 +29,7 @@ import {
   UPDATE_READY_FILE,
 } from '../update-ready-core.ts'
 import { startUpdateReadyWatcher, processAlive, type UpdateReadyHandle } from '../update-ready.ts'
+import { waitFor } from './wait-for.ts'
 
 const SRC = join(import.meta.dirname, '../..')
 const ROOT = join(SRC, '..')
@@ -300,7 +301,7 @@ describe('update-ready watcher — the marker reaches the renderer', () => {
     const h = harness({ preGo: `${SHA}\n` })
     try {
       await h.handle.check()
-      await settle()
+      await waitFor(() => h.rows.some((r) => r.tag === 'update-ready.stale-go-removed'), 'the leftover go-file to be removed')
       assert.ok(!existsSync(h.goPath))
       assert.equal(h.rows.filter((r) => r.tag === 'update-ready.stale-go-removed').length, 1)
     } finally { h.cleanup() }
@@ -316,12 +317,10 @@ describe('update-ready watcher — the marker reaches the renderer', () => {
     const h = harness({ pollMs: 40 })
     try {
       h.write(marker())
-      const until = Date.now() + 3000
-      while (h.sent.length === 0 && Date.now() < until) await settle(20)
+      await waitFor(() => h.sent.length > 0, 'the watcher or the poll to see the file')
       assert.equal(h.sent.length, 1, 'the watcher or the poll saw the file')
       h.alivePids.clear()
-      const until2 = Date.now() + 3000
-      while (h.sent.length < 2 && Date.now() < until2) await settle(20)
+      await waitFor(() => h.sent.length > 1, 'the poll to see the dead gate')
       assert.deepEqual(h.sent.at(-1), null)
       assert.ok(!existsSync(h.markerPath))
       h.handle.stop()

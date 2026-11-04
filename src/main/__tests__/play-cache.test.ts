@@ -8,6 +8,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { createPlayCache } from '../play-cache.ts'
 import { playCacheName, pathHashFor, isEntryFor } from '../play-cache-name.ts'
+import { waitFor } from './wait-for.ts'
 
 let root = ''
 before(async () => { root = await mkdtemp(join(tmpdir(), 'jt-play-cache-')) })
@@ -96,10 +97,12 @@ describe('play cache', () => {
     const b = await pc.cachePathFor('/x/f2.m4a', 1, 1)
     await utimes(b!, new Date(Date.now() - 30_000), new Date(Date.now() - 30_000))
     const c = await pc.cachePathFor('/x/f3.m4a', 1, 1)
-    await new Promise((r) => setTimeout(r, 50))   // enforceCacheCap runs detached
-    const left = (await readdir(pc.dir)).filter((n) => n.endsWith('.flac'))
+    const flacs = async (): Promise<string[]> => (await readdir(pc.dir)).filter((n) => n.endsWith('.flac'))
+    // enforceCacheCap runs detached
+    await waitFor(async () => !(await flacs()).includes(a!.split('/').pop()!), 'the oldest entry to be evicted')
+    await new Promise((r) => setTimeout(r, 50))   // room for a wrong second eviction
+    const left = await flacs()
     assert.ok(left.includes(c!.split('/').pop()!), 'just-written entry must survive')
-    assert.ok(!left.includes(a!.split('/').pop()!), 'oldest entry must be evicted')
     assert.ok(left.length <= 2)
   })
 })

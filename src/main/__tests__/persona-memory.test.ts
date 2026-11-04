@@ -19,10 +19,11 @@ import {
   loadMusicManMemory, noteMusicManUtterance, recentUtterancesBlock,
   loadCynthiaMemory, noteCynthiaUtterance, recentCynthiaBlock,
 } from '../persona-memory.ts'
+import { HUNG_MS } from './wait-for.ts'
 
 /** noteCynthiaUtterance fires the write and returns; a fixed sleep here is a
  *  race that loses under load. Poll to a deadline instead. */
-async function readWhenWritten(path: string, timeoutMs = 2000): Promise<string> {
+async function readWhenWritten(path: string, timeoutMs = HUNG_MS): Promise<string> {
   const deadline = Date.now() + timeoutMs
   for (;;) {
     try { return await readFile(path, 'utf-8') } catch (err) {
@@ -107,7 +108,7 @@ describe('persona memory', () => {
 
     // Poll until BOTH landed — the first write may win the race alone.
     let onDisk: { text: string }[] = []
-    const deadline = Date.now() + 2000
+    const deadline = Date.now() + HUNG_MS
     do {
       onDisk = JSON.parse(await readWhenWritten(join(dir, 'cynthia-memory.json')))
       if (onDisk.length === 2) break

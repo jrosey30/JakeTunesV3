@@ -10,7 +10,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { listeningQuote, listeningQuoteFacts, hubListeningQuote, type QuoteFacts } from '../../common/listening-quote.ts'
-import { createHubListeningQuote, type QuoteFetchLike } from '../listening-quote-hub.ts'
+import { createHubListeningQuote, type QuoteFetchLike, type QuoteFetchReply } from '../listening-quote-hub.ts'
 
 const R = join(import.meta.dirname, '..', '..', 'renderer')
 const src = (...p: string[]): string => readFileSync(join(R, ...p), 'utf8')
@@ -126,12 +126,26 @@ describe('createHubListeningQuote', () => {
     assert.deepEqual(await q2.get(), { answered: false, text: null })
   })
   it('the Home never waits on a slow homemini past waitMs', async () => {
-    const q = createHubListeningQuote({ baseUrl: 'http://h', waitMs: 30, timeoutMs: 1000, fetchImpl: () => new Promise((res) => setTimeout(() => res({ ok: true, status: 200, json: async () => ({ totalLoggedPlays: 50, observation: 'late' }) }), 200)) })
-    const t0 = Date.now()
-    assert.deepEqual(await q.get(), { answered: false, text: null })
-    assert.ok(Date.now() - t0 < 150)
-    await new Promise((r) => setTimeout(r, 250))
+    // A GET only this test can finish, so no clock decides whether it is "slow".
+    // It honours abort as a real fetch does: giving up on it would lose the answer here too.
+    const gets: Array<(reply: QuoteFetchReply) => void> = []
+    const q = createHubListeningQuote({
+      baseUrl: 'http://h', waitMs: 30, timeoutMs: 1000,
+      fetchImpl: (_url, init) => new Promise((res, rej) => {
+        gets.push(res)
+        ;(init?.signal as AbortSignal).addEventListener('abort', () => rej(new Error('aborted')))
+      }),
+    })
+    // Timers run earliest-due first with promise jobs in between, so this one, due
+    // 1 ms after get()'s own and set after it, loses to it on a Mac however busy.
+    const answer = q.get()
+    const pastWaitMs = new Promise<string>((res) => { setTimeout(res, 31, 'still waiting on the GET') })
+    assert.deepEqual(await Promise.race([answer, pastWaitMs]), { answered: false, text: null })
+    assert.equal(gets.length, 1, 'answered with the GET still in flight')
+    gets[0]!({ ok: true, status: 200, json: async () => ({ totalLoggedPlays: 50, observation: 'late' }) })
+    await new Promise((r) => setImmediate(r))   // only promise jobs lie between the reply and the saved answer
     assert.deepEqual(await q.get(), { answered: true, text: 'late' }, 'the slow GET still lands for next time')
+    assert.equal(gets.length, 1, 'that GET, not a second one')
   })
 })
 

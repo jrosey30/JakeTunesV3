@@ -3,7 +3,8 @@
 // src/main/artist-photo-picks.ts + the skip in artist-photo.ts.
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync, existsSync, utimesSync, readFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, existsSync, utimesSync, readFileSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createArtistPhotoPicks, parsePhotoPicks, photoFileOf, PICKS_READY_CAP_MS, type PicksFetchLike } from '../artist-photo-picks.ts'
@@ -31,9 +32,11 @@ function hub(opts: { list?: unknown; status?: number; photo?: Buffer; offline?: 
   return { fetchImpl, seen }
 }
 
-function tmp(): { dir: string; stateFile: string; done(): void } {
+function tmp(): { dir: string; stateFile: string; done(): Promise<void> } {
   const root = mkdtempSync(join(tmpdir(), 'jt-photo-picks-'))
-  return { dir: join(root, 'artist-images'), stateFile: join(root, 'artist-photo-picks.json'), done: () => rmSync(root, { recursive: true, force: true }) }
+  // The async rm with retries: the Deezer test's background save can land mid-delete
+  // (ENOTEMPTY, 2026-11-04; artist-photo.test.ts has the numbers).
+  return { dir: join(root, 'artist-images'), stateFile: join(root, 'artist-photo-picks.json'), done: () => rm(root, { recursive: true, force: true, maxRetries: 5 }) }
 }
 const quiet = { log: () => {}, warn: () => {} }
 
@@ -66,7 +69,7 @@ describe('artist photo picks', () => {
       assert.equal(seen[0]!.url, 'http://homemini:3000/api/artist-photo-picks')
       assert.ok(seen.some((s) => s.url === `http://homemini:3000/api/artist-photo/${FILE}`))
       assert.deepEqual(JSON.parse(readFileSync(t.stateFile, 'utf8')).picks, list.picks)
-    } finally { t.done() }
+    } finally { await t.done() }
   })
 
   it('nothing moved: a 304 for the list and no download while the photo on disk is the pick', async () => {
@@ -78,7 +81,7 @@ describe('artist photo picks', () => {
       seen.length = 0
       assert.deepEqual(await picks.pull(), [])
       assert.deepEqual(seen, [{ url: 'http://homemini:3000/api/artist-photo-picks', inm: '"e1"' }])
-    } finally { t.done() }
+    } finally { await t.done() }
   })
 
   it('a photo that comes back as other bytes is never saved', async () => {
@@ -88,7 +91,7 @@ describe('artist photo picks', () => {
       const picks = createArtistPhotoPicks({ baseUrl: 'http://homemini:3000', dir: t.dir, stateFile: t.stateFile, fetchImpl, ...quiet })
       assert.deepEqual(await picks.pull(), [])
       assert.equal(existsSync(join(t.dir, 'cameron-winter.jpg')), false)
-    } finally { t.done() }
+    } finally { await t.done() }
   })
 
   it('away from homemini (or a homemini without picks) the saved list still stands', async () => {
@@ -102,7 +105,7 @@ describe('artist photo picks', () => {
         await next.pull()
         assert.equal(next.isPicked('cameron-winter'), true)
       }
-    } finally { t.done() }
+    } finally { await t.done() }
   })
 
   it('a pick homemini drops takes its saved photo with it (only while that file is still the pick), so the usual photo comes back', async () => {
@@ -121,7 +124,7 @@ describe('artist photo picks', () => {
       writeFileSync(join(t.dir, 'cameron-winter.jpg'), selfie)
       await createArtistPhotoPicks({ baseUrl: 'http://homemini:3000', dir: t.dir, stateFile: t.stateFile, fetchImpl: gone.fetchImpl, ...quiet }).pull()
       assert.deepEqual(readFileSync(join(t.dir, 'cameron-winter.jpg')), selfie)
-    } finally { t.done() }
+    } finally { await t.done() }
   })
 
   it('ready() never holds a launch longer than the cap when homemini hangs', async () => {
@@ -129,11 +132,12 @@ describe('artist photo picks', () => {
     try {
       const hang: PicksFetchLike = () => new Promise(() => {})
       const picks = createArtistPhotoPicks({ baseUrl: 'http://homemini:3000', dir: t.dir, stateFile: t.stateFile, fetchImpl: hang, ...quiet })
-      const started = Date.now()
       picks.start()
-      await picks.ready()
-      assert.ok(Date.now() - started < PICKS_READY_CAP_MS + 500)
-    } finally { t.done() }
+      // Timers run earliest-due first with promise jobs in between, so this one, due
+      // 1 ms after the cap and set after it, loses to it on a Mac however busy.
+      const pastCap = new Promise<string>((res) => { setTimeout(res, PICKS_READY_CAP_MS + 1, 'still held') })
+      assert.equal(await Promise.race([picks.ready().then(() => 'ready'), pastCap]), 'ready')
+    } finally { await t.done() }
   })
 
   it('the Deezer refresh leaves a picked act alone, and refreshes everyone else as before', async () => {
@@ -165,6 +169,6 @@ describe('artist photo picks', () => {
       assert.equal(downloads.length, 0)
       assert.equal(await photos.get('Geese'), 'geese')
       assert.equal(downloads.length, 1)
-    } finally { t.done() }
+    } finally { await t.done() }
   })
 })

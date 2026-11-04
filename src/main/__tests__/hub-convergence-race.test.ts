@@ -38,6 +38,7 @@ import {
   bumpLocalGen, snapshotLocalGens, movedGens, withLocalLock, lockKeys,
   PLAYLIST_HUB_COLLECTIONS, MIXTAPE_HUB_COLLECTIONS,
 } from '../hub-local-state.ts'
+import { HUNG_MS } from './wait-for.ts'
 
 // ── The hub's rule book (copy of Mobile desktopPlaylistHubRules.ts) ─────
 type Stone = { id: string; name: string; deletedAt: string }
@@ -92,7 +93,7 @@ type P = { id: string; name: string; trackIds: number[]; modifiedAt?: string; [k
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v))
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 /** Poll until `cond` holds (never a fixed guess at how fast the machine is). */
-async function waitFor(cond: () => boolean, what = 'condition', ms = 5000): Promise<void> {
+async function waitFor(cond: () => boolean, what = 'condition', ms = HUNG_MS): Promise<void> {
   const end = Date.now() + ms
   while (!cond()) {
     if (Date.now() > end) throw new Error(`timed out waiting for ${what}`)
