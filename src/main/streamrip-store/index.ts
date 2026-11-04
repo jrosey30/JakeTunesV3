@@ -25,7 +25,7 @@ import { join } from 'path'
 import { homedir, tmpdir } from 'os'
 import { mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
 import { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
-import { rankStreamripCandidates, searchTitle, searchQueryTitle, editionSubstituted, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, isNoResultsMessage, parseStreamripDesc, type QobuzTrackMeta } from '../streamrip-match.ts'
+import { rankStreamripCandidates, rankWithArtistAliases, searchTitle, searchQueryTitle, editionSubstituted, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, isNoResultsMessage, parseStreamripDesc, type QobuzTrackMeta } from '../streamrip-match.ts'
 import { buildRequestedAlbum, verifyAlbumCandidate, reconcileAlbumCompletion, describeCompletion, albumAlternativeDesc, orderTracks, parseCountTag, matchLibraryOwnership, ladderBudgetMs, type RequestedAlbum, type CandidateAlbum, type AlbumVerdict, type Ownership, type LibraryTrackLite } from '../album-identity.ts'
 import { loadLibraryTracksLite } from '../import-pipeline.ts'
 import { itunesAlbumTracks, itunesFindAlbum } from '../download-search'
@@ -35,6 +35,7 @@ import type { SourceEdition } from '../../common/source-edition.ts'
 import { shareSourceKey } from '../../common/source-playlists.ts'
 import { recoTitleMatches, recoArtistMatches } from '../reco-match.ts'
 import { isAllowedStreamripUrl } from '../url-safety'
+import { artistAliases } from '../artist-spellings-store.ts'
 import { quietWarn } from '../flight-recorder'
 
 export interface StreamripDeps {
@@ -43,6 +44,9 @@ export interface StreamripDeps {
   /** Same importer Bandcamp uses; we pass source='streamrip', plus the Listen
    *  List row's share source when this job answers one (the row's addedVia). */
   importDownloaded: (absPaths: string[], source?: string, addedVia?: string) => Promise<ImportedTrackRecord[] | BatchSummary>
+  /** The app's MusicBrainz identity and shared throttle (index.ts mbThrottle). */
+  mbThrottle: () => Promise<void>
+  mbUserAgent: string
 }
 
 // pipx installs the launcher here; an absolute path sidesteps the app's spawn
@@ -694,9 +698,13 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       qsearch = await searchCatalog({ query: bare, source: 'qobuz', mediaType, numResults: 25 })
       trace.push(`qobuz retry “${bare}”: ${qsearch.ok ? `${qsearch.results?.length ?? 0} results` : `ERR ${qsearch.error}`}`)
     }
-    const { ranked, rejectedVersions } = qsearch.ok && qsearch.results?.length
-      ? rankStreamripCandidates(lookFor || query, artist, qsearch.results, mediaType)
-      : { ranked: [], rejectedVersions: [] }
+    // 2026-11-03: Qobuz files The English Beat as "The Beat". When only another
+    // name for the artist stands in the way, MusicBrainz is asked once; the same
+    // names then let the staged file's tags through the judge.
+    const { ranked, rejectedVersions, aliases } = qsearch.ok && qsearch.results?.length
+      ? await rankWithArtistAliases(lookFor || query, artist, qsearch.results, mediaType, (a) => artistAliases(a, { throttle: deps.mbThrottle, userAgent: deps.mbUserAgent }))
+      : { ranked: [], rejectedVersions: [], aliases: [] as string[] }
+      if (aliases.length) trace.push(`“${artist}” also goes by ${aliases.slice(0, 4).map((a) => `“${a}”`).join(', ')} (MusicBrainz)`)
       trace.push(`ranked ${ranked.length}${rejectedVersions.length ? `, rejected versions ${rejectedVersions.length}` : ''}${ranked[0] ? ` — top “${ranked[0].desc}”` : ''}`)
       // ── The clean-version gate (2026-08-16). Explicitness is an identity
       // axis resolved BEFORE any byte downloads: when the clicked row was
@@ -759,7 +767,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     // that recording before it can touch the library. Every rejection is
     // kept as a structured alternative for the verdict at the end.
     const req = buildRequestedRecording({
-      artist, title, album: opts?.album, durationMs, durationTolSec: durTol,
+      artist, artistAliases: aliases, title, album: opts?.album, durationMs, durationTolSec: durTol,
       releaseYear: opts?.releaseYear, cleanedSource: opts?.cleanedSource, explicitSource: opts?.explicitSource,
     })
     const alternatives: Alternative[] = []
@@ -810,7 +818,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       const lookup = cid ? await itunesAlbumTracks(cid).catch(() => null) : null
       const rows = lookup?.ok ? lookup.tracks : []
       reqAlbum = buildRequestedAlbum({
-        artist, title,
+        artist, artistAliases: aliases, title,
         trackCount: opts?.trackCount ?? lookup?.trackCount,
         tracks: rows.map((t) => ({ title: t.song, trackNumber: t.trackNumber, discNumber: t.discNumber, durationSec: t.durationSecs, explicitness: t.explicitness })),
         discCount: rows.reduce((m, t) => Math.max(m, t.discCount ?? t.discNumber ?? 1), 0) || undefined,
@@ -1000,7 +1008,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       const albName = (opts!.album as string).trim()
       const asearch = await searchCatalog({ query: [artist, searchTitle(albName) || albName].filter(Boolean).join(' '), source: 'qobuz', mediaType: 'album', numResults: 10 })
       const albRanked = asearch.ok && asearch.results?.length
-        ? rankStreamripCandidates(albName, artist, asearch.results, 'album').ranked
+        ? rankStreamripCandidates(albName, artist, asearch.results, 'album', aliases).ranked
         : []
       for (const alb of albRanked.slice(0, 2)) {
         const tl = await qobuzAlbumTrackList(alb.id)

@@ -28,6 +28,9 @@ export interface RequestedRecording {
   /** Version markers Jake asked for by name ("(Live)", "(Acoustic)"). Empty =
    *  the ordinary studio recording was requested. */
   requestedMarkers: string[]
+  /** Other names MusicBrainz knows the artist by, when the store filed the song
+   *  under one ("The Beat" for The English Beat). Compared whole. */
+  artistAliases?: string[]
   /** Provider ids that travelled with the pick, when any did. */
   providerIds: { itunesTrackId?: number; isrc?: string }
 }
@@ -59,6 +62,8 @@ export interface RequestedAlbumTrack {
 
 export interface RequestedAlbum {
   artist: string
+  /** RequestedRecording.artistAliases: Qobuz files the albums under that name too. */
+  artistAliases?: string[]
   /** As clicked ("Drums and Wires (Bonus Track Version)"). */
   title: string
   /** Packaging stripped, version markers kept ("Drums and Wires"). */

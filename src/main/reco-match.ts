@@ -195,6 +195,15 @@ export function recoArtistMatches(want: string, got: string): boolean {
   return false
 }
 
+/** The artist, or one of the other names MusicBrainz knows them by (2026-11-03:
+ *  Qobuz files The English Beat as "The Beat"). An alias is compared WHOLE, never
+ *  by containment: "The Beat" is no warrant for "The Beat Happening". */
+export function artistOrAlias(want: string, got: string, aliases: string[] = []): boolean {
+  if (recoArtistMatches(want, got)) return true
+  const g = recoFold(got)
+  return g !== '' && aliases.some((a) => recoFold(a) === g)
+}
+
 /** Distinct credited artists on iTunes rows whose track title matches `wantTitle`. */
 export function distinctArtistsForRecoTitle(
   wantTitle: string,

@@ -1,5 +1,5 @@
 /** Pure Qobuz search-result matching for streamrip — shared by download-by-query and tests. */
-import { recoArtistMatches, recoFold, recoTitleMatches } from './reco-match.ts'
+import { artistOrAlias, recoArtistMatches, recoFold, recoTitleMatches } from './reco-match.ts'
 import { foldAccents, nameKey } from '../common/fold-text.ts'
 
 export interface StreamripSearchHit { source: string; mediaType: string; id: string; desc: string }
@@ -23,12 +23,28 @@ export function parseStreamripDesc(desc: string): { title: string; artist: strin
 // mixes, mashups, rehearsals and alternate takes, a cappellas, nightcore /
 // chopped-and-screwed / 8D variants, concert cuts, dubs. Still count-based,
 // so a song NAMED with one of these words ("Live and Let Die", "Dub Be Good
-// to Me") never self-rejects. ⚠️ TWIN: JakeTunesMobile/backend/src/util/
-// streamripMatch.ts is the Brief-131 port of this file and predates the
-// wrong-version guard entirely (no marker lexicon there) — the phone's
-// Qobuz-only downloader is explicitly INCOMPLETE on identity as of
-// 2026-09-04; closing it is a mobile-phase change, not a desktop one.
-const VERSION_MARKER = /^(live|unplugged|acoustic|rerecord|rerecorded|rerecording|rerecords|demo|demos|karaoke|tribute|instrumental|instrumentals|remix|remixed|remixes|mix|mixes|extended|mashup|mashups|medley|sped|slowed|reverb|nightcore|chopped|screwed|8d|soundalike|cover|covers|bootleg|session|sessions|rehearsal|rehearsals|alternate|alt|acapella|acappella|concert|dub|amended|amendedd|clean|cleaned|censored|edit|edited|radio)$/
+// to Me") never self-rejects.
+// 2026-11-03: club, megamix and the hyphen forms "(Re-Edit)" and "(Sped-Up)",
+// which the phone's list already had: "We Found Love (Cahill Club)" read as the
+// song here whenever no runtime was known.
+// ⚠️ TWIN: JakeTunesMobile/backend/src/util/itunesCanonical.ts VERSION_MARKER.
+// It also lists remaster / mono / deluxe / version for its own edition logic.
+const VERSION_MARKER = /^(live|unplugged|acoustic|rerecord|rerecorded|rerecording|rerecordings|rerecords|demo|demos|karaoke|tribute|instrumental|instrumentals|remix|remixed|remixes|reedit|mix|mixes|megamix|extended|mashup|mashups|medley|sped|spedup|slowed|reverb|nightcore|chopped|screwed|8d|soundalike|cover|covers|bootleg|session|sessions|rehearsal|rehearsals|alternate|alt|acapella|acappella|concert|dub|club|amended|amendedd|clean|cleaned|censored|edit|edited|radio)$/
+
+/**
+ * Acts that are not the artist: cover bands, karaoke and tribute acts, "in the
+ * style of" catalogues. "Rihanna" is inside "Rihanna Cover Band", the artist test
+ * is a containment test, and the store's order broke the tie, so the cover band
+ * ranked first here and the judge called its file exact. The phone learned this
+ * on 2026-11-02 ("why did we found love (the karaoke version) get downloaded").
+ * Out of the running unless the request itself asks for one.
+ * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts COVER_ACT_RE, verbatim.
+ */
+const COVER_ACT_RE = /\b(cover band|cover version|covers?|karaoke|tribute|in the style of|made famous by|originally performed by|as made popular by|sound-?alike|backing track|instrumental version)\b/i
+
+export function isCoverAct(title: string, artist: string): boolean {
+  return COVER_ACT_RE.test(`${artist} ${title}`)
+}
 
 /** The version markers a request itself carries — what Jake asked for by
  *  name ("Hallelujah (Live)"). Used by the identity contract to record that
@@ -84,7 +100,10 @@ const EDITION_GROUP = /^(?:(?:amended|explicit|clean|cleaned|censored|edited)\w*
 const MASK_CHARS = /[*!@#$%]/
 
 export function isMaskedToken(tok: string): boolean {
-  return MASK_CHARS.test(tok) && /[a-z0-9]/i.test(tok)
+  // The punctuation that ends a word is not a mask (2026-11-03): "Oh! Darling"
+  // asked Qobuz for "Darling". ⚠️ TWIN: the phone's streamripMatch.ts, same rule.
+  const t = tok.replace(/^[#([]+/, '').replace(/[!?%.,;:)\]]+$/, '')
+  return MASK_CHARS.test(t) && /[a-z0-9]/i.test(t)
 }
 
 function maskedTokenPattern(tok: string): RegExp {
@@ -109,7 +128,10 @@ function maskedTokenPattern(tok: string): RegExp {
 export function maskedTitleMatches(want: string, got: string): boolean {
   const w = want.toLowerCase().split(/\s+/).filter(Boolean)
   const g = got.toLowerCase().split(/\s+/).filter(Boolean)
-  if (!w.length || g.length < w.length) return false
+  // A title with no mask is not a masked match (2026-11-03): without this, any
+  // title holding the request's words passed, and the judge called "Love Song"
+  // the exact recording of "Love".
+  if (!w.some(isMaskedToken) || g.length < w.length) return false
   // Slide the want tokens over the candidate: the candidate may carry extra
   // trailing decoration ("(Remaster)") that the want does not.
   outer: for (let off = 0; off + w.length <= g.length; off++) {
@@ -222,7 +244,7 @@ function markerAlias(w: string): string | undefined {
 // doesn't already say it: "(Live - הופעה חיה)" is ONE label, not two live
 // markers that a plain "(Live)" request would count as an extra one.
 const titleTokens = (s: string): string[] => {
-  const words = foldAccents(s).split(/\s+/).map((w) => nameKey(w, '')).filter(Boolean)
+  const words = foldAccents(s).replace(/\ba[ -]?capp?ella\b/gi, 'acapella').split(/\s+/).map((w) => nameKey(w, '')).filter(Boolean)
   const said = new Set(words)
   const out: string[] = []
   for (const w of words) {
@@ -235,12 +257,17 @@ const titleTokens = (s: string): string[] => {
   return out
 }
 
+const OWNED_VERSION = /[([{][^)\]}]*\p{L}['’]s\s+version[^)\]}]*[)\]}]/iu
+
 /** If `gotTitle` carries a version marker the request didn't ask for, return
  *  that marker; null = clean. COUNT-based token diff, so a song legitimately
  *  NAMED with a marker word never self-rejects ("Live and Let Die" is clean)
  *  while a decorated variant still trips ("Live and Let Die (Live)" has a
  *  second "live" beyond the requested title → rejected). */
 export function unwantedVersionOf(wantTitle: string, gotTitle: string): string | null {
+  // "(Taylor's Version)" is a re-record whose words are all innocent, and it can
+  // run within a second of the original (2026-11-03; the phone refuses it too).
+  if (OWNED_VERSION.test(gotTitle) && !OWNED_VERSION.test(wantTitle)) return 'rerecord'
   const budget = new Map<string, number>()
   for (const w of titleTokens(wantTitle)) budget.set(w, (budget.get(w) ?? 0) + 1)
   // "(Original Mix)" is how dance catalogues label THE recording, not a
@@ -307,7 +334,9 @@ export function addsRemasterStamp(wantTitle: string, gotTitle: string): boolean 
  * and live cuts, and the duration guard still pins the exact recording.
  */
 function bareTitle(s: string): string {
-  return s.replace(/\s*[([{][^)\]}]*[)\]}]\s*/g, ' ').replace(/\s{2,}/g, ' ').trim()
+  // A dash tail is the same decoration as a bracket: "Stars - Mono" (2026-11-03).
+  // ⚠️ TWIN: the phone's streamripMatch.ts bareTitle.
+  return s.replace(/\s*[([{][^)\]}]*[)\]}]\s*/g, ' ').replace(/\s+[-–—]\s+[^-–—()[\]{}]+$/u, '').replace(/\s{2,}/g, ' ').trim()
 }
 
 export function subtitleVariantMatches(want: string, got: string): boolean {
@@ -318,6 +347,26 @@ export function subtitleVariantMatches(want: string, got: string): boolean {
   if (wb && wb !== w && wb === g) return true
   if (gb && gb !== g && gb === w) return true
   return false
+}
+
+/** The same text. Outkast's "?", The Garden's ":(" and MOULD's "///" fold to nothing,
+ *  and no fuzzy arm compares nothing. ⚠️ TWIN: the phone's streamripMatch.ts. */
+function sameTitle(want: string, got: string): boolean {
+  const w = want.trim().toLowerCase()
+  return w !== '' && w === got.trim().toLowerCase()
+}
+
+/** Does a tag read as the song? The fuzzy arms, the masked pattern and a subtitle
+ *  one catalogue dropped, on the titles as written and without their edition
+ *  labels: "Mo Money Mo Problems (feat. Ma$e & Puff Daddy) [Amended]" reads as
+ *  "Mo Money Mo Problems (feat. Puff Daddy & Mase)", and "Hello" as "Hello - 2009
+ *  Remaster". Until 2026-11-03 the short ones only passed because
+ *  maskedTitleMatches let any title holding the words through, which also let
+ *  "Love Song" pass for "Love". */
+export function titleReads(want: string, got: string): boolean {
+  const w = searchTitle(want) || want, g = searchTitle(got) || got
+  return sameTitle(want, got) || recoTitleMatches(w, g) || maskedTitleMatches(w, g) || subtitleVariantMatches(w, g)
+    || recoTitleMatches(want, got) || maskedTitleMatches(want, got) || subtitleVariantMatches(want, got)
 }
 
 /** Rank every eligible Qobuz hit for a reco title + artist, best first.
@@ -340,18 +389,23 @@ export function rankStreamripCandidates(
   wantArtist: string,
   results: StreamripSearchHit[],
   wantMediaType: 'track' | 'album' = 'track',
+  aliases: string[] = [],
 ): { ranked: StreamripSearchHit[]; rejectedVersions: string[] } {
   const scored: Array<{ r: StreamripSearchHit; score: number; i: number }> = []
   const rejectedVersions: string[] = []
+  const wantsCover = isCoverAct(wantTitle, wantArtist)
   const nWant = recoFold(wantTitle)   // compared only. recoNorm made every Hebrew title '' and gave each the exact-title bonus
   const wantToks = new Set(titleTokens(wantTitle))
   for (let i = 0; i < results.length; i++) {
     const r = results[i]
     if (r.mediaType !== wantMediaType) continue
     const { title, artist } = parseStreamripDesc(r.desc)
-    const subtitleOnly = !recoTitleMatches(wantTitle, title) && !maskedTitleMatches(wantTitle, title)
-      && subtitleVariantMatches(wantTitle, title)
-    if (!recoTitleMatches(wantTitle, title) && !maskedTitleMatches(wantTitle, title) && !subtitleOnly) continue
+    // The request is the title without its labels: "Hello" reads as "Hello - 2009
+    // Remaster", five letters being too short for any fuzzy arm with the stamp on.
+    const reads = recoTitleMatches(wantTitle, title) || maskedTitleMatches(wantTitle, title) || sameTitle(wantTitle, title)
+      || (nWant !== '' && recoFold(searchTitle(title)) === nWant)
+    const subtitleOnly = !reads && (subtitleVariantMatches(wantTitle, title) || subtitleVariantMatches(searchTitle(wantTitle) || wantTitle, searchTitle(title) || title))
+    if (!reads && !subtitleOnly) continue
     if (unwantedVersionOf(wantTitle, title)) { rejectedVersions.push(title); continue }
     // Show-brand live recordings hide the tell in the album part of the
     // desc while the title reads clean — same rejection lane as markers.
@@ -362,11 +416,17 @@ export function rankStreamripCandidates(
     // actually reads the same, so it never outranks one that does.
     if (subtitleOnly) score -= 3
     if (wantArtist && artist) {
-      if (!recoArtistMatches(wantArtist, artist)) continue
-      score += 5
+      // The artist's own name, or one of the names MusicBrainz knows them by
+      // (compared whole), outranks a name that merely contains it: "Rihanna"
+      // before "Rihanna & Friends".
+      if (recoFold(wantArtist) === recoFold(artist)) score += 6
+      else if (recoArtistMatches(wantArtist, artist)) score += 5
+      else if (artistOrAlias(wantArtist, artist, aliases)) score += 6
+      else continue
     } else if (artist) {
       score += 1
     }
+    if (!wantsCover && isCoverAct(title, artist)) { rejectedVersions.push(title); continue }
     if (recoFold(title) === nWant) score += 6
     const extras = titleTokens(title).filter((w) => !wantToks.has(w)).length
     score -= Math.min(4, extras)
@@ -374,6 +434,46 @@ export function rankStreamripCandidates(
   }
   scored.sort((a, b) => b.score - a.score || a.i - b.i)
   return { ranked: scored.map((s) => s.r), rejectedVersions }
+}
+
+/** True when the store has the song under a name for the artist that the request
+ *  does not use: a hit that would have ranked if only its artist had matched
+ *  ("Save It for Later by The Beat" for The English Beat, 2026-11-03).
+ *  ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts hitsByAnotherName. */
+export function hitsByAnotherName(
+  wantTitle: string,
+  wantArtist: string,
+  results: StreamripSearchHit[],
+  wantMediaType: 'track' | 'album' = 'track',
+): boolean {
+  if (!wantArtist) return false
+  return results.some((r) => {
+    if (r.mediaType !== wantMediaType) return false
+    const { title, artist } = parseStreamripDesc(r.desc)
+    if (!artist || recoArtistMatches(wantArtist, artist) || isCoverAct(title, artist)) return false
+    if (!titleReads(wantTitle, title)) return false
+    return !unwantedVersionOf(wantTitle, title) && !liveBrandMarker(wantTitle, r.desc)
+  })
+}
+
+/**
+ * Rank, and when nothing is left only because the store files the artist under
+ * another name, ask for that artist's other names once and rank again. `lookup`
+ * is artist-spellings-store.artistAliases: it waits on MusicBrainz at most once
+ * per artist per TTL, and a busy MusicBrainz answers the stale entry or nothing.
+ */
+export async function rankWithArtistAliases(
+  wantTitle: string,
+  wantArtist: string,
+  results: StreamripSearchHit[],
+  wantMediaType: 'track' | 'album',
+  lookup: (artist: string) => Promise<string[]>,
+): Promise<{ ranked: StreamripSearchHit[]; rejectedVersions: string[]; aliases: string[] }> {
+  const first = rankStreamripCandidates(wantTitle, wantArtist, results, wantMediaType)
+  if (first.ranked.length > 0 || !hitsByAnotherName(wantTitle, wantArtist, results, wantMediaType)) return { ...first, aliases: [] }
+  const aliases = await lookup(wantArtist)
+  if (aliases.length === 0) return { ...first, aliases: [] }
+  return { ...rankStreamripCandidates(wantTitle, wantArtist, results, wantMediaType, aliases), aliases }
 }
 
 /**
@@ -412,6 +512,35 @@ export function liveBrandMarker(wantText: string, gotText: string): string | nul
     if (got.includes(needle) && !want.includes(needle)) return b
   }
   return null
+}
+
+/** Album names that are themselves a recording's name, wherever the words sit.
+ *  Not "sessions": The Sun Sessions IS the original recordings. */
+const RECORDING_ALBUM = /\b(?:live\s+(?:at|in|from|on)\b|(?:in\s+)?concert\b|unplugged\b|acoustic\b|remix(?:es|ed)\b|re-?record(?:ed|ings?)\b|rehearsals?\b|instrumental\w*|demos\b|bootlegs?\b|karaoke\b)|^live\W*$/i
+/** One family of recordings, however an album words it: "(Don Carlos Ambient Mix)"
+ *  on "Don Carlos Remixes", "(Live)" on "In Concert". */
+const markerFamily = (s: string): string => s
+  .replace(/\b(?:remix(?:es|ed)?|mix(?:es)?|megamix)\b/gi, 'mix')
+  .replace(/\b(?:concert|unplugged|acoustic)\b/gi, 'live')
+
+/**
+ * The version an album's NAME says its tracks are (2026-11-03). A live album's
+ * cut often has a clean title, so the album is a witness; but run over the whole
+ * name, the marker test refused "Doll Parts" on Live Through This. On Jake's
+ * library half of what it flagged was a false alarm: "Turn The Radio Off", "Come
+ * Clean", "LONG.LIVE.A$AP", "Beyond The Mix". So a marker counts only where an
+ * album says what it is: in its brackets, after a " - " or ": ", or as one of the
+ * phrases above. A bracket of more than five words is a blurb, not a label.
+ * ⚠️ TWIN: JakeTunesMobile/backend/src/util/itunesCanonical.ts albumAddsRecording.
+ */
+export function albumVersionOf(wantWords: string, album: string): string | null {
+  const labels = [...album.matchAll(/[([{]([^()[\]{}]*)[)\]}]/g)].map((m) => m[1])
+  const tail = /(?:\s[-–—]\s|:\s)([^-–—:()[\]{}]+)$/u.exec(album)?.[1] ?? ''
+  const phrase = (RECORDING_ALBUM.exec(album)?.[0] ?? '').replace(/instrumental\w*/i, 'instrumental')
+  const said = markerFamily([...[...labels, tail].filter((l) => l.trim().split(/\s+/).length <= 5), phrase].join(' '))
+  // Each word once: "Good Evening New York City (Live At Citi Field)" says live one
+  // time, however many of the places above saw it, and a "(Live)" request covers it.
+  return unwantedVersionOf(markerFamily(wantWords), [...new Set(said.toLowerCase().split(/\s+/))].join(' '))
 }
 
 /**
