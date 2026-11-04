@@ -55,7 +55,7 @@ test('now digging: new + not legacy + ≥3 plays, ranked by plays; legacy and ol
 })
 
 test('copy is deterministic and only states the facts', () => {
-  assert.equal(headlineFor('Geese', 81), 'Geese have your attention.')
+  assert.equal(headlineFor('Geese', 81), 'Geese has your attention.')
   assert.equal(headlineFor('Geese', 16), "You can't stop playing Geese.")
   assert.equal(headlineFor('Geese', 6), "Lately, it's Geese.")
   const line = statsLine(artistFacts(T, P, NOW, 'Geese'))
@@ -64,16 +64,21 @@ test('copy is deterministic and only states the facts', () => {
 
 test('plural-form names take "have"; everything else keeps "has" (fail closed)', () => {
   // Jake 2026-10-27: "The Avalanches has your attention" → "shouldn't it be have instead of has??"
+  // Jake 2026-11-04: "geese have your attention.....thats not proper". Geese reads as one band.
   const have = [
     'The Avalanches', 'The Strokes', "The B-52's", 'The Beach Boys', 'The Smashing Pumpkins', 'The All-American Rejects',
-    'Geese', 'Beastie Boys', 'Foo Fighters', 'Talking Heads', 'Red Hot Chili Peppers', 'Alice In Chains', 'Meat Puppets',
-    'Pixies', 'Ramones', "Guns N' Roses", 'Foster The People', 'They Might Be Giants', 'Cocteau Twins', 'Boyz II Men',
+    'The Fratellis', 'Thee Marloes', 'Beastie Boys', 'Foo Fighters', 'Talking Heads', 'Red Hot Chili Peppers', 'Alice In Chains',
+    'Meat Puppets', 'Pixies', 'Ramones', "Guns N' Roses", 'They Might Be Giants', 'Cocteau Twins', 'Boyz II Men', 'Foals',
+    'Parquet Courts', 'Sleigh Bells', 'Kings Of Leon', 'Queens of the Stone Age', 'Gorillaz', 'Basement Jaxx', 'Minutemen',
+    'twenty one pilots', 'Men At Work', 'Stereo MC\'s', 'Salt-N-Pepa', 'FONTAINES D.C.', 'losers!', 'Mom Jeans.',
     'Matt & Kim', 'Belle and Sebastian', 'Crosby, Stills & Nash', 'Eminem, Dr. Dre & 50 Cent', 'Simon & Garfunkel',
+    'Sly and the Family Stone', 'Bob Marley & The Wailers', 'Benny Benassi, Gary Go', 'Public Enemy vs. Benny Benassi',
   ]
   const has = [
-    'Sublime', 'Radiohead', 'Miles Davis', 'Bill Withers', 'Hayley Williams', 'Nia Archives', 'Frankie Cosmos', 'Primus',
-    'Genesis', 'The Boss', 'The Weeknd', 'The National', 'The Clash', 'Tyler, The Creator', 'Florence + the Machine',
-    'Sly and the Family Stone', 'Bob Marley & The Wailers', 'Iron & Wine', 'Kings of Leon', 'Queens of the Stone Age', '',
+    'Geese', 'Sublime', 'Radiohead', 'Miles Davis', 'Bill Withers', 'Hayley Williams', 'Nia Archives', 'Frankie Cosmos', 'Primus',
+    'Genesis', 'Yes', 'James', 'INXS', 'Wheatus', 'Peaches', 'Grimes', 'Floating Points', 'Cut Worms', 'Gnarls Barkley', 'Hotel Pools',
+    'The Boss', 'The Weeknd', 'The National', 'The Clash', 'The Allman Brothers Band', 'Foster The People', 'Tyler, The Creator',
+    'Florence + the Machine', 'Black Country, New Road', 'Iron & Wine', 'A Flock Of Seagulls', 'Gang of Youths', 'Water From Your Eyes', '',
   ]
   for (const a of have) assert.equal(pluralArtistName(a), true, `"${a}" should take "have"`)
   for (const a of has) assert.equal(pluralArtistName(a), false, `"${a}" should keep "has"`)

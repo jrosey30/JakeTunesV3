@@ -187,41 +187,75 @@ export function nowDigging(tracks: readonly SpotTrack[], plays: readonly SpotPla
 }
 
 /**
- * Plural-form artist names take a plural verb — "The Avalanches have your
- * attention", "Geese have", "Matt & Kim have" (Jake, 2026-10-27: "shouldn't
- * it be have instead of has??"). The rule fails closed: only the sure shapes
- * flip to the plural and everything else keeps the singular, so a person whose
- * surname ends in s (Bill Withers, Hayley Williams, Nia Archives) is never
- * made plural. Sure shapes:
- *  - "The …s": a definite article and a last word ending in s (The Strokes,
- *    The B-52's), minus -ss/-us/-is singulars (The Boss).
- *  - a last word that is itself a plural noun bands are named after (Foo
- *    Fighters, Talking Heads, Beastie Boys, Pixies, Foster The People).
- *  - two or more names joined by "&", "and" or "+" (Matt & Kim; Crosby,
- *    Stills & Nash) — but not "X and the Y" (Sly and the Family Stone), and
- *    not the solo acts that only sound like a pair (Iron & Wine).
+ * Whether an artist takes a plural verb: "The Avalanches have your attention"
+ * (Jake, 2026-10-27: "shouldn't it be have instead of has??"), but "Geese has
+ * your attention" (Jake, 2026-11-04: "geese have your attention.....thats not
+ * proper"). All 2,068 artists in the library were judged by name that day ("you
+ * gotta know this shit for every artist in my library"), and these rules give
+ * exactly those answers:
+ *  - two or more names joined by "&", "and", "+", "vs." or a comma (Matt & Kim,
+ *    Bob Marley & The Wailers, credits like Eminem, Dr. Dre & 50 Cent) are plural;
+ *  - so is "The …s": a definite article and a last word ending in s (The Strokes,
+ *    The B-52's), minus -ss/-us/-is singulars (The Boss);
+ *  - so is a last word that is a plural noun bands are named after (Foo Fighters);
+ *  - PLURAL_NAMES are the plural names those shapes can't see (Kings Of Leon,
+ *    Gorillaz, The Fratellis);
+ *  - SINGULAR_NAMES are what the shapes get wrong: one person's project (Iron &
+ *    Wine, Hotel Pools), a phrase (Foster The People), a comma inside one name
+ *    (Tyler, The Creator), and Geese.
+ * Any other name keeps the singular, so a person whose surname ends in s (Bill
+ * Withers, Hayley Williams, Nia Archives) is never made plural.
  */
 const PLURAL_LAST_WORDS = new Set([
-  'animals', 'angels', 'artists', 'bears', 'beasts', 'beatles', 'bees', 'birds', 'bones', 'boys', 'boyz',
-  'breakers', 'brothers', 'buzzcocks', 'byrds', 'cars', 'cats', 'chains', 'children', 'cowboys', 'creatures',
-  'daughters', 'demons', 'descendants', 'descendents', 'devils', 'dogs', 'dolls', 'doors', 'dreamers', 'eagles',
-  'fathers', 'fighters', 'friends', 'geese', 'ghosts', 'giants', 'girls', 'girlz', 'guns', 'heads', 'hearts',
-  'hives', 'kids', 'killers', 'kings', 'kinks', 'lands', 'lions', 'lips', 'lovers', 'machines', 'makers',
-  'men', 'monkees', 'monkeys', 'monsters', 'mothers', 'nights', 'outlaws', 'people', 'peppers', 'pirates',
-  'pistols', 'pixies', 'pools', 'projectors', 'pumpkins', 'puppets', 'queens', 'raiders', 'ramones', 'rangers',
-  'rebels', 'riders', 'robots', 'roots', 'roses', 'saints', 'sharks', 'sisters', 'sons', 'stars', 'stones',
-  'stooges', 'straits', 'strangers', 'strokes', 'surfers', 'swimmers', 'thieves', 'tigers', 'twins', 'vines',
-  'wolves', 'women',
+  'angels', 'animals', 'artists', 'bears', 'beasts', 'beatles', 'bees', 'birds', 'bones', 'boys', 'boyz', 'breakers',
+  'brothers', 'buzzcocks', 'byrds', 'cars', 'cats', 'chains', 'children', 'cowboys', 'creatures', 'daughters',
+  'demons', 'descendants', 'descendents', 'devils', 'dogs', 'dolls', 'doors', 'dreamers', 'eagles', 'fathers',
+  'fighters', 'friends', 'ghosts', 'giants', 'girls', 'girlz', 'guns', 'heads', 'hearts', 'hives', 'kids', 'killers',
+  'kings', 'kinks', 'lands', 'lions', 'lips', 'lovers', 'machines', 'makers', 'men', 'monkees', 'monkeys',
+  'monsters', 'mothers', 'nights', 'outlaws', 'people', 'peppers', 'pirates', 'pistols', 'pixies', 'pools',
+  'projectors', 'pumpkins', 'puppets', 'queens', 'raiders', 'ramones', 'rangers', 'rebels', 'riders', 'robots',
+  'roots', 'roses', 'saints', 'sharks', 'sisters', 'sons', 'stars', 'stones', 'stooges', 'straits', 'strangers',
+  'strokes', 'surfers', 'swimmers', 'thieves', 'tigers', 'twins', 'vines', 'wolves', 'women',
 ])
-const SINGULAR_EXCEPTIONS = new Set(['iron & wine', 'iron and wine'])
+const PLURAL_NAMES = new Set([
+  '100 gecs', '13th floor elevators', '4 non blondes', 'alabama shakes', 'atticus chimps', 'bad books',
+  'bad colours', 'barenaked ladies', 'basement jaxx', 'bee gees', 'black hawks of panama', 'bleachers',
+  'blues pills', 'bone thugs-n-harmony', 'born ruffians', 'brave shores', 'burning airlines', 'caesars',
+  'capital cities', 'cardinals', 'chimers', 'choices', 'cool sounds', 'counting crows', 'cowboy hunters',
+  'crash test dummies', 'crystal castles', 'culture wars', 'custodians', 'damn yankees', 'dangerous toys',
+  'days of the new', 'dead kennedys', 'digable planets', 'discotecas', 'drakulas', 'drop nineteens',
+  'dropkick murphys', 'eagles of death metal', 'early humans', 'editors', 'eels', 'fcukers', 'florentenes', 'foals',
+  'fontaines d.c.', 'french police', 'friendly fires', 'fugees', 'future hippies of punk',
+  'future leaders of the world', 'gameboyz', 'getdown services', 'gin blossoms', 'glyders', 'good neighbours',
+  'gorillaz', 'gravagerz', 'grits', 'gurriers', 'gym class heroes', 'happy mondays', 'heathers',
+  'holidays in united states', 'idles', 'kings of leon', 'knats', 'los bitchos', 'los tres moretones', 'losers!',
+  'lovebirds', 'magic words', 'manic street preachers', 'meatbodies', 'melvins', 'men at work', 'men i trust',
+  'men of the reef', 'men without hats', 'migos', 'minutemen', 'misfits', 'mom jeans.', 'moving units',
+  'new constellations', 'new radicals', 'new york knicks', 'night tales', 'nine inch nails', 'notekillers',
+  'nuevos rios', 'oh sees', 'old mervs', 'orchestral manoeuvres in the dark (omd)', 'os cariocas', 'parcels',
+  'parquet courts', 'party pupils', 'portraits of tracy', 'primitive radio gods', 'propellerheads',
+  'psychic mirrors', 'queens of the stone age', 'raave tapes', 'rikas', 'salt-n-pepa', 'screaming trees',
+  'shades apart', 'sick shooters', 'skull snaps', 'sleigh bells', 'slippers', 'sobs', 'souls of mischief',
+  "stereo mc's", 'stimpies', 'stone temple pilots', 'tanlines', 'tears for fears', 'teddybears', 'teenage dads',
+  'teens in trouble', 'telescreens', 'tha dunciz', 'the barbarians of california', 'the brothers johnson',
+  'the damned', 'the field mice', 'the fratellis', 'the police', 'the presidents of the united states of america',
+  'the renegades of punk', 'the walkmen', 'thee marloes', 'tijuana panthers', 'toadies', 'tones on tail',
+  'trashcan sinatras', 'tunnels', 'twenty one pilots', 'twin tribes', 'twisted teens', 'vacations', 'violent femmes',
+  'vlads', 'yeah yeah yeahs',
+])
+const SINGULAR_NAMES = new Set([
+  'black country, new road', 'does it offend you, yeah?', 'florence + the machine', 'foster the people',
+  'gears, inc.', 'geese', 'grover washington, jr', 'hotel pools', 'iron & wine', 'like roses', 'love, dean',
+  'mirror people', 'paperclip people', 'tyler, the creator',
+])
 
 export function pluralArtistName(name: string): boolean {
   const n = name.trim().replace(/\s+/g, ' ')
   if (!n) return false
   const lower = n.toLowerCase()
-  if (SINGULAR_EXCEPTIONS.has(lower)) return false
-  if (/\s(&|and|\+)\s+the\s/i.test(n)) return false
-  if (/\s(&|and|\+)\s/i.test(n)) return true
+  if (SINGULAR_NAMES.has(lower)) return false
+  if (PLURAL_NAMES.has(lower)) return true
+  if (/\s(&|and|\+|vs\.?)\s|,\s/i.test(n)) return true
   const words = lower.split(' ')
   const last = (words[words.length - 1] ?? '').replace(/[^\p{L}\p{N}'’]+$/u, '').replace(/['’]s$/, 's')
   if (!last) return false
