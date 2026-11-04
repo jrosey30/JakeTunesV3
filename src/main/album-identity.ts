@@ -64,7 +64,7 @@
  */
 import { artistOrAlias, recoNorm, recoTitleMatches } from './reco-match.ts'
 import { foldAccents } from '../common/fold-text.ts'
-import { carriesCensorStamp, maskedTitleMatches, requestedVersionMarkers, searchTitle, subtitleVariantMatches, titleReads, unwantedVersionOf, withoutCensorStamp } from './streamrip-match.ts'
+import { NO_EXPLICIT_WARNING, carriesCensorStamp, maskedTitleMatches, requestedVersionMarkers, searchTitle, subtitleVariantMatches, titleReads, unwantedVersionOf, withoutCensorStamp } from './streamrip-match.ts'
 import type { Provider, RequestedAlbum, RequestedAlbumTrack } from '../common/acquisition-identity.ts'
 export type { RequestedAlbum, RequestedAlbumTrack } from '../common/acquisition-identity.ts'
 
@@ -313,7 +313,7 @@ export function verifyAlbumCandidate(req: RequestedAlbum, cand: CandidateAlbum, 
   if (unwanted) return { verdict: 'reject', kind: 'version', reason: `is the ${unwanted} version (“${candTitle || cand.version}”)` }
 
   // 6. Explicitness — symmetric, unknown is never a mismatch.
-  if (req.explicit === 'explicit' && cand.parentalWarning === false) return { verdict: 'reject', kind: 'explicit', reason: 'is the clean edition; the explicit record was asked for' }
+  if (req.explicit === 'explicit' && cand.parentalWarning === false) return { verdict: 'reject', kind: 'explicit', reason: NO_EXPLICIT_WARNING }
   if (req.explicit === 'clean' && cand.parentalWarning === true) return { verdict: 'reject', kind: 'explicit', reason: 'is the explicit edition; the clean record was asked for' }
 
   // 7. Identifiers, when both sides carry the same kind.

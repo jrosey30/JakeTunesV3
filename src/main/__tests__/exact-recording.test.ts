@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { buildRequestedRecording, requestedLength, verifyCandidate, finalOutcome, describeOutcome, EDITION_TOLERANCE_SEC, RUNTIME_TOLERANCE_SEC, type CandidateEvidence } from '../exact-recording.ts'
-import { rankSoundcloudCandidates, requestedVersionMarkers, unwantedVersionOf, searchTitle, isNoResultsMessage } from '../streamrip-match.ts'
+import { NO_EXPLICIT_WARNING, rankSoundcloudCandidates, requestedVersionMarkers, unwantedVersionOf, searchTitle, isNoResultsMessage } from '../streamrip-match.ts'
 
 // The regression that started 6.0 Phase 1: Jake picked the regular album
 // version of "5 Years Time" by Noah and the Whale (3:37 on iTunes) and the
@@ -126,6 +126,7 @@ describe('the requested-recording identity contract', () => {
     const v = verifyCandidate(req, qz({ title: 'Mask Off', artist: 'Future', durationSec: 204, parentalWarning: false }))
     assert.equal(v.verdict, 'reject')
     assert.equal(v.verdict === 'reject' && v.kind, 'explicit')
+    assert.equal(v.verdict === 'reject' && v.reason, NO_EXPLICIT_WARNING, 'what Qobuz says, not a claim about the audio')
     const clean = buildRequestedRecording({ artist: 'Future', title: 'Mask Off', durationMs: 204_000, durationTolSec: 30, cleanRequested: true })
     assert.equal(verifyCandidate(clean, qz({ title: 'Mask Off', artist: 'Future', durationSec: 204, parentalWarning: false })).verdict, 'exact')
   })

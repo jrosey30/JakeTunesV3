@@ -40,7 +40,7 @@ import type { Provider, RequestedRecording, Alternative, DownloadOutcome } from 
 export type { Provider, RequestedRecording, Alternative, DownloadOutcome } from '../common/acquisition-identity.ts'
 
 import { artistOrAlias, recoNorm, recoTitleMatches } from './reco-match.ts'
-import { albumVersionOf, carriesCensorStamp, creditHolds, editionSubstituted, isCoverAct, liveBrandMarker, parseStreamripDesc, saysExplicit, searchTitle, titleReads, titleWithVersion, unwantedVersionOf, requestedVersionMarkers, withoutCensorStamp, type QobuzTrackMeta } from './streamrip-match.ts'
+import { NO_EXPLICIT_WARNING, albumVersionOf, carriesCensorStamp, creditHolds, editionSubstituted, isCoverAct, liveBrandMarker, parseStreamripDesc, saysExplicit, searchTitle, titleReads, titleWithVersion, unwantedVersionOf, requestedVersionMarkers, withoutCensorStamp, type QobuzTrackMeta } from './streamrip-match.ts'
 import { nameKey } from '../common/fold-text.ts'
 
 /** Does free text (a SoundCloud title/desc) name the artist? Folded in any
@@ -92,7 +92,9 @@ export const EDITION_TOLERANCE_SEC = 30
  *
  * A clean row, by Apple's flag or a stamp on its title or album, says nothing.
  * Apple's search hides explicit rows, so on a rap record the row Jake clicks is
- * often the censored edit, and an edit can lose or gain whole passages. By Apple's
+ * often labelled cleaned, and an edit can lose or gain whole passages. The label is
+ * no proof the song was changed (of 64 such rows on a rap sample, the audio shows
+ * edits in 24), but a wrong one only costs this check: it can't refuse a file. By Apple's
  * own lookups, clean vs explicit: Nasty Boy 231.6 vs 333.8 s, Sky's the Limit 277.1
  * vs 329.4, Respect 273.7 vs 321.3, I Love the Dough 340.2 vs 311.5. No window fits
  * that, and any window around the clean length fits the clean file best: at ±30 s
@@ -248,7 +250,7 @@ export function verifyCandidate(req: RequestedRecording, ev: CandidateEvidence):
   //    and the provider says this one is explicit → out. Unknown on either
   //    side is never a mismatch, and neither is a copy that says it is the explicit cut.
   if (req.explicit === 'explicit' && ev.parentalWarning === false && !saysExplicit(ev.title, ev.version)) {
-    return { verdict: 'reject', kind: 'explicit', reason: 'is the clean edition; the explicit record was asked for' }
+    return { verdict: 'reject', kind: 'explicit', reason: NO_EXPLICIT_WARNING }
   }
   if (req.explicit === 'clean' && ev.parentalWarning === true) {
     return { verdict: 'reject', kind: 'explicit', reason: 'is the explicit edition; the clean record was asked for' }
@@ -279,6 +281,19 @@ export interface MetaVerdicts<T> {
    *  song on Qobuz. Its flag says nothing about censorship, so nothing should judge by it. */
   nothingToCensor: T[]
   explicitMaster: boolean
+  /** A hit that IS this recording is flagged explicit. Beside one, a clean flag means a clean edit. */
+  explicitOnQobuz: boolean
+}
+
+/**
+ * Qobuz's flag as a judge may read it. False means no warning on this release, not
+ * censored: by the audio (2026-11-04), its copies of "Passin' Me By", "Still Not a Player"
+ * and "Baba Says Cool for Thought" with no warning are the same as Jake's files. So on an
+ * album flagged explicit, with no explicit copy of the song beside it, the flag says nothing.
+ * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts isCleanEdition.
+ */
+export function flagToJudge(m: Pick<QobuzTrackMeta, 'parentalWarning' | 'albumParentalWarning'> | undefined, explicitOnQobuz: boolean): boolean | undefined {
+  return m?.parentalWarning === false && m.albumParentalWarning === true && !explicitOnQobuz ? undefined : m?.parentalWarning
 }
 
 /**
@@ -301,6 +316,9 @@ export interface MetaVerdicts<T> {
  * A clean flag on a copy whose own name says Explicit is not believed (saysExplicit), and
  * the name alone proves no master: only one album in the phone's live check does this.
  *
+ * `explicitSeen`: an earlier look already found an explicit copy of this recording, so the
+ * album door judges its tracks knowing what the top hits said.
+ *
  * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts judgeHitsByMeta.
  */
 export function judgeHitsByMeta<T extends { id: string; desc: string }>(
@@ -308,6 +326,7 @@ export function judgeHitsByMeta<T extends { id: string; desc: string }>(
   hits: T[],
   meta: Map<string, QobuzTrackMeta>,
   goneIds: Set<string>,
+  explicitSeen = false,
 ): MetaVerdicts<T> {
   const gone: T[] = []
   const wrongRecording: MetaVerdicts<T>['wrongRecording'] = []
@@ -328,15 +347,15 @@ export function judgeHitsByMeta<T extends { id: string; desc: string }>(
     if (verdict.verdict === 'reject') wrongRecording.push({ hit, verdict })
     else passing.push(hit)
   }
-  const onQobuz = passing.some((h) => meta.get(h.id)?.parentalWarning === true)
+  const onQobuz = explicitSeen || passing.some((h) => meta.get(h.id)?.parentalWarning === true)
   const explicitMaster = req.explicit === 'explicit' || (req.explicit !== 'clean' && onQobuz)
   const flaggedClean = explicitMaster ? passing.filter((h) => {
     const m = meta.get(h.id)
     return m?.parentalWarning === false && !saysExplicit(m.title, m.version)
   }) : []
-  const nothingToCensor = onQobuz ? [] : flaggedClean.filter((h) => meta.get(h.id)?.albumParentalWarning === true)
+  const nothingToCensor = flaggedClean.filter((h) => flagToJudge(meta.get(h.id), onQobuz) === undefined)
   const refusedClean = flaggedClean.filter((h) => !nothingToCensor.includes(h))
-  return { kept: passing.filter((h) => !refusedClean.includes(h)), gone, wrongRecording, refusedClean, nothingToCensor, explicitMaster }
+  return { kept: passing.filter((h) => !refusedClean.includes(h)), gone, wrongRecording, refusedClean, nothingToCensor, explicitMaster, explicitOnQobuz: onQobuz }
 }
 
 /** Decide the honest final outcome once every lane has had its turn.

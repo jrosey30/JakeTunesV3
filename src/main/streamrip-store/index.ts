@@ -25,11 +25,11 @@ import { join } from 'path'
 import { homedir, tmpdir } from 'os'
 import { lstat, mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
 import type { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
-import { rankStreamripCandidates, rankWithArtistAliases, searchTitle, searchQueryTitle, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, isNoResultsMessage, isQobuzNoSuchItem, parseStreamripDesc, qobuzTrackMetaOf, type QobuzTrackMeta } from '../streamrip-match.ts'
+import { NO_EXPLICIT_WARNING, rankStreamripCandidates, rankWithArtistAliases, searchTitle, searchQueryTitle, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, isNoResultsMessage, isQobuzNoSuchItem, parseStreamripDesc, qobuzTrackMetaOf, type QobuzTrackMeta } from '../streamrip-match.ts'
 import { buildRequestedAlbum, verifyAlbumCandidate, reconcileAlbumCompletion, describeCompletion, albumAlternativeDesc, orderTracks, parseCountTag, matchLibraryOwnership, ladderBudgetMs, type RequestedAlbum, type CandidateAlbum, type AlbumVerdict, type Ownership, type LibraryTrackLite } from '../album-identity.ts'
 import { loadLibraryTracksLite } from '../import-pipeline.ts'
 import { itunesAlbumTracks, itunesFindAlbum } from '../download-search.ts'
-import { buildRequestedRecording, judgeHitsByMeta, requestedLength, verifyCandidate, finalOutcome, describeOutcome, soundcloudSearchNote, type Alternative, type CandidateEvidence, type DownloadOutcome, type Provider } from '../exact-recording.ts'
+import { buildRequestedRecording, flagToJudge, judgeHitsByMeta, requestedLength, verifyCandidate, finalOutcome, describeOutcome, soundcloudSearchNote, type Alternative, type CandidateEvidence, type DownloadOutcome, type Provider } from '../exact-recording.ts'
 import { requestFromSourceEdition, verifySourceEdition } from '../source-edition-verify.ts'
 import type { SourceEdition } from '../../common/source-edition.ts'
 import { shareSourceKey } from '../../common/source-playlists.ts'
@@ -563,7 +563,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
   interface QobuzAlbumListing {
     title?: string; artist?: string; version?: string | null; tracksCount?: number; mediaCount?: number; upc?: string
     releaseDate?: string; releaseYear?: number; parentalWarning?: boolean
-    tracks: Array<{ id: string; title: string; durationSec?: number; streamable?: boolean; trackNumber?: number; discNumber?: number; parentalWarning?: boolean }>
+    tracks: Array<{ id: string; title: string; durationSec?: number; streamable?: boolean; trackNumber?: number; discNumber?: number; parentalWarning?: boolean; performer?: string }>
   }
   async function qobuzAlbumTrackList(albumId: string): Promise<QobuzAlbumListing> {
     const creds = await readQobuzCreds()
@@ -571,7 +571,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     try {
       const answer = await qobuzGet('album/get?album_id=' + encodeURIComponent(albumId), creds, 8000)
       if (!answer || answer === 'gone') return { tracks: [] }
-      const d = answer.body as { title?: string; version?: string | null; artist?: { name?: string }; tracks_count?: number; media_count?: number; upc?: string; parental_warning?: boolean; release_date_original?: string; release_date_stream?: string; tracks?: { items?: Array<{ id?: number | string; title?: string; version?: string | null; duration?: number; streamable?: boolean; track_number?: number; media_number?: number; parental_warning?: boolean }> } }
+      const d = answer.body as { title?: string; version?: string | null; artist?: { name?: string }; tracks_count?: number; media_count?: number; upc?: string; parental_warning?: boolean; release_date_original?: string; release_date_stream?: string; tracks?: { items?: Array<{ id?: number | string; title?: string; version?: string | null; duration?: number; streamable?: boolean; track_number?: number; media_number?: number; parental_warning?: boolean; performer?: { name?: string } }> } }
       const releaseDate = typeof d.release_date_stream === 'string' ? d.release_date_stream : undefined
       const original = typeof d.release_date_original === 'string' ? d.release_date_original : releaseDate
       return {
@@ -588,7 +588,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
           .filter((t) => t && t.id != null && t.title)
           // Qobuz keeps "Live"/"Remix" in a separate version field; the
           // tracklist compare must see it as part of the title.
-          .map((t) => ({ id: String(t.id), title: t.version ? `${t.title} (${t.version})` : String(t.title), durationSec: typeof t.duration === 'number' ? t.duration : undefined, streamable: typeof t.streamable === 'boolean' ? t.streamable : undefined, trackNumber: typeof t.track_number === 'number' ? t.track_number : undefined, discNumber: typeof t.media_number === 'number' ? t.media_number : undefined, parentalWarning: typeof t.parental_warning === 'boolean' ? t.parental_warning : undefined })),
+          .map((t) => ({ id: String(t.id), title: t.version ? `${t.title} (${t.version})` : String(t.title), durationSec: typeof t.duration === 'number' ? t.duration : undefined, streamable: typeof t.streamable === 'boolean' ? t.streamable : undefined, trackNumber: typeof t.track_number === 'number' ? t.track_number : undefined, discNumber: typeof t.media_number === 'number' ? t.media_number : undefined, parentalWarning: typeof t.parental_warning === 'boolean' ? t.parental_warning : undefined, performer: typeof t.performer?.name === 'string' ? t.performer.name : undefined })),
       }
     } catch { return { tracks: [] } }
   }
@@ -767,11 +767,13 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       // and a hit with no answer still gets its turn.
       const probed = new Set<string>()
       let metaMap: Map<string, QobuzTrackMeta> = new Map()
+      let explicitOnQobuz = false
       const onlyCleanFailure = (refused: typeof ranked): DownloadResult & { matchDesc?: string } => ({
         ok: false,
         outcome: 'exact-not-found',
-        alternatives: refused.map((c) => ({ provider: 'qobuz' as const, desc: c.desc, reason: 'is the clean edition; the explicit record was asked for' })),
-        error: 'Qobuz only carries the CLEAN edition of this ' + (mediaType === 'album' ? 'album' : 'track') + ' (' + refused.length + ' candidate' + (refused.length > 1 ? 's' : '') + ' refused). Not substituting censorship — try the album download, or another source.',
+        alternatives: refused.map((c) => ({ provider: 'qobuz' as const, desc: c.desc, reason: NO_EXPLICIT_WARNING })),
+        // What is known, and no more: "no warning" is not "censored" (flagToJudge).
+        error: 'Apple lists an explicit ' + (mediaType === 'album' ? 'edition of this album' : 'cut of this track') + ', but no copy on Qobuz is marked explicit (' + refused.length + ' checked). It may be the clean edit, so nothing was imported. Try the album download, or another source.',
       })
       if (ranked.length) {
         const top = ranked.slice(0, 6)
@@ -792,6 +794,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
           const v = judgeHitsByMeta(req, top, meta, gone)
           for (const r of v.wrongRecording) noteReject('qobuz', r.hit.desc, r.verdict)
           for (const c of v.nothingToCensor) meta.set(c.id, { ...meta.get(c.id), parentalWarning: undefined })
+          explicitOnQobuz = v.explicitOnQobuz
           if (v.explicitMaster) {
             trace.push(`${opts?.explicitSource ? 'explicit gate' : 'explicit-first'}: kept ${v.kept.length}, refused clean ${v.refusedClean.length}`)
             if (v.refusedClean.length > 0) console.log('[streamrip] refused ' + v.refusedClean.length + ' clean candidate(s) for "' + title + '" — an explicit master exists')
@@ -1014,9 +1017,9 @@ export function registerStreamripStore(deps: StreamripDeps): void {
           continue
         }
         // Past the sixth hit nothing has asked Qobuz about it yet, and a row with no
-        // length has only this flag between an explicit request and its clean file.
+        // length has only this flag to go on. The same rule as the top hits reads it.
         const meta = metaMap.get(cand.id) ?? (probed.has(cand.id) ? undefined : (await qobuzTrackMeta([cand.id])).get(cand.id))
-        const verdict = await judgeStaged('qobuz', st.staged, cand.desc, { parentalWarning: meta?.parentalWarning, version: meta?.version ?? undefined })
+        const verdict = await judgeStaged('qobuz', st.staged, cand.desc, { parentalWarning: flagToJudge(meta, explicitOnQobuz), version: meta?.version ?? undefined })
         if (verdict.verdict === 'exact') {
           if (verdict.albumMatches) {
             if (fallback) await discardStaged(fallback.staged)
@@ -1045,37 +1048,49 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     // ridiculous"): Qobuz's track search misses songs its own catalogue
     // carries. When the caller named the album, find the ALBUM, read its
     // tracklist, and download the wanted track by id — lossless, canonical
-    // album, judged by the same contract (title + Qobuz's own runtime + its
-    // explicit flag). 2026-11-04: on Migos' "Bad and Boujee", a row labelled
-    // explicit, this door brought in the 332.7 s clean edition of Culture after
-    // the 343.2 s explicit file had been refused on a clean row's length.
+    // album, judged by the same contract as the top hits (title + Qobuz's own
+    // runtime + its explicit flag). 2026-11-04: on Migos' "Bad and Boujee", a row
+    // labelled explicit, this door brought in Culture's 332.7 s edition with no
+    // warning, a different mix, after the 343.2 s explicit file had been refused on
+    // a clean row's length. A Bay Bay's album lists its Single Version, no warning,
+    // before the explicit cut: so the tracks of an album's editions are judged together.
+    // ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts albumDoorHits.
     if (!wantAlbum && (opts?.album || '').trim()) {
       const albName = (opts!.album as string).trim()
       const asearch = await searchCatalog({ query: [artist, searchTitle(albName) || albName].filter(Boolean).join(' '), source: 'qobuz', mediaType: 'album', numResults: 10 })
-      const albRanked = asearch.ok && asearch.results?.length
-        ? rankStreamripCandidates(albName, artist, asearch.results, 'album', aliases, { clocked: false }).ranked
-        : []
-      for (const alb of albRanked.slice(0, 2)) {
-        const tl = await qobuzAlbumTrackList(alb.id)
-        const hit = tl.tracks.find((t) => {
-          if (!recoTitleMatches(lookFor || title, t.title)) return false
-          const v = verifyCandidate(req, { provider: 'qobuz', desc: `${t.title} — ${alb.desc}`, title: t.title, durationSec: t.durationSec ?? null, parentalWarning: t.parentalWarning })
-          return v.verdict === 'exact'
-        })
-        if (!hit) continue
+      const albumsNamed = (name: string): typeof ranked => rankStreamripCandidates(name, artist, asearch.results ?? [], 'album', aliases, { clocked: false }).ranked
+      // The name as the row writes it comes first, so a Deluxe row finds the Deluxe. The
+      // album's other editions come too, and a row's own name can't be trusted to find the
+      // record: Apple's "Life After Death [Amended Version] (2014 Remaster)" reads as Qobuz's
+      // amended "(2014 Remaster)", and not as its explicit "(2014 Remastered Edition)".
+      const editions = [...new Map([...albumsNamed(albName), ...albumsNamed(searchTitle(albName) || albName)].map((a) => [a.id, a])).values()].slice(0, 4)
+      const listings = await Promise.all(editions.map(async (alb) => ({ alb, tl: await qobuzAlbumTrackList(alb.id) })))
+      const doorTracks = listings.flatMap(({ alb, tl }) => tl.tracks.filter((t) => recoTitleMatches(lookFor || title, t.title)).map((t) => ({ ...t, alb, tl })))
+      const trackMeta = new Map(doorTracks.map((t): [string, QobuzTrackMeta] => [t.id, { title: t.title, parentalWarning: t.parentalWarning, albumParentalWarning: t.tl.parentalWarning, durationSec: t.durationSec, album: t.tl.title }]))
+      // Big Pun's "Still Not a Player" EP closes with Incubus's own, by that very title.
+      const doorHits = doorTracks.map((t) => ({ id: t.id, desc: `${t.title} by ${t.performer || artist}` }))
+      const tried = new Set<string>()
+      for (const { id } of judgeHitsByMeta(req, doorHits, trackMeta, new Set(), explicitOnQobuz).kept) {
+        const hit = doorTracks.find((t) => t.id === id)!
+        const alb = hit.alb
+        // One track from an album, and two fetches at most.
+        if (tried.has(alb.id)) continue
+        if (tried.size === 2) break
+        tried.add(alb.id)
         anyMatched = true
         // "you could have said the album is not coming out until october 2"
         // (2026-08-29, verbatim): a PRE-RELEASE track is on the album page
         // with streamable=false — say WHEN instead of a bare Retry.
         if (hit.streamable === false) {
-          const when = tl.releaseDate ? ` — releases ${tl.releaseDate}` : ''
+          const when = hit.tl.releaseDate ? ` — releases ${hit.tl.releaseDate}` : ''
           console.warn(`[download] “${title}” is on “${alb.desc}” but not out yet${when}`)
           return { ok: false, error: `Not out yet: “${alb.desc}”${when}. It'll download once it releases.`, outcome: 'not-released' }
         }
         console.log(`[download] album door: “${title}” found inside “${alb.desc}” (track ${hit.id}) — Qobuz track search had missed it`)
         const st = await stageRip(['id', 'qobuz', 'track', hit.id], clock.remaining())
         if (!st.ok) { trace.push(`album door stage: ${st.error}`); continue }
-        const verdict = await judgeStaged('qobuz', st.staged, `${hit.title} — via album “${alb.desc}”`, { parentalWarning: hit.parentalWarning })
+        // The flag was read above, by the rule that knows what it means.
+        const verdict = await judgeStaged('qobuz', st.staged, `${hit.title} — via album “${alb.desc}”`)
         if (verdict.verdict === 'exact') {
           const dl = await importStaged(st.staged, { addedVia })
           return { ...dl, matchDesc: `${hit.title} — via album “${alb.desc}”`, outcome: dl.ok ? 'imported' : 'provider-failed' }

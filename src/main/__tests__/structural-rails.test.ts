@@ -289,10 +289,11 @@ describe('FORTIFICATIONS — 2026-08-29 ("IT SPEAKS. fortify fortify fortify.")'
   test('WIRING: every Qobuz file the walk can import is judged with Qobuz\'s explicit flag', () => {
     const store = readFileSync(join(SRC, 'main/streamrip-store/index.ts'), 'utf-8')
     const door = store.split('── The ALBUM DOOR')[1]?.split('── Bandcamp — equal citizen')[0] ?? ''
-    assert.ok(door.includes('parentalWarning: t.parentalWarning'), 'the album door picks a track without the flag: Bad and Boujee\'s clean edition came in this way (2026-11-04)')
-    assert.ok(door.includes('parentalWarning: hit.parentalWarning'), 'the album door judges the staged file without the flag')
+    assert.ok(door.includes('parentalWarning: t.parentalWarning'), 'the album door picks a track without the flag: Bad and Boujee\'s no-warning edition came in this way (2026-11-04)')
+    assert.ok(door.includes('judgeHitsByMeta(req, doorHits, trackMeta, new Set(), explicitOnQobuz)'), 'the album door reads the flag by another rule than the top hits: a track with nothing to censor is refused there again')
     assert.ok(store.includes("parentalWarning: typeof t.parental_warning === 'boolean' ? t.parental_warning : undefined"), 'the album listing lost each track\'s own flag: A Bay Bay\'s album says explicit, its Single Version clean')
     assert.ok(store.includes('(await qobuzTrackMeta([cand.id])).get(cand.id)'), 'a hit past the sixth reaches the judge with no flag: a row with no length has nothing else')
+    assert.ok(store.includes('parentalWarning: flagToJudge(meta, explicitOnQobuz)'), 'a hit past the sixth is judged by the raw flag: no warning is not censored')
   })
 
   // ── Listen List → library: the share source reaches every import door ──

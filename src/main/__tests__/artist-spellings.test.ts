@@ -109,7 +109,7 @@ describe('the downloader asks for a Latin name too (2026-11-03)', () => {
     assert.match(store, /await rankWithArtistAliases\(lookFor \|\| query, artist, qsearch\.results, mediaType, \(a\) => artistAliases\(a, \{ throttle: deps\.mbThrottle, userAgent: deps\.mbUserAgent \}\), wantAlbum \? undefined : \{ clocked \}\)/)
     assert.match(store, /buildRequestedRecording\(\{\s+artist, artistAliases: aliases,/)
     assert.match(store, /buildRequestedAlbum\(\{\s+artist, artistAliases: aliases,/)
-    assert.match(store, /rankStreamripCandidates\(albName, artist, asearch\.results, 'album', aliases, \{ clocked: false \}\)/)
+    assert.match(store, /rankStreamripCandidates\(name, artist, asearch\.results \?\? \[\], 'album', aliases, \{ clocked: false \}\)/)
     const own = readFileSync(join(import.meta.dirname, '..', 'artist-spellings-store.ts'), 'utf-8')
     assert.match(own, /export async function artistAliases\(artist: string, deps: \{ throttle: \(\) => Promise<void>; userAgent: string \}\)/)
     assert.match(own, /await ensureSpellings\(\[name\], work, \{ fetchSpellings:/, 'the same throttled, never-cache-a-failure path as the rest of the file')
