@@ -32,7 +32,7 @@
  * Going filter lists the marked nights one card each, the past ones (homemini keeps a snapshot)
  * after them. A night is going OR interested, never both. Photos are 4:3 (home.css).
  */
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { useLibrary } from '../context/LibraryContext'
@@ -44,6 +44,7 @@ import {
 import { nameKey } from '../../common/fold-text'
 import { useArtistProfile } from '../artistProfile'
 import { initials } from '../utils/artistPortrait'
+import { concertPhotoFrameCached, concertPhotoFrameOf } from '../concertPhotoFrames'
 import { snippetPlaying, stopSnippet, subscribeSnippet, toggleSnippet } from '../concertSnippet'
 import { usePlayback } from '../context/PlaybackContext'
 import type { Track } from '../types'
@@ -102,7 +103,9 @@ interface CardProps {
 // ("TONIGHT" glows); a click plays 15 s of his most-played song by the act
 // (equalizer; stops when the card leaves the screen); Going lands a "GOING"
 // stamp; the photo drifts with the rail (CSS scroll timeline). Reduce Motion
-// (prefers-reduced-motion) stills all of it (home.css).
+// (prefers-reduced-motion) stills all of it (home.css). Where the crop sits
+// keeps the faces in (Jake 11/3 "i dont like how the photos cut off the artists
+// faces"): common/concert-photo-framing.ts, concertPhotoFrames.ts.
 
 const appPhotoSlugs = new Map<string, string | null>()
 
@@ -111,6 +114,8 @@ function ConcertPhoto({ name }: { name: string }) {
   const hero = profile.profile?.hero ? profile.photos[profile.profile.hero.url] ?? null : null
   const [app, setApp] = useState<string | null>(appPhotoSlugs.get(name) ?? null)
   const [failed, setFailed] = useState(false)
+  // Bumped when a photo's faces have been read: its frame is in concertPhotoFrames' cache.
+  const [, setFramed] = useState(0)
   useEffect(() => {
     if (hero || appPhotoSlugs.has(name)) return
     let live = true
@@ -121,14 +126,30 @@ function ConcertPhoto({ name }: { name: string }) {
     return () => { live = false }
   }, [name, hero])
   const slug = hero ?? app
+  useEffect(() => {
+    if (!slug || concertPhotoFrameCached(slug)) return
+    let live = true
+    void concertPhotoFrameOf(slug).then(() => { if (live) setFramed((n) => n + 1) })
+    return () => { live = false }
+  }, [slug])
   // Never worse than before the fun row (Jake 10/29 "where are the
   // images??!!!"): the artist page's header photo is preferred, but the app's
   // usual photo always shows when there is one — a small photo is not dropped
   // for initials. Initials only when the act has no photo at all.
   if (slug && !failed) {
+    const frame = concertPhotoFrameCached(slug)
     return (
       <img
-        className="home-concert-photo-img"
+        // A new photo is a new element: the last one never slides to the new one's crop.
+        key={slug}
+        // Hidden until its faces are read, so it first appears already framed and never jumps.
+        className={`home-concert-photo-img${frame ? '' : ' home-concert-photo-img--checking'}`}
+        style={frame ? {
+          '--concert-pos': frame.position,
+          '--concert-pos-still': frame.stillPosition,
+          '--concert-rest': `${frame.rest}px`,
+          '--concert-drift': `${frame.drift}px`,
+        } as CSSProperties : undefined}
         src={`artist-image://${slug}.jpg`}
         alt=""
         draggable={false}

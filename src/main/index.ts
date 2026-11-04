@@ -2486,6 +2486,9 @@ async function createWindow(): Promise<void> {
       // the §2.4 audio-analysis backfill loop and any other long-running
       // sequential renderer work to a halt.
       backgroundThrottling: false,
+      // Where the faces are on a concert card's photo (renderer/concertPhotoFrames.ts).
+      // This one Blink feature, not experimental web platform features.
+      enableBlinkFeatures: 'FaceDetector',
     }
   })
   applyDevReview(mainWindow)   // dev review: muted + titled (JT_DEV_REVIEW=1 only)
