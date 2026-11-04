@@ -458,8 +458,9 @@ export function creditHolds(
  *  whether the row has a length to hold a file to. Left out, it does not count: a whole
  *  album goes to verifyAlbumCandidate, which holds to the name.
  *  Such a hit is a last resort, unlike on the phone: this scoring puts a stranger's "Daylight"
- *  by Kim above Matt & Kim's own "Daylight (Album Version)", and the explicit gate would take
- *  the stranger's flag as proof of a master. So it ranks only when nothing else does. */
+ *  by Kim above Matt & Kim's own "Daylight (Album Version)", and a stranger whose length happens
+ *  to fit could then be imported, or vouch for an explicit master (judgeHitsByMeta). So it ranks
+ *  only when nothing else does. */
 export function rankStreamripCandidates(
   wantTitle: string,
   wantArtist: string,
@@ -757,10 +758,52 @@ export function pickBestSoundcloudMatch(
 // the download fails LOUDLY instead of silently importing censorship.
 
 export interface QobuzTrackMeta {
+  /** The whole title: a search summary's is cut at 50 characters (streamrip's clean()). */
+  title?: string
   parentalWarning?: boolean
+  /** The flag on the album the track sits on: see judgeHitsByMeta. */
+  albumParentalWarning?: boolean
   durationSec?: number
   album?: string
   version?: string | null
+}
+
+/** A track/get answer, field by field: what is absent or the wrong type stays unknown. */
+export function qobuzTrackMetaOf(d: { title?: unknown; parental_warning?: unknown; duration?: unknown; version?: unknown; album?: { title?: unknown; parental_warning?: unknown } }): QobuzTrackMeta {
+  return {
+    title: typeof d.title === 'string' ? d.title.trim() : undefined,
+    parentalWarning: typeof d.parental_warning === 'boolean' ? d.parental_warning : undefined,
+    albumParentalWarning: typeof d.album?.parental_warning === 'boolean' ? d.album.parental_warning : undefined,
+    durationSec: typeof d.duration === 'number' ? d.duration : undefined,
+    album: typeof d.album?.title === 'string' ? d.album.title : undefined,
+    version: typeof d.version === 'string' ? d.version : null,
+  }
+}
+
+/** Qobuz saying it has no such item: "No result matching given argument", the search
+ *  index outliving the catalog. A gateway's 404 or a moved API path looks the same by
+ *  status, and would skip every hit of every song. */
+export function isQobuzNoSuchItem(body: unknown): boolean {
+  const message = (body as { message?: unknown } | null)?.message
+  return typeof message === 'string' && /no result/i.test(message)
+}
+
+/** The title a file from this hit would carry: streamrip writes "title (version)"
+ *  unless the title already says it. */
+export function titleWithVersion(title: string, version?: string | null): string {
+  const v = (version ?? '').trim()
+  return v && !title.includes(v) ? `${title} (${v})` : title
+}
+
+/** Does this copy say it is the explicit cut? Its version field can, or a bracket in its
+ *  title. "Non-Explicit" does not, and a song named "Explicit Content" has said nothing.
+ *  Qobuz's flag can be wrong about a copy that says so: "Paris, Tokyo (Explicit Album
+ *  Version)" on Lupe Fiasco's The Cool is flagged clean, and it sits beside the album's
+ *  clean edit, flagged the same (the phone's live check, 2026-11-04, Brief 223 §6).
+ *  ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts saysExplicit. */
+export function saysExplicit(title?: string | null, version?: string | null): boolean {
+  const label = `${version ?? ''} ${/[([].*[)\]]/.exec(title ?? '')?.[0] ?? ''}`
+  return /(?<!\b(?:non|not)[- ])\bexplicit\b/i.test(label)
 }
 
 export interface ExplicitGateResult<T> {
