@@ -234,6 +234,19 @@ export function resolveExplicitEdition(
   return rowTrackCount === bridged.trackCount ? bridged : undefined
 }
 
+/**
+ * The length a row may carry (2026-11-04). A rescued row points at the explicit
+ * edition and is labelled explicit, but it was built from the clean row, so its
+ * length is the clean file's: "Respect" read explicit at 274 s, the explicit file
+ * runs 321.3 s, and the judge refused it ("runs 5:21, wanted 4:34"). The label
+ * hides the row from every clean-row check downstream, so the length goes here.
+ * A row with nothing to censor keeps its length. Blank is honest.
+ */
+export function rowSeconds(r: Record<string, unknown>, rescued: boolean): number | undefined {
+  if (typeof r.trackTimeMillis !== 'number') return undefined
+  return rescued && r.trackExplicitness === 'cleaned' ? undefined : Math.round(r.trackTimeMillis / 1000)
+}
+
 export async function searchItunesSuggestions(query: string): Promise<{ ok: boolean; results: ItunesSuggestion[] }> {
   const q = (query || '').trim()
   if (q.length < 2) return { ok: true, results: [] }
@@ -275,6 +288,7 @@ export async function searchItunesSuggestions(query: string): Promise<{ ok: bool
           .filter((id) => Number.isFinite(id) && id > 0))].slice(0, 4)
         const explicitByAlbum = await fetchExplicitAlbumMap(cleanedArtistIds)
         raw = results
+          .filter((r) => !isPreviewLengthResult(rowSeconds(r, false), String(r.trackName ?? '')))
           .map((r) => {
             const uncensored = resolveExplicitEdition(
               String(r.collectionName ?? ''),
@@ -297,7 +311,7 @@ export async function searchItunesSuggestions(query: string): Promise<{ ok: bool
               collectionId: rescued ? uncensored.id : (r.collectionId ? Number(r.collectionId) : undefined),
               // Length of the EXACT version this row represents — the download
               // path verifies the Qobuz file against it (wrong-version guard).
-              durationSecs: typeof r.trackTimeMillis === 'number' ? Math.round(r.trackTimeMillis / 1000) : undefined,
+              durationSecs: rowSeconds(r, rescued),
               releaseYear: itunesYear(r.releaseDate),
               trackCount: typeof r.trackCount === 'number' ? r.trackCount : undefined,
               genre: typeof r.primaryGenreName === 'string' ? r.primaryGenreName : undefined,
@@ -305,8 +319,7 @@ export async function searchItunesSuggestions(query: string): Promise<{ ok: bool
                 : (typeof r.trackExplicitness === 'string' ? r.trackExplicitness : undefined),
             }
           })
-          .filter((s) => s.song && s.artist && !ITUNES_JUNK_ARTIST.test(s.artist) && !ITUNES_JUNK_ARTIST.test(s.album || '')
-            && !isPreviewLengthResult(s.durationSecs, s.song))
+          .filter((s) => s.song && s.artist && !ITUNES_JUNK_ARTIST.test(s.artist) && !ITUNES_JUNK_ARTIST.test(s.album || ''))
       }
     } catch { raw = null }
     if (raw === null) raw = await fetchDeezerSuggestions(q)
@@ -385,30 +398,26 @@ export async function searchItunesSuggestions(query: string): Promise<{ ok: bool
                 // the plain search already gave us; keeping them would just
                 // deepen the pile we are trying to get out from under.
                 .filter((r) => foldAccents(String(r.artistName)).replace(/[^a-z0-9]/g, '').startsWith(canonical))
-                .map((r) => ({
-                  song: String(r.trackName ?? ''),
-                  artist: String(r.artistName ?? ''),
-                  album: r.collectionName ? String(r.collectionName) : undefined,
-                  artworkUrl: r.artworkUrl100 ? String(r.artworkUrl100).replace('100x100', '200x200') : undefined,
-                  previewUrl: r.previewUrl ? String(r.previewUrl) : undefined,
-                  appleMusicUrl: r.trackViewUrl ? String(r.trackViewUrl) : undefined,
-                  collectionId: (() => {
-                    const ex = resolveExplicitEdition(String(r.collectionName ?? ''),
-                      typeof r.trackCount === 'number' ? r.trackCount : undefined, explicitByAlbum)
-                    return ex ? ex.id : (r.collectionId ? Number(r.collectionId) : undefined)
-                  })(),
-                  durationSecs: typeof r.trackTimeMillis === 'number' ? Math.round(r.trackTimeMillis / 1000) : undefined,
-                  releaseYear: itunesYear(r.releaseDate),
-                  trackCount: typeof r.trackCount === 'number' ? r.trackCount : undefined,
-                  genre: typeof r.primaryGenreName === 'string' ? r.primaryGenreName : undefined,
-                  explicitness: (() => {
+                .map((r) => {
+                  const uncensored = resolveExplicitEdition(String(r.collectionName ?? ''),
+                    typeof r.trackCount === 'number' ? r.trackCount : undefined, explicitByAlbum)
+                  return {
+                    song: String(r.trackName ?? ''),
+                    artist: String(r.artistName ?? ''),
+                    album: r.collectionName ? String(r.collectionName) : undefined,
+                    artworkUrl: r.artworkUrl100 ? String(r.artworkUrl100).replace('100x100', '200x200') : undefined,
+                    previewUrl: r.previewUrl ? String(r.previewUrl) : undefined,
+                    appleMusicUrl: r.trackViewUrl ? String(r.trackViewUrl) : undefined,
+                    collectionId: uncensored ? uncensored.id : (r.collectionId ? Number(r.collectionId) : undefined),
+                    durationSecs: rowSeconds(r, Boolean(uncensored)),
+                    releaseYear: itunesYear(r.releaseDate),
+                    trackCount: typeof r.trackCount === 'number' ? r.trackCount : undefined,
+                    genre: typeof r.primaryGenreName === 'string' ? r.primaryGenreName : undefined,
                     // If an uncensored edition of this album exists, the row now
                     // points at it, so the badge must say so too.
-                    if (resolveExplicitEdition(String(r.collectionName ?? ''),
-                      typeof r.trackCount === 'number' ? r.trackCount : undefined, explicitByAlbum)) return 'explicit'
-                    return typeof r.trackExplicitness === 'string' ? r.trackExplicitness : undefined
-                  })(),
-                }))
+                    explicitness: uncensored ? 'explicit' : (typeof r.trackExplicitness === 'string' ? r.trackExplicitness : undefined),
+                  }
+                })
                 .filter((s2) => !ITUNES_JUNK_ARTIST.test(s2.artist))
               // Dedupe on song+artist WITHOUT the album: an artist's catalogue
               // carries the same track on the album, the greatest-hits and the

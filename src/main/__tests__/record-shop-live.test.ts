@@ -35,6 +35,10 @@ describe('the live Record Shop session', () => {
     assert.equal(trk?.kind, 'recording')
     assert.equal(trk?.kind === 'recording' && trk.request.durationSec, 235)
     assert.equal(selectionFromQueueResult({ kind: 'id', source: 'qobuz', mediaType: 'album', id: '123', desc: 'raw id' }), undefined)
+    // A clean row's length must not outlive the flag that says so: a re-queue from
+    // the shop would send 273.7 s with nothing to tell main it is the clean file's.
+    const clean = selectionFromQueueResult({ kind: 'query', source: 'qobuz', mediaType: 'track', id: 'x', desc: 'd', artist: 'The Notorious B.I.G.', title: 'Respect', durationMs: 274000, cleanedSource: true })
+    assert.equal(clean?.kind === 'recording' && clean.request.durationSec, 0)
   })
 
   it('a scheduler job becomes a shop job: same key, its verdict and completion carried', () => {

@@ -25,7 +25,7 @@ import { join } from 'path'
 import { homedir, tmpdir } from 'os'
 import { lstat, mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
 import type { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
-import { rankStreamripCandidates, rankWithArtistAliases, searchTitle, searchQueryTitle, editionSubstituted, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, isNoResultsMessage, parseStreamripDesc, type QobuzTrackMeta } from '../streamrip-match.ts'
+import { rankStreamripCandidates, rankWithArtistAliases, searchTitle, searchQueryTitle, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, isNoResultsMessage, parseStreamripDesc, type QobuzTrackMeta } from '../streamrip-match.ts'
 import { buildRequestedAlbum, verifyAlbumCandidate, reconcileAlbumCompletion, describeCompletion, albumAlternativeDesc, orderTracks, parseCountTag, matchLibraryOwnership, ladderBudgetMs, type RequestedAlbum, type CandidateAlbum, type AlbumVerdict, type Ownership, type LibraryTrackLite } from '../album-identity.ts'
 import { loadLibraryTracksLite } from '../import-pipeline.ts'
 import { itunesAlbumTracks, itunesFindAlbum } from '../download-search.ts'
@@ -553,7 +553,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
   interface QobuzAlbumListing {
     title?: string; artist?: string; version?: string | null; tracksCount?: number; mediaCount?: number; upc?: string
     releaseDate?: string; releaseYear?: number; parentalWarning?: boolean
-    tracks: Array<{ id: string; title: string; durationSec?: number; streamable?: boolean; trackNumber?: number; discNumber?: number }>
+    tracks: Array<{ id: string; title: string; durationSec?: number; streamable?: boolean; trackNumber?: number; discNumber?: number; parentalWarning?: boolean }>
   }
   async function qobuzAlbumTrackList(albumId: string): Promise<QobuzAlbumListing> {
     const creds = await readQobuzCreds()
@@ -564,7 +564,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         { headers: { 'X-User-Auth-Token': creds.token, 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(8000) },
       )
       if (!res.ok) return { tracks: [] }
-      const d = await res.json() as { title?: string; version?: string | null; artist?: { name?: string }; tracks_count?: number; media_count?: number; upc?: string; parental_warning?: boolean; release_date_original?: string; release_date_stream?: string; tracks?: { items?: Array<{ id?: number | string; title?: string; version?: string | null; duration?: number; streamable?: boolean; track_number?: number; media_number?: number }> } }
+      const d = await res.json() as { title?: string; version?: string | null; artist?: { name?: string }; tracks_count?: number; media_count?: number; upc?: string; parental_warning?: boolean; release_date_original?: string; release_date_stream?: string; tracks?: { items?: Array<{ id?: number | string; title?: string; version?: string | null; duration?: number; streamable?: boolean; track_number?: number; media_number?: number; parental_warning?: boolean }> } }
       const releaseDate = typeof d.release_date_stream === 'string' ? d.release_date_stream : undefined
       const original = typeof d.release_date_original === 'string' ? d.release_date_original : releaseDate
       return {
@@ -581,7 +581,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
           .filter((t) => t && t.id != null && t.title)
           // Qobuz keeps "Live"/"Remix" in a separate version field; the
           // tracklist compare must see it as part of the title.
-          .map((t) => ({ id: String(t.id), title: t.version ? `${t.title} (${t.version})` : String(t.title), durationSec: typeof t.duration === 'number' ? t.duration : undefined, streamable: typeof t.streamable === 'boolean' ? t.streamable : undefined, trackNumber: typeof t.track_number === 'number' ? t.track_number : undefined, discNumber: typeof t.media_number === 'number' ? t.media_number : undefined })),
+          .map((t) => ({ id: String(t.id), title: t.version ? `${t.title} (${t.version})` : String(t.title), durationSec: typeof t.duration === 'number' ? t.duration : undefined, streamable: typeof t.streamable === 'boolean' ? t.streamable : undefined, trackNumber: typeof t.track_number === 'number' ? t.track_number : undefined, discNumber: typeof t.media_number === 'number' ? t.media_number : undefined, parentalWarning: typeof t.parental_warning === 'boolean' ? t.parental_warning : undefined })),
       }
     } catch { return { tracks: [] } }
   }
@@ -663,19 +663,11 @@ export function registerStreamripStore(deps: StreamripDeps): void {
   // round-trip search → pick → download. `durationMs` (when the caller knows
   // the exact version — the Download view's iTunes pick carries it) turns on
   // download-time verification: a candidate whose real length is off by more
-  // than DURATION_TOLERANCE_SEC is discarded in staging and the next-ranked
-  // candidate is tried. Qobuz's desc gives NO album/length, so a live-album
-  // cut with a clean title ("Your Body Is a Wonderland" from a live record)
-  // is undetectable before download — the file's own clock is the only
-  // trustworthy witness.
-  const DURATION_TOLERANCE_SEC = 5
-  /** When the length we were given belongs to a CENSORED edition, it is not a
-   *  fingerprint for the explicit master. Measured on Life After Death: Mo
-   *  Money Mo Problems 258s amended vs 251s explicit, Hypnotize 230 vs 243,
-   *  Sky's the Limit 277 vs 254. At ±5s the guard rejected the correct file
-   *  every time. Wide enough to accept a different edition of the same song,
-   *  still tight enough to refuse a 9-minute megamix or a 90-second interlude. */
-  const CLEANED_TOLERANCE_SEC = 30
+  // than the request's tolerance (exact-recording.ts requestedLength) is
+  // discarded in staging and the next-ranked candidate is tried. Qobuz's desc
+  // gives NO album/length, so a live-album cut with a clean title ("Your Body
+  // Is a Wonderland" from a live record) is undetectable before download — the
+  // file's own clock is the only trustworthy witness. A clean row has no clock.
   const fmtDur = (s: number | null): string => s == null ? 'unknown length' : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`
   ipc.handle('streamrip:download-by-query', async (_e, opts: { sourceEdition?: SourceEdition; artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number; addedVia?: string }): Promise<DownloadResult & { matchDesc?: string }> => {
     cancelRequested = false            // new attempt = clean slate
@@ -699,18 +691,6 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     }
     if (!title && !artist) return { ok: false, error: 'Nothing to search for.' }
     const durationMs = !wantAlbum && typeof opts?.durationMs === 'number' && opts.durationMs > 1000 ? opts.durationMs : 0
-    // Widen the length guard whenever we deliberately searched for the SONG
-    // rather than the exact pressing the user clicked — a censored edit or a
-    // remaster is a different length by nature, and pinning to the clicked
-    // row's runtime is what rejected the correct file. Feature-credit
-    // stripping does not widen it: same recording, keep the tight guard.
-    // The ALBUM counts too, not just the title. "Lady (Hear Me Tonight)" is a
-    // plain title, but the iTunes row sits on "Modjo (Remastered)" — a
-    // remaster whose runtime can drift from whatever pressing the catalogue
-    // serves. Reading only the title would have applied the tight guard and
-    // rejected the correct file for the second time in one bug.
-    const durTol = (opts?.cleanedSource || editionSubstituted(title) || editionSubstituted(opts?.album || ''))
-      ? CLEANED_TOLERANCE_SEC : DURATION_TOLERANCE_SEC
     // Search by the song's NAME, not by iTunes' edition metadata. iTunes hands
     // us things like "Mo Money Mo Problems (feat. Ma$e & Puff Daddy) [Amended]"
     // and "Life After Death [Amended Version] (2014 Remaster)"; asking a
@@ -803,9 +783,10 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     // that recording before it can touch the library. Every rejection is
     // kept as a structured alternative for the verdict at the end.
     const req = buildRequestedRecording({
-      artist, artistAliases: aliases, title, album: opts?.album, durationMs, durationTolSec: durTol,
+      artist, artistAliases: aliases, title, album: opts?.album, durationMs,
       releaseYear: opts?.releaseYear, cleanedSource: opts?.cleanedSource, explicitSource: opts?.explicitSource,
     })
+    if (durationMs && !req.durationSec) trace.push(`no length: ${fmtDur(durationMs / 1000)} is the clean row's`)
     const alternatives: Alternative[] = []
     // Qobuz rows that matched the song but were other versions are the first
     // structured alternatives — "we found these, none was the exact one".
@@ -1009,7 +990,9 @@ export function registerStreamripStore(deps: StreamripDeps): void {
           lastRipErr = st.error
           continue
         }
-        const meta = metaMap.get(cand.id)
+        // Past the sixth hit nothing has asked Qobuz about it yet, and a row with no
+        // length has only this flag between an explicit request and its clean file.
+        const meta = metaMap.get(cand.id) ?? (probed.has(cand.id) ? undefined : (await qobuzTrackMeta([cand.id])).get(cand.id))
         const verdict = await judgeStaged('qobuz', st.staged, cand.desc, { parentalWarning: meta?.parentalWarning, version: meta?.version ?? undefined })
         if (verdict.verdict === 'exact') {
           if (verdict.albumMatches) {
@@ -1039,7 +1022,10 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     // ridiculous"): Qobuz's track search misses songs its own catalogue
     // carries. When the caller named the album, find the ALBUM, read its
     // tracklist, and download the wanted track by id — lossless, canonical
-    // album, judged by the same contract (title + Qobuz's own runtime).
+    // album, judged by the same contract (title + Qobuz's own runtime + its
+    // explicit flag). 2026-11-04: on Migos' "Bad and Boujee", a row labelled
+    // explicit, this door brought in the 332.7 s clean edition of Culture after
+    // the 343.2 s explicit file had been refused on a clean row's length.
     if (!wantAlbum && (opts?.album || '').trim()) {
       const albName = (opts!.album as string).trim()
       const asearch = await searchCatalog({ query: [artist, searchTitle(albName) || albName].filter(Boolean).join(' '), source: 'qobuz', mediaType: 'album', numResults: 10 })
@@ -1050,7 +1036,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         const tl = await qobuzAlbumTrackList(alb.id)
         const hit = tl.tracks.find((t) => {
           if (!recoTitleMatches(lookFor || title, t.title)) return false
-          const v = verifyCandidate(req, { provider: 'qobuz', desc: `${t.title} — ${alb.desc}`, title: t.title, durationSec: t.durationSec ?? null })
+          const v = verifyCandidate(req, { provider: 'qobuz', desc: `${t.title} — ${alb.desc}`, title: t.title, durationSec: t.durationSec ?? null, parentalWarning: t.parentalWarning })
           return v.verdict === 'exact'
         })
         if (!hit) continue
@@ -1066,7 +1052,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         console.log(`[download] album door: “${title}” found inside “${alb.desc}” (track ${hit.id}) — Qobuz track search had missed it`)
         const st = await stageRip(['id', 'qobuz', 'track', hit.id], clock.remaining())
         if (!st.ok) { trace.push(`album door stage: ${st.error}`); continue }
-        const verdict = await judgeStaged('qobuz', st.staged, `${hit.title} — via album “${alb.desc}”`)
+        const verdict = await judgeStaged('qobuz', st.staged, `${hit.title} — via album “${alb.desc}”`, { parentalWarning: hit.parentalWarning })
         if (verdict.verdict === 'exact') {
           const dl = await importStaged(st.staged, { addedVia })
           return { ...dl, matchDesc: `${hit.title} — via album “${alb.desc}”`, outcome: dl.ok ? 'imported' : 'provider-failed' }

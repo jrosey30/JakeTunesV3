@@ -12,10 +12,11 @@ export interface RequestedRecording {
   /** Normalised forms, for logs and equality. */
   artistNorm: string
   titleNorm: string
-  /** Seconds, when the clicked row knew its runtime; 0 = unknown. */
+  /** Seconds, when the clicked row knew its runtime; 0 = unknown, and a clean
+   *  row's is unknown (exact-recording.ts requestedLength). */
   durationSec: number
   /** ± seconds. Tight for the exact pressing; wide when we deliberately
-   *  searched for the SONG rather than that pressing (censored/remaster). */
+   *  searched for the SONG rather than that pressing (remaster, masked title). */
   durationTolSec: number
   releaseYear?: number
   /** What was ASKED for. 'clean' only when a clean record was deliberately
@@ -56,6 +57,8 @@ export interface RequestedAlbumTrack {
   title: string
   trackNumber?: number
   discNumber?: number
+  /** Absent on a clean row: a censored edit's length says nothing about the
+   *  explicit cut (album-identity.ts buildRequestedAlbum). */
   durationSec?: number
   explicitness?: string
 }

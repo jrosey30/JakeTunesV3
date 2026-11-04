@@ -175,7 +175,8 @@ if (typeof window !== 'undefined') {
 
 // Queue entries resolve on Qobuz AT DOWNLOAD TIME by artist+title/album.
 // durationMs pins the EXACT version the user clicked — main verifies the
-// downloaded file against it, so a re-record/live cut can't slip in.
+// downloaded file against it, so a re-record/live cut can't slip in. A clean
+// row pins nothing: main drops its length (exact-recording.ts requestedLength).
 const songQ = (r: SongRow): QResult => ({
   kind: 'query', source: 'qobuz', mediaType: 'track',
   id: trackQueryId(r.artist, r.title),
@@ -677,7 +678,7 @@ export default function DownloadView({ mode = 'page' }: { mode?: 'page' | 'brows
   const asSongRow = (t: ItunesSuggestion): SongRow => ({
     kind: 'song', artist: t.artist, title: t.song, album: t.album,
     artworkUrl: t.artworkUrl, previewUrl: t.previewUrl,
-    durationSecs: t.durationSecs, releaseYear: t.releaseYear,
+    durationSecs: t.durationSecs, releaseYear: t.releaseYear, explicitness: t.explicitness,
     owned: libIndex.tracks.has(norm(t.song) + '|' + norm(t.artist)), score: 0,
   })
 
