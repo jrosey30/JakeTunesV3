@@ -8,7 +8,7 @@
  *                                   reason from real stars / plays / genre
  *   You've Been Listening To A Lot  most plays in 30 days, with the count
  *   Recently Added                  newest songs, with the date added (a click
- *                                   plays it with the newest 25 queued behind)
+ *                                   plays it with the newest 100 queued behind)
  *
  * Five cards each. You Should Listen To More's "See All" opens Listen More
  * Weekly (2026-10-20: homemini's weekly playlist, whose first songs the row
@@ -18,9 +18,10 @@
  * needs to take you to that playlist" — the same ranking 30 deep, whose
  * first songs the row is); Recently Added's "See All" opens the Recently
  * Added playlist, as the old row did (Jake, mid-build: "should bring you to
- * recently added playlist"). Click a song → it plays, with the rest of the row
- * queued behind it in order (Recently Added queues its newest 25, not just
- * the 5 shown); the album is one right-click away (Go to Album).
+ * recently added playlist"). Click a song → it plays, with the whole playlist
+ * behind the row queued after it (Listen More Weekly's 50, On Repeat's 30,
+ * Recently Added's newest 100), not just the 5 shown; the album is one
+ * right-click away (Go to Album).
  *
  * Like a library row (Jake, 2026-10-20): right-click a song for the Songs
  * view's song menu, an album for the Albums view's album menu
@@ -41,7 +42,7 @@ import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { useHomeItemMenus } from './HomeItemMenus'
 import { setTrackDragPayload } from '../utils/trackDrag'
-import { SHELF_SHOWN, SHELF_MAX, playsLabel, addedLabel, recentlyAddedSongs, recentlyAddedPlay } from '../../common/home-shelves'
+import { SHELF_SHOWN, SHELF_MAX, playsLabel, addedLabel, recentlyAddedSongs, recentlyAddedPlay, shelfQueue } from '../../common/home-shelves'
 import { isTop25Rankable } from '../../common/top25-rankable'
 import type { Track } from '../types'
 
@@ -132,7 +133,7 @@ function SongRow({ title, scrollKey, cards, artFor, playTrack, openAll, fullQueu
               onContextMenu={(e) => menus?.openSongMenu(e, c.track, play, queue, i)}
               draggable
               onDragStart={(e) => setTrackDragPayload(e, c.track.id)}
-              title={`${c.track.title} — ${c.track.artist}\nClick plays it, with the rest of this row after it.`}
+              title={`${c.track.title} — ${c.track.artist}\nClick plays it, with the rest of this list after it.`}
             >
               <div className="home-album-art">
                 {hash ? <AlbumArtImage hash={hash} alt={c.track.album || c.track.title} onLoad={(e) => e.currentTarget.classList.add('home-album-art-loaded')} /> : <Placeholder />}
@@ -174,8 +175,14 @@ export default function HomeShelves({ tracks, regularTracks, artworkMap, artInde
   const heavy = useMemo((): SongCard[] => (shelves?.listeningALot ?? [])
     .map((h) => { const track = byId.get(h.id); return track ? { track, note: playsLabel(h.plays), count: true } : null })
     .filter((c): c is SongCard => c !== null), [shelves, byId])
-  // Recently Added is SONGS (Jake, 2026-10-22): the newest 25 by date added;
-  // the row draws 5 and a click queues all 25. Computed from the library, so
+  // A click plays through the whole playlist behind the row, not the cards on screen.
+  const listOf = useCallback((ids: readonly number[] | undefined): Track[] => (ids ?? [])
+    .map((id) => byId.get(id))
+    .filter((t): t is Track => t !== undefined), [byId])
+  const gemsQueue = useMemo(() => shelfQueue(gems.map((c) => c.track), listOf(weekly?.trackIds)), [gems, weekly, listOf])
+  const heavyQueue = useMemo(() => shelfQueue(heavy.map((c) => c.track), listOf(shelves?.onRepeat)), [heavy, shelves, listOf])
+  // Recently Added is SONGS (Jake, 2026-10-22): the newest 100 by date added;
+  // the row draws 5 and a click queues all 100. Computed from the library, so
   // it is the same list whether or not homemini's document has arrived.
   // Phone twin: ios/JakeTunesMobile/HomeShelves.swift RecentlyAddedShelf.
   const recentSongs = useMemo((): Track[] => recentlyAddedSongs(
@@ -199,11 +206,11 @@ export default function HomeShelves({ tracks, regularTracks, artworkMap, artInde
     <>
       {gems.length > 0 && (
         <SongRow title="You Should Listen To More" scrollKey="home-row-listen-more" cards={gems} artFor={artFor} playTrack={playTrack}
-          openAll={weekly ? () => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: 'listen-more-weekly' }) : undefined} />
+          fullQueue={gemsQueue} openAll={weekly ? () => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: 'listen-more-weekly' }) : undefined} />
       )}
       {heavy.length > 0 && (
         <SongRow title="You’ve Been Listening To A Lot" scrollKey="home-row-listening-a-lot" cards={heavy} artFor={artFor} playTrack={playTrack}
-          openAll={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: 'on-repeat' })} />
+          fullQueue={heavyQueue} openAll={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: 'on-repeat' })} />
       )}
       {recent.length > 0 && (
         <SongRow title="Recently Added" scrollKey="home-row-recent" cards={recent} artFor={artFor} playTrack={playTrack}

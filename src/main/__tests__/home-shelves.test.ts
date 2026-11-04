@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   listeningALot, recentlyAddedAlbums, hiddenGems, isGemEligible, tallyPlays, dailyShuffle, localDayKey,
-  addedLabel, playsLabel, recentlyAddedSongs, recentlyAddedPlay, RECENT_SONGS_QUEUE, DAY_MS, SHELF_MAX, RECENT_ALBUMS_MAX,
+  addedLabel, playsLabel, recentlyAddedSongs, recentlyAddedPlay, shelfQueue, RECENT_SONGS_QUEUE, DAY_MS, SHELF_MAX, RECENT_ALBUMS_MAX,
   type ShelfTrack, type ShelfPlay, type ShelfRules,
 } from '../../common/home-shelves.ts'
 import { isTop25Rankable } from '../../common/top25-rankable.ts'
@@ -225,19 +225,20 @@ test('hidden gems: concerts, sub-minute songs and recent adds never appear, what
   assert.deepEqual(out, [])
 })
 
-// ── Recently added songs (click plays it, the newest 25 queue behind) ──────
+// ── Recently added songs (click plays it, the newest 100 queue behind) ─────
 
-test('recently added songs: newest first, capped at 25, concerts and fragments left out', () => {
+test('recently added songs: newest first, capped at 100, concerts and fragments left out', () => {
   const tracks = [
-    ...Array.from({ length: 30 }, (_, i) => song(i + 1, { album: `Single ${i + 1}`, dateAdded: daysAgo(30 - i) })),
-    song(100, { dateAdded: daysAgo(0) }),
-    song(101, { dateAdded: daysAgo(0), duration: 20_000 }),
-    song(102, { dateAdded: null }),
+    ...Array.from({ length: 120 }, (_, i) => song(i + 1, { album: `Single ${i + 1}`, dateAdded: daysAgo(120 - i) })),
+    song(200, { dateAdded: daysAgo(0) }),
+    song(201, { dateAdded: daysAgo(0), duration: 20_000 }),
+    song(202, { dateAdded: null }),
   ]
-  const out = recentlyAddedSongs(tracks, rules([100]))
+  const out = recentlyAddedSongs(tracks, rules([200]))
+  assert.equal(RECENT_SONGS_QUEUE, 100)
   assert.equal(out.length, RECENT_SONGS_QUEUE)
-  assert.deepEqual(out.slice(0, 3).map((t) => t.id), [30, 29, 28])
-  assert.ok(!out.some((t) => [100, 101, 102].includes(t.id as number)))
+  assert.deepEqual(out.slice(0, 3).map((t) => t.id), [120, 119, 118])
+  assert.ok(!out.some((t) => [200, 201, 202].includes(t.id as number)))
 })
 
 test('recently added songs: same-day adds break ties by the higher id', () => {
@@ -254,4 +255,26 @@ test('recently added click: plays THAT song with the whole list queued, not just
   assert.equal(go.queue.length - go.start - 1, 22)
   assert.equal(recentlyAddedPlay(recent, 25), null)
   assert.equal(recentlyAddedPlay([], 0), null)
+})
+
+// ── The two other rows: a click plays through the whole playlist ───────────
+
+test('shelf queue: the row, then the rest of its playlist, no song twice', () => {
+  const row = [5, 3, 9].map((id) => song(id))
+  const queue = shelfQueue(row, [1, 3, 5, 7, 9, 7].map((id) => song(id)))
+  assert.deepEqual(queue.map((t) => t.id), [5, 3, 9, 1, 7])
+})
+
+test('shelf queue: a card keeps its place, so On Repeat plays 1 of 30, not 1 of 5', () => {
+  const list = Array.from({ length: 30 }, (_, i) => song(i + 1))
+  const row = list.slice(0, 10)
+  const go = recentlyAddedPlay(shelfQueue(row, list), 2)!
+  assert.equal(go.start, 2)
+  assert.equal(go.queue[2]!.id, 3)
+  assert.equal(go.queue.length, 30)
+})
+
+test('shelf queue: with no playlist yet the row is the queue', () => {
+  const row = [1, 2, 3].map((id) => song(id))
+  assert.deepEqual(shelfQueue(row, []).map((t) => t.id), [1, 2, 3])
 })
