@@ -1858,7 +1858,11 @@
    with a soft breathing glow) that flips down into place; while a snippet
    plays, a 3-bar equalizer in an orange disc (22×22); a "GOING" rubber stamp
    (3px #FC5501 border, rotated −11°) slams in when the card is marked. The
-   photo drifts ±14px with the rail's scroll (scroll-driven, no JS). */
+   photo drifts ±14px with the rail's scroll (scroll-driven, no JS).
+   Where the crop sits keeps the faces in (2026-11-03, Jake: "i dont like how
+   the photos cut off the artists faces"): --concert-pos, --concert-rest and
+   --concert-drift per photo (common/concert-photo-framing.ts); the fallbacks
+   here are that module's "no face found", a third of the way down. */
 .home-concert-card { flex-wrap: wrap; align-content: flex-start; }
 .home-concert-photo {
   position: relative;
@@ -1875,6 +1879,8 @@
   width: calc(100% + 28px);
   height: 100%;
   object-fit: cover;
+  object-position: var(--concert-pos, 50% 33.33%);
+  transform: translateX(var(--concert-rest, 0px));
   transition: opacity 200ms ease-out;
 }
 .home-concert-photo-img--checking { opacity: 0; }
@@ -1885,8 +1891,8 @@
   }
 }
 @keyframes home-concert-drift {
-  from { transform: translateX(14px); }
-  to { transform: translateX(-14px); }
+  from { transform: translateX(calc(var(--concert-rest, 0px) + var(--concert-drift, 14px))); }
+  to { transform: translateX(calc(var(--concert-rest, 0px) - var(--concert-drift, 14px))); }
 }
 .home-concert-photo-initials {
   position: absolute;
@@ -1996,7 +2002,7 @@
   cursor: pointer;
 }
 @media (prefers-reduced-motion: reduce) {
-  .home-concert-photo-img { animation: none; left: 0; width: 100%; }
+  .home-concert-photo-img { animation: none; left: 0; width: 100%; transform: none; object-position: var(--concert-pos-still, 50% 33.33%); }
   .home-concert-stub, .home-concert-stub--tonight { animation: none; }
   .home-concert-stub--tonight { box-shadow: 0 0 6px rgba(252, 85, 1, 0.55); }
   .home-concert-eq i { animation: none; }
