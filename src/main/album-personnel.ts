@@ -554,6 +554,8 @@ export interface AlbumPersonnelService {
  * throttle like everyone else. `pagesBusy` must answer false for a page that
  * is waiting on THIS lookup, or the two would wait on each other forever;
  * while such a page waits, the spacing is skipped too — someone is waiting now.
+ * It must also answer false then for a page waiting on another background
+ * lookup, or those two lookups would wait on each other's pages forever.
  */
 export function createBackgroundGate(opts: {
   pagesBusy: () => boolean
@@ -605,13 +607,20 @@ export function createAlbumPersonnelService(deps: AlbumPersonnelServiceDeps): Al
   const answer = (e: PersonnelCacheEntry): AlbumPersonnel =>
     e.releaseMbid ? { ok: true, people: e.people, trackCount: e.trackCount, releaseMbid: e.releaseMbid } : { ok: true, people: e.people, trackCount: e.trackCount }
 
-  // Two album-page mounts asking at once share one lookup.
-  const inflight = new Map<string, Promise<AlbumPersonnel>>()
+  // Two album-page mounts asking at once share one lookup. `background`: a
+  // background caller started it, so its requests pass the background gate.
+  const inflight = new Map<string, { lookup: Promise<AlbumPersonnel>; background: boolean }>()
   // Pages waiting, by album key — what background requests yield to. A page
   // waiting on the very album the prefetch is on does not hold it up (they
-  // share the lookup); any other page does.
+  // share the lookup); any other page does, with one exception. When a page is
+  // waiting on this lookup too, a page waiting on ANOTHER background lookup
+  // does not hold it up: with a page on each, the two gates would each wait for
+  // the other's page, forever. A page with a lookup of its own always does; that
+  // lookup passes no gate, so it ends by itself. A lookup no page is waiting on
+  // yields to every page, and that cannot hang either: no page needs it to finish.
   const pageWaits = new Map<string, number>()
-  const pagesBusyExcept = (key: string): boolean => [...pageWaits.keys()].some((k) => k !== key)
+  const pagesBusyExcept = (key: string): boolean =>
+    [...pageWaits.keys()].some((k) => k !== key && !(pageWaits.has(key) && inflight.get(k)?.background))
   const pageThrottle = deps.throttle ?? defaultThrottle
   const backgroundSpacing = createMbThrottle(deps.backgroundGapMs ?? BACKGROUND_GAP_MS, now, deps.wait ?? sleep)
   const backgroundGate = (key: string): (() => Promise<void>) => createBackgroundGate({
@@ -643,11 +652,11 @@ export function createAlbumPersonnelService(deps: AlbumPersonnelServiceDeps): Al
     const cache = await load()
     const hit = cache.entries[key]
     if (hit && !isPersonnelStale(hit, now())) return answer(hit)
-    let pending = inflight.get(key)
+    let pending = inflight.get(key)?.lookup
     if (!pending) {
       // A page arriving while the prefetch is already on this album shares
       // its lookup; the remaining requests then skip the background spacing
-      // and the gate waits only on OTHER pages' lookups.
+      // and the gate waits only on pages with a lookup of their own.
       const throttle = background ? backgroundGate(key) : pageThrottle
       pending = (async (): Promise<AlbumPersonnel> => {
         const r = await lookupAlbumPersonnel(artist, album, { ...deps, throttle })
@@ -664,7 +673,7 @@ export function createAlbumPersonnelService(deps: AlbumPersonnelServiceDeps): Al
         log(`[album-personnel] ${artist} — ${album}: ${r.people.length} people${r.releaseMbid ? ` (release ${r.releaseMbid}, ${r.trackCount} tracks)` : ' (no release group is this album by this artist)'}`)
         return answer(entry)
       })().finally(() => { inflight.delete(key) })
-      inflight.set(key, pending)
+      inflight.set(key, { lookup: pending, background })
     }
     return pending
   }

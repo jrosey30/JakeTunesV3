@@ -17,7 +17,7 @@ import {
   peopleFromRelease, releaseTrackCount, relationRoles, instrumentLabel, pickRelease, pickReleaseGroup, impliedPrimaryType, dateKey,
   lookupAlbumPersonnel, createAlbumPersonnelService, createMbThrottle, normalizePersonnelCache, readPersonnelCache,
   isPersonnelStale, personnelCacheKey, personnelCachePath, mbReleasesUrl, mbReleaseUrl,
-  PERSONNEL_EMPTY_RECHECK_MS, MAX_PEOPLE, MB_MIN_GAP_MS, BACKGROUND_GAP_MS, PERSONNEL_CACHE_FILE,
+  PERSONNEL_EMPTY_RECHECK_MS, MAX_PEOPLE, MB_MIN_GAP_MS, BACKGROUND_GAP_MS, BACKGROUND_YIELD_MS, PERSONNEL_CACHE_FILE,
   type MbRelation, type MbReleaseDetail, type MbReleaseSummary, type MbSearchGroup, type AlbumPersonnel, type PersonnelCacheFile,
 } from '../album-personnel.ts'
 import { releaseGroupSearchUrl } from '../release-kinds.ts'
@@ -738,7 +738,7 @@ describe('two kinds of caller — a page goes first, the prefetch keeps its dist
   // before its request arrived would be lost, that request would park for good,
   // and with nothing holding the event loop open node:test cancels the rest of
   // the file ("Promise resolution is still pending…", a loaded Mac, 2026-11-03).
-  function gatedFetch(answers: Record<string, unknown>): { fetchFn: typeof fetch; calls: string[]; requestParked: () => Promise<void>; answerNext: () => Promise<void> } {
+  function gatedFetch(answers: Record<string, unknown>): { fetchFn: typeof fetch; calls: string[]; requestParked: (count?: number) => Promise<void>; answerNext: () => Promise<void> } {
     const calls: string[] = []
     const parked: Array<() => void> = []
     let wake = (): void => {}
@@ -748,7 +748,7 @@ describe('two kinds of caller — a page goes first, the prefetch keeps its dist
       const body = answers[url]
       return body === undefined ? jsonResponse({ error: 'Not Found' }, 404) : jsonResponse(body)
     }) as unknown as typeof fetch
-    const requestParked = async (): Promise<void> => { while (parked.length === 0) await new Promise<void>((r) => { wake = r }) }
+    const requestParked = async (count = 1): Promise<void> => { while (parked.length < count) await new Promise<void>((r) => { wake = r }) }
     return { fetchFn, calls, requestParked, answerNext: async () => { await requestParked(); parked.shift()!() } }
   }
   const tick = (): Promise<void> => new Promise((r) => setImmediate(r))
@@ -826,6 +826,69 @@ describe('two kinds of caller — a page goes first, the prefetch keeps its dist
     const [a, b] = await both
     assert.deepEqual(a, b)
     assert.equal(a.people.length, 12)
+    assert.equal(svc.busy(), false)
+  })
+
+  // Production never has two background lookups: its one background caller is the
+  // prefetch, a loop that asks for one album at a time. The next two tests pin what
+  // the gate does if a second caller ever makes it two; the third, production's shape.
+  const QOTSA_SEARCH = releaseGroupSearchUrl(ALBUM, ARTIST)
+  const QOTSA_BROWSE = mbReleasesUrl(GROUP_ID)
+  const QOTSA_RELEASE = mbReleaseUrl(RELEASE_ID)
+  const ABBEY_SEARCH = releaseGroupSearchUrl(ABBEY.album, ABBEY.artist)
+  const ABBEY_BROWSE = mbReleasesUrl(ABBEY.groupId)
+  const ABBEY_RELEASE = mbReleaseUrl(ABBEY.releaseId)
+
+  test('two background lookups with a page on each both finish: neither gate waits on a page that is waiting on the other', async () => {
+    const { fetchFn, calls, requestParked, answerNext } = gatedFetch({ ...QOTSA, ...BEATLES })
+    const svc = createAlbumPersonnelService({ dir: tempDir(), userAgent: 'JakeTunes/test', fetchFn, throttle: async () => {}, retryDelayMs: 0, now: () => NOW, wait: sleepByTurns(), log: quiet })
+    const bgA = svc.get(ARTIST, ALBUM, { background: true })
+    const bgB = svc.get(ABBEY.artist, ABBEY.album, { background: true })
+    await requestParked(2)                                   // each first request is on the wire
+    const pageA = svc.get(ARTIST, ALBUM)
+    const pageB = svc.get(ABBEY.artist, ABBEY.album)
+    const all = Promise.all([bgA, bgB, pageA, pageB])
+    for (let i = 0; i < 6; i++) await Promise.race([answerNext(), all])
+    const [a, b, onA, onB] = await all
+    assert.equal(a.releaseMbid, RELEASE_ID)
+    assert.equal(b.releaseMbid, ABBEY.releaseId)
+    assert.deepEqual(onA, a, 'the page on A got lookup A\'s answer')
+    assert.deepEqual(onB, b, 'the page on B got lookup B\'s answer')
+    assert.equal(calls.length, 6, 'the pages shared the two lookups, three requests each')
+    assert.equal(svc.busy(), false)
+  })
+
+  test('a background lookup nobody is waiting on still yields to a page sharing another background lookup', async () => {
+    const waits: number[] = []
+    const { fetchFn, calls, requestParked, answerNext } = gatedFetch({ ...QOTSA, ...BEATLES })
+    const svc = createAlbumPersonnelService({ dir: tempDir(), userAgent: 'JakeTunes/test', fetchFn, throttle: async () => {}, retryDelayMs: 0, now: () => NOW, wait: sleepByTurns((ms) => { waits.push(ms) }), log: quiet })
+    const nobodyWaiting = svc.get(ARTIST, ALBUM, { background: true })
+    const shared = svc.get(ABBEY.artist, ABBEY.album, { background: true })
+    await requestParked(2)
+    const page = svc.get(ABBEY.artist, ABBEY.album)
+    const all = Promise.all([nobodyWaiting, shared, page])
+    for (let i = 0; i < 6; i++) await Promise.race([answerNext(), all])
+    await all
+    assert.ok(waits.includes(BACKGROUND_YIELD_MS), `the lookup nobody is waiting on polled while the page was busy: ${waits.join(',')}`)
+    assert.deepEqual(calls, [QOTSA_SEARCH, ABBEY_SEARCH, ABBEY_BROWSE, ABBEY_RELEASE, QOTSA_BROWSE, QOTSA_RELEASE], 'the page\'s lookup finished before the other sent another request')
+  })
+
+  test('one prefetch, a page sharing it and a page on another album: the page with its own lookup goes first, then the shared lookup finishes', async () => {
+    const waits: number[] = []
+    const { fetchFn, calls, requestParked, answerNext } = gatedFetch({ ...QOTSA, ...BEATLES })
+    const svc = createAlbumPersonnelService({ dir: tempDir(), userAgent: 'JakeTunes/test', fetchFn, throttle: async () => {}, retryDelayMs: 0, now: () => NOW, wait: sleepByTurns((ms) => { waits.push(ms) }), log: quiet })
+    const prefetch = svc.get(ABBEY.artist, ABBEY.album, { background: true })
+    await requestParked()
+    const sharing = svc.get(ABBEY.artist, ABBEY.album)
+    const ownLookup = svc.get(ARTIST, ALBUM)
+    await requestParked(2)
+    const all = Promise.all([prefetch, sharing, ownLookup])
+    for (let i = 0; i < 6; i++) await Promise.race([answerNext(), all])
+    const [p, s, o] = await all
+    assert.deepEqual(s, p, 'the page sharing the prefetch got its answer')
+    assert.equal(o.releaseMbid, RELEASE_ID)
+    assert.ok(waits.includes(BACKGROUND_YIELD_MS), `the shared lookup polled while the other page was busy: ${waits.join(',')}`)
+    assert.deepEqual(calls, [ABBEY_SEARCH, QOTSA_SEARCH, QOTSA_BROWSE, QOTSA_RELEASE, ABBEY_BROWSE, ABBEY_RELEASE], 'the page with its own lookup finished first')
     assert.equal(svc.busy(), false)
   })
 })
