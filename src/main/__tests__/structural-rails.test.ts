@@ -270,6 +270,31 @@ describe('FORTIFICATIONS — 2026-08-29 ("IT SPEAKS. fortify fortify fortify.")'
       'the SoundCloud lane imports without staging witnesses again — "the file\'s own clock is the only trustworthy witness"')
   })
 
+  // ── A clean row: what says it is clean reaches the judge on every door ──
+  test('WIRING: a clean row reaches the judge knowing it is clean, and the search drops a rescued row\'s length', () => {
+    const store = readFileSync(join(SRC, 'main/streamrip-store/index.ts'), 'utf-8')
+    assert.ok(store.includes('cleanedSource: opts?.cleanedSource'), 'the track judge no longer hears the row is clean: the explicit file is held to the censored edit\'s length again')
+    assert.ok(!/durationTolSec/.test(store), 'the store chose a tolerance again; exact-recording.ts requestedLength reads it off the row')
+    const view = readFileSync(join(SRC, 'renderer/views/DownloadStore/DownloadView.tsx'), 'utf-8')
+    const asSongRow = view.split('const asSongRow')[1]?.split('})')[0] ?? ''
+    assert.ok(asSongRow.includes('explicitness: t.explicitness'), 'a Get on an expanded album\'s track forgot the row is clean: ±5 s of the censored edit')
+    for (const file of ['main/streamrip-store/index.ts', 'main/record-shop-resolve.ts', 'main/ipc/near-edition-ipc.ts']) {
+      const src = readFileSync(join(SRC, file), 'utf-8')
+      assert.ok(src.includes('explicitness: t.explicitness'), `${file} dropped the track's flag: buildRequestedAlbum keeps the clean length`)
+    }
+    const search = readFileSync(join(SRC, 'main/download-search.ts'), 'utf-8')
+    assert.equal((search.match(/durationSecs: rowSeconds\(/g) ?? []).length, 2, 'a search path carries a rescued row\'s clean length under an explicit label again')
+  })
+
+  test('WIRING: every Qobuz file the walk can import is judged with Qobuz\'s explicit flag', () => {
+    const store = readFileSync(join(SRC, 'main/streamrip-store/index.ts'), 'utf-8')
+    const door = store.split('── The ALBUM DOOR')[1]?.split('── Bandcamp — equal citizen')[0] ?? ''
+    assert.ok(door.includes('parentalWarning: t.parentalWarning'), 'the album door picks a track without the flag: Bad and Boujee\'s clean edition came in this way (2026-11-04)')
+    assert.ok(door.includes('parentalWarning: hit.parentalWarning'), 'the album door judges the staged file without the flag')
+    assert.ok(store.includes("parentalWarning: typeof t.parental_warning === 'boolean' ? t.parental_warning : undefined"), 'the album listing lost each track\'s own flag: A Bay Bay\'s album says explicit, its Single Version clean')
+    assert.ok(store.includes('(await qobuzTrackMeta([cand.id])).get(cand.id)'), 'a hit past the sixth reaches the judge with no flag: a row with no length has nothing else')
+  })
+
   // ── Listen List → library: the share source reaches every import door ──
   test('WIRING: every streamrip import carries the job\'s addedVia', () => {
     const store = readFileSync(join(SRC, 'main/streamrip-store/index.ts'), 'utf-8')

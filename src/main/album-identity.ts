@@ -64,7 +64,7 @@
  */
 import { artistOrAlias, recoNorm, recoTitleMatches } from './reco-match.ts'
 import { foldAccents } from '../common/fold-text.ts'
-import { maskedTitleMatches, requestedVersionMarkers, searchTitle, subtitleVariantMatches, titleReads, unwantedVersionOf } from './streamrip-match.ts'
+import { carriesCensorStamp, maskedTitleMatches, requestedVersionMarkers, searchTitle, subtitleVariantMatches, titleReads, unwantedVersionOf, withoutCensorStamp } from './streamrip-match.ts'
 import type { Provider, RequestedAlbum, RequestedAlbumTrack } from '../common/acquisition-identity.ts'
 export type { RequestedAlbum, RequestedAlbumTrack } from '../common/acquisition-identity.ts'
 
@@ -159,10 +159,22 @@ export interface AlbumRequestOpts {
   cleanRequested?: boolean
 }
 
+/** A clean edition's tracks hold the explicit album to nothing (2026-11-04), for
+ *  the reason in exact-recording.ts requestedLength: Ready to Die's clean "Respect"
+ *  is 273.7 s and "Warning" 176.5 s, the explicit cuts 321.3 and 220.4, so the ±20 s
+ *  below refused the explicit album, and called the owned 321.3 s "Respect" missing.
+ *  A track with nothing to censor keeps its length, and the edition its count. */
+function withoutCleanLength(t: RequestedAlbumTrack, albumTitle: string, cleanRequested?: boolean): RequestedAlbumTrack {
+  const clean = !cleanRequested && (t.explicitness === 'cleaned' || carriesCensorStamp(t.title) || carriesCensorStamp(albumTitle))
+  if (!clean) return t
+  const { durationSec: _clean, ...rest } = t
+  return rest
+}
+
 export function buildRequestedAlbum(o: AlbumRequestOpts): RequestedAlbum {
   const artist = (o.artist || '').trim()
   const title = (o.title || '').trim()
-  const tracks = (o.tracks || []).filter((t) => t && (t.title || '').trim()).map((t) => ({ ...t, title: t.title.trim() }))
+  const tracks = (o.tracks || []).filter((t) => t && (t.title || '').trim()).map((t) => withoutCleanLength({ ...t, title: t.title.trim() }, title, o.cleanRequested))
   const discs = tracks.map((t) => t.discNumber ?? 1)
   const discCount = o.discCount ?? (tracks.length ? Math.max(...discs) : undefined)
   return {
@@ -171,7 +183,9 @@ export function buildRequestedAlbum(o: AlbumRequestOpts): RequestedAlbum {
     title,
     baseTitle: searchTitle(title) || title,
     packaging: packagingMarkersOf(title),
-    versionMarkers: requestedVersionMarkers(title),
+    // A stamp is how Apple lists the record, not a version asked for by name:
+    // "Life After Death [Amended Version]" must not require the word "amended".
+    versionMarkers: requestedVersionMarkers(o.cleanRequested ? title : withoutCensorStamp(title)),
     trackCount: o.trackCount ?? (tracks.length ? tracks.length : undefined),
     discCount,
     tracks: orderTracks(tracks),
@@ -402,7 +416,7 @@ export function matchLibraryOwnership(req: RequestedAlbum, library: LibraryTrack
       const l = pool[j]
       if (!trackTitleReads(w.title, l.title)) continue
       if (unwantedVersionForTrack(w.title, l.title, w.durationSec, l.durationSec)) continue
-      const wantMarkers = requestedVersionMarkers(w.title)
+      const wantMarkers = requestedVersionMarkers(req.explicit === 'clean' ? w.title : withoutCensorStamp(w.title))
       if (wantMarkers.length && !(alternateTakeLabel(w.title) && alternateTakeLabel(l.title))) {
         const got = new Set(requestedVersionMarkers(l.title))
         if (wantMarkers.some((m) => !got.has(m))) continue

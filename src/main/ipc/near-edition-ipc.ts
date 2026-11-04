@@ -50,12 +50,12 @@ export async function bandcampTracklist(url: string): Promise<{ title?: string; 
 export function registerNearEditionIpc(ipc: IpcRegistrar): void {
   ipc.handle('near-edition:compare', async (_event, req: CompareEditionsRequest): Promise<CompareEditionsResult | { ok: false; error: string }> => {
     if (!req || typeof req !== 'object' || !req.album || !req.candidate) return { ok: false, error: 'bad-request' }
-    const found = await itunesAlbumTracks(req.collectionId ?? { artist: req.artist, album: req.album }).catch(() => ({ ok: false, tracks: [] as Array<{ song: string; trackNumber?: number; discNumber?: number; durationSecs?: number }> }))
+    const found = await itunesAlbumTracks(req.collectionId ?? { artist: req.artist, album: req.album }).catch(() => ({ ok: false, tracks: [] as Array<{ song: string; trackNumber?: number; discNumber?: number; durationSecs?: number; explicitness?: string }> }))
     if (!found.ok || !found.tracks.length) return { ok: false, error: 'picked-tracklist-unavailable' }
     const reqAlbum = buildRequestedAlbum({
       artist: req.artist, title: req.album, collectionId: req.collectionId, releaseYear: req.releaseYear,
       trackCount: req.trackCount ?? found.tracks.length,
-      tracks: found.tracks.map((t) => ({ title: t.song, trackNumber: t.trackNumber, discNumber: t.discNumber, durationSec: t.durationSecs })),
+      tracks: found.tracks.map((t) => ({ title: t.song, trackNumber: t.trackNumber, discNumber: t.discNumber, durationSec: t.durationSecs, explicitness: t.explicitness })),
     })
     let candTracks = req.candidate.tracks ?? null
     let url = req.candidate.url

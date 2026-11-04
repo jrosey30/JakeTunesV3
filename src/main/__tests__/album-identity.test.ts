@@ -378,3 +378,74 @@ describe('another name for the artist, on albums (2026-11-03)', () => {
     assert.equal(reconcileAlbumCompletion({ req: req(), staged: [], imported: [], dupes: owned }).complete, false)
   })
 })
+
+// 2026-11-04, real rows: Apple's clean Ready to Die (204669415) and Born Again (1782256137),
+// Qobuz's listing of the explicit editions (0075679456762, 0786127302363).
+describe('a clean edition holds the explicit album to no length', () => {
+  const BIG = 'The Notorious B.I.G.'
+  const row = (title: string, durationSec: number, explicitness = 'cleaned'): RequestedAlbumTrack => ({ title, durationSec, explicitness })
+  const READY_CLEAN: RequestedAlbumTrack[] = [row('Intro', 201.5), row('Things Done Changed', 238.1), row('Gimme the Loot', 304.1), row('Machine Gun Funk', 250.5), row('Warning', 176.5), row('Ready To Die', 267.1), row('One More Chance', 258.6), row('The What', 238.3), row('Juicy', 286), row('Respect', 273.7)]
+  const READY_QOBUZ = [['Intro (2005 Remaster)', 203], ['Things Done Changed (2005 Remaster)', 238], ['Gimme the Loot (2005 Remaster)', 285], ['Machine Gun Funk (2005 Remaster)', 255], ['Warning (2005 Remaster)', 220], ['Ready to Die (2005 Remaster)', 264], ['One More Chance (2005 Remaster)', 283], ['The What (2005 Remaster)', 237], ['Juicy (2005 Remaster)', 302], ['Respect (2005 Remaster)', 321]] as const
+  const listing = (tracks: ReadonlyArray<readonly [string, number]>): CandidateAlbum => ({ provider: 'qobuz', desc: 'x', title: 'Ready To Die The Remaster (U.S. Explicit Version 94567)', artist: BIG, trackCount: tracks.length, parentalWarning: true, tracks: tracks.map(([title, durationSec], i) => ({ title, trackNumber: i + 1, durationSec })) })
+  const ready = (tracks = READY_CLEAN) => buildRequestedAlbum({ artist: BIG, title: 'Ready To Die the Remaster', trackCount: tracks.length, tracks })
+
+  it('"Warning" 176.5 s clean, 220 s explicit: the explicit album passes on its titles', () => {
+    const v = verifyAlbumCandidate(ready(), listing(READY_QOBUZ))
+    assert.equal(v.verdict, 'exact', JSON.stringify(v))
+    assert.ok(v.verdict === 'exact' && v.evidence.some((e) => e.startsWith('tracklist 10/10 in order')) && !v.evidence.some((e) => e.includes('with runtimes')))
+  })
+
+  it('a clean edition still needs the right songs in the right order, and the right count', () => {
+    const swapped = [READY_QOBUZ[1], READY_QOBUZ[0], ...READY_QOBUZ.slice(2)]
+    assert.equal(verifyAlbumCandidate(ready(), listing(swapped)).verdict, 'reject')
+    const short = verifyAlbumCandidate(ready(), listing(READY_QOBUZ.slice(0, 9)))
+    assert.equal(short.verdict === 'reject' && short.kind, 'track-count')
+    const remix = READY_QOBUZ.map(([t, s], i): readonly [string, number] => (i === 4 ? ['Warning (Remix)', s] : [t, s]))
+    assert.equal(verifyAlbumCandidate(ready(), listing(remix)).verdict, 'reject')
+  })
+
+  it('each way a track says it is clean takes its length on its own', () => {
+    const lengths = (title: string, tracks: RequestedAlbumTrack[], cleanRequested?: boolean): Array<number | undefined> => buildRequestedAlbum({ artist: BIG, title, tracks, cleanRequested }).tracks.map((t) => t.durationSec)
+    assert.deepEqual(lengths('Ready To Die the Remaster', [row('Warning', 176.5)]), [undefined], 'the flag')
+    assert.deepEqual(lengths('Record', [row('Song [Amended]', 200, 'notExplicit')]), [undefined], 'a stamp on the title')
+    assert.deepEqual(lengths('Life After Death [Amended Version] (2014 Remaster)', [row('Song', 200, 'notExplicit')]), [undefined], 'a stamp on the album')
+    assert.deepEqual(lengths('Record', [row('Song', 200, 'notExplicit'), row('Other', 100, 'explicit'), { title: 'Third', durationSec: 90 }]), [200, 100, 90], 'nothing to censor, the explicit cut, no word at all')
+    assert.deepEqual(lengths('Ready To Die the Remaster', [row('Warning', 176.5)], true), [176.5], 'a clean edition asked for on purpose')
+    assert.deepEqual(lengths('Life After Death [Amended Version]', [row('Song [Amended]', 200)], true), [200], 'the stamps too')
+  })
+
+  it('a track with nothing to censor still holds the album to its length', () => {
+    const req = buildRequestedAlbum({ artist: BIG, title: 'Record', trackCount: 2, tracks: [row('Skit', 100, 'notExplicit'), row('Song', 200)] })
+    const cand = (skit: number, song: number): CandidateAlbum => ({ provider: 'qobuz', desc: 'x', title: 'Record', artist: BIG, trackCount: 2, tracks: [{ title: 'Skit', trackNumber: 1, durationSec: skit }, { title: 'Song', trackNumber: 2, durationSec: song }] })
+    assert.equal(verifyAlbumCandidate(req, cand(100, 300)).verdict, 'exact')
+    const v = verifyAlbumCandidate(req, cand(150, 200))
+    assert.equal(v.verdict === 'reject' && v.kind, 'tracklist')
+  })
+
+  it('the owned explicit "Respect" is owned, and a dupe of it is credited', () => {
+    const req = ready([row('Respect', 273.7)])
+    const library = [{ id: 1, title: 'Respect', artist: BIG, durationSec: 321.3 }]
+    assert.equal(matchLibraryOwnership(req, library).ownedCount, 1)
+    const c = reconcileAlbumCompletion({ req, staged: [], imported: [], dupes: [{ title: 'Respect', artist: BIG, durationSec: 321.3 }] })
+    assert.equal(c.credited, 1)
+    assert.equal(c.complete, true)
+  })
+
+  it('a stamp on the album or the track is no version asked for by name', () => {
+    const stamped = buildRequestedAlbum({ artist: BIG, title: 'Life After Death [Amended Version] (2014 Remaster)', trackCount: 24 })
+    assert.deepEqual(stamped.versionMarkers, [])
+    assert.equal(verifyAlbumCandidate(stamped, { provider: 'qobuz', desc: 'x', title: 'Life After Death', version: '2014 Remastered Edition', artist: BIG, trackCount: 24 }).verdict, 'exact', 'no tracklist to lean on: the explicit album is not "not the amended version"')
+    assert.deepEqual(buildRequestedAlbum({ artist: BIG, title: 'Life After Death [Amended Version]', cleanRequested: true }).versionMarkers, ['amended'], 'unless asked for on purpose')
+    assert.deepEqual(buildRequestedAlbum({ artist: 'Band', title: 'Record (Live)' }).versionMarkers, ['live'])
+    const hypnotize = buildRequestedAlbum({ artist: BIG, title: 'Greatest Hits', tracks: [row('Hypnotize [Amended]', 237.5)] })
+    assert.equal(matchLibraryOwnership(hypnotize, [{ id: 1, title: 'Hypnotize', artist: BIG, durationSec: 229.8 }]).ownedCount, 1, 'the explicit copy Jake owns is that song')
+    const onPurpose = buildRequestedAlbum({ artist: BIG, title: 'Greatest Hits', cleanRequested: true, tracks: [row('Hypnotize [Amended]', 237.5)] })
+    assert.equal(matchLibraryOwnership(onPurpose, [{ id: 1, title: 'Hypnotize', artist: BIG, durationSec: 229.8 }]).ownedCount, 0, 'a clean record asked for is not the explicit copy')
+  })
+
+  it('Born Again: real tracks, flagged clean, the explicit listing drifts and nothing refuses it', () => {
+    const req = buildRequestedAlbum({ artist: BIG, title: 'Born Again', trackCount: 2, tracks: [row("Dangerous MC's (feat. Mark Curry, Snoop Dogg & Busta Rhymes) [2005 Remaster]", 306.3), row('N****s (2005 Remaster)', 230.4)] })
+    const v = verifyAlbumCandidate(req, { provider: 'qobuz', desc: 'x', title: 'Born Again', version: '2005 Remaster', artist: BIG, trackCount: 2, parentalWarning: true, tracks: [{ title: "Dangerous MC's (feat. Mark Curry, Snoop Dogg & Busta Rhymes) [2005 Remaster]", trackNumber: 1, durationSec: 315 }, { title: 'Niggas (2005 Remaster)', trackNumber: 2, durationSec: 228 }] })
+    assert.equal(v.verdict, 'exact', JSON.stringify(v))
+  })
+})

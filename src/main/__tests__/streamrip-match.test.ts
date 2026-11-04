@@ -2,7 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { foldAccents, withinEditDistance, typoBudget } from '../../common/fold-text.ts'
 import { recoArtistMatches, recoTitleMatches } from '../reco-match.ts'
-import { pickBestStreamripMatch, pickBestSoundcloudMatch, rankStreamripCandidates, unwantedVersionOf , searchTitle, maskedTitleMatches, searchQueryTitle, editionSubstituted, subtitleVariantMatches, applyExplicitGate, liveBrandMarker, hitsByAnotherName, rankWithArtistAliases, isCoverAct, isMaskedToken, albumVersionOf, titleReads, requestedVersionMarkers } from '../streamrip-match.ts'
+import { pickBestStreamripMatch, pickBestSoundcloudMatch, rankStreamripCandidates, unwantedVersionOf , searchTitle, maskedTitleMatches, searchQueryTitle, editionSubstituted, carriesCensorStamp, withoutCensorStamp, subtitleVariantMatches, applyExplicitGate, liveBrandMarker, hitsByAnotherName, rankWithArtistAliases, isCoverAct, isMaskedToken, albumVersionOf, titleReads, requestedVersionMarkers } from '../streamrip-match.ts'
 
 function hit(id: string, desc: string) {
   return { source: 'qobuz', mediaType: 'track', id, desc }
@@ -226,6 +226,28 @@ describe('editionSubstituted — when the runtime stops being a fingerprint', ()
   it('is FALSE when only feature credits were stripped — same recording', () => {
     assert.equal(editionSubstituted('Mo Money Mo Problems (feat. Puff Daddy & Mase)'), false)
     assert.equal(editionSubstituted('Hypnotize'), false)
+  })
+})
+
+// The phone's streamripMatch.ts withoutCensorStamp is the same rule.
+describe('withoutCensorStamp — how Apple marks a clean row', () => {
+  it('takes the label off, in brackets or after a dash, and leaves the rest', () => {
+    for (const [stamped, plain] of [
+      ['Hypnotize [Amended]', 'Hypnotize'],
+      ["Another (feat. Lil' Kim) [Amendedd]", "Another (feat. Lil' Kim)"],
+      ['Sugar (Clean Version)', 'Sugar'],
+      ['The Game (Edited)', 'The Game'],
+      ['Song (Censored)', 'Song'],
+      ['Song (Clean Edit)', 'Song'],
+      ['Song (Amended Mix)', 'Song'],
+      ['Song - Clean', 'Song'],
+      ['Song — Edited', 'Song'],
+      ['Life After Death [Amended Version] (2014 Remaster)', 'Life After Death (2014 Remaster)'],
+    ]) assert.equal(withoutCensorStamp(stamped), plain, stamped)
+  })
+  it('a stamp is a stamp only as a label', () => {
+    for (const t of ['Hypnotize [Amended]', 'Sugar (Clean Version)', 'The Game (Edited)', 'Song - Clean', 'Life After Death [Amended Version] (2014 Remaster)']) assert.equal(carriesCensorStamp(t), true, t)
+    for (const t of ['Clean', 'Come Clean', 'Clean Getaway', 'Clean (Taylor\u2019s Version)', 'Hypnotize (Radio Edit)', 'Compton (Explicit Version)', 'Modjo (Remastered)', 'Ready To Die the Remaster', 'Sweet Home Alabama - Edit', 'Album (Clean Bandit Remix)', 'Song (Come Clean)', 'Song (Squeaky Clean Version)', 'Grunge Baby!  Lullaby Versions', '']) assert.equal(carriesCensorStamp(t), false, t)
   })
 })
 

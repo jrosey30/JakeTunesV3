@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildRequestedRecording, verifyCandidate, finalOutcome, describeOutcome, type CandidateEvidence } from '../exact-recording.ts'
+import { buildRequestedRecording, requestedLength, verifyCandidate, finalOutcome, describeOutcome, EDITION_TOLERANCE_SEC, RUNTIME_TOLERANCE_SEC, type CandidateEvidence } from '../exact-recording.ts'
 import { rankSoundcloudCandidates, requestedVersionMarkers, unwantedVersionOf, searchTitle, isNoResultsMessage } from '../streamrip-match.ts'
 
 // The regression that started 6.0 Phase 1: Jake picked the regular album
@@ -249,7 +249,7 @@ describe('the judge, brought level with the phone (2026-11-03)', () => {
   it('an "[Amended]" row is how Apple lists the song, not a request for the clean edit', () => {
     const mo = buildRequestedRecording({ artist: 'The Notorious B.I.G.', title: 'Mo Money Mo Problems (feat. Ma$e & Puff Daddy) [Amended]', durationMs: 258_000, durationTolSec: 30 })
     assert.deepEqual(mo.requestedMarkers, [])
-    assert.equal(verifyCandidate(mo, qz({ title: 'Mo Money Mo Problems (feat. Puff Daddy & Mase)', artist: 'The Notorious B.I.G.', album: 'Life After Death', durationSec: 251 })).verdict, 'exact')
+    assert.equal(verifyCandidate(mo, qz({ title: 'Mo Money Mo Problems (feat. Puff Daddy & Mase)', artist: 'The Notorious B.I.G.', album: 'Life After Death', durationSec: 257.4 })).verdict, 'exact')
     const hyp = buildRequestedRecording({ artist: 'The Notorious B.I.G.', title: 'Hypnotize [Amended]', durationTolSec: 30 })
     assert.equal(verifyCandidate(hyp, qz({ title: 'Hypnotize (2014 Remaster)', artist: 'The Notorious B.I.G.', album: 'Life After Death' })).verdict, 'exact')
     assert.equal(verifyCandidate(hyp, qz({ title: 'Hypnotize (Clean)', artist: 'The Notorious B.I.G.' })).verdict, 'reject', 'the clean file is still not asked for')
@@ -274,5 +274,113 @@ describe('the judge, brought level with the phone (2026-11-03)', () => {
     assert.equal(verifyCandidate(help, qz({ title: 'With a Little Help from My Friends', artist: 'The Beatles', album: "Sgt. Pepper's Lonely Hearts Club Band" })).verdict, 'exact')
     const girl = buildRequestedRecording({ artist: 'Nirvana', title: 'About a Girl', durationTolSec: 5 })
     assert.equal(verifyCandidate(girl, qz({ title: 'About a Girl', artist: 'Nirvana', album: 'MTV Unplugged In New York' })).verdict, 'reject')
+  })
+})
+
+// 2026-11-04, real rows: Apple's lookup of the clean and explicit editions, Qobuz's own
+// listing. Apple's search hides explicit rows, so a clean row is often all Jake can click.
+describe('a clean row has no length', () => {
+  const BIG = 'The Notorious B.I.G.'
+  const AMENDED_ALBUM = 'Life After Death [Amended Version] (2014 Remaster)'
+  const big = (ev: Partial<CandidateEvidence>): CandidateEvidence => qz({ artist: BIG, ...ev })
+  const sky = () => buildRequestedRecording({ artist: BIG, title: "Sky's the Limit (feat. 112) [Amended]", album: AMENDED_ALBUM, durationMs: 277_000, cleanedSource: true })
+  const respect = () => buildRequestedRecording({ artist: BIG, title: 'Respect', album: 'Ready To Die the Remaster', durationMs: 274_000, cleanedSource: true })
+
+  it('"Sky\'s the Limit": the 329.4 s explicit file is the song; 277.1 s was never the only answer', () => {
+    assert.equal(sky().durationSec, 0)
+    const v = verifyCandidate(sky(), big({ title: "Sky's the Limit (feat. 112) (2014 Remaster)", album: 'Life After Death (2014 Remastered Edition)', durationSec: 329.4, parentalWarning: true }))
+    assert.equal(v.verdict, 'exact')
+    assert.ok(v.verdict === 'exact' && !v.evidence.some((e) => e.startsWith('runs')), 'no length, so the length is no witness')
+  })
+
+  it('"Respect": a flag with no stamp on the row, and the 321.3 s explicit file passes', () => {
+    assert.equal(respect().durationSec, 0)
+    for (const album of ['Ready to Die', 'Music Inspired By Biggie: I Got A Story To Tell', 'Ready To Die: For The Respect', 'Ready To Die The Remaster (U.S. Explicit Version 94567)']) {
+      assert.equal(verifyCandidate(respect(), big({ title: 'Respect (2005 Remaster)', album, durationSec: 321.3 })).verdict, 'exact', album)
+    }
+  })
+
+  it('each way a row says it is clean takes the length on its own', () => {
+    const length = (o: { title: string; album?: string; cleanedSource?: boolean }): number => requestedLength({ durationMs: 200_000, ...o }).durationSec
+    assert.equal(length({ title: 'Respect', album: 'Ready to Die', cleanedSource: true }), 0, 'the flag')
+    assert.equal(length({ title: 'The Game (Edited)', album: 'Quality Control' }), 0, 'a stamp on the title')
+    assert.equal(length({ title: 'Song', album: 'Album [Amended Version]' }), 0, 'a stamp on the album')
+    assert.equal(length({ title: 'Respect', album: 'Ready to Die' }), 200, 'no flag and no stamp')
+  })
+
+  it('a clean record asked for on purpose keeps its clean length', () => {
+    for (const o of [{ title: 'Respect', cleanedSource: true }, { title: 'The Game (Edited)' }, { title: 'Song', album: 'Album [Amended Version]' }]) {
+      assert.equal(requestedLength({ durationMs: 200_000, cleanRequested: true, ...o }).durationSec, 200, o.title)
+    }
+    const req = buildRequestedRecording({ artist: BIG, title: 'Respect', durationMs: 273_700, cleanRequested: true })
+    assert.equal(verifyCandidate(req, big({ title: 'Respect', durationSec: 321.3 })).verdict, 'reject')
+  })
+
+  it('the wide window stays where it is honest, and only there', () => {
+    const tol = (title: string, album = ''): { durationSec: number; durationTolSec: number } => requestedLength({ title, album, durationMs: 200_000 })
+    assert.deepEqual(tol('Lady (Hear Me Tonight)', 'Modjo (Remastered)'), { durationSec: 200, durationTolSec: EDITION_TOLERANCE_SEC }, 'a remastered album')
+    assert.deepEqual(tol('Hypnotize (2014 Remaster)'), { durationSec: 200, durationTolSec: EDITION_TOLERANCE_SEC }, 'a remastered title')
+    assert.deepEqual(tol('N****s Bleed'), { durationSec: 200, durationTolSec: EDITION_TOLERANCE_SEC }, 'a masked title')
+    assert.deepEqual(tol('Mo Money Mo Problems (feat. Puff Daddy & Mase)', 'Mo Money Mo Problems'), { durationSec: 200, durationTolSec: RUNTIME_TOLERANCE_SEC }, 'a credit is the same recording')
+    assert.deepEqual(tol('Hypnotize'), { durationSec: 200, durationTolSec: RUNTIME_TOLERANCE_SEC }, 'the plain song')
+    assert.equal(buildRequestedRecording({ artist: BIG, title: 'Hypnotize', durationMs: 229_800 }).durationTolSec, RUNTIME_TOLERANCE_SEC)
+    assert.equal(buildRequestedRecording({ artist: BIG, title: 'Hypnotize (2014 Remaster)', durationMs: 229_800 }).durationTolSec, EDITION_TOLERANCE_SEC)
+    assert.equal(buildRequestedRecording({ artist: BIG, title: 'Hypnotize (2014 Remaster)', durationMs: 229_800, durationTolSec: 5 }).durationTolSec, 5, 'a caller may still say')
+  })
+
+  it('a word that is only a word is no stamp: the length stays', () => {
+    assert.equal(requestedLength({ title: 'Clean', album: '1989', durationMs: 271_000 }).durationSec, 271)
+    assert.equal(requestedLength({ title: 'Blurry', album: 'Come Clean', durationMs: 304_000 }).durationSec, 304)
+    assert.equal(requestedLength({ title: 'Song (Radio Edit)', durationMs: 200_000 }).durationSec, 200)
+    assert.equal(requestedLength({ title: 'Compton', album: 'Compton - A Soundtrack By Dr. Dre (Explicit Version)', durationMs: 200_000 }).durationSec, 200)
+  })
+
+  it('a stamp on the row buys a file that says it is clean nothing, on any of its witnesses', () => {
+    const stamped = () => buildRequestedRecording({ artist: BIG, title: 'Hypnotize [Amended]', album: AMENDED_ALBUM, durationMs: 237_500, cleanedSource: true })
+    const refused = (ev: Partial<CandidateEvidence>): void => {
+      const v = verifyCandidate(stamped(), big(ev))
+      assert.equal(v.verdict === 'reject' && v.kind, 'version', JSON.stringify(ev))
+    }
+    refused({ title: 'Hypnotize [Amended]', album: 'Life After Death', durationSec: 237.5 })
+    refused({ title: 'Hypnotize', version: 'Amended Version', album: 'Life After Death', durationSec: 237.5 })
+    refused({ title: 'Hypnotize', album: 'Life After Death [Amended Version]', durationSec: 237.5 })
+    refused({ title: 'Hypnotize (2005 Remaster)', album: 'Ready To Die The Remaster (U.S. Amended Version 94568)', durationSec: 237.5 })
+    assert.equal(verifyCandidate(stamped(), { provider: 'qobuz', desc: 'Hypnotize [Amended] by The Notorious B.I.G.' }).verdict, 'reject', 'the desc, with no tags to read')
+    assert.equal(verifyCandidate(stamped(), big({ title: 'Hypnotize (2014 Remaster)', album: 'Life After Death', durationSec: 229.8 })).verdict, 'exact')
+    const onPurpose = buildRequestedRecording({ artist: BIG, title: 'Hypnotize [Amended]', album: AMENDED_ALBUM, cleanRequested: true })
+    assert.equal(verifyCandidate(onPurpose, big({ title: 'Hypnotize [Amended]', album: 'Life After Death [Amended Version]' })).verdict, 'exact', 'unless a clean record was asked for')
+  })
+
+  it('with no length the other witnesses still refuse: real cuts of "Sky\'s the Limit"', () => {
+    const reject = (ev: Partial<CandidateEvidence>, kind: string): void => {
+      const v = verifyCandidate(sky(), big(ev))
+      assert.equal(v.verdict === 'reject' && v.kind, kind, JSON.stringify(ev))
+    }
+    reject({ title: "Sky's the Limit (Instrumental) [2014 Remaster]", album: 'Life After Death', durationSec: 273.7 }, 'version')
+    reject({ title: "Sky's the Limit (feat. 112) [Radio Edit] [2014 Remaster]", album: 'Life After Death', durationSec: 253.7 }, 'version')
+    reject({ title: "Somebody's Gotta Die", album: 'Life After Death', durationSec: 266.7 }, 'title')
+    reject({ title: 'Sky Is The Limit', artist: 'Jennesy', durationSec: 211 }, 'artist')
+    reject({ title: "Sky's the Limit", album: 'Live at the Apollo', durationSec: 300 }, 'version')
+  })
+
+  it('no length and no tags is unverifiable: a clean row never imports on the clock', () => {
+    const v = verifyCandidate(sky(), qz({ title: '', album: '', artist: '', durationSec: 277 }))
+    assert.equal(v.verdict, 'unverifiable')
+  })
+
+  it('a rescued row: explicit, no length, and Qobuz\'s own clean flag still refuses', () => {
+    // The real row for "Respect" reads explicit and points at the explicit edition. The
+    // search no longer hands it the clean length (download-search.ts rowSeconds).
+    const req = buildRequestedRecording({ artist: BIG, title: 'Respect', album: 'Ready To Die the Remaster', explicitSource: true })
+    assert.equal(verifyCandidate(req, big({ title: 'Respect (2005 Remaster)', album: 'Ready to Die', durationSec: 321.3, parentalWarning: true })).verdict, 'exact')
+    const clean = verifyCandidate(req, big({ title: 'Respect (2005 Remaster)', album: 'Ready To Die The Remaster', durationSec: 273.7, parentalWarning: false }))
+    assert.equal(clean.verdict === 'reject' && clean.kind, 'explicit')
+  })
+
+  it('a row with an honest length still holds a file to it', () => {
+    const req = buildRequestedRecording({ artist: BIG, title: 'Hypnotize', album: 'Life After Death', durationMs: 229_800, explicitSource: true })
+    assert.equal(req.durationSec, 229.8)
+    const v = verifyCandidate(req, big({ title: 'Hypnotize', album: 'Hypnotize - EP', durationSec: 243.4 }))
+    assert.equal(v.verdict === 'reject' && v.kind, 'duration', 'the 243 s this comment once called explicit is the Club Mix')
   })
 })

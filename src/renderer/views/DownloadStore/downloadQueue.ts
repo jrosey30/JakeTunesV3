@@ -65,11 +65,10 @@ export interface QResult {
   /** Exact-version length from the iTunes pick — main verifies the Qobuz
    *  file against it before import (wrong-version guard, 2026-08-07). */
   durationMs?: number
-  /** The iTunes row this came from is a CENSORED edition, so its runtime is
-   *  not a fingerprint for the explicit master we are actually going to fetch.
-   *  Amended cuts are genuinely different lengths — Mo Money Mo Problems is
-   *  258s amended vs 251s explicit, Sky's the Limit 277s vs 254s — so pinning
-   *  the guard to ±5s of the clean edit rejected every one of them. */
+  /** The iTunes row this came from is a CENSORED edition, so its runtime says
+   *  nothing about the explicit master we are actually going to fetch: Sky's
+   *  the Limit is 277.1 s amended and 329.4 s explicit. Main drops the length
+   *  (exact-recording.ts requestedLength). */
   cleanedSource?: boolean
   explicitSource?: boolean
   /** Release year of the clicked row — part of the identity contract. */
