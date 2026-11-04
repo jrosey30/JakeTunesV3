@@ -760,6 +760,8 @@ export function pickBestSoundcloudMatch(
 export interface QobuzTrackMeta {
   /** The whole title: a search summary's is cut at 50 characters (streamrip's clean()). */
   title?: string
+  /** Qobuz's parental_warning. False means no warning on this release, not censored:
+   *  exact-recording.ts flagToJudge. */
   parentalWarning?: boolean
   /** The flag on the album the track sits on: see judgeHitsByMeta. */
   albumParentalWarning?: boolean
@@ -794,6 +796,10 @@ export function titleWithVersion(title: string, version?: string | null): string
   const v = (version ?? '').trim()
   return v && !title.includes(v) ? `${title} (${v})` : title
 }
+
+/** Why a copy is refused for its flag. What Qobuz says, not a claim about the audio:
+ *  exact-recording.ts flagToJudge. */
+export const NO_EXPLICIT_WARNING = 'has no explicit warning on Qobuz; the explicit record was asked for'
 
 /** Does this copy say it is the explicit cut? Its version field can, or a bracket in its
  *  title. "Non-Explicit" does not, and a song named "Explicit Content" has said nothing.

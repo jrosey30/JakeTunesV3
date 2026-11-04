@@ -7,6 +7,7 @@ import {
 } from '../album-identity.ts'
 import { buildRequestedRecording, verifyCandidate, finalOutcome, describeOutcome, type Alternative } from '../exact-recording.ts'
 import { pickItunesCollection } from '../download-search.ts'
+import { NO_EXPLICIT_WARNING } from '../streamrip-match.ts'
 
 // The album-level root cause (2026-09-05): the album path had no identity —
 // any multi-file stage was stamped "exact: album rip". XTC's bonus edition
@@ -237,6 +238,7 @@ describe('the requested-album identity contract', () => {
     assert.equal(verifyAlbumCandidate(req, { provider: 'qobuz', desc: 'x', title: 'Sgt. Pepper’s Lonely Hearts Club Band', artist: 'The Rutles', trackCount: 13 }).verdict, 'reject')
     const clean = verifyAlbumCandidate(req, { provider: 'qobuz', desc: 'x', title: 'Sgt. Pepper’s Lonely Hearts Club Band', artist: 'The Beatles', trackCount: 13, parentalWarning: false })
     assert.equal(clean.verdict === 'reject' && clean.kind, 'explicit')
+    assert.equal(clean.verdict === 'reject' && clean.reason, NO_EXPLICIT_WARNING, 'what Qobuz says, not a claim about the audio')
     // a live album Jake asked for by name must be the live one
     const liveReq = buildRequestedAlbum({ artist: 'Band', title: 'Record (Live)', trackCount: 10 })
     assert.equal(verifyAlbumCandidate(liveReq, { provider: 'qobuz', desc: 'x', title: 'Record', artist: 'Band', trackCount: 10 }).verdict, 'reject')

@@ -21,8 +21,8 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildRequestedRecording, judgeHitsByMeta, verifyCandidate } from '../exact-recording.ts'
-import { isQobuzNoSuchItem, qobuzTrackMetaOf, saysExplicit, titleWithVersion, type QobuzTrackMeta } from '../streamrip-match.ts'
+import { buildRequestedRecording, flagToJudge, judgeHitsByMeta, verifyCandidate } from '../exact-recording.ts'
+import { isQobuzNoSuchItem, NO_EXPLICIT_WARNING, qobuzTrackMetaOf, saysExplicit, titleWithVersion, type QobuzTrackMeta } from '../streamrip-match.ts'
 
 // The store reaches state-dir.ts, which asks electron for userData. The same stub the
 // headless scripts use; state-dir reads it once, at import.
@@ -172,6 +172,40 @@ describe('judgeHitsByMeta: what Qobuz says, before a byte moves', () => {
       const v = judge(req({ explicitSource: true }), two, { x: { parentalWarning: false }, y: { parentalWarning: false, albumParentalWarning: false } })
       assert.deepEqual(ids(v.refusedClean), ['x', 'y'])
     })
+
+    test('it says whether an explicit copy is what it found', () => {
+      assert.equal(judge(req(), two, { x: { parentalWarning: true } }).explicitOnQobuz, true)
+      assert.equal(judge(req({ explicitSource: true }), two, { x: { parentalWarning: false } }).explicitOnQobuz, false, 'the row says so, Qobuz does not')
+    })
+
+    test('what an earlier look found counts: the album door knows what the top hits said', () => {
+      const looked = (explicitSeen: boolean) => judgeHitsByMeta(req(), [hit('door', 'Mask Off by Future')], new Map([['door', { parentalWarning: false, albumParentalWarning: true }]]), new Set(), explicitSeen)
+      assert.deepEqual(ids(looked(true).refusedClean), ['door'], 'beside an explicit copy, a clean edit')
+      assert.equal(looked(true).explicitMaster, true)
+      assert.equal(looked(true).explicitOnQobuz, true)
+      assert.deepEqual(ids(looked(false).kept), ['door'])
+      assert.equal(looked(false).explicitMaster, false)
+    })
+  })
+})
+
+// By the audio, 2026-11-04: Qobuz's copies of "Passin' Me By", "Still Not a Player" and "Baba
+// Says Cool for Thought" with no warning are the same as Jake's files, down to the waveform.
+describe('flagToJudge: no warning is not censored', () => {
+  test('on an album flagged explicit, with no explicit copy beside it, the flag says nothing', () => {
+    assert.equal(flagToJudge({ parentalWarning: false, albumParentalWarning: true }, false), undefined)
+  })
+  test('beside an explicit copy it means a clean edit', () => {
+    assert.equal(flagToJudge({ parentalWarning: false, albumParentalWarning: true }, true), false)
+  })
+  test('on an album with no warning, or with nothing known of the album, it stands', () => {
+    assert.equal(flagToJudge({ parentalWarning: false, albumParentalWarning: false }, false), false)
+    assert.equal(flagToJudge({ parentalWarning: false }, false), false)
+  })
+  test('an explicit flag, or none, is left as it is', () => {
+    assert.equal(flagToJudge({ parentalWarning: true, albumParentalWarning: true }, false), true)
+    assert.equal(flagToJudge({ albumParentalWarning: true }, false), undefined)
+    assert.equal(flagToJudge(undefined, false), undefined)
   })
 })
 
@@ -539,8 +573,9 @@ describe('the walk, a song: what the gate is still for', () => {
     const r = await store().walk({ ...MASK, explicitSource: true })
     assert.deepEqual(fetched(), [])
     assert.equal(r.outcome, 'exact-not-found')
-    assert.match(r.error ?? '', /only carries the CLEAN edition of this track \(2 candidates refused\)/)
-    assert.deepEqual(r.alternatives?.map((a) => a.reason), ['is the clean edition; the explicit record was asked for', 'is the clean edition; the explicit record was asked for'])
+    assert.equal(r.error, 'Apple lists an explicit cut of this track, but no copy on Qobuz is marked explicit (2 checked). It may be the clean edit, so nothing was imported. Try the album download, or another source.')
+    assert.deepEqual(r.alternatives?.map((a) => a.reason), [NO_EXPLICIT_WARNING, NO_EXPLICIT_WARNING])
+    assert.equal(NO_EXPLICIT_WARNING, 'has no explicit warning on Qobuz; the explicit record was asked for', 'what Qobuz says, not a claim about the audio')
   })
 
   test("Express Yourself: an explicit row, and the track on the explicit album has nothing to censor", async () => {
@@ -649,6 +684,199 @@ describe('the walk, a song: what the gate is still for', () => {
       const { walk, importedIds } = store()
       await walk({ ...MASK, album: 'FUTURE' })
       assert.deepEqual(importedIds(), ['door'])
+    })
+
+    test('a track that says it is the explicit cut comes in even when the file\'s tag does not say so', async () => {
+      hits('track', [['master', maskHit]])
+      provenButBroken()
+      hits('album', [['alb', 'FUTURE by Future']])
+      answers.alb = { title: 'FUTURE', artist: { name: 'Future' }, tracks_count: 1, tracks: { items: [{ id: 'door', title: 'Mask Off', version: 'Explicit Album Version', parental_warning: false, duration: 204 }] } }
+      tags('door', maskTags)
+      const { walk, importedIds } = store()
+      await walk({ ...MASK, album: 'FUTURE' })
+      assert.deepEqual(importedIds(), ['door'])
+    })
+
+    test('a no-warning hit past the sixth on an album flagged explicit is a clean edit beside a proven master', async () => {
+      const clean = ['c1', 'c2', 'c3', 'c4', 'c5']
+      hits('track', [['master', maskHit], ...clean.map((id): [string, string] => [id, maskHit]), ['past', maskHit]])
+      provenButBroken()
+      for (const id of clean) answers[id] = { parental_warning: false, album: { title: 'FUTURE', parental_warning: false } }
+      answers.past = { parental_warning: false, album: { title: 'FUTURE', parental_warning: true } }
+      tags('past', maskTags)
+      const { walk, importedIds } = store()
+      await walk(MASK)
+      assert.deepEqual(fetched(), ['master', 'past'])
+      assert.deepEqual(importedIds(), [])
+    })
+  })
+
+  // No warning is not censored. The real listing: these three are the same audio as Jake's
+  // files (2026-11-04), and Qobuz flags the album explicit and the track not.
+  describe('a track with nothing to censor is not refused, wherever the walk finds it', () => {
+    const PHARCYDE = { artist: 'The Pharcyde', title: "Passin' Me By", album: 'Bizarre Ride II The Pharcyde', explicitSource: true }
+    const passinTags = { title: "Passin' Me By", artist: 'The Pharcyde', album: 'Bizarre Ride II The Pharcyde', duration: 303 }
+    const album = (items: unknown[], flag: boolean | undefined = true): Record<string, unknown> => ({ title: 'Bizarre Ride II The Pharcyde', artist: { name: 'The Pharcyde' }, parental_warning: flag, tracks_count: items.length, tracks: { items } })
+
+    test("the album door: Passin' Me By, on an explicit row, with no explicit copy anywhere", async () => {
+      hits('album', [['bizarre', 'Bizarre Ride II The Pharcyde by The Pharcyde']])
+      answers.bizarre = album([{ id: 'door', title: "Passin' Me By", parental_warning: false, duration: 303 }])
+      tags('door', passinTags)
+      const { walk, importedIds } = store()
+      const r = await walk(PHARCYDE)
+      assert.equal(r.outcome, 'imported', r.error)
+      assert.deepEqual(fetched(), ['door'])
+      assert.deepEqual(importedIds(), ['door'])
+    })
+
+    test('the album door: the same track on an album with no warning is still refused', async () => {
+      hits('album', [['bizarre', 'Bizarre Ride II The Pharcyde by The Pharcyde']])
+      answers.bizarre = album([{ id: 'door', title: "Passin' Me By", parental_warning: false, duration: 303 }], false)
+      tags('door', passinTags)
+      const { walk, importedIds } = store()
+      await walk(PHARCYDE)
+      assert.deepEqual(fetched(), [])
+      assert.deepEqual(importedIds(), [])
+    })
+
+    test('the album door: A Bay Bay\'s album lists its Single Version first, and the explicit cut beside it is the one taken', async () => {
+      // The real listing, in its order: Qobuz flags the album explicit and the Single Version not.
+      hits('album', [['ep', 'A Bay Bay by Hurricane Chris']])
+      answers.ep = { title: 'A Bay Bay', artist: { name: 'Hurricane Chris' }, parental_warning: true, tracks_count: 3, tracks: { items: [
+        { id: 'single', title: 'A Bay Bay', version: 'Single Version', parental_warning: false, duration: 257 },
+        { id: 'instrumental', title: 'A Bay Bay', version: 'Instrumental', parental_warning: false, duration: 252 },
+        { id: 'cut', title: 'A Bay Bay', parental_warning: true, duration: 306 },
+      ] } }
+      tags('cut', { title: 'A Bay Bay', artist: 'Hurricane Chris', album: 'A Bay Bay', duration: 306.9 })
+      const { walk, importedIds } = store()
+      const r = await walk({ artist: 'Hurricane Chris', title: 'A Bay Bay', album: 'A Bay Bay', explicitSource: true })
+      assert.equal(r.outcome, 'imported', r.error)
+      assert.deepEqual(fetched(), ['cut'])
+      assert.deepEqual(importedIds(), ['cut'])
+    })
+
+    test('the album door: a clean edit on an explicit album stays out once the top hits proved a master', async () => {
+      hits('track', [['master', "Passin' Me By by The Pharcyde"]])
+      answers.master = { parental_warning: true, album: { title: 'Bizarre Ride II The Pharcyde', parental_warning: true } }
+      tags('master', { ...passinTags, title: "Passin' Me By (Remix)" })
+      hits('album', [['bizarre', 'Bizarre Ride II The Pharcyde by The Pharcyde']])
+      answers.bizarre = album([{ id: 'door', title: "Passin' Me By", parental_warning: false, duration: 303 }])
+      tags('door', passinTags)
+      const { walk, importedIds } = store()
+      await walk(PHARCYDE)
+      assert.deepEqual(fetched(), ['master'])
+      assert.deepEqual(importedIds(), [])
+    })
+
+    test('the album door still holds a track to the row\'s length, and to what the album says it is', async () => {
+      hits('album', [['bizarre', 'Bizarre Ride II The Pharcyde by The Pharcyde']])
+      answers.bizarre = album([{ id: 'door', title: "Passin' Me By", parental_warning: true, duration: 357 }])
+      tags('door', passinTags)
+      const wrongLength = store()
+      await wrongLength.walk({ ...PHARCYDE, explicitSource: false, durationMs: 303_500 })
+      assert.deepEqual(fetched(), [], 'a length that does not fit')
+      answers.bizarre = { ...album([{ id: 'door', title: "Passin' Me By", parental_warning: true, duration: 303 }]), title: 'Bizarre Ride II The Pharcyde (Live at the Roxy)' }
+      await store().walk({ ...PHARCYDE, explicitSource: false })
+      assert.deepEqual(fetched(), [], 'its real name says live, though the search summary does not')
+    })
+
+    // The real names. No album on Qobuz reads as the row's, so the door stayed shut, and a walk
+    // with no track hits went on to whatever Bandcamp had under the artist's name.
+    test('the album door opens for a row whose album carries Apple\'s stamp', async () => {
+      hits('album', [['full', 'Life After Death (2014 Remaster) by The Notorious B.I.G.']])
+      answers.full = { title: 'Life After Death', version: '2014 Remastered Edition', artist: { name: 'The Notorious B.I.G.' }, parental_warning: true, tracks_count: 1, tracks: { items: [{ id: 'door', title: "Sky's the Limit (feat. 112)", version: '2014 Remaster', parental_warning: true, duration: 329 }] } }
+      tags('door', { title: "Sky's the Limit (feat. 112) (2014 Remaster)", artist: 'The Notorious B.I.G.', album: 'Life After Death', duration: 329.4 })
+      const { walk, importedIds } = store()
+      const r = await walk({ artist: 'The Notorious B.I.G.', title: "Sky's the Limit (feat. 112) [Amended]", album: 'Life After Death [Amended Version] (2014 Remaster)', durationMs: 277_000, cleanedSource: true })
+      assert.equal(r.outcome, 'imported', r.error)
+      assert.deepEqual(importedIds(), ['door'])
+    })
+
+    test('the album door: the row\'s name finds the amended edition, and the explicit one beside it is what comes in', async () => {
+      // Qobuz's real summaries. Apple's stamped name reads as the amended "(2014 Remaster)" only.
+      const big = 'The Notorious B.I.G.'
+      hits('album', [['explicit', `Life After Death (2014 Remastered Edition) by ${big}`], ['deluxe', `Life After Death (25th Anniversary Super Deluxe Ed by ${big}`], ['amended', `Life After Death (2014 Remaster) by ${big}`]])
+      const edition = (id: string, version: string, flag: boolean, duration: number): Record<string, unknown> => ({ title: 'Life After Death', version, artist: { name: big }, parental_warning: flag, tracks_count: 1, tracks: { items: [{ id, title: "Sky's the Limit (feat. 112)", version: '2014 Remaster', parental_warning: flag, duration }] } })
+      answers.explicit = edition('explicitCut', '2014 Remastered Edition', true, 329)
+      answers.deluxe = edition('deluxeCut', '25th Anniversary Super Deluxe Edition', true, 329)
+      answers.amended = edition('amendedCut', '2014 Remaster', false, 277)
+      tags('explicitCut', { title: "Sky's the Limit (feat. 112) (2014 Remaster)", artist: big, album: 'Life After Death', duration: 329.4 })
+      tags('amendedCut', { title: "Sky's the Limit (feat. 112) (2014 Remaster)", artist: big, album: 'Life After Death', duration: 277.1 })
+      const { walk, importedIds } = store()
+      const r = await walk({ artist: big, title: "Sky's the Limit (feat. 112) [Amended]", album: 'Life After Death [Amended Version] (2014 Remaster)', durationMs: 277_000, cleanedSource: true })
+      assert.equal(r.outcome, 'imported', r.error)
+      assert.deepEqual(fetched(), ['explicitCut'])
+      assert.deepEqual(importedIds(), ['explicitCut'])
+    })
+
+    test('the album door fetches one track from an album, and two at most', async () => {
+      hits('album', ['a', 'b', 'c'].map((id): [string, string] => [id, 'Record by Band']))
+      for (const id of ['a', 'b', 'c']) {
+        answers[id] = { title: 'Record', artist: { name: 'Band' }, tracks_count: 2, tracks: { items: [{ id: `${id}1`, title: 'Song', parental_warning: true }, { id: `${id}2`, title: 'Song', parental_warning: true }] } }
+        for (const n of ['1', '2']) tags(`${id}${n}`, { title: 'Song (Remix)', artist: 'Band', album: 'Record' })
+      }
+      const r = await store().walk({ artist: 'Band', title: 'Song', album: 'Record' })
+      assert.deepEqual(fetched(), ['a1', 'b1'])
+      assert.equal(r.ok, false)
+    })
+
+    test('the album door reads four editions at most', async () => {
+      const ids = ['a', 'b', 'c', 'd', 'e', 'f']
+      hits('album', ids.map((id): [string, string] => [id, 'Record by Band']))
+      await store().walk({ artist: 'Band', title: 'Song', album: 'Record' })
+      assert.equal(qobuzCalls.filter((c) => c.url.includes('album/get')).length, 4)
+    })
+
+    test('an edition the row\'s name and the album\'s name both find is read once, and the next one gets its place', async () => {
+      const big = 'The Notorious B.I.G.'
+      hits('album', [['amended', `Life After Death (2014 Remaster) by ${big}`], ['b', `Life After Death (B) by ${big}`], ['c', `Life After Death (C) by ${big}`], ['d', `Life After Death (D) by ${big}`]])
+      await store().walk({ artist: big, title: 'Nasty Boy [Amended]', album: 'Life After Death [Amended Version] (2014 Remaster)', cleanedSource: true })
+      const read = qobuzCalls.filter((c) => c.url.includes('album/get')).map((c) => /album_id=([^&]+)/.exec(c.url)?.[1])
+      assert.deepEqual([...read].sort(), ['amended', 'b', 'c', 'd'])
+    })
+
+    test('the album door prefers the album as the row writes it: a Deluxe row finds the Deluxe', async () => {
+      hits('album', [['plain', 'Pink Friday by Nicki Minaj'], ['deluxe', 'Pink Friday (Deluxe Edition) by Nicki Minaj']])
+      const onlyOnDeluxe = { id: 'bonus', title: 'Super Bass', parental_warning: true, duration: 200 }
+      answers.deluxe = { title: 'Pink Friday (Deluxe Edition)', artist: { name: 'Nicki Minaj' }, parental_warning: true, tracks_count: 1, tracks: { items: [onlyOnDeluxe] } }
+      answers.plain = { title: 'Pink Friday', artist: { name: 'Nicki Minaj' }, parental_warning: true, tracks_count: 1, tracks: { items: [{ ...onlyOnDeluxe, id: 'plainCopy' }] } }
+      tags('bonus', { title: 'Super Bass', artist: 'Nicki Minaj', album: 'Pink Friday (Deluxe Edition)' })
+      tags('plainCopy', { title: 'Super Bass', artist: 'Nicki Minaj', album: 'Pink Friday' })
+      const { walk, importedIds } = store()
+      await walk({ artist: 'Nicki Minaj', title: 'Super Bass', album: 'Pink Friday (Deluxe Edition)' })
+      assert.deepEqual(importedIds(), ['bonus'])
+    })
+
+    test('the album door: another act\'s track of that very title is passed over, with no fetch', async () => {
+      // The real EP: seven Big Pun tracks that are the remix, and Incubus's "Still Not a Player" last.
+      hits('album', [['ep', 'Still Not a Player EP by Big Pun']])
+      answers.ep = { title: 'Still Not a Player EP', artist: { name: 'Big Pun' }, parental_warning: true, tracks_count: 2, tracks: { items: [
+        { id: 'incubus', title: 'Still Not a Player', parental_warning: false, duration: 254, performer: { name: 'Incubus' } },
+        { id: 'pun', title: 'Still Not a Player', parental_warning: false, duration: 236, performer: { name: 'Big Pun' } },
+      ] } }
+      tags('incubus', { title: 'Still Not a Player', artist: 'Incubus', album: 'Still Not a Player EP', duration: 254 })
+      tags('pun', { title: 'Still Not a Player', artist: 'Big Pun', album: 'Still Not a Player EP', duration: 236 })
+      const { walk, importedIds } = store()
+      const r = await walk({ artist: 'Big Pun', title: 'Still Not a Player', album: 'Still Not a Player EP', explicitSource: true })
+      assert.equal(r.outcome, 'imported', r.error)
+      assert.deepEqual(fetched(), ['pun'])
+      assert.deepEqual(importedIds(), ['pun'])
+    })
+
+    test('past the sixth: the same track, on an explicit row, with no explicit copy anywhere', async () => {
+      const q = "Passin' Me By by The Pharcyde"
+      const clean = ['c1', 'c2', 'c3', 'c4', 'c5']
+      hits('track', [['silent', q], ...clean.map((id): [string, string] => [id, q]), ['past', q]])
+      // Qobuz doesn't answer about the first, so it stays in; it turns out to be something else.
+      tags('silent', { ...passinTags, title: "Passin' Me By (Remix)" })
+      for (const id of clean) answers[id] = { parental_warning: false, album: { title: '90s Rap', parental_warning: false } }
+      answers.past = { parental_warning: false, duration: 303, album: { title: 'Bizarre Ride II The Pharcyde', parental_warning: true } }
+      tags('past', passinTags)
+      const { walk, importedIds } = store()
+      const r = await walk(PHARCYDE)
+      assert.equal(r.outcome, 'imported', r.error)
+      assert.deepEqual(fetched(), ['silent', 'past'])
+      assert.deepEqual(importedIds(), ['past'])
     })
   })
 })
@@ -813,7 +1041,8 @@ describe('the walk, a record: only this edition proves a clean one is censored',
     editionWorld([{ id: 'plain', title: 'Ants From Up There', n: 10, flag: false }])
     const r = await store().walk({ ...ANTS, explicitSource: true })
     assert.deepEqual(fetched(), [])
-    assert.match(r.error ?? '', /only carries the CLEAN edition of this album \(1 candidate refused\)/)
+    assert.match(r.error ?? '', /^Apple lists an explicit edition of this album, but no copy on Qobuz is marked explicit \(1 checked\)/)
+    assert.deepEqual(r.alternatives?.map((a) => a.reason), [NO_EXPLICIT_WARNING])
   })
 
   test('an explicit row keeps the explicit edition, and refuses the clean one before a byte', async () => {

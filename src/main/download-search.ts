@@ -236,11 +236,11 @@ export function resolveExplicitEdition(
 
 /**
  * The length a row may carry (2026-11-04). A rescued row points at the explicit
- * edition and is labelled explicit, but it was built from the clean row, so its
- * length is the clean file's: "Respect" read explicit at 274 s, the explicit file
- * runs 321.3 s, and the judge refused it ("runs 5:21, wanted 4:34"). The label
- * hides the row from every clean-row check downstream, so the length goes here.
- * A row with nothing to censor keeps its length. Blank is honest.
+ * edition and is labelled explicit, but it was built from a row Apple labels
+ * cleaned, so its length may be the clean file's: "Respect" read explicit at 274 s,
+ * the explicit file runs 321.3 s, and the judge refused it ("runs 5:21, wanted
+ * 4:34"). The label hides the row from every clean-row check downstream, so the
+ * length goes here. A row with nothing to censor keeps its length. Blank is honest.
  */
 export function rowSeconds(r: Record<string, unknown>, rescued: boolean): number | undefined {
   if (typeof r.trackTimeMillis !== 'number') return undefined
