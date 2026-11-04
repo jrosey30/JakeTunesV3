@@ -156,12 +156,37 @@ export function maskedTitleMatches(want: string, got: string): boolean {
  * profanity — all cases where we deliberately search for the song rather than
  * that exact pressing, so its runtime is no longer a fingerprint. Feature
  * credits do NOT count: stripping "(feat. X)" still points at the same
- * recording, and the tight duration guard should keep protecting those.
+ * recording, and the tight duration guard should keep protecting those. A
+ * censorship stamp takes the length away altogether (exact-recording.ts
+ * requestedLength); this widens the guard for what is left.
  */
 export function editionSubstituted(raw: string): boolean {
   const t = String(raw || '')
   if (t.split(/\s+/).some(isMaskedToken)) return true
   return /\b(amended|explicit|clean(?:ed)?|censored|edited|remaster(?:ed)?)\b/i.test(t)
+}
+
+/**
+ * A censorship label on a title or an album: "[Amended]", "(Clean Version)",
+ * " - Edited". How Apple marks a clean row when its flag does not, and never
+ * something Jake asked for by name. The album's words count too, because a
+ * track on "Life After Death [Amended Version]" is off the censored edition
+ * whatever its own title says.
+ * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts CENSOR_LABEL,
+ * withoutCensorStamp, carriesCensorStamp.
+ */
+const CENSOR_LABEL = /^(?:amended|clean|cleaned|censored|edited)\w*(?:\s+(?:version|edit|mix))?$/i
+
+export function withoutCensorStamp(title: string): string {
+  return title
+    .replace(/\s*[([]([^()[\]]*)[)\]]/g, (m, inner: string) => (CENSOR_LABEL.test(inner.trim()) ? '' : m))
+    .replace(/\s+[-–—]\s*(?:amended\w*|clean(?:ed)?|censored|edited)\s*$/i, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
+export function carriesCensorStamp(text: string): boolean {
+  return withoutCensorStamp(text) !== text.replace(/\s{2,}/g, ' ').trim()
 }
 
 /**

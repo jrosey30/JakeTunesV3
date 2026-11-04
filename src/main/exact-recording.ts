@@ -20,7 +20,8 @@
  *      artist must be the artist (SoundCloud's uploader tag is allowed to be
  *      a label when the artist is in the title), album must not name a
  *      different recording, a TV/venue show brand is a different recording.
- *   4. Runtime within tolerance of the version Jake clicked, when known.
+ *   4. Runtime within tolerance of the version Jake clicked, when known. A
+ *      clean row's length is not known (requestedLength, 2026-11-04).
  *   5. No duration does NOT switch verification off — the tags still judge.
  *      No duration AND no tags = UNVERIFIABLE, and unverifiable never imports.
  *   6. Explicitness is an identity axis: Jake asked for the explicit record,
@@ -38,7 +39,7 @@ import type { Provider, RequestedRecording, Alternative, DownloadOutcome } from 
 export type { Provider, RequestedRecording, Alternative, DownloadOutcome } from '../common/acquisition-identity.ts'
 
 import { artistOrAlias, recoNorm, recoTitleMatches } from './reco-match.ts'
-import { albumVersionOf, isCoverAct, liveBrandMarker, searchTitle, titleReads, unwantedVersionOf, requestedVersionMarkers } from './streamrip-match.ts'
+import { albumVersionOf, carriesCensorStamp, editionSubstituted, isCoverAct, liveBrandMarker, searchTitle, titleReads, unwantedVersionOf, requestedVersionMarkers, withoutCensorStamp } from './streamrip-match.ts'
 import { nameKey } from '../common/fold-text.ts'
 
 /** Does free text (a SoundCloud title/desc) name the artist? Folded in any
@@ -64,7 +65,8 @@ export interface RequestOpts {
   title?: string
   album?: string
   durationMs?: number
-  durationTolSec: number
+  /** ± seconds. Left out, requestedLength reads it off the row's own words. */
+  durationTolSec?: number
   releaseYear?: number
   cleanedSource?: boolean
   explicitSource?: boolean
@@ -76,10 +78,48 @@ export interface RequestOpts {
   artistAliases?: string[]
 }
 
+/** A file is held to the pressing Jake clicked. */
+export const RUNTIME_TOLERANCE_SEC = 5
+/** A remaster or a masked title names the song, not that pressing, and a
+ *  remaster's length drifts: Jamiroquai's "If I Like It, I Do It" is 274.3 s on
+ *  the album and 292.7 s on the remaster. Still tight enough to refuse a
+ *  9-minute megamix or a 90-second interlude. */
+export const EDITION_TOLERANCE_SEC = 30
+
+/**
+ * What a row's length honestly says about the file to fetch (2026-11-04).
+ *
+ * A clean row, by Apple's flag or a stamp on its title or album, says nothing.
+ * Apple's search hides explicit rows, so on a rap record the row Jake clicks is
+ * often the censored edit, and an edit can lose or gain whole passages. By Apple's
+ * own lookups, clean vs explicit: Nasty Boy 231.6 vs 333.8 s, Sky's the Limit 277.1
+ * vs 329.4, Respect 273.7 vs 321.3, I Love the Dough 340.2 vs 311.5. No window fits
+ * that, and any window around the clean length fits the clean file best: at ±30 s
+ * the judge refused the 329.4 s "Sky's the Limit" and called 277.1 s exact. So the
+ * title, album and explicit checks decide. Only a clean record asked for on purpose
+ * keeps its clean length.
+ *
+ * This used to be a ±30 s window, measured as "Mo Money Mo Problems 258 s amended
+ * vs 251 s explicit, Hypnotize 230 vs 243, Sky's the Limit 277 vs 254". Those three
+ * "explicit" lengths are other cuts, by Apple's rows: the Instrumental (251.0), the
+ * Club Mix (243.4) and the Radio Edit (253.7). The album cuts are 257.4, 229.8, 329.4.
+ *
+ * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts expectedRuntimes (the
+ * phone reads every row Apple lists; the desktop reads the row Jake clicked).
+ */
+export function requestedLength(o: Pick<RequestOpts, 'title' | 'album' | 'durationMs' | 'cleanedSource' | 'cleanRequested'>): { durationSec: number; durationTolSec: number } {
+  const title = o.title || '', album = o.album || ''
+  const clean = !o.cleanRequested && (o.cleanedSource || carriesCensorStamp(title) || carriesCensorStamp(album))
+  return {
+    durationSec: !clean && typeof o.durationMs === 'number' && o.durationMs > 1000 ? o.durationMs / 1000 : 0,
+    durationTolSec: editionSubstituted(title) || editionSubstituted(album) ? EDITION_TOLERANCE_SEC : RUNTIME_TOLERANCE_SEC,
+  }
+}
+
 export function buildRequestedRecording(o: RequestOpts): RequestedRecording {
   const artist = (o.artist || '').trim()
   const title = (o.title || '').trim()
-  const durationSec = typeof o.durationMs === 'number' && o.durationMs > 1000 ? o.durationMs / 1000 : 0
+  const { durationSec, durationTolSec } = requestedLength(o)
   return {
     artist,
     title,
@@ -87,7 +127,7 @@ export function buildRequestedRecording(o: RequestOpts): RequestedRecording {
     artistNorm: recoNorm(artist),
     titleNorm: recoNorm(title),
     durationSec,
-    durationTolSec: o.durationTolSec,
+    durationTolSec: o.durationTolSec ?? durationTolSec,
     releaseYear: o.releaseYear,
     explicit: o.explicitSource ? 'explicit' : o.cleanRequested ? 'clean' : 'unknown',
     // A censorship stamp is how Apple lists the song, not a version Jake asked
@@ -131,16 +171,21 @@ const fmt = (s: number): string => `${Math.floor(s / 60)}:${String(Math.round(s 
  */
 export function verifyCandidate(req: RequestedRecording, ev: CandidateEvidence): Verdict {
   const evidence: string[] = []
-  const wantWords = `${req.title} ${req.album}`
+  // The row's censorship stamp buys a file nothing. With "[Amended]" in the request,
+  // the marker checks read a file that says "[Amended]" as asked for, and a clean
+  // row has no length left to catch it (2026-11-04).
+  const stampFree = (s: string): string => req.explicit === 'clean' ? s : withoutCensorStamp(s)
+  const wantTitle = stampFree(req.title)
+  const wantWords = `${wantTitle} ${stampFree(req.album)}`
 
   // 1. Version markers — title, album and the provider's version field.
-  const titleMarker = ev.title ? unwantedVersionOf(req.title, ev.title) : null
+  const titleMarker = ev.title ? unwantedVersionOf(wantTitle, ev.title) : null
   if (titleMarker) return { verdict: 'reject', kind: 'version', reason: `is tagged “${ev.title}” (${titleMarker})` }
-  const versionField = ev.version ? unwantedVersionOf(req.title, ev.version) : null
+  const versionField = ev.version ? unwantedVersionOf(wantTitle, ev.version) : null
   if (versionField) return { verdict: 'reject', kind: 'version', reason: `is the “${ev.version}” version (${versionField})` }
   const albumMarker = ev.album ? albumVersionOf(wantWords, ev.album) : null
   if (albumMarker) return { verdict: 'reject', kind: 'version', reason: `is from “${ev.album}” (${albumMarker})` }
-  const descMarker = ev.desc && !ev.title ? unwantedVersionOf(`${req.title} ${req.artist}`, ev.desc) : null
+  const descMarker = ev.desc && !ev.title ? unwantedVersionOf(`${wantTitle} ${req.artist}`, ev.desc) : null
   if (descMarker) return { verdict: 'reject', kind: 'version', reason: `is listed as “${ev.desc}” (${descMarker})` }
 
   // 1b. Cover, karaoke and tribute acts: "Rihanna" is inside "Rihanna Cover Band".

@@ -27,7 +27,7 @@ export interface QueueOriginLike { recommendationIds: readonly string[]; entryId
 }
 export interface QueueResultLike {
   source: string; mediaType: string; id: string; desc: string; kind?: 'id' | 'query'; origin?: QueueOriginLike
-  artist?: string; title?: string; album?: string; durationMs?: number; releaseYear?: number; collectionId?: number; trackCount?: number
+  artist?: string; title?: string; album?: string; durationMs?: number; cleanedSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number
   sourceEdition?: import('./source-edition.ts').SourceEdition
 }
 export interface QueueItemLike {
@@ -62,7 +62,9 @@ export function selectionFromQueueResult(r: QueueResultLike): ShopSelection | un
   }
   if (r.mediaType === 'track') {
     const title = (r.title || '').trim(); if (!title) return undefined
-    const request: RequestedRecording = { artist, title, album: (r.album || '').trim(), artistNorm: norm(artist), titleNorm: norm(title), durationSec: r.durationMs ? Math.round(r.durationMs / 1000) : 0, durationTolSec: 5, releaseYear: r.releaseYear, explicit: 'unknown', requestedMarkers: [], providerIds: {} }
+    // A clean row's length is not this recording's, and queueResultForSelection
+    // would re-queue it without the flag that tells main so (requestedLength).
+    const request: RequestedRecording = { artist, title, album: (r.album || '').trim(), artistNorm: norm(artist), titleNorm: norm(title), durationSec: r.durationMs && !r.cleanedSource ? Math.round(r.durationMs / 1000) : 0, durationTolSec: 5, releaseYear: r.releaseYear, explicit: 'unknown', requestedMarkers: [], providerIds: {} }
     return { kind: 'recording', revision: `queue:${r.id}`, request }
   }
   return undefined

@@ -84,3 +84,19 @@ describe('near-edition detection', () => {
     for (const banned of ['downloadQueue', 'enqueue(', 'startGet', 'jaketunes-download-prefill', 'streamripDownload', 'queueRecoDownload', 'nearEdition.compare']) assert.ok(!src.includes(banned), `table must not reference ${banned}`)
   })
 })
+
+describe('compare editions: a clean edition (2026-11-04)', () => {
+  const clean = buildRequestedAlbum({ artist: 'The Notorious B.I.G.', title: 'Ready To Die the Remaster', trackCount: 2, tracks: [{ title: 'Warning', trackNumber: 1, durationSec: 176.5, explicitness: 'cleaned' }, { title: 'Respect', trackNumber: 2, durationSec: 273.7, explicitness: 'cleaned' }] })
+  const explicit = [{ title: 'Warning (2005 Remaster)', trackNumber: 1, durationSec: 220 }, { title: 'Respect (2005 Remaster)', trackNumber: 2, durationSec: 321 }]
+  it('no runtime mismatch against a length nobody knows, and no delta invented from it', () => {
+    const rows = judgeAlbumTracks(clean, explicit)
+    assert.deepEqual(rows.map((r) => r.verdict), ['exact', 'exact'])
+    assert.deepEqual(rows.map((r) => r.wantSec), [null, null])
+    assert.deepEqual(rows.map((r) => r.deltaSec), [null, null])
+    assert.deepEqual(rows.map((r) => r.gotSec), [220, 321])
+  })
+  it('a Get from the comparison carries no length either', () => {
+    const plan = planMatchingTrackGets({ ok: true, picked: { label: 'iTunes 204669415', trackCount: 2 }, found: { provider: 'bandcamp', label: 'Bandcamp edition', source: 'x', trackCount: 2 }, rows: judgeAlbumTracks(clean, explicit), summary: summarizeNearEdition(judgeAlbumTracks(clean, explicit), { label: 'x' }, { label: 'y', source: 'z' }), toleranceSec: 20 }, { parentKey: 'k', artist: 'The Notorious B.I.G.', album: 'Ready To Die the Remaster' })
+    assert.deepEqual(plan.jobs.map((j) => j.durationMs), [undefined, undefined])
+  })
+})
