@@ -29,17 +29,16 @@
  * Pure and dependency-free beyond the matchers, so the tests can run the
  * whole contract without a network or a file.
  *
- * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamrip.ts downloadByQuery has
- * NO staging verification (Qobuz pick → rip → import) and its matcher,
- * backend/src/util/streamripMatch.ts, is a Brief-131 port that predates the
- * wrong-version guard. The phone's downloader is explicitly INCOMPLETE on
- * identity as of 2026-09-04; closing it is a mobile-phase change.
+ * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts unwantedVersion is
+ * the phone's copy of this judge: the same witnesses since 2026-11-03, the phone
+ * reading its runtimes off iTunes (nobody clicks a row there). It has no explicit
+ * axis yet, because it never asks Qobuz's metadata endpoint.
  */
 import type { Provider, RequestedRecording, Alternative, DownloadOutcome } from '../common/acquisition-identity.ts'
 export type { Provider, RequestedRecording, Alternative, DownloadOutcome } from '../common/acquisition-identity.ts'
 
-import { recoArtistMatches, recoNorm, recoTitleMatches } from './reco-match.ts'
-import { liveBrandMarker, maskedTitleMatches, subtitleVariantMatches, unwantedVersionOf, requestedVersionMarkers } from './streamrip-match.ts'
+import { artistOrAlias, recoNorm, recoTitleMatches } from './reco-match.ts'
+import { albumVersionOf, isCoverAct, liveBrandMarker, searchTitle, titleReads, unwantedVersionOf, requestedVersionMarkers } from './streamrip-match.ts'
 import { nameKey } from '../common/fold-text.ts'
 
 /** Does free text (a SoundCloud title/desc) name the artist? Folded in any
@@ -51,6 +50,13 @@ export function textNamesArtist(text: string, artist: string): boolean {
   const a = nameKey(artist, '')
   if (!a) return !!artist.trim() && text.toLowerCase().includes(artist.trim().toLowerCase())
   return nameKey(text, '').includes(a)
+}
+
+/** "Villanova - Mr Vibe" is the song "Mr Vibe": SoundCloud uploads carry the
+ *  artist in the title. Only when what precedes the dash names the artist. */
+function withoutArtistPrefix(title: string, artist: string): string {
+  const m = /^(.+?)\s+[-–—]\s+(.+)$/.exec(title)
+  return m && artist && textNamesArtist(m[1], artist) ? m[2] : title
 }
 
 export interface RequestOpts {
@@ -66,6 +72,8 @@ export interface RequestOpts {
   cleanRequested?: boolean
   itunesTrackId?: number
   isrc?: string
+  /** Other names MusicBrainz knows the artist by (RequestedRecording.artistAliases). */
+  artistAliases?: string[]
 }
 
 export function buildRequestedRecording(o: RequestOpts): RequestedRecording {
@@ -82,7 +90,10 @@ export function buildRequestedRecording(o: RequestOpts): RequestedRecording {
     durationTolSec: o.durationTolSec,
     releaseYear: o.releaseYear,
     explicit: o.explicitSource ? 'explicit' : o.cleanRequested ? 'clean' : 'unknown',
-    requestedMarkers: requestedVersionMarkers(title),
+    // A censorship stamp is how Apple lists the song, not a version Jake asked
+    // for (2026-11-03): an "[Amended]" row refused the explicit master by name.
+    requestedMarkers: requestedVersionMarkers(searchTitle(title) || title),
+    artistAliases: o.artistAliases,
     providerIds: { itunesTrackId: o.itunesTrackId, isrc: o.isrc },
   }
 }
@@ -127,10 +138,16 @@ export function verifyCandidate(req: RequestedRecording, ev: CandidateEvidence):
   if (titleMarker) return { verdict: 'reject', kind: 'version', reason: `is tagged “${ev.title}” (${titleMarker})` }
   const versionField = ev.version ? unwantedVersionOf(req.title, ev.version) : null
   if (versionField) return { verdict: 'reject', kind: 'version', reason: `is the “${ev.version}” version (${versionField})` }
-  const albumMarker = ev.album ? unwantedVersionOf(wantWords, ev.album) : null
+  const albumMarker = ev.album ? albumVersionOf(wantWords, ev.album) : null
   if (albumMarker) return { verdict: 'reject', kind: 'version', reason: `is from “${ev.album}” (${albumMarker})` }
   const descMarker = ev.desc && !ev.title ? unwantedVersionOf(`${req.title} ${req.artist}`, ev.desc) : null
   if (descMarker) return { verdict: 'reject', kind: 'version', reason: `is listed as “${ev.desc}” (${descMarker})` }
+
+  // 1b. Cover, karaoke and tribute acts: "Rihanna" is inside "Rihanna Cover Band".
+  if (!isCoverAct(req.title, req.artist)) {
+    if (isCoverAct(ev.title ?? '', ev.artist ?? '')) return { verdict: 'reject', kind: 'version', reason: `is a cover or tribute act (“${ev.artist ?? ev.title}”)` }
+    if (ev.album && isCoverAct(ev.album, '')) return { verdict: 'reject', kind: 'version', reason: `is from a cover or tribute release (“${ev.album}”)` }
+  }
 
   // 2. Show brands — a different recording even with a clean title and the
   //    studio runtime (the Ed Sullivan case).
@@ -141,7 +158,7 @@ export function verifyCandidate(req: RequestedRecording, ev: CandidateEvidence):
   //    BY NAME ("… (Live)"), a title without that word is a different
   //    recording too: the studio cut is not the live one he picked.
   if (ev.title) {
-    const reads = recoTitleMatches(req.title, ev.title) || maskedTitleMatches(req.title, ev.title) || subtitleVariantMatches(req.title, ev.title)
+    const reads = titleReads(req.title, ev.title) || titleReads(req.title, withoutArtistPrefix(ev.title, req.artist))
     if (!reads) return { verdict: 'reject', kind: 'title', reason: `is titled “${ev.title}”, not “${req.title}”` }
     if (req.requestedMarkers.length) {
       const gotMarkers = new Set(requestedVersionMarkers(`${ev.title} ${ev.version ?? ''} ${ev.album ?? ''}`))
@@ -156,7 +173,7 @@ export function verifyCandidate(req: RequestedRecording, ev: CandidateEvidence):
   //    artist may instead appear in the title/desc.
   if (req.artist && ev.artist) {
     const inText = textNamesArtist(`${ev.title ?? ''} ${ev.desc ?? ''}`, req.artist)
-    const ok = recoArtistMatches(req.artist, ev.artist) || (ev.provider === 'soundcloud' && inText)
+    const ok = artistOrAlias(req.artist, ev.artist, req.artistAliases) || (ev.provider === 'soundcloud' && inText)
     if (!ok) return { verdict: 'reject', kind: 'artist', reason: `is by “${ev.artist}”, not ${req.artist}` }
     evidence.push(`artist “${ev.artist}”`)
   } else if (req.artist && ev.provider === 'soundcloud' && (ev.title || ev.desc)) {

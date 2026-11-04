@@ -355,3 +355,26 @@ describe('the requested-album identity contract', () => {
     assert.equal(v.verdict === 'exact' && v.albumMatches, false)
   })
 })
+
+describe('another name for the artist, on albums (2026-11-03)', () => {
+  const tracks = [{ title: 'Save It for Later', trackNumber: 1, durationSec: 214 }]
+  const req = (aliases?: string[]) => buildRequestedAlbum({ artist: 'The English Beat', artistAliases: aliases, title: 'Special Beat Service', trackCount: 1, tracks })
+  const listing = (artist: string): CandidateAlbum => ({ provider: 'qobuz', desc: `Special Beat Service by ${artist}`, title: 'Special Beat Service', artist, trackCount: 1 })
+
+  it('Qobuz files the record under The Beat: one of their names passes, compared whole', () => {
+    assert.notEqual(verifyAlbumCandidate(req(['The Beat']), listing('The Beat')).verdict, 'reject')
+    const without = verifyAlbumCandidate(req(), listing('The Beat'))
+    assert.equal(without.verdict === 'reject' && without.kind, 'artist')
+    const stranger = verifyAlbumCandidate(req(['The Beat']), listing('The Beat Happening'))
+    assert.equal(stranger.verdict === 'reject' && stranger.kind, 'artist')
+  })
+
+  it('a library copy under that name is owned, and a duplicate under it is credited', () => {
+    const owned = [{ title: 'Save It for Later', artist: 'The Beat', durationSec: 214 }]
+    assert.equal(matchLibraryOwnership(req(['The Beat']), owned).ownedCount, 1)
+    assert.equal(matchLibraryOwnership(req(), owned).ownedCount, 0)
+    const c = reconcileAlbumCompletion({ req: req(['The Beat']), staged: [], imported: [], dupes: owned })
+    assert.equal(c.complete, true)
+    assert.equal(reconcileAlbumCompletion({ req: req(), staged: [], imported: [], dupes: owned }).complete, false)
+  })
+})

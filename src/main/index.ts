@@ -10935,6 +10935,8 @@ app.whenReady().then(async () => {
     ipc,
     getMainWindow: () => mainWindow,
     importDownloaded: importDownloadedFiles,
+    mbThrottle,
+    mbUserAgent: `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)`,
   })
 
   // SCOTUS Archive — Poppy's Supreme Court argument (Beck v. Prupis). A
