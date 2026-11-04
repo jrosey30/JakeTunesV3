@@ -224,10 +224,34 @@ export function finalOutcome(o: { alternatives: Alternative[]; ripFailure: strin
   return o.anyMatched ? 'exact-not-found' : 'not-found'
 }
 
+/** SoundCloud's search failing, as a line in the detail: it is the lane's news,
+ *  not the song's verdict. streamrip 2.1.0 is the newest and its
+ *  client/soundcloud.py:224 asserts that every hit offers an HLS MP3, so one hit
+ *  without one kills the whole search (Brief 224: all 26 failed searches in
+ *  main.log). No connection or login fixes that, and streamrip has no SoundCloud
+ *  login at all. */
+export function soundcloudSearchNote(error?: string): string {
+  if (/^AssertionError\b/.test(error ?? '')) return 'SoundCloud wasn’t searched: streamrip’s search crashes on what SoundCloud serves now (AssertionError). That isn’t your connection or your login, and Retry won’t change it.'
+  return `SoundCloud wasn’t searched: ${error || 'its search failed'}.`
+}
+
+/** A program on this Mac that is missing or won't start: ripDiagnosis's words and
+ *  stageBandcamp's. The reason already names the fix. */
+const programProblem = (reason?: string | null): boolean => /isn’t installed|can’t start|failed to start/.test(reason ?? '')
+
 /** Short readable primary status for a queue row + the full actionable
  *  explanation for its detail panel. The queue always shows `primary`;
- *  `detail` is never truncated into a one-liner. */
-export function describeOutcome(outcome: DownloadOutcome, ctx: { title: string; artist: string; query: string; alternatives: Alternative[]; ripFailure?: string | null; searchFailure?: string | null; otherVersions?: string[]; wantAlbum?: boolean }): { primary: string; detail: string } {
+ *  `detail` is never truncated into a one-liner.
+ *  `laneNotes` are what a fallback lane could not do, added under any verdict
+ *  because they never decide it. `unasked`: lanes whose search did not answer, so
+ *  "not found" must not claim them. `loginlessRipFailure`: the failure came from a
+ *  lane with no login to check (Bandcamp). */
+export function describeOutcome(outcome: DownloadOutcome, ctx: { title: string; artist: string; query: string; alternatives: Alternative[]; ripFailure?: string | null; loginlessRipFailure?: boolean; searchFailure?: string | null; otherVersions?: string[]; wantAlbum?: boolean; unasked?: string[]; laneNotes?: string[] }): { primary: string; detail: string } {
+  const { primary, detail } = verdictWords(outcome, ctx)
+  return { primary, detail: ctx.laneNotes?.length ? `${detail}\n${ctx.laneNotes.join('\n')}` : detail }
+}
+
+function verdictWords(outcome: DownloadOutcome, ctx: Parameters<typeof describeOutcome>[1]): { primary: string; detail: string } {
   const who = `“${ctx.title}” — ${ctx.artist}`.trim()
   const judged = ctx.alternatives.slice(0, 5).map((a) => `${a.provider}: ${a.desc} ${a.reason}`).join('\n')
   switch (outcome) {
@@ -248,12 +272,18 @@ export function describeOutcome(outcome: DownloadOutcome, ctx: { title: string; 
         return { primary: 'Couldn’t prove the edition', detail: `An album arrived for ${who} but it could not be proven to be the edition you picked (${ctx.alternatives[0]?.reason ?? 'no track count, no tracklist'}), so it was not imported.${judged ? `\nEditions seen:\n${judged}` : ''}\nPaste a link to the exact album to download it deliberately.` }
       }
       return { primary: 'Couldn’t verify recording', detail: `A file arrived for ${who} but it could not be judged (${ctx.alternatives[0]?.reason ?? 'no tags, no runtime'}), so it was not imported. Paste a link to the exact track to download it deliberately.` }
-    case 'provider-failed':
-      return { primary: 'Download failed', detail: `A source matched ${who} but the transfer failed: ${ctx.ripFailure ?? 'unknown error'}.\nCheck the connection or the service login, then Retry.` }
+    case 'provider-failed': {
+      const next = programProblem(ctx.ripFailure) ? 'Fix that, then Retry.' : ctx.loginlessRipFailure ? 'Check the connection, then Retry.' : 'Check the connection or the service login, then Retry.'
+      return { primary: 'Download failed', detail: `A source matched ${who} but the transfer failed: ${ctx.ripFailure ?? 'unknown error'}.\n${next}` }
+    }
     case 'provider-unavailable':
-      return { primary: 'Provider unavailable', detail: `A service could not be searched for ${who}: ${ctx.searchFailure ?? 'unknown error'}.\nCheck the connection or the login in Setup, then Retry.` }
+      return { primary: 'Provider unavailable', detail: `A service could not be searched for ${who}: ${ctx.searchFailure ?? 'unknown error'}.\n${programProblem(ctx.searchFailure) ? 'Fix that, then Retry.' : 'Check the connection or the login in Setup, then Retry.'}` }
     case 'not-found':
-    default:
-      return { primary: 'Not found', detail: `Nothing resembling ${who} on Qobuz${ctx.wantAlbum ? '' : ', Bandcamp or SoundCloud'} (searched “${ctx.query}”). Retrying repeats the same search; try a different spelling in the Download view, or paste a link.` }
+    default: {
+      // Only what really answered. Albums never go to SoundCloud (single tracks only).
+      const asked = ['Qobuz', 'Bandcamp', ...(ctx.wantAlbum ? [] : ['SoundCloud'])].filter((lane) => !ctx.unasked?.includes(lane))
+      const searched = asked.length > 1 ? `${asked.slice(0, -1).join(', ')} or ${asked[asked.length - 1]}` : asked[0]
+      return { primary: 'Not found', detail: `Nothing resembling ${who} on ${searched} (searched “${ctx.query}”). Retrying repeats the same search; try a different spelling in the Download view, or paste a link.` }
+    }
   }
 }
