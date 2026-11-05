@@ -26,6 +26,7 @@ import { JUNK_ARTIST_NAME } from '../common/junk-artist.ts'
 import { explicitWins } from '../common/explicit.ts'
 import { packagingMarkersOf } from './album-identity.ts'
 import { recoArtistMatches, recoTitleMatches } from './reco-match.ts'
+import type { AppleSongRow } from './exact-recording.ts'
 import { requestedVersionMarkers, searchTitle } from './streamrip-match.ts'
 
 /**
@@ -125,6 +126,34 @@ export async function fetchDeezerSuggestions(q: string): Promise<ItunesSuggestio
       previewUrl: r.preview || undefined,
     })).filter((s) => s.song && s.artist)
     return out.length ? out : null
+  } catch { return null }
+}
+
+/**
+ * What Apple lists for this song, for a row that came with no length, or null when it did not
+ * answer (2026-11-05). The one download queue waits on this, so it has a timeout. A snippet row
+ * is no length for the song (isPreviewLengthResult).
+ * ⚠️ TWIN: JakeTunesMobile/backend/src/util/itunesCanonical.ts itunesSongRows. This one also
+ * says which rows are on a compilation, and asks for 60, this file's other song search: the
+ * clean row of Naughty by Nature's "O.P.P." sits past the first 25, and 200 adds nothing more.
+ */
+export async function itunesSongRows(title: string, artist: string): Promise<AppleSongRow[] | null> {
+  try {
+    const url = `https://itunes.apple.com/search?term=${encodeURIComponent([title, artist].filter(Boolean).join(' '))}&entity=song&limit=60`
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+    if (!res.ok) return null
+    const data = await res.json() as { results?: Array<Record<string, unknown>> }
+    return (data.results ?? [])
+      .filter((r) => r.trackName && r.artistName && typeof r.trackTimeMillis === 'number' && r.trackTimeMillis > 0 && !isPreviewLengthResult(r.trackTimeMillis / 1000, String(r.trackName)))
+      .map((r) => ({
+        title: String(r.trackName),
+        artist: String(r.artistName),
+        album: String(r.collectionName ?? ''),
+        durationSec: Number(r.trackTimeMillis) / 1000,
+        cleaned: r.trackExplicitness === 'cleaned',
+        explicit: r.trackExplicitness === 'explicit',
+        compilation: r.collectionArtistName === 'Various Artists',
+      }))
   } catch { return null }
 }
 

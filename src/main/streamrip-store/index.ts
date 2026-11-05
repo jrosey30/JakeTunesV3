@@ -28,8 +28,8 @@ import type { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/
 import { NO_EXPLICIT_WARNING, bandcampHitDoubt, rankStreamripCandidates, rankWithArtistAliases, searchTitle, searchQueryTitle, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, isNoResultsMessage, isQobuzNoSuchItem, parseStreamripDesc, qobuzTrackMetaOf, type QobuzTrackMeta } from '../streamrip-match.ts'
 import { buildRequestedAlbum, verifyAlbumCandidate, reconcileAlbumCompletion, describeCompletion, albumAlternativeDesc, orderTracks, parseCountTag, matchLibraryOwnership, ladderBudgetMs, type RequestedAlbum, type CandidateAlbum, type AlbumVerdict, type Ownership, type LibraryTrackLite } from '../album-identity.ts'
 import { loadLibraryTracksLite } from '../import-pipeline.ts'
-import { itunesAlbumTracks, itunesFindAlbum } from '../download-search.ts'
-import { buildRequestedRecording, flagToJudge, judgeHitsByMeta, requestedLength, verifyCandidate, finalOutcome, describeOutcome, soundcloudSearchNote, type Alternative, type CandidateEvidence, type DownloadOutcome, type Provider } from '../exact-recording.ts'
+import { itunesAlbumTracks, itunesFindAlbum, itunesSongRows } from '../download-search.ts'
+import { asksAppleForLength, buildRequestedRecording, expectedRuntimes, flagToJudge, judgeHitsByMeta, requestedLength, verifyCandidate, finalOutcome, describeOutcome, soundcloudSearchNote, type Alternative, type CandidateEvidence, type DownloadOutcome, type ExpectedRuntime, type Provider } from '../exact-recording.ts'
 import { requestFromSourceEdition, verifySourceEdition } from '../source-edition-verify.ts'
 import type { SourceEdition } from '../../common/source-edition.ts'
 import { shareSourceKey } from '../../common/source-playlists.ts'
@@ -663,7 +663,8 @@ export function registerStreamripStore(deps: StreamripDeps): void {
   // discarded in staging and the next-ranked candidate is tried. Qobuz's desc
   // gives NO album/length, so a live-album cut with a clean title ("Your Body
   // Is a Wonderland" from a live record) is undetectable before download — the
-  // file's own clock is the only trustworthy witness. A clean row has no clock.
+  // file's own clock is the only trustworthy witness. A clean row has no clock. A row
+  // with no `durationMs`, every Listen List row among them, asks Apple for one first.
   const fmtDur = (s: number | null): string => s == null ? 'unknown length' : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`
   ipc.handle('streamrip:download-by-query', async (_e, opts: { sourceEdition?: SourceEdition; artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number; addedVia?: string }): Promise<DownloadResult & { matchDesc?: string }> => {
     cancelRequested = false            // new attempt = clean slate
@@ -715,7 +716,16 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     // names then let the staged file's tags through the judge.
     // A song may also come back under another way of writing its credit ("Oma" for
     // "OMA & SitarNik"). The judge below reads the same length: a clean row has none.
-    const clocked = requestedLength({ title, album: opts?.album, durationMs, cleanedSource: opts?.cleanedSource }).durationSec > 0
+    // A row that came with no length asks Apple what the recording runs (2026-11-05).
+    // Any trouble is no length: the guard stays out of it, not the download.
+    // ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripWalk.ts walkDownload.
+    let runtimes: ExpectedRuntime[] = []
+    if (!wantAlbum && title && artist && asksAppleForLength({ title, album: opts?.album, durationMs, cleanedSource: opts?.cleanedSource, explicitSource: opts?.explicitSource })) {
+      const rows = await itunesSongRows(lookFor, artist)
+      runtimes = expectedRuntimes({ title, artist, album: opts?.album }, rows ?? [])
+      trace.push(rows === null ? 'apple: no answer, so no length' : runtimes.length ? `apple lists ${runtimes.map((r) => `${fmtDur(r.sec)} ±${r.tolSec}`).join(', ')}` : 'apple: no length for this recording')
+    }
+    const clocked = runtimes.length > 0 || requestedLength({ title, album: opts?.album, durationMs, cleanedSource: opts?.cleanedSource }).durationSec > 0
     const { ranked, rejectedVersions, aliases } = qsearch.ok && qsearch.results?.length
       ? await rankWithArtistAliases(lookFor || query, artist, qsearch.results, mediaType, (a) => artistAliases(a, { throttle: deps.mbThrottle, userAgent: deps.mbUserAgent }), wantAlbum ? undefined : { clocked })
       : { ranked: [], rejectedVersions: [], aliases: [] as string[] }
@@ -726,7 +736,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     // that recording before it can touch the library. Every rejection is
     // kept as a structured alternative for the verdict at the end.
     const req = buildRequestedRecording({
-      artist, artistAliases: aliases, title, album: opts?.album, durationMs,
+      artist, artistAliases: aliases, title, album: opts?.album, durationMs, runtimes,
       releaseYear: opts?.releaseYear, cleanedSource: opts?.cleanedSource, explicitSource: opts?.explicitSource,
     })
     if (durationMs && !req.durationSec) trace.push(`no length: ${fmtDur(durationMs / 1000)} is the clean row's`)
@@ -1117,8 +1127,11 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     // A row with a length holds the file to it. One without has only tags, and a fan's
     // upload can carry the right ones (bandcampHitDoubt). Asked before the fetch, and
     // before the two tries are counted, so a real release further down still gets its turn.
-    const bcDoubt = (r: { url: string; band: string; album: string | null }): string | null => req.durationSec > 0 ? null : bandcampHitDoubt({ artist, title, album: opts?.album || '' }, r)
-    const bcPicks = bcNamed.filter((r) => !bcDoubt(r)).slice(0, 2)
+    // With a length a doubtful page may still land, after the pages that aren't: Björk's
+    // bootleg pages answer ahead of bjork.bandcamp.com, run 4:10, and used up both tries.
+    const bcPageDoubt = (r: { url: string; band: string; album: string | null }): string | null => bandcampHitDoubt({ artist, title, album: opts?.album || '' }, r)
+    const bcDoubt = (r: { url: string; band: string; album: string | null }): string | null => req.durationSec > 0 ? null : bcPageDoubt(r)
+    const bcPicks = [...bcNamed.filter((r) => !bcPageDoubt(r)), ...bcNamed.filter((r) => bcPageDoubt(r) && !bcDoubt(r))].slice(0, 2)
     const bcLeftAlone = bcNamed.filter((r) => bcDoubt(r)).slice(0, 2)
     for (const r of bcLeftAlone) trace.push(`bandcamp “${r.name}” at ${r.url}: ${bcDoubt(r)}`)
     // Not "nothing resembling it". But not a refused file either, so a Qobuz outage or a

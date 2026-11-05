@@ -96,7 +96,9 @@ export function recoToQueueResult(rec: Recommendation): RecoQueueDecision {
       desc: `${title} — ${artist}`,
       artist, title,
       // The album hint opens main's album door when Qobuz's track search
-      // misses the song; it is not a request for the whole record.
+      // misses the song; it is not a request for the whole record. It also says
+      // which of Apple's lengths is this row's: no row was clicked, so there is
+      // no durationMs here, and main asks Apple (exact-recording.ts expectedRuntimes).
       album: album || undefined,
       origin: recoOrigin(rec),
     },
