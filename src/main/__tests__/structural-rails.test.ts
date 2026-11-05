@@ -304,7 +304,7 @@ describe('FORTIFICATIONS — 2026-08-29 ("IT SPEAKS. fortify fortify fortify.")'
     for (const door of doors) {
       assert.ok(door.includes('addedVia'), `${door} drops the Listen List row's share source — a TikTok share downloaded here never reaches the TikTok playlist (2026-11-03)`)
     }
-    assert.ok(store.includes("deps.importDownloaded(opts.only ?? staged.files, 'streamrip', opts.addedVia)"),
+    assert.ok(store.includes("deps.importDownloaded(opts.only ?? staged.files, 'streamrip', opts.addedVia, opts.rowTags)"),
       'importStaged stopped handing addedVia to the importer')
     assert.ok(store.includes("runDownload(['id', source, mediaType, id], shareSourceKey(addedVia))"),
       'the picked-id door dropped the share source')

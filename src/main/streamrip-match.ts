@@ -1,6 +1,7 @@
 /** Pure Qobuz search-result matching for streamrip — shared by download-by-query and tests. */
 import { artistOrAlias, recoArtistMatches, recoFold, recoTitleMatches } from './reco-match.ts'
 import { foldAccents, nameKey } from '../common/fold-text.ts'
+import type { RealAlbum } from '../common/real-album.ts'
 
 export interface StreamripSearchHit { source: string; mediaType: string; id: string; desc: string }
 
@@ -374,6 +375,22 @@ export function subtitleVariantMatches(want: string, got: string): boolean {
   return false
 }
 
+/**
+ * "Girls & Boys" and "Girls and Boys" are one title, and the fold can't see it: "&" folds to
+ * nothing. Parklife's track list says "&", every compilation of it says "and", so the album door
+ * walked straight past the album's own copy (JakeTunesMobile Brief 231). Only for comparing
+ * titles: names stay as they are written.
+ * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts spelledOutAnd.
+ */
+export function spelledOutAnd(title: string): string {
+  return title.replace(/\s*&\s*/g, ' and ').replace(/\s+['’]?n['’]?\s+/gi, ' and ')
+}
+const titleKey = (title: string): string => recoFold(spelledOutAnd(title))
+/** recoTitleMatches, with "&" and "and" as one word. */
+export function titleMatches(want: string, got: string): boolean {
+  return recoTitleMatches(want, got) || recoTitleMatches(spelledOutAnd(want), spelledOutAnd(got))
+}
+
 /** The same text. Outkast's "?", The Garden's ":(" and MOULD's "///" fold to nothing,
  *  and no fuzzy arm compares nothing. ⚠️ TWIN: the phone's streamripMatch.ts. */
 function sameTitle(want: string, got: string): boolean {
@@ -390,8 +407,8 @@ function sameTitle(want: string, got: string): boolean {
  *  "Love Song" pass for "Love". */
 export function titleReads(want: string, got: string): boolean {
   const w = searchTitle(want) || want, g = searchTitle(got) || got
-  return sameTitle(want, got) || recoTitleMatches(w, g) || maskedTitleMatches(w, g) || subtitleVariantMatches(w, g)
-    || recoTitleMatches(want, got) || maskedTitleMatches(want, got) || subtitleVariantMatches(want, got)
+  return sameTitle(want, got) || titleMatches(w, g) || maskedTitleMatches(w, g) || subtitleVariantMatches(w, g)
+    || titleMatches(want, got) || maskedTitleMatches(want, got) || subtitleVariantMatches(want, got)
 }
 
 /**
@@ -434,7 +451,7 @@ export function creditHolds(
 ): boolean {
   const kind = otherCredit(want.artist, found.artist)
   if (!kind || (kind === 'part' && !clocked)) return false
-  const key = (t: string): string => recoFold(summary ? bareTitle(searchTitle(t)) : searchTitle(t))
+  const key = (t: string): string => titleKey(summary ? bareTitle(searchTitle(t)) : searchTitle(t))
   return key(want.title) !== '' && key(want.title) === key(found.title)
 }
 
@@ -472,16 +489,16 @@ export function rankStreamripCandidates(
   const scored: Array<{ r: StreamripSearchHit; score: number; i: number; otherName: boolean }> = []
   const rejectedVersions: string[] = []
   const wantsCover = isCoverAct(wantTitle, wantArtist)
-  const nWant = recoFold(wantTitle)   // compared only. recoNorm made every Hebrew title '' and gave each the exact-title bonus
-  const wantToks = new Set(titleTokens(wantTitle))
+  const nWant = titleKey(wantTitle)   // compared only. recoNorm made every Hebrew title '' and gave each the exact-title bonus
+  const wantToks = new Set(titleTokens(spelledOutAnd(wantTitle)))
   for (let i = 0; i < results.length; i++) {
     const r = results[i]
     if (r.mediaType !== wantMediaType) continue
     const { title, artist } = parseStreamripDesc(r.desc)
     // The request is the title without its labels: "Hello" reads as "Hello - 2009
     // Remaster", five letters being too short for any fuzzy arm with the stamp on.
-    const reads = recoTitleMatches(wantTitle, title) || maskedTitleMatches(wantTitle, title) || sameTitle(wantTitle, title)
-      || (nWant !== '' && recoFold(searchTitle(title)) === nWant)
+    const reads = titleMatches(wantTitle, title) || maskedTitleMatches(wantTitle, title) || sameTitle(wantTitle, title)
+      || (nWant !== '' && titleKey(searchTitle(title)) === nWant)
     const subtitleOnly = !reads && (subtitleVariantMatches(wantTitle, title) || subtitleVariantMatches(searchTitle(wantTitle) || wantTitle, searchTitle(title) || title))
     if (!reads && !subtitleOnly) continue
     if (unwantedVersionOf(wantTitle, title)) { rejectedVersions.push(title); continue }
@@ -507,8 +524,8 @@ export function rankStreamripCandidates(
       score += 1
     }
     if (!wantsCover && isCoverAct(title, artist)) { rejectedVersions.push(title); continue }
-    if (recoFold(title) === nWant) score += 6
-    const extras = titleTokens(title).filter((w) => !wantToks.has(w)).length
+    if (titleKey(title) === nWant) score += 6
+    const extras = titleTokens(spelledOutAnd(title)).filter((w) => !wantToks.has(w)).length
     score -= Math.min(4, extras)
     scored.push({ r, score, i, otherName })
   }
@@ -767,19 +784,121 @@ export interface QobuzTrackMeta {
   albumParentalWarning?: boolean
   durationSec?: number
   album?: string
+  /** Who the album is by: "Various Artists" on a compilation (isCompilationCopy). */
+  albumArtist?: string
   version?: string | null
 }
 
 /** A track/get answer, field by field: what is absent or the wrong type stays unknown. */
-export function qobuzTrackMetaOf(d: { title?: unknown; parental_warning?: unknown; duration?: unknown; version?: unknown; album?: { title?: unknown; parental_warning?: unknown } }): QobuzTrackMeta {
+export function qobuzTrackMetaOf(d: { title?: unknown; parental_warning?: unknown; duration?: unknown; version?: unknown; album?: { title?: unknown; parental_warning?: unknown; artist?: { name?: unknown } } }): QobuzTrackMeta {
   return {
     title: typeof d.title === 'string' ? d.title.trim() : undefined,
     parentalWarning: typeof d.parental_warning === 'boolean' ? d.parental_warning : undefined,
     albumParentalWarning: typeof d.album?.parental_warning === 'boolean' ? d.album.parental_warning : undefined,
     durationSec: typeof d.duration === 'number' ? d.duration : undefined,
     album: typeof d.album?.title === 'string' ? d.album.title : undefined,
+    albumArtist: typeof d.album?.artist?.name === 'string' ? d.album.artist.name : undefined,
     version: typeof d.version === 'string' ? d.version : null,
   }
+}
+
+const albumName = (album: string): string => (searchTitle(album) || album).replace(/\s+[-–—]\s*(?:ep|single)\s*$/i, '').trim()
+
+/** Is this the album the request names? No album on either side is never a mismatch. */
+export function onWantedAlbum(wanted: string, album: string | undefined): boolean {
+  if (!wanted || !album) return true
+  return titleReads(albumName(wanted), albumName(album))
+}
+
+/**
+ * A copy on an album that isn't the artist's own: a compilation, a label sampler, someone
+ * else's DJ mix. The same recording, usually, on the wrong album for the library. So it goes
+ * last in the walk, and with no album to look for it is still off the album. Nothing is known
+ * without an answer from Qobuz, so an unanswered hit is not one of these.
+ * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts isCompilationCopy.
+ */
+export function isCompilationCopy(want: { artist: string; artistAliases?: string[] }, meta: QobuzTrackMeta | undefined): boolean {
+  const by = meta?.albumArtist?.trim()
+  if (!by || !want.artist) return false
+  if (/^(?:various(?: artists)?|va|v\.a\.)$/i.test(by)) return true
+  if ([want.artist, ...(want.artistAliases ?? [])].some((name) => recoArtistMatches(name, by))) return false
+  return otherCredit(want.artist, by) === null
+}
+
+/**
+ * The order to fetch hits in: the album asked for, then another album of the artist's, then a
+ * compilation. `offAlbum`: the hits Qobuz says are on another album, or on a compilation when
+ * no album is named. A compilation only counts as the album when the request names that album.
+ * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts judgeHitsByMeta.
+ */
+export function albumFirst<H extends { id: string }>(
+  want: { artist: string; album: string; artistAliases?: string[] },
+  hits: H[],
+  meta: Map<string, QobuzTrackMeta>,
+): { walk: H[]; offAlbum: Set<string> } {
+  const compilation = new Set(hits.filter((h) => isCompilationCopy(want, meta.get(h.id))).map((h) => h.id))
+  const offAlbum = new Set(hits.filter((h) => !onWantedAlbum(want.album, meta.get(h.id)?.album) || (compilation.has(h.id) && !want.album)).map((h) => h.id))
+  return {
+    walk: [
+      ...hits.filter((h) => !offAlbum.has(h.id)),
+      ...hits.filter((h) => offAlbum.has(h.id) && !compilation.has(h.id)),
+      ...hits.filter((h) => offAlbum.has(h.id) && compilation.has(h.id)),
+    ],
+    offAlbum,
+  }
+}
+
+/** What the library's row says instead of the file's tags, when the copy in hand is from the
+ *  wrong album. The file's cover is that album's too, so the album's own comes from `coverUrls`. */
+export interface RealAlbumTags {
+  album: string
+  albumArtist: string
+  year?: number
+  trackNumber?: number
+  trackCount?: number
+  discNumber?: number
+  /** The song's title as the album prints it, when that only differs in how it is written. */
+  title?: string
+  coverUrls: string[]
+}
+
+/** How far a file may stray from the album's cut when that is the only clock there is. */
+const ALBUM_CUT_TOLERANCE_SEC = 5
+
+/**
+ * The album a copy from the wrong album is filed on. Only when that is certain, or the file's
+ * own tags stand: a row that names a compilation beats a row that names the wrong record.
+ *   - MusicBrainz says which album this is, and the file is the song by the clock: the row's
+ *     length, or the album's own cut.
+ *   - Nothing from MusicBrainz: the row names the album, its length fits, and the copy is on a
+ *     compilation. Never over a copy on the artist's own album: Turnover's "Humming" on
+ *     Peripheral Vision is better than a row's "Humming - Single".
+ * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts realAlbumTags.
+ */
+export function realAlbumTags(
+  want: { title: string; artist: string; album: string; durationSec: number; durationTolSec: number; artistAliases?: string[] },
+  real: RealAlbum | null,
+  copy: { durationSec?: number; meta?: QobuzTrackMeta },
+): RealAlbumTags | null {
+  const sec = copy.durationSec
+  if (!want.album || !sec || sec <= 0) return null
+  const clocked = want.durationSec > 0 && Math.abs(sec - want.durationSec) <= want.durationTolSec
+  const mb = real && titleKey(albumName(real.album)) === titleKey(albumName(want.album)) ? real : null
+  const nearTheCut = mb?.durationSec !== undefined && Math.abs(sec - mb.durationSec) <= ALBUM_CUT_TOLERANCE_SEC
+  if (mb && !mb.lateAlbum && (clocked || nearTheCut)) {
+    return {
+      album: mb.album,
+      albumArtist: want.artist,
+      ...(mb.year ? { year: mb.year } : {}),
+      ...(mb.trackNumber ? { trackNumber: mb.trackNumber } : {}),
+      ...(mb.trackCount ? { trackCount: mb.trackCount } : {}),
+      ...(mb.discNumber ? { discNumber: mb.discNumber } : {}),
+      ...(titleKey(searchTitle(mb.title) || mb.title) === titleKey(searchTitle(want.title) || want.title) ? { title: mb.title } : {}),
+      coverUrls: [`https://coverartarchive.org/release-group/${mb.releaseGroupId}/front-500`],
+    }
+  }
+  if (!clocked || !isCompilationCopy(want, copy.meta)) return null
+  return { album: want.album, albumArtist: want.artist, coverUrls: [] }
 }
 
 /** Qobuz saying it has no such item: "No result matching given argument", the search

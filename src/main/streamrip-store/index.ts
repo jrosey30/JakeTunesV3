@@ -25,15 +25,17 @@ import { join } from 'path'
 import { homedir, tmpdir } from 'os'
 import { lstat, mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
 import type { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
-import { NO_EXPLICIT_WARNING, bandcampHitDoubt, rankStreamripCandidates, rankWithArtistAliases, searchTitle, searchQueryTitle, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, isNoResultsMessage, isQobuzNoSuchItem, parseStreamripDesc, qobuzTrackMetaOf, type QobuzTrackMeta } from '../streamrip-match.ts'
+import { NO_EXPLICIT_WARNING, albumFirst, albumVersionOf, bandcampHitDoubt, isCompilationCopy, onWantedAlbum, rankStreamripCandidates, realAlbumTags, titleMatches, rankWithArtistAliases, searchTitle, searchQueryTitle, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, isNoResultsMessage, isQobuzNoSuchItem, parseStreamripDesc, qobuzTrackMetaOf, type QobuzTrackMeta } from '../streamrip-match.ts'
 import { buildRequestedAlbum, verifyAlbumCandidate, reconcileAlbumCompletion, describeCompletion, albumAlternativeDesc, orderTracks, parseCountTag, matchLibraryOwnership, ladderBudgetMs, type RequestedAlbum, type CandidateAlbum, type AlbumVerdict, type Ownership, type LibraryTrackLite } from '../album-identity.ts'
-import { loadLibraryTracksLite } from '../import-pipeline.ts'
+import { loadLibraryTracksLite, type ImportRowTags } from '../import-pipeline.ts'
+import { albumToLookFor, ownedAlbumSpelling, ownedAlbumTest, type RealAlbum } from '../../common/real-album.ts'
+import { lookUpRealAlbum } from '../real-album-lookup.ts'
 import { itunesAlbumTracks, itunesFindAlbum } from '../download-search.ts'
 import { buildRequestedRecording, flagToJudge, judgeHitsByMeta, requestedLength, verifyCandidate, finalOutcome, describeOutcome, soundcloudSearchNote, type Alternative, type CandidateEvidence, type DownloadOutcome, type Provider } from '../exact-recording.ts'
 import { requestFromSourceEdition, verifySourceEdition } from '../source-edition-verify.ts'
 import type { SourceEdition } from '../../common/source-edition.ts'
 import { shareSourceKey } from '../../common/source-playlists.ts'
-import { recoTitleMatches, recoArtistMatches } from '../reco-match.ts'
+import { recoArtistMatches } from '../reco-match.ts'
 import { isAllowedStreamripUrl } from '../url-safety.ts'
 import { artistAliases } from '../artist-spellings-store.ts'
 import { quietWarn } from '../flight-recorder.ts'
@@ -43,7 +45,7 @@ export interface StreamripDeps {
   getMainWindow: () => BrowserWindow | null
   /** Same importer Bandcamp uses; we pass source='streamrip', plus the Listen
    *  List row's share source when this job answers one (the row's addedVia). */
-  importDownloaded: (absPaths: string[], source?: string, addedVia?: string) => Promise<ImportedTrackRecord[] | BatchSummary>
+  importDownloaded: (absPaths: string[], source?: string, addedVia?: string, rowTags?: ImportRowTags) => Promise<ImportedTrackRecord[] | BatchSummary>
   /** The app's MusicBrainz identity and shared throttle (index.ts mbThrottle). */
   mbThrottle: () => Promise<void>
   mbUserAgent: string
@@ -441,12 +443,25 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     }
   }
 
+  /** The album's own cover, for a copy whose file carries a compilation's. Any trouble: none. */
+  async function fetchAlbumCover(urls: string[]): Promise<Uint8Array | undefined> {
+    for (const url of urls) {
+      try {
+        const res = await fetch(url, { signal: AbortSignal.timeout(8000), headers: { 'User-Agent': deps.mbUserAgent } })
+        if (!res.ok) continue
+        const bytes = new Uint8Array(await res.arrayBuffer())
+        if (bytes.length > 1024) return bytes
+      } catch { /* the next, or none */ }
+    }
+    return undefined
+  }
+
   // Download stage 2: import staged audio into the library + tell the renderer.
-  async function importStaged(staged: StagedRip, opts: { only?: string[]; addedVia?: string } = {}): Promise<DownloadResult> {
+  async function importStaged(staged: StagedRip, opts: { only?: string[]; addedVia?: string; rowTags?: ImportRowTags } = {}): Promise<DownloadResult> {
     try {
       // `only` = the album contract's pick of files whose tracks are NOT
       // already owned; everything else in staging is discarded with it.
-      const summary = await deps.importDownloaded(opts.only ?? staged.files, 'streamrip', opts.addedVia)
+      const summary = await deps.importDownloaded(opts.only ?? staged.files, 'streamrip', opts.addedVia, opts.rowTags)
       const importedTracks: Array<Record<string, unknown>> = Array.isArray(summary)
         ? (summary as unknown as Array<Record<string, unknown>>)
         : ((summary as unknown as { tracks?: Array<Record<string, unknown>> }).tracks ?? [])
@@ -730,6 +745,22 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       releaseYear: opts?.releaseYear, cleanedSource: opts?.cleanedSource, explicitSource: opts?.explicitSource,
     })
     if (durationMs && !req.durationSec) trace.push(`no length: ${fmtDur(durationMs / 1000)} is the clean row's`)
+    // ── The song's real album (JakeTunesMobile Brief 231). A store's first hit for a hit song
+    // is a compilation, and so can be the row's own album. MusicBrainz says which album to look
+    // for: common/real-album.ts. Any trouble is null, and the ladder goes on the row.
+    const rowAlbum = (opts?.album || '').trim()
+    let real: RealAlbum | null = null
+    let library: LibraryTrackLite[] = []
+    if (!wantAlbum && title && artist) {
+      library = await loadLibraryTracksLite().catch(() => [] as LibraryTrackLite[])
+      real = await lookUpRealAlbum(lookFor, artist, durationMs ? [durationMs / 1000] : [], ownedAlbumTest(library, artist), {
+        throttle: deps.mbThrottle,
+        userAgent: deps.mbUserAgent,
+        onTrouble: (why) => trace.push(`musicbrainz: ${why}: going on the row`),
+      })
+      req.album = albumToLookFor(rowAlbum, real, (a) => albumVersionOf(title, a) !== null)
+      if (req.album !== rowAlbum) trace.push(`“${title}” is on “${req.album}”${rowAlbum ? `, not “${rowAlbum}”` : ''} (MusicBrainz)`)
+    }
     const alternatives: Alternative[] = []
     // Qobuz rows that matched the song but were other versions are the first
     // structured alternatives — "we found these, none was the exact one".
@@ -768,6 +799,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       const probed = new Set<string>()
       let metaMap: Map<string, QobuzTrackMeta> = new Map()
       let explicitOnQobuz = false
+      let offAlbum = new Set<string>()
       const onlyCleanFailure = (refused: typeof ranked): DownloadResult & { matchDesc?: string } => ({
         ok: false,
         outcome: 'exact-not-found',
@@ -804,6 +836,18 @@ export function registerStreamripStore(deps: StreamripDeps): void {
           }
           if (v.kept.length === 0 && v.refusedClean.length > 0) return onlyCleanFailure(v.refusedClean)
           ranked2 = [...v.kept, ...ranked.slice(6)]
+          // A row is only overruled by a certain answer, unless Qobuz says the row's own album is
+          // a compilation: then any album of the artist's that MusicBrainz knows is the better name.
+          if (real && !real.lateAlbum && req.album === rowAlbum && rowAlbum !== real.album && v.kept.some((c) => {
+            const m = meta.get(c.id)
+            return m?.album !== undefined && onWantedAlbum(req.album, m.album) && isCompilationCopy(req, m)
+          })) {
+            trace.push(`“${rowAlbum}” is a compilation: looking for “${real.album}” (MusicBrainz)`)
+            req.album = real.album
+          }
+          const order = albumFirst(req, ranked2, meta)
+          ranked2 = order.walk
+          offAlbum = order.offAlbum
         } else {
           ranked2 = ranked.filter((c) => !gone.has(c.id))
           // An album request with no explicit row is judged further down, once the
@@ -978,17 +1022,25 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       }
     }
 
+    // A clean file from the WRONG album (a compilation carrying the same master) is held as a
+    // fallback while a canonical-album copy is looked for, through the album door too.
+    let fallback: { staged: StagedRip; desc: string; meta: QobuzTrackMeta | undefined } | null = null
     if (ranked2.length) {
       // Qobuz: try the top candidates in rank order. Every staged file is
       // judged — with a known runtime AND without one (the old "no duration"
-      // path went stage → import with no witness at all). A clean file from
-      // the WRONG album (a compilation carrying the same master) is held as
-      // a fallback while a canonical-album copy is looked for.
-      let fallback: { staged: StagedRip; desc: string } | null = null
+      // path went stage → import with no witness at all).
       let lastRipErr = ''
       for (const cand of ranked2.slice(0, 3)) {
-        if (cancelRequested) return { ok: false, error: 'canceled', outcome: 'canceled' }
-        if (clock.expired()) return { ...gaveUp(), outcome: 'provider-failed' }
+        if (cancelRequested) {
+          if (fallback) await discardStaged(fallback.staged)
+          return { ok: false, error: 'canceled', outcome: 'canceled' }
+        }
+        if (clock.expired()) {
+          if (fallback) await discardStaged(fallback.staged)
+          return { ...gaveUp(), outcome: 'provider-failed' }
+        }
+        // A good copy is in hand: another album's copy would not be better.
+        if (fallback && offAlbum.has(cand.id)) continue
         if (reqAlbum) {
           // Pre-stage: the provider's own listing must not contradict the
           // edition (cheap refusal); the staged files then have to prove it.
@@ -1021,29 +1073,39 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         const meta = metaMap.get(cand.id) ?? (probed.has(cand.id) ? undefined : (await qobuzTrackMeta([cand.id])).get(cand.id))
         const verdict = await judgeStaged('qobuz', st.staged, cand.desc, { parentalWarning: flagToJudge(meta, explicitOnQobuz), version: meta?.version ?? undefined })
         if (verdict.verdict === 'exact') {
-          if (verdict.albumMatches) {
+          // A compilation only counts as the album when the row names that very album.
+          if (verdict.albumMatches && !(isCompilationCopy(req, meta) && !req.album)) {
             if (fallback) await discardStaged(fallback.staged)
             trace.push(`exact: “${cand.desc}” (${verdict.evidence.join(', ')})`)
             const dl = await importStaged(st.staged, { addedVia })
             return { ...dl, matchDesc: cand.desc, outcome: dl.ok ? 'imported' : 'provider-failed' }
           }
-          if (!fallback) { fallback = { staged: st.staged, desc: cand.desc }; continue }
+          if (!fallback) { fallback = { staged: st.staged, desc: cand.desc, meta }; continue }
           await discardStaged(st.staged)
           continue
         }
         await discardStaged(st.staged)
         noteReject('qobuz', cand.desc, verdict)
       }
-      if (fallback) {
-        console.log(`[download] no canonical-album copy of “${title}” on Qobuz — importing verified off-album master (“${fallback.desc}”)`)
-        const dl = await importStaged(fallback.staged, { addedVia })
-        return { ...dl, matchDesc: fallback.desc, outcome: dl.ok ? 'imported' : 'provider-failed' }
-      }
       if (lastRipErr) trace.push(`qobuz rips failed — last: ${lastRipErr}`)
     }
 
-    if (cancelRequested) return { ok: false, error: 'canceled', outcome: 'canceled' }
-    if (clock.expired()) return { ...gaveUp(), outcome: 'provider-failed' }
+    /** The song, from the wrong album: the row still says the right one when that's certain. */
+    const importFallback = async (held: { staged: StagedRip; desc: string; meta: QobuzTrackMeta | undefined }): Promise<DownloadResult & { matchDesc?: string }> => {
+      const durationSec = (await probeStagedFile(held.staged.files[0])).durSec ?? undefined
+      const tags = realAlbumTags(req, real, { durationSec, meta: held.meta })
+      const owned = tags ? ownedAlbumSpelling(library, tags.albumArtist, tags.album) : null
+      console.log(`[download] no canonical-album copy of “${title}” on Qobuz — importing verified off-album master (“${held.desc}”)${tags ? `, filed on “${owned?.album ?? tags.album}”` : ''}`)
+      const rowTags: ImportRowTags | undefined = tags ? { ...tags, album: owned?.album ?? tags.album, cover: await fetchAlbumCover(tags.coverUrls) } : undefined
+      const dl = await importStaged(held.staged, { addedVia, rowTags })
+      return { ...dl, matchDesc: held.desc, outcome: dl.ok ? 'imported' : 'provider-failed' }
+    }
+
+    if (cancelRequested) {
+      if (fallback) await discardStaged(fallback.staged)
+      return { ok: false, error: 'canceled', outcome: 'canceled' }
+    }
+    if (clock.expired()) return fallback ? importFallback(fallback) : { ...gaveUp(), outcome: 'provider-failed' }
     // ── The ALBUM DOOR (2026-08-29, "another failed download. getting
     // ridiculous"): Qobuz's track search misses songs its own catalogue
     // carries. When the caller named the album, find the ALBUM, read its
@@ -1055,8 +1117,10 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     // a clean row's length. A Bay Bay's album lists its Single Version, no warning,
     // before the explicit cut: so the tracks of an album's editions are judged together.
     // ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts albumDoorHits.
-    if (!wantAlbum && (opts?.album || '').trim()) {
-      const albName = (opts!.album as string).trim()
+    // 2026-11-05: the real album's door first, with a copy from elsewhere in hand or not. The
+    // row's own album, when it is another, is still a way to the song if nothing is held.
+    for (const albName of wantAlbum ? [] : [...new Set([req.album, rowAlbum])].filter(Boolean)) {
+      if (fallback && albName !== req.album) continue
       const asearch = await searchCatalog({ query: [artist, searchTitle(albName) || albName].filter(Boolean).join(' '), source: 'qobuz', mediaType: 'album', numResults: 10 })
       const albumsNamed = (name: string): typeof ranked => rankStreamripCandidates(name, artist, asearch.results ?? [], 'album', aliases, { clocked: false }).ranked
       // The name as the row writes it comes first, so a Deluxe row finds the Deluxe. The
@@ -1065,7 +1129,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       // amended "(2014 Remaster)", and not as its explicit "(2014 Remastered Edition)".
       const editions = [...new Map([...albumsNamed(albName), ...albumsNamed(searchTitle(albName) || albName)].map((a) => [a.id, a])).values()].slice(0, 4)
       const listings = await Promise.all(editions.map(async (alb) => ({ alb, tl: await qobuzAlbumTrackList(alb.id) })))
-      const doorTracks = listings.flatMap(({ alb, tl }) => tl.tracks.filter((t) => recoTitleMatches(lookFor || title, t.title)).map((t) => ({ ...t, alb, tl })))
+      const doorTracks = listings.flatMap(({ alb, tl }) => tl.tracks.filter((t) => titleMatches(lookFor || title, t.title)).map((t) => ({ ...t, alb, tl })))
       const trackMeta = new Map(doorTracks.map((t): [string, QobuzTrackMeta] => [t.id, { title: t.title, parentalWarning: t.parentalWarning, albumParentalWarning: t.tl.parentalWarning, durationSec: t.durationSec, album: t.tl.title }]))
       // Big Pun's "Still Not a Player" EP closes with Incubus's own, by that very title.
       const doorHits = doorTracks.map((t) => ({ id: t.id, desc: `${t.title} by ${t.performer || artist}` }))
@@ -1084,6 +1148,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         if (hit.streamable === false) {
           const when = hit.tl.releaseDate ? ` — releases ${hit.tl.releaseDate}` : ''
           console.warn(`[download] “${title}” is on “${alb.desc}” but not out yet${when}`)
+          if (fallback) continue
           return { ok: false, error: `Not out yet: “${alb.desc}”${when}. It'll download once it releases.`, outcome: 'not-released' }
         }
         console.log(`[download] album door: “${title}” found inside “${alb.desc}” (track ${hit.id}) — Qobuz track search had missed it`)
@@ -1092,6 +1157,13 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         // The flag was read above, by the rule that knows what it means.
         const verdict = await judgeStaged('qobuz', st.staged, `${hit.title} — via album “${alb.desc}”`)
         if (verdict.verdict === 'exact') {
+          // Through the row's door: the song, and still not the album MusicBrainz names.
+          if (!verdict.albumMatches) {
+            if (fallback) await discardStaged(st.staged)
+            else fallback = { staged: st.staged, desc: `${hit.title} — via album “${alb.desc}”`, meta: trackMeta.get(hit.id) }
+            continue
+          }
+          if (fallback) await discardStaged(fallback.staged)
           const dl = await importStaged(st.staged, { addedVia })
           return { ...dl, matchDesc: `${hit.title} — via album “${alb.desc}”`, outcome: dl.ok ? 'imported' : 'provider-failed' }
         }
@@ -1099,6 +1171,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         noteReject('qobuz', `${hit.title} — via album “${alb.desc}”`, verdict)
       }
     }
+    if (fallback) return importFallback(fallback)
 
     if (cancelRequested) return { ok: false, error: 'canceled', outcome: 'canceled' }
     if (clock.expired()) return { ...gaveUp(), outcome: 'provider-failed' }
@@ -1111,7 +1184,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     trace.push('hits' in bcSearch ? `bandcamp: ${bcSearch.hits.length} results` : `bandcamp search: no answer (${bcSearch.noAnswer})`)
     const bcNamed = ('hits' in bcSearch ? bcSearch.hits : []).filter((r) =>
       (!artist || recoArtistMatches(artist, r.band)) &&
-      recoTitleMatches(title, r.name) &&
+      titleMatches(title, r.name) &&
       !unwantedVersionOf(title, r.name) &&
       !liveBrandMarker(title, r.name))
     // A row with a length holds the file to it. One without has only tags, and a fan's
