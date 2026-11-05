@@ -10,8 +10,9 @@
  * The real album is the earliest OFFICIAL release-group of primary type Album, with no
  * secondary type (not Compilation, Live, Soundtrack, Remix, DJ-mix), credited to the artist,
  * holding a recording of this title at this length. Nothing is invented when there is none:
- * a single that was never on an album, a soundtrack song and a track nobody has catalogued
- * all answer null, and the caller keeps what it has.
+ * a single that was never on an album, a track nobody has catalogued and a soundtrack song all
+ * answer null, including one a soundtrack had first (50 Cent's "Hustler's Ambition", later a
+ * bonus track on Curtis), and the caller keeps what it has.
  *
  * Pure, no imports, so its tests and the library audit run it with no network. The asking is
  * the lookup module beside its caller.
@@ -101,7 +102,7 @@ const EDITION_LABEL = /\s*[([][^)\]]*\b(?:remaster(?:ed)?|album version|lp versi
 const plainTitle = (title: string): string => title.replace(EDITION_LABEL, ' ').replace(/\s{2,}/g, ' ').trim()
 
 /** Words a title has when it is another recording than the album's cut. */
-const VERSION_WORD = /\b(?:live|remix|rmx|acoustic|demo|instrumental|karaoke|radio edit|edit|dub|session|sessions|unplugged|mix)\b/i
+const VERSION_WORD = /\b(?:live|remix|rmx|acoustic|demo|instrumental|karaoke|radio edit|edit|dub|session|sessions|unplugged|mix|soundtrack)\b/i
 /** Disambiguations that name the album's own cut: Neil Young's "original studio mix". */
 const OWN_CUT = /\b(?:original|album|lp|studio|mono|stereo)(?:\s+studio)?\s+mix\b/gi
 /** Compilations MusicBrainz has typed as plain albums. */
@@ -119,6 +120,12 @@ export function realAlbumQuery(title: string, artist: string): string {
  *  for "Tri-Polar", not "Tri\u2010Polar". */
 const storeSpelling = (text: string): string => text
   .replace(/[\u2018\u2019\u02bc]/g, "'").replace(/[\u201c\u201d]/g, '"').replace(/[\u2010\u2011]/g, '-').replace(/\u2026/g, '...').replace(/\u00a0/g, ' ')
+
+/** Dates to whatever both sides know: 1994 and 1994-04-25 are not before each other. */
+const datedBefore = (a: string, b: string): boolean => {
+  const n = Math.min(a.length, b.length)
+  return a.slice(0, n) < b.slice(0, n)
+}
 
 const yearOf = (date: string | null | undefined): number | undefined => {
   const y = Number(String(date ?? '').slice(0, 4))
@@ -147,6 +154,10 @@ export function pickRealAlbum(recordings: MbRecording[], req: RealAlbumRequest):
   interface Seat { rg: string; rgTitle: string; release: MbRelease; date: string; clock: boolean | null; printed: string; lengthMs?: number | null }
   const seats: Seat[] = []
   let earliestAny: number | undefined
+  // When each album first came out, whichever edition holds this cut: a 2026 reissue with the
+  // song as a bonus track is still a 2007 album. And when a soundtrack first had this cut.
+  const groupFirst = new Map<string, string>()
+  let soundtrackFirst = ''
   for (const rec of recordings) {
     if (!isTheArtist(rec['artist-credit'])) continue
     if (realAlbumFold(plainTitle(rec.title ?? '')) !== wantTitle) continue
@@ -161,10 +172,13 @@ export function pickRealAlbum(recordings: MbRecording[], req: RealAlbumRequest):
       if (clock !== false && y !== undefined && (earliestAny === undefined || y < earliestAny)) earliestAny = y
       const rg = rel['release-group']
       if (!rg?.id || !rg.title) continue
+      if (clock !== false && rel.date && (rg['secondary-types'] ?? []).some((t) => /soundtrack/i.test(t)) && (!soundtrackFirst || datedBefore(rel.date, soundtrackFirst))) soundtrackFirst = rel.date
       if (String(rg['primary-type'] ?? '').toLowerCase() !== 'album') continue
       if ((rg['secondary-types'] ?? []).length > 0) continue
       if (rel['artist-credit'] && !isTheArtist(rel['artist-credit'])) continue
       if (HITS_PACKAGE.test(rg.title)) continue
+      const seen = groupFirst.get(rg.id)
+      if (rel.date && (!seen || datedBefore(rel.date, seen))) groupFirst.set(rg.id, rel.date)
       seats.push({
         rg: rg.id, rgTitle: storeSpelling(rg.title), release: rel, date: String(rel.date ?? ''),
         clock, printed: storeSpelling(track?.title || rec.title || req.title), lengthMs,
@@ -179,10 +193,28 @@ export function pickRealAlbum(recordings: MbRecording[], req: RealAlbumRequest):
   // By release group: the group's earliest known date.
   const groups = new Map<string, Seat[]>()
   for (const s of fitting) groups.set(s.rg, [...(groups.get(s.rg) ?? []), s])
-  const firstDate = (ss: Seat[]): string => ss.map((s) => s.date).filter(Boolean).sort()[0] ?? '9999'
+  const firstDate = (ss: Seat[]): string => groupFirst.get(ss[0]!.rg) ?? '9999'
   const ordered = [...groups.values()].sort((a, b) => firstDate(a).localeCompare(firstDate(b)))
+  // Every name the album goes by. Bowie's 1969 album is "David Bowie" to MusicBrainz, and most
+  // pressings of it say "Space Oddity".
+  const namesOf = (ss: Seat[]): string[] => [...new Set([ss[0]!.rgTitle, ...ss.map((s) => storeSpelling(s.release.title ?? '')).filter(Boolean)])]
+  /** What most pressings call it, which is what a store calls it. Ties go to MusicBrainz's name. */
+  const usualName = (ss: Seat[]): string => {
+    const counts = new Map<string, number>([[realAlbumFold(ss[0]!.rgTitle), 0]])
+    const names = new Map<string, string>([[realAlbumFold(ss[0]!.rgTitle), ss[0]!.rgTitle]])
+    for (const s of ss) {
+      const name = plainTitle(storeSpelling(s.release.title ?? ''))
+      const key = realAlbumFold(name)
+      if (!key) continue
+      counts.set(key, (counts.get(key) ?? 0) + 1)
+      if (!names.has(key)) names.set(key, name)
+    }
+    const top = [...counts.entries()].reduce((a, b) => (b[1] > a[1] ? b : a))
+    return names.get(top[0])!
+  }
   // The album Jake already owns, if this recording is really on it: the song joins it.
-  const chosen = ordered.find((ss) => req.owned?.(ss[0]!.rgTitle)) ?? ordered[0]!
+  const chosen = ordered.find((ss) => namesOf(ss).some((n) => req.owned?.(n))) ?? ordered[0]!
+  if (soundtrackFirst && chosen !== undefined && datedBefore(soundtrackFirst, firstDate(chosen))) return null
 
   // The plainest edition of that album prints the numbers: the earliest, then the shortest.
   // Not a bonus track that says "(mono)", and a first pressing on vinyl calls track 5 "B1",
@@ -202,7 +234,7 @@ export function pickRealAlbum(recordings: MbRecording[], req: RealAlbumRequest):
   const year = yearOf(firstDate(chosen))
   const lateAlbum = year !== undefined && earliestAny !== undefined && year - earliestAny >= ORIGINAL_ALBUM_YEARS
   return {
-    album: seat.rgTitle,
+    album: namesOf(chosen).find((n) => req.owned?.(n)) ?? usualName(chosen),
     ...(year !== undefined ? { year } : {}),
     ...(number > 0 ? { trackNumber: number } : {}),
     ...(media?.['track-count'] ? { trackCount: media['track-count'] } : {}),
@@ -210,7 +242,7 @@ export function pickRealAlbum(recordings: MbRecording[], req: RealAlbumRequest):
     title: seat.printed,
     ...(seat.lengthMs ? { durationSec: seat.lengthMs / 1000 } : {}),
     releaseGroupId: seat.rg,
-    realAlbums: [...new Set(ordered.map((ss) => ss[0]!.rgTitle))],
+    realAlbums: [...new Set(ordered.flatMap(namesOf))],
     lateAlbum,
     confidence: seat.clock === true && !lateAlbum ? 'high' : 'low',
   }

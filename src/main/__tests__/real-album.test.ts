@@ -69,6 +69,56 @@ describe('which album a song is really on, on real answers', () => {
     assert.deepEqual(r.realAlbums, ['Talk That Talk'])
   })
 
+  it('Backstreet Boys, "Larger Than Life" off Now 4: Millennium', () => {
+    const r = pick('Backstreet Boys - Larger Than Life', [232])!
+    assert.equal(r.album, 'Millennium')
+    assert.equal(r.year, 1999)
+    assert.equal(r.trackNumber, 1)
+  })
+
+  it('David Bowie, "Space Oddity": what the pressings call it, and whichever name he owns it under', () => {
+    assert.equal(pick('David Bowie - Space Oddity', [315])!.album, 'Space Oddity', 'MusicBrainz files it under "David Bowie"')
+    assert.equal(pick('David Bowie - Space Oddity', [315])!.year, 1969)
+    assert.equal(pick('David Bowie - Space Oddity', [315], { owned: (a) => a === 'Man of Words/Man of Music' })!.album, 'Man of Words/Man of Music')
+    assert.equal(albumToLookFor('Man of Words/Man of Music', pick('David Bowie - Space Oddity', [315]), () => false), 'Man of Words/Man of Music', 'a row on that name stands')
+  })
+
+  it('a song a soundtrack had first is a soundtrack song, whatever album it landed on later', () => {
+    assert.equal(pick('The Beach Boys - Kokomo', [216]), null, 'Cocktail, 1988, then Still Cruisin\'')
+    assert.equal(pick("50 Cent - Hustler's Ambition", [175]), null, 'Get Rich or Die Tryin\', then a bonus track on Curtis')
+  })
+
+  it('a title that says it is from a soundtrack has no album to name', () => {
+    assert.equal(pick('Blur - Girls and Boys', [], { title: 'Girls and Boys (From "Trainspotting" Soundtrack)' }), null)
+  })
+
+  it('an album is dated by its first edition, not the reissue that holds this cut', () => {
+    const credit = [{ name: 'A Band', artist: { name: 'A Band' } }]
+    const seat = (date: string, length: number, title = 'The Album'): MbRecording => ({
+      title: 'A Song', length, 'artist-credit': credit,
+      releases: [{ title, status: 'Official', date, 'release-group': { id: 'al', title: 'The Album', 'primary-type': 'Album', 'secondary-types': [] } }],
+    })
+    const r = pickRealAlbum([seat('2026-01-01', 240_000), seat('2007-06-05', 300_000)], { title: 'A Song', artist: 'A Band', durationsSec: [240] })!
+    assert.equal(r.year, 2007)
+    assert.equal(r.lateAlbum, false)
+  })
+
+  it('a date only as fine as both sides know it: the same year is not before', () => {
+    const credit = [{ name: 'A Band', artist: { name: 'A Band' } }]
+    const recs = (soundtrack: string): MbRecording[] => [{
+      title: 'A Song', length: 240_000, 'artist-credit': credit,
+      releases: [
+        { title: 'The Film', status: 'Official', date: soundtrack, 'release-group': { id: 'st', title: 'The Film', 'primary-type': 'Album', 'secondary-types': ['Soundtrack'] } },
+        { title: 'The Album', status: 'Official', date: '2003-09-16', 'release-group': { id: 'al', title: 'The Album', 'primary-type': 'Album', 'secondary-types': [] } },
+      ],
+    }]
+    const ask = (soundtrack: string) => pickRealAlbum(recs(soundtrack), { title: 'A Song', artist: 'A Band', durationsSec: [240] })?.album
+    assert.equal(ask('2003'), 'The Album')
+    assert.equal(ask('2003-12-01'), 'The Album', 'the album came first')
+    assert.equal(ask('2003-02-25'), undefined, 'the soundtrack came first')
+    assert.equal(ask('2001'), undefined)
+  })
+
   it('Eminem, "Lose Yourself": a soundtrack song has no album to name', () => {
     assert.equal(pick('Eminem - Lose Yourself', [326]), null)
     assert.equal(pick('Eminem - Lose Yourself'), null)
