@@ -110,6 +110,15 @@ export function migrateCallback(line: string): string | null {
   return line.replace(HOST_NAME, 'Larry')
 }
 
+/** A whole remembered script (musicman-memory.json), which every prompt reads as
+ *  "this is YOUR memory": tags and name move over; one that also has a pronoun
+ *  that could be his is dropped. It's a rolling list of a dozen. */
+export function migrateRememberedScript(text: string): string | null {
+  const retagged = text.replace(/\[MEGAN\]/gi, '[LARRY]')
+  if (retagged !== text && HER_PRONOUN.test(retagged)) return null
+  return migrateCallback(retagged)
+}
+
 export interface RadioMemoryShape {
   speakers: string[]
   angle: string | null

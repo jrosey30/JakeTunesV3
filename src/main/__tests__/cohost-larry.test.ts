@@ -9,13 +9,14 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import {
   LARRY_VOICE_ID, RADIO_SCRIPT_TAGS, currentCastId, currentRadioTag, migrateCallback, migratePicksCache,
-  migrateRadioEntries, migrateSavedState, normalizeHostId,
+  migrateRadioEntries, migrateRememberedScript, migrateSavedState, normalizeHostId,
 } from '../../common/cohost.ts'
 import { LARRY_CORE, MUSIC_MAN_CORE } from '../personas.ts'
 import { RADIO_CAST_BY_ID } from '../cast.ts'
 import { TOPIC_ANGLES, buildRadioSegmentPrompt, wholeScriptLines } from '../radio-script-prompt.ts'
 import { buildCallerSegmentMode, CALLERS } from '../cast.ts'
 import { ARCHETYPES } from '../archetypes.ts'
+import { initPersonaMemory, loadMusicManMemory, recentUtterancesBlock } from '../persona-memory.ts'
 
 const SRC = join(import.meta.dirname, '..', '..')
 const OLD = ['me', 'gan'].join('')
@@ -141,6 +142,29 @@ describe('old saved state keeps working', () => {
     assert.equal(changed, true)
     assert.deepEqual(entries[0], { speakers: ['mm', 'larry'], angle: 'LARRY OFF-TOPIC', callbacks: ['Fine, Larry.', 'No names here'], slot: 3 })
     assert.equal(entries[1].angle, 'BACK-ANNOUNCE')
+  })
+
+  test('persona memory: the scripts every prompt reads as its own', async () => {
+    assert.equal(migrateRememberedScript('[MM] Sure.\n\n[MEGAN] [scoffs] Okay, Music Man.'), '[MM] Sure.\n\n[LARRY] [scoffs] Okay, Music Man.')
+    assert.equal(migrateRememberedScript("[MM] She's great.\n[MEGAN] No."), null)
+    const saved: unknown[][] = []
+    initPersonaMemory({
+      cache: {
+        get: async () => [
+          { mode: 'radio', text: '[MM] Fine.\n\n[MEGAN] Is it, Megan says.', at: 1 },
+          { mode: 'radio', text: '[MM] Fine.\n\n[MEGAN] She said so.', at: 2 },
+          { mode: 'dj', text: 'Nothing to change.', at: 3 },
+        ],
+        set: (v: unknown[]) => { saved.push(v) },
+      },
+      userDataDir: '/nonexistent',
+    })
+    await loadMusicManMemory()
+    const block = recentUtterancesBlock()
+    assert.match(block, /\[LARRY\] Is it, Larry says\./)
+    assert.match(block, /Nothing to change\./)
+    assert.doesNotMatch(block, /MEGAN|Megan|She said/)
+    assert.equal(saved.length, 1, 'once migrated, it stays migrated')
   })
 
   test('radio memory that is already current is not rewritten', () => {
