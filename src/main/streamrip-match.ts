@@ -812,6 +812,68 @@ export function saysExplicit(title?: string | null, version?: string | null): bo
   return /(?<!\b(?:non|not)[- ])\bexplicit\b/i.test(label)
 }
 
+// ── Whose Bandcamp page is this? ─────────────────────────────────────────
+//
+// Anyone can upload anything to Bandcamp under any band's name, and a row with no length
+// has only tags to hold a file to. "Sky's the Limit" by The Notorious B.I.G. on
+// bstep.bandcamp.com, on "Life After Death (Bstep Edition)", has the right tags and runs
+// 247.1 s; the song runs 329.4 s. Of 64 rap rows with no length, Bandcamp would have
+// imported 27 files and 21 ran more than 5 s from Jake's copy (2026-11-04): a 37 s sample,
+// a slowed mixtape, a DJ's edit.
+// Two things on the search's own answer tell them from a real release, before any fetch.
+// ⚠️ TWIN: JakeTunesMobile/backend/src/util/bandcampLane.ts bandcampPages, stricter: the
+//    phone has no search, so it only ever asks the band's own address.
+
+const bandcampAddress = (name: string): string => foldAccents(name).toLowerCase().replace(/[^a-z0-9]+/g, '')
+
+/** The address names the band: warmduscher, pulpmusic, sapbandatx, officialjackwhite. It
+ *  has to start with the name: xrayrecordsdmx is a label's "Greatest Hits" of DMX re-cuts.
+ *  A short name gets no such room, or "Nas" would own nastyboyrecords. Only "," and "&" join
+ *  credits (otherCredit). */
+export function isBandsOwnAddress(artist: string, url: string): boolean {
+  let host = ''
+  try { host = new URL(url).hostname.toLowerCase() } catch { return false }
+  const page = bandcampAddress(host.replace(/^www\./, '').split('.')[0] ?? '')
+  return [artist, ...artist.split(/[,&]/)].some((credit) => {
+    const name = bandcampAddress(credit), bare = bandcampAddress(credit.trim().replace(/^the\s+/i, ''))
+    if (!bare) return false
+    if (page === `the${bare}` || page === `official${bare}`) return true
+    return bare.length >= 4 ? page.startsWith(bare) || page.startsWith(name) : new RegExp(`^${bare}(?:band|music|official)?$`).test(page)
+  })
+}
+
+/** "(Deluxe Edition)" is the record in other packaging. "(Bstep Edition)" and "(The Samples
+ *  Edition)" are somebody's own: searchTitle drops every "edition", which is right for a
+ *  search and wrong for saying two albums are one. */
+const PACKAGING_EDITION = /\b(?:deluxe|special|expanded|anniversar\w*|remaster\w*|reissue\w*|limited|collector\w*|bonus|standard|super|tour|digital|complete|definitive|legacy|platinum|gold|international|explicit|original|extended)\b/i
+function albumKey(album: string): string {
+  const own = [...album.matchAll(/[([{]([^()[\]{}]*)[)\]}]/g)].some((m) => /\bedition\b/i.test(m[1]) && !PACKAGING_EDITION.test(m[1]))
+  return recoFold(own ? album : (searchTitle(album) || album).replace(/\s+(?:e\.?p\.?|l\.?p\.?|single)$/i, ''))
+}
+
+/**
+ * Why a Bandcamp hit can't be trusted for a row with no length, or null when it can. On the
+ * band's own address, under the band's own name, it can, whatever album it sits on: r/MGMT at
+ * mgmtcoveralbum and future2 at futuretalk start with the name and are not the band. On
+ * anyone else's it has to name the row's album: a label's page does (Passin' Me By on Craft
+ * Recordings, Bizarre Ride II The Pharcyde), a fan's mixtape does not. A page with no album
+ * can stand only for a single, a row whose album is named after the song. A row that names
+ * no album has nothing to hold a page to, and it is the scene band Apple has never heard
+ * of, which this lane is for.
+ */
+export function bandcampHitDoubt(
+  req: { artist: string; title: string; album: string },
+  hit: { url: string; band: string; album?: string | null },
+): string | null {
+  if (!req.album) return null
+  const credits = (name: string): string[] => [name, ...name.split(/[,&]/)].map(recoFold).filter(Boolean)
+  const names = credits(req.artist)
+  if (credits(hit.band).some((c) => names.includes(c)) && isBandsOwnAddress(req.artist, hit.url)) return null
+  const wanted = albumKey(req.album)
+  if (hit.album ? albumKey(hit.album) === wanted : wanted === albumKey(req.title)) return null
+  return `is on someone else’s page${hit.album ? `, on “${hit.album}”` : ''}, and there’s no length to check it against`
+}
+
 export interface ExplicitGateResult<T> {
   kept: T[]
   /** Candidates refused because Qobuz flags them clean. */

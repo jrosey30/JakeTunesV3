@@ -400,6 +400,109 @@ describe('Bandcamp: a search that did not answer is not "nothing on Bandcamp"', 
   })
 })
 
+describe('Bandcamp: a row with no length', () => {
+  // Real answers from Bandcamp's search, with the real files' tags and lengths.
+  const fan = (name: string, band: string, host: string, album: string | null) => ({ type: 't', name, band_name: band, album_name: album, item_url_path: `https://${host}.bandcamp.com/track/${name.toLowerCase().replace(/[^a-z]+/g, '-')}` })
+  const BSTEP = fan("Sky's the Limit", 'The Notorious B.I.G.', 'bstep', 'Life After Death (Bstep Edition)')
+  const SKYS_ROW = { artist: 'The Notorious B.I.G.', title: "Sky's the Limit (feat. 112) [Amended]", album: 'Life After Death [Amended Version] (2014 Remaster)', durationMs: 277_000, cleanedSource: true }
+  const THROW = { artist: 'Paperclip People', title: 'Throw', album: 'The Secret Tapes of Dr. Eich' }
+  const THROW_COMP = fan('Throw', 'Paperclip People', 'xxldancerecord', 'XXL Dance 4 Prt.2')
+  const THROW_REAL = fan('Throw', 'Paperclip People', 'planetecommunications', 'The Secret Tapes of Dr. Eich')
+  const THROW_FILE = { format: { duration: '407.5', tags: { title: 'Throw', artist: 'Paperclip People', album: 'The Secret Tapes of Dr. Eich' } } }
+
+  test('the fan upload is left alone before a byte moves, and the verdict says where it is', async () => {
+    install(pipxBin(), 'yt-dlp', FAKE_YT_DLP)
+    bandcampHits = [BSTEP]
+    const { walk, imported } = store()
+    const r = await walk(SKYS_ROW)
+    assert.equal(imported.length, 0)
+    assert.equal(calls('yt-dlp').length, 0, 'nothing fetched')
+    assert.equal(r.outcome, 'exact-not-found')
+    assert.match(r.detail!, /Bandcamp has “Sky's the Limit” at https:\/\/bstep\.bandcamp\.com\/track\/sky-s-the-limit, left alone: it is on someone else’s page, on “Life After Death \(Bstep Edition\)”, and there’s no length to check it against\./)
+    assert.doesNotMatch(r.detail!, /Nothing resembling/)
+    assert.ok(warned.some((l) => l.includes('bandcamp “Sky\'s the Limit” at https://bstep.bandcamp.com')), 'main.log can count these')
+  })
+
+  test('a comp in front does not cost the real release its turn (Throw, on Planet E)', async () => {
+    install(pipxBin(), 'yt-dlp', FAKE_YT_DLP)
+    put('probe.json', JSON.stringify(THROW_FILE))
+    bandcampHits = [THROW_COMP, THROW_COMP, THROW_REAL]
+    const { walk, imported } = store()
+    const r = await walk(THROW)
+    assert.equal(r.outcome, 'imported', r.error)
+    assert.equal(imported.length, 1)
+    assert.equal(calls('yt-dlp').length, 1)
+    assert.match(calls('yt-dlp')[0], /planetecommunications\.bandcamp\.com/)
+  })
+
+  test('the band’s own page lands, on any album, with no length and no album on the row', async () => {
+    install(pipxBin(), 'yt-dlp', FAKE_YT_DLP)
+    put('probe.json', JSON.stringify({ format: { duration: '168.7', tags: { title: 'Waffle House', artist: 'Golf Lexapro', album: 'Washed EP' } } }))
+    bandcampHits = [fan('Waffle House', 'Golf Lexapro', 'golflexapro', 'Washed EP')]
+    const { walk, imported } = store()
+    const r = await walk({ artist: 'Golf Lexapro', title: 'Waffle House' })
+    assert.equal(r.outcome, 'imported', r.error)
+    assert.equal(imported.length, 1)
+  })
+
+  test('a row with a length goes on to the file judge: that clock is the check', async () => {
+    install(pipxBin(), 'yt-dlp', FAKE_YT_DLP)
+    put('probe.json', JSON.stringify(THROW_FILE))
+    bandcampHits = [THROW_COMP]
+    const { walk, imported } = store()
+    const r = await walk({ ...THROW, durationMs: 407_000 })
+    assert.equal(r.outcome, 'imported', r.error)
+    assert.equal(imported.length, 1, 'the same length on a comp: nothing here says it is another recording')
+    assert.match(calls('yt-dlp')[0], /xxldancerecord/)
+  })
+
+  test('a whole album on a stranger’s page goes on to the album judge, as before', async () => {
+    install(pipxBin(), 'yt-dlp', FAKE_YT_DLP)
+    bandcampHits = [{ type: 'a', name: 'More', band_name: 'Pulp', album_name: null, item_url_path: 'https://antonofian.bandcamp.com/album/more' }]
+    const { walk } = store()
+    await walk({ artist: 'Pulp', album: 'More' })
+    assert.match(calls('yt-dlp')[0] ?? '', /antonofian\.bandcamp\.com\/album\/more/)
+  })
+
+  test('a Qobuz outage keeps its own verdict: the note says what Bandcamp had', async () => {
+    install(pipxBin(), 'yt-dlp', FAKE_YT_DLP)
+    put('search-qobuz.fails', LOGIN_FAILED)
+    bandcampHits = [BSTEP]
+    const r = await store().walk(SKYS_ROW)
+    assert.equal(r.outcome, 'provider-unavailable')
+    assert.match(r.detail!, /left alone/)
+  })
+
+  test('a failed Qobuz transfer keeps its own verdict too', async () => {
+    install(pipxBin(), 'yt-dlp', FAKE_YT_DLP)
+    put('search-qobuz.json', JSON.stringify(hit('qobuz', '7', "Sky's the Limit by The Notorious B.I.G.")))
+    put('rip-qobuz.fails', LOGIN_FAILED)
+    bandcampHits = [BSTEP]
+    const r = await store().walk(SKYS_ROW)
+    assert.equal(r.outcome, 'provider-failed')
+    assert.match(r.detail!, /left alone/)
+  })
+
+  test('a real page that fails the judge and a fan’s left alone: the verdict names both', async () => {
+    install(pipxBin(), 'yt-dlp', FAKE_YT_DLP)
+    put('probe.json', JSON.stringify({ format: { duration: '300', tags: { title: 'Throw (Live)', artist: 'Paperclip People', album: 'The Secret Tapes of Dr. Eich' } } }))
+    bandcampHits = [THROW_COMP, THROW_REAL]
+    const { walk, imported } = store()
+    const r = await walk(THROW)
+    assert.equal(imported.length, 0)
+    assert.equal(calls('yt-dlp').length, 1)
+    assert.equal(r.outcome, 'exact-not-found')
+    assert.match(r.detail!, /bandcamp: Throw — Paperclip People \(Bandcamp stream\) is tagged/)
+    assert.match(r.detail!, /xxldancerecord\.bandcamp\.com\/track\/throw, left alone/)
+  })
+
+  test('nothing but a real zero says nothing resembling it was found', async () => {
+    const r = await store().walk(SKYS_ROW)
+    assert.equal(r.outcome, 'not-found')
+    assert.doesNotMatch(r.detail!, /left alone/)
+  })
+})
+
 describe('SoundCloud: a dead lane is the lane’s news, not the song’s verdict', () => {
   test('nothing anywhere: Not found, as if the lane had answered; it does not read as a login problem', async () => {
     const quiet = await store().walk()
