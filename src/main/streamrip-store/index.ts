@@ -25,7 +25,7 @@ import { join } from 'path'
 import { homedir, tmpdir } from 'os'
 import { lstat, mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
 import type { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
-import { NO_EXPLICIT_WARNING, rankStreamripCandidates, rankWithArtistAliases, searchTitle, searchQueryTitle, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, isNoResultsMessage, isQobuzNoSuchItem, parseStreamripDesc, qobuzTrackMetaOf, type QobuzTrackMeta } from '../streamrip-match.ts'
+import { NO_EXPLICIT_WARNING, bandcampHitDoubt, rankStreamripCandidates, rankWithArtistAliases, searchTitle, searchQueryTitle, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, isNoResultsMessage, isQobuzNoSuchItem, parseStreamripDesc, qobuzTrackMetaOf, type QobuzTrackMeta } from '../streamrip-match.ts'
 import { buildRequestedAlbum, verifyAlbumCandidate, reconcileAlbumCompletion, describeCompletion, albumAlternativeDesc, orderTracks, parseCountTag, matchLibraryOwnership, ladderBudgetMs, type RequestedAlbum, type CandidateAlbum, type AlbumVerdict, type Ownership, type LibraryTrackLite } from '../album-identity.ts'
 import { loadLibraryTracksLite } from '../import-pipeline.ts'
 import { itunesAlbumTracks, itunesFindAlbum } from '../download-search.ts'
@@ -360,7 +360,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
   // the three machines, none of 3 from Electron, none from curl), and reading that as
   // zero results made the verdict say Bandcamp had nothing when it had the song. This
   // reports it. It does not try to get past it.
-  async function bandcampSearch(text: string, kind: 'a' | 't'): Promise<{ hits: Array<{ name: string; band: string; url: string }> } | { noAnswer: string }> {
+  async function bandcampSearch(text: string, kind: 'a' | 't'): Promise<{ hits: Array<{ name: string; band: string; url: string; album: string | null }> } | { noAnswer: string }> {
     try {
       const res = await fetch('https://bandcamp.com/api/bcsearch_public_api/1/autocomplete_elastic', {
         method: 'POST',
@@ -370,11 +370,11 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       })
       if (!res.ok) return { noAnswer: `HTTP ${res.status}` }
       if (!(res.headers.get('content-type') || '').includes('json')) return { noAnswer: 'a web page instead of results' }
-      const d = await res.json() as { auto?: { results?: Array<{ type?: string; name?: string; band_name?: string; item_url_path?: string }> } }
+      const d = await res.json() as { auto?: { results?: Array<{ type?: string; name?: string; band_name?: string; item_url_path?: string; album_name?: string | null }> } }
       return {
         hits: (d.auto?.results || [])
           .filter((r) => r.type === kind && r.name && r.band_name && r.item_url_path)
-          .map((r) => ({ name: String(r.name), band: String(r.band_name), url: String(r.item_url_path) })),
+          .map((r) => ({ name: String(r.name), band: String(r.band_name), url: String(r.item_url_path), album: r.album_name ? String(r.album_name) : null })),
       }
     } catch (err) { return { noAnswer: err instanceof Error ? err.message : 'no answer' } }
   }
@@ -1109,11 +1109,21 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     const bcSearch = await bandcampSearch(query, wantAlbum ? 'a' : 't')
     const bandcampNoAnswer = 'noAnswer' in bcSearch ? bcSearch.noAnswer : null
     trace.push('hits' in bcSearch ? `bandcamp: ${bcSearch.hits.length} results` : `bandcamp search: no answer (${bcSearch.noAnswer})`)
-    const bcPicks = ('hits' in bcSearch ? bcSearch.hits : []).filter((r) =>
+    const bcNamed = ('hits' in bcSearch ? bcSearch.hits : []).filter((r) =>
       (!artist || recoArtistMatches(artist, r.band)) &&
       recoTitleMatches(title, r.name) &&
       !unwantedVersionOf(title, r.name) &&
-      !liveBrandMarker(title, r.name)).slice(0, 2)
+      !liveBrandMarker(title, r.name))
+    // A row with a length holds the file to it. One without has only tags, and a fan's
+    // upload can carry the right ones (bandcampHitDoubt). Asked before the fetch, and
+    // before the two tries are counted, so a real release further down still gets its turn.
+    const bcDoubt = (r: { url: string; band: string; album: string | null }): string | null => req.durationSec > 0 ? null : bandcampHitDoubt({ artist, title, album: opts?.album || '' }, r)
+    const bcPicks = bcNamed.filter((r) => !bcDoubt(r)).slice(0, 2)
+    const bcLeftAlone = bcNamed.filter((r) => bcDoubt(r)).slice(0, 2)
+    for (const r of bcLeftAlone) trace.push(`bandcamp “${r.name}” at ${r.url}: ${bcDoubt(r)}`)
+    // Not "nothing resembling it". But not a refused file either, so a Qobuz outage or a
+    // failed transfer keeps its own verdict: this is only a note.
+    if (bcLeftAlone.length && qsearch.ok) anyMatched = true
     let bandcampFailure: string | null = null
     for (const bcPick of bcPicks) {
       if (cancelRequested) return { ok: false, error: 'canceled', outcome: 'canceled' }
@@ -1200,6 +1210,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     const laneNotes = [
       searchFailure && outcome !== 'provider-unavailable' ? `Qobuz wasn’t searched: ${searchFailure}.` : null,
       bandcampNoAnswer ? `Bandcamp wasn’t searched (${bandcampNoAnswer}), so it may still have this.` : null,
+      ...bcLeftAlone.map((r) => `Bandcamp has “${r.name}” at ${r.url}, left alone: it ${bcDoubt(r)}.`),
       bandcampFailure && !(outcome === 'provider-failed' && ripFailureIsBandcamp) ? `Bandcamp has a match that could not be fetched: ${bandcampFailure}.` : null,
       // The same words as Qobuz's failure (no rip on this Mac) are already said.
       soundcloudSearchError && soundcloudSearchError !== searchFailure ? soundcloudSearchNote(soundcloudSearchError) : null,
