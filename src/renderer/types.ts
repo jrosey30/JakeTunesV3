@@ -304,7 +304,7 @@ export interface ItunesSuggestion {
   /** Track length in seconds (from the album-tracks lookup). */
   durationSecs?: number
 }
-export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 'top-rated' | 'youd-star' | 'best-of-year' | 'musicman-picks' | 'megan-picks' | 'dj-hands-picks' | 'listen-more-weekly' | 'on-repeat'
+export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 'top-rated' | 'youd-star' | 'best-of-year' | 'musicman-picks' | 'larry-picks' | 'dj-hands-picks' | 'listen-more-weekly' | 'on-repeat'
   // 2026-11-01 — where a song came from (src/common/source-playlists.ts)
   | 'tiktok' | 'bandcamp' | 'savant'
   // 2026-11-02 — the Top 1000 Quiz's ranking as a playlist (src/renderer/top1000List.ts)
@@ -527,7 +527,7 @@ export interface AppSettings {
   ai: {
     musicManVoiceEnabled: boolean   // when off, skip ElevenLabs and chat in text only
     claudeDailyCeiling: number      // mirrored to claude-stats.json on save
-    aiHost: 'mm' | 'megan'          // 4.2.5: which persona is the solo host. Radio Mode always co-hosts both regardless.
+    aiHost: 'mm' | 'larry'          // 4.2.5: which persona is the solo host. Radio Mode always co-hosts both regardless.
     /** Draft-only: typed key to save. Never returned by load-app-settings. */
     exaApiKey?: string
     /** True when main has an Exa key in env / prior settings (secret not exposed). */
@@ -700,8 +700,8 @@ declare global {
       musicmanChat: (messages: { role: string; content: string }[], context?: string) => Promise<{ ok: boolean; text: string; textRaw: string; createdPlaylist?: { name: string; trackIds: number[] } | null }>
       musicmanSpeak: (text: string, fast?: boolean, voiceId?: string) => Promise<{ ok: boolean; audio?: string; error?: string }>
       musicmanDj: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => Promise<{ ok: boolean; text: string; transition?: 'talk' | 'scratch' | 'cut' }>
-      // 4.4.52: active mic-button persona ('mm' | 'megan') for speech-bubble attribution
-      getActiveHost: () => Promise<'mm' | 'megan'>
+      // 4.4.52: active mic-button persona ('mm' | 'larry') for speech-bubble attribution
+      getActiveHost: () => Promise<'mm' | 'larry'>
       audioLog: (line: string) => void
       // 2026-08-21 reliability P0: renderer crash net → main flight recorder.
       dxRecord?: (tag: string, detail?: unknown) => void
@@ -726,7 +726,7 @@ declare global {
       getArtistDiscography: (artist: string) => Promise<{ ok: boolean; albums?: Array<{ title: string; year: string; tracks: Array<{ title: string; position: number }>; mb?: { primaryType?: string; secondaryTypes?: string[] } }>; error?: string }>
       loadReleaseKinds?: () => Promise<{ ok: boolean; updatedAt: string; albums: import('../common/release-kind').ReleaseKindsFile['albums'] }>
       musicmanPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], force?: boolean) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
-      meganPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], force?: boolean) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
+      larryPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], force?: boolean) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
       djHandsPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], force?: boolean) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
       saveRecordingMp3: (audioBytes: Uint8Array, mimeType: string) => Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>
       musicmanScanMetadata: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[]) => Promise<{ ok: boolean; issues?: MetadataIssue[]; error?: string }>

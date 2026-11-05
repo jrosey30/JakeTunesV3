@@ -37,7 +37,7 @@ export function initLibraryDigest(deps: { libraryPath: string }): void {
 // shape of the user's taste (eclectic vs deep, era-spread vs era-
 // focused, indie-heavy vs major-label), and play behavior tells them
 // what's loved vs unplayed. Inject BOTH into every character call so
-// Music Man / Megan / Stephen know the whole collection, not just what
+// Music Man / Larry / Stephen know the whole collection, not just what
 // the user's listened to recently.
 //
 // Cached at module level; recomputed at app start + after save-library.

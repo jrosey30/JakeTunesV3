@@ -10,7 +10,7 @@
 // (rootDir src/renderer) can't import across the src/main boundary.
 // Change both sides in the SAME commit.
 
-export type Persona = 'music-man' | 'megan' | 'stephen-hands'
+export type Persona = 'music-man' | 'larry' | 'stephen-hands'
 
 export type DayTheme = {
   /** YYYY-MM-DD in local time. The cache key. */
@@ -58,7 +58,7 @@ export type ShelfItem = {
   }
 }
 
-export type ShelfId = 'mm-picks' | 'new-arrivals' | 'deep-cuts' | 'megan-picks' | 'stephen-crate'
+export type ShelfId = 'mm-picks' | 'new-arrivals' | 'deep-cuts' | 'larry-picks' | 'stephen-crate'
 
 export type Shelf = {
   id: ShelfId

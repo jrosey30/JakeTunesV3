@@ -15,17 +15,17 @@ import { useEffect, useRef, useState } from 'react'
 import { PICKS_SCHEMA_V, getWeekStartFriday, type PicksData } from '../views/SmartPlaylistView'
 
 export interface PersonaShelf {
-  id: 'musicman-picks' | 'megan-picks' | 'dj-hands-picks'
+  id: 'musicman-picks' | 'larry-picks' | 'dj-hands-picks'
   label: string
-  accent: 'mm' | 'megan' | 'djhands'
+  accent: 'mm' | 'larry' | 'djhands'
   name: string
   commentary: string
   trackIds: number[]
 }
 
-const PERSONAS: Array<{ id: PersonaShelf['id']; label: string; accent: PersonaShelf['accent']; apiCall: 'musicmanPicks' | 'meganPicks' | 'djHandsPicks' }> = [
+const PERSONAS: Array<{ id: PersonaShelf['id']; label: string; accent: PersonaShelf['accent']; apiCall: 'musicmanPicks' | 'larryPicks' | 'djHandsPicks' }> = [
   { id: 'musicman-picks', label: 'The Music Man', accent: 'mm', apiCall: 'musicmanPicks' },
-  { id: 'megan-picks', label: 'Megan', accent: 'megan', apiCall: 'meganPicks' },
+  { id: 'larry-picks', label: 'Larry', accent: 'larry', apiCall: 'larryPicks' },
   { id: 'dj-hands-picks', label: 'DJ Stephen Hands', accent: 'djhands', apiCall: 'djHandsPicks' },
 ]
 

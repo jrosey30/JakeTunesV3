@@ -5,6 +5,7 @@
  * main-process state (active AI host cache) so this module stays free
  * of the mega-file's closures.
  */
+import { normalizeHostId, type HostId } from '../../common/cohost.ts'
 import { app } from 'electron'
 import { join } from 'path'
 import { mkdir, readFile, writeFile } from 'fs/promises'
@@ -19,8 +20,8 @@ import {
 } from '../inbox-watcher.ts'
 
 export interface SettingsIpcHost {
-  /** Persist + live-apply the AI host preference ('mm' | 'megan'). */
-  setCachedActiveHost: (host: 'mm' | 'megan') => void
+  /** Persist + live-apply the AI host preference ('mm' | 'larry'). */
+  setCachedActiveHost: (host: HostId) => void
 }
 
 function appSettingsPath(): string {
@@ -64,6 +65,8 @@ export function registerSettingsIpc(ipc: IpcRegistrar, host: SettingsIpcHost): v
       const fromSettings = typeof ai.exaApiKey === 'string' && ai.exaApiKey.trim().length > 0
       const fromEnv = !!(process.env.EXA_API_KEY && process.env.EXA_API_KEY.trim())
       delete ai.exaApiKey
+      // A saved host under the co-host's old name reads as the new one (cohost.ts).
+      if (ai.aiHost !== undefined) ai.aiHost = normalizeHostId(ai.aiHost)
       ai.exaConfigured = fromSettings || fromEnv
       settings.ai = ai
       // Activity sets must not be mutated by plug-in repair or delete-sync.
@@ -87,8 +90,8 @@ export function registerSettingsIpc(ipc: IpcRegistrar, host: SettingsIpcHost): v
       await mkdir(app.getPath('userData'), { recursive: true })
       // Refresh the cached host preference so subsequent prompt builds
       // pick up the new value without an app restart.
-      const aiIn = (settings.ai as { aiHost?: 'mm' | 'megan'; exaApiKey?: string; clearExaKey?: boolean } | undefined)
-      host.setCachedActiveHost(aiIn?.aiHost === 'megan' ? 'megan' : 'mm')
+      const aiIn = (settings.ai as { aiHost?: unknown; exaApiKey?: string; clearExaKey?: boolean } | undefined)
+      host.setCachedActiveHost(normalizeHostId(aiIn?.aiHost))
       // 4.5: live-apply EXA_API_KEY into process.env so the next searchWeb
       // call picks it up without an app restart. Same value also written
       // to userData/.env so it survives restarts via the existing

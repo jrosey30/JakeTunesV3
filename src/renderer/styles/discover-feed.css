@@ -63,7 +63,7 @@
 .store-seeall:hover { text-decoration: underline; }
 .staff-dot { width: 9px; height: 9px; border-radius: 50%; align-self: center; }
 .staff-dot--mm { background: rgb(var(--brand-orange-rgb)); }
-.staff-dot--megan { background: #4a90c2; }
+.staff-dot--larry { background: #4a90c2; }
 .staff-dot--djhands { background: #8e5ac2; }
 
 .store-row {

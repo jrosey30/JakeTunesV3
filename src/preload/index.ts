@@ -76,9 +76,9 @@ const electronAPI = {
   loadReleaseKinds: (): Promise<{ ok: boolean; updatedAt: string; albums: Record<string, { kind: 'album' | 'ep' | 'single' | 'live' | 'compilation'; source: 'manual' | 'musicbrainz' | 'title' | 'shape' | 'default'; mbid?: string; checkedAt?: string }> }> =>
     ipcRenderer.invoke('release-kinds:load'),
   // 4.4.52: which persona the mic button speaks as right now ('mm' or
-  // 'megan') — the toolbar speech bubble reads this to attribute and
+  // 'larry') — the toolbar speech bubble reads this to attribute and
   // colour itself correctly.
-  getActiveHost: (): Promise<'mm' | 'megan'> =>
+  getActiveHost: (): Promise<'mm' | 'larry'> =>
     ipcRenderer.invoke('get-active-host'),
   audioLog: (line: string): void => ipcRenderer.send('audio-log', line),
   reportCrash: (payload: { kind: string; message?: string; stack?: string; source?: string }): void => ipcRenderer.send('flight-record', payload),
@@ -135,8 +135,8 @@ const electronAPI = {
   // this week's cached picks with no Claude call.
   musicmanPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], force?: boolean): Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }> =>
     ipcRenderer.invoke('musicman-picks', tracks, force),
-  meganPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], force?: boolean): Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }> =>
-    ipcRenderer.invoke('megan-picks', tracks, force),
+  larryPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], force?: boolean): Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }> =>
+    ipcRenderer.invoke('larry-picks', tracks, force),
   djHandsPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], force?: boolean): Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }> =>
     ipcRenderer.invoke('dj-hands-picks', tracks, force),
   saveRecordingMp3: (audioBytes: Uint8Array, mimeType: string): Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }> =>
@@ -988,7 +988,7 @@ const electronAPI = {
   recordStore: {
     getShelves: (opts?: { forceRefresh?: boolean }): Promise<unknown> =>
       ipcRenderer.invoke('record-store:get-shelves', opts ?? {}),
-    getBlurb: (args: { itemId: string; persona: 'music-man' | 'megan' | 'stephen-hands' }): Promise<unknown> =>
+    getBlurb: (args: { itemId: string; persona: 'music-man' | 'larry' | 'stephen-hands' }): Promise<unknown> =>
       ipcRenderer.invoke('record-store:get-blurb', args),
     speakBlurb: (args: { blurb: unknown }): Promise<{ ok: true; audioId: string }> =>
       ipcRenderer.invoke('record-store:speak-blurb', args),

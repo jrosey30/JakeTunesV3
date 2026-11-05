@@ -16,7 +16,7 @@
  *  the compile-time guard so a typo can't invent a speaker. */
 export type SpeakerId =
   | 'mm'
-  | 'megan'
+  | 'larry'
   | 'announcer'
   | 'stephen'
   | 'giovanni'

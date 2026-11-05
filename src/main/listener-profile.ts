@@ -365,7 +365,7 @@ export function buildTasteProfile(): string {
   }
 
   // Activity / iPod sync context — what they're doing, where, weather there.
-  // Populated when they run an activity sync; Music Man / Megan / radio should
+  // Populated when they run an activity sync; Music Man / Larry / radio should
   // treat it as live (chat, DJ, playlists, picks, discovery all see this).
   const activityBlock = activityBlockEarly || readActivityBlock()
   if (activityBlock) lines.push(`\n${activityBlock}`)

@@ -1080,9 +1080,9 @@
   border-bottom-color: rgba(var(--brand-orange-rgb),0.2);
 }
 
-/* Megan picks — same dark commentary tone but in her teal/blue palette
+/* Larry picks — same dark commentary tone but in his teal/blue palette
  * to read as a sibling-of-MM picks panel, not a duplicate. */
-.playlist-view-commentary--megan {
+.playlist-view-commentary--larry {
   background: #0e2030;
   color: #b8d0e0;
   border-bottom-color: rgba(58, 124, 165, 0.3);

@@ -19,6 +19,7 @@
  * ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/MixtapesView.swift
  *   `MixtapeDetailView` — Keep / Kept for AI tapes, Delete only for Jake's own.
  */
+import { currentCastId } from '../../common/cohost'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { useLibrary } from '../context/LibraryContext'
@@ -515,7 +516,7 @@ export default function MixtapeView() {
                   <span className="fp-voicerow-label">MIC VOICE</span>
                   <select
                     className="fp-voice-select"
-                    value={(loaded && deckState?.micVoiceId) || 'me'}
+                    value={(loaded && currentCastId(deckState?.micVoiceId ?? '')) || 'me'}
                     onChange={(e) => load({ micVoiceId: e.target.value })}
                     title="Whose voice goes on the tape — yours, or anyone from the station (your take, their voice)"
                   >

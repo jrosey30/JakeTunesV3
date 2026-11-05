@@ -277,7 +277,7 @@ export async function ragRetrieveByQuery(query: string, k: number): Promise<Arra
 // retrieval has no hits — caller appends nothing and the legacy digest
 // is the only library context the model sees.
 // 4.5.0-89 — shared RAG pool builder for the three weekly-picks
-// handlers (mm / megan / dj-hands). Each persona passes its own seed
+// handlers (mm / larry / dj-hands). Each persona passes its own seed
 // query so the retrieved candidate pool biases toward that persona's
 // lane WITHIN the user's library. Returns the original tracks array
 // untouched when:
