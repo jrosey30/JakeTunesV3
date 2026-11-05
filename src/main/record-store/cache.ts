@@ -21,6 +21,7 @@ import { mkdir, readFile, writeFile, rename, unlink, readdir } from 'fs/promises
 import { join, dirname } from 'path'
 import { randomBytes } from 'crypto'
 import type { ShelfBundle, Blurb, Persona } from './types'
+import { stripStageDirections } from '../../common/stage-directions.ts'
 
 const RECORD_STORE_DIR = 'record-store'
 const SUB_SHELVES = 'shelves'
@@ -139,7 +140,9 @@ export class RecordStoreCache {
   }
 
   async getBlurb(persona: Persona, itemId: string): Promise<Blurb | null> {
-    return readJsonOrNull<Blurb>(this.blurbPath(persona, itemId))
+    const blurb = await readJsonOrNull<Blurb>(this.blurbPath(persona, itemId))
+    // Saved ones can open "[laughs]": the shelf is read.
+    return blurb && typeof blurb.text === 'string' ? { ...blurb, text: stripStageDirections(blurb.text) } : blurb
   }
 
   async putBlurb(blurb: Blurb): Promise<void> {

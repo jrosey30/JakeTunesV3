@@ -8,6 +8,7 @@
  * (ipc/ai-ipc.ts).
  */
 import { readFile } from 'node:fs/promises'
+import { stripStageDirections } from '../common/stage-directions.ts'
 import { writeJsonAtomic } from './atomic-write.ts'
 
 export type AlbumNoteKind = 'blurbs' | 'takes'
@@ -53,7 +54,9 @@ export function createAlbumNotesStore(path: string, warn: (msg: string) => void 
   return {
     async get(kind, key) {
       const n = await load()
-      return n[kind][key] || undefined
+      // A saved take can carry the voice's "[softer]": it's read here, never spoken.
+      const text = n[kind][key]
+      return text ? stripStageDirections(text) : undefined
     },
     async set(kind, key, text) {
       const t = (text || '').trim()

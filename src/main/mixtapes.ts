@@ -19,6 +19,7 @@ import { app, shell } from 'electron'
 import type { IpcRegistrar } from './ipc-register.ts'
 import { REFUSED_SENDER } from './ipc-register.ts'
 import { safeIpcError } from './safe-ipc-error.ts'
+import { stripStageDirections } from '../common/stage-directions.ts'
 import { readFile, writeFile, mkdir, unlink, stat, rename } from 'fs/promises'
 import { homedir } from 'os'
 import { join } from 'path'
@@ -141,7 +142,8 @@ async function loadMixtapes(): Promise<Mixtape[]> {
   const raw = await readFile(MIXTAPES_FILE(), 'utf-8')
   const arr = JSON.parse(raw)
   if (!Array.isArray(arr)) throw new Error('mixtapes.json is not an array — refusing to touch it')
-  return arr
+  // A saved note can carry the voice's "[scoff]"; a tape is read.
+  return arr.map((t: Mixtape) => (typeof t?.commentary === 'string' ? { ...t, commentary: stripStageDirections(t.commentary) } : t))
 }
 
 async function saveMixtapes(all: Mixtape[]): Promise<void> {
