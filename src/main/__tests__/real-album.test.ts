@@ -88,8 +88,35 @@ describe('which album a song is really on, on real answers', () => {
     assert.equal(pick("50 Cent - Hustler's Ambition", [175]), null, 'Get Rich or Die Tryin\', then a bonus track on Curtis')
   })
 
-  it('a title that says it is from a soundtrack has no album to name', () => {
+  it('a title that says it is from a soundtrack has no album to name, even where an album prints it that way', () => {
     assert.equal(pick('Blur - Girls and Boys', [], { title: 'Girls and Boys (From "Trainspotting" Soundtrack)' }), null)
+    const title = 'You Know My Name (From "Casino Royale" Soundtrack)'
+    const onCarryOn: MbRecording = {
+      title, length: 240_000, 'artist-credit': [{ name: 'Chris Cornell', artist: { name: 'Chris Cornell' } }],
+      releases: [{ title: 'Carry On', status: 'Official', date: '2026-03-01', 'release-group': { id: 'co', title: 'Carry On', 'primary-type': 'Album', 'secondary-types': [] } }],
+    }
+    assert.equal(pickRealAlbum([onCarryOn], { title, artist: 'Chris Cornell', durationsSec: [240] }), null)
+  })
+
+  it('only this cut counts against an album: a soundtrack\'s other take of the title does not', () => {
+    const credit = [{ name: 'A Band', artist: { name: 'A Band' } }]
+    const recordings: MbRecording[] = [
+      { title: 'A Song', length: 200_000, 'artist-credit': credit, releases: [{ title: 'The Film', status: 'Official', date: '2001', 'release-group': { id: 'st', title: 'The Film', 'primary-type': 'Album', 'secondary-types': ['Soundtrack'] } }] },
+      { title: 'A Song', length: 240_000, 'artist-credit': credit, releases: [{ title: 'The Album', status: 'Official', date: '2003', 'release-group': { id: 'al', title: 'The Album', 'primary-type': 'Album', 'secondary-types': [] } }] },
+    ]
+    assert.equal(pickRealAlbum(recordings, { title: 'A Song', artist: 'A Band', durationsSec: [240] })?.album, 'The Album')
+  })
+
+  it('he owns the later album under a name only its pressings use: the song joins it', () => {
+    const credit = [{ name: 'A Band', artist: { name: 'A Band' } }]
+    const seat = (id: string, rgTitle: string, title: string, date: string): MbRecording => ({
+      title: 'A Song', length: 240_000, 'artist-credit': credit,
+      releases: [{ title, status: 'Official', date, 'release-group': { id, title: rgTitle, 'primary-type': 'Album', 'secondary-types': [] } }],
+    })
+    const recordings = [seat('first', 'First Album', 'First Album', '1999'), seat('second', 'Second Album', 'What The Pressing Says', '2000')]
+    const r = pickRealAlbum(recordings, { title: 'A Song', artist: 'A Band', durationsSec: [240], owned: (a) => a === 'What The Pressing Says' })
+    assert.equal(r?.album, 'What The Pressing Says')
+    assert.equal(r?.releaseGroupId, 'second')
   })
 
   it('an album is dated by its first edition, not the reissue that holds this cut', () => {
