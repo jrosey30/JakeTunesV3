@@ -1,3 +1,4 @@
+import { LARRY_VOICE_ID, RADIO_SCRIPT_TAGS, currentRadioTag } from '../../../common/cohost'
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { audioFromBase64Mpeg } from '../../audio/base64-audio'
 import { usePlayback } from '../../context/PlaybackContext'
@@ -99,18 +100,18 @@ function AirPlayIcon({ active }: { active?: boolean }) {
 }
 
 // 4.4.52: who the toolbar speech bubble can attribute. The mic button
-// speaks as the chosen host (Music Man or Megan); DJ Mode is Stephen
+// speaks as the chosen host (Music Man or Larry); DJ Mode is Stephen
 // Hands. Each gets its own name, loading verb, and (via the matching
 // `data-speaker` attribute → toolbar.css) its own colour palette.
-type BubbleSpeaker = 'mm' | 'megan' | 'djhands'
+type BubbleSpeaker = 'mm' | 'larry' | 'djhands'
 const BUBBLE_SPEAKER_LABEL: Record<BubbleSpeaker, string> = {
   mm: 'The Music Man',
-  megan: 'Megan',
+  larry: 'Larry',
   djhands: 'Stephen Hands',
 }
 const BUBBLE_SPEAKER_VERB: Record<BubbleSpeaker, string> = {
   mm: 'is listening',
-  megan: 'is weighing in',
+  larry: 'is weighing in',
   djhands: 'is on the decks',
 }
 
@@ -158,10 +159,10 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
   const recStartedAtRef = useRef(0)
   // Cache for pre-fetched radio commentary. Stores an ARRAY of dialog
   // segments — each line gets its own TTS audio because we use three
-  // distinct ElevenLabs voices: The Music Man, Megan (co-host), and
+  // distinct ElevenLabs voices: The Music Man, Larry (co-host), and
   // a deeper "Announcer" voice for the campy WJLR station ID drops.
   type RadioSpeaker =
-    | 'mm' | 'megan' | 'announcer' | 'djhands'
+    | 'mm' | 'larry' | 'announcer' | 'djhands'
     // Callers (the 9-person rolodex):
     | 'giovanni' | 'rajiv' | 'bernard' | 'lashonte' | 'kristina'
     | 'devin' | 'maya' | 'mike' | 'zoe'
@@ -188,7 +189,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
   const [djLoading, setDjLoading] = useState(false)
   const [showBubble, setShowBubble] = useState(true)
   // 4.4.49: who the speech bubble is currently attributing. The mic
-  // button is the chosen host (Music Man or Megan — 4.4.52); DJ Mode
+  // button is the chosen host (Music Man or Larry — 4.4.52); DJ Mode
   // is Stephen Hands. Was hardcoded to "The Music Man" — so DJ Mode
   // commentary showed up under the wrong name. The bubble label, the
   // loading verb, and the colour palette all read from this.
@@ -373,7 +374,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
 
   // Toggle handler for Radio Mode — mutual exclusion with autoDj.
   // Turning ON shuffles the entire library, generates a SHOW OPENER
-  // (campy [ANNOUNCER] station ID + MM/Megan welcome banter), plays
+  // (campy [ANNOUNCER] station ID + MM/Larry welcome banter), plays
   // it through, THEN starts the first track. Without the opener, the
   // user just heard music start with no station ID — defeating the
   // "WJLR coming on the air" feel.
@@ -606,7 +607,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
     // That flips the module-level flag off PERMANENTLY for this radio
     // session — runNaturalEnd's `if (autoDjMode)` branch now reads false
     // every time a song ends, so the dj-transition event never fires
-    // and MM/Megan never come back between songs. The user reported
+    // and MM/Larry never come back between songs. The user reported
     // exactly this: "they speak once and then they don't come in and
     // out." This is the kick that started turning the radio off.
     playTrack(firstTrack, shuffled, 0, true, true)
@@ -649,9 +650,8 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
 
   // Voice IDs for the three Radio Mode speakers. The Music Man falls
   // through to the server-side env override (or default) when voiceId
-  // is undefined, so we only pass IDs explicitly for Megan and the
+  // is undefined, so we only pass IDs explicitly for Larry and the
   // Announcer.
-  const MEGAN_VOICE_ID = 'T7eLpgAAhoXHlrNajG8v'
   const ANNOUNCER_VOICE_ID = 'CeNX9CMwmxDxUF5Q2Inm'
   // 4.4.0: caller rolodex — 9 distinct caller voices, each occupying a
   // different conversational function so callbacks don't collapse into
@@ -707,7 +707,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
 
   const RADIO_SPEAKER_LABEL: Record<RadioSpeaker, string> = {
     mm: 'The Music Man',
-    megan: 'Megan',
+    larry: 'Larry',
     announcer: 'WJLR',
     djhands: 'Stephen Hands',
     giovanni: 'Giovanni',
@@ -780,7 +780,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
 
   function voiceIdForRadioSpeaker(speaker: RadioSpeaker): string | undefined {
     switch (speaker) {
-      case 'megan':     return MEGAN_VOICE_ID
+      case 'larry':     return LARRY_VOICE_ID
       case 'announcer': return ANNOUNCER_VOICE_ID
       case 'djhands':   return DJ_HANDS_VOICE_ID
       case 'giovanni':  return GIOVANNI_VOICE_ID
@@ -905,16 +905,16 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
   // 4.4.0: full caller rolodex tag set.
   function parseRadioScript(text: string): Array<{ speaker: RadioSpeaker; line: string }> {
     const segments: Array<{ speaker: RadioSpeaker; line: string }> = []
-    const TAG_RE = /^\[(MM|MEGAN|ANNOUNCER|STEPHEN|DJ_HANDS|DJ_STEPHEN|DJ_STEPHEN_HANDS|GIOVANNI|RAJIV|BERNARD|LASHONTE|KRISTINA|DEVIN|MAYA|MIKE|ZOE)\]\s*(.+)/i
+    const TAG_RE = new RegExp(`^\\[(${RADIO_SCRIPT_TAGS})\\]\\s*(.+)`, 'i')
     for (const raw of text.split('\n')) {
       const line = raw.trim()
       if (!line) continue
       const m = line.match(TAG_RE)
       if (m) {
-        const tag = m[1].toUpperCase()
+        const tag = currentRadioTag(m[1])
         let speaker: RadioSpeaker
         switch (tag) {
-          case 'MEGAN':     speaker = 'megan'; break
+          case 'LARRY':     speaker = 'larry'; break
           case 'ANNOUNCER': speaker = 'announcer'; break
           case 'STEPHEN':
           case 'DJ_HANDS':
@@ -1055,11 +1055,11 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
     setDjLoading(true)
     setDjText('')
     // 4.4.52: the mic button speaks as the user's CHOSEN host — the
-    // Music Man or Megan. buildMusicManPrompt() swaps persona on the
+    // Music Man or Larry. buildMusicManPrompt() swaps persona on the
     // aiHost setting, so the bubble must follow. Was hardcoded 'mm',
-    // which mis-attributed every comment when Megan was the host.
+    // which mis-attributed every comment when Larry was the host.
     const micHost = await window.electronAPI.getActiveHost()
-    setDjSpeaker(micHost === 'megan' ? 'megan' : 'mm')
+    setDjSpeaker(micHost === 'larry' ? 'larry' : 'mm')
     savedVolumeRef.current = pb.volume
 
     // 4.5: SINGLE-TTS path (reverted from per-sentence queue). The
@@ -1075,7 +1075,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
 
     try {
       const track = pb.nowPlaying
-      const persona = micHost === 'megan' ? undefined : undefined
+      const persona = micHost === 'larry' ? undefined : undefined
       // Subscribe to chunks but DON'T do anything with them — the
       // stream completion is what matters now. Empty subscribe keeps
       // the IPC channel clean and lets future debug logging slot in
@@ -1780,7 +1780,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
           <button
             className={`transport-toggle dj-btn radio-mode-btn ${radioMode ? 'radio-mode-btn--on' : ''}`}
             onClick={handleRadioToggle}
-            title={radioMode ? 'Radio Mode is ON (⇧⌘R) — click to turn OFF (WJLR 330.9, Music Man + Megan)' : 'Radio Mode (⇧⌘R) — click to start WJLR 330.9 (whole library shuffled, MM + Megan banter)'}
+            title={radioMode ? 'Radio Mode is ON (⇧⌘R) — click to turn OFF (WJLR 330.9, Music Man + Larry)' : 'Radio Mode (⇧⌘R) — click to start WJLR 330.9 (whole library shuffled, MM + Larry banter)'}
           >
             <RadioIcon />
             {radioMode && (

@@ -30,6 +30,7 @@
  * goes through these functions, so nothing can capture a stale binding.
  */
 
+import { migrateRememberedScript } from '../common/cohost.ts'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
 import { writeJsonAtomic } from './atomic-write.ts'
@@ -67,7 +68,14 @@ export async function loadMusicManMemory(): Promise<void> {
   if (!musicmanMemoryCache) return
   const parsed = await musicmanMemoryCache.get()
   if (Array.isArray(parsed)) {
-    recentMusicManUtterances = parsed.slice(-MM_MEMORY_MAX) as typeof recentMusicManUtterances
+    const held = parsed.slice(-MM_MEMORY_MAX) as typeof recentMusicManUtterances
+    // Every prompt reads this as its own memory, so it can't keep the co-host's old name.
+    const current = held.flatMap((u) => {
+      const text = migrateRememberedScript(u.text)
+      return text === null ? [] : [{ ...u, text }]
+    })
+    recentMusicManUtterances = current
+    if (current.length !== held.length || current.some((u, i) => u.text !== held[i].text)) saveMusicManMemory()
   }
 }
 

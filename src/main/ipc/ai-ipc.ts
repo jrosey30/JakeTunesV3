@@ -18,6 +18,7 @@ import { REFUSED_SENDER } from '../ipc-register.ts'
 import { safeIpcError } from '../safe-ipc-error.ts'
 import { setShowPlan, clearShowPlan, clearMemory } from '../radio-memory.ts'
 import { RADIO_CAST, CALLERS } from '../cast.ts'
+import { LARRY_VOICE_ID } from '../../common/cohost.ts'
 import { allowWithinRateLimit } from '../url-safety.ts'
 import { MUSIC_MAN_CORE } from '../personas.ts'
 import { setLibraryContext } from '../library-digest.ts'
@@ -49,8 +50,8 @@ export interface AiIpcHost {
   revertCynthiaLedgerEntry: (id: string) => Promise<unknown>
   /** App settings (Preferences → AI voice gate). */
   readAppSettings: () => Promise<Record<string, unknown> | null>
-  /** Active AI host preference (mm vs megan) for default TTS voice. */
-  readActiveHost: () => 'mm' | 'megan'
+  /** Active AI host preference (mm vs larry) for default TTS voice. */
+  readActiveHost: () => 'mm' | 'larry'
   /** Main window for save dialogs. */
   getMainWindow: () => BrowserWindow | null
   claudeCall: (
@@ -175,9 +176,8 @@ export function registerAiIpc(ipc: IpcRegistrar, host: AiIpcHost): void {
       if (ai && ai.musicManVoiceEnabled === false) {
         return { ok: true, audio: '' }
       }
-      const meganVoice = 'T7eLpgAAhoXHlrNajG8v'
-      const defaultByHost = host.readActiveHost() === 'megan'
-        ? meganVoice
+      const defaultByHost = host.readActiveHost() === 'larry'
+        ? LARRY_VOICE_ID
         : (process.env.ELEVENLABS_VOICE_ID || 'ljX1ZrXuDIIRVcmiVSyR')
       const voice = voiceId || defaultByHost
       const v3Enabled = (process.env.ELEVENLABS_V3 ?? '1') !== '0' && (process.env.ELEVENLABS_V3 ?? '1').toLowerCase() !== 'false'
@@ -246,7 +246,7 @@ export function registerAiIpc(ipc: IpcRegistrar, host: AiIpcHost): void {
           if (model !== modelChain[0]) {
             console.log(`[TTS] fell back to ${model} for voice ${voice.slice(0, 8)}…`)
           }
-          // Music Man only (not Megan, callers, announcer, DJ): pitch per
+          // Music Man only (not Larry, callers, announcer, DJ): pitch per
           // MUSIC_MAN_PITCH_SEMITONES in the userData .env (voice-pitch.ts).
           const raw = Buffer.from(arrayBuf)
           const audioBuf = voice === mmVoice

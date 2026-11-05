@@ -5,7 +5,7 @@
  * An earlier attempt to move them had to be reverted, and the reason is the
  * thing this file exists to prevent: the builders read MUTABLE state, and if
  * that state is captured at registration time instead of read at call time,
- * it freezes. A frozen activeHost means Jake switches his host to Megan and
+ * it freezes. A frozen activeHost means Jake switches his host to Larry and
  * keeps getting Music Man — with no error, no warning, nothing in the log.
  *
  * So the central test here is not "does it build a prompt". It is "does it
@@ -16,7 +16,7 @@ import { test, describe, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   initPersonaPrompts, buildMusicManPrompt, buildCynthiaPrompt, withLibraryDigest,
-  MUSIC_MAN_CORE, MEGAN_CORE, CYNTHIA_CORE,
+  MUSIC_MAN_CORE, LARRY_CORE, CYNTHIA_CORE,
 } from '../personas.ts'
 import { refreshLibraryDigest, setLibraryContext } from '../library-digest.ts'
 import {
@@ -30,7 +30,7 @@ import { join } from 'path'
 const textOf = (blocks: { text: string }[]) => blocks.map(b => b.text).join('\n---\n')
 
 describe('persona prompts', () => {
-  let host: 'mm' | 'megan'
+  let host: 'mm' | 'larry'
   let taste: string
 
   beforeEach(async () => {
@@ -53,12 +53,12 @@ describe('persona prompts', () => {
 
   test('follows the active host AFTER it changes', () => {
     // The regression that reverted the first attempt. Build once as Music Man,
-    // flip the host, build again — the second prompt must be Megan's.
+    // flip the host, build again — the second prompt must be Larry's.
     assert.ok(textOf(buildMusicManPrompt()).includes(MUSIC_MAN_CORE.slice(0, 60)))
 
-    host = 'megan'
+    host = 'larry'
     const after = textOf(buildMusicManPrompt())
-    assert.ok(after.includes(MEGAN_CORE.slice(0, 60)), 'switched to Megan')
+    assert.ok(after.includes(LARRY_CORE.slice(0, 60)), 'switched to Larry')
     assert.ok(!after.includes(MUSIC_MAN_CORE.slice(0, 60)), 'and left Music Man behind')
   })
 

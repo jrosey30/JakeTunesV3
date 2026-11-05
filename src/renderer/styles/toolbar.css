@@ -314,7 +314,7 @@
   color: #2d6a3e;
 }
 
-/* 4.5.2: live broadcast caption — Music Man / Megan / DJ commentary
+/* 4.5.2: live broadcast caption — Music Man / Larry / DJ commentary
  * typed out in the pill character-by-character, replaces the floating
  * dj-bubble. Slightly warmer text colour + a non-italic body so the
  * caption reads as spoken-voice rather than UI status. The activity
@@ -536,7 +536,7 @@
 }
 
 /* 4.5: closed-caption broadcast layout — stacks the last two wrapped
- * lines of Music Man / Megan / DJ speech on top of each other, with
+ * lines of Music Man / Larry / DJ speech on top of each other, with
  * the older line at 55% opacity and the current line carrying the
  * caret. Replaces the prior single-line sliding window (which clipped
  * monologues and read more like a stock ticker than a TV captions
@@ -1195,7 +1195,7 @@
 
 /* Speech bubble from mic.
    4.4.52: the bubble is colour-coordinated to whoever's speaking. It
-   shows for the mic button (the Music Man OR Megan, whichever is the
+   shows for the mic button (the Music Man OR Larry, whichever is the
    chosen host) and for DJ Mode (Stephen Hands) — three personas, so
    three palettes. The per-speaker `--bubble-*` locals default to the
    Music Man and get overridden by `[data-speaker=...]` below;
@@ -1222,10 +1222,10 @@
   animation: dj-bubble-in 0.3s ease-out;
 }
 
-.dj-bubble[data-speaker="megan"] {
-  --bubble-accent: var(--persona-megan);
-  --bubble-accent-rgb: var(--persona-megan-rgb);
-  --bubble-bg-rgb: var(--persona-megan-bg);
+.dj-bubble[data-speaker="larry"] {
+  --bubble-accent: var(--persona-larry);
+  --bubble-accent-rgb: var(--persona-larry-rgb);
+  --bubble-bg-rgb: var(--persona-larry-bg);
 }
 
 .dj-bubble[data-speaker="djhands"] {

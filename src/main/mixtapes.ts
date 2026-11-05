@@ -29,6 +29,7 @@ import type { MessageCreateParamsNonStreaming } from '@anthropic-ai/sdk/resource
 import type { Message } from '@anthropic-ai/sdk/resources/messages'
 import { fitSide, tapeTracks, MAX_TAPE_SONGS } from '../common/tape-physics'
 import { RADIO_CAST } from './cast'
+import { currentCastId } from '../common/cohost.ts'
 import { isSkitOrIntro, isIntroTitled } from './workout-sync.ts'
 // Tombstone primitives are structural ({id, name, deletedAt}) — the same
 // machinery playlists use, pointed at mixtape-tombstones.json, so a tape
@@ -771,7 +772,7 @@ export function registerMixtapesIpc(host: MixtapesHost): void {
       // tape treatment, so the character still goes through 1979.
       let sourcePath = rawPath
       if (voiceId && voiceId !== 'me') {
-        const v = mixtapeVoiceRoster().find((x) => x.id === voiceId)
+        const v = mixtapeVoiceRoster().find((x) => x.id === currentCastId(voiceId))
         if (v?.voiceId) {
           stsPath = await speechToSpeech(rawPath, v.voiceId)
           sourcePath = stsPath

@@ -31,7 +31,7 @@
  * It survives restarts and syncs to the iPod cleanly. Semantically it's
  * "recently played to completion," which is a sound definition.
  *
- * AI Picks (musicman / megan / dj-hands) are intentionally NOT handled
+ * AI Picks (musicman / larry / dj-hands) are intentionally NOT handled
  * here — they require an async fetch from main and stay inline in
  * `SmartPlaylistView`. They are not part of the iPod-sync set.
  */
@@ -81,7 +81,7 @@ export const SMART_PLAYLIST_TITLES: Record<string, string> = {
   ...Object.fromEntries(SOURCE_PLAYLISTS.map((p) => [p.key, p.name])),
   'youd-star': "Songs You'd Star",
   'musicman-picks': 'The Music Man Picks',
-  'megan-picks': 'Megan Picks',
+  'larry-picks': 'Larry Picks',
   'dj-hands-picks': 'DJ Stephen Hands Picks',
 }
 
@@ -179,7 +179,7 @@ export function evaluateSmartPlaylist(id: SmartPlaylistId, tracks: Track[]): Tra
       return sourcePlaylistTracks(tracks, id)
 
     default:
-      // AI picks (musicman/megan/dj-hands) + anything unknown.
+      // AI picks (musicman/larry/dj-hands) + anything unknown.
       return []
   }
 }

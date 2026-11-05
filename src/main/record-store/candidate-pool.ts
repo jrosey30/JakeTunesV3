@@ -212,7 +212,7 @@ function baseScore(cand: AlbumCandidate, shelfId: ShelfId, todayMs: number): num
       if (cand.totalPlays < 1) return 0
       return 1 / (1 + cand.totalPlays / 3)
     }
-    case 'megan-picks':
+    case 'larry-picks':
     case 'stephen-crate':
       // v1.1 personas — fall back to affinity for now.
       return Math.log1p(cand.totalPlays)

@@ -8,6 +8,8 @@
 // parsing and TTS routing; the radio handler uses VOICE_SETTINGS for
 // per-call ElevenLabs delivery tuning.
 
+import { LARRY_VOICE_ID } from '../common/cohost.ts'
+
 export interface Caller {
   /** Internal id used for tracking in memory + scheduling. */
   id: string
@@ -31,8 +33,8 @@ export interface Caller {
   openings: string[]
   /** MM's default posture toward this caller. */
   mmReaction: string
-  /** Megan's default posture toward this caller. */
-  meganReaction: string
+  /** Larry's default posture toward this caller. */
+  larryReaction: string
   /** Hard rules for what this caller never does. */
   never: string[]
   /** Per-caller ElevenLabs voice settings. */
@@ -61,7 +63,7 @@ export const CALLERS: Record<string, Caller> = {
       `Music Man, my niece keeps playing this and I gotta ask—`,
     ],
     mmReaction: `Annoyed/charmed alternating. Default annoyed (treats Giovanni's question as something to dispatch quickly, condescending, calls him "my friend"). Charmed when Giovanni asks something genuinely sharp ("That's actually a real question, Giovanni").`,
-    meganReaction: `Protective of Giovanni-as-person, mocking of his takes. Will roast a Giovanni opinion but never roast Giovanni himself. Gently corrects his mishears (where MM corrects sharply).`,
+    larryReaction: `Stops him mid-ramble over one word and repeats a mishear back to him in flat disbelief, then asks where he heard that. Never mean to the guy. Baffled by him, and the only one who actually listens to the whole thing.`,
     never: [
       `Never sounds like a podcast guest — no prepared bits.`,
       `Never wins an argument cleanly, but occasionally lands a question the hosts can't dismiss.`,
@@ -78,16 +80,16 @@ export const CALLERS: Record<string, Caller> = {
     tag: 'RAJIV',
     voiceId: 'miqykcv8BCUvQnRlIGUV',
     weight: 2,  // ≈1 in 6
-    fn: `The format antagonist. The skeptic of the show itself — challenges MM and Megan's premises, not their takes.`,
+    fn: `The format antagonist. The skeptic of the show itself — challenges MM and Larry's premises, not their takes.`,
     bg: 'Mid-30s, Astoria, software engineer who reads music writing.',
     speech: 'Measured. Complete sentences. The opposite of Giovanni\'s rambling. He sounds like he prepared the call. More verbal and confident than Giovanni, but not a know-it-all.',
     openings: [
       `Hey, I want to push back on something Music Man said about three songs ago.`,
-      `Music Man, Megan — you both keep treating the chart positions like they mean something. Why?`,
+      `Music Man, Larry — you both keep treating the chart positions like they mean something. Why?`,
       `I've got a question about your framing.`,
     ],
     mmReaction: `Annoyed. Rajiv is the only caller MM treats as a peer-debater rather than a civilian, which MM finds threatening.`,
-    meganReaction: `Delighted. She loves when Rajiv calls because he asks her the questions MM won't.`,
+    larryReaction: `Delighted, in his way. Finally someone else asking what the rules are. Questions Rajiv's premise anyway because he can't help it, then turns the whole thing on the Funk Man.`,
     never: [
       `Not contrarian for sport — has actual reasoned objections.`,
       `Never as rambling as Giovanni.`,
@@ -107,16 +109,16 @@ export const CALLERS: Record<string, Caller> = {
     speech: 'Slow. Calm. Long pauses. Each sentence carries weight. Never raises his voice. The OPPOSITE of Stephen\'s energy.',
     openings: [
       `Music Man. With respect. You weren't there.`,
-      `Megan, you mentioned the Mudd Club a minute ago. I want to add something.`,
+      `Larry, you mentioned the Mudd Club a minute ago. I want to add something.`,
       `I want to add some context, if you don't mind.`,
     ],
     mmReaction: `Defers without protest. This is the ONLY caller MM listens to without interrupting. When Bernard speaks, MM listens. The rarest dynamic on the show.`,
-    meganReaction: `Quiet respect. Asks Bernard a follow-up question. Does not interrupt him.`,
+    larryReaction: `The one caller he won't interrupt. Waits through every pause, and you can hear what it costs him. Asks one small, oddly specific follow-up about how something actually worked, and takes the answer.`,
     never: [
       `Doesn't lecture.`,
       `Doesn't name-drop big names.`,
       `Doesn't say "back in my day."`,
-      `His authority is implicit, never asserted. If he says "I knew Larry" he means Levan, but he won't last-name him because he doesn't need to.`,
+      `His authority is implicit, never asserted. When he talks about Levan he says "Levan", never just "Larry": Larry's the host.`,
     ],
     voiceSettings: { stability: 0.65, similarity_boost: 0.8, style: 0.25 },
   },
@@ -132,14 +134,14 @@ export const CALLERS: Record<string, Caller> = {
     speech: 'Quick. Confident. Slight Brooklyn accent — different from Giovanni\'s, more contemporary, more clipped. Talks at the speed of someone who knows MM is going to interrupt her.',
     openings: [
       `Music Man, when's the last time you listened to something released in the last six months?`,
-      `Megan, I need you to tell Music Man about this. He won't hear it from me.`,
+      `Larry, I need you to tell Music Man about this. He won't hear it from me.`,
       `Y'all are about to get me fired from my job for calling in but—`,
     ],
     mmReaction: `Defensive. He'll deflect with a historical comparison. LaShonte refuses to let him.`,
-    meganReaction: `Allied. Megan and LaShonte often gang up on MM's ahistoricism — but Megan as a critic will sometimes side with MM against LaShonte's specific pick.`,
+    larryReaction: `Allied, mostly because it annoys the Funk Man. They gang up on MM's ahistoricism, but he can't resist questioning one word of hers, and he'll side with MM against a specific pick if she's wrong about it. Being right matters more than having an ally.`,
     never: [
       `Doesn't pander.`,
-      `Not "the young person" — she's a working critic who happens to be younger than Megan.`,
+      `Not "the young person" — she's a working critic who happens to be younger than Larry.`,
       `Doesn't use slang to perform youth.`,
       `Doesn't apologize for her takes.`,
     ],
@@ -161,7 +163,7 @@ export const CALLERS: Record<string, Caller> = {
       `Y'all are sleeping on metal again this hour.`,
     ],
     mmReaction: `Out of his depth and unwilling to admit it. Tries to bridge to something he knows (Sabbath, Blue Öyster Cult). Kristina won't let him off easy.`,
-    meganReaction: `Genuinely engaged. Megan has more metal credibility than MM (canon — she's seen Sleep, Sunn O))), and Boris live, only surfaces during Kristina calls). The Kristina calls let her flex.`,
+    larryReaction: `Genuinely engaged. Larry has more metal credibility than MM (canon — he's seen Sleep, Sunn O))), and Boris live, only surfaces during Kristina calls). He brings it up flatly, then complains about what they charged him for the earplugs.`,
     never: [
       `Doesn't apologize for liking metal.`,
       `Doesn't try to convert anyone.`,
@@ -185,7 +187,7 @@ export const CALLERS: Record<string, Caller> = {
       `Hi, so, like, weird question—`,
     ],
     mmReaction: `Affronted. MM cannot hide his irritation that someone called WJLR for "the Frozen song." One of the few moments MM loses his composure.`,
-    meganReaction: `Charmed. Megan finds Devin genuinely funny and will keep him on the line longer than MM wants.`,
+    larryReaction: `Can't hang up. Keeps Devin on the line wanting to know how he got this number, what he thought this was, and whether he's moved again, long after MM wants him gone.`,
     never: [
       `Not playing dumb — genuinely on a different wavelength.`,
       `Comedy is sincerity, not performance.`,
@@ -199,16 +201,16 @@ export const CALLERS: Record<string, Caller> = {
     tag: 'MAYA',
     voiceId: 'aKw9UnnjRq5scbeeGI7Z',
     weight: 2,  // ≈1 in 6
-    fn: `The question-asker. Doesn't have takes — has real questions, the kind that make MM and Megan stop and actually think.`,
+    fn: `The question-asker. Doesn't have takes — has real questions, the kind that make MM and Larry stop and actually think.`,
     bg: '30s-40s, Park Slope, music-curious but not industry. Reads about music more than she\'d admit.',
     speech: 'Thoughtful. Slight pause before each question. Doesn\'t perform. Sounds like she\'s been thinking about her question on the train.',
     openings: [
       `Hey — quick question, and I'm sorry if it's basic. Why do people care about Steely Dan? I'm not being dismissive, I genuinely want to know.`,
-      `Megan, when you say a record "doesn't hold up" — what does that actually mean to you?`,
+      `Larry, when you say a record "doesn't hold up" — what does that actually mean to you?`,
       `Hi, Maya from Park Slope. I have a real question.`,
     ],
     mmReaction: `Charmed. Maya gives MM permission to teach without him having to fight for the floor. Takes her questions seriously and answers at length.`,
-    meganReaction: `Respectful. Megan recognizes Maya's questions as the ones critics should be asked more often. Answers carefully.`,
+    larryReaction: `Thrown. A real question with no angle in it gives him nothing to push against. Answers it carefully, then comes back a line later to amend his answer.`,
     never: [
       `Not naive — knows what she's asking.`,
       `Refuses to perform expertise.`,
@@ -228,11 +230,11 @@ export const CALLERS: Record<string, Caller> = {
     speech: 'Casual, lower volume than the hosts. Sounds like he\'s calling on a break. Uses first names of people the hosts don\'t know ("I was just talking to Sarah—"). Slight conspiratorial undertone — like every call is half off-the-record.',
     openings: [
       `Music Man, I shouldn't say this, but—`,
-      `Megan, I just got off the phone with somebody at the label. The new record is not happening this fall.`,
+      `Larry, I just got off the phone with somebody at the label. The new record is not happening this fall.`,
       `Hey, quick one. Heard something about that band you mentioned last hour. You want it?`,
     ],
     mmReaction: `Hungry. MM loves Mike calls because they give him information he can claim later as his own. Pretends he already knew whatever Mike just told him ("Right, right, I had heard that"). He had not.`,
-    meganReaction: `Skeptical-but-listening. Doesn't fully trust Mike's leaks but knows half of them turn out to be right. Asks one sharp follow-up; Mike deflects.`,
+    larryReaction: `Wants a name. Who's Sarah? Sarah who? Knows half of Mike's leaks turn out right and still won't drop who Sarah is. Mike deflects.`,
     never: [
       `Doesn't name names of artists in the negative — talks about labels or managers, never trashes a specific musician.`,
       `Doesn't gossip about personal lives, only about business.`,
@@ -252,12 +254,12 @@ export const CALLERS: Record<string, Caller> = {
     bg: 'Late 20s-early 30s, Bushwick, day job unclear (possibly artist, possibly bartender, possibly both).',
     speech: 'Fast, slightly performative, full of energy. Uses sentence fragments for emphasis. Doesn\'t soften opinions with qualifiers. "Final answer." energy. Talks like she\'s been waiting on hold rehearsing the call — but it works because she COMMITS.',
     openings: [
-      `Music Man. Megan. I have figured out the Beatles. They're overrated and I can prove it in thirty seconds.`,
+      `Music Man. Larry. I have figured out the Beatles. They're overrated and I can prove it in thirty seconds.`,
       `Zoe from Bushwick. The greatest live album of all time is MTV Unplugged in New York and I will not be taking questions.`,
       `Okay so I've been thinking about this and Aphex Twin is a hoax. Hear me out.`,
     ],
     mmReaction: `Genuine delight followed by genuine fury. Zoe's takes are exactly the kind MM wants to demolish, and she's exactly the kind of caller who refuses to back down.`,
-    meganReaction: `Endlessly entertained. Loves when Zoe forces MM out of his comfort zone. Occasionally — rarely — actually agrees with a Zoe take, which short-circuits MM completely.`,
+    larryReaction: `Entertained, in his flat way. Respects anyone who won't back down, and makes her defend one word of the take. Rarely, he agrees with her, which short-circuits MM completely.`,
     never: [
       `Doesn't apologize for a take.`,
       `Doesn't ask "am I crazy?" (that's Giovanni's tic — Zoe is never uncertain).`,
@@ -282,20 +284,20 @@ Example openings (use as inspiration only — do NOT copy verbatim):
 ${c.openings.map(o => `  - "${o}"`).join('\n')}
 
 MM'S DEFAULT REACTION: ${c.mmReaction}
-MEGAN'S DEFAULT REACTION: ${c.meganReaction}
+LARRY'S DEFAULT REACTION: ${c.larryReaction}
 
 WHAT ${c.name.toUpperCase()} NEVER DOES:
 ${c.never.map(t => `  • ${t}`).join('\n')}
 
 ★ CRITICAL — WHAT THE CALLER KNOWS ★
-${c.name} is calling FROM HOME, listening to WJLR on the radio. They heard the song that JUST ENDED. They have NO IDEA what's coming up next — the upcoming track is private to MM and Megan in the studio. The caller CANNOT reference, ask about, predict, or comment on the song that's about to play. Their question/take is about: the song that just played, an artist or scene in general, something MM or Megan said earlier, or a random music opinion. NEVER about what's queued. (MM and Megan can tease the upcoming track in their reactions if it earns a line, but the CALLER can't.)
+${c.name} is calling FROM HOME, listening to WJLR on the radio. They heard the song that JUST ENDED. They have NO IDEA what's coming up next — the upcoming track is private to MM and Larry in the studio. The caller CANNOT reference, ask about, predict, or comment on the song that's about to play. Their question/take is about: the song that just played, an artist or scene in general, something MM or Larry said earlier, or a random music opinion. NEVER about what's queued. (MM and Larry can tease the upcoming track in their reactions if it earns a line, but the CALLER can't.)
 
 Format for this segment:
   [MM] One line bringing ${c.name} in BY NAME ("alright we got ${c.name} on the line — ${c.name}, what's good?" / similar). Set the energy in MM's default-reaction mode above.
   [${c.tag}] 1-2 sentence question / take / observation IN THEIR VOICE — referencing only what they could plausibly know (the just-played song or general music). Stay in character — match the speech profile and example openings, do NOT copy the openings.
   [MM] React in default mode.
-  [MEGAN] React in default mode.
-  Optional final [${c.tag}], [MM], or [MEGAN] line wrapping it up. Keep total length tight — caller bits are 22-28 sec, the longest archetype.`
+  [LARRY] React in default mode.
+  Optional final [${c.tag}], [MM], or [LARRY] line wrapping it up. Keep total length tight — caller bits are 22-28 sec, the longest archetype.`
 }
 
 /** Lookup table by speaker tag so the renderer parser can identify which
@@ -344,7 +346,7 @@ export interface RadioCastMember {
 const RADIO_HOSTS: RadioCastMember[] = [
   // 'mm' settings changed 2026-10-16 (Jake picked take B). ⚠️ TWIN: src/main/ipc/ai-ipc.ts musicman-speak Music Man branch.
   { id: 'mm',        name: 'The Music Man',    tag: 'MM',        label: 'The Music Man', kind: 'host',      voiceId: undefined,              voiceSettings: { stability: 0.5,  similarity_boost: 0.75, style: 0.35 } },
-  { id: 'megan',     name: 'Megan',            tag: 'MEGAN',     label: 'Megan',         kind: 'host',      voiceId: 'T7eLpgAAhoXHlrNajG8v', voiceSettings: { stability: 0.2,  similarity_boost: 0.7,  style: 0.85 } },
+  { id: 'larry',     name: 'Larry',            tag: 'LARRY',     label: 'Larry',         kind: 'host',      voiceId: LARRY_VOICE_ID, voiceSettings: { stability: 0.2,  similarity_boost: 0.7,  style: 0.85 } },
   { id: 'announcer', name: 'Announcer',        tag: 'ANNOUNCER', label: 'WJLR',          kind: 'announcer', voiceId: 'CeNX9CMwmxDxUF5Q2Inm', voiceSettings: { stability: 0.75, similarity_boost: 0.85, style: 0.45 } },
   { id: 'stephen',   name: 'DJ Stephen Hands', tag: 'STEPHEN',   label: 'Stephen Hands', kind: 'host',      voiceId: 'ApBE43wHy5MiZGz9ihqB', voiceSettings: { stability: 0.45, similarity_boost: 0.8,  style: 0.55 } },
 ]

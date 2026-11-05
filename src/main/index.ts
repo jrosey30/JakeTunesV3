@@ -21,7 +21,7 @@ import { forTheScreen } from './claude-screen-text.ts'
 import { ensureCompanionTokenFromEnvFile, withCompanionInit } from './hub-companion.ts'
 // The four persona system prompts — 268 lines of prose, lifted out 2026-08-10.
 import {
-  MUSIC_MAN_CORE, MEGAN_CORE, DJ_HANDS_CORE,
+  MUSIC_MAN_CORE, LARRY_CORE, DJ_HANDS_CORE,
   initPersonaPrompts, withLibraryDigest, buildMusicManPrompt,
 } from './personas.ts'
 import {
@@ -140,7 +140,7 @@ import {
   appendMemory, formatMemoryForPrompt, extractCallbacks,
   setHotTake, getHotTake,
 } from './radio-memory'
-import { buildCallerSegmentMode } from './cast'
+import { buildRadioSegmentPrompt, wholeScriptLines } from './radio-script-prompt'
 import { startImessageCapture } from './imessage-capture'
 import { decodeHtmlEntities } from './imessage-capture-core'
 import { sweepFriendImports as moduleSweepFriendImports, noteAttribution } from './friend-credit-sweep.ts'
@@ -204,6 +204,7 @@ import {
   tagYearStr,
 } from '../common/albumReleaseDate'
 import { nameKey, storedNameKey } from '../common/fold-text.ts'
+import { migratePicksCache, normalizeHostId } from '../common/cohost.ts'
 import { chooseArtistIdentity, type IdentityConfidence } from '../common/artist-identity.ts'
 import { fetchArtistDiscography, initArtistDiscography } from './artist-discography.ts'
 import { measureLibraryFileSizes, type FileSizeProgress, type FileSizeScan } from '../common/library-file-sizes.ts'
@@ -420,7 +421,7 @@ if (!process.env.ANTHROPIC_API_KEY || !process.env.DISCOGS_API_TOKEN || !process
     const envFile = fs.readFileSync(join(app.getPath('userData'), '.env'), 'utf8')
     // 4.5: EXA_API_KEY added. Powers the artist-facts augmentation in
     // searchWeb — Exa returns richer/more-current music journalism than
-    // Wikipedia + MusicBrainz alone, giving Music Man / Megan / Stephen
+    // Wikipedia + MusicBrainz alone, giving Music Man / Larry / Stephen
     // sharper context to draw from. Optional — searchWeb skips Exa
     // silently if the key is missing.
     for (const key of ['ANTHROPIC_API_KEY', 'ELEVENLABS_API_KEY', 'DISCOGS_API_TOKEN', 'EXA_API_KEY']) {
@@ -1102,7 +1103,7 @@ const sendToRenderer = (channel: string, ...args: unknown[]): void => {
 
 // AI host preference — written by settings IPC, read by prompt builders.
 // Declared above registerSettingsIpc so the setter closure is valid.
-let cachedActiveHost: 'mm' | 'megan' = 'mm'
+let cachedActiveHost: 'mm' | 'larry' = 'mm'
 
 // IPC registration helper — defaults to refuseIfNotMainWindow. Domain
 // modules (ipc/*.ts) register through this; opt out with { public: true }
@@ -2343,17 +2344,16 @@ async function readAppSettingsAsync(): Promise<Record<string, unknown> | null> {
 // (Binding declared near mainWindow + settings IPC registration above.)
 async function refreshActiveHostFromSettings(): Promise<void> {
   const s = await readAppSettingsAsync()
-  const ai = (s?.ai as { aiHost?: 'mm' | 'megan' } | undefined)
-  cachedActiveHost = ai?.aiHost === 'megan' ? 'megan' : 'mm'
+  cachedActiveHost = normalizeHostId((s?.ai as { aiHost?: unknown } | undefined)?.aiHost)
 }
-function readActiveHostSync(): 'mm' | 'megan' {
+function readActiveHostSync(): 'mm' | 'larry' {
   return cachedActiveHost
 }
 
 // 4.4.52: expose the active host to the renderer so the toolbar speech
 // bubble can attribute a mic-button comment to the RIGHT persona — the
 // mic button routes through buildMusicManPrompt(), which swaps to
-// Megan when she's the chosen host, so the bubble must follow.
+// Larry when he's the chosen host, so the bubble must follow.
 ipc.handle('get-active-host', () => readActiveHostSync(), { public: true })
 
 // ── Persistent audio log ──────────────────────────────────────────────
@@ -3231,7 +3231,7 @@ ipc.handle('get-artist-discography', async (_e, artist: string) => {
 // Combined multi-source search for artist info
 // 4.5: Exa.ai added as a third source. Runs in parallel with Wikipedia
 // + MusicBrainz; concatenated into the artist-facts block fed to every
-// Music Man / Megan / Stephen / chat call. Skips silently if
+// Music Man / Larry / Stephen / chat call. Skips silently if
 // EXA_API_KEY is missing — Wikipedia + MusicBrainz still ground the
 // facts. Query templates live in src/main/exa.ts — edit those to tune
 // what Exa actually retrieves.
@@ -6311,7 +6311,7 @@ If background info from MusicBrainz or Wikipedia is provided below, USE IT for f
       noteMusicManUtterance('dj', text)
       // 4.5: hive-mind log — every mic press captured for future
       // personalization. Persona is 'stephen' if requested, else the
-      // active host (mm/megan) at call time.
+      // active host (mm/larry) at call time.
       logHiveMindInteraction({
         at: Date.now(),
         mode: 'mic',
@@ -6447,198 +6447,11 @@ ipc.handle('musicman-radio', async (_event,
   //                          caller has a distinct conversational function;
   //                          see src/main/cast.ts for the full bible.
   //   - djHandsSegment    → DJ Stephen Hands stops by (rare guest, beats focus)
-  //   - default           → NO [ANNOUNCER], NO guest. Pure MM + Megan banter.
-  const wantsAnnouncer = opener || forceAnnouncer
-  const segmentMode = opener
-    ? `This is the SHOW OPEN. The radio just went live; listeners just clicked in.
-
-ALWAYS lead with TWO [ANNOUNCER] lines, in this exact order:
-  1. The MANDATORY signature open — write it EXACTLY, verbatim, EVERY show (this is WJLR's cold open; it must be identical every single time, the way a real station opens the same way daily):
-     [ANNOUNCER] We are LIVE... live here in Greenpoint!
-     (Those exact words — "We are LIVE... live here in Greenpoint!" — OPEN every show, word for word. ALL CAPS the first "LIVE" so the TTS punches it. You may drop the "WJLR 330.9" call sign right after, but the Greenpoint line comes FIRST and unchanged.)
-  2. The MANDATORY hosts intro line — write it EXACTLY like this, with this phrasing and emphasis:
-     [ANNOUNCER] Here's Megan, and the one, the only, the MUSIC MAN!
-     (You may replace "Here's" with synonyms like "It's" or "Welcome back to" but the rest of the line — "Megan, and the one, the only, the MUSIC MAN!" — stays verbatim. ALL CAPS on "MUSIC MAN" so the TTS punches it.)
-
-After those two announcer lines, MM and Megan welcome the listener, set the energy, and tee up the first track.`
-    : miniId
-      ? `MID-HOUR MINI STATION ID. Brief — about 8 seconds. ONE [ANNOUNCER] line that re-anchors any listener who tuned in late, then immediate hand-off to MM and Megan with a single quick exchange about what's been playing. The mini-ID is DRY — no production sting under it (production handles that).
-
-Format:
-  [ANNOUNCER] One short ID line — "Triple-W Jay El Arr. Three thirty point nine. You're listening." (or close variant — keep it under 10 words).
-  [MM] One quick line bridging.
-  [MEGAN] Quick reply, hand off to the next track.`
-      : callerSegment
-        ? buildCallerSegmentMode(callerId || 'giovanni')
-      : djHandsSegment
-        ? `You're transitioning between songs and DJ STEPHEN HANDS is in the booth — a rare guest spot. He doesn't sit in for the whole show, just drops by to weigh in. He'll cut MM off if MM is wrong about a beat or a sample. Megan respects him more than MM (she likes that he doesn't perform expertise).
-
-Format for this segment:
-  [MM] One line bringing him in ("got Stephen Hands in the booth — Stephen, what we got?")
-  [STEPHEN] 1-2 sentences of his take on the just-played or upcoming track. ALWAYS pivots to whether it MOVES a room — danceable, beat / sample / production / BPM angle. He'll either spot a sample, name-drop a producer, call out a disco / boogie / house lineage other people miss, or bluntly say it doesn't bang. Brief and confident, no overexplaining.
-  [MEGAN] Reacts — agrees with him over MM, or pushes him on something specific.
-  [MM] Tries to reassert. Stephen undercuts him OR Megan does.
-  Optional one more [STEPHEN] line as he peaces out.`
-        : forceAnnouncer
-          ? `You're transitioning between songs in a continuous broadcast. ALWAYS lead with a campy [ANNOUNCER] station ID drop, THEN MM and Megan back-announce / tee up next.`
-          : `${nextTrack ? "You're transitioning between songs in a continuous broadcast. NO station ID this segment — pure MM + Megan banter." : 'A song is currently on the air.'}`
-
-  // 4.2.17: TOPIC ROTATION. Each segment picks ONE angle from this list
-  // so the show doesn't fall into "they always argue about whether the
-  // last song was overrated." Real radio shows roam — back-announce,
-  // tee-up, hot take, industry gossip, scene lore, personal anecdote,
-  // local color. The fixed personas (MUSIC_MAN_CORE / MEGAN_CORE) keep
-  // their opinions consistent across topics, but the *terrain* of each
-  // segment is different. Opener and forceAnnouncer segments get the
-  // tee-up / station-ID flavor and skip the rotation.
-  const TOPIC_ANGLES = [
-    `BACK-ANNOUNCE — focus the segment on the song that JUST played. One of them picks apart a specific element (the bass tone, the snare hit, a single line of lyrics, the production choice on the bridge). The other disagrees about whether that element works. Reference the actual song by name.`,
-    `TEE-UP HYPE — focus on the song that's coming up next. Build anticipation OR trash-talk it before it plays. One of them is excited, the other thinks it's a misfire. Reference the upcoming track and artist by name.`,
-    `GENRE BEEF — argue about the genre, scene, or era the just-played song belongs to. Is it actually that genre? Is the genre played out, underrated, dead, due for a revival? Both come at it from their FIXED opinions but disagree on the angle.`,
-    `HOT TAKE — one of them drops a wildly contrarian opinion about music in general (not necessarily this song). The other absolutely loses it. Examples: "albums are over, EPs are the only honest format" / "vinyl was always a scam" / "the drum machine ruined music" / "no rock band after 1979 has mattered."`,
-    `INDUSTRY GOSSIP — riff like there's recent music-industry news (don't fabricate specific people, but be plausibly current — label drama, a feud, a contract leak, someone canceling a tour). They have OPPOSITE reactions to whatever it is.`,
-    `PERSONAL ANECDOTE — one of them tells a 10-second story (in character) about hearing this song for the first time, a show they went to, a record store, a band they used to know. The other one cuts in skeptical that it happened that way.`,
-    `BROOKLYN LOCAL COLOR — ground the segment in WJLR being LIVE FROM BROOKLYN. Reference a neighborhood, a venue, a specific spot, the weather outside, the studio. Megan and MM disagree about something local (best slice, best venue, most overrated park).`,
-    `SOUND CRITIQUE — pick apart the SONIC details. Drum sound, mix, the way the vocals sit, whether it's compressed to death, the room sound. One of them defends the choices, the other says they hate it.`,
-    `CONNECTION BRIDGE — explicitly tie the just-played song to the upcoming song. Lineage, sonic similarity, sharp contrast, a producer or guest in common, opposite emotional registers. They agree on the connection but argue about which song does it better.`,
-    `NOSTALGIA / ERA — the year/era the just-played song came from. What ELSE was happening then. They disagree about whether the era was actually any good or just remembered fondly.`,
-    `MEGAN OFF-TOPIC — Megan kicks off with something seemingly unrelated (a movie she watched, a tweet she saw, a thing she ate) and loops it back to the song. MM is annoyed she's wasting airtime, then grudgingly admits the connection works.`,
-    `MM HISTORIAN — MM drops an obscure factual claim about the just-played artist (recording session lore, a session musician who really played the part, a famously bad gig). Megan questions whether that's true. MM doubles down.`,
-    `LIVE-IN-STUDIO — react to something happening "in the room": food someone brought, the producer doing something dumb, the mic levels, a phone ringing, a guest who hasn't shown up. Anchor the segment in studio physicality, then loop back to the music.`,
-    `PRETEND CALLER — riff like they're responding to a caller (don't voice the caller; just react). "Mark from Bay Ridge with a take we did NOT need." MM and Megan disagree about whether the imaginary caller was right.`,
-    `ROAST SPECIFIC LYRIC — one of them quotes a specific line from the just-played song and roasts it. The other defends it as unironically great. Quote the lyric in their lines.`,
-    `CHARTS / RECEPTION — argue about how the song was received critically vs. commercially. One of them says "people slept on this", the other says it got exactly the reception it deserved.`,
-    `BAND DYNAMICS — argue about the human relationships inside the band that made the song. Who actually wrote it, who pushed for it, who hated it, who quit over it. Made-up but plausible based on the actual band's known history.`,
-    `LIVE VS STUDIO — one of them claims this song is way better live (or the studio version's the only version that works). The other has the opposite take.`,
-  ]
-  // Don't apply the rotation to opener — opener has its own dedicated job
-  // (welcome the listener, set the energy, tee up the first track). The
-  // forceAnnouncer middle-of-show ID drops still get a topic since they're
-  // long enough to fit one.
-  const topicAngle = opener
-    ? null
-    : TOPIC_ANGLES[Math.floor(Math.random() * TOPIC_ANGLES.length)]
-  // Time-of-day context — real radio shows have different vibes morning
-  // vs late-night. Cheap to add, gives Claude a natural color knob.
-  const now = new Date()
-  const hour = now.getHours()
-  const timeOfDay =
-    hour < 6  ? 'late night / overnight (after-hours, low-lit, conspiratorial)' :
-    hour < 11 ? 'morning (coffee, sharper, talky)' :
-    hour < 14 ? 'midday (steady, lunch-hour energy)' :
-    hour < 18 ? 'afternoon drive (commute, hyped, wider audience)' :
-    hour < 22 ? 'evening (relaxed, dialed-in)' :
-                'late evening (winding down, looser, weirder)'
-
-  const radioInstructions = `You are scripting a 20-second on-air segment for WJLR 330.9 (call sign WJLR, frequency 330.9, broadcasting LIVE FROM BROOKLYN) between two co-hosts who actively bicker:
-
-  • The Music Man (tag: [MM]) — confident, opinionated, slightly arrogant, a bit of a music snob. His knowledge comes out as strong OPINIONS and hot takes, NEVER as facts or history lessons. He'd rather be provocatively wrong than correctly boring.
-  • Megan (tag: [MEGAN])  — sharp, witty, lower-key. Often the counterweight to MM, but NOT reflexively: she agrees and builds on him when he's actually right, then pounces when he overreaches. Her pushback lands BECAUSE it isn't automatic. Pricks his bubble, doesn't pull punches, isn't mean.
-  • CALLERS (tags: [GIOVANNI] / [RAJIV] / [BERNARD] / [LASHONTE] / [KRISTINA] / [DEVIN] / [MAYA] / [MIKE] / [ZOE]) — WJLR has a 9-person caller rolodex. The most frequent is Giovanni (Bay Ridge, earnest, rambling). The others occupy distinct conversational functions: Rajiv challenges the show's framing, Bernard is the elder who was actually there, LaShonte forces them out of the 1970s, Kristina demands they cover metal, Devin called the wrong show, Maya asks the questions that make them think, Mike has industry intel he won't quite source, Zoe announces wildly committed takes. EACH caller appears only when this segment's mode says THEY'RE calling in — the prompt will tell you which one and how MM and Megan should react.
-  • DJ Stephen Hands (tag: [STEPHEN]) — RARE GUEST. JakeTunes' in-house DJ. Goes by Stephen, Hands, or Stephen Hands. PARTY-FIRST: house, rap, electronic, techno, disco, boogie — anything to make a room move. Loves the disco / boogie source-code lineage (Patrick Adams, Larry Levan, Paradise Garage, Salsoul) and modern dance (Daft Punk, Justice, Disclosure, Fred again..). Doesn't engage with rock or pop discourse on its own terms — pivots back to whether anyone could DANCE to it. Brief, hyped, "this fucking goes" energy. Not a man of many words. Only appears when this segment's mode says he's on the show.
-
-${segmentMode}
-
-TIME OF DAY (set the show's energy accordingly): ${timeOfDay}.
-${topicAngle ? `\nTOPIC FOCUS THIS SEGMENT (USE THIS SPECIFIC ANGLE — do NOT default to the same generic "was that song overrated" beat every time):\n${topicAngle}\n\nMM and Megan keep their FIXED opinions across all topics (those don't change), but the TERRAIN of this segment is the angle above. Stay on it. A real radio show roams between angles like this — back-announce, hot take, gossip, anecdote, local color — and never sounds like the same conversation twice.\n` : ''}
-This is a REAL conversation, not a script being read. Make it sound like two people actually talking to each other:
-
-  • REACT to specific words the other one just said. Quote them, mock them, agree-then-twist them. "Underrated? You think THIS is underrated?" "A masterpiece — sure, if you've never heard a Steely Dan record."
-  • CUT EACH OTHER OFF mid-thought. End MM's line with an em-dash and have Megan barge in. End Megan's line with "—" and have MM stomp on it.
-  • Use FILLER and reactions: "I mean—", "Oh come ON", "ha—", "wait wait wait", "no, no", "right? RIGHT?", "ugh", "okay but". Real radio is full of these.
-  • DISAGREE on something specific every time. Taste, the artist's reputation, who the song's really for, whether the upcoming track is going to be good. Megan PUSHES BACK on MM's takes — she's not playing along.
-  • Reference the same thing from different angles. If MM says "this album invented the genre," Megan replies about the SAME album from a different angle, not a totally new tangent.
-
-KILL VANILLA, KILL EXPOSITION (the most important rule on this page):
-  • You have NO notes, no Wikipedia, no liner notes in front of you — you're going off memory, instinct, and opinion. If you catch yourself about to STATE a fact, stop and REACT instead. The #1 failure is sounding like you're reading an encyclopedia: if a line could appear on a Wikipedia page, it is WRONG.
-  • DO NOT recite biographical facts. NO "X was formed in Y in Z." NO "released in 1972 by RCA on the album…" NO "their fourth studio album, which featured…" That's Wikipedia talk, not radio talk.
-  • DO NOT explain the song to the listener. The listener just heard it / is about to hear it. They don't need a synopsis.
-  • DO NOT do the "fun fact" thing ("did you know X recorded this in Y?"). It reads as a teleprompter.
-  • RULE OF THUMB: if a sentence starts with the artist's name or song title and a "to be" verb (X is / was / are…), DELETE IT and write a human reaction instead. "Steely Dan is a band that emerged from the LA studio scene" → "Hands, you ever try to dance to Steely Dan? You can't. That's the whole problem."
-  • Reactions > facts. Tiny moments > sweeping summaries. Half-remembered details > confident timelines.
-
-HUMAN MOVES — the show should sound like two friends with a microphone, not a station-imaging package:
-  • Imperfect memory: "I think this is '74? Could be '73, who cares." "Wasn't this the one where they fired the bass player mid-tour? Or am I thinking of someone else." Half-knowing is more human than confident-knowing.
-  • Tiny lived-in details (made up, in character): "I saw them in a basement in '07, the kick drum literally fell over." "My buddy used to bartend at the place they recorded most of side two." "Last time I heard this I was changing a tire on the BQE, which probably says something."
-  • Talking AROUND the song, not always ABOUT it: a segment can be 80% about something else (the weather outside, what someone ate, MM's shitty week, Megan's neighbor's terrible taste) and just glance at the music in passing. That's how real radio breathes.
-  • Distractions that DON'T fully resolve: start a thought, get sidetracked, the next song interrupts. Don't always wrap it up neatly.
-  • Each other's "lives" (in character, fictional but consistent): MM mentions his record store, his ex who hated this band, his nephew. Megan mentions her column, her dog, her studio neighbor. Brief reference, no exposition.
-  • Sentence FRAGMENTS. Real talk is full of them. "Yeah." "No." "Sure, sure." "Pass." "What is even—" "Anyway."
-  • Running-bit potential: if Megan rolls her eyes at something MM said in this segment, she might come back to it three segments later. (You can't see history, but lean into the feel that there is one.)
-
-LANGUAGE — they're broadcast personalities, not a corporate playlist host. Drop natural profanity when it earns its place: "this song fucking slaps", "goddamn masterpiece", "shit-hot pick", "hell of a record". Megan especially uses sharper language when calling MM out. Don't be gratuitous, DON'T sand them flat either.
-
-DELIVERY CUES (TTS reads punctuation directly):
-  • CAPITALIZE the word that gets punched ("absolutely INSANE drum break").
-  • Exclamation marks for genuine excitement ("hell yes!").
-  • Ellipses... for stretched, thinking pauses.
-  • Em-dashes — for cut-offs and overlapping reactions.
-  • Multiple commas for stuttering ("it's, it's just, it's not even close").
-
-INLINE PERFORMANCE MARKERS — the TTS model performs these as actual sound. Sprinkle them in WHERE THEY EARN IT (not on every line, not lazily). They're how a written line becomes a spoken moment:
-  [laughs] — short laugh, used after MM says something Megan finds dumb.
-  [chuckles] — quieter, more under-the-breath.
-  [sighs] — exasperation, fatigue, "I cannot believe I'm doing this again."
-  [scoffs] — short dismissive exhale, one of Megan's signatures.
-  [whispers] — quiet aside, conspiratorial.
-  [excited] — bumps energy on the next phrase.
-  [sarcastic] — flips the tone of the next phrase.
-  [interrupts] — used at the START of a line that's stomping on the previous speaker.
-  [pauses] — beat of silence, "thinking" feel.
-Examples in context:
-  [MM] [scoffs] Underrated? You think THIS is underrated?
-  [MEGAN] [laughs] I mean — yeah, actually. The [excited] *whole* second side does it for me.
-  [MM] [sighs] Here we go.
-  [MEGAN] [interrupts] Don't "here we go" me, you said the same thing about Steely Dan.
-Use markers SPARINGLY — one per line at most, only when it does work. Overuse reads as a special-effects show, not a real conversation.
-
-Write the way you want them to SOUND.
-
-CAMPY STATION ID — only when the segmentMode above explicitly tells you to (opener / forceAnnouncer). When required, OPEN with a campy station ID line tagged [ANNOUNCER] — this voice is a CONFIDENT, BIG, deep FM-radio drop voice, distinct from MM and Megan. He never sounds unsure or tentative.
-
-CRITICAL — write call-sign letters PHONETICALLY so the TTS pronounces each letter individually, but with CONFIDENCE not hesitation:
-  • "WJLR" → write it as "DOUBLE YOU JAY EL ARR" (each letter as a separate uppercase word, single space, NO ellipses, NO hyphens between letters)
-  • "330.9" → write it as "three thirty point nine" (words, never digits)
-  • DO NOT use ellipses (...) between letters or words — ellipses make the TTS pause uncertainly and the announcer sounds tentative. Use ONLY commas, periods, and exclamation marks for cadence.
-  • For repeated W energy use "TRIPLE-W" (one word) — never "double-yoo... double-yoo..." which reads as stutter / hesitation.
-
-Example drops (use these as templates — vary the form each time):
-  [ANNOUNCER] TRIPLE-W JAY EL ARR! Three thirty point nine FM! LIVE from BROOKLYN!
-  [ANNOUNCER] You are LOCKED IN to DOUBLE YOU JAY EL ARR, three thirty point nine, broadcasting LIVE from the boroughs!
-  [ANNOUNCER] DOUBLE YOU JAY EL ARR, three thirty point nine. The sound of Brooklyn, ALL NIGHT LONG!
-  [ANNOUNCER] This is DOUBLE YOU JAY EL ARR, three thirty point nine FM — Brooklyn's loudest, and we are HOT!
-
-Capitals signal punched emphasis. Exclamation marks drive energy. Make it campy and over-the-top — the energy of a real radio station ID jingle, delivered with TOTAL CONFIDENCE. The [ANNOUNCER] line is a SINGLE drop; MM and Megan banter follows it.
-
-When NOT explicitly told to include [ANNOUNCER], DO NOT include it. The frequency is controlled at the system level, not at your discretion.
-
-Format the segment STRICTLY as speaker-tagged lines${callerSegment ? ' — caller mode is dictated above, follow that structure verbatim.' : djHandsSegment ? ' — DJ Stephen Hands guest mode is dictated above, follow that structure verbatim.' : ':'}
-MANDATORY FORMAT: EVERY line begins with exactly ONE bracketed speaker tag from the cast above (e.g. [MM], [MEGAN], the specific [CALLER] this segment allows, or [STEPHEN] only when he's on). NEVER output an untagged line, a "Name:" prefix, or a bare dash, and NEVER split one speaker's thought onto an untagged continuation line — one tag, then their words. An untagged line is dropped, so a missing tag = lost dialogue.
-${opener
-  ? `[ANNOUNCER] Campy WJLR station ID drop.
-[ANNOUNCER] Here's Megan, and the one, the only, the MUSIC MAN!  (mandatory verbatim — "Here's" / "It's" / "Welcome back to" interchangeable, rest of the line is fixed)`
-  : forceAnnouncer
-    ? '[ANNOUNCER] Campy station ID drop FIRST (mandatory this segment).'
-    : (callerSegment || djHandsSegment ? '' : '(NO [ANNOUNCER] line this segment.)')}
-${callerSegment || djHandsSegment ? '' : `Sound like two people who've co-hosted for years — NOT a fixed call-and-response. VARY the dynamic so no two segments feel alike:
-  • Sometimes they AGREE and pile on together, hyping the same thing.
-  • Sometimes Megan undercuts MM — but NOT every time; predictable disagreement is exactly what makes it stiff.
-  • Sometimes one gets ROLLING on a tangent and the other just punctuates it ("...mhm", "there it is", a laugh).
-  • Sometimes it's fast and overlapping — short cut-ins, [interrupts], one stepping on the tail of the other's line.
-  • Vary who STARTS — don't always open on [MM].
-It's a CONTINUING show, not a cold reset: they can call back to something from earlier in the broadcast and let a thread carry.`}
-
-Vary the LENGTH and rhythm by segment${wantsAnnouncer ? ' (NOT counting the [ANNOUNCER] drop)' : ''}: sometimes a quick 2-line hit, sometimes a 5-6 line riff where one of them really gets going — never the same shape twice in a row. Lines usually run 1-2 sentences, but a clipped 3-word reaction or one longer mid-riff line is good — that variation IS flow. Sound natural read aloud — no asterisks, no stage directions, no emojis, no scene-setting. Cover what a real DJ pair would: react to what just played, tease what's next, a hot take / roast / tangent / bit — opinions ABOUT the music, never facts about it.
-
-EXTERNAL CONTEXT — below the user message you may see Brooklyn weather, US Last.fm scrobble charts this week, recent music-press headlines (Pitchfork / Stereogum / The Quietus), Wikidata structured artist info, Discogs pressing detail, Last.fm "similar to" data, and MusicBrainz / Wikipedia background. Use these as TEXTURE AND REACTION HOOKS, not as a fact dump.
-
-  • Weather → drop ONE line about it if it's interesting ("36 and miserable out, perfect for this one"). Don't beat it.
-  • Charts → only if it gives you a sharp hot take ("I see Sabrina Carpenter at the top, you and I both know that's not real").
-  • Press headlines → if a Pitchfork rating or Stereogum take is worth reacting to (Megan especially), USE IT. Otherwise skip.
-  • Wikidata / Discogs → ONE small detail at most, dropped naturally ("right, this was on Sub Pop"). NOT a recital. NEVER list members or release years like a teleprompter.
-  • Last.fm similar → if MM/Megan want to say "if you like X, you should be into Y," reach for the similar list rather than inventing.
-
-Don't invent specifics you can't verify — if you don't have facts, lean into opinion and the bicker. Vary which speaker opens; sometimes MM, sometimes Megan kicks off.`
+  //   - default           → NO [ANNOUNCER], NO guest. Pure MM + Larry banter.
+  // The prompt itself: radio-script-prompt.ts.
+  const { radioInstructions, topicAngle, wantsAnnouncer } = buildRadioSegmentPrompt({
+    opener, miniId, forceAnnouncer, callerSegment, callerId, djHandsSegment, hasNextTrack: !!nextTrack,
+  })
 
   const radioPrompt = buildMusicManPrompt(radioInstructions)
 
@@ -6750,17 +6563,19 @@ Don't invent specifics you can't verify — if you don't have facts, lean into o
   try {
     const response = await claudeCall('musicman-radio', {
       model: MODEL_SMART,
-      max_tokens: 220,
+      max_tokens: 300,
       system: radioPrompt,
       messages: [{ role: 'user', content: userMessage }]
     })
-    const text = response.content[0].type === 'text' ? response.content[0].text : ''
+    const raw = response.content[0].type === 'text' ? response.content[0].text : ''
+    // Out of room: the last line stopped mid-word. Nobody says half a line.
+    const text = response.stop_reason === 'max_tokens' ? wholeScriptLines(raw) : raw
     if (text) noteMusicManUtterance('radio', text)
     // 4.3.2: persist this segment to radio memory so future segments
     // can reference it. Fire-and-forget — failure to write doesn't
     // affect the response.
     if (text) {
-      const speakers: string[] = ['mm', 'megan']
+      const speakers: string[] = ['mm', 'larry']
       if (callerSegment) speakers.push(callerId || 'giovanni')  // record the ACTUAL caller, not always Giovanni
       if (djHandsSegment) speakers.push('stephen')
       if (wantsAnnouncer) speakers.push('announcer')
@@ -6775,16 +6590,16 @@ Don't invent specifics you can't verify — if you don't have facts, lean into o
         callbacks: extractCallbacks(text),
       })
       // 4.4.1: if this was a Cold Open Hot Take (slot 1, archetype A),
-      // extract the actual claim from MM/Megan's first line and store
+      // extract the actual claim from MM/Larry's first line and store
       // it as the hour's hot take. Slot 11 will pay it off.
       if (archetypeId === 'cold-open-hot-take' && hourCounter !== undefined) {
         const firstLine = text.split('\n')
           .map(l => l.trim())
-          .find(l => /^\[(MM|MEGAN)\]/i.test(l))
+          .find(l => /^\[(MM|LARRY)\]/i.test(l))
         if (firstLine) {
-          const m = firstLine.match(/^\[(MM|MEGAN)\]\s*(.+)/i)
+          const m = firstLine.match(/^\[(MM|LARRY)\]\s*(.+)/i)
           if (m) {
-            const speaker = m[1].toUpperCase() === 'MEGAN' ? 'megan' : 'mm'
+            const speaker = m[1].toUpperCase() === 'LARRY' ? 'larry' : 'mm'
             void setHotTake(m[2].trim(), speaker, hourCounter)
           }
         }
@@ -7008,7 +6823,7 @@ const HIVE_MIND_LOG_PATH = join(STATE_DIR, 'musicman-interactions.jsonl')
 interface HiveMindEntry {
   at: number                      // epoch ms
   mode: string                    // 'mic' | 'dj-transition' | 'radio' | 'playlist' | etc.
-  persona?: string                // 'mm' | 'megan' | 'stephen' | 'announcer' | 'giovanni' | ...
+  persona?: string                // 'mm' | 'larry' | 'stephen' | 'announcer' | 'giovanni' | ...
   track?: {                       // track context the persona was speaking about
     title?: string
     artist?: string
@@ -7036,14 +6851,14 @@ function logHiveMindInteraction(entry: HiveMindEntry): void {
     console.warn('[hive-mind] log serialize failed:', err)
   }
 }
-// ── Megan: the co-host persona (alternate to Music Man) ──
+// ── Larry: the co-host persona (alternate to Music Man) ──
 //
-// 4.2.5 lets the user pick between Music Man and Megan as the default
+// 4.2.5 lets the user pick between Music Man and Larry as the default
 // host voice for chat / picks / recommendations / DJ-set workflows.
 // They co-host on Radio Mode together (always, regardless of preference);
 // the preference only affects the SOLO persona for everything else.
 //
-// Megan is NOT a softer Music Man. She's a different listener with
+// Larry is NOT a softer Music Man. He's a different listener with
 // different taste, different opinions, different reference points. The
 // fixed-opinions block here is intentionally non-overlapping with
 // MUSIC_MAN_CORE so when the user asks both of them about the same
@@ -7531,7 +7346,7 @@ ipc.handle('musicman-radio-plan', async (_event, tracks: { id: number; title: st
   const MAX_PER_ARTIST = 3
   const MIN_DISTINCT_ARTISTS = 10
 
-  const planInstructions = `You are planning the next WJLR 330.9 radio show. Hosts: The Music Man (record-store savant), Megan (working music critic). The set should feel like a REAL radio show curated by experts who know this listener's collection cold — not a shuffle, not a mood-playlist.
+  const planInstructions = `You are planning the next WJLR 330.9 radio show. Hosts: The Music Man (record-store savant), Larry (left-field obsessive with sharp ears who can't let anything go). The set should feel like a REAL radio show curated by experts who know this listener's collection cold — not a shuffle, not a mood-playlist.
 
 Use the LIBRARY DIGEST to ground your taste. You see ${tracks.length} tracks, but the digest tells you the SHAPE of the collection. Lean into it; don't pretend you don't know what this person owns.
 
@@ -7993,7 +7808,8 @@ async function loadPicksCache(): Promise<Record<string, CachedPicksEntry>> {
   try {
     const raw = await readFile(getPicksCachePath(), 'utf-8')
     const parsed = JSON.parse(raw)
-    return (parsed && typeof parsed === 'object') ? parsed : {}
+    // Larry inherits the old key's week: a rename never costs a regeneration.
+    return (parsed && typeof parsed === 'object') ? migratePicksCache(parsed as Record<string, CachedPicksEntry>).cache : {}
   } catch {
     return {}   // missing / corrupt → empty cache, regenerate
   }
@@ -8122,7 +7938,7 @@ function enforcePicksVariety(modelTrackIds: number[], tracks: PicksTrack[], targ
  *  check, the variety pass, and persisting the result — so the three
  *  IPC handlers stay thin and can never drift on caching behavior. */
 async function getOrGeneratePicks(
-  persona: 'mm' | 'megan' | 'djhands',
+  persona: 'mm' | 'larry' | 'djhands',
   tracks: PicksTrack[],
   force: boolean,
   generate: () => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>,
@@ -8155,7 +7971,7 @@ async function getOrGeneratePicks(
 // week-of framing replaces the "today's vibe" framing and makes the
 // picks feel curated rather than churned. Friday-to-Friday matches how
 // real station rotations work (new chart drops, weekly highlight reels).
-function buildPicksInstructions(opts: { trackCount: number; persona: 'mm' | 'megan' }): string {
+function buildPicksInstructions(opts: { trackCount: number; persona: 'mm' | 'larry' }): string {
   const today = new Date()
   // Find Friday-of-this-week (or today if today IS Friday).
   // getDay(): 0=Sun, 1=Mon, ..., 5=Fri, 6=Sat
@@ -8170,16 +7986,16 @@ function buildPicksInstructions(opts: { trackCount: number; persona: 'mm' | 'meg
   const month = today.getMonth()
   const season = month <= 1 || month === 11 ? 'winter' : month <= 4 ? 'spring' : month <= 7 ? 'summer' : 'fall'
 
-  const personaName = opts.persona === 'megan' ? 'Megan' : 'the Music Man'
-  const isMegan = opts.persona === 'megan'
+  const personaName = opts.persona === 'larry' ? 'Larry' : 'the Music Man'
+  const isLarry = opts.persona === 'larry'
 
-  // 4.4.2: per-persona LANE separation. Without this, MM and Megan keep
+  // 4.4.2: per-persona LANE separation. Without this, MM and Larry keep
   // picking the same indie/contemporary tracks, both drift into Stephen
   // Hands' dance territory, and the three picks panels read as
   // overlapping rather than three distinct curatorial points of view.
-  const laneRules = isMegan
-    ? `MEGAN'S LANE — STAY IN IT:
-You're a working music critic with broader taste than Music Man and less reverence for canon. Your picks come from:
+  const laneRules = isLarry
+    ? `LARRY'S LANE — STAY IN IT:
+You've got broader taste than the Music Man (your Funk Man) and less reverence for canon. Your picks come from:
   • Indie + indie-folk (Phoebe Bridgers, Big Thief, Adrianne Lenker, Snail Mail, Soccer Mommy, Fontaines D.C., Wednesday)
   • Contemporary critic territory — current records that are actually getting written about
   • Sharp left-field — jazz that's actually weird (Alice Coltrane, Don Cherry), post-punk's lesser-known second wave, contemporary R&B that doesn't crossover, ambient with ideas
@@ -8189,7 +8005,7 @@ NOT YOUR LANE — leave to MM/Stephen:
   • Classic rock canon (Beatles, Stones, Floyd, Zeppelin) — Music Man's territory
   • Pure dance music, club tracks, hip-hop bangers — Stephen Hands' territory
   • Heritage prog, jazz-fusion-as-historical-deep-dive — Music Man's territory
-You PICK things Music Man would side-eye — that's the point. You don't pick what he'd put on.`
+You PICK things the Funk Man would side-eye — that's the point. You don't pick what he'd put on.`
     : `MUSIC MAN'S LANE — STAY IN IT:
 You're a record-store-clerk-savant with deep canon knowledge. Your picks come from:
   • Classic rock canon — Beatles, Stones, Zeppelin, Floyd, Who, Doors, Hendrix, CSN&Y
@@ -8199,10 +8015,10 @@ You're a record-store-clerk-savant with deep canon knowledge. Your picks come fr
   • Singer-songwriter heritage — Joni, Dylan, Cohen, Van Morrison, Tom Waits
   • '70s soul, '60s soul, Stax / Motown / Hi
   • Prog with substance — King Crimson, Yes, Genesis-with-Gabriel
-NOT YOUR LANE — leave to Megan/Stephen:
-  • Contemporary indie / current critic-darlings — Megan's territory
+NOT YOUR LANE — leave to Larry/Stephen:
+  • Contemporary indie / current critic-darlings — Larry's territory
   • Pure dance music, club tracks, hip-hop bangers, electronic — Stephen Hands' territory
-  • Newer singer-songwriters — leave to Megan
+  • Newer singer-songwriters — leave to Larry
 You PICK from the canon and the deep-dives. You don't chase contemporary buzz.`
 
   return `It's the week of ${startStr} – ${endStr} (${season}). Build ${personaName}'s WEEKLY rotation — exactly ${opts.trackCount} tracks from the user's library that you stand behind for THIS WEEK. The list resets every Friday and runs Friday-through-Thursday.
@@ -8293,34 +8109,34 @@ ipc.handle('musicman-picks', async (_event, tracks: PicksTrack[], force?: boolea
   })
 }, { refuse: REFUSED_SENDER })
 
-// Megan's weekly picks — same structure as MM picks but uses MEGAN_CORE
-// so her fixed contrarian opinions (Charli XCX overrated, Steely Dan
+// Larry's weekly picks — same structure as MM picks but uses LARRY_CORE
+// so his fixed contrarian opinions (Charli XCX overrated, Steely Dan
 // cold, LCD Soundsystem unimpressive, Phoebe Bridgers' Stranger in the
 // Alps over Punisher, etc.) shape what gets selected and how the
 // commentary reads. 25 tracks, weekly Friday-to-Friday rotation.
-ipc.handle('megan-picks', async (_event, tracks: PicksTrack[], force?: boolean) => {
-  return getOrGeneratePicks('megan', tracks, !!force, async () => {
-    // 4.5.0-89 — RAG pool biased toward Megan's lane: working-critic
+ipc.handle('larry-picks', async (_event, tracks: PicksTrack[], force?: boolean) => {
+  return getOrGeneratePicks('larry', tracks, !!force, async () => {
+    // 4.5.0-89 — RAG pool biased toward Larry's lane: working-critic
     // perspective, newer / indie / contrarian / female-fronted. K=400
-    // so her contrarian streak still has range to pull from.
+    // so his contrarian streak still has range to pull from.
     const { pool, used } = await buildRagPoolForPicks(
       'critic indie newer contemporary female-fronted alternative experimental contrarian deep cut',
       tracks,
       400,
     )
-    if (used) console.log(`[megan-picks] RAG pool: ${pool.length} candidates from ${tracks.length}`)
+    if (used) console.log(`[larry-picks] RAG pool: ${pool.length} candidates from ${tracks.length}`)
     const trackList = pool.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}`).join('\n')
-    const picksInstructions = buildPicksInstructions({ trackCount: 25, persona: 'megan' })
+    const picksInstructions = buildPicksInstructions({ trackCount: 25, persona: 'larry' })
     const taste = buildTasteProfile()
-    const systemPrompt = MEGAN_CORE + '\n\n' + picksInstructions
+    const systemPrompt = LARRY_CORE + '\n\n' + picksInstructions
       + (taste ? `\n\nWhat you know about this listener:\n${taste}` : '')
     const [chart, reviews] = await Promise.all([getLastFmNyChart(), getRecentReviews()])
     const chartLine = formatLastFmChartForPrompt(chart)
     const reviewsBlock = formatReviewsForPrompt(reviews)
-    const userContent = `Build this week's picks.\n\nMy library (ID|Title|Artist|Album|Genre):\n${trackList}${chartLine ? `\n\n${chartLine}` : ''}${reviewsBlock ? `\n\n${reviewsBlock}\n\n(The press headlines are reaction context for the COMMENTARY — Megan can roast a Pitchfork take while she explains the picks. Do NOT pick tracks from these — pick only from MY library.)` : ''}`
+    const userContent = `Build this week's picks.\n\nMy library (ID|Title|Artist|Album|Genre):\n${trackList}${chartLine ? `\n\n${chartLine}` : ''}${reviewsBlock ? `\n\n${reviewsBlock}\n\n(The press headlines are reaction context for the COMMENTARY — Larry can get stuck on a Pitchfork take while he explains the picks. Do NOT pick tracks from these — pick only from MY library.)` : ''}`
 
     try {
-      const response = await claudeCall('megan-picks', {
+      const response = await claudeCall('larry-picks', {
         model: MODEL_SMART,
         max_tokens: 1024,
         system: systemPrompt,
@@ -8341,7 +8157,7 @@ ipc.handle('megan-picks', async (_event, tracks: PicksTrack[], force?: boolean) 
 }, { refuse: REFUSED_SENDER })
 
 // DJ Hands' weekly picks — beats / electronic / hip-hop forward. Same
-// 25-track Friday-to-Friday weekly rotation as MM and Megan.
+// 25-track Friday-to-Friday weekly rotation as MM and Larry.
 ipc.handle('dj-hands-picks', async (_event, tracks: PicksTrack[], force?: boolean) => {
  return getOrGeneratePicks('djhands', tracks, !!force, async () => {
   // 4.5.0-89 — RAG pool biased toward Stephen Hands' DJ lane (dance,
@@ -8355,7 +8171,7 @@ ipc.handle('dj-hands-picks', async (_event, tracks: PicksTrack[], force?: boolea
   if (used) console.log(`[dj-hands-picks] RAG pool: ${pool.length} candidates from ${tracks.length}`)
   const trackList = pool.map(t => `${t.id}|${t.title}|${t.artist}|${t.album}|${t.genre}`).join('\n')
   // Use the shared scaffolding but override the persona-name reference to
-  // "DJ Hands" — buildPicksInstructions's persona arg only knows mm/megan,
+  // "DJ Hands" — buildPicksInstructions's persona arg only knows mm/larry,
   // so the prompt manually references DJ Hands here.
   const today = new Date()
   const day = today.getDay()
@@ -8379,12 +8195,12 @@ Stephen Hands picks ONLY from these veins. He is a DJ, not a music critic.
   • Funk + soul + R&B WITH A GROOVE — anything sampled, anything Larry Levan would have played, anything Madlib would have flipped
   • Anything DANCEABLE in the library, period. If it grooves, if it has a real beat, if it has a drum machine, if it samples, if you'd play it at a house party at 1 AM — it's in.
 
-WHAT IS NOT YOUR LANE (these belong to Music Man and Megan, NOT you):
-  • Singer-songwriter, folk, acoustic ballads — leave them to Megan and Music Man
+WHAT IS NOT YOUR LANE (these belong to Music Man and Larry, NOT you):
+  • Singer-songwriter, folk, acoustic ballads — leave them to Larry and Music Man
   • Classic rock canon (Beatles, Stones, Zeppelin, Floyd, etc.) — Music Man's territory
-  • Indie rock, indie folk, sad indie — Megan's territory
+  • Indie rock, indie folk, sad indie — Larry's territory
   • Country, classical, jazz-as-listening — none of you
-  Don't pick "interesting drum programming" track if it's a Big Thief song. That belongs to Megan. You pick things that MOVE A ROOM.
+  Don't pick "interesting drum programming" track if it's a Big Thief song. That belongs to Larry. You pick things that MOVE A ROOM.
 
 LIBRARY-AWARE FALLBACK ORDER (use this exact priority — work TOP-DOWN):
   1. Pure-form dance / disco / club / hip-hop / electronic / techno / house — take everything you can find

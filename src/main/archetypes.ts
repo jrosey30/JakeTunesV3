@@ -19,7 +19,7 @@ export type ArchetypeId =
   | 'brooklyn-texture'      // I — slot 4 or 10
   | 'historian-dwell'       // J — slot 8 only, MM-dominant
   | 'hour-out'              // K — slot 11, references slot 1 hot take
-  | 'back-announce'         // standard MM/Megan back-announce — slot 2, 6, 10
+  | 'back-announce'         // standard MM/Larry back-announce — slot 2, 6, 10
   | 'recovery'              // post-guest / post-caller recovery beat — slot 6, 10
 
 export interface Archetype {
@@ -44,7 +44,7 @@ export const ARCHETYPES: Record<ArchetypeId, Archetype> = {
   'cold-open-hot-take': {
     id: 'cold-open-hot-take',
     name: 'Cold Open Hot Take',
-    shape: `MM opens with a DECLARATIVE BOMB — no setup, no easing in. Megan rebuts inside 2 sentences. They volley 2-3 times, no resolution. Cut to track. This is the opener of the hour and sets the energy.`,
+    shape: `MM opens with a DECLARATIVE BOMB — no setup, no easing in. Larry gets stuck on one word of it inside 2 sentences. They volley 2-3 times, no resolution. Cut to track. This is the opener of the hour and sets the energy.`,
     lengthSec: [18, 22],
     defaultSlots: [1],
     examples: [
@@ -73,7 +73,7 @@ export const ARCHETYPES: Record<ArchetypeId, Archetype> = {
   'lightning-round': {
     id: 'lightning-round',
     name: 'Lightning Round',
-    shape: `RAPID-FIRE prompts. One word or one sentence each, alternating MM and Megan. No dwell. Sub-18-second segment. Used to inject TEMPO. Max 6 exchanges. The format is: MM throws a category, Megan responds with one answer, MM judges instantly, repeat with new category.`,
+    shape: `RAPID-FIRE prompts. One word or one sentence each, alternating MM and Larry. No dwell. Sub-18-second segment. Used to inject TEMPO. Max 6 exchanges. The format is: MM throws a category, Larry responds with one answer, MM judges instantly, repeat with new category.`,
     lengthSec: [15, 18],
     defaultSlots: [4, 9],  // 9 only when Stephen absent (substitute role)
     examples: [
@@ -87,14 +87,14 @@ export const ARCHETYPES: Record<ArchetypeId, Archetype> = {
   'deferred-punchline': {
     id: 'deferred-punchline',
     name: 'Deferred Punchline (payoff)',
-    shape: `THIS SEGMENT IS A PAYOFF. The hour opened (slot 1) with a hot take from MM or Megan. Now (slot 11) the OTHER host calls it back — references the exact claim, asks them to revise, or simply revisits it with new context. The whole closing segment is them litigating it. THIS IS WHAT MAKES THE HOUR FEEL LIKE AN HOUR.
+    shape: `THIS SEGMENT IS A PAYOFF. The hour opened (slot 1) with a hot take from MM or Larry. Now (slot 11) the OTHER host calls it back — references the exact claim, asks them to revise, or simply revisits it with new context. The whole closing segment is them litigating it. THIS IS WHAT MAKES THE HOUR FEEL LIKE AN HOUR.
 
 The slot-1 hot take is in your context — use it. Don't invent a new claim, refer to the actual one.`,
     lengthSec: [15, 20],
     defaultSlots: [11],
     examples: [
-      `Music Man, you said Aja beats anything from this century. Have you heard Black Country, New Road?`,
-      `Megan, you opened the hour saying 1989 was content-shaped product. You sticking with that?`,
+      `Marty. You said Aja beats anything from this century. Have you heard Black Country, New Road?`,
+      `Larry, you opened the hour saying 1989 was content-shaped product. You sticking with that?`,
     ],
     energy: 'MED',
     dwell: 'NORMAL',
@@ -103,7 +103,7 @@ The slot-1 hot take is in your context — use it. Don't invent a new claim, ref
   'lineage-bridge': {
     id: 'lineage-bridge',
     name: 'Lineage Bridge',
-    shape: `Track A → "you can hear this in" → Track B → "and that came from" → Track C. A chain of THREE. MM leads (this is his territory). Megan either co-signs or breaks the chain with one alternative theory. Specific records, specific years.`,
+    shape: `Track A → "you can hear this in" → Track B → "and that came from" → Track C. A chain of THREE. MM leads (this is his territory). Larry either co-signs or breaks the chain by asking who says, then offers one alternative theory. Specific records, specific years.`,
     lengthSec: [22, 25],
     defaultSlots: [3, 8],
     examples: [
@@ -116,7 +116,7 @@ The slot-1 hot take is in your context — use it. Don't invent a new claim, ref
   'lyric-roast': {
     id: 'lyric-roast',
     name: 'Lyric Roast',
-    shape: `One host quotes 3-5 WORDS of a lyric — NEVER MORE than 5 words for both copyright AND comic timing. Asks the other to defend or condemn. The other answers. First host either escalates or backs off. Megan initiates more often (she's sharper).`,
+    shape: `One host quotes 3-5 WORDS of a lyric — NEVER MORE than 5 words for both copyright AND comic timing. Asks the other to defend or condemn. The other answers. First host either escalates or backs off. Larry initiates more often (he can't let a word go).`,
     lengthSec: [15, 20],
     defaultSlots: [4, 9],
     examples: [
@@ -130,12 +130,12 @@ The slot-1 hot take is in your context — use it. Don't invent a new claim, ref
   'brooklyn-texture': {
     id: 'brooklyn-texture',
     name: 'Brooklyn Texture',
-    shape: `A non-music aside about something SPECIFICALLY LOCAL. Bay Ridge bagel, the F train, a Greenpoint bar that closed, a Park Slope parent overheard. Functions as breath. Lands on a music observation by the end. Either host. Megan more often (MM gets too into it).`,
+    shape: `A non-music aside about something SPECIFICALLY LOCAL. Bay Ridge bagel, the F train, a Greenpoint bar that closed, a Park Slope parent overheard. Functions as breath. Lands on a music observation by the end. Either host. Larry more often, and he has a grievance about it (MM just gets too into it).`,
     lengthSec: [15, 18],
     defaultSlots: [4, 10],
     examples: [
-      `Saw a guy on the Q train this morning with a Steely Dan tattoo. Music Man, your people are reproducing.`,
-      `They closed the record store on Manhattan Ave. The one with the cat. RIP.`,
+      `Saw a guy on the Q train this morning with a Steely Dan tattoo. Funk Man, your people are reproducing.`,
+      `They closed the record store on Manhattan Ave. The one with the cat. I still have his pen.`,
     ],
     energy: 'LOW',
     dwell: 'NORMAL',
@@ -144,7 +144,7 @@ The slot-1 hot take is in your context — use it. Don't invent a new claim, ref
   'historian-dwell': {
     id: 'historian-dwell',
     name: 'Historian Dwell',
-    shape: `MM picks a SINGLE album/session/scene and goes DEEP. Real depth — three or four specific facts (year, label, who played what, what happened in the room). Megan interrupts ONCE in the middle to keep him honest. He finishes. Megan delivers a one-line DEFLATE at the end. MM dominates ~70% of the dialogue. This is the show's intellectual heart — slot 8 ONLY.`,
+    shape: `MM picks a SINGLE album/session/scene and goes DEEP. Real depth — three or four specific facts (year, label, who played what, what happened in the room). Larry interrupts ONCE in the middle over one word MM used, and wants to know who told him that. MM finishes anyway. Larry delivers a one-line flat DEFLATE at the end. MM dominates ~70% of the dialogue. This is the show's intellectual heart — slot 8 ONLY.`,
     lengthSec: [22, 25],
     defaultSlots: [8],
     examples: [
@@ -157,12 +157,12 @@ The slot-1 hot take is in your context — use it. Don't invent a new claim, ref
   'hour-out': {
     id: 'hour-out',
     name: 'Hour Out',
-    shape: `Closes the hour. Megan delivers it 60% of the time. ALWAYS references the slot-1 hot take (Deferred Punchline payoff lives here) OR resolves a running bit. Lands on a clean exit line that hands off to the next track or the top-of-hour ID.`,
+    shape: `Closes the hour. Larry delivers it 60% of the time. ALWAYS references the slot-1 hot take (Deferred Punchline payoff lives here) OR resolves a running bit. Lands on a clean exit line that hands off to the next track or the top-of-hour ID.`,
     lengthSec: [15, 20],
     defaultSlots: [11],
     examples: [
-      `Alright, before we go — Music Man, you opened the hour saying Aja beats anything this century. You want to revise?`,
-      `That's the hour. We argued, he lost, you decide.`,
+      `Before we go. Funkhouser. You opened the hour saying Aja beats anything this century. You want to revise that? I've been thinking about it the whole hour.`,
+      `That's the hour. We argued, he lost, he doesn't know.`,
     ],
     energy: 'MED',
     dwell: 'NORMAL',
@@ -176,7 +176,7 @@ The slot-1 hot take is in your context — use it. Don't invent a new claim, ref
     defaultSlots: [2, 6, 10],
     examples: [
       `That was [Artist] — and what a snare sound on that one.`,
-      `Coming up next — [Artist]. Megan's gonna hate this.`,
+      `Coming up next — [Artist]. Larry's gonna hate this.`,
     ],
     energy: 'MED',
     dwell: 'NORMAL',
@@ -185,11 +185,11 @@ The slot-1 hot take is in your context — use it. Don't invent a new claim, ref
   'recovery': {
     id: 'recovery',
     name: 'Recovery / Cool-down',
-    shape: `Post-guest or post-caller cool-down beat. The hosts digest what just happened. Megan teases MM about how the previous segment went (especially if Stephen or LaShonte just demolished his frame). Quieter. Lower energy. The release after a peak.`,
+    shape: `Post-guest or post-caller cool-down beat. The hosts digest what just happened. Larry won't let MM forget how the previous segment went (especially if Stephen or LaShonte just demolished his frame). Quieter. Lower energy. The release after a peak.`,
     lengthSec: [15, 18],
     defaultSlots: [6, 10],
     examples: [
-      `Music Man, Stephen Hands just retired you in real time. How are we doing.`,
+      `Marty. Stephen Hands just retired you in real time. How are we doing.`,
       `Alright — that was Bernard. As usual, leaving us all looking shorter.`,
     ],
     energy: 'LOW',
@@ -223,7 +223,7 @@ export function buildArchetypeBlock(archetypeId: ArchetypeId, opts: {
       lines.push(`SLOT-1 HOT TAKE FROM THE TOP OF THE HOUR (this is what you're paying off — refer to it specifically, don't invent a new claim):`)
       lines.push(`  "${opts.slot1HotTake.slice(0, 280)}"`)
       lines.push('')
-      lines.push(`The closing segment LITIGATES this take. Megan more often opens it (60% of the time). The other host (whoever didn't make the original take) initiates the callback — calls them on it, asks them to revise, references the exact claim. Don't be subtle about the callback — make it explicit.`)
+      lines.push(`The closing segment LITIGATES this take. Larry more often opens it (60% of the time). The other host (whoever didn't make the original take) initiates the callback — calls them on it, asks them to revise, references the exact claim. Don't be subtle about the callback — make it explicit.`)
     } else if (archetypeId === 'deferred-punchline') {
       // No hot take captured — fall back to a generic hour-out.
       lines.push('')
