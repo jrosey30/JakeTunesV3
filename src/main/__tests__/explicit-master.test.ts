@@ -305,15 +305,15 @@ describe('labels from Qobuz\'s own version fields: the check found these refused
 describe('reading what Qobuz answered', () => {
   test('a track/get answer, field by field', () => {
     assert.deepEqual(qobuzTrackMetaOf({ title: ' Mask Off ', parental_warning: true, duration: 204, version: 'Album Version', album: { title: 'FUTURE', parental_warning: false } }), {
-      title: 'Mask Off', parentalWarning: true, albumParentalWarning: false, durationSec: 204, album: 'FUTURE', version: 'Album Version',
+      title: 'Mask Off', parentalWarning: true, albumParentalWarning: false, durationSec: 204, album: 'FUTURE', albumArtist: undefined, version: 'Album Version',
     })
   })
 
   test('absent or the wrong type stays unknown, never a verdict', () => {
     assert.deepEqual(qobuzTrackMetaOf({ title: 7, parental_warning: 'yes', duration: '204', version: 3, album: { title: 5, parental_warning: 'no' } }), {
-      title: undefined, parentalWarning: undefined, albumParentalWarning: undefined, durationSec: undefined, album: undefined, version: null,
+      title: undefined, parentalWarning: undefined, albumParentalWarning: undefined, durationSec: undefined, album: undefined, albumArtist: undefined, version: null,
     })
-    assert.deepEqual(qobuzTrackMetaOf({}), { title: undefined, parentalWarning: undefined, albumParentalWarning: undefined, durationSec: undefined, album: undefined, version: null })
+    assert.deepEqual(qobuzTrackMetaOf({}), { title: undefined, parentalWarning: undefined, albumParentalWarning: undefined, durationSec: undefined, album: undefined, albumArtist: undefined, version: null })
   })
 
   test('only Qobuz\'s own words mean the item is gone', () => {
