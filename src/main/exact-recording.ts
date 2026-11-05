@@ -22,7 +22,8 @@
  *      another way: creditHolds), album must not name a different recording, a
  *      TV/venue show brand is a different recording.
  *   4. Runtime within tolerance of the version Jake clicked, when known. A
- *      clean row's length is not known (requestedLength, 2026-11-04).
+ *      clean row's length is not known (requestedLength, 2026-11-04). A row with
+ *      no length of its own gets Apple's for that recording (expectedRuntimes).
  *   5. No duration does NOT switch verification off — the tags still judge.
  *      No duration AND no tags = UNVERIFIABLE, and unverifiable never imports.
  *   6. Explicitness is an identity axis: Jake asked for the explicit record,
@@ -39,8 +40,8 @@
 import type { Provider, RequestedRecording, Alternative, DownloadOutcome } from '../common/acquisition-identity.ts'
 export type { Provider, RequestedRecording, Alternative, DownloadOutcome } from '../common/acquisition-identity.ts'
 
-import { artistOrAlias, recoNorm } from './reco-match.ts'
-import { NO_EXPLICIT_WARNING, albumVersionOf, carriesCensorStamp, creditHolds, editionSubstituted, isCoverAct, liveBrandMarker, onWantedAlbum, parseStreamripDesc, saysExplicit, searchTitle, titleReads, titleWithVersion, unwantedVersionOf, requestedVersionMarkers, withoutCensorStamp, type QobuzTrackMeta } from './streamrip-match.ts'
+import { artistOrAlias, recoArtistMatches, recoFold, recoNorm, recoTitleMatches } from './reco-match.ts'
+import { NO_EXPLICIT_WARNING, albumVersionOf, bareTitle, carriesCensorStamp, creditHolds, editionSubstituted, isCoverAct, liveBrandMarker, maskedTitleMatches, parseStreamripDesc, saysExplicit, searchTitle, titleReads, titleWithVersion, unwantedVersionOf, requestedVersionMarkers, withoutCensorStamp, type QobuzTrackMeta, onWantedAlbum } from './streamrip-match.ts'
 import { nameKey } from '../common/fold-text.ts'
 
 /** Does free text (a SoundCloud title/desc) name the artist? Folded in any
@@ -77,6 +78,8 @@ export interface RequestOpts {
   isrc?: string
   /** Other names MusicBrainz knows the artist by (RequestedRecording.artistAliases). */
   artistAliases?: string[]
+  /** What Apple lists for a row with no length of its own (expectedRuntimes). */
+  runtimes?: ExpectedRuntime[]
 }
 
 /** A file is held to the pressing Jake clicked. */
@@ -108,29 +111,129 @@ export const EDITION_TOLERANCE_SEC = 30
  * Club Mix (243.4) and the Radio Edit (253.7). The album cuts are 257.4, 229.8, 329.4.
  *
  * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts expectedRuntimes (the
- * phone reads every row Apple lists; the desktop reads the row Jake clicked).
+ * phone reads every row Apple lists; the desktop reads the row Jake clicked, and
+ * expectedRuntimes below when no row was clicked).
  */
 export function requestedLength(o: Pick<RequestOpts, 'title' | 'album' | 'durationMs' | 'cleanedSource' | 'cleanRequested'>): { durationSec: number; durationTolSec: number } {
   const title = o.title || '', album = o.album || ''
-  const clean = !o.cleanRequested && (o.cleanedSource || carriesCensorStamp(title) || carriesCensorStamp(album))
   return {
-    durationSec: !clean && typeof o.durationMs === 'number' && o.durationMs > 1000 ? o.durationMs / 1000 : 0,
+    durationSec: !isCleanRow(o) && typeof o.durationMs === 'number' && o.durationMs > 1000 ? o.durationMs / 1000 : 0,
     durationTolSec: editionSubstituted(title) || editionSubstituted(album) ? EDITION_TOLERANCE_SEC : RUNTIME_TOLERANCE_SEC,
   }
+}
+
+function isCleanRow(o: Pick<RequestOpts, 'title' | 'album' | 'cleanedSource' | 'cleanRequested'>): boolean {
+  return !o.cleanRequested && Boolean(o.cleanedSource || carriesCensorStamp(o.title || '') || carriesCensorStamp(o.album || ''))
+}
+
+/** One length Apple lists for the song, and how far a file may stray from it. */
+export interface ExpectedRuntime { sec: number; tolSec: number }
+
+/** One song as Apple lists it (download-search.ts itunesSongRows). */
+export interface AppleSongRow {
+  title: string
+  artist: string
+  album: string
+  durationSec: number
+  cleaned?: boolean
+  explicit?: boolean
+  /** On a record Apple credits to Various Artists. */
+  compilation?: boolean
+}
+
+/** A request for a live cut, in its brackets or after a dash. */
+const LIVE_REQUEST = /[([–—-][^)\]]*\b(?:live|concert|unplugged)\b/i
+
+const albumKey = (album: string): string => recoFold(searchTitle(album) || album) || album.trim().toLowerCase()
+
+/**
+ * What a row with no length of its own should run, from what Apple lists (2026-11-05). Nobody
+ * clicked a row on the Listen List, so each of its rows reached the judge with only tags to go
+ * on: Tigers Jaw's "Spirit Desire", on the row's "Spirit Desire - EP", took the 283.9 s cut from
+ * "2008 Tour", and Fuel's "Bittersweet" took "Bittersweet Memories" by Top Fuel.
+ *
+ * The phone's rule, row for row: a row counts when it is by the artist (no cover act), has the
+ * song's title, names the same recording both ways round, and is not on an album that says it is
+ * another recording. A live request names no one performance. Any clean row of the song, and
+ * nobody knows its length (requestedLength). Trouble of any kind is [], and the guard stays out
+ * of it, never the download.
+ *
+ * Two things go further, because the phone's rule lets real wrong files through:
+ *   - A row that names an album is held to what Apple lists on that album, and to nothing if
+ *     Apple doesn't list the song there. "A file fits any length" passes the 283.9 s cut of
+ *     "Spirit Desire", because Apple lists both. It passed a 259 s edit of Blur's "Girls and
+ *     Boys" off "90's Rock Anthems" on the phone (2026-11-05), for a row naming Parklife, at
+ *     291.2 s, because Apple's "The Best Of" lists 258.8 s. The album's other packagings count
+ *     as the album: Jamiroquai's "If I Like It, I Do It" is 274.3 s, and 292.7 s remastered.
+ *   - A compilation's row sets no length: that is often an edit. It can still say a clean edit
+ *     exists. MGMT's "When You Die" runs 263.9 s on Little Dark Age, and the only row Apple's
+ *     search has for it is 258.4 s, on "Nova Tunes 3.8"; "Feels Alright" is 533.3 s on its own
+ *     single and 206 s on "House Top 1000".
+ * A row that names no album has every length Apple lists, and a file fits any of them.
+ *
+ * Through the real handler on 936 rows, nothing imported, 209 of them Jake's real Listen List
+ * rows: 9 wrong files stay out, 2 songs come in that couldn't, and 4 songs Jake owns stop landing,
+ * each on a row Apple's match had pointed at another cut or another song. On rows Apple labels
+ * clean, nothing changes.
+ *
+ * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts expectedRuntimes, which has neither
+ * of those two yet. Its judges are this file's: searchTitle for withoutEditionLabels,
+ * unwantedVersionOf for addsRecordingVersion, albumVersionOf for albumAddsRecording.
+ */
+export function expectedRuntimes(want: { title: string; artist: string; album?: string }, rows: AppleSongRow[]): ExpectedRuntime[] {
+  if (!want.title || LIVE_REQUEST.test(want.title)) return []
+  const plain = (t: string): string => searchTitle(t) || t
+  const wantPlain = plain(want.title)
+  const wantKey = recoFold(wantPlain)
+  const wantBare = recoFold(bareTitle(wantPlain))
+  const exactTitle = (t: string): boolean => recoFold(plain(t)) === wantKey
+  const masked = (t: string): boolean => maskedTitleMatches(wantPlain, plain(t)) || maskedTitleMatches(plain(t), wantPlain)
+  const byArtist = rows.filter((r) => r.durationSec > 0
+    && recoArtistMatches(want.artist, r.artist)
+    && !(isCoverAct(r.title, r.artist) || isCoverAct(r.album, '')))
+  const isClean = (r: AppleSongRow): boolean => Boolean(r.cleaned) || carriesCensorStamp(r.title) || carriesCensorStamp(r.album)
+  const namesTheSong = (r: AppleSongRow): boolean => (wantBare !== '' && recoFold(bareTitle(plain(r.title))) === wantBare) || masked(r.title)
+  if (byArtist.some((r) => isClean(r) && namesTheSong(r))) return []
+  const song = byArtist.filter((r) => !r.compilation
+    && (exactTitle(r.title) || (wantBare !== '' && recoFold(plain(r.title)) === wantBare) || masked(r.title))
+    && !unwantedVersionOf(want.title, r.title) && !unwantedVersionOf(r.title, want.title))
+  const named = song.some((r) => exactTitle(r.title)) ? song.filter((r) => exactTitle(r.title)) : song
+  const wantWords = `${want.title} ${want.album ?? ''}`.trim()
+  const studio = named.filter((r) => !albumVersionOf(wantWords, r.album))
+  const onTheRow = want.album ? studio.filter((r) => albumKey(r.album) === albumKey(want.album!)) : studio
+  const out = new Map<string, ExpectedRuntime>()
+  for (const r of onTheRow) {
+    const substituted = [want.title, want.album ?? '', r.title, r.album].some(editionSubstituted)
+    const tolSec = substituted ? EDITION_TOLERANCE_SEC : RUNTIME_TOLERANCE_SEC
+    out.set(`${r.durationSec.toFixed(1)}|${tolSec}`, { sec: r.durationSec, tolSec })
+  }
+  return [...out.values()]
+}
+
+/**
+ * Is this row's length Apple's to answer? A song with no length of its own, unless the row is
+ * clean: the length that matters is then the explicit cut's, and Apple's search only shows the
+ * clean file's. A rescued row reads explicit with its length taken off for the same reason
+ * (download-search.ts rowSeconds).
+ */
+export function asksAppleForLength(o: Pick<RequestOpts, 'title' | 'album' | 'durationMs' | 'cleanedSource' | 'cleanRequested' | 'explicitSource'>): boolean {
+  return requestedLength(o).durationSec === 0 && !isCleanRow(o) && !o.explicitSource
 }
 
 export function buildRequestedRecording(o: RequestOpts): RequestedRecording {
   const artist = (o.artist || '').trim()
   const title = (o.title || '').trim()
   const { durationSec, durationTolSec } = requestedLength(o)
+  const runtimes = durationSec > 0 || isCleanRow(o) ? [] : o.runtimes ?? []
   return {
     artist,
     title,
     album: (o.album || '').trim(),
     artistNorm: recoNorm(artist),
     titleNorm: recoNorm(title),
-    durationSec,
-    durationTolSec: o.durationTolSec ?? durationTolSec,
+    durationSec: runtimes[0]?.sec ?? durationSec,
+    durationTolSec: o.durationTolSec ?? runtimes[0]?.tolSec ?? durationTolSec,
+    ...(runtimes.length > 0 ? { runtimes } : {}),
     releaseYear: o.releaseYear,
     explicit: o.explicitSource ? 'explicit' : o.cleanRequested ? 'clean' : 'unknown',
     // A censorship stamp is how Apple lists the song, not a version Jake asked
@@ -236,13 +339,15 @@ export function verifyCandidate(req: RequestedRecording, ev: CandidateEvidence):
     }
   }
 
-  // 5. Runtime, when both sides know it.
+  // 5. Runtime, when both sides know it. A file fits any length Apple lists.
   if (req.durationSec > 0 && ev.durationSec != null && ev.durationSec > 0) {
-    const diff = Math.abs(ev.durationSec - req.durationSec)
-    if (diff > req.durationTolSec) {
-      return { verdict: 'reject', kind: 'duration', reason: `runs ${fmt(ev.durationSec)}, wanted ${fmt(req.durationSec)}` }
+    const fileSec = ev.durationSec
+    const lengths = req.runtimes ?? [{ sec: req.durationSec, tolSec: req.durationTolSec }]
+    const fit = lengths.find((l) => Math.abs(fileSec - l.sec) <= l.tolSec)
+    if (!fit) {
+      return { verdict: 'reject', kind: 'duration', reason: `runs ${fmt(fileSec)}, wanted ${lengths.slice(0, 3).map((l) => fmt(l.sec)).join(' or ')}` }
     }
-    evidence.push(`runs ${fmt(ev.durationSec)} (±${req.durationTolSec}s of ${fmt(req.durationSec)})`)
+    evidence.push(`runs ${fmt(fileSec)} (±${fit.tolSec}s of ${fmt(fit.sec)})`)
   }
 
   // 6. Explicitness — symmetric. The explicit record was asked for and the

@@ -12,12 +12,16 @@ export interface RequestedRecording {
   /** Normalised forms, for logs and equality. */
   artistNorm: string
   titleNorm: string
-  /** Seconds, when the clicked row knew its runtime; 0 = unknown, and a clean
-   *  row's is unknown (exact-recording.ts requestedLength). */
+  /** Seconds, when the clicked row knew its runtime or Apple listed one for a row
+   *  that came with none (`runtimes`); 0 = unknown, and a clean row's is unknown
+   *  (exact-recording.ts requestedLength). */
   durationSec: number
   /** ± seconds. Tight for the exact pressing; wide when we deliberately
    *  searched for the SONG rather than that pressing (remaster, masked title). */
   durationTolSec: number
+  /** Every length Apple lists for this recording, when no row was clicked: a file
+   *  fits any of them (exact-recording.ts expectedRuntimes). `durationSec` is the first. */
+  runtimes?: Array<{ sec: number; tolSec: number }>
   releaseYear?: number
   /** What was ASKED for. 'clean' only when a clean record was deliberately
    *  requested (`cleanRequested`) — an Apple listing that merely happened to

@@ -359,7 +359,7 @@ export function addsRemasterStamp(wantTitle: string, gotTitle: string): boolean 
  * on top: the artist must match, unwantedVersionOf still throws out remixes
  * and live cuts, and the duration guard still pins the exact recording.
  */
-function bareTitle(s: string): string {
+export function bareTitle(s: string): string {
   // A dash tail is the same decoration as a bracket: "Stars - Mono" (2026-11-03).
   // ⚠️ TWIN: the phone's streamripMatch.ts bareTitle.
   return s.replace(/\s*[([{][^)\]}]*[)\]}]\s*/g, ' ').replace(/\s+[-–—]\s+[^-–—()[\]{}]+$/u, '').replace(/\s{2,}/g, ' ').trim()
