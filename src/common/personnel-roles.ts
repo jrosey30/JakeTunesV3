@@ -211,6 +211,11 @@ function isProductionOnly(roles: readonly string[]): boolean {
   const fams = roles.map(family).filter((f): f is NonNullable<typeof f> => !!f)
   return fams.length > 0 && fams.every((f) => PRODUCTION.has(f.family))
 }
+/** A credit for making the record rather than playing on it. */
+export function isProductionCredit(role: string): boolean {
+  const f = family(role)
+  return !!f && PRODUCTION.has(f.family)
+}
 function producesIt(roles: readonly string[]): boolean {
   return roles.some((r) => { const f = family(r); return f?.family === 'producer' || f?.family === 'executive producer' })
 }
