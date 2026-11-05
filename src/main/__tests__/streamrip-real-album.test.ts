@@ -12,6 +12,7 @@
 import assert from 'node:assert/strict'
 import { after, afterEach, before, beforeEach, describe, it, mock } from 'node:test'
 import { register } from 'node:module'
+import { getDefaultAutoSelectFamilyAttemptTimeout } from 'node:net'
 import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -541,6 +542,12 @@ describe('the real names', () => {
     assert.deepEqual(imports.map((i) => i.id), ['u'])
     assert.equal(imports[0]!.rowTags?.album, 'Drift Away', 'and the row says the album it really came from')
     assert.deepEqual(albumSearches(), ['Dobie Gray Drift Away', 'Dobie Gray Ultimate Collection: Dobie Gray'])
+  })
+})
+
+describe('asking from this machine', () => {
+  it('a slow connect is not a failed one: fetch gets more than its 250 ms per address', () => {
+    assert.equal(getDefaultAutoSelectFamilyAttemptTimeout(), 3_000)
   })
 })
 

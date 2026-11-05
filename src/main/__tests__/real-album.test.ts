@@ -115,6 +115,15 @@ describe('which album a song is really on, on real answers', () => {
     }
   })
 
+  it('a hits package MusicBrainz has typed as an album is no album', () => {
+    const credit = [{ name: 'Eddy Raven', artist: { name: 'Eddy Raven' } }]
+    const onAlbum = (title: string): MbRecording => ({ title: "I'm Gonna Get You", length: 200_000, 'artist-credit': credit, releases: [{ status: 'Official', date: '1990', 'release-group': { id: title, title, 'primary-type': 'Album', 'secondary-types': [] } }] })
+    for (const title of ['Greatest Country Hits', 'Greatest Hits', 'The Best of Eddy Raven', 'The Very Best of Eddy Raven', 'The Essential Eddy Raven', 'Ultimate Collection']) {
+      assert.equal(pickRealAlbum([onAlbum(title)], { title: "I'm Gonna Get You", artist: 'Eddy Raven', durationsSec: [200] }), null, title)
+    }
+    assert.equal(pickRealAlbum([onAlbum('Temporary Sanity')], { title: "I'm Gonna Get You", artist: 'Eddy Raven', durationsSec: [200] })?.album, 'Temporary Sanity')
+  })
+
   it('an early take under the same name doesn\'t make the album late', () => {
     const credit = [{ name: 'A Band', artist: { name: 'A Band' } }]
     const recordings: MbRecording[] = [

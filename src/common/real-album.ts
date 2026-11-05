@@ -105,7 +105,7 @@ const VERSION_WORD = /\b(?:live|remix|rmx|acoustic|demo|instrumental|karaoke|rad
 /** Disambiguations that name the album's own cut: Neil Young's "original studio mix". */
 const OWN_CUT = /\b(?:original|album|lp|studio|mono|stereo)(?:\s+studio)?\s+mix\b/gi
 /** Compilations MusicBrainz has typed as plain albums. */
-const HITS_PACKAGE = /\b(?:greatest hits|the best of|the very best|the essential|the collection|ultimate collection|definitive collection|hits collection|the singles|singles collection)\b/i
+const HITS_PACKAGE = /\b(?:greatest(?:\s+\w+)?\s+hits|the best of|the very best|the essential|the collection|ultimate collection|definitive collection|hits collection|the singles|singles collection)\b/i
 
 export function realAlbumQuery(title: string, artist: string): string {
   const quoted = (s: string): string => `"${s.replace(/(["\\])/g, '\\$1')}"`

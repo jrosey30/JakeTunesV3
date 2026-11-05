@@ -4,7 +4,15 @@
  * must never brick a download. The ladder then goes on what the row says, as it always has.
  * ⚠️ TWIN: JakeTunesMobile backend/src/util/realAlbumLookup.ts.
  */
+import { setDefaultAutoSelectFamilyAttemptTimeout } from 'node:net'
 import { allRecordings, pickRealAlbum, realAlbumQuery, type MbRecordingPage, type RealAlbum } from '../common/real-album.ts'
+
+// Node's fetch gives each address 250 ms. MusicBrainz has one IPv4 address and an IPv6 one this
+// network can't reach, so a connect that takes longer fails the whole request: on 2026-11-05 the
+// Mac's ran 320 ms three times in eight, and one of homemini's took 1.1 s (a lost SYN).
+// Process-wide, since that is the only way there is to say it. Every wait stays bounded by its
+// own request's timeout, and a dead IPv6 still fails at once.
+setDefaultAutoSelectFamilyAttemptTimeout(3_000)
 
 const TIMEOUT_MS = 8_000
 /** Every page, a retry, and a turn in the throttle for each. */
