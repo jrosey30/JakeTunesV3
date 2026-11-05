@@ -6,7 +6,7 @@
  * dates, label history, brief bio). Exa adds current journalism +
  * critical context — review quotes, scene gossip, tour news, recent
  * collaborations. The combined block goes into every Music Man /
- * Megan / Stephen / chat call, so all character voices get the same
+ * Larry / Stephen / chat call, so all character voices get the same
  * upgraded factual ground.
  *
  * COST: ~$0.005 per search call. With the 5-minute fact cache that

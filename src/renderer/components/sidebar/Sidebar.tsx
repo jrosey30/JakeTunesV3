@@ -226,8 +226,8 @@ function SmartPlaylistIcon() {
 }
 
 
-// Megan picks gets a vinyl too — same shape so the picks pair reads as a
-// pair, but in a teal/blue tone to differentiate her from MM's orange.
+// Larry picks gets a vinyl too — same shape so the picks pair reads as a
+// pair, but in a teal/blue tone to differentiate him from MM's orange.
 
 // DJ Hands picks — vinyl in deep purple, the third color in the picks
 // trio. Beats / electronic / hip-hop tone.

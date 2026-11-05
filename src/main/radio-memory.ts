@@ -11,6 +11,7 @@
 import { app } from 'electron'
 import { join } from 'path'
 import { readFile, writeFile, mkdir } from 'fs/promises'
+import { RADIO_SCRIPT_TAGS, currentRadioTag, migrateRadioEntries } from '../common/cohost.ts'
 
 const MEMORY_PATH = join(app.getPath('userData'), 'radio-memory.json')
 const MAX_ENTRIES = 60
@@ -20,12 +21,12 @@ export interface RadioMemoryEntry {
   transition: number      // counter value at segment time
   slot: number            // rotation slot (0-11)
   angle: string | null    // topic angle for this segment ("BACK-ANNOUNCE", "GENRE BEEF", ...)
-  speakers: string[]      // ['mm', 'megan'] or includes 'giovanni' / 'stephen' / 'announcer'
+  speakers: string[]      // ['mm', 'larry'] or includes 'giovanni' / 'stephen' / 'announcer'
   prevTrack: string       // "Title — Artist"
   nextTrack: string       // "Title — Artist"
   // Up to 3 short callback-worthy lines from this segment. We pull
   // these from the script after each generation — typically the
-  // sharpest opinion, a quoted lyric, a Megan zinger, a Giovanni
+  // sharpest opinion, a quoted lyric, a Larry zinger, a Giovanni
   // misfire. Stored verbatim so future segments can quote them.
   callbacks: string[]
 }
@@ -37,7 +38,7 @@ interface MemoryFile {
    *  (when slot 1 fires fresh). */
   hotTake?: {
     text: string
-    speaker: string  // 'mm' or 'megan' — the OTHER host runs the callback
+    speaker: string  // 'mm' or 'larry' — the OTHER host runs the callback
     setAt: number    // epoch ms — informational
     hourCounter: number  // for sanity-checking we're still in the same hour
   }
@@ -61,7 +62,10 @@ async function loadMemory(): Promise<MemoryFile> {
   try {
     const raw = await readFile(MEMORY_PATH, 'utf-8')
     const parsed = JSON.parse(raw) as MemoryFile
-    cache = { entries: Array.isArray(parsed.entries) ? parsed.entries : [] }
+    const migrated = migrateRadioEntries(Array.isArray(parsed.entries) ? parsed.entries : [])
+    cache = { entries: migrated.entries }
+    // This file feeds the prompt: once migrated, it stays migrated.
+    if (migrated.changed) void saveMemory(cache)
   } catch {
     cache = { entries: [] }
   }
@@ -99,7 +103,7 @@ export async function appendMemory(entry: RadioMemoryEntry): Promise<void> {
 /** 4.4.1: store the hot take from a slot-1 Cold Open. Slot 11 will pull
  *  it back as the Deferred Punchline payoff. The "speaker" is the host
  *  who made the take — the OTHER host runs the slot-11 callback. */
-export async function setHotTake(text: string, speaker: 'mm' | 'megan', hourCounter: number): Promise<void> {
+export async function setHotTake(text: string, speaker: 'mm' | 'larry', hourCounter: number): Promise<void> {
   const file = await loadMemory()
   file.hotTake = { text: text.slice(0, 400), speaker, setAt: Date.now(), hourCounter }
   cache = file
@@ -235,17 +239,19 @@ export async function formatMemoryForPrompt(): Promise<string> {
 /** Extract callback-worthy lines from a Claude-generated script.
  *  Heuristic: take the strongest 1-3 lines based on signal markers —
  *  quotes, capitals, definitive statements, profanity. Fall back to
- *  the last MM and Megan lines (often the punchline). Output is
+ *  the last MM and Larry lines (often the punchline). Output is
  *  trimmed to ~140 chars per line. */
+const SCRIPT_LINE = new RegExp(`^\\[(${RADIO_SCRIPT_TAGS})\\]\\s*(.+)`, 'i')
+
 export function extractCallbacks(script: string): string[] {
   const lines = script.split('\n').map(l => l.trim()).filter(Boolean)
   const speakerLines: { speaker: string; text: string }[] = []
   for (const raw of lines) {
-    // ⚠️ TWIN: keep this tag set in sync with parseRadioScript() in
-    // src/renderer/components/playback/Toolbar.tsx. It was missing the 8
-    // non-Giovanni callers, so their lines never became callback fuel.
-    const m = raw.match(/^\[(MM|MEGAN|ANNOUNCER|STEPHEN|DJ_HANDS|DJ_STEPHEN|DJ_STEPHEN_HANDS|GIOVANNI|RAJIV|BERNARD|LASHONTE|KRISTINA|DEVIN|MAYA|MIKE|ZOE)\]\s*(.+)/i)
-    if (m) speakerLines.push({ speaker: m[1].toUpperCase(), text: m[2].trim() })
+    // One tag list with parseRadioScript() in Toolbar.tsx (cohost.ts): a
+    // separate copy here was missing the 8 non-Giovanni callers, so their
+    // lines never became callback fuel.
+    const m = raw.match(SCRIPT_LINE)
+    if (m) speakerLines.push({ speaker: currentRadioTag(m[1]), text: m[2].trim() })
   }
   if (speakerLines.length === 0) return []
 

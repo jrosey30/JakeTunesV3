@@ -1090,13 +1090,13 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
                   <input
                     type="radio"
                     name="ai-host"
-                    checked={draft.ai.aiHost === 'megan'}
+                    checked={draft.ai.aiHost === 'larry'}
                     onChange={() => setDraft({
                       ...draft,
-                      ai: { ...draft.ai, aiHost: 'megan' },
+                      ai: { ...draft.ai, aiHost: 'larry' },
                     })}
                   />
-                  <span>Megan</span>
+                  <span>Larry</span>
                 </label>
               </div>
               <p className="imp-help" style={{ marginTop: 0, marginBottom: 16 }}>
@@ -1151,7 +1151,7 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
                 </button>
               )}
               <p className="imp-help" style={{ marginTop: 0, marginBottom: 16 }}>
-                When set, Music Man / Megan / Stephen / chat all get
+                When set, Music Man / Larry / Stephen / chat all get
                 richer per-track facts via Exa semantic search (Pitchfork,
                 Stereogum, AllMusic, music press generally). 7-day cache,
                 ~$0.005 per artist lookup. The key stays in the main

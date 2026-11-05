@@ -51,7 +51,7 @@ export interface NoticeActivity {
   kind: 'error' | 'info' | 'success'
 }
 
-/** 4.5.2: Music Man / Megan / DJ commentary rendered live inside the
+/** 4.5.2: Music Man / Larry / DJ commentary rendered live inside the
  *  pill — replaces the floating dj-bubble Jake asked to kill. text is
  *  the full caption; revealedChars is how many characters of it have
  *  been "typed out" so far. The setBroadcast timer advances it ~33

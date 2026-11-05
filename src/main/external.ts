@@ -103,7 +103,7 @@ export function formatWeatherForPrompt(w: WeatherSnapshot): string {
 // Charts (top tracks for NY) + similar artists. The charts feed gives
 // the radio show real "trending now" context without us having to
 // fabricate it. Similar artists feeds picks generation with broader
-// surrounding-context so MM/Megan/DJ Hands can refer to "everyone
+// surrounding-context so MM/Larry/DJ Hands can refer to "everyone
 // also listened to X this week."
 const LASTFM_BASE = 'https://ws.audioscrobbler.com/2.0/'
 const lastfmChartsCache = makeCache<string[]>(60 * 60 * 1000)  // 1 hour

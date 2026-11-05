@@ -7,7 +7,7 @@
 // in this codebase (e.g. albumReleaseDate). Dependency-free by design.
 // If you change a shape on either side, update the other in the SAME commit.
 
-export type Persona = 'music-man' | 'megan' | 'stephen-hands'
+export type Persona = 'music-man' | 'larry' | 'stephen-hands'
 
 export type DayTheme = {
   /** YYYY-MM-DD in local time. The cache key. */
@@ -55,7 +55,7 @@ export type ShelfItem = {
   }
 }
 
-export type ShelfId = 'mm-picks' | 'new-arrivals' | 'deep-cuts' | 'megan-picks' | 'stephen-crate'
+export type ShelfId = 'mm-picks' | 'new-arrivals' | 'deep-cuts' | 'larry-picks' | 'stephen-crate'
 
 export type Shelf = {
   id: ShelfId

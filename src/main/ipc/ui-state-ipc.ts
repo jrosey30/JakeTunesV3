@@ -5,6 +5,7 @@
  * the mega-file. Behavior preserved: corrupt-file salvage, serialized
  * deep-merge writes, unique tmp staging names.
  */
+import { migrateSavedState } from '../../common/cohost.ts'
 import { app } from 'electron'
 import { join } from 'path'
 import { readFile, writeFile } from 'fs/promises'
@@ -74,7 +75,8 @@ export function registerUiStateIpc(ipc: IpcRegistrar): void {
       return { ok: false, state: null }   // no file yet — first run
     }
     try {
-      return { ok: true, state: JSON.parse(data) }
+      // What's saved under the co-host's old name reads as the new one (cohost.ts).
+      return { ok: true, state: migrateSavedState(JSON.parse(data)).state }
     } catch (err) {
       // A corrupt ui-state used to fail SILENTLY here: every launch fell back to
       // defaults, so Jake's Songs columns (bpm + camelotKey are in columnOrder
@@ -97,7 +99,7 @@ export function registerUiStateIpc(ipc: IpcRegistrar): void {
       } catch { /* best effort */ }
       if (recovered && typeof recovered === 'object') {
         console.warn('[ui-state] recovered the leading object — layout preserved')
-        return { ok: true, state: recovered as Record<string, unknown> }
+        return { ok: true, state: migrateSavedState(recovered as Record<string, unknown>).state }
       }
       return { ok: false, state: null }
     }

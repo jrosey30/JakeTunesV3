@@ -594,7 +594,7 @@ fi
 # userData (V3 hardcodes the paths) and don't get propagated by any
 # other sync chain, so without this step workmini diverges from
 # macbook silently:
-#   picks-cache.json     — weekly Music Man/Megan/DJ Hands picks
+#   picks-cache.json     — weekly Music Man/Larry/DJ Hands picks
 #                          (regenerated locally if missing → different
 #                          picks per device)
 #   mobile-playlists.json  — iPhone-created playlists (Brief 121),
@@ -819,7 +819,7 @@ if $WITH_ENV; then
   rcp 60 "$ENV_SRC" \
     "${REMOTE}:$WM_HOME/Library/Application Support/JakeTunes/.env" \
     || die ".env copy failed."
-  echo "  ✓ .env copied — AI personas (Music Man / Megan / Stephen / Cynthia) have credentials"
+  echo "  ✓ .env copied — AI personas (Music Man / Larry / Stephen / Cynthia) have credentials"
 else
   echo "  • Skipped. Without it the AI personas have no API keys."
   echo "    Re-run with --with-env to copy them, or add them on workmini yourself."
