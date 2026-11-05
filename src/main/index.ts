@@ -17,6 +17,7 @@ process.env.UV_THREADPOOL_SIZE = process.env.UV_THREADPOOL_SIZE || '64'
 
 import { registerConcertsIpc } from './ipc/concerts-ipc.ts'
 import { parseHubAdoptAck, startHubCatalogPoll } from './hub-catalog'
+import { forTheScreen } from './claude-screen-text.ts'
 import { ensureCompanionTokenFromEnvFile, withCompanionInit } from './hub-companion.ts'
 // The four persona system prompts — 268 lines of prose, lifted out 2026-08-10.
 import {
@@ -523,7 +524,11 @@ function rolloverIfNewDay(): void {
   }
 }
 
-async function claudeCall(
+async function claudeCall(callKey: string, params: ClaudeMessageParams): Promise<ClaudeMessageReply> {
+  return forTheScreen(callKey, await claudeCallRaw(callKey, params))
+}
+
+async function claudeCallRaw(
   callKey: string,
   params: ClaudeMessageParams
 ): Promise<ClaudeMessageReply> {

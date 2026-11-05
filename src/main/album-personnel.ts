@@ -49,7 +49,9 @@
  */
 import { readFile, rename } from 'node:fs/promises'
 import { join } from 'node:path'
+import { isBandMember } from '../common/band-member.ts'
 import { nameKey } from '../common/fold-text.ts'
+import { isProductionCredit } from '../common/personnel-roles.ts'
 import { acceptedReleaseGroups, releaseGroupSearchUrl, type MbReleaseGroup } from './release-kinds.ts'
 import { mbReleaseLabel } from './album-label.ts'
 import { writeJsonAtomic } from './atomic-write.ts'
@@ -641,8 +643,10 @@ export function createAlbumPersonnelService(deps: AlbumPersonnelServiceDeps): Al
     } catch (err) {
       log(`[album-personnel] members of ${artist} unavailable: ${err instanceof Error ? err.message : String(err)}`)
     }
-    const keys = new Set([nameKey(artist), ...(members ?? []).map((m) => nameKey(m))])
-    return { ...r, people: r.people.map((p) => (keys.has(nameKey(p.name)) ? { ...p, member: true } : p)) }
+    // However the sleeve credits them: Nevermind says "David Grohl", the list says Dave.
+    const band = { artist, members: members ?? [], trackCount: r.trackCount }
+    const rules = { nameKey: (s: string) => nameKey(s), isProductionCredit }
+    return { ...r, people: r.people.map((p) => (isBandMember(p, band, rules) ? { ...p, member: true } : p)) }
   }
 
   async function getRaw(artist: string, album: string, background: boolean): Promise<AlbumPersonnel> {

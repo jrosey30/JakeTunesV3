@@ -32,6 +32,7 @@ import type Anthropic from '@anthropic-ai/sdk'
 import { MODEL_SMART, MODEL_FAST } from '../../common/ai-models.ts'
 import { wholeSentences } from '../../common/sentences.ts'
 import { albumNotesKey, createAlbumNotesStore, type AlbumNotesStore } from '../album-notes.ts'
+import { cleanAiProse } from '../../common/clean-ai-prose.ts'
 import { isWeakBlurb } from '../../common/weak-blurb.ts'
 import { pitchShiftMp3, pitchSemitonesFromEnv, speedFromEnv } from '../voice-pitch'
 
@@ -63,27 +64,6 @@ export interface AiIpcHost {
 
 function chatHistoryPath(): string {
   return join(app.getPath('userData'), 'chat-history.json')
-}
-
-// Strip markdown Haiku sometimes emits despite instructions.
-function cleanAiProse(raw: string, title?: string): string {
-  let t = (raw || '').trim()
-  t = t.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '')
-  const lines = t.split('\n')
-  while (lines.length > 0) {
-    const m = /^#{1,6}\s*(.*)$/.exec(lines[0].trim())
-    if (!m) break
-    const heading = m[1].replace(/[*_`"'“”‘’]/g, '').trim()
-    if (!heading || (title && heading.toLowerCase() === title.trim().toLowerCase())) lines.shift()
-    else { lines[0] = m[1]; break }
-  }
-  t = lines.join('\n')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/\*([^*]+)\*/g, '$1')
-    .replace(/__([^_]+)__/g, '$1')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/^#+\s*/gm, '')
-  return t.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
 }
 
 // The history and the take live on disk (album-notes.ts): the same words
@@ -337,6 +317,7 @@ export function registerAiIpc(ipc: IpcRegistrar, host: AiIpcHost): void {
         '2-3 sentences MAX, in your voice. Focus on the music\'s character and where it sits in the artist\'s run.',
         'Do NOT state hard facts you might be wrong about (specific producers, exact dates, chart/sales numbers) — credits are shown separately. No preamble, no "Ah," — just the take.',
         'Plain prose ONLY — no markdown (no # headings, no *asterisks*, no backticks).',
+        'This is read, not spoken: no stage directions or performance tags like [softer] or [laughs].',
       ].filter(Boolean).join('\n')
       const reply = await host.claudeCall('album-take', {
         model: MODEL_FAST,

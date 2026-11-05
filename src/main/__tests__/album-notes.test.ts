@@ -64,3 +64,12 @@ test('albumNotesKey folds case and space, the year apart', () => {
   assert.equal(albumNotesKey(' Queens of the Stone Age ', 'Perfecth'), 'queens of the stone age|perfecth')
   assert.equal(albumNotesKey('Geese', '3D Country', '2023'), 'geese|3d country|2023')
 })
+
+test("a saved take reads without the voice's stage directions", async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'album-notes-'))
+  try {
+    const file = join(dir, 'album-notes.json')
+    await writeFile(file, JSON.stringify({ v: 1, blurbs: {}, takes: { k: 'Softer and more devastating. [softer] It holds up.' } }))
+    assert.equal(await createAlbumNotesStore(file).get('takes', 'k'), 'Softer and more devastating. It holds up.')
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})

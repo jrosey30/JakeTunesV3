@@ -954,4 +954,19 @@ describe('wiring — the registrar, the preload and the renderer twin', () => {
     shape(await svc.get(ARTIST, ''))
     shape(await svc.get(null as unknown as string, ''))
   })
+
+  test('the band under any credited name: Nevermind says David and Chris, the list says Dave and Krist', async () => {
+    const dir = tempDir()
+    const person = (name: string, role: string, tracks: number[]) => ({ name, roles: [role], tracks: tracks.length, credits: [{ role, tracks }] })
+    const all = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    const people = [person('Chris Novoselic', 'bass', all), person('David Grohl', 'drums', all), person('Kurt Cobain', 'guitar', all), person('Kirk Canning', 'cello', [12])]
+    writeFileSync(personnelCachePath(dir), JSON.stringify({ v: 2, entries: { 'nirvana|nevermind': { people, trackCount: 12, at: Date.now() } } }))
+    const svc = createAlbumPersonnelService({
+      dir, userAgent: 'JakeTunes/test', fetchFn: neverFetch, throttle: async () => {},
+      membersOf: async () => ['Kurt Cobain', 'Krist Novoselic', 'Dave Grohl', 'Chad Channing'],
+    })
+    const r = await svc.get('Nirvana', 'Nevermind')
+    assert.deepEqual(r.people.filter((p) => p.member).map((p) => p.name), ['Chris Novoselic', 'David Grohl', 'Kurt Cobain'])
+    assert.deepEqual(r.people.filter((p) => !p.member).map((p) => p.name), ['Kirk Canning'])
+  })
 })

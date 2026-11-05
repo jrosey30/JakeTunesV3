@@ -74,6 +74,12 @@ describe('the text dedupe key', () => {
     assert.notEqual(_normTitleFingerprint('Helicopter (Remix)'), _normFingerprint('Helicopter'))
   })
 
+  test('"&" and "and" are one song (Mobile Brief 231)', () => {
+    assert.equal(fingerprintTrack({ title: 'Girls & Boys', artist: 'Blur', duration: 259000 }), fingerprintTrack({ title: 'Girls and Boys', artist: 'Blur', duration: 259000 }))
+    assert.equal(_normTitleFingerprint("Rock 'n' Roll"), _normTitleFingerprint('Rock and Roll'))
+    assert.notEqual(_normTitleFingerprint('Boys'), _normTitleFingerprint('Girls and Boys'))
+  })
+
   test('fingerprintTrack refuses partial identities', () => {
     assert.equal(fingerprintTrack({ title: 'X', artist: '', duration: 200000 }), null)
     assert.equal(fingerprintTrack({ title: 'X', artist: 'Y', duration: 0 }), null)
@@ -236,6 +242,53 @@ describe('a download that answers a Listen List row', () => {
     assert.equal(batch.tracks.length, 1)
     assert.equal(batch.tracks[0].source, 'streamrip')
     assert.equal(batch.tracks[0].addedVia, 'tiktok')
+  })
+
+  test('a copy from the wrong album goes in under the real one, numbers, title and cover (Mobile Brief 231)', async () => {
+    const src = join(world(), 'anthems.alac')
+    writeFileSync(src, pcm16Wav(44100, 4410))
+    let art: { pictures: unknown; artist: string; album: string } | null = null
+    const dir = mkdtempSync(join(tmpdir(), 'jt-realalbum-'))
+    const musicDir = join(dir, 'iPod_Control/Music')
+    mkdirSync(musicDir, { recursive: true })
+    const lib = join(dir, 'library.json')
+    writeFileSync(lib, JSON.stringify({ tracks: [] }))
+    initImportPipeline(minimalDeps({
+      musicDir: () => musicDir,
+      libraryPath: () => lib,
+      extractEmbeddedArtwork: async (pictures, artist, album) => { art = { pictures, artist, album }; return null },
+    }))
+    const cover = new Uint8Array(2048).fill(7)
+    const batch = await importDownloadedFiles([src], 'streamrip', 'tiktok', {
+      album: 'Parklife', albumArtist: 'Blur', year: 1994, trackNumber: 1, trackCount: 16, discNumber: 1, title: 'Girls & Boys', cover,
+    })
+    const t = batch.tracks[0]
+    assert.equal(t.album, 'Parklife')
+    assert.equal(t.year, 1994)
+    assert.equal(t.trackNumber, 1)
+    assert.equal(t.trackCount, 16)
+    assert.equal(t.discNumber, 1)
+    assert.equal(t.title, 'Girls & Boys')
+    assert.equal(art!.album, 'Parklife')
+    assert.deepEqual(art!.pictures, [{ format: 'image/jpeg', data: cover }])
+  })
+
+  test('no cover to be had: none, never the compilation\'s', async () => {
+    const src = join(world(), 'anthems2.alac')
+    writeFileSync(src, pcm16Wav(44100, 4410))
+    let pictures: unknown = 'not asked'
+    const dir = mkdtempSync(join(tmpdir(), 'jt-realalbum-'))
+    const musicDir = join(dir, 'iPod_Control/Music')
+    mkdirSync(musicDir, { recursive: true })
+    const lib = join(dir, 'library.json')
+    writeFileSync(lib, JSON.stringify({ tracks: [] }))
+    initImportPipeline(minimalDeps({
+      musicDir: () => musicDir,
+      libraryPath: () => lib,
+      extractEmbeddedArtwork: async (p) => { pictures = p; return null },
+    }))
+    await importDownloadedFiles([src], 'streamrip', undefined, { album: 'Parklife', albumArtist: 'Blur' })
+    assert.equal(pictures, undefined)
   })
 
   test('a download with no share source writes no addedVia at all', async () => {

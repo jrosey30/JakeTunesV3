@@ -46,7 +46,7 @@ import {
   type AudioFormat,
 } from './platform.ts'
 import { safeIpcError } from './safe-ipc-error.ts'
-import { searchTitle } from './streamrip-match.ts'
+import { searchTitle, spelledOutAnd } from './streamrip-match.ts'
 import { nextIdAbove, type IdHighWater } from './track-id-high-water.ts'
 
 export interface SingleImportResult {
@@ -118,7 +118,8 @@ export const _normFingerprint = (s: unknown): string => String(s || '')
  *  and an album Jake already owned was imported twice. A remaster is the
  *  same recording (the identity contracts say so too); version markers
  *  ("(Live)", "(Remix)") survive searchTitle and still split the key. */
-export const _normTitleFingerprint = (s: unknown): string => _normFingerprint(searchTitle(String(s || '')))
+// "Girls & Boys" on the album and "Girls and Boys" on a compilation are one song (Mobile Brief 231).
+export const _normTitleFingerprint = (s: unknown): string => _normFingerprint(spelledOutAnd(searchTitle(String(s || ''))))
 
 // Why this set exists:
 // `save-library` on the renderer side is debounced ~1s, so during a
@@ -399,6 +400,20 @@ export function runImportExclusive<T>(fn: () => Promise<T>): Promise<T> {
   return run
 }
 
+/** What a file from the wrong album is imported as: the row, the tags on the copy the library
+ *  keeps, and the cover all name the real album (streamrip-match.ts realAlbumTags). */
+export interface ImportRowTags {
+  album: string
+  albumArtist: string
+  year?: number
+  trackNumber?: number
+  trackCount?: number
+  discNumber?: number
+  title?: string
+  /** The album's own cover. None: the file's is the wrong album's, so there is none. */
+  cover?: Uint8Array
+}
+
 export async function importOneFile(
   srcPath: string,
   id: number,
@@ -407,8 +422,9 @@ export async function importOneFile(
   dateOverride?: Date,
   source?: string,
   addedVia?: string,
+  rowTags?: ImportRowTags,
 ): Promise<SingleImportResult> {
-  return runImportExclusive(() => importOneFileLocked(srcPath, id, chosenFmt, dupeFingerprints, dateOverride, source, addedVia))
+  return runImportExclusive(() => importOneFileLocked(srcPath, id, chosenFmt, dupeFingerprints, dateOverride, source, addedVia, rowTags))
 }
 
 async function importOneFileLocked(
@@ -419,6 +435,7 @@ async function importOneFileLocked(
   dateOverride?: Date,
   source?: string,
   addedVia?: string,
+  rowTags?: ImportRowTags,
 ): Promise<SingleImportResult> {
   const ext = srcPath.substring(srcPath.lastIndexOf('.')).toLowerCase()
   // Brief 170: the destination this import reserved, if it got that
@@ -430,7 +447,16 @@ async function importOneFileLocked(
   try {
     const mm = await import('music-metadata')
     const metadata = await mm.parseFile(srcPath)
-    const common = metadata.common
+    const common = rowTags ? {
+      ...metadata.common,
+      album: rowTags.album,
+      albumartist: rowTags.albumArtist,
+      year: rowTags.year,
+      track: { no: rowTags.trackNumber ?? null, of: rowTags.trackCount ?? null },
+      disk: { no: rowTags.discNumber ?? null, of: null },
+      ...(rowTags.title ? { title: rowTags.title } : {}),
+      picture: rowTags.cover ? [{ format: 'image/jpeg', data: rowTags.cover }] : undefined,
+    } : metadata.common
     const format = metadata.format
 
     const ft = _normTitleFingerprint(common.title)
@@ -724,7 +750,7 @@ export async function nextLibraryId(): Promise<number> {
   return computeNextLibraryId(lib.tracks, await D().idHighWater?.floor() ?? 0)
 }
 
-export async function importDownloadedFiles(absPaths: string[], source?: string, addedVia?: string): Promise<{ tracks: Array<Record<string, unknown>>; dupeCount: number; errorCount: number; dupes: Array<{ src: string; matchedTitle: string; matchedArtist: string }> }> {
+export async function importDownloadedFiles(absPaths: string[], source?: string, addedVia?: string, rowTags?: ImportRowTags): Promise<{ tracks: Array<Record<string, unknown>>; dupeCount: number; errorCount: number; dupes: Array<{ src: string; matchedTitle: string; matchedArtist: string }> }> {
   const validFormats: AudioFormat[] = ['aac-128', 'aac-256', 'aac-320', 'alac', 'aiff', 'wav']
   const preferred = await D().defaultImportFormat()
   const userPreferred: AudioFormat = validFormats.includes(preferred as AudioFormat)
@@ -761,7 +787,7 @@ export async function importDownloadedFiles(absPaths: string[], source?: string,
     D().emitToRenderer('bandcamp:batch-progress', {
       current: done, total, trackTitle, errors, running: true,
     })
-    const r = await importOneFile(p, id, chosenFmt, dupeFingerprints, undefined, source, addedVia)
+    const r = await importOneFile(p, id, chosenFmt, dupeFingerprints, undefined, source, addedVia, rowTags)
     if (r.ok && r.track) {
       tracks.push(r.track)
       // BPM/key analysis starts the moment the song lands — same as drag-drop.
