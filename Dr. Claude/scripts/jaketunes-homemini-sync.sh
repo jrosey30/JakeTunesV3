@@ -105,18 +105,38 @@ MOUNT="${JT_MOUNT:-/Volumes/JakeShared}"
 # instead, so a test can shim mount/ping/smbutil/osascript/lsof/diskutil
 # without touching a real mount.
 if [ "${JT_MOUNT_TOOLS_FROM_PATH:-0}" = "1" ]; then
-  MOUNT_BIN=mount PING_BIN=ping SMBUTIL_BIN=smbutil OSASCRIPT_BIN=osascript LSOF_BIN=lsof DISKUTIL_BIN=diskutil
+  MOUNT_BIN=mount PING_BIN=ping SMBUTIL_BIN=smbutil OSASCRIPT_BIN=osascript LSOF_BIN=lsof DISKUTIL_BIN=diskutil ROUTE_BIN=route
 else
   MOUNT_BIN=/sbin/mount PING_BIN=/sbin/ping SMBUTIL_BIN=/usr/bin/smbutil OSASCRIPT_BIN=/usr/bin/osascript
-  LSOF_BIN=/usr/sbin/lsof DISKUTIL_BIN=/usr/sbin/diskutil
+  LSOF_BIN=/usr/sbin/lsof DISKUTIL_BIN=/usr/sbin/diskutil ROUTE_BIN=/sbin/route
 fi
 NAS_LAN_IP="192.168.1.223"
 NAS_TAILNET_IP="100.117.19.93"
 resolve_jakeshared() {
   "$MOUNT_BIN" | /usr/bin/sed -n 's|^//[^ ]*/JakeShared on \([^ ]*\) (smbfs.*|\1|p' | /usr/bin/head -1
 }
+# No SMB when away (2026-11-06). This Mac's route to the NAS's LAN address leaves
+# through a gateway: away from home, however alive a tailnet mount looks. The share
+# carried 99 MB per 15 minutes of nothing useful out there, and one stat here could
+# sit behind it for 10 s or more, unbounded, on every run. New audio goes over ssh
+# (JakeTunesMobile deploy/macbook-nas-sync.sh); this pass runs the homemini legs.
+# Only a route that answers with an interface and a gateway counts: a failed read
+# proves nothing and takes the old path.
+# ⚠️ TWIN: src/main/nas-route.ts routeShowsGateway, JakeTunesMobile deploy/lib/mini-endpoint.sh mini_has_gateway.
+share_is_away() {
+  local out
+  out=$(/usr/bin/perl -e 'alarm 5; exec @ARGV' "$ROUTE_BIN" -n get "$NAS_LAN_IP" 2>/dev/null) || return 1
+  printf '%s\n' "$out" | grep -q '^ *interface:' || return 1
+  printf '%s\n' "$out" | grep -q '^ *gateway:'
+}
+SHARE_AWAY=0
+share_is_away && SHARE_AWAY=1
+# A pass that must stay off the share never stats it, away or told so (the app
+# passes --homemini-only when its breaker is open).
+NO_SHARE=$SHARE_AWAY
+case " $* " in *" --homemini-only "*|*" --skip-library-json "*) NO_SHARE=1 ;; esac
 LIVE=$(resolve_jakeshared)
-if [ -n "$LIVE" ] && [ -d "$LIVE/JakeTunesLibrary" ]; then
+if [ "$NO_SHARE" -eq 0 ] && [ -n "$LIVE" ] && [ -d "$LIVE/JakeTunesLibrary" ]; then
   MOUNT="$LIVE"
 fi
 HOMEMINI="${JT_HOMEMINI:-jakerosenbaumnas@homemini}"
@@ -457,9 +477,9 @@ log "=== sync started (PID $$) ==="
 # the URL (keychain, silent), alarm-capped, and if nothing is reachable
 # SKIP the mount quietly — never attempt a mount that must fail.
 # --homemini-only (2026-10-06): the NAS breaker is open or the share is
-# away. The homemini legs (library → phone backend, state, artwork) only need
-# SSH, so they still run; the NAS music leg is skipped. Before this, every
-# edit made while the NAS looked slow waited for the breaker (up to 9 min).
+# away. The homemini legs (library → phone backend, state, artwork, stars, plays)
+# only need SSH, so they still run; the NAS music leg is skipped. Before this,
+# every edit made while the NAS looked slow waited for the breaker (up to 9 min).
 HOMEMINI_ONLY=0
 SKIP_LIBRARY_JSON=0
 for arg in "$@"; do
@@ -485,6 +505,13 @@ if [ "$REPLICA" -eq 1 ]; then
   HOMEMINI_ONLY=1
   log "replica: not publishing library.json (hub owns the catalog); this machine's state goes to $REMOTE_STATE_DIR on homemini, never over the hub's files; NAS, Plex and stars legs skipped; notices logged, not shown"
 fi
+# Away decides for itself, so a manual run or an older app that didn't pass the
+# flag can't start a music leg over the tailnet. At home nothing changes, so
+# prefer_lan_mount still gets its chance to move a tailnet mount back to the LAN.
+if [ "$SHARE_AWAY" -eq 1 ] && [ "$HOMEMINI_ONLY" -eq 0 ]; then
+  HOMEMINI_ONLY=1
+  log "away from home (the NAS's LAN address is behind a gateway) — homemini legs only; new audio goes over ssh"
+fi
 [ $HOMEMINI_ONLY -eq 0 ] && { ensure_jakeshared || true; }
 
 if [ $HOMEMINI_ONLY -eq 0 ] && [ ! -d "$MOUNT/JakeTunesLibrary" ]; then
@@ -500,7 +527,7 @@ fi
 resolve_sync_src() {
   if [ -f "$JT_DATA_LOCAL/$1" ]; then
     echo "$JT_DATA_LOCAL/$1"
-  elif [ -f "$MOUNT/JakeTunesState/$1" ]; then
+  elif [ "$HOMEMINI_ONLY" -eq 0 ] && [ -f "$MOUNT/JakeTunesState/$1" ]; then
     echo "$MOUNT/JakeTunesState/$1"
   fi
 }
@@ -808,7 +835,7 @@ log "pulling phone playlist sidecars (homemini → local) …"
 for f in "${PHONE_PLAYLIST_SIDECARS[@]}"; do
   rsync_optional "$(rremote "$JT_DATA_REMOTE/$f")" "$JT_DATA_LOCAL/$f" || \
     log_hourly "/tmp/.jt-phonepl-$f-note" "phone playlist sidecar $f not present on homemini yet"
-  if [ -d "$MOUNT/JakeTunesState" ]; then
+  if [ "$HOMEMINI_ONLY" -eq 0 ] && [ -d "$MOUNT/JakeTunesState" ]; then
     rsync_optional "$(rremote "$JT_DATA_REMOTE/$f")" "$MOUNT/JakeTunesState/$f" || true
   fi
 done

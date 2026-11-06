@@ -26,6 +26,8 @@
 
 import { app } from 'electron'
 import { stat } from 'fs/promises'
+import { createNasBreaker } from './nas-breaker.ts'
+import { createAwayCheck, readNasRoute } from './nas-route.ts'
 
 const NAS_STATE_DIR = '/Volumes/JakeShared/JakeTunesState'
 
@@ -40,93 +42,15 @@ export const STATE_IS_NAS = false
 /** The NAS path — used ONLY as the async backup-mirror target, never read. */
 export const NAS_STATE_DIR_PATH = NAS_STATE_DIR
 
-// ── NAS circuit breaker (2026-07-08, "figure it the fuck out") ────────────
-// The old isNasMounted() was a SYNCHRONOUS existsSync on the SMB mount — a
-// stale Synology share turns any sync fs call into a seconds-long
-// MAIN-PROCESS block, and even async SMB calls park libuv threadpool
-// threads until the SMB timeout, starving every other fs op in the app.
-// Jake's old laptop ran a LOCAL-ONLY library and "rarely froze"; this
-// machine's NAS-touching timers are the difference. The breaker makes the
-// app immune to a flaky share: one 2s-timeout probe decides, a slow/absent
-// NAS opens the breaker and ALL NAS IO is skipped for 5 minutes.
-let nasBreakerUntil = 0
-let lastVerdict = false
-let lastProbeAt = 0
-let probeInflight: Promise<boolean> | null = null
-// Transition-once logging (2026-08-22 flight-log stomp): a sustained
-// remote-mode episode used to re-warn on EVERY re-trip (~every 6 min,
-// all day when the laptop is away). One warn when the breaker OPENS,
-// one when the NAS comes back; the episode in between stays quiet.
-let breakerEpisodeOpen = false
-// Flap damping (same day, four transitions in 30 min on a marginal WAN
-// link): a failure RIGHT AFTER a recovery earns a longer cooldown — the
-// link is oscillating around the probe threshold and rapid retries just
-// churn state. A failure after a LONG healthy stretch keeps the quick
-// 5-min retry, so genuinely-good windows are still harvested promptly
-// (the 17:58Z quick pass that healed nine stranded tracks rode exactly
-// such a window — never damp those).
-let lastRecoveryAt = 0
-const FLAP_WINDOW_MS = 10 * 60_000
-const COOLDOWN_MS = 5 * 60_000
-const FLAP_COOLDOWN_MS = 15 * 60_000
-// While the breaker is open, look again this often — cheap enough to be
-// invisible, frequent enough that recovery is felt in a minute, not fifteen.
-const HALF_OPEN_PROBE_MS = 60_000
-// Recovery kick (2026-08-22): a good window on a marginal link may only
-// last minutes — waiting for the next hourly tick wastes it (the 17:58Z
-// harvest that healed nine stranded tracks was pure timing luck). The
-// orchestrator registers here; recovery fires it. Layering: state-dir
-// must not import the orchestrator, so this is a callback seam.
-let nasRecoveryListener: (() => void) | null = null
-export function onNasRecovery(fn: () => void): void { nasRecoveryListener = fn }
-
-export async function nasAvailable(): Promise<boolean> {
-  const now = Date.now()
-  // HALF-OPEN (2026-08-25). A cooldown used to return false WITHOUT looking, so
-  // a NAS that came back after 30 seconds still had every write refused for the
-  // full 15 minutes — and Jake watched "Couldn't sync to homemini: NAS
-  // unavailable (breaker cooldown)" on a NAS that was demonstrably up (a manual
-  // sync ran clean while the banner was showing). The probe is ONE stat with a
-  // 2s timeout; that is not the hammering a breaker exists to prevent. So while
-  // cooling down, retry once a minute and close the moment it answers.
-  if (now < nasBreakerUntil && now - lastProbeAt < HALF_OPEN_PROBE_MS) return false
-  if (now >= nasBreakerUntil && now - lastProbeAt < 30_000) return lastVerdict   // verdict cache
-  if (probeInflight) return probeInflight
-  probeInflight = (async () => {
-    try {
-      const ok = await Promise.race([
-        stat(NAS_STATE_DIR_PATH).then(() => true, () => false),
-        new Promise<boolean>((r) => setTimeout(() => r(false), 2000)),
-      ])
-      lastVerdict = ok
-      lastProbeAt = Date.now()
-      if (!ok) {
-        const flapping = lastRecoveryAt > 0 && Date.now() - lastRecoveryAt < FLAP_WINDOW_MS
-        nasBreakerUntil = Date.now() + (flapping ? FLAP_COOLDOWN_MS : COOLDOWN_MS)
-        if (!breakerEpisodeOpen) {
-          breakerEpisodeOpen = true
-          console.warn(`[nas-breaker] NAS slow or absent — skipping ALL NAS IO (${flapping ? '15-min cooldown, link is flapping' : '5-min cooldowns'}; will report recovery)`)
-        }
-      } else if (breakerEpisodeOpen) {
-        breakerEpisodeOpen = false
-        nasBreakerUntil = 0          // half-open probe succeeded: stop refusing NOW
-        lastRecoveryAt = Date.now()
-        console.warn('[nas-breaker] NAS recovered — resuming NAS IO')
-        try { nasRecoveryListener?.() } catch (err) { console.warn('[nas-breaker] recovery listener threw:', err) }
-      }
-      return ok
-    } finally {
-      probeInflight = null
-    }
-  })()
-  return probeInflight
-}
-
-/** Last KNOWN verdict — never touches the filesystem. Kept for sync
- *  contexts (UI badges); authoritative checks use nasAvailable(). */
-export function isNasMounted(): boolean {
-  return Date.now() < nasBreakerUntil ? false : lastVerdict
-}
+// The NAS circuit breaker, and no SMB at all when away from home: nas-breaker.ts,
+// nas-route.ts. A mount must be slow to trip the first; the second never looks.
+const breaker = createNasBreaker({
+  probe: () => stat(NAS_STATE_DIR_PATH),
+  isAway: createAwayCheck({ readRoute: readNasRoute }),
+})
+export const nasAvailable = breaker.nasAvailable
+export const isNasMounted = breaker.isNasMounted
+export const onNasRecovery = breaker.onNasRecovery
 
 /**
  * Saves are never locked under local-primary: the local copy is authoritative,

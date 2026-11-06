@@ -7,11 +7,12 @@
  */
 import { app } from 'electron'
 import { join } from 'path'
-import { copyFile, mkdir, readFile, stat, writeFile } from 'fs/promises'
+import { readFile, stat, writeFile } from 'fs/promises'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { IS_WINDOWS } from '../platform'
-import { STATE_DIR, NAS_STATE_DIR_PATH } from '../state-dir'
+import { STATE_DIR, NAS_STATE_DIR_PATH, nasAvailable } from '../state-dir'
+import { mirrorCrowdClipToNas } from '../concert-crowd-mirror.ts'
 import { allowImportPaths } from '../import-allowlist.ts'
 import { safeIpcError } from '../safe-ipc-error'
 import { getArtworkDir, invalidateArtBytes, nativeThumbJpeg } from '../artwork-engine.ts'
@@ -149,14 +150,9 @@ export function registerLiveSetsIpc(ipc: IpcRegistrar, host: LiveSetsIpcHost): v
         const out = join(app.getPath('userData'), 'concert-crowd', `${mergedTrackId}.m4a`)
         const r = await extractCrowdClip(src, cueStartsMs, totalMs, out)
         console.log(`[concert-crowd] ${mergedTrackId}: clip cut at ${r.startSec}s (score ${r.score.toFixed(2)}, ${r.scanned} windows)`)
-        // Mirror the clip into the NAS state dir so the phone's backend
-        // (homemini, STATE_DIR = NAS) can serve it: GET /api/live-sets/:id/crowd.
-        // Best effort — the NAS being away never fails the extraction.
-        try {
-          const nasDir = join(NAS_STATE_DIR_PATH, 'concert-crowd')
-          await mkdir(nasDir, { recursive: true })
-          await copyFile(out, join(nasDir, `${mergedTrackId}.m4a`))
-        } catch (e) { console.warn('[concert-crowd] NAS mirror skipped:', e instanceof Error ? e.message : e) }
+        // Into the NAS state dir for the phone's backend, when there is a NAS to
+        // copy to. Best effort: anything this misses, the sync job carries.
+        await mirrorCrowdClipToNas({ clipPath: out, mergedTrackId, nasDir: NAS_STATE_DIR_PATH, nasAvailable })
         return { ok: true, startSec: r.startSec }
       } catch (err) {
         console.warn('[concert-crowd] extraction failed:', err instanceof Error ? err.message : err)

@@ -86,11 +86,20 @@ exit 0
   scutil: `#!/bin/bash
 echo "StubMac"
 `,
+  // route -n get: on-link at home, a gateway line when away; STUB_ROUTE=none is no route at all.
+  route: `#!/bin/bash
+echo "route $*" >> "$STUB_CALLS"
+[ "$STUB_ROUTE" = "none" ] && exit 1
+echo "   route to: 192.168.1.223"
+[ "$STUB_ROUTE" = "gateway" ] && echo "    gateway: 172.17.1.1"
+echo "  interface: en0"
+exit 0
+`,
 }
 
-interface Run { status: number | null; log: string; calls: string[]; mounts: string }
+interface Run { status: number | null; log: string; calls: string[]; mounts: string; shareStats: string[] }
 
-function run(opts: { server: string; lan: boolean; busy?: boolean; unmountFails?: boolean }): Run {
+function run(opts: { server: string; lan: boolean; busy?: boolean; unmountFails?: boolean; route?: 'home' | 'gateway' | 'none'; args?: string[] }): Run {
   const root = mkdtempSync(join(tmpdir(), 'jt-sync-preferlan-'))
   try {
     const bin = join(root, 'bin')
@@ -110,7 +119,8 @@ function run(opts: { server: string; lan: boolean; busy?: boolean; unmountFails?
     writeFileSync(mounts, `//jakerosenbaum@${opts.server}/JakeShared on ${vol} (smbfs, nodev, nosuid, mounted by jake)\n`)
     const calls = join(root, 'calls.txt')
     writeFileSync(calls, '')
-    const r = spawnSync('/bin/bash', [scriptPath, '--quick'], {
+    // -x: the trace is the only witness that a stat of the share did not happen.
+    const r = spawnSync('/bin/bash', ['-x', scriptPath, ...(opts.args ?? ['--quick'])], {
       env: {
         HOME: home,
         PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`,
@@ -119,6 +129,7 @@ function run(opts: { server: string; lan: boolean; busy?: boolean; unmountFails?
         STUB_CALLS: calls,
         STUB_VOL: vol,
         STUB_LAN: opts.lan ? '1' : '0',
+        STUB_ROUTE: opts.route ?? 'home',
         STUB_BUSY: opts.busy ? '1' : '0',
         STUB_UNMOUNT_FAIL: opts.unmountFails ? '1' : '0',
         JT_SYNC_LOG: join(root, 'sync.log'),
@@ -137,6 +148,8 @@ function run(opts: { server: string; lan: boolean; busy?: boolean; unmountFails?
       log,
       calls: readFileSync(calls, 'utf8').split('\n').filter(Boolean),
       mounts: readFileSync(mounts, 'utf8'),
+      // bash traces `[` as '[' and `[[` as [[
+      shareStats: r.stderr.split('\n').filter((l) => /^\++ *('\['|\[\[) .*-[def] /.test(l) && l.includes(vol)),
     }
   } finally {
     rmSync(root, { recursive: true, force: true })
@@ -181,7 +194,7 @@ describe('sync script: a tailnet JakeShared mount moves to the LAN path at home'
     assert.deepEqual(nasLines(r.log), [])
   })
 
-  it('away (the LAN does not prove the DS225) → the tailnet mount is kept as before', () => {
+  it('on-link but the DS225 does not prove itself (a foreign 192.168.1.x, the NAS asleep) → the tailnet mount is kept as before', () => {
     const r = run({ server: TAILNET, lan: false })
     assert.equal(r.status, 0, r.log)
     assert.ok(!has(r.calls, 'lsof'), r.calls.join('\n'))
@@ -201,5 +214,56 @@ describe('sync script: a tailnet JakeShared mount moves to the LAN path at home'
     const lines = nasLines(r.log)
     assert.equal(lines.length, 1, r.log)
     assert.match(lines[0], /unmounting the tailnet mount .* failed — keeping it/)
+  })
+})
+
+// 2026-11-06. An idle share passes every check, so a sync started within 5 s and a
+// backup within 2 min, the stat then took over 2 s, and the breaker reopened. Away
+// the script stays off the share altogether.
+describe('sync script: no SMB when away', () => {
+  it('a gateway on the route to the NAS → homemini legs only, no ladder, not one stat of the share, even with no flag from the app', () => {
+    const r = run({ server: TAILNET, lan: false, route: 'gateway' })
+    assert.equal(r.status, 0, r.log)
+    assert.match(r.log, /away from home/)
+    assert.match(r.log, /homemini-only pass done/)
+    assert.doesNotMatch(r.log, /rsync music/)
+    for (const tool of ['ping', 'lsof', 'diskutil', 'osascript mount']) assert.ok(!has(r.calls, tool), `${tool}: ${r.calls.join('\n')}`)
+    assert.deepEqual(nasLines(r.log), [])
+    assert.deepEqual(r.shareStats, [])
+  })
+
+  it('…and the same when the app passes --homemini-only', () => {
+    const r = run({ server: TAILNET, lan: false, route: 'gateway', args: ['--quick', '--homemini-only'] })
+    assert.equal(r.status, 0, r.log)
+    assert.doesNotMatch(r.log, /away from home/, 'the app already said so')
+    assert.deepEqual(r.shareStats, [])
+  })
+
+  it('--homemini-only at home (the breaker is open): not one stat of the share either', () => {
+    const r = run({ server: 'ds225.local', lan: true, args: ['--quick', '--homemini-only'] })
+    assert.equal(r.status, 0, r.log)
+    assert.match(r.log, /homemini-only pass done/)
+    assert.deepEqual(r.shareStats, [])
+  })
+
+  it('home again: no gateway, so a tailnet mount left over from the trip still moves to the LAN path', () => {
+    const r = run({ server: TAILNET, lan: true, route: 'home' })
+    assert.equal(r.status, 0, r.log)
+    assert.ok(r.calls.includes('osascript mount ds225.local'), r.calls.join('\n'))
+    assert.match(r.mounts, /^\/\/jakerosenbaum@ds225\.local\/JakeShared on /)
+    assert.doesNotMatch(r.log, /away from home/)
+  })
+
+  it('no route at all proves nothing: the old path, not away', () => {
+    const r = run({ server: TAILNET, lan: false, route: 'none' })
+    assert.equal(r.status, 0, r.log)
+    assert.doesNotMatch(r.log, /away from home/)
+    assert.match(r.log, /not on the LAN — away, keeping it/)
+  })
+
+  it('at home a full pass does look at the share, so the guards above are not simply always off', () => {
+    const r = run({ server: 'ds225.local', lan: true })
+    assert.equal(r.status, 0, r.log)
+    assert.ok(r.shareStats.length > 0, 'the home path stats the live mount')
   })
 })

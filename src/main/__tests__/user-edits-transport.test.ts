@@ -17,6 +17,12 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync,
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
+// At home: the route to the NAS's LAN address has no gateway.
+const STUB_ROUTE_HOME = `#!/bin/bash
+echo 'interface: en0'
+exit 0
+`
+
 const repoRoot = join(import.meta.dirname, '..', '..', '..')
 const scripts = join(repoRoot, 'Dr. Claude', 'scripts')
 const syncScript = join(scripts, 'jaketunes-homemini-sync.sh')
@@ -40,9 +46,9 @@ function statePush(args: string[]): string[] {
   try {
     const bin = join(root, 'bin')
     mkdirSync(bin)
-    // mount is a stub, never this machine's table: with the real one the script
+    // mount and route are stubs, never this machine's: with the real table the script
     // adopts the real share and stats it.
-    for (const [name, body] of [['rsync', STUB_RSYNC], ['ssh', STUB_SSH], ['osascript', '#!/bin/bash\nexit 0\n'], ['scutil', STUB_SCUTIL], ['mount', '#!/bin/bash\nexit 0\n']]) {
+    for (const [name, body] of [['rsync', STUB_RSYNC], ['ssh', STUB_SSH], ['osascript', '#!/bin/bash\nexit 0\n'], ['scutil', STUB_SCUTIL], ['mount', '#!/bin/bash\nexit 0\n'], ['route', STUB_ROUTE_HOME]]) {
       writeFileSync(join(bin, name), body)
       chmodSync(join(bin, name), 0o755)
     }

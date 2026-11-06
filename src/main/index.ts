@@ -4841,6 +4841,7 @@ async function mirrorLibraryToNas(library: unknown): Promise<void> {
   // backend reads is either the whole old copy or the whole new copy — never a
   // duplicated-tail torn write (the 2026-06-27 corruption).
   for (let attempt = 1; attempt <= 2; attempt++) {
+    if (attempt > 1 && !(await nasAvailable())) return   // the first try may have just found out
     try {
       await atomicPublishToNas(
         nasPath,
