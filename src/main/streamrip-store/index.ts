@@ -734,7 +734,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
   // file's own clock is the only trustworthy witness. A clean row has no clock. A row
   // with no `durationMs`, every Listen List row among them, asks Apple for one first.
   const fmtDur = (s: number | null): string => s == null ? 'unknown length' : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`
-  ipc.handle('streamrip:download-by-query', async (_e, opts: { sourceEdition?: SourceEdition; artist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number; addedVia?: string }): Promise<DownloadResult & { matchDesc?: string }> => {
+  ipc.handle('streamrip:download-by-query', async (_e, opts: { sourceEdition?: SourceEdition; artist?: string; askedArtist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number; addedVia?: string }): Promise<DownloadResult & { matchDesc?: string }> => {
     cancelRequested = false            // new attempt = clean slate
     lastStageFailure = null            // never let an OLD rip's error explain THIS request
     const addedVia = shareSourceKey(opts?.addedVia)   // every import below lands with it
@@ -804,7 +804,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     // that recording before it can touch the library. Every rejection is
     // kept as a structured alternative for the verdict at the end.
     const req = buildRequestedRecording({
-      artist, artistAliases: aliases, title, album: opts?.album, durationMs, runtimes,
+      artist, artistAliases: aliases, askedArtist: opts?.askedArtist, title, album: opts?.album, durationMs, runtimes,
       releaseYear: opts?.releaseYear, cleanedSource: opts?.cleanedSource, explicitSource: opts?.explicitSource,
     })
     if (durationMs && !req.durationSec) trace.push(`no length: ${fmtDur(durationMs / 1000)} is the clean row's`)
@@ -836,7 +836,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     const judgeStaged = async (provider: Provider, staged: StagedRip, desc: string, extra: Partial<CandidateEvidence> = {}): Promise<ReturnType<typeof verifyCandidate>> => {
       if (staged.files.length !== 1) return { verdict: 'exact', evidence: ['album rip'], albumMatches: true }
       const probe = await probeStagedFile(staged.files[0])
-      return verifyCandidate(req, { provider, desc, title: probe.title, album: probe.album, artist: probe.artist, durationSec: probe.durSec, ...extra })
+      return verifyCandidate(req, { provider, desc, title: probe.title, album: probe.album, albumArtist: probe.albumArtist, artist: probe.artist, durationSec: probe.durSec, ...extra })
     }
     const noteReject = (provider: Provider, desc: string, verdict: ReturnType<typeof verifyCandidate>): void => {
       if (verdict.verdict === 'exact') return

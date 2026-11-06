@@ -184,15 +184,26 @@ export function recoTitleMatches(want: string, got: string): boolean {
   return false
 }
 
+/**
+ * The same name: folded, or as written when it has no letters to fold. "!!!" folds to nothing, so
+ * the band's own name never matched itself, and "Even When the Water's Cold" was refused as "by !!!,
+ * not !!!" on both apps (2026-11-06). Compared as written, "???" is still somebody else, and an empty
+ * name is no name. textNamesArtist (exact-recording.ts) looks for such a name in free text the same way.
+ * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts sameArtistName.
+ */
+export function sameArtistName(want: string, got: string): boolean {
+  const key = (name: string): string => recoFold(name) || (name || '').trim()
+  return key(want) !== '' && key(want) === key(got)
+}
+
 // ⚠️ TWIN: src/renderer/listen-to-the-list/store.ts artistLooselyMatches (same fold: nameKey squashed) —
 // renderer-side copy of this rule (no cross-bundle import); keep in sync.
+// ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts recoArtistMatches.
 export function recoArtistMatches(want: string, got: string): boolean {
+  if (sameArtistName(want, got)) return true
   const w = recoFold(want)
   const g = recoFold(got)
-  if (!w || !g) return false
-  if (w === g) return true
-  if (w.length >= 4 && g.length >= 4 && (w.includes(g) || g.includes(w))) return true
-  return false
+  return w.length >= 4 && g.length >= 4 && (w.includes(g) || g.includes(w))
 }
 
 /** The artist, or one of the other names MusicBrainz knows them by (2026-11-03:

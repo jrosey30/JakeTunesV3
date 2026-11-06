@@ -41,7 +41,7 @@ import type { Provider, RequestedRecording, Alternative, DownloadOutcome } from 
 export type { Provider, RequestedRecording, Alternative, DownloadOutcome } from '../common/acquisition-identity.ts'
 
 import { artistOrAlias, recoArtistMatches, recoNorm, recoTitleMatches } from './reco-match.ts'
-import { NO_EXPLICIT_WARNING, albumVersionOf, bareTitle, carriesCensorStamp, creditHolds, editionSubstituted, isCompilationCopy, isCoverAct, liveBrandMarker, maskedTitleMatches, parseStreamripDesc, saysExplicit, searchTitle, titleKey, titleReads, titleWithVersion, unwantedVersionOf, requestedVersionMarkers, withoutCensorStamp, type QobuzTrackMeta, onWantedAlbum } from './streamrip-match.ts'
+import { NO_EXPLICIT_WARNING, albumVersionOf, bareTitle, carriesCensorStamp, creditHolds, editionSubstituted, isCompilationCopy, isCoverAct, isCoverRelease, liveBrandMarker, maskedTitleMatches, parseStreamripDesc, saysExplicit, searchTitle, titleKey, titleReads, titleWithVersion, unwantedVersionOf, requestedVersionMarkers, withoutCensorStamp, type QobuzTrackMeta, onWantedAlbum } from './streamrip-match.ts'
 import { nameKey } from '../common/fold-text.ts'
 
 /** Does free text (a SoundCloud title/desc) name the artist? Folded in any
@@ -64,6 +64,8 @@ function withoutArtistPrefix(title: string, artist: string): string {
 
 export interface RequestOpts {
   artist?: string
+  /** RequestedRecording.askedArtist. */
+  askedArtist?: string
   title?: string
   album?: string
   durationMs?: number
@@ -227,6 +229,7 @@ export function buildRequestedRecording(o: RequestOpts): RequestedRecording {
   const runtimes = durationSec > 0 || isCleanRow(o) ? [] : o.runtimes ?? []
   return {
     artist,
+    askedArtist: o.askedArtist,
     title,
     album: (o.album || '').trim(),
     artistNorm: recoNorm(artist),
@@ -255,6 +258,8 @@ export interface CandidateEvidence {
   title?: string
   artist?: string
   album?: string
+  /** Who the album is credited to: the file's own tag, or Qobuz's word (isCoverRelease). */
+  albumArtist?: string
   durationSec?: number | null
   /** Provider's own explicit flag (Qobuz parental_warning). */
   parentalWarning?: boolean
@@ -297,7 +302,8 @@ export function verifyCandidate(req: RequestedRecording, ev: CandidateEvidence):
   // 1b. Cover, karaoke and tribute acts: "Rihanna" is inside "Rihanna Cover Band".
   if (!isCoverAct(req.title, req.artist)) {
     if (isCoverAct(ev.title ?? '', ev.artist ?? '')) return { verdict: 'reject', kind: 'version', reason: `is a cover or tribute act (“${ev.artist ?? ev.title}”)` }
-    if (ev.album && isCoverAct(ev.album, '')) return { verdict: 'reject', kind: 'version', reason: `is from a cover or tribute release (“${ev.album}”)` }
+    // A lane with no catalogue behind it writes its own credits, so its album names stand.
+    if (ev.album && isCoverRelease(ev.album, ev.provider === 'qobuz' ? ev.albumArtist : undefined, req.askedArtist ?? req.artist)) return { verdict: 'reject', kind: 'version', reason: `is from a cover or tribute release (“${ev.album}”)` }
   }
 
   // 2. Show brands — a different recording even with a clean title and the
@@ -452,6 +458,7 @@ export function judgeHitsByMeta<T extends { id: string; desc: string }>(
       title: titleWithVersion(m.title || title, m.version),
       artist,
       album: m.album,
+      albumArtist: m.albumArtist,
       durationSec: m.durationSec,
     })
     if (verdict.verdict === 'reject') wrongRecording.push({ hit, verdict })
