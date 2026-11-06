@@ -148,7 +148,7 @@ describe('walked through the real handler', () => {
   }
   const fileTags = (id: string, t: { title: string; artist: string; album: string; duration: number }): void =>
     put(`probe-${id}.json`, JSON.stringify({ format: { duration: String(t.duration), tags: { title: t.title, artist: t.artist, album: t.album } } }))
-  /** How streamrip writes a name: "title (version)", unless the title already says it. */
+  /** How streamrip writes a title: "title (version)", unless the title already says it. The album tag is the album's title alone. */
   const named = (title: string, version: string | null): string => version && !title.includes(version) ? `${title} (${version})` : title
 
   /** The whole outside world of one real row, every file tagged the way streamrip tags it. */
@@ -162,8 +162,8 @@ describe('walked through the real handler', () => {
     }
     for (const [id, a] of Object.entries(w.qobuz)) {
       if (a === 'gone') continue
-      if ('performer' in a) fileTags(id, { title: named(a.title, a.version), artist: a.performer.name, album: named(a.album.title, a.album.version), duration: a.duration })
-      else for (const t of a.tracks.items) fileTags(String(t.id), { title: named(t.title, t.version), artist: t.performer.name, album: named(a.title, a.version), duration: t.duration })
+      if ('performer' in a) fileTags(id, { title: named(a.title, a.version), artist: a.performer.name, album: a.album.title, duration: a.duration })
+      else for (const t of a.tracks.items) fileTags(String(t.id), { title: named(t.title, t.version), artist: t.performer.name, album: a.title, duration: t.duration })
     }
     return w.row
   }
@@ -246,12 +246,12 @@ describe('walked through the real handler', () => {
   describe('every hit of a song is asked about before any is fetched', () => {
     const SLIPPY = 'Underworld - Born Slippy .NUXX (Remastered)'
 
-    test('Born Slippy: the 705 s cut is the 23rd hit, and the album’s own copy comes in', async () => {
+    test('Born Slippy: the 705 s cut is the 23rd hit, and the first fetch', async () => {
       const { walk, importedIds } = store()
       const r = await walk(realWorld(SLIPPY))
       assert.equal(r.outcome, 'imported', r.error)
-      assert.deepEqual(importedIds(), ['28265336'], 'the Super Deluxe the row names')
-      assert.deepEqual(ripped(), ['28265297', '28265336'], 'the radio edits and the 456 s cut cost no fetch; the Deluxe is held')
+      assert.deepEqual(importedIds(), ['28265297'])
+      assert.deepEqual(ripped(), ['28265297'], 'the radio edits and the 456 s cut cost no fetch')
       assert.equal(trackQuestions().length, 25)
     })
 
@@ -297,7 +297,7 @@ describe('walked through the real handler', () => {
       const { walk, importedIds } = store()
       await walk(row)
       assert.equal(trackQuestions().length, 25)
-      assert.deepEqual(importedIds(), ['28265336'])
+      assert.deepEqual(importedIds(), ['28265297'])
     })
 
     test('a whole album still asks about six hits', async () => {
