@@ -57,7 +57,9 @@ function runScript(args: string[], env: Record<string, string> = {}): Run {
   try {
     const bin = join(root, 'bin')
     mkdirSync(bin)
-    for (const [name, body] of [['rsync', STUB_RSYNC], ['ssh', STUB_SSH], ['osascript', STUB_OSASCRIPT], ['scutil', STUB_SCUTIL]]) {
+    // mount is a stub, never this machine's table: with the real one the script
+    // adopts the real share and stats it.
+    for (const [name, body] of [['rsync', STUB_RSYNC], ['ssh', STUB_SSH], ['osascript', STUB_OSASCRIPT], ['scutil', STUB_SCUTIL], ['mount', '#!/bin/bash\nexit 0\n']]) {
       writeFileSync(join(bin, name), body)
       chmodSync(join(bin, name), 0o755)
     }
@@ -65,8 +67,8 @@ function runScript(args: string[], env: Record<string, string> = {}): Run {
     const data = join(home, HUB_DIR)
     mkdirSync(join(data, 'artwork'), { recursive: true })
     for (const f of STATE_FILES) writeFileSync(join(data, f), f === 'library.json' ? '{"tracks":[{"id":1}]}' : `${f}\n`)
-    // The phone legs run on a full hub pass (after the NAS legs) and only
-    // when the desktop side has something to push.
+    // The phone legs run on every hub pass (before the NAS legs and the
+    // homemini-only exit) and only when the desktop side has something to push.
     mkdirSync(join(root, 'nas', 'JakeTunesLibrary'), { recursive: true })
     mkdirSync(join(root, 'lib'), { recursive: true })
     writeFileSync(join(data, 'mobile-stars.json'), '{}')
@@ -85,6 +87,7 @@ function runScript(args: string[], env: Record<string, string> = {}): Run {
         JT_HOMEMINI: 'test@stub',
         JT_LIBRARY_ROOT: join(root, 'lib'),
         JT_MOUNT: join(root, 'nas'),
+        JT_MOUNT_TOOLS_FROM_PATH: '1',
         ...env,
       },
       encoding: 'utf8',
@@ -174,6 +177,50 @@ describe('sync script: the hub run is unchanged', () => {
     const art = artworkPush(r)
     assert.ok(art && art.args.includes('--update') && !art.args.includes('--ignore-existing'))
     assert.equal(r.calls.some((c) => c.tool === 'SSH' && c.args.join(' ').includes('replicas/')), false)
+  })
+
+  // 2026-11-06. A hub's stars leave through these legs and no other. They sat after the
+  // homemini-only exit, so on 11/5 no star push ran from 20:48 to 23:42 and stars
+  // made at 21:42 waited about 2 hours.
+  it('a homemini-only hub pass still runs the phone legs: stars both ways, plays, sidecars, the listening log', () => {
+    const r = runScript(['--quick', '--homemini-only'])
+    assert.equal(r.status, 0, r.log)
+    const args = rsyncs(r).map((c) => c.args)
+    const dests = args.map((a) => a[a.length - 1])
+    const sources = args.map((a) => a[a.length - 2])
+    assert.ok(sources.includes(`test@stub:${HUB_DIR}/mobile-stars.json`), 'phone stars pulled')
+    assert.ok(dests.includes(`test@stub:${HUB_DIR}/.mobile-stars.json.incoming`), 'desktop stars pushed')
+    assert.ok(dests.includes(`test@stub:${HUB_DIR}/mobile-plays.json`), 'plays pushed')
+    assert.ok(sources.includes(`test@stub:${HUB_DIR}/mobile-playlists.json`), 'playlist sidecar pulled')
+    assert.ok(sources.some((s) => s.endsWith('/mobile-listening-log.jsonl')), 'phone listening log pulled')
+    assert.ok(r.calls.some((c) => c.tool === 'SSH' && c.args.join(' ').includes('cd ~/"Library/Application Support/JakeTunes" && python3')), 'the tombstone merge ran on homemini')
+    assert.match(r.log, /pushing desktop stars/)
+    assert.match(r.log, /homemini-only pass done/)
+  })
+
+  it('the phone pull runs before the push, and both before the homemini-only exit', () => {
+    const r = runScript(['--quick', '--homemini-only'])
+    const pull = r.log.indexOf('pulling phone stars')
+    const push = r.log.indexOf('pushing desktop stars')
+    const done = r.log.indexOf('homemini-only pass done')
+    assert.ok(pull >= 0 && push > pull && done > push, r.log)
+  })
+
+  it('a replica runs none of them: its stars go through the app, not this script', () => {
+    const r = runScript(['--quick', '--skip-library-json'])
+    assert.equal(r.status, 0, r.log)
+    assert.doesNotMatch(r.log, /pulling phone stars|pushing desktop stars|pulling phone playlist sidecars/)
+    const remote = rsyncs(r).flatMap((c) => c.args).filter((a) => a.startsWith('test@stub:'))
+    for (const f of ['mobile-stars.json', 'mobile-plays.json', 'mobile-playlists.json', 'mobile-listening-log.jsonl']) {
+      assert.equal(remote.some((a) => a.endsWith(f)), false, `${f} on a replica pass`)
+    }
+  })
+
+  it('a full hub pass runs them exactly once', () => {
+    const r = runScript(['--quick'])
+    assert.equal(r.status, 0, r.log)
+    assert.equal(r.log.split('pushing desktop stars').length - 1, 1, r.log)
+    assert.equal(r.log.split('pulling phone stars').length - 1, 1, r.log)
   })
 
   it('hub: a failed push still shows its notification', () => {

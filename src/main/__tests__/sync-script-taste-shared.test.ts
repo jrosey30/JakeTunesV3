@@ -104,7 +104,9 @@ function runScript(args: string[], opts: { local?: Record<string, string>; remot
   const root = mkdtempSync(join(tmpdir(), 'jt-taste-sync-'))
   const bin = join(root, 'bin')
   mkdirSync(bin)
-  for (const [name, body] of [['rsync', STUB_RSYNC], ['ssh', STUB_SSH], ['scutil', STUB_SCUTIL], ['osascript', STUB_OSASCRIPT]]) {
+  // mount is a stub, never this machine's table: with the real one the script
+  // adopts the real share and stats it.
+  for (const [name, body] of [['rsync', STUB_RSYNC], ['ssh', STUB_SSH], ['scutil', STUB_SCUTIL], ['osascript', STUB_OSASCRIPT], ['mount', STUB_OSASCRIPT]]) {
     writeFileSync(join(bin, name), body)
     chmodSync(join(bin, name), 0o755)
   }
@@ -129,7 +131,7 @@ function runScript(args: string[], opts: { local?: Record<string, string>; remot
     env: {
       HOME: home, PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`, STUB_CALLS: calls, STUB_REMOTE: remote,
       JT_SYNC_LOG: join(root, 'sync.log'), JT_SYNC_LOCK: join(root, 'sync.lock'), JT_HOMEMINI: 'test@stub',
-      JT_LIBRARY_ROOT: join(root, 'lib'), JT_MOUNT: join(root, 'nas'), ...opts.env,
+      JT_LIBRARY_ROOT: join(root, 'lib'), JT_MOUNT: join(root, 'nas'), JT_MOUNT_TOOLS_FROM_PATH: '1', ...opts.env,
     },
     encoding: 'utf8',
     timeout: 60_000,

@@ -40,7 +40,9 @@ function statePush(args: string[]): string[] {
   try {
     const bin = join(root, 'bin')
     mkdirSync(bin)
-    for (const [name, body] of [['rsync', STUB_RSYNC], ['ssh', STUB_SSH], ['osascript', '#!/bin/bash\nexit 0\n'], ['scutil', STUB_SCUTIL]]) {
+    // mount is a stub, never this machine's table: with the real one the script
+    // adopts the real share and stats it.
+    for (const [name, body] of [['rsync', STUB_RSYNC], ['ssh', STUB_SSH], ['osascript', '#!/bin/bash\nexit 0\n'], ['scutil', STUB_SCUTIL], ['mount', '#!/bin/bash\nexit 0\n']]) {
       writeFileSync(join(bin, name), body)
       chmodSync(join(bin, name), 0o755)
     }
@@ -58,7 +60,7 @@ function statePush(args: string[]): string[] {
       env: {
         HOME: join(root, 'home'), PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`, STUB_CALLS: calls,
         JT_SYNC_LOG: join(root, 'sync.log'), JT_SYNC_LOCK: join(root, 'sync.lock'), JT_HOMEMINI: 'test@stub',
-        JT_LIBRARY_ROOT: join(root, 'lib'), JT_MOUNT: join(root, 'nas'),
+        JT_LIBRARY_ROOT: join(root, 'lib'), JT_MOUNT: join(root, 'nas'), JT_MOUNT_TOOLS_FROM_PATH: '1',
       },
       encoding: 'utf8', timeout: 60_000,
     })

@@ -59,7 +59,9 @@ function runScript(args: string[]): Run {
   try {
     const bin = join(root, 'bin')
     mkdirSync(bin)
-    for (const [name, body] of [['rsync', STUB_RSYNC], ['ssh', STUB_SSH], ['osascript', STUB_OSASCRIPT], ['scutil', STUB_SCUTIL]]) {
+    // mount is a stub, never this machine's table: with the real one the script
+    // adopts the real share and stats it.
+    for (const [name, body] of [['rsync', STUB_RSYNC], ['ssh', STUB_SSH], ['osascript', STUB_OSASCRIPT], ['scutil', STUB_SCUTIL], ['mount', '#!/bin/bash\nexit 0\n']]) {
       writeFileSync(join(bin, name), body)
       chmodSync(join(bin, name), 0o755)
     }
@@ -92,6 +94,7 @@ function runScript(args: string[]): Run {
         JT_HOMEMINI: 'test@stub',
         JT_LIBRARY_ROOT: join(root, 'lib'),
         JT_MOUNT: join(root, 'nas'),
+        JT_MOUNT_TOOLS_FROM_PATH: '1',
         JT_PLEX_SKIP: '1',
       },
       encoding: 'utf8',

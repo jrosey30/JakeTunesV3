@@ -746,6 +746,142 @@ sync_artwork_to_homemini() {
   fi
 }
 
+# ── Stars, plays and the phone's sidecars: SSH only, every hub pass ───────
+# A hub's stars leave through these legs and no other (src/main/star-hub-push.ts:
+# hubs never push). They sat after the NAS legs and the homemini-only exit, so a
+# pass that skipped the NAS skipped them too: on 2026-11-05 no star push ran from
+# 20:48 to 23:42, and stars made at 21:42 waited about 2 hours. A breaker-open pass
+# at home lost them the same way. Called below, before that exit; never on a replica.
+sync_phone_legs() {
+# ── 5. mobile-set sidecars under LOCAL-PRIMARY (homemini ↔ local). ──
+#
+# 2026-06-07 sync B-pass. Pre-fix this synced the NAS copies, but under
+# local-primary (4.5.0-114) the app reads/writes mobile-stars.json LOCALLY and
+# never touches NAS — so a NAS-based sidecar sync was disconnected from the app
+# entirely: desktop stars never reached homemini, phone stars never reached the
+# desktop (the round-trip was severed).
+#
+# Stars now round-trip through the LOCAL file with the APP as the SOLE writer,
+# so we never race its in-memory cache:
+#   PULL homemini's set → mobile-stars.incoming.json (staging). The app unions
+#        it into the local set on next launch (mergeIncomingMobileStars), then
+#        deletes it.
+#   PUSH the local set → homemini as .mobile-stars.json.incoming, merged
+#        into homemini's copy there (Brief 172 — see the push below).
+# PULL BEFORE PUSH so a phone star is captured into staging before the
+# push merges it back. No permanent loss: a phone star lives in staging
+# until merged, then re-pushed next cycle.
+#
+# Brief 172 — the sidecar is format v2 with tombstones ({v, trackIds,
+# removed: {id: ts}, added: {id: ts}}, last-writer-wins per id;
+# ⚠️ TWIN: src/main/mobile-stars-merge.ts and JakeTunesMobile
+# backend/src/util/starSidecar.ts). The old additive union (and the old
+# --update copy push) resurrected un-starred tracks: whichever copy
+# still held the id won. Readers everywhere still accept v1 files.
+log "pulling phone stars (homemini → local staging) …"
+rsync -tz --no-perms --no-owner --no-group \
+  "$(rremote "$JT_DATA_REMOTE/mobile-stars.json")" "$JT_DATA_LOCAL/mobile-stars.incoming.json" >> "$LOG" 2>&1
+pull_rc=$?
+if [ $pull_rc -ne 0 ] && [ $pull_rc -ne 23 ] && [ $pull_rc -ne 24 ]; then
+  log "WARNING: pull of mobile-stars returned $pull_rc (continuing)"
+  notify "Couldn't pull phone stars from homemini — desktop may be behind."
+fi
+# Phone listening stream (2026-08-07 parity: "same page as mobile at all
+# times") — the backend appends {t,ts,ar,ti,al,g,pct,src:mobile} events;
+# desktop KPIs merge them with its own listening-log. The backend writes it
+# in its STATE_DIR — the NAS share as homemini mounts it. 2026-10-20: this
+# pull only tried homemini's ~/JakeTunesState and App Support, where the file
+# never lives, so the MacBook's copy froze on 9/13 and every run said "not
+# present yet" while the real log (529 KB) grew on the NAS. That path is
+# tried first now; the old two stay as fallbacks.
+# All may be absent pre-first-play, so these use rsync_optional: a missing
+# source is normal here and must not log an error.
+PHONE_STATE_DIR_ON_HOMEMINI="${JT_PHONE_STATE_DIR:-/Volumes/JakeShared/JakeTunesState}"
+rsync_optional "$HOMEMINI:$PHONE_STATE_DIR_ON_HOMEMINI/mobile-listening-log.jsonl" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
+rsync_optional "$HOMEMINI:JakeTunesState/mobile-listening-log.jsonl" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
+rsync_optional "$(rremote "$JT_DATA_REMOTE/mobile-listening-log.jsonl")" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
+  log_hourly /tmp/.jt-phonelog-note "phone listening log not found on homemini (checked $PHONE_STATE_DIR_ON_HOMEMINI, ~/JakeTunesState, App Support)"
+# Phone playlist sidecars: PULL ONLY (homemini → MacBook local, and NAS when
+# mounted). Never the reverse — see PHONE_PLAYLIST_SIDECARS above. Desktop V3
+# reads these as Brief 121 mirrors; the iOS backend is the writer.
+log "pulling phone playlist sidecars (homemini → local) …"
+for f in "${PHONE_PLAYLIST_SIDECARS[@]}"; do
+  rsync_optional "$(rremote "$JT_DATA_REMOTE/$f")" "$JT_DATA_LOCAL/$f" || \
+    log_hourly "/tmp/.jt-phonepl-$f-note" "phone playlist sidecar $f not present on homemini yet"
+  if [ -d "$MOUNT/JakeTunesState" ]; then
+    rsync_optional "$(rremote "$JT_DATA_REMOTE/$f")" "$MOUNT/JakeTunesState/$f" || true
+  fi
+done
+# Brief 172: the push is a MERGE, not a copy. Upload the local set as
+# .mobile-stars.json.incoming; a remote python pass merges it into
+# homemini's copy with the same last-writer-wins tombstone rule the app
+# and the backend use, then os.replace. A blunt copy (even --update)
+# would erase phone tombstones written since the pull above, and a
+# stale local v1 file would resurrect everything the phone un-starred.
+log "pushing desktop stars (local → homemini, tombstone merge) …"
+if [ -f "$JT_DATA_LOCAL/mobile-stars.json" ]; then
+  rsync -tz --no-perms --no-owner --no-group \
+    "$JT_DATA_LOCAL/mobile-stars.json" "$(rremote "$JT_DATA_REMOTE/.mobile-stars.json.incoming")" >> "$LOG" 2>&1
+  push_rc=$?
+  if [ $push_rc -ne 0 ] && [ $push_rc -ne 23 ] && [ $push_rc -ne 24 ]; then
+    log "WARNING: push of mobile-stars returned $push_rc (continuing)"
+    notify "Couldn't push desktop stars to homemini — phone may be behind."
+  elif [ $push_rc -eq 0 ]; then
+    star_out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOMEMINI" 'cd ~/"Library/Application Support/JakeTunes" && python3 - <<"EOF"
+import json, os
+def load(p):
+    try:
+        with open(p) as f: return json.load(f)
+    except Exception:
+        return None
+def norm(raw):
+    if isinstance(raw, list):
+        return {"trackIds": [x for x in raw if isinstance(x, str) and x], "removed": {}, "added": {}}
+    if isinstance(raw, dict):
+        ids = raw.get("trackIds")
+        ids = [x for x in ids if isinstance(x, str) and x] if isinstance(ids, list) else []
+        def tmap(m):
+            out = {}
+            if isinstance(m, dict):
+                for k, v in m.items():
+                    if isinstance(k, str) and k and isinstance(v, (int, float)) and v > 0: out[k] = v
+            return out
+        return {"trackIds": ids, "removed": tmap(raw.get("removed")), "added": tmap(raw.get("added"))}
+    return {"trackIds": [], "removed": {}, "added": {}}
+inc = load(".mobile-stars.json.incoming")
+if inc is None:
+    print("refused-corrupt")
+    raise SystemExit(0)
+a = norm(inc); b = norm(load("mobile-stars.json"))
+removed = dict(b["removed"]); added = dict(b["added"])
+for k, v in a["removed"].items(): removed[k] = max(removed.get(k, 0), v)
+for k, v in a["added"].items(): added[k] = max(added.get(k, 0), v)
+listed = set(a["trackIds"]) | set(b["trackIds"])
+merged = sorted(i for i in listed | set(removed) | set(added)
+                if (i in listed or i in added) and added.get(i, 0) >= removed.get(i, 0))
+out_obj = {"v": 2, "trackIds": merged, "removed": removed, "added": added}
+tmp = ".mobile-stars.json.merge-tmp"
+with open(tmp, "w") as f: json.dump(out_obj, f)
+os.replace(tmp, "mobile-stars.json")
+try: os.unlink(".mobile-stars.json.incoming")
+except OSError: pass
+print("merged %d stars, %d tombstones" % (len(merged), len(removed)))
+EOF' 2>>"$LOG")
+    case "$star_out" in
+      merged*) log "star push: $star_out → homemini mobile-stars.json" ;;
+      *) log "WARNING: star merge on homemini returned '$star_out' (continuing)"; notify "Couldn't merge desktop stars on homemini — phone may be behind." ;;
+    esac
+  fi
+fi
+# Plays: one-way push of the desktop play log to homemini. The iOS app doesn't
+# write mobile-plays.json yet, so a full round-trip is a later iOS-side change;
+# this is harmless prep (no staging/merge).
+if [ -f "$JT_DATA_LOCAL/mobile-plays.json" ]; then
+  rsync -tz --update --no-perms --no-owner --no-group \
+    "$JT_DATA_LOCAL/mobile-plays.json" "$(rremote "$JT_DATA_REMOTE/mobile-plays.json")" >> "$LOG" 2>&1 || true
+fi
+}
+
 # The other Mac's taste copies → userData/taste-elsewhere/ (see TASTE_SHARED
 # above). Every pass, hub and replica, before the homemini-only exit. Additive:
 # no --delete, so a copy stays honoured if that Mac goes quiet. Never fatal.
@@ -792,6 +928,7 @@ pull_taste_elsewhere() {
 homemini_rc=0
 push_homemini_state || homemini_rc=$?
 pull_taste_elsewhere || true
+if [ "$REPLICA" -eq 0 ]; then sync_phone_legs; fi
 if [ $HOMEMINI_ONLY -eq 1 ]; then
   sync_artwork_to_homemini
   log "homemini-only pass done (state rc=$homemini_rc) — NAS legs skipped"
@@ -1092,133 +1229,8 @@ fi
 # without covers; missing covers backfill on the next sync.
 sync_artwork_to_homemini
 
-# ── 5. mobile-set sidecars under LOCAL-PRIMARY (homemini ↔ local). ──
-#
-# 2026-06-07 sync B-pass. Pre-fix this synced the NAS copies, but under
-# local-primary (4.5.0-114) the app reads/writes mobile-stars.json LOCALLY and
-# never touches NAS — so a NAS-based sidecar sync was disconnected from the app
-# entirely: desktop stars never reached homemini, phone stars never reached the
-# desktop (the round-trip was severed).
-#
-# Stars now round-trip through the LOCAL file with the APP as the SOLE writer,
-# so we never race its in-memory cache:
-#   PULL homemini's set → mobile-stars.incoming.json (staging). The app unions
-#        it into the local set on next launch (mergeIncomingMobileStars), then
-#        deletes it.
-#   PUSH the local set → homemini as .mobile-stars.json.incoming, merged
-#        into homemini's copy there (Brief 172 — see the push below).
-# PULL BEFORE PUSH so a phone star is captured into staging before the
-# push merges it back. No permanent loss: a phone star lives in staging
-# until merged, then re-pushed next cycle.
-#
-# Brief 172 — the sidecar is format v2 with tombstones ({v, trackIds,
-# removed: {id: ts}, added: {id: ts}}, last-writer-wins per id;
-# ⚠️ TWIN: src/main/mobile-stars-merge.ts and JakeTunesMobile
-# backend/src/util/starSidecar.ts). The old additive union (and the old
-# --update copy push) resurrected un-starred tracks: whichever copy
-# still held the id won. Readers everywhere still accept v1 files.
-log "pulling phone stars (homemini → local staging) …"
-rsync -tz --no-perms --no-owner --no-group \
-  "$(rremote "$JT_DATA_REMOTE/mobile-stars.json")" "$JT_DATA_LOCAL/mobile-stars.incoming.json" >> "$LOG" 2>&1
-pull_rc=$?
-if [ $pull_rc -ne 0 ] && [ $pull_rc -ne 23 ] && [ $pull_rc -ne 24 ]; then
-  log "WARNING: pull of mobile-stars returned $pull_rc (continuing)"
-  notify "Couldn't pull phone stars from homemini — desktop may be behind."
-fi
-# Phone listening stream (2026-08-07 parity: "same page as mobile at all
-# times") — the backend appends {t,ts,ar,ti,al,g,pct,src:mobile} events;
-# desktop KPIs merge them with its own listening-log. The backend writes it
-# in its STATE_DIR — the NAS share as homemini mounts it. 2026-10-20: this
-# pull only tried homemini's ~/JakeTunesState and App Support, where the file
-# never lives, so the MacBook's copy froze on 9/13 and every run said "not
-# present yet" while the real log (529 KB) grew on the NAS. That path is
-# tried first now; the old two stay as fallbacks.
-# All may be absent pre-first-play, so these use rsync_optional: a missing
-# source is normal here and must not log an error.
-PHONE_STATE_DIR_ON_HOMEMINI="${JT_PHONE_STATE_DIR:-/Volumes/JakeShared/JakeTunesState}"
-rsync_optional "$HOMEMINI:$PHONE_STATE_DIR_ON_HOMEMINI/mobile-listening-log.jsonl" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
-rsync_optional "$HOMEMINI:JakeTunesState/mobile-listening-log.jsonl" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
-rsync_optional "$(rremote "$JT_DATA_REMOTE/mobile-listening-log.jsonl")" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
-  log_hourly /tmp/.jt-phonelog-note "phone listening log not found on homemini (checked $PHONE_STATE_DIR_ON_HOMEMINI, ~/JakeTunesState, App Support)"
-# Phone playlist sidecars: PULL ONLY (homemini → MacBook local, and NAS when
-# mounted). Never the reverse — see PHONE_PLAYLIST_SIDECARS above. Desktop V3
-# reads these as Brief 121 mirrors; the iOS backend is the writer.
-log "pulling phone playlist sidecars (homemini → local) …"
-for f in "${PHONE_PLAYLIST_SIDECARS[@]}"; do
-  rsync_optional "$(rremote "$JT_DATA_REMOTE/$f")" "$JT_DATA_LOCAL/$f" || \
-    log_hourly "/tmp/.jt-phonepl-$f-note" "phone playlist sidecar $f not present on homemini yet"
-  if [ -d "$MOUNT/JakeTunesState" ]; then
-    rsync_optional "$(rremote "$JT_DATA_REMOTE/$f")" "$MOUNT/JakeTunesState/$f" || true
-  fi
-done
-# Brief 172: the push is a MERGE, not a copy. Upload the local set as
-# .mobile-stars.json.incoming; a remote python pass merges it into
-# homemini's copy with the same last-writer-wins tombstone rule the app
-# and the backend use, then os.replace. A blunt copy (even --update)
-# would erase phone tombstones written since the pull above, and a
-# stale local v1 file would resurrect everything the phone un-starred.
-log "pushing desktop stars (local → homemini, tombstone merge) …"
-if [ -f "$JT_DATA_LOCAL/mobile-stars.json" ]; then
-  rsync -tz --no-perms --no-owner --no-group \
-    "$JT_DATA_LOCAL/mobile-stars.json" "$(rremote "$JT_DATA_REMOTE/.mobile-stars.json.incoming")" >> "$LOG" 2>&1
-  push_rc=$?
-  if [ $push_rc -ne 0 ] && [ $push_rc -ne 23 ] && [ $push_rc -ne 24 ]; then
-    log "WARNING: push of mobile-stars returned $push_rc (continuing)"
-    notify "Couldn't push desktop stars to homemini — phone may be behind."
-  elif [ $push_rc -eq 0 ]; then
-    star_out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOMEMINI" 'cd ~/"Library/Application Support/JakeTunes" && python3 - <<"EOF"
-import json, os
-def load(p):
-    try:
-        with open(p) as f: return json.load(f)
-    except Exception:
-        return None
-def norm(raw):
-    if isinstance(raw, list):
-        return {"trackIds": [x for x in raw if isinstance(x, str) and x], "removed": {}, "added": {}}
-    if isinstance(raw, dict):
-        ids = raw.get("trackIds")
-        ids = [x for x in ids if isinstance(x, str) and x] if isinstance(ids, list) else []
-        def tmap(m):
-            out = {}
-            if isinstance(m, dict):
-                for k, v in m.items():
-                    if isinstance(k, str) and k and isinstance(v, (int, float)) and v > 0: out[k] = v
-            return out
-        return {"trackIds": ids, "removed": tmap(raw.get("removed")), "added": tmap(raw.get("added"))}
-    return {"trackIds": [], "removed": {}, "added": {}}
-inc = load(".mobile-stars.json.incoming")
-if inc is None:
-    print("refused-corrupt")
-    raise SystemExit(0)
-a = norm(inc); b = norm(load("mobile-stars.json"))
-removed = dict(b["removed"]); added = dict(b["added"])
-for k, v in a["removed"].items(): removed[k] = max(removed.get(k, 0), v)
-for k, v in a["added"].items(): added[k] = max(added.get(k, 0), v)
-listed = set(a["trackIds"]) | set(b["trackIds"])
-merged = sorted(i for i in listed | set(removed) | set(added)
-                if (i in listed or i in added) and added.get(i, 0) >= removed.get(i, 0))
-out_obj = {"v": 2, "trackIds": merged, "removed": removed, "added": added}
-tmp = ".mobile-stars.json.merge-tmp"
-with open(tmp, "w") as f: json.dump(out_obj, f)
-os.replace(tmp, "mobile-stars.json")
-try: os.unlink(".mobile-stars.json.incoming")
-except OSError: pass
-print("merged %d stars, %d tombstones" % (len(merged), len(removed)))
-EOF' 2>>"$LOG")
-    case "$star_out" in
-      merged*) log "star push: $star_out → homemini mobile-stars.json" ;;
-      *) log "WARNING: star merge on homemini returned '$star_out' (continuing)"; notify "Couldn't merge desktop stars on homemini — phone may be behind." ;;
-    esac
-  fi
-fi
-# Plays: one-way push of the desktop play log to homemini. The iOS app doesn't
-# write mobile-plays.json yet, so a full round-trip is a later iOS-side change;
-# this is harmless prep (no staging/merge).
-if [ -f "$JT_DATA_LOCAL/mobile-plays.json" ]; then
-  rsync -tz --update --no-perms --no-owner --no-group \
-    "$JT_DATA_LOCAL/mobile-plays.json" "$(rremote "$JT_DATA_REMOTE/mobile-plays.json")" >> "$LOG" 2>&1 || true
-fi
+# ── 5. Stars, plays and the phone's sidecars ran here until 2026-11-06. They ──
+# only need SSH, so they moved to sync_phone_legs, before the homemini-only exit.
 
 # ── 5b. Prune phone-deleted recommendations from the DESKTOP copy. ────
 #

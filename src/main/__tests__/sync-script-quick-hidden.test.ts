@@ -53,7 +53,9 @@ function quickList(files: Record<string, string>): { list: string[]; status: num
   try {
     const bin = join(root, 'bin')
     mkdirSync(bin)
-    for (const [name, body] of [['rsync', STUB_RSYNC], ['ssh', STUB_SSH], ['osascript', STUB_OK], ['scutil', STUB_SCUTIL]]) {
+    // mount is a stub, never this machine's table: with the real one the script
+    // adopts the real share and stats it.
+    for (const [name, body] of [['rsync', STUB_RSYNC], ['ssh', STUB_SSH], ['osascript', STUB_OK], ['scutil', STUB_SCUTIL], ['mount', STUB_OK]]) {
       writeFileSync(join(bin, name), body)
       chmodSync(join(bin, name), 0o755)
     }
@@ -86,6 +88,7 @@ function quickList(files: Record<string, string>): { list: string[]; status: num
         JT_HOMEMINI: 'test@stub',
         JT_LIBRARY_ROOT: lib,
         JT_MOUNT: join(root, 'nas'),
+        JT_MOUNT_TOOLS_FROM_PATH: '1',
         JT_PLEX_SKIP: '1',
       },
       encoding: 'utf8',
