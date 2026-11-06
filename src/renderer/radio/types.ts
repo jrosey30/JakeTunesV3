@@ -32,8 +32,10 @@ export type SpeakerId =
 /** One spoken line — the atomic unit of a show. `text` is the words; the pill
  *  caption is `text` minus inline audio tags (e.g. "[laughs]"). `overlap` is the
  *  rebuild's fix for stiff pacing: a true interrupt starts BEFORE the previous
- *  line finishes instead of waiting for dead air. `audio`/`durationMs` are filled
- *  by the TTS pass. */
+ *  line finishes instead of waiting for dead air. `audio` is filled by the TTS
+ *  pass only for a line with its own recording (the announcer, or a run that fell
+ *  back to line by line); a line in a take shares the take's audio. `durationMs`
+ *  is filled when it plays. */
 export interface RadioLine {
   speaker: SpeakerId
   text: string
@@ -41,6 +43,19 @@ export interface RadioLine {
   audio?: string        // base64 mp3
   durationMs?: number   // measured when audio metadata loads
 }
+
+/** When one line of a take is speaking, in seconds into the take's audio. */
+export interface CaptionCue {
+  line: RadioLine
+  startSec: number
+  endSec: number
+}
+
+/** What a break plays, in order: a take (a run of lines in one recording) or a
+ *  line with its own recording. */
+export type RadioUnit =
+  | { kind: 'take'; lines: RadioLine[]; audio: string; cues: CaptionCue[] }
+  | { kind: 'line'; line: RadioLine }
 
 /** One generated talk break — the show open, a between-songs banter, a caller
  *  call-in, a station ID. Carries the structural context (slot/archetype/angle)
@@ -52,6 +67,7 @@ export interface RadioSegment {
   angle?: string            // topic angle used
   speakers: SpeakerId[]     // everyone who appears (for memory/callbacks)
   lines: RadioLine[]
+  units?: RadioUnit[]       // what can play, filled by the TTS pass
   prevTrack?: string        // "Title — Artist" that just played
   nextTrack?: string        // "Title — Artist" coming up
 }
