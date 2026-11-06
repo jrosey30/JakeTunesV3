@@ -8,7 +8,7 @@
  * through homemini's own mount, add-only, away or home, within a minute or so.
  * This copy is the fast path at home, never the only one.
  */
-import { copyFile, mkdir } from 'fs/promises'
+import { copyFile, mkdir, rename, unlink } from 'fs/promises'
 import { join } from 'path'
 
 export type CrowdMirrorResult = 'copied' | 'waits-for-sync'
@@ -21,10 +21,12 @@ export async function mirrorCrowdClipToNas(deps: {
   log?: (message: string) => void
   copy?: (from: string, to: string) => Promise<void>
   makeDir?: (dir: string) => Promise<unknown>
+  publish?: (from: string, to: string) => Promise<void>
 }): Promise<CrowdMirrorResult> {
   const log = deps.log ?? ((m: string) => console.warn(m))
   const copy = deps.copy ?? copyFile
   const makeDir = deps.makeDir ?? ((dir: string) => mkdir(dir, { recursive: true }))
+  const publish = deps.publish ?? rename
   if (!(await deps.nasAvailable())) {
     log(`[concert-crowd] ${deps.mergedTrackId}: no NAS right now; the sync job carries the clip through homemini`)
     return 'waits-for-sync'
@@ -32,7 +34,17 @@ export async function mirrorCrowdClipToNas(deps: {
   try {
     const dir = join(deps.nasDir, 'concert-crowd')
     await makeDir(dir)
-    await copy(deps.clipPath, join(dir, `${deps.mergedTrackId}.m4a`))
+    // Under a hidden name, then renamed. SMB can drop mid-copy, the sync job's retry only
+    // adds, and a short file at the final name would stop it ever being repaired: the phone
+    // would keep a torn clip while the log said the job carries it.
+    const tmp = join(dir, `.${deps.mergedTrackId}.m4a.${process.pid}.tmp`)
+    try {
+      await copy(deps.clipPath, tmp)
+      await publish(tmp, join(dir, `${deps.mergedTrackId}.m4a`))
+    } catch (err) {
+      await unlink(tmp).catch(() => { /* never made, or the share is gone */ })
+      throw err
+    }
     return 'copied'
   } catch (err) {
     log(`[concert-crowd] ${deps.mergedTrackId}: NAS copy failed (${err instanceof Error ? err.message : err}); the sync job carries the clip through homemini`)

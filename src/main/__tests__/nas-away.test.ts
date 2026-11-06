@@ -8,7 +8,7 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createAwayCheck, routeShowsGateway, NAS_LAN_IP } from '../nas-route.ts'
@@ -217,6 +217,42 @@ describe('a crowd clip is not lost when the share is not there', () => {
       assert.equal(r, 'waits-for-sync')
       assert.match(logs[0], /EIO/)
       assert.match(logs[0], /sync job carries the clip/)
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+})
+
+describe('a clip copy the share cuts off', () => {
+  // The sync job's retry is add-only (macbook-nas-sync.sh publish_crowd_clips), so a short
+  // file at the final name is what could never be repaired.
+  it('leaves nothing at the final name, and no litter', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'jt-crowd-'))
+    try {
+      const src = join(root, 'clip.m4a')
+      writeFileSync(src, 'crowd')
+      const logs: string[] = []
+      const r = await mirrorCrowdClipToNas({
+        clipPath: src, mergedTrackId: 42, nasDir: join(root, 'nas'), nasAvailable: async () => true,
+        log: (m) => logs.push(m),
+        copy: async (_from, to) => { writeFileSync(to, 'cr'); throw new Error('EIO') },
+      })
+      assert.equal(r, 'waits-for-sync')
+      assert.ok(!existsSync(join(root, 'nas', 'concert-crowd', '42.m4a')), 'the job can still add it')
+      assert.deepEqual(readdirSync(join(root, 'nas', 'concert-crowd')), [])
+      assert.match(logs[0], /sync job carries the clip/)
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+
+  it('a rename that fails is the same: nothing at the final name', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'jt-crowd-'))
+    try {
+      const src = join(root, 'clip.m4a')
+      writeFileSync(src, 'crowd')
+      const r = await mirrorCrowdClipToNas({
+        clipPath: src, mergedTrackId: 42, nasDir: join(root, 'nas'), nasAvailable: async () => true,
+        log: () => {}, publish: async () => { throw new Error('EIO') },
+      })
+      assert.equal(r, 'waits-for-sync')
+      assert.deepEqual(readdirSync(join(root, 'nas', 'concert-crowd')), [])
     } finally { rmSync(root, { recursive: true, force: true }) }
   })
 })
