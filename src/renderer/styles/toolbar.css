@@ -357,39 +357,34 @@
   .np-caret { animation: none; }
 }
 
-/* 4.5: in-pill Radio Mode strip. Replaces the external red ON AIR pill
- * that used to float next to the transport row. Lives at the top of
- * the now-playing pill regardless of which mode the rest of the pill
- * is in (playing / broadcast / activity). Reads at-a-glance: brand-
- * red text, monospaced numerals, blinking dot. Pill height bumps when
- * the strip is showing so the existing content doesn't get crowded. */
-.now-playing-pill--radio {
-  padding-top: 1px;
-}
-/* 4.5: the pill NEVER resizes (Jake: "stay the same size as it always is").
-   It holds the base 52px in every mode — NO radio/broadcast height bump. The
-   radio strip is a thin top line and the caption shows speaker + ONE line
-   (.np-broadcast-line--older is hidden), so it all fits the 52px screen. */
+/* Radio Mode's station tag, in the top-left corner of the pill. Absolute, so the
+ * song, artist and album sit exactly where they do with the radio off (Jake,
+ * 2026-11-05: "it pushes the album info down. cant happen"). The song line keeps
+ * clear of it and stays centered; a name too long for what's left shrinks or
+ * ticks past as usual (lcdTicker). */
 .np-radio-strip {
+  position: absolute;
+  top: 5px;
+  left: 8px;
+  z-index: 1;
   display: flex;
   align-items: center;
-  justify-content: center;          /* center it like a real station header */
-  gap: 6px;
-  font-size: 10.5px;
+  gap: 5px;
+  font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.2px;            /* was 0.7px — the wide spacing is what read as tick marks */
+  letter-spacing: 0.2px;
   text-transform: uppercase;
   color: #b81d2c;
-  margin: 0 0 3px;
-  padding-bottom: 2px;
-  border-bottom: 1px solid rgba(184, 29, 44, 0.18);  /* defines it as an intentional ON-AIR header, not floating glyphs */
   line-height: 1;
-  font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  pointer-events: none;
+}
+.now-playing-pill--radio .now-playing-line-primary {
+  margin-inline: 122px;
 }
 .np-radio-strip__dot {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: #e8404f;
   box-shadow: 0 0 4px rgba(232, 64, 79, 0.6);
@@ -406,7 +401,7 @@
 /* 4.5.0-53 — HERO ON AIR display. When the pill has no other content
  * (no track playing, no broadcast caption, no activity), Radio Mode
  * takes over the WHOLE pill — centered, big, with EQ bars flanking
- * the callsign + countdown. Pre-fix this strip was a tiny corner
+ * the callsign. Pre-fix this strip was a tiny corner
  * label and the pill looked empty + broken. */
 .now-playing-pill--radio-hero {
   /* Reset the +radio padding/height the compact strip used so this
@@ -467,35 +462,6 @@
   animation: np-radio-hero-pulse 1.2s ease-in-out infinite;
   flex-shrink: 0;
 }
-.np-radio-hero__time {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: #5a4530;
-}
-.np-radio-hero__elapsed {
-  color: #c01a2c;
-  font-weight: 800;
-}
-.np-radio-hero__remaining {
-  color: #3a2a18;
-  font-weight: 800;
-}
-.np-radio-hero__time-sep {
-  color: rgba(122, 26, 37, 0.4);
-}
-.np-radio-hero__left {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #8a7050;
-  margin-left: 2px;
-}
-
 /* Equalizer bars — 4 thin bars on each side of the label, each pulsing
  * at a different cadence so it reads as "live audio" not a static
  * decoration. */

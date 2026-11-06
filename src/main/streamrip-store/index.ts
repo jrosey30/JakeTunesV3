@@ -24,6 +24,7 @@ import { createHash } from 'crypto'
 import { join } from 'path'
 import { homedir, tmpdir } from 'os'
 import { lstat, mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
+import { createRipProgress, cutShort, decodedSecFromStats, finishedRipFiles, RIP_HARD_CAP_MS, RIP_PROGRESS_CHECK_MS } from './rip-finish.ts'
 import type { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
 import { NO_EXPLICIT_WARNING, albumFirst, albumSearchNames, albumVersionOf, bandcampHitDoubt, isCompilationCopy, onWantedAlbum, rankStreamripCandidates, realAlbumTags, titleMatches, rankWithArtistAliases, searchTitle, searchQueryTitle, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, isNoResultsMessage, isQobuzNoSuchItem, parseStreamripDesc, qobuzTrackMetaOf, type QobuzTrackMeta } from '../streamrip-match.ts'
 import { buildRequestedAlbum, verifyAlbumCandidate, reconcileAlbumCompletion, describeCompletion, albumAlternativeDesc, orderTracks, parseCountTag, matchLibraryOwnership, ladderBudgetMs, type RequestedAlbum, type CandidateAlbum, type AlbumVerdict, type Ownership, type LibraryTrackLite } from '../album-identity.ts'
@@ -110,7 +111,7 @@ async function collectAudio(dir: string, minBytes = MIN_AUDIO_BYTES): Promise<st
   return out.sort()
 }
 
-interface RunResult { code: number; stdout: string; stderr: string; enoent: boolean }
+interface RunResult { code: number; stdout: string; stderr: string; enoent: boolean; timedOut?: boolean }
 // Live children — so a mis-click can be CANCELED (Jake, 2026-07-16). Killing
 // the rip process aborts the transfer; the staging temp dir is wiped by the
 // caller's finally, so a canceled download leaves nothing behind.
@@ -122,17 +123,41 @@ interface RunResult { code: number; stdout: string; stderr: string; enoent: bool
 // fallback ladder, not just the current process.
 const activeProcs = new Map<ReturnType<typeof execFile>, 'download' | 'search'>()
 let cancelRequested = false
-function run(bin: string, args: string[], timeoutMs: number, kind: 'download' | 'search' = 'download'): Promise<RunResult> {
+function run(bin: string, args: string[], timeoutMs: number, kind: 'download' | 'search' = 'download', stillMoving?: () => Promise<boolean>): Promise<RunResult> {
   return new Promise((resolve) => {
-    const child = execFile(bin, args, { timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024 }, (err, stdout, stderr) => {
+    const started = Date.now()
+    let timedOut = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const child = execFile(bin, args, { maxBuffer: 32 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (timer) clearTimeout(timer)
       activeProcs.delete(child)
       const e = err as (Error & { code?: number | string; killed?: boolean }) | null
       const enoent = e?.code === 'ENOENT'
       const code = typeof e?.code === 'number' ? e.code : (e ? 1 : 0)
-      resolve({ code, stdout: stdout || '', stderr: stderr || '', enoent })
+      resolve({ code, stdout: stdout || '', stderr: stderr || '', enoent, timedOut })
     })
     activeProcs.set(child, kind)
+    const atDeadline = async (): Promise<void> => {
+      if (stillMoving && Date.now() - started < RIP_HARD_CAP_MS && await stillMoving()) {
+        timer = setTimeout(() => { void atDeadline() }, RIP_PROGRESS_CHECK_MS)
+        return
+      }
+      timedOut = true
+      child.kill('SIGTERM')
+    }
+    timer = setTimeout(() => { void atDeadline() }, timeoutMs)
   })
+}
+
+/** Every byte under a rip's staging folder: is the transfer still moving? */
+async function bytesUnder(dir: string): Promise<number> {
+  let total = 0
+  for (const e of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
+    const p = join(dir, e.name)
+    if (e.isDirectory()) total += await bytesUnder(p)
+    else total += (await lstat(p).catch(() => null))?.size ?? 0
+  }
+  return total
 }
 
 // 6.0 Phase 4: the fallback ladder gets ONE overall clock. Worst case used
@@ -328,8 +353,15 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         }
         const left = maxMs - (Date.now() - started)
         if (left < 15000) break
-        res = await run(rip.bin, ['--folder', staging, '--quality', '4', '--no-db', '--no-progress', ...ripSubcmd], left)
-        const got = await collectAudio(staging)
+        const here = staging
+        res = await run(rip.bin, ['--folder', staging, '--quality', '4', '--no-db', '--no-progress', ...ripSubcmd], left, 'download', createRipProgress(() => bytesUnder(here)))
+        // Stopped mid-transfer: what's there is cut off under its final name. Nothing it left counts.
+        if (res.timedOut) {
+          console.warn(`[streamrip] stopped: no new bytes past the deadline (${Math.round((Date.now() - started) / 60000)} min). Nothing imported.`)
+          await wipeStaging(staging)
+          return { ok: false, error: 'The connection was too slow to finish this download. Nothing was imported, so try again on a better connection.' }
+        }
+        const got = await wholeRipFiles(await finishedRipFiles(await collectAudio(staging), probeStagedFile))
         if (got.length > 0) return { ok: true, staged: { staging, files: got } }
         if (cancelRequested) break
         const why = tailMessage(res)
@@ -427,6 +459,19 @@ export function registerStreamripStore(deps: StreamripDeps): void {
    *  file's own tags said "(Live at Cynthia Woods Mitchell Pavilion…)" /
    *  album "As/Is - Live". The file never lies about itself. */
   interface StagedProbe { durSec: number | null; title: string; album: string; artist: string; albumArtist: string; trackNumber?: number; trackTotal?: number; discNumber?: number; discTotal?: number }
+  /** Decode each file to its end: a header says the whole song even when the bytes stop early. */
+  async function wholeRipFiles(files: string[]): Promise<string[]> {
+    const out: string[] = []
+    for (const file of files) {
+      const probe = await probeStagedFile(file)
+      const res = await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-stats', '-i', file, '-map', '0:a:0', '-f', 'null', '-'], 5 * 60_000, 'search')
+      const decoded = decodedSecFromStats(res.stderr)
+      if (cutShort(probe.durSec, decoded)) console.warn(`[streamrip] refusing a cut-off file: ${file.slice(file.lastIndexOf('/') + 1)} decodes to ${decoded}s of ${probe.durSec}s`)
+      else out.push(file)
+    }
+    return out
+  }
+
   async function probeStagedFile(file: string): Promise<StagedProbe> {
     // track/disc read "2/15" style; the album contract orders the staged
     // files by them and checks the disc structure of the edition.

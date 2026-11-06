@@ -48,7 +48,7 @@ import {
   phonePlaylistSidecarsNeverPushFromDesktop,
   assertNoDesktopBluntPush,
 } from './sidecar-contracts.ts'
-import { fetchHeadersWithin } from './fetch-headers'; import { withBodyInactivityTimeout } from './stream-body-timeout.ts'; import { spoolAwareServe, spoolPaceFor, spoolLimitsFor, SPOOL_DIR_NAME } from './stream-spool.ts'; import { startOvernightPreload } from './overnight-preload.ts'; import { refreshPhoneMirrors, ensureMobileImportAudio, assertNoMirrorNasPush } from './phone-mirrors.ts'; import { createPhonePlaylistSync, PHONE_PLAYLIST_FILES, PHONE_PLAYLIST_LEDGERS } from './phone-playlist-sync.ts'; import { safeIpcError } from './safe-ipc-error.ts'
+import { fetchHeadersWithin } from './fetch-headers'; import { withBodyInactivityTimeout } from './stream-body-timeout.ts'; import { spoolAwareServe, spoolPaceFor, spoolLimitsFor, SPOOL_DIR_NAME } from './stream-spool.ts'; import { startOvernightPreload } from './overnight-preload.ts'; import { refreshPhoneMirrors, ensureMobileImportAudio, createImportAudioPuller, assertNoMirrorNasPush } from './phone-mirrors.ts'; import { createPhonePlaylistSync, PHONE_PLAYLIST_FILES, PHONE_PLAYLIST_LEDGERS } from './phone-playlist-sync.ts'; import { safeIpcError } from './safe-ipc-error.ts'
 import { computeDeletedPaths } from './library-deletions'; import { createPhoneImportGuard } from './phone-import-guard.ts'
 import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './play-cache-name'
 import { createPlayCache } from './play-cache.ts'
@@ -3667,6 +3667,7 @@ const PHONE_AUTHORED_FILES = [
 ]
 // 2026-10-20 — a song deleted here stays deleted: tombstones to homemini + the absorb filter, and freed ids never reissued (phone-import-guard.ts).
 const phoneImportGuard = createPhoneImportGuard({ dir: app.getPath('userData'), baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), libraryTracks: async () => (await libraryCache.get()).tracks as never, warn: quietWarn })
+const importAudioPuller = createImportAudioPuller((rows, onFailure) => ensureMobileImportAudio(rows, { libraryRoot: MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, ''), backendUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), onFailure, log: (m) => console.log(m) }))
 async function refreshPhoneAuthoredMirrors(): Promise<void> {
   // 2026-08-30 ("do a better job of adding the songs i download on mobile
   // to the library"): mirroring moved to phone-mirrors.ts — HTTP from the
@@ -3697,21 +3698,16 @@ async function refreshPhoneAuthoredMirrors(): Promise<void> {
       } catch { /* next boot's overlay still applies them */ }
     }
   }
-  // Phone downloads: push on mid-session change. Boot-time absorb is
-  // renderer-PULLED (get-mobile-imports below) — a boot push raced the
-  // React listener mount and vanished silently (found live 2026-08-07:
-  // Jake restarted, nothing absorbed, "is it though????").
-  if (refreshedNames.includes('mobile-imports.json')) {
-    try {
-      const tracks = await phoneImportGuard.absorbableImports(join(app.getPath('userData'), 'mobile-imports.json'))   // never a row deleted here
-      if (tracks.length > 0 && mainWindow) {
-        // Audio FIRST (pulled straight from homemini — no rsync, no NAS),
-        // so the absorb always lands rows whose bytes are already on disk.
-        await ensureMobileImportAudio(tracks as never, { libraryRoot: MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, ''), backendUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, '') })
-        sendToRenderer('mobile-imports-updated', { tracks })
-      }
-    } catch { /* no imports yet — next tick retries */ }
-  }
+  // Phone downloads: offered on every tick, changed or not. Absorbing is idempotent, and a row
+  // a boot or a slow start missed would otherwise wait for the file to change again. The first
+  // absorb after a launch is the renderer's pull (get-mobile-imports below).
+  try {
+    const tracks = await phoneImportGuard.absorbableImports(join(app.getPath('userData'), 'mobile-imports.json'))   // never a row deleted here
+    if (tracks.length > 0 && mainWindow) {
+      sendToRenderer('mobile-imports-updated', { tracks })
+      importAudioPuller.offer(tracks as never)   // behind the absorb, never ahead of it
+    }
+  } catch { /* no imports yet — next tick retries */ }
 }
 
 // Renderer pulls the phone-download sidecar AFTER its library loads —
@@ -3723,7 +3719,7 @@ ipc.handle('get-mobile-imports', async () => {
   try { overrides = await mobileMetadataOverridesCache.get() } catch { /* none yet */ }
   try {
     const tracks = await phoneImportGuard.absorbableImports(join(app.getPath('userData'), 'mobile-imports.json'))   // never a row deleted here
-    if (tracks.length > 0) await ensureMobileImportAudio(tracks as never, { libraryRoot: MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, ''), backendUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, '') })
+    if (tracks.length > 0) importAudioPuller.offer(tracks as never)   // behind the absorb, never ahead of it
     return { tracks, overrides }
   } catch {
     return { tracks: [], overrides }

@@ -681,7 +681,7 @@ export interface ListeningMemoryData {
   quote?: string | null
 }
 
-export type SortColumn = 'title' | 'artist' | 'album' | 'genre' | 'origin' | 'subgenre' | 'year' | 'dateAdded' | 'playCount' | 'rating' | 'channelMode' | 'bpm' | 'camelotKey'
+export type SortColumn = 'title' | 'artist' | 'album' | 'genre' | 'origin' | 'subgenre' | 'year' | 'dateAdded' | 'lastPlayedAt' | 'playCount' | 'rating' | 'channelMode' | 'bpm' | 'camelotKey'
 export type SortDirection = 'asc' | 'desc'
 
 declare global {

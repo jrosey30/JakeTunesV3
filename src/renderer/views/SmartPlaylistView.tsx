@@ -15,13 +15,14 @@ import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { useReleaseMonths } from '../releaseMonths'
 import { monthPlaylistName, monthTrackIds, parseMonthPlaylistId } from '../../common/release-months'
 import { isTop25Rankable } from '../../common/top25-rankable'
-import { playsEverywhere } from '../../common/plays-elsewhere'
+import { lastPlayedEverywhere, playsEverywhere } from '../../common/plays-elsewhere'
 import { usePlaysElsewhere, useTracksEverywhere } from '../playsElsewhere'
 import { Track, type SmartPlaylistId } from '../types'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import { downloadMenuEntries, subscribeDownloads, downloadsVersion, isDownloaded, isDownloading } from '../utils/downloadStore'
-import { formatAppDate } from '../utils/formatDate'
+import { formatAppDateTime } from '../utils/formatDate'
+import { DATE_TIME_COLUMN_WIDTH } from '../utils/columnState'
 import { canonicalArtist } from '../utils/artistAlias'
 import { albumKeyOf } from '../utils/albumKey'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -128,7 +129,8 @@ const ALL_COLUMN_DEFS: ColDef[] = [
   { key: 'album', label: 'Album', defaultWidth: 160, minWidth: 60, resizable: true },
   { key: 'genre', label: 'Genre', defaultWidth: 100, minWidth: 50, resizable: true },
   { key: 'year', label: 'Year', defaultWidth: 50, minWidth: 35, resizable: true },
-  { key: 'dateAdded', label: 'Date Added', defaultWidth: 100, minWidth: 60, resizable: true },
+  { key: 'dateAdded', label: 'Date Added', defaultWidth: DATE_TIME_COLUMN_WIDTH, minWidth: DATE_TIME_COLUMN_WIDTH, resizable: true },
+  { key: 'lastPlayedAt', label: 'Last Played', defaultWidth: DATE_TIME_COLUMN_WIDTH, minWidth: DATE_TIME_COLUMN_WIDTH, resizable: true },
   { key: 'playCount', label: 'Plays', defaultWidth: 50, minWidth: 35, resizable: true },
   { key: 'channelMode', label: 'Channels', defaultWidth: 70, minWidth: 50, resizable: true },
   // 4.5: 'rating' column REMOVED — star renders inline next to title.
@@ -455,16 +457,16 @@ export default function SmartPlaylistView() {
   // smart playlist.
   const defaultHidden = useMemo(() => {
     switch (playlistId) {
-      case 'recently-added':  return new Set(['playCount', 'channelMode'])             // show dateAdded
+      case 'recently-added':  return new Set(['lastPlayedAt', 'playCount', 'channelMode'])             // show dateAdded
       case 'tiktok':
       case 'bandcamp':
-      case 'savant':          return new Set(['playCount', 'channelMode'])             // newest import first: show dateAdded
+      case 'savant':          return new Set(['lastPlayedAt', 'playCount', 'channelMode'])             // newest import first: show dateAdded
       case 'recently-played': return new Set(['dateAdded', 'playCount', 'channelMode']) // recency-driven; both noisy
-      case 'top-25':          return new Set(['dateAdded', 'channelMode'])              // playCount drives the list, keep it visible
-      case 'top-1000':        return new Set(['dateAdded', 'channelMode'])              // rank order from the quiz; plays stay visible
-      case 'top-rated':       return new Set(['dateAdded', 'playCount', 'channelMode']) // Starred is binary; counts add noise
-      case 'best-of-year':    return new Set(['dateAdded', 'channelMode'])              // the signals that ranked it stay visible
-      default:                return new Set(['dateAdded', 'playCount', 'channelMode']) // picks views — meta-light
+      case 'top-25':          return new Set(['dateAdded', 'lastPlayedAt', 'channelMode'])              // playCount drives the list, keep it visible
+      case 'top-1000':        return new Set(['dateAdded', 'lastPlayedAt', 'channelMode'])              // rank order from the quiz; plays stay visible
+      case 'top-rated':       return new Set(['dateAdded', 'lastPlayedAt', 'playCount', 'channelMode']) // Starred is binary; counts add noise
+      case 'best-of-year':    return new Set(['dateAdded', 'lastPlayedAt', 'channelMode'])              // the signals that ranked it stay visible
+      default:                return new Set(['dateAdded', 'lastPlayedAt', 'playCount', 'channelMode']) // picks views — meta-light
     }
   }, [playlistId])
   const [hiddenCols, setHiddenCols] = useState<Set<string>>(defaultHidden)
@@ -629,6 +631,7 @@ export default function SmartPlaylistView() {
         case 'year': av = a.year || 0; bv = b.year || 0; break
         case 'time': av = a.duration || 0; bv = b.duration || 0; break
         case 'dateAdded': av = a.dateAdded || ''; bv = b.dateAdded || ''; break
+        case 'lastPlayedAt': { const d = lastPlayedEverywhere(a, elsewhere) - lastPlayedEverywhere(b, elsewhere); return sortDir === 'asc' ? d : -d }
         case 'playCount': { const d = playsEverywhere(a, elsewhere) - playsEverywhere(b, elsewhere); return sortDir === 'asc' ? d : -d }
         case 'rating': av = a.rating || 0; bv = b.rating || 0; break
         case 'channelMode': av = a.channelMode || ''; bv = b.channelMode || ''; break
@@ -1288,7 +1291,9 @@ export default function SmartPlaylistView() {
                   case 'year':
                     return <div key={col.key} className="songs-cell">{track.year || ''}</div>
                   case 'dateAdded':
-                    return <div key={col.key} className="songs-cell">{formatAppDate(track.dateAdded)}</div>
+                    return <div key={col.key} className="songs-cell">{formatAppDateTime(track.dateAdded)}</div>
+                  case 'lastPlayedAt':
+                    return <div key={col.key} className="songs-cell">{formatAppDateTime(lastPlayedEverywhere(track, elsewhere))}</div>
                   case 'playCount':
                     return <div key={col.key} className="songs-cell songs-cell--plays">{playsEverywhere(track, elsewhere) || ''}</div>
                   default:

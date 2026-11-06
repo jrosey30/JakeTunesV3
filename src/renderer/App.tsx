@@ -815,6 +815,9 @@ function AppInner() {
   // pulls it, and the mobile backend drops its now-redundant sidecar row.
   const absorbMobileImports = useCallback((rows: unknown[], overrides?: Record<string, { fp?: string; fields?: Record<string, string> }>) => {
     try {
+      // The library hasn't loaded: anything absorbed now is wiped when it lands, and the row is
+      // only offered again later. The pull below runs once it has.
+      if (libStateRef.current.tracks.length === 0) return
       const existingIds = new Set(libStateRef.current.tracks.map((t) => t.id))
       const existingPaths = new Set(libStateRef.current.tracks.map((t) => t.path))
       const justDeleted = (fp: unknown) => typeof fp === 'string' && Date.now() - (goneFingerprintsRef.current.get(fp) ?? 0) < 15_000
