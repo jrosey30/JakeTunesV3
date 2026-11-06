@@ -16,8 +16,11 @@
  * the eq.ts broadcast audio routing, the stingers. NEVER pins Howler.ctx (see
  * feedback_audiocontext_pin) — it only routes <audio> elements into the existing
  * master analyser via attach*ToBroadcast.
+ *
+ * 2026-11-06: a break is one take, not one recording per line (one-take.ts).
  */
-import type { RadioLine, RadioSegment, SpeakerId } from './types'
+import type { CaptionCue, RadioLine, RadioSegment, RadioUnit, SpeakerId } from './types'
+import { playUnits, startTake, synthesizeUnits } from './one-take'
 import { audioFromBase64Mpeg } from '../audio/base64-audio'
 import { setBroadcastTimed, setRadio } from '../activity'
 import { attachClipToBroadcast, attachAnnouncerToBroadcast, detachClipFromBroadcast } from '../audio/eq'
@@ -119,36 +122,50 @@ export class RadioEngine {
     return lines
   }
 
-  /** TTS every line, in parallel with a small concurrency cap (matches V1). */
+  /** Voice the break: one call per run of hosts and callers, one per announcer
+   *  line, in parallel with a small concurrency cap (matches V1). */
   async synthesize(seg: RadioSegment): Promise<void> {
-    const CAP = 4
-    let i = 0
-    const worker = async (): Promise<void> => {
-      while (i < seg.lines.length) {
-        const line = seg.lines[i++]
-        if (!line) break
-        const voiceId = this.byId.get(line.speaker)?.voiceId
-        try {
-          const tts = await window.electronAPI.musicmanSpeak(line.text, false, voiceId)
-          if (tts.ok && tts.audio) line.audio = tts.audio
-          else console.warn(`[radioV2] TTS dropped [${line.speaker}]:`, tts.error || '')
-        } catch (err) {
-          console.warn(`[radioV2] TTS error [${line.speaker}]:`, err)
-        }
-      }
-    }
-    await Promise.all(Array.from({ length: Math.min(CAP, seg.lines.length) }, () => worker()))
+    seg.units = await synthesizeUnits(seg.lines, {
+      voiceIdFor: (speaker) => this.byId.get(speaker)?.voiceId,
+      dialogue: (inputs) => window.electronAPI.radioDialogue(inputs),
+      speak: (text, voiceId) => window.electronAPI.musicmanSpeak(text, false, voiceId),
+      warn: (message, detail) => console.warn(message, detail),
+    })
   }
 
-  /** Play a segment's lines in order — the sequencer. Phase 1 reproduces V1
-   *  (strictly sequential). Phase 2 adds intentional inter-line beats and REAL
-   *  overlap when `line.overlap` is set (the stiff-pacing fix). */
+  /** Play a segment's units in order — the sequencer. */
   async playSegment(seg: RadioSegment): Promise<void> {
-    for (const line of seg.lines) {
-      if (this.stopped) return
-      if (!line.audio) continue
-      await this.playLine(line)
-    }
+    await playUnits(seg.units ?? [], {
+      playTake: (take) => this.playTake(take),
+      playLine: (line) => this.playLine(line),
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      isStopped: () => this.stopped,
+    })
+  }
+
+  /** One run of lines in one recording, through the same broadcast routing as a
+   *  line. The caption moves from speaker to speaker with the clock. */
+  private playTake(take: Extract<RadioUnit, { kind: 'take' }>): Promise<void> {
+    return new Promise((resolve) => {
+      const audio = audioFromBase64Mpeg(take.audio)
+      this.currentAudio = audio
+      attachClipToBroadcast(audio)
+      const finish = startTake(audio, take.cues, {
+        waitReady: () => this.waitMeta(audio),
+        live: () => this.currentAudio === audio,
+        show: (cue: CaptionCue) => {
+          const durationMs = (cue.endSec - cue.startSec) * 1000
+          cue.line.durationMs = durationMs
+          setBroadcastTimed({ speaker: this.byId.get(cue.line.speaker)?.label || '', text: stripAudioTags(cue.line.text) }, durationMs)
+        },
+        done: () => {
+          if (this.finishCurrent === finish) this.finishCurrent = null
+          try { detachClipFromBroadcast(audio) } catch { /* ignore */ }
+          resolve()
+        },
+      })
+      this.finishCurrent = finish
+    })
   }
 
   private playLine(line: RadioLine): Promise<void> {
@@ -214,7 +231,7 @@ export class RadioEngine {
       const seg = await this.generateSegment(req)
       if (seg) {
         await this.synthesize(seg)
-        if (seg.lines.some((l) => l.audio)) this.cache.set(cacheKey, seg)
+        if (seg.units?.length) this.cache.set(cacheKey, seg)
       }
     } catch (err) {
       console.warn('[radioV2] prefetch failed:', err)
@@ -235,7 +252,7 @@ export class RadioEngine {
       seg = (await this.generateSegment(req)) ?? undefined
       if (seg) await this.synthesize(seg)
     }
-    if (!seg || !seg.lines.some((l) => l.audio)) return false
+    if (!seg?.units?.length) return false
     await this.playSegment(seg)
     return true
   }
@@ -246,7 +263,7 @@ export class RadioEngine {
     const seg = await this.generateSegment({ ...req, opener: true })
     if (!seg) return false
     await this.synthesize(seg)
-    if (!seg.lines.some((l) => l.audio)) return false
+    if (!seg.units?.length) return false
     await this.playSegment(seg)
     return true
   }

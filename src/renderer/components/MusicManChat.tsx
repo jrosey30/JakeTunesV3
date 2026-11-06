@@ -40,7 +40,7 @@ export interface ChatMessage {
   content: string
   // 4.5: tagged version of the assistant's response (with ElevenLabs
   // [scoff]/[laughs]/[softer]/etc. inline). Hidden from display — `content`
-  // is the stripped-clean version — but used by the speaker button so v3 still
+  // is the stripped-clean version — but used by the speaker button so v4 still
   // performs the dialogue expressively when the user opts into hearing it.
   contentRaw?: string
   /** The playlist his create_playlist tool made on this turn — drives the
@@ -186,7 +186,7 @@ export default function MusicManChat({ variant, contextLine }: Props) {
       }
       // 4.5: store BOTH the stripped text (for display) and the raw text with
       // [scoff]/[laughs] tags intact (for the speaker button to feed ElevenLabs
-      // v3). textRaw defaults to text on older builds + error paths.
+      // v4). textRaw defaults to text on older builds + error paths.
       const finalMessages: ChatMessage[] = [...newMessages, {
         role: 'assistant',
         content: result.text,

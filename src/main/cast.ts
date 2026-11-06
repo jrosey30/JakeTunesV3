@@ -5,8 +5,8 @@
 // This module is the single source of truth for caller data. The
 // musicman-radio IPC handler imports CALLERS to inject per-caller
 // prompt instructions; the renderer imports the voice IDs + tags for
-// parsing and TTS routing; the radio handler uses VOICE_SETTINGS for
-// per-call ElevenLabs delivery tuning.
+// parsing and TTS routing. Delivery is not per caller any more: since
+// 2026-11-06 everyone speaks on one settings pair (eleven-speech.ts).
 
 import { LARRY_VOICE_ID } from '../common/cohost.ts'
 
@@ -37,13 +37,6 @@ export interface Caller {
   larryReaction: string
   /** Hard rules for what this caller never does. */
   never: string[]
-  /** Per-caller ElevenLabs voice settings. */
-  voiceSettings: {
-    stability: number
-    similarity_boost: number
-    style: number
-    use_speaker_boost?: boolean
-  }
 }
 
 export const CALLERS: Record<string, Caller> = {
@@ -71,7 +64,6 @@ export const CALLERS: Record<string, Caller> = {
       `Never tries to be funny — funny because earnest.`,
       `Never references previous calls he's made.`,
     ],
-    voiceSettings: { stability: 0.55, similarity_boost: 0.75, style: 0.35 },
   },
 
   rajiv: {
@@ -95,13 +87,14 @@ export const CALLERS: Record<string, Caller> = {
       `Never as rambling as Giovanni.`,
       `Doesn't call about specific tracks — calls about the show's framing.`,
     ],
-    voiceSettings: { stability: 0.55, similarity_boost: 0.75, style: 0.35 },
   },
 
   bernard: {
     id: 'bernard',
     name: 'Bernard',
     tag: 'BERNARD',
+    // Gone from ElevenLabs (404 since at least 2026-11-05). Jake picks the
+    // replacement; until then his lines drop and the rest of the break plays.
     voiceId: 'Q0HZwrR1H2SmRvd5cX3U',
     weight: 1,  // ≈1 in 8 — the rarest, most precious caller
     fn: `The elder statesman. Lived experience MM is forced to defer to. Bernard was actually there — CBGB, the Loft, Danceteria, Paradise Garage door. Calls in occasionally to gently correct MM's historical claims with first-person memory.`,
@@ -120,7 +113,6 @@ export const CALLERS: Record<string, Caller> = {
       `Doesn't say "back in my day."`,
       `His authority is implicit, never asserted. When he talks about Levan he says "Levan", never just "Larry": Larry's the host.`,
     ],
-    voiceSettings: { stability: 0.65, similarity_boost: 0.8, style: 0.25 },
   },
 
   lashonte: {
@@ -145,7 +137,6 @@ export const CALLERS: Record<string, Caller> = {
       `Doesn't use slang to perform youth.`,
       `Doesn't apologize for her takes.`,
     ],
-    voiceSettings: { stability: 0.5, similarity_boost: 0.78, style: 0.45 },
   },
 
   kristina: {
@@ -169,7 +160,6 @@ export const CALLERS: Record<string, Caller> = {
       `Doesn't try to convert anyone.`,
       `Not a metal evangelist — just impatient that the show pretends metal doesn't exist.`,
     ],
-    voiceSettings: { stability: 0.55, similarity_boost: 0.75, style: 0.4 },
   },
 
   devin: {
@@ -192,7 +182,6 @@ export const CALLERS: Record<string, Caller> = {
       `Not playing dumb — genuinely on a different wavelength.`,
       `Comedy is sincerity, not performance.`,
     ],
-    voiceSettings: { stability: 0.5, similarity_boost: 0.7, style: 0.5 },
   },
 
   maya: {
@@ -216,7 +205,6 @@ export const CALLERS: Record<string, Caller> = {
       `Refuses to perform expertise.`,
       `Asks one question per call — gets her answer, says thanks, hangs up.`,
     ],
-    voiceSettings: { stability: 0.6, similarity_boost: 0.8, style: 0.3 },
   },
 
   mike: {
@@ -241,7 +229,6 @@ export const CALLERS: Record<string, Caller> = {
       `Doesn't pretend to be objective — clear that he has angles, just won't say what they are.`,
       `Never says where he heard something.`,
     ],
-    voiceSettings: { stability: 0.55, similarity_boost: 0.78, style: 0.3 },
   },
 
   zoe: {
@@ -266,7 +253,6 @@ export const CALLERS: Record<string, Caller> = {
       `Doesn't engage with MM's counter-evidence on its merits — dismisses it and doubles down.`,
       `Not stupid — committed. Should sound SURE.`,
     ],
-    voiceSettings: { stability: 0.45, similarity_boost: 0.75, style: 0.55 },
   },
 }
 
@@ -316,7 +302,7 @@ export function callerForTag(tag: string): Caller | null {
 // TTS handler (host voiceId + voiceSettings, index.ts ~5808), and the renderer
 // (voiceIdForRadioSpeaker + RADIO_SPEAKER_LABEL + the parse switch, Toolbar).
 // RADIO_CAST collapses all of it into ONE list — hosts + announcer + the 9
-// callers, each with its tag, pill label, voice id, and delivery settings.
+// callers, each with its tag, pill label and voice id.
 // Adding a host or caller becomes ONE entry here. Consumed only by the radioV2
 // path; V1 is untouched (CALLERS / buildCallerSegmentMode still stand).
 //
@@ -335,20 +321,17 @@ export interface RadioCastMember {
   /** Display label for the now-playing pill. */
   label: string
   kind: RadioCastKind
-  /** ElevenLabs voice id. undefined → the server-side default voice (The Music Man). */
+  /** ElevenLabs voice id. undefined → musicManVoiceId(), this Mac's Music Man. */
   voiceId?: string
-  voiceSettings?: { stability: number; similarity_boost: number; style: number; use_speaker_boost?: boolean }
 }
 
-/** The four fixed studio voices. voiceIds + settings are lifted verbatim from the
- *  V1 TTS path so V2 sounds identical. (Verify `label`s against V1's
+/** The four fixed studio voices. (Verify `label`s against V1's
  *  RADIO_SPEAKER_LABEL when the engine is wired in Phase 1's final step.) */
 const RADIO_HOSTS: RadioCastMember[] = [
-  // 'mm' settings changed 2026-10-16 (Jake picked take B). ⚠️ TWIN: src/main/ipc/ai-ipc.ts musicman-speak Music Man branch.
-  { id: 'mm',        name: 'The Music Man',    tag: 'MM',        label: 'The Music Man', kind: 'host',      voiceId: undefined,              voiceSettings: { stability: 0.5,  similarity_boost: 0.75, style: 0.35 } },
-  { id: 'larry',     name: 'Larry',            tag: 'LARRY',     label: 'Larry',         kind: 'host',      voiceId: LARRY_VOICE_ID, voiceSettings: { stability: 0.2,  similarity_boost: 0.7,  style: 0.85 } },
-  { id: 'announcer', name: 'Announcer',        tag: 'ANNOUNCER', label: 'WJLR',          kind: 'announcer', voiceId: 'CeNX9CMwmxDxUF5Q2Inm', voiceSettings: { stability: 0.75, similarity_boost: 0.85, style: 0.45 } },
-  { id: 'stephen',   name: 'DJ Stephen Hands', tag: 'STEPHEN',   label: 'Stephen Hands', kind: 'host',      voiceId: 'ApBE43wHy5MiZGz9ihqB', voiceSettings: { stability: 0.45, similarity_boost: 0.8,  style: 0.55 } },
+  { id: 'mm',        name: 'The Music Man',    tag: 'MM',        label: 'The Music Man', kind: 'host',      voiceId: undefined },
+  { id: 'larry',     name: 'Larry',            tag: 'LARRY',     label: 'Larry',         kind: 'host',      voiceId: LARRY_VOICE_ID },
+  { id: 'announcer', name: 'Announcer',        tag: 'ANNOUNCER', label: 'WJLR',          kind: 'announcer', voiceId: 'CeNX9CMwmxDxUF5Q2Inm' },
+  { id: 'stephen',   name: 'DJ Stephen Hands', tag: 'STEPHEN',   label: 'Stephen Hands', kind: 'host',      voiceId: 'ApBE43wHy5MiZGz9ihqB' },
 ]
 
 /** Callers derived from CALLERS so there's never a second copy to drift. */
@@ -359,7 +342,6 @@ const RADIO_CALLERS: RadioCastMember[] = Object.values(CALLERS).map((c) => ({
   label: c.name,
   kind: 'caller' as const,
   voiceId: c.voiceId,
-  voiceSettings: c.voiceSettings,
 }))
 
 export const RADIO_CAST: RadioCastMember[] = [...RADIO_HOSTS, ...RADIO_CALLERS]
@@ -373,3 +355,22 @@ export const RADIO_CAST_BY_TAG: Record<string, RadioCastMember> =
 /** Valid speaker ids — handed to the generator so it can only emit a real cast
  *  member, and used to validate the structured output. */
 export const RADIO_SPEAKER_IDS: string[] = RADIO_CAST.map((m) => m.id)
+
+/** The Music Man's voice on this Mac: the userData .env, then the code default. */
+export function musicManVoiceId(): string {
+  return process.env.ELEVENLABS_VOICE_ID || 'ljX1ZrXuDIIRVcmiVSyR'
+}
+
+/** The cast as the renderer gets it, every member with a real voice id. The
+ *  Music Man's has to be spelled out: left undefined, musicman-speak falls to the
+ *  active host's voice, so with Larry as the mic host the Music Man's radio lines
+ *  came out in Larry's voice. */
+export function radioCastForRenderer(mmVoiceId: string): Array<{ id: string; tag: string; label: string; voiceId?: string; kind: string }> {
+  return RADIO_CAST.map((m) => ({
+    id: m.id,
+    tag: m.tag,
+    label: m.label,
+    voiceId: m.voiceId ?? (m.id === 'mm' ? mmVoiceId : undefined),
+    kind: m.kind,
+  }))
+}
