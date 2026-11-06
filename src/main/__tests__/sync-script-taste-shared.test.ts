@@ -14,16 +14,10 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync, rmSync, readdirSync, utimesSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-
-// At home: the route to the NAS's LAN address has no gateway.
-const STUB_ROUTE_HOME = `#!/bin/bash
-echo 'interface: en0'
-exit 0
-`
+import { runSyncScript } from './sync-script-run.ts'
 
 const repoRoot = join(import.meta.dirname, '..', '..', '..')
 const scriptPath = join(repoRoot, 'Dr. Claude', 'scripts', 'jaketunes-homemini-sync.sh')
@@ -110,9 +104,7 @@ function runScript(args: string[], opts: { local?: Record<string, string>; remot
   const root = mkdtempSync(join(tmpdir(), 'jt-taste-sync-'))
   const bin = join(root, 'bin')
   mkdirSync(bin)
-  // mount and route are stubs, never this machine's: with the real table the script
-  // adopts the real share and stats it.
-  for (const [name, body] of [['rsync', STUB_RSYNC], ['ssh', STUB_SSH], ['scutil', STUB_SCUTIL], ['osascript', STUB_OSASCRIPT], ['mount', STUB_OSASCRIPT], ['route', STUB_ROUTE_HOME]]) {
+  for (const [name, body] of [['rsync', STUB_RSYNC], ['ssh', STUB_SSH], ['scutil', STUB_SCUTIL], ['osascript', STUB_OSASCRIPT]]) {
     writeFileSync(join(bin, name), body)
     chmodSync(join(bin, name), 0o755)
   }
@@ -133,14 +125,10 @@ function runScript(args: string[], opts: { local?: Record<string, string>; remot
   mkdirSync(join(root, 'lib'), { recursive: true })
   const calls = join(root, 'calls.txt')
   writeFileSync(calls, '')
-  const r = spawnSync('/bin/bash', [scriptPath, ...args], {
-    env: {
-      HOME: home, PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`, STUB_CALLS: calls, STUB_REMOTE: remote,
-      JT_SYNC_LOG: join(root, 'sync.log'), JT_SYNC_LOCK: join(root, 'sync.lock'), JT_HOMEMINI: 'test@stub',
-      JT_LIBRARY_ROOT: join(root, 'lib'), JT_MOUNT: join(root, 'nas'), JT_MOUNT_TOOLS_FROM_PATH: '1', ...opts.env,
-    },
-    encoding: 'utf8',
-    timeout: 60_000,
+  const r = runSyncScript(args, bin, {
+    HOME: home, PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`, STUB_CALLS: calls, STUB_REMOTE: remote,
+    JT_SYNC_LOG: join(root, 'sync.log'), JT_SYNC_LOCK: join(root, 'sync.lock'), JT_HOMEMINI: 'test@stub',
+    JT_LIBRARY_ROOT: join(root, 'lib'), JT_MOUNT: join(root, 'nas'), ...opts.env,
   })
   const log = existsSync(join(root, 'sync.log')) ? readFileSync(join(root, 'sync.log'), 'utf8') : ''
   const out: Run = {

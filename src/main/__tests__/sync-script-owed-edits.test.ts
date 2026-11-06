@@ -15,13 +15,11 @@
  */
 import { after, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
 import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { runSyncScript } from './sync-script-run.ts'
 
-const repoRoot = join(import.meta.dirname, '..', '..', '..')
-const scriptPath = join(repoRoot, 'Dr. Claude', 'scripts', 'jaketunes-homemini-sync.sh')
 const HUB_DIR = 'Library/Application Support/JakeTunes'
 const STATE_FILES = ['library.json', 'playlists.json', 'play-events.jsonl']
 const F = 'iPod_Control/Music/F04'
@@ -57,7 +55,7 @@ exit 0
 `
 
 const bin = mkdtempSync(join(tmpdir(), 'jt-sync-owed-bin-'))
-for (const [name, body] of [['rsync', STUB_RSYNC], ['ssh', STUB_SSH], ['osascript', STUB_OK], ['scutil', STUB_SCUTIL], ['mount', STUB_OK], ['route', STUB_ROUTE]]) {
+for (const [name, body] of [['rsync', STUB_RSYNC], ['ssh', STUB_SSH], ['osascript', STUB_OK], ['scutil', STUB_SCUTIL], ['route', STUB_ROUTE]]) {
   writeFileSync(join(bin, name), body)
   chmodSync(join(bin, name), 0o755)
 }
@@ -95,23 +93,18 @@ function makeWorld() {
     leftovers: (): string[] => readdirSync(data).filter((n) => n.startsWith(OWED)).sort(),
     pass(args: string[], env: Record<string, string> = {}): Pass {
       writeFileSync(listFile, '')
-      const r = spawnSync('/bin/bash', [scriptPath, ...args], {
-        env: {
-          HOME: home,
-          PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`,
-          STUB_LIST: listFile,
-          STUB_OWED: owedPath,
-          JT_SYNC_LOG: join(root, 'sync.log'),
-          JT_SYNC_LOCK: join(root, 'sync.lock'),
-          JT_HOMEMINI: 'test@stub',
-          JT_LIBRARY_ROOT: lib,
-          JT_MOUNT: join(root, 'nas'),
-          JT_MOUNT_TOOLS_FROM_PATH: '1',
-          JT_PLEX_SKIP: '1',
-          ...env,
-        },
-        encoding: 'utf8',
-        timeout: 60_000,
+      const r = runSyncScript(args, bin, {
+        HOME: home,
+        PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`,
+        STUB_LIST: listFile,
+        STUB_OWED: owedPath,
+        JT_SYNC_LOG: join(root, 'sync.log'),
+        JT_SYNC_LOCK: join(root, 'sync.lock'),
+        JT_HOMEMINI: 'test@stub',
+        JT_LIBRARY_ROOT: lib,
+        JT_MOUNT: join(root, 'nas'),
+        JT_PLEX_SKIP: '1',
+        ...env,
       })
       const log = existsSync(join(root, 'sync.log')) ? readFileSync(join(root, 'sync.log'), 'utf8') : ''
       return { list: readFileSync(listFile, 'utf8').split('\n').filter(Boolean).sort(), status: r.status, log }

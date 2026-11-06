@@ -17,7 +17,7 @@ import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { safeIpcError } from '../safe-ipc-error.ts'
 import { setShowPlan, clearShowPlan, clearMemory } from '../radio-memory.ts'
-import { RADIO_CAST, CALLERS } from '../cast.ts'
+import { musicManVoiceId, radioCastForRenderer } from '../cast.ts'
 import { LARRY_VOICE_ID } from '../../common/cohost.ts'
 import { allowWithinRateLimit } from '../url-safety.ts'
 import { MUSIC_MAN_CORE } from '../personas.ts'
@@ -34,7 +34,8 @@ import { wholeSentences } from '../../common/sentences.ts'
 import { albumNotesKey, createAlbumNotesStore, type AlbumNotesStore } from '../album-notes.ts'
 import { cleanAiProse } from '../../common/clean-ai-prose.ts'
 import { isWeakBlurb } from '../../common/weak-blurb.ts'
-import { pitchShiftMp3, pitchSemitonesFromEnv, speedFromEnv } from '../voice-pitch'
+import { speakFast, speakTake, speakText } from '../eleven-speech.ts'
+import { MAX_DIALOGUE_CHARS, type DialogueInput } from '../../common/speech.ts'
 
 export interface AiIpcHost {
   setClaudeDailyCeiling: (ceiling: number) => Promise<{ ok: boolean; dailyCeiling: number }>
@@ -93,10 +94,7 @@ export function registerAiIpc(ipc: IpcRegistrar, host: AiIpcHost): void {
   }, { refuse: REFUSED_SENDER })
 
   ipc.handle('radio-get-cast', async () => {
-    return {
-      ok: true,
-      cast: RADIO_CAST.map((m) => ({ id: m.id, tag: m.tag, label: m.label, voiceId: m.voiceId, kind: m.kind })),
-    }
+    return { ok: true, cast: radioCastForRenderer(musicManVoiceId()) }
   }, { public: true })
 
   ipc.handle('radio-clear-show-plan', async () => {
@@ -164,104 +162,50 @@ export function registerAiIpc(ipc: IpcRegistrar, host: AiIpcHost): void {
 
   // ── Thin Music Man surfaces ──────────────────────────────────────────
 
+  // One bucket for both doors, 60 calls a minute: a break is one to three calls
+  // now, and the per-line fallback (a dozen lines at most) still fits, so all
+  // this ever stops is a renderer gone wrong.
+  const ttsAllowed = (): boolean => allowWithinRateLimit(ttsRateBucket, 'musicman-speak', 60, 60_000)
+  const voiceIsOff = async (): Promise<boolean> => {
+    const settings = await host.readAppSettings()
+    const ai = (settings?.ai as { musicManVoiceEnabled?: boolean } | undefined)
+    return ai?.musicManVoiceEnabled === false
+  }
+
   ipc.handle('musicman-speak', async (_event, text: string, fast?: boolean, voiceId?: string) => {
-    if (!allowWithinRateLimit(ttsRateBucket, 'musicman-speak', 60, 60_000)) {
+    if (!ttsAllowed()) {
       return { ok: false, error: 'TTS rate limit — try again in a moment.' }
     }
     const spoken = typeof text === 'string' ? text.slice(0, 4000) : ''
     if (!spoken.trim()) return { ok: true, audio: '' }
     try {
-      const settings = await host.readAppSettings()
-      const ai = (settings?.ai as { musicManVoiceEnabled?: boolean } | undefined)
-      if (ai && ai.musicManVoiceEnabled === false) {
-        return { ok: true, audio: '' }
-      }
-      const defaultByHost = host.readActiveHost() === 'larry'
-        ? LARRY_VOICE_ID
-        : (process.env.ELEVENLABS_VOICE_ID || 'ljX1ZrXuDIIRVcmiVSyR')
-      const voice = voiceId || defaultByHost
-      const v3Enabled = (process.env.ELEVENLABS_V3 ?? '1') !== '0' && (process.env.ELEVENLABS_V3 ?? '1').toLowerCase() !== 'false'
-      const modelChain = fast
-        ? ['eleven_flash_v2_5']
-        : (v3Enabled ? ['eleven_v3', 'eleven_turbo_v2_5'] : ['eleven_turbo_v2_5'])
-      const ANNOUNCER_VOICE_ID  = 'CeNX9CMwmxDxUF5Q2Inm'
-      const DJ_HANDS_VOICE_ID   = 'ApBE43wHy5MiZGz9ihqB'
-      const callerByVoice = Object.values(CALLERS).find(c => c.voiceId === voice)
-      // The Music Man's own voice (ELEVENLABS_VOICE_ID or the default).
-      const mmVoice = process.env.ELEVENLABS_VOICE_ID || 'ljX1ZrXuDIIRVcmiVSyR'
-      const voiceSettings =
-        voice === ANNOUNCER_VOICE_ID
-          ? {
-              stability: 0.75,
-              similarity_boost: 0.85,
-              style: 0.45,
-              use_speaker_boost: true,
-            }
-          : callerByVoice
-            ? callerByVoice.voiceSettings
-            : voice === DJ_HANDS_VOICE_ID
-              ? {
-                  stability: 0.45,
-                  similarity_boost: 0.8,
-                  style: 0.55,
-                  use_speaker_boost: true,
-                }
-              : voice === mmVoice
-                // Music Man (Jake, 2026-10-16: "too robotic", picked take B):
-                // v3 "Natural" stability, calmer style.
-                // ⚠️ TWIN: src/main/cast.ts RADIO_HOSTS 'mm' voiceSettings.
-                ? {
-                    stability: 0.5,
-                    similarity_boost: 0.75,
-                    style: 0.35,
-                    use_speaker_boost: true,
-                  }
-                : {
-                    stability: 0.2,
-                    similarity_boost: 0.7,
-                    style: 0.85,
-                    use_speaker_boost: true,
-                  }
-      let lastError = ''
-      for (const model of modelChain) {
-        try {
-          const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}`, {
-            method: 'POST',
-            headers: {
-              'xi-api-key': process.env.ELEVENLABS_API_KEY || '',
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              text: spoken,
-              model_id: model,
-              voice_settings: voiceSettings,
-            })
-          })
-          if (!res.ok) {
-            lastError = await res.text()
-            console.warn(`[TTS] ${model} failed for voice ${voice.slice(0, 8)}…: ${res.status} ${lastError.slice(0, 200)}`)
-            continue
-          }
-          const arrayBuf = await res.arrayBuffer()
-          if (model !== modelChain[0]) {
-            console.log(`[TTS] fell back to ${model} for voice ${voice.slice(0, 8)}…`)
-          }
-          // Music Man only (not Larry, callers, announcer, DJ): pitch per
-          // MUSIC_MAN_PITCH_SEMITONES in the userData .env (voice-pitch.ts).
-          const raw = Buffer.from(arrayBuf)
-          const audioBuf = voice === mmVoice
-            ? await pitchShiftMp3(raw, pitchSemitonesFromEnv(process.env.MUSIC_MAN_PITCH_SEMITONES), speedFromEnv(process.env.MUSIC_MAN_SPEED))
-            : raw
-          return { ok: true, audio: audioBuf.toString('base64') }
-        } catch (err: unknown) {
-          lastError = err instanceof Error ? err.message : String(err)
-          console.warn(`[TTS] ${model} threw for voice ${voice.slice(0, 8)}…: ${lastError}`)
-        }
-      }
-      return { ok: false, error: safeIpcError(lastError || 'all TTS models failed', 'api-failed') }
+      if (await voiceIsOff()) return { ok: true, audio: '' }
+      const voice = voiceId || (host.readActiveHost() === 'larry' ? LARRY_VOICE_ID : musicManVoiceId())
+      const audio = fast ? await speakFast(spoken, voice) : await speakText(spoken, voice)
+      return { ok: true, audio: audio.toString('base64') }
     } catch (err: unknown) {
-      const msg = safeIpcError(err, 'api-failed')
-      return { ok: false, error: msg }
+      return { ok: false, error: safeIpcError(err, 'api-failed') }
+    }
+  }, { refuse: REFUSED_SENDER })
+
+  // A radio break: one run of host and caller lines as one recording, plus when
+  // each line is speaking. A failure here is the renderer's cue to speak the run
+  // line by line through musicman-speak.
+  ipc.handle('radio-dialogue', async (_event, lines: DialogueInput[]) => {
+    if (!ttsAllowed()) {
+      return { ok: false, error: 'TTS rate limit — try again in a moment.' }
+    }
+    const inputs = Array.isArray(lines) ? lines : []
+    const valid = inputs.length > 0 && inputs.every((l) => typeof l?.text === 'string' && !!l.text.trim() && typeof l.voiceId === 'string' && !!l.voiceId)
+    if (!valid || inputs.reduce((sum, l) => sum + l.text.length, 0) > MAX_DIALOGUE_CHARS) {
+      return { ok: false, error: 'invalid-input' }
+    }
+    try {
+      if (await voiceIsOff()) return { ok: true, audio: '' }
+      const take = await speakTake(inputs)
+      return { ok: true, audio: take.audio.toString('base64'), segments: take.segments }
+    } catch (err: unknown) {
+      return { ok: false, error: safeIpcError(err, 'api-failed') }
     }
   }, { refuse: REFUSED_SENDER })
 

@@ -13,6 +13,10 @@
  * Any failure returns the ORIGINAL audio — the Music Man never goes silent
  * over a pitch tweak.
  *
+ * 2026-11-06: only mixtape talkovers (speech-to-speech, mixtapes.ts) still come
+ * through here. musicman-speak moved to eleven_v4, which doesn't lift his pitch
+ * the way v3 did, so it has no pitch or speed change at all (eleven-speech.ts).
+ *
  * No Electron imports, no extensionless siblings: node --test loads it.
  */
 import { execFile } from 'node:child_process'

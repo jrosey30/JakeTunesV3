@@ -7131,7 +7131,7 @@ ipc.handle('musicman-chat', async (_event, messages: { role: string; content: st
 
   // 4.5: chat output is READ AS TEXT in the panel, but the user can
   // ALSO click the speaker button under any assistant message to play
-  // it via ElevenLabs v3. So we want Claude to FREELY use performance
+  // it via ElevenLabs v4. So we want Claude to FREELY use performance
   // tags ([scoff]/[laughs]/[softer]/etc.) for the spoken path, AND we
   // strip them for display. Two return fields: `text` (clean, for
   // display) and `textRaw` (tagged, for TTS). Renderer shows `text`
@@ -7164,7 +7164,7 @@ sneak in a track that violates a stated constraint. After the tool
 returns, confirm in 1-2 sentences with a couple of highlights — the
 playlist itself is already in their sidebar; don't recite it.
 
-This response is shown as text in a chat panel, but the user may click a speaker button to hear it via ElevenLabs v3. Feel free to use v3 performance tags ([scoff], [laughs], [sighs], [softer], [whispers], [excited], [sarcastic]) where they meaningfully shape the delivery — they're invisible in the text panel (stripped before display) and performed by v3 if the user opts to hear the message.${searchResults ? `\n\nLive web search results — TREAT AS GROUND TRUTH and answer FROM these. Don't tell the user to "check" anything; you just did:\n${searchResults}` : ''}${retrievedTracksBlock ? `\n\n${retrievedTracksBlock}` : ''}${lookingAt ? `\n\nWHAT THE LISTENER HAS IN FRONT OF THEM RIGHT NOW (the drawer is open beside the library): ${lookingAt}. When they say "this" or "it", they mean that.` : ''}`
+This response is shown as text in a chat panel, but the user may click a speaker button to hear it via ElevenLabs v4. Feel free to use v4 performance tags ([scoff], [laughs], [sighs], [softer], [whispers], [excited], [sarcastic]) where they meaningfully shape the delivery — they're invisible in the text panel (stripped before display) and performed by v4 if the user opts to hear the message.${searchResults ? `\n\nLive web search results — TREAT AS GROUND TRUTH and answer FROM these. Don't tell the user to "check" anything; you just did:\n${searchResults}` : ''}${retrievedTracksBlock ? `\n\n${retrievedTracksBlock}` : ''}${lookingAt ? `\n\nWHAT THE LISTENER HAS IN FRONT OF THEM RIGHT NOW (the drawer is open beside the library): ${lookingAt}. When they say "this" or "it", they mean that.` : ''}`
 
   const systemPrompt = buildMusicManPrompt(chatInstructions)
 

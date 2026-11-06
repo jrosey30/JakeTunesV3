@@ -1,6 +1,7 @@
 /**
  * jaketunes-homemini-sync.sh run end to end against recording stubs for
- * ssh / rsync / osascript / scutil (2026-10-09).
+ * ssh / rsync / osascript / scutil (2026-10-09), with the mount tools faked by
+ * sync-script-run.ts.
  *
  * A replica (--skip-library-json) must push SAFELY:
  *   - its state goes to replicas/<name>/ on homemini, never over the hub's
@@ -14,19 +15,11 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { runSyncScript } from './sync-script-run.ts'
 
-// At home: the route to the NAS's LAN address has no gateway.
-const STUB_ROUTE_HOME = `#!/bin/bash
-echo 'interface: en0'
-exit 0
-`
-
-const repoRoot = join(import.meta.dirname, '..', '..', '..')
-const scriptPath = join(repoRoot, 'Dr. Claude', 'scripts', 'jaketunes-homemini-sync.sh')
 const HUB_DIR = 'Library/Application Support/JakeTunes'
 const STATE_FILES = [
   'library.json', 'metadata-overrides.json', 'playlists.json', 'play-events.jsonl', 'listening-log.jsonl',
@@ -74,9 +67,7 @@ function runScript(args: string[], env: Record<string, string> = {}): Run {
   try {
     const bin = join(root, 'bin')
     mkdirSync(bin)
-    // mount and route are stubs, never this machine's: with the real table the script
-    // adopts the real share and stats it.
-    for (const [name, body] of [['rsync', STUB_RSYNC], ['ssh', STUB_SSH], ['osascript', STUB_OSASCRIPT], ['scutil', STUB_SCUTIL], ['mount', '#!/bin/bash\nexit 0\n'], ['route', STUB_ROUTE_HOME]]) {
+    for (const [name, body] of [['rsync', STUB_RSYNC], ['ssh', STUB_SSH], ['osascript', STUB_OSASCRIPT], ['scutil', STUB_SCUTIL]]) {
       writeFileSync(join(bin, name), body)
       chmodSync(join(bin, name), 0o755)
     }
@@ -94,21 +85,16 @@ function runScript(args: string[], env: Record<string, string> = {}): Run {
     writeFileSync(join(data, 'artwork', 'abc.meta.json'), '{}')
     const calls = join(root, 'calls.txt')
     writeFileSync(calls, '')
-    const r = spawnSync('/bin/bash', [scriptPath, ...args], {
-      env: {
-        HOME: home,
-        PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`,
-        STUB_CALLS: calls,
-        JT_SYNC_LOG: join(root, 'sync.log'),
-        JT_SYNC_LOCK: join(root, 'sync.lock'),
-        JT_HOMEMINI: 'test@stub',
-        JT_LIBRARY_ROOT: join(root, 'lib'),
-        JT_MOUNT: join(root, 'nas'),
-        JT_MOUNT_TOOLS_FROM_PATH: '1',
-        ...env,
-      },
-      encoding: 'utf8',
-      timeout: 60_000,
+    const r = runSyncScript(args, bin, {
+      HOME: home,
+      PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`,
+      STUB_CALLS: calls,
+      JT_SYNC_LOG: join(root, 'sync.log'),
+      JT_SYNC_LOCK: join(root, 'sync.lock'),
+      JT_HOMEMINI: 'test@stub',
+      JT_LIBRARY_ROOT: join(root, 'lib'),
+      JT_MOUNT: join(root, 'nas'),
+      ...env,
     })
     const parsed = readFileSync(calls, 'utf8').split('\n').filter(Boolean).map((line) => {
       const [tool, ...rest] = line.split(SEP)
