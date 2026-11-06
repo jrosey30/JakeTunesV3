@@ -37,7 +37,7 @@ import {
   initListenerProfile, loadListenerProfile, saveListenerProfile, appendListeningEvent,
   addObservation, getListenerProfile, buildTasteProfile, type ListenerProfile,
 } from './listener-profile.ts'
-import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, shell, globalShortcut, nativeImage, systemPreferences } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, shell, globalShortcut, nativeImage, systemPreferences, session } from 'electron'
 import { writeJsonAtomic } from './atomic-write'
 import { resolveContainedPath, isPathInside } from './path-safety'
 import { isHomeminiPlaybackClient, mayFollowPlaybackSymlink } from './stream-playback'
@@ -215,6 +215,8 @@ import { summariseLearning, discoverVerdicts, type LedgerRow } from './discovery
 import { readSharedLedgerRows } from './taste-ledger-io.ts'
 import { discoveryFeedbackCache, sharedDiscoveryFeedback, recordNotForMe, recordAllowAgain } from './discovery-feedback.ts'
 import { JsonFileCache, flushAllCaches } from './state-cache'
+import { createQuitFinish, hardExit } from './quit-finish.ts'
+import { BANDCAMP_PARTITION } from './bandcamp-integration/partition'
 import { hashPayload, verifyLandedFile, stagePayloadAndRename } from './save-verify.ts'
 import { decideStagedRecovery, snapshotLibraryFile } from './staged-recovery.ts'
 import { fsyncFile, fsyncParentDir } from './fs-durability.ts'
@@ -10980,3 +10982,12 @@ app.on('before-quit', (e) => {
     app.quit()
   })()
 })
+// The last thing: flush what Chromium holds, then leave without waiting on the thread pool (quit-finish.ts).
+const quitSessions = () => (app.isReady() ? [session.defaultSession, session.fromPartition(BANDCAMP_PARTITION)] : [])
+const finishQuit = createQuitFinish({
+  flushStorage: () => { for (const s of quitSessions()) s.flushStorageData() },
+  flushCookies: () => Promise.all(quitSessions().map((s) => s.cookies.flushStore())),
+  librarySaved: () => librarySaveChain,
+  leave: hardExit,
+})
+app.on('will-quit', (e) => { e.preventDefault(); finishQuit() })

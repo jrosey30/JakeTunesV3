@@ -26,17 +26,29 @@ jaketunes-install-gate.sh <staged.app> <backup-name> [max-wait-min] [sha] [note]
      app said "install now" (below).
    The heavier checks run every 15 s; the app's go-file is stat'ed every 2 s.
    `max-wait-min` (default 45) bounds the wait; the pipeline passes 180.
-3. Install: `caffeinate`; quit by bundle id and wait for the process (by name,
-   `pgrep -x`) to go; re-check the asar mtime (another session installing
+3. Install: `caffeinate`; quit by bundle id and wait up to 30 s for the process
+   (by name, `pgrep -x`) to go, where a process on its way out (`ps` state E or
+   Z) counts as gone; re-check the asar mtime (another session installing
    mid-way = abort); move the old bundle to `~/<backup-name>` (outside
    /Applications, or LaunchServices keeps launching it); `ditto` the staged
    bundle in — on failure the previous build is moved back; strip quarantine,
-   verify the signature, `lsregister -f`, `open`. The last line reports the
+   verify the signature, `lsregister -f`, start the app. The last line reports the
    Mac, version, asar size/mtime, pid and where the previous build is.
+4. **The Mac is never left with no app** (2026-11-06). The quit can't be taken back,
+   so once it is asked for, the app is started again on every way out: install done,
+   any ABORT after that point, a TERM. It is started only when the old pid is really
+   gone, because `open` while a dying process still exists finds the old instance or
+   loses the single-instance lock, and starts nothing. If that takes more than 30 s, a
+   detached watcher does it (up to 30 minutes), and the last line says `pid pending`.
+   If the old process turns out never to have quit, the watcher starts nothing. On
+   11/5 a quit took 21 minutes: the gate gave up after 30 s and nothing started the
+   app when the process finally died.
 
 Exit codes the pipeline parses: `0` installed · `1` ABORT (a precondition,
 the app would not quit, the copy failed, the asar changed) · `3` the gate
 never cleared in `max-wait-min`. Every ABORT leaves the installed app as it was.
+The app itself leaves within about 4 s since 2026-11-06 (`src/main/quit-finish.ts`);
+a long wait now means the old build, or a write already in the kernel.
 
 ## "Update ready" — how the gate and the app talk
 
@@ -119,6 +131,7 @@ temp HOME with every Mac-only tool faked on PATH (`pmset`, `ioreg`,
 `caffeinate`, `scutil`, `ps`, `PlistBuddy`, `lsregister`) and a fake app
 bundle as the install target. The overrides it uses — `JT_GATE_APP`,
 `JT_GATE_DATA_DIR`, `JT_GATE_LSREGISTER`, `JT_GATE_PLISTBUDDY`,
-`JT_GATE_POLL_S`, `JT_GATE_GO_POLL_S` — all default to the real thing and are
+`JT_GATE_POLL_S`, `JT_GATE_GO_POLL_S`, `JT_GATE_QUIT_WAIT_S`, `JT_GATE_GONE_WAIT_S`,
+`JT_GATE_WATCH_S`, `JT_GATE_WATCH_POLL_S` — all default to the real thing and are
 not used by the pipeline. `src/main/__tests__/update-ready.test.ts` covers the
 app side and locks the wiring. Both run in `npm run check`.

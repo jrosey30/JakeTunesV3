@@ -52,17 +52,28 @@ printf '    | |   "HIDIdleTime" = %s\\n' "$(cat "$JT_FAKE/idle_ns")"
 `,
   osascript: `#!/bin/bash
 echo "osascript $*" >> "$JT_FAKE/calls.log"
+if [ -e "$JT_FAKE/pids" ]; then
+  # The process table world: quit_state says what the old process turns into.
+  [ -e "$JT_FAKE/quit_state" ] && cp "$JT_FAKE/quit_state" "$JT_FAKE/state_4242"
+  exit 0
+fi
 [ -e "$JT_FAKE/refuse_quit" ] || rm -f "$JT_FAKE/running"
 exit 0
 `,
   pgrep: `#!/bin/bash
 echo "pgrep $*" >> "$JT_FAKE/calls.log"
+if [ -e "$JT_FAKE/pids" ]; then
+  [ -s "$JT_FAKE/pids" ] || exit 1
+  cat "$JT_FAKE/pids"
+  exit 0
+fi
 if [ -e "$JT_FAKE/running" ]; then echo 4242; exit 0; fi
 exit 1
 `,
   ps: `#!/bin/bash
-pid=""
-while [ $# -gt 0 ]; do case "$1" in -p) pid="$2"; shift ;; esac; shift; done
+pid=""; fmt=""
+while [ $# -gt 0 ]; do case "$1" in -p) pid="$2"; shift ;; -o) fmt="$2"; shift ;; esac; shift; done
+if [ "$fmt" = "state=" ]; then cat "$JT_FAKE/state_$pid" 2>/dev/null || echo "S"; exit 0; fi
 cat "$JT_FAKE/ps_$pid" 2>/dev/null
 exit 0
 `,
@@ -75,8 +86,15 @@ echo "ditto $*" >> "$JT_FAKE/calls.log"
 [ -e "$JT_FAKE/ditto_fail" ] && exit 1
 cp -R "$1" "$2"
 `,
+  // With the old process still there, open finds it and starts nothing: the case the
+  // gate has to wait out (the old instance holds LaunchServices and the single-instance lock).
   open: `#!/bin/bash
 echo "open $*" >> "$JT_FAKE/calls.log"
+if [ -e "$JT_FAKE/pids" ]; then
+  if grep -q '^4242$' "$JT_FAKE/pids"; then echo "open-found-the-old-one" >> "$JT_FAKE/calls.log"; exit 0; fi
+  echo 5151 >> "$JT_FAKE/pids"
+  exit 0
+fi
 touch "$JT_FAKE/running"
 exit 0
 `,
@@ -125,7 +143,12 @@ for (const [name, body] of Object.entries(FAKES)) {
 }
 // The one the gate holds to a limit of its own (alarm 20): never its first run.
 execFileSync(join(bin, 'osascript'), { env: { ...process.env, JT_FAKE: bin } })
-after(() => rmSync(bin, { recursive: true, force: true }))
+// A detached watcher (the slow-quit cases) ends within a poll of its test's cleanup. Let
+// it, before the fakes' folder goes: it must never find the real tools on PATH.
+after(async () => {
+  await new Promise((r) => setTimeout(r, 1500))
+  rmSync(bin, { recursive: true, force: true })
+})
 
 const ASSERTIONS = {
   none: `Assertions status system-wide:
@@ -167,6 +190,13 @@ interface WorldOpts {
   backupExists?: boolean
   /** Heavy-check cadence in seconds (JT_GATE_POLL_S); long = prove the go-file path. */
   pollS?: number
+  /** What the old process turns into when asked to quit, in the process-table world. */
+  quitState?: string
+  /** Start in the process-table world (a pids file) with these pids; '' = no app running. */
+  pids?: string
+  quitWaitS?: number
+  goneWaitS?: number
+  watchS?: number
 }
 
 interface World {
@@ -183,6 +213,11 @@ interface World {
   writeGo: (sha: string) => void
   setAudio: (a: keyof typeof ASSERTIONS) => void
   setIdle: (s: number) => void
+  /** The old process finally dies. */
+  oldGone: () => void
+  /** Something else starts the app. */
+  newApp: () => void
+  pids: () => string
   run: (args: { sha?: string; note?: string; maxMin?: number }) => Gate
   cleanup: () => void
 }
@@ -208,6 +243,8 @@ function makeWorld(o: WorldOpts = {}): World {
   writeFileSync(join(fake, 'calls.log'), '')
   if (o.codesignExit) writeFileSync(join(fake, 'codesign_exit'), String(o.codesignExit))
   if (o.dittoFail) writeFileSync(join(fake, 'ditto_fail'), '')
+  if (o.pids !== undefined) writeFileSync(join(fake, 'pids'), o.pids)
+  if (o.quitState) writeFileSync(join(fake, 'quit_state'), `${o.quitState}\n`)
 
   const installedApp = join(root, 'Applications', 'JakeTunes.app')
   mkdirSync(join(installedApp, 'Contents', 'Resources'), { recursive: true })
@@ -232,6 +269,18 @@ function makeWorld(o: WorldOpts = {}): World {
     writeGo: (sha) => { const tmp = `${goFile}.${process.pid}.tmp`; writeFileSync(tmp, `${sha}\n`); renameSync(tmp, goFile) },
     setAudio: (a) => writeFileSync(join(fake, 'assertions'), ASSERTIONS[a]),
     setIdle: (s) => writeFileSync(join(fake, 'idle_ns'), String(s * 1_000_000_000)),
+    // Atomic, like the process table: a reader must never catch this half written.
+    oldGone: () => {
+      const tmp = join(fake, 'pids.tmp')
+      writeFileSync(tmp, readFileSync(join(fake, 'pids'), 'utf8').split('\n').filter((l) => l && l !== '4242').map((l) => `${l}\n`).join(''))
+      renameSync(tmp, join(fake, 'pids'))
+    },
+    newApp: () => {
+      const tmp = join(fake, 'pids.tmp')
+      writeFileSync(tmp, `${readFileSync(join(fake, 'pids'), 'utf8')}7777\n`)
+      renameSync(tmp, join(fake, 'pids'))
+    },
+    pids: () => readFileSync(join(fake, 'pids'), 'utf8'),
     // Five minutes, not the script's 45: the runner's own limit, so being slow never
     // trips this ABORT, and a gate that outlives its test goes soon after instead of
     // holding a CI run for 45 minutes (2026-10-30).
@@ -250,6 +299,11 @@ function makeWorld(o: WorldOpts = {}): World {
           JT_GATE_PLISTBUDDY: join(bin, 'PlistBuddy'),
           JT_GATE_POLL_S: String(o.pollS ?? 1),
           JT_GATE_GO_POLL_S: '0.1',
+          JT_GATE_QUIT_WAIT_S: String(o.quitWaitS ?? 30),
+          JT_GATE_GONE_WAIT_S: String(o.goneWaitS ?? 30),
+          // Always bounded here: a watcher that outlives this file's fakes would find the real open.
+          JT_GATE_WATCH_S: String(o.watchS ?? 8),
+          JT_GATE_WATCH_POLL_S: '0.1',
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       })
@@ -524,5 +578,135 @@ describe('install gate — the pre-protocol behaviour is unchanged', () => {
       assert.ok(!existsSync(unsigned.marker))
       assert.equal(readFileSync(unsigned.installedAsar, 'utf8'), OLD_ASAR)
     } finally { unsigned.cleanup() }
+  })
+})
+
+// 11/5: a quit took 21 minutes on one in-flight NAS write. The gate gave up after 30 s
+// with "did not quit", and when the old process finally died nothing started the app.
+describe('install gate — a slow quit never leaves the Mac with no app', () => {
+  const opens = (w: World): number => (w.calls().match(/^open -a /gm) ?? []).length
+
+  for (const [name, state] of [['trying to exit (E)', 'UE'], ['a zombie (Z)', 'Z']] as const) {
+    it(`a process ${name} counts as quit: the install goes on, and the app starts only once the old pid is gone`, async () => {
+      const w = makeWorld({ idleS: 130, pids: '4242\n', quitState: state })
+      try {
+        const g = w.run({})
+        await waitFor(() => /is exiting \(no code running\) — that counts as quit/.test(g.out()), 'the exiting line')
+        await waitFor(() => w.calls().includes(`lsregister -f ${w.installedApp}`), 'the copy, with the old pid still there')
+        assert.equal(readFileSync(w.installedAsar, 'utf8'), NEW_ASAR)
+        await sleep(400)
+        assert.equal(opens(w), 0, 'no open while the old process exists')
+        w.oldGone()
+        const r = await finished(g)
+        assert.equal(r.code, 0, g.out())
+        assert.equal(opens(w), 1)
+        assert.doesNotMatch(w.calls(), /open-found-the-old-one/)
+        assert.doesNotMatch(g.out(), /did not quit/)
+        assert.match(g.out(), /, pid 5151, previous kept at/, 'the new process, never the dying one')
+      } finally { w.cleanup() }
+    })
+  }
+
+  it('the old pid outlasts the wait: exit 0, "pid pending", and a watcher starts the app when it goes', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitState: 'UE', goneWaitS: 1, watchS: 20 })
+    try {
+      const g = w.run({})
+      const r = await finished(g)
+      assert.equal(r.code, 0, g.out())
+      assert.match(g.out(), /, pid pending, it starts when the old process is gone, previous kept at/)
+      assert.equal(readFileSync(w.installedAsar, 'utf8'), NEW_ASAR, 'the install is done')
+      await sleep(400)
+      assert.equal(opens(w), 0, 'still waiting on the old pid')
+      w.oldGone()
+      await waitFor(() => /5151/.test(w.pids()), 'the watcher starting the app')
+      assert.equal(opens(w), 1)
+      assert.doesNotMatch(w.calls(), /open-found-the-old-one/)
+    } finally { w.cleanup() }
+  })
+
+  it('still alive after the wait: ABORT, install untouched, and when it does go the app comes back', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 20 })
+    try {
+      const g = w.run({ sha: SHA })
+      const r = await finished(g)
+      assert.equal(r.code, 1)
+      assert.match(g.out(), /ABORT: JakeTunes did not quit — install untouched/)
+      assert.equal(readFileSync(w.installedAsar, 'utf8'), OLD_ASAR)
+      assert.doesNotMatch(w.calls(), /^ditto /m)
+      assert.ok(!existsSync(w.marker), 'markers removed on this abort too')
+      await sleep(400)
+      assert.equal(opens(w), 0, 'it is still alive: nothing to start')
+      w.oldGone()
+      await waitFor(() => /5151/.test(w.pids()), 'the app coming back')
+      assert.equal(opens(w), 1)
+    } finally { w.cleanup() }
+  })
+
+  it('…and if it never goes, the watcher gives up and starts nothing', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 1 })
+    try {
+      const r = await finished(w.run({}))
+      assert.equal(r.code, 1)
+      await sleep(1800)
+      assert.equal(opens(w), 0)
+    } finally { w.cleanup() }
+  })
+
+  it('…and if something else started the app meanwhile, the watcher leaves it alone', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 20 })
+    try {
+      await finished(w.run({}))
+      w.newApp()
+      w.oldGone()
+      await sleep(600)
+      assert.equal(opens(w), 0)
+    } finally { w.cleanup() }
+  })
+
+  it('killed after the quit was asked for: the app still comes back', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', watchS: 20 })
+    try {
+      const g = w.run({})
+      await waitFor(() => /^osascript /m.test(w.calls()), 'the quit')
+      g.child.kill('SIGTERM')
+      const r = await finished(g)
+      assert.equal(r.code, 143)
+      assert.equal(readFileSync(w.installedAsar, 'utf8'), OLD_ASAR)
+      w.oldGone()
+      await waitFor(() => opens(w) === 1, 'the app coming back')
+    } finally { w.cleanup() }
+  })
+
+  it('a TERM before the quit is asked for starts nothing: the app was never told to go', async () => {
+    const w = makeWorld({ idleS: 10, pids: '4242\n', watchS: 3 })
+    try {
+      const g = w.run({ sha: SHA })
+      await waitFor(() => existsSync(w.marker), 'update-ready.json')
+      g.child.kill('SIGTERM')
+      await finished(g)
+      w.oldGone()
+      await sleep(500)
+      assert.equal(opens(w), 0)
+    } finally { w.cleanup() }
+  })
+
+  it('no app running at the start: nothing to wait for, it is simply started', async () => {
+    const w = makeWorld({ idleS: 130, pids: '' })
+    try {
+      const g = w.run({})
+      const r = await finished(g)
+      assert.equal(r.code, 0, g.out())
+      assert.equal(opens(w), 1)
+      assert.match(g.out(), /, pid 5151, previous kept at/)
+    } finally { w.cleanup() }
+  })
+
+  it('an ABORT after a quit with the old pid gone starts the app at once, as before', async () => {
+    const w = makeWorld({ idleS: 130, dittoFail: true })
+    try {
+      const r = await finished(w.run({}))
+      assert.equal(r.code, 1)
+      assert.equal(opens(w), 1)
+    } finally { w.cleanup() }
   })
 })
