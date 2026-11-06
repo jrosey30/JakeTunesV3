@@ -243,6 +243,9 @@ export async function mergeLiveSet(
         const head = await readRange(seg.path, offset, PROBE_BYTES)
         seam = planSeam(pendingTail, head, BYTES_PER_SEC, FRAME)
         if (seam.unclosed) console.warn(`[live-set] the join into "${seg.input.title}" keeps a fault nothing here could close: ${seam.unclosed.holeMs.toFixed(1)} ms hole, step ${seam.unclosed.jumpOverSlope.toFixed(2)} x the local slope`)
+        if (seam.openGapMs) console.warn(`[live-set] the join into "${seg.input.title}" keeps ${seam.openGapMs} ms of silence at the cut, too long to close and too short to be a pause`)
+      } else if (si > 0) {
+        console.warn(`[live-set] the join into "${seg.input.title}" is not measured: a song beside it is 16 s or less, so it stays as it comes`)
       }
       const overlap = seam.overlapBytes
       // The cue sits where the next song takes over, not where the overlap

@@ -94,23 +94,43 @@ export function seamOverlapMs(tail: Envelope, head: Envelope, capMs = 4000, minM
  * What a plain join of these two moments would be, measured at sample level
  * (2026-11-06). `tailDb`/`headDb` are the room's level just either side of the
  * cut (median of 2 ms windows, 70-300 ms away, so the join itself can't move
- * them). `holeMs` is how long the cut sits 10 dB under both sides, in level and
- * in first difference alike. `jumpOverSlope` is the step across the cut against
- * the steepest step within 20 ms of it. `dipDb` is how far the cut sits under
- * the song bodies around the overlap, on the shallower side. `headArrivesMs` is
- * how soon after the cut the next song is within 10 dB of its body (null: not
- * in the time we can see).
+ * them). `holeMs` is how long a hole touching the cut lasts, 0 if none does.
+ * `jumpOverSlope` is the step across the cut against the steepest step within
+ * 20 ms of it. `tailDropDb`/`headDropDb` are how far the cut sits under that
+ * side's own body around the overlap, and `dipDb` is the shallower of the two.
+ * `headArrivesMs` is how soon after the cut the next song is within 10 dB of its
+ * body (null: not in the time we can see), and `headJumps` says most of that climb
+ * is one hard entry and not a fade. `tailStopsHard` is the same reading of the
+ * tail, backwards from the cut. `headSilentMs` is how much of the head before it
+ * arrives is digital silence.
  */
 export interface JoinFacts {
   tailDb: number
   headDb: number
   holeMs: number
   jumpOverSlope: number
+  tailDropDb: number
+  headDropDb: number
   dipDb: number
   headArrivesMs: number | null
+  headJumps: boolean
+  tailStopsHard: boolean
+  headSilentMs: number
 }
 
 const DB_FLOOR = -140
+/** A hole further than this from the cut is the music's own, not the join's. */
+const HOLE_TOUCH_MS = 1.5
+/** A notch: this far under what sits right beside the cut, in level and in first difference. */
+const NOTCH_LEVEL_DB = 18
+const NOTCH_DIFF_DB = 12
+/** A side is there once it's within this of its body. */
+const THERE_WITHIN_DB = 10
+/** Half of the climb inside the last 200 ms is an entry; a fade spreads it out. */
+const ENTRY_WINDOWS = 2
+const ENTRY_SHARE = 0.5
+/** Digital silence, or what's left of it after a lossy decode. */
+const SILENT_DB = -85
 function powerDb(p: number): number { return 10 * Math.log10(Math.max(p, 1e-14)) }
 function median(values: number[]): number {
   const v = [...values].sort((a, b) => a - b)
@@ -126,12 +146,27 @@ function rmsDbNoFloor(pcm: Buffer): number {
 }
 
 /**
+ * How one side of a join gets from the cut to its body. `levels` run outward from
+ * the cut, on the 100 ms grid. A climb with half of it inside its last 200 ms is an
+ * entry (a band, a stick, a note that stops): measured on Unplugged's rooms, 98% of
+ * it is. A fade of 0.6 s or more never gets there, whatever its depth, so this
+ * tells a short crowd fade from a band coming in where a clock can't.
+ */
+function climbFromCut(levels: number[], body: number): { at: number; hard: boolean } {
+  const at = levels.findIndex((db) => db >= body - THERE_WITHIN_DB)
+  if (at <= 0) return { at, hard: at === 0 }
+  const climb = levels[at] - Math.min(...levels.slice(0, at))
+  return { at, hard: levels[at] - levels[Math.max(0, at - ENTRY_WINDOWS)] >= ENTRY_SHARE * climb }
+}
+
+/**
  * Port of the audit's measures (blip_core.py hole_analysis + click_analysis,
  * build_report.py classify_xfade), with the hole read honestly: see the note on
  * the windows below. `tail` ends and `head` starts at the cut; `overlapBytes` is
  * the overlap the fades asked for, which sets where "the song bodies" are.
+ * `holeTouchMs` is how near the cut a hole has to come to count.
  */
-export function measurePlainJoin(tail: Buffer, head: Buffer, overlapBytes: number, bytesPerSec: number, frameBytes: number): JoinFacts {
+export function measurePlainJoin(tail: Buffer, head: Buffer, overlapBytes: number, bytesPerSec: number, frameBytes: number, holeTouchMs = HOLE_TOUCH_MS): JoinFacts {
   const ch = frameBytes / 2
   const rate = bytesPerSec / frameBytes
   const reach = Math.ceil(rate * 0.32)   // 300 ms plus one window
@@ -198,11 +233,24 @@ export function measurePlainJoin(tail: Buffer, head: Buffer, overlapBytes: numbe
     if (open && open.last === i - 1) open.last = i
     else runs.push({ first: i, last: i })
   }
-  let holeMs = 0
-  if (runs.length) {
-    const distance = (r: { first: number; last: number }): number => Math.min(Math.abs(fine.tMs[r.first]), Math.abs(fine.tMs[r.last]))
-    const nearest = runs.reduce((a, b) => (distance(b) < distance(a) ? b : a))
-    holeMs = (((nearest.last - nearest.first) * hop + 0.9 * fineWin) / rate) * 1000
+  // Only a hole that touches the cut is the join's. Music has gaps of its own, and one
+  // a few ms away used to lay two full-level songs over each other to fix nothing.
+  const touching = runs.find((r) => fine.tMs[r.first] <= holeTouchMs && fine.tMs[r.last] >= -holeTouchMs)
+  let holeMs = touching ? (((touching.last - touching.first) * hop + 0.9 * fineWin) / rate) * 1000 : 0
+  // Two soft edges in a dark room can miss that by a hair: the highs are already going
+  // 15-70 ms out, so the first difference has less far to fall. Nassau 0:34:58 is -40
+  // dBFS either side, -66 at the cut, 3 ms wide, and missed by 1.96 dB, so the one drop-out
+  // left in a show of 21 was going to be built in for good, while the same fault at -44
+  // dBFS two songs earlier was closed. So a V at the cut counts too, against what sits
+  // right beside it.
+  if (holeMs === 0) {
+    const beside = (arr: number[]): number => Math.min(medianBetween(fine.tMs, arr, -4, -2.5), medianBetween(fine.tMs, arr, 2.5, 4))
+    const atCut = (arr: number[]): number => Math.min(...arr.filter((_, i) => Math.abs(fine.tMs[i]) <= 1))
+    const room = beside(fine.eRaw)
+    if (atCut(fine.eRaw) <= room - NOTCH_LEVEL_DB && atCut(fine.eDiff) <= beside(fine.eDiff) - NOTCH_DIFF_DB) {
+      const under = fine.eRaw.filter((v, i) => Math.abs(fine.tMs[i]) <= 3 && v < room - 10).length
+      holeMs = (((under - 1) * hop + 0.9 * fineWin) / rate) * 1000
+    }
   }
 
   // The step across the cut, against the steepest step within 20 ms of it.
@@ -242,21 +290,29 @@ export function measurePlainJoin(tail: Buffer, head: Buffer, overlapBytes: numbe
   // When the next song is really there. Its body is what it sounds like once it
   // has settled: the loudest reading above, or the second half of what we can see.
   const settled = rmsDbNoFloor(head.subarray(Math.floor(head.length / 2 / frameBytes) * frameBytes))
-  const body = Math.max(post, settled)
-  const arrivesAt = rmsEnvelope(head, bytesPerSec).rmsDb.findIndex((db) => db >= body - 10)
+  const headLevels = rmsEnvelope(head, bytesPerSec).rmsDb
+  const headClimb = climbFromCut(headLevels, Math.max(post, settled))
+  const tailSettled = rmsDbNoFloor(tail.subarray(0, Math.floor(tail.length / 2 / frameBytes) * frameBytes))
+  const tailClimb = climbFromCut(rmsEnvelope(tail, bytesPerSec).rmsDb.reverse(), Math.max(pre, tailSettled))
+  const beforeArrival = headClimb.at >= 0 ? headLevels.slice(0, headClimb.at) : headLevels
 
   return {
     tailDb,
     headDb,
     holeMs,
     jumpOverSlope,
+    tailDropDb: pre - tailDb,
+    headDropDb: post - headDb,
     dipDb: Math.min(pre - tailDb, post - headDb),
-    headArrivesMs: arrivesAt >= 0 ? arrivesAt * 100 : null,
+    headArrivesMs: headClimb.at >= 0 ? headClimb.at * 100 : null,
+    headJumps: headClimb.hard,
+    tailStopsHard: tailClimb.hard,
+    headSilentMs: beforeArrival.filter((db) => db <= SILENT_DB).length * 100,
   }
 }
 
-/** Louder than this at the cut, on both sides, and the room is still there. */
-const ROOM_FLOOR_DB = -60
+/** A side this far under its own body at the cut has been faded away, at any mastering level. */
+const FADED_AWAY_DB = 40
 /** A pair of real fades digs at least this far under the song bodies. */
 const DEEP_DIP_DB = 25
 /** A tail this much louder than the head is a hard end above a head coming up
@@ -266,30 +322,43 @@ const CLIFF_DB = 10
 /** A tail this far under the head's opening, having come down from its body. */
 const FELL_UNDER_DB = 6
 const FELL_FROM_DB = 12
-/** The next song is within 10 dB of its body this soon: it came in hard. */
+/** A head room shorter than this is the next song's own start, not a room to fade under. */
 const ARRIVES_MS = 1000
+/** Digital silence this long before a hard start is a pause. Under it, no fade asks anyway. */
+const PAUSE_MS = 600
 
 /**
  * Were these fades real? 12 dB of drop asks for an overlap; this answers. An
  * overlap puts two moments of the show on top of each other, so it has to earn
  * it: the fades have to have taken the room away.
- *   • A side at the floor at the cut: faded out, down to nothing.
- *   • A tail far above the head at the cut: without an overlap, a cliff.
+ *   • A note that stops, digital silence, then a hard start: a pause, and it's on
+ *     the tape. An overlap deletes it and lays any count-in under the old song.
+ *   • A side faded far under its own body: faded out, down to nothing. Against
+ *     the music's own level, so a quiet record gets the same answer as a loud one
+ *     (at a fixed -60 dBFS, the real seams turned down 15 dB gave 22 false overlaps).
  *   • The next song comes in hard: no. There is no fade-in to rebuild, and an
  *     overlap only lays the old song's end over the new song's start, however
  *     quiet the cut is (Unplugged 0:12:28: the tape runs straight through the
- *     room at -46 dBFS on both sides, then the band comes in).
- *   • A deep dip with nothing arriving: a pair of real fades.
- *   • A tail that came down from its body to well under the room the head opens
- *     in: a room doesn't fall below its own floor, so the tail was faded under it
- *     (Geese, Alive 0:12:37: 36 dB in 4 s, to 10.8 dB under the head's room).
+ *     room at -46 dBFS on both sides, then the band comes in). The exception is
+ *     a tail faded under the room, next. Whether it's hard comes from the climb and
+ *     not a clock: a 1.4 s crowd fade used to pass for the band and leave a 34 dB
+ *     hush, and a band after 1.1 s of room used to get an overlap 2.2 s into its
+ *     first notes.
+ *   • A tail that came down from its body to well under a room the head opens in
+ *     for more than a second: a room doesn't fall below its own floor, so the tail
+ *     was faded under it (Geese, Alive 0:12:37: 36 dB in 4 s, to 10.8 dB under the
+ *     head's room).
+ *   • A tail far above a head that climbs slowly: without an overlap, a cliff. A
+ *     head that simply opens quiet isn't one (a quiet intro would go under the old song).
+ *   • A deep dip: a pair of real fades.
  */
 export function fadeIsReal(f: JoinFacts): boolean {
-  if (Math.min(f.tailDb, f.headDb) <= ROOM_FLOOR_DB) return true
-  if (f.tailDb - f.headDb > CLIFF_DB) return true
-  if (f.headArrivesMs !== null && f.headArrivesMs <= ARRIVES_MS) return false
-  if (f.dipDb >= DEEP_DIP_DB) return true
-  return f.headDb - f.tailDb >= FELL_UNDER_DB && f.dipDb >= FELL_FROM_DB
+  if (f.tailStopsHard && f.headJumps && f.headSilentMs >= PAUSE_MS) return false
+  if (f.tailDropDb >= FADED_AWAY_DB || f.headDropDb >= FADED_AWAY_DB) return true
+  const headOpensInARoom = f.headArrivesMs === null || f.headArrivesMs > ARRIVES_MS
+  const fellUnder = headOpensInARoom && f.headDb - f.tailDb >= FELL_UNDER_DB && f.dipDb >= FELL_FROM_DB
+  if (f.headJumps) return fellUnder
+  return fellUnder || f.tailDb - f.headDb > CLIFF_DB || f.dipDb >= DEEP_DIP_DB
 }
 
 /** Quieter than this and no one can hear the join: leave its bits alone. */
@@ -306,13 +375,15 @@ export type SeamMix = 'none' | 'fade' | 'edges' | 'ramp'
 /**
  * What to do at one seam. `overlapBytes` of the tail's end and the head's start
  * share the same time; `cueBytes` is where in that time the marker goes.
- * `unclosed` says a plain join has a fault nothing here could close.
+ * `unclosed` says a plain join has a fault nothing here could close. `openGapMs` says
+ * the join keeps a stretch of silence the hole reader can't see.
  */
 export interface SeamPlan {
   mix: SeamMix
   overlapBytes: number
   cueBytes: number
   unclosed?: { holeMs: number; jumpOverSlope: number }
+  openGapMs?: number
 }
 
 /** The join with its overlap in place, as two buffers that meet mid-overlap. */
@@ -344,6 +415,40 @@ export function mixEdges(tail: Buffer, head: Buffer, frameBytes: number, ramp: b
 }
 
 /**
+ * A sum is new audio with two new joins of its own, where it meets each song, and a click
+ * there is as loud as the one it replaced. The reading across its middle can't see them: a
+ * natural dip at the cut read as clean while its ends stepped 18 times what a plain join had
+ * there (Taxes 0:28, 2150 against 117), and a sum of two loud songs clipped where neither
+ * did (Such Great Heights 3:07). Each end is held to the steepest step beside the overlap or
+ * the step of the plain join it replaces, whichever is more: padding, then a hard start,
+ * is a step either way.
+ */
+function sumFits(tail: Buffer, head: Buffer, mixed: Buffer, bytesPerSec: number, frameBytes: number): boolean {
+  const bytes = mixed.length
+  const tailStart = tail.length - bytes
+  if (tailStart < frameBytes || bytes + frameBytes > head.length) return false   // no music left to meet
+  for (let o = 0; o < bytes; o += 2) {
+    if (tail.readInt16LE(tailStart + o) + head.readInt16LE(o) !== mixed.readInt16LE(o)) return false   // it clipped
+  }
+  const step = (a: Buffer, aAt: number, b: Buffer, bAt: number): number => {
+    let m = 0
+    for (let c = 0; c < frameBytes; c += 2) m = Math.max(m, Math.abs(a.readInt16LE(aAt + c) - b.readInt16LE(bAt + c)))
+    return m
+  }
+  const steepest = (buf: Buffer, from: number, to: number): number => {
+    let m = 0
+    for (let o = Math.max(0, from); o + frameBytes < Math.min(buf.length, to); o += frameBytes) m = Math.max(m, step(buf, o, buf, o + frameBytes))
+    return m
+  }
+  const span = bytesForMs(20, bytesPerSec, frameBytes)
+  const entry = step(mixed, 0, tail, tailStart - frameBytes)
+  const exit = step(head, bytes, mixed, bytes - frameBytes)
+  const beside = Math.max(steepest(tail, tailStart - span, tailStart), steepest(head, bytes, bytes + span))
+  const plain = step(tail, tail.length - frameBytes, head, 0)
+  return Math.max(entry, exit) < STEP_LIMIT * Math.max(beside, plain, 1)
+}
+
+/**
  * A plain join that would leave a hole or a step gets the shortest overlap that
  * closes it (2026-11-06). Nassau's songs each start and stop with a ramp of 1-2 ms,
  * which is right for a track on its own; two of them back to back are a notch of
@@ -354,15 +459,17 @@ export function mixEdges(tail: Buffer, head: Buffer, frameBytes: number, ramp: b
  * Tried, then measured: an answer that doesn't leave the join clean isn't used.
  */
 function closeJoin(tail: Buffer, head: Buffer, f: JoinFacts, bytesPerSec: number, frameBytes: number): SeamPlan | null {
-  if (Math.min(f.tailDb, f.headDb) <= AUDIBLE_FLOOR_DB) return null
+  // The louder side: a tail cut on a crest into silence is a click however quiet the other side is.
+  if (Math.max(f.tailDb, f.headDb) <= AUDIBLE_FLOOR_DB) return null
   if (f.holeMs === 0 && f.jumpOverSlope < STEP_LIMIT) return null
   const tryMix = (ms: number, ramp: boolean): SeamPlan | null => {
     const bytes = Math.min(bytesForMs(ms, bytesPerSec, frameBytes), tail.length, head.length)
     if (bytes === 0) return null
     const mixed = mixEdges(tail.subarray(tail.length - bytes), head.subarray(0, bytes), frameBytes, ramp)
     const joined = closedJoin(tail, head, mixed, frameBytes)
-    const after = measurePlainJoin(joined.tail, joined.head, 0, bytesPerSec, frameBytes)
+    const after = measurePlainJoin(joined.tail, joined.head, 0, bytesPerSec, frameBytes, (bytes / bytesPerSec) * 500 + HOLE_TOUCH_MS)
     if (after.holeMs > 0 || after.jumpOverSlope >= STEP_LIMIT) return null
+    if (!ramp && !sumFits(tail, head, mixed, bytesPerSec, frameBytes)) return null
     return { mix: ramp ? 'ramp' : 'edges', overlapBytes: bytes, cueBytes: Math.floor(bytes / 2 / frameBytes) * frameBytes }
   }
   // The hole's reading stops at 15 ms either side, so a long one may need a second try.
@@ -403,6 +510,24 @@ export function crossoverBytes(tail: Buffer, head: Buffer, bytesPerSec: number, 
   return Math.min(bytesForMs(take * 100, bytesPerSec, frameBytes), length)
 }
 
+/** From this long, silence on one side of the cut fills the hole reader's own reference,
+ *  so it reads 0. Under it, a hole is seen, and either closed or reported. */
+const GAP_UNSEEN_MS = 46
+/** From this long the fades take over: a gap is an overlap or a pause, not a blind spot. */
+const GAP_TAKEN_OVER_MS = 600
+
+/** How long `pcm` stays under the audible floor, in 1 ms blocks outward from the cut. */
+function silenceAtCutMs(pcm: Buffer, atEnd: boolean, bytesPerSec: number, frameBytes: number): number {
+  const block = bytesForMs(1, bytesPerSec, frameBytes)
+  let ms = 0
+  while (ms < GAP_TAKEN_OVER_MS && (ms + 1) * block <= pcm.length) {
+    const piece = atEnd ? pcm.subarray(pcm.length - (ms + 1) * block, pcm.length - ms * block) : pcm.subarray(ms * block, (ms + 1) * block)
+    if (rmsDbNoFloor(piece) > AUDIBLE_FLOOR_DB) break
+    ms++
+  }
+  return ms
+}
+
 /**
  * The answer for one seam. `tail` is the held-back end of the previous song and
  * `head` the start of the next, each cut at the song's real edge.
@@ -418,13 +543,16 @@ export function planSeam(tail: Buffer, head: Buffer, bytesPerSec: number, frameB
       cueBytes: crossoverBytes(tail.subarray(tail.length - fadeBytes), head.subarray(0, fadeBytes), bytesPerSec, frameBytes),
     }
   }
-  const closed = closeJoin(tail, head, facts, bytesPerSec, frameBytes)
-  if (closed) return closed
-  const plain: SeamPlan = { mix: 'none', overlapBytes: 0, cueBytes: 0 }
-  const audible = Math.min(facts.tailDb, facts.headDb) > AUDIBLE_FLOOR_DB
-  return audible && (facts.holeMs > 0 || facts.jumpOverSlope >= STEP_LIMIT)
-    ? { ...plain, unclosed: { holeMs: facts.holeMs, jumpOverSlope: facts.jumpOverSlope } }
-    : plain
+  const plan: SeamPlan = closeJoin(tail, head, facts, bytesPerSec, frameBytes) ?? { mix: 'none', overlapBytes: 0, cueBytes: 0 }
+  const audible = Math.max(facts.tailDb, facts.headDb) > AUDIBLE_FLOOR_DB
+  if (plan.mix === 'none' && audible && (facts.holeMs > 0 || facts.jumpOverSlope >= STEP_LIMIT)) {
+    plan.unclosed = { holeMs: facts.holeMs, jumpOverSlope: facts.jumpOverSlope }
+  }
+  // Left as it is, on purpose: nothing here is short enough to close it, and it may be
+  // the show's own. But a fault nobody can see stays wrong for good, so it goes in the log.
+  const gapMs = Math.max(silenceAtCutMs(tail, true, bytesPerSec, frameBytes), silenceAtCutMs(head, false, bytesPerSec, frameBytes))
+  if (audible && gapMs >= GAP_UNSEEN_MS && gapMs < GAP_TAKEN_OVER_MS) plan.openGapMs = gapMs
+  return plan
 }
 
 /** Sum two equal-length s16 buffers sample-by-sample, clamped. */

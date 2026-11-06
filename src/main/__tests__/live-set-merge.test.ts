@@ -20,6 +20,7 @@ import { register } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { addSmpb } from './m4a-itunsmpb.ts'
+import { bufferRmsDb, mixSeam } from '../live-set-seams.ts'
 
 // `electron` -> a stub whose app root is the repo, so platform.ts's tag step
 // runs the real core/tag_writer.py, as the headless merger does.
@@ -70,6 +71,18 @@ async function merge(dir: string, sources: Array<{ path: string; frames: number 
 }
 
 const msOf = (frames: number): number => Math.round((frames / RATE) * 1000)
+
+/** What the merge says while it works, for the things that only go in the log. */
+async function warningsDuring<T>(work: () => Promise<T>): Promise<{ result: T; warnings: string[] }> {
+  const warnings: string[] = []
+  const original = console.warn
+  console.warn = (...args: unknown[]): void => { warnings.push(args.join(' ')) }
+  try {
+    return { result: await work(), warnings }
+  } finally {
+    console.warn = original
+  }
+}
 
 function assertSameBytes(actual: Buffer, expected: Buffer, label: string): void {
   assert.equal(actual.length / FRAME, expected.length / FRAME, `${label}: frame count`)
@@ -261,6 +274,15 @@ describe('mergeLiveSet, the overlap rule', { skip: FFMPEG_MISSING }, () => {
       assert.equal(result.cues[2].startMs, msOf(2 * frames - overlap), 'the next marker is right too')
       assertSameBytes(merged.subarray(0, headOfB * FRAME), pa.subarray(0, headOfB * FRAME), 'before the overlap')
       assertSameBytes(merged.subarray(frames * FRAME), Buffer.concat([pb.subarray(overlap * FRAME), pc]), 'after the overlap')
+      // The overlap itself: both fades tapered and summed, lifted toward the quieter of the
+      // bodies, each read over the 2 s right outside it.
+      const twoSeconds = 2 * RATE * FRAME
+      const refDb = Math.min(
+        bufferRmsDb(pa.subarray(headOfB * FRAME - twoSeconds, headOfB * FRAME)),
+        bufferRmsDb(pb.subarray(overlap * FRAME, overlap * FRAME + twoSeconds)),
+      )
+      const mixed = mixSeam(pa.subarray(headOfB * FRAME, frames * FRAME), pb.subarray(0, overlap * FRAME), RATE * FRAME, FRAME, refDb)
+      assertSameBytes(merged.subarray(headOfB * FRAME, frames * FRAME), mixed, 'the overlap')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -395,6 +417,72 @@ describe('mergeLiveSet, joins that would leave a hole or a click', { skip: FFMPE
       const result = await merge(dir, [{ path: a, frames }, { path: b, frames }])
       assertSameBytes(decode(result.mergedPath), Buffer.concat([decode(a), decode(b)]), 'merged audio')
       assert.equal(result.cues[1].startMs, msOf(frames))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('mergeLiveSet, what it only says in the log', { skip: FFMPEG_MISSING }, () => {
+  /** A song that fades out and in as deep as any real pair, if anyone were measuring it. */
+  const fading = (frames: number, seed: number): Buffer => bed(frames, seed, 0.1, (f) => {
+    const fromEdge = Math.min(f, frames - 1 - f) / RATE
+    return fromEdge >= 4 ? 1 : Math.pow(10, (-60 * (4 - fromEdge)) / 4 / 20)
+  })
+
+  test('a song of 16 s or less: the joins beside it are not measured, and that goes in the log', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jt-merge-short-'))
+    try {
+      const lengths = [20 * RATE, 12 * RATE, 20 * RATE, 16 * RATE, 16 * RATE + 1, 20 * RATE]
+      const sources = lengths.map((frames, i) => ({ path: encode(dir, `s${i}.flac`, fading(frames, 201 + i), FLAC), frames }))
+      const decoded = sources.map((s) => decode(s.path))
+      const { result, warnings } = await warningsDuring(() => merge(dir, sources))
+      const merged = decode(result.mergedPath)
+      const notMeasured = warnings.filter((w) => w.includes('not measured'))
+      assert.deepEqual(notMeasured.map((w) => w.match(/"(.*)"/)?.[1]), ['Song 2', 'Song 3', 'Song 4', 'Song 5'])
+      // Only the last join, between two songs over 16 s, was measured and overlapped.
+      const before = lengths.slice(0, 5).reduce((a, b) => a + b, 0)
+      const overlap = before + lengths[5] - merged.length / FRAME
+      assert.ok(overlap > 0.6 * RATE && overlap <= 4 * RATE, `${overlap} frames in common`)
+      assertSameBytes(merged.subarray(0, (before - overlap) * FRAME), Buffer.concat(decoded.slice(0, 5)).subarray(0, (before - overlap) * FRAME), 'everything before it')
+      let at = 0
+      for (let i = 0; i < 5; i++) {
+        assert.equal(result.cues[i].startMs, msOf(at), `marker ${i}`)
+        at += lengths[i]
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('a one-sided gap the hole reader can\'t see stays as it is, and that goes in the log', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jt-merge-gap-'))
+    try {
+      const frames = 20 * RATE
+      const withGap = bed(frames, 211, 0.1)
+      withGap.fill(0, withGap.length - 2646 * FRAME)   // 60 ms
+      const a = encode(dir, 'a.flac', withGap, FLAC)
+      const b = encode(dir, 'b.flac', bed(frames, 212, 0.1), FLAC)
+      const { result, warnings } = await warningsDuring(() => merge(dir, [{ path: a, frames }, { path: b, frames }]))
+      assertSameBytes(decode(result.mergedPath), Buffer.concat([decode(a), decode(b)]), 'merged audio')
+      assert.equal(warnings.filter((w) => w.includes('60 ms of silence') && w.includes('"Song 2"')).length, 1, warnings.join(' | '))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('a hole too long to close stays as it is, and that goes in the log', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jt-merge-open-'))
+    try {
+      const frames = 20 * RATE
+      const tail = bed(frames, 213, 0.1), head = bed(frames, 214, 0.1)
+      tail.fill(0, tail.length - 882 * FRAME)
+      head.fill(0, 0, 882 * FRAME)   // 40 ms in all
+      const a = encode(dir, 'a.flac', tail, FLAC)
+      const b = encode(dir, 'b.flac', head, FLAC)
+      const { result, warnings } = await warningsDuring(() => merge(dir, [{ path: a, frames }, { path: b, frames }]))
+      assertSameBytes(decode(result.mergedPath), Buffer.concat([decode(a), decode(b)]), 'merged audio')
+      assert.equal(warnings.filter((w) => w.includes('keeps a fault') && w.includes('"Song 2"')).length, 1, warnings.join(' | '))
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
