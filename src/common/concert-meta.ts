@@ -23,8 +23,10 @@ export interface ConcertMetaLike {
   venue?: string
   city?: string
   date?: string
-  /** A bare artwork-store hash for a real poster, when one was set. */
+  /** The poster's bare artwork hash: its own key, never the album's (concert-poster.ts). */
   poster?: string
+  /** '#rrggbb', the poster's own edge colour: the frame's background. */
+  posterMatte?: string
   blurb?: string
   facts?: readonly string[]
 }
@@ -90,6 +92,8 @@ export interface DeclaredConcert<E extends ConcertSetLike = ConcertSetLike> {
   blurb?: string
   /** concert.poster when set (a bare artwork hash); the caller falls back to the show's cover. */
   poster?: string
+  /** concert.posterMatte when set. */
+  posterMatte?: string
   /** First night (ms), +∞ when no date is grounded. */
   when: number
   /** The source track's year, 0 when unknown. */
@@ -124,6 +128,7 @@ export function declaredConcerts<E extends ConcertSetLike>(
       date,
       blurb: entry.concert?.blurb || entry.concert?.facts?.[0],
       poster: entry.concert?.poster || undefined,
+      posterMatte: entry.concert?.posterMatte || undefined,
       when: firstNightMs(date),
       year: year > 0 && year < 10000 ? year : 0,
     })

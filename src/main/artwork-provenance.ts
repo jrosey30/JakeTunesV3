@@ -13,7 +13,7 @@
  * Kept free of electron imports so tests can load it.
  */
 
-export type ArtworkFetchProvider = 'coverartarchive' | 'deezer'
+export type ArtworkFetchProvider = 'coverartarchive' | 'deezer' | 'itunes'
 
 export interface FetchedArtworkSidecar {
   artist: string

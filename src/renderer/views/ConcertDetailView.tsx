@@ -2,10 +2,11 @@
  * ConcertDetailView — the concert page ("the setlist journey", LC-8), rebuilt
  * 2026-09-02 as the marquee ("extreme makeover, home edition" — Jake).
  *
- *   • HERO: the cover as a soft wash behind a silver panel, the poster at its
- *     own aspect (a square cover stays square; a real gig poster stands
- *     tall), band eyebrow, the show in display serif, the VENUE as a lockup,
- *     a ticket stub for nights + set. Play / Crowd / Undeclare.
+ *   • HERO: the cover as a soft wash behind a silver panel, the poster in the
+ *     one frame every surface uses (common/concert-poster.ts: 961:1292, whole,
+ *     on a matte of its own edge colour), band eyebrow, the show in display
+ *     serif, the VENUE as a lockup, a ticket stub for nights + set. Play /
+ *     Crowd / Undeclare.
  *   • THE SHOW, START TO FINISH: a timeline strip — one segment per song,
  *     sized by length; played segments toned, the current one lit; hover
  *     names the song. It is a MAP, not a seek bar: a click starts the show
@@ -43,7 +44,8 @@ import type { LiveSetCue, Track } from '../types'
 import '../styles/concerts.css'
 import '../styles/concert-detail.css'
 import '../styles/concert-stage.css'
-import { albumArtUrl, artRevision } from '../artRevision'
+import { albumArtUrl, artRevision, bumpArtRevisions } from '../artRevision'
+import { posterMatte } from '../../common/concert-poster'
 
 function mmss(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000))
@@ -162,18 +164,19 @@ export default function ConcertDetailView() {
   }, [notesDraft, savedNotes, albumKey])
   const [confirmRemove, setConfirmRemove] = useState(false)
 
-  // The poster IS the artwork — drop an image on it, or click to choose.
+  // Drop an image on the poster, or click to choose: that is Jake's pick, and it
+  // goes under the show's OWN artwork key. It used to go on the album's key,
+  // which replaced the album's cover (common/concert-poster.ts). A replaced poster
+  // keeps its name, so its bytes need the revision bump (artRevision.ts).
   const [posterDrag, setPosterDrag] = useState(false)
   const applyPoster = useCallback(async (path: string) => {
-    if (!path || !meta.band || !meta.show) return
-    const r = await window.electronAPI.setCustomArtwork(meta.band, meta.show, path)
-    if (r.ok && r.key && r.hash) {
-      libDispatch({ type: 'ADD_ARTWORK', key: r.key, hash: r.hash })
-      // The image you just set IS the poster: a persisted concert.poster
-      // (the seeded ones) would otherwise keep winning over it.
-      if (liveSet?.concert?.poster) void updateConcertMeta(albumKey, { poster: '' })
+    if (!path) return
+    const r = await window.electronAPI.setConcertPoster(albumKey, path)
+    if (r.ok && r.fields && r.hash) {
+      await updateConcertMeta(albumKey, r.fields)
+      bumpArtRevisions([r.hash])
     }
-  }, [meta.band, meta.show, libDispatch, liveSet?.concert?.poster, albumKey])
+  }, [albumKey])
   const onPosterDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault(); setPosterDrag(false)
     const f = e.dataTransfer.files?.[0] as (File & { path?: string }) | undefined
@@ -236,6 +239,7 @@ export default function ConcertDetailView() {
         <div className="cd-hero-veil" aria-hidden="true" />
         <div
           className={`cd-poster${posterDrag ? ' is-drag' : ''}`}
+          style={{ background: posterMatte(c) }}
           onClick={choosePoster}
           onDrop={onPosterDrop}
           onDragOver={(e) => { e.preventDefault(); if (!posterDrag) setPosterDrag(true) }}

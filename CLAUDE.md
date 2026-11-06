@@ -299,3 +299,26 @@ and search. Be surgical when editing it.
 - Listener profile data in Get Info modal
 - Double-click to rename playlists (deferred)
 - Select-all on playlist input focus (deferred)
+
+---
+
+## Concert posters (2026-11-06)
+
+One image per show, on every surface, in one 961:1292 frame, whole, never
+cropped; what it leaves over gets a matte from the poster's own edge colour;
+nothing is drawn on top. `src/common/concert-poster.ts` is the rule.
+
+- A poster sits under its OWN artwork key (`concert poster|||<band> · <show>`),
+  with its bare hash in `concert.poster`, its source in `concert.posterSource`
+  (`jake-pick`, `gig-poster`, `film-one-sheet`, `built`) and its matte in
+  `concert.posterMatte`. **Never `setCustomArtwork` for a poster:** it writes the
+  album's key, which is how Unplugged and Stop Making Sense lost their covers.
+  The merged row's `(live set)` key points at the poster.
+- A built poster is one flat JPEG, made once, at declare time
+  (`ensure-concert-poster`), or headlessly with
+  `scripts/concert/concert-posters.mts build`. It draws through `osascript` +
+  AppKit (`src/main/concert-poster-render.ts`): no window, and Homebrew's ffmpeg
+  has no drawtext.
+- `scripts/concert/concert-posters.mts migrate` moved the 13 shows declared before
+  the rule. It has a dry run, backs up, and is safe to run twice. Quit the app
+  first: it holds live-sets.json and the artwork index in memory.

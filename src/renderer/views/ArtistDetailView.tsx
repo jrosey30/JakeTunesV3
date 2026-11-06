@@ -836,6 +836,7 @@ export default function ArtistDetailView() {
                   key={tile.key}
                   albumKey={tile.concert.albumKey}
                   artHash={tile.concert.poster || findArtHash(tile.concert.band, tile.concert.show)}
+                  matte={tile.concert.posterMatte}
                   band={tile.concert.band}
                   title={tile.concert.show}
                   venue={tile.concert.venue}

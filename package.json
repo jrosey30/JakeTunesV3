@@ -100,6 +100,10 @@
       {
         "from": "native/bin",
         "to": "bin"
+      },
+      {
+        "from": "src/renderer/assets/fonts/pixChicago.ttf",
+        "to": "fonts/pixChicago.ttf"
       }
     ],
     "asar": true

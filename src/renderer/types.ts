@@ -176,11 +176,22 @@ export interface LiveSetEntry {
   // never fabricated. Optional + back-compat: older sidecar rows omit it.
   concert?: ConcertMeta
 }
+/** What the poster IPCs answer. `fields` are saved with updateConcertMeta (src/renderer/liveSets.ts). */
+export interface ConcertPosterResult {
+  ok: boolean
+  hash?: string
+  fields?: { poster: string; posterSource: PosterSource; posterMatte: string }
+  /** The show already had a poster: nothing was made. */
+  existing?: boolean
+  error?: string
+}
 export interface ConcertMeta {
   venue?: string
   city?: string
   date?: string        // display string, e.g. "May 15–16, 1980"
-  poster?: string      // artwork key/hash for the concert poster (portrait)
+  poster?: string      // the poster's bare artwork hash: its own key, never the album's (common/concert-poster.ts)
+  posterSource?: PosterSource  // what the poster is: jake-pick, gig-poster, film-one-sheet or built
+  posterMatte?: string // '#rrggbb', the poster's own edge colour: the frame's background
   blurb?: string       // one-line summary for the Live Concerts index (grounded; falls back to facts[0])
   crowd?: boolean      // Crowd ambience remembered PER SHOW (an acoustic taping stays off; an arena can stay on)
   // Companion panel (tour-book layer). All grounded or user-authored, never
@@ -502,6 +513,7 @@ export type ImportFormatChoice = 'aac-128' | 'aac-256' | 'aac-320' | 'alac' | 'a
 // app already imports from. `import type` keeps types.ts free of a
 // runtime dep on howler.
 import type { EqSettings } from './audio/eq'
+import type { PosterSource } from '../common/concert-poster'
 import type { IpodDeviceMarker, IpodIdentity } from '../common/ipod-identity'
 import type { UpdateReadyState } from '../common/update-ready'
 export type { EqSettings } from './audio/eq'
@@ -1074,6 +1086,10 @@ declare global {
       onLiveSetProgress: (callback: (progress: { stage: 'decode' | 'concat' | 'encode'; current: number; total: number; label: string }) => void) => () => void
       loadLiveSets: () => Promise<{ ok: boolean; sets: Record<string, LiveSetEntry> }>
       saveLiveSet: (albumKey: string, entry: LiveSetEntry) => Promise<{ ok: boolean; error?: string }>
+      // The poster rule (common/concert-poster.ts). Both write the artwork store only and
+      // hand back the concert.* fields, which the caller saves through updateConcertMeta.
+      setConcertPoster: (albumKey: string, imagePath: string) => Promise<ConcertPosterResult>
+      ensureConcertPoster: (albumKey: string, show: { band: string; show: string; year?: string | number }) => Promise<ConcertPosterResult>
       removeLiveSet: (albumKey: string) => Promise<{ ok: boolean; error?: string }>
       extractConcertCrowd: (mergedTrackId: number, colonPath: string, cueStartsMs: number[], totalMs: number) => Promise<{ ok: boolean; error?: string; startSec?: number }>
       onLiveSetsUpdated?: (callback: (p: { liveSets: boolean; artwork: Array<{ key: string; hash: string }> }) => void) => () => void

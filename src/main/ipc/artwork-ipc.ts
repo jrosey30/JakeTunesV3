@@ -26,6 +26,8 @@ import {
   searchDeezerArt,
 } from '../artwork-engine.ts'
 import { type ArtworkFetchProvider, fetchedArtworkSidecar } from '../artwork-provenance.ts'
+import { installPosterImage, withPosterKeys } from '../concert-poster.ts'
+import { showKeyOfMergedAlbumKey } from '../../common/concert-poster.ts'
 import type { LiveSetEntry } from '../index.ts'
 
 export interface ArtworkIpcHost {
@@ -33,7 +35,12 @@ export interface ArtworkIpcHost {
   sendToRenderer: (channel: string, ...args: unknown[]) => void
   getMount: () => string | null
   getMainWindow: () => BrowserWindow | null
-  liveSetsCache: { get: () => Promise<Record<string, LiveSetEntry>> }
+  liveSetsCache: {
+    get: () => Promise<Record<string, LiveSetEntry>>
+    update: (fn: (sets: Record<string, LiveSetEntry>) => Record<string, LiveSetEntry>) => Promise<void>
+  }
+  /** Hub origin on a replica, null on the canonical laptop: a replica's concerts mirror the laptop's. */
+  replicaHubBase: () => Promise<string | null>
 }
 
 export function registerArtworkIpc(ipc: IpcRegistrar, host: ArtworkIpcHost): void {
@@ -135,6 +142,21 @@ export function registerArtworkIpc(ipc: IpcRegistrar, host: ArtworkIpcHost): voi
       const hash = artworkHash(artist, album)
       const destPath = join(dir, `${hash}.jpg`)
 
+      // A show's merged recording has no cover of its own. Art dropped on it (the
+      // sidebar panel while a concert plays) is the show's poster: one image per
+      // show, on every surface (common/concert-poster.ts).
+      const showKey = showKeyOfMergedAlbumKey(key)
+      const show = showKey ? (await host.liveSetsCache.get())[showKey] : undefined
+      if (showKey && show && !(await host.replicaHubBase())) {
+        const installed = await installPosterImage({ artworkDir: dir, albumKey: showKey, imagePath, source: 'jake-pick' })
+        invalidateArtBytes(installed.hash)
+        await saveArtworkIndex(withPosterKeys(await loadArtworkIndex(), installed))
+        await host.liveSetsCache.update((sets) => ({ ...sets, [showKey]: { ...sets[showKey]!, concert: { ...sets[showKey]!.concert, ...installed.fields } } }))
+        triggerSync('artwork')
+        host.sendToRenderer('live-sets-updated', { liveSets: true, artwork: [{ key: installed.key, hash: installed.versioned }] })
+        return { ok: true, key, hash: installed.versioned }
+      }
+
       invalidateArtBytes(hash)
       // Convert to JPEG using macOS sips (handles PNG, TIFF, BMP, GIF, etc.)
       const ext = imagePath.slice(imagePath.lastIndexOf('.')).toLowerCase()
@@ -155,10 +177,11 @@ export function registerArtworkIpc(ipc: IpcRegistrar, host: ArtworkIpcHost): voi
       const index = await loadArtworkIndex()
       index[key] = versionedHash
       // A declared live set's "(Live Set)" album aliases the source album's art
-      // (live-sets-ipc); keep the alias in step so the Albums grid and the concert
-      // poster never disagree after a swap (2026-09-02).
+      // (live-sets-ipc); keep the alias in step while the show has no poster of its
+      // own. Once it has one the alias IS the poster, and the album's cover is free
+      // to change without touching the show (common/concert-poster.ts).
       const aliasKey = `${key} (live set)`
-      if (index[aliasKey]) index[aliasKey] = versionedHash
+      if (index[aliasKey] && !(await host.liveSetsCache.get())[key]?.concert?.poster) index[aliasKey] = versionedHash
       await saveArtworkIndex(index)
       // 4.4.57 — the user chose this cover: lock it so no auto-fetch path
       // (online fetcher, embedded-art extraction, forced re-fetch) ever
