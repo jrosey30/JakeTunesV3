@@ -19,7 +19,7 @@ import { buildRequestedAlbum, verifyAlbumCandidate } from '../album-identity.ts'
 import { buildRequestedRecording, expectedRuntimes, judgeHitsByMeta, verifyCandidate, type AppleSongRow, type CandidateEvidence } from '../exact-recording.ts'
 import { hitsByAnotherName, isCompilationCopy, isCoverRelease, rankStreamripCandidates, type QobuzTrackMeta, type StreamripSearchHit } from '../streamrip-match.ts'
 import { artistOrAlias, recoArtistMatches, sameArtistName } from '../reco-match.ts'
-import { artistLooselyMatches, dedupeSuggestions } from '../../renderer/listen-to-the-list/store.ts'
+import { dedupeSuggestions } from '../../renderer/listen-to-the-list/store.ts'
 import { recoToQueueResult } from '../../renderer/listen-to-the-list/ltlDownload.ts'
 
 // The store reaches state-dir.ts, which asks electron for userData. The same stub the
@@ -92,11 +92,6 @@ describe('the Listen List twin of the rule', () => {
   ).length === 0
   it('a band with no letters is already on the list', () => assert.equal(onList('!!!'), true))
   it('and nobody else is', () => assert.equal(onList('???'), false))
-  it('says what the main process says, name for name', () => {
-    for (const [a, b] of [['!!!', '!!!'], [' !!! ', '!!!'], ['!!!', '???'], ['!!!', ''], ['', ''], ['  ', '  '], ['!!!!', '!!!!!'], ['T-Pain', 't pain'], ['Rihanna', 'Rihanna & Calvin Harris'], ['Sia', 'Asia']] as const) {
-      assert.equal(artistLooselyMatches(a, b), recoArtistMatches(a, b), `${a} / ${b}`)
-    }
-  })
 })
 
 describe('"Even When the Water\'s Cold" by !!!', () => {
@@ -207,7 +202,7 @@ describe('T-Pain\'s two songs, through the judge', () => {
     const { albumArtist: _, ...noCredit } = THATS_LIFE_META
     assert.deepEqual(judged(THATS_LIFE, [hit('243437261', "That's Life by T-Pain")], { 243437261: noCredit }).kept, [])
   })
-  it('the album\'s word doesn\'t let the wrong cut through: a plain request is not his live one', () => {
+  it('the album\'s word doesn\'t let the wrong cut through: a plain request is not the live one', () => {
     const live = judge({ title: 'Buy U a Drank', artist: 'T-Pain' }, { provider: 'qobuz', title: 'Buy U A Drank (Live)', artist: 'T-Pain', album: COVERS_ALBUM, albumArtist: 'T-Pain' })
     assert.equal(live.verdict, 'reject')
     assert.match(reason(live), /live/i)
@@ -220,7 +215,7 @@ describe('T-Pain\'s two songs, through the judge', () => {
 })
 
 // Listen List rows 219 and 60: what Jake jotted, and what Apple's match made of it. Both albums are
-// credited to the act the match names, so only who he asked for tells them from T-Pain's.
+// credited to the act the match names, so only who was asked for tells them from T-Pain's.
 const SPARROW_ALBUM = 'Collide With the Night Sky: Lullaby covers of Pierce the Veil songs'
 const SPARROW_REC = { song: 'Floral & Fading', artist: 'Pierce the Veil', album: 'Misadventures', matchedTitle: 'Floral and Fading', matchedArtist: 'Sparrow Sleeps', matchedAlbum: SPARROW_ALBUM }
 const SPARROW_ROW = { title: 'Floral and Fading', artist: 'Sparrow Sleeps', album: SPARROW_ALBUM }
@@ -234,7 +229,6 @@ describe('who was asked for, not who Apple matched', () => {
     const d = recoToQueueResult({ id: 'r', createdAt: '2026-11-05T04:14:15Z', ...SPARROW_REC } as never)
     assert.equal(d.kind, 'queue')
     if (d.kind !== 'queue') return
-    assert.equal(d.result.artist, 'Sparrow Sleeps')
     assert.equal(d.result.askedArtist, 'Pierce the Veil')
     const none = recoToQueueResult({ id: 'r', createdAt: '2026-11-05T04:14:15Z', song: 'Song', matchedTitle: 'Song', matchedArtist: 'Band' } as never)
     assert.equal(none.kind === 'queue' && none.result.askedArtist, '', 'a row that names nobody asked for nobody')
@@ -420,7 +414,7 @@ describe('walked through the real handler', () => {
     assert.deepEqual(imported, [])
   })
 
-  it('T-Pain: his own album lands, on what Qobuz says and what the file says', async () => {
+  it('T-Pain: the artist\'s own album lands, on what Qobuz says and what the file says', async () => {
     searchAnswers([['243437261', "That's Life by T-Pain"]])
     answers = { 243437261: THATS_LIFE_META }
     fileIs(LIFE_TAGS)
@@ -430,7 +424,7 @@ describe('walked through the real handler', () => {
     assert.equal(imported.length, 1)
   })
 
-  it('T-Pain: Qobuz gave no answer, and the file\'s tag still says it is his', async () => {
+  it('T-Pain: Qobuz gave no answer, and the file\'s tag still names T-Pain', async () => {
     searchAnswers([['243437261', "That's Life by T-Pain"]])
     fileIs(LIFE_TAGS)
     const { walk, imported } = store()

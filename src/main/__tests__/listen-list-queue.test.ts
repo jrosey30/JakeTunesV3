@@ -65,12 +65,22 @@ describe('the Listen List rides the one Downloads scheduler', () => {
   })
 
   it('who the row names, whoever Apple matched it to, reaches main with the job', async () => {
-    const r = rec({ song: 'Floral & Fading', artist: 'Pierce the Veil', matchedTitle: 'Floral and Fading', matchedArtist: 'Sparrow Sleeps' })
-    answers.set('Floral and Fading', { ok: false, error: 'stubbed' })
+    const r = rec({ song: 'Good Song', artist: 'Calvin Harris', matchedTitle: 'Good Song (feat. Calvin Harris)', matchedArtist: 'Rihanna' })
+    answers.set('Good Song (feat. Calvin Harris)', { ok: false, error: 'stubbed' })
     queueRecoDownload(r)
     await settle()
-    assert.equal(calls[0].artist, 'Sparrow Sleeps')
-    assert.equal(calls[0].askedArtist, 'Pierce the Veil')
+    assert.equal(calls[0].artist, 'Rihanna')
+    assert.equal(calls[0].askedArtist, 'Calvin Harris')
+  })
+
+  it('a row Apple matched to a stranger reaches main in its own words', async () => {
+    const r = rec({ song: 'Floral & Fading', artist: 'Pierce the Veil', album: 'Misadventures', matchedTitle: 'Floral and Fading', matchedArtist: 'Sparrow Sleeps', matchedAlbum: 'Lullaby covers of Pierce the Veil songs' })
+    answers.set('Floral & Fading', { ok: false, error: 'stubbed' })
+    queueRecoDownload(r)
+    await settle()
+    assert.equal(calls[0].artist, 'Pierce the Veil')
+    assert.equal(calls[0].title, 'Floral & Fading')
+    assert.equal(calls[0].album, 'Misadventures')
   })
 
   // 2026-11-03: Chalk "Bliss", shared from TikTok, downloaded from this list,
