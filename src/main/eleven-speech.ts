@@ -4,8 +4,8 @@
  *
  * The app was on eleven_v3 with one recording per line, a different settings
  * branch per speaker and a pitch chain on the Music Man; Jake's site work is
- * eleven_v4 in one take. He compared them on one real break and picked: v4, one
- * call for the whole break, 0.47 / 0.66, the app's current Music Man voice. So
+ * eleven_v4 in one take. Jake compared them on one real break and picked: v4,
+ * one call for the whole break, 0.47 / 0.66, the app's current Music Man voice. So
  * everything except Scotus now goes through one door: the dialogue endpoint,
  * those settings, one input or many. No pitch or speed change on anyone.
  *
