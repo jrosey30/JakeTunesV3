@@ -196,8 +196,9 @@ async function requestTake(
  * by 13 dB. A voice not listed gets 0 dB.
  *
  * The hosts: five real breaks read -19.1 (Music Man) and -15.3 (Larry) on average.
- * With these two trims they read about -16 each. Any one take still varies by
- * about 1 LU either way: that's the acting, and it stays.
+ * With these two trims they read about -16 each on average. In any one take the
+ * two can still sit up to 2 LU apart (of seven takes, four within 1 LU): that's
+ * the acting, and it stays.
  * Everyone else: one or two short lines each, so these are rough.
  */
 export const VOICE_TRIM_DB: Record<string, number> = {
@@ -216,9 +217,9 @@ export function voiceTrimDb(voiceId: string): number {
   return VOICE_TRIM_DB[voiceId] ?? 0
 }
 
-/** Nothing above this leaves main. Under full scale because a sample limiter
- *  can't see the peaks between samples and the mp3 encoder adds a little: on real
- *  takes this lands near -1.2 dBTP. */
+/** The limiter's ceiling. Under full scale because a sample limiter can't see the
+ *  peaks between samples. The 192k mp3 encoder then scales everything by about
+ *  0.97 (-0.27 dB on real takes): this lands near -1.2 dBTP. */
 const CEILING = 0.89 // about -1 dBFS
 /** The gain moves over this long, so a switch that can't land in silence doesn't click. */
 const GAIN_RAMP_SEC = 0.02
@@ -354,7 +355,7 @@ export async function finishTake(pieces: Buffer[], spans: Array<{ startSec: numb
 
 /** A run of radio lines as one recording. Throws when the call fails (one dead
  *  voice fails the whole call) or the API doesn't say who speaks when: the
- *  renderer then speaks the run line by line, so a break is never lost. */
+ *  renderer then speaks the run line by line. */
 export async function speakTake(inputs: DialogueInput[], deps: SpeechDeps = realDeps): Promise<{ audio: Buffer; segments: DialogueSegment[] }> {
   const take = await requestTake(inputs, deps)
   if (take.spans.length === 0) throw new Error('elevenlabs: a take with no voice_segments')

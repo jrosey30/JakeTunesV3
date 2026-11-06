@@ -11,7 +11,8 @@
  * them with no DOM: RadioEngine.ts owns the audio element and the pill.
  *
  * If a call fails (one voice gone from ElevenLabs fails the whole call), the run
- * is spoken line by line with a beat between speakers. A break is never lost.
+ * is spoken line by line with a beat between speakers, so one bad call or one dead
+ * voice can't lose a break.
  */
 import { MAX_DIALOGUE_CHARS, type DialogueInput, type DialogueResult, type DialogueSegment } from '../../common/speech.ts'
 import type { CaptionCue, RadioLine, RadioUnit, SpeakerId } from './types.ts'
