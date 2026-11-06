@@ -146,6 +146,11 @@ PLEX_SKIP="${JT_PLEX_SKIP:-0}"
 PLEX_SCANNER="/volume1/@appstore/PlexMediaServer/Plex Media Scanner"
 JT_DATA_LOCAL="$HOME/Library/Application Support/JakeTunes"
 JT_DATA_REMOTE='Library/Application Support/JakeTunes'
+# Every rsync to homemini works under the limits the ssh calls here already have
+# (2026-11-06). With none, an rsync to a homemini whose tailnet node is dead waits out the
+# kernel's connect timeout, 75 s (net.inet.tcp.keepinit, measured), and a pass makes more
+# than a dozen of them. The music leg goes to the mount, so this doesn't touch it.
+export RSYNC_RSH='ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4'
 
 # Shared remount helper (2026-08-07). A host qualifies ONLY by silently
 # proving it's the DS225 (smbutil view -N via keychain lists JakeShared —
@@ -809,6 +814,15 @@ log "pulling phone stars (homemini → local staging) …"
 rsync -tz --no-perms --no-owner --no-group \
   "$(rremote "$JT_DATA_REMOTE/mobile-stars.json")" "$JT_DATA_LOCAL/mobile-stars.incoming.json" >> "$LOG" 2>&1
 pull_rc=$?
+# 255 is ssh itself: homemini didn't answer at all (both rsyncs, measured). Every leg below
+# would ask it the same question, up to 10 s each, ahead of a music leg that doesn't need
+# it. The state push has already said so when it failed the same way; a notification on
+# macOS 26 opens Script Editor, so this doesn't say it twice.
+if [ $pull_rc -eq 255 ]; then
+  log "homemini did not answer ssh (phone stars pull exit 255) — stars, plays and the phone's sidecars wait for the next pass"
+  [ "$homemini_rc" -eq 0 ] && notify "Couldn't reach homemini. Stars and plays wait for the next sync."
+  return 0
+fi
 if [ $pull_rc -ne 0 ] && [ $pull_rc -ne 23 ] && [ $pull_rc -ne 24 ]; then
   log "WARNING: pull of mobile-stars returned $pull_rc (continuing)"
   notify "Couldn't pull phone stars from homemini — desktop may be behind."
