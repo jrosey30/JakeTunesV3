@@ -18,7 +18,7 @@
  */
 import { requestDiscoveryTab } from '../views/discoveryTab.ts'
 import { ADD_SOURCE_LABEL, addedViaOf } from '../../common/source-playlists.ts'
-import { matchNamesRowArtist } from '../../common/artist-credit.ts'
+import { recoFields } from '../../common/artist-credit.ts'
 import type { Recommendation } from '../types.ts'
 import {
   enqueue, cancel, retry, subscribeQueue, getQueue, itemForRecommendation,
@@ -41,16 +41,7 @@ export interface LtlDownloadStatus {
   jobKey?: string
 }
 
-export function recoFields(rec: Recommendation): { artist: string; title: string; album: string } {
-  // Apple matched the row to someone it doesn't name, so nothing of the match is left: its album is
-  // that stranger's too. ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts downloadRequest.
-  if (!matchNamesRowArtist(rec)) return { title: (rec.song || '').trim(), album: (rec.album || '').trim(), artist: (rec.artist || '').trim() }
-  return {
-    title: (rec.matchedTitle || rec.song || '').trim(),
-    album: (rec.matchedAlbum || rec.album || '').trim(),
-    artist: (rec.matchedArtist || rec.artist || '').trim(),
-  }
-}
+export { recoFields }
 
 /** Song / Album / Artist — what a recommendation IS. ⚠️ TWIN:
  *  views/ListenToTheListView.tsx recoType (the list groups by the same rule),

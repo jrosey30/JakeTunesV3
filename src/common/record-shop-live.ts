@@ -11,6 +11,7 @@
 import type { RequestedAlbum, RequestedRecording, DownloadOutcome, Alternative, Provider } from './acquisition-identity.ts'
 import { shopSnapshot, type ShopItem, type ShopSelection, type ShopSession, type ShopAcquisitionJob, type ShopOwnership, type ShopListEntry, type ShopRecommendation, type Snapshot } from './record-shop.ts'
 import { shopEntryFromLegacy, shopResultFromDownload, type LegacyShopRecommendation } from './record-shop-adapters.ts'
+import { recoFields } from './artist-credit.ts'
 
 export const LIVE_ITEM_PREFIX = 'legacy-recommendation:'
 export const FIXTURE_ID_PREFIX = 'fx:'
@@ -42,7 +43,7 @@ const norm = (s: string): string => String(s || '').toLowerCase().replace(/[^a-z
 /** A song jot is its own selection: the regular shop queues it by artist +
  *  title and main proves the recording. Revision keys on the jot. */
 export function recordingSelectionFromJot(rec: Pick<LegacyShopRecommendation, 'id' | 'artist' | 'song' | 'album' | 'matchedArtist' | 'matchedTitle' | 'matchedAlbum'>): Extract<ShopSelection, { kind: 'recording' }> | undefined {
-  const artist = (rec.matchedArtist || rec.artist || '').trim(), title = (rec.matchedTitle || rec.song || '').trim(), album = (rec.matchedAlbum || rec.album || '').trim()
+  const { artist, title, album } = recoFields(rec)
   if (!title) return undefined
   const request: RequestedRecording = { artist, title, album, artistNorm: norm(artist), titleNorm: norm(title), durationSec: 0, durationTolSec: 5, explicit: 'unknown', requestedMarkers: [], providerIds: {} }
   return { kind: 'recording', revision: `jot:${rec.id}`, request }
@@ -118,18 +119,19 @@ export type ShopResolveResult =
   | { ok: false; error: string }
 
 export function resolveRequestFor(item: Snapshot<ShopItem>, rec: LegacyShopRecommendation | undefined): ShopResolveRequest | null {
-  const artist = (rec?.matchedArtist || rec?.artist || item.display.artist || '').trim()
+  const row = rec ? recoFields(rec) : undefined
+  const artist = (row?.artist || item.display.artist || '').trim()
   if (item.kind === 'release') {
     const sel = item.selection
-    const album = (sel?.request.title || rec?.matchedAlbum || rec?.album || item.display.title || '').trim()
+    const album = (sel?.request.title || row?.album || item.display.title || '').trim()
     if (!album) return null
     return { kind: 'release', artist: sel?.request.artist || artist, album, collectionId: sel?.request.providerIds.itunesCollectionId, trackCount: sel?.request.trackCount, releaseYear: sel?.request.releaseYear }
   }
   if (item.kind === 'recording') {
     const sel = item.selection
-    const title = (sel?.request.title || rec?.matchedTitle || rec?.song || item.display.title || '').trim()
+    const title = (sel?.request.title || row?.title || item.display.title || '').trim()
     if (!title) return null
-    return { kind: 'recording', artist: sel?.request.artist || artist, title, album: sel?.request.album || rec?.matchedAlbum || rec?.album || undefined, durationSec: sel?.request.durationSec || undefined }
+    return { kind: 'recording', artist: sel?.request.artist || artist, title, album: sel?.request.album || row?.album || undefined, durationSec: sel?.request.durationSec || undefined }
   }
   return null
 }

@@ -9,6 +9,8 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { readFileSync } from 'node:fs'
 import { matchNamesRowArtist } from '../../common/artist-credit.ts'
+import { recordingSelectionFromJot, resolveRequestFor } from '../../common/record-shop-live.ts'
+import { shopSnapshot } from '../../common/record-shop.ts'
 import { recoFields, recoToQueueResult } from '../../renderer/listen-to-the-list/ltlDownload.ts'
 import type { Recommendation } from '../../renderer/types.ts'
 
@@ -141,8 +143,35 @@ describe('what such a row asks a download for', () => {
   })
 })
 
+describe('the Record Store reads a row the same way', () => {
+  const song = shopSnapshot({ itemId: 'legacy-recommendation:r', kind: 'recording' as const, display: { title: 'x' } })
+  const record = shopSnapshot({ itemId: 'legacy-recommendation:r', kind: 'release' as const, display: { title: 'x' } })
+  const named = (rec: Partial<Recommendation>) => {
+    const { artist, title, album } = recordingSelectionFromJot(row(rec))!.request
+    return { artist, title, album }
+  }
+  it('a song row is selected by its own words, and a right match by Apple\'s', () => {
+    assert.deepEqual(named(STRANGERS[6]!), { artist: 'Pierce the Veil', title: 'Floral & Fading', album: 'Misadventures' })
+    assert.deepEqual(named(THE_SAME_ACT[0]!), { artist: 'Rihanna', title: 'We Found Love (feat. Calvin Harris)', album: 'Talk That Talk' })
+  })
+  it('it asks main about the row, not the stranger', () => {
+    assert.deepEqual(resolveRequestFor(song, row(STRANGERS[3]!)), { kind: 'recording', artist: 'Natek', title: 'Bite the bullet', album: 'In search of ocean', durationSec: undefined })
+    const lullabies = row({ kind: 'album', album: 'Misadventures', artist: 'Pierce the Veil', matchedArtist: 'Sparrow Sleeps', matchedAlbum: 'Lullabies' })
+    assert.deepEqual(resolveRequestFor(record, lullabies), { kind: 'release', artist: 'Pierce the Veil', album: 'Misadventures', collectionId: undefined, trackCount: undefined, releaseYear: undefined })
+  })
+  it('a right match still asks main by Apple\'s names', () => {
+    assert.deepEqual(resolveRequestFor(song, row(THE_SAME_ACT[0]!)), { kind: 'recording', artist: 'Rihanna', title: 'We Found Love (feat. Calvin Harris)', album: 'Talk That Talk', durationSec: undefined })
+  })
+})
+
 describe('the wiring', () => {
   const src = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf-8')
+  it('Get on a song in the Record Store takes the Listen List\'s door', () => {
+    assert.match(src('../../renderer/record-shop/liveShopCommands.ts'), /const d = queueRecoDownload\(rec\)/)
+  })
+  it('the list groups a row by the names it will ask for', () => {
+    assert.match(src('../../renderer/views/ListenToTheListView.tsx'), /const recoType = \(r: Recommendation\)[^\n]*\n\s+const \{ title: song, album \} = recoFields\(r\)/)
+  })
   it('the Listen List shows the row by the names it will ask for', () => {
     assert.match(src('../../renderer/listen-to-the-list/components.tsx'), /export function displayRecoName\(rec: Recommendation\): string \{\n\s+const \{ title, artist \} = recoFields\(rec\)/)
   })

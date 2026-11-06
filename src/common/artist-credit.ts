@@ -1,6 +1,6 @@
 /**
  * Whether two artist credits are one act. In common because both bundles ask: the main process's
- * judge, and the Listen List, which has to know who a row's download is for.
+ * judge, and the Listen List and Record Store, which have to know who a row's download is for.
  * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts, the same functions.
  */
 import { hasOtherScript, nameKey, withinEditDistance } from './fold-text.ts'
@@ -91,4 +91,19 @@ export function matchNamesRowArtist(rec: { song?: string; artist?: string; match
   const a = fold(asked), m = fold(matched)
   if (Math.max(a.length, m.length) >= 5 && withinEditDistance(a, m, 1)) return true
   return sameArtistName(String(rec.song ?? ''), matched) && sameArtistName(asked, withoutFeaturedCredit(title))
+}
+
+/**
+ * What a row asks a download for: Apple's spelling and record, unless Apple matched it to someone it
+ * doesn't name. Then nothing of the match is left, because its album is that stranger's too. The Listen
+ * List and the Record Store both read a row this way, so what they show is what Get asks for.
+ * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts downloadRequest.
+ */
+export function recoFields(rec: { song?: string; artist?: string; album?: string; matchedTitle?: string; matchedArtist?: string; matchedAlbum?: string }): { artist: string; title: string; album: string } {
+  if (!matchNamesRowArtist(rec)) return { title: (rec.song || '').trim(), album: (rec.album || '').trim(), artist: (rec.artist || '').trim() }
+  return {
+    title: (rec.matchedTitle || rec.song || '').trim(),
+    album: (rec.matchedAlbum || rec.album || '').trim(),
+    artist: (rec.matchedArtist || rec.artist || '').trim(),
+  }
 }
