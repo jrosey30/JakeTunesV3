@@ -35,7 +35,12 @@ const STATE_FILES = [
 const STUB_RSYNC = `#!/bin/bash
 if [ "$1" = "--version" ]; then echo "rsync  version 3.4.2  protocol version 32"; exit 0; fi
 for a in "$@"; do
-  case "$a" in --files-from=*) cat "\${a#--files-from=}" >> "$STUB_LIST" ;; esac
+  case "$a" in --files-from=*)
+    cat "\${a#--files-from=}" >> "$STUB_LIST"
+    printf '%s\\n' "$@" > "$STUB_LIST.args"
+    [ -n "\${STUB_HANG:-}" ] && exec sleep "$STUB_HANG"
+    ;;
+  esac
 done
 exit 0
 `
@@ -54,7 +59,7 @@ echo "StubMac"
 
 /** Runs --quick against a library holding `files` (relative path → bytes)
  *  and returns the file list the music leg handed rsync. */
-function quickList(files: Record<string, string>): { list: string[]; status: number | null; log: string } {
+function quickList(files: Record<string, string>, env: Record<string, string> = {}): { list: string[]; args: string[]; status: number | null; log: string } {
   const root = mkdtempSync(join(tmpdir(), 'jt-sync-quick-'))
   try {
     const bin = join(root, 'bin')
@@ -96,12 +101,15 @@ function quickList(files: Record<string, string>): { list: string[]; status: num
         JT_MOUNT: join(root, 'nas'),
         JT_MOUNT_TOOLS_FROM_PATH: '1',
         JT_PLEX_SKIP: '1',
+        ...env,
       },
       encoding: 'utf8',
       timeout: 60_000,
     })
     const log = existsSync(join(root, 'sync.log')) ? readFileSync(join(root, 'sync.log'), 'utf8') : ''
-    return { list: readFileSync(listFile, 'utf8').split('\n').filter(Boolean).sort(), status: r.status, log }
+    const argsFile = `${listFile}.args`
+    const args = existsSync(argsFile) ? readFileSync(argsFile, 'utf8').split('\n').filter(Boolean) : []
+    return { list: readFileSync(listFile, 'utf8').split('\n').filter(Boolean).sort(), args, status: r.status, log }
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -124,5 +132,28 @@ describe('sync script --quick: the NAS music leg', () => {
     })
     assert.equal(r.status, 0, r.log)
     assert.deepEqual(r.list, ['./Playlists/mix.m3u', `./${F}/imported_1.m4a`])
+  })
+  // 2026-11-06: it had no limit of its own. On a wedged share it sat until the
+  // orchestrator's 600 s watchdog killed the whole script, Plex and artwork legs included.
+  it('goes with --timeout=180 and without --size-only, which would drop re-tags', () => {
+    const r = quickList({ 'iPod_Control/Music/F04/imported_1.m4a': 'audio' })
+    assert.equal(r.status, 0, r.log)
+    assert.ok(r.args.includes('--timeout=180'), r.args.join(' '))
+    assert.ok(!r.args.includes('--size-only'), r.args.join(' '))
+  })
+
+  it('a leg that hangs is cut by its alarm and the rest of the pass still runs', () => {
+    const started = Date.now()
+    const r = quickList({ 'iPod_Control/Music/F04/imported_1.m4a': 'audio' }, { STUB_HANG: '45', JT_QUICK_ALARM_S: '1' })
+    assert.equal(r.status, 0, r.log)
+    assert.ok(Date.now() - started < 30_000, 'it did not wait the rsync out')
+    assert.match(r.log, /music rsync exit=142 \(mode=quick\)/)
+    assert.match(r.log, /=== sync done ===/)
+  })
+
+  it('the alarm is 420 s, the same as the full leg, inside the 600 s watchdog', () => {
+    const src = readFileSync(scriptPath, 'utf8')
+    assert.ok(src.includes(`perl -e 'alarm shift; exec @ARGV' "\${JT_QUICK_ALARM_S:-420}"`))
+    assert.ok(src.includes(`perl -e 'alarm shift; exec @ARGV' 420 \\\n    rsync -az --size-only`), 'the full leg')
   })
 })

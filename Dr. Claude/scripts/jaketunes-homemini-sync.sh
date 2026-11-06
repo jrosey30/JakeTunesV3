@@ -1000,7 +1000,12 @@ if [ $QUICK_MODE -eq 1 ]; then
   file_count=$(wc -l < "$TMP_LIST" | tr -d ' ')
   log "quick mode: $file_count files modified in the last 10 min"
   if [ "$file_count" -gt 0 ]; then
-    rsync -rtz --files-from="$TMP_LIST" \
+    # 2026-11-06 — BOUNDED, like the full leg below. It had no limit of its own, so
+    # on a wedged share rsync sat until the orchestrator's 600 s watchdog killed the
+    # whole script, with the Plex, artwork and prune legs still to come (4 of 5 uploads
+    # on 11/5). No --size-only: a re-tag keeps its size, and this leg is what carries it.
+    perl -e 'alarm shift; exec @ARGV' "${JT_QUICK_ALARM_S:-420}" \
+      rsync -rtz --timeout=180 --files-from="$TMP_LIST" \
       "$LIBRARY_ROOT/" "$MOUNT/JakeTunesLibrary/" \
       >> "$LOG" 2>&1
     music_rc=$?
