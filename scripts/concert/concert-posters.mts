@@ -100,7 +100,7 @@ async function migrate(): Promise<void> {
   if (restore) {
     refuseWhileAppRuns()
     await restoreBackup(resolve(restore), (l) => console.log(l))
-    console.log('Restored. Push it to homemini the same way as a run (see below).')
+    console.log('Restored. To put homemini back too: bash ~/bin/jaketunes-homemini-sync.sh --homemini-only')
     return
   }
   const reviewDir = flag('review-dir')
