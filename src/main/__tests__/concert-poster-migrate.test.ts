@@ -432,6 +432,14 @@ describe('a poster already in the store', () => {
     assert.equal(kept?.versioned, `${posterArtworkHash(UNPLUGGED)}_9`)
     assert.deepEqual(kept?.fields, { poster: posterArtworkHash(UNPLUGGED), posterSource: 'jake-pick', posterMatte: '#abcdef' })
   })
+  test('an image whose edge cannot be read still lands, on the plain ground', async () => {
+    const w = world()
+    const src = join(w.dir, 'odd.jpg')
+    writeFileSync(src, jpeg('not really decodable'))
+    const got = await installPosterImage({ artworkDir: w.paths.artworkDir, albumKey: PARADISO, imagePath: src, source: 'jake-pick', now: 5 })
+    assert.equal(got.fields.posterMatte, '#0B0B0A')
+    assert.ok(readFileSync(posterFile(w, PARADISO)).equals(jpeg('not really decodable')))
+  })
   test('the app checks before it builds', () => {
     const ipc = readFileSync(join(import.meta.dirname, '..', 'ipc', 'live-sets-ipc.ts'), 'utf-8')
     const start = ipc.indexOf("ipc.handle('ensure-concert-poster'")

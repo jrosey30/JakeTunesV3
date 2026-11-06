@@ -46,6 +46,7 @@ import '../styles/concert-detail.css'
 import '../styles/concert-stage.css'
 import { albumArtUrl, artRevision, bumpArtRevisions } from '../artRevision'
 import { posterMatte } from '../../common/concert-poster'
+import { setNotice } from '../activity'
 
 function mmss(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000))
@@ -175,6 +176,8 @@ export default function ConcertDetailView() {
     if (r.ok && r.fields && r.hash) {
       await updateConcertMeta(albumKey, r.fields)
       bumpArtRevisions([r.hash])
+    } else {
+      setNotice(r.error ? `Couldn't set the poster: ${r.error}` : "Couldn't set the poster.", { kind: 'error' })
     }
   }, [albumKey])
   const onPosterDrop = useCallback((e: React.DragEvent) => {

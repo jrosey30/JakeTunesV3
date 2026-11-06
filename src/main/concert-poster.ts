@@ -75,7 +75,11 @@ export async function installPosterImage(input: {
   const bytes = (await stat(dest)).size
   // A built poster's ground IS its edge: exact, so its matte can never drift from
   // what was drawn. Anything else is measured from the poster itself.
-  const matte = input.matte ?? (input.source === 'built' ? POSTER_GROUND : await readEdgeMatte(dest))
+  // A poster with no measured matte still draws: on the plain ground, never not at all.
+  const matte = input.matte ?? (input.source === 'built' ? POSTER_GROUND : await readEdgeMatte(dest).catch((err: unknown) => {
+    console.warn('[concert-poster] no matte from this image (the plain ground stands in):', err instanceof Error ? err.message : err)
+    return POSTER_GROUND
+  }))
   const backupDir = join(input.artworkDir, 'locked-backup')
   try {
     await mkdir(backupDir, { recursive: true })
