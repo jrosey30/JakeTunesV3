@@ -58,8 +58,18 @@ exit 0
   // throwaway background-only app launched by open and killed). pgrep -x sees nothing
   // from the moment a process turns E, and ps -p still answers for it. The first version
   // of these fakes had pgrep listing it, which is how the gate shipped a bug they agreed with.
+  // looks_left: how many more looks the app just started lasts. Then it has died.
   pgrep: `#!/bin/bash
 echo "pgrep $*" >> "$JT_FAKE/calls.log"
+if [ -e "$JT_FAKE/looks_left" ]; then
+  n=$(cat "$JT_FAKE/looks_left")
+  if [ "$n" -le 0 ]; then
+    grep -vx 5151 "$JT_FAKE/pids" > "$JT_FAKE/pids.died"; /bin/mv -f "$JT_FAKE/pids.died" "$JT_FAKE/pids"
+    rm -f "$JT_FAKE/looks_left"
+  else
+    echo $((n - 1)) > "$JT_FAKE/looks_left"
+  fi
+fi
 if [ -e "$JT_FAKE/pids" ]; then
   rc=1
   for p in $(cat "$JT_FAKE/pids"); do
@@ -137,6 +147,7 @@ cp -R "$1" "$2"
   // nothing: measured on a real process in state E. The case the gate has to wait out.
   // open_fails: how many more times open says no (LaunchServices, right after a swap).
   // open_swallows: how many more times open says yes and nothing starts.
+  // open_short_lived: how many more times what starts is alive for one look and then gone.
   open: `#!/bin/bash
 echo "open $*" >> "$JT_FAKE/calls.log"
 countdown() {
@@ -154,6 +165,7 @@ if [ -e "$JT_FAKE/pids" ]; then
       *) echo "open-found-the-old-one" >> "$JT_FAKE/calls.log"; exit 0 ;;
     esac
   fi
+  countdown open_short_lived && echo 1 > "$JT_FAKE/looks_left"
   echo 5151 >> "$JT_FAKE/pids"
   exit 0
 fi
@@ -279,6 +291,8 @@ interface WorldOpts {
   openFails?: number
   /** How many times open says yes and nothing starts. */
   openSwallows?: number
+  /** How many times what open starts lasts one look and dies. */
+  openShortLived?: number
   /** Starts with a JakeTunes Helper in this exiting state in the process table. */
   helperDying?: string
   /** Already in this state when the gate starts. */
@@ -363,6 +377,7 @@ export function makeWorld(o: WorldOpts = {}): World {
   if (o.quitState) writeFileSync(join(fake, 'quit_state'), `${o.quitState}\n`)
   if (o.openFails !== undefined) writeFileSync(join(fake, 'open_fails'), String(o.openFails))
   if (o.openSwallows !== undefined) writeFileSync(join(fake, 'open_swallows'), String(o.openSwallows))
+  if (o.openShortLived !== undefined) writeFileSync(join(fake, 'open_short_lived'), String(o.openShortLived))
   if (o.helperDying) { writeFileSync(join(fake, 'pids'), `${o.pids ?? ''}9\n`); writeFileSync(join(fake, 'state_9'), `${o.helperDying}\n`) }
   if (o.oldState) writeFileSync(join(fake, 'state_4242'), `${o.oldState}\n`)
   if (o.dittoHang) writeFileSync(join(fake, 'ditto_hang'), o.dittoHang === 'partial' ? 'partial\n' : '')
@@ -470,6 +485,7 @@ export function makeWorld(o: WorldOpts = {}): World {
           JT_GATE_WATCH_POLL_S: String(o.watchPollS ?? 0.1),
           JT_GATE_OPEN_RETRY_S: '0.1',
           JT_GATE_START_WAIT_S: '1',
+          JT_GATE_STAY_S: '0.1',
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       })

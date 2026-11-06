@@ -5,7 +5,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync, rmSync } from 'node:fs'
-import { finished, makeWorld, NEW_ASAR, OLD_ASAR, opens, SHA, sleep, started } from './install-gate-world.ts'
+import { finished, makeWorld, NEW_ASAR, OLD_ASAR, opens, scriptPath, SHA, sleep, started } from './install-gate-world.ts'
 import { waitFor } from './wait-for.ts'
 
 // 11/5: a quit took 21 minutes on one in-flight NAS write. The gate gave up after 30 s
@@ -312,6 +312,37 @@ describe('install gate — open -a can say no', () => {
       assert.equal(opens(w), 2)
       assert.match(g.out(), /, pid 5151, previous kept at/)
     } finally { w.cleanup() }
+  })
+
+  // Reviewer's finding, 2026-11-06. One live look was "started": a build that dies seconds in got
+  // exit 0 and "pid 5151". install-both runs its legs in parallel, so a bad build could reach all
+  // three Macs with every report saying fine.
+  it('what it starts dies right away: not started, it tries again, and reports the one that stayed', async () => {
+    const w = makeWorld({ idleS: 130, pids: '', openShortLived: 1 })
+    try {
+      const g = w.run({})
+      const r = await finished(g)
+      assert.equal(r.code, 0, g.out())
+      assert.equal(opens(w), 2)
+      assert.match(g.out(), /, pid 5151, previous kept at/)
+    } finally { w.cleanup() }
+  })
+
+  it('what it starts keeps dying: exit 4 and "pid none", where it used to say installed, and the watcher keeps asking', async () => {
+    const w = makeWorld({ idleS: 130, pids: '', openShortLived: 3, watchS: 60, watchPollS: 0.5 })
+    try {
+      const g = w.run({ sha: SHA })
+      const r = await finished(g)
+      assert.equal(r.code, 4, g.out())
+      assert.match(g.out(), /, pid none, the app did not come up, still trying, previous kept at/)
+      assert.equal(readFileSync(w.installedAsar, 'utf8'), NEW_ASAR, 'the build stays: no automatic rollback')
+      await started(w)
+      assert.equal(opens(w), 4, 'the gate\'s three, then the watcher\'s')
+    } finally { w.cleanup() }
+  })
+
+  it('it waits 5 s before the second look, the time a bad build takes to die', () => {
+    assert.match(readFileSync(scriptPath, 'utf8'), /STAY="\$\{JT_GATE_STAY_S:-5\}"/)
   })
 
   it('it says yes three times and nothing starts: exit 4, and the watcher keeps asking', async () => {

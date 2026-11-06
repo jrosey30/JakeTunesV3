@@ -11,7 +11,7 @@
 #  - quit by process NAME (pgrep -x), never a path regex (10/11)
 #  - a process on its way out (state E or Z) has quit: it runs no code and never comes
 #    back. But `open` while it still exists exits 0 and starts nothing (measured, below),
-#    so the app starts when that pid is gone, and only a live process proves it started.
+#    so the app starts when that pid is gone, and only a process still alive 5 s on proves it started.
 #    Once the quit is asked for, every way out of this script ends with the app running
 #    or a watcher that will start it: on 11/5 a quit took 21 minutes, this script gave
 #    up after 30 s, and when the old process finally died the Mac had no app running.
@@ -48,7 +48,7 @@
 # the real thing: JT_GATE_APP, JT_GATE_DATA_DIR, JT_GATE_LSREGISTER, JT_GATE_PLISTBUDDY,
 # JT_GATE_POLL_S (15), JT_GATE_GO_POLL_S (2), JT_GATE_QUIT_WAIT_S (30), JT_GATE_GONE_WAIT_S (30),
 # JT_GATE_WATCH_S (1800, counted in polls: time awake), JT_GATE_WATCH_POLL_S (5),
-# JT_GATE_OPEN_RETRY_S (2), JT_GATE_START_WAIT_S (10).
+# JT_GATE_OPEN_RETRY_S (2), JT_GATE_START_WAIT_S (10), JT_GATE_STAY_S (5).
 set -u
 # Whatever reads this may go away first: a client that exits, a pipeline killed along with it.
 # By default the next echo then gets SIGPIPE, bash runs the EXIT trap, and the trap's own first
@@ -76,6 +76,7 @@ WATCH_S="${JT_GATE_WATCH_S:-1800}"
 WATCH_POLL="${JT_GATE_WATCH_POLL_S:-5}"
 OPEN_RETRY="${JT_GATE_OPEN_RETRY_S:-2}"
 START_WAIT="${JT_GATE_START_WAIT_S:-10}"
+STAY="${JT_GATE_STAY_S:-5}"
 
 # ── The app's process ────────────────────────────────────────────────────────
 # Measured 2026-11-06 on a real bundle held in exit, launched by open and killed:
@@ -165,9 +166,17 @@ start_app() {
   if [ -n "$(old_left)" ]; then start_app_when_gone; return 1; fi
   for i in 1 2 3; do
     if open -a "$APP"; then
-      # jt_live, not pgrep: a dying process must not count as started.
+      # jt_live, not pgrep: a dying process must not count as started. And alive once isn't
+      # started either: a fake open whose process lasted 1.5 s got exit 0 and "pid 5151", with no
+      # process 11 s later, and install-both runs its legs in parallel, so a build that dies in
+      # its first seconds could reach all three Macs looking fine. If it's gone on the second
+      # look, open gets the next try, and after that the watcher and exit 4.
       for j in $(seq 1 "$START_WAIT"); do
-        if [ -n "$(jt_live)" ]; then APP_DUE=0; return 0; fi
+        if [ -n "$(jt_live)" ]; then
+          sleep "$STAY"
+          if [ -n "$(jt_live)" ]; then APP_DUE=0; return 0; fi
+          break
+        fi
         sleep 1
       done
     else
