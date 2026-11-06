@@ -16,7 +16,8 @@ import {
   ensurePlaylistNotesLoaded, getPlaylistNote, setPlaylistNote,
 } from '../playlistCovers'
 import { downloadMenuEntries, subscribeDownloads, downloadsVersion, isDownloaded, isDownloading } from '../utils/downloadStore'
-import { formatAppDate } from '../utils/formatDate'
+import { formatAppDateTime } from '../utils/formatDate'
+import { DATE_TIME_COLUMN_WIDTH } from '../utils/columnState'
 import { canonicalArtist } from '../utils/artistAlias'
 import { albumKeyOf } from '../utils/albumKey'
 import { suggestForPlaylist, suggestFromVibeHits, keepStripSteady, suggestableOn } from '../utils/playlistSuggest'
@@ -40,7 +41,7 @@ import { songsGridTemplate, songsGridTemplateFixed } from '../utils/songsGridTem
 import '../styles/songs.css'
 import { addToPlaylistEntry, addToIpodPoolEntry, queueMenuEntries } from '../utils/playlistMenu'
 import { getInfoTarget } from '../../common/get-info-target'
-import { playsEverywhere } from '../../common/plays-elsewhere'
+import { lastPlayedEverywhere, playsEverywhere } from '../../common/plays-elsewhere'
 import { usePlaysElsewhere } from '../playsElsewhere'
 
 function formatDuration(ms: number): string {
@@ -70,7 +71,8 @@ const ALL_COLUMN_DEFS: ColDef[] = [
   { key: 'album', label: 'Album', defaultWidth: 160, minWidth: 60, resizable: true },
   { key: 'genre', label: 'Genre', defaultWidth: 100, minWidth: 50, resizable: true },
   { key: 'year', label: 'Year', defaultWidth: 50, minWidth: 35, resizable: true },
-  { key: 'dateAdded', label: 'Date Added', defaultWidth: 100, minWidth: 60, resizable: true },
+  { key: 'dateAdded', label: 'Date Added', defaultWidth: DATE_TIME_COLUMN_WIDTH, minWidth: DATE_TIME_COLUMN_WIDTH, resizable: true },
+  { key: 'lastPlayedAt', label: 'Last Played', defaultWidth: DATE_TIME_COLUMN_WIDTH, minWidth: DATE_TIME_COLUMN_WIDTH, resizable: true },
   { key: 'playCount', label: 'Plays', defaultWidth: 50, minWidth: 35, resizable: true },
   { key: 'channelMode', label: 'Channels', defaultWidth: 70, minWidth: 50, resizable: true },
   // 4.5: 'rating' column REMOVED — star renders inline next to title.
@@ -183,7 +185,7 @@ export default function PlaylistView() {
 
   // Column visibility & width state. Rating column stays visible by
   // default so ratings can be edited inline from any playlist.
-  const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set(['dateAdded', 'playCount', 'channelMode']))
+  const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => new Set(['dateAdded', 'lastPlayedAt', 'playCount', 'channelMode']))
   // Re-render when download pins/progress change so the title-cell disc tracks
   // state (store is app-init'd in App.tsx; inert on all-local machines).
   useSyncExternalStore(subscribeDownloads, downloadsVersion)
@@ -415,6 +417,7 @@ export default function PlaylistView() {
         case 'year': av = a.year || 0; bv = b.year || 0; break
         case 'time': av = a.duration || 0; bv = b.duration || 0; break
         case 'dateAdded': av = a.dateAdded || ''; bv = b.dateAdded || ''; break
+        case 'lastPlayedAt': { const d = lastPlayedEverywhere(a, elsewhere) - lastPlayedEverywhere(b, elsewhere); return sortDir === 'asc' ? d : -d }
         case 'playCount': { const d = playsEverywhere(a, elsewhere) - playsEverywhere(b, elsewhere); return sortDir === 'asc' ? d : -d }
         case 'rating': av = a.rating || 0; bv = b.rating || 0; break
         case 'channelMode': av = a.channelMode || ''; bv = b.channelMode || ''; break
@@ -1117,7 +1120,9 @@ export default function PlaylistView() {
                     case 'year':
                       return <div key={col.key} className="songs-cell">{track.year || ''}</div>
                     case 'dateAdded':
-                      return <div key={col.key} className="songs-cell songs-cell--time">{formatAppDate(track.dateAdded)}</div>
+                      return <div key={col.key} className="songs-cell songs-cell--time">{formatAppDateTime(track.dateAdded)}</div>
+                    case 'lastPlayedAt':
+                      return <div key={col.key} className="songs-cell songs-cell--time">{formatAppDateTime(lastPlayedEverywhere(track, elsewhere))}</div>
                     case 'playCount':
                       return <div key={col.key} className="songs-cell songs-cell--plays">{playsEverywhere(track, elsewhere) || ''}</div>
                     default:
