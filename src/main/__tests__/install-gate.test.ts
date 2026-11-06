@@ -108,15 +108,32 @@ fi
 cat "$JT_FAKE/ps_$pid" 2>/dev/null
 exit 0
 `,
+  // codesign_exit: the staged app's check. codesign_exit_copy: the check of the copy.
   codesign: `#!/bin/bash
 echo "codesign $*" >> "$JT_FAKE/calls.log"
+case "\${@: -1}" in
+  */.jt-incoming-*) exit "$(cat "$JT_FAKE/codesign_exit_copy" 2>/dev/null || echo 0)" ;;
+esac
 exit "$(cat "$JT_FAKE/codesign_exit" 2>/dev/null || echo 0)"
 `,
+  // The real mv, on the record. mv_in_fails and mv_in_hang: the rename of the copy into place.
+  mv: `#!/bin/bash
+echo "mv $*" >> "$JT_FAKE/calls.log"
+case "$*" in
+  *.jt-incoming-*)
+    [ -e "$JT_FAKE/mv_in_fails" ] && exit 1
+    if [ -e "$JT_FAKE/mv_in_hang" ]; then echo $$ > "$JT_FAKE/ditto_pid"; exec sleep 60; fi
+    ;;
+esac
+exec /bin/mv "$@"
+`,
   // ditto_hang: a copy still going. It says what it has written so far ("partial" = some
-  // of the bundle, empty = nothing yet) and waits to be killed.
+  // of the bundle, empty = nothing yet) and waits to be killed. ditto_starts_app: something
+  // else starts the app while it copies.
   ditto: `#!/bin/bash
 echo "ditto $*" >> "$JT_FAKE/calls.log"
 [ -e "$JT_FAKE/ditto_fail" ] && exit 1
+[ -e "$JT_FAKE/ditto_starts_app" ] && echo 7777 >> "$JT_FAKE/pids"
 if [ -e "$JT_FAKE/ditto_hang" ]; then
   if [ -s "$JT_FAKE/ditto_hang" ]; then mkdir -p "$2/Contents"; echo partial > "$2/Contents/half-written"; fi
   echo $$ > "$JT_FAKE/ditto_pid"
@@ -272,6 +289,12 @@ interface WorldOpts {
   dittoHang?: 'partial' | 'nothing'
   /** The quit holds until quitDone(). */
   quitHold?: boolean
+  /** The check of the copy fails, where the staged app's passed. */
+  codesignExitCopy?: number
+  /** The rename of the copy into place: refused, or still going when the test kills it. */
+  mvIn?: 'fails' | 'hangs'
+  /** Something else starts the app while the copy runs. */
+  dittoStartsApp?: boolean
 }
 
 interface World {
@@ -298,6 +321,8 @@ interface World {
   /** The Mac slept: the wall clock is this much further on. */
   clockJumps: (seconds: number) => void
   openWorksNow: () => void
+  /** Where this gate copies the build before it swaps. */
+  incoming: (g: Gate) => string
   /** A TERM to the gate and its copy, the way a kill of the process group lands. */
   termGateAndCopy: (g: Gate) => void
   quitDone: () => void
@@ -336,6 +361,10 @@ function makeWorld(o: WorldOpts = {}): World {
   if (o.oldState) writeFileSync(join(fake, 'state_4242'), `${o.oldState}\n`)
   if (o.dittoHang) writeFileSync(join(fake, 'ditto_hang'), o.dittoHang === 'partial' ? 'partial\n' : '')
   if (o.quitHold) writeFileSync(join(fake, 'quit_hold'), '')
+  if (o.codesignExitCopy) writeFileSync(join(fake, 'codesign_exit_copy'), String(o.codesignExitCopy))
+  if (o.mvIn === 'fails') writeFileSync(join(fake, 'mv_in_fails'), '')
+  if (o.mvIn === 'hangs') writeFileSync(join(fake, 'mv_in_hang'), '')
+  if (o.dittoStartsApp) writeFileSync(join(fake, 'ditto_starts_app'), '')
 
   const installedApp = join(root, 'Applications', 'JakeTunes.app')
   mkdirSync(join(installedApp, 'Contents', 'Resources'), { recursive: true })
@@ -386,6 +415,7 @@ function makeWorld(o: WorldOpts = {}): World {
       renameSync(tmp, join(fake, 'open_fails'))
     },
     quitDone: () => rmSync(join(fake, 'quit_hold'), { force: true }),
+    incoming: (g) => join(home, `.jt-incoming-${g.child.pid}.app`),
     termGateAndCopy: (g) => {
       g.child.kill('SIGTERM')
       process.kill(Number(readFileSync(join(fake, 'ditto_pid'), 'utf8')), 'SIGTERM')
@@ -512,7 +542,7 @@ describe('install gate — the update-ready protocol', () => {
 
       const calls = w.calls()
       const quitAt = calls.indexOf('osascript -e quit app id "com.jacobrosenbaum.jaketunes"')
-      const dittoAt = calls.indexOf(`ditto ${w.stagedApp} ${w.installedApp}`)
+      const dittoAt = calls.indexOf(`ditto ${w.stagedApp} ${w.incoming(g)}`)
       assert.ok(quitAt >= 0 && dittoAt > quitAt, `quit before copy:\n${calls}`)
       assert.match(calls, /^lsregister -f /m)
       assert.match(calls, /^open -a /m)
@@ -597,7 +627,7 @@ describe('install gate — the update-ready protocol', () => {
     } finally { w.cleanup() }
   })
 
-  it('markers are removed on ABORT — copy failed, previous build restored', async () => {
+  it('markers are removed on ABORT — copy failed, the installed build never moved', async () => {
     const w = makeWorld({ idleS: 10, dittoFail: true, pollS: 30 })
     try {
       const g = w.run({ sha: SHA })
@@ -605,10 +635,10 @@ describe('install gate — the update-ready protocol', () => {
       w.writeGo(SHA)
       const r = await finished(g)
       assert.equal(r.code, 1)
-      assert.match(g.out(), /COPY FAILED — restoring the previous build/)
-      assert.equal(readFileSync(w.installedAsar, 'utf8'), OLD_ASAR, 'the previous build is back in place')
-      assert.ok(!existsSync(join(w.home, BK)), 'the backup moved back')
-      assert.match(w.calls(), /^lsregister -f /m)
+      assert.match(g.out(), /COPY FAILED — the installed build was not touched/)
+      assert.equal(readFileSync(w.installedAsar, 'utf8'), OLD_ASAR, 'the previous build is still in place')
+      assert.ok(!existsSync(join(w.home, BK)), 'nothing was moved aside')
+      assert.ok(!existsSync(w.incoming(g)), 'no copy left behind')
       assert.match(w.calls(), /^open -a /m)
       assert.ok(!existsSync(w.marker) && !existsSync(w.goFile), 'both markers removed on abort')
     } finally { w.cleanup() }
@@ -1053,6 +1083,118 @@ describe('install gate — open -a can say no', () => {
   })
 })
 
+// Reviewer's finding, 2026-11-06. The copy went straight into /Applications, and in a bundle's
+// order the executable lands long before Info.plist (line 5 of 298 in ditto -V). A watcher's open,
+// a Dock click or the sync on homemini could start half a build (2 of 20 phases on the fakes), and
+// a SIGKILL or a power cut left it there with nothing to repair it.
+describe('install gate — copy first, swap second', () => {
+  const opens = (w: World): number => (w.calls().match(/^open -a /gm) ?? []).length
+
+  it('while the copy runs, the path holds the whole old build, and the half copy sits under a hidden name', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitState: '?E', dittoHang: 'partial', watchS: 30 })
+    try {
+      const g = w.run({})
+      await waitFor(() => existsSync(join(w.fake, 'ditto_pid')), 'the copy')
+      assert.equal(readFileSync(w.installedAsar, 'utf8'), OLD_ASAR)
+      assert.ok(!existsSync(join(w.installedApp, 'Contents', 'half-written')))
+      assert.ok(existsSync(join(w.incoming(g), 'Contents', 'half-written')))
+      assert.ok(!existsSync(join(w.home, BK)), 'nothing has moved yet')
+      w.termGateAndCopy(g)
+      await finished(g)
+    } finally { w.cleanup() }
+  })
+
+  it('in order: copy, check the copy, old build aside, copy into place, tell LaunchServices, start', async () => {
+    const w = makeWorld({ idleS: 130, pids: '' })
+    try {
+      const g = w.run({})
+      const r = await finished(g)
+      assert.equal(r.code, 0, g.out())
+      const incoming = w.incoming(g)
+      const calls = w.calls().split('\n')
+      const at = (line: string): number => {
+        const i = calls.indexOf(line)
+        assert.ok(i >= 0, `${line}\nnot in:\n${calls.join('\n')}`)
+        return i
+      }
+      const steps = [
+        `ditto ${w.stagedApp} ${incoming}`,
+        `xattr -dr com.apple.quarantine ${incoming}`,
+        `codesign --verify --deep --strict ${incoming}`,
+        `mv ${w.installedApp} ${join(w.home, BK)}`,
+        `mv ${incoming} ${w.installedApp}`,
+        `lsregister -f ${w.installedApp}`,
+        `open -a ${w.installedApp}`,
+      ].map(at)
+      assert.deepEqual(steps, [...steps].sort((a, b) => a - b), calls.join('\n'))
+      assert.equal(readFileSync(w.installedAsar, 'utf8'), NEW_ASAR)
+      assert.equal(readFileSync(join(w.home, BK, 'Contents', 'Resources', 'app.asar'), 'utf8'), OLD_ASAR)
+      assert.ok(!existsSync(incoming), 'nothing left at the hidden name')
+    } finally { w.cleanup() }
+  })
+
+  it('the copy fails its signature check: the install stops there, and the old build starts', async () => {
+    const w = makeWorld({ idleS: 130, pids: '', codesignExitCopy: 1 })
+    try {
+      const g = w.run({ sha: SHA })
+      const r = await finished(g)
+      assert.equal(r.code, 1, g.out())
+      assert.match(g.out(), /ABORT: the copy failed its signature check — the installed build was not touched/)
+      assert.equal(readFileSync(w.installedAsar, 'utf8'), OLD_ASAR)
+      assert.ok(!existsSync(join(w.home, BK)), 'nothing was moved aside')
+      assert.ok(!existsSync(w.incoming(g)), 'the bad copy is gone')
+      assert.equal(opens(w), 1)
+      assert.ok(!existsSync(w.marker), 'markers go on this exit too')
+    } finally { w.cleanup() }
+  })
+
+  it('the rename of the copy into place fails: the previous build goes back, and it is what starts', async () => {
+    const w = makeWorld({ idleS: 130, pids: '', mvIn: 'fails' })
+    try {
+      const g = w.run({})
+      const r = await finished(g)
+      assert.equal(r.code, 1, g.out())
+      assert.match(g.out(), /COPY FAILED — restoring the previous build/)
+      assert.equal(readFileSync(w.installedAsar, 'utf8'), OLD_ASAR)
+      assert.ok(!existsSync(join(w.home, BK)), 'the backup moved back')
+      assert.ok(!existsSync(w.incoming(g)), 'the copy is gone')
+      assert.equal(opens(w), 1)
+    } finally { w.cleanup() }
+  })
+
+  // The sync on homemini (pgrep || open -g) or a Dock click. The swap would leave that app running
+  // from ~/<backup>, and the gate would call it the new build.
+  it('something starts the app while the copy runs: the install stops, the bundle stays, and nothing else is started', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitState: 'Z', dittoStartsApp: true })
+    try {
+      const g = w.run({})
+      const r = await finished(g)
+      assert.equal(r.code, 1, g.out())
+      assert.match(g.out(), /ABORT: JakeTunes started again during the copy — install untouched/)
+      assert.doesNotMatch(g.out(), /the app starts by itself/, 'there is one running: nothing is owed')
+      assert.equal(readFileSync(w.installedAsar, 'utf8'), OLD_ASAR)
+      assert.ok(!existsSync(join(w.home, BK)), 'nothing was moved aside')
+      assert.ok(!existsSync(w.incoming(g)), 'the copy is gone')
+      assert.equal(opens(w), 0)
+    } finally { w.cleanup() }
+  })
+
+  it('a copy a killed gate left behind is removed; one whose gate is alive is not', async () => {
+    const w = makeWorld({ idleS: 130, pids: '' })
+    try {
+      const dead = join(w.home, '.jt-incoming-99999.app')
+      const alive = join(w.home, `.jt-incoming-${process.pid}.app`)
+      mkdirSync(join(dead, 'Contents'), { recursive: true })
+      mkdirSync(join(alive, 'Contents'), { recursive: true })
+      const g = w.run({})
+      const r = await finished(g)
+      assert.equal(r.code, 0, g.out())
+      assert.ok(!existsSync(dead), 'no gate 99999 here, so nobody is coming back for it')
+      assert.ok(existsSync(alive), 'another install is using this one')
+    } finally { w.cleanup() }
+  })
+})
+
 // Reviewer's finding, 2026-11-06. With its reader gone (a client that exits, a pipeline killed
 // with it) the gate's next echo got SIGPIPE. Bash ran the EXIT trap, and the trap's own first echo
 // died the same way, before it restored anything or left the watcher. Each of these ended at
@@ -1128,25 +1270,43 @@ describe('install gate — killed during the swap', () => {
   const started = (w: World): Promise<true> => waitFor(() => /5151/.test(w.pids()) || null, 'the app starting') as Promise<true>
 
   for (const hang of ['partial', 'nothing'] as const) {
-    it(`killed with ${hang === 'partial' ? 'half the bundle' : 'nothing'} copied: the previous build goes back, and that is what starts`, async () => {
+    it(`killed with ${hang === 'partial' ? 'half the bundle' : 'nothing'} copied: the installed build never moved, and that is what starts`, async () => {
       const w = makeWorld({ idleS: 130, pids: '4242\n', quitState: '?E', dittoHang: hang, watchS: 30 })
       try {
         const g = w.run({ sha: SHA })
         await waitFor(() => existsSync(join(w.fake, 'ditto_pid')), 'the copy')
-        assert.ok(!existsSync(w.installedAsar), 'the old bundle is aside, mid-swap')
         w.termGateAndCopy(g)
         const r = await finished(g)
         assert.equal(r.code, 143)
-        assert.equal(readFileSync(w.installedAsar, 'utf8'), OLD_ASAR, 'the previous build is back in place')
-        assert.ok(!existsSync(join(w.installedApp, 'Contents', 'half-written')), 'none of the half copy is left')
-        assert.ok(!existsSync(join(w.home, BK)), 'the backup moved back')
-        assert.match(w.calls(), new RegExp(`^lsregister -f ${w.installedApp}$`, 'm'))
+        assert.equal(readFileSync(w.installedAsar, 'utf8'), OLD_ASAR, 'the previous build is in place')
+        assert.ok(!existsSync(join(w.installedApp, 'Contents', 'half-written')), 'none of the half copy is there')
+        assert.ok(!existsSync(w.incoming(g)), 'the half copy is gone')
+        assert.ok(!existsSync(join(w.home, BK)), 'nothing was moved aside')
         assert.ok(!existsSync(w.marker), 'markers go on this exit too')
         w.oldGone()
         await started(w)
       } finally { w.cleanup() }
     })
   }
+
+  it('killed between the two renames, with nothing at the path: the previous build goes back, and that is what starts', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitState: '?E', mvIn: 'hangs', watchS: 30 })
+    try {
+      const g = w.run({ sha: SHA })
+      await waitFor(() => existsSync(join(w.fake, 'ditto_pid')), 'the rename of the copy into place')
+      assert.ok(!existsSync(w.installedAsar), 'the old bundle is aside')
+      w.termGateAndCopy(g)
+      const r = await finished(g)
+      assert.equal(r.code, 143)
+      assert.equal(readFileSync(w.installedAsar, 'utf8'), OLD_ASAR, 'the previous build is back in place')
+      assert.ok(!existsSync(join(w.home, BK)), 'the backup moved back')
+      assert.ok(!existsSync(w.incoming(g)), 'the copy is gone')
+      assert.match(w.calls(), new RegExp(`^lsregister -f ${w.installedApp}$`, 'm'))
+      assert.ok(!existsSync(w.marker), 'markers go on this exit too')
+      w.oldGone()
+      await started(w)
+    } finally { w.cleanup() }
+  })
 
   it('killed after the copy finished, waiting on the old pid: the new build stays, and it is what starts', async () => {
     const w = makeWorld({ idleS: 130, pids: '4242\n', quitState: '?E', watchS: 1 })

@@ -15,9 +15,10 @@
 #    Once the quit is asked for, every way out of this script ends with the app running
 #    or a watcher that will start it: on 11/5 a quit took 21 minutes, this script gave
 #    up after 30 s, and when the old process finally died the Mac had no app running.
-#    A kill during the swap puts the previous build back first, so what starts is whole.
-#  - previous build kept OUTSIDE /Applications (LaunchServices), restored if
-#    the copy fails; codesign verify; lsregister -f; caffeinate (10/19 sleep gap)
+#  - the copy is made and checked under a hidden name, then two renames swap it in, so nothing
+#    can find half a build at the path. A kill between them puts the previous build back.
+#  - previous build kept OUTSIDE /Applications (LaunchServices); codesign verify; lsregister -f;
+#    caffeinate (10/19 sleep gap)
 #
 # "Update ready" protocol (2026-10-30, Jake: "there should be an indication somewhere
 # within jaketunes that it is ready to update"). Two marker files in the app's data
@@ -106,7 +107,8 @@ old_left() {
 }
 OLD_PIDS=""
 APP_DUE=0   # 1 from the moment the quit is asked for until the app is started or a watcher will start it
-SWAPPING=0  # 1 from moving the old bundle aside until the new one is whole
+SWAPPING=0  # 1 from moving the old bundle aside until the new one is in its place
+INCOMING="$HOME/.jt-incoming-$$.app"
 # Detached: it outlives this script (and an ssh session running it). It starts the app
 # when the old process is gone, unless something else already has.
 # Its window counts polls, never the clock: date keeps counting while the Mac sleeps, so
@@ -175,7 +177,7 @@ start_app() {
   start_app_when_gone "no app after 3 tries of open -a; still trying in the background"
   return 2
 }
-# The previous build back in /Applications, whatever a copy left there.
+# The previous build back in /Applications.
 restore_previous() {
   [ -d "$HOME/$BK" ] || return 0
   rm -rf "$APP"
@@ -236,14 +238,15 @@ cleanup_markers() {
   if [ -f "$READY" ] && grep -q "\"gatePid\": $$[,} ]" "$READY" 2>/dev/null; then rm -f "$READY"; fi
   if [ -f "$GO" ] && [ "$(go_sha)" = "$SHA" ]; then rm -f "$GO"; fi
 }
-# Any exit after the quit, a kill included, still gets the app back. A kill during the
-# swap leaves half a bundle or none, so the previous build goes back first.
+# Any exit after the quit, a kill included, still gets the app back. A kill between the two
+# renames leaves no bundle at the path, so the previous build goes back first.
 on_exit() {
   cleanup_markers
   if [ "$SWAPPING" = 1 ]; then
     say "$(date +%H:%M:%S) killed during the swap — restoring the previous build"
     restore_previous
   fi
+  rm -rf "$INCOMING"
   [ "$APP_DUE" = 1 ] && start_app_when_gone
   return 0
 }
@@ -299,16 +302,41 @@ for i in $(seq 1 "$QUIT_WAIT"); do [ -z "$(jt_live)" ] && break; sleep 1; done
 gate >/dev/null || true
 [ "$(stat -f %m "$ASAR")" = "$M0" ] || { say "ABORT: app.asar changed at quit time"; start_app; kill $CAF 2>/dev/null; exit 1; }
 
+# Copy first, swap second. In a bundle's order the executable lands long before Info.plist (line 5
+# of 298 in ditto -V), so a copy straight into /Applications could start half done for anything
+# that opened it (a watcher, a Dock click, the sync on homemini), and a kill or a power cut left
+# it there. The copy goes to a hidden name and is checked there, so all of that finds a whole build
+# at the path and only the gap between two renames is left. $HOME and /Applications are one volume
+# on all three Macs (stat, 11/6), and restore_previous has always moved the bundle the same way.
+for d in "$HOME"/.jt-incoming-*.app; do
+  p=${d##*-}; p=${p%.app}
+  [ -d "$d" ] && ! kill -0 "$p" 2>/dev/null && rm -rf "$d"
+done
+if ! ditto "$NEW" "$INCOMING"; then
+  say "COPY FAILED — the installed build was not touched"
+  start_app; kill $CAF 2>/dev/null; exit 1
+fi
+xattr -dr com.apple.quarantine "$INCOMING" 2>/dev/null
+if ! codesign --verify --deep --strict "$INCOMING"; then
+  say "ABORT: the copy failed its signature check — the installed build was not touched"
+  start_app; kill $CAF 2>/dev/null; exit 1
+fi
+# Something started the app while that ran. Swapping now would leave it running from ~/$BK, and
+# the new build's launch would lose the single-instance lock to it, with this gate reporting its
+# pid as the new build's.
+if [ -n "$(jt_live)" ]; then
+  APP_DUE=0
+  say "ABORT: JakeTunes started again during the copy — install untouched"
+  kill $CAF 2>/dev/null; exit 1
+fi
+
 SWAPPING=1
 mv "$APP" "$HOME/$BK" || { SWAPPING=0; say "ABORT: could not move the old app aside"; start_app; kill $CAF 2>/dev/null; exit 1; }
-if ! ditto "$NEW" "$APP"; then
-  SWAPPING=0
+if ! mv "$INCOMING" "$APP"; then
   say "COPY FAILED — restoring the previous build"
-  restore_previous; start_app; kill $CAF 2>/dev/null; exit 1
+  restore_previous; SWAPPING=0; start_app; kill $CAF 2>/dev/null; exit 1
 fi
 SWAPPING=0
-xattr -dr com.apple.quarantine "$APP" 2>/dev/null
-codesign --verify --deep --strict "$APP" || say "WARN: installed app signature check failed"
 "$LSREG" -f "$APP"
 gate_rc=0
 start_app
