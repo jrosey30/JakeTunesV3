@@ -151,6 +151,11 @@ JT_DATA_REMOTE='Library/Application Support/JakeTunes'
 # kernel's connect timeout, 75 s (net.inet.tcp.keepinit, measured), and a pass makes more
 # than a dozen of them. The music leg goes to the mount, so this doesn't touch it.
 export RSYNC_RSH='ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4'
+# Audio edits no music leg has carried yet: a line for each file the app rewrites.
+# ⚠️ TWIN: src/main/audio-edits-owed.ts writes this file.
+OWED_EDITS="$JT_DATA_LOCAL/audio-edits-owed.txt"
+OWED_PER_LEG="${JT_OWED_PER_LEG:-200}"
+OWED_MAX_REFUSALS="${JT_OWED_MAX_REFUSALS:-20}"
 
 # Shared remount helper (2026-08-07). A host qualifies ONLY by silently
 # proving it's the DS225 (smbutil view -N via keychain lists JakeShared —
@@ -517,6 +522,8 @@ if [ "$SHARE_AWAY" -eq 1 ] && [ "$HOMEMINI_ONLY" -eq 0 ]; then
   HOMEMINI_ONLY=1
   log "away from home (the NAS's LAN address is behind a gateway) — homemini legs only; new audio goes over ssh"
 fi
+# A replica has no music leg, so no list of edits would ever be read.
+[ "$REPLICA" -eq 1 ] && rm -f "$OWED_EDITS"
 [ $HOMEMINI_ONLY -eq 0 ] && { ensure_jakeshared || true; }
 
 if [ $HOMEMINI_ONLY -eq 0 ] && [ ! -d "$MOUNT/JakeTunesLibrary" ]; then
@@ -994,9 +1001,72 @@ for arg in "$@"; do
   [ "$arg" = "--quick" ] && QUICK_MODE=1
 done
 
+# Audio edits no leg has carried (2026-11-06). A Get Info edit rewrites the file's tags,
+# often at the same size. The quick leg is the only thing that can carry that: the full
+# leg is --size-only and hop 1 only adds. It looked back 10 minutes, so an edit made away,
+# or with the breaker open, never reached the NAS copy, the one Plex reads.
+# A list, not "everything newer than the last leg". Measured 11/6: in a week 679 files
+# (25.3 GB) got a new mtime, 636 of them (23.7 GB) the same bytes homemini already has, and
+# 43 were edits. By the 8/23 note below SMB doesn't keep the mtimes rsync sets, so a walk by
+# mtime would send all of it again, every pass, until one finished inside the alarm.
+# The app's list is taken aside by rename, so a line written during the leg starts a new
+# file and can't be cleared with this one. A taken list stays on disk until a leg that
+# carried it finishes, so a killed run's list goes with the next one. At most OWED_PER_LEG
+# files a leg, so a bulk edit moves forward inside the 420 s alarm instead of sending the
+# same files again every pass. The full leg never touches the list.
+take_owed_edits() {
+  local out=$1 f line rel raw
+  OWED_TAKEN=(); OWED_REST=""; OWED_COUNT=0
+  [ -d "$LIBRARY_ROOT" ] || return 0
+  if [ -f "$OWED_EDITS" ]; then mv -f "$OWED_EDITS" "$OWED_EDITS.taken.$$.$RANDOM" 2>/dev/null || true; fi
+  raw=$(mktemp /tmp/jaketunes-sync-owed.XXXXXX)
+  for f in "$OWED_EDITS".taken.*; do
+    [ -f "$f" ] || continue
+    OWED_TAKEN+=("$f")
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in */iPod_Control/*) rel="iPod_Control/${line#*/iPod_Control/}" ;; *) continue ;; esac
+      case "$rel" in */.*) continue ;; esac
+      # Gone, a link (streamed) or empty: nothing to carry.
+      if [ -f "$LIBRARY_ROOT/$rel" ] && [ ! -L "$LIBRARY_ROOT/$rel" ] && [ -s "$LIBRARY_ROOT/$rel" ]; then
+        printf './%s\n' "$rel"
+      fi
+    done < "$f"
+  done > "$raw"
+  LC_ALL=C sort -u -o "$raw" "$raw"
+  head -n "$OWED_PER_LEG" "$raw" >> "$out"
+  OWED_COUNT=$(head -n "$OWED_PER_LEG" "$raw" | wc -l | tr -d ' ')
+  OWED_REST="$raw.rest"
+  tail -n +"$(( OWED_PER_LEG + 1 ))" "$raw" > "$OWED_REST"
+  rm -f "$raw"
+}
+# $1 = the leg's exit. Only a leg that finished clears the list. What didn't fit goes back
+# first, so a kill between the two steps leaves a line owed twice, never lost. A file the NAS
+# keeps refusing (exit 23, and a notification each time) is given up on after
+# OWED_MAX_REFUSALS legs in a row, with a line in the log. A cut leg (30, 142) proves
+# nothing about the file, so it doesn't count.
+settle_owed_edits() {
+  local rc=$1 refused
+  if [ "${#OWED_TAKEN[@]}" -gt 0 ]; then
+    if [ "$rc" -eq 0 ]; then
+      if [ -s "$OWED_REST" ]; then mv -f "$OWED_REST" "$OWED_EDITS.taken.rest.$$.$RANDOM"; fi
+      rm -f "${OWED_TAKEN[@]}" "$OWED_EDITS.refused"
+    elif [ "$rc" -eq 23 ] && [ "$OWED_COUNT" -gt 0 ]; then
+      refused=$(( $(cat "$OWED_EDITS.refused" 2>/dev/null || echo 0) + 1 ))
+      if [ "$refused" -ge "$OWED_MAX_REFUSALS" ]; then
+        log "WARNING: gave up on $OWED_COUNT audio edit(s) the NAS refused $refused legs in a row (exit 23) — their tags on the NAS stay as they were"
+        rm -f "${OWED_TAKEN[@]}" "$OWED_EDITS.refused"
+      else
+        echo "$refused" > "$OWED_EDITS.refused"
+      fi
+    fi
+  fi
+  [ -n "$OWED_REST" ] && rm -f "$OWED_REST"
+  return 0
+}
+
 run_music_rsync() {
 if [ $QUICK_MODE -eq 1 ]; then
-  log "rsync music (quick: files modified in last 10 min) → $MOUNT/JakeTunesLibrary/ …"
+  log "rsync music (quick: files modified in last 10 min, and edits no leg has carried) → $MOUNT/JakeTunesLibrary/ …"
   TMP_LIST=$(mktemp /tmp/jaketunes-sync-files.XXXXXX)
   # 2026-10-18: `-not -path './.*'` only skips hidden entries at the ROOT.
   # A hidden FILE deeper down (iPod_Control/Music/F04/.x.tagwrite-ab12.m4a)
@@ -1011,8 +1081,11 @@ if [ $QUICK_MODE -eq 1 ]; then
       -not -path './_pending-imports/*' \
       -not -name '.*' \
       -not -name 'Icon?' ) > "$TMP_LIST"
+  take_owed_edits "$TMP_LIST"
+  LC_ALL=C sort -u -o "$TMP_LIST" "$TMP_LIST"
   file_count=$(wc -l < "$TMP_LIST" | tr -d ' ')
   log "quick mode: $file_count files modified in the last 10 min"
+  [ "$OWED_COUNT" -gt 0 ] && log "quick mode: that includes $OWED_COUNT audio edit(s) no leg had carried"
   if [ "$file_count" -gt 0 ]; then
     # 2026-11-06 — BOUNDED, like the full leg below. It had no limit of its own, so
     # on a wedged share rsync sat until the orchestrator's 600 s watchdog killed the
@@ -1027,6 +1100,7 @@ if [ $QUICK_MODE -eq 1 ]; then
     music_rc=0
   fi
   rm -f "$TMP_LIST"
+  settle_owed_edits "$music_rc"
 else
   log "rsync music (full, additive only — never deletes) → $MOUNT/JakeTunesLibrary/ …"
   # 4.4.68 / Brief 019: --delete REMOVED. Previous behavior propagated

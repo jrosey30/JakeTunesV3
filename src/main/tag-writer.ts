@@ -25,6 +25,7 @@ import { spawn } from 'child_process'
 import { PYTHON_CMD, IS_WINDOWS } from './platform.ts'
 import { safeIpcError } from './safe-ipc-error.ts'
 import { withFileWriteLock, writeVerified } from './audio-write-guard.ts'
+import { noteAudioEditOwed } from './audio-edits-owed.ts'
 
 // Fields safe to propagate to embedded file tags. Anything not in this
 // set is JakeTunes-internal (analysis results, listener stats, ratings)
@@ -162,7 +163,7 @@ function runPythonTagWriter(script: string, audioFilePath: string, payload: Reco
   })
 }
 
-export async function writeTagsToFile(req: TagWriteRequest, opts: { script?: string } = {}): Promise<TagWriteResult> {
+export async function writeTagsToFile(req: TagWriteRequest, opts: { script?: string; noteEdit?: (path: string) => Promise<void> } = {}): Promise<TagWriteResult> {
   const { audioFilePath, overrides } = req
   // Absolute-path sanity check. iPod colon-paths would silently fail
   // here ("file not found" deep in mutagen), so reject up front with a
@@ -209,6 +210,8 @@ export async function writeTagsToFile(req: TagWriteRequest, opts: { script?: str
     // never a throw: a vanished file or a refused rename is a failed write.
     const writeResult = await writeVerified(audioFilePath, (target) => runPythonTagWriter(script, target, payload))
       .catch((err: unknown) => ({ ok: false, error: safeIpcError(err, 'io-failed') }))
+    // The quick leg carries a rewrite to the NAS, whenever it next runs.
+    if (writeResult.ok) await (opts.noteEdit ?? noteAudioEditOwed)(audioFilePath)
     return {
       ok: writeResult.ok,
       filePath: audioFilePath,
