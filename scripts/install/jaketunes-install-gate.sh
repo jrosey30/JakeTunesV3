@@ -152,7 +152,7 @@ start_app_when_gone() {
       fi
       looks=$((looks + 1))
       sleep "$poll"
-    done' _ "$(awk -v s="$WATCH_S" -v p="$WATCH_POLL" 'BEGIN { n = int(s / p); print (n < 1 ? 1 : n) }')" \
+    done' jt-gate-watcher "$(awk -v s="$WATCH_S" -v p="$WATCH_POLL" 'BEGIN { n = int(s / p); print (n < 1 ? 1 : n) }')" \
     "$WATCH_POLL" "$APP" $OLD_PIDS >/dev/null 2>&1 &
 }
 # Start the app now if the old process is gone within GONE_WAIT, or leave it to the watcher.
@@ -291,6 +291,13 @@ say "$(date +%H:%M:%S) gate $why"
 
 # ── Install ──────────────────────────────────────────────────────────────────
 caffeinate -i -t 300 & CAF=$!
+# A gate that gave up may have left its watcher, and from here this gate owes the app. Left alone
+# it reopened the old build during this gate's look (2 of 20 phases, ending "did not quit" with the
+# old build) or just before the swap (1 of 20, reported as installed), and a recipe's retry never
+# got its turn. It goes before anything else can die: before the quit, or it opens as soon as the
+# old pid goes, and before OLD_PIDS, so whatever it just started is counted. The digit in the
+# pattern is what a watcher has and a shell that only quotes this line doesn't.
+pkill -f 'jt-gate-watcher [0-9]' && { APP_DUE=1; say "$(date +%H:%M:%S) retired an older install's watcher, this install owes the app now"; }
 OLD_PIDS="$(pgrep -x JakeTunes | tr '\n' ' ')$(jt_dying | tr '\n' ' ')"
 [ -n "$OLD_PIDS" ] && APP_DUE=1
 perl -e 'alarm 20; exec @ARGV' osascript -e 'quit app id "com.jacobrosenbaum.jaketunes"' 2>&1

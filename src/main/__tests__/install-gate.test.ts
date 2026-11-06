@@ -122,7 +122,7 @@ echo "mv $*" >> "$JT_FAKE/calls.log"
 case "$*" in
   *.jt-incoming-*)
     [ -e "$JT_FAKE/mv_in_fails" ] && exit 1
-    if [ -e "$JT_FAKE/mv_in_hang" ]; then echo $$ > "$JT_FAKE/ditto_pid"; exec sleep 60; fi
+    if [ -e "$JT_FAKE/mv_in_hang" ]; then echo $$ > "$JT_FAKE/ditto_pid.tmp"; /bin/mv -f "$JT_FAKE/ditto_pid.tmp" "$JT_FAKE/ditto_pid"; exec sleep 60; fi
     ;;
 esac
 exec /bin/mv "$@"
@@ -136,7 +136,7 @@ echo "ditto $*" >> "$JT_FAKE/calls.log"
 [ -e "$JT_FAKE/ditto_starts_app" ] && echo 7777 >> "$JT_FAKE/pids"
 if [ -e "$JT_FAKE/ditto_hang" ]; then
   if [ -s "$JT_FAKE/ditto_hang" ]; then mkdir -p "$2/Contents"; echo partial > "$2/Contents/half-written"; fi
-  echo $$ > "$JT_FAKE/ditto_pid"
+  echo $$ > "$JT_FAKE/ditto_pid.tmp"; /bin/mv -f "$JT_FAKE/ditto_pid.tmp" "$JT_FAKE/ditto_pid"
   exec sleep 60
 fi
 cp -R "$1" "$2"
@@ -171,6 +171,12 @@ exit 0
   xattr: `#!/bin/bash
 echo "xattr $*" >> "$JT_FAKE/calls.log"
 exit 0
+`,
+  // Only this world's watchers. The real pkill by the gate's own pattern would reach every
+  // watcher on this Mac, a real install's among them.
+  pkill: `#!/bin/bash
+echo "pkill $*" >> "$JT_FAKE/calls.log"
+exec /usr/bin/pkill -f "jt-gate-watcher [0-9].*$JT_GATE_APP"
 `,
   // date_offset moves the wall clock, the way a closed lid does: the epoch seconds jump,
   // and nothing else about the run changes.
@@ -323,6 +329,14 @@ interface World {
   openWorksNow: () => void
   /** Where this gate copies the build before it swaps. */
   incoming: (g: Gate) => string
+  /** What the old process turns into when the next gate asks it to quit. */
+  setQuitState: (state: string) => void
+  /** From now on a copy never finishes. */
+  copyHangs: () => void
+  /** A real pgrep, by the name the gate gives its watcher. */
+  watcherAlive: () => boolean
+  /** It has looked at the process table and gone to sleep, so it won't look again for a poll. */
+  watcherAsleep: () => boolean
   /** A TERM to the gate and its copy, the way a kill of the process group lands. */
   termGateAndCopy: (g: Gate) => void
   quitDone: () => void
@@ -416,6 +430,25 @@ function makeWorld(o: WorldOpts = {}): World {
     },
     quitDone: () => rmSync(join(fake, 'quit_hold'), { force: true }),
     incoming: (g) => join(home, `.jt-incoming-${g.child.pid}.app`),
+    setQuitState: (state) => writeFileSync(join(fake, 'quit_state'), `${state}\n`),
+    copyHangs: () => writeFileSync(join(fake, 'ditto_hang'), 'partial\n'),
+    watcherAlive: () => {
+      try {
+        execFileSync('/usr/bin/pgrep', ['-f', `jt-gate-watcher [0-9].*${installedApp}`], { stdio: 'ignore' })
+        return true
+      } catch {
+        return false
+      }
+    },
+    watcherAsleep: () => {
+      try {
+        const pid = execFileSync('/usr/bin/pgrep', ['-f', `jt-gate-watcher [0-9].*${installedApp}`], { encoding: 'utf8' }).trim().split('\n')[0]
+        execFileSync('/usr/bin/pgrep', ['-P', pid, '-x', 'sleep'], { stdio: 'ignore' })
+        return true
+      } catch {
+        return false
+      }
+    },
     termGateAndCopy: (g) => {
       g.child.kill('SIGTERM')
       process.kill(Number(readFileSync(join(fake, 'ditto_pid'), 'utf8')), 'SIGTERM')
@@ -839,7 +872,8 @@ describe('install gate — a slow quit never leaves the Mac with no app', () => 
     try {
       const r = await finished(w.run({}))
       assert.equal(r.code, 1)
-      await sleep(1800)
+      // Not a fixed sleep: 1800 ms failed 3 runs of 5 at load 40-90, with the watcher still on its way.
+      await waitFor(() => !w.watcherAlive(), 'the watcher giving up')
       assert.equal(opens(w), 0)
       w.oldGone()
       await sleep(600)
@@ -1009,7 +1043,9 @@ describe('install gate — open -a can say no', () => {
   })
 
   it('it keeps saying no: the last line says so, the exit is 4, the build stays, and the app still comes when open works', async () => {
-    const w = makeWorld({ idleS: 130, pids: '', openFails: 1000, watchS: 30 })
+    // A real-sized gap between the watcher's tries: at the fast poll its 10 tries are spent in 6 s,
+    // which a busy Mac can use up before this test gets to say open works (load 600, 2026-11-06).
+    const w = makeWorld({ idleS: 130, pids: '', openFails: 1000, watchS: 60, watchPollS: 1 })
     try {
       const g = w.run({ sha: SHA })
       const r = await finished(g)
@@ -1079,6 +1115,97 @@ describe('install gate — open -a can say no', () => {
       await sleep(1500) // its next try would have been 0.6 s on
       assert.equal(opens(w), 4)
       assert.equal(w.pids(), '')
+    } finally { w.cleanup() }
+  })
+})
+
+// Reviewer's finding, 2026-11-06. Gate 1 gave up with "did not quit" and left its watcher, and a
+// retry ran inside its window. In 2 of 20 phases the watcher reopened the old build in gate 2's
+// look, so gate 2 said "did not quit" too. In 1 it did so just before the swap, and the gate called
+// that process the new build. It also opened half copies, and it beat the recipe's retry.
+describe('install gate — a retry retires the older watcher', () => {
+  const opens = (w: World): number => (w.calls().match(/^open -a /gm) ?? []).length
+  const started = (w: World): Promise<true> => waitFor(() => /5151/.test(w.pids()) || null, 'the app starting') as Promise<true>
+  /** Gate 1 gives up on an app that won't quit, and leaves its watcher. */
+  async function gaveUp(w: World): Promise<void> {
+    const r = await finished(w.run({}))
+    assert.equal(r.code, 1)
+    await waitFor(() => w.watcherAlive(), 'gate 1\'s watcher')
+  }
+
+  it('it goes before the quit: when the old pid dies during the copy, it opens nothing', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 60 })
+    try {
+      await gaveUp(w)
+      w.setQuitState('?E')
+      w.copyHangs()
+      const g = w.run({})
+      await waitFor(() => existsSync(join(w.fake, 'ditto_pid')), 'gate 2\'s copy')
+      assert.ok(!w.watcherAlive(), 'gate 1\'s watcher is gone')
+      assert.match(g.out(), /retired an older install's watcher/)
+      const calls = w.calls()
+      assert.ok(calls.lastIndexOf('pkill ') < calls.lastIndexOf('osascript '), `retired before the quit:\n${calls}`)
+      w.oldGone()
+      await sleep(600)
+      assert.equal(opens(w), 0, 'nobody opened anything while the copy ran')
+      w.termGateAndCopy(g)
+      assert.equal((await finished(g)).code, 143)
+      await started(w)
+      assert.equal(readFileSync(w.installedAsar, 'utf8'), OLD_ASAR)
+    } finally { w.cleanup() }
+  })
+
+  it('a retry that installs ends with the new build and one open', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 60 })
+    try {
+      await gaveUp(w)
+      w.setQuitState('Z')
+      const g = w.run({})
+      const r = await finished(g)
+      assert.equal(r.code, 0, g.out())
+      assert.equal(readFileSync(w.installedAsar, 'utf8'), NEW_ASAR)
+      assert.equal(opens(w), 1)
+      assert.match(g.out(), /, pid 5151, previous kept at/)
+    } finally { w.cleanup() }
+  })
+
+  // Its pid is gone and it hasn't looked yet, so OLD_PIDS comes up empty: only that watcher knew.
+  it('it owed the app, so the retry does now: killed right after, the app still comes', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 60, watchPollS: 90 })
+    try {
+      await gaveUp(w)
+      await waitFor(() => w.watcherAsleep(), 'gate 1\'s watcher to look once and sleep')
+      w.oldGone()
+      w.copyHangs()
+      const g = w.run({})
+      await waitFor(() => existsSync(join(w.fake, 'ditto_pid')), 'gate 2\'s copy')
+      assert.ok(!w.watcherAlive(), 'gate 1\'s watcher is gone')
+      assert.equal(opens(w), 0, 'it never got to look again')
+      w.termGateAndCopy(g)
+      assert.equal((await finished(g)).code, 143)
+      await started(w)
+    } finally { w.cleanup() }
+  })
+
+  it('with no older watcher it owes nothing it did not owe before', async () => {
+    const w = makeWorld({ idleS: 130, pids: '', dittoHang: 'nothing', watchS: 2 })
+    try {
+      const g = w.run({})
+      await waitFor(() => existsSync(join(w.fake, 'ditto_pid')), 'the copy')
+      assert.doesNotMatch(g.out(), /retired an older/)
+      w.termGateAndCopy(g)
+      await finished(g)
+      await sleep(400)
+      assert.equal(opens(w), 0, 'no app was running and none was due')
+    } finally { w.cleanup() }
+  })
+
+  it('the watcher is really called that: a real pgrep finds it, and the gate looks for that shape', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 20 })
+    try {
+      await gaveUp(w)
+      const src = readFileSync(scriptPath, 'utf8')
+      assert.match(src, /pkill -f 'jt-gate-watcher \[0-9\]'/)
     } finally { w.cleanup() }
   })
 })
