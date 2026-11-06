@@ -35,6 +35,15 @@
  *      Savant and mixtape intros).
  *   7. Helper restarts are the shell's job; this core never changes state
  *      on a respawn — only on a fresh state line.
+ *   8. Only an app calls happen in counts: isCallApp below. Jake, 2026-11-05,
+ *      9:37 at night: "it keeps pausing for a call that i am not on". macOS's
+ *      speech service (com.apple.CoreSpeech) opened the mic within a second of
+ *      the music starting and held it 33 s, so "any other process on the mic"
+ *      paused, resumed and paused again every 45 s. Dictation, recorders and
+ *      voice assistants are not calls either. Missing a call app costs a press
+ *      of pause; a false call stops the music for nothing.
+ *   9. A mic that comes back right after our resume, twice in a row, is
+ *      following the music, not a call: leave the music alone for half an hour.
  */
 
 /** A call is "started" only after the mic has stayed open this long. */
@@ -46,6 +55,12 @@ export const QUIET_MS = 12_000
  * flipping) before an unexplained transition counts as the user's again.
  */
 export const ECHO_MS = 3000
+/** A "call" starting this soon after our resume came back because we resumed (rule 9). */
+export const BOUNCE_MS = 5000
+/** Comebacks in a row before we stop believing them (rule 9). */
+export const MAX_BOUNCES = 2
+/** How long we then leave the music alone (rule 9). */
+export const STAND_DOWN_MS = 30 * 60 * 1000
 /** Helper respawn schedule; after the last entry the shell gives up. */
 export const RESPAWN_BACKOFF_MS: readonly number[] = [1000, 5000, 30_000]
 export const PAUSE_NOTICE_MS = 6000
@@ -125,18 +140,22 @@ export function createCallPauser(deps: CallPauserDeps): CallPauser {
   let echoPause: unknown = null
   let echoPlay: unknown = null
   let disposed = false
+  // Rule 9.
+  let lastResumeAt: number | null = null
+  let bounces = 0
+  let standDownUntil = 0
 
   const clear = (handle: unknown): null => {
     if (handle !== null && handle !== undefined) clock.clearTimeout(handle)
     return null
   }
 
-  /** Bundle ids of the OTHER processes running input (rule 6). */
+  /** Bundle ids of the call apps running input (rules 6 and 8). */
   const others = (state: MicState): string[] => {
     const out: string[] = []
     state.pids.forEach((pid, i) => {
       const bundle = state.bundles[i] ?? ''
-      if (!isOwn(pid, bundle)) out.push(bundle)
+      if (!isOwn(pid, bundle) && isCallApp(bundle)) out.push(bundle)
     })
     return out
   }
@@ -163,6 +182,7 @@ export function createCallPauser(deps: CallPauserDeps): CallPauser {
     call.quietTimer = null
     call = null
     if (!resume) return
+    lastResumeAt = clock.now()
     echoPlay = clear(echoPlay)
     echoPlay = clock.setTimeout(() => { echoPlay = null }, ECHO_MS)
     emit({ type: 'resume' })
@@ -173,12 +193,15 @@ export function createCallPauser(deps: CallPauserDeps): CallPauser {
     const bundles = others(state)
     if (bundles.length > 0) {
       if (!call) {
+        const bounced = lastResumeAt !== null && clock.now() - lastResumeAt < BOUNCE_MS
+        bounces = bounced ? bounces + 1 : 0
+        if (bounces >= MAX_BOUNCES) standDownUntil = clock.now() + STAND_DOWN_MS
         call = {
           startedAt: clock.now(),
           bundles,
           confirmed: false,
           autoPaused: false,
-          stoodDown: false,
+          stoodDown: clock.now() < standDownUntil,
           confirmTimer: null,
           quietTimer: null,
         }
@@ -263,14 +286,16 @@ export function createCallPauser(deps: CallPauserDeps): CallPauser {
   }
 }
 
-// ── App names for the notice ────────────────────────────────────────────
+// ── The apps a call happens in ─────────────────────────────────
 // Matched by bundle-id prefix, case-insensitively: Electron and WebKit apps
 // capture audio in helper processes whose ids are the parent's plus a
 // suffix (com.microsoft.teams2.helper, com.apple.WebKit.GPU, …).
 
 const CALL_APPS: ReadonlyArray<readonly [string, string]> = [
   ['com.apple.facetime', 'FaceTime'],
-  ['us.zoom.xos', 'Zoom'],
+  ['com.apple.avconferenced', 'FaceTime'],       // where FaceTime's audio runs
+  ['com.apple.telephonyutilities', 'phone'],     // a call through the iPhone
+  ['us.zoom.', 'Zoom'],
   ['com.microsoft.teams', 'Teams'],              // new Teams (…teams2) and classic
   ['com.webex.meetingmanager', 'Webex'],
   ['cisco-systems.spark', 'Webex'],
@@ -278,19 +303,37 @@ const CALL_APPS: ReadonlyArray<readonly [string, string]> = [
   ['com.tinyspeck.slackmacgap', 'Slack'],
   ['com.hnc.discord', 'Discord'],
   ['net.whatsapp.whatsapp', 'WhatsApp'],
+  ['desktop.whatsapp', 'WhatsApp'],
   ['org.whispersystems.signal-desktop', 'Signal'],
+  ['ru.keepcoder.telegram', 'Telegram'],
+  ['org.telegram.', 'Telegram'],
   ['com.skype.skype', 'Skype'],
+  ['com.amazon.amazon-chime', 'Chime'],
+  ['com.logmein.', 'GoTo'],
+  ['com.ringcentral.', 'RingCentral'],
+  ['com.bluejeansnet.', 'BlueJeans'],
 ]
 
+/** Google Meet and every other call that runs in a tab. */
 const BROWSERS: ReadonlyArray<readonly [string, string]> = [
   ['com.google.chrome', 'Chrome'],
   ['com.apple.safari', 'Safari'],
   ['com.apple.webkit', 'Safari'],                // Safari captures in its WebKit helpers
   ['company.thebrowser.browser', 'Arc'],
+  ['company.thebrowser.dia', 'Dia'],
   ['org.mozilla.', 'Firefox'],
   ['com.microsoft.edgemac', 'Edge'],
   ['com.brave.browser', 'Brave'],
+  ['ai.perplexity.comet', 'Comet'],
+  ['com.vivaldi.vivaldi', 'Vivaldi'],
+  ['com.operasoftware.', 'Opera'],
 ]
+
+/** Is this a process a call happens in? Rule 8: nothing else stops the music. */
+export function isCallApp(bundle: string): boolean {
+  const b = bundle.toLowerCase()
+  return CALL_APPS.some(([prefix]) => b.startsWith(prefix)) || BROWSERS.some(([prefix]) => b.startsWith(prefix))
+}
 
 /**
  * "your Zoom call" / "a call in Chrome" / "your call" — the phrase the pause

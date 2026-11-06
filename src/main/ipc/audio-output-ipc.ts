@@ -12,6 +12,7 @@ import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { IS_MAC, IS_WINDOWS, audioHelperRelPath } from '../platform'
 import { safeIpcError } from '../safe-ipc-error'
+import { callAppOnMic } from '../pause-for-calls'
 
 export interface AudioOutputIpcHost {
   sendToRenderer: (channel: string, ...args: unknown[]) => void
@@ -104,7 +105,9 @@ export function registerAudioOutputIpc(ipc: IpcRegistrar, host: AudioOutputIpcHo
       const execP = promisify(execFile)
       const { stdout } = await execP(helperPath, ['mic-status'], { timeout: 4000 })
       const parsed = JSON.parse(stdout) as { ok?: boolean; micActive?: boolean }
-      const active = !!parsed.micActive
+      // "The mic is on" is not "a call is on": macOS's speech service takes it too
+      // (pause-for-calls-core, rule 8). Null = the helper can't say (older macOS).
+      const active = !!parsed.micActive && callAppOnMic() !== false
       if (lastMicActive === null) {
         // First reading establishes the baseline. If the mic is ALREADY
         // active when we arm (music started during a call), fire once so
