@@ -24,6 +24,29 @@ export async function finishedRipFiles(files: string[], tagsOf: (file: string) =
   return out
 }
 
+/** How much shorter than its own header a file may decode. */
+export const RIP_SHORT_SEC = 2
+
+/**
+ * A dropped connection can end a transfer early with no error, and then streamrip tags what it got:
+ * Tinashe's "Popstar" came in as 38 seconds of 2:47, tagged. A FLAC header still says the whole song,
+ * so the file has to be decoded to know. Null from either side means it couldn't be measured, and a
+ * file that can't be measured passes: the import's own checks stand behind it.
+ */
+export function cutShort(headerSec: number | null, decodedSec: number | null): boolean {
+  if (headerSec == null || decodedSec == null) return false
+  return headerSec - decodedSec > RIP_SHORT_SEC
+}
+
+/** ffmpeg's -stats prints "time=00:02:33.04" as it decodes: the last one is the length. */
+export function decodedSecFromStats(stderr: string): number | null {
+  const all = [...stderr.matchAll(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/g)]
+  const m = all[all.length - 1]
+  if (!m) return null
+  const sec = Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])
+  return Number.isFinite(sec) && sec > 0 ? sec : null
+}
+
 /** A transfer past its clock keeps going while bytes keep landing, up to this long in all. */
 export const RIP_HARD_CAP_MS = 45 * 60 * 1000
 /** How often a transfer past its clock is looked at. */

@@ -24,7 +24,7 @@ import { createHash } from 'crypto'
 import { join } from 'path'
 import { homedir, tmpdir } from 'os'
 import { lstat, mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
-import { createRipProgress, finishedRipFiles, RIP_HARD_CAP_MS, RIP_PROGRESS_CHECK_MS } from './rip-finish.ts'
+import { createRipProgress, cutShort, decodedSecFromStats, finishedRipFiles, RIP_HARD_CAP_MS, RIP_PROGRESS_CHECK_MS } from './rip-finish.ts'
 import type { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
 import { NO_EXPLICIT_WARNING, albumFirst, albumVersionOf, bandcampHitDoubt, isCompilationCopy, onWantedAlbum, rankStreamripCandidates, realAlbumTags, titleMatches, rankWithArtistAliases, searchTitle, searchQueryTitle, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, isNoResultsMessage, isQobuzNoSuchItem, parseStreamripDesc, qobuzTrackMetaOf, type QobuzTrackMeta } from '../streamrip-match.ts'
 import { buildRequestedAlbum, verifyAlbumCandidate, reconcileAlbumCompletion, describeCompletion, albumAlternativeDesc, orderTracks, parseCountTag, matchLibraryOwnership, ladderBudgetMs, type RequestedAlbum, type CandidateAlbum, type AlbumVerdict, type Ownership, type LibraryTrackLite } from '../album-identity.ts'
@@ -361,7 +361,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
           await wipeStaging(staging)
           return { ok: false, error: 'The connection was too slow to finish this download. Nothing was imported, so try again on a better connection.' }
         }
-        const got = await finishedRipFiles(await collectAudio(staging), probeStagedFile)
+        const got = await wholeRipFiles(await finishedRipFiles(await collectAudio(staging), probeStagedFile))
         if (got.length > 0) return { ok: true, staged: { staging, files: got } }
         if (cancelRequested) break
         const why = tailMessage(res)
@@ -459,6 +459,19 @@ export function registerStreamripStore(deps: StreamripDeps): void {
    *  file's own tags said "(Live at Cynthia Woods Mitchell Pavilion…)" /
    *  album "As/Is - Live". The file never lies about itself. */
   interface StagedProbe { durSec: number | null; title: string; album: string; artist: string; albumArtist: string; trackNumber?: number; trackTotal?: number; discNumber?: number; discTotal?: number }
+  /** Decode each file to its end: a header says the whole song even when the bytes stop early. */
+  async function wholeRipFiles(files: string[]): Promise<string[]> {
+    const out: string[] = []
+    for (const file of files) {
+      const probe = await probeStagedFile(file)
+      const res = await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-stats', '-i', file, '-map', '0:a:0', '-f', 'null', '-'], 5 * 60_000, 'search')
+      const decoded = decodedSecFromStats(res.stderr)
+      if (cutShort(probe.durSec, decoded)) console.warn(`[streamrip] refusing a cut-off file: ${file.slice(file.lastIndexOf('/') + 1)} decodes to ${decoded}s of ${probe.durSec}s`)
+      else out.push(file)
+    }
+    return out
+  }
+
   async function probeStagedFile(file: string): Promise<StagedProbe> {
     // track/disc read "2/15" style; the album contract orders the staged
     // files by them and checks the disc structure of the edition.

@@ -6,7 +6,7 @@ import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { createRipProgress, finishedRipFiles, RIP_QUIET_LOOKS } from '../streamrip-store/rip-finish.ts'
+import { createRipProgress, cutShort, decodedSecFromStats, finishedRipFiles, RIP_QUIET_LOOKS } from '../streamrip-store/rip-finish.ts'
 
 describe('finishedRipFiles', () => {
   const tags: Record<string, { title: string; artist: string; albumArtist?: string }> = {
@@ -53,10 +53,31 @@ describe('createRipProgress', () => {
   })
 })
 
+describe('a file cut short with its tags on', () => {
+  test('Popstar: 38 s of a 2:47 header is cut short', () => {
+    assert.equal(cutShort(167.8, 38.1), true)
+  })
+  test('a whole file, and a rounding difference, are not', () => {
+    assert.equal(cutShort(179.733, 179.73), false)
+    assert.equal(cutShort(179.7, 178.5), false)
+  })
+  test('what can\'t be measured passes', () => {
+    assert.equal(cutShort(null, 38), false)
+    assert.equal(cutShort(167.8, null), false)
+  })
+  test('the length comes from the last time ffmpeg printed', () => {
+    const stderr = 'size=N/A time=00:00:11.20 bitrate=N/A speed=22x\rsize=N/A time=00:02:33.04 bitrate=N/A speed=40x\n'
+    assert.equal(decodedSecFromStats(stderr), 153.04)
+    assert.equal(decodedSecFromStats('nothing here'), null)
+    assert.equal(decodedSecFromStats('time=00:00:00.00'), null)
+  })
+})
+
 describe('the wiring', () => {
   const src = readFileSync(join(import.meta.dirname, '..', 'streamrip-store', 'index.ts'), 'utf-8')
   test('stageRip refuses a rip the clock stopped and an untagged file', () => {
     assert.match(src, /if \(res\.timedOut\) \{/)
     assert.match(src, /finishedRipFiles\(await collectAudio\(staging\), probeStagedFile\)/)
+    assert.match(src, /wholeRipFiles\(/)
   })
 })
