@@ -12,13 +12,11 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { runSyncScript } from './sync-script-run.ts'
 
-const repoRoot = join(import.meta.dirname, '..', '..', '..')
-const scriptPath = join(repoRoot, 'Dr. Claude', 'scripts', 'jaketunes-homemini-sync.sh')
 const HUB_DIR = 'Library/Application Support/JakeTunes'
 const STATE_FILES = [
   'library.json', 'metadata-overrides.json', 'playlists.json', 'play-events.jsonl', 'listening-log.jsonl',
@@ -76,20 +74,16 @@ function quickList(files: Record<string, string>): { list: string[]; status: num
     }
     const listFile = join(root, 'list.txt')
     writeFileSync(listFile, '')
-    const r = spawnSync('/bin/bash', [scriptPath, '--quick'], {
-      env: {
-        HOME: home,
-        PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`,
-        STUB_LIST: listFile,
-        JT_SYNC_LOG: join(root, 'sync.log'),
-        JT_SYNC_LOCK: join(root, 'sync.lock'),
-        JT_HOMEMINI: 'test@stub',
-        JT_LIBRARY_ROOT: lib,
-        JT_MOUNT: join(root, 'nas'),
-        JT_PLEX_SKIP: '1',
-      },
-      encoding: 'utf8',
-      timeout: 60_000,
+    const r = runSyncScript(['--quick'], bin, {
+      HOME: home,
+      PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`,
+      STUB_LIST: listFile,
+      JT_SYNC_LOG: join(root, 'sync.log'),
+      JT_SYNC_LOCK: join(root, 'sync.lock'),
+      JT_HOMEMINI: 'test@stub',
+      JT_LIBRARY_ROOT: lib,
+      JT_MOUNT: join(root, 'nas'),
+      JT_PLEX_SKIP: '1',
     })
     const log = existsSync(join(root, 'sync.log')) ? readFileSync(join(root, 'sync.log'), 'utf8') : ''
     return { list: readFileSync(listFile, 'utf8').split('\n').filter(Boolean).sort(), status: r.status, log }
