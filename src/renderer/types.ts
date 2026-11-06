@@ -504,6 +504,7 @@ export type ImportFormatChoice = 'aac-128' | 'aac-256' | 'aac-320' | 'alac' | 'a
 import type { EqSettings } from './audio/eq'
 import type { IpodDeviceMarker, IpodIdentity } from '../common/ipod-identity'
 import type { UpdateReadyState } from '../common/update-ready'
+import type { DialogueInput, DialogueResult } from '../common/speech'
 export type { EqSettings } from './audio/eq'
 export type { UpdateReadyState } from '../common/update-ready'
 
@@ -699,6 +700,8 @@ declare global {
       setLibraryContext: (ctx: string) => Promise<void>
       musicmanChat: (messages: { role: string; content: string }[], context?: string) => Promise<{ ok: boolean; text: string; textRaw: string; createdPlaylist?: { name: string; trackIds: number[] } | null }>
       musicmanSpeak: (text: string, fast?: boolean, voiceId?: string) => Promise<{ ok: boolean; audio?: string; error?: string }>
+      // A run of radio lines as one take (2026-11-06). Types: src/common/speech.ts.
+      radioDialogue: (inputs: DialogueInput[]) => Promise<DialogueResult>
       musicmanDj: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => Promise<{ ok: boolean; text: string; transition?: 'talk' | 'scratch' | 'cut' }>
       // 4.4.52: active mic-button persona ('mm' | 'larry') for speech-bubble attribution
       getActiveHost: () => Promise<'mm' | 'larry'>
