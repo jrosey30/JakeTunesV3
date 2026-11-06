@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { IpodDeviceMarker, IpodIdentity } from '../common/ipod-identity'
 import type { UpdateReadyState } from '../common/update-ready'
+import type { DialogueInput, DialogueResult } from '../common/speech'
 
 const electronAPI = {
   loadTracks: (): Promise<{ tracks: unknown[]; playlists: { name: string; trackIds: number[] }[] }> => ipcRenderer.invoke('load-tracks'),
@@ -41,6 +42,9 @@ const electronAPI = {
     ipcRenderer.invoke('musicman-chat', messages, context),
   musicmanSpeak: (text: string, fast?: boolean, voiceId?: string): Promise<{ ok: boolean; audio?: string; error?: string }> =>
     ipcRenderer.invoke('musicman-speak', text, fast, voiceId),
+  // A run of radio lines as one take (2026-11-06). Types: src/common/speech.ts.
+  radioDialogue: (inputs: DialogueInput[]): Promise<DialogueResult> =>
+    ipcRenderer.invoke('radio-dialogue', inputs),
   musicmanDj: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen'): Promise<{ ok: boolean; text: string; transition?: 'talk' | 'scratch' | 'cut' }> =>
     ipcRenderer.invoke('musicman-dj', track, nextTrack, persona),
   // 4.5: streaming variant for the mic button. The renderer subscribes
