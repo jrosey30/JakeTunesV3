@@ -48,7 +48,7 @@
 # the real thing: JT_GATE_APP, JT_GATE_DATA_DIR, JT_GATE_LSREGISTER, JT_GATE_PLISTBUDDY,
 # JT_GATE_POLL_S (15), JT_GATE_GO_POLL_S (2), JT_GATE_QUIT_WAIT_S (30), JT_GATE_GONE_WAIT_S (30),
 # JT_GATE_WATCH_S (1800), JT_GATE_WATCH_POLL_S (5),
-# JT_GATE_OPEN_RETRY_S (2), JT_GATE_START_WAIT_S (10), JT_GATE_STAY_S (5).
+# JT_GATE_OPEN_RETRY_S (2), JT_GATE_START_WAIT_S (10), JT_GATE_STAY_S (5), JT_GATE_LS_LIMIT_S (30).
 set -u
 # Whatever reads this may go away first: a client that exits, a pipeline killed along with it.
 # By default the next echo then gets SIGPIPE, bash runs the EXIT trap, and the trap's own first
@@ -77,6 +77,11 @@ WATCH_POLL="${JT_GATE_WATCH_POLL_S:-5}"
 OPEN_RETRY="${JT_GATE_OPEN_RETRY_S:-2}"
 START_WAIT="${JT_GATE_START_WAIT_S:-10}"
 STAY="${JT_GATE_STAY_S:-5}"
+LS_LIMIT="${JT_GATE_LS_LIMIT_S:-30}"
+
+# LaunchServices can stall, and an ssh leg would then sit until its own 3-hour limit with no last
+# line. An alarm kills whichever tool it is, and to the gate that is open saying no.
+ls_bound() { perl -e 'alarm shift; exec @ARGV' "$LS_LIMIT" "$@"; }
 
 # ── The app's process ────────────────────────────────────────────────────────
 # Measured 2026-11-06 on a real bundle held in exit, launched by open and killed:
@@ -132,7 +137,7 @@ start_app_when_gone() {
   APP_DUE=0
   say "$(date +%H:%M:%S) ${1:-the app starts by itself when the old JakeTunes is gone}"
   nohup /bin/bash -c '
-    polls=$1; poll=$2; wall=$3; app=$4; log=$5; shift 5
+    polls=$1; poll=$2; wall=$3; app=$4; log=$5; limit=$6; shift 6
     caffeinate -i -w $$ >/dev/null 2>&1 &
     gave_up() { mkdir -p "${log%/*}"; echo "$(date "+%Y-%m-%d %H:%M:%S") watcher, pids $old: $1" >> "$log"; }
     old=$*
@@ -153,7 +158,7 @@ start_app_when_gone() {
         if [ "$until_open" -le 0 ]; then
           [ "$opens" -ge "$max_opens" ] && { gave_up "NO APP RUNNING: $opens tries of open -a $app and nothing stayed up"; exit 1; }
           opens=$((opens + 1)); until_open=6
-          open -a "$app"
+          perl -e "alarm shift; exec @ARGV" "$limit" open -a "$app"
         fi
         until_open=$((until_open - 1))
       elif [ -z "$going" ] && [ $(( $(date +%s) - began )) -ge "$wall" ]; then
@@ -162,7 +167,7 @@ start_app_when_gone() {
       fi
       sleep "$poll"
     done' jt-gate-watcher "$(awk -v s="$WATCH_S" -v p="$WATCH_POLL" 'BEGIN { n = int(s / p); print (n < 1 ? 1 : n) }')" \
-    "$WATCH_POLL" "$WATCH_S" "$APP" "$WATCHER_LOG" $OLD_PIDS >/dev/null 2>&1 &
+    "$WATCH_POLL" "$WATCH_S" "$APP" "$WATCHER_LOG" "$LS_LIMIT" $OLD_PIDS >/dev/null 2>&1 &
 }
 # Start the app now if the old process is gone within GONE_WAIT, or leave it to the watcher.
 # 0 a live process came up · 1 the old process is still there, the watcher has it · 2 none
@@ -173,7 +178,7 @@ start_app() {
   for i in $(seq 1 "$GONE_WAIT"); do [ -z "$(old_left)" ] && break; sleep 1; done
   if [ -n "$(old_left)" ]; then start_app_when_gone; return 1; fi
   for i in 1 2 3; do
-    if open -a "$APP"; then
+    if ls_bound open -a "$APP"; then
       # jt_live, not pgrep: a dying process must not count as started. And alive once isn't
       # started either: a fake open whose process lasted 1.5 s got exit 0 and "pid 5151", with no
       # process 11 s later, and install-both runs its legs in parallel, so a build that dies in
@@ -198,7 +203,7 @@ start_app() {
 restore_previous() {
   [ -d "$HOME/$BK" ] || return 0
   rm -rf "$APP"
-  mv "$HOME/$BK" "$APP" && "$LSREG" -f "$APP"
+  mv "$HOME/$BK" "$APP" && ls_bound "$LSREG" -f "$APP"
 }
 
 # ── Marker protocol ──────────────────────────────────────────────────────────
@@ -366,7 +371,7 @@ if ! mv "$INCOMING" "$APP"; then
   restore_previous; SWAPPING=0; start_app; kill $CAF 2>/dev/null; exit 1
 fi
 SWAPPING=0
-"$LSREG" -f "$APP"
+ls_bound "$LSREG" -f "$APP"
 gate_rc=0
 start_app
 case $? in

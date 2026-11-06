@@ -5,7 +5,8 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { finished, makeWorld, NEW_ASAR, OLD_ASAR, opens, scriptPath, SHA, sleep, started } from './install-gate-world.ts'
 import { waitFor } from './wait-for.ts'
 
@@ -421,6 +422,45 @@ describe('install gate — open -a can say no', () => {
       const pid = w.calls().match(/caffeinate -i -w (\d+)/)![1]
       assert.equal(execFileSync('/bin/ps', ['-o', 'state=', '-p', pid]).toString().trim().length > 0, true, 'it follows a live pid')
       assert.match(execFileSync('/bin/ps', ['-o', 'command=', '-p', pid]).toString(), /jt-gate-watcher [0-9]/, 'that pid is the watcher')
+    } finally { w.cleanup() }
+  })
+
+  // Reviewer's finding, 2026-11-06. If LaunchServices stalls, the gate hangs before its last line,
+  // and an ssh leg sits until its 3-hour limit.
+  it('open never comes back: an alarm ends it, and the next try starts the app', async () => {
+    const w = makeWorld({ idleS: 130, pids: '', openHangs: 1 })
+    try {
+      const began = Date.now()
+      const g = w.run({})
+      const r = await finished(g)
+      assert.equal(r.code, 0, g.out())
+      assert.ok(Date.now() - began < 20_000, 'the fake open sleeps 40 s')
+      assert.equal(opens(w), 2)
+    } finally { w.cleanup() }
+  })
+
+  it('lsregister never comes back: an alarm ends it, and the app still starts', async () => {
+    const w = makeWorld({ idleS: 130, pids: '', lsregHangs: true })
+    try {
+      const began = Date.now()
+      const g = w.run({})
+      const r = await finished(g)
+      assert.equal(r.code, 0, g.out())
+      assert.ok(Date.now() - began < 20_000, 'the fake lsregister sleeps 40 s')
+      assert.equal(readFileSync(w.installedAsar, 'utf8'), NEW_ASAR)
+    } finally { w.cleanup() }
+  })
+
+  it('open never comes back for the watcher either', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitState: '?E', goneWaitS: 1, watchS: 30, watchPollS: 0.1 })
+    try {
+      const r = await finished(w.run({}))
+      assert.equal(r.code, 0)
+      writeFileSync(join(w.fake, 'open_hangs'), '1')
+      w.oldGone()
+      const began = Date.now()
+      await started(w)
+      assert.ok(Date.now() - began < 20_000, 'the fake open sleeps 40 s')
     } finally { w.cleanup() }
   })
 
