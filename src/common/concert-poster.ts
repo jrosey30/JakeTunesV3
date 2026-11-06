@@ -208,7 +208,9 @@ export function builtPosterSpec(words: PosterWords): BuiltPosterSpec {
       details: words.details.map(upper),
       size: at(8),
       lineHeight: at(11),
-      tracking: 0.05 * at(8),
+      // The mock's 0.05em is on SF at 8 px, whose small-size cut is already loose. At 45 px
+      // the system font is the tight display cut, so this much prints the same line width.
+      tracking: Math.round(0.118 * at(8) * 100) / 100,
       color: '#E9E5DF',
       gap: at(5),
     },

@@ -72,7 +72,7 @@ describe('a built poster, drawn', { skip }, () => {
     const ruleY = c.y + c.h + spec.rule.gap + Math.floor(spec.rule.h / 2)
     assert.ok(near(at(spec.pad.left + 20, ruleY), [0xfd, 0x56, 0x01], 30), `rule ${at(spec.pad.left + 20, ruleY)}`)
     // The details break between facts, never leaving a separator to start a line.
-    assert.deepEqual(r.printed, ['ALIVE & IN PERSON', 'THE DIAMOND MINE · QUEENS, NY', '2023'])
+    assert.deepEqual(r.printed, ['ALIVE & IN PERSON', 'THE DIAMOND MINE', 'QUEENS, NY · 2023'])
   })
 
   test('a long name never clips: the size comes down until its longest word fits', async () => {
