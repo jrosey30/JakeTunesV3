@@ -465,7 +465,7 @@ describe('the real names', () => {
     assert.deepEqual(albumSearches(), ['Dobie Gray Drift Away'])
   })
 
-  it('a hit past the sixth, which only then says it is a compilation, is held when the row names no album', async () => {
+  it('a hit past the sixth is asked about too, so a compilation there costs no fetch when the row names no album', async () => {
     musicBrainz = 'down'
     const comps = ['a', 'b', 'c', 'd', 'e', 'f']
     hits('track', [...comps, 'late', 'own'].map((id): [string, string] => [id, 'Read My Mind by The Killers']))
@@ -475,7 +475,7 @@ describe('the real names', () => {
     const { walk, imports } = store()
     await walk({ artist: 'The Killers', title: 'Read My Mind' })
     assert.deepEqual(imports.map((i) => i.id), ['own'])
-    assert.deepEqual(fetched(), ['late', 'own'])
+    assert.deepEqual(fetched(), ['own'])
   })
 
   it('These Boots: Start Walkin\' is held, and Boots is the row', async () => {

@@ -640,7 +640,7 @@ describe('the walk, a song: what the gate is still for', () => {
       tags('master', { title: 'Mask Off (Remix)', artist: 'Future', album: 'FUTURE' })
     }
 
-    test('a clean hit past the sixth, which nothing had asked about, is refused on its flag', async () => {
+    test('a clean hit past the sixth is asked about like the rest, and refused on its flag with no fetch', async () => {
       const clean = ['c1', 'c2', 'c3', 'c4', 'c5']
       hits('track', [['master', maskHit], ...clean.map((id): [string, string] => [id, maskHit]), ['past', maskHit]])
       provenButBroken()
@@ -649,7 +649,7 @@ describe('the walk, a song: what the gate is still for', () => {
       tags('past', maskTags)
       const { walk, importedIds } = store()
       const r = await walk(MASK)
-      assert.deepEqual(fetched(), ['master', 'past'])
+      assert.deepEqual(fetched(), ['master'])
       assert.deepEqual(importedIds(), [])
       assert.equal(r.ok, false)
     })
@@ -706,7 +706,7 @@ describe('the walk, a song: what the gate is still for', () => {
       tags('past', maskTags)
       const { walk, importedIds } = store()
       await walk(MASK)
-      assert.deepEqual(fetched(), ['master', 'past'])
+      assert.deepEqual(fetched(), ['master'])
       assert.deepEqual(importedIds(), [])
     })
   })

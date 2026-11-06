@@ -385,7 +385,7 @@ export function subtitleVariantMatches(want: string, got: string): boolean {
 export function spelledOutAnd(title: string): string {
   return title.replace(/\s*&\s*/g, ' and ').replace(/\s+['’]?n['’]?\s+/gi, ' and ')
 }
-const titleKey = (title: string): string => recoFold(spelledOutAnd(title))
+export const titleKey = (title: string): string => recoFold(spelledOutAnd(title))
 /** recoTitleMatches, with "&" and "and" as one word. */
 export function titleMatches(want: string, got: string): boolean {
   return recoTitleMatches(want, got) || recoTitleMatches(spelledOutAnd(want), spelledOutAnd(got))
@@ -803,6 +803,17 @@ export function qobuzTrackMetaOf(d: { title?: unknown; parental_warning?: unknow
 }
 
 const albumName = (album: string): string => (searchTitle(album) || album).replace(/\s+[-–—]\s*(?:ep|single)\s*$/i, '').trim()
+
+/**
+ * What to ask Qobuz's album search for: the album's name, then with every bracket gone. It answers
+ * nothing for "Underworld Second Toughest in the Infants (Super Deluxe)", and the album is there.
+ * Whatever comes back is still ranked against the row's whole name.
+ * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts albumSearchNames.
+ */
+export function albumSearchNames(album: string): string[] {
+  const name = albumName(album)
+  return [...new Set([name, bareTitle(name)].filter(Boolean))]
+}
 
 /** Is this the album the request names? No album on either side is never a mismatch. */
 export function onWantedAlbum(wanted: string, album: string | undefined): boolean {
