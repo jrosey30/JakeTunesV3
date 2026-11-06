@@ -31,6 +31,7 @@ import { readFile } from 'fs/promises'
 import { join } from 'path'
 import {
   createCallPauser,
+  isCallApp,
   parseHelperChunk,
   pauseForCallsEnabled,
   respawnDelay,
@@ -53,6 +54,17 @@ export interface PauseForCallsDeps {
 
 export interface PauseForCallsHandle {
   stop: () => void
+}
+
+// The helper's latest word, for the other feature that asks whether a call is on
+// (audio-output-ipc: move the music to another speaker). Null while it hasn't spoken.
+let lastMicState: MicState | null = null
+
+/** Is a call app on the mic right now? Null = the helper can't say. */
+export function callAppOnMic(): boolean | null {
+  if (!lastMicState) return null
+  const state = lastMicState
+  return state.pids.some((_pid, i) => isCallApp(state.bundles[i] ?? ''))
 }
 
 /** JakeTunes' own bundle ids: the packaged app and its helpers, and the dev Electron shell. */
@@ -203,6 +215,7 @@ export function startPauseForCalls(deps: PauseForCallsDeps): PauseForCallsHandle
       buf = parsed.rest
       for (const state of parsed.states) {
         gotLine = true
+        lastMicState = state
         deps.record('calls.mic', state)
         feed(state)
       }
@@ -221,6 +234,7 @@ export function startPauseForCalls(deps: PauseForCallsDeps): PauseForCallsHandle
     if (healthyTimer) { clearTimeout(healthyTimer); healthyTimer = null }
     ipcMain.removeListener('set-playback-active', onPlaybackActive)
     pauser.dispose()
+    lastMicState = null
     const proc = child
     child = null
     if (proc) {

@@ -19,12 +19,16 @@ import assert from 'node:assert/strict'
 import {
   createCallPauser,
   describeCall,
+  isCallApp,
   parseHelperChunk,
   parseStateLine,
   pauseForCallsEnabled,
   respawnDelay,
+  BOUNCE_MS,
   CONFIRM_MS,
+  MAX_BOUNCES,
   QUIET_MS,
+  STAND_DOWN_MS,
   ECHO_MS,
   RESPAWN_BACKOFF_MS,
   type CallAction,
@@ -69,6 +73,9 @@ const OWN = { pid: OWN_PID, bundle: 'com.jacobrosenbaum.jaketunes' }
 const ZOOM = { pid: 812, bundle: 'us.zoom.xos' }
 const CHROME = { pid: 913, bundle: 'com.google.Chrome' }
 const FACETIME = { pid: 77, bundle: 'com.apple.FaceTime' }
+const TEAMS = { pid: 65015, bundle: 'com.microsoft.teams2.modulehost' }
+const CORESPEECH = { pid: 8134, bundle: 'com.apple.CoreSpeech' }
+const PLAUD = { pid: 52890, bundle: 'ai.plaud.desktop.plaud' }
 
 /**
  * A pauser wired to a fake clock. With `echo`, the fake renderer answers
@@ -98,6 +105,83 @@ function rig(opts: { enabled?: boolean; echo?: boolean } = {}) {
   const notices = () => actions.filter((a) => a.type === 'notice').map((a) => (a as { text: string }).text)
   return { clock, actions, pauser, mic, play, settings, kinds, notices }
 }
+
+describe('call pauser — what counts as a call', () => {
+  test('macOS speech on the mic is not a call: the music keeps playing (2026-11-05)', () => {
+    const r = rig({ echo: true })
+    r.play(true)
+    r.mic(CORESPEECH)
+    r.clock.advance(33_000)
+    r.mic()
+    r.clock.advance(60_000)
+    assert.deepEqual(r.kinds(), [])
+    assert.equal(r.pauser.snapshot().call, null)
+  })
+
+  test('a recorder, a dictation app or an unknown process on the mic is not a call', () => {
+    for (const proc of [PLAUD, { pid: 9, bundle: 'com.example.dictation' }, { pid: 10, bundle: '' }]) {
+      const r = rig({ echo: true })
+      r.play(true)
+      r.mic(proc)
+      r.clock.advance(60_000)
+      assert.deepEqual(r.kinds(), [], proc.bundle)
+    }
+  })
+
+  test('a call app pauses even with speech on the mic beside it, and the call ends when the app does', () => {
+    const r = rig({ echo: true })
+    r.play(true)
+    r.mic(CORESPEECH)
+    r.clock.advance(5000)
+    assert.deepEqual(r.kinds(), [])
+    r.mic(CORESPEECH, TEAMS)
+    r.clock.advance(CONFIRM_MS + 100)
+    assert.deepEqual(r.kinds(), ['pause', 'notice'])
+    assert.match(r.notices()[0], /your Teams call/)
+    r.mic(CORESPEECH)                     // Teams hung up; speech is still on the mic
+    r.clock.advance(QUIET_MS + 100)
+    assert.deepEqual(r.kinds(), ['pause', 'notice', 'resume', 'notice'])
+  })
+
+  test('the apps a call happens in', () => {
+    for (const b of ['us.zoom.xos', 'us.zoom.CptHost', 'com.microsoft.teams2.modulehost', 'com.microsoft.teams2.helper', 'com.apple.FaceTime', 'com.apple.avconferenced', 'Cisco-Systems.Spark', 'com.google.Chrome.helper', 'com.apple.WebKit.GPU', 'ai.perplexity.comet.helper']) {
+      assert.equal(isCallApp(b), true, b)
+    }
+    for (const b of ['com.apple.CoreSpeech', 'com.apple.corespeechd_system', 'com.apple.assistantd', 'com.apple.SpeechRecognitionCore.speechrecognitiond', 'ai.plaud.desktop.plaud', 'com.anthropic.claudefordesktop', 'com.apple.VoiceMemos', '']) {
+      assert.equal(isCallApp(b), false, b)
+    }
+  })
+
+  test('a mic that follows the music stops being believed after two comebacks', () => {
+    const r = rig({ echo: true })
+    r.play(true)
+    const cycle = () => {
+      r.mic(ZOOM)
+      r.clock.advance(CONFIRM_MS + 100)
+      r.mic()
+      r.clock.advance(QUIET_MS + 100)     // resumed
+      r.clock.advance(BOUNCE_MS - 4000)   // and it's back a second later
+    }
+    cycle(); cycle(); cycle()
+    const pauses = () => r.kinds().filter((k) => k === 'pause').length
+    assert.equal(pauses(), MAX_BOUNCES)
+    // It keeps opening and closing beside the music: left alone.
+    r.mic(ZOOM)
+    r.clock.advance(120_000)
+    r.mic()
+    r.clock.advance(QUIET_MS + 100)
+    r.mic(ZOOM)
+    r.clock.advance(CONFIRM_MS + 100)
+    assert.equal(pauses(), MAX_BOUNCES)
+    r.mic()
+    r.clock.advance(QUIET_MS + 100)
+    // A real call after the half hour is believed again.
+    r.clock.advance(STAND_DOWN_MS)
+    r.mic(ZOOM)
+    r.clock.advance(CONFIRM_MS + 100)
+    assert.equal(pauses(), MAX_BOUNCES + 1)
+  })
+})
 
 describe('call pauser — a call starting', () => {
   test('a mic blip shorter than CONFIRM_MS is not a call', () => {
