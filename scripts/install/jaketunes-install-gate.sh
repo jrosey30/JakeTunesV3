@@ -10,11 +10,12 @@
 #  - asar-mtime guard: another session installing mid-way = abort
 #  - quit by process NAME (pgrep -x), never a path regex (10/11)
 #  - a process on its way out (state E or Z) has quit: it runs no code and never comes
-#    back. But `open` while it still exists finds the old instance (or loses the
-#    single-instance lock) and starts nothing, so the app starts when that pid is gone.
+#    back. But `open` while it still exists exits 0 and starts nothing (measured, below),
+#    so the app starts when that pid is gone, and only a live process proves it started.
 #    Once the quit is asked for, every way out of this script ends with the app running
 #    or a watcher that will start it: on 11/5 a quit took 21 minutes, this script gave
 #    up after 30 s, and when the old process finally died the Mac had no app running.
+#    A kill during the swap puts the previous build back first, so what starts is whole.
 #  - previous build kept OUTSIDE /Applications (LaunchServices), restored if
 #    the copy fails; codesign verify; lsregister -f; caffeinate (10/19 sleep gap)
 #
@@ -39,11 +40,14 @@
 #
 # Exit codes and messages are parsed by the install pipeline — keep them:
 #   0 installed · 1 ABORT (precondition, quit, copy, asar changed) · 3 gate timeout
+#   4 installed, but no app came up: open -a said no, or said yes and nothing started.
+#     The watcher keeps asking.
 #
 # Test-harness overrides (src/main/__tests__/install-gate.test.ts), all defaulting to
 # the real thing: JT_GATE_APP, JT_GATE_DATA_DIR, JT_GATE_LSREGISTER, JT_GATE_PLISTBUDDY,
 # JT_GATE_POLL_S (15), JT_GATE_GO_POLL_S (2), JT_GATE_QUIT_WAIT_S (30), JT_GATE_GONE_WAIT_S (30),
-# JT_GATE_WATCH_S (1800), JT_GATE_WATCH_POLL_S (5).
+# JT_GATE_WATCH_S (1800, counted in polls: time awake), JT_GATE_WATCH_POLL_S (5),
+# JT_GATE_OPEN_RETRY_S (2), JT_GATE_START_WAIT_S (10).
 set -u
 NEW="$1"; BK="$2"; MAXMIN="${3:-45}"; SHA="${4:-}"; NOTE="${5:-}"
 APP="${JT_GATE_APP:-/Applications/JakeTunes.app}"
@@ -59,9 +63,17 @@ QUIT_WAIT="${JT_GATE_QUIT_WAIT_S:-30}"
 GONE_WAIT="${JT_GATE_GONE_WAIT_S:-30}"
 WATCH_S="${JT_GATE_WATCH_S:-1800}"
 WATCH_POLL="${JT_GATE_WATCH_POLL_S:-5}"
+OPEN_RETRY="${JT_GATE_OPEN_RETRY_S:-2}"
+START_WAIT="${JT_GATE_START_WAIT_S:-10}"
 
 # ── The app's process ────────────────────────────────────────────────────────
-# pgrep -x still lists a process that is exiting. ps state: E = trying to exit, Z = zombie.
+# Measured 2026-11-06 on a real bundle held in exit, launched by open and killed:
+#  - ps -p says ?E and the name in parentheses, for as long as the exit takes. pgrep -x
+#    and -f see NOTHING from the moment it turns E. launchd still holds its job.
+#  - open -a then exits 0 and starts nothing, and nothing starts when the process goes.
+# So "is it gone" is a question for ps, by pid, and only a live process proves "it
+# started", never open's exit code. The first version of this asked pgrep and believed
+# open, its fakes agreed with it, and on a real exit it left the Mac with no app.
 jt_live() {
   local p st
   for p in $(pgrep -x JakeTunes); do
@@ -69,41 +81,95 @@ jt_live() {
     case "$st" in ''|*E*|*Z*) ;; *) echo "$p" ;; esac
   done
 }
-# Which of the pids the app had before the quit still exist, in any state.
+# On its way out already, where pgrep can't see it: a re-run of this gate, or a kill by hand.
+# NF == 3 leaves out "JakeTunes Helper", whose name splits in two.
+jt_dying() {
+  ps -axo pid=,state=,comm= 2>/dev/null | awk 'NF == 3 && $2 ~ /E/ && ($3 == "(JakeTunes)" || $3 ~ /\/JakeTunes$/) { print $1 }'
+}
+# Which of the pids the app had before the quit still exist. A zombie has let go of
+# everything and launchd reaps it at once, so it doesn't count.
 old_left() {
-  local p now
-  now=" $(pgrep -x JakeTunes | tr '\n' ' ')"
-  for p in $OLD_PIDS; do case "$now" in *" $p "*) echo "$p" ;; esac; done
+  local p
+  for p in $OLD_PIDS; do
+    case "$(ps -o state= -p "$p" 2>/dev/null)" in ''|*Z*) ;; *) echo "$p" ;; esac
+  done
 }
 OLD_PIDS=""
 APP_DUE=0   # 1 from the moment the quit is asked for until the app is started or a watcher will start it
+SWAPPING=0  # 1 from moving the old bundle aside until the new one is whole
 # Detached: it outlives this script (and an ssh session running it). It starts the app
-# when the old process is gone, unless something else already has. If the old process is
-# still there at the end, the app never quit, and there is nothing to start.
+# when the old process is gone, unless something else already has.
+# Its window counts polls, never the clock: date keeps counting while the Mac sleeps, so
+# a closed lid used the window up with nothing running. And it looks before it decides,
+# the last time after its last sleep.
+# Only one thing ends the wait: an old process plainly alive at the end of the window.
+# That app never quit, nothing is owed, and a quit by hand later stays a quit. A process
+# on its way out (E, or U: the 11/5 quit sat in U for 7 minutes with its main thread parked
+# in teardown) gets no limit: the app is owed, however long the kernel takes. A swap only
+# ever happens over a process in E or Z, so an installed build always gets its app.
+# It is done when a live process says so. Until then it asks open again every 6 polls, at
+# most 10 times: enough for LaunchServices to come round, few enough that an app that
+# crashes on launch doesn't throw up crash reports for half an hour.
 start_app_when_gone() {
   APP_DUE=0
-  echo "$(date +%H:%M:%S) the app starts by itself when the old JakeTunes is gone"
+  echo "$(date +%H:%M:%S) ${1:-the app starts by itself when the old JakeTunes is gone}"
   nohup /bin/bash -c '
-    secs=$1; poll=$2; app=$3; shift 3
-    end=$(( $(date +%s) + secs ))
-    while [ "$(date +%s)" -lt "$end" ]; do
-      now=" $(pgrep -x JakeTunes | tr "\n" " ")"; left=""
-      for p in "$@"; do case "$now" in *" $p "*) left=1 ;; esac; done
+    polls=$1; poll=$2; app=$3; shift 3
+    max_opens=$(( polls / 6 )); [ "$max_opens" -lt 1 ] && max_opens=1; [ "$max_opens" -gt 10 ] && max_opens=10
+    looks=0; opens=0; until_open=0
+    while :; do
+      left=""; going=""
+      for p in "$@"; do
+        case "$(ps -o state= -p "$p" 2>/dev/null)" in
+          ""|*Z*) ;;
+          *E*|*U*) left=1; going=1 ;;
+          *) left=1 ;;
+        esac
+      done
       if [ -z "$left" ]; then
-        [ "$now" = " " ] && [ -d "$app" ] && open -a "$app"
+        [ -n "$(pgrep -x JakeTunes)" ] && exit 0
+        [ -d "$app" ] || exit 0
+        if [ "$until_open" -le 0 ]; then
+          [ "$opens" -ge "$max_opens" ] && exit 1
+          opens=$((opens + 1)); until_open=6
+          open -a "$app"
+        fi
+        until_open=$((until_open - 1))
+      elif [ -z "$going" ] && [ "$looks" -ge "$polls" ]; then
         exit 0
       fi
+      looks=$((looks + 1))
       sleep "$poll"
-    done' _ "$WATCH_S" "$WATCH_POLL" "$APP" $OLD_PIDS >/dev/null 2>&1 &
+    done' _ "$(awk -v s="$WATCH_S" -v p="$WATCH_POLL" 'BEGIN { n = int(s / p); print (n < 1 ? 1 : n) }')" \
+    "$WATCH_POLL" "$APP" $OLD_PIDS >/dev/null 2>&1 &
 }
-# Start the app now if the old process is gone within GONE_WAIT, or leave it to the
-# watcher. Returns 0 when it was started here.
+# Start the app now if the old process is gone within GONE_WAIT, or leave it to the watcher.
+# 0 a live process came up · 1 the old process is still there, the watcher has it · 2 none
+# came up in 3 tries (LaunchServices has only just been told about the bundle), the watcher
+# keeps asking.
 start_app() {
-  local i
+  local i j
   for i in $(seq 1 "$GONE_WAIT"); do [ -z "$(old_left)" ] && break; sleep 1; done
   if [ -n "$(old_left)" ]; then start_app_when_gone; return 1; fi
-  APP_DUE=0
-  open -a "$APP"
+  for i in 1 2 3; do
+    if open -a "$APP"; then
+      # jt_live, not pgrep: a dying process must not count as started.
+      for j in $(seq 1 "$START_WAIT"); do
+        if [ -n "$(jt_live)" ]; then APP_DUE=0; return 0; fi
+        sleep 1
+      done
+    else
+      sleep "$OPEN_RETRY"
+    fi
+  done
+  start_app_when_gone "no app after 3 tries of open -a; still trying in the background"
+  return 2
+}
+# The previous build back in /Applications, whatever a copy left there.
+restore_previous() {
+  [ -d "$HOME/$BK" ] || return 0
+  rm -rf "$APP"
+  mv "$HOME/$BK" "$APP" && "$LSREG" -f "$APP"
 }
 
 # ── Marker protocol ──────────────────────────────────────────────────────────
@@ -160,9 +226,14 @@ cleanup_markers() {
   if [ -f "$READY" ] && grep -q "\"gatePid\": $$[,} ]" "$READY" 2>/dev/null; then rm -f "$READY"; fi
   if [ -f "$GO" ] && [ "$(go_sha)" = "$SHA" ]; then rm -f "$GO"; fi
 }
-# Any exit after the quit, a kill included, still gets the app back.
+# Any exit after the quit, a kill included, still gets the app back. A kill during the
+# swap leaves half a bundle or none, so the previous build goes back first.
 on_exit() {
   cleanup_markers
+  if [ "$SWAPPING" = 1 ]; then
+    echo "$(date +%H:%M:%S) killed during the swap — restoring the previous build"
+    restore_previous
+  fi
   [ "$APP_DUE" = 1 ] && start_app_when_gone
   return 0
 }
@@ -207,7 +278,7 @@ echo "$(date +%H:%M:%S) gate $why"
 
 # ── Install ──────────────────────────────────────────────────────────────────
 caffeinate -i -t 300 & CAF=$!
-OLD_PIDS=$(pgrep -x JakeTunes | tr '\n' ' ')
+OLD_PIDS="$(pgrep -x JakeTunes | tr '\n' ' ')$(jt_dying | tr '\n' ' ')"
 [ -n "$OLD_PIDS" ] && APP_DUE=1
 perl -e 'alarm 20; exec @ARGV' osascript -e 'quit app id "com.jacobrosenbaum.jaketunes"' 2>&1
 for i in $(seq 1 "$QUIT_WAIT"); do [ -z "$(jt_live)" ] && break; sleep 1; done
@@ -218,19 +289,24 @@ for i in $(seq 1 "$QUIT_WAIT"); do [ -z "$(jt_live)" ] && break; sleep 1; done
 gate >/dev/null || true
 [ "$(stat -f %m "$ASAR")" = "$M0" ] || { echo "ABORT: app.asar changed at quit time"; start_app; kill $CAF 2>/dev/null; exit 1; }
 
-mv "$APP" "$HOME/$BK" || { echo "ABORT: could not move the old app aside"; start_app; kill $CAF 2>/dev/null; exit 1; }
+SWAPPING=1
+mv "$APP" "$HOME/$BK" || { SWAPPING=0; echo "ABORT: could not move the old app aside"; start_app; kill $CAF 2>/dev/null; exit 1; }
 if ! ditto "$NEW" "$APP"; then
+  SWAPPING=0
   echo "COPY FAILED — restoring the previous build"
-  rm -rf "$APP"; mv "$HOME/$BK" "$APP"; "$LSREG" -f "$APP"; start_app; kill $CAF 2>/dev/null; exit 1
+  restore_previous; start_app; kill $CAF 2>/dev/null; exit 1
 fi
+SWAPPING=0
 xattr -dr com.apple.quarantine "$APP" 2>/dev/null
 codesign --verify --deep --strict "$APP" || echo "WARN: installed app signature check failed"
 "$LSREG" -f "$APP"
-pid_note="pending, it starts when the old process is gone"
-if start_app; then
-  # jt_live, not pgrep: a dying process must not count as started.
-  for i in $(seq 1 30); do [ -n "$(jt_live)" ] && break; sleep 1; done
-  pid_note="$(jt_live | head -1)"
-fi
+gate_rc=0
+start_app
+case $? in
+  0) pid_note="$(jt_live | head -1)" ;;
+  1) pid_note="pending, it starts when the old process is gone" ;;
+  *) pid_note="none, the app did not come up, still trying"; gate_rc=4 ;;
+esac
 kill $CAF 2>/dev/null
 echo "$(scutil --get ComputerName 2>/dev/null): $("$PLISTBUDDY" -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist"), $(stat -f 'app.asar %z bytes, %Sm' "$ASAR"), pid $pid_note, previous kept at ~/$BK"
+exit $gate_rc

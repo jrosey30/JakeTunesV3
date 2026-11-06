@@ -27,26 +27,36 @@ jaketunes-install-gate.sh <staged.app> <backup-name> [max-wait-min] [sha] [note]
    The heavier checks run every 15 s; the app's go-file is stat'ed every 2 s.
    `max-wait-min` (default 45) bounds the wait; the pipeline passes 180.
 3. Install: `caffeinate`; quit by bundle id and wait up to 30 s for the process
-   (by name, `pgrep -x`) to go, where a process on its way out (`ps` state E or
-   Z) counts as gone; re-check the asar mtime (another session installing
-   mid-way = abort); move the old bundle to `~/<backup-name>` (outside
-   /Applications, or LaunchServices keeps launching it); `ditto` the staged
-   bundle in — on failure the previous build is moved back; strip quarantine,
-   verify the signature, `lsregister -f`, start the app. The last line reports the
-   Mac, version, asar size/mtime, pid and where the previous build is.
+   to go, where a process on its way out (`ps` state E or Z) counts as gone; re-check
+   the asar mtime (another session installing mid-way = abort); move the old bundle to
+   `~/<backup-name>` (outside /Applications, or LaunchServices keeps launching it);
+   `ditto` the staged bundle in — on failure the previous build is moved back; strip
+   quarantine, verify the signature, `lsregister -f`, start the app. The last line
+   reports the Mac, version, asar size/mtime, pid and where the previous build is.
 4. **The Mac is never left with no app** (2026-11-06). The quit can't be taken back,
    so once it is asked for, the app is started again on every way out: install done,
-   any ABORT after that point, a TERM. It is started only when the old pid is really
-   gone, because `open` while a dying process still exists finds the old instance or
-   loses the single-instance lock, and starts nothing. If that takes more than 30 s, a
-   detached watcher does it (up to 30 minutes), and the last line says `pid pending`.
-   If the old process turns out never to have quit, the watcher starts nothing. On
-   11/5 a quit took 21 minutes: the gate gave up after 30 s and nothing started the
-   app when the process finally died.
+   any ABORT after that point, a TERM. On 11/5 a quit took 21 minutes: the gate gave up
+   after 30 s and nothing started the app when the process finally died.
+   - **Measured** on a real bundle held in exit: `ps -p` says `?E` for as long as the
+     exit takes, `pgrep -x` and `-f` see nothing from the moment it turns E, launchd
+     still holds the job, and `open -a` exits 0 and starts nothing. So the old pid is
+     asked about with `ps`, by pid, the app starts when that pid is gone, and only a
+     live process proves it started, never `open`'s exit code.
+   - If the old pid takes more than 30 s, a detached watcher does it, and the last line
+     says `pid pending`. The watcher counts polls, not the clock, so a closed lid uses
+     up none of its 30 minutes. While the old process is on its way out (state E or U)
+     it has no limit at all, and a swap only ever happens over a process in E or Z. It
+     only gives up on an old process that is plainly alive at the end of the window: that
+     app never quit, and a quit by hand later stays a quit.
+   - If no app comes up after three tries of `open`, the watcher keeps asking (every
+     6 polls, 10 times at most), the last line says `pid none, the app did not come up,
+     still trying`, and the exit is 4.
+   - A kill during the swap puts the previous build back first, so what starts is whole.
 
 Exit codes the pipeline parses: `0` installed · `1` ABORT (a precondition,
 the app would not quit, the copy failed, the asar changed) · `3` the gate
-never cleared in `max-wait-min`. Every ABORT leaves the installed app as it was.
+never cleared in `max-wait-min` · `4` the build is installed, but no app has come up
+yet. Every ABORT leaves the installed app as it was.
 The app itself leaves within about 4 s since 2026-11-06 (`src/main/quit-finish.ts`);
 a long wait now means the old build, or a write already in the kernel.
 
@@ -132,6 +142,6 @@ temp HOME with every Mac-only tool faked on PATH (`pmset`, `ioreg`,
 bundle as the install target. The overrides it uses — `JT_GATE_APP`,
 `JT_GATE_DATA_DIR`, `JT_GATE_LSREGISTER`, `JT_GATE_PLISTBUDDY`,
 `JT_GATE_POLL_S`, `JT_GATE_GO_POLL_S`, `JT_GATE_QUIT_WAIT_S`, `JT_GATE_GONE_WAIT_S`,
-`JT_GATE_WATCH_S`, `JT_GATE_WATCH_POLL_S` — all default to the real thing and are
+`JT_GATE_WATCH_S`, `JT_GATE_WATCH_POLL_S`, `JT_GATE_OPEN_RETRY_S`, `JT_GATE_START_WAIT_S` — all default to the real thing and are
 not used by the pipeline. `src/main/__tests__/update-ready.test.ts` covers the
 app side and locks the wiring. Both run in `npm run check`.
