@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import type { Track } from '../types'
-import { playsEverywhere } from '../../common/plays-elsewhere'
+import { lastPlayedEverywhere, playsEverywhere } from '../../common/plays-elsewhere'
+import { formatAppDateTime } from '../utils/formatDate'
 import { usePlaysElsewhere } from '../playsElsewhere'
 import '../styles/getinfo.css'
 
@@ -387,7 +388,13 @@ export default function GetInfoModal({
                 <div className="getinfo-file-row">
                   <span className="getinfo-file-label">Added</span>
                   <span className="getinfo-file-value">
-                    {currentTrack.dateAdded || '\u2014'}
+                    {formatAppDateTime(currentTrack.dateAdded) || '\u2014'}
+                  </span>
+                </div>
+                <div className="getinfo-file-row">
+                  <span className="getinfo-file-label">Last Played</span>
+                  <span className="getinfo-file-value">
+                    {formatAppDateTime(lastPlayedEverywhere(currentTrack, elsewhere)) || '\u2014'}
                   </span>
                 </div>
               </div>

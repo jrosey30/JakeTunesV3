@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { Track, SortColumn, SortDirection } from '../types'
-import { playsEverywhere, type ElsewhereOverlay } from '../../common/plays-elsewhere'
+import { lastPlayedEverywhere, NO_PLAYS_ELSEWHERE, playsEverywhere, type ElsewhereOverlay } from '../../common/plays-elsewhere'
 
 export function useSortedTracks(
   tracks: Track[],
@@ -35,8 +35,9 @@ export function useSortedTracks(
     }
     return [...filtered].sort((a, b) => {
       const byPlays = sortColumn === 'playCount' && elsewhere
-      const av = byPlays ? playsEverywhere(a, elsewhere) : a[sortColumn] as unknown
-      const bv = byPlays ? playsEverywhere(b, elsewhere) : b[sortColumn] as unknown
+      const byLastPlayed = sortColumn === 'lastPlayedAt'
+      const av = byPlays ? playsEverywhere(a, elsewhere) : byLastPlayed ? lastPlayedEverywhere(a, elsewhere ?? NO_PLAYS_ELSEWHERE) : a[sortColumn] as unknown
+      const bv = byPlays ? playsEverywhere(b, elsewhere) : byLastPlayed ? lastPlayedEverywhere(b, elsewhere ?? NO_PLAYS_ELSEWHERE) : b[sortColumn] as unknown
       let cmp: number
       if (sortColumn === 'camelotKey') {
         const [an, al] = camelot(av)

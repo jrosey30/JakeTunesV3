@@ -5,10 +5,10 @@ import { usePlayback } from '../context/PlaybackContext'
 import { useAudio, prefetchTrackForPlay, prefetchTrackImmediate } from '../hooks/useAudio'
 import { useVirtualScroll } from '../hooks/useVirtualScroll'
 import { useScrollPersistence, getSavedScrollTop } from '../hooks/useScrollPersistence'
-import { getColumnCache, setColumnCache, primeColumnCacheFromUiState, DEFAULT_HIDDEN, orderColumnKeys } from '../utils/columnState'
+import { getColumnCache, setColumnCache, primeColumnCacheFromUiState, DATE_TIME_COLUMN_WIDTH, DEFAULT_HIDDEN, orderColumnKeys, widenedForDateTime } from '../utils/columnState'
 import { useSortedTracks } from '../hooks/useSortedTracks'
 import { usePlaysElsewhere } from '../playsElsewhere'
-import { playsEverywhere } from '../../common/plays-elsewhere'
+import { lastPlayedEverywhere, playsEverywhere } from '../../common/plays-elsewhere'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { getSnapshot as recentlyAddedSnapshot, isRecentlyAdded, subscribe as subscribeRecentlyAdded } from '../state/recentlyAdded'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
@@ -17,7 +17,7 @@ import DeleteSongsDialog from '../components/DeleteSongsDialog'
 import GetInfoModal from '../components/GetInfoModal'
 import { useCynthia } from '../context/CynthiaContext'
 import { subscribeDownloads, downloadsVersion, isDownloaded, isDownloading, initDownloads } from '../utils/downloadStore'
-import { formatAppDate } from '../utils/formatDate'
+import { formatAppDateTime } from '../utils/formatDate'
 import ScrollTopButton from '../components/ScrollTopButton'
 import SortArrowIcon from '../components/SortArrowIcon'
 import TrackGridView from '../components/TrackGridView'
@@ -48,10 +48,6 @@ interface ColDef {
   defaultWidth: number
   minWidth: number
   resizable: boolean
-}
-
-function formatDateAdded(d: string): string {
-  return formatAppDate(d)
 }
 
 // 4.5.2: was an inline 5-star widget that shadowed the shared
@@ -95,7 +91,9 @@ const ALL_COLUMN_DEFS: ColDef[] = [
   // right-click column picker; hover a cell to see the full general→specific path.
   { key: 'subgenre', label: 'Subgenre', defaultWidth: 150, minWidth: 60, resizable: true },
   { key: 'year', label: 'Year', defaultWidth: 50, minWidth: 35, resizable: true },
-  { key: 'dateAdded', label: 'Date Added', defaultWidth: 100, minWidth: 60, resizable: true },
+  // 2026-11-05 (Jake): 1/2/2004 5:56:02 PM, and a Last Played beside it in the same form.
+  { key: 'dateAdded', label: 'Date Added', defaultWidth: DATE_TIME_COLUMN_WIDTH, minWidth: DATE_TIME_COLUMN_WIDTH, resizable: true },
+  { key: 'lastPlayedAt', label: 'Last Played', defaultWidth: DATE_TIME_COLUMN_WIDTH, minWidth: DATE_TIME_COLUMN_WIDTH, resizable: true },
   { key: 'playCount', label: 'Plays', defaultWidth: 50, minWidth: 35, resizable: true },
   // Mono/stereo tag (Get Info "Channels"). Hidden by default — enable via the
   // header right-click column picker.
@@ -245,7 +243,9 @@ const SongRow = memo(function SongRow({
           case 'year':
             return <div key={col.key} className="songs-cell">{track.year || ''}</div>
           case 'dateAdded':
-            return <div key={col.key} className="songs-cell">{formatDateAdded(track.dateAdded)}</div>
+            return <div key={col.key} className="songs-cell">{formatAppDateTime(track.dateAdded)}</div>
+          case 'lastPlayedAt':
+            return <div key={col.key} className="songs-cell">{formatAppDateTime(lastPlayedEverywhere(track, elsewhere))}</div>
           case 'playCount':
             return <div key={col.key} className="songs-cell songs-cell--plays">{playsEverywhere(track, elsewhere) || ''}</div>
           case 'channelMode':
@@ -872,7 +872,7 @@ function scrollBlankProbe(sc: HTMLDivElement | null): void {
     const handler = (e: Event) => {
       const { colWidthMap: savedWidths, hiddenCols: savedHidden, columnOrder: savedOrder, colsV } = (e as CustomEvent).detail
       if (savedWidths && typeof savedWidths === 'object') {
-        setColWidthMap(prev => ({ ...prev, ...savedWidths }))
+        setColWidthMap(prev => ({ ...prev, ...widenedForDateTime(savedWidths, colsV) }))
       }
       if (Array.isArray(savedHidden)) {
         // Version-migration lives in primeColumnCacheFromUiState so this path
@@ -898,7 +898,7 @@ function scrollBlankProbe(sc: HTMLDivElement | null): void {
     setColumnCache({ hidden: Array.from(hiddenCols), widths: colWidthMap, order: columnOrder })
     colSaveRef.current = setTimeout(() => {
       window.dispatchEvent(new CustomEvent('jaketunes-save-columns', {
-        detail: { colWidthMap, hiddenCols: Array.from(hiddenCols), columnOrder, colsV: 4 }
+        detail: { colWidthMap, hiddenCols: Array.from(hiddenCols), columnOrder, colsV: 5 }
       }))
     }, 500)
   }, [colWidthMap, hiddenCols, columnOrder])

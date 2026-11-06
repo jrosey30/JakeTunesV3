@@ -32,6 +32,9 @@ export interface ColumnState {
   order: string[]
 }
 
+/** Fits the longest Date Added or Last Played, 12/28/2026 12:59:59 PM, with no "…". */
+export const DATE_TIME_COLUMN_WIDTH = 165
+
 /** Opt-in columns start hidden; the header right-click picker reveals them. */
 export const DEFAULT_HIDDEN = ['channelMode', 'subgenre', 'bpm', 'camelotKey']
 
@@ -54,6 +57,9 @@ interface UiColumnDetail {
  * hiddenCols, so each new one is defaulted-hidden EXACTLY ONCE, at its version
  * bump. A save at or after that version carries the user's real decision and is
  * left alone. colsV 2 = channelMode, 3 = subgenre, 4 = bpm + camelotKey.
+ * colsV 5 = Date Added grew a time and a Last Played joined it (2026-11-05): Jake
+ * asked for that one, so it is NOT hidden, and a saved width too narrow for the
+ * stamp is widened once.
  */
 export function primeColumnCacheFromUiState(detail: UiColumnDetail): void {
   const v = typeof detail.colsV === 'number' ? detail.colsV : 0
@@ -67,7 +73,7 @@ export function primeColumnCacheFromUiState(detail: UiColumnDetail): void {
   }
 
   const widths = detail.colWidthMap && typeof detail.colWidthMap === 'object'
-    ? { ...(cache?.widths ?? {}), ...(detail.colWidthMap as Record<string, number>) }
+    ? { ...(cache?.widths ?? {}), ...widenedForDateTime(detail.colWidthMap as Record<string, number>, v) }
     : (cache?.widths ?? {})
 
   const order = Array.isArray(detail.columnOrder) && detail.columnOrder.length > 0
@@ -75,6 +81,13 @@ export function primeColumnCacheFromUiState(detail: UiColumnDetail): void {
     : (cache?.order ?? [])
 
   cache = { hidden: hidden ?? cache?.hidden ?? [...DEFAULT_HIDDEN], widths, order }
+}
+
+/** A save from before the time-of-day (colsV < 5) has Date Added at about 100. */
+export function widenedForDateTime(widths: Record<string, number>, colsV: unknown): Record<string, number> {
+  const v = typeof colsV === 'number' ? colsV : 0
+  if (v >= 5 || !(widths.dateAdded < DATE_TIME_COLUMN_WIDTH)) return widths
+  return { ...widths, dateAdded: DATE_TIME_COLUMN_WIDTH }
 }
 
 /**
