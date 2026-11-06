@@ -21,9 +21,12 @@
  * state as quit (scripts/install/jaketunes-install-gate.sh). Away from home there
  * should be no such write: nasAvailable() says no without a stat.
  *
- * It runs from will-quit: every window is closed, and before-quit has already flushed
- * the sidecar caches. The sync child stays out of it. It is detached by design, it
- * outlives a quit, and signalling it can cut a publish.
+ * It runs from will-quit: every window is closed. before-quit has started flushing the
+ * sidecar caches, and on a second Cmd-Q will-quit can get here while that still runs, so
+ * the flush is one of the things waited for. The sync child stays out of it. It is detached
+ * by design, it outlives a quit, and signalling it can cut a publish.
+ *
+ * The one quit that does not kill itself is a quit during an iPod sync: leaveFor.
  */
 
 /** Grace after the flushes: flushStorageData can't say when it is done. */
@@ -36,6 +39,8 @@ export function createQuitFinish(deps: {
   flushCookies: () => Promise<unknown>
   /** The library save in flight, if any. Local disk: normally a moment. */
   librarySaved: () => Promise<unknown>
+  /** before-quit's sidecar flush, if one is still running. */
+  sidecarsFlushed: () => Promise<unknown>
   leave: () => void
   log?: (message: string) => void
   graceMs?: number
@@ -55,6 +60,7 @@ export function createQuitFinish(deps: {
     const settled = Promise.all([
       settle('cookie flush', deps.flushCookies),
       settle('library save', deps.librarySaved),
+      settle('sidecar flush', deps.sidecarsFlushed),
       sleep(graceMs),
     ]).then(() => 'settled')
     void Promise.race([settled, sleep(boundMs).then(() => 'bound')]).then((how) => {
@@ -62,6 +68,24 @@ export function createQuitFinish(deps: {
       deps.leave()
     })
   }
+}
+
+/**
+ * How to leave, asked at the moment of leaving. The iPod engine copies straight to the song's final
+ * name, so a kill during a sync leaves a torn song on the card, and it can tear the catalog the
+ * next sync uses as its template. The normal exit lets the copy in flight finish, as every quit
+ * did before 2026-11-06. Measured on a windowless scratch Electron 30.5.1 with a 900 MB copy under
+ * way: app.exit(0) ended with the whole file, 3 of 3, in 0.9 to 2.8 s; SIGKILL left 82 MB and 134 MB.
+ * The cost: with a pool thread stuck for good, app.exit was still waiting 15 s on (the same run), so
+ * a sync and a hung file call together wait as the old quit did. The install gate won't quit during
+ * a sync at all, so this is Cmd-Q, or a quit by hand.
+ */
+export function leaveFor(deps: {
+  syncInFlight: () => boolean
+  exitNormally: () => void
+  kill: () => void
+}): () => void {
+  return () => { if (deps.syncInFlight()) deps.exitNormally(); else deps.kill() }
 }
 
 /**

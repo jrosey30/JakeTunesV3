@@ -215,7 +215,7 @@ import { summariseLearning, discoverVerdicts, type LedgerRow } from './discovery
 import { readSharedLedgerRows } from './taste-ledger-io.ts'
 import { discoveryFeedbackCache, sharedDiscoveryFeedback, recordNotForMe, recordAllowAgain } from './discovery-feedback.ts'
 import { JsonFileCache, flushAllCaches } from './state-cache'
-import { createQuitFinish, hardExit } from './quit-finish.ts'
+import { createQuitFinish, hardExit, leaveFor } from './quit-finish.ts'
 import { BANDCAMP_PARTITION } from './bandcamp-integration/partition'
 import { hashPayload, verifyLandedFile, stagePayloadAndRename } from './save-verify.ts'
 import { decideStagedRecovery, snapshotLibraryFile } from './staged-recovery.ts'
@@ -10960,6 +10960,7 @@ app.on('window-all-closed', () => {
 // the cache stats instead of vanishing. `quitDeferralStarted` guards
 // re-entry — the second 'before-quit' (our own app.quit()) proceeds.
 let quitDeferralStarted = false
+let sidecarFlush: Promise<unknown> = Promise.resolve()
 app.on('before-quit', (e) => {
   unregisterMediaKeyShortcuts()
   void stopInboxWatcher().catch(() => { /* shutting down, ignore */ })
@@ -10971,9 +10972,11 @@ app.on('before-quit', (e) => {
   if (win && !win.isDestroyed()) {
     try { win.webContents.send('app-quit-fade') } catch { /* ignore */ }
   }
+  const flush = flushAllCaches([overridesCache, mobileStarsCache, listenerProfileCache, musicmanMemoryCache, playlistsCache], 2000)
+  sidecarFlush = flush
   void (async () => {
     const [settled] = await Promise.all([
-      flushAllCaches([overridesCache, mobileStarsCache, listenerProfileCache, musicmanMemoryCache, playlistsCache], 2000),
+      flush,
       // Preserve the 180ms audio-fade deferral alongside the flush wait.
       new Promise((r) => setTimeout(r, hasWin ? 180 : 0)),
     ])
@@ -10988,6 +10991,9 @@ const finishQuit = createQuitFinish({
   flushStorage: () => { for (const s of quitSessions()) s.flushStorageData() },
   flushCookies: () => Promise.all(quitSessions().map((s) => s.cookies.flushStore())),
   librarySaved: () => librarySaveChain,
-  leave: hardExit,
+  sidecarsFlushed: () => sidecarFlush,
+  leave: leaveFor({ syncInFlight: () => syncEngine.isSyncInFlight(), exitNormally: () => app.exit(0), kill: hardExit }),
+  // The kill comes in the same tick as the bound line, and console.warn reaches main.log through a queue.
+  log: (m) => flightRecorder.recordNow('warn', 'quit', { msg: m }),
 })
 app.on('will-quit', (e) => { e.preventDefault(); finishQuit() })
