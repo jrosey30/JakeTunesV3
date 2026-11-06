@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { mkdtemp, writeFile, readFile, mkdir, stat, utimes } from 'fs/promises'
-import { refreshPhoneMirrors, ensureMobileImportAudio } from '../phone-mirrors.ts'
+import { refreshPhoneMirrors, ensureMobileImportAudio, createImportAudioPuller, IMPORT_AUDIO_FIRST_WAIT_MS, IMPORT_AUDIO_MAX_WAIT_MS } from '../phone-mirrors.ts'
 
 const httpServing = (payload: Record<string, { mtimeMs: number; body: string }>) => (async (url: string) => {
   const name = decodeURIComponent(String(url).split('/phone-sidecars/')[1] || '')
@@ -232,5 +232,84 @@ describe('refreshPhoneMirrors: merged files are never copied over', () => {
       merge: { 'mobile-stars.json': async () => { n++ } },
     })
     assert.equal(n, 0)
+  })
+})
+
+describe('createImportAudioPuller: the audio follows the absorb, it never holds it up', () => {
+  const rows = [{ id: 1, path: ':iPod_Control:Music:F01:a.flac' }]
+  const settle = () => new Promise((r) => setImmediate(r))
+
+  test('offer returns at once, whatever the link is doing', () => {
+    let started = 0
+    const puller = createImportAudioPuller(() => { started++; return new Promise(() => {}) })
+    puller.offer(rows)
+    assert.equal(started, 1)
+    assert.equal(puller.idle(), false)
+  })
+
+  test('one pass at a time: a tick during a pass adds nothing', async () => {
+    let started = 0
+    let finish = () => {}
+    const puller = createImportAudioPuller(() => { started++; return new Promise<void>((r) => { finish = r }) })
+    puller.offer(rows)
+    puller.offer(rows)
+    assert.equal(started, 1)
+    finish()
+    await settle()
+    assert.equal(puller.idle(), true)
+    puller.offer(rows)
+    assert.equal(started, 2)
+  })
+
+  test('a pass that failed leaves the link alone, longer each time, and a good pass resets it', async () => {
+    let clock = 1_000
+    let started = 0
+    let fail = true
+    const puller = createImportAudioPuller(async (_rows, onFailure) => { started++; if (fail) onFailure() }, () => clock)
+    puller.offer(rows)
+    await settle()
+    assert.equal(started, 1)
+    clock += IMPORT_AUDIO_FIRST_WAIT_MS - 1
+    puller.offer(rows)
+    await settle()
+    assert.equal(started, 1, 'still waiting')
+    clock += 1
+    puller.offer(rows)
+    await settle()
+    assert.equal(started, 2)
+    clock += IMPORT_AUDIO_FIRST_WAIT_MS
+    puller.offer(rows)
+    await settle()
+    assert.equal(started, 2, 'the second wait is twice the first')
+    clock += IMPORT_AUDIO_FIRST_WAIT_MS
+    fail = false
+    puller.offer(rows)
+    await settle()
+    assert.equal(started, 3)
+    puller.offer(rows)
+    await settle()
+    assert.equal(started, 4, 'a good pass clears the wait')
+  })
+
+  test('the wait stops growing at the ceiling', async () => {
+    let clock = 0
+    let started = 0
+    const puller = createImportAudioPuller(async (_r, onFailure) => { started++; onFailure() }, () => clock)
+    for (let i = 0; i < 8; i++) { puller.offer(rows); await settle(); clock += IMPORT_AUDIO_MAX_WAIT_MS }
+    assert.equal(started, 8)
+  })
+
+  test('a dead link stops the pass at the first song', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'lib-'))
+    let tries = 0
+    let failures = 0
+    const twoRows = [{ id: 1, path: ':iPod_Control:Music:F01:a.flac' }, { id: 2, path: ':iPod_Control:Music:F01:b.flac' }]
+    const n = await ensureMobileImportAudio(twoRows, {
+      libraryRoot: root, backendUrl: 'http://hub', onFailure: () => { failures++ },
+      fetchFn: (async () => { tries++; throw new Error('timed out') }) as unknown as typeof fetch,
+    })
+    assert.equal(n, 0)
+    assert.equal(tries, 1)
+    assert.equal(failures, 1)
   })
 })
