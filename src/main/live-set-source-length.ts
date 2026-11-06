@@ -200,7 +200,11 @@ export async function readDeclaredLength(absPath: string): Promise<DeclaredLengt
 
   const moov = await readMoovPayload(absPath)
   const table = moov ? audioTableFromMoov(moov) : null
-  if (!table || !(table.editStart > 0) || !(table.timescale > 0)) return null
+  if (!table || !(table.editStart > 0) || !(table.timescale > 0)) {
+    // Its padding can't be cut. 6 of the 6,896 AAC files in the library on 2026-11-06.
+    console.warn(`[live-set] ${absPath}: AAC that declares no length, so its encoder padding stays`)
+    return null
+  }
   const mediaFrames = table.sampleCount - table.editStart
   if (!(mediaFrames > 0)) return null
   const frames = sampleRate > 0 && table.timescale !== sampleRate

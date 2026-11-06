@@ -5,7 +5,9 @@
  * blip audit's findings of 2026-11-05, which all live in how the merge uses them:
  * encoder padding copied into the show (holes up to 22.9 ms at 90 joins), every
  * marker 8.000 s early in 8 shows, 24 crossfades the recording never asked for,
- * and 62-71% of every moov being zeros.
+ * and 62-71% of every moov being zeros. Nor the review's: soft song edges still
+ * notching the join, and a marker in the middle of an overlap the next song had
+ * already taken over.
  *
  * Sources are synthetic with known lengths, so "the song's real frames" is a
  * fact here and not a reading of the same code under test.
@@ -159,21 +161,18 @@ describe('mergeLiveSet, sources that declare their own length', { skip: FFMPEG_M
   test('iTunes AAC: the iTunSMPB count decides where the song ends', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'jt-merge-smpb-'))
     try {
-      const framesA = 881764, framesB = 882000
+      const framesA = 881764
       const a = encode(dir, 'a.m4a', bed(framesA, 21, 0.1), AAC)
-      const b = encode(dir, 'b.m4a', bed(framesB, 22, 0.1), AAC)
       addSmpb(a, 1024, 0, 1)
       const decodedA = decode(a)
       // Not the sample table's answer: only the tag can say this count.
-      const declared = decodedA.length / FRAME - 777
-      assert.notEqual(declared, framesA)
+      const declared = framesA - 777
       rmSync(a)
       encode(dir, 'a.m4a', bed(framesA, 21, 0.1), AAC)
-      addSmpb(a, 1024, 777, declared)
-      const result = await merge(dir, [{ path: a, frames: framesA }, { path: b, frames: framesB }])
-      const expected = Buffer.concat([decodedA.subarray(0, declared * FRAME), decode(b).subarray(0, framesB * FRAME)])
-      assertSameBytes(decode(result.mergedPath), expected, 'merged audio')
-      assert.equal(result.cues[1].startMs, msOf(declared))
+      addSmpb(a, 1024, decodedA.length / FRAME - declared, declared)
+      const result = await merge(dir, [{ path: a, frames: framesA }])
+      assertSameBytes(decode(result.mergedPath), decodedA.subarray(0, declared * FRAME), 'merged audio')
+      assert.equal(result.totalDurationMs, msOf(declared))
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -256,10 +255,146 @@ describe('mergeLiveSet, the overlap rule', { skip: FFMPEG_MISSING }, () => {
       assert.ok(overlap >= 0.6 * RATE && overlap <= 4 * RATE, `overlap ${overlap} frames`)
 
       const headOfB = frames - overlap
-      assert.equal(result.cues[1].startMs, msOf(headOfB + Math.floor(overlap / 2)), 'the marker sits mid-overlap')
+      // Two even fades cross near the middle (see the next tests for uneven ones).
+      const middle = msOf(headOfB + Math.floor(overlap / 2))
+      assert.ok(Math.abs(result.cues[1].startMs - middle) <= 300, `the marker sits at the crossing: ${result.cues[1].startMs}, middle ${middle}`)
       assert.equal(result.cues[2].startMs, msOf(2 * frames - overlap), 'the next marker is right too')
       assertSameBytes(merged.subarray(0, headOfB * FRAME), pa.subarray(0, headOfB * FRAME), 'before the overlap')
       assertSameBytes(merged.subarray(frames * FRAME), Buffer.concat([pb.subarray(overlap * FRAME), pc]), 'after the overlap')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('mergeLiveSet, where the marker goes in an overlap', { skip: FFMPEG_MISSING }, () => {
+  const frames = 882000
+  const faded = (depthFrames: number, f: number): number => (f >= depthFrames ? 0 : 1 - f / depthFrames)
+
+  test('a tail faded to nothing under a hard start: the marker is where the overlap starts', async () => {
+    // Whole Lotta Love into The Ocean: the middle would land 2 s into the new song.
+    const dir = mkdtempSync(join(tmpdir(), 'jt-merge-cue-hard-'))
+    try {
+      const fade = 3 * RATE
+      const a = encode(dir, 'a.flac', bed(frames, 81, 0.05, (f) => faded(fade, f - (frames - fade - 22050))), FLAC)
+      const b = encode(dir, 'b.flac', bed(frames, 82, 0.2), FLAC)
+      const result = await merge(dir, [{ path: a, frames }, { path: b, frames }])
+      const overlap = 2 * frames - decode(result.mergedPath).length / FRAME
+      assert.ok(overlap > 0.6 * RATE, `it overlapped: ${overlap} frames`)
+      assert.equal(result.cues[1].startMs, msOf(frames - overlap))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('a hard end over a head fading in from nothing: the marker waits for the head', async () => {
+    // The Rain Song into Dazed And Confused: the middle would flip 1.35 s early.
+    const dir = mkdtempSync(join(tmpdir(), 'jt-merge-cue-late-'))
+    try {
+      const a = encode(dir, 'a.flac', bed(frames, 83, 0.1), FLAC)
+      const silent = RATE / 2, rise = 3 * RATE
+      const b = encode(dir, 'b.flac', bed(frames, 84, 0.1, (f) => (f < silent ? 0 : f >= silent + rise ? 1 : (f - silent) / rise)), FLAC)
+      const result = await merge(dir, [{ path: a, frames }, { path: b, frames }])
+      const overlap = 2 * frames - decode(result.mergedPath).length / FRAME
+      assert.ok(overlap > 0.6 * RATE, `it overlapped: ${overlap} frames`)
+      const start = msOf(frames - overlap), end = msOf(frames)
+      // The head only reaches the tail's level once its fade-in is done, at 3.5 s: past
+      // the 4 s cap's middle by far, and within a window or two of it either way.
+      assert.ok(result.cues[1].startMs > start + (end - start) * 0.75, `marker ${result.cues[1].startMs} in ${start}..${end}`)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('mergeLiveSet, joins that would leave a hole or a click', { skip: FFMPEG_MISSING }, () => {
+  const frames = 882000
+  /** A bed whose edges curve up from nothing over 1-2 ms, as Nassau's songs do. */
+  const softBed = (seed: number, tailRamp: number, headRamp: number): Buffer =>
+    bed(frames, seed, 0.1, (f) => {
+      if (f < headRamp) return (f / headRamp) ** 2
+      if (frames - 1 - f < tailRamp) return ((frames - 1 - f) / tailRamp) ** 2
+      return 1
+    })
+
+  test('soft edges back to back: no notch, and only those few frames differ from the sources', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jt-merge-soft-'))
+    try {
+      const a = encode(dir, 'a.flac', softBed(91, 77, 88), FLAC)
+      const b = encode(dir, 'b.flac', softBed(92, 88, 77), FLAC)
+      const pa = decode(a), pb = decode(b)
+      // Around the join only: each song's outer edge is soft too, and that one's real.
+      const aroundJoin = (pcm: Buffer, at: number): Buffer => pcm.subarray((at - RATE) * FRAME, (at + RATE) * FRAME)
+      const plainHole = deepestHoleDb(aroundJoin(Buffer.concat([pa, pb]), frames))
+      assert.ok(plainHole.db < -20, `fixture: a plain join notches ${plainHole.db.toFixed(1)} dB`)
+
+      const result = await merge(dir, [{ path: a, frames }, { path: b, frames }])
+      const merged = decode(result.mergedPath)
+      const overlap = 2 * frames - merged.length / FRAME
+      assert.ok(overlap >= 100 && overlap <= 200, `${overlap} frames in common`)
+      const hole = deepestHoleDb(aroundJoin(merged, frames - overlap))
+      assert.ok(hole.db > -15, `${hole.db.toFixed(1)} dB under the show's level at ${hole.atMs} ms`)
+
+      assertSameBytes(merged.subarray(0, (frames - overlap) * FRAME), pa.subarray(0, (frames - overlap) * FRAME), 'before the overlap')
+      assertSameBytes(merged.subarray(frames * FRAME), pb.subarray(overlap * FRAME), 'after the overlap')
+      const sum = Buffer.alloc(overlap * FRAME)
+      for (let i = 0; i < overlap * FRAME; i += 2) {
+        sum.writeInt16LE(Math.max(-32768, Math.min(32767, pa.readInt16LE((frames - overlap) * FRAME + i) + pb.readInt16LE(i))), i)
+      }
+      assertSameBytes(merged.subarray((frames - overlap) * FRAME, frames * FRAME), sum, 'the overlap is the two edges, summed')
+      assert.equal(result.cues[1].startMs, msOf(frames - overlap + Math.floor(overlap / 2)))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('a song the album cut hard: no click, and 2.5 ms is all it costs', async () => {
+    // Unplugged 0:03:37: a -20.9 dBFS step, 17 times the local slope.
+    const dir = mkdtempSync(join(tmpdir(), 'jt-merge-step-'))
+    try {
+      const sine = (count: number, phase: number): Buffer => {
+        const b = Buffer.alloc(count * FRAME)
+        for (let i = 0; i < count; i++) {
+          const v = Math.round(9000 * Math.sin(2 * Math.PI * 50 * (i / RATE) + phase))
+          b.writeInt16LE(v, i * FRAME)
+          b.writeInt16LE(v, i * FRAME + 2)
+        }
+        return b
+      }
+      // Ends on a crest; the next song starts from zero, 9000 away.
+      const tailFrames = 882 * 1000 + 220
+      const a = encode(dir, 'a.flac', sine(tailFrames, 0), FLAC)
+      const b = encode(dir, 'b.flac', sine(frames, 0), FLAC)
+      const pa = decode(a), pb = decode(b)
+      const result = await merge(dir, [{ path: a, frames: tailFrames }, { path: b, frames }])
+      const merged = decode(result.mergedPath)
+      const overlap = tailFrames + frames - merged.length / FRAME
+      assert.equal(overlap, 110)
+      let worst = 0
+      for (let i = (tailFrames - overlap - 5) * FRAME; i < (tailFrames + 5) * FRAME; i += FRAME) {
+        worst = Math.max(worst, Math.abs(merged.readInt16LE(i + FRAME) - merged.readInt16LE(i)))
+      }
+      assert.ok(worst < 200, `steepest step through the join: ${worst}`)
+      assertSameBytes(merged.subarray(0, (tailFrames - overlap) * FRAME), pa.subarray(0, (tailFrames - overlap) * FRAME), 'before the ramp')
+      assertSameBytes(merged.subarray(tailFrames * FRAME), pb.subarray(overlap * FRAME), 'after the ramp')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('the tape runs through a quiet room, then the band: nothing laid over anything', async () => {
+    // Unplugged 0:12:28, which the first version overlapped by 4 s.
+    const dir = mkdtempSync(join(tmpdir(), 'jt-merge-room-'))
+    try {
+      const under = Math.pow(10, -28 / 20)
+      const a = encode(dir, 'a.flac', bed(frames, 93, 0.12, (f) => {
+        const left = (frames - f) / RATE
+        return left > 2 ? 1 : left < 0.5 ? under : Math.pow(10, (-28 * (2 - left)) / 1.5 / 20)
+      }), FLAC)
+      const b = encode(dir, 'b.flac', bed(frames, 94, 0.12, (f) => (f / RATE < 0.3 ? under : 1)), FLAC)
+      const result = await merge(dir, [{ path: a, frames }, { path: b, frames }])
+      assertSameBytes(decode(result.mergedPath), Buffer.concat([decode(a), decode(b)]), 'merged audio')
+      assert.equal(result.cues[1].startMs, msOf(frames))
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
