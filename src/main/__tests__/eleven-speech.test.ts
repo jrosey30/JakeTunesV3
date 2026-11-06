@@ -324,11 +324,54 @@ describe('trims', () => {
     samples.fill(0, 900, 950)
     samples.fill(0, 1050, 1100)
     assert.ok(Math.abs(snapToQuiet(samples, rate, 1.06) - 1.075) < 0.011)
+    assert.ok(Math.abs(snapToQuiet(samples, rate, 0.96) - 0.925) < 0.011)
     const solid = new Float32Array(4000).fill(0.2)
     assert.equal(snapToQuiet(solid, rate, 2), 2)
     const blip = new Float32Array(4000).fill(0.2)
-    blip.fill(0, 2000, 2005) // shorter than the ramp
+    blip.fill(0, 2000, 2010) // 10 ms: shorter than the ramp
     assert.equal(snapToQuiet(blip, rate, 2), 2)
+  })
+})
+
+describe('a gain change lands in the gap, and only a real gap', () => {
+  const rate = 1000 // one sample a millisecond, so the times read straight off
+  const fromDb = (db: number): number => 10 ** (db / 20)
+
+  /** Sound at `db` everywhere, with the given stretches (seconds) silent or at their own level. */
+  function take(db: number, seconds: number, stretches: Array<[number, number, number?]>): Float32Array {
+    const samples = new Float32Array(seconds * rate).fill(fromDb(db))
+    for (const [from, to, level] of stretches) samples.fill(level === undefined ? 0 : fromDb(level), from * rate, to * rate)
+    return samples
+  }
+
+  it('a word whose tail runs well past the boundary: the switch waits for the quiet', () => {
+    // A real take, "[interrupts] No, no, no." into "[whispers] Don't tell anyone.": at
+    // the boundary, 5.520, the tail is at -27 dB, and it reaches -60 dB 180 ms later. A
+    // switch at the boundary lifted that tail 4.5 dB as it faded.
+    const samples = take(-20, 8, [[5.52, 5.58, -30], [5.58, 5.64, -40], [5.64, 5.7, -50], [5.7, 6]])
+    const at = snapToQuiet(samples, rate, 5.52)
+    assert.ok(at >= 5.71 && at <= 5.99, `landed at ${at}`)
+  })
+
+  it('a first sound that leads the boundary: the switch goes back to the quiet before it', () => {
+    const samples = take(-20, 8, [[3, 3.2]]) // the next speaker starts at 3.2, the boundary says 3.4
+    const at = snapToQuiet(samples, rate, 3.4)
+    assert.ok(at >= 3.01 && at <= 3.19, `landed at ${at}`)
+  })
+
+  it('a gap too far from the boundary belongs to someone else\'s line', () => {
+    assert.equal(snapToQuiet(take(-20, 8, [[3.28, 3.6]]), rate, 3), 3, 'ahead of it')
+    assert.equal(snapToQuiet(take(-20, 8, [[2.4, 2.72]]), rate, 3), 3, 'behind it')
+  })
+
+  it('soft speech is not a gap: speech at -25 dBFS or a breath at -50, however long', () => {
+    assert.equal(snapToQuiet(take(-20, 8, [[2.8, 3.1, -25]]), rate, 3), 3)
+    assert.equal(snapToQuiet(take(-20, 8, [[2.8, 3.1, -50]]), rate, 3), 3)
+  })
+
+  it('room tone is a gap: -65 dBFS and below', () => {
+    const at = snapToQuiet(take(-20, 8, [[2.8, 2.95, -65]]), rate, 3)
+    assert.ok(at >= 2.81 && at <= 2.94, `landed at ${at}`)
   })
 })
 
@@ -367,6 +410,29 @@ describe('the doors reach the finishing step', () => {
       { input: 0, startSec: 0, endSec: 2.5 },
       { input: 1, startSec: 2.5, endSec: 4 },
     ])
+  })
+})
+
+describe('finishTake moves each gain change to the quiet', () => {
+  it('the ramp sits in the gap the decoded audio shows, not on the boundary', async () => {
+    const rate = 22_050 // what finishTake decodes at
+    const pcm = new Float32Array(rate * 4).fill(0.1)
+    pcm.fill(0, rate * 2, Math.round(rate * 2.1)) // silence from 2.0 to 2.1 s
+    const filters: string[] = []
+    const deps = fakeDeps([], {
+      ffmpeg: async (args) => {
+        const at = args.findIndex((a) => a === '-af' || a === '-filter_complex')
+        if (at < 0) return Buffer.from(pcm.buffer)
+        filters.push(args[at + 1])
+        writeFileSync(args[args.length - 1], 'finished')
+        return Buffer.alloc(0)
+      },
+    })
+    await finishTake([Buffer.from('raw')], [{ startSec: 0, voiceId: MM }, { startSec: 2.18, voiceId: LARRY_VOICE_ID }], deps)
+    const ramp = /clip\(\(t-([\d.]+)\)/.exec(filters[0])
+    assert.ok(ramp, filters[0])
+    const startsAt = Number(ramp[1])
+    assert.ok(startsAt >= 2 && startsAt + 0.02 <= 2.1, `the ramp starts at ${startsAt}`)
   })
 })
 
@@ -419,6 +485,35 @@ describe('finishing real audio', { skip: !hasFfmpeg }, () => {
       const hot = tone(dir, 'hot.mp3', 0.8, 2)
       const limited = await finishTake([hot], [{ startSec: 0, voiceId: 'QUIET' }])
       assert.ok(peak(limited, dir) <= 0.95, `peak ${peak(limited, dir)} after +6 dB on a hot tone`)
+    } finally {
+      delete VOICE_TRIM_DB.QUIET
+      delete VOICE_TRIM_DB.LOUD
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('sound either side of a boundary keeps its own speaker\'s gain, up to the gap', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jt-speech-test-'))
+    VOICE_TRIM_DB.QUIET = 6
+    VOICE_TRIM_DB.LOUD = -3
+    try {
+      // Tone, a gap from 2.0 to 2.4 s, tone.
+      const path = join(dir, 'gap.mp3')
+      execFileSync('ffmpeg', ['-nostdin', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100:duration=5',
+        '-af', "volume='if(between(t,2.0,2.4),0,2)':eval=frame", '-ac', '1', '-c:a', 'libmp3lame', '-b:a', '128k', path])
+      const source = readFileSync(path)
+      const change = (from: number, to: number, out: Buffer): number => rmsDb(out, dir, from, to) - rmsDb(source, dir, from, to)
+
+      // The encoded tone rings on to about 2.03 s. A boundary at 1.85 is 180 ms before
+      // the quiet, like the real take: all of that is still the first speaker's tail.
+      const tail = await finishTake([source], [{ startSec: 0, voiceId: 'QUIET' }, { startSec: 1.85, voiceId: 'LOUD' }])
+      assert.ok(Math.abs(change(1.88, 1.98, tail) - 6) < 0.5, `the tail changed ${change(1.88, 1.98, tail)} dB`)
+      assert.ok(Math.abs(change(2.5, 3, tail) + 3) < 0.5, 'the next speaker has their own')
+
+      // The boundary is 200 ms after the gap: that's already the next speaker's first sound.
+      const lead = await finishTake([source], [{ startSec: 0, voiceId: 'QUIET' }, { startSec: 2.6, voiceId: 'LOUD' }])
+      assert.ok(Math.abs(change(2.45, 2.55, lead) + 3) < 0.5, `the first sound changed ${change(2.45, 2.55, lead)} dB`)
+      assert.ok(Math.abs(change(1.5, 1.9, lead) - 6) < 0.5, 'the first speaker has their own')
     } finally {
       delete VOICE_TRIM_DB.QUIET
       delete VOICE_TRIM_DB.LOUD

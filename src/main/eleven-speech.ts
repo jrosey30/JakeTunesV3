@@ -222,11 +222,12 @@ export function voiceTrimDb(voiceId: string): number {
 const CEILING = 0.89 // about -1 dBFS
 /** The gain moves over this long, so a switch that can't land in silence doesn't click. */
 const GAIN_RAMP_SEC = 0.02
-/** How far from a voice_segments boundary to look for the gap between speakers.
- *  Further back than ahead: a speaker's first sound can lead the boundary (50 ms
- *  on the reference break, where the switch would have landed inside "It's"). */
-const SNAP_BACK_SEC = 0.25
-const SNAP_AHEAD_SEC = 0.15
+/** How far either side of a voice_segments boundary to look for the gap between
+ *  speakers. A speaker's first sound can lead the boundary (50 ms on the reference
+ *  break, where the switch would have landed inside "It's"), and the last one's tail
+ *  can outrun it (180 ms on "[interrupts] No, no, no.", where the switch lifted a
+ *  fading word 4.5 dB). */
+const SNAP_REACH_SEC = 0.25
 const QUIET_RMS = 0.001 // -60 dBFS; the gaps between speakers sit below -70
 const SNAP_RATE = 22_050
 
@@ -279,8 +280,8 @@ export function finishFilter(steps: GainStep[]): string {
  */
 export function snapToQuiet(samples: Float32Array, rate: number, atSec: number): number {
   const frame = Math.max(1, Math.round(rate * 0.01))
-  const first = Math.max(0, Math.floor(((atSec - SNAP_BACK_SEC) * rate) / frame))
-  const end = Math.min(Math.floor(samples.length / frame), Math.ceil(((atSec + SNAP_AHEAD_SEC) * rate) / frame))
+  const first = Math.max(0, Math.floor(((atSec - SNAP_REACH_SEC) * rate) / frame))
+  const end = Math.min(Math.floor(samples.length / frame), Math.ceil(((atSec + SNAP_REACH_SEC) * rate) / frame))
   const quietPower = QUIET_RMS * QUIET_RMS
   let best: number | null = null
   let bestDistance = Infinity
