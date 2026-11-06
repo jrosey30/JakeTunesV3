@@ -14,6 +14,11 @@
  * (capped). A fade-out summed over a fade-in is ≈ a constant room, which is
  * exactly what the tape had before the album cut it.
  *
+ * A fade alone is not enough (2026-11-06). 12 dB of drop on one side used to
+ * start an overlap, and the blip audit found 24 seams where both sides were
+ * still in the room at the cut, so two moments of the show played at once and
+ * 70.5 s of it was gone. See seamOverlapBytes.
+ *
  * Pure functions on 16-bit interleaved PCM buffers; the merge engine owns
  * the I/O.
  */
@@ -79,6 +84,156 @@ export function seamOverlapMs(tail: Envelope, head: Envelope, capMs = 4000, minM
   const o = Math.max(t, h)
   if (o < minMs) return 0
   return Math.min(capMs, o)
+}
+
+/**
+ * What a plain join of these two moments would be, measured at sample level
+ * (2026-11-06). `tailDb`/`headDb` are the room's level just either side of the
+ * cut (median of 2 ms windows, 70-300 ms away, so the join itself can't move
+ * them). `holeMs` is how long the cut sits 10 dB under both sides, in level and
+ * in first difference alike. `jumpOverSlope` is the step across the cut against
+ * the steepest step within 20 ms of it. `dipDb` is how far the cut sits under
+ * the song bodies just outside the overlap, on the shallower side.
+ */
+export interface JoinFacts {
+  tailDb: number
+  headDb: number
+  holeMs: number
+  jumpOverSlope: number
+  dipDb: number
+}
+
+const DB_FLOOR = -140
+function powerDb(p: number): number { return 10 * Math.log10(Math.max(p, 1e-14)) }
+function median(values: number[]): number {
+  const v = [...values].sort((a, b) => a - b)
+  return v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2
+}
+function rmsDbNoFloor(pcm: Buffer): number {
+  const n = pcm.length & ~1
+  if (n === 0) return DB_FLOOR
+  let acc = 0
+  for (let i = 0; i < n; i += 2) { const s = pcm.readInt16LE(i) / 32768; acc += s * s }
+  const rms = Math.sqrt(acc / (n / 2))
+  return rms > 0 ? Math.max(DB_FLOOR, 20 * Math.log10(rms)) : DB_FLOOR
+}
+
+/**
+ * Port of the audit's measures (blip_core.py hole_analysis + click_analysis,
+ * build_report.py classify_xfade). `tail` ends and `head` starts at the cut;
+ * `overlapBytes` is the overlap the fades asked for, which sets where "the song
+ * bodies" are.
+ */
+export function measurePlainJoin(tail: Buffer, head: Buffer, overlapBytes: number, bytesPerSec: number, frameBytes: number): JoinFacts {
+  const ch = frameBytes / 2
+  const rate = bytesPerSec / frameBytes
+  const reach = Math.ceil(rate * 0.32)   // 300 ms plus one window
+  const tailFrames = Math.floor(tail.length / frameBytes)
+  const headFrames = Math.floor(head.length / frameBytes)
+  const before = Math.min(reach, tailFrames)
+  const after = Math.min(reach, headFrames)
+  const total = before + after
+  const sampleAt = (i: number, c: number): number => {
+    const f = i - before   // relative to the cut
+    return f < 0
+      ? tail.readInt16LE((tailFrames + f) * frameBytes + c * 2)
+      : head.readInt16LE(f * frameBytes + c * 2)
+  }
+
+  // Running power of the signal and of its first difference.
+  const win = Math.floor(rate * 0.002)
+  const hop = Math.max(1, Math.round(rate * 0.00025))
+  const cumRaw = new Float64Array(total + 1)
+  const cumDiff = new Float64Array(total + 1)
+  for (let i = 0; i < total; i++) {
+    let raw = 0, diff = 0
+    for (let c = 0; c < ch; c++) {
+      const s = sampleAt(i, c) / 32768
+      const d = i > 0 ? s - sampleAt(i - 1, c) / 32768 : 0
+      raw += s * s
+      diff += d * d
+    }
+    cumRaw[i + 1] = cumRaw[i] + raw / ch
+    cumDiff[i + 1] = cumDiff[i] + diff / ch
+  }
+  const tMs: number[] = [], eRaw: number[] = [], eDiff: number[] = []
+  for (let st = 0; st + win <= total; st += hop) {
+    tMs.push(((st + win / 2 - before) / rate) * 1000)
+    eRaw.push(powerDb((cumRaw[st + win] - cumRaw[st]) / win))
+    eDiff.push(powerDb((cumDiff[st + win] - cumDiff[st]) / win))
+  }
+  const medianBetween = (arr: number[], lo: number, hi: number): number => {
+    const picked = arr.filter((_, i) => tMs[i] >= lo && tMs[i] < hi)
+    return picked.length ? median(picked) : DB_FLOOR
+  }
+  const tailDb = medianBetween(eRaw, -300, -70)
+  const headDb = medianBetween(eRaw, 70, 300)
+  const refRaw = Math.min(tailDb, headDb)
+  const refDiff = Math.min(medianBetween(eDiff, -300, -70), medianBetween(eDiff, 70, 300))
+
+  // The run under both references, nearest the cut, within 70 ms of it.
+  const runs: Array<{ first: number; last: number }> = []
+  for (let i = 0; i < tMs.length; i++) {
+    if (tMs[i] < -70 || tMs[i] > 70) continue
+    if (!(eRaw[i] < refRaw - 10 && eDiff[i] < refDiff - 10)) continue
+    const open = runs[runs.length - 1]
+    if (open && i - open.last <= 2) open.last = i
+    else runs.push({ first: i, last: i })
+  }
+  let holeMs = 0
+  if (runs.length) {
+    const distance = (r: { first: number; last: number }): number => Math.abs(tMs[r.first + Math.floor((r.last - r.first + 1) / 2)])
+    const nearest = runs.reduce((a, b) => (distance(b) < distance(a) ? b : a))
+    holeMs = (((nearest.last - nearest.first + 1) * hop) / rate) * 1000
+  }
+
+  // The step across the cut, against the steepest step within 20 ms of it.
+  let jumpOverSlope = 0
+  if (before >= 2 && after >= 2) {
+    const stepAt = (i: number): number => {
+      let m = 0
+      for (let c = 0; c < ch; c++) m = Math.max(m, Math.abs(sampleAt(i + 1, c) - sampleAt(i, c)))
+      return m
+    }
+    const span = Math.floor(rate * 0.02)
+    let slope = 0
+    for (let i = Math.max(0, before - span); i < before - 3; i++) slope = Math.max(slope, stepAt(i))
+    for (let i = before + 2; i < Math.min(total - 1, before + span); i++) slope = Math.max(slope, stepAt(i))
+    jumpOverSlope = stepAt(before - 1) / Math.max(1, slope)
+  }
+
+  // How far the cut sits under the bodies just outside the overlap.
+  const half = bytesForMs(500, bytesPerSec, frameBytes)
+  const overlap = Math.min(overlapBytes, tail.length, head.length)
+  const preBytes = tail.subarray(Math.max(0, tail.length - overlap - half), tail.length - overlap)
+  const postBytes = head.subarray(overlap, Math.min(head.length, overlap + half))
+  const pre = preBytes.length ? rmsDbNoFloor(preBytes) : tailDb
+  const post = postBytes.length ? rmsDbNoFloor(postBytes) : headDb
+  return { tailDb, headDb, holeMs, jumpOverSlope, dipDb: Math.min(pre - tailDb, post - headDb) }
+}
+
+/**
+ * Both sides still in the room at the cut, so a plain join is the recording
+ * running straight through and overlapping it would lay two moments of the show
+ * on top of each other. Louder than -60 dBFS on both sides, no hole, no step
+ * beyond the local slope, and the cut less than 25 dB under the song bodies (a
+ * pair of real fades digs deeper than that).
+ */
+export function plainJoinIsClean(f: JoinFacts): boolean {
+  return Math.min(f.tailDb, f.headDb) > -60 && f.holeMs <= 2 && f.jumpOverSlope < 1.5 && f.dipDb < 25
+}
+
+/**
+ * The overlap for one seam, in whole frames. `tail` is the held-back end of the
+ * previous song and `head` the start of the next, each cut at the song's real
+ * edge. 12 dB of drop on one side is not enough to overlap (the 2026-09-02 rule
+ * alone laid 24 seams, 70.5 s of music, over themselves): the join has to need it.
+ */
+export function seamOverlapBytes(tail: Buffer, head: Buffer, bytesPerSec: number, frameBytes: number): number {
+  const ms = seamOverlapMs(rmsEnvelope(tail, bytesPerSec), rmsEnvelope(head, bytesPerSec))
+  if (ms === 0) return 0
+  const overlap = Math.min(bytesForMs(ms, bytesPerSec, frameBytes), tail.length)
+  return plainJoinIsClean(measurePlainJoin(tail, head, overlap, bytesPerSec, frameBytes)) ? 0 : overlap
 }
 
 /** Sum two equal-length s16 buffers sample-by-sample, clamped. */
