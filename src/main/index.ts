@@ -57,7 +57,7 @@ import { backfillAlacFingerprints, planLocalAlacMigration, type AlacMigrateTrack
 import { decideStreamConvertAttempt, decideStreamConvertMiss } from './stream-convert-retry.ts'
 import {
   appendOffloadReplacement, confirmRawHomeminiMatch, createCachedOffloadReader, hubOffloadActive,
-  libraryRootFromMusicDir, OFFLOAD_CONVERT_BATCH, serveHubOffloadSymlink, streamConvertRuns,
+localAudioDropRefused,   libraryRootFromMusicDir, OFFLOAD_CONVERT_BATCH, serveHubOffloadSymlink, streamConvertRuns,
 } from './offload-audio.ts'
 import { bootHubOffload, menuHubOffload, registerOffloadIpc } from './ipc/offload-ipc.ts'
 import { createServePin } from './play-cache-serve-pin.ts'
@@ -4333,6 +4333,8 @@ async function convertTrackToStreamed(ipodPath: string, storedFingerprint: strin
     let st
     try { st = await lstat(fp) } catch { return { ok: false, error: 'local file not found' } }
     if (st.isSymbolicLink()) return { ok: true }
+    const refused = await localAudioDropRefused(fp)
+    if (refused) return { ok: false, error: refused }
     const id = await trackIdForAbsPath(fp)
     if (id == null) return { ok: false, error: 'track id not found in library' }
     const match = await confirmRawHomeminiMatch({
@@ -4475,6 +4477,7 @@ async function runStreamConvertPass(now: number): Promise<void> {
     const source = await readStreamSource()
     const offload = await readOffloadAudio()
     if (!streamConvertRuns({ streamSource: source, offload })) return
+    if (await localAudioDropRefused(MUSIC_DIR)) return
     let items = await readStreamConvertQueue()
     if (!items.length) return
     const hub = hubOffloadActive({ streamSource: source, offload })
@@ -4556,6 +4559,8 @@ ipc.handle('download-track', async (_e, ipodPath: string): Promise<{ ok: boolean
 
 ipc.handle('remove-download', async (_e, ipodPath: string): Promise<{ ok: boolean; error?: string }> => {
   try {
+    const refused = await localAudioDropRefused(trackFarmPath(ipodPath))
+    if (refused) return { ok: false, error: refused }
     if ((await readStreamSource()) === 'homemini') {
       // Laptop homemini mode: re-stream. convertTrackToStreamed hash-verifies
       // homemini serves the exact bytes before dropping the local file, so this
@@ -9705,6 +9710,7 @@ app.whenReady().then(async () => {
       console.log('[evict] skipped — iPod sync in flight (copy source must stay)')
       return empty
     }
+    if (await localAudioDropRefused(MUSIC_DIR)) return empty
     const { readdir: rd, stat: st, appendFile: af } = await import('fs/promises')
     const result = await sweepOnce({
       listLocalAudio: async () => {
@@ -10070,6 +10076,7 @@ app.whenReady().then(async () => {
   // path (same window as the stream-convert match) so boot is not blocked.
   void (async () => {
     if ((await readStreamSource()) !== 'homemini') return
+    if (await localAudioDropRefused(MUSIC_DIR)) return
     let tracks: AlacMigrateTrack[] = []
     try {
       const lib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8')) as { tracks?: AlacMigrateTrack[] }
