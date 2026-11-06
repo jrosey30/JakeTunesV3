@@ -8,8 +8,8 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
   DIALOGUE_URL,
@@ -41,18 +41,22 @@ function takeResponse(segments: unknown[] = [], audio = Buffer.from('fake-mp3'))
   return new Response(JSON.stringify({ audio_base64: audio.toString('base64'), voice_segments: segments }), { status: 200 })
 }
 
-interface Sent { url: string; body: Record<string, any>; apiKey: string | null }
+interface Sent { url: string; body: Record<string, any>; apiKey: string | null; contentType: string | null }
 
 /** Fake network: answers from a list (the last answer repeats), records every request. */
-function fakeDeps(answers: Array<() => Response | Promise<Response>>, overrides: Partial<SpeechDeps> = {}): SpeechDeps & { sent: Sent[]; slept: number[] } {
+function fakeDeps(answers: Array<() => Response | Promise<Response>>, overrides: Partial<SpeechDeps> = {}): SpeechDeps & { sent: Sent[]; slept: number[]; signals: unknown[] } {
   const sent: Sent[] = []
   const slept: number[] = []
+  const signals: unknown[] = []
   let i = 0
   return {
     sent,
     slept,
+    signals,
     fetch: (async (url: string, init: RequestInit) => {
-      sent.push({ url, body: JSON.parse(String(init.body)), apiKey: new Headers(init.headers).get('xi-api-key') })
+      const headers = new Headers(init.headers)
+      sent.push({ url, body: JSON.parse(String(init.body)), apiKey: headers.get('xi-api-key'), contentType: headers.get('content-type') })
+      signals.push(init.signal)
       const answer = answers[Math.min(i, answers.length - 1)]
       i += 1
       return answer()
@@ -105,9 +109,46 @@ describe('the request', () => {
     assert.equal(audio.toString(), 'flash-mp3')
   })
 
+  it('every call says it is JSON and gives up on a hung answer, by how much it asked for', async () => {
+    const asked: number[] = []
+    const realTimeout = AbortSignal.timeout
+    AbortSignal.timeout = (ms: number) => { asked.push(ms); return realTimeout.call(AbortSignal, ms) }
+    try {
+      const deps = fakeDeps([() => takeResponse([{ voice_id: MM, start_time_seconds: 0, end_time_seconds: 1, dialogue_input_index: 0 }])])
+      await silenceWarnings(() => speakTake([{ text: 'x'.repeat(100), voiceId: MM }, { text: 'y'.repeat(100), voiceId: MM }], deps))
+      await silenceWarnings(() => speakText('x'.repeat(2000), MM, deps))
+      const fast = fakeDeps([() => new Response(Buffer.from('flash-mp3'), { status: 200 })])
+      await speakFast('z'.repeat(100), 'SCOTUSVOICE', fast)
+      assert.deepEqual(asked, [60_000, 180_000, 45_000], '30 s + 150 ms a character, never past 3 minutes')
+      for (const d of [deps, fast]) {
+        assert.ok(d.signals.every((signal) => signal instanceof AbortSignal))
+        assert.ok(d.sent.every((request) => request.contentType === 'application/json'))
+      }
+    } finally {
+      AbortSignal.timeout = realTimeout
+    }
+  })
+
   it('a take with no voice_segments fails, so the renderer falls back instead of captioning blind', async () => {
     const deps = fakeDeps([() => takeResponse([])])
     await assert.rejects(() => speakTake([{ text: 'One.', voiceId: MM }], deps), /voice_segments/)
+  })
+
+  it('a take with no audio fails: an empty answer would read as the voice switched off', async () => {
+    const empty = fakeDeps([() => takeResponse([{ voice_id: MM, start_time_seconds: 0, end_time_seconds: 1, dialogue_input_index: 0 }], Buffer.alloc(0))])
+    await assert.rejects(() => speakTake([{ text: 'One.', voiceId: MM }], empty), /no audio/)
+    await assert.rejects(() => speakText('One.', MM, empty), /no audio/)
+  })
+
+  it('one voice needs no timing: an answer with no voice_segments at all still speaks', async () => {
+    const deps = fakeDeps([() => new Response(JSON.stringify({ audio_base64: Buffer.from('raw-take').toString('base64') }), { status: 200 })])
+    const audio = await silenceWarnings(() => speakText('One.', MM, deps))
+    assert.equal(audio.toString(), 'raw-take')
+  })
+
+  it('the fast path fails plainly too, and never hands an error page over as audio', async () => {
+    const deps = fakeDeps([() => new Response('{"detail":"nope"}', { status: 400 })])
+    await silenceWarnings(() => assert.rejects(() => speakFast('Text.', 'V', deps), /elevenlabs 400/))
   })
 
   it('a dead voice fails the call with its status, for the caller to fall back on', async () => {
@@ -161,11 +202,13 @@ describe('429s wait and retry the same model', () => {
   })
 
   it('a 5xx or a dropped connection gets one short retry, a timeout none', async () => {
-    const deps = { sleep: async () => {} }
+    let slept: number[] = []
+    const deps = { sleep: async (ms: number) => { slept.push(ms) } }
     let calls = 0
     const after500 = await sendWithRetry(async () => { calls += 1; return new Response('', { status: calls === 1 ? 503 : 200 }) }, deps)
     assert.equal(after500.status, 200)
     assert.equal(calls, 2)
+    assert.deepEqual(slept, [1000])
 
     calls = 0
     const still500 = await sendWithRetry(async () => { calls += 1; return new Response('', { status: 500 }) }, deps)
@@ -173,18 +216,36 @@ describe('429s wait and retry the same model', () => {
     assert.equal(calls, 2)
 
     calls = 0
+    slept = []
     const afterDrop = await sendWithRetry(async () => {
       calls += 1
       if (calls === 1) throw new TypeError('fetch failed')
       return new Response('', { status: 200 })
     }, deps)
     assert.equal(afterDrop.status, 200)
+    assert.deepEqual(slept, [1000])
+
+    calls = 0
+    await assert.rejects(() => sendWithRetry(async () => { calls += 1; throw new TypeError('fetch failed') }, deps), /fetch failed/)
+    assert.equal(calls, 2, 'one retry, not forever')
 
     calls = 0
     const timeout = Object.assign(new Error('timed out'), { name: 'TimeoutError' })
     await assert.rejects(() => sendWithRetry(async () => { calls += 1; throw timeout }, deps), /timed out/)
     assert.equal(calls, 1)
   })
+})
+
+describe('a retry lets go of the answer it won\'t read', () => {
+  for (const status of [429, 503]) {
+    it(`after a ${status}`, async () => {
+      const first = new Response('some body', { status })
+      let sends = 0
+      const res = await silenceWarnings(() => sendWithRetry(async () => (sends++ === 0 ? first : new Response('', { status: 200 })), { sleep: async () => {} }))
+      assert.equal(res.status, 200)
+      assert.equal((await first.body?.getReader().read())?.done, true, 'the first answer\'s body was cancelled')
+    })
+  }
 })
 
 describe('long text', () => {
@@ -375,6 +436,35 @@ describe('a gain change lands in the gap, and only a real gap', () => {
   })
 })
 
+describe('the numbers that decide the sound', () => {
+  it('each voice keeps the trim it was measured for', () => {
+    // Change one on purpose, by measuring takes: a wrong trim sounds like a different
+    // room, and nothing else would notice.
+    assert.deepEqual(VOICE_TRIM_DB, {
+      [MM]: 4,
+      [LARRY_VOICE_ID]: -0.5,
+      ApBE43wHy5MiZGz9ihqB: 1, // Stephen
+      UOB3uZCEf2cjGpZaGOXq: 1, // Giovanni
+      miqykcv8BCUvQnRlIGUV: 1, // Rajiv
+      BlgEcC0TfWpBak7FmvHW: 4, // Kristina
+      YrAYvOVjAFiqVwBgB4qI: 3, // Devin
+      Ib97zM6uFBc71OWgj75I: 7, // Mike
+      c8v8wiyiDwyuduufV6kB: 13, // Zoe
+    })
+  })
+
+  it('one voice: its gain, then the ceiling, the limiter\'s attack and release, and nothing else', () => {
+    assert.equal(finishFilter([{ atSec: 0, db: 4 }]), 'volume=1.58489,alimiter=limit=0.89:attack=5:release=50:level=0:latency=1')
+  })
+
+  it('two voices: the gain re-read every 256 samples, a 20 ms ramp, the same ceiling', () => {
+    assert.equal(
+      finishFilter([{ atSec: 0, db: 4 }, { atSec: 5, db: -0.5 }]),
+      "asetnsamples=n=256:p=0,volume=volume='1.58489+(-0.64083)*clip((t-4.990)/0.02,0,1)':eval=frame,alimiter=limit=0.89:attack=5:release=50:level=0:latency=1",
+    )
+  })
+})
+
 describe('the doors reach the finishing step', () => {
   /** Fake ffmpeg: records the filter it was asked for, hands back fake audio. */
   function recording(answers: Array<() => Response>) {
@@ -433,6 +523,30 @@ describe('finishTake moves each gain change to the quiet', () => {
     assert.ok(ramp, filters[0])
     const startsAt = Number(ramp[1])
     assert.ok(startsAt >= 2 && startsAt + 0.02 <= 2.1, `the ramp starts at ${startsAt}`)
+  })
+})
+
+describe('finishTake leaves nothing behind', () => {
+  it('its temp folder is gone, when ffmpeg works and when it fails', async () => {
+    const dirs: string[] = []
+    const works = fakeDeps([], {
+      ffmpeg: async (args) => {
+        const out = args[args.length - 1]
+        dirs.push(dirname(out))
+        writeFileSync(out, 'finished')
+        return Buffer.alloc(0)
+      },
+    })
+    assert.equal((await finishTake([Buffer.from('raw')], [{ startSec: 0, voiceId: MM }], works)).toString(), 'finished')
+    const fails = fakeDeps([], {
+      ffmpeg: async (args) => {
+        dirs.push(dirname(args[args.length - 1]))
+        throw new Error('ffmpeg exploded')
+      },
+    })
+    assert.equal((await silenceWarnings(() => finishTake([Buffer.from('raw')], [{ startSec: 0, voiceId: MM }], fails))).toString(), 'raw')
+    assert.equal(dirs.length, 2)
+    for (const dir of dirs) assert.equal(existsSync(dir), false, dir)
   })
 })
 
@@ -517,6 +631,19 @@ describe('finishing real audio', { skip: !hasFfmpeg }, () => {
     } finally {
       delete VOICE_TRIM_DB.QUIET
       delete VOICE_TRIM_DB.LOUD
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('the limiter leaves a hot voice right at its ceiling, not under it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jt-speech-test-'))
+    VOICE_TRIM_DB.QUIET = 6
+    try {
+      const limited = await finishTake([tone(dir, 'hot.mp3', 0.8, 2)], [{ startSec: 0, voiceId: 'QUIET' }])
+      const top = peak(limited, dir)
+      assert.ok(top >= 0.8 && top <= 0.95, `peak ${top}`)
+    } finally {
+      delete VOICE_TRIM_DB.QUIET
       rmSync(dir, { recursive: true, force: true })
     }
   })
