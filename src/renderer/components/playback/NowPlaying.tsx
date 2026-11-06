@@ -344,30 +344,17 @@ export default function NowPlaying() {
   // mini-visualizer was retired).
   const isActivity = effectiveMode === 'rip' || effectiveMode === 'sync' || effectiveMode === 'import' || effectiveMode === 'notice' || effectiveMode === 'broadcast'
 
-  // 4.5: render a thin "ON AIR · WJLR 330.9 · elapsed / remaining"
-  // strip inside the pill whenever Radio Mode is active. Replaces the
-  // external red pill that sat awkwardly next to the transport row.
-  // Strip is the same color language as the existing radio-on-air-pill
-  // (brand orange/red) so the visual ID survives the relocation.
-  function formatSec(s: number): string {
-    const h = Math.floor(s / 3600)
-    const m = Math.floor((s % 3600) / 60)
-    const ss = s % 60
-    return h > 0
-      ? `${h}:${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}`
-      : `${m}:${String(ss).padStart(2, '0')}`
-  }
+  // Radio Mode's station tag. Jake, 2026-11-05, with the album line cut off under the old
+  // strip: "it pushes the album info down. cant happen. why not put the radio on air info in
+  // the topleft corner", "no need for countdown, it should just be 90 mins". So it takes no
+  // room in the pill, and there's no clock: a show runs 90 minutes (RADIO_CAP_MS, Toolbar).
   const radioActive = !!radio?.active
-  // 4.5.0-53: two variants of the radio strip.
+  // 4.5.0-53: two variants of the radio tag.
   //  - HERO: shown when the pill has no other content (no track playing,
-  //    no broadcast caption, no activity). Centered, big, EQ bars, station
-  //    callsign stacked above the time. Fills the empty pill so "Radio
-  //    Mode is on" reads at a glance instead of being a tiny corner label.
-  //  - COMPACT: shown when something else IS playing inside the pill so
-  //    the radio strip doesn't fight the foreground for attention. Same
-  //    small top-bar treatment as before.
-  const radioElapsedSec = radio ? Math.floor(radio.elapsedMs / 1000) : 0
-  const radioRemainingSec = radio ? Math.max(0, Math.floor((radio.capMs - radio.elapsedMs) / 1000)) : 0
+  //    no broadcast caption, no activity). Centered, big, EQ bars. Fills
+  //    the empty pill so "Radio Mode is on" reads at a glance.
+  //  - CORNER: shown when something else IS playing inside the pill. Top
+  //    left, out of the song's way.
   // ⚠️ TWIN: src/common/scrubber-clock.ts
   const previewClock = formatScrubberClock(preview.position, preview.duration)
   const playClock = tapeOnAir
@@ -375,8 +362,8 @@ export default function NowPlaying() {
     : formatScrubberClock(state.position, state.duration)
   const isPillEmpty = effectiveMode === null
   const radioStrip = radioActive && radio && !isPillEmpty ? (
-    <div className="np-radio-strip" aria-live="polite">
-      <span className="np-radio-strip__dot" /> ON AIR · WJLR 330.9 · {formatSec(radioElapsedSec)} / {formatSec(radioRemainingSec)} left
+    <div className="np-radio-strip">
+      <span className="np-radio-strip__dot" /> ON AIR · WJLR 330.9
     </div>
   ) : null
   const radioHero = radioActive && radio && isPillEmpty ? (
@@ -389,12 +376,6 @@ export default function NowPlaying() {
           <span className="np-radio-hero__dot" /> ON AIR
           <span className="np-radio-hero__sep">·</span>
           <span className="np-radio-hero__call">WJLR 330.9</span>
-        </div>
-        <div className="np-radio-hero__time">
-          <span className="np-radio-hero__elapsed">{formatSec(radioElapsedSec)}</span>
-          <span className="np-radio-hero__time-sep">/</span>
-          <span className="np-radio-hero__remaining">{formatSec(radioRemainingSec)}</span>
-          <span className="np-radio-hero__left">left</span>
         </div>
       </div>
       <div className="np-radio-hero__eq np-radio-hero__eq--mirror" aria-hidden="true">
