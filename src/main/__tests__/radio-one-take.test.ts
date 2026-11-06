@@ -2,13 +2,14 @@
  * One take per break: what RadioEngine decides, with its effects passed in
  * (one-take.ts). Grouping, the announcer staying separate, captions from
  * voice_segments, the fallback when a call fails, the finishCurrent contract, and
- * the wires a unit test can't reach.
+ * the wires no test can call. The engine itself runs in radio-engine.test.ts.
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import {
+  CUE_POLL_MS,
   SPEAKER_BEAT_MS,
   captionCues,
   cueFollower,
@@ -48,8 +49,8 @@ describe('grouping', () => {
   })
 
   it('a run past the character limit starts another run, never past the limit', () => {
-    const lines = [line('mm', 'x'.repeat(60)), line('larry', 'y'.repeat(60)), line('mm', 'z'.repeat(60))]
-    assert.deepEqual(planRuns(lines, 130).map((s) => (s.kind === 'run' ? s.lines.length : 0)), [2, 1])
+    const lines = [line('mm', 'x'.repeat(60)), line('larry', 'y'.repeat(60)), line('mm', 'z'.repeat(60)), line('larry', 'w'.repeat(60))]
+    assert.deepEqual(planRuns(lines, 130).map((s) => (s.kind === 'run' ? s.lines.length : 0)), [2, 2], 'each run counts from zero')
     assert.equal(planRuns(lines).length, 1, 'the default limit is ElevenLabs 2,000')
   })
 
@@ -191,6 +192,29 @@ describe('synthesis', () => {
   })
 })
 
+describe('calls at once', () => {
+  it('never more than 4, takes and announcer lines together', async () => {
+    let active = 0
+    let peak = 0
+    const busy = async <T>(answer: T): Promise<T> => {
+      active += 1
+      peak = Math.max(peak, active)
+      await new Promise((r) => setTimeout(r, 2))
+      active -= 1
+      return answer
+    }
+    const { deps, calls } = fakes({
+      dialogue: (inputs) => busy({ ok: true, audio: 'TAKE', segments: inputs.map((_, input) => ({ input, startSec: 0, endSec: 1 })) }),
+      speak: (text) => busy({ ok: true, audio: text }),
+    })
+    const lines = Array.from({ length: 12 }, (_, i) => [line('mm', `run ${i}`), line('announcer', `id ${i}`)]).flat()
+    await synthesizeUnits(lines, deps)
+    assert.equal(calls.dialogue.length, 12)
+    assert.equal(calls.speak.length, 12)
+    assert.equal(peak, 4)
+  })
+})
+
 describe('captions from voice_segments', () => {
   const lines = [line('mm', 'one'), line('larry', 'two'), line('mm', 'three')]
 
@@ -256,6 +280,7 @@ describe('captions from voice_segments', () => {
 function fakeTake(cues: CaptionCue[], overrides: { playRejects?: boolean; live?: () => boolean } = {}) {
   const log: string[] = []
   let tick: (() => void) | null = null
+  let pollMs: number | null = null
   const audio = {
     currentTime: 0,
     play: async () => {
@@ -271,11 +296,11 @@ function fakeTake(cues: CaptionCue[], overrides: { playRejects?: boolean; live?:
     live: overrides.live ?? (() => true),
     show: (cue) => log.push(`show:${cue.line.text}`),
     done: () => log.push('done'),
-    every: (fn) => { tick = fn; return 1 as unknown as ReturnType<typeof setInterval> },
+    every: (fn, ms) => { tick = fn; pollMs = ms; return 1 as unknown as ReturnType<typeof setInterval> },
     cancel: () => { tick = null; log.push('cancel') },
   })
   const flush = () => new Promise((r) => setImmediate(r))
-  return { audio, log, finish, flush, ready: () => ready(), tick: () => tick?.(), ticking: () => tick !== null }
+  return { audio, log, finish, flush, ready: () => ready(), tick: () => tick?.(), ticking: () => tick !== null, pollMs: () => pollMs }
 }
 
 describe('playing a take', () => {
@@ -292,6 +317,14 @@ describe('playing a take', () => {
     t.audio.currentTime = 2.01
     t.tick()
     assert.deepEqual(t.log, ['show:one', 'play', 'show:two'])
+  })
+
+  it('the caption looks at the clock often enough to change on time', async () => {
+    const t = fakeTake(cues)
+    t.ready()
+    await t.flush()
+    assert.equal(t.pollMs(), CUE_POLL_MS)
+    assert.equal(CUE_POLL_MS, 50)
   })
 
   it('ending settles it once and stops the clock', async () => {
@@ -337,6 +370,14 @@ describe('playing a take', () => {
     t.ready()
     await t.flush()
     assert.deepEqual(t.log, ['show:one', 'play', 'cancel', 'done'])
+  })
+
+  it('an error during the metadata wait settles it, and it never plays', async () => {
+    const t = fakeTake(cues)
+    ;(t.audio.onerror as () => void)()
+    t.ready()
+    await t.flush()
+    assert.deepEqual(t.log, ['done'])
   })
 
   it('a playback error settles it', async () => {
@@ -457,7 +498,23 @@ describe('the announcer chain', () => {
     assert.equal(kinds.filter((k) => k === 'convolver').length, 1)
     assert.equal(kinds.filter((k) => k === 'biquad').length, 3)
     assert.equal(ctx.nodes.find((n) => n.kind === 'compressor')?.threshold.value, -22)
-    assert.ok(ctx.nodes.find((n) => n.kind === 'convolver')?.buffer, 'the reverb has its impulse response')
+    const ir = ctx.nodes.find((n) => n.kind === 'convolver')?.buffer as { getChannelData: (c: number) => Float32Array } | null
+    assert.ok(ir, 'the reverb has its impulse response')
+    // Decaying noise, not silence. The fake context runs at 100 Hz, so these are the
+    // first and last 0.3 s.
+    const energy = (from: number, to: number): number => ir.getChannelData(0).slice(from, to).reduce((sum, v) => sum + v * v, 0)
+    assert.equal(ir.getChannelData(0).length, 150, '1.5 s')
+    assert.ok(energy(0, 30) > 0.5, `early energy ${energy(0, 30)}`)
+    assert.ok(energy(120, 150) < energy(0, 30) / 10, 'and it dies away')
+    // The sound of the chain: input, dry, wet ("too wet sounds like a bathroom"), output.
+    assert.deepEqual(ctx.nodes.filter((n) => n.kind === 'gain').map((n) => n.gain.value), [1, 0.85, 0.18, ANNOUNCER_OUTPUT_GAIN])
+    const comp = ctx.nodes.find((n) => n.kind === 'compressor') as Record<string, { value: number }>
+    assert.deepEqual([comp.knee.value, comp.ratio.value, comp.attack.value, comp.release.value], [10, 8, 0.002, 0.18])
+    assert.deepEqual(ctx.nodes.filter((n) => n.kind === 'biquad').map((n) => [n.type, n.frequency.value, n.gain.value, n.Q.value]), [
+      ['lowshelf', 180, 4, 0],
+      ['peaking', 2800, 5, 0.7],
+      ['highshelf', 8000, 2, 0],
+    ])
     // Walk the graph from the input: every path goes through the compressor, the
     // three filters and the output, the wet one through the reverb as well.
     const paths = (from: Record<string, any>): string[][] => (from.targets ?? []).flatMap((to: Record<string, any>) => {
@@ -472,45 +529,14 @@ describe('the announcer chain', () => {
 })
 
 describe('the wires', () => {
-  const engine = read('renderer/radio/RadioEngine.ts')
+  // The engine and the handlers run for real in radio-engine.test.ts and
+  // speech-ipc.test.ts. These are what no test can call: the preload's channel
+  // name, the renderer's types, and what must never come back.
   const aiIpc = read('main/ipc/ai-ipc.ts')
 
-  it('the engine plays takes through the broadcast routing and the same caption store', () => {
-    const body = engine.slice(engine.indexOf('private playTake('), engine.indexOf('private playLine('))
-    assert.match(body, /attachClipToBroadcast\(audio\)/)
-    assert.match(body, /setBroadcastTimed\(/)
-    assert.match(body, /detachClipFromBroadcast\(audio\)/)
-    assert.match(body, /this\.finishCurrent = finish/)
-    assert.match(body, /this\.currentAudio = audio/)
-  })
-
-  it('the announcer keeps his FX and stingers', () => {
-    const body = engine.slice(engine.indexOf('private playLine('), engine.indexOf('private waitMeta('))
-    assert.match(body, /attachAnnouncerToBroadcast\(audio\)/)
-    assert.match(body, /playStinger\(randomPreStinger\(\)\)/)
-    assert.match(body, /playStinger\(randomEndStinger\(\)\)/)
-  })
-
-  it('the engine asks main for takes, and main answers on a guarded channel', () => {
-    assert.match(engine, /window\.electronAPI\.radioDialogue\(inputs\)/)
-    assert.match(engine, /window\.electronAPI\.musicmanSpeak\(text, false, voiceId\)/, 'the fallback stays on v4, never the Scotus fast path')
+  it('the preload and the renderer\'s types carry the channel', () => {
     assert.match(read('preload/index.ts'), /radioDialogue: .*\n\s*ipcRenderer\.invoke\('radio-dialogue', inputs\)/)
     assert.match(read('renderer/types.ts'), /radioDialogue: \(inputs: DialogueInput\[\]\)/)
-    const handler = aiIpc.slice(aiIpc.indexOf("ipc.handle('radio-dialogue'"), aiIpc.indexOf("ipc.handle('get-album-blurb'"))
-    assert.match(handler, /speakTake\(inputs\)/)
-    assert.match(handler, /voiceIsOff\(\)/, 'the Settings switch applies here too')
-    assert.match(handler, /ttsAllowed\(\)/, 'the rate limit applies here too')
-    assert.match(handler, /refuse: REFUSED_SENDER/)
-  })
-
-  it('musicman-speak goes through the speech door, the fast flag to flash alone', () => {
-    const handler = aiIpc.slice(aiIpc.indexOf("ipc.handle('musicman-speak'"), aiIpc.indexOf("ipc.handle('radio-dialogue'"))
-    assert.match(handler, /fast \? await speakFast\(spoken, voice\) : await speakText\(spoken, voice\)/)
-    assert.doesNotMatch(handler, /fetch\(/)
-  })
-
-  it('radio-get-cast sends the real Music Man voice', () => {
-    assert.match(aiIpc, /radioCastForRenderer\(musicManVoiceId\(\)\)/)
   })
 
   it('no pitch or speed on musicman-speak, and only mixtape talkovers still use the pitch chain', () => {
@@ -534,10 +560,5 @@ describe('the wires', () => {
     for (const rel of ['main/personas.ts', 'main/radio-script-prompt.ts', 'main/index.ts']) {
       assert.doesNotMatch(read(rel), /ElevenLabs v3|v3 performs|performed by v3|use v3 performance/, rel)
     }
-  })
-
-  it('a take reaches every check the engine used to make on a line', () => {
-    assert.doesNotMatch(engine, /seg\.lines\.some\(\(l\) => l\.audio\)/, 'a take leaves line.audio empty')
-    assert.equal((engine.match(/seg\??\.units\??\.length/g) || []).length, 3, 'prefetch, transition and opener all ask the units')
   })
 })
