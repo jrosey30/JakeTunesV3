@@ -141,6 +141,19 @@ describe('synthesis', () => {
     assert.equal(calls.warned.filter((w) => w.includes('[bernard]')).length, 1, 'the drop is logged')
   })
 
+  it('a speak call that throws drops only that line', async () => {
+    const { deps, calls } = fakes({
+      dialogue: async () => ({ ok: false, error: 'api-failed' }),
+      speak: async (text) => {
+        if (text === 'with respect') throw new Error('channel gone')
+        return { ok: true, audio: `SOLO:${text}` }
+      },
+    })
+    const units = await synthesizeUnits([line('mm', 'we got Bernard'), line('bernard', 'with respect'), line('larry', 'he stopped')], deps)
+    assert.deepEqual(units.map((u) => (u.kind === 'line' ? u.line.text : 'TAKE')), ['we got Bernard', 'he stopped'])
+    assert.equal(calls.warned.filter((w) => w.includes('[bernard]')).length, 1)
+  })
+
   it('the voice switched off in Settings is not a failure: no fallback, nothing to play', async () => {
     const { deps, calls } = fakes({ dialogue: async () => ({ ok: true, audio: '' }), speak: async () => ({ ok: true, audio: '' }) })
     const units = await synthesizeUnits([line('announcer', 'id'), line('mm', 'one')], deps)
@@ -445,6 +458,16 @@ describe('the announcer chain', () => {
     assert.equal(kinds.filter((k) => k === 'biquad').length, 3)
     assert.equal(ctx.nodes.find((n) => n.kind === 'compressor')?.threshold.value, -22)
     assert.ok(ctx.nodes.find((n) => n.kind === 'convolver')?.buffer, 'the reverb has its impulse response')
+    // Walk the graph from the input: every path goes through the compressor, the
+    // three filters and the output, the wet one through the reverb as well.
+    const paths = (from: Record<string, any>): string[][] => (from.targets ?? []).flatMap((to: Record<string, any>) => {
+      if (!to.kind) return [[from.kind]]
+      return paths(to).map((rest) => [from.kind, ...rest])
+    })
+    assert.deepEqual(paths(fx.input as unknown as Record<string, any>).map((path) => path.join('>')).sort(), [
+      'gain>compressor>biquad>biquad>biquad>convolver>gain>gain',
+      'gain>compressor>biquad>biquad>biquad>gain>gain',
+    ])
   })
 })
 
@@ -470,6 +493,7 @@ describe('the wires', () => {
 
   it('the engine asks main for takes, and main answers on a guarded channel', () => {
     assert.match(engine, /window\.electronAPI\.radioDialogue\(inputs\)/)
+    assert.match(engine, /window\.electronAPI\.musicmanSpeak\(text, false, voiceId\)/, 'the fallback stays on v4, never the Scotus fast path')
     assert.match(read('preload/index.ts'), /radioDialogue: .*\n\s*ipcRenderer\.invoke\('radio-dialogue', inputs\)/)
     assert.match(read('renderer/types.ts'), /radioDialogue: \(inputs: DialogueInput\[\]\)/)
     const handler = aiIpc.slice(aiIpc.indexOf("ipc.handle('radio-dialogue'"), aiIpc.indexOf("ipc.handle('get-album-blurb'"))

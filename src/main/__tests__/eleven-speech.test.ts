@@ -332,6 +332,44 @@ describe('trims', () => {
   })
 })
 
+describe('the doors reach the finishing step', () => {
+  /** Fake ffmpeg: records the filter it was asked for, hands back fake audio. */
+  function recording(answers: Array<() => Response>) {
+    const filters: string[] = []
+    const deps = fakeDeps(answers, {
+      ffmpeg: async (args) => {
+        const at = args.findIndex((a) => a === '-af' || a === '-filter_complex')
+        if (at < 0) return Buffer.alloc(4410 * 4) // the decode for snapping: silence
+        filters.push(args[at + 1])
+        writeFileSync(args[args.length - 1], 'finished')
+        return Buffer.alloc(0)
+      },
+    })
+    return { deps, filters }
+  }
+
+  it('one voice gets its trim', async () => {
+    const { deps, filters } = recording([() => takeResponse()])
+    const audio = await speakText('Hello there.', MM, deps)
+    assert.equal(audio.toString(), 'finished')
+    assert.match(filters[0], new RegExp(`^volume=${(10 ** (voiceTrimDb(MM) / 20)).toFixed(5)},alimiter=`))
+  })
+
+  it('a take gets each voice its trim by time range, and answers with who speaks when', async () => {
+    const { deps, filters } = recording([() => takeResponse([
+      { voice_id: LARRY_VOICE_ID, start_time_seconds: 2.5, end_time_seconds: 4, dialogue_input_index: 1 },
+      { voice_id: MM, start_time_seconds: 0, end_time_seconds: 2.5, dialogue_input_index: 0 },
+    ])])
+    const take = await speakTake([{ text: 'One.', voiceId: MM }, { text: 'Two.', voiceId: LARRY_VOICE_ID }], deps)
+    assert.equal(take.audio.toString(), 'finished')
+    assert.match(filters[0], /clip\(\(t-/, 'gain by time range')
+    assert.deepEqual(take.segments, [
+      { input: 0, startSec: 0, endSec: 2.5 },
+      { input: 1, startSec: 2.5, endSec: 4 },
+    ])
+  })
+})
+
 describe('finishing real audio', { skip: !hasFfmpeg }, () => {
   /** An mp3 of a steady tone peaking at `amp`, `seconds` long. (lavfi's sine is 1/8 of full scale.) */
   function tone(dir: string, name: string, amp: number, seconds: number): Buffer {
@@ -434,9 +472,14 @@ describe('finishing real audio', { skip: !hasFfmpeg }, () => {
     }
   })
 
-  it('an ffmpeg that writes nothing counts as failed', async () => {
+  it('an ffmpeg that writes an empty file counts as failed', async () => {
     const raw = Buffer.from('untrimmed-take')
-    const empty = fakeDeps([], { ffmpeg: async () => Buffer.alloc(0) })
+    const empty = fakeDeps([], {
+      ffmpeg: async (args) => {
+        writeFileSync(args[args.length - 1], '')
+        return Buffer.alloc(0)
+      },
+    })
     assert.deepEqual(await silenceWarnings(() => finishTake([raw], [{ startSec: 0, voiceId: 'NOBODY' }], empty)), raw)
   })
 })
