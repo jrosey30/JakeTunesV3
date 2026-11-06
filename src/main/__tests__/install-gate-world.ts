@@ -147,6 +147,7 @@ cp -R "$1" "$2"
   // nothing: measured on a real process in state E. The case the gate has to wait out.
   // open_fails: how many more times open says no (LaunchServices, right after a swap).
   // open_swallows: how many more times open says yes and nothing starts.
+  // open_hangs: how many more times open never comes back.
   // open_short_lived: how many more times what starts is alive for one look and then gone.
   open: `#!/bin/bash
 echo "open $*" >> "$JT_FAKE/calls.log"
@@ -156,6 +157,7 @@ countdown() {
   [ "$n" -gt 0 ] || return 1
   echo $((n - 1)) > "$JT_FAKE/$1.tmp"; mv -f "$JT_FAKE/$1.tmp" "$JT_FAKE/$1"
 }
+countdown open_hangs && exec sleep 40
 countdown open_fails && exit 1
 countdown open_swallows && exit 0
 if [ -e "$JT_FAKE/pids" ]; then
@@ -217,6 +219,7 @@ awk '/CFBundleShortVersionString/{getline; gsub(/.*<string>|<\\/string>.*/, "");
 `,
   lsregister: `#!/bin/bash
 echo "lsregister $*" >> "$JT_FAKE/calls.log"
+[ -e "$JT_FAKE/lsreg_hangs" ] && exec sleep 40
 exit 0
 `,
 }
@@ -249,6 +252,18 @@ Listed by owning process:
    PreventUserIdleSystemSleep       1
 Listed by owning process:
    pid 4242(JakeTunes): [0x000000030000a0b1] 00:12:34 PreventUserIdleSystemSleep named: "Playing audio"
+`,
+  // A real Electron blocker, measured 2026-11-06 on a scratch app with its name changed.
+  sync: `Assertions status system-wide:
+   PreventUserIdleDisplaySleep      1
+Listed by owning process:
+   pid 4242(JakeTunes): [0x003321b9000592c6] 00:11:00 NoDisplaySleepAssertion named: "Electron"
+`,
+  // What the app holds every day, and it mustn't look like a sync.
+  everyday: `Assertions status system-wide:
+   PreventUserIdleSystemSleep       1
+Listed by owning process:
+   pid 4242(JakeTunes): [0x003321b900059200] 00:11:00 NoIdleSleepAssertion named: "Electron"
 `,
   stream: `Assertions status system-wide:
    PreventUserIdleSystemSleep       1
@@ -291,6 +306,10 @@ interface WorldOpts {
   openFails?: number
   /** How many times open says yes and nothing starts. */
   openSwallows?: number
+  /** lsregister never comes back. */
+  lsregHangs?: boolean
+  /** How many times open never comes back. */
+  openHangs?: number
   /** How many times what open starts lasts one look and dies. */
   openShortLived?: number
   /** Starts with a JakeTunes Helper in this exiting state in the process table. */
@@ -379,6 +398,8 @@ export function makeWorld(o: WorldOpts = {}): World {
   if (o.quitState) writeFileSync(join(fake, 'quit_state'), `${o.quitState}\n`)
   if (o.openFails !== undefined) writeFileSync(join(fake, 'open_fails'), String(o.openFails))
   if (o.openSwallows !== undefined) writeFileSync(join(fake, 'open_swallows'), String(o.openSwallows))
+  if (o.lsregHangs) writeFileSync(join(fake, 'lsreg_hangs'), '')
+  if (o.openHangs !== undefined) writeFileSync(join(fake, 'open_hangs'), String(o.openHangs))
   if (o.openShortLived !== undefined) writeFileSync(join(fake, 'open_short_lived'), String(o.openShortLived))
   if (o.helperDying) { writeFileSync(join(fake, 'pids'), `${o.pids ?? ''}9\n`); writeFileSync(join(fake, 'state_9'), `${o.helperDying}\n`) }
   if (o.oldState) writeFileSync(join(fake, 'state_4242'), `${o.oldState}\n`)
@@ -489,6 +510,7 @@ export function makeWorld(o: WorldOpts = {}): World {
           JT_GATE_OPEN_RETRY_S: '0.1',
           JT_GATE_START_WAIT_S: '1',
           JT_GATE_STAY_S: '0.1',
+          JT_GATE_LS_LIMIT_S: '1',
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       })

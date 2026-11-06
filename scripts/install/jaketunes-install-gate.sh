@@ -278,7 +278,12 @@ codesign --verify --deep --strict "$NEW" || { say "ABORT: staged app signature i
 M0=$(stat -f %m "$ASAR")
 
 # $1 = 1 when the app asked for the install: idle is not required, audio still is.
+# First, and never waived: an iPod sync. A quit mid-sync leaves part of the new songs on the card
+# and the old catalog, which the next sync copies over its good .bak. sync-keep-awake.ts is the only
+# holder of a display blocker in the app, and a real Electron blocker reads NoDisplaySleepAssertion
+# (measured 11/6). A video wake lock would read the same, and that only delays an install.
 gate() {
+  if pmset -g assertions | grep JakeTunes | grep -Eq "NoDisplaySleepAssertion|PreventUserIdleDisplaySleep"; then echo "an iPod sync is running"; return 1; fi
   if pmset -g assertions | grep JakeTunes | grep -q "Playing audio"; then echo "playing audio"; return 1; fi
   for p in $(pmset -g assertions | grep -A1 coreaudiod | sed -nE 's/.*Created for PID: ([0-9]+).*/\1/p'); do
     ps -o comm= -p "$p" 2>/dev/null | grep -q JakeTunes && { echo "JakeTunes holds an audio stream"; return 1; }

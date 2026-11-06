@@ -116,6 +116,36 @@ describe('install gate — the update-ready protocol', () => {
     } finally { w.cleanup() }
   })
 
+  // Reviewer's finding, 2026-11-06. Nothing stopped a quit during an iPod sync: a 1000-song Activity
+  // Sync takes 25 minutes, and with no audio and 2 minutes idle the gate quit the app mid-copy.
+  it('an iPod sync blocks the install, with or without a click on Install, and it goes ahead when the sync is done', async () => {
+    const w = makeWorld({ idleS: 130, audio: 'sync', pollS: 30 })
+    try {
+      const g = w.run({ sha: SHA })
+      await waitFor(() => /waiting: an iPod sync is running/.test(g.out()), 'the sync block line')
+      w.writeGo(SHA)
+      await sleep(700)
+      assert.equal(g.child.exitCode, null, 'still waiting while the sync runs')
+      assert.doesNotMatch(w.calls(), /osascript/)
+      assert.equal(readFileSync(w.installedAsar, 'utf8'), OLD_ASAR)
+
+      w.setAudio('none')
+      const r = await finished(g)
+      assert.equal(r.code, 0, g.out())
+      assert.equal(readFileSync(w.installedAsar, 'utf8'), NEW_ASAR)
+    } finally { w.cleanup() }
+  })
+
+  it('what the app holds every day isn\'t a sync: no wait', async () => {
+    const w = makeWorld({ idleS: 130, audio: 'everyday', pollS: 30 })
+    try {
+      const g = w.run({ sha: SHA })
+      const r = await finished(g)
+      assert.equal(r.code, 0, g.out())
+      assert.doesNotMatch(g.out(), /iPod sync/)
+    } finally { w.cleanup() }
+  })
+
   it('the second audio signal (a coreaudiod stream owned by JakeTunes) blocks too', async () => {
     const w = makeWorld({ idleS: 10, audio: 'stream', pollS: 30 })
     try {
