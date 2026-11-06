@@ -53,6 +53,11 @@ describe('grouping', () => {
     assert.equal(planRuns(lines).length, 1, 'the default limit is ElevenLabs 2,000')
   })
 
+  it('one line past the limit is a run of its own: main refuses it and the fallback splits it', () => {
+    const lines = [line('mm', 'short'), line('larry', 'x'.repeat(200))]
+    assert.deepEqual(planRuns(lines, 100).map((s) => (s.kind === 'run' ? s.lines.length : 0)), [1, 1])
+  })
+
   it('an empty break plans nothing', () => {
     assert.deepEqual(planRuns([]), [])
   })

@@ -195,14 +195,14 @@ async function requestTake(
  * -16 LUFS. On v4 a clone keeps its source recording's loudness, and they differ
  * by 13 dB. A voice not listed gets 0 dB.
  *
- * The hosts: four real breaks read -19.1 (Music Man) and -15.5 (Larry) on average.
- * With these two the same breaks read -16.0 and -15.7. Any one take still varies
- * by about 1 LU either way: that's the acting, and it stays.
+ * The hosts: five real breaks read -19.1 (Music Man) and -15.3 (Larry) on average.
+ * With these two trims they read about -16 each. Any one take still varies by
+ * about 1 LU either way: that's the acting, and it stays.
  * Everyone else: one or two short lines each, so these are rough.
  */
 export const VOICE_TRIM_DB: Record<string, number> = {
   '3q3z1RplmzZ5UT7BUP61': 4, // the Music Man (Jake's ELEVENLABS_VOICE_ID since 2026-10-16)
-  [LARRY_VOICE_ID]: 0,
+  [LARRY_VOICE_ID]: -0.5,
   ApBE43wHy5MiZGz9ihqB: 1, // Stephen
   UOB3uZCEf2cjGpZaGOXq: 1, // Giovanni
   miqykcv8BCUvQnRlIGUV: 1, // Rajiv
@@ -218,7 +218,7 @@ export function voiceTrimDb(voiceId: string): number {
 
 /** Nothing above this leaves main. Under full scale because a sample limiter
  *  can't see the peaks between samples and the mp3 encoder adds a little: on real
- *  takes this lands at -1.2 dBTP. */
+ *  takes this lands near -1.2 dBTP. */
 const CEILING = 0.89 // about -1 dBFS
 /** The gain moves over this long, so a switch that can't land in silence doesn't click. */
 const GAIN_RAMP_SEC = 0.02
