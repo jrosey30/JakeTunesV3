@@ -22,6 +22,7 @@ import {
   decideReplacement,
   digestBuffer,
   drainOffloadEnqueue,
+  dropAudioRefusal,
   dryRunOffload,
   formatOffloadDryRun,
   hubOffloadActive,
@@ -569,6 +570,64 @@ describe('hub library root is Music2', () => {
       home,
       exists,
     }), '/Users/jake/Music2/JakeTunesLibrary')
+  })
+})
+
+describe('a file is only swapped for a link on another machine, on its own disk', () => {
+  const laptop = {
+    hostname: 'Jakes-MacBook-Pro-2145.local',
+    localAddresses: ['127.0.0.1', '172.17.149.17', '100.114.37.7'],
+    hubAddresses: ['100.115.64.102'],
+    realPath: '/Users/jake/Music2/JakeTunesLibrary/iPod_Control/Music/F01/imported_1.m4a',
+  }
+
+  test('a laptop with its own disk may', () => {
+    assert.equal(dropAudioRefusal(laptop), null)
+    assert.equal(dropAudioRefusal({ ...laptop, hostname: 'Workmini.local' }), null)
+  })
+
+  test('homemini may not, by name', () => {
+    assert.match(dropAudioRefusal({ ...laptop, hostname: 'Jakes-Mini-6224' }) ?? '', /serves \/audio/)
+    assert.match(dropAudioRefusal({ ...laptop, hostname: 'Jakes-Mac-mini-6224' }) ?? '', /serves \/audio/)
+  })
+
+  test('homemini may not, by address, whatever it is called', () => {
+    const renamed = { ...laptop, hostname: 'whatever', localAddresses: ['192.168.1.233', '100.115.64.102'] }
+    assert.match(dropAudioRefusal(renamed) ?? '', /serves \/audio/)
+  })
+
+  test("homemini's own disk is refused too: the hash check would compare a file with itself", () => {
+    const served = { ...laptop, hostname: 'Jakes-Mini-6224', realPath: '/Users/jakerosenbaumnas/Music/JakeTunesLibrary/iPod_Control/Music/F01/imported_1.m4a' }
+    assert.ok(dropAudioRefusal(served))
+  })
+
+  test('no answer about homemini means no', () => {
+    assert.match(dropAudioRefusal({ ...laptop, hubAddresses: null }) ?? '', /cannot tell/)
+    assert.match(dropAudioRefusal({ ...laptop, hubAddresses: [] }) ?? '', /cannot tell/)
+  })
+
+  test('a path that resolves onto a mount is refused on any machine', () => {
+    const vault = { ...laptop, realPath: '/Volumes/JakeShared/JakeTunesLibrary/iPod_Control/Music/F01/imported_1.m4a' }
+    assert.match(dropAudioRefusal(vault) ?? '', /own disk/)
+    assert.ok(dropAudioRefusal({ ...laptop, realPath: null }))
+  })
+
+  test('every door that drops a file asks first', () => {
+    const index = readFileSync(new URL('../index.ts', import.meta.url), 'utf8')
+    const convert = index.slice(index.indexOf('async function convertTrackToStreamed('))
+    assert.ok(convert.indexOf('localAudioDropRefused(fp)') > 0)
+    assert.ok(convert.indexOf('localAudioDropRefused(fp)') < convert.indexOf('await symlink(sentinel, tmp)'))
+    const pass = index.slice(index.indexOf('async function runStreamConvertPass('))
+    assert.ok(pass.indexOf('localAudioDropRefused(MUSIC_DIR)') > 0)
+    assert.ok(pass.indexOf('localAudioDropRefused(MUSIC_DIR)') < pass.indexOf('readStreamConvertQueue()'))
+    const scanAt = index.indexOf('await planLocalAlacMigration')
+    assert.match(index.slice(Math.max(0, scanAt - 1200), scanAt), /localAudioDropRefused\(MUSIC_DIR\)/)
+    const removeDownload = index.slice(index.indexOf("ipc.handle('remove-download'"))
+    assert.ok(removeDownload.indexOf('localAudioDropRefused(') > 0)
+    assert.ok(removeDownload.indexOf('localAudioDropRefused(') < removeDownload.indexOf('await symlink(target, tmp)'))
+    const sweep = index.slice(index.indexOf('const runEvictionSweep = async'))
+    assert.ok(sweep.indexOf('localAudioDropRefused(MUSIC_DIR)') > 0)
+    assert.ok(sweep.indexOf('localAudioDropRefused(MUSIC_DIR)') < sweep.indexOf('await sweepOnce('))
   })
 })
 

@@ -23,7 +23,10 @@
  */
 
 import { createHash } from 'crypto'
+import { lookup } from 'dns/promises'
 import { createReadStream } from 'fs'
+import { realpath } from 'fs/promises'
+import { hostname, networkInterfaces } from 'os'
 import { join } from 'path'
 import { withCompanionInit } from './hub-companion.ts'
 import { isLibraryAlac, type AlacMigrateTrack } from './alac-stream-migrate.ts'
@@ -238,6 +241,61 @@ export function rawAudioUrl(base: string, id: string | number): string {
 
 export function urlAsksForTranscode(url: string): boolean {
   return /[?&]fmt=/.test(url)
+}
+
+export interface DropAudioFacts {
+  hostname: string
+  localAddresses: string[]
+  /** What the name homemini resolves to from here. Null: it did not resolve. */
+  hubAddresses: string[] | null
+  realPath: string | null
+}
+
+const AUDIO_HOST_NAME = /^jakes-(mac-)?mini\b/i
+
+/**
+ * Why this machine may not swap a music file for a link, or null if it may.
+ *
+ * From 2026-11-02 homemini's own app did it: a replica converts its "local"
+ * files, and homemini's library root is a symlink to the NAS vault, so 3,353
+ * masters became links to an empty file. With the NAS down at boot the root
+ * falls back to ~/Music, the disk /audio serves from, and the hash check would
+ * compare a file with itself.
+ *
+ * So this has to be provably another machine, on a disk of its own. If homemini
+ * doesn't resolve there's no telling which machine this is, and the answer is
+ * no: a laptop off the tailnet couldn't confirm a match anyway.
+ */
+export function dropAudioRefusal(facts: DropAudioFacts): string | null {
+  if (AUDIO_HOST_NAME.test(facts.hostname)) return 'this machine serves /audio'
+  if (!facts.hubAddresses?.length) return 'cannot tell whether this machine serves /audio'
+  if (facts.hubAddresses.some((a) => facts.localAddresses.includes(a))) return 'this machine serves /audio'
+  if (!facts.realPath) return 'cannot resolve the path'
+  if (facts.realPath.startsWith('/Volumes/') || facts.realPath.startsWith('\\\\')) {
+    return `${facts.realPath} is not on this machine's own disk`
+  }
+  return null
+}
+
+let lastDropRefusal: string | null = null
+
+export async function localAudioDropRefused(abs: string): Promise<string | null> {
+  const hubAddresses = await Promise.race([
+    lookup('homemini', { all: true }).then((found) => found.map((f) => f.address)).catch(() => null),
+    new Promise<null>((resolve) => { setTimeout(() => resolve(null), 5000).unref() }),
+  ])
+  const localAddresses = Object.values(networkInterfaces()).flat().flatMap((nic) => (nic ? [nic.address] : []))
+  const refused = dropAudioRefusal({
+    hostname: hostname(),
+    localAddresses,
+    hubAddresses,
+    realPath: await realpath(abs).catch(() => null),
+  })
+  if (refused !== lastDropRefusal) {
+    lastDropRefusal = refused
+    if (refused) console.warn(`[stream-convert] keeping local audio: ${refused}`)
+  }
+  return refused
 }
 
 export function libraryRootFromMusicDir(musicDir: string): string {
