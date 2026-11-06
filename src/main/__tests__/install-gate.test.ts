@@ -50,8 +50,10 @@ exit 0
 echo "ioreg $*" >> "$JT_FAKE/calls.log"
 printf '    | |   "HIDIdleTime" = %s\\n' "$(cat "$JT_FAKE/idle_ns")"
 `,
+  // quit_hold: the quit takes as long as the file stays, so a test can act inside it.
   osascript: `#!/bin/bash
 echo "osascript $*" >> "$JT_FAKE/calls.log"
+while [ -e "$JT_FAKE/quit_hold" ]; do sleep 0.02; done
 if [ -e "$JT_FAKE/pids" ]; then
   # The process table world: quit_state says what the old process turns into.
   [ -e "$JT_FAKE/quit_state" ] && cp "$JT_FAKE/quit_state" "$JT_FAKE/state_4242"
@@ -268,6 +270,8 @@ interface WorldOpts {
   oldState?: string
   /** A copy that never finishes: 'partial' has written some of the bundle, 'nothing' has not begun. */
   dittoHang?: 'partial' | 'nothing'
+  /** The quit holds until quitDone(). */
+  quitHold?: boolean
 }
 
 interface World {
@@ -296,6 +300,7 @@ interface World {
   openWorksNow: () => void
   /** A TERM to the gate and its copy, the way a kill of the process group lands. */
   termGateAndCopy: (g: Gate) => void
+  quitDone: () => void
   run: (args: { sha?: string; note?: string; maxMin?: number }) => Gate
   cleanup: () => void
 }
@@ -304,6 +309,8 @@ interface Gate {
   child: ChildProcess
   out: () => string
   exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>
+  /** Whatever read the gate's output has gone: its next write has no one to go to. */
+  readerGone: () => Promise<void>
 }
 
 function makeWorld(o: WorldOpts = {}): World {
@@ -328,6 +335,7 @@ function makeWorld(o: WorldOpts = {}): World {
   if (o.helperDying) { writeFileSync(join(fake, 'pids'), `${o.pids ?? ''}9\n`); writeFileSync(join(fake, 'state_9'), `${o.helperDying}\n`) }
   if (o.oldState) writeFileSync(join(fake, 'state_4242'), `${o.oldState}\n`)
   if (o.dittoHang) writeFileSync(join(fake, 'ditto_hang'), o.dittoHang === 'partial' ? 'partial\n' : '')
+  if (o.quitHold) writeFileSync(join(fake, 'quit_hold'), '')
 
   const installedApp = join(root, 'Applications', 'JakeTunes.app')
   mkdirSync(join(installedApp, 'Contents', 'Resources'), { recursive: true })
@@ -377,6 +385,7 @@ function makeWorld(o: WorldOpts = {}): World {
       writeFileSync(tmp, '0')
       renameSync(tmp, join(fake, 'open_fails'))
     },
+    quitDone: () => rmSync(join(fake, 'quit_hold'), { force: true }),
     termGateAndCopy: (g) => {
       g.child.kill('SIGTERM')
       process.kill(Number(readFileSync(join(fake, 'ditto_pid'), 'utf8')), 'SIGTERM')
@@ -418,7 +427,12 @@ function makeWorld(o: WorldOpts = {}): World {
       const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
         child.on('exit', (code, signal) => resolve({ code, signal }))
       })
-      return { child, out: () => out, exited }
+      const readerGone = async (): Promise<void> => {
+        child.stdout?.destroy()
+        child.stderr?.destroy()
+        await sleep(100)
+      }
+      return { child, out: () => out, exited, readerGone }
     },
     // A gate still waiting when a test gives up is killed here: left alone it
     // held the stdio pipes (and node:test) for its whole max-wait (2026-10-30).
@@ -1035,6 +1049,75 @@ describe('install gate — open -a can say no', () => {
       await sleep(1500) // its next try would have been 0.6 s on
       assert.equal(opens(w), 4)
       assert.equal(w.pids(), '')
+    } finally { w.cleanup() }
+  })
+})
+
+// Reviewer's finding, 2026-11-06. With its reader gone (a client that exits, a pipeline killed
+// with it) the gate's next echo got SIGPIPE. Bash ran the EXIT trap, and the trap's own first echo
+// died the same way, before it restored anything or left the watcher. Each of these ended at
+// rc 141, with no app.
+describe('install gate — nobody left to read its output', () => {
+  const started = (w: World): Promise<true> => waitFor(() => /5151/.test(w.pids()) || null, 'the app starting') as Promise<true>
+
+  it('gone during the quit, with the old process in E past the wait: the build goes in, and the watcher still starts the app', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitState: '?E', goneWaitS: 1, watchS: 30, quitHold: true })
+    try {
+      const g = w.run({ sha: SHA })
+      await waitFor(() => /^osascript /m.test(w.calls()), 'the quit')
+      await g.readerGone()
+      w.quitDone()
+      const r = await finished(g)
+      assert.equal(r.code, 0)
+      assert.equal(readFileSync(w.installedAsar, 'utf8'), NEW_ASAR)
+      assert.ok(!existsSync(w.marker), 'markers go on this exit too')
+      w.oldGone()
+      await started(w)
+    } finally { w.cleanup() }
+  })
+
+  it('gone during the quit, and the copy fails: the old build stays, and it is what starts', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitState: '?E', goneWaitS: 1, watchS: 30, quitHold: true, dittoFail: true })
+    try {
+      const g = w.run({})
+      await waitFor(() => /^osascript /m.test(w.calls()), 'the quit')
+      await g.readerGone()
+      w.quitDone()
+      const r = await finished(g)
+      assert.equal(r.code, 1)
+      assert.equal(readFileSync(w.installedAsar, 'utf8'), OLD_ASAR)
+      w.oldGone()
+      await started(w)
+    } finally { w.cleanup() }
+  })
+
+  it('gone, then killed during the copy: the old build is whole, and it is what starts', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitState: '?E', dittoHang: 'partial', watchS: 30 })
+    try {
+      const g = w.run({ sha: SHA })
+      await waitFor(() => existsSync(join(w.fake, 'ditto_pid')), 'the copy')
+      await g.readerGone()
+      w.termGateAndCopy(g)
+      const r = await finished(g)
+      assert.equal(r.code, 143)
+      assert.equal(readFileSync(w.installedAsar, 'utf8'), OLD_ASAR)
+      assert.ok(!existsSync(join(w.installedApp, 'Contents', 'half-written')), 'none of the half copy is left')
+      w.oldGone()
+      await started(w)
+    } finally { w.cleanup() }
+  })
+
+  it('gone while it waits: nothing is owed yet, and the install still goes ahead when the gate clears', async () => {
+    const w = makeWorld({ idleS: 10, pids: '4242\n', quitState: 'Z' })
+    try {
+      const g = w.run({ sha: SHA })
+      await waitFor(() => /waiting: in use 10s ago/.test(g.out()), 'the idle wait line')
+      await g.readerGone()
+      w.setIdle(130)
+      const r = await finished(g)
+      assert.equal(r.code, 0)
+      assert.equal(readFileSync(w.installedAsar, 'utf8'), NEW_ASAR)
+      await started(w)
     } finally { w.cleanup() }
   })
 })

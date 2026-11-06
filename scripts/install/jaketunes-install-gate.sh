@@ -49,6 +49,16 @@
 # JT_GATE_WATCH_S (1800, counted in polls: time awake), JT_GATE_WATCH_POLL_S (5),
 # JT_GATE_OPEN_RETRY_S (2), JT_GATE_START_WAIT_S (10).
 set -u
+# Whatever reads this may go away first: a client that exits, a pipeline killed along with it.
+# By default the next echo then gets SIGPIPE, bash runs the EXIT trap, and the trap's own first
+# echo dies the same way, before it restores anything or leaves the watcher. Measured 2026-11-06:
+# rc 141 and no app, one way with half a bundle. It has to be the empty trap: one that runs a
+# command didn't hold on bash 3.2. And every line goes through say. With the signal ignored the
+# echo just fails, but bash 3.2 keeps the text in stdout's buffer, and the next $(function) prints
+# it into its capture: jt_live then read the time of day as a pid, and an app that had quit ended
+# as "did not quit". So the first failure points stdout at /dev/null and flushes the text there.
+trap '' PIPE
+say() { echo "$@" || { exec >/dev/null; echo; }; }
 NEW="$1"; BK="$2"; MAXMIN="${3:-45}"; SHA="${4:-}"; NOTE="${5:-}"
 APP="${JT_GATE_APP:-/Applications/JakeTunes.app}"
 ASAR="$APP/Contents/Resources/app.asar"
@@ -112,7 +122,7 @@ SWAPPING=0  # 1 from moving the old bundle aside until the new one is whole
 # crashes on launch doesn't throw up crash reports for half an hour.
 start_app_when_gone() {
   APP_DUE=0
-  echo "$(date +%H:%M:%S) ${1:-the app starts by itself when the old JakeTunes is gone}"
+  say "$(date +%H:%M:%S) ${1:-the app starts by itself when the old JakeTunes is gone}"
   nohup /bin/bash -c '
     polls=$1; poll=$2; app=$3; shift 3
     max_opens=$(( polls / 6 )); [ "$max_opens" -lt 1 ] && max_opens=1; [ "$max_opens" -gt 10 ] && max_opens=10
@@ -192,9 +202,9 @@ write_ready() {
   if printf '{ "v": 1, "sha": "%s", "version": "%s", "note": "%s", "stagedAt": "%s", "gatePid": %d }\n' \
       "$(json_str "$SHA")" "$(json_str "$ver")" "$(json_str "$NOTE")" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$" > "$tmp" \
      && mv -f "$tmp" "$READY"; then
-    echo "$(date +%H:%M:%S) update-ready.json written for $SHA — the app can push the install through"
+    say "$(date +%H:%M:%S) update-ready.json written for $SHA — the app can push the install through"
   else
-    rm -f "$tmp"; echo "WARN: could not write $READY — waiting on idle only"
+    rm -f "$tmp"; say "WARN: could not write $READY — waiting on idle only"
   fi
 }
 
@@ -217,7 +227,7 @@ go_requested() {
   local got; got=$(head -c 200 "$aside" 2>/dev/null | tr -d '[:space:]')
   if [ "$got" = "$SHA" ]; then mv -f "$aside" "$GO"; return 0; fi
   rm -f "$aside"
-  echo "$(date +%H:%M:%S) ignoring update-go for another build (${got:-empty}) — removed"
+  say "$(date +%H:%M:%S) ignoring update-go for another build (${got:-empty}) — removed"
   return 1
 }
 
@@ -231,7 +241,7 @@ cleanup_markers() {
 on_exit() {
   cleanup_markers
   if [ "$SWAPPING" = 1 ]; then
-    echo "$(date +%H:%M:%S) killed during the swap — restoring the previous build"
+    say "$(date +%H:%M:%S) killed during the swap — restoring the previous build"
     restore_previous
   fi
   [ "$APP_DUE" = 1 ] && start_app_when_gone
@@ -242,9 +252,9 @@ trap 'exit 143' TERM
 trap 'exit 130' INT
 
 # ── Preconditions ────────────────────────────────────────────────────────────
-[ -d "$NEW" ] || { echo "ABORT: no staged app at $NEW"; exit 1; }
-[ -e "$HOME/$BK" ] && { echo "ABORT: ~/$BK already exists"; exit 1; }
-codesign --verify --deep --strict "$NEW" || { echo "ABORT: staged app signature invalid"; exit 1; }
+[ -d "$NEW" ] || { say "ABORT: no staged app at $NEW"; exit 1; }
+[ -e "$HOME/$BK" ] && { say "ABORT: ~/$BK already exists"; exit 1; }
+codesign --verify --deep --strict "$NEW" || { say "ABORT: staged app signature invalid"; exit 1; }
 M0=$(stat -f %m "$ASAR")
 
 # $1 = 1 when the app asked for the install: idle is not required, audio still is.
@@ -268,13 +278,13 @@ while :; do
   if [ "$go" = 1 ] || [ $(( now - heavy_at )) -ge "$HEAVY_EVERY" ]; then
     heavy_at=$now
     if why="$(gate "$go")"; then break; fi
-    [ "$why" != "$last" ] && echo "$(date +%H:%M:%S) waiting: $why" && last="$why"
-    [ "$now" -ge "$deadline" ] && { echo "ABORT: gate never cleared in ${MAXMIN} min — nothing changed"; exit 3; }
+    [ "$why" != "$last" ] && say "$(date +%H:%M:%S) waiting: $why" && last="$why"
+    [ "$now" -ge "$deadline" ] && { say "ABORT: gate never cleared in ${MAXMIN} min — nothing changed"; exit 3; }
   fi
   sleep "$GO_EVERY"
 done
-echo "$(date +%H:%M:%S) gate $why"
-[ "$(stat -f %m "$ASAR")" = "$M0" ] || { echo "ABORT: app.asar changed while waiting (another install?)"; exit 1; }
+say "$(date +%H:%M:%S) gate $why"
+[ "$(stat -f %m "$ASAR")" = "$M0" ] || { say "ABORT: app.asar changed while waiting (another install?)"; exit 1; }
 
 # ── Install ──────────────────────────────────────────────────────────────────
 caffeinate -i -t 300 & CAF=$!
@@ -284,21 +294,21 @@ perl -e 'alarm 20; exec @ARGV' osascript -e 'quit app id "com.jacobrosenbaum.jak
 for i in $(seq 1 "$QUIT_WAIT"); do [ -z "$(jt_live)" ] && break; sleep 1; done
 # Still alive: the install stops here. It may yet be quitting, so the exit trap leaves
 # the watcher behind: when it goes, the app comes back. If it never goes, nothing happens.
-[ -n "$(jt_live)" ] && { echo "ABORT: JakeTunes did not quit — install untouched"; kill $CAF 2>/dev/null; exit 1; }
-[ -n "$(old_left)" ] && echo "$(date +%H:%M:%S) JakeTunes pid $(old_left | tr '\n' ' ')is exiting (no code running) — that counts as quit"
+[ -n "$(jt_live)" ] && { say "ABORT: JakeTunes did not quit — install untouched"; kill $CAF 2>/dev/null; exit 1; }
+[ -n "$(old_left)" ] && say "$(date +%H:%M:%S) JakeTunes pid $(old_left | tr '\n' ' ')is exiting (no code running) — that counts as quit"
 gate >/dev/null || true
-[ "$(stat -f %m "$ASAR")" = "$M0" ] || { echo "ABORT: app.asar changed at quit time"; start_app; kill $CAF 2>/dev/null; exit 1; }
+[ "$(stat -f %m "$ASAR")" = "$M0" ] || { say "ABORT: app.asar changed at quit time"; start_app; kill $CAF 2>/dev/null; exit 1; }
 
 SWAPPING=1
-mv "$APP" "$HOME/$BK" || { SWAPPING=0; echo "ABORT: could not move the old app aside"; start_app; kill $CAF 2>/dev/null; exit 1; }
+mv "$APP" "$HOME/$BK" || { SWAPPING=0; say "ABORT: could not move the old app aside"; start_app; kill $CAF 2>/dev/null; exit 1; }
 if ! ditto "$NEW" "$APP"; then
   SWAPPING=0
-  echo "COPY FAILED — restoring the previous build"
+  say "COPY FAILED — restoring the previous build"
   restore_previous; start_app; kill $CAF 2>/dev/null; exit 1
 fi
 SWAPPING=0
 xattr -dr com.apple.quarantine "$APP" 2>/dev/null
-codesign --verify --deep --strict "$APP" || echo "WARN: installed app signature check failed"
+codesign --verify --deep --strict "$APP" || say "WARN: installed app signature check failed"
 "$LSREG" -f "$APP"
 gate_rc=0
 start_app
@@ -308,5 +318,5 @@ case $? in
   *) pid_note="none, the app did not come up, still trying"; gate_rc=4 ;;
 esac
 kill $CAF 2>/dev/null
-echo "$(scutil --get ComputerName 2>/dev/null): $("$PLISTBUDDY" -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist"), $(stat -f 'app.asar %z bytes, %Sm' "$ASAR"), pid $pid_note, previous kept at ~/$BK"
+say "$(scutil --get ComputerName 2>/dev/null): $("$PLISTBUDDY" -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist"), $(stat -f 'app.asar %z bytes, %Sm' "$ASAR"), pid $pid_note, previous kept at ~/$BK"
 exit $gate_rc
