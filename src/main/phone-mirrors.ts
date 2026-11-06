@@ -220,7 +220,7 @@ export interface MobileImportRow { id?: unknown; path?: unknown; title?: unknown
  */
 export async function ensureMobileImportAudio(
   rows: MobileImportRow[],
-  opts: { libraryRoot: string; backendUrl: string; fetchFn?: typeof fetch; log?: (m: string) => void },
+  opts: { libraryRoot: string; backendUrl: string; fetchFn?: typeof fetch; log?: (m: string) => void; onFailure?: () => void },
 ): Promise<number> {
   const fetchFn = opts.fetchFn ?? fetch
   let pulled = 0
@@ -235,16 +235,59 @@ export async function ensureMobileImportAudio(
     if (have && have.size > 0) continue                  // already here — never overwrite
     try {
       const res = await fetchFn(`${opts.backendUrl}/audio/${encodeURIComponent(String(id))}`, withCompanionInit({ signal: AbortSignal.timeout(5 * 60_000) }))
-      if (!res.ok) { opts.log?.(`[phone-mirrors] audio ${id} → ${res.status} (rsync return-leg will retry)`); continue }
+      if (!res.ok) { opts.log?.(`[phone-mirrors] audio ${id} → ${res.status} (rsync return-leg will retry)`); opts.onFailure?.(); continue }
       const buf = Buffer.from(await res.arrayBuffer())
       const want = Number(res.headers.get('content-length')) || 0
-      if (buf.length === 0 || (want > 0 && buf.length !== want)) { opts.log?.(`[phone-mirrors] audio ${id} short read — refused`); continue }
+      if (buf.length === 0 || (want > 0 && buf.length !== want)) { opts.log?.(`[phone-mirrors] audio ${id} short read — refused`); opts.onFailure?.(); continue }
       await writeAtomic(dest, buf)
       pulled++
       opts.log?.(`[phone-mirrors] pulled audio for “${String(row?.title ?? id)}” (${(buf.length / 1e6).toFixed(1)} MB)`)
     } catch (err) {
       opts.log?.(`[phone-mirrors] audio ${id} pull failed: ${err instanceof Error ? err.message : err}`)
+      opts.onFailure?.()
+      // The link is bad: the next song would hold it for its own five minutes.
+      return pulled
     }
   }
   return pulled
+}
+
+/** After a pass that failed, the next one waits this long, doubling up to IMPORT_AUDIO_MAX_WAIT_MS. */
+export const IMPORT_AUDIO_FIRST_WAIT_MS = 30 * 60_000
+export const IMPORT_AUDIO_MAX_WAIT_MS = 6 * 60 * 60_000
+
+/**
+ * Bringing a phone download's audio to this Mac, behind the absorb. Jake, 2026-11-05: "why does my
+ * phone have 12595 songs. and my macbook has 12561". The absorb used to wait for the audio: 39 songs,
+ * 1.8 GB, on a hotel link at 24 KB/s, five minutes a song before each gave up, and the songs stayed
+ * off the desktop for hours while the phone showed them. A row with no file here plays from homemini,
+ * as 2,867 songs on this Mac already do, so the audio can come whenever it comes. One pass at a time,
+ * and a pass that failed waits before the link gets hit again.
+ */
+export function createImportAudioPuller(
+  pull: (rows: MobileImportRow[], onFailure: () => void) => Promise<unknown>,
+  now: () => number = Date.now,
+): { offer: (rows: MobileImportRow[]) => void; idle: () => boolean } {
+  let running = false
+  let notBefore = 0
+  let wait = IMPORT_AUDIO_FIRST_WAIT_MS
+  return {
+    idle: () => !running,
+    offer(rows) {
+      if (running || rows.length === 0 || now() < notBefore) return
+      running = true
+      let failed = false
+      void pull(rows, () => { failed = true })
+        .catch(() => { failed = true })
+        .finally(() => {
+          running = false
+          if (failed) {
+            notBefore = now() + wait
+            wait = Math.min(wait * 2, IMPORT_AUDIO_MAX_WAIT_MS)
+          } else {
+            wait = IMPORT_AUDIO_FIRST_WAIT_MS
+          }
+        })
+    },
+  }
 }
