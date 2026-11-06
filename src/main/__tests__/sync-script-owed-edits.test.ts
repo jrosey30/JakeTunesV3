@@ -15,10 +15,12 @@
  */
 import { after, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { runSyncScript } from './sync-script-run.ts'
+import { HUNG_MS } from './wait-for.ts'
 
 const HUB_DIR = 'Library/Application Support/JakeTunes'
 const STATE_FILES = ['library.json', 'playlists.json', 'play-events.jsonl']
@@ -27,10 +29,16 @@ const OWED = 'audio-edits-owed.txt'
 
 // The music leg is the call with --files-from. Everything else is homemini: answered, 0.
 // STUB_DURING_LEG: a line the app writes while the leg runs.
+// STUB_REAL_RSYNC: a real rsync does the leg. /usr/bin/rsync (openrsync) runs its other half
+// as `rsync --server`, by name through PATH, and that name is this stub: answered 0, the client
+// says "unexpected end of file" and exits 1 (run 42216467962, and on this Mac, 2026-11-06).
 const STUB_RSYNC = `#!/bin/bash
 if [ "$1" = "--version" ]; then echo "rsync  version 3.4.2  protocol version 32"; exit 0; fi
 for a in "$@"; do
-  case "$a" in --files-from=*)
+  case "$a" in --server)
+    [ -n "\${STUB_REAL_RSYNC:-}" ] && exec "$STUB_REAL_RSYNC" "$@"
+    ;;
+  --files-from=*)
     cat "\${a#--files-from=}" >> "$STUB_LIST"
     [ -n "\${STUB_DURING_LEG:-}" ] && printf '%s\\n' "$STUB_DURING_LEG" >> "$STUB_OWED"
     [ -n "\${STUB_REAL_RSYNC:-}" ] && exec "$STUB_REAL_RSYNC" "$@"
@@ -114,6 +122,33 @@ function makeWorld() {
 }
 
 const AWAY = { STUB_AWAY: '1' }
+
+/** Null when this rsync can run the quick leg's own flags, tried in a temp folder with no stub on
+ *  its PATH. Otherwise why it can't, which is what the test skips with. */
+function cannotRunTheLeg(rsync: string): string | null {
+  if (!existsSync(rsync)) return `${rsync} is not on this Mac`
+  const root = mkdtempSync(join(tmpdir(), 'jt-rsync-probe-'))
+  try {
+    const from = join(root, 'from')
+    const to = join(root, 'to')
+    mkdirSync(join(from, 'F04'), { recursive: true })
+    mkdirSync(join(to, 'F04'), { recursive: true })
+    writeFileSync(join(from, 'F04', 'a.m4a'), 'TAGS-NEW')
+    writeFileSync(join(to, 'F04', 'a.m4a'), 'TAGS-OLD')
+    utimesSync(join(to, 'F04', 'a.m4a'), hoursAgo(48), hoursAgo(48))
+    writeFileSync(join(root, 'list'), './F04/a.m4a\n')
+    const r = spawnSync(rsync, ['-rtz', '--timeout=180', `--files-from=${join(root, 'list')}`, `${from}/`, `${to}/`], {
+      encoding: 'utf8',
+      env: { PATH: `${dirname(rsync)}:/usr/bin:/bin` },
+      timeout: HUNG_MS,
+    })
+    if (r.status !== 0) return `${rsync} can't run the quick leg here: exit ${r.status}, ${(r.stderr || r.error?.message || '').trim()}`
+    const landed = readFileSync(join(to, 'F04', 'a.m4a'), 'utf8')
+    return landed === 'TAGS-NEW' ? null : `${rsync} finished the quick leg and left the old bytes`
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}
 const rel = (name: string): string => `./${F}/${name}`
 
 describe('sync script --quick: the audio edits no leg has carried', () => {
@@ -305,22 +340,26 @@ describe('sync script --quick: the audio edits no leg has carried', () => {
     } finally { w.cleanup() }
   })
 
-  // Same size, other bytes, through a real rsync: what the --size-only full leg can't see.
-  const real = ['/opt/homebrew/bin/rsync', '/usr/bin/rsync'].find((p) => existsSync(p))
-  it('a same-size re-tag made away lands on the NAS copy, through a real rsync', { skip: real ? false : 'no rsync here' }, () => {
-    const w = makeWorld()
-    try {
-      w.owe(w.song('a.m4a', 'TAGS-NEW'))
-      const onNas = join(w.nas, F, 'a.m4a')
-      mkdirSync(dirname(onNas), { recursive: true })
-      writeFileSync(onNas, 'TAGS-OLD')
-      utimesSync(onNas, hoursAgo(48), hoursAgo(48))
-      w.pass(['--quick'], AWAY)
-      assert.equal(readFileSync(onNas, 'utf8'), 'TAGS-OLD', 'nothing touches the NAS while away')
-      const home = w.pass(['--quick'], { STUB_REAL_RSYNC: real! })
-      assert.equal(home.status, 0, home.log)
-      assert.equal(readFileSync(onNas, 'utf8'), 'TAGS-NEW')
-      assert.deepEqual(w.leftovers(), [])
-    } finally { w.cleanup() }
-  })
+  // Same size, other bytes, through a real rsync: what the --size-only full leg can't see. Each
+  // rsync here, because the app's PATH picks one: this Mac's quick legs ran on /usr/bin/rsync from
+  // 10/9 to 10/11 (177 with files finished, 2,892 files, real log) and on Homebrew's since, and a
+  // CI runner has only /usr/bin/rsync.
+  for (const real of ['/opt/homebrew/bin/rsync', '/usr/bin/rsync']) {
+    it(`a same-size re-tag made away lands on the NAS copy, through a real rsync (${real})`, { skip: cannotRunTheLeg(real) ?? false }, () => {
+      const w = makeWorld()
+      try {
+        w.owe(w.song('a.m4a', 'TAGS-NEW'))
+        const onNas = join(w.nas, F, 'a.m4a')
+        mkdirSync(dirname(onNas), { recursive: true })
+        writeFileSync(onNas, 'TAGS-OLD')
+        utimesSync(onNas, hoursAgo(48), hoursAgo(48))
+        w.pass(['--quick'], AWAY)
+        assert.equal(readFileSync(onNas, 'utf8'), 'TAGS-OLD', 'nothing touches the NAS while away')
+        const home = w.pass(['--quick'], { STUB_REAL_RSYNC: real })
+        assert.equal(home.status, 0, home.log)
+        assert.equal(readFileSync(onNas, 'utf8'), 'TAGS-NEW')
+        assert.deepEqual(w.leftovers(), [])
+      } finally { w.cleanup() }
+    })
+  }
 })
