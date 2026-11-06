@@ -25,7 +25,7 @@ import { join } from 'path'
 import { homedir, tmpdir } from 'os'
 import { lstat, mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
 import type { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
-import { NO_EXPLICIT_WARNING, albumFirst, albumVersionOf, bandcampHitDoubt, isCompilationCopy, onWantedAlbum, rankStreamripCandidates, realAlbumTags, titleMatches, rankWithArtistAliases, searchTitle, searchQueryTitle, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, isNoResultsMessage, isQobuzNoSuchItem, parseStreamripDesc, qobuzTrackMetaOf, type QobuzTrackMeta } from '../streamrip-match.ts'
+import { NO_EXPLICIT_WARNING, albumFirst, albumSearchNames, albumVersionOf, bandcampHitDoubt, isCompilationCopy, onWantedAlbum, rankStreamripCandidates, realAlbumTags, titleMatches, rankWithArtistAliases, searchTitle, searchQueryTitle, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, isNoResultsMessage, isQobuzNoSuchItem, parseStreamripDesc, qobuzTrackMetaOf, type QobuzTrackMeta } from '../streamrip-match.ts'
 import { buildRequestedAlbum, verifyAlbumCandidate, reconcileAlbumCompletion, describeCompletion, albumAlternativeDesc, orderTracks, parseCountTag, matchLibraryOwnership, ladderBudgetMs, type RequestedAlbum, type CandidateAlbum, type AlbumVerdict, type Ownership, type LibraryTrackLite } from '../album-identity.ts'
 import { loadLibraryTracksLite, type ImportRowTags } from '../import-pipeline.ts'
 import { itunesAlbumTracks, itunesFindAlbum, itunesSongRows } from '../download-search.ts'
@@ -608,15 +608,23 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     } catch { return { tracks: [] } }
   }
 
+  /** Six at a time. A burst nobody answered ends the asking: Qobuz is down or the token is dead,
+   *  and each of the rest would wait out the same timeout for the same nothing.
+   *  ⚠️ TWIN: JakeTunesMobile/backend/src/util/qobuzMeta.ts qobuzTrackAnswers. */
   async function qobuzTrackMeta(ids: string[], gone?: Set<string>): Promise<Map<string, QobuzTrackMeta>> {
     const out = new Map<string, QobuzTrackMeta>()
     const creds = await readQobuzCreds()
-    if (!creds || ids.length === 0) return out
-    await Promise.all(ids.map(async (id) => {
-      const answer = await qobuzGet('track/get?track_id=' + encodeURIComponent(id), creds, 6000)
-      if (answer === 'gone') { gone?.add(id); return }
-      if (answer) out.set(id, qobuzTrackMetaOf(answer.body as Parameters<typeof qobuzTrackMetaOf>[0]))
-    }))
+    if (!creds) return out
+    for (let i = 0; i < ids.length; i += 6) {
+      const heard = await Promise.all(ids.slice(i, i + 6).map(async (id) => {
+        const answer = await qobuzGet('track/get?track_id=' + encodeURIComponent(id), creds, 6000)
+        if (answer === 'gone') { gone?.add(id); return true }
+        if (!answer) return false
+        out.set(id, qobuzTrackMetaOf(answer.body as Parameters<typeof qobuzTrackMetaOf>[0]))
+        return true
+      }))
+      if (!heard.some(Boolean)) break
+    }
     return out
   }
 
@@ -788,7 +796,8 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     const noteReject = (provider: Provider, desc: string, verdict: ReturnType<typeof verifyCandidate>): void => {
       if (verdict.verdict === 'exact') return
       if (verdict.verdict === 'unverifiable') sawUnverifiable = true
-      alternatives.push({ provider, desc, reason: verdict.reason })
+      // One edit on twenty compilations is one line on the Refused list: Blur's "Girls and Boys" has 21.
+      if (!alternatives.some((a) => a.provider === provider && a.desc === desc && a.reason === verdict.reason)) alternatives.push({ provider, desc, reason: verdict.reason })
       trace.push(`${provider} “${desc}”: ${verdict.verdict} — ${verdict.reason}`)
       console.log(`[download] ${verdict.verdict === 'reject' ? 'rejected' : 'could not verify'} ${provider} candidate for “${title}”: “${desc}” ${verdict.reason}`)
     }
@@ -806,7 +815,6 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       // an id Qobuz answers that for is skipped, so the pick walks the next
       // candidates instead of one-shotting the first. A timeout is no answer,
       // and a hit with no answer still gets its turn.
-      const probed = new Set<string>()
       let metaMap: Map<string, QobuzTrackMeta> = new Map()
       let explicitOnQobuz = false
       let offAlbum = new Set<string>()
@@ -818,10 +826,13 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         error: 'Apple lists an explicit ' + (mediaType === 'album' ? 'edition of this album' : 'cut of this track') + ', but no copy on Qobuz is marked explicit (' + refused.length + ' checked). It may be the clean edit, so nothing was imported. Try the album download, or another source.',
       })
       if (ranked.length) {
-        const top = ranked.slice(0, 6)
+        // Every hit of a song, because only three get fetched, and a hit nobody asked about costs a
+        // fetch to learn what one question says. Underworld's 705 s "Born Slippy" is hit 23 of 25:
+        // the first three unasked hits used up the fetches on a radio edit and a 456 s cut.
+        // ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripWalk.ts tryHits.
+        const top = mediaType === 'album' ? ranked.slice(0, 6) : ranked
         const gone = new Set<string>()
         const meta = await (mediaType === 'album' ? qobuzAlbumMeta : qobuzTrackMeta)(top.map((c) => c.id), gone)
-        for (const c of top) probed.add(c.id)
         metaMap = meta
         for (const c of top) if (gone.has(c.id)) trace.push(`skip “${c.desc}”: gone from Qobuz's catalog (404)`)
         if (mediaType === 'track') {
@@ -840,12 +851,12 @@ export function registerStreamripStore(deps: StreamripDeps): void {
           if (v.explicitMaster) {
             trace.push(`${opts?.explicitSource ? 'explicit gate' : 'explicit-first'}: kept ${v.kept.length}, refused clean ${v.refusedClean.length}`)
             if (v.refusedClean.length > 0) console.log('[streamrip] refused ' + v.refusedClean.length + ' clean candidate(s) for "' + title + '" — an explicit master exists')
-            // From here on this is a request for the explicit record: a hit past the
-            // sixth and the album door hear Qobuz's flag the same way.
+            // From here on this is a request for the explicit record: the album door hears
+            // Qobuz's flag the same way.
             req.explicit = 'explicit'
           }
           if (v.kept.length === 0 && v.refusedClean.length > 0) return onlyCleanFailure(v.refusedClean)
-          ranked2 = [...v.kept, ...ranked.slice(6)]
+          ranked2 = v.kept
           // A row is only overruled by a certain answer, unless Qobuz says the row's own album is
           // a compilation: then any album of the artist's that MusicBrainz knows is the better name.
           if (real && !real.lateAlbum && req.album === rowAlbum && rowAlbum !== real.album && v.kept.some((c) => {
@@ -1078,9 +1089,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
           lastRipErr = st.error
           continue
         }
-        // Past the sixth hit nothing has asked Qobuz about it yet, and a row with no
-        // length has only this flag to go on. The same rule as the top hits reads it.
-        const meta = metaMap.get(cand.id) ?? (probed.has(cand.id) ? undefined : (await qobuzTrackMeta([cand.id])).get(cand.id))
+        const meta = metaMap.get(cand.id)
         const verdict = await judgeStaged('qobuz', st.staged, cand.desc, { parentalWarning: flagToJudge(meta, explicitOnQobuz), version: meta?.version ?? undefined })
         if (verdict.verdict === 'exact') {
           // A compilation only counts as the album when the row names that very album.
@@ -1131,13 +1140,17 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     // row's own album, when it is another, is still a way to the song if nothing is held.
     for (const albName of wantAlbum ? [] : [...new Set([req.album, rowAlbum])].filter(Boolean)) {
       if (fallback && albName !== req.album) continue
-      const asearch = await searchCatalog({ query: [artist, searchTitle(albName) || albName].filter(Boolean).join(' '), source: 'qobuz', mediaType: 'album', numResults: 10 })
-      const albumsNamed = (name: string): typeof ranked => rankStreamripCandidates(name, artist, asearch.results ?? [], 'album', aliases, { clocked: false }).ranked
-      // The name as the row writes it comes first, so a Deluxe row finds the Deluxe. The
-      // album's other editions come too, and a row's own name can't be trusted to find the
-      // record: Apple's "Life After Death [Amended Version] (2014 Remaster)" reads as Qobuz's
-      // amended "(2014 Remaster)", and not as its explicit "(2014 Remastered Edition)".
-      const editions = [...new Map([...albumsNamed(albName), ...albumsNamed(searchTitle(albName) || albName)].map((a) => [a.id, a])).values()].slice(0, 4)
+      let editions: typeof ranked = []
+      for (const asked of albumSearchNames(albName)) {
+        const asearch = await searchCatalog({ query: [artist, asked].filter(Boolean).join(' '), source: 'qobuz', mediaType: 'album', numResults: 10 })
+        const albumsNamed = (name: string): typeof ranked => rankStreamripCandidates(name, artist, asearch.results ?? [], 'album', aliases, { clocked: false }).ranked
+        // The name as the row writes it comes first, so a Deluxe row finds the Deluxe. The
+        // album's other editions come too, and a row's own name can't be trusted to find the
+        // record: Apple's "Life After Death [Amended Version] (2014 Remaster)" reads as Qobuz's
+        // amended "(2014 Remaster)", and not as its explicit "(2014 Remastered Edition)".
+        editions = [...new Map([...albumsNamed(albName), ...albumsNamed(searchTitle(albName) || albName)].map((a) => [a.id, a])).values()].slice(0, 4)
+        if (editions.length > 0) break
+      }
       const listings = await Promise.all(editions.map(async (alb) => ({ alb, tl: await qobuzAlbumTrackList(alb.id) })))
       const doorTracks = listings.flatMap(({ alb, tl }) => tl.tracks.filter((t) => titleMatches(lookFor || title, t.title)).map((t) => ({ ...t, alb, tl })))
       const trackMeta = new Map(doorTracks.map((t): [string, QobuzTrackMeta] => [t.id, { title: t.title, parentalWarning: t.parentalWarning, albumParentalWarning: t.tl.parentalWarning, durationSec: t.durationSec, album: t.tl.title }]))

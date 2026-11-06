@@ -40,8 +40,8 @@
 import type { Provider, RequestedRecording, Alternative, DownloadOutcome } from '../common/acquisition-identity.ts'
 export type { Provider, RequestedRecording, Alternative, DownloadOutcome } from '../common/acquisition-identity.ts'
 
-import { artistOrAlias, recoArtistMatches, recoFold, recoNorm, recoTitleMatches } from './reco-match.ts'
-import { NO_EXPLICIT_WARNING, albumVersionOf, bareTitle, carriesCensorStamp, creditHolds, editionSubstituted, isCoverAct, liveBrandMarker, maskedTitleMatches, parseStreamripDesc, saysExplicit, searchTitle, titleReads, titleWithVersion, unwantedVersionOf, requestedVersionMarkers, withoutCensorStamp, type QobuzTrackMeta, onWantedAlbum } from './streamrip-match.ts'
+import { artistOrAlias, recoArtistMatches, recoNorm, recoTitleMatches } from './reco-match.ts'
+import { NO_EXPLICIT_WARNING, albumVersionOf, bareTitle, carriesCensorStamp, creditHolds, editionSubstituted, isCompilationCopy, isCoverAct, liveBrandMarker, maskedTitleMatches, parseStreamripDesc, saysExplicit, searchTitle, titleKey, titleReads, titleWithVersion, unwantedVersionOf, requestedVersionMarkers, withoutCensorStamp, type QobuzTrackMeta, onWantedAlbum } from './streamrip-match.ts'
 import { nameKey } from '../common/fold-text.ts'
 
 /** Does free text (a SoundCloud title/desc) name the artist? Folded in any
@@ -144,7 +144,7 @@ export interface AppleSongRow {
 /** A request for a live cut, in its brackets or after a dash. */
 const LIVE_REQUEST = /[([–—-][^)\]]*\b(?:live|concert|unplugged)\b/i
 
-const albumKey = (album: string): string => recoFold(searchTitle(album) || album) || album.trim().toLowerCase()
+const albumKey = (album: string): string => titleKey(searchTitle(album) || album) || album.trim().toLowerCase()
 
 /**
  * What a row with no length of its own should run, from what Apple lists (2026-11-05). Nobody
@@ -184,18 +184,18 @@ export function expectedRuntimes(want: { title: string; artist: string; album?: 
   if (!want.title || LIVE_REQUEST.test(want.title)) return []
   const plain = (t: string): string => searchTitle(t) || t
   const wantPlain = plain(want.title)
-  const wantKey = recoFold(wantPlain)
-  const wantBare = recoFold(bareTitle(wantPlain))
-  const exactTitle = (t: string): boolean => recoFold(plain(t)) === wantKey
+  const wantKey = titleKey(wantPlain)
+  const wantBare = titleKey(bareTitle(wantPlain))
+  const exactTitle = (t: string): boolean => titleKey(plain(t)) === wantKey
   const masked = (t: string): boolean => maskedTitleMatches(wantPlain, plain(t)) || maskedTitleMatches(plain(t), wantPlain)
   const byArtist = rows.filter((r) => r.durationSec > 0
     && recoArtistMatches(want.artist, r.artist)
     && !(isCoverAct(r.title, r.artist) || isCoverAct(r.album, '')))
   const isClean = (r: AppleSongRow): boolean => Boolean(r.cleaned) || carriesCensorStamp(r.title) || carriesCensorStamp(r.album)
-  const namesTheSong = (r: AppleSongRow): boolean => (wantBare !== '' && recoFold(bareTitle(plain(r.title))) === wantBare) || masked(r.title)
+  const namesTheSong = (r: AppleSongRow): boolean => (wantBare !== '' && titleKey(bareTitle(plain(r.title))) === wantBare) || masked(r.title)
   if (byArtist.some((r) => isClean(r) && namesTheSong(r))) return []
   const song = byArtist.filter((r) => !r.compilation
-    && (exactTitle(r.title) || (wantBare !== '' && recoFold(plain(r.title)) === wantBare) || masked(r.title))
+    && (exactTitle(r.title) || (wantBare !== '' && titleKey(plain(r.title)) === wantBare) || masked(r.title))
     && !unwantedVersionOf(want.title, r.title) && !unwantedVersionOf(r.title, want.title))
   const named = song.some((r) => exactTitle(r.title)) ? song.filter((r) => exactTitle(r.title)) : song
   const wantWords = `${want.title} ${want.album ?? ''}`.trim()
@@ -402,7 +402,7 @@ export function flagToJudge(m: Pick<QobuzTrackMeta, 'parentalWarning' | 'albumPa
 }
 
 /**
- * Judges the top Qobuz hits on what the metadata says, before a byte moves. A hit with
+ * Judges the Qobuz hits on what the metadata says, before a byte moves. A hit with
  * no answer passes through unjudged: an API hiccup must not brick downloads.
  *
  * Only a hit that IS this recording can prove an explicit master exists. Asking any top
@@ -411,6 +411,11 @@ export function flagToJudge(m: Pick<QobuzTrackMeta, 'parentalWarning' | 'albumPa
  * stages it then tried were live cuts. Warmduscher's "I Got Friends" (2026-10-22) kept a
  * remix and a live version and refused the rest. So a hit goes through verifyCandidate
  * first, without its flag, and only what passes may vouch for anything.
+ *
+ * A compilation's copy passes on its tags and proves nothing about the recording. The only
+ * copy of "Passin' Me By" flagged explicit is on Various Artists' "HIP-HOP 50: WEST COAST", and
+ * it is another recording. Vouching for it threw out the album's own 303 s, the same audio as
+ * Jake's file, and it came in itself.
  *
  * A clean flag on a track from an album flagged explicit means two different things.
  * With an explicit copy of the song on Qobuz, it is a clean edit, like the Single Version
@@ -452,7 +457,10 @@ export function judgeHitsByMeta<T extends { id: string; desc: string }>(
     if (verdict.verdict === 'reject') wrongRecording.push({ hit, verdict })
     else passing.push(hit)
   }
-  const onQobuz = explicitSeen || passing.some((h) => meta.get(h.id)?.parentalWarning === true)
+  const onQobuz = explicitSeen || passing.some((h) => {
+    const m = meta.get(h.id)
+    return m?.parentalWarning === true && !isCompilationCopy(req, m)
+  })
   const explicitMaster = req.explicit === 'explicit' || (req.explicit !== 'clean' && onQobuz)
   const flaggedClean = explicitMaster ? passing.filter((h) => {
     const m = meta.get(h.id)
