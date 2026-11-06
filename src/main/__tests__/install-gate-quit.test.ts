@@ -4,6 +4,7 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { finished, makeWorld, NEW_ASAR, OLD_ASAR, opens, scriptPath, SHA, sleep, started } from './install-gate-world.ts'
 import { waitFor } from './wait-for.ts'
@@ -244,15 +245,45 @@ describe('install gate — the watcher does not give up on the clock', () => {
     } finally { w.cleanup() }
   })
 
-  it('a jump in the wall clock uses up none of the window: the Mac asleep is not the app stuck', async () => {
+  // Reviewer's finding, 2026-11-06. The window counted time awake, so a lid shut across days could
+  // bring the app back after a quit by hand the next day.
+  it('plainly alive once the wall clock has passed the window, however little of it was awake: it stops, and a later quit stays a quit', async () => {
     const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 30 })
     try {
       const r = await finished(w.run({}))
       assert.equal(r.code, 1)
-      await sleep(500) // the watcher is under way: the jump lands inside its window
+      await waitFor(() => w.watcherAlive() || null, 'the watcher')
       w.clockJumps(3600)
+      await waitFor(() => !w.watcherAlive(), 'the watcher stopping')
+      w.oldGone()
       await sleep(600)
-      assert.equal(opens(w), 0, 'it is still alive')
+      assert.equal(opens(w), 0)
+    } finally { w.cleanup() }
+  })
+
+  for (const state of ['?E', 'U']) {
+    it(`in ${state} when the Mac wakes past the window: the wall clock doesn't apply, the app is owed`, async () => {
+      const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 30 })
+      try {
+        const r = await finished(w.run({}))
+        assert.equal(r.code, 1)
+        w.setOldState(state)
+        await sleep(300) // it has looked at the new state
+        w.clockJumps(3600)
+        await sleep(600)
+        assert.ok(w.watcherAlive(), 'still waiting')
+        w.oldGone()
+        await started(w)
+      } finally { w.cleanup() }
+    })
+  }
+
+  it('the old pid already gone when the Mac wakes: the jump changes nothing, the app starts', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitState: '?E', goneWaitS: 1, watchS: 30 })
+    try {
+      const r = await finished(w.run({}))
+      assert.equal(r.code, 0)
+      w.clockJumps(3600)
       w.oldGone()
       await started(w)
     } finally { w.cleanup() }
@@ -343,6 +374,54 @@ describe('install gate — open -a can say no', () => {
 
   it('it waits 5 s before the second look, the time a bad build takes to die', () => {
     assert.match(readFileSync(scriptPath, 'utf8'), /STAY="\$\{JT_GATE_STAY_S:-5\}"/)
+  })
+
+  // Reviewer's finding, 2026-11-06. The watcher's output goes to /dev/null and the gate has gone,
+  // so when it stopped asking, nobody was told there was no app.
+  it('the watcher runs out of tries: it says NO APP RUNNING in a log, because nobody else is left to', async () => {
+    const w = makeWorld({ idleS: 130, pids: '', openSwallows: 99, watchS: 1, watchPollS: 0.1 })
+    try {
+      const r = await finished(w.run({ sha: SHA }))
+      assert.equal(r.code, 4)
+      await waitFor(() => !w.watcherAlive(), 'the watcher stopping')
+      assert.match(readFileSync(w.watcherLog, 'utf8'), /NO APP RUNNING: 1 tries of open -a .*JakeTunes\.app/)
+    } finally { w.cleanup() }
+  })
+
+  it('the watcher stops on an app that never quit: that goes in the log too, as nothing to do', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 1 })
+    try {
+      const r = await finished(w.run({}))
+      assert.equal(r.code, 1)
+      await waitFor(() => !w.watcherAlive(), 'the watcher stopping')
+      const log = readFileSync(w.watcherLog, 'utf8')
+      assert.match(log, /pids 4242: still plainly alive after 1s/)
+      assert.doesNotMatch(log, /NO APP RUNNING/)
+    } finally { w.cleanup() }
+  })
+
+  it('a watcher that starts the app says nothing in the log', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitState: '?E', goneWaitS: 1, watchS: 30 })
+    try {
+      await finished(w.run({}))
+      w.oldGone()
+      await started(w)
+      await waitFor(() => !w.watcherAlive(), 'the watcher stopping')
+      assert.equal(existsSync(w.watcherLog), false)
+    } finally { w.cleanup() }
+  })
+
+  // Reviewer's finding, 2026-11-06. The gate's caffeinate ends with the gate, and a Mini with its
+  // display asleep could sleep with no app and be off the network until someone touched it.
+  it('the watcher holds the Mac awake for itself, for as long as it runs', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitState: '?E', goneWaitS: 1, watchS: 30 })
+    try {
+      await finished(w.run({}))
+      await waitFor(() => /caffeinate -i -w \d+/.test(w.calls()) || null, 'the watcher\'s caffeinate')
+      const pid = w.calls().match(/caffeinate -i -w (\d+)/)![1]
+      assert.equal(execFileSync('/bin/ps', ['-o', 'state=', '-p', pid]).toString().trim().length > 0, true, 'it follows a live pid')
+      assert.match(execFileSync('/bin/ps', ['-o', 'command=', '-p', pid]).toString(), /jt-gate-watcher [0-9]/, 'that pid is the watcher')
+    } finally { w.cleanup() }
   })
 
   it('it says yes three times and nothing starts: exit 4, and the watcher keeps asking', async () => {

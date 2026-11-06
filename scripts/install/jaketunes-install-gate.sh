@@ -47,7 +47,7 @@
 # Test-harness overrides (src/main/__tests__/install-gate.test.ts), all defaulting to
 # the real thing: JT_GATE_APP, JT_GATE_DATA_DIR, JT_GATE_LSREGISTER, JT_GATE_PLISTBUDDY,
 # JT_GATE_POLL_S (15), JT_GATE_GO_POLL_S (2), JT_GATE_QUIT_WAIT_S (30), JT_GATE_GONE_WAIT_S (30),
-# JT_GATE_WATCH_S (1800, counted in polls: time awake), JT_GATE_WATCH_POLL_S (5),
+# JT_GATE_WATCH_S (1800), JT_GATE_WATCH_POLL_S (5),
 # JT_GATE_OPEN_RETRY_S (2), JT_GATE_START_WAIT_S (10), JT_GATE_STAY_S (5).
 set -u
 # Whatever reads this may go away first: a client that exits, a pipeline killed along with it.
@@ -110,26 +110,34 @@ OLD_PIDS=""
 APP_DUE=0   # 1 from the moment the quit is asked for until the app is started or a watcher will start it
 SWAPPING=0  # 1 from moving the old bundle aside until the new one is in its place
 INCOMING="$HOME/.jt-incoming-$$.app"
+WATCHER_LOG="$HOME/Library/Logs/jaketunes-install-gate.log"
 # Detached: it outlives this script (and an ssh session running it). It starts the app
 # when the old process is gone, unless something else already has.
-# Its window counts polls, never the clock: date keeps counting while the Mac sleeps, so
-# a closed lid used the window up with nothing running. And it looks before it decides,
-# the last time after its last sleep.
-# Only one thing ends the wait: an old process plainly alive at the end of the window.
-# That app never quit, nothing is owed, and a quit by hand later stays a quit. A process
-# on its way out (E, or U: the 11/5 quit sat in U for 7 minutes with its main thread parked
-# in teardown) gets no limit: the app is owed, however long the kernel takes. A swap only
+# It looks before it decides, the last time after its last sleep, and only one thing ends the
+# wait: an old process plainly alive once the window has passed. That app never quit, nothing is
+# owed, and a quit by hand later stays a quit. The window is the wall clock, so a lid shut across
+# days can't bring the app back after a quit by hand the next day. Inside it a quit by hand does
+# bring the app back: one ps sample can't tell that from an install's slow quit (a live app read
+# U, then 36 S and 4 R in 10 s, 11/6), and 11/5's slow quit took 21 minutes.
+# A process on its way out (E, or U: the 11/5 quit sat in U for 7 minutes with its main thread
+# parked in teardown) gets no limit: the app is owed, however long the kernel takes. A swap only
 # ever happens over a process in E or Z, so an installed build always gets its app.
 # It is done when a live process says so. Until then it asks open again every 6 polls, at
 # most 10 times: enough for LaunchServices to come round, few enough that an app that
 # crashes on launch doesn't throw up crash reports for half an hour.
+# Its output goes nowhere and the gate is gone by then, so a give-up goes to WATCHER_LOG.
+# It holds its own caffeinate: the gate's ends with the gate, and a Mini asleep has no app and
+# isn't on the network until someone touches it.
 start_app_when_gone() {
   APP_DUE=0
   say "$(date +%H:%M:%S) ${1:-the app starts by itself when the old JakeTunes is gone}"
   nohup /bin/bash -c '
-    polls=$1; poll=$2; app=$3; shift 3
+    polls=$1; poll=$2; wall=$3; app=$4; log=$5; shift 5
+    caffeinate -i -w $$ >/dev/null 2>&1 &
+    gave_up() { mkdir -p "${log%/*}"; echo "$(date "+%Y-%m-%d %H:%M:%S") watcher, pids $old: $1" >> "$log"; }
+    old=$*
     max_opens=$(( polls / 6 )); [ "$max_opens" -lt 1 ] && max_opens=1; [ "$max_opens" -gt 10 ] && max_opens=10
-    looks=0; opens=0; until_open=0
+    began=$(date +%s); opens=0; until_open=0
     while :; do
       left=""; going=""
       for p in "$@"; do
@@ -141,20 +149,20 @@ start_app_when_gone() {
       done
       if [ -z "$left" ]; then
         [ -n "$(pgrep -x JakeTunes)" ] && exit 0
-        [ -d "$app" ] || exit 0
+        [ -d "$app" ] || { gave_up "no bundle at $app, nothing to start"; exit 0; }
         if [ "$until_open" -le 0 ]; then
-          [ "$opens" -ge "$max_opens" ] && exit 1
+          [ "$opens" -ge "$max_opens" ] && { gave_up "NO APP RUNNING: $opens tries of open -a $app and nothing stayed up"; exit 1; }
           opens=$((opens + 1)); until_open=6
           open -a "$app"
         fi
         until_open=$((until_open - 1))
-      elif [ -z "$going" ] && [ "$looks" -ge "$polls" ]; then
+      elif [ -z "$going" ] && [ $(( $(date +%s) - began )) -ge "$wall" ]; then
+        gave_up "still plainly alive after ${wall}s, it never quit, nothing to do"
         exit 0
       fi
-      looks=$((looks + 1))
       sleep "$poll"
     done' jt-gate-watcher "$(awk -v s="$WATCH_S" -v p="$WATCH_POLL" 'BEGIN { n = int(s / p); print (n < 1 ? 1 : n) }')" \
-    "$WATCH_POLL" "$APP" $OLD_PIDS >/dev/null 2>&1 &
+    "$WATCH_POLL" "$WATCH_S" "$APP" "$WATCHER_LOG" $OLD_PIDS >/dev/null 2>&1 &
 }
 # Start the app now if the old process is gone within GONE_WAIT, or leave it to the watcher.
 # 0 a live process came up · 1 the old process is still there, the watcher has it · 2 none

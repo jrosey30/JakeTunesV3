@@ -319,6 +319,8 @@ export interface World {
   installedAsar: string
   stagedApp: string
   fake: string
+  /** Where the watcher writes a give-up. */
+  watcherLog: string
   calls: () => string
   writeGo: (sha: string) => void
   setAudio: (a: keyof typeof ASSERTIONS) => void
@@ -403,6 +405,7 @@ export function makeWorld(o: WorldOpts = {}): World {
   const spawned: ChildProcess[] = []
   return {
     root, home, dataDir, fake, installedApp, stagedApp, goFile,
+    watcherLog: join(home, 'Library', 'Logs', 'jaketunes-install-gate.log'),
     marker: join(dataDir, 'update-ready.json'),
     installedAsar: join(installedApp, 'Contents', 'Resources', 'app.asar'),
     calls: () => readFileSync(join(fake, 'calls.log'), 'utf8'),
