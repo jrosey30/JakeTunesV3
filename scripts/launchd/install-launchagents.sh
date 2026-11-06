@@ -17,7 +17,9 @@
 # installed one is reported "up to date" and never reloaded.
 #
 # Test/override hooks (used by the fixture runs in the brief doc):
-#   LAUNCHAGENTS_DIR   where plists install (default ~/Library/LaunchAgents)
+#   LAUNCHAGENTS_DIR   where plists install (default ~/Library/LaunchAgents).
+#                      --apply still reloads the real job, by label, so a test
+#                      also needs a fake launchctl first on PATH.
 #   JAKETUNES_REPO_DIR repo root the templates point at (default: this repo)
 #   NODE_BIN           node path rendered into templates
 #   PYTHON_BIN         python3 path rendered into templates

@@ -7,7 +7,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -75,16 +75,40 @@ describe('enrichment nightly', () => {
     assert.doesNotMatch(driver, /lyrics phase skipped/, 'lyrics are never the phase that gets skipped')
   })
 
+  // LAUNCHAGENTS_DIR only moves the plist: the reload reaches launchd by label. With the
+  // real launchctl on PATH, every test run booted out the real 04:30 job and reloaded it
+  // from a temp folder that was then deleted (found 2026-11-06, when a sandboxed run let
+  // the bootout through, failed the bootstrap and left the job unloaded).
   test('install-launchagents --only installs one job; an unknown label is refused', () => {
-    const agents = mkdtempSync(join(tmpdir(), 'agents-'))
+    const root = mkdtempSync(join(tmpdir(), 'agents-'))
     try {
+      const agents = join(root, 'agents')
+      const bin = join(root, 'bin')
+      const calls = join(root, 'launchctl-calls')
+      mkdirSync(bin)
+      writeFileSync(join(bin, 'launchctl'), '#!/bin/bash\necho "$*" >> "$LAUNCHCTL_CALLS"\n', { mode: 0o755 })
+      writeFileSync(calls, '')
       const run = (args: string[]) => spawnSync('bash', [join(launchd, 'install-launchagents.sh'), ...args], {
-        env: { ...childEnv, LAUNCHAGENTS_DIR: agents, PATH: '/usr/bin:/bin' }, encoding: 'utf-8',
+        env: { ...childEnv, LAUNCHAGENTS_DIR: agents, LAUNCHCTL_CALLS: calls, PATH: `${bin}:/usr/bin:/bin` }, encoding: 'utf-8',
       })
       const one = run(['--apply', '--only', 'com.jaketunes.enrichment-catchup'])
       assert.equal(one.status, 0, one.stderr)
       assert.deepEqual(readdirSync(agents), ['com.jaketunes.enrichment-catchup.plist'], 'only the named job lands')
+      const domain = `gui/${process.getuid!()}`
+      assert.deepEqual(readFileSync(calls, 'utf-8').split('\n').filter(Boolean), [
+        `bootout ${domain}/com.jaketunes.enrichment-catchup`,
+        `bootstrap ${domain} ${join(agents, 'com.jaketunes.enrichment-catchup.plist')}`,
+      ], 'the fake launchctl reloads the installed plist; no calls here means the real one got them')
       assert.notEqual(run(['--apply', '--only', 'com.jaketunes.nope']).status, 0)
-    } finally { rmSync(agents, { recursive: true, force: true }) }
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+
+  test('a test that runs the installer fakes launchctl', () => {
+    const offenders = readdirSync(import.meta.dirname).filter((f) => {
+      if (!f.endsWith('.ts')) return false
+      const src = readFileSync(join(import.meta.dirname, f), 'utf-8')
+      return src.includes('install-launchagents.sh') && !src.includes("join(bin, 'launchctl')")
+    })
+    assert.deepEqual(offenders, [], 'the real launchctl reloads the real job, whatever LAUNCHAGENTS_DIR says')
   })
 })
