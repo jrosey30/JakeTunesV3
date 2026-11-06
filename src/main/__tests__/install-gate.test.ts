@@ -370,8 +370,10 @@ function makeWorld(o: WorldOpts = {}): World {
       renameSync(tmp, join(fake, 'state_4242'))
     },
     clockJumps: (seconds) => writeFileSync(join(fake, 'date_offset'), String(seconds)),
+    // Not the fake open's temp name: two writers on one name, and a watcher mid-countdown
+    // took this one's away (ENOENT, once, at load 37, 2026-11-06).
     openWorksNow: () => {
-      const tmp = join(fake, 'open_fails.tmp')
+      const tmp = join(fake, 'open_fails.works-now.tmp')
       writeFileSync(tmp, '0')
       renameSync(tmp, join(fake, 'open_fails'))
     },
