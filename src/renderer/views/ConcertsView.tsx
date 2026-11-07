@@ -1,7 +1,8 @@
 /**
  * ConcertsView — the Live Concerts index, rebuilt 2026-09-02 to follow the
- * concert page's makeover: one ROW per show (poster at its own aspect + a
- * short blurb), bands A→Z, ties in chronological order (Jake). The blurb is
+ * concert page's makeover: one ROW per show (the poster in the one frame,
+ * common/concert-poster.ts, + a short blurb), bands A→Z, ties in chronological
+ * order (Jake). The blurb is
  * `concert.blurb` when set, else the first grounded fact — never invented.
  * White / silver / charcoal / one orange; the brown poster wall is retired.
  */
@@ -14,6 +15,7 @@ import AlbumArtImage from '../components/AlbumArtImage'
 import { setConcertKey } from '../concertNav'
 import type { LiveSetEntry } from '../types'
 import { declaredConcerts } from '../../common/concert-meta'
+import { posterMatte } from '../../common/concert-poster'
 import '../styles/albums.css'
 import '../styles/concerts.css'
 import '../styles/concert-stage.css'
@@ -96,7 +98,7 @@ export default function ConcertsView() {
               tabIndex={0}
               title={`${c.show} — ${c.band}`}
             >
-              <div className="concert-row-art">
+              <div className="concert-row-art" style={{ background: posterMatte(c.entry.concert) }}>
                 {c.artHash
                   ? <AlbumArtImage hash={c.artHash} alt={c.show} className="concert-row-img" size={320} />
                   : <div className="concert-row-noart" aria-hidden="true" />}
