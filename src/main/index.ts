@@ -8455,6 +8455,12 @@ registerWorkoutSyncIpc({
     const ipod = await resolveIpodState(detectedIpodMount, STATE_DIR)
     return ipod.refusal ? null : ipod.stateDir
   },
+  // Every iPod but the Original syncs exactly its Pool (2026-11-07); no iPod = the Original's pool.
+  listOnlyIpod: async () => {
+    if (!detectedIpodMount) return null
+    const id = await identifyIpod(detectedIpodMount, STATE_DIR)
+    return id.status === 'known' && !id.device.primary ? id.device.name : null
+  },
 })
 // iPod Pool — the hand-built sync set (drag songs/albums/artists/playlists
 // onto the sidebar row); build-workout-sync-set reads it in pool mode.

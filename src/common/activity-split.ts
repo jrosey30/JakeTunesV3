@@ -83,3 +83,43 @@ export function halfAndHalfLine(
     : ''
   return `Half and half: ${parts.join(' + ')}.${waiting}`
 }
+
+/**
+ * Every iPod but the Original is a curated list (Jake, 2026-11-07: the Red's
+ * pool is a 500-song list and exactly those 500 go on it). A sync of N puts
+ * the pool on and nothing else: the newest N drops when the pool is bigger,
+ * the whole pool when it is smaller. No Music Man half, no Top 1000, no fill.
+ * The Original stays on splitHalfAndHalf.
+ */
+export function splitListOnly(poolIdsInDropOrder: readonly number[], target: number): HalfAndHalf {
+  const n = Math.max(0, Math.floor(target))
+  const cut = Math.max(0, poolIdsInDropOrder.length - n)
+  return {
+    manualIds: poolIdsInDropOrder.slice(cut),
+    pinnedCount: 0,
+    brainTarget: 0,
+    waitingIds: poolIdsInDropOrder.slice(0, cut),
+  }
+}
+
+/** The review sheet's line for a list-only iPod: what goes on, and nothing else. */
+export function listOnlyLine(split: { manualIds: readonly number[]; waitingIds: readonly number[] }, ipodName: string): string {
+  const on = split.manualIds.length
+  const songs = `${on.toLocaleString()} ${on === 1 ? 'song' : 'songs'}`
+  const waiting = split.waitingIds.length
+  const rest = waiting > 0
+    ? ` Your newest ${songs}; ${waiting.toLocaleString()} older pool ${waiting === 1 ? 'song sits' : 'songs sit'} this one out.`
+    : ` All ${songs}.`
+  return `Just ${ipodName}’s Pool, nothing added.${rest}`
+}
+
+/** The one switch main and the sheets share: the Original (or no known iPod) is half and half,
+ *  any other registered iPod is list-only. */
+export function splitForIpod(
+  poolIdsInDropOrder: readonly number[],
+  target: number,
+  listOnly: boolean,
+  pinnedIdsInPriority: readonly number[] = [],
+): HalfAndHalf {
+  return listOnly ? splitListOnly(poolIdsInDropOrder, target) : splitHalfAndHalf(poolIdsInDropOrder, target, pinnedIdsInPriority)
+}
