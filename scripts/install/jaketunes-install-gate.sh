@@ -39,7 +39,8 @@
 #  newer gate's files survive an older gate's death. No sha, or no data folder (a dev
 #  machine): the markers are skipped and the gate behaves exactly as before.
 #
-# Exit codes and messages are parsed by the install pipeline — keep them:
+# Exit codes, for a caller that keeps ${PIPESTATUS[0]}. The recipes so far pipe this through grep and
+# read only the last line, so keep the messages too (README):
 #   0 installed · 1 ABORT (precondition, quit, copy, asar changed) · 3 gate timeout
 #   4 installed, but no app came up: open -a said no, or said yes and nothing started.
 #     The watcher keeps asking.
