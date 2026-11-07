@@ -58,6 +58,10 @@ export interface WorkoutSyncHost {
   /** The plugged-in iPod's name when it is NOT the Original (a curated list: its Pool and
    *  nothing else, Jake 2026-11-07); null for the Original, no iPod, or an unknown card. */
   listOnlyIpod?: () => Promise<string | null>
+  /** That iPod's list, refreshed from homemini into its pool file first (ipod-list-pool.ts):
+   *  the ids in drop order, and one plain line when they are NOT homemini's fresh answer
+   *  ("homemini didn’t answer — using the list from …"). null = no list-only iPod plugged in. */
+  listOnlyPool?: () => Promise<{ ids: number[]; note: string | null } | null>
 }
 
 const WORKOUT_TARGET = 1000
@@ -281,7 +285,26 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
       // Pool songs are exempt from the 2-per-artist rule; Music Man's half is
       // not, and counts the pool half. (Replaces the 2026-09-02 either/or
       // "Who picks" pool mode and its over-target hard stop.)
-      const pool = opts?.pool
+      // Every iPod but the Original is a curated list (2026-11-07): exactly its Pool, newest
+      // first when the pool is bigger than the size, never Music Man or Top 1000 fill.
+      const listOnlyName = (await host.listOnlyIpod?.().catch(() => null)) ?? null
+      // homemini writes that list (2026-11-07, Jake: "i cannot manually add songs in there"):
+      // the iPod's pool file is refreshed from homemini right before the set is built, and
+      // the set is built from that file, never from the renderer's copy. homemini away or
+      // answering junk: the last good file, and the note says so on the review line.
+      let listNote: string | null = null
+      let poolIn = opts?.pool
+      if (listOnlyName !== null && host.listOnlyPool) {
+        const fresh = await host.listOnlyPool().catch((err) => {
+          console.warn('[workout-sync] iPod list refresh failed — the renderer’s pool stands:', err instanceof Error ? err.message : err)
+          return null
+        })
+        if (fresh) {
+          poolIn = { ids: fresh.ids, fill: false }
+          listNote = fresh.note
+        }
+      }
+      const pool = poolIn
       const poolMode = !!pool && ((Array.isArray(pool.ids) && pool.ids.length > 0) || (Array.isArray(pool.pinnedIds) && pool.pinnedIds.length > 0))
       const byId = new Map(tracks.map((t) => [Number(t.id), t]))
       const syncable = (t: WorkoutTrack): boolean =>
@@ -311,12 +334,11 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
           console.log(`[workout-sync] pool: ${pool.ids.length - poolIds.length} id(s) not syncable/unknown — dropped from ${pool.ids.length}`)
         }
       }
-      // Every iPod but the Original is a curated list (2026-11-07): exactly its Pool, newest
-      // first when the pool is bigger than the size, never Music Man or Top 1000 fill.
-      const listOnlyName = (await host.listOnlyIpod?.().catch(() => null)) ?? null
       const split = splitForIpod(poolIds, target, listOnlyName !== null, pinnedIds)
       if (listOnlyName !== null && split.manualIds.length === 0) {
-        return { ok: false, error: `${listOnlyName}’s Pool is empty. Only its Pool goes on ${listOnlyName}, so drop songs into it first.` }
+        return { ok: false, error: host.listOnlyPool
+          ? `${listOnlyName}’s list is empty. Only its list goes on ${listOnlyName}; songs are added by asking Claude, or by the brain.${listNote ? ` ${listNote}` : ''}`
+          : `${listOnlyName}’s Pool is empty. Only its Pool goes on ${listOnlyName}, so drop songs into it first.` }
       }
       const manualIds = split.manualIds
       const gap = split.brainTarget
@@ -462,7 +484,7 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
           : selected.commentary
       } else if (listOnlyName !== null) {
         name = (brief.profileName || '').trim() || `${listOnlyName}’s Pool`
-        commentary = listOnlyLine(split, listOnlyName)
+        commentary = listNote ? `${listOnlyLine(split, listOnlyName)} ${listNote}` : listOnlyLine(split, listOnlyName)
       } else if (topIds.length > 0) {
         name = (brief.profileName || '').trim() || 'Top 1000'
         commentary = halfAndHalfLine(split, manualIds.length, topIds.length, 0)

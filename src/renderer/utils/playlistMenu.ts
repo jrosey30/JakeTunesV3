@@ -14,7 +14,7 @@
 import type { MenuEntry } from '../components/ContextMenu'
 import type { Playlist, Track } from '../types'
 import { setNotice } from '../activity'
-import { addTracksToPoolDirect, getPoolReadOnly } from '../activityPool'
+import { addTracksToPoolDirect, getPoolDevice, getPoolEditable, getPoolManaged } from '../activityPool'
 import { queueNoticeText, type QueueMode } from '../../common/queue-notice'
 
 /** iPod-imported playlists whose names duplicate the built-in smart playlists.
@@ -125,10 +125,14 @@ export function queueMenuEntries(tracks: Track[], dispatch: QueueDispatch): Menu
  */
 export function addToIpodPoolEntry(tracks: Track[]): MenuEntry {
   const n = tracks.length
+  const listIpod = getPoolManaged() ? getPoolDevice() : null
+  const base = n === 1 ? 'Add to iPod Pool' : `Add ${n} songs to iPod Pool`
   return {
-    label: n === 1 ? 'Add to iPod Pool' : `Add ${n} songs to iPod Pool`,
-    // A replica (workmini) only mirrors the MacBook's pool — it can't be edited here.
-    disabled: n === 0 || getPoolReadOnly(),
+    label: listIpod ? `${base} (not while ${listIpod.name} is plugged in)` : base,
+    // A replica (workmini) only mirrors the MacBook's pool — it can't be edited here. And only
+    // the Original's pool takes songs by hand: with another iPod plugged in, the pool is that
+    // iPod's list, which homemini writes (2026-11-07), so the entry is off.
+    disabled: n === 0 || !getPoolEditable(),
     onClick: () => { void addTracksToPoolDirect(tracks) },
   }
 }

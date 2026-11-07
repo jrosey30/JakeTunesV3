@@ -10,6 +10,10 @@
  * and write atomically. The merge rules are pure (activity-pool.ts); the
  * skit gate is the SAME one the picker and the mixtape builder use, so a
  * 40-second interlude can't reach the iPod by any door.
+ *
+ * Every iPod but the Original (2026-11-07): its list is homemini's (ipod-lists-ipc.ts).
+ * Its page reads it (`managed`, read-only) and add / remove / swap / clear are refused
+ * (common/ipod-list-doc.ts poolEditRefusal) — Jake: "i cannot manually add songs in there".
  */
 import { dirname, join } from 'path'
 import { mkdir, readFile, writeFile, rename } from 'fs/promises'
@@ -22,6 +26,8 @@ import { ORIGINAL_DEFAULTS, type IpodDeviceMarker } from '../../common/ipod-iden
 import { loadIpodRegistry, poolFileFor } from '../ipod-identity.ts'
 import { isSkitOrIntro } from '../workout-sync.ts'
 import { createHubPoolMirror } from '../hub-pool-mirror.ts'
+import { poolEditRefusal } from '../../common/ipod-list-doc.ts'
+import type { IpodPoolRefresh } from '../ipod-list-pool.ts'
 
 /** A replica (workmini) shows the MacBook's pool read-only; it never edits one. */
 const REPLICA_READ_ONLY = 'The iPod Pool is edited on the MacBook — this Mac only shows it.'
@@ -120,6 +126,9 @@ export function registerActivityPoolIpc(
     hubBase?: () => Promise<string | null>
     /** The plugged-in iPod, when JakeTunes knows it (index.ts: the detected mount → identifyIpod). */
     currentIpod?: () => Promise<IpodDeviceMarker | null>
+    /** A non-Original iPod's list, refreshed from homemini into its pool file first
+     *  (ipc/ipod-lists-ipc.ts). Absent: the pool file as it stands. */
+    listPool?: (device: IpodDeviceMarker) => Promise<IpodPoolRefresh>
   } = {},
 ): void {
   // Replica mode: the pool comes from the hub (homemini), read-only. The local
@@ -137,10 +146,29 @@ export function registerActivityPoolIpc(
     }
   }
 
+  // Every iPod but the Original carries homemini's list (2026-11-07, Jake: "i cannot manually
+  // add songs in there"). Its page is read-only (`managed`), and every edit below is refused.
+  const refuseEdit = async (): Promise<{ ok: false; error: string } | null> => {
+    const error = poolEditRefusal(await currentOwner())
+    return error ? { ok: false, error } : null
+  }
+
   ipc.handle('activity-pool-get', async () => {
     const hubIds = await replicaIds()
     if (hubIds) return { ok: true, ids: hubIds, names: {} as Record<string, PoolName>, max: POOL_MAX, readOnly: true, device: ownerOut(null) }
     const owner = await currentOwner()
+    if (owner) {
+      if (opts.listPool) {
+        try {
+          const r = await opts.listPool(owner)
+          return { ok: true, ids: r.poolIds, names: r.names, max: POOL_MAX, managed: true, note: r.note, device: ownerOut(owner) }
+        } catch (err) {
+          console.warn(`[activity-pool] ${owner.name}: list refresh failed — showing the file:`, err instanceof Error ? err.message : err)
+        }
+      }
+      const file = await loadPoolFile(owner)
+      return { ok: true, ids: file.ids, names: file.names, max: POOL_MAX, managed: true, note: null, device: ownerOut(owner) }
+    }
     const file = await loadPoolFile(owner)
     // The Original's ledger names its pool's early drops; another iPod has no ledger yet.
     if (!owner && await backfillNamesFromLedger(file.ids, file.names)) await saveActivityPool(owner, file.ids, file.names)
@@ -151,6 +179,8 @@ export function registerActivityPoolIpc(
   // "Use the new copy". Order is the pool's order; it is preserved.
   ipc.handle('activity-pool-swap', async (_e, args: { oldId: number; newId: number; name?: PoolName }) => {
     if (await replicaIds()) return { ok: false, error: REPLICA_READ_ONLY }
+    const refused = await refuseEdit()
+    if (refused) return refused
     const oldId = Number(args?.oldId)
     const newId = Number(args?.newId)
     if (!Number.isFinite(oldId) || !Number.isFinite(newId)) return { ok: false, error: 'Bad ids.' }
@@ -172,6 +202,8 @@ export function registerActivityPoolIpc(
     if (!Array.isArray(candidates) || candidates.length === 0) {
       return { ok: false, error: 'Nothing to add.' }
     }
+    const refused = await refuseEdit()
+    if (refused) return refused
     const owner = await currentOwner()
     // No song rides two iPods: whatever already lives on another iPod's pool stays there.
     const gate = blockedByOtherIpods(candidates, await otherIpodPools(owner))
@@ -194,6 +226,8 @@ export function registerActivityPoolIpc(
 
   ipc.handle('activity-pool-remove', async (_e, ids: number[]) => {
     if (await replicaIds()) return { ok: false, error: REPLICA_READ_ONLY }
+    const refused = await refuseEdit()
+    if (refused) return refused
     const owner = await currentOwner()
     const file = await loadPoolFile(owner)
     const next = removeFromPool(file.ids, Array.isArray(ids) ? ids : [])
@@ -203,6 +237,8 @@ export function registerActivityPoolIpc(
 
   ipc.handle('activity-pool-clear', async () => {
     if (await replicaIds()) return { ok: false, error: REPLICA_READ_ONLY }
+    const refused = await refuseEdit()
+    if (refused) return refused
     await saveActivityPool(await currentOwner(), [], {})
     return { ok: true, ids: [] as number[] }
   }, { refuse: REFUSED_SENDER })

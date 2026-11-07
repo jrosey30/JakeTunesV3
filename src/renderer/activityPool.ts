@@ -20,6 +20,11 @@ let max = 1000
  *  hub for display. Every edit door checks this; main refuses edits there too. */
 let readOnly = false
 let hubPoll: ReturnType<typeof setInterval> | null = null
+/** True while a non-Original iPod is plugged in (2026-11-07): its list is homemini's, written
+ *  by asking Claude or by the brain, never by hand. Every edit door checks this; main refuses too. */
+let managed = false
+/** One plain line when that list is not homemini's fresh answer ("homemini didn’t answer — …"). */
+let managedNote: string | null = null
 /** Whose pool this is (one Pool per iPod, step 2): the plugged-in iPod's, else the Original's. */
 export interface PoolDevice { id: string | null; name: string; primary: boolean }
 let device: PoolDevice | null = null
@@ -37,6 +42,14 @@ export function getPoolIds(): number[] { return ids }
 export function getPoolNames(): Record<string, PoolName> { return names }
 export function getPoolMax(): number { return max }
 export function getPoolReadOnly(): boolean { return readOnly }
+export function getPoolManaged(): boolean { return managed }
+export function usePoolManaged(): boolean { return useSyncExternalStore(subscribePool, getPoolManaged) }
+export function getPoolManagedNote(): string | null { return managedNote }
+export function usePoolManagedNote(): string | null { return useSyncExternalStore(subscribePool, getPoolManagedNote) }
+/** Can songs be dropped into / taken out of the pool from this Mac right now? Only the
+ *  Original's, and never on a replica. */
+export function getPoolEditable(): boolean { return !readOnly && !managed }
+export function usePoolEditable(): boolean { return useSyncExternalStore(subscribePool, getPoolEditable) }
 export function usePoolReadOnly(): boolean { return useSyncExternalStore(subscribePool, getPoolReadOnly) }
 export function getPoolDevice(): PoolDevice | null { return device }
 export function usePoolDevice(): PoolDevice | null { return useSyncExternalStore(subscribePool, getPoolDevice) }
@@ -86,6 +99,8 @@ export async function refreshPool(): Promise<number[]> {
       if (r.names && typeof r.names === 'object') names = r.names
       if (typeof r.max === 'number') max = r.max
       readOnly = r.readOnly === true
+      managed = r.managed === true
+      managedNote = managed && typeof r.note === 'string' && r.note ? r.note : null
       device = r.device && typeof r.device === 'object' ? { id: r.device.id ?? null, name: String(r.device.name ?? ''), primary: r.device.primary === true } : null
       // A mirror follows the MacBook: re-read every 5 minutes (the hub's own
       // mirror cadence). The MacBook never polls — it is the writer.
@@ -99,7 +114,7 @@ export async function refreshPool(): Promise<number[]> {
 /** Drop handler: resolve dragged ids to tracks (the skit gate needs
  *  title/duration/genre) and report the outcome in one notice. */
 export async function addTracksToPool(dropped: number[], byId: Map<number, Track>): Promise<void> {
-  if (readOnly) return
+  if (!getPoolEditable()) return
   const candidates = dropped
     .map((id) => byId.get(id))
     .filter((t): t is Track => !!t)
@@ -142,20 +157,20 @@ export function addTracksToPoolDirect(tracks: Track[]): Promise<void> {
 }
 
 export async function removeFromPool(remove: number[]): Promise<void> {
-  if (readOnly) return
+  if (!getPoolEditable()) return
   const r = await window.electronAPI.removeFromActivityPool?.(remove)
   if (r?.ok && Array.isArray(r.ids)) { ids = r.ids; notify() }
 }
 
 export async function clearPool(): Promise<void> {
-  if (readOnly) return
+  if (!getPoolEditable()) return
   const r = await window.electronAPI.clearActivityPool?.()
   if (r?.ok) { ids = []; names = {}; notify() }
 }
 
 /** "Use the new copy": replace a dead id with the re-added track, in place. */
 export async function swapInPool(oldId: number, replacement: Track): Promise<void> {
-  if (readOnly) return
+  if (!getPoolEditable()) return
   const r = await window.electronAPI.swapInActivityPool?.({ oldId, newId: replacement.id, name: { t: replacement.title || '', a: replacement.artist || '' } })
   if (r?.ok && Array.isArray(r.ids)) { ids = r.ids; if (r.names) names = r.names; notify(); return }
   setNotice(`Couldn't swap that song — ${r?.error || 'no reply from the app'}`, { kind: 'error', durationMs: 5000 })

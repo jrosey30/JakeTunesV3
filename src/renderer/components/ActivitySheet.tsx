@@ -228,7 +228,7 @@ export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
         <div className="activity-sheet-head">
           <h2 className="activity-sheet-title">What are you doing?</h2>
           <p className="activity-sheet-sub">
-            {listOnly ? `Just ${listOnly.name}’s Pool: the songs you dropped in, and nothing else. Pick a size at least as big as the pool to put all of it on.` : 'Half your iPod Pool, half Music Man. Your newest pool drops take half the set; Music Man reads your taste — what you star and play most — and picks the other half to fit what you’re doing. Songs land at your convert setting. “Bopping Around” is everyday listening: hanging out, commuting, errands.'}
+            {listOnly ? `Just ${listOnly.name}’s list, and nothing else. homemini keeps it: songs are added by asking Claude, or by the brain. Pick a size at least as big as the list to put all of it on.` : 'Half your iPod Pool, half Music Man. Your newest pool drops take half the set; Music Man reads your taste — what you star and play most — and picks the other half to fit what you’re doing. Songs land at your convert setting. “Bopping Around” is everyday listening: hanging out, commuting, errands.'}
           </p>
         </div>
 
@@ -247,8 +247,8 @@ export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
           <div className="activity-pool-status">
             {listOnly
               ? (poolHalf === 0
-                  ? `${listOnly.name}’s Pool is empty, so there is nothing to sync. Only its Pool goes on ${listOnly.name}.`
-                  : `${poolWaiting > 0 ? `Your newest ${poolHalf.toLocaleString()} pool songs go on; ${poolWaiting.toLocaleString()} older pool song${poolWaiting === 1 ? '' : 's'} sit this one out.` : `All ${poolHalf.toLocaleString()} pool song${poolHalf === 1 ? '' : 's'} go on.`} Nothing else is added.`)
+                  ? `${listOnly.name}’s list is empty, so there is nothing to sync. Only its list goes on ${listOnly.name}.`
+                  : `${poolWaiting > 0 ? `The newest ${poolHalf.toLocaleString()} songs on the list go on; ${poolWaiting.toLocaleString()} older song${poolWaiting === 1 ? '' : 's'} sit this one out.` : `All ${poolHalf.toLocaleString()} song${poolHalf === 1 ? '' : 's'} on the list go on.`} Nothing else is added. homemini’s latest list is read right before the sync.`)
               : poolHalf === 0
               ? `Your iPod Pool is empty, so your Top 1000 fills all ${target.toLocaleString()}. Right-click any song and choose “Add to iPod Pool” to claim half.`
               : `Your half: your ${poolHalf.toLocaleString()} newest pool drops. Your Top 1000 fills the other ${brainHalf.toLocaleString()}, best first.${poolWaiting > 0 ? ` ${poolWaiting.toLocaleString()} older pool song${poolWaiting === 1 ? '' : 's'} sit this one out.` : ''}`}

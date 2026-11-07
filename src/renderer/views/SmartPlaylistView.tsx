@@ -10,6 +10,8 @@ import { evaluateSmartPlaylist, SMART_PLAYLIST_TITLES as TITLES } from '../utils
 import { smartPlaylistCover } from '../utils/playlistCovers'
 import { useListenMoreWeekly } from '../listenMoreWeekly'
 import { useTop1000List } from '../top1000List'
+import { useIpodLists } from '../ipodLists'
+import { parseIpodListPlaylistId } from '../../common/ipod-list-doc'
 import { useHomeShelves } from '../homeShelves'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { useReleaseMonths } from '../releaseMonths'
@@ -150,7 +152,11 @@ export default function SmartPlaylistView() {
 
   const playlistId = libState.activeSmartPlaylist
   const monthYm = playlistId ? parseMonthPlaylistId(playlistId) : null
-  const title = playlistId ? TITLES[playlistId] || (monthYm ? monthPlaylistName(monthYm) : playlistId) : ''
+  // A non-Original iPod's list (2026-11-07): named for the iPod ("iPod EVIL"), homemini's order.
+  const ipodLists = useIpodLists()
+  const ipodListDevice = playlistId ? parseIpodListPlaylistId(playlistId) : null
+  const ipodList = ipodListDevice ? ipodLists.find((l) => l.id === ipodListDevice) ?? null : null
+  const title = playlistId ? TITLES[playlistId] || (monthYm ? monthPlaylistName(monthYm) : ipodList ? ipodList.name : playlistId) : ''
 
   // 4.2.18: per-persona weekly picks state. Both Music Man and Larry
   // get their own 25-track rotation that resets every Friday at 00:00.
@@ -376,6 +382,12 @@ export default function SmartPlaylistView() {
       const byId = new Map(libState.tracks.map((t) => [t.id, t]))
       return monthTrackIds(releaseMonths, monthYm).map((id) => byId.get(id)).filter((t): t is Track => t !== undefined)
     }
+    if (ipodListDevice) {
+      // A non-Original iPod's list (2026-11-07): homemini's list, newest first, resolved here.
+      if (!ipodList) return []
+      const byId = new Map(libState.tracks.map((t) => [t.id, t]))
+      return ipodList.ids.map((id) => byId.get(id)).filter((t): t is Track => t !== undefined)
+    }
     if (playlistId === 'top-1000') {
       // The Top 1000 Quiz's ranking (2026-11-02): homemini's list in rank order, resolved here.
       if (!top1000) return []
@@ -438,7 +450,7 @@ export default function SmartPlaylistView() {
         .slice(0, 25))
     }
     return own(evaluateSmartPlaylist(playlistId, everywhere))
-  }, [playlistId, libState.tracks, everywhere, picks, topWindow, windowedCounts, weekly, onRepeat, monthYm, releaseMonths, top1000])
+  }, [playlistId, libState.tracks, everywhere, picks, topWindow, windowedCounts, weekly, onRepeat, monthYm, releaseMonths, top1000, ipodListDevice, ipodList])
 
   // Apply search filter — every word must appear somewhere across all fields
   const filteredTracks = useMemo(() => {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react'
+import { useState, useEffect, useCallback, useRef, useSyncExternalStore, useMemo } from 'react'
 import { SMART_PLAYLIST_NAMES } from '../../utils/playlistMenu'
 import { BEST_OF_YEAR_NAME } from '../../utils/smartPlaylists'
 import { smartPlaylistCover } from '../../utils/playlistCovers'
@@ -17,12 +17,14 @@ import ConfirmDialog from '../ConfirmDialog'
 import type { ViewName, SmartPlaylistId, Track, Playlist } from '../../types'
 import { isJustificationPlaylist, sortJustifications } from '../../utils/justification'
 import { useReleaseMonths } from '../../releaseMonths'
+import { useIpodLists } from '../../ipodLists'
+import { ipodListPlaylistId } from '../../../common/ipod-list-doc'
 import { monthPlaylistId, monthPlaylistName, yearsOf } from '../../../common/release-months'
 import { setNotice } from '../../activity'
 import { setMixtapeId, getMixtapeId, getMixtapes, subscribeMixtapes, refreshMixtapes } from '../../mixtapes'
 import { getAiMixtapes, subscribeAiMixtapes, ensureAiMixtapesLoaded, removeKeptAiTape } from '../../aiMixtapes'
 import { keptAiTapes, type AiMixtape } from '../../../common/ai-mixtapes'
-import { getPoolIds, subscribePool, refreshPool, addTracksToPool, usePoolHealth, usePoolReadOnly } from '../../activityPool'
+import { getPoolIds, subscribePool, refreshPool, addTracksToPool, usePoolHealth, usePoolEditable } from '../../activityPool'
 import { CD_PRESENCE_START, stepCdPresence } from '../../../common/auto-nav'
 import { quizDoorShown } from '../../../common/top1000-doc'
 import { autoNavBlocked } from '../../utils/autoNavGuard'
@@ -286,6 +288,16 @@ export default function Sidebar() {
   const [plCtxMenu, setPlCtxMenu] = useState<{ x: number; y: number; playlistId: string; playlistName: string; kind: 'user' | 'smart' } | null>(null)
   // This year's releases by month (2026-10-24): a section per year, a smart playlist per month.
   const releaseMonths = useReleaseMonths()
+  // Each non-Original iPod's list as a playlist (2026-11-07, Jake: "the evil ipod gets a playlist
+  // like the top 1000 ipod does"), right after Top 1000, named for the iPod. homemini's list,
+  // newest first (src/renderer/ipodLists.ts). Sidebar only — never synced to the Original.
+  const ipodLists = useIpodLists()
+  const allSmart = useMemo(() => {
+    if (ipodLists.length === 0) return smartPlaylists
+    const lists = ipodLists.map((l) => ({ label: l.name, id: ipodListPlaylistId(l.id) as SmartPlaylistId }))
+    const at = smartPlaylists.findIndex((x) => x.id === 'top-1000') + 1
+    return [...smartPlaylists.slice(0, at), ...lists, ...smartPlaylists.slice(at)]
+  }, [ipodLists])
   // Pinned playlists (2026-08-07, Jake: "pin 3 and only 3 playlists to the
   // very tippy top above defaults....i can absolutely pin a default").
   // Raw ids — user playlists ('pl-…'/'mm-…') and smart ids never collide.
@@ -353,7 +365,8 @@ export default function Sidebar() {
   // iPod Pool (2026-09-02): the hand-built activity set. Count rides the
   // sidebar badge; drops onto the row add to it (iTunes: drag to the iPod).
   const poolIds = useSyncExternalStore(subscribePool, getPoolIds)
-  const poolReadOnly = usePoolReadOnly()   // workmini: the MacBook's pool, display-only
+  // workmini: the MacBook's pool, display-only; a non-Original iPod plugged in: its list is homemini's (2026-11-07)
+  const poolEditable = usePoolEditable()
   // The badge is what will SYNC, not what was dropped (2026-09-19: 1,000
   // in the badge, 992 at the sheet). Pool page names the difference.
   const poolHealthInfo = usePoolHealth(state.tracks)
@@ -768,7 +781,7 @@ export default function Sidebar() {
             badge={poolIds.length > 0 ? poolHealthInfo.syncable.length.toLocaleString() : undefined}
             selected={state.currentView === 'activity-pool'}
             onClick={() => dispatch({ type: 'SET_VIEW', view: 'activity-pool' })}
-            droppable={!poolReadOnly}
+            droppable={poolEditable}
             onDrop={(trackIds) => { void addTracksToPool(trackIds, new Map(state.tracks.map((t) => [t.id, t]))) }}
           />
         </SidebarSection>
@@ -860,7 +873,7 @@ export default function Sidebar() {
               MOVES its entry up — no duplicate below. Stale pins (deleted
               playlists) simply resolve to nothing. */}
           {pinned.map((id) => {
-            const sp = smartPlaylists.find(x => x.id === id)
+            const sp = allSmart.find(x => x.id === id)
             if (sp) return (
               <div key={`pin-${id}`} onContextMenu={(e) => handlePlaylistContextMenu(e, sp.id, sp.label, 'smart')}>
                 <SidebarItem
@@ -888,7 +901,7 @@ export default function Sidebar() {
               </div>
             )
           })}
-          {smartPlaylists.filter(sp => !pinned.includes(sp.id)).map((sp) => (
+          {allSmart.filter(sp => !pinned.includes(sp.id)).map((sp) => (
             <div key={sp.id} onContextMenu={(e) => handlePlaylistContextMenu(e, sp.id, sp.label, 'smart')}>
               <SidebarItem
                 label={sp.label}
