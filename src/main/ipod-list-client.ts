@@ -54,5 +54,24 @@ export function createIpodListClient(opts: IpodListClientOptions) {
       }
       return { kind: 'ok', list }
     },
+
+    /** The iPod was renamed (2026-11-07): PATCH homemini's list name (Mobile PR #753).
+     *  true = homemini took it; false = not now (down, 404, any refusal). */
+    async rename(deviceId: string, name: string): Promise<boolean> {
+      try {
+        const res = await fetchImpl(`${base}/${encodeURIComponent(deviceId)}`, withCompanionInit({
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+          signal: AbortSignal.timeout(timeoutMs),
+        }) as Record<string, unknown>)
+        if (res.status === 200) return true
+        warn(`[ipod-list] rename ${deviceId}: homemini answered ${res.status}`)
+        return false
+      } catch (err) {
+        warn(`[ipod-list] rename ${deviceId} failed: ${(err as Error)?.message ?? err}`)
+        return false
+      }
+    },
   }
 }

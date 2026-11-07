@@ -4,9 +4,9 @@
  * Everything dropped onto the sidebar's "iPod Pool" row (or onto this
  * page) lands here in drop order. The page is a plain, honest list: what
  * is in the pool, how long it runs, remove one, clear all, and hand off to
- * the Device page to sync it. No picking happens here. Every Activity Sync
- * is half and half (2026-10-16): the newest half-set of this pool goes on,
- * and the Top 1000 Quiz list fills the other half (Music Man when homemini is away).
+ * the Device page to sync it. No picking happens here. One button per iPod
+ * (2026-11-07): the Original's Sync puts its Top 1000 on it, so drops here
+ * stay here; another iPod's Sync puts exactly its list on it.
  *
  * Any other iPod plugged in (2026-11-07): the page shows that iPod's list, which
  * homemini writes, read-only and newest first — no drop target, no edit controls.
@@ -21,7 +21,6 @@ import {
   usePoolManaged, usePoolManagedNote, addTracksToPool, removeFromPool, clearPool, swapInPool,
 } from '../activityPool'
 import '../styles/activity-pool.css'
-import { splitHalfAndHalf } from '../../common/activity-split'
 import { ipodListHowSongsArrive } from '../../common/ipod-list-doc'
 
 function fmtClock(ms: number): string {
@@ -103,16 +102,12 @@ export default function ActivityPoolView() {
                   ? <>{rows.length.toLocaleString()} dropped in · {fmtLong(totalMs)} · {otherIpod.name}’s own pool — a song rides one iPod, never two · a sync puts exactly these on it, nothing added{cantSync > 0 ? <> · <strong className="pool-sub-warn">{cantSync} can’t</strong></> : ''}</>
                   : <>{otherIpod.name} is plugged in: this is its own pool. Drop songs, albums, artists or playlists here — anything already on another iPod stays there.</>)
               : ids.length > 0
-              ? (() => {
-                  const split = splitHalfAndHalf(health.syncable, max)
-                  const dropsOn = split.manualIds.length
-                  return <>{rows.length.toLocaleString()} dropped in · a {max.toLocaleString()}-song sync takes your newest {dropsOn.toLocaleString()} drops, your Top 1000 fills the other {split.brainTarget.toLocaleString()} · {fmtLong(totalMs)}{cantSync > 0 ? <> · <strong className="pool-sub-warn">{cantSync} can’t</strong></> : ''}</>
-                })()
+              ? <>{rows.length.toLocaleString()} dropped in · {fmtLong(totalMs)} · the Original’s Sync puts its Top 1000 on it, so these stay here</>
               : <>No songs dropped in yet — right-click songs and choose “Add to iPod Pool”, or drag songs, albums, artists or playlists onto this page.</>}
           </div>
         </div>
         {(editable || managed) && <div className="pool-actions">
-          <button
+          {otherIpod && <button
             type="button"
             className="pool-btn pool-btn--go"
             disabled={rows.length === 0}
@@ -121,21 +116,19 @@ export default function ActivityPoolView() {
               // no iPod mounted the Sidebar bounces the Device page straight
               // back to Songs, which read as the button doing nothing (and the
               // notice still said "press Activity Sync"). No iPod → stay here.
-              // (Every sync is half and half, so there is no pool "mode" to
-              // hand over any more — the Activity sheet ignored it.)
-              const tail = otherIpod
-                ? `${otherIpod.name} gets exactly this pool, nothing added.`
-                : 'half the set comes from your newest pool drops, your Top 1000 fills the rest.'
+              // One button per iPod (2026-11-07): only a list-only iPod syncs
+              // what this page shows; the Original's Sync is its Top 1000.
+              const tail = `${otherIpod.name} gets exactly this list, nothing added.`
               void window.electronAPI.checkIpodMounted().then((r) => r.mounted, () => false).then((mounted) => {
                 if (!mounted) {
-                  setNotice(`Plug in the iPod, then press Activity Sync — ${tail}`, { kind: 'info', durationMs: 6000 })
+                  setNotice(`Plug in ${otherIpod.name}, then press Sync ${otherIpod.name} — ${tail}`, { kind: 'info', durationMs: 6000 })
                   return
                 }
                 dispatch({ type: 'SET_VIEW', view: 'device' })
-                setNotice(`Press Activity Sync — ${tail}`, { kind: 'info', durationMs: 6000 })
+                setNotice(`Press Sync ${otherIpod.name} — ${tail}`, { kind: 'info', durationMs: 6000 })
               })
             }}
-          >{managed ? 'Sync this list…' : 'Sync this pool…'}</button>
+          >{managed ? 'Sync this list…' : 'Sync this pool…'}</button>}
           {editable && <button type="button" className="pool-btn" disabled={rows.length === 0} onClick={() => setConfirmClear(true)}>Clear pool</button>}
         </div>}
       </div>
@@ -147,7 +140,7 @@ export default function ActivityPoolView() {
 
       {editable && <div className="pool-rules">
         Dropping skips skits, intros and sub-minute fragments (you’ll see the count). Duplicates never double-count.
-        The pool is yours — no per-artist limit. Every sync takes your newest drops for its half; older drops sit that one out.
+        The pool is yours — no per-artist limit. The Original’s Sync puts its Top 1000 on it, not this pool.
         The pool holds {max.toLocaleString()} — drop more and the oldest drops roll off to make room (you’ll see how many).
       </div>}
 

@@ -1,20 +1,21 @@
 import { useMemo, useState, useEffect, useRef, useSyncExternalStore } from 'react'
 import { useLibrary } from '../context/LibraryContext'
-import { buildWorkoutIpodSyncPayload, assembleSyncPlaylists, type WorkoutSyncPayload } from '../utils/workoutIpodSync'
+import { assembleSyncPlaylists, planIpodSync, planTracks } from '../utils/workoutIpodSync'
+import type { OneSyncPlan } from '../../common/ipod-one-sync-plan'
+import { readyLine, leftOffLine, syncButtonLabel, lastSyncedLine, syncingStep } from '../../common/ipod-one-sync-plan'
+import { stickerHex } from '../components/IpodIdentityBar'
+import { checkIpodName, macShowsLine } from '../../common/ipod-name'
 // Called in runFullLibrarySync below. The comment at the top of this file has
 // named this as the shared source of sync playlists since it was extracted, but
 // the import was never added — so a full library sync threw ReferenceError
 // before copying anything.
 import { buildSmartPlaylistsForSync } from '../utils/smartPlaylists'
-import ActivitySheet, { type ActivityBrief } from '../components/ActivitySheet'
-import SyncReviewSheet from '../components/SyncReviewSheet'
 import ConfirmDialog from '../components/ConfirmDialog'
 import IpodLibraryModal from '../components/IpodLibraryModal'
 import SyncHistorySheet, { SyncHistoryRows, type SyncHistoryEntryLike } from '../components/SyncHistorySheet'
 import { subscribeSyncTimeline, getSyncTimeline, startSyncTimeline, finishSyncTimeline, clearSyncTimeline, deviceFixtureRequested, subscribeEjectFailure, getEjectFailure, showEjectFailure } from '../syncTimeline'
 import { SYNC_STEPS, timelinePercent, resultLine, elapsedLabel, stepLabel, ipodCountLabel } from '../../common/sync-progress-model'
 import { syncOutcome, stoppedLabel, syncFailureCopy } from '../../common/sync-failure-copy'
-import { getPoolIds, subscribePool, requestPoolMode, usePoolHealth } from '../activityPool'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import '../styles/device.css'
 
@@ -128,29 +129,30 @@ export default function DeviceView() {
   const [showIpodLibrary, setShowIpodLibrary] = useState(false)
   const [showSyncHistory, setShowSyncHistory] = useState(false)
   const [appVersion, setAppVersion] = useState<string>('')
-  const [showActivitySheet, setShowActivitySheet] = useState(false)
   const [showFullSyncConfirm, setShowFullSyncConfirm] = useState(false)
-  const [lastBrief, setLastBrief] = useState<ActivityBrief | null>(null)
-  // REVIEW GATE: set after Music Man builds a proposal; nothing syncs or
-  // persists until the user confirms the (possibly edited) list.
-  const [reviewData, setReviewData] = useState<{
-    payload: WorkoutSyncPayload
-    brief: ActivityBrief
-    keepIds: Set<number>
-    leaving: Array<{ path: string; title: string; artist: string }>
-  } | null>(null)
-  // Last CONFIRMED activity set — offered as "Save as playlist" (its own
-  // SYNCED SETS sidebar category) when Jake really likes a sync.
-  const [lastCommitted, setLastCommitted] = useState<{ name: string; trackIds: number[] } | null>(null)
-  const [savedSetNotice, setSavedSetNotice] = useState<string | null>(null)
-
-  useEffect(() => {
-    window.electronAPI.getWorkoutSyncState?.().then((r) => {
-      if (r?.ok && r.state?.trackIds?.length) {
-        setLastCommitted({ name: r.state.name, trackIds: r.state.trackIds })
-      }
-    }).catch(() => {})
-  }, [])
+  // ONE BUTTON PER iPod (Jake 2026-11-07: "activity sync is kind of obsolete.
+  // can we just make the sync process for specific ipods easy and pretty
+  // straight forward"). What one Sync puts on the plugged-in iPod is main's
+  // plan (main/ipod-one-sync.ts): the Original's Top 1000, any other iPod's
+  // list from homemini, an unknown iPod refused. No size, no profile, no
+  // Music Man, no review step. This page shows the plan and syncs exactly it.
+  const [plan, setPlan] = useState<OneSyncPlan | null>(null)
+  const [showLeftOff, setShowLeftOff] = useState(false)
+  // Rename the iPod (2026-11-07, Jake: "i actually want to name the actual ipod
+  // punkPod"): click its name. Main renames the marker, the drive and homemini's
+  // list in one go; the next sync writes it into the iPod's own catalog.
+  const [renaming, setRenaming] = useState<string | null>(null)
+  const [renameBusy, setRenameBusy] = useState(false)
+  const [renameMsg, setRenameMsg] = useState<string | null>(null)
+  const tracksRef = useRef(state.tracks)
+  tracksRef.current = state.tracks
+  const planSeq = useRef(0)
+  const refreshPlan = async (): Promise<OneSyncPlan> => {
+    const seq = ++planSeq.current
+    const p = await planIpodSync(tracksRef.current)
+    if (seq === planSeq.current) setPlan(p)
+    return p
+  }
 
   // The page's phase strip and result line read the sync TIMELINE (fed by the
   // engine's own progress events via App and by setSyncStatus above).
@@ -171,12 +173,25 @@ export default function DeviceView() {
     if (timeline.status === 'done' || timeline.status === 'failed' || timeline.status === 'cancelled') { const t = window.setTimeout(loadHistory, 1500); return () => window.clearTimeout(t) }
   }, [timeline.status])
   const lastSync = useMemo(() => (history || []).find((e) => e.kind === 'sync' && e.landed != null) ?? null, [history])
-  const poolIds = useSyncExternalStore(subscribePool, getPoolIds)
-  const poolHealthInfo = usePoolHealth(state.tracks)   // what will sync, not what was dropped (2026-09-19)
   const [optionsOpen, setOptionsOpen] = useState(false)
   const [failureDetails, setFailureDetails] = useState(false)
-  const [quickTarget, setQuickTarget] = useState<number>(() => 1000)
-  useEffect(() => { if (lastBrief?.target) setQuickTarget(lastBrief.target) }, [lastBrief])
+  // The plan follows the iPod: on open, when an iPod mounts or changes, when the
+  // library loads, and after every sync. Read-only — nothing is written to the iPod.
+  const libraryLoaded = state.tracks.length > 0
+  useEffect(() => {
+    if (!libraryLoaded || syncing) return
+    void refreshPlan()
+    const again = () => { void refreshPlan() }
+    window.addEventListener('jaketunes-ipod-mounted', again)
+    window.addEventListener('jaketunes-ipod-ejected', again)
+    const off = window.electronAPI.onIpodDeviceChanged?.(again)
+    return () => {
+      window.removeEventListener('jaketunes-ipod-mounted', again)
+      window.removeEventListener('jaketunes-ipod-ejected', again)
+      off?.()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [libraryLoaded, syncing])
   const timeLabel = (ms: number) => new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
   // Claims come from the phase evidence (which steps ran, where it stopped),
   // never from the message alone — see sync-failure-copy.ts.
@@ -184,25 +199,6 @@ export default function DeviceView() {
   const ejectFailure = useSyncExternalStore(subscribeEjectFailure, getEjectFailure)
   const ejectCopy = ejectFailure ? syncFailureCopy(`Eject failed: ${ejectFailure}`) : null
   const countLabel = ipodCountLabel(lastSync, timeline.status)
-
-  const saveLastSetAsPlaylist = () => {
-    if (!lastCommitted) return
-    const exists = state.playlists.some((p) => p.category === 'synced-set' && p.name === lastCommitted.name)
-    const name = exists
-      ? `${lastCommitted.name} (${new Date().toLocaleDateString([], { month: 'short', day: 'numeric' })})`
-      : lastCommitted.name
-    dispatch({
-      type: 'ADD_PLAYLIST',
-      playlist: {
-        id: `synced-set-${Date.now()}`,
-        name,
-        trackIds: lastCommitted.trackIds,
-        category: 'synced-set' as const,
-      },
-    })
-    setSavedSetNotice(`Saved “${name}” to Synced Sets`)
-    setTimeout(() => setSavedSetNotice(null), 4000)
-  }
 
   // Pull the version from main once on mount. Sourced from package.json
   // via app.getVersion() so it auto-tracks the actual installed build.
@@ -400,16 +396,9 @@ export default function DeviceView() {
     return false
   }
 
-  // Two explicit sync entry points (Jake, 2026-07-18: "separate activity
-  // sync or supersync button… everything needs to work as planned. no
-  // exceptions"). Each button does exactly ONE thing:
-  //   Activity Sync → sheet → ~1,000-track set. Can never full-mirror.
-  //   Full Sync → confirm dialog → whole-library mirror. The ONLY path
-  //   to a full mirror; the sheet's "whole library" escape was removed.
-  const handleActivitySync = async () => {
-    if (await ensureIpodMounted()) setShowActivitySheet(true)
-  }
-
+  // Two explicit sync entry points: Sync (this iPod's own songs, below) and
+  // Full Sync (confirm dialog → whole-library mirror, the ONLY path to a full
+  // mirror).
   const handleFullSync = async () => {
     if (await ensureIpodMounted()) setShowFullSyncConfirm(true)
   }
@@ -460,86 +449,58 @@ export default function DeviceView() {
     }
   }
 
-  const runSyncWithBrief = async (brief: ActivityBrief) => {
-    setShowActivitySheet(false)
-    setLastBrief(brief)
-    const activity = await import('../activity')
-
-    setSyncing(true)
-    setSyncStatus({ state: 'syncing', step: 'Music Man building your activity set…' })
-    activity.setSync({ active: true, step: 'Music Man building your activity set…' })
+  const saveRename = async () => {
+    if (renaming === null) return
+    const check = checkIpodName(renaming)
+    if (!check.ok) { setRenameMsg(check.error); return }
+    setRenameBusy(true)
     try {
-      const built = await buildWorkoutIpodSyncPayload(state.tracks, state.playlists, brief)
-      if (!built.ok) {
-        const msg = built.error || 'Could not build activity set'
-        setSyncStatus({ state: 'error', message: msg })
-        activity.setSync({ active: true, step: `Sync failed — ${msg}` })
-        setTimeout(() => activity.setSync(null), 4000)
-        setSyncing(false)
-        return
-      }
-      // REVIEW GATE (Jake 2026-07-18): stop here and show the proposed
-      // set. previewIpodSync runs the ENGINE'S OWN planning criteria
-      // (real files on the device + size matches vs source/cached
-      // mirror) — never the iTunesDB, which is a stale template after a
-      // gut. Nothing has synced or persisted — the build handler no
-      // longer saves state, so Cancel = no trace.
-      const targetKbpsPrev: 128 | 192 | 256 =
-        appliedSettings.optConvertBitrateTarget === '256' ? 256
-        : appliedSettings.optConvertBitrateTarget === '192' ? 192
-        : 128
-      const preview = await window.electronAPI.previewIpodSync?.(built.payload.tracks, {
-        enabled: appliedSettings.optConvertBitrate,
-        targetKbps: targetKbpsPrev,
-      })
-      const keepIds = new Set<number>(
-        (preview?.ok ? preview.plan : []).filter((r) => r.action === 'keep').map((r) => r.id),
-      )
-      setReviewData({
-        payload: built.payload,
-        brief,
-        keepIds,
-        leaving: preview?.ok ? preview.leaving : [],
-      })
-      setSyncing(false)
-      setSyncStatus({ state: 'idle' })
-      activity.setSync(null)
+      const r = await window.electronAPI.renameIpodDevice?.(check.name)
+      if (!r) { setRenameMsg('This build can’t rename iPods.'); return }
+      if (!r.ok) { setRenameMsg(r.error); return }
+      setRenaming(null)
+      const later = r.homemini === 'later' ? ` homemini will hear the new name on the next sync.` : ''
+      setRenameMsg(r.driveNote ? `${r.driveNote}${later}` : `Renamed to ${r.device.name}. The iPod shows it after the next sync.${later}`)
+      setIpodName(r.mount.split('/').pop() || r.device.name)
+      void refreshPlan()
+      window.dispatchEvent(new Event('jaketunes-ipod-mounted'))
     } catch (err) {
-      console.error('Activity set build failed:', err)
-      const msg = String(err)
-      setSyncStatus({ state: 'error', message: msg })
-      activity.setSync({ active: true, step: `Build failed — ${msg}` })
-      setTimeout(() => activity.setSync(null), 4000)
-      setSyncing(false)
+      setRenameMsg(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRenameBusy(false)
     }
   }
 
-  // The sync half — runs only after the user confirms the (possibly
-  // edited) list in the review sheet. Commits the set as ground truth
-  // ONLY after the device sync succeeds.
-  const runConfirmedActivitySync = async (finalTracks: typeof state.tracks) => {
-    const review = reviewData
-    setReviewData(null)
-    if (!review || finalTracks.length === 0) return
+  // THE one Sync: a fresh plan (the Original's Top 1000 is re-read and another
+  // iPod's list re-fetched from homemini right now), then exactly those songs
+  // through the activity engine — wipe, copy, verify, catalog, seal, and the
+  // plays round trip, as before.
+  const runOneSync = async () => {
+    if (!(await ensureIpodMounted())) return
     const activity = await import('../activity')
     setSyncing(true)
-    const name = review.payload.name
-    // Playlists restored: the real root cause was the iTunesDB dataset assembly
-    // (album list written before the track list + a stale type-5 section copied
-    // verbatim from the old library, whose items pointed at deleted track ids —
-    // the Mini's index build aborted on the dangling ref). Fixed in
-    // core/db_reader.py (clean [tracks, playlists, albums] order, stale sections
-    // dropped, num_children corrected), so playlists are safe to write again.
-    const playlists = assembleSyncPlaylists(finalTracks, state.playlists, name)
-    const wx = review.payload.weatherLine ? ` · ${review.payload.weatherLine}` : ''
-    setSyncStatus({
-      state: 'syncing',
-      step: `Syncing “${name}” — ${finalTracks.length} tracks${wx}…`,
-    })
-    activity.setSync({ active: true, step: `Syncing “${name}” — ${finalTracks.length} tracks…` })
+    setShowLeftOff(false)
     try {
-      // Activity sets ride the user's APPLIED convert setting — toggle
-      // ON = 128k CBR mirrors (the chirp cure), OFF = ALAC preserved.
+      const fresh = await refreshPlan()
+      if (!fresh.ok) {
+        setSyncStatus({ state: 'error', message: fresh.error })
+        activity.setSync({ active: true, step: `Sync didn’t start — ${fresh.error}` })
+        setTimeout(() => activity.setSync(null), 5000)
+        return
+      }
+      const finalTracks = planTracks(fresh, state.tracks)
+      if (finalTracks.length === 0) {
+        setSyncStatus({ state: 'error', message: `None of ${fresh.ipodName}’s songs are in this library.` })
+        return
+      }
+      // Playlists restored: the real root cause was the iTunesDB dataset assembly
+      // (album list written before the track list + a stale type-5 section copied
+      // verbatim from the old library). Fixed in core/db_reader.py, so playlists
+      // are safe to write.
+      const playlists = assembleSyncPlaylists(finalTracks, state.playlists, fresh.setName)
+      setSyncStatus({ state: 'syncing', step: syncingStep(fresh.setName, finalTracks.length) })
+      activity.setSync({ active: true, step: syncingStep(fresh.setName, finalTracks.length) })
+      // The user's APPLIED convert setting — toggle ON = AAC mirrors, OFF = ALAC preserved.
       const targetKbpsNum: 128 | 192 | 256 =
         appliedSettings.optConvertBitrateTarget === '256' ? 256
         : appliedSettings.optConvertBitrateTarget === '192' ? 192
@@ -548,17 +509,13 @@ export default function DeviceView() {
         enabled: appliedSettings.optConvertBitrate,
         targetKbps: targetKbpsNum,
       }, { wipeFirst: true, origin: 'activity-click' })  // dedicated activity engine; click-only
-      if (result.alreadyRunning) {
-        return
-      }
+      if (result.alreadyRunning) return
       if (!result.ok) {
-        // 4.5.0-109: distinguish user-cancelled from real failure. Cancel
-        // is expected, not an error; flash a brief notice + return to idle.
+        // Cancel is expected, not an error; flash a brief notice + return to idle.
         if (result.cancelled) {
           setSyncStatus({ state: 'idle' })
           activity.setSync({ active: true, step: `Sync cancelled (${result.copied || 0} files copied before stop)` })
           setTimeout(() => activity.setSync(null), 3000)
-          setSyncing(false)
           return
         }
         const msg = result.error || 'Unknown error'
@@ -571,30 +528,18 @@ export default function DeviceView() {
         setSyncStatus({ state: 'error', message: msg })
         activity.setSync({ active: true, step: `Sync failed — ${msg}` })
         setTimeout(() => activity.setSync(null), 4000)
-        setSyncing(false)
         return
       }
-      // Apply smart-sync path rewrites: when main detected that a
-      // track's audio already lived on the iPod under a different
-      // F-dir, it updated the in-flight tracks array for the DB
-      // write. Mirror those rewrites into library.json so the
-      // renderer stays consistent with what's now on the device.
+      // Smart-sync path re-links (main found a song's audio already on the iPod
+      // under another F-dir) mirrored into the library.
       if (result.pathRewrites && result.pathRewrites.length > 0) {
         dispatch({
           type: 'UPDATE_TRACKS',
           updates: result.pathRewrites.map(r => ({ id: r.id, field: 'path', value: r.newPath })),
         })
       }
-      // Apply silent post-sync identity-verifier updates: backfilled
-      // audioFingerprints for older tracks that never got one,
-      // path heals when a track's audio moved to a different F-dir,
-      // and audioMissing flags when a track's file genuinely can't
-      // be located on any known mount. The verifier never deletes —
-      // worst case we just set audioMissing=true so the UI dims the
-      // row. This is the identity-based replacement for the old
-      // text-matching verify-and-repair flow that nuked Pink Floyd's
-      // "Another Brick in the Wall, Pt. 1" because "Pt." didn't
-      // match "Part" in its normalize().
+      // The identity verifier's silent updates: backfilled fingerprints, path
+      // heals, audioMissing flags. It never deletes.
       if (result.verificationUpdates && result.verificationUpdates.length > 0) {
         const updates: { id: number; field: string; value: string | boolean }[] = []
         for (const u of result.verificationUpdates) {
@@ -604,39 +549,9 @@ export default function DeviceView() {
         }
         if (updates.length > 0) dispatch({ type: 'UPDATE_TRACKS', updates })
       }
-      // Sync landed — NOW commit the set as "what's on the iPod". This
-      // is what plug-in auto-sync repairs and the next build rotates
-      // away from. Also feeds Music Man's activity brain context.
-      const proposedIds = new Set(review.payload.tracks.map((t) => t.id))
-      const finalIds = new Set(finalTracks.map((t) => t.id))
-      await window.electronAPI.commitWorkoutSyncSet?.({
-        trackIds: finalTracks.map((t) => t.id),
-        name,
-        commentary: review.payload.commentary,
-        alacCount: review.payload.alacCount,
-        // Record the convert settings this set was ACTUALLY synced with, so
-        // the plug-in auto-repair can replay them if ui-state's copy of the
-        // prefs is ever missing (2026-08-07: a ui-state clobber erased them
-        // and every repair silently aborted).
-        convertOptions: {
-          enabled: appliedSettings.optConvertBitrate,
-          targetKbps: appliedSettings.optConvertBitrateTarget === '256' ? 256 : appliedSettings.optConvertBitrateTarget === '192' ? 192 : 128,
-        },
-        brief: review.brief as unknown as Record<string, unknown>,
-        // Jake's review edits — the strongest taste signal the brain
-        // gets: removed = demote next time, added = boost.
-        added: finalTracks.filter((t) => !proposedIds.has(t.id))
-          .map((t) => ({ id: t.id, title: String(t.title || ''), artist: String(t.artist || '') })),
-        removed: review.payload.tracks.filter((t) => !finalIds.has(t.id))
-          .map((t) => ({ id: t.id, title: String(t.title || ''), artist: String(t.artist || '') })),
-      })
-      setLastCommitted({ name, trackIds: finalTracks.map((t) => t.id) })
-      const now = new Date()
-      const timeStr = now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-      // Verified-count truth (2026-07-24): `landed` is what actually committed to
-      // the card (unmount/remount-verified), not what we sent. If it fell short of
-      // the target, say so plainly instead of a false "done" — never claim a
-      // number the card doesn't hold.
+      // Verified-count truth: `landed` is what committed to the card
+      // (unmount/remount-verified), not what was sent. A shortfall is said
+      // plainly, never a false "done".
       const target = result.target ?? finalTracks.length
       const landed = result.landed ?? (result.totalTracks || finalTracks.length)
       const shortfall = result.shortfall ?? 0
@@ -650,16 +565,13 @@ export default function DeviceView() {
           state: 'done',
           copied: result.copied || 0,
           total: landed,
-          time: timeStr,
+          time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
         })
-        // "done" now means everything is flushed + verified on the card (main
-        // remounts before declaring success). The iPod firmware still builds its
-        // own library index from the DB, so its on-screen count climbs up to the
-        // real number over the next moment — set that expectation so a mid-index
-        // read isn't mistaken for a short sync.
+        // The iPod firmware builds its own index from the DB, so its on-screen
+        // count climbs up to the real number over the next moment.
         activity.setSync({
           active: true,
-          step: `Synced ${landed} to the iPod — all verified on the card. Give it a moment to finish counting up to ${landed}.`,
+          step: `Synced ${landed} to ${fresh.ipodName} — all verified on the card. Give it a moment to finish counting up to ${landed}.`,
         })
         setTimeout(() => activity.setSync(null), 7000)
       }
@@ -669,8 +581,9 @@ export default function DeviceView() {
       setSyncStatus({ state: 'error', message: msg })
       activity.setSync({ active: true, step: `Sync failed — ${msg}` })
       setTimeout(() => activity.setSync(null), 4000)
+    } finally {
+      setSyncing(false)
     }
-    setSyncing(false)
   }
 
   return (
@@ -708,7 +621,7 @@ export default function DeviceView() {
           <div className="device-itunes-info-line device-now-line">
             {lastSync && countLabel
               ? <span>{countLabel}: <strong>{(lastSync.landed ?? 0).toLocaleString()} songs</strong> · {new Date(lastSync.when).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}{lastSync.target != null && lastSync.landed != null && lastSync.landed < lastSync.target ? ` (short of ${lastSync.target.toLocaleString()})` : ''}{countLabel === 'Last verified' ? ' — what the iPod holds now is not verified' : ''}</span>
-              : <span>No Activity Sync recorded yet.</span>}
+              : <span>No sync recorded yet.</span>}
             {fixture && <span className="device-fixture-tag" title="Renderer fixture — no iPod, no engine">Fixture</span>}
           </div>
         </div>
@@ -720,25 +633,78 @@ export default function DeviceView() {
       <div className="device-itunes-section device-sync">
         <h2 className="device-itunes-section-title">Sync</h2>
         <div className="device-sync-primary">
-          <button
-            className="device-itunes-btn device-itunes-btn--sync"
-            disabled={syncing || isDirty}
-            onClick={handleActivitySync}
-            title={isDirty ? 'Click Apply first to save your setting changes' : (syncing ? 'Sync in progress…' : 'Answer a few questions — Music Man builds the set for the activity')}
-          >{syncing ? 'Syncing…' : 'Activity Sync'}</button>
-          <span className="device-sync-sizes" role="radiogroup" aria-label="How many songs">
-            {[100, 250, 500, 1000].map((n) => (
-              <button key={n} type="button" role="radio" aria-checked={quickTarget === n} className={`device-sync-size${quickTarget === n ? ' is-on' : ''}`} disabled={syncing} onClick={() => { setQuickTarget(n); setLastBrief((b) => (b ? { ...b, target: n } : b)) }}>{n.toLocaleString()}</button>
-            ))}
-          </span>
-          {lastBrief?.profileName && <span className="device-sync-profile">profile: {lastBrief.profileName}</span>}
-          {poolIds.length > 0 && (
-            <button className="device-itunes-btn" disabled={syncing || isDirty} onClick={() => { requestPoolMode(); handleActivitySync() }} title="Sync the hand-built iPod Pool">Sync the Pool ({poolHealthInfo.syncable.length.toLocaleString()})</button>
+          {plan && plan.ipodName && renaming === null && (
+            <span className="device-sync-ipod">
+              <span className="device-sync-sticker" style={{ background: stickerHex(plan.color) }} aria-hidden="true" />
+              <button
+                type="button"
+                className="device-sync-name"
+                disabled={syncing}
+                title={syncing ? 'Wait for the sync to finish' : 'Rename this iPod'}
+                onClick={() => { setRenaming(plan.ipodName); setRenameMsg(null) }}
+              >{plan.ipodName}</button>
+              {plan.ok ? readyLine(plan).slice(plan.ipodName.length) : ''}
+            </span>
+          )}
+          {plan && plan.ipodName && renaming !== null && (() => {
+            const check = checkIpodName(renaming)
+            const upper = check.ok ? macShowsLine(check) : null
+            return (
+              <form className="device-sync-rename" onSubmit={(e) => { e.preventDefault(); void saveRename() }}>
+                <span className="device-sync-sticker" style={{ background: stickerHex(plan.color) }} aria-hidden="true" />
+                <input
+                  value={renaming}
+                  maxLength={20}
+                  autoFocus
+                  aria-label="iPod name"
+                  disabled={renameBusy}
+                  onChange={(e) => { setRenaming(e.target.value); setRenameMsg(null) }}
+                  onKeyDown={(e) => { if (e.key === 'Escape') { setRenaming(null); setRenameMsg(null) } }}
+                />
+                <button type="submit" className="device-itunes-btn" disabled={renameBusy || syncing || !check.ok}>{renameBusy ? 'Renaming…' : 'Rename'}</button>
+                <button type="button" className="device-link-btn" disabled={renameBusy} onClick={() => { setRenaming(null); setRenameMsg(null) }}>Cancel</button>
+                {!check.ok && renaming.trim() !== '' && <span className="device-sync-facts-error device-sync-rename-note">{check.error}</span>}
+                {upper && <span className="device-sync-rename-note">{upper}</span>}
+              </form>
+            )
+          })()}
+          {plan?.ok && renaming === null && (
+            <button
+              className="device-itunes-btn device-itunes-btn--sync"
+              disabled={syncing || isDirty}
+              onClick={() => { void runOneSync() }}
+              title={isDirty ? 'Click Apply first to save your setting changes' : (syncing ? 'Sync in progress…' : `Put these ${plan.trackIds.length.toLocaleString('en-US')} songs on ${plan.ipodName}`)}
+            >{syncing ? 'Syncing…' : syncButtonLabel(plan.ipodName)}</button>
           )}
           <span className="device-sync-spacer" />
           <button type="button" className="device-link-btn" disabled={syncing || isDirty} onClick={handleFullSync} title={isDirty ? 'Click Apply first to save your setting changes' : 'Mirror the ENTIRE library to the iPod at your convert setting'}>Full Sync…</button>
           <button type="button" className="device-link-btn" aria-expanded={optionsOpen || isDirty} onClick={() => setOptionsOpen((o) => !o)}>Options {optionsOpen || isDirty ? '▾' : '▸'}</button>
         </div>
+        <div className="device-sync-facts">
+          {renameMsg && renaming === null && <span>{renameMsg}</span>}
+          {renameMsg && renaming !== null && <span className="device-sync-facts-error">{renameMsg}</span>}
+          {plan === null && <span>Reading what goes on this iPod…</span>}
+          {plan && !plan.ok && plan.kind === 'unknown' && <span>Set this iPod up above, then it gets its own Sync button.</span>}
+          {plan && !plan.ok && plan.kind !== 'unknown' && <span className="device-sync-facts-error">{plan.error}</span>}
+          {plan?.ok && plan.note && <span>{plan.note}</span>}
+          {plan?.ok && leftOffLine(plan) && (
+            <span>
+              {leftOffLine(plan)}{' '}
+              <button type="button" className="device-link-btn" aria-expanded={showLeftOff} onClick={() => setShowLeftOff((v) => !v)}>{showLeftOff ? 'Hide' : 'Which ones'}</button>
+            </span>
+          )}
+          <span>
+            {lastSyncedLine(lastSync?.when)}{' · '}
+            <button type="button" className="device-link-btn" onClick={() => setShowSyncHistory(true)}>Sync History</button>
+          </span>
+        </div>
+        {plan?.ok && showLeftOff && plan.leftOff.length > 0 && (
+          <ul className="device-sync-leftoff">
+            {plan.leftOff.map((l) => (
+              <li key={l.id}>{l.artist ? `${l.artist} — ` : ''}{l.title}: {l.why}</li>
+            ))}
+          </ul>
+        )}
 
         {timeline.status !== 'idle' && (
           <div className={`device-sync-strip device-sync-strip--${timeline.status}`} role="status">
@@ -801,20 +767,6 @@ export default function DeviceView() {
             </div>
           </div>
         )}
-        {(lastCommitted || savedSetNotice) && (
-          <div className="device-sync-status device-sync-status--saveset">
-            {savedSetNotice ? (
-              <span className="device-sync-message">✓ {savedSetNotice}</span>
-            ) : (
-              <button
-                className="device-itunes-btn device-itunes-btn--saveset"
-                onClick={saveLastSetAsPlaylist}
-                title="Keep this sync's track list as a playlist in the SYNCED SETS sidebar section"
-              >Save “{lastCommitted!.name}” as playlist</button>
-            )}
-          </div>
-        )}
-
         {(optionsOpen || isDirty) && (
           <div className="device-itunes-options device-itunes-options--disclosure">
             <label className="device-itunes-option">
@@ -943,34 +895,14 @@ export default function DeviceView() {
       </div>
       {showIpodLibrary && <IpodLibraryModal onClose={() => setShowIpodLibrary(false)} />}
       {showSyncHistory && <SyncHistorySheet onClose={() => setShowSyncHistory(false)} />}
-      {showActivitySheet && (
-        <ActivitySheet
-          initial={lastBrief}
-          onCancel={() => setShowActivitySheet(false)}
-          onConfirm={(brief) => { void runSyncWithBrief(brief) }}
-        />
-      )}
       {showFullSyncConfirm && (
         <ConfirmDialog
           message="Mirror the ENTIRE library to the iPod?"
-          detail={`All ${state.tracks.length.toLocaleString()} songs copy at ${appliedSettings.optConvertBitrate ? `${appliedSettings.optConvertBitrateTarget} kbps AAC` : 'original quality'}. Anything on the iPod that isn't in the library — including the current activity set — is replaced. On the Mini this takes hours; keep it plugged in.`}
+          detail={`All ${state.tracks.length.toLocaleString()} songs copy at ${appliedSettings.optConvertBitrate ? `${appliedSettings.optConvertBitrateTarget} kbps AAC` : 'original quality'}. Anything on the iPod that isn't in the library — including the songs from the last Sync — is replaced. On the Mini this takes hours; keep it plugged in.`}
           confirmLabel="Full Sync"
           destructive={false}
           onConfirm={() => { void runFullLibrarySync() }}
           onCancel={() => setShowFullSyncConfirm(false)}
-        />
-      )}
-      {reviewData && (
-        <SyncReviewSheet
-          setName={reviewData.payload.name}
-          commentary={reviewData.payload.commentary}
-          weatherLine={reviewData.payload.weatherLine}
-          initialTracks={reviewData.payload.tracks}
-          keepIds={reviewData.keepIds}
-          leaving={reviewData.leaving}
-          allTracks={state.tracks}
-          onCancel={() => setReviewData(null)}
-          onConfirm={(tracks) => { void runConfirmedActivitySync(tracks) }}
         />
       )}
     </div>

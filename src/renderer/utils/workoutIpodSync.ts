@@ -1,52 +1,64 @@
 /**
- * Build the track + playlist payload for iPod sync.
- *
- * Syncs a rotating AI activity set (~1000 tracks) shaped by the pre-sync
- * brief + place weather. Files copy as-is (ALAC preserved).
+ * The track + playlist payload for an iPod sync (2026-11-07: one button per
+ * iPod). main/ipod-one-sync.ts decides which songs go on the plugged-in iPod —
+ * the Original's Top 1000, another iPod's list — and this turns that plan into
+ * the rows and playlists sync-to-ipod takes. No size, no brief, no Music Man.
+ * Files copy as-is (ALAC preserved).
  */
 
 import type { Track, Playlist } from '../types'
 import { buildSmartPlaylistsForSync } from './smartPlaylists'
-import type { ActivityBrief } from '../components/ActivitySheet'
-import { getPoolIds } from '../activityPool'
+import type { OneSyncPlan } from '../../common/ipod-one-sync-plan'
 
-export interface WorkoutSyncPayload {
-  tracks: Track[]
-  playlists: Playlist[]
-  name: string
-  commentary: string
-  alacCount: number
-  total: number
-  weatherLine?: string
-}
-
-function toWorkoutTrack(t: Track) {
+/** What main needs to plan a sync: the board check (title, artist, path, codec,
+ *  duration) and the Original's most-loved fill order (rating, plays, recency). */
+function toPlanTrack(t: Track) {
   return {
     id: t.id,
     title: t.title,
     artist: t.artist,
-    album: t.album,
     genre: t.genre,
-    year: t.year,
     playCount: t.playCount,
-    skipCount: t.skipCount,
     rating: t.rating,
-    bpm: t.bpm,
     codec: t.codec,
-    fileSize: t.fileSize,
     duration: t.duration,
     path: t.path,
     audioMissing: t.audioMissing,
+    lastPlayedAt: t.lastPlayedAt,
+    dateAdded: t.dateAdded,
   }
 }
 
+/** What one Sync would put on the plugged-in iPod right now (the plan only — nothing is written). */
+export async function planIpodSync(allTracks: Track[]): Promise<OneSyncPlan> {
+  const api = window.electronAPI.planIpodSync
+  if (!api) return { ok: false, kind: 'none', ipodName: null, color: null, error: 'This build can’t sync iPods.' }
+  try {
+    return await api(allTracks.map(toPlanTrack))
+  } catch (err) {
+    return { ok: false, kind: 'none', ipodName: null, color: null, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/** The plan's ids as library rows, in plan order. */
+export function planTracks(plan: Extract<OneSyncPlan, { ok: true }>, allTracks: Track[]): Track[] {
+  const byId = new Map(allTracks.map((t) => [Number(t.id), t]))
+  const out: Track[] = []
+  const seen = new Set<number>()
+  for (const id of plan.trackIds) {
+    const t = byId.get(Number(id))
+    if (!t || seen.has(t.id)) continue
+    seen.add(t.id)
+    out.push(t)
+  }
+  return out
+}
+
 /**
- * Assemble the playlist list for an activity-set sync: the set itself as
- * a named playlist, plus the user's regular playlists filtered down to
- * members of the set. Exported so the review sheet can re-assemble after
- * the user edits (removes/substitutes) tracks — playlists must always be
- * rebuilt from the FINAL track list or the iPod DB would reference songs
- * that never landed.
+ * Assemble the playlist list for an iPod sync: the set itself as a named
+ * playlist, plus the user's regular playlists filtered down to members of
+ * the set. Always built from the FINAL track list, or the iPod DB would
+ * reference songs that never landed.
  */
 export function assembleSyncPlaylists(
   tracks: Track[],
@@ -61,72 +73,8 @@ export function assembleSyncPlaylists(
   })).filter((p) => (p.trackIds?.length || 0) > 0)
   const setPlaylist: Playlist = {
     id: 'workout-sync',
-    name: setName || 'Activity Sync',
+    name: setName || 'iPod',
     trackIds: tracks.map((t) => t.id),
   }
   return [setPlaylist, ...filteredRegular]
-}
-
-export async function buildWorkoutIpodSyncPayload(
-  allTracks: Track[],
-  regularPlaylists: Playlist[],
-  brief?: ActivityBrief | null,
-): Promise<{ ok: true; payload: WorkoutSyncPayload } | { ok: false; error: string }> {
-  // HALF AND HALF (2026-10-16): every sync takes the newest half-set from
-  // the hand-built iPod Pool and the Top 1000 fills the rest (main's
-  // activity-split.ts). The pool always rides along; an empty pool simply
-  // means the Top 1000 fills the whole set (Music Man when homemini is away,
-  // workout-sync-ipc.ts). DeviceView (do-not-touch) never
-  // learns the difference — this util reads the pool.
-  // No pinned lists, no locked albums (Jake, 2026-10-25: "strip the locks and
-  // pins from the ipod pool too"): nothing rides along unasked.
-  const poolIds = getPoolIds()
-  const pool = poolIds.length > 0 ? { ids: poolIds, fill: true } : undefined
-  const res = await window.electronAPI.buildWorkoutSyncSet?.(
-    allTracks.map(toWorkoutTrack),
-    brief ? { brief, saveProfile: true, target: brief.target ?? 1000, pool } : undefined,
-  )
-  if (!res?.ok || !res.trackIds?.length) {
-    return { ok: false, error: res?.error || 'Could not build activity sync set.' }
-  }
-
-  const byId = new Map(allTracks.map((t) => [Number(t.id), t]))
-  const requested = Math.max(res.trackIds.length, Number(res.requested) || brief?.target || 1000)
-  const tracks: Track[] = []
-  const seen = new Set<number>()
-  const take = (raw: number | string) => {
-    if (tracks.length >= requested) return
-    const id = Number(raw)
-    if (!Number.isFinite(id) || seen.has(id)) return
-    const t = byId.get(id)
-    if (!t) return
-    seen.add(id)
-    tracks.push(t)
-  }
-  for (const id of res.trackIds) take(id)
-  for (const id of res.reserveIds || []) take(id)
-  if (tracks.length === 0) {
-    return { ok: false, error: 'Activity set produced no matching library tracks.' }
-  }
-  if (tracks.length < requested) {
-    console.warn(`[workout-sync] resolved ${tracks.length}/${requested} — library had no more eligible replacements`)
-  }
-
-  const w = res.weather
-  const weatherLine = w
-    ? `${w.placeLabel || brief?.place || ''}: ${w.tempF}°F, ${w.description || w.condition}`
-    : undefined
-
-  return {
-    ok: true,
-    payload: {
-      tracks,
-      playlists: assembleSyncPlaylists(tracks, regularPlaylists, res.name || 'Activity Sync'),
-      name: res.name || 'Activity Sync',
-      commentary: res.commentary || '',
-      alacCount: res.alacCount ?? 0,
-      total: tracks.length,
-      weatherLine,
-    },
-  }
 }

@@ -40,7 +40,11 @@ const AGAIN_CABLE = 'Sync again without unplugging. If it comes up short again, 
 
 const RULES: Rule[] = [
   { test: /no verified ipod mount|ipod is not mounted|no ipod detected/i, stage: 'device', happened: 'No iPod was found.', next: 'Plug it in (a direct USB port, no hub) and try again.' },
-  { test: /library is empty|nothing to commit|could not build an activity set|api-failed|io-failed|build failed/i, stage: 'build', happened: 'The set could not be built.', next: 'Try the sheet again; if it keeps failing, check the library and the brain services.' },
+  { test: /library is empty|nothing to commit|could not build an activity set|api-failed|io-failed|build failed/i, stage: 'build', happened: 'The set could not be built.', next: 'Sync again; if it keeps failing, check the library and homemini.' },
+  // One button per iPod (2026-11-07, main/ipod-one-sync.ts): refused before anything is written.
+  { test: /top 1000 can’t be read right now|list couldn’t be read/i, stage: 'build', happened: 'What goes on this iPod couldn’t be read from homemini. Nothing on the iPod was touched.', next: 'Sync again once homemini is answering.' },
+  { test: /list is empty\. songs are added/i, stage: 'build', happened: 'This iPod’s list is empty, and only its list goes on it.', next: 'Ask Claude to add songs to it, then sync again.' },
+  { test: /none of the [\d,]+ songs on .+ list can go on it|none of the top 1000 can go on/i, stage: 'build', happened: 'None of the songs for this iPod can go on it, so nothing on the iPod was touched.', next: 'Open Details for the reasons, and sync again once they’re fixed.' },
   // A list-only iPod (every iPod but the Original, 2026-11-07) with nothing in its Pool.
   { test: /pool is empty\. only its pool goes on/i, stage: 'build', happened: 'This iPod’s Pool is empty, and only its Pool goes on it.', next: 'Drop songs into its Pool, then sync again.' },
   { test: /songs on this ipod's list (can go on it|could be converted for it)/i, stage: 'prepare', happened: 'None of the songs on this iPod’s list can go on it, so nothing on the iPod was touched.', next: 'Open Details for the reasons, fix or swap those songs in its Pool, and sync again.' },

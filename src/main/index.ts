@@ -1178,6 +1178,8 @@ registerIpodIpc(ipc, {
   runPythonRestore: (args, stdinData) => runPythonRestore(args, stdinData),
   isSyncInFlight: () => syncEngine.isSyncInFlight(),
   onMountDetected: (mount) => void roundTripOnMount(mount).catch((err) => console.warn('[roundtrip] plug-in failed:', err instanceof Error ? err.message : err)),
+  renameOnHomemini: (id, name) => ipodLists.rename(id, name),   // ipodLists is set up below; called only on a click
+  onDeviceChanged: () => sendToRenderer('ipod-device-changed', null),
 })
 registerSyncIpc(ipc, {
   requestSyncCancel: () => syncEngine.requestSyncCancel(),
@@ -8465,6 +8467,7 @@ registerWorkoutSyncIpc({
     return id.status === 'known' && !id.device.primary ? id.device.name : null
   },
   listOnlyPool: () => ipodLists.refreshPlugged(detectedIpodMount),   // homemini's list, refreshed first
+  pluggedIpod: async () => (detectedIpodMount ? identifyIpod(detectedIpodMount, STATE_DIR) : null),   // the one-button sync
 })
 // iPod Pool — the hand-built sync set (drag songs/albums/artists/playlists
 // onto the sidebar row); build-workout-sync-set reads it in pool mode.
@@ -9109,7 +9112,11 @@ registerSyncedPicksIpc(ipc)
 registerHomeSpotlightIpc(ipc, { getPlayEventsPath, libraryCache })
 const concerts = registerConcertsIpc(ipc, { libraryCache, mbThrottle })
 registerPreviewRefreshIpc(ipc)
-registerSyncHistoryIpc(ipc, { stateDir: STATE_DIR })
+registerSyncHistoryIpc(ipc, { stateDir: STATE_DIR, dir: async () => {   // the plugged-in iPod's own ledgers
+  if (!detectedIpodMount) return STATE_DIR
+  const ipod = await resolveIpodState(detectedIpodMount, STATE_DIR)
+  return ipod.refusal ? null : ipod.stateDir
+} })
 
 
 ipc.handle('get-friend-standings', async () => {

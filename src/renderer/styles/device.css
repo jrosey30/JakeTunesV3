@@ -302,18 +302,26 @@
   .device-itunes-btn--apply { animation: none; }
 }
 
-/* ── Activity Sync front end (2026-09-06): SYNC zone, phase strip, result
+/* ── Sync front end (2026-09-06): SYNC zone, phase strip, result
    line, recent syncs. The iTunes silhouette (header, capacity bar, button
    row) is untouched above and below. ── */
 .device-now-line { margin-top: 6px; color: #4a4a4a; }
 .device-now-line strong { color: #222; }
 .device-fixture-tag { margin-left: 10px; padding: 0 6px; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: #8a3a1a; background: #fde3d1; border: 1px solid #e7b49a; border-radius: 8px; }
 .device-sync-primary { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-.device-sync-sizes { display: inline-flex; gap: 2px; padding: 2px; background: #e9e6df; border: 1px solid #cfc9bd; border-radius: 10px; }
-.device-sync-size { border: 0; background: transparent; padding: 2px 9px; font-size: 11px; font-weight: 600; color: #6a655b; border-radius: 8px; cursor: default; font-variant-numeric: tabular-nums; }
-.device-sync-size.is-on { background: #fff; color: #222; box-shadow: 0 1px 2px rgba(0,0,0,0.12); }
-.device-sync-size:disabled { opacity: 0.5; }
-.device-sync-profile { font-size: 11px; color: #7a746a; }
+/* One button per iPod (2026-11-07): the iPod's sticker colour + name + "N songs
+   ready", its Sync button, then one line of facts. Names wrap, never clip. */
+.device-sync-ipod { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: #222; overflow-wrap: anywhere; }
+.device-sync-sticker { flex: none; width: 14px; height: 14px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.25); box-shadow: inset 0 1px 1px rgba(255,255,255,0.5); }
+.device-sync-name { border: 0; background: transparent; padding: 0; font: inherit; color: inherit; cursor: default; border-bottom: 1px dashed #9a948a; }
+.device-sync-name:hover:not(:disabled) { border-bottom-color: #3b5a8f; color: #3b5a8f; }
+.device-sync-rename { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.device-sync-rename input { font-size: 14px; font-weight: 600; padding: 2px 6px; width: 12em; border: 1px solid #b9b3a7; border-radius: 4px; }
+.device-sync-rename-note { flex-basis: 100%; font-size: 12px; color: #4a4a4a; line-height: 1.45; }
+.device-sync-facts { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin-top: 8px; font-size: 12px; color: #4a4a4a; line-height: 1.45; }
+.device-sync-facts .device-link-btn { padding: 0 2px; }
+.device-sync-facts-error { color: #9a2f2f; }
+.device-sync-leftoff { margin: 6px 0 0; padding: 6px 10px 6px 24px; max-height: 160px; overflow-y: auto; font-size: 12px; line-height: 1.45; color: #444; background: rgba(0,0,0,0.04); border-radius: 4px; overflow-wrap: anywhere; user-select: text; }
 .device-sync-spacer { flex: 1; }
 .device-link-btn { border: 0; background: transparent; color: #3b5a8f; font-size: 12px; padding: 2px 4px; cursor: default; }
 .device-link-btn:hover:not(:disabled) { text-decoration: underline; }

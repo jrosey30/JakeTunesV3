@@ -35,6 +35,8 @@ import { pickTasteExemplars } from './discovery-brain.ts'
 import { getEmbeddingsMap, embedTexts } from './ai/embeddings.ts'
 import { halfAndHalfLine, listOnlyLine, splitForIpod } from '../common/activity-split'
 import { pickFromTop1000 } from '../common/top1000-sync.ts'
+import { planOneSync, type OneSyncIpod, type OneSyncTrack } from './ipod-one-sync.ts'
+import type { IpodIdentity } from '../common/ipod-identity.ts'
 
 type ClaudeCall = (callKey: string, params: MessageCreateParamsNonStreaming) => Promise<Message>
 
@@ -62,6 +64,8 @@ export interface WorkoutSyncHost {
    *  the ids in drop order, and one plain line when they are NOT homemini's fresh answer
    *  ("homemini didn’t answer — using the list from …"). null = no list-only iPod plugged in. */
   listOnlyPool?: () => Promise<{ ids: number[]; note: string | null } | null>
+  /** Which iPod is plugged in (null = none) — the one-button sync's door (ipod-one-sync.ts). */
+  pluggedIpod?: () => Promise<IpodIdentity | null>
 }
 
 const WORKOUT_TARGET = 1000
@@ -247,6 +251,23 @@ async function askActivityVibe(
 
 export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
   const { ipc } = host
+  // ONE BUTTON PER iPod (2026-11-07): what one Sync puts on the plugged-in iPod —
+  // the Original's Top 1000, another iPod's list, an unknown iPod refused. No size,
+  // no brief, no Music Man (ipod-one-sync.ts). The renderer syncs exactly these ids.
+  ipc.handle('plan-ipod-sync', async (_e, tracks: OneSyncTrack[]) => {
+    return planOneSync({
+      ipod: async (): Promise<OneSyncIpod> => {
+        const id = await host.pluggedIpod?.()
+        if (!id) return { status: 'none' }
+        if (id.status !== 'known') return { status: 'unknown' }
+        return { status: 'known', id: id.device.id, name: id.device.name, color: id.device.color, primary: id.device.primary }
+      },
+      top1000: async () => (await host.top1000ForSync?.()) ?? null,
+      list: async () => (await host.listOnlyPool?.()) ?? null,
+      ineligible: async () => (await host.getIneligibleTrackIds?.()) ?? new Set<number>(),
+    }, Array.isArray(tracks) ? tracks : [])
+  }, { refuse: REFUSED_SENDER })
+
   ipc.handle('build-workout-sync-set', async (
     _e,
     tracks: WorkoutTrack[],

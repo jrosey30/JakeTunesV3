@@ -68,7 +68,7 @@ export function SyncHistoryRows({ entries, limit }: { entries: Entry[]; limit?: 
               <div key={key} className={`sh-row${expanded ? ' is-open' : ''}`}>
                 <button type="button" className="sh-row-head" onClick={() => setOpen(expanded ? null : key)}>
                   <span className="sh-when">{whenLabel(e.when)}</span>
-                  <span className="sh-what">Activity Sync · {e.target ?? '?'} songs</span>
+                  <span className="sh-what">Sync · {e.target ?? '?'} songs</span>
                   <span className={`sh-badge ${e.aborted ? 'sh-badge--bad' : good ? 'sh-badge--good' : 'sh-badge--warn'}`}>
                     {badge}
                   </span>

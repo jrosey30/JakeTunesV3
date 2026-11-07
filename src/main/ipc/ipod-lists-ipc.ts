@@ -19,6 +19,7 @@ import { identifyIpod, loadIpodRegistry, poolFileFor } from '../ipod-identity.ts
 import { createIpodListClient } from '../ipod-list-client.ts'
 import { refreshIpodPool, type IpodPoolRefresh, type PoolFileName } from '../ipod-list-pool.ts'
 import type { FetchLike } from '../top1000-client.ts'
+import { flushHomeminiName } from '../ipod-rename.ts'
 
 export interface IpodListsHost {
   stateDir: string
@@ -34,6 +35,8 @@ export interface IpodListSource {
   refresh(device: IpodDeviceMarker): Promise<IpodPoolRefresh>
   /** The plugged-in iPod's list when it is a known non-Original iPod; null otherwise. */
   refreshPlugged(mount: string | null): Promise<{ ids: number[]; note: string | null } | null>
+  /** Tell homemini an iPod's new name (PATCH); false = not now. */
+  rename(deviceId: string, name: string): Promise<boolean>
 }
 
 export function createIpodListSource(host: IpodListsHost): IpodListSource {
@@ -54,6 +57,9 @@ export function createIpodListSource(host: IpodListsHost): IpodListSource {
   }
 
   async function refresh(device: IpodDeviceMarker): Promise<IpodPoolRefresh> {
+    // A rename homemini missed (it was away) goes first — every sync reads the list here.
+    await flushHomeminiName(host.stateDir, device.id, (id, name) => client.rename(id, name))
+      .catch((err) => host.warn?.(`[ipod-list] pending rename for ${device.name}: ${(err as Error)?.message ?? err}`))
     return refreshIpodPool({
       poolFile: poolFileFor(host.stateDir, device),
       ipodName: device.name,
@@ -64,6 +70,7 @@ export function createIpodListSource(host: IpodListsHost): IpodListSource {
 
   return {
     refresh,
+    rename: (deviceId, name) => client.rename(deviceId, name),
     async refreshPlugged(mount) {
       if (!mount) return null
       const id = await identifyIpod(mount, host.stateDir)

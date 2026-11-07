@@ -93,10 +93,16 @@ describe('removeFromPool', () => {
 
 describe('pool page', () => {
   const view = readFileSync(join(import.meta.dirname, '..', '..', 'renderer', 'views', 'ActivityPoolView.tsx'), 'utf8')
-  it('"Sync this pool…" checks for an iPod before going to the Device page', () => {
+  it('"Sync this list…" checks for the iPod before going to the Device page, and names its one Sync button', () => {
     assert.match(view, /checkIpodMounted\(\)/)
-    assert.match(view, /Plug in the iPod, then press Activity Sync/)
+    assert.match(view, /Plug in \$\{otherIpod\.name\}, then press Sync \$\{otherIpod\.name\}/)
     assert.doesNotMatch(view, /requestPoolMode\(/)
+    assert.doesNotMatch(view, /setNotice\(`[^`]*Activity Sync/)
+  })
+  it('the Original gets no sync button here: its Sync is its Top 1000, not this pool (2026-11-07)', () => {
+    assert.match(view, /\{otherIpod && <button/)
+    assert.match(view, /the Original’s Sync puts its Top 1000 on it/)
+    assert.doesNotMatch(view, /splitHalfAndHalf/)
   })
   it('no copy says the sync stops and asks you to trim — half and half never trims or stops', () => {
     assert.doesNotMatch(view, /asks you to trim/)

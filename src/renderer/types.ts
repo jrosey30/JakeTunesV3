@@ -872,6 +872,9 @@ declare global {
       }>
       onIpodSyncIncomplete: (callback: (info: { phase: string; at?: string }) => void) => () => void
       getIpodDevice?: () => Promise<{ ok: boolean; mounted?: boolean; identity?: IpodIdentity; error?: string }>
+      renameIpodDevice?: (name: string) => Promise<
+        | { ok: true; device: IpodDeviceMarker; mount: string; driveNote: string | null; homemini: 'saved' | 'later' | 'n/a' }
+        | { ok: false; error: string }>
       registerIpodDevice?: (input: { asOriginal: boolean; name?: string; color?: string; purpose?: string }) => Promise<{ ok: true; device: IpodDeviceMarker } | { ok: false; error: string }>
       onIpodDeviceChanged?: (callback: () => void) => () => void
       analyzeTrack: (trackId: number, colonPath: string, fingerprint: string) => Promise<{ ok: boolean; bpm?: number; keyRoot?: string; keyMode?: 'major' | 'minor' | ''; camelotKey?: string; error?: string }>
@@ -1012,6 +1015,10 @@ declare global {
   onIpodRoundTrip: (callback: (payload: { updates: Array<{ id: number; field: string; value: number }>; summary: { plays: number; tracks: number; otgLists: number } }) => void) => () => void
   onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'db' | 'verify' | 'cancelled' | 'error'; current: number; total: number; title: string }) => void) => () => void
       onStateSaveLocked: (callback: (info: { reason: string }) => void) => () => void
+      planIpodSync?: (tracks: Array<{
+        id: number; title?: string; artist?: string; path?: string; codec?: string; audioMissing?: boolean
+        duration?: number; genre?: string; rating?: number; playCount?: number; lastPlayedAt?: unknown; dateAdded?: unknown
+      }>) => Promise<import('../common/ipod-one-sync-plan').OneSyncPlan>
       buildWorkoutSyncSet?: (tracks: Array<{
         id: number; title?: string; artist?: string; album?: string; genre?: string; year?: string | number
         playCount?: number; skipCount?: number; rating?: number; bpm?: number | null; codec?: string; fileSize?: number

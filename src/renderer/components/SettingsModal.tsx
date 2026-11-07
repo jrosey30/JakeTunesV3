@@ -897,9 +897,9 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
           {tab === 'Sync' && (
             <>
               <p className="imp-help" style={{ marginBottom: 12 }}>
-                iPod writes happen only when you click Activity Sync or Full Sync.
+                iPod writes happen only when you click Sync or Full Sync.
                 Plug-in no longer auto-repairs — that second writer is how a sealed
-                500 became 492 on the Mini. After Activity Sync, TSA inspects every
+                500 became 492 on the Mini. After a Sync, TSA inspects every
                 song by identity and the set stays until you sync again.
               </p>
               {/* The two retired auto-sync checkboxes were removed 2026-09-06

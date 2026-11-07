@@ -3,9 +3,8 @@
  * Pool per iPod, step 1). DeviceView itself is on the do-not-touch list, so
  * this lives beside it rather than inside it.
  *
- *   • the original: its name and what it's for, nothing to do
- *   • another iPod JakeTunes knows (the red Mini): name + "left alone until it
- *     has its own Pool" — main refuses every write to it anyway
+ *   • an iPod JakeTunes knows: nothing here — its name, colour and one Sync
+ *     button are in the Device page's Sync area (2026-11-07)
  *   • an iPod with no ID yet: set it up, either as the original (only when no
  *     original is registered on this Mac) or as a new iPod with a name, a
  *     sticker colour and a line about what it's for
@@ -25,7 +24,7 @@ const STICKERS: Array<{ name: string; hex: string }> = [
   { name: 'black', hex: '#2a2a2a' },
 ]
 
-function stickerHex(color: string | null): string {
+export function stickerHex(color: string | null): string {
   return STICKERS.find((s) => s.name === color)?.hex || color || '#b9bcc0'
 }
 
@@ -77,19 +76,9 @@ export default function IpodIdentityBar() {
 
   if (!identity) return null
 
-  if (identity.status === 'known') {
-    const d = identity.device
-    return (
-      <div className="ipod-id-bar">
-        <span className="ipod-id-sticker" style={{ background: stickerHex(d.color) }} aria-hidden="true" />
-        <span className="ipod-id-name">{d.name}</span>
-        {d.purpose && <span className="ipod-id-purpose">{d.purpose}</span>}
-        {!d.primary && (
-          <span className="ipod-id-note">Its own Pool and its own sync: drop songs on the sidebar’s iPod Pool while it’s plugged in, then Sync the Pool — its drops plus Music Man picks, no Top 1000. Its play counts come home after its first sync.</span>
-        )}
-      </div>
-    )
-  }
+  // A known iPod's name and colour sit in the Device page's Sync area, beside
+  // its one Sync button (2026-11-07). This strip is only for setting one up.
+  if (identity.status === 'known') return null
 
   return (
     <div className="ipod-id-bar ipod-id-bar--unknown">
