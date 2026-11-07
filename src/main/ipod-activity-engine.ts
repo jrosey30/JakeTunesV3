@@ -138,6 +138,9 @@ export interface ActivitySyncInput {
    *  a seat; a song that can't go on is left off and named in `leftOff`, and
    *  the set lands that many fewer instead of refusing. */
   listOnly?: boolean
+  /** The iPod's own name (its marker): written as the catalog's master playlist
+   *  title, which is the name the iPod shows for itself (2026-11-07). */
+  ipodName?: string
 }
 
 export interface ActivitySyncResult {
@@ -1062,7 +1065,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   const written = await spawnJson(
     python,
     [host.coreScript('core/db_reader.py'), '--write', localDb, '--template', ipodDb, '--ipod-root', IPOD_MOUNT],
-    JSON.stringify({ tracks, playlists }),
+    JSON.stringify({ tracks, playlists, masterName: input.ipodName }),
   )
   if (written.err && (written.err as NodeJS.ErrnoException).code === 'ENOENT') {
     return rewipeAndStop(fail({ copied, copyErrors, error: host.pythonHint || PYTHON_INSTALL_HINT, target }))

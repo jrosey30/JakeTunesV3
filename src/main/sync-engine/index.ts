@@ -335,6 +335,8 @@ export function createSyncEngine(host: SyncEngineHost) {
     // Every iPod but the Original takes exactly its own list (2026-11-07):
     // the activity engine must never fill it from the library.
     let listOnlyIpod = false
+    // The iPod's own name, written as the catalog's master title (what the iPod calls itself).
+    let ipodName: string | undefined
     if (gateMount) {
       const ipod = await resolveIpodState(gateMount, STATE_DIR)
       if (ipod.refusal) {
@@ -343,6 +345,7 @@ export function createSyncEngine(host: SyncEngineHost) {
       }
       syncStateDir = ipod.stateDir
       listOnlyIpod = !!(ipod.device && !ipod.device.primary)
+      ipodName = ipod.device?.name
       if (ipod.device && !ipod.device.primary) console.log(`sync-to-ipod: ${ipod.device.name} — its own sync state lives in ${ipod.stateDir}`)
       // Plays first (2026-10-28): keep a copy of Play Counts/OTG + the pre-sync
       // catalog and manifest, bring the plays home, and confirm they are
@@ -382,7 +385,7 @@ export function createSyncEngine(host: SyncEngineHost) {
         // #47 (fill-to-N): next eligible library songs when a boarded one cannot copy.
         // A list-only iPod gets no library loader at all — its set is its list.
         loadReplacementTracks: listOnlyIpod ? undefined : bindActivityReplacements(getLibraryTracks, getConcertOwnedTrackIds),
-      }, { tracks, playlists, convertOptions, listOnly: listOnlyIpod })
+      }, { tracks, playlists, convertOptions, listOnly: listOnlyIpod, ipodName })
     }
     if (syncOpts?.wipeFirst) {
       return { ok: false, copied: 0, error: 'Activity Sync is the dedicated engine, not this copy loop.' }
@@ -1671,7 +1674,7 @@ export function createSyncEngine(host: SyncEngineHost) {
     const localDb = join(app.getPath('temp'), `jaketunes-itunesdb-${process.pid}`)
     const scriptPath = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/db_reader.py')
     return await new Promise((resolve) => {
-      const input = JSON.stringify({ tracks, playlists })
+      const input = JSON.stringify({ tracks, playlists, masterName: ipodName })
       const py = spawn(PYTHON_CMD ?? 'python3', [
         scriptPath, '--write', localDb, '--template', ipodDb, '--ipod-root', IPOD_MOUNT,
       ])

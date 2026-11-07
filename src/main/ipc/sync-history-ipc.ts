@@ -125,10 +125,18 @@ export function buildSyncHistory(
   return entries.slice(0, cap)
 }
 
-export function registerSyncHistoryIpc(ipc: IpcRegistrar, host: { stateDir: string }): void {
+export function registerSyncHistoryIpc(
+  ipc: IpcRegistrar,
+  /** `dir`: the plugged-in iPod's own state dir (each iPod keeps its own ledgers,
+   *  step 2b) — null for an iPod JakeTunes doesn't know, which has no history.
+   *  Absent: `stateDir` (the Original's). */
+  host: { stateDir: string; dir?: () => Promise<string | null> },
+): void {
   ipc.handle('get-sync-history', async (): Promise<{ ok: boolean; entries: SyncHistoryEntry[] }> => {
+    const dir = host.dir ? await host.dir().catch(() => host.stateDir) : host.stateDir
+    if (dir === null) return { ok: true, entries: [] }
     const read = (name: string): Promise<string> =>
-      readFile(join(host.stateDir, name), 'utf-8').catch(() => '')
+      readFile(join(dir, name), 'utf-8').catch(() => '')
     const [activity, roundtrip] = await Promise.all([
       read('activity-sync-ledger.jsonl'),
       read('ipod-roundtrip-ledger.jsonl'),

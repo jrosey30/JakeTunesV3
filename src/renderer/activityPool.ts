@@ -29,11 +29,6 @@ let managedNote: string | null = null
 export interface PoolDevice { id: string | null; name: string; primary: boolean }
 let device: PoolDevice | null = null
 let deviceWatch = false
-/** RETIRED 2026-10-16 with pool "mode" — every sync is half and half. The
- *  pool page no longer raises it; DeviceView's "Sync the Pool" button
- *  (Do-Not-Touch) still does, and the Activity sheet consumes and ignores
- *  it. Kept only so that call site compiles. */
-let pendingPoolMode = false
 const listeners = new Set<() => void>()
 
 function notify(): void { for (const l of listeners) l() }
@@ -76,14 +71,6 @@ export function usePoolHealth(tracks: Track[]): PoolHealth {
 export function subscribePool(cb: () => void): () => void {
   listeners.add(cb)
   return () => { listeners.delete(cb) }
-}
-
-export function requestPoolMode(): void { pendingPoolMode = true }
-/** One-shot read: true exactly once after requestPoolMode(). */
-export function consumePoolModeRequest(): boolean {
-  const v = pendingPoolMode
-  pendingPoolMode = false
-  return v
 }
 
 export async function refreshPool(): Promise<number[]> {

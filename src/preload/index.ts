@@ -319,6 +319,8 @@ const electronAPI = {
   // Which iPod is plugged in (2026-10-23, one Pool per iPod — step 1).
   getIpodDevice: (): Promise<{ ok: boolean; mounted?: boolean; identity?: IpodIdentity; error?: string }> =>
     ipcRenderer.invoke('get-ipod-device'),
+  renameIpodDevice: (name: string): Promise<unknown> =>
+    ipcRenderer.invoke('rename-ipod-device', name),
   registerIpodDevice: (input: { asOriginal: boolean; name?: string; color?: string; purpose?: string }): Promise<{ ok: true; device: IpodDeviceMarker } | { ok: false; error: string }> =>
     ipcRenderer.invoke('register-ipod-device', input),
   onIpodDeviceChanged: (callback: () => void) => {
@@ -665,6 +667,9 @@ const electronAPI = {
   // loop checks it between files and bails with cancelled:true.
   cancelSync: (): Promise<{ ok: boolean; wasRunning: boolean }> =>
     ipcRenderer.invoke('cancel-sync'),
+  // One button per iPod (2026-11-07): what one Sync puts on the plugged-in iPod.
+  planIpodSync: (tracks: unknown[]): Promise<unknown> =>
+    ipcRenderer.invoke('plan-ipod-sync', tracks),
   buildWorkoutSyncSet: (tracks: Array<{
     id: number; title?: string; artist?: string; album?: string; genre?: string; year?: string | number
     playCount?: number; skipCount?: number; rating?: number; bpm?: number | null; codec?: string; fileSize?: number

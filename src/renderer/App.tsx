@@ -766,7 +766,7 @@ function AppInner() {
         if (!r?.ok || !r.sealed || r.unmounted) return
         if (r.drifted) {
           setNotice(
-            `iPod TSA: ${r.present} of ${r.target} songs from the last Activity Sync are still on the Mini. Will not auto-repair — run Activity Sync when you want a new set.`,
+            `iPod TSA: ${r.present} of ${r.target} songs from the last sync are still on the Mini. Will not auto-repair — press Sync on the Device page when you want them back.`,
             { kind: 'error', durationMs: 12000 },
           )
         }

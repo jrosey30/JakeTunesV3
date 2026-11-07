@@ -230,6 +230,29 @@ export async function registerIpod(
   return { ok: true, device: marker }
 }
 
+/**
+ * A new name for a known iPod (2026-11-07): the marker on the card first (the
+ * marker wins over the registry on every plug-in), then this Mac's registry.
+ * Same id, colour, purpose, primary flag and createdAt — the id is the identity.
+ */
+export async function renameIpodMarker(
+  mount: string,
+  stateDir: string,
+  name: string,
+): Promise<{ ok: true; device: IpodDeviceMarker; before: string } | { ok: false; error: string }> {
+  const current = await readDeviceMarker(mount)
+  if (!current) return { ok: false, error: 'JakeTunes doesn’t know this iPod yet. Set it up first.' }
+  const next = parseDeviceMarker({ ...current, name })
+  if (!next) return { ok: false, error: 'Give the iPod a name.' }
+  try {
+    await writeDeviceMarker(mount, next)
+  } catch (err) {
+    return { ok: false, error: `Couldn’t write to the iPod: ${err instanceof Error ? err.message : 'write failed'}` }
+  }
+  await rememberDevice(stateDir, next).catch(logRegistryFail)
+  return { ok: true, device: next, before: current.name }
+}
+
 /** null = this is the original iPod; otherwise why songs must not be imported off it (the one
  *  path that stays Original-only after step 2b: another iPod's card is never a source). */
 export async function refuseUnlessOriginalIpod(mount: string, stateDir: string): Promise<string | null> {

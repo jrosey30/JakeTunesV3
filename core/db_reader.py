@@ -142,6 +142,47 @@ def parse_tracks(db_path=IPOD_PATH):
 
     return tracks
 
+def parse_master_name(db_path=IPOD_PATH):
+    """The master playlist's title — the name the iPod shows for itself. '' if none."""
+    with open(db_path, "rb") as f:
+        data = f.read()
+    hlen = struct.unpack_from('<I', data, 4)[0]
+    children = struct.unpack_from('<I', data, 20)[0]
+    pos = hlen
+    for _ in range(children):
+        if pos + 16 > len(data) or data[pos:pos+4] != b'mhsd':
+            break
+        total = struct.unpack_from('<I', data, pos + 8)[0]
+        typ = struct.unpack_from('<I', data, pos + 12)[0]
+        if typ == 2:
+            lp = pos + struct.unpack_from('<I', data, pos + 4)[0]
+            if data[lp:lp+4] != b'mhlp':
+                return ''
+            count = struct.unpack_from('<I', data, lp + 8)[0]
+            yp = lp + struct.unpack_from('<I', data, lp + 4)[0]
+            for _ in range(count):
+                if data[yp:yp+4] != b'mhyp':
+                    return ''
+                yh = struct.unpack_from('<I', data, yp + 4)[0]
+                yt = struct.unpack_from('<I', data, yp + 8)[0]
+                if struct.unpack_from('<I', data, yp + 0x14)[0] == 1:
+                    nm = struct.unpack_from('<I', data, yp + 0x0C)[0]
+                    cp = yp + yh
+                    for _ in range(nm):
+                        if data[cp:cp+4] != b'mhod':
+                            break
+                        mt = struct.unpack_from('<I', data, cp + 8)[0]
+                        if struct.unpack_from('<I', data, cp + 12)[0] == 1:
+                            sl = struct.unpack_from('<I', data, cp + 0x1C)[0]
+                            return read_utf16(data, cp + 0x28, sl)
+                        cp += mt
+                    return ''
+                yp += yt
+            return ''
+        pos += total
+    return ''
+
+
 def parse_playlists(db_path=IPOD_PATH, tracks=None):
     """Parse playlists from the iPod iTunesDB (mhlp → mhyp → mhip)."""
     with open(db_path, "rb") as f:
@@ -1025,9 +1066,24 @@ def _sort_indices(tracks, sort_key):
     return indices
 
 
+DEFAULT_MASTER_NAME = 'JakeTunes'
+
+
+def master_playlist_name(name):
+    """The iPod's own name: the master playlist's title (Settings > About).
+    2026-11-07 (Jake: "i actually want to name the actual ipod punkPod"): the
+    plugged-in iPod's name from its JakeTunes marker, else the old fixed name."""
+    if isinstance(name, str):
+        clean = ' '.join(name.split())
+        if clean:
+            return clean[:63]
+    return DEFAULT_MASTER_NAME
+
+
 def build_mhyp_record(name, dbids, is_master, template_header=None,
                        template_mhods=None, sort_mhods=None):
     """Build an mhyp playlist record with mhip items.
+    For the master playlist, `name` is the iPod's own name (master_playlist_name).
     template_header:  existing 184-byte mhyp header to reuse (preserves playlist ID, flags).
     template_mhods:   tuple of (type100_bytes, type102_bytes) from existing DB.
     sort_mhods:       list of type-52 sort index mhod bytes (master playlist only).
@@ -1053,7 +1109,8 @@ def build_mhyp_record(name, dbids, is_master, template_header=None,
 
     # Name mhod (type 1)
     if is_master:
-        mhods += build_string_mhod(1, 'JakeTunes')
+        # Always written fresh, never the template's old title.
+        mhods += build_string_mhod(1, master_playlist_name(name))
         mhod_count += 1
     elif name:
         mhods += build_string_mhod(1, name)
@@ -1086,8 +1143,9 @@ def build_mhyp_record(name, dbids, is_master, template_header=None,
     return bytes(hdr) + bytes(mhods) + bytes(items)
 
 
-def write_itunesdb(tracks, playlists, template_path, output_path, ipod_root=None):
-    """Rebuild the iPod iTunesDB from JakeTunes library data."""
+def write_itunesdb(tracks, playlists, template_path, output_path, ipod_root=None, master_name=None):
+    """Rebuild the iPod iTunesDB from JakeTunes library data.
+    master_name: the iPod's own name, written as the master playlist title."""
     # ⚠️ TWIN: src/main/ipod-reconcile.ts fileSizeForItunesDb
     # mhit 0x24 MUST be the file on THIS card. library.json fileSize is often
     # a stale ALAC length (Beyond Me 31MB vs 7.5MB on disk). Mini firmware
@@ -1354,7 +1412,7 @@ def write_itunesdb(tracks, playlists, template_path, output_path, ipod_root=None
     struct.pack_into('<I', mhlp, 8, total_pl)
 
     pl_data = bytearray(mhlp)
-    pl_data += build_mhyp_record('', all_dbids, is_master=True,
+    pl_data += build_mhyp_record(master_name, all_dbids, is_master=True,
                                   template_header=master_mhyp_hdr,
                                   template_mhods=template_pl_mhods,
                                   sort_mhods=sort_mhods)
@@ -1532,6 +1590,7 @@ if __name__ == "__main__":
             template,
             db_path,
             ipod_root=root,
+            master_name=input_data.get('masterName'),
         )
         json.dump({'ok': True, 'count': count}, sys.stdout)
         sys.exit(0)

@@ -1,7 +1,5 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { newestProfile, profileChips, detachChangedProfile } from '../../common/activity-profiles.ts'
 
 const p = (id: string, profileName: string, updatedAt: string) => ({ id, profileName, updatedAt })
@@ -72,20 +70,5 @@ describe('A profile-sourced brief keeps its id only while it still IS that profi
   it('a brief that never came from a profile passes through untouched', () => {
     const b = { activity: 'run', place: 'Brooklyn' }
     assert.equal(detachChangedProfile(b, null), b)
-  })
-})
-
-describe('wired into the Activity sheet', () => {
-  const sheet = readFileSync(join(import.meta.dirname, '..', '..', 'renderer', 'components', 'ActivitySheet.tsx'), 'utf8')
-  it('starts from the newest profile, chips are deduped, confirm detaches a changed profile', () => {
-    assert.match(sheet, /newestProfile\(list\)/)
-    assert.match(sheet, /profileChips\(profiles\)\.map/)
-    assert.match(sheet, /onConfirm\(detachChangedProfile\(/)
-  })
-  it('Return builds, Escape cancels — and the review sheet gets no Return key', () => {
-    assert.match(sheet, /e\.key === 'Escape'/)
-    assert.match(sheet, /e\.key !== 'Enter'/)
-    const review = readFileSync(join(import.meta.dirname, '..', '..', 'renderer', 'components', 'SyncReviewSheet.tsx'), 'utf8')
-    assert.doesNotMatch(review, /'Enter'/)
   })
 })

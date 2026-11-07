@@ -14,7 +14,8 @@ import { REFUSED_SENDER } from '../ipc-register.ts'
 import { safeIpcError } from '../safe-ipc-error.ts'
 import { findIpodMount, isIpodMount, volumeNameFromMount, ejectVolume, IS_MAC } from '../platform.ts'
 import { STATE_DIR } from '../state-dir.ts'
-import { identifyIpod, registerIpod } from '../ipod-identity.ts'
+import { identifyIpod, registerIpod, renameIpodMarker } from '../ipod-identity.ts'
+import { renameIpod, renameMacVolume, queueHomeminiName } from '../ipod-rename.ts'
 
 export interface IpodMountSnapshot {
   mount: string | null
@@ -40,11 +41,18 @@ export interface IpodIpcHost {
    *  ingest hangs off this — reading Play Counts/OTG the moment the iPod
    *  arrives, before any sync can retire them. */
   onMountDetected?: (mount: string) => void
+  /** Tell homemini an iPod's new name (ipod-lists-ipc.ts); false = not now. */
+  renameOnHomemini?: (deviceId: string, name: string) => Promise<boolean>
+  /** The plugged-in iPod's identity changed (a rename): the renderer re-reads it. */
+  onDeviceChanged?: () => void
 }
 
 const IPOD_MISS_THRESHOLD = 3   // ~3 polls (~7.5s) of true absence before "disconnected"
 
 export function registerIpodIpc(ipc: IpcRegistrar, host: IpodIpcHost): void {
+  // While the drive is being renamed its mount path moves; the poll must not
+  // read that as an unplug or a new plug-in (which would run the round trip again).
+  let renameInFlight = false
   // Report the iPod's actual storage capacity by statting the mounted volume.
   ipc.handle('get-ipod-capacity', async () => {
     try {
@@ -97,7 +105,7 @@ export function registerIpodIpc(ipc: IpcRegistrar, host: IpodIpcHost): void {
       // here used to flip the sidebar to "ejected" then back, which fired
       // jaketunes-ipod-mounted and started auto-repair on top of the live
       // writer (two syncs, random Songs counts).
-      if (host.isSyncInFlight?.() && state.mount) {
+      if ((host.isSyncInFlight?.() || renameInFlight) && state.mount) {
         return { mounted: true, name: state.volume }
       }
       let mount = await findIpodMount()
@@ -180,6 +188,31 @@ export function registerIpodIpc(ipc: IpcRegistrar, host: IpodIpcHost): void {
       return r
     } catch (err) {
       return { ok: false, error: safeIpcError(err, 'io-failed') }
+    }
+  }, { refuse: REFUSED_SENDER })
+
+  // Rename the plugged-in iPod (2026-11-07): marker + registry, the drive's own
+  // label, homemini's list name; the next sync writes it into the catalog.
+  ipc.handle('rename-ipod-device', async (_e, name: unknown) => {
+    if (renameInFlight) return { ok: false, error: 'A rename is already running.' }
+    renameInFlight = true
+    try {
+      const r = await renameIpod({
+        syncing: () => host.isSyncInFlight?.() === true,
+        mount: () => host.getMount().mount,
+        renameMarker: (mount, next) => renameIpodMarker(mount, STATE_DIR, next),
+        renameVolume: (mount, label) => (IS_MAC ? renameMacVolume(mount, label) : Promise.resolve(mount)),
+        renameOnHomemini: (id, next) => host.renameOnHomemini?.(id, next) ?? Promise.resolve(false),
+        queueHomeminiName: (id, next) => queueHomeminiName(STATE_DIR, id, next),
+        // Same iPod at a new path: not an unplug, not a new plug-in (no second round trip).
+        followMount: (mount) => host.setMount({ mount, volume: volumeNameFromMount(mount), missStreak: 0 }),
+      }, name)
+      if (r.ok) host.onDeviceChanged?.()
+      return r
+    } catch (err) {
+      return { ok: false, error: safeIpcError(err, 'io-failed') }
+    } finally {
+      renameInFlight = false
     }
   }, { refuse: REFUSED_SENDER })
 
