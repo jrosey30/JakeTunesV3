@@ -13,11 +13,15 @@
  *      (s16 / 44100 / forced stereo, so mixed-format albums — ALAC, AAC,
  *      MP3, even mono oddities — concatenate byte-safely)
  *   2. RIFF chunk-walk each WAV to find its `data` payload (never assume
- *      a 44-byte header — ffmpeg can emit LIST chunks), stream-append the
- *      payloads into one combined WAV, and derive each song's startMs
- *      from EXACT cumulative PCM byte counts
+ *      a 44-byte header — ffmpeg can emit LIST chunks), clamp it to the
+ *      song's real length (AAC decodes its encoder padding as audio; see
+ *      live-set-source-length.ts), stream-append the payloads into one
+ *      combined WAV, and derive each song's startMs from EXACT cumulative
+ *      PCM byte counts
  *   3. convertAudio(combined, out, 'alac', tags) — the existing two-step
- *      afconvert encode + mutagen tag embed, iPod-safe bitstream and all
+ *      afconvert encode + mutagen tag embed, iPod-safe bitstream and all.
+ *      Then the zeros mutagen leaves in the moov come out, so a show's map
+ *      is only its map (mp4-moov-padding.ts).
  *
  * The caller (the 'live-set-merge' IPC in index.ts) owns progress
  * forwarding, artwork aliasing, and handing the finished file to the
@@ -30,8 +34,10 @@ import { mkdir, rm, stat, statfs, open } from 'node:fs/promises'
 import { createReadStream, createWriteStream } from 'node:fs'
 import { pipeline } from 'node:stream/promises'
 import { join } from 'node:path'
-import { convertAudio, type AudioTags } from './platform'
-import { rmsEnvelope, seamOverlapMs, mixSeam, bufferRmsDb, bytesForMs } from './live-set-seams'
+import { convertAudio, type AudioTags } from './platform.ts'
+import { planSeam, mixSeam, mixEdges, bufferRmsDb, bytesForMs, type SeamPlan } from './live-set-seams.ts'
+import { readDeclaredLength, realSegmentBytes, type DeclaredLength } from './live-set-source-length.ts'
+import { dropMoovPadding } from './mp4-moov-padding.ts'
 
 const execP = promisify(execFile)
 
@@ -163,7 +169,7 @@ export async function mergeLiveSet(
 
   try {
     // ── Stage 1: decode every track to uniform PCM ──
-    const segs: { path: string; input: LiveSetMergeInput }[] = []
+    const segs: { path: string; input: LiveSetMergeInput; declared: DeclaredLength | null }[] = []
     for (let i = 0; i < tracks.length; i++) {
       const t = tracks[i]
       onProgress({ stage: 'decode', current: i + 1, total: tracks.length, label: `Decoding ${i + 1}/${tracks.length} — ${t.title}` })
@@ -178,7 +184,13 @@ export async function mergeLiveSet(
         '-loglevel', 'error',
         segPath,
       ], { timeout: 300000, maxBuffer: 64 * 1024 * 1024 })
-      segs.push({ path: segPath, input: t })
+      // Where the file says the song ends. A file that can't answer keeps its
+      // decode as it is: a hole is better than cutting music on a guess.
+      const declared = await readDeclaredLength(t.absPath).catch((err: unknown) => {
+        console.warn(`[live-set] no declared length for "${t.title}":`, err instanceof Error ? err.message : err)
+        return null
+      })
+      segs.push({ path: segPath, input: t, declared })
     }
 
     // ── Stage 2: chunk-walk + stream-concat, computing exact cues ──
@@ -191,8 +203,10 @@ export async function mergeLiveSet(
     // Seams (2026-09-02): each seam is measured — a track that fades the
     // room out is overlapped with the next track's fade-in for the length
     // of the fade (capped at 4 s), so the crowd stays continuous; a
-    // soundboard cut with no fades stays a gapless butt splice. See
-    // live-set-seams.ts. `pendingTail` is the previous segment's fade-out,
+    // soundboard cut with no fades stays a gapless butt splice, and so does
+    // a cut where both sides are still in the room (2026-11-06); a join that
+    // would leave a hole or a click gets a few ms, no more. See
+    // live-set-seams.ts. `pendingTail` is the previous segment's last 8 s,
     // held back until the next head arrives to be summed with it.
     const FRAME = CHANNELS * BYTES_PER_SAMPLE
     const PROBE_BYTES = bytesForMs(8000, BYTES_PER_SEC, FRAME)
@@ -211,21 +225,36 @@ export async function mergeLiveSet(
     })
     let pendingTail: Buffer | null = null
     let seamsCrossfaded = 0
+    let joinsClosed = 0
+    let paddingBytesCut = 0
     for (let si = 0; si < segs.length; si++) {
       const seg = segs[si]
-      const { offset, size } = await findWavData(seg.path)
-      // Overlap with the previous segment: measured off both fades.
-      let overlap = 0
+      const { offset, size: decodedSize } = await findWavData(seg.path)
+      // Only the song: the encoder's tail-out never reaches the show.
+      const size = realSegmentBytes(decodedSize, seg.declared, SAMPLE_RATE, FRAME)
+      paddingBytesCut += decodedSize - size
+      if (seg.declared && size === decodedSize && seg.declared.frames * FRAME < decodedSize) {
+        console.warn(`[live-set] "${seg.input.title}" declares ${seg.declared.frames} frames (${seg.declared.source}) but decodes to ${decodedSize / FRAME}: too far apart to be padding, keeping the decode`)
+      }
+      // What this seam needs. Nothing to measure when either song is too short
+      // to have held 8 s back.
+      let seam: SeamPlan = { mix: 'none', overlapBytes: 0, cueBytes: 0 }
       if (pendingTail && size > PROBE_BYTES * 2) {
         const head = await readRange(seg.path, offset, PROBE_BYTES)
-        const ms = seamOverlapMs(rmsEnvelope(pendingTail, BYTES_PER_SEC), rmsEnvelope(head, BYTES_PER_SEC))
-        overlap = Math.min(bytesForMs(ms, BYTES_PER_SEC, FRAME), pendingTail.length)
+        seam = planSeam(pendingTail, head, BYTES_PER_SEC, FRAME)
+        if (seam.unclosed) console.warn(`[live-set] the join into "${seg.input.title}" keeps a fault nothing here could close: ${seam.unclosed.holeMs.toFixed(1)} ms hole, step ${seam.unclosed.jumpOverSlope.toFixed(2)} x the local slope`)
+        if (seam.openGapMs) console.warn(`[live-set] the join into "${seg.input.title}" keeps ${seam.openGapMs} ms of silence at the cut, too long to close and too short to be a pause`)
+      } else if (si > 0) {
+        console.warn(`[live-set] the join into "${seg.input.title}" is not measured: a song beside it is 16 s or less, so it stays as it comes`)
       }
-      // The cue sits at the CROSSOVER (mid-overlap), not where the overlap
+      const overlap = seam.overlapBytes
+      // The cue sits where the next song takes over, not where the overlap
       // begins — otherwise the setlist flips to the next song while the old
       // tail is still audible (Jake: "it jumped to Jet before the end of
-      // Drive My Car"). Durations become spans cue→cue below.
-      const cueStart = cumBytes - overlap + Math.floor(overlap / 2 / FRAME) * FRAME
+      // Drive My Car"). The held-back tail hasn't been counted in cumBytes
+      // yet, and the next song starts after it. Durations become spans
+      // cue→cue below.
+      const cueStart = cumBytes + (pendingTail?.length ?? 0) - overlap + seam.cueBytes
       cues.push({
         trackId: seg.input.id,
         title: seg.input.title,
@@ -235,20 +264,26 @@ export async function mergeLiveSet(
       })
       if (pendingTail) {
         if (overlap > 0) {
-          // The previous tail's un-overlapped part, then the mixed seam:
-          // tapered edges + make-up gain toward the quieter body level of
-          // the two neighbours (measured 2 s either side of the overlap).
           const keep = pendingTail.subarray(0, pendingTail.length - overlap)
           await writeBuf(keep)
           const head = await readRange(seg.path, offset, overlap)
-          const afterBytes = bytesForMs(2000, BYTES_PER_SEC, FRAME)
-          const after = await readRange(seg.path, offset + overlap, afterBytes)
-          const refBefore = bufferRmsDb(keep.subarray(Math.max(0, keep.length - afterBytes)))
-          const refAfter = bufferRmsDb(after)
-          const refDb = Math.min(refBefore, refAfter)
-          await writeBuf(mixSeam(pendingTail.subarray(pendingTail.length - overlap), head, BYTES_PER_SEC, FRAME, refDb))
+          const tailEnd = pendingTail.subarray(pendingTail.length - overlap)
+          if (seam.mix === 'fade') {
+            // The previous tail's un-overlapped part, then the mixed seam:
+            // tapered edges + make-up gain toward the quieter body level of
+            // the two neighbours (measured 2 s either side of the overlap).
+            const afterBytes = bytesForMs(2000, BYTES_PER_SEC, FRAME)
+            const after = await readRange(seg.path, offset + overlap, afterBytes)
+            const refBefore = bufferRmsDb(keep.subarray(Math.max(0, keep.length - afterBytes)))
+            const refAfter = bufferRmsDb(after)
+            const refDb = Math.min(refBefore, refAfter)
+            await writeBuf(mixSeam(tailEnd, head, BYTES_PER_SEC, FRAME, refDb))
+            seamsCrossfaded++
+          } else {
+            await writeBuf(mixEdges(tailEnd, head, FRAME, seam.mix === 'ramp'))
+            joinsClosed++
+          }
           cumBytes += pendingTail.length
-          seamsCrossfaded++
         } else {
           await writeBuf(pendingTail)
           cumBytes += pendingTail.length
@@ -279,7 +314,7 @@ export async function mergeLiveSet(
       const next = i + 1 < cues.length ? cues[i + 1].startMs : totalMsNow
       cues[i].durationMs = Math.max(0, next - cues[i].startMs)
     }
-    if (seamsCrossfaded > 0) console.log(`[live-set] ${seamsCrossfaded}/${Math.max(0, segs.length - 1)} seams crossfaded (album fades measured)`)
+    console.log(`[live-set] ${seamsCrossfaded}/${Math.max(0, segs.length - 1)} seams crossfaded (album fades measured), ${joinsClosed} joins closed (a hole or a click), ${paddingBytesCut / FRAME} frames of encoder padding cut`)
     await new Promise<void>((resolve, reject) => out.end((err?: Error | null) => (err ? reject(err) : resolve())))
 
     // Patch the real sizes into the header.
@@ -320,6 +355,14 @@ export async function mergeLiveSet(
     // deletes mergedPath itself after the import queue copies it in.
     for (const seg of segs) await rm(seg.path, { force: true }).catch(() => {})
     await rm(combinedPath, { force: true }).catch(() => {})
+
+    // mutagen leaves 0.1% of the file as zeros in the moov: 62-71% of a show's
+    // map, and the phone downloads the map before the first note. Tags stay in
+    // the file and a later re-tag just pads again. Failing here keeps the
+    // padded file, which plays exactly the same.
+    await dropMoovPadding(mergedPath).catch((err: unknown) => {
+      console.warn('[live-set] moov padding kept:', err instanceof Error ? err.message : err)
+    })
 
     const totalDurationMs = Math.round((cumBytes / BYTES_PER_SEC) * 1000)
     return { mergedPath, cues, totalDurationMs }

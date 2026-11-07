@@ -4,7 +4,7 @@
  */
 
 import type { Recommendation } from '../types'
-import { nameKey } from '../../common/fold-text.ts'
+import { recoArtistMatches } from '../../common/artist-credit.ts'
 
 export interface MmSuggestion {
   song: string
@@ -64,22 +64,6 @@ export function suggKey(s: { song: string; artist: string }): string {
   return `${s.artist.toLowerCase().trim()}|${s.song.toLowerCase().trim()}`
 }
 
-// ⚠️ TWIN: src/main/reco-match.ts recoArtistMatches — renderer-side copy of the
-// same loose artist rule (exact normalized, else 4+-char substring either way);
-// no cross-bundle import from src/main, so keep the two in sync. Exists because
-// exact keys miss multi-credit strings: a list entry saved as "Daft Punk" must
-// still match a suggestion credited "Daft Punk, Pharrell Williams & Nile Rodgers".
-function artistLooselyMatches(want: string, got: string): boolean {
-  // = recoFold: accents folded (Sigur Rós meets Sigur Ros) and any script
-  // kept (a Hebrew artist was '' and never matched). See src/common/fold-text.ts.
-  const clean = (s: string) => nameKey(s, '')
-  const w = clean(want)
-  const g = clean(got)
-  if (!w || !g) return false
-  if (w === g) return true
-  return w.length >= 4 && g.length >= 4 && (w.includes(g) || g.includes(w))
-}
-
 export function dedupeSuggestions(incoming: MmSuggestion[], list: Recommendation[]): MmSuggestion[] {
   const listPairs = list
     .map((r) => ({
@@ -89,7 +73,9 @@ export function dedupeSuggestions(incoming: MmSuggestion[], list: Recommendation
     .filter((p) => p.artist && p.title)
   const onList = (s: MmSuggestion): boolean => {
     const title = s.song.toLowerCase().trim()
-    return listPairs.some((p) => p.title === title && artistLooselyMatches(s.artist, p.artist))
+    // A credit holding the name counts: a list entry saved as "Daft Punk" must still match a
+    // suggestion credited "Daft Punk, Pharrell Williams & Nile Rodgers".
+    return listPairs.some((p) => p.title === title && recoArtistMatches(s.artist, p.artist))
   }
   const seen = new Set<string>()
   const out: MmSuggestion[] = []

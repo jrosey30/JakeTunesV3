@@ -12,14 +12,13 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync, rmSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { runSyncScript } from './sync-script-run.ts'
 
 const repoRoot = join(import.meta.dirname, '..', '..', '..')
 const scripts = join(repoRoot, 'Dr. Claude', 'scripts')
-const syncScript = join(scripts, 'jaketunes-homemini-sync.sh')
 const HUB_DIR = 'Library/Application Support/JakeTunes'
 const SEP = '\u001f'
 
@@ -54,13 +53,10 @@ function statePush(args: string[]): string[] {
     mkdirSync(join(root, 'lib'), { recursive: true })
     const calls = join(root, 'calls.txt')
     writeFileSync(calls, '')
-    const r = spawnSync('/bin/bash', [syncScript, ...args], {
-      env: {
-        HOME: join(root, 'home'), PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`, STUB_CALLS: calls,
-        JT_SYNC_LOG: join(root, 'sync.log'), JT_SYNC_LOCK: join(root, 'sync.lock'), JT_HOMEMINI: 'test@stub',
-        JT_LIBRARY_ROOT: join(root, 'lib'), JT_MOUNT: join(root, 'nas'),
-      },
-      encoding: 'utf8', timeout: 60_000,
+    const r = runSyncScript(args, bin, {
+      HOME: join(root, 'home'), PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`, STUB_CALLS: calls,
+      JT_SYNC_LOG: join(root, 'sync.log'), JT_SYNC_LOCK: join(root, 'sync.lock'), JT_HOMEMINI: 'test@stub',
+      JT_LIBRARY_ROOT: join(root, 'lib'), JT_MOUNT: join(root, 'nas'),
     })
     assert.equal(r.status, 0, r.stderr)
     const push = readFileSync(calls, 'utf8').split('\n').filter(Boolean)

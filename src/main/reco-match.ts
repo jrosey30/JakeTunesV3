@@ -1,5 +1,8 @@
 /** Pure iTunes reco matching — shared by suggest-verify and unit tests. */
 import { nameKey, storedNameKey } from '../common/fold-text.ts'
+import { recoArtistMatches, sameArtistName } from '../common/artist-credit.ts'
+
+export { recoArtistMatches, sameArtistName }
 
 /**
  * ⚠️ IDENTITY, NOT MATCHING. recoNorm feeds recoMatchKey, and those keys are
@@ -52,7 +55,7 @@ export function recoFold(s: string): string {
 // ⚠️ TWIN: ~/JakeTunesMobile/backend/src/util/reco-identity.ts — byte-identical
 // logic; the parity fixture table in __tests__ is copy-shared verbatim with
 // the backend suite so drift fails both. Display-only cousins (looser, never
-// write tombstones): renderer store.ts artistLooselyMatches; iOS matchKey.
+// write tombstones): renderer store.ts dedupeSuggestions; iOS matchKey.
 //
 // Key kinds, strongest first (a record emits every kind that applies; ANY
 // overlap between two records = same song):
@@ -184,17 +187,6 @@ export function recoTitleMatches(want: string, got: string): boolean {
   return false
 }
 
-// ⚠️ TWIN: src/renderer/listen-to-the-list/store.ts artistLooselyMatches (same fold: nameKey squashed) —
-// renderer-side copy of this rule (no cross-bundle import); keep in sync.
-export function recoArtistMatches(want: string, got: string): boolean {
-  const w = recoFold(want)
-  const g = recoFold(got)
-  if (!w || !g) return false
-  if (w === g) return true
-  if (w.length >= 4 && g.length >= 4 && (w.includes(g) || g.includes(w))) return true
-  return false
-}
-
 /** The artist, or one of the other names MusicBrainz knows them by (2026-11-03:
  *  Qobuz files The English Beat as "The Beat"). An alias is compared WHOLE, never
  *  by containment: "The Beat" is no warrant for "The Beat Happening". */
@@ -225,6 +217,7 @@ export function distinctArtistsForRecoTitle(
  * MM credited the wrong artist. Reject when the title maps to multiple real artists
  * on iTunes (e.g. "Around the World" → Daft Punk vs Kings of Leon). Allow a single
  * canonical correction when the title is unambiguous (e.g. Bonafied Lovin' → Chromeo).
+ * This corrects a model's credit. A row Jake named is held to more: matchNamesRowArtist.
  */
 export function shouldRejectRecoArtistCorrection(
   wantTitle: string,
