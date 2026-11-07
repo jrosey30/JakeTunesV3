@@ -13,7 +13,7 @@ import { join } from 'node:path'
 import { mergedAlbumArtworkKey, posterArtworkKey } from '../../common/concert-poster.ts'
 import { installPosterImage, md5Hex, posterArtworkHash, posterInStore } from '../concert-poster.ts'
 import {
-  applyPlan, describePlan, makePlan, planIsEmpty, restoreBackup, SHOW_RULES, RUSH_JULY_SHA256, RUSH_JUNE_SHA256,
+  applyPlan, describePlan, makePlan, planIsEmpty, restoreBackup, SHOW_RULES, RUSH_JULY_SHA256, RUSH_JUNE_SHA256, writeAtomic,
   type MigratePaths, type MigrateTools, type PlanAction, type ShowPlan,
 } from '../concert-poster-migrate.ts'
 
@@ -359,6 +359,86 @@ describe('safe to run twice', () => {
     assert.equal(acts(showOf(p.shows, UNPLUGGED), 'cover-restore').length, 1, 'still byte-identical to the poster, so it still holds the poster')
     await applyPlan(p, w.paths)
     assert.ok(readFileSync(artFile(w, UNPLUGGED)).equals(jpeg('unplugged cover from the web')))
+  })
+})
+
+describe('a run that stops part-way is finished by running it again', () => {
+  let w: World
+  beforeEach(() => { w = world() })
+
+  for (const where of ['posters', 'covers', 'index', 'locks', 'live-sets'] as const) {
+    test(`stopped after ${where}`, async () => {
+      const original = {
+        locks: readFileSync(w.paths.locks), index: readFileSync(w.paths.index), sets: readFileSync(w.paths.liveSets),
+        album: readFileSync(artFile(w, UNPLUGGED)),
+      }
+      await plan(w, true)
+      const first = await plan(w, false)
+      const stop = (s: string): void => { if (s === where) throw new Error('the disk said no') }
+      await assert.rejects(applyPlan(first, w.paths, () => {}, stop), /the disk said no/)
+      const backups = (): string[] => readdirSync(w.paths.backupRoot).filter((n) => n.startsWith('concert-posters-'))
+      assert.equal(backups().length, 1)
+
+      const second = await plan(w, false)
+      await applyPlan(second, w.paths)
+      assert.deepEqual(backups().length, 1, 'no second backup: one taken now would hold the half-finished store')
+
+      assert.deepEqual(json<string[]>(w.paths.locks).filter((k) => k === UNPLUGGED), [], 'the album key is unlocked')
+      const bare = md5Hex(UNPLUGGED)
+      assert.equal(existsSync(join(w.paths.artworkDir, 'locked-backup', `${bare}.jpg`)), false, 'and its backup copy is gone, or the next launch re-locks it')
+      const stamped = json<Record<string, string>>(w.paths.index)[UNPLUGGED]!
+      assert.match(stamped, new RegExp(`^${bare}_\\d+$`), 'the album\'s index line moved, so a replica fetches the cover')
+      const said = json<{ importedAt: string }>(artFile(w, UNPLUGGED).replace(/\.jpg$/, '.meta.json'))
+      assert.equal(stamped, `${bare}_${Date.parse(said.importedAt)}`, 'one stamp for the cover and its index line')
+      assert.ok(readFileSync(artFile(w, UNPLUGGED)).equals(jpeg('unplugged cover from the web')))
+      assert.equal(json<Record<string, { concert: { poster?: string } }>>(w.paths.liveSets)[UNPLUGGED]!.concert.poster, posterArtworkHash(UNPLUGGED))
+      assert.ok(planIsEmpty(await plan(w, false)), 'a third plan finds nothing')
+      assert.equal(existsSync(join(w.paths.backupRoot, 'concert-posters.in-progress.json')), false)
+
+      // And the first run's backup still undoes all of it.
+      await restoreBackup(join(w.paths.backupRoot, backups()[0]!))
+      assert.ok(readFileSync(w.paths.locks).equals(original.locks))
+      assert.ok(readFileSync(w.paths.index).equals(original.index))
+      assert.ok(readFileSync(w.paths.liveSets).equals(original.sets))
+      assert.ok(readFileSync(artFile(w, UNPLUGGED)).equals(original.album))
+    })
+  }
+
+  test('a cover whose sidecar never landed is written again, and the rest still follows', async () => {
+    await plan(w, true)
+    const first = await plan(w, false)
+    await assert.rejects(applyPlan(first, w.paths, () => {}, (s) => { if (s === 'covers') throw new Error('stop') }))
+    rmSync(artFile(w, UNPLUGGED).replace(/\.jpg$/, '.meta.json'))
+    const again = await plan(w, false)
+    assert.equal(acts(showOf(again.shows, UNPLUGGED), 'cover-restore').length, 1)
+    await applyPlan(again, w.paths)
+    assert.ok(existsSync(artFile(w, UNPLUGGED).replace(/\.jpg$/, '.meta.json')))
+    assert.ok(planIsEmpty(await plan(w, false)))
+  })
+
+  test('stopped between a cover and its backup copy: the copy still goes, or the next launch re-locks the poster', async () => {
+    await plan(w, true)
+    const first = await plan(w, false)
+    await assert.rejects(applyPlan(first, w.paths, () => {}, (s) => { if (s === 'covers') throw new Error('stop') }))
+    const copy = join(w.paths.artworkDir, 'locked-backup', `${md5Hex(UNPLUGGED)}.jpg`)
+    writeFileSync(copy, POSTERS[UNPLUGGED]!)
+    await applyPlan(await plan(w, false), w.paths)
+    assert.equal(existsSync(copy), false)
+  })
+
+  test('a failed write leaves no stray temp file beside the store', async () => {
+    const dest = join(w.dir, 'a-folder-in-the-way')
+    mkdirSync(join(dest, 'inside'), { recursive: true })
+    await assert.rejects(writeAtomic(dest, 'bytes'))
+    assert.deepEqual(readdirSync(w.dir).filter((n) => n.endsWith('.tmp')), [])
+  })
+
+  test('a finished migration never unlocks a lock Jake made afterwards', async () => {
+    await dryRunThenApply(w)
+    writeFileSync(w.paths.locks, JSON.stringify([UNPLUGGED]))
+    const p = await plan(w, false)
+    assert.deepEqual(acts(showOf(p.shows, UNPLUGGED), 'unlock'), [])
+    assert.ok(planIsEmpty(p))
   })
 })
 

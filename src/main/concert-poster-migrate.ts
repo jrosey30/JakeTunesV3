@@ -20,8 +20,9 @@
  *   - Identity, not names (the Code Hygiene rule): the album's key is only
  *     overwritten while its file is byte-identical to the show's poster, or is the
  *     pinned July Rush image. A second run finds nothing left to do and writes
- *     nothing. Each step is safe to repeat, so a crash mid-way is finished by
- *     running it again.
+ *     nothing. A run that stops part-way leaves a marker beside the backups, and
+ *     the next run finishes exactly what it left (unlock, backup copy, index) and
+ *     keeps the first run's backup, which is the one that undoes everything.
  *
  * Electron-free: every path and every tool is passed in, so the tests run against a
  * scratch store and need no ffmpeg, no osascript and no network.
@@ -86,6 +87,11 @@ export interface MigratePaths {
   backupRoot: string
 }
 
+/** Stands from the moment the backup is proven until the last write is done. */
+const markerPath = (paths: MigratePaths): string => join(paths.backupRoot, 'concert-posters.in-progress.json')
+const readMarker = (paths: MigratePaths): Promise<{ backupDir: string } | null> =>
+  readJson<{ backupDir: string } | null>(markerPath(paths), null)
+
 export interface MigrateTools {
   now: () => number
   readMatte: (imagePath: string) => Promise<string>
@@ -145,10 +151,15 @@ async function readJson<T>(path: string, fallback: T): Promise<T> {
   }
 }
 
-async function writeAtomic(path: string, data: string | Uint8Array): Promise<void> {
+export async function writeAtomic(path: string, data: string | Uint8Array): Promise<void> {
   const tmp = `${path}.${process.pid}.${Date.now()}.tmp`
-  await writeFile(tmp, data)
-  await rename(tmp, path)
+  try {
+    await writeFile(tmp, data)
+    await rename(tmp, path)
+  } catch (err) {
+    await rm(tmp, { force: true }).catch(() => {})
+    throw err
+  }
 }
 
 export function slugOfShow(albumKey: string): string {
@@ -218,6 +229,7 @@ export async function makePlan(paths: MigratePaths, tools: MigrateTools, opts: {
   const locks = new Set(await readJson<string[]>(paths.locks, []))
   const library = await readJson<{ tracks?: Row[] }>(paths.library, {})
   const rows = new Map((library.tracks ?? []).map((t) => [Number(t.id), t] as const))
+  const resuming = (await readMarker(paths)) !== null
   const concerts = new Map(declaredConcerts(sets, (id) => rows.get(id)).map((c) => [c.albumKey, c] as const))
   const shows: ShowPlan[] = []
 
@@ -296,26 +308,36 @@ export async function makePlan(paths: MigratePaths, tools: MigrateTools, opts: {
       if (rule.from === 'rush-file') holdsPoster = held === pins.july
       else if (posterThere) holdsPoster = held === (await sha256File(posterStoreFile))
       else holdsPoster = true
+      const albumDest = join(paths.artworkDir, `${albumBare}.jpg`)
+      const review = coverReviewPath(paths, albumBare)
+      const backupCopy = join(paths.artworkDir, 'locked-backup', `${albumBare}.jpg`)
+      // A run that stopped part-way: the cover is back, what goes with it may not be.
+      // Only with the marker standing, so a finished migration never unlocks a lock
+      // Jake made afterwards.
+      const coverLanded = !holdsPoster && resuming && (await exists(review)) && held === (await sha256File(review))
       if (holdsPoster) {
-        const albumDest = join(paths.artworkDir, `${albumBare}.jpg`)
-        const review = coverReviewPath(paths, albumBare)
         // A file already in the review folder stands: it may be a person's own choice.
         if (opts.dryRun && !(await exists(review))) await findCover(paths, tools, entry, rows, band, show, albumBare)
-        if (await exists(review)) {
+      }
+      if ((holdsPoster || coverLanded) && (await exists(review))) {
+        const said = coverLanded ? await readJson<{ key?: string; importedAt?: string } | null>(albumDest.replace(/\.jpg$/, '.meta.json'), null) : null
+        const saidAt = said?.key === albumKey && said.importedAt ? Date.parse(said.importedAt) : Number.NaN
+        if (!Number.isFinite(saidAt)) {
           const bytes = await readFile(review)
           const size = await tools.imageSize(review)
           const info = await readJson<CoverInfo>(coverReviewInfo(paths, albumBare), { provider: 'embedded' })
           plan.actions.push({ do: 'cover-restore', src: review, dest: albumDest, sha256: sha256(bytes), bytes: bytes.length, size: size ? `${size.w}x${size.h}` : '?', ...info })
-          if (locks.has(albumKey)) plan.actions.push({ do: 'unlock', key: albumKey })
-          const backupCopy = join(paths.artworkDir, 'locked-backup', `${albumBare}.jpg`)
-          if (await exists(backupCopy)) plan.actions.push({ do: 'drop-backup-copy', path: backupCopy })
-          plan.actions.push({ do: 'index', key: albumKey, value: `${albumBare}_${now}` })
-        } else {
-          plan.actions.push({
-            do: 'cover-missing', dest: albumDest,
-            why: `no cover in the files or on the web. The album key keeps today's image${entry.promotedTrackIds?.length ? ' and this album IS visible (promoted songs): look at it' : ': the album is hidden by its concert, so nothing draws it'}`,
-          })
         }
+        if (locks.has(albumKey)) plan.actions.push({ do: 'unlock', key: albumKey })
+        if (await exists(backupCopy)) plan.actions.push({ do: 'drop-backup-copy', path: backupCopy })
+        // The same stamp the cover's sidecar carries, so finishing a run is one answer.
+        const value = `${albumBare}_${Number.isFinite(saidAt) ? saidAt : now}`
+        if (index[albumKey] !== value) plan.actions.push({ do: 'index', key: albumKey, value })
+      } else if (holdsPoster) {
+        plan.actions.push({
+          do: 'cover-missing', dest: albumDest,
+          why: `no cover in the files or on the web. The album key keeps today's image${entry.promotedTrackIds?.length ? ' and this album IS visible (promoted songs): look at it' : ': the album is hidden by its concert, so nothing draws it'}`,
+        })
       }
     }
 
@@ -384,6 +406,8 @@ export const planIsEmpty = (plan: Plan): boolean =>
 
 // ── Applying it ─────────────────────────────────────────────────────────
 
+export type ApplyStage = 'posters' | 'covers' | 'index' | 'locks' | 'live-sets'
+
 export interface ApplyResult {
   backupDir: string | null
   changed: number
@@ -400,17 +424,7 @@ async function backUp(file: string, into: string, seen: Map<string, string>): Pr
   seen.set(file, name)
 }
 
-/**
- * Do what the plan says. Back up first and stop if the backup does not check out.
- * Posters land before any album key is touched, so a poster's bytes are never in
- * one place only; live-sets.json goes last, and each step is safe to repeat.
- */
-export async function applyPlan(plan: Plan, paths: MigratePaths, log: (line: string) => void = () => {}): Promise<ApplyResult> {
-  if (paths.imagesDir) throw new Error('--apply needs the real store, not a copy of the images')
-  const actions = plan.shows.flatMap((s) => s.actions.map((a) => ({ a, albumKey: s.albumKey, band: s.band, show: s.show })))
-  const work = actions.filter(({ a }) => a.do !== 'cover-missing')
-  if (work.length === 0) return { backupDir: null, changed: 0 }
-
+async function backUpEverything(plan: Plan, paths: MigratePaths, work: PlanAction[], log: (line: string) => void): Promise<string> {
   const stamp = new Date(plan.now).toISOString().replace(/[:.]/g, '-')
   const backupDir = join(paths.backupRoot, `concert-posters-${stamp}`)
   await mkdir(backupDir, { recursive: true })
@@ -419,7 +433,7 @@ export async function applyPlan(plan: Plan, paths: MigratePaths, log: (line: str
   await backUp(paths.liveSets, backupDir, saved)
   await backUp(paths.index, backupDir, saved)
   await backUp(paths.locks, backupDir, saved)
-  for (const { a } of work) {
+  for (const a of work) {
     if (a.do === 'cover-restore') {
       await backUp(a.dest, backupDir, saved)
       await backUp(a.dest.replace(/\.jpg$/, '.meta.json'), backupDir, saved)
@@ -432,7 +446,39 @@ export async function applyPlan(plan: Plan, paths: MigratePaths, log: (line: str
   const manifest = { made: new Date(plan.now).toISOString(), files: [...saved].map(([path, name]) => ({ path, name })), created }
   await writeAtomic(join(backupDir, 'manifest.json'), JSON.stringify(manifest, null, 2))
   log(`Backed up ${saved.size} files to ${backupDir} (checked by sha256).`)
+  return backupDir
+}
 
+/**
+ * Do what the plan says. Back up first and stop if the backup does not check out.
+ * Posters land before any album key is touched, so a poster's bytes are never in
+ * one place only; live-sets.json goes last, and each step is safe to repeat.
+ */
+export async function applyPlan(
+  plan: Plan, paths: MigratePaths, log: (line: string) => void = () => {},
+  /** Tests stop a run here, the way a crash or a locked file would. */
+  stage: (name: ApplyStage) => void | Promise<void> = () => {},
+): Promise<ApplyResult> {
+  if (paths.imagesDir) throw new Error('--apply needs the real store, not a copy of the images')
+  const actions = plan.shows.flatMap((s) => s.actions.map((a) => ({ a, albumKey: s.albumKey, band: s.band, show: s.show })))
+  const work = actions.filter(({ a }) => a.do !== 'cover-missing')
+  const marker = await readMarker(paths)
+  if (work.length === 0) {
+    await rm(markerPath(paths), { force: true })
+    return { backupDir: marker?.backupDir ?? null, changed: 0 }
+  }
+
+  let backupDir: string
+  if (marker) {
+    // The first run's backup holds the store as it was. One taken now would hold the
+    // half-finished store, and undoing to that is no undo.
+    backupDir = marker.backupDir
+    log(`An earlier run stopped part-way: finishing it. Its backup stays the one to undo with: ${backupDir}`)
+  } else {
+    backupDir = await backUpEverything(plan, paths, work.map(({ a }) => a), log)
+    await mkdir(paths.backupRoot, { recursive: true })
+    await writeAtomic(markerPath(paths), JSON.stringify({ backupDir }, null, 2))
+  }
   // Posters first: the bytes are under their own key before any album key changes.
   for (const { a, albumKey } of work) {
     if (a.do === 'poster-copy' || a.do === 'poster-file' || a.do === 'poster-built') {
@@ -442,6 +488,7 @@ export async function applyPlan(plan: Plan, paths: MigratePaths, log: (line: str
       log(`wrote ${basename(a.dest)}`)
     }
   }
+  await stage('posters')
   // Album keys: the album's own cover, and what says where it came from.
   for (const { a, albumKey, band, show } of work) {
     if (a.do === 'cover-restore') {
@@ -456,17 +503,20 @@ export async function applyPlan(plan: Plan, paths: MigratePaths, log: (line: str
       await rm(a.path, { force: true })
     }
   }
+  await stage('covers')
   // Index + locks.
   const index = await readJson<Record<string, string>>(paths.index, {})
   let touchedIndex = false
   for (const { a } of work) if (a.do === 'index') { index[a.key] = a.value; touchedIndex = true }
   if (touchedIndex) await writeAtomic(paths.index, JSON.stringify(index, null, 2))
+  await stage('index')
   const unlocks = work.flatMap(({ a }) => (a.do === 'unlock' ? [a.key] : []))
   if (unlocks.length) {
     const locks = new Set(await readJson<string[]>(paths.locks, []))
     for (const k of unlocks) locks.delete(k)
     await writeAtomic(paths.locks, JSON.stringify([...locks], null, 2))
   }
+  await stage('locks')
   // live-sets.json last.
   const sets = await readJson<LiveSets>(paths.liveSets, {})
   let touchedSets = false
@@ -477,6 +527,8 @@ export async function applyPlan(plan: Plan, paths: MigratePaths, log: (line: str
     }
   }
   if (touchedSets) await writeAtomic(paths.liveSets, JSON.stringify(sets, null, 2))
+  await stage('live-sets')
+  await rm(markerPath(paths), { force: true })
   return { backupDir, changed: work.length }
 }
 
@@ -489,6 +541,8 @@ export async function restoreBackup(backupDir: string, log: (line: string) => vo
     await copyFile(join(backupDir, f.name), f.path)
     log(`restored ${f.path}`)
   }
+  // Undone: there is no half-finished run left for the next one to finish.
+  await rm(join(dirname(backupDir), 'concert-posters.in-progress.json'), { force: true })
 }
 
 // ── Reading a file's own art ────────────────────────────────────────────

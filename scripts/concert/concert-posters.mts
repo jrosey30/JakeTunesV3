@@ -31,6 +31,7 @@
 //           --rebuild redraws a built poster whose words have changed. It never touches
 //           a real one: Jake's pick, always.
 import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -136,7 +137,7 @@ async function migrate(): Promise<void> {
     console.log(`Look through ${paths.reviewDir} before --apply. Delete a bad cover candidate and that album is left alone; put your own JPEG in its place and that one is used.`)
     return
   }
-  if (planIsEmpty(plan)) {
+  if (planIsEmpty(plan) && !existsSync(join(paths.backupRoot, 'concert-posters.in-progress.json'))) {
     console.log('\nNothing to do: no file was touched and no backup was made.')
     return
   }
