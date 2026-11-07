@@ -320,5 +320,7 @@ nothing is drawn on top. `src/common/concert-poster.ts` is the rule.
   AppKit (`src/main/concert-poster-render.ts`): no window, and Homebrew's ffmpeg
   has no drawtext.
 - `scripts/concert/concert-posters.mts migrate` moved the 13 shows declared before
-  the rule. It has a dry run, backs up, and is safe to run twice. Quit the app
-  first: it holds live-sets.json and the artwork index in memory.
+  the rule. It has a dry run, backs up, and is safe to run twice. A run that stops
+  part-way leaves `backups/concert-posters.in-progress.json`; run it again and it
+  finishes, keeping the first backup. Quit the app first: it holds live-sets.json
+  and the artwork index in memory.
