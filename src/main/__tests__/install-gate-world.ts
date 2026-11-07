@@ -106,6 +106,9 @@ if [ "$fmt" = "state=" ] || [ "$fmt" = "time=" ]; then
   fi
   if [ "$fmt" = "time=" ]; then
     # A live app's CPU time moves between any two looks, unless cpu_parked says it is stuck.
+    # cpu_show: exactly what ps prints, for a test that needs the digits.
+    echo "cpu-look" >> "$JT_FAKE/calls.log"
+    [ -e "$JT_FAKE/cpu_show" ] && { cat "$JT_FAKE/cpu_show"; exit 0; }
     n=$(cat "$JT_FAKE/cpu_$pid" 2>/dev/null || echo 400)
     if [ ! -e "$JT_FAKE/cpu_parked" ]; then n=$((n + 1)); echo "$n" > "$JT_FAKE/cpu_$pid"; fi
     echo "  0:$n.57"
@@ -368,6 +371,8 @@ export interface World {
   setOldState: (state: string) => void
   /** Its CPU time stops moving: a process parked in teardown, whatever ps says of its state. */
   cpuParked: () => void
+  /** What ps says of its CPU time from now on. */
+  cpuShows: (time: string) => void
   /** The push channel this Mac has, the same file the other jobs read. */
   setNtfyTopic: (topic: string) => void
   /** The Mac slept: the wall clock is this much further on. */
@@ -471,6 +476,11 @@ export function makeWorld(o: WorldOpts = {}): World {
       renameSync(tmp, join(fake, 'state_4242'))
     },
     cpuParked: () => writeFileSync(join(fake, 'cpu_parked'), ''),
+    cpuShows: (time) => {
+      const tmp = join(fake, 'cpu_show.tmp')
+      writeFileSync(tmp, `  ${time}\n`)
+      renameSync(tmp, join(fake, 'cpu_show'))
+    },
     setNtfyTopic: (topic) => {
       mkdirSync(join(home, '.config', 'jaketunes'), { recursive: true })
       writeFileSync(join(home, '.config', 'jaketunes', 'ntfy-topic'), `${topic}\n`)
@@ -594,6 +604,15 @@ export const opens = (w: World): number => (w.calls().match(/^open -a /gm) ?? []
 export const watcherEnded = async (w: World): Promise<void> => {
   await waitFor(() => /caffeinate -i -w \d+/.test(w.calls()) || null, "the watcher's caffeinate")
   await waitFor(() => !w.watcherAlive(), 'the watcher stopping')
+}
+
+/** The watcher has read its start time, so a clock jump from here is past its window. */
+export const watcherSettled = (w: World): Promise<unknown> => waitFor(() => w.watcherAsleep() || null, 'the watcher asleep at its poll')
+const cpuLooks = (w: World): number => (w.calls().match(/^cpu-look$/gm) ?? []).length
+/** Waits for the watcher's next read of the CPU time, or for it to end. No clock in it: at load a look can be seconds late. */
+export const nextCpuLook = async (w: World): Promise<void> => {
+  const seen = cpuLooks(w)
+  await waitFor(() => cpuLooks(w) > seen || !w.watcherAlive() || null, 'the next look at the CPU time')
 }
 
 export const started = (w: World): Promise<true> => waitFor(() => /5151/.test(w.pids()) || null, 'the app starting') as Promise<true>

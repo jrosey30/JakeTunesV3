@@ -7,7 +7,7 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { finished, makeWorld, NEW_ASAR, OLD_ASAR, opens, scriptPath, SHA, sleep, started, watcherEnded } from './install-gate-world.ts'
+import { finished, makeWorld, NEW_ASAR, OLD_ASAR, opens, scriptPath, SHA, sleep, started, watcherEnded, watcherSettled, nextCpuLook } from './install-gate-world.ts'
 import { waitFor } from './wait-for.ts'
 
 // 11/5: a quit took 21 minutes on one in-flight NAS write. The gate gave up after 30 s
@@ -305,6 +305,80 @@ describe('install gate — the watcher does not give up on the clock', () => {
     })
   }
 
+  // Third look, 2026-11-06. One tick ended it: a parked process's CPU time does move by 0.01, and the
+  // first look was never refreshed, so "60 s apart" was really "ever".
+  it('plain for a long time, and its CPU time ticks once by 0.01: it stays, and the app comes', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 30 })
+    try {
+      const r = await finished(w.run({}))
+      assert.equal(r.code, 1)
+      w.cpuShows('0:04.00')
+      await watcherSettled(w)
+      w.clockJumps(3600)
+      await nextCpuLook(w) // the first look
+      w.cpuShows('0:04.01')
+      await sleep(1300) // more than a gap on from the first look
+      await nextCpuLook(w)
+      assert.ok(w.watcherAlive(), 'still waiting')
+      assert.ok(!existsSync(w.watcherLog), 'it never gave up')
+      w.setOldState('?E')
+      await sleep(300)
+      w.oldGone()
+      await started(w)
+    } finally { w.cleanup() }
+  })
+
+  it('ticks that add up over many gaps are not one gap of work: it stays', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 30 })
+    try {
+      const r = await finished(w.run({}))
+      assert.equal(r.code, 1)
+      w.cpuShows('0:04.00')
+      await watcherSettled(w)
+      w.clockJumps(3600)
+      for (const hundredths of ['03', '06', '09', '12', '15']) {
+        await nextCpuLook(w)
+        w.cpuShows(`0:04.${hundredths}`)
+      }
+      await nextCpuLook(w)
+      assert.ok(w.watcherAlive(), 'a rise of 0.03 a gap, 0.15 in all')
+    } finally { w.cleanup() }
+  })
+
+  it('ps moves to a new minute: 0:59.95 to 1:00.10 is 0.15 s of work, so it goes, and says so to the phone', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 30 })
+    w.setNtfyTopic('test-topic')
+    try {
+      const r = await finished(w.run({}))
+      assert.equal(r.code, 1)
+      w.cpuShows('0:59.95')
+      await watcherSettled(w)
+      w.clockJumps(3600)
+      await nextCpuLook(w)
+      w.cpuShows('1:00.10')
+      await watcherEnded(w)
+      assert.match(readFileSync(w.watcherLog, 'utf8'), /still plainly alive/)
+      assert.match(w.calls(), /^curl .*JakeTunes install gave up.*nothing will restart it/m)
+      assert.equal(opens(w), 0, 'it never opened anything')
+    } finally { w.cleanup() }
+  })
+
+  it('…and across a minute a smaller rise is still small: 0:59.99 to 1:00.04 stays', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 30 })
+    try {
+      const r = await finished(w.run({}))
+      assert.equal(r.code, 1)
+      w.cpuShows('0:59.99')
+      await watcherSettled(w)
+      w.clockJumps(3600)
+      await nextCpuLook(w)
+      w.cpuShows('1:00.04')
+      await sleep(1300)
+      await nextCpuLook(w)
+      assert.ok(w.watcherAlive(), 'a rise of 0.05')
+    } finally { w.cleanup() }
+  })
+
   it('plain and working, but the two looks are closer than the limit: it stays', async () => {
     const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 30, watchCpuS: 1800 })
     try {
@@ -490,14 +564,15 @@ describe('install gate — open -a can say no', () => {
     } finally { w.cleanup() }
   })
 
-  it('an app that never quit is nothing to push', async () => {
+  it('an app that never quit goes in the log as nothing to do, with the app still up: the phone hears it at ordinary priority, since the watcher is guessing', async () => {
     const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 1 })
     w.setNtfyTopic('test-topic')
     try {
       assert.equal((await finished(w.run({}))).code, 1)
       await watcherEnded(w)
       assert.match(readFileSync(w.watcherLog, 'utf8'), /still plainly alive/)
-      assert.doesNotMatch(w.calls(), /^curl /m)
+      assert.match(w.calls(), /^curl .*JakeTunes install gave up.*Priority: default/m)
+      assert.doesNotMatch(w.calls(), /NO APP RUNNING|did not come back/)
     } finally { w.cleanup() }
   })
 

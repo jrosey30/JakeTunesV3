@@ -126,10 +126,12 @@ WATCHER_LOG="$HOME/Library/Logs/jaketunes-install-gate.log"
 # across days can't bring the app back after a quit by hand the next day. Inside it a quit by hand
 # does bring the app back: one ps sample can't tell that from an install's slow quit (a live app read
 # U, then 36 S and 4 R in 10 s, 11/6), and 11/5's slow quit took 21 minutes.
-# One plain look isn't enough past the window either: a quit stuck in U can read R, S or I once,
-# and leaving then is the Mac with no app. So working means its CPU time moved between two looks at
-# least 60 s apart, with no look on its way out between them. A process parked in teardown stayed at
-# 0:00.04 across 45 s and a live app went 6:07.57 to 6:08.01 in 60 s (11/6).
+# One plain look isn't enough past the window either: a quit stuck in U can read R, S or I, and for
+# a long time (a pool thread parked on a FIFO: SN for 6 minutes), and leaving then is the Mac with no
+# app. So working means its CPU time rose at least 0.10 s across one gap of at least 60 s, with no
+# look on its way out in it. A smaller rise starts the next gap from there, because a parked process
+# does tick: 0.14, 0.16, 0.17 in 3 minutes, and against the first look one tick would be "ever". Live
+# apps left idle moved 0.22 to 13 s per gap (all three Macs, 11/6). It's still a guess, so it goes to the phone.
 # A process on its way out (E, or U: the 11/5 quit sat in U for 7 minutes with its main thread
 # parked in teardown) gets no limit: the app is owed, however long the kernel takes. A swap only
 # ever happens over a process in E or Z, so an installed build always gets its app.
@@ -147,12 +149,20 @@ start_app_when_gone() {
     polls=$1; poll=$2; wall=$3; app=$4; log=$5; limit=$6; cpu_gap=$7; shift 7
     caffeinate -i -w $$ >/dev/null 2>&1 &
     gave_up() { mkdir -p "${log%/*}"; echo "$(date "+%Y-%m-%d %H:%M:%S") watcher, pids $old: $1" >> "$log"; }
-    no_app() {
-      gave_up "NO APP RUNNING: $1"
+    push() {
       topic=$(tr -d "[:space:]" < "$HOME/.config/jaketunes/ntfy-topic" 2>/dev/null)
       [ -n "$topic" ] || return 0
-      perl -e "alarm shift; exec @ARGV" 20 curl -fsS --max-time 15 -H "Title: JakeTunes did not come back" -H "Priority: high" -H "Tags: warning" \
-        -d "JakeTunes is not running on $(scutil --get ComputerName 2>/dev/null) after an install: $1" "https://ntfy.sh/$topic" >/dev/null 2>&1
+      perl -e "alarm shift; exec @ARGV" 20 curl -fsS --max-time 15 -H "Title: $1" -H "Priority: $3" -H "Tags: warning" \
+        -d "$2" "https://ntfy.sh/$topic" >/dev/null 2>&1
+    }
+    no_app() {
+      gave_up "NO APP RUNNING: $1"
+      push "JakeTunes did not come back" "JakeTunes is not running on $(scutil --get ComputerName 2>/dev/null) after an install: $1" high
+    }
+    # All the old pids together, in hundredths of a second. ps says 0:00.14, or 6:07.57.
+    cpu_total() {
+      for p in "$@"; do ps -o time= -p "$p" 2>/dev/null; done |
+        awk "{ n = split(\$1, t, \":\"); s = 0; for (i = 1; i <= n; i++) s = s * 60 + t[i]; sum += s } END { printf \"%.0f\", sum * 100 }"
     }
     old=$*
     max_opens=$(( polls / 6 )); [ "$max_opens" -lt 1 ] && max_opens=1; [ "$max_opens" -gt 10 ] && max_opens=10
@@ -178,13 +188,17 @@ start_app_when_gone() {
       elif [ -n "$going" ]; then
         cpu_at=""
       elif [ $(( $(date +%s) - began )) -ge "$wall" ]; then
-        now=$(date +%s); cpu=""
-        for p in "$@"; do cpu="$cpu $p=$(ps -o time= -p "$p" 2>/dev/null)"; done
+        now=$(date +%s)
         if [ -z "$cpu_at" ]; then
+          cpu_at=$now; cpu_was=$(cpu_total "$@")
+        elif [ $(( now - cpu_at )) -ge "$cpu_gap" ]; then
+          cpu=$(cpu_total "$@")
+          if [ $(( cpu - cpu_was )) -ge 10 ]; then
+            gave_up "still plainly alive after ${wall}s and working, it never quit, nothing to do"
+            push "JakeTunes install gave up" "An install could not quit JakeTunes on $(scutil --get ComputerName 2>/dev/null). It looks alive and working, so nothing will restart it. If it is not running, open it." default
+            exit 0
+          fi
           cpu_at=$now; cpu_was=$cpu
-        elif [ $(( now - cpu_at )) -ge "$cpu_gap" ] && [ "$cpu" != "$cpu_was" ]; then
-          gave_up "still plainly alive after ${wall}s and working, it never quit, nothing to do"
-          exit 0
         fi
       fi
       sleep "$poll"

@@ -57,9 +57,12 @@ jaketunes-install-gate.sh <staged.app> <backup-name> [max-wait-min] [sha] [note]
      and it holds its own `caffeinate`. While the old process is on its way out (state E
      or U) it has no limit at all, and a swap only ever happens over a process in E or Z.
      It only gives up on an old process that is plainly alive 30 minutes later on the wall
-     clock and working: `ps -o time=` moved between two looks at least 60 s apart, with no
-     look in E or U between them. One plain look isn't enough, because a quit stuck in U can
-     read R, S or I once. That app never quit, and a quit by hand later stays a quit. Inside
+     clock and working: `ps -o time=` rose at least 0.10 s across one gap of at least 60 s, with
+     no look in E or U in it. A smaller rise starts the next gap, because a parked process
+     ticks now and then (0.03 s in 3 minutes), and live apps left idle moved 0.22 s or more
+     per gap on all three Macs. One plain look isn't enough, because a stuck quit can read R, S
+     or I for minutes. That app never quit, and a quit by hand later stays a quit. It's still
+     a guess, so the give-up goes to the phone at ordinary priority. Inside
      the 30 minutes a quit by hand does bring the app back, because one `ps` sample can't
      tell that from a slow quit.
    - A later gate retires the watcher before its own quit, and from then on that gate owes
