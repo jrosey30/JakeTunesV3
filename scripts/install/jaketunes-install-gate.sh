@@ -48,7 +48,7 @@
 # Test-harness overrides (src/main/__tests__/install-gate.test.ts), all defaulting to
 # the real thing: JT_GATE_APP, JT_GATE_DATA_DIR, JT_GATE_LSREGISTER, JT_GATE_PLISTBUDDY,
 # JT_GATE_POLL_S (15), JT_GATE_GO_POLL_S (2), JT_GATE_QUIT_WAIT_S (30), JT_GATE_GONE_WAIT_S (30),
-# JT_GATE_WATCH_S (1800), JT_GATE_WATCH_POLL_S (5),
+# JT_GATE_WATCH_S (1800), JT_GATE_WATCH_POLL_S (5), JT_GATE_WATCH_CPU_S (60),
 # JT_GATE_OPEN_RETRY_S (2), JT_GATE_START_WAIT_S (10), JT_GATE_STAY_S (5), JT_GATE_LS_LIMIT_S (30).
 set -u
 # Whatever reads this may go away first: a client that exits, a pipeline killed along with it.
@@ -75,6 +75,7 @@ QUIT_WAIT="${JT_GATE_QUIT_WAIT_S:-30}"
 GONE_WAIT="${JT_GATE_GONE_WAIT_S:-30}"
 WATCH_S="${JT_GATE_WATCH_S:-1800}"
 WATCH_POLL="${JT_GATE_WATCH_POLL_S:-5}"
+WATCH_CPU="${JT_GATE_WATCH_CPU_S:-60}"
 OPEN_RETRY="${JT_GATE_OPEN_RETRY_S:-2}"
 START_WAIT="${JT_GATE_START_WAIT_S:-10}"
 STAY="${JT_GATE_STAY_S:-5}"
@@ -120,30 +121,42 @@ WATCHER_LOG="$HOME/Library/Logs/jaketunes-install-gate.log"
 # Detached: it outlives this script (and an ssh session running it). It starts the app
 # when the old process is gone, unless something else already has.
 # It looks before it decides, the last time after its last sleep, and only one thing ends the
-# wait: an old process plainly alive once the window has passed. That app never quit, nothing is
-# owed, and a quit by hand later stays a quit. The window is the wall clock, so a lid shut across
-# days can't bring the app back after a quit by hand the next day. Inside it a quit by hand does
-# bring the app back: one ps sample can't tell that from an install's slow quit (a live app read
+# wait: an old process plainly alive and working once the window has passed. That app never quit,
+# nothing is owed, and a quit by hand later stays a quit. The window is the wall clock, so a lid shut
+# across days can't bring the app back after a quit by hand the next day. Inside it a quit by hand
+# does bring the app back: one ps sample can't tell that from an install's slow quit (a live app read
 # U, then 36 S and 4 R in 10 s, 11/6), and 11/5's slow quit took 21 minutes.
+# One plain look isn't enough past the window either: a quit stuck in U can read R, S or I once,
+# and leaving then is the Mac with no app. So working means its CPU time moved between two looks at
+# least 60 s apart, with no look on its way out between them. A process parked in teardown stayed at
+# 0:00.04 across 45 s and a live app went 6:07.57 to 6:08.01 in 60 s (11/6).
 # A process on its way out (E, or U: the 11/5 quit sat in U for 7 minutes with its main thread
 # parked in teardown) gets no limit: the app is owed, however long the kernel takes. A swap only
 # ever happens over a process in E or Z, so an installed build always gets its app.
 # It is done when a live process says so. Until then it asks open again every 6 polls, at
 # most 10 times: enough for LaunchServices to come round, few enough that an app that
 # crashes on launch doesn't throw up crash reports for half an hour.
-# Its output goes nowhere and the gate is gone by then, so a give-up goes to WATCHER_LOG.
+# Its output goes nowhere and the gate is gone by then, so a give-up goes to WATCHER_LOG, and no app
+# running goes to the phone too. A caller that read "pid pending" has long since said done.
 # It holds its own caffeinate: the gate's ends with the gate, and a Mini asleep has no app and
 # isn't on the network until someone touches it.
 start_app_when_gone() {
   APP_DUE=0
   say "$(date +%H:%M:%S) ${1:-the app starts by itself when the old JakeTunes is gone}"
   nohup /bin/bash -c '
-    polls=$1; poll=$2; wall=$3; app=$4; log=$5; limit=$6; shift 6
+    polls=$1; poll=$2; wall=$3; app=$4; log=$5; limit=$6; cpu_gap=$7; shift 7
     caffeinate -i -w $$ >/dev/null 2>&1 &
     gave_up() { mkdir -p "${log%/*}"; echo "$(date "+%Y-%m-%d %H:%M:%S") watcher, pids $old: $1" >> "$log"; }
+    no_app() {
+      gave_up "NO APP RUNNING: $1"
+      topic=$(tr -d "[:space:]" < "$HOME/.config/jaketunes/ntfy-topic" 2>/dev/null)
+      [ -n "$topic" ] || return 0
+      perl -e "alarm shift; exec @ARGV" 20 curl -fsS --max-time 15 -H "Title: JakeTunes did not come back" -H "Priority: high" -H "Tags: warning" \
+        -d "JakeTunes is not running on $(scutil --get ComputerName 2>/dev/null) after an install: $1" "https://ntfy.sh/$topic" >/dev/null 2>&1
+    }
     old=$*
     max_opens=$(( polls / 6 )); [ "$max_opens" -lt 1 ] && max_opens=1; [ "$max_opens" -gt 10 ] && max_opens=10
-    began=$(date +%s); opens=0; until_open=0
+    began=$(date +%s); opens=0; until_open=0; cpu_at=""; cpu_was=""
     while :; do
       left=""; going=""
       for p in "$@"; do
@@ -155,20 +168,28 @@ start_app_when_gone() {
       done
       if [ -z "$left" ]; then
         [ -n "$(pgrep -x JakeTunes)" ] && exit 0
-        [ -d "$app" ] || { gave_up "no bundle at $app, nothing to start"; exit 0; }
+        [ -d "$app" ] || { no_app "no bundle at $app, nothing to start"; exit 0; }
         if [ "$until_open" -le 0 ]; then
-          [ "$opens" -ge "$max_opens" ] && { gave_up "NO APP RUNNING: $opens tries of open -a $app and nothing stayed up"; exit 1; }
+          [ "$opens" -ge "$max_opens" ] && { no_app "$opens tries of open -a $app and nothing stayed up"; exit 1; }
           opens=$((opens + 1)); until_open=6
           perl -e "alarm shift; exec @ARGV" "$limit" open -a "$app"
         fi
         until_open=$((until_open - 1))
-      elif [ -z "$going" ] && [ $(( $(date +%s) - began )) -ge "$wall" ]; then
-        gave_up "still plainly alive after ${wall}s, it never quit, nothing to do"
-        exit 0
+      elif [ -n "$going" ]; then
+        cpu_at=""
+      elif [ $(( $(date +%s) - began )) -ge "$wall" ]; then
+        now=$(date +%s); cpu=""
+        for p in "$@"; do cpu="$cpu $p=$(ps -o time= -p "$p" 2>/dev/null)"; done
+        if [ -z "$cpu_at" ]; then
+          cpu_at=$now; cpu_was=$cpu
+        elif [ $(( now - cpu_at )) -ge "$cpu_gap" ] && [ "$cpu" != "$cpu_was" ]; then
+          gave_up "still plainly alive after ${wall}s and working, it never quit, nothing to do"
+          exit 0
+        fi
       fi
       sleep "$poll"
     done' jt-gate-watcher "$(awk -v s="$WATCH_S" -v p="$WATCH_POLL" 'BEGIN { n = int(s / p); print (n < 1 ? 1 : n) }')" \
-    "$WATCH_POLL" "$WATCH_S" "$APP" "$WATCHER_LOG" "$LS_LIMIT" $OLD_PIDS >/dev/null 2>&1 &
+    "$WATCH_POLL" "$WATCH_S" "$APP" "$WATCHER_LOG" "$LS_LIMIT" "$WATCH_CPU" $OLD_PIDS >/dev/null 2>&1 &
 }
 # Start the app now if the old process is gone within GONE_WAIT, or leave it to the watcher.
 # 0 a live process came up · 1 the old process is still there, the watcher has it · 2 none

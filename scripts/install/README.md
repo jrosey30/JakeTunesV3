@@ -57,9 +57,11 @@ jaketunes-install-gate.sh <staged.app> <backup-name> [max-wait-min] [sha] [note]
      and it holds its own `caffeinate`. While the old process is on its way out (state E
      or U) it has no limit at all, and a swap only ever happens over a process in E or Z.
      It only gives up on an old process that is plainly alive 30 minutes later on the wall
-     clock: that app never quit, and a quit by hand later stays a quit. Inside the 30
-     minutes a quit by hand does bring the app back, because one `ps` sample can't tell that
-     from a slow quit.
+     clock and working: `ps -o time=` moved between two looks at least 60 s apart, with no
+     look in E or U between them. One plain look isn't enough, because a quit stuck in U can
+     read R, S or I once. That app never quit, and a quit by hand later stays a quit. Inside
+     the 30 minutes a quit by hand does bring the app back, because one `ps` sample can't
+     tell that from a slow quit.
    - A later gate retires the watcher before its own quit, and from then on that gate owes
      the app, even if no old process is left.
    - If no app comes up after three tries of `open`, the watcher keeps asking (every
@@ -67,7 +69,8 @@ jaketunes-install-gate.sh <staged.app> <backup-name> [max-wait-min] [sha] [note]
      still trying`, and the exit is 4.
    - The watcher's output goes nowhere and the gate is gone by then, so it appends when it
      gives up to `~/Library/Logs/jaketunes-install-gate.log`, with the words `NO APP RUNNING`
-     when that is the case.
+     when that is the case. That one also goes to the phone, through the topic in
+     `~/.config/jaketunes/ntfy-topic` if the Mac has one, because nothing reads that log.
    - A kill between the two renames puts the previous build back first, so what starts is whole.
    - The gate outlives whatever reads its output. SIGPIPE is ignored, and the first write
      that fails points stdout at /dev/null.
@@ -82,6 +85,12 @@ was. A TERM or INT exits 143 or 130.
 the pipeline's status is `grep`'s and exit 4 used to end in "done". A caller has to keep
 `${PIPESTATUS[0]}` or look for `pid none`. The next recipe has to: nothing in this repo runs
 the gate. A human reads the last line, and `0` with `pid pending` is not yet an app.
+
+So a recipe says done only on a real pid. On `pid pending` or `pid none` it waits for
+`pgrep -x JakeTunes`, looks again 5 s later, and gives that a limit (15 minutes covers the
+watcher's 10 tries once the old process has gone). Past the limit it says `NO APP RUNNING on
+<Mac>`. The likeliest time for `pid pending` is the first install over an old build, whose
+quit is the slow one, so reading only the exit code misses exactly that one.
 
 The app itself leaves within about 4 s since 2026-11-06 (`src/main/quit-finish.ts`);
 a long wait now means the old build, or a write already in the kernel.

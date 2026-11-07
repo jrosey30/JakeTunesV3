@@ -281,6 +281,60 @@ describe('install gate — the watcher does not give up on the clock', () => {
     })
   }
 
+  // Second look, 2026-11-06. A stuck quit sat in U, the lid closed, and one look read R, S or I. The
+  // watcher took that for an app that never quit and left, and when the process died the Mac had no app.
+  for (const state of ['R', 'S', 'I']) {
+    it(`stuck in U across a closed lid, then one look reads ${state} with its CPU time still: it isn't working, so the watcher stays and the app comes`, async () => {
+      const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 30 })
+      try {
+        const r = await finished(w.run({}))
+        assert.equal(r.code, 1)
+        w.cpuParked()
+        w.setOldState('U')
+        await sleep(300)
+        w.clockJumps(3600)
+        w.setOldState(state)
+        await sleep(1600) // past the two looks a give-up needs
+        assert.ok(w.watcherAlive(), 'still waiting')
+        w.setOldState('?E')
+        await sleep(300)
+        w.oldGone()
+        await started(w)
+        assert.ok(!existsSync(w.watcherLog), 'it never gave up')
+      } finally { w.cleanup() }
+    })
+  }
+
+  it('plain and working, but the two looks are closer than the limit: it stays', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 30, watchCpuS: 1800 })
+    try {
+      const r = await finished(w.run({}))
+      assert.equal(r.code, 1)
+      await waitFor(() => /caffeinate -i -w \d+/.test(w.calls()) || null, "the watcher's caffeinate")
+      w.clockJumps(3600)
+      await sleep(1600)
+      assert.ok(w.watcherAlive(), 'one look at the CPU time, and no second one far enough on')
+    } finally { w.cleanup() }
+  })
+
+  it('a look on its way out between the two: the first says nothing, the wait for two plain looks starts again', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 30, watchCpuS: 1800 })
+    try {
+      const r = await finished(w.run({}))
+      assert.equal(r.code, 1)
+      await waitFor(() => /caffeinate -i -w \d+/.test(w.calls()) || null, "the watcher's caffeinate")
+      w.clockJumps(3600)
+      await sleep(1000) // the first plain look
+      w.setOldState('U')
+      await sleep(1000)
+      w.clockJumps(7200)
+      await sleep(600)
+      w.setOldState('S')
+      await sleep(1000)
+      assert.ok(w.watcherAlive(), 'the CPU time moved, but across a look in U')
+    } finally { w.cleanup() }
+  })
+
   it('the old pid already gone when the Mac wakes: the jump changes nothing, the app starts', async () => {
     const w = makeWorld({ idleS: 130, pids: '4242\n', quitState: '?E', goneWaitS: 1, watchS: 30 })
     try {
@@ -401,6 +455,62 @@ describe('install gate — open -a can say no', () => {
       const log = readFileSync(w.watcherLog, 'utf8')
       assert.match(log, /pids 4242: still plainly alive after 1s/)
       assert.doesNotMatch(log, /NO APP RUNNING/)
+    } finally { w.cleanup() }
+  })
+
+  // Second look, 2026-11-06: the likeliest first-install ending is exit 0 and "pid pending", so a
+  // recipe that reads the last line has already said done when the watcher gives up, and nothing reads
+  // that log. So the watcher says it to the phone itself.
+  it('exit 0 and "pid pending", then nothing stays up: the watcher pushes it to the phone', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitState: '?E', goneWaitS: 1, watchS: 1, openSwallows: 100000 })
+    w.setNtfyTopic('test-topic')
+    try {
+      const g = w.run({})
+      const r = await finished(g)
+      assert.equal(r.code, 0)
+      assert.match(g.out(), /pid pending/)
+      w.oldGone()
+      await waitFor(() => /^curl /m.test(w.calls()) || null, 'the push')
+      const push = w.calls().split('\n').find((l) => l.startsWith('curl '))
+      assert.match(push ?? '', /JakeTunes is not running on TestMac/)
+      assert.match(push ?? '', /https:\/\/ntfy\.sh\/test-topic$/)
+      await watcherEnded(w)
+      assert.match(readFileSync(w.watcherLog, 'utf8'), /NO APP RUNNING/)
+      assert.equal(w.calls().split('\n').filter((l) => l.startsWith('curl ')).length, 1, 'one push')
+    } finally { w.cleanup() }
+  })
+
+  it('no topic on this Mac: no push, and the log still has it', async () => {
+    const w = makeWorld({ idleS: 130, pids: '', openSwallows: 100000, watchS: 1 })
+    try {
+      await finished(w.run({}))
+      await watcherEnded(w)
+      assert.match(readFileSync(w.watcherLog, 'utf8'), /NO APP RUNNING/)
+      assert.doesNotMatch(w.calls(), /^curl /m)
+    } finally { w.cleanup() }
+  })
+
+  it('an app that never quit is nothing to push', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 1 })
+    w.setNtfyTopic('test-topic')
+    try {
+      assert.equal((await finished(w.run({}))).code, 1)
+      await watcherEnded(w)
+      assert.match(readFileSync(w.watcherLog, 'utf8'), /still plainly alive/)
+      assert.doesNotMatch(w.calls(), /^curl /m)
+    } finally { w.cleanup() }
+  })
+
+  it('no bundle to start is no app too: the push goes', async () => {
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitState: '?E', goneWaitS: 1, watchS: 30 })
+    w.setNtfyTopic('test-topic')
+    try {
+      assert.equal((await finished(w.run({}))).code, 0)
+      rmSync(w.installedApp, { recursive: true, force: true })
+      w.oldGone()
+      await watcherEnded(w)
+      assert.match(readFileSync(w.watcherLog, 'utf8'), /NO APP RUNNING: no bundle/)
+      assert.match(w.calls(), /^curl .*JakeTunes is not running/m)
     } finally { w.cleanup() }
   })
 

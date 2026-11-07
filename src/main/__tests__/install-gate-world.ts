@@ -98,11 +98,18 @@ if [ -n "$all" ]; then
   done
   exit 0
 fi
-if [ "$fmt" = "state=" ]; then
+if [ "$fmt" = "state=" ] || [ "$fmt" = "time=" ]; then
   if [ -e "$JT_FAKE/pids" ]; then
     grep -qx "$pid" "$JT_FAKE/pids" || exit 1
   else
     [ -e "$JT_FAKE/running" ] || exit 1
+  fi
+  if [ "$fmt" = "time=" ]; then
+    # A live app's CPU time moves between any two looks, unless cpu_parked says it is stuck.
+    n=$(cat "$JT_FAKE/cpu_$pid" 2>/dev/null || echo 400)
+    if [ ! -e "$JT_FAKE/cpu_parked" ]; then n=$((n + 1)); echo "$n" > "$JT_FAKE/cpu_$pid"; fi
+    echo "  0:$n.57"
+    exit 0
   fi
   cat "$JT_FAKE/state_$pid" 2>/dev/null || echo "S"
   exit 0
@@ -192,6 +199,11 @@ if [ "$1" = "+%s" ] && [ -e "$JT_FAKE/date_offset" ]; then
   exit 0
 fi
 exec /bin/date "$@"
+`,
+  // Never the network: a push is a line on the record.
+  curl: `#!/bin/bash
+echo "curl $*" >> "$JT_FAKE/calls.log"
+exit 0
 `,
   caffeinate: `#!/bin/bash
 echo "caffeinate $*" >> "$JT_FAKE/calls.log"
@@ -302,6 +314,7 @@ interface WorldOpts {
   goneWaitS?: number
   watchS?: number
   watchPollS?: number
+  watchCpuS?: number
   /** How many times open says no before it works. */
   openFails?: number
   /** How many times open says yes and nothing starts. */
@@ -353,6 +366,10 @@ export interface World {
   pids: () => string
   /** What ps says the old process is now. */
   setOldState: (state: string) => void
+  /** Its CPU time stops moving: a process parked in teardown, whatever ps says of its state. */
+  cpuParked: () => void
+  /** The push channel this Mac has, the same file the other jobs read. */
+  setNtfyTopic: (topic: string) => void
   /** The Mac slept: the wall clock is this much further on. */
   clockJumps: (seconds: number) => void
   openWorksNow: () => void
@@ -453,6 +470,11 @@ export function makeWorld(o: WorldOpts = {}): World {
       writeFileSync(tmp, `${state}\n`)
       renameSync(tmp, join(fake, 'state_4242'))
     },
+    cpuParked: () => writeFileSync(join(fake, 'cpu_parked'), ''),
+    setNtfyTopic: (topic) => {
+      mkdirSync(join(home, '.config', 'jaketunes'), { recursive: true })
+      writeFileSync(join(home, '.config', 'jaketunes', 'ntfy-topic'), `${topic}\n`)
+    },
     clockJumps: (seconds) => writeFileSync(join(fake, 'date_offset'), String(seconds)),
     // Its own file, not a write to the fake open's count. Sharing a temp name gave ENOENT (load 37),
     // and with two names an open mid-countdown wrote 999 back over this 0, so the watcher spent its
@@ -507,6 +529,7 @@ export function makeWorld(o: WorldOpts = {}): World {
           // Always bounded here: a watcher that outlives this file's fakes would find the real open.
           JT_GATE_WATCH_S: String(o.watchS ?? 120),
           JT_GATE_WATCH_POLL_S: String(o.watchPollS ?? 0.1),
+          JT_GATE_WATCH_CPU_S: String(o.watchCpuS ?? 1),
           JT_GATE_OPEN_RETRY_S: '0.1',
           JT_GATE_START_WAIT_S: '1',
           JT_GATE_STAY_S: '0.1',
