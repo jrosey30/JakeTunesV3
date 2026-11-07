@@ -470,11 +470,17 @@ log_hourly() {
   fi
 }
 
+# 255 is ssh itself, and rsync says 12 when ssh dies just after it starts (1 of 20 stubbed
+# pulls). Every later call would ask a dead homemini the same question, up to 10 s each, so the
+# first one to hear that stops the rest of the phone legs and the last step.
+HOMEMINI_GONE=0
 rsync_optional() {
   local err rc
+  [ "$HOMEMINI_GONE" -eq 1 ] && return 1
   err=$(rsync -tz --no-perms --no-owner --no-group "$@" 2>&1 >/dev/null)
   rc=$?
   [ $rc -eq 0 ] && return 0
+  case $rc in 255|12) HOMEMINI_GONE=1 ;; esac
   case "$err" in
     *"No such file or directory"*) return 1 ;;   # expected absence — say nothing
     *) [ -n "$err" ] && printf '%s\n' "$err" >> "$LOG"; return 1 ;;
@@ -817,6 +823,9 @@ sync_artwork_to_homemini() {
 # pass that skipped the NAS skipped them too: on 2026-11-05 no star push ran from
 # 20:48 to 23:42, and stars made at 21:42 waited about 2 hours. A breaker-open pass
 # at home lost them the same way. Called below, before that exit; never on a replica.
+# Only what touches no NAS goes here. A pull that goes through homemini's own NAS mount, or
+# a copy onto this Mac's share, can stall for minutes (215 s on 10/27, 300 s on 11/6) and on a
+# hung share never ends, and nothing else in the pass would run: those wait for sync_phone_last_legs.
 sync_phone_legs() {
 # ── 5. mobile-set sidecars under LOCAL-PRIMARY (homemini ↔ local). ──
 #
@@ -847,12 +856,13 @@ log "pulling phone stars (homemini → local staging) …"
 rsync -tz --no-perms --no-owner --no-group \
   "$(rremote "$JT_DATA_REMOTE/mobile-stars.json")" "$JT_DATA_LOCAL/mobile-stars.incoming.json" >> "$LOG" 2>&1
 pull_rc=$?
-# 255 is ssh itself: homemini didn't answer at all (both rsyncs, measured). Every leg below
+# 255 or 12 is ssh itself: homemini didn't answer at all (both rsyncs, measured). Every leg below
 # would ask it the same question, up to 10 s each, ahead of a music leg that doesn't need
 # it. The state push has already said so when it failed the same way; a notification on
 # macOS 26 opens Script Editor, so this doesn't say it twice.
-if [ $pull_rc -eq 255 ]; then
-  log "homemini did not answer ssh (phone stars pull exit 255) — stars, plays and the phone's sidecars wait for the next pass"
+if [ $pull_rc -eq 255 ] || [ $pull_rc -eq 12 ]; then
+  HOMEMINI_GONE=1
+  log "homemini did not answer ssh (phone stars pull exit $pull_rc) — stars, plays and the phone's sidecars wait for the next pass"
   [ "$homemini_rc" -eq 0 ] && notify "Couldn't reach homemini. Stars and plays wait for the next sync."
   return 0
 fi
@@ -860,32 +870,18 @@ if [ $pull_rc -ne 0 ] && [ $pull_rc -ne 23 ] && [ $pull_rc -ne 24 ]; then
   log "WARNING: pull of mobile-stars returned $pull_rc (continuing)"
   notify "Couldn't pull phone stars from homemini — desktop may be behind."
 fi
-# Phone listening stream (2026-08-07 parity: "same page as mobile at all
-# times") — the backend appends {t,ts,ar,ti,al,g,pct,src:mobile} events;
-# desktop KPIs merge them with its own listening-log. The backend writes it
-# in its STATE_DIR — the NAS share as homemini mounts it. 2026-10-20: this
-# pull only tried homemini's ~/JakeTunesState and App Support, where the file
-# never lives, so the MacBook's copy froze on 9/13 and every run said "not
-# present yet" while the real log (529 KB) grew on the NAS. That path is
-# tried first now; the old two stay as fallbacks.
-# All may be absent pre-first-play, so these use rsync_optional: a missing
-# source is normal here and must not log an error.
-PHONE_STATE_DIR_ON_HOMEMINI="${JT_PHONE_STATE_DIR:-/Volumes/JakeShared/JakeTunesState}"
-rsync_optional "$HOMEMINI:$PHONE_STATE_DIR_ON_HOMEMINI/mobile-listening-log.jsonl" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
-rsync_optional "$HOMEMINI:JakeTunesState/mobile-listening-log.jsonl" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
-rsync_optional "$(rremote "$JT_DATA_REMOTE/mobile-listening-log.jsonl")" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
-  log_hourly /tmp/.jt-phonelog-note "phone listening log not found on homemini (checked $PHONE_STATE_DIR_ON_HOMEMINI, ~/JakeTunesState, App Support)"
-# Phone playlist sidecars: PULL ONLY (homemini → MacBook local, and NAS when
-# mounted). Never the reverse — see PHONE_PLAYLIST_SIDECARS above. Desktop V3
+# Phone playlist sidecars: PULL ONLY (homemini → MacBook local; the copy onto the NAS
+# is in sync_phone_last_legs). Never the reverse — see PHONE_PLAYLIST_SIDECARS above. Desktop V3
 # reads these as Brief 121 mirrors; the iOS backend is the writer.
 log "pulling phone playlist sidecars (homemini → local) …"
 for f in "${PHONE_PLAYLIST_SIDECARS[@]}"; do
   rsync_optional "$(rremote "$JT_DATA_REMOTE/$f")" "$JT_DATA_LOCAL/$f" || \
-    log_hourly "/tmp/.jt-phonepl-$f-note" "phone playlist sidecar $f not present on homemini yet"
-  if [ "$HOMEMINI_ONLY" -eq 0 ] && [ -d "$MOUNT/JakeTunesState" ]; then
-    rsync_optional "$(rremote "$JT_DATA_REMOTE/$f")" "$MOUNT/JakeTunesState/$f" || true
-  fi
+    { [ "$HOMEMINI_GONE" -eq 1 ] && break; log_hourly "/tmp/.jt-phonepl-$f-note" "phone playlist sidecar $f not present on homemini yet"; }
 done
+if [ "$HOMEMINI_GONE" -eq 1 ]; then
+  log "homemini did not answer ssh (phone sidecar pull) — stars, plays and the phone's sidecars wait for the next pass"
+  return 0
+fi
 # Brief 172: the push is a MERGE, not a copy. Upload the local set as
 # .mobile-stars.json.incoming; a remote python pass merges it into
 # homemini's copy with the same last-writer-wins tombstone rule the app
@@ -897,11 +893,16 @@ if [ -f "$JT_DATA_LOCAL/mobile-stars.json" ]; then
   rsync -tz --no-perms --no-owner --no-group \
     "$JT_DATA_LOCAL/mobile-stars.json" "$(rremote "$JT_DATA_REMOTE/.mobile-stars.json.incoming")" >> "$LOG" 2>&1
   push_rc=$?
+  if [ $push_rc -eq 255 ] || [ $push_rc -eq 12 ]; then
+    HOMEMINI_GONE=1
+    log "homemini did not answer ssh (star push exit $push_rc) — stars and plays wait for the next pass"
+    return 0
+  fi
   if [ $push_rc -ne 0 ] && [ $push_rc -ne 23 ] && [ $push_rc -ne 24 ]; then
     log "WARNING: push of mobile-stars returned $push_rc (continuing)"
     notify "Couldn't push desktop stars to homemini — phone may be behind."
   elif [ $push_rc -eq 0 ]; then
-    star_out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOMEMINI" 'cd ~/"Library/Application Support/JakeTunes" && python3 - <<"EOF"
+    star_out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "$HOMEMINI" 'cd ~/"Library/Application Support/JakeTunes" && python3 - <<"EOF"
 import json, os
 def load(p):
     try:
@@ -941,6 +942,12 @@ try: os.unlink(".mobile-stars.json.incoming")
 except OSError: pass
 print("merged %d stars, %d tombstones" % (len(merged), len(removed)))
 EOF' 2>>"$LOG")
+    star_rc=$?
+    if [ $star_rc -eq 255 ]; then
+      HOMEMINI_GONE=1
+      log "homemini did not answer ssh (star merge exit 255) — stars and plays wait for the next pass"
+      return 0
+    fi
     case "$star_out" in
       merged*) log "star push: $star_out → homemini mobile-stars.json" ;;
       *) log "WARNING: star merge on homemini returned '$star_out' (continuing)"; notify "Couldn't merge desktop stars on homemini — phone may be behind." ;;
@@ -953,6 +960,33 @@ fi
 if [ -f "$JT_DATA_LOCAL/mobile-plays.json" ]; then
   rsync -tz --update --no-perms --no-owner --no-group \
     "$JT_DATA_LOCAL/mobile-plays.json" "$(rremote "$JT_DATA_REMOTE/mobile-plays.json")" >> "$LOG" 2>&1 || true
+fi
+}
+
+# The last step, after artwork on both ways out: what can hang on a NAS. A hub pass only.
+sync_phone_last_legs() {
+[ "$REPLICA" -eq 0 ] || return 0
+[ "$HOMEMINI_GONE" -eq 0 ] || return 0
+# Phone listening stream (2026-08-07 parity: "same page as mobile at all
+# times") — the backend appends {t,ts,ar,ti,al,g,pct,src:mobile} events;
+# desktop KPIs merge them with its own listening-log. The backend writes it
+# in its STATE_DIR — the NAS share as homemini mounts it. 2026-10-20: this
+# pull only tried homemini's ~/JakeTunesState and App Support, where the file
+# never lives, so the MacBook's copy froze on 9/13 and every run said "not
+# present yet" while the real log (529 KB) grew on the NAS. That path is
+# tried first now; the old two stay as fallbacks.
+# All may be absent pre-first-play, so these use rsync_optional: a missing
+# source is normal here and must not log an error.
+PHONE_STATE_DIR_ON_HOMEMINI="${JT_PHONE_STATE_DIR:-/Volumes/JakeShared/JakeTunesState}"
+rsync_optional "$HOMEMINI:$PHONE_STATE_DIR_ON_HOMEMINI/mobile-listening-log.jsonl" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
+rsync_optional "$HOMEMINI:JakeTunesState/mobile-listening-log.jsonl" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
+rsync_optional "$(rremote "$JT_DATA_REMOTE/mobile-listening-log.jsonl")" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
+  [ "$HOMEMINI_GONE" -eq 1 ] || log_hourly /tmp/.jt-phonelog-note "phone listening log not found on homemini (checked $PHONE_STATE_DIR_ON_HOMEMINI, ~/JakeTunesState, App Support)"
+if [ "$HOMEMINI_ONLY" -eq 0 ] && [ -d "$MOUNT/JakeTunesState" ]; then
+  for f in "${PHONE_PLAYLIST_SIDECARS[@]}"; do
+    rsync_optional "$(rremote "$JT_DATA_REMOTE/$f")" "$MOUNT/JakeTunesState/$f" || true
+    [ "$HOMEMINI_GONE" -eq 1 ] && break
+  done
 fi
 }
 
@@ -1005,6 +1039,7 @@ pull_taste_elsewhere || true
 if [ "$REPLICA" -eq 0 ]; then sync_phone_legs; fi
 if [ $HOMEMINI_ONLY -eq 1 ]; then
   sync_artwork_to_homemini
+  sync_phone_last_legs
   log "homemini-only pass done (state rc=$homemini_rc) — NAS legs skipped"
   exit 0
 fi
@@ -1404,6 +1439,8 @@ sync_artwork_to_homemini
 
 # ── 5. Stars, plays and the phone's sidecars ran here until 2026-11-06. They ──
 # only need SSH, so they moved to sync_phone_legs, before the homemini-only exit.
+# What can hang on a NAS stays last, here and on that exit.
+sync_phone_last_legs
 
 # ── 5b. Prune phone-deleted recommendations from the DESKTOP copy. ────
 #
