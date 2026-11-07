@@ -477,13 +477,37 @@ log_hourly() {
 # pulls). Every later call would ask a dead homemini the same question, up to 10 s each, so the
 # first one to hear that stops the rest of the phone legs and the last step.
 HOMEMINI_GONE=0
+# A limit on a pull that reads homemini's NAS mount (2026-11-06). --timeout alone ends real rsync
+# (3 s, back in 6 s), but openrsync, which runs when the app's PATH has /usr/bin first, sat through
+# it. And the usual alarm isn't enough here: rsync dies, its ssh stays for as long as the far end is
+# stuck, and the capture below waits on ssh's stderr (real rsync and ssh, 4 s alarm, far end stuck
+# 15 s: back after 15 s, on either rsync). So rsync runs in its own group and all of it goes: TERM at
+# the limit, KILL 5 s on, and whatever rsync leaves behind when it ends by itself. 142 is the limit.
+in_own_group() {
+  /usr/bin/perl -e '
+    my $limit = shift; my $cut = 0; setpgrp(0, 0); $SIG{TERM} = "IGNORE";
+    my $kid = fork; exit 1 unless defined $kid;
+    if (!$kid) { $SIG{TERM} = "DEFAULT"; exec @ARGV; exit 127 }
+    $SIG{ALRM} = sub { $cut++ ? kill("KILL", -$$) : kill("TERM", -$$); alarm 5 };
+    alarm $limit; waitpid $kid, 0; my $st = $?;
+    kill "TERM", -$$;
+    exit($cut ? 142 : $st >> 8)' "$@"
+}
+RSYNC_OPTIONAL_LIMIT_S=""
 rsync_optional() {
   local err rc
   [ "$HOMEMINI_GONE" -eq 1 ] && return 1
-  err=$(rsync -tz --no-perms --no-owner --no-group "$@" 2>&1 >/dev/null)
+  if [ -n "$RSYNC_OPTIONAL_LIMIT_S" ]; then
+    err=$(in_own_group "$RSYNC_OPTIONAL_LIMIT_S" rsync -tz --no-perms --no-owner --no-group "$@" 2>&1 >/dev/null)
+  else
+    err=$(rsync -tz --no-perms --no-owner --no-group "$@" 2>&1 >/dev/null)
+  fi
   rc=$?
   [ $rc -eq 0 ] && return 0
-  case $rc in 255|12) HOMEMINI_GONE=1 ;; esac
+  case $rc in
+    255|12) HOMEMINI_GONE=1 ;;
+    142) err="rsync cut off after ${RSYNC_OPTIONAL_LIMIT_S}s: ${*: -2:1} ${err}" ;;
+  esac
   case "$err" in
     *"No such file or directory"*) return 1 ;;   # expected absence — say nothing
     *) [ -n "$err" ] && printf '%s\n' "$err" >> "$LOG"; return 1 ;;
@@ -984,8 +1008,12 @@ sync_phone_last_legs() {
 # tried first now; the old two stay as fallbacks.
 # All may be absent pre-first-play, so these use rsync_optional: a missing
 # source is normal here and must not log an error.
+# Every away pass comes through here now, and on a hung NAS that pull never ends: sshd still
+# answers, so ssh's keepalives don't help, and the orchestrator's 600 s kill says "Sync timed out"
+# for a pass whose useful legs all landed, and holds the gate a new song's catalog publish waits on.
+local RSYNC_OPTIONAL_LIMIT_S="${JT_NAS_PULL_LIMIT_S:-120}"
 PHONE_STATE_DIR_ON_HOMEMINI="${JT_PHONE_STATE_DIR:-/Volumes/JakeShared/JakeTunesState}"
-rsync_optional "$HOMEMINI:$PHONE_STATE_DIR_ON_HOMEMINI/mobile-listening-log.jsonl" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
+rsync_optional --timeout=60 "$HOMEMINI:$PHONE_STATE_DIR_ON_HOMEMINI/mobile-listening-log.jsonl" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
 rsync_optional "$HOMEMINI:JakeTunesState/mobile-listening-log.jsonl" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
 rsync_optional "$(rremote "$JT_DATA_REMOTE/mobile-listening-log.jsonl")" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
   [ "$HOMEMINI_GONE" -eq 1 ] || log_hourly /tmp/.jt-phonelog-note "phone listening log not found on homemini (checked $PHONE_STATE_DIR_ON_HOMEMINI, ~/JakeTunesState, App Support)"

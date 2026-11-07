@@ -3,9 +3,9 @@
  *
  * The phone legs moved ahead of the music leg so stars and plays leave on every hub pass. Two of
  * their steps touch a NAS: the listening log, which homemini reads from its own mount, and the
- * sidecar copy onto this Mac's share. Neither has a limit that holds (--timeout: openrsync sat
- * 40 s on a 3 s limit, and a wedge in a local write outlives it), and real passes stalled 194 to
- * 300 s on them. Ahead of the music leg, a hang there meant no music, no Plex, no artwork.
+ * sidecar copy onto this Mac's share. --timeout alone doesn't hold them (openrsync sat 40 s on a 3 s
+ * limit, and a wedge in a local write outlives it), and real passes stalled 194 to 300 s on them.
+ * Ahead of the music leg, a hang there meant no music, no Plex, no artwork.
  */
 import { after, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
@@ -22,6 +22,18 @@ const STUB_RSYNC = `#!/bin/bash
 if [ "$1" = "--version" ]; then echo "rsync  version 3.4.2  protocol version 32"; exit 0; fi
 echo "rsync $*" >> "$STUB_CALLS"
 case "$*" in *\${STUB_FAIL_ON:-no such thing}*) exit "\${STUB_FAIL_RC:-255}" ;; esac
+# STUB_STALL_ON: a sender stuck on a hung mount, with a child that holds stderr, as rsync's ssh does
+# once an alarm has killed rsync. STUB_STALL=honours-timeout exits at --timeout and leaves the child;
+# otherwise it sits through it, as openrsync did. "stall-ended" is the stall running out, which no
+# pass should ever wait for.
+case "$*" in
+  *\${STUB_STALL_ON:-no such thing}*)
+    ( sleep 8; echo "stall-ended" >> "$STUB_CALLS" ) &
+    case "$STUB_STALL:$*" in honours-timeout:*--timeout=*) exit 30 ;; esac
+    wait
+    exit 30
+    ;;
+esac
 exit 0
 `
 const STUB_SSH = `#!/bin/bash
@@ -102,6 +114,22 @@ describe('the order of the legs', () => {
     assert.ok(at(calls, STAR_PULL) < at(calls, ARTWORK), calls.join('\n'))
     assert.ok(at(calls, ARTWORK) < at(calls, LISTENING), calls.join('\n'))
     assert.equal(calls.filter((c) => c.includes('/nas/JakeTunesState/mobile-')).length, 0)
+  })
+
+  for (const stall of ['honours-timeout', 'ignores-timeout']) {
+    it(`a hung NAS under the listening log, rsync ${stall}: the pass ends by itself, and says so`, () => {
+      const { calls, log, status } = pass(['--quick', '--homemini-only'], { STUB_STALL_ON: '/Volumes/JakeShared/JakeTunesState/mobile-listening-log', STUB_STALL: stall, JT_NAS_PULL_LIMIT_S: '1' })
+      assert.equal(status, 0, log)
+      assert.match(log, /homemini-only pass done/)
+      assert.equal(calls.filter((c) => c === 'stall-ended').length, 0, `it sat on the stall:\n${calls.join('\n')}`)
+      assert.equal(calls.filter((c) => c.includes(LISTENING)).length, 2, 'the next path still gets its turn')
+      if (stall === 'ignores-timeout') assert.match(log, /rsync cut off after 1s: .*mobile-listening-log/)
+    })
+  }
+
+  it('the pull through the NAS mount carries --timeout', () => {
+    const { calls } = pass(['--quick', '--homemini-only'])
+    assert.match(calls.find((c) => c.includes(LISTENING)) ?? '', /--timeout=60 test@stub:\/Volumes\/JakeShared\//)
   })
 
   it('the listening log still reaches this Mac by the same three paths, in order', () => {
