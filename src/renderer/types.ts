@@ -147,7 +147,7 @@ export interface Mixtape {
   seasonal?: string
 }
 
-export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'download' | 'scotus' | 'recordstore' |'listen-to-the-list' | 'new-for-you' | 'discovery' | 'mix-detail' | 'concerts' | 'concert-detail' | 'mixtape-detail' | 'dj' | 'activity-pool' | 'year-in-review' | 'top1000'
+export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'download' | 'scotus' | 'recordstore' |'listen-to-the-list' | 'new-for-you' | 'discovery' | 'mix-detail' | 'concerts' | 'concert-detail' | 'mixtape-detail' | 'dj' | 'year-in-review' | 'top1000'
 
 // V5 Live Concert Mode — a declared album's merged "live set". Key'd by
 // albumKey (artist|||album) in live-sets.json; the merged file is a REAL
@@ -1256,6 +1256,7 @@ declare global {
       top1000Undo?: () => Promise<{ ok: true; value: import('../common/top1000-doc').QuizUndo } | { ok: false; error: string }>
       top1000List?: () => Promise<{ ok: true; value: { progress: import('../common/top1000-doc').QuizProgress; list: import('../common/top1000-doc').QuizListEntry[] } } | { ok: false; error: string }>
       // 2026-11-07 — every non-Original iPod's list (homemini writes it; src/main/ipc/ipod-lists-ipc.ts)
+      ipodRegistryList?: () => Promise<{ ok: boolean; devices?: Array<{ id: string; name: string; color: string | null; primary: boolean }>; error?: string }>
       ipodListsGet?: () => Promise<{ ok: boolean; lists?: Array<{ id: string; name: string; color: string | null; purpose: string | null; ids: number[]; source: 'homemini' | 'local'; note: string | null; updatedAt: string | null }> }>
       top1000Ties?: () => Promise<{ ok: true; value: number | null } | { ok: false; error: string }>
       homeShelvesGet?: () => Promise<{ ok: boolean; state?: import('../common/home-shelves-doc').HomeShelvesState }>

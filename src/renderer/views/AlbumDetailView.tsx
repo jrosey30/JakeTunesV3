@@ -40,7 +40,7 @@ import { verifyLiveSetCompleteness } from '../utils/liveSetCompleteness'
 import type { Track, LiveSetCue } from '../types'
 import '../styles/songs.css'
 import '../styles/album-page.css'
-import { addToPlaylistEntry, addToIpodPoolEntry, queueMenuEntries } from '../utils/playlistMenu'
+import { addToPlaylistEntry, queueMenuEntries } from '../utils/playlistMenu'
 import { getInfoTarget, type GetInfoTarget } from '../../common/get-info-target'
 import { planConcertStart } from '../../common/concert-start'
 import { jewelCasePhotoVars } from '../../common/jewel-case-photo'
@@ -533,7 +533,6 @@ export default function AlbumDetailView() {
       { separator: true as const },
       ...queueMenuEntries(selectedTracks, pbDispatch),
       addToPlaylistEntry(selectedTracks, lib.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
-      addToIpodPoolEntry(selectedTracks),
       { separator: true as const },
       // Already on the album page — only Go to Artist makes sense here.
       { label: 'Go to Artist', onClick: () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(track.albumArtist || track.artist || '') }) },

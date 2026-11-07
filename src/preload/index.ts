@@ -321,6 +321,8 @@ const electronAPI = {
     ipcRenderer.invoke('get-ipod-device'),
   renameIpodDevice: (name: string): Promise<unknown> =>
     ipcRenderer.invoke('rename-ipod-device', name),
+  ipodRegistryList: (): Promise<{ ok: boolean; devices: Array<{ id: string; name: string; color: string | null; primary: boolean }>; error?: string }> =>
+    ipcRenderer.invoke('ipod-registry:list'),
   registerIpodDevice: (input: { asOriginal: boolean; name?: string; color?: string; purpose?: string }): Promise<{ ok: true; device: IpodDeviceMarker } | { ok: false; error: string }> =>
     ipcRenderer.invoke('register-ipod-device', input),
   onIpodDeviceChanged: (callback: () => void) => {

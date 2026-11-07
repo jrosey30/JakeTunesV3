@@ -1,7 +1,5 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { blockedByOtherIpods, mergeIntoPool, removeFromPool, POOL_MAX } from '../activity-pool.ts'
 
 const never = () => false
@@ -88,25 +86,6 @@ describe('mergeIntoPool', () => {
 describe('removeFromPool', () => {
   it('removes only the named ids', () => {
     assert.deepEqual(removeFromPool([1, 2, 3, 4], [2, 4, 9]), [1, 3])
-  })
-})
-
-describe('pool page', () => {
-  const view = readFileSync(join(import.meta.dirname, '..', '..', 'renderer', 'views', 'ActivityPoolView.tsx'), 'utf8')
-  it('"Sync this list…" checks for the iPod before going to the Device page, and names its one Sync button', () => {
-    assert.match(view, /checkIpodMounted\(\)/)
-    assert.match(view, /Plug in \$\{otherIpod\.name\}, then press Sync \$\{otherIpod\.name\}/)
-    assert.doesNotMatch(view, /requestPoolMode\(/)
-    assert.doesNotMatch(view, /setNotice\(`[^`]*Activity Sync/)
-  })
-  it('the Original gets no sync button here: its Sync is its Top 1000, not this pool (2026-11-07)', () => {
-    assert.match(view, /\{otherIpod && <button/)
-    assert.match(view, /the Original’s Sync puts its Top 1000 on it/)
-    assert.doesNotMatch(view, /splitHalfAndHalf/)
-  })
-  it('no copy says the sync stops and asks you to trim — half and half never trims or stops', () => {
-    assert.doesNotMatch(view, /asks you to trim/)
-    assert.doesNotMatch(view, /sync stops/)
   })
 })
 

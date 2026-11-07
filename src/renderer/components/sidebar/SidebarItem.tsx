@@ -16,18 +16,23 @@ interface Props {
   /** 4.4.0: extra className on the row — used for the WJLR Picks
    *  featured-section treatment. */
   className?: string
-  /** Small right-aligned count (iPod Pool: "812"). */
+  /** Small right-aligned count (an iPod's list: "812"). */
   badge?: string
+  /** A quieter second part after the label ("Top 1000" on the Original's row). */
+  detail?: string
+  /** Wrap a long name onto a second line instead of cutting it off (iPod rows:
+   *  Jake's iPod names must never clip). */
+  wrap?: boolean
   /** A persistent trailing control on the row (its own click, never the
    *  row's). The Download row's door to the Downloads panel: always shown;
    *  `badge` inside it only while there is something to count. */
   door?: { onClick: () => void; title: string; icon: ReactNode; badge?: string }
   /** 2026-09-02: make the row a DRAG SOURCE carrying this whole list —
-   *  a playlist dragged onto the iPod Pool brings every song. */
+   *  a playlist dragged onto another playlist brings every song. */
   dragTrackIds?: number[]
 }
 
-export default function SidebarItem({ label, icon, selected, indicator, highlight, onClick, onDoubleClick, droppable, onDrop, className, badge, door, dragTrackIds }: Props) {
+export default function SidebarItem({ label, icon, selected, indicator, highlight, onClick, onDoubleClick, droppable, onDrop, className, badge, detail, wrap, door, dragTrackIds }: Props) {
   const [dragOver, setDragOver] = useState(false)
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -63,6 +68,7 @@ export default function SidebarItem({ label, icon, selected, indicator, highligh
     highlight ? 'sidebar-item--highlight' : '',
     highlight && selected ? 'sidebar-item--highlight-selected' : '',
     dragOver ? 'sidebar-item--dragover' : '',
+    wrap ? 'sidebar-item--wrap' : '',
     className || '',
   ].filter(Boolean).join(' ')
 
@@ -85,7 +91,7 @@ export default function SidebarItem({ label, icon, selected, indicator, highligh
       onDragStart={dragTrackIds && dragTrackIds.length > 0 ? (e) => setAlbumDragPayload(e, dragTrackIds) : undefined}
     >
       {icon && <span className="sidebar-item-icon">{icon}</span>}
-      <span className="sidebar-item-label">{label}</span>
+      <span className="sidebar-item-label">{label}{detail && <span className="sidebar-item-detail"> · {detail}</span>}</span>
       {badge && <span className="sidebar-item-badge">{badge}</span>}
       {door && (
         <button type="button" className={`sidebar-item-door${door.badge ? ' sidebar-item-door--counted' : ''}`} title={door.title} aria-label={door.title} onClick={(e) => { e.stopPropagation(); door.onClick() }}>
