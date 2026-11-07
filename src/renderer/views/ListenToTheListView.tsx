@@ -30,7 +30,7 @@ import { useListenToTheList } from '../listen-to-the-list/useListenToTheList'
 import type { AddFormState } from '../listen-to-the-list/useListenToTheList'
 import {
   canDownloadReco, getLtlDownloadSnapshot, prefillDownloadView, openBrowse,
-  queueRecoDownload, subscribeLtlDownload, type LtlDownloadStatus,
+  queueRecoDownload, recoFields, subscribeLtlDownload, type LtlDownloadStatus,
 } from '../listen-to-the-list/ltlDownload'
 import '../styles/listen-to-the-list.css'
 
@@ -98,8 +98,7 @@ export default function ListenToTheListView() {
 
   // Song / Album / Artist — the list groups by what a reco IS (Jake 2026-07-23).
   const recoType = (r: Recommendation): 'song' | 'album' | 'artist' => {
-    const song = (r.matchedTitle || r.song || '').trim()
-    const album = (r.matchedAlbum || r.album || '').trim()
+    const { title: song, album } = recoFields(r)
     if (r.kind === 'album' || r.kind === 'concert') return 'album'
     if (song) return 'song'
     if (album) return 'album'

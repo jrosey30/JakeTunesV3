@@ -18,6 +18,7 @@
  */
 import { requestDiscoveryTab } from '../views/discoveryTab.ts'
 import { ADD_SOURCE_LABEL, addedViaOf } from '../../common/source-playlists.ts'
+import { recoFields } from '../../common/artist-credit.ts'
 import type { Recommendation } from '../types.ts'
 import {
   enqueue, cancel, retry, subscribeQueue, getQueue, itemForRecommendation,
@@ -40,13 +41,7 @@ export interface LtlDownloadStatus {
   jobKey?: string
 }
 
-export function recoFields(rec: Recommendation): { artist: string; title: string; album: string } {
-  return {
-    title: (rec.matchedTitle || rec.song || '').trim(),
-    album: (rec.matchedAlbum || rec.album || '').trim(),
-    artist: (rec.matchedArtist || rec.artist || '').trim(),
-  }
-}
+export { recoFields }
 
 /** Song / Album / Artist — what a recommendation IS. ⚠️ TWIN:
  *  views/ListenToTheListView.tsx recoType (the list groups by the same rule),

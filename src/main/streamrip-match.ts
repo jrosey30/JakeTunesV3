@@ -1,7 +1,10 @@
 /** Pure Qobuz search-result matching for streamrip — shared by download-by-query and tests. */
 import { artistOrAlias, recoArtistMatches, recoFold, recoTitleMatches, sameArtistName } from './reco-match.ts'
+import { otherCredit } from '../common/artist-credit.ts'
 import { foldAccents, nameKey } from '../common/fold-text.ts'
 import type { RealAlbum } from '../common/real-album.ts'
+
+export { otherCredit }
 
 export interface StreamripSearchHit { source: string; mediaType: string; id: string; desc: string }
 
@@ -52,8 +55,8 @@ export function isCoverAct(title: string, artist: string): boolean {
  * is playing them: T-Pain's "On Top of The Covers (Live from The Sun Rose)" and Ozzy Osbourne's
  * "Under Cover" are their own records, and every song on them was refused as a tribute (2026-11-06).
  * So on an album credited to the artist Jake asked for, that one word doesn't count. `asked` is who
- * he asked for, never Apple's match of it: his "Floral & Fading" by Pierce the Veil matched Sparrow
- * Sleeps, on "Lullaby covers of Pierce the Veil songs", and that row then names the act on the album.
+ * Jake asked for, never Apple's match of it: a row for "Floral & Fading" by Pierce the Veil matched
+ * Sparrow Sleeps, on "Lullaby covers of Pierce the Veil songs", and then named the act on the album.
  * The credit must be the whole name: "The Beatles Revival Band" contains "The Beatles". Every other
  * word still counts: Lynyrd Skynyrd's "… Tribute Tour 1987" is theirs too, a live record, and a plain
  * request is not asking for it. With no credit to read, nothing has changed.
@@ -427,30 +430,6 @@ export function titleReads(want: string, got: string): boolean {
   const w = searchTitle(want) || want, g = searchTitle(got) || got
   return sameTitle(want, got) || titleMatches(w, g) || maskedTitleMatches(w, g) || subtitleVariantMatches(w, g)
     || titleMatches(want, got) || maskedTitleMatches(want, got) || subtitleVariantMatches(want, got)
-}
-
-/**
- * Another way of writing the same credit, for when recoArtistMatches says no (JakeTunesMobile
- * Brief 225):
- *   'order': the same words in another order. Qobuz lists Richard F. as "F. Richard", and a
- *            joint credit comes in any order ("Mr. Kris & Eric Faria").
- *   'part':  one whole name of a joint credit, too short for recoArtistMatches' containment
- *            test. Qobuz lists "OMA & SitarNik" as "Oma".
- * Only "&" and "," join credits: "/" and "+" sit inside names (AC/DC, C+C Music Factory).
- * "Sly & the Family Stone" is one band, "Sammy Davis, Jr." one man, and a lone letter no name.
- * There is no spelling rule: 18 artist pairs in Jake's library are one letter apart, and all 18
- * are different acts (David Bowie, David Zowie).
- * A name alone does not make it the song: see creditHolds.
- * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts otherCredit, verbatim.
- */
-export function otherCredit(want: string, got: string): 'order' | 'part' | null {
-  const wordsOf = (name: string): string[] => name.split(/[\s,&]+/).map(recoFold).filter(Boolean)
-  const w = wordsOf(want), g = wordsOf(got)
-  if (w.join(' ') !== g.join(' ') && [...w].sort().join(' ') === [...g].sort().join(' ')) return 'order'
-  const credits = want.split(/[,&]/).map((c) => c.trim()).filter(Boolean)
-  const name = recoFold(got)
-  if (credits.length < 2 || name.length < 2 || credits.some((c) => /^(?:the\s|[js]r\b)/i.test(c))) return null
-  return credits.some((c) => recoFold(c) === name) ? 'part' : null
 }
 
 /**

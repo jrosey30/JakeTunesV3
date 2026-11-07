@@ -8,13 +8,13 @@ import {
   getLtlDownloadStatus,
   isLtlDownloadBusy,
   queueRecoDownload,
+  recoFields,
   subscribeLtlDownload,
   getLtlDownloadSnapshot,
 } from './ltlDownload'
 
 export function displayRecoName(rec: Recommendation): string {
-  const title = rec.matchedTitle || rec.song
-  const artist = rec.matchedArtist || rec.artist
+  const { title, artist } = recoFields(rec)
   if (title && artist) return `${title} — ${artist}`
   return title || artist || rec.album || rec.note || 'Untitled'
 }
