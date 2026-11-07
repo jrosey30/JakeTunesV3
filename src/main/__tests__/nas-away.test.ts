@@ -34,6 +34,9 @@ destination: 192.168.1.223
        0         0         0         0         0         0      1500      1187
 `
 
+const answers = async (): Promise<boolean> => true
+const silent = async (): Promise<boolean> => false
+
 describe('the route says away', () => {
   it('a gateway and an interface = away; on-link, empty, or an error line = not proven', () => {
     assert.equal(routeShowsGateway(AWAY), true)
@@ -47,7 +50,7 @@ describe('the route says away', () => {
     let t = 1_000_000
     let runs = 0
     let out: string | null = AWAY
-    const away = createAwayCheck({ readRoute: async () => { runs++; return out }, now: () => t })
+    const away = createAwayCheck({ readRoute: async () => { runs++; return out }, ping: answers, now: () => t })
     assert.equal(await away(), true)
     assert.equal(await away(), true)
     assert.equal(runs, 1)
@@ -63,16 +66,142 @@ describe('the route says away', () => {
   it('calls that overlap share one route read', async () => {
     let runs = 0
     let release: (s: string) => void = () => {}
-    const away = createAwayCheck({ readRoute: () => { runs++; return new Promise((r) => { release = r }) } })
+    const away = createAwayCheck({ readRoute: () => { runs++; return new Promise((r) => { release = r }) }, ping: answers })
     const both = Promise.all([away(), away()])
     release(AWAY)
     assert.deepEqual(await both, [true, true])
     assert.equal(runs, 1)
   })
 
-  it('a route that cannot be read, or rejects, is not away', async () => {
-    assert.equal(await createAwayCheck({ readRoute: async () => null })(), false)
-    assert.equal(await createAwayCheck({ readRoute: async () => { throw new Error('spawn failed') } })(), false)
+  it('with no earlier answer, a route that cannot be read, or rejects, or is empty, is not away, and nobody pings', async () => {
+    let pings = 0
+    const ping = async (): Promise<boolean> => { pings++; return false }
+    assert.equal(await createAwayCheck({ readRoute: async () => null, ping })(), false)
+    assert.equal(await createAwayCheck({ readRoute: async () => { throw new Error('spawn failed') }, ping })(), false)
+    assert.equal(await createAwayCheck({ readRoute: async () => '', ping })(), false)
+    assert.equal(pings, 0)
+  })
+
+  // Real `route -n get` with no route prints nothing on stdout and exits 0 (measured through
+  // execFile too), so '' is the shape, not null.
+  it('a failed or empty read keeps the last answer: away stays away, home stays home', async () => {
+    for (const nothing of ['', null, 'route: writing to routing socket: not in table\n', '    gateway: 172.17.1.1\n']) {
+      let t = 1_000_000
+      let out: string | null = AWAY
+      const away = createAwayCheck({ readRoute: async () => out, ping: answers, now: () => t })
+      assert.equal(await away(), true)
+      out = nothing
+      t += 30_001
+      assert.equal(await away(), true, `away, then ${JSON.stringify(nothing)}`)
+      out = HOME
+      t += 30_001
+      assert.equal(await away(), false, 'home answers on-link, so coming home still works')
+      out = nothing
+      t += 30_001
+      assert.equal(await away(), false, `home, then ${JSON.stringify(nothing)}`)
+    }
+  })
+})
+
+// A hotel or a friend's network numbered 192.168.1.x gives HOME's route, and the app stated the share.
+describe("on-link isn't home until the address answers", () => {
+  function check(answer: () => Promise<boolean>) {
+    const w = { t: 1_000_000, route: HOME as string | null, pings: 0, logs: [] as string[], answer }
+    const away = createAwayCheck({
+      readRoute: async () => w.route,
+      ping: () => { w.pings++; return w.answer() },
+      now: () => w.t,
+      log: (m) => w.logs.push(m),
+    })
+    return { w, away }
+  }
+
+  it('on-link and it answers: home, nothing logged', async () => {
+    const { w, away } = check(answers)
+    assert.equal(await away(), false)
+    assert.equal(w.pings, 1)
+    assert.deepEqual(w.logs, [])
+  })
+
+  it('on-link and no answer: away, and that state is said once per change, not every 30 s', async () => {
+    const { w, away } = check(silent)
+    for (let i = 0; i < 4; i++) {
+      assert.equal(await away(), true)
+      w.t += 30_001
+    }
+    assert.equal(w.logs.length, 1, w.logs.join('\n'))
+    assert.match(w.logs[0], /on-link, no answer/)
+    assert.match(w.logs[0], /look at ping first/)
+    w.answer = answers
+    assert.equal(await away(), false)
+    assert.equal(w.logs.length, 2)
+    assert.match(w.logs[1], /no answer: over/)
+  })
+
+  it('leaving for a network with a gateway ends that state too', async () => {
+    const { w, away } = check(silent)
+    assert.equal(await away(), true)
+    w.route = AWAY
+    w.t += 30_001
+    assert.equal(await away(), true)
+    assert.match(w.logs[1], /no answer: over/)
+  })
+
+  it('the ping is cached with the route: once per 30 s', async () => {
+    const { w, away } = check(answers)
+    await away()
+    await away()
+    w.t += 29_999
+    await away()
+    assert.equal(w.pings, 1)
+    w.t += 2
+    await away()
+    assert.equal(w.pings, 2)
+  })
+
+  it('a gateway needs no ping', async () => {
+    const { w, away } = check(answers)
+    w.route = AWAY
+    assert.equal(await away(), true)
+    assert.equal(w.pings, 0)
+  })
+
+  it('a ping that rejects is no answer', async () => {
+    const { away } = check(async () => { throw new Error('spawn failed') })
+    assert.equal(await away(), true)
+  })
+
+  it('the real ping is one packet, one second, and cut at 3 s, so it can\'t freeze anything', () => {
+    const src = readFileSync(join(repoRoot, 'src/main/nas-route.ts'), 'utf8')
+    assert.match(src, /execFile\('\/sbin\/ping', \['-c1', '-t1', NAS_LAN_IP\], \{ timeout: 3000 \}/)
+  })
+})
+
+describe('one empty read while away, with the real breaker', () => {
+  it('no stat, no false recovery, no kick', async () => {
+    let t = 5_000_000
+    let route: string | null = AWAY
+    let probes = 0
+    let kicks = 0
+    const warnings: string[] = []
+    const breaker = createNasBreaker({
+      probe: async () => { probes++ },
+      isAway: createAwayCheck({ readRoute: async () => route, ping: answers, now: () => t }),
+      now: () => t,
+      warn: (m) => { warnings.push(m) },
+      probeTimeoutMs: 50,
+    })
+    breaker.onNasRecovery(() => { kicks++ })
+    assert.equal(await breaker.nasAvailable(), false)
+    route = ''
+    t += 60_000
+    for (let i = 0; i < 4; i++) {
+      assert.equal(await breaker.nasAvailable(), false)
+      t += 10_000
+    }
+    assert.equal(probes, 0)
+    assert.equal(kicks, 0)
+    assert.ok(!warnings.some((m) => /recovered/.test(m)), warnings.join('\n'))
   })
 })
 
@@ -262,7 +391,7 @@ describe('wiring', () => {
 
   it('state-dir builds the one breaker on the route check', () => {
     const src = read('src/main/state-dir.ts')
-    assert.match(src, /createNasBreaker\(\{\s*probe: \(\) => stat\(NAS_STATE_DIR_PATH\),\s*isAway: createAwayCheck\(\{ readRoute: readNasRoute \}\),/)
+    assert.match(src, /createNasBreaker\(\{\s*probe: \(\) => stat\(NAS_STATE_DIR_PATH\),\s*isAway: createAwayCheck\(\{ readRoute: readNasRoute, ping: pingNas \}\),/)
     for (const name of ['nasAvailable', 'isNasMounted', 'onNasRecovery']) assert.match(src, new RegExp(`export const ${name} = breaker\\.${name}`))
   })
 
@@ -281,6 +410,6 @@ describe('wiring', () => {
   it('the app and the script ask about the same address, by the same rule', () => {
     const script = read('Dr. Claude/scripts/jaketunes-homemini-sync.sh')
     assert.ok(script.includes(`NAS_LAN_IP="${NAS_LAN_IP}"`), 'NAS_LAN_IP twin')
-    assert.match(script, /share_is_away\(\) \{[\s\S]*?\^ \*interface:[\s\S]*?\^ \*gateway:/)
+    assert.match(script, /share_is_away\(\) \{[\s\S]*?\^ \*interface:[\s\S]*?\^ \*gateway:[\s\S]*?-c1 -t1 "\$NAS_LAN_IP"/)
   })
 })

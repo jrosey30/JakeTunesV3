@@ -27,7 +27,7 @@
 import { app } from 'electron'
 import { stat } from 'fs/promises'
 import { createNasBreaker } from './nas-breaker.ts'
-import { createAwayCheck, readNasRoute } from './nas-route.ts'
+import { createAwayCheck, pingNas, readNasRoute } from './nas-route.ts'
 
 const NAS_STATE_DIR = '/Volumes/JakeShared/JakeTunesState'
 
@@ -46,7 +46,7 @@ export const NAS_STATE_DIR_PATH = NAS_STATE_DIR
 // nas-route.ts. A mount must be slow to trip the first; the second never looks.
 const breaker = createNasBreaker({
   probe: () => stat(NAS_STATE_DIR_PATH),
-  isAway: createAwayCheck({ readRoute: readNasRoute }),
+  isAway: createAwayCheck({ readRoute: readNasRoute, ping: pingNas }),
 })
 export const nasAvailable = breaker.nasAvailable
 export const isNasMounted = breaker.isNasMounted

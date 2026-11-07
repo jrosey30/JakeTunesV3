@@ -69,15 +69,15 @@ export function createNasBreaker(deps: {
   let nasRecoveryListener: (() => void) | null = null
 
   async function nasAvailable(): Promise<boolean> {
-    // No SMB when away (2026-11-06). Not a probe, not a stat: the route says the
-    // NAS's LAN address is behind a gateway, so the answer is no until home. The
+    // No SMB when away (2026-11-06). Not a probe, not a stat: nas-route.ts says this
+    // Mac isn't on the NAS's LAN, so the answer is no until home. The
     // episode stays open, so the first good probe back home is a recovery and
     // fires the kick, and that sync is what moves a tailnet mount back to the LAN.
     if (await deps.isAway()) {
       lastVerdict = false
       if (!breakerEpisodeOpen) {
         breakerEpisodeOpen = true
-        warn('[nas-breaker] away from home (the NAS\'s LAN address is behind a gateway) — no NAS IO until home; will report recovery')
+        warn('[nas-breaker] away from home (the NAS\'s LAN address is behind a gateway, or on-link and not answering) — no NAS IO until home; will report recovery')
       }
       return false
     }

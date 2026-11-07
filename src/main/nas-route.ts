@@ -13,11 +13,20 @@
  * only when the packet would leave the LAN. It touches nothing on the share and
  * can't hang on it. Cached, because the app asks every few seconds.
  *
- * Only a route that answers with an interface and a gateway says "away". A failed
- * read says nothing, and the caller goes on as if this check did not exist.
+ * On-link isn't home until the address answers. A hotel or a friend's network numbered
+ * 192.168.1.x, a very common default, gives the same route with no gateway, and on it the
+ * app stated the share again. So on-link gets one ping, a second at most, cached with the route.
+ * That state is said out loud, once per change: if something ever stopped ping at home (macOS
+ * Local Network privacy can refuse what an app spawns), the Mac would read as away for good.
+ *
+ * A failed or empty read says nothing, so the last answer stands. Real `route -n get` with
+ * no route prints nothing and exits 0 (measured), so the test is the interface line, not null.
+ * A wake on the road before Wi-Fi is back landed there, and read as home for 30 s: one stat,
+ * "NAS recovered", and the kick. With no earlier answer, the caller goes on as if this check
+ * did not exist.
  *
  * ⚠️ TWIN: Dr. Claude/scripts/jaketunes-homemini-sync.sh share_is_away() and
- * JakeTunesMobile deploy/lib/mini-endpoint.sh mini_has_gateway(), the same rule in bash.
+ * JakeTunesMobile deploy/lib/mini-endpoint.sh mini_home_proof(), the same rule in bash.
  */
 import { execFile } from 'child_process'
 
@@ -38,20 +47,48 @@ export function readNasRoute(): Promise<string | null> {
   })
 }
 
+/** One ping of the NAS's LAN address. False on no answer, and on anything stopping ping. */
+export function pingNas(): Promise<boolean> {
+  return new Promise((resolve) => {
+    execFile('/sbin/ping', ['-c1', '-t1', NAS_LAN_IP], { timeout: 3000 }, (err) => resolve(!err))
+  })
+}
+
 export function createAwayCheck(deps: {
   readRoute: () => Promise<string | null>
+  ping: () => Promise<boolean>
   now?: () => number
   cacheMs?: number
+  log?: (message: string) => void
 }): () => Promise<boolean> {
   const now = deps.now ?? Date.now
   const cacheMs = deps.cacheMs ?? AWAY_CACHE_MS
+  const log = deps.log ?? ((m: string) => console.warn(m))
   let cached: { at: number; away: boolean } | null = null
   let inflight: Promise<boolean> | null = null
+  let silent = false
+  const noteSilent = (nowSilent: boolean): void => {
+    if (nowSilent === silent) return
+    silent = nowSilent
+    log(nowSilent
+      ? `[nas-route] on-link, no answer: ${NAS_LAN_IP} is on this Mac's subnet and did not answer ping — treating this as away. On the home network this is wrong: look at ping first`
+      : '[nas-route] on-link, no answer: over')
+  }
+  const look = async (): Promise<boolean> => {
+    const out = await deps.readRoute().catch(() => null)
+    if (out === null || !/^\s*interface:/m.test(out)) return cached?.away ?? false
+    if (routeShowsGateway(out)) {
+      noteSilent(false)
+      return true
+    }
+    const answered = await deps.ping().catch(() => false)
+    noteSilent(!answered)
+    return !answered
+  }
   return async () => {
     if (cached && now() - cached.at < cacheMs) return cached.away
     if (inflight) return inflight
-    inflight = deps.readRoute()
-      .then((out) => out !== null && routeShowsGateway(out), () => false)
+    inflight = look()
       .then((away) => {
         cached = { at: now(), away }
         inflight = null

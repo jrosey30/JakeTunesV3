@@ -49,6 +49,7 @@ done
 exit 0
 `
 const STUB_OK = '#!/bin/bash\nexit 0\n'
+// Home needs the NAS's address to answer.
 const STUB_SSH = `#!/bin/bash
 case "$*" in
   *python3*) echo "published 1" ;;
@@ -63,7 +64,7 @@ exit 0
 `
 
 const bin = mkdtempSync(join(tmpdir(), 'jt-sync-owed-bin-'))
-for (const [name, body] of [['rsync', STUB_RSYNC], ['ssh', STUB_SSH], ['osascript', STUB_OK], ['scutil', STUB_SCUTIL], ['route', STUB_ROUTE]]) {
+for (const [name, body] of [['rsync', STUB_RSYNC], ['ssh', STUB_SSH], ['osascript', STUB_OK], ['ping', STUB_OK], ['scutil', STUB_SCUTIL], ['route', STUB_ROUTE]]) {
   writeFileSync(join(bin, name), body)
   chmodSync(join(bin, name), 0o755)
 }

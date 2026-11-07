@@ -89,7 +89,7 @@ echo "StubMac"
   // route -n get: on-link at home, a gateway line when away; STUB_ROUTE=none is no route at all.
   route: `#!/bin/bash
 echo "route $*" >> "$STUB_CALLS"
-[ "$STUB_ROUTE" = "none" ] && exit 1
+[ "$STUB_ROUTE" = "none" ] && { echo "route: writing to routing socket: not in table" >&2; exit 0; }
 echo "   route to: 192.168.1.223"
 [ "$STUB_ROUTE" = "gateway" ] && echo "    gateway: 172.17.1.1"
 echo "  interface: en0"
@@ -97,9 +97,9 @@ exit 0
 `,
 }
 
-interface Run { status: number | null; log: string; calls: string[]; mounts: string; shareStats: string[] }
+interface Run { status: number | null; log: string; calls: string[]; mounts: string; shareStats: string[]; shareState: string }
 
-function run(opts: { server: string; lan: boolean; busy?: boolean; unmountFails?: boolean; route?: 'home' | 'gateway' | 'none'; args?: string[] }): Run {
+function run(opts: { server: string; lan: boolean; busy?: boolean; unmountFails?: boolean; route?: 'home' | 'gateway' | 'none'; args?: string[]; shareState?: string }): Run {
   const root = mkdtempSync(join(tmpdir(), 'jt-sync-preferlan-'))
   try {
     const bin = join(root, 'bin')
@@ -119,6 +119,7 @@ function run(opts: { server: string; lan: boolean; busy?: boolean; unmountFails?
     writeFileSync(mounts, `//jakerosenbaum@${opts.server}/JakeShared on ${vol} (smbfs, nodev, nosuid, mounted by jake)\n`)
     const calls = join(root, 'calls.txt')
     writeFileSync(calls, '')
+    if (opts.shareState) writeFileSync(join(root, 'sync.lock.share-state'), `${opts.shareState}\n`)
     // -x: the trace is the only witness that a stat of the share did not happen.
     const r = spawnSync('/bin/bash', ['-x', scriptPath, ...(opts.args ?? ['--quick'])], {
       env: {
@@ -148,6 +149,7 @@ function run(opts: { server: string; lan: boolean; busy?: boolean; unmountFails?
       log,
       calls: readFileSync(calls, 'utf8').split('\n').filter(Boolean),
       mounts: readFileSync(mounts, 'utf8'),
+      shareState: existsSync(join(root, 'sync.lock.share-state')) ? readFileSync(join(root, 'sync.lock.share-state'), 'utf8').trim() : '',
       // bash traces `[` as '[' and `[[` as [[
       shareStats: r.stderr.split('\n').filter((l) => /^\++ *('\['|\[\[) .*-[def] /.test(l) && l.includes(vol)),
     }
@@ -195,7 +197,7 @@ describe('sync script: a tailnet JakeShared mount moves to the LAN path at home'
   })
 
   it('on-link but the DS225 does not prove itself (a foreign 192.168.1.x, the NAS asleep) → the tailnet mount is kept as before', () => {
-    const r = run({ server: TAILNET, lan: false })
+    const r = run({ server: TAILNET, lan: false, route: 'none' })
     assert.equal(r.status, 0, r.log)
     assert.ok(!has(r.calls, 'lsof'), r.calls.join('\n'))
     assert.ok(!has(r.calls, 'diskutil'), r.calls.join('\n'))
@@ -254,11 +256,58 @@ describe('sync script: no SMB when away', () => {
     assert.doesNotMatch(r.log, /away from home/)
   })
 
-  it('no route at all proves nothing: the old path, not away', () => {
+  it('no route at all, with no earlier answer, proves nothing: the old path, not away', () => {
     const r = run({ server: TAILNET, lan: false, route: 'none' })
     assert.equal(r.status, 0, r.log)
     assert.doesNotMatch(r.log, /away from home/)
     assert.match(r.log, /not on the LAN — away, keeping it/)
+  })
+
+  it('an empty route read just after being away is not home: not one stat of the share', () => {
+    for (const shareState of ['away', 'on-link-no-answer']) {
+      const r = run({ server: TAILNET, lan: false, route: 'none', shareState })
+      assert.equal(r.status, 0, r.log)
+      assert.match(r.log, /away from home/)
+      assert.deepEqual(r.shareStats, [])
+      assert.equal(r.shareState, shareState, 'an empty read changes no answer')
+    }
+  })
+
+  it('…and after home it stays home', () => {
+    const r = run({ server: 'ds225.local', lan: true, route: 'none', shareState: 'home' })
+    assert.equal(r.status, 0, r.log)
+    assert.doesNotMatch(r.log, /away from home/)
+  })
+
+  // A hotel or a friend's network numbered 192.168.1.x: same route, nobody at that address.
+  it('on-link and no answer → homemini legs only, no ladder, not one stat of the share', () => {
+    const r = run({ server: TAILNET, lan: false, route: 'home' })
+    assert.equal(r.status, 0, r.log)
+    assert.match(r.log, /on-link, no answer: 192\.168\.1\.223/)
+    assert.match(r.log, /away from home/)
+    assert.match(r.log, /homemini-only pass done/)
+    assert.doesNotMatch(r.log, /rsync music/)
+    assert.deepEqual(r.shareStats, [])
+    assert.deepEqual(r.calls.filter((c) => c.startsWith('ping')), ['ping 192.168.1.223'], 'one ping, no ladder')
+    assert.equal(r.shareState, 'on-link-no-answer', 'not the same word as a normal away')
+  })
+
+  it('…said once per change: the next pass in that state says nothing new', () => {
+    const r = run({ server: TAILNET, lan: false, route: 'home', shareState: 'on-link-no-answer' })
+    assert.doesNotMatch(r.log, /on-link, no answer/)
+    assert.equal(r.shareState, 'on-link-no-answer')
+  })
+
+  it('…and when it answers again the log says so', () => {
+    const r = run({ server: 'ds225.local', lan: true, route: 'home', shareState: 'on-link-no-answer' })
+    assert.match(r.log, /on-link, no answer: over/)
+    assert.equal(r.shareState, 'home')
+  })
+
+  it('a gateway needs no ping, and it is its own word', () => {
+    const r = run({ server: TAILNET, lan: false, route: 'gateway' })
+    assert.equal(r.shareState, 'away')
+    assert.doesNotMatch(r.log, /on-link, no answer/)
   })
 
   it('at home a full pass does look at the share, so the guards above are not simply always off', () => {

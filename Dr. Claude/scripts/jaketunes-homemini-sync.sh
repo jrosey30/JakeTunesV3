@@ -120,14 +120,39 @@ resolve_jakeshared() {
 # carried 99 MB per 15 minutes of nothing useful out there, and one stat here could
 # sit behind it for 10 s or more, unbounded, on every run. New audio goes over ssh
 # (JakeTunesMobile deploy/macbook-nas-sync.sh); this pass runs the homemini legs.
-# Only a route that answers with an interface and a gateway counts: a failed read
-# proves nothing and takes the old path.
-# ⚠️ TWIN: src/main/nas-route.ts routeShowsGateway, JakeTunesMobile deploy/lib/mini-endpoint.sh mini_has_gateway.
+# On-link isn't home until the address answers: a hotel or a friend's network numbered
+# 192.168.1.x has the same route, and on it this script ran the music leg over the tailnet
+# mount, up to 200 whole files with no partial. One ping, one second, cut at 3 s.
+# On-link with no answer is its own state, not an ordinary away: if something ever stopped
+# ping at home, this Mac would read as away for good. So it gets a line in the log, once per
+# change, and its word in the state file beside the lock (home, away, on-link-no-answer).
+# A failed or empty route read says nothing (the real route prints nothing and exits 0 when
+# there is no route, measured): the last answer stands, and with none it's the old path.
+# ⚠️ TWIN: src/main/nas-route.ts createAwayCheck, JakeTunesMobile deploy/lib/mini-endpoint.sh mini_home_proof.
+SHARE_STATE="$LOCK.share-state"
 share_is_away() {
-  local out
-  out=$(/usr/bin/perl -e 'alarm 5; exec @ARGV' "$ROUTE_BIN" -n get "$NAS_LAN_IP" 2>/dev/null) || return 1
-  printf '%s\n' "$out" | grep -q '^ *interface:' || return 1
-  printf '%s\n' "$out" | grep -q '^ *gateway:'
+  local out prev word
+  prev=$(cat "$SHARE_STATE" 2>/dev/null)
+  out=$(/usr/bin/perl -e 'alarm 5; exec @ARGV' "$ROUTE_BIN" -n get "$NAS_LAN_IP" 2>/dev/null) || out=""
+  if ! printf '%s\n' "$out" | grep -q '^ *interface:'; then
+    case "$prev" in away|on-link-no-answer) return 0 ;; *) return 1 ;; esac
+  fi
+  if printf '%s\n' "$out" | grep -q '^ *gateway:'; then
+    word=away
+  elif /usr/bin/perl -e 'alarm 3; exec @ARGV' "$PING_BIN" -c1 -t1 "$NAS_LAN_IP" >/dev/null 2>&1; then
+    word=home
+  else
+    word=on-link-no-answer
+  fi
+  if [ "$word" != "$prev" ]; then
+    printf '%s\n' "$word" > "$SHARE_STATE.tmp.$$" && mv -f "$SHARE_STATE.tmp.$$" "$SHARE_STATE"
+    if [ "$word" = on-link-no-answer ]; then
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] on-link, no answer: $NAS_LAN_IP is on this Mac's subnet and did not answer ping — treating this as away. On the home network this is wrong: look at ping first" >> "$LOG"
+    elif [ "$prev" = on-link-no-answer ]; then
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] on-link, no answer: over ($word)" >> "$LOG"
+    fi
+  fi
+  [ "$word" != home ]
 }
 SHARE_AWAY=0
 share_is_away && SHARE_AWAY=1
