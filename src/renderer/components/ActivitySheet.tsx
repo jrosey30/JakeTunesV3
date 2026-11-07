@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { refreshPool, consumePoolModeRequest, usePoolHealth } from '../activityPool'
-import { splitHalfAndHalf } from '../../common/activity-split'
+import { refreshPool, consumePoolModeRequest, usePoolHealth, usePoolDevice } from '../activityPool'
+import { splitForIpod } from '../../common/activity-split'
 import { newestProfile, profileChips, detachChangedProfile } from '../../common/activity-profiles'
 import { useLibrary } from '../context/LibraryContext'
 import '../styles/activity-sheet.css'
@@ -121,7 +121,10 @@ export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
   // Always half and half (2026-10-16, Jake: "50% automated 50% manual",
   // newest drops first) — the SAME function main uses to build the set.
   // No pinned lists, no locked albums (2026-10-25): your half is your drops.
-  const split = splitHalfAndHalf(poolIds, target)
+  // Any iPod but the Original is a curated list (2026-11-07): its Pool and nothing else.
+  const poolDevice = usePoolDevice()
+  const listOnly = poolDevice && !poolDevice.primary ? poolDevice : null
+  const split = splitForIpod(poolIds, target, listOnly !== null)
   const poolHalf = split.manualIds.length
   const brainHalf = split.brainTarget
   const poolWaiting = split.waitingIds.length
@@ -225,7 +228,7 @@ export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
         <div className="activity-sheet-head">
           <h2 className="activity-sheet-title">What are you doing?</h2>
           <p className="activity-sheet-sub">
-            {'Half your iPod Pool, half Music Man. Your newest pool drops take half the set; Music Man reads your taste — what you star and play most — and picks the other half to fit what you’re doing. Songs land at your convert setting. “Bopping Around” is everyday listening: hanging out, commuting, errands.'}
+            {listOnly ? `Just ${listOnly.name}’s Pool: the songs you dropped in, and nothing else. Pick a size at least as big as the pool to put all of it on.` : 'Half your iPod Pool, half Music Man. Your newest pool drops take half the set; Music Man reads your taste — what you star and play most — and picks the other half to fit what you’re doing. Songs land at your convert setting. “Bopping Around” is everyday listening: hanging out, commuting, errands.'}
           </p>
         </div>
 
@@ -242,7 +245,11 @@ export default function ActivitySheet({ initial, onConfirm, onCancel }: Props) {
             ))}
           </div>
           <div className="activity-pool-status">
-            {poolHalf === 0
+            {listOnly
+              ? (poolHalf === 0
+                  ? `${listOnly.name}’s Pool is empty, so there is nothing to sync. Only its Pool goes on ${listOnly.name}.`
+                  : `${poolWaiting > 0 ? `Your newest ${poolHalf.toLocaleString()} pool songs go on; ${poolWaiting.toLocaleString()} older pool song${poolWaiting === 1 ? '' : 's'} sit this one out.` : `All ${poolHalf.toLocaleString()} pool song${poolHalf === 1 ? '' : 's'} go on.`} Nothing else is added.`)
+              : poolHalf === 0
               ? `Your iPod Pool is empty, so your Top 1000 fills all ${target.toLocaleString()}. Right-click any song and choose “Add to iPod Pool” to claim half.`
               : `Your half: your ${poolHalf.toLocaleString()} newest pool drops. Your Top 1000 fills the other ${brainHalf.toLocaleString()}, best first.${poolWaiting > 0 ? ` ${poolWaiting.toLocaleString()} older pool song${poolWaiting === 1 ? '' : 's'} sit this one out.` : ''}`}
             {poolUnsyncable > 0 && <span className="activity-pool-warn"> {poolUnsyncable} pooled song{poolUnsyncable === 1 ? '' : 's'} can't sync — see the iPod Pool page.</span>}

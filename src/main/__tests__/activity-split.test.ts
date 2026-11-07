@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { halfAndHalfLine, splitHalfAndHalf } from '../../common/activity-split.ts'
+import { halfAndHalfLine, listOnlyLine, splitForIpod, splitHalfAndHalf, splitListOnly } from '../../common/activity-split.ts'
 
 const range = (a: number, b: number): number[] => Array.from({ length: b - a + 1 }, (_, i) => a + i)
 
@@ -77,5 +77,50 @@ describe('no pinned lists, no locked albums (2026-10-25)', () => {
     assert.equal(s.pinnedCount, 0)
     assert.equal(halfAndHalfLine(s, s.manualIds.length, 5, 0), 'Half and half: your 5 newest pool drops + 5 from your Top 1000, best first. 1 older pool song sits this one out.')
     assert.equal(halfAndHalfLine(splitHalfAndHalf([], 10), 0, 10, 0), 'Half and half: your 0 newest pool drops + 10 from your Top 1000, best first.')
+  })
+})
+
+describe('every iPod but the Original is a curated list: its Pool, nothing else (2026-11-07)', () => {
+  it('pool bigger than the size: the newest N drops, no brain half', () => {
+    const s = splitForIpod(range(1, 800), 500, true)
+    assert.deepEqual(s.manualIds, range(301, 800))
+    assert.equal(s.brainTarget, 0)
+    assert.deepEqual(s.waitingIds, range(1, 300))
+  })
+  it('pool equal to the size: exactly the pool (the Red: 500 songs at 500)', () => {
+    const s = splitForIpod(range(1, 500), 500, true)
+    assert.deepEqual(s.manualIds, range(1, 500))
+    assert.equal(s.brainTarget, 0)
+    assert.deepEqual(s.waitingIds, [])
+  })
+  it('pool smaller than the size: just the pool, never filler', () => {
+    const s = splitForIpod(range(1, 500), 1000, true)
+    assert.deepEqual(s.manualIds, range(1, 500))
+    assert.equal(s.brainTarget, 0)
+    assert.deepEqual(s.waitingIds, [])
+  })
+  it('empty pool: nothing at all', () => {
+    const s = splitListOnly([], 250)
+    assert.deepEqual(s.manualIds, [])
+    assert.equal(s.brainTarget, 0)
+    assert.deepEqual(s.waitingIds, [])
+  })
+  it('keeps drop order', () => {
+    assert.deepEqual(splitListOnly([30, 10, 20, 40], 3).manualIds, [10, 20, 40])
+  })
+  it('the Original is unchanged: splitForIpod(…, false) is exactly half and half', () => {
+    for (const [pool, n] of [[range(1, 1000), 1000], [range(1, 120), 1000], [[], 250], [range(1, 500), 500]] as const) {
+      assert.deepEqual(splitForIpod(pool, n, false), splitHalfAndHalf(pool, n))
+    }
+    assert.equal(splitForIpod(range(1, 500), 1000, false).brainTarget, 500, 'the Original still gets a brain half')
+  })
+  it('the review line says list-only, never half and half', () => {
+    const all = listOnlyLine(splitListOnly(range(1, 500), 500), 'Red')
+    assert.equal(all, 'Just Red’s Pool, nothing added. All 500 songs.')
+    assert.doesNotMatch(all, /half|Music Man|Top 1000/i)
+    assert.equal(listOnlyLine(splitListOnly(range(1, 800), 500), 'Red'),
+      'Just Red’s Pool, nothing added. Your newest 500 songs; 300 older pool songs sit this one out.')
+    assert.equal(listOnlyLine(splitListOnly([7, 8], 1), 'Red'),
+      'Just Red’s Pool, nothing added. Your newest 1 song; 1 older pool song sits this one out.')
   })
 })

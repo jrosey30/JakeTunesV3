@@ -33,7 +33,7 @@ import { buildActivityQueryText } from './activity-context-core.ts'
 import { computeActivityBrainFit, type BrainFitResult } from './activity-brain.ts'
 import { pickTasteExemplars } from './discovery-brain.ts'
 import { getEmbeddingsMap, embedTexts } from './ai/embeddings.ts'
-import { halfAndHalfLine, splitHalfAndHalf } from '../common/activity-split'
+import { halfAndHalfLine, listOnlyLine, splitForIpod } from '../common/activity-split'
 import { pickFromTop1000 } from '../common/top1000-sync.ts'
 
 type ClaudeCall = (callKey: string, params: MessageCreateParamsNonStreaming) => Promise<Message>
@@ -55,6 +55,9 @@ export interface WorkoutSyncHost {
    *  ipod-pools/<id>/ for any other known iPod); null = an unknown card, whose state is
    *  never written. index.ts resolves it through resolveIpodState. */
   ipodStateDir?: () => Promise<string | null>
+  /** The plugged-in iPod's name when it is NOT the Original (a curated list: its Pool and
+   *  nothing else, Jake 2026-11-07); null for the Original, no iPod, or an unknown card. */
+  listOnlyIpod?: () => Promise<string | null>
 }
 
 const WORKOUT_TARGET = 1000
@@ -308,7 +311,13 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
           console.log(`[workout-sync] pool: ${pool.ids.length - poolIds.length} id(s) not syncable/unknown — dropped from ${pool.ids.length}`)
         }
       }
-      const split = splitHalfAndHalf(poolIds, target, pinnedIds)
+      // Every iPod but the Original is a curated list (2026-11-07): exactly its Pool, newest
+      // first when the pool is bigger than the size, never Music Man or Top 1000 fill.
+      const listOnlyName = (await host.listOnlyIpod?.().catch(() => null)) ?? null
+      const split = splitForIpod(poolIds, target, listOnlyName !== null, pinnedIds)
+      if (listOnlyName !== null && split.manualIds.length === 0) {
+        return { ok: false, error: `${listOnlyName}’s Pool is empty. Only its Pool goes on ${listOnlyName}, so drop songs into it first.` }
+      }
       const manualIds = split.manualIds
       const gap = split.brainTarget
       const wantBrain = gap > 0
@@ -451,6 +460,9 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
         commentary = manualIds.length > 0 || topIds.length > 0
           ? `${selected.commentary} ${halfAndHalfLine(split, manualIds.length, topIds.length, fillIds.length)}`
           : selected.commentary
+      } else if (listOnlyName !== null) {
+        name = (brief.profileName || '').trim() || `${listOnlyName}’s Pool`
+        commentary = listOnlyLine(split, listOnlyName)
       } else if (topIds.length > 0) {
         name = (brief.profileName || '').trim() || 'Top 1000'
         commentary = halfAndHalfLine(split, manualIds.length, topIds.length, 0)

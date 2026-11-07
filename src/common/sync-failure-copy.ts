@@ -41,6 +41,8 @@ const AGAIN_CABLE = 'Sync again without unplugging. If it comes up short again, 
 const RULES: Rule[] = [
   { test: /no verified ipod mount|ipod is not mounted|no ipod detected/i, stage: 'device', happened: 'No iPod was found.', next: 'Plug it in (a direct USB port, no hub) and try again.' },
   { test: /library is empty|nothing to commit|could not build an activity set|api-failed|io-failed|build failed/i, stage: 'build', happened: 'The set could not be built.', next: 'Try the sheet again; if it keeps failing, check the library and the brain services.' },
+  // A list-only iPod (every iPod but the Original, 2026-11-07) with nothing in its Pool.
+  { test: /pool is empty\. only its pool goes on/i, stage: 'build', happened: 'This iPod’s Pool is empty, and only its Pool goes on it.', next: 'Drop songs into its Pool, then sync again.' },
   { test: /your pool has \d+ songs/i, stage: 'build', happened: 'The pool is larger than the chosen size.', next: 'Remove songs from the pool or pick a bigger size.' },
   // #47 fill-to-N (merged 2026-10-08): refused before the wipe — the library cannot fill N.
   { test: /only \d+ of \d+ requested songs can land/i, stage: 'prepare', happened: 'The library has fewer songs that can land on the iPod than the chosen size.', next: 'Pick a smaller size, or add songs the Mini can list, and sync again.' },
