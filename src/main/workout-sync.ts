@@ -10,7 +10,7 @@ import {
   type ActivityBrief,
   type ActivityWeather,
 } from './activity-context-core.ts'
-import { ipodFirmwareWillList } from './ipod-reconcile.ts'
+import { ipodCanCarryAfterConversion } from './ipod-reconcile.ts'
 
 export interface WorkoutTrack {
   id: number
@@ -256,13 +256,14 @@ export function selectWorkoutSyncSet(
   // front so a blank never eats one of the 1000 slots (2026-07-21).
   // audioMissing / explicit empty path are the same class: they eat an N
   // slot and then the copy preflight refuses the whole set (2026-08-16).
-  // Firmware-unlistable paths (.flac, FAT temps) are the 1000→985 class:
+  // Firmware-unlistable paths (FAT temps; .flac only before its ALAC conversion counted) are the 1000→985 class:
   // they used to occupy a slot and then vanish from Music > Songs.
   const named = (t: WorkoutTrack) => String(t.title || '').trim() !== '' && String(t.artist || '').trim() !== ''
   const playableHint = (t: WorkoutTrack) =>
     t.audioMissing !== true && (t.path === undefined || String(t.path).trim() !== '')
   const excluded = new Set<number>(opts.excludeIds ? [...opts.excludeIds].map(Number) : [])
-  const firmwareOk = (t: WorkoutTrack) => t.path === undefined || ipodFirmwareWillList(t)
+  // A .flac source is converted to ALAC at copy time, so it can go on (2026-11-07).
+  const firmwareOk = (t: WorkoutTrack) => t.path === undefined || ipodCanCarryAfterConversion(t)
   const eligible = tracks.filter((t) => named(t) && playableHint(t) && firmwareOk(t) && !isSkitOrIntro(t) && !excluded.has(Number(t.id)))
 
   // Brain term: the taste model is the dominant quality signal now. Cosine

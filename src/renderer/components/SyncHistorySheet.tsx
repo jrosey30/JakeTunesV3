@@ -87,6 +87,16 @@ export function SyncHistoryRows({ entries, limit }: { entries: Entry[]; limit?: 
                         {e.removed!.map((x) => <div key={`r${x.id}`} className="sh-line sh-line--off">{nameOf(x)}</div>)}
                       </>
                     )}
+                    {(e.leftOff || []).length > 0 && (
+                      <>
+                        <div className="sh-detail-head">
+                          Left off ({e.leftOff!.length}{e.requested != null ? ` of the ${e.requested} on the list` : ''}) — nothing took their place
+                        </div>
+                        {e.leftOff!.map((x) => (
+                          <div key={`l${x.id}`} className="sh-line sh-line--off">{nameOf(x)}{x.why ? ` — ${x.why}` : ''}</div>
+                        ))}
+                      </>
+                    )}
                     {(e.added || []).length === 0 && (e.removed || []).length === 0 && (
                       <div className="sh-line sh-line--dim">Same set as the sync before.</div>
                     )}

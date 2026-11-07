@@ -170,7 +170,7 @@ test('activity sync writes artists A–Z and fills copy misses so N means N', ()
   assert.match(engine, /loadReplacementTracks/)
   assert.match(engine, /bindActivityReplacements/)
   // The activity-sync host is wired in sync-engine/ (P1C2 cut), not index.ts.
-  assert.match(readFileSync(join(mainDir, 'sync-engine/index.ts'), 'utf-8'), /loadReplacementTracks: bindActivityReplacements\(/)
+  assert.match(readFileSync(join(mainDir, 'sync-engine/index.ts'), 'utf-8'), /loadReplacementTracks: listOnlyIpod \? undefined : bindActivityReplacements\(/)
   assert.match(fill, /queueActivityCandidates/)
   assert.match(sort, /ipodArtistSortKey/)
   assert.match(sort, /ipodFirmwareFold/)

@@ -24,6 +24,8 @@ interface PicksRow {
   added?: number[]
   removed?: number[]
   picked?: Array<{ id: number; t?: string; a?: string }>
+  requested?: number
+  leftOff?: Array<{ id: number; t?: string; a?: string; why?: string }>
 }
 interface ResultRow {
   kind: 'result'
@@ -34,6 +36,8 @@ interface ResultRow {
   sealedOk?: boolean
   copied?: number
   copyErrors?: number
+  /** Written on the sealed run; also holds songs left off at the conversion step. */
+  leftOff?: Array<{ id: number; t?: string; a?: string; why?: string }>
 }
 interface RoundTripRow {
   kind: 'roundtrip'
@@ -53,6 +57,9 @@ export interface SyncHistoryEntry {
   pickedCount?: number
   added?: Array<{ id: number; t?: string; a?: string }>
   removed?: Array<{ id: number; t?: string; a?: string }>
+  /** A list-only iPod: how many were on its list, and each one left off with why. */
+  requested?: number
+  leftOff?: Array<{ id: number; t?: string; a?: string; why?: string }>
   plays?: Array<{ id: number; delta: number }>
   otgLists?: number
   unmatched?: number
@@ -101,6 +108,8 @@ export function buildSyncHistory(
       pickedCount: p.pickedIds?.length ?? p.picked?.length,
       added: (p.added || []).map((id) => nameOf.get(id) || { id }),
       removed: (p.removed || []).map((id) => prev.get(id) || { id }),
+      ...(p.requested != null ? { requested: p.requested } : {}),
+      ...((res?.leftOff || p.leftOff || []).length > 0 ? { leftOff: res?.leftOff || p.leftOff } : {}),
     })
   })
   for (const t of trips) {

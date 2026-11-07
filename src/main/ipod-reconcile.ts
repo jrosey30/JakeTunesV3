@@ -456,3 +456,26 @@ export function ipodFirmwareWillList(t: {
   const ext = ipodPathExtension(String(t.path ?? ''))
   return IPOD_FIRMWARE_EXTS.has(ext)
 }
+
+/**
+ * Can this library row be PUT ON the Mini, counting what the sync converts
+ * on the way? ipodFirmwareWillList answers for the file as it sits on the
+ * CARD; this answers for the library's SOURCE. A .flac master is converted
+ * at copy time (needsIpodAlacTranscode → the 16-bit / 44.1 kHz ALAC mirror,
+ * written as .m4a), so it lists like any .m4a.
+ *
+ * 2026-11-07: asking ipodFirmwareWillList about the SOURCE path called 74 of
+ * a list-only iPod's 500 songs "unplayable" because they were .flac, and the
+ * 74 seats went to library ids 0..77.
+ */
+export function ipodCanCarryAfterConversion(t: {
+  title?: unknown
+  artist?: unknown
+  path?: unknown
+  codec?: unknown
+}): boolean {
+  if (ipodFirmwareWillList(t)) return true
+  if (!foldForIpod(String(t.title ?? '')).trim()) return false
+  if (!foldForIpod(String(t.artist ?? '')).trim()) return false
+  return needsIpodAlacTranscode(String(t.path ?? ''))
+}
