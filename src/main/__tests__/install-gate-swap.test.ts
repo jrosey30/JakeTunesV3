@@ -89,7 +89,7 @@ describe('install gate — a retry retires the older watcher', () => {
   })
 
   it('the watcher is really called that: a real pgrep finds it, and the gate looks for that shape', async () => {
-    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 20 })
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 120 })
     try {
       await gaveUp(w)
       const src = readFileSync(scriptPath, 'utf8')

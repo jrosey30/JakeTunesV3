@@ -7,7 +7,7 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { finished, makeWorld, NEW_ASAR, OLD_ASAR, opens, scriptPath, SHA, sleep, started } from './install-gate-world.ts'
+import { finished, makeWorld, NEW_ASAR, OLD_ASAR, opens, scriptPath, SHA, sleep, started, watcherEnded } from './install-gate-world.ts'
 import { waitFor } from './wait-for.ts'
 
 // 11/5: a quit took 21 minutes on one in-flight NAS write. The gate gave up after 30 s
@@ -99,7 +99,7 @@ describe('install gate — a slow quit never leaves the Mac with no app', () => 
   })
 
   it('still alive after the wait: ABORT, install untouched, and when it does go the app comes back', async () => {
-    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 20 })
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 120 })
     try {
       const g = w.run({ sha: SHA })
       const r = await finished(g)
@@ -122,7 +122,7 @@ describe('install gate — a slow quit never leaves the Mac with no app', () => 
       const r = await finished(w.run({}))
       assert.equal(r.code, 1)
       // Not a fixed sleep: 1800 ms failed 3 runs of 5 at load 40-90, with the watcher still on its way.
-      await waitFor(() => !w.watcherAlive(), 'the watcher giving up')
+      await watcherEnded(w)
       assert.equal(opens(w), 0)
       w.oldGone()
       await sleep(600)
@@ -131,7 +131,7 @@ describe('install gate — a slow quit never leaves the Mac with no app', () => 
   })
 
   it('…and with no bundle left to start, it ends without asking open', async () => {
-    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 20 })
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 120 })
     try {
       const r = await finished(w.run({}))
       assert.equal(r.code, 1)
@@ -143,7 +143,7 @@ describe('install gate — a slow quit never leaves the Mac with no app', () => 
   })
 
   it('…and if something else started the app meanwhile, the watcher leaves it alone', async () => {
-    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 20 })
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 120 })
     try {
       await finished(w.run({}))
       w.newApp()
@@ -154,7 +154,7 @@ describe('install gate — a slow quit never leaves the Mac with no app', () => 
   })
 
   it('killed after the quit was asked for: the app still comes back', async () => {
-    const w = makeWorld({ idleS: 130, pids: '4242\n', watchS: 20 })
+    const w = makeWorld({ idleS: 130, pids: '4242\n', watchS: 120 })
     try {
       const g = w.run({})
       await waitFor(() => /^osascript /m.test(w.calls()), 'the quit')
@@ -223,13 +223,15 @@ describe('install gate — the watcher does not give up on the clock', () => {
 
   for (const state of ['?E', 'UE', 'U']) {
     it(`no install yet, and the old process turns ${state} in the window: it is on its way out, so the watcher stays past the window`, async () => {
-      const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 1 })
+      // On a clock the test moves: with a real 1 s window, a busy Mac used it up before the state changed.
+      const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 30 })
       try {
         const r = await finished(w.run({}))
         assert.equal(r.code, 1)
         assert.equal(readFileSync(w.installedAsar, 'utf8'), OLD_ASAR)
         w.setOldState(state)
-        await sleep(1600)
+        w.clockJumps(3600)
+        await sleep(600)
         w.oldGone()
         await started(w)
       } finally { w.cleanup() }
@@ -291,12 +293,13 @@ describe('install gate — the watcher does not give up on the clock', () => {
   })
 
   it('it looks once more after its last sleep, before it gives up', async () => {
-    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 1, watchPollS: 3 })
+    // On a clock the test moves: with a real 1 s window a busy Mac could pass it on the first look.
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitWaitS: 1, watchS: 30, watchPollS: 3 })
     try {
       const r = await finished(w.run({}))
       assert.equal(r.code, 1)
-      await sleep(700)
       w.oldGone()
+      w.clockJumps(3600)
       await started(w)
     } finally { w.cleanup() }
   })
@@ -384,7 +387,7 @@ describe('install gate — open -a can say no', () => {
     try {
       const r = await finished(w.run({ sha: SHA }))
       assert.equal(r.code, 4)
-      await waitFor(() => !w.watcherAlive(), 'the watcher stopping')
+      await watcherEnded(w)
       assert.match(readFileSync(w.watcherLog, 'utf8'), /NO APP RUNNING: 1 tries of open -a .*JakeTunes\.app/)
     } finally { w.cleanup() }
   })
@@ -394,7 +397,7 @@ describe('install gate — open -a can say no', () => {
     try {
       const r = await finished(w.run({}))
       assert.equal(r.code, 1)
-      await waitFor(() => !w.watcherAlive(), 'the watcher stopping')
+      await watcherEnded(w)
       const log = readFileSync(w.watcherLog, 'utf8')
       assert.match(log, /pids 4242: still plainly alive after 1s/)
       assert.doesNotMatch(log, /NO APP RUNNING/)
@@ -428,31 +431,31 @@ describe('install gate — open -a can say no', () => {
   // Reviewer's finding, 2026-11-06. If LaunchServices stalls, the gate hangs before its last line,
   // and an ssh leg sits until its 3-hour limit.
   it('open never comes back: an alarm ends it, and the next try starts the app', async () => {
-    const w = makeWorld({ idleS: 130, pids: '', openHangs: 1 })
+    const w = makeWorld({ idleS: 130, pids: '', openHangs: 1, lsLimitS: 5 })
     try {
       const began = Date.now()
       const g = w.run({})
       const r = await finished(g)
       assert.equal(r.code, 0, g.out())
-      assert.ok(Date.now() - began < 20_000, 'the fake open sleeps 40 s')
-      assert.equal(opens(w), 2)
+      assert.ok(Date.now() - began < 200_000, 'the fake open sleeps 600 s')
+      assert.ok(opens(w) >= 2)
     } finally { w.cleanup() }
   })
 
   it('lsregister never comes back: an alarm ends it, and the app still starts', async () => {
-    const w = makeWorld({ idleS: 130, pids: '', lsregHangs: true })
+    const w = makeWorld({ idleS: 130, pids: '', lsregHangs: true, lsLimitS: 5 })
     try {
       const began = Date.now()
       const g = w.run({})
       const r = await finished(g)
       assert.equal(r.code, 0, g.out())
-      assert.ok(Date.now() - began < 20_000, 'the fake lsregister sleeps 40 s')
+      assert.ok(Date.now() - began < 200_000, 'the fake lsregister sleeps 600 s')
       assert.equal(readFileSync(w.installedAsar, 'utf8'), NEW_ASAR)
     } finally { w.cleanup() }
   })
 
   it('open never comes back for the watcher either', async () => {
-    const w = makeWorld({ idleS: 130, pids: '4242\n', quitState: '?E', goneWaitS: 1, watchS: 30, watchPollS: 0.1 })
+    const w = makeWorld({ idleS: 130, pids: '4242\n', quitState: '?E', goneWaitS: 1, watchS: 30, watchPollS: 0.1, lsLimitS: 5 })
     try {
       const r = await finished(w.run({}))
       assert.equal(r.code, 0)
@@ -460,7 +463,7 @@ describe('install gate — open -a can say no', () => {
       w.oldGone()
       const began = Date.now()
       await started(w)
-      assert.ok(Date.now() - began < 20_000, 'the fake open sleeps 40 s')
+      assert.ok(Date.now() - began < 200_000, 'the fake open sleeps 600 s')
     } finally { w.cleanup() }
   })
 

@@ -157,7 +157,7 @@ countdown() {
   [ "$n" -gt 0 ] || return 1
   echo $((n - 1)) > "$JT_FAKE/$1.tmp"; mv -f "$JT_FAKE/$1.tmp" "$JT_FAKE/$1"
 }
-countdown open_hangs && exec sleep 40
+countdown open_hangs && exec sleep 600
 [ -e "$JT_FAKE/open_works" ] || { countdown open_fails && exit 1; }
 countdown open_swallows && exit 0
 if [ -e "$JT_FAKE/pids" ]; then
@@ -219,7 +219,7 @@ awk '/CFBundleShortVersionString/{getline; gsub(/.*<string>|<\\/string>.*/, "");
 `,
   lsregister: `#!/bin/bash
 echo "lsregister $*" >> "$JT_FAKE/calls.log"
-[ -e "$JT_FAKE/lsreg_hangs" ] && exec sleep 40
+[ -e "$JT_FAKE/lsreg_hangs" ] && exec sleep 600
 exit 0
 `,
 }
@@ -308,6 +308,8 @@ interface WorldOpts {
   openSwallows?: number
   /** lsregister never comes back. */
   lsregHangs?: boolean
+  /** The alarm on open and lsregister. A short one kills a fake that a busy Mac hasn't started yet. */
+  lsLimitS?: number
   /** How many times open never comes back. */
   openHangs?: number
   /** How many times what open starts lasts one look and dies. */
@@ -471,7 +473,8 @@ export function makeWorld(o: WorldOpts = {}): World {
     watcherAsleep: () => {
       try {
         const pid = execFileSync('/usr/bin/pgrep', ['-f', `jt-gate-watcher [0-9].*${installedApp}`], { encoding: 'utf8' }).trim().split('\n')[0]
-        execFileSync('/usr/bin/pgrep', ['-P', pid, '-x', 'sleep'], { stdio: 'ignore' })
+        // By its poll: the fake caffeinate is a sleep too, and it's there before the first look.
+        execFileSync('/usr/bin/pgrep', ['-P', pid, '-f', `^sleep ${o.watchPollS ?? 0.1}$`], { stdio: 'ignore' })
         return true
       } catch {
         return false
@@ -502,12 +505,12 @@ export function makeWorld(o: WorldOpts = {}): World {
           JT_GATE_QUIT_WAIT_S: String(o.quitWaitS ?? 30),
           JT_GATE_GONE_WAIT_S: String(o.goneWaitS ?? 30),
           // Always bounded here: a watcher that outlives this file's fakes would find the real open.
-          JT_GATE_WATCH_S: String(o.watchS ?? 8),
+          JT_GATE_WATCH_S: String(o.watchS ?? 120),
           JT_GATE_WATCH_POLL_S: String(o.watchPollS ?? 0.1),
           JT_GATE_OPEN_RETRY_S: '0.1',
           JT_GATE_START_WAIT_S: '1',
           JT_GATE_STAY_S: '0.1',
-          JT_GATE_LS_LIMIT_S: '1',
+          JT_GATE_LS_LIMIT_S: String(o.lsLimitS ?? 60),
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       })
@@ -560,4 +563,14 @@ export async function finished(g: Gate, timeoutMs = HUNG_MS): Promise<{ code: nu
 }
 
 export const opens = (w: World): number => (w.calls().match(/^open -a /gm) ?? []).length
+/**
+ * The watcher has been and gone. "Not alive" alone is also true before it starts: at load 300 a test
+ * went on while the watcher was still on its way, and it then found the old pid gone and opened the app.
+ * Its caffeinate is the first thing it does, so that's the proof it began.
+ */
+export const watcherEnded = async (w: World): Promise<void> => {
+  await waitFor(() => /caffeinate -i -w \d+/.test(w.calls()) || null, "the watcher's caffeinate")
+  await waitFor(() => !w.watcherAlive(), 'the watcher stopping')
+}
+
 export const started = (w: World): Promise<true> => waitFor(() => /5151/.test(w.pids()) || null, 'the app starting') as Promise<true>
