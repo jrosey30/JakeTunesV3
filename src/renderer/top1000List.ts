@@ -13,10 +13,13 @@ import { useEffect, useSyncExternalStore } from 'react'
 export interface Top1000ListState {
   /** song ids, rank 1 first; null until homemini has answered once */
   ids: number[] | null
+  /** the quiz's rank per song id (String(id) → rank), every song on the list,
+   *  in the library here or not; null until homemini has answered once */
+  ranks: Record<string, number> | null
   fetchedAt: number | null
 }
 
-let snap: Top1000ListState = { ids: null, fetchedAt: null }
+let snap: Top1000ListState = { ids: null, ranks: null, fetchedAt: null }
 let inFlight: Promise<void> | null = null
 const listeners = new Set<() => void>()
 
@@ -26,8 +29,8 @@ function subscribe(cb: () => void): () => void {
 }
 const getSnapshot = (): Top1000ListState => snap
 
-function put(ids: number[]): void {
-  snap = { ids, fetchedAt: Date.now() }
+function put(ids: number[], ranks: Record<string, number>): void {
+  snap = { ids, ranks, fetchedAt: Date.now() }
   for (const l of listeners) l()
 }
 
@@ -38,11 +41,13 @@ export function refreshTop1000List(): Promise<void> {
   inFlight = (api.top1000List?.() ?? Promise.resolve({ ok: false as const, error: 'no bridge' }))
     .then((r) => {
       if (!r.ok) { console.warn('[top1000-list] unavailable:', r.error); return }
-      const ids = [...r.value.list]
+      const rows = [...r.value.list]
         .sort((a, b) => a.rank - b.rank)
-        .map((e) => Number(e.id))
-        .filter((id) => Number.isInteger(id) && id > 0)
-      put(ids)
+        .map((e) => ({ id: Number(e.id), rank: Number(e.rank) }))
+        .filter((e) => Number.isInteger(e.id) && e.id > 0)
+      const ranks: Record<string, number> = {}
+      for (const e of rows) if (Number.isFinite(e.rank) && e.rank > 0) ranks[String(e.id)] = e.rank
+      put(rows.map((e) => e.id), ranks)
     })
     .catch((err: unknown) => { console.warn('[top1000-list] read failed:', err instanceof Error ? err.message : err) })
     .finally(() => { inFlight = null })
@@ -56,4 +61,10 @@ export function useTop1000List(): number[] | null {
   const s = useSyncExternalStore(subscribe, getSnapshot)
   useEffect(() => { void refreshTop1000List() }, [])
   return s.ids
+}
+
+/** The quiz's rank per song id (String(id) → rank) for the '#' column, or null
+ *  when homemini has never answered. Shares the list's fetch. */
+export function useTop1000Ranks(): Record<string, number> | null {
+  return useSyncExternalStore(subscribe, getSnapshot).ranks
 }
