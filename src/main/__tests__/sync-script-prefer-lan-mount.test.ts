@@ -33,7 +33,8 @@ cat "$STUB_MOUNTS"
 host="\${@: -1}"
 echo "ping $host" >> "$STUB_CALLS"
 case "$host" in
-  ds225.local|192.168.1.223) [ "$STUB_LAN" = "1" ] && exit 0; exit 2 ;;
+  192.168.1.223) [ "$STUB_LAN" = "1" ] && [ "$STUB_LAN_MOVED" != "1" ] && exit 0; exit 2 ;;
+  ds225.local) [ "$STUB_LAN" = "1" ] && exit 0; exit 2 ;;
 esac
 exit 2
 `,
@@ -99,7 +100,7 @@ exit 0
 
 interface Run { status: number | null; log: string; calls: string[]; mounts: string; shareStats: string[]; shareState: string }
 
-function run(opts: { server: string; lan: boolean; busy?: boolean; unmountFails?: boolean; route?: 'home' | 'gateway' | 'none'; args?: string[]; shareState?: string }): Run {
+function run(opts: { server: string; lan: boolean; lanMoved?: boolean; busy?: boolean; unmountFails?: boolean; route?: 'home' | 'gateway' | 'none'; args?: string[]; shareState?: string }): Run {
   const root = mkdtempSync(join(tmpdir(), 'jt-sync-preferlan-'))
   try {
     const bin = join(root, 'bin')
@@ -130,6 +131,7 @@ function run(opts: { server: string; lan: boolean; busy?: boolean; unmountFails?
         STUB_CALLS: calls,
         STUB_VOL: vol,
         STUB_LAN: opts.lan ? '1' : '0',
+        STUB_LAN_MOVED: opts.lanMoved ? '1' : '0',
         STUB_ROUTE: opts.route ?? 'home',
         STUB_BUSY: opts.busy ? '1' : '0',
         STUB_UNMOUNT_FAIL: opts.unmountFails ? '1' : '0',
@@ -288,8 +290,18 @@ describe('sync script: no SMB when away', () => {
     assert.match(r.log, /homemini-only pass done/)
     assert.doesNotMatch(r.log, /rsync music/)
     assert.deepEqual(r.shareStats, [])
-    assert.deepEqual(r.calls.filter((c) => c.startsWith('ping')), ['ping 192.168.1.223'], 'one ping, no ladder')
+    assert.deepEqual(r.calls.filter((c) => c.startsWith('ping')), ['ping 192.168.1.223', 'ping ds225.local'], 'the address, then the name, and no ladder')
+    assert.match(r.log, /doesn't answer on the LAN/, 'not "behind a gateway": there is no gateway here')
+    assert.doesNotMatch(r.log, /behind a gateway/)
     assert.equal(r.shareState, 'on-link-no-answer', 'not the same word as a normal away')
+  })
+
+  // Second look, 2026-11-06: a new lease at home read as away for good.
+  it('the NAS took a new address at home: ds225.local answers, so this is home, and the legs run', () => {
+    const r = run({ server: 'ds225.local', lan: true, route: 'home', lanMoved: true })
+    assert.equal(r.shareState, 'home')
+    assert.doesNotMatch(r.log, /on-link, no answer/)
+    assert.doesNotMatch(r.log, /away from home/)
   })
 
   it('…said once per change: the next pass in that state says nothing new', () => {

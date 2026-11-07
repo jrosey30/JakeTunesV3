@@ -11,7 +11,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, readdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { createAwayCheck, routeShowsGateway, NAS_LAN_IP } from '../nas-route.ts'
+import { createAwayCheck, pingNas, routeShowsGateway, NAS_LAN_IP } from '../nas-route.ts'
 import { createNasBreaker } from '../nas-breaker.ts'
 import { mirrorCrowdClipToNas } from '../concert-crowd-mirror.ts'
 
@@ -173,7 +173,23 @@ describe("on-link isn't home until the address answers", () => {
 
   it('the real ping is one packet, one second, and cut at 3 s, so it can\'t freeze anything', () => {
     const src = readFileSync(join(repoRoot, 'src/main/nas-route.ts'), 'utf8')
-    assert.match(src, /execFile\('\/sbin\/ping', \['-c1', '-t1', NAS_LAN_IP\], \{ timeout: 3000 \}/)
+    assert.match(src, /execFile\('\/sbin\/ping', \['-c1', '-t1', host\], \{ timeout: 3000 \}/)
+  })
+
+  // Second look, 2026-11-06. The NAS takes DHCP, so a new lease at home left .223 on-link and silent:
+  // away for good, with no music leg, no owed list and no backup. On main that was home, and
+  // ds225.local still worked. A foreign LAN has no ds225.local to answer.
+  it('the fixed address is silent and ds225.local answers: the NAS moved, and that is home', async () => {
+    const asked: string[] = []
+    assert.equal(await pingNas(async (host) => { asked.push(host); return host === 'ds225.local' }), true)
+    assert.deepEqual(asked, ['192.168.1.223', 'ds225.local'])
+  })
+
+  it('neither answers: no answer, and the fixed address that answers needs no second ping', async () => {
+    assert.equal(await pingNas(async () => false), false)
+    const asked: string[] = []
+    assert.equal(await pingNas(async (host) => { asked.push(host); return true }), true)
+    assert.deepEqual(asked, ['192.168.1.223'])
   })
 })
 
@@ -405,7 +421,7 @@ describe('wiring', () => {
 
   it('state-dir builds the one breaker on the route check', () => {
     const src = read('src/main/state-dir.ts')
-    assert.match(src, /createNasBreaker\(\{\s*probe: \(\) => stat\(NAS_STATE_DIR_PATH\),\s*isAway: createAwayCheck\(\{ readRoute: readNasRoute, ping: pingNas \}\),/)
+    assert.match(src, /createNasBreaker\(\{\s*probe: \(\) => stat\(NAS_STATE_DIR_PATH\),\s*isAway: createAwayCheck\(\{ readRoute: readNasRoute, ping: \(\) => pingNas\(\) \}\),/)
     for (const name of ['nasAvailable', 'isNasMounted', 'onNasRecovery']) assert.match(src, new RegExp(`export const ${name} = breaker\\.${name}`))
   })
 

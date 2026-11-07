@@ -126,6 +126,8 @@ resolve_jakeshared() {
 # On-link with no answer is its own state, not an ordinary away: if something ever stopped
 # ping at home, this Mac would read as away for good. So it gets a line in the log, once per
 # change, and its word in the state file beside the lock (home, away, on-link-no-answer).
+# A silent address gets its name asked too: the NAS takes DHCP, so a new lease at home left .223
+# on-link and silent, away for good with the NAS right there. A foreign LAN has no ds225.local.
 # A failed or empty route read says nothing (the real route prints nothing and exits 0 when
 # there is no route, measured): the last answer stands, and with none it's the old path.
 # ⚠️ TWIN: src/main/nas-route.ts createAwayCheck, JakeTunesMobile deploy/lib/mini-endpoint.sh mini_home_proof.
@@ -139,7 +141,8 @@ share_is_away() {
   fi
   if printf '%s\n' "$out" | grep -q '^ *gateway:'; then
     word=away
-  elif /usr/bin/perl -e 'alarm 3; exec @ARGV' "$PING_BIN" -c1 -t1 "$NAS_LAN_IP" >/dev/null 2>&1; then
+  elif /usr/bin/perl -e 'alarm 3; exec @ARGV' "$PING_BIN" -c1 -t1 "$NAS_LAN_IP" >/dev/null 2>&1 \
+    || /usr/bin/perl -e 'alarm 3; exec @ARGV' "$PING_BIN" -c1 -t1 ds225.local >/dev/null 2>&1; then
     word=home
   else
     word=on-link-no-answer
@@ -147,7 +150,7 @@ share_is_away() {
   if [ "$word" != "$prev" ]; then
     printf '%s\n' "$word" > "$SHARE_STATE.tmp.$$" && mv -f "$SHARE_STATE.tmp.$$" "$SHARE_STATE"
     if [ "$word" = on-link-no-answer ]; then
-      echo "[$(date '+%Y-%m-%d %H:%M:%S')] on-link, no answer: $NAS_LAN_IP is on this Mac's subnet and did not answer ping — treating this as away. On the home network this is wrong: look at ping first" >> "$LOG"
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] on-link, no answer: $NAS_LAN_IP is on this Mac's subnet and neither it nor ds225.local answered ping — treating this as away. On the home network this is wrong: look at ping first" >> "$LOG"
     elif [ "$prev" = on-link-no-answer ]; then
       echo "[$(date '+%Y-%m-%d %H:%M:%S')] on-link, no answer: over ($word)" >> "$LOG"
     fi
@@ -552,7 +555,11 @@ fi
 # prefer_lan_mount still gets its chance to move a tailnet mount back to the LAN.
 if [ "$SHARE_AWAY" -eq 1 ] && [ "$HOMEMINI_ONLY" -eq 0 ]; then
   HOMEMINI_ONLY=1
-  log "away from home (the NAS's LAN address is behind a gateway) — homemini legs only; new audio goes over ssh"
+  if [ "$(cat "$SHARE_STATE" 2>/dev/null)" = on-link-no-answer ]; then
+    log "reading as away from home (the NAS doesn't answer on the LAN) — homemini legs only; new audio goes over ssh"
+  else
+    log "away from home (the NAS's LAN address is behind a gateway) — homemini legs only; new audio goes over ssh"
+  fi
 fi
 # A replica has no music leg, so no list of edits would ever be read.
 [ "$REPLICA" -eq 1 ] && rm -f "$OWED_EDITS"
