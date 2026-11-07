@@ -158,7 +158,7 @@ countdown() {
   echo $((n - 1)) > "$JT_FAKE/$1.tmp"; mv -f "$JT_FAKE/$1.tmp" "$JT_FAKE/$1"
 }
 countdown open_hangs && exec sleep 40
-countdown open_fails && exit 1
+[ -e "$JT_FAKE/open_works" ] || { countdown open_fails && exit 1; }
 countdown open_swallows && exit 0
 if [ -e "$JT_FAKE/pids" ]; then
   if grep -qx 4242 "$JT_FAKE/pids"; then
@@ -452,13 +452,10 @@ export function makeWorld(o: WorldOpts = {}): World {
       renameSync(tmp, join(fake, 'state_4242'))
     },
     clockJumps: (seconds) => writeFileSync(join(fake, 'date_offset'), String(seconds)),
-    // Not the fake open's temp name: two writers on one name, and a watcher mid-countdown
-    // took this one's away (ENOENT, once, at load 37, 2026-11-06).
-    openWorksNow: () => {
-      const tmp = join(fake, 'open_fails.works-now.tmp')
-      writeFileSync(tmp, '0')
-      renameSync(tmp, join(fake, 'open_fails'))
-    },
+    // Its own file, not a write to the fake open's count. Sharing a temp name gave ENOENT (load 37),
+    // and with two names an open mid-countdown wrote 999 back over this 0, so the watcher spent its
+    // tries on a "no" (load 300, 2026-11-06).
+    openWorksNow: () => writeFileSync(join(fake, 'open_works'), ''),
     quitDone: () => rmSync(join(fake, 'quit_hold'), { force: true }),
     incoming: (g) => join(home, `.jt-incoming-${g.child.pid}.app`),
     setQuitState: (state) => writeFileSync(join(fake, 'quit_state'), `${state}\n`),
