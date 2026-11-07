@@ -13,6 +13,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { UpdateReadyState } from '../types'
+import { INSTALL_AFTER_SYNC } from '../../common/update-ready'
 
 export interface UpdateReadyView {
   ready: UpdateReadyState | null
@@ -20,6 +21,8 @@ export interface UpdateReadyView {
   installing: boolean
   /** The click did not take (main refused or the go-file could not be written); clears itself. */
   failed: boolean
+  /** That click came during an iPod sync: nothing went wrong, it has to wait. Clears itself. */
+  afterSync: boolean
   install: () => Promise<void>
 }
 
@@ -29,6 +32,7 @@ export function useUpdateReady(): UpdateReadyView {
   const [ready, setReady] = useState<UpdateReadyState | null>(null)
   const [installing, setInstalling] = useState(false)
   const [failed, setFailed] = useState(false)
+  const [afterSync, setAfterSync] = useState(false)
   const failedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -50,19 +54,22 @@ export function useUpdateReady(): UpdateReadyView {
 
   const install = useCallback(async () => {
     setFailed(false)
+    setAfterSync(false)
     setInstalling(true)
     let ok = false
+    let error: string | undefined
     try {
-      ok = (await window.electronAPI.installUpdateNow()).ok
+      ({ ok, error } = await window.electronAPI.installUpdateNow())
     } catch (err) {
       console.warn('[update-ready] install request failed:', err)
     }
     if (ok) return
     setInstalling(false)
     setFailed(true)
+    setAfterSync(error === INSTALL_AFTER_SYNC)
     if (failedTimer.current) clearTimeout(failedTimer.current)
-    failedTimer.current = setTimeout(() => { failedTimer.current = null; setFailed(false) }, FAILED_SHOWN_MS)
+    failedTimer.current = setTimeout(() => { failedTimer.current = null; setFailed(false); setAfterSync(false) }, FAILED_SHOWN_MS)
   }, [])
 
-  return { ready, installing, failed, install }
+  return { ready, installing, failed, afterSync, install }
 }

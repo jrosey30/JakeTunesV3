@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { IpcMainInvokeEvent } from 'electron'
 import type { IpcRegistrar, RegisterHandleOptions } from '../ipc-register.ts'
-import type { UpdateReadyState } from '../../common/update-ready.ts'
+import { INSTALL_AFTER_SYNC, type UpdateReadyState } from '../../common/update-ready.ts'
 import {
   goFileBody,
   judgeMarker,
@@ -137,6 +137,7 @@ interface Harness {
   rows: Array<{ tag: string; detail?: unknown }>
   actions: string[]
   alivePids: Set<number>
+  sync: { inFlight: boolean }
   invoke: (channel: string) => Promise<unknown>
   write: (m: Record<string, unknown>) => void
   markerPath: string
@@ -160,12 +161,14 @@ function harness(opts: { runningSha?: string; pollMs?: number; preGo?: string; o
   const rows: Array<{ tag: string; detail?: unknown }> = []
   const actions: string[] = []
   const alivePids = new Set<number>([4242])
+  const sync = { inFlight: false }
   const handle = startUpdateReadyWatcher({
     ipc,
     userData: dir,
     runningSha: opts.runningSha ?? RUNNING,
     send: (s) => { sent.push(s) },
     sendAction: (a) => { actions.push(a); opts.onPause?.() },
+    syncInFlight: () => sync.inFlight,
     record: (tag, detail) => { rows.push({ tag, detail }) },
     now: () => NOW,
     pidAlive: (pid) => alivePids.has(pid),
@@ -173,7 +176,7 @@ function harness(opts: { runningSha?: string; pollMs?: number; preGo?: string; o
     log: () => { /* quiet */ },
   })
   return {
-    dir, handle, sent, rows, actions, alivePids, markerPath, goPath,
+    dir, handle, sent, rows, actions, alivePids, sync, markerPath, goPath,
     invoke: async (channel) => {
       const fn = handlers.get(channel)
       assert.ok(fn, `no handler for ${channel}`)
@@ -185,6 +188,37 @@ function harness(opts: { runningSha?: string; pollMs?: number; preGo?: string; o
 }
 
 const settle = (ms = 30): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+describe('update-ready watcher — Install during an iPod sync', () => {
+  // Second look, 2026-11-06. The gate never waives a sync, so a click during one paused the music and
+  // said "back in a moment" for up to the whole sync, then quit about 2 s after it ended, with no warning.
+  test('the click does nothing yet: no pause, no go-file, and the answer says why', async () => {
+    const h = harness()
+    try {
+      h.write(marker())
+      await h.handle.check()
+      h.sync.inFlight = true
+      assert.deepEqual(await h.invoke('install-update-now'), { ok: false, error: INSTALL_AFTER_SYNC })
+      assert.deepEqual(h.actions, [], 'the music keeps playing')
+      assert.ok(!existsSync(h.goPath), 'the gate has no yes to act on when the sync ends')
+      assert.ok(h.rows.some((r) => r.tag === 'update-ready.install-after-sync'))
+    } finally { h.cleanup() }
+  })
+
+  test('once the sync is done the same click goes through', async () => {
+    const h = harness()
+    try {
+      h.write(marker())
+      await h.handle.check()
+      h.sync.inFlight = true
+      await h.invoke('install-update-now')
+      h.sync.inFlight = false
+      assert.deepEqual(await h.invoke('install-update-now'), { ok: true })
+      assert.deepEqual(h.actions, ['pause'])
+      assert.ok(existsSync(h.goPath))
+    } finally { h.cleanup() }
+  })
+})
 
 describe('update-ready watcher — the marker reaches the renderer', () => {
   test('no marker: nothing is pushed, get answers null, Install is refused', async () => {
@@ -339,6 +373,7 @@ describe('update-ready wiring — the tested code is the live code', () => {
   const preload = readFileSync(join(SRC, 'preload/index.ts'), 'utf-8')
   const types = readFileSync(join(SRC, 'renderer/types.ts'), 'utf-8')
   const statusBar = readFileSync(join(SRC, 'renderer/components/chrome/StatusBar.tsx'), 'utf-8')
+  const hook = readFileSync(join(SRC, 'renderer/hooks/useUpdateReady.ts'), 'utf-8')
   const app = readFileSync(join(SRC, 'renderer/App.tsx'), 'utf-8')
 
   test('index.ts starts the watcher exactly once, with the media-key pause and the build sha', () => {
@@ -348,6 +383,7 @@ describe('update-ready wiring — the tested code is the live code', () => {
     const call = index.slice(index.indexOf('startUpdateReadyWatcher({'))
     const line = call.slice(0, call.indexOf('\n'))
     assert.match(line, /sendAction: sendMediaKeyAction/, 'Install must pause through the media-key path (the pause action from #305)')
+    assert.match(line, /syncInFlight: \(\) => syncEngine\.isSyncInFlight\(\)/, 'a click during an iPod sync is answered from the sync engine')
     assert.match(line, /runningSha: getBuildProvenance\(app\.getVersion\(\)\)\.buildSha/, 'the running build is identified by its build sha, not its version')
     assert.match(line, /userData: app\.getPath\('userData'\)/, 'the markers live in userData, where the gate writes them')
     assert.match(line, /sendToRenderer\('update-ready'/, 'the push channel the preload listens on')
@@ -369,6 +405,8 @@ describe('update-ready wiring — the tested code is the live code', () => {
     assert.match(statusBar, /useUpdateReady\(\)/)
     assert.match(statusBar, /Update ready · Install/)
     assert.match(statusBar, /Installing — back in a moment/)
+    assert.match(statusBar, /update\.afterSync \? 'Install after the iPod sync'/)
+    assert.match(hook, /error === INSTALL_AFTER_SYNC/)
     assert.match(statusBar, /message="Install the update\?"/)
     assert.match(statusBar, /JakeTunes will pause, close and come back in about 20 seconds\./)
     assert.match(statusBar, /confirmLabel="Install"/)

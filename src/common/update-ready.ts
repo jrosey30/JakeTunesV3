@@ -15,3 +15,6 @@ export interface UpdateReadyState {
   /** Free text from the install pipeline — what is in the update ('' when none). */
   note: string
 }
+
+/** install-update-now's answer while an iPod sync runs: the gate won't quit the app until it ends. */
+export const INSTALL_AFTER_SYNC = 'after the sync'

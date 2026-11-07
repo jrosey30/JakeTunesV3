@@ -15,6 +15,10 @@
  *                             'pause' pause-for-calls sends), then write
  *                             `update-go` holding the sha. The gate sees it
  *                             within 2 s and installs without waiting for idle.
+ *                             During an iPod sync it does neither: the gate
+ *                             won't quit the app until the sync ends, so the
+ *                             click would pause the music and then quit with
+ *                             no warning up to 25 minutes later.
  *   push 'update-ready' (state | null)       whenever what the bar shows changes
  *
  * On start any leftover `update-go` is removed: a go-file can only outlive a
@@ -29,7 +33,7 @@ import { readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { IpcRegistrar } from './ipc-register.ts'
 import { REFUSED_SENDER } from './ipc-register.ts'
-import type { UpdateReadyState } from '../common/update-ready.ts'
+import { INSTALL_AFTER_SYNC, type UpdateReadyState } from '../common/update-ready.ts'
 import {
   goFileBody,
   judgeMarker,
@@ -49,6 +53,8 @@ export interface UpdateReadyDeps {
   send: (state: UpdateReadyState | null) => void
   /** The media-key path (sendMediaKeyAction); 'pause' is idempotent in the renderer. */
   sendAction: (action: 'pause') => void
+  /** An iPod sync is running (the sync engine's own flag). */
+  syncInFlight: () => boolean
   /** Flight-recorder row, info level. */
   record: (tag: string, detail?: unknown) => void
   now?: () => number
@@ -186,6 +192,11 @@ export function startUpdateReadyWatcher(deps: UpdateReadyDeps): UpdateReadyHandl
     await check()
     const state = current
     if (!state) return { ok: false, error: 'no-update' }
+    if (deps.syncInFlight()) {
+      deps.record('update-ready.install-after-sync', { sha: state.sha })
+      log('[update-ready] Install clicked during an iPod sync — nothing paused, no go-file')
+      return { ok: false, error: INSTALL_AFTER_SYNC }
+    }
     try {
       deps.sendAction('pause')
       await writeTextAtomic(goPath, goFileBody(state.sha))

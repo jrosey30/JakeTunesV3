@@ -61,7 +61,7 @@ export default function StatusBar() {
           title={updateTitle}
           onClick={() => setConfirmInstall(true)}
         >
-          {update.failed ? 'Install didn’t start — try again' : 'Update ready · Install'}
+          {update.afterSync ? 'Install after the iPod sync' : update.failed ? 'Install didn’t start — try again' : 'Update ready · Install'}
         </button>
       )}
       {confirmInstall && ready && (

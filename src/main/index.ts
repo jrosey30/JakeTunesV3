@@ -10027,7 +10027,7 @@ app.whenReady().then(async () => {
   startPauseForCalls({ sendAction: sendMediaKeyAction, notify: (n) => sendToRenderer('app-notice', n), record: (tag, detail) => flightRecorder.record('info', tag, detail), settingsPath: appSettingsPath })
   startLibraryWatcher()
   // Update ready (2026-10-30): the install gate's update-ready.json → status-bar "Update ready · Install"; the click pauses via the media-key path and writes update-go. Module: update-ready.ts.
-  startUpdateReadyWatcher({ ipc, userData: app.getPath('userData'), runningSha: getBuildProvenance(app.getVersion()).buildSha, send: (s) => sendToRenderer('update-ready', s), sendAction: sendMediaKeyAction, record: (tag, detail) => flightRecorder.record('info', tag, detail) })
+  startUpdateReadyWatcher({ ipc, userData: app.getPath('userData'), runningSha: getBuildProvenance(app.getVersion()).buildSha, send: (s) => sendToRenderer('update-ready', s), sendAction: sendMediaKeyAction, syncInFlight: () => syncEngine.isSyncInFlight(), record: (tag, detail) => flightRecorder.record('info', tag, detail) })
 
   void (async () => {
     try {
