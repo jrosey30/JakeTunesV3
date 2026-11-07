@@ -64,6 +64,15 @@ describe('the Listen List rides the one Downloads scheduler', () => {
     assert.equal(queueKey(fromView), queueKey(d.result))
   })
 
+  it('who the row names, whoever Apple matched it to, reaches main with the job', async () => {
+    const r = rec({ song: 'Floral & Fading', artist: 'Pierce the Veil', matchedTitle: 'Floral and Fading', matchedArtist: 'Sparrow Sleeps' })
+    answers.set('Floral and Fading', { ok: false, error: 'stubbed' })
+    queueRecoDownload(r)
+    await settle()
+    assert.equal(calls[0].artist, 'Sparrow Sleeps')
+    assert.equal(calls[0].askedArtist, 'Pierce the Veil')
+  })
+
   // 2026-11-03: Chalk "Bliss", shared from TikTok, downloaded from this list,
   // landed with source 'streamrip' and no addedVia, so the TikTok playlist
   // never saw it. The phone's download of the same row stamped it.

@@ -1,5 +1,5 @@
 /** Pure Qobuz search-result matching for streamrip — shared by download-by-query and tests. */
-import { artistOrAlias, recoArtistMatches, recoFold, recoTitleMatches } from './reco-match.ts'
+import { artistOrAlias, recoArtistMatches, recoFold, recoTitleMatches, sameArtistName } from './reco-match.ts'
 import { foldAccents, nameKey } from '../common/fold-text.ts'
 import type { RealAlbum } from '../common/real-album.ts'
 
@@ -45,6 +45,24 @@ const COVER_ACT_RE = /\b(cover band|cover version|covers?|karaoke|tribute|in the
 
 export function isCoverAct(title: string, artist: string): boolean {
   return COVER_ACT_RE.test(`${artist} ${title}`)
+}
+
+/**
+ * Is this album a cover or tribute release? "Covers" on its own says whose songs they are, not who
+ * is playing them: T-Pain's "On Top of The Covers (Live from The Sun Rose)" and Ozzy Osbourne's
+ * "Under Cover" are their own records, and every song on them was refused as a tribute (2026-11-06).
+ * So on an album credited to the artist Jake asked for, that one word doesn't count. `asked` is who
+ * he asked for, never Apple's match of it: his "Floral & Fading" by Pierce the Veil matched Sparrow
+ * Sleeps, on "Lullaby covers of Pierce the Veil songs", and that row then names the act on the album.
+ * The credit must be the whole name: "The Beatles Revival Band" contains "The Beatles". Every other
+ * word still counts: Lynyrd Skynyrd's "… Tribute Tour 1987" is theirs too, a live record, and a plain
+ * request is not asking for it. With no credit to read, nothing has changed.
+ * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts isCoverRelease, verbatim.
+ */
+const COVERS_WORD = /\bcovers?\b(?!\s+(?:band|version)\b)/gi
+
+export function isCoverRelease(album: string, albumArtist: string | undefined, asked: string): boolean {
+  return isCoverAct(sameArtistName(asked, albumArtist ?? '') ? album.replace(COVERS_WORD, ' ') : album, '')
 }
 
 /** The version markers a request itself carries — what Jake asked for by
@@ -515,7 +533,7 @@ export function rankStreamripCandidates(
       // The artist's own name, or one of the names MusicBrainz knows them by
       // (compared whole), outranks a name that merely contains it: "Rihanna"
       // before "Rihanna & Friends".
-      if (recoFold(wantArtist) === recoFold(artist)) score += 6
+      if (sameArtistName(wantArtist, artist)) score += 6
       else if (recoArtistMatches(wantArtist, artist)) score += 5
       else if (artistOrAlias(wantArtist, artist, aliases)) score += 6
       else if (credit && creditHolds({ title: wantTitle, artist: wantArtist }, credit.clocked, { title, artist }, true)) otherName = true

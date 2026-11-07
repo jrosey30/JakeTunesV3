@@ -7,6 +7,10 @@ export type Provider = 'qobuz' | 'bandcamp' | 'soundcloud'
 export interface RequestedRecording {
   /** As displayed by the source Jake clicked (iTunes / Deezer / a card). */
   artist: string
+  /** Who the row itself names, when Apple's match may have put someone else in `artist`
+   *  (streamrip-match.ts isCoverRelease). Empty: it names nobody. Absent: `artist` is who was
+   *  asked for, the row Jake clicked. */
+  askedArtist?: string
   title: string
   album: string
   /** Normalised forms, for logs and equality. */

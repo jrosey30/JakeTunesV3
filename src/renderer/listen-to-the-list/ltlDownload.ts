@@ -95,6 +95,9 @@ export function recoToQueueResult(rec: Recommendation): RecoQueueDecision {
       id: trackQueryId(artist, title),
       desc: `${title} — ${artist}`,
       artist, title,
+      // Who the row names, whoever Apple matched it to: main reads it (isCoverRelease).
+      // ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts downloadRequest.
+      askedArtist: (rec.artist || '').trim(),
       // The album hint opens main's album door when Qobuz's track search
       // misses the song; it is not a request for the whole record. It also says
       // which of Apple's lengths is this row's: no row was clicked, so there is

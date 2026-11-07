@@ -69,12 +69,14 @@ export function suggKey(s: { song: string; artist: string }): string {
 // no cross-bundle import from src/main, so keep the two in sync. Exists because
 // exact keys miss multi-credit strings: a list entry saved as "Daft Punk" must
 // still match a suggestion credited "Daft Punk, Pharrell Williams & Nile Rodgers".
-function artistLooselyMatches(want: string, got: string): boolean {
+export function artistLooselyMatches(want: string, got: string): boolean {
   // = recoFold: accents folded (Sigur Rós meets Sigur Ros) and any script
   // kept (a Hebrew artist was '' and never matched). See src/common/fold-text.ts.
   const clean = (s: string) => nameKey(s, '')
   const w = clean(want)
   const g = clean(got)
+  // A name with no letters to fold ("!!!") is compared as written (sameArtistName).
+  if (!w && !g) return want.trim() !== '' && want.trim() === got.trim()
   if (!w || !g) return false
   if (w === g) return true
   return w.length >= 4 && g.length >= 4 && (w.includes(g) || g.includes(w))
