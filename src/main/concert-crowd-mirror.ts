@@ -8,7 +8,7 @@
  * through homemini's own mount, add-only, away or home, within a minute or so.
  * This copy is the fast path at home, never the only one.
  */
-import { copyFile, mkdir, rename, unlink } from 'fs/promises'
+import { copyFile, mkdir, rename, stat, unlink } from 'fs/promises'
 import { join } from 'path'
 
 export type CrowdMirrorResult = 'copied' | 'waits-for-sync'
@@ -40,6 +40,8 @@ export async function mirrorCrowdClipToNas(deps: {
     const tmp = join(dir, `.${deps.mergedTrackId}.m4a.${process.pid}.tmp`)
     try {
       await copy(deps.clipPath, tmp)
+      // A copy can come up short with no error, and that short file is what the rename makes permanent.
+      if ((await stat(tmp)).size !== (await stat(deps.clipPath)).size) throw new Error('short copy')
       await publish(tmp, join(dir, `${deps.mergedTrackId}.m4a`))
     } catch (err) {
       await unlink(tmp).catch(() => { /* never made, or the share is gone */ })

@@ -351,6 +351,20 @@ describe('a crowd clip is not lost when the share is not there', () => {
 })
 
 describe('a clip copy the share cuts off', () => {
+  it('a copy that comes up short with no error leaves nothing at the final name', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'jt-crowd-'))
+    try {
+      const src = join(root, 'clip.m4a')
+      writeFileSync(src, 'crowd noise, the whole clip')
+      const r = await mirrorCrowdClipToNas({
+        clipPath: src, mergedTrackId: 42, nasDir: join(root, 'nas'), nasAvailable: async () => true,
+        log: () => {}, copy: async (_from, to) => { writeFileSync(to, 'crowd') },
+      })
+      assert.equal(r, 'waits-for-sync')
+      assert.deepEqual(readdirSync(join(root, 'nas', 'concert-crowd')), [])
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+
   // The sync job's retry is add-only (macbook-nas-sync.sh publish_crowd_clips), so a short
   // file at the final name is what could never be repaired.
   it('leaves nothing at the final name, and no litter', async () => {
