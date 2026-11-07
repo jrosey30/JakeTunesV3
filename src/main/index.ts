@@ -96,6 +96,7 @@ import { phoneOverlayFields } from '../common/genre-vocab.ts'; import { mergeOve
 import { registerPreviewRefreshIpc } from './ipc/preview-refresh-ipc.ts'
 import { registerSyncHistoryIpc } from './ipc/sync-history-ipc.ts'
 import { registerActivityPoolIpc } from './ipc/activity-pool-ipc.ts'
+import { registerIpodListsIpc } from './ipc/ipod-lists-ipc.ts'
 import { registerAlbumInfoIpc, rankLibraryAlbums } from './ipc/album-info-ipc.ts'
 import {
   initRagRetrieval, ragIndexedCountForTracks, ragLibraryArtistSet, pickRetrievalIndex,
@@ -8437,6 +8438,8 @@ async function getConcertOwnedTrackIds(): Promise<Set<number>> {
   return owned
 }
 
+// Every iPod but the Original carries homemini's list (2026-11-07): read here, never written.
+const ipodLists = registerIpodListsIpc(ipc, { stateDir: STATE_DIR, baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), libraryTracks: async () => (await libraryCache.get()).tracks, warn: (m) => quietWarn('ipod-list', m) })
 // Activity sync (Cursor branch) — builds the ≤1000-track iPod set from a brief
 registerWorkoutSyncIpc({
   ipc,
@@ -8461,6 +8464,7 @@ registerWorkoutSyncIpc({
     const id = await identifyIpod(detectedIpodMount, STATE_DIR)
     return id.status === 'known' && !id.device.primary ? id.device.name : null
   },
+  listOnlyPool: () => ipodLists.refreshPlugged(detectedIpodMount),   // homemini's list, refreshed first
 })
 // iPod Pool — the hand-built sync set (drag songs/albums/artists/playlists
 // onto the sidebar row); build-workout-sync-set reads it in pool mode.
@@ -8472,6 +8476,7 @@ registerActivityPoolIpc(ipc, {
     const id = await identifyIpod(detectedIpodMount, STATE_DIR)
     return id.status === 'known' ? id.device : null
   },
+  listPool: (device) => ipodLists.refresh(device),
 })
 
 // Mixtapes — songs → a real C60/C90/C120 cassette with Jake's voice on it

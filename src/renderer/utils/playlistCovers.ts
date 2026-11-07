@@ -22,6 +22,7 @@ import bandcampCover from '../assets/playlist-covers/bandcamp.jpg'
 import savantCover from '../assets/playlist-covers/savant.jpg'
 import { BEST_OF_YEAR } from './smartPlaylists'
 import { parseMonthPlaylistId } from '../../common/release-months'
+import { parseIpodListPlaylistId } from '../../common/ipod-list-doc'
 import type { SmartPlaylistId } from '../types'
 
 /** Best of <year> art exists per year — a year without one keeps the plain icon. */
@@ -45,7 +46,14 @@ const FIXED_COVERS: Readonly<Partial<Record<SmartPlaylistId, string>>> = {
  *  the plain icon. Vite resolves the glob at build time. */
 const MONTH_COVERS = import.meta.glob('../assets/playlist-covers/month-*.jpg', { eager: true, import: 'default' }) as Record<string, string>
 
+/** One cover per non-Original iPod's list ('ipod-list-<marker id>' → ipod-list-<marker id>.jpg,
+ *  2026-11-07): iPod EVIL's is red, drawn in the Top 1000 cover's style (JakeTunesMobile
+ *  tools/make-playlist-covers.py's primitives). An iPod without a file keeps the plain icon. */
+const IPOD_LIST_COVERS = import.meta.glob('../assets/playlist-covers/ipod-list-*.jpg', { eager: true, import: 'default' }) as Record<string, string>
+
 export function smartPlaylistCover(id: SmartPlaylistId): string | null {
+  const ipod = parseIpodListPlaylistId(id)
+  if (ipod) return IPOD_LIST_COVERS[`../assets/playlist-covers/ipod-list-${ipod}.jpg`] ?? null
   if (id === 'best-of-year') return BEST_OF_COVERS[BEST_OF_YEAR] ?? null
   const fixed = FIXED_COVERS[id]
   if (fixed) return fixed

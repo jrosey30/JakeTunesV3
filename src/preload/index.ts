@@ -742,7 +742,7 @@ const electronAPI = {
   getActivityProfiles: (): Promise<{ ok: boolean; profiles?: Array<Record<string, unknown>> }> =>
     ipcRenderer.invoke('get-activity-profiles'),
   // iPod Pool (2026-09-02) — the hand-built activity set.
-  getActivityPool: (): Promise<{ ok: boolean; ids?: number[]; names?: Record<string, { t: string; a: string }>; max?: number; readOnly?: boolean; device?: { id: string | null; name: string; primary: boolean } }> =>
+  getActivityPool: (): Promise<{ ok: boolean; ids?: number[]; names?: Record<string, { t: string; a: string }>; max?: number; readOnly?: boolean; managed?: boolean; note?: string | null; device?: { id: string | null; name: string; primary: boolean } }> =>
     ipcRenderer.invoke('activity-pool-get'),
   addToActivityPool: (candidates: Array<{ id: number; title?: string; artist?: string; duration?: number; genre?: string; playCount?: number; rating?: number }>): Promise<{ ok: boolean; ids?: number[]; names?: Record<string, { t: string; a: string }>; added?: number; dupes?: number; skits?: number; rolledOff?: number; overflow?: number; max?: number; blocked?: Array<{ id: number; by: string }>; device?: { id: string | null; name: string; primary: boolean }; error?: string }> =>
     ipcRenderer.invoke('activity-pool-add', candidates),
@@ -1211,6 +1211,8 @@ const electronAPI = {
   top1000Undo: (): Promise<unknown> => ipcRenderer.invoke('top1000:undo'),
   top1000List: (): Promise<unknown> => ipcRenderer.invoke('top1000:list'),
   top1000Ties: (): Promise<unknown> => ipcRenderer.invoke('top1000:ties'),
+  // Every non-Original iPod's list (2026-11-07) — homemini writes it; read-only here.
+  ipodListsGet: (): Promise<unknown> => ipcRenderer.invoke('ipod-lists:get'),
   homeShelvesGet: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:get'),
   homeShelvesRefresh: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:refresh'),
   homeShelvesLocalPlays: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:local-plays'),

@@ -1,0 +1,58 @@
+/**
+ * iPod list client (2026-11-07) — the desktop's half of homemini's
+ * GET /api/ipod-lists/:deviceId (contract: common/ipod-list-doc.ts). homemini is
+ * the only writer; this only asks. Same shape as the Top 1000 client
+ * (top1000-client.ts): the companion header, a timeout, fetch injected so it runs
+ * under node:test (__tests__/ipod-lists.test.ts).
+ */
+import { withCompanionInit } from './hub-companion.ts'
+import { parseIpodList, type IpodList } from '../common/ipod-list-doc.ts'
+import type { FetchLike } from './top1000-client.ts'
+
+export type IpodListAnswer =
+  /** homemini's list, checked. */
+  | { kind: 'ok'; list: IpodList }
+  /** 404: homemini has no list for this iPod yet. */
+  | { kind: 'none' }
+  /** No answer at all (down, timed out, off the tailnet). */
+  | { kind: 'offline'; error: string }
+  /** An answer that isn't a list: another status, or a body that fails the parser. */
+  | { kind: 'bad'; error: string }
+
+export interface IpodListClientOptions {
+  baseUrl: string
+  fetchImpl?: FetchLike
+  timeoutMs?: number
+  warn?: (msg: string) => void
+}
+
+export function createIpodListClient(opts: IpodListClientOptions) {
+  const fetchImpl: FetchLike = opts.fetchImpl ?? (fetch as unknown as FetchLike)
+  const timeoutMs = opts.timeoutMs ?? 8_000
+  const warn = opts.warn ?? ((m: string) => console.warn(m))
+  const base = `${opts.baseUrl.replace(/\/+$/, '')}/api/ipod-lists`
+
+  return {
+    async get(deviceId: string): Promise<IpodListAnswer> {
+      let res: Awaited<ReturnType<FetchLike>>
+      try {
+        res = await fetchImpl(`${base}/${encodeURIComponent(deviceId)}`, withCompanionInit({ method: 'GET', signal: AbortSignal.timeout(timeoutMs) }) as Record<string, unknown>)
+      } catch (err) {
+        const error = (err as Error)?.message ?? String(err)
+        warn(`[ipod-list] ${deviceId} failed: ${error}`)
+        return { kind: 'offline', error }
+      }
+      if (res.status === 404) return { kind: 'none' }
+      if (res.status !== 200) {
+        warn(`[ipod-list] ${deviceId}: homemini answered ${res.status}`)
+        return { kind: 'bad', error: `homemini answered ${res.status}` }
+      }
+      const list = parseIpodList(await res.json().catch(() => null), deviceId)
+      if (!list) {
+        warn(`[ipod-list] ${deviceId}: the list came back unreadable`)
+        return { kind: 'bad', error: 'the list came back unreadable' }
+      }
+      return { kind: 'ok', list }
+    },
+  }
+}

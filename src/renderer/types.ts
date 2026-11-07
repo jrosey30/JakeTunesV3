@@ -322,6 +322,8 @@ export type SmartPlaylistId = 'recently-added' | 'recently-played' | 'top-25' | 
   | 'top-1000'
   // 2026-10-24 — one per month of this year's releases ('month-2026-09'; src/common/release-months.ts)
   | `month-${string}`
+  // 2026-11-07 — each non-Original iPod's list from homemini ('ipod-list-<marker id>'; src/renderer/ipodLists.ts)
+  | `ipod-list-${string}`
 
 export interface ChatConversation {
   id: string
@@ -1053,7 +1055,7 @@ declare global {
       getWorkoutSyncState?: () => Promise<{ ok: boolean; state?: { trackIds: number[]; name: string; convertOptions?: { enabled: boolean; targetKbps: 128 | 192 | 256 }; commentary: string; syncedAt: string; alacCount: number } | null }>
       getActivityProfiles?: () => Promise<{ ok: boolean; profiles?: Array<Record<string, unknown>> }>
       // iPod Pool (2026-09-02)
-      getActivityPool?: () => Promise<{ ok: boolean; ids?: number[]; names?: Record<string, { t: string; a: string }>; max?: number; readOnly?: boolean; device?: { id: string | null; name: string; primary: boolean } }>
+      getActivityPool?: () => Promise<{ ok: boolean; ids?: number[]; names?: Record<string, { t: string; a: string }>; max?: number; readOnly?: boolean; managed?: boolean; note?: string | null; device?: { id: string | null; name: string; primary: boolean } }>
       addToActivityPool?: (candidates: Array<{ id: number; title?: string; artist?: string; duration?: number; genre?: string; playCount?: number; rating?: number }>) => Promise<{ ok: boolean; ids?: number[]; names?: Record<string, { t: string; a: string }>; added?: number; dupes?: number; skits?: number; rolledOff?: number; overflow?: number; max?: number; blocked?: Array<{ id: number; by: string }>; device?: { id: string | null; name: string; primary: boolean }; error?: string }>
       swapInActivityPool?: (args: { oldId: number; newId: number; name?: { t: string; a: string } }) => Promise<{ ok: boolean; ids?: number[]; names?: Record<string, { t: string; a: string }>; error?: string }>
       removeFromActivityPool?: (ids: number[]) => Promise<{ ok: boolean; ids?: number[] }>
@@ -1244,6 +1246,8 @@ declare global {
       top1000Answer?: (input: import('../common/top1000-doc').QuizAnswerInput) => Promise<{ ok: true; value: import('../common/top1000-doc').QuizProgress } | { ok: false; error: string }>
       top1000Undo?: () => Promise<{ ok: true; value: import('../common/top1000-doc').QuizUndo } | { ok: false; error: string }>
       top1000List?: () => Promise<{ ok: true; value: { progress: import('../common/top1000-doc').QuizProgress; list: import('../common/top1000-doc').QuizListEntry[] } } | { ok: false; error: string }>
+      // 2026-11-07 — every non-Original iPod's list (homemini writes it; src/main/ipc/ipod-lists-ipc.ts)
+      ipodListsGet?: () => Promise<{ ok: boolean; lists?: Array<{ id: string; name: string; color: string | null; purpose: string | null; ids: number[]; source: 'homemini' | 'local'; note: string | null; updatedAt: string | null }> }>
       top1000Ties?: () => Promise<{ ok: true; value: number | null } | { ok: false; error: string }>
       homeShelvesGet?: () => Promise<{ ok: boolean; state?: import('../common/home-shelves-doc').HomeShelvesState }>
       homeShelvesRefresh?: () => Promise<{ ok: boolean; state?: import('../common/home-shelves-doc').HomeShelvesState }>
