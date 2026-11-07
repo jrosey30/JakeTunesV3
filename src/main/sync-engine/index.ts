@@ -332,6 +332,9 @@ export function createSyncEngine(host: SyncEngineHost) {
     // journal, reports and ledger under ipod-pools/<id>/; an unknown card is refused.
     const gateMount = host.getMount() || await findIpodMount()
     syncStateDir = STATE_DIR
+    // Every iPod but the Original takes exactly its own list (2026-11-07):
+    // the activity engine must never fill it from the library.
+    let listOnlyIpod = false
     if (gateMount) {
       const ipod = await resolveIpodState(gateMount, STATE_DIR)
       if (ipod.refusal) {
@@ -339,6 +342,7 @@ export function createSyncEngine(host: SyncEngineHost) {
         return { ok: false, copied: 0, error: ipod.refusal }
       }
       syncStateDir = ipod.stateDir
+      listOnlyIpod = !!(ipod.device && !ipod.device.primary)
       if (ipod.device && !ipod.device.primary) console.log(`sync-to-ipod: ${ipod.device.name} — its own sync state lives in ${ipod.stateDir}`)
       // Plays first (2026-10-28): keep a copy of Play Counts/OTG + the pre-sync
       // catalog and manifest, bring the plays home, and confirm they are
@@ -376,8 +380,9 @@ export function createSyncEngine(host: SyncEngineHost) {
         stageTrack: (colonPath, trackId) => stageLibraryTrack(colonPath, trackId),
         freeBytes,
         // #47 (fill-to-N): next eligible library songs when a boarded one cannot copy.
-        loadReplacementTracks: bindActivityReplacements(getLibraryTracks, getConcertOwnedTrackIds),
-      }, { tracks, playlists, convertOptions })
+        // A list-only iPod gets no library loader at all — its set is its list.
+        loadReplacementTracks: listOnlyIpod ? undefined : bindActivityReplacements(getLibraryTracks, getConcertOwnedTrackIds),
+      }, { tracks, playlists, convertOptions, listOnly: listOnlyIpod })
     }
     if (syncOpts?.wipeFirst) {
       return { ok: false, copied: 0, error: 'Activity Sync is the dedicated engine, not this copy loop.' }

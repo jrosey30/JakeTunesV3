@@ -35,6 +35,19 @@ describe('buildSyncHistory', () => {
     assert.deepEqual(out[1].plays, [{ id: 2, delta: 3 }])
   })
 
+  test('a list-only sync shows what was left off and why (result wins over picks)', () => {
+    const picks = { kind: 'picks', when: '2026-11-07T17:00:00Z', target: 2, listOnly: true, requested: 4, pickedIds: [5, 6], added: [5, 6], removed: [],
+      picked: [{ id: 5, t: 'Five', a: 'E' }, { id: 6, t: 'Six', a: 'F' }],
+      leftOff: [{ id: 7, t: 'SEGUE', a: 'G', why: 'it reads as a skit, intro or segue, not a song' }] }
+    const res = { kind: 'result', when: '2026-11-07T17:10:00Z', picksWhen: '2026-11-07T17:00:00Z', target: 2, landed: 2, sealedOk: true, requested: 4,
+      leftOff: [...picks.leftOff, { id: 8, t: 'Broke', a: 'H', why: "its audio couldn't be converted for the iPod (damaged file)" }] }
+    const [e] = buildSyncHistory(L([picks, res]), '')
+    assert.equal(e.requested, 4)
+    assert.deepEqual(e.leftOff?.map((x) => x.id), [7, 8])
+    const [aborted] = buildSyncHistory(L([picks]), '')
+    assert.deepEqual(aborted.leftOff?.map((x) => x.id), [7])
+  })
+
   test('torn lines and empty ledgers never throw', () => {
     assert.deepEqual(buildSyncHistory('not json\n{"kind":"picks"', ''), [])
     assert.deepEqual(buildSyncHistory('', ''), [])

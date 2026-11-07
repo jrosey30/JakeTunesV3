@@ -75,7 +75,10 @@ import {
   formatFreeSpaceRefuse,
   type StageTrackResult,
 } from './ipod-sync-materialize.ts'
-import { activityTrackCanBoard, pickReplacementTracks, queueActivityCandidates } from './activity-fill.ts'
+import {
+  activityTrackCanBoard, leftOffSong, pickReplacementTracks, planListOnlyBoarding, queueActivityCandidates,
+  whyActivityTrackCannotBoard, type LeftOffSong,
+} from './activity-fill.ts'
 import { orderTracksForIpodTitleIndex, stampIpodSortArtist } from './ipod-artist-sort.ts'
 
 export interface ActivitySyncHost {
@@ -130,6 +133,11 @@ export interface ActivitySyncInput {
   requestedTarget?: number
   /** Extra eligible tracks the picker scored but did not board — copy replacements. */
   reserve?: Array<Record<string, unknown>>
+  /** A list-only iPod (every iPod but the Original, 2026-11-07): the set is
+   *  exactly these tracks. Nothing from the library or a reserve ever takes
+   *  a seat; a song that can't go on is left off and named in `leftOff`, and
+   *  the set lands that many fewer instead of refusing. */
+  listOnly?: boolean
 }
 
 export interface ActivitySyncResult {
@@ -152,6 +160,9 @@ export interface ActivitySyncResult {
    *  file, e.g. the 2026-10-10/11 ALAC imports). Skipped and replaced from
    *  reserve so N still means N — never the reason a whole sync stops. */
   unconvertible?: Array<{ id: number; title: string; artist: string }>
+  /** List-only sets: what was asked for, and each song left off with why. */
+  requested?: number
+  leftOff?: LeftOffSong[]
 }
 
 export function bindActivityReplacements(
@@ -160,7 +171,11 @@ export function bindActivityReplacements(
 ): NonNullable<ActivitySyncHost['loadReplacementTracks']> {
   return async (excludeIds, needed) => {
     const lib = await getLibrary()
-    return pickReplacementTracks(lib.tracks || [], excludeIds, needed, await getIneligible())
+    const picked = pickReplacementTracks(lib.tracks || [], excludeIds, needed, await getIneligible())
+    if (picked.length > 0) {
+      console.log(`activity-sync: library fallback offered ${picked.length} most-loved song(s) (starred, then most played) as last-resort replacements`)
+    }
+    return picked
   }
 }
 
@@ -197,8 +212,14 @@ async function expandActivityPool(
   primary: Array<Record<string, unknown>>,
   reserve: Array<Record<string, unknown>>,
   requested: number,
-): Promise<{ pool: Array<Record<string, unknown>>; shortfall: number }> {
+  listOnly: boolean,
+): Promise<{ pool: Array<Record<string, unknown>>; shortfall: number; target: number; leftOff: LeftOffSong[] }> {
   const idOf = (t: Record<string, unknown>) => Number(t.id)
+  if (listOnly) {
+    // Its own list, nothing else: no library fill, no reserve.
+    const plan = planListOnlyBoarding(primary, requested, idOf)
+    return { pool: plan.pool, shortfall: 0, target: plan.target, leftOff: plan.leftOff }
+  }
   const exclude = new Set([...primary, ...reserve].map(idOf).filter((id) => Number.isFinite(id)))
   let extra: Array<Record<string, unknown>> = []
   if (host.loadReplacementTracks) {
@@ -213,7 +234,7 @@ async function expandActivityPool(
     canBoard: activityTrackCanBoard,
     idOf,
   })
-  return { pool: queue, shortfall }
+  return { pool: queue, shortfall, target: requested, leftOff: [] }
 }
 
 export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyncInput): Promise<ActivitySyncResult> {
@@ -223,11 +244,28 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   const pathSep = host.pathSep
   const python = host.pythonCmd || PYTHON_CMD || 'python3'
 
+  const listOnly = input.listOnly === true
+  // List-only: songs that cannot go on, each with why (result + ledger).
+  const leftOff: LeftOffSong[] = []
   let tracks: Array<Record<string, unknown>>
+  let target = requested
   {
-    const expanded = await expandActivityPool(host, input.tracks, input.reserve || [], requested)
+    const expanded = await expandActivityPool(host, input.tracks, input.reserve || [], requested, listOnly)
     tracks = expanded.pool.slice(0, requested + 40)
-    if (expanded.pool.length < requested) {
+    if (listOnly) {
+      leftOff.push(...expanded.leftOff)
+      target = expanded.target
+      if (leftOff.length > 0) {
+        console.warn(`activity-sync: list-only set — ${leftOff.length} song(s) left off, landing ${target} of ${requested}:`,
+          leftOff.slice(0, 10).map((l) => `${l.artist} — ${l.title} (${l.why})`))
+      }
+      if (target === 0) {
+        return fail({
+          copied: 0, target: 0, requested, landed: 0, shortfall: 0, leftOff,
+          error: `None of the ${requested} songs on this iPod's list can go on it. Nothing was wiped. ${leftOff.slice(0, 3).map((l) => `${l.artist} — ${l.title}: ${l.why}`).join('; ')}`,
+        })
+      }
+    } else if (expanded.pool.length < requested) {
       console.error(`activity-sync: REFUSING — library only has ${expanded.pool.length} boardable songs for a ${requested}-song set`)
       return fail({
         copied: 0,
@@ -241,7 +279,18 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
       console.log(`activity-sync: boarded ${requested} with ${tracks.length - requested} replacement(s) in reserve`)
     }
   }
-  const target = requested
+
+  // List-only: drop rows from the set, name them, and shrink the set to
+  // what is left. Never a replacement, never a refusal (unless nothing is left).
+  const leaveOff = (keep: (t: Record<string, unknown>) => boolean, why: (t: Record<string, unknown>) => string): void => {
+    const next: Array<Record<string, unknown>> = []
+    for (const t of tracks) {
+      if (keep(t)) next.push(t)
+      else leftOff.push(leftOffSong(t, why(t)))
+    }
+    tracks = next
+    target = Math.min(target, tracks.length)
+  }
 
   console.log(`activity-sync: START — dedicated wipe+rebuild for ${target} songs (not the full-library engine)`)
 
@@ -275,7 +324,17 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
       pathSep,
       lstat,
     })
-    if (classified.blanks.length || classified.fileless.length) {
+    if (listOnly && (classified.blanks.length || classified.fileless.length)) {
+      const before = tracks.length
+      leaveOff((t) => {
+        if (!activityTrackCanBoard(t)) return false
+        const label = `${String(t.title || '').trim()} — ${String(t.artist || '').trim()}`
+        if (classified.fileless.some((f) => f.startsWith(label))) return false
+        if (classified.blanks.some((b) => b.includes(`id ${t.id}:`))) return false
+        return true
+      }, (t) => whyActivityTrackCannotBoard(t) || 'its audio file is not on this Mac or homemini')
+      console.warn(`activity-sync: list-only set — left off ${before - tracks.length} song(s) with no playable file; landing ${target}`)
+    } else if (classified.blanks.length || classified.fileless.length) {
       const before = tracks.length
       tracks = tracks.filter((t) => {
         if (!activityTrackCanBoard(t)) return false
@@ -351,7 +410,11 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
         remoteBytes.set(p.id, r.bytes)
       }
     }
-    if (pullFail.length > 0) {
+    if (pullFail.length > 0 && listOnly) {
+      const failedIds = new Set(toPull.filter((p) => pullFail.some((f) => f.startsWith(p.label))).map((p) => p.id))
+      leaveOff((t) => !failedIds.has(Number(t.id)), () => "homemini couldn't send its audio file")
+      console.warn(`activity-sync: list-only set — homemini miss on ${failedIds.size} song(s), left off; landing ${target}`)
+    } else if (pullFail.length > 0) {
       const failedIds = new Set(toPull.filter((p) => pullFail.some((f) => f.startsWith(p.label))).map((p) => p.id))
       tracks = tracks.filter((t) => !failedIds.has(Number(t.id)))
       console.warn(`activity-sync: homemini miss on ${failedIds.size} song(s) — replacing so ${target} still means ${target}`)
@@ -379,13 +442,15 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   }
 
   const destSeen = new Set<string>()
-  tracks = tracks.filter((t) => {
+  const firstAtDest = (t: Record<string, unknown>): boolean => {
     const dest = ipodPlayableDestPath(String(t.path || ''))
     if (!dest) return false
     if (destSeen.has(dest)) return false
     destSeen.add(dest)
     return true
-  })
+  }
+  if (listOnly) leaveOff(firstAtDest, () => 'another song on the list has the same file name on the iPod')
+  else tracks = tracks.filter(firstAtDest)
   const collisions = tsaDestCollisions(tracks.map((t) => tsaBoardPassenger({
     ...t,
     destPath: ipodPlayableDestPath(String(t.path || '')),
@@ -393,7 +458,15 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   if (collisions.length > 0) {
     console.warn(`activity-sync: dest collision(s) after first-wins filter: ${collisions.slice(0, 3).join(', ')}`)
     const collide = new Set(collisions)
-    tracks = tracks.filter((t) => !collide.has(ipodPlayableDestPath(String(t.path || ''))))
+    const clear = (t: Record<string, unknown>) => !collide.has(ipodPlayableDestPath(String(t.path || '')))
+    if (listOnly) leaveOff(clear, () => 'another song on the list has the same file name on the iPod')
+    else tracks = tracks.filter(clear)
+  }
+  if (listOnly && target === 0) {
+    return fail({
+      copied: 0, target: 0, requested, landed: 0, shortfall: 0, leftOff,
+      error: `None of the ${requested} songs on this iPod's list can go on it. Nothing was wiped.`,
+    })
   }
   if (tracks.length < target) {
     return fail({
@@ -434,6 +507,8 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
       added: pickedIds.filter((i) => !prevSet.has(i)),
       removed: prevIds.filter((i) => !nowSet.has(i)),
       picked: tsaBoarded.map((p) => ({ id: p.id, t: String(p.title || ''), a: String(p.artist || '') })),
+      ...(listOnly ? { listOnly: true, requested } : {}),
+      ...(leftOff.length > 0 ? { leftOff: leftOff.map((l) => ({ id: l.id, t: l.title, a: l.artist, why: l.why })) } : {}),
     }) + '\n', 'utf-8')
   } catch (err) {
     console.warn('activity-sync: ledger append failed (non-blocking):', err)
@@ -504,6 +579,8 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   // #47 (fill-to-N): tracks[target..] are copy-time replacements. They are
   // resolved here like everything else, but never kept from a previous
   // card and only copied when a primary miss leaves the card short of N.
+  // A list-only set has none (tracks.length === target).
+  const reserveFrom = target
   for (let i = 0; i < tracks.length; i++) {
     if (host.isCancelled()) {
       await host.writeJournal(null)
@@ -552,7 +629,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
           ? `Activity sync refused — ${staged.error}. Nothing was wiped.`
           : `Could not stage "${title}" for the iPod (${staged.error}). Nothing was wiped.`
         console.error(`activity-sync: ${msg}`)
-        if (i >= target) { console.warn(`activity-sync: reserve "${title}" skipped`); continue }
+        if (i >= reserveFrom) { console.warn(`activity-sync: reserve "${title}" skipped`); continue }
         await host.writeJournal(null)
         return fail({ copied: 0, error: msg, target })
       }
@@ -598,7 +675,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
           // temp. The library symlink is not replaced.
           const mirror = await host.buildIpodSafeAlacMirror(bytesForMirror)
           if (!mirror) {
-            if (i >= target) { console.warn(`activity-sync: reserve "${title}" has no iPod-safe ALAC — skipped`); continue }
+            if (i >= reserveFrom) { console.warn(`activity-sync: reserve "${title}" has no iPod-safe ALAC — skipped`); continue }
             skipUnconvertible(title, String(track.artist || ''), id, 'no iPod-safe ALAC')
             continue
           }
@@ -612,7 +689,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
           cardOnlyIds.add(id)
         } catch (err) {
           console.error(`activity-sync: FLAC→ALAC failed for ${title}:`, err)
-          if (i >= target) { console.warn(`activity-sync: reserve "${title}" skipped`); continue }
+          if (i >= reserveFrom) { console.warn(`activity-sync: reserve "${title}" skipped`); continue }
           skipUnconvertible(title, String(track.artist || ''), id, err instanceof Error ? err.message.slice(0, 120) : String(err).slice(0, 120))
           continue
         }
@@ -643,7 +720,22 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   if (unconvertible.length > 0) {
     const names = unconvertible.slice(0, 5).map((u) => `${u.artist} — ${u.title}`).join('; ')
     console.warn(`activity-sync: ${unconvertible.length} damaged song(s) skipped and replaced: ${names}`)
-    if (plan.length < target) {
+    if (listOnly) {
+      // Its own list: the damaged songs are left off, the set lands fewer.
+      const gone = new Set(unconvertible.map((u) => u.id))
+      for (const u of unconvertible) leftOff.push(leftOffSong(u, "its audio couldn't be converted for the iPod (damaged file)"))
+      tracks = tracks.filter((t) => !gone.has(Number(t.id)))
+      tsaBoarded = tsaBoarded.filter((p) => !gone.has(p.id))
+      target = plan.length
+      console.warn(`activity-sync: list-only set — landing ${target} of ${requested}`)
+      if (target === 0) {
+        await host.writeJournal(null)
+        return fail({
+          copied: 0, target: 0, requested, landed: 0, shortfall: 0, unconvertible, leftOff,
+          error: `None of the songs on this iPod's list could be converted for it. Nothing was wiped. ${names}`,
+        })
+      }
+    } else if (plan.length < target) {
       await host.writeJournal(null)
       return fail({
         copied: 0, target, unconvertible,
@@ -665,7 +757,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   const srcSizeById = new Map<number, number>()
   const cardSizeById = new Map<number, number>()
   for (const e of plan) {
-    if (e.i >= target) continue   // a reserve is never kept — it lands only if a primary misses
+    if (e.i >= reserveFrom) continue   // a reserve is never kept — it lands only if a primary misses
     const rel = e.dstToCopy.startsWith(IPOD_MOUNT) ? e.dstToCopy.slice(IPOD_MOUNT.length + 1) : e.dstToCopy
     const sourceSize = e.knownSourceSize ?? (await stat(e.srcToCopy).catch(() => null))?.size ?? 0
     const onCardSize = (await stat(e.dstToCopy).catch(() => null))?.size
@@ -1234,6 +1326,8 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
       kind: 'result', when: new Date().toISOString(), picksWhen: ledgerWhen,
       target, landed: target, sealedOk, copied, copyErrors,
       ...(unconvertible.length > 0 ? { unconvertible: unconvertible.map((u) => u.id) } : {}),
+      ...(listOnly ? { requested } : {}),
+      ...(leftOff.length > 0 ? { leftOff: leftOff.map((l) => ({ id: l.id, t: l.title, a: l.artist, why: l.why })) } : {}),
     }) + '\n', 'utf-8')
   } catch (err) {
     console.warn('activity-sync: ledger result append failed (non-blocking):', err)
@@ -1253,6 +1347,8 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     verifyAttempts,
     // No pathRewrites: card names never reach the library (see cardOnlyIds).
     ...(unconvertible.length > 0 ? { unconvertible } : {}),
+    ...(listOnly ? { requested } : {}),
+    ...(leftOff.length > 0 ? { leftOff } : {}),
     error: sealedOk ? undefined : `Activity set of ${target} did not seal. Not calling this a success.`,
   }
 }

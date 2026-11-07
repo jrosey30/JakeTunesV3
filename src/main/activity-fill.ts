@@ -5,12 +5,17 @@
  * / vanished-id rows eat slots and nothing replaces them. Failed copies
  * must not count toward N; pull the next eligible so the user still gets
  * N when the library has more.
+ *
+ * A list-only iPod (every iPod but the Original, 2026-11-07) is the
+ * exception: its set is exactly its own list. Nothing from the library
+ * ever fills it, so a song that cannot go on is LEFT OFF and named
+ * (planListOnlyBoarding), and the set lands that many fewer.
  */
 
-import { ipodFirmwareWillList } from './ipod-reconcile.ts'
+import { ipodCanCarryAfterConversion, ipodPathExtension } from './ipod-reconcile.ts'
 import { isSkitOrIntro, type WorkoutTrack } from './workout-sync.ts'
 
-export function activityTrackCanBoard(t: {
+type BoardRow = {
   id?: unknown
   title?: unknown
   artist?: unknown
@@ -21,15 +26,59 @@ export function activityTrackCanBoard(t: {
   genre?: unknown
   playCount?: unknown
   rating?: unknown
-}): boolean {
-  if (t.audioMissing === true) return false
+}
+
+/** Why this row can't go on the iPod, in plain words; null when it can. */
+export function whyActivityTrackCannotBoard(t: BoardRow): string | null {
+  if (t.audioMissing === true) return 'its audio file is missing everywhere'
   const title = String(t.title || '').trim()
   const artist = String(t.artist || '').trim()
-  if (!title || !artist) return false
+  if (!title || !artist) return 'it has no title or no artist'
   const path = String(t.path || '').trim()
-  if (!path) return false
-  if (isSkitOrIntro(t as WorkoutTrack)) return false
-  return ipodFirmwareWillList({ title, artist, path, codec: t.codec })
+  if (!path) return 'it has no audio file in the library'
+  if (isSkitOrIntro(t as WorkoutTrack)) return 'it reads as a skit, intro or segue, not a song'
+  // The SOURCE question: a .flac is converted to ALAC at copy time.
+  if (!ipodCanCarryAfterConversion({ title, artist, path, codec: t.codec })) {
+    const ext = ipodPathExtension(path) || 'no extension'
+    return `the iPod can't play its file type (${ext})`
+  }
+  return null
+}
+
+export function activityTrackCanBoard(t: BoardRow): boolean {
+  return whyActivityTrackCannotBoard(t) === null
+}
+
+export interface LeftOffSong { id: number; title: string; artist: string; why: string }
+
+export function leftOffSong(t: { id?: unknown; title?: unknown; artist?: unknown }, why: string): LeftOffSong {
+  return { id: Number(t.id), title: String(t.title || ''), artist: String(t.artist || ''), why }
+}
+
+/**
+ * A list-only set: its own songs in list order, never anything else.
+ * What can't go on is left off with the reason; the set is then that many
+ * fewer (target = what boarded, never more than requested).
+ */
+export function planListOnlyBoarding<T extends BoardRow>(
+  primary: T[],
+  requested: number,
+  idOf: (t: T) => number = (t) => Number(t.id),
+): { pool: T[]; target: number; leftOff: LeftOffSong[] } {
+  const want = Math.max(0, Math.floor(requested))
+  const pool: T[] = []
+  const leftOff: LeftOffSong[] = []
+  const seen = new Set<number>()
+  for (const t of primary) {
+    if (pool.length >= want) break
+    const id = idOf(t)
+    if (!Number.isFinite(id) || seen.has(id)) continue
+    seen.add(id)
+    const why = whyActivityTrackCannotBoard(t)
+    if (why) { leftOff.push(leftOffSong(t, why)); continue }
+    pool.push(t)
+  }
+  return { pool, target: pool.length, leftOff }
 }
 
 export function queueActivityCandidates<T>(opts: {
@@ -83,6 +132,13 @@ export function resolvePickedTracks<T extends { id: number }>(
   return { tracks: out, shortfall: Math.max(0, want - out.length), replaced }
 }
 
+/**
+ * The Original's LAST resort, after the picker's reserve: songs from the
+ * whole library. Most-loved first — starred (rating), then most played,
+ * then most recently played / added — never library order. Library order
+ * is id order, so this used to hand out ids 0, 1, 2, … (Lou Reed, Magdalena
+ * Bay, Parallelle) to every set that came up short.
+ */
 export function pickReplacementTracks<T extends { id?: unknown }>(
   library: T[],
   excludeIds: Set<number>,
@@ -91,13 +147,28 @@ export function pickReplacementTracks<T extends { id?: unknown }>(
 ): T[] {
   const want = Math.max(0, Math.floor(needed))
   if (want <= 0) return []
-  const out: T[] = []
+  const candidates: T[] = []
   for (const t of library) {
     const id = Number(t.id)
     if (!Number.isFinite(id) || excludeIds.has(id) || ineligibleIds?.has(id)) continue
     if (!activityTrackCanBoard(t)) continue
-    out.push(t)
-    if (out.length >= want) break
+    candidates.push(t)
   }
-  return out
+  const num = (v: unknown): number => {
+    const n = Number(v)
+    return Number.isFinite(n) ? n : 0
+  }
+  const when = (v: unknown): number => {
+    if (typeof v === 'number' && Number.isFinite(v)) return v
+    const ms = Date.parse(String(v ?? ''))
+    return Number.isFinite(ms) ? ms : 0
+  }
+  const row = (t: T) => t as T & { rating?: unknown; playCount?: unknown; lastPlayedAt?: unknown; dateAdded?: unknown }
+  candidates.sort((a, b) =>
+    num(row(b).rating) - num(row(a).rating)
+    || num(row(b).playCount) - num(row(a).playCount)
+    || when(row(b).lastPlayedAt) - when(row(a).lastPlayedAt)
+    || when(row(b).dateAdded) - when(row(a).dateAdded)
+    || num(b.id) - num(a.id))
+  return candidates.slice(0, want)
 }

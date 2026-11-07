@@ -1004,6 +1004,8 @@ declare global {
     sealedOk?: boolean; aborted?: boolean; pickedCount?: number
     added?: Array<{ id: number; t?: string; a?: string }>
     removed?: Array<{ id: number; t?: string; a?: string }>
+    requested?: number
+    leftOff?: Array<{ id: number; t?: string; a?: string; why?: string }>
     plays?: Array<{ id: number; delta: number }>; otgLists?: number; unmatched?: number
   }> }>
   refreshDeezerPreview: (artist: string, title: string) => Promise<{ ok: boolean; previewUrl?: string }>
