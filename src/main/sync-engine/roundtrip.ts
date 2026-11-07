@@ -291,6 +291,30 @@ async function writeRoundTripState(stateDir: string, state: RoundTripState): Pro
 }
 
 /**
+ * A sync just put a new catalog on the card (2026-11-07, swap-only sync).
+ * The state's `ingested` counts are cumulative for ONE catalog generation;
+ * planRoundTrip resets them when the catalog's sha1 moves. If a rebuilt
+ * catalog ever came out byte-identical (same set, a deterministic writer),
+ * the sha1 would NOT move while the firmware starts a fresh Play Counts from
+ * zero, and every later play would be swallowed by the old totals. So when
+ * the generation is unchanged and the old Play Counts is gone from the card,
+ * the ledger for this generation starts over. With Play Counts still on the
+ * card nothing changes (those counts are still against this same catalog).
+ */
+export async function startRoundTripGeneration(
+  stateDir: string,
+  catalog: Buffer,
+  playCountsOnCard: boolean,
+): Promise<'new-generation' | 'restarted' | 'kept'> {
+  const generation = sha1(catalog)
+  const prior = await readRoundTripState(stateDir)
+  if (!prior || prior.generation !== generation) return 'new-generation'
+  if (playCountsOnCard) return 'kept'
+  await writeRoundTripState(stateDir, { generation, snapshot: '', ingested: {} })
+  return 'restarted'
+}
+
+/**
  * Record a plan: state + ledger first (the record exists even if applying
  * fails), then windowed play events, then absolute updates to the renderer.
  */

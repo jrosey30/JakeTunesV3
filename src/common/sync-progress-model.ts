@@ -20,7 +20,17 @@ export const SYNC_STEPS: ReadonlyArray<{ id: SyncStep; label: string }> = [
 ]
 const ORDER: Record<SyncStep, number> = { prepare: 0, wipe: 1, copy: 2, verify: 3, catalog: 4, seal: 5 }
 
-export interface SyncEvent { phase: 'preflight' | 'copy' | 'verify' | 'db' | 'cancelled' | 'error'; current: number; total: number; title: string }
+export interface SyncEvent {
+  phase: 'preflight' | 'copy' | 'verify' | 'db' | 'cancelled' | 'error'
+  current: number
+  total: number
+  title: string
+  /** The engine's decision (2026-11-07): 'swap' moves only what changes, and
+   *  its Wipe step is the removal of the songs leaving ("Remove"). */
+  mode?: 'swap' | 'full'
+  /** The engine's own result line ("Swapped 7 songs: 7 out, 7 in. 993 stayed."). */
+  summary?: string
+}
 
 export interface SyncResult {
   ok: boolean
@@ -52,10 +62,15 @@ export interface SyncTimeline {
   error: string | null
   /** How many engine events this run has seen — zero means no phase evidence. */
   seen: number
+  /** A swap run: only the songs that change move; Wipe reads "Remove". */
+  swap: boolean
+  /** The engine's own result line, when it sent one. */
+  summary: string | null
 }
 
 export const IDLE_TIMELINE: SyncTimeline = {
   status: 'idle', step: null, reached: [], current: 0, total: 0, title: '', startedAt: null, endedAt: null, target: null, landed: null, copied: null, error: null, seen: 0,
+  swap: false, summary: null,
 }
 
 export function startTimeline(now: number, target: number | null, title = 'Starting…'): SyncTimeline {
@@ -65,7 +80,7 @@ export function startTimeline(now: number, target: number | null, title = 'Start
 function stepFor(t: SyncTimeline, e: SyncEvent): SyncStep | null {
   switch (e.phase) {
     case 'preflight': return 'prepare'
-    case 'copy': return /^wiping/i.test(e.title) ? 'wipe' : 'copy'
+    case 'copy': return /^(wiping|removing)/i.test(e.title) ? 'wipe' : 'copy'
     case 'db': return 'catalog'
     case 'verify': return t.reached.includes('catalog') ? 'seal' : 'verify'
     default: return null
@@ -84,6 +99,8 @@ export function reduceSyncEvent(t: SyncTimeline, e: SyncEvent, now: number): Syn
   if (t.status === 'idle') t = startTimeline(now, t.target)
   if (t.status !== 'running') return t
   t = { ...t, seen: t.seen + 1 }
+  if (e.mode) t = { ...t, swap: e.mode === 'swap' }
+  if (e.summary) t = { ...t, summary: e.summary }
   if (e.phase === 'cancelled') {
     return { ...t, status: 'cancelled', endedAt: now, copied: e.current, title: '' }
   }
@@ -122,14 +139,22 @@ export function timelinePercent(t: SyncTimeline): number {
   return Math.min(99, Math.round(((idx + within) / SYNC_STEPS.length) * 100))
 }
 
-export function stepLabel(step: SyncStep): string { return SYNC_STEPS.find((s) => s.id === step)?.label ?? step }
+/** A swap's Wipe step only removes the songs leaving, so it reads "Remove". */
+export function stepLabel(step: SyncStep, t?: Pick<SyncTimeline, 'swap'> | null): string {
+  if (step === 'wipe' && t?.swap) return 'Remove'
+  return SYNC_STEPS.find((s) => s.id === step)?.label ?? step
+}
 
 /** One line, what About will say. */
 export function resultLine(t: SyncTimeline, timeLabel: (ms: number) => string): string | null {
   if (t.status !== 'done') return null
   const n = (t.landed ?? t.target ?? 0).toLocaleString()
   const target = t.target != null ? t.target.toLocaleString() : n
-  return `Landed ${n} of ${target} — verified on the card${t.endedAt ? `, ${timeLabel(t.endedAt)}` : ''}`
+  const when = t.endedAt ? `, ${timeLabel(t.endedAt)}` : ''
+  // A swap leads with what moved; a full copy keeps its line and says why.
+  if (t.swap && t.summary) return `${t.summary} All ${n} verified on the card${when}.`
+  const line = `Landed ${n} of ${target} — verified on the card${when}`
+  return t.summary ? `${line}. ${t.summary}` : line
 }
 
 export function elapsedLabel(t: SyncTimeline, now: number): string {

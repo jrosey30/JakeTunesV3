@@ -24,7 +24,7 @@ import { spawn } from 'child_process'
 import { createHash } from 'crypto'
 import { appendFile, copyFile, mkdir, readFile, stat, lstat, unlink } from 'fs/promises'
 import { join } from 'path'
-import { findIpodMount, isIpodMount, PYTHON_CMD, PYTHON_INSTALL_HINT, remountVolume } from './platform.ts'
+import { findIpodMount, isIpodMount, PYTHON_CMD, PYTHON_INSTALL_HINT, remountVolume as platformRemountVolume } from './platform.ts'
 import {
   activitySetProven,
   ACTIVITY_WIPE_EMPTY_STREAK,
@@ -43,6 +43,7 @@ import {
   tsaAllClear,
   tsaBoardPassenger,
   tsaDestCollisions,
+  parseTsaSeal,
   tsaNormalizeColonPath,
   tsaRelFromColon,
   tsaScreen,
@@ -60,9 +61,27 @@ import {
   retireIpodFirmwareScratch,
 } from './ipod-sync-card.ts'
 import { safeIpcError } from './safe-ipc-error.ts'
-import { activityKeepPlan, wipeListingMatchesKeep, keepStreak, type KeepCandidate } from './activity-keep.ts'
+import { wipeListingMatchesKeep, keepStreak } from './activity-keep.ts'
+import {
+  LAST_SYNC_MANIFEST_FILE,
+  SWAP_MANIFEST_FORMAT,
+  TSA_SEAL_FILE,
+  catalogDigest,
+  catalogIdsAscend,
+  fullCopyLine,
+  planSwap,
+  proveCardForSwap,
+  rowsMissingOnCard,
+  swapResultLine,
+  swapTooBig,
+  type CardState,
+  type SwapCandidate,
+  type SwapManifestRow,
+  type SwapPlan,
+} from './ipod-swap-sync.ts'
+import { startRoundTripGeneration } from './sync-engine/roundtrip.ts'
 import { orderForIpodCatalog, conformCatalogIdOrder } from './ipod-catalog-order.ts'
-import { REWIPED_NOTE } from '../common/sync-failure-copy.ts'
+import { REWIPED_NOTE, swapKeptNote } from '../common/sync-failure-copy.ts'
 import type { SyncConvertOptions } from './ipc/sync-ipc.ts'
 import {
   classifyActivitySyncTracks,
@@ -91,7 +110,8 @@ export interface ActivitySyncHost {
   musicDir: string
   pathSep: '/' | '\\'
   isMac: boolean
-  sendProgress: (p: { phase: string; current: number; total: number; title: string }) => void
+  /** mode/summary: the swap-or-full decision and the result line (sync-progress-model.ts). */
+  sendProgress: (p: { phase: string; current: number; total: number; title: string; mode?: 'swap' | 'full'; summary?: string }) => void
   isCancelled: () => boolean
   isStreamedTrackFile: (abs: string) => Promise<boolean>
   buildAacMirror: (src: string, kbps: number) => Promise<string | null>
@@ -123,6 +143,8 @@ export interface ActivitySyncHost {
    *  Needed so 15 firmware-unlistable / dead-path rows do not shrink a
    *  1000-song request to 985. */
   loadReplacementTracks?: (excludeIds: Set<number>, needed: number) => Promise<Array<Record<string, unknown>>>
+  /** Tests only: a fake card has no device node to unmount. Production leaves it unset. */
+  remountVolume?: typeof platformRemountVolume
 }
 
 export interface ActivitySyncInput {
@@ -166,6 +188,13 @@ export interface ActivitySyncResult {
   /** List-only sets: what was asked for, and each song left off with why. */
   requested?: number
   leftOff?: LeftOffSong[]
+  /** 'swap': only the songs that changed moved (2026-11-07). 'full': wiped and
+   *  copied the whole set; fullReason says why in plain words. */
+  mode?: 'swap' | 'full'
+  fullReason?: string
+  swap?: { out: number; in: number; stayed: number; changed: number }
+  /** One plain line for the result: "Swapped 7 songs: 7 out, 7 in. 993 stayed." */
+  summary?: string
 }
 
 export function bindActivityReplacements(
@@ -246,6 +275,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   const requested = Math.max(1, Math.floor(Number(input.requestedTarget) || input.tracks.length || 0))
   const pathSep = host.pathSep
   const python = host.pythonCmd || PYTHON_CMD || 'python3'
+  const remountVolume = host.remountVolume ?? platformRemountVolume
 
   const listOnly = input.listOnly === true
   // List-only: songs that cannot go on, each with why (result + ledger).
@@ -490,6 +520,16 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   // entry per attempt with the added/removed diff vs the previous attempt,
   // one 'result' entry when a sync seals. A picks entry with no matching
   // result = a refused/aborted run. Never blocks a sync.
+  // What the LAST sync left behind, read before this one clears the seal and
+  // writes its own in-flight manifest over it. Reading it after (as the keep
+  // plan did from 2026-09-19) meant every sync saw an unsealed manifest, kept
+  // nothing, and copied all 1,000 again.
+  const readStateJson = async (name: string): Promise<unknown> => {
+    try { return JSON.parse(await readFile(join(host.stateDir, name), 'utf-8')) } catch { return null }
+  }
+  const priorManifestRaw = await readStateJson(LAST_SYNC_MANIFEST_FILE)
+  const priorSealRaw = await readStateJson(TSA_SEAL_FILE)
+
   const ledgerPath = join(host.stateDir, 'activity-sync-ledger.jsonl')
   const ledgerWhen = new Date().toISOString()
   try {
@@ -515,25 +555,6 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     }) + '\n', 'utf-8')
   } catch (err) {
     console.warn('activity-sync: ledger append failed (non-blocking):', err)
-  }
-
-  await host.clearSeal()
-  try {
-    await host.writeManifest({
-      syncedAt: new Date().toISOString(),
-      status: 'in-flight',
-      sealed: false,
-      count: target,
-      tracks: tracks.map((t) => ({
-        id: Number(t.id),
-        title: String(t.title || ''),
-        artist: String(t.artist || ''),
-        album: String(t.album || ''),
-      })),
-    })
-    console.log(`activity-sync: MANIFEST in-flight — ${target} songs boarded, not sealed`)
-  } catch (mErr) {
-    console.warn('activity-sync: manifest write failed (non-fatal):', mErr instanceof Error ? mErr.message : mErr)
   }
 
   await host.writeJournal('copy')
@@ -564,6 +585,8 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     dstToCopy: string
     restage?: { colon: string; id: number }
     knownSourceSize?: number
+    /** Size of the library master (local file, or homemini's), before any mirror. */
+    masterSize: number
   }
   const plan: CopyPlanEntry[] = []
   // Everything in this loop happens BEFORE the wipe, so its progress is
@@ -715,7 +738,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     }
 
     dstToCopy = ipodPlayableDestPath(dstToCopy)
-    plan.push({ i, id, title, srcToCopy, dstToCopy, restage, knownSourceSize })
+    plan.push({ i, id, title, srcToCopy, dstToCopy, restage, knownSourceSize, masterSize: sourceBytes })
   }
 
   // Damaged songs were dropped above; reserves fill their places. Only if
@@ -747,79 +770,77 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     }
   }
 
-  // ── 2b. Keep plan: what is already right on the card, by identity ──
-  // A song is kept only when the last SEALED manifest lists this id at this
-  // card path with this fingerprint identity AND the card file is exactly
-  // the size of what we would copy (activity-keep.ts). Anything else is
-  // copied; everything else on the card is deleted. All proof stages
-  // downstream are unchanged, so a wrong keep cannot seal.
-  let manifest: unknown = null
-  try { manifest = JSON.parse(await readFile(join(host.stateDir, 'last-sync-manifest.json'), 'utf-8')) } catch { manifest = null }
+  // ── 2b. Swap or full: what can stay on the card, PROVEN (2026-11-07) ──
+  // Jake: "it shouldnt wipe the ipod and start the 1000 from scratch, it
+  // should just swap out the songs that they are being replaced with."
+  // A song stays only when the last sync's sealed manifest (this format), its
+  // seal, the card's own catalog (byte-for-byte) and every file on the card
+  // all agree (proveCardForSwap), and the song is the same file by
+  // fingerprint and size (planSwap). Anything unproven is a full
+  // wipe-and-copy, with one plain reason in the result.
   const identityById = new Map(tsaBoarded.map((p) => [p.id, p.identity]))
-  const candidates: KeepCandidate[] = []
-  const srcSizeById = new Map<number, number>()
-  const cardSizeById = new Map<number, number>()
+  const relOf = (abs: string): string =>
+    tsaNormalizeColonPath(abs.startsWith(IPOD_MOUNT) ? abs.slice(IPOD_MOUNT.length + 1) : abs)
+  const dstById = new Map(plan.map((e) => [e.id, e.dstToCopy]))
+  const masterSizeById = new Map(plan.map((e) => [e.id, e.masterSize || 0]))
+  const candidates: SwapCandidate[] = []
   for (const e of plan) {
-    if (e.i >= reserveFrom) continue   // a reserve is never kept — it lands only if a primary misses
-    const rel = e.dstToCopy.startsWith(IPOD_MOUNT) ? e.dstToCopy.slice(IPOD_MOUNT.length + 1) : e.dstToCopy
-    const sourceSize = e.knownSourceSize ?? (await stat(e.srcToCopy).catch(() => null))?.size ?? 0
-    const onCardSize = (await stat(e.dstToCopy).catch(() => null))?.size
-    srcSizeById.set(e.id, sourceSize)
-    if (onCardSize !== undefined) cardSizeById.set(e.id, onCardSize)
+    if (e.i >= reserveFrom) continue   // a reserve never stays — it lands only if a primary misses
     candidates.push({
       id: e.id,
-      destPath: tsaNormalizeColonPath(rel),
+      destPath: relOf(e.dstToCopy),
       identity: identityById.get(e.id) || '',
-      sourceSize,
-      onCardSize,
+      copySize: e.knownSourceSize ?? (await stat(e.srcToCopy).catch(() => null))?.size ?? 0,
+      sourceSize: e.masterSize || 0,
     })
   }
-  const keep = activityKeepPlan(candidates, manifest as Parameters<typeof activityKeepPlan>[1])
-  const keepAbs = new Set(plan.filter((e) => keep.keepIds.has(e.id)).map((e) => e.dstToCopy))
-  console.log(`activity-sync: KEEP ${keep.keepIds.size} already on the card by identity, COPY ${keep.copyIds.length}` +
-    (keep.copyIds.length ? ` (${Object.entries(keep.reasons).map(([k, v]) => `${k}: ${v}`).join(', ')})` : ''))
+  const proof = proveCardForSwap(priorManifestRaw, priorSealRaw, await readCardState(IPOD_MOUNT))
+  let swap: SwapPlan | null = null
+  let fullReason: string | null = null
+  const stayRows = new Map<number, SwapManifestRow>()
+  if (!proof.ok) {
+    fullReason = proof.why
+  } else {
+    const candidate = planSwap(candidates, proof.rows)
+    fullReason = swapTooBig(candidate, target)
+    if (!fullReason) {
+      swap = candidate
+      for (const id of swap.stay) stayRows.set(id, proof.rows.get(id)!)
+    }
+  }
+  const mode: 'swap' | 'full' = swap ? 'swap' : 'full'
+  const keepIds = swap ? swap.stay : new Set<number>()
+  const keepAbs = new Set(plan.filter((e) => keepIds.has(e.id)).map((e) => e.dstToCopy))
+  if (swap) {
+    console.log(`activity-sync: SWAP — ${swap.leave.length} out, ${swap.arrive.length} in, ${swap.stay.size} stay` +
+      (swap.changed.length ? ` (${swap.changed.length} re-copied: the library file changed)` : ''))
+    host.sendProgress({
+      phase: 'preflight', current: target, total: target, mode,
+      title: `Swapping: ${swap.leave.length.toLocaleString()} out, ${swap.arrive.length.toLocaleString()} in, ${swap.stay.size.toLocaleString()} stay`,
+    })
+  } else {
+    console.log(`activity-sync: FULL copy — ${fullReason}`)
+    host.sendProgress({ phase: 'preflight', current: target, total: target, mode, title: fullCopyLine(fullReason || 'nothing to keep') })
+  }
 
-  // ── 3. Targeted wipe: delete everything outside the keep set, prove it ──
-  host.sendProgress({
-    phase: 'copy', current: 0, total: 1,
-    title: keep.keepIds.size > 0
-      ? `Keeping ${keep.keepIds.size.toLocaleString()} already on the iPod · clearing the rest…`
-      : 'Wiping the iPod for a clean rebuild…',
-  })
-  let wiped = 0
-  try {
-    let streak = 0
-    let listedNow: string[] = []
-    for (let pass = 0; pass < ACTIVITY_WIPE_MAX_PASSES; pass++) {
-      const listed = await listIpodMusicFiles(IPOD_MOUNT)
-      for (const p of listed) {
-        if (keepAbs.has(p)) continue
-        try { await unlink(p); wiped++ } catch { /* retry */ }
-      }
-      listedNow = await listIpodMusicFiles(IPOD_MOUNT)
-      streak = keepStreak(wipeListingMatchesKeep(listedNow, keepAbs), streak)
-      console.log(`activity-sync: WIPE pass ${pass + 1}/${ACTIVITY_WIPE_MAX_PASSES} listed=${listed.length} now=${listedNow.length} keep=${keepAbs.size} streak=${streak}`)
-      if (streak >= ACTIVITY_WIPE_EMPTY_STREAK) break
-      await new Promise((r) => setTimeout(r, 250))
-    }
-    if (streak < ACTIVITY_WIPE_EMPTY_STREAK) {
-      const extra = listedNow.filter((p) => !keepAbs.has(p)).length
-      const missing = [...keepAbs].filter((p) => !listedNow.includes(p)).length
-      return fail({
-        copied: 0,
-        error: `Activity wipe could not settle the iPod (${extra} leftover file${extra === 1 ? '' : 's'}, ${missing} kept file${missing === 1 ? '' : 's'} vanished). Reseat the cable and sync again — nothing new was copied.`,
-        target,
-      })
-    }
-    await retireScratch(IPOD_MOUNT, 'after wipe')
-    console.log(`activity-sync: WIPE deleted ${wiped} file(s) — card holds exactly the ${keepAbs.size} kept, rebuilding to ${target}`)
-  } catch (e) {
-    return fail({
-      copied: 0,
-      error: `Activity wipe failed (${e instanceof Error ? e.message : String(e)}). Nothing was copied.`,
-      target,
-    })
-  }
+  // Never a half-updated card (swap only). At every moment the card's catalog
+  // names only files that are on it: the old catalog until a catalog of the
+  // songs that STAY replaces it, and only then does anything leave; arrivals
+  // are files no catalog names until the final one. Unplugged at any point,
+  // the iPod boots onto a whole list.
+  //   cataloguedAbs — the files the catalog now on the card can name
+  //   interimTouched / finalTouched — a catalog copy onto the card began
+  let cataloguedAbs = new Set<string>(
+    proof.ok ? [...proof.rows.values()].map((r) => join(IPOD_MOUNT, tsaRelFromColon(r.destPath, pathSep))) : [],
+  )
+  let interimTouched = false
+  let finalTouched = false
+
+  const writtenById = new Map<number, { srcPath: string; dstPath: string; expectedSize: number }>()
+  let copied = 0
+  let kept = 0
+  let copyErrors = 0
+  let verifyAttempts = 0
 
   const rewipeAndStop = async (why: ActivitySyncResult): Promise<ActivitySyncResult> => {
     try {
@@ -835,8 +856,415 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     return { ...why, error }
   }
 
+  // A swap that stops leaves the card on a whole catalog: the files this run
+  // copied (which no catalog on the card names) come off again; the songs the
+  // catalog names are never touched. Once the final catalog's copy has begun,
+  // every file it names is already on the card, so nothing is removed.
+  const swapStop = async (why: ActivitySyncResult): Promise<ActivitySyncResult> => {
+    if (finalTouched) return { ...why, mode, swap: swapCounts() }
+    let removed = 0
+    try {
+      for (const p of await listIpodMusicFiles(IPOD_MOUNT)) {
+        if (cataloguedAbs.has(p)) continue
+        try { await unlink(p); removed++ } catch { /* best effort */ }
+      }
+    } catch { /* best effort */ }
+    let restored = false
+    if (!interimTouched && proveCardForSwap(priorManifestRaw, priorSealRaw, await readCardState(IPOD_MOUNT)).ok) {
+      // The card re-proves as exactly what the last sync left (its catalog,
+      // every file, nothing else): give back its seal and manifest, so the
+      // next Sync swaps again instead of copying everything.
+      const seal = parseTsaSeal(priorSealRaw)
+      if (seal && priorManifestRaw && typeof priorManifestRaw === 'object') {
+        try {
+          await host.writeSeal(seal)
+          await host.writeManifest(priorManifestRaw as Record<string, unknown>)
+          restored = true
+        } catch (err) {
+          console.warn('activity-sync: swap stop — could not give back the last seal (next sync copies in full):', err)
+        }
+      }
+    }
+    console.error(`activity-sync: swap stopped — took ${removed} file(s) copied this run back off; the card's catalog names ${cataloguedAbs.size} song(s), all on it${restored ? ' (the last sync\'s seal is back)' : ''}. ${why.error}`)
+    const error = [why.error || 'Sync stopped.', swapKeptNote(cataloguedAbs.size, restored)].join(' ')
+    return { ...why, error, mode, swap: swapCounts() }
+  }
+  const stopAfterTouch = (why: ActivitySyncResult): Promise<ActivitySyncResult> =>
+    swap ? swapStop(why) : rewipeAndStop(why)
+  const swapCounts = () => swap
+    ? { out: swap.leave.length, in: copied, stayed: kept, changed: swap.changed.length }
+    : undefined
+
+  // ── The catalog, written, put on the card and proven (interim or final) ──
+  // 'final' is the whole set. 'interim' (swap only) is the songs that stay,
+  // written BEFORE any file leaves; its progress stays on the Remove step.
+  type CatalogOk = { ok: true; tracks: Array<Record<string, unknown>>; readback: { tracks: Array<Record<string, unknown>> }; md5: string; bytes: number }
+  type CatalogFail = { ok: false; touchedCard: boolean; result: ActivitySyncResult }
+  const putCatalog = async (
+    tracks: Array<Record<string, unknown>>,
+    playlists: Array<Record<string, unknown>>,
+    kind: 'interim' | 'final',
+    /** Size each song's card file must have — what was proven, never a fresh stat. */
+    expectedSize: Map<number, number>,
+  ): Promise<CatalogOk | CatalogFail> => {
+    const target = tracks.length
+    const interim = kind === 'interim'
+    const say = (title: string, current = 1, total = 1): void => host.sendProgress(interim
+      ? { phase: 'copy', current, total, title: `Removing — ${title}`, mode }
+      : { phase: 'db', current, total, title })
+    const stop = (touchedCard: boolean, r: Omit<ActivitySyncResult, 'ok'> & { error: string }): CatalogFail =>
+      ({ ok: false, touchedCard, result: fail(r) })
+    await host.writeJournal('db')
+    if (interim) say('writing the song list for the songs that stay…', 0)
+    else host.sendProgress({ phase: 'db', current: 0, total: 1, title: 'Writing iTunesDB...' })
+
+    // Stamp iTunesDB sizes from the card, not library.json.
+    // Write tracks in firmware-fold title order so Music > Songs is A–Z
+    // even if type-52 key 3 (Songs) is discarded. stamp sortArtist for mhod 22
+    // (Artists). mhia + the type-52 tables (3 Songs, 4 Albums, 5 Artists,
+    // 7 Genres) are built inside write_itunesdb.
+    tracks = orderTracksForIpodTitleIndex(tracks.map((t) => stampIpodSortArtist(t)))
+    for (const t of tracks) {
+      const dst = dstById.get(Number(t.id))
+      if (!dst) continue
+      try {
+        const sz = (await stat(dst)).size
+        t.fileSize = fileSizeForItunesDb(sz)
+        t.sampleRate = sampleRateForItunesDb(t.sampleRate as number | undefined)
+        const remembered = writtenById.get(Number(t.id))
+        if (remembered) remembered.expectedSize = sz
+      } catch { /* the guard below names it */ }
+      if (!String(t.title || '').trim()) {
+        const base = String(t.path || '').split(':').pop() || 'Unknown'
+        t.title = base.replace(/\.[^.]+$/, '') || 'Unknown'
+      }
+      if (!String(t.artist || '').trim()) t.artist = String(t.albumArtist || t.album || 'Unknown Artist')
+    }
+    const unlistable = tracks.filter((t) => !ipodFirmwareWillList(t))
+    if (unlistable.length > 0) {
+      return stop(false, {
+        copied, copyErrors, target, landed: target - unlistable.length, shortfall: unlistable.length, verifyAttempts,
+        error: `${unlistable.length} song(s) Mini 1.4.1 will not list. Not writing a catalog. ${unlistable.slice(0, 3).map((t) => `${t.artist} — ${t.title}`).join('; ')}`,
+      })
+    }
+
+    // The catalog is written alphabetically (artist > album > track). The
+    // 2026-08-28 belief that Mini 1.4.1 lists Artists in this PHYSICAL order
+    // was wrong: its Music menus read the type-52 tables, which db_reader
+    // had keyed in the wrong numbering until 2026-10-17 (see _sort_indices).
+    // The physical order stays — harmless, and conformCatalogIdOrder re-mints
+    // ids against it. Playlists reference dbids, so their order is untouched.
+    tracks = orderForIpodCatalog(tracks)
+
+    // Never catalog a missing file: every song this catalog names must be on
+    // the card right now at the size that was proven. Firmware 1.4.1 aborts
+    // Songs on a missing file; it does not skip it.
+    const onCardNow = new Map<string, number>()
+    const guardRows: Array<{ id: number; destPath: string; size: number }> = []
+    for (const t of tracks) {
+      const id = Number(t.id)
+      const dst = dstById.get(id) || ''
+      const colon = relOf(dst)
+      const sz = dst ? (await stat(dst).catch(() => null))?.size : undefined
+      if (sz !== undefined) onCardNow.set(colon, sz)
+      guardRows.push({ id, destPath: colon, size: expectedSize.get(id) ?? -1 })
+    }
+    const notOnCard = rowsMissingOnCard(guardRows, onCardNow)
+    if (notOnCard.length > 0) {
+      const gone = new Set(notOnCard)
+      const sample = tracks.filter((t) => gone.has(Number(t.id))).slice(0, 3).map((t) => `${t.artist} — ${t.title}`).join('; ')
+      return stop(false, {
+        copied, copyErrors, target, landed: target - notOnCard.length, shortfall: notOnCard.length, verifyAttempts,
+        error: `${notOnCard.length} song(s) the catalog would list are not on the card at their proven size. Not writing a catalog. ${sample}`,
+      })
+    }
+
+    // ── 5. Build catalog locally, copy to CF, prove bytes+hash+N ──
+    const ipodDb = join(IPOD_MOUNT, 'iPod_Control', 'iTunes', 'iTunesDB')
+    try { await copyFile(ipodDb, ipodDb + '.bak') } catch { /* non-fatal */ }
+    const localDb = join(host.tempDir, `jaketunes-itunesdb-${host.pid}`)
+    const written = await spawnJson(
+      python,
+      [host.coreScript('core/db_reader.py'), '--write', localDb, '--template', ipodDb, '--ipod-root', IPOD_MOUNT],
+      JSON.stringify({ tracks, playlists, masterName: input.ipodName }),
+    )
+    if (written.err && (written.err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return stop(false, { copied, copyErrors, error: host.pythonHint || PYTHON_INSTALL_HINT, target })
+    }
+    if (written.code !== 0) {
+      try { await unlink(localDb) } catch { /* temp */ }
+      return stop(false, {
+        copied, copyErrors, target,
+        error: safeIpcError(`DB write failed (code ${written.code}): ${written.stderr}`, 'tool-failed'),
+      })
+    }
+    console.log('activity-sync stderr:', written.stderr)
+    // Firmware finds songs by binary search on mhit id — ids must ascend in
+    // record order or songs silently vanish from About (the 819 saga).
+    const conform = await conformCatalogIdOrder(localDb)
+    if (!conform.ok) {
+      try { await unlink(localDb) } catch { /* temp */ }
+      await retireScratch(IPOD_MOUNT, 'catalog order conform failed')
+      return stop(false, {
+        copied, copyErrors, target,
+        error: `The catalog could not be conformed to firmware id order (${conform.error}). Previous catalog is untouched. Sync again.`,
+      })
+    }
+    console.log(`activity-sync: ${conform.summary}`)
+    const contig = await ensureContiguousDb(localDb, python)
+    console.log(`activity-sync: ${contig.summary}`)
+    if (!contig.ok) {
+      try { await unlink(localDb) } catch { /* temp */ }
+      await retireScratch(IPOD_MOUNT, 'catalog contiguity failed')
+      return stop(false, {
+        copied, copyErrors, target,
+        error: `The catalog was written but could not be laid down as one piece (${contig.error}). Previous catalog is untouched. Sync again.`,
+      })
+    }
+    if (interim) say('song list for the songs that stay written')
+    else host.sendProgress({ phase: 'db', current: 1, total: 1, title: 'iTunesDB written' })
+
+    if (interim) say(`putting the ${target}-song list on the card…`)
+    else host.sendProgress({ phase: 'db', current: 1, total: 1, title: `Putting the ${target}-song catalog on the card…` })
+    let catalogConsecutive = 0
+    let readback: { tracks: Array<Record<string, unknown>> } | null = null
+    let cardBytes: Buffer | null = null
+    const CATALOG_PROOF_ROUNDS = 4
+    for (let round = 1; round <= CATALOG_PROOF_ROUNDS; round++) {
+      if (catalogConsecutive === 0) {
+        try {
+          if (interim) interimTouched = true
+          else finalTouched = true
+          await copyFile(localDb, ipodDb)
+          const conf = await confirmWriteOnCard(localDb, ipodDb)
+          if (!conf.ok) {
+            console.error(`activity-sync: catalog copy not confirmed (${conf.reason})`)
+            continue
+          }
+        } catch (copyErr) {
+          console.error('activity-sync: catalog copy onto the card failed:', copyErr)
+          continue
+        }
+      }
+      await retireScratch(IPOD_MOUNT, 'after catalog copy')
+      const flush = await remountVolume(IPOD_MOUNT)
+      if (!flush.ok) {
+        await retireScratch(IPOD_MOUNT, 'remount failed after catalog copy')
+        try { await unlink(localDb) } catch { /* temp */ }
+        return stop(true, {
+          copied, copyErrors, target, landed: 0, shortfall: target, verifyAttempts,
+          error: `The catalog file never made it onto the card — remount failed (${flush.error}). The Mini does not have ${target} songs. Do not unplug — sync again.`,
+        })
+      }
+      host.setDetectedMount(flush.mountPoint || IPOD_MOUNT)
+      await retireScratch(flush.mountPoint || IPOD_MOUNT, 'after remount')
+      let onCard: Buffer
+      try {
+        onCard = await readFile(ipodDb)
+      } catch {
+        catalogConsecutive = 0
+        continue
+      }
+      const cardMd5 = createHash('md5').update(onCard).digest('hex')
+      try {
+        readback = await host.readIpodDatabase()
+      } catch {
+        catalogConsecutive = 0
+        continue
+      }
+      const match = catalogBytesMatch({
+        onCardBytes: onCard.length,
+        localBytes: contig.bytes,
+        onCardMd5: cardMd5,
+        localMd5: contig.md5,
+        trackCount: readback.tracks.length,
+        target,
+      })
+      console.log(`activity-sync: ${kind} catalog proof ${round}/${CATALOG_PROOF_ROUNDS} — card ${onCard.length}b md5 ${cardMd5.slice(0, 8)} tracks=${readback.tracks.length} vs local ${contig.bytes}b md5 ${contig.md5.slice(0, 8)} target=${target} match=${match}`)
+      if (match) {
+        cardBytes = onCard
+        catalogConsecutive++
+        if (catalogOnCardProven(catalogConsecutive, match)) {
+          console.log(`activity-sync: ${kind} catalog ON CARD — ${target} tracks, ${contig.bytes} bytes, held across two remounts`)
+          break
+        }
+      } else {
+        catalogConsecutive = 0
+      }
+    }
+    try { await unlink(localDb) } catch { /* temp */ }
+    if (!readback || !cardBytes || !catalogOnCardProven(catalogConsecutive, catalogConsecutive >= 2)) {
+      return stop(true, {
+        copied, copyErrors, target, landed: 0, shortfall: target, verifyAttempts,
+        error: `The ${target}-song catalog never committed to the card. Mac cache is not the Mini — that is how Songs became 450. Not calling this done. Sync again without unplugging.`,
+      })
+    }
+
+    const onDevice = readback.tracks.length
+    if (onDevice !== target) {
+      return stop(true, {
+        copied, copyErrors, target, landed: onDevice, shortfall: target - onDevice, verifyAttempts,
+        error: `Catalog on the card lists ${onDevice} of ${target}. Not calling this done.`,
+      })
+    }
+
+    const missingRows: Array<{ title: string; artist: string; path: string }> = []
+    for (const t of readback.tracks as Array<{ path?: string; title?: string; artist?: string }>) {
+      const colon = String(t.path || '')
+      const abs = colon ? join(IPOD_MOUNT, tsaRelFromColon(colon, pathSep)) : ''
+      try {
+        if (!colon) throw new Error('no-path')
+        const sz = (await stat(abs)).size
+        if (sz <= 0) throw new Error('empty')
+      } catch {
+        missingRows.push({ title: String(t.title || ''), artist: String(t.artist || ''), path: colon })
+      }
+    }
+    if (missingRows.length > 0) {
+      const sample = missingRows.slice(0, 8).map((r) => `${r.artist} — ${r.title}`).join('; ')
+      await host.writeReport({
+        syncedAt: new Date().toISOString(), target,
+        landed: onDevice - missingRows.length, shortfall: missingRows.length,
+        verifyPasses: verifyAttempts, copied, copyErrors,
+        failed: missingRows.slice(0, 40).map((r, i) => ({ id: i, title: r.title, artist: r.artist, path: r.path })),
+      })
+      return stop(true, {
+        copied, copyErrors, target, landed: onDevice - missingRows.length, shortfall: missingRows.length, verifyAttempts,
+        error: `Sync verify failed: ${missingRows.length} of ${onDevice} catalog songs are not on the card. Firmware 1.4.1 aborts Songs, it does not skip ${missingRows.length}. ${sample}`,
+      })
+    }
+
+    const semanticScript = host.coreScript('core/tools/itdb_verify.py')
+    const semantic = await new Promise<{ ok: boolean; output: string }>((done) => {
+      const check = spawn(python, [semanticScript, ipodDb, '--root', IPOD_MOUNT, '--expect', String(target)])
+      let output = ''
+      check.stdout.on('data', (d: Buffer) => { output += d.toString() })
+      check.stderr.on('data', (d: Buffer) => { output += d.toString() })
+      check.on('error', (err: Error) => done({ ok: false, output: safeIpcError(err, 'tool-failed') }))
+      check.on('close', (checkCode: number) => done({ ok: checkCode === 0, output }))
+    })
+    if (!semantic.ok) {
+      console.error(`activity-sync: FIRMWARE SEMANTIC VALIDATION FAILED:\n${semantic.output}`)
+      await host.writeReport({
+        syncedAt: new Date().toISOString(), target, landed: 0, shortfall: target,
+        verifyPasses: verifyAttempts, copied, copyErrors,
+        failed: [{ id: 0, title: 'iTunesDB semantic validation failed', artist: '', path: '' }],
+      })
+      return stop(true, {
+        copied, copyErrors, target, landed: 0, shortfall: target, verifyAttempts,
+        error: `The ${target} files are on the iPod, but its catalog contains firmware-invalid song records. JakeTunes refused to claim success. Sync again to rebuild the catalog.`,
+      })
+    }
+    console.log(`activity-sync: firmware-semantic validation GREEN for all ${target} tracks`)
+
+    // A new catalog is a new play-count generation. The writer is not
+    // byte-deterministic today, so the sha1 always moves; if it ever stops
+    // moving, the round trip must still start counting from zero for this
+    // catalog (the old Play Counts was ingested before the sync and retired).
+    const playCountsLeft = await stat(join(IPOD_MOUNT, 'iPod_Control', 'iTunes', 'Play Counts')).then(() => true, () => false)
+    await startRoundTripGeneration(host.stateDir, cardBytes, playCountsLeft)
+      .catch((err) => console.warn('activity-sync: round-trip generation note failed (non-blocking):', err))
+
+    // The card's catalog has changed: say which song each record is, so the
+    // round trip and the iPod's identity can map it even if nothing after
+    // this finishes. Unsealed — a swap never trusts it.
+    try {
+      await host.writeManifest({
+        syncedAt: new Date().toISOString(),
+        status: interim ? 'interim' : 'catalogued',
+        sealed: false,
+        count: target,
+        tracks: tracks.map((t) => ({
+          id: Number(t.id),
+          destPath: relOf(dstById.get(Number(t.id)) || ''),
+          identity: identityById.get(Number(t.id)) || '',
+        })),
+      })
+    } catch (mErr) {
+      console.warn(`activity-sync: ${kind} manifest write failed (non-fatal):`, mErr)
+    }
+    return { ok: true, tracks, readback, md5: contig.md5, bytes: contig.bytes }
+  }
+
+  // The card is about to change: from here until a new seal, the last
+  // sync's seal no longer describes it. (Cleared here, not before Prepare:
+  // a refusal that never touched the card keeps the last seal, so the next
+  // Sync can still swap.)
+  await host.clearSeal()
+  try {
+    await host.writeManifest({
+      syncedAt: new Date().toISOString(),
+      status: 'in-flight',
+      sealed: false,
+      count: target,
+      tracks: tracks.map((t) => ({
+        id: Number(t.id),
+        title: String(t.title || ''),
+        artist: String(t.artist || ''),
+        album: String(t.album || ''),
+      })),
+    })
+    console.log(`activity-sync: MANIFEST in-flight — ${target} songs boarded, not sealed`)
+  } catch (mErr) {
+    console.warn('activity-sync: manifest write failed (non-fatal):', mErr instanceof Error ? mErr.message : mErr)
+  }
+
+  // ── 3. Remove (swap) or wipe (full) ──
+  if (swap && swap.leave.length > 0) {
+    // First the card gets a catalog of only the songs that stay. From then
+    // on, deleting a leaving song can't leave the iPod pointing at nothing.
+    const out = swap.leave.length
+    host.sendProgress({ phase: 'copy', current: 0, total: out, mode, title: `Removing ${out.toLocaleString()} song${out === 1 ? '' : 's'} leaving the iPod…` })
+    const stayIds = keepIds
+    const stayTracks = tracks.filter((t) => stayIds.has(Number(t.id)))
+    const stayPlaylists = playlists
+      .map((p) => ({ ...p, trackIds: (Array.isArray(p.trackIds) ? p.trackIds : []).filter((id) => stayIds.has(Number(id))) }))
+      .filter((p) => p.trackIds.length > 0)
+    const interim = await putCatalog(stayTracks, stayPlaylists, 'interim', new Map([...stayRows].map(([id, r]) => [id, r.size])))
+    if (!interim.ok) return swapStop(interim.result)
+    cataloguedAbs = new Set(keepAbs)
+    host.sendProgress({ phase: 'copy', current: 0, total: out, mode, title: `Removing ${out.toLocaleString()} song${out === 1 ? '' : 's'} — the iPod now lists the ${stayIds.size.toLocaleString()} that stay` })
+  } else if (!swap) {
+    host.sendProgress({ phase: 'copy', current: 0, total: 1, mode, title: 'Wiping the iPod for a clean rebuild…' })
+  }
+  if (!swap || swap.leave.length > 0) {
+    let wiped = 0
+    try {
+      let streak = 0
+      let listedNow: string[] = []
+      for (let pass = 0; pass < ACTIVITY_WIPE_MAX_PASSES; pass++) {
+        const listed = await listIpodMusicFiles(IPOD_MOUNT)
+        for (const p of listed) {
+          if (keepAbs.has(p)) continue
+          try { await unlink(p); wiped++ } catch { /* retry */ }
+        }
+        listedNow = await listIpodMusicFiles(IPOD_MOUNT)
+        streak = keepStreak(wipeListingMatchesKeep(listedNow, keepAbs), streak)
+        console.log(`activity-sync: ${swap ? 'REMOVE' : 'WIPE'} pass ${pass + 1}/${ACTIVITY_WIPE_MAX_PASSES} listed=${listed.length} now=${listedNow.length} keep=${keepAbs.size} streak=${streak}`)
+        if (streak >= ACTIVITY_WIPE_EMPTY_STREAK) break
+        await new Promise((r) => setTimeout(r, 250))
+      }
+      if (streak < ACTIVITY_WIPE_EMPTY_STREAK) {
+        const extra = listedNow.filter((p) => !keepAbs.has(p)).length
+        const missing = [...keepAbs].filter((p) => !listedNow.includes(p)).length
+        return fail({
+          copied: 0,
+          error: `Activity wipe could not settle the iPod (${extra} leftover file${extra === 1 ? '' : 's'}, ${missing} kept file${missing === 1 ? '' : 's'} vanished). Reseat the cable and sync again — nothing new was copied.`,
+          target,
+        })
+      }
+      await retireScratch(IPOD_MOUNT, swap ? 'after remove' : 'after wipe')
+      console.log(`activity-sync: ${swap ? 'REMOVE' : 'WIPE'} deleted ${wiped} file(s) — card holds exactly the ${keepAbs.size} kept, rebuilding to ${target}`)
+    } catch (e) {
+      return fail({
+        copied: 0,
+        error: `Activity wipe failed (${e instanceof Error ? e.message : String(e)}). Nothing was copied.`,
+        target,
+      })
+    }
+  }
+
   // ── 3b. Copy what is not already there ──
-  const writtenById = new Map<number, { srcPath: string; dstPath: string; expectedSize: number }>()
   const restageById = new Map<number, { colon: string; id: number }>()
   for (const e of plan) if (e.restage) restageById.set(e.id, e.restage)
   const prepareSource = async (entry: { id: number; localFile: string }): Promise<{ abs: string; cleanup: () => Promise<void> }> => {
@@ -846,24 +1274,21 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     if (!staged.ok) throw new Error(staged.error)
     return { abs: staged.abs, cleanup: staged.cleanup }
   }
-  let copied = 0
-  let kept = 0
-  let copyErrors = 0
+  // Copy counts only arrivals: a song that stays is not copied and says nothing.
+  const copyTotal = Math.max(1, target - keepIds.size)
 
   for (const e of plan) {
     if (writtenById.size >= target) break   // #47: N reached — the rest were reserves
     if (host.isCancelled()) {
-      host.sendProgress({ phase: 'cancelled', current: copied + kept + copyErrors, total: target, title: '' })
-      return rewipeAndStop({ ok: false, copied, kept, copyErrors, cancelled: true, error: 'Sync cancelled by user', target })
+      host.sendProgress({ phase: 'cancelled', current: copied, total: copyTotal, title: '' })
+      return stopAfterTouch({ ok: false, copied, kept, copyErrors, cancelled: true, error: 'Sync cancelled by user', target })
     }
-    if (keep.keepIds.has(e.id)) {
-      const sz = cardSizeById.get(e.id) ?? srcSizeById.get(e.id) ?? 0
-      writtenById.set(e.id, { srcPath: e.srcToCopy, dstPath: e.dstToCopy, expectedSize: sz })
+    if (keepIds.has(e.id)) {
+      writtenById.set(e.id, { srcPath: e.srcToCopy, dstPath: e.dstToCopy, expectedSize: stayRows.get(e.id)?.size ?? 0 })
       kept++
-      host.sendProgress({ phase: 'copy', current: copied + kept + copyErrors, total: target, title: `Kept: ${e.title}` })
       continue
     }
-    host.sendProgress({ phase: 'copy', current: copied + kept + copyErrors, total: target, title: e.title })
+    host.sendProgress({ phase: 'copy', current: copied + copyErrors, total: copyTotal, title: e.title })
     let copySrc = e.srcToCopy
     let release = async () => {}
     if (e.restage) {
@@ -889,7 +1314,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
       const sz = (await stat(copySrc)).size
       writtenById.set(e.id, { srcPath: e.srcToCopy, dstPath: e.dstToCopy, expectedSize: sz })
       copied++
-      host.sendProgress({ phase: 'copy', current: copied + kept + copyErrors, total: target, title: e.title })
+      host.sendProgress({ phase: 'copy', current: copied + copyErrors, total: copyTotal, title: e.title })
     } catch (err) {
       console.error(`activity-sync: copy failed for "${e.title}":`, err)
       copyErrors++
@@ -907,7 +1332,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     destPath: ipodPlayableDestPath(String(t.path || '')),
   }))
   if (copied + kept !== target || writtenById.size !== target || tracks.length !== target) {
-    return rewipeAndStop(fail({
+    return stopAfterTouch(fail({
       copied, kept, copyErrors, target, landed: writtenById.size,
       shortfall: target - writtenById.size,
       error: `Only ${writtenById.size} of ${target} songs confirmed on the card after copy. Not writing a catalog — that is how Songs became 486. Sync again.`,
@@ -917,9 +1342,9 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     console.warn(`activity-sync: ${copyErrors} copy miss(es) replaced — still ${target}/${target} on the card`)
   }
 
-  // ── 4. Prove N files across remounts ──
+  // ── 4. Prove N files across remounts (the whole set, staying songs too) ──
   if (!host.isMac) {
-    return rewipeAndStop(fail({
+    return stopAfterTouch(fail({
       copied, copyErrors, target,
       error: 'Activity Sync can only prove the card on macOS (cold remount). Nothing was sealed.',
     }))
@@ -930,6 +1355,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     const remembered = writtenById.get(id)!
     return { id, dstPath: remembered.dstPath, localFile: remembered.srcPath, expectedSize: remembered.expectedSize }
   })
+  const provenSize = new Map(verify.map((v) => [v.id, v.expectedSize]))
 
   host.sendProgress({
     phase: 'verify', current: 1, total: 16,
@@ -940,12 +1366,13 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     label: 'activity-files',
     isCancelled: () => host.isCancelled(),
     prepareSource,
+    remount: remountVolume,
   })
   let landedIds = verified.landedIds
-  let verifyAttempts = verified.attempts
+  verifyAttempts = verified.attempts
 
   if (verified.remountFailed && landedIds.size === 0) {
-    return rewipeAndStop(fail({
+    return stopAfterTouch(fail({
       copied, copyErrors, target, landed: 0, shortfall: target, verifyAttempts,
       error: 'Could not verify the iPod (remount failed after writing). The mount cache lies on this card — sync again without unplugging. No catalog was written.',
     }))
@@ -1013,225 +1440,21 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   }
 
   if (!activitySetProven(consecutiveFull, landedIds.size, target)) {
-    return rewipeAndStop(fail({
+    return stopAfterTouch(fail({
       copied, copyErrors, target, landed: landedIds.size, shortfall: target - landedIds.size, verifyAttempts,
       error: `Only ${landedIds.size} of ${target} songs held across two remounts. Not writing a catalog (N means N). Sync again.`,
     }))
   }
 
-  // Stamp iTunesDB sizes from the card, not library.json.
-  // Write tracks in firmware-fold title order so Music > Songs is A–Z
-  // even if type-52 key 3 (Songs) is discarded. stamp sortArtist for mhod 22
-  // (Artists). mhia + the type-52 tables (3 Songs, 4 Albums, 5 Artists,
-  // 7 Genres) are built inside write_itunesdb.
-  tracks = orderTracksForIpodTitleIndex(tracks.map((t) => stampIpodSortArtist(t)))
-  for (const t of tracks) {
-    const remembered = writtenById.get(Number(t.id))
-    if (!remembered) continue
-    try {
-      const sz = (await stat(remembered.dstPath)).size
-      t.fileSize = fileSizeForItunesDb(sz)
-      t.sampleRate = sampleRateForItunesDb(t.sampleRate as number | undefined)
-      remembered.expectedSize = sz
-    } catch { /* prove already passed */ }
-    if (!String(t.title || '').trim()) {
-      const base = String(t.path || '').split(':').pop() || 'Unknown'
-      t.title = base.replace(/\.[^.]+$/, '') || 'Unknown'
-    }
-    if (!String(t.artist || '').trim()) t.artist = String(t.albumArtist || t.album || 'Unknown Artist')
+  // ── 5. The whole set's catalog (always rebuilt in full: the firmware's
+  // order, id and sort-table rules hold for the whole set, never a splice) ──
+  const catalog = await putCatalog(tracks, playlists, 'final', provenSize)
+  if (!catalog.ok) {
+    if (swap) return swapStop(catalog.result)
+    return catalog.touchedCard ? catalog.result : rewipeAndStop(catalog.result)
   }
-  const unlistable = tracks.filter((t) => !ipodFirmwareWillList(t))
-  if (unlistable.length > 0) {
-    return rewipeAndStop(fail({
-      copied, copyErrors, target, landed: target - unlistable.length, shortfall: unlistable.length, verifyAttempts,
-      error: `${unlistable.length} song(s) Mini 1.4.1 will not list. Not writing a catalog. ${unlistable.slice(0, 3).map((t) => `${t.artist} — ${t.title}`).join('; ')}`,
-    }))
-  }
-
-  // The catalog is written alphabetically (artist > album > track). The
-  // 2026-08-28 belief that Mini 1.4.1 lists Artists in this PHYSICAL order
-  // was wrong: its Music menus read the type-52 tables, which db_reader
-  // had keyed in the wrong numbering until 2026-10-17 (see _sort_indices).
-  // The physical order stays — harmless, and conformCatalogIdOrder re-mints
-  // ids against it. Playlists reference dbids, so their order is untouched.
-  tracks = orderForIpodCatalog(tracks)
-
-  // ── 5. Build catalog locally, copy to CF, prove bytes+hash+N ──
-  await host.writeJournal('db')
-  host.sendProgress({ phase: 'db', current: 0, total: 1, title: 'Writing iTunesDB...' })
-  const ipodDb = join(IPOD_MOUNT, 'iPod_Control', 'iTunes', 'iTunesDB')
-  try { await copyFile(ipodDb, ipodDb + '.bak') } catch { /* non-fatal */ }
-  const localDb = join(host.tempDir, `jaketunes-itunesdb-${host.pid}`)
-  const written = await spawnJson(
-    python,
-    [host.coreScript('core/db_reader.py'), '--write', localDb, '--template', ipodDb, '--ipod-root', IPOD_MOUNT],
-    JSON.stringify({ tracks, playlists, masterName: input.ipodName }),
-  )
-  if (written.err && (written.err as NodeJS.ErrnoException).code === 'ENOENT') {
-    return rewipeAndStop(fail({ copied, copyErrors, error: host.pythonHint || PYTHON_INSTALL_HINT, target }))
-  }
-  if (written.code !== 0) {
-    try { await unlink(localDb) } catch { /* temp */ }
-    return rewipeAndStop(fail({
-      copied, copyErrors, target,
-      error: safeIpcError(`DB write failed (code ${written.code}): ${written.stderr}`, 'tool-failed'),
-    }))
-  }
-  console.log('activity-sync stderr:', written.stderr)
-  // Firmware finds songs by binary search on mhit id — ids must ascend in
-  // record order or songs silently vanish from About (the 819 saga).
-  const conform = await conformCatalogIdOrder(localDb)
-  if (!conform.ok) {
-    try { await unlink(localDb) } catch { /* temp */ }
-    await retireScratch(IPOD_MOUNT, 'catalog order conform failed')
-    return rewipeAndStop(fail({
-      copied, copyErrors, target,
-      error: `The catalog could not be conformed to firmware id order (${conform.error}). Previous catalog is untouched. Sync again.`,
-    }))
-  }
-  console.log(`activity-sync: ${conform.summary}`)
-  const contig = await ensureContiguousDb(localDb, python)
-  console.log(`activity-sync: ${contig.summary}`)
-  if (!contig.ok) {
-    try { await unlink(localDb) } catch { /* temp */ }
-    await retireScratch(IPOD_MOUNT, 'catalog contiguity failed')
-    return rewipeAndStop(fail({
-      copied, copyErrors, target,
-      error: `The catalog was written but could not be laid down as one piece (${contig.error}). Previous catalog is untouched. Sync again.`,
-    }))
-  }
-  host.sendProgress({ phase: 'db', current: 1, total: 1, title: 'iTunesDB written' })
-
-  host.sendProgress({
-    phase: 'db', current: 1, total: 1,
-    title: `Putting the ${target}-song catalog on the card…`,
-  })
-  let catalogConsecutive = 0
-  let readback: { tracks: Array<Record<string, unknown>> } | null = null
-  const CATALOG_PROOF_ROUNDS = 4
-  for (let round = 1; round <= CATALOG_PROOF_ROUNDS; round++) {
-    if (catalogConsecutive === 0) {
-      try {
-        await copyFile(localDb, ipodDb)
-        const conf = await confirmWriteOnCard(localDb, ipodDb)
-        if (!conf.ok) {
-          console.error(`activity-sync: catalog copy not confirmed (${conf.reason})`)
-          continue
-        }
-      } catch (copyErr) {
-        console.error('activity-sync: catalog copy onto the card failed:', copyErr)
-        continue
-      }
-    }
-    await retireScratch(IPOD_MOUNT, 'after catalog copy')
-    const flush = await remountVolume(IPOD_MOUNT)
-    if (!flush.ok) {
-      await retireScratch(IPOD_MOUNT, 'remount failed after catalog copy')
-      try { await unlink(localDb) } catch { /* temp */ }
-      return fail({
-        copied, copyErrors, target, landed: 0, shortfall: target, verifyAttempts,
-        error: `The catalog file never made it onto the card — remount failed (${flush.error}). The Mini does not have ${target} songs. Do not unplug — sync again.`,
-      })
-    }
-    host.setDetectedMount(flush.mountPoint || IPOD_MOUNT)
-    await retireScratch(flush.mountPoint || IPOD_MOUNT, 'after remount')
-    let onCard: Buffer
-    try {
-      onCard = await readFile(ipodDb)
-    } catch {
-      catalogConsecutive = 0
-      continue
-    }
-    const cardMd5 = createHash('md5').update(onCard).digest('hex')
-    try {
-      readback = await host.readIpodDatabase()
-    } catch {
-      catalogConsecutive = 0
-      continue
-    }
-    const match = catalogBytesMatch({
-      onCardBytes: onCard.length,
-      localBytes: contig.bytes,
-      onCardMd5: cardMd5,
-      localMd5: contig.md5,
-      trackCount: readback.tracks.length,
-      target,
-    })
-    console.log(`activity-sync: catalog proof ${round}/${CATALOG_PROOF_ROUNDS} — card ${onCard.length}b md5 ${cardMd5.slice(0, 8)} tracks=${readback.tracks.length} vs local ${contig.bytes}b md5 ${contig.md5.slice(0, 8)} target=${target} match=${match}`)
-    if (match) {
-      catalogConsecutive++
-      if (catalogOnCardProven(catalogConsecutive, match)) {
-        console.log(`activity-sync: catalog ON CARD — ${target} tracks, ${contig.bytes} bytes, held across two remounts`)
-        break
-      }
-    } else {
-      catalogConsecutive = 0
-    }
-  }
-  try { await unlink(localDb) } catch { /* temp */ }
-  if (!readback || !catalogOnCardProven(catalogConsecutive, catalogConsecutive >= 2)) {
-    return fail({
-      copied, copyErrors, target, landed: 0, shortfall: target, verifyAttempts,
-      error: `The ${target}-song catalog never committed to the card. Mac cache is not the Mini — that is how Songs became 450. Not calling this done. Sync again without unplugging.`,
-    })
-  }
-
-  const onDevice = readback.tracks.length
-  if (onDevice !== target) {
-    return fail({
-      copied, copyErrors, target, landed: onDevice, shortfall: target - onDevice, verifyAttempts,
-      error: `Catalog on the card lists ${onDevice} of ${target}. Not calling this done.`,
-    })
-  }
-
-  const missingRows: Array<{ title: string; artist: string; path: string }> = []
-  for (const t of readback.tracks as Array<{ path?: string; title?: string; artist?: string }>) {
-    const colon = String(t.path || '')
-    const abs = colon ? join(IPOD_MOUNT, tsaRelFromColon(colon, pathSep)) : ''
-    try {
-      if (!colon) throw new Error('no-path')
-      const sz = (await stat(abs)).size
-      if (sz <= 0) throw new Error('empty')
-    } catch {
-      missingRows.push({ title: String(t.title || ''), artist: String(t.artist || ''), path: colon })
-    }
-  }
-  if (missingRows.length > 0) {
-    const sample = missingRows.slice(0, 8).map((r) => `${r.artist} — ${r.title}`).join('; ')
-    await host.writeReport({
-      syncedAt: new Date().toISOString(), target,
-      landed: onDevice - missingRows.length, shortfall: missingRows.length,
-      verifyPasses: verifyAttempts, copied, copyErrors,
-      failed: missingRows.slice(0, 40).map((r, i) => ({ id: i, title: r.title, artist: r.artist, path: r.path })),
-    })
-    return fail({
-      copied, copyErrors, target, landed: onDevice - missingRows.length, shortfall: missingRows.length, verifyAttempts,
-      error: `Sync verify failed: ${missingRows.length} of ${onDevice} catalog songs are not on the card. Firmware 1.4.1 aborts Songs, it does not skip ${missingRows.length}. ${sample}`,
-    })
-  }
-
-  const semanticScript = host.coreScript('core/tools/itdb_verify.py')
-  const semantic = await new Promise<{ ok: boolean; output: string }>((done) => {
-    const check = spawn(python, [semanticScript, ipodDb, '--root', IPOD_MOUNT, '--expect', String(target)])
-    let output = ''
-    check.stdout.on('data', (d: Buffer) => { output += d.toString() })
-    check.stderr.on('data', (d: Buffer) => { output += d.toString() })
-    check.on('error', (err: Error) => done({ ok: false, output: safeIpcError(err, 'tool-failed') }))
-    check.on('close', (checkCode: number) => done({ ok: checkCode === 0, output }))
-  })
-  if (!semantic.ok) {
-    console.error(`activity-sync: FIRMWARE SEMANTIC VALIDATION FAILED:\n${semantic.output}`)
-    await host.writeReport({
-      syncedAt: new Date().toISOString(), target, landed: 0, shortfall: target,
-      verifyPasses: verifyAttempts, copied, copyErrors,
-      failed: [{ id: 0, title: 'iTunesDB semantic validation failed', artist: '', path: '' }],
-    })
-    return fail({
-      copied, copyErrors, target, landed: 0, shortfall: target, verifyAttempts,
-      error: `The ${target} files are on the iPod, but its catalog contains firmware-invalid song records. JakeTunes refused to claim success. Sync again to rebuild the catalog.`,
-    })
-  }
-  console.log(`activity-sync: firmware-semantic validation GREEN for all ${target} tracks`)
+  tracks = catalog.tracks
+  const readback = catalog.readback
 
   // ── 6. TSA by identity, then seal ──
   host.sendProgress({
@@ -1288,12 +1511,18 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     await host.writeSeal(seal)
     console.log(`activity-sync: TSA sealed ${seal.target} songs — plug-in will inspect, not auto-sync`)
     try {
+      // The swap's proof: this catalog's bytes and every file's size, so the
+      // next Sync can trust the card and move only what changes.
       await host.writeManifest({
+        format: SWAP_MANIFEST_FORMAT,
         syncedAt: seal.sealedAt,
         status: 'sealed',
         sealed: true,
         count: seal.target,
-        tracks: seal.passengers.map((p) => ({ id: p.id, destPath: p.destPath, identity: p.identity })),
+        catalog: { md5: catalog.md5, bytes: catalog.bytes },
+        tracks: seal.passengers.map((p) => ({
+          id: p.id, destPath: p.destPath, identity: p.identity, size: p.expectedSize, sourceSize: masterSizeById.get(p.id) || 0,
+        })),
       })
     } catch (mErr) {
       console.warn('activity-sync: sealed, but last-sync-manifest update failed:', mErr)
@@ -1324,10 +1553,20 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     copyErrors,
     failed: [],
   })
+  const counts = swapCounts()
+  const changedNote = counts && counts.changed > 0
+    ? ` ${counts.changed.toLocaleString()} of them ${counts.changed === 1 ? 'was' : 'were'} re-copied because the library file changed.`
+    : ''
+  const summary = counts
+    ? swapResultLine(counts.out, counts.in, counts.stayed) + changedNote
+    : fullCopyLine(fullReason || 'nothing to keep')
+  console.log(`activity-sync: ${summary}`)
+  host.sendProgress({ phase: 'verify', current: 1, total: 1, title: 'Sealed', mode, summary })
   try {
     await appendFile(join(host.stateDir, 'activity-sync-ledger.jsonl'), JSON.stringify({
       kind: 'result', when: new Date().toISOString(), picksWhen: ledgerWhen,
       target, landed: target, sealedOk, copied, copyErrors,
+      mode, ...(counts ? { swap: counts } : { fullReason }),
       ...(unconvertible.length > 0 ? { unconvertible: unconvertible.map((u) => u.id) } : {}),
       ...(listOnly ? { requested } : {}),
       ...(leftOff.length > 0 ? { leftOff: leftOff.map((l) => ({ id: l.id, t: l.title, a: l.artist, why: l.why })) } : {}),
@@ -1342,6 +1581,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   return {
     ok: sealedOk,
     copied,
+    kept,
     copyErrors,
     totalTracks: tracks.length,
     target,
@@ -1352,6 +1592,21 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     ...(unconvertible.length > 0 ? { unconvertible } : {}),
     ...(listOnly ? { requested } : {}),
     ...(leftOff.length > 0 ? { leftOff } : {}),
+    mode,
+    ...(counts ? { swap: counts } : { fullReason: fullReason || undefined }),
+    summary,
     error: sealedOk ? undefined : `Activity set of ${target} did not seal. Not calling this a success.`,
   }
+}
+
+/** What the card holds, read without writing: every music file's size, and
+ *  the catalog's digest and id order. */
+async function readCardState(mount: string): Promise<CardState> {
+  const files = new Map<string, number>()
+  for (const abs of await listIpodMusicFiles(mount)) {
+    const sz = (await stat(abs).catch(() => null))?.size
+    if (sz !== undefined) files.set(tsaNormalizeColonPath(abs.startsWith(mount) ? abs.slice(mount.length + 1) : abs), sz)
+  }
+  const db = await readFile(join(mount, 'iPod_Control', 'iTunes', 'iTunesDB')).catch(() => null)
+  return { files, catalog: db ? catalogDigest(db) : null, catalogIdsAscend: db ? catalogIdsAscend(db) : null }
 }

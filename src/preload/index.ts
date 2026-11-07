@@ -770,8 +770,8 @@ const electronAPI = {
     ipcRenderer.on('ipod-roundtrip', handler)
     return () => { ipcRenderer.removeListener('ipod-roundtrip', handler) }
   },
-  onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'verify' | 'db' | 'cancelled' | 'error'; current: number; total: number; title: string }) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, progress: { phase: 'copy' | 'preflight' | 'verify' | 'db' | 'cancelled' | 'error'; current: number; total: number; title: string }) => callback(progress)
+  onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'verify' | 'db' | 'cancelled' | 'error'; current: number; total: number; title: string; mode?: 'swap' | 'full'; summary?: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: { phase: 'copy' | 'preflight' | 'verify' | 'db' | 'cancelled' | 'error'; current: number; total: number; title: string; mode?: 'swap' | 'full'; summary?: string }) => callback(progress)
     ipcRenderer.on('sync-progress', handler)
     return () => { ipcRenderer.removeListener('sync-progress', handler) }
   },
