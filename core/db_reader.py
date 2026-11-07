@@ -751,8 +751,8 @@ def ipod_artist_sort_key(name, sort_artist=None):
 
     Activity sync used to emit mhia records in picker/score order, so the
     Mini's Artists menu was first-seen, not alphabetical. sortArtist wins
-    when present. Do NOT use this for type-52 mhod tables — those must
-    stay on _fold() or firmware discards out-of-order Songs rows.
+    when present. The type-52 tables use it through menu_sort_text, which
+    _fold()s the result (accents: firmware discards out-of-order rows).
     """
     raw = str(sort_artist or '').strip() or str(name or '')
     s = raw.strip().lower()
@@ -803,7 +803,7 @@ def album_tuples_for_itunesdb(tracks):
 
     mhia is not a type-52 table, so article-strip is legal here: album
     title (sortAlbum when present; leading The/A/An per artist-sort).
-    Artists menu stays A–Z via mhod 22 + type-52 key 4 — not via this
+    Artists menu stays A–Z via mhod 22 + type-52 key 5 — not via this
     list's first-seen artist order (that was the #47 Artists fix; Albums
     now owns mhia order).
 
@@ -876,11 +876,40 @@ def music_menu_sort_keys(existing_sort_keys):
     return keys
 
 
-def firmware_sort_text(track, field, sort_field=None):
-    """String type-52 _fold() sees. Explicit sortTitle/sortAlbum win.
+# Kill switch for the leading-article rule in the type-52 tables (2026-11-07).
+# If this file exists, _sort_indices sorts exactly as it did before:
+# 'The Strokes' under T. No build needed: `touch` it, sync again.
+# ⚠️ TWIN: src/main/ipod-artist-sort.ts IPOD_SORT_KEEP_THE_FILE
+IPOD_SORT_KEEP_THE_FILE = os.path.join('~', '.config', 'jaketunes', 'ipod-sort-keep-the')
 
-    Do NOT pass stamped sortArtist here for key 4 — that label strips
-    'The ' and firmware will discard the table as out-of-order.
+
+def ipod_sort_keeps_the():
+    """True when the kill-switch file exists (old 'The under T' tables)."""
+    return os.path.exists(os.path.expanduser(IPOD_SORT_KEEP_THE_FILE))
+
+
+def menu_sort_text(track, field, sort_field=None):
+    """Music-menu sort string for one type-52 text component (2026-11-07).
+
+    The explicit sort field (sortTitle / sortAlbum / sortArtist) when the
+    track has one, else the display text; leading punctuation and a
+    leading 'The '/'A '/'An ' dropped exactly like ipod_artist_sort_key
+    (which is the desktop app's artistSortName), then _fold() for
+    accents, quotes and case. 'The Strokes' sorts as 'strokes', 'The Dark
+    Side of the Moon' as 'dark side of the moon', 'Tiësto' as 'tiesto'.
+
+    ⚠️ TWIN: src/main/ipod-artist-sort.ts ipodMenuSortText
+    """
+    explicit = track.get(sort_field) if sort_field else None
+    return _fold(ipod_artist_sort_key(track.get(field, ''), explicit))
+
+
+def firmware_sort_text(track, field, sort_field=None):
+    """String type-52 _fold() sees under the kill switch (old rule).
+    Explicit sortTitle/sortAlbum win.
+
+    The old rule never passed stamped sortArtist for the Artists key —
+    that label strips 'The '. The current rule is menu_sort_text.
     """
     if sort_field:
         s = str(track.get(sort_field) or '').strip()
@@ -895,9 +924,10 @@ def _fold(s):
     out-of-order. Python codepoint .lower() files 'Tiësto' after 'Tz' and
     'Entrañas' after 'Entz'; the firmware collates ë→e, ñ→n — those 36
     accented tracks vanished from Music > Songs. NFKD-strip combining
-    marks, normalize typographic quotes/dashes, casefold. Do NOT strip
-    a leading 'The ' — the firmware doesn't for our tables (proven by
-    the surviving The-prefixed artists).
+    marks, normalize typographic quotes/dashes, casefold. This fold does
+    not strip a leading 'The '; menu_sort_text strips it before folding
+    (2026-11-07 — the July "firmware keeps The" reading was taken while
+    the table key numbers were rotated, see _sort_indices).
     ⚠️ TWIN: src/main/ipod-artist-sort.ts ipodFirmwareFold
     ⚠️ TWIN in spirit: any future sort-table writer must use this fold."""
     import unicodedata
@@ -911,11 +941,29 @@ def _fold(s):
 def _sort_indices(tracks, sort_key):
     """Return list of track indices sorted by the given sort key.
 
-    Type-52 MUST use _fold() (firmware collation). Never article-strip
-    a leading 'The '/'A '/'An ' here — Mini 1.4.1 discards the table
-    (Tiësto / Entrañas / The-prefixed rows vanish from Songs).
-    sortAlbum / sortTitle are folded when present; the artist key (5)
-    always folds the display artist, not stamped sortArtist.
+    Every text component goes through menu_sort_text (2026-11-07, Jake:
+    "artists and songs and albums starting with the word 'the' are
+    categorized under 'T'. shouldnt be that way"): the explicit sort
+    field when present (sortTitle / sortAlbum / sortArtist — the
+    activity engine stamps sortArtist, mhod 22's 'Beatles'), else the
+    display text with leading punctuation and The/A/An dropped, then
+    _fold(). So 'The Strokes' sorts under S, 'The Dark Side of the Moon'
+    under D, 'The End' under E — the desktop app's own order. Genre
+    NAMES are not article-stripped. Accent folding stays: that part is
+    proven (36 accented songs vanished from Songs before _fold, 07-21).
+
+    Why this was 'The under T' until now: on 07-21 the surviving
+    The-prefixed artists were read as proof the firmware keeps 'The'.
+    But until 10-17 the key numbers were rotated (below), so that
+    evidence came from tables filed under the wrong menus. Unproven
+    either way; Jake's next red-iPod sync (500 songs) is the test —
+    About must still say 500.
+
+    Kill switch, no build: if ~/.config/jaketunes/ipod-sort-keep-the
+    exists (IPOD_SORT_KEEP_THE_FILE), this behaves exactly as before:
+    _fold() of the display text, sortTitle / sortAlbum honoured, the
+    Artists key folds the display artist and ignores sortArtist. The
+    TS twin (ipod-artist-sort.ts) reads the same file.
 
     Key numbers are the FIRMWARE's (libgpod MHOD52_SORTTYPE): 3 = title
     (Songs), 4 = album (Albums), 5 = artist (Artists), 7 = genre (Genres).
@@ -925,31 +973,50 @@ def _sort_indices(tracks, sort_key):
     Twin Tribes, BELLA, DJ Split", which is exactly the first-seen artist
     order of the GENRE-sorted table we had written under key 5.
     """
+    if ipod_sort_keeps_the():
+        def title(t):
+            return _fold(firmware_sort_text(t, 'title', 'sortTitle'))
+
+        def album(t):
+            return _fold(firmware_sort_text(t, 'album', 'sortAlbum'))
+
+        def artist(t):
+            return _fold(t.get('artist', ''))
+    else:
+        def title(t):
+            return menu_sort_text(t, 'title', 'sortTitle')
+
+        def album(t):
+            return menu_sort_text(t, 'album', 'sortAlbum')
+
+        def artist(t):
+            return menu_sort_text(t, 'artist', 'sortArtist')
+
     def key_fn(idx):
         t = tracks[idx]
         if sort_key == 3:  # title — Music > Songs
-            return (_fold(firmware_sort_text(t, 'title', 'sortTitle')),)
+            return (title(t),)
         elif sort_key == 4:  # album — Music > Albums
-            return (_fold(firmware_sort_text(t, 'album', 'sortAlbum')),
+            return (album(t),
                     int(t.get('discNumber', 0) or 0),
                     int(t.get('trackNumber', 0) or 0))
-        elif sort_key == 5:  # artist — Music > Artists (firmware fold)
-            return (_fold(t.get('artist', '')),
-                    _fold(firmware_sort_text(t, 'album', 'sortAlbum')),
+        elif sort_key == 5:  # artist — Music > Artists
+            return (artist(t),
+                    album(t),
                     int(t.get('discNumber', 0) or 0),
                     int(t.get('trackNumber', 0) or 0))
-        elif sort_key == 7:  # genre — Music > Genres
+        elif sort_key == 7:  # genre — Music > Genres (name never article-stripped)
             return (_fold(t.get('genre', '')),
-                    _fold(t.get('artist', '')),
-                    _fold(firmware_sort_text(t, 'album', 'sortAlbum')))
+                    artist(t),
+                    album(t))
         elif sort_key == 18:  # artist + album + track (secondary sort)
-            return (_fold(t.get('artist', '')),
-                    _fold(firmware_sort_text(t, 'album', 'sortAlbum')),
+            return (artist(t),
+                    album(t),
                     int(t.get('discNumber', 0) or 0),
                     int(t.get('trackNumber', 0) or 0))
         elif sort_key in (35, 36):  # album artist / composer sort
-            return (_fold(t.get('artist', '')),
-                    _fold(firmware_sort_text(t, 'album', 'sortAlbum')),
+            return (artist(t),
+                    album(t),
                     int(t.get('trackNumber', 0) or 0))
         return (idx,)  # unknown key — preserve insertion order
 

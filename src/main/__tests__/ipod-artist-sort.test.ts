@@ -1,11 +1,17 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
+  IPOD_SORT_KEEP_THE_FILE,
   artistSortName,
   compareIpodArtistNames,
   ipodArtistSortKey,
   ipodArtistSortLabel,
   ipodFirmwareFold,
+  ipodMenuSortText,
+  ipodSortKeepsThe,
   orderAlbumsForIpodIndex,
   orderTracksForIpodArtistIndex,
   orderTracksForIpodTitleIndex,
@@ -61,25 +67,51 @@ describe('ipod artist sort — Mini Music > Artists A–Z', () => {
 })
 
 describe('ipod firmware fold — type-52 Songs / Albums / Genres', () => {
-  it('keeps leading The and folds ë→e like db_reader._fold', () => {
+  it('folds ë→e like db_reader._fold; the fold alone keeps The', () => {
     assert.ok(ipodFirmwareFold('The End').startsWith('the '))
     assert.equal(ipodFirmwareFold('Tiësto'), 'tiesto')
     assert.equal(ipodFirmwareFold('Entrañas'), 'entranas')
     assert.ok(ipodFirmwareFold('The Dark Side of the Moon').startsWith('the '))
   })
 
-  it('orders Songs A–Z by firmware-fold title (The End under T, not E)', () => {
-    const tracks = [
-      { id: 1, title: 'The End' },
-      { id: 2, title: 'Taste' },
-      { id: 3, title: 'Come Together' },
-      { id: 4, title: 'One More Time' },
-      { id: 5, title: 'Excursions' },
-      { id: 6, title: 'Time' },
-      { id: 7, title: 'Tiësto' },
-    ]
-    const ordered = orderTracksForIpodTitleIndex(tracks)
-    assert.deepEqual(ordered.map((t) => t.title), [
+  it('menu sort text drops The/A/An, then folds (2026-11-07)', () => {
+    assert.equal(ipodMenuSortText('The End', undefined, false), 'end')
+    assert.equal(ipodMenuSortText('The Dark Side of the Moon', undefined, false, 'album'), 'dark side of the moon')
+    assert.equal(ipodMenuSortText('The Strokes', undefined, false, 'artist'), 'strokes')
+    assert.equal(ipodMenuSortText('Tiësto', undefined, false, 'artist'), 'tiesto')
+    assert.equal(ipodMenuSortText('The Beatles', 'Beatles', false, 'artist'), 'beatles')
+  })
+
+  it('kill switch: menu sort text keeps The and ignores sortArtist', () => {
+    assert.equal(ipodMenuSortText('The End', undefined, true), 'the end')
+    assert.equal(ipodMenuSortText('The Beatles', 'Beatles', true, 'artist'), 'the beatles')
+    assert.equal(ipodMenuSortText('Zebra', 'Apple', true, 'title'), 'apple')
+  })
+
+  const songs = [
+    { id: 1, title: 'The End' },
+    { id: 2, title: 'Taste' },
+    { id: 3, title: 'Come Together' },
+    { id: 4, title: 'One More Time' },
+    { id: 5, title: 'Excursions' },
+    { id: 6, title: 'Time' },
+    { id: 7, title: 'Tiësto' },
+  ]
+
+  it('orders Songs A–Z with The dropped (The End under E)', () => {
+    assert.deepEqual(orderTracksForIpodTitleIndex(songs, false).map((t) => t.title), [
+      'Come Together',
+      'The End',
+      'Excursions',
+      'One More Time',
+      'Taste',
+      'Tiësto',
+      'Time',
+    ])
+  })
+
+  it('kill switch: Songs keep The End under T', () => {
+    assert.deepEqual(orderTracksForIpodTitleIndex(songs, true).map((t) => t.title), [
       'Come Together',
       'Excursions',
       'One More Time',
@@ -90,11 +122,28 @@ describe('ipod firmware fold — type-52 Songs / Albums / Genres', () => {
     ])
   })
 
+  it('reads the kill-switch file under $HOME', () => {
+    const old = process.env.HOME
+    const home = mkdtempSync(join(tmpdir(), 'jt-keep-the-'))
+    try {
+      process.env.HOME = home
+      assert.equal(ipodSortKeepsThe(), false)
+      mkdirSync(join(home, '.config', 'jaketunes'), { recursive: true })
+      writeFileSync(join(home, IPOD_SORT_KEEP_THE_FILE), '')
+      assert.equal(ipodSortKeepsThe(), true)
+      assert.equal(orderTracksForIpodTitleIndex(songs)[4].title, 'The End')
+    } finally {
+      if (old === undefined) delete process.env.HOME
+      else process.env.HOME = old
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
   it('prefers sortTitle as the fold input for Songs', () => {
     const ordered = orderTracksForIpodTitleIndex([
       { id: 1, title: 'Zebra', sortTitle: 'Apple' },
       { id: 2, title: 'Banana' },
-    ])
+    ], false)
     assert.deepEqual(ordered.map((t) => t.id), [1, 2])
   })
 

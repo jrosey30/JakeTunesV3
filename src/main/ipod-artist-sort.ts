@@ -11,9 +11,13 @@
  * ⚠️ TWIN: src/renderer/utils/artistSort.ts artistSortName / compareNames
  * ⚠️ TWIN: core/db_reader.py ipod_artist_sort_key / ipod_artist_sort_label
  *
- * Do NOT use this fold for iTunesDB type-52 sort tables — those must
- * match firmware collation (_fold in db_reader.py) or Songs drops rows.
+ * The iTunesDB type-52 sort tables use this strip too, then the firmware
+ * fold (ipodMenuSortText below; twin of db_reader.py menu_sort_text).
  */
+
+import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
 export function ipodArtistSortKey(artist: string, sortArtist?: string | null): string {
   const raw = (sortArtist && String(sortArtist).trim()) ? String(sortArtist) : String(artist || '')
@@ -109,8 +113,9 @@ export function stampIpodSortArtist<T extends { artist?: unknown; sortArtist?: u
  * ⚠️ TWIN: core/db_reader.py _fold
  *
  * NFKD-strip combining marks, normalize typographic quotes/dashes, casefold.
- * Does NOT strip a leading "The " — Mini 1.4.1 discards out-of-order
- * type-52 rows (Tiësto / Entrañas / The-prefixed titles vanish from Songs).
+ * Accents MUST fold: Mini 1.4.1 discarded out-of-order type-52 rows
+ * (Tiësto / Entrañas vanished from Songs, 2026-07-21). This fold keeps a
+ * leading "The "; ipodMenuSortText strips it first.
  */
 export function ipodFirmwareFold(s: string): string {
   return String(s || '')
@@ -129,31 +134,62 @@ function optionalSortText(display: unknown, sortValue?: unknown): string {
   return String(display || '')
 }
 
-/** Music > Songs write / type-52 key 3 order (firmware fold of sortTitle || title). */
+/**
+ * Kill switch (2026-11-07): when this file exists the type-52 tables and
+ * this module sort exactly as before — "The Strokes" under T.
+ * ⚠️ TWIN: core/db_reader.py IPOD_SORT_KEEP_THE_FILE / ipod_sort_keeps_the.
+ * Both halves read the same file, so they cannot split.
+ */
+export const IPOD_SORT_KEEP_THE_FILE = join('.config', 'jaketunes', 'ipod-sort-keep-the')
+
+export function ipodSortKeepsThe(): boolean {
+  try {
+    return existsSync(join(homedir(), IPOD_SORT_KEEP_THE_FILE))
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Music-menu sort text for one component (title / album / artist).
+ * ⚠️ TWIN: core/db_reader.py menu_sort_text (and the kill-switch branch of
+ * _sort_indices). Explicit sort field when present, else the display text;
+ * leading punctuation and The/A/An dropped (artistSortName), then the
+ * firmware fold. With keepThe, the old rule: fold of sortTitle/sortAlbum ||
+ * display, and the artist ignores sortArtist.
+ */
+export function ipodMenuSortText(
+  display: unknown,
+  sortValue: unknown,
+  keepThe: boolean,
+  field: 'title' | 'album' | 'artist' = 'title',
+): string {
+  if (keepThe) {
+    return ipodFirmwareFold(field === 'artist' ? String(display || '') : optionalSortText(display, sortValue))
+  }
+  return ipodFirmwareFold(ipodArtistSortKey(String(display || ''), sortValue == null ? null : String(sortValue)))
+}
+
+/** Music > Songs write / type-52 key 3 order (ipodMenuSortText of sortTitle || title). */
 export function orderTracksForIpodTitleIndex<T extends {
   title?: unknown
   sortTitle?: unknown
   artist?: unknown
+  sortArtist?: unknown
   album?: unknown
+  sortAlbum?: unknown
   trackNumber?: unknown
-}>(tracks: T[]): T[] {
+}>(tracks: T[], keepThe: boolean = ipodSortKeepsThe()): T[] {
+  const cmp = (a: string, b: string): number => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
   return [...tracks].sort((a, b) => {
-    const c = ipodFirmwareFold(optionalSortText(a.title, a.sortTitle)).localeCompare(
-      ipodFirmwareFold(optionalSortText(b.title, b.sortTitle)),
-      undefined,
-      { numeric: true, sensitivity: 'base' },
-    )
+    const c = cmp(ipodMenuSortText(a.title, a.sortTitle, keepThe, 'title'), ipodMenuSortText(b.title, b.sortTitle, keepThe, 'title'))
     if (c !== 0) return c
-    const art = ipodFirmwareFold(String(a.artist || '')).localeCompare(
-      ipodFirmwareFold(String(b.artist || '')),
-      undefined,
-      { numeric: true, sensitivity: 'base' },
-    )
+    const art = cmp(ipodMenuSortText(a.artist, a.sortArtist, keepThe, 'artist'), ipodMenuSortText(b.artist, b.sortArtist, keepThe, 'artist'))
     if (art !== 0) return art
-    const alb = ipodFirmwareFold(String(a.album || '')).localeCompare(
-      ipodFirmwareFold(String(b.album || '')),
-      undefined,
-      { numeric: true, sensitivity: 'base' },
+    // Under the kill switch the old tiebreak read the display album.
+    const alb = cmp(
+      ipodMenuSortText(a.album, keepThe ? undefined : a.sortAlbum, keepThe, 'album'),
+      ipodMenuSortText(b.album, keepThe ? undefined : b.sortAlbum, keepThe, 'album'),
     )
     if (alb !== 0) return alb
     return numField(a.trackNumber) - numField(b.trackNumber)

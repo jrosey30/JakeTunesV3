@@ -1638,10 +1638,11 @@ export function createSyncEngine(host: SyncEngineHost) {
     // Switch the toolbar status to the writer phase — the
     // preflight is done; from here it's the iTunesDB rebuild + write
     // (sub-second) and then the post-sync verifier (seconds).
-    // Mini 1.4.1 has no type-52 sort tables: the Artists menu reads mhit
-    // PHYSICAL order. The activity engine has ordered its catalog since
-    // 2026-08-28; the full-library path shipped in library order, so a
-    // whole-library sync listed artists shuffled. Playlists reference
+    // Physical catalog order: artist (The/A/An dropped), album, track.
+    // The 2026-08-28 belief that Mini 1.4.1 lists Artists in this order was
+    // disproved 2026-10-17 — the menus read the type-52 tables built in
+    // core/db_reader.py _sort_indices. Kept: harmless, and
+    // conformCatalogIdOrder re-mints ids against it. Playlists reference
     // dbids, so their order is untouched by construction.
     tracks = orderForIpodCatalog(tracks)
 
