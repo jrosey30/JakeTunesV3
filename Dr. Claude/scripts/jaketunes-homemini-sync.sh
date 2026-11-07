@@ -181,6 +181,7 @@ export RSYNC_RSH='ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterv
 OWED_EDITS="$JT_DATA_LOCAL/audio-edits-owed.txt"
 OWED_PER_LEG="${JT_OWED_PER_LEG:-200}"
 OWED_MAX_REFUSALS="${JT_OWED_MAX_REFUSALS:-20}"
+OWED_NAS_NEWER_S="${JT_OWED_NAS_NEWER_S:-21600}"
 
 # Shared remount helper (2026-08-07). A host qualifies ONLY by silently
 # proving it's the DS225 (smbutil view -N via keychain lists JakeShared —
@@ -1040,7 +1041,7 @@ done
 # files a leg, so a bulk edit moves forward inside the 420 s alarm instead of sending the
 # same files again every pass. The full leg never touches the list.
 take_owed_edits() {
-  local out=$1 f line rel raw
+  local out=$1 f line rel raw nas_m mine_m other_root=0
   OWED_TAKEN=(); OWED_REST=""; OWED_COUNT=0
   [ -d "$LIBRARY_ROOT" ] || return 0
   if [ -f "$OWED_EDITS" ]; then mv -f "$OWED_EDITS" "$OWED_EDITS.taken.$$.$RANDOM" 2>/dev/null || true; fi
@@ -1049,7 +1050,14 @@ take_owed_edits() {
     [ -f "$f" ] || continue
     OWED_TAKEN+=("$f")
     while IFS= read -r line || [ -n "$line" ]; do
-      case "$line" in */iPod_Control/*) rel="iPod_Control/${line#*/iPod_Control/}" ;; *) continue ;; esac
+      # Anchored on the library root, or the list's own ./iPod_Control leftovers. Any other
+      # path that merely has iPod_Control in it (a dev run's fixture library, the NAS's own copy)
+      # used to send the real library's same-named file over the master.
+      case "$line" in
+        "$LIBRARY_ROOT"/iPod_Control/*) rel="${line#"$LIBRARY_ROOT"/}" ;;
+        ./iPod_Control/*) rel="${line#./}" ;;
+        *) other_root=$((other_root + 1)); continue ;;
+      esac
       case "$rel" in */.*) continue ;; esac
       # Gone, a link (streamed) or empty: nothing to carry.
       if [ -f "$LIBRARY_ROOT/$rel" ] && [ ! -L "$LIBRARY_ROOT/$rel" ] && [ -s "$LIBRARY_ROOT/$rel" ]; then
@@ -1058,16 +1066,35 @@ take_owed_edits() {
     done < "$f"
   done > "$raw"
   LC_ALL=C sort -u -o "$raw" "$raw"
-  head -n "$OWED_PER_LEG" "$raw" >> "$out"
-  OWED_COUNT=$(head -n "$OWED_PER_LEG" "$raw" | wc -l | tr -d ' ')
+  [ "$other_root" -gt 0 ] && log "WARNING: dropped $other_root audio edit line(s) outside $LIBRARY_ROOT"
+  # A file whose NAS copy is over 6 hours newer than this Mac's edit is left alone, with a line
+  # in the log. The wait can be a whole trip, and a repair or a restore of that master in the
+  # meantime must not lose to an edit from days before. #recycle is a thin net: its prune goes by
+  # the file's own mtime, so an old master is gone by the next 04:30. Not --update on the leg: the
+  # NAS's mtime is often upload time (222 of 280 recent songs newer, median 347 s), and an edit
+  # made before an upload would be skipped with exit 0 and the list cleared.
   OWED_REST="$raw.rest"
-  tail -n +"$(( OWED_PER_LEG + 1 ))" "$raw" > "$OWED_REST"
+  : > "$OWED_REST"
+  while IFS= read -r line; do
+    if [ "$OWED_COUNT" -ge "$OWED_PER_LEG" ]; then printf '%s\n' "$line" >> "$OWED_REST"; continue; fi
+    rel="${line#./}"
+    if [ -f "$MOUNT/JakeTunesLibrary/$rel" ]; then
+      nas_m=$(/usr/bin/stat -f %m "$MOUNT/JakeTunesLibrary/$rel" 2>/dev/null || echo 0)
+      mine_m=$(/usr/bin/stat -f %m "$LIBRARY_ROOT/$rel" 2>/dev/null || echo 0)
+      if [ $(( nas_m - mine_m )) -gt "$OWED_NAS_NEWER_S" ]; then
+        log "WARNING: left $rel alone: the NAS copy is much newer than this Mac's edit"
+        continue
+      fi
+    fi
+    printf '%s\n' "$line" >> "$out"
+    OWED_COUNT=$((OWED_COUNT + 1))
+  done < "$raw"
   rm -f "$raw"
 }
 # $1 = the leg's exit. Only a leg that finished clears the list. What didn't fit goes back
 # first, so a kill between the two steps leaves a line owed twice, never lost. A file the NAS
 # keeps refusing (exit 23, and a notification each time) is given up on after
-# OWED_MAX_REFUSALS legs in a row, with a line in the log. A cut leg (30, 142) proves
+# OWED_MAX_REFUSALS legs in a row, with a line in the log, and what never went stays owed. A cut leg (30, 142) proves
 # nothing about the file, so it doesn't count.
 settle_owed_edits() {
   local rc=$1 refused
@@ -1079,6 +1106,7 @@ settle_owed_edits() {
       refused=$(( $(cat "$OWED_EDITS.refused" 2>/dev/null || echo 0) + 1 ))
       if [ "$refused" -ge "$OWED_MAX_REFUSALS" ]; then
         log "WARNING: gave up on $OWED_COUNT audio edit(s) the NAS refused $refused legs in a row (exit 23) — their tags on the NAS stay as they were"
+        if [ -s "$OWED_REST" ]; then mv -f "$OWED_REST" "$OWED_EDITS.taken.rest.$$.$RANDOM"; fi
         rm -f "${OWED_TAKEN[@]}" "$OWED_EDITS.refused"
       else
         echo "$refused" > "$OWED_EDITS.refused"

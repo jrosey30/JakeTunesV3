@@ -245,6 +245,81 @@ describe('sync script --quick: the audio edits no leg has carried', () => {
     } finally { w.cleanup() }
   })
 
+  // These all have /iPod_Control/ in them. Only that text used to be read, so each one sent the
+  // real library's same-named file over the master.
+  it('a line under another root, or naming the NAS copy itself, sends nothing, and the log counts them', () => {
+    const w = makeWorld()
+    try {
+      const real = w.song('real.m4a')
+      w.song('other.m4a')
+      w.owe(`/tmp/fixture-library/${F}/other.m4a`)
+      w.owe(join(w.nas, F, 'other.m4a'))
+      w.owe(real)
+      const { list, log } = w.pass(['--quick'])
+      assert.deepEqual(list, [rel('real.m4a')])
+      assert.match(log, /dropped 2 audio edit line\(s\) outside/)
+    } finally { w.cleanup() }
+  })
+
+  it('a master repaired on the NAS since this edit stays, with a line in the log, and the rest go', () => {
+    const w = makeWorld()
+    try {
+      const edit = w.song('repaired.m4a', 'monday edit', hoursAgo(96))
+      w.owe(edit)
+      w.owe(w.song('fine.m4a'))
+      mkdirSync(join(w.nas, F), { recursive: true })
+      const master = join(w.nas, F, 'repaired.m4a')
+      writeFileSync(master, 'the repair')
+      utimesSync(master, hoursAgo(1), hoursAgo(1))
+      const { list, log } = w.pass(['--quick'])
+      assert.deepEqual(list, [rel('fine.m4a')])
+      assert.match(log, new RegExp(`left ${F}/repaired\\.m4a alone: the NAS copy is much newer`))
+      assert.deepEqual(w.leftovers(), [], 'not owed for ever')
+    } finally { w.cleanup() }
+  })
+
+  it('a NAS copy minutes newer is only upload time: the edit still goes (222 of 280 recent songs look like this)', () => {
+    const w = makeWorld()
+    try {
+      const edit = w.song('a.m4a')
+      w.owe(edit)
+      mkdirSync(join(w.nas, F), { recursive: true })
+      const master = join(w.nas, F, 'a.m4a')
+      writeFileSync(master, 'old tags')
+      const later = new Date(hoursAgo(3).getTime() + 5 * 60_000)
+      utimesSync(master, later, later)
+      assert.deepEqual(w.pass(['--quick']).list, [rel('a.m4a')])
+    } finally { w.cleanup() }
+  })
+
+  it('the 6-hour line: just over stays, just under goes', () => {
+    for (const [overBy, sent] of [[60_000, false], [-60_000, true]] as const) {
+      const w = makeWorld()
+      try {
+        const t = hoursAgo(10)
+        w.owe(w.song('a.m4a', 'edit', t))
+        mkdirSync(join(w.nas, F), { recursive: true })
+        const master = join(w.nas, F, 'a.m4a')
+        writeFileSync(master, 'nas')
+        const m = new Date(t.getTime() + 6 * 3_600_000 + overBy)
+        utimesSync(master, m, m)
+        assert.equal(w.pass(['--quick']).list.length, sent ? 1 : 0)
+      } finally { w.cleanup() }
+    }
+  })
+
+  it('a file left alone does not use up a place in the leg', () => {
+    const w = makeWorld()
+    try {
+      w.owe(w.song('a.m4a', 'edit', hoursAgo(96)))
+      mkdirSync(join(w.nas, F), { recursive: true })
+      writeFileSync(join(w.nas, F, 'a.m4a'), 'repair')
+      for (const n of ['b.m4a', 'c.m4a']) w.owe(w.song(n))
+      assert.deepEqual(w.pass(['--quick'], { JT_OWED_PER_LEG: '1' }).list, [rel('b.m4a')])
+      assert.deepEqual(w.pass(['--quick'], { JT_OWED_PER_LEG: '1' }).list, [rel('c.m4a')])
+    } finally { w.cleanup() }
+  })
+
   it('a file gone, a link, an empty file, a hidden name or a path outside the library: nothing to carry', () => {
     const w = makeWorld()
     try {
@@ -315,6 +390,20 @@ describe('sync script --quick: the audio edits no leg has carried', () => {
       assert.deepEqual(w.pass(['--quick'], env).list, [rel('a.m4a')])
       assert.match(readFileSync(join(w.root, 'sync.log'), 'utf8'), /gave up on 1 audio edit\(s\) the NAS refused 3 legs in a row/)
       assert.deepEqual(w.pass(['--quick'], env).list, [])
+      assert.deepEqual(w.leftovers(), [])
+    } finally { w.cleanup() }
+  })
+
+  it('…giving up drops what was refused and keeps what never went', () => {
+    const w = makeWorld()
+    try {
+      const names = ['a', 'b', 'c', 'd', 'e'].map((n) => `${n}.m4a`)
+      for (const n of names) w.owe(w.song(n))
+      const env = { JT_OWED_PER_LEG: '2', JT_OWED_MAX_REFUSALS: '2', STUB_MUSIC_EXIT: '23' }
+      w.pass(['--quick'], env)
+      assert.deepEqual(w.pass(['--quick'], env).list, [rel('a.m4a'), rel('b.m4a')])
+      assert.match(readFileSync(join(w.root, 'sync.log'), 'utf8'), /gave up on 2 audio edit/)
+      assert.deepEqual(w.pass(['--quick'], { JT_OWED_PER_LEG: '10' }).list, [rel('c.m4a'), rel('d.m4a'), rel('e.m4a')])
       assert.deepEqual(w.leftovers(), [])
     } finally { w.cleanup() }
   })
