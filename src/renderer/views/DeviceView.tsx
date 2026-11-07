@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useRef, useSyncExternalStore } from 'reac
 import { useLibrary } from '../context/LibraryContext'
 import { assembleSyncPlaylists, planIpodSync, planTracks } from '../utils/workoutIpodSync'
 import type { OneSyncPlan } from '../../common/ipod-one-sync-plan'
-import { readyLine, leftOffLine, syncButtonLabel, lastSyncedLine, syncingStep } from '../../common/ipod-one-sync-plan'
+import { readyLine, leftOffLine, syncButtonLabel, lastSyncedLine, syncingStep, withLastSyncLeftOff } from '../../common/ipod-one-sync-plan'
 import { stickerHex } from '../components/IpodIdentityBar'
 import { checkIpodName, macShowsLine } from '../../common/ipod-name'
 // Called in runFullLibrarySync below. The comment at the top of this file has
@@ -14,7 +14,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import IpodLibraryModal from '../components/IpodLibraryModal'
 import SyncHistorySheet, { SyncHistoryRows, type SyncHistoryEntryLike } from '../components/SyncHistorySheet'
 import { subscribeSyncTimeline, getSyncTimeline, startSyncTimeline, finishSyncTimeline, clearSyncTimeline, deviceFixtureRequested, subscribeEjectFailure, getEjectFailure, showEjectFailure } from '../syncTimeline'
-import { SYNC_STEPS, timelinePercent, resultLine, elapsedLabel, stepLabel, ipodCountLabel } from '../../common/sync-progress-model'
+import { SYNC_STEPS, finishedSyncResult, timelinePercent, resultLine, elapsedLabel, stepLabel, ipodCountLabel } from '../../common/sync-progress-model'
 import { syncOutcome, stoppedLabel, syncFailureCopy } from '../../common/sync-failure-copy'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import '../styles/device.css'
@@ -67,7 +67,7 @@ function IpodLargeIcon() {
 // the same `evaluateSmartPlaylist` the view uses. See that file's
 // header for the full why.
 
-type SyncStatus = { state: 'idle' } | { state: 'syncing'; step: string } | { state: 'done'; copied: number; total: number; time: string } | { state: 'error'; message: string }
+type SyncStatus = { state: 'idle' } | { state: 'syncing'; step: string } | { state: 'done'; copied: number; total: number; time: string; target?: number } | { state: 'error'; message: string }
 
 export default function DeviceView() {
   const { state, dispatch } = useLibrary()
@@ -99,7 +99,7 @@ export default function DeviceView() {
         startSyncTimeline(target, next.step)
       }
     } else if (next.state === 'done') {
-      if (t.status === 'running' || t.status === 'idle') finishSyncTimeline({ ok: true, landed: next.total, target: t.target ?? next.total, copied: next.copied, sealedOk: true })
+      if (t.status === 'running' || t.status === 'idle') finishSyncTimeline(finishedSyncResult(next, t.target))
     } else if (next.state === 'error') {
       if (t.status === 'running' || t.status === 'idle') finishSyncTimeline({ ok: false, error: next.message })
     } else if (next.state === 'idle' && t.status === 'running') {
@@ -173,6 +173,9 @@ export default function DeviceView() {
     if (timeline.status === 'done' || timeline.status === 'failed' || timeline.status === 'cancelled') { const t = window.setTimeout(loadHistory, 1500); return () => window.clearTimeout(t) }
   }, [timeline.status])
   const lastSync = useMemo(() => (history || []).find((e) => e.kind === 'sync' && e.landed != null) ?? null, [history])
+  // What can't go on: the plan's own list, plus what the last sealed sync left
+  // off by itself (homemini couldn't send it). Never a seal failure.
+  const leftOffPlan = useMemo(() => (plan?.ok ? withLastSyncLeftOff(plan, lastSync?.leftOff) : null), [plan, lastSync])
   const [optionsOpen, setOptionsOpen] = useState(false)
   const [failureDetails, setFailureDetails] = useState(false)
   // The plan follows the iPod: on open, when an iPod mounts or changes, when the
@@ -565,6 +568,7 @@ export default function DeviceView() {
           state: 'done',
           copied: result.copied || 0,
           total: landed,
+          target,
           time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
         })
         // The iPod firmware builds its own index from the DB, so its on-screen
@@ -687,9 +691,9 @@ export default function DeviceView() {
           {plan && !plan.ok && plan.kind === 'unknown' && <span>Set this iPod up above, then it gets its own Sync button.</span>}
           {plan && !plan.ok && plan.kind !== 'unknown' && <span className="device-sync-facts-error">{plan.error}</span>}
           {plan?.ok && plan.note && <span>{plan.note}</span>}
-          {plan?.ok && leftOffLine(plan) && (
+          {leftOffPlan && leftOffLine(leftOffPlan) && (
             <span>
-              {leftOffLine(plan)}{' '}
+              {leftOffLine(leftOffPlan)}{' '}
               <button type="button" className="device-link-btn" aria-expanded={showLeftOff} onClick={() => setShowLeftOff((v) => !v)}>{showLeftOff ? 'Hide' : 'Which ones'}</button>
             </span>
           )}
@@ -698,9 +702,9 @@ export default function DeviceView() {
             <button type="button" className="device-link-btn" onClick={() => setShowSyncHistory(true)}>Sync History</button>
           </span>
         </div>
-        {plan?.ok && showLeftOff && plan.leftOff.length > 0 && (
+        {leftOffPlan && showLeftOff && leftOffPlan.leftOff.length > 0 && (
           <ul className="device-sync-leftoff">
-            {plan.leftOff.map((l) => (
+            {leftOffPlan.leftOff.map((l) => (
               <li key={l.id}>{l.artist ? `${l.artist} — ` : ''}{l.title}: {l.why}</li>
             ))}
           </ul>

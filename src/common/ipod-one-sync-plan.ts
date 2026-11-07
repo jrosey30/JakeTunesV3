@@ -64,3 +64,22 @@ export function lastSyncedLine(when: string | number | null | undefined): string
 export function syncingStep(setName: string, count: number): string {
   return `Syncing “${setName}” — ${n(count)} tracks…`
 }
+
+/** The plan's left-off songs plus the ones on its list that the last sealed
+ *  sync left off on its own (homemini couldn't send a file, a file couldn't be converted):
+ *  those are only known once the engine ran, and they are not on the iPod
+ *  either. Read from the ledger (Sync History), so they survive the page. */
+export function withLastSyncLeftOff(
+  plan: Extract<OneSyncPlan, { ok: true }>,
+  last: ReadonlyArray<{ id: number; t?: string; a?: string; why?: string }> | null | undefined,
+): Extract<OneSyncPlan, { ok: true }> {
+  if (!last || last.length === 0) return plan
+  // Only songs still on this iPod's list: one dropped from the list since is
+  // nobody's business here.
+  const onList = new Set(plan.trackIds)
+  const seen = new Set(plan.leftOff.map((l) => l.id))
+  const extra = last
+    .filter((l) => onList.has(l.id) && !seen.has(l.id))
+    .map((l) => ({ id: l.id, title: l.t || `Song ${l.id}`, artist: l.a || '', why: l.why || 'the last sync left it off' }))
+  return extra.length === 0 ? plan : { ...plan, leftOff: [...plan.leftOff, ...extra] }
+}

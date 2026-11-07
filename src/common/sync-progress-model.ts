@@ -112,6 +112,16 @@ export function applySyncResult(t: SyncTimeline, r: SyncResult, now: number): Sy
   return { ...base, status: 'done', step: 'seal', reached: reach(base.reached, 'seal'), endedAt: now, target, landed: landed ?? target, copied: r.copied ?? base.copied, error: null, title: '' }
 }
 
+/** A sync the page saw finish clean, as the timeline's result. The engine's
+ *  own target wins over the count the timeline was started with: a list-only
+ *  iPod's engine can leave a song off by design (homemini couldn't send it,
+ *  #371) and seal one fewer, and that is a success, not a short seal
+ *  (punkPod, 2026-11-07: 850 of 851 sealed, shown as "Stopped at Seal").
+ *  A card that drops writes still fails: landed under the ENGINE's target. */
+export function finishedSyncResult(done: { copied: number; total: number; target?: number }, startedTarget: number | null): SyncResult {
+  return { ok: true, landed: done.total, target: done.target ?? startedTarget ?? done.total, copied: done.copied, sealedOk: true }
+}
+
 /** 0–100 across the six steps, with the in-step fraction when the engine gives counts. */
 export function timelinePercent(t: SyncTimeline): number {
   if (t.status === 'done') return 100

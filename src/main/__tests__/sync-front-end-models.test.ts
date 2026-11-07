@@ -6,9 +6,10 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { IDLE_TIMELINE, applySyncResult, reduceSyncEvent, resultLine, startTimeline, timelinePercent, type SyncEvent } from '../../common/sync-progress-model.ts'
+import { IDLE_TIMELINE, applySyncResult, finishedSyncResult, reduceSyncEvent, resultLine, startTimeline, timelinePercent, type SyncEvent } from '../../common/sync-progress-model.ts'
 import { syncFailureCopy, syncOutcome, stoppedLabel } from '../../common/sync-failure-copy.ts'
 import { ipodCountLabel } from '../../common/sync-progress-model.ts'
+import { leftOffLine, withLastSyncLeftOff, type OneSyncPlan } from '../../common/ipod-one-sync-plan.ts'
 
 const T0 = 1_000_000
 const ev = (phase: SyncEvent['phase'], current: number, total: number, title = ''): SyncEvent => ({ phase, current, total, title })
@@ -56,6 +57,38 @@ describe('sync timeline', () => {
     const failed = applySyncResult(startTimeline(T0, 500), { ok: false, error: 'Activity TSA boarded 3 for a 500-song set. Nothing was wiped.' }, T0)
     assert.equal(failed.status, 'failed'); assert.match(failed.error!, /TSA/)
     assert.equal(resultLine(failed, () => ''), null)
+  })
+  it('a song left off by design is not a seal failure: the engine’s target wins over the planned count (punkPod, 2026-11-07)', () => {
+    // Started with the plan's 851; the engine left "Goo Goo Muck" off (homemini 404) and sealed 850 of its 850.
+    let t = startTimeline(T0, 851)
+    for (const e of REAL_RUN) t = reduceSyncEvent(t, e, T0 + 1)
+    const done = applySyncResult(t, finishedSyncResult({ copied: 850, total: 850, target: 850 }, t.target), T0 + 60_000)
+    assert.equal(done.status, 'done'); assert.equal(done.error, null)
+    assert.equal(resultLine(done, () => '9:41 PM'), 'Landed 850 of 850 — verified on the card, 9:41 PM')
+    assert.equal(ipodCountLabel({ landed: 850, target: 850, sealedOk: true }, done.status), 'On the iPod now')
+  })
+  it('a card dropping writes still fails: landed under the ENGINE’s target', () => {
+    let t = startTimeline(T0, 851)
+    for (const e of REAL_RUN) t = reduceSyncEvent(t, e, T0 + 1)
+    const short = applySyncResult(t, finishedSyncResult({ copied: 850, total: 849, target: 850 }, t.target), T0)
+    assert.equal(short.status, 'failed'); assert.match(short.error!, /Only 849 of 850/)
+    // No engine target (the full-library path): still measured against what the run started with.
+    const old = applySyncResult(startTimeline(T0, 1000), finishedSyncResult({ copied: 998, total: 998 }, 1000), T0)
+    assert.equal(old.status, 'failed'); assert.match(old.error!, /Only 998 of 1000/)
+  })
+  it('the device page hands the engine’s target to the timeline, and shows the last sync’s left-off songs', () => {
+    const device = readFileSync(new URL('../../renderer/views/DeviceView.tsx', import.meta.url), 'utf8')
+    assert.match(device, /finishSyncTimeline\(finishedSyncResult\(next, t\.target\)\)/)
+    assert.match(device, /total: landed,\s*target,/)
+    assert.match(device, /withLastSyncLeftOff\(plan, lastSync\?\.leftOff\)/)
+  })
+  it('the left-off line adds what the last sealed sync left off, only songs still on the list', () => {
+    const plan: Extract<OneSyncPlan, { ok: true }> = { ok: true, kind: 'list', ipodName: 'punkPod', color: null, setName: 'punkPod', trackIds: [1, 2, 3], leftOff: [{ id: 9, title: 'Gone', artist: 'X', why: 'it isn’t in this library' }], note: null } as Extract<OneSyncPlan, { ok: true }>
+    assert.equal(withLastSyncLeftOff(plan, undefined), plan)
+    const shown = withLastSyncLeftOff(plan, [{ id: 2, t: 'Goo Goo Muck', a: 'The Cramps', why: 'homemini couldn\'t send its audio file' }, { id: 9, t: 'Gone' }, { id: 77, t: 'Dropped from list' }])
+    assert.deepEqual(shown.leftOff.map((l) => l.id), [9, 2])
+    assert.equal(shown.leftOff[1].title, 'Goo Goo Muck')
+    assert.equal(leftOffLine(shown), '2 songs can’t go on')
   })
   it('an engine error event fails the timeline with the engine’s words kept', () => {
     const t = reduceSyncEvent(startTimeline(T0, 10), ev('error', 0, 0, 'Activity wipe failed (EIO). Nothing was copied.'), T0)
