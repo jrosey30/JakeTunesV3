@@ -41,6 +41,8 @@ export async function remountVerifyEntries(
     isCancelled?: () => boolean
     /** Restage a streamed master for a recopy, then delete it. Default is the local file. */
     prepareSource?: (entry: { id: number; localFile: string }) => Promise<{ abs: string; cleanup: () => Promise<void> }>
+    /** Tests only (a fake card has no device node). Default: the real cold remount. */
+    remount?: typeof remountVolume
   } = { maxPasses: 4 },
 ): Promise<{ ok: boolean; landedIds: Set<number>; attempts: number; remountFailed: boolean }> {
   const landedIds = new Set<number>()
@@ -52,7 +54,7 @@ export async function remountVerifyEntries(
   for (let pass = 1; pass <= opts.maxPasses; pass++) {
     attempts = pass
     if (opts.isCancelled?.()) break
-    const rm = await remountVolume(mountPoint)
+    const rm = await (opts.remount ?? remountVolume)(mountPoint)
     if (!rm.ok) {
       console.warn(`ipod-card: ${opts.label || 'verify'} remount failed (pass ${pass}): ${rm.error}`)
       remountFailed = true

@@ -721,7 +721,7 @@ export default function DeviceView() {
                 return (
                   <li key={st.id} className={`device-sync-step${done ? ' is-done' : ''}${current ? ' is-current' : ''}${stoppedHere ? ' is-stopped' : ''}`}>
                     <span className="device-sync-step-mark" aria-hidden="true">{done ? '✓' : stoppedHere ? '✕' : ''}</span>
-                    {st.label}
+                    {stepLabel(st.id, timeline)}
                     {current && timeline.total > 1 && <span className="device-sync-step-count">{timeline.current.toLocaleString()}/{timeline.total.toLocaleString()}</span>}
                   </li>
                 )
@@ -730,7 +730,7 @@ export default function DeviceView() {
             {timeline.status === 'running' && (
               <div className="device-sync-live">
                 <span className="device-sync-live-bar" aria-hidden="true"><i style={{ width: `${timelinePercent(timeline)}%` }} /></span>
-                <span className="device-sync-live-text">{timeline.step ? stepLabel(timeline.step) : ''}{timeline.title ? ` — ${timeline.title}` : ''}</span>
+                <span className="device-sync-live-text">{timeline.step ? stepLabel(timeline.step, timeline) : ''}{timeline.title ? ` — ${timeline.title}` : ''}</span>
                 <span className="device-sync-live-elapsed">{elapsedLabel(timeline, now)}</span>
                 <button
                   className="device-itunes-btn"
@@ -756,7 +756,7 @@ export default function DeviceView() {
                   <button type="button" className="device-link-btn" aria-expanded={failureDetails} onClick={() => setFailureDetails((d) => !d)}>{failureDetails ? 'Hide details' : 'Details'}</button>
                   <button type="button" className="device-link-btn" onClick={() => { setFailureDetails(false); clearSyncTimeline(); if (syncStatus.state === 'error') setSyncStatus({ state: 'idle' }) }}>Dismiss</button>
                 </span>
-                {failureDetails && <pre className="device-sync-result-raw">{outcome.raw}{outcome.fromEvidence ? `\n\nSteps reached: ${timeline.reached.map(stepLabel).join(' → ')}; stopped at ${timeline.step ? stepLabel(timeline.step) : '—'}.` : '\n\nNo phase events were received for this attempt.'}</pre>}
+                {failureDetails && <pre className="device-sync-result-raw">{outcome.raw}{outcome.fromEvidence ? `\n\nSteps reached: ${timeline.reached.map((s) => stepLabel(s, timeline)).join(' → ')}; stopped at ${timeline.step ? stepLabel(timeline.step, timeline) : '—'}.` : '\n\nNo phase events were received for this attempt.'}</pre>}
               </div>
             )}
           </div>

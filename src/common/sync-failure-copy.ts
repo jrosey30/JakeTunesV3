@@ -23,7 +23,7 @@
 import type { SyncStep, SyncTimeline } from './sync-progress-model.ts'
 import { stepLabel } from './sync-progress-model.ts'
 
-export type IpodChanged = 'no' | 'unknown' | 'emptied' | 'songs-only' | 'catalog-unverified'
+export type IpodChanged = 'no' | 'unknown' | 'emptied' | 'songs-only' | 'catalog-unverified' | 'swap-kept'
 export type CatalogClaim = 'previous' | 'unknown' | 'written-unverified'
 
 export interface SyncFailureCopy {
@@ -54,6 +54,7 @@ const RULES: Rule[] = [
   { test: /activity tsa/i, stage: 'prepare', happened: 'Some songs could not board: a file is missing, has no destination, or would collide on the card.', next: 'Open Details for the songs, fix or drop them, and sync again.' },
   { test: /have damaged audio and there are not enough replacements/i, stage: 'prepare', happened: 'Some songs have damaged audio files and there were not enough replacement songs, so nothing on the iPod was touched.', next: 'Pick a smaller size, or re-download the damaged songs (Details lists them), then sync again.' },
   { test: /could not build an ipod-safe alac|flac→alac failed/i, stage: 'prepare', happened: 'A song could not be converted to an iPod-safe ALAC, so nothing on the iPod was touched.', next: 'Open Details for the song — the original may be multichannel or damaged. Drop it and sync again.' },
+  { test: /swap’s removal step/i, stage: 'wipe', happened: 'The songs leaving the iPod could not all be removed.', next: 'Reseat the cable (direct USB port) and sync again.' },
   { test: /activity wipe/i, stage: 'wipe', happened: 'The iPod could not be cleared for the rebuild.', next: 'Reseat the cable (direct USB port) and sync again.' },
   { test: /sync cancelled/i, stage: 'copy', happened: 'You stopped the sync.', next: 'Sync again when ready.' },
   { test: /confirmed on the card after copy/i, stage: 'copy', happened: 'Fewer songs reached the card than were sent.', next: AGAIN_CABLE },
@@ -62,6 +63,7 @@ const RULES: Rule[] = [
   { test: /held across two remounts/i, stage: 'verify', happened: 'Songs dropped off the card between two remounts.', next: AGAIN_CABLE },
   { test: /will not list/i, stage: 'verify', happened: 'Some songs would not be listed by the Mini’s firmware.', next: 'Open Details for the songs, drop or re-encode them, and sync again.' },
   { test: /tsa held \d+ of \d+ songs/i, stage: 'verify', happened: 'Some songs were held back because the Mini would not show them.', next: 'Open Details for the songs, drop or re-encode them, and sync again.' },
+  { test: /the catalog would list are not on the card/i, stage: 'catalog', happened: 'Some songs the new catalog would list were not on the card, so no catalog was written.', next: AGAIN_CABLE },
   { test: /could not be conformed to firmware id order|could not be laid down as one piece/i, stage: 'catalog', happened: 'The new catalog could not be written correctly.', next: AGAIN },
   { test: /catalog file never made it onto the card|never committed to the card/i, stage: 'seal', happened: 'The new catalog did not reach the card.', next: AGAIN },
   { test: /catalog on the card lists \d+ of \d+/i, stage: 'seal', happened: 'The card’s catalog lists fewer songs than the set.', next: AGAIN },
@@ -97,12 +99,24 @@ const CHANGED_LINE: Record<IpodChanged, string> = {
   emptied: 'The copied songs were cleared again and no catalog was written. The previous catalog stands, but its songs are no longer on the card — sync again before using the iPod.',
   'songs-only': 'The new songs are on the card, but the catalog was not replaced. The iPod will show the old list until you sync again.',
   'catalog-unverified': 'The new songs are on the card and a new catalog was written, but the card did not prove it. Do not trust the count the iPod shows until a sync seals.',
+  'swap-kept': 'The iPod still plays: every song its list names is on it. Sync again to finish the swap.',
 }
 
 /** Appended by the Activity engine when an abort after the wipe removed
  *  the songs it had copied (rewipeAndStop) — the claim then is 'emptied'
  *  whatever step the abort happened at. */
 export const REWIPED_NOTE = 'The songs copied this run were taken off the card again.'
+
+/** Appended by the Activity engine when a SWAP stops (2026-11-07): the files
+ *  it copied came off again and the card's catalog names only songs that are
+ *  on it. `restored` = the card is exactly as the last sync left it. */
+export const SWAP_KEPT_MARK = 'The iPod still has a working song list'
+export function swapKeptNote(songs: number, restored: boolean): string {
+  const n = songs.toLocaleString('en-US')
+  return restored
+    ? `${SWAP_KEPT_MARK}: nothing on it changed, all ${n} songs are still there.`
+    : `${SWAP_KEPT_MARK} of the ${n} songs on it. Sync again to finish.`
+}
 
 /** The claims, from what actually happened. */
 export function syncOutcome(t: SyncTimeline): SyncOutcome | null {
@@ -127,6 +141,11 @@ export function syncOutcome(t: SyncTimeline): SyncOutcome | null {
     }
   }
   if ((t.error || '').includes(REWIPED_NOTE)) { changed = 'emptied'; catalog = 'previous' }
+  else if ((t.error || '').includes(SWAP_KEPT_MARK)) {
+    const untouched = (t.error || '').includes('nothing on it changed')
+    changed = untouched ? 'no' : 'swap-kept'
+    catalog = untouched ? 'previous' : 'unknown'
+  }
   return { ...copy, stoppedAt, changed, catalog, changedLine: CHANGED_LINE[changed], fromEvidence: evidence }
 }
 

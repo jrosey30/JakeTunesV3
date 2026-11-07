@@ -210,5 +210,7 @@ test('a damaged song is skipped and replaced from reserve, not the reason a sync
   assert.match(engine, /skipUnconvertible\(title, String\(track\.artist \|\| ''\), id, 'no iPod-safe ALAC'\)/)
   // Not enough reserves still refuses — before the wipe, naming the songs.
   assert.match(engine, /if \(plan\.length < target\) \{/)
-  assert.ok(engine.indexOf('if (plan.length < target) {') < engine.indexOf('── 2b. Keep plan'))
+  // (2b was "Keep plan" until the swap-only sync, 2026-11-07: still before the card is touched.)
+  assert.ok(engine.indexOf('── 2b. Swap or full') > 0)
+  assert.ok(engine.indexOf('if (plan.length < target) {') < engine.indexOf('── 2b. Swap or full'))
 })
