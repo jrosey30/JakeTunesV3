@@ -9,7 +9,8 @@ import { attachClipToBroadcast, detachClipFromBroadcast } from '../audio/eq'
 import { evaluateSmartPlaylist, SMART_PLAYLIST_TITLES as TITLES } from '../utils/smartPlaylists'
 import { smartPlaylistCover } from '../utils/playlistCovers'
 import { useListenMoreWeekly } from '../listenMoreWeekly'
-import { useTop1000List } from '../top1000List'
+import { useTop1000List, useTop1000Ranks } from '../top1000List'
+import { isRankedPlaylist, rankMovement, rotateRankSnap, weekKeyOf, RANK_SNAPSHOT_KEYS, type RankSnap } from '../../common/rank-movement'
 import { useIpodLists } from '../ipodLists'
 import { parseIpodListPlaylistId } from '../../common/ipod-list-doc'
 import { useHomeShelves } from '../homeShelves'
@@ -118,10 +119,12 @@ interface ColDef {
   resizable: boolean
 }
 
+const TOP_1000_RANK_WIDTH = 116
+
 const ALL_COLUMN_DEFS: ColDef[] = [
   { key: 'playing', label: '', defaultWidth: 24, minWidth: 24, resizable: false },
-  // 4.5: Power-rankings column — only surfaced for the Top 25 playlist
-  // (filtered out below for other smart playlists). Shows current rank +
+  // 4.5: Power-rankings column — only surfaced for the ranked playlists,
+  // Top 25 and (2026-11-07) Top 1000 (filtered out below for the rest). Shows current rank +
   // last-week rank in parens + a green up / red down / neutral dash
   // arrow. LW data is taken from a weekly-rotated snapshot in ui-state.
   { key: 'rank', label: '#', defaultWidth: 80, minWidth: 60, resizable: false },
@@ -356,6 +359,8 @@ export default function SmartPlaylistView() {
   const weekly = useListenMoreWeekly()
   // Top 1000 (2026-11-02): the quiz's ranked list from homemini, rank 1 first.
   const top1000 = useTop1000List()
+  // …and each song's rank on it, for the '#' column (2026-11-07).
+  const top1000Ranks = useTop1000Ranks()
   // On Repeat (2026-10-28): the Home shelves document's list — the same
   // rows the Home's ON REPEAT row draws (its head), resolved here.
   const regularTracks = useRegularLibraryTracks(libState.tracks)
@@ -517,60 +522,49 @@ export default function SmartPlaylistView() {
     // Rank column shows on every Top 25 view; the LW arrow inside it
     // only renders for All Time (week/month don't have a meaningful
     // week-over-week snapshot). Number always present so the user
-    // sees positions 1 -> 25.
-    if (c.key === 'rank' && playlistId !== 'top-25') return false
+    // sees positions 1 -> 25. Top 1000 (2026-11-07) shows it too, always
+    // with the arrow: its rank is the quiz's, from homemini.
+    if (c.key === 'rank' && !isRankedPlaylist(playlistId)) return false
     return true
   })
 
-  // 4.5: Top-25 last-week snapshot. Rotates weekly: when we detect a new
-  // ISO week, promote the in-flight `curr` snapshot to `prev` and capture
-  // current ranks as the new `curr`. Display reads `prev` for the "(LW)"
-  // value + delta arrow. First-ever load has prev=null → every track
-  // shows as NEW; subsequent weeks show real movement.
-  type RankSnap = { weekKey: number; prev: Record<string, number> | null; curr: Record<string, number> }
-  const [rankSnap, setRankSnap] = useState<RankSnap | null>(null)
+  // 4.5: last-week snapshot for the ranked playlists. Rotates weekly: when
+  // we detect a new week, promote the in-flight `curr` snapshot to `prev`
+  // and capture current ranks as the new `curr`. Display reads `prev` for
+  // the "(LW)" value + delta arrow. First-ever load has prev=null → every
+  // track shows as NEW; subsequent weeks show real movement. The rule is
+  // shared (src/common/rank-movement.ts); Top 25 and Top 1000 each keep
+  // their own ui-state key so the two rankings never mix.
+  // Tagged with its playlist, so switching Top 25 ↔ Top 1000 never draws one
+  // list's movement on the other for a frame.
+  const [rankSnapFor, setRankSnapFor] = useState<{ playlistId: string; snap: RankSnap } | null>(null)
+  const rankSnap = rankSnapFor && rankSnapFor.playlistId === playlistId ? rankSnapFor.snap : null
+  // Current ranks by song id: Top 25's position in the list (All Time only —
+  // week / month are recent-listening lenses, not power-rankings inputs);
+  // Top 1000's quiz rank from homemini, every song on the list.
+  const currentRanks = useMemo<Record<string, number> | null>(() => {
+    if (playlistId === 'top-1000') return top1000Ranks
+    if (playlistId !== 'top-25' || topWindow !== 'all' || smartTracks.length === 0) return null
+    const r: Record<string, number> = {}
+    smartTracks.forEach((t, i) => { r[String(t.id)] = i + 1 })
+    return r
+  }, [playlistId, topWindow, smartTracks, top1000Ranks])
   useEffect(() => {
-    if (playlistId !== 'top-25') return
-    // Snapshot only the All Time view — week / month variants are
-    // recent-listening lenses, not power-rankings inputs.
-    if (topWindow !== 'all') return
-    if (smartTracks.length === 0) return
-    const WEEK_MS = 7 * 24 * 60 * 60 * 1000
-    const currentWeek = Math.floor(Date.now() / WEEK_MS)
-    const currentRanks: Record<string, number> = {}
-    smartTracks.forEach((t, i) => { currentRanks[String(t.id)] = i + 1 })
-
+    if (!isRankedPlaylist(playlistId)) return
+    if (!currentRanks || Object.keys(currentRanks).length === 0) return
+    const key = RANK_SNAPSHOT_KEYS[playlistId]
+    const currentWeek = weekKeyOf(Date.now())
     let cancelled = false
     window.electronAPI.loadUiState().then(r => {
       if (cancelled) return
       const existing = (r.ok && r.state) ? (r.state as Record<string, unknown>) : {}
-      const saved = existing.topRankSnapshot as RankSnap | undefined
-
-      let next: RankSnap
-      if (!saved || typeof saved.weekKey !== 'number') {
-        // First-ever snapshot — no LW data yet.
-        next = { weekKey: currentWeek, prev: null, curr: currentRanks }
-      } else if (saved.weekKey === currentWeek) {
-        // Same week as the saved snapshot — keep prev as-is, refresh
-        // curr to current ranks (plays may have shifted intra-week,
-        // but we don't rotate prev until next week).
-        next = { weekKey: currentWeek, prev: saved.prev, curr: currentRanks }
-      } else {
-        // Week rolled over — promote saved.curr to prev, set curr to
-        // current. THIS is the moment the user gets fresh LW deltas.
-        next = { weekKey: currentWeek, prev: saved.curr, curr: currentRanks }
-      }
-      setRankSnap(next)
+      const { next, changed } = rotateRankSnap(existing[key], currentRanks, currentWeek)
+      setRankSnapFor({ playlistId, snap: next })
       // Persist only if anything actually changed; avoid pointless writes.
-      const isSame = saved && saved.weekKey === next.weekKey
-        && JSON.stringify(saved.curr) === JSON.stringify(next.curr)
-        && JSON.stringify(saved.prev) === JSON.stringify(next.prev)
-      if (!isSame) {
-        window.electronAPI.saveUiState({ ...existing, topRankSnapshot: next })
-      }
+      if (changed) window.electronAPI.saveUiState({ ...existing, [key]: next })
     })
     return () => { cancelled = true }
-  }, [playlistId, smartTracks, topWindow])
+  }, [playlistId, currentRanks])
 
   // --- Local sort state — restored from module-level map so it survives navigation ---
   const [sortCol, setSortCol] = useState<string | null>(() => {
@@ -659,7 +653,9 @@ export default function SmartPlaylistView() {
   // --- Column resize ---
   const [colWidthMap, setColWidthMap] = useState<Record<string, number>>({})
 
-  const colWidths = visibleCols.map(c => colWidthMap[c.key] ?? c.defaultWidth)
+  // Top 1000's '#' needs room for "1000 (1000) ▼999"; Top 25 keeps its 80.
+  const colWidths = visibleCols.map(c => colWidthMap[c.key]
+    ?? (c.key === 'rank' && playlistId === 'top-1000' ? TOP_1000_RANK_WIDTH : c.defaultWidth))
   const gridTemplate = songsGridTemplate(visibleCols, colWidths)
   const gridTemplateFixed = songsGridTemplateFixed(colWidths)
 
@@ -1207,38 +1203,32 @@ export default function SmartPlaylistView() {
                   case 'playing':
                     return <div key={col.key} className="songs-cell songs-cell--icon">{isPlaying && <SpeakerPlayingIcon />}</div>
                   case 'rank': {
-                    const rank = i + 1
+                    // Top 1000: the quiz's rank (a song homemini ranks but this
+                    // library lacks leaves a gap, as it should). Top 25: position.
+                    const rank = playlistId === 'top-1000'
+                      ? (top1000Ranks?.[String(track.id)] ?? i + 1)
+                      : i + 1
                     // LW arrow + delta only on All Time (the snapshot
                     // is keyed to all-time ranks). Week/month views
                     // get the rank number alone — still meaningful as
                     // "position 1 through 25 within this lens."
-                    if (topWindow !== 'all') {
+                    if (playlistId === 'top-25' && topWindow !== 'all') {
                       return (
                         <div key={col.key} className="songs-cell songs-cell--rank">
                           <span className="rank-num">{rank}</span>
                         </div>
                       )
                     }
-                    const lwRank = rankSnap?.prev?.[String(track.id)]
-                    let arrow = ''
-                    let arrowClass = 'rank-arrow rank-arrow--same'
-                    let lwLabel = ''
-                    if (lwRank === undefined) {
-                      arrow = 'NEW'
-                      arrowClass = 'rank-arrow rank-arrow--new'
-                    } else if (rank < lwRank) {
-                      arrow = `▲${lwRank - rank}`
-                      arrowClass = 'rank-arrow rank-arrow--up'
-                      lwLabel = `(${lwRank})`
-                    } else if (rank > lwRank) {
-                      arrow = `▼${rank - lwRank}`
-                      arrowClass = 'rank-arrow rank-arrow--down'
-                      lwLabel = `(${lwRank})`
-                    } else {
-                      arrow = '—'
-                      arrowClass = 'rank-arrow rank-arrow--same'
-                      lwLabel = `(${lwRank})`
+                    // No snapshot yet for this list (first paint): show the
+                    // number alone rather than flash NEW on every row.
+                    if (!rankSnap) {
+                      return (
+                        <div key={col.key} className="songs-cell songs-cell--rank">
+                          <span className="rank-num">{rank}</span>
+                        </div>
+                      )
                     }
+                    const { arrow, arrowClass, lwLabel } = rankMovement(rank, rankSnap.prev?.[String(track.id)])
                     return (
                       <div key={col.key} className="songs-cell songs-cell--rank">
                         <span className="rank-num">{rank}</span>
