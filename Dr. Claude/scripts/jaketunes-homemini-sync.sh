@@ -1189,7 +1189,7 @@ else
   # terms with the other legs still to come. The leg is additive, so a killed
   # pass just resumes next tick.
   perl -e 'alarm shift; exec @ARGV' 420 \
-    rsync -az --size-only --no-links --no-perms --no-owner --no-group --no-times \
+    rsync -az --size-only --min-size=1 --no-links --no-perms --no-owner --no-group --no-times \
     --timeout=180 \
     --exclude='.DS_Store' --exclude='._*' --exclude='_pending-imports/' \
     --exclude='/.*/' --exclude='.*' \

@@ -29,6 +29,7 @@ const STATE_FILES = [
 const STUB_RSYNC = `#!/bin/bash
 if [ "$1" = "--version" ]; then echo "rsync  version 3.4.2  protocol version 32"; exit 0; fi
 for a in "$@"; do
+  case "$a" in --size-only) printf '%s\\n' "$@" > "$STUB_LIST.full" ;; esac
   case "$a" in --files-from=*)
     cat "\${a#--files-from=}" >> "$STUB_LIST"
     printf '%s\\n' "$@" > "$STUB_LIST.args"
@@ -53,7 +54,7 @@ echo "StubMac"
 
 /** Runs --quick against a library holding `files` (relative path → bytes)
  *  and returns the file list the music leg handed rsync. */
-function quickList(files: Record<string, string>, env: Record<string, string> = {}): { list: string[]; args: string[]; status: number | null; log: string } {
+function quickList(files: Record<string, string>, env: Record<string, string> = {}, flags: string[] = ['--quick']): { list: string[]; args: string[]; full: string[]; status: number | null; log: string } {
   const root = mkdtempSync(join(tmpdir(), 'jt-sync-quick-'))
   try {
     const bin = join(root, 'bin')
@@ -81,7 +82,7 @@ function quickList(files: Record<string, string>, env: Record<string, string> = 
     }
     const listFile = join(root, 'list.txt')
     writeFileSync(listFile, '')
-    const r = runSyncScript(['--quick'], bin, {
+    const r = runSyncScript(flags, bin, {
       HOME: home,
       PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`,
       STUB_LIST: listFile,
@@ -96,11 +97,22 @@ function quickList(files: Record<string, string>, env: Record<string, string> = 
     const log = existsSync(join(root, 'sync.log')) ? readFileSync(join(root, 'sync.log'), 'utf8') : ''
     const argsFile = `${listFile}.args`
     const args = existsSync(argsFile) ? readFileSync(argsFile, 'utf8').split('\n').filter(Boolean) : []
-    return { list: readFileSync(listFile, 'utf8').split('\n').filter(Boolean).sort(), args, status: r.status, log }
+    const fullFile = `${listFile}.full`
+    const full = existsSync(fullFile) ? readFileSync(fullFile, 'utf8').split('\n').filter(Boolean) : []
+    return { list: readFileSync(listFile, 'utf8').split('\n').filter(Boolean).sort(), args, full, status: r.status, log }
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
 }
+
+describe('sync script: the full music leg', () => {
+  // A 0-byte import reservation a kill left behind. The quick leg has always skipped them. The full
+  // leg is --size-only, so it carried one to the NAS, and over a same-named file there.
+  it('leaves 0-byte reservations behind, as the quick leg does', () => {
+    const r = quickList({ 'iPod_Control/Music/F04/imported_1.m4a': 'audio' }, {}, [])
+    assert.ok(r.full.includes('--min-size=1'), r.full.join(' ') || r.log)
+  })
+})
 
 describe('sync script --quick: the NAS music leg', () => {
   it('skips hidden files at any depth and 0-byte reservations; finished files still go', () => {
