@@ -10,7 +10,11 @@ import { mkdtemp, readFile, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import {
+  SWAP_FULL_EVERY,
   SWAP_MANIFEST_FORMAT,
+  SWAP_MAX_REMOVED_SHARE,
+  nextSwapHistory,
+  swapBackstop,
   catalogIdsAscend,
   fullCopyLine,
   planSwap,
@@ -37,6 +41,7 @@ function fixture(ids = [0, 1, 2, 3]) {
   const manifest = {
     format: SWAP_MANIFEST_FORMAT, syncedAt: 'x', status: 'sealed', sealed: true, count: rows.length,
     catalog: { md5: 'abc', bytes: 4096 },
+    swapsSinceFull: 0, bytesRemovedSinceFull: 0,
     tracks: rows,
   }
   const seal = {
@@ -83,6 +88,9 @@ describe('proveCardForSwap — a swap only on a card that is proven, every no in
     const f = fixture()
     no({ ...f.manifest, count: 9 }, f.seal, f.card, /can’t be read/)
     no({ ...f.manifest, tracks: [...f.rows, f.rows[0]] }, f.seal, f.card, /can’t be read/)
+    const noHistory: Record<string, unknown> = { ...f.manifest }
+    delete noHistory.swapsSinceFull
+    no(noHistory, f.seal, f.card, /can’t be read/)
   })
   it('no seal, or a seal that disagrees with the manifest', () => {
     const f = fixture()
@@ -149,6 +157,29 @@ describe('planSwap — identity by fingerprint and size, never text', () => {
     const plan = (n: number) => ({ stay: new Set<number>(), arrive: Array.from({ length: n }, (_, i) => i), leave: [], changed: [] })
     assert.equal(swapTooBig(plan(700), 1000), null)
     assert.match(String(swapTooBig(plan(701), 1000)), /701 of 1,000 songs are changing, so a full copy is simpler/)
+  })
+})
+
+describe('the fragmentation backstop', () => {
+  const GB = 1024 ** 3
+  it('after 5 swaps that removed songs, the next one is a full copy', () => {
+    assert.equal(SWAP_FULL_EVERY, 5)
+    assert.equal(swapBackstop({ swapsSinceFull: 4, bytesRemovedSinceFull: 0 }, 1000, 8 * GB), null)
+    assert.match(String(swapBackstop({ swapsSinceFull: 5, bytesRemovedSinceFull: 0 }, 1000, 8 * GB)), /5 swaps since the last full copy/)
+  })
+  it('once removals since the last full copy pass 15% of the card, a full copy', () => {
+    assert.equal(SWAP_MAX_REMOVED_SHARE, 0.15)
+    assert.equal(swapBackstop({ swapsSinceFull: 1, bytesRemovedSinceFull: 0.10 * 8 * GB }, 0.04 * 8 * GB, 8 * GB), null)
+    assert.match(String(swapBackstop({ swapsSinceFull: 1, bytesRemovedSinceFull: 0.10 * 8 * GB }, 0.06 * 8 * GB, 8 * GB)), /cleared 16% of the iPod/)
+    assert.match(String(swapBackstop({ swapsSinceFull: 1, bytesRemovedSinceFull: 0 }, 1000, null)), /size can’t be read/)
+  })
+  it('a swap that removes nothing makes no holes and is never stopped or counted', () => {
+    assert.equal(swapBackstop({ swapsSinceFull: 9, bytesRemovedSinceFull: 99 * GB }, 0, null), null)
+    assert.deepEqual(nextSwapHistory({ swapsSinceFull: 2, bytesRemovedSinceFull: 50 }, 0), { swapsSinceFull: 2, bytesRemovedSinceFull: 50 })
+  })
+  it('a full copy starts the count over; a swap adds to it', () => {
+    assert.deepEqual(nextSwapHistory(null, 12345), { swapsSinceFull: 0, bytesRemovedSinceFull: 0 })
+    assert.deepEqual(nextSwapHistory({ swapsSinceFull: 2, bytesRemovedSinceFull: 50 }, 25), { swapsSinceFull: 3, bytesRemovedSinceFull: 75 })
   })
 })
 
@@ -247,6 +278,9 @@ describe('a swap that stops says the iPod still works', () => {
   })
   it('the guard’s refusal has plain words', () => {
     assert.equal(syncFailureCopy('2 song(s) the catalog would list are not on the card at their proven size. Not writing a catalog. A — B').stage, 'catalog')
+    const removal = syncFailureCopy('The swap’s removal step could not settle the iPod (1 leaving file still there, 0 staying files vanished).')
+    assert.equal(removal.stage, 'wipe')
+    assert.match(removal.happened, /leaving the iPod could not all be removed/)
   })
 })
 

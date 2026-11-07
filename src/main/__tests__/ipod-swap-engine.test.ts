@@ -238,6 +238,10 @@ describe('swap-only sync on a fake card', () => {
     assert.ok(!r.events.some((e) => /^Wiping/.test(e.title)))
     assert.ok(r.events.filter((e) => e.phase === 'copy' && !/^Removing/.test(e.title)).every((e) => e.total === 7))
     assert.ok(r.events.some((e) => e.mode === 'swap' && e.summary === res.summary))
+    // The backstop's count: one swap that removed 7 songs since the full copy.
+    const m = JSON.parse(await readFile(join(r.state, 'last-sync-manifest.json'), 'utf-8'))
+    assert.equal(m.swapsSinceFull, 1)
+    assert.equal(m.bytesRemovedSinceFull, 7 * SONG_BYTES)
     // The ledger says what moved.
     const ledger = (await readFile(join(r.state, 'activity-sync-ledger.jsonl'), 'utf-8')).trim().split('\n').map((l) => JSON.parse(l))
     const result = ledger.filter((e) => e.kind === 'result').pop()
@@ -470,6 +474,115 @@ describe('a stop before the card is touched keeps the last seal', () => {
     const next = await sync(r, range(0, N))
     assert.equal(next.ok, true, next.error)
     assert.equal(next.mode, 'swap', next.fullReason)
+  })
+})
+
+describe('the fragmentation backstop, end to end', () => {
+  let r: Rig
+  before(async () => {
+    r = await makeRig()
+    const first = await sync(r, range(0, N))
+    assert.equal(first.ok, true, first.error)
+    for (let id = 500; id < 520; id++) await addSong(r, id)
+  })
+  after(async () => { await rm(r.root, { recursive: true, force: true }) })
+
+  it('five swaps that remove songs, then a full copy with a plain reason, then swaps again', async () => {
+    let set = range(0, N)
+    for (let k = 0; k < 5; k++) {
+      set = [...set.filter((id) => id !== k), 500 + k]          // one out, one in
+      const res = await sync(r, set)
+      assert.equal(res.ok, true, res.error)
+      assert.equal(res.mode, 'swap', `swap ${k + 1}: ${res.fullReason}`)
+    }
+    const m = JSON.parse(await readFile(join(r.state, 'last-sync-manifest.json'), 'utf-8'))
+    assert.equal(m.swapsSinceFull, 5)
+    assert.equal(m.bytesRemovedSinceFull, 5 * SONG_BYTES)
+    // An unchanged sync removes nothing: it still swaps and isn't counted.
+    const same = await sync(r, set)
+    assert.equal(same.mode, 'swap', same.fullReason)
+    assert.equal(JSON.parse(await readFile(join(r.state, 'last-sync-manifest.json'), 'utf-8')).swapsSinceFull, 5)
+    set = [...set.filter((id) => id !== 5), 505]
+    const sixth = await sync(r, set)
+    assert.equal(sixth.ok, true, sixth.error)
+    assert.equal(sixth.mode, 'full')
+    assert.match(String(sixth.fullReason), /5 swaps since the last full copy/)
+    assert.match(String(sixth.summary), /^Full copy: it’s been 5 swaps/)
+    await assertCardWhole(r)
+    const after6 = JSON.parse(await readFile(join(r.state, 'last-sync-manifest.json'), 'utf-8'))
+    assert.deepEqual([after6.swapsSinceFull, after6.bytesRemovedSinceFull], [0, 0])
+    set = [...set.filter((id) => id !== 6), 506]
+    const next = await sync(r, set)
+    assert.equal(next.mode, 'swap', next.fullReason)
+  })
+
+  it('removals past 15% of the card since the last full copy: a full copy', async () => {
+    r.host.cardCapacityBytes = async () => 20 * SONG_BYTES      // 15% = 3 songs' worth
+    try {
+      const now = JSON.parse(await readFile(join(r.state, 'last-sync-manifest.json'), 'utf-8')).tracks.map((t: { id: number }) => t.id) as number[]
+      const keep = now.slice(4)
+      const res = await sync(r, [...keep, 510, 511, 512, 513])     // 4 out = 20% of this card
+      assert.equal(res.ok, true, res.error)
+      assert.equal(res.mode, 'full')
+      assert.match(String(res.fullReason), /would have cleared 2\d% of the iPod/)
+      await assertCardWhole(r)
+    } finally {
+      delete r.host.cardCapacityBytes
+    }
+  })
+})
+
+describe('plays when a swap stops on the catalog step (review of #377)', () => {
+  let r: Rig
+  const playEvents: Array<{ id: number; count: number }> = []
+  let rtHost: RoundTripHost
+  before(async () => {
+    r = await makeRig()
+    rtHost = {
+      stateDir: r.state,
+      getLibraryTracks: async () => [...r.library.values()].map((t) => ({ id: Number(t.id), playCount: 0 })),
+      appendPlayEvents: async (id, count) => { playEvents.push({ id, count }) },
+      sendToRenderer: () => {},
+      isSyncInFlight: () => false,
+    }
+    const first = await sync(r, range(0, N))
+    assert.equal(first.ok, true, first.error)
+  })
+  after(async () => { await rm(r.root, { recursive: true, force: true }) })
+
+  /** The firmware: one entry per catalog record. It appends to a Play Counts
+   *  that is still there, and starts a fresh one when it was retired. */
+  const play = async (path: string, n: number): Promise<void> => {
+    const pc = join(r.card, 'iPod_Control', 'iTunes', 'Play Counts')
+    const { paths } = await cardCatalog(r.card)
+    const prior = await readFile(pc).catch(() => null)
+    const b = prior && prior.length === 96 + paths.length * 16 ? Buffer.from(prior) : Buffer.alloc(96 + paths.length * 16)
+    b.write('mhdp', 0, 'latin1'); b.writeUInt32LE(96, 4); b.writeUInt32LE(16, 8); b.writeUInt32LE(paths.length, 12)
+    const i = paths.indexOf(path)
+    assert.ok(i >= 0)
+    b.writeUInt32LE(b.readUInt32LE(96 + i * 16) + n, 96 + i * 16)
+    b.writeUInt32LE(3_900_000_000, 96 + i * 16 + 4)
+    await writeFile(pc, b)
+  }
+
+  it('a pure-add swap that stops on the contiguity step: new plays on a staying song come home exactly once', async () => {
+    await play(pathOf(2), 3)
+    const gate1 = await securePlaysBeforeSync(r.card, rtHost, 'Activity Sync')
+    assert.equal(gate1.ok, true, gate1.ok ? '' : gate1.error)
+    assert.deepEqual(playEvents.splice(0), [{ id: 2, count: 3 }])
+
+    for (let id = 600; id < 603; id++) await addSong(r, id)
+    r.host.ensureContiguousDb = async () => ({ ok: false, preallocContig: false, bytes: 0, md5: '', summary: 'forced', error: 'forced for the test' })
+    const res = await sync(r, [...range(0, N), 600, 601, 602])
+    delete r.host.ensureContiguousDb
+    assert.equal(res.ok, false)
+    assert.match(String(res.error), /could not be laid down as one piece/)
+    assert.match(String(res.error), /nothing on it changed/)
+
+    await play(pathOf(2), 1)                      // one more listen on the same catalog
+    const gate2 = await securePlaysBeforeSync(r.card, rtHost, 'Activity Sync')
+    assert.equal(gate2.ok, true, gate2.ok ? '' : gate2.error)
+    assert.deepEqual(playEvents.splice(0), [{ id: 2, count: 1 }], 'the new listen counts once — not swallowed, not doubled')
   })
 })
 

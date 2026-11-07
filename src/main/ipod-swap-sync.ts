@@ -32,6 +32,17 @@ import { parseTsaSeal, tsaNormalizeColonPath } from './ipod-sync-tsa.ts'
 export const SWAP_MANIFEST_FORMAT = 2
 /** More of the set than this arriving → a full copy is simpler. */
 export const SWAP_MAX_CHANGE_FRACTION = 0.7
+/**
+ * Fragmentation backstop (review of #377). Before swaps, every sync wiped, so
+ * the card's free space started in one piece. A swap punches holes (the songs
+ * leaving) and writes the catalog into them, and the 2026-08-15 lesson
+ * (ipod-db-contiguity.ts) is that a fragmented catalog passes every check
+ * while the Mini indexes a random count. So after this many swaps, or once
+ * this share of the card has been freed by removals since the last full copy,
+ * the next Sync is a full copy again.
+ */
+export const SWAP_FULL_EVERY = 5
+export const SWAP_MAX_REMOVED_SHARE = 0.15
 export const LAST_SYNC_MANIFEST_FILE = 'last-sync-manifest.json'
 export const TSA_SEAL_FILE = 'ipod-activity-tsa-seal.json'
 
@@ -52,8 +63,15 @@ export interface SwapManifest {
   sealed: true
   count: number
   catalog: { md5: string; bytes: number }
+  /** Swaps that removed songs since the last full copy (0 right after one). */
+  swapsSinceFull: number
+  /** Bytes of songs removed by swaps since the last full copy. */
+  bytesRemovedSinceFull: number
   tracks: SwapManifestRow[]
 }
+
+/** Since the last full copy: how many swaps, and how much they freed. */
+export interface SwapHistory { swapsSinceFull: number; bytesRemovedSinceFull: number }
 
 /** What the card holds right now, read without writing anything. */
 export interface CardState {
@@ -66,7 +84,7 @@ export interface CardState {
 }
 
 export type SwapProof =
-  | { ok: true; rows: Map<number, SwapManifestRow> }
+  | { ok: true; rows: Map<number, SwapManifestRow>; history: SwapHistory }
   | { ok: false; why: string }
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`
@@ -106,7 +124,10 @@ export function proveCardForSwap(manifestRaw: unknown, sealRaw: unknown, card: C
   }
   const rows = manifestRows(m)
   const cat = m.catalog as { md5?: unknown; bytes?: unknown } | undefined
-  if (!rows || rows.size === 0 || rows.size !== Number(m.count) || !cat || typeof cat.md5 !== 'string' || !(Number(cat.bytes) > 0)) {
+  const swapsSinceFull = Number(m.swapsSinceFull)
+  const bytesRemovedSinceFull = Number(m.bytesRemovedSinceFull)
+  if (!rows || rows.size === 0 || rows.size !== Number(m.count) || !cat || typeof cat.md5 !== 'string' || !(Number(cat.bytes) > 0)
+    || !Number.isInteger(swapsSinceFull) || swapsSinceFull < 0 || !Number.isFinite(bytesRemovedSinceFull) || bytesRemovedSinceFull < 0) {
     return { ok: false, why: 'the record of the last sync can’t be read' }
   }
   const seal = parseTsaSeal(sealRaw)
@@ -149,7 +170,7 @@ export function proveCardForSwap(manifestRaw: unknown, sealRaw: unknown, card: C
   if (strangers > 0) {
     return { ok: false, why: `the iPod holds ${plural(strangers, 'file')} the last sync didn’t put there` }
   }
-  return { ok: true, rows }
+  return { ok: true, rows, history: { swapsSinceFull, bytesRemovedSinceFull } }
 }
 
 /** One song this sync wants on the card. */
@@ -210,6 +231,34 @@ export function swapTooBig(plan: SwapPlan, target: number): string | null {
     return `${plan.arrive.length.toLocaleString('en-US')} of ${target.toLocaleString('en-US')} songs are changing, so a full copy is simpler`
   }
   return null
+}
+
+/**
+ * null = this swap may go ahead; otherwise the plain reason the card gets a
+ * fresh full copy instead (the fragmentation backstop). `leaveBytes` is what
+ * this swap would remove; `capacityBytes` the card's size (null = unknown).
+ */
+export function swapBackstop(history: SwapHistory, leaveBytes: number, capacityBytes: number | null): string | null {
+  if (leaveBytes <= 0) return null      // nothing leaves: no new holes, nothing to count
+  if (history.swapsSinceFull >= SWAP_FULL_EVERY) {
+    return `it’s been ${history.swapsSinceFull} swaps since the last full copy, and a fresh copy keeps the iPod’s free space in one piece`
+  }
+  if (!(capacityBytes && capacityBytes > 0)) return 'the iPod’s size can’t be read'
+  const removed = history.bytesRemovedSinceFull + leaveBytes
+  if (removed > capacityBytes * SWAP_MAX_REMOVED_SHARE) {
+    const pct = Math.round((removed / capacityBytes) * 100)
+    return `swaps since the last full copy would have cleared ${pct}% of the iPod, and a fresh copy keeps its free space in one piece`
+  }
+  return null
+}
+
+/** What the next manifest records: a full copy starts the count over. */
+export function nextSwapHistory(prev: SwapHistory | null, leaveBytes: number): SwapHistory {
+  if (!prev) return { swapsSinceFull: 0, bytesRemovedSinceFull: 0 }
+  // Only a swap that removed songs counts: one that only added, or changed
+  // nothing, leaves no holes behind.
+  if (!(leaveBytes > 0)) return { ...prev }
+  return { swapsSinceFull: prev.swapsSinceFull + 1, bytesRemovedSinceFull: prev.bytesRemovedSinceFull + leaveBytes }
 }
 
 /** "Swapped 7 songs: 7 out, 7 in. 993 stayed." */
