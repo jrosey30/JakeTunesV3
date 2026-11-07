@@ -12,7 +12,7 @@ import { canonicalArtist } from '../utils/artistAlias'
 import { groupTracksIntoAlbums, type Album } from '../utils/albumGroups'
 import type { Track } from '../types'
 import '../styles/albums.css'
-import { addToPlaylistEntry, addToIpodPoolEntry, queueMenuEntries } from '../utils/playlistMenu'
+import { addToPlaylistEntry, queueMenuEntries } from '../utils/playlistMenu'
 
 /// V5 facelift: Grid mode for the flat-table views (Songs / Playlist /
 /// Smart Playlist) — the iTunes-10 album-tile wall. This is a shared
@@ -69,7 +69,6 @@ export default function TrackGridView({ tracks, emptyNoun }: TrackGridViewProps)
       { separator: true as const },
       ...queueMenuEntries(ordered, pbDispatch),
       addToPlaylistEntry(ordered, lib.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
-      addToIpodPoolEntry(ordered),
       { separator: true as const },
       { label: 'Go to Album', onClick: () => libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyFromStrings(album.artist, album.name) }) },
       { label: 'Go to Artist', onClick: () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(album.artist || '') }) },

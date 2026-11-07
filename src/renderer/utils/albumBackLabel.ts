@@ -29,7 +29,6 @@ const BACK_LABELS: Record<ViewName, string> = {
   'concert-detail': '← Concert',
   'mixtape-detail': '← Mixtape',
   dj: '← DJ',
-  'activity-pool': '← iPod Pool',
   'year-in-review': '← Year in Review',
   top1000: '← Top 1000 Quiz',
 }

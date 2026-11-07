@@ -49,7 +49,7 @@ describe('the back pill names every page you can come from (Jake 10/30: "make go
     const named: Array<[string, string]> = [
       ['home', 'Home'], ['songs', 'Songs'], ['albums', 'Albums'], ['artists', 'Artists'], ['genres', 'Genres'],
       ['discovery', 'Record Shop'], ['top1000', 'Top 1000 Quiz'], ['concerts', 'Live Concerts'],
-      ['musicman', 'The Music Man'], ['year-in-review', 'Year in Review'], ['activity-pool', 'iPod Pool'],
+      ['musicman', 'The Music Man'], ['year-in-review', 'Year in Review'],
       ['device', 'iPod'], ['store', 'Bandcamp Store'], ['dj', 'DJ'],
     ]
     for (const [view, name] of named) assert.equal(backLabelForLocation(loc(view)), `← ${name}`)

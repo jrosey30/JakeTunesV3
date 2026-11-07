@@ -17,7 +17,6 @@ import PlaylistView from '../views/PlaylistView'
 import SmartPlaylistView from '../views/SmartPlaylistView'
 import DeviceView from '../views/DeviceView'
 import IpodIdentityBar from './IpodIdentityBar'
-import ActivityPoolView from '../views/ActivityPoolView'
 import CDImportView from '../views/CDImportView'
 import StoreView from '../views/BandcampStore'
 import DownloadView from '../views/DownloadStore'
@@ -140,7 +139,6 @@ export default function MainContent() {
     case 'top1000': viewElement = <Top1000QuizView />; break
     case 'concert-detail': viewElement = <ConcertDetailView />; break
     case 'mixtape-detail': viewElement = <MixtapeView />; break
-    case 'activity-pool': viewElement = <ActivityPoolView />; break
     case 'mix-detail': viewElement = <MixDetailView />; break
     case 'genres': viewElement = <GenresPage />; break   // Browse (GenresView, untouched) | Icebergs
     case 'discovery': viewElement = <DiscoveryView />; break

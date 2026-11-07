@@ -18,13 +18,15 @@ import type { ViewName, SmartPlaylistId, Track, Playlist } from '../../types'
 import { isJustificationPlaylist, sortJustifications } from '../../utils/justification'
 import { useReleaseMonths } from '../../releaseMonths'
 import { useIpodLists } from '../../ipodLists'
-import { ipodListPlaylistId } from '../../../common/ipod-list-doc'
+import { useIpodRegistry } from '../../ipodRegistry'
+import { useTop1000List } from '../../top1000List'
+import { ipodSidebarRows } from '../../../common/sidebar-ipods'
+import { SIDEBAR_ORDER_KEY, DEFAULT_SECTION_ORDER, YEAR_PREFIX, parseSavedOrder, orderSections, moveSection, nudgeSection } from '../../../common/sidebar-order'
 import { monthPlaylistId, monthPlaylistName, yearsOf } from '../../../common/release-months'
 import { setNotice } from '../../activity'
 import { setMixtapeId, getMixtapeId, getMixtapes, subscribeMixtapes, refreshMixtapes } from '../../mixtapes'
 import { getAiMixtapes, subscribeAiMixtapes, ensureAiMixtapesLoaded, removeKeptAiTape } from '../../aiMixtapes'
 import { keptAiTapes, type AiMixtape } from '../../../common/ai-mixtapes'
-import { getPoolIds, subscribePool, refreshPool, addTracksToPool, usePoolHealth, usePoolEditable } from '../../activityPool'
 import { CD_PRESENCE_START, stepCdPresence } from '../../../common/auto-nav'
 import { quizDoorShown } from '../../../common/top1000-doc'
 import { autoNavBlocked } from '../../utils/autoNavGuard'
@@ -94,10 +96,8 @@ const smartPlaylists: { label: string; id: SmartPlaylistId }[] = [
   { label: 'Recently Added', id: 'recently-added' },
   { label: 'Recently Played', id: 'recently-played' },
   { label: 'Top 25 Most Played', id: 'top-25' },
-  // The Top 1000 Quiz's ranking as a playlist (2026-11-02, Jake: "why isnt the top 1000 a
-  // playlist i can listen to"): homemini's list, rank 1 first (src/renderer/top1000List.ts).
-  // Sidebar only — the Original iPod already gets the 1000 as its pool.
-  { label: 'Top 1000', id: 'top-1000' },
+  // Top 1000 (homemini's quiz ranking) moved to the iPODS section on 2026-11-07:
+  // it is the Original iPod's list. Each other iPod's list sits there too.
   { label: 'Starred', id: 'top-rated' },
   // Where a song came from (2026-11-01): TikTok / Bandcamp / Savant, newest
   // import first (src/common/source-playlists.ts). Sidebar only — never to
@@ -242,17 +242,6 @@ function EjectIcon() {
   )
 }
 
-function PoolIcon() {
-  // A record crate: the pool is the box of records you pull for the trip.
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#5a6b8a" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M2.5 6.5h11l-1 7h-9z" />
-      <path d="M1.8 6.5 3 3.2h10l1.2 3.3" />
-      <path d="M5.5 9.2h5" />
-    </svg>
-  )
-}
-
 function IpodIcon() {
   return (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#555" strokeWidth="1">
@@ -288,16 +277,26 @@ export default function Sidebar() {
   const [plCtxMenu, setPlCtxMenu] = useState<{ x: number; y: number; playlistId: string; playlistName: string; kind: 'user' | 'smart' } | null>(null)
   // This year's releases by month (2026-10-24): a section per year, a smart playlist per month.
   const releaseMonths = useReleaseMonths()
-  // Each non-Original iPod's list as a playlist (2026-11-07, Jake: "the evil ipod gets a playlist
-  // like the top 1000 ipod does"), right after Top 1000, named for the iPod. homemini's list,
-  // newest first (src/renderer/ipodLists.ts). Sidebar only — never synced to the Original.
+  // iPODS (2026-11-07, Jake: "the ipod pool for each ipod is in the playlists area...they should
+  // have their own section"). One row per iPod this Mac has met: the Original opens its Top 1000,
+  // every other iPod opens its list on homemini (src/renderer/ipodLists.ts) — what each one's Sync
+  // button puts on it (PR #372). common/sidebar-ipods.ts builds the rows.
   const ipodLists = useIpodLists()
-  const allSmart = useMemo(() => {
-    if (ipodLists.length === 0) return smartPlaylists
-    const lists = ipodLists.map((l) => ({ label: l.name, id: ipodListPlaylistId(l.id) as SmartPlaylistId }))
-    const at = smartPlaylists.findIndex((x) => x.id === 'top-1000') + 1
-    return [...smartPlaylists.slice(0, at), ...lists, ...smartPlaylists.slice(at)]
-  }, [ipodLists])
+  const ipodRegistry = useIpodRegistry()
+  const top1000Ids = useTop1000List()
+  const libraryIds = useMemo(() => new Set(state.tracks.map((t) => t.id)), [state.tracks])
+  const ipodRows = useMemo(() => ipodSidebarRows({
+    devices: ipodRegistry,
+    lists: ipodLists,
+    top1000Ids,
+    inLibrary: (id) => libraryIds.has(id),
+  }), [ipodRegistry, ipodLists, top1000Ids, libraryIds])
+  // What a pin can name: the smart playlists and the iPod lists (a pin on Top 1000 made before
+  // it moved still resolves).
+  const allSmart = useMemo(() => [
+    ...smartPlaylists,
+    ...ipodRows.map((r) => ({ label: r.detail ? `${r.name} · ${r.detail}` : r.name, id: r.playlistId as SmartPlaylistId })),
+  ], [ipodRows])
   // Pinned playlists (2026-08-07, Jake: "pin 3 and only 3 playlists to the
   // very tippy top above defaults....i can absolutely pin a default").
   // Raw ids — user playlists ('pl-…'/'mm-…') and smart ids never collide.
@@ -362,16 +361,8 @@ export default function Sidebar() {
 
   useEffect(() => { void refreshMixtapes() }, [])
   useEffect(() => { ensureAiMixtapesLoaded() }, [])
-  // iPod Pool (2026-09-02): the hand-built activity set. Count rides the
-  // sidebar badge; drops onto the row add to it (iTunes: drag to the iPod).
-  const poolIds = useSyncExternalStore(subscribePool, getPoolIds)
-  // workmini: the MacBook's pool, display-only; a non-Original iPod plugged in: its list is homemini's (2026-11-07)
-  const poolEditable = usePoolEditable()
-  // The badge is what will SYNC, not what was dropped (2026-09-19: 1,000
-  // in the badge, 992 at the sheet). Pool page names the difference.
-  const poolHealthInfo = usePoolHealth(state.tracks)
   // Placement audit 9/2 — "Download" carries a live count of jobs in flight
-  // (downloading + queued), the way iPod Pool does, so downloads are visible
+  // (downloading + queued), so downloads are visible
   // from anywhere without opening the page. `getQueue` returns the same array
   // reference until the queue changes, which is what useSyncExternalStore wants.
   const downloadQueue = useSyncExternalStore(subscribeQueue, getQueue)
@@ -380,7 +371,21 @@ export default function Sidebar() {
   // once they settle, and is hidden when the queue is empty.
   const downloadsBadgeText = downloadsBadge(panelSummary(downloadsPanelRows(downloadQueue, Date.now())))
   const downloadsPanelOpen = useSyncExternalStore(subscribeDownloadsPanelOpen, getDownloadsPanelOpen)
-  useEffect(() => { void refreshPool() }, [])
+  // Section order (2026-11-07, Jake: "i want to be able to have the side bar categories
+  // customizeable as to where i place them, click and drag and drop"). Per machine, in
+  // ui-state.json; main merges the one key into what's on disk. common/sidebar-order.ts has the rules.
+  const [savedOrder, setSavedOrder] = useState<string[]>([])
+  useEffect(() => {
+    void window.electronAPI.loadUiState()
+      .then((r) => { if (r?.ok && r.state) setSavedOrder(parseSavedOrder(r.state[SIDEBAR_ORDER_KEY])) })
+      .catch(() => {})
+  }, [])
+  const persistOrder = useCallback((next: string[]) => {
+    setSavedOrder(next)
+    void window.electronAPI.saveUiState({ [SIDEBAR_ORDER_KEY]: next })
+  }, [])
+  const [sectionCtxMenu, setSectionCtxMenu] = useState<{ x: number; y: number; key: string } | null>(null)
+  const [justificationOpen, setJustificationOpen] = useState(true)
 
   useEffect(() => {
     if (creatingPlaylist) {
@@ -439,7 +444,7 @@ export default function Sidebar() {
   }, [])
 
   // One row of a hand-made playlist (rename inline, drop, drag, context menu) — the PLAYLISTS
-  // section and the JUSTIFICATION section (2026-10-24) draw the same row.
+  // section and its Justification subgroup draw the same row.
   const userPlaylistRow = (pl: Playlist) => (
     editingPlaylistId === pl.id ? (
       <div key={pl.id} className="sidebar-item" style={{ paddingLeft: 22 }}>
@@ -472,7 +477,7 @@ export default function Sidebar() {
     )
   )
   // JUSTIFICATION (Jake, 2026-10-24): his "I would never have found this on Spotify" playlists,
-  // still regular playlists, grouped in their own section in numeral order. A pin moves one up.
+  // still regular playlists, grouped in numeral order (a subgroup of PLAYLISTS since 2026-11-07). A pin moves one up.
   const justifications = sortJustifications(state.playlists.filter(pl => isJustificationPlaylist(pl.name) && pl.category !== 'synced-set' && !pinned.includes(pl.id)))
 
   const handleRenamePlaylist = useCallback(() => {
@@ -591,318 +596,287 @@ export default function Sidebar() {
 
   // Right-click Play / Shuffle grey out on a playlist with no songs.
   const ctxPlaylistEmpty = !plCtxMenu || !state.playlists.find(p => p.id === plCtxMenu.playlistId)?.trackIds.length
-
-  return (
-    <div className="sidebar">
-      <div className="sidebar-scroll">
-        <SidebarSection title="LIBRARY">
-          {libraryItems.filter((item) => item.view !== 'top1000' || quizDoorShown(quizTies, onQuiz)).map((item) => (
-            <SidebarItem
-              key={item.view}
-              label={item.label}
-              icon={LIBRARY_ICONS[item.view]}
-              highlight={item.highlight}
-              selected={state.currentView === item.view}
-              onClick={() => dispatch({ type: 'SET_VIEW', view: item.view })}
-            />
-          ))}
-        </SidebarSection>
-
-        <SidebarSection title="STORE">
-          {/* Placement audit P4 (Jake 2026-09-06): Record Shop lives under STORE —
-              LIBRARY is what you own, STORE is where you get more. Same view id
-              ('discovery'), same highlight; only the row moved. */}
+  // Every top-level section, by its stable key (common/sidebar-order.ts). null = not showing now.
+  const sectionProps = (key: string) => ({ sectionKey: key, onSectionDrop: dropSection, onHeaderContextMenu: openSectionMenu, onNudge: nudge })
+  // A section dropped on another: before it, or after it (= before the one that follows it).
+  const dropSection = (dragged: string, target: string, where: 'before' | 'after') => {
+    const rest = drawnSections.filter((k) => k !== dragged)
+    const at = rest.indexOf(target)
+    if (at === -1) return
+    persistOrder(moveSection(drawnSections, savedOrder, dragged, where === 'before' ? target : (rest[at + 1] ?? null)))
+  }
+  const nudge = (key: string, step: -1 | 1) => persistOrder(nudgeSection(drawnSections, savedOrder, key, step))
+  const openSectionMenu = (e: React.MouseEvent, key: string) => setSectionCtxMenu({ x: e.clientX, y: e.clientY, key })
+  const sectionNodes: Array<[string, JSX.Element | null]> = [
+    ['library', (
+      <SidebarSection key={'library'} {...sectionProps('library')} title="LIBRARY">
+        {libraryItems.filter((item) => item.view !== 'top1000' || quizDoorShown(quizTies, onQuiz)).map((item) => (
           <SidebarItem
-            label="Record Shop"
-            icon={LIBRARY_ICONS['discovery']}
-            selected={state.currentView === 'discovery' || state.currentView === 'listen-to-the-list' || state.currentView === 'new-for-you' || state.currentView === 'recordstore'}
-            highlight="#b87333"
-            onClick={() => dispatch({ type: 'SET_VIEW', view: 'discovery' })}
+            key={item.view}
+            label={item.label}
+            icon={LIBRARY_ICONS[item.view]}
+            highlight={item.highlight}
+            selected={state.currentView === item.view}
+            onClick={() => dispatch({ type: 'SET_VIEW', view: item.view })}
           />
-          <SidebarItem
-            label="Bandcamp Store"
-            icon={(
-              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-                <path d="M3 3h10l-1.2 7.5a1.5 1.5 0 0 1-1.48 1.25H5.68A1.5 1.5 0 0 1 4.2 10.5L3 3z" fill="#2c5aa0" />
-                <circle cx="6" cy="13.5" r="1" fill="#2c5aa0" />
-                <circle cx="11" cy="13.5" r="1" fill="#2c5aa0" />
-              </svg>
-            )}
-            selected={state.currentView === 'store'}
-            onClick={() => dispatch({ type: 'SET_VIEW', view: 'store' })}
-          />
-          {/* Placement audit P1 (approved): the Downloads row IS the panel's door —
-              the whole row toggles it; the glyph stays visible when the queue is
-              empty and the count rides inside it. The legacy page keeps its own
-              row below until parity and everyday use retire it. */}
-          <SidebarItem
-            label="Downloads"
-            icon={(
-              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#7a5ca8" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M8 2.5v6" />
-                <path d="M5.5 6 8 8.7 10.5 6" />
-                <path d="M3 11.5h10" />
-              </svg>
-            )}
-            className={downloadsPanelOpen ? 'sidebar-item--panel-open' : undefined}
-            onClick={() => toggleDownloadsPanel('toggle')}
-            door={{
-              title: 'Show downloads',
-              onClick: () => toggleDownloadsPanel('toggle'),
-              badge: downloadsBadgeText,
-              icon: (
-                <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="1.5" y="2" width="9" height="8" rx="1.2" />
-                  <path d="M7 2v8" />
-                </svg>
-              ),
-            }}
-          />
-          <SidebarItem
-            label="Download page"
-            className="sidebar-item--legacy"
-            icon={(
-              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#9a948a" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
-                <path d="M2.5 6h11" />
-              </svg>
-            )}
-            selected={state.currentView === 'download'}
-            onClick={() => dispatch({ type: 'SET_VIEW', view: 'download' })}
-          />
-          {/* DJ booth — nav entry HIDDEN 2026-08-04 at Jake's request ("it needs to
-              be on the shelf for a little bit"). The feature is intact and the 'dj'
-              route stays wired in MainContent, so restoring this SidebarItem is the
-              whole job when it comes back. Same treatment as the Record Store entry.
-          
-              <SidebarItem
-              label="DJ"
-              icon={(
-              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#F9864C" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="4.6" cy="5.4" r="2.9" />
-              <circle cx="11.4" cy="5.4" r="2.9" />
-              <path d="M2 12.4h12" />
-              <path d="M8 10.9v3" />
-              </svg>
-              )}
-              selected={state.currentView === 'dj'}
-              onClick={() => dispatch({ type: 'SET_VIEW', view: 'dj' })}
-              />
-          */}
-          {/* Brief 037 Record Store — entry HIDDEN for the 4.5.0-111
-              release (shipping listen-to-the-list only; Phase-2 store held).
-              Re-add this SidebarItem when RECORD_STORE_ENABLED flips back on:
-              <SidebarItem
-                label="Record Store"
-                icon={(
-                  <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
-                    <circle cx="8" cy="8" r="6.5" fill="#b87333" />
-                    <circle cx="8" cy="8" r="2.2" fill="#fff" />
-                    <circle cx="8" cy="8" r="0.8" fill="#b87333" />
-                  </svg>
-                )}
-                selected={state.currentView === 'recordstore'}
-                onClick={() => dispatch({ type: 'SET_VIEW', view: 'recordstore' })}
-              /> */}
-        </SidebarSection>
-
-        {/* Placement audit 9/2 — Beck v. Prupis is a private archive (never a
-            track, never public), not a store. Its own one-row section says so. */}
-        <SidebarSection title="ARCHIVE">
-          <SidebarItem
-            label="Beck v. Prupis"
-            icon={(
-              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#9a7b3a" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M2 6 8 2.3 14 6" />
-                <path d="M2.6 6.6v6M6 6.6v6M10 6.6v6M13.4 6.6v6" />
-                <path d="M1.4 13h13.2" />
-              </svg>
-            )}
-            selected={state.currentView === 'scotus'}
-            onClick={() => dispatch({ type: 'SET_VIEW', view: 'scotus' })}
-          />
-        </SidebarSection>
-
-        {(ipodMounted || cdMounted || deviceFixtureRequested()) && (
-          <SidebarSection title="DEVICES">
-            {(ipodMounted || deviceFixtureRequested()) && (
-              <li
-                className={`sidebar-item sidebar-device-row ${state.currentView === 'device' ? 'sidebar-item--selected' : ''}`}
-                onClick={() => dispatch({ type: 'SET_VIEW', view: 'device' })}
-              >
-                <span className="sidebar-item-icon"><IpodIcon /></span>
-                <span className="sidebar-item-label">{ipodName}</span>
-                <button className="sidebar-eject-btn" title="Eject" onClick={async (e) => {
-                  e.stopPropagation()
-                  // If we're playing a track from the iPod, the file handle
-                  // would prevent diskutil eject from succeeding. STOP unloads
-                  // the Howl which closes the ipod-audio:// streaming read.
-                  // 500ms is comfortably more than the unload takes locally
-                  // and shorter than the user's perceptible delay budget.
-                  const playingFromIpod = pb.isPlaying && pb.nowPlaying?.path?.startsWith('iPod_Control:')
-                  if (playingFromIpod) {
-                    pbDispatch({ type: 'STOP' })
-                    await new Promise((resolve) => setTimeout(resolve, 500))
-                  }
-                  const r = await window.electronAPI.ejectIpod()
-                  if (r.ok) {
-                    window.dispatchEvent(new Event('jaketunes-ipod-ejected'))
-                  } else {
-                    setNotice(`Couldn't eject — ${r.error || 'the disk did not respond'}`, { kind: 'error', durationMs: 6000 })
-                  }
-                }}><EjectIcon /></button>
-              </li>
-            )}
-            {cdMounted && (
-              <li
-                className={`sidebar-item sidebar-device-row ${state.currentView === 'cd-import' ? 'sidebar-item--selected' : ''}`}
-                onClick={() => dispatch({ type: 'SET_VIEW', view: 'cd-import' })}
-              >
-                <span className="sidebar-item-icon"><CdIcon /></span>
-                <span className="sidebar-item-label">{cdName}</span>
-                <button className="sidebar-eject-btn" title="Eject CD" onClick={(e) => { e.stopPropagation(); window.electronAPI.ejectCd().then(() => window.dispatchEvent(new Event('jaketunes-cd-ejected'))) }}><EjectIcon /></button>
-              </li>
-            )}
-          </SidebarSection>
-        )}
-
-        {/* iPod Pool (2026-09-02): the hand-built Activity Sync set. Its own
-            section, named for what it feeds — Jake: a pool "listed as a
-            device and ipod not even plugged in" is wrong, and a permanent
-            row is "still sitting there". So: shown ONLY while the pool has
-            songs. First songs enter via right-click → Add to iPod Pool;
-            after that the row is the drop target for whole albums,
-            artists and playlists. Clear the pool and the row goes. */}
-        {poolIds.length > 0 && (
-        <SidebarSection title="ACTIVITY SYNC">
-          <SidebarItem
-            label="iPod Pool"
-            icon={<PoolIcon />}
-            badge={poolIds.length > 0 ? poolHealthInfo.syncable.length.toLocaleString() : undefined}
-            selected={state.currentView === 'activity-pool'}
-            onClick={() => dispatch({ type: 'SET_VIEW', view: 'activity-pool' })}
-            droppable={poolEditable}
-            onDrop={(trackIds) => { void addTracksToPool(trackIds, new Map(state.tracks.map((t) => [t.id, t]))) }}
-          />
-        </SidebarSection>
-        )}
-
-        {/* WJLR Picks moved INTO the Record Shop as the staff wall
-            (2026-08-22, Jake: "move these into a row for each person on the
-            record store page"). Full-table views remain routable — the
-            shop's shelf headers link straight to VIEW_SMART_PLAYLIST. */}
-
-        {/* 2026-07-18 — mixtapes: real cassettes made from a song
-            selection. Module store (mixtapes.ts) mirrors concertNav;
-            detail view routes via generic SET_VIEW. */}
-        <SidebarSection title="MIXTAPES">
-          <SidebarItem
-            label="New Mixtape…"
-            icon={<CassetteIcon />}
-            selected={false}
-            onClick={() => setShowBlankTape(true)}
-          />
-          {mixtapes.map((m) => (
-            <div key={m.id} onContextMenu={(e) => { e.preventDefault(); setTapeCtxMenu({ x: e.clientX, y: e.clientY, own: { id: m.id, title: m.title } }) }}>
-              <SidebarItem
-                label={m.title}
-                icon={<CassetteIcon />}
-                selected={state.currentView === 'mixtape-detail' && activeMixtapeId === m.id}
-                onClick={() => { setMixtapeId(m.id); dispatch({ type: 'SET_VIEW', view: 'mixtape-detail' }) }}
-              />
-            </div>
-          ))}
-          {keptTapes.map((t) => (
-            <div key={t.id} onContextMenu={(e) => { e.preventDefault(); setTapeCtxMenu({ x: e.clientX, y: e.clientY, kept: t }) }}>
-              <SidebarItem
-                label={t.title}
-                icon={<CassetteIcon />}
-                selected={state.currentView === 'mixtape-detail' && activeMixtapeId === t.id}
-                onClick={() => { setMixtapeId(t.id); dispatch({ type: 'SET_VIEW', view: 'mixtape-detail' }) }}
-              />
-            </div>
-          ))}
-        </SidebarSection>
-
-        {/* 2026-07-18 — saved activity syncs get their own category so a
-            kept sync reads as a different kind of thing than a hand-made
-            playlist. Section renders only when at least one exists. */}
-        {state.playlists.some(pl => pl.category === 'synced-set') && (
-          <SidebarSection title="SYNCED SETS">
-            {state.playlists.filter(pl => pl.category === 'synced-set').map((pl) => (
-              <div key={pl.id} onContextMenu={(e) => handlePlaylistContextMenu(e, pl.id, pl.name)}>
-                <SidebarItem
-                  label={pl.name}
-                  icon={<SmartPlaylistIcon />}
-                  selected={state.currentView === 'playlist' && state.activePlaylistId === pl.id}
-                  onClick={() => dispatch({ type: 'VIEW_PLAYLIST', id: pl.id })}
-                  onDoubleClick={() => playPlaylist(pl.id)}
-                  dragTrackIds={pl.trackIds}
-                />
-              </div>
-            ))}
-          </SidebarSection>
-        )}
-
-        {justifications.length > 0 && (
-          <SidebarSection title="JUSTIFICATION">
-            {justifications.map(userPlaylistRow)}
-          </SidebarSection>
-        )}
-
-        {/* This year's releases month by month (2026-10-24): homemini dates every album on
-            MusicBrainz (singles off an unreleased album sit in the album's month). One section
-            per year, months in order, a smart playlist each. Sidebar only — not synced to the iPod. */}
-        {yearsOf(releaseMonths).map((year) => (
-          <SidebarSection key={year} title={year}>
-            {(releaseMonths?.months ?? []).filter((ym) => ym.startsWith(year)).map((ym) => (
-              <SidebarItem
-                key={ym}
-                label={monthPlaylistName(ym)}
-                icon={<SmartPlaylistIcon />}
-                selected={state.currentView === 'smart-playlist' && state.activeSmartPlaylist === monthPlaylistId(ym)}
-                onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: monthPlaylistId(ym) })}
-              />
-            ))}
-          </SidebarSection>
         ))}
-
-        <SidebarSection title="PLAYLISTS">
-          {/* Pinned first (max 3, any mix of defaults + user playlists),
-              then the remaining defaults, then user playlists A–Z. A pin
-              MOVES its entry up — no duplicate below. Stale pins (deleted
-              playlists) simply resolve to nothing. */}
-          {pinned.map((id) => {
-            const sp = allSmart.find(x => x.id === id)
-            if (sp) return (
-              <div key={`pin-${id}`} onContextMenu={(e) => handlePlaylistContextMenu(e, sp.id, sp.label, 'smart')}>
-                <SidebarItem
-                  label={sp.label}
-                  icon={<SmartIcon id={sp.id} />}
-                  selected={state.currentView === 'smart-playlist' && state.activeSmartPlaylist === sp.id}
-                  onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: sp.id })}
-                />
-              </div>
-            )
-            const pl = state.playlists.find(x => x.id === id)
-            if (!pl) return null
-            return (
-              <div key={`pin-${id}`} onContextMenu={(e) => handlePlaylistContextMenu(e, pl.id, pl.name)}>
-                <SidebarItem
-                  label={pl.name}
-                  icon={<PlaylistIcon />}
-                  selected={state.currentView === 'playlist' && state.activePlaylistId === pl.id}
-                  onClick={() => dispatch({ type: 'VIEW_PLAYLIST', id: pl.id })}
-                  onDoubleClick={() => playPlaylist(pl.id)}
-                  droppable
-                  onDrop={(trackIds) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pl.id, trackIds })}
-                  dragTrackIds={pl.trackIds}
-                />
-              </div>
-            )
-          })}
-          {allSmart.filter(sp => !pinned.includes(sp.id)).map((sp) => (
-            <div key={sp.id} onContextMenu={(e) => handlePlaylistContextMenu(e, sp.id, sp.label, 'smart')}>
+      </SidebarSection>
+    )],
+    ['store', (
+      <SidebarSection key={'store'} {...sectionProps('store')} title="STORE">
+        {/* Placement audit P4 (Jake 2026-09-06): Record Shop lives under STORE —
+            LIBRARY is what you own, STORE is where you get more. Same view id
+            ('discovery'), same highlight; only the row moved. */}
+        <SidebarItem
+          label="Record Shop"
+          icon={LIBRARY_ICONS['discovery']}
+          selected={state.currentView === 'discovery' || state.currentView === 'listen-to-the-list' || state.currentView === 'new-for-you' || state.currentView === 'recordstore'}
+          highlight="#b87333"
+          onClick={() => dispatch({ type: 'SET_VIEW', view: 'discovery' })}
+        />
+        <SidebarItem
+          label="Bandcamp Store"
+          icon={(
+            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M3 3h10l-1.2 7.5a1.5 1.5 0 0 1-1.48 1.25H5.68A1.5 1.5 0 0 1 4.2 10.5L3 3z" fill="#2c5aa0" />
+              <circle cx="6" cy="13.5" r="1" fill="#2c5aa0" />
+              <circle cx="11" cy="13.5" r="1" fill="#2c5aa0" />
+            </svg>
+          )}
+          selected={state.currentView === 'store'}
+          onClick={() => dispatch({ type: 'SET_VIEW', view: 'store' })}
+        />
+        {/* Placement audit P1 (approved): the Downloads row IS the panel's door —
+            the whole row toggles it; the glyph stays visible when the queue is
+            empty and the count rides inside it. The legacy page keeps its own
+            row below until parity and everyday use retire it. */}
+        <SidebarItem
+          label="Downloads"
+          icon={(
+            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#7a5ca8" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M8 2.5v6" />
+              <path d="M5.5 6 8 8.7 10.5 6" />
+              <path d="M3 11.5h10" />
+            </svg>
+          )}
+          className={downloadsPanelOpen ? 'sidebar-item--panel-open' : undefined}
+          onClick={() => toggleDownloadsPanel('toggle')}
+          door={{
+            title: 'Show downloads',
+            onClick: () => toggleDownloadsPanel('toggle'),
+            badge: downloadsBadgeText,
+            icon: (
+              <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="1.5" y="2" width="9" height="8" rx="1.2" />
+                <path d="M7 2v8" />
+              </svg>
+            ),
+          }}
+        />
+        <SidebarItem
+          label="Download page"
+          className="sidebar-item--legacy"
+          icon={(
+            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#9a948a" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
+              <path d="M2.5 6h11" />
+            </svg>
+          )}
+          selected={state.currentView === 'download'}
+          onClick={() => dispatch({ type: 'SET_VIEW', view: 'download' })}
+        />
+        {/* DJ booth — nav entry HIDDEN 2026-08-04 at Jake's request ("it needs to
+            be on the shelf for a little bit"). The feature is intact and the 'dj'
+            route stays wired in MainContent, so restoring this SidebarItem is the
+            whole job when it comes back. Same treatment as the Record Store entry.
+        
+            <SidebarItem
+            label="DJ"
+            icon={(
+            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#F9864C" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="4.6" cy="5.4" r="2.9" />
+            <circle cx="11.4" cy="5.4" r="2.9" />
+            <path d="M2 12.4h12" />
+            <path d="M8 10.9v3" />
+            </svg>
+            )}
+            selected={state.currentView === 'dj'}
+            onClick={() => dispatch({ type: 'SET_VIEW', view: 'dj' })}
+            />
+        */}
+        {/* Brief 037 Record Store — entry HIDDEN for the 4.5.0-111
+            release (shipping listen-to-the-list only; Phase-2 store held).
+            Re-add this SidebarItem when RECORD_STORE_ENABLED flips back on:
+            <SidebarItem
+              label="Record Store"
+              icon={(
+                <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+                  <circle cx="8" cy="8" r="6.5" fill="#b87333" />
+                  <circle cx="8" cy="8" r="2.2" fill="#fff" />
+                  <circle cx="8" cy="8" r="0.8" fill="#b87333" />
+                </svg>
+              )}
+              selected={state.currentView === 'recordstore'}
+              onClick={() => dispatch({ type: 'SET_VIEW', view: 'recordstore' })}
+            /> */}
+      </SidebarSection>
+    )],
+    // Placement audit 9/2 — Beck v. Prupis is a private archive (never a
+    // track, never public), not a store. Its own one-row section says so.
+    ['archive', (
+      <SidebarSection key={'archive'} {...sectionProps('archive')} title="ARCHIVE">
+        <SidebarItem
+          label="Beck v. Prupis"
+          icon={(
+            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="#9a7b3a" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M2 6 8 2.3 14 6" />
+              <path d="M2.6 6.6v6M6 6.6v6M10 6.6v6M13.4 6.6v6" />
+              <path d="M1.4 13h13.2" />
+            </svg>
+          )}
+          selected={state.currentView === 'scotus'}
+          onClick={() => dispatch({ type: 'SET_VIEW', view: 'scotus' })}
+        />
+      </SidebarSection>
+    )],
+    ['devices', (ipodMounted || cdMounted || deviceFixtureRequested()) ? (
+      <SidebarSection key={'devices'} {...sectionProps('devices')} title="DEVICES">
+        {(ipodMounted || deviceFixtureRequested()) && (
+          <li
+            className={`sidebar-item sidebar-device-row ${state.currentView === 'device' ? 'sidebar-item--selected' : ''}`}
+            onClick={() => dispatch({ type: 'SET_VIEW', view: 'device' })}
+          >
+            <span className="sidebar-item-icon"><IpodIcon /></span>
+            <span className="sidebar-item-label">{ipodName}</span>
+            <button className="sidebar-eject-btn" title="Eject" onClick={async (e) => {
+              e.stopPropagation()
+              // If we're playing a track from the iPod, the file handle
+              // would prevent diskutil eject from succeeding. STOP unloads
+              // the Howl which closes the ipod-audio:// streaming read.
+              // 500ms is comfortably more than the unload takes locally
+              // and shorter than the user's perceptible delay budget.
+              const playingFromIpod = pb.isPlaying && pb.nowPlaying?.path?.startsWith('iPod_Control:')
+              if (playingFromIpod) {
+                pbDispatch({ type: 'STOP' })
+                await new Promise((resolve) => setTimeout(resolve, 500))
+              }
+              const r = await window.electronAPI.ejectIpod()
+              if (r.ok) {
+                window.dispatchEvent(new Event('jaketunes-ipod-ejected'))
+              } else {
+                setNotice(`Couldn't eject — ${r.error || 'the disk did not respond'}`, { kind: 'error', durationMs: 6000 })
+              }
+            }}><EjectIcon /></button>
+          </li>
+        )}
+        {cdMounted && (
+          <li
+            className={`sidebar-item sidebar-device-row ${state.currentView === 'cd-import' ? 'sidebar-item--selected' : ''}`}
+            onClick={() => dispatch({ type: 'SET_VIEW', view: 'cd-import' })}
+          >
+            <span className="sidebar-item-icon"><CdIcon /></span>
+            <span className="sidebar-item-label">{cdName}</span>
+            <button className="sidebar-eject-btn" title="Eject CD" onClick={(e) => { e.stopPropagation(); window.electronAPI.ejectCd().then(() => window.dispatchEvent(new Event('jaketunes-cd-ejected'))) }}><EjectIcon /></button>
+          </li>
+        )}
+      </SidebarSection>
+    ) : null],
+    // iPODS (2026-11-07): one row per iPod, opening the list its Sync button puts on it.
+    ['ipods', (
+      <SidebarSection key={'ipods'} {...sectionProps('ipods')} title="iPODS">
+        {ipodRows.map((r) => (
+          <div key={r.key} onContextMenu={(e) => handlePlaylistContextMenu(e, r.playlistId, r.detail ? `${r.name} · ${r.detail}` : r.name, 'smart')}>
+            <SidebarItem
+              label={r.name}
+              detail={r.detail ?? undefined}
+              wrap
+              icon={<span className="sidebar-ipod-dot" style={r.color ? { background: r.color } : undefined} aria-hidden="true" />}
+              badge={r.count === null ? undefined : r.count.toLocaleString()}
+              selected={state.currentView === 'smart-playlist' && state.activeSmartPlaylist === r.playlistId}
+              onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: r.playlistId as SmartPlaylistId })}
+            />
+          </div>
+        ))}
+      </SidebarSection>
+    )],
+    // 2026-07-18 — mixtapes: real cassettes made from a song
+    // selection. Module store (mixtapes.ts) mirrors concertNav;
+    // detail view routes via generic SET_VIEW.
+    ['mixtapes', (
+      <SidebarSection key={'mixtapes'} {...sectionProps('mixtapes')} title="MIXTAPES">
+        <SidebarItem
+          label="New Mixtape…"
+          icon={<CassetteIcon />}
+          selected={false}
+          onClick={() => setShowBlankTape(true)}
+        />
+        {mixtapes.map((m) => (
+          <div key={m.id} onContextMenu={(e) => { e.preventDefault(); setTapeCtxMenu({ x: e.clientX, y: e.clientY, own: { id: m.id, title: m.title } }) }}>
+            <SidebarItem
+              label={m.title}
+              icon={<CassetteIcon />}
+              selected={state.currentView === 'mixtape-detail' && activeMixtapeId === m.id}
+              onClick={() => { setMixtapeId(m.id); dispatch({ type: 'SET_VIEW', view: 'mixtape-detail' }) }}
+            />
+          </div>
+        ))}
+        {keptTapes.map((t) => (
+          <div key={t.id} onContextMenu={(e) => { e.preventDefault(); setTapeCtxMenu({ x: e.clientX, y: e.clientY, kept: t }) }}>
+            <SidebarItem
+              label={t.title}
+              icon={<CassetteIcon />}
+              selected={state.currentView === 'mixtape-detail' && activeMixtapeId === t.id}
+              onClick={() => { setMixtapeId(t.id); dispatch({ type: 'SET_VIEW', view: 'mixtape-detail' }) }}
+            />
+          </div>
+        ))}
+      </SidebarSection>
+    )],
+    // 2026-07-18 — saved activity syncs get their own category so a
+    // kept sync reads as a different kind of thing than a hand-made
+    // playlist. Section renders only when at least one exists.
+    ['synced-sets', state.playlists.some(pl => pl.category === 'synced-set') ? (
+      <SidebarSection key={'synced-sets'} {...sectionProps('synced-sets')} title="SYNCED SETS">
+        {state.playlists.filter(pl => pl.category === 'synced-set').map((pl) => (
+          <div key={pl.id} onContextMenu={(e) => handlePlaylistContextMenu(e, pl.id, pl.name)}>
+            <SidebarItem
+              label={pl.name}
+              icon={<SmartPlaylistIcon />}
+              selected={state.currentView === 'playlist' && state.activePlaylistId === pl.id}
+              onClick={() => dispatch({ type: 'VIEW_PLAYLIST', id: pl.id })}
+              onDoubleClick={() => playPlaylist(pl.id)}
+              dragTrackIds={pl.trackIds}
+            />
+          </div>
+        ))}
+      </SidebarSection>
+    ) : null],
+    // This year's releases month by month (2026-10-24): homemini dates every album on
+    // MusicBrainz (singles off an unreleased album sit in the album's month). One section
+    // per year, months in order, a smart playlist each. Sidebar only — not synced to the iPod.
+    ...yearsOf(releaseMonths).map((year): [string, JSX.Element] => [`${YEAR_PREFIX}${year}`, (
+      <SidebarSection key={`${YEAR_PREFIX}${year}`} {...sectionProps(`${YEAR_PREFIX}${year}`)} title={year}>
+        {(releaseMonths?.months ?? []).filter((ym) => ym.startsWith(year)).map((ym) => (
+          <SidebarItem
+            key={ym}
+            label={monthPlaylistName(ym)}
+            icon={<SmartPlaylistIcon />}
+            selected={state.currentView === 'smart-playlist' && state.activeSmartPlaylist === monthPlaylistId(ym)}
+            onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: monthPlaylistId(ym) })}
+          />
+        ))}
+      </SidebarSection>
+    )]),
+    ['playlists', (
+      <SidebarSection key={'playlists'} {...sectionProps('playlists')} title="PLAYLISTS">
+        {/* Pinned first (max 3, any mix of defaults + user playlists),
+            then the remaining defaults, then user playlists A–Z. A pin
+            MOVES its entry up — no duplicate below. Stale pins (deleted
+            playlists) simply resolve to nothing. */}
+        {pinned.map((id) => {
+          const sp = allSmart.find(x => x.id === id)
+          if (sp) return (
+            <div key={`pin-${id}`} onContextMenu={(e) => handlePlaylistContextMenu(e, sp.id, sp.label, 'smart')}>
               <SidebarItem
                 label={sp.label}
                 icon={<SmartIcon id={sp.id} />}
@@ -910,33 +884,99 @@ export default function Sidebar() {
                 onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: sp.id })}
               />
             </div>
-          ))}
-          {state.playlists
-            .filter(pl => !SMART_PLAYLIST_NAMES.has(pl.name) && pl.category !== 'synced-set' && !pinned.includes(pl.id) && !isJustificationPlaylist(pl.name))
-            .slice()
-            .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
-            .map(userPlaylistRow)}
-          {creatingPlaylist && (
-            <div className="sidebar-item" style={{ paddingLeft: 22 }}>
-              <span className="sidebar-item-icon"><PlaylistIcon /></span>
-              <input
-                ref={newPlaylistRef}
-                className="sidebar-inline-input"
-                placeholder="Playlist name"
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleNewPlaylistSubmit(e.currentTarget.value)
-                  if (e.key === 'Escape') setCreatingPlaylist(false)
-                }}
-                onBlur={(e) => handleNewPlaylistSubmit(e.currentTarget.value)}
+          )
+          const pl = state.playlists.find(x => x.id === id)
+          if (!pl) return null
+          return (
+            <div key={`pin-${id}`} onContextMenu={(e) => handlePlaylistContextMenu(e, pl.id, pl.name)}>
+              <SidebarItem
+                label={pl.name}
+                icon={<PlaylistIcon />}
+                selected={state.currentView === 'playlist' && state.activePlaylistId === pl.id}
+                onClick={() => dispatch({ type: 'VIEW_PLAYLIST', id: pl.id })}
+                onDoubleClick={() => playPlaylist(pl.id)}
+                droppable
+                onDrop={(trackIds) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pl.id, trackIds })}
+                dragTrackIds={pl.trackIds}
               />
             </div>
-          )}
-        </SidebarSection>
+          )
+        })}
+        {smartPlaylists.filter(sp => !pinned.includes(sp.id)).map((sp) => (
+          <div key={sp.id} onContextMenu={(e) => handlePlaylistContextMenu(e, sp.id, sp.label, 'smart')}>
+            <SidebarItem
+              label={sp.label}
+              icon={<SmartIcon id={sp.id} />}
+              selected={state.currentView === 'smart-playlist' && state.activeSmartPlaylist === sp.id}
+              onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: sp.id })}
+            />
+          </div>
+        ))}
+        {/* JUSTIFICATION (Jake, 2026-11-07: "justification should also be a subgroup of
+            playlists"): his "I would never have found this on Spotify" playlists, in numeral
+            order, folded under PLAYLISTS. A pin still moves one to the top. */}
+        {justifications.length > 0 && (
+          <li className="sidebar-subgroup">
+            <button type="button" className="sidebar-subgroup-header" aria-expanded={justificationOpen} onClick={() => setJustificationOpen((o) => !o)}>
+              <svg className={`sidebar-chevron ${justificationOpen ? 'open' : ''}`} width="8" height="8" viewBox="0 0 8 8" fill="currentColor" aria-hidden="true">
+                <path d="M2 1l4 3-4 3z" />
+              </svg>
+              <span>Justification</span>
+            </button>
+            {justificationOpen && <ul className="sidebar-subgroup-items">{justifications.map(userPlaylistRow)}</ul>}
+          </li>
+        )}
+        {state.playlists
+          .filter(pl => !SMART_PLAYLIST_NAMES.has(pl.name) && pl.category !== 'synced-set' && !pinned.includes(pl.id) && !isJustificationPlaylist(pl.name))
+          .slice()
+          .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+          .map(userPlaylistRow)}
+        {creatingPlaylist && (
+          <div className="sidebar-item" style={{ paddingLeft: 22 }}>
+            <span className="sidebar-item-icon"><PlaylistIcon /></span>
+            <input
+              ref={newPlaylistRef}
+              className="sidebar-inline-input"
+              placeholder="Playlist name"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleNewPlaylistSubmit(e.currentTarget.value)
+                if (e.key === 'Escape') setCreatingPlaylist(false)
+              }}
+              onBlur={(e) => handleNewPlaylistSubmit(e.currentTarget.value)}
+            />
+          </div>
+        )}
+      </SidebarSection>
+    )],
+  ]
+  const sectionByKey = new Map(sectionNodes.filter((e): e is [string, JSX.Element] => e[1] !== null))
+  const drawnSections = orderSections([...sectionByKey.keys()], savedOrder, DEFAULT_SECTION_ORDER)
+
+  return (
+    <div className="sidebar">
+      <div className="sidebar-scroll">
+        {drawnSections.map((key) => sectionByKey.get(key))}
       </div>
 
       <AlbumArtPanel onNewPlaylist={handleNewPlaylist} />
 
+      {sectionCtxMenu && (() => {
+        const i = drawnSections.indexOf(sectionCtxMenu.key)
+        return (
+          <ContextMenu
+            x={sectionCtxMenu.x}
+            y={sectionCtxMenu.y}
+            items={[
+              { label: 'Move Up', disabled: i <= 0, onClick: () => nudge(sectionCtxMenu.key, -1) },
+              { label: 'Move Down', disabled: i === -1 || i >= drawnSections.length - 1, onClick: () => nudge(sectionCtxMenu.key, 1) },
+              { separator: true as const },
+              { label: 'Reset Sidebar Order', disabled: savedOrder.length === 0, onClick: () => persistOrder([]) },
+            ]}
+            onClose={() => setSectionCtxMenu(null)}
+          />
+        )
+      })()}
       {plCtxMenu && (
         <ContextMenu
           x={plCtxMenu.x}

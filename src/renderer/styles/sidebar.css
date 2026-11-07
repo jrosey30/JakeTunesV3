@@ -434,3 +434,67 @@
   display: block;
   box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.25);
 }
+
+/* Section reorder (2026-11-07, Jake: "customizeable as to where i place them,
+   click and drag and drop"). The header is the handle; a 2px selection-blue
+   line (the dragover row's colour, var(--selection-top)) shows where the
+   section will land. */
+.sidebar-section { position: relative; }
+.sidebar-section-header[draggable="true"] { cursor: grab; }
+.sidebar-section-header[draggable="true"]:active { cursor: grabbing; }
+.sidebar-section--drop-before::before,
+.sidebar-section--drop-after::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--selection-top);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.6);
+  pointer-events: none;
+  z-index: 1;
+}
+.sidebar-section--drop-before::before { top: -4px; }
+.sidebar-section--drop-after::after { bottom: -4px; }
+
+/* iPODS rows: the iPod's sticker colour as an 8px dot in the 14px icon box
+   (~57%), grey (#a9a49b) when no colour was chosen. Names wrap, never clip. */
+.sidebar-ipod-dot {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #a9a49b;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.25), 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+.sidebar-item--wrap {
+  white-space: normal;
+  align-items: flex-start;
+}
+.sidebar-item--wrap .sidebar-item-icon { margin-top: 1px; }
+.sidebar-item--wrap .sidebar-item-label {
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  line-height: 1.3;
+}
+.sidebar-item-detail { color: var(--text-dim); font-weight: 400; }
+.sidebar-item--selected .sidebar-item-detail { color: rgba(255, 255, 255, 0.85); }
+
+/* Justification: a subgroup folded inside PLAYLISTS (2026-11-07). Its header
+   reads like a row (22px in, body size), its playlists sit one step deeper. */
+.sidebar-subgroup { list-style: none; }
+.sidebar-subgroup-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 10px 2px 22px;
+  font-size: var(--font-body);
+  font-weight: 600;
+  color: var(--text-dim);
+  text-align: left;
+}
+.sidebar-subgroup-header:hover { background: rgba(0, 0, 0, 0.06); }
+.sidebar-subgroup-items .sidebar-item { padding-left: 34px; }

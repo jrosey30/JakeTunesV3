@@ -14,7 +14,7 @@ import { REFUSED_SENDER } from '../ipc-register.ts'
 import { safeIpcError } from '../safe-ipc-error.ts'
 import { findIpodMount, isIpodMount, volumeNameFromMount, ejectVolume, IS_MAC } from '../platform.ts'
 import { STATE_DIR } from '../state-dir.ts'
-import { identifyIpod, registerIpod, renameIpodMarker } from '../ipod-identity.ts'
+import { identifyIpod, registerIpod, renameIpodMarker, loadIpodRegistry } from '../ipod-identity.ts'
 import { renameIpod, renameMacVolume, queueHomeminiName } from '../ipod-rename.ts'
 
 export interface IpodMountSnapshot {
@@ -171,6 +171,17 @@ export function registerIpodIpc(ipc: IpcRegistrar, host: IpodIpcHost): void {
       return { ok: true, mounted: true, identity: await identifyIpod(mount, STATE_DIR) }
     } catch (err) {
       return { ok: false, error: safeIpcError(err, 'io-failed') }
+    }
+  }, { public: true })
+
+  // Every iPod this Mac has met (ipod-devices.json), plugged in or not: the
+  // sidebar's iPODS section, one row per iPod (2026-11-07). Read-only.
+  ipc.handle('ipod-registry:list', async () => {
+    try {
+      const reg = await loadIpodRegistry(STATE_DIR)
+      return { ok: true, devices: reg.devices.map((d) => ({ id: d.id, name: d.name, color: d.color, primary: d.primary })) }
+    } catch (err) {
+      return { ok: false, devices: [], error: safeIpcError(err, 'io-failed') }
     }
   }, { public: true })
 
