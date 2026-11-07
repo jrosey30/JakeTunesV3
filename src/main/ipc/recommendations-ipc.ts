@@ -19,6 +19,7 @@ import { REFUSED_SENDER } from '../ipc-register.ts'
 import { NAS_STATE_DIR_PATH, STATE_DIR, nasAvailable } from '../state-dir'
 import { quietWarn } from '../flight-recorder'
 import { nameKey } from '../../common/fold-text.ts'
+import { matchNamesRowArtist } from '../../common/artist-credit.ts'
 import { noteAttribution } from '../friend-credit-sweep.ts'
 import { startImessageCapture } from '../imessage-capture'
 import { MUSIC_MAN_CORE } from '../personas.ts'
@@ -485,7 +486,9 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
     song?: string; artist?: string; album?: string; note?: string
   }, source: RecoSource = 'user'): Promise<RecommendationRecord> {
     const now = new Date().toISOString()
-    const enrichment = await lookupItunesForRecommendation(input)
+    const found = await lookupItunesForRecommendation(input)
+    // Someone else's song of that title is no answer for a row that names its artist.
+    const enrichment: typeof found = matchNamesRowArtist({ song: input.song, artist: input.artist, ...found }) ? found : {}
     const canonicalSong = enrichment.matchedTitle || input.song?.trim() || undefined
     const canonicalArtist = enrichment.matchedArtist || input.artist?.trim() || undefined
     return {
