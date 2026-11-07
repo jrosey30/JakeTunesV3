@@ -9,8 +9,16 @@
 #    by JakeTunes; plus ≥120 s of keyboard/mouse idle
 #  - asar-mtime guard: another session installing mid-way = abort
 #  - quit by process NAME (pgrep -x), never a path regex (10/11)
-#  - previous build kept OUTSIDE /Applications (LaunchServices), restored if
-#    the copy fails; codesign verify; lsregister -f; caffeinate (10/19 sleep gap)
+#  - a process on its way out (state E or Z) has quit: it runs no code and never comes
+#    back. But `open` while it still exists exits 0 and starts nothing (measured, below),
+#    so the app starts when that pid is gone, and only a process still alive 5 s on proves it started.
+#    Once the quit is asked for, every way out of this script ends with the app running
+#    or a watcher that will start it: on 11/5 a quit took 21 minutes, this script gave
+#    up after 30 s, and when the old process finally died the Mac had no app running.
+#  - the copy is made and checked under a hidden name, then two renames swap it in, so nothing
+#    can find half a build at the path. A kill between them puts the previous build back.
+#  - previous build kept OUTSIDE /Applications (LaunchServices); codesign verify; lsregister -f;
+#    caffeinate (10/19 sleep gap)
 #
 # "Update ready" protocol (2026-10-30, Jake: "there should be an indication somewhere
 # within jaketunes that it is ready to update"). Two marker files in the app's data
@@ -31,13 +39,28 @@
 #  newer gate's files survive an older gate's death. No sha, or no data folder (a dev
 #  machine): the markers are skipped and the gate behaves exactly as before.
 #
-# Exit codes and messages are parsed by the install pipeline — keep them:
+# Exit codes, for a caller that keeps ${PIPESTATUS[0]}. The recipes so far pipe this through grep and
+# read only the last line, so keep the messages too (README):
 #   0 installed · 1 ABORT (precondition, quit, copy, asar changed) · 3 gate timeout
+#   4 installed, but no app came up: open -a said no, or said yes and nothing started.
+#     The watcher keeps asking.
 #
 # Test-harness overrides (src/main/__tests__/install-gate.test.ts), all defaulting to
 # the real thing: JT_GATE_APP, JT_GATE_DATA_DIR, JT_GATE_LSREGISTER, JT_GATE_PLISTBUDDY,
-# JT_GATE_POLL_S (15), JT_GATE_GO_POLL_S (2).
+# JT_GATE_POLL_S (15), JT_GATE_GO_POLL_S (2), JT_GATE_QUIT_WAIT_S (30), JT_GATE_GONE_WAIT_S (30),
+# JT_GATE_WATCH_S (1800), JT_GATE_WATCH_POLL_S (5), JT_GATE_WATCH_CPU_S (60),
+# JT_GATE_OPEN_RETRY_S (2), JT_GATE_START_WAIT_S (10), JT_GATE_STAY_S (5), JT_GATE_LS_LIMIT_S (30).
 set -u
+# Whatever reads this may go away first: a client that exits, a pipeline killed along with it.
+# By default the next echo then gets SIGPIPE, bash runs the EXIT trap, and the trap's own first
+# echo dies the same way, before it restores anything or leaves the watcher. Measured 2026-11-06:
+# rc 141 and no app, one way with half a bundle. It has to be the empty trap: one that runs a
+# command didn't hold on bash 3.2. And every line goes through say. With the signal ignored the
+# echo just fails, but bash 3.2 keeps the text in stdout's buffer, and the next $(function) prints
+# it into its capture: jt_live then read the time of day as a pid, and an app that had quit ended
+# as "did not quit". So the first failure points stdout at /dev/null and flushes the text there.
+trap '' PIPE
+say() { echo "$@" || { exec >/dev/null; echo; }; }
 NEW="$1"; BK="$2"; MAXMIN="${3:-45}"; SHA="${4:-}"; NOTE="${5:-}"
 APP="${JT_GATE_APP:-/Applications/JakeTunes.app}"
 ASAR="$APP/Contents/Resources/app.asar"
@@ -48,6 +71,176 @@ READY="$DATA_DIR/update-ready.json"
 GO="$DATA_DIR/update-go"
 HEAVY_EVERY="${JT_GATE_POLL_S:-15}"
 GO_EVERY="${JT_GATE_GO_POLL_S:-2}"
+QUIT_WAIT="${JT_GATE_QUIT_WAIT_S:-30}"
+GONE_WAIT="${JT_GATE_GONE_WAIT_S:-30}"
+WATCH_S="${JT_GATE_WATCH_S:-1800}"
+WATCH_POLL="${JT_GATE_WATCH_POLL_S:-5}"
+WATCH_CPU="${JT_GATE_WATCH_CPU_S:-60}"
+OPEN_RETRY="${JT_GATE_OPEN_RETRY_S:-2}"
+START_WAIT="${JT_GATE_START_WAIT_S:-10}"
+STAY="${JT_GATE_STAY_S:-5}"
+LS_LIMIT="${JT_GATE_LS_LIMIT_S:-30}"
+
+# LaunchServices can stall, and an ssh leg would then sit until its own 3-hour limit with no last
+# line. An alarm kills whichever tool it is, and to the gate that is open saying no.
+ls_bound() { perl -e 'alarm shift; exec @ARGV' "$LS_LIMIT" "$@"; }
+
+# ── The app's process ────────────────────────────────────────────────────────
+# Measured 2026-11-06 on a real bundle held in exit, launched by open and killed:
+#  - ps -p says ?E and the name in parentheses, for as long as the exit takes. pgrep -x
+#    and -f see NOTHING from the moment it turns E. launchd still holds its job.
+#  - open -a then exits 0 and starts nothing, and nothing starts when the process goes.
+# So "is it gone" is a question for ps, by pid, and only a live process proves "it
+# started", never open's exit code. The first version of this asked pgrep and believed
+# open, its fakes agreed with it, and on a real exit it left the Mac with no app.
+jt_live() {
+  local p st
+  for p in $(pgrep -x JakeTunes); do
+    st=$(ps -o state= -p "$p" 2>/dev/null)
+    case "$st" in ''|*E*|*Z*) ;; *) echo "$p" ;; esac
+  done
+}
+# On its way out already, where pgrep can't see it: a re-run of this gate, or a kill by hand.
+# NF == 3 leaves out "JakeTunes Helper", whose name splits in two.
+jt_dying() {
+  ps -axo pid=,state=,comm= 2>/dev/null | awk 'NF == 3 && $2 ~ /E/ && ($3 == "(JakeTunes)" || $3 ~ /\/JakeTunes$/) { print $1 }'
+}
+# Which of the pids the app had before the quit still exist. A zombie has let go of
+# everything and launchd reaps it at once, so it doesn't count.
+old_left() {
+  local p
+  for p in $OLD_PIDS; do
+    case "$(ps -o state= -p "$p" 2>/dev/null)" in ''|*Z*) ;; *) echo "$p" ;; esac
+  done
+}
+OLD_PIDS=""
+APP_DUE=0   # 1 from the moment the quit is asked for until the app is started or a watcher will start it
+SWAPPING=0  # 1 from moving the old bundle aside until the new one is in its place
+INCOMING="$HOME/.jt-incoming-$$.app"
+WATCHER_LOG="$HOME/Library/Logs/jaketunes-install-gate.log"
+# Detached: it outlives this script (and an ssh session running it). It starts the app
+# when the old process is gone, unless something else already has.
+# It looks before it decides, the last time after its last sleep, and only one thing ends the
+# wait: an old process plainly alive and working once the window has passed. That app never quit,
+# nothing is owed, and a quit by hand later stays a quit. The window is the wall clock, so a lid shut
+# across days can't bring the app back after a quit by hand the next day. Inside it a quit by hand
+# does bring the app back: one ps sample can't tell that from an install's slow quit (a live app read
+# U, then 36 S and 4 R in 10 s, 11/6), and 11/5's slow quit took 21 minutes.
+# One plain look isn't enough past the window either: a quit stuck in U can read R, S or I, and for
+# a long time (a pool thread parked on a FIFO: SN for 6 minutes), and leaving then is the Mac with no
+# app. So working means its CPU time rose at least 0.10 s across one gap of at least 60 s, with no
+# look on its way out in it. A smaller rise starts the next gap from there, because a parked process
+# does tick: 0.14, 0.16, 0.17 in 3 minutes, and against the first look one tick would be "ever". Live
+# apps left idle moved 0.22 to 13 s per gap (all three Macs, 11/6). It's still a guess, so it goes to the phone.
+# A process on its way out (E, or U: the 11/5 quit sat in U for 7 minutes with its main thread
+# parked in teardown) gets no limit: the app is owed, however long the kernel takes. A swap only
+# ever happens over a process in E or Z, so an installed build always gets its app.
+# It is done when a live process says so. Until then it asks open again every 6 polls, at
+# most 10 times: enough for LaunchServices to come round, few enough that an app that
+# crashes on launch doesn't throw up crash reports for half an hour.
+# Its output goes nowhere and the gate is gone by then, so a give-up goes to WATCHER_LOG, and no app
+# running goes to the phone too. A caller that read "pid pending" has long since said done.
+# It holds its own caffeinate: the gate's ends with the gate, and a Mini asleep has no app and
+# isn't on the network until someone touches it.
+start_app_when_gone() {
+  APP_DUE=0
+  say "$(date +%H:%M:%S) ${1:-the app starts by itself when the old JakeTunes is gone}"
+  nohup /bin/bash -c '
+    polls=$1; poll=$2; wall=$3; app=$4; log=$5; limit=$6; cpu_gap=$7; shift 7
+    caffeinate -i -w $$ >/dev/null 2>&1 &
+    gave_up() { mkdir -p "${log%/*}"; echo "$(date "+%Y-%m-%d %H:%M:%S") watcher, pids $old: $1" >> "$log"; }
+    push() {
+      topic=$(tr -d "[:space:]" < "$HOME/.config/jaketunes/ntfy-topic" 2>/dev/null)
+      [ -n "$topic" ] || return 0
+      perl -e "alarm shift; exec @ARGV" 20 curl -fsS --max-time 15 -H "Title: $1" -H "Priority: $3" -H "Tags: warning" \
+        -d "$2" "https://ntfy.sh/$topic" >/dev/null 2>&1
+    }
+    no_app() {
+      gave_up "NO APP RUNNING: $1"
+      push "JakeTunes did not come back" "JakeTunes is not running on $(scutil --get ComputerName 2>/dev/null) after an install: $1" high
+    }
+    # All the old pids together, in hundredths of a second. ps says 0:00.14, or 6:07.57.
+    cpu_total() {
+      for p in "$@"; do ps -o time= -p "$p" 2>/dev/null; done |
+        awk "{ n = split(\$1, t, \":\"); s = 0; for (i = 1; i <= n; i++) s = s * 60 + t[i]; sum += s } END { printf \"%.0f\", sum * 100 }"
+    }
+    old=$*
+    max_opens=$(( polls / 6 )); [ "$max_opens" -lt 1 ] && max_opens=1; [ "$max_opens" -gt 10 ] && max_opens=10
+    began=$(date +%s); opens=0; until_open=0; cpu_at=""; cpu_was=""
+    while :; do
+      left=""; going=""
+      for p in "$@"; do
+        case "$(ps -o state= -p "$p" 2>/dev/null)" in
+          ""|*Z*) ;;
+          *E*|*U*) left=1; going=1 ;;
+          *) left=1 ;;
+        esac
+      done
+      if [ -z "$left" ]; then
+        [ -n "$(pgrep -x JakeTunes)" ] && exit 0
+        [ -d "$app" ] || { no_app "no bundle at $app, nothing to start"; exit 0; }
+        if [ "$until_open" -le 0 ]; then
+          [ "$opens" -ge "$max_opens" ] && { no_app "$opens tries of open -a $app and nothing stayed up"; exit 1; }
+          opens=$((opens + 1)); until_open=6
+          perl -e "alarm shift; exec @ARGV" "$limit" open -a "$app"
+        fi
+        until_open=$((until_open - 1))
+      elif [ -n "$going" ]; then
+        cpu_at=""
+      elif [ $(( $(date +%s) - began )) -ge "$wall" ]; then
+        now=$(date +%s)
+        if [ -z "$cpu_at" ]; then
+          cpu_at=$now; cpu_was=$(cpu_total "$@")
+        elif [ $(( now - cpu_at )) -ge "$cpu_gap" ]; then
+          cpu=$(cpu_total "$@")
+          if [ $(( cpu - cpu_was )) -ge 10 ]; then
+            gave_up "still plainly alive after ${wall}s and working, it never quit, nothing to do"
+            push "JakeTunes install gave up" "An install could not quit JakeTunes on $(scutil --get ComputerName 2>/dev/null). It looks alive and working, so nothing will restart it. If it is not running, open it." default
+            exit 0
+          fi
+          cpu_at=$now; cpu_was=$cpu
+        fi
+      fi
+      sleep "$poll"
+    done' jt-gate-watcher "$(awk -v s="$WATCH_S" -v p="$WATCH_POLL" 'BEGIN { n = int(s / p); print (n < 1 ? 1 : n) }')" \
+    "$WATCH_POLL" "$WATCH_S" "$APP" "$WATCHER_LOG" "$LS_LIMIT" "$WATCH_CPU" $OLD_PIDS >/dev/null 2>&1 &
+}
+# Start the app now if the old process is gone within GONE_WAIT, or leave it to the watcher.
+# 0 a live process came up · 1 the old process is still there, the watcher has it · 2 none
+# came up in 3 tries (LaunchServices has only just been told about the bundle), the watcher
+# keeps asking.
+start_app() {
+  local i j
+  for i in $(seq 1 "$GONE_WAIT"); do [ -z "$(old_left)" ] && break; sleep 1; done
+  if [ -n "$(old_left)" ]; then start_app_when_gone; return 1; fi
+  for i in 1 2 3; do
+    if ls_bound open -a "$APP"; then
+      # jt_live, not pgrep: a dying process must not count as started. And alive once isn't
+      # started either: a fake open whose process lasted 1.5 s got exit 0 and "pid 5151", with no
+      # process 11 s later, and install-both runs its legs in parallel, so a build that dies in
+      # its first seconds could reach all three Macs looking fine. If it's gone on the second
+      # look, open gets the next try, and after that the watcher and exit 4.
+      for j in $(seq 1 "$START_WAIT"); do
+        if [ -n "$(jt_live)" ]; then
+          sleep "$STAY"
+          if [ -n "$(jt_live)" ]; then APP_DUE=0; return 0; fi
+          break
+        fi
+        sleep 1
+      done
+    else
+      sleep "$OPEN_RETRY"
+    fi
+  done
+  start_app_when_gone "no app after 3 tries of open -a; still trying in the background"
+  return 2
+}
+# The previous build back in /Applications.
+restore_previous() {
+  [ -d "$HOME/$BK" ] || return 0
+  rm -rf "$APP"
+  mv "$HOME/$BK" "$APP" && ls_bound "$LSREG" -f "$APP"
+}
 
 # ── Marker protocol ──────────────────────────────────────────────────────────
 markers_on=0
@@ -69,9 +262,9 @@ write_ready() {
   if printf '{ "v": 1, "sha": "%s", "version": "%s", "note": "%s", "stagedAt": "%s", "gatePid": %d }\n' \
       "$(json_str "$SHA")" "$(json_str "$ver")" "$(json_str "$NOTE")" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$" > "$tmp" \
      && mv -f "$tmp" "$READY"; then
-    echo "$(date +%H:%M:%S) update-ready.json written for $SHA — the app can push the install through"
+    say "$(date +%H:%M:%S) update-ready.json written for $SHA — the app can push the install through"
   else
-    rm -f "$tmp"; echo "WARN: could not write $READY — waiting on idle only"
+    rm -f "$tmp"; say "WARN: could not write $READY — waiting on idle only"
   fi
 }
 
@@ -94,7 +287,7 @@ go_requested() {
   local got; got=$(head -c 200 "$aside" 2>/dev/null | tr -d '[:space:]')
   if [ "$got" = "$SHA" ]; then mv -f "$aside" "$GO"; return 0; fi
   rm -f "$aside"
-  echo "$(date +%H:%M:%S) ignoring update-go for another build (${got:-empty}) — removed"
+  say "$(date +%H:%M:%S) ignoring update-go for another build (${got:-empty}) — removed"
   return 1
 }
 
@@ -103,18 +296,35 @@ cleanup_markers() {
   if [ -f "$READY" ] && grep -q "\"gatePid\": $$[,} ]" "$READY" 2>/dev/null; then rm -f "$READY"; fi
   if [ -f "$GO" ] && [ "$(go_sha)" = "$SHA" ]; then rm -f "$GO"; fi
 }
-trap cleanup_markers EXIT
+# Any exit after the quit, a kill included, still gets the app back. A kill between the two
+# renames leaves no bundle at the path, so the previous build goes back first.
+on_exit() {
+  cleanup_markers
+  if [ "$SWAPPING" = 1 ]; then
+    say "$(date +%H:%M:%S) killed during the swap — restoring the previous build"
+    restore_previous
+  fi
+  rm -rf "$INCOMING"
+  [ "$APP_DUE" = 1 ] && start_app_when_gone
+  return 0
+}
+trap on_exit EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
 
 # ── Preconditions ────────────────────────────────────────────────────────────
-[ -d "$NEW" ] || { echo "ABORT: no staged app at $NEW"; exit 1; }
-[ -e "$HOME/$BK" ] && { echo "ABORT: ~/$BK already exists"; exit 1; }
-codesign --verify --deep --strict "$NEW" || { echo "ABORT: staged app signature invalid"; exit 1; }
+[ -d "$NEW" ] || { say "ABORT: no staged app at $NEW"; exit 1; }
+[ -e "$HOME/$BK" ] && { say "ABORT: ~/$BK already exists"; exit 1; }
+codesign --verify --deep --strict "$NEW" || { say "ABORT: staged app signature invalid"; exit 1; }
 M0=$(stat -f %m "$ASAR")
 
 # $1 = 1 when the app asked for the install: idle is not required, audio still is.
+# First, and never waived: an iPod sync. A quit mid-sync leaves part of the new songs on the card
+# and the old catalog, which the next sync copies over its good .bak. sync-keep-awake.ts is the only
+# holder of a display blocker in the app, and a real Electron blocker reads NoDisplaySleepAssertion
+# (measured 11/6). A video wake lock would read the same, and that only delays an install.
 gate() {
+  if pmset -g assertions | grep JakeTunes | grep -Eq "NoDisplaySleepAssertion|PreventUserIdleDisplaySleep"; then echo "an iPod sync is running"; return 1; fi
   if pmset -g assertions | grep JakeTunes | grep -q "Playing audio"; then echo "playing audio"; return 1; fi
   for p in $(pmset -g assertions | grep -A1 coreaudiod | sed -nE 's/.*Created for PID: ([0-9]+).*/\1/p'); do
     ps -o comm= -p "$p" 2>/dev/null | grep -q JakeTunes && { echo "JakeTunes holds an audio stream"; return 1; }
@@ -134,31 +344,77 @@ while :; do
   if [ "$go" = 1 ] || [ $(( now - heavy_at )) -ge "$HEAVY_EVERY" ]; then
     heavy_at=$now
     if why="$(gate "$go")"; then break; fi
-    [ "$why" != "$last" ] && echo "$(date +%H:%M:%S) waiting: $why" && last="$why"
-    [ "$now" -ge "$deadline" ] && { echo "ABORT: gate never cleared in ${MAXMIN} min — nothing changed"; exit 3; }
+    [ "$why" != "$last" ] && say "$(date +%H:%M:%S) waiting: $why" && last="$why"
+    [ "$now" -ge "$deadline" ] && { say "ABORT: gate never cleared in ${MAXMIN} min — nothing changed"; exit 3; }
   fi
   sleep "$GO_EVERY"
 done
-echo "$(date +%H:%M:%S) gate $why"
-[ "$(stat -f %m "$ASAR")" = "$M0" ] || { echo "ABORT: app.asar changed while waiting (another install?)"; exit 1; }
+say "$(date +%H:%M:%S) gate $why"
+[ "$(stat -f %m "$ASAR")" = "$M0" ] || { say "ABORT: app.asar changed while waiting (another install?)"; exit 1; }
 
 # ── Install ──────────────────────────────────────────────────────────────────
 caffeinate -i -t 300 & CAF=$!
+# A gate that gave up may have left its watcher, and from here this gate owes the app. Left alone
+# it reopened the old build during this gate's look (2 of 20 phases, ending "did not quit" with the
+# old build) or just before the swap (1 of 20, reported as installed), and a recipe's retry never
+# got its turn. It goes before anything else can die: before the quit, or it opens as soon as the
+# old pid goes, and before OLD_PIDS, so whatever it just started is counted. The digit in the
+# pattern is what a watcher has and a shell that only quotes this line doesn't.
+pkill -f 'jt-gate-watcher [0-9]' && { APP_DUE=1; say "$(date +%H:%M:%S) retired an older install's watcher, this install owes the app now"; }
+OLD_PIDS="$(pgrep -x JakeTunes | tr '\n' ' ')$(jt_dying | tr '\n' ' ')"
+[ -n "$OLD_PIDS" ] && APP_DUE=1
 perl -e 'alarm 20; exec @ARGV' osascript -e 'quit app id "com.jacobrosenbaum.jaketunes"' 2>&1
-for i in $(seq 1 30); do pgrep -x JakeTunes >/dev/null || break; sleep 1; done
-pgrep -x JakeTunes >/dev/null && { echo "ABORT: JakeTunes did not quit — install untouched"; kill $CAF 2>/dev/null; exit 1; }
+for i in $(seq 1 "$QUIT_WAIT"); do [ -z "$(jt_live)" ] && break; sleep 1; done
+# Still alive: the install stops here. It may yet be quitting, so the exit trap leaves
+# the watcher behind: when it goes, the app comes back. If it never goes, nothing happens.
+[ -n "$(jt_live)" ] && { say "ABORT: JakeTunes did not quit — install untouched"; kill $CAF 2>/dev/null; exit 1; }
+[ -n "$(old_left)" ] && say "$(date +%H:%M:%S) JakeTunes pid $(old_left | tr '\n' ' ')is exiting (no code running) — that counts as quit"
 gate >/dev/null || true
-[ "$(stat -f %m "$ASAR")" = "$M0" ] || { echo "ABORT: app.asar changed at quit time"; open -a "$APP"; kill $CAF 2>/dev/null; exit 1; }
+[ "$(stat -f %m "$ASAR")" = "$M0" ] || { say "ABORT: app.asar changed at quit time"; start_app; kill $CAF 2>/dev/null; exit 1; }
 
-mv "$APP" "$HOME/$BK" || { echo "ABORT: could not move the old app aside"; open -a "$APP"; kill $CAF 2>/dev/null; exit 1; }
-if ! ditto "$NEW" "$APP"; then
-  echo "COPY FAILED — restoring the previous build"
-  rm -rf "$APP"; mv "$HOME/$BK" "$APP"; "$LSREG" -f "$APP"; open -a "$APP"; kill $CAF 2>/dev/null; exit 1
+# Copy first, swap second. In a bundle's order the executable lands long before Info.plist (line 5
+# of 298 in ditto -V), so a copy straight into /Applications could start half done for anything
+# that opened it (a watcher, a Dock click, the sync on homemini), and a kill or a power cut left
+# it there. The copy goes to a hidden name and is checked there, so all of that finds a whole build
+# at the path and only the gap between two renames is left. $HOME and /Applications are one volume
+# on all three Macs (stat, 11/6), and restore_previous has always moved the bundle the same way.
+for d in "$HOME"/.jt-incoming-*.app; do
+  p=${d##*-}; p=${p%.app}
+  [ -d "$d" ] && ! kill -0 "$p" 2>/dev/null && rm -rf "$d"
+done
+if ! ditto "$NEW" "$INCOMING"; then
+  say "COPY FAILED — the installed build was not touched"
+  start_app; kill $CAF 2>/dev/null; exit 1
 fi
-xattr -dr com.apple.quarantine "$APP" 2>/dev/null
-codesign --verify --deep --strict "$APP" || echo "WARN: installed app signature check failed"
-"$LSREG" -f "$APP"
-open -a "$APP"
-for i in $(seq 1 30); do pgrep -x JakeTunes >/dev/null && break; sleep 1; done
+xattr -dr com.apple.quarantine "$INCOMING" 2>/dev/null
+if ! codesign --verify --deep --strict "$INCOMING"; then
+  say "ABORT: the copy failed its signature check — the installed build was not touched"
+  start_app; kill $CAF 2>/dev/null; exit 1
+fi
+# Something started the app while that ran. Swapping now would leave it running from ~/$BK, and
+# the new build's launch would lose the single-instance lock to it, with this gate reporting its
+# pid as the new build's.
+if [ -n "$(jt_live)" ]; then
+  APP_DUE=0
+  say "ABORT: JakeTunes started again during the copy — install untouched"
+  kill $CAF 2>/dev/null; exit 1
+fi
+
+SWAPPING=1
+mv "$APP" "$HOME/$BK" || { SWAPPING=0; say "ABORT: could not move the old app aside"; start_app; kill $CAF 2>/dev/null; exit 1; }
+if ! mv "$INCOMING" "$APP"; then
+  say "COPY FAILED — restoring the previous build"
+  restore_previous; SWAPPING=0; start_app; kill $CAF 2>/dev/null; exit 1
+fi
+SWAPPING=0
+ls_bound "$LSREG" -f "$APP"
+gate_rc=0
+start_app
+case $? in
+  0) pid_note="$(jt_live | head -1)" ;;
+  1) pid_note="pending, it starts when the old process is gone" ;;
+  *) pid_note="none, the app did not come up, still trying"; gate_rc=4 ;;
+esac
 kill $CAF 2>/dev/null
-echo "$(scutil --get ComputerName 2>/dev/null): $("$PLISTBUDDY" -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist"), $(stat -f 'app.asar %z bytes, %Sm' "$ASAR"), pid $(pgrep -x JakeTunes | head -1), previous kept at ~/$BK"
+say "$(scutil --get ComputerName 2>/dev/null): $("$PLISTBUDDY" -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist"), $(stat -f 'app.asar %z bytes, %Sm' "$ASAR"), pid $pid_note, previous kept at ~/$BK"
+exit $gate_rc

@@ -17,6 +17,8 @@ import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { runSyncScript } from './sync-script-run.ts'
 
+const repoRoot = join(import.meta.dirname, '..', '..', '..')
+const scriptPath = join(repoRoot, 'Dr. Claude', 'scripts', 'jaketunes-homemini-sync.sh')
 const HUB_DIR = 'Library/Application Support/JakeTunes'
 const STATE_FILES = [
   'library.json', 'metadata-overrides.json', 'playlists.json', 'play-events.jsonl', 'listening-log.jsonl',
@@ -27,7 +29,13 @@ const STATE_FILES = [
 const STUB_RSYNC = `#!/bin/bash
 if [ "$1" = "--version" ]; then echo "rsync  version 3.4.2  protocol version 32"; exit 0; fi
 for a in "$@"; do
-  case "$a" in --files-from=*) cat "\${a#--files-from=}" >> "$STUB_LIST" ;; esac
+  case "$a" in --size-only) printf '%s\\n' "$@" > "$STUB_LIST.full" ;; esac
+  case "$a" in --files-from=*)
+    cat "\${a#--files-from=}" >> "$STUB_LIST"
+    printf '%s\\n' "$@" > "$STUB_LIST.args"
+    [ -n "\${STUB_HANG:-}" ] && exec sleep "$STUB_HANG"
+    ;;
+  esac
 done
 exit 0
 `
@@ -46,7 +54,7 @@ echo "StubMac"
 
 /** Runs --quick against a library holding `files` (relative path → bytes)
  *  and returns the file list the music leg handed rsync. */
-function quickList(files: Record<string, string>): { list: string[]; status: number | null; log: string } {
+function quickList(files: Record<string, string>, env: Record<string, string> = {}, flags: string[] = ['--quick']): { list: string[]; args: string[]; full: string[]; status: number | null; log: string } {
   const root = mkdtempSync(join(tmpdir(), 'jt-sync-quick-'))
   try {
     const bin = join(root, 'bin')
@@ -74,7 +82,7 @@ function quickList(files: Record<string, string>): { list: string[]; status: num
     }
     const listFile = join(root, 'list.txt')
     writeFileSync(listFile, '')
-    const r = runSyncScript(['--quick'], bin, {
+    const r = runSyncScript(flags, bin, {
       HOME: home,
       PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`,
       STUB_LIST: listFile,
@@ -84,13 +92,27 @@ function quickList(files: Record<string, string>): { list: string[]; status: num
       JT_LIBRARY_ROOT: lib,
       JT_MOUNT: join(root, 'nas'),
       JT_PLEX_SKIP: '1',
+      ...env,
     })
     const log = existsSync(join(root, 'sync.log')) ? readFileSync(join(root, 'sync.log'), 'utf8') : ''
-    return { list: readFileSync(listFile, 'utf8').split('\n').filter(Boolean).sort(), status: r.status, log }
+    const argsFile = `${listFile}.args`
+    const args = existsSync(argsFile) ? readFileSync(argsFile, 'utf8').split('\n').filter(Boolean) : []
+    const fullFile = `${listFile}.full`
+    const full = existsSync(fullFile) ? readFileSync(fullFile, 'utf8').split('\n').filter(Boolean) : []
+    return { list: readFileSync(listFile, 'utf8').split('\n').filter(Boolean).sort(), args, full, status: r.status, log }
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
 }
+
+describe('sync script: the full music leg', () => {
+  // A 0-byte import reservation a kill left behind. The quick leg has always skipped them. The full
+  // leg is --size-only, so it carried one to the NAS, and over a same-named file there.
+  it('leaves 0-byte reservations behind, as the quick leg does', () => {
+    const r = quickList({ 'iPod_Control/Music/F04/imported_1.m4a': 'audio' }, {}, [])
+    assert.ok(r.full.includes('--min-size=1'), r.full.join(' ') || r.log)
+  })
+})
 
 describe('sync script --quick: the NAS music leg', () => {
   it('skips hidden files at any depth and 0-byte reservations; finished files still go', () => {
@@ -109,5 +131,28 @@ describe('sync script --quick: the NAS music leg', () => {
     })
     assert.equal(r.status, 0, r.log)
     assert.deepEqual(r.list, ['./Playlists/mix.m3u', `./${F}/imported_1.m4a`])
+  })
+  // 2026-11-06: it had no limit of its own. On a wedged share it sat until the
+  // orchestrator's 600 s watchdog killed the whole script, Plex and artwork legs included.
+  it('goes with --timeout=180 and without --size-only, which would drop re-tags', () => {
+    const r = quickList({ 'iPod_Control/Music/F04/imported_1.m4a': 'audio' })
+    assert.equal(r.status, 0, r.log)
+    assert.ok(r.args.includes('--timeout=180'), r.args.join(' '))
+    assert.ok(!r.args.includes('--size-only'), r.args.join(' '))
+  })
+
+  it('a leg that hangs is cut by its alarm and the rest of the pass still runs', () => {
+    const started = Date.now()
+    const r = quickList({ 'iPod_Control/Music/F04/imported_1.m4a': 'audio' }, { STUB_HANG: '45', JT_QUICK_ALARM_S: '1' })
+    assert.equal(r.status, 0, r.log)
+    assert.ok(Date.now() - started < 30_000, 'it did not wait the rsync out')
+    assert.match(r.log, /music rsync exit=142 \(mode=quick\)/)
+    assert.match(r.log, /=== sync done ===/)
+  })
+
+  it('the alarm is 420 s, the same as the full leg, inside the 600 s watchdog', () => {
+    const src = readFileSync(scriptPath, 'utf8')
+    assert.ok(src.includes(`perl -e 'alarm shift; exec @ARGV' "\${JT_QUICK_ALARM_S:-420}"`))
+    assert.ok(src.includes(`perl -e 'alarm shift; exec @ARGV' 420 \\\n    rsync -az --size-only`), 'the full leg')
   })
 })

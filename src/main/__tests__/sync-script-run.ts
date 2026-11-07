@@ -11,8 +11,9 @@
  * mount with nothing open, the same run would have unmounted the real share.
  *
  * JT_MOUNT_TOOLS_FROM_PATH=1 makes the script look for those tools on PATH, and here
- * they all say no: nothing is mounted, no host answers. A tool already in `bin` wins,
- * so a harness keeps its own recording osascript.
+ * they all say no: nothing is mounted, no host answers, the route can't be read, which the
+ * script takes as not away. The real route says away on a trip, and the music leg never ran
+ * (2026-11-06). A tool already in `bin` wins, so a harness keeps its own recording osascript.
  */
 import assert from 'node:assert/strict'
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
@@ -22,7 +23,7 @@ import { tmpdir } from 'node:os'
 import { HUNG_MS } from './wait-for.ts'
 
 const scriptPath = join(import.meta.dirname, '..', '..', '..', 'Dr. Claude', 'scripts', 'jaketunes-homemini-sync.sh')
-const MOUNT_TOOLS = ['mount', 'ping', 'smbutil', 'lsof', 'diskutil', 'osascript']
+const MOUNT_TOOLS = ['mount', 'ping', 'smbutil', 'lsof', 'diskutil', 'osascript', 'route']
 
 const FAKE = `#!/bin/bash
 echo "\${0##*/}" >> "$STUB_TOOLS_ASKED"

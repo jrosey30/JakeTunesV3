@@ -237,6 +237,39 @@ fi
 echo "clear: no JakeTunes audio, idle ${idle}s"
 GATE
 )"
+# The install gate's questions about the app's process (scripts/install/jaketunes-install-gate.sh),
+# and why: on a real bundle held in exit, pgrep sees nothing from the moment the process turns E,
+# and `open -a` then exits 0 and starts nothing. So this script opened into a dying app, and 8 s
+# later said "crashed on launch" with no app running. "Is it gone" is a question for ps, by pid.
+# (read, not $(cat <<...): bash 3.2 reads a case pattern's ")" inside $( ) as the end of it.)
+{ IFS= read -r -d '' JT_PS_SH || true; } <<'JT_PS'
+jt_live() {
+  local p st
+  for p in $(pgrep -x JakeTunes); do
+    st=$(ps -o state= -p "$p" 2>/dev/null)
+    case "$st" in ''|*E*|*Z*) ;; *) echo "$p" ;; esac
+  done
+}
+jt_dying() {
+  ps -axo pid=,state=,comm= 2>/dev/null | awk 'NF == 3 && $2 ~ /E/ && ($3 == "(JakeTunes)" || $3 ~ /\/JakeTunes$/) { print $1 }'
+}
+old_left() {
+  local p
+  for p in $OLD_PIDS; do
+    case "$(ps -o state= -p "$p" 2>/dev/null)" in ''|*Z*) ;; *) echo "$p" ;; esac
+  done
+}
+JT_PS
+
+# The relaunch at the end of a run. It used to quit, sleep 3 and open, which landed on a dying app
+# when the quit ran long, and nothing started the app after that.
+{ IFS= read -r -d '' RELAUNCH_SH || true; } <<'RELAUNCH'
+OLD_PIDS="$(pgrep -x JakeTunes | tr '\n' ' ')$(jt_dying | tr '\n' ' ')"
+osascript -e 'quit app "JakeTunes"' 2>/dev/null || true
+for i in $(seq 1 45); do [ -z "$(old_left)" ] && break; sleep 1; done
+open -a JakeTunes
+RELAUNCH
+
 check_gate() { rsh 30 "bash -s -- $IDLE_MIN_S" <<<"$GATE_SH" 2>&1; }
 
 # Polls the gate (read-only) until it opens or GATE_WAIT_MIN runs out.
@@ -466,7 +499,7 @@ wait_for_gates || die "Install skipped — gate stayed closed for ${GATE_WAIT_MI
 rcp 1200 "$DMG" "${REMOTE}:jaketunes-deploy.dmg" || die "DMG copy failed (exit $?)."  # staged in $HOME — /tmp on workmini eats dmgs
 BK="JakeTunes-prev-auto-$(date +%Y%m%d-%H%M).app"
 {
-  printf 'GATE_SH=%q\nASAR_INFO_PY=%q\n' "$GATE_SH" "$ASAR_INFO_PY"
+  printf 'GATE_SH=%q\nASAR_INFO_PY=%q\n%s' "$GATE_SH" "$ASAR_INFO_PY" "$JT_PS_SH"
   cat <<'REMOTE_INSTALL'
 set -u
 EXPECT_SHA="$1"; WANT_MTIME="$2"; BK="$3"; IDLE_MIN="$4"
@@ -476,7 +509,24 @@ DMG="$HOME/jaketunes-deploy.dmg"
 MNT="$HOME/.jaketunes-deploy-mnt"
 LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 abort() { echo "  ✗ $1" >&2; hdiutil detach "$MNT" -quiet -force 2>/dev/null; rm -f "$DMG"; exit "${2:-1}"; }
-running() { pgrep -x JakeTunes >/dev/null; }
+running() { [ -n "$(jt_live)" ]; }
+# Start the app once the old process is gone. A swap only happens over a process in E or Z, so it
+# will go, and if that outlasts this ssh call a detached shell starts the app. The name and the pid
+# after it are what the install gate retires an older watcher by. 1 means that shell has it.
+start_app() {
+  local i
+  for i in $(seq 1 120); do [ -z "$(old_left)" ] && break; sleep 1; done
+  [ -z "$(old_left)" ] && { open -a "$APP"; return 0; }
+  JT_APP="$APP" nohup /bin/bash -c '
+    for p in "$@"; do
+      while :; do
+        case "$(ps -o state= -p "$p" 2>/dev/null)" in ""|*Z*) break ;; esac
+        sleep 5
+      done
+    done
+    [ -n "$(pgrep -x JakeTunes)" ] || open -a "$JT_APP"' jt-gate-watcher $OLD_PIDS >/dev/null 2>&1 &
+  return 1
+}
 
 # A fixed mount point: ghost /Volumes/JakeTunes* attaches made the old
 # `ls -d /Volumes/JakeTunes*` pick the wrong volume.
@@ -496,14 +546,15 @@ have=$(stat -f %m "$ASAR" 2>/dev/null) || abort "installed app.asar is missing (
 # The gate again, last thing before the quit.
 reason=$(bash -c "$GATE_SH" gate "$IDLE_MIN") || abort "gate closed at swap time: $reason" 10
 
-if running; then
+OLD_PIDS="$(pgrep -x JakeTunes | tr '\n' ' ')$(jt_dying | tr '\n' ' ')"
+if [ -n "$OLD_PIDS" ]; then
   perl -e 'alarm 20; exec @ARGV' osascript -e 'quit app id "com.jacobrosenbaum.jaketunes"' >/dev/null 2>&1
   for i in $(seq 1 45); do running || break; sleep 1; done
   running && abort "JakeTunes did not quit — install untouched"
 fi
-mv "$APP" "$HOME/$BK" || abort "could not move the old bundle aside"
+mv "$APP" "$HOME/$BK" || { start_app; abort "could not move the old bundle aside"; }
 if ! ditto "$NEW" "$APP"; then
-  rm -rf "$APP"; mv "$HOME/$BK" "$APP"; open -a "$APP"
+  rm -rf "$APP"; mv "$HOME/$BK" "$APP"; start_app
   abort "ditto failed — previous build restored and relaunched"
 fi
 hdiutil detach "$MNT" -quiet -force 2>/dev/null; rm -f "$DMG"
@@ -516,7 +567,7 @@ VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Cont
 echo "  ✓ Installed JakeTunes $VER @ ${EXPECT_SHA:0:12} (previous build kept at ~/$BK)"
 # Launch and confirm it STAYS alive (signature/Gatekeeper kills are
 # instant). An empty library at this point is expected; data comes next.
-open -a "$APP"
+start_app || abort "the old JakeTunes is taking its time to exit: the app starts when it's gone. Previous build is at ~/$BK" 3
 sleep 8
 running || abort "JakeTunes crashed on launch — see ~/Library/Logs/DiagnosticReports/; previous build is at ~/$BK" 3
 echo "  ✓ JakeTunes launches and stays running on workmini"
@@ -862,7 +913,7 @@ fi
 # the new library simply loads at the next launch.
 say "Relaunching JakeTunes with the full library…"
 if GATE_REASON="$(check_gate)"; then
-  rsh 60 "osascript -e 'quit app \"JakeTunes\"' 2>/dev/null || true; sleep 3; open -a JakeTunes" || true
+  rsh 90 'bash -s' <<<"$JT_PS_SH$RELAUNCH_SH" || true
   echo "  ✓ relaunched ($GATE_REASON)"
 else
   echo "  • not relaunching — $GATE_REASON. The new library loads at JakeTunes' next launch."

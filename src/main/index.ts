@@ -37,7 +37,7 @@ import {
   initListenerProfile, loadListenerProfile, saveListenerProfile, appendListeningEvent,
   addObservation, getListenerProfile, buildTasteProfile, type ListenerProfile,
 } from './listener-profile.ts'
-import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, shell, globalShortcut, nativeImage, systemPreferences } from 'electron'
+import { app, BrowserWindow, Menu, ipcMain, protocol, dialog, powerSaveBlocker, shell, globalShortcut, nativeImage, systemPreferences, session } from 'electron'
 import { writeJsonAtomic } from './atomic-write'
 import { resolveContainedPath, isPathInside } from './path-safety'
 import { isHomeminiPlaybackClient, mayFollowPlaybackSymlink } from './stream-playback'
@@ -215,6 +215,8 @@ import { summariseLearning, discoverVerdicts, type LedgerRow } from './discovery
 import { readSharedLedgerRows } from './taste-ledger-io.ts'
 import { discoveryFeedbackCache, sharedDiscoveryFeedback, recordNotForMe, recordAllowAgain } from './discovery-feedback.ts'
 import { JsonFileCache, flushAllCaches } from './state-cache'
+import { createQuitFinish, hardExit, leaveFor } from './quit-finish.ts'
+import { BANDCAMP_PARTITION } from './bandcamp-integration/partition'
 import { hashPayload, verifyLandedFile, stagePayloadAndRename } from './save-verify.ts'
 import { decideStagedRecovery, snapshotLibraryFile } from './staged-recovery.ts'
 import { fsyncFile, fsyncParentDir } from './fs-durability.ts'
@@ -4841,6 +4843,7 @@ async function mirrorLibraryToNas(library: unknown): Promise<void> {
   // backend reads is either the whole old copy or the whole new copy — never a
   // duplicated-tail torn write (the 2026-06-27 corruption).
   for (let attempt = 1; attempt <= 2; attempt++) {
+    if (attempt > 1 && !(await nasAvailable())) return   // the first try may have just found out
     try {
       await atomicPublishToNas(
         nasPath,
@@ -10024,7 +10027,7 @@ app.whenReady().then(async () => {
   startPauseForCalls({ sendAction: sendMediaKeyAction, notify: (n) => sendToRenderer('app-notice', n), record: (tag, detail) => flightRecorder.record('info', tag, detail), settingsPath: appSettingsPath })
   startLibraryWatcher()
   // Update ready (2026-10-30): the install gate's update-ready.json → status-bar "Update ready · Install"; the click pauses via the media-key path and writes update-go. Module: update-ready.ts.
-  startUpdateReadyWatcher({ ipc, userData: app.getPath('userData'), runningSha: getBuildProvenance(app.getVersion()).buildSha, send: (s) => sendToRenderer('update-ready', s), sendAction: sendMediaKeyAction, record: (tag, detail) => flightRecorder.record('info', tag, detail) })
+  startUpdateReadyWatcher({ ipc, userData: app.getPath('userData'), runningSha: getBuildProvenance(app.getVersion()).buildSha, send: (s) => sendToRenderer('update-ready', s), sendAction: sendMediaKeyAction, syncInFlight: () => syncEngine.isSyncInFlight(), record: (tag, detail) => flightRecorder.record('info', tag, detail) })
 
   void (async () => {
     try {
@@ -10957,6 +10960,7 @@ app.on('window-all-closed', () => {
 // the cache stats instead of vanishing. `quitDeferralStarted` guards
 // re-entry — the second 'before-quit' (our own app.quit()) proceeds.
 let quitDeferralStarted = false
+let sidecarFlush: Promise<unknown> = Promise.resolve()
 app.on('before-quit', (e) => {
   unregisterMediaKeyShortcuts()
   void stopInboxWatcher().catch(() => { /* shutting down, ignore */ })
@@ -10968,9 +10972,11 @@ app.on('before-quit', (e) => {
   if (win && !win.isDestroyed()) {
     try { win.webContents.send('app-quit-fade') } catch { /* ignore */ }
   }
+  const flush = flushAllCaches([overridesCache, mobileStarsCache, listenerProfileCache, musicmanMemoryCache, playlistsCache], 2000)
+  sidecarFlush = flush
   void (async () => {
     const [settled] = await Promise.all([
-      flushAllCaches([overridesCache, mobileStarsCache, listenerProfileCache, musicmanMemoryCache, playlistsCache], 2000),
+      flush,
       // Preserve the 180ms audio-fade deferral alongside the flush wait.
       new Promise((r) => setTimeout(r, hasWin ? 180 : 0)),
     ])
@@ -10979,3 +10985,15 @@ app.on('before-quit', (e) => {
     app.quit()
   })()
 })
+// The last thing: flush what Chromium holds, then leave without waiting on the thread pool (quit-finish.ts).
+const quitSessions = () => (app.isReady() ? [session.defaultSession, session.fromPartition(BANDCAMP_PARTITION)] : [])
+const finishQuit = createQuitFinish({
+  flushStorage: () => { for (const s of quitSessions()) s.flushStorageData() },
+  flushCookies: () => Promise.all(quitSessions().map((s) => s.cookies.flushStore())),
+  librarySaved: () => librarySaveChain,
+  sidecarsFlushed: () => sidecarFlush,
+  leave: leaveFor({ syncInFlight: () => syncEngine.isSyncInFlight(), exitNormally: () => app.exit(0), kill: hardExit }),
+  // The kill comes in the same tick as the bound line, and console.warn reaches main.log through a queue.
+  log: (m) => flightRecorder.recordNow('warn', 'quit', { msg: m }),
+})
+app.on('will-quit', (e) => { e.preventDefault(); finishQuit() })

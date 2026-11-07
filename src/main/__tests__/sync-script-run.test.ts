@@ -18,7 +18,7 @@ describe('sync script rails: nothing gets past the fakes', () => {
   it('the script reaches the mount tools only through their variables', () => {
     const direct = script.split('\n')
       .filter((l) => !/^\s*#/.test(l) && !/^\s*(MOUNT_BIN|LSOF_BIN)=\//.test(l))
-      .filter((l) => /\/s?bin\/(mount|ping|smbutil|lsof|diskutil|osascript)\b/.test(l))
+      .filter((l) => /\/s?bin\/(mount|ping|smbutil|lsof|diskutil|osascript|route)\b/.test(l))
     assert.deepEqual(direct, [], 'a tool called by its full path skips the fakes and reaches the real network')
   })
 
@@ -70,6 +70,9 @@ function hubPass(share: (root: string) => string) {
     return {
       status: r.status,
       toolsAsked: r.toolsAsked,
+      // On disk, not what the run called: the script holds route to 5 s, and at load 500 the fake
+      // didn't get to say it was asked.
+      fakedTools: readdirSync(bin),
       mount,
       log: readFileSync(join(root, 'sync.log'), 'utf8'),
       rsyncArgs: readFileSync(args, 'utf8').split('\n').filter(Boolean),
@@ -87,6 +90,7 @@ describe('a run on the fakes', () => {
       return nas
     })
     assert.equal(r.status, 0, r.log)
+    assert.ok(r.fakedTools.includes('route'), `the real route would answer, and away from home it says away: ${r.fakedTools}`)
     assert.ok(r.log.includes(`→ ${r.mount}/JakeTunesLibrary/`), `the music leg left JT_MOUNT:\n${r.log}`)
     assert.doesNotMatch(r.log, /overrides publish/, 'the sandbox has no metadata-overrides.json, so none was found on a real share')
     assert.deepEqual(r.rsyncArgs.filter((a) => a.startsWith('/Volumes/')), [])

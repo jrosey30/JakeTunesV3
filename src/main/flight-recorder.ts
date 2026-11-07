@@ -31,6 +31,7 @@
  * everything against a temp dir.
  */
 
+import { appendFileSync } from 'fs'
 import { appendFile, rename, stat } from 'fs/promises'
 
 export interface FlightRecorderDeps {
@@ -49,6 +50,9 @@ export interface FlightRecorderDeps {
 
 export interface FlightRecorder {
   record: (level: 'info' | 'warn' | 'error', tag: string, detail?: unknown) => void
+  /** On disk before it returns, for a line a process kill follows at once. Local disk only, and
+   *  never for the hot path. A kill in the same tick took the queued kind, 6 runs of 6 (2026-11-06). */
+  recordNow: (level: 'info' | 'warn' | 'error', tag: string, detail?: unknown) => void
   /** Wraps console.warn/console.error to also record. Idempotent.
    *  `unhandledRejections` (main process only) also records every unhandled
    *  promise rejection with its stack under one stable message prefix. */
@@ -138,17 +142,28 @@ export function initFlightRecorder(deps: FlightRecorderDeps): FlightRecorder {
   // Even the readiness gate is caught — a failed boot must not poison it.
   let chain: Promise<void> = (deps.ready ?? Promise.resolve()).catch(() => {})
 
-  const record = (level: 'info' | 'warn' | 'error', tag: string, detail?: unknown): void => {
-    // Serialize OUTSIDE the chain so a throwing toJSON can't poison it.
-    let line: string
+  const lineFor = (level: 'info' | 'warn' | 'error', tag: string, detail?: unknown): string | null => {
     try {
       const d = serializeDetail(detail)
-      line = `{"ts":"${new Date(now()).toISOString()}","level":"${level}","tag":${JSON.stringify(String(tag))}${d ? `,"detail":${d}` : ''}${dropped > 0 ? `,"droppedBefore":${dropped}` : ''}}\n`
+      const line = `{"ts":"${new Date(now()).toISOString()}","level":"${level}","tag":${JSON.stringify(String(tag))}${d ? `,"detail":${d}` : ''}${dropped > 0 ? `,"droppedBefore":${dropped}` : ''}}\n`
       if (dropped > 0) dropped = 0
+      return line
     } catch {
       dropped++
-      return
+      return null
     }
+  }
+
+  const recordNow = (level: 'info' | 'warn' | 'error', tag: string, detail?: unknown): void => {
+    const line = lineFor(level, tag, detail)
+    if (line === null) return
+    try { appendFileSync(deps.logPath(), line) } catch { dropped++ }
+  }
+
+  const record = (level: 'info' | 'warn' | 'error', tag: string, detail?: unknown): void => {
+    // Serialize OUTSIDE the chain so a throwing toJSON can't poison it.
+    const line = lineFor(level, tag, detail)
+    if (line === null) return
     chain = chain.then(async () => {
       try {
         if (++appendsSinceCheck >= CHECK_EVERY) {
@@ -204,7 +219,7 @@ export function initFlightRecorder(deps: FlightRecorderDeps): FlightRecorder {
     }
   }
 
-  return { record, mirrorConsole, drops: () => dropped }
+  return { record, recordNow, mirrorConsole, drops: () => dropped }
 }
 
 /** First arg becomes the message; remaining args ride as a compact tail. */

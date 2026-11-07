@@ -105,18 +105,66 @@ MOUNT="${JT_MOUNT:-/Volumes/JakeShared}"
 # instead, so a test can shim mount/ping/smbutil/osascript/lsof/diskutil
 # without touching a real mount.
 if [ "${JT_MOUNT_TOOLS_FROM_PATH:-0}" = "1" ]; then
-  MOUNT_BIN=mount PING_BIN=ping SMBUTIL_BIN=smbutil OSASCRIPT_BIN=osascript LSOF_BIN=lsof DISKUTIL_BIN=diskutil
+  MOUNT_BIN=mount PING_BIN=ping SMBUTIL_BIN=smbutil OSASCRIPT_BIN=osascript LSOF_BIN=lsof DISKUTIL_BIN=diskutil ROUTE_BIN=route
 else
   MOUNT_BIN=/sbin/mount PING_BIN=/sbin/ping SMBUTIL_BIN=/usr/bin/smbutil OSASCRIPT_BIN=/usr/bin/osascript
-  LSOF_BIN=/usr/sbin/lsof DISKUTIL_BIN=/usr/sbin/diskutil
+  LSOF_BIN=/usr/sbin/lsof DISKUTIL_BIN=/usr/sbin/diskutil ROUTE_BIN=/sbin/route
 fi
 NAS_LAN_IP="192.168.1.223"
 NAS_TAILNET_IP="100.117.19.93"
 resolve_jakeshared() {
   "$MOUNT_BIN" | /usr/bin/sed -n 's|^//[^ ]*/JakeShared on \([^ ]*\) (smbfs.*|\1|p' | /usr/bin/head -1
 }
+# No SMB when away (2026-11-06). This Mac's route to the NAS's LAN address leaves
+# through a gateway: away from home, however alive a tailnet mount looks. The share
+# carried 99 MB per 15 minutes of nothing useful out there, and one stat here could
+# sit behind it for 10 s or more, unbounded, on every run. New audio goes over ssh
+# (JakeTunesMobile deploy/macbook-nas-sync.sh); this pass runs the homemini legs.
+# On-link isn't home until the address answers: a hotel or a friend's network numbered
+# 192.168.1.x has the same route, and on it this script ran the music leg over the tailnet
+# mount, up to 200 whole files with no partial. One ping, one second, cut at 3 s.
+# On-link with no answer is its own state, not an ordinary away: if something ever stopped
+# ping at home, this Mac would read as away for good. So it gets a line in the log, once per
+# change, and its word in the state file beside the lock (home, away, on-link-no-answer).
+# A silent address gets its name asked too: the NAS takes DHCP, so a new lease at home left .223
+# on-link and silent, away for good with the NAS right there. A foreign LAN has no ds225.local.
+# A failed or empty route read says nothing (the real route prints nothing and exits 0 when
+# there is no route, measured): the last answer stands, and with none it's the old path.
+# ⚠️ TWIN: src/main/nas-route.ts createAwayCheck, JakeTunesMobile deploy/lib/mini-endpoint.sh mini_home_proof.
+SHARE_STATE="$LOCK.share-state"
+share_is_away() {
+  local out prev word
+  prev=$(cat "$SHARE_STATE" 2>/dev/null)
+  out=$(/usr/bin/perl -e 'alarm 5; exec @ARGV' "$ROUTE_BIN" -n get "$NAS_LAN_IP" 2>/dev/null) || out=""
+  if ! printf '%s\n' "$out" | grep -q '^ *interface:'; then
+    case "$prev" in away|on-link-no-answer) return 0 ;; *) return 1 ;; esac
+  fi
+  if printf '%s\n' "$out" | grep -q '^ *gateway:'; then
+    word=away
+  elif /usr/bin/perl -e 'alarm 3; exec @ARGV' "$PING_BIN" -c1 -t1 "$NAS_LAN_IP" >/dev/null 2>&1 \
+    || /usr/bin/perl -e 'alarm 3; exec @ARGV' "$PING_BIN" -c1 -t1 ds225.local >/dev/null 2>&1; then
+    word=home
+  else
+    word=on-link-no-answer
+  fi
+  if [ "$word" != "$prev" ]; then
+    printf '%s\n' "$word" > "$SHARE_STATE.tmp.$$" && mv -f "$SHARE_STATE.tmp.$$" "$SHARE_STATE"
+    if [ "$word" = on-link-no-answer ]; then
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] on-link, no answer: $NAS_LAN_IP is on this Mac's subnet and neither it nor ds225.local answered ping — treating this as away. On the home network this is wrong: look at ping first" >> "$LOG"
+    elif [ "$prev" = on-link-no-answer ]; then
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] on-link, no answer: over ($word)" >> "$LOG"
+    fi
+  fi
+  [ "$word" != home ]
+}
+SHARE_AWAY=0
+share_is_away && SHARE_AWAY=1
+# A pass that must stay off the share never stats it, away or told so (the app
+# passes --homemini-only when its breaker is open).
+NO_SHARE=$SHARE_AWAY
+case " $* " in *" --homemini-only "*|*" --skip-library-json "*) NO_SHARE=1 ;; esac
 LIVE=$(resolve_jakeshared)
-if [ -n "$LIVE" ] && [ -d "$LIVE/JakeTunesLibrary" ]; then
+if [ "$NO_SHARE" -eq 0 ] && [ -n "$LIVE" ] && [ -d "$LIVE/JakeTunesLibrary" ]; then
   MOUNT="$LIVE"
 fi
 HOMEMINI="${JT_HOMEMINI:-jakerosenbaumnas@homemini}"
@@ -126,6 +174,17 @@ PLEX_SKIP="${JT_PLEX_SKIP:-0}"
 PLEX_SCANNER="/volume1/@appstore/PlexMediaServer/Plex Media Scanner"
 JT_DATA_LOCAL="$HOME/Library/Application Support/JakeTunes"
 JT_DATA_REMOTE='Library/Application Support/JakeTunes'
+# Every rsync to homemini works under the limits the ssh calls here already have
+# (2026-11-06). With none, an rsync to a homemini whose tailnet node is dead waits out the
+# kernel's connect timeout, 75 s (net.inet.tcp.keepinit, measured), and a pass makes more
+# than a dozen of them. The music leg goes to the mount, so this doesn't touch it.
+export RSYNC_RSH='ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4'
+# Audio edits no music leg has carried yet: a line for each file the app rewrites.
+# ⚠️ TWIN: src/main/audio-edits-owed.ts writes this file.
+OWED_EDITS="$JT_DATA_LOCAL/audio-edits-owed.txt"
+OWED_PER_LEG="${JT_OWED_PER_LEG:-200}"
+OWED_MAX_REFUSALS="${JT_OWED_MAX_REFUSALS:-20}"
+OWED_NAS_NEWER_S="${JT_OWED_NAS_NEWER_S:-21600}"
 
 # Shared remount helper (2026-08-07). A host qualifies ONLY by silently
 # proving it's the DS225 (smbutil view -N via keychain lists JakeShared —
@@ -414,11 +473,41 @@ log_hourly() {
   fi
 }
 
+# 255 is ssh itself, and rsync says 12 when ssh dies just after it starts (1 of 20 stubbed
+# pulls). Every later call would ask a dead homemini the same question, up to 10 s each, so the
+# first one to hear that stops the rest of the phone legs and the last step.
+HOMEMINI_GONE=0
+# A limit on a pull that reads homemini's NAS mount (2026-11-06). --timeout alone ends real rsync
+# (3 s, back in 6 s), but openrsync, which runs when the app's PATH has /usr/bin first, sat through
+# it. And the usual alarm isn't enough here: rsync dies, its ssh stays for as long as the far end is
+# stuck, and the capture below waits on ssh's stderr (real rsync and ssh, 4 s alarm, far end stuck
+# 15 s: back after 15 s, on either rsync). So rsync runs in its own group and all of it goes: TERM at
+# the limit, KILL 5 s on, and whatever rsync leaves behind when it ends by itself. 142 is the limit.
+in_own_group() {
+  /usr/bin/perl -e '
+    my $limit = shift; my $cut = 0; setpgrp(0, 0); $SIG{TERM} = "IGNORE";
+    my $kid = fork; exit 1 unless defined $kid;
+    if (!$kid) { $SIG{TERM} = "DEFAULT"; exec @ARGV; exit 127 }
+    $SIG{ALRM} = sub { $cut++ ? kill("KILL", -$$) : kill("TERM", -$$); alarm 5 };
+    alarm $limit; waitpid $kid, 0; my $st = $?;
+    kill "TERM", -$$;
+    exit($cut ? 142 : $st >> 8)' "$@"
+}
+RSYNC_OPTIONAL_LIMIT_S=""
 rsync_optional() {
   local err rc
-  err=$(rsync -tz --no-perms --no-owner --no-group "$@" 2>&1 >/dev/null)
+  [ "$HOMEMINI_GONE" -eq 1 ] && return 1
+  if [ -n "$RSYNC_OPTIONAL_LIMIT_S" ]; then
+    err=$(in_own_group "$RSYNC_OPTIONAL_LIMIT_S" rsync -tz --no-perms --no-owner --no-group "$@" 2>&1 >/dev/null)
+  else
+    err=$(rsync -tz --no-perms --no-owner --no-group "$@" 2>&1 >/dev/null)
+  fi
   rc=$?
   [ $rc -eq 0 ] && return 0
+  case $rc in
+    255|12) HOMEMINI_GONE=1 ;;
+    142) err="rsync cut off after ${RSYNC_OPTIONAL_LIMIT_S}s: ${*: -2:1} ${err}" ;;
+  esac
   case "$err" in
     *"No such file or directory"*) return 1 ;;   # expected absence — say nothing
     *) [ -n "$err" ] && printf '%s\n' "$err" >> "$LOG"; return 1 ;;
@@ -457,9 +546,9 @@ log "=== sync started (PID $$) ==="
 # the URL (keychain, silent), alarm-capped, and if nothing is reachable
 # SKIP the mount quietly — never attempt a mount that must fail.
 # --homemini-only (2026-10-06): the NAS breaker is open or the share is
-# away. The homemini legs (library → phone backend, state, artwork) only need
-# SSH, so they still run; the NAS music leg is skipped. Before this, every
-# edit made while the NAS looked slow waited for the breaker (up to 9 min).
+# away. The homemini legs (library → phone backend, state, artwork, stars, plays)
+# only need SSH, so they still run; the NAS music leg is skipped. Before this,
+# every edit made while the NAS looked slow waited for the breaker (up to 9 min).
 HOMEMINI_ONLY=0
 SKIP_LIBRARY_JSON=0
 for arg in "$@"; do
@@ -485,6 +574,19 @@ if [ "$REPLICA" -eq 1 ]; then
   HOMEMINI_ONLY=1
   log "replica: not publishing library.json (hub owns the catalog); this machine's state goes to $REMOTE_STATE_DIR on homemini, never over the hub's files; NAS, Plex and stars legs skipped; notices logged, not shown"
 fi
+# Away decides for itself, so a manual run or an older app that didn't pass the
+# flag can't start a music leg over the tailnet. At home nothing changes, so
+# prefer_lan_mount still gets its chance to move a tailnet mount back to the LAN.
+if [ "$SHARE_AWAY" -eq 1 ] && [ "$HOMEMINI_ONLY" -eq 0 ]; then
+  HOMEMINI_ONLY=1
+  if [ "$(cat "$SHARE_STATE" 2>/dev/null)" = on-link-no-answer ]; then
+    log "reading as away from home (the NAS doesn't answer on the LAN) — homemini legs only; new audio goes over ssh"
+  else
+    log "away from home (the NAS's LAN address is behind a gateway) — homemini legs only; new audio goes over ssh"
+  fi
+fi
+# A replica has no music leg, so no list of edits would ever be read.
+[ "$REPLICA" -eq 1 ] && rm -f "$OWED_EDITS"
 [ $HOMEMINI_ONLY -eq 0 ] && { ensure_jakeshared || true; }
 
 if [ $HOMEMINI_ONLY -eq 0 ] && [ ! -d "$MOUNT/JakeTunesLibrary" ]; then
@@ -500,7 +602,7 @@ fi
 resolve_sync_src() {
   if [ -f "$JT_DATA_LOCAL/$1" ]; then
     echo "$JT_DATA_LOCAL/$1"
-  elif [ -f "$MOUNT/JakeTunesState/$1" ]; then
+  elif [ "$HOMEMINI_ONLY" -eq 0 ] && [ -f "$MOUNT/JakeTunesState/$1" ]; then
     echo "$MOUNT/JakeTunesState/$1"
   fi
 }
@@ -746,6 +848,183 @@ sync_artwork_to_homemini() {
   fi
 }
 
+# ── Stars, plays and the phone's sidecars: SSH only, every hub pass ───────
+# A hub's stars leave through these legs and no other (src/main/star-hub-push.ts:
+# hubs never push). They sat after the NAS legs and the homemini-only exit, so a
+# pass that skipped the NAS skipped them too: on 2026-11-05 no star push ran from
+# 20:48 to 23:42, and stars made at 21:42 waited about 2 hours. A breaker-open pass
+# at home lost them the same way. Called below, before that exit; never on a replica.
+# Only what touches no NAS goes here. A pull that goes through homemini's own NAS mount, or
+# a copy onto this Mac's share, can stall for minutes (215 s on 10/27, 300 s on 11/6) and on a
+# hung share never ends, and nothing else in the pass would run: those wait for sync_phone_last_legs.
+sync_phone_legs() {
+# ── 5. mobile-set sidecars under LOCAL-PRIMARY (homemini ↔ local). ──
+#
+# 2026-06-07 sync B-pass. Pre-fix this synced the NAS copies, but under
+# local-primary (4.5.0-114) the app reads/writes mobile-stars.json LOCALLY and
+# never touches NAS — so a NAS-based sidecar sync was disconnected from the app
+# entirely: desktop stars never reached homemini, phone stars never reached the
+# desktop (the round-trip was severed).
+#
+# Stars now round-trip through the LOCAL file with the APP as the SOLE writer,
+# so we never race its in-memory cache:
+#   PULL homemini's set → mobile-stars.incoming.json (staging). The app unions
+#        it into the local set on next launch (mergeIncomingMobileStars), then
+#        deletes it.
+#   PUSH the local set → homemini as .mobile-stars.json.incoming, merged
+#        into homemini's copy there (Brief 172 — see the push below).
+# PULL BEFORE PUSH so a phone star is captured into staging before the
+# push merges it back. No permanent loss: a phone star lives in staging
+# until merged, then re-pushed next cycle.
+#
+# Brief 172 — the sidecar is format v2 with tombstones ({v, trackIds,
+# removed: {id: ts}, added: {id: ts}}, last-writer-wins per id;
+# ⚠️ TWIN: src/main/mobile-stars-merge.ts and JakeTunesMobile
+# backend/src/util/starSidecar.ts). The old additive union (and the old
+# --update copy push) resurrected un-starred tracks: whichever copy
+# still held the id won. Readers everywhere still accept v1 files.
+log "pulling phone stars (homemini → local staging) …"
+rsync -tz --no-perms --no-owner --no-group \
+  "$(rremote "$JT_DATA_REMOTE/mobile-stars.json")" "$JT_DATA_LOCAL/mobile-stars.incoming.json" >> "$LOG" 2>&1
+pull_rc=$?
+# 255 or 12 is ssh itself: homemini didn't answer at all (both rsyncs, measured). Every leg below
+# would ask it the same question, up to 10 s each, ahead of a music leg that doesn't need
+# it. The state push has already said so when it failed the same way; a notification on
+# macOS 26 opens Script Editor, so this doesn't say it twice.
+if [ $pull_rc -eq 255 ] || [ $pull_rc -eq 12 ]; then
+  HOMEMINI_GONE=1
+  log "homemini did not answer ssh (phone stars pull exit $pull_rc) — stars, plays and the phone's sidecars wait for the next pass"
+  [ "$homemini_rc" -eq 0 ] && notify "Couldn't reach homemini. Stars and plays wait for the next sync."
+  return 0
+fi
+if [ $pull_rc -ne 0 ] && [ $pull_rc -ne 23 ] && [ $pull_rc -ne 24 ]; then
+  log "WARNING: pull of mobile-stars returned $pull_rc (continuing)"
+  notify "Couldn't pull phone stars from homemini — desktop may be behind."
+fi
+# Phone playlist sidecars: PULL ONLY (homemini → MacBook local; the copy onto the NAS
+# is in sync_phone_last_legs). Never the reverse — see PHONE_PLAYLIST_SIDECARS above. Desktop V3
+# reads these as Brief 121 mirrors; the iOS backend is the writer.
+log "pulling phone playlist sidecars (homemini → local) …"
+for f in "${PHONE_PLAYLIST_SIDECARS[@]}"; do
+  rsync_optional "$(rremote "$JT_DATA_REMOTE/$f")" "$JT_DATA_LOCAL/$f" || \
+    { [ "$HOMEMINI_GONE" -eq 1 ] && break; log_hourly "/tmp/.jt-phonepl-$f-note" "phone playlist sidecar $f not present on homemini yet"; }
+done
+if [ "$HOMEMINI_GONE" -eq 1 ]; then
+  log "homemini did not answer ssh (phone sidecar pull) — stars, plays and the phone's sidecars wait for the next pass"
+  return 0
+fi
+# Brief 172: the push is a MERGE, not a copy. Upload the local set as
+# .mobile-stars.json.incoming; a remote python pass merges it into
+# homemini's copy with the same last-writer-wins tombstone rule the app
+# and the backend use, then os.replace. A blunt copy (even --update)
+# would erase phone tombstones written since the pull above, and a
+# stale local v1 file would resurrect everything the phone un-starred.
+log "pushing desktop stars (local → homemini, tombstone merge) …"
+if [ -f "$JT_DATA_LOCAL/mobile-stars.json" ]; then
+  rsync -tz --no-perms --no-owner --no-group \
+    "$JT_DATA_LOCAL/mobile-stars.json" "$(rremote "$JT_DATA_REMOTE/.mobile-stars.json.incoming")" >> "$LOG" 2>&1
+  push_rc=$?
+  if [ $push_rc -eq 255 ] || [ $push_rc -eq 12 ]; then
+    HOMEMINI_GONE=1
+    log "homemini did not answer ssh (star push exit $push_rc) — stars and plays wait for the next pass"
+    return 0
+  fi
+  if [ $push_rc -ne 0 ] && [ $push_rc -ne 23 ] && [ $push_rc -ne 24 ]; then
+    log "WARNING: push of mobile-stars returned $push_rc (continuing)"
+    notify "Couldn't push desktop stars to homemini — phone may be behind."
+  elif [ $push_rc -eq 0 ]; then
+    star_out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 "$HOMEMINI" 'cd ~/"Library/Application Support/JakeTunes" && python3 - <<"EOF"
+import json, os
+def load(p):
+    try:
+        with open(p) as f: return json.load(f)
+    except Exception:
+        return None
+def norm(raw):
+    if isinstance(raw, list):
+        return {"trackIds": [x for x in raw if isinstance(x, str) and x], "removed": {}, "added": {}}
+    if isinstance(raw, dict):
+        ids = raw.get("trackIds")
+        ids = [x for x in ids if isinstance(x, str) and x] if isinstance(ids, list) else []
+        def tmap(m):
+            out = {}
+            if isinstance(m, dict):
+                for k, v in m.items():
+                    if isinstance(k, str) and k and isinstance(v, (int, float)) and v > 0: out[k] = v
+            return out
+        return {"trackIds": ids, "removed": tmap(raw.get("removed")), "added": tmap(raw.get("added"))}
+    return {"trackIds": [], "removed": {}, "added": {}}
+inc = load(".mobile-stars.json.incoming")
+if inc is None:
+    print("refused-corrupt")
+    raise SystemExit(0)
+a = norm(inc); b = norm(load("mobile-stars.json"))
+removed = dict(b["removed"]); added = dict(b["added"])
+for k, v in a["removed"].items(): removed[k] = max(removed.get(k, 0), v)
+for k, v in a["added"].items(): added[k] = max(added.get(k, 0), v)
+listed = set(a["trackIds"]) | set(b["trackIds"])
+merged = sorted(i for i in listed | set(removed) | set(added)
+                if (i in listed or i in added) and added.get(i, 0) >= removed.get(i, 0))
+out_obj = {"v": 2, "trackIds": merged, "removed": removed, "added": added}
+tmp = ".mobile-stars.json.merge-tmp"
+with open(tmp, "w") as f: json.dump(out_obj, f)
+os.replace(tmp, "mobile-stars.json")
+try: os.unlink(".mobile-stars.json.incoming")
+except OSError: pass
+print("merged %d stars, %d tombstones" % (len(merged), len(removed)))
+EOF' 2>>"$LOG")
+    star_rc=$?
+    if [ $star_rc -eq 255 ]; then
+      HOMEMINI_GONE=1
+      log "homemini did not answer ssh (star merge exit 255) — stars and plays wait for the next pass"
+      return 0
+    fi
+    case "$star_out" in
+      merged*) log "star push: $star_out → homemini mobile-stars.json" ;;
+      *) log "WARNING: star merge on homemini returned '$star_out' (continuing)"; notify "Couldn't merge desktop stars on homemini — phone may be behind." ;;
+    esac
+  fi
+fi
+# Plays: one-way push of the desktop play log to homemini. The iOS app doesn't
+# write mobile-plays.json yet, so a full round-trip is a later iOS-side change;
+# this is harmless prep (no staging/merge).
+if [ -f "$JT_DATA_LOCAL/mobile-plays.json" ]; then
+  rsync -tz --update --no-perms --no-owner --no-group \
+    "$JT_DATA_LOCAL/mobile-plays.json" "$(rremote "$JT_DATA_REMOTE/mobile-plays.json")" >> "$LOG" 2>&1 || true
+fi
+}
+
+# The last step, after artwork on both ways out: what can hang on a NAS. A hub pass only.
+sync_phone_last_legs() {
+[ "$REPLICA" -eq 0 ] || return 0
+[ "$HOMEMINI_GONE" -eq 0 ] || return 0
+# Phone listening stream (2026-08-07 parity: "same page as mobile at all
+# times") — the backend appends {t,ts,ar,ti,al,g,pct,src:mobile} events;
+# desktop KPIs merge them with its own listening-log. The backend writes it
+# in its STATE_DIR — the NAS share as homemini mounts it. 2026-10-20: this
+# pull only tried homemini's ~/JakeTunesState and App Support, where the file
+# never lives, so the MacBook's copy froze on 9/13 and every run said "not
+# present yet" while the real log (529 KB) grew on the NAS. That path is
+# tried first now; the old two stay as fallbacks.
+# All may be absent pre-first-play, so these use rsync_optional: a missing
+# source is normal here and must not log an error.
+# Every away pass comes through here now, and on a hung NAS that pull never ends: sshd still
+# answers, so ssh's keepalives don't help, and the orchestrator's 600 s kill says "Sync timed out"
+# for a pass whose useful legs all landed, and holds the gate a new song's catalog publish waits on.
+local RSYNC_OPTIONAL_LIMIT_S="${JT_NAS_PULL_LIMIT_S:-120}"
+PHONE_STATE_DIR_ON_HOMEMINI="${JT_PHONE_STATE_DIR:-/Volumes/JakeShared/JakeTunesState}"
+rsync_optional --timeout=60 "$HOMEMINI:$PHONE_STATE_DIR_ON_HOMEMINI/mobile-listening-log.jsonl" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
+rsync_optional "$HOMEMINI:JakeTunesState/mobile-listening-log.jsonl" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
+rsync_optional "$(rremote "$JT_DATA_REMOTE/mobile-listening-log.jsonl")" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
+  [ "$HOMEMINI_GONE" -eq 1 ] || log_hourly /tmp/.jt-phonelog-note "phone listening log not found on homemini (checked $PHONE_STATE_DIR_ON_HOMEMINI, ~/JakeTunesState, App Support)"
+if [ "$HOMEMINI_ONLY" -eq 0 ] && [ -d "$MOUNT/JakeTunesState" ]; then
+  for f in "${PHONE_PLAYLIST_SIDECARS[@]}"; do
+    rsync_optional "$(rremote "$JT_DATA_REMOTE/$f")" "$MOUNT/JakeTunesState/$f" || true
+    [ "$HOMEMINI_GONE" -eq 1 ] && break
+  done
+fi
+}
+
 # The other Mac's taste copies → userData/taste-elsewhere/ (see TASTE_SHARED
 # above). Every pass, hub and replica, before the homemini-only exit. Additive:
 # no --delete, so a copy stays honoured if that Mac goes quiet. Never fatal.
@@ -792,8 +1071,10 @@ pull_taste_elsewhere() {
 homemini_rc=0
 push_homemini_state || homemini_rc=$?
 pull_taste_elsewhere || true
+if [ "$REPLICA" -eq 0 ]; then sync_phone_legs; fi
 if [ $HOMEMINI_ONLY -eq 1 ]; then
   sync_artwork_to_homemini
+  sync_phone_last_legs
   log "homemini-only pass done (state rc=$homemini_rc) — NAS legs skipped"
   exit 0
 fi
@@ -816,9 +1097,99 @@ for arg in "$@"; do
   [ "$arg" = "--quick" ] && QUICK_MODE=1
 done
 
+# Audio edits no leg has carried (2026-11-06). A Get Info edit rewrites the file's tags,
+# often at the same size. The quick leg is the only thing that can carry that: the full
+# leg is --size-only and hop 1 only adds. It looked back 10 minutes, so an edit made away,
+# or with the breaker open, never reached the NAS copy, the one Plex reads.
+# A list, not "everything newer than the last leg". Measured 11/6: in a week 679 files
+# (25.3 GB) got a new mtime, 636 of them (23.7 GB) the same bytes homemini already has, and
+# 43 were edits. By the 8/23 note below SMB doesn't keep the mtimes rsync sets, so a walk by
+# mtime would send all of it again, every pass, until one finished inside the alarm.
+# The app's list is taken aside by rename, so a line written during the leg starts a new
+# file and can't be cleared with this one. A taken list stays on disk until a leg that
+# carried it finishes, so a killed run's list goes with the next one. At most OWED_PER_LEG
+# files a leg, so a bulk edit moves forward inside the 420 s alarm instead of sending the
+# same files again every pass. The full leg never touches the list.
+take_owed_edits() {
+  local out=$1 f line rel raw nas_m mine_m other_root=0
+  OWED_TAKEN=(); OWED_REST=""; OWED_COUNT=0
+  [ -d "$LIBRARY_ROOT" ] || return 0
+  if [ -f "$OWED_EDITS" ]; then mv -f "$OWED_EDITS" "$OWED_EDITS.taken.$$.$RANDOM" 2>/dev/null || true; fi
+  raw=$(mktemp /tmp/jaketunes-sync-owed.XXXXXX)
+  for f in "$OWED_EDITS".taken.*; do
+    [ -f "$f" ] || continue
+    OWED_TAKEN+=("$f")
+    while IFS= read -r line || [ -n "$line" ]; do
+      # Anchored on the library root, or the list's own ./iPod_Control leftovers. Any other
+      # path that merely has iPod_Control in it (a dev run's fixture library, the NAS's own copy)
+      # used to send the real library's same-named file over the master.
+      case "$line" in
+        "$LIBRARY_ROOT"/iPod_Control/*) rel="${line#"$LIBRARY_ROOT"/}" ;;
+        ./iPod_Control/*) rel="${line#./}" ;;
+        *) other_root=$((other_root + 1)); continue ;;
+      esac
+      case "$rel" in */.*) continue ;; esac
+      # Gone, a link (streamed) or empty: nothing to carry.
+      if [ -f "$LIBRARY_ROOT/$rel" ] && [ ! -L "$LIBRARY_ROOT/$rel" ] && [ -s "$LIBRARY_ROOT/$rel" ]; then
+        printf './%s\n' "$rel"
+      fi
+    done < "$f"
+  done > "$raw"
+  LC_ALL=C sort -u -o "$raw" "$raw"
+  [ "$other_root" -gt 0 ] && log "WARNING: dropped $other_root audio edit line(s) outside $LIBRARY_ROOT"
+  # A file whose NAS copy is over 6 hours newer than this Mac's edit is left alone, with a line
+  # in the log. The wait can be a whole trip, and a repair or a restore of that master in the
+  # meantime must not lose to an edit from days before. #recycle is a thin net: its prune goes by
+  # the file's own mtime, so an old master is gone by the next 04:30. Not --update on the leg: the
+  # NAS's mtime is often upload time (222 of 280 recent songs newer, median 347 s), and an edit
+  # made before an upload would be skipped with exit 0 and the list cleared.
+  OWED_REST="$raw.rest"
+  : > "$OWED_REST"
+  while IFS= read -r line; do
+    if [ "$OWED_COUNT" -ge "$OWED_PER_LEG" ]; then printf '%s\n' "$line" >> "$OWED_REST"; continue; fi
+    rel="${line#./}"
+    if [ -f "$MOUNT/JakeTunesLibrary/$rel" ]; then
+      nas_m=$(/usr/bin/stat -f %m "$MOUNT/JakeTunesLibrary/$rel" 2>/dev/null || echo 0)
+      mine_m=$(/usr/bin/stat -f %m "$LIBRARY_ROOT/$rel" 2>/dev/null || echo 0)
+      if [ $(( nas_m - mine_m )) -gt "$OWED_NAS_NEWER_S" ]; then
+        log "WARNING: left $rel alone: the NAS copy is much newer than this Mac's edit"
+        continue
+      fi
+    fi
+    printf '%s\n' "$line" >> "$out"
+    OWED_COUNT=$((OWED_COUNT + 1))
+  done < "$raw"
+  rm -f "$raw"
+}
+# $1 = the leg's exit. Only a leg that finished clears the list. What didn't fit goes back
+# first, so a kill between the two steps leaves a line owed twice, never lost. A file the NAS
+# keeps refusing (exit 23, and a notification each time) is given up on after
+# OWED_MAX_REFUSALS legs in a row, with a line in the log, and what never went stays owed. A cut leg (30, 142) proves
+# nothing about the file, so it doesn't count.
+settle_owed_edits() {
+  local rc=$1 refused
+  if [ "${#OWED_TAKEN[@]}" -gt 0 ]; then
+    if [ "$rc" -eq 0 ]; then
+      if [ -s "$OWED_REST" ]; then mv -f "$OWED_REST" "$OWED_EDITS.taken.rest.$$.$RANDOM"; fi
+      rm -f "${OWED_TAKEN[@]}" "$OWED_EDITS.refused"
+    elif [ "$rc" -eq 23 ] && [ "$OWED_COUNT" -gt 0 ]; then
+      refused=$(( $(cat "$OWED_EDITS.refused" 2>/dev/null || echo 0) + 1 ))
+      if [ "$refused" -ge "$OWED_MAX_REFUSALS" ]; then
+        log "WARNING: gave up on $OWED_COUNT audio edit(s) the NAS refused $refused legs in a row (exit 23) — their tags on the NAS stay as they were"
+        if [ -s "$OWED_REST" ]; then mv -f "$OWED_REST" "$OWED_EDITS.taken.rest.$$.$RANDOM"; fi
+        rm -f "${OWED_TAKEN[@]}" "$OWED_EDITS.refused"
+      else
+        echo "$refused" > "$OWED_EDITS.refused"
+      fi
+    fi
+  fi
+  [ -n "$OWED_REST" ] && rm -f "$OWED_REST"
+  return 0
+}
+
 run_music_rsync() {
 if [ $QUICK_MODE -eq 1 ]; then
-  log "rsync music (quick: files modified in last 10 min) → $MOUNT/JakeTunesLibrary/ …"
+  log "rsync music (quick: files modified in last 10 min, and edits no leg has carried) → $MOUNT/JakeTunesLibrary/ …"
   TMP_LIST=$(mktemp /tmp/jaketunes-sync-files.XXXXXX)
   # 2026-10-18: `-not -path './.*'` only skips hidden entries at the ROOT.
   # A hidden FILE deeper down (iPod_Control/Music/F04/.x.tagwrite-ab12.m4a)
@@ -833,10 +1204,18 @@ if [ $QUICK_MODE -eq 1 ]; then
       -not -path './_pending-imports/*' \
       -not -name '.*' \
       -not -name 'Icon?' ) > "$TMP_LIST"
+  take_owed_edits "$TMP_LIST"
+  LC_ALL=C sort -u -o "$TMP_LIST" "$TMP_LIST"
   file_count=$(wc -l < "$TMP_LIST" | tr -d ' ')
   log "quick mode: $file_count files modified in the last 10 min"
+  [ "$OWED_COUNT" -gt 0 ] && log "quick mode: that includes $OWED_COUNT audio edit(s) no leg had carried"
   if [ "$file_count" -gt 0 ]; then
-    rsync -rtz --files-from="$TMP_LIST" \
+    # 2026-11-06 — BOUNDED, like the full leg below. It had no limit of its own, so
+    # on a wedged share rsync sat until the orchestrator's 600 s watchdog killed the
+    # whole script, with the Plex, artwork and prune legs still to come (4 of 5 uploads
+    # on 11/5). No --size-only: a re-tag keeps its size, and this leg is what carries it.
+    perl -e 'alarm shift; exec @ARGV' "${JT_QUICK_ALARM_S:-420}" \
+      rsync -rtz --timeout=180 --files-from="$TMP_LIST" \
       "$LIBRARY_ROOT/" "$MOUNT/JakeTunesLibrary/" \
       >> "$LOG" 2>&1
     music_rc=$?
@@ -844,6 +1223,7 @@ if [ $QUICK_MODE -eq 1 ]; then
     music_rc=0
   fi
   rm -f "$TMP_LIST"
+  settle_owed_edits "$music_rc"
 else
   log "rsync music (full, additive only — never deletes) → $MOUNT/JakeTunesLibrary/ …"
   # 4.4.68 / Brief 019: --delete REMOVED. Previous behavior propagated
@@ -932,7 +1312,7 @@ else
   # terms with the other legs still to come. The leg is additive, so a killed
   # pass just resumes next tick.
   perl -e 'alarm shift; exec @ARGV' 420 \
-    rsync -az --size-only --no-links --no-perms --no-owner --no-group --no-times \
+    rsync -az --size-only --min-size=1 --no-links --no-perms --no-owner --no-group --no-times \
     --timeout=180 \
     --exclude='.DS_Store' --exclude='._*' --exclude='_pending-imports/' \
     --exclude='/.*/' --exclude='.*' \
@@ -1092,133 +1472,10 @@ fi
 # without covers; missing covers backfill on the next sync.
 sync_artwork_to_homemini
 
-# ── 5. mobile-set sidecars under LOCAL-PRIMARY (homemini ↔ local). ──
-#
-# 2026-06-07 sync B-pass. Pre-fix this synced the NAS copies, but under
-# local-primary (4.5.0-114) the app reads/writes mobile-stars.json LOCALLY and
-# never touches NAS — so a NAS-based sidecar sync was disconnected from the app
-# entirely: desktop stars never reached homemini, phone stars never reached the
-# desktop (the round-trip was severed).
-#
-# Stars now round-trip through the LOCAL file with the APP as the SOLE writer,
-# so we never race its in-memory cache:
-#   PULL homemini's set → mobile-stars.incoming.json (staging). The app unions
-#        it into the local set on next launch (mergeIncomingMobileStars), then
-#        deletes it.
-#   PUSH the local set → homemini as .mobile-stars.json.incoming, merged
-#        into homemini's copy there (Brief 172 — see the push below).
-# PULL BEFORE PUSH so a phone star is captured into staging before the
-# push merges it back. No permanent loss: a phone star lives in staging
-# until merged, then re-pushed next cycle.
-#
-# Brief 172 — the sidecar is format v2 with tombstones ({v, trackIds,
-# removed: {id: ts}, added: {id: ts}}, last-writer-wins per id;
-# ⚠️ TWIN: src/main/mobile-stars-merge.ts and JakeTunesMobile
-# backend/src/util/starSidecar.ts). The old additive union (and the old
-# --update copy push) resurrected un-starred tracks: whichever copy
-# still held the id won. Readers everywhere still accept v1 files.
-log "pulling phone stars (homemini → local staging) …"
-rsync -tz --no-perms --no-owner --no-group \
-  "$(rremote "$JT_DATA_REMOTE/mobile-stars.json")" "$JT_DATA_LOCAL/mobile-stars.incoming.json" >> "$LOG" 2>&1
-pull_rc=$?
-if [ $pull_rc -ne 0 ] && [ $pull_rc -ne 23 ] && [ $pull_rc -ne 24 ]; then
-  log "WARNING: pull of mobile-stars returned $pull_rc (continuing)"
-  notify "Couldn't pull phone stars from homemini — desktop may be behind."
-fi
-# Phone listening stream (2026-08-07 parity: "same page as mobile at all
-# times") — the backend appends {t,ts,ar,ti,al,g,pct,src:mobile} events;
-# desktop KPIs merge them with its own listening-log. The backend writes it
-# in its STATE_DIR — the NAS share as homemini mounts it. 2026-10-20: this
-# pull only tried homemini's ~/JakeTunesState and App Support, where the file
-# never lives, so the MacBook's copy froze on 9/13 and every run said "not
-# present yet" while the real log (529 KB) grew on the NAS. That path is
-# tried first now; the old two stay as fallbacks.
-# All may be absent pre-first-play, so these use rsync_optional: a missing
-# source is normal here and must not log an error.
-PHONE_STATE_DIR_ON_HOMEMINI="${JT_PHONE_STATE_DIR:-/Volumes/JakeShared/JakeTunesState}"
-rsync_optional "$HOMEMINI:$PHONE_STATE_DIR_ON_HOMEMINI/mobile-listening-log.jsonl" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
-rsync_optional "$HOMEMINI:JakeTunesState/mobile-listening-log.jsonl" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
-rsync_optional "$(rremote "$JT_DATA_REMOTE/mobile-listening-log.jsonl")" "$JT_DATA_LOCAL/mobile-listening-log.jsonl" || \
-  log_hourly /tmp/.jt-phonelog-note "phone listening log not found on homemini (checked $PHONE_STATE_DIR_ON_HOMEMINI, ~/JakeTunesState, App Support)"
-# Phone playlist sidecars: PULL ONLY (homemini → MacBook local, and NAS when
-# mounted). Never the reverse — see PHONE_PLAYLIST_SIDECARS above. Desktop V3
-# reads these as Brief 121 mirrors; the iOS backend is the writer.
-log "pulling phone playlist sidecars (homemini → local) …"
-for f in "${PHONE_PLAYLIST_SIDECARS[@]}"; do
-  rsync_optional "$(rremote "$JT_DATA_REMOTE/$f")" "$JT_DATA_LOCAL/$f" || \
-    log_hourly "/tmp/.jt-phonepl-$f-note" "phone playlist sidecar $f not present on homemini yet"
-  if [ -d "$MOUNT/JakeTunesState" ]; then
-    rsync_optional "$(rremote "$JT_DATA_REMOTE/$f")" "$MOUNT/JakeTunesState/$f" || true
-  fi
-done
-# Brief 172: the push is a MERGE, not a copy. Upload the local set as
-# .mobile-stars.json.incoming; a remote python pass merges it into
-# homemini's copy with the same last-writer-wins tombstone rule the app
-# and the backend use, then os.replace. A blunt copy (even --update)
-# would erase phone tombstones written since the pull above, and a
-# stale local v1 file would resurrect everything the phone un-starred.
-log "pushing desktop stars (local → homemini, tombstone merge) …"
-if [ -f "$JT_DATA_LOCAL/mobile-stars.json" ]; then
-  rsync -tz --no-perms --no-owner --no-group \
-    "$JT_DATA_LOCAL/mobile-stars.json" "$(rremote "$JT_DATA_REMOTE/.mobile-stars.json.incoming")" >> "$LOG" 2>&1
-  push_rc=$?
-  if [ $push_rc -ne 0 ] && [ $push_rc -ne 23 ] && [ $push_rc -ne 24 ]; then
-    log "WARNING: push of mobile-stars returned $push_rc (continuing)"
-    notify "Couldn't push desktop stars to homemini — phone may be behind."
-  elif [ $push_rc -eq 0 ]; then
-    star_out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOMEMINI" 'cd ~/"Library/Application Support/JakeTunes" && python3 - <<"EOF"
-import json, os
-def load(p):
-    try:
-        with open(p) as f: return json.load(f)
-    except Exception:
-        return None
-def norm(raw):
-    if isinstance(raw, list):
-        return {"trackIds": [x for x in raw if isinstance(x, str) and x], "removed": {}, "added": {}}
-    if isinstance(raw, dict):
-        ids = raw.get("trackIds")
-        ids = [x for x in ids if isinstance(x, str) and x] if isinstance(ids, list) else []
-        def tmap(m):
-            out = {}
-            if isinstance(m, dict):
-                for k, v in m.items():
-                    if isinstance(k, str) and k and isinstance(v, (int, float)) and v > 0: out[k] = v
-            return out
-        return {"trackIds": ids, "removed": tmap(raw.get("removed")), "added": tmap(raw.get("added"))}
-    return {"trackIds": [], "removed": {}, "added": {}}
-inc = load(".mobile-stars.json.incoming")
-if inc is None:
-    print("refused-corrupt")
-    raise SystemExit(0)
-a = norm(inc); b = norm(load("mobile-stars.json"))
-removed = dict(b["removed"]); added = dict(b["added"])
-for k, v in a["removed"].items(): removed[k] = max(removed.get(k, 0), v)
-for k, v in a["added"].items(): added[k] = max(added.get(k, 0), v)
-listed = set(a["trackIds"]) | set(b["trackIds"])
-merged = sorted(i for i in listed | set(removed) | set(added)
-                if (i in listed or i in added) and added.get(i, 0) >= removed.get(i, 0))
-out_obj = {"v": 2, "trackIds": merged, "removed": removed, "added": added}
-tmp = ".mobile-stars.json.merge-tmp"
-with open(tmp, "w") as f: json.dump(out_obj, f)
-os.replace(tmp, "mobile-stars.json")
-try: os.unlink(".mobile-stars.json.incoming")
-except OSError: pass
-print("merged %d stars, %d tombstones" % (len(merged), len(removed)))
-EOF' 2>>"$LOG")
-    case "$star_out" in
-      merged*) log "star push: $star_out → homemini mobile-stars.json" ;;
-      *) log "WARNING: star merge on homemini returned '$star_out' (continuing)"; notify "Couldn't merge desktop stars on homemini — phone may be behind." ;;
-    esac
-  fi
-fi
-# Plays: one-way push of the desktop play log to homemini. The iOS app doesn't
-# write mobile-plays.json yet, so a full round-trip is a later iOS-side change;
-# this is harmless prep (no staging/merge).
-if [ -f "$JT_DATA_LOCAL/mobile-plays.json" ]; then
-  rsync -tz --update --no-perms --no-owner --no-group \
-    "$JT_DATA_LOCAL/mobile-plays.json" "$(rremote "$JT_DATA_REMOTE/mobile-plays.json")" >> "$LOG" 2>&1 || true
-fi
+# ── 5. Stars, plays and the phone's sidecars ran here until 2026-11-06. They ──
+# only need SSH, so they moved to sync_phone_legs, before the homemini-only exit.
+# What can hang on a NAS stays last, here and on that exit.
+sync_phone_last_legs
 
 # ── 5b. Prune phone-deleted recommendations from the DESKTOP copy. ────
 #

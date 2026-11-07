@@ -202,3 +202,125 @@ describe('the subset proof reads real stamps', () => {
     }
   })
 })
+
+/**
+ * The install's own remote script, run for real in a temp folder: every Mac tool a fake, and the
+ * fakes behave as measured on a real bundle held in exit. pgrep can't see a process in E, and open
+ * exits 0 and starts nothing while it exists. The absolute paths are the one thing swapped.
+ */
+describe('the remote install asks ps about the old process, by pid', () => {
+  const FAKES: Record<string, string> = {
+    pgrep: 'for f in "$W"/proc/*; do [ -f "$f" ] && [ "$(cat "$f")" = S ] && basename "$f"; done; exit 0',
+    // "ps -o state= -p PID", and the whole table. A count in dying/<pid> is how many looks a
+    // process has left in E.
+    ps: `if [ "$1" = -o ]; then f="$W/proc/$4"; [ -f "$f" ] || exit 1; cat "$f"
+d="$W/dying/$4"; if [ -f "$d" ]; then n=$(cat "$d"); if [ "$n" -le 0 ]; then rm -f "$f" "$d"; else echo $((n - 1)) > "$d"; fi; fi
+else for f in "$W"/proc/*; do [ -f "$f" ] && echo "$(basename "$f") $(cat "$f") (JakeTunes)"; done; fi; exit 0`,
+    // The quit: the live process turns E, with a number of looks left, or stays if told to.
+    osascript: 'echo quit >> "$W/calls"; [ -f "$W/never_quits" ] && exit 0; for f in "$W"/proc/*; do [ -f "$f" ] || continue; echo E > "$f"; cat "$W/looks" > "$W/dying/$(basename "$f")"; done; exit 0',
+    open: 'echo open >> "$W/calls"; [ -f "$W/open_starts_nothing" ] && exit 0; for f in "$W"/proc/*; do [ -f "$f" ] && exit 0; done; echo S > "$W/proc/5151"; exit 0',
+    hdiutil: '[ "$1" = attach ] && cp -R "$W/staged.app" "$7/JakeTunes.app"; exit 0',
+    python3: 'echo sha=abc; exit 0',
+    codesign: 'exit 0',
+    xattr: 'exit 0',
+    ditto: '[ -f "$W/ditto_fails" ] && exit 1; cp -R "$1" "$2"',
+    lsreg: 'echo lsreg >> "$W/calls"; exit 0',
+  }
+  function world(looks: number) {
+    const w = mkdtempSync(join(tmpdir(), 'wm-install-'))
+    const home = join(w, 'home'); const bin = join(w, 'bin')
+    for (const d of [home, bin, join(w, 'proc'), join(w, 'dying'), join(w, 'staged.app', 'Contents', 'Resources'), join(w, 'Applications', 'JakeTunes.app', 'Contents', 'Resources')]) mkdirSync(d, { recursive: true })
+    writeFileSync(join(w, 'staged.app', 'Contents', 'Resources', 'app.asar'), 'new')
+    writeFileSync(join(w, 'Applications', 'JakeTunes.app', 'Contents', 'Resources', 'app.asar'), 'old')
+    writeFileSync(join(w, 'looks'), String(looks))
+    writeFileSync(join(w, 'proc', '4242'), 'S')
+    for (const [name, body] of Object.entries(FAKES)) writeFileSync(join(bin, name), `#!/bin/bash\n${body}\n`, { mode: 0o755 })
+    const env = { ...childEnv, HOME: home, W: w, PATH: `${bin}:/usr/bin:/bin` }
+    const calls = () => { try { return readFileSync(join(w, 'calls'), 'utf8').trim().split('\n') } catch { return [] as string[] } }
+    const running = () => spawnSync(join(bin, 'pgrep'), [], { env, encoding: 'utf8' }).stdout.trim()
+    const install = () => {
+      const app = join(w, 'Applications', 'JakeTunes.app')
+      const mtime = spawnSync('stat', ['-f', '%m', join(app, 'Contents', 'Resources', 'app.asar')], { encoding: 'utf8' }).stdout.trim()
+      const script = `GATE_SH='echo clear'\nASAR_INFO_PY=x\n${heredoc(deploy, 'JT_PS')}\n${heredoc(deploy, 'REMOTE_INSTALL')}`
+        .replace('APP=/Applications/JakeTunes.app', `APP='${app}'`)
+        .replace(/^LSREG=.*$/m, `LSREG='${join(bin, 'lsreg')}'`)
+        .replace('$(seq 1 120)', '$(seq 1 3)')
+        .replace('seq 1 45', 'seq 1 2')
+        .replace('sleep 8', 'sleep 0.3')
+      return spawnSync('bash', ['-s', '--', 'abc', mtime, 'prev.app', '5'], { input: script, env, encoding: 'utf8', timeout: 60_000 })
+    }
+    return { w, home, env, calls, running, install }
+  }
+  const gone = async (test: () => boolean) => {
+    for (let i = 0; i < 200; i++) { if (test()) return true; await new Promise((r) => setTimeout(r, 100)) }
+    return false
+  }
+
+  test('an old process in E: the app opens when it has gone, so a live app comes up', () => {
+    const { w, calls, running, install } = world(2)
+    try {
+      const r = install()
+      assert.equal(r.status, 0, r.stderr)
+      assert.deepEqual(calls().filter((c) => c === 'open'), ['open'], 'one open, after the pid went')
+      assert.equal(running(), '5151')
+    } finally { rmSync(w, { recursive: true, force: true }) }
+  })
+
+  test('an old process that outlasts the wait: exit 3 says so, and the app starts when it goes', async () => {
+    const { w, home, calls, running, install } = world(1000)
+    try {
+      const r = install()
+      assert.equal(r.status, 3, r.stderr)
+      assert.match(r.stderr, /taking its time to exit/)
+      assert.deepEqual(calls().filter((c) => c === 'open'), [], 'nothing opens into a dying app')
+      assert.ok(readFileSync(join(home, 'prev.app', 'Contents', 'Resources', 'app.asar')), 'the swap happened')
+      writeFileSync(join(w, 'dying', '4242'), '0')
+      assert.ok(await gone(() => running() === '5151'), 'the detached shell started it')
+    } finally { rmSync(w, { recursive: true, force: true }) }
+  })
+
+  test('an app already in E before the quit is still waited for', () => {
+    const { w, calls, running, install } = world(2)
+    try {
+      writeFileSync(join(w, 'proc', '4242'), 'E')
+      writeFileSync(join(w, 'dying', '4242'), '2')
+      const r = install()
+      assert.equal(r.status, 0, r.stderr)
+      assert.deepEqual(calls().filter((c) => c === 'open'), ['open'])
+      assert.equal(running(), '5151')
+    } finally { rmSync(w, { recursive: true, force: true }) }
+  })
+
+  test('a copy that fails over an old process in E still gets the old build started', () => {
+    const { w, calls, running, install } = world(2)
+    try {
+      writeFileSync(join(w, 'ditto_fails'), '')
+      const r = install()
+      assert.equal(r.status, 1)
+      assert.match(r.stderr, /ditto failed/)
+      assert.deepEqual(calls().filter((c) => c === 'open'), ['open'])
+      assert.equal(running(), '5151')
+    } finally { rmSync(w, { recursive: true, force: true }) }
+  })
+
+  test('an app that never comes up is still reported', () => {
+    const { w, install } = world(2)
+    try {
+      writeFileSync(join(w, 'open_starts_nothing'), '')
+      const r = install()
+      assert.equal(r.status, 3)
+      assert.match(r.stderr, /crashed on launch/)
+    } finally { rmSync(w, { recursive: true, force: true }) }
+  })
+
+  test('the last relaunch waits for the old process too', () => {
+    const { w, env, calls, running } = world(2)
+    try {
+      const script = `${heredoc(deploy, 'JT_PS')}\n${heredoc(deploy, 'RELAUNCH')}`.replace('sleep 1', 'sleep 0.1')
+      const r = spawnSync('bash', ['-s'], { input: script, env, encoding: 'utf8', timeout: 60_000 })
+      assert.equal(r.status, 0, r.stderr)
+      assert.deepEqual(calls(), ['quit', 'open'])
+      assert.equal(running(), '5151')
+    } finally { rmSync(w, { recursive: true, force: true }) }
+  })
+})
