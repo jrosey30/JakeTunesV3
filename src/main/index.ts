@@ -97,6 +97,7 @@ import { registerPreviewRefreshIpc } from './ipc/preview-refresh-ipc.ts'
 import { registerSyncHistoryIpc } from './ipc/sync-history-ipc.ts'
 import { registerActivityPoolIpc } from './ipc/activity-pool-ipc.ts'
 import { registerIpodListsIpc } from './ipc/ipod-lists-ipc.ts'
+import { startIpodSyncReady } from './ipod-sync-ready-start.ts'
 import { registerAlbumInfoIpc, rankLibraryAlbums } from './ipc/album-info-ipc.ts'
 import {
   initRagRetrieval, ragIndexedCountForTracks, ragLibraryArtistSet, pickRetrievalIndex,
@@ -8441,7 +8442,9 @@ async function getConcertOwnedTrackIds(): Promise<Set<number>> {
 }
 
 // Every iPod but the Original carries homemini's list (2026-11-07): read here, never written.
-const ipodLists = registerIpodListsIpc(ipc, { stateDir: STATE_DIR, baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), libraryTracks: async () => (await libraryCache.get()).tracks, warn: (m) => quietWarn('ipod-list', m) })
+// "Ready for an updated sync" (2026-11-07): each iPod's Top 1000 / list vs its last sync → one notice + phone push, hub only.
+const ipodSyncReady = startIpodSyncReady({ stateDir: STATE_DIR, baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), isReplica: isHomeminiPlaybackClientCached, libraryTracks: async () => (await libraryCache.get()).tracks, ineligible: getConcertOwnedTrackIds, window: () => mainWindow, send: sendToRenderer, log: (m) => console.log(m), warn: (m) => quietWarn('sync-ready', m) })
+const ipodLists = registerIpodListsIpc(ipc, { stateDir: STATE_DIR, baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), libraryTracks: async () => (await libraryCache.get()).tracks, warn: (m) => quietWarn('ipod-list', m), onListRead: (d, ids) => ipodSyncReady.listRead(d, ids) })
 // Activity sync (Cursor branch) — builds the ≤1000-track iPod set from a brief
 registerWorkoutSyncIpc({
   ipc,
@@ -9859,7 +9862,7 @@ app.whenReady().then(async () => {
   // mirror to the NAS without ever surfacing a "go push it" banner.
   setInterval(() => { void autoBackupStateToNas() }, 120_000)
   startBrainPull(async () => new Set((((await libraryCache.get()) as { tracks?: Array<{ id: number }> }).tracks || []).map((t) => Number(t.id))), nasUp, STATE_FILE_NAMES) // NAS→laptop, never back
-  startTasteStatePull({ localDir: STATE_DIR, nasDir: NAS_STATE_DIR_PATH, nasAvailable, hubBase: () => { try { return new URL(MOBILE_BACKEND_URL).origin } catch { return null } }, log: (m) => console.warn(m) }) // learned taste (taste-engine): NAS, else homemini's /api/taste-state (workmini has no NAS mount)
+  startTasteStatePull({ localDir: STATE_DIR, nasDir: NAS_STATE_DIR_PATH, nasAvailable, hubBase: () => { try { return new URL(MOBILE_BACKEND_URL).origin } catch { return null } }, log: (m) => console.warn(m), onTop1000Pulled: (adopted) => ipodSyncReady.pulled(adopted) }) // learned taste (taste-engine): NAS, else homemini's /api/taste-state (workmini has no NAS mount)
   // 4.5: auto-index new songs into RAG (Jake: "every new song to auto index").
   // Boot + every 30s — embeds anything imported that lacks a vector, so RAG /
   // mixes / chat can use it within seconds, not at the nightly trainer pass.

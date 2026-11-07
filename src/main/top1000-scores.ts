@@ -99,6 +99,9 @@ export interface Top1000ScoresHost {
   hubBase?: () => string | null
   fetchImpl?: typeof fetch
   log(msg: string): void
+  /** After every pull: true when homemini's standings were adopted (they moved). The iPod
+   *  "ready for an updated sync" check rides this tick (ipod-sync-ready.ts). */
+  onPulled?: (adopted: boolean) => void
 }
 
 let current: Top1000Scores | null = null
@@ -158,7 +161,9 @@ export async function pullTop1000ScoresOnce(host: Top1000ScoresHost): Promise<bo
 }
 
 export function startTop1000ScoresPull(host: Top1000ScoresHost): void {
-  const tick = () => pullTop1000ScoresOnce(host).catch((err) => host.log(`[top1000-scores] pull failed: ${err instanceof Error ? err.message : String(err)}`))
+  const tick = () => pullTop1000ScoresOnce(host)
+    .catch((err) => { host.log(`[top1000-scores] pull failed: ${err instanceof Error ? err.message : String(err)}`); return false })
+    .then((adopted) => { try { host.onPulled?.(adopted) } catch (err) { host.log(`[top1000-scores] onPulled failed: ${err instanceof Error ? err.message : String(err)}`) } })
   void loadLocal(host).then(tick)
   setInterval(() => { void tick() }, 10 * 60_000)
 }

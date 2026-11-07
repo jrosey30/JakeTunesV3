@@ -66,6 +66,8 @@ export interface TasteStateHost {
   hubBase?: () => string | null
   fetchImpl?: typeof fetch
   log(msg: string): void
+  /** The Top 1000 standings' tick (top1000-scores.ts onPulled). */
+  onTop1000Pulled?: (adopted: boolean) => void
 }
 
 let current: TasteState | null = null
@@ -143,7 +145,7 @@ async function pullFromHub(host: TasteStateHost): Promise<boolean> {
 export function startTasteStatePull(host: TasteStateHost): void {
   // The Top 1000 Quiz's standings ride the same host (hub origin, local state dir): the other
   // learned taste signal from homemini (top1000-scores.ts).
-  startTop1000ScoresPull(host)
+  startTop1000ScoresPull({ ...host, onPulled: host.onTop1000Pulled })
   // …and this year's releases by month for the sidebar's month playlists (release-months.ts).
   startReleaseMonthsPull(host)
   void loadLocal(host).then(() => pullTasteStateOnce(host)).catch((err) => host.log(`[taste-state] pull failed: ${err instanceof Error ? err.message : String(err)}`))
