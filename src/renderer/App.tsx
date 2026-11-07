@@ -1618,6 +1618,7 @@ function AppInner() {
         case 'view-artists': dispatch({ type: 'SET_VIEW', view: 'artists' }); break
         case 'view-albums': dispatch({ type: 'SET_VIEW', view: 'albums' }); break
         case 'view-genres': dispatch({ type: 'SET_VIEW', view: 'genres' }); break
+        case 'view-device': dispatch({ type: 'SET_VIEW', view: 'device' }); break   // the "ready for an updated sync" notification
         case 'toggle-visualizer': window.dispatchEvent(new CustomEvent('toggle-visualizer')); break
         // Controls → Radio Mode (⇧⌘R) / DJ Mode (⇧⌘D). Toolbar owns both
         // modes (and keeps them mutually exclusive); these are the same
