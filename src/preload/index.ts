@@ -839,6 +839,11 @@ const electronAPI = {
     ipcRenderer.invoke('save-live-set', albumKey, entry),
   removeLiveSet: (albumKey: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('remove-live-set', albumKey),
+  // The poster rule (src/common/concert-poster.ts): a show's poster sits under its own artwork key.
+  setConcertPoster: (albumKey: string, imagePath: string): Promise<{ ok: boolean; hash?: string; fields?: { poster: string; posterSource: 'jake-pick' | 'gig-poster' | 'film-one-sheet' | 'built'; posterMatte: string }; existing?: boolean; error?: string }> =>
+    ipcRenderer.invoke('set-concert-poster', albumKey, imagePath),
+  ensureConcertPoster: (albumKey: string, show: { band: string; show: string; year?: string | number }): Promise<{ ok: boolean; hash?: string; fields?: { poster: string; posterSource: 'jake-pick' | 'gig-poster' | 'film-one-sheet' | 'built'; posterMatte: string }; existing?: boolean; error?: string }> =>
+    ipcRenderer.invoke('ensure-concert-poster', albumKey, show),
   extractConcertCrowd: (mergedTrackId: number, colonPath: string, cueStartsMs: number[], totalMs: number): Promise<{ ok: boolean; error?: string; startSec?: number }> =>
     ipcRenderer.invoke('extract-concert-crowd', mergedTrackId, colonPath, cueStartsMs, totalMs),
   // 2026-10-19 replica concert mirror: main pulled a new live-sets.json and/or

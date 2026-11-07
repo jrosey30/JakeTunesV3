@@ -7,7 +7,7 @@
  */
 import { app } from 'electron'
 import { join } from 'path'
-import { readFile, stat, writeFile } from 'fs/promises'
+import { readFile, rm, stat, writeFile } from 'fs/promises'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { IS_WINDOWS } from '../platform'
@@ -21,6 +21,9 @@ import {
   startReplicaArtworkMirror, recentAlbumKeys, THIN_LINK_PACE_BYTES_PER_SEC, FAT_LINK_PACE_BYTES_PER_SEC, type RecentRow,
 } from '../replica-artwork-mirror.ts'
 import { pregenerateThumbs } from '../album-art-serve.ts'
+import { coverFileName, installPosterImage, posterInStore, renderPosterForShow, withPosterKeys, type InstalledPoster, type PosterFields } from '../concert-poster.ts'
+import { parseConcertMeta } from '../../common/concert-meta.ts'
+import { triggerSync } from '../sync-orchestrator'
 import type { LiveSetEntry } from '../index.ts'
 
 export interface LiveSetsIpcHost {
@@ -115,6 +118,84 @@ export function registerLiveSetsIpc(ipc: IpcRegistrar, host: LiveSetsIpcHost): v
       return next
     })
     return { ok: true }
+  }, { refuse: REFUSED_SENDER })
+
+  // ── The poster rule (src/common/concert-poster.ts) ────────────────────────
+  // A poster sits under its OWN artwork key. A drop used to go through
+  // set-custom-artwork onto the album's key, which replaced the album's cover:
+  // that is why Unplugged and Stop Making Sense showed a cropped poster on the
+  // Albums tab. These two write the artwork store only and hand back the
+  // concert.* fields; the renderer saves those through updateConcertMeta, like
+  // every other concert field, so its copy of the sets stays the one in charge.
+  type PosterReply = { ok: boolean; hash?: string; fields?: PosterFields; existing?: boolean; error?: string }
+
+  function posterFontPath(): string {
+    return app.isPackaged
+      ? join(process.resourcesPath, 'fonts', 'pixChicago.ttf')
+      : join(app.getAppPath(), 'src', 'renderer', 'assets', 'fonts', 'pixChicago.ttf')
+  }
+
+  /** The index, the byte cache, the mirror to homemini, and the renderer's map. */
+  async function publishPoster(installed: InstalledPoster): Promise<void> {
+    invalidateArtBytes(installed.hash)
+    await host.saveArtworkIndex(withPosterKeys(await host.loadArtworkIndex(), installed))
+    triggerSync('artwork')
+    host.sendToRenderer('live-sets-updated', {
+      liveSets: false,
+      artwork: [{ key: installed.key, hash: installed.versioned }, { key: installed.aliasKey, hash: installed.versioned }],
+    })
+  }
+
+  // Jake's pick: whatever he drops on the concert page, always (the rule's first line).
+  ipc.handle('set-concert-poster', async (_e, albumKey: string, imagePath: string): Promise<PosterReply> => {
+    if (await isReplica()) return { ok: false, error: REPLICA_LIVE_SETS_READ_ONLY }
+    if (!(await host.liveSetsCache.get())[albumKey]) return { ok: false, error: 'not a declared concert' }
+    try {
+      const installed = await installPosterImage({ artworkDir: getArtworkDir(), albumKey, imagePath: String(imagePath || ''), source: 'jake-pick' })
+      await publishPoster(installed)
+      return { ok: true, hash: installed.hash, fields: installed.fields }
+    } catch (err) {
+      console.warn('[concert-poster] set failed:', err instanceof Error ? err.message : err)
+      return { ok: false, error: safeIpcError(err, 'io-failed') }
+    }
+  }, { refuse: REFUSED_SENDER })
+
+  // A newly declared show with no poster gets a built one, made once from its
+  // cover and its grounded words. A failure here never fails the declare: the
+  // show just draws its cover whole in the frame until a poster arrives.
+  ipc.handle('ensure-concert-poster', async (_e, albumKey: string, show: { band: string; show: string; year?: string | number }): Promise<PosterReply> => {
+    const entry = (await host.liveSetsCache.get())[albumKey]
+    if (!entry) return { ok: false, error: 'not a declared concert' }
+    if (entry.concert?.poster) return { ok: true, existing: true, hash: entry.concert.poster }
+    if (await isReplica()) return { ok: false, error: REPLICA_LIVE_SETS_READ_ONLY }
+    const dir = getArtworkDir()
+    // Declared before and undeclared since: a real poster is still in the store. It stands.
+    const kept = await posterInStore(dir, albumKey)
+    if (kept && kept.fields.posterSource !== 'built') {
+      await publishPoster(kept)
+      return { ok: true, hash: kept.hash, fields: kept.fields, existing: true }
+    }
+    const tmp = join(app.getPath('temp'), `concert-poster-${process.pid}-${Date.now()}.jpg`)
+    try {
+      const coverName = coverFileName((await host.loadArtworkIndex())[albumKey])
+      const coverPath = coverName ? join(dir, coverName) : null
+      const hasCover = coverPath ? await stat(coverPath).then((s) => s.size > 0, () => false) : false
+      const { venue, date } = parseConcertMeta(show.show, entry.cues[0]?.title || '', entry.concert)
+      await renderPosterForShow({
+        facts: { band: show.band, show: show.show, venue, date, city: entry.concert?.city, year: show.year },
+        coverPath: hasCover ? coverPath : null,
+        outPath: tmp,
+        fontPath: posterFontPath(),
+      })
+      const installed = await installPosterImage({ artworkDir: dir, albumKey, imagePath: tmp, source: 'built' })
+      await publishPoster(installed)
+      return { ok: true, hash: installed.hash, fields: installed.fields }
+    } catch (err) {
+      console.warn('[concert-poster] build failed (the cover stands in):', err instanceof Error ? err.message : err)
+      return { ok: false, error: safeIpcError(err, 'io-failed') }
+    } finally {
+      await rm(tmp, { force: true }).catch((err) => console.warn('[concert-poster] temp file left behind:', err instanceof Error ? err.message : err))
+    }
   }, { refuse: REFUSED_SENDER })
 
   // Concert crowd ambience (LC-7): serve the short "that night's crowd" clip

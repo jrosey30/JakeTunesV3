@@ -209,9 +209,39 @@ const W_ALBUM  = 0.8
 const W_GENRE  = 0.4
 const W_PLAYS  = 0.3  // playlist name match
 
+/**
+ * A query with no letters or digits ("@", "!!!") normalizes to nothing, and so
+ * does a band's name made of symbols, so scoring can't find it. It is compared
+ * as written against whole names, which never matches the whole library.
+ * ⚠️ TWIN: JakeTunesMobile ios/JakeTunesMobile/SearchRank.swift `symbolQuery`.
+ */
+export function symbolQuery(rawQuery: string): string | null {
+  const typed = rawQuery.trim()
+  return typed && !normalize(typed) ? typed.toLowerCase() : null
+}
+
+function searchBySymbol(idx: SearchIndex, symbol: string, cap: number): SearchResults {
+  const same = (name: string | null | undefined): boolean => (name || '').trim().toLowerCase() === symbol
+  const tracks = idx.tracks.filter(t => same(t.artist) || same(t.title))
+  const albums = idx.albums.filter(a => same(a.album) || same(a.artist))
+  const artists = idx.artists.filter(a => same(a.name))
+  const playlists = idx.playlists.filter(p => same(p.name))
+  const top = artists[0] ?? albums[0] ?? tracks[0] ?? playlists[0]
+  return {
+    tracks: tracks.slice(0, cap).map(row => ({ row, score: 100 })),
+    albums: albums.slice(0, cap).map(row => ({ row, score: 100 })),
+    artists: artists.slice(0, cap).map(row => ({ row, score: 100 })),
+    playlists: playlists.slice(0, cap).map(row => ({ row, score: 100 })),
+    topHit: top ? { row: top, score: 100 } : null,
+  }
+}
+
 export function search(idx: SearchIndex, rawQuery: string, opts?: { perSectionCap?: number }): SearchResults {
   const q = normalize(rawQuery)
-  if (!q) return { tracks: [], albums: [], artists: [], playlists: [], topHit: null }
+  if (!q) {
+    const symbol = symbolQuery(rawQuery)
+    return symbol ? searchBySymbol(idx, symbol, opts?.perSectionCap ?? 8) : { tracks: [], albums: [], artists: [], playlists: [], topHit: null }
+  }
   const qTokens = q.split(' ')
   const cap = opts?.perSectionCap ?? 8
 

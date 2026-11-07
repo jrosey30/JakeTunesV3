@@ -66,6 +66,11 @@ describe('live-sets body + adopt rules', () => {
     // A set whose merged row is missing is not drawn, so it asks for nothing.
     assert.deepEqual(concertArtworkKeys(sets, rows.filter((r) => r.id !== 12260)).filter((k) => k.startsWith('geese')), [])
   })
+
+  it('a show with a poster also asks for the poster\'s own key', () => {
+    const withPoster = { 'geese|||alive & in person': { mergedTrackId: 12260, cues: [{ trackId: 12256, title: '2122 (Live)', artist: 'Geese' }], concert: { poster: 'abc' } } }
+    assert.ok(concertArtworkKeys(withPoster, rows).includes('concert poster|||geese · alive & in person'))
+  })
 })
 
 interface Hub {

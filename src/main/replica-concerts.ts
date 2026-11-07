@@ -23,6 +23,7 @@
 import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { declaredConcerts, type ConcertSetLike, type ConcertTrackLike } from '../common/concert-meta.ts'
+import { posterArtworkKey } from '../common/concert-poster.ts'
 import { withCompanionInit } from './hub-companion.ts'
 
 /** A live-sets.json entry as far as this module reads it (main's LiveSetEntry satisfies it). */
@@ -108,9 +109,9 @@ export function liveSetsAdoptDecision(
 
 /**
  * The artwork keys a concert is drawn with, exactly as the renderer looks
- * them up: the concert page / Live Concerts wall use `band|||show`
- * (common/concert-meta.ts declaredConcerts → lookupArtwork), and the album
- * grid uses the merged track's own `artist|||album` ("… (Live Set)").
+ * them up: its poster's own key when it has a poster (common/concert-poster.ts),
+ * `band|||show` for the cover (common/concert-meta.ts declaredConcerts →
+ * lookupArtwork), and the merged track's own `artist|||album` ("… (Live Set)").
  */
 export function concertArtworkKeys(
   sets: Record<string, ReplicaLiveSet>,
@@ -120,6 +121,7 @@ export function concertArtworkKeys(
   const key = (a: string | null | undefined, b: string | null | undefined) => `${(a || '').toLowerCase().trim()}|||${(b || '').toLowerCase().trim()}`
   const out = new Set<string>()
   for (const c of declaredConcerts(sets, (id) => byId.get(Number(id)))) {
+    if (c.poster) out.add(posterArtworkKey(c.albumKey))
     if (c.band && c.show) out.add(key(c.band, c.show))
     const merged = byId.get(Number(c.entry.mergedTrackId))
     if (merged?.artist && merged?.album) out.add(key(merged.artist, merged.album))

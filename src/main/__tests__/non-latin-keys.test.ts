@@ -29,7 +29,7 @@ import { normalizedArtworkKey, buildNormalizedArtworkIndex, lookupArtwork } from
 import { normTitle } from '../../renderer/utils/normTitle.ts'
 import { norm as dlNorm, normQ } from '../../renderer/views/DownloadStore/downloadKeys.ts'
 import { trackQueryId, albumQueryId } from '../../renderer/views/DownloadStore/downloadQueue.ts'
-import { normalize as searchNormalize, buildIndex, search } from '../../renderer/utils/searchIndex.ts'
+import { normalize as searchNormalize, buildIndex, search, symbolQuery } from '../../renderer/utils/searchIndex.ts'
 import type { Track } from '../../renderer/types.ts'
 import { recordIdentityKeys, recoDedupeKey, recoIdNorm, recoNorm, isTombstonedRecord, RECO_IDENTITY_PREFIX } from '../reco-match.ts'
 import { maskedTitleMatches, titleReads } from '../streamrip-match.ts'
@@ -587,5 +587,26 @@ describe('recommendations-ipc: caches and iTunes scoring compare with recoFold',
     assert.match(src, /const wantSong = recoFold\(input\.song \|\| ''\)\n\s+const wantArtist = recoFold\(input\.artist \|\| ''\)/)
     assert.match(src, /const songN = recoFold\(s\.song\)\n\s+const artistN = recoFold\(s\.artist\)/)
     assert.doesNotMatch(src, /recoNorm\(/, 'recoNorm is identity-only; nothing in this file compares with it')
+  })
+})
+
+describe('a name made of symbols', () => {
+  const song = (id: number, artist: string, title: string, album: string) => ({ id, artist, title, album }) as unknown as Parameters<typeof buildIndex>[0][number]
+  const idx = buildIndex([song(1, '@', 'Autosmile', 'Autosmile'), song(2, '!!!', 'Even When the Water\'s Cold', 'Thr!!!er'), song(3, 'foo@bar', 'Other', 'Other')], [])
+
+  it('finds the band by its whole name, and nobody else', () => {
+    const r = search(idx, ' @ ')
+    assert.deepEqual(r.artists.map(h => (h.row as { name: string }).name), ['@'])
+    assert.deepEqual(r.tracks.map(h => (h.row as { id: number }).id), [1])
+    assert.equal(r.topHit?.row.kind, 'artist')
+    assert.deepEqual(search(idx, '!!!').tracks.map(h => (h.row as { id: number }).id), [2])
+  })
+
+  it('finds nothing for symbols no name is, and no query still finds nothing', () => {
+    const none = search(idx, '??')
+    assert.equal(none.tracks.length + none.artists.length + none.albums.length, 0)
+    assert.equal(none.topHit, null)
+    assert.equal(search(idx, '   ').topHit, null)
+    assert.equal(symbolQuery('!!! band'), null)
   })
 })

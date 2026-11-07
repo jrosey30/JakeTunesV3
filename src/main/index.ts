@@ -3808,7 +3808,7 @@ export interface LiveSetEntry {
   // Constituents reimported to the regular library (right-click → Add to
   // Library). Exempted from the concert's library-hide. See src/renderer/types.ts.
   promotedTrackIds?: number[]
-  concert?: { venue?: string; city?: string; date?: string; poster?: string; facts?: string[]; notes?: string; source?: string; label?: string; merchUrl?: string; segments?: Array<{ before: number; label: string }> }  /* ⚠️ TWIN: renderer types.ts ConcertMeta */
+  concert?: { venue?: string; city?: string; date?: string; poster?: string; posterSource?: string; posterMatte?: string; facts?: string[]; notes?: string; source?: string; label?: string; merchUrl?: string; segments?: Array<{ before: number; label: string }> }  /* ⚠️ TWIN: renderer types.ts ConcertMeta */
 }
 const liveSetsCache = new JsonFileCache<Record<string, LiveSetEntry>>(
   () => join(STATE_DIR, 'live-sets.json'),
@@ -9631,7 +9631,7 @@ registerArtworkIpc(ipc, {
   sendToRenderer,
   getMount: () => detectedIpodMount,
   getMainWindow: () => mainWindow,
-  liveSetsCache,
+  liveSetsCache, replicaHubBase,
 })
 
 registerLyricsIpc(ipc, { file: () => join(STATE_DIR, 'lyrics.json'), hubBase: replicaHubBase, notify: () => sendToRenderer('lyrics-updated') })  // replica: homemini's copy, never fetched here

@@ -15,7 +15,7 @@
 
 import type { Track, LiveSetEntry } from './types'
 import { enqueueFiles, onTrackImported } from './importQueue'
-import { registerLiveSet } from './liveSets'
+import { registerLiveSet, updateConcertMeta } from './liveSets'
 import { verifyLiveSetCompleteness } from './utils/liveSetCompleteness'
 
 export interface DeclareAlbumInput {
@@ -109,6 +109,17 @@ export async function declareLiveSet(album: DeclareAlbumInput, opts?: { confirme
       createdAt: new Date().toISOString(),
     }
     await registerLiveSet(album.albumKey, entry)
+
+    // A new show gets its one poster now: built once from its cover and its
+    // grounded words (common/concert-poster.ts). Best effort: a failure never
+    // fails the declare, and the show draws its cover whole in the frame instead.
+    try {
+      const made = await window.electronAPI.ensureConcertPoster(album.albumKey, { band: album.artist, show: album.name, year: album.year })
+      if (made.ok && made.fields) await updateConcertMeta(album.albumKey, made.fields)
+      else if (!made.ok) console.warn('[live-set] no built poster:', made.error)
+    } catch (err) {
+      console.warn('[live-set] no built poster:', err instanceof Error ? err.message : err)
+    }
 
     // The import queue COPIED the file into the library farm; the scratch
     // original is now redundant. Path-gated main-side (scratch dir only).
