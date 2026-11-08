@@ -127,7 +127,6 @@ export interface PreloadPlaylist {
   name?: string
   trackIds?: ReadonlyArray<number | string>
   modifiedAt?: string
-  category?: string
 }
 
 export interface PlanInputs {
@@ -159,7 +158,7 @@ export function manualPlaylistFilter(year: number): (p: PreloadPlaylist) => bool
     `Best of ${year}`, 'Recently Added', 'Recently Played', 'Top 25 Most Played', 'My Top Rated',
     'Starred', "Songs You'd Star", 'Classical Music',
   ])
-  return (p) => !smart.has(p.name ?? '') && p.category !== 'synced-set'
+  return (p) => !smart.has(p.name ?? '')
 }
 
 /** Can playback stream this row from homemini at all? Same gates as the pool

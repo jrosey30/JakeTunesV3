@@ -36,11 +36,9 @@ export const SMART_PLAYLIST_NAMES = new Set([
 ])
 
 /** The playlists a song can actually be added to, in the order the sidebar
- *  shows them — so the submenu reads top-to-bottom like the sidebar does.
- *  Synced sets are excluded: they're activity-sync output with their own
- *  section, not hand-curated lists. */
+ *  shows them — so the submenu reads top-to-bottom like the sidebar does. */
 export function manualPlaylists(playlists: Playlist[]): Playlist[] {
-  return playlists.filter(pl => !SMART_PLAYLIST_NAMES.has(pl.name) && pl.category !== 'synced-set')
+  return playlists.filter(pl => !SMART_PLAYLIST_NAMES.has(pl.name))
 }
 
 /**

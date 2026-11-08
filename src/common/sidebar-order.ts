@@ -27,10 +27,18 @@ export const DEFAULT_SECTION_ORDER: readonly string[] = [
   'devices',
   'ipods',
   'mixtapes',
-  'synced-sets',
   YEARS_SLOT,
   'playlists',
 ]
+
+/**
+ * Sections that no longer exist. A saved order written by an older build may
+ * still name one; it is dropped on read, so it never takes a slot and the next
+ * save forgets it. 'synced-sets' went 2026-11-08: nothing has made one since the
+ * Activity Sync sheet left (#372), and a playlist still marked as one simply
+ * shows in PLAYLISTS.
+ */
+export const RETIRED_SECTION_KEYS: ReadonlySet<string> = new Set(['synced-sets'])
 
 /** Where a key sits by default (years share their slot). */
 function defaultRank(key: string, defaults: readonly string[]): number {
@@ -45,7 +53,7 @@ export function parseSavedOrder(raw: unknown): string[] {
   const out: string[] = []
   const seen = new Set<string>()
   for (const v of raw) {
-    if (typeof v !== 'string' || !v || v.length > 64 || seen.has(v)) continue
+    if (typeof v !== 'string' || !v || v.length > 64 || seen.has(v) || RETIRED_SECTION_KEYS.has(v)) continue
     seen.add(v)
     out.push(v)
     if (out.length >= 200) break
