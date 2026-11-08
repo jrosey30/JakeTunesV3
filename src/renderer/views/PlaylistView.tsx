@@ -20,7 +20,7 @@ import { formatAppDateTime } from '../utils/formatDate'
 import { DATE_TIME_COLUMN_WIDTH } from '../utils/columnState'
 import { canonicalArtist } from '../utils/artistAlias'
 import { albumKeyOf } from '../utils/albumKey'
-import { suggestForPlaylist, suggestFromVibeHits, keepStripSteady, suggestableOn } from '../utils/playlistSuggest'
+import { suggestForPlaylist, suggestFromVibeHits, nextStrip, suggestableOn } from '../utils/playlistSuggest'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import AlbumArtImage from '../components/AlbumArtImage'
 import { CloseIcon } from '../components/TransportIcons'
@@ -341,7 +341,9 @@ export default function PlaylistView() {
       return hitsHere
         ? suggestFromVibeHits(allPlaylistTracks, suggestPool, vibeHits, STRIP, suggestRotate, vibeClusterSeeds,
             (playlist ? tasteWeights[playlist.id] ?? tasteWeights['*'] : undefined) ?? {}, suggestDiag.current, stripHidden, learnedTaste, quizLove, STRIP * 3)
-        : suggestForPlaylist(allPlaylistTracks, suggestPool.filter((t) => !stripHidden.has(t.id)), STRIP, suggestRotate, STRIP * 3)
+        // The fallback draws only from songs the strip may show here (not
+        // from an album already on the playlist), the brain path's own rule.
+        : suggestForPlaylist(allPlaylistTracks, suggestPool.filter(suggestableOn(allPlaylistTracks, stripHidden)), STRIP, suggestRotate, STRIP * 3)
     },
     [allPlaylistTracks, suggestPool, hitsHere, vibeHits, vibeClusterSeeds, suggestRotate, tasteWeights, playlist, stripHidden, learnedTaste, quizLove],
   )
@@ -353,15 +355,9 @@ export default function PlaylistView() {
   const stripMemo = useRef<{ key: string; ids: number[] } | null>(null)
   const suggestions = useMemo(() => {
     const key = `${playlist?.id ?? ''}:${suggestRotate}:${hitsHere ? 'vibe' : 'tags'}`
-    const prev = stripMemo.current
-    let strip: Track[]
-    if (prev && prev.key === key && prev.ids.length > 0) {
-      const byId = new Map(suggestPool.map((t) => [t.id, t]))
-      const shown = prev.ids.map((id) => byId.get(id)).filter((t): t is Track => t !== undefined)
-      strip = keepStripSteady(shown, candidates, suggestableOn(allPlaylistTracks, stripHidden), STRIP)
-    } else {
-      strip = candidates.slice(0, STRIP)
-    }
+    // nextStrip: steady across re-renders, empty or not (2026-11-08, the
+    // Rocksurgence flicker — playlistSuggest.ts has the story).
+    const strip = nextStrip(stripMemo.current, key, candidates, suggestPool, suggestableOn(allPlaylistTracks, stripHidden), STRIP)
     stripMemo.current = { key, ids: strip.map((t) => t.id) }
     return strip
   }, [candidates, playlist?.id, suggestRotate, hitsHere, suggestPool, allPlaylistTracks, stripHidden])
