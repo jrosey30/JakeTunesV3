@@ -172,6 +172,12 @@ describe('WIRING — the tested code is the live code', () => {
     // called directly in index — so this wire matches the reference form.
     { fn: 'importDownloaded: importDownloadedFiles', file: 'main/index.ts', minCalls: 2, literal: true,
       why: 'P1C1 — both store integrations receive the import bridge' },
+    // iPod songs stay on this Mac (2026-11-08, ipod-keep-local.ts): both eviction routes ask the gate.
+    { fn: 'keepLocal: () => ipodLocal.sweepKeep()', file: 'main/index.ts', minCalls: 1, literal: true,
+      why: 'unwired, the hourly sweep trashes songs an iPod needs and the next sync fetches them mid-sync again' },
+    { fn: 'keepsColon(ipodGate, it.ipodPath)', file: 'main/index.ts', minCalls: 1, literal: true,
+      why: 'unwired, stream-convert turns an iPod song into a link to homemini and the next sync fetches it mid-sync again' },
+    { fn: 'startIpodLocal', file: 'main/index.ts', minCalls: 1, why: 'unwired, iPod songs are never brought back and the Device page can’t say what’s ready' },
   ]
   for (const w of WIRES) {
     test(`${w.fn} is wired (${w.why})`, () => {

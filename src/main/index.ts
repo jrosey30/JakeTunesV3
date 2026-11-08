@@ -98,6 +98,7 @@ import { registerSyncHistoryIpc } from './ipc/sync-history-ipc.ts'
 import { registerActivityPoolIpc } from './ipc/activity-pool-ipc.ts'
 import { registerIpodListsIpc } from './ipc/ipod-lists-ipc.ts'
 import { startIpodSyncReady } from './ipod-sync-ready-start.ts'
+import { startIpodLocal } from './ipod-local-start.ts'; import { keepsColon } from './ipod-keep-local.ts'
 import { registerAlbumInfoIpc, rankLibraryAlbums } from './ipc/album-info-ipc.ts'
 import {
   initRagRetrieval, ragIndexedCountForTracks, ragLibraryArtistSet, pickRetrievalIndex,
@@ -4487,11 +4488,12 @@ async function runStreamConvertPass(now: number): Promise<void> {
     let items = await readStreamConvertQueue()
     if (!items.length) return
     const hub = hubOffloadActive({ streamSource: source, offload })
+    const ipodGate = await ipodLocal.gate()   // songs on an iPod's list stay on this Mac (ipod-keep-local.ts)
     const keep: StreamConvertItem[] = []
     let changed = false
     let attempted = 0
     for (const it of items) {
-      if (decideStreamConvertAttempt(it, now) === 'wait') {
+      if (decideStreamConvertAttempt(it, now) === 'wait' || keepsColon(ipodGate, it.ipodPath)) {
         keep.push(it)
         continue
       }
@@ -8444,6 +8446,8 @@ async function getConcertOwnedTrackIds(): Promise<Set<number>> {
 // Every iPod but the Original carries homemini's list (2026-11-07): read here, never written.
 // "Ready for an updated sync" (2026-11-07): each iPod's Top 1000 / list vs its last sync → one notice + phone push, hub only.
 const ipodSyncReady = startIpodSyncReady({ stateDir: STATE_DIR, baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), isReplica: isHomeminiPlaybackClientCached, libraryTracks: async () => (await libraryCache.get()).tracks, ineligible: getConcertOwnedTrackIds, window: () => mainWindow, send: sendToRenderer, log: (m) => console.log(m), warn: (m) => quietWarn('sync-ready', m) })
+const ipodLocal = startIpodLocal({ ipc, userDataDir: app.getPath('userData'), stateDir: STATE_DIR, baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), audioBase: HOMEMINI_AUDIO_BASE, isReplica: isHomeminiPlaybackClientCached, libraryTracks: async () => ((await libraryCache.get()).tracks ?? []) as Array<Record<string, unknown>>, localMount: () => libraryRootFromMusicDir(MUSIC_DIR), pathSep: IS_WINDOWS ? '\\' : '/', isPlaying: () => playbackActive, syncInFlight: () => syncEngine.isSyncInFlight(), freeBytes: laptopFreeBytes,
+  libraryRefused: () => localAudioDropRefused(MUSIC_DIR), materialize: (colon, id, fetchAudio) => materializeTrackFromHomemini({ ...homeminiPullOpts(colon, id), fetchAudio }), mount: () => detectedIpodMount, ineligible: getConcertOwnedTrackIds, log: (m) => console.log(m), warn: (m) => quietWarn('ipod-local', m) })
 const ipodLists = registerIpodListsIpc(ipc, { stateDir: STATE_DIR, baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), libraryTracks: async () => (await libraryCache.get()).tracks, warn: (m) => quietWarn('ipod-list', m), onListRead: (d, ids) => ipodSyncReady.listRead(d, ids) })
 // Activity sync (Cursor branch) — builds the ≤1000-track iPod set from a brief
 registerWorkoutSyncIpc({
@@ -9728,7 +9732,7 @@ app.whenReady().then(async () => {
   const runEvictionSweep = async (): Promise<SweepResult> => {
     const empty: SweepResult = {
       examined: 0, tooYoung: 0, notInLibrary: 0, notOnHomemini: 0,
-      hashMismatch: 0, evicted: 0, evictedBytes: 0, errors: 0,
+      hashMismatch: 0, evicted: 0, evictedBytes: 0, errors: 0, ipodKept: 0,
     }
     if (syncEngine.isSyncInFlight()) {
       console.log('[evict] skipped — iPod sync in flight (copy source must stay)')
@@ -9804,9 +9808,10 @@ app.whenReady().then(async () => {
       },
       now: () => Date.now(),
       shouldAbort: () => syncEngine.isSyncInFlight(),
+      keepLocal: () => ipodLocal.sweepKeep(),   // songs on an iPod's list stay (ipod-keep-local.ts)
     })
     if (result.evicted > 0 || result.errors > 0) {
-      console.log(`[evict] examined=${result.examined} evicted=${result.evicted} (${(result.evictedBytes / 1e6).toFixed(1)}MB) young=${result.tooYoung} noLib=${result.notInLibrary} noRemote=${result.notOnHomemini} mismatch=${result.hashMismatch} errors=${result.errors}`)
+      console.log(`[evict] examined=${result.examined} evicted=${result.evicted} (${(result.evictedBytes / 1e6).toFixed(1)}MB) young=${result.tooYoung} noLib=${result.notInLibrary} noRemote=${result.notOnHomemini} mismatch=${result.hashMismatch} ipodKept=${result.ipodKept} errors=${result.errors}`)
     }
     void af
     return result

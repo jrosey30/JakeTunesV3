@@ -73,6 +73,9 @@ export interface EvictionDeps {
   now: () => number
   /** Stop mid-batch if iPod sync started — do not trash the copy source. */
   shouldAbort?: () => boolean
+  /** Songs on an iPod's list stay on this Mac (ipod-keep-local.ts, 2026-11-08):
+   *  true = never evict this F##/file. Asked once per sweep. */
+  keepLocal?: () => Promise<(rel: string) => boolean>
 }
 
 export interface SweepResult {
@@ -84,6 +87,8 @@ export interface SweepResult {
   evicted: number
   evictedBytes: number
   errors: number
+  /** On an iPod's list: kept on this Mac (ipod-keep-local.ts). */
+  ipodKept: number
 }
 
 async function localMd5(abs: string): Promise<string> {
@@ -98,13 +103,15 @@ async function localMd5(abs: string): Promise<string> {
 export async function sweepOnce(deps: EvictionDeps): Promise<SweepResult> {
   const r: SweepResult = {
     examined: 0, tooYoung: 0, notInLibrary: 0, notOnHomemini: 0,
-    hashMismatch: 0, evicted: 0, evictedBytes: 0, errors: 0,
+    hashMismatch: 0, evicted: 0, evictedBytes: 0, errors: 0, ipodKept: 0,
   }
   let candidates: EvictionCandidate[]
   let alive: Set<string>
+  let kept: (rel: string) => boolean = () => false
   try {
     candidates = await deps.listLocalAudio()
     alive = await deps.libraryRelPaths()
+    if (deps.keepLocal) kept = await deps.keepLocal()
   } catch {
     r.errors++
     return r
@@ -118,6 +125,7 @@ export async function sweepOnce(deps: EvictionDeps): Promise<SweepResult> {
       r.examined++
       if (c.mtimeMs > cutoff) { r.tooYoung++; return false }
       if (!alive.has(c.rel)) { r.notInLibrary++; return false }
+      if (kept(c.rel)) { r.ipodKept++; return false }
       return true
     })
     .sort((a, b) => a.mtimeMs - b.mtimeMs)

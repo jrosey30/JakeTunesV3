@@ -3,6 +3,7 @@ import { useLibrary } from '../context/LibraryContext'
 import { assembleSyncPlaylists, planIpodSync, planTracks } from '../utils/workoutIpodSync'
 import type { OneSyncPlan } from '../../common/ipod-one-sync-plan'
 import { readyLine, leftOffLine, syncButtonLabel, lastSyncedLine, syncingStep, withLastSyncLeftOff } from '../../common/ipod-one-sync-plan'
+import { readyOnMacLine, leaveOffQuestion, syncNowLeavingOffLabel, idsLeavingOff, mustAskBeforeSync, type ReadyOnMac } from '../../common/ipod-ready-on-mac'
 import { stickerHex } from '../components/IpodIdentityBar'
 import { checkIpodName, macShowsLine } from '../../common/ipod-name'
 // Called in runFullLibrarySync below. The comment at the top of this file has
@@ -144,6 +145,17 @@ export default function DeviceView() {
   const [renaming, setRenaming] = useState<string | null>(null)
   const [renameBusy, setRenameBusy] = useState(false)
   const [renameMsg, setRenameMsg] = useState<string | null>(null)
+  // Ready on this Mac (2026-11-08, Jake: "why cant we know and catch this before
+  // it happens"): is every song the plan needs on this Mac (or already on the
+  // iPod)? Anything else would be fetched from homemini mid-sync. `leaveOff` is
+  // the one confirm Sync shows before it touches the card when some aren't.
+  const [ready, setReady] = useState<ReadyOnMac | null>(null)
+  const [leaveOff, setLeaveOff] = useState<ReadyOnMac | null>(null)
+  const checkReady = async (p: OneSyncPlan): Promise<ReadyOnMac | null> => {
+    if (!p.ok || !window.electronAPI.ipodLocalCheck) return null
+    const r = await window.electronAPI.ipodLocalCheck(p.trackIds).catch(() => null)
+    return r && r.ok ? r.ready : null
+  }
   const tracksRef = useRef(state.tracks)
   tracksRef.current = state.tracks
   const planSeq = useRef(0)
@@ -151,6 +163,7 @@ export default function DeviceView() {
     const seq = ++planSeq.current
     const p = await planIpodSync(tracksRef.current)
     if (seq === planSeq.current) setPlan(p)
+    void checkReady(p).then((r) => { if (seq === planSeq.current) setReady(r) })
     return p
   }
 
@@ -478,11 +491,13 @@ export default function DeviceView() {
   // iPod's list re-fetched from homemini right now), then exactly those songs
   // through the activity engine — wipe, copy, verify, catalog, seal, and the
   // plays round trip, as before.
-  const runOneSync = async () => {
+  // `leaving`: Jake chose "Sync now" on the leave-off confirm for these songs.
+  const runOneSync = async (leaving?: ReadyOnMac) => {
     if (!(await ensureIpodMounted())) return
     const activity = await import('../activity')
     setSyncing(true)
     setShowLeftOff(false)
+    setLeaveOff(null)
     try {
       const fresh = await refreshPlan()
       if (!fresh.ok) {
@@ -491,7 +506,17 @@ export default function DeviceView() {
         setTimeout(() => activity.setSync(null), 5000)
         return
       }
-      const finalTracks = planTracks(fresh, state.tracks)
+      // Before anything touches the card: a song that isn't on this Mac (and
+      // isn't already on the iPod) would be fetched mid-sync. Ask first; more
+      // missing than Jake agreed to leave off asks again.
+      const local = await checkReady(fresh)
+      if (local && mustAskBeforeSync(local, leaving)) {
+        setReady(local)
+        setLeaveOff(local)
+        return
+      }
+      const ids = local && local.missing.length > 0 ? idsLeavingOff(fresh.trackIds, local) : fresh.trackIds
+      const finalTracks = planTracks({ ...fresh, trackIds: ids }, state.tracks)
       if (finalTracks.length === 0) {
         setSyncStatus({ state: 'error', message: `None of ${fresh.ipodName}’s songs are in this library.` })
         return
@@ -690,6 +715,14 @@ export default function DeviceView() {
           {plan === null && <span>Reading what goes on this iPod…</span>}
           {plan && !plan.ok && plan.kind === 'unknown' && <span>Set this iPod up above, then it gets its own Sync button.</span>}
           {plan && !plan.ok && plan.kind !== 'unknown' && <span className="device-sync-facts-error">{plan.error}</span>}
+          {plan?.ok && ready && !leaveOff && <span>{readyOnMacLine(ready)}</span>}
+          {leaveOff && (
+            <span className="device-sync-leaveoff" role="group" aria-label="Songs not on this Mac">
+              {leaveOffQuestion(leaveOff)}{' '}
+              <button type="button" className="device-itunes-btn" disabled={syncing} onClick={() => { const r = leaveOff; setLeaveOff(null); void runOneSync(r) }}>{syncNowLeavingOffLabel(leaveOff.missing.length)}</button>{' '}
+              <button type="button" className="device-link-btn" onClick={() => { setLeaveOff(null); void window.electronAPI.ipodLocalKick?.() }}>Wait</button>
+            </span>
+          )}
           {plan?.ok && plan.note && <span>{plan.note}</span>}
           {leftOffPlan && leftOffLine(leftOffPlan) && (
             <span>

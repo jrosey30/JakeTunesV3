@@ -464,27 +464,22 @@ async function runActivitySyncHolding(
   // proof) probes exactly as it always did.
   const remoteBytes = new Map<number, number>()
   const sizeFromRecord = new Map<number, number>()
+  /** The card copy's size by that record (a converted song's mirror, not its master). */
+  const copySizeFromRecord = new Map<number, number>()
   const askLater = new Set<number>()
   let probeNow = toPull
   if (toPull.length > 0) {
-    const early = proveCardForSwap(priorManifestRaw, priorSealRaw, await readCardState(IPOD_MOUNT))
-    if (early.ok) {
-      const byId = new Map(tracks.map((t) => [Number(t.id), t]))
-      probeNow = toPull.filter((p) => {
-        const row = early.rows.get(p.id)
-        const t = byId.get(p.id)
-        if (!row || !t || !(row.size > 0) || !(row.sourceSize > 0)) return true
-        const destPath = ipodPlayableDestPath(String(t.path || ''))
-        const identity = tsaBoardPassenger({ ...t, destPath }).identity
-        const onCard = stayVerdict({ id: p.id, destPath, identity, copySize: row.size, sourceSize: row.sourceSize }, row) === 'stay'
-        if (!onCard) return true
-        askLater.add(p.id)
-        sizeFromRecord.set(p.id, row.sourceSize)
-        return false
-      })
-      if (askLater.size > 0) {
-        console.log(`activity-sync: ${askLater.size} song(s) not on this Mac are on the card by the last sync's record — homemini is asked only if one must move`)
-      }
+    const onCard = onCardByRecord(toPull.map((p) => p.id), tracks, priorManifestRaw, priorSealRaw, await readCardState(IPOD_MOUNT))
+    probeNow = toPull.filter((p) => {
+      const row = onCard.get(p.id)
+      if (!row) return true
+      askLater.add(p.id)
+      sizeFromRecord.set(p.id, row.sourceSize)
+      copySizeFromRecord.set(p.id, row.size)
+      return false
+    })
+    if (askLater.size > 0) {
+      console.log(`activity-sync: ${askLater.size} song(s) not on this Mac are on the card by the last sync's record — homemini is asked only if one must move`)
     }
   }
   if (toPull.length > 0) {
@@ -653,77 +648,39 @@ async function runActivitySyncHolding(
     knownSourceSize?: number
     /** Size of the library master (local file, or homemini's), before any mirror. */
     masterSize: number
+    /** Not on this Mac, needs converting, on the card by the last sync's record:
+     *  not fetched unless the swap plan says it must move (§2c). */
+    later?: { track: Record<string, unknown>; rawColon: string; localFile: string; overCeiling: boolean }
   }
   const plan: CopyPlanEntry[] = []
-  // Everything in this loop happens BEFORE the wipe, so its progress is
-  // 'preflight' (the Prepare step). It used to say 'copy', and when a
-  // song failed here the screen claimed Wipe ✓ / Copy ✗ and "the copied
-  // songs were cleared" — while the card had not been touched (2026-10-17).
-  // A song whose audio cannot be converted (damaged file) is dropped like an
-  // unplayable row and replaced from reserve — one bad file must not stop a
-  // 1000-song sync (2026-10-17: "Breeze" stopped one; 44 such files exist).
-  const unconvertible: Array<{ id: number; title: string; artist: string }> = []
-  const skipUnconvertible = (title: string, artist: string, id: number, why: string): void => {
-    unconvertible.push({ id, title, artist })
-    console.warn(`activity-sync: "${title}" (id ${id}) cannot be converted for the iPod (${why}) — skipped, a reserve takes its place`)
-    host.sendProgress({ phase: 'preflight', current: 0, total: target, title: `Skipped (damaged file): ${title}` })
-  }
-  // #47 (fill-to-N): tracks[target..] are copy-time replacements. They are
-  // resolved here like everything else, but never kept from a previous
-  // card and only copied when a primary miss leaves the card short of N.
-  // A list-only set has none (tracks.length === target).
-  const reserveFrom = target
-  for (let i = 0; i < tracks.length; i++) {
-    if (host.isCancelled()) {
-      await host.writeJournal(null)
-      return fail({ copied: 0, cancelled: true, error: 'Sync cancelled by user — nothing on the iPod was touched.', target })
-    }
-    const track = tracks[i]
-    const title = String(track.title || '')
-    const id = Number(track.id)
-    const rawColon = String(track.path || '')
-    const destColon = ipodPlayableDestPath(rawColon)
-    if (destColon !== rawColon) {
-      // CARD path only (DB payload + TSA read it). Never exported to the
-      // library — see cardOnlyIds above (2026-08-31: 702 rows; 2026-09-19: 8).
-      cardOnlyIds.add(id)
-      track.path = destColon
-    }
-    const localFile = join(LOCAL_MOUNT, rawColon.replace(/:/g, pathSep))
+  type Prepared =
+    | { ok: true; srcToCopy: string; dstToCopy: string; restage?: { colon: string; id: number }; knownSourceSize?: number }
+    | { ok: false; kind: 'stage'; msg: string }
+    | { ok: false; kind: 'unconvertible'; why: string }
+  // The card's copy of one song: the master as it is, or a mirror (AAC with
+  // the convert toggle, ALAC for FLAC / over the Mini's ceiling). A song not on
+  // this Mac that needs a mirror is staged from homemini first, one file, and
+  // the temp is gone when this returns.
+  const prepareForCard = async (a: {
+    i: number; id: number; title: string; dstToCopy: string; needsPull: boolean
+    track: Record<string, unknown>; rawColon: string; localFile: string; overCeiling: boolean
+  }): Promise<Prepared> => {
+    const { i, id, title, track, rawColon, localFile, overCeiling } = a
     let srcToCopy = localFile
-    let dstToCopy = join(IPOD_MOUNT, destColon.replace(/:/g, pathSep))
+    let dstToCopy = a.dstToCopy
     let restage: { colon: string; id: number } | undefined
     let knownSourceSize: number | undefined
-
-    host.sendProgress({ phase: 'preflight', current: Math.min(i, target), total: target, title: `Preparing: ${title}` })
-
-    const kind = await classifyLocalLibraryFile(rawColon, { localMount: LOCAL_MOUNT, pathSep, lstat })
-    const needsPull = kind === 'streamed' || kind === 'missing'
-    // Lossless but not stereo CD-quality — a high-res (24-bit / 96–192 kHz)
-    // or multichannel ALAC .m4a. The Mini cannot play it, and its >2000 kbps
-    // record fails the firmware-semantic gate, which refuses the WHOLE sync
-    // ("6/1000 track(s) have out-of-range bitrate", 2026-10-17 — six hi-res
-    // streamrip downloads). The full sync learned this on 2026-09-07
-    // (sync-engine exceedsIpodPlayableCeiling); Activity Sync only ever
-    // checked the .flac extension. Same rescue: the 16-bit / 44.1 kHz
-    // stereo ALAC mirror. The master is untouched.
-    const sourceBytes = needsPull
-      ? (remoteBytes.get(id) || sizeFromRecord.get(id) || Number(track.fileSize) || 0)
-      : ((await stat(localFile).catch(() => null))?.size ?? 0)
-    const overCeiling = !needsIpodAlacTranscode(localFile)
-      && exceedsIpodPlayableCeiling(sourceBytes, Number(track.duration || 0))
     let bytesForMirror = localFile
     let stageCleanup: (() => Promise<void>) | null = null
-    if (needsPull && (convertOptions?.enabled || needsIpodAlacTranscode(localFile) || overCeiling)) {
+    if (a.needsPull && (convertOptions?.enabled || needsIpodAlacTranscode(localFile) || overCeiling)) {
       const staged = await host.stageTrack(rawColon, id)
       if (!staged.ok) {
-        const msg = staged.reason === 'free-space'
-          ? `Activity sync refused — ${staged.error}. Nothing was wiped.`
-          : `Could not stage "${title}" for the iPod (${staged.error}). Nothing was wiped.`
-        console.error(`activity-sync: ${msg}`)
-        if (i >= reserveFrom) { console.warn(`activity-sync: reserve "${title}" skipped`); continue }
-        await host.writeJournal(null)
-        return fail({ copied: 0, error: msg, target })
+        return {
+          ok: false, kind: 'stage',
+          msg: staged.reason === 'free-space'
+            ? `Activity sync refused — ${staged.error}. Nothing was wiped.`
+            : `Could not stage "${title}" for the iPod (${staged.error}). Nothing was wiped.`,
+        }
       }
       bytesForMirror = staged.abs
       stageCleanup = staged.cleanup
@@ -766,11 +723,7 @@ async function runActivitySyncHolding(
           // bytesForMirror is a real file: a library master, or one staged
           // temp. The library symlink is not replaced.
           const mirror = await host.buildIpodSafeAlacMirror(bytesForMirror)
-          if (!mirror) {
-            if (i >= reserveFrom) { console.warn(`activity-sync: reserve "${title}" has no iPod-safe ALAC — skipped`); continue }
-            skipUnconvertible(title, String(track.artist || ''), id, 'no iPod-safe ALAC')
-            continue
-          }
+          if (!mirror) return { ok: false, kind: 'unconvertible', why: 'no iPod-safe ALAC' }
           srcToCopy = mirror
           dstToCopy = ipodPlayableDestPath(dstToCopy)
           const newRel = dstToCopy.startsWith(IPOD_MOUNT) ? dstToCopy.slice(IPOD_MOUNT.length + 1) : dstToCopy
@@ -781,9 +734,7 @@ async function runActivitySyncHolding(
           cardOnlyIds.add(id)
         } catch (err) {
           console.error(`activity-sync: FLAC→ALAC failed for ${title}:`, err)
-          if (i >= reserveFrom) { console.warn(`activity-sync: reserve "${title}" skipped`); continue }
-          skipUnconvertible(title, String(track.artist || ''), id, err instanceof Error ? err.message.slice(0, 120) : String(err).slice(0, 120))
-          continue
+          return { ok: false, kind: 'unconvertible', why: err instanceof Error ? err.message.slice(0, 120) : String(err).slice(0, 120) }
         }
       }
     } finally {
@@ -797,14 +748,97 @@ async function runActivitySyncHolding(
       }
     }
 
-    if (needsPull && srcToCopy === localFile) {
+    if (a.needsPull && srcToCopy === localFile) {
       restage = { colon: rawColon, id }
       const remote = remoteBytes.get(id) || sizeFromRecord.get(id)
       if (knownSourceSize == null && remote && remote > 0) knownSourceSize = remote
     }
+    return { ok: true, srcToCopy, dstToCopy: ipodPlayableDestPath(dstToCopy), restage, knownSourceSize }
+  }
+  // Everything in this loop happens BEFORE the wipe, so its progress is
+  // 'preflight' (the Prepare step). It used to say 'copy', and when a
+  // song failed here the screen claimed Wipe ✓ / Copy ✗ and "the copied
+  // songs were cleared" — while the card had not been touched (2026-10-17).
+  // A song whose audio cannot be converted (damaged file) is dropped like an
+  // unplayable row and replaced from reserve — one bad file must not stop a
+  // 1000-song sync (2026-10-17: "Breeze" stopped one; 44 such files exist).
+  const unconvertible: Array<{ id: number; title: string; artist: string }> = []
+  const skipUnconvertible = (title: string, artist: string, id: number, why: string): void => {
+    unconvertible.push({ id, title, artist })
+    console.warn(`activity-sync: "${title}" (id ${id}) cannot be converted for the iPod (${why}) — skipped, a reserve takes its place`)
+    host.sendProgress({ phase: 'preflight', current: 0, total: target, title: `Skipped (damaged file): ${title}` })
+  }
+  // #47 (fill-to-N): tracks[target..] are copy-time replacements. They are
+  // resolved here like everything else, but never kept from a previous
+  // card and only copied when a primary miss leaves the card short of N.
+  // A list-only set has none (tracks.length === target).
+  const reserveFrom = target
+  for (let i = 0; i < tracks.length; i++) {
+    if (host.isCancelled()) {
+      await host.writeJournal(null)
+      return fail({ copied: 0, cancelled: true, error: 'Sync cancelled by user — nothing on the iPod was touched.', target })
+    }
+    const track = tracks[i]
+    const title = String(track.title || '')
+    const id = Number(track.id)
+    const rawColon = String(track.path || '')
+    const destColon = ipodPlayableDestPath(rawColon)
+    if (destColon !== rawColon) {
+      // CARD path only (DB payload + TSA read it). Never exported to the
+      // library — see cardOnlyIds above (2026-08-31: 702 rows; 2026-09-19: 8).
+      cardOnlyIds.add(id)
+      track.path = destColon
+    }
+    const localFile = join(LOCAL_MOUNT, rawColon.replace(/:/g, pathSep))
+    const dstToCopy = join(IPOD_MOUNT, destColon.replace(/:/g, pathSep))
 
-    dstToCopy = ipodPlayableDestPath(dstToCopy)
-    plan.push({ i, id, title, srcToCopy, dstToCopy, restage, knownSourceSize, masterSize: sourceBytes })
+    host.sendProgress({ phase: 'preflight', current: Math.min(i, target), total: target, title: `Preparing: ${title}` })
+
+    const kind = await classifyLocalLibraryFile(rawColon, { localMount: LOCAL_MOUNT, pathSep, lstat })
+    const needsPull = kind === 'streamed' || kind === 'missing'
+    // Lossless but not stereo CD-quality — a high-res (24-bit / 96–192 kHz)
+    // or multichannel ALAC .m4a. The Mini cannot play it, and its >2000 kbps
+    // record fails the firmware-semantic gate, which refuses the WHOLE sync
+    // ("6/1000 track(s) have out-of-range bitrate", 2026-10-17 — six hi-res
+    // streamrip downloads). The full sync learned this on 2026-09-07
+    // (sync-engine exceedsIpodPlayableCeiling); Activity Sync only ever
+    // checked the .flac extension. Same rescue: the 16-bit / 44.1 kHz
+    // stereo ALAC mirror. The master is untouched.
+    const sourceBytes = needsPull
+      ? (remoteBytes.get(id) || sizeFromRecord.get(id) || Number(track.fileSize) || 0)
+      : ((await stat(localFile).catch(() => null))?.size ?? 0)
+    const overCeiling = !needsIpodAlacTranscode(localFile)
+      && exceedsIpodPlayableCeiling(sourceBytes, Number(track.duration || 0))
+    const later = { track, rawColon, localFile, overCeiling }
+    // A song not on this Mac that needs converting, which the last sync's
+    // record already puts on the card as this sync would write it (§1's
+    // askLater), is NOT downloaded here (2026-11-08, after #382). The swap
+    // plan decides with the record's sizes; a song that stays never needs its
+    // bytes. Only if it must move is it fetched and converted (§2c). The
+    // convert toggle is left out: a new bitrate can't be told from the record.
+    const convertNeeded = needsIpodAlacTranscode(localFile) || overCeiling
+    if (needsPull && convertNeeded && !convertOptions?.enabled && askLater.has(id) && i < reserveFrom) {
+      track.codec = 'alac'   // what the ALAC mirror sets (below); the card copy is that mirror
+      plan.push({
+        i, id, title, srcToCopy: localFile, dstToCopy: ipodPlayableDestPath(dstToCopy),
+        restage: { colon: rawColon, id }, knownSourceSize: copySizeFromRecord.get(id),
+        masterSize: sourceBytes, later,
+      })
+      continue
+    }
+    const out = await prepareForCard({ i, id, title, dstToCopy, needsPull, ...later })
+    if (!out.ok) {
+      if (out.kind === 'stage') {
+        console.error(`activity-sync: ${out.msg}`)
+        if (i >= reserveFrom) { console.warn(`activity-sync: reserve "${title}" skipped`); continue }
+        await host.writeJournal(null)
+        return fail({ copied: 0, error: out.msg, target })
+      }
+      if (i >= reserveFrom) { console.warn(`activity-sync: reserve "${title}" skipped (${out.why})`); continue }
+      skipUnconvertible(title, String(track.artist || ''), id, out.why)
+      continue
+    }
+    plan.push({ i, id, title, srcToCopy: out.srcToCopy, dstToCopy: out.dstToCopy, restage: out.restage, knownSourceSize: out.knownSourceSize, masterSize: sourceBytes })
   }
 
   // Damaged songs were dropped above; reserves fill their places. Only if
@@ -928,6 +962,28 @@ async function runActivitySyncHolding(
       masterSizeById.set(e.id, r.bytes)   // homemini's master, over the record's
     }
   }
+  // A song §1 left unconverted because the record put it on the card, and the
+  // plan says must move after all (a full copy, or it changed): fetched and
+  // converted now, still before the card changes. A song that stays never is.
+  const lateWhy = new Map<number, string>()
+  const convertLate = plan.filter((e) => e.later && !keepIds.has(e.id) && !fetchFailedIds.has(e.id))
+  for (let k = 0; k < convertLate.length; k++) {
+    const e = convertLate[k]
+    if (host.isCancelled()) {
+      await host.writeJournal(null)
+      return fail({ copied: 0, cancelled: true, error: 'Sync cancelled by user — nothing on the iPod was touched.', target })
+    }
+    const out = await prepareForCard({ i: e.i, id: e.id, title: e.title, dstToCopy: e.dstToCopy, needsPull: true, ...e.later! })
+    if (out.ok) {
+      Object.assign(e, { srcToCopy: out.srcToCopy, dstToCopy: out.dstToCopy, restage: out.restage, knownSourceSize: out.knownSourceSize, later: undefined })
+      dstById.set(e.id, out.dstToCopy)
+      continue
+    }
+    const why = out.kind === 'stage' ? out.msg : out.why
+    console.error(`activity-sync: "${e.title}" (id ${e.id}) must move and couldn't be prepared (${why}); the card is untouched`)
+    fetchFailedIds.add(e.id)
+    if (out.kind === 'unconvertible') lateWhy.set(e.id, "its audio couldn't be converted for the iPod (damaged file)")
+  }
   if (swap) {
     const toFetch = plan.filter((e) => e.restage && e.i < reserveFrom && !keepIds.has(e.id) && !fetchFailedIds.has(e.id))
     for (let k = 0; k < toFetch.length; k++) {
@@ -953,7 +1009,7 @@ async function runActivitySyncHolding(
   if (fetchFailedIds.size > 0) {
     const gone = fetchFailedIds
     if (listOnly) {
-      for (const t of tracks) if (gone.has(Number(t.id))) leftOff.push(leftOffSong(t, LEFT_OFF_NO_FETCH))
+      for (const t of tracks) if (gone.has(Number(t.id))) leftOff.push(leftOffSong(t, lateWhy.get(Number(t.id)) ?? LEFT_OFF_NO_FETCH))
       tracks = tracks.filter((t) => !gone.has(Number(t.id)))
       tsaBoarded = tsaBoarded.filter((p) => !gone.has(p.id))
       for (let k = plan.length - 1; k >= 0; k--) if (gone.has(plan[k].id)) plan.splice(k, 1)
@@ -1834,9 +1890,41 @@ async function cardCapacityBytes(mount: string): Promise<number | null> {
   }
 }
 
+/**
+ * The songs among `ids` that the last sync's sealed record proves are on the
+ * card as a sync now would write them (same id, card path, identity, sizes):
+ * id → the card copy's size and the master's. Empty when the card can't be
+ * proven. The engine's §1 and the Device page's "ready on this Mac" check
+ * (ipod-local-ipc.ts) both ask this: a song here never needs its bytes unless
+ * the swap plan says it must move.
+ */
+export function onCardByRecord(
+  ids: readonly number[],
+  tracks: ReadonlyArray<Record<string, unknown>>,
+  manifestRaw: unknown,
+  sealRaw: unknown,
+  card: CardState,
+): Map<number, { size: number; sourceSize: number }> {
+  const out = new Map<number, { size: number; sourceSize: number }>()
+  const proof = proveCardForSwap(manifestRaw, sealRaw, card)
+  if (!proof.ok) return out
+  const byId = new Map(tracks.map((t) => [Number(t.id), t]))
+  for (const id of ids) {
+    const row = proof.rows.get(id)
+    const t = byId.get(id)
+    if (!row || !t || !(row.size > 0) || !(row.sourceSize > 0)) continue
+    const destPath = ipodPlayableDestPath(String(t.path || ''))
+    const identity = tsaBoardPassenger({ ...t, destPath }).identity
+    if (stayVerdict({ id, destPath, identity, copySize: row.size, sourceSize: row.sourceSize }, row) === 'stay') {
+      out.set(id, { size: row.size, sourceSize: row.sourceSize })
+    }
+  }
+  return out
+}
+
 /** What the card holds, read without writing: every music file's size, and
  *  the catalog's digest and id order. */
-async function readCardState(mount: string): Promise<CardState> {
+export async function readCardState(mount: string): Promise<CardState> {
   const files = new Map<string, number>()
   for (const abs of await listIpodMusicFiles(mount)) {
     const sz = (await stat(abs).catch(() => null))?.size

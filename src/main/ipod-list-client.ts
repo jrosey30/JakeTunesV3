@@ -55,6 +55,25 @@ export function createIpodListClient(opts: IpodListClientOptions) {
       return { kind: 'ok', list }
     },
 
+    /** Every list homemini keeps, including lists for iPods not registered on any Mac yet
+     *  (GET /api/ipod-lists). null = no clean answer (down, refused, or a body that isn't
+     *  { lists: [...] }); a list that fails the parser is dropped, never guessed at. */
+    async all(): Promise<IpodList[] | null> {
+      try {
+        const res = await fetchImpl(base, withCompanionInit({ method: 'GET', signal: AbortSignal.timeout(timeoutMs) }) as Record<string, unknown>)
+        if (res.status !== 200) {
+          warn(`[ipod-list] all lists: homemini answered ${res.status}`)
+          return null
+        }
+        const body = await res.json().catch(() => null) as { lists?: unknown } | null
+        if (!body || !Array.isArray(body.lists)) return null
+        return body.lists.map((l) => parseIpodList(l)).filter((l): l is IpodList => l !== null)
+      } catch (err) {
+        warn(`[ipod-list] all lists failed: ${(err as Error)?.message ?? err}`)
+        return null
+      }
+    },
+
     /** The iPod was renamed (2026-11-07): PATCH homemini's list name (Mobile PR #753).
      *  true = homemini took it; false = not now (down, 404, any refusal). */
     async rename(deviceId: string, name: string): Promise<boolean> {

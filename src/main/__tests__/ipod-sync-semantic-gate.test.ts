@@ -207,7 +207,10 @@ test('a damaged song is skipped and replaced from reserve, not the reason a sync
   // converted is now dropped like an unplayable row; reserves fill N.
   assert.doesNotMatch(engine, /return fail\(\{ copied: 0, error: `Could not build an iPod-safe ALAC for/)
   assert.doesNotMatch(engine, /return fail\(\{ copied: 0, error: `FLAC→ALAC failed for/)
-  assert.match(engine, /skipUnconvertible\(title, String\(track\.artist \|\| ''\), id, 'no iPod-safe ALAC'\)/)
+  // (2026-11-08: the conversion moved into prepareForCard, which names the
+  // damage; the planning loop still skips it for a reserve to fill.)
+  assert.match(engine, /return \{ ok: false, kind: 'unconvertible', why: 'no iPod-safe ALAC' \}/)
+  assert.match(engine, /skipUnconvertible\(title, String\(track\.artist \|\| ''\), id, out\.why\)/)
   // Not enough reserves still refuses — before the wipe, naming the songs.
   assert.match(engine, /if \(plan\.length < target\) \{/)
   // (2b was "Keep plan" until the swap-only sync, 2026-11-07: still before the card is touched.)

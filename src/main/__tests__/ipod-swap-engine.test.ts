@@ -15,7 +15,7 @@ import { readFileSync, unlinkSync } from 'fs'
 import { appendFile, mkdir, mkdtemp, readFile, readdir, rm, stat, truncate, unlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { runActivitySync, type ActivitySyncHost, type ActivitySyncResult } from '../ipod-activity-engine.ts'
+import { onCardByRecord, readCardState, runActivitySync, type ActivitySyncHost, type ActivitySyncResult } from '../ipod-activity-engine.ts'
 import { catalogIdsAscend } from '../ipod-swap-sync.ts'
 import { parseCatalogPaths, ROUNDTRIP_STATE_FILE, type RoundTripHost } from '../sync-engine/roundtrip.ts'
 import { securePlaysBeforeSync } from '../ipod-plays-archive.ts'
@@ -955,6 +955,142 @@ describe('a full copy probes every song not on this Mac, as before', () => {
       const files = await cardFiles(r.card)
       assert.ok(files.has(pathOf(0)) && files.has(pathOf(2)) && !files.has(pathOf(1)))
       await assertCardWhole(r)
+    } finally {
+      await rm(r.root, { recursive: true, force: true })
+    }
+  })
+})
+
+// ── 2026-11-08 (after #382): a song not on this Mac that needs converting
+// (FLAC, or over the Mini's ceiling) used to be downloaded in full while the
+// sync was still planning, even when the last sync's record put it on the card
+// and it would stay — and a failed download stopped the sync. A song that
+// stays now never needs its bytes. ──
+
+const FLAC_ID = 970
+const flacPath = `:iPod_Control:Music:${folder(FLAC_ID)}:S${FLAC_ID}.flac`
+
+async function addFlac(r: Rig): Promise<void> {
+  const dir = join(r.lib, 'iPod_Control', 'Music', folder(FLAC_ID))
+  await mkdir(dir, { recursive: true })
+  await writeFile(join(dir, `S${FLAC_ID}.flac`), Buffer.alloc(SONG_BYTES + 1000, 0x5a))
+  r.library.set(FLAC_ID, {
+    id: FLAC_ID, title: 'Flac Song', artist: 'Band Z', album: 'Album 0', genre: 'Rock',
+    duration: DURATION_MS, codec: 'flac', path: flacPath,
+    audioFingerprint: `sha1:${FLAC_ID.toString(16).padStart(8, '0')}|${SONG_BYTES + 1000}`,
+  })
+  // The ALAC mirror: the same bytes cut to the song size, as a .m4a (the real one is ffmpeg).
+  r.host.buildIpodSafeAlacMirror = async (src) => {
+    const dir2 = join(r.root, 'mirrors'); await mkdir(dir2, { recursive: true })
+    const out = join(dir2, `mirror-${Date.now()}-${Math.random().toString(36).slice(2)}.m4a`)
+    await writeFile(out, (await readFile(src)).subarray(0, SONG_BYTES))
+    return out
+  }
+}
+
+/** Production stages a song under its own extension (stageFileName): a FLAC stays .flac. */
+function stageKeepsExtension(r: Rig, homemini: Map<number, Buffer>, seen: { fetched: number[] }): void {
+  r.host.stageTrack = async (colon, id) => {
+    if (!homemini.has(id)) return { ok: false, error: 'fetch failed', reason: 'fetch' }
+    seen.fetched.push(id)
+    const dir = join(r.root, 'stage'); await mkdir(dir, { recursive: true })
+    const abs = join(dir, `${id}${colon.slice(colon.lastIndexOf('.'))}`)
+    await writeFile(abs, homemini.get(id)!)
+    return { ok: true, abs, staged: true, pulled: true, cleanup: async () => { await unlink(abs).catch(() => {}) } }
+  }
+}
+
+describe('a song not on this Mac that needs converting', () => {
+  it('stays on the card without ever being downloaded', async () => {
+    const r = await makeRig()
+    try {
+      await addFlac(r)
+      const set = [...range(0, N - 1), FLAC_ID]
+      const first = await sync(r, set)
+      assert.equal(first.ok, true, first.error)
+      const homemini = new Map<number, Buffer>()
+      await evict(r, FLAC_ID, homemini)
+      const fetch = wireHomemini(r, homemini, new Set())
+      const probe = wireProbe(r, homemini, () => true)
+      const before = await cardFiles(r.card)
+      const cardPath = [...before.keys()].find((p) => p.includes(`S${FLAC_ID}`))!
+      assert.ok(cardPath, 'the first sync put the mirror on the card')
+      const res = await sync(r, set)
+      assert.equal(res.ok, true, res.error)
+      assert.equal(res.mode, 'swap', res.fullReason)
+      assert.deepEqual(fetch.fetched, [], 'a song that stays is never downloaded')
+      assert.deepEqual(probe.asked, [], 'a song that stays is never asked about')
+      assert.ok(!res.leftOff?.length, JSON.stringify(res.leftOff))
+      const after = await cardFiles(r.card)
+      assert.equal(after.get(cardPath)?.ino, before.get(cardPath)!.ino, 'the mirror on the card is untouched')
+      assert.ok((await cardCatalog(r.card)).paths.includes(cardPath), 'and in the catalog')
+      await assertCardWhole(r)
+    } finally {
+      await rm(r.root, { recursive: true, force: true })
+    }
+  })
+
+  it('a staying song whose download would fail no longer stops the sync', async () => {
+    const r = await makeRig()
+    try {
+      await addFlac(r)
+      const set = [...range(0, N - 1), FLAC_ID]
+      assert.equal((await sync(r, set)).ok, true)
+      const homemini = new Map<number, Buffer>()
+      await evict(r, FLAC_ID, homemini)
+      wireHomemini(r, homemini, new Set([FLAC_ID]))   // homemini can't send it
+      const res = await sync(r, set, { listOnly: false })
+      assert.equal(res.ok, true, res.error)
+      assert.equal(res.mode, 'swap', res.fullReason)
+      assert.ok((await cardCatalog(r.card)).paths.some((p) => p.includes(`S${FLAC_ID}`)))
+      await assertCardWhole(r)
+    } finally {
+      await rm(r.root, { recursive: true, force: true })
+    }
+  })
+
+  it('must move after all (a full copy): fetched and converted then, before the card changes', async () => {
+    const r = await makeRig()
+    try {
+      await addFlac(r)
+      assert.equal((await sync(r, [...range(0, N - 1), FLAC_ID])).ok, true)
+      for (let id = 900; id < 915; id++) await addSong(r, id)
+      const homemini = new Map<number, Buffer>()
+      await evict(r, FLAC_ID, homemini)
+      const fetch = wireHomemini(r, homemini, new Set())
+      wireProbe(r, homemini, () => true)
+      stageKeepsExtension(r, homemini, fetch)
+      const res = await sync(r, [...range(0, 4), ...range(900, 915), FLAC_ID])   // most of the set changes
+      assert.equal(res.ok, true, res.error)
+      assert.equal(res.mode, 'full')
+      assert.deepEqual(fetch.fetched, [FLAC_ID], 'fetched once, to convert it')
+      const files = await cardFiles(r.card)
+      const onCard = [...files.keys()].find((p) => p.includes(`S${FLAC_ID}`))
+      assert.ok(onCard && onCard.endsWith('.m4a'), `the mirror is on the card: ${onCard}`)
+      assert.equal(files.get(onCard!)!.size, SONG_BYTES)
+      await assertCardWhole(r)
+    } finally {
+      await rm(r.root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('the Device page’s ready check: what is on the card by the record', () => {
+  it('a song evicted from this Mac but on the card by the last sync needs nothing; a new one does', async () => {
+    const r = await makeRig()
+    try {
+      await addFlac(r)
+      await addSong(r, 980)
+      const set = [...range(0, N - 1), FLAC_ID]
+      assert.equal((await sync(r, set)).ok, true)
+      const homemini = new Map<number, Buffer>()
+      for (const id of [3, FLAC_ID, 980]) await evict(r, id, homemini)
+      const readState = async (f: string) => JSON.parse(await readFile(join(r.state, f), 'utf-8'))
+      const tracks = [...r.library.values()]
+      const onCard = onCardByRecord([3, FLAC_ID, 980], tracks, await readState('last-sync-manifest.json'), await readState('ipod-activity-tsa-seal.json'), await readCardState(r.card))
+      assert.deepEqual([...onCard.keys()].sort((a, b) => a - b), [3, FLAC_ID], '980 was never synced: it would have to be fetched')
+      // An unsealed record proves nothing.
+      assert.equal(onCardByRecord([3], tracks, await readState('last-sync-manifest.json'), null, await readCardState(r.card)).size, 0)
     } finally {
       await rm(r.root, { recursive: true, force: true })
     }
