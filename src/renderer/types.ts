@@ -1019,6 +1019,8 @@ declare global {
         id: number; title?: string; artist?: string; path?: string; codec?: string; audioMissing?: boolean
         duration?: number; genre?: string; rating?: number; playCount?: number; lastPlayedAt?: unknown; dateAdded?: unknown
       }>) => Promise<import('../common/ipod-one-sync-plan').OneSyncPlan>
+      ipodLocalCheck?: (planIds: number[]) => Promise<{ ok: true; ready: import('../common/ipod-ready-on-mac').ReadyOnMac } | { ok: false; error: string }>
+      ipodLocalKick?: () => Promise<{ ok: boolean }>
       buildWorkoutSyncSet?: (tracks: Array<{
         id: number; title?: string; artist?: string; album?: string; genre?: string; year?: string | number
         playCount?: number; skipCount?: number; rating?: number; bpm?: number | null; codec?: string; fileSize?: number
