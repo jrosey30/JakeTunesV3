@@ -848,3 +848,115 @@ describe('the Original swap with an arrival homemini can’t send', () => {
     }
   })
 })
+
+// ── 2026-11-08, follow-up to #381: the homemini probe ran BEFORE the swap
+// plan, so on a slow link a probe miss for an evicted song already on the
+// card (one that would stay) still left it off. The plan comes first now. ──
+
+/** Probes homemini answers: ok for the ids in `answers`, a timeout for the rest. Records every id asked. */
+function wireProbe(r: Rig, homemini: Map<number, Buffer>, answers: (id: number) => boolean): { asked: number[] } {
+  const seen = { asked: [] as number[] }
+  r.host.probeHomeminiTrack = async (id) => {
+    seen.asked.push(id)
+    return answers(id) && homemini.has(id) ? { ok: true, bytes: homemini.get(id)!.length } : { ok: false, error: 'timed out after 8000 ms' }
+  }
+  return seen
+}
+
+describe('a list-only swap on a link where homemini’s probe times out', () => {
+  let r: Rig
+  const homemini = new Map<number, Buffer>()
+  before(async () => {
+    r = await makeRig()
+    for (const id of [950, 951, 960]) await addSong(r, id)
+    const first = await sync(r, range(0, N))
+    assert.equal(first.ok, true, first.error)
+    for (const id of [3, 8, 13]) await evict(r, id, homemini)
+  })
+  after(async () => { await rm(r.root, { recursive: true, force: true }) })
+
+  it('an evicted song that stays is never probed, stays on the card and in the catalog', async () => {
+    wireHomemini(r, homemini, new Set())
+    const probe = wireProbe(r, homemini, () => false)
+    const before = await cardFiles(r.card)
+    const set = [...range(0, N - 2), 950, 951]
+    const res = await sync(r, set)
+    assert.equal(res.ok, true, res.error)
+    assert.equal(res.mode, 'swap', res.fullReason)
+    assert.equal(res.target, N)
+    assert.deepEqual(res.swap, { out: 2, in: 2, stayed: N - 2, changed: 0 })
+    assert.ok(!res.leftOff?.length, `nothing left off: ${JSON.stringify(res.leftOff)}`)
+    assert.deepEqual(probe.asked, [], 'a song that stays is never asked about')
+    const after = await cardFiles(r.card)
+    for (const id of [3, 8, 13]) assert.equal(after.get(pathOf(id))?.ino, before.get(pathOf(id))!.ino, `${id} stayed untouched`)
+    const { paths } = await cardCatalog(r.card)
+    for (const id of [3, 8, 13]) assert.ok(paths.includes(pathOf(id)), `${id} is in the catalog`)
+    assert.equal(paths.length, N)
+    await assertCardWhole(r)
+  })
+
+  it('an evicted song that arrives and can’t be probed is left off with the reason; the stays still stay', async () => {
+    await evict(r, 960, homemini)
+    wireHomemini(r, homemini, new Set())
+    const probe = wireProbe(r, homemini, () => false)
+    const before = await cardFiles(r.card)
+    const set = [...range(0, N - 3), 950, 951, 960]
+    const res = await sync(r, set)
+    assert.equal(res.ok, true, res.error)
+    assert.equal(res.mode, 'swap', res.fullReason)
+    assert.equal(res.target, N - 1)
+    assert.deepEqual(res.leftOff?.map((l) => [l.id, l.why]), [[960, "homemini couldn't send its audio file"]])
+    assert.deepEqual(probe.asked, [960], 'only the arrival is asked about')
+    const after = await cardFiles(r.card)
+    for (const id of [3, 8, 13]) assert.equal(after.get(pathOf(id))?.ino, before.get(pathOf(id))!.ino, `${id} stayed untouched`)
+    assert.ok(!after.has(pathOf(960)))
+    assert.deepEqual([...after.keys()].sort(), [...range(0, N - 3), 950, 951].map(pathOf).sort())
+    await assertCardWhole(r)
+  })
+})
+
+describe('a full copy probes every song not on this Mac, as before', () => {
+  it('no record of a last sync: the miss is asked about up front and left off', async () => {
+    const r = await makeRig()
+    try {
+      const homemini = new Map<number, Buffer>()
+      for (const id of [4, 9]) await evict(r, id, homemini)
+      wireHomemini(r, homemini, new Set())
+      const probe = wireProbe(r, homemini, (id) => id !== 4)
+      const res = await sync(r, range(0, N))
+      assert.equal(res.ok, true, res.error)
+      assert.equal(res.mode, 'full')
+      assert.equal(res.target, N - 1)
+      assert.deepEqual(res.leftOff?.map((l) => [l.id, l.why]), [[4, "homemini couldn't send its audio file"]])
+      assert.deepEqual(probe.asked.sort((a, b) => a - b), [4, 9])
+      assert.ok(!(await cardFiles(r.card)).has(pathOf(4)))
+      await assertCardWhole(r)
+    } finally {
+      await rm(r.root, { recursive: true, force: true })
+    }
+  })
+
+  it('a provable card that still gets a full copy (too much changing): the record’s songs are asked about too', async () => {
+    const r = await makeRig()
+    try {
+      const first = await sync(r, range(0, N))
+      assert.equal(first.ok, true, first.error)
+      for (let id = 900; id < 915; id++) await addSong(r, id)
+      const homemini = new Map<number, Buffer>()
+      for (const id of [0, 1, 2]) await evict(r, id, homemini)
+      wireHomemini(r, homemini, new Set())
+      const probe = wireProbe(r, homemini, (id) => id !== 1)
+      const res = await sync(r, [...range(0, 5), ...range(900, 915)])   // 75% changing
+      assert.equal(res.ok, true, res.error)
+      assert.equal(res.mode, 'full')
+      assert.equal(res.target, N - 1)
+      assert.deepEqual(res.leftOff?.map((l) => [l.id, l.why]), [[1, "homemini couldn't send its audio file"]])
+      assert.deepEqual(probe.asked.sort((a, b) => a - b), [0, 1, 2])
+      const files = await cardFiles(r.card)
+      assert.ok(files.has(pathOf(0)) && files.has(pathOf(2)) && !files.has(pathOf(1)))
+      await assertCardWhole(r)
+    } finally {
+      await rm(r.root, { recursive: true, force: true })
+    }
+  })
+})
