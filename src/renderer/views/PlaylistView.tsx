@@ -35,6 +35,8 @@ import SortArrowIcon from '../components/SortArrowIcon'
 import TrackGridView from '../components/TrackGridView'
 import CoverFlowView from './CoverFlowView'
 import { useViewMode } from '../context/ViewModeContext'
+import { useTrackListKeys } from '../hooks/useTrackListKeys'
+import { scrollListRowIntoView } from '../utils/trackListKeys'
 import { SpeakerPlayingIcon } from '../assets/icons/SpeakerIcon'
 import { setNotice } from '../activity'
 import { songsGridTemplate, songsGridTemplateFixed } from '../utils/songsGridTemplate'
@@ -95,12 +97,16 @@ export default function PlaylistView() {
   const [editName, setEditName] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const selectedIdsRef = useRef(selectedIds)
+  selectedIdsRef.current = selectedIds
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; idx: number } | null>(null)
   const [confirmAction, setConfirmAction] = useState<{ type: 'delete-playlist' | 'delete-tracks'; trackIds?: number[] } | null>(null)
   const [undoState, setUndoState] = useState<{ trackIds: number[]; atIndex: number; playlistId: string; message: string } | null>(null)
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null)
   const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
   const lastClickedIdx = useRef<number>(-1)
+  // Keyboard cursor for ↑/↓ (hooks/useTrackListKeys.ts); clicks move it too.
+  const focusedIdx = useRef<number>(-1)
   const [headerCtxMenu, setHeaderCtxMenu] = useState<{ x: number; y: number } | null>(null)
 
   // Auto-follow now-playing (4.0). Mirror of SongsView pattern; suppressed
@@ -617,6 +623,36 @@ export default function PlaylistView() {
     }
   }, [pb.nowPlaying?.id, state.currentView, sortedTracks])
 
+  // (Hooks stay above the not-found return: React needs the same hooks every render.)
+  // Reset anchor when search/sort changes the visible list
+  useEffect(() => {
+    lastClickedIdx.current = -1
+    setSelectedIds(new Set())
+  }, [state.searchQuery, sortCol, sortDir])
+  // A different list, or a new order: the keyboard cursor starts over.
+  useEffect(() => { focusedIdx.current = -1 }, [state.searchQuery, sortCol, sortDir, state.activePlaylistId])
+
+  // ↑/↓ (⇧ extends), Enter, Space, type-to-find — the same keys as Songs
+  // (Jake 2026-11-07: "i cant go up and down any playlist with the up down
+  // arrows!!!" — they fell through to the global volume). List mode only.
+  useTrackListKeys({
+    enabled: state.currentView === 'playlist' && viewMode === 'list' && !confirmAction && !ctxMenu,
+    tracks: sortedTracks,
+    focusedIdx,
+    lastClickedIdx,
+    selectOne: (id) => setSelectedIds(new Set([id])),
+    selectRange: (ids) => setSelectedIds(new Set(ids)),
+    scrollToIdx: (idx) => {
+      // Arrowing is activity: hold off the now-playing follow, as Songs does.
+      isAutoScrollAtRef.current = Date.now()
+      lastUserActivityAtRef.current = Date.now()
+      scrollListRowIntoView(songsBodyRef.current, idx)
+    },
+    play: (idx) => playTrack(sortedTracks[idx], sortedTracks, idx, undefined, true),
+    getSelectedIds: () => selectedIdsRef.current,
+    hasNowPlaying: () => !!pb.nowPlaying,
+  })
+
   if (!playlist) {
     return <div style={{ padding: 24, color: '#999' }}>Playlist not found.</div>
   }
@@ -639,12 +675,6 @@ export default function PlaylistView() {
     setEditing(false)
   }
 
-  // Reset anchor when search/sort changes the visible list
-  useEffect(() => {
-    lastClickedIdx.current = -1
-    setSelectedIds(new Set())
-  }, [state.searchQuery, sortCol, sortDir])
-
   const handleClick = (track: Track, idx: number, e: React.MouseEvent) => {
     if (e.shiftKey && lastClickedIdx.current >= 0 && lastClickedIdx.current < sortedTracks.length) {
       const from = Math.min(lastClickedIdx.current, idx)
@@ -662,6 +692,7 @@ export default function PlaylistView() {
       setSelectedIds(new Set([track.id]))
       lastClickedIdx.current = idx
     }
+    focusedIdx.current = idx
   }
 
   const handleContextMenu = (e: React.MouseEvent, track: Track, idx: number) => {
