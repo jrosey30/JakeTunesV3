@@ -23,7 +23,8 @@
  *     else is in iPod_Control/Music;
  *   • at most 70% of the set changes (past that a full copy is simpler).
  * Identity is the fingerprint, never text (CLAUDE.md: destructive ops gate on
- * identity). A song whose library file changed (size of the master, size of
+ * identity); a song with no fingerprint yet stays only on id + exact card path
+ * + both sizes (identityHolds). A song whose library file changed (size of the master, size of
  * the file we would copy, or fingerprint) leaves and arrives again.
  */
 import { createHash } from 'crypto'
@@ -198,10 +199,30 @@ export interface SwapPlan {
 
 export type StayVerdict = 'stay' | 'new' | 'moved' | 'identity-changed' | 'file-changed'
 
+/**
+ * A song with no fingerprint yet (a fresh download, before the fingerprint
+ * pass reaches it) boards under its path (`path:`). It used to never stay:
+ * 2026-11-08, four Cramps songs downloaded the day before were re-copied on
+ * every swap over a slow link. And the seal records that path in its CARD form
+ * ("imported_14505.m4a" rides as "14505.m4a"), so the two never matched
+ * anyway. Such a song stays on the same proof the CLAUDE.md rule allows
+ * (track id, exact path, sizes): the same id, the same card path, and both the
+ * card file's size and the library master's size known and equal. The same
+ * holds the one time a song gains its fingerprint after the sync that put it
+ * there. A fingerprint the card's record has is never traded for less, and a
+ * fingerprint that differs is a changed song.
+ */
+function identityHolds(c: SwapCandidate, row: SwapManifestRow): boolean {
+  if (row.identity.startsWith('fp:')) return c.identity === row.identity
+  if (!row.identity.startsWith('path:')) return false
+  if (!c.identity.startsWith('fp:') && !c.identity.startsWith('path:')) return false
+  return c.sourceSize > 0 && row.sourceSize > 0
+}
+
 export function stayVerdict(c: SwapCandidate, row: SwapManifestRow | undefined): StayVerdict {
   if (!row) return 'new'
   if (tsaNormalizeColonPath(c.destPath) !== row.destPath) return 'moved'
-  if (!c.identity.startsWith('fp:') || c.identity !== row.identity) return 'identity-changed'
+  if (!identityHolds(c, row)) return 'identity-changed'
   if (!(c.copySize > 0) || c.copySize !== row.size) return 'file-changed'
   if (c.sourceSize > 0 && row.sourceSize > 0 && c.sourceSize !== row.sourceSize) return 'file-changed'
   return 'stay'
