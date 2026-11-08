@@ -127,7 +127,7 @@ describe('proveCardForSwap — a swap only on a card that is proven, every no in
   })
 })
 
-describe('planSwap — identity by fingerprint and size, never text', () => {
+describe('planSwap — identity by fingerprint (or id + exact path) and size, never text', () => {
   const cand = (id: number, over: Partial<SwapCandidate> = {}): SwapCandidate => ({
     id, destPath: P(id), identity: `fp:sha1:${id}|1`, copySize: 1000 + id, sourceSize: 2000 + id, ...over,
   })
@@ -137,7 +137,14 @@ describe('planSwap — identity by fingerprint and size, never text', () => {
     assert.equal(stayVerdict(cand(9), undefined), 'new')
     assert.equal(stayVerdict(cand(1, { destPath: ':iPod_Control:Music:F09:X.m4a' }), rows.get(1)), 'moved')
     assert.equal(stayVerdict(cand(1, { identity: 'fp:sha1:new|1' }), rows.get(1)), 'identity-changed')
-    assert.equal(stayVerdict(cand(1, { identity: 'path::iPod_Control:Music:F01:S1.m4a' }), { ...rows.get(1)!, identity: 'path::iPod_Control:Music:F01:S1.m4a' }), 'identity-changed', 'a weak identity never vouches')
+    // No fingerprint yet (a fresh download): id + card path + both sizes known and equal.
+    const pathRow = { ...rows.get(1)!, identity: 'path::iPod_Control:Music:F01:S1.m4a' }
+    assert.equal(stayVerdict(cand(1, { identity: 'path::iPod_Control:Music:F01:imported_1.m4a' }), pathRow), 'stay', 'the seal keeps the card form of the path; the library form still matches by id + card path + sizes')
+    assert.equal(stayVerdict(cand(1, { identity: 'path::iPod_Control:Music:F01:S1.m4a', sourceSize: 0 }), pathRow), 'identity-changed', 'no fingerprint and no master size: nothing vouches')
+    assert.equal(stayVerdict(cand(1, { identity: 'path::iPod_Control:Music:F01:S1.m4a', copySize: 5 }), pathRow), 'file-changed')
+    assert.equal(stayVerdict(cand(1), pathRow), 'stay', 'the song gained its fingerprint after the sync that put it there')
+    assert.equal(stayVerdict(cand(1, { identity: 'path::iPod_Control:Music:F01:S1.m4a' }), rows.get(1)), 'identity-changed', 'a fingerprint on record is never traded for a path')
+    assert.equal(stayVerdict(cand(1, { identity: 'id:1' }), { ...rows.get(1)!, identity: 'id:1' }), 'identity-changed', 'an id alone never vouches')
     assert.equal(stayVerdict(cand(1, { copySize: 77 }), rows.get(1)), 'file-changed')
     assert.equal(stayVerdict(cand(1, { copySize: 0 }), rows.get(1)), 'file-changed')
     assert.equal(stayVerdict(cand(1, { sourceSize: 3 }), rows.get(1)), 'file-changed', 'the master changed even if a mirror came out the same size')

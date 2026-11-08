@@ -11,7 +11,7 @@
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'child_process'
-import { unlinkSync } from 'fs'
+import { readFileSync, unlinkSync } from 'fs'
 import { appendFile, mkdir, mkdtemp, readFile, readdir, rm, stat, truncate, unlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -648,6 +648,201 @@ describe('the rig never touches a real iPod', () => {
     try {
       assert.ok(r.card.startsWith(tmpdir()) || r.card.startsWith('/private' + tmpdir()), r.card)
       await appendFile(join(r.root, 'probe'), 'x')
+    } finally {
+      await rm(r.root, { recursive: true, force: true })
+    }
+  })
+})
+
+// ── 2026-11-08, the punkPod on a slow relay: an arrival homemini couldn't send
+// stopped a whole swap, and four songs with no fingerprint yet were re-copied. ──
+
+/** Evict a song from the Mac: its bytes live only on "homemini" now. */
+async function evict(r: Rig, id: number, homemini: Map<number, Buffer>): Promise<void> {
+  const p = join(r.lib, String(r.library.get(id)!.path).slice(1).replace(/:/g, '/'))
+  homemini.set(id, await readFile(p))
+  await unlink(p)
+}
+
+/** A homemini that sends what it has, except the ids in `refuse` (fetch failed). */
+function wireHomemini(r: Rig, homemini: Map<number, Buffer>, refuse: Set<number>, onFail?: () => void): { fetched: number[] } {
+  const seen = { fetched: [] as number[] }
+  r.host.probeHomeminiTrack = async (id) => homemini.has(id) ? { ok: true, bytes: homemini.get(id)!.length } : { ok: false, error: 'homemini 404' }
+  r.host.stageTrack = async (_colon, id) => {
+    if (refuse.has(id) || !homemini.has(id)) { onFail?.(); return { ok: false, error: 'fetch failed', reason: 'fetch' } }
+    seen.fetched.push(id)
+    const dir = join(r.root, 'stage'); await mkdir(dir, { recursive: true })
+    const abs = join(dir, `${id}.m4a`)
+    await writeFile(abs, homemini.get(id)!)
+    return { ok: true, abs, staged: true, pulled: true, cleanup: async () => { await unlink(abs).catch(() => {}) } }
+  }
+  return seen
+}
+
+describe('a list-only swap with an arrival homemini can’t send', () => {
+  let r: Rig
+  const homemini = new Map<number, Buffer>()
+  before(async () => {
+    r = await makeRig()
+    for (let id = 700; id < 705; id++) await addSong(r, id)
+    const first = await sync(r, range(0, N))
+    assert.equal(first.ok, true, first.error)
+  })
+  after(async () => { await rm(r.root, { recursive: true, force: true }) })
+
+  it('leaves that song off, finishes the swap with N-1, sealed, and says why', async () => {
+    for (let id = 700; id < 705; id++) await evict(r, id, homemini)
+    const dbBefore = await readFile(join(r.card, 'iPod_Control', 'iTunes', 'iTunesDB'))
+    const filesBefore = await cardFiles(r.card)
+    let cardAtFail: { db: Buffer } | null = null
+    const seen = wireHomemini(r, homemini, new Set([702]), () => {
+      cardAtFail = {
+        db: Buffer.from(readFileSync(join(r.card, 'iPod_Control', 'iTunes', 'iTunesDB'))),
+      }
+    })
+    const set = [...range(0, N - 5), ...range(700, 705)]          // 5 out, 5 in, one of them unfetchable
+    const res = await sync(r, set)
+    assert.equal(res.ok, true, res.error)
+    assert.equal(res.mode, 'swap', res.fullReason)
+    assert.equal(res.target, N - 1)
+    assert.deepEqual(res.swap, { out: 5, in: 4, stayed: N - 5, changed: 0 })
+    assert.deepEqual(res.leftOff?.map((l) => [l.id, l.why]), [[702, "homemini couldn't send its audio file"]])
+    // Known before anything on the card changed: the old catalog, the old files.
+    assert.ok(cardAtFail, 'the failing fetch happened')
+    assert.equal(Buffer.compare(cardAtFail!.db, dbBefore), 0, 'the fetch failed while the card still held the last sync’s catalog')
+    assert.deepEqual(seen.fetched.sort(), [700, 701, 703, 704], 'every other arrival was fetched ahead')
+    // The card: the stays untouched, the 4 that came, the leavers gone.
+    const after = await cardFiles(r.card)
+    for (const id of range(0, N - 5)) assert.equal(after.get(pathOf(id))!.ino, filesBefore.get(pathOf(id))!.ino, `${id} (staying) was rewritten`)
+    assert.deepEqual([...after.keys()].sort(), [...range(0, N - 5), 700, 701, 703, 704].map(pathOf).sort())
+    const { paths } = await cardCatalog(r.card)
+    assert.deepEqual(paths.slice().sort(), [...range(0, N - 5), 700, 701, 703, 704].map(pathOf).sort())
+    await assertCardWhole(r)
+    // Sealed with N-1, the ledger names the song left off, and the staged copies are gone.
+    const seal = JSON.parse(await readFile(join(r.state, 'ipod-activity-tsa-seal.json'), 'utf-8'))
+    assert.equal(seal.target, N - 1)
+    const result = (await readFile(join(r.state, 'activity-sync-ledger.jsonl'), 'utf-8')).trim().split('\n').map((l) => JSON.parse(l)).filter((e) => e.kind === 'result').pop()
+    assert.deepEqual(result.leftOff.map((l: { id: number; why: string }) => [l.id, l.why]), [[702, "homemini couldn't send its audio file"]])
+    assert.equal(result.landed, N - 1)
+    assert.deepEqual(await readdir(join(r.root, 'stage')), [], 'every staged arrival was released')
+    // When homemini can send it, the next Sync adds it as a swap.
+    const again = wireHomemini(r, homemini, new Set())
+    const next = await sync(r, set)
+    assert.equal(next.ok, true, next.error)
+    assert.equal(next.mode, 'swap', next.fullReason)
+    assert.deepEqual(next.swap, { out: 0, in: 1, stayed: N - 1, changed: 0 })
+    assert.deepEqual(again.fetched, [702], 'the evicted songs on the card stay: only the newcomer is fetched')
+    await assertCardWhole(r)
+  })
+})
+
+describe('a list-only full copy with a song homemini can’t send at copy time', () => {
+  it('leaves it off and seals N-1 (never a stopped sync)', async () => {
+    const r = await makeRig()
+    try {
+      const homemini = new Map<number, Buffer>()
+      await evict(r, 4, homemini)
+      wireHomemini(r, homemini, new Set([4]))
+      const res = await sync(r, range(0, N))
+      assert.equal(res.ok, true, res.error)
+      assert.equal(res.mode, 'full')
+      assert.equal(res.target, N - 1)
+      assert.deepEqual(res.leftOff?.map((l) => l.id), [4])
+      await assertCardWhole(r)
+      assert.ok(!(await cardFiles(r.card)).has(pathOf(4)))
+    } finally {
+      await rm(r.root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('songs that stay are not re-copied', () => {
+  let r: Rig
+  const homemini = new Map<number, Buffer>()
+  before(async () => { r = await makeRig() })
+  after(async () => { await rm(r.root, { recursive: true, force: true }) })
+
+  it('a song evicted from the Mac since the last sync, unchanged, stays', async () => {
+    const first = await sync(r, range(0, N))
+    assert.equal(first.ok, true, first.error)
+    for (const id of [3, 8, 13]) await evict(r, id, homemini)
+    const seen = wireHomemini(r, homemini, new Set())
+    const before = await cardFiles(r.card)
+    const res = await sync(r, range(0, N))
+    assert.equal(res.ok, true, res.error)
+    assert.equal(res.mode, 'swap', res.fullReason)
+    assert.deepEqual(res.swap, { out: 0, in: 0, stayed: N, changed: 0 })
+    assert.equal(res.copied, 0)
+    assert.deepEqual(seen.fetched, [], 'nothing fetched from homemini')
+    const after = await cardFiles(r.card)
+    for (const id of [3, 8, 13]) assert.equal(after.get(pathOf(id))!.ino, before.get(pathOf(id))!.ino)
+  })
+
+  it('a fresh download with no fingerprint yet (and a card name unlike its library name) stays', async () => {
+    // "imported_14505.m4a" rides as "14505.m4a": the 4 Cramps songs, 2026-11-08.
+    const ids = [14505, 14506]
+    for (const id of ids) {
+      const dir = join(r.lib, 'iPod_Control', 'Music', 'F05')
+      await mkdir(dir, { recursive: true })
+      await writeFile(join(dir, `imported_${id}.m4a`), Buffer.alloc(SONG_BYTES, id & 0xff))
+      r.library.set(id, {
+        id, title: `Fresh ${id}`, artist: 'The Cramps', album: 'Bad Music for Bad People', genre: 'Rock',
+        duration: DURATION_MS, codec: 'alac', path: `:iPod_Control:Music:F05:imported_${id}.m4a`,
+      })
+    }
+    const set = [...range(0, N), ...ids]
+    const add = await sync(r, set)
+    assert.equal(add.ok, true, add.error)
+    assert.deepEqual(add.swap, { out: 0, in: 2, stayed: N, changed: 0 })
+    const m = JSON.parse(await readFile(join(r.state, 'last-sync-manifest.json'), 'utf-8'))
+    assert.ok(m.tracks.filter((t: { id: number }) => ids.includes(t.id)).every((t: { identity: string }) => t.identity.startsWith('path:')))
+    const before = await cardFiles(r.card)
+    const res = await sync(r, set)
+    assert.equal(res.ok, true, res.error)
+    assert.deepEqual(res.swap, { out: 0, in: 0, stayed: N + 2, changed: 0 }, 'no re-copy for a song with no fingerprint')
+    // and once the fingerprint pass reaches them, still no re-copy
+    for (const id of ids) r.library.get(id)!.audioFingerprint = `sha1:${id}|${SONG_BYTES}`
+    const fp = await sync(r, set)
+    assert.equal(fp.ok, true, fp.error)
+    assert.deepEqual(fp.swap, { out: 0, in: 0, stayed: N + 2, changed: 0 }, 'gaining a fingerprint is not a change')
+    const after = await cardFiles(r.card)
+    for (const id of ids) {
+      const p = `:iPod_Control:Music:F05:${id}.m4a`
+      assert.equal(after.get(p)!.ino, before.get(p)!.ino, `${p} was rewritten`)
+    }
+    // A real change still re-copies: a new master size at the same path.
+    await writeFile(join(r.lib, 'iPod_Control', 'Music', 'F05', `imported_${ids[0]}.m4a`), Buffer.alloc(SONG_BYTES + 64, 1))
+    r.library.get(ids[0])!.audioFingerprint = `sha1:${ids[0]}|${SONG_BYTES}`   // fingerprint not refreshed yet
+    const changed = await sync(r, set)
+    assert.equal(changed.ok, true, changed.error)
+    assert.deepEqual(changed.swap, { out: 1, in: 1, stayed: N + 1, changed: 1 })
+  })
+})
+
+describe('the Original swap with an arrival homemini can’t send', () => {
+  it('a reserve takes the seat, fetched-ahead failures never touch the card, N still means N', async () => {
+    const r = await makeRig()
+    try {
+      const first = await sync(r, range(0, N), { listOnly: false })
+      assert.equal(first.ok, true, first.error)
+      const homemini = new Map<number, Buffer>()
+      for (let id = 800; id < 804; id++) await addSong(r, id)
+      await evict(r, 801, homemini)
+      wireHomemini(r, homemini, new Set([801]))
+      const tracks = [...range(0, N - 2), 800, 801].map((id) => ({ ...r.library.get(id)! }))
+      const reserve = [802, 803].map((id) => ({ ...r.library.get(id)! }))
+      const res = await runActivitySync(r.host, {
+        tracks, reserve, playlists: [{ name: 'Top 1000', trackIds: tracks.map((t) => t.id) }],
+        requestedTarget: N, listOnly: false, ipodName: 'TestPod',
+      })
+      assert.equal(res.ok, true, res.error)
+      assert.equal(res.mode, 'swap', res.fullReason)
+      assert.equal(res.target, N)
+      assert.equal(res.leftOff, undefined)
+      const files = await cardFiles(r.card)
+      assert.ok(files.has(pathOf(800)) && files.has(pathOf(802)) && !files.has(pathOf(801)))
+      assert.equal(files.size, N)
+      await assertCardWhole(r)
     } finally {
       await rm(r.root, { recursive: true, force: true })
     }

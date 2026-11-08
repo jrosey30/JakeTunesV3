@@ -275,7 +275,28 @@ async function expandActivityPool(
   return { pool: queue, shortfall, target: requested, leftOff: [] }
 }
 
+/** A list-only song whose audio homemini could not send (probe, fetch ahead, or copy). */
+const LEFT_OFF_NO_FETCH = "homemini couldn't send its audio file"
+
 export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyncInput): Promise<ActivitySyncResult> {
+  // Arrivals fetched from homemini before the card is touched (swap only) are
+  // held on the Mac until the run ends, however it ends.
+  const preStaged = new Map<number, { abs: string; cleanup: () => Promise<void> }>()
+  try {
+    return await runActivitySyncHolding(host, input, preStaged)
+  } finally {
+    for (const s of preStaged.values()) {
+      await s.cleanup().catch((err) => console.warn('activity-sync: a staged arrival could not be released:', err))
+    }
+    preStaged.clear()
+  }
+}
+
+async function runActivitySyncHolding(
+  host: ActivitySyncHost,
+  input: ActivitySyncInput,
+  preStaged: Map<number, { abs: string; cleanup: () => Promise<void> }>,
+): Promise<ActivitySyncResult> {
   const playlists = input.playlists
   const convertOptions = input.convertOptions
   const requested = Math.max(1, Math.floor(Number(input.requestedTarget) || input.tracks.length || 0))
@@ -452,7 +473,7 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     }
     if (pullFail.length > 0 && listOnly) {
       const failedIds = new Set(toPull.filter((p) => pullFail.some((f) => f.startsWith(p.label))).map((p) => p.id))
-      leaveOff((t) => !failedIds.has(Number(t.id)), () => "homemini couldn't send its audio file")
+      leaveOff((t) => !failedIds.has(Number(t.id)), () => LEFT_OFF_NO_FETCH)
       console.warn(`activity-sync: list-only set — homemini miss on ${failedIds.size} song(s), left off; landing ${target}`)
     } else if (pullFail.length > 0) {
       const failedIds = new Set(toPull.filter((p) => pullFail.some((f) => f.startsWith(p.label))).map((p) => p.id))
@@ -834,6 +855,68 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   } else {
     console.log(`activity-sync: FULL copy — ${fullReason}`)
     host.sendProgress({ phase: 'preflight', current: target, total: target, mode, title: fullCopyLine(fullReason || 'nothing to keep') })
+  }
+
+  // ── 2c. Swap: fetch every arriving song from homemini BEFORE the card changes ──
+  // 2026-11-08 (punkPod, Jake away on a slow Tailscale relay): one arrival's
+  // fetch failed at copy time, after the interim catalog and the removals,
+  // and stopped the whole swap ("Only 828 of 829 songs confirmed"). Fetched
+  // first, a song homemini can't send is known while the card is still the
+  // last sync's: a list-only iPod leaves it off (the set lands one fewer, the
+  // reason in the result and the ledger), the Original lets a reserve take its
+  // seat. A Mac too full to hold them stops the fetching early, and the rest
+  // are fetched at copy time as before. A full copy is not fetched ahead (up
+  // to 1,000 songs on the Mac's disk at once).
+  const fetchFailedIds = new Set<number>()
+  if (swap) {
+    const toFetch = plan.filter((e) => e.restage && e.i < reserveFrom && !keepIds.has(e.id))
+    for (let k = 0; k < toFetch.length; k++) {
+      const e = toFetch[k]
+      if (host.isCancelled()) {
+        await host.writeJournal(null)
+        return fail({ copied: 0, cancelled: true, error: 'Sync cancelled by user — nothing on the iPod was touched.', target })
+      }
+      host.sendProgress({ phase: 'preflight', current: k + 1, total: toFetch.length, mode, title: `Fetching from homemini: ${e.title}` })
+      const staged = await host.stageTrack(e.restage!.colon, e.restage!.id)
+      if (staged.ok) {
+        preStaged.set(e.id, { abs: staged.abs, cleanup: staged.cleanup })
+        continue
+      }
+      if (staged.reason === 'free-space') {
+        console.warn(`activity-sync: fetching arrivals ahead stopped at ${k} of ${toFetch.length} (${staged.error}); the rest are fetched at copy time`)
+        break
+      }
+      console.error(`activity-sync: arriving "${e.title}" (id ${e.id}) — homemini couldn't send it (${staged.error}); the card is untouched`)
+      fetchFailedIds.add(e.id)
+    }
+  }
+  if (swap && fetchFailedIds.size > 0) {
+    const gone = fetchFailedIds
+    if (listOnly) {
+      for (const t of tracks) if (gone.has(Number(t.id))) leftOff.push(leftOffSong(t, LEFT_OFF_NO_FETCH))
+      tracks = tracks.filter((t) => !gone.has(Number(t.id)))
+      tsaBoarded = tsaBoarded.filter((p) => !gone.has(p.id))
+      for (let k = plan.length - 1; k >= 0; k--) if (gone.has(plan[k].id)) plan.splice(k, 1)
+      swap.arrive = swap.arrive.filter((id) => !gone.has(id))
+      swap.changed = swap.changed.filter((id) => !gone.has(id))
+      target -= gone.size
+      console.warn(`activity-sync: list-only set — homemini couldn't send ${gone.size} arriving song(s), left off; landing ${target} of ${requested}`)
+      if (target === 0) {
+        await host.writeJournal(null)
+        return fail({
+          copied: 0, target: 0, requested, landed: 0, shortfall: 0, leftOff,
+          error: `None of the songs on this iPod's list could be fetched from homemini. Nothing on the iPod was touched.`,
+        })
+      }
+    } else if (plan.filter((e) => !gone.has(e.id)).length < target) {
+      await host.writeJournal(null)
+      return fail({
+        copied: 0, target, shortfall: gone.size,
+        error: `homemini couldn't send ${gone.size} arriving song(s) and there are not enough replacements to make ${target}. Nothing on the iPod was touched.`,
+      })
+    } else {
+      console.warn(`activity-sync: homemini couldn't send ${gone.size} arriving song(s); a reserve takes each seat at copy time`)
+    }
   }
 
   // Never a half-updated card (swap only). At every moment the card's catalog
@@ -1318,6 +1401,8 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   const restageById = new Map<number, { colon: string; id: number }>()
   for (const e of plan) if (e.restage) restageById.set(e.id, e.restage)
   const prepareSource = async (entry: { id: number; localFile: string }): Promise<{ abs: string; cleanup: () => Promise<void> }> => {
+    const held = preStaged.get(entry.id)
+    if (held) return { abs: held.abs, cleanup: async () => {} }   // released when the run ends
     const rs = restageById.get(entry.id)
     if (!rs) return { abs: entry.localFile, cleanup: async () => {} }
     const staged = await host.stageTrack(rs.colon, rs.id)
@@ -1326,6 +1411,9 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
   }
   // Copy counts only arrivals: a song that stays is not copied and says nothing.
   const copyTotal = Math.max(1, target - keepIds.size)
+  // List-only: an arrival homemini can't send at copy time is left off, as at
+  // Prepare, never a stopped sync (2026-11-08). Not a full Mac disk: that stops.
+  const droppedAtCopy = new Set<number>()
 
   for (const e of plan) {
     if (writtenById.size >= target) break   // #47: N reached — the rest were reserves
@@ -1339,12 +1427,25 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
       continue
     }
     host.sendProgress({ phase: 'copy', current: copied + copyErrors, total: copyTotal, title: e.title })
+    if (fetchFailedIds.has(e.id)) {   // the Original: homemini couldn't send it ahead; a reserve takes the seat
+      copyErrors++
+      continue
+    }
     let copySrc = e.srcToCopy
     let release = async () => {}
-    if (e.restage) {
+    const held = preStaged.get(e.id)
+    if (held) {
+      copySrc = held.abs   // fetched before the card changed; released when the run ends
+    } else if (e.restage) {
       const staged = await host.stageTrack(e.restage.colon, e.restage.id)
       if (!staged.ok) {
         console.error(`activity-sync: skipping "${e.title}" — ${staged.error}`)
+        if (listOnly && staged.reason !== 'free-space') {
+          const t = tracks.find((x) => Number(x.id) === e.id)
+          leftOff.push(leftOffSong(t ?? { id: e.id, title: e.title }, LEFT_OFF_NO_FETCH))
+          droppedAtCopy.add(e.id)
+          continue
+        }
         copyErrors++
         continue
       }
@@ -1373,6 +1474,16 @@ export async function runActivitySync(host: ActivitySyncHost, input: ActivitySyn
     }
   }
 
+  if (droppedAtCopy.size > 0) {
+    target -= droppedAtCopy.size
+    console.warn(`activity-sync: list-only set — homemini couldn't send ${droppedAtCopy.size} song(s) at copy time, left off; landing ${target} of ${requested}`)
+    if (target === 0) {
+      return stopAfterTouch(fail({
+        copied, kept, copyErrors, target: 0, requested, landed: 0, shortfall: 0, leftOff,
+        error: `None of the songs on this iPod's list could be fetched from homemini. Not writing a catalog.`,
+      }))
+    }
+  }
   // #47: the card holds what landed (primaries + any reserve that replaced a
   // miss); a miss that was replaced is not a failure, so copyErrors no longer
   // refuses the catalog on its own.
