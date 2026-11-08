@@ -32,7 +32,7 @@ export default function NewMixtapeSheet({ onClose }: Props) {
   )
   const byId = useMemo(() => new Map(state.tracks.map((t) => [t.id, t])), [state.tracks])
   const pickablePlaylists = useMemo(
-    () => state.playlists.filter((pl) => pl.category !== 'synced-set' && (pl.trackIds?.length || 0) >= 2),
+    () => state.playlists.filter((pl) => (pl.trackIds?.length || 0) >= 2),
     [state.playlists],
   )
 

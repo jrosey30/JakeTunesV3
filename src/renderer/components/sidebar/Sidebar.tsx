@@ -478,7 +478,7 @@ export default function Sidebar() {
   )
   // JUSTIFICATION (Jake, 2026-10-24): his "I would never have found this on Spotify" playlists,
   // still regular playlists, grouped in numeral order (a subgroup of PLAYLISTS since 2026-11-07). A pin moves one up.
-  const justifications = sortJustifications(state.playlists.filter(pl => isJustificationPlaylist(pl.name) && pl.category !== 'synced-set' && !pinned.includes(pl.id)))
+  const justifications = sortJustifications(state.playlists.filter(pl => isJustificationPlaylist(pl.name) && !pinned.includes(pl.id)))
 
   const handleRenamePlaylist = useCallback(() => {
     if (!plCtxMenu) return
@@ -832,25 +832,6 @@ export default function Sidebar() {
         ))}
       </SidebarSection>
     )],
-    // 2026-07-18 — saved activity syncs get their own category so a
-    // kept sync reads as a different kind of thing than a hand-made
-    // playlist. Section renders only when at least one exists.
-    ['synced-sets', state.playlists.some(pl => pl.category === 'synced-set') ? (
-      <SidebarSection key={'synced-sets'} {...sectionProps('synced-sets')} title="SYNCED SETS">
-        {state.playlists.filter(pl => pl.category === 'synced-set').map((pl) => (
-          <div key={pl.id} onContextMenu={(e) => handlePlaylistContextMenu(e, pl.id, pl.name)}>
-            <SidebarItem
-              label={pl.name}
-              icon={<SmartPlaylistIcon />}
-              selected={state.currentView === 'playlist' && state.activePlaylistId === pl.id}
-              onClick={() => dispatch({ type: 'VIEW_PLAYLIST', id: pl.id })}
-              onDoubleClick={() => playPlaylist(pl.id)}
-              dragTrackIds={pl.trackIds}
-            />
-          </div>
-        ))}
-      </SidebarSection>
-    ) : null],
     // This year's releases month by month (2026-10-24): homemini dates every album on
     // MusicBrainz (singles off an unreleased album sit in the album's month). One section
     // per year, months in order, a smart playlist each. Sidebar only — not synced to the iPod.
@@ -927,7 +908,7 @@ export default function Sidebar() {
           </li>
         )}
         {state.playlists
-          .filter(pl => !SMART_PLAYLIST_NAMES.has(pl.name) && pl.category !== 'synced-set' && !pinned.includes(pl.id) && !isJustificationPlaylist(pl.name))
+          .filter(pl => !SMART_PLAYLIST_NAMES.has(pl.name) && !pinned.includes(pl.id) && !isJustificationPlaylist(pl.name))
           .slice()
           .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
           .map(userPlaylistRow)}

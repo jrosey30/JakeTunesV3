@@ -74,7 +74,6 @@ describe('buildPreloadPlan — priority order and de-duplication', () => {
       { name: 'Older', trackIds: [10, 1] },
       { name: 'Recently Played', trackIds: [11] },
       { name: 'Edited', trackIds: [9, '3'], modifiedAt: daysAgo(1) },
-      { name: 'Synced', trackIds: [11], category: 'synced-set' },
     ],
   }))
 

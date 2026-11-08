@@ -14,7 +14,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { ipodSidebarRows, safeDotColor, TOP_1000_PLAYLIST_ID, type SidebarIpodDevice, type SidebarIpodList } from '../../common/sidebar-ipods.ts'
 import { ipodListPlaylistId } from '../../common/ipod-list-doc.ts'
-import { orderSections, moveSection, nudgeSection, parseSavedOrder, defaultOrder, DEFAULT_SECTION_ORDER } from '../../common/sidebar-order.ts'
+import { orderSections, moveSection, nudgeSection, parseSavedOrder, defaultOrder, DEFAULT_SECTION_ORDER, RETIRED_SECTION_KEYS } from '../../common/sidebar-order.ts'
 
 const SRC = join(import.meta.dirname, '..', '..')
 const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8')
@@ -124,10 +124,23 @@ describe('section order: saved, merged with what is showing', () => {
     assert.deepEqual(parseSavedOrder('library'), [])
     assert.deepEqual(parseSavedOrder(undefined), [])
   })
+  it('a saved order naming the removed SYNCED SETS section still draws, and forgets it', () => {
+    const old = ['playlists', 'synced-sets', 'library', 'store', 'archive', 'ipods', 'mixtapes', 'year:2026']
+    const saved = parseSavedOrder(old)
+    assert.ok(!saved.includes('synced-sets'))
+    assert.deepEqual(orderSections(ALL, saved), old.filter((k) => k !== 'synced-sets'))
+    // Even unparsed, a key nothing draws is skipped and moves nothing.
+    assert.deepEqual(orderSections(ALL, old), old.filter((k) => k !== 'synced-sets'))
+    // The next save (a move) carries no retired key.
+    const next = moveSection(orderSections(ALL, saved), saved, 'library', 'playlists')
+    assert.ok(!next.includes('synced-sets'))
+    assert.ok(!DEFAULT_SECTION_ORDER.includes('synced-sets'))
+    assert.ok(RETIRED_SECTION_KEYS.has('synced-sets'))
+  })
   it('the default list names every section the sidebar draws', () => {
     const sidebar = read('renderer/components/sidebar/Sidebar.tsx')
     const keys = [...sidebar.matchAll(/^ {4}\['([a-z-]+)', /gm)].map((m) => m[1])
-    assert.ok(keys.length >= 8, `found ${keys.join(',')}`)
+    assert.ok(keys.length >= 7, `found ${keys.join(',')}`)
     for (const k of keys) assert.ok(DEFAULT_SECTION_ORDER.includes(k), `${k} missing from DEFAULT_SECTION_ORDER`)
     assert.match(sidebar, /`\$\{YEAR_PREFIX\}\$\{year\}`/)
   })
@@ -147,6 +160,12 @@ describe('the sidebar after #372', () => {
     const smart = sidebar.slice(sidebar.indexOf('const smartPlaylists'), sidebar.indexOf(']', sidebar.indexOf('const smartPlaylists')))
     assert.doesNotMatch(smart, /id: 'top-1000'/)
     assert.match(sidebar, /\{smartPlaylists\.filter\(sp => !pinned\.includes\(sp\.id\)\)/)
+  })
+  it('no SYNCED SETS section: a playlist still marked synced-set shows in PLAYLISTS', () => {
+    assert.doesNotMatch(sidebar, /SYNCED SETS|synced-set/)
+    for (const f of ['renderer/utils/playlistMenu.ts', 'renderer/components/NewMixtapeSheet.tsx', 'renderer/types.ts', 'main/overnight-preload.ts']) {
+      assert.doesNotMatch(read(f), /synced-set/, f)
+    }
   })
   it('Justification is a subgroup of PLAYLISTS, not a section of its own', () => {
     assert.doesNotMatch(sidebar, /title="JUSTIFICATION"/)

@@ -107,9 +107,6 @@ export interface Playlist {
   // Brief 121 — playlists synced from the iOS app. Renderer can use this
   // to badge or order them differently; absence = V3-owned.
   source?: 'mobile'
-  // 2026-07-18 — saved activity syncs live in their own sidebar section
-  // ("SYNCED SETS"), not among regular playlists.
-  category?: 'synced-set'
 }
 
 // Mixtapes (2026-07-18) — a group of songs turned into a REAL cassette:
