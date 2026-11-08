@@ -14,13 +14,18 @@
  *
  * One macOS notification (and one ntfy push when a topic is set) per distinct
  * difference, never twice for the same in/out sets, at most once per iPod per
- * 6 hours (the next one says the latest totals). No manifest = the iPod was
+ * 6 hours (the next one says the latest totals). The Original (the Top 1000) is
+ * once a WEEK (Jake, 2026-11-08: "the top 1000 notofication comes once a week
+ * not daily"): a change inside the week waits, and the notice at the week's end
+ * says the net difference at that moment; back to no difference by then, nothing
+ * is sent. The week counts from the last notice, kept in ipod-sync-ready.json,
+ * so a restart doesn't reset it. No manifest = the iPod was
  * never synced from this Mac: one "not synced yet", once. Only the hub (the
  * MacBook) checks at all, so three Macs never triple-notify.
  *
  * When it runs: on the Top 1000 standings' 10-minute tick (top1000-scores.ts
  * onPulled; the Original only when the standings were adopted, or when a
- * notice is waiting out its 6 hours), and whenever a list is read from homemini
+ * notice is waiting out its quiet window), and whenever a list is read from homemini
  * (ipc/ipod-lists-ipc.ts onListRead). No timer of its own.
  *
  * Electron-free; every effect is injected (__tests__/ipod-sync-ready.test.ts).
@@ -36,6 +41,13 @@ import type { IpodDeviceMarker } from '../common/ipod-identity.ts'
 export const SYNC_READY_CAP = 1000
 /** At most one notice per iPod in this window, however often its difference shifts. */
 export const SYNC_READY_QUIET_MS = 6 * 3600 * 1000
+/** The Original (the Top 1000): at most one notice a week. */
+export const SYNC_READY_ORIGINAL_QUIET_MS = 7 * 24 * 3600 * 1000
+
+/** How long an iPod's notices stay quiet after one is told. */
+export function quietMsFor(device: { primary: boolean }): number {
+  return device.primary ? SYNC_READY_ORIGINAL_QUIET_MS : SYNC_READY_QUIET_MS
+}
 export const SYNC_READY_STATE_FILE = 'ipod-sync-ready.json'
 
 export type IpodSyncDiff =
@@ -89,8 +101,8 @@ export interface DeviceNoticeState {
   toldNeverSynced?: boolean
 }
 
-/** Pure: tell Jake now? And the state to keep either way. */
-export function decideNotice(prev: DeviceNoticeState | undefined, diff: IpodSyncDiff, nowMs: number): { notify: boolean; next: DeviceNoticeState } {
+/** Pure: tell Jake now? And the state to keep either way. `quietMs`: quietMsFor(device). */
+export function decideNotice(prev: DeviceNoticeState | undefined, diff: IpodSyncDiff, nowMs: number, quietMs: number = SYNC_READY_QUIET_MS): { notify: boolean; next: DeviceNoticeState } {
   const p: DeviceNoticeState = { ...(prev ?? {}) }
   if (diff.kind === 'never-synced') {
     if (p.toldNeverSynced || diff.targetCount === 0) return { notify: false, next: p }
@@ -99,7 +111,7 @@ export function decideNotice(prev: DeviceNoticeState | undefined, diff: IpodSync
   if (diff.kind === 'same') return { notify: false, next: { ...p, pending: false } }
   const key = diffKey(diff)
   if (key === p.key) return { notify: false, next: { ...p, pending: false } }
-  if (p.at !== undefined && nowMs - p.at < SYNC_READY_QUIET_MS) return { notify: false, next: { ...p, pending: true } }
+  if (p.at !== undefined && nowMs - p.at < quietMs) return { notify: false, next: { ...p, pending: true } }
   return { notify: true, next: { ...p, key, at: nowMs, pending: false } }
 }
 
@@ -123,7 +135,7 @@ export function noticeText(device: { name: string; primary: boolean }, diff: Ipo
   const nIn = diff.in.length
   const nOut = diff.out.length
   if (device.primary) {
-    return { title, body: `Top 1000 changed: ${nIn.toLocaleString('en-US')} in, ${nOut.toLocaleString('en-US')} out. ${who} is ready for an updated sync.` }
+    return { title, body: `Top 1000 this week: ${nIn.toLocaleString('en-US')} in, ${nOut.toLocaleString('en-US')} out. ${who} is ready for an updated sync.` }
   }
   if (nOut === 0) return { title, body: `${who}: ${plural(nIn, 'new song', 'new songs')} ready to sync.` }
   if (nIn === 0) return { title, body: `${who}: ${plural(nOut, 'song', 'songs')} to come off. Ready for an updated sync.` }
@@ -222,9 +234,9 @@ export function createIpodSyncReady(deps: IpodSyncReadyDeps): IpodSyncReadyRunne
       if (!t) continue   // homemini away / no list: say nothing, keep the state
       const diff = diffIpodTarget({ target: t.target, onIpod, keep: t.keep })
       diffs.set(device.id, diff)
-      const { notify, next } = decideNotice(state[device.id], diff, now())
+      const { notify, next } = decideNotice(state[device.id], diff, now(), quietMsFor(device))
       if (JSON.stringify(next) !== JSON.stringify(state[device.id] ?? {})) { state[device.id] = next; changed = true }
-      if (diff.kind === 'differs') log(`[sync-ready] ${device.name}: ${diff.in.length} in, ${diff.out.length} out${notify ? ' — told' : next.pending ? ' — waiting out the 6 hours' : ''}`)
+      if (diff.kind === 'differs') log(`[sync-ready] ${device.name}: ${diff.in.length} in, ${diff.out.length} out${notify ? ' — told' : next.pending ? (device.primary ? ' — waiting for the week' : ' — waiting out the 6 hours') : ''}`)
       if (!notify) continue
       const text = noticeText(device, diff)
       if (!text) continue
