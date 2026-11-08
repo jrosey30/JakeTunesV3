@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { suggestForPlaylist, suggestFromVibeHits, keepStripSteady, suggestableOn, type SuggestibleTrack } from '../../renderer/utils/playlistSuggest.ts'
+import { suggestForPlaylist, suggestFromVibeHits, keepStripSteady, suggestableOn, nextStrip, type SuggestibleTrack } from '../../renderer/utils/playlistSuggest.ts'
 
 let nextId = 1
 function t(over: Partial<SuggestibleTrack>): SuggestibleTrack {
@@ -497,3 +497,48 @@ test('take returns more picks from the same page start, so the strip itself does
   assert.deepEqual(fifteen.slice(0, 5).map((x) => x.id), five.map((x) => x.id))
 })
 
+
+// ── 2026-11-08, Jake: "rocksurgence spazzes when i click it" ───────────────
+// The page re-renders on every playback tick. The metadata fallback's picks
+// were all from albums already on Rocksurgence, keepStripSteady threw them
+// all out, and an empty strip restarted from those same picks: five cards,
+// none, five, none… each tick, with the song list jumping under it.
+test('the strip holds still across re-renders when no fallback pick may be shown', () => {
+  const pl = ['A', 'B', 'C'].map((x) => t({ artist: x, album: `${x}1`, genre: 'Rock' }))
+  // Every candidate shares an album with the playlist.
+  const sameAlbums = ['A', 'B', 'C', 'A', 'B', 'C'].map((x) => t({ artist: x, album: `${x}1`, genre: 'Rock' }))
+  const ok = suggestableOn(pl, new Set())
+  let prev: { key: string; ids: number[] } | null = null
+  const lens: number[] = []
+  for (let render = 0; render < 6; render++) {
+    const strip = nextStrip(prev, 'pl:0:tags', sameAlbums, sameAlbums, ok, 5)
+    prev = { key: 'pl:0:tags', ids: strip.map((x) => x.id) }
+    lens.push(strip.length)
+  }
+  assert.deepEqual(lens, [0, 0, 0, 0, 0, 0])
+})
+
+test('a steady strip is the same strip on every re-render, and fills in place', () => {
+  const pl = [t({ artist: 'A', album: 'A1' })]
+  const picks = ['W', 'X', 'Y', 'Z', 'V', 'U'].map((x) => t({ artist: x, album: `${x}1` }))
+  const offAlbum = t({ artist: 'A', album: 'A1' })
+  const cands = [offAlbum, ...picks]
+  const ok = suggestableOn(pl, new Set())
+  const first = nextStrip(null, 'k', cands, cands, ok, 5)
+  assert.deepEqual(first.map((x) => x.id), picks.slice(0, 5).map((x) => x.id), 'a song from an album on the playlist never shows')
+  let prev = { key: 'k', ids: first.map((x) => x.id) }
+  for (let render = 0; render < 4; render++) {
+    const again = nextStrip(prev, 'k', cands, cands, ok, 5)
+    assert.deepEqual(again.map((x) => x.id), prev.ids)
+    prev = { key: 'k', ids: again.map((x) => x.id) }
+  }
+})
+
+test('the metadata fallback, fed only what may be shown, still fills the strip', () => {
+  const pl = ['A', 'B'].map((x) => t({ artist: x, album: `${x}1`, genre: 'Rock', year: 2020 }))
+  const sameAlbum = ['A', 'B'].map((x) => t({ artist: x, album: `${x}1`, genre: 'Rock', year: 2020 }))
+  const otherAlbum = ['A', 'B'].map((x) => t({ artist: x, album: `${x}2`, genre: 'Rock', year: 2020 }))
+  const ok = suggestableOn(pl, new Set())
+  const picks = suggestForPlaylist(pl, [...sameAlbum, ...otherAlbum].filter(ok), 5, 0, 15)
+  assert.deepEqual(new Set(picks.map((x) => x.id)), new Set(otherAlbum.map((x) => x.id)))
+})

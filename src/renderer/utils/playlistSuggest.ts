@@ -480,3 +480,30 @@ export function keepStripSteady<T extends SuggestibleTrack>(
   }
   return slots.filter((t): t is T => t !== null)
 }
+
+/**
+ * One render's strip (2026-11-08, Jake: "rocksurgence spazzes when i click
+ * it"). The page re-renders on every playback tick, and this step runs each
+ * time. It used to start a fresh strip whenever the last one was EMPTY, from
+ * picks that keepStripSteady then threw out (the metadata fallback offered
+ * songs from albums already on the playlist): five cards, none, five, none…
+ * on every tick, and the song list under the strip jumped with it. Now only
+ * picks that may be suggested here are ever shown, and a strip for the same
+ * key is always kept steady, empty or not, so a repeat render with nothing
+ * new returns the same strip.
+ */
+export function nextStrip<T extends SuggestibleTrack>(
+  prev: { key: string; ids: number[] } | null,
+  key: string,
+  candidates: readonly T[],
+  pool: readonly T[],
+  stillOk: (t: T) => boolean,
+  limit: number,
+): T[] {
+  if (prev && prev.key === key) {
+    const byId = new Map(pool.map((t) => [t.id, t]))
+    const shown = prev.ids.map((id) => byId.get(id)).filter((t): t is T => t !== undefined)
+    return keepStripSteady(shown, candidates, stillOk, limit)
+  }
+  return candidates.filter(stillOk).slice(0, limit)
+}
