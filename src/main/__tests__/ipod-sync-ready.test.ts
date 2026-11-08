@@ -4,6 +4,7 @@
  *
  *   • the diff: in / out sets, the 1,000 cap, no manifest, fillers kept
  *   • the debounce: one notice per distinct difference, at most one per iPod per 6 hours,
+ *     the Original (Top 1000) once a week with the net difference then (2026-11-08),
  *     "not synced yet" once, a replica never
  *   • the phone push: the ntfy call's shape with a fake sender, never the topic in a log
  */
@@ -13,7 +14,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  SYNC_READY_QUIET_MS, createIpodSyncReady, decideNotice, diffIpodTarget, diffKey, noticeText, readManifestIds,
+  SYNC_READY_ORIGINAL_QUIET_MS, SYNC_READY_QUIET_MS, createIpodSyncReady, quietMsFor, decideNotice, diffIpodTarget, diffKey, noticeText, readManifestIds,
   type IpodSyncReadyDeps,
 } from '../ipod-sync-ready.ts'
 import { pushNtfy, ntfyTitle, type NtfyFetch } from '../ntfy-push.ts'
@@ -83,6 +84,25 @@ describe('decideNotice', () => {
   it('no difference says nothing', () => {
     assert.equal(decideNotice(undefined, { kind: 'same' }, 0).notify, false)
   })
+  it('the Original waits a week; other iPods keep 6 hours', () => {
+    assert.equal(quietMsFor(original), 7 * 24 * 3600 * 1000)
+    assert.equal(SYNC_READY_ORIGINAL_QUIET_MS, 7 * 24 * 3600 * 1000)
+    assert.equal(quietMsFor(punk), 6 * 3600 * 1000)
+    const a = decideNotice(undefined, d1, 0, quietMsFor(original))
+    assert.equal(a.notify, true)
+    const b = decideNotice(a.next, d2, SYNC_READY_QUIET_MS, quietMsFor(original))
+    assert.equal(b.notify, false, 'six hours is not a week')
+    assert.equal(b.next.pending, true)
+    assert.equal(decideNotice(b.next, d2, SYNC_READY_ORIGINAL_QUIET_MS - 1, quietMsFor(original)).notify, false)
+    assert.equal(decideNotice(b.next, d2, SYNC_READY_ORIGINAL_QUIET_MS, quietMsFor(original)).notify, true)
+  })
+  it('back to no difference inside the week: nothing waits', () => {
+    const a = decideNotice(undefined, d1, 0, quietMsFor(original))
+    const b = decideNotice(a.next, d2, 3600 * 1000, quietMsFor(original))
+    const c = decideNotice(b.next, { kind: 'same' }, 2 * 3600 * 1000, quietMsFor(original))
+    assert.equal(c.notify, false)
+    assert.equal(c.next.pending, false)
+  })
   it('"not synced yet" once, and never for an empty list', () => {
     const a = decideNotice(undefined, { kind: 'never-synced', targetCount: 3 }, 0)
     assert.equal(a.notify, true)
@@ -94,7 +114,7 @@ describe('decideNotice', () => {
 describe('noticeText', () => {
   it('the Original', () => {
     assert.equal(noticeText(original, { kind: 'differs', in: range(1, 6), out: range(10, 6) })?.body,
-      'Top 1000 changed: 6 in, 6 out. The Original is ready for an updated sync.')
+      'Top 1000 this week: 6 in, 6 out. The Original is ready for an updated sync.')
     assert.equal(noticeText(original, { kind: 'never-synced', targetCount: 1000 })?.body,
       'The Original hasn’t been synced from this Mac yet. Its Top 1000 is ready to go on.')
   })
@@ -155,7 +175,7 @@ describe('the runner', () => {
     w.top = [...range(7, 994), ...range(2001, 6)]   // 6 in (2001..2006), 6 out (1..6)
     await runner.check({ original: true })
     assert.equal(w.notices.length, 1)
-    assert.equal(w.notices[0].body, 'Top 1000 changed: 6 in, 6 out. The Original is ready for an updated sync.')
+    assert.equal(w.notices[0].body, 'Top 1000 this week: 6 in, 6 out. The Original is ready for an updated sync.')
     assert.equal(w.notices[0].deviceId, original.id)
     assert.deepEqual(w.pushes, [{ title: 'JakeTunes', body: w.notices[0].body }])
     w.advance(24 * 3600 * 1000)
@@ -163,7 +183,7 @@ describe('the runner', () => {
     assert.equal(w.notices.length, 1, 'the same difference is never told twice')
   })
 
-  it('it keeps shifting: quiet for 6 hours, then the latest totals once', async () => {
+  it('the Top 1000 keeps shifting: quiet for the week, then the net totals once', async () => {
     const { w, runner } = world()
     w.top = [...range(2, 999), 2001]
     await runner.check({ original: true })
@@ -171,15 +191,76 @@ describe('the runner', () => {
     w.advance(3600 * 1000)
     w.top = [...range(3, 998), 2001, 2002]
     await runner.check({ original: true })
-    assert.equal(w.notices.length, 1, 'inside 6 hours')
-    // The standings don't move again, but the waiting notice is due: the plain tick checks the Original.
+    assert.equal(w.notices.length, 1, 'inside the week')
     w.advance(SYNC_READY_QUIET_MS)
+    w.top = [...range(4, 997), 2001, 2002, 2003]
+    await runner.check({ original: true })
+    assert.equal(w.notices.length, 1, 'six hours on: still inside the week')
+    w.top = [...range(3, 998), 2001, 2002]
+    // The standings don't move again, but the waiting notice is due: the plain tick checks the Original.
+    w.advance(SYNC_READY_ORIGINAL_QUIET_MS - SYNC_READY_QUIET_MS - 3600 * 1000 - 1)
+    runner.pulled(false)
+    await runner.check({})
+    assert.equal(w.notices.length, 1, 'a millisecond short of the week')
+    w.advance(1)
     const before = w.asked.top1000
     runner.pulled(false)
     await runner.check({})   // waits for the queued pass
     assert.equal(w.asked.top1000, before + 1)
     assert.equal(w.notices.length, 2)
-    assert.equal(w.notices[1].body, 'Top 1000 changed: 2 in, 2 out. The Original is ready for an updated sync.')
+    assert.equal(w.notices[1].body, 'Top 1000 this week: 2 in, 2 out. The Original is ready for an updated sync.')
+  })
+
+  it('the Top 1000 changes and changes back inside the week: nothing is sent', async () => {
+    const { w, runner } = world()
+    w.top = [...range(2, 999), 2001]
+    await runner.check({ original: true })
+    assert.equal(w.notices.length, 1)
+    w.advance(24 * 3600 * 1000)
+    w.top = [...range(3, 998), 2001, 2002]
+    await runner.check({ original: true })
+    w.advance(24 * 3600 * 1000)
+    w.top = range(1, 1000)   // the iPod holds its target again
+    await runner.check({ original: true })
+    w.advance(SYNC_READY_ORIGINAL_QUIET_MS)
+    runner.pulled(false)
+    await runner.check({})
+    assert.equal(w.notices.length, 1)
+    assert.equal(w.pushes.length, 1)
+  })
+
+  it('another iPod keeps 6 hours', async () => {
+    const { w, runner } = world()
+    w.lists[punk.id] = [4, 3, 2, 1]
+    await runner.check({ lists: true })
+    w.advance(3600 * 1000)
+    w.lists[punk.id] = [5, 4, 3, 2, 1]
+    await runner.check({ lists: true })
+    assert.equal(w.notices.length, 1, 'inside 6 hours')
+    w.advance(SYNC_READY_QUIET_MS)
+    await runner.check({ lists: true })
+    assert.equal(w.notices.length, 2)
+    assert.equal(w.notices[1].body, 'punkPod: 2 new songs ready to sync.')
+  })
+
+  it('a restart does not reset the Original\'s week', async () => {
+    const first = world()
+    first.w.top = [...range(2, 999), 2001]
+    await first.runner.check({ original: true })
+    assert.equal(first.w.notices.length, 1)
+    let nowMs = 1_000_000 + 2 * 24 * 3600 * 1000
+    const notices: unknown[] = []
+    const again = createIpodSyncReady({
+      stateDir: first.w.stateDir, isHub: async () => true, devices: async () => [original],
+      onIpod: async () => range(1, 1000), top1000: async () => [...range(3, 998), 2001, 2002], list: async () => null,
+      notify: (n) => { notices.push(n) }, push: async () => {}, log: () => {}, now: () => nowMs,
+    })
+    await again.check({ original: true })
+    assert.equal(notices.length, 0, 'two days after the last notice')
+    nowMs = 1_000_000 + SYNC_READY_ORIGINAL_QUIET_MS
+    again.pulled(false)
+    await again.check({})
+    assert.equal(notices.length, 1)
   })
 
   it('a plain tick with nothing waiting does not ask for the Top 1000', async () => {
