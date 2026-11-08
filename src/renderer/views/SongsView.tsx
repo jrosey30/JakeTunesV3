@@ -26,6 +26,7 @@ import { useViewMode } from '../context/ViewModeContext'
 import FindBar from '../components/FindBar'
 import { useFindState } from '../hooks/useFindState'
 import { useGetInfoHandlers } from '../hooks/useGetInfoHandlers'
+import { useTrackListKeys } from '../hooks/useTrackListKeys'
 import { songsGridTemplate, songsGridTemplateFixed } from '../utils/songsGridTemplate'
 import type { SortColumn, Track } from '../types'
 import EmptyState from '../components/EmptyState'
@@ -527,8 +528,6 @@ export default function SongsView() {
 
   // Track focused index for keyboard nav (separate from selection for smooth scrolling)
   const focusedIdx = useRef<number>(-1)
-  const typeBuffer = useRef('')
-  const typeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Scroll a row just into view (nearest edge). Used by keyboard nav.
   const scrollToIdx = useCallback((idx: number) => {
@@ -728,96 +727,28 @@ function scrollBlankProbe(sc: HTMLDivElement | null): void {
         return
       }
 
-      // Arrow Up / Arrow Down = move selection
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        e.preventDefault()
-        // 4.5: CLAIM Up/Down so the global volume shortcut (App.tsx's document
-        // keydown handler) doesn't ALSO fire — without this, arrowing the song
-        // list nudged the volume on every keypress. We're a capture-phase window
-        // listener, so stopPropagation here keeps the event from reaching App.tsx.
-        e.stopPropagation()
-        const dir = e.key === 'ArrowDown' ? 1 : -1
-        let next = focusedIdx.current + dir
-        if (focusedIdx.current < 0) {
-          // Nothing focused yet — start from top or bottom
-          next = e.key === 'ArrowDown' ? 0 : sorted.length - 1
-        }
-        next = Math.max(0, Math.min(sorted.length - 1, next))
-        focusedIdx.current = next
-        const track = sorted[next]
-        if (track) {
-          if (e.shiftKey) {
-            // Extend selection
-            const anchor = lastClickedIdx.current >= 0 ? lastClickedIdx.current : next
-            const from = Math.min(anchor, next)
-            const to = Math.max(anchor, next)
-            const ids = sorted.slice(from, to + 1).map(t => t.id)
-            libDispatch({ type: 'SELECT_RANGE', ids })
-          } else {
-            libDispatch({ type: 'SELECT_TRACK', id: track.id })
-            lastClickedIdx.current = next
-          }
-          scrollToIdx(next)
-        }
-        return
-      }
-
-      // Enter = play selected track
-      if (e.key === 'Enter') {
-        const idx = focusedIdx.current >= 0 ? focusedIdx.current : -1
-        const track = idx >= 0 ? sorted[idx] : null
-        if (track) {
-          e.preventDefault()
-          playTrack(track, sorted, idx, undefined, true)
-        }
-        return
-      }
-
-      // Space: when NOTHING is loaded, start the highlighted song — the iTunes
-      // behavior (Space on an idle library plays your selection). When a track
-      // is already loaded (playing OR paused), leave Space to the global handler
-      // so it pauses/resumes the current track. Mid-search (typeBuffer non-empty)
-      // spaces fall through to type-to-search below so multi-word titles match.
-      if (e.key === ' ' && typeBuffer.current === '') {
-        if (!nowPlayingIdRef.current) {
-          const idx = focusedIdx.current >= 0
-            ? focusedIdx.current
-            : sorted.findIndex(t => selectedIdsRef.current.has(t.id))
-          const track = idx >= 0 ? sorted[idx] : null
-          if (track) {
-            e.preventDefault()
-            e.stopPropagation()   // we're starting playback; don't let App.tsx ALSO toggle
-            focusedIdx.current = idx
-            playTrack(track, sorted, idx, undefined, true)
-            return
-          }
-        }
-        // A track is loaded, or nothing is highlighted — let the global Space
-        // (play/pause) handle it; return so the space isn't typed into search.
-        return
-      }
-
-      // Type-to-search: single printable character jumps to first matching track
-      if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        typeBuffer.current += e.key.toLowerCase()
-        if (typeTimer.current) clearTimeout(typeTimer.current)
-        typeTimer.current = setTimeout(() => { typeBuffer.current = '' }, 800)
-        const query = typeBuffer.current
-        const idx = sorted.findIndex(t => (t.title || '').toLowerCase().startsWith(query))
-        if (idx >= 0) {
-          focusedIdx.current = idx
-          lastClickedIdx.current = idx
-          libDispatch({ type: 'SELECT_TRACK', id: sorted[idx].id })
-          scrollToIdx(idx)
-        }
-        return
-      }
+      // ↑/↓, Enter, Space and type-to-find: useTrackListKeys below.
     }
     // Use capture phase to match App.tsx's Space handler and ensure we fire
     // before any intermediate element can consume the event
     window.addEventListener('keydown', handleKeyDown, true)
     return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [sorted, libDispatch, playTrack, scrollToIdx, markActivity])
+  }, [sorted, libDispatch, markActivity])
+
+  // ↑/↓ (⇧ extends), Enter, Space, type-to-find — shared with the playlists
+  // (hooks/useTrackListKeys.ts). List mode only: in Cover Flow the flow owns ↑/↓.
+  useTrackListKeys({
+    enabled: viewMode === 'list',
+    tracks: sorted,
+    focusedIdx,
+    lastClickedIdx,
+    selectOne: (id) => libDispatch({ type: 'SELECT_TRACK', id }),
+    selectRange: (ids) => libDispatch({ type: 'SELECT_RANGE', ids }),
+    scrollToIdx,
+    play: (idx) => playTrack(sorted[idx], sorted, idx, undefined, true),
+    getSelectedIds: () => selectedIdsRef.current,
+    hasNowPlaying: () => !!nowPlayingIdRef.current,
+  })
 
   // Cmd+I → open Get Info for selected tracks (nothing selected → the
   // now-playing song; see getInfoTarget)

@@ -35,6 +35,8 @@ import SortArrowIcon from '../components/SortArrowIcon'
 import TrackGridView from '../components/TrackGridView'
 import CoverFlowView from './CoverFlowView'
 import { useViewMode } from '../context/ViewModeContext'
+import { useTrackListKeys } from '../hooks/useTrackListKeys'
+import { scrollListRowIntoView } from '../utils/trackListKeys'
 import { setNotice } from '../activity'
 import { songsGridTemplate, songsGridTemplateFixed } from '../utils/songsGridTemplate'
 import '../styles/musicman.css'
@@ -802,9 +804,13 @@ export default function SmartPlaylistView() {
 
   // --- Selection, context menu, Get Info ---
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
+  const selectedIdsRef = useRef(selectedIds)
+  selectedIdsRef.current = selectedIds
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; track: Track; idx: number } | null>(null)
   const [getInfoState, setGetInfoState] = useState<{ tracks: Track[]; index: number } | null>(null)
   const lastClickedIdx = useRef<number>(-1)
+  // Keyboard cursor for ↑/↓ (hooks/useTrackListKeys.ts); clicks move it too.
+  const focusedIdx = useRef<number>(-1)
 
   // Auto-follow now-playing (4.0). Mirrors the SongsView pattern:
   // when the playing track changes and the user has been idle for >5s,
@@ -828,6 +834,29 @@ export default function SmartPlaylistView() {
     lastClickedIdx.current = -1
     setSelectedIds(new Set())
   }, [libState.searchQuery, sortCol, sortDir])
+  // A different list, or a new order: the keyboard cursor starts over.
+  useEffect(() => { focusedIdx.current = -1 }, [libState.searchQuery, sortCol, sortDir, libState.activeSmartPlaylist])
+
+  // ↑/↓ (⇧ extends), Enter, Space, type-to-find — the same keys as Songs
+  // (Jake 2026-11-07: "i cant go up and down any playlist with the up down
+  // arrows!!!" — they fell through to the global volume). List mode only.
+  useTrackListKeys({
+    enabled: libState.currentView === 'smart-playlist' && viewMode === 'list' && !ctxMenu,
+    tracks: sortedTracks,
+    focusedIdx,
+    lastClickedIdx,
+    selectOne: (id) => setSelectedIds(new Set([id])),
+    selectRange: (ids) => setSelectedIds(new Set(ids)),
+    scrollToIdx: (idx) => {
+      // Arrowing is activity: hold off the now-playing follow, as Songs does.
+      isAutoScrollAtRef.current = Date.now()
+      lastUserActivityAtRef.current = Date.now()
+      scrollListRowIntoView(songsBodyRef.current, idx)
+    },
+    play: (idx) => playTrack(sortedTracks[idx], sortedTracks, idx, undefined, true),
+    getSelectedIds: () => selectedIdsRef.current,
+    hasNowPlaying: () => !!pbState.nowPlaying,
+  })
 
   const handleClick = (track: Track, idx: number, e: React.MouseEvent) => {
     if (e.shiftKey && lastClickedIdx.current >= 0 && lastClickedIdx.current < sortedTracks.length) {
@@ -846,6 +875,7 @@ export default function SmartPlaylistView() {
       setSelectedIds(new Set([track.id]))
       lastClickedIdx.current = idx
     }
+    focusedIdx.current = idx
   }
 
   // Keyboard: ⌘A selects every visible track (parity with SongsView).
