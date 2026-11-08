@@ -5,7 +5,9 @@
  * of N (100 / 250 / 500 / 1000) is one pipeline:
  *
  *   1. Board N by identity. Streamed songs are probed on homemini, then
- *      staged one file at a time at copy. Refuse dest collisions and blanks.
+ *      staged one file at a time at copy. A streamed song the last sync's
+ *      record proves is already on the card is not asked about until the
+ *      swap plan says it must move (2026-11-08). Refuse dest collisions and blanks.
  *   2. Wipe Music until two consecutive empty listings.
  *   3. Copy every song (ALAC, or AAC if the convert toggle is on) + F_FULLFSYNC.
  *   4. Two consecutive remounts must show N files at the intended sizes.
@@ -74,6 +76,7 @@ import {
   planSwap,
   proveCardForSwap,
   rowsMissingOnCard,
+  stayVerdict,
   swapResultLine,
   swapTooBig,
   type CardState,
@@ -440,7 +443,50 @@ async function runActivitySyncHolding(
     pathSep,
     lstat,
   })
+  // What the LAST sync left behind, read before this one clears the seal and
+  // writes its own in-flight manifest over it. Reading it after (as the keep
+  // plan did from 2026-09-19) meant every sync saw an unsealed manifest, kept
+  // nothing, and copied all 1,000 again.
+  const readStateJson = async (name: string): Promise<unknown> => {
+    try { return JSON.parse(await readFile(join(host.stateDir, name), 'utf-8')) } catch { return null }
+  }
+  const priorManifestRaw = await readStateJson(LAST_SYNC_MANIFEST_FILE)
+  const priorSealRaw = await readStateJson(TSA_SEAL_FILE)
+
+  // A song not on this Mac that the last sync's record proves is on the card,
+  // as this sync would write it, is not asked about here (2026-11-08). The
+  // probe used to run for every such song before the swap plan, and on a slow
+  // link (8 s timeout) a miss left off a song that was already on the card
+  // and would have stayed: a song that never needed to move. Its sizes come
+  // from that record, and homemini is asked only if the plan says it must
+  // move (a full copy, or its file changed): §2c's late probe. A song the
+  // record can't vouch for is probed here, as before, so a full copy (no
+  // proof) probes exactly as it always did.
   const remoteBytes = new Map<number, number>()
+  const sizeFromRecord = new Map<number, number>()
+  const askLater = new Set<number>()
+  let probeNow = toPull
+  if (toPull.length > 0) {
+    const early = proveCardForSwap(priorManifestRaw, priorSealRaw, await readCardState(IPOD_MOUNT))
+    if (early.ok) {
+      const byId = new Map(tracks.map((t) => [Number(t.id), t]))
+      probeNow = toPull.filter((p) => {
+        const row = early.rows.get(p.id)
+        const t = byId.get(p.id)
+        if (!row || !t || !(row.size > 0) || !(row.sourceSize > 0)) return true
+        const destPath = ipodPlayableDestPath(String(t.path || ''))
+        const identity = tsaBoardPassenger({ ...t, destPath }).identity
+        const onCard = stayVerdict({ id: p.id, destPath, identity, copySize: row.size, sourceSize: row.sourceSize }, row) === 'stay'
+        if (!onCard) return true
+        askLater.add(p.id)
+        sizeFromRecord.set(p.id, row.sourceSize)
+        return false
+      })
+      if (askLater.size > 0) {
+        console.log(`activity-sync: ${askLater.size} song(s) not on this Mac are on the card by the last sync's record — homemini is asked only if one must move`)
+      }
+    }
+  }
   if (toPull.length > 0) {
     const free = await host.freeBytes().catch(() => 0)
     if (diskWriteWouldBreachFloor(free, 0)) {
@@ -449,18 +495,20 @@ async function runActivitySyncHolding(
       await host.writeJournal(null)
       return fail({ copied: 0, error: msg, target })
     }
-    console.log(`activity-sync: ${toPull.length}/${target} not on this Mac — probing homemini before wipe (one file staged at copy; library symlink stays)`)
+  }
+  if (probeNow.length > 0) {
+    console.log(`activity-sync: ${probeNow.length}/${target} not on this Mac — probing homemini before wipe (one file staged at copy; library symlink stays)`)
     const pullFail: string[] = []
-    for (let i = 0; i < toPull.length; i++) {
+    for (let i = 0; i < probeNow.length; i++) {
       if (host.isCancelled()) {
         await host.writeJournal(null)
         return fail({ copied: 0, cancelled: true, error: 'Sync cancelled by user', target })
       }
-      const p = toPull[i]
+      const p = probeNow[i]
       host.sendProgress({
         phase: 'preflight',
         current: i + 1,
-        total: toPull.length,
+        total: probeNow.length,
         title: `Checking homemini: ${p.label}`,
       })
       const r = await host.probeHomeminiTrack(p.id)
@@ -472,11 +520,11 @@ async function runActivitySyncHolding(
       }
     }
     if (pullFail.length > 0 && listOnly) {
-      const failedIds = new Set(toPull.filter((p) => pullFail.some((f) => f.startsWith(p.label))).map((p) => p.id))
+      const failedIds = new Set(probeNow.filter((p) => pullFail.some((f) => f.startsWith(p.label))).map((p) => p.id))
       leaveOff((t) => !failedIds.has(Number(t.id)), () => LEFT_OFF_NO_FETCH)
       console.warn(`activity-sync: list-only set — homemini miss on ${failedIds.size} song(s), left off; landing ${target}`)
     } else if (pullFail.length > 0) {
-      const failedIds = new Set(toPull.filter((p) => pullFail.some((f) => f.startsWith(p.label))).map((p) => p.id))
+      const failedIds = new Set(probeNow.filter((p) => pullFail.some((f) => f.startsWith(p.label))).map((p) => p.id))
       tracks = tracks.filter((t) => !failedIds.has(Number(t.id)))
       console.warn(`activity-sync: homemini miss on ${failedIds.size} song(s) — replacing so ${target} still means ${target}`)
       if (tracks.filter(activityTrackCanBoard).length < target && host.loadReplacementTracks) {
@@ -548,16 +596,6 @@ async function runActivitySyncHolding(
   // entry per attempt with the added/removed diff vs the previous attempt,
   // one 'result' entry when a sync seals. A picks entry with no matching
   // result = a refused/aborted run. Never blocks a sync.
-  // What the LAST sync left behind, read before this one clears the seal and
-  // writes its own in-flight manifest over it. Reading it after (as the keep
-  // plan did from 2026-09-19) meant every sync saw an unsealed manifest, kept
-  // nothing, and copied all 1,000 again.
-  const readStateJson = async (name: string): Promise<unknown> => {
-    try { return JSON.parse(await readFile(join(host.stateDir, name), 'utf-8')) } catch { return null }
-  }
-  const priorManifestRaw = await readStateJson(LAST_SYNC_MANIFEST_FILE)
-  const priorSealRaw = await readStateJson(TSA_SEAL_FILE)
-
   const ledgerPath = join(host.stateDir, 'activity-sync-ledger.jsonl')
   const ledgerWhen = new Date().toISOString()
   try {
@@ -670,7 +708,7 @@ async function runActivitySyncHolding(
     // checked the .flac extension. Same rescue: the 16-bit / 44.1 kHz
     // stereo ALAC mirror. The master is untouched.
     const sourceBytes = needsPull
-      ? (remoteBytes.get(id) || Number(track.fileSize) || 0)
+      ? (remoteBytes.get(id) || sizeFromRecord.get(id) || Number(track.fileSize) || 0)
       : ((await stat(localFile).catch(() => null))?.size ?? 0)
     const overCeiling = !needsIpodAlacTranscode(localFile)
       && exceedsIpodPlayableCeiling(sourceBytes, Number(track.duration || 0))
@@ -761,7 +799,7 @@ async function runActivitySyncHolding(
 
     if (needsPull && srcToCopy === localFile) {
       restage = { colon: rawColon, id }
-      const remote = remoteBytes.get(id)
+      const remote = remoteBytes.get(id) || sizeFromRecord.get(id)
       if (knownSourceSize == null && remote && remote > 0) knownSourceSize = remote
     }
 
@@ -868,8 +906,30 @@ async function runActivitySyncHolding(
   // are fetched at copy time as before. A full copy is not fetched ahead (up
   // to 1,000 songs on the Mac's disk at once).
   const fetchFailedIds = new Set<number>()
+  // The late probe (2026-11-08): a song not on this Mac that §1 didn't ask
+  // about, because the last sync's record put it on the card, is asked now,
+  // and only if the plan says it must move: a full copy, or its file changed.
+  // A song that stays is never asked and never left off for a miss. A miss
+  // here is handled like a fetch that failed ahead, below, still before the
+  // card changes.
+  const lateProbe = plan.filter((e) => askLater.has(e.id) && !keepIds.has(e.id))
+  for (let k = 0; k < lateProbe.length; k++) {
+    const e = lateProbe[k]
+    if (host.isCancelled()) {
+      await host.writeJournal(null)
+      return fail({ copied: 0, cancelled: true, error: 'Sync cancelled by user — nothing on the iPod was touched.', target })
+    }
+    host.sendProgress({ phase: 'preflight', current: k + 1, total: lateProbe.length, mode, title: `Checking homemini: ${e.title}` })
+    const r = await host.probeHomeminiTrack(e.id)
+    if (!r.ok) {
+      console.error(`activity-sync: homemini probe failed — "${e.title}" (id ${e.id}) must move: ${r.error}; the card is untouched`)
+      fetchFailedIds.add(e.id)
+    } else if (r.bytes && r.bytes > 0) {
+      masterSizeById.set(e.id, r.bytes)   // homemini's master, over the record's
+    }
+  }
   if (swap) {
-    const toFetch = plan.filter((e) => e.restage && e.i < reserveFrom && !keepIds.has(e.id))
+    const toFetch = plan.filter((e) => e.restage && e.i < reserveFrom && !keepIds.has(e.id) && !fetchFailedIds.has(e.id))
     for (let k = 0; k < toFetch.length; k++) {
       const e = toFetch[k]
       if (host.isCancelled()) {
@@ -890,15 +950,17 @@ async function runActivitySyncHolding(
       fetchFailedIds.add(e.id)
     }
   }
-  if (swap && fetchFailedIds.size > 0) {
+  if (fetchFailedIds.size > 0) {
     const gone = fetchFailedIds
     if (listOnly) {
       for (const t of tracks) if (gone.has(Number(t.id))) leftOff.push(leftOffSong(t, LEFT_OFF_NO_FETCH))
       tracks = tracks.filter((t) => !gone.has(Number(t.id)))
       tsaBoarded = tsaBoarded.filter((p) => !gone.has(p.id))
       for (let k = plan.length - 1; k >= 0; k--) if (gone.has(plan[k].id)) plan.splice(k, 1)
-      swap.arrive = swap.arrive.filter((id) => !gone.has(id))
-      swap.changed = swap.changed.filter((id) => !gone.has(id))
+      if (swap) {
+        swap.arrive = swap.arrive.filter((id) => !gone.has(id))
+        swap.changed = swap.changed.filter((id) => !gone.has(id))
+      }
       target -= gone.size
       console.warn(`activity-sync: list-only set — homemini couldn't send ${gone.size} arriving song(s), left off; landing ${target} of ${requested}`)
       if (target === 0) {
@@ -1427,7 +1489,7 @@ async function runActivitySyncHolding(
       continue
     }
     host.sendProgress({ phase: 'copy', current: copied + copyErrors, total: copyTotal, title: e.title })
-    if (fetchFailedIds.has(e.id)) {   // the Original: homemini couldn't send it ahead; a reserve takes the seat
+    if (fetchFailedIds.has(e.id)) {   // the Original: homemini couldn't send it (probe or fetch ahead); a reserve takes the seat
       copyErrors++
       continue
     }
