@@ -14,6 +14,7 @@ import { TOP_1000_PLAYLIST_ID } from '../../common/sidebar-ipods'
 import { useIpodListsSnapshot } from '../ipodLists'
 import { useIpodRegistry } from '../ipodRegistry'
 import top1000Cover from '../assets/playlist-covers/top-1000.jpg'
+import { useIpodPhotoCover } from '../ipodPhotoCovers'
 
 const BUNDLED = import.meta.glob('../assets/ipod-covers/*.jpg', { eager: true, import: 'default' }) as Record<string, string>
 
@@ -52,10 +53,13 @@ export function useIpodPlaylistLook(playlistId: string | null | undefined): Ipod
   return entry ? ipodLook({ model: entry.model, listColor: entry.color }) : ipodLook({})
 }
 
-/** The cover of an iPODS playlist; null for every other playlist (smartPlaylistCover covers those). */
+/** The cover of an iPODS playlist; null for every other playlist (smartPlaylistCover covers those).
+ *  A photo Jake gave it wins over the drawing (2026-11-09, ipodPhotoCovers.ts). */
 export function useIpodPlaylistCover(playlistId: string | null | undefined): string | null {
   const look = useIpodPlaylistLook(playlistId)
   const src = useIpodCover(look)
+  const photo = useIpodPhotoCover(playlistId)
+  if (photo) return photo
   // The Original's silver mini is the bundled top-1000.jpg (full size, the same art).
   if (playlistId === TOP_1000_PLAYLIST_ID && look?.color === 'silver') return top1000Cover
   return src

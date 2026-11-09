@@ -1267,6 +1267,11 @@ declare global {
       ipodListRename?: (input: { deviceId: string; name: string }) => Promise<{ ok: true; name: string; homemini: 'saved' | 'later' } | { ok: false; error: string }>
       top1000NameGet?: () => Promise<{ ok: true; name: string; custom: string | null; pending: boolean } | { ok: false; error: string }>
       top1000NameSet?: (name: string | null) => Promise<{ ok: true; name: string; custom: string | null; homemini: 'saved' | 'later' } | { ok: false; error: string }>
+      // 2026-11-09 — photo covers (src/main/ipod-photo-covers.ts)
+      ipodPhotoGet?: (key: string) => Promise<{ ok: boolean; shown: 'kept' | 'bundled' | 'drawing'; url: string | null }>
+      ipodPhotoSync?: () => Promise<{ ok: boolean }>
+      ipodPhotoChoose?: (key: string) => Promise<{ ok: true; homemini: 'saved' | 'later' } | { ok: false; error?: string; cancelled?: boolean }>
+      ipodPhotoDrawing?: (key: string) => Promise<{ ok: true; homemini: 'saved' | 'later' } | { ok: false; error: string }>
       top1000Ties?: () => Promise<{ ok: true; value: number | null } | { ok: false; error: string }>
       homeShelvesGet?: () => Promise<{ ok: boolean; state?: import('../common/home-shelves-doc').HomeShelvesState }>
       homeShelvesRefresh?: () => Promise<{ ok: boolean; state?: import('../common/home-shelves-doc').HomeShelvesState }>

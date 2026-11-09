@@ -8440,7 +8440,14 @@ async function getConcertOwnedTrackIds(): Promise<Set<number>> {
 const ipodSyncReady = startIpodSyncReady({ stateDir: STATE_DIR, baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), isReplica: isHomeminiPlaybackClientCached, libraryTracks: async () => (await libraryCache.get()).tracks, ineligible: getConcertOwnedTrackIds, window: () => mainWindow, send: sendToRenderer, log: (m) => console.log(m), warn: (m) => quietWarn('sync-ready', m) })
 const ipodLocal = startIpodLocal({ ipc, userDataDir: app.getPath('userData'), stateDir: STATE_DIR, baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), audioBase: HOMEMINI_AUDIO_BASE, isReplica: isHomeminiPlaybackClientCached, libraryTracks: async () => ((await libraryCache.get()).tracks ?? []) as Array<Record<string, unknown>>, localMount: () => libraryRootFromMusicDir(MUSIC_DIR), pathSep: IS_WINDOWS ? '\\' : '/', isPlaying: () => playbackActive, syncInFlight: () => syncEngine.isSyncInFlight(), freeBytes: laptopFreeBytes,
   libraryRefused: () => localAudioDropRefused(MUSIC_DIR), materialize: (colon, id, fetchAudio) => materializeTrackFromHomemini({ ...homeminiPullOpts(colon, id), fetchAudio }), mount: () => detectedIpodMount, ineligible: getConcertOwnedTrackIds, log: (m) => console.log(m), warn: (m) => quietWarn('ipod-local', m) })
-const ipodLists = registerIpodListsIpc(ipc, { stateDir: STATE_DIR, baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), isReplica: isHomeminiPlaybackClientCached, libraryTracks: async () => (await libraryCache.get()).tracks, warn: (m) => quietWarn('ipod-list', m), onListRead: (d, ids, everyDays) => ipodSyncReady.listRead(d, ids, everyDays) })
+// "Use a photo…" for the Top 1000 or an iPod list (2026-11-09, main/ipod-photo-covers.ts).
+async function pickIpodPhoto(): Promise<string | null> {
+  const opts = { title: 'Use a photo', properties: ['openFile' as const], filters: [{ name: 'Photos', extensions: ['jpg', 'jpeg', 'png'] }] }
+  const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+  const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+  return res.canceled ? null : res.filePaths[0] ?? null
+}
+const ipodLists = registerIpodListsIpc(ipc, { stateDir: STATE_DIR, baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), isReplica: isHomeminiPlaybackClientCached, libraryTracks: async () => (await libraryCache.get()).tracks, warn: (m) => quietWarn('ipod-list', m), pickPhoto: pickIpodPhoto, onListRead: (d, ids, everyDays) => ipodSyncReady.listRead(d, ids, everyDays) })
 // Activity sync (Cursor branch) — builds the ≤1000-track iPod set from a brief
 registerWorkoutSyncIpc({
   ipc,
