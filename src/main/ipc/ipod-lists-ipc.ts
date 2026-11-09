@@ -40,7 +40,7 @@ import { refreshIpodPool, type IpodPoolRefresh, type PoolFileName } from '../ipo
 import type { FetchLike } from '../top1000-client.ts'
 import { flushHomeminiName } from '../ipod-rename.ts'
 import { createProposalsDesk } from '../ipod-list-proposals.ts'
-import { gatherIpodLists, ipodListsCachePath } from '../ipod-lists-gather.ts'
+import { gatherIpodLists, ipodListsCachePath, readListsCache } from '../ipod-lists-gather.ts'
 import { createWantedShelfSource } from '../ipod-wanted-shelf-source.ts'
 import { chooseIpodColor, flushPendingColors, readChosenColors } from '../ipod-colors.ts'
 import { ipodCoverDataUrl } from '../ipod-cover-cache.ts'
@@ -212,7 +212,14 @@ export function registerIpodListsIpc(ipc: IpcRegistrar, host: IpodListsHost): Ip
     return photos.useDrawing(key).catch((err) => ({ ok: false as const, error: (err as Error)?.message ?? 'couldn’t go back to the drawing' }))
   }, { refuse: { ok: false, error: 'refused-sender' } })
   // The Record Shop's "For your iPods" section (2026-11-09; main/ipod-wanted-shelf.ts).
-  const wanted = createWantedShelfSource({ stateDir: host.stateDir, lists: () => source.all(), libraryTracks: host.libraryTracks, warn: host.warn })
+  // homemini away: the copy of its lists this Mac kept from its last answer
+  // (ipod-lists-cache.json, `wanted` included), so the rows still show.
+  const wanted = createWantedShelfSource({
+    stateDir: host.stateDir,
+    lists: async () => (await source.all().catch(() => null)) ?? readListsCache(ipodListsCachePath(host.stateDir)),
+    libraryTracks: host.libraryTracks,
+    warn: host.warn,
+  })
   ipc.handle('ipod-lists:wanted-shelf', async (_e, force?: unknown) => wanted.get(force === true), { public: true })
   setInterval(() => {
     void source.desk.flush().catch(() => undefined)

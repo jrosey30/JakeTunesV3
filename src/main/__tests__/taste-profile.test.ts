@@ -167,7 +167,7 @@ describe('wired into the generator (index.ts)', () => {
   const src = readFileSync(join(import.meta.dirname, '..', 'index.ts'), 'utf8')
   it('exceptions leave the anchors, Rocksurgence joins the supply, the gate and the exemplars are live', () => {
     assert.match(src, /anchors = focus\.dropExceptions\(getTasteAnchors\(tracks, 16\)\)/)
-    assert.match(src, /\.\.\.spotifyAnchors, \.\.\.focus\.anchors\(dayN\)\]/)
+    assert.match(src, /\.\.\.spotifyAnchors, \.\.\.focus\.anchors\(dayN\), \.\.\.df\.crateSeeds\(focus\.dropExceptions\(getTasteAnchors\(tracks, 400\)\)\)\]/, 'the crate seeds leave the exceptions out too (2026-11-09)')
     assert.match(src, /focus\.prefetchTags\(/)
     assert.match(src, /genreGate: focus\.blocks/)
     assert.equal((src.match(/focus\.exemplars\(tracks\)/g) || []).length, 2)

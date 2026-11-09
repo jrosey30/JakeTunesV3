@@ -23,7 +23,7 @@
 import { isJunkArtistName } from '../common/junk-artist.ts'
 import { addsRemasterStamp, searchTitle, unwantedVersionOf } from './streamrip-match.ts'
 import { recoArtistMatches } from './reco-match.ts'
-import { fileGenre, genreForPick, pickHookIndex, type PickGenreSources } from '../common/record-shop-bins.ts'
+import { CRATES, fileGenre, genreForPick, pickHookIndex, type PickGenreSources } from '../common/record-shop-bins.ts'
 import { loadTagCache, cachedTags } from './artist-tags.ts'
 import { nameKey, storedNameKey } from '../common/fold-text.ts'
 import { CRITIC_LANE, CRITIC_PICKS_SOURCE } from '../common/critic-picks.ts'
@@ -68,6 +68,10 @@ export interface FeedCard {
    *  fabricated "because you like …" is worse than none — it claims to know
    *  the listener and gets it wrong. Unvalidated = left undefined. */
   because?: string
+  /** Two hops out (discover-supply twoHopPool, 2026-11-09): the neighbour of
+   *  `because` this pick was reached through. Sorted a little lower than a
+   *  one-hop pick of the same score (TWO_HOP_PENALTY). */
+  via?: string
   /** Who recommends it, when that is a named person rather than the shop —
    *  the critic wall's picks carry { kind: 'person', name: '@handle' }.
    *  Unset = the shop's own pick (shopItemFromFeed reads it as 'ai'). */
@@ -281,13 +285,26 @@ export function filterFeed(
       const bt = baseTitleKey(c.title)
       if (opts.ownedBaseKeys && bt && bt !== ak && opts.ownedBaseKeys.has(`${ak}|${bt}`)) return false
     }
-    const sv = opts.served[key]
-    // A paced lane moves on by its own ledger, so view rotation never rests
-    // it — only a hard Not-for-me rest does.
-    const restAt = PACED_LANES.has(c.lane) ? CARD_REST_VIEWS : rv
-    if (sv && sv.views >= restAt && opts.now - sv.last < rr) return false
-    return true
+    return !isResting(c, opts, opts.now, rv, rr)
   })
+}
+
+/** Resting: Jake said "Not for me" to the artist, or the card has been on the
+ *  page `rotateViews` days without a bite (14 days off). A paced lane moves on
+ *  by its own ledger, so view rotation never rests it — only a hard
+ *  Not-for-me rest does. filterFeed's rule, and the supply harvest asks it
+ *  too so it never fills the day with picks the filter would drop. */
+export function isResting(
+  c: Pick<FeedCard, 'lane' | 'artist' | 'title'>,
+  fb: { notForMe: Record<string, unknown>; served: Record<string, { views: number; last: number } | undefined> },
+  now: number,
+  rotateViews = 4,
+  rotateRestMs = 14 * 24 * 3600 * 1000,
+): boolean {
+  if (fb.notForMe[normKey(c.artist)]) return true
+  const sv = fb.served[cardKey(c)]
+  const restAt = PACED_LANES.has(c.lane) ? CARD_REST_VIEWS : rotateViews
+  return !!sv && sv.views >= restAt && now - sv.last < rotateRestMs
 }
 
 /** Leave out every card already on the Listen List. `isOnList` is the
@@ -345,9 +362,17 @@ export function dropVetoed<L extends { cards: unknown[] }>(
 // actually believe in the pick; a thin lane may back-fill with its best
 // sub-floor cards down to BRAIN_HARD_FLOOR (a small shelf of decent picks
 // beats an empty shelf), but a 40 — the "no signal" sentinel — never ships.
-export const BRAIN_FLOOR = 60
+// 2026-11-09 (Jake: "not enough recommendations"): the floor was 60 for the
+// narrative lanes while the quota lanes shipped 52s, so the time machine kept
+// 1 of 24. One bar now: 55 for every lane, a thin lane back-fills to 6, and
+// nothing under 52 ships past a quota lane's first 25.
+export const BRAIN_FLOOR = 55
 export const BRAIN_HARD_FLOOR = 52
-export const BRAIN_LANE_MIN = 3
+export const BRAIN_LANE_MIN = 6
+/** The 25/25 promise ("NO LESS"): a quota lane always keeps its best this many, whatever the brain says. */
+export const QUOTA_FLOOR = 25
+/** The day's target per quota lane, above the promise (2026-11-09). */
+export const QUOTA_TARGET = 60
 
 /** Apply the floor per lane. Only meaningful after brainPct is stamped —
  *  callers skip this entirely when the brain didn't score (null pcts). */
@@ -360,9 +385,16 @@ export function applyQualityFloor(cards: FeedCard[]): FeedCard[] {
   }
   const out: FeedCard[] = []
   for (const [lane, arr] of byLane) {
-    // Quota lanes (25/25, "NO LESS"): the brain ORDERS them, it never
-    // starves them — the count is the contract, not the cosine.
-    if (QUOTA_LANES.has(lane) || PACED_LANES.has(lane)) { out.push(...arr); continue }
+    // Paced lanes move on by their own ledger; the floor never cuts them.
+    if (PACED_LANES.has(lane)) { out.push(...arr); continue }
+    // Quota lanes ("NO LESS"): their best QUOTA_FLOOR always stand — the
+    // count is the contract, not the cosine. Past that, the day's extra
+    // picks must clear the hard floor.
+    if (QUOTA_LANES.has(lane)) {
+      const ranked = [...arr].sort((a, b) => (b.brainPct ?? 0) - (a.brainPct ?? 0))
+      out.push(...ranked.filter((c, i) => i < QUOTA_FLOOR || (c.brainPct ?? 0) >= BRAIN_HARD_FLOOR))
+      continue
+    }
     const kept = arr.filter((c) => (c.brainPct ?? 0) >= BRAIN_FLOOR)
     if (kept.length < BRAIN_LANE_MIN) {
       const backfill = arr
@@ -897,6 +929,8 @@ export async function supplyLanes(
   owned: { artists: Set<string>; albumKeys: Set<string>; baseKeys: Set<string>; titlesBy?: Map<string, string[]> },
   fetchFn: typeof fetch = fetch,
   sleepMs = 120,   // Deezer politeness (50 req / 5 s per IP); tests pass 0
+  /** A pick the feed would leave out anyway (Not for me, resting): the harvest walks past it. */
+  resting?: (artist: string, title: string) => boolean,
 ): Promise<FeedCard[]> {
   const { buildDailyDiscovery } = await import('./discover-supply.ts')
   const deps = {
@@ -909,6 +943,7 @@ export async function supplyLanes(
     // Which Deezer act IS each anchor (2026-11-08): checked against what Jake
     // knows by that name, so a same-named stranger never seeds the shop.
     knownTitles: (artist: string): string[] => owned.titlesBy?.get(nameKey(artist, '')) ?? [],
+    resting,
   }
   // Curator pool (guarded: state-dir drags electron, which the node test
   // loader cannot resolve — tests run with an empty pool, the app with
@@ -923,29 +958,70 @@ export async function supplyLanes(
       return []
     }
   })()
-  const daily = await buildDailyDiscovery(anchorNames, deps, { want: 40, dayNumber, curatorSongs })
+  // The target plus a little room for the genre gate, cross-lane dedupe and
+  // the brain's hard floor; resting picks are skipped at the source now.
+  const daily = await buildDailyDiscovery(anchorNames, deps, { want: QUOTA_TARGET + 10, floor: QUOTA_FLOOR + 5, dayNumber, curatorSongs })
   if (daily.report.shortfall.length) {
     console.warn(`[discover] supply shortfall: ${daily.report.shortfall.join(', ')} (pool ${daily.report.poolSize}, ${daily.report.passes} passes)`)
   }
   const cards: FeedCard[] = []
   for (const a of daily.albums) {
-    cards.push({ lane: 'fresh-albums', type: 'album', artist: a.artist, title: a.title, year: a.year, why: clipWhy(a.because ? `Neighbors with ${a.because}` : 'Near your library'), artUrl: a.artUrl, because: a.because })
+    cards.push({ lane: 'fresh-albums', type: 'album', artist: a.artist, title: a.title, year: a.year, why: supplyWhy(a), artUrl: a.artUrl, because: a.because, ...(a.via ? { via: a.via } : {}) })
   }
   for (const s of daily.songs) {
-    cards.push({ lane: 'fresh-songs', type: 'song', artist: s.artist, title: s.title, why: clipWhy(s.curated ? `Curated by ${s.curated}` : (s.because ? `Neighbors with ${s.because}` : 'Near your library')), artUrl: s.artUrl, previewUrl: s.previewUrl, because: s.because })
+    cards.push({ lane: 'fresh-songs', type: 'song', artist: s.artist, title: s.title, why: s.curated ? clipWhy(`Curated by ${s.curated}`) : supplyWhy(s), artUrl: s.artUrl, previewUrl: s.previewUrl, because: s.because, ...(s.via ? { via: s.via } : {}) })
   }
   return cards
 }
 
-/** One place decides what a shelf holds. Quota lanes seat exactly 25 when
- *  supply allows (Jake: "NO LESS"); narrative lanes stay at 24; the scene
+/**
+ * Seeds for every crate (2026-11-09). The daily supply digs from the artists
+ * Jake plays most, and they are mostly rock, indie and electronic, so on the
+ * day he said "not enough recommendations" Soul / Funk / R&B had 3 cards and
+ * Grunge 3. These add, per crate, the library artists he plays most whose
+ * own genre files there. `ranked` is getTasteAnchors' order (most played
+ * first). A seed is always an artist he plays, so "Because you play X" stays true.
+ */
+export function crateSeeds(ranked: Array<{ artist: string; primaryGenre?: string | null }>, perCrate = 3): string[] {
+  const out: string[] = []
+  for (const cr of CRATES) {
+    out.push(...ranked.filter((a) => a.primaryGenre && fileGenre(a.primaryGenre).bin === cr.id).slice(0, perCrate).map((a) => a.artist))
+  }
+  return out
+}
+
+/** A supply pick's line: one hop is "Neighbors with X" (the card already
+ *  says "Because you play X", so the page hides it); two hops names the
+ *  band in between. */
+export function supplyWhy(p: { because?: string; via?: string }): string {
+  if (p.via) return clipWhy(`By way of ${p.via}`)
+  return clipWhy(p.because ? `Neighbors with ${p.because}` : 'Near your library')
+}
+
+/** A two-hop pick sorts as if it scored this much lower (its shown % is untouched). */
+export const TWO_HOP_PENALTY = 5
+
+/** A view counts once a day (2026-11-09). Every page open used to count one
+ *  for every card on the page, seen or not, so four visits in an afternoon
+ *  rested the whole shelf for two weeks: 34 of 80 harvested picks were
+ *  resting the day Jake said "not enough recommendations". */
+export function countView(served: Record<string, { first: number; last: number; views: number }>, key: string, now: number): void {
+  const sv = served[key]
+  if (!sv) { served[key] = { first: now, last: now, views: 1 }; return }
+  if (now - sv.last >= 12 * 3600 * 1000) sv.views += 1
+  sv.last = now
+}
+
+/** One place decides what a shelf holds. Quota lanes seat up to
+ *  QUOTA_TARGET (60) when supply allows, never fewer than 25 (Jake: "NO
+ *  LESS"); narrative lanes stay at 24; the scene
  *  lane keeps its per-anchor orbit cap. Extracted from index.ts under the
  *  line ratchet — the rail said new capability belongs in a module. */
 export function assembleLanes(shelved: FeedCard[]): Array<{ id: string; title: string; cards: FeedCard[] }> {
   const laneDefs = [
     { id: 'brand-new', title: 'Brand New', cap: 24 },
-    { id: 'fresh-albums', title: 'New Records', cap: 25 },
-    { id: 'fresh-songs', title: 'New Songs', cap: 25 },
+    { id: 'fresh-albums', title: 'New Records', cap: QUOTA_TARGET },
+    { id: 'fresh-songs', title: 'New Songs', cap: QUOTA_TARGET },
     { id: 'scene', title: 'From the Scene', cap: 24 },
     { id: 'missing', title: "You're Missing", cap: 24 },
     { id: 'time-machine', title: 'Time Machine', cap: 24 },
@@ -956,7 +1032,7 @@ export function assembleLanes(shelved: FeedCard[]): Array<{ id: string; title: s
     .map((l) => ({
       id: l.id, title: l.title,
       cards: (l.id === 'scene' ? capOrbits(shelved.filter((c) => c.lane === l.id)) : shelved.filter((c) => c.lane === l.id))
-        .sort((a, b) => (b.brainPct ?? 0) - (a.brainPct ?? 0))
+        .sort((a, b) => ((b.brainPct ?? 0) - (b.via ? TWO_HOP_PENALTY : 0)) - ((a.brainPct ?? 0) - (a.via ? TWO_HOP_PENALTY : 0)))
         .slice(0, l.cap),
     }))
     .filter((l) => l.cards.length > 0)
