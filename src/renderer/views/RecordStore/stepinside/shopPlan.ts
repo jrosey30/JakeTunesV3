@@ -22,6 +22,8 @@
  * four down the middle. Every rail faces an aisle.
  */
 
+import { artistSortName } from '../../../utils/artistSort.ts'
+
 export type BinKind = 'arrivals' | 'genre' | 'mixed'
 
 export interface BinDef {
@@ -108,17 +110,18 @@ export function fileGenre(genre: string | undefined | null): Filing {
   return { bin: 'other', section: 'ODDITIES' }
 }
 
-/** Key a shop files an artist under: leading "The" dropped, accents
- *  folded, so Édith is with the Es and The Beatles with the Bs. */
+/** Key a shop files an artist under: the app's one rule (artistSort.ts:
+ *  a leading The / A / An and leading punctuation dropped), accents folded,
+ *  so Édith is with the Es and The Beatles with the Bs. */
 export function filingKey(artist: string): string {
-  return artist.replace(/^the\s+/i, '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  return artistSortName(artist).normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 }
 
 /** Filing letter for a divider tab. Any script's letter counts — Hebrew
  *  and Cyrillic acts file after Z and the tab says so in their own
  *  alphabet. Digits and symbols are "#". */
 export function filingLetter(artist: string): string {
-  const c = [...artist.replace(/^the\s+/i, '').trim()][0] ?? ''
+  const c = [...artistSortName(artist)][0] ?? ''
   const folded = c.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase()
   return /\p{L}/u.test(folded) ? folded : '#'
 }

@@ -11,6 +11,7 @@ import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { useLibrary } from '../context/LibraryContext'
 import { subscribeLiveSets, getLiveSetsSnapshot } from '../liveSets'
 import { buildNormalizedArtworkIndex, lookupArtwork } from '../utils/artworkLookup'
+import { artistSortName, NAME_COLLATOR } from '../utils/artistSort'
 import AlbumArtImage from '../components/AlbumArtImage'
 import { setConcertKey } from '../concertNav'
 import type { LiveSetEntry } from '../types'
@@ -45,7 +46,7 @@ interface ConcertRow {
 
 /** Sort key for the band: drop a leading "The " so The Postal Service files under P. */
 function bandKey(band: string): string {
-  return band.toLowerCase().replace(/^the\s+/, '').trim()
+  return artistSortName(band)
 }
 
 export default function ConcertsView() {
@@ -61,7 +62,7 @@ export default function ConcertsView() {
       albumKey: c.albumKey, entry: c.entry, band: c.band, show: c.show, venue: c.venue, city: c.city, date: c.date,
       artHash: c.poster || lookupArtwork(lib.artworkMap, normalizedArtIndex, c.band, c.show), blurb: c.blurb, when: c.when,
     }))
-    return out.sort((a, b) => bandKey(a.band).localeCompare(bandKey(b.band)) || (a.when - b.when) || a.show.localeCompare(b.show))
+    return out.sort((a, b) => NAME_COLLATOR.compare(bandKey(a.band), bandKey(b.band)) || (a.when - b.when) || a.show.localeCompare(b.show))
   }, [snap, lib.tracks, lib.artworkMap, normalizedArtIndex])
 
   const openConcert = useCallback((albumKey: string) => {

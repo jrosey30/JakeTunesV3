@@ -14,6 +14,7 @@ import { albumKeyOf } from '../utils/albumKey'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { canonicalArtist } from '../utils/artistAlias'
 import { sortAlbumTracks } from '../utils/albumTrackOrder'
+import { compareAlbumNames } from '../utils/artistSort'
 import { albumCreditReleaseDate, formatReleaseDateDisplay } from '../utils/albumReleaseDate'
 import { albumDetailBackLabel } from '../utils/albumBackLabel'
 import { useBackLabel } from '../hooks/useBackLabel'
@@ -200,7 +201,7 @@ export default function AlbumDetailView() {
       const k = albumKeyOf(t)
       if (!byKey.has(k)) byKey.set(k, { key: k, name: t.album || 'Unknown', year: String(t.year || '') })
     }
-    return [...byKey.values()].sort((a, b) => (b.year || '').localeCompare(a.year || '') || a.name.localeCompare(b.name))
+    return [...byKey.values()].sort((a, b) => (b.year || '').localeCompare(a.year || '') || compareAlbumNames(a.name, b.name))
   }, [lib.tracks, albumArtist])
   const curIdx = useMemo(() => siblingAlbums.findIndex(a => a.key === albumKey), [siblingAlbums, albumKey])
   const prevAlbum = curIdx > 0 ? siblingAlbums[curIdx - 1] : null
