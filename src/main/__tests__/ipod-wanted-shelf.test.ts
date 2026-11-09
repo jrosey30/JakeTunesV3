@@ -122,3 +122,22 @@ test('source: homemini down = no section; lookups are cached on disk and reused'
     assert.equal((await src.get(true)).shelves.length, 1, 'homemini going away keeps the last good shelves')
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
+
+test('a named record: that one, in whatever edition Deezer has it; never a live record or best-of by that name', async () => {
+  const albums = [
+    { id: 1, title: 'Hysteria (Deluxe Edition)', record_type: 'album', fans: 50, cover_big: 'h-deluxe.jpg' },
+    { id: 2, title: 'Hysteria - Live at the Whisky', record_type: 'album', fans: 900 },
+    { id: 3, title: 'Hysteria (Remastered 2017)', record_type: 'album', fans: 80, cover_big: 'h-rem.jpg' },
+    { id: 4, title: 'Pyromania', record_type: 'album', fans: 99 },
+  ]
+  const { namedAlbum } = await import('../ipod-wanted-shelf.ts')
+  assert.equal(namedAlbum(albums, 'Hysteria')?.cover_big, 'h-rem.jpg')
+  assert.equal(namedAlbum([...albums, { id: 5, title: 'Hysteria', fans: 1, cover_big: 'h.jpg' }], 'Hysteria')?.cover_big, 'h.jpg')
+  assert.equal(namedAlbum([{ title: 'Hysteria (Live)', fans: 5 }], 'Hysteria'), null)
+  assert.equal(namedAlbum(albums, 'Adrenalize'), null)
+  // lookup shows the named record, with art when Deezer has it
+  const hit = await lookupWanted({ artist: 'Uffie', album: 'Sex Dreams and Denim Jeans' }, { fetchJson })
+  assert.deepEqual(hit, { type: 'album', artist: 'Uffie', title: 'Sex Dreams and Denim Jeans', artUrl: 'u1.jpg' })
+  const none = await lookupWanted({ artist: 'Uffie', album: 'A Record Deezer Lacks' }, { fetchJson })
+  assert.deepEqual(none, { type: 'album', artist: 'Uffie', title: 'A Record Deezer Lacks' })
+})

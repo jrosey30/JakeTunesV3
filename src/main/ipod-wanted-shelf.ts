@@ -85,7 +85,7 @@ export function bestKnownAlbum(
 }
 
 /** Deezer: the record the shop shows for one wanted item. */
-export async function lookupWanted(w: Pick<IpodListWanted, 'artist' | 'title'>, deps: Pick<WantedShelfDeps, 'fetchJson'>): Promise<WantedHit> {
+export async function lookupWanted(w: Pick<IpodListWanted, 'artist' | 'title' | 'album'>, deps: Pick<WantedShelfDeps, 'fetchJson'>): Promise<WantedHit> {
   if (w.title) {
     const want = { a: nameKey(w.artist, ''), t: nameKey(w.title.replace(/\s*[([].*?[)\]]/g, ''), '') }
     const hits = rows(await deps.fetchJson(`${API}/search?q=${encodeURIComponent(`${w.artist} ${w.title}`)}&limit=15`).catch(() => null))
@@ -105,6 +105,18 @@ export async function lookupWanted(w: Pick<IpodListWanted, 'artist' | 'title'>, 
   const act = await resolveDeezerArtist(w.artist, { fetchJson: deps.fetchJson })
   if (!act) return null
   const albums = rows(await deps.fetchJson(`${API}/artist/${act.id}/albums?limit=100`).catch(() => null))
+  if (w.album) {
+    // homemini named the record that defines this artist for the list (chosen
+    // by hand: Deezer's most popular is a deluxe or a 2020s record as often as
+    // not). Show THAT record, in whatever edition Deezer carries it.
+    const named = namedAlbum(albums, w.album)
+      ?? namedAlbum(rows(await deps.fetchJson(`${API}/search/album?q=${encodeURIComponent(`${act.name} ${w.album}`)}&limit=25`).catch(() => null))
+        .filter((a) => nameKey(str((a.artist as { name?: unknown } | undefined)?.name), '') === nameKey(act.name, '')), w.album)
+    return {
+      type: 'album', artist: act.name, title: w.album,
+      ...(named && str(named.cover_big || named.cover_medium) ? { artUrl: str(named.cover_big) || str(named.cover_medium) } : {}),
+    }
+  }
   const top = rows(await deps.fetchJson(`${API}/artist/${act.id}/top?limit=10`).catch(() => null))
   const best = bestKnownAlbum(albums, top)
   if (!best) return null
@@ -115,7 +127,27 @@ export async function lookupWanted(w: Pick<IpodListWanted, 'artist' | 'title'>, 
   }
 }
 
-export const wantedLookupKey = (w: Pick<IpodListWanted, 'artist' | 'title'>): string => `${nameKey(w.artist, '')}|${nameKey(w.title ?? '', '')}`
+export const wantedLookupKey = (w: Pick<IpodListWanted, 'artist' | 'title' | 'album'>): string =>
+  `${nameKey(w.artist, '')}|${nameKey(w.title ?? '', '')}|${nameKey(w.album ?? '', '')}`
+
+/** A title with its "(Deluxe Edition)" / " - 2011 Remaster" tail off, as a key. */
+const coreTitle = (t: string): string => nameKey(t.replace(/\s*[([][^)\]]*[)\]]\s*$/g, '').replace(/\s+[-–—]\s+[^-–—]*$/, ''), '')
+/** Never a live record, best-of, tribute or box, whatever its name says. */
+const NOT_THE_RECORD = /\b(live|tribute|karaoke|instrumental|best of|greatest hits|collection|anthology|box|essential|hits)\b/i
+
+/** Pure: the Deezer album that IS the named record (any edition), or null. */
+export function namedAlbum(albums: Array<Record<string, unknown>>, name: string): Record<string, unknown> | null {
+  const want = nameKey(name, '')
+  const wantCore = coreTitle(name)
+  const ok = albums.filter((a) => {
+    const t = str(a.title)
+    if (!t) return false
+    if (NOT_THE_RECORD.test(t) && !NOT_THE_RECORD.test(name)) return false
+    return nameKey(t, '') === want || coreTitle(t) === wantCore || coreTitle(t) === want
+  })
+  // the plain title first, then the edition with the most fans
+  return ok.find((a) => nameKey(str(a.title), '') === want) ?? [...ok].sort((a, b) => num(b.fans) - num(a.fans))[0] ?? null
+}
 
 /**
  * The section: one shelf per list that wants anything, in the lists' order,
