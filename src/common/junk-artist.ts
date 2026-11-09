@@ -19,7 +19,7 @@
  *
  * Over-refusal is the safe direction on a discovery shelf.
  */
-export const JUNK_ARTIST_NAME = /karaoke|tribute|cover band|made famous|made popular|in the style of|originally performed|8.?bit|chiptune|lullaby|rockabye|little rock star|music foundation|piano (tribute|version|renditions?)|string quartet|meditation|sleep baby|nursery|international orchestra|philharmonic orchestra|\borchestra\b.*\b(plays|performs)\b|studio (musicians|players|orchestra)|the hit crew|instrumental hits|piano dreamers|midnite string|guitar tribute|music box|kidz bop|kids' cover/i
+export const JUNK_ARTIST_NAME = /karaoke|tribute|cover band|revival band|made famous|made popular|in the style of|originally performed|8.?bit|chiptune|lullaby|rockabye|little rock star|music foundation|piano (tribute|version|renditions?)|string quartet|meditation|sleep baby|nursery|international orchestra|philharmonic orchestra|\borchestra\b.*\b(plays|performs)\b|studio (musicians|players|orchestra)|the hit crew|instrumental hits|piano dreamers|midnite string|guitar tribute|music box|kidz bop|kids' cover/i
 
 export function isJunkArtistName(name: string | null | undefined): boolean {
   return JUNK_ARTIST_NAME.test(String(name || ''))

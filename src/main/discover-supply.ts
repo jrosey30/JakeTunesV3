@@ -19,6 +19,7 @@
  */
 
 import { isJunkArtistName, looksLikeCoverFactory } from '../common/junk-artist.ts'
+import { nameKey } from '../common/fold-text.ts'
 
 export interface SupplyDeps {
   fetchJson: (url: string) => Promise<unknown>
@@ -28,6 +29,10 @@ export interface SupplyDeps {
   ownsSong: (artist: string, title: string) => boolean
   /** true when the library already has this ARTIST at all. */
   ownsArtist: (artist: string) => boolean
+  /** Song and album titles Jake KNOWS by this artist (library + Spotify), to
+   *  tell a same-named stranger from the band (resolveDeezerArtist). Absent
+   *  or empty = nothing to check against. */
+  knownTitles?: (artist: string) => string[]
 }
 
 export interface SupplyAlbum { artist: string; title: string; year?: string; artUrl?: string; recordType?: string; deezerId?: number; because?: string }
@@ -59,6 +64,55 @@ export function dayStride(dayNumber: number, poolSize: number, want: number): nu
   return out
 }
 
+/** A title as an identity key: brackets and " - Radio Edit" tails dropped. */
+const titleKey = (t: string): string =>
+  nameKey(String(t || '').replace(/\s*[([{][^)\]}]*[)\]}]/g, ' ').replace(/\s+[-–—]\s+.*$/, ''), '')
+
+/**
+ * Which Deezer artist IS this anchor? (2026-11-08)
+ *
+ * The supply lane used to take Deezer's FIRST search hit (`limit=1`), and
+ * Deezer ranks a tiny namesake above the band people mean: on 2026-11-08
+ * "Eminem" resolved to "Emine'm" (920 fans), "Nirvana" to "Nirvana (UK)",
+ * "Sublime" to a 17-fan "SuBlime", "Underworld" to a 40-fan namesake, and
+ * "JOSIE." to Jessie J. Their neighbours filled the shop: Nick Jonas, Pixie
+ * Lott and Christina Aguilera "because JOSIE.", "The Beatles Revival Band"
+ * "because Nirvana" (Jake: "weird/random picks", "not my taste").
+ *
+ * Now only a hit whose NAME is the anchor's name counts (case, accents and
+ * punctuation folded). Same-named acts are tried most fans first, and when
+ * Jake knows songs or albums by the anchor (library, Spotify), the act must
+ * have one of them among its top tracks or albums: Deezer's only "josie" is
+ * a 100-fan stranger with none of JOSIE.'s songs. Nothing confirmed = no
+ * anchor: a wrong anchor's neighbours are worse than one anchor fewer.
+ */
+export async function resolveDeezerArtist(
+  anchor: string,
+  deps: Pick<SupplyDeps, 'fetchJson' | 'knownTitles'>,
+): Promise<{ id: number; name: string } | null> {
+  const want = nameKey(anchor, '')
+  if (!want) return null
+  const found = arr(await deps.fetchJson(`${API}/search/artist?q=${encodeURIComponent(anchor)}&limit=25`).catch(() => null))
+  const same: Array<{ id: number; name: string; fans: number }> = []
+  for (const r of found) {
+    const id = Number((r as { id?: unknown }).id)
+    const name = nameOf(r)
+    if (!Number.isFinite(id) || nameKey(name, '') !== want) continue
+    const fansRaw = Number((r as { nb_fan?: unknown }).nb_fan)
+    same.push({ id, name, fans: Number.isFinite(fansRaw) ? fansRaw : -1 })
+  }
+  same.sort((a, b) => b.fans - a.fans)
+  const known = new Set((deps.knownTitles?.(anchor) ?? []).map(titleKey).filter(Boolean))
+  if (known.size === 0) return same[0] ? { id: same[0].id, name: same[0].name } : null
+  for (const c of same.slice(0, 3)) {
+    const top = arr(await deps.fetchJson(`${API}/artist/${c.id}/top?limit=50`).catch(() => null))
+    if (top.some((t) => known.has(titleKey(str(t.title))))) return { id: c.id, name: c.name }
+    const albums = arr(await deps.fetchJson(`${API}/artist/${c.id}/albums?limit=50`).catch(() => null))
+    if (albums.some((al) => known.has(titleKey(str(al.title))))) return { id: c.id, name: c.name }
+  }
+  return null
+}
+
 /** Neighbours of the anchors, nearest first, de-duplicated, owned artists last. */
 export async function relatedArtistPool(
   anchors: string[],
@@ -67,10 +121,11 @@ export async function relatedArtistPool(
   const seen = new Set<string>()
   const pool: Array<{ id: number; name: string; anchor: string; owned: boolean }> = []
   const refused: string[] = []
+  const unresolved: string[] = []
   for (const anchor of anchors) {
-    const found = arr(await deps.fetchJson(`${API}/search/artist?q=${encodeURIComponent(anchor)}&limit=1`).catch(() => null))
-    const id = Number((found[0] as { id?: unknown })?.id)
-    if (!Number.isFinite(id)) continue
+    const hit = await resolveDeezerArtist(anchor, deps)
+    if (!hit) { unresolved.push(anchor); continue }
+    const id = hit.id
     for (const r of arr(await deps.fetchJson(`${API}/artist/${id}/related?limit=50`).catch(() => null))) {
       const name = nameOf(r)
       const rid = Number((r as { id?: unknown }).id)
@@ -89,6 +144,7 @@ export async function relatedArtistPool(
       pool.push({ id: rid, name, anchor, owned: deps.ownsArtist(name) })
     }
   }
+  if (unresolved.length) console.warn(`[discover-supply] ${unresolved.length} anchor(s) have no Deezer artist of that exact name, left out: ${unresolved.slice(0, 8).join('; ')}${unresolved.length > 8 ? '; …' : ''}`)
   if (refused.length) console.log(`[discover-supply] refused ${refused.length} related act(s) as cover factories: ${refused.slice(0, 6).join('; ')}${refused.length > 6 ? '; …' : ''}`)
   // Artists Jake does NOT already own lead — that is what "new music" means.
   return [...pool.filter((a) => !a.owned), ...pool.filter((a) => a.owned)]
@@ -112,6 +168,18 @@ const JUNK = new RegExp([
   '\\bbest of\\b', 'greatest hits', '\\banthology\\b', '\\bb-?sides\\b',
   '\\blive (at|in|from)\\b', '\\([^)]*\\b(live|acoustic|demos?|unplugged)\\b[^)]*\\)',
   '\\bdemos?\\b', '\\bunplugged\\b', '\\bsessions?\\b', '\\bbootleg\\b', '\\bouttakes?\\b',
+  // 2026-11-08, cards on the shelf that day: "The Essential Foo Fighters"
+  // (Jake owns nine of their albums: a best-of is songs he already has),
+  // "The Sire Years: Complete Albums Box", "Collected Recordings 1983-1989",
+  // "Power Ballad (Music From The Motion Picture)", "Tout va bien (Original
+  // Soundtrack)", "La hija de todas las rabias (Original Score)", and two
+  // Rolling Thunder Revue 1976 tapes named by date and city.
+  '\\bessential\\b', '\\bcollected\\b', '\\bcollection\\b', '\\bbox\\s*set\\b', '\\balbums box\\b',
+  '\\bcomplete (albums|recordings|works|studio)\\b', '\\bretrospective\\b', '\\bsampler\\b', '\\bvery best\\b',
+  '\\bsoundtrack\\b', '\\boriginal score\\b', '\\bmotion picture\\b', '\\bmusic from (the|and inspired)\\b',
+  '\\bhome (jam|recordings?)\\b',
+  // A concert named by its date: "1976: Fort Collins", "May 23rd".
+  '\\b(19|20)\\d\\d:\\s', '\\b(january|february|march|april|may|june|july|august|september|october|november|december) \\d{1,2}(st|nd|rd|th)\\b',
 ].join('|'), 'i')
 
 /** Albums he does not own, real records only, newest first. */
@@ -230,6 +298,22 @@ export async function harvestCuratorSongs(
   return out
 }
 
+/**
+ * Rotate the ENTRY POINT daily so today's shop is not yesterday's shop, while
+ * staying stable within the day (no reshuffling under Jake mid-browse).
+ *
+ * The rotation runs INSIDE each half (2026-11-08). It used to permute the
+ * whole pool, which threw away relatedArtistPool's one ordering promise,
+ * "artists Jake does NOT own come first": on 2026-11-08 20 of the 50 quota
+ * cards were by artists already in the library (Lou Reed, Bob Dylan, John
+ * Lennon, Foo Fighters, Metronomy, +44, ...), which is what "already own
+ * them" looked like. Owned artists still fill in when the new ones run dry.
+ */
+export function rotateKeepingNewFirst<T extends { owned: boolean }>(pool: T[], dayNumber: number): T[] {
+  const rotate = (part: T[]): T[] => part.length > 1 ? dayStride(dayNumber, part.length, part.length).map((i) => part[i]) : part
+  return [...rotate(pool.filter((a) => !a.owned)), ...rotate(pool.filter((a) => a.owned))]
+}
+
 export interface DailyDiscovery {
   albums: SupplyAlbum[]
   songs: SupplySong[]
@@ -260,13 +344,7 @@ export async function buildDailyDiscovery(
   const dayNumber = opts.dayNumber ?? Math.floor(Date.now() / 86_400_000)
   const shortfall: string[] = []
 
-  let pool = await relatedArtistPool(anchors, deps)
-  // Rotate the ENTRY POINT daily so today's shop is not yesterday's shop, while
-  // staying stable within the day (no reshuffling under Jake mid-browse).
-  if (pool.length > 1) {
-    const order = dayStride(dayNumber, pool.length, pool.length)
-    pool = order.map((i) => pool[i])
-  }
+  const pool = rotateKeepingNewFirst(await relatedArtistPool(anchors, deps), dayNumber)
 
   const albums: SupplyAlbum[] = []
   const songs: SupplySong[] = []

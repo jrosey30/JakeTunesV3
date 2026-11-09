@@ -855,7 +855,7 @@ export function ownershipChecks(owned: { artists: Set<string>; albumKeys: Set<st
 export async function supplyLanes(
   anchorNames: string[],
   dayNumber: number,
-  owned: { artists: Set<string>; albumKeys: Set<string>; baseKeys: Set<string> },
+  owned: { artists: Set<string>; albumKeys: Set<string>; baseKeys: Set<string>; titlesBy?: Map<string, string[]> },
   fetchFn: typeof fetch = fetch,
   sleepMs = 120,   // Deezer politeness (50 req / 5 s per IP); tests pass 0
 ): Promise<FeedCard[]> {
@@ -867,6 +867,9 @@ export async function supplyLanes(
       return res.json()
     },
     ...ownershipChecks(owned),
+    // Which Deezer act IS each anchor (2026-11-08): checked against what Jake
+    // knows by that name, so a same-named stranger never seeds the shop.
+    knownTitles: (artist: string): string[] => owned.titlesBy?.get(nameKey(artist, '')) ?? [],
   }
   // Curator pool (guarded: state-dir drags electron, which the node test
   // loader cannot resolve — tests run with an empty pool, the app with
@@ -957,4 +960,29 @@ export function ownedPairKeys(tracks: Array<{ artist?: string; albumArtist?: str
     }
   }
   return out
+}
+
+/**
+ * Song and album titles per artist (key: nameKey(artist, '')), from the
+ * library plus any outside listening (Spotify's top tracks and likes) — what
+ * the supply lane checks a Deezer act against before using it as an anchor
+ * (discover-supply.ts resolveDeezerArtist, 2026-11-08).
+ */
+export function knownTitleIndex(
+  tracks: Array<{ artist?: string; albumArtist?: string; album?: string; title?: string }>,
+  extra: Array<{ artist?: string; song?: string; album?: string }> = [],
+): Map<string, string[]> {
+  const out = new Map<string, Set<string>>()
+  const add = (who: unknown, ...titles: unknown[]): void => {
+    for (const name of artistContributors(String(who || ''))) {
+      const k = nameKey(name, '')
+      if (!k) continue
+      let set = out.get(k)
+      if (!set) { set = new Set(); out.set(k, set) }
+      for (const t of titles) { const v = String(t || '').trim(); if (v) set.add(v) }
+    }
+  }
+  for (const t of tracks) { add(t.artist, t.title, t.album); if (t.albumArtist) add(t.albumArtist, t.title, t.album) }
+  for (const t of extra) add(t.artist, t.song, t.album)
+  return new Map([...out].map(([k, v]) => [k, [...v]]))
 }
