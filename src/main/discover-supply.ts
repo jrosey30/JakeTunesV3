@@ -185,16 +185,40 @@ const JUNK = new RegExp([
 /** A title that is not a canonical studio release (compilation, box set, live, tribute, deluxe…). */
 export const isJunkEdition = (title: string): boolean => JUNK.test(title)
 
+/**
+ * How many of the day's picks one library artist may seed (2026-11-09).
+ * On 2026-11-09 Sublime seeded 22 of the 50 daily cards and five artists
+ * seeded all of them, so the shop read as one ska-punk list twice. Shared by
+ * the albums and the songs: three picks per "because" for the whole day.
+ */
+export const PICKS_PER_ANCHOR = 3
+
+export interface AnchorCap { room(anchor: string): boolean; take(anchor: string): boolean; give(anchor: string): void }
+
+export function anchorCap(max = PICKS_PER_ANCHOR): AnchorCap & { counts: Map<string, number> } {
+  const counts = new Map<string, number>()
+  const k = (a: string): string => a.trim().toLowerCase()
+  return {
+    counts,
+    room: (a) => (counts.get(k(a)) ?? 0) < max,
+    take: (a) => { const n = counts.get(k(a)) ?? 0; if (n >= max) return false; counts.set(k(a), n + 1); return true },
+    /** A harvested pick the day did not seat hands its slot back. */
+    give: (a) => { const n = counts.get(k(a)) ?? 0; if (n > 0) counts.set(k(a), n - 1) },
+  }
+}
+
 /** Albums he does not own, real records only, newest first. */
 export async function harvestAlbums(
   pool: Array<{ id: number; name: string; anchor: string }>,
   want: number,
   deps: SupplyDeps,
+  anchors?: AnchorCap,
 ): Promise<SupplyAlbum[]> {
   const out: SupplyAlbum[] = []
   const perArtist = new Map<string, number>()
   for (const a of pool) {
     if (out.length >= want) break
+    if (anchors && !anchors.room(a.anchor)) continue
     for (const al of arr(await deps.fetchJson(`${API}/artist/${a.id}/albums?limit=25`).catch(() => null))) {
       if (out.length >= want) break
       const title = str(al.title)
@@ -203,6 +227,7 @@ export async function harvestAlbums(
       if (deps.ownsAlbum(a.name, title)) continue                  // THE hard rule
       const n = perArtist.get(a.name) || 0
       if (n >= 2) continue                                         // no one artist owning the shelf
+      if (anchors && !anchors.take(a.anchor)) break
       perArtist.set(a.name, n + 1)
       out.push({
         artist: a.name, title,
@@ -222,11 +247,13 @@ export async function harvestSongs(
   pool: Array<{ id: number; name: string; anchor: string }>,
   want: number,
   deps: SupplyDeps,
+  anchors?: AnchorCap,
 ): Promise<SupplySong[]> {
   const out: SupplySong[] = []
   const perArtist = new Map<string, number>()
   for (const a of pool) {
     if (out.length >= want) break
+    if (anchors && !anchors.room(a.anchor)) continue
     for (const t of arr(await deps.fetchJson(`${API}/artist/${a.id}/top?limit=10`).catch(() => null))) {
       if (out.length >= want) break
       const title = str(t.title)
@@ -234,6 +261,7 @@ export async function harvestSongs(
       if (deps.ownsSong(a.name, title)) continue                   // THE hard rule
       const n = perArtist.get(a.name) || 0
       if (n >= 2) continue
+      if (anchors && !anchors.take(a.anchor)) break
       perArtist.set(a.name, n + 1)
       const album = t.album as { cover_big?: string; cover_medium?: string } | undefined
       out.push({
@@ -340,7 +368,7 @@ export interface DailyDiscovery {
 export async function buildDailyDiscovery(
   anchors: string[],
   deps: SupplyDeps,
-  opts: { want?: number; dayNumber?: number; maxPasses?: number; curatorSongs?: Array<{ artist: string; title: string; curator: string; playlist: string }>; curatorSlots?: number } = {},
+  opts: { want?: number; dayNumber?: number; maxPasses?: number; curatorSongs?: Array<{ artist: string; title: string; curator: string; playlist: string }>; curatorSlots?: number; perAnchor?: number } = {},
 ): Promise<DailyDiscovery> {
   const want = opts.want ?? 25
   const maxPasses = opts.maxPasses ?? 3
@@ -369,24 +397,23 @@ export async function buildDailyDiscovery(
 
   let passes = 0
   let frontier = pool
+  const cap = anchorCap(opts.perAnchor ?? PICKS_PER_ANCHOR)
   while (passes < maxPasses && (albums.length < want || songs.length < want)) {
     passes++
     if (albums.length < want) {
-      for (const a of await harvestAlbums(frontier, (want - albums.length) * 3, deps)) {
+      for (const a of await harvestAlbums(frontier, (want - albums.length) * 3, deps, cap)) {
         const k = key(a.artist, a.title)
-        if (seenAlbum.has(k)) continue
+        if (albums.length >= want || seenAlbum.has(k)) { if (a.because) cap.give(a.because); continue }
         seenAlbum.add(k)
         albums.push(a)
-        if (albums.length >= want) break
       }
     }
     if (songs.length < want) {
-      for (const s of await harvestSongs(frontier, (want - songs.length) * 3, deps)) {
+      for (const s of await harvestSongs(frontier, (want - songs.length) * 3, deps, cap)) {
         const k = key(s.artist, s.title)
-        if (seenSong.has(k)) continue
+        if (songs.length >= want || seenSong.has(k)) { if (s.because) cap.give(s.because); continue }
         seenSong.add(k)
         songs.push(s)
-        if (songs.length >= want) break
       }
     }
     if (albums.length >= want && songs.length >= want) break
@@ -397,6 +424,27 @@ export async function buildDailyDiscovery(
     const known = new Set(frontier.map((a) => a.name.toLowerCase()))
     frontier = deeper.filter((a) => !known.has(a.name.toLowerCase()))
     if (!frontier.length) break
+  }
+
+  // The quota outranks the spread ("NO LESS"): when the capped walk comes up
+  // short, the nearest neighbours fill what is left, cap or no cap.
+  if (albums.length < want) {
+    for (const a of await harvestAlbums(pool, (want - albums.length) * 3, deps)) {
+      const k = key(a.artist, a.title)
+      if (seenAlbum.has(k)) continue
+      seenAlbum.add(k)
+      albums.push(a)
+      if (albums.length >= want) break
+    }
+  }
+  if (songs.length < want) {
+    for (const s of await harvestSongs(pool, (want - songs.length) * 3, deps)) {
+      const k = key(s.artist, s.title)
+      if (seenSong.has(k)) continue
+      seenSong.add(k)
+      songs.push(s)
+      if (songs.length >= want) break
+    }
   }
 
   if (albums.length < want) shortfall.push(`albums ${albums.length}/${want}`)

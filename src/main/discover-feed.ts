@@ -23,7 +23,8 @@
 import { isJunkArtistName } from '../common/junk-artist.ts'
 import { addsRemasterStamp, searchTitle, unwantedVersionOf } from './streamrip-match.ts'
 import { recoArtistMatches } from './reco-match.ts'
-import { binForGenre, pickHookIndex } from '../common/record-shop-bins.ts'
+import { fileGenre, genreForPick, pickHookIndex, type PickGenreSources } from '../common/record-shop-bins.ts'
+import { loadTagCache, cachedTags } from './artist-tags.ts'
 import { nameKey, storedNameKey } from '../common/fold-text.ts'
 import { CRITIC_LANE, CRITIC_PICKS_SOURCE } from '../common/critic-picks.ts'
 import type { RecommendationSource } from '../common/record-shop.ts'
@@ -47,7 +48,8 @@ export interface FeedCard {
    *  the scene connection). Only set when it describes the MUSIC — "3 of
    *  their tracks already yours" is inventory, not sound, and stays out. */
   desc?: string
-  /** Shop bin divider (2026-08-22 crate reorg) — computed from genre. */
+  /** The crate the pick files in (common/record-shop-bins.ts CRATES id,
+   *  2026-11-09) — computed from genre by stampBins. */
   bin?: string
   /** iTunes collection id, when verification saw one — the key that lets
    *  the hook-sample pass look the album's tracks up. */
@@ -379,9 +381,46 @@ export function applyQualityFloor(cards: FeedCard[]): FeedCard[] {
 // the rail said "new capability belongs in a MODULE" and it was right.
 // Deps arrive injected so node --test can exercise both passes.
 
-/** Every card files under a genre divider. */
-export function stampBins(cards: FeedCard[]): void {
-  for (const c of cards) c.bin = binForGenre(c.genre)
+/** Every card gets a genre and files into one of Jake's crates (2026-11-09).
+ *  The daily lanes reach here with no genre, which is how the old page ended
+ *  up with one crate called "Misc": the genre now comes from the card, the
+ *  artist in the library, the artist's MusicBrainz tags or the library
+ *  artist the pick came from (genreForPick). Run at generation and again on
+ *  every feed served, so a feed built before this still files. Idempotent. */
+export function stampBins(cards: FeedCard[], src: PickGenreSources): void {
+  for (const c of cards) {
+    const g = genreForPick(c, src)
+    if (g && !(c.genre && fileGenre(c.genre).bin === fileGenre(g).bin)) c.genre = g
+    c.bin = fileGenre(g).bin
+  }
+}
+
+/** The library's own genre per artist (the one most of his tracks by them
+ *  carry) and the MusicBrainz tag cache, for stampBins. */
+export async function shopGenreSources(
+  tracks: Array<{ artist?: string; albumArtist?: string; genre?: string }>,
+  tagFile: string,
+  now = Date.now(),
+): Promise<PickGenreSources> {
+  const counts = new Map<string, Map<string, number>>()
+  for (const t of tracks) {
+    const g = (t.genre || '').trim()
+    if (!g) continue
+    for (const who of new Set([t.albumArtist, t.artist])) {
+      const k = normKey(String(who || ''))
+      if (!k) continue
+      const m = counts.get(k) ?? new Map<string, number>()
+      m.set(g, (m.get(g) ?? 0) + 1)
+      counts.set(k, m)
+    }
+  }
+  const top = new Map<string, string>()
+  for (const [k, m] of counts) top.set(k, [...m].sort((a, b) => b[1] - a[1])[0][0])
+  const cache = await loadTagCache(tagFile)
+  return {
+    libraryGenre: (artist) => top.get(normKey(artist)),
+    tags: (artist) => cachedTags(cache, artist, now),
+  }
 }
 
 /**

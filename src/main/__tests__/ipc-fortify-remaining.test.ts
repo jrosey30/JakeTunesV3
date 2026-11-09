@@ -34,14 +34,7 @@ test('no raw ipcMain.handle outside ipc-register.ts', () => {
   assert.deepEqual(leaks, [], `raw ipcMain.handle remaining in: ${leaks.join(', ')}`)
 })
 
-test('record-store / imessage / gapless register through IpcRegistrar', () => {
-  const recordStore = readFileSync(join(mainDir, 'record-store/index.ts'), 'utf-8')
-  assert.match(recordStore, /ipc: IpcRegistrar/)
-  assert.match(recordStore, /record-store:get-shelves/)
-  assert.match(recordStore, /refuse: REFUSED_SHELVES/)
-  assert.match(recordStore, /refuse: null/)
-  assert.match(recordStore, /refuse: REFUSED_SENDER/)
-
+test('imessage / gapless register through IpcRegistrar', () => {
   const imsg = readFileSync(join(mainDir, 'imessage-capture.ts'), 'utf-8')
   assert.match(imsg, /startImessageCapture\(ipc: IpcRegistrar/)
   assert.match(imsg, /imessage-capture-status/)

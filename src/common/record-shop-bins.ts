@@ -4,9 +4,9 @@
  * the bin experience… if recommending an album, have one song be the 30
  * second sample for the entire album that is going to hook me").
  *
- * Pure and node-tested. The shop's genre DIVIDERS are deliberately coarse —
- * a real store has PUNK and HIP-HOP cards in the crates, not a taxonomy.
- * Order is display order; Punk leads (this is Jake's store).
+ * Pure and node-tested. SHOP_BINS / binForGenre are the critic wall's coarse
+ * reading of a sheet genre (critic-picks.ts criticGenre). The page files
+ * into CRATES (below), Jake's own filing, since 2026-11-09.
  */
 
 export const SHOP_BINS = [
@@ -54,52 +54,101 @@ export function pickHookIndex(tracks: Array<{ previewUrl?: string; pct?: number 
   return best
 }
 
-/**
- * Shelf quotas (2026-08-23, Jake: "some genre's shouldnt have 7 picks and
- * others 2 and 1"). Presentation policy, applied at render time so cached
- * feeds behave identically:
- *  - a bin shows at most `cap` cards — its BEST by brain %, ties keep
- *    original order;
- *  - a bin with fewer than `minShelf` cards can't stand as a shelf — its
- *    cards fold into the 'More Finds' shelf at the end, so nothing is lost
- *    but no shelf looks abandoned;
- *  - `keep` pins cards that must survive the cap (the critic wall's daily
- *    five — a count Jake asked for, not a brain contest). Pinned cards take
- *    their seats first; the best unpinned fill what is left.
- */
-export const MORE_BIN = 'More Finds'
+// ── The crates (2026-11-09 reorganization) ──────────────────────────
+// Jake's own filing, 2026-09-10, rescued from Step Inside's floor plan
+// (renderer/views/RecordStore/stepinside/shopPlan.ts, removed with the room;
+// tag archive/step-inside-2026-11-09): "classic rock and rock share.
+// alternative/indie share. punk and grunge their own thing." Then: "no —
+// punk is separate and grunge is separate. they're their own things." The
+// small sections share one crate with a label on each card, the way a
+// neighbourhood shop files what it only has a few of. There is no Misc.
 
-export function applyBinQuotas<T extends { bin?: string; brainPct?: number }>(
-  cards: T[],
-  opts: { cap?: number; minShelf?: number; keep?: (card: T) => boolean } = {},
-): Array<{ bin: string; cards: T[] }> {
-  const cap = opts.cap ?? 6
-  const minShelf = opts.minShelf ?? 3
-  const pinned = (c: T): number => (opts.keep?.(c) ? 1 : 0)
-  // Pinned first, then brain %, ties keep original order; then back to it.
-  const best = (arr: T[], n: number): T[] => arr
-    .map((c, i) => ({ c, i }))
-    .sort((a, b) => (pinned(b.c) - pinned(a.c)) || ((b.c.brainPct ?? 0) - (a.c.brainPct ?? 0)) || (a.i - b.i))
-    .slice(0, Math.max(n, arr.filter((c) => pinned(c)).length))
-    .sort((a, b) => a.i - b.i)
-    .map((x) => x.c)
-  const byBin = new Map<string, T[]>()
-  for (const c of cards) {
-    const b = c.bin || 'Misc'
-    const arr = byBin.get(b) || []
-    arr.push(c)
-    byBin.set(b, arr)
+/** The crates in their fixed order, the order the page shows them. */
+export const CRATES = [
+  { id: 'punk', label: 'Punk' },
+  { id: 'grunge', label: 'Grunge' },
+  { id: 'rock', label: 'Rock' },
+  { id: 'alt', label: 'Alternative / Indie' },
+  { id: 'rap', label: 'Rap / Hip-Hop' },
+  { id: 'electronic', label: 'Electronic / Dance' },
+  { id: 'soul', label: 'Soul / Funk / R&B' },
+  { id: 'pop', label: 'Pop / New Wave' },
+  { id: 'other', label: 'Jazz · World · Metal · Country' },
+] as const
+export type CrateId = typeof CRATES[number]['id']
+export const isCrateId = (v: unknown): v is CrateId => CRATES.some((c) => c.id === v)
+
+/** Order the small sections file in the mixed crate. */
+export const OTHER_SECTIONS = ['JAZZ', 'BRAZIL & LATIN', 'WORLD', 'REGGAE', 'METAL', 'COUNTRY', 'ODDITIES'] as const
+export type OtherSection = typeof OTHER_SECTIONS[number]
+
+export interface Filing { bin: CrateId; section?: OtherSection }
+
+/** Ordered rules: the first match wins, and the order is the point —
+ *  "Funk Rock" is rock, "Alternative Hip-Hop" is rap, "Latin House" is
+ *  electronic, "Garage Rock" is rock but "UK Garage" is not. The words are
+ *  the ones in Jake's own library ("altnerative", "sleaze"). */
+const RULES: Array<[RegExp, Filing]> = [
+  [/grunge/i,                                                      { bin: 'grunge' }],
+  [/punk|hardcore/i,                                               { bin: 'punk' }],
+  [/metal/i,                                                       { bin: 'other', section: 'METAL' }],
+  [/\brap\b|hip.?hop|trip hop|dub-hop/i,                            { bin: 'rap' }],
+  [/r&b|\bsoul\b(?! rock)|boogie|\bfunk\b(?! rock)(?! metal)/i,     { bin: 'soul' }],
+  [/alternative|altnerative|indie|shoegaze|college|chillwave|sleaze/i, { bin: 'alt' }],
+  [/house|electro|dance|disco|uk garage|big beat|berlin|techno|mash up/i, { bin: 'electronic' }],
+  [/rock|blues|americana/i,                                        { bin: 'rock' }],
+  [/pop|wave|synth|easy listening|italo/i,                          { bin: 'pop' }],
+  [/jazz/i,                                                        { bin: 'other', section: 'JAZZ' }],
+  [/bossa|samba|mpb|brazil|latin/i,                                { bin: 'other', section: 'BRAZIL & LATIN' }],
+  [/reggae|dancehall|\bdub\b/i,                                    { bin: 'other', section: 'REGGAE' }],
+  [/country/i,                                                     { bin: 'other', section: 'COUNTRY' }],
+  [/world|afro/i,                                                  { bin: 'other', section: 'WORLD' }],
+]
+
+/** Where a genre files when one of Jake's rules knows it; null otherwise. */
+export function knownFiling(genre: string | undefined | null): Filing | null {
+  const g = (genre || '').trim()
+  if (!g) return null
+  for (const [re, filing] of RULES) if (re.test(g)) return filing
+  return null
+}
+
+/** Where a genre string files. Anything unrecognised goes to the oddities
+ *  card in the mixed crate, never lost and never a crate called Misc. */
+export function fileGenre(genre: string | undefined | null): Filing {
+  return knownFiling(genre) ?? { bin: 'other', section: 'ODDITIES' }
+}
+
+/** Where the genre of a pick comes from, best first. */
+export interface PickGenreSources {
+  /** The genre Jake's library gives this artist (his own words), if he has any of them. */
+  libraryGenre: (artist: string) => string | undefined
+  /** MusicBrainz's community tags for the artist, most-voted first (main/artist-tags.ts). */
+  tags: (artist: string) => string[] | undefined
+}
+
+/**
+ * Every pick gets a genre before it is filed (Jake, 2026-11-09: the crates
+ * were one crate called "Misc" because most lanes reach the page with no
+ * genre). Best first: the card's own (iTunes, the critic sheet), the
+ * artist's genre in the library, the artist's MusicBrainz tags, the genre
+ * (then the tags) of the artist the pick came from ("because"), then the
+ * card's sonic one-liner. The first one Jake's rules know wins; failing that the
+ * first word anyone gave; null only when nobody said anything at all.
+ */
+export function genreForPick(
+  card: { artist: string; genre?: string; because?: string; desc?: string },
+  src: PickGenreSources,
+): string | null {
+  const said: string[] = []
+  const add = (g: string | undefined | null): void => { const t = (g || '').trim(); if (t) said.push(t) }
+  add(card.genre)
+  add(src.libraryGenre(card.artist))
+  for (const t of src.tags(card.artist) ?? []) add(t)
+  if (card.because) {
+    add(src.libraryGenre(card.because))
+    for (const t of src.tags(card.because) ?? []) add(t)
   }
-  const shelves: Array<{ bin: string; cards: T[] }> = []
-  const overflow: T[] = []
-  for (const bin of SHOP_BINS) {
-    const arr = byBin.get(bin)
-    if (!arr) continue
-    if (arr.length < minShelf) { overflow.push(...arr); continue }
-    shelves.push({ bin, cards: best(arr, cap) })
-  }
-  // Unknown bins (future-proofing) fold into More too.
-  for (const [bin, arr] of byBin) if (!(SHOP_BINS as readonly string[]).includes(bin)) overflow.push(...arr)
-  if (overflow.length) shelves.push({ bin: MORE_BIN, cards: best(overflow, cap + 2) })
-  return shelves
+  add(card.desc)
+  return said.find((g) => knownFiling(g)) ?? said[0] ?? null
 }

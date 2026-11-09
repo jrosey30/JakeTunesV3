@@ -21,7 +21,7 @@ import CDImportView from '../views/CDImportView'
 import StoreView from '../views/BandcampStore'
 import DownloadView from '../views/DownloadStore'
 import ScotusView from '../views/ScotusView'
-import RecordStoreView from '../views/RecordStore'
+import RockDnaView from '../views/RockDnaView'
 import YearInReviewView from '../views/YearInReviewView'
 import Top1000QuizView from '../views/Top1000QuizView'
 import ViewModeToggle from './ViewModeToggle'
@@ -162,7 +162,9 @@ export default function MainContent() {
     case 'store': viewElement = <StoreView />; break
     case 'download': viewElement = <DownloadView />; break
     case 'scotus': viewElement = <ScotusView />; break
-    case 'recordstore': viewElement = <RecordStoreView />; break
+    // Rock DNA left the Record Shop's tabs (2026-11-09): a quiz, not a place
+    // to shop. The shop's "What I've learned" strip links here.
+    case 'rock-dna': viewElement = <RockDnaView />; break
     default: viewElement = <SongsView />
   }
 

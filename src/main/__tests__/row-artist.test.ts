@@ -166,8 +166,12 @@ describe('the Record Store reads a row the same way', () => {
 
 describe('the wiring', () => {
   const src = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf-8')
-  it('Get on a song in the Record Store takes the Listen List\'s door', () => {
-    assert.match(src('../../renderer/record-shop/liveShopCommands.ts'), /const d = queueRecoDownload\(rec\)/)
+  // Moved here when Step Inside's room (liveShopCommands.ts) was removed
+  // (2026-11-09): the doors that are left are the shop card's Get and the
+  // Listen List's own.
+  it('Get on a song in the Record Shop takes the Listen List\'s door', () => {
+    assert.match(src('../../renderer/views/NewForYouView.tsx'), /const d = queueRecoDownload\(rec\)/)
+    assert.match(src('../../renderer/views/ListenToTheListView.tsx'), /const d = queueRecoDownload\(r\)/)
   })
   it('the list groups a row by the names it will ask for', () => {
     assert.match(src('../../renderer/views/ListenToTheListView.tsx'), /const recoType = \(r: Recommendation\)[^\n]*\n\s+const \{ title: song, album \} = recoFields\(r\)/)

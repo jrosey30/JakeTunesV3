@@ -123,8 +123,8 @@ export function restoreActionFor(t: NavLocation): RestoreAction {
  * playlist you visited earlier must reopen as that album, not as the playlist
  * (Jake 2026-10-30: "I flip from Perfecth to a playlist page, and I don't have
  * any way of going back to the Perfecth page"). No saved view → Home. The
- * hidden Record Store placeholder has no sidebar entry to leave by, so a
- * session that ended there reopens on Songs (4.5.0-63).
+ * Record Store room was removed (2026-11-09), so a session saved there
+ * reopens on Songs (4.5.0-63).
  */
 export function savedLocation(ui: Record<string, unknown> | null | undefined): NavLocation {
   const str = (k: string): string | null => { const v = ui?.[k]; return typeof v === 'string' ? v : null }

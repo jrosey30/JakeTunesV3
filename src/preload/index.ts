@@ -1002,20 +1002,6 @@ const electronAPI = {
   streamripSetQobuzToken: (userId: string, token: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('streamrip:set-qobuz-token', userId, token),
 
-  // ── Music Man's Record Store (Brief 037) ──
-  // Phase 0: get-shelves returns a heuristic ShelfBundle; blurb/speak/
-  // cancel are wired but stubbed. Phase 1 swaps in the LLM-driven
-  // curator; Phase 2 adds the scene/FSM/TTS layer.
-  recordStore: {
-    getShelves: (opts?: { forceRefresh?: boolean }): Promise<unknown> =>
-      ipcRenderer.invoke('record-store:get-shelves', opts ?? {}),
-    getBlurb: (args: { itemId: string; persona: 'music-man' | 'larry' | 'stephen-hands' }): Promise<unknown> =>
-      ipcRenderer.invoke('record-store:get-blurb', args),
-    speakBlurb: (args: { blurb: unknown }): Promise<{ ok: true; audioId: string }> =>
-      ipcRenderer.invoke('record-store:speak-blurb', args),
-    cancelSpeech: (args: { audioId: string }): Promise<{ ok: true }> =>
-      ipcRenderer.invoke('record-store:cancel-speech', args),
-  },
   // ── Record Shop (6.0): an item's catalogue identity + library ownership by recording identity ──
   recordShop: {
     resolve: (req: unknown): Promise<unknown> => ipcRenderer.invoke('record-shop:resolve', req),

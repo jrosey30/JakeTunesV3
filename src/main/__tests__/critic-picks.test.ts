@@ -28,7 +28,8 @@ import {
   looksLikeCriticSheet, CRITIC_LEDGER_FILE, CRITIC_SHEET_FILE,
 } from '../critic-picks-feed.ts'
 import { applyQualityFloor, assembleLanes, filterFeed, ownedPairKeys, ownershipChecks, normKey, type FeedCard } from '../discover-feed.ts'
-import { applyBinQuotas, binForGenre } from '../../common/record-shop-bins.ts'
+import { binForGenre } from '../../common/record-shop-bins.ts'
+import { buildShopPage } from '../../common/record-shop-page.ts'
 import { shopItemFromFeed } from '../../common/record-shop-adapters.ts'
 
 // gviz shape: every cell quoted, a stats panel to the right of the six columns.
@@ -482,14 +483,12 @@ describe('the shop passes keep the daily five whole', () => {
     const l = lanes.find((x) => x.id === CRITIC_LANE)
     assert.equal(l?.cards.length, CRITIC_PICKS_SOURCE.perDay)
   })
-  test('pinned in their genre bin — the brain-% cap cannot hide one', () => {
-    const rock = Array.from({ length: 8 }, (_, i) => ({ bin: 'Rock', brainPct: 90 + i, lane: 'scene' }))
-    const pick = { bin: 'Rock', brainPct: 1, lane: CRITIC_LANE }
-    const shelves = applyBinQuotas([...rock, pick], { cap: 6, keep: (c) => c.lane === CRITIC_LANE })
-    const r = shelves.find((s) => s.bin === 'Rock')!
-    assert.equal(r.cards.length, 6)
-    assert.ok(r.cards.includes(pick))
-    const unpinned = applyBinQuotas([...rock, pick], { cap: 6 }).find((s) => s.bin === 'Rock')!
-    assert.ok(!unpinned.cards.includes(pick), 'without the pin the cap would have dropped it')
+  test('never capped out of their crate: every critic pick is on the page', () => {
+    const rock = Array.from({ length: 8 }, (_, i) => ({ lane: 'scene', type: 'album' as const, artist: `Band ${i}`, title: `LP ${i}`, bin: 'rock', brainPct: 90 + i }))
+    const pick = { lane: CRITIC_LANE, type: 'album' as const, artist: 'Thin Lizzy', title: 'Jailbreak', bin: 'rock', brainPct: 1 }
+    const page = buildShopPage({ lanes: [{ id: 'scene', cards: rock }, { id: CRITIC_LANE, cards: [pick] }], wanted: [], year: '2026' })
+    const r = page.crates.find((c) => c.id === 'rock')!
+    assert.equal(r.entries.length, 9)
+    assert.ok(r.entries.some((e) => e.lead === pick))
   })
 })

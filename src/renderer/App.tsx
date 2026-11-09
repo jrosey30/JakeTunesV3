@@ -1087,12 +1087,7 @@ function AppInner() {
         // an album page therefore landed on a playlist visited earlier, behind
         // an album entry with no album under it: Back could only reach Albums.
         // Jake: "page memory sucks … no way of going back to the Perfecth page."
-        //
-        // Acceptance harness: #stepInside boots into the game so a run can be
-        // driven and recorded. Dev-only — main never sets this hash in a
-        // packaged app.
-        const harness = typeof window !== 'undefined' && /stepInside/i.test(window.location.hash)
-        dispatch(harness ? { type: 'SET_VIEW', view: 'recordstore' } : restoreActionFor(savedLocation(ui)))
+        dispatch(restoreActionFor(savedLocation(ui)))
         if (typeof ui.sortColumn === 'string') {
           // Restore sort state — dispatch twice if needed to match saved direction
           dispatch({ type: 'SET_SORT', column: ui.sortColumn as import('./types').SortColumn })

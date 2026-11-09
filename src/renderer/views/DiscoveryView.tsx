@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import NewForYouView from './NewForYouView'
 import ListenToTheListView from './ListenToTheListView'
 import DownloadView from './DownloadStore/DownloadView'
-import RockDnaView from './RockDnaView'
 import { useShopList } from '../record-shop/useShopSession'
 import { DISCOVERY_TAB_EVENT, rememberDiscoveryTab, rememberedDiscoveryTab, type DiscoveryTab } from './discoveryTab'
 import '../styles/discovery.css'
@@ -37,7 +36,7 @@ export default function DiscoveryView({ initialTab }: { initialTab?: DiscoveryTa
   // Literal labels (Record Shop structure proposal, step 5): what a tab IS.
   // "For You" = the AI picks (The Racks stays as the room's name, a subtitle);
   // "Listen List" = the saved items, with how many. Routes and tab ids are
-  // unchanged; "At the Counter" now names acquisition activity (Step Inside).
+  // unchanged.
   return (
     <div className="discovery">
       <div className="discovery-tabs" role="tablist" aria-label="Record Shop">
@@ -62,17 +61,12 @@ export default function DiscoveryView({ initialTab }: { initialTab?: DiscoveryTa
           className={`discovery-tab ${tab === 'your-list' ? 'discovery-tab--on' : ''}`}
           onClick={() => select('your-list')}
         >Listen List{recs.length > 0 && <span className="discovery-tab__count" aria-label={`${recs.length} saved`}>{recs.length.toLocaleString()}</span>}</button>
-        {/* Rock DNA (Rocksurgence step 2, 2026-10-11): the taste quiz that
-            steers what this shop digs for. */}
-        <button
-          role="tab"
-          aria-selected={tab === 'rock-dna'}
-          className={`discovery-tab ${tab === 'rock-dna' ? 'discovery-tab--on' : ''}`}
-          onClick={() => select('rock-dna')}
-        >Rock DNA</button>
+        {/* Rock DNA left the tabs (2026-11-09): it is a quiz, not a place to
+            shop. Its own page ('rock-dna' view) is linked from the For You
+            page's "What I've learned" strip ("Tune my taste"). */}
       </div>
       <div className="discovery-body">
-        {tab === 'new-for-you' ? <NewForYouView /> : tab === 'browse' ? <DownloadView mode="browse" /> : tab === 'rock-dna' ? <RockDnaView /> : <ListenToTheListView />}
+        {tab === 'new-for-you' ? <NewForYouView /> : tab === 'browse' ? <DownloadView mode="browse" /> : <ListenToTheListView />}
       </div>
     </div>
   )

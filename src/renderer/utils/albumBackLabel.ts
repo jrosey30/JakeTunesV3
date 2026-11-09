@@ -20,7 +20,7 @@ const BACK_LABELS: Record<ViewName, string> = {
   store: '← Bandcamp Store',
   download: '← Downloads',
   scotus: '← Beck v. Prupis',
-  recordstore: '← Record Store',
+  'rock-dna': '← Rock DNA',
   'listen-to-the-list': '← Listen List',
   'new-for-you': '← New For You',
   discovery: '← Record Shop',

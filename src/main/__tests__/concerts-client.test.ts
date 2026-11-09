@@ -254,15 +254,12 @@ describe('concerts client — the fallback chain', () => {
 
 describe('WIRING — the tested feed is the live one', () => {
   const read = (...p: string[]) => readFileSync(join(import.meta.dirname, '..', ...p), 'utf-8')
-  it('index.ts registers the concerts IPC and hands the feed to the Music Man; the old channels are gone', () => {
+  // The Music Man's day-theme hand-off went with the Record Store room
+  // (2026-11-09); the feed itself still serves Home and the Concerts page.
+  it('index.ts registers the concerts IPC; the old channels are gone', () => {
     const idx = read('index.ts')
-    assert.match(idx, /const concerts = registerConcertsIpc\(ipc, \{ libraryCache, mbThrottle \}\)/)
-    assert.match(idx, /concertFeed: concerts\.forMusicMan,/)
+    assert.match(idx, /registerConcertsIpc\(ipc, \{ libraryCache, mbThrottle \}\)/)
     assert.doesNotMatch(idx, /'get-tour-dates'|'get-venue-shows'/)
-  })
-  it('the Record Store passes it through to the day-theme context, which narrows it with musicManShows', () => {
-    assert.match(read('record-store', 'index.ts'), /concertFeed: deps\.concertFeed,/)
-    assert.match(read('record-store', 'external-context.ts'), /musicManShows\(feedItems, now\.getTime\(\), \{ days: FEED_SHOW_WINDOW_DAYS, limit: FEED_SHOW_LIMIT \}\)/)
   })
   it('the Home draws HomeShows from concerts:get / concerts:refresh, and no concert label clips', () => {
     const home = read('..', 'renderer', 'views', 'HomeView.tsx')
