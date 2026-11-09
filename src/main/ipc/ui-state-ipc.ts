@@ -12,6 +12,7 @@ import { readFile, writeFile } from 'fs/promises'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { loadPins, saveLocalPins, normalizePins, pinsPath } from '../playlist-pins.ts'
+import { SIDEBAR_ORDER_KEY } from '../../common/sidebar-order.ts'
 
 function uiStatePath(): string {
   return join(app.getPath('userData'), 'ui-state.json')
@@ -65,7 +66,22 @@ async function saveUiStateSerialized(uiState: Record<string, unknown>): Promise<
   }
 }
 
-export function registerUiStateIpc(ipc: IpcRegistrar): void {
+/** The sidebar's saved section order as it is on disk now (raw; null when unreadable). */
+export async function readSavedSidebarOrder(): Promise<unknown> {
+  try {
+    const state = JSON.parse(await readFile(uiStatePath(), 'utf-8')) as Record<string, unknown>
+    return state && typeof state === 'object' ? (state[SIDEBAR_ORDER_KEY] ?? []) : null
+  } catch {
+    return null
+  }
+}
+
+export interface UiStateIpcHooks {
+  /** A save carried the sidebar's section order (sidebar-order-publish.ts sends it to homemini). */
+  onSidebarOrder?: (raw: unknown) => void
+}
+
+export function registerUiStateIpc(ipc: IpcRegistrar, hooks: UiStateIpcHooks = {}): void {
   ipc.handle('load-ui-state', async () => {
     const path = uiStatePath()
     let data: string
@@ -109,6 +125,9 @@ export function registerUiStateIpc(ipc: IpcRegistrar): void {
   ipc.handle('save-ui-state', async (_e, uiState: Record<string, unknown>) => {
     const run = uiStateWriteChain.then(() => saveUiStateSerialized(uiState), () => saveUiStateSerialized(uiState))
     uiStateWriteChain = run.catch(() => {})
+    if (uiState && typeof uiState === 'object' && SIDEBAR_ORDER_KEY in uiState) {
+      void run.then((r) => { if (r.ok) hooks.onSidebarOrder?.(uiState[SIDEBAR_ORDER_KEY]) })
+    }
     return run
   }, { refuse: REFUSED_SENDER })
 

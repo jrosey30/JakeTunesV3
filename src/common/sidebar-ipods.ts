@@ -26,8 +26,9 @@
  *
  * Pure — node --test loads it.
  *
- * ⚠️ TWIN (not yet built): JakeTunesMobile shows Top 1000 and each iPod's list as
- * built-in playlists (backend/src/util/builtInPlaylists.ts, ios PlaylistGroups.swift).
+ * ⚠️ TWIN: JakeTunesMobile ios PlaylistGroups.swift (2026-11-09) draws the same iPODS
+ * section on the phone: Top 1000 first, a pinned list next, the rest by name, from
+ * homemini's built-in playlists (backend/src/util/builtInPlaylists.ts).
  */
 import { ipodListPlaylistId, parseIpodListPlaylistId } from './ipod-list-doc.ts'
 

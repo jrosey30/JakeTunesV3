@@ -62,7 +62,8 @@ localAudioDropRefused,   libraryRootFromMusicDir, OFFLOAD_CONVERT_BATCH, serveHu
 import { bootHubOffload, menuHubOffload, registerOffloadIpc } from './ipc/offload-ipc.ts'
 import { createServePin } from './play-cache-serve-pin.ts'
 import { createIpcRegistrar, REFUSED_SENDER } from './ipc-register.ts'
-import { registerUiStateIpc } from './ipc/ui-state-ipc.ts'
+import { registerUiStateIpc, readSavedSidebarOrder } from './ipc/ui-state-ipc.ts'
+import { createSidebarOrderPublisher } from './sidebar-order-publish.ts'
 import { registerBackupIpc } from './ipc/backup-ipc.ts'
 import { registerSettingsIpc } from './ipc/settings-ipc.ts'
 import { registerImportIpc, resolveAudioPaths } from './ipc/import-ipc.ts'
@@ -1112,7 +1113,18 @@ let cachedActiveHost: 'mm' | 'larry' = 'mm'
 // modules (ipc/*.ts) register through this; opt out with { public: true }
 // only for intentionally public / read-only channels.
 const ipc = createIpcRegistrar(() => mainWindow)
-registerUiStateIpc(ipc)
+// The sidebar's section order goes to homemini (hub only) so the phone's
+// Playlists tab draws its sections in the same order (sidebar-order-publish.ts).
+const sidebarOrderPublisher = createSidebarOrderPublisher({
+  baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''),
+  isReplica: () => isHomeminiPlaybackClientCached(),
+  withAuth: (init) => withCompanionInit(init),
+  warn: (m) => quietWarn('sidebar-order', m),
+})
+registerUiStateIpc(ipc, { onSidebarOrder: (raw) => { void sidebarOrderPublisher.publish(raw) } })
+void app.whenReady().then(() => setTimeout(() => {
+  void readSavedSidebarOrder().then((raw) => { if (raw !== null) void sidebarOrderPublisher.publish(raw) })
+}, 20_000))
 // Spotify connect + weekly Discover Weekly → brain-gated onto the list
 // ("get Discover Weekly into the brain", greenlit 2026-07-14).
 registerSpotifyIpc(ipc, {

@@ -10,6 +10,10 @@
  *   - a showing key the save never heard of goes to its default slot: right
  *     after the section that comes before it by default
  *
+ * The hub publishes the saved list to homemini (main/sidebar-order-publish.ts) and
+ * the phone orders its Playlists tab's sections by it. ⚠️ TWIN: JakeTunesMobile
+ * ios PlaylistGroups.swift `order` / `defaultOrder` / `parseSavedOrder`.
+ *
  * Pure — node --test loads it.
  */
 
