@@ -45,6 +45,7 @@ import { addToPlaylistEntry, queueMenuEntries } from '../utils/playlistMenu'
 import { getInfoTarget } from '../../common/get-info-target'
 import { lastPlayedEverywhere, playsEverywhere } from '../../common/plays-elsewhere'
 import { usePlaysElsewhere } from '../playsElsewhere'
+import { sortTracksByName } from '../utils/artistSort'
 
 function formatDuration(ms: number): string {
   if (!ms || ms <= 0) return ''
@@ -409,6 +410,8 @@ export default function PlaylistView() {
 
   const sortedTracks = useMemo(() => {
     if (!sortCol) return tracks // natural order
+    // Artist / Album: "The Strokes" under S, like every other list (artistSort.ts).
+    if (sortCol === 'artist' || sortCol === 'album') return sortTracksByName(tracks, sortCol, sortDir)
     return [...tracks].sort((a, b) => {
       let av: string | number = '', bv: string | number = ''
       switch (sortCol) {

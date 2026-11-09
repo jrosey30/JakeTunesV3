@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { Track, SortColumn, SortDirection } from '../types'
+import { sortTracksByName } from '../utils/artistSort'
 import { lastPlayedEverywhere, NO_PLAYS_ELSEWHERE, playsEverywhere, type ElsewhereOverlay } from '../../common/plays-elsewhere'
 
 export function useSortedTracks(
@@ -33,6 +34,10 @@ export function useSortedTracks(
       const m = /^(\d{1,2})([AB])$/i.exec(String(v ?? '').trim())
       return m ? [Number(m[1]), m[2].toUpperCase()] : [999, 'Z']
     }
+    // 2026-11-09: Artist and Album sort the way the Artists page and the
+    // iPods do — "The Strokes" under S, "The Wall" under W (artistSort.ts).
+    // They compared the raw lowercased text, so every "The ..." sat under T.
+    if (sortColumn === 'artist' || sortColumn === 'album') return sortTracksByName(filtered, sortColumn, sortDirection)
     return [...filtered].sort((a, b) => {
       const byPlays = sortColumn === 'playCount' && elsewhere
       const byLastPlayed = sortColumn === 'lastPlayedAt'

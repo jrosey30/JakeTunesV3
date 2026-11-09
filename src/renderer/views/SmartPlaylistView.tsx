@@ -44,6 +44,7 @@ import '../styles/musicman.css'
 import '../styles/songs.css'
 import { addToPlaylistEntry, queueMenuEntries } from '../utils/playlistMenu'
 import { getInfoTarget } from '../../common/get-info-target'
+import { sortTracksByName } from '../utils/artistSort'
 
 // Persist sort preferences per smart playlist across navigation
 const smartSortPrefs = new Map<string, { col: string | null; dir: 'asc' | 'desc' }>()
@@ -630,6 +631,8 @@ export default function SmartPlaylistView() {
       })
     }
     if (!sortCol) return filteredTracks
+    // Artist / Album: "The Strokes" under S, like every other list (artistSort.ts).
+    if (sortCol === 'artist' || sortCol === 'album') return sortTracksByName(filteredTracks, sortCol, sortDir)
     return [...filteredTracks].sort((a, b) => {
       let av: string | number = '', bv: string | number = ''
       switch (sortCol) {

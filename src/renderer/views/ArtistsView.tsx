@@ -22,7 +22,7 @@ import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { useScrollPersistence } from '../hooks/useScrollPersistence'
 import { useScrollingClass } from '../hooks/useScrollingClass'
 import { sessionArtistImages, hashColor, initials } from '../utils/artistPortrait'
-import { compareNames, artistSectionLetter } from '../utils/artistSort'
+import { compareNames, compareAlbumNames, artistSectionLetter } from '../utils/artistSort'
 import ScrollTopButton from '../components/ScrollTopButton'
 import FindBar from '../components/FindBar'
 import { useFindState } from '../hooks/useFindState'
@@ -325,7 +325,7 @@ export default function ArtistsView(): JSX.Element {
 
   const playArtist = useCallback((a: ArtistCard) => {
     const n = (v: number | string | undefined): number => Number(v) || 0
-    const list = [...a.tracks].sort((x, y) => (x.album || '').localeCompare(y.album || '') || n(x.discNumber) - n(y.discNumber) || n(x.trackNumber) - n(y.trackNumber))
+    const list = [...a.tracks].sort((x, y) => compareAlbumNames(x.album || '', y.album || '') || n(x.discNumber) - n(y.discNumber) || n(x.trackNumber) - n(y.trackNumber))
     if (list.length) playTrack(list[0], list, 0, undefined, true)
   }, [playTrack])
 

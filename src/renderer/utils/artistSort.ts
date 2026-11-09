@@ -31,7 +31,49 @@ export function artistSortName(name: string): string {
  *  Use EVERYWHERE a list of album or artist names is alphabetized so the whole
  *  app sorts identically. */
 export function compareNames(a: string, b: string): number {
-  return artistSortName(a).localeCompare(artistSortName(b), undefined, { numeric: true, sensitivity: 'base' })
+  return NAME_COLLATOR.compare(artistSortName(a), artistSortName(b))
+}
+
+/** The collator compareNames uses, for comparing keys that are ALREADY sort
+ *  names (precomputed once per row, so a 13,000-song sort doesn't run the
+ *  strip on every comparison). Same options as before: natural numbers,
+ *  case/accent-insensitive. */
+export const NAME_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+
+/** Albums file by the same rule as artists ("The Wall" under W, "A Night at
+ *  the Opera" under N) — one rule for both, named for the call site. */
+export const albumSortName = artistSortName
+export const compareAlbumNames = compareNames
+
+/** The fields a song row may carry. sortArtist / sortAlbum are iTunes'
+ *  "Sort Artist" / "Sort Album" tags: when a row has one, it wins (the same
+ *  as the iPod's ipodArtistSortKey), and it still goes through the strip. */
+export interface SortableTrack {
+  artist?: string | null
+  album?: string | null
+  sortArtist?: unknown
+  sortAlbum?: unknown
+}
+
+const explicit = (v: unknown): string => (v == null ? '' : String(v).trim())
+
+/** A song's artist sort name ("The Strokes" → "strokes"), sortArtist first. */
+export function trackArtistSortName(t: SortableTrack): string {
+  return artistSortName(explicit(t.sortArtist) || String(t.artist || ''))
+}
+
+/** A song's album sort name ("The Wall" → "wall"), sortAlbum first. */
+export function trackAlbumSortName(t: SortableTrack): string {
+  return albumSortName(explicit(t.sortAlbum) || String(t.album || ''))
+}
+
+/** Sort rows by a name column, iTunes-style, computing each row's key once.
+ *  Ascending; the caller reverses for descending. Ties keep their order. */
+export function sortTracksByName<T extends SortableTrack>(tracks: readonly T[], column: 'artist' | 'album', dir: 'asc' | 'desc' = 'asc'): T[] {
+  const keyed = tracks.map((t) => ({ t, k: column === 'artist' ? trackArtistSortName(t) : trackAlbumSortName(t) }))
+  const sign = dir === 'asc' ? 1 : -1
+  keyed.sort((a, b) => sign * NAME_COLLATOR.compare(a.k, b.k))
+  return keyed.map((x) => x.t)
 }
 
 /** Section letter for the A–Z index: first letter of the sort name, or '#'
