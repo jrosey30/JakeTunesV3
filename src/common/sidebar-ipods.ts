@@ -16,7 +16,8 @@
  * shouldnt have to be plugged into homemini and workmini....those 2 see the ipod
  * playlists as ipod playlists but really just playlists. macbook is the only one
  * that actually syncs and works directly with each ipod". So:
- *   - the hub (the MacBook): the iPod bits — the colour dot from the registry, the
+ *   - the hub (the MacBook): the iPod bits — the registry's colour (since 2026-11-09 the
+ *     row draws the iPod itself, utils/ipodCovers.ts, not a dot), the
  *     Original's name, "planned" on a list no iPod carries yet;
  *   - a replica (homemini's and workmini's apps): plain playlists, nothing read
  *     from the registry, nothing about plugging in or syncing.

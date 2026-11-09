@@ -1256,10 +1256,13 @@ declare global {
       top1000List?: () => Promise<{ ok: true; value: { progress: import('../common/top1000-doc').QuizProgress; list: import('../common/top1000-doc').QuizListEntry[] } } | { ok: false; error: string }>
       // 2026-11-07 — every non-Original iPod's list (homemini writes it; src/main/ipc/ipod-lists-ipc.ts)
       ipodRegistryList?: () => Promise<{ ok: boolean; devices?: Array<{ id: string; name: string; color: string | null; primary: boolean }>; error?: string }>
-      ipodListsGet?: () => Promise<{ ok: boolean; role?: 'hub' | 'replica'; lists?: Array<{ id: string; name: string; color: string | null; purpose: string | null; ids: number[]; source: 'homemini' | 'local' | 'cache'; note: string | null; updatedAt: string | null; registered?: boolean }> }>
+      ipodListsGet?: () => Promise<{ ok: boolean; role?: 'hub' | 'replica'; lists?: Array<{ id: string; name: string; color: string | null; model?: string; purpose: string | null; ids: number[]; source: 'homemini' | 'local' | 'cache'; note: string | null; updatedAt: string | null; registered?: boolean }> }>
       ipodWantedShelf?: (force?: boolean) => Promise<{ ok: boolean; shelves?: Array<{ listId: string; listName: string; title: string; cards: Array<{ lane: 'ipod-wanted'; type: 'album' | 'song'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string }> }>; error?: string }>
       ipodListProposals?: (deviceId: string) => Promise<{ ok: boolean; proposals?: Array<{ id: number; why: string; at: string; artist?: string; title?: string; album?: string }>; proposedAt?: string | null; queued?: number; offline?: boolean; error?: string }>
       ipodListDecide?: (input: { deviceId: string; approve?: number[]; reject?: number[] }) => Promise<{ ok: boolean; sent?: boolean; error?: string }>
+      // 2026-11-09 — "iPod color…" and custom-colour covers (src/main/ipod-colors.ts, ipod-cover-cache.ts)
+      ipodListSetColor?: (input: { deviceId: string; color: string }) => Promise<{ ok: true; color: string; homemini: 'saved' | 'later'; registry: boolean } | { ok: false; error: string }>
+      ipodCoverGet?: (key: string) => Promise<{ ok: boolean; url: string | null }>
       top1000Ties?: () => Promise<{ ok: true; value: number | null } | { ok: false; error: string }>
       homeShelvesGet?: () => Promise<{ ok: boolean; state?: import('../common/home-shelves-doc').HomeShelvesState }>
       homeShelvesRefresh?: () => Promise<{ ok: boolean; state?: import('../common/home-shelves-doc').HomeShelvesState }>

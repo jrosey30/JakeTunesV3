@@ -20,6 +20,8 @@
  * the list's writer — the shape, the 1000 ceiling and newest-first order must match.
  */
 
+import { isIpodModel, normalizeIpodColor, type IpodModel } from './ipod-covers.ts'
+
 /** No iPod list is ever bigger than this, whatever homemini says its cap is. */
 export const IPOD_LIST_MAX = 1000
 
@@ -50,6 +52,10 @@ export interface IpodList {
    * week"): optional, absent on older lists (= every day, perDay a run).
    */
   brain: { enabled: boolean; perDay: number; everyDays?: number; perRun?: number }
+  /** The iPod the list lives on (2026-11-09): 'mini' | 'classic' | '3g' | 'default'. Absent = not chosen. */
+  model?: IpodModel
+  /** Its colour: a named iPod colour or '#rrggbb' (common/ipod-covers.ts). Absent = not chosen. */
+  color?: string
   /**
    * What the list's purpose calls for that the library doesn't have
    * (2026-11-09, Jake: "the songs i dont have for y2k, 80's and indie
@@ -148,6 +154,9 @@ export function parseIpodList(raw: unknown, expectedId?: string): IpodList | nul
     updatedAt: r.updatedAt,
     brain,
     ...(() => { const w = parseWanted(r.wanted); return w.length ? { wanted: w } : {} })(),
+    // The iPod's look (2026-11-09): optional, a bad one is just absent.
+    ...(isIpodModel(r.model) ? { model: r.model } : {}),
+    ...(normalizeIpodColor(r.color) ? { color: normalizeIpodColor(r.color)! } : {}),
   }
 }
 

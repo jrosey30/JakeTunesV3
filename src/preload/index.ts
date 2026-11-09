@@ -1229,6 +1229,9 @@ const electronAPI = {
   ipodListProposals: (deviceId: string): Promise<unknown> => ipcRenderer.invoke('ipod-lists:proposals', deviceId),
   ipodWantedShelf: (force?: boolean): Promise<unknown> => ipcRenderer.invoke('ipod-lists:wanted-shelf', force === true),
   ipodListDecide: (input: { deviceId: string; approve?: number[]; reject?: number[] }): Promise<unknown> => ipcRenderer.invoke('ipod-lists:decide', input),
+  // "iPod color…" (2026-11-09): an iPod list's cover colour; and a custom-colour cover homemini drew.
+  ipodListSetColor: (input: { deviceId: string; color: string }): Promise<unknown> => ipcRenderer.invoke('ipod-lists:set-color', input),
+  ipodCoverGet: (key: string): Promise<unknown> => ipcRenderer.invoke('ipod-cover:get', key),
   homeShelvesGet: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:get'),
   homeShelvesRefresh: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:refresh'),
   homeShelvesLocalPlays: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:local-plays'),
