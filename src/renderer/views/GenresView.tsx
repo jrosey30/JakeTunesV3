@@ -13,6 +13,7 @@ import EmptyState from '../components/EmptyState'
 import { Track } from '../types'
 import { setNotice } from '../activity'
 import { albumKeyOf } from '../utils/albumKey'
+import { compareNames, compareAlbumNames } from '../utils/artistSort'
 import '../styles/genres.css'
 
 export default function GenresView() {
@@ -71,7 +72,7 @@ export default function GenresView() {
   const artists = useMemo(() => {
     const set = new Set<string>()
     for (const t of filteredByGenre) if (t.artist) set.add(t.artist)
-    return Array.from(set).sort()
+    return Array.from(set).sort(compareNames)
   }, [filteredByGenre])
 
   const filteredByArtist = useMemo(() => {
@@ -88,7 +89,7 @@ export default function GenresView() {
   const albums = useMemo(() => {
     const set = new Set<string>()
     for (const t of filteredByArtist) if (t.album) set.add(t.album)
-    return Array.from(set).sort()
+    return Array.from(set).sort(compareAlbumNames)
   }, [filteredByArtist])
 
   const filteredTracks = useMemo(() => {
