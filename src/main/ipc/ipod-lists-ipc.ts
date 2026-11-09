@@ -3,10 +3,11 @@
  * homemini writes (contract: common/ipod-list-doc.ts; Jake: "i cannot manually
  * add songs in there"). This module is the desktop's one door to those lists:
  *
- *   'ipod-lists:get' → { ok, lists: [{ id, name, color, purpose, ids, source, note, updatedAt }] }
- *       one per registered non-Original iPod, ids in LIST order (newest first) —
- *       the sidebar's playlist per iPod (renderer/ipodLists.ts). homemini's list,
- *       else that iPod's pool file.
+ *   'ipod-lists:get' → { ok, role, lists: [{ id, name, color, purpose, ids, source, note, updatedAt, registered }] }
+ *       every list homemini keeps, ids in LIST order (newest first) — the
+ *       sidebar's iPODS section and each list's playlist (renderer/ipodLists.ts).
+ *       On the hub a registered iPod's list goes through its pool file; a replica
+ *       never touches the registry or a pool file (main/ipod-lists-gather.ts).
  *
  *   'ipod-lists:proposals' (deviceId) → { ok, proposals, proposedAt, queued, offline }
  *       the brain's picks waiting for Jake (2026-11-09), for the panel at the top
@@ -23,12 +24,14 @@
  */
 import type { IpcRegistrar } from '../ipc-register.ts'
 import type { IpodDeviceMarker } from '../../common/ipod-identity.ts'
+import type { IpodList } from '../../common/ipod-list-doc.ts'
 import { identifyIpod, loadIpodRegistry, poolFileFor } from '../ipod-identity.ts'
 import { createIpodListClient } from '../ipod-list-client.ts'
 import { refreshIpodPool, type IpodPoolRefresh, type PoolFileName } from '../ipod-list-pool.ts'
 import type { FetchLike } from '../top1000-client.ts'
 import { flushHomeminiName } from '../ipod-rename.ts'
 import { createProposalsDesk } from '../ipod-list-proposals.ts'
+import { gatherIpodLists, ipodListsCachePath } from '../ipod-lists-gather.ts'
 
 /** How often a decision homemini hasn't heard yet is tried again. */
 export const DECISION_RETRY_MS = 5 * 60_000
@@ -41,6 +44,8 @@ export interface IpodListsHost {
   libraryTracks?: () => Promise<unknown[]>
   fetchImpl?: FetchLike
   warn?: (msg: string) => void
+  /** homemini's and workmini's apps: the lists are plain playlists there (main/ipod-lists-gather.ts). Absent = hub. */
+  isReplica?: () => Promise<boolean>
   /** A list was just read clean from homemini (ids newest first, and its grow cadence when it has one): the "ready to sync" check (ipod-sync-ready.ts). */
   onListRead?: (device: IpodDeviceMarker, listIds: number[], everyDays?: number) => void
 }
@@ -53,7 +58,7 @@ export interface IpodListSource {
   rename(deviceId: string, name: string): Promise<boolean>
 }
 
-export function createIpodListSource(host: IpodListsHost): IpodListSource & { desk: ReturnType<typeof createProposalsDesk> } {
+export function createIpodListSource(host: IpodListsHost): IpodListSource & { desk: ReturnType<typeof createProposalsDesk>; all: () => Promise<IpodList[] | null> } {
   const client = createIpodListClient({ baseUrl: host.baseUrl, fetchImpl: host.fetchImpl, warn: host.warn })
   const desk = createProposalsDesk({ stateDir: host.stateDir, get: (id) => client.proposals(id), send: (id, d) => client.decide(id, d), log: host.warn })
 
@@ -94,6 +99,7 @@ export function createIpodListSource(host: IpodListsHost): IpodListSource & { de
   return {
     desk,
     refresh,
+    all: () => client.all(),
     rename: (deviceId, name) => client.rename(deviceId, name),
     async refreshPlugged(mount) {
       if (!mount) return null
@@ -107,16 +113,14 @@ export function createIpodListSource(host: IpodListsHost): IpodListSource & { de
 
 export function registerIpodListsIpc(ipc: IpcRegistrar, host: IpodListsHost): IpodListSource {
   const source = createIpodListSource(host)
-  ipc.handle('ipod-lists:get', async () => {
-    const reg = await loadIpodRegistry(host.stateDir)
-    const lists = []
-    for (const d of reg.devices) {
-      if (d.primary) continue
-      const r = await source.refresh(d)
-      lists.push({ id: d.id, name: d.name, color: d.color, purpose: d.purpose, ids: r.listIds, source: r.source, note: r.note, updatedAt: r.updatedAt })
-    }
-    return { ok: true, lists }
-  }, { public: true })
+  ipc.handle('ipod-lists:get', async () => gatherIpodLists({
+    isReplica: host.isReplica ?? (async () => false),
+    registry: async () => (await loadIpodRegistry(host.stateDir)).devices,
+    refresh: (d) => source.refresh(d),
+    all: () => source.all(),
+    cacheFile: ipodListsCachePath(host.stateDir),
+    warn: host.warn,
+  }), { public: true })
   ipc.handle('ipod-lists:proposals', async (_e, deviceId: unknown) => {
     if (typeof deviceId !== 'string') return { ok: false, error: 'no iPod' }
     return source.desk.view(deviceId)

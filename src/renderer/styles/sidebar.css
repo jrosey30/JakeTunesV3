@@ -498,3 +498,8 @@
 }
 .sidebar-subgroup-header:hover { background: rgba(0, 0, 0, 0.06); }
 .sidebar-subgroup-items .sidebar-item { padding-left: 34px; }
+/* A list homemini keeps for an iPod not set up yet (hub only): a hollow dot. */
+.sidebar-ipod-dot--planned {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px #a9a49b;
+}
