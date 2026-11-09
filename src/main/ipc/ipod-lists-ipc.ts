@@ -12,6 +12,9 @@
  *   'ipod-lists:proposals' (deviceId) → { ok, proposals, proposedAt, queued, offline }
  *       the brain's picks waiting for Jake (2026-11-09), for the panel at the top
  *       of an iPod list's playlist (renderer/components/IpodProposalsPanel.tsx).
+ *   'ipod-lists:wanted-shelf' (force?) → { ok, shelves: [{ listId, listName, title, cards }] }
+ *       the Record Shop's "For your iPods" rows: what each list is missing
+ *       (main/ipod-wanted-shelf-source.ts).
  *   'ipod-lists:decide' ({ deviceId, approve, reject }) → { ok, sent }
  *       Approve / Skip: on disk first, then homemini (main/ipod-list-proposals.ts);
  *       what homemini doesn't hear now goes on the next read, refresh or the
@@ -38,6 +41,7 @@ import type { FetchLike } from '../top1000-client.ts'
 import { flushHomeminiName } from '../ipod-rename.ts'
 import { createProposalsDesk } from '../ipod-list-proposals.ts'
 import { gatherIpodLists, ipodListsCachePath } from '../ipod-lists-gather.ts'
+import { createWantedShelfSource } from '../ipod-wanted-shelf-source.ts'
 import { chooseIpodColor, flushPendingColors, readChosenColors } from '../ipod-colors.ts'
 import { ipodCoverDataUrl } from '../ipod-cover-cache.ts'
 
@@ -170,6 +174,9 @@ export function registerIpodListsIpc(ipc: IpcRegistrar, host: IpodListsHost): Ip
     const ids = (v: unknown): number[] => (Array.isArray(v) ? v.map(Number).filter((n) => Number.isInteger(n) && n > 0) : [])
     return source.desk.decide(i.deviceId, { approve: ids(i.approve), reject: ids(i.reject) })
   }, { refuse: { ok: false, error: 'refused-sender' } })
+  // The Record Shop's "For your iPods" section (2026-11-09; main/ipod-wanted-shelf.ts).
+  const wanted = createWantedShelfSource({ stateDir: host.stateDir, lists: () => source.all(), libraryTracks: host.libraryTracks, warn: host.warn })
+  ipc.handle('ipod-lists:wanted-shelf', async (_e, force?: unknown) => wanted.get(force === true), { public: true })
   setInterval(() => {
     void source.desk.flush().catch(() => undefined)
     void source.flushColors()

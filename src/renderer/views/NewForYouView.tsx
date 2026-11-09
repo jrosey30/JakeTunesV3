@@ -59,6 +59,10 @@ interface Lane { id: string; title: string; cards: FeedCard[] }
 let feedCache: Lane[] | null = null
 let feedAtCache: number | null = null
 let rediscCache: RediscoveryPick[] | null = null
+// "For your iPods" (2026-11-09): what each iPod list is missing. Kept between
+// visits like the feed; refreshed quietly on arrival.
+interface WantedShelf { listId: string; listName: string; title: string; cards: FeedCard[] }
+let wantedCache: WantedShelf[] | null = null
 // A background refresh that lands while Jake is LOOKING at the page must
 // not reshuffle it (the "glitchy" feel — cards jumping mid-browse). The
 // fresh feed parks here and is adopted on the NEXT visit; only per-card
@@ -86,6 +90,7 @@ export default function NewForYouView() {
   const [addedRecs, setAddedRecs] = useState<Map<string, Recommendation>>(new Map())
   const dlMap = useSyncExternalStore(subscribeLtlDownload, getLtlDownloadSnapshot)
   const [owned, setOwned] = useState<RediscoveryPick[]>(rediscCache ?? [])
+  const [wantedShelves, setWantedShelves] = useState<WantedShelf[]>(wantedCache ?? [])
   // Real artist photos for the Overlooked lane. Jake, twice: "that's an
   // album picture not an artist". Keyed by artist name; null = looked up,
   // none available (fall back to initials, never to a cover in a circle).
@@ -128,6 +133,15 @@ export default function NewForYouView() {
     void window.electronAPI.getRediscovery?.().then((r) => {
       if (r?.ok && r.picks) { rediscCache = r.picks; setOwned(r.picks) }
     })
+  }, [])
+
+  // Jake (2026-11-09): "the songs i dont have for y2k, 80's and indie
+  // sleaze....thats the type of stuff that should go in the record shop."
+  // Its own section after the daily picks, so it never crowds them out.
+  useEffect(() => {
+    void window.electronAPI.ipodWantedShelf?.().then((r) => {
+      if (r?.ok && r.shelves) { wantedCache = r.shelves; setWantedShelves(r.shelves) }
+    }).catch(() => { /* the section simply isn't there */ })
   }, [])
 
   const playOwned = (pick: RediscoveryPick) => {
@@ -302,7 +316,7 @@ export default function NewForYouView() {
 
   const SHOP_NAMES: Record<string, string> = {
     'brand-new': 'New', 'scene': 'Scene', 'missing': 'Gap', 'time-machine': 'Used', 'songs': 'Single',
-    'fresh-albums': 'New', 'fresh-songs': 'New', [CRITIC_LANE]: 'Staff',
+    'fresh-albums': 'New', 'fresh-songs': 'New', [CRITIC_LANE]: 'Staff', 'ipod-wanted': 'iPod',
   }
   const laneReason = (c: FeedCard): string | null => {
     switch (c.lane) {
@@ -313,8 +327,62 @@ export default function NewForYouView() {
       case 'songs': return 'One song to try'
       case 'fresh-albums': return c.because ? `Not in your library — via ${c.because}` : 'Not in your library'
       case 'fresh-songs': return c.because ? `Not in your library — via ${c.because}` : 'Not in your library'
+      case 'ipod-wanted': return c.why
       default: return null
     }
+  }
+
+  const shopCard = (c: FeedCard) => {
+    const id = cardId(c)
+    const isPlaying = preview.playingId === id
+    const isAdded = added.has(id)
+    const sampleUrl = c.type === 'album' ? c.hookPreviewUrl : c.previewUrl
+    return (
+      <div key={id} ref={seenRef(id, c)} className="store-card store-card--reco">
+        <div className="store-art">
+          <div className="df-art-ph" aria-hidden="true">♪</div>
+          {c.artUrl && <img className="store-art-img" src={c.artUrl} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none' }} />}
+          {c.brainPct != null && <span className="store-pct" title="Brain match vs your taste">{c.brainPct}%</span>}
+          {c.lane !== 'ipod-wanted' && <button type="button" className="store-nope" title={`Never show ${c.artist} again`} aria-label="Not for me" onClick={() => notForMe(c)}><CloseIcon /></button>}
+          {sampleUrl && (
+            <button type="button" className={`store-play store-play--btn${isPlaying ? ' store-play--on' : ''}`}
+              onClick={() => togglePreview(id, sampleUrl, c.type === 'album' && c.hookTitle ? `${c.title} · ${c.hookTitle}` : c.title, c.artist)}
+              title={isPlaying ? 'Stop' : (c.type === 'album' && c.hookTitle ? `Sample: ${c.hookTitle}` : 'Preview')}>
+              {isPlaying ? <PauseIcon /> : <PlayIcon />}
+            </button>
+          )}
+        </div>
+        <div className="store-meta-line">
+          <span className={`df-type df-type--${c.type}`}>{c.type}</span>
+          {c.year && <span className="store-year">{c.year}</span>}
+          <span className="store-lane">{SHOP_NAMES[c.lane] ?? ''}</span>
+        </div>
+        <div className="store-name" title={c.title}>{c.type === 'artist' ? c.artist : c.title}</div>
+        {c.type !== 'artist' && <div className="store-artist" title={c.artist}>{c.artist}</div>}
+        {c.because
+          ? <div className="store-because">Because you play <b>{c.because}</b></div>
+          : laneReason(c) ? <div className="store-because store-because--lane">{laneReason(c)}</div> : null}
+        {c.why && c.lane !== 'ipod-wanted' && <div className="store-pitch">{c.why}</div>}
+        {(() => {
+          if (!isAdded) {
+            return <button type="button" className="store-add" onClick={() => void addToList(c)}>+ List</button>
+          }
+          const rec = addedRecs.get(id)
+          const dl = rec ? dlMap.get(rec.id)?.state ?? 'idle' : null
+          if (!rec || dl === 'queued' || dl === 'downloading' || dl === 'done') {
+            const label = !rec ? 'On your list ✓' : dl === 'queued' ? 'Queued…' : dl === 'downloading' ? 'Getting…' : 'In your library ✓'
+            return <button type="button" className="store-add store-add--done" disabled>{label}</button>
+          }
+          const failed = dl === 'error'
+          return (
+            <button type="button" className="store-add" onClick={() => getReco(rec)}
+              title={failed ? (dlMap.get(rec.id)?.error || 'Download failed — try again') : c.type === 'song' ? 'Download to your library' : c.type === 'album' ? 'Pick the edition in Browse' : 'Browse their records'}>
+              {failed ? 'Retry ↓' : '↓ Get'}
+            </button>
+          )
+        })()}
+      </div>
+    )
   }
 
   // ── Staff picks wall — the WJLR personas, moved in from the sidebar.
@@ -418,61 +486,27 @@ export default function NewForYouView() {
             <span className="store-shelf-count">{cards.length} pick{cards.length === 1 ? '' : 's'}</span>
           </div>
           <div className="store-row">
-            {cards.map((c) => {
-              const id = cardId(c)
-              const isPlaying = preview.playingId === id
-              const isAdded = added.has(id)
-              const sampleUrl = c.type === 'album' ? c.hookPreviewUrl : c.previewUrl
-              return (
-                <div key={id} ref={seenRef(id, c)} className="store-card store-card--reco">
-                  <div className="store-art">
-                    <div className="df-art-ph" aria-hidden="true">♪</div>
-                    {c.artUrl && <img className="store-art-img" src={c.artUrl} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none' }} />}
-                    {c.brainPct != null && <span className="store-pct" title="Brain match vs your taste">{c.brainPct}%</span>}
-                    <button type="button" className="store-nope" title={`Never show ${c.artist} again`} aria-label="Not for me" onClick={() => notForMe(c)}><CloseIcon /></button>
-                    {sampleUrl && (
-                      <button type="button" className={`store-play store-play--btn${isPlaying ? ' store-play--on' : ''}`}
-                        onClick={() => togglePreview(id, sampleUrl, c.type === 'album' && c.hookTitle ? `${c.title} · ${c.hookTitle}` : c.title, c.artist)}
-                        title={isPlaying ? 'Stop' : (c.type === 'album' && c.hookTitle ? `Sample: ${c.hookTitle}` : 'Preview')}>
-                        {isPlaying ? <PauseIcon /> : <PlayIcon />}
-                      </button>
-                    )}
-                  </div>
-                  <div className="store-meta-line">
-                    <span className={`df-type df-type--${c.type}`}>{c.type}</span>
-                    {c.year && <span className="store-year">{c.year}</span>}
-                    <span className="store-lane">{SHOP_NAMES[c.lane] ?? ''}</span>
-                  </div>
-                  <div className="store-name" title={c.title}>{c.type === 'artist' ? c.artist : c.title}</div>
-                  {c.type !== 'artist' && <div className="store-artist" title={c.artist}>{c.artist}</div>}
-                  {c.because
-                    ? <div className="store-because">Because you play <b>{c.because}</b></div>
-                    : laneReason(c) ? <div className="store-because store-because--lane">{laneReason(c)}</div> : null}
-                  {c.why && <div className="store-pitch">{c.why}</div>}
-                  {(() => {
-                    if (!isAdded) {
-                      return <button type="button" className="store-add" onClick={() => void addToList(c)}>+ List</button>
-                    }
-                    const rec = addedRecs.get(id)
-                    const dl = rec ? dlMap.get(rec.id)?.state ?? 'idle' : null
-                    if (!rec || dl === 'queued' || dl === 'downloading' || dl === 'done') {
-                      const label = !rec ? 'On your list ✓' : dl === 'queued' ? 'Queued…' : dl === 'downloading' ? 'Getting…' : 'In your library ✓'
-                      return <button type="button" className="store-add store-add--done" disabled>{label}</button>
-                    }
-                    const failed = dl === 'error'
-                    return (
-                      <button type="button" className="store-add" onClick={() => getReco(rec)}
-                        title={failed ? (dlMap.get(rec.id)?.error || 'Download failed — try again') : c.type === 'song' ? 'Download to your library' : c.type === 'album' ? 'Pick the edition in Browse' : 'Browse their records'}>
-                        {failed ? 'Retry ↓' : '↓ Get'}
-                      </button>
-                    )
-                  })()}
-                </div>
-              )
-            })}
+            {cards.map((c) => shopCard(c))}
           </div>
         </section>
       ))}
+
+      {wantedShelves.length > 0 && (
+        <div className="store-section" data-section="for-your-ipods">
+          <h2 className="store-section-title">For your iPods</h2>
+          {wantedShelves.map((sh) => (
+            <section key={sh.listId} className="store-shelf" data-lane={`ipod-wanted-${sh.listId}`}>
+              <div className="store-shelf-head">
+                <span className="store-shelf-title">{sh.title}</span>
+                <span className="store-shelf-count">{sh.cards.length} pick{sh.cards.length === 1 ? '' : 's'}</span>
+              </div>
+              <div className="store-row">
+                {sh.cards.map((c) => shopCard(c))}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
 
       {owned.length > 0 && (
         <section className="df-lane" data-lane="behind-counter">

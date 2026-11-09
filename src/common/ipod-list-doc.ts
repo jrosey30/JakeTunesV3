@@ -56,6 +56,36 @@ export interface IpodList {
   model?: IpodModel
   /** Its colour: a named iPod colour or '#rrggbb' (common/ipod-covers.ts). Absent = not chosen. */
   color?: string
+  /**
+   * What the list's purpose calls for that the library doesn't have
+   * (2026-11-09, Jake: "the songs i dont have for y2k, 80's and indie
+   * sleaze....thats the type of stuff that should go in the record shop").
+   * The Record Shop's "For your iPods" section reads it
+   * (main/ipod-wanted-shelf.ts). An item with a title is one song; without,
+   * the artist. Absent on older lists.
+   */
+  wanted?: IpodListWanted[]
+}
+
+export interface IpodListWanted { artist: string; title?: string; album?: string; why?: string; addedAt: string }
+
+/** Informational, like the history: a bad item is dropped, never the list. */
+function parseWanted(raw: unknown): IpodListWanted[] {
+  if (!Array.isArray(raw)) return []
+  const out: IpodListWanted[] = []
+  const text = (v: unknown): v is string => typeof v === 'string' && v.trim().length > 0 && v.length <= 200
+  for (const e of raw.slice(0, 300)) {
+    const r = e as Record<string, unknown> | null
+    if (!r || typeof r !== 'object' || !text(r.artist) || typeof r.addedAt !== 'string') continue
+    out.push({
+      artist: r.artist.trim(),
+      ...(text(r.title) ? { title: r.title.trim() } : {}),
+      ...(text(r.album) ? { album: r.album.trim() } : {}),
+      ...(text(r.why) ? { why: r.why.trim() } : {}),
+      addedAt: r.addedAt,
+    })
+  }
+  return out
 }
 
 /** homemini's bounds for the cadence fields; a value outside them is dropped, never the list. */
@@ -123,6 +153,7 @@ export function parseIpodList(raw: unknown, expectedId?: string): IpodList | nul
     removed: parseChanges(r.removed),
     updatedAt: r.updatedAt,
     brain,
+    ...(() => { const w = parseWanted(r.wanted); return w.length ? { wanted: w } : {} })(),
     // The iPod's look (2026-11-09): optional, a bad one is just absent.
     ...(isIpodModel(r.model) ? { model: r.model } : {}),
     ...(normalizeIpodColor(r.color) ? { color: normalizeIpodColor(r.color)! } : {}),

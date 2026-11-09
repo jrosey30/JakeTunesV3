@@ -182,6 +182,9 @@ const JUNK = new RegExp([
   '\\b(19|20)\\d\\d:\\s', '\\b(january|february|march|april|may|june|july|august|september|october|november|december) \\d{1,2}(st|nd|rd|th)\\b',
 ].join('|'), 'i')
 
+/** A title that is not a canonical studio release (compilation, box set, live, tribute, deluxe…). */
+export const isJunkEdition = (title: string): boolean => JUNK.test(title)
+
 /** Albums he does not own, real records only, newest first. */
 export async function harvestAlbums(
   pool: Array<{ id: number; name: string; anchor: string }>,
