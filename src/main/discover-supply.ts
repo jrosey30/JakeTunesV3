@@ -197,6 +197,9 @@ const JUNK = new RegExp([
   '\\blive on\\b', '\\binterviews?\\b', '\\bremix(es|ed)?\\b',
   "\\b(special|collector'?s|limited|bonus|expanded|super) edition\\b", '\\boriginal\\b[^)]*\\brecordings\\b',
   '\\([^)]*\\b(version|edit|re-?recorded|mix)\\b[^)]*\\)',
+  // Same harvest: "Coming Home Live", "The Lost Files: Vol. 1",
+  // "Watergate 18 - mixed by Butch". A live record, a vault dig, a DJ mix.
+  '\\blive$', '\\blost files\\b', '\\bunreleased\\b', '\\brarities\\b', '\\bmixed by\\b', '\\bdj[- ]mix\\b',
   // A concert named by its date: "1976: Fort Collins", "May 23rd".
   '\\b(19|20)\\d\\d:\\s', '\\b(january|february|march|april|may|june|july|august|september|october|november|december) \\d{1,2}(st|nd|rd|th)\\b',
 ].join('|'), 'i')

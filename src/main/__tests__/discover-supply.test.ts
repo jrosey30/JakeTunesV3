@@ -553,7 +553,7 @@ describe('more supply, same quality (2026-11-09)', () => {
     assert.deepEqual(interleaveBySeed(pool, 7), out)
   })
   test('the new edition words: live on, interviews, remixes, special editions, "(2012 Version)"', async () => {
-    for (const t of ['Sparks Live On The Moon', 'Alone (Special Edition)', 'The Beatles: The Interviews', 'Loads Of Remixes', 'Annette (The Original 2013 Recordings)', 'Party Boots (2012 Version)']) {
+    for (const t of ['Sparks Live On The Moon', 'Alone (Special Edition)', 'The Beatles: The Interviews', 'Loads Of Remixes', 'Annette (The Original 2013 Recordings)', 'Party Boots (2012 Version)', 'Coming Home Live', 'The Lost Files: Vol. 1', 'Watergate 18 - mixed by Butch']) {
       const dz = fakeDeezer({ related: { A: ['Band'] }, albums: { Band: [{ title: t }] } })
       assert.deepEqual(await harvestAlbums([{ id: dz.idFor('Band'), name: 'Band', anchor: 'A' }], 10, deps({ fetchJson: dz.fetchJson })), [], t)
     }
