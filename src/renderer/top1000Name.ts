@@ -31,13 +31,16 @@ export function refreshTop1000Name(): Promise<void> {
   return inFlight
 }
 
-/** What the Top 1000 is called now. The first view to mount asks main. */
+/** What the Top 1000 is called now. The first view to mount asks main, and the name is asked
+ *  again on focus and every 10 minutes, so a rename on another Mac or the phone's homemini shows here. */
 export function useTop1000Name(): string {
   const s = useSyncExternalStore(subscribe, getSnapshot)
   useEffect(() => {
     if (asked) return
     asked = true
     void refreshTop1000Name()
+    window.addEventListener('focus', () => { void refreshTop1000Name() })
+    window.setInterval(() => { void refreshTop1000Name() }, 10 * 60_000)
   }, [])
   return s
 }
