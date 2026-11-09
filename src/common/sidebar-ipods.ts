@@ -59,9 +59,9 @@ export interface SidebarIpodList {
 export interface SidebarIpodRow {
   /** React key: the marker id, or 'original' / 'top-1000' when no Original is known. */
   key: string
-  /** The iPod's name (hub), or the list's name (replica). */
+  /** The list's name (renamed by hand, 2026-11-09), else the iPod's; the Top 1000's name on a replica. */
   name: string
-  /** A quieter second part after the name: "Top 1000" on the Original's row, "planned" on a list no iPod carries yet (hub only). */
+  /** A quieter second part after the name: the Top 1000's name on the Original's row, "planned" on a list no iPod carries yet (hub only). */
   detail: string | null
   /** A safe CSS colour for the dot, or null (grey). Always null on a replica. */
   color: string | null
@@ -89,6 +89,8 @@ export interface SidebarIpodInput {
   inLibrary: (id: number) => boolean
   /** The pinned playlist ids (playlist-pins.json). A pinned list moves up, right after Top 1000. */
   pinned?: readonly string[]
+  /** The Top 1000's display name (renamed by Jake, 2026-11-09; renderer/top1000Name.ts). Default "Top 1000". */
+  top1000Name?: string
 }
 
 const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i
@@ -120,11 +122,12 @@ export function ipodSidebarRows(input: SidebarIpodInput): SidebarIpodRow[] {
   const hub = (input.role ?? 'hub') === 'hub'
   const devices = hub ? input.devices : []
   const original = devices.find((d) => d.primary) ?? null
+  const topName = input.top1000Name?.trim() || 'Top 1000'
   const first: SidebarIpodRow = hub
     ? {
         key: original?.id ?? 'original',
         name: original?.name?.trim() || 'Original',
-        detail: 'Top 1000',
+        detail: topName,
         color: safeDotColor(original?.color),
         playlistId: TOP_1000_PLAYLIST_ID,
         count: countIn(input.top1000Ids, input.inLibrary),
@@ -133,7 +136,7 @@ export function ipodSidebarRows(input: SidebarIpodInput): SidebarIpodRow[] {
       }
     : {
         key: TOP_1000_PLAYLIST_ID,
-        name: 'Top 1000',
+        name: topName,
         detail: null,
         color: null,
         playlistId: TOP_1000_PLAYLIST_ID,
@@ -152,7 +155,8 @@ export function ipodSidebarRows(input: SidebarIpodInput): SidebarIpodRow[] {
     const planned = hub && !deviceIds.has(id) && list?.registered !== true
     rest.push({
       key: id,
-      name: (hub ? name.trim() : '') || list?.name?.trim() || name.trim() || 'iPod',
+      // The list's own name first (2026-11-09: a list is renamed on its own; the iPod keeps its name).
+      name: list?.name?.trim() || name.trim() || 'iPod',
       detail: planned ? 'planned' : null,
       color: hub && !planned ? safeDotColor(color ?? list?.color) : null,
       playlistId: ipodListPlaylistId(id),

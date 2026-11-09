@@ -4,6 +4,7 @@ import { useNavigation } from '../context/NavigationContext'
 import { backLabelForLocation } from '../utils/albumBackLabel'
 import { albumKeyFromStrings } from '../utils/albumKey'
 import { SMART_PLAYLIST_TITLES } from '../utils/smartPlaylists'
+import { useTop1000Name } from '../top1000Name'
 
 /**
  * The name of the page Back lands on, as the back pill says it (Jake,
@@ -17,6 +18,8 @@ import { SMART_PLAYLIST_TITLES } from '../utils/smartPlaylists'
 export function useBackLabel(): string | null {
   const { canGoBack, backTo, backToSearch } = useNavigation()
   const { state: lib } = useLibrary()
+  // The Top 1000 can be renamed (2026-11-09).
+  const top1000Name = useTop1000Name()
   const albumKey = backTo?.view === 'album-detail' ? backTo.albumKey : null
   // The key is lowercased, so the title comes from the owning track (the
   // titlebar breadcrumb resolves it the same way). Memoized on the key.
@@ -28,7 +31,7 @@ export function useBackLabel(): string | null {
   const playlist = backTo?.view === 'playlist' && backTo.playlistId
     ? lib.playlists.find((p) => p.id === backTo.playlistId)?.name ?? null
     : backTo?.view === 'smart-playlist' && backTo.smartPlaylistId
-      ? SMART_PLAYLIST_TITLES[backTo.smartPlaylistId] ?? null
+      ? (backTo.smartPlaylistId === 'top-1000' ? top1000Name : SMART_PLAYLIST_TITLES[backTo.smartPlaylistId] ?? null)
       : null
   if (!canGoBack) return null
   return backLabelForLocation(backTo, backToSearch, { album, playlist })

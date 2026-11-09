@@ -11,7 +11,9 @@ import { smartPlaylistCover } from '../utils/playlistCovers'
 import { useListenMoreWeekly } from '../listenMoreWeekly'
 import { useTop1000List, useTop1000Ranks } from '../top1000List'
 import { isRankedPlaylist, rankMovement, rotateRankSnap, weekKeyOf, RANK_SNAPSHOT_KEYS, type RankSnap } from '../../common/rank-movement'
-import { useIpodLists, entryColor } from '../ipodLists'
+import { useIpodLists, entryColor, renameIpodList, useIpodListsRole } from '../ipodLists'
+import { useTop1000Name, renameTop1000 } from '../top1000Name'
+import ListRenameField from '../components/ListRenameField'
 import { useIpodPlaylistCover } from '../utils/ipodCovers'
 import { IpodColorPicker } from '../components/IpodColorPicker'
 import { parseIpodListPlaylistId } from '../../common/ipod-list-doc'
@@ -166,7 +168,13 @@ export default function SmartPlaylistView() {
   const ipodListDevice = playlistId ? parseIpodListPlaylistId(playlistId) : null
   const ipodList = ipodListDevice ? ipodLists.find((l) => l.id === ipodListDevice) ?? null : null
   const [ipodColorAt, setIpodColorAt] = useState<{ x: number; y: number } | null>(null)
-  const title = playlistId ? TITLES[playlistId] || (monthYm ? monthPlaylistName(monthYm) : ipodList ? ipodList.name : playlistId) : ''
+  // The Top 1000 and the iPod lists can be renamed (2026-11-09): Rename… in the header and the sidebar.
+  const top1000Name = useTop1000Name()
+  const ipodListsRole = useIpodListsRole()
+  const [renaming, setRenaming] = useState(false)
+  const renamable = playlistId === 'top-1000' || ipodList !== null
+  useEffect(() => { setRenaming(false) }, [playlistId])
+  const title = playlistId === 'top-1000' ? top1000Name : playlistId ? TITLES[playlistId] || (monthYm ? monthPlaylistName(monthYm) : ipodList ? ipodList.name : playlistId) : ''
 
   // 4.2.18: per-persona weekly picks state. Both Music Man and Larry
   // get their own 25-track rotation that resets every Friday at 00:00.
@@ -1069,7 +1077,24 @@ export default function SmartPlaylistView() {
           />
         )}
         <div>
-          <h2 className="playlist-view-name">{displayName}</h2>
+          {renaming && renamable ? (
+            <ListRenameField
+              variant="header"
+              initial={displayName}
+              others={playlistId === 'top-1000'
+                ? ipodLists.map((l) => l.name)
+                : [...ipodLists.filter((l) => l.id !== ipodList?.id).map((l) => l.name), top1000Name]}
+              hint={ipodListsRole === 'hub' && (playlistId === 'top-1000' || ipodList?.registered) ? 'Renames the playlist. The iPod keeps its own name.' : null}
+              onSave={async (name) => {
+                const r = playlistId === 'top-1000' ? await renameTop1000(name) : await renameIpodList(ipodList!.id, name)
+                if (r.ok && r.homemini === 'later') setNotice(`Renamed to ${r.name}. homemini will get it when it's back.`, { kind: 'info', durationMs: 5000 })
+                return r.ok ? { ok: true } : r
+              }}
+              onDone={() => setRenaming(false)}
+            />
+          ) : (
+            <h2 className="playlist-view-name">{displayName}</h2>
+          )}
           <div className="playlist-view-meta">
             {isPicksView && picksLoading ? loadingLabel : (
               <>
@@ -1087,6 +1112,14 @@ export default function SmartPlaylistView() {
                 title={`The colour of ${ipodList.name} on its cover`}
               >
                 iPod color…
+              </button>
+            </div>
+          )}
+          {/* Rename… (2026-11-09): the Top 1000's or an iPod list's name, on every screen. */}
+          {renamable && !renaming && (
+            <div className="top25-window-switch">
+              <button className="top25-window-btn" onClick={() => setRenaming(true)} title="Rename this playlist">
+                Rename…
               </button>
             </div>
           )}
