@@ -7,7 +7,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
-  QUEUE_ORPHAN_GRACE_MS, reconcileQueueWithLibrary, runConvertPass,
+  ASK_AHEAD, mergeQueuedDuringPass, PENDING_PASSES_BEFORE_WAIT, QUEUE_ORPHAN_GRACE_MS, reconcileQueueWithLibrary, runConvertPass,
   type ConvertOutcome, type ConvertPassDeps, type QueueRow, type StreamConvertItem,
 } from '../stream-convert-pass.ts'
 import type { HomeminiIdentity, IdentityAnswer, OneIdentity } from '../audio-identity.ts'
@@ -74,7 +74,7 @@ describe('runConvertPass', () => {
       { id: 1, fp: 'sha1:now1|1', identity: ident(1), allowWholeFile: false },
       { id: 2, fp: 'sha1:now2|1', identity: ident(2), allowWholeFile: false },
     ])
-    assert.deepEqual(result, { keep: [], changed: true, converted: 2, dropped: 0, tried: 2 })
+    assert.deepEqual(result, { keep: [], changed: true, converted: 2, dropped: 0, tried: 2, pending: 0 })
   })
 
   it('dead rows leave the queue even when nothing else is due', async () => {
@@ -93,22 +93,26 @@ describe('runConvertPass', () => {
     const src = readFileSync(new URL('../stream-convert-pass.ts', import.meta.url), 'utf8')
     const imports = [...src.matchAll(/^import .* from '([^']+)'/gm)].map((m) => m[1])
     assert.deepEqual(imports.sort(), ['./audio-identity.ts', './offload-confirm.ts', './stream-convert-retry.ts'])
-    assert.equal(/^import (?!type)/m.test(src.replace(/^import \{ decideStreamConvertAttempt[^\n]*\n/m, '')), false, 'everything but the retry rule is a type')
+    assert.match(src, /^import type \{ RefusalMemo \} from '\.\/offload-confirm\.ts'$/m, 'the module that reads files is a type here, never code')
+    for (const dep of ['audio-identity.ts', 'stream-convert-retry.ts']) {
+      const depSrc = readFileSync(new URL(`../${dep}`, import.meta.url), 'utf8')
+      assert.equal(/from '(node:)?(fs|fs\/promises|child_process)'/.test(depSrc), false, `${dep} has no file access either`)
+    }
     assert.equal(/\b(unlink|rm|rmSync|rename|writeFile|trashItem|symlink)\b/.test(src), false)
   })
 
-  it('a file homemini hasn’t hashed yet leaves its row exactly as it was', async () => {
+  it('a file homemini hasn’t hashed yet is not a try: nothing is done to the file, the wait is not lengthened', async () => {
     const items = [row(1, { tries: 2, retryAfter: NOW - 1 })]
-    const { result, seen } = await pass({ items }, { kind: 'answers', byId: new Map([['1', { pending: true as const, size: 5, etag: '"5"' }]]) }, () => ({ ok: false, reason: 'pending' }))
-    assert.deepEqual(seen.converts[0].identity, { pending: true, size: 5, etag: '"5"' })
-    assert.deepEqual(result.keep, items)
-    assert.equal(result.changed, false)
+    const { result, seen } = await pass({ items }, { kind: 'answers', byId: new Map([['1', { pending: true as const, size: 5, etag: '"5"' }]]) })
+    assert.equal(seen.converts.length, 0)
+    assert.deepEqual(result.keep, [{ ...items[0], pendingPasses: 1 }])
+    assert.equal(result.tried, 0)
   })
 
   it('an empty library read touches nothing', async () => {
     const items = [row(1), row(9)]
     const { result, seen } = await pass({ items, tracks: [] }, answers(1))
-    assert.deepEqual(result, { keep: items, changed: false, converted: 0, dropped: 0, tried: 0 })
+    assert.deepEqual(result, { keep: items, changed: false, converted: 0, dropped: 0, tried: 0, pending: 0 })
     assert.equal(seen.asked.length + seen.converts.length, 0)
   })
 
@@ -123,8 +127,52 @@ describe('runConvertPass', () => {
   it('the batch limit counts tries, in queue order', async () => {
     const items = [row(1), row(2), row(3)]
     const { result, seen } = await pass({ items, batch: 2 }, answers(1, 2, 3))
-    assert.deepEqual(seen.asked, [[1, 2]])
-    assert.deepEqual(result.keep, [items[2]])
+    assert.deepEqual(seen.asked, [[1, 2, 3]], 'asked about further than it will try')
+    assert.deepEqual(seen.converts.map((c) => c.id), [1, 2])
+    assert.deepEqual(result.keep, [items[2]], 'the third is untouched')
+    const many = Array.from({ length: 40 }, (_, i) => row(i + 1))
+    const big = await pass({ items: many, batch: 2, tracks: many.map((_, i) => track(i + 1)) }, answers())
+    assert.equal(big.seen.asked[0].length, 2 * ASK_AHEAD, 'and no further than that')
+  })
+
+  // The review's starvation case: the head of the queue is not hashed yet on homemini.
+  it('songs homemini hasn’t hashed don’t use the batch: the songs behind them are tried the same pass', async () => {
+    const items = [row(1), row(2), row(3), row(4)]
+    const byId = new Map<string, HomeminiIdentity | { pending: true } | null>([['1', { pending: true }], ['2', { pending: true }], ['3', ident(3)], ['4', ident(4)]])
+    const { result, seen } = await pass({ items, batch: 2 }, { kind: 'answers', byId })
+    assert.deepEqual(seen.converts.map((c) => c.id), [3, 4], 'both places in the batch went to songs that could be tried')
+    assert.equal(result.converted, 2)
+    assert.equal(result.pending, 2)
+    assert.deepEqual(result.keep.map((k) => [k.ipodPath, k.pendingPasses, k.retryAfter]), [[colon(1), 1, undefined], [colon(2), 1, undefined]])
+    assert.match(seen.logs.join('\n'), /2 song\(s\) waiting for homemini to hash its copy/)
+  })
+
+  it('a song still not hashed after several passes waits like any miss, and says so', async () => {
+    const stuck = row(1, { pendingPasses: PENDING_PASSES_BEFORE_WAIT - 1, tries: 1 })
+    const byId = new Map([['1', { pending: true as const }]])
+    const { result, seen } = await pass({ items: [stuck] }, { kind: 'answers', byId })
+    const kept = result.keep[0]
+    assert.ok((kept.retryAfter ?? 0) > NOW, 'it waits')
+    assert.equal(kept.tries, 2, 'and the next wait is longer')
+    assert.equal('pendingPasses' in kept, false, 'the count starts over after the wait')
+    assert.match(seen.logs.join('\n'), /1 asked 5 passes running, now waiting longer/)
+    assert.equal(seen.converts.length, 0)
+  })
+
+  it('the count of not-hashed passes ends when homemini answers', async () => {
+    const { result } = await pass({ items: [row(1, { pendingPasses: 3 })] }, answers(1), () => ({ ok: false, reason: 'different', refused: { local: 'a', remote: 'b' } }))
+    assert.equal('pendingPasses' in result.keep[0], false)
+  })
+
+  it('a song queued while the pass ran is not lost when the queue is written back', () => {
+    const a = row(1), b = row(2), c = row(3)
+    const queuedMeanwhile = row(4)
+    // the pass read [a, b, c], converted b, changed a
+    const a2 = { ...a, tries: 1 }
+    assert.deepEqual(mergeQueuedDuringPass([a, b, c], [a2, c], [a, b, c, queuedMeanwhile]), [a2, c, queuedMeanwhile])
+    assert.deepEqual(mergeQueuedDuringPass([a, b], [], [a, b]), [], 'a converted row stays out')
+    assert.deepEqual(mergeQueuedDuringPass([a], [a], [a, queuedMeanwhile, { ...queuedMeanwhile }]), [a, queuedMeanwhile], 'once')
+    assert.deepEqual(mergeQueuedDuringPass([a], [a], []), [a], 'an unreadable file loses nothing the pass kept')
   })
 
   it('homemini not answering leaves every row exactly as it was', async () => {
@@ -197,6 +245,7 @@ describe('runConvertPass', () => {
     const index = readFileSync(new URL('../index.ts', import.meta.url), 'utf8')
     const passSrc = index.slice(index.indexOf('async function runStreamConvertPass('), index.indexOf('function ensureStreamConvertWorker('))
     assert.match(passSrc, /await runConvertPass\(\{/)
+    assert.match(passSrc, /const left = mergeQueuedDuringPass\(items, keep, await readStreamConvertQueue\(\)\)\s*if \(changed \|\| left\.length !== items\.length\) await writeStreamConvertQueue\(left\)\s*if \(!left\.length && streamConvertTimer\)/, 'written back merged, and the worker only stops on a queue that is really empty')
     assert.match(passSrc, /tracks: \(\(\(await libraryCache\.get\(\)\) as CachedLibrary\)\.tracks \|\| \[\]\) as QueueTrack\[\]/)
     assert.match(passSrc, /away: isAwayFromHome,/)
     assert.match(passSrc, /askIdentity: \(ids\) => askAudioIdentity\(/)
@@ -205,7 +254,9 @@ describe('runConvertPass', () => {
     const convert = index.slice(index.indexOf('async function convertTrackToStreamed('), index.indexOf('async function laptopFreeBytes('))
     const gate = convert.indexOf('await confirmHomeminiHoldsFile({')
     assert.ok(gate > 0 && gate < convert.indexOf('await symlink(sentinel, tmp)'), 'the gate comes before the file is replaced')
-    assert.match(convert, /if \(!match\.ok\) return \{ ok: false,/)
+    assert.match(convert, /if \(!match\.ok\) return \{ ok: false, error: keptLocalMessage\(match\.reason\),/)
+    assert.match(convert, /pendingRetries: ask\.identity === undefined \? USER_PENDING_RETRIES : 0,/, 'only a request waits on homemini’s hash; the queue never does')
+    assert.equal(index.includes('does not yet serve the full file'), false, 'the one message that was said for every reason is gone')
     assert.match(convert, /String\(ask\.forId\) !== String\(id\)/, 'the answer must be about this id')
     assert.equal(index.includes('confirmRawHomeminiMatch'), false, 'the whole-file gate is reached only through offload-confirm.ts')
   })

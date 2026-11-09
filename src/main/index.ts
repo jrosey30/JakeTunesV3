@@ -54,7 +54,7 @@ import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './p
 import { createPlayCache } from './play-cache.ts'
 import { createStreamAlacCache, downloadUrlToFile, ffmpegAlacToFlac, localFileNeedsStreamAlacDecode } from './stream-alac-cache.ts'
 import { backfillAlacFingerprints, planLocalAlacMigration, type AlacMigrateTrack } from './alac-stream-migrate.ts'
-import { runConvertPass, type ConvertOutcome, type QueueTrack, type StreamConvertItem } from './stream-convert-pass.ts'; import { confirmHomeminiHoldsFile, type RefusalMemo } from './offload-confirm.ts'
+import { mergeQueuedDuringPass, runConvertPass, type ConvertOutcome, type QueueTrack, type StreamConvertItem } from './stream-convert-pass.ts'; import { confirmHomeminiHoldsFile, keptLocalMessage, USER_PENDING_RETRIES, type RefusalMemo } from './offload-confirm.ts'
 import { askAudioIdentity, hubBaseFromAudioBase, type OneIdentity } from './audio-identity.ts'
 import {
   appendOffloadReplacement, createCachedOffloadReader, hubOffloadActive,
@@ -4355,8 +4355,9 @@ async function convertTrackToStreamed(ipodPath: string, storedFingerprint: strin
     const match = await confirmHomeminiHoldsFile({
       id, localAbs: fp, libraryFingerprint: storedFingerprint, audioBase: HOMEMINI_AUDIO_BASE,
       identity: ask.identity, remembered: ask.remembered, allowWholeFile: ask.allowWholeFile ?? true,
+      pendingRetries: ask.identity === undefined ? USER_PENDING_RETRIES : 0,   // no answer handed in = Jake asked for this song
     })
-    if (!match.ok) return { ok: false, error: 'homemini does not yet serve the full file — kept local', reason: match.reason, refused: match.refused }
+    if (!match.ok) return { ok: false, error: keptLocalMessage(match.reason), reason: match.reason, refused: match.refused }
     const sentinel = await ensureStreamedSentinel()
     const tmp = fp + '.stream.tmp'
     await unlink(tmp).catch(() => {})
@@ -4507,8 +4508,10 @@ async function runStreamConvertPass(now: number): Promise<void> {
       convert: (row, identity, allowWholeFile) => convertTrackToStreamed(row.item.ipodPath, row.fingerprint, { forId: row.id, identity, remembered: row.item.refused, allowWholeFile }),
       log: (m) => console.log(m),
     })
-    if (changed || keep.length !== items.length) await writeStreamConvertQueue(keep)
-    if (!keep.length && streamConvertTimer) { clearInterval(streamConvertTimer); streamConvertTimer = null }
+    // A song queued while the pass ran is in the file and not in `keep`: it stays (stream-convert-pass.ts).
+    const left = mergeQueuedDuringPass(items, keep, await readStreamConvertQueue())
+    if (changed || left.length !== items.length) await writeStreamConvertQueue(left)
+    if (!left.length && streamConvertTimer) { clearInterval(streamConvertTimer); streamConvertTimer = null }
   } catch { /* non-fatal */ } finally {
     streamConvertPassRunning = false
   }

@@ -10,7 +10,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  afterProbe, decidePrefetch, remoteCopyKey, fetchResumable, nextRefused, owedFingerprints, parseOwedFingerprints, parseRefused, planPrefetch, prefetchLogLine, probeFingerprint, refusalKey, REFUSED_HOLD_MS, runPrefetchPass, splitRefused, verifyFetched,
+  afterProbe, decidePrefetch, probeAlreadyParked, remoteCopyKey, fetchResumable, nextRefused, owedFingerprints, parseOwedFingerprints, parseRefused, planPrefetch, prefetchLogLine, probeFingerprint, refusalKey, REFUSED_HOLD_MS, runPrefetchPass, splitRefused, verifyFetched,
   type FetchLike, type FetchOneResult, type LocalKind, type PrefetchItem, type RefusedMemory,
 } from '../ipod-prefetch.ts'
 import type { HomeminiIdentity, PendingIdentity } from '../audio-identity.ts'
@@ -273,7 +273,7 @@ describe('a song homemini’s copy can’t prove is not fetched again every pass
     assert.match(src, /items: toFetch,/, 'held songs are not handed to the pass')
     assert.equal((src.match(/refusedNow\.push\(item\)/g) ?? []).length, 1, 'one door for every refusal')
     assert.equal((src.match(/return refuse\(item, part, /g) ?? []).length, 2, 'both refusals go through it')
-    assert.match(src, /nextRefused\(memory, plan\.items, refusedNow, landed, Date\.now\(\), remote\)/)
+    assert.match(src, /nextRefused\(memory, plan\.items, refusedNow, landed, Date\.now\(\), remote, parkedNow\)/)
     assert.match(src, /headers\.set\('X-JakeTunes-Purpose', 'copy'\)/)
   })
 })
@@ -372,8 +372,35 @@ describe('homemini is asked what it holds before anything is downloaded', () => 
   it('an evicted file at the size homemini holds is fetched at home and waits when away', () => {
     const ev: PrefetchItem = { ...base, fingerprint: 'sha1:stale|1', evicted: { md5: 'c'.repeat(32), bytes: 500 } }
     assert.equal(decidePrefetch(ev, remote, home), 'fetch')
-    assert.equal(decidePrefetch(ev, remote, away), 'wait-home')
+    assert.equal(decidePrefetch({ ...ev, fingerprint: undefined }, remote, away), 'wait-home')
     assert.equal(decidePrefetch(ev, remote, asked), 'fetch', 'Jake’s Wait is a request')
+  })
+  it('away, a song whose library fingerprint may be current gets its 256 KB before it is parked', () => {
+    const ev: PrefetchItem = { ...base, fingerprint: 'sha1:maybe|1', evicted: { md5: 'c'.repeat(32), bytes: 500 } }
+    assert.equal(decidePrefetch(ev, remote, away), 'probe-else-home')
+    assert.equal(decidePrefetch(ev, undefined, away), 'probe-else-home', 'on an older backend too')
+    assert.equal(afterProbe('match', away, 'probe-else-home'), 'fetch', 'the fingerprint is current: nothing more to check, so it comes now')
+    assert.equal(afterProbe('mismatch', away, 'probe-else-home'), 'wait-home', 'not refused: the receipt decides at home')
+    assert.equal(afterProbe('unknown', away, 'probe-else-home'), 'wait-home')
+    // a whole-file sha1 on record is not something 256 KB can settle
+    assert.equal(decidePrefetch({ ...ev, fullSha1: 'b'.repeat(40) }, remote, away), 'wait-home')
+  })
+  it('that 256 KB is looked at once while nothing changes, not every pass (480 songs × 256 KB)', () => {
+    const ev: PrefetchItem = { ...base, fingerprint: 'sha1:stale|1', evicted: { md5: 'c'.repeat(32), bytes: 500 } }
+    const answers = new Map([['1', remote]])
+    const memory = nextRefused({}, [ev], [], new Set(), 1000, answers, [ev])
+    assert.equal(memory['1'].parked, true)
+    assert.equal(probeAlreadyParked(ev, memory, 1000 + 9 * REFUSED_HOLD_MS, answers), true, 'same copy on homemini, same record here: not probed again')
+    assert.equal(probeAlreadyParked(ev, memory, 2000, new Map([['1', { ...remote, etag: '"new"' }]])), false, 'homemini’s copy changed')
+    assert.equal(probeAlreadyParked({ ...ev, fingerprint: 'sha1:fresh|1' }, memory, 2000, answers), false, 'the library’s fingerprint changed')
+    assert.equal(probeAlreadyParked(ev, {}, 2000, answers), false)
+    // parked is not refused: at home the song is fetched, whatever the entry says
+    assert.deepEqual(splitRefused([ev], memory, 2000, REFUSED_HOLD_MS, answers).held, [])
+    assert.equal(probeAlreadyParked(ev, nextRefused({}, [ev], [ev], new Set(), 1000, answers), 2000, answers), false, 'a refusal is not a parking')
+    // carried across passes with its first time, and across the file
+    const later = nextRefused(memory, [ev], [], new Set(), 5000, answers)
+    assert.deepEqual(later, memory)
+    assert.deepEqual(parseRefused(JSON.stringify(memory)), memory)
   })
   it('an evicted file at another size is not downloaded to find out', () => {
     assert.equal(decidePrefetch({ ...base, evicted: { md5: 'c'.repeat(32), bytes: 499 } }, remote, home), 'refuse')
@@ -383,7 +410,7 @@ describe('homemini is asked what it holds before anything is downloaded', () => 
     const pending: PendingIdentity = { pending: true, size: 500, etag: '"1f4-1"' }
     const ev: PrefetchItem = { ...base, fingerprint: 'sha1:stale|1', evicted: { md5: 'c'.repeat(32), bytes: 500 } }
     assert.equal(decidePrefetch(ev, pending, home), 'fetch')
-    assert.equal(decidePrefetch(ev, pending, away), 'wait-home')
+    assert.equal(decidePrefetch({ ...ev, fingerprint: undefined }, pending, away), 'wait-home')
     assert.equal(decidePrefetch({ ...base, fullSha1: 'a'.repeat(40) }, pending, home), 'later')
     assert.equal(decidePrefetch({ ...base, evicted: { md5: 'c'.repeat(32), bytes: 500 } }, { pending: true }, home), 'later', 'no size said: nothing to go on yet')
     assert.equal(decidePrefetch({ ...base, evicted: { md5: 'c'.repeat(32), bytes: 499 } }, pending, home), 'refuse')
@@ -429,18 +456,47 @@ describe('homemini is asked what it holds before anything is downloaded', () => 
   })
 
   it('a landed song’s fingerprint is owed to the library until the library shows it', () => {
-    const owed = { 7: { id: 7, fileSize: 900, audioFingerprint: 'sha1:new|5' }, 8: { id: 8, fileSize: 100, audioFingerprint: 'sha1:n8|5' }, 9: { id: 9, fileSize: 1 } }
+    const owed = { 7: { id: 7, fileSize: 900, mtimeMs: 50, audioFingerprint: 'sha1:new|5' }, 8: { id: 8, fileSize: 100, mtimeMs: 50, audioFingerprint: 'sha1:n8|5' }, 9: { id: 9, fileSize: 1, mtimeMs: 50 } }
     const tracks = [
       { id: 7, path: colon(7), fileSize: 900, audioFingerprint: 'sha1:old|5' },
       { id: 8, path: colon(8), fileSize: 100, audioFingerprint: 'sha1:n8|5' },
     ]
-    const r = owedFingerprints(owed, tracks)
+    const same = (id: number) => ({ size: owed[id as 7 | 8 | 9].fileSize, mtimeMs: 50.4 })
+    const r = owedFingerprints(owed, tracks, same)
     assert.deepEqual(Object.keys(r.still), ['7'], '8 is shown, 9 left the library')
-    assert.deepEqual(r.resend, [owed[7]])
-    assert.deepEqual(owedFingerprints(r.still, [{ ...tracks[0], audioFingerprint: 'sha1:new|5' }]), { still: {}, resend: [] })
+    assert.deepEqual(r.resend, [{ id: 7, fileSize: 900, audioFingerprint: 'sha1:new|5' }], 'the renderer gets the measurement, nothing else')
+    assert.deepEqual(owedFingerprints(r.still, [{ ...tracks[0], audioFingerprint: 'sha1:new|5' }], same), { still: {}, resend: [] })
     assert.deepEqual(parseOwedFingerprints(JSON.stringify(owed)), owed)
     assert.deepEqual(parseOwedFingerprints('{torn'), {})
-    assert.deepEqual(parseOwedFingerprints(JSON.stringify({ x: { fileSize: 5 }, 3: { fileSize: 0 }, 4: null })), {})
+    assert.deepEqual(parseOwedFingerprints(JSON.stringify({ x: { fileSize: 5, mtimeMs: 1 }, 3: { fileSize: 0, mtimeMs: 1 }, 4: null, 5: { fileSize: 5 } })), {}, 'a row that names no file time is never re-sent')
+  })
+
+  // The song lands, Jake edits its tags within the half hour (the tag writer measures and
+  // sends the new fingerprint itself), and the next pass must not put the old one back.
+  it('an owed fingerprint is never re-sent once the file it was measured from has changed', () => {
+    const owed = { 7: { id: 7, fileSize: 900, mtimeMs: 50, audioFingerprint: 'sha1:landed|5' } }
+    const edited = [{ id: 7, path: colon(7), fileSize: 900, audioFingerprint: 'sha1:after-the-edit|5' }]
+    const newerFile = owedFingerprints(owed, edited, () => ({ size: 900, mtimeMs: 99_000 }))
+    assert.deepEqual(newerFile, { still: {}, resend: [] }, 'same size, later time: dropped, nothing sent')
+    assert.deepEqual(owedFingerprints(owed, edited, () => ({ size: 950, mtimeMs: 50 })), { still: {}, resend: [] }, 'another size')
+    assert.deepEqual(owedFingerprints(owed, edited, () => null), { still: {}, resend: [] }, 'no file (evicted again, or a link)')
+    assert.equal(owedFingerprints(owed, edited, () => ({ size: 900, mtimeMs: 50 })).resend.length, 1, 'the untouched file is still owed')
+  })
+
+  it('Wait during a running pass runs one more pass as Jake’s request, and authorises no other', async () => {
+    const src = await readFile(new URL('../ipod-local-start.ts', import.meta.url), 'utf8')
+    assert.match(src, /async function cycle\(asked: boolean\): Promise<void> \{\s*if \(running\) \{\s*if \(asked\) askedWhileRunning = true\s*return\s*\}/)
+    assert.match(src, /running = false\s*if \(askedWhileRunning\) \{\s*askedWhileRunning = false\s*void cycle\(true\)/)
+    assert.equal((src.match(/void cycle\(true\)/g) ?? []).length, 2, 'Jake’s click, and the pass queued behind a running one')
+    assert.equal((src.match(/void cycle\(false\)/g) ?? []).length, 2, 'both timers are background passes')
+    assert.equal(/\buserAsked = /.test(src), false, 'no flag outlives the pass it was set for')
+    assert.match(src, /userAsked: asked \}/)
+    // an away probe that didn't match is remembered, and a remembered one is not repeated
+    assert.match(src, /if \(v === 'probe-else-home' && probeAlreadyParked\(item, memory, Date\.now\(\), remote\)\) v = 'wait-home'/)
+    assert.match(src, /if \(asked === 'probe-else-home' && probed === 'mismatch'\) parkedNow\.push\(item\)/)
+    // a measurement is tied to the file it was taken from
+    assert.match(src, /return \{ \.\.\.m, mtimeMs: after\.mtimeMs \}/)
+    assert.match(src, /owedFingerprints\(owed, tracks, \(id\) => files\.get\(id\) \?\? null\)/)
   })
 
   it('the pass is wired to it (ipod-local-start.ts, index.ts)', async () => {
@@ -452,7 +508,7 @@ describe('homemini is asked what it holds before anything is downloaded', () => 
     assert.match(src, /await evictedByPath\(\)\)/, 'the plan gets the eviction receipts')
     assert.match(src, /splitRefused\(plan\.items, memory, Date\.now\(\), REFUSED_HOLD_MS, remote\)/)
     assert.match(src, /away: await host\.isAway\(\)\.catch\(\(\) => true\), userAsked: asked/, 'an away check that fails reads as away')
-    assert.match(src, /userAsked = true/, 'the Device page’s Wait is a request')
+    assert.match(src, /'ipod-local:kick', async \(\) => \{\s*void cycle\(true\)/, 'the Device page’s Wait is a request')
     const verify = src.indexOf('const bad = await verifyFetched(part, item)')
     const land = src.indexOf('await host.materialize(item.colon')
     const measure = src.indexOf('await measureLanded(item, tracks)')
@@ -461,11 +517,11 @@ describe('homemini is asked what it holds before anything is downloaded', () => 
     // The library has one writer (the renderer's save). This module hands it a measurement and writes no library file.
     assert.equal(/library\.json|LIBRARY_PATH/.test(src), false)
     // Never on a replica (workmini, homemini's own app): the pass leaves before anything is measured or told.
-    const cycleSrc = src.slice(src.indexOf('async function cycle()'))
+    const cycleSrc = src.slice(src.indexOf('async function cycle('))
     const replicaGate = cycleSrc.indexOf('if (!(await applies())) return')
     assert.ok(replicaGate > 0 && replicaGate < cycleSrc.indexOf('settleOwed('), 'the replica gate comes first')
     assert.equal((src.match(/settleOwed\(/g) ?? []).length, 3, 'defined once, called twice, both inside the pass')
-    assert.equal(src.slice(0, src.indexOf('async function cycle()')).split('host.tellLibrary(').length - 1, 1, 'told only from settleOwed')
+    assert.equal(src.slice(0, src.indexOf('async function cycle(')).split('host.tellLibrary(').length - 1, 1, 'told only from settleOwed')
     const index = await readFile(new URL('../index.ts', import.meta.url), 'utf8')
     assert.match(index, /isAway: isAwayFromHome, fingerprintOf: computeAudioFingerprint, tellLibrary: \(m\) => sendToRenderer\('tag-writeback:file-changed', m\)/)
   })

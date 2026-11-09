@@ -47,8 +47,12 @@
  *     tried again until it changes (`decidePrefetch`, `splitRefused`). With no
  *     such route on homemini (an older backend) the day's hold above applies.
  *   • Away from home, a file that could only be checked after downloading it
- *     whole waits until this Mac is home. Jake's "Wait" on the Device page is a
- *     request, and fetches anyway.
+ *     whole waits until this Mac is home (a current fingerprint still settles
+ *     it with 256 KB). Jake's "Wait" on the Device page is a request, and
+ *     fetches anyway: that one pass only. "Away" is the app's one check
+ *     (nas-route.ts), which also reads as away when the NAS is down at home;
+ *     then these songs wait for the NAS or for Wait. Telling those two apart
+ *     needs a second proof of home, which is that module's job, not this one's.
  *
  * Electron-free; every effect is injected (__tests__/ipod-prefetch.test.ts).
  */
@@ -135,8 +139,12 @@ export const REFUSED_HOLD_MS = 24 * 60 * 60 * 1000
 /**
  * id → what the library said about the song when it was refused, and when.
  * `remote`: what homemini said it holds then (audio-identity), when it was asked.
+ * `parked`: not a refusal. Away from home, the 256 KB probe didn't match the
+ * library's fingerprint, so the song waits for home; the probe is not repeated
+ * while nothing changed (480 songs × 256 KB every pass otherwise). At home the
+ * entry means nothing and the song is fetched.
  */
-export type RefusedMemory = Record<string, { key: string; at: number; remote?: string }>
+export type RefusedMemory = Record<string, { key: string; at: number; remote?: string; parked?: true }>
 
 /** homemini's answers this pass, by id. A missing id was not answered for. */
 export type RemoteAnswers = ReadonlyMap<string, IdentityEntry>
@@ -168,19 +176,27 @@ export function splitRefused(items: readonly PrefetchItem[], memory: RefusedMemo
   const out = { fetch: [] as PrefetchItem[], held: [] as PrefetchItem[] }
   for (const item of items) {
     const m = memory[String(item.id)]
-    let holds = false
-    if (m && m.key === refusalKey(item)) {
-      const copy = remoteCopyKey(remote?.get(String(item.id)))
-      if (m.remote !== undefined && copy !== undefined) holds = copy === m.remote
-      else holds = now - m.at >= 0 && now - m.at < holdMs
-    }
+    const holds = !!m && !m.parked && stillStands(m, item, now, holdMs, remote)
     ;(holds ? out.held : out.fetch).push(item)
   }
   return out
 }
 
+function stillStands(m: RefusedMemory[string], item: PrefetchItem, now: number, holdMs: number, remote: RemoteAnswers | null): boolean {
+  if (m.key !== refusalKey(item)) return false
+  const copy = remoteCopyKey(remote?.get(String(item.id)))
+  if (m.remote !== undefined && copy !== undefined) return copy === m.remote
+  return now - m.at >= 0 && now - m.at < holdMs
+}
+
+/** Away from home: was this song's 256 KB probe already tried, with nothing changed since? Then it isn't probed again. */
+export function probeAlreadyParked(item: PrefetchItem, memory: RefusedMemory, now: number, remote: RemoteAnswers | null = null, holdMs = REFUSED_HOLD_MS): boolean {
+  const m = memory[String(item.id)]
+  return !!m && m.parked === true && stillStands(m, item, now, holdMs, remote)
+}
+
 /** The memory after a pass: refusals added, songs that landed or left the queue dropped. */
-export function nextRefused(memory: RefusedMemory, queued: readonly PrefetchItem[], refusedNow: readonly PrefetchItem[], landed: ReadonlySet<number>, now: number, remote: RemoteAnswers | null = null): RefusedMemory {
+export function nextRefused(memory: RefusedMemory, queued: readonly PrefetchItem[], refusedNow: readonly PrefetchItem[], landed: ReadonlySet<number>, now: number, remote: RemoteAnswers | null = null, parkedNow: readonly PrefetchItem[] = []): RefusedMemory {
   const out: RefusedMemory = {}
   const inQueue = new Map(queued.map((i) => [String(i.id), i]))
   for (const [id, m] of Object.entries(memory)) {
@@ -190,6 +206,10 @@ export function nextRefused(memory: RefusedMemory, queued: readonly PrefetchItem
   for (const item of refusedNow) {
     const copy = remoteCopyKey(remote?.get(String(item.id)))
     out[String(item.id)] = { key: refusalKey(item), at: now, ...(copy !== undefined ? { remote: copy } : {}) }
+  }
+  for (const item of parkedNow) {
+    const copy = remoteCopyKey(remote?.get(String(item.id)))
+    out[String(item.id)] = { key: refusalKey(item), at: now, ...(copy !== undefined ? { remote: copy } : {}), parked: true }
   }
   return out
 }
@@ -203,8 +223,11 @@ export function nextRefused(memory: RefusedMemory, queued: readonly PrefetchItem
  * wait-home  only downloading it whole could tell, and this Mac is away
  * absent     homemini has no file for it yet
  * later      homemini hasn't hashed its copy yet, and this song needs the hash
+ * probe-else-home  away from home with an eviction receipt AND a library
+ *            fingerprint: 256 KB can settle it now if the fingerprint is
+ *            current; if not, the receipt needs the whole file, so it waits
  */
-export type PrefetchVerdict = 'fetch' | 'probe' | 'refuse' | 'wait-home' | 'absent' | 'later'
+export type PrefetchVerdict = 'fetch' | 'probe' | 'probe-else-home' | 'refuse' | 'wait-home' | 'absent' | 'later'
 
 export interface PrefetchWhere {
   away: boolean
@@ -218,7 +241,9 @@ export interface PrefetchWhere {
  */
 export function decidePrefetch(item: PrefetchItem, remote: IdentityEntry | undefined, where: PrefetchWhere): PrefetchVerdict {
   if (remote === null) return 'absent'
-  const checkedAfter: PrefetchVerdict = where.away && !where.userAsked ? 'wait-home' : 'fetch'
+  const parked = where.away && !where.userAsked
+  // Parked, the receipt can't be used (it needs the whole file), but a current fingerprint still can.
+  const checkedAfter: PrefetchVerdict = !parked ? 'fetch' : item.fingerprint && !item.fullSha1 ? 'probe-else-home' : 'wait-home'
   if (remote) {
     // Not hashed yet: the size is still known, and an evicted file needs no more than that here.
     const sha1 = 'sha1' in remote ? remote.sha1 : undefined
@@ -233,9 +258,14 @@ export function decidePrefetch(item: PrefetchItem, remote: IdentityEntry | undef
   return item.fingerprint ? 'probe' : 'fetch'
 }
 
-/** After `probe`: a match is fetched, a mismatch refused, and no answer is a whole-file check. */
-export function afterProbe(probe: 'match' | 'mismatch' | 'unknown', where: PrefetchWhere): PrefetchVerdict {
+/**
+ * After the 256 KB probe. `probe`: a match is fetched, a mismatch refused, and
+ * no answer is a whole-file check. `probe-else-home`: a match is fetched, and
+ * anything else waits for home, where the eviction receipt decides.
+ */
+export function afterProbe(probe: 'match' | 'mismatch' | 'unknown', where: PrefetchWhere, asked: 'probe' | 'probe-else-home' = 'probe'): PrefetchVerdict {
   if (probe === 'match') return 'fetch'
+  if (asked === 'probe-else-home') return 'wait-home'
   if (probe === 'mismatch') return 'refuse'
   return where.away && !where.userAsked ? 'wait-home' : 'fetch'
 }
@@ -244,26 +274,39 @@ export function afterProbe(probe: 'match' | 'mismatch' | 'unknown', where: Prefe
 
 export const OWED_FINGERPRINTS_FILE = 'ipod-prefetch-fingerprints-owed.json'
 export interface MeasuredLanding { id: number; fileSize: number; audioFingerprint?: string }
+/** A measurement, and the file's modified time when it was taken: it describes that file and no later one. */
+export interface OwedLanding extends MeasuredLanding { mtimeMs: number }
 /** id → what was measured from the landed file, until the library's record shows it. */
-export type OwedFingerprints = Record<string, MeasuredLanding>
+export type OwedFingerprints = Record<string, OwedLanding>
 
 /**
  * The library is written by the renderer's save, which may not be there when a
  * song lands. So a measurement is owed until the library shows it: `resend`
  * goes to the renderer again, `still` is what is owed after this look.
+ *
+ * A measurement is only ever re-sent for the file it was taken from. `fileNow`
+ * is that song's file as it is on disk now; if its size or modified time moved
+ * (Jake edited the tags, which measures and sends its own), or it is gone, the
+ * owed row is dropped. An old value must never overwrite a newer, correct one.
  */
-export function owedFingerprints(owed: OwedFingerprints, tracks: ReadonlyArray<PrefetchTrack>): { still: OwedFingerprints; resend: MeasuredLanding[] } {
+export function owedFingerprints(
+  owed: OwedFingerprints,
+  tracks: ReadonlyArray<PrefetchTrack>,
+  fileNow: (id: number) => { size: number; mtimeMs: number } | null,
+): { still: OwedFingerprints; resend: MeasuredLanding[] } {
   const byId = new Map<number, PrefetchTrack>()
   for (const t of tracks) byId.set(Number(t?.id), t)
   const out = { still: {} as OwedFingerprints, resend: [] as MeasuredLanding[] }
   for (const [id, m] of Object.entries(owed)) {
     const t = byId.get(Number(id))
     if (!t) continue   // the song left the library
+    const f = fileNow(Number(id))
+    if (!f || f.size !== m.fileSize || Math.floor(f.mtimeMs) !== Math.floor(m.mtimeMs)) continue   // not the file that was measured
     const sizeShown = Number(t.fileSize) === m.fileSize
     const fpShown = !m.audioFingerprint || t.audioFingerprint === m.audioFingerprint
     if (sizeShown && fpShown) continue
     out.still[id] = m
-    out.resend.push(m)
+    out.resend.push({ id: m.id, fileSize: m.fileSize, ...(m.audioFingerprint ? { audioFingerprint: m.audioFingerprint } : {}) })
   }
   return out
 }
@@ -271,10 +314,11 @@ export function owedFingerprints(owed: OwedFingerprints, tracks: ReadonlyArray<P
 export function parseOwedFingerprints(text: string | null): OwedFingerprints {
   const out: OwedFingerprints = {}
   try {
-    const o = JSON.parse(text ?? '') as Record<string, Partial<MeasuredLanding> | null>
+    const o = JSON.parse(text ?? '') as Record<string, Partial<OwedLanding> | null>
     for (const [id, m] of Object.entries(o ?? {})) {
       if (!m || !Number.isInteger(Number(id)) || !Number.isFinite(m.fileSize) || Number(m.fileSize) <= 0) continue
-      out[id] = { id: Number(id), fileSize: Number(m.fileSize), ...(typeof m.audioFingerprint === 'string' ? { audioFingerprint: m.audioFingerprint } : {}) }
+      if (typeof m.mtimeMs !== 'number' || !Number.isFinite(m.mtimeMs)) continue   // can't be tied to a file: never re-sent
+      out[id] = { id: Number(id), fileSize: Number(m.fileSize), mtimeMs: m.mtimeMs, ...(typeof m.audioFingerprint === 'string' ? { audioFingerprint: m.audioFingerprint } : {}) }
     }
   } catch { /* none */ }
   return out
@@ -283,9 +327,9 @@ export function parseOwedFingerprints(text: string | null): OwedFingerprints {
 export function parseRefused(text: string | null): RefusedMemory {
   const out: RefusedMemory = {}
   try {
-    const o = JSON.parse(text ?? '') as Record<string, { key?: unknown; at?: unknown; remote?: unknown }>
+    const o = JSON.parse(text ?? '') as Record<string, { key?: unknown; at?: unknown; remote?: unknown; parked?: unknown }>
     for (const [id, m] of Object.entries(o ?? {})) {
-      if (m && typeof m.key === 'string' && typeof m.at === 'number' && Number.isFinite(m.at)) out[id] = { key: m.key, at: m.at, ...(typeof m.remote === 'string' ? { remote: m.remote } : {}) }
+      if (m && typeof m.key === 'string' && typeof m.at === 'number' && Number.isFinite(m.at)) out[id] = { key: m.key, at: m.at, ...(typeof m.remote === 'string' ? { remote: m.remote } : {}), ...(m.parked === true ? { parked: true as const } : {}) }
     }
   } catch { /* none */ }
   return out

@@ -17,13 +17,19 @@
  *     (audio-identity.ts). No answer at all: the rows are left exactly as they
  *     were. No such route (an older backend): the old check runs, but never
  *     while away from home, where it means downloading every file whole.
- *   • A file homemini hasn't hashed yet (`pending`) leaves its row as it was:
- *     asking is what makes homemini hash it, and the next pass has the answer.
+ *   • A file homemini hasn't hashed yet (`pending`) is not a try: asking is
+ *     what makes homemini hash it, and the next pass usually has the answer. It
+ *     doesn't count against the batch, so it can't hold the songs behind it. The
+ *     row counts the passes (`pendingPasses`), and after PENDING_PASSES_BEFORE_WAIT
+ *     of them it waits like any miss. The pass says how many are waiting.
+ *   • The queue is written back as what the pass decided PLUS whatever was
+ *     queued while it ran (`mergeQueuedDuringPass`); a pass used to overwrite
+ *     the file with the list it read at its start.
  *   • A refusal is remembered on its row, so nothing is hashed or fetched for
  *     it again until this Mac's file or homemini's copy changes.
  */
-import { decideStreamConvertAttempt, decideStreamConvertMiss, type StreamConvertRetryItem } from './stream-convert-retry.ts'
-import type { IdentityAnswer, OneIdentity } from './audio-identity.ts'
+import { decideStreamConvertAttempt, decideStreamConvertMiss, streamConvertWaitMs, type StreamConvertRetryItem } from './stream-convert-retry.ts'
+import { isPending, type IdentityAnswer, type OneIdentity } from './audio-identity.ts'
 import type { RefusalMemo } from './offload-confirm.ts'
 
 export interface StreamConvertItem extends StreamConvertRetryItem {
@@ -32,6 +38,29 @@ export interface StreamConvertItem extends StreamConvertRetryItem {
   fingerprint?: string
   /** The last refusal (offload-confirm.ts). */
   refused?: RefusalMemo
+  /** Passes in a row that found homemini hadn't hashed its copy yet. */
+  pendingPasses?: number
+}
+
+/** After this many passes of "not hashed yet" in a row, the row waits like any miss. */
+export const PENDING_PASSES_BEFORE_WAIT = 5
+/** How many due rows homemini is asked about per row the pass may try: the extra ones get hashed ahead. */
+export const ASK_AHEAD = 4
+
+/**
+ * What to write after a pass: what it decided, plus every row that was queued
+ * while it ran (in the file now, not in the list the pass read). A row the pass
+ * removed stays removed.
+ */
+export function mergeQueuedDuringPass<T extends { ipodPath: string }>(readAtStart: readonly T[], keep: readonly T[], inFileNow: readonly T[]): T[] {
+  const seen = new Set(readAtStart.map((it) => it.ipodPath))
+  const out = [...keep]
+  for (const it of inFileNow) {
+    if (!it?.ipodPath || seen.has(it.ipodPath)) continue
+    seen.add(it.ipodPath)
+    out.push(it)
+  }
+  return out
 }
 
 export interface QueueTrack { id?: unknown; path?: unknown; audioFingerprint?: unknown }
@@ -87,7 +116,7 @@ export interface ConvertPassDeps<T extends StreamConvertItem> {
   items: readonly T[]
   tracks: ReadonlyArray<QueueTrack>
   maxAgeMs: number
-  /** At most this many tries in one pass; null = no limit. */
+  /** At most this many tries in one pass; null = no limit. A song homemini hasn't hashed yet is not a try. */
   batch: number | null
   /** true = this song stays on this Mac (an iPod's list). */
   kept: (item: T) => boolean
@@ -104,10 +133,12 @@ export interface ConvertPassResult<T extends StreamConvertItem> {
   converted: number
   dropped: number
   tried: number
+  /** Rows homemini hadn't hashed its copy for. */
+  pending: number
 }
 
 export async function runConvertPass<T extends StreamConvertItem>(deps: ConvertPassDeps<T>): Promise<ConvertPassResult<T>> {
-  const untouched: ConvertPassResult<T> = { keep: [...deps.items], changed: false, converted: 0, dropped: 0, tried: 0 }
+  const untouched: ConvertPassResult<T> = { keep: [...deps.items], changed: false, converted: 0, dropped: 0, tried: 0, pending: 0 }
   const rec = reconcileQueueWithLibrary(deps.items, deps.tracks, deps.now)
   if (!rec) return untouched
   const dropped = new Set<T>(rec.dropped)
@@ -115,7 +146,7 @@ export async function runConvertPass<T extends StreamConvertItem>(deps: ConvertP
   if (dropped.size) deps.log(`[stream-convert] ${dropped.size} queue row(s) dropped: the path is no longer in the library`)
   for (const it of dropped) deps.log(`[stream-convert] dropped from the queue (no library song has this exact path; the file, if any, is untouched): ${it.ipodPath}`)
   const afterDrop = (): ConvertPassResult<T> => ({
-    keep: deps.items.filter((it) => !dropped.has(it)), changed: dropped.size > 0, converted: 0, dropped: dropped.size, tried: 0,
+    keep: deps.items.filter((it) => !dropped.has(it)), changed: dropped.size > 0, converted: 0, dropped: dropped.size, tried: 0, pending: 0,
   })
 
   const due: Array<QueueRow<T>> = []
@@ -123,7 +154,9 @@ export async function runConvertPass<T extends StreamConvertItem>(deps: ConvertP
     const row = rec.rows.get(it)
     if (!row) continue
     if (decideStreamConvertAttempt(it, deps.now) === 'wait' || deps.kept(it)) continue
-    if (deps.batch != null && due.length >= deps.batch) break
+    // Asked about further than the batch reaches: a row that turns out not to be a try
+    // (not hashed yet) must not use up a place, and asking is what gets the next ones hashed.
+    if (deps.batch != null && due.length >= deps.batch * ASK_AHEAD) break
     due.push(row)
   }
   if (!due.length) return afterDrop()
@@ -146,12 +179,34 @@ export async function runConvertPass<T extends StreamConvertItem>(deps: ConvertP
   }
 
   const dueSet = new Set(due.map((r) => r.item))
-  const out: ConvertPassResult<T> = { keep: [], changed: dropped.size > 0, converted: 0, dropped: dropped.size, tried: 0 }
-  for (const it of deps.items) {
-    if (dropped.has(it)) continue
-    if (!dueSet.has(it)) { out.keep.push(it); continue }
-    const row = rec.rows.get(it)!
+  const out: ConvertPassResult<T> = { keep: [], changed: dropped.size > 0, converted: 0, dropped: dropped.size, tried: 0, pending: 0 }
+  let pendingWaiting = 0
+  for (const queued of deps.items) {
+    if (dropped.has(queued)) continue
+    if (!dueSet.has(queued)) { out.keep.push(queued); continue }
+    const row = rec.rows.get(queued)!
+    let it: T = queued
     const identity: OneIdentity = answer.kind === 'unsupported' ? 'unsupported' : (answer.byId.get(String(row.id)) ?? null)
+    if (identity !== 'unsupported' && isPending(identity)) {
+      // Not a try. Counted on the row; too many in a row and it waits like a miss.
+      out.pending++
+      out.changed = true
+      const passes = (it.pendingPasses ?? 0) + 1
+      if (passes >= PENDING_PASSES_BEFORE_WAIT) {
+        pendingWaiting++
+        const { pendingPasses: _n, ...rest } = it
+        out.keep.push({ ...rest, retryAfter: deps.now + streamConvertWaitMs(it.tries ?? 0, deps.maxAgeMs), tries: (it.tries ?? 0) + 1 } as T)
+      } else {
+        out.keep.push({ ...it, pendingPasses: passes })
+      }
+      continue
+    }
+    if (deps.batch != null && out.tried >= deps.batch) { out.keep.push(it); continue }
+    if (it.pendingPasses != null) {
+      const { pendingPasses: _n, ...rest } = it
+      it = rest as T
+      out.changed = true
+    }
     out.tried++
     let r: ConvertOutcome
     try { r = await deps.convert(row, identity, allowWholeFile) } catch (err) { r = { ok: false, error: err instanceof Error ? err.message : String(err) } }
@@ -181,6 +236,9 @@ export async function runConvertPass<T extends StreamConvertItem>(deps: ConvertP
       if (!r.refused) deps.log(`[stream-convert] no homemini match yet (${r.reason ?? r.error ?? 'unknown'}), will retry: ${it.ipodPath}`)
     }
     out.keep.push(next)
+  }
+  if (out.pending) {
+    deps.log(`[stream-convert] ${out.pending} song(s) waiting for homemini to hash its copy${pendingWaiting ? ` (${pendingWaiting} asked ${PENDING_PASSES_BEFORE_WAIT} passes running, now waiting longer)` : ''}`)
   }
   return out
 }

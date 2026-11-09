@@ -27,8 +27,8 @@ import { LAST_SYNC_MANIFEST_FILE, TSA_SEAL_FILE } from './ipod-swap-sync.ts'
 import { offloadReplacementsPath, parseReplacementLog, rawAudioUrl } from './offload-audio.ts'
 import { createIpodKeepLocal, keepsRel, type KeepGate } from './ipod-keep-local.ts'
 import {
-  afterProbe, decidePrefetch, discardPart, fetchResumable, nextRefused, OWED_FINGERPRINTS_FILE, owedFingerprints, parseOwedFingerprints, parseRefused, planPrefetch, prefetchLogLine, probeFingerprint, REFUSED_FILE, REFUSED_HOLD_MS, runPrefetchPass, splitRefused, verifyFetched,
-  type LocalKind, type MeasuredLanding, type PrefetchItem, type PrefetchPassResult, type PrefetchVerdict, type RemoteAnswers,
+  afterProbe, decidePrefetch, discardPart, probeAlreadyParked, fetchResumable, nextRefused, OWED_FINGERPRINTS_FILE, owedFingerprints, parseOwedFingerprints, parseRefused, planPrefetch, prefetchLogLine, probeFingerprint, REFUSED_FILE, REFUSED_HOLD_MS, runPrefetchPass, splitRefused, verifyFetched,
+  type LocalKind, type MeasuredLanding, type OwedLanding, type PrefetchItem, type PrefetchPassResult, type PrefetchVerdict, type RemoteAnswers,
 } from './ipod-prefetch.ts'
 import { askAudioIdentity } from './audio-identity.ts'
 import { parseEvictionJournal } from './library-eviction.ts'
@@ -141,32 +141,47 @@ export function startIpodLocal(host: IpodLocalHost): IpodLocal {
     await rename(`${file}.tmp`, file)
   }
   // A landed song's fingerprint goes to the library until the library shows it.
-  async function settleOwed(tracks: ReadonlyArray<Record<string, unknown>>, landedNow: readonly MeasuredLanding[] = []): Promise<void> {
+  async function settleOwed(tracks: ReadonlyArray<Record<string, unknown>>, landedNow: readonly OwedLanding[] = []): Promise<void> {
     try {
       const owed = parseOwedFingerprints(await readFile(owedPath, 'utf-8').catch(() => null))
       const before = JSON.stringify(owed)
       for (const m of landedNow) owed[String(m.id)] = m
-      const { still, resend } = owedFingerprints(owed, tracks)
+      // Each owed song's file as it is now: a measurement is re-sent only for the file it was taken from.
+      const files = new Map<number, { size: number; mtimeMs: number } | null>()
+      for (const id of Object.keys(owed).map(Number)) {
+        const colon = String(tracks.find((t) => Number(t.id) === id)?.path || '')
+        const st = colon ? await lstat(colonPathToAbs(colon, host.localMount(), host.pathSep)).catch(() => null) : null
+        files.set(id, st && st.isFile() ? { size: st.size, mtimeMs: st.mtimeMs } : null)
+      }
+      const { still, resend } = owedFingerprints(owed, tracks, (id) => files.get(id) ?? null)
       for (const m of resend) host.tellLibrary(m)
       if (JSON.stringify(still) !== before) await saveJson(owedPath, still)
     } catch (err) {
       host.warn(`[ipod-local] could not hand a landed song’s fingerprint to the library: ${err instanceof Error ? err.message : err}`)
     }
   }
-  async function measureLanded(item: PrefetchItem, tracks: ReadonlyArray<Record<string, unknown>>): Promise<MeasuredLanding | null> {
+  async function measureLanded(item: PrefetchItem, tracks: ReadonlyArray<Record<string, unknown>>): Promise<OwedLanding | null> {
     const track = tracks.find((t) => Number(t.id) === item.id)
     if (!track) return null
     const abs = colonPathToAbs(item.colon, host.localMount(), host.pathSep)
+    const before = await lstat(abs)
     const { measured } = await measureLibraryFileSizes([track], () => abs, () => true, lstat, undefined, host.fingerprintOf)
-    return measured[0] ?? null
+    const after = await lstat(abs)
+    const m: MeasuredLanding | undefined = measured[0]
+    // Measured from a file that held still, or not owed at all.
+    if (!m || before.size !== after.size || before.mtimeMs !== after.mtimeMs || m.fileSize !== after.size) return null
+    return { ...m, mtimeMs: after.mtimeMs }
   }
 
-  let userAsked = false
-  async function cycle(): Promise<void> {
-    if (running) return
+  // Jake's Wait while a pass is running: one more pass, right after it, as his request.
+  let askedWhileRunning = false
+  /** `asked`: Jake asked for THIS pass (the Device page's Wait). It authorises this pass and no other. */
+  async function cycle(asked: boolean): Promise<void> {
+    if (running) {
+      if (asked) askedWhileRunning = true
+      return
+    }
     running = true
-    const asked = userAsked
-    userAsked = false
     try {
       if (!(await applies())) return
       const { doc } = await keep.refresh()
@@ -184,7 +199,7 @@ export function startIpodLocal(host: IpodLocalHost): IpodLocal {
       const memory = parseRefused(await readFile(refusedPath, 'utf-8').catch(() => null))
       const refusedNow: PrefetchItem[] = []
       const landed = new Set<number>()
-      const landedMeasures: MeasuredLanding[] = []
+      const landedMeasures: OwedLanding[] = []
       let waitingForHome = 0
       const copyInit = (init: RequestInit): RequestInit => {
         const headers = new Headers(init.headers)
@@ -206,8 +221,11 @@ export function startIpodLocal(host: IpodLocalHost): IpodLocal {
       // hashed it, or the file would have to come whole to be checked and this Mac is away from home.
       const notNow: PrefetchItem[] = []
       const toFetch: PrefetchItem[] = []
+      const parkedNow: PrefetchItem[] = []
       for (const item of wanted) {
-        const v = verdictOf(item)
+        let v = verdictOf(item)
+        // Its 256 KB was already looked at while away and nothing changed since: not looked at again.
+        if (v === 'probe-else-home' && probeAlreadyParked(item, memory, Date.now(), remote)) v = 'wait-home'
         if (v === 'wait-home') waitingForHome++
         ;(v === 'wait-home' || v === 'absent' || v === 'later' ? notNow : toFetch).push(item)
       }
@@ -225,7 +243,12 @@ export function startIpodLocal(host: IpodLocalHost): IpodLocal {
           const url = rawAudioUrl(host.audioBase, item.id)
           const part = join(partDir, `${item.id}.part`)
           let verdict = verdictOf(item)
-          if (verdict === 'probe') verdict = afterProbe(await probeFingerprint(item, url, fetch, copyInit), where)
+          if (verdict === 'probe' || verdict === 'probe-else-home') {
+            const asked = verdict
+            const probed = await probeFingerprint(item, url, fetch, copyInit)
+            verdict = afterProbe(probed, where, asked)
+            if (asked === 'probe-else-home' && probed === 'mismatch') parkedNow.push(item)   // remembered: not probed again while away
+          }
           if (verdict === 'absent' || verdict === 'later') return { ok: false, error: 'homemini doesn’t have the file ready yet' }
           if (verdict === 'wait-home') { waitingForHome++; return { ok: false, error: 'waiting until this Mac is home' } }
           if (verdict === 'refuse') return refuse(item, part, 'homemini’s copy isn’t the file this Mac has on record')
@@ -247,7 +270,7 @@ export function startIpodLocal(host: IpodLocalHost): IpodLocal {
       pass.left += held.length + notNow.length
       for (const h of [...held, ...notNow]) pass.leftBytes += h.bytes
       try {
-        await saveJson(refusedPath, nextRefused(memory, plan.items, refusedNow, landed, Date.now(), remote))
+        await saveJson(refusedPath, nextRefused(memory, plan.items, refusedNow, landed, Date.now(), remote, parkedNow))
       } catch (err) {
         host.warn(`[ipod-local] could not remember the refused songs: ${err instanceof Error ? err.message : err}`)
       }
@@ -258,6 +281,10 @@ export function startIpodLocal(host: IpodLocalHost): IpodLocal {
       host.warn(`[ipod-local] pass failed: ${err instanceof Error ? err.message : err}`)
     } finally {
       running = false
+      if (askedWhileRunning) {
+        askedWhileRunning = false
+        void cycle(true)
+      }
     }
   }
   function skip(why: string): void {
@@ -265,14 +292,13 @@ export function startIpodLocal(host: IpodLocalHost): IpodLocal {
     lastSkip = why
   }
 
-  const first = setTimeout(() => { void cycle() }, FIRST_RUN_MS)
+  const first = setTimeout(() => { void cycle(false) }, FIRST_RUN_MS)
   first.unref?.()
-  const every = setInterval(() => { void cycle() }, EVERY_MS)
+  const every = setInterval(() => { void cycle(false) }, EVERY_MS)
   every.unref?.()
 
   host.ipc.handle('ipod-local:kick', async () => {
-    userAsked = true   // Jake's Wait: a request, so it fetches even away from home
-    void cycle()
+    void cycle(true)   // Jake's Wait: a request, so this pass fetches even away from home
     return { ok: true }
   }, { refuse: REFUSED_SENDER })
 

@@ -10,9 +10,14 @@
  * It replaces a file only when ALL of these hold:
  *   • homemini's size and whole-file sha1 equal this Mac's file, hashed here;
  *   • this Mac's file did not change while it was being hashed;
- *   • the first 256 KB homemini serves right now are this file's first 256 KB,
- *     and it says the file is that size (an old answer about a file since
- *     replaced can't pass: tags sit at the front).
+ *   • what homemini serves right now is the copy it answered about (the same
+ *     ETag: size and modified time), it says the file is that size, and its
+ *     first 256 KB are this file's first 256 KB. An old answer about a file
+ *     since replaced can't pass, wherever in the file the change is.
+ * A copy homemini hasn't hashed yet is not confirmed. In the background the
+ * row waits. When Jake asked for this song ("Remove download"), it is asked
+ * about a few more times, and then the whole file is compared the old way, so
+ * the click does what it says and the message says what happened.
  * That is the old rule (same size, same sha1 of the whole file), with the
  * hash taken on homemini's disk instead of over the wire.
  *
@@ -33,6 +38,9 @@ import { askAudioIdentity, hubBaseFromAudioBase, identityKey, isPending, oneIden
 import { withCompanionInit } from './hub-companion.ts'
 
 const PREFIX_BYTES = 256 * 1024
+export const PENDING_WAIT_MS = 3000
+/** How many more times a request asks about a copy homemini hasn't hashed yet. */
+export const USER_PENDING_RETRIES = 4
 
 /** What a refusal was made on. Either side changing makes a new try worth it. */
 export interface RefusalMemo {
@@ -54,6 +62,19 @@ export type HoldsFile =
     reason: 'different' | 'missing' | 'unreachable' | 'transcode' | 'held' | 'away' | 'pending'
     refused?: RefusalMemo
   }
+
+/** What to tell Jake when a file was kept. Each line is what actually happened. */
+export function keptLocalMessage(reason: Extract<HoldsFile, { ok: false }>['reason']): string {
+  switch (reason) {
+    case 'different':
+    case 'held': return 'homemini holds a different copy of this file (the audio may be the same with other tags) — kept local'
+    case 'missing': return 'homemini does not have this file yet — kept local'
+    case 'pending': return 'homemini has the file and is still checking it — kept local for now'
+    case 'away': return 'away from home: comparing this file means downloading it whole — kept local'
+    case 'transcode': return 'homemini would send a converted copy, which can’t be compared — kept local'
+    case 'unreachable': return 'homemini did not give a clear answer — kept local'
+  }
+}
 
 interface LocalStat { size: number; mtimeMs: number }
 
@@ -90,6 +111,14 @@ export async function confirmHomeminiHoldsFile(opts: {
   allowWholeFile: boolean
   remembered?: RefusalMemo
   askIdentity?: (id: string | number) => Promise<OneIdentity>
+  /**
+   * Jake asked for this song: a copy homemini hasn't hashed yet is asked about
+   * this many more times, then compared whole (when `allowWholeFile`). 0, the
+   * default, is the background: `pending` is the answer.
+   */
+  pendingRetries?: number
+  pendingWaitMs?: number
+  sleep?: (ms: number) => Promise<void>
   statLocal?: (abs: string) => Promise<LocalStat>
   hashLocal?: (abs: string) => Promise<FullFileDigest>
   readLocalPrefix?: (abs: string) => Promise<Buffer>
@@ -105,18 +134,26 @@ export async function confirmHomeminiHoldsFile(opts: {
     try { return await fetchPrefix(url) } catch { return { transportError: true, status: 0, body: null } }
   }
 
-  let identity: OneIdentity
-  if (opts.identity !== undefined) identity = opts.identity
-  else {
-    const ask = opts.askIdentity ?? (async (id) => oneIdentity(await askAudioIdentity({
-      baseUrl: hubBaseFromAudioBase(opts.audioBase), ids: [id], withInit: withCompanionInit,
-    }), id))
-    try { identity = await ask(opts.id) } catch { identity = 'unreachable' }
+  const ask = opts.askIdentity ?? (async (id) => oneIdentity(await askAudioIdentity({
+    baseUrl: hubBaseFromAudioBase(opts.audioBase), ids: [id], withInit: withCompanionInit,
+  }), id))
+  const askNow = async (): Promise<OneIdentity> => {
+    try { return await ask(opts.id) } catch { return 'unreachable' }
+  }
+  let identity: OneIdentity = opts.identity !== undefined ? opts.identity : await askNow()
+  // Asking is what makes homemini hash the file, so a request is worth a few more asks.
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms) }))
+  for (let i = 0; i < (opts.pendingRetries ?? 0) && identity !== 'unsupported' && identity !== 'unreachable' && isPending(identity); i++) {
+    await sleep(opts.pendingWaitMs ?? PENDING_WAIT_MS)
+    identity = await askNow()
   }
   if (identity === 'unreachable') return { ok: false, reason: 'unreachable' }
   if (identity === null) return { ok: false, reason: 'missing' }
   // Not hashed yet is not an identity: nothing is replaced on a size and a date.
-  if (identity !== 'unsupported' && isPending(identity)) return { ok: false, reason: 'pending' }
+  if (identity !== 'unsupported' && isPending(identity)) {
+    if (!((opts.pendingRetries ?? 0) > 0 && opts.allowWholeFile)) return { ok: false, reason: 'pending' }
+    identity = 'unsupported'   // a request, still not hashed: the whole file is compared, as before
+  }
 
   let before: LocalStat
   try { before = await statLocal(opts.localAbs) } catch { return { ok: false, reason: 'unreachable' } }
@@ -155,6 +192,8 @@ export async function confirmHomeminiHoldsFile(opts: {
   const probe = await probeNow()
   if (probe.transportError) return { ok: false, reason: 'unreachable' }
   if (!probe.body || probe.body.length <= 0 || (probe.status !== 200 && probe.status !== 206)) return { ok: false, reason: 'missing' }
+  // The copy being served must be the copy the answer was about. Not a refusal: asked again.
+  if (!probe.etag || probe.etag !== identity.etag) return { ok: false, reason: 'unreachable' }
   if (probe.total !== mine.bytes) return { ok: false, reason: 'unreachable' }
   const theirFront = probe.body.subarray(0, PREFIX_BYTES)
   if (mineFront.length <= 0 || theirFront.length !== mineFront.length || sha1(theirFront) !== sha1(mineFront)) {

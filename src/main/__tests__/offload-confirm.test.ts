@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto'
 import { mkdtemp, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { confirmHomeminiHoldsFile, localFileKey, sameRefusal, type HoldsFile } from '../offload-confirm.ts'
+import { confirmHomeminiHoldsFile, keptLocalMessage, localFileKey, sameRefusal, type HoldsFile } from '../offload-confirm.ts'
 import { identityKey, type HomeminiIdentity, type OneIdentity } from '../audio-identity.ts'
 import type { HomeminiPrefixProbe, RawOpen } from '../offload-audio.ts'
 
@@ -120,6 +120,18 @@ describe('confirmHomeminiHoldsFile', () => {
     assert.equal(silent.ok, false)
   })
 
+  // Review, 2026-11-09: tags that sit AFTER the first 256 KB. homemini answered about the old
+  // copy, then the file was replaced at the same size; the front still matches this Mac's.
+  it('the copy served must be the copy the answer was about: another ETag confirms nothing', async () => {
+    const h = hub(mine, '"replaced-since"')
+    const r = await confirm(identityOf(mine, '"v1"'), h)
+    assert.equal(r.ok, false)
+    assert.equal(!r.ok && r.reason, 'unreachable', 'not a refusal to remember: asked again')
+    assert.equal(!r.ok && r.refused, undefined)
+    const noTag = await confirm(identityOf(mine), h, { fetchPrefix: async () => ({ transportError: false, status: 206, body: mine.subarray(0, WINDOW), total: mine.length }) })
+    assert.equal(noTag.ok, false, 'no ETag on the bytes: nothing ties them to the answer')
+  })
+
   it('a shared first 256 KB with another tail never replaces: the whole-file sha1 decides', async () => {
     const r = await confirm(identityOf(otherTail), hub(otherTail))
     assert.equal(!r.ok && r.reason, 'different')
@@ -165,6 +177,55 @@ describe('confirmHomeminiHoldsFile', () => {
     assert.equal(unread.ok, false)
     const lying = await confirm(identityOf(mine), hub(mine), { hashLocal: async () => ({ sha1: sha1(retagged), bytes: mine.length }) })
     assert.equal(!lying.ok && lying.reason, 'different', 'it is this Mac’s hash against homemini’s, nothing else')
+  })
+
+  describe('Jake asked for this song ("Remove download") and homemini hasn’t hashed it yet', () => {
+    const pending = { pending: true as const, size: mine.length, etag: '"v1"' }
+    it('it is asked about again, and converts as soon as the hash is there', async () => {
+      const answers: OneIdentity[] = [pending, pending, identityOf(mine)]
+      const waits: number[] = []
+      const h = hub(mine)
+      const r = await confirm(undefined as unknown as OneIdentity, h, {
+        identity: undefined, allowWholeFile: true, pendingRetries: 4, pendingWaitMs: 7,
+        askIdentity: async () => answers.shift()!, sleep: async (ms) => { waits.push(ms) },
+      })
+      assert.deepEqual(r, { ok: true, fullSha1: sha1(mine), bytes: mine.length, via: 'identity' })
+      assert.deepEqual(waits, [7, 7], 'two more asks, then the answer')
+      assert.equal(h.seen.whole, 0)
+    })
+    it('still not hashed after the last ask: the whole file is compared, so the click is not refused for nothing', async () => {
+      let asks = 0
+      const h = hub(mine)
+      const r = await confirm(undefined as unknown as OneIdentity, h, {
+        identity: undefined, allowWholeFile: true, pendingRetries: 2, askIdentity: async () => { asks++; return pending }, sleep: async () => undefined,
+      })
+      assert.deepEqual(r, { ok: true, fullSha1: sha1(mine), bytes: mine.length, via: 'whole-file' })
+      assert.equal(asks, 3, 'bounded: the first ask and two more')
+      assert.equal(h.seen.whole, 1)
+      // and that compare still refuses another file
+      const other = await confirm(undefined as unknown as OneIdentity, hub(otherTail), {
+        identity: undefined, allowWholeFile: true, pendingRetries: 1, askIdentity: async () => pending, sleep: async () => undefined,
+      })
+      assert.equal(!other.ok && other.reason, 'different')
+    })
+    it('the background never waits and never falls back: pending is the answer', async () => {
+      let slept = 0
+      const h = hub(mine)
+      const r = await confirm(pending, h, { allowWholeFile: true, sleep: async () => { slept++ } })
+      assert.deepEqual(r, { ok: false, reason: 'pending' })
+      assert.deepEqual([slept, h.seen.whole, h.seen.prefix], [0, 0, 0])
+    })
+    it('what Jake is told is what happened', () => {
+      assert.match(keptLocalMessage('pending'), /still checking/)
+      assert.match(keptLocalMessage('different'), /different copy/)
+      assert.equal(keptLocalMessage('held'), keptLocalMessage('different'))
+      assert.match(keptLocalMessage('missing'), /does not have this file yet/)
+      assert.match(keptLocalMessage('unreachable'), /did not give a clear answer/)
+      assert.match(keptLocalMessage('away'), /away from home/)
+      const all = (['different', 'missing', 'pending', 'away', 'transcode', 'unreachable'] as const).map(keptLocalMessage)
+      assert.equal(new Set(all).size, all.length, 'no two reasons share a sentence')
+      assert.ok(all.every((m) => m.endsWith('kept local') || m.endsWith('kept local for now')))
+    })
   })
 
   it('asked here when the caller didn’t: the one id, and a throw is no answer', async () => {
