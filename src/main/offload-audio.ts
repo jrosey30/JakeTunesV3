@@ -787,11 +787,14 @@ export async function readPrefixBody(stream: ReadableStream<Uint8Array>, limit =
   return Buffer.concat(chunks)
 }
 
+/** Tells homemini this request is a file check or copy, not someone listening (its batch jobs yield to playback). */
+const COPY_PURPOSE = { 'X-JakeTunes-Purpose': 'copy' } as const
+
 async function defaultFetchPrefix(url: string): Promise<HomeminiPrefixProbe> {
   if (urlAsksForTranscode(url)) return { transportError: false, status: 0, body: null }
   try {
     const res = await fetch(url, withCompanionInit({
-      headers: { Range: 'bytes=0-262143' },
+      headers: { Range: 'bytes=0-262143', ...COPY_PURPOSE },
       signal: AbortSignal.timeout(8000),
     }))
     if ((!res.ok && res.status !== 206) || !res.body) {
@@ -808,6 +811,7 @@ async function defaultOpenRaw(url: string): Promise<RawOpen> {
   if (urlAsksForTranscode(url)) return { ok: false, transportError: false, status: 0 }
   try {
     const res = await fetch(url, withCompanionInit({
+      headers: { ...COPY_PURPOSE },
       signal: AbortSignal.timeout(FULL_BODY_TIMEOUT_MS),
     }))
     if (res.status === 404) return { ok: false, transportError: false, status: 404 }
