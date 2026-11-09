@@ -56,6 +56,13 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46ch;
 }
 .store-shelf-count { font-size: 10.5px; color: var(--text-secondary, #a49c8a); }
+/* "For your iPods" (2026-11-09): what the iPod lists are missing, its own
+   section after the daily picks. */
+.store-section { margin-top: 10px; }
+.store-section-title {
+  font-size: 17px; font-weight: 700; letter-spacing: -0.01em; margin: 6px 0 4px;
+  color: var(--text-primary, #1a1a1a);
+}
 .store-seeall {
   margin-left: auto; border: 0; background: none; cursor: pointer; padding: 0;
   font-size: 11px; font-weight: 600; color: rgb(var(--brand-orange-rgb));

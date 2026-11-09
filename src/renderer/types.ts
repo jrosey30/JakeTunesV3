@@ -1257,6 +1257,7 @@ declare global {
       // 2026-11-07 — every non-Original iPod's list (homemini writes it; src/main/ipc/ipod-lists-ipc.ts)
       ipodRegistryList?: () => Promise<{ ok: boolean; devices?: Array<{ id: string; name: string; color: string | null; primary: boolean }>; error?: string }>
       ipodListsGet?: () => Promise<{ ok: boolean; role?: 'hub' | 'replica'; lists?: Array<{ id: string; name: string; color: string | null; purpose: string | null; ids: number[]; source: 'homemini' | 'local' | 'cache'; note: string | null; updatedAt: string | null; registered?: boolean }> }>
+      ipodWantedShelf?: (force?: boolean) => Promise<{ ok: boolean; shelves?: Array<{ listId: string; listName: string; title: string; cards: Array<{ lane: 'ipod-wanted'; type: 'album' | 'song'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string }> }>; error?: string }>
       ipodListProposals?: (deviceId: string) => Promise<{ ok: boolean; proposals?: Array<{ id: number; why: string; at: string; artist?: string; title?: string; album?: string }>; proposedAt?: string | null; queued?: number; offline?: boolean; error?: string }>
       ipodListDecide?: (input: { deviceId: string; approve?: number[]; reject?: number[] }) => Promise<{ ok: boolean; sent?: boolean; error?: string }>
       top1000Ties?: () => Promise<{ ok: true; value: number | null } | { ok: false; error: string }>

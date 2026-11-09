@@ -1227,6 +1227,7 @@ const electronAPI = {
   ipodListsGet: (): Promise<unknown> => ipcRenderer.invoke('ipod-lists:get'),
   // The brain's picks waiting for Jake (2026-11-09): read, and Approve / Skip.
   ipodListProposals: (deviceId: string): Promise<unknown> => ipcRenderer.invoke('ipod-lists:proposals', deviceId),
+  ipodWantedShelf: (force?: boolean): Promise<unknown> => ipcRenderer.invoke('ipod-lists:wanted-shelf', force === true),
   ipodListDecide: (input: { deviceId: string; approve?: number[]; reject?: number[] }): Promise<unknown> => ipcRenderer.invoke('ipod-lists:decide', input),
   homeShelvesGet: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:get'),
   homeShelvesRefresh: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:refresh'),
