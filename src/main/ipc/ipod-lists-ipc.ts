@@ -8,6 +8,14 @@
  *       the sidebar's playlist per iPod (renderer/ipodLists.ts). homemini's list,
  *       else that iPod's pool file.
  *
+ *   'ipod-lists:proposals' (deviceId) → { ok, proposals, proposedAt, queued, offline }
+ *       the brain's picks waiting for Jake (2026-11-09), for the panel at the top
+ *       of an iPod list's playlist (renderer/components/IpodProposalsPanel.tsx).
+ *   'ipod-lists:decide' ({ deviceId, approve, reject }) → { ok, sent }
+ *       Approve / Skip: on disk first, then homemini (main/ipod-list-proposals.ts);
+ *       what homemini doesn't hear now goes on the next read, refresh or the
+ *       5-minute retry.
+ *
  * And for main: `refresh(device)` (the pool page, activity-pool-ipc.ts) and
  * `refreshPlugged(mount)` (the Activity Sync build, workout-sync-ipc.ts) — both
  * copy homemini's list into the iPod's pool file first (ipod-list-pool.ts).
@@ -20,6 +28,10 @@ import { createIpodListClient } from '../ipod-list-client.ts'
 import { refreshIpodPool, type IpodPoolRefresh, type PoolFileName } from '../ipod-list-pool.ts'
 import type { FetchLike } from '../top1000-client.ts'
 import { flushHomeminiName } from '../ipod-rename.ts'
+import { createProposalsDesk } from '../ipod-list-proposals.ts'
+
+/** How often a decision homemini hasn't heard yet is tried again. */
+export const DECISION_RETRY_MS = 5 * 60_000
 
 export interface IpodListsHost {
   stateDir: string
@@ -41,8 +53,9 @@ export interface IpodListSource {
   rename(deviceId: string, name: string): Promise<boolean>
 }
 
-export function createIpodListSource(host: IpodListsHost): IpodListSource {
+export function createIpodListSource(host: IpodListsHost): IpodListSource & { desk: ReturnType<typeof createProposalsDesk> } {
   const client = createIpodListClient({ baseUrl: host.baseUrl, fetchImpl: host.fetchImpl, warn: host.warn })
+  const desk = createProposalsDesk({ stateDir: host.stateDir, get: (id) => client.proposals(id), send: (id, d) => client.decide(id, d), log: host.warn })
 
   async function namesFromLibrary(): Promise<(id: number) => PoolFileName | null> {
     let tracks: unknown[] = []
@@ -62,6 +75,8 @@ export function createIpodListSource(host: IpodListsHost): IpodListSource {
     // A rename homemini missed (it was away) goes first — every sync reads the list here.
     await flushHomeminiName(host.stateDir, device.id, (id, name) => client.rename(id, name))
       .catch((err) => host.warn?.(`[ipod-list] pending rename for ${device.name}: ${(err as Error)?.message ?? err}`))
+    // Approvals homemini missed go before the list is read, so the read has them.
+    await desk.flush().catch((err) => host.warn?.(`[ipod-list] pending decisions: ${(err as Error)?.message ?? err}`))
     return refreshIpodPool({
       poolFile: poolFileFor(host.stateDir, device),
       ipodName: device.name,
@@ -77,6 +92,7 @@ export function createIpodListSource(host: IpodListsHost): IpodListSource {
   }
 
   return {
+    desk,
     refresh,
     rename: (deviceId, name) => client.rename(deviceId, name),
     async refreshPlugged(mount) {
@@ -101,5 +117,17 @@ export function registerIpodListsIpc(ipc: IpcRegistrar, host: IpodListsHost): Ip
     }
     return { ok: true, lists }
   }, { public: true })
+  ipc.handle('ipod-lists:proposals', async (_e, deviceId: unknown) => {
+    if (typeof deviceId !== 'string') return { ok: false, error: 'no iPod' }
+    return source.desk.view(deviceId)
+  }, { public: true })
+  // A write: the main window only.
+  ipc.handle('ipod-lists:decide', async (_e, input: unknown) => {
+    const i = input as { deviceId?: unknown; approve?: unknown; reject?: unknown } | null
+    if (!i || typeof i.deviceId !== 'string') return { ok: false, error: 'no iPod' }
+    const ids = (v: unknown): number[] => (Array.isArray(v) ? v.map(Number).filter((n) => Number.isInteger(n) && n > 0) : [])
+    return source.desk.decide(i.deviceId, { approve: ids(i.approve), reject: ids(i.reject) })
+  }, { refuse: { ok: false, error: 'refused-sender' } })
+  setInterval(() => { void source.desk.flush().catch(() => undefined) }, DECISION_RETRY_MS).unref?.()
   return source
 }

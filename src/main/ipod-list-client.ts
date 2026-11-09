@@ -7,6 +7,7 @@
  */
 import { withCompanionInit } from './hub-companion.ts'
 import { parseIpodList, type IpodList } from '../common/ipod-list-doc.ts'
+import { parseProposalSet, type IpodProposalSet } from '../common/ipod-list-proposals.ts'
 import type { FetchLike } from './top1000-client.ts'
 
 export type IpodListAnswer =
@@ -71,6 +72,46 @@ export function createIpodListClient(opts: IpodListClientOptions) {
       } catch (err) {
         warn(`[ipod-list] all lists failed: ${(err as Error)?.message ?? err}`)
         return null
+      }
+    },
+
+    /** The brain's picks waiting for Jake (2026-11-09; common/ipod-list-proposals.ts). */
+    async proposals(deviceId: string): Promise<
+      | { kind: 'ok'; set: IpodProposalSet }
+      | { kind: 'none' }
+      | { kind: 'offline'; error: string }
+      | { kind: 'bad'; error: string }> {
+      let res: Awaited<ReturnType<FetchLike>>
+      try {
+        res = await fetchImpl(`${base}/${encodeURIComponent(deviceId)}/proposals`, withCompanionInit({ method: 'GET', signal: AbortSignal.timeout(timeoutMs) }) as Record<string, unknown>)
+      } catch (err) {
+        const error = (err as Error)?.message ?? String(err)
+        warn(`[ipod-list] proposals ${deviceId} failed: ${error}`)
+        return { kind: 'offline', error }
+      }
+      if (res.status === 404) return { kind: 'none' }
+      if (res.status !== 200) return { kind: 'bad', error: `homemini answered ${res.status}` }
+      const set = parseProposalSet(await res.json().catch(() => null), deviceId)
+      return set ? { kind: 'ok', set } : { kind: 'bad', error: 'the picks came back unreadable' }
+    },
+
+    /** Jake's approvals and skips. 'done' = homemini has them; 'retry' = not now (away, 5xx,
+     *  a refused token); 'drop' = homemini will never take this one (400, 404): keeping it
+     *  would retry forever. */
+    async decide(deviceId: string, d: { approve: number[]; reject: number[] }): Promise<'done' | 'retry' | 'drop'> {
+      try {
+        const res = await fetchImpl(`${base}/${encodeURIComponent(deviceId)}/proposals/decide`, withCompanionInit({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(d),
+          signal: AbortSignal.timeout(timeoutMs),
+        }) as Record<string, unknown>)
+        if (res.status === 200) return 'done'
+        warn(`[ipod-list] decide ${deviceId}: homemini answered ${res.status}`)
+        return res.status === 400 || res.status === 404 ? 'drop' : 'retry'
+      } catch (err) {
+        warn(`[ipod-list] decide ${deviceId} failed: ${(err as Error)?.message ?? err}`)
+        return 'retry'
       }
     },
 

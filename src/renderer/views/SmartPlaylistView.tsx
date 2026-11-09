@@ -13,6 +13,7 @@ import { useTop1000List, useTop1000Ranks } from '../top1000List'
 import { isRankedPlaylist, rankMovement, rotateRankSnap, weekKeyOf, RANK_SNAPSHOT_KEYS, type RankSnap } from '../../common/rank-movement'
 import { useIpodLists } from '../ipodLists'
 import { parseIpodListPlaylistId } from '../../common/ipod-list-doc'
+import IpodProposalsPanel from '../components/IpodProposalsPanel'
 import { useHomeShelves } from '../homeShelves'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { useReleaseMonths } from '../releaseMonths'
@@ -1145,6 +1146,8 @@ export default function SmartPlaylistView() {
           )}
         </div>
       </div>
+      {/* The brain's picks waiting for Jake's OK (2026-11-09) */}
+      {ipodListDevice && <IpodProposalsPanel deviceId={ipodListDevice} ipodName={ipodList?.name ?? title} />}
       {isPicksView && picks?.commentary && (
         <div className={`playlist-view-commentary playlist-view-commentary--${picksConfig?.kind === 'larry' ? 'larry' : picksConfig?.kind === 'djhands' ? 'djhands' : 'musicman'}`}>
           {picks.commentary}{' '}
