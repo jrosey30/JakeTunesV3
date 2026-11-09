@@ -29,8 +29,8 @@ export interface IpodListsHost {
   libraryTracks?: () => Promise<unknown[]>
   fetchImpl?: FetchLike
   warn?: (msg: string) => void
-  /** A list was just read clean from homemini (ids newest first): the "ready to sync" check (ipod-sync-ready.ts). */
-  onListRead?: (device: IpodDeviceMarker, listIds: number[]) => void
+  /** A list was just read clean from homemini (ids newest first, and its grow cadence when it has one): the "ready to sync" check (ipod-sync-ready.ts). */
+  onListRead?: (device: IpodDeviceMarker, listIds: number[], everyDays?: number) => void
 }
 
 export interface IpodListSource {
@@ -70,7 +70,7 @@ export function createIpodListSource(host: IpodListsHost): IpodListSource {
     }).then((r) => {
       // A clean read from homemini: the "ready to sync" check takes these ids (ipod-sync-ready.ts).
       if (r.source === 'homemini') {
-        try { host.onListRead?.(device, r.listIds) } catch (err) { host.warn?.(`[ipod-list] onListRead: ${(err as Error)?.message ?? err}`) }
+        try { host.onListRead?.(device, r.listIds, r.everyDays) } catch (err) { host.warn?.(`[ipod-list] onListRead: ${(err as Error)?.message ?? err}`) }
       }
       return r
     })

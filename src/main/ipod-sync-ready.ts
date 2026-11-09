@@ -14,7 +14,11 @@
  *
  * One macOS notification (and one ntfy push when a topic is set) per distinct
  * difference, never twice for the same in/out sets, at most once per iPod per
- * 6 hours (the next one says the latest totals). The Original (the Top 1000) is
+ * 6 hours (the next one says the latest totals). A list that homemini grows
+ * only every 7 days or more (its brain.everyDays; the punkPod: 14, Jake
+ * 2026-11-08: "only update punkpod once every other week") is told at most
+ * once per that many days; the last cadence seen is kept with its state, so a
+ * read that doesn't carry it still waits. The Original (the Top 1000) is
  * once a WEEK (Jake, 2026-11-08: "the top 1000 notofication comes once a week
  * not daily"): a change inside the week waits, and the notice at the week's end
  * says the net difference at that moment; back to no difference by then, nothing
@@ -44,9 +48,17 @@ export const SYNC_READY_QUIET_MS = 6 * 3600 * 1000
 /** The Original (the Top 1000): at most one notice a week. */
 export const SYNC_READY_ORIGINAL_QUIET_MS = 7 * 24 * 3600 * 1000
 
-/** How long an iPod's notices stay quiet after one is told. */
-export function quietMsFor(device: { primary: boolean }): number {
-  return device.primary ? SYNC_READY_ORIGINAL_QUIET_MS : SYNC_READY_QUIET_MS
+/** A list whose grower runs this rarely or rarer gets one notice per run window. */
+export const SYNC_READY_CADENCE_MIN_DAYS = 7
+
+/**
+ * How long an iPod's notices stay quiet after one is told. `everyDays`: the
+ * list's grow cadence from homemini (non-Original iPods only).
+ */
+export function quietMsFor(device: { primary: boolean }, everyDays?: number): number {
+  if (device.primary) return SYNC_READY_ORIGINAL_QUIET_MS
+  if (typeof everyDays === 'number' && Number.isInteger(everyDays) && everyDays >= SYNC_READY_CADENCE_MIN_DAYS) return everyDays * 24 * 3600 * 1000
+  return SYNC_READY_QUIET_MS
 }
 export const SYNC_READY_STATE_FILE = 'ipod-sync-ready.json'
 
@@ -99,6 +111,8 @@ export interface DeviceNoticeState {
   pending?: boolean
   /** "Not synced yet" was told. */
   toldNeverSynced?: boolean
+  /** The list's grow cadence last read from homemini (brain.everyDays); non-Original only. */
+  everyDays?: number
 }
 
 /** Pure: tell Jake now? And the state to keep either way. `quietMs`: quietMsFor(device). */
@@ -158,8 +172,8 @@ export interface IpodSyncReadyDeps {
   onIpod: (device: IpodDeviceMarker) => Promise<number[] | null>
   /** homemini's Top 1000, ranked best first; null = not answering. */
   top1000: () => Promise<number[] | null>
-  /** homemini's list for a non-Original iPod, newest first; null = no clean answer. */
-  list: (device: IpodDeviceMarker) => Promise<number[] | null>
+  /** homemini's list for a non-Original iPod, newest first (with its grow cadence when it has one); null = no clean answer. */
+  list: (device: IpodDeviceMarker) => Promise<number[] | { ids: number[]; everyDays?: number } | null>
   boarding?: () => Promise<SyncBoarding | null>
   /** The macOS notification. Clicking it opens the Device page. */
   notify: (n: { title: string; body: string; deviceId: string }) => void
@@ -175,7 +189,7 @@ export interface IpodSyncReadyRunner {
   /** The standings tick (top1000-scores.ts onPulled). */
   pulled(adopted: boolean): void
   /** A list was just read from homemini (ipc/ipod-lists-ipc.ts): check that iPod with those ids. */
-  listRead(device: IpodDeviceMarker, listIdsNewestFirst: number[]): void
+  listRead(device: IpodDeviceMarker, listIdsNewestFirst: number[], everyDays?: number): void
   /** For the Device page / tests: the last difference per iPod id. */
   lastDiff(deviceId: string): IpodSyncDiff | null
 }
@@ -202,7 +216,7 @@ export function createIpodSyncReady(deps: IpodSyncReadyDeps): IpodSyncReadyRunne
     await rename(tmp, statePath)
   }
 
-  async function targetFor(device: IpodDeviceMarker, boarding: SyncBoarding | null, given?: number[]): Promise<{ target: number[]; keep: Set<number> } | null> {
+  async function targetFor(device: IpodDeviceMarker, boarding: SyncBoarding | null, given?: { ids: number[]; everyDays?: number }): Promise<{ target: number[]; keep: Set<number>; cadence?: { everyDays?: number } } | null> {
     if (device.primary) {
       const ranked = await deps.top1000().catch(() => null)
       if (!ranked || ranked.length === 0) return null
@@ -211,13 +225,17 @@ export function createIpodSyncReady(deps: IpodSyncReadyDeps): IpodSyncReadyRunne
       const keep = new Set(picked.length < SYNC_READY_CAP ? boarding.fill(new Set(picked), SYNC_READY_CAP - picked.length) : [])
       return { target: picked, keep }
     }
-    const ids = given ?? await deps.list(device).catch(() => null)
-    if (!ids) return null
+    const answer = given ?? await deps.list(device).catch(() => null)
+    if (!answer) return null
+    // A bare id list says nothing about the cadence; an { ids, everyDays } answer
+    // is homemini's word on it (no everyDays = the list has none).
+    const ids = Array.isArray(answer) ? answer : answer.ids
+    const cadence = Array.isArray(answer) ? undefined : { everyDays: answer.everyDays }
     const capped = ids.slice(0, SYNC_READY_CAP)
-    return { target: boarding ? capped.filter((id) => boarding.canBoard(id)) : capped, keep: new Set() }
+    return { target: boarding ? capped.filter((id) => boarding.canBoard(id)) : capped, keep: new Set(), ...(cadence ? { cadence } : {}) }
   }
 
-  async function pass(only: (d: IpodDeviceMarker) => boolean, given?: { deviceId: string; ids: number[] }): Promise<void> {
+  async function pass(only: (d: IpodDeviceMarker) => boolean, given?: { deviceId: string; answer: { ids: number[]; everyDays?: number } }): Promise<void> {
     if (!(await deps.isHub().catch(() => false))) return
     const devices = (await deps.devices().catch(() => [] as IpodDeviceMarker[])).filter(only)
     if (devices.length === 0) return
@@ -230,13 +248,23 @@ export function createIpodSyncReady(deps: IpodSyncReadyDeps): IpodSyncReadyRunne
         log(`[sync-ready] ${device.name}: last sync's manifest unreadable (${(err as Error)?.message ?? err}) — skipped`)
         continue
       }
-      const t = await targetFor(device, boarding, given && given.deviceId === device.id ? given.ids : undefined)
+      const t = await targetFor(device, boarding, given && given.deviceId === device.id ? given.answer : undefined)
       if (!t) continue   // homemini away / no list: say nothing, keep the state
       const diff = diffIpodTarget({ target: t.target, onIpod, keep: t.keep })
       diffs.set(device.id, diff)
-      const { notify, next } = decideNotice(state[device.id], diff, now(), quietMsFor(device))
+      // The cadence: this read's when it says, else the last one seen (a read that
+      // doesn't carry it still waits out the window homemini last named).
+      const prev = state[device.id]
+      const everyDays = device.primary ? undefined : t.cadence ? t.cadence.everyDays : prev?.everyDays
+      const quietMs = quietMsFor(device, everyDays)
+      const { notify, next: decided } = decideNotice(prev, diff, now(), quietMs)
+      const next: DeviceNoticeState = { ...decided }
+      delete next.everyDays
+      if (everyDays !== undefined) next.everyDays = everyDays
       if (JSON.stringify(next) !== JSON.stringify(state[device.id] ?? {})) { state[device.id] = next; changed = true }
-      if (diff.kind === 'differs') log(`[sync-ready] ${device.name}: ${diff.in.length} in, ${diff.out.length} out${notify ? ' — told' : next.pending ? (device.primary ? ' — waiting for the week' : ' — waiting out the 6 hours') : ''}`)
+      const waiting = device.primary ? ' — waiting for the week'
+        : quietMs > SYNC_READY_QUIET_MS ? ` — waiting out the ${Math.round(quietMs / 86_400_000)} days` : ' — waiting out the 6 hours'
+      if (diff.kind === 'differs') log(`[sync-ready] ${device.name}: ${diff.in.length} in, ${diff.out.length} out${notify ? ' — told' : next.pending ? waiting : ''}`)
       if (!notify) continue
       const text = noticeText(device, diff)
       if (!text) continue
@@ -267,9 +295,9 @@ export function createIpodSyncReady(deps: IpodSyncReadyDeps): IpodSyncReadyRunne
         await pass((d) => (d.primary ? original : true))
       })
     },
-    listRead(device, ids) {
+    listRead(device, ids, everyDays) {
       if (device.primary) return
-      void queue(() => pass((d) => d.id === device.id, { deviceId: device.id, ids }))
+      void queue(() => pass((d) => d.id === device.id, { deviceId: device.id, answer: { ids, everyDays } }))
     },
     lastDiff(deviceId) {
       return diffs.get(deviceId) ?? null

@@ -103,6 +103,14 @@ describe('decideNotice', () => {
     assert.equal(c.notify, false)
     assert.equal(c.next.pending, false)
   })
+  it('a list homemini grows every 7+ days is told once per that many days; under 7 keeps 6 hours', () => {
+    assert.equal(quietMsFor(punk, 14), 14 * 24 * 3600 * 1000)
+    assert.equal(quietMsFor(punk, 7), 7 * 24 * 3600 * 1000)
+    assert.equal(quietMsFor(punk, 6), SYNC_READY_QUIET_MS)
+    assert.equal(quietMsFor(punk, 1), SYNC_READY_QUIET_MS)
+    assert.equal(quietMsFor(punk, undefined), SYNC_READY_QUIET_MS)
+    assert.equal(quietMsFor(original, 14), SYNC_READY_ORIGINAL_QUIET_MS, 'the Original stays weekly')
+  })
   it('"not synced yet" once, and never for an empty list', () => {
     const a = decideNotice(undefined, { kind: 'never-synced', targetCount: 3 }, 0)
     assert.equal(a.notify, true)
@@ -241,6 +249,43 @@ describe('the runner', () => {
     await runner.check({ lists: true })
     assert.equal(w.notices.length, 2)
     assert.equal(w.notices[1].body, 'punkPod: 2 new songs ready to sync.')
+  })
+
+  it('punkPod on a 14-day cadence: one notice, then quiet for 14 days, then the net totals', async () => {
+    const DAY = 24 * 3600 * 1000
+    const answers: Record<string, { ids: number[]; everyDays?: number }> = { [punk.id]: { ids: [4, 3, 2, 1], everyDays: 14 } }
+    const { w, runner } = world({ list: async (d: IpodDeviceMarker) => answers[d.id] ?? null })
+    await runner.check({ lists: true })
+    assert.equal(w.notices.length, 1)
+    w.advance(SYNC_READY_QUIET_MS)
+    answers[punk.id] = { ids: [5, 4, 3, 2, 1], everyDays: 14 }
+    await runner.check({ lists: true })
+    assert.equal(w.notices.length, 1, '6 hours is not enough on a 14-day cadence')
+    w.advance(14 * DAY - SYNC_READY_QUIET_MS - 1)
+    await runner.check({ lists: true })
+    assert.equal(w.notices.length, 1, 'still inside the 14 days')
+    w.advance(1)
+    await runner.check({ lists: true })
+    assert.equal(w.notices.length, 2)
+    assert.equal(w.notices[1].body, 'punkPod: 2 new songs ready to sync.')
+    const saved = JSON.parse(readFileSync(join(w.stateDir, 'ipod-sync-ready.json'), 'utf-8'))
+    assert.equal(saved[punk.id].everyDays, 14)
+  })
+
+  it('a list read through the pool refresh carries its cadence; a bare id list keeps the last one seen', async () => {
+    const DAY = 24 * 3600 * 1000
+    const { w, runner } = world()
+    runner.listRead(punk, [4, 3, 2, 1], 14)
+    await runner.check({})
+    assert.equal(w.notices.length, 1)
+    w.advance(DAY)
+    w.lists[punk.id] = [5, 4, 3, 2, 1]   // the world's list() answers a bare id list
+    await runner.check({ lists: true })
+    assert.equal(w.notices.length, 1, 'the 14 days homemini last named still hold')
+    // homemini drops the cadence: back to 6 hours
+    runner.listRead(punk, [6, 5, 4, 3, 2, 1], undefined)
+    await runner.check({})
+    assert.equal(w.notices.length, 2)
   })
 
   it('a restart does not reset the Original\'s week', async () => {
@@ -418,11 +463,11 @@ describe('wiring (source locks)', () => {
   it('the standings tick and every list read reach the check; a click opens the Device page', () => {
     const idx = read('main/index.ts')
     assert.match(idx, /onTop1000Pulled: \(adopted\) => ipodSyncReady\.pulled\(adopted\)/)
-    assert.match(idx, /onListRead: \(d, ids\) => ipodSyncReady\.listRead\(d, ids\)/)
+    assert.match(idx, /onListRead: \(d, ids, everyDays\) => ipodSyncReady\.listRead\(d, ids, everyDays\)/)
     assert.match(idx, /isReplica: isHomeminiPlaybackClientCached/)
     assert.match(read('main/taste-state.ts'), /startTop1000ScoresPull\(\{ \.\.\.host, onPulled: host\.onTop1000Pulled \}\)/)
     assert.match(read('main/top1000-scores.ts'), /host\.onPulled\?\.\(adopted\)/)
-    assert.match(read('main/ipc/ipod-lists-ipc.ts'), /host\.onListRead\?\.\(device, r\.listIds\)/)
+    assert.match(read('main/ipc/ipod-lists-ipc.ts'), /host\.onListRead\?\.\(device, r\.listIds, r\.everyDays\)/)
     assert.match(read('main/ipod-sync-ready-start.ts'), /host\.send\('menu-action', 'view-device'\)/)
     assert.match(read('renderer/App.tsx'), /case 'view-device': dispatch\(\{ type: 'SET_VIEW', view: 'device' \}\)/)
   })

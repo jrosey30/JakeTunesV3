@@ -44,8 +44,17 @@ export interface IpodList {
   adds: IpodListChange[]
   removed: IpodListChange[]
   updatedAt: string
-  brain: { enabled: boolean; perDay: number }
+  /**
+   * The grower's settings. `everyDays` (1..60) and `perRun` (0..50) are the
+   * list's cadence (Jake 2026-11-08: "only update punkpod once every other
+   * week"): optional, absent on older lists (= every day, perDay a run).
+   */
+  brain: { enabled: boolean; perDay: number; everyDays?: number; perRun?: number }
 }
+
+/** homemini's bounds for the cadence fields; a value outside them is dropped, never the list. */
+export const IPOD_LIST_EVERY_DAYS_MAX = 60
+export const IPOD_LIST_PER_RUN_MAX = 50
 
 const DEVICE_ID = /^[a-z0-9-]{6,64}$/
 const BY = new Set<IpodListAddedBy>(['seed', 'claude', 'brain'])
@@ -88,9 +97,16 @@ export function parseIpodList(raw: unknown, expectedId?: string): IpodList | nul
   }
   if (typeof r.updatedAt !== 'string' || !r.updatedAt.trim()) return null
   const b = r.brain as Record<string, unknown> | null | undefined
-  const brain = b && typeof b === 'object'
+  const brain: IpodList['brain'] = b && typeof b === 'object'
     ? { enabled: b.enabled === true, perDay: typeof b.perDay === 'number' && Number.isFinite(b.perDay) && b.perDay >= 0 ? Math.floor(b.perDay) : 0 }
     : { enabled: false, perDay: 0 }
+  // The cadence (optional): kept only when it is a whole number in homemini's
+  // bounds. A bad or missing one is just absent: an older list never fails here.
+  if (b && typeof b === 'object') {
+    const whole = (v: unknown, lo: number, hi: number): v is number => typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi
+    if (whole(b.everyDays, 1, IPOD_LIST_EVERY_DAYS_MAX)) brain.everyDays = b.everyDays
+    if (whole(b.perRun, 0, IPOD_LIST_PER_RUN_MAX)) brain.perRun = b.perRun
+  }
   return {
     id: r.id,
     name: r.name.trim(),
