@@ -29,7 +29,7 @@ import { planMoodPrune } from './brain-prune.mjs'
 import { writeBrainStatus } from './brain-status.mjs'
 import { comparePurity, gateDecision, PURITY_MAX_REGRESSION } from './brain-purity.mjs'
 import { pickBatch } from './brain-batch.mjs'
-import { musicStreamActive, nightlyTrainerActive, untilMs, redescribeCandidates, candidateDescriptors, promoteNext, staleStaged, describeTrack, PROMPT_VERSION } from './brain-redescribe.mjs'
+import { musicStreamActive, nightlyTrainerActive, bpmKeyWorkerActive, untilMs, redescribeCandidates, candidateDescriptors, promoteNext, staleStaged, describeTrack, nextFilePath, PROMPT_VERSION } from './brain-redescribe.mjs'
 import { baseText, moodText, tempoEnergy } from '../src/common/embedding-text.ts'   // Brief 181: the text twins' ONE source of truth (the app imports it too)
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -46,7 +46,11 @@ const LIB = join(STATE_DIR, 'library.json')
 const EMB = join(STATE_DIR, 'embeddings.bin')
 const MOOD = join(STATE_DIR, 'mood-index.bin')
 const DESC = join(STATE_DIR, 'brain-descriptors.json')
-const DESC_NEXT = join(STATE_DIR, 'brain-descriptors.next.json')   // staged re-describe (scripts/brain-redescribe.mjs)
+// Staged re-describe (scripts/brain-redescribe.mjs). `--next-file <name>` picks
+// another staged file in the state dir, so a new prompt's run never overwrites
+// an older candidate that is still waiting on its score (2026-11-08).
+let DESC_NEXT
+try { DESC_NEXT = nextFilePath(process.argv, STATE_DIR) } catch (e) { console.error(e.message); process.exit(1) }
 const LYRICS = join(STATE_DIR, 'lyrics.json')   // grounded LRCLIB lyrics (scripts/lyrics-fetch.mjs)
 const ENV = join(homedir(), 'JakeTunesV3', '.env')
 const GEMMA_URL = process.env.GEMMA_URL || 'http://homemini:11434/api/generate'
@@ -600,6 +604,7 @@ async function main() {
       try { ps = execFileSync('/bin/ps', ['-axo', 'command']).toString() } catch { /* can't tell → not busy */ }
       if (musicStreamActive(ps)) return 'music is streaming'
       if (nightlyTrainerActive(ps)) return 'the nightly trainer is running'
+      if (bpmKeyWorkerActive(ps)) return 'the BPM/key worker is running'
       try {
         const lvl = Number(execFileSync('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level']).toString().trim())
         if (lvl >= 4) return 'memory pressure is critical'

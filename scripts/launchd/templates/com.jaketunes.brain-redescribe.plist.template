@@ -9,6 +9,13 @@
      staged it is a no-op each night (0 candidates) apart from the new adds the
      02:00 trainer describes with its own model. Unload this agent after
      --promote-next has run and the trainer's GEMMA_MODEL is switched.
+     2026-11-08 (prompt v3, "the feeling" fix): the v2 candidate in
+     brain-descriptors.next.json failed the vibe gate, so the v3 run stages in
+     its OWN file, brain-descriptors.next-v3.json (`--next-file`), and the v2
+     file is left as it is. It also steps aside while the Mobile repo's BPM/key
+     worker measures (19:00-23:55, 02:20-03:00). On homemini render it against
+     a dedicated detached origin/main checkout (JAKETUNES_REPO_DIR), never the
+     shared ~/JakeTunesV3.
      Path tokens are rendered by install-launchagents.sh. -->
 <plist version="1.0"><dict>
   <key>Label</key><string>com.jaketunes.brain-redescribe</string>
@@ -16,6 +23,8 @@
     <string>__NODE__</string>
     <string>__REPO__/scripts/brain-trainer.mjs</string>
     <string>--redescribe-all</string>
+    <string>--next-file</string>
+    <string>brain-descriptors.next-v3.json</string>
     <string>--until</string>
     <string>06:00</string>
   </array>
