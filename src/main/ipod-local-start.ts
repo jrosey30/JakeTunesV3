@@ -12,7 +12,7 @@
  * is picked up on the next run (and at once from the Device page's Wait).
  * Only on the Mac Jake syncs from (not a replica): elsewhere it does nothing.
  */
-import { lstat, readFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { IpcRegistrar } from './ipc-register.ts'
 import { REFUSED_SENDER } from './ipc-register.ts'
@@ -27,8 +27,8 @@ import { LAST_SYNC_MANIFEST_FILE, TSA_SEAL_FILE } from './ipod-swap-sync.ts'
 import { offloadReplacementsPath, parseReplacementLog, rawAudioUrl } from './offload-audio.ts'
 import { createIpodKeepLocal, keepsRel, type KeepGate } from './ipod-keep-local.ts'
 import {
-  discardPart, fetchResumable, planPrefetch, prefetchLogLine, runPrefetchPass, verifyFetched,
-  type LocalKind, type PrefetchPassResult,
+  discardPart, fetchResumable, nextRefused, parseRefused, planPrefetch, prefetchLogLine, probeFingerprint, REFUSED_FILE, runPrefetchPass, splitRefused, verifyFetched,
+  type LocalKind, type PrefetchItem, type PrefetchPassResult,
 } from './ipod-prefetch.ts'
 import type { MaterializeFetchResult } from './ipod-sync-materialize.ts'
 import type { ReadyOnMac } from '../common/ipod-ready-on-mac.ts'
@@ -129,28 +129,53 @@ export function startIpodLocal(host: IpodLocalHost): IpodLocal {
       const plan = await planPrefetch(doc.ids, tracks, kindOf, await fullSha1ByPath())
       lastSkip = null
       const partDir = join(host.userDataDir, 'ipod-prefetch')
+      // Songs homemini's copy couldn't prove are asked for once a day, not every pass.
+      const refusedPath = join(host.userDataDir, REFUSED_FILE)
+      const memory = parseRefused(await readFile(refusedPath, 'utf-8').catch(() => null))
+      const { fetch: toFetch, held } = splitRefused(plan.items, memory, Date.now())
+      const refusedNow: PrefetchItem[] = []
+      const landed = new Set<number>()
+      const copyInit = (init: RequestInit): RequestInit => {
+        const headers = new Headers(init.headers)
+        headers.set('X-JakeTunes-Purpose', 'copy')   // homemini: a copy, not someone listening
+        return withCompanionInit({ ...init, headers }) ?? { ...init, headers }
+      }
       const pass = await runPrefetchPass({
-        items: plan.items,
+        items: toFetch,
         reachable,
         isPlaying: () => host.isPlaying() || host.syncInFlight(),
         freeBytes: host.freeBytes,
         fetchOne: async (item, shouldStop) => {
+          const url = rawAudioUrl(host.audioBase, item.id)
           const part = join(partDir, `${item.id}.part`)
-          const got = await fetchResumable({
-            url: rawAudioUrl(host.audioBase, item.id), partPath: part, fetchImpl: fetch, shouldStop,
-            withInit: (init) => withCompanionInit(init) ?? init,
-          })
+          if ((await probeFingerprint(item, url, fetch, copyInit)) === 'mismatch') {
+            await discardPart(part)
+            refusedNow.push(item)
+            return { ok: false, error: 'its fingerprint doesn’t match the library’s', identity: true }
+          }
+          const got = await fetchResumable({ url, partPath: part, fetchImpl: fetch, shouldStop, withInit: copyInit })
           if (!got.ok) return got
           const bad = await verifyFetched(part, item)
-          if (bad) { await discardPart(part); return { ok: false, error: bad } }
+          if (bad) { await discardPart(part); refusedNow.push(item); return { ok: false, error: bad, identity: true } }
           const bytes = await readFile(part)
           const r = await host.materialize(item.colon, item.id, async () => ({ ok: true, status: 200, buffer: bytes }))
           await discardPart(part)
+          if (r.ok) landed.add(item.id)
           return r.ok ? { ok: true, bytes: bytes.length } : { ok: false, error: r.error || 'restore failed' }
         },
       })
+      pass.left += held.length
+      for (const h of held) pass.leftBytes += h.bytes
+      try {
+        const next = nextRefused(memory, plan.items, refusedNow, landed, Date.now())
+        await mkdir(host.userDataDir, { recursive: true })
+        await writeFile(`${refusedPath}.tmp`, JSON.stringify(next))
+        await rename(`${refusedPath}.tmp`, refusedPath)
+      } catch (err) {
+        host.warn(`[ipod-local] could not remember the refused songs: ${err instanceof Error ? err.message : err}`)
+      }
       lastPass = pass
-      host.log(prefetchLogLine(plan, pass))
+      host.log(prefetchLogLine(plan, pass, held.length + refusedNow.length))
     } catch (err) {
       host.warn(`[ipod-local] pass failed: ${err instanceof Error ? err.message : err}`)
     } finally {

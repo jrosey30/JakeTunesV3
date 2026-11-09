@@ -26,6 +26,14 @@
  *     free (counted twice: the part file and the restore's temp). Short of it,
  *     the pass stops and says how much room the rest needs.
  *   • homemini not answering: the pass is skipped.
+ *   • A song homemini's copy can't prove is asked for once a day, not every
+ *     pass (2026-11-09). The library's fingerprint goes stale when a file's
+ *     tags are rewritten; about 490 iPod songs were like that, and each pass
+ *     downloaded all of them, threw them away, and did it again 30 minutes
+ *     later: 299 GB in 17 hours, away from home. Now the first 256 KB is
+ *     checked before the rest is fetched, and a refusal is remembered on disk
+ *     (`refusedPath`) until the library's record of the song changes or a day
+ *     passes. A sync still gets those songs the way it always did (staged).
  *
  * Electron-free; every effect is injected (__tests__/ipod-prefetch.test.ts).
  */
@@ -95,7 +103,74 @@ export async function planPrefetch(
 
 export type FetchOneResult =
   | { ok: true; bytes: number }
-  | { ok: false; error: string; stopped?: boolean; transport?: boolean }
+  | { ok: false; error: string; stopped?: boolean; transport?: boolean; /** homemini's copy isn't provably this song */ identity?: boolean }
+
+// ── Songs homemini's copy can't prove ──────────────────────────────────────
+
+export const REFUSED_FILE = 'ipod-prefetch-refused.json'
+export const REFUSED_HOLD_MS = 24 * 60 * 60 * 1000
+/** id → what the library said about the song when it was refused, and when. */
+export type RefusedMemory = Record<string, { key: string; at: number }>
+
+/** What the check is made against: a change here means a new try is worth it. */
+export function refusalKey(item: PrefetchItem): string {
+  return `${item.fingerprint ?? ''}|${item.fullSha1 ?? ''}|${item.bytes}`
+}
+
+/** `fetch`: worth asking homemini for. `held`: refused less than a day ago on this same record. */
+export function splitRefused(items: readonly PrefetchItem[], memory: RefusedMemory, now: number, holdMs = REFUSED_HOLD_MS): { fetch: PrefetchItem[]; held: PrefetchItem[] } {
+  const out = { fetch: [] as PrefetchItem[], held: [] as PrefetchItem[] }
+  for (const item of items) {
+    const m = memory[String(item.id)]
+    const holds = !!m && m.key === refusalKey(item) && now - m.at >= 0 && now - m.at < holdMs
+    ;(holds ? out.held : out.fetch).push(item)
+  }
+  return out
+}
+
+/** The memory after a pass: refusals added, songs that landed or left the queue dropped. */
+export function nextRefused(memory: RefusedMemory, queued: readonly PrefetchItem[], refusedNow: readonly PrefetchItem[], landed: ReadonlySet<number>, now: number): RefusedMemory {
+  const out: RefusedMemory = {}
+  const inQueue = new Map(queued.map((i) => [String(i.id), i]))
+  for (const [id, m] of Object.entries(memory)) {
+    const item = inQueue.get(id)
+    if (item && !landed.has(item.id) && m.key === refusalKey(item)) out[id] = m
+  }
+  for (const item of refusedNow) out[String(item.id)] = { key: refusalKey(item), at: now }
+  return out
+}
+
+export function parseRefused(text: string | null): RefusedMemory {
+  const out: RefusedMemory = {}
+  try {
+    const o = JSON.parse(text ?? '') as Record<string, { key?: unknown; at?: unknown }>
+    for (const [id, m] of Object.entries(o ?? {})) {
+      if (m && typeof m.key === 'string' && typeof m.at === 'number' && Number.isFinite(m.at)) out[id] = { key: m.key, at: m.at }
+    }
+  } catch { /* none */ }
+  return out
+}
+
+/**
+ * The first 256 KB against the library's fingerprint, before the whole file is
+ * fetched. 'unknown' (homemini didn't answer a range, or the song has a full
+ * sha1 on record, or no fingerprint) leaves the decision to verifyFetched.
+ */
+export async function probeFingerprint(item: PrefetchItem, url: string, fetchImpl: FetchLike, withInit: (init: RequestInit) => RequestInit = (i) => i): Promise<'match' | 'mismatch' | 'unknown'> {
+  if (!item.fingerprint || item.fullSha1) return 'unknown'
+  try {
+    const res = await fetchImpl(url, withInit({ headers: { Range: `bytes=0-${FINGERPRINT_PROBE_BYTES - 1}` }, signal: AbortSignal.timeout(30_000) }))
+    if (res.status !== 206) { await res.body?.cancel().catch(() => undefined); return 'unknown' }
+    const buf = Buffer.from(await res.arrayBuffer())
+    const total = Number(/\/(\d+)$/.exec(res.headers.get('content-range') || '')?.[1])
+    // A short answer that isn't the whole file proves nothing.
+    if (buf.length < FINGERPRINT_PROBE_BYTES && !(Number.isFinite(total) && buf.length === total)) return 'unknown'
+    return sha1WindowMatches(item.fingerprint, buf) ? 'match' : 'mismatch'
+  } catch {
+    return 'unknown'
+  }
+}
+const FINGERPRINT_PROBE_BYTES = 256 * 1024
 
 export interface PrefetchPassDeps {
   items: readonly PrefetchItem[]
@@ -185,8 +260,9 @@ export async function runPrefetchPass(deps: PrefetchPassDeps): Promise<PrefetchP
 }
 
 /** The one line a pass logs. */
-export function prefetchLogLine(plan: Pick<PrefetchPlan, 'total' | 'local'>, pass: PrefetchPassResult): string {
+export function prefetchLogLine(plan: Pick<PrefetchPlan, 'total' | 'local'>, pass: PrefetchPassResult, held = 0): string {
   const parts = [`[ipod-local] ${plan.total} iPod song(s): ${plan.local + pass.fetched} on this Mac`]
+  if (held) parts.push(`${held} not asked for again today (homemini’s copy doesn’t match the library’s record of the song)`)
   if (pass.fetched) parts.push(`fetched ${pass.fetched} (${(pass.fetchedBytes / 1e6).toFixed(0)} MB)`)
   if (pass.left) parts.push(`${pass.left} still to fetch (${gb(pass.leftBytes)} GB)`)
   if (pass.failed.length) parts.push(`${pass.failed.length} failed (first: id ${pass.failed[0].id}: ${pass.failed[0].error})`)
