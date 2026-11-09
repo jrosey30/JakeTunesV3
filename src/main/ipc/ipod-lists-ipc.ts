@@ -44,6 +44,10 @@ import { gatherIpodLists, ipodListsCachePath } from '../ipod-lists-gather.ts'
 import { createWantedShelfSource } from '../ipod-wanted-shelf-source.ts'
 import { chooseIpodColor, flushPendingColors, readChosenColors } from '../ipod-colors.ts'
 import { ipodCoverDataUrl } from '../ipod-cover-cache.ts'
+import { createPhotoCoverClient, createPhotoCovers } from '../ipod-photo-covers.ts'
+import { withCompanionInit } from '../hub-companion.ts'
+import { MAX_PHOTO_BYTES } from '../../common/ipod-photo-covers.ts'
+import { open as openFile } from 'fs/promises'
 
 /** How often a decision homemini hasn't heard yet is tried again. */
 export const DECISION_RETRY_MS = 5 * 60_000
@@ -58,6 +62,8 @@ export interface IpodListsHost {
   warn?: (msg: string) => void
   /** homemini's and workmini's apps: the lists are plain playlists there (main/ipod-lists-gather.ts). Absent = hub. */
   isReplica?: () => Promise<boolean>
+  /** "Use a photo…": the file Jake picks (a dialog in main/index.ts); null = cancelled. */
+  pickPhoto?: () => Promise<string | null>
   /** A list was just read clean from homemini (ids newest first, and its grow cadence when it has one): the "ready to sync" check (ipod-sync-ready.ts). */
   onListRead?: (device: IpodDeviceMarker, listIds: number[], everyDays?: number) => void
 }
@@ -174,12 +180,58 @@ export function registerIpodListsIpc(ipc: IpcRegistrar, host: IpodListsHost): Ip
     const ids = (v: unknown): number[] => (Array.isArray(v) ? v.map(Number).filter((n) => Number.isInteger(n) && n > 0) : [])
     return source.desk.decide(i.deviceId, { approve: ids(i.approve), reject: ids(i.reject) })
   }, { refuse: { ok: false, error: 'refused-sender' } })
+  // Photo covers (2026-11-09; main/ipod-photo-covers.ts): "Use a photo…" / "Use the drawing"
+  // for the Top 1000 and each iPod list, kept here first and sent when homemini answers.
+  const photos = createPhotoCovers({
+    stateDir: host.stateDir,
+    client: createPhotoCoverClient({
+      baseUrl: host.baseUrl,
+      fetchImpl: host.fetchImpl as never,
+      withAuth: (init) => withCompanionInit(init as RequestInit) as Record<string, unknown>,
+      warn: host.warn,
+    }),
+    log: host.warn,
+  })
+  ipc.handle('ipod-photo:get', async (_e, key: unknown) => {
+    const v = await photos.view(key).catch(() => ({ shown: 'drawing' as const, url: null }))
+    return { ok: true, ...v }
+  }, { public: true })
+  ipc.handle('ipod-photo:sync', async () => {
+    await photos.sync().catch((err) => host.warn?.(`[photo-covers] sync: ${(err as Error)?.message ?? err}`))
+    return { ok: true }
+  }, { public: true })
+  // Writes: the main window only.
+  ipc.handle('ipod-photo:choose', async (_e, key: unknown) => {
+    const path = await (host.pickPhoto?.() ?? Promise.resolve(null)).catch(() => null)
+    if (!path) return { ok: false, cancelled: true }
+    const bytes = await readCapped(path, MAX_PHOTO_BYTES).catch(() => null)
+    if (!bytes) return { ok: false, error: 'That photo couldn’t be read, or it is bigger than 25 MB.' }
+    return photos.choose(key, bytes).catch((err) => ({ ok: false as const, error: (err as Error)?.message ?? 'couldn’t keep the photo' }))
+  }, { refuse: { ok: false, error: 'refused-sender' } })
+  ipc.handle('ipod-photo:drawing', async (_e, key: unknown) => {
+    return photos.useDrawing(key).catch((err) => ({ ok: false as const, error: (err as Error)?.message ?? 'couldn’t go back to the drawing' }))
+  }, { refuse: { ok: false, error: 'refused-sender' } })
   // The Record Shop's "For your iPods" section (2026-11-09; main/ipod-wanted-shelf.ts).
   const wanted = createWantedShelfSource({ stateDir: host.stateDir, lists: () => source.all(), libraryTracks: host.libraryTracks, warn: host.warn })
   ipc.handle('ipod-lists:wanted-shelf', async (_e, force?: unknown) => wanted.get(force === true), { public: true })
   setInterval(() => {
     void source.desk.flush().catch(() => undefined)
     void source.flushColors()
+    void photos.sync().catch(() => undefined)
   }, DECISION_RETRY_MS).unref?.()
   return source
+}
+
+/** A picked file's bytes, never more than `cap` + 1 read (null when it is bigger: refused before it is kept). */
+async function readCapped(path: string, cap: number): Promise<Uint8Array | null> {
+  const fh = await openFile(path, 'r')
+  try {
+    const { size } = await fh.stat()
+    if (!size || size > cap) return null
+    const buf = Buffer.alloc(size)
+    const { bytesRead } = await fh.read(buf, 0, size, 0)
+    return new Uint8Array(buf.buffer, buf.byteOffset, bytesRead)
+  } finally {
+    await fh.close()
+  }
 }

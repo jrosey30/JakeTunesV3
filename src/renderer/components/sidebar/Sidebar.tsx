@@ -4,6 +4,8 @@ import { BEST_OF_YEAR_NAME } from '../../utils/smartPlaylists'
 import { smartPlaylistCover } from '../../utils/playlistCovers'
 import { useIpodPlaylistCover } from '../../utils/ipodCovers'
 import { IpodColorPicker } from '../IpodColorPicker'
+import { chooseIpodPhoto, backToIpodDrawing, useHasIpodPhoto } from '../../ipodPhotoCovers'
+import { photoKeyForPlaylist } from '../../../common/ipod-photo-covers'
 import { parseIpodListPlaylistId } from '../../../common/ipod-list-doc'
 import { entryColor } from '../../ipodLists'
 import { useLibrary } from '../../context/LibraryContext'
@@ -285,6 +287,8 @@ export default function Sidebar() {
   const [plCtxMenu, setPlCtxMenu] = useState<{ x: number; y: number; playlistId: string; playlistName: string; kind: 'user' | 'smart' } | null>(null)
   // "iPod color…" (2026-11-09) from an iPod list's row.
   const [ipodColorAt, setIpodColorAt] = useState<{ x: number; y: number; deviceId: string } | null>(null)
+  // "Use a photo…" / "Use the drawing" (2026-11-09) from the Top 1000's or an iPod list's row.
+  const ctxHasPhoto = useHasIpodPhoto(plCtxMenu?.playlistId)
   // This year's releases by month (2026-10-24): a section per year, a smart playlist per month.
   const releaseMonths = useReleaseMonths()
   // iPODS (2026-11-07, Jake: "the ipod pool for each ipod is in the playlists area...they should
@@ -966,12 +970,28 @@ export default function Sidebar() {
               { separator: true as const },
             ] : []),
             { label: pinned.includes(plCtxMenu.playlistId) ? 'Unpin from Top' : 'Pin to Top', onClick: () => togglePin(plCtxMenu.playlistId) },
-            ...(parseIpodListPlaylistId(plCtxMenu.playlistId) ? [
+            ...(photoKeyForPlaylist(plCtxMenu.playlistId) ? [
               { separator: true as const },
-              { label: 'iPod color…', onClick: () => {
-                const deviceId = parseIpodListPlaylistId(plCtxMenu.playlistId)
-                if (deviceId) setIpodColorAt({ x: plCtxMenu.x, y: plCtxMenu.y, deviceId })
+              ...(parseIpodListPlaylistId(plCtxMenu.playlistId) ? [
+                { label: 'iPod color…', onClick: () => {
+                  const deviceId = parseIpodListPlaylistId(plCtxMenu.playlistId)
+                  if (deviceId) setIpodColorAt({ x: plCtxMenu.x, y: plCtxMenu.y, deviceId })
+                  setPlCtxMenu(null)
+                } },
+              ] : []),
+              { label: 'Use a photo…', onClick: () => {
+                const { playlistId, playlistName } = plCtxMenu
                 setPlCtxMenu(null)
+                void chooseIpodPhoto(playlistId, playlistName.split(' · ')[0]).then((r) => {
+                  if (r.line) setNotice(r.line, { kind: r.ok ? 'info' : 'error', durationMs: 6000 })
+                })
+              } },
+              { label: 'Use the drawing', disabled: !ctxHasPhoto, onClick: () => {
+                const { playlistId, playlistName } = plCtxMenu
+                setPlCtxMenu(null)
+                void backToIpodDrawing(playlistId, playlistName.split(' · ')[0]).then((r) => {
+                  if (r.line) setNotice(r.line, { kind: r.ok ? 'info' : 'error', durationMs: 6000 })
+                })
               } },
             ] : []),
             ...(plCtxMenu.kind === 'user' ? [

@@ -1218,6 +1218,11 @@ const electronAPI = {
   // "iPod color…" (2026-11-09): an iPod list's cover colour; and a custom-colour cover homemini drew.
   ipodListSetColor: (input: { deviceId: string; color: string }): Promise<unknown> => ipcRenderer.invoke('ipod-lists:set-color', input),
   ipodCoverGet: (key: string): Promise<unknown> => ipcRenderer.invoke('ipod-cover:get', key),
+  // Photo covers (2026-11-09): the Top 1000's or an iPod list's photo over its drawn iPod.
+  ipodPhotoGet: (key: string): Promise<unknown> => ipcRenderer.invoke('ipod-photo:get', key),
+  ipodPhotoSync: (): Promise<unknown> => ipcRenderer.invoke('ipod-photo:sync'),
+  ipodPhotoChoose: (key: string): Promise<unknown> => ipcRenderer.invoke('ipod-photo:choose', key),
+  ipodPhotoDrawing: (key: string): Promise<unknown> => ipcRenderer.invoke('ipod-photo:drawing', key),
   homeShelvesGet: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:get'),
   homeShelvesRefresh: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:refresh'),
   homeShelvesLocalPlays: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:local-plays'),

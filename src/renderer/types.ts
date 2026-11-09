@@ -1263,6 +1263,11 @@ declare global {
       // 2026-11-09 — "iPod color…" and custom-colour covers (src/main/ipod-colors.ts, ipod-cover-cache.ts)
       ipodListSetColor?: (input: { deviceId: string; color: string }) => Promise<{ ok: true; color: string; homemini: 'saved' | 'later'; registry: boolean } | { ok: false; error: string }>
       ipodCoverGet?: (key: string) => Promise<{ ok: boolean; url: string | null }>
+      // 2026-11-09 — photo covers (src/main/ipod-photo-covers.ts)
+      ipodPhotoGet?: (key: string) => Promise<{ ok: boolean; shown: 'kept' | 'bundled' | 'drawing'; url: string | null }>
+      ipodPhotoSync?: () => Promise<{ ok: boolean }>
+      ipodPhotoChoose?: (key: string) => Promise<{ ok: true; homemini: 'saved' | 'later' } | { ok: false; error?: string; cancelled?: boolean }>
+      ipodPhotoDrawing?: (key: string) => Promise<{ ok: true; homemini: 'saved' | 'later' } | { ok: false; error: string }>
       top1000Ties?: () => Promise<{ ok: true; value: number | null } | { ok: false; error: string }>
       homeShelvesGet?: () => Promise<{ ok: boolean; state?: import('../common/home-shelves-doc').HomeShelvesState }>
       homeShelvesRefresh?: () => Promise<{ ok: boolean; state?: import('../common/home-shelves-doc').HomeShelvesState }>

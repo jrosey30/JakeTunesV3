@@ -14,6 +14,8 @@ import { isRankedPlaylist, rankMovement, rotateRankSnap, weekKeyOf, RANK_SNAPSHO
 import { useIpodLists, entryColor } from '../ipodLists'
 import { useIpodPlaylistCover } from '../utils/ipodCovers'
 import { IpodColorPicker } from '../components/IpodColorPicker'
+import { chooseIpodPhoto, backToIpodDrawing, useHasIpodPhoto } from '../ipodPhotoCovers'
+import { photoKeyForPlaylist } from '../../common/ipod-photo-covers'
 import { parseIpodListPlaylistId } from '../../common/ipod-list-doc'
 import IpodProposalsPanel from '../components/IpodProposalsPanel'
 import { useHomeShelves } from '../homeShelves'
@@ -166,6 +168,9 @@ export default function SmartPlaylistView() {
   const ipodListDevice = playlistId ? parseIpodListPlaylistId(playlistId) : null
   const ipodList = ipodListDevice ? ipodLists.find((l) => l.id === ipodListDevice) ?? null : null
   const [ipodColorAt, setIpodColorAt] = useState<{ x: number; y: number } | null>(null)
+  // Photo covers (2026-11-09): the Top 1000 and every iPod list.
+  const photoKey = photoKeyForPlaylist(playlistId)
+  const hasPhoto = useHasIpodPhoto(playlistId)
   const title = playlistId ? TITLES[playlistId] || (monthYm ? monthPlaylistName(monthYm) : ipodList ? ipodList.name : playlistId) : ''
 
   // 4.2.18: per-persona weekly picks state. Both Music Man and Larry
@@ -1078,16 +1083,35 @@ export default function SmartPlaylistView() {
               </>
             )}
           </div>
-          {/* "iPod color…" (2026-11-09): an iPod list's cover colour. Not Top 1000 (the Original's). */}
-          {ipodList && (
+          {/* "iPod color…" (2026-11-09): an iPod list's cover colour. Not Top 1000 (the Original's).
+              "Use a photo…" / "Use the drawing" (2026-11-09): the Top 1000's or an iPod list's photo. */}
+          {photoKey && (
             <div className="top25-window-switch">
+              {ipodList && (
+                <button
+                  className="top25-window-btn"
+                  onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setIpodColorAt({ x: r.left, y: r.bottom + 4 }) }}
+                  title={`The colour of ${ipodList.name} on its cover`}
+                >
+                  iPod color…
+                </button>
+              )}
               <button
                 className="top25-window-btn"
-                onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setIpodColorAt({ x: r.left, y: r.bottom + 4 }) }}
-                title={`The colour of ${ipodList.name} on its cover`}
+                onClick={() => { void chooseIpodPhoto(playlistId!, displayName).then((r) => { if (r.line) setNotice(r.line, { kind: r.ok ? 'info' : 'error', durationMs: 6000 }) }) }}
+                title={`A photo for ${displayName}'s cover, here and on the phone`}
               >
-                iPod color…
+                Use a photo…
               </button>
+              {hasPhoto && (
+                <button
+                  className="top25-window-btn"
+                  onClick={() => { void backToIpodDrawing(playlistId!, displayName).then((r) => { if (r.line) setNotice(r.line, { kind: r.ok ? 'info' : 'error', durationMs: 6000 }) }) }}
+                  title={`${displayName} wears its drawn iPod again`}
+                >
+                  Use the drawing
+                </button>
+              )}
             </div>
           )}
           {/* 4.5: Top 25 window switcher — keeps the sidebar clean
