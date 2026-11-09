@@ -13,7 +13,7 @@ describe('the transport-key claim', () => {
   })
 
   it('withholds exactly the transport keys while claimed', () => {
-    const release = claimTransportKeys('step-inside')
+    const release = claimTransportKeys('scotus')
     assert.equal(shouldYieldToClaim('Space'), true)
     assert.equal(shouldYieldToClaim('ArrowLeft'), true)
     assert.equal(shouldYieldToClaim('ArrowRight'), true)
@@ -27,7 +27,7 @@ describe('the transport-key claim', () => {
   })
 
   it('restores the app the instant the claim is released', () => {
-    const release = claimTransportKeys('step-inside')
+    const release = claimTransportKeys('scotus')
     assert.equal(shouldYieldToClaim('ArrowRight'), true)
     release()
     assert.equal(shouldYieldToClaim('ArrowRight'), false)
@@ -36,7 +36,7 @@ describe('the transport-key claim', () => {
 
   it('survives leaving and re-entering', () => {
     for (let i = 0; i < 3; i++) {
-      const release = claimTransportKeys('step-inside')
+      const release = claimTransportKeys('scotus')
       assert.equal(shouldYieldToClaim('Space'), true, `claim ${i} took`)
       release()
       assert.equal(shouldYieldToClaim('Space'), false, `release ${i} gave it back`)
@@ -57,7 +57,7 @@ describe('the transport-key claim', () => {
 
   it('a full claim after a narrow one withholds all five again', () => {
     const narrow = claimTransportKeys('listen-list', ['Space', 'ArrowUp', 'ArrowDown'])
-    const full = claimTransportKeys('step-inside')
+    const full = claimTransportKeys('scotus')
     narrow()                                        // late unmount of the Listen List
     for (const k of ['Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']) {
       assert.equal(shouldYieldToClaim(k), true, `${k} withheld by the full claim`)

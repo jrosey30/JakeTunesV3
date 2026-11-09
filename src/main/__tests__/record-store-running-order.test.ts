@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildCandidatePool } from '../record-store/candidate-pool.ts'
+import { buildCandidatePool } from '../candidate-pool.ts'
 
 // A record pulled out of a crate has to start at side A track 1. The library
 // hands tracks over in scan order, so without an explicit sort the needle

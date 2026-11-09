@@ -36,7 +36,6 @@
 .store-btn:disabled { opacity: 0.6; cursor: default; }
 .store-btn--primary { background: rgb(var(--brand-orange-rgb)); border-color: #c74a08; color: #fff; }
 .store-btn--primary:hover { filter: brightness(1.05); background: rgb(var(--brand-orange-rgb)); }
-.df-step-inside-mm { width: 20px; height: 20px; object-fit: contain; }
 
 .df-loading, .df-error { padding: 30px 0; font-size: 13px; font-style: italic; color: var(--text-secondary, #8a8275); }
 
@@ -63,6 +62,28 @@
   font-size: 17px; font-weight: 700; letter-spacing: -0.01em; margin: 6px 0 4px;
   color: var(--text-primary, #1a1a1a);
 }
+/* The page's bands (2026-11-09 reorganization): a title, what the band is,
+   and a count. The owned bands sit apart from the new music above them. */
+.store-section { margin-bottom: 18px; }
+.store-section-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 2px; }
+.store-section-head .store-section-title { margin: 6px 0 2px; }
+.store-section-sub { font-size: 11.5px; color: var(--text-secondary, #8a8275); }
+.store-section-note { font-size: 11px; color: var(--text-secondary, #a49c8a); margin-left: auto; }
+.store-section--owned { border-top: 2px solid rgba(85, 78, 64, 0.12); padding-top: 8px; margin-top: 22px; }
+.store-section--owned + .store-section--owned { border-top: 0; margin-top: 0; }
+.store-shelf-owned {
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  color: #3d7a3d; background: rgba(61, 122, 61, 0.09); border-radius: 3px; padding: 1px 5px;
+}
+.store-row--wrap { flex-wrap: wrap; overflow-x: visible; }
+/* "+2 more by NOFX": the artist's other cards, folded behind the first. */
+.store-fold {
+  flex: 0 0 auto; align-self: center; border: 1px dashed rgba(85, 78, 64, 0.3); border-radius: 6px;
+  background: none; cursor: pointer; padding: 8px 10px; max-width: 120px;
+  font-size: 11px; font-weight: 600; line-height: 1.3; color: rgb(var(--brand-orange-rgb)); text-align: left;
+}
+.store-fold:hover { background: rgba(var(--brand-orange-rgb), 0.06); }
+.store-fold--open { color: var(--text-secondary, #8a8275); }
 .store-seeall {
   margin-left: auto; border: 0; background: none; cursor: pointer; padding: 0;
   font-size: 11px; font-weight: 600; color: rgb(var(--brand-orange-rgb));
@@ -169,6 +190,9 @@
   background: var(--white, #fff);
 }
 .df-learned-head { display: flex; flex-direction: column; gap: 2px; }
+/* At the bottom now (2026-11-09): a report about the shop, not part of it. */
+.df-learned--quiet { margin: 26px 0 8px; border-left-width: 1px; background: none; opacity: 0.9; }
+.df-learned--quiet .df-learned-head { flex-direction: row; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
 .df-learned-eyebrow { font-size: 9px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-secondary, #98917f); }
 .df-learned-headline { font-size: 13px; font-weight: 700; color: var(--text-primary, #1a1a1a); }
 .df-learned-stats { display: flex; gap: 14px; margin-top: 6px; font-size: 11px; color: var(--text-secondary, #777); }

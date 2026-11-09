@@ -6,7 +6,7 @@
  * mounted DiscoveryView hears the event and switches; an unmounted one reads
  * the remembered tab when it mounts.
  */
-export type DiscoveryTab = 'new-for-you' | 'browse' | 'your-list' | 'rock-dna'
+export type DiscoveryTab = 'new-for-you' | 'browse' | 'your-list'
 
 export const DISCOVERY_TAB_EVENT = 'jaketunes-discovery-tab'
 

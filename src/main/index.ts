@@ -167,7 +167,7 @@ import { machineBehindNas } from './stale-push-guard'
 import { snapshotLibrary, maybeAutoSnapshot } from './backup'
 import { shouldRefuseSave, mayUnlinkDeletions, UNLINK_CAP } from './save-guards'
 import { computeTasteFingerprint, getTasteAnchors } from './taste-model'
-import { loadDiscoveryFocus } from './discovery-focus'
+import { loadDiscoveryFocus, ARTIST_TAGS_FILE } from './discovery-focus'
 import type { TrackLike } from './taste-model'
 import { parseCandidates, rankCandidates, listenListPredicate } from './radar-core'
 import type { RankedCandidate } from './radar-core'
@@ -315,9 +315,7 @@ import { registerStreamripStore } from './streamrip-store'
 import { registerGaplessTrimIpc } from './gapless-trim'
 import { registerPlaylistCoverIpc, registerPlaylistCoverProtocol } from './playlist-covers'
 import { registerScotusArchive } from './scotus-archive'
-import { registerRecordStoreIntegration } from './record-store'
-import { parsePlayEvents } from './record-store/shelf-generator'
-import type { CandTrack } from './record-store/candidate-pool'
+import { parsePlayEvents } from './play-events'
 import { registerWorkoutSyncIpc } from './workout-sync-ipc'
 import { createTop1000SyncSource } from './top1000-sync-source.ts'
 import { createTop1000Client } from './top1000-client.ts'
@@ -1600,7 +1598,7 @@ ipc.handle('discovery-allow-again', async (_e, artist: string) => {
 // feed built by v2 carries VA-compilation junk cards and must regenerate.
 // v4 (2026-08-07): "From the Scene" lane (human-graph reach — the
 // Ceremony problem); regenerate so the lane appears.
-const FEED_GEN_VERSION = 13  // 2026-11-08: supply anchors resolve by exact name (no Deezer namesakes), new artists lead the rotation, compilations/soundtracks/dated tapes gated  // 12: 2026-10-18: critic wall lane (critic-picks-feed.ts)  // 11: 2026-10-11: Rock DNA rides in the picking prompts, Dislike leaves the shop  // 10: 2026-10-10: taste profile — Rocksurgence seeds the supply, math rock gated, Angine an exception  // 9: cover-factory gates in the supply lane  // 8: curator lane — Spotify curator picks seat New Songs slots (2026-09-01); 7: supply edition gate; 6: 25/25 supply lanes; 5: bins + hooks + pitches
+const FEED_GEN_VERSION = 14  // 2026-11-09: three picks per "because" artist (discover-supply PICKS_PER_ANCHOR), every card gets a genre and a crate  // 13: 2026-11-08: supply anchors resolve by exact name (no Deezer namesakes), new artists lead the rotation, compilations/soundtracks/dated tapes gated  // 12: 2026-10-18: critic wall lane (critic-picks-feed.ts)  // 11: 2026-10-11: Rock DNA rides in the picking prompts, Dislike leaves the shop  // 10: 2026-10-10: taste profile — Rocksurgence seeds the supply, math rock gated, Angine an exception  // 9: cover-factory gates in the supply lane  // 8: curator lane — Spotify curator picks seat New Songs slots (2026-09-01); 7: supply edition gate; 6: 25/25 supply lanes; 5: bins + hooks + pitches
 type FeedCacheShape = { at: number; ver?: number; lanes: Array<{ id: string; title: string; cards: unknown[] }> }
 let discoverFeedMem: FeedCacheShape | null = null
 const DISCOVER_TTL_MS = 3 * 60 * 60 * 1000
@@ -1884,7 +1882,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
 
     // Shop passes (module): genre dividers + the one 30s hook sample per
     // album — floor first, so only shelf-worthy albums earn the lookups.
-    df.stampBins(shelved)
+    df.stampBins(shelved, await df.shopGenreSources(tracks, join(STATE_DIR, ARTIST_TAGS_FILE)))
     await df.applyAlbumHooks(shelved, {
       albumTracks: (id) => itunesAlbumTracks(id),
       scoreCandidates: (cands) => brainMatchCandidates(cands, focus.exemplars(tracks) as Array<{ id?: number; rating?: number; playCount?: number }>, 5),
@@ -2003,7 +2001,9 @@ async function countFeedServed(lanes: Array<{ id: string; title: string; cards: 
 // was built, and a verdict from the other Mac arrives after that.
 async function withoutListed<L extends { cards: unknown[] }>(lanes: L[]): Promise<L[]> {
   try {
-    const { dropListed, dropVetoed } = await import('./discover-feed.ts')
+    const df = await import('./discover-feed.ts'), { dropListed, dropVetoed } = df
+    // A feed built before the crates (2026-11-09) still files: genre + crate on every serve.
+    df.stampBins(lanes.flatMap((l) => l.cards as import('./discover-feed.ts').FeedCard[]), await df.shopGenreSources(((await libraryCache.get()) as { tracks?: TrackLike[] }).tracks ?? [], join(STATE_DIR, ARTIST_TAGS_FILE)))
     lanes = dropVetoed(lanes, await sharedDiscoveryFeedback(), Date.now())
     return dropListed(lanes, listenListPredicate(await readRecommendationsFile()))
   } catch (err) {
@@ -2560,18 +2560,10 @@ async function createWindow(): Promise<void> {
     sendMediaKeyAction(action)
   })
 
-  // Acceptance harness (dev only): JT_STEP_INSIDE=1 boots straight into
-  // Step Inside, and =demo additionally runs the scripted approach/browse/
-  // pull/return so a run can be recorded without a human at the keyboard.
-  // Ignored entirely in a packaged app, so normal startup is unchanged.
-  const stepInsideHash = !app.isPackaged && process.env['JT_STEP_INSIDE']
-    ? (process.env['JT_STEP_INSIDE'] === 'demo' ? '#stepInsideDemo' : '#stepInside')
-    : ''
-
   if (isDev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'] + stepInsideHash)
+    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'), stepInsideHash ? { hash: stepInsideHash.slice(1) } : undefined)
+    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
 
@@ -9117,7 +9109,7 @@ registerReleaseKindsIpc(ipc, { file: () => releaseKindsPath(STATE_DIR), hubBase:
 registerYirIpc(ipc)
 registerSyncedPicksIpc(ipc)
 registerHomeSpotlightIpc(ipc, { getPlayEventsPath, libraryCache })
-const concerts = registerConcertsIpc(ipc, { libraryCache, mbThrottle })
+registerConcertsIpc(ipc, { libraryCache, mbThrottle })  // the Music Man's day-theme feed went with the Record Store room (2026-11-09)
 registerPreviewRefreshIpc(ipc)
 registerSyncHistoryIpc(ipc, { stateDir: STATE_DIR, dir: async () => {   // the plugged-in iPod's own ledgers
   if (!detectedIpodMount) return STATE_DIR
@@ -10812,44 +10804,6 @@ app.whenReady().then(async () => {
     },
   })
 
-  // ── Music Man's Record Store (Brief 037) ──
-  // The Phase-1 engine (1a-1e) + Phase-2 UI are wired below. Held OFF for
-  // the 4.5.0-111 release (shipping listen-to-the-list only) — the store
-  // code ships dormant and the sidebar entry is hidden, so it's
-  // unreachable. Flip back to true (+ unhide the Sidebar entry) to resume
-  // Phase-2 dev after this DMG goes out.
-  const RECORD_STORE_ENABLED = true   // 2026-08-07: Step Inside door on the Record Shop page
-  if (RECORD_STORE_ENABLED) {
-    // LLM adapter over claudeCall (§3.6 — no new SDK/keys). Returns the
-    // assistant text; daily ceiling + cached fallback are handled inside
-    // claudeCall, and the engine falls back to heuristics if it throws.
-    const recordStoreLlm = async (req: {
-      callKey: string; model: string; maxTokens: number; system: string; user: string
-    }): Promise<string> => {
-      const reply = await claudeCall(req.callKey, {
-        model: req.model,
-        max_tokens: req.maxTokens,
-        system: req.system,
-        messages: [{ role: 'user', content: req.user }],
-      })
-      const block = reply.content[0]
-      return block && block.type === 'text' ? block.text : ''
-    }
-    registerRecordStoreIntegration({
-      ipc,
-      userDataDir: app.getPath('userData'),
-      getMainWindow: () => mainWindow,
-      getTracks: async () => {
-        const lib = (await libraryCache.get()) as { tracks?: CandTrack[] }
-        return Array.isArray(lib.tracks) ? lib.tracks : []
-      },
-      getPlayEvents: async () =>
-        parsePlayEvents(await readFile(getPlayEventsPath(), 'utf-8').catch(() => '')),
-      llm: recordStoreLlm,
-      personaCore: MUSIC_MAN_CORE,
-      concertFeed: concerts.forMusicMan,
-    })
-  }
 
   // 4.4.13: Inbox auto-import. Chokidar watches ~/Music2/_inbox for new
   // audio files (Qobuz downloads, manual drops, etc.) and forwards them

@@ -31,7 +31,9 @@
 // rule). The LLM's role is to apply *taste* — picking the 5 BEST from
 // the top 50, with reasoning — not to do the math itself.
 
-import type { ShelfId } from './types'
+// Kept when the Record Store room it fed was removed (2026-11-09); its
+// running-order rule is still tested (record-store-running-order.test.ts).
+export type ShelfId = 'mm-picks' | 'new-arrivals' | 'deep-cuts' | 'larry-picks' | 'stephen-crate'
 
 // ── Public types ─────────────────────────────────────────────────────
 

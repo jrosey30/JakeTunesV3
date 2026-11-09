@@ -52,7 +52,7 @@ export interface DiscoveryFocus {
   dropExceptions<T extends { artist: string }>(anchors: T[]): T[]
   anchors(dayNumber: number): string[]
   exemplars<T extends { artist?: string; albumArtist?: string }>(tracks: T[]): T[]
-  prefetchTags(cards: Array<{ artist: string }>): Promise<void>
+  prefetchTags(cards: Array<{ artist: string; because?: string }>): Promise<void>
   blocks(card: { artist: string; genre?: string }): boolean
   /** Rock DNA in words for the picking prompts ('' before the quiz). */
   dnaLine: string
@@ -89,15 +89,19 @@ export async function loadDiscoveryFocus(
     .flatMap((pl) => (pl.trackIds ?? []).map((id) => { const t = byId.get(Number(id)); return normName(t?.albumArtist || t?.artist) })).filter(Boolean))
   const dislikedOut = (artist: string): boolean => { const k = normName(artist); return disliked.has(k) && !onFocus.has(k) }
   const tagFile = join(stateDir, ARTIST_TAGS_FILE)
-  const cache = profile.lowGenres.length ? await loadTagCache(tagFile) : {}
+  // Always loaded and always filled (2026-11-09): the shop's crates file a
+  // pick by its artist's tags too (discover-feed.ts stampBins), not only the
+  // taste profile's genre gate.
+  const cache = await loadTagCache(tagFile)
   return {
     profile,
     dropExceptions: (anchors) => dropExceptionAnchors(anchors, profile),
     anchors: (dayNumber) => focusAnchors(profile, playlists, tracks, dayNumber),
     exemplars: (ts) => exemplarPool(ts, profile),
     prefetchTags: async (cards) => {
-      if (!profile.lowGenres.length) return
-      const looked = await ensureArtistTags(cards.map((c) => c.artist), cache, { fetchTags, now, sleepMs: opts.throttle || opts.fetchTags ? 0 : 1100 })
+      // The "because" artist too: a pick with no tags of its own files by the
+      // artist it came from (common/record-shop-bins.ts genreForPick).
+      const looked = await ensureArtistTags(cards.flatMap((c) => (c.because ? [c.artist, c.because] : [c.artist])), cache, { fetchTags, now, sleepMs: opts.throttle || opts.fetchTags ? 0 : 1100 })
       if (looked > 0) await saveTagCache(tagFile, cache).catch(() => { /* cache is a convenience */ })
     },
     blocks: (card) => dislikedOut(card.artist) || genreBlocked(profile, card.artist, [card.genre, ...(cachedTags(cache, card.artist, now) ?? []).slice(0, GATE_TAGS)]),

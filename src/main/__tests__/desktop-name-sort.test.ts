@@ -19,7 +19,6 @@ import {
   trackAlbumSortName,
   trackArtistSortName,
 } from '../../renderer/utils/artistSort.ts'
-import { filingKey, filingLetter } from '../../renderer/views/RecordStore/stepinside/shopPlan.ts'
 
 const src = (rel: string): string => readFileSync(join(import.meta.dirname, '../../renderer', rel), 'utf-8')
 
@@ -63,14 +62,6 @@ describe('name sort — "The" files under the next word', () => {
     assert.deepEqual(sortTracksByName(rows, 'album', 'asc').map((r) => r.id), [3, 2, 1, 4, 5])
     assert.deepEqual(rows.map((r) => r.id), [1, 2, 3, 4, 5], 'input untouched')
   })
-
-  it('the record store files by the same rule', () => {
-    assert.equal(filingKey('The Beatles'), 'beatles')
-    assert.equal(filingKey('A Tribe Called Quest'), 'tribe called quest')
-    assert.equal(filingKey('Édith Piaf'), 'edith piaf')
-    assert.equal(filingLetter('The Strokes'), 'S')
-    assert.equal(filingLetter('"Weird Al" Yankovic'), 'W')
-  })
 })
 
 describe('name sort — the views use the one helper', () => {
@@ -96,13 +87,12 @@ describe('name sort — the views use the one helper', () => {
     assert.match(src('utils/albumGroups.ts'), /\.sort\(\(a, b\) => compareNames\(a\.name, b\.name\)\)/)
   })
 
-  it('concerts and the record store use it', () => {
+  it('concerts use it', () => {
     assert.match(src('views/ConcertsView.tsx'), /return artistSortName\(band\)/)
-    assert.match(src('views/RecordStore/stepinside/shopPlan.ts'), /artistSortName\(artist\)/)
   })
 
   it('no renderer list strips "The" by hand any more', () => {
-    for (const f of ['views/ConcertsView.tsx', 'views/RecordStore/stepinside/shopPlan.ts', 'hooks/useSortedTracks.ts']) {
+    for (const f of ['views/ConcertsView.tsx', 'hooks/useSortedTracks.ts']) {
       assert.doesNotMatch(src(f), /replace\(\/\^the\\s\+\//i, f)
     }
   })

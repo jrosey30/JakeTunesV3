@@ -1,4 +1,8 @@
 /**
+ * The Record Shop's For You page (2026-11-09 reorganization: one band per
+ * question, new-to-buy first and owned last, every card once; the bands and
+ * their order are common/record-shop-page.ts). Built on:
+ *
  * Discover — typed, multi-lane feed (2026-07-14 ground-up rebuild).
  *
  * Jake killed the old radar view: "wordy and sloppy… it doesn't know what
@@ -27,9 +31,11 @@ import AlbumArtImage from '../components/AlbumArtImage'
 import { useImpressions } from '../hooks/useImpressions'
 import { PlayIcon, PauseIcon, CloseIcon } from '../components/TransportIcons'
 import type { RediscoveryPick } from '../types'
-import mmSmug from './RecordStore/art/musicman-smug.png'
-import { binForGenre, applyBinQuotas } from '../../common/record-shop-bins'
 import { CRITIC_LANE } from '../../common/critic-picks'
+import {
+  buildShopPage, laneChip, moreLabel, sectionLabel, shopCountLine, LANE_NAMES, SHOP_PAGE_SECTIONS, SHOP_SECTION_TITLES,
+  type CrateEntry, type ShopPageSection,
+} from '../../common/record-shop-page'
 import { useWjlrPicks } from '../hooks/useWjlrPicks'
 import { lookupArtworkOneShot } from '../utils/artworkLookup'
 import {
@@ -53,16 +59,19 @@ interface FeedCard {
   bin?: string
   hookPreviewUrl?: string
   hookTitle?: string
+  desc?: string
 }
 interface Lane { id: string; title: string; cards: FeedCard[] }
+// "For your iPods" (2026-11-09; main/ipod-wanted-shelf.ts on
+// feat/shop-for-your-ipods): what each iPod list is missing. Kept between
+// visits like the feed; refreshed quietly on arrival. Until main registers
+// 'ipod-lists:wanted-shelf' the call fails and the band simply isn't drawn.
+interface WantedShelf { listId: string; listName: string; title: string; cards: FeedCard[] }
+let wantedCache: WantedShelf[] | null = null
 
 let feedCache: Lane[] | null = null
 let feedAtCache: number | null = null
 let rediscCache: RediscoveryPick[] | null = null
-// "For your iPods" (2026-11-09): what each iPod list is missing. Kept between
-// visits like the feed; refreshed quietly on arrival.
-interface WantedShelf { listId: string; listName: string; title: string; cards: FeedCard[] }
-let wantedCache: WantedShelf[] | null = null
 // A background refresh that lands while Jake is LOOKING at the page must
 // not reshuffle it (the "glitchy" feel — cards jumping mid-browse). The
 // fresh feed parks here and is adopted on the NEXT visit; only per-card
@@ -91,6 +100,8 @@ export default function NewForYouView() {
   const dlMap = useSyncExternalStore(subscribeLtlDownload, getLtlDownloadSnapshot)
   const [owned, setOwned] = useState<RediscoveryPick[]>(rediscCache ?? [])
   const [wantedShelves, setWantedShelves] = useState<WantedShelf[]>(wantedCache ?? [])
+  // Folded cards ("+2 more by NOFX") opened on this visit, by the lead's id.
+  const [openFolds, setOpenFolds] = useState<Set<string>>(new Set())
   // Real artist photos for the Overlooked lane. Jake, twice: "that's an
   // album picture not an artist". Keyed by artist name; null = looked up,
   // none available (fall back to initials, never to a cover in a circle).
@@ -137,11 +148,10 @@ export default function NewForYouView() {
 
   // Jake (2026-11-09): "the songs i dont have for y2k, 80's and indie
   // sleaze....thats the type of stuff that should go in the record shop."
-  // Its own section after the daily picks, so it never crowds them out.
   useEffect(() => {
     void window.electronAPI.ipodWantedShelf?.().then((r) => {
       if (r?.ok && r.shelves) { wantedCache = r.shelves; setWantedShelves(r.shelves) }
-    }).catch(() => { /* the section simply isn't there */ })
+    }).catch(() => { /* the band simply isn't there */ })
   }, [])
 
   const playOwned = (pick: RediscoveryPick) => {
@@ -291,48 +301,33 @@ export default function NewForYouView() {
   }, [])
   useEffect(() => { loadLearned() }, [loadLearned])
 
-  // ── Genre sections (2026-08-23 store rebuild): the crate-flip diorama is
-  // gone — cards group under clean genre shelves, scannable at a glance,
-  // in the app's own iTunes-Store idiom. Bin organization survives.
-  // Shelf quotas (Jake: 'some genre's shouldnt have 7 picks and others 2
-  // and 1'): each shelf shows its best ~6; too-thin bins fold into a
-  // single 'More Finds' shelf at the end.
-  // The daily 25/25 gets its own UNCAPPED shelves (2026-08-28): the genre
-  // shelves cap at ~6 by brain score, and the quota cards were losing that
-  // contest invisibly — the feed held 25/25 for days while the page showed
-  // none of it ("yeah no i dont see it...."). The quota is THE feature; it
-  // renders whole, first, and the curated genre crates follow.
-  // The critic wall's daily five file into those crates pinned — like the
-  // quota, a count Jake asked for, never lost to the brain-% cap.
-  const freshLane = (id: string) => lanes.find((l) => l.id === id)?.cards ?? []
-  const binSections = [
-    { bin: "Today's 25 New Records", cards: freshLane('fresh-albums') },
-    { bin: "Today's 25 New Songs", cards: freshLane('fresh-songs') },
-  ].filter((sec) => sec.cards.length > 0).concat(applyBinQuotas(
-    lanes.filter((l) => l.id !== 'fresh-albums' && l.id !== 'fresh-songs')
-      .flatMap((l) => l.cards).map((c) => ({ ...c, bin: c.bin ?? binForGenre(c.genre) })),
-    { keep: (c) => c.lane === CRITIC_LANE },
-  ))
+  // ── The page (2026-11-09 reorganization) ────────────────────────────
+  // The old page opened with three rows of music Jake already owns, then
+  // "Today's 25 New Records" (mostly catalog), then one genre crate called
+  // "Misc" and a catch-all "More Finds" that a 6-card cap quietly trimmed.
+  // Now: For Your iPods → Out This Year → The Crates (Jake's own filing,
+  // fixed order, albums first, one card per artist, nothing capped) → the
+  // hosts' picks and Behind the Counter, both already in the library →
+  // What I've learned. buildShopPage decides; this only draws.
+  const year = String(new Date().getFullYear())
+  const page = useMemo(() => buildShopPage({ lanes, wanted: wantedShelves, year }), [lanes, wantedShelves, year])
 
-  const SHOP_NAMES: Record<string, string> = {
-    'brand-new': 'New', 'scene': 'Scene', 'missing': 'Gap', 'time-machine': 'Used', 'songs': 'Single',
-    'fresh-albums': 'New', 'fresh-songs': 'New', [CRITIC_LANE]: 'Staff', 'ipod-wanted': 'iPod',
-  }
   const laneReason = (c: FeedCard): string | null => {
     switch (c.lane) {
-      case 'brand-new': return c.year ? `New in ${c.year}` : 'Out now'
+      case 'brand-new': return c.year ? `Out in ${c.year}` : 'Out recently'
       case 'time-machine': return c.year ? `From ${c.year} — an era you play` : 'From an era you play'
       case 'scene': return 'From the scene around your library'
-      case 'missing': return 'A gap in a genre you play'
+      case 'missing': return "You're missing this one"
       case 'songs': return 'One song to try'
-      case 'fresh-albums': return c.because ? `Not in your library — via ${c.because}` : 'Not in your library'
-      case 'fresh-songs': return c.because ? `Not in your library — via ${c.because}` : 'Not in your library'
+      case 'fresh-albums': return 'Not in your library'
+      case 'fresh-songs': return 'Not in your library'
+      case CRITIC_LANE: return "A critic's pick"
       case 'ipod-wanted': return c.why
       default: return null
     }
   }
 
-  const shopCard = (c: FeedCard) => {
+  const shopCard = (c: FeedCard, section?: string) => {
     const id = cardId(c)
     const isPlaying = preview.playingId === id
     const isAdded = added.has(id)
@@ -355,14 +350,14 @@ export default function NewForYouView() {
         <div className="store-meta-line">
           <span className={`df-type df-type--${c.type}`}>{c.type}</span>
           {c.year && <span className="store-year">{c.year}</span>}
-          <span className="store-lane">{SHOP_NAMES[c.lane] ?? ''}</span>
+          <span className="store-lane">{section ?? laneChip(c, year)}</span>
         </div>
         <div className="store-name" title={c.title}>{c.type === 'artist' ? c.artist : c.title}</div>
         {c.type !== 'artist' && <div className="store-artist" title={c.artist}>{c.artist}</div>}
         {c.because
           ? <div className="store-because">Because you play <b>{c.because}</b></div>
           : laneReason(c) ? <div className="store-because store-because--lane">{laneReason(c)}</div> : null}
-        {c.why && c.lane !== 'ipod-wanted' && <div className="store-pitch">{c.why}</div>}
+        {c.why && c.lane !== 'ipod-wanted' && !/^Neighbors with /.test(c.why) && <div className="store-pitch">{c.why}</div>}
         {(() => {
           if (!isAdded) {
             return <button type="button" className="store-add" onClick={() => void addToList(c)}>+ List</button>
@@ -385,80 +380,88 @@ export default function NewForYouView() {
     )
   }
 
-  // ── Staff picks wall — the WJLR personas, moved in from the sidebar.
+  // One artist, one card; the rest fold behind it and open in place.
+  const entryCards = (e: CrateEntry<FeedCard>) => {
+    const leadId = cardId(e.lead)
+    const open = openFolds.has(leadId)
+    const section = e.section ? sectionLabel(e.section) : undefined
+    return [
+      shopCard(e.lead, section),
+      ...(e.more.length ? [
+        <button key={`${leadId}|fold`} type="button" className={`store-fold${open ? ' store-fold--open' : ''}`}
+          aria-expanded={open}
+          onClick={() => setOpenFolds((cur) => { const n = new Set(cur); if (n.has(leadId)) n.delete(leadId); else n.add(leadId); return n })}>
+          {open ? `Fold ${e.lead.artist} back` : moreLabel(e)}
+        </button>,
+      ] : []),
+      ...(open ? e.more.map((m) => shopCard(m, section)) : []),
+    ]
+  }
+
+  const sectionHead = (id: ShopPageSection, note?: string) => (
+    <div className="store-section-head">
+      <h2 className="store-section-title">{SHOP_SECTION_TITLES[id].title}</h2>
+      {SHOP_SECTION_TITLES[id].sub && <span className="store-section-sub">{SHOP_SECTION_TITLES[id].sub}</span>}
+      {note && <span className="store-section-note">{note}</span>}
+    </div>
+  )
+
+  // ── The hosts' picks — the WJLR personas' weekly rows. Music Jake already
+  // owns: moved down beside Behind the Counter and labeled so (2026-11-09).
   const shelves = useWjlrPicks(useMemo(
     () => lib.tracks.map((t) => ({ id: t.id, title: t.title || '', artist: t.artist || '', album: t.album || '', genre: t.genre || '', year: t.year ?? '' })),
     [lib.tracks],
   ))
   const trackById = useMemo(() => new Map(lib.tracks.map((t) => [t.id, t])), [lib.tracks])
 
-  return (
-    <div className="df-view" ref={pageRef}>
-      <div className="store-head">
-        <div>
-          <h1 className="store-title">The Record Shop</h1>
-          <span className="store-sub">WJLR Records · Greenpoint{generatedAt ? ` · restocked ${new Date(generatedAt).toLocaleDateString()}` : ''}</span>
-        </div>
-        <div className="store-head-right">
-          <button type="button" className="store-btn" onClick={() => void load(true)} disabled={loading}>
-            {loading ? 'Restocking…' : '↻ Restock'}
-          </button>
-          <button type="button" className="store-btn store-btn--primary" onClick={() => dispatch({ type: 'SET_VIEW', view: 'recordstore' })}>
-            <img className="df-step-inside-mm" src={mmSmug} alt="" aria-hidden="true" />
-            Step Inside
-          </button>
-        </div>
-      </div>
+  const hostRows = (shelves ?? []).map((sh) => ({ sh, picks: sh.trackIds.map((tid) => trackById.get(tid)).filter((t): t is NonNullable<typeof t> => !!t).slice(0, 12) }))
+    .filter((r) => r.picks.length > 0)
 
-      {learned && (
-        <section className={`df-learned df-learned--${learned.confidence}`}>
-          <div className="df-learned-head">
-            <span className="df-learned-eyebrow">What I've learned</span>
-            <span className="df-learned-headline">{learned.headline}</span>
-          </div>
-          <div className="df-learned-stats">
-            <span><b>{learned.accepts}</b> kept</span>
-            <span><b>{learned.rejects}</b> turned down</span>
-            {learned.stripSignals > 0 && (
-              <span className="df-learned-dim">{learned.stripSignals.toLocaleString()} more from your playlists</span>
-            )}
-            {learned.learnedAt && (
-              <span className="df-learned-dim">last studied {new Date(learned.learnedAt).toLocaleDateString()}</span>
-            )}
-          </div>
-          {learned.lanes.length > 0 && (
-            <div className="df-learned-lanes">
-              {learned.lanes.map((l: DiscoveryLearned['lanes'][number]) => (
-                <span key={l.lane} className="df-learned-lane">
-                  {SHOP_NAMES[l.lane] ?? l.lane}
-                  <b className="df-learned-yes">+{l.accepts}</b>
-                  {l.rejects > 0 && <b className="df-learned-no">−{l.rejects}</b>}
-                </span>
-              ))}
+  // Every band, drawn in SHOP_PAGE_SECTIONS order (the order is data, tested).
+  const bands: Record<ShopPageSection, JSX.Element | null> = {
+    'for-your-ipods': page.ipods.length === 0 ? null : (
+      <section key="for-your-ipods" className="store-section" data-section="for-your-ipods">
+        {sectionHead('for-your-ipods')}
+        {page.ipods.map((sh) => (
+          <section key={sh.listId} className="store-shelf" data-lane={`ipod-wanted-${sh.listId}`}>
+            <div className="store-shelf-head">
+              <span className="store-shelf-title">{sh.title}</span>
+              <span className="store-shelf-count">{sh.entries.length} pick{sh.entries.length === 1 ? '' : 's'}</span>
             </div>
-          )}
-          {learned.stoppedShowing.length > 0 && (
-            <div className="df-learned-stopped">
-              Stopped showing you: {learned.stoppedShowing.slice(0, 6).map((s2: DiscoveryLearned['stoppedShowing'][number]) => s2.artist).join(', ')}
-              {learned.stoppedShowing.length > 6 ? ` +${learned.stoppedShowing.length - 6} more` : ''}
+            <div className="store-row">{sh.entries.flatMap(entryCards)}</div>
+          </section>
+        ))}
+      </section>
+    ),
+    'out-this-year': page.outThisYear.length === 0 ? null : (
+      <section key="out-this-year" className="store-section" data-section="out-this-year">
+        {sectionHead('out-this-year', `${page.counts.outThisYear} from ${year}`)}
+        <div className="store-row store-row--wrap">{page.outThisYear.flatMap(entryCards)}</div>
+      </section>
+    ),
+    crates: page.crates.length === 0 ? null : (
+      <section key="crates" className="store-section" data-section="crates">
+        {sectionHead('crates', shopCountLine(page.counts))}
+        {page.crates.map((cr) => (
+          <section key={cr.id} className="store-shelf" data-lane={`crate-${cr.id}`}>
+            <div className="store-shelf-head">
+              <span className="store-shelf-title">{cr.label}</span>
+              <span className="store-shelf-count">{cr.count} pick{cr.count === 1 ? '' : 's'}</span>
             </div>
-          )}
-        </section>
-      )}
-
-      {loading && lanes.length === 0 && (
-        <PageGate note="Reading your taste…" layout="grid" />
-      )}
-      {error && !loading && lanes.length === 0 && <div className="df-error">{error}</div>}
-
-      {shelves && shelves.length > 0 && shelves.map((sh) => {
-        const picks = sh.trackIds.map((tid) => trackById.get(tid)).filter((t): t is NonNullable<typeof t> => !!t).slice(0, 12)
-        if (!picks.length) return null
-        return (
+            <div className="store-row">{cr.entries.flatMap(entryCards)}</div>
+          </section>
+        ))}
+      </section>
+    ),
+    'hosts-picks': hostRows.length === 0 ? null : (
+      <section key="hosts-picks" className="store-section store-section--owned" data-section="hosts-picks">
+        {sectionHead('hosts-picks')}
+        {hostRows.map(({ sh, picks }) => (
           <section key={sh.id} className="store-shelf" data-lane={`staff-${sh.accent}`}>
             <div className="store-shelf-head">
               <span className={`staff-dot staff-dot--${sh.accent}`} aria-hidden="true" />
               <span className="store-shelf-title">{sh.label} Picks</span>
+              <span className="store-shelf-owned">already in your library</span>
               {sh.commentary && <span className="store-shelf-note" title={sh.commentary}>“{sh.commentary.length > 110 ? sh.commentary.slice(0, 107).replace(/\s+\S*$/, '') + '…' : sh.commentary}”</span>}
               <button type="button" className="store-seeall" onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: sh.id })}>See All ›</button>
             </div>
@@ -476,70 +479,98 @@ export default function NewForYouView() {
               ))}
             </div>
           </section>
-        )
-      })}
-
-      {binSections.map(({ bin, cards }) => (
-        <section key={bin} className="store-shelf" data-lane={`bin-${bin}`}>
-          <div className="store-shelf-head">
-            <span className="store-shelf-title">{bin}</span>
-            <span className="store-shelf-count">{cards.length} pick{cards.length === 1 ? '' : 's'}</span>
-          </div>
-          <div className="store-row">
-            {cards.map((c) => shopCard(c))}
-          </div>
-        </section>
-      ))}
-
-      {wantedShelves.length > 0 && (
-        <div className="store-section" data-section="for-your-ipods">
-          <h2 className="store-section-title">For your iPods</h2>
-          {wantedShelves.map((sh) => (
-            <section key={sh.listId} className="store-shelf" data-lane={`ipod-wanted-${sh.listId}`}>
-              <div className="store-shelf-head">
-                <span className="store-shelf-title">{sh.title}</span>
-                <span className="store-shelf-count">{sh.cards.length} pick{sh.cards.length === 1 ? '' : 's'}</span>
+        ))}
+      </section>
+    ),
+    'behind-the-counter': owned.length === 0 ? null : (
+      <section key="behind-the-counter" className="store-section store-section--owned df-lane" data-section="behind-the-counter" data-lane="behind-counter">
+        {sectionHead('behind-the-counter')}
+        <div className="df-row">
+          {owned.map((pk) => (
+            // ARTIST cards (Jake: "those are supposed to be ARTISTS") —
+            // circles, artist name front and centered, album demoted to
+            // the tooltip alongside Music Man's pitch.
+            <div key={`${pk.artist}|${pk.album}`} className="df-card df-card--artist">
+              <button type="button" className="df-art df-art--btn" title={pk.reason || `Play ${pk.artist}`} onClick={() => playOwned(pk)}>
+                {/* An ARTIST card shows the ARTIST. Portrait when we have
+                    one, honest initials disc when we don't. Never a cover. */}
+                {portraits.get(pk.artist)
+                  ? <img className="df-portrait" src={`artist-image://${portraits.get(pk.artist)}.jpg`} alt="" draggable={false} />
+                  : <div className="df-initials" style={{ background: hashColor(pk.artist) }}>{initials(pk.artist)}</div>}
+                <span className="df-play df-play--owned" aria-hidden="true"><PlayIcon size={15} /></span>
+              </button>
+              <div className="df-badge-row df-badge-row--center">
+                <span className="df-type df-type--owned">Artist</span>
+                <span className="df-year">{pk.plays} play{pk.plays === 1 ? '' : 's'}</span>
               </div>
-              <div className="store-row">
-                {sh.cards.map((c) => shopCard(c))}
-              </div>
-            </section>
+              <div className="df-name df-name--center" title={`${pk.artist}${pk.album ? ` — ${pk.album}` : ''}`}>{pk.artist}</div>
+            </div>
           ))}
         </div>
-      )}
-
-      {owned.length > 0 && (
-        <section className="df-lane" data-lane="behind-counter">
-          <div className="df-lane-head">Behind the Counter</div>
-          <div className="df-row">
-            {owned.map((pk) => {
-              return (
-                // ARTIST cards (Jake: "those are supposed to be ARTISTS") —
-                // circles, artist name front and centered, album demoted to
-                // the tooltip alongside Music Man's pitch.
-                <div key={`${pk.artist}|${pk.album}`} className="df-card df-card--artist">
-                  <button type="button" className="df-art df-art--btn" title={pk.reason || `Play ${pk.artist}`} onClick={() => playOwned(pk)}>
-                    {/* An ARTIST card shows the ARTIST. Album art in a circle
-                        claims to be a photo of a person and isn't — that is
-                        what read as sloppy. Portrait when we have one, honest
-                        initials disc when we don't. Never a cover. */}
-                    {portraits.get(pk.artist)
-                      ? <img className="df-portrait" src={`artist-image://${portraits.get(pk.artist)}.jpg`} alt="" draggable={false} />
-                      : <div className="df-initials" style={{ background: hashColor(pk.artist) }}>{initials(pk.artist)}</div>}
-                    <span className="df-play df-play--owned" aria-hidden="true"><PlayIcon size={15} /></span>
-                  </button>
-                  <div className="df-badge-row df-badge-row--center">
-                    <span className="df-type df-type--owned">Artist</span>
-                    <span className="df-year">{pk.plays} play{pk.plays === 1 ? '' : 's'}</span>
-                  </div>
-                  <div className="df-name df-name--center" title={`${pk.artist}${pk.album ? ` — ${pk.album}` : ''}`}>{pk.artist}</div>
-                </div>
-              )
-            })}
+      </section>
+    ),
+    // A report about the shop, not part of it: a quiet strip at the bottom,
+    // with the way to Rock DNA (out of the shop's tabs since 2026-11-09).
+    'what-ive-learned': (
+      <section key="what-ive-learned" className={`df-learned df-learned--quiet df-learned--${learned?.confidence ?? 'low'}`} data-section="what-ive-learned">
+        <div className="df-learned-head">
+          <span className="df-learned-eyebrow">{SHOP_SECTION_TITLES['what-ive-learned'].title}</span>
+          {learned && <span className="df-learned-headline">{learned.headline}</span>}
+          <button type="button" className="store-seeall" onClick={() => dispatch({ type: 'SET_VIEW', view: 'rock-dna' })}>Tune my taste: Rock DNA ›</button>
+        </div>
+        {learned && (
+          <div className="df-learned-stats">
+            <span><b>{learned.accepts}</b> kept</span>
+            <span><b>{learned.rejects}</b> turned down</span>
+            {learned.stripSignals > 0 && (
+              <span className="df-learned-dim">{learned.stripSignals.toLocaleString()} more from your playlists</span>
+            )}
+            {learned.learnedAt && (
+              <span className="df-learned-dim">last studied {new Date(learned.learnedAt).toLocaleDateString()}</span>
+            )}
           </div>
-        </section>
-      )}
+        )}
+        {learned && learned.lanes.length > 0 && (
+          <div className="df-learned-lanes">
+            {learned.lanes.map((l: DiscoveryLearned['lanes'][number]) => (
+              <span key={l.lane} className="df-learned-lane">
+                {LANE_NAMES[l.lane] ?? l.lane}
+                <b className="df-learned-yes">+{l.accepts}</b>
+                {l.rejects > 0 && <b className="df-learned-no">−{l.rejects}</b>}
+              </span>
+            ))}
+          </div>
+        )}
+        {learned && learned.stoppedShowing.length > 0 && (
+          <div className="df-learned-stopped">
+            Stopped showing you: {learned.stoppedShowing.slice(0, 6).map((s2: DiscoveryLearned['stoppedShowing'][number]) => s2.artist).join(', ')}
+            {learned.stoppedShowing.length > 6 ? ` +${learned.stoppedShowing.length - 6} more` : ''}
+          </div>
+        )}
+      </section>
+    ),
+  }
 
+  return (
+    <div className="df-view" ref={pageRef}>
+      <div className="store-head">
+        <div>
+          <h1 className="store-title">The Record Shop</h1>
+          <span className="store-sub">WJLR Records · Greenpoint{generatedAt ? ` · restocked ${new Date(generatedAt).toLocaleDateString()}` : ''}</span>
+        </div>
+        <div className="store-head-right">
+          <button type="button" className="store-btn" onClick={() => void load(true)} disabled={loading}>
+            {loading ? 'Restocking…' : '↻ Restock'}
+          </button>
+        </div>
+      </div>
+
+      {loading && lanes.length === 0 && (
+        <PageGate note="Reading your taste…" layout="grid" />
+      )}
+      {error && !loading && lanes.length === 0 && <div className="df-error">{error}</div>}
+
+      {SHOP_PAGE_SECTIONS.map((id) => bands[id])}
     </div>
   )
 }

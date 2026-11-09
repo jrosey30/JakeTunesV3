@@ -542,3 +542,45 @@ describe('edition gate — compilations, soundtracks and dated tapes (2026-11-08
     assert.equal(isJunkArtistName('Creedence Clearwater Revival'), false)
   })
 })
+
+describe('one library artist seeds at most three picks a day (2026-11-09)', () => {
+  // On 2026-11-09 Sublime seeded 22 of the 50 daily cards and five artists
+  // seeded all of them. The cap is shared by the albums and the songs.
+  function manyAnchors() {
+    const related: Record<string, string[]> = {}
+    const albums: Record<string, Array<{ title: string }>> = {}
+    const top: Record<string, string[]> = {}
+    for (const anchor of ['Sublime', 'Neutral Milk Hotel', 'FUTURE', 'Eminem', 'The Bug Club', 'Pixies', 'Blondie', 'Wire', 'Can', 'Air', 'Low', 'Ride', 'Suede', 'Spoon', 'Beck', 'Bjork', 'Cake', 'Doves', 'Eels', 'Foals']) {
+      related[anchor] = []
+      for (let i = 0; i < 12; i++) {
+        const name = `${anchor} Neighbour ${i}`
+        related[anchor].push(name)
+        albums[name] = [{ title: `${name} LP` }]
+        top[name] = [`${name} Song`]
+      }
+    }
+    return fakeDeezer({ related, albums, top })
+  }
+
+  test('the quota is filled and no anchor seeds more than three', async () => {
+    const dz = manyAnchors()
+    const out = await buildDailyDiscovery(['Sublime', 'Neutral Milk Hotel', 'FUTURE', 'Eminem', 'The Bug Club', 'Pixies', 'Blondie', 'Wire', 'Can', 'Air', 'Low', 'Ride', 'Suede', 'Spoon', 'Beck', 'Bjork', 'Cake', 'Doves', 'Eels', 'Foals'],
+      deps({ fetchJson: dz.fetchJson }), { dayNumber: 3 })
+    assert.equal(out.albums.length, 25)
+    assert.equal(out.songs.length, 25)
+    const seeded = new Map<string, number>()
+    for (const p of [...out.albums, ...out.songs]) seeded.set(p.because ?? '', (seeded.get(p.because ?? '') ?? 0) + 1)
+    assert.ok([...seeded.values()].every((n) => n <= 3), JSON.stringify([...seeded]))
+    assert.ok(seeded.size >= 17, `50 picks from at least 17 anchors, got ${seeded.size}`)
+  })
+
+  test('the quota outranks the spread: one anchor still fills 25 and 25', async () => {
+    const related: Record<string, string[]> = { Sublime: [] }
+    const albums: Record<string, Array<{ title: string }>> = {}
+    const top: Record<string, string[]> = {}
+    for (let i = 0; i < 30; i++) { const n = `Ska ${i}`; related.Sublime.push(n); albums[n] = [{ title: `${n} LP` }]; top[n] = [`${n} Song`] }
+    const out = await buildDailyDiscovery(['Sublime'], deps({ fetchJson: fakeDeezer({ related, albums, top }).fetchJson }), { dayNumber: 3 })
+    assert.equal(out.albums.length, 25)
+    assert.equal(out.songs.length, 25)
+  })
+})
