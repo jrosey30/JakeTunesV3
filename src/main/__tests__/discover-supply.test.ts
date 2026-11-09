@@ -18,7 +18,7 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   dayStride, relatedArtistPool, harvestAlbums, harvestSongs, buildDailyDiscovery,
-  resolveDeezerArtist, rotateKeepingNewFirst,
+  resolveDeezerArtist, rotateKeepingNewFirst, interleaveBySeed, twoHopPool, PICKS_PER_ANCHOR, SEED_SHARE, PICKS_PER_ARTIST,
   type SupplyDeps,
 } from '../discover-supply.ts'
 import { isJunkArtistName } from '../../common/junk-artist.ts'
@@ -511,6 +511,66 @@ describe('rotateKeepingNewFirst — the daily rotation keeps new artists ahead o
   })
 })
 
+describe('more supply, same quality (2026-11-09)', () => {
+  test('two hops out: when one hop runs short, the strongest seed reaches past its neighbours; because stays the seed', async () => {
+    const related: Record<string, string[]> = { Nirvana: ['Owned Band', 'Mudhoney'], Mudhoney: ['Tad', 'Green River', 'Nirvana'] }
+    const albums: Record<string, Array<{ title: string }>> = { Mudhoney: [{ title: 'Superfuzz Bigmuff' }], Tad: [{ title: 'God\'s Balls' }], 'Green River': [{ title: 'Rehab Doll' }] }
+    const dz = fakeDeezer({ related, albums })
+    const out = await buildDailyDiscovery(['Nirvana'], deps({ fetchJson: dz.fetchJson, ownsArtist: (a) => a === 'Owned Band' }), { want: 3, dayNumber: 1 })
+    const byArtist = new Map(out.albums.map((a) => [a.artist, a]))
+    assert.equal(byArtist.get('Mudhoney')?.via, undefined, 'one hop has no via')
+    assert.equal(byArtist.get('Tad')?.because, 'Nirvana', '"because" is always the library artist')
+    assert.equal(byArtist.get('Tad')?.via, 'Mudhoney')
+    assert.equal(out.albums[0].artist, 'Mudhoney', 'one hop first')
+  })
+  test('two hops never reach an artist he owns, the seed, or a one-hop neighbour twice', async () => {
+    const dz = fakeDeezer({ related: { Seed: ['N1', 'N2'], N1: ['Seed', 'N2', 'Owned', 'Far'], N2: ['Far', 'Farther'] } })
+    const first = [{ id: dz.idFor('N1'), name: 'N1', anchor: 'Seed', owned: false }, { id: dz.idFor('N2'), name: 'N2', anchor: 'Seed', owned: false }]
+    const two = await twoHopPool(first, ['Seed'], deps({ fetchJson: dz.fetchJson, ownsArtist: (a) => a === 'Owned' }))
+    assert.deepEqual(two.map((a) => [a.name, a.via]), [['Far', 'N1'], ['Farther', 'N2']])
+  })
+  test(`one artist gets at most ${PICKS_PER_ARTIST} cards across the albums and the songs`, async () => {
+    const dz = fakeDeezer({ related: { A: ['Band'] }, albums: { Band: [{ title: 'LP1' }, { title: 'LP2' }, { title: 'LP3' }] }, top: { Band: ['S1', 'S2', 'S3'] } })
+    const out = await buildDailyDiscovery(['A'], deps({ fetchJson: dz.fetchJson }), { want: 10, dayNumber: 1, twoHopSeeds: 0 })
+    assert.equal(out.albums.length + out.songs.length, PICKS_PER_ARTIST)
+  })
+  test('a resting pick is walked past, not seated and then thrown away', async () => {
+    const dz = fakeDeezer({ related: { A: ['B1', 'B2'] }, albums: { B1: [{ title: 'Seen It' }, { title: 'Fresh' }], B2: [{ title: 'Also Fresh' }] } })
+    const out = await buildDailyDiscovery(['A'], deps({ fetchJson: dz.fetchJson, resting: (_a, t) => t === 'Seen It' }), { want: 2, dayNumber: 1 })
+    assert.deepEqual(out.albums.map((a) => a.title).sort(), ['Also Fresh', 'Fresh'])
+  })
+  test('a seed listed twice is one seed', async () => {
+    const dz = deepCatalogueOf(['Anchor'])
+    const out = await buildDailyDiscovery(['Anchor', 'anchor', ' Anchor '], deps({ fetchJson: dz.fetchJson }), { dayNumber: 1 })
+    assert.equal(dz.calls.filter((u) => u.includes('search/artist')).length, 1)
+    assert.equal(out.albums.length, 25)
+  })
+  test('interleaveBySeed deals one per seed in turn, stable for the day', () => {
+    const pool = [...['a1', 'a2', 'a3'].map((n) => ({ name: n, anchor: 'A' })), ...['b1', 'b2'].map((n) => ({ name: n, anchor: 'B' })), { name: 'c1', anchor: 'C' }]
+    const out = interleaveBySeed(pool, 7)
+    assert.equal(out.length, pool.length)
+    assert.deepEqual(new Set(out.slice(0, 3).map((a) => a.anchor)), new Set(['A', 'B', 'C']), 'the first round has one from each seed')
+    assert.deepEqual(interleaveBySeed(pool, 7), out)
+  })
+  test('the new edition words: live on, interviews, remixes, special editions, "(2012 Version)"', async () => {
+    for (const t of ['Sparks Live On The Moon', 'Alone (Special Edition)', 'The Beatles: The Interviews', 'Loads Of Remixes', 'Annette (The Original 2013 Recordings)', 'Party Boots (2012 Version)', 'Coming Home Live', 'The Lost Files: Vol. 1', 'Watergate 18 - mixed by Butch']) {
+      const dz = fakeDeezer({ related: { A: ['Band'] }, albums: { Band: [{ title: t }] } })
+      assert.deepEqual(await harvestAlbums([{ id: dz.idFor('Band'), name: 'Band', anchor: 'A' }], 10, deps({ fetchJson: dz.fetchJson })), [], t)
+    }
+  })
+})
+
+function deepCatalogueOf(anchors: string[]) {
+  const related: Record<string, string[]> = {}
+  const albums: Record<string, Array<{ title: string }>> = {}
+  const top: Record<string, string[]> = {}
+  for (const a of anchors) {
+    related[a] = []
+    for (let i = 0; i < 40; i++) { const n = `${a} Band ${i}`; related[a].push(n); albums[n] = [{ title: `${n} A` }, { title: `${n} B` }]; top[n] = [`${n} S1`, `${n} S2`] }
+  }
+  return fakeDeezer({ related, albums, top })
+}
+
 describe('edition gate — compilations, soundtracks and dated tapes (2026-11-08 shelf)', () => {
   test('the real cards are refused; canonical records beside them are kept', async () => {
     const titles = [
@@ -543,9 +603,11 @@ describe('edition gate — compilations, soundtracks and dated tapes (2026-11-08
   })
 })
 
-describe('one library artist seeds at most three picks a day (2026-11-09)', () => {
+describe(`one library artist seeds at most ${PICKS_PER_ANCHOR} picks a day (2026-11-09)`, () => {
   // On 2026-11-09 Sublime seeded 22 of the 50 daily cards and five artists
-  // seeded all of them. The cap is shared by the albums and the songs.
+  // seeded all of them (#393 capped it at three). The same afternoon, Jake:
+  // "not enough recommendations": 60 and 60, six a seed, never over 10%.
+  // The cap is shared by the albums and the songs.
   function manyAnchors() {
     const related: Record<string, string[]> = {}
     const albums: Record<string, Array<{ title: string }>> = {}
@@ -562,7 +624,7 @@ describe('one library artist seeds at most three picks a day (2026-11-09)', () =
     return fakeDeezer({ related, albums, top })
   }
 
-  test('the quota is filled and no anchor seeds more than three', async () => {
+  test(`the quota is filled and no anchor seeds more than ${PICKS_PER_ANCHOR}`, async () => {
     const dz = manyAnchors()
     const out = await buildDailyDiscovery(['Sublime', 'Neutral Milk Hotel', 'FUTURE', 'Eminem', 'The Bug Club', 'Pixies', 'Blondie', 'Wire', 'Can', 'Air', 'Low', 'Ride', 'Suede', 'Spoon', 'Beck', 'Bjork', 'Cake', 'Doves', 'Eels', 'Foals'],
       deps({ fetchJson: dz.fetchJson }), { dayNumber: 3 })
@@ -570,8 +632,20 @@ describe('one library artist seeds at most three picks a day (2026-11-09)', () =
     assert.equal(out.songs.length, 25)
     const seeded = new Map<string, number>()
     for (const p of [...out.albums, ...out.songs]) seeded.set(p.because ?? '', (seeded.get(p.because ?? '') ?? 0) + 1)
-    assert.ok([...seeded.values()].every((n) => n <= 3), JSON.stringify([...seeded]))
+    assert.ok([...seeded.values()].every((n) => n <= PICKS_PER_ANCHOR), JSON.stringify([...seeded]))
     assert.ok(seeded.size >= 17, `50 picks from at least 17 anchors, got ${seeded.size}`)
+  })
+
+  test(`60 and 60 from twenty seeds: every seed takes its turn, none over ${SEED_SHARE * 100}%`, async () => {
+    const dz = manyAnchors()
+    const seeds = ['Sublime', 'Neutral Milk Hotel', 'FUTURE', 'Eminem', 'The Bug Club', 'Pixies', 'Blondie', 'Wire', 'Can', 'Air', 'Low', 'Ride', 'Suede', 'Spoon', 'Beck', 'Bjork', 'Cake', 'Doves', 'Eels', 'Foals']
+    const out = await buildDailyDiscovery(seeds, deps({ fetchJson: dz.fetchJson }), { want: 60, floor: 25, dayNumber: 5 })
+    assert.equal(out.albums.length, 60)
+    assert.equal(out.songs.length, 60)
+    const seeded = new Map<string, number>()
+    for (const p of [...out.albums, ...out.songs]) seeded.set(p.because ?? '', (seeded.get(p.because ?? '') ?? 0) + 1)
+    assert.equal(seeded.size, 20, 'all twenty seeds are heard from')
+    assert.ok([...seeded.values()].every((n) => n <= 120 * SEED_SHARE), JSON.stringify([...seeded]))
   })
 
   test('the quota outranks the spread: one anchor still fills 25 and 25', async () => {

@@ -141,3 +141,47 @@ test('a named record: that one, in whatever edition Deezer has it; never a live 
   const none = await lookupWanted({ artist: 'Uffie', album: 'A Record Deezer Lacks' }, { fetchJson })
   assert.deepEqual(none, { type: 'album', artist: 'Uffie', title: 'A Record Deezer Lacks' })
 })
+
+// 2026-11-09, after #393 shipped (Jake: "record shop is still weird"): the
+// section must show from the list doc as homemini writes it, and from this
+// Mac's kept copy of it when homemini doesn't answer.
+test('For Your iPods renders from the list doc: the rows lead the page, one per list that wants something', async () => {
+  const { buildShopPage } = await import('../../common/record-shop-page.ts')
+  const dir = await mkdtemp(join(tmpdir(), 'jt-ipod-wanted-page-'))
+  try {
+    const fetchImpl = (async (url: string) => ({ json: async () => fetchJson(String(url)) })) as unknown as typeof fetch
+    const lists = [
+      parseIpodList(raw({ wanted: [{ artist: 'Uffie', addedAt: AT }, { artist: 'Cut Copy', album: 'In Ghost Colours', addedAt: AT }] }))!,
+      parseIpodList({ ...raw(), id: 'b0b0b0b0-0000-4000-8000-000000000000', name: 'punkPod', purpose: 'punk' })!,   // wants nothing: no row
+    ]
+    const src = createWantedShelfSource({ stateDir: dir, lists: async () => lists, libraryTracks: async () => [], fetchImpl, sleepMs: 0 })
+    const r = await src.get(true)
+    assert.equal(r.ok, true)
+    const page = buildShopPage({
+      lanes: [{ id: 'fresh-albums', cards: [{ lane: 'fresh-albums', type: 'album', artist: 'Cut Copy', title: 'In Ghost Colours', genre: 'Electronic' }] }],
+      wanted: r.shelves, year: '2026',
+    })
+    assert.deepEqual(page.ipods.map((row) => [row.title, row.cards.map((s) => s.card.title)]), [['Wanted for Indie Sleeze', ['Sex Dreams and Denim Jeans', 'In Ghost Colours']]])
+    assert.equal(page.crates.length, 0, 'the record the iPod row shows is not shown again in a crate')
+    assert.equal(page.counts.ipods, 2)
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
+test("homemini away: the shop reads this Mac's kept copy of the lists (ipod-lists-cache.json); an empty shelf is asked again within minutes", async () => {
+  const { readFileSync } = await import('node:fs')
+  const ipc = readFileSync(join(import.meta.dirname, '../ipc/ipod-lists-ipc.ts'), 'utf8')
+  assert.match(ipc, /lists: async \(\) => \(await source\.all\(\)\.catch\(\(\) => null\)\) \?\? readListsCache\(ipodListsCachePath\(host\.stateDir\)\)/)
+  const dir = await mkdtemp(join(tmpdir(), 'jt-ipod-wanted-ttl-'))
+  try {
+    let clock = 0
+    let lists: IpodList[] = [parseIpodList(raw())!]   // no `wanted` yet
+    const fetchImpl = (async (url: string) => ({ json: async () => fetchJson(String(url)) })) as unknown as typeof fetch
+    const src = createWantedShelfSource({ stateDir: dir, lists: async () => lists, libraryTracks: async () => [], fetchImpl, sleepMs: 0, now: () => clock })
+    assert.deepEqual((await src.get()).shelves, [])
+    lists = [parseIpodList(raw({ wanted: [{ artist: 'Uffie', addedAt: AT }] }))!]   // homemini writes `wanted`
+    clock = 60_000
+    assert.deepEqual((await src.get()).shelves, [], 'held for a minute')
+    clock = 6 * 60_000
+    assert.equal((await src.get()).shelves.length, 1, 'after five minutes the empty shelf is asked again')
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
