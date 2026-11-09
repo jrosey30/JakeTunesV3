@@ -17,10 +17,10 @@ import ConfirmDialog from '../ConfirmDialog'
 import type { ViewName, SmartPlaylistId, Track, Playlist } from '../../types'
 import { isJustificationPlaylist, sortJustifications } from '../../utils/justification'
 import { useReleaseMonths } from '../../releaseMonths'
-import { useIpodLists } from '../../ipodLists'
+import { useIpodLists, useIpodListsRole } from '../../ipodLists'
 import { useIpodRegistry } from '../../ipodRegistry'
 import { useTop1000List } from '../../top1000List'
-import { ipodSidebarRows } from '../../../common/sidebar-ipods'
+import { ipodSidebarRows, isIpodPlaylistId } from '../../../common/sidebar-ipods'
 import { SIDEBAR_ORDER_KEY, DEFAULT_SECTION_ORDER, YEAR_PREFIX, parseSavedOrder, orderSections, moveSection, nudgeSection } from '../../../common/sidebar-order'
 import { monthPlaylistId, monthPlaylistName, yearsOf } from '../../../common/release-months'
 import { setNotice } from '../../activity'
@@ -281,22 +281,14 @@ export default function Sidebar() {
   // have their own section"). One row per iPod this Mac has met: the Original opens its Top 1000,
   // every other iPod opens its list on homemini (src/renderer/ipodLists.ts) — what each one's Sync
   // button puts on it (PR #372). common/sidebar-ipods.ts builds the rows.
+  // One place (2026-11-09): every list homemini keeps, on every Mac, and nowhere else in the
+  // sidebar. On a replica (homemini's, workmini's app) they are plain playlists; only the hub
+  // (the MacBook, which syncs iPods) shows the registry's dots and "planned".
   const ipodLists = useIpodLists()
+  const ipodListsRole = useIpodListsRole()
   const ipodRegistry = useIpodRegistry()
   const top1000Ids = useTop1000List()
   const libraryIds = useMemo(() => new Set(state.tracks.map((t) => t.id)), [state.tracks])
-  const ipodRows = useMemo(() => ipodSidebarRows({
-    devices: ipodRegistry,
-    lists: ipodLists,
-    top1000Ids,
-    inLibrary: (id) => libraryIds.has(id),
-  }), [ipodRegistry, ipodLists, top1000Ids, libraryIds])
-  // What a pin can name: the smart playlists and the iPod lists (a pin on Top 1000 made before
-  // it moved still resolves).
-  const allSmart = useMemo(() => [
-    ...smartPlaylists,
-    ...ipodRows.map((r) => ({ label: r.detail ? `${r.name} · ${r.detail}` : r.name, id: r.playlistId as SmartPlaylistId })),
-  ], [ipodRows])
   // Pinned playlists (2026-08-07, Jake: "pin 3 and only 3 playlists to the
   // very tippy top above defaults....i can absolutely pin a default").
   // Raw ids — user playlists ('pl-…'/'mm-…') and smart ids never collide.
@@ -324,6 +316,16 @@ export default function Sidebar() {
   }, [onQuiz])
 
   const [pinned, setPinned] = useState<string[]>([])
+  const ipodRows = useMemo(() => ipodSidebarRows({
+    role: ipodListsRole === 'hub' ? 'hub' : 'replica',
+    devices: ipodRegistry,
+    lists: ipodLists,
+    top1000Ids,
+    inLibrary: (id) => libraryIds.has(id),
+    pinned,
+  }), [ipodListsRole, ipodRegistry, ipodLists, top1000Ids, libraryIds, pinned])
+  // A pin on an iPod list (Top 1000 included) moves that row up inside iPODS; it is never drawn
+  // a second time under PLAYLISTS (isIpodPlaylistId). Jake: "why are there 2 places".
   useEffect(() => {
     void window.electronAPI.loadPlaylistPins().then((r) => {
       if (r?.ok && r.pins) setPinned(r.pins.pinnedPlaylists.slice(0, 3))
@@ -785,12 +787,14 @@ export default function Sidebar() {
     ['ipods', (
       <SidebarSection key={'ipods'} {...sectionProps('ipods')} title="iPODS">
         {ipodRows.map((r) => (
-          <div key={r.key} onContextMenu={(e) => handlePlaylistContextMenu(e, r.playlistId, r.detail ? `${r.name} · ${r.detail}` : r.name, 'smart')}>
+          <div key={r.key} onContextMenu={(e) => handlePlaylistContextMenu(e, r.playlistId, r.detail && !r.planned ? `${r.name} · ${r.detail}` : r.name, 'smart')}>
             <SidebarItem
               label={r.name}
               detail={r.detail ?? undefined}
               wrap
-              icon={<span className="sidebar-ipod-dot" style={r.color ? { background: r.color } : undefined} aria-hidden="true" />}
+              icon={ipodListsRole === 'hub'
+                ? <span className={`sidebar-ipod-dot${r.planned ? ' sidebar-ipod-dot--planned' : ''}`} style={r.color ? { background: r.color } : undefined} aria-hidden="true" />
+                : <SmartIcon id={r.playlistId as SmartPlaylistId} />}
               badge={r.count === null ? undefined : r.count.toLocaleString()}
               selected={state.currentView === 'smart-playlist' && state.activeSmartPlaylist === r.playlistId}
               onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: r.playlistId as SmartPlaylistId })}
@@ -854,8 +858,8 @@ export default function Sidebar() {
             then the remaining defaults, then user playlists A–Z. A pin
             MOVES its entry up — no duplicate below. Stale pins (deleted
             playlists) simply resolve to nothing. */}
-        {pinned.map((id) => {
-          const sp = allSmart.find(x => x.id === id)
+        {pinned.filter((id) => !isIpodPlaylistId(id)).map((id) => {
+          const sp = smartPlaylists.find(x => x.id === id)
           if (sp) return (
             <div key={`pin-${id}`} onContextMenu={(e) => handlePlaylistContextMenu(e, sp.id, sp.label, 'smart')}>
               <SidebarItem

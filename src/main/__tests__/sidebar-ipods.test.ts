@@ -12,7 +12,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { ipodSidebarRows, safeDotColor, TOP_1000_PLAYLIST_ID, type SidebarIpodDevice, type SidebarIpodList } from '../../common/sidebar-ipods.ts'
+import { ipodSidebarRows, isIpodPlaylistId, safeDotColor, TOP_1000_PLAYLIST_ID, type SidebarIpodDevice, type SidebarIpodList } from '../../common/sidebar-ipods.ts'
 import { ipodListPlaylistId } from '../../common/ipod-list-doc.ts'
 import { orderSections, moveSection, nudgeSection, parseSavedOrder, defaultOrder, DEFAULT_SECTION_ORDER, RETIRED_SECTION_KEYS } from '../../common/sidebar-order.ts'
 
@@ -27,7 +27,7 @@ const all = () => true
 describe('iPODS rows from the registry', () => {
   it('one row per registered iPod, the Original first, opening its Top 1000', () => {
     const rows = ipodSidebarRows({ devices: [PUNK, ORIGINAL, BLUE], lists: [], top1000Ids: [1, 2, 3], inLibrary: all })
-    assert.deepEqual(rows.map((r) => r.name), ['Original', 'punkPod', 'Blue'])
+    assert.deepEqual(rows.map((r) => r.name), ['Original', 'Blue', 'punkPod'], 'Top 1000 first, then by name')
     assert.equal(rows[0].playlistId, TOP_1000_PLAYLIST_ID)
     assert.equal(rows[0].playlistId, 'top-1000')
     assert.equal(rows[0].detail, 'Top 1000')
@@ -35,17 +35,18 @@ describe('iPODS rows from the registry', () => {
   })
   it('every other iPod opens its own homemini list', () => {
     const rows = ipodSidebarRows({ devices: [ORIGINAL, PUNK, BLUE], lists: [], top1000Ids: null, inLibrary: all })
-    assert.equal(rows[1].playlistId, ipodListPlaylistId(PUNK.id))
-    assert.equal(rows[1].playlistId, 'ipod-list-0d8fc490-74d1-4232-9a35-1801a66f4fde')
-    assert.equal(rows[2].playlistId, 'ipod-list-blue-2222')
+    assert.equal(rows[2].playlistId, ipodListPlaylistId(PUNK.id))
+    assert.equal(rows[2].playlistId, 'ipod-list-0d8fc490-74d1-4232-9a35-1801a66f4fde')
+    assert.equal(rows[1].playlistId, 'ipod-list-blue-2222')
     assert.equal(rows[1].detail, null)
+    assert.equal(rows[1].planned, false)
   })
   it('counts are the songs of each list that are in this library; unknown until homemini answers', () => {
     const lists: SidebarIpodList[] = [{ id: PUNK.id, name: 'punkPod', color: 'red', ids: [10, 11, 12, 99] }]
     const rows = ipodSidebarRows({ devices: [ORIGINAL, PUNK, BLUE], lists, top1000Ids: [1, 2, 99], inLibrary: (id) => id !== 99 })
     assert.equal(rows[0].count, 2)
-    assert.equal(rows[1].count, 3)
-    assert.equal(rows[2].count, null, 'no list yet → no number, never a fake 0')
+    assert.equal(rows[2].count, 3)
+    assert.equal(rows[1].count, null, 'no list yet → no number, never a fake 0')
     assert.equal(ipodSidebarRows({ devices: [ORIGINAL], lists: [], top1000Ids: null, inLibrary: all })[0].count, null)
   })
   it('a Mac that never met the Original still shows the Top 1000 row (workmini)', () => {
@@ -55,10 +56,11 @@ describe('iPODS rows from the registry', () => {
     assert.equal(rows[0].playlistId, 'top-1000')
   })
   it('a list whose iPod the registry read missed still gets its row, once', () => {
-    const lists: SidebarIpodList[] = [{ id: PUNK.id, name: 'punkPod', color: '#ff0000', ids: [1] }]
+    const lists: SidebarIpodList[] = [{ id: PUNK.id, name: 'punkPod', color: '#ff0000', ids: [1], registered: true }]
     const rows = ipodSidebarRows({ devices: [], lists, top1000Ids: null, inLibrary: all })
     assert.deepEqual(rows.map((r) => r.playlistId), ['top-1000', ipodListPlaylistId(PUNK.id)])
     assert.equal(rows[1].color, '#ff0000')
+    assert.equal(rows[1].planned, false)
     const both = ipodSidebarRows({ devices: [ORIGINAL, PUNK], lists, top1000Ids: null, inLibrary: all })
     assert.equal(both.length, 2)
   })
@@ -71,6 +73,77 @@ describe('iPODS rows from the registry', () => {
     assert.equal(safeDotColor(null), null)
     assert.equal(safeDotColor('red; background: url(x)'), null)
     assert.equal(safeDotColor('rgb(1,2,3)'), null)
+  })
+})
+
+describe('iPODS: one place, on every Mac (2026-11-09)', () => {
+  // homemini's lists as main hands them over: punkPod (registered on the MacBook only) and
+  // the planned ones no iPod carries yet.
+  const PLANNED: SidebarIpodList[] = [
+    { id: 'y2k-revival-01', name: 'Y2K Revival', color: null, ids: [7, 8] },
+    { id: 'best-of-bandcamp', name: 'Best of Bandcamp', color: null, ids: [9] },
+    { id: 'totally-80s-001', name: 'Totally 80s', color: null, ids: [] },
+  ]
+  const PUNK_LIST: SidebarIpodList = { id: PUNK.id, name: 'punkPod', color: null, ids: [1, 2, 3] }
+
+  it('a Mac with no registry (workmini) still shows punkPod and every planned list, Top 1000 first, then by name', () => {
+    const rows = ipodSidebarRows({ role: 'replica', devices: [], lists: [PUNK_LIST, ...PLANNED], top1000Ids: [1], inLibrary: all })
+    assert.deepEqual(rows.map((r) => r.name), ['Top 1000', 'Best of Bandcamp', 'punkPod', 'Totally 80s', 'Y2K Revival'])
+    assert.equal(rows.find((r) => r.name === 'punkPod')?.count, 3)
+  })
+  it('a replica shows plain playlists: no registry, no dots, nothing "planned", no iPod names', () => {
+    const rows = ipodSidebarRows({ role: 'replica', devices: [{ ...ORIGINAL, name: 'Silver' }, PUNK], lists: [{ ...PUNK_LIST, registered: true }, ...PLANNED], top1000Ids: null, inLibrary: all })
+    assert.equal(rows[0].name, 'Top 1000')
+    assert.equal(rows[0].detail, null)
+    for (const r of rows) {
+      assert.equal(r.color, null, r.name)
+      assert.equal(r.planned, false, r.name)
+      assert.equal(r.detail, null, r.name)
+    }
+  })
+  it('the hub: the registry\'s dots on registered iPods, "planned" and no colour on the rest', () => {
+    const rows = ipodSidebarRows({ role: 'hub', devices: [ORIGINAL, PUNK], lists: [{ ...PUNK_LIST, registered: true }, ...PLANNED], top1000Ids: null, inLibrary: all })
+    assert.deepEqual(rows.map((r) => r.name), ['Original', 'Best of Bandcamp', 'punkPod', 'Totally 80s', 'Y2K Revival'])
+    const punk = rows.find((r) => r.name === 'punkPod')
+    assert.equal(punk?.color, 'red')
+    assert.equal(punk?.planned, false)
+    for (const name of ['Best of Bandcamp', 'Totally 80s', 'Y2K Revival']) {
+      const r = rows.find((x) => x.name === name)
+      assert.equal(r?.planned, true, name)
+      assert.equal(r?.detail, 'planned', name)
+      assert.equal(r?.color, null, name)
+    }
+  })
+  it('each list has exactly one row, whatever the registry and the lists both say', () => {
+    const rows = ipodSidebarRows({ role: 'hub', devices: [ORIGINAL, PUNK, PUNK], lists: [{ ...PUNK_LIST, registered: true }, PUNK_LIST, ...PLANNED], top1000Ids: null, inLibrary: all })
+    const ids = rows.map((r) => r.playlistId)
+    assert.equal(new Set(ids).size, ids.length)
+    assert.equal(ids.filter((i) => i === 'top-1000').length, 1)
+  })
+  it('a pinned list moves up inside iPODS, right after Top 1000; Top 1000 stays first', () => {
+    const pinned = ['pl-1', TOP_1000_PLAYLIST_ID, ipodListPlaylistId('y2k-revival-01')]
+    const rows = ipodSidebarRows({ role: 'replica', devices: [], lists: [PUNK_LIST, ...PLANNED], top1000Ids: null, inLibrary: all, pinned })
+    assert.deepEqual(rows.map((r) => r.name), ['Top 1000', 'Y2K Revival', 'Best of Bandcamp', 'punkPod', 'Totally 80s'])
+  })
+  it('isIpodPlaylistId: Top 1000 and every iPod list, nothing else', () => {
+    assert.equal(isIpodPlaylistId('top-1000'), true)
+    assert.equal(isIpodPlaylistId(ipodListPlaylistId(PUNK.id)), true)
+    for (const id of ['top-25', 'top-rated', 'pl-1786144518145', 'listen-more-weekly', '', null, undefined]) assert.equal(isIpodPlaylistId(id), false, String(id))
+  })
+  it('the sidebar draws no iPod list anywhere but iPODS: pins skip them, no smart list names one', () => {
+    const sidebar = read('renderer/components/sidebar/Sidebar.tsx')
+    assert.match(sidebar, /pinned\.filter\(\(id\) => !isIpodPlaylistId\(id\)\)\.map/)
+    assert.doesNotMatch(sidebar, /allSmart/)
+    const smart = sidebar.slice(sidebar.indexOf('const smartPlaylists'), sidebar.indexOf(']', sidebar.indexOf('const smartPlaylists')))
+    assert.doesNotMatch(smart, /id: 'top-1000'|ipod-list-/)
+    const library = sidebar.slice(sidebar.indexOf('const libraryItems'), sidebar.indexOf(']', sidebar.indexOf('const libraryItems')))
+    assert.doesNotMatch(library, /'top-1000'|ipod-list-/)
+    assert.equal((sidebar.match(/ipodRows\.map\(/g) ?? []).length, 1, 'iPod rows are drawn in one place')
+  })
+  it('the sidebar knows hub from replica from main, never from the registry', () => {
+    const sidebar = read('renderer/components/sidebar/Sidebar.tsx')
+    assert.match(sidebar, /role: ipodListsRole === 'hub' \? 'hub' : 'replica'/)
+    assert.match(read('main/index.ts'), /registerIpodListsIpc\(ipc, \{[^\n]*isReplica: isHomeminiPlaybackClientCached/)
   })
 })
 

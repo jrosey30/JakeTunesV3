@@ -1256,7 +1256,7 @@ declare global {
       top1000List?: () => Promise<{ ok: true; value: { progress: import('../common/top1000-doc').QuizProgress; list: import('../common/top1000-doc').QuizListEntry[] } } | { ok: false; error: string }>
       // 2026-11-07 — every non-Original iPod's list (homemini writes it; src/main/ipc/ipod-lists-ipc.ts)
       ipodRegistryList?: () => Promise<{ ok: boolean; devices?: Array<{ id: string; name: string; color: string | null; primary: boolean }>; error?: string }>
-      ipodListsGet?: () => Promise<{ ok: boolean; lists?: Array<{ id: string; name: string; color: string | null; purpose: string | null; ids: number[]; source: 'homemini' | 'local'; note: string | null; updatedAt: string | null }> }>
+      ipodListsGet?: () => Promise<{ ok: boolean; role?: 'hub' | 'replica'; lists?: Array<{ id: string; name: string; color: string | null; purpose: string | null; ids: number[]; source: 'homemini' | 'local' | 'cache'; note: string | null; updatedAt: string | null; registered?: boolean }> }>
       ipodListProposals?: (deviceId: string) => Promise<{ ok: boolean; proposals?: Array<{ id: number; why: string; at: string; artist?: string; title?: string; album?: string }>; proposedAt?: string | null; queued?: number; offline?: boolean; error?: string }>
       ipodListDecide?: (input: { deviceId: string; approve?: number[]; reject?: number[] }) => Promise<{ ok: boolean; sent?: boolean; error?: string }>
       top1000Ties?: () => Promise<{ ok: true; value: number | null } | { ok: false; error: string }>

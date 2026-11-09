@@ -6,17 +6,36 @@
  * Since one Sync button per iPod (PR #372) each iPod syncs exactly one list:
  *   - the Original: its Top 1000 (homemini's quiz ranking, playlist 'top-1000')
  *   - every other iPod: its own list on homemini (playlist ipodListPlaylistId(id))
- * So the section is one row per registered iPod, opening that list. The
- * Original's hand-built iPod Pool feeds no iPod any more and has no row.
+ *
+ * One place (2026-11-09). Jake: "i dont see punkpod on workmini for some reason.
+ * and why are there 2 places that i can access the ipod playlists on the same
+ * side bar?" The rows came from THIS Mac's ipod-devices.json, so a Mac that never
+ * had punkPod plugged in had no punkPod row, and a pin on Top 1000 drew it a
+ * second time at the top of PLAYLISTS. Now the section is every list homemini
+ * keeps, on every Mac: Top 1000 first, then each list by name. And: "they
+ * shouldnt have to be plugged into homemini and workmini....those 2 see the ipod
+ * playlists as ipod playlists but really just playlists. macbook is the only one
+ * that actually syncs and works directly with each ipod". So:
+ *   - the hub (the MacBook): the iPod bits — the colour dot from the registry, the
+ *     Original's name, "planned" on a list no iPod carries yet;
+ *   - a replica (homemini's and workmini's apps): plain playlists, nothing read
+ *     from the registry, nothing about plugging in or syncing.
+ * A pinned iPod list stays in this section (moved up, after Top 1000) and is
+ * never drawn again under PLAYLISTS (isIpodPlaylistId).
  *
  * Pure — node --test loads it.
  *
  * ⚠️ TWIN (not yet built): JakeTunesMobile shows Top 1000 and each iPod's list as
  * built-in playlists (backend/src/util/builtInPlaylists.ts, ios PlaylistGroups.swift).
  */
-import { ipodListPlaylistId } from './ipod-list-doc.ts'
+import { ipodListPlaylistId, parseIpodListPlaylistId } from './ipod-list-doc.ts'
 
 export const TOP_1000_PLAYLIST_ID = 'top-1000'
+
+/** Is this playlist id one of the iPODS section's rows? (Top 1000 or an iPod list.) */
+export function isIpodPlaylistId(id: string | null | undefined): boolean {
+  return id === TOP_1000_PLAYLIST_ID || parseIpodListPlaylistId(id) !== null
+}
 
 /** One registered iPod, as ipod-devices.json knows it. */
 export interface SidebarIpodDevice {
@@ -32,33 +51,43 @@ export interface SidebarIpodList {
   name: string
   color: string | null
   ids: readonly number[]
+  /** An iPod in this Mac's registry carries it (hub only). false/absent = homemini keeps it for an iPod not set up here. */
+  registered?: boolean
 }
 
 export interface SidebarIpodRow {
-  /** React key: the marker id, or 'original' when this Mac has never met the Original. */
+  /** React key: the marker id, or 'original' / 'top-1000' when no Original is known. */
   key: string
-  /** The iPod's name. */
+  /** The iPod's name (hub), or the list's name (replica). */
   name: string
-  /** What the row opens, shown after the name ("Top 1000"); null for a list iPod. */
+  /** A quieter second part after the name: "Top 1000" on the Original's row, "planned" on a list no iPod carries yet (hub only). */
   detail: string | null
-  /** A safe CSS colour for the dot, or null (grey). */
+  /** A safe CSS colour for the dot, or null (grey). Always null on a replica. */
   color: string | null
   /** The smart playlist id the row opens. */
   playlistId: string
   /** Songs of that list in this library; null = not known yet (homemini hasn't answered). */
   count: number | null
   primary: boolean
+  /** Hub only: homemini keeps this list but no iPod in this Mac's registry carries it. */
+  planned: boolean
 }
 
+export type SidebarIpodRole = 'hub' | 'replica'
+
 export interface SidebarIpodInput {
-  /** ipod-devices.json, any order. Empty when the read failed or no iPod was ever met. */
+  /** 'hub' (the MacBook: syncs iPods, shows their colours) or 'replica' (plain playlists). Default 'hub'. */
+  role?: SidebarIpodRole
+  /** ipod-devices.json, any order. Empty when the read failed or no iPod was ever met. Ignored on a replica. */
   devices: readonly SidebarIpodDevice[]
-  /** Every non-Original iPod's list (renderer/ipodLists.ts). */
+  /** Every list homemini keeps, registered or not (renderer/ipodLists.ts). */
   lists: readonly SidebarIpodList[]
   /** The Top 1000 song ids, rank order; null until homemini has answered once. */
   top1000Ids: readonly number[] | null
   /** Is this song in the library? (What the playlist page will actually show.) */
   inLibrary: (id: number) => boolean
+  /** The pinned playlist ids (playlist-pins.json). A pinned list moves up, right after Top 1000. */
+  pinned?: readonly string[]
 }
 
 const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i
@@ -78,40 +107,63 @@ function countIn(ids: readonly number[] | null | undefined, inLibrary: (id: numb
   return n
 }
 
+const byName = (a: SidebarIpodRow, b: SidebarIpodRow): number =>
+  a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || a.key.localeCompare(b.key)
+
 /**
- * The rows, Original first, then the other iPods in the order this Mac met them.
- * The Original always has a row: the Top 1000 is its list even on a Mac that has
- * never had it plugged in (workmini), and it must not vanish from the sidebar.
+ * The rows: Top 1000 first, then every list by name (a pinned one first, in pin
+ * order). Top 1000 always has a row, on every Mac. A list homemini keeps always
+ * has a row, whether or not this Mac has met its iPod (workmini never has).
  */
 export function ipodSidebarRows(input: SidebarIpodInput): SidebarIpodRow[] {
-  const original = input.devices.find((d) => d.primary) ?? null
-  const rows: SidebarIpodRow[] = [{
-    key: original?.id ?? 'original',
-    name: original?.name?.trim() || 'Original',
-    detail: 'Top 1000',
-    color: safeDotColor(original?.color),
-    playlistId: TOP_1000_PLAYLIST_ID,
-    count: countIn(input.top1000Ids, input.inLibrary),
-    primary: true,
-  }]
+  const hub = (input.role ?? 'hub') === 'hub'
+  const devices = hub ? input.devices : []
+  const original = devices.find((d) => d.primary) ?? null
+  const first: SidebarIpodRow = hub
+    ? {
+        key: original?.id ?? 'original',
+        name: original?.name?.trim() || 'Original',
+        detail: 'Top 1000',
+        color: safeDotColor(original?.color),
+        playlistId: TOP_1000_PLAYLIST_ID,
+        count: countIn(input.top1000Ids, input.inLibrary),
+        primary: true,
+        planned: false,
+      }
+    : {
+        key: TOP_1000_PLAYLIST_ID,
+        name: 'Top 1000',
+        detail: null,
+        color: null,
+        playlistId: TOP_1000_PLAYLIST_ID,
+        count: countIn(input.top1000Ids, input.inLibrary),
+        primary: true,
+        planned: false,
+      }
   const listById = new Map(input.lists.map((l) => [l.id, l]))
+  const deviceIds = new Set(devices.map((d) => d.id))
   const seen = new Set<string>()
+  const rest: SidebarIpodRow[] = []
   const push = (id: string, name: string, color: string | null): void => {
-    if (seen.has(id)) return
+    if (seen.has(id) || (original && id === original.id)) return
     seen.add(id)
     const list = listById.get(id)
-    rows.push({
+    const planned = hub && !deviceIds.has(id) && list?.registered !== true
+    rest.push({
       key: id,
-      name: name.trim() || list?.name?.trim() || 'iPod',
-      detail: null,
-      color: safeDotColor(color ?? list?.color),
+      name: (hub ? name.trim() : '') || list?.name?.trim() || name.trim() || 'iPod',
+      detail: planned ? 'planned' : null,
+      color: hub && !planned ? safeDotColor(color ?? list?.color) : null,
       playlistId: ipodListPlaylistId(id),
       count: countIn(list?.ids, input.inLibrary),
       primary: false,
+      planned,
     })
   }
-  for (const d of input.devices) if (!d.primary) push(d.id, d.name, d.color)
-  // A list whose iPod the registry read missed still gets its row.
-  for (const l of input.lists) if (!original || l.id !== original.id) push(l.id, l.name, l.color)
-  return rows
+  for (const d of devices) if (!d.primary) push(d.id, d.name, d.color)
+  for (const l of input.lists) push(l.id, l.name, l.color)
+  rest.sort(byName)
+  const pins = (input.pinned ?? []).filter((p) => p !== TOP_1000_PLAYLIST_ID)
+  const pinnedRows = pins.map((p) => rest.find((r) => r.playlistId === p)).filter((r): r is SidebarIpodRow => r !== undefined)
+  return [first, ...pinnedRows, ...rest.filter((r) => !pinnedRows.includes(r))]
 }
