@@ -91,6 +91,13 @@ describe('name sort — the views use the one helper', () => {
     assert.match(src('views/ConcertsView.tsx'), /return artistSortName\(band\)/)
   })
 
+  it('Genres artist and album columns use it', () => {
+    const v = src('views/GenresView.tsx')
+    assert.match(v, /Array\.from\(set\)\.sort\(compareNames\)/)
+    assert.match(v, /Array\.from\(set\)\.sort\(compareAlbumNames\)/)
+    assert.doesNotMatch(v, /Array\.from\(set\)\.sort\(\)/)
+  })
+
   it('no renderer list strips "The" by hand any more', () => {
     for (const f of ['views/ConcertsView.tsx', 'hooks/useSortedTracks.ts']) {
       assert.doesNotMatch(src(f), /replace\(\/\^the\\s\+\//i, f)
