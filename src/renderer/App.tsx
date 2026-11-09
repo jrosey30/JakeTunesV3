@@ -58,7 +58,9 @@ import { initDownloads } from './utils/downloadStore'
 import { ensureLiveSetsLoaded, reloadLiveSets } from './liveSets'
 import { hydrateScrollCacheFromUiState } from './hooks/useScrollPersistence'
 import { restoreActionFor, savedLocation } from './nav-history'
-import { AppSettings, DEFAULT_APP_SETTINGS, type Playlist, type Track } from './types'
+import { AppSettings, DEFAULT_APP_SETTINGS, type Playlist, type SmartPlaylistId, type Track } from './types'
+import { parseOpenIpodListAction } from '../common/ipod-list-proposals'
+import { ipodListPlaylistId } from '../common/ipod-list-doc'
 import { setNotice } from './activity'
 import { autoNavBlocked } from './utils/autoNavGuard'
 import { fetchArtForArrivals, countInRecentlyAdded } from './utils/newArrivals'
@@ -1599,6 +1601,9 @@ function AppInner() {
 
   useEffect(() => {
     const cleanup = window.electronAPI.onMenuAction((action: string) => {
+      // "punkPod: 10 picks to review" (2026-11-09): the notification opens that iPod's list
+      const pickedIpod = parseOpenIpodListAction(action)
+      if (pickedIpod) { dispatch({ type: 'VIEW_SMART_PLAYLIST', id: ipodListPlaylistId(pickedIpod) as SmartPlaylistId }); return }
       switch (action) {
         case 'play-pause': togglePlayPause(); break
         // Distinct, idempotent pause / play — sent by pause-for-calls (main)

@@ -3,6 +3,11 @@
  * real sources and the macOS notification. Kept out of index.ts, which is
  * ratcheted. Clicking the notification brings the window up on the Device page
  * (menu-action 'view-device', App.tsx).
+ *
+ * The brain's picks (2026-11-09): the same ticks also look for a new set of
+ * picks waiting for Jake (ipod-list-proposals.ts createProposalNotice): one
+ * notification + one phone push per set, "punkPod: 10 picks to review", and
+ * the click opens that iPod's list (menu-action 'open-ipod-list:<id>').
  */
 import { Notification, type BrowserWindow } from 'electron'
 import { join } from 'node:path'
@@ -11,6 +16,8 @@ import { ipodStateDirFor, loadIpodRegistry } from './ipod-identity.ts'
 import { createIpodListClient } from './ipod-list-client.ts'
 import { createIpodSyncReady, readManifestIds, type IpodSyncReadyRunner, type SyncBoarding } from './ipod-sync-ready.ts'
 import { pushNtfy } from './ntfy-push.ts'
+import { createProposalNotice } from './ipod-list-proposals.ts'
+import { openIpodListAction } from '../common/ipod-list-proposals.ts'
 import { createTop1000Client } from './top1000-client.ts'
 
 export interface IpodSyncReadyHost {
@@ -31,10 +38,38 @@ export interface IpodSyncReadyHost {
 // A notification the code no longer references can be collected before it is clicked.
 const live = new Set<Notification>()
 
+/** Show a notification that brings the window up and sends `action` to the renderer. */
+function showNotice(host: IpodSyncReadyHost, title: string, body: string, action: string): void {
+  if (!Notification.isSupported()) return
+  const n = new Notification({ title, body })
+  live.add(n)
+  n.on('click', () => {
+    live.delete(n)
+    const w = host.window()
+    if (w && !w.isDestroyed()) {
+      if (w.isMinimized()) w.restore()
+      w.show()
+      w.focus()
+    }
+    host.send('menu-action', action)
+  })
+  n.on('close', () => { live.delete(n) })
+  n.show()
+}
+
 export function startIpodSyncReady(host: IpodSyncReadyHost): IpodSyncReadyRunner {
   const top1000 = createTop1000Client({ baseUrl: host.baseUrl, warn: host.warn })
   const lists = createIpodListClient({ baseUrl: host.baseUrl, warn: host.warn })
-  return createIpodSyncReady({
+  const picks = createProposalNotice({
+    stateDir: host.stateDir,
+    isHub: async () => !(await host.isReplica()),
+    devices: async () => (await loadIpodRegistry(host.stateDir)).devices,
+    get: (id) => lists.proposals(id),
+    notify: ({ title, body, deviceId }) => showNotice(host, title, body, openIpodListAction(deviceId)),
+    push: (msg) => pushNtfy(msg, { log: host.log }),
+    log: host.log,
+  })
+  const runner = createIpodSyncReady({
     stateDir: host.stateDir,
     isHub: async () => !(await host.isReplica()),
     devices: async () => (await loadIpodRegistry(host.stateDir)).devices,
@@ -58,24 +93,14 @@ export function startIpodSyncReady(host: IpodSyncReadyHost): IpodSyncReadyRunner
         fill: (taken, needed) => pickReplacementTracks(tracks, taken, needed, ineligible).map((t) => Number(t.id)),
       }
     },
-    notify: ({ title, body }) => {
-      if (!Notification.isSupported()) return
-      const n = new Notification({ title, body })
-      live.add(n)
-      n.on('click', () => {
-        live.delete(n)
-        const w = host.window()
-        if (w && !w.isDestroyed()) {
-          if (w.isMinimized()) w.restore()
-          w.show()
-          w.focus()
-        }
-        host.send('menu-action', 'view-device')
-      })
-      n.on('close', () => { live.delete(n) })
-      n.show()
-    },
+    notify: ({ title, body }) => showNotice(host, title, body, 'view-device'),
     push: (msg) => pushNtfy(msg, { log: host.log }),
     log: host.log,
   })
+  // The same ticks look for new picks: the standings' 10 minutes, and every list read.
+  return {
+    ...runner,
+    pulled(adopted) { runner.pulled(adopted); void picks.check() },
+    listRead(device, ids, everyDays) { runner.listRead(device, ids, everyDays); if (!device.primary) void picks.check(device.id) },
+  }
 }

@@ -1,0 +1,67 @@
+/* "Picks to review" (2026-11-09): the brain's picks waiting for Jake, at the
+   top of an iPod list's playlist (components/IpodProposalsPanel.tsx).
+   Names never clip: every text wraps, nothing is ellipsized. */
+.ipod-proposals {
+  margin: 8px 16px 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(70, 55, 40, 0.18);
+  border-radius: 8px;
+  background: var(--brand-cream, #FEFDFC);
+  max-height: 40vh;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+.ipod-proposals-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.ipod-proposals-titles { flex: 1; min-width: 0; }
+.ipod-proposals-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #161312);
+}
+.ipod-proposals-intro,
+.ipod-proposals-away {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: rgba(22, 19, 18, 0.65);
+  overflow-wrap: anywhere;
+}
+.ipod-proposals-away { color: var(--brand-orange-dark, #C94401); }
+.ipod-proposals-all { display: flex; gap: 6px; flex-shrink: 0; }
+.ipod-proposals-list { list-style: none; margin: 0; padding: 0; }
+.ipod-proposals-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-top: 1px solid rgba(70, 55, 40, 0.10);
+}
+.ipod-proposals-text { flex: 1; min-width: 0; }
+.ipod-proposals-name {
+  font-size: 12px;
+  color: var(--text-primary, #161312);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.ipod-proposals-why {
+  font-size: 11px;
+  color: rgba(22, 19, 18, 0.6);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.ipod-proposals-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.ipod-proposals-play {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(70, 55, 40, 0.25);
+  background: #fff;
+  cursor: pointer;
+}
+.ipod-proposals-play:disabled { opacity: 0.4; cursor: default; }

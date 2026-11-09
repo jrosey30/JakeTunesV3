@@ -1225,6 +1225,9 @@ const electronAPI = {
   top1000Ties: (): Promise<unknown> => ipcRenderer.invoke('top1000:ties'),
   // Every non-Original iPod's list (2026-11-07) — homemini writes it; read-only here.
   ipodListsGet: (): Promise<unknown> => ipcRenderer.invoke('ipod-lists:get'),
+  // The brain's picks waiting for Jake (2026-11-09): read, and Approve / Skip.
+  ipodListProposals: (deviceId: string): Promise<unknown> => ipcRenderer.invoke('ipod-lists:proposals', deviceId),
+  ipodListDecide: (input: { deviceId: string; approve?: number[]; reject?: number[] }): Promise<unknown> => ipcRenderer.invoke('ipod-lists:decide', input),
   homeShelvesGet: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:get'),
   homeShelvesRefresh: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:refresh'),
   homeShelvesLocalPlays: (): Promise<unknown> => ipcRenderer.invoke('home-shelves:local-plays'),
