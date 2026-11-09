@@ -115,6 +115,43 @@ export function createIpodListClient(opts: IpodListClientOptions) {
       }
     },
 
+    /** "iPod color…" (2026-11-09): PATCH homemini's list { color }. true = homemini has it, or
+     *  never will (404: no such list, keeping it would retry forever). A 400 stays false: a
+     *  homemini older than the colour field answers 400, and the colour should land once it updates. */
+    async setColor(deviceId: string, color: string): Promise<boolean> {
+      try {
+        const res = await fetchImpl(`${base}/${encodeURIComponent(deviceId)}`, withCompanionInit({
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ color }),
+          signal: AbortSignal.timeout(timeoutMs),
+        }) as Record<string, unknown>)
+        if (res.status === 200 || res.status === 404) return true
+        warn(`[ipod-list] colour ${deviceId}: homemini answered ${res.status}`)
+        return false
+      } catch (err) {
+        warn(`[ipod-list] colour ${deviceId} failed: ${(err as Error)?.message ?? err}`)
+        return false
+      }
+    },
+
+    /** One drawn iPod cover from homemini (GET /api/playlist-cover/ipod/:model/:color).
+     *  exact = homemini drew this very colour (X-Ipod-Cover: exact); otherwise it is the
+     *  nearest named colour while the custom one is being drawn. null = no answer. */
+    async cover(path: string): Promise<{ bytes: Buffer; exact: boolean } | null> {
+      try {
+        const res = await fetchImpl(`${opts.baseUrl.replace(/\/+$/, '')}${path}`, withCompanionInit({ method: 'GET', signal: AbortSignal.timeout(timeoutMs) }) as Record<string, unknown>)
+        if (res.status !== 200) return null
+        const r = res as unknown as { arrayBuffer: () => Promise<ArrayBuffer>; headers?: { get?: (k: string) => string | null } }
+        const bytes = Buffer.from(await r.arrayBuffer())
+        if (bytes.length < 1000) return null
+        return { bytes, exact: r.headers?.get?.('x-ipod-cover') === 'exact' }
+      } catch (err) {
+        warn(`[ipod-list] cover ${path} failed: ${(err as Error)?.message ?? err}`)
+        return null
+      }
+    },
+
     /** The iPod was renamed (2026-11-07): PATCH homemini's list name (Mobile PR #753).
      *  true = homemini took it; false = not now (down, 404, any refusal). */
     async rename(deviceId: string, name: string): Promise<boolean> {

@@ -16,6 +16,12 @@
  *       Approve / Skip: on disk first, then homemini (main/ipod-list-proposals.ts);
  *       what homemini doesn't hear now goes on the next read, refresh or the
  *       5-minute retry.
+ *   'ipod-lists:set-color' ({ deviceId, color }) → { ok, color, homemini: 'saved' | 'later' }
+ *       "iPod color…" (2026-11-09): the cover's colour. Kept on this Mac (the hub's
+ *       choice wins over the registry) and sent to homemini, or waits on disk for it
+ *       (main/ipod-colors.ts); flushed before each list read and on the 5-minute retry.
+ *   'ipod-cover:get' (key) → { ok, url } — a custom-colour cover homemini drew, kept on
+ *       this Mac for good (main/ipod-cover-cache.ts); url null = show the bundled nearest.
  *
  * And for main: `refresh(device)` (the pool page, activity-pool-ipc.ts) and
  * `refreshPlugged(mount)` (the Activity Sync build, workout-sync-ipc.ts) — both
@@ -32,6 +38,8 @@ import type { FetchLike } from '../top1000-client.ts'
 import { flushHomeminiName } from '../ipod-rename.ts'
 import { createProposalsDesk } from '../ipod-list-proposals.ts'
 import { gatherIpodLists, ipodListsCachePath } from '../ipod-lists-gather.ts'
+import { chooseIpodColor, flushPendingColors, readChosenColors } from '../ipod-colors.ts'
+import { ipodCoverDataUrl } from '../ipod-cover-cache.ts'
 
 /** How often a decision homemini hasn't heard yet is tried again. */
 export const DECISION_RETRY_MS = 5 * 60_000
@@ -58,7 +66,13 @@ export interface IpodListSource {
   rename(deviceId: string, name: string): Promise<boolean>
 }
 
-export function createIpodListSource(host: IpodListsHost): IpodListSource & { desk: ReturnType<typeof createProposalsDesk>; all: () => Promise<IpodList[] | null> } {
+export function createIpodListSource(host: IpodListsHost): IpodListSource & {
+  desk: ReturnType<typeof createProposalsDesk>
+  all: () => Promise<IpodList[] | null>
+  sendColor: (deviceId: string, color: string) => Promise<boolean>
+  flushColors: () => Promise<'none' | 'sent' | 'still-waiting'>
+  cover: (path: string) => Promise<{ bytes: Buffer; exact: boolean } | null>
+} {
   const client = createIpodListClient({ baseUrl: host.baseUrl, fetchImpl: host.fetchImpl, warn: host.warn })
   const desk = createProposalsDesk({ stateDir: host.stateDir, get: (id) => client.proposals(id), send: (id, d) => client.decide(id, d), log: host.warn })
 
@@ -75,6 +89,10 @@ export function createIpodListSource(host: IpodListsHost): IpodListSource & { de
     }
     return (id) => byId.get(id) ?? null
   }
+
+  const sendColor = (id: string, color: string) => client.setColor(id, color)
+  const flushColors = () => flushPendingColors(host.stateDir, sendColor)
+    .catch((err) => { host.warn?.(`[ipod-list] pending colours: ${(err as Error)?.message ?? err}`); return 'still-waiting' as const })
 
   async function refresh(device: IpodDeviceMarker): Promise<IpodPoolRefresh> {
     // A rename homemini missed (it was away) goes first — every sync reads the list here.
@@ -98,6 +116,9 @@ export function createIpodListSource(host: IpodListsHost): IpodListSource & { de
 
   return {
     desk,
+    sendColor,
+    flushColors,
+    cover: (path: string) => client.cover(path),
     refresh,
     all: () => client.all(),
     rename: (deviceId, name) => client.rename(deviceId, name),
@@ -113,14 +134,31 @@ export function createIpodListSource(host: IpodListsHost): IpodListSource & { de
 
 export function registerIpodListsIpc(ipc: IpcRegistrar, host: IpodListsHost): IpodListSource {
   const source = createIpodListSource(host)
-  ipc.handle('ipod-lists:get', async () => gatherIpodLists({
-    isReplica: host.isReplica ?? (async () => false),
-    registry: async () => (await loadIpodRegistry(host.stateDir)).devices,
-    refresh: (d) => source.refresh(d),
-    all: () => source.all(),
-    cacheFile: ipodListsCachePath(host.stateDir),
-    warn: host.warn,
-  }), { public: true })
+  const isReplica = host.isReplica ?? (async () => false)
+  ipc.handle('ipod-lists:get', async () => {
+    // A colour homemini missed goes first, so the read has it.
+    await source.flushColors()
+    return gatherIpodLists({
+      isReplica,
+      registry: async () => (await loadIpodRegistry(host.stateDir)).devices,
+      refresh: (d) => source.refresh(d),
+      all: () => source.all(),
+      cacheFile: ipodListsCachePath(host.stateDir),
+      chosen: () => readChosenColors(host.stateDir),
+      warn: host.warn,
+    })
+  }, { public: true })
+  // A write: the main window only.
+  ipc.handle('ipod-lists:set-color', async (_e, input: unknown) => {
+    const i = input as { deviceId?: unknown; color?: unknown } | null
+    const hub = !(await isReplica().catch(() => true))
+    return chooseIpodColor({ stateDir: host.stateDir, send: source.sendColor, hub }, i?.deviceId, i?.color)
+      .catch((err) => ({ ok: false as const, error: (err as Error)?.message ?? 'couldn’t save the colour' }))
+  }, { refuse: { ok: false, error: 'refused-sender' } })
+  ipc.handle('ipod-cover:get', async (_e, key: unknown) => {
+    const url = await ipodCoverDataUrl({ stateDir: host.stateDir, fetchCover: source.cover }, key).catch(() => null)
+    return { ok: true, url }
+  }, { public: true })
   ipc.handle('ipod-lists:proposals', async (_e, deviceId: unknown) => {
     if (typeof deviceId !== 'string') return { ok: false, error: 'no iPod' }
     return source.desk.view(deviceId)
@@ -132,6 +170,9 @@ export function registerIpodListsIpc(ipc: IpcRegistrar, host: IpodListsHost): Ip
     const ids = (v: unknown): number[] => (Array.isArray(v) ? v.map(Number).filter((n) => Number.isInteger(n) && n > 0) : [])
     return source.desk.decide(i.deviceId, { approve: ids(i.approve), reject: ids(i.reject) })
   }, { refuse: { ok: false, error: 'refused-sender' } })
-  setInterval(() => { void source.desk.flush().catch(() => undefined) }, DECISION_RETRY_MS).unref?.()
+  setInterval(() => {
+    void source.desk.flush().catch(() => undefined)
+    void source.flushColors()
+  }, DECISION_RETRY_MS).unref?.()
   return source
 }

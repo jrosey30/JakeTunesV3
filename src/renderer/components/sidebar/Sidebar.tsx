@@ -2,6 +2,10 @@ import { useState, useEffect, useCallback, useRef, useSyncExternalStore, useMemo
 import { SMART_PLAYLIST_NAMES } from '../../utils/playlistMenu'
 import { BEST_OF_YEAR_NAME } from '../../utils/smartPlaylists'
 import { smartPlaylistCover } from '../../utils/playlistCovers'
+import { useIpodPlaylistCover } from '../../utils/ipodCovers'
+import { IpodColorPicker } from '../IpodColorPicker'
+import { parseIpodListPlaylistId } from '../../../common/ipod-list-doc'
+import { entryColor } from '../../ipodLists'
 import { useLibrary } from '../../context/LibraryContext'
 import { subscribeQueue, getQueue } from '../../views/DownloadStore/downloadQueue'
 import { downloadsPanelRows, panelSummary, downloadsBadge } from '../../../common/downloads-panel-model'
@@ -207,9 +211,13 @@ function CassetteIcon() {
 
 /** A smart playlist's icon: its own cover when it has one (Listen More Weekly,
  *  Best of <year> — Jake: "needs its own distinct logo"), else the gear list. */
-function SmartIcon({ id }: { id: SmartPlaylistId }) {
-  const cover = smartPlaylistCover(id)
-  return cover ? <img src={cover} alt="" className="sidebar-cover-icon" draggable={false} /> : <SmartPlaylistIcon />
+function SmartIcon({ id, planned = false }: { id: SmartPlaylistId; planned?: boolean }) {
+  // Top 1000 and every iPod list wear their own iPod (2026-11-09, utils/ipodCovers.ts).
+  const ipodCover = useIpodPlaylistCover(id)
+  const cover = ipodCover ?? smartPlaylistCover(id)
+  return cover
+    ? <img src={cover} alt="" className={`sidebar-cover-icon${planned ? ' sidebar-cover-icon--planned' : ''}`} draggable={false} />
+    : <SmartPlaylistIcon />
 }
 
 function SmartPlaylistIcon() {
@@ -275,6 +283,8 @@ export default function Sidebar() {
   const currentViewRef = useRef(state.currentView)
   currentViewRef.current = state.currentView
   const [plCtxMenu, setPlCtxMenu] = useState<{ x: number; y: number; playlistId: string; playlistName: string; kind: 'user' | 'smart' } | null>(null)
+  // "iPod color…" (2026-11-09) from an iPod list's row.
+  const [ipodColorAt, setIpodColorAt] = useState<{ x: number; y: number; deviceId: string } | null>(null)
   // This year's releases by month (2026-10-24): a section per year, a smart playlist per month.
   const releaseMonths = useReleaseMonths()
   // iPODS (2026-11-07, Jake: "the ipod pool for each ipod is in the playlists area...they should
@@ -792,9 +802,7 @@ export default function Sidebar() {
               label={r.name}
               detail={r.detail ?? undefined}
               wrap
-              icon={ipodListsRole === 'hub'
-                ? <span className={`sidebar-ipod-dot${r.planned ? ' sidebar-ipod-dot--planned' : ''}`} style={r.color ? { background: r.color } : undefined} aria-hidden="true" />
-                : <SmartIcon id={r.playlistId as SmartPlaylistId} />}
+              icon={<SmartIcon id={r.playlistId as SmartPlaylistId} planned={r.planned} />}
               badge={r.count === null ? undefined : r.count.toLocaleString()}
               selected={state.currentView === 'smart-playlist' && state.activeSmartPlaylist === r.playlistId}
               onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: r.playlistId as SmartPlaylistId })}
@@ -973,6 +981,14 @@ export default function Sidebar() {
               { separator: true as const },
             ] : []),
             { label: pinned.includes(plCtxMenu.playlistId) ? 'Unpin from Top' : 'Pin to Top', onClick: () => togglePin(plCtxMenu.playlistId) },
+            ...(parseIpodListPlaylistId(plCtxMenu.playlistId) ? [
+              { separator: true as const },
+              { label: 'iPod color…', onClick: () => {
+                const deviceId = parseIpodListPlaylistId(plCtxMenu.playlistId)
+                if (deviceId) setIpodColorAt({ x: plCtxMenu.x, y: plCtxMenu.y, deviceId })
+                setPlCtxMenu(null)
+              } },
+            ] : []),
             ...(plCtxMenu.kind === 'user' ? [
               { separator: true as const },
               { label: 'Rename…', onClick: handleRenamePlaylist },
@@ -983,6 +999,20 @@ export default function Sidebar() {
           onClose={() => setPlCtxMenu(null)}
         />
       )}
+      {ipodColorAt && (() => {
+        const entry = ipodLists.find((l) => l.id === ipodColorAt.deviceId)
+        return entry ? (
+          <IpodColorPicker
+            deviceId={entry.id}
+            ipodName={entry.name}
+            current={entryColor(entry)}
+            x={ipodColorAt.x}
+            y={ipodColorAt.y}
+            onClose={() => setIpodColorAt(null)}
+            onSaved={(line) => setNotice(line, { kind: 'info', durationMs: 5000 })}
+          />
+        ) : null
+      })()}
       {tapeCtxMenu && (
         <ContextMenu
           x={tapeCtxMenu.x}

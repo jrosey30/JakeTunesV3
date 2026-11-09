@@ -1,0 +1,84 @@
+/* "iPod color…" (2026-11-09) — components/IpodColorPicker.tsx. The context
+ * menu's own panel (contextmenu.css); the current colour is ringed in the
+ * JakeTunes orange #FD5601, never a system blue. */
+.ipod-color-picker {
+  min-width: 0;
+  padding: 6px 10px 8px;
+}
+.ipod-color-picker-title {
+  font-weight: 600;
+  color: #444;
+  padding: 0 0 6px;
+}
+.ipod-color-picker-swatches {
+  display: grid;
+  grid-template-columns: repeat(6, 18px);
+  gap: 7px;
+}
+.ipod-color-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  cursor: default;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.28), 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+.ipod-color-swatch:hover {
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.28), 0 0 0 2px rgba(253, 86, 1, 0.45);
+}
+.ipod-color-swatch--current,
+.ipod-color-swatch--current:hover {
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.28), 0 0 0 2px #fcfafb, 0 0 0 4px #fd5601;
+}
+.ipod-color-swatch--small {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  vertical-align: -2px;
+  margin-right: 6px;
+}
+.ipod-color-custom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(0, 0, 0, 0.12);
+}
+.ipod-color-custom--current .ipod-color-swatch--small {
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.28), 0 0 0 2px #fd5601;
+}
+.ipod-color-custom-pick {
+  position: relative;
+  cursor: default;
+}
+.ipod-color-custom-pick input[type='color'] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: default;
+}
+.ipod-color-use {
+  font-size: 11px;
+  padding: 1px 10px;
+  border-radius: 4px;
+  border: 1px solid #b04000;
+  background: linear-gradient(180deg, #ff7a33, #fd5601);
+  color: #fff;
+}
+.ipod-color-use:disabled {
+  border-color: #aaa;
+  background: linear-gradient(180deg, #f2f2f2, #dcdcdc);
+  color: #999;
+}
+.ipod-color-picker-error {
+  margin-top: 6px;
+  color: #c14201;
+  max-width: 180px;
+  white-space: normal;
+}
+.sidebar-cover-icon--planned {
+  opacity: 0.45;
+}

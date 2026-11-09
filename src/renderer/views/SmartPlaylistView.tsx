@@ -11,7 +11,9 @@ import { smartPlaylistCover } from '../utils/playlistCovers'
 import { useListenMoreWeekly } from '../listenMoreWeekly'
 import { useTop1000List, useTop1000Ranks } from '../top1000List'
 import { isRankedPlaylist, rankMovement, rotateRankSnap, weekKeyOf, RANK_SNAPSHOT_KEYS, type RankSnap } from '../../common/rank-movement'
-import { useIpodLists } from '../ipodLists'
+import { useIpodLists, entryColor } from '../ipodLists'
+import { useIpodPlaylistCover } from '../utils/ipodCovers'
+import { IpodColorPicker } from '../components/IpodColorPicker'
 import { parseIpodListPlaylistId } from '../../common/ipod-list-doc'
 import IpodProposalsPanel from '../components/IpodProposalsPanel'
 import { useHomeShelves } from '../homeShelves'
@@ -163,6 +165,7 @@ export default function SmartPlaylistView() {
   const ipodLists = useIpodLists()
   const ipodListDevice = playlistId ? parseIpodListPlaylistId(playlistId) : null
   const ipodList = ipodListDevice ? ipodLists.find((l) => l.id === ipodListDevice) ?? null : null
+  const [ipodColorAt, setIpodColorAt] = useState<{ x: number; y: number } | null>(null)
   const title = playlistId ? TITLES[playlistId] || (monthYm ? monthPlaylistName(monthYm) : ipodList ? ipodList.name : playlistId) : ''
 
   // 4.2.18: per-persona weekly picks state. Both Music Man and Larry
@@ -1036,7 +1039,9 @@ export default function SmartPlaylistView() {
 
   const isPicksView = picksConfig !== null
   const displayName = isPicksView && picks?.name ? picks.name : title
-  const cover = playlistId ? smartPlaylistCover(playlistId as SmartPlaylistId) : null
+  // Top 1000 and every iPod list wear their own iPod (2026-11-09, utils/ipodCovers.ts).
+  const ipodCover = useIpodPlaylistCover(playlistId)
+  const cover = ipodCover ?? (playlistId ? smartPlaylistCover(playlistId as SmartPlaylistId) : null)
   const loadingLabel =
     picksConfig?.kind === 'larry'   ? 'Larry is picking tracks…' :
     picksConfig?.kind === 'djhands' ? 'DJ Stephen Hands is picking tracks…' :
@@ -1052,6 +1057,17 @@ export default function SmartPlaylistView() {
             <img src={cover} alt="" className="playlist-view-cover-img" />
           </div>
         )}
+        {ipodColorAt && ipodList && (
+          <IpodColorPicker
+            deviceId={ipodList.id}
+            ipodName={ipodList.name}
+            current={entryColor(ipodList)}
+            x={ipodColorAt.x}
+            y={ipodColorAt.y}
+            onClose={() => setIpodColorAt(null)}
+            onSaved={(line) => setNotice(line, { kind: 'info', durationMs: 5000 })}
+          />
+        )}
         <div>
           <h2 className="playlist-view-name">{displayName}</h2>
           <div className="playlist-view-meta">
@@ -1062,6 +1078,18 @@ export default function SmartPlaylistView() {
               </>
             )}
           </div>
+          {/* "iPod color…" (2026-11-09): an iPod list's cover colour. Not Top 1000 (the Original's). */}
+          {ipodList && (
+            <div className="top25-window-switch">
+              <button
+                className="top25-window-btn"
+                onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setIpodColorAt({ x: r.left, y: r.bottom + 4 }) }}
+                title={`The colour of ${ipodList.name} on its cover`}
+              >
+                iPod color…
+              </button>
+            </div>
+          )}
           {/* 4.5: Top 25 window switcher — keeps the sidebar clean
               (one entry) while giving Jake last-week / last-month /
               all-time lenses without a separate playlist per window. */}
