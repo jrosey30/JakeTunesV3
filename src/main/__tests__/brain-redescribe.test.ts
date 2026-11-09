@@ -10,7 +10,7 @@ import { join } from 'node:path'
 import {
   musicStreamActive, nightlyTrainerActive, untilMs, redescribeCandidates, candidateDescriptors, promoteNext,
   staleStaged, PROMPT_VERSION, stockHits, formulaOpener, stockScore, needsRetry, pickDescriptor,
-  describePrompt, describeTrack, audioFacts, cleanDescriptor,
+  describePrompt, describeTrack, audioFacts, cleanDescriptor, bpmKeyWorkerActive, nextFilePath,
 } from '../../../scripts/brain-redescribe.mjs'
 
 const PV = PROMPT_VERSION
@@ -160,6 +160,32 @@ describe('the describe prompt', () => {
     assert.doesNotMatch(audioFacts(t), /minor/)
     assert.equal(audioFacts({ artist: 'A', title: 'B' }), '')
   })
+  it('asks for the feeling as well as the sound (11/08: gemma4 v2 lines lost the emotion words)', () => {
+    const p = describePrompt(t)
+    assert.match(p, /sounds AND how it feels/)
+    assert.match(p, /The sound:/)
+    assert.match(p, /The feeling:/)
+    assert.match(p, /two or three plain emotion words/)
+    assert.match(p, /The energy, honestly: hushed, gentle, relaxed, lively, urgent, intense or ferocious/)
+  })
+  it('keeps intensity words for songs that really are intense, and says most are not', () => {
+    const p = describePrompt(t)
+    assert.match(p, /Intensity words \(heavy, aggressive, raw, distorted/)
+    assert.match(p, /are for LOUD sound only/)
+    assert.match(p, /A soft, acoustic or gentle song never gets them/)
+    assert.match(p, /never use "heavy" or "raw" for a sad feeling/)
+  })
+  it('keeps the anti-cliché rules from v2', () => {
+    const p = describePrompt(t)
+    for (const w of ['gritty', 'mid-tempo', 'driving', 'shimmering', 'late-night', 'high-octane']) assert.match(p, new RegExp(w))
+    assert.match(p, /Never start with a comma-separated pair of adjectives/)
+    assert.match(p, /Tempo is stored separately/)
+    assert.match(p, /never invent a contrast/)
+  })
+  it('is prompt v3, so nothing staged by the v2 prompt is ever scored or promoted as v3', () => {
+    assert.equal(PROMPT_VERSION, 3)
+    assert.deepEqual(promoteNext({}, { 1: { d: 'a v2 line', gm: 'gemma4:12b', pv: 2 } }), [])
+  })
   it('the retry nudge names what to drop', () => {
     const p = describePrompt(t, { words: ['gritty', 'mid-tempo'], opener: true })
     assert.match(p, /"gritty", "mid-tempo"/)
@@ -217,6 +243,48 @@ describe('the trainer wiring', () => {
   it('no longer yields on any ffmpeg (the cable channels never stop)', () => {
     assert.doesNotMatch(block, /pgrep/)
     assert.match(block, /musicStreamActive/)
+  })
+})
+
+describe('stepping aside for the BPM/key worker (19:00-23:55, 02:20-03:00)', () => {
+  const WORKER = '/opt/homebrew/bin/node --env-file=.env dist/bpmKeyWorker.js --until 23:55 --wait-lock'
+  const MEASURER = '/opt/homebrew/Cellar/python@3.12/3.12.13_2/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python /Users/jakerosenbaumnas/JakeTunesMobile/tools/bpm-key/analyze.py serve'
+  it('sees the worker and its measurers (the real homemini ps lines)', () => {
+    assert.equal(bpmKeyWorkerActive([CABLE, WORKER].join('\n')), true)
+    assert.equal(bpmKeyWorkerActive([CABLE, MEASURER].join('\n')), true)
+  })
+  it('ignores the cable channels, editors, greps and the shell wrapper alone', () => {
+    assert.equal(bpmKeyWorkerActive([CABLE, '/usr/bin/grep bpmKeyWorker.js', 'vim tools/bpm-key/analyze.py'].join('\n')), false)
+    assert.equal(bpmKeyWorkerActive(''), false)
+  })
+  it('the trainer yields to it', () => {
+    const src = readFileSync(join(import.meta.dirname, '..', '..', '..', 'scripts', 'brain-trainer.mjs'), 'utf8')
+    assert.match(src, /if \(bpmKeyWorkerActive\(ps\)\) return/)
+  })
+})
+
+describe('--next-file (a new prompt stages beside the old candidate, never over it)', () => {
+  const S = '/state'
+  it('defaults to brain-descriptors.next.json', () => {
+    assert.equal(nextFilePath(['node', 'brain-trainer.mjs', '--redescribe-all'], S), '/state/brain-descriptors.next.json')
+  })
+  it('takes a plain .json name in the state dir', () => {
+    assert.equal(nextFilePath(['--redescribe-all', '--next-file', 'brain-descriptors.next-v3.json'], S), '/state/brain-descriptors.next-v3.json')
+  })
+  it('refuses the live store, paths, a missing value and non-json names', () => {
+    for (const argv of [
+      ['--next-file', 'brain-descriptors.json'],
+      ['--next-file', '../brain-descriptors.next.json'],
+      ['--next-file', '/tmp/x.json'],
+      ['--next-file'],
+      ['--next-file', '--until'],
+      ['--next-file', 'next.txt'],
+    ]) assert.throws(() => nextFilePath(argv, S), argv.join(' '))
+  })
+  it('every staged-file mode in the trainer goes through it', () => {
+    const src = readFileSync(join(import.meta.dirname, '..', '..', '..', 'scripts', 'brain-trainer.mjs'), 'utf8')
+    assert.match(src, /DESC_NEXT = nextFilePath\(process\.argv, STATE_DIR\)/)
+    assert.doesNotMatch(src, /join\(STATE_DIR, 'brain-descriptors\.next\.json'\)/)
   })
 })
 

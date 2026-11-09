@@ -18,6 +18,8 @@
  *      re-embeds their mood vectors — run only after the eval passes.
  */
 
+import { basename, join } from 'node:path'
+
 /**
  * Is a MUSIC stream being transcoded right now? Takes `ps -axo command` text.
  *
@@ -48,6 +50,45 @@ export function nightlyTrainerActive(psText) {
     const l = line.trim()
     return /(^|\/|\s)brain-trainer\.mjs(\s|$)/.test(l) && /(^|\/)node(\s|$)/.test(l.split(/\s+/, 1)[0] || '') && !/\s--redescribe-all(\s|$)/.test(l)
   })
+}
+
+/**
+ * Is the Mobile repo's BPM/key worker running? Takes `ps -axo command` text.
+ * It measures audio on homemini 19:00-23:55 and 02:20-03:00 (Mobile
+ * deploy/bpm-key-worker.sh, Brief 245); the re-describe steps aside rather than
+ * load a 12b model beside its measurers. Its node process (dist/bpmKeyWorker.js)
+ * and its Python measurers (tools/bpm-key/analyze.py) both count.
+ */
+export function bpmKeyWorkerActive(psText) {
+  return String(psText || '').split('\n').some((line) => {
+    const l = line.trim()
+    const bin = (l.split(/\s+/, 1)[0] || '').toLowerCase()
+    if (/(^|\/)node$/.test(bin)) return /(^|[\s/])bpmKeyWorker\.js(\s|$)/.test(l)
+    if (/(^|\/)python[\d.]*$/.test(bin)) return /\/bpm-key\/analyze\.py(\s|$)/.test(l)
+    return false
+  })
+}
+
+/** The default staged file, and the live store a staged file must never be. */
+export const DEFAULT_NEXT_FILE = 'brain-descriptors.next.json'
+const LIVE_STORE = 'brain-descriptors.json'
+
+/**
+ * The staged file for --redescribe-all / --mood-candidate / --promote-next:
+ * `--next-file <name>` in argv, else brain-descriptors.next.json. A plain file
+ * name inside the state dir only (no paths: the staged file sits beside the
+ * store it may one day be promoted into), never the live store. Throws on a
+ * missing or bad value.
+ */
+export function nextFilePath(argv, stateDir) {
+  const i = argv.indexOf('--next-file')
+  if (i < 0) return join(stateDir, DEFAULT_NEXT_FILE)
+  const name = argv[i + 1]
+  if (!name || name.startsWith('--')) throw new Error('--next-file needs a file name')
+  if (name !== basename(name) || name === '.' || name === '..') throw new Error(`--next-file wants a plain file name in the state dir, got "${name}"`)
+  if (!name.endsWith('.json')) throw new Error(`--next-file wants a .json name, got "${name}"`)
+  if (name === LIVE_STORE) throw new Error('--next-file must not be the live brain-descriptors.json')
+  return join(stateDir, name)
 }
 
 /**
@@ -153,11 +194,23 @@ export function staleStaged(next, pv = PROMPT_VERSION) {
  * that opens with the "Adj, adj …" formula or uses a stock word gets ONE
  * retry with a nudge naming what to drop, and the cleaner of the two is kept.
  *
+ * v3, 2026-11-08 (Jake: "that is unacceptable the whole point of the LLM
+ * switch was to improve!!!!"). The v2 candidate won genre and tempo but lost
+ * the vibe probes (vibe 0.659 → 0.612; "aggressive heavy intense music"
+ * 0.93 → 0.53). Over all 13,185 songs its lines had lost the feeling —
+ * emotion words per line 2.39 → 0.55 — and used intensity words (heavy, raw,
+ * distorted…) 3x as often on ordinary songs, so they no longer marked the
+ * heavy ones. River In The Road went from "…evoke desolate desert landscapes
+ * and brooding melancholic introspection" to "A heavy, swinging groove…".
+ * v3 asks for the sound AND the feeling (two or three emotion words that set
+ * the song apart from its genre, plus an honest energy word), and keeps
+ * intensity words for loud sound only. Pilot numbers are in the PR.
+ *
  * PROMPT_VERSION is stamped on every staged entry (`pv`). Bump it whenever
  * the prompt or the post-check changes: everything staged under an older
  * version becomes to-do again and is never promoted.
  */
-export const PROMPT_VERSION = 2
+export const PROMPT_VERSION = 3
 
 /** Words the models lean on whatever the song (measured 10/29, both models). */
 export const STOCK_WORDS = ['mid-tempo', 'gritty', 'late-night', 'shimmering', 'driving', 'high-octane']
@@ -210,17 +263,21 @@ export function describePrompt(t, retry = null) {
   const facts = audioFacts(t)
   const lines = [
     'You are a precise music cataloguer writing one line for a mood-search index.',
+    'People search it by feeling as much as by sound ("rainy day melancholy", "angry and loud", "warm and hopeful").',
     '',
     `Track: ${t.artist || '?'} — ${t.title || '?'}`,
     `Album: ${t.album || '?'} (${t.year || '?'})`,
     `Genre: ${t.genre || '?'}`,
     ...(facts ? [facts] : []),
     '',
-    'In ONE line (max 20 words), describe how THIS recording sounds and feels.',
-    '- Describe this specific recording: if you know it, say what is actually on the record (arrangement, lead instrument, vocal delivery, dynamics). If you do not know it well, stay with what the artist, album and genre make likely — never invent a contrast with the artist\'s usual sound.',
-    '- Start with the most distinctive sound or the feeling of the song — never with a comma-separated pair of adjectives.',
+    'In ONE line (max 30 words), say how THIS recording sounds AND how it feels.',
+    '- The sound: what is actually on the record (arrangement, lead instrument, vocal delivery, production). If you do not know the recording well, stay with what the artist, album and genre make likely — never invent a contrast with the artist\'s usual sound.',
+    '- The feeling: two or three plain emotion words for what THIS song makes the listener feel, the way a friend would put it — the words that set it apart from other songs in its genre, not a mood that would fit any song.',
+    '- The energy, honestly: hushed, gentle, relaxed, lively, urgent, intense or ferocious.',
+    '- Intensity words (heavy, aggressive, raw, distorted, fuzz, crushing, screaming, abrasive) are for LOUD sound only. When the song is loud and aggressive (as much punk, metal and hard rock is), say so plainly. A soft, acoustic or gentle song never gets them, and never use "heavy" or "raw" for a sad feeling.',
+    '- Never start with a comma-separated pair of adjectives.',
     '- Tempo is stored separately: do not mention tempo or pace unless it is the defining trait of the song.',
-    '- Use exact, concrete words; avoid stock filler such as gritty, mid-tempo, driving, shimmering, late-night, high-octane.',
+    '- Use exact words; avoid stock filler such as gritty, mid-tempo, driving, shimmering, late-night, high-octane.',
     '- No artist name, no song title, no preamble. Output ONLY the line.',
   ]
   if (retry) {
