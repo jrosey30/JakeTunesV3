@@ -36,6 +36,8 @@ export interface IpodPoolRefresh {
   note: string | null
   /** When the ids were last written (the file's updatedAt), ISO; null when never. */
   updatedAt: string | null
+  /** homemini's grow cadence for this list (brain.everyDays), on a homemini answer that has one. */
+  everyDays?: number
 }
 
 export interface RefreshIpodPoolInput {
@@ -138,5 +140,8 @@ export async function refreshIpodPool(input: RefreshIpodPoolInput): Promise<Ipod
       console.warn(`[ipod-list] could not write ${input.ipodName}’s pool file:`, (err as Error)?.message ?? err)
     }
   }
-  return { poolIds, listIds: [...list.ids], names, source: 'homemini', note: null, updatedAt }
+  return {
+    poolIds, listIds: [...list.ids], names, source: 'homemini', note: null, updatedAt,
+    ...(list.brain.everyDays !== undefined ? { everyDays: list.brain.everyDays } : {}),
+  }
 }

@@ -65,6 +65,16 @@ describe('the iPod list parser', () => {
     assert.equal(l.adds[0]!.why, 'asked for it')
     assert.deepEqual(l.brain, { enabled: true, perDay: 3 })
   })
+  it('reads the grow cadence when homemini sends one; an old list has none; a bad one is dropped, never the list', () => {
+    assert.deepEqual(parseIpodList(doc({ brain: { enabled: true, perDay: 3, everyDays: 14, perRun: 10 } }))?.brain,
+      { enabled: true, perDay: 3, everyDays: 14, perRun: 10 })
+    assert.equal('everyDays' in parseIpodList(doc())!.brain, false)
+    for (const bad of [{ everyDays: 0 }, { everyDays: 61 }, { everyDays: 1.5 }, { everyDays: '14' }, { perRun: -1 }, { perRun: 51 }]) {
+      const l = parseIpodList(doc({ brain: { enabled: true, perDay: 3, ...bad } }))
+      assert.ok(l, JSON.stringify(bad))
+      assert.deepEqual(l.brain, { enabled: true, perDay: 3 }, JSON.stringify(bad))
+    }
+  })
   it('an empty list is a list (a slow build starts at nothing)', () => {
     assert.deepEqual(parseIpodList(doc({ ids: [], adds: [] }))?.ids, [])
   })
@@ -158,6 +168,14 @@ describe('the pre-sync refresh of a list iPod’s pool file', () => {
     assert.deepEqual(file.names['40'], { t: 'Library 40', a: 'Lib' }, 'a new song is named from the library')
     assert.equal(file.names['1'], undefined)
     assert.equal(file.updatedAt, '2026-11-07T12:00:00.000Z')
+  })
+
+  it('reachable: homemini\'s grow cadence rides along for the sync-ready check', async () => {
+    const pool = poolFileFor(tmp('jt-ipl-'), evil)
+    const withCadence = parseIpodList(doc({ brain: { enabled: true, perDay: 3, everyDays: 14, perRun: 10 } }))!
+    assert.equal((await refreshIpodPool(base(pool, async () => ({ kind: 'ok', list: withCadence })))).everyDays, 14)
+    const plain = parseIpodList(doc())!
+    assert.equal('everyDays' in (await refreshIpodPool(base(pool, async () => ({ kind: 'ok', list: plain })))), false)
   })
 
   it('reachable with no file yet: the file is made', async () => {

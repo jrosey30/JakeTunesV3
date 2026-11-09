@@ -45,7 +45,7 @@ export function startIpodSyncReady(host: IpodSyncReadyHost): IpodSyncReadyRunner
     },
     list: async (device) => {
       const r = await lists.get(device.id)
-      return r.kind === 'ok' ? r.list.ids : null
+      return r.kind === 'ok' ? { ids: r.list.ids, everyDays: r.list.brain.everyDays } : null
     },
     boarding: async (): Promise<SyncBoarding | null> => {
       const tracks = ((await host.libraryTracks()) ?? []) as Array<Record<string, unknown>>
