@@ -10,8 +10,8 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  fetchResumable, planPrefetch, prefetchLogLine, runPrefetchPass, verifyFetched,
-  type FetchOneResult, type LocalKind, type PrefetchItem,
+  fetchResumable, nextRefused, parseRefused, planPrefetch, prefetchLogLine, probeFingerprint, refusalKey, REFUSED_HOLD_MS, runPrefetchPass, splitRefused, verifyFetched,
+  type FetchLike, type FetchOneResult, type LocalKind, type PrefetchItem,
 } from '../ipod-prefetch.ts'
 
 const GB = 1024 ** 3
@@ -195,5 +195,81 @@ describe('fetchResumable against a homemini-shaped server', () => {
     assert.equal(r.ok, false)
     assert.equal((r as { transport?: boolean }).transport, true)
     await assert.rejects(stat(part))
+  })
+})
+
+// 2026-11-09: about 490 iPod songs had a stale fingerprint in the library. Every
+// pass downloaded each one whole, threw it away, and did it again 30 minutes later.
+describe('a song homemini’s copy can’t prove is not fetched again every pass', () => {
+  const fpOf = (b: Buffer): string => `sha1:${createHash('sha1').update(b.subarray(0, 256 * 1024)).digest('hex').slice(0, 16)}|1000`
+  const body = Buffer.alloc(600 * 1024, 7)
+  const answering = (calls: Array<string | null>, status = 206): FetchLike => async (_url, init) => {
+    calls.push(new Headers(init?.headers).get('range'))
+    if (status !== 206) return new Response('no', { status })
+    return new Response(body.subarray(0, 256 * 1024), { status: 206, headers: { 'Content-Range': `bytes 0-262143/${body.length}` } })
+  }
+
+  it('the first 256 KB is checked before the file is fetched', async () => {
+    const calls: Array<string | null> = []
+    const good: PrefetchItem = { id: 1, colon: colon(1), bytes: body.length, fingerprint: fpOf(body) }
+    assert.equal(await probeFingerprint(good, 'http://x/audio/1', answering(calls)), 'match')
+    assert.deepEqual(calls, ['bytes=0-262143'])
+    const stale: PrefetchItem = { ...good, fingerprint: 'sha1:0000000000000000|1000' }
+    assert.equal(await probeFingerprint(stale, 'http://x/audio/1', answering(calls)), 'mismatch')
+  })
+  it('no fingerprint, a full sha1 on record, or no ranged answer decides nothing', async () => {
+    const calls: Array<string | null> = []
+    assert.equal(await probeFingerprint({ id: 1, colon: colon(1), bytes: 1 }, 'http://x', answering(calls)), 'unknown')
+    assert.equal(await probeFingerprint({ id: 1, colon: colon(1), bytes: 1, fingerprint: 'sha1:00|1', fullSha1: 'a'.repeat(40) }, 'http://x', answering(calls)), 'unknown')
+    assert.equal(calls.length, 0, 'neither asked homemini')
+    assert.equal(await probeFingerprint({ id: 1, colon: colon(1), bytes: 1, fingerprint: 'sha1:00|1' }, 'http://x', answering(calls, 200)), 'unknown')
+    assert.equal(await probeFingerprint({ id: 1, colon: colon(1), bytes: 1, fingerprint: 'sha1:00|1' }, 'http://x', async () => { throw new Error('down') }), 'unknown')
+    // a short answer that isn't the whole file proves nothing
+    const short: FetchLike = async () => new Response(body.subarray(0, 1000), { status: 206, headers: { 'Content-Range': `bytes 0-999/${body.length}` } })
+    assert.equal(await probeFingerprint({ id: 1, colon: colon(1), bytes: 1, fingerprint: 'sha1:00|1' }, 'http://x', short), 'unknown')
+  })
+  it('a refused song is held for a day, on the same record only', () => {
+    const a: PrefetchItem = { id: 1, colon: colon(1), bytes: 10, fingerprint: 'sha1:aa|1' }
+    const b: PrefetchItem = { id: 2, colon: colon(2), bytes: 10, fingerprint: 'sha1:bb|1' }
+    const t0 = 1_000_000
+    const memory = nextRefused({}, [a, b], [a], new Set(), t0)
+    assert.deepEqual(Object.keys(memory), ['1'])
+    let s = splitRefused([a, b], memory, t0 + 60_000)
+    assert.deepEqual([s.fetch.map((i) => i.id), s.held.map((i) => i.id)], [[2], [1]])
+    s = splitRefused([a, b], memory, t0 + REFUSED_HOLD_MS)
+    assert.deepEqual(s.held, [], 'a day later it is asked for again')
+    s = splitRefused([{ ...a, fingerprint: 'sha1:cc|1' }, b], memory, t0 + 60_000)
+    assert.deepEqual(s.held, [], 'the library’s record changed: worth a new try')
+    s = splitRefused([a], memory, t0 - 5)
+    assert.deepEqual(s.held, [], 'a stamp from the future holds nothing')
+    assert.notEqual(refusalKey(a), refusalKey({ ...a, bytes: 11 }))
+  })
+  it('the memory drops what landed, what left the queue, and what changed', () => {
+    const a: PrefetchItem = { id: 1, colon: colon(1), bytes: 10, fingerprint: 'sha1:aa|1' }
+    const b: PrefetchItem = { id: 2, colon: colon(2), bytes: 10, fingerprint: 'sha1:bb|1' }
+    const c: PrefetchItem = { id: 3, colon: colon(3), bytes: 10, fingerprint: 'sha1:cc|1' }
+    const m0 = nextRefused({}, [a, b, c], [a, b, c], new Set(), 5)
+    const m1 = nextRefused(m0, [a, { ...b, fingerprint: 'sha1:new|1' }], [], new Set([1]), 9)
+    assert.deepEqual(m1, {}, '1 landed, 2 changed, 3 left the queue')
+    const m2 = nextRefused(m0, [a, b, c], [c], new Set(), 9)
+    assert.deepEqual([m2['1'].at, m2['3'].at], [5, 9], 'an old refusal keeps its time; a new one restarts it')
+    assert.deepEqual(parseRefused(JSON.stringify(m0)), m0)
+    assert.deepEqual(parseRefused('{torn'), {})
+    assert.deepEqual(parseRefused(JSON.stringify({ 1: { key: 5, at: 'x' }, 2: null })), {})
+  })
+  it('the log line says how many are waiting', () => {
+    const pass = { fetched: 0, fetchedBytes: 0, failed: [], left: 2, leftBytes: 0, stoppedBecause: null }
+    assert.match(prefetchLogLine({ total: 10, local: 8 }, pass, 2), /2 not asked for again today/)
+    assert.doesNotMatch(prefetchLogLine({ total: 10, local: 8 }, pass), /not asked/)
+  })
+  it('the pass is wired to all of it (ipod-local-start.ts)', async () => {
+    const src = await readFile(new URL('../ipod-local-start.ts', import.meta.url), 'utf8')
+    const probe = src.indexOf('probeFingerprint(item, url, fetch, copyInit)')
+    const whole = src.indexOf('fetchResumable({ url, partPath: part')
+    assert.ok(probe > 0 && whole > probe, 'the probe runs before the whole file is fetched')
+    assert.match(src, /items: toFetch,/, 'held songs are not handed to the pass')
+    assert.equal((src.match(/refusedNow\.push\(item\)/g) ?? []).length, 2, 'both refusals are remembered')
+    assert.match(src, /nextRefused\(memory, plan\.items, refusedNow, landed, Date\.now\(\)\)/)
+    assert.match(src, /headers\.set\('X-JakeTunes-Purpose', 'copy'\)/)
   })
 })
