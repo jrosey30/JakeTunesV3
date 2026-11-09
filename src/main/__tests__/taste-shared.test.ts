@@ -258,7 +258,7 @@ describe('wiring (checked at the source)', () => {
   const index = src('main/index.ts')
 
   it('everything that decides what the Record Shop shows reads BOTH Macs\' verdicts', () => {
-    assert.equal(index.match(/await sharedDiscoveryFeedback\(\)/g)?.length, 4, 'learned panel, feed build, serve-time door, radar')
+    assert.equal(index.match(/await sharedDiscoveryFeedback\(\)/g)?.length, 5, 'learned panel, supply harvest (skips resting picks, 2026-11-09), feed build, serve-time door, radar')
     assert.match(index, /feedback: sharedDiscoveryFeedback, isOnList:/, 'critic wall')
     assert.match(index, /lanes = dropVetoed\(lanes, await sharedDiscoveryFeedback\(\), Date\.now\(\)\)\n\s+return dropListed\(lanes,/, 'every feed that leaves main')
     assert.equal(index.match(/readSharedLedgerRows\(TASTE_LEDGER_PATH\(\)\)/g)?.length, 2, 'learned panel + Discovery verdicts')

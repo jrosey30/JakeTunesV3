@@ -33,8 +33,8 @@ import { PlayIcon, PauseIcon, CloseIcon } from '../components/TransportIcons'
 import type { RediscoveryPick } from '../types'
 import { CRITIC_LANE } from '../../common/critic-picks'
 import {
-  buildShopPage, laneChip, moreLabel, sectionLabel, shopCountLine, LANE_NAMES, SHOP_PAGE_SECTIONS, SHOP_SECTION_TITLES,
-  type CrateEntry, type ShopPageSection,
+  buildShopPage, laneChip, shopCountLine, LANE_NAMES, SHOP_PAGE_SECTIONS, SHOP_SECTION_TITLES,
+  type ShelfCard, type ShopPageSection,
 } from '../../common/record-shop-page'
 import { useWjlrPicks } from '../hooks/useWjlrPicks'
 import { lookupArtworkOneShot } from '../utils/artworkLookup'
@@ -100,8 +100,6 @@ export default function NewForYouView() {
   const dlMap = useSyncExternalStore(subscribeLtlDownload, getLtlDownloadSnapshot)
   const [owned, setOwned] = useState<RediscoveryPick[]>(rediscCache ?? [])
   const [wantedShelves, setWantedShelves] = useState<WantedShelf[]>(wantedCache ?? [])
-  // Folded cards ("+2 more by NOFX") opened on this visit, by the lead's id.
-  const [openFolds, setOpenFolds] = useState<Set<string>>(new Set())
   // Real artist photos for the Overlooked lane. Jake, twice: "that's an
   // album picture not an artist". Keyed by artist name; null = looked up,
   // none available (fall back to initials, never to a cover in a circle).
@@ -148,11 +146,13 @@ export default function NewForYouView() {
 
   // Jake (2026-11-09): "the songs i dont have for y2k, 80's and indie
   // sleaze....thats the type of stuff that should go in the record shop."
-  useEffect(() => {
-    void window.electronAPI.ipodWantedShelf?.().then((r) => {
+  const loadWanted = (force = false) => {
+    void window.electronAPI.ipodWantedShelf?.(force).then((r) => {
       if (r?.ok && r.shelves) { wantedCache = r.shelves; setWantedShelves(r.shelves) }
     }).catch(() => { /* the band simply isn't there */ })
-  }, [])
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { loadWanted() }, [])
 
   const playOwned = (pick: RediscoveryPick) => {
     const nrm = (x: string) => (x || '').trim().toLowerCase()
@@ -380,23 +380,8 @@ export default function NewForYouView() {
     )
   }
 
-  // One artist, one card; the rest fold behind it and open in place.
-  const entryCards = (e: CrateEntry<FeedCard>) => {
-    const leadId = cardId(e.lead)
-    const open = openFolds.has(leadId)
-    const section = e.section ? sectionLabel(e.section) : undefined
-    return [
-      shopCard(e.lead, section),
-      ...(e.more.length ? [
-        <button key={`${leadId}|fold`} type="button" className={`store-fold${open ? ' store-fold--open' : ''}`}
-          aria-expanded={open}
-          onClick={() => setOpenFolds((cur) => { const n = new Set(cur); if (n.has(leadId)) n.delete(leadId); else n.add(leadId); return n })}>
-          {open ? `Fold ${e.lead.artist} back` : moreLabel(e)}
-        </button>,
-      ] : []),
-      ...(open ? e.more.map((m) => shopCard(m, section)) : []),
-    ]
-  }
+  // Every record is its own card (2026-11-09, Jake: "dont like the fold in").
+  const shelfCards = (cards: Array<ShelfCard<FeedCard>>) => cards.map((s) => shopCard(s.card, s.label))
 
   const sectionHead = (id: ShopPageSection, note?: string) => (
     <div className="store-section-head">
@@ -426,9 +411,9 @@ export default function NewForYouView() {
           <section key={sh.listId} className="store-shelf" data-lane={`ipod-wanted-${sh.listId}`}>
             <div className="store-shelf-head">
               <span className="store-shelf-title">{sh.title}</span>
-              <span className="store-shelf-count">{sh.entries.length} pick{sh.entries.length === 1 ? '' : 's'}</span>
+              <span className="store-shelf-count">{sh.cards.length} pick{sh.cards.length === 1 ? '' : 's'}</span>
             </div>
-            <div className="store-row">{sh.entries.flatMap(entryCards)}</div>
+            <div className="store-row">{shelfCards(sh.cards)}</div>
           </section>
         ))}
       </section>
@@ -436,7 +421,7 @@ export default function NewForYouView() {
     'out-this-year': page.outThisYear.length === 0 ? null : (
       <section key="out-this-year" className="store-section" data-section="out-this-year">
         {sectionHead('out-this-year', `${page.counts.outThisYear} from ${year}`)}
-        <div className="store-row store-row--wrap">{page.outThisYear.flatMap(entryCards)}</div>
+        <div className="store-row store-row--wrap">{shelfCards(page.outThisYear)}</div>
       </section>
     ),
     crates: page.crates.length === 0 ? null : (
@@ -446,9 +431,9 @@ export default function NewForYouView() {
           <section key={cr.id} className="store-shelf" data-lane={`crate-${cr.id}`}>
             <div className="store-shelf-head">
               <span className="store-shelf-title">{cr.label}</span>
-              <span className="store-shelf-count">{cr.count} pick{cr.count === 1 ? '' : 's'}</span>
+              <span className="store-shelf-count">{cr.cards.length} pick{cr.cards.length === 1 ? '' : 's'}</span>
             </div>
-            <div className="store-row">{cr.entries.flatMap(entryCards)}</div>
+            <div className="store-row">{shelfCards(cr.cards)}</div>
           </section>
         ))}
       </section>
@@ -559,7 +544,7 @@ export default function NewForYouView() {
           <span className="store-sub">WJLR Records · Greenpoint{generatedAt ? ` · restocked ${new Date(generatedAt).toLocaleDateString()}` : ''}</span>
         </div>
         <div className="store-head-right">
-          <button type="button" className="store-btn" onClick={() => void load(true)} disabled={loading}>
+          <button type="button" className="store-btn" onClick={() => { void load(true); loadWanted(true) }} disabled={loading}>
             {loading ? 'Restocking…' : '↻ Restock'}
           </button>
         </div>

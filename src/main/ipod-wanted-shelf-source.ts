@@ -9,7 +9,8 @@
  *     (discover-feed ownershipChecks), so an owned artist never appears
  *   • Deezer, politely (one request per 120 ms); a found record is kept 30
  *     days, a miss 3 (ipod-wanted-lookups.json in the state dir)
- *   • the built shelves are kept for an hour in memory; force rebuilds
+ *   • the built shelves are kept for an hour in memory (an empty answer five
+ *     minutes); force rebuilds
  */
 import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -20,6 +21,7 @@ export const WANTED_LOOKUPS_FILE = 'ipod-wanted-lookups.json'
 const HIT_TTL_MS = 30 * 86_400_000
 const MISS_TTL_MS = 3 * 86_400_000
 const SHELF_TTL_MS = 60 * 60_000
+const EMPTY_SHELF_TTL_MS = 5 * 60_000
 
 export interface WantedShelfSourceHost {
   stateDir: string
@@ -98,7 +100,10 @@ export function createWantedShelfSource(host: WantedShelfSourceHost) {
 
   return {
     async get(force = false): Promise<{ ok: boolean; shelves: WantedShelf[]; error?: string }> {
-      if (!force && built && now() - built.at < SHELF_TTL_MS) return { ok: true, shelves: built.shelves }
+      // An empty shelf is asked again after a few minutes: homemini may have
+      // written the lists' `wanted` since (it did, the afternoon this shipped).
+      const ttl = built?.shelves.length ? SHELF_TTL_MS : EMPTY_SHELF_TTL_MS
+      if (!force && built && now() - built.at < ttl) return { ok: true, shelves: built.shelves }
       inflight ??= build().catch((err) => {
         host.warn?.(`[ipod-wanted] shelf failed: ${(err as Error)?.message ?? err}`)
         return built ? { ok: true, shelves: built.shelves } : { ok: false, shelves: [], error: String((err as Error)?.message ?? err) }

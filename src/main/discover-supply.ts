@@ -33,10 +33,22 @@ export interface SupplyDeps {
    *  tell a same-named stranger from the band (resolveDeezerArtist). Absent
    *  or empty = nothing to check against. */
   knownTitles?: (artist: string) => string[]
+  /** true when this pick is resting (Jake said "Not for me", or the shop has
+   *  already shown it four days running) — the harvest walks past it and
+   *  keeps going, instead of filling the day with picks the feed's filter
+   *  will throw away (2026-11-09: 34 of 80 harvested picks were resting,
+   *  and the shelf came out at 18 records). Absent = nothing rests. */
+  resting?: (artist: string, title: string) => boolean
 }
 
-export interface SupplyAlbum { artist: string; title: string; year?: string; artUrl?: string; recordType?: string; deezerId?: number; because?: string }
-export interface SupplySong { artist: string; title: string; artUrl?: string; previewUrl?: string; deezerId?: number; because?: string; curated?: string }
+/** A pick two hops out (2026-11-09): `because` is still the library artist,
+ *  `via` the neighbour it was reached through. */
+export interface SupplyAlbum { artist: string; title: string; year?: string; artUrl?: string; recordType?: string; deezerId?: number; because?: string; via?: string }
+export interface SupplySong { artist: string; title: string; artUrl?: string; previewUrl?: string; deezerId?: number; because?: string; via?: string; curated?: string }
+
+/** A pool artist: who they are, the library artist they came from, and (two
+ *  hops out) the neighbour in between. */
+export interface PoolArtist { id: number; name: string; anchor: string; owned: boolean; via?: string }
 
 const API = 'https://api.deezer.com'
 const arr = (o: unknown): Array<Record<string, unknown>> => {
@@ -117,9 +129,9 @@ export async function resolveDeezerArtist(
 export async function relatedArtistPool(
   anchors: string[],
   deps: SupplyDeps,
-): Promise<Array<{ id: number; name: string; anchor: string; owned: boolean }>> {
+): Promise<PoolArtist[]> {
   const seen = new Set<string>()
-  const pool: Array<{ id: number; name: string; anchor: string; owned: boolean }> = []
+  const pool: PoolArtist[] = []
   const refused: string[] = []
   const unresolved: string[] = []
   for (const anchor of anchors) {
@@ -178,6 +190,13 @@ const JUNK = new RegExp([
   '\\bcomplete (albums|recordings|works|studio)\\b', '\\bretrospective\\b', '\\bsampler\\b', '\\bvery best\\b',
   '\\bsoundtrack\\b', '\\boriginal score\\b', '\\bmotion picture\\b', '\\bmusic from (the|and inspired)\\b',
   '\\bhome (jam|recordings?)\\b',
+  // 2026-11-09, from the first 60/60 harvest on Jake's library: "Sparks Live
+  // On The Moon", "Alone (Special Edition)", "The Beatles: The Interviews",
+  // "Loads Of Remixes", "Annette (The Original 2013 Recordings)" and a song
+  // "(2012 Version)". A re-cut or re-issue is not the record.
+  '\\blive on\\b', '\\binterviews?\\b', '\\bremix(es|ed)?\\b',
+  "\\b(special|collector'?s|limited|bonus|expanded|super) edition\\b", '\\boriginal\\b[^)]*\\brecordings\\b',
+  '\\([^)]*\\b(version|edit|re-?recorded|mix)\\b[^)]*\\)',
   // A concert named by its date: "1976: Fort Collins", "May 23rd".
   '\\b(19|20)\\d\\d:\\s', '\\b(january|february|march|april|may|june|july|august|september|october|november|december) \\d{1,2}(st|nd|rd|th)\\b',
 ].join('|'), 'i')
@@ -186,17 +205,26 @@ const JUNK = new RegExp([
 export const isJunkEdition = (title: string): boolean => JUNK.test(title)
 
 /**
- * How many of the day's picks one library artist may seed (2026-11-09).
- * On 2026-11-09 Sublime seeded 22 of the 50 daily cards and five artists
- * seeded all of them, so the shop read as one ska-punk list twice. Shared by
- * the albums and the songs: three picks per "because" for the whole day.
+ * How many of the day's picks one library artist may seed.
+ * 2026-11-09 (#393): Sublime had seeded 22 of the 50 daily cards and five
+ * artists seeded all of them, so the cap went to three. Same day, Jake, after
+ * using it: "not enough recommendations". The page is now 60 records and 60
+ * songs, so the cap is six, and no seed may carry more than SEED_SHARE of the
+ * day's picks even when supply runs short (seedShareCap).
  */
-export const PICKS_PER_ANCHOR = 3
+export const PICKS_PER_ANCHOR = 6
+/** The most of the day's picks one seed may carry, short supply or not. */
+export const SEED_SHARE = 0.1
+/** The most cards one artist gets in the day's harvest (albums and songs together). */
+export const PICKS_PER_ARTIST = 3
+
+/** The looser cap for a short day: SEED_SHARE of the day's picks, never under PICKS_PER_ANCHOR. */
+export const seedShareCap = (dayPicks: number): number => Math.max(PICKS_PER_ANCHOR, Math.floor(dayPicks * SEED_SHARE))
 
 export interface AnchorCap { room(anchor: string): boolean; take(anchor: string): boolean; give(anchor: string): void }
 
-export function anchorCap(max = PICKS_PER_ANCHOR): AnchorCap & { counts: Map<string, number> } {
-  const counts = new Map<string, number>()
+/** `counts` may be shared, so a looser cap later in the day starts from what was already seeded. */
+export function anchorCap(max = PICKS_PER_ANCHOR, counts = new Map<string, number>()): AnchorCap & { counts: Map<string, number> } {
   const k = (a: string): string => a.trim().toLowerCase()
   return {
     counts,
@@ -207,28 +235,37 @@ export function anchorCap(max = PICKS_PER_ANCHOR): AnchorCap & { counts: Map<str
   }
 }
 
+/** The cards one artist already has today, shared by the album and song harvests. */
+export type ArtistTally = Map<string, number>
+const artistKey = (name: string): string => nameKey(name, '') || name.toLowerCase()
+
 /** Albums he does not own, real records only, newest first. */
 export async function harvestAlbums(
-  pool: Array<{ id: number; name: string; anchor: string }>,
+  pool: Array<{ id: number; name: string; anchor: string; via?: string }>,
   want: number,
   deps: SupplyDeps,
   anchors?: AnchorCap,
+  tally?: ArtistTally,
 ): Promise<SupplyAlbum[]> {
   const out: SupplyAlbum[] = []
   const perArtist = new Map<string, number>()
   for (const a of pool) {
     if (out.length >= want) break
     if (anchors && !anchors.room(a.anchor)) continue
+    if (tally && (tally.get(artistKey(a.name)) ?? 0) >= PICKS_PER_ARTIST) continue
     for (const al of arr(await deps.fetchJson(`${API}/artist/${a.id}/albums?limit=25`).catch(() => null))) {
       if (out.length >= want) break
       const title = str(al.title)
       if (!title || JUNK.test(title)) continue
       if (String(al.record_type || '') !== 'album') continue      // no singles/EPs padding the count
       if (deps.ownsAlbum(a.name, title)) continue                  // THE hard rule
+      if (deps.resting?.(a.name, title)) continue                  // the feed would only drop it
       const n = perArtist.get(a.name) || 0
       if (n >= 2) continue                                         // no one artist owning the shelf
+      if (tally && (tally.get(artistKey(a.name)) ?? 0) >= PICKS_PER_ARTIST) break
       if (anchors && !anchors.take(a.anchor)) break
       perArtist.set(a.name, n + 1)
+      tally?.set(artistKey(a.name), (tally.get(artistKey(a.name)) ?? 0) + 1)
       out.push({
         artist: a.name, title,
         year: str(al.release_date).slice(0, 4) || undefined,
@@ -236,6 +273,7 @@ export async function harvestAlbums(
         recordType: str(al.record_type) || undefined,
         deezerId: Number(al.id) || undefined,
         because: a.anchor,
+        ...(a.via ? { via: a.via } : {}),
       })
     }
   }
@@ -244,25 +282,30 @@ export async function harvestAlbums(
 
 /** Songs he does not own, with a 30s preview wherever Deezer has one. */
 export async function harvestSongs(
-  pool: Array<{ id: number; name: string; anchor: string }>,
+  pool: Array<{ id: number; name: string; anchor: string; via?: string }>,
   want: number,
   deps: SupplyDeps,
   anchors?: AnchorCap,
+  tally?: ArtistTally,
 ): Promise<SupplySong[]> {
   const out: SupplySong[] = []
   const perArtist = new Map<string, number>()
   for (const a of pool) {
     if (out.length >= want) break
     if (anchors && !anchors.room(a.anchor)) continue
+    if (tally && (tally.get(artistKey(a.name)) ?? 0) >= PICKS_PER_ARTIST) continue
     for (const t of arr(await deps.fetchJson(`${API}/artist/${a.id}/top?limit=10`).catch(() => null))) {
       if (out.length >= want) break
       const title = str(t.title)
       if (!title || JUNK.test(title)) continue
       if (deps.ownsSong(a.name, title)) continue                   // THE hard rule
+      if (deps.resting?.(a.name, title)) continue
       const n = perArtist.get(a.name) || 0
       if (n >= 2) continue
+      if (tally && (tally.get(artistKey(a.name)) ?? 0) >= PICKS_PER_ARTIST) break
       if (anchors && !anchors.take(a.anchor)) break
       perArtist.set(a.name, n + 1)
+      tally?.set(artistKey(a.name), (tally.get(artistKey(a.name)) ?? 0) + 1)
       const album = t.album as { cover_big?: string; cover_medium?: string } | undefined
       out.push({
         artist: a.name, title,
@@ -270,7 +313,47 @@ export async function harvestSongs(
         previewUrl: str(t.preview) || undefined,
         deezerId: Number(t.id) || undefined,
         because: a.anchor,
+        ...(a.via ? { via: a.via } : {}),
       })
+    }
+  }
+  return out
+}
+
+/**
+ * Two hops out, for the strongest seeds only (2026-11-09). One hop from a
+ * seed Jake has played to death mostly lands on bands he already owns, which
+ * is how five seeds carried the whole day. The neighbours of a seed's
+ * nearest NEW neighbours are still close to it, and they are new. Each keeps
+ * the library artist as its "because" (never the neighbour: "because" is
+ * always someone he plays) and names the neighbour as `via`. They follow
+ * every one-hop new artist in the pool, so they only fill what one hop
+ * couldn't.
+ */
+export async function twoHopPool(
+  firstHop: PoolArtist[],
+  seeds: string[],
+  deps: SupplyDeps,
+  opts: { perSeed?: number } = {},
+): Promise<PoolArtist[]> {
+  const perSeed = opts.perSeed ?? 4
+  const seen = new Set(firstHop.map((a) => a.name.toLowerCase()))
+  for (const s of seeds) seen.add(s.toLowerCase())
+  const out: PoolArtist[] = []
+  for (const seed of seeds) {
+    const via = firstHop.filter((a) => a.anchor === seed && !a.owned).slice(0, perSeed)
+    for (const v of via) {
+      for (const r of arr(await deps.fetchJson(`${API}/artist/${v.id}/related?limit=25`).catch(() => null))) {
+        const name = nameOf(r)
+        const rid = Number((r as { id?: unknown }).id)
+        const key = name.toLowerCase()
+        if (!name || !Number.isFinite(rid) || seen.has(key)) continue
+        seen.add(key)
+        const { nb_fan, nb_album } = r as { nb_fan?: unknown; nb_album?: unknown }
+        if (isJunkArtistName(name) || looksLikeCoverFactory(nb_fan, nb_album)) continue
+        if (deps.ownsArtist(name)) continue          // two hops out is for new artists only
+        out.push({ id: rid, name, anchor: seed, owned: false, via: v.name })
+      }
     }
   }
   return out
@@ -345,6 +428,25 @@ export function rotateKeepingNewFirst<T extends { owned: boolean }>(pool: T[], d
   return [...rotate(pool.filter((a) => !a.owned)), ...rotate(pool.filter((a) => a.owned))]
 }
 
+/**
+ * Every seed takes its turn (2026-11-09). A flat rotation hands out picks in
+ * proportion to how many new neighbours a seed has, so a seed whose corner of
+ * the graph is crowded (ska punk, indie) filled the day and a seed for a
+ * thin crate (soul, grunge) got one card. Each seed's own neighbours are
+ * rotated by day, then dealt round-robin, one from each seed in turn, with
+ * the seeds' order rotated by day too.
+ */
+export function interleaveBySeed<T extends { anchor: string }>(pool: T[], dayNumber: number): T[] {
+  const bySeed = new Map<string, T[]>()
+  for (const a of pool) { const g = bySeed.get(a.anchor) ?? []; g.push(a); bySeed.set(a.anchor, g) }
+  const seeds = [...bySeed.keys()]
+  const order = seeds.length > 1 ? dayStride(dayNumber, seeds.length, seeds.length).map((i) => seeds[i]) : seeds
+  const lists = order.map((k) => { const g = bySeed.get(k)!; return g.length > 1 ? dayStride(dayNumber, g.length, g.length).map((i) => g[i]) : g })
+  const out: T[] = []
+  for (let r = 0; out.length < pool.length; r++) for (const l of lists) if (l[r]) out.push(l[r])
+  return out
+}
+
 export interface DailyDiscovery {
   albums: SupplyAlbum[]
   songs: SupplySong[]
@@ -356,94 +458,99 @@ export interface DailyDiscovery {
  * The daily shop: N albums and N songs, none of them already owned.
  *
  * Jake's spec is a QUOTA, not a suggestion — "25 new songs each day as well as
- * 25 new albums that I DO NOT HAVE IN MY LIBRARY. NO LESS". So this widens
- * until it fills: pass 1 walks the nearest neighbours, and each later pass
- * reaches further out (neighbours of the neighbours) rather than giving up at
- * 19 and calling it a day.
+ * 25 new albums that I DO NOT HAVE IN MY LIBRARY. NO LESS". `floor` is that
+ * promise; `want` is the day's target above it (2026-11-09: 60 and 60, "not
+ * enough recommendations").
  *
- * If it still cannot fill after `maxPasses` it does NOT pad with owned music or
- * with singles — it returns what it has AND says so in `report.shortfall`. A
- * quiet 19 is how the old shop got away with being thin for weeks.
+ * The pool, in order: new artists one hop from a seed, new artists two hops
+ * from the strongest seeds, then artists he already owns. It is walked in up
+ * to three stages:
+ *   1. at most PICKS_PER_ANCHOR picks per seed;
+ *   2. if the target isn't met, up to SEED_SHARE of the day's picks per seed;
+ *   3. only if the floor still isn't met, no seed cap at all (the quota
+ *      outranks the spread).
+ * One artist never gets more than PICKS_PER_ARTIST cards across both.
+ *
+ * If it still cannot fill it does NOT pad with owned music or with singles —
+ * it returns what it has AND says so in `report.shortfall`. A quiet 19 is how
+ * the old shop got away with being thin for weeks.
  */
 export async function buildDailyDiscovery(
   anchors: string[],
   deps: SupplyDeps,
-  opts: { want?: number; dayNumber?: number; maxPasses?: number; curatorSongs?: Array<{ artist: string; title: string; curator: string; playlist: string }>; curatorSlots?: number; perAnchor?: number } = {},
+  opts: { want?: number; floor?: number; dayNumber?: number; maxPasses?: number; curatorSongs?: Array<{ artist: string; title: string; curator: string; playlist: string }>; curatorSlots?: number; perAnchor?: number; twoHopSeeds?: number } = {},
 ): Promise<DailyDiscovery> {
   const want = opts.want ?? 25
+  const floor = Math.min(opts.floor ?? want, want)
   const maxPasses = opts.maxPasses ?? 3
   const dayNumber = opts.dayNumber ?? Math.floor(Date.now() / 86_400_000)
   const shortfall: string[] = []
+  // A later stage walks the same artists again: ask Deezer once per URL.
+  const memo = new Map<string, Promise<unknown>>()
+  const d: SupplyDeps = {
+    ...deps,
+    fetchJson: (url) => {
+      let p = memo.get(url)
+      if (!p) { p = deps.fetchJson(url); memo.set(url, p); p.catch(() => memo.delete(url)) }
+      return p
+    },
+  }
+  const seeds = [...new Map(anchors.map((a) => [a.trim().toLowerCase(), a.trim()])).values()].filter(Boolean)
 
-  const pool = rotateKeepingNewFirst(await relatedArtistPool(anchors, deps), dayNumber)
+  const first = await relatedArtistPool(seeds, d)
+  const second = (opts.twoHopSeeds ?? 6) > 0 ? await twoHopPool(first, seeds.slice(0, opts.twoHopSeeds ?? 6), d) : []
+  const pool = [
+    ...interleaveBySeed(first.filter((a) => !a.owned), dayNumber),
+    ...interleaveBySeed(second, dayNumber),
+    ...interleaveBySeed(first.filter((a) => a.owned), dayNumber),
+  ]
 
   const albums: SupplyAlbum[] = []
   const songs: SupplySong[] = []
   const seenAlbum = new Set<string>()
   const seenSong = new Set<string>()
   const key = (a: string, b: string): string => `${a} ${b}`.toLowerCase()
+  const tally: ArtistTally = new Map()
 
   // Curator picks seat first (a few reserved slots, rotated daily); the
   // graph fills the rest of the quota as always.
   if (opts.curatorSongs?.length) {
     const slots = Math.min(opts.curatorSlots ?? 5, want)
-    for (const s of await harvestCuratorSongs(opts.curatorSongs, slots, deps, dayNumber)) {
+    for (const s of await harvestCuratorSongs(opts.curatorSongs, slots, d, dayNumber)) {
       const k = key(s.artist, s.title)
-      if (seenSong.has(k)) continue
+      if (seenSong.has(k) || d.resting?.(s.artist, s.title)) continue
       seenSong.add(k)
       songs.push(s)
     }
   }
 
+  const counts = new Map<string, number>()
+  const stages: Array<{ cap?: AnchorCap; upTo: number }> = [
+    { cap: anchorCap(opts.perAnchor ?? PICKS_PER_ANCHOR, counts), upTo: want },
+    { cap: anchorCap(Math.max(opts.perAnchor ?? PICKS_PER_ANCHOR, seedShareCap(want * 2)), counts), upTo: want },
+    { upTo: floor },
+  ]
   let passes = 0
-  let frontier = pool
-  const cap = anchorCap(opts.perAnchor ?? PICKS_PER_ANCHOR)
-  while (passes < maxPasses && (albums.length < want || songs.length < want)) {
+  for (const stage of stages.slice(0, maxPasses)) {
+    if (albums.length >= stage.upTo && songs.length >= stage.upTo) continue
     passes++
-    if (albums.length < want) {
-      for (const a of await harvestAlbums(frontier, (want - albums.length) * 3, deps, cap)) {
+    if (albums.length < stage.upTo) {
+      const notYet = { ...d, resting: (ar: string, t: string) => seenAlbum.has(key(ar, t)) || !!d.resting?.(ar, t) }
+      for (const a of await harvestAlbums(pool, stage.upTo - albums.length, notYet, stage.cap, tally)) {
         const k = key(a.artist, a.title)
-        if (albums.length >= want || seenAlbum.has(k)) { if (a.because) cap.give(a.because); continue }
+        if (seenAlbum.has(k)) { if (a.because) stage.cap?.give(a.because); continue }
         seenAlbum.add(k)
         albums.push(a)
       }
     }
-    if (songs.length < want) {
-      for (const s of await harvestSongs(frontier, (want - songs.length) * 3, deps, cap)) {
+    if (songs.length < stage.upTo) {
+      const notYet = { ...d, resting: (ar: string, t: string) => seenSong.has(key(ar, t)) || !!d.resting?.(ar, t) }
+      for (const s of await harvestSongs(pool, stage.upTo - songs.length, notYet, stage.cap, tally)) {
         const k = key(s.artist, s.title)
-        if (songs.length >= want || seenSong.has(k)) { if (s.because) cap.give(s.because); continue }
+        if (seenSong.has(k)) { if (s.because) stage.cap?.give(s.because); continue }
         seenSong.add(k)
         songs.push(s)
       }
-    }
-    if (albums.length >= want && songs.length >= want) break
-    // Reach further: neighbours OF the neighbours we just used.
-    const nextNames = frontier.slice(0, 8).map((a) => a.name)
-    if (!nextNames.length) break
-    const deeper = await relatedArtistPool(nextNames, deps)
-    const known = new Set(frontier.map((a) => a.name.toLowerCase()))
-    frontier = deeper.filter((a) => !known.has(a.name.toLowerCase()))
-    if (!frontier.length) break
-  }
-
-  // The quota outranks the spread ("NO LESS"): when the capped walk comes up
-  // short, the nearest neighbours fill what is left, cap or no cap.
-  if (albums.length < want) {
-    for (const a of await harvestAlbums(pool, (want - albums.length) * 3, deps)) {
-      const k = key(a.artist, a.title)
-      if (seenAlbum.has(k)) continue
-      seenAlbum.add(k)
-      albums.push(a)
-      if (albums.length >= want) break
-    }
-  }
-  if (songs.length < want) {
-    for (const s of await harvestSongs(pool, (want - songs.length) * 3, deps)) {
-      const k = key(s.artist, s.title)
-      if (seenSong.has(k)) continue
-      seenSong.add(k)
-      songs.push(s)
-      if (songs.length >= want) break
     }
   }
 

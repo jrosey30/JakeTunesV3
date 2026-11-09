@@ -95,12 +95,16 @@ describe('applyQualityFloor', () => {
     pcts.map((p, i) => card({ lane, title: `t${i}`, brainPct: p }))
 
   test(`cards below ${BRAIN_FLOOR} are dropped from a healthy lane`, () => {
-    const out = applyQualityFloor(scored('a', [90, 85, 70, 61, 59, 40]))
-    assert.deepEqual(out.map((c) => c.brainPct), [90, 85, 70, 61])
+    const out = applyQualityFloor(scored('a', [90, 85, 70, 66, 61, 59, 57, 54, 40]))
+    assert.deepEqual(out.map((c) => c.brainPct), [90, 85, 70, 66, 61, 59, 57])
   })
   test(`a thin lane back-fills to ${BRAIN_LANE_MIN} with its best ≥${BRAIN_HARD_FLOOR}`, () => {
-    const out = applyQualityFloor(scored('a', [88, 57, 55, 53, 40]))
-    assert.deepEqual(out.map((c) => c.brainPct).sort((x, y) => (y ?? 0) - (x ?? 0)), [88, 57, 55])
+    const out = applyQualityFloor(scored('a', [88, 57, 54, 53, 51, 40]))
+    assert.deepEqual(out.map((c) => c.brainPct).sort((x, y) => (y ?? 0) - (x ?? 0)), [88, 57, 54, 53])
+  })
+  test('one bar for every lane (2026-11-09): a 56 the time machine used to drop now ships', () => {
+    assert.equal(BRAIN_FLOOR, 55)
+    assert.equal(applyQualityFloor(scored('time-machine', [90, 85, 80, 75, 70, 65, 56])).length, 7)
   })
   test('the 40 "no signal" sentinel never ships, even into an empty lane', () => {
     const out = applyQualityFloor(scored('a', [40, 40, 40]))

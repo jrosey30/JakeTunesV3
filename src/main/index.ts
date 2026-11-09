@@ -1598,7 +1598,7 @@ ipc.handle('discovery-allow-again', async (_e, artist: string) => {
 // feed built by v2 carries VA-compilation junk cards and must regenerate.
 // v4 (2026-08-07): "From the Scene" lane (human-graph reach — the
 // Ceremony problem); regenerate so the lane appears.
-const FEED_GEN_VERSION = 14  // 2026-11-09: three picks per "because" artist (discover-supply PICKS_PER_ANCHOR), every card gets a genre and a crate  // 13: 2026-11-08: supply anchors resolve by exact name (no Deezer namesakes), new artists lead the rotation, compilations/soundtracks/dated tapes gated  // 12: 2026-10-18: critic wall lane (critic-picks-feed.ts)  // 11: 2026-10-11: Rock DNA rides in the picking prompts, Dislike leaves the shop  // 10: 2026-10-10: taste profile — Rocksurgence seeds the supply, math rock gated, Angine an exception  // 9: cover-factory gates in the supply lane  // 8: curator lane — Spotify curator picks seat New Songs slots (2026-09-01); 7: supply edition gate; 6: 25/25 supply lanes; 5: bins + hooks + pitches
+const FEED_GEN_VERSION = 15  // 2026-11-09 (later): 60 records + 60 songs, six picks per seed (never over 10% of the day), the harvest skips resting picks, a seed per crate, two hops for the strongest seeds  // 14: 2026-11-09: three picks per "because" artist (discover-supply PICKS_PER_ANCHOR), every card gets a genre and a crate  // 13: 2026-11-08: supply anchors resolve by exact name (no Deezer namesakes), new artists lead the rotation, compilations/soundtracks/dated tapes gated  // 12: 2026-10-18: critic wall lane (critic-picks-feed.ts)  // 11: 2026-10-11: Rock DNA rides in the picking prompts, Dislike leaves the shop  // 10: 2026-10-10: taste profile — Rocksurgence seeds the supply, math rock gated, Angine an exception  // 9: cover-factory gates in the supply lane  // 8: curator lane — Spotify curator picks seat New Songs slots (2026-09-01); 7: supply edition gate; 6: 25/25 supply lanes; 5: bins + hooks + pitches
 type FeedCacheShape = { at: number; ver?: number; lanes: Array<{ id: string; title: string; cards: unknown[] }> }
 let discoverFeedMem: FeedCacheShape | null = null
 const DISCOVER_TTL_MS = 3 * 60 * 60 * 1000
@@ -1687,11 +1687,11 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     const missingPromise = (async () => {
       try {
         // 2026-08-25: completion WAS the page. Now a small shelf — buildGapCards.
-        const discos = await Promise.all(anchors.slice(0, 8).map(async (a) => ({
+        const discos = await Promise.all(anchors.slice(0, 12).map(async (a) => ({
           artist: a.artist, tracks: a.tracks,
           albums: (await fetchArtistDiscography(a.artist).catch(() => null))?.albums || [],
         })))
-        for (const c of df.buildGapCards(discos, ownedAlbumKeys)) cards.push(c)
+        for (const c of df.buildGapCards(discos, ownedAlbumKeys, { limit: 12 })) cards.push(c)
       } catch (err) { console.warn('[discover] missing lane failed:', err) }
     })()
 
@@ -1834,7 +1834,8 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     // L0 · Bulk supply — the 25/25 quota lanes (Jake: "NO LESS"). Deezer graph, module-side; all 16
     // anchors feed the pool, plus his top SPOTIFY artists ("wire in the taste signal they use").
     const spotifyAnchors = await loadSpotifyTasteAnchors(join(STATE_DIR, 'spotify-taste.json'), 4)
-    const supplyPromise = df.supplyLanes([...anchors.map((a) => a.artist), ...spotifyAnchors, ...focus.anchors(dayN)], dayN, { artists: ownedArtists, albumKeys: ownedAlbumKeys, baseKeys: ownedBaseKeys, titlesBy: df.knownTitleIndex(tracks as Array<{ artist?: string; albumArtist?: string; album?: string; title?: string }>, await loadSpotifyTasteTracks(join(STATE_DIR, 'spotify-taste.json'))) }).then((cs) => { cards.push(...cs) }).catch((err) => console.warn('[discover] supply lanes failed:', err))
+    const supplyFb = await sharedDiscoveryFeedback(), supplyNow = Date.now()   // the harvest skips what filterFeed would rest (2026-11-09)
+    const supplyPromise = df.supplyLanes([...anchors.map((a) => a.artist), ...spotifyAnchors, ...focus.anchors(dayN), ...df.crateSeeds(focus.dropExceptions(getTasteAnchors(tracks, 400)))], dayN, { artists: ownedArtists, albumKeys: ownedAlbumKeys, baseKeys: ownedBaseKeys, titlesBy: df.knownTitleIndex(tracks as Array<{ artist?: string; albumArtist?: string; album?: string; title?: string }>, await loadSpotifyTasteTracks(join(STATE_DIR, 'spotify-taste.json'))) }, fetch, 120, (artist, title) => df.isResting({ lane: 'fresh-albums', artist, title }, supplyFb, supplyNow)).then((cs) => { cards.push(...cs) }).catch((err) => console.warn('[discover] supply lanes failed:', err))
 
     // L5 · Critic wall — a public ratings sheet's 9s/10s he doesn't own, 5 a day, credited; IN ADDITION to the 25/25 and never a taste signal (critic-picks-feed.ts). Unshifted so it wins cross-lane dedupe.
     const criticPromise = import('./critic-picks-feed.ts').then((m) => m.criticPickCards({ stateDir: STATE_DIR, tracks: tracks as Array<{ artist?: string; albumArtist?: string; album?: string }>, owned: { artists: ownedArtists, albumKeys: ownedAlbumKeys, baseKeys: ownedBaseKeys }, blocks: focus.blocks, feedback: sharedDiscoveryFeedback, isOnList: async () => listenListPredicate(await readRecommendationsFile()) })).then((cs) => { cards.unshift(...cs) }).catch((err) => console.warn('[discover] critic picks failed:', err))
@@ -1986,8 +1987,8 @@ async function countFeedServed(lanes: Array<{ id: string; title: string; cards: 
     await discoveryFeedbackCache.update((cur) => {
       for (const l of lanes) for (const c of l.cards as import('./discover-feed.ts').FeedCard[]) {
         const k = df.cardKey(c)
-        const sv = cur.served[k]
-        if (sv) { sv.views += 1; sv.last = nowMs } else cur.served[k] = { first: nowMs, last: nowMs, views: 1 }
+        // Once a day per card (df.countView, 2026-11-09): four page opens no longer rest the shelf.
+        df.countView(cur.served, k, nowMs)
       }
       return cur
     })

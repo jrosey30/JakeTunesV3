@@ -488,7 +488,7 @@ describe('the shop passes keep the daily five whole', () => {
     const pick = { lane: CRITIC_LANE, type: 'album' as const, artist: 'Thin Lizzy', title: 'Jailbreak', bin: 'rock', brainPct: 1 }
     const page = buildShopPage({ lanes: [{ id: 'scene', cards: rock }, { id: CRITIC_LANE, cards: [pick] }], wanted: [], year: '2026' })
     const r = page.crates.find((c) => c.id === 'rock')!
-    assert.equal(r.entries.length, 9)
-    assert.ok(r.entries.some((e) => e.lead === pick))
+    assert.equal(r.cards.length, 9)
+    assert.ok(r.cards.some((s) => s.card === pick))
   })
 })
