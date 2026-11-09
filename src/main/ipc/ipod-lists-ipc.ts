@@ -23,6 +23,11 @@
  *       "iPod color…" (2026-11-09): the cover's colour. Kept on this Mac (the hub's
  *       choice wins over the registry) and sent to homemini, or waits on disk for it
  *       (main/ipod-colors.ts); flushed before each list read and on the 5-minute retry.
+ *   'ipod-lists:rename' ({ deviceId, name }) → { ok, name, homemini: 'saved' | 'later' } | { ok: false, error }
+ *       Rename… (2026-11-09) on any Mac: the list's name, never the iPod's (main/ipod-list-rename.ts).
+ *       Waits on disk when homemini is away; flushed before each list read and on the 5-minute retry.
+ *   'top1000-name:get' → { ok, name, custom, pending }  /  'top1000-name:set' (name) → { ok, name, custom, homemini }
+ *       The Top 1000's display name, kept on homemini (main/top1000-name.ts).
  *   'ipod-cover:get' (key) → { ok, url } — a custom-colour cover homemini drew, kept on
  *       this Mac for good (main/ipod-cover-cache.ts); url null = show the bundled nearest.
  *
@@ -38,7 +43,9 @@ import { identifyIpod, loadIpodRegistry, poolFileFor } from '../ipod-identity.ts
 import { createIpodListClient } from '../ipod-list-client.ts'
 import { refreshIpodPool, type IpodPoolRefresh, type PoolFileName } from '../ipod-list-pool.ts'
 import type { FetchLike } from '../top1000-client.ts'
-import { flushHomeminiName } from '../ipod-rename.ts'
+import { flushAllHomeminiNames, readPendingNames } from '../ipod-rename.ts'
+import { renameIpodList } from '../ipod-list-rename.ts'
+import { createTop1000NameRemote, flushTop1000Name, localTop1000Name, readTop1000Name, setTop1000Name, type Top1000NameDeps } from '../top1000-name.ts'
 import { createProposalsDesk } from '../ipod-list-proposals.ts'
 import { gatherIpodLists, ipodListsCachePath, readListsCache } from '../ipod-lists-gather.ts'
 import { createWantedShelfSource } from '../ipod-wanted-shelf-source.ts'
@@ -81,6 +88,8 @@ export function createIpodListSource(host: IpodListsHost): IpodListSource & {
   all: () => Promise<IpodList[] | null>
   sendColor: (deviceId: string, color: string) => Promise<boolean>
   flushColors: () => Promise<'none' | 'sent' | 'still-waiting'>
+  flushNames: () => Promise<'none' | 'sent' | 'still-waiting'>
+  renameList: (deviceId: string, name: string) => Promise<'done' | 'retry' | 'drop'>
   cover: (path: string) => Promise<{ bytes: Buffer; exact: boolean } | null>
 } {
   const client = createIpodListClient({ baseUrl: host.baseUrl, fetchImpl: host.fetchImpl, warn: host.warn })
@@ -104,9 +113,12 @@ export function createIpodListSource(host: IpodListsHost): IpodListSource & {
   const flushColors = () => flushPendingColors(host.stateDir, sendColor)
     .catch((err) => { host.warn?.(`[ipod-list] pending colours: ${(err as Error)?.message ?? err}`); return 'still-waiting' as const })
 
+  const flushNames = () => flushAllHomeminiNames(host.stateDir, client.renameList, undefined, host.warn)
+    .catch((err) => { host.warn?.(`[ipod-list] pending names: ${(err as Error)?.message ?? err}`); return 'still-waiting' as const })
+
   async function refresh(device: IpodDeviceMarker): Promise<IpodPoolRefresh> {
     // A rename homemini missed (it was away) goes first — every sync reads the list here.
-    await flushHomeminiName(host.stateDir, device.id, (id, name) => client.rename(id, name))
+    await flushAllHomeminiNames(host.stateDir, client.renameList, device.id, host.warn)
       .catch((err) => host.warn?.(`[ipod-list] pending rename for ${device.name}: ${(err as Error)?.message ?? err}`))
     // Approvals homemini missed go before the list is read, so the read has them.
     await desk.flush().catch((err) => host.warn?.(`[ipod-list] pending decisions: ${(err as Error)?.message ?? err}`))
@@ -128,6 +140,8 @@ export function createIpodListSource(host: IpodListsHost): IpodListSource & {
     desk,
     sendColor,
     flushColors,
+    flushNames,
+    renameList: client.renameList,
     cover: (path: string) => client.cover(path),
     refresh,
     all: () => client.all(),
@@ -145,9 +159,15 @@ export function createIpodListSource(host: IpodListsHost): IpodListSource & {
 export function registerIpodListsIpc(ipc: IpcRegistrar, host: IpodListsHost): IpodListSource {
   const source = createIpodListSource(host)
   const isReplica = host.isReplica ?? (async () => false)
+  const top1000: Top1000NameDeps = {
+    stateDir: host.stateDir,
+    ...createTop1000NameRemote({ baseUrl: host.baseUrl, fetchImpl: host.fetchImpl, warn: host.warn }),
+    warn: host.warn,
+  }
   ipc.handle('ipod-lists:get', async () => {
-    // A colour homemini missed goes first, so the read has it.
+    // A colour or a name homemini missed goes first, so the read has it.
     await source.flushColors()
+    await source.flushNames()
     return gatherIpodLists({
       isReplica,
       registry: async () => (await loadIpodRegistry(host.stateDir)).devices,
@@ -155,9 +175,36 @@ export function registerIpodListsIpc(ipc: IpcRegistrar, host: IpodListsHost): Ip
       all: () => source.all(),
       cacheFile: ipodListsCachePath(host.stateDir),
       chosen: () => readChosenColors(host.stateDir),
+      pendingNames: () => readPendingNames(host.stateDir),
       warn: host.warn,
     })
   }, { public: true })
+  // Every list's name as this Mac shows it: homemini's last answer with the renames still waiting on top.
+  async function listNames(): Promise<Array<{ id: string; name: string }>> {
+    const kept = (await readListsCache(ipodListsCachePath(host.stateDir))) ?? []
+    const waiting = await readPendingNames(host.stateDir)
+    return kept.map((l) => ({ id: l.id, name: waiting[l.id] ?? l.name }))
+  }
+  // Rename… (2026-11-09). A write: the main window only. Any Mac, hub or replica.
+  ipc.handle('ipod-lists:rename', async (_e, input: unknown) => {
+    const i = input as { deviceId?: unknown; name?: unknown } | null
+    return renameIpodList({
+      stateDir: host.stateDir,
+      send: source.renameList,
+      others: async (id) => [
+        ...(await listNames()).filter((l) => l.id !== id).map((l) => l.name),
+        await localTop1000Name(host.stateDir),
+      ],
+      warn: host.warn,
+    }, i?.deviceId, i?.name).catch((err) => ({ ok: false as const, error: (err as Error)?.message ?? 'couldn’t rename the list' }))
+  }, { refuse: { ok: false, error: 'refused-sender' } })
+  ipc.handle('top1000-name:get', async () => ({ ok: true as const, ...(await readTop1000Name(top1000)) }), { public: true })
+  // A write: the main window only.
+  ipc.handle('top1000-name:set', async (_e, name: unknown) => {
+    const others = (await listNames()).map((l) => l.name)
+    return setTop1000Name(top1000, name, others)
+      .catch((err) => ({ ok: false as const, error: (err as Error)?.message ?? 'couldn’t rename the Top 1000' }))
+  }, { refuse: { ok: false, error: 'refused-sender' } })
   // A write: the main window only.
   ipc.handle('ipod-lists:set-color', async (_e, input: unknown) => {
     const i = input as { deviceId?: unknown; color?: unknown } | null
@@ -224,6 +271,8 @@ export function registerIpodListsIpc(ipc: IpcRegistrar, host: IpodListsHost): Ip
   setInterval(() => {
     void source.desk.flush().catch(() => undefined)
     void source.flushColors()
+    void source.flushNames()
+    void flushTop1000Name(top1000).catch(() => undefined)
     void photos.sync().catch(() => undefined)
   }, DECISION_RETRY_MS).unref?.()
   return source

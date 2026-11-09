@@ -26,7 +26,10 @@ import { useReleaseMonths } from '../../releaseMonths'
 import { useIpodLists, useIpodListsRole } from '../../ipodLists'
 import { useIpodRegistry } from '../../ipodRegistry'
 import { useTop1000List } from '../../top1000List'
-import { ipodSidebarRows, isIpodPlaylistId } from '../../../common/sidebar-ipods'
+import { useTop1000Name, renameTop1000 } from '../../top1000Name'
+import { renameIpodList } from '../../ipodLists'
+import ListRenameField from '../ListRenameField'
+import { ipodSidebarRows, isIpodPlaylistId, TOP_1000_PLAYLIST_ID } from '../../../common/sidebar-ipods'
 import { SIDEBAR_ORDER_KEY, DEFAULT_SECTION_ORDER, YEAR_PREFIX, parseSavedOrder, orderSections, moveSection, nudgeSection } from '../../../common/sidebar-order'
 import { monthPlaylistId, monthPlaylistName, yearsOf } from '../../../common/release-months'
 import { setNotice } from '../../activity'
@@ -302,6 +305,10 @@ export default function Sidebar() {
   const ipodListsRole = useIpodListsRole()
   const ipodRegistry = useIpodRegistry()
   const top1000Ids = useTop1000List()
+  const top1000Name = useTop1000Name()
+  // Rename… on an iPODS row (2026-11-09, Jake: "allow me to rename the ipod playlists too!! if i
+  // want"): the row being renamed (its playlist id), drawn as an inline box (components/ListRenameField.tsx).
+  const [renamingIpodRow, setRenamingIpodRow] = useState<string | null>(null)
   const libraryIds = useMemo(() => new Set(state.tracks.map((t) => t.id)), [state.tracks])
   // Pinned playlists (2026-08-07, Jake: "pin 3 and only 3 playlists to the
   // very tippy top above defaults....i can absolutely pin a default").
@@ -337,7 +344,8 @@ export default function Sidebar() {
     top1000Ids,
     inLibrary: (id) => libraryIds.has(id),
     pinned,
-  }), [ipodListsRole, ipodRegistry, ipodLists, top1000Ids, libraryIds, pinned])
+    top1000Name,
+  }), [ipodListsRole, ipodRegistry, ipodLists, top1000Ids, libraryIds, pinned, top1000Name])
   // A pin on an iPod list (Top 1000 included) moves that row up inside iPODS; it is never drawn
   // a second time under PLAYLISTS (isIpodPlaylistId). Jake: "why are there 2 places".
   useEffect(() => {
@@ -495,6 +503,31 @@ export default function Sidebar() {
   // JUSTIFICATION (Jake, 2026-10-24): his "I would never have found this on Spotify" playlists,
   // still regular playlists, grouped in numeral order (a subgroup of PLAYLISTS since 2026-11-07). A pin moves one up.
   const justifications = sortJustifications(state.playlists.filter(pl => isJustificationPlaylist(pl.name) && !pinned.includes(pl.id)))
+
+  // The inline box for an iPODS row being renamed. A name never matches another list's (the Top
+  // 1000's included). On the hub a list an iPod carries says once that the iPod keeps its own name.
+  const ipodRenameField = (playlistId: string) => {
+    const deviceId = parseIpodListPlaylistId(playlistId)
+    const entry = deviceId ? ipodLists.find((l) => l.id === deviceId) : null
+    const isTop = playlistId === TOP_1000_PLAYLIST_ID
+    if (!isTop && !entry) return null
+    const hub = ipodListsRole === 'hub'
+    const carried = hub && (isTop || entry?.registered === true)
+    return (
+      <ListRenameField
+        variant="sidebar"
+        initial={isTop ? top1000Name : entry!.name}
+        others={isTop ? ipodLists.map((l) => l.name) : [...ipodLists.filter((l) => l.id !== deviceId).map((l) => l.name), top1000Name]}
+        hint={carried ? 'Renames the playlist. The iPod keeps its own name.' : null}
+        onSave={async (name) => {
+          const r = isTop ? await renameTop1000(name) : await renameIpodList(deviceId!, name)
+          if (r.ok && r.homemini === 'later') setNotice(`Renamed to ${r.name}. homemini will get it when it's back.`, { kind: 'info', durationMs: 5000 })
+          return r.ok ? { ok: true } : r
+        }}
+        onDone={() => setRenamingIpodRow(null)}
+      />
+    )
+  }
 
   const handleRenamePlaylist = useCallback(() => {
     if (!plCtxMenu) return
@@ -785,7 +818,9 @@ export default function Sidebar() {
     // iPODS (2026-11-07): one row per iPod, opening the list its Sync button puts on it.
     ['ipods', (
       <SidebarSection key={'ipods'} {...sectionProps('ipods')} title="iPODS">
-        {ipodRows.map((r) => (
+        {ipodRows.map((r) => renamingIpodRow === r.playlistId ? (
+          <div key={r.key}>{ipodRenameField(r.playlistId)}</div>
+        ) : (
           <div key={r.key} onContextMenu={(e) => handlePlaylistContextMenu(e, r.playlistId, r.detail && !r.planned ? `${r.name} · ${r.detail}` : r.name, 'smart')}>
             <SidebarItem
               label={r.name}
@@ -970,6 +1005,11 @@ export default function Sidebar() {
               { separator: true as const },
             ] : []),
             { label: pinned.includes(plCtxMenu.playlistId) ? 'Unpin from Top' : 'Pin to Top', onClick: () => togglePin(plCtxMenu.playlistId) },
+            // Rename… an iPod list or the Top 1000 (2026-11-09): the playlist's name, on every screen.
+            ...(isIpodPlaylistId(plCtxMenu.playlistId) ? [
+              { separator: true as const },
+              { label: 'Rename…', onClick: () => { setRenamingIpodRow(plCtxMenu.playlistId); setPlCtxMenu(null) } },
+            ] : []),
             ...(photoKeyForPlaylist(plCtxMenu.playlistId) ? [
               { separator: true as const },
               ...(parseIpodListPlaylistId(plCtxMenu.playlistId) ? [

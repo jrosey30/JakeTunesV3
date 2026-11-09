@@ -111,6 +111,27 @@ export async function setIpodListColor(deviceId: string, color: string): Promise
   return { ok: true, homemini: r.homemini }
 }
 
+/**
+ * Rename… (2026-11-09): the list's new name shows at once everywhere it is drawn, then main
+ * keeps it and tells homemini (or holds it until homemini answers). The iPod keeps its own name.
+ * On a refusal the old name comes back and the reason is returned.
+ */
+export async function renameIpodList(deviceId: string, name: string): Promise<{ ok: true; name: string; homemini: 'saved' | 'later' } | { ok: false; error: string }> {
+  const trimmed = name.trim()
+  const before = snap
+  snap = snap.map((l) => (l.id === deviceId ? { ...l, name: trimmed } : l))
+  for (const l of listeners) l()
+  const r = await (window.electronAPI.ipodListRename?.({ deviceId, name: trimmed }) ?? Promise.resolve({ ok: false as const, error: 'not available' }))
+    .catch((err: unknown) => ({ ok: false as const, error: err instanceof Error ? err.message : 'couldn’t rename the list' }))
+  if (!r.ok) {
+    snap = before
+    for (const l of listeners) l()
+    return r
+  }
+  void refreshIpodLists()
+  return r
+}
+
 /** The colour the cover shows for an entry (its model's default when none). */
 export function entryColor(e: Pick<IpodListEntry, 'model' | 'color'>): string {
   return e.color ?? IPOD_DEFAULT_COLOR[e.model]

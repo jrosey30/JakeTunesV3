@@ -33,6 +33,27 @@ export function createIpodListClient(opts: IpodListClientOptions) {
   const warn = opts.warn ?? ((m: string) => console.warn(m))
   const base = `${opts.baseUrl.replace(/\/+$/, '')}/api/ipod-lists`
 
+  /** A list's new name (the iPod renamed, or the list renamed by hand, 2026-11-09).
+   *  'done' = homemini has it; 'retry' = not now (away, 5xx, a refused token); 'drop' = homemini
+   *  will never take this one (400 not a name, 404 no such list, 409 another list has it):
+   *  keeping it would retry forever. */
+  async function renameList(deviceId: string, name: string): Promise<'done' | 'retry' | 'drop'> {
+    try {
+      const res = await fetchImpl(`${base}/${encodeURIComponent(deviceId)}`, withCompanionInit({
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+        signal: AbortSignal.timeout(timeoutMs),
+      }) as Record<string, unknown>)
+      if (res.status === 200) return 'done'
+      warn(`[ipod-list] rename ${deviceId}: homemini answered ${res.status}`)
+      return res.status === 400 || res.status === 404 || res.status === 409 ? 'drop' : 'retry'
+    } catch (err) {
+      warn(`[ipod-list] rename ${deviceId} failed: ${(err as Error)?.message ?? err}`)
+      return 'retry'
+    }
+  }
+
   return {
     async get(deviceId: string): Promise<IpodListAnswer> {
       let res: Awaited<ReturnType<FetchLike>>
@@ -155,20 +176,9 @@ export function createIpodListClient(opts: IpodListClientOptions) {
     /** The iPod was renamed (2026-11-07): PATCH homemini's list name (Mobile PR #753).
      *  true = homemini took it; false = not now (down, 404, any refusal). */
     async rename(deviceId: string, name: string): Promise<boolean> {
-      try {
-        const res = await fetchImpl(`${base}/${encodeURIComponent(deviceId)}`, withCompanionInit({
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name }),
-          signal: AbortSignal.timeout(timeoutMs),
-        }) as Record<string, unknown>)
-        if (res.status === 200) return true
-        warn(`[ipod-list] rename ${deviceId}: homemini answered ${res.status}`)
-        return false
-      } catch (err) {
-        warn(`[ipod-list] rename ${deviceId} failed: ${(err as Error)?.message ?? err}`)
-        return false
-      }
+      return (await renameList(deviceId, name)) === 'done'
     },
+
+    renameList,
   }
 }

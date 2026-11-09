@@ -67,6 +67,9 @@ export interface GatherIpodListsDeps {
   cacheFile: string
   /** Colours Jake picked on this Mac (main/ipod-colors.ts), by iPod id. They win on the hub. */
   chosen?: () => Promise<Record<string, string>>
+  /** Names homemini hasn't heard yet (main/ipod-rename.ts readPendingNames), by iPod id. They win
+   *  everywhere, so a rename shows at once, homemini there or not (2026-11-09). */
+  pendingNames?: () => Promise<Record<string, string>>
   warn?: (msg: string) => void
 }
 
@@ -102,10 +105,10 @@ async function homeminiLists(deps: GatherIpodListsDeps): Promise<{ lists: IpodLi
   return { lists: (await readListsCache(deps.cacheFile)) ?? [], fresh: false }
 }
 
-function wire(l: IpodList, fresh: boolean, registered: boolean, chosen?: string): IpodListWire {
+function wire(l: IpodList, fresh: boolean, registered: boolean, chosen?: string, pendingName?: string): IpodListWire {
   const look = ipodLook({ model: l.model, listColor: l.color, chosen })
   return {
-    id: l.id, name: l.name, color: look.color, model: look.model, purpose: l.purpose, ids: [...l.ids],
+    id: l.id, name: pendingName ?? l.name, color: look.color, model: look.model, purpose: l.purpose, ids: [...l.ids],
     source: fresh ? 'homemini' : 'cache', note: null, updatedAt: l.updatedAt, registered,
   }
 }
@@ -114,9 +117,11 @@ export async function gatherIpodLists(deps: GatherIpodListsDeps): Promise<IpodLi
   let replica = true
   try { replica = await deps.isReplica() } catch (err) { deps.warn?.(`[ipod-lists] role check: ${(err as Error)?.message ?? err}`) }
 
+  const names = await (deps.pendingNames?.() ?? Promise.resolve({} as Record<string, string>)).catch(() => ({} as Record<string, string>))
+
   if (replica) {
     const remote = await homeminiLists(deps)
-    return { ok: true, role: 'replica', lists: remote.lists.map((l) => wire(l, remote.fresh, false)) }
+    return { ok: true, role: 'replica', lists: remote.lists.map((l) => wire(l, remote.fresh, false, undefined, names[l.id])) }
   }
 
   const devices = await deps.registry().catch(() => [] as IpodDeviceMarker[])
@@ -136,8 +141,11 @@ export async function gatherIpodLists(deps: GatherIpodListsDeps): Promise<IpodLi
   for (const { d, r } of pending) {
     const h = remoteById.get(d.id)
     const look = ipodLook({ model: h?.model, listColor: h?.color, registryColor: d.color, registered: true, chosen: chosen[d.id] })
-    lists.push({ id: d.id, name: d.name, color: look.color, model: look.model, purpose: d.purpose, ids: r.listIds, source: r.source, note: r.note, updatedAt: r.updatedAt, registered: true })
+    // The list's name (2026-11-09: a list is renamed on its own, the iPod keeps its name): a rename
+    // homemini hasn't heard yet, else homemini's, else the iPod's own.
+    const name = names[d.id] ?? h?.name ?? d.name
+    lists.push({ id: d.id, name, color: look.color, model: look.model, purpose: d.purpose, ids: r.listIds, source: r.source, note: r.note, updatedAt: r.updatedAt, registered: true })
   }
-  for (const l of remote.lists) if (!known.has(l.id)) lists.push(wire(l, remote.fresh, false, chosen[l.id]))
+  for (const l of remote.lists) if (!known.has(l.id)) lists.push(wire(l, remote.fresh, false, chosen[l.id], names[l.id]))
   return { ok: true, role: 'hub', lists }
 }

@@ -113,6 +113,11 @@ export async function renameMacVolume(mount: string, label: string): Promise<str
 
 const PENDING_FILE = 'ipod-list-renames.json'
 
+/** Names homemini hasn't heard yet, by iPod id: the device rename's and the list rename's (one queue, the newest wins). */
+export async function readPendingNames(stateDir: string): Promise<Record<string, string>> {
+  return readPending(stateDir)
+}
+
 async function readPending(stateDir: string): Promise<Record<string, string>> {
   try {
     const raw = JSON.parse(await readFile(join(stateDir, PENDING_FILE), 'utf-8')) as Record<string, unknown>
@@ -154,4 +159,34 @@ export async function flushHomeminiName(
     await writePending(stateDir, now)
   }
   return 'sent'
+}
+
+/**
+ * Every name homemini hasn't heard yet (or one iPod's): before each list read and on the 5-minute
+ * retry (main/ipc/ipod-lists-ipc.ts). 'drop' = homemini will never take it (a name another list has,
+ * no such list): it leaves the queue, and the list shows homemini's name again. A name changed again
+ * while one was in flight stays for the next flush.
+ */
+export async function flushAllHomeminiNames(
+  stateDir: string,
+  send: (deviceId: string, name: string) => Promise<'done' | 'retry' | 'drop'>,
+  only?: string,
+  warn?: (msg: string) => void,
+): Promise<'none' | 'sent' | 'still-waiting'> {
+  const pending = await readPending(stateDir)
+  const ids = Object.keys(pending).filter((id) => only === undefined || id === only)
+  if (!ids.length) return 'none'
+  let waiting = false
+  for (const id of ids) {
+    const name = pending[id]
+    const out = await send(id, name).catch(() => 'retry' as const)
+    if (out === 'retry') { waiting = true; continue }
+    if (out === 'drop') warn?.(`[ipod-list] homemini won't take the name "${name}" for ${id}; dropped`)
+    const now = await readPending(stateDir)
+    if (now[id] === name) {
+      delete now[id]
+      await writePending(stateDir, now)
+    }
+  }
+  return waiting ? 'still-waiting' : 'sent'
 }
