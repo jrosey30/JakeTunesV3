@@ -20,6 +20,8 @@
  * the list's writer — the shape, the 1000 ceiling and newest-first order must match.
  */
 
+import { isIpodModel, normalizeIpodColor, type IpodModel } from './ipod-covers.ts'
+
 /** No iPod list is ever bigger than this, whatever homemini says its cap is. */
 export const IPOD_LIST_MAX = 1000
 
@@ -50,6 +52,10 @@ export interface IpodList {
    * week"): optional, absent on older lists (= every day, perDay a run).
    */
   brain: { enabled: boolean; perDay: number; everyDays?: number; perRun?: number }
+  /** The iPod the list lives on (2026-11-09): 'mini' | 'classic' | '3g' | 'default'. Absent = not chosen. */
+  model?: IpodModel
+  /** Its colour: a named iPod colour or '#rrggbb' (common/ipod-covers.ts). Absent = not chosen. */
+  color?: string
 }
 
 /** homemini's bounds for the cadence fields; a value outside them is dropped, never the list. */
@@ -117,6 +123,9 @@ export function parseIpodList(raw: unknown, expectedId?: string): IpodList | nul
     removed: parseChanges(r.removed),
     updatedAt: r.updatedAt,
     brain,
+    // The iPod's look (2026-11-09): optional, a bad one is just absent.
+    ...(isIpodModel(r.model) ? { model: r.model } : {}),
+    ...(normalizeIpodColor(r.color) ? { color: normalizeIpodColor(r.color)! } : {}),
   }
 }
 

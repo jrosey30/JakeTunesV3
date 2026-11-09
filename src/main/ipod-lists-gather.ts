@@ -23,13 +23,20 @@ import { dirname, join } from 'path'
 import type { IpodDeviceMarker } from '../common/ipod-identity.ts'
 import { parseIpodList, type IpodList } from '../common/ipod-list-doc.ts'
 import type { IpodPoolRefresh } from './ipod-list-pool.ts'
+import { ipodLook, type IpodModel } from '../common/ipod-covers.ts'
 
 export const IPOD_LISTS_CACHE_FILE = 'ipod-lists-cache.json'
 
 export interface IpodListWire {
   id: string
   name: string
+  /**
+   * The iPod the list wears on its cover (2026-11-09, common/ipod-covers.ts): a named iPod
+   * colour or '#rrggbb', never null. On the hub: Jake's choice on this Mac, then a registered
+   * iPod's registry colour, then homemini's, then the model's default. On a replica: homemini's.
+   */
   color: string | null
+  model: IpodModel
   purpose: string | null
   /** Song ids, newest first. */
   ids: number[]
@@ -58,6 +65,8 @@ export interface GatherIpodListsDeps {
   all: () => Promise<IpodList[] | null>
   /** Where homemini's last clean answer is kept (this Mac's state dir). */
   cacheFile: string
+  /** Colours Jake picked on this Mac (main/ipod-colors.ts), by iPod id. They win on the hub. */
+  chosen?: () => Promise<Record<string, string>>
   warn?: (msg: string) => void
 }
 
@@ -93,9 +102,10 @@ async function homeminiLists(deps: GatherIpodListsDeps): Promise<{ lists: IpodLi
   return { lists: (await readListsCache(deps.cacheFile)) ?? [], fresh: false }
 }
 
-function wire(l: IpodList, fresh: boolean, registered: boolean): IpodListWire {
+function wire(l: IpodList, fresh: boolean, registered: boolean, chosen?: string): IpodListWire {
+  const look = ipodLook({ model: l.model, listColor: l.color, chosen })
   return {
-    id: l.id, name: l.name, color: null, purpose: l.purpose, ids: [...l.ids],
+    id: l.id, name: l.name, color: look.color, model: look.model, purpose: l.purpose, ids: [...l.ids],
     source: fresh ? 'homemini' : 'cache', note: null, updatedAt: l.updatedAt, registered,
   }
 }
@@ -110,15 +120,24 @@ export async function gatherIpodLists(deps: GatherIpodListsDeps): Promise<IpodLi
   }
 
   const devices = await deps.registry().catch(() => [] as IpodDeviceMarker[])
+  const chosen = await (deps.chosen?.() ?? Promise.resolve({} as Record<string, string>)).catch(() => ({} as Record<string, string>))
   const lists: IpodListWire[] = []
   const known = new Set<string>()
+  const pending: Array<{ d: IpodDeviceMarker; r: IpodPoolRefresh }> = []
   for (const d of devices) {
     known.add(d.id)
     if (d.primary) continue
-    const r = await deps.refresh(d)
-    lists.push({ id: d.id, name: d.name, color: d.color, purpose: d.purpose, ids: r.listIds, source: r.source, note: r.note, updatedAt: r.updatedAt, registered: true })
+    pending.push({ d, r: await deps.refresh(d) })
   }
+  // homemini's lists carry each iPod's model and colour; a registered iPod's list goes
+  // through its pool file, so its look comes from here.
   const remote = await homeminiLists(deps)
-  for (const l of remote.lists) if (!known.has(l.id)) lists.push(wire(l, remote.fresh, false))
+  const remoteById = new Map(remote.lists.map((l) => [l.id, l]))
+  for (const { d, r } of pending) {
+    const h = remoteById.get(d.id)
+    const look = ipodLook({ model: h?.model, listColor: h?.color, registryColor: d.color, registered: true, chosen: chosen[d.id] })
+    lists.push({ id: d.id, name: d.name, color: look.color, model: look.model, purpose: d.purpose, ids: r.listIds, source: r.source, note: r.note, updatedAt: r.updatedAt, registered: true })
+  }
+  for (const l of remote.lists) if (!known.has(l.id)) lists.push(wire(l, remote.fresh, false, chosen[l.id]))
   return { ok: true, role: 'hub', lists }
 }

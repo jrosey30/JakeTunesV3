@@ -60,7 +60,9 @@ describe('ipod-lists:get on a replica (workmini, homemini\'s app)', () => {
     assert.deepEqual(d.calls.refresh, [], 'a replica never writes a pool file or feeds the sync-ready check')
     for (const l of r.lists) {
       assert.equal(l.registered, false)
-      assert.equal(l.color, null)
+      // The cover's colour is homemini's (none here: the default iPod's white), never a registry's (2026-11-09).
+      assert.equal(l.color, 'white')
+      assert.equal(l.model, 'default')
       assert.equal(l.source, 'homemini')
     }
   })

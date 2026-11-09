@@ -9,6 +9,9 @@
 // deterministic) — rerun it there and copy the desktop set here.
 // ⚠️ TWIN: JakeTunesMobile backend/assets/playlist-covers/<id>.jpg —
 // the same art the phone shows; change both together.
+// Top 1000 (top-1000.jpg) is the Original's silver iPod mini since 2026-11-09,
+// and every iPod list wears its own iPod: utils/ipodCovers.ts (the iPODS rows
+// and the playlist header ask useIpodPlaylistCover first).
 import listenMoreWeeklyCover from '../assets/playlist-covers/listen-more-weekly.jpg'
 import bestOf2026Cover from '../assets/playlist-covers/best-of-2026.jpg'
 import onRepeatCover from '../assets/playlist-covers/on-repeat.jpg'
@@ -46,14 +49,9 @@ const FIXED_COVERS: Readonly<Partial<Record<SmartPlaylistId, string>>> = {
  *  the plain icon. Vite resolves the glob at build time. */
 const MONTH_COVERS = import.meta.glob('../assets/playlist-covers/month-*.jpg', { eager: true, import: 'default' }) as Record<string, string>
 
-/** One cover per non-Original iPod's list ('ipod-list-<marker id>' → ipod-list-<marker id>.jpg,
- *  2026-11-07): iPod EVIL's is red, drawn in the Top 1000 cover's style (JakeTunesMobile
- *  tools/make-playlist-covers.py's primitives). An iPod without a file keeps the plain icon. */
-const IPOD_LIST_COVERS = import.meta.glob('../assets/playlist-covers/ipod-list-*.jpg', { eager: true, import: 'default' }) as Record<string, string>
-
 export function smartPlaylistCover(id: SmartPlaylistId): string | null {
-  const ipod = parseIpodListPlaylistId(id)
-  if (ipod) return IPOD_LIST_COVERS[`../assets/playlist-covers/ipod-list-${ipod}.jpg`] ?? null
+  // An iPod list wears its own iPod (2026-11-09): utils/ipodCovers.ts useIpodPlaylistCover.
+  if (parseIpodListPlaylistId(id)) return null
   if (id === 'best-of-year') return BEST_OF_COVERS[BEST_OF_YEAR] ?? null
   const fixed = FIXED_COVERS[id]
   if (fixed) return fixed

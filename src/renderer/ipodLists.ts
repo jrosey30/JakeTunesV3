@@ -9,12 +9,16 @@
 // Sidebar only: never synced to the Original.
 // Same module-store idiom as top1000List.ts.
 import { useEffect, useSyncExternalStore } from 'react'
+import { isIpodModel, normalizeIpodColor, IPOD_DEFAULT_COLOR, type IpodModel } from '../common/ipod-covers'
 
 export interface IpodListEntry {
   /** The iPod's marker id. */
   id: string
   name: string
+  /** The cover's iPod colour (a named iPod colour or '#rrggbb'), resolved by main. */
   color: string | null
+  /** The cover's iPod model; 'default' when the list has none. */
+  model: IpodModel
   purpose: string | null
   /** Song ids, newest first. */
   ids: number[]
@@ -54,7 +58,8 @@ export function refreshIpodLists(): Promise<void> {
       snap = r.lists.map((l) => ({
         id: String(l.id),
         name: String(l.name),
-        color: l.color ?? null,
+        color: normalizeIpodColor(l.color),
+        model: isIpodModel(l.model) ? l.model : 'default',
         purpose: l.purpose ?? null,
         ids: (Array.isArray(l.ids) ? l.ids : []).map(Number).filter((id) => Number.isInteger(id) && id > 0),
         source: l.source === 'homemini' ? 'homemini' : l.source === 'cache' ? 'cache' : 'local',
@@ -82,4 +87,36 @@ export function useIpodListsRole(): IpodListsRole | null {
   const r = useSyncExternalStore(subscribe, getRole)
   useEffect(() => { void refreshIpodLists() }, [])
   return r
+}
+
+/**
+ * "iPod color…" (2026-11-09): the cover changes at once, then main keeps the
+ * colour and tells homemini (or holds it until homemini answers). On a refusal
+ * the old colour comes back.
+ */
+export async function setIpodListColor(deviceId: string, color: string): Promise<{ ok: true; homemini: 'saved' | 'later' } | { ok: false; error: string }> {
+  const c = normalizeIpodColor(color)
+  if (!c) return { ok: false, error: 'That isn’t a colour JakeTunes knows.' }
+  const before = snap
+  snap = snap.map((l) => (l.id === deviceId ? { ...l, color: c } : l))
+  for (const l of listeners) l()
+  const r = await (window.electronAPI.ipodListSetColor?.({ deviceId, color: c }) ?? Promise.resolve({ ok: false as const, error: 'not available' }))
+    .catch((err: unknown) => ({ ok: false as const, error: err instanceof Error ? err.message : 'couldn’t save the colour' }))
+  if (!r.ok) {
+    snap = before
+    for (const l of listeners) l()
+    return r
+  }
+  void refreshIpodLists()
+  return { ok: true, homemini: r.homemini }
+}
+
+/** The colour the cover shows for an entry (its model's default when none). */
+export function entryColor(e: Pick<IpodListEntry, 'model' | 'color'>): string {
+  return e.color ?? IPOD_DEFAULT_COLOR[e.model]
+}
+
+/** The lists as they are now, without asking main again (covers: one per sidebar row). */
+export function useIpodListsSnapshot(): IpodListEntry[] {
+  return useSyncExternalStore(subscribe, getSnapshot)
 }
