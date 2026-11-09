@@ -163,3 +163,30 @@ export async function sweepOnce(deps: EvictionDeps): Promise<SweepResult> {
   }
   return r
 }
+
+export interface EvictionReceipt { md5: string; bytes: number; when: string }
+
+/**
+ * The journal read back: colon path → the LAST receipt for it (a file can be
+ * evicted, brought back, retagged and evicted again; only the last is the file
+ * homemini was proven to hold). A torn or malformed line is skipped.
+ * Used by ipod-prefetch.ts to recognise an evicted file when it comes back.
+ */
+export function parseEvictionJournal(text: string): Map<string, EvictionReceipt> {
+  const out = new Map<string, EvictionReceipt>()
+  for (const line of text.split('\n')) {
+    const s = line.trim()
+    if (!s) continue
+    try {
+      const r = JSON.parse(s) as { when?: unknown; rel?: unknown; md5?: unknown; bytes?: unknown }
+      const rel = typeof r.rel === 'string' ? r.rel : ''
+      const md5 = typeof r.md5 === 'string' ? r.md5.toLowerCase() : ''
+      const bytes = Number(r.bytes)
+      if (!/^F\d+\/[^/\\:]+$/.test(rel) || !/^[0-9a-f]{32}$/.test(md5) || !Number.isSafeInteger(bytes) || bytes <= 0) continue
+      out.set(`:iPod_Control:Music:${rel.replace('/', ':')}`, { md5, bytes, when: typeof r.when === 'string' ? r.when : '' })
+    } catch {
+      // a torn last line from a crash
+    }
+  }
+  return out
+}

@@ -105,6 +105,16 @@ export interface HomeminiPrefixProbe {
   transportError: boolean
   status: number
   body: Buffer | null
+  /** homemini's ETag for the file, when it sent one. */
+  etag?: string | null
+  /** The whole file's size by Content-Range (or Content-Length on a 200), when it said. */
+  total?: number | null
+}
+
+/** The size homemini says the whole file is, from a ranged or a whole answer. */
+export function totalFromHeaders(status: number, contentRange: string | null, contentLength: string | null): number | null {
+  const n = status === 206 ? Number(/\/(\d+)\s*$/.exec(contentRange || '')?.[1]) : status === 200 ? Number(contentLength) : Number.NaN
+  return Number.isSafeInteger(n) && n > 0 ? n : null
 }
 
 export function readOffloadAudioFlag(settings: unknown): boolean {
@@ -790,7 +800,7 @@ export async function readPrefixBody(stream: ReadableStream<Uint8Array>, limit =
 /** Tells homemini this request is a file check or copy, not someone listening (its batch jobs yield to playback). */
 const COPY_PURPOSE = { 'X-JakeTunes-Purpose': 'copy' } as const
 
-async function defaultFetchPrefix(url: string): Promise<HomeminiPrefixProbe> {
+export async function defaultFetchPrefix(url: string): Promise<HomeminiPrefixProbe> {
   if (urlAsksForTranscode(url)) return { transportError: false, status: 0, body: null }
   try {
     const res = await fetch(url, withCompanionInit({
@@ -801,13 +811,17 @@ async function defaultFetchPrefix(url: string): Promise<HomeminiPrefixProbe> {
       return { transportError: false, status: res.status, body: null }
     }
     const body = await readPrefixBody(res.body)
-    return { transportError: false, status: res.status, body: body.length ? body : null }
+    return {
+      transportError: false, status: res.status, body: body.length ? body : null,
+      etag: res.headers.get('etag'),
+      total: totalFromHeaders(res.status, res.headers.get('content-range'), res.headers.get('content-length')),
+    }
   } catch {
     return { transportError: true, status: 0, body: null }
   }
 }
 
-async function defaultOpenRaw(url: string): Promise<RawOpen> {
+export async function defaultOpenRaw(url: string): Promise<RawOpen> {
   if (urlAsksForTranscode(url)) return { ok: false, transportError: false, status: 0 }
   try {
     const res = await fetch(url, withCompanionInit({
@@ -830,7 +844,7 @@ async function defaultOpenRaw(url: string): Promise<RawOpen> {
   }
 }
 
-async function compareOpened(
+export async function compareOpened(
   url: string,
   localAbs: string,
   openRaw: (url: string) => Promise<RawOpen>,
@@ -855,6 +869,13 @@ async function compareOpened(
     if (opened.transportError) return { ok: false, reason: 'unreachable' }
     if (opened.status === 404 || opened.status === 204) return { ok: false, reason: 'missing' }
     return { ok: false, reason: opened.status === 0 ? 'unreachable' : 'different' }
+  }
+  // A different size can't be the same file: say so without reading the body.
+  if (opened.contentLength != null && opened.contentLength !== local.bytes) {
+    await opened.stream.cancel().catch((err) => {
+      console.warn('[offload] raw body cancel failed:', err instanceof Error ? err.message : err)
+    })
+    return { ok: false, reason: 'different' }
   }
   const remote = await digestWebStream(opened.stream, opened.contentLength)
   if (remote === 'short') return { ok: false, reason: 'unreachable' }

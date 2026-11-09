@@ -10,9 +10,11 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  fetchResumable, nextRefused, parseRefused, planPrefetch, prefetchLogLine, probeFingerprint, refusalKey, REFUSED_HOLD_MS, runPrefetchPass, splitRefused, verifyFetched,
-  type FetchLike, type FetchOneResult, type LocalKind, type PrefetchItem,
+  afterProbe, decidePrefetch, remoteCopyKey, fetchResumable, nextRefused, owedFingerprints, parseOwedFingerprints, parseRefused, planPrefetch, prefetchLogLine, probeFingerprint, refusalKey, REFUSED_HOLD_MS, runPrefetchPass, splitRefused, verifyFetched,
+  type FetchLike, type FetchOneResult, type LocalKind, type PrefetchItem, type RefusedMemory,
 } from '../ipod-prefetch.ts'
+import type { HomeminiIdentity, PendingIdentity } from '../audio-identity.ts'
+import { parseEvictionJournal } from '../library-eviction.ts'
 
 const GB = 1024 ** 3
 const colon = (id: number) => `:iPod_Control:Music:F01:imported_${id}.m4a`
@@ -259,7 +261,8 @@ describe('a song homemini’s copy can’t prove is not fetched again every pass
   })
   it('the log line says how many are waiting', () => {
     const pass = { fetched: 0, fetchedBytes: 0, failed: [], left: 2, leftBytes: 0, stoppedBecause: null }
-    assert.match(prefetchLogLine({ total: 10, local: 8 }, pass, 2), /2 not asked for again today/)
+    assert.match(prefetchLogLine({ total: 10, local: 8 }, pass, 2), /2 not asked for again until something changes/)
+    assert.match(prefetchLogLine({ total: 10, local: 8 }, pass, 0, 3), /3 waiting until this Mac is home/)
     assert.doesNotMatch(prefetchLogLine({ total: 10, local: 8 }, pass), /not asked/)
   })
   it('the pass is wired to all of it (ipod-local-start.ts)', async () => {
@@ -268,8 +271,202 @@ describe('a song homemini’s copy can’t prove is not fetched again every pass
     const whole = src.indexOf('fetchResumable({ url, partPath: part')
     assert.ok(probe > 0 && whole > probe, 'the probe runs before the whole file is fetched')
     assert.match(src, /items: toFetch,/, 'held songs are not handed to the pass')
-    assert.equal((src.match(/refusedNow\.push\(item\)/g) ?? []).length, 2, 'both refusals are remembered')
-    assert.match(src, /nextRefused\(memory, plan\.items, refusedNow, landed, Date\.now\(\)\)/)
+    assert.equal((src.match(/refusedNow\.push\(item\)/g) ?? []).length, 1, 'one door for every refusal')
+    assert.equal((src.match(/return refuse\(item, part, /g) ?? []).length, 2, 'both refusals go through it')
+    assert.match(src, /nextRefused\(memory, plan\.items, refusedNow, landed, Date\.now\(\), remote\)/)
     assert.match(src, /headers\.set\('X-JakeTunes-Purpose', 'copy'\)/)
+  })
+})
+
+// 2026-11-09, ~/concert-repair/refused-copies-diagnosis.md: all 480 refused iPod
+// songs were homemini holding the very file this Mac evicted. The tags had been
+// rewritten after import and the library's fingerprint never was.
+describe('an evicted song is recognised by the file this Mac evicted', () => {
+  const body = Buffer.concat([Buffer.alloc(300 * 1024, 3), Buffer.from('the audio')])
+  const md5 = createHash('md5').update(body).digest('hex')
+  const sha = createHash('sha1').update(body).digest('hex')
+  const staleFp = 'sha1:0000000000000000|1000'
+  const rightFp = `sha1:${createHash('sha1').update(body.subarray(0, 256 * 1024)).digest('hex').slice(0, 16)}|1000`
+  let dir = ''
+  let part = ''
+  before(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'jt-evicted-'))
+    part = join(dir, 'x.part')
+    await writeFile(part, body)
+  })
+  after(async () => { await rm(dir, { recursive: true, force: true }) })
+
+  it('evictions.log is read back by path, the last receipt for a path winning', () => {
+    const log = [
+      JSON.stringify({ when: '2026-09-01T00:00:00Z', rel: 'F19/ZJRS.m4a', md5: 'a'.repeat(32), bytes: 10 }),
+      JSON.stringify({ when: '2026-09-02T00:00:00Z', rel: 'F31/XCNW.m4a', md5: 'B'.repeat(32), bytes: 20 }),
+      JSON.stringify({ when: '2026-09-03T00:00:00Z', rel: 'F19/ZJRS.m4a', md5: 'c'.repeat(32), bytes: 30 }),
+      JSON.stringify({ rel: '../etc/passwd', md5: 'd'.repeat(32), bytes: 5 }),
+      JSON.stringify({ rel: 'F02/short.m4a', md5: 'abc', bytes: 5 }),
+      JSON.stringify({ rel: 'F03/nobytes.m4a', md5: 'e'.repeat(32), bytes: 0 }),
+      '{"when":"2026-09-04T00:00:00Z","rel":"F04/torn.m4a","md5":"',
+    ].join('\n')
+    const m = parseEvictionJournal(log)
+    assert.deepEqual([...m.keys()], [':iPod_Control:Music:F19:ZJRS.m4a', ':iPod_Control:Music:F31:XCNW.m4a'])
+    assert.deepEqual(m.get(':iPod_Control:Music:F19:ZJRS.m4a'), { md5: 'c'.repeat(32), bytes: 30, when: '2026-09-03T00:00:00Z' })
+    assert.equal(m.get(':iPod_Control:Music:F31:XCNW.m4a')?.md5, 'b'.repeat(32))
+  })
+
+  it('the plan carries the receipt', async () => {
+    const tracks = [{ id: 1, path: colon(1), fileSize: body.length, audioFingerprint: staleFp }]
+    const plan = await planPrefetch([1], tracks, async () => 'missing', new Map(), new Map([[colon(1), { md5, bytes: body.length }]]))
+    assert.deepEqual(plan.items[0].evicted, { md5, bytes: body.length })
+  })
+
+  it('the evicted file passes on md5 and size though the library’s fingerprint is stale', async () => {
+    const it1: PrefetchItem = { id: 1, colon: colon(1), bytes: body.length, fingerprint: staleFp, evicted: { md5, bytes: body.length } }
+    assert.equal(await verifyFetched(part, it1), null)
+    // without the receipt it is still refused, as on 11/9
+    assert.match(String(await verifyFetched(part, { ...it1, evicted: undefined })), /fingerprint/)
+  })
+
+  it('another file is refused: wrong md5, or the right md5 beside the wrong size', async () => {
+    const wrongMd5: PrefetchItem = { id: 1, colon: colon(1), bytes: body.length, fingerprint: staleFp, evicted: { md5: 'f'.repeat(32), bytes: body.length } }
+    assert.match(String(await verifyFetched(part, wrongMd5)), /neither the file this Mac evicted/)
+    const wrongSize: PrefetchItem = { id: 1, colon: colon(1), bytes: body.length, evicted: { md5, bytes: body.length + 1 } }
+    assert.match(String(await verifyFetched(part, wrongSize)), /md5 doesn’t match the file this Mac evicted/)
+    const notAnMd5: PrefetchItem = { id: 1, colon: colon(1), bytes: body.length, evicted: { md5: '', bytes: body.length } }
+    assert.ok(await verifyFetched(part, notAnMd5), 'an empty md5 on record proves nothing')
+  })
+
+  it('a whole-file sha1 on record is never rescued by the 256 KB fingerprint, only by the receipt', async () => {
+    const offloaded: PrefetchItem = { id: 1, colon: colon(1), bytes: body.length, fullSha1: '0'.repeat(40), fingerprint: rightFp }
+    assert.match(String(await verifyFetched(part, offloaded)), /sha1/)
+    assert.equal(await verifyFetched(part, { ...offloaded, evicted: { md5, bytes: body.length } }), null)
+    assert.equal(await verifyFetched(part, { ...offloaded, fullSha1: sha.toUpperCase() }), null)
+    // a receipt that doesn't match falls back to the fingerprint, as a song with no receipt does
+    assert.equal(await verifyFetched(part, { id: 1, colon: colon(1), bytes: 1, fingerprint: rightFp, evicted: { md5: 'f'.repeat(32), bytes: 1 } }), null)
+  })
+
+  it('the refusals written before the receipt counted are tried again, once', () => {
+    // The shape ipod-prefetch-refused.json had on 11/9: 480 rows, an empty full sha1, no receipt.
+    const before: PrefetchItem = { id: 518, colon: colon(518), bytes: 11124599, fingerprint: staleFp }
+    const old: RefusedMemory = { 518: { key: `${staleFp}||11124599`, at: 1000 } }
+    const now: PrefetchItem = { ...before, evicted: { md5, bytes: 11124599 } }
+    assert.deepEqual(splitRefused([now], old, 2000).held, [], 'worth a new try at once')
+    assert.deepEqual(nextRefused(old, [now], [], new Set([518]), 3000), {}, 'and gone from the file when it lands')
+    assert.deepEqual(nextRefused(old, [now], [], new Set(), 3000), {}, 'or as soon as the record it was made on is not the record any more')
+  })
+})
+
+describe('homemini is asked what it holds before anything is downloaded', () => {
+  const home = { away: false, userAsked: false }
+  const away = { away: true, userAsked: false }
+  const asked = { away: true, userAsked: true }
+  const remote: HomeminiIdentity = { size: 500, sha1: 'a'.repeat(40), etag: '"1f4-19e6c96fcd8"' }
+  const base: PrefetchItem = { id: 1, colon: colon(1), bytes: 500 }
+
+  it('a file homemini doesn’t have is not asked for', () => {
+    assert.equal(decidePrefetch({ ...base, fingerprint: 'sha1:aa|1' }, null, home), 'absent')
+  })
+  it('the sha1 this Mac logged when it offloaded the file: proven, fetched anywhere', () => {
+    assert.equal(decidePrefetch({ ...base, fullSha1: 'A'.repeat(40) }, remote, away), 'fetch')
+    assert.equal(decidePrefetch({ ...base, fullSha1: 'b'.repeat(40) }, remote, home), 'refuse', 'another sha1 and no receipt: nothing downloaded')
+    assert.equal(decidePrefetch({ ...base, fullSha1: 'b'.repeat(40), fingerprint: 'sha1:aa|1' }, remote, home), 'refuse', 'the fingerprint doesn’t rescue it')
+  })
+  it('an evicted file at the size homemini holds is fetched at home and waits when away', () => {
+    const ev: PrefetchItem = { ...base, fingerprint: 'sha1:stale|1', evicted: { md5: 'c'.repeat(32), bytes: 500 } }
+    assert.equal(decidePrefetch(ev, remote, home), 'fetch')
+    assert.equal(decidePrefetch(ev, remote, away), 'wait-home')
+    assert.equal(decidePrefetch(ev, remote, asked), 'fetch', 'Jake’s Wait is a request')
+  })
+  it('an evicted file at another size is not downloaded to find out', () => {
+    assert.equal(decidePrefetch({ ...base, evicted: { md5: 'c'.repeat(32), bytes: 499 } }, remote, home), 'refuse')
+    assert.equal(decidePrefetch({ ...base, fingerprint: 'sha1:aa|1', evicted: { md5: 'c'.repeat(32), bytes: 499 } }, remote, home), 'probe', 'the library’s fingerprint still gets its 256 KB')
+  })
+  it('a file homemini hasn’t hashed yet: an evicted song needs only its size; an offloaded one waits for the hash', () => {
+    const pending: PendingIdentity = { pending: true, size: 500, etag: '"1f4-1"' }
+    const ev: PrefetchItem = { ...base, fingerprint: 'sha1:stale|1', evicted: { md5: 'c'.repeat(32), bytes: 500 } }
+    assert.equal(decidePrefetch(ev, pending, home), 'fetch')
+    assert.equal(decidePrefetch(ev, pending, away), 'wait-home')
+    assert.equal(decidePrefetch({ ...base, fullSha1: 'a'.repeat(40) }, pending, home), 'later')
+    assert.equal(decidePrefetch({ ...base, evicted: { md5: 'c'.repeat(32), bytes: 500 } }, { pending: true }, home), 'later', 'no size said: nothing to go on yet')
+    assert.equal(decidePrefetch({ ...base, evicted: { md5: 'c'.repeat(32), bytes: 499 } }, pending, home), 'refuse')
+  })
+  it('a fingerprint alone is probed; nothing on record is fetched, as before', () => {
+    assert.equal(decidePrefetch({ ...base, fingerprint: 'sha1:aa|1' }, remote, away), 'probe')
+    assert.equal(decidePrefetch(base, remote, away), 'fetch')
+  })
+  it('an older backend (no answer possible): whole-file checks run at home only', () => {
+    assert.equal(decidePrefetch({ ...base, fullSha1: 'a'.repeat(40) }, undefined, home), 'fetch')
+    assert.equal(decidePrefetch({ ...base, fullSha1: 'a'.repeat(40) }, undefined, away), 'wait-home')
+    assert.equal(decidePrefetch({ ...base, evicted: { md5: 'c'.repeat(32), bytes: 500 } }, undefined, away), 'wait-home')
+    assert.equal(decidePrefetch({ ...base, evicted: { md5: 'c'.repeat(32), bytes: 500 } }, undefined, asked), 'fetch')
+    assert.equal(decidePrefetch({ ...base, fingerprint: 'sha1:aa|1' }, undefined, away), 'probe')
+  })
+  it('after the probe: match fetches, mismatch refuses, no answer is a whole-file check', () => {
+    assert.equal(afterProbe('match', away), 'fetch')
+    assert.equal(afterProbe('mismatch', home), 'refuse')
+    assert.equal(afterProbe('unknown', home), 'fetch')
+    assert.equal(afterProbe('unknown', away), 'wait-home')
+    assert.equal(afterProbe('unknown', asked), 'fetch')
+  })
+
+  it('a refusal is held for as long as homemini gives the same answer, and no longer', () => {
+    const a: PrefetchItem = { ...base, fingerprint: 'sha1:aa|1' }
+    const answers = new Map([['1', remote]])
+    const memory = nextRefused({}, [a], [a], new Set(), 1000, answers)
+    assert.equal(memory['1'].remote, remoteCopyKey(remote))
+    const aWeek = 1000 + 7 * REFUSED_HOLD_MS
+    assert.deepEqual(splitRefused([a], memory, aWeek, REFUSED_HOLD_MS, answers).held.map((i) => i.id), [1], 'a week on, same answer: still not asked for')
+    const replaced = new Map([['1', { ...remote, etag: '"1f4-19e6c96ffff"' }]])
+    assert.deepEqual(splitRefused([a], memory, 2000, REFUSED_HOLD_MS, replaced).held, [], 'homemini’s copy changed: worth a new try')
+    // homemini finishing its hash of the same copy is not a change: no second download
+    const unhashed: PendingIdentity = { pending: true, size: remote.size, etag: remote.etag }
+    const early = nextRefused({}, [a], [a], new Set(), 1000, new Map([['1', unhashed]]))
+    assert.deepEqual(splitRefused([a], early, 2000, REFUSED_HOLD_MS, answers).held.map((i) => i.id), [1])
+    assert.equal(remoteCopyKey({ pending: true }), undefined, 'no ETag: homemini didn’t say which copy')
+    assert.equal(remoteCopyKey(null), undefined)
+    // homemini can't be asked this pass (older backend): the day's hold carries it
+    assert.deepEqual(splitRefused([a], memory, 2000, REFUSED_HOLD_MS, null).held.map((i) => i.id), [1])
+    assert.deepEqual(splitRefused([a], memory, aWeek, REFUSED_HOLD_MS, null).held, [])
+    assert.deepEqual(parseRefused(JSON.stringify(memory)), memory, 'the answer survives the file')
+  })
+
+  it('a landed song’s fingerprint is owed to the library until the library shows it', () => {
+    const owed = { 7: { id: 7, fileSize: 900, audioFingerprint: 'sha1:new|5' }, 8: { id: 8, fileSize: 100, audioFingerprint: 'sha1:n8|5' }, 9: { id: 9, fileSize: 1 } }
+    const tracks = [
+      { id: 7, path: colon(7), fileSize: 900, audioFingerprint: 'sha1:old|5' },
+      { id: 8, path: colon(8), fileSize: 100, audioFingerprint: 'sha1:n8|5' },
+    ]
+    const r = owedFingerprints(owed, tracks)
+    assert.deepEqual(Object.keys(r.still), ['7'], '8 is shown, 9 left the library')
+    assert.deepEqual(r.resend, [owed[7]])
+    assert.deepEqual(owedFingerprints(r.still, [{ ...tracks[0], audioFingerprint: 'sha1:new|5' }]), { still: {}, resend: [] })
+    assert.deepEqual(parseOwedFingerprints(JSON.stringify(owed)), owed)
+    assert.deepEqual(parseOwedFingerprints('{torn'), {})
+    assert.deepEqual(parseOwedFingerprints(JSON.stringify({ x: { fileSize: 5 }, 3: { fileSize: 0 }, 4: null })), {})
+  })
+
+  it('the pass is wired to it (ipod-local-start.ts, index.ts)', async () => {
+    const src = await readFile(new URL('../ipod-local-start.ts', import.meta.url), 'utf8')
+    const ask = src.indexOf('askAudioIdentity({ baseUrl: host.baseUrl')
+    const whole = src.indexOf('fetchResumable({ url, partPath: part')
+    assert.ok(ask > 0 && ask < whole, 'homemini is asked before any file is fetched')
+    assert.match(src, /if \(answer\.kind === 'unreachable'\) \{ skip\(/, 'no answer decides nothing')
+    assert.match(src, /await evictedByPath\(\)\)/, 'the plan gets the eviction receipts')
+    assert.match(src, /splitRefused\(plan\.items, memory, Date\.now\(\), REFUSED_HOLD_MS, remote\)/)
+    assert.match(src, /away: await host\.isAway\(\)\.catch\(\(\) => true\), userAsked: asked/, 'an away check that fails reads as away')
+    assert.match(src, /userAsked = true/, 'the Device page’s Wait is a request')
+    const verify = src.indexOf('const bad = await verifyFetched(part, item)')
+    const land = src.indexOf('await host.materialize(item.colon')
+    const measure = src.indexOf('await measureLanded(item, tracks)')
+    assert.ok(verify > whole && land > verify && measure > land, 'verified, then written, then measured')
+    assert.match(src, /for \(const m of resend\) host\.tellLibrary\(m\)/)
+    // The library has one writer (the renderer's save). This module hands it a measurement and writes no library file.
+    assert.equal(/library\.json|LIBRARY_PATH/.test(src), false)
+    // Never on a replica (workmini, homemini's own app): the pass leaves before anything is measured or told.
+    const cycleSrc = src.slice(src.indexOf('async function cycle()'))
+    const replicaGate = cycleSrc.indexOf('if (!(await applies())) return')
+    assert.ok(replicaGate > 0 && replicaGate < cycleSrc.indexOf('settleOwed('), 'the replica gate comes first')
+    assert.equal((src.match(/settleOwed\(/g) ?? []).length, 3, 'defined once, called twice, both inside the pass')
+    assert.equal(src.slice(0, src.indexOf('async function cycle()')).split('host.tellLibrary(').length - 1, 1, 'told only from settleOwed')
+    const index = await readFile(new URL('../index.ts', import.meta.url), 'utf8')
+    assert.match(index, /isAway: isAwayFromHome, fingerprintOf: computeAudioFingerprint, tellLibrary: \(m\) => sendToRenderer\('tag-writeback:file-changed', m\)/)
   })
 })

@@ -44,9 +44,11 @@ export const NAS_STATE_DIR_PATH = NAS_STATE_DIR
 
 // The NAS circuit breaker, and no SMB at all when away from home: nas-breaker.ts,
 // nas-route.ts. A mount must be slow to trip the first; the second never looks.
+/** Is this Mac away from home (nas-route.ts)? One cached check for every caller. */
+export const isAwayFromHome = createAwayCheck({ readRoute: readNasRoute, ping: () => pingNas() })
 const breaker = createNasBreaker({
   probe: () => stat(NAS_STATE_DIR_PATH),
-  isAway: createAwayCheck({ readRoute: readNasRoute, ping: () => pingNas() }),
+  isAway: isAwayFromHome,
 })
 export const nasAvailable = breaker.nasAvailable
 export const isNasMounted = breaker.isNasMounted
