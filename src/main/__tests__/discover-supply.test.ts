@@ -18,8 +18,11 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   dayStride, relatedArtistPool, harvestAlbums, harvestSongs, buildDailyDiscovery,
+  resolveDeezerArtist, rotateKeepingNewFirst,
   type SupplyDeps,
 } from '../discover-supply.ts'
+import { isJunkArtistName } from '../../common/junk-artist.ts'
+import { knownTitleIndex } from '../discover-feed.ts'
 
 /** A fake Deezer: artists -> related -> albums/top-tracks, all in memory. */
 function fakeDeezer(opts: {
@@ -381,5 +384,161 @@ describe('harvestAlbums — instrumental / performed-by records are not records 
     const pool = await relatedArtistPool(['A'], deps({ fetchJson: dz.fetchJson }))
     const albums = await harvestAlbums(pool, 10, deps({ fetchJson: dz.fetchJson }))
     assert.deepEqual(albums.map((a) => a.title), ['Songs of Innocence', 'A Real Record'])
+  })
+})
+
+// ── 2026-11-08: "the record store recommendations have gotten really bad" ──
+// Jake: "Not my taste", "Already own them", "Weird/random picks". Every
+// fixture below is a real card or a real Deezer answer from that day.
+
+/** Deezer's search answers as recorded on 2026-11-08 (name, fans), first hit first. */
+const DEEZER_SEARCH_20261108: Record<string, Array<[string, number]>> = {
+  'JOSIE.': [['Jessie J', 5097401], ['Joseph Kamel', 146033], ['Josie Charles', 357]],
+  Eminem: [["Emine'm", 920], ['Eminem', 19175056], ['TI feat. Eminem', 795]],
+  Nirvana: [['Nirvana (UK)', 272], ['Nirvana', 10105660], ['Approaching Nirvana', 10029]],
+  Sublime: [['SuBlime ', 17], ['Sublime', 43], ['Sublime', 315449], ['Sublime with Rome', 21924]],
+  Underworld: [['Underworld', 40], ['Underworld', 110212], ['The Hickey Underworld', 2758]],
+  'Crown Lands': [['CROWNLANDS', 4], ['Crown Lands', 2268]],
+  Echowave: [['EchoWave', 74]],
+}
+
+function recordedSearch(): { fetchJson: SupplyDeps['fetchJson']; idOf: (name: string, fans: number) => number } {
+  const ids = new Map<string, number>()
+  const idOf = (name: string, fans: number): number => {
+    const k = `${name}#${fans}`
+    if (!ids.has(k)) ids.set(k, 500 + ids.size)
+    return ids.get(k)!
+  }
+  const fetchJson = async (url: string): Promise<unknown> => {
+    const m = url.match(/search\/artist\?q=([^&]+)/)
+    if (!m) return { data: [] }
+    const rows = DEEZER_SEARCH_20261108[decodeURIComponent(m[1])] ?? []
+    return { data: rows.map(([name, nb_fan]) => ({ id: idOf(name, nb_fan), name, nb_fan })) }
+  }
+  return { fetchJson, idOf }
+}
+
+describe('resolveDeezerArtist — the anchor is the band Jake means, never a namesake (2026-11-08)', () => {
+  test('JOSIE. is not Jessie J: no artist of that name means no anchor', async () => {
+    const dz = recordedSearch()
+    assert.equal(await resolveDeezerArtist('JOSIE.', dz), null)
+  })
+
+  test('Eminem, Nirvana, Sublime, Underworld: the same-named act with the most fans wins', async () => {
+    const dz = recordedSearch()
+    assert.equal((await resolveDeezerArtist('Eminem', dz))?.id, dz.idOf('Eminem', 19175056))
+    assert.equal((await resolveDeezerArtist('Nirvana', dz))?.id, dz.idOf('Nirvana', 10105660))
+    assert.equal((await resolveDeezerArtist('Sublime', dz))?.id, dz.idOf('Sublime', 315449))
+    assert.equal((await resolveDeezerArtist('Underworld', dz))?.id, dz.idOf('Underworld', 110212))
+    assert.equal((await resolveDeezerArtist('Crown Lands', dz))?.id, dz.idOf('Crown Lands', 2268))
+  })
+
+  test('case and punctuation are not a different name', async () => {
+    const dz = recordedSearch()
+    assert.equal((await resolveDeezerArtist('Echowave', dz))?.name, 'EchoWave')
+  })
+
+  test("a wrong anchor's neighbours never reach the pool", async () => {
+    const dz = recordedSearch()
+    const fetchJson = async (url: string): Promise<unknown> => {
+      const rel = url.match(/artist\/(\d+)\/related/)
+      if (rel && Number(rel[1]) === dz.idOf('Jessie J', 5097401)) return { data: [{ id: 9001, name: 'Nick Jonas', nb_fan: 3000000, nb_album: 20 }] }
+      if (rel && Number(rel[1]) === dz.idOf('Nirvana', 10105660)) return { data: [{ id: 9002, name: 'Mudhoney', nb_fan: 90000, nb_album: 30 }] }
+      return dz.fetchJson(url)
+    }
+    const pool = await relatedArtistPool(['JOSIE.', 'Nirvana'], deps({ fetchJson }))
+    assert.deepEqual(pool.map((p) => p.name), ['Mudhoney'])
+  })
+})
+
+describe('resolveDeezerArtist — a same-named stranger is not the band (2026-11-08)', () => {
+  // Deezer's only "josie" (100 fans) sings "Submarine Queen" and "keep on";
+  // Jake's JOSIE. is "did i stutter?" on his Spotify. Two Underworlds: the
+  // one with "Born Slippy" is the one he plays.
+  const fetchJson = async (url: string): Promise<unknown> => {
+    if (url.includes('search/artist?q=JOSIE.')) return { data: [{ id: 1, name: 'Jessie J', nb_fan: 5097401 }, { id: 2, name: 'josie', nb_fan: 100 }] }
+    if (url.includes('search/artist?q=Underworld')) return { data: [{ id: 3, name: 'Underworld', nb_fan: 40 }, { id: 4, name: 'Underworld', nb_fan: 110212 }] }
+    if (url.includes('artist/2/top')) return { data: [{ title: 'Submarine Queen' }, { title: 'keep on' }] }
+    if (url.includes('artist/4/top')) return { data: [{ title: 'Born Slippy (Nuxx)' }, { title: 'Rez' }] }
+    if (url.includes('artist/3/top')) return { data: [{ title: 'Grave Dust' }] }
+    return { data: [] }
+  }
+  const known: Record<string, string[]> = { 'JOSIE.': ['did i stutter? - Radio Edit'], Underworld: ['Born Slippy .NUXX', 'Born Slippy (Nuxx)'] }
+
+  test('JOSIE. with known songs and no Deezer act that has them: no anchor', async () => {
+    assert.equal(await resolveDeezerArtist('JOSIE.', { fetchJson, knownTitles: (a) => known[a] ?? [] }), null)
+  })
+
+  test('the Underworld that has his songs is the anchor', async () => {
+    assert.equal((await resolveDeezerArtist('Underworld', { fetchJson, knownTitles: (a) => known[a] ?? [] }))?.id, 4)
+  })
+
+  test('knownTitleIndex: library titles and albums, Spotify songs, under every credited name', () => {
+    const idx = knownTitleIndex(
+      [{ artist: 'Underworld', album: 'Second Toughest in the Infants', title: 'Born Slippy .NUXX' }, { artist: 'Rihanna, Kanye West, and Paul McCartney', title: 'FourFiveSeconds' }],
+      [{ artist: 'JOSIE.', song: 'did i stutter? - Radio Edit', album: 'did i stutter?' }],
+    )
+    assert.deepEqual(idx.get('underworld'), ['Born Slippy .NUXX', 'Second Toughest in the Infants'])
+    assert.ok(idx.get('paulmccartney')?.includes('FourFiveSeconds'))
+    assert.ok(idx.get('josie')?.includes('did i stutter? - Radio Edit'))
+  })
+})
+
+describe('rotateKeepingNewFirst — the daily rotation keeps new artists ahead of owned ones (2026-11-08)', () => {
+  test('owned artists never jump ahead, whatever the day', () => {
+    const pool = [
+      { name: 'Sorry', owned: false }, { name: 'Ray Bull', owned: false }, { name: 'Rampa', owned: false },
+      { name: 'Lou Reed', owned: true }, { name: 'Bob Dylan', owned: true }, { name: 'Foo Fighters', owned: true },
+    ]
+    for (const day of [20400, 20401, 20402, 20765]) {
+      const out = rotateKeepingNewFirst(pool, day)
+      assert.equal(out.length, pool.length)
+      assert.deepEqual(out.slice(0, 3).map((a) => a.owned), [false, false, false], `day ${day}`)
+      assert.deepEqual(new Set(out.map((a) => a.name)), new Set(pool.map((a) => a.name)))
+    }
+  })
+
+  test('the shelf fills from new artists first and only reaches owned ones when they run dry', async () => {
+    const related = { Anchor: ['Lou Reed', 'Bob Dylan', 'Sorry', 'Ray Bull', 'Rampa', 'Kiwi jr.'] }
+    const albums: Record<string, Array<{ title: string }>> = {}
+    for (const n of related.Anchor) albums[n] = [{ title: `${n} LP1` }, { title: `${n} LP2` }]
+    const dz = fakeDeezer({ related, albums })
+    const owned = new Set(['Lou Reed', 'Bob Dylan', 'Kiwi jr.'])
+    for (const day of [20400, 20401, 20402]) {
+      const r = await buildDailyDiscovery(['Anchor'], deps({ fetchJson: dz.fetchJson, ownsArtist: (a) => owned.has(a) }), { want: 6, dayNumber: day, maxPasses: 1 })
+      assert.ok(r.albums.every((a) => !owned.has(a.artist)), `day ${day}: ${r.albums.map((a) => a.artist).join(', ')}`)
+    }
+  })
+})
+
+describe('edition gate — compilations, soundtracks and dated tapes (2026-11-08 shelf)', () => {
+  test('the real cards are refused; canonical records beside them are kept', async () => {
+    const titles = [
+      'The Essential Foo Fighters',
+      'The Sire Years: Complete Albums Box',
+      'Collected Recordings 1983-1989',
+      'Power Ballad (Music From The Motion Picture)',
+      'Tout va bien (Original Soundtrack)',
+      'La hija de todas las rabias (Original Score)',
+      'The Rolling Thunder Revue 1976: Fort Collins Colorado, May 23rd',
+      'The Rolling Thunder Revue 1976: Fort Worth Texas, May 16th',
+      'Power To The People (Home Jam)',
+    ]
+    for (const t of titles) {
+      const dz = fakeDeezer({ related: { A: ['Band'] }, albums: { Band: [{ title: t }] } })
+      const out = await harvestAlbums([{ id: dz.idFor('Band'), name: 'Band', anchor: 'A' }], 10, deps({ fetchJson: dz.fetchJson }))
+      assert.deepEqual(out, [], t)
+    }
+    const keep = ['Anywhere But Here', 'Spatial, No Problem.', 'Chopper', 'Lulu', 'Five Dice, All Threes', 'Milk And Honey']
+    for (const t of keep) {
+      const dz = fakeDeezer({ related: { A: ['Band'] }, albums: { Band: [{ title: t }] } })
+      const out = await harvestAlbums([{ id: dz.idFor('Band'), name: 'Band', anchor: 'A' }], 10, deps({ fetchJson: dz.fetchJson }))
+      assert.equal(out.length, 1, t)
+    }
+  })
+
+  test('a revival band is a tribute act', () => {
+    assert.equal(isJunkArtistName('The Beatles Revival Band'), true)
+    assert.equal(isJunkArtistName('Creedence Clearwater Revival'), false)
   })
 })

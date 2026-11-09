@@ -60,6 +60,18 @@ export async function saveSpotifyTaste(taste: SpotifyTasteFile, file: string): P
   await rename(tmp, file)
 }
 
+/** Every song in the pulled slices (top tracks + recent likes) — [] when
+ *  never pulled. The shop checks a Deezer anchor against these titles. */
+export async function loadSpotifyTasteTracks(file: string): Promise<SpotifyTasteTrack[]> {
+  try {
+    const v = JSON.parse(await readFile(file, 'utf-8')) as SpotifyTasteFile
+    return [...(Array.isArray(v.topTracks) ? v.topTracks : []), ...(Array.isArray(v.likedRecent) ? v.likedRecent : [])]
+      .filter((t) => t && typeof t.artist === 'string' && !blocked(t.artist))
+  } catch {
+    return []
+  }
+}
+
 /** Top Spotify artists for the shop's anchor pool — [] when never pulled. */
 export async function loadSpotifyTasteAnchors(file: string, max = 4): Promise<string[]> {
   try {

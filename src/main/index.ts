@@ -151,7 +151,7 @@ import { createArtistWiki } from './artist-wiki.ts'
 import { initPlaylistHubSync, schedulePlaylistHubConverge, type HubPlaylistLike } from './playlist-hub-sync.ts'
 import { initMixtapeHubSync, scheduleMixtapeHubConverge } from './mixtape-hub-sync.ts'
 import { registerSpotifyIpc } from './spotify-ipc.ts'
-import { loadSpotifyTasteAnchors } from './spotify-taste.ts'
+import { loadSpotifyTasteAnchors, loadSpotifyTasteTracks } from './spotify-taste.ts'
 import { readMixtapesForHub, writeMixtapesFromHub, mixtapeTombstonesFile, mixtapeIntrosDir } from './mixtapes.ts'
 import { tombstonesPath as playlistTombstonesPath, loadTombstones as loadPlaylistTombstones } from './playlist-tombstones.ts'
 import { pinsPath as playlistPinsPath } from './playlist-pins.ts'
@@ -1600,7 +1600,7 @@ ipc.handle('discovery-allow-again', async (_e, artist: string) => {
 // feed built by v2 carries VA-compilation junk cards and must regenerate.
 // v4 (2026-08-07): "From the Scene" lane (human-graph reach — the
 // Ceremony problem); regenerate so the lane appears.
-const FEED_GEN_VERSION = 12  // 2026-10-18: critic wall lane (critic-picks-feed.ts)  // 11: 2026-10-11: Rock DNA rides in the picking prompts, Dislike leaves the shop  // 10: 2026-10-10: taste profile — Rocksurgence seeds the supply, math rock gated, Angine an exception  // 9: cover-factory gates in the supply lane  // 8: curator lane — Spotify curator picks seat New Songs slots (2026-09-01); 7: supply edition gate; 6: 25/25 supply lanes; 5: bins + hooks + pitches
+const FEED_GEN_VERSION = 13  // 2026-11-08: supply anchors resolve by exact name (no Deezer namesakes), new artists lead the rotation, compilations/soundtracks/dated tapes gated  // 12: 2026-10-18: critic wall lane (critic-picks-feed.ts)  // 11: 2026-10-11: Rock DNA rides in the picking prompts, Dislike leaves the shop  // 10: 2026-10-10: taste profile — Rocksurgence seeds the supply, math rock gated, Angine an exception  // 9: cover-factory gates in the supply lane  // 8: curator lane — Spotify curator picks seat New Songs slots (2026-09-01); 7: supply edition gate; 6: 25/25 supply lanes; 5: bins + hooks + pitches
 type FeedCacheShape = { at: number; ver?: number; lanes: Array<{ id: string; title: string; cards: unknown[] }> }
 let discoverFeedMem: FeedCacheShape | null = null
 const DISCOVER_TTL_MS = 3 * 60 * 60 * 1000
@@ -1836,7 +1836,7 @@ async function generateDiscoverFeed(): Promise<{ ok: boolean; lanes?: Array<{ id
     // L0 · Bulk supply — the 25/25 quota lanes (Jake: "NO LESS"). Deezer graph, module-side; all 16
     // anchors feed the pool, plus his top SPOTIFY artists ("wire in the taste signal they use").
     const spotifyAnchors = await loadSpotifyTasteAnchors(join(STATE_DIR, 'spotify-taste.json'), 4)
-    const supplyPromise = df.supplyLanes([...anchors.map((a) => a.artist), ...spotifyAnchors, ...focus.anchors(dayN)], dayN, { artists: ownedArtists, albumKeys: ownedAlbumKeys, baseKeys: ownedBaseKeys }).then((cs) => { cards.push(...cs) }).catch((err) => console.warn('[discover] supply lanes failed:', err))
+    const supplyPromise = df.supplyLanes([...anchors.map((a) => a.artist), ...spotifyAnchors, ...focus.anchors(dayN)], dayN, { artists: ownedArtists, albumKeys: ownedAlbumKeys, baseKeys: ownedBaseKeys, titlesBy: df.knownTitleIndex(tracks as Array<{ artist?: string; albumArtist?: string; album?: string; title?: string }>, await loadSpotifyTasteTracks(join(STATE_DIR, 'spotify-taste.json'))) }).then((cs) => { cards.push(...cs) }).catch((err) => console.warn('[discover] supply lanes failed:', err))
 
     // L5 · Critic wall — a public ratings sheet's 9s/10s he doesn't own, 5 a day, credited; IN ADDITION to the 25/25 and never a taste signal (critic-picks-feed.ts). Unshifted so it wins cross-lane dedupe.
     const criticPromise = import('./critic-picks-feed.ts').then((m) => m.criticPickCards({ stateDir: STATE_DIR, tracks: tracks as Array<{ artist?: string; albumArtist?: string; album?: string }>, owned: { artists: ownedArtists, albumKeys: ownedAlbumKeys, baseKeys: ownedBaseKeys }, blocks: focus.blocks, feedback: sharedDiscoveryFeedback, isOnList: async () => listenListPredicate(await readRecommendationsFile()) })).then((cs) => { cards.unshift(...cs) }).catch((err) => console.warn('[discover] critic picks failed:', err))
