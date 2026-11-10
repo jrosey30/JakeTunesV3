@@ -460,6 +460,22 @@ describe('pinned pre-loads survive the cap pass', () => {
 describe('preloadSpool', () => {
   const opts = { paceBytesPerSec: 0, stallMs: 2_000, headerTimeoutMs: 2_000, deadlineMs: 5_000, limits: spoolLimitsFor(true) }
 
+  test('every pre-load request says it is a copy; a daytime play\'s spool does not (homemini must not take it for a listener)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'preload-purpose-'))
+    const seen: Array<{ url: string; purpose: string | null }> = []
+    const fetchFn = (async (url: string, init?: RequestInit) => {
+      seen.push({ url, purpose: new Headers(init?.headers).get('X-JakeTunes-Purpose') })
+      return new Response(Buffer.alloc(10, 1), { status: 200, headers: { 'content-length': '10' } })
+    }) as unknown as typeof fetch
+    assert.deepEqual(await preloadSpool(dir, 'night-copy', 'http://h/night-copy', { ...opts, fetchFn }), { kind: 'landed', bytes: 10 })
+    ensureSpool(dir, 'day-play', 'http://h/day-play', fetchFn)
+    await waitFor(() => seen.some((r) => r.url === 'http://h/day-play'), 'the playback spool to ask')
+    const night = seen.filter((r) => r.url === 'http://h/night-copy')
+    assert.ok(night.length >= 1 && night.every((r) => r.purpose === 'copy'), JSON.stringify(night))
+    assert.ok(seen.filter((r) => r.url === 'http://h/day-play').every((r) => r.purpose === null))
+    await waitFor(() => spoolQueueState().active === 0, 'the playback spool to finish')
+  })
+
   test('never takes the slot from a playback spool — "busy"', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'preload-busy-'))
     let release = (): void => {}

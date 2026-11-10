@@ -168,7 +168,7 @@ export function spoolPaceFor(kbps: number): number {
  *  `paceBytesPerSec` > 0: Range chunks averaging that rate; 0: one request. */
 async function landSpool(
   dir: string, key: string, url: string, fetchFn: typeof fetch, paceBytesPerSec: number,
-  signal: AbortSignal, stallMs = 0, onHeaders?: () => void,
+  signal: AbortSignal, stallMs = 0, onHeaders?: () => void, headers?: Record<string, string>,
 ): Promise<number> {
   const part = join(dir, `${key}.part.${process.pid}`)
   try {
@@ -176,7 +176,7 @@ async function landSpool(
     // cleanup) instead of an uncaught exception dialog and a spool slot that
     // never frees (2026-10-17); downloadInRangeChunks also verifies the size.
     const got = await downloadInRangeChunks(url, part, {
-      fetchFn, bytesPerSec: paceBytesPerSec, signal, stallMs,
+      fetchFn, bytesPerSec: paceBytesPerSec, signal, stallMs, headers,
       onFirstResponse: () => onHeaders?.(),
     })
     const contentType = got.contentType || 'audio/mpeg'
@@ -338,6 +338,17 @@ export interface PreloadSpoolOptions {
   limits: SpoolLimits
 }
 
+/**
+ * What the overnight pre-load says with every request: this is a copy, not
+ * someone listening. homemini's batch jobs wait while music is being served,
+ * and on 2026-11-10 its brain re-describe sat paused from 01:01 to 03:20
+ * because workmini's pre-load (one song after another, 01:00 to 06:00, every
+ * night) looked like a listener. homemini's backend already honours the header
+ * (JakeTunesMobile util/playbackActivity.ts isFileCopy). A daytime play's
+ * spool (ensureSpool) does NOT send it: that one is someone listening.
+ */
+export const PRELOAD_PURPOSE = { 'X-JakeTunes-Purpose': 'copy' } as const
+
 export async function preloadSpool(dir: string, key: string, url: string, opts: PreloadSpoolOptions): Promise<PreloadOutcome> {
   // Take the slot synchronously (no await before this) so a playback spool
   // can't slip into the same slot between the check and the claim.
@@ -355,7 +366,7 @@ export async function preloadSpool(dir: string, key: string, url: string, opts: 
     await mkdir(dir, { recursive: true })
     const ready = await spoolReady(dir, key)
     if (ready) return { kind: 'local', bytes: ready.total }
-    const bytes = await landSpool(dir, key, url, opts.fetchFn ?? fetch, opts.paceBytesPerSec, ac.signal, opts.stallMs, () => clearTimeout(headerTimer))
+    const bytes = await landSpool(dir, key, url, opts.fetchFn ?? fetch, opts.paceBytesPerSec, ac.signal, opts.stallMs, () => clearTimeout(headerTimer), { ...PRELOAD_PURPOSE })
     failedAt.delete(key)
     await enforceSpoolCap(dir, opts.limits.capBytes, opts.limits.honorPins)
     return { kind: 'landed', bytes }
