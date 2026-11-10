@@ -246,8 +246,15 @@ export interface Recommendation {
   source?: 'user' | 'mm' | 'radar'
   // Brief 126 — sync protocol v2: what the jot wants + stable external id
   // (archive.org concert item). Fulfillment fields land via the sweep.
-  kind?: 'track' | 'album' | 'concert'
+  // 'artist' / 'playlist' (2026-11-10): a link a friend sent that is not one
+  // song, named by homemini. A playlist's name is in `album`, its songs in
+  // `tracks`. ⚠️ TWIN: JakeTunesMobile backend/src/util/recoTypes.ts.
+  kind?: 'track' | 'album' | 'concert' | 'artist' | 'playlist'
   externalId?: string
+  // homemini's structured friend attribution: who sent it, and the link.
+  from?: string
+  link?: string
+  tracks?: Array<{ title: string; artist: string }>
   owned?: boolean
   ownedAt?: string
   ownedVia?: string

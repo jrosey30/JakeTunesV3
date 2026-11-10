@@ -20,6 +20,7 @@ import { requestDiscoveryTab } from '../views/discoveryTab.ts'
 import { ADD_SOURCE_LABEL, addedViaOf } from '../../common/source-playlists.ts'
 import { recoFields } from '../../common/artist-credit.ts'
 import type { Recommendation } from '../types.ts'
+import { friendOf, isLinkKind } from './friend.ts'
 import {
   enqueue, cancel, retry, subscribeQueue, getQueue, itemForRecommendation,
   trackQueryId, albumQueryId, type QItem, type QResult, type QueueOrigin,
@@ -48,16 +49,13 @@ export { recoFields }
  *  and main/radar-core.ts isAlbumRow (the radar hides the albums listed here). */
 export function recoKind(rec: Recommendation): 'song' | 'album' | 'concert' | 'artist' {
   const { title, album } = recoFields(rec)
+  // A playlist's name sits in `album`; it is no record to pick an edition of.
+  if (isLinkKind(rec)) return 'artist'
   if (rec.kind === 'concert') return 'concert'
   if (rec.kind === 'album') return 'album'
   if (title) return 'song'
   if (album) return 'album'
   return 'artist'
-}
-
-function friendOf(rec: Recommendation): string | null {
-  const m = String(rec.note || '').match(/(?:^|· )from ([^·]+?)(?: ·|$)/)
-  return m ? m[1].trim() : null
 }
 
 /** Provenance that rides on the job: the recommendation id (the list's

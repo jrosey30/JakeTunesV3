@@ -91,10 +91,14 @@ export interface LibraryIndex {
 export function creditKindOf(r: { kind?: string; song?: string; matchedTitle?: string; album?: string; matchedAlbum?: string }): CreditKind | null {
   const song = String(r.matchedTitle || r.song || '').trim()
   const album = String(r.matchedAlbum || r.album || '').trim()
+  // A playlist's name sits where an album's does; it is not a record to own.
+  // An artist or a playlist a friend sent is credited song by song, from the
+  // sends ledger (friend-imports-core sendsOfLinkRows), never from here.
+  if (r.kind === 'artist' || r.kind === 'playlist') return null
   if (r.kind === 'album' || r.kind === 'concert') return 'album'
   if (song) return 'song'
   if (album) return 'album'
-  return null   // artist recos aren't creditable — nothing concrete to import
+  return null   // a bare artist jot has nothing concrete to import
 }
 
 export function albumKeyOfStrings(album: string, artist: string): string | null {

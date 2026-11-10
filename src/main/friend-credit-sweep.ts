@@ -21,7 +21,8 @@ import { STATE_DIR } from './state-dir.ts'
 import { JsonFileCache } from './state-cache.ts'
 import {
   computeImportCredits, computeAttributionCredits, pairKeys, friendOfNote,
-  attributionKey, type RecoAttribution, type CreditableReco,
+  attributionKey, artistSendKey, withFriendInNote, sendsOfLinkRows, computeArtistSendCredits,
+  type RecoAttribution, type CreditableReco,
 } from './friend-imports-core'
 import { computeAlbumCredits, creditKindOf, type CreditRecord } from './friend-standings-core'
 
@@ -51,20 +52,39 @@ const attributionsCache = new JsonFileCache<{ attributions: RecoAttribution[] }>
  * MESSAGE from recording twice, which was the 13→15 double-count bug).
  */
 export async function noteAttribution(a: RecoAttribution): Promise<void> {
-  if (!a.friend?.trim() || !attributionKey(a)) return
+  await noteAttributions([a])
+}
+
+/** A song send, or an artist send (no song): one key per friend either way. */
+const sendKey = (a: RecoAttribution): string | null => attributionKey(a) ?? artistSendKey(a)
+
+/** Several sends in one write (a playlist is one send per song). */
+export async function noteAttributions(sends: RecoAttribution[]): Promise<void> {
+  const fresh = sends.filter((a) => a.friend?.trim() && sendKey(a))
+  if (fresh.length === 0) return
+  const idOf = (a: RecoAttribution): string => `${a.friend.trim().toLowerCase()}\u0000${sendKey(a)}`
+  const have = new Set((await attributionsCache.get()).attributions.map(idOf))
+  if (fresh.every((a) => have.has(idOf(a)))) return   // nothing new: no write
   await attributionsCache.update((cur) => {
-    const key = attributionKey(a)
     // One attribution per friend+song — the first send's timestamp stands.
-    if (cur.attributions.some((x) => x.friend.trim().toLowerCase() === a.friend.trim().toLowerCase() && attributionKey(x) === key)) return cur
-    cur.attributions.push(a)
+    const seen = new Set(cur.attributions.map(idOf))
+    for (const a of fresh) {
+      if (seen.has(idOf(a))) continue
+      seen.add(idOf(a))
+      cur.attributions.push(a)
+    }
     return cur
   })
 }
 
 export async function sweepFriendImports(deps: SweepDeps): Promise<number> {
   try {
-    const recos = await deps.readRecos()
+    // The sender where the matchers read it: homemini keeps it in `from`.
+    const recos = (await deps.readRecos()).map(withFriendInNote)
     const tracks = await deps.getTracks()
+    // An artist or a playlist a friend sent (2026-11-10): remembered as sends,
+    // so the credit survives the row leaving the list like any other.
+    await noteAttributions(sendsOfLinkRows(recos))
     const credited = new Set((await importCreditCache.get()).credited)
 
     // Song credits (existing matcher) — but only for song-kind recos, so an
@@ -88,7 +108,11 @@ export async function sweepFriendImports(deps: SweepDeps): Promise<number> {
       if (r) for (const k of pairKeys(r as unknown as CreditableReco)) coveredPairs.add(`${c.friend.trim().toLowerCase()}|${k}`)
     }
     const attrs = (await attributionsCache.get()).attributions
-    const attrHits = computeAttributionCredits(attrs, tracks, credited, coveredPairs)
+    const songHits = computeAttributionCredits(attrs, tracks, credited, coveredPairs)
+    // An artist send: the first song by that artist after the send, unless
+    // that very song just earned (or once earned) this friend its point.
+    for (const h of songHits) coveredPairs.add(`${h.friend.trim().toLowerCase()}|${h.key}`)
+    const attrHits = [...songHits, ...computeArtistSendCredits(attrs, tracks, credited, coveredPairs)]
 
     if (credits.length === 0 && albumHits.length === 0 && attrHits.length === 0) return 0
 

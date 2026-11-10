@@ -10,7 +10,17 @@
  * is a track; anything else (artist-only, note-only) stays unkinded.
  * ⚠️ TWIN: JakeTunesMobile/backend recommendations POST honours `kind` as-is.
  */
-export type RecoKind = 'track' | 'album' | 'concert'
+/** 'artist' and 'playlist' (2026-11-10) are never typed here: homemini sets
+ *  them when it names a link a friend sent that is not one song.
+ *  ⚠️ TWIN: JakeTunesMobile/backend/src/util/recoTypes.ts Recommendation.kind. */
+export type RecoKind = 'track' | 'album' | 'concert' | 'artist' | 'playlist'
+
+/** A row homemini named from a link: an artist, a playlist, or a page listed
+ *  under its own title (note === link). It is taken as homemini wrote it —
+ *  the iTunes enrichment would turn an artist into one of his songs. */
+export function isHubNamedLink(r: { kind?: string; note?: string; link?: string }): boolean {
+  return r.kind === 'artist' || r.kind === 'playlist' || (!!r.link && r.note === r.link)
+}
 
 export function recoKindForInput(input: { song?: string; album?: string; kind?: RecoKind }): RecoKind | undefined {
   if (input.kind) return input.kind
