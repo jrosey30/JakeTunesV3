@@ -29,7 +29,7 @@ import { planMoodPrune } from './brain-prune.mjs'
 import { writeBrainStatus } from './brain-status.mjs'
 import { comparePurity, gateDecision, PURITY_MAX_REGRESSION } from './brain-purity.mjs'
 import { pickBatch } from './brain-batch.mjs'
-import { musicStreamActive, nightlyTrainerActive, bpmKeyWorkerActive, untilMs, redescribeCandidates, candidateDescriptors, promoteNext, staleStaged, describeTrack, nextFilePath, PROMPT_VERSION } from './brain-redescribe.mjs'
+import { musicStreamActive, nightlyTrainerActive, bpmKeyWorkerActive, untilMs, redescribeCandidates, candidateDescriptors, promoteNext, staleStaged, describeTrack, nextFilePath, PROMPT_VERSION, memoryYieldReason, parseSwapUsedMB } from './brain-redescribe.mjs'
 import { baseText, moodText, tempoEnergy } from '../src/common/embedding-text.ts'   // Brief 181: the text twins' ONE source of truth (the app imports it too)
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -594,7 +594,8 @@ async function main() {
   // night's window. YIELD RULE: this is the always-on serving box — before
   // every call we check for a MUSIC transcode (cable playout's video ffmpeg
   // runs 24/7 and does not count), for the 02:00 nightly trainer, and for
-  // critical memory pressure; any one unloads the model until the coast is clear.
+  // high memory pressure (critical, or swap in use past 10 GB: memoryYieldReason);
+  // any one unloads the model until the coast is clear.
   if (process.argv.includes('--redescribe-all')) {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
     const ua = process.argv.indexOf('--until')
@@ -605,11 +606,12 @@ async function main() {
       if (musicStreamActive(ps)) return 'music is streaming'
       if (nightlyTrainerActive(ps)) return 'the nightly trainer is running'
       if (bpmKeyWorkerActive(ps)) return 'the BPM/key worker is running'
-      try {
-        const lvl = Number(execFileSync('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level']).toString().trim())
-        if (lvl >= 4) return 'memory pressure is critical'
-      } catch { /* not macOS / no sysctl → skip */ }
-      return null
+      const sysctl = (name) => { try { return execFileSync('/usr/sbin/sysctl', ['-n', name]).toString().trim() } catch { return '' /* not macOS / no sysctl → skip */ } }
+      const lvl = sysctl('kern.memorystatus_vm_pressure_level')
+      const maxSwap = Number(process.env.JT_REDESCRIBE_MAX_SWAP_MB)
+      return memoryYieldReason(
+        { pressureLevel: lvl === '' ? null : Number(lvl), swapUsedMB: parseSwapUsedMB(sysctl('vm.swapusage')) },
+        Number.isFinite(maxSwap) && maxSwap > 0 ? { maxSwapMB: maxSwap } : undefined)
     }
     const gemmaUnload = async () => {
       try {

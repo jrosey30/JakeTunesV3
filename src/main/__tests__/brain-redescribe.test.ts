@@ -11,6 +11,7 @@ import {
   musicStreamActive, nightlyTrainerActive, untilMs, redescribeCandidates, candidateDescriptors, promoteNext,
   staleStaged, PROMPT_VERSION, stockHits, formulaOpener, stockScore, needsRetry, pickDescriptor,
   describePrompt, describeTrack, audioFacts, cleanDescriptor, bpmKeyWorkerActive, nextFilePath,
+  memoryYieldReason, parseSwapUsedMB, MAX_SWAP_MB,
 } from '../../../scripts/brain-redescribe.mjs'
 
 const PV = PROMPT_VERSION
@@ -32,6 +33,52 @@ describe('the yield rule', () => {
   it('does not mistake other processes that mention ffmpeg for one', () => {
     assert.equal(musicStreamActive('/usr/bin/grep ffmpeg\nnode /tmp/ffmpeg-watch.js'), false)
     assert.equal(musicStreamActive(''), false)
+  })
+})
+
+describe('stepping aside for memory (2026-11-10: 18 GB on a 16 GB machine, swap at 19 GB)', () => {
+  it('reads swap in use from sysctl vm.swapusage', () => {
+    assert.equal(parseSwapUsedMB('total = 7168.00M  used = 5696.62M  free = 1471.38M  (encrypted)'), 5696.62)
+    assert.equal(parseSwapUsedMB('total = 20.00G  used = 18.70G  free = 1.30G'), 18.7 * 1024)
+    assert.equal(parseSwapUsedMB(''), null)
+    assert.equal(parseSwapUsedMB('sysctl: unknown oid'), null)
+  })
+  it('runs at normal pressure with the swap homemini always carries', () => {
+    assert.equal(memoryYieldReason({ pressureLevel: 1, swapUsedMB: 5696 }), null)
+  })
+  it('yields at critical; warn alone is what a loaded 8 GB model always reads here, and yielding to it would loop', () => {
+    assert.equal(memoryYieldReason({ pressureLevel: 2, swapUsedMB: 5358 }), null)
+    assert.equal(memoryYieldReason({ pressureLevel: 4, swapUsedMB: 3000 }), 'memory pressure is critical')
+  })
+  it('yields when swap in use passes the limit, whatever the pressure level says', () => {
+    assert.equal(MAX_SWAP_MB, 10000)
+    assert.match(memoryYieldReason({ pressureLevel: 2, swapUsedMB: 19149 }) ?? '', /^swap in use is 18\.7 GB \(limit 9\.8 GB\)$/)
+    assert.equal(memoryYieldReason({ pressureLevel: 1, swapUsedMB: 10000 }), null)
+    assert.equal(memoryYieldReason({ pressureLevel: 1, swapUsedMB: 6000 }, { maxSwapMB: 5000 })?.startsWith('swap in use'), true)
+  })
+  it('a reading it could not take never yields by itself', () => {
+    assert.equal(memoryYieldReason({ pressureLevel: null, swapUsedMB: null }), null)
+    assert.equal(memoryYieldReason({ pressureLevel: NaN, swapUsedMB: NaN }), null)
+    assert.equal(memoryYieldReason(), null)
+  })
+})
+
+describe('the run on homemini goes through its own Ollama server, prompt cache off', () => {
+  const root = join(import.meta.dirname, '..', '..', '..')
+  const template = readFileSync(join(root, 'scripts', 'launchd', 'templates', 'com.jaketunes.brain-redescribe.plist.template'), 'utf8')
+  const wrapper = readFileSync(join(root, 'scripts', 'launchd', 'brain-redescribe-run.sh'), 'utf8')
+  it('the launchd job starts the wrapper, not node on the app\'s server', () => {
+    const args = template.slice(template.indexOf('<key>ProgramArguments</key>'), template.indexOf('</array>'))
+    assert.match(args, /<string>\/bin\/bash<\/string>\s*<string>__REPO__\/scripts\/launchd\/brain-redescribe-run\.sh<\/string>\s*<string>__NODE__<\/string>\s*<string>__REPO__<\/string>\s*<string>--redescribe-all<\/string>/)
+  })
+  it('the wrapper turns the prompt cache off and points the job at its own port', () => {
+    assert.match(wrapper, /^LLAMA_ARG_CACHE_RAM=0 \\$/m)
+    assert.match(wrapper, /^OLLAMA_HOST="127\.0\.0\.1:\$PORT" \\$/m)
+    assert.match(wrapper, /GEMMA_URL="http:\/\/127\.0\.0\.1:\$PORT\/api\/generate" "\$NODE_BIN" "\$REPO_DIR\/scripts\/brain-trainer\.mjs" "\$@"/)
+  })
+  it('the model, the context and the sampling are not the wrapper\'s to change', () => {
+    assert.doesNotMatch(wrapper, /OLLAMA_CONTEXT_LENGTH|num_ctx|temperature|GEMMA_MODEL=/)
+    assert.match(template, /<key>GEMMA_MODEL<\/key><string>gemma4:12b<\/string>/)
   })
 })
 

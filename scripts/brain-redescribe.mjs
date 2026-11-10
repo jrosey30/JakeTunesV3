@@ -69,6 +69,36 @@ export function bpmKeyWorkerActive(psText) {
   })
 }
 
+/** Megabytes of swap in use, from `sysctl -n vm.swapusage` ("total = 7168.00M  used = 5696.62M  free = ..."), or null. */
+export function parseSwapUsedMB(text) {
+  const m = /used\s*=\s*([\d.]+)\s*([MG])/i.exec(String(text || ''))
+  if (!m) return null
+  const n = Number(m[1])
+  if (!Number.isFinite(n)) return null
+  return m[2].toUpperCase() === 'G' ? n * 1024 : n
+}
+
+/** Swap in use above which the re-describe steps aside (homemini stands at 4 to 6 GB). */
+export const MAX_SWAP_MB = 10000
+
+/**
+ * Should the re-describe step aside for memory? `pressureLevel` is macOS's
+ * kern.memorystatus_vm_pressure_level: 1 normal, 2 warn, 4 critical.
+ *
+ * Until 2026-11-10 only "critical" counted, and the job ran for hours with
+ * swap at 19 GB on a 16 GB machine while the music server's file calls timed
+ * out: the level never reached critical. So swap in use past `maxSwapMB`
+ * now counts too. "Warn" (2) does NOT: measured on homemini, the level sits
+ * at warn the whole time an 8 GB model is loaded with swap steady near 5 GB,
+ * so yielding at warn would unload the model, drop to normal, reload, and
+ * loop. A value that could not be read (null, NaN) never yields by itself.
+ */
+export function memoryYieldReason({ pressureLevel = null, swapUsedMB = null } = {}, { maxSwapMB = MAX_SWAP_MB } = {}) {
+  if (Number.isFinite(pressureLevel) && pressureLevel >= 4) return 'memory pressure is critical'
+  if (Number.isFinite(swapUsedMB) && swapUsedMB > maxSwapMB) return `swap in use is ${Math.round(swapUsedMB / 1024 * 10) / 10} GB (limit ${Math.round(maxSwapMB / 1024 * 10) / 10} GB)`
+  return null
+}
+
 /** The default staged file, and the live store a staged file must never be. */
 export const DEFAULT_NEXT_FILE = 'brain-descriptors.next.json'
 const LIVE_STORE = 'brain-descriptors.json'

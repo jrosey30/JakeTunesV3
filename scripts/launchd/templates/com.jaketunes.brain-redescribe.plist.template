@@ -16,12 +16,22 @@
      worker measures (19:00-23:55, 02:20-03:00). On homemini render it against
      a dedicated detached origin/main checkout (JAKETUNES_REPO_DIR), never the
      shared ~/JakeTunesV3.
+     2026-11-10 (memory): the job took 18 GB on this 16 GB machine because the
+     model server kept 8 GB of finished prompts it never read again. It now
+     runs through scripts/launchd/brain-redescribe-run.sh, which starts an
+     Ollama server of its own (port 11436) with that cache off and stops it at
+     the end: about 10 GB, swap steady near 5 GB. GEMMA_URL below is only what the wrapper replaces.
+     The run also steps aside when swap in use passes 10 GB (before, only at
+     memory pressure "critical", which 19 GB of swap never reached). Model,
+     context, prompt and sampling are unchanged.
      Path tokens are rendered by install-launchagents.sh. -->
 <plist version="1.0"><dict>
   <key>Label</key><string>com.jaketunes.brain-redescribe</string>
   <key>ProgramArguments</key><array>
+    <string>/bin/bash</string>
+    <string>__REPO__/scripts/launchd/brain-redescribe-run.sh</string>
     <string>__NODE__</string>
-    <string>__REPO__/scripts/brain-trainer.mjs</string>
+    <string>__REPO__</string>
     <string>--redescribe-all</string>
     <string>--next-file</string>
     <string>brain-descriptors.next-v3.json</string>
