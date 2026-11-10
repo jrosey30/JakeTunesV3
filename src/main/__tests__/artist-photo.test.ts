@@ -4,7 +4,7 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, utimesSync, readFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, utimesSync, readFileSync, rmSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -248,8 +248,32 @@ describe('a photo on disk is returned at once and refreshed behind', () => {
       writeFileSync(join(dir, 'geese.jpg'), 'x')
       writeFileSync(join(dir, `${artistSlug('Молчат Дома')}.jpg`), 'x')
       writeFileSync(join(dir, 'fat-dog.miss'), '')
-      assert.deepEqual(await photos.known(['Geese', 'Fat Dog', 'Молчат Дома', '', 'Nobody']), { Geese: 'geese', 'Молчат Дома': artistSlug('Молчат Дома') })
+      writeFileSync(join(dir, 'old-miss.miss'), '')
+      age(join(dir, 'old-miss.miss'), 7 * 3600 * 1000)
+      const k = await photos.known(['Geese', 'Fat Dog', 'Молчат Дома', '', 'Nobody', 'Old Miss'])
+      assert.deepEqual(k.slugs, { Geese: 'geese', 'Молчат Дома': artistSlug('Молчат Дома') })
+      assert.deepEqual(k.none, ['Fat Dog'], 'a fresh .miss is "looked up: none"; an old one and a never-asked name are not known')
+      assert.deepEqual(Object.keys(k.versions).sort(), ['geese', artistSlug('Молчат Дома')].sort())
+      assert.ok(k.versions.geese > 0)
       assert.equal(log.length, 0)
+    } finally { await removeTemp(root) }
+  })
+
+  it('a refresh never writes a photo back after its file was removed meanwhile (a pick withdrawn mid-download)', async () => {
+    const { root, dir, factsFile } = setup()
+    try {
+      const jpg = join(dir, 'geese.jpg')
+      writeFileSync(jpg, 'old photo')
+      age(jpg, 61 * DAY)
+      const photos = createArtistPhotos({
+        dir, factsFile, refreshGapMs: 0,
+        owned: async () => ({ albums: ['Getting Killed'], titles: [] }),
+        fetchJson: fake(geeseRoutes),
+        download: async () => { rmSync(jpg); return Buffer.from('new photo') },   // removed while the download ran
+      })
+      assert.equal(await photos.get('Geese'), 'geese')
+      await photos.idle()
+      assert.equal(existsSync(jpg), false, 'the removed photo stays removed: the next look starts clean')
     } finally { await removeTemp(root) }
   })
 })

@@ -123,7 +123,7 @@ describe('an unfinished or absent discography answer is held for a while, not re
   })
   it('the page keeps a real answer for the session, so a revisit paints "More from" on its first frame', () => {
     const view = readFileSync(join(import.meta.dirname, '../../renderer/views/ArtistDetailView.tsx'), 'utf-8')
-    assert.match(view, /\(\) => new Map\(personas\.map\(p => \[p\.name, discoMemo\.get\(p\.name\) \?\? \('loading' as const\)\]\)\)\)/)
-    assert.match(view, /if \(r\?\.ok\) discoMemo\.set\(p\.name, got\)/, '"unavailable" is not remembered: the next visit asks main, which holds it')
+    assert.match(view, /\(\) => new Map\(personas\.map\(p => \[p\.name, kept\(discoMemo, p\.name, Date\.now\(\)\) \?\? \('loading' as const\)\]\)\)\)/)
+    assert.match(view, /if \(r\?\.ok\) keep\(discoMemo, p\.name, got,/, '"unavailable" is not remembered: the next visit asks main, which holds it')
   })
 })

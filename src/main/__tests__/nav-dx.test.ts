@@ -138,7 +138,7 @@ describe('dx.nav is off unless asked for', () => {
   })
   it('the page feeds it: navigations, the header picture, each ask, the scroll', () => {
     const r = (...p: string[]): string => readFileSync(join(import.meta.dirname, '../../renderer', ...p), 'utf-8')
-    assert.match(r('components', 'MainContent.tsx'), /navDxNavigated\(\{ from, to: activeKey, kind: arrival, remount: !keptActive \}\)/)
+    assert.match(r('components', 'MainContent.tsx'), /navDxNavigated\(\{ from, to: activeKey, kind: arrival === 'return' \? 'return' : 'arrive', remount: !keptActive \}\)/)
     assert.match(r('components', 'artist', 'HeroPhoto.tsx'), /navDxHero\(src\)/)
     assert.match(r('hooks', 'useScrollPersistence.ts'), /navDxScroll\(\{ saved: remembered\?\.top \?\? null \}\)/)
     const view = r('views', 'ArtistDetailView.tsx')

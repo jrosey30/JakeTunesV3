@@ -2255,10 +2255,11 @@ ipc.handle('get-upcoming-releases-personal', async (): Promise<{ ok: boolean; it
 // (hit + miss tombstone), single-flight per slug, all handled inside
 // getArtistImage. Always succeeds (returns slug: null on failure) so the
 // renderer doesn't need try/catch on every call.
-ipc.handle('get-artist-image', async (_event, artist: string): Promise<{ ok: boolean; slug: string | null }> => {
+ipc.handle('get-artist-image', async (_event, artist: string): Promise<{ ok: boolean; slug: string | null; v?: number }> => {
   try {
     const slug = await getArtistImage(artist)
-    return { ok: true, slug }
+    // v: the file's mtime, part of the picture's address — a photo replaced under the same slug is never drawn from memory.
+    return { ok: true, slug, ...(slug ? { v: await artistPhotos.version(slug) } : {}) }
   } catch (err) {
     console.warn('[get-artist-image] failed for', artist, err)
     return { ok: true, slug: null }
@@ -2266,10 +2267,10 @@ ipc.handle('get-artist-image', async (_event, artist: string): Promise<{ ok: boo
 }, { refuse: { ok: false, slug: null } })
 // Which of these artists have a photo on disk (name → slug): one folder listing,
 // no network. The artist page's first frame is drawn from it (renderer/artistPageSeed.ts).
-ipc.handle('artist-photos:known', async (_event, names: unknown): Promise<{ ok: boolean; slugs: Record<string, string> }> => {
+ipc.handle('artist-photos:known', async (_event, names: unknown) => {
   const list = Array.isArray(names) ? names.filter((n): n is string => typeof n === 'string' && n.length > 0 && n.length <= 300).slice(0, 20_000) : []
-  return { ok: true, slugs: await artistPhotos.known(list) }
-}, { refuse: { ok: false, slugs: {} } })
+  return { ok: true, ...(await artistPhotos.known(list)) }
+}, { refuse: { ok: false, slugs: {}, versions: {}, none: [] } })
 // Genre Iceberg: ListenBrainz listener counts (seeded at install) rank a genre's artists, best-known first.
 ipc.handle('artist-listeners', async () => { try { return JSON.parse(await readFile(join(app.getPath('userData'), 'artist-listeners.json'), 'utf8')) as Record<string, number> } catch { return {} } }, { refuse: {} })
 
@@ -3249,7 +3250,8 @@ ipc.handle('get-artist-discography', async (_e, artist: string) => {
   if (!artist || typeof artist !== 'string') return { ok: false, error: 'No artist' }
   const result = await fetchArtistDiscography(artist)
   if (!result) return { ok: false, error: 'Discography unavailable' }
-  return { ok: true, albums: result.albums }
+  // incomplete: a source was down — main holds it 6 h, and the page's session memo does too.
+  return { ok: true, albums: result.albums, ...(result.incomplete ? { incomplete: true } : {}) }
 }, { refuse: REFUSED_SENDER })
 
 // Combined multi-source search for artist info

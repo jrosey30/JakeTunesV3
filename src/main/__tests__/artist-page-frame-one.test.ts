@@ -11,8 +11,11 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   headerPick, heroLayers, bioPlan, shownProfileState, initialScroll, artistImageUrl, WIKI_GRACE_MS,
-  type HeroLayer, type HeroEvent,
+  keep, kept, KEEP_WIKI_MS, KEEP_WIKI_NONE_MS, KEEP_DISCO_MS, KEEP_DISCO_INCOMPLETE_MS,
+  type HeroLayer, type HeroEvent, type Kept,
 } from '../../renderer/artistPageModel.ts'
+import { knownArtistPhoto, sessionArtistImages, diskArtistPhotos, diskArtistNoPhoto } from '../../renderer/utils/artistPortrait.ts'
+import { pageArrival } from '../../renderer/navIntent.ts'
 import { createArtistProfileStore, type ProfileApi } from '../../renderer/artistProfileStore.ts'
 import { viewTransitionKey } from '../../renderer/keptView.ts'
 import { emptyProfileState, parseArtistProfile, type ArtistProfile, type ArtistProfileState } from '../../common/artist-profile.ts'
@@ -110,6 +113,30 @@ describe('frame 1: the cached profile is known before the page asks for anything
     assert.equal(store.peek('Geese').state.photos[HERO_URL], 'ap-hero-1', "another artist's push never lands here")
   })
 
+  it("an answer named for another artist is refused, whichever door it comes through", async () => {
+    const other: ArtistProfileState = { ...cached(), name: 'Somebody Else' }
+    const api: ProfileApi = { artistProfileGet: async () => ({ ok: true, state: other }), artistProfileRefresh: async () => ({ ok: true, state: other }) }
+    const store = createArtistProfileStore(() => api, () => {})
+    store.seed([], false)
+    await store.open('Geese')
+    assert.equal(store.peek('Geese').state.profile, null, 'neither the cache read nor the refresh put a stranger on the page')
+    assert.equal(store.peek('Geese').state.name, 'Geese')
+    assert.equal(store.peek('Geese').settled, true)
+    store.seed([{ ...other, name: '' }, null as unknown as ArtistProfileState], true)
+    assert.equal(store.peek('').state.profile, null)
+  })
+
+  it('the seed never overwrites what this session already knows', async () => {
+    const live: ArtistProfileState = { ...cached(), profile: { ...GEESE, oneLiner: 'FROM HOMEMINI' }, source: 'homemini' }
+    const store = createArtistProfileStore(() => ({ artistProfileRefresh: async () => ({ ok: true, state: live }) }), () => {})
+    store.seed([], false)
+    await store.open('Geese')                                         // the page was opened before the seed landed
+    store.seed([cached()], true)                                      // …then the (older) disk copy arrives
+    assert.equal(store.peek('Geese').state.profile?.oneLiner, 'FROM HOMEMINI')
+    assert.equal(store.peek('Geese').state.source, 'homemini')
+    assert.equal(store.peek('Geese').settled, true)
+  })
+
   it('a refresh that fails changes nothing but "settled" (the fallback may now show)', async () => {
     const api: ProfileApi = { artistProfileRefresh: async () => { throw new Error('ETIMEDOUT') } }
     const store = createArtistProfileStore(() => api, () => {})
@@ -138,13 +165,56 @@ describe('the header picture is decided from what is known, once', () => {
     assert.deepEqual(headerPick({ ...base, artistSlug: 'geese' }), first)
   })
 
-  it('while the photo is not known the header is ink — never the record cover a photo would then replace', () => {
-    assert.deepEqual(headerPick({ ...base, artistSlug: undefined }), { kind: 'none', pending: true })
+  // Review of PR 408: 341 of 2,348 artists have no photo on disk. Holding the
+  // header blank for them until Deezer answered (8 s to give up offline,
+  // forever if the lookup threw) took away the cover the page used to open on.
+  it('no photo KNOWN on this Mac: the record cover is there from the first frame — never a blank header waiting on a lookup', () => {
+    const cover = { kind: 'cover', src: 'album-art://cover.jpg' }
+    assert.deepEqual(headerPick({ ...base, artistSlug: undefined }), cover, 'the lookup has not answered (or threw, or never will)')
+    assert.deepEqual(headerPick({ ...base, artistSlug: null }), cover, 'the lookup said there is none (a fresh .miss in the boot seed says so on frame 1)')
+    assert.deepEqual(headerPick({ ...base, artistSlug: undefined, artistPhotoFailed: true }), cover)
   })
 
-  it('the cover takes the slot only once the lookup has said there is no photo', () => {
-    assert.deepEqual(headerPick({ ...base, artistSlug: null }), { kind: 'cover', src: 'album-art://cover.jpg' })
-    assert.deepEqual(headerPick({ ...base, artistSlug: null, coverSrc: null }), { kind: 'none', pending: false })
+  it('ink only when there is no cover either', () => {
+    assert.deepEqual(headerPick({ ...base, artistSlug: null, coverSrc: null }), { kind: 'none' })
+    assert.deepEqual(headerPick({ ...base, artistSlug: undefined, coverSrc: null }), { kind: 'none' })
+  })
+
+  it('a photo that turns up later takes over from the cover — as a cross-fade, in the same box', () => {
+    const before = headerPick({ ...base, artistSlug: undefined })
+    const after = headerPick({ ...base, artistSlug: 'geese', artistVersion: 1700000000000 })
+    assert.equal(before.kind, 'cover')
+    assert.deepEqual(after, { kind: 'artist', src: 'artist-image://geese.jpg?v=1700000000000', slug: 'geese' })
+    let layers = heroLayers(heroLayers([], { type: 'want', src: 'album-art://cover.jpg' }), { type: 'loaded', src: 'album-art://cover.jpg', width: 600, height: 600 })
+    layers = heroLayers(layers, { type: 'want', src: (after as { src: string }).src })
+    assert.deepEqual(layers.map((l) => l.phase), ['in', 'loading'], 'the cover stays up while the photo decodes')
+    layers = heroLayers(layers, { type: 'loaded', src: (after as { src: string }).src, width: 1000, height: 1000 })
+    assert.deepEqual(layers.map((l) => l.phase), ['out', 'in'])
+  })
+
+  it('what the boot seed knows: a photo on disk, a fresh miss ("none"), or nothing', () => {
+    sessionArtistImages.clear(); diskArtistPhotos.clear(); diskArtistNoPhoto.clear()
+    diskArtistPhotos.set('Geese', 'geese')
+    diskArtistNoPhoto.add('Opus Kink')
+    assert.equal(knownArtistPhoto('Geese'), 'geese')
+    assert.equal(knownArtistPhoto('Opus Kink'), null, 'looked up within the last hours: there is none')
+    assert.equal(knownArtistPhoto('Never Asked'), undefined)
+    sessionArtistImages.set('Opus Kink', 'opus-kink')
+    assert.equal(knownArtistPhoto('Opus Kink'), 'opus-kink', "this session's answer wins over the boot seed")
+    sessionArtistImages.clear(); diskArtistPhotos.clear(); diskArtistNoPhoto.clear()
+    const seed = renderer('artistPageSeed.ts')
+    assert.match(seed, /for \(const name of r\.none \?\? \[\]\) diskArtistNoPhoto\.add\(name\)/)
+    assert.match(seed, /artistPhotoVersions\.set\(slug, v\)/)
+  })
+
+  it("a photo replaced under the same slug (Jake's new pick) has a new address, so the old picture cannot stick", () => {
+    assert.notEqual(artistImageUrl('geese', 0, 1), artistImageUrl('geese', 0, 2))
+    assert.equal(artistImageUrl('geese', 480, 5), 'artist-image://geese.jpg?v=5&s=480')
+    assert.equal(headerPick({ ...base, artistSlug: 'geese', artistVersion: 2 }).kind, 'artist')
+    assert.notDeepEqual(headerPick({ ...base, artistSlug: 'geese', artistVersion: 1 }), headerPick({ ...base, artistSlug: 'geese', artistVersion: 2 }))
+    const view = renderer('views', 'ArtistDetailView.tsx')
+    assert.match(view, /prev\.slug === r\.slug && \(!v \|\| prev\.v === v\) \? prev : \{ name, slug: r\.slug, failed: false, v \}/)
+    assert.match(view, /artistVersion: photo\?\.v,/)
   })
 
   it("the slug the cached profile names stands in while the lookup hasn't answered", () => {
@@ -256,8 +326,8 @@ describe('one bio, never a bio and then another', () => {
   it('the text that was on the page before is there again at once (Back does not re-fetch under a restored scroll)', () => {
     assert.equal(plan({ wikiShownBefore: true }).showWiki, true)
     const view = renderer('views', 'ArtistDetailView.tsx')
-    assert.match(view, /const kept = wikiMemo\.get\(lookupName\)/)
-    assert.match(view, /wikiMemo\.set\(name, \{ extract: r\.extract, pageUrl: r\.pageUrl \}\)/)
+    assert.match(view, /const before = kept\(wikiMemo, lookupName, Date\.now\(\)\)/)
+    assert.match(view, /keep\(wikiMemo, name, \{ extract: r\.extract, pageUrl: r\.pageUrl \}, r\.extract \? KEEP_WIKI_MS : KEEP_WIKI_NONE_MS, Date\.now\(\)\)/)
   })
   it('before the cache has been read nothing is planned', () => {
     assert.deepEqual(plan({ cacheRead: false, graceOver: true, settled: true }), { fetchWiki: false, showWiki: false })
@@ -298,6 +368,15 @@ describe('what was painted stays painted: a newer bio waits for the next visit',
     const th = emptyProfileState('Talking Heads')
     assert.equal(shownProfileState(cached(), th, { textPainted: true, scrolled: true }), th)
   })
+  // Review of PR 408: when the fallback drawn at 700 ms was "No biography found",
+  // a real profile landing later was withheld for the whole visit.
+  it('"No biography found" is not text anyone is reading: only a real bio counts as painted', () => {
+    const view = renderer('views', 'ArtistDetailView.tsx')
+    assert.match(view, /if \(profile\?\.bio \|\| shownWiki\?\.extract\) textPaintedRef\.current = true/)
+    assert.doesNotMatch(view, /if \(profile\?\.bio \|\| shownWiki\) textPaintedRef/)
+    // …so with the empty line on the page and the reader at the top, the profile is let in:
+    assert.equal(shownProfileState(none, newer, { textPainted: false, scrolled: false }), newer)
+  })
   it('the page draws through it, and Jake\'s own member photo shows at once', () => {
     const view = renderer('views', 'ArtistDetailView.tsx')
     assert.match(view, /const profileState = shownProfileState\(shownProfile, latestProfileState, \{/)
@@ -311,6 +390,17 @@ describe('scroll: arriving starts at the top, Back restores where you left', () 
     assert.equal(initialScroll('arrive', { top: 2400, left: 0 }), null, 'a click on an artist does not land where that artist was last left')
     assert.deepEqual(initialScroll('return', { top: 2400, left: 0 }), { top: 2400, left: 0 })
     assert.equal(initialScroll('return', undefined), null)
+  })
+  it('a relaunch onto an artist page reopens it where it was left, as before: only a fresh navigation starts at the top', () => {
+    assert.deepEqual(initialScroll('restore', { top: 2400, left: 0 }), { top: 2400, left: 0 })
+    assert.equal(pageArrival(true, false), 'restore', 'the first page shown after a launch is the page you were on')
+    assert.equal(pageArrival(false, false), 'arrive')
+    assert.equal(pageArrival(false, true), 'return')
+    assert.equal(pageArrival(true, true), 'return')
+    const main = renderer('components', 'MainContent.tsx')
+    assert.match(main, /kind: pageArrival\(ref\.current === null, takeHistoryNavigation\(\)\)/)
+    assert.match(main, /data-nav=\{arrival === 'return' \? 'return' : undefined\}/, 'the entrance choreography is unchanged')
+    assert.match(renderer('views', 'ArtistDetailView.tsx'), /instantFirst=\{arrival !== 'arrive'\}/)
   })
   it('the page tells the scroll memory how it was reached, and an arrival forgets the old position', () => {
     assert.match(renderer('views', 'ArtistDetailView.tsx'), /useScrollPersistence\(`artist-detail:\$\{artist\}`, scrollRef, arrival\)/)
@@ -396,6 +486,48 @@ describe('member tiles: a fit size, a reserved box, a fade', () => {
   })
 })
 
+describe('what the page remembers for the session expires when main would ask again', () => {
+  const H = 3_600_000
+  it('kept until its time is up, then forgotten', () => {
+    const memo = new Map<string, Kept<string>>()
+    keep(memo, 'a', 'x', 1000, 5000)
+    assert.equal(kept(memo, 'a', 5999), 'x')
+    assert.equal(kept(memo, 'a', 6000), undefined)
+    assert.equal(memo.has('a'), false, 'and dropped, so the page asks main')
+    assert.equal(kept(memo, 'never', 0), undefined)
+  })
+  it("main's own holds: no Wikipedia page 1 h, an unfinished discography 6 h", () => {
+    assert.equal(KEEP_WIKI_NONE_MS, 1 * H)
+    assert.equal(KEEP_DISCO_INCOMPLETE_MS, 6 * H)
+    assert.equal(KEEP_WIKI_MS, 24 * H)
+    assert.equal(KEEP_DISCO_MS, 7 * 24 * H)
+  })
+  it('the page files each answer under the right one', () => {
+    const view = renderer('views', 'ArtistDetailView.tsx')
+    assert.match(view, /r\.extract \? KEEP_WIKI_MS : KEEP_WIKI_NONE_MS/)
+    assert.match(view, /if \(r\?\.ok\) keep\(discoMemo, p\.name, got, r\.incomplete \? KEEP_DISCO_INCOMPLETE_MS : KEEP_DISCO_MS, Date\.now\(\)\)/)
+    assert.doesNotMatch(view, /(wikiMemo|discoMemo)\.(get|set|has)\(/, 'nothing reads or writes the memos around their expiry')
+    const index = readFileSync(join(import.meta.dirname, '..', 'index.ts'), 'utf-8')
+    assert.match(index, /albums: result\.albums, \.\.\.\(result\.incomplete \? \{ incomplete: true \} : \{\}\)/, 'main says when the answer is unfinished')
+  })
+})
+
+describe('a first-ever bio lands in room that was held for it', () => {
+  const view = renderer('views', 'ArtistDetailView.tsx')
+  const css = renderer('styles', 'artist-detail.css')
+  it('a page opened with no bio in hand holds About at a fixed height for the whole visit', () => {
+    assert.match(view, /const \[aboutReserved\] = useState\(aboutPending\)/, 'decided on the first frame, never changed by the text arriving')
+    assert.match(css, /\.ad-about\.is-reserved \{ height: 248px;[^}]*overflow: hidden;/)
+  })
+  it('a longer bio is cut at the edge with "More": only Jake\'s click moves what is below', () => {
+    assert.match(view, /className=\{`ad-about ad-rise ad-d4\$\{aboutReserved && !aboutOpen \? ' is-reserved' : ''\}`\}/)
+    assert.match(view, /aboutReserved && !aboutOpen && aboutOverflows && \(\s+<button type="button" className="ad-about-more" onClick=\{\(\) => setAboutOpen\(true\)\}>More<\/button>/)
+  })
+  it('a cached bio is on the first frame and is never held or cut', () => {
+    assert.match(view, /const aboutPending = !profile && \(!cacheRead \|\| wikiLoading\)/)
+  })
+})
+
 describe('nothing is drawn only to be replaced', () => {
   const view = renderer('views', 'ArtistDetailView.tsx')
   it('no "Looking up … on MusicBrainz" line under the covers: the list arriving is one move, not two', () => {
@@ -414,7 +546,7 @@ describe('WIRING: the first frame is drawn from memory', () => {
     assert.match(view, /const known = name \? knownArtistPhoto\(name\) : undefined/)
     assert.match(view, /sessionArtistImages\.set\(name, r\.slug\)/, 'and the answer is written back for the next page')
     const portrait = renderer('utils', 'artistPortrait.ts')
-    assert.match(portrait, /if \(sessionArtistImages\.has\(name\)\) return sessionArtistImages\.get\(name\)\s+return diskArtistPhotos\.get\(name\)/)
+    assert.match(portrait, /if \(sessionArtistImages\.has\(name\)\) return sessionArtistImages\.get\(name\)\s+const onDisk = diskArtistPhotos\.get\(name\)/)
   })
   it('main hands over the cached profiles and the photos on disk once, after the library loads', () => {
     const seed = renderer('artistPageSeed.ts')

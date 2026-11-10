@@ -11,7 +11,7 @@
  */
 import type { ArtistLibraryIndex } from './artistLibraryIndex'
 import { canonicalArtist } from './utils/artistAlias'
-import { diskArtistPhotos } from './utils/artistPortrait'
+import { diskArtistPhotos, diskArtistNoPhoto, artistPhotoVersions } from './utils/artistPortrait'
 import { artistProfileStore } from './artistProfile'
 
 let started = false
@@ -34,7 +34,10 @@ export function primeArtistPage(index: ArtistLibraryIndex): void {
       const names = new Set<string>()
       for (const n of index.names) { names.add(n); names.add(canonicalArtist(n)) }
       const r = await api.artistPhotosKnown?.([...names])
-      if (r?.ok && r.slugs) for (const [name, slug] of Object.entries(r.slugs)) diskArtistPhotos.set(name, slug)
+      if (!r?.ok) return
+      for (const [name, slug] of Object.entries(r.slugs ?? {})) diskArtistPhotos.set(name, slug)
+      for (const [slug, v] of Object.entries(r.versions ?? {})) artistPhotoVersions.set(slug, v)
+      for (const name of r.none ?? []) diskArtistNoPhoto.add(name)
     } catch (err) {
       console.warn('[artist-page] photo seed failed:', err instanceof Error ? err.message : err)
     }

@@ -738,7 +738,7 @@ declare global {
       onMusicmanDjChunk: (callback: (p: { chunk: string; accumulated: string }) => void) => () => void
       musicmanPrefetchFacts: (track: { artist: string; album: string }) => Promise<{ ok: boolean }>
       onAppQuitFade: (callback: () => void) => () => void
-      getArtistDiscography: (artist: string) => Promise<{ ok: boolean; albums?: Array<{ title: string; year: string; tracks: Array<{ title: string; position: number }>; mb?: { primaryType?: string; secondaryTypes?: string[] } }>; error?: string }>
+      getArtistDiscography: (artist: string) => Promise<{ ok: boolean; albums?: Array<{ title: string; year: string; tracks: Array<{ title: string; position: number }>; mb?: { primaryType?: string; secondaryTypes?: string[] } }>; incomplete?: boolean; error?: string }>
       loadReleaseKinds?: () => Promise<{ ok: boolean; updatedAt: string; albums: import('../common/release-kind').ReleaseKindsFile['albums'] }>
       musicmanPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], force?: boolean) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
       larryPicks: (tracks: { id: number; title: string; artist: string; album: string; genre: string; year: string | number }[], force?: boolean) => Promise<{ ok: boolean; name?: string; commentary?: string; trackIds?: number[]; error?: string }>
@@ -1220,7 +1220,7 @@ declare global {
 
       // 4.4.40 — Per-artist photo slug; renderer loads via the
       // artist-image:// protocol scheme.
-      getArtistImage: (artist: string) => Promise<{ ok: boolean; slug: string | null }>
+      getArtistImage: (artist: string) => Promise<{ ok: boolean; slug: string | null; v?: number }>
       artistListeners?: () => Promise<Record<string, number>>
       yirGet?: (year?: number) => Promise<(import('../common/year-in-review').YearInReview & { builtAt?: string }) | null>
       yirExport?: (which: number[] | 'all') => Promise<{ ok: boolean; dir?: string; stills?: string[]; videos?: string[]; note?: string; error?: string }>
@@ -1234,7 +1234,7 @@ declare global {
       artistProfileGet?: (name: string) => Promise<{ ok: boolean; state?: import('../common/artist-profile').ArtistProfileState }>
       artistProfileRefresh?: (name: string) => Promise<{ ok: boolean; state?: import('../common/artist-profile').ArtistProfileState }>
       artistProfileAll?: () => Promise<{ ok: boolean; states?: import('../common/artist-profile').ArtistProfileState[]; complete?: boolean }>
-      artistPhotosKnown?: (names: string[]) => Promise<{ ok: boolean; slugs?: Record<string, string> }>
+      artistPhotosKnown?: (names: string[]) => Promise<{ ok: boolean; slugs?: Record<string, string>; versions?: Record<string, number>; none?: string[] }>
       onArtistProfileUpdated?: (cb: (state: import('../common/artist-profile').ArtistProfileState) => void) => () => void
       artistMemberPhotoSet?: (artist: string, member: string, file: File | null) => Promise<
         { ok: true; state: import('../common/artist-profile').ArtistProfileState } | { ok: false; canceled?: boolean; error?: string }>

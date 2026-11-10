@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type React from 'react'
 import { useDelayedFlag } from '../hooks/useDelayedFlag'
 import { useLibrary } from '../context/LibraryContext'
@@ -11,8 +11,11 @@ import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
 import AlbumArtImage from '../components/AlbumArtImage'
 import { canonicalArtist, isSameArtist, artistIdentityKey, subscribeAliases, getAliasVersion } from '../utils/artistAlias'
 import { artistLibraryIndex, tracksOfArtist, libraryAlbumFacts, trackIdSet } from '../artistLibraryIndex'
-import { headerPick, bioPlan, shownProfileState, WIKI_GRACE_MS } from '../artistPageModel'
-import { knownArtistPhoto, sessionArtistImages } from '../utils/artistPortrait'
+import {
+  headerPick, bioPlan, shownProfileState, WIKI_GRACE_MS, keep, kept, type Kept,
+  KEEP_WIKI_MS, KEEP_WIKI_NONE_MS, KEEP_DISCO_MS, KEEP_DISCO_INCOMPLETE_MS,
+} from '../artistPageModel'
+import { knownArtistPhoto, sessionArtistImages, artistPhotoVersions } from '../utils/artistPortrait'
 import { useNavArrivalKind } from '../context/NavArrivalContext'
 import { navDxTimed, navDxSource } from '../navDxDom'
 import HeroPhoto from '../components/artist/HeroPhoto'
@@ -112,9 +115,11 @@ const relatedArtistsCache: Record<string, RelatedArtist[]> = {}
 // What the page showed last time, kept for the session so coming Back paints
 // it on the first frame instead of fetching it again under a restored scroll
 // (2026-11-10): the Wikipedia fallback bio, and each persona's MusicBrainz
-// discography ("More from").
-const wikiMemo = new Map<string, { extract: string | null; pageUrl: string | null }>()
-const discoMemo = new Map<string, DiscographyAlbum[] | 'empty'>()
+// discography ("More from"). Each is kept only as long as main itself would
+// hold it (artistPageModel.ts KEEP_*): a "no page found" for an hour, an
+// unfinished discography for six, so a long session asks again when main would.
+const wikiMemo = new Map<string, Kept<{ extract: string | null; pageUrl: string | null }>>()
+const discoMemo = new Map<string, Kept<DiscographyAlbum[] | 'empty'>>()
 
 function relationLabel(rel: string): string {
   switch (rel) {
@@ -393,10 +398,10 @@ export default function ArtistDetailView() {
   // when a profile is not about to replace it (bioPlan): one bio is never
   // painted and then swapped for another.
   const [wikiEntry, setWikiEntry] = useState<{ name: string; extract: string | null; pageUrl: string | null } | null>(() => {
-    const kept = wikiMemo.get(lookupName)
-    return kept ? { name: lookupName, ...kept } : null
+    const before = kept(wikiMemo, lookupName, Date.now())
+    return before ? { name: lookupName, ...before } : null
   })
-  const [wikiShownBefore] = useState(() => wikiMemo.has(lookupName))
+  const [wikiShownBefore] = useState(() => wikiEntry !== null)
   const [graceOver, setGraceOver] = useState(false)
   useEffect(() => {
     const t = setTimeout(() => setGraceOver(true), WIKI_GRACE_MS)
@@ -408,11 +413,11 @@ export default function ArtistDetailView() {
   const shownWiki = bio.showWiki ? wiki : null
   const wikiLoading = wantWiki && !shownWiki
   useEffect(() => {
-    if (!wantWiki || wikiMemo.has(lookupName)) return
+    if (!wantWiki || kept(wikiMemo, lookupName, Date.now())) return
     let cancelled = false
     const name = lookupName
     navDxTimed('wiki', window.electronAPI.getArtistWiki(name), () => 'main').then(r => {
-      wikiMemo.set(name, { extract: r.extract, pageUrl: r.pageUrl })
+      keep(wikiMemo, name, { extract: r.extract, pageUrl: r.pageUrl }, r.extract ? KEEP_WIKI_MS : KEEP_WIKI_NONE_MS, Date.now())
       if (!cancelled) setWikiEntry({ name, extract: r.extract, pageUrl: r.pageUrl })
     }).catch((err: unknown) => {
       console.warn('[artist-detail] wiki fallback failed:', err instanceof Error ? err.message : err)
@@ -420,15 +425,16 @@ export default function ArtistDetailView() {
     })
     return () => { cancelled = true }
   }, [wantWiki, lookupName])
-  useEffect(() => { if (profile?.bio || shownWiki) textPaintedRef.current = true })
+  // Only real text counts: "No biography found" is not something a profile must wait behind.
+  useEffect(() => { if (profile?.bio || shownWiki?.extract) textPaintedRef.current = true })
 
   // Artist photo via the existing per-artist photo IPC (Deezer, identity-
   // confirmed). Canonicalized so an alias-merged row still pulls the photo.
   // What is already known (a grid looked it up this session, or the file was
   // on disk at boot) is on the first frame; the ask below runs behind it.
-  const seedPhoto = (name: string): { name: string; slug: string | null; failed: boolean } | null => {
+  const seedPhoto = (name: string): { name: string; slug: string | null; failed: boolean; v: number } | null => {
     const known = name ? knownArtistPhoto(name) : undefined
-    return known === undefined ? null : { name, slug: known, failed: false }
+    return known === undefined ? null : { name, slug: known, failed: false, v: (known && artistPhotoVersions.get(known)) || 0 }
   }
   const [photoEntry, setPhotoEntry] = useState(() => seedPhoto(lookupName))
   const photo = photoEntry && photoEntry.name === lookupName ? photoEntry : seedPhoto(lookupName)
@@ -440,7 +446,10 @@ export default function ArtistDetailView() {
     navDxTimed('photo-ask', window.electronAPI.getArtistImage(name), (r) => (r.ok ? (r.slug ? 'main' : 'main-none') : 'refused')).then(r => {
       if (!r.ok) return
       sessionArtistImages.set(name, r.slug)
-      if (!cancelled) setPhotoEntry((prev) => (prev && prev.name === name && prev.slug === r.slug ? prev : { name, slug: r.slug, failed: false }))
+      const v = r.v ?? 0
+      if (r.slug && v) artistPhotoVersions.set(r.slug, v)
+      // Same photo, same file: nothing changes. A file replaced under the same slug (a new pick) is a new picture.
+      if (!cancelled) setPhotoEntry((prev) => (prev && prev.name === name && prev.slug === r.slug && (!v || prev.v === v) ? prev : { name, slug: r.slug, failed: false, v }))
     }).catch((err: unknown) => { console.warn('[artist-detail] photo lookup failed:', err instanceof Error ? err.message : err) })
     return () => { cancelled = true }
   }, [lookupName])
@@ -461,9 +470,10 @@ export default function ArtistDetailView() {
   // credit rides only as the image's hover title, never printed (Jake: no
   // footnotes). With heroNeedsPhoto the app's artist image shows the wrong
   // line-up, so the record cover takes the slot; otherwise the artist image.
-  // While the photo lookup has not answered the header is ink — never a cover
-  // that a photo replaces a moment later. A later, better picture cross-fades
-  // in inside the same box (HeroPhoto).
+  // With no photo known to be on this Mac the record cover is there from the
+  // first frame — the header never sits blank on a lookup (offline it takes
+  // 8 s to give up). A later, better picture cross-fades in inside the same
+  // box (HeroPhoto).
   const [brokenHero, setBrokenHero] = useState<string | null>(null)
   const coverSrc = fallbackHash ? albumArtUrl(fallbackHash) : null
   const pick = headerPick({
@@ -471,13 +481,14 @@ export default function ArtistDetailView() {
     photos: profileState.photos,
     brokenHero,
     artistSlug: photo ? photo.slug : undefined,
+    artistVersion: photo?.v,
     artistPhotoFailed: !!photo?.failed,
     coverSrc,
   })
   const heroSrc = pick.kind === 'none' ? null : pick.src
   const onHeroFailed = useCallback((src: string) => {
     if (pick.kind === 'hero' && src === pick.src) setBrokenHero(pick.url)
-    else if (pick.kind === 'artist' && src === pick.src) setPhotoEntry({ name: lookupName, slug: photo?.slug ?? null, failed: true })
+    else if (pick.kind === 'artist' && src === pick.src) setPhotoEntry({ name: lookupName, slug: photo?.slug ?? null, failed: true, v: photo?.v ?? 0 })
   }, [pick, lookupName, photo])
 
   // Related-artists graph (associate, not merge): this artist's band(s),
@@ -516,12 +527,12 @@ export default function ArtistDetailView() {
   // An answer main gave earlier this session is on the first frame (discoMemo).
   const personaNames = useMemo(() => personas.map(p => p.name).join('|'), [personas])
   const [discoByPersona, setDiscoByPersona] = useState<Map<string, DiscographyAlbum[] | 'loading' | 'empty'>>(
-    () => new Map(personas.map(p => [p.name, discoMemo.get(p.name) ?? ('loading' as const)])))
+    () => new Map(personas.map(p => [p.name, kept(discoMemo, p.name, Date.now()) ?? ('loading' as const)])))
   useEffect(() => {
     if (personas.length === 0) { setDiscoByPersona(new Map()); return }
     let cancelled = false
-    const need = personas.filter(p => !discoMemo.has(p.name))
-    setDiscoByPersona(new Map(personas.map(p => [p.name, discoMemo.get(p.name) ?? ('loading' as const)])))
+    const need = personas.filter(p => !kept(discoMemo, p.name, Date.now()))
+    setDiscoByPersona(new Map(personas.map(p => [p.name, kept(discoMemo, p.name, Date.now()) ?? ('loading' as const)])))
     if (need.length === 0) { navDxSource('discography', 0, 'memory'); return }
     const began = performance.now()
     Promise.all(need.map(async p => {
@@ -529,7 +540,7 @@ export default function ArtistDetailView() {
         const r = await window.electronAPI.getArtistDiscography?.(p.name)
         const got = (r?.ok && r.albums?.length) ? r.albums : 'empty' as const
         // Only a real answer is remembered: "unavailable" is asked again next visit (main holds it an hour).
-        if (r?.ok) discoMemo.set(p.name, got)
+        if (r?.ok) keep(discoMemo, p.name, got, r.incomplete ? KEEP_DISCO_INCOMPLETE_MS : KEEP_DISCO_MS, Date.now())
         return [p.name, got] as const
       } catch {
         return [p.name, 'empty' as const] as const
@@ -605,6 +616,22 @@ export default function ArtistDetailView() {
 
   // Quiet placeholders only when a lookup runs past 400 ms (a cache hit never flashes).
   const aboutPending = !profile && (!cacheRead || wikiLoading)
+  // A bio that was not there on the first frame lands in room that was held
+  // for it from the start, and the room stays for the visit: what is under
+  // About does not jump down when the text arrives, or back up if it is short.
+  // A bio taller than that room is cut at its edge with "More" (Jake's click
+  // opens it), so nothing under About moves on its own. A cached bio — every
+  // later visit — is on the first frame and is never held or cut.
+  const [aboutReserved] = useState(aboutPending)
+  const [aboutOpen, setAboutOpen] = useState(false)
+  const [aboutOverflows, setAboutOverflows] = useState(false)
+  const aboutRef = useRef<HTMLElement | null>(null)
+  useLayoutEffect(() => {
+    const el = aboutRef.current
+    if (!el || !aboutReserved || aboutOpen) return
+    const over = el.scrollHeight > el.clientHeight + 1
+    if (over !== aboutOverflows) setAboutOverflows(over)
+  })
   // Past the bio's own grace: "Looking up…" must never be the text that the bio then replaces.
   const aboutLoadingShown = useDelayedFlag(aboutPending, WIKI_GRACE_MS + 400)
   const relatedLoadingShown = useDelayedFlag(relatedLoading)
@@ -672,7 +699,7 @@ export default function ArtistDetailView() {
           title={pick.kind === 'hero' && pick.credit ? `${artist} photo: ${pick.credit}` : undefined}
           kind={profile?.kind}
           framed={pick.kind === 'hero'}
-          instantFirst={arrival === 'return'}
+          instantFirst={arrival !== 'arrive'}
           onFailed={onHeroFailed}
         />
         <div className="ad-hero-text">
@@ -693,8 +720,8 @@ export default function ArtistDetailView() {
 
       <div className="ad-sheet">
         {/* About — directly under the header, facts beside it. */}
-        <section className="ad-about ad-rise ad-d4">
-          <div className={`ad-about-main${aboutPending ? ' is-pending' : ''}`}>
+        <section ref={aboutRef} className={`ad-about ad-rise ad-d4${aboutReserved && !aboutOpen ? ' is-reserved' : ''}`}>
+          <div className="ad-about-main">
             <h2 className="ad-h2">About</h2>
             {profile?.bio ? (
               <>
@@ -726,6 +753,9 @@ export default function ArtistDetailView() {
                 </Fragment>
               ))}
             </dl>
+          )}
+          {aboutReserved && !aboutOpen && aboutOverflows && (
+            <button type="button" className="ad-about-more" onClick={() => setAboutOpen(true)}>More</button>
           )}
         </section>
 

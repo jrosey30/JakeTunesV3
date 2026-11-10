@@ -14,13 +14,19 @@
  *   4. when a pick goes from the list, removes the picked photo it saved (only if that file is still
  *      the pick), so artist-photo.ts fetches Deezer's again on the next look, as homemini and the phone
  *      do at once. Without this the Mac kept the old pick until Deezer's 30-day refresh.
- * Photos asked for in the first moments of a launch wait for the first pull (ready(), capped at
- * 1.5 s), so the picked face is the first one drawn.
+ * The saved list is read when this is created, synchronously, so isPicked() is right from the
+ * first call of a launch. Photos asked for in the first moments of a launch (artist-photo.ts
+ * get() and known(), which feeds the artist page's first frame) wait for the first pull (ready(),
+ * capped at 1.5 s), so a pick made since the last run is the first picture drawn; after that
+ * ready() is already resolved and nothing waits. A pick that lands later replaces the file under
+ * the same slug: the file's mtime is part of the picture's address (artist-photo.ts version()), so
+ * the next look draws the new face, never the old one from memory.
  *
  * Pure of electron: fetch, the folders and the clock are injected (__tests__/artist-photo-picks.test.ts).
  */
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { withCompanionInit } from './hub-companion.ts'
 import { artistSlug } from './artist-photo.ts'
@@ -91,17 +97,16 @@ export function createArtistPhotoPicks(opts: ArtistPhotoPicksOptions) {
     lastProblem = what
   }
 
-  /** The list the last pull saved (read once per run). */
-  const load = (): Promise<void> => (loading ??= (async () => {
-    try {
-      const saved = JSON.parse(await readFile(opts.stateFile, 'utf8')) as { etag?: unknown }
-      const list = parsePhotoPicks(saved)
-      if (list) {
-        picks = new Map(list.map((p) => [p.slug, p]))
-        etag = typeof saved.etag === 'string' ? saved.etag : ''
-      }
-    } catch { /* first run, or unreadable: start empty */ }
-  })())
+  /** The list the last pull saved: read here, once, before anything can ask isPicked(). */
+  try {
+    const saved = JSON.parse(readFileSync(opts.stateFile, 'utf8')) as { etag?: unknown }
+    const list = parsePhotoPicks(saved)
+    if (list) {
+      picks = new Map(list.map((p) => [p.slug, p]))
+      etag = typeof saved.etag === 'string' ? saved.etag : ''
+    }
+  } catch { /* first run, or unreadable: start empty */ }
+  const load = (): Promise<void> => (loading ??= Promise.resolve())
 
   const save = async (): Promise<void> => {
     const tmp = `${opts.stateFile}.tmp`

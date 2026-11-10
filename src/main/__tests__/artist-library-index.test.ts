@@ -88,6 +88,18 @@ describe('built once per library, rebuilt when it changes', () => {
     assert.equal(tracksOfArtist(grown, 'Geese').length, before + 1)
     assert.equal(tracksOfArtist(lib, 'Geese').length, before, 'and the old array still answers for itself')
   })
+  it('album facts are rebuilt for a changed library too', () => {
+    const lib = library()
+    const before = libraryAlbumFacts(lib, nameKey)
+    const grown = [...lib, T('Geese', 'Projector', 'Low Era')]
+    const after = libraryAlbumFacts(grown, nameKey)
+    assert.notEqual(after, before)
+    assert.equal(after.size, before.size + 1, 'the new album has its facts')
+    assert.deepEqual([...after], [...collectAlbumFacts(grown, nameKey)])
+    assert.equal(albumTitleForKey(grown, albumKeyFromStrings('Geese', 'Projector')), 'Projector')
+    assert.equal(albumTitleForKey(lib, albumKeyFromStrings('Geese', 'Projector')), null)
+    assert.equal(trackIdSet(grown).size, lib.length + 1)
+  })
   it('a change to the alias map rebuilds it: the same library regroups', () => {
     setUserAliases({})
     const lib = library()

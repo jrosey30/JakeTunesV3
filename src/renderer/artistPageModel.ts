@@ -10,8 +10,10 @@
  * credited photo. The rules here are the phone's "frame-1 rule" on the desktop:
  *
  *   headerPick      — which picture the header shows, decided from what is
- *                     known NOW. Unknown is ink (the header's own colour),
- *                     never a cover that a photo will replace a moment later.
+ *                     known NOW: a photo known to be on this Mac, else the
+ *                     record cover. The header is never left blank waiting
+ *                     on a lookup (341 of 2,348 artists have no photo on
+ *                     disk; offline that lookup takes 8 s to give up).
  *   heroLayers      — a later, better picture cross-fades in over the one
  *                     showing, in the same box. Never a hard swap, never a
  *                     moment with no picture between two pictures.
@@ -19,11 +21,13 @@
  *                     profile but only SHOWN once homemini has said there is
  *                     no profile (or has not answered within a short grace),
  *                     so one bio is never painted and then replaced.
- *   shownProfileState — what was painted stays painted for this visit. A
- *                     profile whose text changed while the page is open waits
- *                     for the next visit (the calmer of the two behaviours:
- *                     nothing moves under the reader); photos of the SAME
- *                     profile fill their reserved tiles as they land.
+ *   shownProfileState — real text that was painted stays painted for this
+ *                     visit. A profile whose text changed while the page is
+ *                     open waits for the next visit (the calmer of the two
+ *                     behaviours: nothing moves under the reader); photos of
+ *                     the SAME profile fill their reserved tiles as they
+ *                     land. An empty About ("No biography found") is not
+ *                     text anyone is reading: a profile is let in over it.
  */
 import { headerPhotoChoice } from '../common/artist-page.ts'
 import type { ArtistProfile, ArtistProfileSource, ArtistProfileState } from '../common/artist-profile.ts'
@@ -34,11 +38,14 @@ export type HeaderPick =
   | { kind: 'hero'; src: string; url: string; credit?: string }
   | { kind: 'artist'; src: string; slug: string }
   | { kind: 'cover'; src: string }
-  /** Ink: nothing to show yet (the photo lookup has not answered) or at all. */
-  | { kind: 'none'; pending: boolean }
+  /** Ink: no photo and no record cover either. */
+  | { kind: 'none' }
 
-export const artistImageUrl = (slug: string, size = 0): string =>
-  `artist-image://${slug}.jpg${size > 0 ? `?s=${size}` : ''}`
+/** `version` is the file's mtime (artistPhotoVersions): a photo replaced under the same slug gets a new address. */
+export const artistImageUrl = (slug: string, size = 0, version = 0): string => {
+  const q = [version > 0 ? `v=${version}` : '', size > 0 ? `s=${size}` : ''].filter(Boolean).join('&')
+  return `artist-image://${slug}.jpg${q ? `?${q}` : ''}`
+}
 
 export interface HeaderPickInput {
   profile: ArtistProfile | null
@@ -48,6 +55,8 @@ export interface HeaderPickInput {
   brokenHero: string | null
   /** The app's artist photo: a slug, null (looked up: there is none), undefined (not known yet). */
   artistSlug: string | null | undefined
+  /** That photo file's mtime, when known. */
+  artistVersion?: number
   /** The artist photo failed to draw. */
   artistPhotoFailed: boolean
   /** The most played record's cover (else the newest record's), if there is one. */
@@ -60,9 +69,11 @@ export interface HeaderPickInput {
  *  1. the profile's credited header photo, once it is saved on this Mac —
  *     from the first frame when the profile is cached;
  *  2. heroNeedsPhoto: the record cover, never the artist image;
- *  3. the artist image (the lookup's slug, else the slug the profile names);
- *  4. no artist image: the record cover — but only once the lookup has SAID
- *     there is none. While it has not answered the header stays ink.
+ *  3. the artist image, when one is KNOWN to be on this Mac (the lookup's
+ *     slug, else the slug the profile names);
+ *  4. otherwise the record cover, from the first frame — whether the lookup
+ *     said there is no photo, has not answered yet, or failed. A photo that
+ *     does turn up later cross-fades in over it (heroLayers).
  */
 export function headerPick(i: HeaderPickInput): HeaderPick {
   const choice = headerPhotoChoice(i.profile)
@@ -70,11 +81,10 @@ export function headerPick(i: HeaderPickInput): HeaderPick {
   if (choice === 'hero' && hero && i.photos[hero.url] && i.brokenHero !== hero.url) {
     return { kind: 'hero', src: artistImageUrl(i.photos[hero.url]), url: hero.url, credit: hero.credit }
   }
-  const cover: HeaderPick = i.coverSrc ? { kind: 'cover', src: i.coverSrc } : { kind: 'none', pending: false }
+  const cover: HeaderPick = i.coverSrc ? { kind: 'cover', src: i.coverSrc } : { kind: 'none' }
   if (choice === 'cover') return cover
   const slug = i.artistSlug || i.profile?.heroPhoto || null
-  if (slug && !i.artistPhotoFailed) return { kind: 'artist', src: artistImageUrl(slug), slug }
-  if (i.artistSlug === undefined && !i.artistPhotoFailed) return { kind: 'none', pending: true }
+  if (slug && !i.artistPhotoFailed) return { kind: 'artist', src: artistImageUrl(slug, 0, slug === i.artistSlug ? i.artistVersion : 0), slug }
   return cover
 }
 
@@ -165,7 +175,7 @@ const sameDoc = (a: ArtistProfile | null, b: ArtistProfile | null): boolean =>
   a === b || (!!a && !!b && JSON.stringify(a) === JSON.stringify(b))
 
 export interface ShownContext {
-  /** A bio (homemini's or Wikipedia's) or its "none found" line is on the page. */
+  /** Real bio text (homemini's or Wikipedia's) is on the page. The "No biography found" line is not: nobody is reading it. */
   textPainted: boolean
   /** The reader has scrolled away from the top. */
   scrolled: boolean
@@ -192,10 +202,34 @@ export function shownProfileState(shown: ArtistProfileState | null, latest: Arti
 
 /**
  * Where a page opens. Arriving (a click on an artist) starts at the top;
- * returning (Back / Forward) restores the scroll you left. Before 2026-11-10
- * the saved position was applied on every mount, so a click on an artist
- * could land mid-Discography, where you had last left that artist.
+ * returning (Back / Forward) restores the scroll you left, and so does the
+ * page the app reopens on after a relaunch ('restore'). Before 2026-11-10 the
+ * saved position was applied on every mount, so a click on an artist could
+ * land mid-Discography, where you had last left that artist.
  */
-export function initialScroll(arrival: 'arrive' | 'return', saved: { top: number; left: number } | undefined): { top: number; left: number } | null {
-  return arrival === 'return' && saved ? saved : null
+export function initialScroll(arrival: 'arrive' | 'return' | 'restore', saved: { top: number; left: number } | undefined): { top: number; left: number } | null {
+  return arrival !== 'arrive' && saved ? saved : null
+}
+
+// ── what the page remembers for the session ───────────────────────────────
+
+/** How long the page keeps an answer before it asks main again — main's own holds. */
+export const KEEP_WIKI_MS = 24 * 3600 * 1000          // main's Wikipedia cache
+export const KEEP_WIKI_NONE_MS = 3600 * 1000           // "no page found": asked again within the hour
+export const KEEP_DISCO_MS = 7 * 24 * 3600 * 1000     // a finished MusicBrainz discography
+export const KEEP_DISCO_INCOMPLETE_MS = 6 * 3600 * 1000 // an unfinished one (a source was down)
+
+export interface Kept<T> { value: T; until: number }
+
+/** Remember `value` under `key` until `ttlMs` from now. */
+export function keep<T>(memo: Map<string, Kept<T>>, key: string, value: T, ttlMs: number, now: number): void {
+  memo.set(key, { value, until: now + ttlMs })
+}
+
+/** What is remembered under `key`, unless its time is up (then it is forgotten, and main is asked again). */
+export function kept<T>(memo: Map<string, Kept<T>>, key: string, now: number): T | undefined {
+  const hit = memo.get(key)
+  if (!hit) return undefined
+  if (now >= hit.until) { memo.delete(key); return undefined }
+  return hit.value
 }

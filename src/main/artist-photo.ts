@@ -107,16 +107,26 @@ export interface PhotoDeps {
   now?: () => number
   /** A photo Jake picked on homemini (artist-photo-picks.ts): never refreshed from Deezer. */
   picked?: (slug: string) => boolean
-  /** Waited on before Deezer is asked, so a launch's first lookups come after the first picks pull. */
+  /** Waited on before each look, so a launch's first photos come after the first picks pull
+   *  (capped there at 1.5 s): Jake's pick is the first picture drawn, never the photo it replaces. */
   ready?: () => Promise<void>
   /** Pause between background refreshes (tests pass 0). */
   refreshGapMs?: number
 }
 
+export interface KnownPhotos { slugs: Record<string, string>; versions: Record<string, number>; none: string[] }
+
 export function createArtistPhotos(deps: PhotoDeps): {
   get(artist: string): Promise<string | null>
-  /** Which of these names have a photo on disk right now (name → slug). One folder listing, no network. */
-  known(names: readonly string[]): Promise<Record<string, string>>
+  /**
+   * What the disk says about these names, from one folder listing and no network:
+   * `slugs` (name → slug) for a photo that is there, with `versions` (slug → the
+   * file's mtime, so a replaced photo gets a new address), and `none` for the
+   * names a recent look found no photo for (a fresh .miss).
+   */
+  known(names: readonly string[]): Promise<KnownPhotos>
+  /** The photo file's mtime (0 when there is none): part of its address, so a replaced file is never drawn from memory. */
+  version(slug: string): Promise<number>
   /** Resolves when no background refresh is queued or running (tests). */
   idle(): Promise<void>
 } {
@@ -203,6 +213,10 @@ export function createArtistPhotos(deps: PhotoDeps): {
     const running = inFlight.get(slug)
     if (running) return running
     const task = (async (): Promise<string | null> => {
+      // The first picks pull of a launch first (never rejects, capped at 1.5 s there,
+      // already resolved after that): a pick made since the last run must be the
+      // picture drawn, not the Deezer photo it replaces.
+      await deps.ready?.()
       const jpg = join(deps.dir, `${slug}.jpg`), miss = join(deps.dir, `${slug}.miss`)
       // A photo on disk is the answer, at once, whatever its age (2026-11-10:
       // a photo past 30 days used to be held back until Deezer had been asked
@@ -213,9 +227,7 @@ export function createArtistPhotos(deps: PhotoDeps): {
         if (now() - st.mtimeMs >= photoMaxAgeMs(slug)) queueRefresh(artist, slug)
         return slug
       }
-      await deps.ready?.()                                           // never rejects (artist-photo-picks.ts)
       await mkdir(deps.dir, { recursive: true }).catch(() => {})
-      if (await exists(jpg)) return slug                             // the first picks pull just saved it
       if (await fresh(miss, MISS_TTL_MS)) return null
       const f = await factFor(artist)
       if (!f) return null                                            // Deezer unreachable: ask again next time
@@ -233,18 +245,32 @@ export function createArtistPhotos(deps: PhotoDeps): {
     return task.finally(() => inFlight.delete(slug))
   }
 
-  const known = async (names: readonly string[]): Promise<Record<string, string>> => {
-    const out: Record<string, string> = {}
+  const known = async (names: readonly string[]): Promise<KnownPhotos> => {
+    const out: KnownPhotos = { slugs: {}, versions: {}, none: [] }
+    await deps.ready?.()                                             // as get(): after the launch's first picks pull
     let files: string[]
     try { files = await readdir(deps.dir) } catch { return out }
-    const have = new Set<string>()
-    for (const f of files) if (f.endsWith('.jpg')) have.add(f.slice(0, -4))
+    const have = new Set<string>(), missed = new Set<string>()
+    for (const f of files) {
+      if (f.endsWith('.jpg')) have.add(f.slice(0, -4))
+      else if (f.endsWith('.miss')) missed.add(f.slice(0, -5))
+    }
     for (const name of names) {
       if (typeof name !== 'string' || !name) continue
       const slug = artistSlug(name)
-      if (slug !== 'unknown' && have.has(slug)) out[name] = slug
+      if (slug === 'unknown') continue
+      if (have.has(slug)) {
+        out.slugs[name] = slug
+        if (!(slug in out.versions)) out.versions[slug] = await version(slug)
+      } else if (missed.has(slug) && await fresh(join(deps.dir, `${slug}.miss`), MISS_TTL_MS)) {
+        out.none.push(name)                                          // looked up within the last hours: there is none
+      }
     }
     return out
+  }
+
+  const version = async (slug: string): Promise<number> => {
+    try { return Math.floor((await stat(join(deps.dir, `${slug}.jpg`))).mtimeMs) } catch { return 0 }
   }
 
   const idle = async (): Promise<void> => { while (draining) await draining }
@@ -252,6 +278,7 @@ export function createArtistPhotos(deps: PhotoDeps): {
   return {
     get,
     known,
+    version,
     idle,
   }
 }

@@ -80,14 +80,15 @@ export function getSavedScrollLeft(key: string): number {
 /**
  * `arrival` (optional): how this page was reached. Left out, the saved
  * position is applied on every mount, as it always was. Given, it is applied
- * only on a 'return' (Back / Forward); an 'arrive' starts at the top and
- * forgets the old position, so the next Back lands where you left the page
- * THIS time (artistPageModel.ts initialScroll).
+ * on a 'return' (Back / Forward) and on a 'restore' (the page the app reopened
+ * on after a relaunch); an 'arrive' starts at the top and forgets the old
+ * position, so the next Back lands where you left the page THIS time
+ * (artistPageModel.ts initialScroll).
  */
 export function useScrollPersistence(
   key: string,
   containerRef: React.RefObject<HTMLElement | null>,
-  arrival?: 'arrive' | 'return',
+  arrival?: 'arrive' | 'return' | 'restore',
 ): void {
   // True while a restore is still chasing its target on an async page.
   // The recorder effect below must NOT capture positions during this

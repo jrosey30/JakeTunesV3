@@ -99,6 +99,8 @@ export function createArtistProfileClient(opts: ArtistProfileClientOptions): Art
 
   const liveThisSession = new Set<string>()
   const lastAsk = new Map<string, number>()
+  /** Artists whose last answer was 404 ("not built yet"): asked again on every visit, whatever the gap. */
+  const lastWasMissing = new Set<string>()
   const inFlight = new Map<string, Promise<ArtistProfileState>>()
   let wasUnreachable = false
 
@@ -179,6 +181,7 @@ export function createArtistProfileClient(opts: ArtistProfileClientOptions): Art
       // identity didn't hold). Better empty than wrong: drop any old copy.
       noteReachable(true)
       liveThisSession.delete(n.toLowerCase())
+      lastWasMissing.add(n.toLowerCase())
       await writeCache(n, { doc: null, etag: null, missing: true })
       return
     }
@@ -198,6 +201,7 @@ export function createArtistProfileClient(opts: ArtistProfileClientOptions): Art
     }
     noteReachable(true)
     liveThisSession.add(n.toLowerCase())
+    lastWasMissing.delete(n.toLowerCase())
     await writeCache(n, { doc: body, etag: res.headers?.get('etag') ?? null })
   }
 
@@ -281,7 +285,9 @@ export function createArtistProfileClient(opts: ArtistProfileClientOptions): Art
     }
     const running = inFlight.get(k)
     if (running) return after(running)
-    if (!o?.force && now() - (lastAsk.get(k) ?? 0) < PROFILE_MIN_GAP_MS) return after(read(n))
+    // A 404 is "not built yet": homemini builds a page within minutes of its first
+    // visit, so the revisit asks again instead of reusing the stub for the gap.
+    if (!o?.force && !lastWasMissing.has(k) && now() - (lastAsk.get(k) ?? 0) < PROFILE_MIN_GAP_MS) return after(read(n))
     lastAsk.set(k, now())
     const p = (async () => {
       try {

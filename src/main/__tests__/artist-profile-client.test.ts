@@ -7,7 +7,7 @@
 // so main/index.ts did not grow.
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, readFile, readdir } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, readdir, writeFile } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -271,6 +271,22 @@ describe('artist profile client', () => {
     assert.equal(hub.calls.length, 1)
   })
 
+  // Review of PR 408: a page first visited before homemini has built it gets a 404.
+  // homemini builds it within minutes; the revisit must not reuse the stub for the gap.
+  it('a 404 is asked again on the very next visit, and the built profile comes back', async () => {
+    const c = make()
+    hub.mode = 'missing'
+    assert.equal((await c.refresh('Geese')).source, 'missing')
+    hub.mode = 'up'                                   // built meanwhile; no time has passed
+    hub.calls = []
+    const s = await c.refresh('Geese', { waitPhotos: true })
+    assert.ok(hub.calls.some((x) => x.url.endsWith('/profile')), 'asked again inside the gap')
+    assert.equal(s.profile?.name, 'Geese')
+    hub.calls = []
+    await c.refresh('Geese')
+    assert.equal(hub.calls.length, 0, 'and once there is a profile the gap applies as before')
+  })
+
   it('the cache file is per artist and names its artist', async () => {
     await make().refresh('Geese')
     const raw = JSON.parse(await readFile(join(dir, 'artist-profiles', profileCacheFile('Geese')), 'utf-8'))
@@ -390,6 +406,15 @@ describe('the profile text is delivered before its photos', () => {
     assert.deepEqual(all.states.map((x) => x.name).sort(), ['Fat Dog', 'Geese', 'Nobody'])
     assert.equal(all.states.find((x) => x.name === 'Nobody')!.source, 'missing', 'a cached 404 is known too: the page plans its fallback on the first frame')
     assert.equal(Object.keys(all.states.find((x) => x.name === 'Geese')!.photos).length, 2, 'with the photos already saved')
+    // A file whose name is not its artist's (copied, renamed, torn) is not trusted: the page
+    // would be handed one artist's profile under another's cache slot.
+    const real = join(dir, 'p', profileCacheFile('Geese'))
+    await writeFile(join(dir, 'p', profileCacheFile('Somebody Else')), await readFile(real, 'utf-8'))
+    await writeFile(join(dir, 'p', 'junk.json'), '{ not json')
+    const guarded = await createArtistProfileClient(opts).readAll()
+    assert.deepEqual(guarded.states.map((x) => x.name).sort(), ['Fat Dog', 'Geese', 'Nobody'], 'Geese once, under its own file only')
+    await rm(join(dir, 'p', profileCacheFile('Somebody Else')))
+    await rm(join(dir, 'p', 'junk.json'))
     const some = await createArtistProfileClient(opts).readAll(2)
     assert.equal(some.states.length, 2)
     assert.equal(some.complete, false, 'a cut-short list says so, so "not listed" is not read as "not cached"')

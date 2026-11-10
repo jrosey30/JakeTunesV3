@@ -8,6 +8,7 @@ import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createArtistPhotoPicks, parsePhotoPicks, photoFileOf, PICKS_READY_CAP_MS, type PicksFetchLike } from '../artist-photo-picks.ts'
+import { waitFor } from './wait-for.ts'
 import { createArtistPhotos, PHOTO_MAX_AGE_MS } from '../artist-photo.ts'
 
 const commons = Buffer.from('the Commons photo of Cameron Winter Jake kept on the Geese page')
@@ -176,5 +177,59 @@ describe('artist photo picks', () => {
       assert.equal(downloads.length, 1)
       assert.equal(readFileSync(join(t.dir, 'geese.jpg'), 'utf8'), 'a fresh Deezer photo')
     } finally { await t.done() }
+  })
+
+  // Review of PR 408: Jake's own pick must win on the first draw after a launch.
+  it('the saved list is known the moment this is created: isPicked() never says "not picked" for a moment at boot', async () => {
+    const t = tmp()
+    try {
+      const first = createArtistPhotoPicks({ baseUrl: 'http://homemini:3000/', dir: t.dir, stateFile: t.stateFile, fetchImpl: hub().fetchImpl, ...quiet })
+      await first.pull()
+      const next = createArtistPhotoPicks({ baseUrl: 'http://homemini:3000/', dir: t.dir, stateFile: t.stateFile, fetchImpl: hub({ offline: true }).fetchImpl, ...quiet })
+      assert.equal(next.isPicked('cameron-winter'), true, 'no await between creating it and asking')
+    } finally { await t.done() }
+  })
+
+  it('a pick made since the last run is the first picture drawn: the look waits for the first pull, and the address changes with the file', async () => {
+    const t = tmp()
+    try {
+      const { mkdirSync } = await import('node:fs')
+      mkdirSync(t.dir, { recursive: true })
+      writeFileSync(join(t.dir, 'cameron-winter.jpg'), selfie)            // Deezer's, from the last run
+      const before = new Date(Date.now() - 86_400_000)
+      utimesSync(join(t.dir, 'cameron-winter.jpg'), before, before)
+      let pulled: () => void = () => {}
+      const firstPull = new Promise<void>((r) => { pulled = r })
+      const photos = createArtistPhotos({
+        dir: t.dir, factsFile: join(t.dir, '..', 'artist-deezer.json'),
+        owned: async () => ({ albums: [], titles: [] }), fetchJson: async () => undefined, download: async () => null,
+        picked: () => true,
+        ready: () => firstPull,
+      })
+      const v0 = Math.floor(before.getTime())
+      let slug: string | null | undefined
+      let seeded: Awaited<ReturnType<typeof photos.known>> | undefined
+      void photos.get('Cameron Winter').then((a) => { slug = a })
+      void photos.known(['Cameron Winter']).then((k) => { seeded = k })
+      await new Promise((r) => setTimeout(r, 40))                       // a fixed pause is fine before checking that nothing happened
+      assert.equal(slug, undefined, "the old photo is not handed over ahead of the launch's first picks pull")
+      assert.equal(seeded, undefined, 'nor put in the boot seed the artist page draws its first frame from')
+      writeFileSync(join(t.dir, 'cameron-winter.jpg'), commons)           // the pull saves Jake's pick…
+      pulled()
+      await waitFor(() => slug !== undefined && seeded !== undefined, 'the look, once the first pull is done')
+      assert.equal(slug, 'cameron-winter')
+      const v1 = seeded!.versions['cameron-winter']
+      assert.ok(v1 > v0, 'the replaced file has a new version…')
+      assert.equal(await photos.version('cameron-winter'), v1)
+      assert.equal(await photos.version('nobody'), 0)
+      const index = readFileSync(join(import.meta.dirname, '..', 'index.ts'), 'utf-8')
+      assert.match(index, /return \{ ok: true, slug, \.\.\.\(slug \? \{ v: await artistPhotos\.version\(slug\) \} : \{\}\) \}/, '…which rides with every lookup, into the picture\'s address')
+    } finally { await t.done() }
+  })
+
+  it('the header comment says what happens', () => {
+    const src = readFileSync(join(import.meta.dirname, '..', 'artist-photo-picks.ts'), 'utf-8')
+    assert.match(src, /read when this is created, synchronously/)
+    assert.match(src, /readFileSync\(opts\.stateFile, 'utf8'\)/)
   })
 })

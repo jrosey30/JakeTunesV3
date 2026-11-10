@@ -34,7 +34,7 @@ import { primeArtistPage } from '../artistPageSeed'
 import { subscribeAliases, getAliasVersion } from '../utils/artistAlias'
 import { foldName } from '../releaseKinds'
 import { navDxNavigated } from '../navDxDom'
-import { takeHistoryNavigation } from '../navIntent'
+import { takeHistoryNavigation, pageArrival } from '../navIntent'
 import { useNavigation } from '../context/NavigationContext'
 import { useBackLabel } from '../hooks/useBackLabel'
 import { showsSharedBack } from '../backPill'
@@ -44,10 +44,10 @@ import '../styles/main-content.css'
 /** Arrive vs return, decided ONCE per mounted page (its key) and then held
  *  for that page's lifetime — flipping data-nav later would restart the very
  *  entrance animations the return switched off. */
-function useNavArrival(key: string): 'return' | 'arrive' {
-  const ref = useRef<{ key: string; kind: 'return' | 'arrive' } | null>(null)
+function useNavArrival(key: string): 'return' | 'arrive' | 'restore' {
+  const ref = useRef<{ key: string; kind: 'return' | 'arrive' | 'restore' } | null>(null)
   if (!ref.current || ref.current.key !== key) {
-    ref.current = { key, kind: takeHistoryNavigation() ? 'return' : 'arrive' }
+    ref.current = { key, kind: pageArrival(ref.current === null, takeHistoryNavigation()) }
   }
   return ref.current.kind
 }
@@ -111,7 +111,7 @@ export default function MainContent() {
   const activeKey = keptActive ? `kept:${wantKept}` : transitionKey
   const arrival = useNavArrival(activeKey)
   // The kept page's data-nav is fixed at ITS mount (see useNavArrival).
-  const keptArrivalRef = useRef<{ root: KeptRoot; kind: 'return' | 'arrive' } | null>(null)
+  const keptArrivalRef = useRef<{ root: KeptRoot; kind: 'return' | 'arrive' | 'restore' } | null>(null)
   if (wantKept && keptActive && keptArrivalRef.current?.root !== wantKept) keptArrivalRef.current = { root: wantKept, kind: arrival }
   if (!wantKept) keptArrivalRef.current = null
   // The artist page's per-library answers (which tracks are whose, every
@@ -125,7 +125,7 @@ export default function MainContent() {
   useLayoutEffect(() => {
     const from = lastKeyRef.current
     lastKeyRef.current = activeKey
-    if (from !== null) navDxNavigated({ from, to: activeKey, kind: arrival, remount: !keptActive })
+    if (from !== null) navDxNavigated({ from, to: activeKey, kind: arrival === 'return' ? 'return' : 'arrive', remount: !keptActive })
   }, [activeKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Parking a page must not leave keyboard focus on one of its cards — Space /
