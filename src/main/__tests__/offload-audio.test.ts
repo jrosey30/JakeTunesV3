@@ -256,8 +256,10 @@ describe('replacement requires a full-file sha1 and size', () => {
       openRaw: async () => ({
         ok: true,
         status: 200,
-        contentLength: local.length + 50,
-        stream: streamOf(local),
+        // homemini promises this Mac's size and the body ends early (2026-11-09: a
+        // promise of ANOTHER size is 'different' without reading it, offload-confirm.test.ts)
+        contentLength: local.length,
+        stream: streamOf(local.subarray(0, 5)),
       }),
       hashLocal: async () => digestBuffer(local),
     })
@@ -639,7 +641,7 @@ describe('index wires hub offload without the replica boot scan', () => {
     const beforeScan = index.slice(Math.max(0, scanAt - 1200), scanAt)
     assert.match(beforeScan, /readStreamSource\(\)\) !== 'homemini'/)
     assert.match(index, /bootHubOffload\(/)
-    assert.match(index, /confirmRawHomeminiMatch\(/)
+    assert.match(index, /confirmHomeminiHoldsFile\(/)
     assert.equal(index.includes('homeminiServesMatchingBytes'), false)
     assert.equal(index.includes('bytes=0-262143'), false)
     assert.match(index, /fullSha1: match\.fullSha1/)

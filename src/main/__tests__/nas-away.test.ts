@@ -421,7 +421,10 @@ describe('wiring', () => {
 
   it('state-dir builds the one breaker on the route check', () => {
     const src = read('src/main/state-dir.ts')
-    assert.match(src, /createNasBreaker\(\{\s*probe: \(\) => stat\(NAS_STATE_DIR_PATH\),\s*isAway: createAwayCheck\(\{ readRoute: readNasRoute, ping: \(\) => pingNas\(\) \}\),/)
+    // One cached route check, shared with the offload queue and the iPod job (2026-11-09).
+    assert.match(src, /export const isAwayFromHome = createAwayCheck\(\{ readRoute: readNasRoute, ping: \(\) => pingNas\(\) \}\)/)
+    assert.equal((src.match(/createAwayCheck\(/g) ?? []).length, 1, 'one check, one cache')
+    assert.match(src, /createNasBreaker\(\{\s*probe: \(\) => stat\(NAS_STATE_DIR_PATH\),\s*isAway: isAwayFromHome,/)
     for (const name of ['nasAvailable', 'isNasMounted', 'onNasRecovery']) assert.match(src, new RegExp(`export const ${name} = breaker\\.${name}`))
   })
 

@@ -54,9 +54,10 @@ import { pathHashFor, playCacheName, isEntryFor, legacyPlayCacheName } from './p
 import { createPlayCache } from './play-cache.ts'
 import { createStreamAlacCache, downloadUrlToFile, ffmpegAlacToFlac, localFileNeedsStreamAlacDecode } from './stream-alac-cache.ts'
 import { backfillAlacFingerprints, planLocalAlacMigration, type AlacMigrateTrack } from './alac-stream-migrate.ts'
-import { decideStreamConvertAttempt, decideStreamConvertMiss } from './stream-convert-retry.ts'
+import { mergeQueuedDuringPass, runConvertPass, type ConvertOutcome, type QueueTrack, type StreamConvertItem } from './stream-convert-pass.ts'; import { confirmHomeminiHoldsFile, keptLocalMessage, USER_PENDING_RETRIES, type RefusalMemo } from './offload-confirm.ts'
+import { askAudioIdentity, hubBaseFromAudioBase, type OneIdentity } from './audio-identity.ts'
 import {
-  appendOffloadReplacement, confirmRawHomeminiMatch, createCachedOffloadReader, hubOffloadActive,
+  appendOffloadReplacement, createCachedOffloadReader, hubOffloadActive,
 localAudioDropRefused,   libraryRootFromMusicDir, OFFLOAD_CONVERT_BATCH, serveHubOffloadSymlink, streamConvertRuns,
 } from './offload-audio.ts'
 import { bootHubOffload, menuHubOffload, registerOffloadIpc } from './ipc/offload-ipc.ts'
@@ -161,7 +162,7 @@ import { computeStandings, computeAlbumCredits, creditKindOf, albumKeyOfStrings,
 import { scorePlaylistCandidates } from './playlist-vibes'
 import { ARCHETYPES, buildArchetypeBlock, type ArchetypeId } from './archetypes'
 import { join, relative } from 'path'
-import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted, nasAvailable, isSaveLocked, startNasReconnectWatcher } from './state-dir'
+import { STATE_DIR, STATE_IS_NAS, NAS_STATE_DIR_PATH, isNasMounted, nasAvailable, isSaveLocked, startNasReconnectWatcher, isAwayFromHome } from './state-dir'
 import { startBrainPull } from './brain-pull'
 import { startTasteStatePull } from './taste-state.ts'
 import { machineBehindNas } from './stale-push-guard'
@@ -4337,9 +4338,10 @@ async function fingerprintForIpodPath(ipodPath: string): Promise<string | undefi
   return undefined
 }
 // Convert a local track file into a streamed symlink. Drops local bytes only
-// after confirmRawHomeminiMatch: raw /audio/:id size and full sha1. The 256KB
-// fingerprint is a pre-filter. Atomic (symlink tmp → rename). No-op if linked.
-async function convertTrackToStreamed(ipodPath: string, storedFingerprint: string | undefined): Promise<{ ok: boolean; error?: string }> {
+// after confirmHomeminiHoldsFile (offload-confirm.ts): homemini's size and full
+// sha1 of the raw file equal this one's. Atomic (symlink tmp → rename). No-op if
+// linked. `ask.background`: a queue pass, which never downloads to check while away.
+async function convertTrackToStreamed(ipodPath: string, storedFingerprint: string | undefined, ask: { forId?: string | number; identity?: OneIdentity; remembered?: RefusalMemo; allowWholeFile?: boolean } = {}): Promise<ConvertOutcome> {
   try {
     const fp = trackFarmPath(ipodPath)
     let st
@@ -4349,10 +4351,13 @@ async function convertTrackToStreamed(ipodPath: string, storedFingerprint: strin
     if (refused) return { ok: false, error: refused }
     const id = await trackIdForAbsPath(fp)
     if (id == null) return { ok: false, error: 'track id not found in library' }
-    const match = await confirmRawHomeminiMatch({
-      id, localAbs: fp, storedFingerprint, audioBase: HOMEMINI_AUDIO_BASE,
+    if (ask.forId != null && String(ask.forId) !== String(id)) return { ok: false, error: 'the library changed under this check' }
+    const match = await confirmHomeminiHoldsFile({
+      id, localAbs: fp, libraryFingerprint: storedFingerprint, audioBase: HOMEMINI_AUDIO_BASE,
+      identity: ask.identity, remembered: ask.remembered, allowWholeFile: ask.allowWholeFile ?? true,
+      pendingRetries: ask.identity === undefined ? USER_PENDING_RETRIES : 0,   // no answer handed in = Jake asked for this song
     })
-    if (!match.ok) return { ok: false, error: 'homemini does not yet serve the full file — kept local' }
+    if (!match.ok) return { ok: false, error: keptLocalMessage(match.reason), reason: match.reason, refused: match.refused }
     const sentinel = await ensureStreamedSentinel()
     const tmp = fp + '.stream.tmp'
     await unlink(tmp).catch(() => {})
@@ -4445,7 +4450,6 @@ async function pinStreamedTrackFromHomemini(ipodPath: string): Promise<{ ok: boo
 // retried every period while the app runs — the file is not abandoned
 // until the next boot. Crash-safe:
 // persisted in userData. Poll interval is > 30s to dodge homemini's miss-cache.
-interface StreamConvertItem { ipodPath: string; fingerprint?: string; enqueuedAt: number; retryAfter?: number }
 const STREAM_CONVERT_MAX_AGE_MS = 30 * 60 * 1000   // after this, retry once per period while the app runs
 let streamConvertTimer: ReturnType<typeof setInterval> | null = null
 function streamConvertQueuePath(): string {
@@ -4490,36 +4494,24 @@ async function runStreamConvertPass(now: number): Promise<void> {
     const offload = await readOffloadAudio()
     if (!streamConvertRuns({ streamSource: source, offload })) return
     if (await localAudioDropRefused(MUSIC_DIR)) return
-    let items = await readStreamConvertQueue()
+    const items = await readStreamConvertQueue()
     if (!items.length) return
     const hub = hubOffloadActive({ streamSource: source, offload })
     const ipodGate = await ipodLocal.gate()   // songs on an iPod's list stay on this Mac (ipod-keep-local.ts)
-    const keep: StreamConvertItem[] = []
-    let changed = false
-    let attempted = 0
-    for (const it of items) {
-      if (decideStreamConvertAttempt(it, now) === 'wait' || keepsColon(ipodGate, it.ipodPath)) {
-        keep.push(it)
-        continue
-      }
-      if (hub && attempted >= OFFLOAD_CONVERT_BATCH) { keep.push(it); continue }
-      attempted++
-      const fpr = it.fingerprint ?? await fingerprintForIpodPath(it.ipodPath)
-      const r = await convertTrackToStreamed(it.ipodPath, fpr)
-      if (r.ok) {
-        console.log(`[stream-convert] converted to streamed: ${it.ipodPath}`)
-        changed = true
-        continue
-      }
-      const miss = decideStreamConvertMiss(it, now, STREAM_CONVERT_MAX_AGE_MS)
-      if (miss.rescheduled) {
-        changed = true
-        console.log(`[stream-convert] no homemini match yet, retrying in 30 min: ${it.ipodPath}`)
-      }
-      keep.push(miss.item)
-    }
-    if (changed || keep.length !== items.length) await writeStreamConvertQueue(keep)
-    if (!keep.length && streamConvertTimer) { clearInterval(streamConvertTimer); streamConvertTimer = null }
+    // The library's record NOW decides, never the row's (stream-convert-pass.ts).
+    const { keep, changed } = await runConvertPass({
+      now, items, maxAgeMs: STREAM_CONVERT_MAX_AGE_MS, batch: hub ? OFFLOAD_CONVERT_BATCH : null,
+      tracks: (((await libraryCache.get()) as CachedLibrary).tracks || []) as QueueTrack[],
+      kept: (it) => keepsColon(ipodGate, it.ipodPath),
+      away: isAwayFromHome,
+      askIdentity: (ids) => askAudioIdentity({ baseUrl: hubBaseFromAudioBase(HOMEMINI_AUDIO_BASE), ids, withInit: withCompanionInit }),
+      convert: (row, identity, allowWholeFile) => convertTrackToStreamed(row.item.ipodPath, row.fingerprint, { forId: row.id, identity, remembered: row.item.refused, allowWholeFile }),
+      log: (m) => console.log(m),
+    })
+    // A song queued while the pass ran is in the file and not in `keep`: it stays (stream-convert-pass.ts).
+    const left = mergeQueuedDuringPass(items, keep, await readStreamConvertQueue())
+    if (changed || left.length !== items.length) await writeStreamConvertQueue(left)
+    if (!left.length && streamConvertTimer) { clearInterval(streamConvertTimer); streamConvertTimer = null }
   } catch { /* non-fatal */ } finally {
     streamConvertPassRunning = false
   }
@@ -8452,7 +8444,7 @@ async function getConcertOwnedTrackIds(): Promise<Set<number>> {
 // "Ready for an updated sync" (2026-11-07): each iPod's Top 1000 / list vs its last sync → one notice + phone push, hub only.
 const ipodSyncReady = startIpodSyncReady({ stateDir: STATE_DIR, baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), isReplica: isHomeminiPlaybackClientCached, libraryTracks: async () => (await libraryCache.get()).tracks, ineligible: getConcertOwnedTrackIds, window: () => mainWindow, send: sendToRenderer, log: (m) => console.log(m), warn: (m) => quietWarn('sync-ready', m) })
 const ipodLocal = startIpodLocal({ ipc, userDataDir: app.getPath('userData'), stateDir: STATE_DIR, baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), audioBase: HOMEMINI_AUDIO_BASE, isReplica: isHomeminiPlaybackClientCached, libraryTracks: async () => ((await libraryCache.get()).tracks ?? []) as Array<Record<string, unknown>>, localMount: () => libraryRootFromMusicDir(MUSIC_DIR), pathSep: IS_WINDOWS ? '\\' : '/', isPlaying: () => playbackActive, syncInFlight: () => syncEngine.isSyncInFlight(), freeBytes: laptopFreeBytes,
-  libraryRefused: () => localAudioDropRefused(MUSIC_DIR), materialize: (colon, id, fetchAudio) => materializeTrackFromHomemini({ ...homeminiPullOpts(colon, id), fetchAudio }), mount: () => detectedIpodMount, ineligible: getConcertOwnedTrackIds, log: (m) => console.log(m), warn: (m) => quietWarn('ipod-local', m) })
+  libraryRefused: () => localAudioDropRefused(MUSIC_DIR), materialize: (colon, id, fetchAudio) => materializeTrackFromHomemini({ ...homeminiPullOpts(colon, id), fetchAudio }), mount: () => detectedIpodMount, isAway: isAwayFromHome, fingerprintOf: computeAudioFingerprint, tellLibrary: (m) => sendToRenderer('tag-writeback:file-changed', m), ineligible: getConcertOwnedTrackIds, log: (m) => console.log(m), warn: (m) => quietWarn('ipod-local', m) })
 // "Use a photo…" for the Top 1000 or an iPod list (2026-11-09, main/ipod-photo-covers.ts).
 async function pickIpodPhoto(): Promise<string | null> {
   const opts = { title: 'Use a photo', properties: ['openFile' as const], filters: [{ name: 'Photos', extensions: ['jpg', 'jpeg', 'png'] }] }
