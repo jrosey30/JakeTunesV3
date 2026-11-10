@@ -54,6 +54,8 @@ export interface StreamAlacCache {
   readonly dir: string
   readonly capBytes: number
   ensureDir(): Promise<void>
+  /** The decoded FLAC for this song is on disk now. Never downloads. */
+  has(trackId: string | number): Promise<boolean>
   /** Completed FLAC path. Concurrent callers share one decode. */
   ensure(trackId: string | number): Promise<string>
   /** Range (or whole-file) response. Waits out an in-flight decode. */
@@ -67,15 +69,37 @@ function safeId(trackId: string | number): string {
   return id
 }
 
+/**
+ * Waits between tries when homemini doesn't answer at all or answers 5xx. Its
+ * backend restarts on every deploy and refuses connections for a few seconds:
+ * five plays failed at once with "fetch failed" on 2026-11-10 13:31:42Z, the
+ * second a deploy landed. A 404 (no such song) is never retried.
+ */
+export const RAW_FETCH_RETRY_WAITS_MS: readonly number[] = [500, 1500, 3000]
+
 /** Download a URL to `dest`. Used for the raw homemini ALAC master. */
 export async function downloadUrlToFile(
   url: string,
   dest: string,
   fetchFn: (url: string, init?: RequestInit) => Promise<Response> = fetch,
+  retry: { waitsMs?: readonly number[]; sleep?: (ms: number) => Promise<void> } = {},
 ): Promise<void> {
-  const res = await fetchFn(url, { signal: AbortSignal.timeout(10 * 60_000) })
-  if ((!res.ok && res.status !== 206) || !res.body) {
-    throw new Error(`alac fetch ${res.status}`)
+  const waits = retry.waitsMs ?? RAW_FETCH_RETRY_WAITS_MS
+  const sleep = retry.sleep ?? ((ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms) }))
+  let res: Response | null = null
+  for (let attempt = 0; ; attempt++) {
+    let failure: unknown = null
+    try { res = await fetchFn(url, { signal: AbortSignal.timeout(10 * 60_000) }) } catch (err) { failure = err; res = null }
+    if (res && res.status < 500) break
+    if (attempt >= waits.length) {
+      if (failure) throw failure
+      break
+    }
+    await res?.body?.cancel().catch(() => undefined)
+    await sleep(waits[attempt])
+  }
+  if (!res || (!res.ok && res.status !== 206) || !res.body) {
+    throw new Error(`alac fetch ${res ? res.status : 'failed'}`)
   }
   // pipeline via writeWebBodyToFile — see web-body-to-file.ts (2026-10-17).
   await writeWebBodyToFile(res.body, dest)
@@ -235,6 +259,9 @@ export function createStreamAlacCache(opts: StreamAlacCacheDeps): StreamAlacCach
     dir,
     capBytes,
     ensureDir: async () => { await mkdir(dir, { recursive: true }) },
+    has: async (trackId) => {
+      try { return (await stat(join(dir, `${safeId(trackId)}.flac`))).size > 0 } catch { return false }
+    },
     ensure,
     serve,
     inflightCount: () => inflight.size,

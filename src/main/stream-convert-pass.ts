@@ -27,6 +27,11 @@
  *     the file with the list it read at its start.
  *   • A refusal is remembered on its row, so nothing is hashed or fetched for
  *     it again until this Mac's file or homemini's copy changes.
+ *   • 2026-11-10: a song Chromium can't play as it is (ALAC) is not tried
+ *     until homemini says its playable copy is ready (flac-variant.ts). The
+ *     pass asks for the due rows in one request, which is also what makes
+ *     homemini build the missing copies. Not ready is not a try: the row is
+ *     left exactly as it was and asked about next pass.
  */
 import { decideStreamConvertAttempt, decideStreamConvertMiss, streamConvertWaitMs, type StreamConvertRetryItem } from './stream-convert-retry.ts'
 import { isPending, type IdentityAnswer, type OneIdentity } from './audio-identity.ts'
@@ -62,6 +67,13 @@ export function mergeQueuedDuringPass<T extends { ipodPath: string }>(readAtStar
   }
   return out
 }
+
+/**
+ * homemini's playable copy of a song, as this pass needs it (flac-variant.ts
+ * playableVerdicts makes these): `ready` the file may be tried; `soon` being
+ * built or not known; `never` homemini said it won't have one for now.
+ */
+export type PlayableVerdict = 'ready' | 'soon' | 'never'
 
 export interface QueueTrack { id?: unknown; path?: unknown; audioFingerprint?: unknown }
 
@@ -122,6 +134,14 @@ export interface ConvertPassDeps<T extends StreamConvertItem> {
   kept: (item: T) => boolean
   away: () => Promise<boolean>
   askIdentity: (ids: Array<string | number>) => Promise<IdentityAnswer>
+  /** true = this Mac can only play the song from a copy homemini converts (ALAC). */
+  needsPlayable?: (item: T) => boolean
+  /**
+   * Ask homemini to have those songs' playable copies ready. Answers each id's
+   * verdict; null = no answer, and then none of them is tried. An id the
+   * answer leaves out is `soon`.
+   */
+  askPlayable?: (ids: Array<string | number>) => Promise<Map<string, PlayableVerdict> | null>
   /** `allowWholeFile` false: the old whole-file compare must not run. */
   convert: (row: QueueRow<T>, identity: OneIdentity, allowWholeFile: boolean) => Promise<ConvertOutcome>
   log: (msg: string) => void
@@ -135,6 +155,8 @@ export interface ConvertPassResult<T extends StreamConvertItem> {
   tried: number
   /** Rows homemini hadn't hashed its copy for. */
   pending: number
+  /** Rows left alone because homemini's playable copy isn't ready. Only set when there are any. */
+  notPlayable?: number
 }
 
 export async function runConvertPass<T extends StreamConvertItem>(deps: ConvertPassDeps<T>): Promise<ConvertPassResult<T>> {
@@ -178,6 +200,27 @@ export async function runConvertPass<T extends StreamConvertItem>(deps: ConvertP
     allowWholeFile = false
   }
 
+  // Songs whose playable copy on homemini isn't ready are not tried at all.
+  // `notPlayable`: being built, or not known. The row is left exactly as it was.
+  // `cantBePlayable`: homemini said it won't have one for now (no room, the
+  // conversion failed, no file). The row waits like a miss, so it can't hold
+  // the songs behind it.
+  const notPlayable = new Set<T>()
+  const cantBePlayable = new Set<T>()
+  const needing = deps.needsPlayable && deps.askPlayable ? due.filter((r) => deps.needsPlayable!(r.item)) : []
+  if (needing.length) {
+    let states: Map<string, PlayableVerdict> | null
+    try { states = await deps.askPlayable!(needing.map((r) => r.id)) } catch { states = null }
+    for (const r of needing) {
+      const verdict = states ? (states.get(String(r.id)) ?? 'soon') : 'soon'
+      if (verdict === 'ready') continue
+      if (verdict === 'never') cantBePlayable.add(r.item)
+      else notPlayable.add(r.item)
+    }
+    if (!states) deps.log(`[stream-convert] homemini didn't say which playable copies are ready; ${notPlayable.size} song(s) kept local this pass`)
+    else if (notPlayable.size) deps.log(`[stream-convert] ${notPlayable.size} song(s) kept local: homemini's playable copy isn't ready yet`)
+  }
+
   const dueSet = new Set(due.map((r) => r.item))
   const out: ConvertPassResult<T> = { keep: [], changed: dropped.size > 0, converted: 0, dropped: dropped.size, tried: 0, pending: 0 }
   let pendingWaiting = 0
@@ -201,6 +244,15 @@ export async function runConvertPass<T extends StreamConvertItem>(deps: ConvertP
       }
       continue
     }
+    // Not a try, and nothing about the row changes.
+    if (notPlayable.has(queued)) { out.keep.push(it); out.notPlayable = (out.notPlayable ?? 0) + 1; continue }
+    if (cantBePlayable.has(queued)) {
+      out.notPlayable = (out.notPlayable ?? 0) + 1
+      out.changed = true
+      deps.log(`[stream-convert] kept local, homemini has no playable copy of it for now; asked again later: ${it.ipodPath}`)
+      out.keep.push({ ...it, retryAfter: deps.now + streamConvertWaitMs(it.tries ?? 0, deps.maxAgeMs), tries: (it.tries ?? 0) + 1 })
+      continue
+    }
     if (deps.batch != null && out.tried >= deps.batch) { out.keep.push(it); continue }
     if (it.pendingPasses != null) {
       const { pendingPasses: _n, ...rest } = it
@@ -217,7 +269,7 @@ export async function runConvertPass<T extends StreamConvertItem>(deps: ConvertP
       continue
     }
     // Nothing was learned about the song: the row stays as it was and is asked about next pass.
-    if (r.reason === 'away' || r.reason === 'pending') { out.keep.push(it); continue }
+    if (r.reason === 'away' || r.reason === 'pending' || r.reason === 'not-playable') { out.keep.push(it); continue }
     const miss = decideStreamConvertMiss(it, deps.now, deps.maxAgeMs)
     let next: T = miss.item
     const sameMemo = !!r.refused && it.refused?.local === r.refused.local && it.refused?.remote === r.refused.remote

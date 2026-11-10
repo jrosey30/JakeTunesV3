@@ -56,6 +56,7 @@ import { createStreamAlacCache, downloadUrlToFile, ffmpegAlacToFlac, localFileNe
 import { backfillAlacFingerprints, planLocalAlacMigration, type AlacMigrateTrack } from './alac-stream-migrate.ts'
 import { mergeQueuedDuringPass, runConvertPass, type ConvertOutcome, type QueueTrack, type StreamConvertItem } from './stream-convert-pass.ts'; import { confirmHomeminiHoldsFile, keptLocalMessage, USER_PENDING_RETRIES, type RefusalMemo } from './offload-confirm.ts'
 import { askAudioIdentity, hubBaseFromAudioBase, type OneIdentity } from './audio-identity.ts'
+import { askFlacVariants, confirmPlayableOnHomemini, notPlayableMessage, playableIds, playableVerdicts, USER_PLAYABLE_RETRIES } from './flac-variant.ts'; import { buildRecentKeep, createPlayerTouches, keepWindows } from './offload-keep-recent.ts'; import { createStreamedAlacServer } from './stream-alac-serve.ts'
 import {
   appendOffloadReplacement, createCachedOffloadReader, hubOffloadActive,
 localAudioDropRefused,   libraryRootFromMusicDir, OFFLOAD_CONVERT_BATCH, serveHubOffloadSymlink, streamConvertRuns,
@@ -4358,6 +4359,11 @@ async function convertTrackToStreamed(ipodPath: string, storedFingerprint: strin
       pendingRetries: ask.identity === undefined ? USER_PENDING_RETRIES : 0,   // no answer handed in = Jake asked for this song
     })
     if (!match.ok) return { ok: false, error: keptLocalMessage(match.reason), reason: match.reason, refused: match.refused }
+    // ALAC: this Mac can only play it from homemini's FLAC copy, so that copy must be on homemini's disk first (flac-variant.ts).
+    if (wantsHomeminiFlac(fp)) {
+      const playable = await confirmPlayableOnHomemini({ id, ask: (one) => askVariants([one], true), retries: ask.identity === undefined ? USER_PLAYABLE_RETRIES : 0 })
+      if (!playable.ok) return { ok: false, error: notPlayableMessage(playable.state), reason: 'not-playable' }
+    }
     const sentinel = await ensureStreamedSentinel()
     const tmp = fp + '.stream.tmp'
     await unlink(tmp).catch(() => {})
@@ -4372,6 +4378,9 @@ async function convertTrackToStreamed(ipodPath: string, storedFingerprint: strin
     return { ok: false, error: safeIpcError(err, 'unknown') }
   }
 }
+const askVariants = (ids: ReadonlyArray<string | number>, want: boolean, timeoutMs?: number) => askFlacVariants({ baseUrl: hubBaseFromAudioBase(HOMEMINI_AUDIO_BASE), ids, want, withInit: withCompanionInit, timeoutMs })
+/** What the player asked for lately: playing now, or loaded ahead as next (offload-keep-recent.ts). */
+const playerTouches = createPlayerTouches()
 async function laptopFreeBytes(): Promise<number> {
   try {
     const root = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '') || app.getPath('home')
@@ -4498,11 +4507,16 @@ async function runStreamConvertPass(now: number): Promise<void> {
     if (!items.length) return
     const hub = hubOffloadActive({ streamSource: source, offload })
     const ipodGate = await ipodLocal.gate()   // songs on an iPod's list stay on this Mac (ipod-keep-local.ts)
+    // What Jake just got or just played stays too (offload-keep-recent.ts).
+    const windows = keepWindows(await laptopFreeBytes())
+    const recent = buildRecentKeep((((await libraryCache.get()) as CachedLibrary).tracks || []) as QueueTrack[], now, windows)
     // The library's record NOW decides, never the row's (stream-convert-pass.ts).
     const { keep, changed } = await runConvertPass({
       now, items, maxAgeMs: STREAM_CONVERT_MAX_AGE_MS, batch: hub ? OFFLOAD_CONVERT_BATCH : null,
       tracks: (((await libraryCache.get()) as CachedLibrary).tracks || []) as QueueTrack[],
-      kept: (it) => keepsColon(ipodGate, it.ipodPath),
+      kept: (it) => keepsColon(ipodGate, it.ipodPath) || recent.has(it.ipodPath) || playerTouches.has(it.ipodPath, now),
+      needsPlayable: (it) => wantsHomeminiFlac(trackFarmPath(it.ipodPath)),
+      askPlayable: async (ids) => playableVerdicts(await askVariants(ids, true)),
       away: isAwayFromHome,
       askIdentity: (ids) => askAudioIdentity({ baseUrl: hubBaseFromAudioBase(HOMEMINI_AUDIO_BASE), ids, withInit: withCompanionInit }),
       convert: (row, identity, allowWholeFile) => convertTrackToStreamed(row.item.ipodPath, row.fingerprint, { forId: row.id, identity, remembered: row.item.refused, allowWholeFile }),
@@ -10104,6 +10118,14 @@ app.whenReady().then(async () => {
     transcode: ffmpegAlacToFlac,
   })
   await streamAlacCache.ensureDir()
+  // A streamed ALAC song plays from this Mac's decoded copy, else homemini's ready FLAC copy, else it is decoded here (stream-alac-serve.ts).
+  const streamedAlac = createStreamedAlacServer({
+    cachedLocally: (id) => streamAlacCache.has(id),
+    serveLocal: (id, range) => streamAlacCache.serve(id, range),
+    readyOnHomemini: async (id) => playableIds(await askVariants([id], false, 2500))?.has(id) === true,
+    fetchFlac: (id, range) => fetchAudioFromHomemini(id, range, true),
+    want: (id) => { void askVariants([id], true).catch(() => undefined) },
+  })
   // ALAC already on this disk: same queue as a new import. Symlinks and
   // missing files are skipped. Rows with no sha1 are hashed off this
   // path (same window as the stream-convert match) so boot is not blocked.
@@ -10431,6 +10453,7 @@ app.whenReady().then(async () => {
 
   protocol.handle('ipod-audio', async (request) => {
     const rawPath = decodeURIComponent(request.url.replace('ipod-audio://', ''))
+    playerTouches.noteAbs(rawPath, Date.now())
     const playCacheDir = join(app.getPath('userData'), 'play-cache')
     const localMountRoot = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
     const homeminiClient = await isHomeminiPlaybackClientCached()
@@ -10445,16 +10468,17 @@ app.whenReady().then(async () => {
         console.warn('[ipod-audio] streaming client but no library id for', rawPath.slice(0, 120))
       } else {
         const wantsFlac = wantsHomeminiFlac(rawPath)
-        // Streamed or evicted ALAC on a fat link: do not ask homemini for
-        // ?fmt=flac (that transcode is not in this repo) and do not hand
-        // Chromium the raw ALAC. Decode into the 2 GB cache. A real local
-        // file falls through to the play-cache. Thin-link machines keep
-        // ?fmt=aac via fetchAudioFromHomemini. lstat does not follow SMB.
+        // Streamed or evicted ALAC on a fat link: never hand Chromium the raw
+        // ALAC. stream-alac-serve.ts picks the source: this Mac's decoded copy,
+        // else homemini's FLAC copy when it says that copy is ready, else
+        // decode into the 2 GB cache. A real local file falls through to the
+        // play-cache. Thin-link machines keep ?fmt=aac via
+        // fetchAudioFromHomemini. lstat does not follow SMB.
         const compressed = await readStreamCompressedCached()
         if (wantsFlac && !compressed.on && isPathInside(rawPath, localMountRoot)) {
           if (await localFileNeedsStreamAlacDecode(rawPath, lstat)) {
             try {
-              return await streamAlacCache.serve(streamId, request.headers.get('range'))
+              return await streamedAlac.serve(streamId, request.headers.get('range'))
             } catch (err) {
               console.warn('[ipod-audio] streamed ALAC decode failed:', err instanceof Error ? err.message : err)
               return new Response('Unavailable', { status: 503 })
@@ -10592,7 +10616,7 @@ app.whenReady().then(async () => {
         try { return (await lstat(rawPath)).isSymbolicLink() } catch { return false }
       },
       trackId: () => trackIdForAbsPath(rawPath),
-      serveAlac: (id, range) => streamAlacCache.serve(id, range),
+      serveAlac: (id, range) => streamedAlac.serve(id, range),
       fetchById: (id, range) => fetchAudioFromHomemini(id, range, false),
     })
     if (hubServed) return hubServed
