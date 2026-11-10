@@ -18,7 +18,7 @@ def validate_runs(base, base_rows, candidate, candidate_rows, v1_base, v1_base_r
     for summary, rows, ruler in ((base, base_rows, 'v3'), (candidate, candidate_rows, 'v3'), (v1_base, v1_base_rows, 'v1'), (v1_candidate, v1_candidate_rows, 'v1')):
         raw = (root / ('eval_set_v3.json' if ruler == 'v3' else 'eval_set.json')).read_bytes()
         spec = json.loads(raw)
-        if summary.get('ruler') != ruler or summary.get('limit') is not None or summary.get('no_llm') is not False:
+        if summary.get('ruler') != ruler or not (summary.get('limit') is None or (type(summary.get('limit')) is int and summary['limit'] == 0)) or summary.get('no_llm') is not False:
             raise ValueError('complete measured ruler required')
         if summary.get('eval_set_sha') != hashlib.sha1(raw).hexdigest()[:12]:
             raise ValueError('ruler file identity mismatch')

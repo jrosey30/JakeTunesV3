@@ -435,7 +435,7 @@ def v1_mood_diag(prompts, tracks, embed_cache):
     reading the nightly reports track as 'ret-007 mood'. Additive diagnostic:
     it never enters a v1 mean. Returns ({probe_id: recall}, mood_sha|None)."""
     path = os.path.join(STATE_DIR, "mood-index.bin")
-    if not os.path.exists(path):
+    if not (os.path.exists(path) or os.path.lexists(os.path.join(STATE_DIR, "brain-generation.json"))):
         return {}, None
     ids, vecs, _ = read_embeddings(path)
     out = {}
@@ -626,26 +626,32 @@ def title_index(tracks):
 
 
 def v3_self_test(tracks, vocab):
-    """The v3 grounding check must catch fabrication AND off-predicate citations
-    before anything is scored (exit 2 otherwise)."""
+    """Exercise the validator with isolated controls, not ambiguous live titles.
+    These controls are never evaluation probes and never enter score logs.
+    """
     import scorecard as S
-    idx = title_index(tracks)
-    t = next(t for t in tracks if t.get("title") and t.get("artist") and str(t.get("genre") or "") in vocab.leaf_family)
-    leaf = str(t["genre"]).strip()
-    other = next(l for l in vocab.leaf_family if l != leaf)
-    on, off = S.compile_predicate({"genre_leaf": leaf}, vocab), S.compile_predicate({"genre_leaf": other}, vocab)
+    leaves = list(vocab.leaf_family)
+    if len(leaves) < 2:
+        raise SystemExit('v3 self-test requires two distinct vocabulary leaves')
+    leaf, other = leaves[:2]
+    t = {"title": "Validator Control", "artist": "Validator Artist", "genre": leaf}
+    idx = title_index([t])
+    on = S.compile_predicate({"genre_leaf": leaf}, vocab)
+    off = S.compile_predicate({"genre_leaf": other}, vocab)
     real = [{"title": t["title"], "artist": t["artist"]}]
-    fake = [{"title": "Imaginary Song That Cannot Exist 9z9z", "artist": "Nobody At All 9z9z"}]
+    fake = [{"title": "Missing Validator Control", "artist": t["artist"]}]
+    ambiguous = title_index([t, {**t, "title": t["title"] + " (Live)", "genre": other}])
     checks = [
         (check_citations_v3(fake, idx, on)[1] == 1, "fabricated citation not flagged"),
-        (check_citations_v3(real, idx, on)[1] == 0, f"real on-predicate track {t['title']!r} flagged"),
+        (check_citations_v3(real, idx, on)[1] == 0, "on-predicate control flagged"),
         (check_citations_v3(real, idx, off)[1] == 1, "off-predicate citation not flagged"),
+        (check_citations_v3(real, ambiguous, on)[1] == 1, "ambiguous citation not flagged"),
     ]
     for ok, why in checks:
         if not ok:
             print(f"[FATAL] v3 self-test: {why} — the grounding check is broken. STOP.", file=sys.stderr)
             sys.exit(2)
-    print(f"[selftest v3] fabricated -> flagged, \"{t['title']}\" on-predicate -> ok, off-predicate -> flagged. OK")
+    print('[selftest v3] isolated positive, fabricated, off-predicate and ambiguous controls OK')
 
 
 def _mean(xs):
@@ -688,8 +694,25 @@ def capture_generation_binding(main_source_commit=None):
     return generation_binding
 
 
+def evaluator_provenance():
+    """Identify committed evaluator inputs; only the two append-only outputs
+    are excluded. Code, probes, bridge and dependency changes remain dirty.
+    Fail closed on Git errors. Capture before and after scoring.
+    """
+    import subprocess
+    commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=REPO, text=True).strip()
+    status = subprocess.check_output([
+        'git', 'status', '--porcelain', '--untracked-files=all', '--',
+        'brain-eval', 'package.json', 'package-lock.json',
+        ':(top,exclude,literal)brain-eval/score_log.jsonl',
+        ':(top,exclude,literal)brain-eval/score_rows.jsonl',
+    ], cwd=REPO, text=True)
+    return commit, bool(status.strip())
+
+
 def main_v3(args):
     import scorecard as S
+    initial_evaluator = evaluator_provenance()
     label = args.label or "current"
     run_id = args.run_id or new_run_id(label, "v3")
     initial_generation_binding = capture_generation_binding()
@@ -874,9 +897,10 @@ def main_v3(args):
 
     if generation_binding:
         generation_binding['dependencies']['mainSourceCommit'] = main_sha
-    import subprocess
-    evaluator_commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=REPO, text=True).strip()
-    evaluator_dirty = bool(subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=all', '--', 'brain-eval'], cwd=REPO, text=True).strip())
+    evaluator_commit, evaluator_dirty = evaluator_provenance()
+    if (evaluator_commit, evaluator_dirty) != initial_evaluator:
+        raise SystemExit('evaluator inputs changed during the run; refusing score log')
+
 
     summary = {
         "at": int(now * 1000), "iso": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now)),
