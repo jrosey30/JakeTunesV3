@@ -32,3 +32,27 @@ describe('hub-routed mirrors never ride the NAS push / orphan check', () => {
     for (const f of HUB_ROUTED_MIRRORS) assert.ok(block.includes(`'${f}'`), `${f} dropped from PHONE_AUTHORED_FILES`)
   })
 })
+
+// 2026-11-09: auto-backup looked, warned "ORPHANED LOCAL EDITS ... Use Settings",
+// and then pushed the file itself seconds later: 1,812 warnings in main.log for
+// edits that were never stuck (metadata-overrides.json, 20:39:36 local, was on
+// the NAS byte-identical within minutes). The look before the push is quiet;
+// the look after it warns, so the line now means a file is STILL ahead.
+describe('ORPHANED LOCAL EDITS means still ahead after auto-backup tried', () => {
+  const fn = (() => {
+    const start = src.indexOf('async function autoBackupStateToNas(')
+    const end = src.indexOf('\n}\n', start)
+    assert.ok(start > 0 && end > start, 'autoBackupStateToNas not found')
+    return src.slice(start, end)
+  })()
+  it('the look before the push does not warn, the look after it does', () => {
+    const looks = [...fn.matchAll(/await detectStateConflicts\(([^)]*)\)/g)].map((m) => m[1])
+    assert.deepEqual(looks, ['false', ''], 'auto-backup looks twice: quietly before the push, aloud after it')
+    assert.ok(fn.indexOf('detectStateConflicts(false)') < fn.indexOf('atomicPublishToNas('), 'the quiet look comes before the push')
+    assert.ok(fn.lastIndexOf('detectStateConflicts()') > fn.indexOf('atomicPublishToNas('), 'the warning look comes after the push')
+  })
+  it('the warning is gated on the caller asking for it, and defaults to on', () => {
+    assert.ok(src.includes('async function detectStateConflicts(announce = true)'), 'manual reconcile and the after-push look still warn')
+    assert.ok(src.includes('if (announce && orphanKey !== lastOrphanWarnKey)'), 'a quiet look must not warn or use up the warn-once key')
+  })
+})

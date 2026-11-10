@@ -3888,7 +3888,7 @@ interface StateConflict {
 /** Skip .reconcile-bak when pushing tiny sidecars — halves SMB round-trips. */
 const RECONCILE_BACKUP_MIN_BYTES = 64 * 1024
 let stateConflicts: StateConflict[] = []
-async function detectStateConflicts(): Promise<void> {
+async function detectStateConflicts(announce = true): Promise<void> {   // false = auto-backup's look BEFORE it pushes: that is work found, not work stuck
   stateConflicts = []
   // Replicas adopt library.json from the hub. Surfacing it as a local-newer
   // conflict is what auto-backup and "Push local edits" then write onto the
@@ -3925,7 +3925,7 @@ async function detectStateConflicts(): Promise<void> {
     // log). Keyed on the file names — a NEW file joining the orphan set
     // re-warns with the full picture; the drift seconds ticking up do not.
     const orphanKey = stateConflicts.map(c => c.file).sort().join('|')
-    if (orphanKey !== lastOrphanWarnKey) {
+    if (announce && orphanKey !== lastOrphanWarnKey) {
       lastOrphanWarnKey = orphanKey
       quietWarn('state-orphaned-edits', `[state] ORPHANED LOCAL EDITS detected (offline-mode work that didn't reach NAS): ${summary}. Use Settings → Library → Push local edits to NAS to resolve.`)
     }
@@ -4053,7 +4053,7 @@ async function autoBackupStateToNas(): Promise<void> {
   if (!(await nasAvailable())) return   // breaker open: skip ALL NAS IO
   autoBackupBusy = true
   try {
-    await detectStateConflicts()
+    await detectStateConflicts(false)   // the look after the push (below) is the one that warns: only what is STILL ahead is orphaned
     if (stateConflicts.length === 0) return
     const behind = await machineBehindNas(join(app.getPath('userData'), 'library.json'), join(NAS_STATE_DIR_PATH, 'library.json'))
     if (behind) { quietWarn('state-backup-behind', `[state] auto-backup PAUSED: ${behind}`); return }   // src/common/stale-push.ts
