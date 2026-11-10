@@ -29,7 +29,7 @@ import { planMoodPrune } from './brain-prune.mjs'
 import { writeBrainStatus } from './brain-status.mjs'
 import { comparePurity, gateDecision, PURITY_MAX_REGRESSION } from './brain-purity.mjs'
 import { pickBatch } from './brain-batch.mjs'
-import { musicStreamActive, nightlyTrainerActive, bpmKeyWorkerActive, untilMs, redescribeCandidates, candidateDescriptors, promoteNext, staleStaged, describeTrack, nextFilePath, PROMPT_VERSION, memoryYieldReason, parseSwapUsedMB } from './brain-redescribe.mjs'
+import { musicStreamActive, nightlyTrainerActive, bpmKeyWorkerActive, untilMs, redescribeCandidates, candidateDescriptors, promoteNext, staleStaged, describeTrack, nextFilePath, PROMPT_VERSION, memoryYieldReason, parseSwapUsedMB, listeningByStamp } from './brain-redescribe.mjs'
 import { baseText, moodText, tempoEnergy } from '../src/common/embedding-text.ts'   // Brief 181: the text twins' ONE source of truth (the app imports it too)
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -600,10 +600,17 @@ async function main() {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
     const ua = process.argv.indexOf('--until')
     const stopAt = ua > 0 ? untilMs(process.argv[ua + 1]) : Infinity
+    // The Mobile backend's "audio last served to a listener" stamp, in homemini's LOCAL state dir.
+    const AUDIO_STAMP = process.env.JT_AUDIO_STAMP_PATH || join(homedir(), 'JakeTunesState', 'audio-last-served.json')
     const busy = () => {
       let ps = ''
       try { ps = execFileSync('/bin/ps', ['-axo', 'command']).toString() } catch { /* can't tell → not busy */ }
-      if (musicStreamActive(ps)) return 'music is streaming'
+      // Someone listening: homemini's own stamp when there is one (a copy job
+      // never writes it), else any audio ffmpeg.
+      let stamp = null
+      try { stamp = readFileSync(AUDIO_STAMP, 'utf8') } catch { /* no stamp on this machine */ }
+      const listening = listeningByStamp(stamp)
+      if (listening === true || (listening === null && musicStreamActive(ps))) return 'music is streaming'
       if (nightlyTrainerActive(ps)) return 'the nightly trainer is running'
       if (bpmKeyWorkerActive(ps)) return 'the BPM/key worker is running'
       const sysctl = (name) => { try { return execFileSync('/usr/sbin/sysctl', ['-n', name]).toString().trim() } catch { return '' /* not macOS / no sysctl → skip */ } }

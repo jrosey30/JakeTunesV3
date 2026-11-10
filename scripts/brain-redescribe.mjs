@@ -69,6 +69,35 @@ export function bpmKeyWorkerActive(psText) {
   })
 }
 
+/** homemini's "someone is listening" window: the Mobile backend's QUIET_MS. */
+export const LISTENING_QUIET_MS = 120000
+
+/**
+ * Is someone listening, by homemini's own record? `stampText` is the content
+ * of the Mobile backend's audio-last-served.json ({ "at": <epoch ms> }),
+ * which GET /audio/:id writes for a listener and NOT for a copy
+ * (JakeTunesMobile backend/src/util/playbackActivity.ts, the rule the BPM/key
+ * and artist-page workers already wait on).
+ *
+ *   true / false   the record was read: listening within the window, or not
+ *   null           no usable record (not homemini, backend never ran): the
+ *                  caller falls back to musicStreamActive
+ *
+ * Why not just look for an audio ffmpeg (musicStreamActive)? On 2026-11-10
+ * the re-describe sat paused from 01:01 to 03:20 for workmini's overnight
+ * pre-load: a copy job, but each song it had not fetched before made homemini
+ * convert it, and that ffmpeg looks like music. The same rule misses a real
+ * listener whose song needs no conversion (the phone, on Wi-Fi). A stamp from
+ * the future (a clock step) counts as listening, as it does in the backend.
+ */
+export function listeningByStamp(stampText, now = Date.now(), quietMs = LISTENING_QUIET_MS) {
+  if (!stampText) return null
+  let at
+  try { at = JSON.parse(stampText)?.at } catch { return null }
+  if (typeof at !== 'number' || !Number.isFinite(at)) return null
+  return now - at < quietMs
+}
+
 /** Megabytes of swap in use, from `sysctl -n vm.swapusage` ("total = 7168.00M  used = 5696.62M  free = ..."), or null. */
 export function parseSwapUsedMB(text) {
   const m = /used\s*=\s*([\d.]+)\s*([MG])/i.exec(String(text || ''))

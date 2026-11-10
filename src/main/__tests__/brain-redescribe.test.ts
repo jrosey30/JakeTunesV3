@@ -11,7 +11,7 @@ import {
   musicStreamActive, nightlyTrainerActive, untilMs, redescribeCandidates, candidateDescriptors, promoteNext,
   staleStaged, PROMPT_VERSION, stockHits, formulaOpener, stockScore, needsRetry, pickDescriptor,
   describePrompt, describeTrack, audioFacts, cleanDescriptor, bpmKeyWorkerActive, nextFilePath,
-  memoryYieldReason, parseSwapUsedMB, MAX_SWAP_MB,
+  memoryYieldReason, parseSwapUsedMB, MAX_SWAP_MB, listeningByStamp, LISTENING_QUIET_MS,
 } from '../../../scripts/brain-redescribe.mjs'
 
 const PV = PROMPT_VERSION
@@ -33,6 +33,31 @@ describe('the yield rule', () => {
   it('does not mistake other processes that mention ffmpeg for one', () => {
     assert.equal(musicStreamActive('/usr/bin/grep ffmpeg\nnode /tmp/ffmpeg-watch.js'), false)
     assert.equal(musicStreamActive(''), false)
+  })
+})
+
+describe('someone listening, by homemini\'s own record (2026-11-10: paused 01:01 to 03:20 for workmini\'s copy job)', () => {
+  const NOW = 1_800_000_000_000
+  const stamp = (agoMs: number) => JSON.stringify({ at: NOW - agoMs, iso: 'x' })
+  it('audio served to a listener in the last two minutes is listening', () => {
+    assert.equal(LISTENING_QUIET_MS, 120000)
+    assert.equal(listeningByStamp(stamp(15_000), NOW), true)
+    assert.equal(listeningByStamp(stamp(119_999), NOW), true)
+  })
+  it('a stamp older than that is nobody listening, whatever ffmpeg is doing', () => {
+    assert.equal(listeningByStamp(stamp(120_000), NOW), false)
+    assert.equal(listeningByStamp(stamp(3 * 3600_000), NOW), false)
+  })
+  it('a stamp from the future counts as listening (the backend\'s rule)', () => {
+    assert.equal(listeningByStamp(stamp(-60_000), NOW), true)
+  })
+  it('no usable record is null, so the caller falls back to the ffmpeg rule', () => {
+    for (const bad of [null, undefined, '', 'not json', '{}', '{"at":"yesterday"}', '{"at":null}']) assert.equal(listeningByStamp(bad as string, NOW), null)
+  })
+  it('the trainer asks the stamp first and the ffmpeg rule only without one', () => {
+    const src = readFileSync(join(import.meta.dirname, '..', '..', '..', 'scripts', 'brain-trainer.mjs'), 'utf8')
+    assert.match(src, /listening === true \|\| \(listening === null && musicStreamActive\(ps\)\)/)
+    assert.match(src, /JT_AUDIO_STAMP_PATH \|\| join\(homedir\(\), 'JakeTunesState', 'audio-last-served\.json'\)/)
   })
 })
 
