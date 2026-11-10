@@ -6,16 +6,31 @@
  *
  * Now: Deezer, and only the Deezer artist one of Jake's albums or songs proves
  * is HIS (the MESH lesson: a name is not an identity). The confirmed artist's
- * fan count is kept in artist-deezer.json alongside the photo. A photo already on disk is never hidden by a failed refresh.
+ * fan count is kept in artist-deezer.json alongside the photo. A photo already on disk is never hidden by a failed refresh,
+ * and never held back by a refresh that is due: it is returned at once and refreshed behind (2026-11-10).
  *
  * Electron-free; fetch, clock and file locations are injected for tests.
  */
 import { join } from 'path'
 import { createHash } from 'crypto'
-import { readFile, writeFile, rename, stat, unlink, mkdir } from 'fs/promises'
+import { readFile, writeFile, rename, stat, unlink, mkdir, readdir } from 'fs/promises'
 
 export const PHOTO_MAX_AGE_MS = 30 * 24 * 3600 * 1000
 export const MISS_TTL_MS = 6 * 3600 * 1000
+/** A refresh that could not finish (Deezer away, nothing newer) is not tried again sooner than this. */
+export const REFRESH_RETRY_MS = 6 * 3600 * 1000
+/** Pause between two background refreshes, so a first lookup for a page never waits behind a long line of them. */
+export const REFRESH_GAP_MS = 1000
+
+/**
+ * When a photo on disk is due a refresh: 30 days plus up to 30 more, fixed per
+ * artist. 1,399 photos were all fetched on 2026-10-18; with one shared age
+ * they would all fall due on the same day. Spread, that is about 47 a day.
+ */
+export function photoMaxAgeMs(slug: string): number {
+  const spread = createHash('sha1').update(slug).digest().readUInt32BE(0) / 0x1_0000_0000
+  return PHOTO_MAX_AGE_MS + Math.floor(spread * PHOTO_MAX_AGE_MS)
+}
 const API = 'https://api.deezer.com'
 
 /** Filename-safe and stable. Names with no Latin letters (ברי סחרוף, Молчат
@@ -92,14 +107,21 @@ export interface PhotoDeps {
   now?: () => number
   /** A photo Jake picked on homemini (artist-photo-picks.ts): never refreshed from Deezer. */
   picked?: (slug: string) => boolean
-  /** Waited on before each look, so a launch's first photos come after the first picks pull. */
+  /** Waited on before Deezer is asked, so a launch's first lookups come after the first picks pull. */
   ready?: () => Promise<void>
+  /** Pause between background refreshes (tests pass 0). */
+  refreshGapMs?: number
 }
 
 export function createArtistPhotos(deps: PhotoDeps): {
   get(artist: string): Promise<string | null>
+  /** Which of these names have a photo on disk right now (name → slug). One folder listing, no network. */
+  known(names: readonly string[]): Promise<Record<string, string>>
+  /** Resolves when no background refresh is queued or running (tests). */
+  idle(): Promise<void>
 } {
   const now = deps.now ?? Date.now
+  const refreshGapMs = deps.refreshGapMs ?? REFRESH_GAP_MS
   const inFlight = new Map<string, Promise<string | null>>()
   let facts: Record<string, ArtistFacts> | null = null
   let writing = Promise.resolve()
@@ -129,29 +151,81 @@ export function createArtistPhotos(deps: PhotoDeps): {
     return all[artist]
   }
 
+  const saveJpg = async (jpg: string, buf: Buffer): Promise<void> => {
+    // tmp + rename: the old photo is being served while its replacement lands.
+    const tmp = `${jpg}.${process.pid}.tmp`
+    await writeFile(tmp, buf)
+    await rename(tmp, jpg).catch(async (err: unknown) => { await unlink(tmp).catch(() => {}); throw err })
+  }
+
+  // ── background refresh of a photo that is already on disk ──
+  // One at a time, a pause between two, each artist at most once per
+  // REFRESH_RETRY_MS. What may replace a photo is unchanged: only the Deezer
+  // artist one of Jake's albums or songs confirms (factFor), never over his
+  // own pick, and a refresh that finds nothing leaves the photo alone.
+  const refreshQueue: Array<{ artist: string; slug: string }> = []
+  const queued = new Set<string>()
+  const lastTry = new Map<string, number>()
+  let draining: Promise<void> | null = null
+  const refreshOne = async (artist: string, slug: string): Promise<void> => {
+    await deps.ready?.()                                             // never rejects (artist-photo-picks.ts)
+    const jpg = join(deps.dir, `${slug}.jpg`), miss = join(deps.dir, `${slug}.miss`)
+    if (deps.picked?.(slug)) return                                  // Jake's pick: Deezer never replaces it
+    if (await fresh(jpg, photoMaxAgeMs(slug))) return                // refreshed meanwhile (a pick landed)
+    if (await fresh(miss, MISS_TTL_MS)) return
+    const f = await factFor(artist)
+    if (!f || !f.pic) return                                         // Deezer away, or no confirmed photo: keep ours
+    const buf = await deps.download(f.pic)
+    if (!buf) return
+    if (!(await exists(jpg))) return                                 // removed meanwhile (a pick withdrawn): the next look starts clean
+    await saveJpg(jpg, buf)
+    await unlink(miss).catch(() => {})
+  }
+  const drain = async (): Promise<void> => {
+    while (refreshQueue.length) {
+      const next = refreshQueue.shift()!
+      queued.delete(next.slug)
+      lastTry.set(next.slug, now())
+      try { await refreshOne(next.artist, next.slug) } catch { /* the photo on disk stands */ }
+      if (refreshQueue.length && refreshGapMs > 0) await new Promise((r) => setTimeout(r, refreshGapMs))
+    }
+  }
+  const queueRefresh = (artist: string, slug: string): void => {
+    if (queued.has(slug) || now() - (lastTry.get(slug) ?? -Infinity) < REFRESH_RETRY_MS) return
+    queued.add(slug)
+    refreshQueue.push({ artist, slug })
+    if (!draining) draining = drain().finally(() => { draining = null })
+  }
+
   const get = (artist: string): Promise<string | null> => {
     const slug = artistSlug(artist)
     if (slug === 'unknown') return Promise.resolve(null)
     const running = inFlight.get(slug)
     if (running) return running
     const task = (async (): Promise<string | null> => {
-      await deps.ready?.()                                           // never rejects (artist-photo-picks.ts)
       const jpg = join(deps.dir, `${slug}.jpg`), miss = join(deps.dir, `${slug}.miss`)
+      // A photo on disk is the answer, at once, whatever its age (2026-11-10:
+      // a photo past 30 days used to be held back until Deezer had been asked
+      // again, so the card and the artist page sat without it). When it is
+      // due, the refresh runs behind this answer.
+      const st = await stat(jpg).catch(() => null)
+      if (st) {
+        if (now() - st.mtimeMs >= photoMaxAgeMs(slug)) queueRefresh(artist, slug)
+        return slug
+      }
+      await deps.ready?.()                                           // never rejects (artist-photo-picks.ts)
       await mkdir(deps.dir, { recursive: true }).catch(() => {})
-      const have = await exists(jpg)
-      if (have && deps.picked?.(slug)) return slug                    // Jake's pick: Deezer never replaces it
-      if (have && await fresh(jpg, PHOTO_MAX_AGE_MS)) return slug
-      if (await fresh(miss, MISS_TTL_MS)) return have ? slug : null
+      if (await exists(jpg)) return slug                             // the first picks pull just saved it
+      if (await fresh(miss, MISS_TTL_MS)) return null
       const f = await factFor(artist)
-      if (!f) return have ? slug : null                              // Deezer unreachable: keep what we have
+      if (!f) return null                                            // Deezer unreachable: ask again next time
       if (!f.pic) {
-        if (have) return slug                                        // never hide a photo we already have
         await writeFile(miss, '').catch(() => {})
         return null
       }
       const buf = await deps.download(f.pic)
-      if (!buf) return have ? slug : null
-      await writeFile(jpg, buf)
+      if (!buf) return null
+      await saveJpg(jpg, buf)
       await unlink(miss).catch(() => {})
       return slug
     })()
@@ -159,7 +233,25 @@ export function createArtistPhotos(deps: PhotoDeps): {
     return task.finally(() => inFlight.delete(slug))
   }
 
+  const known = async (names: readonly string[]): Promise<Record<string, string>> => {
+    const out: Record<string, string> = {}
+    let files: string[]
+    try { files = await readdir(deps.dir) } catch { return out }
+    const have = new Set<string>()
+    for (const f of files) if (f.endsWith('.jpg')) have.add(f.slice(0, -4))
+    for (const name of names) {
+      if (typeof name !== 'string' || !name) continue
+      const slug = artistSlug(name)
+      if (slug !== 'unknown' && have.has(slug)) out[name] = slug
+    }
+    return out
+  }
+
+  const idle = async (): Promise<void> => { while (draining) await draining }
+
   return {
     get,
+    known,
+    idle,
   }
 }

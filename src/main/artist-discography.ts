@@ -12,9 +12,13 @@
  * store carries all reached his artist pages.
  *
  * Cached to disk for 7 days per artist. A result the gate couldn't finish
- * (MusicBrainz or both stores unreachable) is returned but never cached, the
- * same rule as an incomplete identity check: an outage is not a fact about a
- * release, so the next visit asks again.
+ * (MusicBrainz or both stores unreachable) is never kept as a fact about a
+ * release, the same rule as an incomplete identity check: an outage is not a
+ * fact. It is HELD for a few hours instead, and then asked again
+ * (heldDiscography below). Until 2026-11-10 it was not kept at all, so every
+ * visit to such an artist ran the whole lookup again (Red Hot Chili Peppers 27
+ * times, The Orb 24, Talking Heads 19 in one log) and "More from" popped in
+ * late under the Discography each time.
  */
 import { join } from 'path'
 import { readFile, writeFile, mkdir } from 'fs/promises'
@@ -38,8 +42,10 @@ export interface DiscographyResult {
   albums: DiscographyAlbum[]
   fetchedAt: number
   schemaVersion?: number
-  /// The gate couldn't finish (a source was down): returned, never cached.
+  /// The gate couldn't finish (a source was down): returned, and held only for DISCO_INCOMPLETE_TTL_MS.
   incomplete?: boolean
+  /// No answer at all (MusicBrainz away, the identity check cut short): nothing to show, held for DISCO_UNAVAILABLE_TTL_MS.
+  unavailable?: boolean
   /// What the gate turned away, with its reasons (for audits; the renderer ignores it).
   rejected?: Array<{ title: string; reasons: string[]; notes: string[] }>
 }
@@ -51,7 +57,26 @@ export interface DiscographyResult {
 // edition, not a 3-disc bundle (3D Country); Jake's hidden releases.
 // 5: the release gate (Official status, artist credit, store availability).
 export const DISCO_SCHEMA_VERSION = 5
-const DISCO_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+export const DISCO_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+/// How long an unfinished result stands before the lookup runs again.
+export const DISCO_INCOMPLETE_TTL_MS = 6 * 60 * 60 * 1000
+/// How long "no answer" stands before the lookup runs again.
+export const DISCO_UNAVAILABLE_TTL_MS = 60 * 60 * 1000
+
+/**
+ * What the cache file still answers, if anything. A finished result stands 7
+ * days; an unfinished one 6 hours; "no answer" 1 hour (its result is null,
+ * exactly what the lookup returned). Anything else — another schema, no date,
+ * a date in the future, too old — is a miss, and the lookup runs.
+ */
+export function heldDiscography(cached: unknown, now: number): { result: DiscographyResult | null } | null {
+  const c = cached as Partial<DiscographyResult> | null
+  if (!c || typeof c !== 'object' || c.schemaVersion !== DISCO_SCHEMA_VERSION || typeof c.fetchedAt !== 'number' || !c.fetchedAt) return null
+  const age = now - c.fetchedAt
+  const ttl = c.unavailable ? DISCO_UNAVAILABLE_TTL_MS : c.incomplete ? DISCO_INCOMPLETE_TTL_MS : DISCO_CACHE_TTL_MS
+  if (age < 0 || age >= ttl) return null
+  return { result: c.unavailable ? null : (c as DiscographyResult) }
+}
 /// The desktop shows albums and EPs (live records have their own shelf).
 const SECTIONS: ReleaseSection[] = ['album', 'ep']
 
@@ -146,14 +171,18 @@ export function fetchArtistDiscography(artist: string): Promise<DiscographyResul
 async function fetchArtistDiscographyOnce(artist: string): Promise<DiscographyResult | null> {
   const w = need()
   const cachePath = discoCachePath(artist)
-  // Cache hit
+  // Cache hit (a finished result, or an unfinished / absent one still inside its short hold)
   try {
-    const raw = await readFile(cachePath, 'utf-8')
-    const cached = JSON.parse(raw) as DiscographyResult
-    if (cached.schemaVersion === DISCO_SCHEMA_VERSION && !cached.incomplete && cached.fetchedAt && Date.now() - cached.fetchedAt < DISCO_CACHE_TTL_MS) {
-      return cached
-    }
+    const held = heldDiscography(JSON.parse(await readFile(cachePath, 'utf-8')), Date.now())
+    if (held) return held.result
   } catch { /* miss */ }
+  // No answer: nothing to show, and nothing learned about the artist. Held for
+  // an hour so the next visits don't each run the lookup again.
+  const unavailable = async (why: string): Promise<null> => {
+    console.warn(`[discography] ${artist}: ${why} — no answer, asked again in an hour`)
+    await writeCache(cachePath, { artist, albums: [], fetchedAt: Date.now(), schemaVersion: DISCO_SCHEMA_VERSION, unavailable: true })
+    return null
+  }
 
   const headers = {
     'User-Agent': `JakeTunes/${w.appVersion()} (jacobrosenbaum@gmail.com)`,
@@ -170,7 +199,7 @@ async function fetchArtistDiscographyOnce(artist: string): Promise<DiscographyRe
     const libraryGenres = await w.getLibraryGenresForArtist(artist)
     const libraryAlbums = await w.getLibraryAlbumsForArtist(artist)
     const canon = await w.resolveCanonicalArtist(artist, { libraryGenres, libraryAlbums })
-    if (!canon) return null
+    if (!canon) return unavailable('no MusicBrainz artist resolved')
     const mbid = canon.mbid
     // A stranger's discography is worse than none (Jake, 10/20: "what is
     // duck and pop songs???"). Cached empty so the page stops asking.
@@ -184,7 +213,7 @@ async function fetchArtistDiscographyOnce(artist: string): Promise<DiscographyRe
     // namesake's whole catalogue to be told so (a 'weak' SebastiAn resolves
     // to a classical giant with thousands of release groups).
     if (canon.identity === 'ambiguous' || canon.identity === 'weak' || !canon.identity) {
-      if (canon.incomplete) return null  // MusicBrainz hiccup — try again next visit, cache nothing
+      if (canon.incomplete) return unavailable('the identity check was cut short')  // MusicBrainz hiccup: not a fact, a short hold
       return refuse(canon.identity === 'ambiguous' ? `namesakes the library can't tell apart (${mbid})` : `no MusicBrainz artist claims this exact name (best guess ${mbid})`)
     }
 
@@ -192,7 +221,7 @@ async function fetchArtistDiscographyOnce(artist: string): Promise<DiscographyRe
     //    identity, Jake's hidden list, type, credit, bootleg vocabulary,
     //    Official status, store availability (common/release-gate.ts).
     const browse = await fetchReleaseGroupsForGate(mbid, SECTIONS, getJson)
-    if (!browse.complete && browse.groups.length === 0) return null  // MusicBrainz down — nothing to judge, cache nothing
+    if (!browse.complete && browse.groups.length === 0) return unavailable('MusicBrainz did not list the releases')  // nothing to judge
     const gate = await gateReleaseGroups({
       artist,
       artistNames: [canon.name],
@@ -205,7 +234,7 @@ async function fetchArtistDiscographyOnce(artist: string): Promise<DiscographyRe
     }, { fold: nameKey, normTitle: normAlbumTitle, albumMatch: albumTitlesMatch, ...httpGateSources(getJson, SECTIONS) })
     console.warn(`[discography] ${artist}: gate ${describeGate(gate)}`)
     if (!gate.identity.ok) {
-      if (!gate.complete) return null
+      if (!gate.complete) return unavailable('the release gate was cut short')
       return refuse(`${gate.identity.why} (${mbid})`)
     }
     let incomplete = !browse.complete || !gate.complete
@@ -275,11 +304,11 @@ async function fetchArtistDiscographyOnce(artist: string): Promise<DiscographyRe
       ...(incomplete ? { incomplete: true } : {}),
       rejected: gate.verdicts.filter((v) => !v.admitted).map((v) => ({ title: v.title, reasons: v.reasons, notes: v.notes })),
     }
-    if (incomplete) console.warn(`[discography] ${artist}: incomplete (a source was down) — not cached`)
-    else await writeCache(cachePath, result)
+    if (incomplete) console.warn(`[discography] ${artist}: incomplete (a source was down) — held ${DISCO_INCOMPLETE_TTL_MS / 3_600_000} h, then asked again`)
+    await writeCache(cachePath, result)
     return result
   } catch (err) {
     console.warn('[discography] fetch failed:', err)
-    return null
+    return unavailable('the lookup failed')
   }
 }

@@ -7,6 +7,8 @@
  */
 
 import { useEffect, useLayoutEffect, useRef } from 'react'
+import { initialScroll } from '../artistPageModel'
+import { navDxScroll } from '../navDxDom'
 
 interface ScrollPosition {
   top: number
@@ -75,9 +77,17 @@ export function getSavedScrollLeft(key: string): number {
   return scrollCache.get(key)?.left ?? 0
 }
 
+/**
+ * `arrival` (optional): how this page was reached. Left out, the saved
+ * position is applied on every mount, as it always was. Given, it is applied
+ * only on a 'return' (Back / Forward); an 'arrive' starts at the top and
+ * forgets the old position, so the next Back lands where you left the page
+ * THIS time (artistPageModel.ts initialScroll).
+ */
 export function useScrollPersistence(
   key: string,
-  containerRef: React.RefObject<HTMLElement | null>
+  containerRef: React.RefObject<HTMLElement | null>,
+  arrival?: 'arrive' | 'return',
 ): void {
   // True while a restore is still chasing its target on an async page.
   // The recorder effect below must NOT capture positions during this
@@ -91,8 +101,14 @@ export function useScrollPersistence(
   useLayoutEffect(() => {
     const el = containerRef.current
     if (!el) return
-    const saved = scrollCache.get(key)
-    if (saved === undefined) return
+    const remembered = scrollCache.get(key)
+    const saved = arrival === undefined ? remembered : (initialScroll(arrival, remembered) ?? undefined)
+    navDxScroll({ saved: remembered?.top ?? null })
+    if (arrival === 'arrive' && remembered !== undefined) {
+      scrollCache.delete(key)
+      schedulePersistScrollCache()
+    }
+    if (saved === undefined) { navDxScroll({ restored: el.scrollTop }); return }
     const apply = (): void => {
       el.scrollTop = saved.top
       el.scrollLeft = saved.left
@@ -103,6 +119,7 @@ export function useScrollPersistence(
       el.dispatchEvent(new Event('scroll'))
     }
     apply()
+    navDxScroll({ restored: el.scrollTop })
     if (Math.abs(el.scrollTop - saved.top) <= 2) return   // reached — done
 
     // The assignment CLAMPED: content hasn't grown tall enough yet
@@ -129,7 +146,8 @@ export function useScrollPersistence(
     el.addEventListener('keydown', cancel)
     raf = requestAnimationFrame(tick)
     return cancel
-  }, [key, containerRef])
+    // `arrival` is fixed for a mounted page (MainContent decides it once per key).
+  }, [key, containerRef]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const el = containerRef.current

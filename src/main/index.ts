@@ -94,6 +94,7 @@ import { registerHomeSpotlightIpc } from './ipc/home-spotlight-ipc.ts'
 import { assertNoSyncedPicksPush } from './synced-picks-client.ts'
 import { createArtistPhotos, nameKey as photoNameKey } from './artist-photo.ts'
 import { createArtistPhotoPicks } from './artist-photo-picks.ts'
+import { createArtistImageServer } from './artist-image-serve.ts'
 import { phoneOverlayFields } from '../common/genre-vocab.ts'; import { mergeOverrideField } from './override-merge.ts'; import { registerUserEdits } from './ipc/user-edits-ipc.ts'
 import { registerPreviewRefreshIpc } from './ipc/preview-refresh-ipc.ts'
 import { registerSyncHistoryIpc } from './ipc/sync-history-ipc.ts'
@@ -115,6 +116,7 @@ import {
   artworkLookupRebuildPromise, artworkNormIndexMem, artworkSidecarNormMem,
   setArtworkIndexMem, type ParsedPicture, searchDeezerArt,
   nativeThumbJpeg,
+  nativeThumbJpegDownOnly,
 } from './artwork-engine.ts'; import { createAlbumArtServer, pregenerateThumbs } from './album-art-serve.ts'
 import { registerIpodIpc } from './ipc/ipod-ipc.ts'
 import { registerSyncIpc, type SyncConvertOptions } from './ipc/sync-ipc.ts'
@@ -2262,6 +2264,12 @@ ipc.handle('get-artist-image', async (_event, artist: string): Promise<{ ok: boo
     return { ok: true, slug: null }
   }
 }, { refuse: { ok: false, slug: null } })
+// Which of these artists have a photo on disk (name → slug): one folder listing,
+// no network. The artist page's first frame is drawn from it (renderer/artistPageSeed.ts).
+ipc.handle('artist-photos:known', async (_event, names: unknown): Promise<{ ok: boolean; slugs: Record<string, string> }> => {
+  const list = Array.isArray(names) ? names.filter((n): n is string => typeof n === 'string' && n.length > 0 && n.length <= 300).slice(0, 20_000) : []
+  return { ok: true, slugs: await artistPhotos.known(list) }
+}, { refuse: { ok: false, slugs: {} } })
 // Genre Iceberg: ListenBrainz listener counts (seeded at install) rank a genre's artists, best-known first.
 ipc.handle('artist-listeners', async () => { try { return JSON.parse(await readFile(join(app.getPath('userData'), 'artist-listeners.json'), 'utf8')) as Record<string, number> } catch { return {} } }, { refuse: {} })
 
@@ -2430,6 +2438,9 @@ ipcMain.on('dx-record', (_e, payload: unknown) => {
   try { if (JSON.stringify(detail ?? null).length > 2000) detail = { truncated: true } } catch { detail = { unserializable: true } }
   flightRecorder.record('info', `dx.${tag}`, detail)
 })
+// dx.nav (renderer/navDx.ts) — one row per page navigation, off unless ui-state
+// has "navDx": true or this run was started with JT_NAV_DX=1.
+ipc.handle('nav-dx:env', async (): Promise<boolean> => process.env.JT_NAV_DX === '1', { refuse: false })
 // Warn-once state for persisting conditions (flight-log stomp 2026-08-22:
 // one orphaned-edits condition = 23 identical lines; nine propagating
 // imports = 36 stream-404 lines). First occurrence is the signal.
@@ -9999,27 +10010,12 @@ app.whenReady().then(async () => {
   // `artist-image://{slug}.jpg`. The slug is already filename-safe
   // (artistSlug strips everything except [a-z0-9-]) so we just read
   // from disk; no traversal possible.
-  protocol.handle('artist-image', async (request) => {
-    const url = request.url.replace('artist-image://', '')
-    const raw = decodeURIComponent(url.split('?')[0].replace('.jpg', ''))
-    const slug = raw.replace(/[^a-z0-9-]/g, '')
-    if (!slug) {
-      return new Response('Bad slug', { status: 400 })
-    }
-    const filePath = join(getArtistImageDir(), `${slug}.jpg`)
-    try {
-      const data = await readFile(filePath)
-      return new Response(data as unknown as BodyInit, {
-        headers: {
-          'Content-Type': 'image/jpeg',
-          // Long cache — slug is unique per artist; disk-side TTL handles refresh
-          'Cache-Control': 'public, max-age=604800',
-        },
-      })
-    } catch {
-      return new Response('Not found', { status: 404 })
-    }
-  })
+  // The handler and its ?s= thumb tier live in artist-image-serve.ts.
+  protocol.handle('artist-image', createArtistImageServer({
+    dir: getArtistImageDir,
+    thumbDir: () => join(app.getPath('userData'), 'artist-image-thumbs'),
+    makeThumb: nativeThumbJpegDownOnly,
+  }))
 
   // 320px thumb pregeneration, 25 s after boot: missing OR stale thumbs (album-art-serve.ts).
   setTimeout(() => { void pregenerateThumbs({ artworkDir: getArtworkDir, makeThumb: nativeThumbJpeg }) }, 25_000)

@@ -4,8 +4,12 @@
  * ../../common/artist-profile.ts.
  *
  *   'artist-profile:get'      (name)  → { ok, state }   the cached profile, no network — instant
- *   'artist-profile:refresh'  (name)  → { ok, state }   one GET (ETag, throttled per artist) +
- *                                                       any member photo not saved yet
+ *   'artist-profile:refresh'  (name)  → { ok, state }   one GET (ETag, throttled per artist); answers
+ *                                                       when the TEXT is saved. Photos not saved yet
+ *                                                       are fetched behind the answer.
+ *   'artist-profile:all'      ()      → { ok, states, complete }   every cached profile, for the
+ *                                                       page's first frame (renderer/artistPageSeed.ts)
+ *   push 'artist-profile:updated' (state)               a photo of that profile just landed on disk
  *   'artist-profile:set-member-photo' (artist, member, path | null)
  *                                     → { ok, state } | { ok: false, canceled? , error? }
  *       Jake's own photo of a member. path = a dropped file; null = open a
@@ -90,6 +94,11 @@ export function registerArtistProfileIpc(ipc: IpcRegistrar): void {
     profileDir: join(app.getPath('userData'), 'artist-profiles'),
     photoDir: artistImageDir(),
     warn: (key: string, m: string) => quietWarn(`artist-profile:${key}`, m),
+    onUpdate: (state) => {
+      for (const w of BrowserWindow.getAllWindows()) {
+        if (!w.isDestroyed()) w.webContents.send('artist-profile:updated', state)
+      }
+    },
   })
 
   const nameOf = (v: unknown): string => (typeof v === 'string' ? v.trim().slice(0, 300) : '')
@@ -98,6 +107,8 @@ export function registerArtistProfileIpc(ipc: IpcRegistrar): void {
     ({ ok: true, state: await client.read(nameOf(name)) }), { refuse: REFUSED_SENDER })
   ipc.handle('artist-profile:refresh', async (_e, name: unknown) =>
     ({ ok: true, state: await client.refresh(nameOf(name)) }), { refuse: REFUSED_SENDER })
+
+  ipc.handle('artist-profile:all', async () => ({ ok: true, ...(await client.readAll()) }), { refuse: REFUSED_SENDER })
 
   ipc.handle('artist-profile:set-member-photo', async (event, artist: unknown, member: unknown, path: unknown) => {
     const a = nameOf(artist)

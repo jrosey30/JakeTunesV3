@@ -10,6 +10,12 @@ import { buildNormalizedArtworkIndex, lookupArtwork, queueArtworkResolutions } f
 import { prefetchAlbumArtHashes } from '../utils/artworkPrefetch'
 import AlbumArtImage from '../components/AlbumArtImage'
 import { canonicalArtist, isSameArtist, artistIdentityKey, subscribeAliases, getAliasVersion } from '../utils/artistAlias'
+import { artistLibraryIndex, tracksOfArtist, libraryAlbumFacts, trackIdSet } from '../artistLibraryIndex'
+import { headerPick, bioPlan, shownProfileState, WIKI_GRACE_MS } from '../artistPageModel'
+import { knownArtistPhoto, sessionArtistImages } from '../utils/artistPortrait'
+import { useNavArrivalKind } from '../context/NavArrivalContext'
+import { navDxTimed, navDxSource } from '../navDxDom'
+import HeroPhoto from '../components/artist/HeroPhoto'
 import type { RelatedArtist } from '../types'
 import ScrollTopButton from '../components/ScrollTopButton'
 import { albumKeyFromStrings } from '../utils/albumKey'
@@ -25,7 +31,7 @@ import { addToPlaylistEntry, queueMenuEntries } from '../utils/playlistMenu'
 import { setAlbumDragPayload } from '../utils/trackDrag'
 import { normTitle } from '../utils/normTitle'
 import { classifyRelease, RELEASE_KIND_LABEL, type ReleaseKind } from '../../common/release-kind'
-import { collectAlbumFacts, groupByReleaseKind, releaseKindForRows, releaseKindRank } from '../../common/release-sections'
+import { groupByReleaseKind, releaseKindForRows, releaseKindRank } from '../../common/release-sections'
 import { subscribeReleaseKinds, getReleaseKindsSnapshot, refreshReleaseKinds, foldName } from '../releaseKinds'
 import { subscribeLiveSets, getLiveSetsSnapshot } from '../liveSets'
 import { setConcertKey } from '../concertNav'
@@ -37,7 +43,7 @@ import { playsEverywhere } from '../../common/plays-elsewhere'
 import { useArtistProfile } from '../artistProfile'
 import {
   topSongs, mostPlayedRecord, earliestAdded, dayMonthYear, clock, lengthLabel, plural,
-  RELEASE_KIND_SINGULAR, heroEyebrow, heroNameSize, albumTileMeta, headerPhotoChoice, heroPhotoFit,
+  RELEASE_KIND_SINGULAR, heroEyebrow, heroNameSize, albumTileMeta,
 } from '../../common/artist-page'
 import MemberTile from '../components/artist/MemberTile'
 import MoreFromList, { type MoreFromRelease } from '../components/artist/MoreFromList'
@@ -103,6 +109,12 @@ type WallTile = LiveWallTile<ReturnType<typeof declaredConcerts>[number], AlbumG
 // Related artists cached per canonical name across visits (main caches a day
 // too; this avoids even the round-trip on re-open). homemini's list only.
 const relatedArtistsCache: Record<string, RelatedArtist[]> = {}
+// What the page showed last time, kept for the session so coming Back paints
+// it on the first frame instead of fetching it again under a restored scroll
+// (2026-11-10): the Wikipedia fallback bio, and each persona's MusicBrainz
+// discography ("More from").
+const wikiMemo = new Map<string, { extract: string | null; pageUrl: string | null }>()
+const discoMemo = new Map<string, DiscographyAlbum[] | 'empty'>()
 
 function relationLabel(rel: string): string {
   switch (rel) {
@@ -174,10 +186,13 @@ export default function ArtistDetailView() {
     else dispatch({ type: 'SET_VIEW', view: artistReturnView })
   }, [canGoBack, navBack, dispatch, artistReturnView])
 
-  // `.artist-detail` is itself the scroll container. Persist its scrollTop
-  // per-artist so opening an album and coming back lands where Jake left off.
+  // `.artist-detail` is itself the scroll container. Its scrollTop is kept
+  // per artist so opening an album and coming Back lands where Jake left off.
+  // Only Back / Forward restore it: a click on an artist opens at the top
+  // (2026-11-10 — it used to land wherever that artist was last left).
   const scrollRef = useRef<HTMLDivElement>(null)
-  useScrollPersistence(`artist-detail:${artist}`, scrollRef)
+  const arrival = useNavArrivalKind()
+  useScrollPersistence(`artist-detail:${artist}`, scrollRef, arrival)
 
   const aliasVersion = useSyncExternalStore(subscribeAliases, getAliasVersion)
   const lookupName = useMemo(() => canonicalArtist(artist), [artist, aliasVersion])
@@ -187,11 +202,10 @@ export default function ArtistDetailView() {
   // tracks are projected out of regularTracks, so it never groups as an
   // album; the Live section shows it once, as its poster.
   const liveSnap = useSyncExternalStore(subscribeLiveSets, getLiveSetsSnapshot)
-  const trackById = useMemo(() => {
-    const m = new Map<number, Track>()
-    for (const t of lib.tracks) m.set(t.id, t)
-    return m
-  }, [lib.tracks])
+  // The library by artist, built once per library in idle time
+  // (artistLibraryIndex.ts) — not by walking every track on each visit.
+  const libIndex = useMemo(() => artistLibraryIndex(lib.tracks), [lib.tracks, aliasVersion])
+  const trackById = libIndex.trackById
   const artistConcerts = useMemo(() => {
     if (!artist) return []
     const canonicalActive = canonicalArtist(artist)
@@ -208,13 +222,10 @@ export default function ArtistDetailView() {
 
   // Every track of this artist, concerts included — for the header's song
   // and play counts (a concert's songs are songs; its merged file is not).
-  const matchesArtist = useCallback((t: Track, canonicalActive: string) =>
-    isSameArtist(t.artist || '', canonicalActive) || (t.contributingArtists || []).some((x) => isSameArtist(x || '', canonicalActive)), [])
   const artistAllTracks = useMemo(() => {
     if (!artist) return [] as Track[]
-    const canonicalActive = canonicalArtist(artist)
-    return lib.tracks.filter((t) => matchesArtist(t, canonicalActive))
-  }, [lib.tracks, artist, aliasVersion, matchesArtist])
+    return tracksOfArtist(lib.tracks, canonicalArtist(artist))
+  }, [lib.tracks, artist, aliasVersion])
 
   // 4.5.0-45: Persona-aware aggregation. Match on either `artist` exact
   // OR contributingArtists.includes — canonicalize so "Paul McCartney
@@ -224,7 +235,10 @@ export default function ArtistDetailView() {
     if (!artist) return []
     const canonicalActive = canonicalArtist(artist)
     const byPersona = new Map<string, Map<string, AlbumGroup>>()
-    for (const t of regularTracks) {
+    // This artist's tracks, minus what a declared concert hides (the regular library).
+    const regular = regularTracks === lib.tracks ? null : trackIdSet(regularTracks)
+    for (const t of artistAllTracks) {
+      if (regular && !regular.has(t.id)) continue
       const directMatch = isSameArtist(t.artist || '', canonicalActive)
       const collabMatch = (t.contributingArtists || []).find(x => isSameArtist(x || '', canonicalActive))
       if (!directMatch && !collabMatch) continue
@@ -271,7 +285,7 @@ export default function ArtistDetailView() {
       out.push({ name: artistConcerts[0].band || artist, yearRange: '', albums: [] })
     }
     return out
-  }, [regularTracks, artist, aliasVersion, artistConcerts])
+  }, [regularTracks, lib.tracks, artistAllTracks, artist, aliasVersion, artistConcerts])
 
   const concertsForPersona = useMemo(
     () => concertsByPersona(artistConcerts, personas.map((p) => p.name)),
@@ -290,7 +304,7 @@ export default function ArtistDetailView() {
   // the fallback matches what main would store for the same album.
   const storedKinds = useSyncExternalStore(subscribeReleaseKinds, getReleaseKindsSnapshot)
   useEffect(() => { void refreshReleaseKinds() }, [artist])
-  const albumFacts = useMemo(() => collectAlbumFacts(lib.tracks, foldName), [lib.tracks])
+  const albumFacts = useMemo(() => libraryAlbumFacts(lib.tracks, foldName), [lib.tracks])
   const kindOfAlbum = useCallback(
     (g: AlbumGroup): ReleaseKind => releaseKindForRows(g.tracks, storedKinds, albumFacts, foldName),
     [storedKinds, albumFacts],
@@ -354,21 +368,51 @@ export default function ArtistDetailView() {
   }, [personas, lib.artworkMap, normalizedArtIndex, findArtHash, dispatch])
 
   // ── profile (homemini) + the fallback bio ──
-  // The cached profile paints at once; the refresh lands behind it. With no
-  // profile (404, or homemini away and nothing cached) the page shows the
-  // validated Wikipedia summary it always had, and no members.
-  const { state: profileState, cacheRead, replace: replaceProfile } = useArtistProfile(lookupName)
+  // The cached profile is in memory from boot (artistProfileStore), so it is
+  // on the page's FIRST frame; the refresh lands behind it. With no profile
+  // (404, or homemini away and nothing cached) the page shows the validated
+  // Wikipedia summary it always had, and no members.
+  const { state: latestProfileState, cacheRead, settled: profileSettled, replace: replaceProfile } = useArtistProfile(lookupName)
+  // What was painted stays painted for this visit (artistPageModel.ts
+  // shownProfileState): photos of the same profile fill their reserved tiles
+  // as they land, but a profile whose TEXT changed while the page is open —
+  // or one arriving after a bio is already on the page — waits for the next
+  // visit. Nothing moves under the reader.
+  const textPaintedRef = useRef(false)
+  const [shownProfile, setShownProfile] = useState(latestProfileState)
+  const profileState = shownProfileState(shownProfile, latestProfileState, {
+    textPainted: textPaintedRef.current,
+    scrolled: (scrollRef.current?.scrollTop ?? 0) > 40,
+  })
+  if (profileState !== shownProfile) setShownProfile(profileState)
   const profile = profileState.profile
-  // Keyed by artist: the page can move between artists without remounting.
-  const [wikiEntry, setWikiEntry] = useState<{ name: string; extract: string | null; pageUrl: string | null } | null>(null)
-  const wiki = wikiEntry && wikiEntry.name === lookupName ? wikiEntry : null
-  const wantWiki = !!lookupName && cacheRead && !profile
-  const wikiLoading = wantWiki && !wiki
+  // Jake's own member photo is his action on this page: it shows at once.
+  const onMemberPhotoSet = useCallback((st: typeof latestProfileState) => { replaceProfile(st); setShownProfile(st) }, [replaceProfile])
+
+  // The fallback bio is fetched alongside homemini's answer but shown only
+  // when a profile is not about to replace it (bioPlan): one bio is never
+  // painted and then swapped for another.
+  const [wikiEntry, setWikiEntry] = useState<{ name: string; extract: string | null; pageUrl: string | null } | null>(() => {
+    const kept = wikiMemo.get(lookupName)
+    return kept ? { name: lookupName, ...kept } : null
+  })
+  const [wikiShownBefore] = useState(() => wikiMemo.has(lookupName))
+  const [graceOver, setGraceOver] = useState(false)
   useEffect(() => {
-    if (!wantWiki) return
+    const t = setTimeout(() => setGraceOver(true), WIKI_GRACE_MS)
+    return () => clearTimeout(t)
+  }, [lookupName])
+  const wiki = wikiEntry && wikiEntry.name === lookupName ? wikiEntry : null
+  const bio = bioPlan({ hasProfile: !!profile, cacheRead, source: profileState.source, settled: profileSettled, graceOver, wikiShownBefore })
+  const wantWiki = !!lookupName && bio.fetchWiki
+  const shownWiki = bio.showWiki ? wiki : null
+  const wikiLoading = wantWiki && !shownWiki
+  useEffect(() => {
+    if (!wantWiki || wikiMemo.has(lookupName)) return
     let cancelled = false
     const name = lookupName
-    window.electronAPI.getArtistWiki(name).then(r => {
+    navDxTimed('wiki', window.electronAPI.getArtistWiki(name), () => 'main').then(r => {
+      wikiMemo.set(name, { extract: r.extract, pageUrl: r.pageUrl })
       if (!cancelled) setWikiEntry({ name, extract: r.extract, pageUrl: r.pageUrl })
     }).catch((err: unknown) => {
       console.warn('[artist-detail] wiki fallback failed:', err instanceof Error ? err.message : err)
@@ -376,23 +420,30 @@ export default function ArtistDetailView() {
     })
     return () => { cancelled = true }
   }, [wantWiki, lookupName])
+  useEffect(() => { if (profile?.bio || shownWiki) textPaintedRef.current = true })
 
   // Artist photo via the existing per-artist photo IPC (Deezer, identity-
   // confirmed). Canonicalized so an alias-merged row still pulls the photo.
-  const [photoEntry, setPhotoEntry] = useState<{ name: string; slug: string | null; failed: boolean } | null>(null)
-  const photo = photoEntry && photoEntry.name === lookupName ? photoEntry : null
-  const photoSlug = photo?.slug ?? null
-  const photoFailed = !!photo?.failed
+  // What is already known (a grid looked it up this session, or the file was
+  // on disk at boot) is on the first frame; the ask below runs behind it.
+  const seedPhoto = (name: string): { name: string; slug: string | null; failed: boolean } | null => {
+    const known = name ? knownArtistPhoto(name) : undefined
+    return known === undefined ? null : { name, slug: known, failed: false }
+  }
+  const [photoEntry, setPhotoEntry] = useState(() => seedPhoto(lookupName))
+  const photo = photoEntry && photoEntry.name === lookupName ? photoEntry : seedPhoto(lookupName)
   useEffect(() => {
     if (!lookupName) return
     let cancelled = false
     const name = lookupName
-    window.electronAPI.getArtistImage(name).then(r => {
-      if (!cancelled) setPhotoEntry({ name, slug: r.ok ? r.slug : null, failed: false })
+    if (knownArtistPhoto(name) !== undefined) navDxSource('photo', 0, 'memory')
+    navDxTimed('photo-ask', window.electronAPI.getArtistImage(name), (r) => (r.ok ? (r.slug ? 'main' : 'main-none') : 'refused')).then(r => {
+      if (!r.ok) return
+      sessionArtistImages.set(name, r.slug)
+      if (!cancelled) setPhotoEntry((prev) => (prev && prev.name === name && prev.slug === r.slug ? prev : { name, slug: r.slug, failed: false }))
     }).catch((err: unknown) => { console.warn('[artist-detail] photo lookup failed:', err instanceof Error ? err.message : err) })
     return () => { cancelled = true }
   }, [lookupName])
-  const heroSlug = photoSlug || profile?.heroPhoto || null
   const recordHash = record ? findArtHash(recordPersona, record.group.name) : undefined
   // No photo of the artist: the most played record's cover (else the newest
   // record's) fills the band-photo slot, so the header never has dead space.
@@ -403,42 +454,31 @@ export default function ArtistDetailView() {
     }
     return undefined
   })()
-  // The header's picture (common/artist-page.ts headerPhotoChoice, twinned
+  // The header's picture, decided from what is known NOW (artistPageModel.ts
+  // headerPick; the kinds are common/artist-page.ts headerPhotoChoice, twinned
   // with the phone): a credited header photo from the profile wins once it is
-  // saved on this Mac — its credit rides only as the image's hover title,
-  // never printed (Jake: no footnotes); with heroNeedsPhoto the app's artist image shows the wrong
+  // saved on this Mac — from the first frame when the profile is cached; its
+  // credit rides only as the image's hover title, never printed (Jake: no
+  // footnotes). With heroNeedsPhoto the app's artist image shows the wrong
   // line-up, so the record cover takes the slot; otherwise the artist image.
-  const headerChoice = headerPhotoChoice(profile)
+  // While the photo lookup has not answered the header is ink — never a cover
+  // that a photo replaces a moment later. A later, better picture cross-fades
+  // in inside the same box (HeroPhoto).
   const [brokenHero, setBrokenHero] = useState<string | null>(null)
-  const creditedHero = headerChoice === 'hero' && profile?.hero && profileState.photos[profile.hero.url] && brokenHero !== profile.hero.url ? profile.hero : null
-  const creditedHeroSlug = creditedHero ? profileState.photos[creditedHero.url] : null
   const coverSrc = fallbackHash ? albumArtUrl(fallbackHash) : null
-  const heroSrc = creditedHeroSlug
-    ? `artist-image://${creditedHeroSlug}.jpg`
-    : headerChoice === 'cover'
-      ? coverSrc
-      : heroSlug && !photoFailed
-        ? `artist-image://${heroSlug}.jpg`
-        : coverSrc
-
-  // How the photo meets its window (common/artist-page.ts heroPhotoFit): a
-  // group's photo in a window narrower than the photo is shown whole instead
-  // of cropped at its sides, and a tall one whole instead of sliced through
-  // its rows of faces. Needs the window's size (it follows the page's width)
-  // and the photo's own proportions (once it has loaded).
-  const heroPhotoRef = useRef<HTMLDivElement | null>(null)
-  const [heroBox, setHeroBox] = useState<{ width: number; height: number } | null>(null)
-  const [heroNatural, setHeroNatural] = useState<{ src: string; width: number; height: number } | null>(null)
-  useEffect(() => {
-    const el = heroPhotoRef.current
-    if (!el || typeof ResizeObserver === 'undefined') return
-    const measure = () => setHeroBox((prev) => (prev && prev.width === el.clientWidth && prev.height === el.clientHeight ? prev : { width: el.clientWidth, height: el.clientHeight }))
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [heroSrc])
-  const heroFit = heroSrc && heroBox && heroNatural && heroNatural.src === heroSrc ? heroPhotoFit(profile?.kind, heroBox, heroNatural, !!creditedHero) : 'cover'
+  const pick = headerPick({
+    profile,
+    photos: profileState.photos,
+    brokenHero,
+    artistSlug: photo ? photo.slug : undefined,
+    artistPhotoFailed: !!photo?.failed,
+    coverSrc,
+  })
+  const heroSrc = pick.kind === 'none' ? null : pick.src
+  const onHeroFailed = useCallback((src: string) => {
+    if (pick.kind === 'hero' && src === pick.src) setBrokenHero(pick.url)
+    else if (pick.kind === 'artist' && src === pick.src) setPhotoEntry({ name: lookupName, slug: photo?.slug ?? null, failed: true })
+  }, [pick, lookupName, photo])
 
   // Related-artists graph (associate, not merge): this artist's band(s),
   // bandmates, side projects + key collaborators. The ones you OWN are
@@ -448,21 +488,16 @@ export default function ArtistDetailView() {
   // list itself is homemini's, the same one the phone shows (main/related-artists.ts).
   const [related, setRelated] = useState<RelatedArtist[]>(() => relatedArtistsCache[lookupName] || [])
   const [relatedLoading, setRelatedLoading] = useState(false)
-  const ownedArtistKeys = useMemo(() => {
-    const s = new Set<string>()
-    for (const t of lib.tracks) {
-      const a = (t.artist || '').trim()
-      if (a) s.add(artistIdentityKey(canonicalArtist(a)))
-    }
-    return s
-  }, [lib.tracks, aliasVersion])
+  const ownedArtistKeys = libIndex.ownedArtistKeys
   useEffect(() => {
     if (!lookupName) { setRelated([]); return }
-    if (relatedArtistsCache[lookupName]) { setRelated(relatedArtistsCache[lookupName]); return }
+    if (relatedArtistsCache[lookupName]) { setRelated(relatedArtistsCache[lookupName]); navDxSource('related', 0, 'memory'); return }
     let cancelled = false
     setRelated([])
     setRelatedLoading(true)
-    window.electronAPI.getRelatedArtists?.(lookupName).then((r) => {
+    const asked = window.electronAPI.getRelatedArtists?.(lookupName)
+    if (!asked) { setRelatedLoading(false); return }
+    navDxTimed('related', asked, (r) => r?.source ?? 'none').then((r) => {
       if (cancelled) return
       const list = (r?.ok && r.related) ? r.related : []
       // Only homemini's list is kept for the session: a local fallback (homemini
@@ -478,22 +513,31 @@ export default function ArtistDetailView() {
   // per persona, cached 7 days in main. Since 10/20 (V3 #215) main refuses a
   // namesake's catalogue, so a reply here means the identity is confirmed;
   // what's drawn from it is "More from <Artist>" — the releases NOT owned.
-  const [discoByPersona, setDiscoByPersona] = useState<Map<string, DiscographyAlbum[] | 'loading' | 'empty'>>(new Map())
+  // An answer main gave earlier this session is on the first frame (discoMemo).
   const personaNames = useMemo(() => personas.map(p => p.name).join('|'), [personas])
+  const [discoByPersona, setDiscoByPersona] = useState<Map<string, DiscographyAlbum[] | 'loading' | 'empty'>>(
+    () => new Map(personas.map(p => [p.name, discoMemo.get(p.name) ?? ('loading' as const)])))
   useEffect(() => {
     if (personas.length === 0) { setDiscoByPersona(new Map()); return }
     let cancelled = false
-    setDiscoByPersona(new Map(personas.map(p => [p.name, 'loading' as const])))
-    Promise.all(personas.map(async p => {
+    const need = personas.filter(p => !discoMemo.has(p.name))
+    setDiscoByPersona(new Map(personas.map(p => [p.name, discoMemo.get(p.name) ?? ('loading' as const)])))
+    if (need.length === 0) { navDxSource('discography', 0, 'memory'); return }
+    const began = performance.now()
+    Promise.all(need.map(async p => {
       try {
         const r = await window.electronAPI.getArtistDiscography?.(p.name)
-        return [p.name, (r?.ok && r.albums?.length) ? r.albums : 'empty' as const] as const
+        const got = (r?.ok && r.albums?.length) ? r.albums : 'empty' as const
+        // Only a real answer is remembered: "unavailable" is asked again next visit (main holds it an hour).
+        if (r?.ok) discoMemo.set(p.name, got)
+        return [p.name, got] as const
       } catch {
         return [p.name, 'empty' as const] as const
       }
     })).then(results => {
+      navDxSource('discography', performance.now() - began, 'main')
       if (cancelled) return
-      setDiscoByPersona(new Map(results))
+      setDiscoByPersona((prev) => { const next = new Map(prev); for (const [n, v] of results) next.set(n, v); return next })
     })
     return () => { cancelled = true }
     // personaNames captures the identity of the set without re-running
@@ -560,9 +604,10 @@ export default function ArtistDetailView() {
   }, [chapters, ownedReleases])
 
   // Quiet placeholders only when a lookup runs past 400 ms (a cache hit never flashes).
-  const aboutLoadingShown = useDelayedFlag(!profile && (!cacheRead || wikiLoading))
+  const aboutPending = !profile && (!cacheRead || wikiLoading)
+  // Past the bio's own grace: "Looking up…" must never be the text that the bio then replaces.
+  const aboutLoadingShown = useDelayedFlag(aboutPending, WIKI_GRACE_MS + 400)
   const relatedLoadingShown = useDelayedFlag(relatedLoading)
-  const discoLoadingShown = useDelayedFlag([...discoByPersona.values()].some((v) => v === 'loading'))
 
   if (!artist) {
     return (
@@ -621,27 +666,15 @@ export default function ArtistDetailView() {
       <BackButton label={backLabel} onClick={goBack} className="artist-detail-back" />
 
       <header className="ad-hero">
-        {heroSrc && (
-          <div className={`ad-hero-photo${heroFit === 'width' ? ' ad-hero-photo--whole' : heroFit === 'height' ? ' ad-hero-photo--tall' : ''}`} ref={heroPhotoRef}>
-            <img
-              className="ad-drift"
-              src={heroSrc}
-              alt={artist}
-              onLoad={(e) => {
-                const im = e.currentTarget
-                setHeroNatural({ src: heroSrc, width: im.naturalWidth, height: im.naturalHeight })
-              }}
-              title={creditedHero?.credit ? `${artist} photo: ${creditedHero.credit}` : undefined}
-              draggable={false}
-              onError={() => {
-                if (creditedHero) setBrokenHero(creditedHero.url)
-                else if (heroSlug && !photoFailed) setPhotoEntry({ name: lookupName, slug: photoSlug, failed: true })
-              }}
-            />
-            <div className="ad-hero-fade-x" />
-            <div className="ad-hero-fade-y" />
-          </div>
-        )}
+        <HeroPhoto
+          src={heroSrc}
+          alt={artist}
+          title={pick.kind === 'hero' && pick.credit ? `${artist} photo: ${pick.credit}` : undefined}
+          kind={profile?.kind}
+          framed={pick.kind === 'hero'}
+          instantFirst={arrival === 'return'}
+          onFailed={onHeroFailed}
+        />
         <div className="ad-hero-text">
           <div className="ad-eyebrow ad-eyebrow--hero ad-rise ad-d1">{heroEyebrow(profile?.origin)}</div>
           <h1 className={`ad-name ad-name--${heroNameSize(artist)} ad-rise ad-d2`}>{artist}</h1>
@@ -661,7 +694,7 @@ export default function ArtistDetailView() {
       <div className="ad-sheet">
         {/* About — directly under the header, facts beside it. */}
         <section className="ad-about ad-rise ad-d4">
-          <div className="ad-about-main">
+          <div className={`ad-about-main${aboutPending ? ' is-pending' : ''}`}>
             <h2 className="ad-h2">About</h2>
             {profile?.bio ? (
               <>
@@ -672,9 +705,9 @@ export default function ArtistDetailView() {
               profile.facts.length === 0 && <p className="ad-body ad-body--quiet">No biography yet.</p>
             ) : aboutLoadingShown ? (
               <p className="ad-body ad-body--quiet">Looking up {artist}…</p>
-            ) : wiki?.extract ? (
-              bioParas(wiki.extract).map((p, i) => <p key={i} className="ad-body">{p}</p>)
-            ) : wiki ? (
+            ) : shownWiki?.extract ? (
+              bioParas(shownWiki.extract).map((p, i) => <p key={i} className="ad-body">{p}</p>)
+            ) : shownWiki ? (
               // Better empty than wrong: no validated page → no bio, and a way to look.
               <p className="ad-body ad-body--quiet">
                 No biography found for {artist}. Search{' '}
@@ -774,7 +807,7 @@ export default function ArtistDetailView() {
                   needsPhoto={!!m.needsPhoto && !(m.photo && profileState.photos[m.photo.url])}
                   soloArtist={m.libraryArtist && libraryHas(m.libraryArtist) && artistIdentityKey(canonicalArtist(m.libraryArtist)) !== artistIdentityKey(lookupName) ? m.libraryArtist : undefined}
                   onOpenSolo={openArtist}
-                  onPhotoSet={replaceProfile}
+                  onPhotoSet={onMemberPhotoSet}
                 />
               ))}
             </div>
@@ -799,7 +832,6 @@ export default function ArtistDetailView() {
             </div>
             {chapters.map(({ persona, rows }) => {
               const more = moreFrom(persona, [...rows.album, ...rows.eps, ...rows.compilation])
-              const discoLoading = discoByPersona.get(persona.name) === 'loading'
               return (
                 <div key={persona.name} className="ad-chapter">
                   {isMulti && (
@@ -816,9 +848,13 @@ export default function ArtistDetailView() {
                       </div>
                     </Fragment>
                   ))}
-                  {filter === 'all' && (more.length > 0
-                    ? <MoreFromList artist={persona.name} releases={more} ownedTrack={ownedTrack} onPlay={(t) => playQueue([t])} />
-                    : discoLoading && discoLoadingShown && <div className="ad-more ad-more--loading">Looking up the rest of {persona.name}’s records on MusicBrainz…</div>)}
+                  {/* No "looking up" line while MusicBrainz is asked (2026-11-10): it
+                      appeared under the covers 400 ms in, pushed Live and Related
+                      down, and was then replaced by the list — two moves where the
+                      list arriving is one. */}
+                  {filter === 'all' && more.length > 0 && (
+                    <MoreFromList artist={persona.name} releases={more} ownedTrack={ownedTrack} onPlay={(t) => playQueue([t])} />
+                  )}
                 </div>
               )
             })}

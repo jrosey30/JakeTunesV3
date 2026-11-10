@@ -143,7 +143,8 @@ describe('artist photo picks', () => {
   it('the Deezer refresh leaves a picked act alone, and refreshes everyone else as before', async () => {
     const t = tmp()
     try {
-      const old = new Date(Date.now() - PHOTO_MAX_AGE_MS - 86_400_000)
+      // Past the longest age a photo may reach before it is due (30 days + up to 30 more, per artist).
+      const old = new Date(Date.now() - 2 * PHOTO_MAX_AGE_MS - 86_400_000)
       const { mkdirSync } = await import('node:fs')
       mkdirSync(t.dir, { recursive: true })
       for (const slug of ['cameron-winter', 'geese']) {
@@ -162,13 +163,18 @@ describe('artist photo picks', () => {
         download: async (url: string) => { downloads.push(url); return Buffer.from('a fresh Deezer photo') },
         picked: (slug: string) => slug === 'cameron-winter',
         ready: async () => { waited = true },
+        refreshGapMs: 0,
       })
+      // The photo on disk is the answer at once; the refresh that is due runs behind it (2026-11-10).
       assert.equal(await photos.get('Cameron Winter'), 'cameron-winter')
+      await photos.idle()
       assert.deepEqual(readFileSync(join(t.dir, 'cameron-winter.jpg')), commons)
-      assert.equal(waited, true)
+      assert.equal(waited, true, 'the refresh waits for the first picks pull before it decides')
       assert.equal(downloads.length, 0)
       assert.equal(await photos.get('Geese'), 'geese')
+      await photos.idle()
       assert.equal(downloads.length, 1)
+      assert.equal(readFileSync(join(t.dir, 'geese.jpg'), 'utf8'), 'a fresh Deezer photo')
     } finally { await t.done() }
   })
 })

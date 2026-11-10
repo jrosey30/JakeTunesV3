@@ -719,6 +719,7 @@ declare global {
       audioLog: (line: string) => void
       // 2026-08-21 reliability P0: renderer crash net → main flight recorder.
       dxRecord?: (tag: string, detail?: unknown) => void
+      navDxEnv?: () => Promise<boolean>
       reportCrash: (payload: { kind: string; message?: string; stack?: string; source?: string }) => void
       // 4.1.6: Radio Mode — between-song WJLR-style commentary (distinct from
       // the one-shot mic-click `musicmanDj`). Forwards to ipcMain 'musicman-radio'.
@@ -1232,6 +1233,9 @@ declare global {
       // 2026-10-20 — homemini's pre-built artist profile; see src/common/artist-profile.ts.
       artistProfileGet?: (name: string) => Promise<{ ok: boolean; state?: import('../common/artist-profile').ArtistProfileState }>
       artistProfileRefresh?: (name: string) => Promise<{ ok: boolean; state?: import('../common/artist-profile').ArtistProfileState }>
+      artistProfileAll?: () => Promise<{ ok: boolean; states?: import('../common/artist-profile').ArtistProfileState[]; complete?: boolean }>
+      artistPhotosKnown?: (names: string[]) => Promise<{ ok: boolean; slugs?: Record<string, string> }>
+      onArtistProfileUpdated?: (cb: (state: import('../common/artist-profile').ArtistProfileState) => void) => () => void
       artistMemberPhotoSet?: (artist: string, member: string, file: File | null) => Promise<
         { ok: true; state: import('../common/artist-profile').ArtistProfileState } | { ok: false; canceled?: boolean; error?: string }>
       // 2026-10-18 — synced picks (Island Albums + Favorite Artists) via

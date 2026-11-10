@@ -16,6 +16,20 @@ export interface NavLocation {
   smartPlaylistId: string | null
   artist: string | null
   albumKey: string | null
+  /**
+   * Which concert (its album key) or mixtape (its id) a detail view shows.
+   * Those pages are routed by the generic SET_VIEW and keep their subject in a
+   * module store (concertNav.ts, mixtapes.ts), so until 2026-11-10 history
+   * held only the view: concert A → artist → concert B → Back → Back landed
+   * on B, the store's last value.
+   */
+  detailKey: string | null
+}
+
+/** The subjects that live outside the library state, as they are right now. */
+export interface DetailSubjects {
+  concertKey?: string | null
+  mixtapeId?: string | null
 }
 
 export interface NavHistory {
@@ -30,7 +44,8 @@ export function sameLoc(a: NavLocation | undefined, b: NavLocation | undefined):
     a.playlistId === b.playlistId &&
     a.smartPlaylistId === b.smartPlaylistId &&
     a.artist === b.artist &&
-    a.albumKey === b.albumKey
+    a.albumKey === b.albumKey &&
+    (a.detailKey ?? null) === (b.detailKey ?? null)
   )
 }
 
@@ -73,14 +88,31 @@ export interface NavigableState {
  * visits to e.g. Albums look like different places and corrupt the stack —
  * and would let a playlist you visited an hour ago define where you are now.
  */
-export function locationOf(s: NavigableState): NavLocation {
+export function locationOf(s: NavigableState, subjects: DetailSubjects = {}): NavLocation {
   return {
     view: s.currentView,
     playlistId: s.currentView === 'playlist' ? s.activePlaylistId : null,
     smartPlaylistId: s.currentView === 'smart-playlist' ? s.activeSmartPlaylist : null,
     artist: s.currentView === 'artist-detail' ? s.activeArtist : null,
     albumKey: s.currentView === 'album-detail' ? s.pendingAlbumKey : null,
+    detailKey:
+      s.currentView === 'concert-detail' ? (subjects.concertKey || null)
+        : s.currentView === 'mixtape-detail' ? (subjects.mixtapeId || null)
+          : null,
   }
+}
+
+/**
+ * The module store a history entry's subject goes back into BEFORE its
+ * restore action is dispatched, so Back / Forward to a concert or a mixtape
+ * opens the one that entry was, not the one opened last. Null: the entry has
+ * no such subject (or was recorded without one — the store is left as it is).
+ */
+export function detailSubjectFor(t: NavLocation): { store: 'concert' | 'mixtape'; key: string } | null {
+  if (!t.detailKey) return null
+  if (t.view === 'concert-detail') return { store: 'concert', key: t.detailKey }
+  if (t.view === 'mixtape-detail') return { store: 'mixtape', key: t.detailKey }
+  return null
 }
 
 /** The existing reducer actions that re-enter a page (no reducer changes). */

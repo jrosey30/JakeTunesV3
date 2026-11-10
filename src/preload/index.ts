@@ -88,6 +88,8 @@ const electronAPI = {
   reportCrash: (payload: { kind: string; message?: string; stack?: string; source?: string }): void => ipcRenderer.send('flight-record', payload),
   // Diagnostic rows (dx.*) into main.log — observation only, never load-bearing.
   dxRecord: (tag: string, detail?: unknown): void => ipcRenderer.send('dx-record', { tag, detail }),
+  // dx.nav (renderer/navDx.ts): is JT_NAV_DX=1 set for this run? Off by default.
+  navDxEnv: (): Promise<boolean> => ipcRenderer.invoke('nav-dx:env'),
   // 4.1.6: Radio Mode — between-song WJLR-style commentary, distinct
   // from one-shot DJ comment (mic click). Same shape, different system
   // prompt + voice.
@@ -1167,6 +1169,16 @@ const electronAPI = {
   // refresh = one GET (ETag) + member photos.
   artistProfileGet: (name: string): Promise<unknown> => ipcRenderer.invoke('artist-profile:get', name),
   artistProfileRefresh: (name: string): Promise<unknown> => ipcRenderer.invoke('artist-profile:refresh', name),
+  // 2026-11-10 — the artist page's first frame: every cached profile, and which
+  // artists have a photo on disk (no network either way). Main pushes
+  // 'artist-profile:updated' (the new state) as each profile photo lands.
+  artistProfileAll: (): Promise<unknown> => ipcRenderer.invoke('artist-profile:all'),
+  artistPhotosKnown: (names: string[]): Promise<unknown> => ipcRenderer.invoke('artist-photos:known', names),
+  onArtistProfileUpdated: (cb: (state: unknown) => void): (() => void) => {
+    const handler = (_e: unknown, state: unknown): void => cb(state)
+    ipcRenderer.on('artist-profile:updated', handler)
+    return () => { ipcRenderer.removeListener('artist-profile:updated', handler) }
+  },
   /** Jake's own photo of a band member: a dropped image File, or null to open a picker. */
   artistMemberPhotoSet: (artist: string, member: string, file: File | null): Promise<unknown> => {
     let path: string | null = null
