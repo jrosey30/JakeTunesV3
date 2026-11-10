@@ -134,6 +134,14 @@ export function nativeThumbJpeg(full: Buffer, width: number): Buffer | null {
   return img.resize({ width, quality: 'good' }).toJPEG(82)
 }
 
+/** artist-image://'s downscaler (artist-image-serve.ts): as above, but a photo
+ *  already no wider than `width` is left alone (null), never blown up. */
+export function nativeThumbJpegDownOnly(full: Buffer, width: number): Buffer | null {
+  const img = nativeImage.createFromBuffer(full)
+  if (img.isEmpty() || img.getSize().width <= width) return null
+  return img.resize({ width, quality: 'good' }).toJPEG(82)
+}
+
 export function getCachedArtBytes(hash: string): ArrayBuffer | undefined {
   const key = bareArtHash(hash)
   const hit = ART_BYTES_CACHE.get(key)

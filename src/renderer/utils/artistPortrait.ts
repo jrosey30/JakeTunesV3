@@ -22,6 +22,26 @@ const AVATAR_COLORS = ['#c0392b', '#8e44ad', '#2980b9', '#27ae60', '#f39c12', '#
  *  Value: slug (found) | null (looked up, none available — don't retry). */
 export const sessionArtistImages = new Map<string, string | null>()
 
+/**
+ * Photos main found on this Mac's disk at boot (name → slug; artistPageSeed.ts).
+ * Kept apart from sessionArtistImages on purpose: that map also says "looked
+ * up, none" and stops the grids asking again; this one only ever says "there
+ * is a file", so the artist page can draw it on its first frame.
+ */
+export const diskArtistPhotos = new Map<string, string>()
+/** Names a recent look found no photo for (a fresh .miss on disk at boot). */
+export const diskArtistNoPhoto = new Set<string>()
+/** slug → its file's mtime: part of the picture's address, so a photo replaced under the same slug (a new pick, a refresh) is never drawn from memory. */
+export const artistPhotoVersions = new Map<string, number>()
+
+/** What is known about this artist's photo right now: a slug, null (looked up: none), undefined (not known). */
+export function knownArtistPhoto(name: string): string | null | undefined {
+  if (sessionArtistImages.has(name)) return sessionArtistImages.get(name)
+  const onDisk = diskArtistPhotos.get(name)
+  if (onDisk) return onDisk
+  return diskArtistNoPhoto.has(name) ? null : undefined
+}
+
 export const ARTIST_PHOTO_PREFETCH_CAP = 32
 export const ARTIST_PHOTO_BATCH = 3
 

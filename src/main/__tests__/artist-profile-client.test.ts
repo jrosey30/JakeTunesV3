@@ -7,7 +7,7 @@
 // so main/index.ts did not grow.
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, readFile, readdir } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, readdir, writeFile } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -15,6 +15,7 @@ import {
   artistPhotoFileOf, parseArtistProfile, photoCacheSlug, profileCacheFile, memberPhotoPath, artistProfilePath, profilePhotoUrls,
 } from '../../common/artist-profile.ts'
 import { createArtistProfileClient, PROFILE_MIN_GAP_MS, type ProfileFetchLike } from '../artist-profile-client.ts'
+import { waitFor } from './wait-for.ts'
 
 const GEESE = {
   version: 1,
@@ -155,20 +156,32 @@ describe('artist profile client', () => {
   let dir: string
   let hub: Hub
   let now: number
-  const make = () => createArtistProfileClient({
-    baseUrl: 'http://homemini:3000/',
-    profileDir: join(dir, 'artist-profiles'),
-    photoDir: join(dir, 'artist-images'),
-    fetchImpl: fakeHub(hub),
-    now: () => now,
-    warn: () => {},
-  })
+  // refresh() answers before its photos are saved (2026-11-10): every client
+  // made here is waited on before the folder is removed, or a photo landing
+  // mid-delete is ENOTEMPTY.
+  let made: Array<ReturnType<typeof createArtistProfileClient>> = []
+  const make = () => {
+    const c = createArtistProfileClient({
+      baseUrl: 'http://homemini:3000/',
+      profileDir: join(dir, 'artist-profiles'),
+      photoDir: join(dir, 'artist-images'),
+      fetchImpl: fakeHub(hub),
+      now: () => now,
+      warn: () => {},
+    })
+    made.push(c)
+    return c
+  }
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'jt-artist-profile-'))
     hub = { mode: 'up', body: GEESE, etag: '"v1"', postMode: 'ok', calls: [] }
     now = Date.UTC(2026, 9, 20, 22)
   })
-  afterEach(async () => { await rm(dir, { recursive: true, force: true }) })
+  afterEach(async () => {
+    await Promise.all(made.map((c) => c.idle()))
+    made = []
+    await rm(dir, { recursive: true, force: true, maxRetries: 5 })
+  })
 
   it('nothing cached → read is "none" and touches no network', async () => {
     const c = make()
@@ -180,7 +193,7 @@ describe('artist profile client', () => {
 
   it('refresh fetches, caches, and saves every member photo once', async () => {
     const c = make()
-    const s = await c.refresh('Geese')
+    const s = await c.refresh('Geese', { waitPhotos: true })
     assert.equal(s.source, 'homemini')
     assert.equal(s.profile?.name, 'Geese')
     assert.equal(hub.calls[0].url, 'http://homemini:3000/api/artist/Geese/profile')
@@ -198,13 +211,13 @@ describe('artist profile client', () => {
 
   it('the credited hero photo is saved with the member photos', async () => {
     hub.body = { ...GEESE, hero: { url: '/api/artist-photo/1857f06283720e62.jpg', source: 'commons', credit: 'X, Wikimedia Commons, CC BY 2.0' } }
-    const s = await make().refresh('Geese')
+    const s = await make().refresh('Geese', { waitPhotos: true })
     assert.equal(s.photos['/api/artist-photo/1857f06283720e62.jpg'], photoCacheSlug('1857f06283720e62.jpg'))
     assert.equal(Object.keys(s.photos).length, 3)
   })
 
   it('a new client paints from the disk cache instantly', async () => {
-    await make().refresh('Geese')
+    await make().refresh('Geese', { waitPhotos: true })
     hub.calls = []
     const s = await make().read('Geese')
     assert.equal(s.source, 'cache')
@@ -250,12 +263,28 @@ describe('artist profile client', () => {
 
   it('visits closer than the gap reuse the last answer; force asks again', async () => {
     const c = make()
-    await c.refresh('Geese')
+    await c.refresh('Geese', { waitPhotos: true })
     hub.calls = []
     await c.refresh('Geese')
     assert.equal(hub.calls.length, 0)
     await c.refresh('Geese', { force: true })
     assert.equal(hub.calls.length, 1)
+  })
+
+  // Review of PR 408: a page first visited before homemini has built it gets a 404.
+  // homemini builds it within minutes; the revisit must not reuse the stub for the gap.
+  it('a 404 is asked again on the very next visit, and the built profile comes back', async () => {
+    const c = make()
+    hub.mode = 'missing'
+    assert.equal((await c.refresh('Geese')).source, 'missing')
+    hub.mode = 'up'                                   // built meanwhile; no time has passed
+    hub.calls = []
+    const s = await c.refresh('Geese', { waitPhotos: true })
+    assert.ok(hub.calls.some((x) => x.url.endsWith('/profile')), 'asked again inside the gap')
+    assert.equal(s.profile?.name, 'Geese')
+    hub.calls = []
+    await c.refresh('Geese')
+    assert.equal(hub.calls.length, 0, 'and once there is a profile the gap applies as before')
   })
 
   it('the cache file is per artist and names its artist', async () => {
@@ -290,6 +319,105 @@ describe('artist profile client', () => {
     }
     const stranger = await c.putMemberPhoto('Geese', 'Not In The Band', new Uint8Array([255, 216]))
     assert.equal(stranger.ok, false)
+  })
+})
+
+// 2026-11-10 — the text homemini returned in 14 ms used to wait for every
+// photo download (one at a time, up to 15 s each when away) before the page
+// got any of it; meanwhile the page had shown the Wikipedia fallback, which
+// the profile then replaced.
+describe('the profile text is delivered before its photos', () => {
+  let dir: string
+  beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'jt-artist-profile-split-')) })
+  afterEach(async () => { await rm(dir, { recursive: true, force: true, maxRetries: 5 }) })
+
+  /** A homemini whose profile answers at once and whose photos wait until released, one by one. */
+  function slowPhotoHub(): { fetchImpl: ProfileFetchLike; release(file: string): void; asked: string[]; inFlight(): number; most(): number } {
+    const gates = new Map<string, () => void>()
+    const asked: string[] = []
+    let flying = 0, most = 0
+    const fetchImpl: ProfileFetchLike = async (url) => {
+      if (url.includes('/api/artist-photo/')) {
+        const file = decodeURIComponent(url.split('/api/artist-photo/')[1])
+        asked.push(file)
+        flying++; most = Math.max(most, flying)
+        await new Promise<void>((r) => gates.set(file, r))
+        flying--
+        return { ok: true, status: 200, json: async () => null, arrayBuffer: async () => new Uint8Array([255, 216, 255, 224]).buffer, headers: { get: (n: string) => (n.toLowerCase() === 'content-type' ? 'image/jpeg' : null) } }
+      }
+      return { ok: true, status: 200, json: async () => ({ ...GEESE, hero: { url: '/api/artist-photo/hero.jpg', source: 'commons' } }), headers: { get: (n: string) => (n.toLowerCase() === 'etag' ? '"v1"' : null) } }
+    }
+    return { fetchImpl, release: (file) => { gates.get(file)?.(); gates.delete(file) }, asked, inFlight: () => flying, most: () => most }
+  }
+
+  it('refresh answers with the bio while every photo is still downloading', async () => {
+    const hub = slowPhotoHub()
+    const updates: Array<Record<string, string>> = []
+    const c = createArtistProfileClient({ baseUrl: 'http://homemini:3000', profileDir: join(dir, 'p'), photoDir: join(dir, 'i'), fetchImpl: hub.fetchImpl, warn: () => {}, onUpdate: (st) => updates.push(st.photos) })
+    // No photo is released yet: before 2026-11-10 this refresh() never came back.
+    let s: Awaited<ReturnType<typeof c.refresh>> | undefined
+    void c.refresh('Geese').then((st) => { s = st })
+    await waitFor(() => s, 'the bio, with every photo still downloading')
+    assert.equal(s!.profile?.bio?.lede, GEESE.bio.lede)
+    assert.deepEqual(s!.photos, {}, 'no photo yet: their tiles are reserved, not held up')
+    // The photos follow, each announced on its own as it lands.
+    await waitFor(() => hub.asked.length === 3, 'all three photos asked for at once')
+    assert.deepEqual(hub.asked.sort(), ['face-cameron.jpg', 'hero.jpg', 'jake-emily.jpg'], 'fetched side by side, not one after another')
+    hub.release('jake-emily.jpg')
+    await waitFor(() => updates.length === 1, 'the first photo to be announced')
+    assert.deepEqual(Object.keys(updates[0]), ['/api/artist-photo/jake-emily.jpg'], 'the first photo to land is on the page before the slowest')
+    hub.release('hero.jpg'); hub.release('face-cameron.jpg')
+    await c.photosSettled('Geese')
+    assert.equal(updates.length, 3)
+    assert.equal(Object.keys(updates[2]).length, 3)
+    assert.equal(Object.keys((await c.read('Geese')).photos).length, 3)
+  })
+
+  it('a photo that never arrives holds nothing: the text is there, the other photos land', async () => {
+    const hub = slowPhotoHub()
+    const c = createArtistProfileClient({ baseUrl: 'http://homemini:3000', profileDir: join(dir, 'p'), photoDir: join(dir, 'i'), fetchImpl: hub.fetchImpl, warn: () => {} })
+    const s = await c.refresh('Geese')
+    assert.equal(s.profile?.name, 'Geese')
+    await waitFor(() => hub.asked.length === 3, 'all three photos asked for')
+    hub.release('face-cameron.jpg'); hub.release('jake-emily.jpg')      // hero.jpg hangs (homemini slow)
+    await waitFor(() => hub.inFlight() === 1, 'the two released photos to land')
+    assert.equal(Object.keys((await c.read('Geese')).photos).length, 2)
+    hub.release('hero.jpg')
+    await c.photosSettled('Geese')
+  })
+
+  it('readAll: every cached profile, newest first, with no network — what the page draws its first frame from', async () => {
+    const calls: string[] = []
+    const fetchImpl: ProfileFetchLike = async (url) => {
+      calls.push(url)
+      if (url.includes('/api/artist-photo/')) return { ok: true, status: 200, json: async () => null, arrayBuffer: async () => new Uint8Array([255, 216]).buffer, headers: { get: () => 'image/jpeg' } }
+      if (url.includes('Nobody')) return { ok: false, status: 404, json: async () => ({}) }
+      const name = decodeURIComponent(/\/artist\/([^/]+)\/profile/.exec(url)![1])
+      return { ok: true, status: 200, json: async () => ({ ...GEESE, name }), headers: { get: () => '"v1"' } }
+    }
+    const opts = { baseUrl: 'http://homemini:3000', profileDir: join(dir, 'p'), photoDir: join(dir, 'i'), fetchImpl, warn: () => {} }
+    const first = createArtistProfileClient(opts)
+    for (const n of ['Geese', 'Fat Dog', 'Nobody']) await first.refresh(n, { waitPhotos: true })
+    calls.length = 0
+    await first.idle()
+    const all = await createArtistProfileClient(opts).readAll()
+    assert.equal(calls.length, 0, 'no network')
+    assert.equal(all.complete, true)
+    assert.deepEqual(all.states.map((x) => x.name).sort(), ['Fat Dog', 'Geese', 'Nobody'])
+    assert.equal(all.states.find((x) => x.name === 'Nobody')!.source, 'missing', 'a cached 404 is known too: the page plans its fallback on the first frame')
+    assert.equal(Object.keys(all.states.find((x) => x.name === 'Geese')!.photos).length, 2, 'with the photos already saved')
+    // A file whose name is not its artist's (copied, renamed, torn) is not trusted: the page
+    // would be handed one artist's profile under another's cache slot.
+    const real = join(dir, 'p', profileCacheFile('Geese'))
+    await writeFile(join(dir, 'p', profileCacheFile('Somebody Else')), await readFile(real, 'utf-8'))
+    await writeFile(join(dir, 'p', 'junk.json'), '{ not json')
+    const guarded = await createArtistProfileClient(opts).readAll()
+    assert.deepEqual(guarded.states.map((x) => x.name).sort(), ['Fat Dog', 'Geese', 'Nobody'], 'Geese once, under its own file only')
+    await rm(join(dir, 'p', profileCacheFile('Somebody Else')))
+    await rm(join(dir, 'p', 'junk.json'))
+    const some = await createArtistProfileClient(opts).readAll(2)
+    assert.equal(some.states.length, 2)
+    assert.equal(some.complete, false, 'a cut-short list says so, so "not listed" is not read as "not cached"')
   })
 })
 

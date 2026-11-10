@@ -58,6 +58,7 @@ import { initDownloads } from './utils/downloadStore'
 import { ensureLiveSetsLoaded, reloadLiveSets } from './liveSets'
 import { hydrateScrollCacheFromUiState } from './hooks/useScrollPersistence'
 import { restoreActionFor, savedLocation } from './nav-history'
+import { initNavDx } from './navDxDom'
 import { AppSettings, DEFAULT_APP_SETTINGS, type Playlist, type SmartPlaylistId, type Track } from './types'
 import { parseOpenIpodListAction } from '../common/ipod-list-proposals'
 import { ipodListPlaylistId } from '../common/ipod-list-doc'
@@ -188,6 +189,8 @@ function AppInner() {
   // splash — otherwise every launch offers Back (and the back pill) to a page
   // nobody saw. Runs in the commit that reveals the UI, after the restore.
   useEffect(() => { if (uiReady) beginHistory() }, [uiReady, beginHistory])
+  // dx.nav (navDx.ts): reads its flag once; off by default, and then a no-op.
+  useEffect(() => { void initNavDx() }, [])
   // 4.4.39: minimum splash display time. Even on a warm cache where the
   // library Promise.all settles in <500ms, we hold the splash for ≥1400ms
   // so the wordmark/greeting/EQ-bars actually get to land — otherwise

@@ -26,9 +26,15 @@ import YearInReviewView from '../views/YearInReviewView'
 import Top1000QuizView from '../views/Top1000QuizView'
 import ViewModeToggle from './ViewModeToggle'
 import { useDiscHandoffView } from '../discHandoff'
-import { useLayoutEffect, useRef, useState } from 'react'
-import { nextKeptRoot, type KeptRoot } from '../keptView'
-import { takeHistoryNavigation } from '../navIntent'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { nextKeptRoot, viewTransitionKey, type KeptRoot } from '../keptView'
+import { NavArrivalContext } from '../context/NavArrivalContext'
+import { prewarmArtistLibraryIndex } from '../artistLibraryIndex'
+import { primeArtistPage } from '../artistPageSeed'
+import { subscribeAliases, getAliasVersion } from '../utils/artistAlias'
+import { foldName } from '../releaseKinds'
+import { navDxNavigated } from '../navDxDom'
+import { takeHistoryNavigation, pageArrival } from '../navIntent'
 import { useNavigation } from '../context/NavigationContext'
 import { useBackLabel } from '../hooks/useBackLabel'
 import { showsSharedBack } from '../backPill'
@@ -38,10 +44,10 @@ import '../styles/main-content.css'
 /** Arrive vs return, decided ONCE per mounted page (its key) and then held
  *  for that page's lifetime — flipping data-nav later would restart the very
  *  entrance animations the return switched off. */
-function useNavArrival(key: string): 'return' | 'arrive' {
-  const ref = useRef<{ key: string; kind: 'return' | 'arrive' } | null>(null)
+function useNavArrival(key: string): 'return' | 'arrive' | 'restore' {
+  const ref = useRef<{ key: string; kind: 'return' | 'arrive' | 'restore' } | null>(null)
   if (!ref.current || ref.current.key !== key) {
-    ref.current = { key, kind: takeHistoryNavigation() ? 'return' : 'arrive' }
+    ref.current = { key, kind: pageArrival(ref.current === null, takeHistoryNavigation()) }
   }
   return ref.current.kind
 }
@@ -85,11 +91,12 @@ export default function MainContent() {
   // For PlaylistView and SmartPlaylistView the "identity" of the view
   // is the active playlist id — we want a fresh fade-in when the user
   // clicks a different playlist, not just when they switch view type.
-  const transitionKey =
-    view === 'playlist' ? `playlist:${state.activePlaylistId}` :
-    view === 'smart-playlist' ? `smart:${state.activeSmartPlaylist}` :
-    view === 'album-detail' ? `album:${shown.albumKey}` :
-    view
+  const transitionKey = viewTransitionKey(view, {
+    activePlaylistId: state.activePlaylistId,
+    activeSmartPlaylist: state.activeSmartPlaylist,
+    activeArtist: state.activeArtist,
+    albumKey: shown.albumKey,
+  })
 
   // 2026-10-21: the grid you came from (Artists / Albums) stays mounted,
   // hidden, under the artist and album pages — back is an unhide, not a
@@ -104,9 +111,23 @@ export default function MainContent() {
   const activeKey = keptActive ? `kept:${wantKept}` : transitionKey
   const arrival = useNavArrival(activeKey)
   // The kept page's data-nav is fixed at ITS mount (see useNavArrival).
-  const keptArrivalRef = useRef<{ root: KeptRoot; kind: 'return' | 'arrive' } | null>(null)
+  const keptArrivalRef = useRef<{ root: KeptRoot; kind: 'return' | 'arrive' | 'restore' } | null>(null)
   if (wantKept && keptActive && keptArrivalRef.current?.root !== wantKept) keptArrivalRef.current = { root: wantKept, kind: arrival }
   if (!wantKept) keptArrivalRef.current = null
+  // The artist page's per-library answers (which tracks are whose, every
+  // album's facts) are built in idle time whenever the library or the alias
+  // map changes, never on the click that opens an artist (artistLibraryIndex.ts);
+  // the first build also fetches what the page's first frame draws from disk.
+  const aliasVersion = useSyncExternalStore(subscribeAliases, getAliasVersion)
+  useEffect(() => prewarmArtistLibraryIndex(state.tracks, foldName, primeArtistPage), [state.tracks, aliasVersion])
+  // dx.nav (off unless flagged on): one row per page shown.
+  const lastKeyRef = useRef<string | null>(null)
+  useLayoutEffect(() => {
+    const from = lastKeyRef.current
+    lastKeyRef.current = activeKey
+    if (from !== null) navDxNavigated({ from, to: activeKey, kind: arrival === 'return' ? 'return' : 'arrive', remount: !keptActive })
+  }, [activeKey]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Parking a page must not leave keyboard focus on one of its cards — Space /
   // Enter on a hidden artist card would navigate from under the detail page.
   const keptBoxRef = useRef<HTMLDivElement>(null)
@@ -214,7 +235,7 @@ export default function MainContent() {
                 <div className="view-mode-bar"><ViewModeToggle /></div>
                 <div className="view-mode-bar-content">{viewElement}</div>
               </div>
-            ) : viewElement}
+            ) : <NavArrivalContext.Provider value={arrival}>{viewElement}</NavArrivalContext.Provider>}
           </div>
         )}
         <div

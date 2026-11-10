@@ -1,6 +1,9 @@
-import { createContext, useContext, useRef, useState, useEffect, useCallback, ReactNode } from 'react'
+import { createContext, useContext, useRef, useState, useEffect, useCallback, useSyncExternalStore, ReactNode } from 'react'
 import { useLibrary } from './LibraryContext'
-import { recordLocation, locationOf, restoreActionFor, canGoBack as histCanBack, canGoForward as histCanForward } from '../nav-history'
+import { recordLocation, locationOf, restoreActionFor, detailSubjectFor, canGoBack as histCanBack, canGoForward as histCanForward } from '../nav-history'
+import { getConcertKey, setConcertKey, subscribeConcertKey } from '../concertNav'
+import { getMixtapeId, setMixtapeId, subscribeMixtapes } from '../mixtapes'
+import { noteNavHow } from '../navDxDom'
 import type { NavLocation, NavHistory } from '../nav-history'
 import { reopenSearch } from '../searchNav'
 import { markHistoryNavigation } from '../navIntent'
@@ -47,7 +50,11 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
   // Each subject is captured ONLY while its view is showing (locationOf says
   // why: the reducer leaves pendingAlbumKey / activeArtist / activePlaylistId
   // lingering after you navigate away).
-  const loc: NavLocation = locationOf(lib)
+  // A concert's and a mixtape's subject live in module stores (those pages are
+  // routed by SET_VIEW); read here so two concerts are two places in history.
+  const concertKey = useSyncExternalStore(subscribeConcertKey, getConcertKey)
+  const mixtapeId = useSyncExternalStore(subscribeMixtapes, getMixtapeId)
+  const loc: NavLocation = locationOf(lib, { concertKey, mixtapeId })
 
   // History in a ref (synchronous read/write across the observer + handlers);
   // `tick` just forces a repaint so derived canGoBack/Forward update.
@@ -77,7 +84,14 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
 
   // One rule for re-entering a page (nav-history.ts) — shared with the startup
   // restore in App.tsx, so a history entry and a saved page land identically.
-  const restore = useCallback((t: NavLocation) => { dispatch(restoreActionFor(t)) }, [dispatch])
+  const restore = useCallback((t: NavLocation) => {
+    // The entry's own concert / mixtape goes back into its store first, so the
+    // page opens on the one that entry was (nav-history.ts detailSubjectFor).
+    const subject = detailSubjectFor(t)
+    if (subject?.store === 'concert') setConcertKey(subject.key)
+    else if (subject?.store === 'mixtape') setMixtapeId(subject.key)
+    dispatch(restoreActionFor(t))
+  }, [dispatch])
 
   // Record location changes. recordLocation returns the SAME object on a
   // back/forward landing (index already moved) or a no-op → identity check
@@ -89,9 +103,10 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
     navRef.current = next
     repaint()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loc.view, loc.playlistId, loc.smartPlaylistId, loc.artist, loc.albumKey])
+  }, [loc.view, loc.playlistId, loc.smartPlaylistId, loc.artist, loc.albumKey, loc.detailKey])
 
   const goBack = useCallback(() => {
+    noteNavHow('back')
     const s = navRef.current
     const sr = searchReturnRef.current
     if (sr && sr.atIndex === s.index) {
@@ -116,6 +131,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
   }, [restore, repaint])
 
   const goForward = useCallback(() => {
+    noteNavHow('forward')
     const s = navRef.current
     if (s.index >= s.history.length - 1) return
     navRef.current = { history: s.history, index: s.index + 1 }
@@ -160,7 +176,9 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
       // layout) — ordinary vertical scrolling stays free.
       const sideways = Math.abs(e.deltaX) > Math.abs(e.deltaY)
       const consumed = e.defaultPrevented || (sideways && insideHorizontalScroller(e.target))
-      go(tracker.push({ t: e.timeStamp, dx: e.deltaX, dy: e.deltaY, consumed }))
+      const d = tracker.push({ t: e.timeStamp, dx: e.deltaX, dy: e.deltaY, consumed })
+      if (d) noteNavHow('swipe')
+      go(d)
     }
     // Main relays the older-style macOS 'swipe' (and Windows/Linux
     // browser-backward/forward app-commands) as menu actions.

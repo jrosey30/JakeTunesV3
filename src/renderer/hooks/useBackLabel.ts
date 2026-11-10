@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { useNavigation } from '../context/NavigationContext'
 import { backLabelForLocation } from '../utils/albumBackLabel'
-import { albumKeyFromStrings } from '../utils/albumKey'
+import { albumTitleForKey } from '../artistLibraryIndex'
 import { SMART_PLAYLIST_TITLES } from '../utils/smartPlaylists'
 import { useTop1000Name } from '../top1000Name'
 
@@ -23,11 +23,9 @@ export function useBackLabel(): string | null {
   const albumKey = backTo?.view === 'album-detail' ? backTo.albumKey : null
   // The key is lowercased, so the title comes from the owning track (the
   // titlebar breadcrumb resolves it the same way). Memoized on the key.
-  const album = useMemo(() => {
-    if (!albumKey) return null
-    const t = lib.tracks.find((tk) => albumKeyFromStrings(tk.albumArtist || tk.artist, tk.album) === albumKey)
-    return t?.album || null
-  }, [albumKey, lib.tracks])
+  // (A map built once per library — artistLibraryIndex.ts — not a scan of
+  // every track each time the page Back lands on changes.)
+  const album = useMemo(() => (albumKey ? albumTitleForKey(lib.tracks, albumKey) : null), [albumKey, lib.tracks])
   const playlist = backTo?.view === 'playlist' && backTo.playlistId
     ? lib.playlists.find((p) => p.id === backTo.playlistId)?.name ?? null
     : backTo?.view === 'smart-playlist' && backTo.smartPlaylistId

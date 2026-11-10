@@ -81,8 +81,11 @@ describe('the header photo (twin of the phone, Mobile #501)', () => {
   })
   it('the page never draws the artist image when the choice is the cover', () => {
     const view = readFileSync(join(import.meta.dirname, '../../renderer/views/ArtistDetailView.tsx'), 'utf-8')
-    assert.match(view, /headerPhotoChoice\(profile\)/)
-    assert.match(view, /headerChoice === 'cover'\s*\?\s*coverSrc/)
+    // The choice is made in one pure place since 2026-11-10 (artistPageModel.ts headerPick).
+    assert.match(view, /const pick = headerPick\(\{/)
+    const model = readFileSync(join(import.meta.dirname, '../../renderer/artistPageModel.ts'), 'utf-8')
+    assert.match(model, /const choice = headerPhotoChoice\(i\.profile\)/)
+    assert.match(model, /if \(choice === 'cover'\) return cover/)
   })
 })
 
@@ -127,8 +130,10 @@ describe('the header photo window (twin of the phone, Mobile ArtistHeroFraming)'
     assert.equal(heroPhotoFit('group', { width: 878, height: 440 }, { width: 1000, height: 1000 }, true), 'height')
   })
   it('the page measures its window and the photo, and the stylesheet draws the whole one', () => {
-    const view = readFileSync(join(import.meta.dirname, '../../renderer/views/ArtistDetailView.tsx'), 'utf-8')
-    assert.match(view, /heroPhotoFit\(profile\?\.kind, heroBox, heroNatural, !!creditedHero\)/)
+    // The header's picture is its own component since 2026-11-10 (the cross-fade in a reserved box).
+    const view = readFileSync(join(import.meta.dirname, '../../renderer/components/artist/HeroPhoto.tsx'), 'utf-8')
+    assert.match(view, /heroPhotoFit\(kind, heroBox, heroNatural, !!m\?\.framed\)/)
+    assert.match(readFileSync(join(import.meta.dirname, '../../renderer/views/ArtistDetailView.tsx'), 'utf-8'), /kind=\{profile\?\.kind\}\s+framed=\{pick\.kind === 'hero'\}/)
     assert.match(view, /ad-hero-photo--whole/)
     assert.match(view, /ad-hero-photo--tall/)
     const css = readFileSync(join(import.meta.dirname, '../../renderer/styles/artist-detail.css'), 'utf-8')

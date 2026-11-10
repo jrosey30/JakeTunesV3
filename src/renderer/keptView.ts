@@ -44,3 +44,26 @@ export function nextKeptRoot(current: string, kept: KeptRoot | null): KeptRoot |
   if ((DETAIL_VIEWS as readonly string[]).includes(current)) return kept
   return null
 }
+
+/**
+ * The identity of the page on screen: a change of key remounts the page (fresh
+ * state, the entrance, the top of the page). Detail pages are keyed by their
+ * SUBJECT, so moving from one artist to another is a new page — until
+ * 2026-11-10 the artist page's key was the bare view name, and a click on a
+ * related artist (the chips at the very bottom) kept the old page mounted:
+ * the old header photo for a beat, the old scroll position, no entrance.
+ */
+export function viewTransitionKey(view: string, s: {
+  activePlaylistId?: string | null
+  activeSmartPlaylist?: string | null
+  activeArtist?: string | null
+  albumKey?: string | null
+}): string {
+  switch (view) {
+    case 'playlist': return `playlist:${s.activePlaylistId}`
+    case 'smart-playlist': return `smart:${s.activeSmartPlaylist}`
+    case 'album-detail': return `album:${s.albumKey}`
+    case 'artist-detail': return `artist:${s.activeArtist ?? ''}`
+    default: return view
+  }
+}
