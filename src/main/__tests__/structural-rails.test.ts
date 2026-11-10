@@ -183,6 +183,7 @@ describe('WIRING — the tested code is the live code', () => {
     { fn: 'confirmPlayableOnHomemini', file: 'main/index.ts', minCalls: 1, why: 'unwired, an ALAC file is dropped before homemini has a copy this Mac can play, and the first tap waits on a download or a conversion' },
     { fn: '|| recent.has(it.ipodPath) || playerTouches.has(it.ipodPath, now)', file: 'main/index.ts', minCalls: 1, literal: true,
       why: 'unwired, an album is offloaded five minutes after Jake imports it' },
+    { fn: 'returnRecentToDisk', file: 'main/index.ts', minCalls: 1, why: 'unwired, the 694 recent songs offloaded on 2026-11-09/10 stay as links and each first play waits on homemini' },
     { fn: 'streamedAlac.serve(', file: 'main/index.ts', minCalls: 2, literal: true,
       why: 'unwired, a streamed ALAC song downloads whole before its first byte even when homemini has a ready copy' },
   ]

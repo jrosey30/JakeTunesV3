@@ -61,7 +61,7 @@ import {
   appendOffloadReplacement, createCachedOffloadReader, hubOffloadActive,
 localAudioDropRefused,   libraryRootFromMusicDir, OFFLOAD_CONVERT_BATCH, serveHubOffloadSymlink, streamConvertRuns,
 } from './offload-audio.ts'
-import { bootHubOffload, menuHubOffload, registerOffloadIpc } from './ipc/offload-ipc.ts'
+import { bootHubOffload, menuHubOffload, registerOffloadIpc, returnRecentToDisk } from './ipc/offload-ipc.ts'
 import { createServePin } from './play-cache-serve-pin.ts'
 import { createIpcRegistrar, REFUSED_SENDER } from './ipc-register.ts'
 import { registerUiStateIpc, readSavedSidebarOrder } from './ipc/ui-state-ipc.ts'
@@ -4507,9 +4507,10 @@ async function runStreamConvertPass(now: number): Promise<void> {
     if (!items.length) return
     const hub = hubOffloadActive({ streamSource: source, offload })
     const ipodGate = await ipodLocal.gate()   // songs on an iPod's list stay on this Mac (ipod-keep-local.ts)
-    // What Jake just got or just played stays too (offload-keep-recent.ts).
+    // What Jake just got or just played stays too, and what was already offloaded comes back (offload-keep-recent.ts).
     const windows = keepWindows(await laptopFreeBytes())
     const recent = buildRecentKeep((((await libraryCache.get()) as CachedLibrary).tracks || []) as QueueTrack[], now, windows)
+    if (hub && windows.roomy && !(await isAwayFromHome().catch(() => true))) void returnRecentToDisk(recent, (colon) => playerTouches.has(colon, Date.now()))
     // The library's record NOW decides, never the row's (stream-convert-pass.ts).
     const { keep, changed } = await runConvertPass({
       now, items, maxAgeMs: STREAM_CONVERT_MAX_AGE_MS, batch: hub ? OFFLOAD_CONVERT_BATCH : null,

@@ -15,6 +15,7 @@ import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { withCompanionInit } from '../hub-companion.ts'
 import { colonPathToAbs } from '../activity-boardable.ts'
+import { returnRecentSongs } from '../offload-recent-return.ts'
 import {
   bootOffloadIntent,
   compareLocalToRaw,
@@ -225,19 +226,9 @@ async function runStart(interactive: boolean): Promise<{ ok: boolean; error?: st
   return { ok: true }
 }
 
-async function runRehydrate(interactive: boolean): Promise<{ ok: boolean; restored?: number; error?: string }> {
-  if (!host) return { ok: false, error: 'offload is not ready' }
-  let text = ''
-  try {
-    text = await readFile(offloadReplacementsPath(host.userDataDir()), 'utf-8')
-  } catch {
-    const message = 'No offload-replacements.jsonl yet. Nothing to pull back.'
-    await showText('Undo offload', message, interactive)
-    return { ok: false, error: message }
-  }
-  const records = parseReplacementLog(text)
-  const result = await rehydrateReplacements({
-    records,
+/** The real effects of a rehydrate: free space, homemini's raw bytes, what is at the path now, the atomic write. */
+function rehydrateEffects(): Pick<Parameters<typeof rehydrateReplacements>[0], 'freeBytes' | 'fetchFull' | 'currentKind' | 'writeBack'> {
+  return {
     freeBytes: async () => {
       const s = await statfs(host!.musicRoot())
       return Number(s.bavail) * Number(s.bsize)
@@ -272,7 +263,48 @@ async function runRehydrate(interactive: boolean): Promise<{ ok: boolean; restor
       await writeFile(tmp, bytes)
       await rename(tmp, abs)
     },
-  })
+  }
+}
+
+/**
+ * Bring recent songs back onto this Mac (offload-recent-return.ts). Hub only,
+ * offload on. `keep` and `inUse` are the caller's (offload-keep-recent.ts).
+ */
+let returnRunning = false
+export async function returnRecentToDisk(keep: { has(colonPath: string): boolean }, inUse: (colonPath: string) => boolean): Promise<void> {
+  if (!host || returnRunning) return
+  returnRunning = true
+  try {
+    if (!hubOffloadActive({ streamSource: await host.readStreamSource(), offload: await host.readOffloadAudio() })) return
+    let text = ''
+    try { text = await readFile(offloadReplacementsPath(host.userDataDir()), 'utf-8') } catch { return }
+    const effects = rehydrateEffects()
+    await returnRecentSongs({
+      records: parseReplacementLog(text), keep, inUse,
+      currentKind: effects.currentKind,
+      rehydrate: (records) => rehydrateReplacements({ records, ...effects }),
+      requeue: (records) => host!.enqueue(records.map((r) => ({ ipodPath: r.path, fingerprint: r.fingerprint || undefined, enqueuedAt: Date.now() }))),
+      log: (m) => console.log(m),
+    })
+  } catch (err) {
+    console.warn('[offload] bringing recent songs back failed:', err instanceof Error ? err.message : err)
+  } finally {
+    returnRunning = false
+  }
+}
+
+async function runRehydrate(interactive: boolean): Promise<{ ok: boolean; restored?: number; error?: string }> {
+  if (!host) return { ok: false, error: 'offload is not ready' }
+  let text = ''
+  try {
+    text = await readFile(offloadReplacementsPath(host.userDataDir()), 'utf-8')
+  } catch {
+    const message = 'No offload-replacements.jsonl yet. Nothing to pull back.'
+    await showText('Undo offload', message, interactive)
+    return { ok: false, error: message }
+  }
+  const records = parseReplacementLog(text)
+  const result = await rehydrateReplacements({ records, ...rehydrateEffects() })
   const message = result.stoppedBecause
     ? `Pulled ${result.restored} file(s) back, skipped ${result.skipped}. Stopped: ${result.stoppedBecause}`
     : `Pulled ${result.restored} file(s) back, skipped ${result.skipped}.`
