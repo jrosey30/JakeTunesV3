@@ -107,11 +107,19 @@ if [ "$fmt" = "state=" ] || [ "$fmt" = "time=" ]; then
   if [ "$fmt" = "time=" ]; then
     # A live app's CPU time moves between any two looks, unless cpu_parked says it is stuck.
     # cpu_show: exactly what ps prints, for a test that needs the digits.
+    # The value is read first and the look goes on the record second. The other way round, a test
+    # that saw "cpu-look" and then changed cpu_show could get in before the read: the first look
+    # took the new digits, no later look saw a rise, and the watcher never ended (19 of 60 runs
+    # at load, 2026-11-09).
+    if [ -e "$JT_FAKE/cpu_show" ]; then
+      shown=$(cat "$JT_FAKE/cpu_show")
+    else
+      n=$(cat "$JT_FAKE/cpu_$pid" 2>/dev/null || echo 400)
+      if [ ! -e "$JT_FAKE/cpu_parked" ]; then n=$((n + 1)); echo "$n" > "$JT_FAKE/cpu_$pid"; fi
+      shown="  0:$n.57"
+    fi
     echo "cpu-look" >> "$JT_FAKE/calls.log"
-    [ -e "$JT_FAKE/cpu_show" ] && { cat "$JT_FAKE/cpu_show"; exit 0; }
-    n=$(cat "$JT_FAKE/cpu_$pid" 2>/dev/null || echo 400)
-    if [ ! -e "$JT_FAKE/cpu_parked" ]; then n=$((n + 1)); echo "$n" > "$JT_FAKE/cpu_$pid"; fi
-    echo "  0:$n.57"
+    echo "$shown"
     exit 0
   fi
   cat "$JT_FAKE/state_$pid" 2>/dev/null || echo "S"
@@ -485,7 +493,12 @@ export function makeWorld(o: WorldOpts = {}): World {
       mkdirSync(join(home, '.config', 'jaketunes'), { recursive: true })
       writeFileSync(join(home, '.config', 'jaketunes', 'ntfy-topic'), `${topic}\n`)
     },
-    clockJumps: (seconds) => writeFileSync(join(fake, 'date_offset'), String(seconds)),
+    // Atomic: the fake date reads this on every look, and half a write is no number.
+    clockJumps: (seconds) => {
+      const tmp = join(fake, 'date_offset.tmp')
+      writeFileSync(tmp, String(seconds))
+      renameSync(tmp, join(fake, 'date_offset'))
+    },
     // Its own file, not a write to the fake open's count. Sharing a temp name gave ENOENT (load 37),
     // and with two names an open mid-countdown wrote 999 back over this 0, so the watcher spent its
     // tries on a "no" (load 300, 2026-11-06).
@@ -609,7 +622,11 @@ export const watcherEnded = async (w: World): Promise<void> => {
 /** The watcher has read its start time, so a clock jump from here is past its window. */
 export const watcherSettled = (w: World): Promise<unknown> => waitFor(() => w.watcherAsleep() || null, 'the watcher asleep at its poll')
 const cpuLooks = (w: World): number => (w.calls().match(/^cpu-look$/gm) ?? []).length
-/** Waits for the watcher's next read of the CPU time, or for it to end. No clock in it: at load a look can be seconds late. */
+/**
+ * Waits for the watcher's next read of the CPU time, or for it to end. No clock in it: at load a look
+ * can be seconds late. The fake ps records a look only after it has read the value, so what a test
+ * changes after this returns is seen by the look after, never by this one.
+ */
 export const nextCpuLook = async (w: World): Promise<void> => {
   const seen = cpuLooks(w)
   await waitFor(() => cpuLooks(w) > seen || !w.watcherAlive() || null, 'the next look at the CPU time')
