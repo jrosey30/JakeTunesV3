@@ -8,7 +8,7 @@
  * inits, and album-info lookups that were interleaved with this code
  * deliberately stay behind.
  */
-import { recoKindForInput, preserveAlbumIdentity, type RecoKind } from '../reco-kind-core.ts'
+import { recoKindForInput, preserveAlbumIdentity, isHubNamedLink, type RecoKind } from '../reco-kind-core.ts'
 import { BrowserWindow, app } from 'electron'
 import { randomUUID } from 'crypto'
 import { join } from 'path'
@@ -60,8 +60,14 @@ export interface RecommendationRecord {
   source?: RecoSource
   // Brief 126 — sync protocol v2: what the jot wants (track/album/full
   // concert) + a stable external id (archive.org item — strongest identity).
-  kind?: 'track' | 'album' | 'concert'
+  kind?: RecoKind
   externalId?: string
+  // homemini's structured friend attribution (its Brief 132): who sent the
+  // row and the link they sent. A named link's row carries these and no note.
+  from?: string
+  link?: string
+  /** A playlist a friend sent: its songs (the credit sweep reads them). */
+  tracks?: Array<{ title: string; artist: string }>
   // Fulfillment (backend-synced): the jot landed in the library.
   owned?: boolean
   ownedAt?: string
@@ -902,7 +908,8 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
 
     try {
       // origin:'user' — a deliberate human add; may un-delete (Brief 126).
-      const res = await hub.add({ ...trimmed, origin: 'user' })
+      // sentAt: a bare link's row is dated by the send, which is what a credit is judged from.
+      const res = await hub.add({ ...trimmed, origin: 'user', ...(input.sentAt ? { sentAt: input.sentAt } : {}) })
       backendStatus = res.status
       if (res.ok) {
         const parsed = res.json as RecommendationRecord | { item?: RecommendationRecord } | null
@@ -924,6 +931,17 @@ export function registerRecommendations(ipc: IpcRegistrar, host: Recommendations
       }
     }
 
+    if (recommendation?.id && isHubNamedLink(recommendation)) {
+      // An artist, a playlist or a page homemini named from the link: kept as written.
+      recommendation = { ...recommendation, source: recommendation.source || source }
+      try { await appendRecommendationLocal(recommendation) } catch (err) {
+        console.warn('[reco] local append after POST failed:', err instanceof Error ? err.message : err)
+      }
+      scheduleRecoConvergeSync()
+      noteFriendSend()
+      tickFriendAdd()
+      return { ok: true, recommendation }
+    }
     if (recommendation?.id) {
       try {
         const enriched = await buildLocalRecommendation({

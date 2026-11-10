@@ -28,6 +28,11 @@ export type MusicLinkKind =
   | { service: 'apple'; kind: 'track'; id: string }
   | { service: 'apple'; kind: 'album'; id: string }
   | { service: 'spotify'; kind: 'track' | 'album' | 'short' }
+  /** A streaming page that is not one song or one album: an artist, a
+   *  playlist, a podcast, a profile. homemini names these (2026-11-10; its
+   *  util/linkKinds.ts) — Avery's artist page and playlist were 'unknown'
+   *  here, waited out five scans and landed as "texted song link". */
+  | { service: 'spotify' | 'apple'; kind: 'page' }
   | { service: 'unknown' }
 
 export function classifyMusicLink(url: string): MusicLinkKind {
@@ -37,6 +42,7 @@ export function classifyMusicLink(url: string): MusicLinkKind {
   if (host === 'open.spotify.com') {
     if (/^\/(?:intl-[a-z]+\/)?track\//i.test(u.pathname)) return { service: 'spotify', kind: 'track' }
     if (/^\/(?:intl-[a-z]+\/)?album\//i.test(u.pathname)) return { service: 'spotify', kind: 'album' }
+    if (/^\/(?:intl-[a-z-]+\/)?(?:artist|playlist|episode|show|user)\/[^/]/i.test(u.pathname)) return { service: 'spotify', kind: 'page' }
     return { service: 'unknown' }
   }
   if (host === 'spotify.link') return { service: 'spotify', kind: 'short' }
@@ -47,6 +53,7 @@ export function classifyMusicLink(url: string): MusicLinkKind {
     if (song) return { service: 'apple', kind: 'track', id: song[1] }
     const album = u.pathname.match(/\/album\/[^/]*\/(?:id)?(\d+)/i)
     if (album) return { service: 'apple', kind: 'album', id: album[1] }
+    if (/\/(?:artist|playlist)\/[^/]/i.test(u.pathname)) return { service: 'apple', kind: 'page' }
     return { service: 'unknown' }
   }
   return { service: 'unknown' }

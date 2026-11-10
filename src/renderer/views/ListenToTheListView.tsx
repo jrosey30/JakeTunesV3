@@ -25,6 +25,7 @@ import { claimTransportKeys } from '../input-mode'
 import { formatAppDate } from '../utils/formatDate'
 import type { Recommendation, ItunesSuggestion } from '../types'
 import { displayRecoName } from '../listen-to-the-list/components'
+import { friendOf, linkOf, isLinkKind } from '../listen-to-the-list/friend'
 import { useItunesAutocomplete } from '../listen-to-the-list/useItunesAutocomplete'
 import { useListenToTheList } from '../listen-to-the-list/useListenToTheList'
 import type { AddFormState } from '../listen-to-the-list/useListenToTheList'
@@ -36,10 +37,6 @@ import '../styles/listen-to-the-list.css'
 
 interface Friend { name: string; adds: number; got: number; tossed: number; lastAt: number; imported: number }
 
-function friendOf(rec: Recommendation): string | null {
-  const m = String(rec.note || '').match(/(?:^|· )from ([^·]+?)(?: ·|$)/)
-  return m ? m[1].trim() : null
-}
 function humanNoteOf(rec: Recommendation): string {
   return String(rec.note || '')
     .replace(/(?:^|· )from [^·]+?(?= ·|$)/, '')
@@ -99,6 +96,7 @@ export default function ListenToTheListView() {
   // Song / Album / Artist — the list groups by what a reco IS (Jake 2026-07-23).
   const recoType = (r: Recommendation): 'song' | 'album' | 'artist' => {
     const { title: song, album } = recoFields(r)
+    if (isLinkKind(r)) return 'artist'
     if (r.kind === 'album' || r.kind === 'concert') return 'album'
     if (song) return 'song'
     if (album) return 'album'
@@ -314,6 +312,8 @@ export default function ListenToTheListView() {
     const canDl = canDownloadReco(r)
     const isAlbum = recoType(r) === 'album'
     const dl = dlOf(r.id)
+    // An artist or a playlist a friend sent: the link is the thing to open.
+    const sentLink = isLinkKind(r) ? linkOf(r) : null
     return (
       <div
         key={r.id}
@@ -340,6 +340,7 @@ export default function ListenToTheListView() {
           </div>
           <div className="ltl-tri-sub">
             {isAlbum && (r.matchedAlbum || r.album) && <span className="ltl-tri-album">{r.matchedAlbum || r.album}</span>}
+            {r.kind === 'artist' && <span className="ltl-tri-album">Artist</span>}
             {note && <span className="ltl-tri-note">{note}</span>}
             <span className="ltl-tri-date">{formatAppDate(r.createdAt)}</span>
           </div>
@@ -367,6 +368,8 @@ export default function ListenToTheListView() {
             </>
           ) : isAlbum ? (
             <button type="button" className="ltl-tri-get" onClick={() => openDownloadForReco(r)} title="Pick tracks in Download">Tracks</button>
+          ) : sentLink ? (
+            <button type="button" className="ltl-tri-get" onClick={() => { void window.electronAPI.openExternalUrl?.(sentLink) }} title={sentLink}>Open</button>
           ) : canDl && (
             <button type="button" className="ltl-tri-get" onClick={() => getReco(r)} title="Get it (Enter)">Get</button>
           )}

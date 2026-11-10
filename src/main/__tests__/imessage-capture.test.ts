@@ -71,9 +71,9 @@ describe('imessage-capture — classifyMusicLink', () => {
     assert.deepEqual(classifyMusicLink('https://open.spotify.com/intl-de/track/abc'), { service: 'spotify', kind: 'track' })
   })
 
-  it('playlists and artist pages are unknown (not one addable song)', () => {
-    assert.deepEqual(classifyMusicLink('https://open.spotify.com/playlist/abc'), { service: 'unknown' })
-    assert.deepEqual(classifyMusicLink('https://music.apple.com/us/artist/paul-simon/78349'), { service: 'unknown' })
+  it('playlists and artist pages are pages homemini names (they were unknown until 2026-11-10, and never left this Mac)', () => {
+    assert.deepEqual(classifyMusicLink('https://open.spotify.com/playlist/abc'), { service: 'spotify', kind: 'page' })
+    assert.deepEqual(classifyMusicLink('https://music.apple.com/us/artist/paul-simon/78349'), { service: 'apple', kind: 'page' })
   })
 })
 

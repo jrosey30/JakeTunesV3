@@ -20,8 +20,14 @@
  * - First run looks back 7 days, capped at 20 adds (no list flooding);
  *   after that the cursor moves strictly forward.
  * - A link that fails to resolve (offline, Spotify bot-wall) retries up to
- *   5 scans, then lands as a note-only jot carrying the raw link — a texted
- *   song is never silently dropped.
+ *   5 scans, then goes to homemini as the bare link — a texted song is never
+ *   silently dropped. homemini names it, or lists it by its link and keeps
+ *   asking (JakeTunesMobile backend util/linkRows.ts).
+ * - A link that is not one song or one album (an artist page, a playlist, a
+ *   podcast) goes to homemini on the first scan (2026-11-10): Avery Allen's
+ *   artist page and playlist waited out the five scans here, and the
+ *   note-only jot they became was refused by homemini, so they never left
+ *   this Mac.
  * - No Full Disk Access → status 'denied'; the LTL view shows the one-time
  *   setup hint. The watcher keeps probing, so the moment Jake flips the
  *   toggle it starts without a relaunch.
@@ -90,7 +96,7 @@ export interface ImessageCaptureHost {
     song?: string; artist?: string; album?: string; note?: string; from?: string; link?: string
     /** message arrival time — the credit sweep's date gate judges the SEND */
     sentAt?: string
-  }) => Promise<{ ok: boolean; deduped?: boolean; error?: string }>
+  }) => Promise<{ ok: boolean; deduped?: boolean; error?: string; recommendation?: { song?: string; artist?: string; album?: string } }>
 }
 
 // ── IO ──
@@ -106,15 +112,18 @@ async function fetchText(url: string, timeoutMs = 8000): Promise<{ text: string;
   } catch { return null }
 }
 
-async function resolveLink(url: string): Promise<ResolvedLink | null> {
+/** 'hub': not one song or one album — homemini names it. */
+async function resolveLink(url: string): Promise<ResolvedLink | 'hub' | null> {
   let kind = classifyMusicLink(url)
   let pageUrl = url
+  if (kind.service !== 'unknown' && kind.kind === 'page') return 'hub'
   if (kind.service === 'spotify' && kind.kind === 'short') {
     // spotify.link → follow the redirect, classify where it lands
     const page = await fetchText(url)
     if (!page) return null
     kind = classifyMusicLink(page.finalUrl)
     pageUrl = page.finalUrl
+    if (kind.service !== 'unknown' && kind.kind === 'page') return 'hub'
     if (kind.service === 'spotify') {
       const t = page.text.match(/<title>([^<]+)<\/title>/i)?.[1]
       const parsed = t ? parseSpotifyTitle(t) : null
@@ -334,14 +343,23 @@ async function scanOnce(host: ImessageCaptureHost): Promise<void> {
       resolved += 1
       const from = senderName(item.sender, contacts)
       const link = await resolveLink(item.url)
-      if (link && (link.song || link.album)) {
+      if (link === 'hub') {
+        // homemini reads the page and names the row (an artist with his
+        // picture, a playlist with its songs). Unreachable: the add waits in
+        // the outbox like any other and is named when it lands.
+        const res = await host.addRecommendation({ note: 'texted song link', from, link: item.url, sentAt: item.at })
+        const named = res.recommendation
+        state.captures.push({ guid: item.guid, url: item.url, song: named?.song, artist: named?.artist, album: named?.album, from, at: item.at, status: res.ok ? (res.deduped ? 'deduped' : 'added') : 'failed' })
+        if (res.ok) console.log(`[imsg] captured a page link (homemini names it): ${named?.artist || named?.album || named?.song || item.url} (from ${from || 'unknown'})`)
+        else state.pending.push({ ...item, attempts: item.attempts + 1 })
+      } else if (link && (link.song || link.album)) {
         const res = await host.addRecommendation({ ...link, from, link: item.url, sentAt: item.at })
         state.captures.push({ guid: item.guid, url: item.url, ...link, from, at: item.at, status: res.ok ? (res.deduped ? 'deduped' : 'added') : 'failed' })
         if (res.ok) console.log(`[imsg] captured: ${link.song || link.album} — ${link.artist || '?'} (from ${from || 'unknown'})${res.deduped ? ' [already on list]' : ''}`)
         else state.pending.push({ ...item, attempts: item.attempts + 1 })
       } else if (item.attempts + 1 >= MAX_PENDING_ATTEMPTS) {
         // Never silently drop a texted song — land the raw link as a jot.
-        const res = await host.addRecommendation({ note: 'texted song link', from, link: item.url })
+        const res = await host.addRecommendation({ note: 'texted song link', from, link: item.url, sentAt: item.at })
         state.captures.push({ guid: item.guid, url: item.url, from, at: item.at, status: res.ok ? 'note-fallback' : 'failed' })
         console.log(`[imsg] unresolvable after ${MAX_PENDING_ATTEMPTS} tries — landed as note: ${item.url}`)
       } else {

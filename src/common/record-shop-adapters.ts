@@ -8,14 +8,16 @@ export interface LegacyShopRecommendation {
   artworkUrl?: string; previewUrl?: string
   appleMusicUrl?: string; matchedTitle?: string; matchedArtist?: string; matchedAlbum?: string; resolvedAt?: string
   source?: 'user' | 'mm' | 'radar'
-  kind?: 'track' | 'album' | 'concert'; externalId?: string
+  kind?: 'track' | 'album' | 'concert' | 'artist' | 'playlist'; externalId?: string
   owned?: boolean; ownedAt?: string; ownedVia?: string; ownedDesc?: string
 }
 
 /** A legacy jot carries hints, not a selected catalogue edition. Even an owned
  * jot stays unresolved; main's ownership assessment is the authority. */
 export function shopEntryFromLegacy(rec: LegacyShopRecommendation): Snapshot<ShopListEntry> {
+  // A playlist a friend sent keeps its name in `album`; it is no release.
   const kind = rec.kind === 'concert' ? 'concert' : rec.kind === 'album' ? 'release'
+    : rec.kind === 'artist' ? 'artist' : rec.kind === 'playlist' ? 'note'
     : rec.kind === 'track' || rec.song ? 'recording' : rec.album ? 'release' : rec.artist ? 'artist' : 'note'
   const item: ShopItem = {
     itemId: `legacy-recommendation:${rec.id}`, kind,

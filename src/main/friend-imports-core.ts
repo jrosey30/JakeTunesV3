@@ -51,6 +51,25 @@ export function friendOfNote(note: string | undefined): string | null {
   return m ? m[1].trim() : null
 }
 
+/** Who sent this row: homemini's `from` field, else the packed note. homemini
+ *  moved the friend out of the note for every row that names an artist (its
+ *  Brief 132), and a row added on the phone with "who sent it" never had a
+ *  packed note, so reading the note alone left those sends without a sender
+ *  on the list and without a credit (found 2026-11-10).
+ *  ⚠️ TWIN: renderer listen-to-the-list/friend.ts friendOf. */
+export function friendOfReco(r: { from?: unknown; note?: unknown }): string | null {
+  const from = typeof r.from === 'string' ? r.from.trim() : ''
+  return from || friendOfNote(typeof r.note === 'string' ? r.note : undefined)
+}
+
+/** The same row with its sender where the credit matchers read it (the note). */
+export function withFriendInNote<T extends { from?: unknown; note?: unknown }>(r: T): T {
+  const friend = friendOfReco(r)
+  const note = typeof r.note === 'string' ? r.note : ''
+  if (!friend || friendOfNote(note)) return r
+  return { ...r, note: [note.trim(), `from ${friend}`].filter(Boolean).join(' · ') }
+}
+
 /** Exported for the standings sweep: a CreditRecord must carry the SAME keys
  *  the credit was granted on, or deletion checks would use a different
  *  identity than the award did. */
@@ -120,6 +139,7 @@ export function computeImportCredits(
 // friend+song, ever.
 
 export interface RecoAttribution {
+  /** Absent: the friend sent the ARTIST (computeArtistSendCredits). */
   song?: string
   artist?: string
   friend: string
@@ -175,6 +195,95 @@ export function computeAttributionCredits(
     if (when === undefined || when < sentAt) continue        // owned-before or absent
     seen.add(recoId)
     out.push({ recoId, friend, key, label: a.artist ? `${a.song} — ${a.artist}` : String(a.song || '') })
+  }
+  return out
+}
+
+// ── A link that is not one song (2026-11-10) ─────────────────────────
+// Jake: "someone sends me a song, and they never enter the standings." Avery
+// Allen texted a Spotify artist page and a playlist. homemini now names such
+// a link (an artist row, a playlist row with its songs), and these are the
+// sends those rows stand for. The scoring is Jake's, unchanged: a point is an
+// IMPORT, and it must come after the send.
+//   a playlist → each of its songs is a song send (the attribution ledger's
+//                own shape): 1 point per song of it Jake imports;
+//   an artist  → 1 point for the first song by that artist that arrives after
+//                the send. One, not one per song: the friend named a band,
+//                not a record (an album link is still the 5).
+
+/** `artist:<key>` for a send that names an artist and no song. */
+export function artistSendKey(a: { song?: string; artist?: string }): string | null {
+  if (recoIdNorm(a.song || '')) return null
+  const ar = recoIdNorm(a.artist || '')
+  return ar ? `artist:${ar}` : null
+}
+
+export interface LinkSendRow {
+  kind?: unknown
+  artist?: unknown
+  from?: unknown
+  note?: unknown
+  link?: unknown
+  createdAt?: unknown
+  tracks?: unknown
+}
+
+/** The sends a friend's artist or playlist row stands for. */
+export function sendsOfLinkRows(recos: LinkSendRow[]): RecoAttribution[] {
+  const out: RecoAttribution[] = []
+  const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '')
+  for (const r of recos) {
+    const friend = friendOfReco(r)
+    const at = str(r.createdAt)
+    if (!friend || !at) continue
+    const url = str(r.link) || undefined
+    if (r.kind === 'artist' && str(r.artist)) out.push({ artist: str(r.artist), friend, at, url })
+    if (r.kind === 'playlist' && Array.isArray(r.tracks)) {
+      for (const t of r.tracks as Array<{ title?: unknown; artist?: unknown }>) {
+        if (str(t?.title) && str(t?.artist)) out.push({ song: str(t.title), artist: str(t.artist), friend, at, url })
+      }
+    }
+  }
+  return out
+}
+
+export function artistSendRecoId(a: RecoAttribution): string | null {
+  const key = artistSendKey(a)
+  const friend = a.friend?.trim().toLowerCase()
+  return key && friend ? `attr-${key}:${friend}` : null
+}
+
+/** One credit per friend + artist: the first song by that artist to arrive
+ *  after the send, unless that song already earned this friend a point. */
+export function computeArtistSendCredits(
+  attributions: RecoAttribution[],
+  tracks: LibTrackLite[],
+  alreadyCredited: ReadonlySet<string>,
+  coveredPairs: ReadonlySet<string>,
+): Array<ImportCredit & { key: string; label: string }> {
+  const out: Array<ImportCredit & { key: string; label: string }> = []
+  const seen = new Set<string>()
+  for (const a of attributions) {
+    const recoId = artistSendRecoId(a)
+    if (!recoId || alreadyCredited.has(recoId) || seen.has(recoId)) continue
+    const artist = recoIdNorm(a.artist || '')
+    const friend = a.friend.trim()
+    const sentAt = Date.parse(a.at || '')
+    if (!Number.isFinite(sentAt) || sentAt <= 0) continue   // no timeline = no proof
+    let best: { when: number; key: string; title: string } | null = null
+    for (const t of tracks) {
+      const title = recoIdNorm(t.title || '')
+      if (!title) continue
+      if (recoIdNorm(t.artist || '') !== artist && recoIdNorm(t.albumArtist || '') !== artist) continue
+      const when = Date.parse(t.dateAdded || '') || 0
+      if (when < sentAt) continue                            // owned before the send
+      const key = `${title}|${artist}`
+      if (coveredPairs.has(`${friend.toLowerCase()}|${key}`)) continue
+      if (!best || when < best.when) best = { when, key, title: String(t.title).trim() }
+    }
+    if (!best) continue
+    seen.add(recoId)
+    out.push({ recoId, friend, key: best.key, label: `${best.title} — ${String(a.artist).trim()}` })
   }
   return out
 }
