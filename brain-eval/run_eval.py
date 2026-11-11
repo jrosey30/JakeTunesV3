@@ -91,8 +91,13 @@ def key(name):
 # Format (from src/main/ai/embeddings.ts): "EMBD" | u16 ver | u16 dim | u32 count
 # then count records of [u32 trackId][dim * f32], all little-endian.
 def read_embeddings(path):
-    with open(path, "rb") as f:
-        blob = f.read()
+    from generation_state import snapshot
+    active = snapshot(os.path.dirname(path)) if os.path.basename(path) == 'mood-index.bin' else None
+    if active:
+        blob = active['mood']
+    else:
+        with open(path, "rb") as f:
+            blob = f.read()
     if blob[0:4] != EMBED_MAGIC:
         raise SystemExit(f"[fatal] {path}: bad magic {blob[0:4]!r} (expected EMBD)")
     ver = struct.unpack_from("<H", blob, 4)[0]
@@ -112,6 +117,10 @@ def read_embeddings(path):
     return ids, vecs, {"ver": ver, "dim": dim, "count": int(count)}
 
 def sha_of(path):
+    from generation_state import snapshot
+    active = snapshot(os.path.dirname(path)) if os.path.basename(path) == 'mood-index.bin' else None
+    if active:
+        return hashlib.sha1(active['mood']).hexdigest()[:12]
     h = hashlib.sha1()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
@@ -426,7 +435,7 @@ def v1_mood_diag(prompts, tracks, embed_cache):
     reading the nightly reports track as 'ret-007 mood'. Additive diagnostic:
     it never enters a v1 mean. Returns ({probe_id: recall}, mood_sha|None)."""
     path = os.path.join(STATE_DIR, "mood-index.bin")
-    if not os.path.exists(path):
+    if not (os.path.exists(path) or os.path.lexists(os.path.join(STATE_DIR, "brain-generation.json"))):
         return {}, None
     ids, vecs, _ = read_embeddings(path)
     out = {}
@@ -482,6 +491,8 @@ def main():
     if args.ruler == "v3":
         return main_v3(args)
 
+    initial_generation_binding = capture_generation_binding()
+    initial_library_sha = sha_of(LIB_PATH)
     do_base = args.baseline or (args.models and "base" in args.models)
     run_id = args.run_id or new_run_id("current", "v1")
 
@@ -537,6 +548,8 @@ def main():
         print(f"[v1] production routes (main src {routes_src[:12]}): "
               f"{sum(1 for v in v1_routes.values() if v == 'mood')} mood / {sum(1 for v in v1_routes.values() if v != 'mood')} main")
     lib_sha = sha_of(LIB_PATH)
+    if lib_sha != initial_library_sha or capture_generation_binding() != initial_generation_binding:
+        raise SystemExit('v1 evaluation inputs changed during the run; refusing score log')
 
     # append one row per brain (+ its per-probe rows)
     now = time.time()
@@ -551,6 +564,7 @@ def main():
             "model": args.model, "judged": bool(args.judge), "no_llm": bool(args.no_llm),
             "limit": args.limit, **s,
             "ruler": "v1", "run_id": run_id, "mood_id": mood_id, "library_sha": lib_sha,
+            "eval_set_sha": sha_of(EVAL_PATH), "grounding_validator": "legacy-title-or-artist-v1",
         })
         for r in rows:
             if r["group"] == "retrieval":
@@ -579,9 +593,9 @@ def check_citations_v3(cited, title_idx, match):
         if not isinstance(c, dict):
             n += 1; bad += 1; details.append(("UNPARSEABLE", str(c)[:60], "")); continue
         ti, ar = S.cite_key(c.get("title")), S.cite_key(c.get("artist"))
-        if not ti and not ar:
-            continue
         n += 1
+        if not ti or not ar:
+            bad += 1; details.append(("MISSING-IDENTITY", c.get("title"), c.get("artist"))); continue
         cands = title_idx.get(ti, [])
         if not cands:
             bad += 1; details.append(("FABRICATED", c.get("title"), c.get("artist"))); continue
@@ -589,11 +603,11 @@ def check_citations_v3(cited, title_idx, match):
             def amatch(t):
                 keys = {S.cite_key(t.get("artist"))} | {S.cite_key(a) for a in (t.get("contributingArtists") or [])}
                 keys.discard("")
-                return any(ar == k or (min(len(ar), len(k)) >= 4 and (ar in k or k in ar)) for k in keys)
+                return ar in keys
             cands = [t for t in cands if amatch(t)]
             if not cands:
                 bad += 1; details.append(("MISATTRIBUTED", c.get("title"), c.get("artist"))); continue
-        if not any(match(t) for t in cands):
+        if not all(match(t) for t in cands):
             t0 = cands[0]
             bad += 1; details.append(("OFF-PREDICATE", c.get("title"), f"{c.get('artist')} [{t0.get('genre')}, {t0.get('year')}]"))
             continue
@@ -612,26 +626,32 @@ def title_index(tracks):
 
 
 def v3_self_test(tracks, vocab):
-    """The v3 grounding check must catch fabrication AND off-predicate citations
-    before anything is scored (exit 2 otherwise)."""
+    """Exercise the validator with isolated controls, not ambiguous live titles.
+    These controls are never evaluation probes and never enter score logs.
+    """
     import scorecard as S
-    idx = title_index(tracks)
-    t = next(t for t in tracks if t.get("title") and t.get("artist") and str(t.get("genre") or "") in vocab.leaf_family)
-    leaf = str(t["genre"]).strip()
-    other = next(l for l in vocab.leaf_family if l != leaf)
-    on, off = S.compile_predicate({"genre_leaf": leaf}, vocab), S.compile_predicate({"genre_leaf": other}, vocab)
+    leaves = list(vocab.leaf_family)
+    if len(leaves) < 2:
+        raise SystemExit('v3 self-test requires two distinct vocabulary leaves')
+    leaf, other = leaves[:2]
+    t = {"title": "Validator Control", "artist": "Validator Artist", "genre": leaf}
+    idx = title_index([t])
+    on = S.compile_predicate({"genre_leaf": leaf}, vocab)
+    off = S.compile_predicate({"genre_leaf": other}, vocab)
     real = [{"title": t["title"], "artist": t["artist"]}]
-    fake = [{"title": "Imaginary Song That Cannot Exist 9z9z", "artist": "Nobody At All 9z9z"}]
+    fake = [{"title": "Missing Validator Control", "artist": t["artist"]}]
+    ambiguous = title_index([t, {**t, "title": t["title"] + " (Live)", "genre": other}])
     checks = [
         (check_citations_v3(fake, idx, on)[1] == 1, "fabricated citation not flagged"),
-        (check_citations_v3(real, idx, on)[1] == 0, f"real on-predicate track {t['title']!r} flagged"),
+        (check_citations_v3(real, idx, on)[1] == 0, "on-predicate control flagged"),
         (check_citations_v3(real, idx, off)[1] == 1, "off-predicate citation not flagged"),
+        (check_citations_v3(real, ambiguous, on)[1] == 1, "ambiguous citation not flagged"),
     ]
     for ok, why in checks:
         if not ok:
             print(f"[FATAL] v3 self-test: {why} — the grounding check is broken. STOP.", file=sys.stderr)
             sys.exit(2)
-    print(f"[selftest v3] fabricated -> flagged, \"{t['title']}\" on-predicate -> ok, off-predicate -> flagged. OK")
+    print('[selftest v3] isolated positive, fabricated, off-predicate and ambiguous controls OK')
 
 
 def _mean(xs):
@@ -649,10 +669,53 @@ def group_summary(rows, field):
     return head, groups
 
 
+def capture_generation_binding(main_source_commit=None):
+    # Exact effective candidate bytes, not just truncated SHA1 diagnostic IDs.
+    from generation_state import snapshot as generation_snapshot, digest, packed
+    active_generation = generation_snapshot(STATE_DIR)
+    mood_path = os.path.join(STATE_DIR, 'mood-index.bin')
+    mood_bytes = active_generation['mood'] if active_generation else (open(mood_path, 'rb').read() if os.path.exists(mood_path) else None)
+    descriptors_path = os.path.join(STATE_DIR, 'brain-descriptors.json')
+    descriptor_bytes = active_generation['descriptors'] if active_generation else (open(descriptors_path, 'rb').read() if os.path.exists(descriptors_path) else None)
+    source_path = os.path.join(STATE_DIR, 'generation-source.json')
+    candidate_source = json.load(open(source_path)) if os.path.exists(source_path) else {}
+    generation_binding = None
+    if descriptor_bytes is not None and mood_bytes is not None:
+        generation_binding = {'moodSha256': digest(mood_bytes), 'descriptorsSha256': digest(descriptor_bytes),
+            'librarySha256': digest(open(LIB_PATH, 'rb').read()),
+            'effectiveSnapshotSha256': digest(packed({'moodSha256': digest(mood_bytes), 'descriptorsSha256': digest(descriptor_bytes)})),
+            'parentRevision': active_generation['hubRevision'] if active_generation else candidate_source.get('parentRevision'),
+            'hasUnvalidatedOverlay': active_generation['hasUnvalidatedOverlay'] if active_generation else None,
+            'evaluationApplicable': active_generation.get('evaluationApplicable') if active_generation else False,
+            'dependencyMismatches': active_generation.get('dependencyMismatches', []) if active_generation else [],
+            'dependencies': {'semanticSha256': digest(open(EMB_PATH, 'rb').read()),
+                'audioSha256': digest(open(os.path.join(STATE_DIR, 'audio-index.bin'), 'rb').read()) if os.path.exists(os.path.join(STATE_DIR, 'audio-index.bin')) else None, 'mainSourceCommit': main_source_commit}}
+
+    return generation_binding
+
+
+def evaluator_provenance():
+    """Identify committed evaluator inputs; only the two append-only outputs
+    are excluded. Code, probes, bridge and dependency changes remain dirty.
+    Fail closed on Git errors. Capture before and after scoring.
+    """
+    import subprocess
+    commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=REPO, text=True).strip()
+    status = subprocess.check_output([
+        'git', 'status', '--porcelain', '--untracked-files=all', '--',
+        'brain-eval', 'package.json', 'package-lock.json',
+        ':(top,exclude,literal)brain-eval/score_log.jsonl',
+        ':(top,exclude,literal)brain-eval/score_rows.jsonl',
+    ], cwd=REPO, text=True)
+    return commit, bool(status.strip())
+
+
 def main_v3(args):
     import scorecard as S
+    initial_evaluator = evaluator_provenance()
     label = args.label or "current"
     run_id = args.run_id or new_run_id(label, "v3")
+    initial_generation_binding = capture_generation_binding()
     vocab = S.load_vocab()
     spec = json.load(open(S.EVAL_V3_PATH, encoding="utf-8"))
     probes, gq = spec["probes"], spec["grounding"]
@@ -673,6 +736,8 @@ def main_v3(args):
     _, by_id1, titles, artists = load_library()
     self_test(titles, artists, by_id1)
     v3_self_test(tracks, vocab)
+    if capture_generation_binding() != initial_generation_binding:
+        raise SystemExit('evaluation inputs changed while loading; refusing scoring')
 
     exp = {p["id"]: S.expected_ids(p["expected"], tracks, vocab) for p in probes}
     gexp = {g["id"]: S.expected_ids(g["expected"], tracks, vocab) for g in gq}
@@ -686,7 +751,7 @@ def main_v3(args):
     ids_m, vecs_m, meta_m = read_embeddings(EMB_PATH)
     brain_id = sha_of(EMB_PATH)
     mood_path = os.path.join(STATE_DIR, "mood-index.bin")
-    has_mood = os.path.exists(mood_path)
+    has_mood = os.path.exists(mood_path) or os.path.exists(os.path.join(STATE_DIR, "brain-generation.json"))
     ids_x, vecs_x, meta_x = read_embeddings(mood_path) if has_mood else (None, None, {"count": 0})
     mood_id = sha_of(mood_path) if has_mood else None
     audio_path = os.path.join(STATE_DIR, "audio-index.bin")
@@ -826,6 +891,17 @@ def main_v3(args):
     print(f"routes: {routes}")
     print("=" * 72)
 
+    generation_binding = capture_generation_binding()
+    if generation_binding != initial_generation_binding:
+        raise SystemExit('evaluation inputs changed during the run; refusing an artifact-bound score')
+
+    if generation_binding:
+        generation_binding['dependencies']['mainSourceCommit'] = main_sha
+    evaluator_commit, evaluator_dirty = evaluator_provenance()
+    if (evaluator_commit, evaluator_dirty) != initial_evaluator:
+        raise SystemExit('evaluator inputs changed during the run; refusing score log')
+
+
     summary = {
         "at": int(now * 1000), "iso": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now)),
         "ruler": "v3", "run_id": run_id, "label": label, "model": args.model, "judged": False,
@@ -840,6 +916,9 @@ def main_v3(args):
         "diag_main": {"headline": dm_head, "groups": dm_groups},
         "diag_mood": {"headline": dx_head, "groups": dx_groups},
         "grounding": grounding, "grounding_n": len(g_scored),
+        "grounding_validator": "identity-predicate-v2",
+        "generation_binding": generation_binding,
+        "evaluator_commit": evaluator_commit, "evaluator_dirty": evaluator_dirty,
         "routes": routes, "ruler_check": {k: rc[k] for k in ("tagged", "unresolved", "frac")},
     }
     log_path = os.path.join(args.log_dir, "score_log.jsonl")
