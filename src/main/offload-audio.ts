@@ -957,8 +957,9 @@ export type HubSymlinkPlan =
 /**
  * Hub only. A replica never reaches this: it is a homemini client and
  * returns earlier. A real local file stays on disk. A symlink fetches
- * homemini by the id this hub published. ALAC uses the laptop decode
- * cache, not homemini ?fmt=flac and not the raw ALAC bytes.
+ * homemini by the id this hub published. ALAC never goes to Chromium raw:
+ * `serveAlac` (stream-alac-serve.ts) plays this Mac's decoded copy, else
+ * homemini's ready FLAC copy, else decodes here.
  */
 export function planHubSymlinkPlayback(opts: {
   offload: boolean

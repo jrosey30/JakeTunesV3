@@ -15,6 +15,9 @@ import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { withCompanionInit } from '../hub-companion.ts'
 import { colonPathToAbs } from '../activity-boardable.ts'
+import { emptyLedger, parseLedger, returnedLately, returnRecentSongs, RETURN_LEDGER_FILE, type ReturnLedger } from '../offload-recent-return.ts'
+import { askAudioIdentity, hubBaseFromAudioBase } from '../audio-identity.ts'
+import { writeJsonAtomic } from '../atomic-write.ts'
 import {
   bootOffloadIntent,
   compareLocalToRaw,
@@ -225,19 +228,9 @@ async function runStart(interactive: boolean): Promise<{ ok: boolean; error?: st
   return { ok: true }
 }
 
-async function runRehydrate(interactive: boolean): Promise<{ ok: boolean; restored?: number; error?: string }> {
-  if (!host) return { ok: false, error: 'offload is not ready' }
-  let text = ''
-  try {
-    text = await readFile(offloadReplacementsPath(host.userDataDir()), 'utf-8')
-  } catch {
-    const message = 'No offload-replacements.jsonl yet. Nothing to pull back.'
-    await showText('Undo offload', message, interactive)
-    return { ok: false, error: message }
-  }
-  const records = parseReplacementLog(text)
-  const result = await rehydrateReplacements({
-    records,
+/** The real effects of a rehydrate: free space, homemini's raw bytes, what is at the path now, the atomic write. */
+function rehydrateEffects(): Pick<Parameters<typeof rehydrateReplacements>[0], 'freeBytes' | 'fetchFull' | 'currentKind' | 'writeBack'> {
+  return {
     freeBytes: async () => {
       const s = await statfs(host!.musicRoot())
       return Number(s.bavail) * Number(s.bsize)
@@ -272,7 +265,81 @@ async function runRehydrate(interactive: boolean): Promise<{ ok: boolean; restor
       await writeFile(tmp, bytes)
       await rename(tmp, abs)
     },
-  })
+  }
+}
+
+/** The ledger of what came back and what was refused (offload-recent-return.ts). A read that fails is an empty ledger. */
+async function readReturnLedger(): Promise<ReturnLedger> {
+  if (!host) return emptyLedger()
+  return parseLedger(await readFile(join(host.userDataDir(), RETURN_LEDGER_FILE), 'utf-8').catch(() => null))
+}
+
+/** For the offload queue: the songs that came back lately and must not be offloaded again yet. */
+export async function returnedHold(now: number, freeBytes: number): Promise<{ has(colonPath: string): boolean }> {
+  const ledger = await readReturnLedger()
+  return { has: (colonPath) => returnedLately(ledger, colonPath, now, freeBytes) }
+}
+
+/** Which side of the 60/80 GB edges the disk was on at the last look, kept across restarts (offload-keep-recent.ts). */
+export const keepWindowStore = {
+  load: async (): Promise<boolean | null> => {
+    if (!host) return null
+    const saved = JSON.parse(await readFile(join(host.userDataDir(), 'offload-keep-windows.json'), 'utf-8')) as { roomy?: unknown }
+    return typeof saved?.roomy === 'boolean' ? saved.roomy : null
+  },
+  save: async (roomy: boolean): Promise<void> => {
+    if (host) await writeJsonAtomic(join(host.userDataDir(), 'offload-keep-windows.json'), { roomy, at: new Date().toISOString() })
+  },
+}
+
+/**
+ * Bring the songs Jake just got back onto this Mac (offload-recent-return.ts
+ * has every rule). `roomy` and `away` are the caller's look at the disk and the
+ * network; with either against it, nothing is asked and nothing is fetched.
+ */
+let returnRunning = false
+export async function returnRecentToDisk(opts: {
+  added: { has(colonPath: string): boolean }
+  inUse: (colonPath: string) => boolean
+  roomy: boolean
+  away: () => Promise<boolean>
+}): Promise<void> {
+  if (!host || returnRunning) return
+  returnRunning = true
+  try {
+    const hub = hubOffloadActive({ streamSource: await host.readStreamSource(), offload: await host.readOffloadAudio() })
+    let text = ''
+    try { text = await readFile(offloadReplacementsPath(host.userDataDir()), 'utf-8') } catch { return }
+    const effects = rehydrateEffects()
+    const result = await returnRecentSongs({
+      hub, roomy: opts.roomy, away: opts.away,
+      records: parseReplacementLog(text), added: opts.added, inUse: opts.inUse,
+      ledger: await readReturnLedger(), now: Date.now(),
+      currentKind: effects.currentKind, freeBytes: effects.freeBytes, fetchFull: effects.fetchFull, writeBack: effects.writeBack,
+      askIdentity: (ids) => askAudioIdentity({ baseUrl: hubBaseFromAudioBase(host!.audioBase), ids, withInit: withCompanionInit }),
+      requeue: (records) => host!.enqueue(records.map((r) => ({ ipodPath: r.path, fingerprint: r.fingerprint || undefined, enqueuedAt: Date.now() }))),
+      log: (m) => console.log(m),
+    })
+    if (result.ledgerChanged) await writeJsonAtomic(join(host.userDataDir(), RETURN_LEDGER_FILE), result.ledger)
+  } catch (err) {
+    console.warn('[offload] bringing songs back failed:', err instanceof Error ? err.message : err)
+  } finally {
+    returnRunning = false
+  }
+}
+
+async function runRehydrate(interactive: boolean): Promise<{ ok: boolean; restored?: number; error?: string }> {
+  if (!host) return { ok: false, error: 'offload is not ready' }
+  let text = ''
+  try {
+    text = await readFile(offloadReplacementsPath(host.userDataDir()), 'utf-8')
+  } catch {
+    const message = 'No offload-replacements.jsonl yet. Nothing to pull back.'
+    await showText('Undo offload', message, interactive)
+    return { ok: false, error: message }
+  }
+  const records = parseReplacementLog(text)
+  const result = await rehydrateReplacements({ records, ...rehydrateEffects() })
   const message = result.stoppedBecause
     ? `Pulled ${result.restored} file(s) back, skipped ${result.skipped}. Stopped: ${result.stoppedBecause}`
     : `Pulled ${result.restored} file(s) back, skipped ${result.skipped}.`

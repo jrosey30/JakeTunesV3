@@ -179,6 +179,14 @@ describe('WIRING — the tested code is the live code', () => {
     { fn: 'keepsColon(ipodGate, it.ipodPath)', file: 'main/index.ts', minCalls: 1, literal: true,
       why: 'unwired, stream-convert turns an iPod song into a link to homemini and the next sync fetches it mid-sync again' },
     { fn: 'startIpodLocal', file: 'main/index.ts', minCalls: 1, why: 'unwired, iPod songs are never brought back and the Device page can’t say what’s ready' },
+    // "transistor by 311 wont play. it never ends!!" (2026-11-10): what Jake just got stays, and an ALAC file is dropped only once homemini's playable copy is ready.
+    { fn: 'confirmPlayableOnHomemini', file: 'main/index.ts', minCalls: 1, why: 'unwired, an ALAC file is dropped before homemini has a copy this Mac can play, and the first tap waits on a download or a conversion' },
+    { fn: '|| recent.has(it.ipodPath) || cameBack.has(it.ipodPath) || playerTouches.has(it.ipodPath, now)', file: 'main/index.ts', minCalls: 1, literal: true,
+      why: 'unwired, an album is offloaded five minutes after Jake imports it' },
+    { fn: 'returnRecentToDisk', file: 'main/index.ts', minCalls: 1, why: 'unwired, the songs Jake just got that were offloaded on 2026-11-09/10 stay as links and each first play waits on homemini' },
+    { fn: 'warmKeeper.pass(', file: 'main/index.ts', minCalls: 1, literal: true, why: 'unwired, homemini lets a played song’s copy go and the next tap is the first ask again' },
+    { fn: 'streamedAlac.serve(', file: 'main/index.ts', minCalls: 2, literal: true,
+      why: 'unwired, a streamed ALAC song downloads whole before its first byte even when homemini has a ready copy' },
   ]
   for (const w of WIRES) {
     test(`${w.fn} is wired (${w.why})`, () => {
