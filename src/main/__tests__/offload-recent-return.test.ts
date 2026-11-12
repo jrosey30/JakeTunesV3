@@ -8,7 +8,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import {
-  emptyLedger, parseLedger, recentReturnCandidates, returnAllowed, returnedLately, returnRecentSongs, roomToReturn,
+  emptyLedger, HOLD_LAPSE_BYTES, parseLedger, recentReturnCandidates, returnAllowed, returnedLately, returnRecentSongs, roomToReturn,
   REFUSED_RECHECK_MS, RETURN_ASK, RETURN_HOLD_DAYS, RETURN_MAX_BYTES, RETURN_PER_PASS, type ReturnLedger,
 } from '../offload-recent-return.ts'
 import type { OffloadReplacementRecord } from '../offload-audio.ts'
@@ -46,9 +46,10 @@ function world(ids: number[], over: Partial<World> = {}): World {
     ...over,
   }
 }
-async function pass(w: World, records: OffloadReplacementRecord[], over: { hub?: boolean; roomy?: boolean; away?: boolean; now?: number; added?: Set<string> } = {}) {
+async function pass(w: World, records: OffloadReplacementRecord[], over: { hub?: boolean; roomy?: boolean; away?: boolean | 'throws' | 'no-answer'; now?: number; added?: Set<string> } = {}) {
   const r = await returnRecentSongs({
-    hub: over.hub ?? true, roomy: over.roomy ?? true, away: over.away ?? false,
+    hub: over.hub ?? true, roomy: over.roomy ?? true,
+    away: async () => { if (over.away === 'throws') throw new Error('route lookup failed'); return (over.away === 'no-answer' ? undefined : over.away ?? false) as boolean },
     records, added: over.added ?? new Set(records.map((x) => x.path)), ledger: w.ledger, now: over.now ?? NOW,
     inUse: (p) => [...w.inUse].some((n) => colon(n) === p),
     currentKind: async (x) => w.kinds[Number(x.id)] ?? 'missing',
@@ -79,7 +80,7 @@ describe('which songs may come back', () => {
       { path: colon(1), dateAdded: new Date(NOW - 2 * DAY).toISOString() },
       { path: colon(2), dateAdded: new Date(NOW - 400 * DAY).toISOString(), lastPlayedAt: NOW - DAY },
     ]
-    const recent = buildRecentKeep(tracks, NOW, createKeepWindowState().look(251 * GB))
+    const recent = buildRecentKeep(tracks, NOW, await createKeepWindowState().look(251 * GB))
     assert.equal(recent.get(colon(2)), 'played', 'it is still kept from being offloaded')
     const w = world([1, 2])
     await pass(w, [rec(1), rec(2)], { added: addedLately(recent) })
@@ -94,8 +95,8 @@ describe('when it runs at all', () => {
     assert.equal(returnAllowed({ hub: true, roomy: false, away: false }), false)
     assert.equal(returnAllowed({ hub: true, roomy: true, away: true }), false)
   })
-  it('away from home, tight windows, or not the hub: homemini is not even asked', async () => {
-    for (const over of [{ away: true }, { roomy: false }, { hub: false }]) {
+  it('away from home, an away check that fails or says nothing, tight windows, or not the hub: homemini is not even asked', async () => {
+    for (const over of [{ away: true }, { away: 'throws' as const }, { away: 'no-answer' as const }, { roomy: false }, { hub: false }]) {
       const w = world([1])
       const r = await pass(w, [rec(1)], over)
       assert.deepEqual(w.seen.asked, [], JSON.stringify(over))
@@ -176,6 +177,14 @@ describe('homemini is asked before anything is downloaded', () => {
     await pass(w, [rec(1), rec(2)], { now: NOW + 90_000 })
     assert.deepEqual(w.seen.fetched, [2, 1], 'not downloaded a second time')
   })
+  it('a pass never starts more than six downloads, even when every one of them turns out wrong', async () => {
+    const ids = Array.from({ length: 30 }, (_, i) => i + 1)
+    const w = world(ids, { sends: () => Buffer.from('not what it said') })
+    const r = await pass(w, ids.map((n) => rec(n, `2026-11-10T00:00:${String(n).padStart(2, '0')}Z`)))
+    assert.equal(w.seen.fetched.length, RETURN_PER_PASS)
+    assert.equal(r.downloads, RETURN_PER_PASS)
+    assert.deepEqual(w.seen.written, [])
+  })
   it('at most a few files a pass, and a bounded question', async () => {
     const ids = Array.from({ length: RETURN_ASK + 10 }, (_, i) => i + 1)
     const w = world(ids)
@@ -220,6 +229,14 @@ describe('the ledger', () => {
     assert.equal(returnedLately(ledger, colon(1), NOW + RETURN_HOLD_DAYS * DAY), false)
     assert.equal(returnedLately(ledger, colon(2), NOW), false)
   })
+  it('the hold lapses when the disk is really running out: under 30 GB free, never on an unknown disk', () => {
+    const ledger: ReturnLedger = { version: 1, returned: { [colon(1)]: NOW }, refused: {} }
+    assert.equal(returnedLately(ledger, colon(1), NOW + DAY, HOLD_LAPSE_BYTES), true)
+    assert.equal(returnedLately(ledger, colon(1), NOW + DAY, HOLD_LAPSE_BYTES - 1), false)
+    assert.equal(returnedLately(ledger, colon(1), NOW + DAY, 0), false)
+    assert.equal(returnedLately(ledger, colon(1), NOW + DAY, Number.NaN), true)
+    assert.ok(HOLD_LAPSE_BYTES < ROOMY_ENTER_BYTES, 'nothing is brought back where the hold has lapsed, so no loop')
+  })
   it('a missing or broken file is an empty ledger, never a throw', () => {
     assert.deepEqual(parseLedger(null), emptyLedger())
     assert.deepEqual(parseLedger('{not json'), emptyLedger())
@@ -236,7 +253,7 @@ describe('walking the disk across the edge, both ways', () => {
   const SONG = 100 * 1024 * 1024
   const N = 300
   const HOUR = 60 * 60 * 1000
-  it('a song is fetched at most once, however the disk moves, and what came back is never dropped inside its 14 days', async () => {
+  it('a song is fetched at most once, however the disk moves, and what came back is only dropped inside its 14 days when the disk is under 30 GB', async () => {
     // One pass an hour for 40 days, with a disk that swings 55 GB ↔ 115 GB free every two days.
     const tracks = Array.from({ length: N }, (_, i) => ({ id: i + 1, path: colon(i + 1), dateAdded: new Date(NOW - (i % 13) * DAY - HOUR).toISOString() }))
     const records = tracks.map((t) => rec(t.id))
@@ -247,6 +264,7 @@ describe('walking the disk across the edge, both ways', () => {
     const cameBackAt = new Map<number, number>()
     let ledger = emptyLedger()
     let offloadedInsideHold = 0
+    let lapsed = 0
     let lowestAfterWrite = Infinity
     let flips = 0
     let was: boolean | null = null
@@ -256,18 +274,21 @@ describe('walking the disk across the edge, both ways', () => {
     const lastDayFetches: number[] = []
     for (let h = 0; h < 40 * 24; h++) {
       const now = NOW + h * HOUR
-      const windows = state.look(freeAt(h))
+      const windows = await state.look(freeAt(h))
       if (was !== null && was !== windows.roomy) flips++
       was = windows.roomy
       const recent = buildRecentKeep(tracks, now, windows)
       for (const id of [...local]) {
-        if (recent.has(colon(id)) || returnedLately(ledger, colon(id), now)) continue
+        if (recent.has(colon(id)) || returnedLately(ledger, colon(id), now, freeAt(h))) continue
         local.delete(id)
-        if (now - (cameBackAt.get(id) ?? -Infinity) < RETURN_HOLD_DAYS * DAY) offloadedInsideHold++
+        if (now - (cameBackAt.get(id) ?? -Infinity) < RETURN_HOLD_DAYS * DAY) {
+          if (freeAt(h) - WEIGHT < HOLD_LAPSE_BYTES) lapsed++   // free as it was when the queue decided, before this file went
+          else offloadedInsideHold++
+        }
       }
       let got = 0
       const r = await returnRecentSongs({
-        hub: true, roomy: windows.roomy, away: false, records, added: addedLately(recent), ledger, now,
+        hub: true, roomy: windows.roomy, away: async () => false, records, added: addedLately(recent), ledger, now,
         inUse: () => false,
         currentKind: async (x) => (local.has(Number(x.id)) ? 'file' : 'symlink'),
         askIdentity: async (ids) => ({ kind: 'answers', byId: new Map(ids.map((id) => [String(id), { size: size(Number(id)), sha1: sha(body(Number(id))), etag: '"e"' }])) }),
@@ -284,7 +305,8 @@ describe('walking the disk across the edge, both ways', () => {
     const most = Math.max(0, ...fetches.values())
     assert.ok(fetches.size > 0, 'the simulation did bring songs back')
     assert.equal(most, 1, `a song was downloaded ${most} times`)
-    assert.equal(offloadedInsideHold, 0, 'a song that came back was offloaded again inside its 14 days')
+    assert.equal(offloadedInsideHold, 0, 'a song that came back was offloaded again inside its 14 days with 30 GB or more free')
+    assert.ok(lapsed > 0, 'the disk really went under 30 GB and the hold lapsed there')
     assert.ok(lowestAfterWrite >= ROOMY_ENTER_BYTES - 1024, `a fetch left the disk at ${(lowestAfterWrite / GB).toFixed(1)} GB free, under the 80 GB edge`)
     assert.ok(flips >= 6, `the disk really crossed both edges (${flips} flips in 40 days)`)
     assert.ok(flips <= 45, `the windows flipped ${flips} times: two edges allow at most two flips per swing`)

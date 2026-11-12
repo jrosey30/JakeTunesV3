@@ -55,12 +55,26 @@ export function keepWindows(freeBytes: number, wasRoomy: boolean | null = null):
     : { addedMs: TIGHT_DAYS * DAY, playedMs: TIGHT_DAYS * DAY, roomy }
 }
 
-/** Remembers the last look, so the windows have two edges (keepWindows). In memory: a restart starts from "no look yet". */
-export function createKeepWindowState(): { look(freeBytes: number): KeepWindows } {
+/**
+ * Remembers the last look, so the windows have two edges (keepWindows). With a
+ * `store` the side is kept across restarts: between 60 and 80 GB free a
+ * restart must not turn long windows into tight ones. A store that fails to
+ * load is "no look yet"; one that fails to save costs nothing but the memory.
+ */
+export function createKeepWindowState(store?: {
+  load: () => Promise<boolean | null>
+  save: (roomy: boolean) => Promise<void>
+}): { look(freeBytes: number): Promise<KeepWindows> } {
   let was: boolean | null = null
+  let loaded = !store
   return {
-    look(freeBytes) {
+    async look(freeBytes) {
+      if (!loaded) {
+        loaded = true
+        try { const saved = await store!.load(); was = typeof saved === 'boolean' ? saved : null } catch { was = null }
+      }
       const w = keepWindows(freeBytes, was)
+      if (store && w.roomy !== was) await store.save(w.roomy).catch(() => undefined)
       was = w.roomy
       return w
     },
@@ -115,8 +129,8 @@ export function colonFromAbs(absPath: string): string | null {
 export interface PlayerTouches {
   noteAbs(absPath: string, now: number): void
   has(colonPath: string, now: number): boolean
-  /** Every path asked for inside the window, newest first. */
-  recent(now: number): string[]
+  /** Every path asked for inside the window with when it was last asked for, newest first. */
+  recent(now: number): Array<{ path: string; at: number }>
   readonly size: number
 }
 
@@ -137,7 +151,7 @@ export function createPlayerTouches(windowMs = PLAYER_TOUCH_MS, max = 5000): Pla
       return true
     },
     recent(now) {
-      return [...at].filter(([, t]) => now - t < windowMs).map(([p]) => p).reverse()
+      return [...at].filter(([, t]) => now - t < windowMs).map(([path, t]) => ({ path, at: t })).reverse()
     },
     get size() { return at.size },
   }

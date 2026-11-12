@@ -184,7 +184,7 @@ describe('WIRING — the tested code is the live code', () => {
     { fn: '|| recent.has(it.ipodPath) || cameBack.has(it.ipodPath) || playerTouches.has(it.ipodPath, now)', file: 'main/index.ts', minCalls: 1, literal: true,
       why: 'unwired, an album is offloaded five minutes after Jake imports it' },
     { fn: 'returnRecentToDisk', file: 'main/index.ts', minCalls: 1, why: 'unwired, the songs Jake just got that were offloaded on 2026-11-09/10 stay as links and each first play waits on homemini' },
-    { fn: 'keepStreamedWarm', file: 'main/index.ts', minCalls: 1, why: 'unwired, homemini lets a played song’s copy go and the next tap is the first ask again' },
+    { fn: 'warmKeeper.pass(', file: 'main/index.ts', minCalls: 1, literal: true, why: 'unwired, homemini lets a played song’s copy go and the next tap is the first ask again' },
     { fn: 'streamedAlac.serve(', file: 'main/index.ts', minCalls: 2, literal: true,
       why: 'unwired, a streamed ALAC song downloads whole before its first byte even when homemini has a ready copy' },
   ]

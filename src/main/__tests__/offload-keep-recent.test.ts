@@ -33,13 +33,32 @@ describe('keepWindows', () => {
     assert.equal(keepWindows(70 * GB).roomy, false)
     assert.equal(keepWindows(ROOMY_ENTER_BYTES).roomy, true)
   })
-  it('a disk hovering at the 60 GB edge flips the windows once, not every look', () => {
+  it('a disk hovering at the 60 GB edge flips the windows once, not every look', async () => {
     const state = createKeepWindowState()
-    assert.equal(state.look(251 * GB).roomy, true)
-    const looks = [61, 59, 61, 59.5, 62, 58, 64, 70, 79].map((gb) => state.look(gb * GB).roomy)
+    assert.equal((await state.look(251 * GB)).roomy, true)
+    const looks: boolean[] = []
+    for (const gb of [61, 59, 61, 59.5, 62, 58, 64, 70, 79]) looks.push((await state.look(gb * GB)).roomy)
     assert.deepEqual(looks, [true, false, false, false, false, false, false, false, false])
-    assert.equal(state.look(80 * GB).roomy, true)
-    assert.equal(state.look(61 * GB).roomy, true)
+    assert.equal((await state.look(80 * GB)).roomy, true)
+    assert.equal((await state.look(61 * GB)).roomy, true)
+  })
+  it('a restart remembers which side of the edges the disk was on', async () => {
+    let saved: boolean | null = null
+    const saves: boolean[] = []
+    const store = { load: async () => saved, save: async (r: boolean) => { saved = r; saves.push(r) } }
+    assert.equal((await createKeepWindowState(store).look(251 * GB)).roomy, true)
+    // The app restarts with 70 GB free: between the edges. It was long, so it stays long.
+    assert.equal((await createKeepWindowState(store).look(70 * GB)).roomy, true)
+    assert.equal((await createKeepWindowState().look(70 * GB)).roomy, false, 'with no memory the same disk reads tight')
+    // It goes tight, restarts at 70 GB: it was tight, so it stays tight.
+    assert.equal((await createKeepWindowState(store).look(50 * GB)).roomy, false)
+    assert.equal((await createKeepWindowState(store).look(70 * GB)).roomy, false)
+    assert.deepEqual(saves, [true, false], 'saved only when the side changes')
+  })
+  it('a store that can’t be read is "no look yet", and one that can’t be written never fails a look', async () => {
+    const broken = { load: async (): Promise<boolean | null> => { throw new Error('ENOENT') }, save: async () => { throw new Error('EROFS') } }
+    assert.equal((await createKeepWindowState(broken).look(70 * GB)).roomy, false)
+    assert.equal((await createKeepWindowState(broken).look(251 * GB)).roomy, true)
   })
 })
 
@@ -107,7 +126,7 @@ describe('what the player asked for', () => {
     t.noteAbs('/m/iPod_Control/Music/F01/old.m4a', NOW - PLAYER_TOUCH_MS)
     t.noteAbs('/m/iPod_Control/Music/F01/a.m4a', NOW - 1000)
     t.noteAbs('/m/iPod_Control/Music/F01/b.m4a', NOW)
-    assert.deepEqual(t.recent(NOW), [':iPod_Control:Music:F01:b.m4a', ':iPod_Control:Music:F01:a.m4a'])
+    assert.deepEqual(t.recent(NOW), [{ path: ':iPod_Control:Music:F01:b.m4a', at: NOW }, { path: ':iPod_Control:Music:F01:a.m4a', at: NOW - 1000 }])
   })
   it('a path outside the library is ignored, and the memory is bounded', () => {
     const t = createPlayerTouches(PLAYER_TOUCH_MS, 2)

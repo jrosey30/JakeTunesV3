@@ -275,9 +275,21 @@ async function readReturnLedger(): Promise<ReturnLedger> {
 }
 
 /** For the offload queue: the songs that came back lately and must not be offloaded again yet. */
-export async function returnedHold(now: number): Promise<{ has(colonPath: string): boolean }> {
+export async function returnedHold(now: number, freeBytes: number): Promise<{ has(colonPath: string): boolean }> {
   const ledger = await readReturnLedger()
-  return { has: (colonPath) => returnedLately(ledger, colonPath, now) }
+  return { has: (colonPath) => returnedLately(ledger, colonPath, now, freeBytes) }
+}
+
+/** Which side of the 60/80 GB edges the disk was on at the last look, kept across restarts (offload-keep-recent.ts). */
+export const keepWindowStore = {
+  load: async (): Promise<boolean | null> => {
+    if (!host) return null
+    const saved = JSON.parse(await readFile(join(host.userDataDir(), 'offload-keep-windows.json'), 'utf-8')) as { roomy?: unknown }
+    return typeof saved?.roomy === 'boolean' ? saved.roomy : null
+  },
+  save: async (roomy: boolean): Promise<void> => {
+    if (host) await writeJsonAtomic(join(host.userDataDir(), 'offload-keep-windows.json'), { roomy, at: new Date().toISOString() })
+  },
 }
 
 /**
@@ -296,12 +308,11 @@ export async function returnRecentToDisk(opts: {
   returnRunning = true
   try {
     const hub = hubOffloadActive({ streamSource: await host.readStreamSource(), offload: await host.readOffloadAudio() })
-    const away = await opts.away().catch(() => true)
     let text = ''
     try { text = await readFile(offloadReplacementsPath(host.userDataDir()), 'utf-8') } catch { return }
     const effects = rehydrateEffects()
     const result = await returnRecentSongs({
-      hub, roomy: opts.roomy, away,
+      hub, roomy: opts.roomy, away: opts.away,
       records: parseReplacementLog(text), added: opts.added, inUse: opts.inUse,
       ledger: await readReturnLedger(), now: Date.now(),
       currentKind: effects.currentKind, freeBytes: effects.freeBytes, fetchFull: effects.fetchFull, writeBack: effects.writeBack,

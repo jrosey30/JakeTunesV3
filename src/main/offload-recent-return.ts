@@ -13,7 +13,9 @@
  *     playing it would fetch its original and a week later drop it again.
  *   • A song that came back is not offloaded again for RETURN_HOLD_DAYS,
  *     whatever the windows say (`returned` in the ledger, asked by the queue).
- *     So the tight windows never let go of what this fetched.
+ *     So the tight windows never let go of what this fetched. The hold lapses
+ *     only under HOLD_LAPSE_BYTES free, and a song comes back ONCE: one that
+ *     was offloaded again after that stays streamed.
  *   • It only runs with room to spare: after the write the disk must still have
  *     ROOMY_ENTER_BYTES free. The windows turn tight under 60 GB and this stops
  *     at 80, so fetching can't be what turns them.
@@ -24,7 +26,8 @@
  *     streamed and remembered (`refused`), and asked about again only after
  *     REFUSED_RECHECK_MS. Taking homemini's newer file instead would need the
  *     proof that only the tags differ, which this Mac can't see.
- *   • One song that can't come back never holds the songs behind it.
+ *   • One song that can't come back never holds the songs behind it, and a
+ *     pass never starts more than RETURN_PER_PASS downloads.
  *   • "Is the player using it?" is asked right before the file is swapped, not
  *     when the batch was picked.
  *
@@ -77,8 +80,20 @@ export function parseLedger(text: string | null): ReturnLedger {
   }
 }
 
-/** The queue asks this: a song that came back in the last RETURN_HOLD_DAYS is not offloaded. */
-export function returnedLately(ledger: ReturnLedger, colonPath: string, now: number): boolean {
+/**
+ * Under this much free disk the hold lapses: a Mac that is really running out
+ * of room may offload what came back. No loop can come of it, because nothing
+ * is brought back under ROOMY_ENTER_BYTES (80 GB) free.
+ */
+export const HOLD_LAPSE_BYTES = 30 * 1024 * 1024 * 1024
+
+/**
+ * The queue asks this: a song that came back in the last RETURN_HOLD_DAYS is
+ * not offloaded, unless the disk is known to be under HOLD_LAPSE_BYTES free.
+ * Unknown free space keeps the hold.
+ */
+export function returnedLately(ledger: ReturnLedger, colonPath: string, now: number, freeBytes: number = Number.NaN): boolean {
+  if (Number.isFinite(freeBytes) && freeBytes < HOLD_LAPSE_BYTES) return false
   const at = ledger.returned[colonPath]
   return typeof at === 'number' && now - at < RETURN_HOLD_DAYS * DAY
 }
@@ -123,7 +138,8 @@ export interface ReturnRecentResult {
 export async function returnRecentSongs(opts: {
   hub: boolean
   roomy: boolean
-  away: boolean
+  /** Is this Mac away from home? A check that fails or throws reads as AWAY. */
+  away: () => Promise<boolean>
   records: ReadonlyArray<OffloadReplacementRecord>
   /** Songs ADDED lately (offload-keep-recent.ts addedLately). */
   added: { has(colonPath: string): boolean }
@@ -144,13 +160,19 @@ export async function returnRecentSongs(opts: {
 }): Promise<ReturnRecentResult> {
   const ledger: ReturnLedger = { version: 1, returned: { ...opts.ledger.returned }, refused: { ...opts.ledger.refused } }
   const out: ReturnRecentResult = { restored: 0, refused: 0, downloads: 0, stoppedBecause: null, ledger, ledgerChanged: false }
-  if (!returnAllowed(opts)) return out
+  if (!opts.hub || !opts.roomy) return out
+  let away: boolean
+  try { away = (await opts.away()) !== false } catch { away = true }
+  if (!returnAllowed({ hub: opts.hub, roomy: opts.roomy, away })) return out
   const max = opts.max ?? RETURN_PER_PASS
 
   // Links only, not in use, not refused lately on this same record.
   const asking: OffloadReplacementRecord[] = []
   for (const r of recentReturnCandidates(opts.records, opts.added)) {
     if (asking.length >= RETURN_ASK) break
+    // A song comes back once. If the disk later ran so low that its hold lapsed and it was offloaded again,
+    // it stays streamed: fetching it a second time is the start of a loop.
+    if (ledger.returned[r.path] != null) continue
     const memo = ledger.refused[r.path]
     if (memo && memo.record === r.fullSha1 && opts.now - memo.at < REFUSED_RECHECK_MS) continue
     if (opts.inUse(r.path)) continue
@@ -179,7 +201,8 @@ export async function returnRecentSongs(opts: {
 
   const back: OffloadReplacementRecord[] = []
   for (const r of asking) {
-    if (back.length >= max) break
+    // The cap is on downloads STARTED: a pass never fetches more than `max` whole files, whatever becomes of them.
+    if (back.length >= max || out.downloads >= max) break
     const identity = answer.byId.get(String(r.id)) ?? null
     // No file, or not hashed yet: nothing is known, so nothing is fetched and nothing is remembered.
     if (!identity || isPending(identity)) continue

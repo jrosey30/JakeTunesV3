@@ -84,9 +84,17 @@ describe('one song, one source', () => {
       assert.deepEqual(w.seen.local, [], 'nothing from the other file')
       assert.equal(w.server.sourceOf(7), null, 'unpinned: the reload starts the song over')
       assert.match(w.seen.logs.join('\n'), /mid-song/)
-      // The player's reload asks from byte 0 and gets one whole, consistent file.
+      // The same range asked again (a retry), and any other range above 0: still refused, still nothing from the other file.
+      w.set({ flac: 'ok' })
+      assert.equal((await w.server.serve(7, 'bytes=900000-')).status, 503)
+      assert.equal((await w.server.serve(7, 'bytes=1200000-')).status, 503)
+      assert.deepEqual(w.seen.local, [])
+      assert.equal(w.seen.flac.length, 2, 'homemini is not asked for it either: the header the player holds is gone')
+      w.set({ flac })
+      // Only a load from byte 0 starts the song again, on one whole, consistent file.
       assert.equal(await (await w.server.serve(7, 'bytes=0-')).text(), 'local')
       assert.equal(w.server.sourceOf(7), 'local')
+      assert.equal(await (await w.server.serve(7, 'bytes=900000-')).text(), 'local', 'and its later ranges are served again')
     }
   })
   it('a pinned song asked again from byte 0 may start over on this Mac', async () => {

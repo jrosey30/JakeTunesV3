@@ -56,12 +56,12 @@ import { createStreamAlacCache, downloadUrlToFile, ffmpegAlacToFlac, localFileNe
 import { backfillAlacFingerprints, planLocalAlacMigration, type AlacMigrateTrack } from './alac-stream-migrate.ts'
 import { mergeQueuedDuringPass, runConvertPass, type ConvertOutcome, type QueueTrack, type StreamConvertItem } from './stream-convert-pass.ts'; import { confirmHomeminiHoldsFile, keptLocalMessage, USER_PENDING_RETRIES, type RefusalMemo } from './offload-confirm.ts'
 import { askAudioIdentity, hubBaseFromAudioBase, type OneIdentity } from './audio-identity.ts'
-import { askFlacVariants, confirmPlayableOnHomemini, notPlayableMessage, playableIds, playableVerdicts, USER_PLAYABLE_RETRIES } from './flac-variant.ts'; import { addedLately, buildRecentKeep, createKeepWindowState, createPlayerTouches } from './offload-keep-recent.ts'; import { keepStreamedWarm } from './stream-keep-warm.ts'; import { createStreamedAlacServer, READY_ASK_MS } from './stream-alac-serve.ts'
+import { askFlacVariants, confirmPlayableOnHomemini, notPlayableMessage, playableIds, playableVerdicts, USER_PLAYABLE_RETRIES } from './flac-variant.ts'; import { addedLately, buildRecentKeep, createKeepWindowState, createPlayerTouches } from './offload-keep-recent.ts'; import { createWarmKeeper } from './stream-keep-warm.ts'; import { createStreamedAlacServer, READY_ASK_MS } from './stream-alac-serve.ts'
 import {
   appendOffloadReplacement, createCachedOffloadReader, hubOffloadActive,
 localAudioDropRefused,   libraryRootFromMusicDir, OFFLOAD_CONVERT_BATCH, serveHubOffloadSymlink, streamConvertRuns,
 } from './offload-audio.ts'
-import { bootHubOffload, menuHubOffload, registerOffloadIpc, returnedHold, returnRecentToDisk } from './ipc/offload-ipc.ts'
+import { bootHubOffload, keepWindowStore, menuHubOffload, registerOffloadIpc, returnedHold, returnRecentToDisk } from './ipc/offload-ipc.ts'
 import { createServePin } from './play-cache-serve-pin.ts'
 import { createIpcRegistrar, REFUSED_SENDER } from './ipc-register.ts'
 import { registerUiStateIpc, readSavedSidebarOrder } from './ipc/ui-state-ipc.ts'
@@ -4394,7 +4394,8 @@ async function convertTrackToStreamed(ipodPath: string, storedFingerprint: strin
 const askVariants = (ids: ReadonlyArray<string | number>, want: boolean, timeoutMs?: number) => askFlacVariants({ baseUrl: hubBaseFromAudioBase(HOMEMINI_AUDIO_BASE), ids, want, withInit: withCompanionInit, timeoutMs })
 /** What the player asked for lately: playing now, or loaded ahead as next (offload-keep-recent.ts). */
 const playerTouches = createPlayerTouches()
-const keepWindowState = createKeepWindowState()   // two edges: long windows are left under 60 GB free and entered at 80
+const keepWindowState = createKeepWindowState(keepWindowStore)   // two edges: long windows are left under 60 GB free and entered at 80; the side survives a restart
+const warmKeeper = createWarmKeeper({ ask: async (ids) => { const r = await askVariants(ids, false); return r.kind === 'answers' ? r.byId : null }, want: async (ids) => { const r = await askVariants(ids, true); return r.kind === 'answers' ? r.byId : null } })
 async function laptopFreeBytes(): Promise<number> {
   try {
     const root = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '') || app.getPath('home')
@@ -4522,13 +4523,14 @@ async function runStreamConvertPass(now: number): Promise<void> {
     const hub = hubOffloadActive({ streamSource: source, offload })
     const ipodGate = await ipodLocal.gate()   // songs on an iPod's list stay on this Mac (ipod-keep-local.ts)
     // What Jake just got or just played stays too, and what was already offloaded comes back (offload-keep-recent.ts).
-    const windows = keepWindowState.look(await laptopFreeBytes())
+    const freeNow = await laptopFreeBytes()
+    const windows = await keepWindowState.look(freeNow)
     const libTracks = (((await libraryCache.get()) as CachedLibrary).tracks || []) as QueueTrack[]
     const recent = buildRecentKeep(libTracks, now, windows)
-    const cameBack = await returnedHold(now)   // a song that came back is not offloaded again for 14 days, whatever the windows say
+    const cameBack = await returnedHold(now, freeNow)   // a song that came back is not offloaded again for 14 days, whatever the windows say (it lapses under 30 GB free)
     if (hub) void returnRecentToDisk({ added: addedLately(recent), inUse: (colon) => playerTouches.has(colon, Date.now()), roomy: windows.roomy, away: isAwayFromHome })
     // A played or loaded-ahead streamed song: homemini is asked to keep its playable copy ready (stream-keep-warm.ts).
-    void keepStreamedWarm({ tracks: libTracks, touched: playerTouches.recent(now), now, needsCopy: (colon) => wantsHomeminiFlac(trackFarmPath(colon)), isStreamed: async (colon) => (await lstat(trackFarmPath(colon))).isSymbolicLink(), want: (ids) => askVariants(ids, true) })
+    void warmKeeper.pass({ tracks: libTracks, touched: playerTouches.recent(now), now, needsCopy: (colon) => wantsHomeminiFlac(trackFarmPath(colon)), isStreamed: async (colon) => (await lstat(trackFarmPath(colon))).isSymbolicLink() })
     // The library's record NOW decides, never the row's (stream-convert-pass.ts).
     const { keep, changed } = await runConvertPass({
       now, items, maxAgeMs: STREAM_CONVERT_MAX_AGE_MS, batch: hub ? OFFLOAD_CONVERT_BATCH : null,

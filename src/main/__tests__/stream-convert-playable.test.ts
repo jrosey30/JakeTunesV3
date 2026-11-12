@@ -116,8 +116,9 @@ describe('index.ts wires the two rules in front of the drop', () => {
   it('the pass keeps what Jake just got, what the player asked for, and asks for playable copies', () => {
     const passFn = index.slice(index.indexOf('async function runStreamConvertPass('), index.indexOf('function ensureStreamConvertWorker('))
     assert.match(passFn, /kept: \(it\) => keepsColon\(ipodGate, it\.ipodPath\) \|\| recent\.has\(it\.ipodPath\) \|\| cameBack\.has\(it\.ipodPath\) \|\| playerTouches\.has\(it\.ipodPath, now\)/)
-    assert.match(passFn, /const windows = keepWindowState\.look\(await laptopFreeBytes\(\)\)/, 'the two-edge windows, not a fresh look each pass')
-    assert.match(passFn, /const cameBack = await returnedHold\(now\)/)
+    assert.match(passFn, /const windows = await keepWindowState\.look\(freeNow\)/, 'the two-edge windows, not a fresh look each pass')
+    assert.match(index, /const keepWindowState = createKeepWindowState\(keepWindowStore\)/, 'and the side survives a restart')
+    assert.match(passFn, /const cameBack = await returnedHold\(now, freeNow\)/)
     assert.match(passFn, /needsPlayable: \(it\) => wantsHomeminiFlac\(trackFarmPath\(it\.ipodPath\)\)/)
     assert.match(passFn, /askPlayable:/)
     assert.match(passFn, /const recent = buildRecentKeep\(/)
@@ -131,7 +132,8 @@ describe('index.ts wires the two rules in front of the drop', () => {
     assert.match(call, /added: addedLately\(recent\)/)
     assert.match(call, /inUse: \(colon\) => playerTouches\.has\(colon, Date\.now\(\)\)/)
     assert.match(passFn, /if \(hub\) void returnRecentToDisk\(/)
-    assert.match(passFn, /void keepStreamedWarm\(\{/)
+    assert.match(passFn, /void warmKeeper\.pass\(\{/)
+    assert.match(index, /createWarmKeeper\(\{ ask: async \(ids\) => \{ const r = await askVariants\(ids, false\)/, 'the keeper asks without building first')
     assert.match(index, /askVariants\(\[id\], false, READY_ASK_MS\)/)
   })
   it('the player’s requests are noted, and a streamed ALAC song goes through the new order on both routes', () => {

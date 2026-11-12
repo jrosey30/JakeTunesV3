@@ -18,8 +18,17 @@
  * so a song that started on one keeps to it for its later ranges. A seek never
  * lands in the other file. When a song that is on homemini's copy asks for a
  * later range and homemini doesn't serve it, that range FAILS (503): bytes from
- * this Mac's file under the header homemini's file sent would be noise. The
- * song is unpinned, so the player's reload starts it cleanly from byte 0.
+ * this Mac's file under the header homemini's file sent would be noise. From
+ * then on EVERY range above byte 0 of that song fails, a retry of the same one
+ * included, until a request from byte 0 arrives: only a fresh load of the song
+ * may pick a source again.
+ *
+ * What the player does with that 503 (renderer/hooks/useAudio.ts, read on
+ * 2026-11-12, not changed): the audio element raises an error, Howler reports
+ * it as a load error, and `failAdvanceRef` SKIPS TO THE NEXT SONG (counted and
+ * capped, Brief 160). The song is not restarted. Only when the element stalls
+ * without raising an error does the heartbeat's freeze watchdog reload the
+ * song and seek back to where it was, and that reload starts from byte 0.
  *
  * Electron-free; every effect is injected (__tests__/stream-alac-serve.test.ts).
  */
@@ -65,6 +74,8 @@ export function createStreamedAlacServer(deps: StreamedAlacDeps): StreamedAlacSe
   const now = deps.now ?? Date.now
   const log = deps.log ?? ((m: string) => console.log(m))
   const pins = new Map<string, { source: 'homemini' | 'local'; at: number }>()
+  /** Songs whose homemini copy stopped mid-song: no range above 0 is served until one from 0 arrives. */
+  const broken = new Set<string>()
   const pinned = (id: string): 'homemini' | 'local' | null => {
     const p = pins.get(id)
     if (!p) return null
@@ -83,6 +94,10 @@ export function createStreamedAlacServer(deps: StreamedAlacDeps): StreamedAlacSe
 
   async function serve(rawId: string | number, range: string | null): Promise<Response> {
     const id = String(rawId)
+    if (broken.has(id)) {
+      if (rangeStart(range) > 0) return new Response('Unavailable', { status: 503 })
+      broken.delete(id)   // a fresh load of the song: it may pick a source again
+    }
     const was = pinned(id)
     if (was === 'local') return local(id, range)
     if (was === null) {
@@ -98,7 +113,9 @@ export function createStreamedAlacServer(deps: StreamedAlacDeps): StreamedAlacSe
     if (was === 'homemini' && rangeStart(range) > 0) {
       // Never two encodes in one song. The next load of it starts over, on whichever source answers.
       pins.delete(id)
-      log(`[stream-alac] homemini stopped serving its FLAC copy of ${id} mid-song; this range fails and the song reloads from its start`)
+      broken.add(id)
+      if (broken.size > 200) broken.delete(broken.values().next().value as string)
+      log(`[stream-alac] homemini stopped serving its FLAC copy of ${id} mid-song; its later ranges fail until the song is loaded again from its start`)
       return new Response('Unavailable', { status: 503 })
     }
     log(`[stream-alac] homemini didn't serve its FLAC copy of ${id}; decoding here instead`)
