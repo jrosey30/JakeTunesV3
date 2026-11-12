@@ -29,3 +29,13 @@ export function takeHistoryNavigation(): boolean {
   pending = false
   return was
 }
+
+/**
+ * How a page was reached, for the page itself (NavArrivalContext): Back /
+ * Forward is a 'return'; the first page shown after a launch is a 'restore'
+ * (the page you were on, reopened — it keeps its scroll, as it always did);
+ * anything else is an 'arrive' and starts at the top.
+ */
+export function pageArrival(firstPage: boolean, fromHistory: boolean): 'arrive' | 'return' | 'restore' {
+  return fromHistory ? 'return' : firstPage ? 'restore' : 'arrive'
+}

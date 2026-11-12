@@ -28,6 +28,13 @@
   --ad-display: var(--font-display, -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif);
   --ad-cover-shadow: 0 6px 18px rgba(0, 0, 0, 0.20), 0 0 0 0.5px rgba(0, 0, 0, 0.10);
   --ad-card-shadow: 0 2px 4px rgba(70, 55, 40, 0.06), 0 8px 24px rgba(70, 55, 40, 0.10);
+  /* THE knob for the page's entrance (2026-11-10): from the first frame to the
+     last section standing still. Every rise and its stagger is a share of it
+     (see "Motion" below), so this one number retunes the whole entrance. It
+     was 1.06 s, which read as "slow to appear"; keep it at 250 ms or less. */
+  --ad-enter-total: 240ms;
+  /* A picture arriving in its reserved box (the header photo, a member's face). */
+  --ad-fade: 180ms;
 
   height: 100%;
   overflow-y: auto;
@@ -60,12 +67,25 @@
   background: var(--ad-ink);
   display: flex;
 }
+/* The picture's window: always there, in the header's own ink, whether or not
+ * a picture has arrived — so one arriving never moves or resizes anything. */
 .ad-hero-photo {
   position: absolute;
   top: 0; right: 0; bottom: 0;
   width: 61%;
   overflow: hidden;
+  background: var(--ad-ink);
 }
+/* Pictures stack in the window (HeroPhoto.tsx): the new one fades in over the
+ * one showing, which fades out under it. Never a hard swap. */
+.ad-hero-layer {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity var(--ad-fade) ease;
+}
+.ad-hero-layer.is-in { opacity: 1; }
+.ad-hero-layer.is-instant { transition: none; }
 .ad-hero-photo img {
   width: 100%;
   height: 100%;
@@ -203,6 +223,19 @@
   padding-bottom: 30px;
 }
 .ad-about-main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+/* A page opened with no bio in hand holds About's room from its first frame and
+ * for the whole visit (ArtistDetailView aboutReserved): a lede and two
+ * paragraphs fit, so the text landing does not push "Your <Artist>" down, and
+ * a short or absent bio does not pull it back up. A longer one is cut at the
+ * edge with "More" — opening it is Jake's click, never the page's own move.
+ * A cached bio (every later visit) is on the first frame and is never held or cut. */
+.ad-about.is-reserved { height: 248px; box-sizing: border-box; overflow: hidden; position: relative; align-content: start; }
+.ad-about-more {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 34px 0 10px; border: none; cursor: pointer; text-align: left;
+  background: linear-gradient(180deg, rgba(253, 253, 253, 0), var(--ad-sheet) 62%);
+  font-family: inherit; font-size: 11px; font-weight: 700; color: var(--ad-orange-dark);
+}
 .ad-lede { margin: 0; font-family: var(--ad-display); font-size: 17px; line-height: 1.5; font-weight: 600; color: var(--ad-text); }
 .ad-body { margin: 0; font-size: 13px; line-height: 1.6; color: #2b2622; }
 .ad-body--quiet { color: var(--ad-text-3); }
@@ -318,7 +351,10 @@
   cursor: pointer;
   line-height: 0;
 }
-.ad-member-img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 50%; display: block; }
+/* The face fades in over the tile's own colour once it has decoded (MemberTile.tsx). */
+.ad-member-img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 50%; display: block; opacity: 0; transition: opacity var(--ad-fade) ease; }
+.ad-member-img.is-in { opacity: 1; }
+.ad-member-img.is-instant { transition: none; }
 .ad-member-mono {
   display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;
   font-family: var(--ad-display); font-size: 44px; font-weight: 800; letter-spacing: -0.02em; line-height: 1;
@@ -401,7 +437,6 @@
 
 /* More from <Artist> — the old full discography, collapsed under the rows. */
 .ad-more { margin-top: 6px; border-top: 1px solid var(--ad-hair); padding-top: 12px; }
-.ad-more--loading { font-size: 11px; color: var(--ad-text-3); }
 .ad-more-toggle {
   display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
   padding: 0; border: none; background: none; cursor: pointer; font-family: inherit; text-align: left; color: var(--ad-text);
@@ -474,15 +509,19 @@ button.ad-more-track:hover .ad-more-track-title { color: var(--ad-orange-dark); 
   from { transform: scale(1.02); }
   to { transform: scale(1.09) translate(-1%, 1%); }
 }
-.ad-rise { animation: ad-rise 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
-.ad-d1 { animation-delay: 0.04s; }
-.ad-d2 { animation-delay: 0.1s; }
-.ad-d3 { animation-delay: 0.17s; }
-.ad-d4 { animation-delay: 0.25s; }
-.ad-d5 { animation-delay: 0.35s; }
-.ad-d6 { animation-delay: 0.46s; }
+/* The entrance: each block rises a few pixels as it fades in, top to bottom.
+ * All of it is a share of --ad-enter-total (the knob, on .artist-detail): a
+ * rise takes 70% of it and the last block starts 30% in, so the page stands
+ * still when the total is up. */
+.ad-rise { animation: ad-rise calc(var(--ad-enter-total) * 0.7) cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.ad-d1 { animation-delay: calc(var(--ad-enter-total) * 0.05); }
+.ad-d2 { animation-delay: calc(var(--ad-enter-total) * 0.10); }
+.ad-d3 { animation-delay: calc(var(--ad-enter-total) * 0.15); }
+.ad-d4 { animation-delay: calc(var(--ad-enter-total) * 0.20); }
+.ad-d5 { animation-delay: calc(var(--ad-enter-total) * 0.25); }
+.ad-d6 { animation-delay: calc(var(--ad-enter-total) * 0.30); }
 @keyframes ad-rise {
-  from { opacity: 0; transform: translateY(12px); }
+  from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: none; }
 }
 .ad-lift { transition: transform 0.22s cubic-bezier(0.2, 0.7, 0.2, 1), box-shadow 0.22s; }
@@ -498,7 +537,7 @@ button.ad-more-track:hover .ad-more-track-title { color: var(--ad-orange-dark); 
 }
 @media (prefers-reduced-motion: reduce) {
   .ad-drift, .ad-rise, .ad-hero-photo--whole img, .ad-hero-photo--tall img { animation: none; }
-  .ad-lift, .ad-chev, .ad-member-hint { transition: none; }
+  .ad-lift, .ad-chev, .ad-member-hint, .ad-hero-layer, .ad-member-img { transition: none; }
   .ad-lift:hover, .ad-cover:hover .ad-lift { transform: none; }
 }
 

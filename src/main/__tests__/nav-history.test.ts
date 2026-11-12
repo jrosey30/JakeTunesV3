@@ -3,12 +3,12 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  recordLocation, canGoBack, canGoForward, sameLoc, locationOf, restoreActionFor, savedLocation,
+  recordLocation, canGoBack, canGoForward, sameLoc, locationOf, restoreActionFor, savedLocation, detailSubjectFor,
 } from '../../renderer/nav-history.ts'
-import type { NavLocation, NavHistory, NavigableState, RestoreAction } from '../../renderer/nav-history.ts'
+import type { NavLocation, NavHistory, NavigableState, RestoreAction, DetailSubjects } from '../../renderer/nav-history.ts'
 
 const L = (view: string, extra: Partial<NavLocation> = {}): NavLocation => ({
-  view, playlistId: null, smartPlaylistId: null, artist: null, albumKey: null, ...extra,
+  view, playlistId: null, smartPlaylistId: null, artist: null, albumKey: null, detailKey: null, ...extra,
 })
 const start = (loc: NavLocation): NavHistory => ({ history: [loc], index: 0 })
 const src = (...p: string[]): string => readFileSync(join(import.meta.dirname, '..', '..', 'renderer', ...p), 'utf-8')
@@ -226,7 +226,7 @@ describe('savedLocation — reopening the window lands on the page you were on',
 describe('wiring: one rule for re-entering a page, used by Back/Forward AND the startup restore', () => {
   it('NavigationContext reads its location and replays entries through nav-history', () => {
     const ctx = src('context', 'NavigationContext.tsx')
-    assert.match(ctx, /const loc: NavLocation = locationOf\(lib\)/)
+    assert.match(ctx, /const loc: NavLocation = locationOf\(lib, \{ concertKey, mixtapeId \}\)/)
     assert.match(ctx, /dispatch\(restoreActionFor\(t\)\)/)
   })
   it('App reopens the saved page with the same step, and no longer replays a lingering playlist id', () => {
@@ -248,5 +248,103 @@ describe('wiring: one rule for re-entering a page, used by Back/Forward AND the 
     assert.match(lib, /currentView: 'artist-detail',\s*\n\s*activeArtist: action\.artistName,/)
     assert.match(lib, /currentView: 'album-detail',\s*\n\s*pendingAlbumKey: action\.albumKey,/)
     assert.match(lib, /case 'CLEAR_PENDING_ALBUM_KEY':\s*\n\s*return \{ \.\.\.state, pendingAlbumKey: null \}/)
+  })
+})
+
+// 2026-11-10 — concert A → artist → concert B → Back → Back opened concert B.
+// A concert page is routed by the generic SET_VIEW and keeps WHICH concert in
+// a module store (concertNav.ts), so history held two identical
+// 'concert-detail' entries and Back replayed the view over the store's last
+// value. Mixtapes are routed the same way (mixtapes.ts).
+describe('Back to a concert opens THAT concert', () => {
+  /** The app's navigation with the concert / mixtape stores beside the library state, as NavigationContext runs it. */
+  class DetailNav {
+    state: NavigableState = BOOT
+    subjects: Required<DetailSubjects> = { concertKey: '', mixtapeId: '' }
+    nav: NavHistory = { history: [locationOf(BOOT)], index: 0 }
+    get loc(): NavLocation { return locationOf(this.state, this.subjects) }
+    private seen: NavLocation = locationOf(BOOT)
+    /** NavigationContext's effect: it runs only when the location it reads has changed. */
+    private observe(): void {
+      const now = this.loc
+      if (sameLoc(now, this.seen)) return
+      this.seen = now
+      this.nav = recordLocation(this.nav, now)
+    }
+    go(a: RestoreAction): void { this.state = reduce(this.state, a); this.observe() }
+    openConcert(key: string): void { this.subjects.concertKey = key; this.observe(); this.go({ type: 'SET_VIEW', view: 'concert-detail' }) }
+    openMixtape(id: string): void { this.subjects.mixtapeId = id; this.observe(); this.go({ type: 'SET_VIEW', view: 'mixtape-detail' }) }
+    private land(): void {
+      const t = this.nav.history[this.nav.index]
+      const subject = detailSubjectFor(t)
+      if (subject?.store === 'concert') this.subjects.concertKey = subject.key
+      if (subject?.store === 'mixtape') this.subjects.mixtapeId = subject.key
+      this.observe()                       // the store change re-renders the observer before the dispatch does
+      this.go(restoreActionFor(t))
+    }
+    back(): void { if (canGoBack(this.nav)) { this.nav = { ...this.nav, index: this.nav.index - 1 }; this.land() } }
+    forward(): void { if (canGoForward(this.nav)) { this.nav = { ...this.nav, index: this.nav.index + 1 }; this.land() } }
+    /** What the concert page would draw. */
+    get showing(): string { return this.state.currentView === 'concert-detail' ? this.subjects.concertKey : this.state.currentView === 'mixtape-detail' ? this.subjects.mixtapeId : this.state.currentView }
+  }
+  const A = 'geese|||live at the bowery', B = 'geese|||live in paris'
+
+  it('concert A → artist → concert B → Back → Back lands on A (it landed on B)', () => {
+    const m = new DetailNav()
+    m.go({ type: 'SET_VIEW', view: 'concerts' })
+    m.openConcert(A)
+    m.go({ type: 'VIEW_ARTIST_DETAIL', artistName: 'Geese' })
+    m.openConcert(B)
+    assert.equal(m.showing, B)
+    assert.deepEqual(m.nav.history.map((l) => l.detailKey), [null, null, A, null, B])
+    m.back()
+    assert.equal(m.showing, 'artist-detail')
+    m.back()
+    assert.equal(m.showing, A)
+    assert.equal(m.nav.index, 2, 'a landing, not a new entry')
+    assert.equal(m.nav.history.length, 5, 'the forward entries are still there')
+    m.forward(); m.forward()
+    assert.equal(m.showing, B, 'and Forward comes back to B')
+  })
+
+  it('two concerts in a row are two places: Back from B is A', () => {
+    const m = new DetailNav()
+    m.openConcert(A)
+    m.openConcert(B)
+    assert.equal(m.nav.history.length, 3)
+    m.back()
+    assert.equal(m.showing, A)
+  })
+
+  it('mixtapes the same way', () => {
+    const m = new DetailNav()
+    m.openMixtape('tape-1')
+    m.go({ type: 'SET_VIEW', view: 'songs' })
+    m.openMixtape('tape-2')
+    m.back(); m.back()
+    assert.equal(m.showing, 'tape-1')
+  })
+
+  it('the subject counts only while its own view is showing (a concert opened an hour ago does not make two Albums pages)', () => {
+    const a = locationOf({ ...BOOT, currentView: 'albums' }, { concertKey: A })
+    const b = locationOf({ ...BOOT, currentView: 'albums' }, { concertKey: B })
+    assert.equal(sameLoc(a, b), true)
+    assert.equal(a.detailKey, null)
+    assert.equal(sameLoc(L('concert-detail', { detailKey: A }), L('concert-detail', { detailKey: B })), false)
+  })
+
+  it('an entry with no subject leaves the store alone', () => {
+    assert.equal(detailSubjectFor(L('concert-detail')), null)
+    assert.equal(detailSubjectFor(L('albums', { detailKey: A })), null)
+    assert.deepEqual(detailSubjectFor(L('concert-detail', { detailKey: A })), { store: 'concert', key: A })
+    assert.deepEqual(detailSubjectFor(L('mixtape-detail', { detailKey: 't' })), { store: 'mixtape', key: 't' })
+  })
+
+  it('NavigationContext reads the stores and puts the subject back before it replays the entry', () => {
+    const ctx = src('context', 'NavigationContext.tsx')
+    assert.match(ctx, /useSyncExternalStore\(subscribeConcertKey, getConcertKey\)/)
+    assert.match(ctx, /useSyncExternalStore\(subscribeMixtapes, getMixtapeId\)/)
+    assert.match(ctx, /if \(subject\?\.store === 'concert'\) setConcertKey\(subject\.key\)\s+else if \(subject\?\.store === 'mixtape'\) setMixtapeId\(subject\.key\)\s+dispatch\(restoreActionFor\(t\)\)/)
+    assert.match(ctx, /loc\.albumKey, loc\.detailKey\]/, 'a change of concert alone is a navigation')
   })
 })
