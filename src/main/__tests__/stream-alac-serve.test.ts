@@ -4,7 +4,7 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { createStreamedAlacServer, SOURCE_PIN_MS, type StreamedAlacDeps } from '../stream-alac-serve.ts'
+import { createStreamedAlacServer, rangeStart, READY_ASK_MS, SOURCE_PIN_MS, type StreamedAlacDeps } from '../stream-alac-serve.ts'
 
 function world(over: Partial<StreamedAlacDeps> & { cached?: boolean; ready?: boolean | 'throw'; flac?: 'ok' | 'null' | 'throw' } = {}) {
   const seen = { local: [] as string[], flac: [] as string[], wanted: [] as string[], readyAsks: 0, logs: [] as string[] }
@@ -73,6 +73,35 @@ describe('one song, one source', () => {
     w.set({ cached: true, ready: false })
     assert.equal(await (await w.server.serve(7, 'bytes=900000-')).text(), 'homemini')
     assert.equal(w.seen.readyAsks, 1, 'the later range does not ask again')
+  })
+  it('homemini stops serving mid-song: that range fails, and bytes from this Mac’s file are never sent under homemini’s header', async () => {
+    for (const flac of ['null', 'throw'] as const) {
+      const w = world({ ready: true })
+      await w.server.serve(7, 'bytes=0-')
+      w.set({ flac, cached: true })
+      const res = await w.server.serve(7, 'bytes=900000-')
+      assert.equal(res.status, 503)
+      assert.deepEqual(w.seen.local, [], 'nothing from the other file')
+      assert.equal(w.server.sourceOf(7), null, 'unpinned: the reload starts the song over')
+      assert.match(w.seen.logs.join('\n'), /mid-song/)
+      // The player's reload asks from byte 0 and gets one whole, consistent file.
+      assert.equal(await (await w.server.serve(7, 'bytes=0-')).text(), 'local')
+      assert.equal(w.server.sourceOf(7), 'local')
+    }
+  })
+  it('a pinned song asked again from byte 0 may start over on this Mac', async () => {
+    const w = world({ ready: true })
+    await w.server.serve(7, 'bytes=0-')
+    w.set({ flac: 'null' })
+    assert.equal(await (await w.server.serve(7, 'bytes=0-')).text(), 'local')
+    assert.equal(await (await w.server.serve(8, null)).text(), 'local')
+  })
+  it('reads where a range starts, and the readiness ask is short', () => {
+    assert.equal(rangeStart('bytes=900000-'), 900000)
+    assert.equal(rangeStart('bytes=0-'), 0)
+    assert.equal(rangeStart(null), 0)
+    assert.equal(rangeStart('bytes=-500'), 0)
+    assert.ok(READY_ASK_MS <= 500, 'a slow homemini costs a first play well under a second before the fallback')
   })
   it('a song that started on this Mac stays here, even once homemini’s copy is ready', async () => {
     const w = world({ ready: false })

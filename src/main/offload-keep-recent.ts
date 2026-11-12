@@ -28,18 +28,43 @@
 const DAY = 24 * 60 * 60 * 1000
 export const KEEP_ADDED_DAYS = 14
 export const KEEP_PLAYED_DAYS = 7
-/** Under this much free disk the windows are TIGHT_DAYS. */
+/** Under this much free disk the windows become TIGHT_DAYS. */
 export const ROOMY_FREE_BYTES = 60 * 1024 * 1024 * 1024
+/**
+ * They only go back to the long windows at this much free. One edge at 60 GB
+ * would flip 1,588 songs between "stays" and "may go" each time the disk
+ * crossed it (review of PR 409); with 20 GB between the two edges, dropping
+ * a few files can't be what flips them back.
+ */
+export const ROOMY_ENTER_BYTES = 80 * 1024 * 1024 * 1024
 export const TIGHT_DAYS = 2
 export const PLAYER_TOUCH_MS = 6 * 60 * 60 * 1000
 
 export interface KeepWindows { addedMs: number; playedMs: number; roomy: boolean }
 
-export function keepWindows(freeBytes: number): KeepWindows {
-  const roomy = Number.isFinite(freeBytes) && freeBytes >= ROOMY_FREE_BYTES
+/**
+ * `wasRoomy`: what the last look decided (null = no look yet). Long windows
+ * are left under ROOMY_FREE_BYTES and entered only at ROOMY_ENTER_BYTES; a
+ * first look is long only at the higher edge.
+ */
+export function keepWindows(freeBytes: number, wasRoomy: boolean | null = null): KeepWindows {
+  const known = Number.isFinite(freeBytes)
+  const roomy = known && (wasRoomy === true ? freeBytes >= ROOMY_FREE_BYTES : freeBytes >= ROOMY_ENTER_BYTES)
   return roomy
     ? { addedMs: KEEP_ADDED_DAYS * DAY, playedMs: KEEP_PLAYED_DAYS * DAY, roomy }
     : { addedMs: TIGHT_DAYS * DAY, playedMs: TIGHT_DAYS * DAY, roomy }
+}
+
+/** Remembers the last look, so the windows have two edges (keepWindows). In memory: a restart starts from "no look yet". */
+export function createKeepWindowState(): { look(freeBytes: number): KeepWindows } {
+  let was: boolean | null = null
+  return {
+    look(freeBytes) {
+      const w = keepWindows(freeBytes, was)
+      was = w.roomy
+      return w
+    },
+  }
 }
 
 /** Epoch ms from the library's two shapes: an ISO string (dateAdded) or a number (lastPlayedAt). */
@@ -73,6 +98,13 @@ export function buildRecentKeep(tracks: ReadonlyArray<RecentTrack>, now: number,
   return out
 }
 
+/** The paths kept because they were ADDED lately (not merely played): the only songs worth fetching back. */
+export function addedLately(keep: ReadonlyMap<string, 'added' | 'played'>): Set<string> {
+  const out = new Set<string>()
+  for (const [p, why] of keep) if (why === 'added') out.add(p)
+  return out
+}
+
 /** ":iPod_Control:Music:F01:x.m4a" from an absolute path, or null. */
 export function colonFromAbs(absPath: string): string | null {
   const i = absPath.indexOf('iPod_Control')
@@ -83,6 +115,8 @@ export function colonFromAbs(absPath: string): string | null {
 export interface PlayerTouches {
   noteAbs(absPath: string, now: number): void
   has(colonPath: string, now: number): boolean
+  /** Every path asked for inside the window, newest first. */
+  recent(now: number): string[]
   readonly size: number
 }
 
@@ -101,6 +135,9 @@ export function createPlayerTouches(windowMs = PLAYER_TOUCH_MS, max = 5000): Pla
       if (t == null) return false
       if (now - t >= windowMs) { at.delete(colonPath); return false }
       return true
+    },
+    recent(now) {
+      return [...at].filter(([, t]) => now - t < windowMs).map(([p]) => p).reverse()
     },
     get size() { return at.size },
   }

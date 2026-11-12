@@ -4,8 +4,8 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  buildRecentKeep, colonFromAbs, createPlayerTouches, keepWindows, recentReason, whenMs,
-  KEEP_ADDED_DAYS, KEEP_PLAYED_DAYS, PLAYER_TOUCH_MS, ROOMY_FREE_BYTES, TIGHT_DAYS,
+  addedLately, buildRecentKeep, colonFromAbs, createKeepWindowState, createPlayerTouches, keepWindows, recentReason, whenMs,
+  KEEP_ADDED_DAYS, KEEP_PLAYED_DAYS, PLAYER_TOUCH_MS, ROOMY_ENTER_BYTES, ROOMY_FREE_BYTES, TIGHT_DAYS,
 } from '../offload-keep-recent.ts'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -16,11 +16,30 @@ const roomy = keepWindows(251 * GB)
 describe('keepWindows', () => {
   it('14 days added / 7 played with room; 2 days each when the disk is nearly full or unknown', () => {
     assert.deepEqual(roomy, { addedMs: KEEP_ADDED_DAYS * DAY, playedMs: KEEP_PLAYED_DAYS * DAY, roomy: true })
-    assert.deepEqual(keepWindows(ROOMY_FREE_BYTES), roomy)
     const tight = { addedMs: TIGHT_DAYS * DAY, playedMs: TIGHT_DAYS * DAY, roomy: false }
-    assert.deepEqual(keepWindows(ROOMY_FREE_BYTES - 1), tight)
     assert.deepEqual(keepWindows(0), tight)
     assert.deepEqual(keepWindows(Number.NaN), tight)
+    assert.deepEqual(keepWindows(Number.NaN, true), tight)
+  })
+  it('two edges: long windows are left under 60 GB and entered only at 80', () => {
+    // Coming down: still long at 60, tight just under.
+    assert.equal(keepWindows(ROOMY_FREE_BYTES, true).roomy, true)
+    assert.equal(keepWindows(ROOMY_FREE_BYTES - 1, true).roomy, false)
+    // Coming up: still tight anywhere under 80, long at 80.
+    assert.equal(keepWindows(ROOMY_FREE_BYTES + 1, false).roomy, false)
+    assert.equal(keepWindows(ROOMY_ENTER_BYTES - 1, false).roomy, false)
+    assert.equal(keepWindows(ROOMY_ENTER_BYTES, false).roomy, true)
+    // No look yet: the higher edge.
+    assert.equal(keepWindows(70 * GB).roomy, false)
+    assert.equal(keepWindows(ROOMY_ENTER_BYTES).roomy, true)
+  })
+  it('a disk hovering at the 60 GB edge flips the windows once, not every look', () => {
+    const state = createKeepWindowState()
+    assert.equal(state.look(251 * GB).roomy, true)
+    const looks = [61, 59, 61, 59.5, 62, 58, 64, 70, 79].map((gb) => state.look(gb * GB).roomy)
+    assert.deepEqual(looks, [true, false, false, false, false, false, false, false, false])
+    assert.equal(state.look(80 * GB).roomy, true)
+    assert.equal(state.look(61 * GB).roomy, true)
   })
 })
 
@@ -68,6 +87,12 @@ describe('buildRecentKeep', () => {
   })
 })
 
+describe('addedLately', () => {
+  it('only what was added counts as "just got"; a played old song does not', () => {
+    assert.deepEqual([...addedLately(new Map([['a', 'added'], ['b', 'played']]))], ['a'])
+  })
+})
+
 describe('what the player asked for', () => {
   it('a song the player loaded is kept for 6 hours, by its library path', () => {
     const t = createPlayerTouches()
@@ -76,6 +101,13 @@ describe('what the player asked for', () => {
     assert.equal(t.has(colon, NOW + PLAYER_TOUCH_MS - 1), true)
     assert.equal(t.has(colon, NOW + PLAYER_TOUCH_MS), false)
     assert.equal(t.has(':iPod_Control:Music:F21:other.m4a', NOW), false)
+  })
+  it('lists what was asked for inside the window, newest first', () => {
+    const t = createPlayerTouches()
+    t.noteAbs('/m/iPod_Control/Music/F01/old.m4a', NOW - PLAYER_TOUCH_MS)
+    t.noteAbs('/m/iPod_Control/Music/F01/a.m4a', NOW - 1000)
+    t.noteAbs('/m/iPod_Control/Music/F01/b.m4a', NOW)
+    assert.deepEqual(t.recent(NOW), [':iPod_Control:Music:F01:b.m4a', ':iPod_Control:Music:F01:a.m4a'])
   })
   it('a path outside the library is ignored, and the memory is bounded', () => {
     const t = createPlayerTouches(PLAYER_TOUCH_MS, 2)

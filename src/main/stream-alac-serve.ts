@@ -16,7 +16,10 @@
  *
  * One song, one source: the two FLAC copies are different files (two ffmpegs),
  * so a song that started on one keeps to it for its later ranges. A seek never
- * lands in the other file.
+ * lands in the other file. When a song that is on homemini's copy asks for a
+ * later range and homemini doesn't serve it, that range FAILS (503): bytes from
+ * this Mac's file under the header homemini's file sent would be noise. The
+ * song is unpinned, so the player's reload starts it cleanly from byte 0.
  *
  * Electron-free; every effect is injected (__tests__/stream-alac-serve.test.ts).
  */
@@ -36,6 +39,13 @@ export interface StreamedAlacDeps {
   log?: (msg: string) => void
 }
 
+/**
+ * How long a first play waits for homemini to say "my copy is ready" before it
+ * decodes here instead. A ready copy answers in about 15 ms; when homemini is
+ * slow, the old 2.5 s was 2.5 s of silence in front of the fallback.
+ */
+export const READY_ASK_MS = 400
+
 /** How long a song keeps to the source its first request got. */
 export const SOURCE_PIN_MS = 30 * 60 * 1000
 
@@ -43,6 +53,12 @@ export interface StreamedAlacServer {
   serve(id: string | number, range: string | null): Promise<Response>
   /** For tests and the log: which source a song is on. */
   sourceOf(id: string | number): 'homemini' | 'local' | null
+}
+
+/** The first byte a Range header asks for; 0 for none, a suffix range, or anything unreadable. */
+export function rangeStart(range: string | null): number {
+  const m = /bytes=(\d+)-/.exec(range ?? '')
+  return m ? Number(m[1]) : 0
 }
 
 export function createStreamedAlacServer(deps: StreamedAlacDeps): StreamedAlacServer {
@@ -79,6 +95,12 @@ export function createStreamedAlacServer(deps: StreamedAlacDeps): StreamedAlacSe
     // homemini's copy: this song's first request found it ready, or an earlier range already came from it.
     const remote = await deps.fetchFlac(id, range).catch(() => null)
     if (remote) { pin(id, 'homemini'); return remote }
+    if (was === 'homemini' && rangeStart(range) > 0) {
+      // Never two encodes in one song. The next load of it starts over, on whichever source answers.
+      pins.delete(id)
+      log(`[stream-alac] homemini stopped serving its FLAC copy of ${id} mid-song; this range fails and the song reloads from its start`)
+      return new Response('Unavailable', { status: 503 })
+    }
     log(`[stream-alac] homemini didn't serve its FLAC copy of ${id}; decoding here instead`)
     return local(id, range)
   }
