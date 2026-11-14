@@ -1251,6 +1251,9 @@ const electronAPI = {
   ipodListRename: (input: { deviceId: string; name: string }): Promise<unknown> => ipcRenderer.invoke('ipod-lists:rename', input),
   top1000NameGet: (): Promise<unknown> => ipcRenderer.invoke('top1000-name:get'),
   top1000NameSet: (name: string | null): Promise<unknown> => ipcRenderer.invoke('top1000-name:set', name),
+  // Headline… (2026-11-14): the line at the top of an iPod list's page (key = its id) or the Top 1000's ('top1000').
+  ipodHeadlineSet: (input: { key: string; headline: string | null }): Promise<unknown> => ipcRenderer.invoke('ipod-headline:set', input),
+  top1000HeadlineGet: (local?: boolean): Promise<unknown> => ipcRenderer.invoke('ipod-headline:top1000', local === true),
   // Photo covers (2026-11-09): the Top 1000's or an iPod list's photo over its drawn iPod.
   ipodPhotoGet: (key: string): Promise<unknown> => ipcRenderer.invoke('ipod-photo:get', key),
   ipodPhotoSync: (): Promise<unknown> => ipcRenderer.invoke('ipod-photo:sync'),

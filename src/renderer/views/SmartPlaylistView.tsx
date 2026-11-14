@@ -11,13 +11,16 @@ import { smartPlaylistCover } from '../utils/playlistCovers'
 import { useListenMoreWeekly } from '../listenMoreWeekly'
 import { useTop1000List, useTop1000Ranks } from '../top1000List'
 import { isRankedPlaylist, rankMovement, rotateRankSnap, weekKeyOf, RANK_SNAPSHOT_KEYS, type RankSnap } from '../../common/rank-movement'
-import { useIpodLists, entryColor, renameIpodList, useIpodListsRole } from '../ipodLists'
+import { useIpodLists, entryColor, renameIpodList, setIpodListHeadline, useIpodListsRole } from '../ipodLists'
 import { useTop1000Name, renameTop1000 } from '../top1000Name'
 import ListRenameField from '../components/ListRenameField'
-import { useIpodPlaylistCover } from '../utils/ipodCovers'
+import { useIpodPlaylistCover, useIpodPlaylistLook } from '../utils/ipodCovers'
+import { IpodAd } from '../components/IpodAd'
+import { useTop1000Headline, useTop1000Counts, setTop1000Headline } from '../top1000Headline'
+import { adCopy, adCounts, adHeadline, adLegal, checkHeadline, countArtists, HEADLINE_MAX } from '../../common/ipod-ad'
 import { usePeriodPlaylistCover } from '../utils/periodCovers'
 import { IpodColorPicker } from '../components/IpodColorPicker'
-import { chooseIpodPhoto, backToIpodDrawing, useHasIpodPhoto } from '../ipodPhotoCovers'
+import { chooseIpodPhoto, backToIpodDrawing, useIpodPhotoCover } from '../ipodPhotoCovers'
 import { photoKeyForPlaylist } from '../../common/ipod-photo-covers'
 import { parseIpodListPlaylistId } from '../../common/ipod-list-doc'
 import IpodProposalsPanel from '../components/IpodProposalsPanel'
@@ -177,10 +180,15 @@ export default function SmartPlaylistView() {
   const ipodListsRole = useIpodListsRole()
   const [renaming, setRenaming] = useState(false)
   const renamable = playlistId === 'top-1000' || ipodList !== null
-  useEffect(() => { setRenaming(false) }, [playlistId])
+  // Headline… (2026-11-14): the line at the top of an iPod's page (common/ipod-ad.ts).
+  const [editingHeadline, setEditingHeadline] = useState(false)
+  const top1000Headline = useTop1000Headline()
+  const top1000Counts = useTop1000Counts()
+  useEffect(() => { setRenaming(false); setEditingHeadline(false) }, [playlistId])
   // Photo covers (2026-11-09): the Top 1000 and every iPod list.
   const photoKey = photoKeyForPlaylist(playlistId)
-  const hasPhoto = useHasIpodPhoto(playlistId)
+  const ipodPhoto = useIpodPhotoCover(playlistId)
+  const hasPhoto = ipodPhoto !== null
   const title = playlistId === 'top-1000' ? top1000Name : playlistId ? TITLES[playlistId] || (monthYm ? monthPlaylistName(monthYm) : ipodList ? ipodList.name : playlistId) : ''
 
   // 4.2.18: per-persona weekly picks state. Both Music Man and Larry
@@ -745,6 +753,13 @@ export default function SmartPlaylistView() {
     if (idx < 0) return
     const el = songsBodyRef.current
     if (!el) return
+    // An iPod's page (2026-11-14): the ad and the bar are in this scroller above the rows, so the
+    // row's place is read off the page instead of worked out from its number.
+    if (el.classList.contains('songs-view--ipod-ad')) {
+      isAutoScrollAtRef.current = Date.now()
+      scrollListRowIntoView(el, idx)
+      return
+    }
     // V5 facelift: 18px rows (matches --row-height + SongsView's ROW_HEIGHT).
     const rowH = 18
     const rowTop = idx * rowH
@@ -1056,6 +1071,13 @@ export default function SmartPlaylistView() {
   const displayName = isPicksView && picks?.name ? picks.name : title
   // Top 1000 and every iPod list wear their own iPod (2026-11-09, utils/ipodCovers.ts).
   const ipodCover = useIpodPlaylistCover(playlistId)
+  // The ad's iPod and its numbers (2026-11-14): the whole list, whatever the search box holds.
+  // homemini's counts when it sends them (the phone's numbers), else this Mac's own.
+  const adLook = useIpodPlaylistLook(playlistId)
+  const adFacts = useMemo(() => ({
+    ...adCounts({ songs: smartTracks.length, artists: countArtists(smartTracks, canonicalArtist) }, playlistId === 'top-1000' ? top1000Counts : ipodList),
+    durationMs: smartTracks.reduce((sum, t) => sum + (t.duration || 0), 0),
+  }), [smartTracks, ipodList, top1000Counts, playlistId])
   // A month and the year wear the cover homemini drew (2026-11-13, utils/periodCovers.ts).
   const periodCover = usePeriodPlaylistCover(playlistId)
   const cover = ipodCover ?? periodCover ?? (playlistId ? smartPlaylistCover(playlistId as SmartPlaylistId) : null)
@@ -1064,29 +1086,71 @@ export default function SmartPlaylistView() {
     picksConfig?.kind === 'djhands' ? 'DJ Stephen Hands is picking tracks…' :
     'The Music Man is picking tracks…'
 
-  return (
-    <div className="playlist-view">
-      <div className="playlist-view-header">
+  // The iPod ad page (2026-11-14, common/ipod-ad.ts; Jake approved the mock: "Yeah that'll do").
+  // The Top 1000 and every iPod list open on the ad: it is the top of the song list's own
+  // scroller, so it scrolls away with the songs, and this header (as one bar), the panels and
+  // the column header pin under it. List view only: the grid and Cover Flow scroll themselves.
+  const adPage = playlistId === 'top-1000' || ipodListDevice !== null
+  const showAd = adPage && viewMode === 'list'
+  const adKnown = playlistId === 'top-1000' || ipodList !== null
+  const adEl = showAd ? (
+    <IpodAd
+      name={adKnown ? displayName : ''}
+      headline={adKnown ? adHeadline({ headline: playlistId === 'top-1000' ? top1000Headline : ipodList?.headline, name: displayName, top1000: playlistId === 'top-1000' }) : ''}
+      copy={adKnown ? adCopy(adFacts.songs, adFacts.artists) : ''}
+      legal={adKnown ? adLegal({
+        name: displayName,
+        model: adLook?.model,
+        color: adLook?.color,
+        songs: adFacts.songs,
+        cap: playlistId === 'top-1000' ? 1000 : ipodList?.cap,
+        durationMs: adFacts.durationMs,
+        lastSyncedAt: ipodList?.lastSyncedAt,
+        now: new Date(),
+      }) : ''}
+      look={adKnown ? adLook : null}
+      photo={ipodPhoto}
+    />
+  ) : null
+
+  const colorPickerEl = ipodColorAt && ipodList ? (
+    <IpodColorPicker
+      deviceId={ipodList.id}
+      ipodName={ipodList.name}
+      current={entryColor(ipodList)}
+      x={ipodColorAt.x}
+      y={ipodColorAt.y}
+      onClose={() => setIpodColorAt(null)}
+      onSaved={(line) => setNotice(line, { kind: 'info', durationMs: 5000 })}
+    />
+  ) : null
+
+  const headerEl = (
+      <div className={`playlist-view-header${showAd ? ' playlist-view-header--bar' : ''}`}>
         {/* The playlists homemini makes get their own art (Jake 2026-10-20:
             "something noticeable"); the rest keep the plain header. */}
-        {cover && (
+        {cover && !showAd && (
           <div className="playlist-view-cover playlist-view-cover--static">
             <img src={cover} alt="" className="playlist-view-cover-img" />
           </div>
         )}
-        {ipodColorAt && ipodList && (
-          <IpodColorPicker
-            deviceId={ipodList.id}
-            ipodName={ipodList.name}
-            current={entryColor(ipodList)}
-            x={ipodColorAt.x}
-            y={ipodColorAt.y}
-            onClose={() => setIpodColorAt(null)}
-            onSaved={(line) => setNotice(line, { kind: 'info', durationMs: 5000 })}
-          />
-        )}
         <div>
-          {renaming && renamable ? (
+          {editingHeadline && adPage ? (
+            <ListRenameField
+              variant="header"
+              label="Headline"
+              initial={(playlistId === 'top-1000' ? top1000Headline : ipodList?.headline) ?? ''}
+              others={[]}
+              check={(value) => { const c = checkHeadline(value); return c.ok ? { ok: true, name: c.headline ?? '' } : c }}
+              hint={`The line at the top of this page, up to ${HEADLINE_MAX} characters. Empty goes back to ${playlistId === 'top-1000' ? 'the usual line' : 'the name'}.`}
+              onSave={async (value) => {
+                const r = playlistId === 'top-1000' ? await setTop1000Headline(value) : await setIpodListHeadline(ipodList!.id, value)
+                if (r.ok && r.homemini === 'later') setNotice('Headline changed here. homemini and the phone get it when homemini has it.', { kind: 'info', durationMs: 5000 })
+                return r.ok ? { ok: true } : r
+              }}
+              onDone={() => setEditingHeadline(false)}
+            />
+          ) : renaming && renamable ? (
             <ListRenameField
               variant="header"
               initial={displayName}
@@ -1144,8 +1208,14 @@ export default function SmartPlaylistView() {
             </div>
           )}
           {/* Rename… (2026-11-09): the Top 1000's or an iPod list's name, on every screen. */}
-          {renamable && !renaming && (
+          {renamable && !renaming && !editingHeadline && (
             <div className="top25-window-switch">
+              {/* Headline… (2026-11-14): the line at the top of this iPod's page. */}
+              {(playlistId === 'top-1000' || ipodList) && (
+                <button className="top25-window-btn" onClick={() => setEditingHeadline(true)} title="Change the line at the top of this page">
+                  Headline…
+                </button>
+              )}
               <button className="top25-window-btn" onClick={() => setRenaming(true)} title="Rename this playlist">
                 Rename…
               </button>
@@ -1238,6 +1308,9 @@ export default function SmartPlaylistView() {
           )}
         </div>
       </div>
+  )
+  const panelsEl = (
+    <>
       {/* The brain's picks waiting for Jake's OK (2026-11-09) */}
       {ipodListDevice && <IpodProposalsPanel deviceId={ipodListDevice} ipodName={ipodList?.name ?? title} />}
       {/* An event cover proposed for this month, and "This month's cover is…" (2026-11-13) */}
@@ -1254,26 +1327,9 @@ export default function SmartPlaylistView() {
           </button>
         </div>
       )}
-      {/* Brief 026: wrap .songs-header + .songs-body in a .songs-view
-          flex column so the CSS that gives them a shared horizontal
-          scroll context applies here too. SongsView and PlaylistView
-          already had this wrapper; SmartPlaylistView was the outlier
-          rendering both as direct children of .playlist-view, which
-          left header column labels desynced from row cells under
-          horizontal scroll. Same { flex: 1, minHeight: 0 } sizing as
-          PlaylistView's existing wrapper at line 533. */}
-      {/* V5 facelift: Grid / Cover Flow modes swap only the table below
-          the smart-playlist header. */}
-      {viewMode === 'grid' ? (
-        <div style={{ flex: 1, minHeight: 0 }}>
-          <TrackGridView tracks={sortedTracks} emptyNoun="tracks" />
-        </div>
-      ) : viewMode === 'coverflow' ? (
-        <div style={{ flex: 1, minHeight: 0 }}>
-          <CoverFlowView tracks={sortedTracks} emptyNoun="tracks" stateKey={`smart:${playlistId ?? ''}`} />
-        </div>
-      ) : (
-      <div className="songs-view" style={{ flex: 1, minHeight: 0 }} ref={songsBodyRef} onScroll={handleScroll}>
+    </>
+  )
+  const columnsEl = (
       <div
         className="songs-header"
         style={{ gridTemplateColumns: gridTemplate }}
@@ -1298,6 +1354,35 @@ export default function SmartPlaylistView() {
           </div>
         ))}
       </div>
+  )
+
+  return (
+    <div className="playlist-view">
+      {colorPickerEl}
+      {!showAd && headerEl}
+      {!showAd && panelsEl}
+      {/* Brief 026: wrap .songs-header + .songs-body in a .songs-view
+          flex column so the CSS that gives them a shared horizontal
+          scroll context applies here too. SongsView and PlaylistView
+          already had this wrapper; SmartPlaylistView was the outlier
+          rendering both as direct children of .playlist-view, which
+          left header column labels desynced from row cells under
+          horizontal scroll. Same { flex: 1, minHeight: 0 } sizing as
+          PlaylistView's existing wrapper at line 533. */}
+      {/* V5 facelift: Grid / Cover Flow modes swap only the table below
+          the smart-playlist header. */}
+      {viewMode === 'grid' ? (
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <TrackGridView tracks={sortedTracks} emptyNoun="tracks" />
+        </div>
+      ) : viewMode === 'coverflow' ? (
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <CoverFlowView tracks={sortedTracks} emptyNoun="tracks" stateKey={`smart:${playlistId ?? ''}`} />
+        </div>
+      ) : (
+      <div className={`songs-view${showAd ? ' songs-view--ipod-ad' : ''}`} style={{ flex: 1, minHeight: 0 }} ref={songsBodyRef} onScroll={handleScroll}>
+      {showAd && adEl}
+      {showAd ? <div className="songs-pin">{headerEl}{panelsEl}{columnsEl}</div> : columnsEl}
       <div className="songs-body">
         {/* Fixed-px width anchor: owns .songs-view scrollWidth so rows
             (contain:inline-size) can't inflate past the header. */}

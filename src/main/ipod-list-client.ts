@@ -156,6 +156,27 @@ export function createIpodListClient(opts: IpodListClientOptions) {
       }
     },
 
+    /** "Headline…" (2026-11-14, common/ipod-ad.ts): PATCH homemini's list { headline }; null clears it.
+     *  'done' = homemini has it; 'drop' = it never will (404: no such list); 'retry' = not now.
+     *  A 400 is 'retry' too: a homemini older than the headline field answers 400 to the key, and
+     *  the headline should land once it updates (the rules are checked here before anything is sent). */
+    async setHeadline(deviceId: string, headline: string | null): Promise<'done' | 'retry' | 'drop'> {
+      try {
+        const res = await fetchImpl(`${base}/${encodeURIComponent(deviceId)}`, withCompanionInit({
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ headline }),
+          signal: AbortSignal.timeout(timeoutMs),
+        }) as Record<string, unknown>)
+        if (res.status === 200) return 'done'
+        warn(`[ipod-list] headline ${deviceId}: homemini answered ${res.status}`)
+        return res.status === 404 ? 'drop' : 'retry'
+      } catch (err) {
+        warn(`[ipod-list] headline ${deviceId} failed: ${(err as Error)?.message ?? err}`)
+        return 'retry'
+      }
+    },
+
     /** One drawn iPod cover from homemini (GET /api/playlist-cover/ipod/:model/:color).
      *  exact = homemini drew this very colour (X-Ipod-Cover: exact); otherwise it is the
      *  nearest named colour while the custom one is being drawn. null = no answer. */

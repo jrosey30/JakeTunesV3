@@ -1,0 +1,154 @@
+/* The iPod ad page (2026-11-14, components/IpodAd.tsx). Jake approved the
+   second mock: a white field, one iPod, one headline, one line, one small grey
+   line. The numbers are the mock's at its 1052px pane (headline 62px at 86%
+   width, text from 84px, the iPod 260x276 from 640px, the grey line 18px off
+   the floor); under that width they shrink with the pane, never with content. */
+
+.ipod-ad {
+  --ipod-ad-paper: #fff;
+  --ipod-ad-ink: #1d1d1f;
+  --ipod-ad-ink2: #58585d;
+  --ipod-ad-ink3: #96969b;
+  --ipod-ad-rim: rgba(0, 0, 0, 0.2);
+  --ipod-ad-floor: 1;
+  --ipod-ad-serif: "Hoefler Text", Georgia, serif;
+  flex: none;
+  height: 340px;
+  overflow: hidden;
+  background: var(--ipod-ad-paper);
+  color: var(--ipod-ad-ink);
+  font-family: var(--ipod-ad-serif);
+  container-type: inline-size;
+  /* The table under it scrolls sideways; the ad stays where it is. */
+  position: sticky;
+  left: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+/* Black, for a dark theme. The app has none yet, so nothing sets this but a
+   theme attribute the app doesn't write and the class. Nothing moves: the type
+   goes white and the floor shadow goes away. */
+.ipod-ad--dark,
+:root[data-theme="dark"] .ipod-ad {
+  --ipod-ad-paper: #000;
+  --ipod-ad-ink: #f5f5f7;
+  --ipod-ad-ink2: #a9a9af;
+  --ipod-ad-ink3: #6f6f76;
+  --ipod-ad-rim: rgba(255, 255, 255, 0.14);
+  --ipod-ad-floor: 0;
+}
+
+.ipod-ad-text {
+  position: absolute;
+  left: min(84px, 8cqw);
+  top: 86px;
+  /* 86% wide: the narrowed serif of the mock. The box is wider by the same
+     amount so the text still reaches where it should. */
+  width: calc((61cqw - min(84px, 8cqw) - 16px) / 0.86);
+  transform: scaleX(0.86);
+  transform-origin: 0 0;
+}
+
+.ipod-ad-headline {
+  margin: 0;
+  font-family: var(--ipod-ad-serif);
+  font-weight: 400;
+  font-size: calc(min(62px, 5.9cqw) * var(--ipod-ad-hl, 1));
+  line-height: 1.02;
+  letter-spacing: -0.012em;
+  color: var(--ipod-ad-ink);
+  /* Two lines of 62px, whatever the headline is: the copy under it never moves. */
+  height: calc(min(62px, 5.9cqw) * 2.04);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+.ipod-ad-headline-line { display: block; }
+
+.ipod-ad-copy {
+  margin: 22px 0 0;
+  font-size: 18px;
+  line-height: 1.36;
+  color: var(--ipod-ad-ink2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ipod-ad-pod {
+  position: absolute;
+  left: 61cqw;
+  top: 28px;
+  width: 260px;
+  height: 276px;
+}
+.ipod-ad--photo .ipod-ad-pod { top: 34px; height: 262px; }
+
+.ipod-drawing { display: block; height: 100%; width: auto; margin: 0 auto; }
+.ipod-drawing-rim { stroke: var(--ipod-ad-rim); stroke-width: 0.8; }
+.ipod-drawing-floor { opacity: var(--ipod-ad-floor); }
+
+.ipod-ad-photo { display: block; height: 100%; width: auto; margin: 0 auto; }
+/* A photo that isn't cut out is shown whole, square, as Jake gave it. */
+.ipod-ad-photo--whole { aspect-ratio: 1; object-fit: cover; }
+
+.ipod-ad-legal {
+  position: absolute;
+  left: min(84px, 8cqw);
+  bottom: 18px;
+  margin: 0;
+  font-size: 11px;
+  color: var(--ipod-ad-ink3);
+  white-space: nowrap;
+  transform: scaleX(0.9);
+  transform-origin: 0 100%;
+}
+
+/* ── The page under the ad ────────────────────────────────────────────────
+   The ad is the top of the list's own scroller, so it scrolls away with the
+   songs. The bar (name, count, Rename…, Play All), anything between it and
+   the table, and the column header stay: they pin to the top together. */
+
+.songs-view--ipod-ad { container-type: inline-size; }
+
+.songs-pin {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  flex: none;
+  width: max-content;
+  min-width: 100%;
+  background: var(--white, #fdfdfd);
+}
+/* Inside the pin the column header is already held; it only scrolls sideways with the rows. */
+.songs-pin > .songs-header { position: static; }
+/* The bar and what sits under it stay put when the table scrolls sideways. */
+.songs-pin > :not(.songs-header) {
+  position: sticky;
+  left: 0;
+  width: 100cqw;
+  box-sizing: border-box;
+}
+
+/* The bar: the page's own header on one line. The cover is the ad now. */
+.playlist-view-header.playlist-view-header--bar {
+  padding: 7px 12px 7px 14px;
+  gap: 10px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--white, #fdfdfd);
+}
+.playlist-view-header.playlist-view-header--bar > div:not(.playlist-view-actions) {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+.playlist-view-header--bar .playlist-view-name { font-size: 14px; line-height: 22px; letter-spacing: 0; }
+.playlist-view-header--bar .playlist-view-meta { margin-top: 0; }
+.playlist-view-header--bar .top25-window-switch { margin-top: 0; }
+.playlist-view-header--bar .playlist-view-meta + .top25-window-switch { margin-left: auto; }
+.playlist-view-header--bar .list-rename--header { flex: 0 1 340px; }
+.playlist-view-header--bar .list-rename-header-input { font-size: 13px; }
