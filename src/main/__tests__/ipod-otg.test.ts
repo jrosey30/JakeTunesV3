@@ -14,7 +14,7 @@
  */
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, writeFile, stat } from 'node:fs/promises'
+import { mkdtemp, mkdir, readdir, readFile, writeFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -22,7 +22,7 @@ import {
   type RoundTripHost,
 } from '../sync-engine/roundtrip.ts'
 import { securePlaysBeforeSync } from '../ipod-plays-archive.ts'
-import { OTG_PLAYLISTS_FILE, planOtgSave, readOtgPlaylists, saveOtgLists } from '../ipod-otg-playlists.ts'
+import { OTG_PLAYLISTS_FILE, otgListId, planOtgSave, readOtgPlaylists, readOtgPlaylistsRepairing, saveOtgLists, type OtgIo } from '../ipod-otg-playlists.ts'
 
 /** An OTGPlaylistInfo as the firmware writes it (libgpod / gnupod layout). */
 function otgFile(indexes: number[], o: { bigEndian?: boolean; headerLen?: number; entryLen?: number; unknown16?: number } = {}): Buffer {
@@ -81,29 +81,97 @@ describe('OTGPlaylistInfo format', () => {
 
 describe('saving On-The-Go lists', () => {
   const now = new Date('2026-11-13T15:00:00Z')
+  const L = (...ids: number[]) => ({ trackIds: ids })
+  const base = { ipodName: 'punkPod', deviceKey: 'punk', now }
+
   test('numbered up from the last one, named for the iPod, dated', () => {
-    const first = planOtgSave([], { snapshot: 'a'.repeat(40), lists: [[3, 1, 2], [9]], ipodName: 'punkPod', now })
+    const first = planOtgSave([], { ...base, snapshot: 'a'.repeat(40), lists: [L(3, 1, 2), L(9)] })
     assert.deepEqual(first.map((p) => [p.n, p.deviceName, p.name, p.trackIds]), [
       [1, 'On-The-Go 1', 'On-The-Go 1 — punkPod', [3, 1, 2]],
       [2, 'On-The-Go 2', 'On-The-Go 2 — punkPod', [9]],
     ])
     assert.equal(first[0].createdAt, '2026-11-13T15:00:00.000Z')
-    const next = planOtgSave(first, { snapshot: 'b'.repeat(40), lists: [[4, 4, 5]], ipodName: 'punkPod', now })
+    const next = planOtgSave(first, { ...base, snapshot: 'b'.repeat(40), lists: [L(4, 4, 5)] })
     assert.deepEqual(next.map((p) => p.deviceName), ['On-The-Go 3'])
     assert.deepEqual(next[0].trackIds, [4, 4, 5], 'his order and his repeats are kept')
   })
-  test('the same snapshot saved twice saves nothing new; an empty list is not a playlist', async () => {
+
+  test('one list is saved once: the same songs in the same order are the same list, whatever files they came in', () => {
+    // Review of PR 412: plug in, play a song, plug in again. The play log changed, so the
+    // snapshot changed, and the same list was saved as On-The-Go 1, 2 and 3.
+    const one = planOtgSave([], { ...base, snapshot: 'a'.repeat(40), lists: [L(11, 12, 13)] })
+    const two = planOtgSave(one, { ...base, snapshot: 'b'.repeat(40), lists: [L(11, 12, 13)] })
+    const three = planOtgSave(one, { ...base, snapshot: 'c'.repeat(40), lists: [L(11, 12, 13), L(11, 12, 13)] })
+    assert.deepEqual([one.length, two.length, three.length], [1, 0, 0])
+    assert.equal(planOtgSave(one, { ...base, snapshot: 'd'.repeat(40), lists: [L(13, 12, 11)] }).length, 1, 'another order is another list')
+    assert.equal(otgListId('punk', [11, 12, 13]), one[0].id)
+    assert.notEqual(otgListId('y2k', [11, 12, 13]), one[0].id, 'the same songs on another iPod are that iPod’s list')
+    assert.equal(/[a-d]{12}/.test(one[0].id), false, 'the id does not come from the snapshot')
+  })
+
+  test('saved twice saves nothing new; an empty list is not a playlist', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'otg-save-'))
-    const a = await saveOtgLists(dir, { snapshot: 'c'.repeat(40), lists: [[1, 2], []], ipodName: 'punkPod', now })
+    const a = await saveOtgLists(dir, { ...base, snapshot: 'c'.repeat(40), lists: [L(1, 2), L()] })
     assert.equal(a.length, 1)
-    assert.deepEqual(await saveOtgLists(dir, { snapshot: 'c'.repeat(40), lists: [[1, 2], []], ipodName: 'punkPod', now }), [])
+    assert.deepEqual(await saveOtgLists(dir, { ...base, snapshot: 'e'.repeat(40), lists: [L(1, 2), L()] }), [])
     assert.deepEqual((await readOtgPlaylists(dir)).map((p) => p.deviceName), ['On-The-Go 1'])
   })
-  test('a file that can’t be read is an error, never a fresh numbering', async () => {
+
+  test('the save is read back: a disk that keeps something else is an error, not a saved list', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'otg-back-'))
+    const files = new Map<string, string>()
+    const lying: OtgIo = {
+      readFile: async (p) => { if (!files.has(p)) throw Object.assign(new Error('nope'), { code: 'ENOENT' }); return files.get(p)! },
+      // The write "succeeds" and keeps a file without the list (a card or disk that drops writes).
+      writeFile: async (p) => { files.set(p, JSON.stringify({ version: 1, playlists: [] })) },
+      rename: async (a, b) => { files.set(b, files.get(a)!); files.delete(a) },
+    }
+    await assert.rejects(saveOtgLists(dir, { ...base, snapshot: 'f'.repeat(40), lists: [L(1, 2)] }, lying), /did not read back/)
+    const honest: OtgIo = { ...lying, writeFile: async (p, t) => { files.set(p, t) } }
+    assert.equal((await saveOtgLists(dir, { ...base, snapshot: 'f'.repeat(40), lists: [L(1, 2)] }, honest)).length, 1)
+  })
+
+  test('a damaged file: moved aside whole, a fresh one started, and the words say so', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'otg-bad-'))
     await writeFile(join(dir, OTG_PLAYLISTS_FILE), '{ not json')
-    await assert.rejects(saveOtgLists(dir, { snapshot: 'd'.repeat(40), lists: [[1]], ipodName: 'x', now }))
-    assert.equal(await readFile(join(dir, OTG_PLAYLISTS_FILE), 'utf-8'), '{ not json', 'the unreadable file is left alone')
+    const said: string[] = []
+    const r = await readOtgPlaylistsRepairing(dir, { now, warn: (m) => said.push(m) })
+    assert.deepEqual(r.playlists, [])
+    const aside = (await readdir(dir)).filter((f) => f.startsWith(`${OTG_PLAYLISTS_FILE}.corrupt-`))
+    assert.equal(aside.length, 1)
+    assert.equal(await readFile(join(dir, aside[0]), 'utf-8'), '{ not json', 'every byte of the bad file is kept')
+    assert.match(r.repaired!, /unreadable.*moved aside, whole, to .*corrupt-2026-11-13.*nothing in it was deleted/)
+    assert.equal(said.length, 1)
+    // And saving works again straight away.
+    assert.equal((await saveOtgLists(dir, { ...base, snapshot: 'd'.repeat(40), lists: [L(1)] })).length, 1)
+  })
+
+  test('one bad row: the readable lists are kept, the file as found is kept aside, numbering goes on', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'otg-row-'))
+    const good = planOtgSave([], { ...base, snapshot: 'a'.repeat(40), lists: [L(1, 2), L(3)] })
+    const found = JSON.stringify({ version: 1, playlists: [good[0], { id: 'otg-x', n: 'three', trackIds: 'oops' }, good[1]] })
+    await writeFile(join(dir, OTG_PLAYLISTS_FILE), found)
+    const r = await readOtgPlaylistsRepairing(dir, { now, warn: () => {} })
+    assert.deepEqual(r.playlists.map((p) => p.deviceName), ['On-The-Go 1', 'On-The-Go 2'])
+    assert.match(r.repaired!, /1 saved On-The-Go list\(s\) were unreadable.*the 2 list\(s\) that read were kept/)
+    const aside = (await readdir(dir)).find((f) => f.includes('.corrupt-'))!
+    assert.equal(await readFile(join(dir, aside), 'utf-8'), found, 'the unparsed row is still there, in the aside file')
+    assert.deepEqual((await readOtgPlaylistsRepairing(dir, { now })).repaired, null, 'the rewritten file is clean')
+    const next = await saveOtgLists(dir, { ...base, snapshot: 'b'.repeat(40), lists: [L(7)] })
+    assert.deepEqual(next.map((p) => p.deviceName), ['On-The-Go 3'])
+  })
+
+  test('a damaged file that can’t be moved aside stops, and says which file to move', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'otg-stuck-'))
+    const stuck: OtgIo = {
+      readFile: async () => '{ not json',
+      writeFile: async () => { throw new Error('must not write over it') },
+      rename: async () => { throw new Error('EPERM') },
+    }
+    await assert.rejects(
+      saveOtgLists(dir, { ...base, snapshot: 'd'.repeat(40), lists: [L(1)] }, stuck),
+      /ipod-otg-playlists\.json\) are damaged and couldn’t be moved aside \(EPERM\)\. Nothing was changed\. Move that file out of the folder and sync again/,
+    )
   })
 })
 
@@ -147,7 +215,7 @@ async function card(otg: Record<string, Buffer>) {
     isSyncInFlight: () => false,
     saveOtgLists: save,
   })
-  const real: RoundTripHost['saveOtgLists'] = async (snapshot, lists) => { await saveOtgLists(state, { snapshot, lists, ipodName: 'punkPod' }) }
+  const real: RoundTripHost['saveOtgLists'] = async (snapshot, lists) => { await saveOtgLists(state, { snapshot, lists, ipodName: 'punkPod', deviceKey: 'punk' }) }
   return { mount, itunes, state, host, real }
 }
 
@@ -188,5 +256,64 @@ describe('On-The-Go through the round trip', () => {
     const out = await ingestRoundTripSnapshot(await readRoundTripSnapshot(c.itunes), c.host(c.real))
     assert.equal(out.kind, 'nothing-new')
     assert.deepEqual((await readOtgPlaylists(c.state)).map((p) => p.trackIds), [[101, 202]])
+  })
+  test('plugged in twice with new plays in between: still one On-The-Go list', async () => {
+    const c = await card({ OTGPlaylistInfo: otgFile([2, 0, 1]) })
+    const plays = (n: number): Buffer => {
+      const b = Buffer.alloc(16 + 3 * 16); b.write('mhdp', 0, 'latin1'); b.writeUInt32LE(16, 4); b.writeUInt32LE(16, 8); b.writeUInt32LE(3, 12)
+      b.writeUInt32LE(n, 16); b.writeUInt32LE(3_900_000_000, 20)
+      return b
+    }
+    for (const n of [1, 2, 3]) {
+      await writeFile(join(c.itunes, 'Play Counts'), plays(n))   // a new play log = a new snapshot each time
+      const out = await ingestRoundTripSnapshot(await readRoundTripSnapshot(c.itunes), c.host(c.real))
+      assert.equal(out.kind, 'brought-home')
+    }
+    assert.deepEqual((await readOtgPlaylists(c.state)).map((p) => [p.deviceName, p.trackIds]), [['On-The-Go 1', [303, 101, 202]]])
+  })
+
+  test('every On-The-Go file on the iPod is read, not only the first four', async () => {
+    const files: Record<string, Buffer> = { OTGPlaylistInfo: otgFile([0]) }
+    for (let i = 1; i <= 5; i++) files[`OTGPlaylistInfo_${i}`] = otgFile(i % 2 ? [1, 0] : [2, 1, 0].slice(0, 1 + (i % 3)))
+    files.OTGPlaylistInfo_5 = otgFile([2, 2, 1])
+    const c = await card(files)
+    assert.equal((await readRoundTripSnapshot(c.itunes)).otg.length, 6)
+    await ingestRoundTripSnapshot(await readRoundTripSnapshot(c.itunes), c.host(c.real))
+    const saved = await readOtgPlaylists(c.state)
+    assert.ok(saved.some((p) => p.trackIds.join() === '303,303,202'), 'the sixth file’s list came home')
+  })
+
+  test('songs that can’t be matched: the rest of the list comes home, and it says how many', async () => {
+    const c = await card({ OTGPlaylistInfo: otgFile([2, 57, 0]) })   // 57 is past the end of a 3-song iPod
+    const said: string[] = []
+    const warn = console.warn
+    console.warn = (...a: unknown[]) => { said.push(a.join(' ')) }
+    try {
+      const out = await ingestRoundTripSnapshot(await readRoundTripSnapshot(c.itunes), c.host(c.real))
+      assert.equal(out.kind, 'brought-home')
+    } finally { console.warn = warn }
+    const [p] = await readOtgPlaylists(c.state)
+    assert.deepEqual([p.trackIds, p.onIpod], [[303, 101], 3])
+    assert.ok(said.some((l) => /On-The-Go list 1, song 2: not brought home — it points at song 58 of the iPod’s list, which has 3/.test(l)), said.join('\n'))
+    assert.ok(said.some((l) => /On-The-Go list 1: 2 of 3 songs came home/.test(l)))
+  })
+
+  test('a list with NO song that can be matched is never lost: nothing is recorded, the sync stops, the iPod keeps it', async () => {
+    const c = await card({ OTGPlaylistInfo: otgFile([40, 41]) })
+    const out = await ingestRoundTripSnapshot(await readRoundTripSnapshot(c.itunes), c.host(c.real))
+    assert.deepEqual([out.kind, (out as { list?: number }).list, (out as { songs?: number }).songs], ['otg-unmatched', 1, 2])
+    assert.equal(await readRoundTripState(c.state), null, 'not recorded as brought home')
+    assert.deepEqual(await readOtgPlaylists(c.state), [])
+    const gate = await securePlaysBeforeSync(c.mount, c.host(c.real), 'Activity Sync')
+    assert.equal(gate.ok, false)
+    assert.match((gate as { error: string }).error, /On-The-Go list 1 on it \(2 songs\) can’t be brought home.*the list was left on the iPod/)
+    assert.equal(await exists(join(c.itunes, 'OTGPlaylistInfo')), true, 'still on the iPod')
+  })
+
+  test('one good list and one unmatched list: the sync still stops, so the unmatched one isn’t erased', async () => {
+    const c = await card({ OTGPlaylistInfo: otgFile([0, 1]), OTGPlaylistInfo_1: otgFile([99]) })
+    const out = await ingestRoundTripSnapshot(await readRoundTripSnapshot(c.itunes), c.host(c.real))
+    assert.equal(out.kind, 'otg-unmatched')
+    assert.equal((await securePlaysBeforeSync(c.mount, c.host(c.real), 'Activity Sync')).ok, false)
   })
 })

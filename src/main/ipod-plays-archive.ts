@@ -227,6 +227,9 @@ export function securePlaysRefusal(outcome: RoundTripOutcome | null, archiveDir:
   if (outcome.kind === 'cannot-map') {
     return `JakeTunes stopped before touching the iPod: it holds ${outcome.plays || 'some'} play${outcome.plays === 1 ? '' : 's'} that can’t be brought home, because ${outcome.reason}.${kept}`
   }
+  if (outcome.kind === 'otg-unmatched') {
+    return `JakeTunes stopped before touching the iPod: On-The-Go list ${outcome.list} on it (${outcome.songs} song${outcome.songs === 1 ? '' : 's'}) can’t be brought home, because ${outcome.reason}. A sync would erase it, so the list was left on the iPod.${kept} Tell Claude; once the list is matched, or you say it can go, the sync will run.`
+  }
   if (outcome.kind === 'failed') return `JakeTunes stopped before touching the iPod: bringing its plays home failed (${outcome.reason}).${kept}`
   return `JakeTunes stopped before touching the iPod: it couldn’t confirm the iPod’s plays were recorded${why ? ` (${why})` : ''}.${kept}`
 }

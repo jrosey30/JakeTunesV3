@@ -124,6 +124,8 @@ import { registerSyncIpc, type SyncConvertOptions } from './ipc/sync-ipc.ts'
 import { createSyncEngine, type VerifyTrackInput, type VerifyTrackUpdate } from './sync-engine/index.ts'
 import { createDevicePlaylists } from './ipod-device-playlists-run.ts'
 import { saveOtgLists } from './ipod-otg-playlists.ts'
+import { deviceKeyOf } from '../common/ipod-device-playlists.ts'
+import type { IpodDeviceMarker } from '../common/ipod-identity.ts'
 import { ingestIpodRoundTrip, type RoundTripHost } from './sync-engine/roundtrip.ts'
 import { identifyIpod, resolveIpodState } from './ipod-identity.ts'
 import { manifestForCatalog, securePlaysBeforeSync } from './ipod-plays-archive.ts'
@@ -1160,14 +1162,14 @@ registerLibraryIpc(ipc, {
   purgeLibraryOrphans: () => purgeLibraryOrphans(),
 })
 // The plays round trip for one iPod's state dir — plug-in and the pre-sync gate share it.
-function roundTripHostFor(stateDir: string, ipodName?: string): RoundTripHost {
+function roundTripHostFor(stateDir: string, ipod?: IpodDeviceMarker | null): RoundTripHost {
   return {
     stateDir,
     // On-The-Go lists made on the iPod become real playlists, saved in this iPod's
     // state dir before the plays are marked brought home (ipod-otg-playlists.ts).
     saveOtgLists: async (snapshot, lists) => {
-      const saved = await saveOtgLists(stateDir, { snapshot, lists, ipodName: ipodName || 'iPod' })
-      if (saved.length) console.warn(`[roundtrip] saved ${saved.map((p) => `${p.name} (${p.trackIds.length} songs)`).join(', ')}`)
+      const saved = await saveOtgLists(stateDir, { snapshot, lists, ipodName: ipod?.name || 'iPod', deviceKey: deviceKeyOf(ipod) })
+      if (saved.length) console.warn(`[roundtrip] saved ${saved.map((p) => `${p.name} (${p.trackIds.length}${p.onIpod ? ` of ${p.onIpod}` : ''} songs)`).join(', ')}`)
     },
     getLibraryTracks: async () =>
       (((await libraryCache.get()) as { tracks?: Array<{ id: number; playCount?: number; lastPlayedAt?: number }> }).tracks) || [],
@@ -1190,7 +1192,7 @@ async function roundTripOnMount(mount: string): Promise<void> {
     ipod = await resolveIpodState(mount, STATE_DIR)
   }
   if (ipod.refusal) return void console.warn(`[roundtrip] plug-in: skipped: ${ipod.refusal}`)
-  await ingestIpodRoundTrip(mount, roundTripHostFor(ipod.stateDir, ipod.device?.name))
+  await ingestIpodRoundTrip(mount, roundTripHostFor(ipod.stateDir, ipod.device))
 }
 registerIpodIpc(ipc, {
   getMount: () => ({ mount: detectedIpodMount, volume: detectedIpodVolume, missStreak: ipodMissStreak }),
@@ -4824,7 +4826,7 @@ function scheduleDbRebuild(deletedPaths: string[]) {
     const ipod = await resolveIpodState(detectedIpodMount, STATE_DIR)
     if (ipod.refusal) return console.log(`[delete-sync] skipped — ${ipod.refusal}`)
     // This rewrites the card's iTunesDB: plays first, same gate as every sync.
-    const plays = await securePlaysBeforeSync(detectedIpodMount, roundTripHostFor(ipod.stateDir, ipod.device?.name), 'delete mirror')
+    const plays = await securePlaysBeforeSync(detectedIpodMount, roundTripHostFor(ipod.stateDir, ipod.device), 'delete mirror')
     if (!plays.ok) return console.warn(`[delete-sync] skipped — ${plays.error}`)
     try {
       const ipodMount = detectedIpodMount

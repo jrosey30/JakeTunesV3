@@ -17,17 +17,18 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  BPM_RANGES, DECADE_MIN, SET_PLAYLIST_ID, bpmPlaylists, bpmRangeIndex, builtinDefaultNames, decadeName,
-  decadePlaylists, devicePlaylistSet, verifiedBpmFrom, type DevicePlaylist, type DeviceTrack,
+  BPM_RANGES, DECADE_MIN, NEARLY_ALL, SET_PLAYLIST_ID, bpmPlaylists, bpmRangeIndex, builtinDefaultNames, decadeName,
+  decadePlaylists, devicePlaylistSet, deviceKeyOf, playlistRuleApplies, verifiedBpmFrom, type DevicePlaylist, type DeviceTrack,
 } from '../../common/ipod-device-playlists.ts'
 import { compareIpodArtistNames } from '../ipod-artist-sort.ts'
 import { compareNames } from '../../renderer/utils/artistSort.ts'
 import { conformCatalogIdOrder } from '../ipod-catalog-order.ts'
-import { createDevicePlaylists, parseAssigned, ASSIGNED_CACHE_FILE, BPM_CACHE_FILE } from '../ipod-device-playlists-run.ts'
+import { applyDevicePlaylists, createDevicePlaylists, parseAssigned, ASSIGNED_CACHE_FILE, BPM_CACHE_FILE } from '../ipod-device-playlists-run.ts'
+import { LAST_SYNC_PLAYLISTS_FILE, PLAYLIST_RULE_FILE, describePlaylistPlan, onlyOwnPlaylists, readLastSyncPlaylists } from '../ipod-playlist-rule.ts'
 import { saveOtgLists, OTG_PLAYLISTS_FILE } from '../ipod-otg-playlists.ts'
 
 const ROOT = join(import.meta.dirname, '..', '..', '..')
@@ -35,16 +36,20 @@ const range = (n: number, from = 1): number[] => Array.from({ length: n }, (_, i
 const songs = (ids: number[], year: number): DeviceTrack[] => ids.map((id) => ({ id, year }))
 const names = (ps: DevicePlaylist[]): string[] => ps.map((p) => p.name)
 const set = (over: Partial<Parameters<typeof devicePlaylistSet>[0]> & { tracks: DeviceTrack[] }) =>
-  devicePlaylistSet({ passed: [], year: 2026, verifiedBpm: new Map(), onTheGo: [], assigned: [], compareNames: compareIpodArtistNames, ...over })
+  devicePlaylistSet({ passed: [], year: 2026, onlyOwn: true, verifiedBpm: new Map(), onTheGo: [], assigned: [], compareNames: compareIpodArtistNames, ...over })
 
 describe('decade lists', () => {
   test('named the way an iPod named them', () => {
     assert.deepEqual([1960, 1990, 2000, 2010, 2020].map(decadeName), ["60's Music", "90's Music", "00's Music", "10's Music", "20's Music"])
   })
   test('a decade needs 10 songs; 9 is not a list', () => {
-    const t = [...songs(range(DECADE_MIN - 1), 1985), ...songs(range(DECADE_MIN, 100), 1994), ...songs([900, 901], 0)]
+    assert.equal(DECADE_MIN, 10)
+    assert.equal(NEARLY_ALL, 0.9)
+    const t = [...songs(range(9), 1985), ...songs(range(10, 100), 1994), ...songs([900, 901], 0)]
     assert.deepEqual(names(decadePlaylists(t)), ["90's Music"])
-    assert.deepEqual(decadePlaylists(t)[0].trackIds, range(DECADE_MIN, 100))
+    assert.deepEqual(decadePlaylists(t)[0].trackIds, range(10, 100))
+    // The floor holds in the set an iPod actually gets, too.
+    assert.deepEqual(names(set({ tracks: [...songs(range(9), 1985), ...songs(range(10, 100), 1994), ...songs(range(10, 200), 2004)] }).playlists), ["90's Music", "00's Music"])
   })
   test('oldest decade first; a missing or silly year is in no decade', () => {
     const t = [...songs(range(10, 1), 2003), ...songs(range(10, 20), 1979), { id: 99, year: 'n/a' }, { id: 98, year: 3 }]
@@ -90,8 +95,9 @@ describe('what one iPod gets', () => {
 
   test('the library’s own playlists are not written; the log is told which', () => {
     const r = set({ tracks, passed })
-    assert.deepEqual(r.dropped, ['Office Musick', 'Justification II', 'Best of 2019'])
-    for (const n of r.dropped) assert.equal(names(r.playlists).includes(n), false)
+    assert.deepEqual(r.removed, ['Office Musick', 'Justification II', 'Best of 2019'])
+    assert.deepEqual(r.wouldRemove, [])
+    for (const n of r.removed) assert.equal(names(r.playlists).includes(n), false)
   })
   test('defaults in one fixed order; empty and nearly-the-whole-iPod ones are left off', () => {
     const r = set({ tracks, passed, verifiedBpm: new Map([[1, 100], [2, 140]]) })
@@ -138,9 +144,128 @@ describe('order: defaults, On-The-Go, then the rest A to Z', () => {
     const r = set({ tracks: songs(range(10), 1990), assigned: [{ id: 'mine', name: 'Mine', trackIds: [9, 1, 9, 77, 3, ...range(10)] }] })
     assert.deepEqual(r.playlists.map((p) => [p.name, p.trackIds]), [['Mine', [9, 1, 3, 2, 4, 5, 6, 7, 8, 10]]])
   })
+  test('an assigned or On-The-Go playlist with none of its songs on this iPod is never written', () => {
+    const r = set({
+      tracks: songs(range(20), 1990),
+      onTheGo: [{ id: 'otg-x', name: 'On-The-Go 1', trackIds: [500, 501] }, { id: 'otg-y', name: 'On-The-Go 2', trackIds: [] }],
+      assigned: [{ id: 'a', name: 'Empty', trackIds: [] }, { id: 'b', name: 'Elsewhere', trackIds: [900] }, { id: 'c', name: 'Here', trackIds: [900, 3] }],
+    })
+    assert.deepEqual(r.playlists.map((p) => [p.name, p.trackIds]), [['Here', [3]]])
+    assert.deepEqual(r.added, ['Here'])
+  })
   test('two playlists can’t share a name on the iPod; the first one stands', () => {
     const r = set({ tracks: songs(range(20), 1990), passed: [{ id: 's', name: 'Starred', trackIds: [1] }], assigned: [{ id: 'x', name: 'starred', trackIds: [2] }] })
     assert.deepEqual(names(r.playlists), ['Starred'])
+  })
+})
+
+// ── the switch: nothing leaves an iPod until Jake says so for that iPod ──
+
+describe('the per-iPod switch (off until Jake says yes)', () => {
+  const tracks = [...songs(range(30), 1994), ...songs(range(30, 31), 2004)]
+  const passed = [
+    { id: SET_PLAYLIST_ID, name: 'punkPod', trackIds: range(60) },
+    { id: 'smart-ra', name: 'Recently Added', trackIds: range(58) },          // 97% of the iPod: today it is written anyway
+    { id: 'pl-1', name: 'Office Musick', trackIds: [1, 2, 3, 9000] },
+    { id: 'pl-2', name: '90’s Music', trackIds: [4] },                        // his old imported list, curly quote
+    { id: 'smart-starred', name: 'Starred', trackIds: [] },
+    { id: 'pl-3', name: 'Justification II', trackIds: [5] },
+  ]
+  const extra = {
+    verifiedBpm: new Map([[1, 100]]),
+    onTheGo: [{ id: 'otg-1', name: 'On-The-Go 1', trackIds: [2, 1] }],
+    assigned: [{ id: 'j', name: 'Skate Night', trackIds: [7] }],
+  }
+
+  test('OFF: every playlist written before is still written, untouched and in the same order; the new ones follow', () => {
+    const r = set({ tracks, passed, onlyOwn: false, ...extra })
+    assert.deepEqual(r.playlists.slice(0, passed.length).map((p) => [p.name, p.trackIds]), passed.map((p) => [p.name, p.trackIds]))
+    assert.deepEqual(names(r.playlists).slice(passed.length), ["00's Music", 'BPM 090-109', 'On-The-Go 1', 'Skate Night'])
+    assert.deepEqual(r.added, ["00's Music", 'BPM 090-109', 'On-The-Go 1', 'Skate Night'])
+    assert.deepEqual(r.removed, [], 'nothing is removed while the switch is off')
+    assert.deepEqual(r.wouldRemove, ['Office Musick', '90’s Music', 'Justification II'], 'and it says exactly what switching it on would remove')
+    // His old "90’s Music" and the new "90's Music" are one name on the iPod: his stands, no second one appears.
+    assert.equal(names(r.playlists).filter((n) => n.replace('’', "'") === "90's Music").length, 1)
+  })
+  test('ON: only this iPod’s own; the same call says what was removed', () => {
+    const r = set({ tracks, passed, onlyOwn: true, ...extra })
+    assert.deepEqual(names(r.playlists), ['punkPod', "90's Music", "00's Music", 'BPM 090-109', 'On-The-Go 1', 'Skate Night'])
+    assert.deepEqual(r.removed, ['Office Musick', '90’s Music', 'Justification II'])
+    assert.deepEqual(r.wouldRemove, [])
+  })
+  test('the switch is a file in that iPod’s folder: missing, unreadable or anything but true is OFF', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ipod-rule-'))
+    assert.equal(await onlyOwnPlaylists(dir), false)
+    for (const text of ['', '{ torn', 'true', '{}', '{"onlyOwnPlaylists":"true"}', '{"onlyOwnPlaylists":1}', '{"onlyOwnPlaylists":false}', '{"onlyOwn":true}']) {
+      writeFileSync(join(dir, PLAYLIST_RULE_FILE), text)
+      assert.equal(await onlyOwnPlaylists(dir), false, text)
+    }
+    writeFileSync(join(dir, PLAYLIST_RULE_FILE), JSON.stringify({ onlyOwnPlaylists: true, approvedAt: '2026-11-14', note: 'Jake, in chat' }))
+    assert.equal(await onlyOwnPlaylists(dir), true)
+    assert.equal(await onlyOwnPlaylists(mkdtempSync(join(tmpdir(), 'ipod-rule-other-'))), false, 'one iPod’s yes is not another’s')
+  })
+  test('nothing in the app writes the switch: it is flipped by hand, on Jake’s word', () => {
+    const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+      e.isDirectory() ? (e.name === '__tests__' || e.name === 'node_modules' ? [] : walk(join(dir, e.name))) : /\.(ts|tsx|py|mjs)$/.test(e.name) ? [join(dir, e.name)] : [])
+    const mentions = [...walk(join(ROOT, 'src')), ...walk(join(ROOT, 'scripts')), ...walk(join(ROOT, 'core'))]
+      .filter((f) => /PLAYLIST_RULE_FILE|ipod-playlists-rule\.json/.test(readFileSync(f, 'utf-8')))
+      .map((f) => f.slice(ROOT.length + 1))
+    assert.deepEqual(mentions, ['src/main/ipod-playlist-rule.ts'], 'only the reader knows the file')
+    const rule = readFileSync(join(ROOT, 'src/main/ipod-playlist-rule.ts'), 'utf-8')
+    const uses = [...rule.matchAll(/PLAYLIST_RULE_FILE/g)].length
+    assert.equal(uses, 2, 'the name is defined once and used once: by the reader')
+    assert.match(rule, /readFile\(join\(stateDir, PLAYLIST_RULE_FILE\)/)
+  })
+  test('the log line says what is written, what is new, and what is or would be left off', () => {
+    const off = set({ tracks, passed, onlyOwn: false, ...extra })
+    const line = describePlaylistPlan('punkPod', { ...off, onlyOwnPlaylists: false, notes: ['homemini didn’t answer.'] })
+    assert.match(line, /punkPod gets 10 playlist\(s\): punkPod \(60\), Recently Added \(58\)/)
+    assert.match(line, /New on this iPod's rule: 00's Music, BPM 090-109, On-The-Go 1, Skate Night\./)
+    assert.match(line, /is OFF for this iPod, so the library's playlists are still written\. Switching it on would leave off: Office Musick, 90’s Music, Justification II\./)
+    assert.match(line, /homemini didn’t answer\.$/)
+    const on = set({ tracks, passed, onlyOwn: true, ...extra })
+    assert.match(describePlaylistPlan('punkPod', { ...on, onlyOwnPlaylists: true, notes: [] }), /is ON for this iPod\. Left off: Office Musick, 90’s Music, Justification II\./)
+  })
+})
+
+describe('which syncs the rule is for, and what a failure does', () => {
+  const device = { id: 'dev-1', name: 'punkPod', primary: false }
+  const passed = [{ id: 'lib', name: 'Bops', trackIds: [1] }]
+  const never = async (): Promise<never> => { throw new Error('must not be asked') }
+  const base = { device, passed, tracks: [{ id: 1 }], stateDir: '/nowhere', deviceKey: 'dev-1' }
+
+  test('only the one Sync button', () => {
+    assert.equal(playlistRuleApplies('activity-click'), true)
+    for (const o of ['full-library-click', 'auto', '', undefined, null, 'activity', true]) assert.equal(playlistRuleApplies(o), false, String(o))
+  })
+  test('any other sync gets back exactly what it handed in, and nothing is asked', async () => {
+    for (const origin of ['full-library-click', undefined, 'auto']) {
+      const r = await applyDevicePlaylists({ ...base, origin, forSync: never })
+      assert.deepEqual(r, { ok: true, playlists: passed, applied: false })
+      assert.equal((r as { playlists: unknown }).playlists, passed, 'the very same array')
+    }
+    const unknown = await applyDevicePlaylists({ ...base, device: null, origin: 'activity-click', forSync: never })
+    assert.deepEqual(unknown, { ok: true, playlists: passed, applied: false })
+  })
+  test('a failure putting the playlists together STOPS the sync: ok false, in plain words', async () => {
+    const r = await applyDevicePlaylists({ ...base, origin: 'activity-click', forSync: async () => { throw new Error('the saved lists are damaged') }, log: () => {} })
+    assert.deepEqual(r, { ok: false, error: 'This iPod’s playlists couldn’t be put together (the saved lists are damaged). Nothing on the iPod was changed.' })
+  })
+  test('the engine stops on that answer before it runs the sync, and asks through this one call', () => {
+    const engine = readFileSync(join(ROOT, 'src/main/sync-engine/index.ts'), 'utf-8')
+    const call = engine.indexOf('const own = await applyDevicePlaylists({')
+    const stop = engine.indexOf('if (!own.ok) {', call)
+    const refuse = engine.indexOf('return { ok: false, copied: 0, error: own.error }', stop)
+    const run = engine.indexOf('return runActivitySync({', call)
+    const gate = engine.indexOf('securePlaysBeforeSync(gateMount')
+    assert.ok(gate > 0 && gate < call && call < stop && stop < refuse && refuse < run, 'plays gate → playlists → stop on failure → the sync')
+    assert.match(engine.slice(call, stop), /origin: syncOpts\?\.origin,/)
+    assert.equal([...engine.matchAll(/host\.devicePlaylists/g)].length, 1, 'the engine never asks for the set any other way')
+    assert.equal([...engine.matchAll(/devicePlaylistSet|forSync\(/g)].length, 0)
+  })
+  test('the Original’s playlists are kept under top1000, any other iPod’s under its id', () => {
+    assert.equal(deviceKeyOf({ id: 'abc', primary: true }), 'top1000')
+    assert.equal(deviceKeyOf({ id: 'abc', primary: false }), 'abc')
   })
 })
 
@@ -150,46 +275,88 @@ describe('gathering an iPod’s playlists for a sync', () => {
   const tracks = range(30).map((id) => ({ id, year: id <= 15 ? 1994 : 2004 }))
   const passed = [{ id: SET_PLAYLIST_ID, name: 'punkPod', trackIds: range(30) }, { id: 'lib', name: 'Bops', trackIds: [1] }]
   const reply = (status: number, body: unknown) => ({ ok: status === 200, status, json: async () => body })
+  const on = (dir: string): void => writeFileSync(join(dir, PLAYLIST_RULE_FILE), JSON.stringify({ onlyOwnPlaylists: true }))
+  const ask = (dir: string) => ({ passed, tracks, stateDir: dir, deviceKey: 'dev-1', ipodName: 'punkPod' })
+  const offline = { baseUrl: 'http://hub', warn: () => {}, fetchImpl: async () => { throw new Error('offline') } }
+  const home = (assigned: unknown[]) => ({
+    baseUrl: 'http://hub', warn: () => {},
+    fetchImpl: async (url: string, init?: Record<string, unknown>) => {
+      if (url.includes('/api/bpm-key')) return reply(200, { tracks: { '1': { bpm: 100, bpmStatus: 'verified' }, '2': { bpm: 180, bpmStatus: 'unverified' } } })
+      if ((init as { method?: string })?.method === 'PUT') return reply(200, { ok: true })
+      return reply(200, { playlists: assigned })
+    },
+  })
+  const SKATE = { id: 'jake-1', name: 'Skate Night', source: 'jake', trackIds: [9, 8, 400] }
 
-  test('homemini answering: BPM lists, his playlists, On-The-Go; On-The-Go is sent up once', async () => {
+  test('switch off (the default): the library’s playlists stay, the new ones are added, and the record says what switching on would remove', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ipod-pl-'))
-    await saveOtgLists(dir, { snapshot: 'a'.repeat(40), lists: [[3, 2]], ipodName: 'punkPod' })
+    const r = await createDevicePlaylists(home([SKATE])).forSync(ask(dir))
+    assert.deepEqual(names(r.playlists), ['punkPod', 'Bops', "90's Music", "00's Music", 'BPM 090-109', 'Skate Night'])
+    assert.deepEqual([r.onlyOwnPlaylists, r.removed, r.wouldRemove], [false, [], ['Bops']])
+    const rec = await readLastSyncPlaylists(dir)
+    assert.deepEqual([rec?.ipod, rec?.onlyOwnPlaylists, rec?.wouldRemove, rec?.added], ['punkPod', false, ['Bops'], ["90's Music", "00's Music", 'BPM 090-109', 'Skate Night']])
+  })
+  test('switch on: BPM lists, his playlists, On-The-Go; On-The-Go is sent up once', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ipod-pl-'))
+    on(dir)
+    await saveOtgLists(dir, { snapshot: 'a'.repeat(40), lists: [{ trackIds: [3, 2] }], ipodName: 'punkPod', deviceKey: 'dev-1' })
     const calls: string[] = []
-    const run = createDevicePlaylists({
-      baseUrl: 'http://hub', warn: () => {},
-      fetchImpl: async (url, init) => {
-        calls.push(`${String((init as { method?: string }).method)} ${url.replace('http://hub', '')}`)
-        if (url.includes('/api/bpm-key')) return reply(200, { tracks: { '1': { bpm: 100, bpmStatus: 'verified' }, '2': { bpm: 180, bpmStatus: 'unverified' } } })
-        if ((init as { method?: string }).method === 'PUT') return reply(200, { ok: true })
-        return reply(200, { playlists: [{ id: 'jake-1', name: 'Skate Night', source: 'jake', trackIds: [9, 8, 400] }] })
-      },
-    })
-    const r = await run.forSync({ passed, tracks, stateDir: dir, deviceKey: 'dev-1' })
+    const h = home([SKATE])
+    const run = createDevicePlaylists({ ...h, fetchImpl: async (url, init) => { calls.push(`${String((init as { method?: string }).method)} ${url.replace('http://hub', '')}`); return h.fetchImpl(url, init) } })
+    const r = await run.forSync(ask(dir))
     assert.deepEqual(r.playlists.map((p) => [p.name, p.trackIds.length]), [
       ['punkPod', 30], ["90's Music", 15], ["00's Music", 15], ['BPM 090-109', 1], ['On-The-Go 1', 2], ['Skate Night', 2],
     ])
-    assert.deepEqual(r.dropped, ['Bops'])
-    assert.ok(calls.some((c) => c.startsWith('PUT /api/ipod-playlists/dev-1/otg-aaaaaaaaaaaa-1')))
-    assert.ok(existsSync(join(dir, BPM_CACHE_FILE)) && existsSync(join(dir, ASSIGNED_CACHE_FILE)))
+    assert.deepEqual(r.removed, ['Bops'])
+    assert.ok(calls.some((c) => /^PUT \/api\/ipod-playlists\/dev-1\/otg-[0-9a-f]{16}$/.test(c)), calls.join('\n'))
+    assert.ok(existsSync(join(dir, BPM_CACHE_FILE)) && existsSync(join(dir, ASSIGNED_CACHE_FILE)) && existsSync(join(dir, LAST_SYNC_PLAYLISTS_FILE)))
   })
-  test('homemini away: the copies kept from last time are used', async () => {
+  test('homemini away: the copies kept from last time are used, and it says so', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ipod-pl-'))
+    on(dir)
     writeFileSync(join(dir, BPM_CACHE_FILE), JSON.stringify({ bpm: { '4': 150 } }))
     writeFileSync(join(dir, ASSIGNED_CACHE_FILE), JSON.stringify({ playlists: [{ id: 'jake-1', name: 'Skate Night', trackIds: [9] }] }))
-    const run = createDevicePlaylists({ baseUrl: 'http://hub', warn: () => {}, fetchImpl: async () => { throw new Error('offline') } })
-    const r = await run.forSync({ passed, tracks, stateDir: dir, deviceKey: 'dev-1' })
+    const r = await createDevicePlaylists(offline).forSync(ask(dir))
     assert.deepEqual(names(r.playlists), ['punkPod', "90's Music", "00's Music", 'BPM 150-169', 'Skate Night'])
+    assert.equal(r.notes.length, 2)
+    assert.match(r.notes.join(' '), /the copy kept from last time was used/)
   })
-  test('an older homemini (no such route) and nothing kept: defaults only, no error', async () => {
+  test('unknown is not empty: away with NO kept copy, the playlists the last sync wrote stay on the iPod', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ipod-pl-'))
-    const run = createDevicePlaylists({ baseUrl: 'http://hub', warn: () => {}, fetchImpl: async () => reply(404, null) })
-    assert.deepEqual(names((await run.forSync({ passed, tracks, stateDir: dir, deviceKey: 'dev-1' })).playlists), ['punkPod', "90's Music", "00's Music"])
+    on(dir)
+    const first = await createDevicePlaylists(home([SKATE, { id: 'jake-2', name: 'Apple Pie', source: 'jake', trackIds: [5] }])).forSync(ask(dir))
+    const wrote = names(first.playlists)
+    assert.deepEqual(wrote, ['punkPod', "90's Music", "00's Music", 'BPM 090-109', 'Apple Pie', 'Skate Night'])
+    // The kept copies are gone (a cleared cache, a failed write) and homemini can't be reached.
+    for (const f of [BPM_CACHE_FILE, ASSIGNED_CACHE_FILE]) writeFileSync(join(dir, f), 'gone')
+    const away = await createDevicePlaylists(offline).forSync(ask(dir))
+    assert.deepEqual(names(away.playlists), wrote, 'nothing came off the iPod because a list couldn’t be read')
+    assert.match(away.notes.join(' '), /so the 2 assigned playlist\(s\) the last sync wrote are written again/)
+    assert.match(away.notes.join(' '), /so the 1 BPM playlist\(s\) the last sync wrote are written again/)
+    // And a third sync, still away, still holds them (the record is rewritten from what was written).
+    assert.deepEqual(names((await createDevicePlaylists(offline).forSync(ask(dir))).playlists), wrote)
   })
-  test('an On-The-Go file that can’t be read stops the sync', async () => {
+  test('an empty answer from homemini IS empty: a playlist Jake deleted comes off', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ipod-pl-'))
+    on(dir)
+    await createDevicePlaylists(home([SKATE])).forSync(ask(dir))
+    const r = await createDevicePlaylists(home([])).forSync(ask(dir))
+    assert.equal(names(r.playlists).includes('Skate Night'), false)
+  })
+  test('an iPod that never had any, and homemini without the route: defaults only, and it says none were written', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ipod-pl-'))
+    on(dir)
+    const r = await createDevicePlaylists({ baseUrl: 'http://hub', warn: () => {}, fetchImpl: async () => reply(404, null) }).forSync(ask(dir))
+    assert.deepEqual(names(r.playlists), ['punkPod', "90's Music", "00's Music"])
+    assert.match(r.notes.join(' '), /homemini answered 404 for this iPod’s playlists, and this Mac has no record of any from an earlier sync, so none are written this time/)
+  })
+  test('damaged saved On-The-Go lists: moved aside, the sync goes on, the record says where the file went', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ipod-pl-'))
     writeFileSync(join(dir, OTG_PLAYLISTS_FILE), 'not json')
-    const run = createDevicePlaylists({ baseUrl: 'http://hub', warn: () => {}, fetchImpl: async () => reply(404, null) })
-    await assert.rejects(run.forSync({ passed, tracks, stateDir: dir, deviceKey: 'dev-1' }))
+    const r = await createDevicePlaylists({ baseUrl: 'http://hub', warn: () => {}, fetchImpl: async () => reply(404, null) }).forSync(ask(dir))
+    assert.match(r.notes[0], /unreadable\. It was moved aside, whole, to .*\.corrupt-/)
+    assert.equal(readdirSync(dir).filter((f) => f.includes('.corrupt-')).length, 1)
+    assert.match((await readLastSyncPlaylists(dir))!.notes[0], /moved aside/)
   })
   test('a body that isn’t playlists is not playlists', () => {
     assert.equal(parseAssigned({ nope: 1 }), null)

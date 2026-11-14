@@ -36,7 +36,9 @@ import {
 import { confirmWriteOnCard, flushCardCaches, remountVerifyEntries, retireIpodFirmwareScratch } from '../ipod-sync-card.ts'
 import { securePlaysBeforeSync } from '../ipod-plays-archive.ts'
 import { uniqueTmpPath, type RoundTripHost } from './roundtrip.ts'
-import { ORIGINAL_DEVICE_KEY } from '../../common/ipod-device-playlists.ts'
+import { deviceKeyOf } from '../../common/ipod-device-playlists.ts'
+import { applyDevicePlaylists, type ForSyncInput, type ForSyncResult } from '../ipod-device-playlists-run.ts'
+import type { IpodDeviceMarker } from '../../common/ipod-identity.ts'
 import {
   tsaActivityOk, tsaAllClear, tsaBoardPassenger, tsaDestCollisions,
   tsaNormalizeColonPath, tsaRelFromColon, tsaScreen, tsaSealFromScreen,
@@ -96,18 +98,13 @@ export interface SyncEngineHost {
   verifyAndHealTracks: (inputs: VerifyTrackInput[], mounts: string[]) => Promise<VerifyTrackUpdate[]>
   walkAudioFilesUnder: (root: string) => Promise<string[]>
   /** The plays round trip, pointed at one iPod's state dir (the pre-sync gate uses it). */
-  roundTripHost: (stateDir: string, ipodName?: string) => RoundTripHost
+  roundTripHost: (stateDir: string, ipod?: IpodDeviceMarker | null) => RoundTripHost
   /**
    * The playlists this iPod carries (2026-11-13, common/ipod-device-playlists.ts):
    * its own list, the defaults, On-The-Go, then what is assigned to it. The
    * library's general playlists are left off. Throws to stop the sync.
    */
-  devicePlaylists: (input: {
-    passed: ReadonlyArray<Record<string, unknown>>
-    tracks: ReadonlyArray<Record<string, unknown>>
-    stateDir: string
-    deviceKey: string
-  }) => Promise<{ playlists: Array<{ id: string; name: string; trackIds: number[] }>; dropped: string[] }>
+  devicePlaylists: (input: ForSyncInput) => Promise<ForSyncResult>
 }
 
 export function createSyncEngine(host: SyncEngineHost) {
@@ -362,29 +359,24 @@ export function createSyncEngine(host: SyncEngineHost) {
       // Plays first (2026-10-28): keep a copy of Play Counts/OTG + the pre-sync
       // catalog and manifest, bring the plays home, and confirm they are
       // recorded — BEFORE either engine below wipes or rewrites the card.
-      const plays = await securePlaysBeforeSync(gateMount, host.roundTripHost(syncStateDir, ipod.device?.name),
+      const plays = await securePlaysBeforeSync(gateMount, host.roundTripHost(syncStateDir, ipod.device),
         syncOpts?.origin === 'activity-click' ? 'Activity Sync' : 'library sync')
       if (!plays.ok) return { ok: false, copied: 0, error: plays.error }
-      // THIS iPod's playlists only (Jake, 2026-11-13). After the plays gate, so an
-      // On-The-Go list made since the last sync is already saved and goes back on
-      // as a normal playlist. Before anything is written: a failure here leaves
-      // the card exactly as it was. The whole-library mirror is not an iPod's own
-      // sync and keeps what it always wrote.
-      if (syncOpts?.origin === 'activity-click' && ipod.device) {
-        try {
-          const set = await host.devicePlaylists({
-            passed: playlists, tracks, stateDir: syncStateDir,
-            deviceKey: ipod.device.primary ? ORIGINAL_DEVICE_KEY : ipod.device.id,
-          })
-          console.warn(`sync-to-ipod: ${ipod.device.name} gets ${set.playlists.length} playlist(s): ${set.playlists.map((p) => `${p.name} (${p.trackIds.length})`).join(', ')}` +
-            (set.dropped.length ? `. Left off (not this iPod's): ${set.dropped.join(', ')}` : ''))
-          playlists = set.playlists as unknown as Array<Record<string, unknown>>
-        } catch (err) {
-          const why = err instanceof Error ? err.message : String(err)
-          console.error(`sync-to-ipod: REFUSED — playlists: ${why}`)
-          return { ok: false, copied: 0, error: `This iPod's playlists couldn't be put together (${why}). Nothing on the iPod was changed.` }
-        }
+      // This iPod's playlists (Jake, 2026-11-13; ipod-device-playlists-run.ts). After
+      // the plays gate, so an On-The-Go list made since the last sync is already saved
+      // and goes back on as a normal playlist. Before anything is written: a failure
+      // here leaves the card exactly as it was. Only the one Sync button; the
+      // whole-library mirror keeps what it always wrote. Taking the library's
+      // playlists OFF an iPod is behind that iPod's own switch (ipod-playlist-rule.ts).
+      const own = await applyDevicePlaylists({
+        origin: syncOpts?.origin, device: ipod.device, passed: playlists, tracks,
+        stateDir: syncStateDir, deviceKey: deviceKeyOf(ipod.device), forSync: host.devicePlaylists,
+      })
+      if (!own.ok) {
+        console.error(`sync-to-ipod: REFUSED — ${own.error}`)
+        return { ok: false, copied: 0, error: own.error }
       }
+      playlists = own.playlists
     }
     syncCancelRequested = false
     if (syncOpts?.origin === 'activity-click') {
