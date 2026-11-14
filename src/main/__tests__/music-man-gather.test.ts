@@ -8,7 +8,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createMusicManGather, type GatherDeps, type GatherTrack } from '../music-man-gather.ts'
+import { createMusicManGather, findAskedIn, type GatherDeps, type GatherTrack } from '../music-man-gather.ts'
 import { profileCacheFile } from '../../common/artist-profile.ts'
 import { buildPacket } from '../../common/music-man-packet.ts'
 
@@ -35,7 +35,7 @@ before(async () => {
   await writeFile(join(dir, 'album-personnel.json'), JSON.stringify({ v: 2, entries: { 'twisted teens|the holy cross tigers': { people: [{ name: 'RJ Santos', roles: ['steel guitar'], tracks: 3, credits: [] }], trackCount: 13, at: 1 } } }))
   await writeFile(join(dir, 'album-notes.json'), JSON.stringify({ v: 1, blurbs: { 'twisted teens|the holy cross tigers|2026': 'Their third release of 2026.' }, takes: {} }))
   await writeFile(join(dir, 'ipod-lists-cache.json'), JSON.stringify({ lists: [{ id: 'a', name: 'Best of Bandcamp', ids: [12970] }] }))
-  await writeFile(join(dir, 'friend-credits.json'), JSON.stringify({ credits: [{ friend: 'Avery', keys: ['stalks|twistedteens'] }] }))
+  await writeFile(join(dir, 'friend-credits.json'), JSON.stringify({ credits: [{ friend: 'Avery Stone', keys: ['stalks|twistedteens'] }] }))
   await writeFile(join(dir, 'artist-tags.json'), JSON.stringify({ 'twisted teens': { tags: ['garage punk', 'country punk'] } }))
   await writeFile(join(dir, 'artist-members.json'), '{ this file is torn')
 })
@@ -69,7 +69,7 @@ describe('gathering for an album page', () => {
     assert.equal(stalks.mood, 'A breakup, shouted.')
     assert.equal(stalks.top1000, 412)
     assert.deepEqual(stalks.ipods, ['Best of Bandcamp'])
-    assert.equal(stalks.sentBy, 'Avery')
+    assert.equal(stalks.sentBy, 'Avery', 'the first name only: "Avery Stone" never leaves the Mac')
     assert.equal(stalks.starred, true)
     assert.equal(stalks.key, 'D major')
     assert.equal(stalks.subgenre, 'Garage/Psych, Garage-Punk Revival')
@@ -168,5 +168,32 @@ describe('when things are missing or slow', () => {
     const again = await g.lookHarder({ kind: 'album', artist: 'Television', album: 'Marquee Moon' }, { ...first, artist: null })
     assert.equal(again.artist?.oneLiner, 'American rock band.')
     assert.equal(again.press, 'Found on the second look.')
+  })
+})
+
+describe('a typed question that names something else Jake owns', () => {
+  const page = { kind: 'album', artist: 'Twisted Teens', album: 'The Holy Cross Tigers' } as const
+  test('another artist in the library becomes the subject', () => {
+    assert.deepEqual(findAskedIn('ok but what about Television?', page, TRACKS), { kind: 'artist', name: 'Television' })
+    assert.deepEqual(findAskedIn('is it better than television', page, TRACKS), { kind: 'artist', name: 'Television' })
+  })
+  test('another record in the library becomes the subject, named in full', () => {
+    assert.deepEqual(findAskedIn('how does it compare to Blame the Clown?', page, TRACKS), { kind: 'album', artist: 'Twisted Teens', album: 'Blame the Clown', year: '2026' })
+    assert.deepEqual(findAskedIn('and Marquee Moon?', page, TRACKS), { kind: 'album', artist: 'Television', album: 'Marquee Moon', year: '1977' })
+  })
+  test("the page's own names are not something else", () => {
+    assert.equal(findAskedIn('are Twisted Teens any good?', page, TRACKS), null)
+    assert.equal(findAskedIn('is the holy cross tigers their best?', page, TRACKS), null)
+    assert.equal(findAskedIn('who are Twisted Teens?', { kind: 'song', trackId: 12970 }, TRACKS), null)
+  })
+  test('a name he does not own, an everyday word, or part of a word is nothing', () => {
+    assert.equal(findAskedIn('do you know Glorp Division?', page, TRACKS), null)
+    assert.equal(findAskedIn('is this any good? where do I start?', page, TRACKS), null)
+    assert.equal(findAskedIn('I love it', page, [...TRACKS, { id: 9, title: 'x', artist: 'Love', album: 'Forever Changes' }]), null)
+    assert.equal(findAskedIn('is it televisions fault', page, TRACKS), null)
+  })
+  test('the gatherer asks the live library', async () => {
+    const { g } = rig()
+    assert.deepEqual(await g.findAsked('what about Television?', page), { kind: 'artist', name: 'Television' })
   })
 })

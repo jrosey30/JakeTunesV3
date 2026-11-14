@@ -13,7 +13,10 @@
  *   3. ask the host, with the last few turns of this session;
  *   4. a reply that says he doesn't know it (common/non-answer.ts) is never
  *      returned: one more try with more to go on, then the facts and the sound
- *      in plain words;
+ *      in plain words. One retry, never more. This holds for things in Jake's
+ *      library. A typed question about something else is answered about that:
+ *      a record or artist he owns gets its own facts; anything else may
+ *      honestly get "never heard of them";
  *   5. Larry may add one line, when he has one and hasn't just had one.
  *
  * Nothing here is kept on disk: a take is said when asked, not stored.
@@ -23,12 +26,12 @@
  * (scripts/music-man-eval.ts) with the same code the app runs.
  */
 import {
-  buildPacket, factsOnlyAnswer, subjectKey, subjectLabel,
+  buildPacket, factsOnlyAnswer, subjectKey, subjectLabel, subjectNames,
   type AskHost, type AskLine, type AskResult, type AskSubject, type PacketInput,
 } from '../common/music-man-packet.ts'
-import { isNonAnswer } from '../common/non-answer.ts'
+import { asksAboutOther, judgeReply } from '../common/non-answer.ts'
 import {
-  askLine, CONVERSATIONAL_REGISTER, GROUNDING_RULES, LARRY_CHIME_IN, NO_HEDGE_RETRY, larryPassed,
+  askLine, CONVERSATIONAL_REGISTER, GROUNDING_RULES, LARRY_CHIME_IN, NO_HEDGE_RETRY, OFF_PAGE_NOTE, larryPassed,
 } from '../common/music-man-ask-prompt.ts'
 import { stripStageDirections } from '../common/stage-directions.ts'
 import { cleanAiProse } from '../common/clean-ai-prose.ts'
@@ -53,6 +56,16 @@ export interface AskDeps {
   /** A second, slower look for a thin subject. Returns what it has now. */
   lookHarder?: (subject: AskSubject, input: PacketInput) => Promise<PacketInput>
   model: (call: AskModelCall) => Promise<{ text: string; cut: boolean }>
+  /**
+   * Something else in the library that a typed question names (an artist or a record that is
+   * not the page). The ask is then about that, with its own facts.
+   */
+  findAsked?: (question: string, page: AskSubject) => Promise<AskSubject | null>
+  /**
+   * One yes/no to the small model, only when the rule can't tell whether a reply says he
+   * doesn't know the subject. Absent, or failing: the reply is taken as an answer.
+   */
+  judge?: (reply: string, what: string) => Promise<boolean>
   activeHost: () => AskHost
   /** Settings → AI → "Larry chimes in". */
   larryMayChimeIn: () => boolean | Promise<boolean>
@@ -139,7 +152,21 @@ export function createMusicManAsk(deps: AskDeps): MusicManAsk {
     return { line, cut: r.cut }
   }
 
-  async function larryLine(packetText: string, said: string, asked: boolean): Promise<AskLine | undefined> {
+  /** Does this reply say he doesn't know the subject? The rule first; the small model only when the rule can't tell. */
+  async function saysHeDoesntKnow(text: string, names: readonly string[], what: string): Promise<boolean> {
+    if (!text) return true
+    const verdict = judgeReply(text, names)
+    if (verdict === 'non-answer') return true
+    if (verdict !== 'unsure' || !deps.judge) return false
+    try {
+      return await deps.judge(text, what)
+    } catch (err) {
+      log(`[musicman-ask] the judge did not answer: ${(err as Error).message}`)
+      return false
+    }
+  }
+
+  async function larryLine(packetText: string, said: string, asked: boolean, names: readonly string[]): Promise<AskLine | undefined> {
     const instructions = asked
       ? `Jake asked what YOU think, right after the Funk Man answered. One or two short spoken sentences, to both of them.\n\n${GROUNDING_RULES}`
       : LARRY_CHIME_IN
@@ -151,7 +178,7 @@ export function createMusicManAsk(deps: AskDeps): MusicManAsk {
       if (r.cut || larryPassed(r.text)) return undefined
       const line = show(r.text)
       // The same rule as the Music Man's: a line that says he doesn't know it is not a line.
-      if (!line.text || isNonAnswer(line.text)) return undefined
+      if (!line.text || judgeReply(line.text, names) === 'non-answer') return undefined
       return line
     } catch (err) {
       log(`[musicman-ask] Larry had nothing: ${(err as Error).message}`)
@@ -163,38 +190,50 @@ export function createMusicManAsk(deps: AskDeps): MusicManAsk {
     async ask(req) {
       freshSession()
       const host = deps.activeHost()
-      let input = await deps.gather(req.subject, req.nowPlayingId)
+      // A typed question may be about something else. If it names a record or an artist Jake owns,
+      // the ask is about that. If it names something else entirely, the page is only where he is.
+      const question = (req.question ?? '').trim()
+      let subject = req.subject
+      let offPage = false
+      if (question) {
+        const asked = deps.findAsked ? await deps.findAsked(question, req.subject).catch(() => null) : null
+        if (asked) subject = asked
+      }
+      let input = await deps.gather(subject, req.nowPlayingId)
       if (!input || (input.songs.length === 0 && !input.artist)) {
         return { ok: false, error: 'not-in-library' }
       }
       let packet = buildPacket(input)
       let looked = false
       if (packet.thin && deps.lookHarder) {
-        input = await deps.lookHarder(req.subject, input)
+        input = await deps.lookHarder(subject, input)
         packet = buildPacket(input)
         looked = true
       }
 
-      const key = subjectKey(req.subject)
-      const what = subjectLabel(req.subject, input.songs)
+      const names = subjectNames(input)
+      if (question && subject === req.subject) offPage = asksAboutOther(question, names)
+      const key = subjectKey(subject)
+      const what = subjectLabel(subject, input.songs)
       const cutIn = larrySaid ? `(After your last line, Larry cut in: "${larrySaid}")\n` : ''
       larrySaid = ''
       const larryOn = host === 'mm' && await deps.larryMayChimeIn()
       const forLarry = larryOn && /\blarry\b/i.test(req.question ?? '')
-      const line = `${cutIn}${askLine(what, { question: req.question, again: !req.question && key === lastKey })}${forLarry ? '\n(Larry answers for himself right after you. Hand it to him in one short line; don\'t speak for him.)' : ''}`
+      const line = `${cutIn}${askLine(what, { question: req.question, again: !req.question && key === lastKey })}${forLarry ? '\n(Larry answers for himself right after you. Hand it to him in one short line; don\'t speak for him.)' : ''}${offPage ? `\n${OFF_PAGE_NOTE}` : ''}`
       const messages: AskMessage[] = [...turns, { role: 'user', content: `${packet.text}\n\n${line}` }]
 
       let how: 'model' | 'second-try' | 'facts' = 'model'
       let reply = await hostReply(host, messages)
-      if (!reply.line.text || isNonAnswer(reply.line.text)) {
+      // Off the page, "never heard of them" is an honest answer and stands. On it, it never does.
+      if (!offPage && await saysHeDoesntKnow(reply.line.text, names, what)) {
         log(`[musicman-ask] first reply on ${key} said he didn't know it; asking again`)
         if (!looked && deps.lookHarder) {
-          input = await deps.lookHarder(req.subject, input)
+          input = await deps.lookHarder(subject, input)
           packet = buildPacket(input)
         }
         how = 'second-try'
         reply = await hostReply(host, [...turns, { role: 'user', content: `${packet.text}\n\n${line}\n\n${NO_HEDGE_RETRY}` }])
-        if (!reply.line.text || isNonAnswer(reply.line.text)) {
+        if (await saysHeDoesntKnow(reply.line.text, names, what)) {
           const facts = factsOnlyAnswer(input)
           if (!facts) return { ok: false, error: 'nothing-to-say' }
           log(`[musicman-ask] second reply on ${key} still didn't know it; answering from the facts`)
@@ -209,11 +248,12 @@ export function createMusicManAsk(deps: AskDeps): MusicManAsk {
       deps.note?.(host, reply.line.text)
 
       let larry: AskLine | undefined
-      if (larryOn && how !== 'facts') {
+      if (!reply.line.text) return { ok: false, error: 'nothing-to-say' }
+      if (larryOn && how !== 'facts' && !offPage) {
         const asked = forLarry
         const due = now() - larryAt >= LARRY_MIN_GAP_MS && asksSinceLarry >= LARRY_MIN_ASKS_BETWEEN && random() < LARRY_CHANCE
         if (asked || due) {
-          larry = await larryLine(packet.text, reply.line.text, asked)
+          larry = await larryLine(packet.text, reply.line.text, asked, names)
           if (larry) {
             larryAt = now()
             asksSinceLarry = 0

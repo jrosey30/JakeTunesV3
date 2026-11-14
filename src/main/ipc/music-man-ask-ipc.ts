@@ -9,11 +9,11 @@ import type { TextBlockParam } from '@anthropic-ai/sdk/resources/messages'
 import type { IpcRegistrar } from '../ipc-register.ts'
 import { REFUSED_SENDER } from '../ipc-register.ts'
 import { safeIpcError } from '../safe-ipc-error.ts'
-import { MODEL_SMART } from '../../common/ai-models.ts'
+import { MODEL_FAST, MODEL_SMART } from '../../common/ai-models.ts'
 import { LARRY_CORE, buildMusicManPrompt } from '../personas.ts'
-import { buildPacket, factsOnlyAnswer, type AskSubject, type PacketInput } from '../../common/music-man-packet.ts'
-import { CONVERSATIONAL_REGISTER, GROUNDING_RULES, NO_HEDGE_RETRY } from '../../common/music-man-ask-prompt.ts'
-import { isNonAnswer } from '../../common/non-answer.ts'
+import { buildPacket, factsOnlyAnswer, subjectLabel, subjectNames, type AskSubject, type PacketInput } from '../../common/music-man-packet.ts'
+import { CONVERSATIONAL_REGISTER, GROUNDING_RULES, NO_HEDGE_RETRY, judgePrompt, judgedYes } from '../../common/music-man-ask-prompt.ts'
+import { asksAboutOther, judgeReply } from '../../common/non-answer.ts'
 import { createMusicManAsk, type AskHost, type AskResult, type MusicManAsk } from '../music-man-ask.ts'
 import { createMusicManGather, type GatherTrack, type MusicManGather } from '../music-man-gather.ts'
 
@@ -62,8 +62,12 @@ export function larryChimesIn(settings: Record<string, unknown> | null): boolean
 }
 
 export interface MusicManGrounding {
-  /** What to add to the chat's system prompt for this subject. '' when it isn't in the library. */
-  chatBlock(subject: unknown, nowPlayingId?: unknown): Promise<{ block: string; input: PacketInput } | null>
+  /**
+   * What to add to the chat's system prompt. The facts are for the page, unless the question
+   * names another artist or record Jake owns: then they are for that. `offPage`: the question is
+   * about something that is neither, so "never heard of them" is an honest reply and stands.
+   */
+  chatBlock(subject: unknown, nowPlayingId?: unknown, question?: string): Promise<{ block: string; input: PacketInput; offPage: boolean } | null>
   /** A chat reply that said he didn't know it: one more try, then the facts. */
   rescueChat(input: PacketInput, reply: string, again: (extra: string) => Promise<string>): Promise<string>
 }
@@ -79,10 +83,19 @@ export function registerMusicManAskIpc(ipc: IpcRegistrar, host: MusicManAskHost)
     warn: (m) => console.warn(m),
   }))
 
+  /** The rule couldn't tell: one yes/no to the small model. A failed call counts as "no". */
+  const judge = async (reply: string, what: string): Promise<boolean> => {
+    const p = judgePrompt(what, reply)
+    const r = await host.claudeCall('musicman-ask-judge', { model: MODEL_FAST, max_tokens: 5, system: p.system, messages: [{ role: 'user', content: p.user }] })
+    return judgedYes(r.content.filter((b): b is Anthropic.Messages.TextBlock => b.type === 'text').map((b) => b.text).join(' '))
+  }
+
   let subjectNow: AskSubject | null = null
   const asker: MusicManAsk = createMusicManAsk({
     gather: (subject, nowPlayingId) => gather().gather(subject, nowPlayingId),
     lookHarder: (subject, input) => gather().lookHarder(subject, input),
+    findAsked: (question, page) => gather().findAsked(question, page),
+    judge,
     activeHost: host.readActiveHost,
     larryMayChimeIn: async () => larryChimesIn(await host.readAppSettings()),
     note: (who, said) => { if (subjectNow) host.said(who, said, subjectNow) },
@@ -115,22 +128,32 @@ export function registerMusicManAskIpc(ipc: IpcRegistrar, host: MusicManAskHost)
   }, { refuse: REFUSED_SENDER })
 
   return {
-    async chatBlock(rawSubject, nowPlayingId) {
-      const subject = parseAskSubject(rawSubject)
-      if (!subject) return null
+    async chatBlock(rawSubject, nowPlayingId, question) {
+      const page = parseAskSubject(rawSubject)
+      if (!page) return null
+      const q = (question ?? '').trim()
+      const asked = q ? await gather().findAsked(q, page).catch(() => null) : null
+      const subject = asked ?? page
       const input = await gather().gather(subject, typeof nowPlayingId === 'number' ? nowPlayingId : null).catch(() => null)
       if (!input || (input.songs.length === 0 && !input.artist)) return null
-      return { input, block: `\n\n${CONVERSATIONAL_REGISTER}\n\n${GROUNDING_RULES}\n\nFACTS (what Jake is on right now; a question about "this" means this):\n${buildPacket(input).text}` }
+      const offPage = !asked && !!q && asksAboutOther(q, subjectNames(input))
+      return {
+        input,
+        offPage,
+        block: `\n\n${CONVERSATIONAL_REGISTER}\n\n${GROUNDING_RULES}\n\nFACTS (${asked ? 'what Jake just asked about' : 'what Jake is on right now; a question about "this" means this'}):\n${buildPacket(input).text}`,
+      }
     },
     async rescueChat(input, reply, again) {
-      // Only when it is the page's own artist or record he says he doesn't know: a question
-      // about some other band, asked from this page, may honestly get "never heard of them".
-      const names = [input.artist?.name, input.songs[0]?.artist, input.songs[0]?.album, input.subject.kind === 'song' ? input.songs[0]?.title : '']
-        .map((n) => (n ?? '').toLowerCase().trim()).filter((n) => n.length > 1)
-      const low = reply.toLowerCase()
-      if (!isNonAnswer(reply) || !names.some((n) => low.includes(n))) return reply
+      // Only when it is this subject he says he doesn't know. The rule first; the small model when it can't tell.
+      const names = subjectNames(input)
+      const what = subjectLabel(input.subject, input.songs)
+      const doesntKnow = async (text: string): Promise<boolean> => {
+        const v = judgeReply(text, names)
+        return v === 'non-answer' || (v === 'unsure' && await judge(text, what).catch(() => false))
+      }
+      if (!(await doesntKnow(reply))) return reply
       const second = await again(NO_HEDGE_RETRY).catch(() => '')
-      if (second && !isNonAnswer(second)) return second
+      if (second && !(await doesntKnow(second))) return second
       return factsOnlyAnswer(input) || reply
     },
   }

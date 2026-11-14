@@ -17,9 +17,9 @@ import { join } from 'node:path'
 const ROOT = join(import.meta.dirname, '..', '..', '..')
 
 const TWINS = [
-  { here: 'src/common/non-answer.ts', there: 'backend/src/util/nonAnswer.ts', sha256: 'a1dc59ba5bf24a706b3f17f9b40701c4ccd073a25c798a97ef0c27b3dc3ad04c' },
-  { here: 'src/common/music-man-packet.ts', there: 'backend/src/util/musicManPacket.ts', sha256: 'fa030c0e7c5ceff6567758d64bb4a609898e6ba113c1d102f36c8819e33e030e' },
-  { here: 'src/common/music-man-ask-prompt.ts', there: 'backend/src/util/musicManAskPrompt.ts', sha256: '782565a2d07d7cc5a73e0a2e99bc5df8db415b34e00e254af2a19ad68facd0db' },
+  { here: 'src/common/non-answer.ts', there: 'backend/src/util/nonAnswer.ts', sha256: '64eb06d25b2d67fbc607e6fee46b4c47400c9b36483f3f81c1c80a834ddac38e' },
+  { here: 'src/common/music-man-packet.ts', there: 'backend/src/util/musicManPacket.ts', sha256: 'a7e9569f93ac0830154146bf029687a03ecf50d2ffc92dc448689084028273f8' },
+  { here: 'src/common/music-man-ask-prompt.ts', there: 'backend/src/util/musicManAskPrompt.ts', sha256: '0e87c45a990c981a770acff5eeb175f0c3f5be870c4a2c7e13c1d65b4e1621d2' },
 ]
 
 describe('the Music Man twins', () => {

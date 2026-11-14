@@ -73,6 +73,43 @@ export const HUB_WAIT_MS = 2500
 const TOP1000_TTL_MS = 10 * 60_000
 
 const low = (s: unknown): string => String(s ?? '').toLowerCase().trim()
+
+/** Names that are also everyday words: never taken from a question as a band or a record. */
+const TOO_COMMON = new Set(['yes', 'air', 'live', 'help', 'love', 'home', 'war', 'real', 'next', 'more', 'best', 'this', 'that', 'what', 'them', 'they', 'good', 'better', 'songs', 'music', 'album', 'record', 'band', 'here', 'there', 'first', 'last', 'side', 'back', 'start', 'heart', 'life', 'time', 'today', 'tonight', 'girls', 'boys', 'think', 'like', 'about', 'something', 'anything', 'everything', 'greatest hits', 'the best', 'untitled', 'unknown', 'various artists', 'larry', 'marty'])
+
+/**
+ * The library artist or record a question names, other than the page's own.
+ * Whole words only, the longest name wins, an artist before a record. Pure.
+ * ⚠️ TWIN: JakeTunesMobile backend/src/util/musicManGround.ts findAsked.
+ */
+export function findAskedIn(question: string, page: AskSubject, tracks: readonly GatherTrack[]): AskSubject | null {
+  const q = ` ${low(question).replace(/[^\p{L}\p{N}&'./-]+/gu, ' ')} `
+  if (q.trim().length < 3) return null
+  const pageNames = new Set<string>()
+  if (page.kind === 'album') { pageNames.add(low(page.artist)); pageNames.add(low(page.album)) }
+  if (page.kind === 'artist') pageNames.add(low(page.name))
+  if (page.kind === 'song') {
+    const t = tracks.find((x) => x.id === page.trackId)
+    for (const n of [t?.artist, t?.albumArtist, t?.album, t?.title]) if (n) pageNames.add(low(n))
+  }
+  const named = (name: string, min: number): boolean => {
+    const n = low(name).replace(/[^\p{L}\p{N}&'./-]+/gu, ' ').trim()
+    return n.length >= min && !TOO_COMMON.has(n) && !pageNames.has(low(name)) && q.includes(` ${n} `)
+  }
+  let artist = ''
+  let album: GatherTrack | null = null
+  for (const t of tracks) {
+    for (const a of [t.albumArtist, t.artist]) {
+      if (a && a.length > artist.length && named(a, 4)) artist = a
+    }
+    if (t.album && (!album || t.album.length > (album.album ?? '').length) && named(t.album, 7)) album = t
+  }
+  // A record named in full beats an artist named inside its title ("Television" in "Television's Marquee Moon" is both: the record wins when longer).
+  if (album?.album && album.album.length > artist.length) {
+    return { kind: 'album', artist: album.albumArtist || album.artist || '', album: album.album, year: album.year ? String(album.year) : undefined }
+  }
+  return artist ? { kind: 'artist', name: artist } : null
+}
 const squash = (s: unknown): string => low(s).replace(/[^a-z0-9]+/g, '')
 
 function within<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
@@ -83,6 +120,12 @@ function within<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
 }
 
 export interface MusicManGather {
+  /**
+   * An artist or a record in the library that a typed question names, when it is not the page
+   * Jake is on ("what about Television?" from a Twisted Teens page). Null: the question names
+   * nothing else he owns.
+   */
+  findAsked(question: string, page: AskSubject): Promise<AskSubject | null>
   gather(subject: AskSubject, nowPlayingId?: number | null): Promise<PacketInput | null>
   lookHarder(subject: AskSubject, input: PacketInput): Promise<PacketInput>
 }
@@ -211,7 +254,8 @@ export function createMusicManGather(deps: GatherDeps): MusicManGather {
       const desc = record(d[String(t.id)])
       const year = t.year ? String(t.year) : undefined
       const sub = [t.subgenre, t.subgenreLean].filter((s) => s && String(s).trim()).join(', ')
-      const friend = friendOf.get(`${squash(t.title)}|${squash(t.artist)}`)
+      // Only the first name goes to the model provider (the packet cuts it again): "Lorin", never "Lorin Bloom".
+      const friend = friendOf.get(`${squash(t.title)}|${squash(t.artist)}`)?.trim().split(/\s+/)[0]
       const on = ipods.filter((l) => l.ids.has(t.id)).map((l) => l.name)
       const song: PacketSong = {
         id: t.id,
@@ -253,6 +297,9 @@ export function createMusicManGather(deps: GatherDeps): MusicManGather {
   }
 
   return {
+    async findAsked(question, page) {
+      return findAskedIn(question, page, await deps.tracks())
+    },
     async gather(subject, nowPlayingId) {
       const all = await deps.tracks()
       let rows: GatherTrack[] = []

@@ -7083,7 +7083,7 @@ function buildCynthiaSweepHooks() {
 // Music Man chat
 ipc.handle('musicman-chat', async (_event, messages: { role: string; content: string }[], context?: string, subject?: unknown, nowPlayingId?: unknown) => {
   // The page Jake is on, as facts (2026-11-13): "is this any good?" is answered from what the app knows.
-  const grounded = await musicManGrounding.chatBlock(subject, nowPlayingId)
+  const grounded = await musicManGrounding.chatBlock(subject, nowPlayingId, messages.filter(m => m.role === 'user').pop()?.content)
   const lastUserMsg = messages.filter(m => m.role === 'user').pop()?.content || ''
   // Drawer context (2026-09-02): what's playing / which page is open, so
   // "is this any good?" means THIS song. Bounded; never trusted as fact.
@@ -7229,7 +7229,7 @@ This response is shown as text in a chat panel, but the user may click a speaker
       .trim(), retrieved.tracks)
     if (credited.fixes.length) console.warn('[musicman] credit guard fixed:', credited.fixes.map(f => `${f.from} -> ${f.to} (${f.why})`).join('; '))
     // On a page he was handed the facts for, "I don't know them" is never the reply (non-answer.ts).
-    const textRaw = !grounded ? credited.text : await musicManGrounding.rescueChat(grounded.input, credited.text, async (extra) => {
+    const textRaw = !grounded || grounded.offPage ? credited.text : await musicManGrounding.rescueChat(grounded.input, credited.text, async (extra) => {
       const r = await claudeCall('musicman-chat', { model: MODEL_SMART, max_tokens: 600, system: systemPrompt, messages: [...convo, { role: 'user', content: extra }] })
       return r.content.filter((b): b is Anthropic.Messages.TextBlock => b.type === 'text').map((b) => b.text).join('\n').trim()
     })

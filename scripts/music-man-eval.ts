@@ -18,12 +18,14 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import Anthropic from '@anthropic-ai/sdk'
-import { MODEL_SMART, withModelPolicy } from '../src/common/ai-models.ts'
+import { MODEL_FAST, MODEL_SMART, withModelPolicy } from '../src/common/ai-models.ts'
 import { LARRY_CORE, MUSIC_MAN_CORE } from '../src/main/personas.ts'
 import { createMusicManAsk, type AskHost, type AskResult } from '../src/main/music-man-ask.ts'
 import { createMusicManGather, type GatherTrack } from '../src/main/music-man-gather.ts'
 import { buildPacket, subjectLabel, type AskSubject } from '../src/common/music-man-packet.ts'
-import { isNonAnswer } from '../src/common/non-answer.ts'
+import { asksAboutOther, judgeReply } from '../src/common/non-answer.ts'
+import { judgePrompt, judgedYes } from '../src/common/music-man-ask-prompt.ts'
+import { subjectNames } from '../src/common/music-man-packet.ts'
 
 const userData = join(homedir(), 'Library', 'Application Support', 'JakeTunes')
 const out = process.argv[2] || join(homedir(), 'concert-repair', `music-man-eval-${new Date().toISOString().slice(0, 10)}.md`)
@@ -57,10 +59,20 @@ const gatherer = createMusicManGather({
 })
 
 let calls = 0
+let judged = 0
+/** The app's judge: one yes/no to the small model, only when the rule can't tell. */
+async function judge(reply: string, what: string): Promise<boolean> {
+  judged++
+  const p = judgePrompt(what, reply)
+  const r = await anthropic.messages.create(withModelPolicy({ model: MODEL_FAST, max_tokens: 5, system: p.system, messages: [{ role: 'user', content: p.user }] }))
+  return judgedYes(r.content.filter((b): b is Anthropic.Messages.TextBlock => b.type === 'text').map((b) => b.text).join(' '))
+}
 function asker(host: AskHost) {
   return createMusicManAsk({
     gather: (s, np) => gatherer.gather(s, np),
     lookHarder: (s, i) => gatherer.lookHarder(s, i),
+    findAsked: (q, page) => gatherer.findAsked(q, page),
+    judge,
     activeHost: () => host,
     larryMayChimeIn: () => true,
     // Larry is asked whenever the rate limit lets him, so the file shows him; he still passes when he has nothing.
@@ -120,6 +132,8 @@ const cases: Case[] = [
   { title: 'A song playing, no page open', subject: song('Charli XCX', '360'), turns: [MIC] },
   { title: 'The punkPod (an iPod\'s list)', subject: ipod('punkPod'), turns: [MIC] },
   { title: '"Greenpoint Greatest Hits" (a playlist)', subject: playlist('Greenpoint Greatest Hits'), turns: [MIC] },
+  { title: 'From the Twisted Teens page, about something else', subject: album('Twisted Teens', 'The Holy Cross Tigers'),
+    turns: [{ question: 'do you know a band called Glorp Division?' }, { question: 'ok, what about Television?' }] },
   { title: 'Larry as the chosen host: "The Holy Cross Tigers"', subject: album('Twisted Teens', 'The Holy Cross Tigers'), host: 'larry', turns: [MIC] },
 ]
 
@@ -142,12 +156,17 @@ for (const c of cases) {
     lines.push(`**Jake** ${t.question ? `"${t.question}"` : `(mic, on ${subjectLabel(c.subject, input?.songs ?? [])})`}`, '')
     if (!r.ok) { lines.push(`_no answer: ${r.error}_`, ''); continue }
     answers++
-    if (isNonAnswer(r.text)) nonAnswers++
+    const names = input ? subjectNames(input) : []
+    // A question about something that is not the page and not in the library may honestly get "don't know".
+    const offPage = !!t.question && asksAboutOther(t.question, names) && !(await gatherer.findAsked(t.question, c.subject))
+    const verdict = judgeReply(r.text, names)
+    if (verdict === 'non-answer' && !offPage) nonAnswers++
+    if (offPage || verdict === 'other') lines.push('_(about something that is not the page and not in the library: an honest "don\'t know" is allowed here)_', '')
     lines.push(`**${r.speaker === 'larry' ? 'Larry' : 'The Music Man'}**${r.how === 'model' ? '' : r.how === 'second-try' ? ' _(second try: his first reply said he didn\'t know it and was thrown away)_' : ' _(the plain facts: two replies said he didn\'t know it)_'}: ${r.text}`, '')
     if (r.larry) lines.push(`**Larry**: ${r.larry.text}`, '')
     console.log(`${c.title} / ${t.question ?? 'mic'}: ${r.how}${r.larry ? ' + larry' : ''}`)
   }
 }
-lines.push('---', '', `${answers} answers, ${nonAnswers} of them saying he didn't know the thing asked about. ${calls} model calls (${MODEL_SMART}).`, '')
+lines.push('---', '', `${answers} answers, ${nonAnswers} of them saying he didn't know the page's own subject. ${calls} model calls (${MODEL_SMART}), ${judged} yes/no checks by the small model (${MODEL_FAST}) where the rule couldn't tell.`, '')
 writeFileSync(out, lines.join('\n'))
 console.log(`wrote ${out}: ${answers} answers, ${nonAnswers} non-answers, ${calls} calls`)

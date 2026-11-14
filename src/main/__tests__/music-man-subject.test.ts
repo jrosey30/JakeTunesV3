@@ -117,8 +117,16 @@ describe('no take without an ask', () => {
     assert.match(read('renderer/components/playback/Toolbar.tsx'), /askSubjectFor\(lib, pb\.nowPlaying, ipodLists\)/)
     assert.match(read('renderer/components/MusicManDrawer.tsx'), /askSubjectFor\(lib, pb\.nowPlaying, ipodLists\)/)
     assert.match(read('renderer/components/MusicManChat.tsx'), /musicmanChat\(newMessages, contextLine \|\| undefined, subject \?\? null, nowPlayingId \?\? null\)/)
-    assert.match(read('main/index.ts'), /musicManGrounding\.chatBlock\(subject, nowPlayingId\)/)
+    assert.match(read('main/index.ts'), /musicManGrounding\.chatBlock\(subject, nowPlayingId, messages\.filter\(m => m\.role === 'user'\)\.pop\(\)\?\.content\)/)
+    // A question about something that isn't the page and isn't in the library is left alone.
+    assert.match(read('main/index.ts'), /!grounded \|\| grounded\.offPage \? credited\.text : await musicManGrounding\.rescueChat/)
     assert.match(read('main/index.ts'), /musicManGrounding\.rescueChat\(grounded\.input, credited\.text/)
+  })
+
+  test('the judge is the small model, asked for one word, and only through the ask', () => {
+    const ipc = read('main/ipc/music-man-ask-ipc.ts')
+    assert.match(ipc, /claudeCall\('musicman-ask-judge', \{ model: MODEL_FAST, max_tokens: 5,/)
+    assert.match(ipc, /v === 'non-answer' \|\| \(v === 'unsure' && await judge\(/)
   })
 
   test('a take is never kept: the ask writes nothing to disk', () => {

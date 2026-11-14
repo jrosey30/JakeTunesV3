@@ -47,7 +47,7 @@ export function createAlbumNotesStore(path: string, warn: (msg: string) => void 
           if (raw && typeof raw === 'object') {
             loaded = { v: 1, blurbs: { ...(raw.blurbs || {}) }, takes: { ...(raw.takes || {}) } }
             const before = Object.keys(loaded.takes).length
-            for (const [k, v] of Object.entries(loaded.takes)) if (typeof v !== 'string' || isNonAnswer(v)) delete loaded.takes[k]
+            for (const [k, v] of Object.entries(loaded.takes)) if (typeof v !== 'string' || isNonAnswer(v, k.split('|').slice(0, 2))) delete loaded.takes[k]
             const dropped = before - Object.keys(loaded.takes).length
             if (dropped > 0) {
               const snapshot: AlbumNotesFile = { v: 1, blurbs: { ...loaded.blurbs }, takes: { ...loaded.takes } }

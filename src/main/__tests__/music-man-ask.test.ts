@@ -279,3 +279,123 @@ describe('Larry', () => {
     assert.ok(out.ok && !out.larry)
   })
 })
+
+describe('a question about something that is not the page', () => {
+  const HONEST = "Glorp Division? Never heard of them, and I'm not going to make something up."
+
+  test('an honest "never heard of them" about another band stands: no retry, no facts forced on it', async () => {
+    const r = rig([HONEST])
+    const out = await r.ask.ask({ subject: TIGERS, question: 'do you know Glorp Division?' })
+    assert.ok(out.ok)
+    assert.equal(out.how, 'model')
+    assert.equal(out.text, HONEST)
+    assert.equal(r.calls.length, 1)
+    const sent = r.calls[0]!.messages.at(-1)!.content
+    assert.match(sent, /This question is about something other than the page he has open/)
+    assert.doesNotMatch(sent, /Your last reply said you didn't know it/)
+    assert.match(r.calls[0]!.instructions, /If he asks about something ELSE .* answer THAT/)
+  })
+
+  test('the same words about the page itself are still thrown away', async () => {
+    const r = rig(['Never heard of them.', GOOD])
+    const out = await r.ask.ask({ subject: TIGERS, question: 'who are they?' })
+    assert.ok(out.ok && out.how === 'second-try')
+  })
+
+  test('on the page, a reply that says he doesn\'t know some other band is not a failure', async () => {
+    const r = rig(["It's a breakup record with steel guitar, and it's great. I've never heard of Glorp Division, though."])
+    const out = await r.ask.ask({ subject: TIGERS, question: 'is it good?' })
+    assert.ok(out.ok && out.how === 'model')
+    assert.equal(r.calls.length, 1)
+  })
+
+  test('a question that names another record Jake owns is answered from that record\'s facts', async () => {
+    const gathered: string[] = []
+    const television = { kind: 'artist', name: 'Television' } as const
+    const r = rig(['Marquee Moon. Ten minutes and not one wasted.'], {
+      findAsked: async (q) => (/television/i.test(q) ? television : null),
+      gather: async (subject) => {
+        gathered.push(subject.kind === 'artist' ? subject.name : 'page')
+        return subject.kind === 'artist'
+          ? input({ subject, songs: [{ id: 7, title: 'Marquee Moon', artist: 'Television', album: 'Marquee Moon', plays: 40 }], artist: { name: 'Television', oneLiner: 'American rock band.' } })
+          : input()
+      },
+    })
+    const out = await r.ask.ask({ subject: TIGERS, question: 'what about Television?' })
+    assert.ok(out.ok)
+    assert.deepEqual(gathered, ['Television'])
+    const sent = r.calls[0]!.messages.at(-1)!.content
+    assert.match(sent, /WHAT JAKE IS LOOKING AT: the artist Television/)
+    assert.match(sent, /Jake asks, about the artist Television: "what about Television\?"/)
+    assert.doesNotMatch(sent, /something other than the page/)
+  })
+
+  test('and there, in his library, "I don\'t know them" is a failure again', async () => {
+    const r = rig(["I don't know Television.", 'Marquee Moon. Ten minutes and not one wasted.'], {
+      findAsked: async () => ({ kind: 'artist', name: 'Television' }),
+      gather: async (subject) => input({ subject, songs: [{ id: 7, title: 'Marquee Moon', artist: 'Television', album: 'Marquee Moon' }], artist: { name: 'Television', oneLiner: 'American rock band.' } }),
+    })
+    const out = await r.ask.ask({ subject: TIGERS, question: 'what about Television?' })
+    assert.ok(out.ok && out.how === 'second-try')
+  })
+
+  test('the mic itself (no typed question) is always about the page', async () => {
+    let asked = 0
+    const r = rig([GOOD], { findAsked: async () => { asked++; return null } })
+    await r.ask.ask({ subject: TIGERS })
+    assert.equal(asked, 0)
+    assert.doesNotMatch(r.calls[0]!.messages.at(-1)!.content, /something other than the page/)
+  })
+})
+
+describe("when the rule can't tell", () => {
+  const UNCLEAR = "This album hasn't exactly been living rent-free with me, I can't comment."
+
+  test('the small model is asked once, yes or no; yes means try again', async () => {
+    const judged: string[] = []
+    const r = rig([UNCLEAR, GOOD], { judge: async (reply, what) => { judged.push(`${what} :: ${reply}`); return reply === UNCLEAR } })
+    const out = await r.ask.ask({ subject: TIGERS })
+    assert.ok(out.ok && out.how === 'second-try')
+    assert.deepEqual(judged, [`the album "The Holy Cross Tigers" by Twisted Teens (2026) :: ${UNCLEAR}`])
+  })
+
+  test('no means the reply stands', async () => {
+    const r = rig([UNCLEAR], { judge: async () => false })
+    const out = await r.ask.ask({ subject: TIGERS })
+    assert.ok(out.ok && out.how === 'model')
+    assert.equal(r.calls.length, 1)
+  })
+
+  test('a clear answer and a clear non-answer never reach the judge', async () => {
+    let judged = 0
+    const judge = async (): Promise<boolean> => { judged++; return true }
+    await rig([GOOD], { judge }).ask.ask({ subject: TIGERS })
+    await rig([SAW, GOOD], { judge }).ask.ask({ subject: TIGERS })
+    assert.equal(judged, 0)
+  })
+
+  test('a judge that fails or is absent leaves the reply as it is', async () => {
+    const failing = rig([UNCLEAR], { judge: async () => { throw new Error('model down') } })
+    const a = await failing.ask.ask({ subject: TIGERS })
+    assert.ok(a.ok && a.how === 'model')
+    const none = rig([UNCLEAR])
+    const b = await none.ask.ask({ subject: TIGERS })
+    assert.ok(b.ok && b.how === 'model')
+  })
+
+  test('the retry is bounded at one: two host calls at most, whatever comes back', async () => {
+    const r = rig([SAW, UNCLEAR, 'never used'], { judge: async () => true })
+    const out = await r.ask.ask({ subject: TIGERS })
+    assert.ok(out.ok && out.how === 'facts')
+    assert.equal(r.calls.length, 2)
+  })
+
+  test("the reviewer's opinions go straight through", async () => {
+    for (const opinion of ["I've never heard a band commit this hard.", "I didn't know Twisted Teens could sound this mean.", 'Send me a song that hits harder.']) {
+      const r = rig([opinion], { judge: async () => { throw new Error('must not be asked') } })
+      const out = await r.ask.ask({ subject: TIGERS })
+      assert.ok(out.ok && out.how === 'model', opinion)
+      assert.equal(r.calls.length, 1, opinion)
+    }
+  })
+})
