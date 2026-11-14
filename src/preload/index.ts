@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { IpodDeviceMarker, IpodIdentity } from '../common/ipod-identity'
+import type { IpodSetupLook } from '../common/ipod-onboarding'
 import type { UpdateReadyState } from '../common/update-ready'
 import type { DialogueInput, DialogueResult } from '../common/speech'
 
@@ -327,6 +328,15 @@ const electronAPI = {
     ipcRenderer.invoke('ipod-registry:list'),
   registerIpodDevice: (input: { asOriginal: boolean; name?: string; color?: string; purpose?: string }): Promise<{ ok: true; device: IpodDeviceMarker } | { ok: false; error: string }> =>
     ipcRenderer.invoke('register-ipod-device', input),
+  // Setting up a new iPod (2026-11-13; main/ipc/ipod-onboarding-ipc.ts).
+  ipodSetupLook: (arg?: { listId?: string | null; name?: string | null; typed?: string | null; recheck?: boolean }): Promise<IpodSetupLook> =>
+    ipcRenderer.invoke('ipod-setup:look', arg),
+  ipodSetupTest: (): Promise<{ ok: boolean; result?: { ok: boolean; bytes: number; reason?: string }; error?: string }> =>
+    ipcRenderer.invoke('ipod-setup:test'),
+  ipodSetupPrepare: (arg: { listId: string; name: string | null; color: string | null; typed: string | null; matchCover: boolean }): Promise<{ ok: boolean; error?: string; did?: string[]; notes?: string[] }> =>
+    ipcRenderer.invoke('ipod-setup:prepare', arg),
+  ipodSetupChecked: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('ipod-setup:checked'),
   onIpodDeviceChanged: (callback: () => void) => {
     const handler = () => callback()
     ipcRenderer.on('ipod-device-changed', handler)

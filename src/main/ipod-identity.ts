@@ -204,15 +204,22 @@ async function identifyIpodNow(mount: string, stateDir: string): Promise<IpodIde
 export async function registerIpod(
   mount: string,
   stateDir: string,
-  input: { asOriginal: boolean; name?: unknown; color?: unknown; purpose?: unknown },
+  /** `id`: the homemini list this iPod takes over (iPod set-up, 2026-11-13) — the ID file gets the
+   *  list's id, which is the whole binding. `replace`: the card already has an ID file and Jake
+   *  confirmed moving it to another list; never the Original's. */
+  input: { asOriginal: boolean; name?: unknown; color?: unknown; purpose?: unknown; id?: string; replace?: boolean },
 ): Promise<{ ok: true; device: IpodDeviceMarker } | { ok: false; error: string }> {
-  if (await readDeviceMarker(mount)) return { ok: false, error: 'This iPod is already set up.' }
+  const existing = await readDeviceMarker(mount)
+  if (existing && (existing.primary || input.asOriginal || input.replace !== true)) return { ok: false, error: 'This iPod is already set up.' }
   const reg = await loadRegistry(stateDir)
   if (input.asOriginal && reg.devices.some((d) => d.primary)) {
     return { ok: false, error: 'Another iPod is already your original. Set this one up as a new iPod.' }
   }
+  if (input.id !== undefined && (input.asOriginal || reg.devices.some((d) => d.primary && d.id === input.id))) {
+    return { ok: false, error: 'That list belongs to your original iPod.' }
+  }
   const marker = buildDeviceMarker({
-    id: input.asOriginal ? `original-${randomUUID().slice(0, 8)}` : randomUUID(),
+    id: input.asOriginal ? `original-${randomUUID().slice(0, 8)}` : input.id ?? randomUUID(),
     name: input.name ?? (input.asOriginal ? ORIGINAL_DEFAULTS.name : undefined),
     color: input.color,
     purpose: input.purpose ?? (input.asOriginal ? ORIGINAL_DEFAULTS.purpose : undefined),
@@ -261,4 +268,16 @@ export async function refuseUnlessOriginalIpod(mount: string, stateDir: string):
   } catch {
     return 'JakeTunes couldn’t tell which iPod this is, so it left it alone.'
   }
+}
+
+/** An iPod was moved to another list (iPod set-up, 2026-11-13): the old id leaves this Mac's
+ *  list of iPods, so its list reads "no iPod yet" again. Its sync state folder is left alone. */
+export async function forgetIpod(stateDir: string, id: string): Promise<void> {
+  const reg = await loadRegistry(stateDir)
+  const devices = reg.devices.filter((d) => d.id !== id || d.primary)
+  if (devices.length === reg.devices.length) return
+  const path = join(stateDir, REGISTRY_FILE)
+  const tmp = uniqueTmpPath(path)
+  await writeFile(tmp, JSON.stringify({ devices }, null, 2), 'utf-8')
+  await rename(tmp, path)
 }

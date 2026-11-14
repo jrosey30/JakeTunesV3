@@ -16,6 +16,7 @@ import { findIpodMount, isIpodMount, volumeNameFromMount, ejectVolume, IS_MAC } 
 import { STATE_DIR } from '../state-dir.ts'
 import { identifyIpod, registerIpod, renameIpodMarker, loadIpodRegistry } from '../ipod-identity.ts'
 import { renameIpod, renameMacVolume, queueHomeminiName } from '../ipod-rename.ts'
+import { registerIpodOnboardingIpc, type IpodOnboardingHost } from './ipod-onboarding-ipc.ts'
 
 export interface IpodMountSnapshot {
   mount: string | null
@@ -45,6 +46,8 @@ export interface IpodIpcHost {
   renameOnHomemini?: (deviceId: string, name: string) => Promise<boolean>
   /** The plugged-in iPod's identity changed (a rename): the renderer re-reads it. */
   onDeviceChanged?: () => void
+  /** iPod set-up (ipod-onboarding-ipc.ts): homemini, the library, and which Mac this is. Absent = no set-up handlers. */
+  setup?: Pick<IpodOnboardingHost, 'stateDir' | 'baseUrl' | 'libraryTracks' | 'isReplica'>
 }
 
 const IPOD_MISS_THRESHOLD = 3   // ~3 polls (~7.5s) of true absence before "disconnected"
@@ -254,4 +257,15 @@ export function registerIpodIpc(ipc: IpcRegistrar, host: IpodIpcHost): void {
     const payload = JSON.stringify({ approvedIds })
     return await host.runPythonRestore(['--apply', mount, xmlPath], payload)
   }, { refuse: REFUSED_SENDER })
+
+  // Setting up a new iPod (2026-11-13).
+  if (host.setup) {
+    registerIpodOnboardingIpc(ipc, {
+      ...host.setup,
+      getMount: () => host.getMount().mount,
+      followMount: (mount) => host.setMount({ mount, volume: volumeNameFromMount(mount), missStreak: 0 }),
+      isSyncInFlight: () => host.isSyncInFlight?.() === true || renameInFlight,
+      onDeviceChanged: () => host.onDeviceChanged?.(),
+    })
+  }
 }
