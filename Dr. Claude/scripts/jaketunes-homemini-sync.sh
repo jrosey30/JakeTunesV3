@@ -626,6 +626,16 @@ resolve_sync_src() {
 # incoming one's newest, the incoming copy is stale and is refused; and,
 # Brief 197, a song it lacks that was added in the last 30 days refuses
 # too, even when older than the incoming one's newest, and is named).
+# One difference from that twin, on purpose (2026-11-12): a song Jake
+# DELETED is not a song this copy "has never seen". homemini keeps his
+# deletions in ~/JakeTunesState/track-tombstones.json (the desktop POSTs
+# them, src/main/track-tombstones.ts), and a missing song one of them
+# covers refuses nothing. Without this, deleting a song added in the last
+# 30 days refused every publish after it; at home the save-time NAS mirror
+# carried the deletion round the guard within minutes, but away from home
+# there is no NAS, so nothing new reached the phone or workmini until the
+# laptop was home again (7 songs held for hours on 2026-11-12, and for 2 h
+# on 11-09). ⚠️ TWIN of tombstoneFor in src/main/track-tombstones.ts.
 publish_backend_library() {
   local src="$1" out
   if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$src" 2>/dev/null; then
@@ -654,7 +664,37 @@ if new is None or len(new) == 0:
 cur = tracks("library.json") or []
 ids = set(str(t.get("id")) for t in new)
 newest = max([x for x in (ts(t) for t in new) if x is not None] or [float("-inf")])
-ahead = [t for t in cur if str(t.get("id")) not in ids and (ts(t) or float("-inf")) > newest]
+# The deletions Jake made, by audio fingerprint (never by id or title;
+# no apostrophes in here, this text sits inside a quoted ssh command). A file
+# that is missing or does not parse is no deletions: the guard refuses as
+# it always did.
+def fp_of(t):
+    v = t.get("audioFingerprint")
+    return v.strip() if isinstance(v, str) else ""
+def deletions():
+    try:
+        d = json.load(open("track-tombstones.json"))
+    except Exception:
+        return {}
+    rows = d if isinstance(d, list) else (d.get("tombstones") if isinstance(d, dict) else None)
+    out = {}
+    for r in rows if isinstance(rows, list) else []:
+        if not isinstance(r, dict): continue
+        fp, at = fp_of(r), ts({"dateAdded": r.get("deletedAt")})
+        if fp and at is not None and at > out.get(fp, float("-inf")): out[fp] = at
+    return out
+tombs = deletions()
+live = set(fp_of(t) for t in new)
+def deleted(t):
+    fp = fp_of(t)
+    at = tombs.get(fp) if fp else None
+    if at is None or fp in live: return False   # same audio still in the incoming copy: not gone
+    added = ts(t)
+    return not (added is not None and added > at)   # added again after the deletion: not deleted
+missing = [t for t in cur if str(t.get("id")) not in ids]
+honoured = [t for t in missing if deleted(t)]
+missing = [t for t in missing if not deleted(t)]
+ahead = [t for t in missing if (ts(t) or float("-inf")) > newest]
 if ahead:
     print("refused-stale %d" % len(ahead)); raise SystemExit(0)
 # Brief 197 — twin of the recent-id rule in stale-push.ts: a song the
@@ -663,11 +703,14 @@ if ahead:
 # phone download erased by a cross-lineage publish, 2026-10-14). Named,
 # so the refusal is loud, never silent.
 cutoff = time.time() - 30 * 24 * 3600
-recent = [t for t in cur if str(t.get("id")) not in ids and (ts(t) or 0) > cutoff]
+recent = [t for t in missing if (ts(t) or 0) > cutoff]
 if recent:
     names = "; ".join(str(t.get("title") or t.get("id")) for t in recent[:10])
     print("refused-recent %d %s" % (len(recent), names)); raise SystemExit(0)
 os.replace(".library.json.incoming", "library.json")
+if honoured:
+    import sys
+    sys.stderr.write("backend publish: %d song(s) Jake deleted left homemini with this copy (%s)\n" % (len(honoured), "; ".join(str(t.get("title") or t.get("id")) for t in honoured[:10])))
 print("published %d" % len(new))
 EOF' 2>>"$LOG")
   case "$out" in
