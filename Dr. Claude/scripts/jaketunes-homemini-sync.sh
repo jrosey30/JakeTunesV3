@@ -657,40 +657,70 @@ def tracks(p):
     except Exception:
         return None
     return d if isinstance(d, list) else d.get("tracks", [])
-# A date is read the way JavaScript reads it (the desktop wrote every one
-# of them), by hand, so homemini on Python 3.9 and a newer Python agree:
-# date only is UTC midnight, any number of fractional digits, Z or an
-# offset. Until 2026-11-13 this was datetime.fromisoformat, which on 3.9
-# cannot read one fractional digit and took a bare date as local time.
+# Dates. The desktop wrote every one of them, so a date is read the way
+# JavaScript reads it, by hand, so homemini on Python 3.9 and a newer Python
+# agree: any number of fractional digits, Z or an offset, no zone at all
+# means local time, and a bare date is UTC midnight. Until 2026-11-13 the
+# guard used datetime.fromisoformat, which on 3.9 cannot read one fractional
+# digit and takes a bare date as LOCAL midnight. That reading is kept too
+# (legacy), and where the two differ each rule takes the one that refuses
+# more, so this guard never lets through what the old one refused:
+#   a missing song is as late as either reading says,
+#   the newest song in this copy is as early as either says,
+#   a deletion is as early as either says,
+#   and a date nobody can read is recent (a refusal), never old.
 import re, calendar
-WHEN = re.compile(r"^(\d{4})-(\d\d)-(\d\d)(?:[Tt ](\d\d):(\d\d)(?::(\d\d)(?:\.(\d+))?)?(Z|z|[+-]\d\d:?\d\d))?$")
-def when(v):
+from datetime import datetime
+WHEN = re.compile(r"^(\d{4})-(\d\d)-(\d\d)(?:[Tt ](\d\d):(\d\d)(?::(\d\d)(?:\.(\d+))?)?(Z|z|[+-]\d\d:?\d\d)?)?$")
+def local(y, mo, d, h, mi, sec):
+    try: return time.mktime((y, mo, d, h, mi, sec, 0, 0, -1))
+    except Exception: return None
+def readings(v):
+    # (earliest, latest) instant the text can mean; None when it cannot be read
     m = WHEN.match(v.strip()) if isinstance(v, str) else None
     if not m: return None
-    y, mo, d, h, mi, sec, frac, tz = m.groups()
-    try:
-        base = calendar.timegm((int(y), int(mo), int(d), int(h or 0), int(mi or 0), int(sec or 0)))
-    except Exception:
-        return None
-    if not (1 <= int(mo) <= 12 and 1 <= int(d) <= 31 and int(h or 0) < 24 and int(mi or 0) < 60 and int(sec or 0) < 60): return None
+    y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    timed = m.group(4) is not None
+    h, mi, sec = int(m.group(4) or 0), int(m.group(5) or 0), int(m.group(6) or 0)
+    if not (1 <= mo <= 12 and 1 <= d <= 31 and h < 24 and mi < 60 and sec < 60): return None
+    try: utc = calendar.timegm((y, mo, d, h, mi, sec))
+    except Exception: return None
+    if not timed:
+        loc = local(y, mo, d, 0, 0, 0)
+        return (min(utc, loc), max(utc, loc)) if loc is not None else (utc, utc)
+    frac = float("0." + m.group(7)) if m.group(7) else 0.0
+    tz = m.group(8)
+    if not tz:
+        loc = local(y, mo, d, h, mi, sec)
+        return (loc + frac, loc + frac) if loc is not None else None
     off = 0
-    if tz and tz not in ("Z", "z"):
+    if tz not in ("Z", "z"):
         digits = tz[1:].replace(":", "")
         off = (int(digits[:2]) * 3600 + int(digits[2:]) * 60) * (1 if tz[0] == "+" else -1)
-    return base - off + (float("0." + frac) if frac else 0.0)
-def ts(t):
-    return when(t.get("dateAdded"))
+    return (utc - off + frac, utc - off + frac)
+def legacy(v):
+    try: return datetime.fromisoformat(str(v).replace("Z","+00:00")).timestamp()
+    except Exception: return None
+def latest(v):
+    # None when the desktop itself could not read it, whatever this Python makes of it
+    # (3.14 reads 20200101, 3.9 and JavaScript do not): unreadable is one thing everywhere.
+    r, old = readings(v), legacy(v)
+    if r is None: return None
+    return max(r[1], old) if old is not None else r[1]
+def added(t):
+    return latest(t.get("dateAdded", ""))
 new = tracks(".library.json.incoming")
 if new is None or len(new) == 0:
     print("refused-corrupt"); raise SystemExit(0)
 cur = tracks("library.json") or []
 ids = set(str(t.get("id")) for t in new)
-newest = max([x for x in (ts(t) for t in new) if x is not None] or [float("-inf")])
+newest = min(
+    max([r[0] for r in (readings(t.get("dateAdded", "")) for t in new) if r] or [float("-inf")]),
+    max([x for x in (legacy(t.get("dateAdded", "")) for t in new) if x is not None] or [float("-inf")]))
 # The deletions Jake made, by audio fingerprint (never by id or title;
 # no apostrophes in here, this text sits inside a quoted ssh command). A file
 # that is missing or does not parse is no deletions: the guard refuses as
 # it always did. Every doubt below falls the same way, to the old refusal.
-# A date nobody can read never excuses.
 def fp_of(t):
     v = t.get("audioFingerprint")
     return v.strip() if isinstance(v, str) else ""
@@ -707,8 +737,9 @@ def deletions():
     out = {}
     for r in rows if isinstance(rows, list) else []:
         if not isinstance(r, dict): continue
-        fp, at = fp_of(r), when(r.get("deletedAt"))
-        if not fp or at is None or at > now + SKEW: continue
+        fp, read = fp_of(r), readings(r.get("deletedAt"))
+        if not fp or read is None or read[1] > now + SKEW: continue
+        at = read[0]
         if at > out.get(fp, float("-inf")): out[fp] = at
     return out
 tombs = deletions()
@@ -717,8 +748,8 @@ def deleted(t):
     fp = fp_of(t)
     at = tombs.get(fp) if fp else None
     if at is None or fp in live: return False   # same audio still in the incoming copy: not gone
-    added = when(t.get("dateAdded"))
-    return added is not None and added <= at    # added after the deletion, or a date nobody can read: not deleted
+    since = added(t)
+    return since is not None and since <= at    # added after the deletion, or a date nobody can read: not deleted
 missing = [t for t in cur if str(t.get("id")) not in ids]
 honoured = [t for t in missing if deleted(t)]
 # Jake deletes songs by the handful: 31 in his busiest day (2026-11-03), 22
@@ -730,7 +761,7 @@ MAX_DELETIONS = 50
 if len(honoured) > MAX_DELETIONS:
     print("refused-too-many-deletions %d" % len(honoured)); raise SystemExit(0)
 missing = [t for t in missing if not deleted(t)]
-ahead = [t for t in missing if (ts(t) or float("-inf")) > newest]
+ahead = [t for t in missing if (added(t) if added(t) is not None else float("-inf")) > newest]
 if ahead:
     print("refused-stale %d" % len(ahead)); raise SystemExit(0)
 # Brief 197 — twin of the recent-id rule in stale-push.ts: a song the
@@ -738,8 +769,8 @@ if ahead:
 # even when it is OLDER than the newest in the incoming copy (the same-day
 # phone download erased by a cross-lineage publish, 2026-10-14). Named,
 # so the refusal is loud, never silent.
-cutoff = time.time() - 30 * 24 * 3600
-recent = [t for t in missing if (ts(t) or 0) > cutoff]
+cutoff = now - 30 * 24 * 3600
+recent = [t for t in missing if added(t) is None or added(t) > cutoff]
 if recent:
     names = "; ".join(str(t.get("title") or t.get("id")) for t in recent[:10])
     print("refused-recent %d %s" % (len(recent), names)); raise SystemExit(0)

@@ -80,20 +80,20 @@ interface Outcome { out: string; err: string; served: Row[] }
 interface Case { homemini: Row[]; incoming: Row[]; tombstones?: unknown; tombstonesRaw?: string }
 
 /** The same case on every interpreter; they must agree, and the answer is returned once. */
-function publish(opts: Case): Outcome {
-  const all = PYTHONS.map((py) => publishWith(py, opts))
+function publish(opts: Case, tz = 'America/New_York'): Outcome {
+  const all = PYTHONS.map((py) => publishWith(py, opts, tz))
   for (const o of all.slice(1)) assert.deepEqual(o, all[0], `${PYTHONS.join(' and ')} disagree`)
   return all[0]
 }
 
-function publishWith(python: string, opts: Case): Outcome {
+function publishWith(python: string, opts: Case, tz: string): Outcome {
   const dir = mkdtempSync(join(tmpdir(), 'jt-publish-deletions-'))
   try {
     writeFileSync(join(dir, 'library.json'), JSON.stringify({ tracks: opts.homemini }))
     writeFileSync(join(dir, '.library.json.incoming'), JSON.stringify({ tracks: opts.incoming }))
     if (opts.tombstonesRaw !== undefined) writeFileSync(join(dir, 'track-tombstones.json'), opts.tombstonesRaw)
     else if (opts.tombstones !== undefined) writeFileSync(join(dir, 'track-tombstones.json'), JSON.stringify(opts.tombstones))
-    const r = spawnSync(python, ['-'], { cwd: dir, input: guardSource(), encoding: 'utf8' })
+    const r = spawnSync(python, ['-'], { cwd: dir, input: guardSource(), encoding: 'utf8', env: { ...process.env, TZ: tz } })
     assert.equal(r.status, 0, r.stderr)
     assert.ok(existsSync(join(dir, 'library.json')))
     return {
@@ -107,6 +107,11 @@ function publishWith(python: string, opts: Case): Outcome {
 }
 
 const ids = (rows: Row[]) => rows.map((r) => r.id)
+/** How far a zone's wall clock is ahead of UTC at an instant, in ms. */
+function offsetMs(tz: string, atMs: number): number {
+  const digits = new Date(atMs).toLocaleString('sv-SE', { timeZone: tz }).replace(' ', 'T')
+  return Date.parse(`${digits}Z`) - (atMs - (atMs % 1000))
+}
 const T = (...t: unknown[]) => ({ v: 1, tombstones: t })
 
 /** n songs added a week ago, and a deletion for each an hour ago. */
@@ -266,14 +271,19 @@ describe('guarded publish: what a deletion never excuses', () => {
     assert.equal(r.out, 'published 4')
   })
 
-  it('a row whose date nobody can read is not excused', () => {
-    for (const dateAdded of ['', 'yesterday', '2026-11-12T18:00:15', '12/11/2026', 1794500000000, null]) {
-      const lost: Row = { id: 15122, title: 'Save Yourself', dateAdded, audioFingerprint: 'dc6b107e' }
+  it('a missing song whose date nobody can read is recent: refused, deletion or no deletion', () => {
+    const ABSENT = Symbol('absent')
+    // The last three are dates Python 3.14 reads and JavaScript and 3.9 do not: old ones on purpose,
+    // so only "nobody can read it" can be what refuses them, on either Python.
+    for (const dateAdded of ['', 'yesterday', '12/11/2026', '2026-13-45', 1794500000000, null, ABSENT, '20200101', '2020-01-01T18', '2020-W01-3']) {
+      const lost = { id: 15122, title: 'Save Yourself', audioFingerprint: 'dc6b107e', ...(dateAdded === ABSENT ? {} : { dateAdded }) } as Row
       const held = [...OLD, lost]
-      const r = publish({ homemini: held, incoming: INCOMING, tombstones: T(tomb('dc6b107e', HOUR)) })
-      // An unreadable date is not "recent" to the old rule either: what matters is that
-      // the row is still counted as missing, never waved through as deleted.
-      assert.equal(r.err, '', `dateAdded ${JSON.stringify(dateAdded)} was excused`)
+      for (const tombstones of [undefined, T(tomb('dc6b107e', HOUR))]) {
+        const r = publish({ homemini: held, incoming: INCOMING, tombstones })
+        assert.equal(r.out, 'refused-recent 1 Save Yourself', `dateAdded ${String(dateAdded)}`)
+        assert.deepEqual(ids(r.served), ids(held))
+        assert.equal(r.err, '')
+      }
     }
   })
 
@@ -317,16 +327,236 @@ describe('guarded publish: dates the way JavaScript writes them, on every Python
     }
   })
 
-  it('a date with no time is UTC midnight, as Date.parse has it', () => {
+  /** x as wall-clock digits in a zone, no zone written: "2026-11-12T13:00:15". */
+  const wall = (ms: number, tz: string) => new Date(ms).toLocaleString('sv-SE', { timeZone: tz }).replace(' ', 'T')
+  const lostAt = (dateAdded: string): Row => ({ id: 15122, title: 'Save Yourself', dateAdded, audioFingerprint: 'dc6b107e' })
+  const deletedAtMs = (ms: number) => T({ audioFingerprint: 'dc6b107e', deletedAt: new Date(ms).toISOString() })
+  const verdict = (dateAdded: string, deletedMs: number, tz: string) =>
+    publish({ homemini: [...OLD, lostAt(dateAdded)], incoming: INCOMING, tombstones: deletedAtMs(deletedMs) }, tz).out
+
+  it('a date with no time is the LATER of UTC midnight and local midnight, so it is never excused early', () => {
     const day = new Date(NOW - 2 * DAY).toISOString().slice(0, 10)
-    const midnight = Date.parse(day)
-    const lost: Row = { id: 15122, title: 'Save Yourself', dateAdded: day, audioFingerprint: 'dc6b107e' }
-    const at = (ms: number) => T({ audioFingerprint: 'dc6b107e', deletedAt: new Date(ms).toISOString() })
-    assert.equal(publish({ homemini: [...OLD, lost], incoming: INCOMING, tombstones: at(midnight) }).out, 'published 4')
-    assert.match(publish({ homemini: [...OLD, lost], incoming: INCOMING, tombstones: at(midnight - 1000) }).out, /^refused-/)
+    const utcMidnight = Date.parse(day)
+    for (const tz of ['America/New_York', 'Asia/Kolkata', 'UTC']) {
+      const localMidnight = utcMidnight - offsetMs(tz, utcMidnight - offsetMs(tz, utcMidnight))   // the offset in force AT local midnight
+      const later = Math.max(utcMidnight, localMidnight)
+      assert.equal(verdict(day, later, tz), 'published 4', `${tz}: deleted at the later midnight`)
+      assert.match(verdict(day, later - 1000, tz), /^refused-/, `${tz}: deleted a second before the later midnight`)
+    }
+  })
+
+  it('a time with no zone is local time, as JavaScript reads it', () => {
+    const x = base.getTime() - (base.getTime() % 1000)
+    for (const tz of ['America/New_York', 'Asia/Kolkata']) {
+      assert.equal(verdict(wall(x, tz), x + 1000, tz), 'published 4', `${tz}: deleted a second after`)
+      assert.match(verdict(wall(x, tz), x - 1000, tz), /^refused-/, `${tz}: deleted a second before`)
+    }
+  })
+
+  it("an offset's sign matters: +05:00 is five hours east, -05:00 five hours west", () => {
+    const x = base.getTime() - (base.getTime() % 1000)
+    const written = (sign: '+' | '-') => `${new Date(x + (sign === '+' ? 5 : -5) * HOUR).toISOString().slice(0, 19)}${sign}05:00`
+    for (const sign of ['+', '-'] as const) {
+      assert.equal(verdict(written(sign), x + 1000, 'UTC'), 'published 4', `${sign}05:00, deleted a second after`)
+      assert.match(verdict(written(sign), x - 1000, 'UTC'), /^refused-/, `${sign}05:00, deleted a second before`)
+    }
+    // And on the deletion: the same instant written both ways excuses the same song.
+    for (const sign of ['+', '-'] as const) {
+      const del = (ms: number) => T({ audioFingerprint: 'dc6b107e', deletedAt: `${new Date(ms + (sign === '+' ? 5 : -5) * HOUR).toISOString().slice(0, 19)}${sign}05:00` })
+      const lost = lostAt(new Date(x).toISOString())
+      assert.equal(publish({ homemini: [...OLD, lost], incoming: INCOMING, tombstones: del(x + 1000) }, 'UTC').out, 'published 4')
+      assert.match(publish({ homemini: [...OLD, lost], incoming: INCOMING, tombstones: del(x - 1000) }, 'UTC').out, /^refused-/)
+    }
   })
 
   it("homemini's own Python is one of the interpreters wherever it exists", () => {
     if (existsSync('/usr/bin/python3')) assert.equal(PYTHONS[0], '/usr/bin/python3')
+  })
+})
+
+/**
+ * Never looser. The guard as it ran before PR 411 is frozen in
+ * fixtures/publish-guard-before-pr411.py. Both guards get the same folder and the same
+ * clock, for a missing song dated in every shape at every distance from the two lines
+ * the old guard drew (30 days ago; this copy's newest song), in three time zones, on
+ * every Python. Wherever the old guard refused, the new one must refuse, unless a
+ * deletion on record covers the song, which is the one thing this PR lets through.
+ */
+describe('guarded publish: never looser than the guard before it', () => {
+  const BEFORE = readFileSync(join(import.meta.dirname, 'fixtures', 'publish-guard-before-pr411.py'), 'utf8')
+  // The clock is the harness's to set, so the lines are put where the readings disagree:
+  // 30 days before each of these is between UTC midnight and New York's (02:00Z), between
+  // Kolkata's and UTC's (21:00Z), clear of both (12:00Z), and wherever today happens to be.
+  const TODAY = Math.floor(NOW / DAY) * DAY
+  const CLOCKS = [Math.floor(NOW / 1000) * 1000, TODAY + 2 * HOUR, TODAY + 21 * HOUR, TODAY + 12 * HOUR]
+  const ZONES = ['America/New_York', 'Asia/Kolkata', 'UTC']
+  const MIN = 60 * 1000
+  const NEAR = [1 * MIN, 30 * MIN, 3 * HOUR, 4.5 * HOUR, 5 * HOUR, 5.5 * HOUR, 6 * HOUR, 13 * HOUR, 25 * HOUR].flatMap((d) => [-d, d])
+  const FEWER = [1 * MIN, 3 * HOUR, 5.5 * HOUR, 25 * HOUR].flatMap((d) => [-d, d])
+  const ABSENT = '__absent__'
+
+  /** One instant, written every way a date has been or could be written. */
+  function shapes(ms: number, tz: string): Array<[string, unknown]> {
+    const z = new Date(ms).toISOString()
+    const head = z.slice(0, 19)
+    const shifted = (h: number) => new Date(ms + h * HOUR).toISOString().slice(0, 23)
+    const wallClock = new Date(ms).toLocaleString('sv-SE', { timeZone: tz }).replace(' ', 'T')
+    return [
+      ['ms', z],
+      ['one digit', `${head}.${z.slice(20, 21)}Z`],
+      ['no fraction', `${head}Z`],
+      ['six digits', `${head}.${z.slice(20, 23)}000Z`],
+      ['+05:00', `${shifted(5)}+05:00`],
+      ['-05:00', `${shifted(-5)}-05:00`],
+      ['+0530', `${shifted(5.5)}+0530`],
+      ['lower case', z.replace('T', 't').replace('Z', 'z')],
+      ['space', z.replace('T', ' ')],
+      ['no zone, local digits', wallClock],
+      ['no zone, UTC digits', head],
+      ['no zone, minutes only', wallClock.slice(0, 16)],
+      ['date only, UTC day', z.slice(0, 10)],
+      ['date only, local day', wallClock.slice(0, 10)],
+    ]
+  }
+  const UNREADABLE: Array<[string, unknown]> = [
+    ['text', 'yesterday'], ['empty', ''], ['null', null], ['epoch number', 1794500000000], ['absent', ABSENT],
+    ['month 13', '2026-13-45'], ['compact', '20261112'], ['us', '11/12/2026'], ['true', true],
+  ]
+
+  interface Probe { label: string; now: number; cur: unknown[]; incoming: unknown[]; tombstones?: unknown; excused: boolean }
+  const song = (id: number, dateAdded: unknown, fp = `fp-${id}`) =>
+    ({ id, title: `Song ${id}`, audioFingerprint: fp, ...(dateAdded === ABSENT ? {} : { dateAdded }) })
+
+  const probes = (tz: string): Probe[] => CLOCKS.flatMap((clock) => probesAt(tz, clock))
+
+  function probesAt(tz: string, NOW_MS: number): Probe[] {
+    const out: Probe[] = []
+    const at = `${new Date(NOW_MS).toISOString().slice(11, 16)}Z`
+    const add = (p: Omit<Probe, 'now'>) => out.push({ ...p, label: `[${at}] ${p.label}`, now: NOW_MS / 1000 })
+    const old = [song(1, new Date(NOW_MS - 200 * DAY).toISOString()), song(2, new Date(NOW_MS - 90 * DAY).toISOString())]
+    const covering = { v: 1, tombstones: [{ id: '9', audioFingerprint: 'fp-9', title: 't', artist: 'a', durationMs: 1, deletedAt: new Date(NOW_MS - MIN).toISOString() }] }
+    const unrelated = { v: 1, tombstones: [{ ...covering.tombstones[0], audioFingerprint: 'someone-else' }] }
+
+    // Line 1: 30 days ago. This copy has a song from an hour ago, so nothing missing is "newer".
+    const line = NOW_MS - 30 * DAY
+    const fresh = [...old, song(3, new Date(NOW_MS - HOUR).toISOString())]
+    for (const d of NEAR) {
+      for (const [name, text] of shapes(line + d, tz)) {
+        const cur = [...fresh, song(9, text)]
+        add({ label: `30-day line ${d / MIN} min, ${name}`, cur, incoming: fresh, excused: false })
+        add({ label: `30-day line ${d / MIN} min, ${name}, someone else deleted`, cur, incoming: fresh, tombstones: unrelated, excused: false })
+        add({ label: `30-day line ${d / MIN} min, ${name}, deleted`, cur, incoming: fresh, tombstones: covering, excused: true })
+      }
+    }
+    // Line 2: this copy's newest song, 60 days ago, itself written every way.
+    const newest = NOW_MS - 60 * DAY
+    for (const [newestName, newestText] of shapes(newest, tz)) {
+      const incoming = [...old, song(3, newestText)]
+      for (const d of FEWER) {
+        for (const [name, text] of shapes(newest + d, tz)) {
+          add({ label: `newest (${newestName}) ${d / MIN} min, ${name}`, cur: [...incoming, song(9, text)], incoming, excused: false })
+        }
+      }
+      for (const [name, value] of UNREADABLE) {
+        add({ label: `newest (${newestName}), missing song dated ${name}`, cur: [...incoming, song(9, value)], incoming, excused: false })
+      }
+    }
+    // Dates nobody can read: with and without a deletion that would cover the song.
+    for (const [name, value] of UNREADABLE) {
+      const cur = [...fresh, song(9, value)]
+      add({ label: `unreadable ${name}`, cur, incoming: fresh, excused: false })
+      add({ label: `unreadable ${name}, deleted`, cur, incoming: fresh, tombstones: covering, excused: false })
+      // ... and as this copy's newest song.
+      const incoming = [...old, song(3, value)]
+      add({ label: `newest unreadable ${name}`, cur: [...incoming, song(9, new Date(NOW_MS - 45 * DAY).toISOString())], incoming, excused: false })
+    }
+    return out
+  }
+
+  const HARNESS = `
+import sys, json, os, io, time, tempfile, shutil, contextlib
+job = json.load(sys.stdin)
+clock = [0.0]
+time.time = lambda: clock[0]
+guards = {"before": compile(job["before"], "before", "exec"), "after": compile(job["after"], "after", "exec")}
+home = tempfile.mkdtemp()
+os.chdir(home)
+def run(which, case):
+    clock[0] = float(case["now"])
+    for name in os.listdir("."): os.remove(name)
+    json.dump({"tracks": case["cur"]}, open("library.json", "w"))
+    json.dump({"tracks": case["incoming"]}, open(".library.json.incoming", "w"))
+    if case.get("tombstones") is not None: json.dump(case["tombstones"], open("track-tombstones.json", "w"))
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            exec(guards[which], {"__name__": "__main__"})
+    except SystemExit:
+        pass
+    kept = len(json.load(open("library.json"))["tracks"])
+    return [out.getvalue().strip(), kept]
+answers = [[run("before", c), run("after", c)] for c in job["cases"]]
+os.chdir("/")
+shutil.rmtree(home, ignore_errors=True)
+json.dump(answers, sys.stdout)
+`
+
+  type Answer = [[string, number], [string, number]]
+  function ask(python: string, tz: string, cases: Probe[], after = guardSource()): Answer[] {
+    const r = spawnSync(python, ['-c', HARNESS], {
+      input: JSON.stringify({ before: BEFORE, after, cases }),
+      encoding: 'utf8', env: { ...process.env, TZ: tz }, maxBuffer: 256 * 1024 * 1024,
+    })
+    assert.equal(r.status, 0, r.stderr.slice(-2000))
+    return JSON.parse(r.stdout)
+  }
+  const refused = (out: string) => out.startsWith('refused-')
+
+  it('the frozen guard is the one main ran', () => {
+    assert.match(BEFORE, /datetime\.fromisoformat/)
+    assert.equal(BEFORE.includes('track-tombstones'), false)
+  })
+
+  for (const python of PYTHONS) {
+    for (const tz of ZONES) {
+      it(`${python}, ${tz}: what the old guard refused is still refused`, () => {
+        const cases = probes(tz)
+        const answers = ask(python, tz, cases)
+        assert.equal(answers.length, cases.length)
+        const looser: string[] = []
+        const count = { same: 0, stricter: 0, excused: 0, oldRefused: 0, oldPublished: 0 }
+        answers.forEach(([[was, wasKept], [now, nowKept]], i) => {
+          const c = cases[i]
+          assert.match(was, /^(published \d+|refused-\S+.*)$/, c.label)
+          assert.match(now, /^(published \d+|refused-\S+.*)$/, c.label)
+          // The verdict is what happened to the file, not only what was printed.
+          assert.equal(refused(was), wasKept === c.cur.length, c.label)
+          assert.equal(refused(now), nowKept === c.cur.length, c.label)
+          if (refused(was)) count.oldRefused++; else count.oldPublished++
+          if (refused(was) === refused(now)) count.same++
+          else if (refused(now)) count.stricter++
+          else if (c.excused) count.excused++
+          else looser.push(`${c.label}: was "${was}", now "${now}"`)
+          // The shape every real row has, with no deletion in play: not one word changes.
+          if (!c.tombstones && / ms$/.test(c.label) && (!c.label.includes('] newest') || c.label.includes('] newest (ms)'))) assert.equal(now, was, c.label)
+        })
+        assert.deepEqual(looser, [], `${looser.length} case(s) the old guard refused now publish`)
+        // Not vacuous: both verdicts were on the table, and the deletion excuse did fire.
+        assert.ok(count.oldRefused > 100 && count.oldPublished > 100, JSON.stringify(count))
+        assert.ok(count.excused > 0, JSON.stringify(count))
+      })
+    }
+  }
+
+  it('the comparison can fail: a guard that reads a bare date as UTC only is caught', () => {
+    // The reader PR 411 first shipped with (7da6501a): UTC midnight for a bare date, where
+    // the old guard on homemini took local midnight. West of Greenwich that is hours looser.
+    const loose = guardSource().replace('return (min(utc, loc), max(utc, loc)) if loc is not None else (utc, utc)', 'return (utc, utc)')
+      .replace('    return max(r[1], old) if old is not None else r[1]\n', '    return r[1]\n')
+    assert.notEqual(loose, guardSource())
+    const cases = probes('America/New_York')
+    const answers = ask(PYTHONS[0], 'America/New_York', cases, loose)
+    const looser = answers.filter(([[was], [now]], i) => refused(was) && !refused(now) && !cases[i].excused)
+    assert.ok(looser.length > 0, 'the differential saw nothing wrong with a looser guard')
   })
 })
