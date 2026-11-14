@@ -147,7 +147,7 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
       const replica = await host.isReplica().catch(() => false)
       return { ok: true as const, mounted: false, step: onboardingStep({ facts: replica ? ({ role: 'replica' } as IpodDeviceFacts) : null, target: null, name: null, typed: null, records, progress: blank }), targets: [], cover: null, health: null, record: null }
     }
-    const f = await facts(mount, arg?.recheck === true)
+    let f = await facts(mount, arg?.recheck === true)
     const lists = (await client().all()) ?? []
     const target = await targetFor(arg?.listId, lists)
     const marker = f.marker
@@ -167,12 +167,21 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
       bpm: marker && !marker.primary && !target ? await bpmFor(marker.id) : null,
     }
     const tailTarget = !target && mine ? await targetFor(mine.id, lists) : target
-    const step = onboardingStep({
-      facts: f, target: target ?? (marker && !marker.primary ? tailTarget : null),
+    const ask = (facts: IpodDeviceFacts) => onboardingStep({
+      facts, target: target ?? (marker && !marker.primary ? tailTarget : null),
       name: typeof arg?.name === 'string' && arg.name.trim() ? arg.name : null,
       typed: typeof arg?.typed === 'string' ? arg.typed : null,
       records: fresh, progress,
     })
+    let step = ask(f)
+    // Jake picked a list: the test file runs by itself, no button (2026-11-14). Only when nothing
+    // else stops the set-up, and behind the same guard as every write.
+    if (target && step.step === 'checks' && !step.blocked && !f.writeTest && f.stable) {
+      const r = await runCardTest(mount, guardFor(f, mount), { quick: true })
+      if (seen && seen.mount === mount) seen.writeTest = r
+      f = { ...f, writeTest: r }
+      step = ask(f)
+    }
     const record = marker ? fresh.find((r) => r.listId === marker.id) ?? null : null
     return {
       ok: true as const,
@@ -225,7 +234,7 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
         const why = step.step === 'refused' || step.step === 'checks' || step.step === 'name' ? step.line : step.step === 'confirm' ? `Type “${step.phrase}” to go on.` : 'This iPod isn’t at the set-up step.'
         return { ok: false, error: `${why} Nothing on the iPod was changed.`, step }
       }
-      const checked = checkIpodName(name ?? (target.kind === 'list' ? target.listName : null))
+      const checked = checkIpodName(step.name)
       if (!checked.ok) return { ok: false, error: checked.error }
       const color = normalizeIpodColor(arg.color) ?? (target.kind === 'list' ? target.color : null)
       const list = target.kind === 'list' ? lists.find((l) => l.id === target.listId) ?? null : null

@@ -89,7 +89,7 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
     setColor(row?.color ?? null)
     setTyped('')
     setName('')
-    void run('Checking the iPod…', () => refresh({ listId: id, name: '', typed: '' }))
+    void run('Checking the iPod, and writing and reading back a test file…', () => refresh({ listId: id, name: '', typed: '' }))
   }
 
   return (
@@ -130,16 +130,6 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
           <Checks checks={step.checks} />
           <div className="ipod-id-actions">
             <button type="button" className="device-itunes-btn" disabled={!!busy} onClick={() => { void run('Checking the connection…', () => refresh({ recheck: true })) }}>Check again</button>
-            {!step.blocked && (
-              <button
-                type="button" className="device-itunes-btn" disabled={!!busy}
-                onClick={() => { void run('Writing and reading the test file…', async () => {
-                  const r = await window.electronAPI.ipodSetupTest?.()
-                  if (r && !r.ok) setError(r.error ?? 'The test couldn’t run.')
-                  await refresh()
-                }) }}
-              >Run the test file</button>
-            )}
           </div>
         </>
       )}
@@ -163,6 +153,10 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
           <ul className="ipod-setup-checks">
             {step.actions.map((a) => <li key={a} className="ipod-setup-check"><span className="ipod-setup-mark" aria-hidden="true">•</span><span>{a}</span></li>)}
           </ul>
+          <label className="ipod-id-field">
+            <span>iPod name</span>
+            <input value={name || step.name} maxLength={11} onChange={(e) => setName(e.target.value)} />
+          </label>
           <div className="ipod-id-field">
             <span>The iPod’s colour</span>
             <div className="ipod-id-swatches" role="radiogroup" aria-label="iPod colour">
@@ -184,7 +178,7 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
             <button
               type="button" className="device-itunes-btn" disabled={!!busy}
               onClick={() => { void run('Setting up the iPod…', async () => {
-                const r = await window.electronAPI.ipodSetupPrepare?.({ listId, name: name.trim() || null, color, typed, matchCover })
+                const r = await window.electronAPI.ipodSetupPrepare?.({ listId, name: name.trim() || step.name, color, typed, matchCover })
                 if (!r) { setError('This build can’t set up iPods.'); return }
                 if (!r.ok) { setError(r.error ?? 'Setting up didn’t finish.'); await refresh(); return }
                 // Something worth reading (the drive kept its old name, the picture didn't save) is
@@ -216,7 +210,7 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
                 if (r && !r.ok) setError(r.error ?? 'That couldn’t be saved.')
                 await refresh()
               }) }}
-            >I checked all of these on the iPod</button>
+            >Both are right</button>
           </div>
         </>
       )}

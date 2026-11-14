@@ -5,7 +5,7 @@ import {
   QUICK_TEST_BYTES, STABLE_READS_NEEDED, bpmLine, buildOnboardingRecord, cardTestPlan, compareFirmware, confirmationMatches,
   confirmationPhrase, coverMismatch, detectHardware, deviceSerial, firmwareFromBuildId, firstSyncEstimate, ipodHealthCheck,
   isModdedStorage, onboardedLine, onboardingChecks, onboardingStep, onboardingWriteRefusal, parseOnboardingDoc, parseSysInfo,
-  proofChecklist, recordForWipedIpod,
+  proofChecklist, recordForWipedIpod, suggestedIpodName,
   type IpodDeviceFacts, type IpodOnboardingRecord, type OnboardingInput, type OnboardingProgress, type OnboardingTarget,
 } from '../../common/ipod-onboarding.ts'
 import type { IpodDeviceMarker } from '../../common/ipod-identity.ts'
@@ -141,17 +141,30 @@ describe('the steps, in order', () => {
     const s = onboardingStep(input({ target: list() }))
     assert.equal(s.step, 'prepare')
     assert.ok(s.step === 'prepare' && s.actions.some((a) => /blank song database/.test(a)))
-    assert.ok(s.step === 'prepare' && s.actions.some((a) => a === "Name the drive 1980's (the Mac shows 1980'S)."))
-    assert.ok(s.step === 'prepare' && s.actions.some((a) => a.includes("this iPod is 1980's and carries 1980's on every plug-in")))
+    assert.equal(s.step === 'prepare' && s.name, '80sPod')
+    assert.ok(s.step === 'prepare' && s.actions.some((a) => a === 'Name the drive 80sPod (the Mac shows 80SPOD).'))
+    assert.ok(s.step === 'prepare' && s.actions.some((a) => a.includes("this iPod is 80sPod and carries 1980's on every plug-in")))
   })
-  test('a list name the drive can’t hold asks for a short name, and takes one', () => {
-    const bandcamp = list({ listId: BANDCAMP, listName: 'Best of Bandcamp', songs: 888, bytes: 30 * GB, model: 'classic' })
-    const ask = onboardingStep(input({ target: bandcamp }))
-    assert.equal(ask.step, 'name')
-    assert.match(ask.step === 'name' ? ask.line : '', /too long for an iPod’s drive name \(11 characters at most\)/)
-    assert.equal(onboardingStep(input({ target: bandcamp, name: 'Bandcamp' })).step, 'prepare')
+  test('the iPod gets a short name in punkPod’s pattern; the list keeps its own; Jake can type another', () => {
+    assert.equal(suggestedIpodName('Indie Sleeze'), 'sleezePod')
+    assert.equal(suggestedIpodName('Best of Bandcamp'), 'campPod')
+    assert.equal(suggestedIpodName('Y2K'), 'y2kPod')
+    assert.equal(suggestedIpodName("1980's"), '80sPod')
+    assert.equal(suggestedIpodName('1990’s'), '90sPod')
+    assert.equal(suggestedIpodName('Totally 80s'), '80sPod')
+    assert.equal(suggestedIpodName('Groovy Rave'), 'Groovy Rave')
+    assert.equal(suggestedIpodName('A Name That Is Far Too Long'), null)
+    const bandcamp = list({ listId: BANDCAMP, listName: 'Best of Bandcamp', songs: 888, bytes: 30 * GB, model: 'mini' })
+    const auto = onboardingStep(input({ target: bandcamp }))
+    assert.equal(auto.step === 'prepare' && auto.name, 'campPod')
+    assert.ok(auto.step === 'prepare' && auto.actions.some((a) => a.includes('this iPod is campPod and carries Best of Bandcamp')))
+    assert.equal((onboardingStep(input({ target: bandcamp, name: 'Bandcamp' })) as { name: string }).name, 'Bandcamp')
     const bad = onboardingStep(input({ target: bandcamp, name: 'Best of Bandcamp' }))
     assert.match(bad.step === 'name' ? bad.line : '', /16 characters/)
+    // Nothing to suggest: he is asked.
+    const ask = onboardingStep(input({ target: list({ listName: 'A Name That Is Far Too Long' }) }))
+    assert.match(ask.step === 'name' ? ask.line : '', /Give the iPod a short name \(11 characters at most/)
+    assert.equal(onboardingStep(input({ target: { kind: 'new' } })).step, 'name')
   })
   test('songs already on it: the typed confirmation names the device, and only the exact words pass', () => {
     const used = facts({ catalog: { present: true, readable: true, songs: 10727 }, musicFiles: 10727 })
@@ -230,10 +243,15 @@ describe('the checks', () => {
     assert.match(status(facts({ rockbox: true }), 'firmware').line, /only you can run in Terminal/)
     assert.equal(blocked(facts({ rockbox: true })), true)
   })
-  test('a Mac-formatted iPod stops; JakeTunes never formats', () => {
+  test('a Mac-formatted iPod is not erased: it runs on HFS+ as it is, and the set-up goes on with a warning', () => {
     const hfs = status(facts({ fs: 'hfs' }), 'format')
-    assert.equal(hfs.status, 'stop')
-    assert.match(hfs.line, /erases the iPod, and JakeTunes doesn’t do that for you\. Nothing was changed\./)
+    assert.equal(hfs.status, 'warn')
+    assert.match(hfs.line, /nothing needs erasing/)
+    assert.equal(onboardingStep(input({ facts: facts({ fs: 'hfs' }), target: list() })).step, 'prepare')
+    // Anything else is not an iPod's format, and JakeTunes never formats.
+    const ex = status(facts({ fs: 'exfat' }), 'format')
+    assert.equal(ex.status, 'stop')
+    assert.match(ex.line, /JakeTunes doesn’t do that for you\. Nothing was changed\./)
     assert.equal(blocked(facts({ fs: 'exfat' })), true)
   })
   test('a 3rd generation on old software is warned about lossless; on 2.3 it is fine', () => {
@@ -345,9 +363,9 @@ describe('the record and the words', () => {
   })
   test('the checklist, the estimate, the BPM line', () => {
     const c = proofChecklist('Eighties', 1193, 'on-the-ipod')
+    assert.equal(c.length, 2, 'one screen: the count, and the last song')
     assert.equal(c[0], 'Settings > About: Songs reads 1,193.')
-    assert.match(c[1], /Eighties’s list is first, then the default playlists/)
-    assert.match(c[2], /very last song/)
+    assert.match(c[1], /very last song plays/)
     assert.equal(firstSyncEstimate(0, 5), null)
     assert.equal(firstSyncEstimate(10, null), null)
     assert.match(firstSyncEstimate(829, 28 * GB) ?? '', /829 songs, 28 GB: about 39 minutes to 2 hours/)

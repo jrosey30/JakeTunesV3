@@ -378,7 +378,10 @@ export function onboardingChecks(facts: IpodDeviceFacts, target: OnboardingTarge
   // Format
   if (facts.fs === null) add('format', 'unknown', 'JakeTunes couldn’t read how the drive is formatted.')
   else if (facts.fs === 'fat32') add('format', 'ok', 'Formatted FAT32, the format JakeTunes syncs.')
-  else if (facts.fs === 'hfs') add('format', 'stop', 'This iPod is formatted for a Mac (HFS+). JakeTunes syncs FAT32 iPods. Changing the format erases the iPod, and JakeTunes doesn’t do that for you. Nothing was changed.')
+  // A Mac-formatted iPod runs on HFS+ natively and the Mac writes it, so nothing has to be erased
+  // (2026-11-14). Converting one to FAT32 is not a reformat of the data partition: the partition
+  // map changes and the firmware partition moves, which a mistake turns into a dead iPod.
+  else if (facts.fs === 'hfs') add('format', 'warn', 'Formatted for a Mac (HFS+). The iPod runs on that as it is and nothing needs erasing. JakeTunes has only synced FAT32 iPods so far, so its first sync is the test.')
   else add('format', 'stop', 'This drive isn’t formatted the way an iPod needs (FAT32). Changing the format erases it, and JakeTunes doesn’t do that for you. Nothing was changed.')
 
   // Storage
@@ -430,6 +433,26 @@ export function coverMismatch(target: OnboardingTarget | null, facts: IpodDevice
   return { model: real, line: `${target.listName} is ${had}; this is ${hardwareName(detectHardware(facts.sysInfo, facts.usb))}. Update the picture to match? The colour stays what you pick.` }
 }
 
+// ── The iPod's own name ──────────────────────────────────────────────────────
+
+/**
+ * A short name for the iPod itself, in punkPod's pattern (Jake, 2026-11-14:
+ * "figure out a cool looking name"). It is what the drive and the iPod's About
+ * screen say; the list keeps the name Jake gave it. A suggestion only: he can
+ * type another. null = nothing to suggest (he names it).
+ */
+export function suggestedIpodName(listName: string): string | null {
+  const n = listName.toLowerCase()
+  const pick = /sle[ae]ze/.test(n) ? 'sleezePod'
+    : /bandcamp/.test(n) ? 'campPod'
+      : /y2k|2000/.test(n) ? 'y2kPod'
+        : /punk/.test(n) ? 'punkPod'
+          : (/\b(?:19)?([2-9]0)[’']?s\b/.exec(n)?.[1] ?? null)
+  if (pick && /^\d0$/.test(pick)) return `${pick}sPod`
+  if (pick) return pick
+  return checkIpodName(listName).ok ? listName.replace(/\s+/g, ' ').trim() : null
+}
+
 // ── The typed confirmation ───────────────────────────────────────────────────
 
 /** What Jake must type, exactly, before anything on the iPod is replaced. It names the device. */
@@ -460,7 +483,7 @@ export type OnboardingStep =
   | { step: 'name'; line: string; suggestion: string | null }
   | { step: 'checks'; checks: OnboardingCheck[]; blocked: boolean; line: string }
   | { step: 'confirm'; phrase: string; why: string[] }
-  | { step: 'prepare'; actions: string[] }
+  | { step: 'prepare'; actions: string[]; name: string }
   | { step: 'first-sync'; line: string; estimate: string | null }
   | { step: 'proof'; checklist: string[]; line: string }
   | { step: 'done'; lines: string[] }
@@ -522,15 +545,12 @@ export function firstSyncEstimate(songs: number, bytes: number | null): string |
   return `${count(songs, 'song')}, ${gb(bytes)}: about ${span(fast)} to ${span(slow)}, with the Mac awake and the screen unlocked.`
 }
 
-/** The three things to click on the iPod itself, plus the number About must show. */
-export function proofChecklist(name: string, songs: number, playlists: OnboardingProgress['playlists']): string[] {
+/** The shortest honest proof (Jake, 2026-11-14: "less red tape the better, but ensure success"):
+ *  the count the iPod's own software indexed, and the last song written, played. */
+export function proofChecklist(_name: string, songs: number, _playlists: OnboardingProgress['playlists']): string[] {
   return [
     `Settings > About: Songs reads ${songs.toLocaleString('en-US')}.`,
-    playlists === 'on-the-ipod'
-      ? `Music > Playlists: ${name}’s list is first, then the default playlists in their order. Play the first song of the list.`
-      : 'Music > Playlists: open the first one and play its first song.',
-    'Music > Songs: scroll to the very last song, play it, and skip to the middle of it. It should play without a pause.',
-    'Hold the centre button on any song to add it to On-The-Go, then check it is there under Playlists.',
+    'Music > Songs: the very last song plays, and skips to its middle without a pause.',
   ]
 }
 
@@ -597,7 +617,7 @@ export function onboardingStep(input: OnboardingInput): OnboardingStep {
   }
 
   // The iPod's own name: it is the drive's name too, so 11 characters at most.
-  const suggested = target.kind === 'list' && checkIpodName(target.listName).ok ? target.listName : null
+  const suggested = target.kind === 'list' ? suggestedIpodName(target.listName) : null
   const nameCheck = checkIpodName(input.name ?? suggested)
   if (!nameCheck.ok) {
     return {
@@ -606,7 +626,7 @@ export function onboardingStep(input: OnboardingInput): OnboardingStep {
       line: input.name
         ? nameCheck.error
         : target.kind === 'list'
-          ? `“${target.listName}” is too long for an iPod’s drive name (${FAT_LABEL_MAX} characters at most). Give the iPod a short name; the list keeps its own.`
+          ? `Give the iPod a short name (${FAT_LABEL_MAX} characters at most: it is the drive’s name too). The list stays “${target.listName}”.`
           : 'Give the new iPod a name (11 characters at most: it is the drive’s name too).',
     }
   }
@@ -621,7 +641,7 @@ export function onboardingStep(input: OnboardingInput): OnboardingStep {
       blocked: stops.length > 0,
       line: stops.length
         ? `${count(stops.length, 'thing')} must be fixed before this iPod can be set up. ${NOTHING_CHANGED}`
-        : 'Two checks still need to run: the connection, and a small test file that is written, read back and removed.',
+        : 'Checking the connection and the test file…',
     }
   }
 
@@ -632,6 +652,7 @@ export function onboardingStep(input: OnboardingInput): OnboardingStep {
 
   return {
     step: 'prepare',
+    name: nameCheck.name,
     actions: [
       'Make the iPod’s folders (they are left alone where they already exist).',
       facts.catalog.present ? 'Keep the song database that’s there; the first sync rewrites it.' : 'Write a blank song database.',
