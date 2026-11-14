@@ -191,15 +191,12 @@ app side and locks the wiring. Both run in `npm run check`.
 Jake: *"Don't force anything, user decides in app whether he wants to update now. update
 later in middle of night or something (user will tell you when) or skip to next week."*
 
-Give the gate a 6th argument, a release file, and it waits for a decision instead of idle:
+The release job does not call the gate any more. It stages and offers, one call per Mac, and
+returns in seconds (below: **The release job's one call**). On each Mac a launchd agent then runs
+the gate with a 6th argument, a release file, and the gate waits for a decision instead of idle:
 
-```sh
-cat > "$SP/release.json" <<'JSON'
-{ "label": "This week's fixes", "kind": "weekly", "notes": ["Album pages open faster", "…"] }
-JSON
-# kind: weekly | monthly | fix. Max wait: 8 days (11520 min). Run it detached on each Mac
-# (nohup … &): an ssh session held open for a week is not something to rely on.
-~/bin/jaketunes-install-gate.sh "$STAGED" "JakeTunes-prev-$TAG-$SHA.app" 11520 "$SHA" "$NOTE" "$SP/release.json"
+```
+jaketunes-install-gate.sh <staged.app> <backup> 11520 <sha> <label> <staged-updates/<sha>/release.json>
 ```
 
 - The marker is `v: 2`: the v 1 fields plus `label`, `kind`, `notes` (list of one-line
@@ -224,11 +221,72 @@ JSON
   bar says "Installing — back in a moment" and refuses both.
 - Without the 6th argument the gate is the v 1 gate, idle install included. A v 1 offer still
   shows the three answers, but **Skip** only hides it there: a v 1 gate installs on idle anyway.
-- A reboot ends a waiting gate (the marker goes with it); the decision stays on disk and
-  applies if the same release is offered again.
+- A reboot ends a waiting gate (the marker goes with it). The agent starts a new gate for the
+  same release within 5 minutes of login, and the decision on disk applies to it.
 
 Each decision also reaches homemini as an `update` event in the usage log
 (`update.offered`, `update.decide`, `update.change`, `update.cancel`,
 `update.install.waiting`, `update.install.start`, and on the next launch `update.installed`
 or `update.install-not-landed`). Tests: `install-gate-release.test.ts` (the script),
 `update-decision.test.ts` (the app). Pictures of the bar: `node tools/render-update-choices.mjs <dir>`.
+
+## Each Mac decides for itself: the policy (2026-11-14)
+
+Two policies, chosen per Mac, never by an argument a recipe might forget:
+
+| Mac | Policy | What happens |
+|---|---|---|
+| MacBook, workmini | `decide` | The gate gets the release file. Nothing installs until Jake picks Install now, Install at… or Skip to next week in the app. |
+| homemini | `idle` | No release file. The gate installs at the first idle, no-audio moment, as before (Jake, 2026-10-30: *"the homemini you can update automatically because i dont see it unless i logon to that screen"*). Its app still shows the offer, and Install now works there. |
+
+The policy is `~/.config/jaketunes/update-policy` (one word, `decide` or `idle`) when that file
+exists. Otherwise it goes by host name: `Jakes-Mini-…` / `Jakes-Mac-mini…` / `homemini` is
+`idle`, everything else `decide`. That rule is `host_policy` in `jaketunes-update-agent.sh`, a twin
+of the app's `deviceFromHostname` (`src/common/usage-log.ts`), and `update-agent.test.ts` pins the two together.
+
+## The launchd agent: nothing held open, survives a reboot (2026-11-14)
+
+`jaketunes-update-agent.sh` runs as `com.jaketunes.update-gate` (`~/Library/LaunchAgents/`) at
+load and every 5 minutes. Each run takes a lock, looks, maybe starts the gate detached, and
+leaves. The plist sets `AbandonProcessGroup`, so launchd doesn't kill the gate when the run ends.
+
+Staged releases live in `~/Library/Application Support/JakeTunes/staged-updates/<sha>/`:
+`JakeTunes.app`, `release.json`, `staged-at`. The agent keeps its own notes beside them
+(`gate.pid`, `gate.exit`, `tries`, `skipped`, `gave-up`, `installed`).
+
+- **The newest staged release wins.** An older release is never started again. Its waiting v 2
+  gate sees the newer marker and leaves (exit 6). On an `idle` Mac the agent sends it TERM,
+  because a v 1 gate has no marker check. One job owns it all, so a release job never finds "a
+  gate still running".
+- **Already installed** (the release's sha is in the installed `app.asar`): nothing to do. The
+  last two staged releases and the newest `~/JakeTunes-prev-*.app` are kept; older ones go.
+- **A gate waiting:** the agent leaves it. A pid only counts while `ps` shows it is the agent's
+  own `jt-update-gate-run`, so a pid reused after a reboot is not mistaken for one.
+- **How the last gate ended:**
+  - exit 5 (skipped in the app): final.
+  - exit 1 (ABORT): counted, and after 3 the agent gives up on that release.
+  - exit 3 (timeout), 6 (replaced), 143/130 (killed): started again, not counted.
+  - no answer and a dead pid (**a reboot**, or a hard kill): started again, not counted. The
+    app's decision is still on disk, so an Install at… made before the reboot still holds.
+- Log: `~/Library/Logs/jaketunes-update-gate.log` (rotated at 1 MB). The agent's lines and every
+  gate's output go there.
+
+## The release job's one call (2026-11-14)
+
+```
+jaketunes-offer-update.sh <built JakeTunes.app> <sha> <release.json>
+```
+
+Run it on each Mac, from the build's own `scripts/install/` (it installs its siblings, the agent
+and the gate, from beside itself). It returns at once.
+
+1. Checks the bundle, its signature, the sha and the release file.
+2. Stages the copy under a hidden name, then renames it into place.
+3. Installs the agent and gate into `.../JakeTunes/update-agent/`.
+4. Writes the plist. A changed plist, or a job that isn't loaded, is bootstrapped; otherwise the
+   job is only kicked to look now. Running it twice is harmless.
+
+Exit 0 offered, 1 refused (nothing changed).
+
+Tests: `src/main/__tests__/update-agent.test.ts` runs both scripts for real under a temp HOME,
+with a fake gate and a fake `launchctl`. No launchd job is ever loaded.
