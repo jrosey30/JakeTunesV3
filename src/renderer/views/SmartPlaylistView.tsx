@@ -16,7 +16,7 @@ import { useTop1000Name, renameTop1000 } from '../top1000Name'
 import ListRenameField from '../components/ListRenameField'
 import { useIpodPlaylistCover, useIpodPlaylistLook } from '../utils/ipodCovers'
 import { IpodAd } from '../components/IpodAd'
-import { useTop1000Headline, setTop1000Headline } from '../top1000Headline'
+import { useTop1000Headline, useTop1000Counts, setTop1000Headline } from '../top1000Headline'
 import { adCopy, adCounts, adHeadline, adLegal, checkHeadline, countArtists, HEADLINE_MAX } from '../../common/ipod-ad'
 import { usePeriodPlaylistCover } from '../utils/periodCovers'
 import { IpodColorPicker } from '../components/IpodColorPicker'
@@ -183,6 +183,7 @@ export default function SmartPlaylistView() {
   // Headline… (2026-11-14): the line at the top of an iPod's page (common/ipod-ad.ts).
   const [editingHeadline, setEditingHeadline] = useState(false)
   const top1000Headline = useTop1000Headline()
+  const top1000Counts = useTop1000Counts()
   useEffect(() => { setRenaming(false); setEditingHeadline(false) }, [playlistId])
   // Photo covers (2026-11-09): the Top 1000 and every iPod list.
   const photoKey = photoKeyForPlaylist(playlistId)
@@ -1074,9 +1075,9 @@ export default function SmartPlaylistView() {
   // homemini's counts when it sends them (the phone's numbers), else this Mac's own.
   const adLook = useIpodPlaylistLook(playlistId)
   const adFacts = useMemo(() => ({
-    ...adCounts({ songs: smartTracks.length, artists: countArtists(smartTracks, canonicalArtist) }, ipodList),
+    ...adCounts({ songs: smartTracks.length, artists: countArtists(smartTracks, canonicalArtist) }, playlistId === 'top-1000' ? top1000Counts : ipodList),
     durationMs: smartTracks.reduce((sum, t) => sum + (t.duration || 0), 0),
-  }), [smartTracks, ipodList])
+  }), [smartTracks, ipodList, top1000Counts, playlistId])
   // A month and the year wear the cover homemini drew (2026-11-13, utils/periodCovers.ts).
   const periodCover = usePeriodPlaylistCover(playlistId)
   const cover = ipodCover ?? periodCover ?? (playlistId ? smartPlaylistCover(playlistId as SmartPlaylistId) : null)

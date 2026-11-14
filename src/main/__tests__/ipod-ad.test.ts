@@ -18,7 +18,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  adCopy, adCounts, adHeadline, adLegal, checkHeadline, cleanHeadline, countArtists, headlineLines, headlineSizePx, hoursWords,
+  adCopy, adCounts, adHeadline, adLegal, homeminiCounts, checkHeadline, cleanHeadline, countArtists, headlineLines, headlineSizePx, hoursWords,
   ipodDrawingColors, ipodModelWords, ipodScreenTitle, syncedDateWords,
   HEADLINE_FULL_PX, HEADLINE_MAX, HEADLINE_MIN_PX, TOP_1000_DEFAULT_HEADLINE,
 } from '../../common/ipod-ad.ts'
@@ -145,16 +145,22 @@ describe('the copy line', () => {
     assert.equal(adCopy(5, 0), '5 songs.')
     assert.equal(adCopy(0, 0), 'No songs yet.')
   })
-  it('homemini\'s counts win when it sends them (so the phone and the desktop agree); otherwise this Mac counts', () => {
+  it('homemini\'s two counts are used only when it sends both; otherwise this Mac counts both (never one of each)', () => {
     const local = { songs: 834, artists: 200 }
     assert.deepEqual(adCounts(local, { songCount: 834, artistCount: 199 }), { songs: 834, artists: 199 })
-    assert.deepEqual(adCounts(local, { artistCount: 199 }), { songs: 834, artists: 199 })
-    assert.deepEqual(adCounts(local, { songCount: 840 }), { songs: 840, artists: 200 })
+    assert.deepEqual(adCounts(local, { songCount: 0, artistCount: 0 }), { songs: 0, artists: 0 })
+    // one without the other: neither is used
+    assert.deepEqual(adCounts(local, { artistCount: 199 }), local)
+    assert.deepEqual(adCounts(local, { songCount: 840 }), local)
+    assert.deepEqual(adCounts(local, { songCount: 840, artistCount: null }), local)
     assert.deepEqual(adCounts(local, {}), local)
     assert.deepEqual(adCounts(local, null), local)
-    assert.deepEqual(adCounts(local, { songCount: null, artistCount: undefined }), local)
-    for (const bad of [-1, 1.5, '199', Number.NaN]) assert.deepEqual(adCounts(local, { songCount: bad, artistCount: bad }), local)
-    assert.deepEqual(adCounts(local, { songCount: 0, artistCount: 0 }), { songs: 0, artists: 0 })
+    for (const bad of [-1, 1.5, '199', Number.NaN]) {
+      assert.deepEqual(adCounts(local, { songCount: bad, artistCount: 199 }), local)
+      assert.deepEqual(adCounts(local, { songCount: 834, artistCount: bad }), local)
+    }
+    assert.deepEqual(homeminiCounts({ songCount: 1000, artistCount: 458, name: 'Top 1000' } as never), { songCount: 1000, artistCount: 458 })
+    assert.equal(homeminiCounts({ songCount: 1000 }), null)
   })
   it('artists are counted once, whatever their case, by the key the app gives', () => {
     const tracks = [{ artist: 'Wire' }, { artist: 'wire ' }, { artist: 'The Cramps' }, { artist: '' }, { artist: null }, {}]
@@ -485,32 +491,45 @@ describe('Headline… reaches homemini (PATCH a list, PUT the Top 1000)', () => 
     const remote = createTop1000HeadlineRemote({ baseUrl: 'http://homemini:3000/', fetchImpl: h.fetchImpl, warn: quiet })
     assert.equal(await remote.put('Every one a keeper.'), 'done')
     assert.deepEqual(h.seen[0], { url: 'http://homemini:3000/api/top1000/name', method: 'PUT', body: { headline: 'Every one a keeper.' } })
-    assert.deepEqual(await remote.get(), { headline: 'Every one a keeper.' })
+    assert.deepEqual(await remote.get(), { headline: 'Every one a keeper.', counts: null }, 'no counts sent: none')
     // older than the field: 400 on the PUT ("only name can be set"), no headline on the GET
     const old = createTop1000HeadlineRemote({ baseUrl: 'http://homemini:3000', fetchImpl: fakeHomemini(400).fetchImpl, warn: quiet })
     assert.equal(await old.put('Every one a keeper.'), 'retry')
     const oldGet = createTop1000HeadlineRemote({ baseUrl: 'http://homemini:3000', fetchImpl: fakeHomemini(200, { name: 'Top 1000', custom: null }).fetchImpl, warn: quiet })
-    assert.deepEqual(await oldGet.get(), { headline: null })
+    assert.deepEqual(await oldGet.get(), { headline: null, counts: null })
     const down = createTop1000HeadlineRemote({ baseUrl: 'http://homemini:3000', fetchImpl: fakeHomemini('down').fetchImpl, warn: quiet })
     assert.equal(await down.put(null), 'retry')
     assert.equal(await down.get(), undefined)
   })
   it('the Top 1000\'s headline: a waiting one wins, then homemini\'s, then its last answer kept here', async () => {
     const stateDir = tmp()
-    assert.deepEqual(await localTop1000Headline(stateDir), { headline: null, pending: false })
-    assert.deepEqual(await readTop1000Headline({ stateDir, get: async () => ({ headline: 'From homemini.' }) }), { headline: 'From homemini.', pending: false })
-    // homemini away: the copy kept from its last answer
-    assert.deepEqual(await readTop1000Headline({ stateDir, get: async () => undefined }), { headline: 'From homemini.', pending: false })
-    assert.deepEqual(await localTop1000Headline(stateDir), { headline: 'From homemini.', pending: false })
+    assert.deepEqual(await localTop1000Headline(stateDir), { headline: null, pending: false, counts: null })
+    const counts = { songCount: 1000, artistCount: 458 }
+    assert.deepEqual(await readTop1000Headline({ stateDir, get: async () => ({ headline: 'From homemini.', counts }) }), { headline: 'From homemini.', pending: false, counts })
+    // homemini away: the copy kept from its last answer, counts included
+    assert.deepEqual(await readTop1000Headline({ stateDir, get: async () => undefined }), { headline: 'From homemini.', pending: false, counts })
+    assert.deepEqual(await localTop1000Headline(stateDir), { headline: 'From homemini.', pending: false, counts })
     // Jake changes it with homemini away: his words show, here, at once
     const r = await setHeadline({ stateDir, send: async () => 'retry', warn: quiet }, TOP1000_HEADLINE_KEY, 'Mine now.')
     assert.equal(r.ok && r.homemini, 'later')
-    assert.deepEqual(await readTop1000Headline({ stateDir, get: async () => ({ headline: 'From homemini.' }) }), { headline: 'Mine now.', pending: true })
-    assert.deepEqual(await localTop1000Headline(stateDir), { headline: 'Mine now.', pending: true })
-    // homemini back: sent, and the kept copy is the new one
+    // homemini answers with its old line and new counts: the line owed wins, the counts are taken,
+    // and the old line is not what the next launch paints
+    const later = { songCount: 1000, artistCount: 457 }
+    assert.deepEqual(await readTop1000Headline({ stateDir, get: async () => ({ headline: 'From homemini.', counts: later }) }), { headline: 'Mine now.', pending: true, counts: later })
+    assert.deepEqual(await localTop1000Headline(stateDir), { headline: 'Mine now.', pending: true, counts: later })
+    // homemini back: sent, and the kept copy is the new line with homemini's counts kept (a PUT answer has none)
     const again = await setHeadline({ stateDir, send: async () => 'done' }, TOP1000_HEADLINE_KEY, 'Mine now.')
     assert.equal(again.ok && again.homemini, 'saved')
-    assert.deepEqual(await localTop1000Headline(stateDir), { headline: 'Mine now.', pending: false })
+    assert.deepEqual(await localTop1000Headline(stateDir), { headline: 'Mine now.', pending: false, counts: later })
+    // a homemini that can't build the Top 1000 leaves the counts out: this Mac counts again
+    assert.deepEqual(await readTop1000Headline({ stateDir, get: async () => ({ headline: 'Mine now.', counts: null }) }), { headline: 'Mine now.', pending: false, counts: null })
+  })
+
+  it('homemini\'s Top 1000 answer: both counts or none', async () => {
+    const both = createTop1000HeadlineRemote({ baseUrl: 'http://homemini:3000', fetchImpl: fakeHomemini(200, { name: 'Top 1000', custom: null, headline: null, songCount: 1000, artistCount: 458 }).fetchImpl, warn: quiet })
+    assert.deepEqual(await both.get(), { headline: null, counts: { songCount: 1000, artistCount: 458 } })
+    const one = createTop1000HeadlineRemote({ baseUrl: 'http://homemini:3000', fetchImpl: fakeHomemini(200, { name: 'Top 1000', custom: null, songCount: 1000 }).fetchImpl, warn: quiet })
+    assert.deepEqual(await one.get(), { headline: null, counts: null })
   })
 })
 

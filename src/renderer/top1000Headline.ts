@@ -7,7 +7,7 @@
 // them when Jake changed the headline somewhere else.
 // Same module-store idiom as top1000Name.ts.
 import { useEffect, useSyncExternalStore } from 'react'
-import { checkHeadline } from '../common/ipod-ad'
+import { checkHeadline, homeminiCounts, type HomeminiCounts } from '../common/ipod-ad'
 
 let headline: string | null = null
 let asked = false
@@ -21,6 +21,14 @@ function subscribe(cb: () => void): () => void {
   return () => { listeners.delete(cb) }
 }
 const getSnapshot = (): string | null => headline
+/** homemini's song and artist counts for the Top 1000 (both or none; Mobile #798). */
+let counts: HomeminiCounts | null = null
+const getCounts = (): HomeminiCounts | null => counts
+function putCounts(next: HomeminiCounts | null): void {
+  if (next?.songCount === counts?.songCount && next?.artistCount === counts?.artistCount) return
+  counts = next
+  for (const l of listeners) l()
+}
 function put(next: string | null): void {
   if (next === headline) return
   headline = next
@@ -30,7 +38,9 @@ function put(next: string | null): void {
 async function ask(local: boolean): Promise<void> {
   const at = edits
   const r = await window.electronAPI.top1000HeadlineGet?.(local)
-  if (r?.ok && at === edits) put(r.headline)
+  if (!r?.ok) return
+  putCounts(homeminiCounts(r.counts))
+  if (at === edits) put(r.headline)
 }
 
 /** Ask main: this Mac's copy first (the first time), then homemini's. Overlapping asks share one read. */
@@ -50,6 +60,13 @@ export function useTop1000Headline(): string | null {
   const s = useSyncExternalStore(subscribe, getSnapshot)
   useEffect(() => { void refreshTop1000Headline() }, [])
   return s
+}
+
+/** homemini's counts for the Top 1000's copy line, or null (the page counts its own). Shares the headline's read. */
+export function useTop1000Counts(): HomeminiCounts | null {
+  const c = useSyncExternalStore(subscribe, getCounts)
+  useEffect(() => { void refreshTop1000Headline() }, [])
+  return c
 }
 
 /** Headline… on the Top 1000: shown at once; the old line comes back on a refusal. Empty = the default. */

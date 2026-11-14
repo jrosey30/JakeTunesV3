@@ -100,19 +100,30 @@ export function adCopy(songs: number, artists: number): string {
   return `${s} by ${n(artists)} ${artists === 1 ? 'artist' : 'artists'}.`
 }
 
+export interface HomeminiCounts { songCount: number; artistCount: number }
+
 /**
- * The two numbers on the copy line. homemini counts them for the phone too
- * (`songCount`, `artistCount` on its list rows, by the main-artist rule), so
- * when it sends them every screen says the same thing. A homemini that doesn't
- * send them yet, or a number that isn't a whole count, falls back to this
- * Mac's own count of the songs it has.
+ * homemini's two counts for a list (2026-11-14, Mobile #798): `songCount` and
+ * `artistCount`, whole numbers, counted by the main-artist rule, the phone's
+ * numbers. On every row of GET /api/ipod-lists, on GET /api/ipod-lists/:id and
+ * on GET /api/top1000/name (left out while the Top 1000 can't be built). Only
+ * both together count: one without the other is nothing.
+ */
+export function homeminiCounts(raw: { songCount?: unknown; artistCount?: unknown } | null | undefined): HomeminiCounts | null {
+  const whole = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0
+  if (!raw || !whole(raw.songCount) || !whole(raw.artistCount)) return null
+  return { songCount: raw.songCount, artistCount: raw.artistCount }
+}
+
+/**
+ * The two numbers on the copy line: homemini's pair when it sent both (so every
+ * screen says the same thing), else this Mac's own count of the songs it has.
+ * Never one of each: a song count and an artist count from two different
+ * countings can disagree with each other.
  */
 export function adCounts(local: { songs: number; artists: number }, homemini: { songCount?: unknown; artistCount?: unknown } | null | undefined): { songs: number; artists: number } {
-  const whole = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0
-  return {
-    songs: whole(homemini?.songCount) ? homemini!.songCount as number : local.songs,
-    artists: whole(homemini?.artistCount) ? homemini!.artistCount as number : local.artists,
-  }
+  const both = homeminiCounts(homemini)
+  return both ? { songs: both.songCount, artists: both.artistCount } : local
 }
 
 /** How many different artists a list has. `keyOf` is the app's own artist key (the renderer passes canonicalArtist). */

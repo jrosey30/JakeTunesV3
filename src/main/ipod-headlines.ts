@@ -27,7 +27,7 @@
  */
 import { readFile } from 'fs/promises'
 import { join } from 'path'
-import { checkHeadline, cleanHeadline } from '../common/ipod-ad.ts'
+import { checkHeadline, cleanHeadline, homeminiCounts, type HomeminiCounts } from '../common/ipod-ad.ts'
 import { writeJsonAtomic } from './atomic-write.ts'
 import { withLocalLock } from './hub-local-state.ts'
 import { withCompanionInit } from './hub-companion.ts'
@@ -163,7 +163,11 @@ export async function setHeadline(deps: SetHeadlineDeps, key: unknown, raw: unkn
   }
   if (flushed === 'dropped') return { ok: false, error: 'homemini has no list for this iPod.' }
   if (flushed === 'sent' && key === TOP1000_HEADLINE_KEY) {
-    await withLocalLock(sendLock(deps.stateDir, key), () => writeJsonAtomic(join(deps.stateDir, TOP1000_CACHE_FILE), { headline: check.headline, savedAt: new Date().toISOString() }))
+    // homemini's counts stay in the kept copy: a PUT answer never carries them.
+    await withLocalLock(sendLock(deps.stateDir, key), async () => {
+      const kept = await cachedTop1000(deps.stateDir)
+      await writeJsonAtomic(join(deps.stateDir, TOP1000_CACHE_FILE), { headline: check.headline, counts: kept.counts, savedAt: new Date().toISOString() })
+    })
       .catch((err) => deps.warn?.(`[ipod-headline] cache write: ${(err as Error)?.message ?? err}`))
   }
   return { ok: true, headline: check.headline, homemini: flushed === 'sent' ? 'saved' : 'later' }
@@ -172,8 +176,9 @@ export async function setHeadline(deps: SetHeadlineDeps, key: unknown, raw: unkn
 // ── The Top 1000's headline ──────────────────────────────────────────────
 
 export interface Top1000HeadlineRemote {
-  /** homemini's headline (null = none, or a homemini older than the field); undefined = no clean answer. */
-  get: () => Promise<{ headline: Headline } | undefined>
+  /** homemini's headline (null = none, or a homemini older than the field) and its two counts
+   *  (null unless it sent both); undefined = no clean answer. */
+  get: () => Promise<{ headline: Headline; counts: HomeminiCounts | null } | undefined>
   put: (headline: Headline) => Promise<'done' | 'retry' | 'drop'>
 }
 
@@ -182,15 +187,18 @@ export interface Top1000HeadlineView {
   headline: Headline
   /** true while it waits for homemini. */
   pending: boolean
+  /** homemini's song and artist counts for the copy line (its last answer); null = count here. */
+  counts: HomeminiCounts | null
 }
 
-async function cachedTop1000Headline(stateDir: string): Promise<Headline> {
+/** homemini's last answer kept on this Mac: its headline and its counts. */
+async function cachedTop1000(stateDir: string): Promise<{ headline: Headline; counts: HomeminiCounts | null }> {
   try {
-    const raw = JSON.parse(await readFile(join(stateDir, TOP1000_CACHE_FILE), 'utf-8')) as { headline?: unknown } | null
-    return cleanHeadline(raw?.headline)
+    const raw = JSON.parse(await readFile(join(stateDir, TOP1000_CACHE_FILE), 'utf-8')) as { headline?: unknown; counts?: { songCount?: unknown; artistCount?: unknown } } | null
+    return { headline: cleanHeadline(raw?.headline), counts: homeminiCounts(raw?.counts) }
   } catch {
-    // No copy kept yet: no headline.
-    return null
+    // No copy kept yet: no headline, no counts.
+    return { headline: null, counts: null }
   }
 }
 
@@ -200,22 +208,27 @@ export function readTop1000Headline(deps: { stateDir: string; get: Top1000Headli
   // way can't be kept over the new one.
   return withLocalLock(sendLock(deps.stateDir, TOP1000_HEADLINE_KEY), async () => {
     const waiting = await withLocalLock(fileLock(deps.stateDir), () => readPendingHeadlines(deps.stateDir))
-    if (has(waiting, TOP1000_HEADLINE_KEY)) return { headline: waiting[TOP1000_HEADLINE_KEY], pending: true }
+    const owed = has(waiting, TOP1000_HEADLINE_KEY)
+    const before = await cachedTop1000(deps.stateDir)
     const fresh = await deps.get().catch(() => undefined)
+    // homemini's counts are always its own. Its headline is kept only when none is owed:
+    // an answer from before Jake's line reached it must not become the copy the next launch paints.
+    const kept = fresh ? { headline: owed ? before.headline : fresh.headline, counts: fresh.counts } : before
     if (fresh) {
-      await writeJsonAtomic(join(deps.stateDir, TOP1000_CACHE_FILE), { headline: fresh.headline, savedAt: new Date().toISOString() })
+      await writeJsonAtomic(join(deps.stateDir, TOP1000_CACHE_FILE), { ...kept, savedAt: new Date().toISOString() })
         .catch((err) => deps.warn?.(`[ipod-headline] cache write: ${(err as Error)?.message ?? err}`))
-      return { headline: fresh.headline, pending: false }
     }
-    return { headline: await cachedTop1000Headline(deps.stateDir), pending: false }
+    if (owed) return { headline: waiting[TOP1000_HEADLINE_KEY], pending: true, counts: kept.counts }
+    return { headline: kept.headline, pending: false, counts: kept.counts }
   })
 }
 
 /** The Top 1000's headline as this Mac has it on disk, without asking homemini (the first paint). */
 export async function localTop1000Headline(stateDir: string): Promise<Top1000HeadlineView> {
+  const kept = await cachedTop1000(stateDir)
   const waiting = await readPendingHeadlines(stateDir)
-  if (has(waiting, TOP1000_HEADLINE_KEY)) return { headline: waiting[TOP1000_HEADLINE_KEY], pending: true }
-  return { headline: await cachedTop1000Headline(stateDir), pending: false }
+  if (has(waiting, TOP1000_HEADLINE_KEY)) return { headline: waiting[TOP1000_HEADLINE_KEY], pending: true, counts: kept.counts }
+  return { headline: kept.headline, pending: false, counts: kept.counts }
 }
 
 /** homemini's half: GET/PUT /api/top1000/name with the companion header. A PUT of { headline } alone never touches the name. */
@@ -229,9 +242,9 @@ export function createTop1000HeadlineRemote(opts: { baseUrl: string; fetchImpl?:
       try {
         const res = await fetchImpl(url, withCompanionInit({ method: 'GET', signal: AbortSignal.timeout(timeoutMs) }) as Record<string, unknown>)
         if (res.status !== 200) return undefined
-        const body = await res.json().catch(() => null) as { name?: unknown; headline?: unknown } | null
+        const body = await res.json().catch(() => null) as { name?: unknown; headline?: unknown; songCount?: unknown; artistCount?: unknown } | null
         if (!body || typeof body !== 'object' || !('name' in body)) return undefined
-        return { headline: cleanHeadline(body.headline) }
+        return { headline: cleanHeadline(body.headline), counts: homeminiCounts(body) }
       } catch (err) {
         warn(`[ipod-headline] Top 1000 read failed: ${(err as Error)?.message ?? err}`)
         return undefined

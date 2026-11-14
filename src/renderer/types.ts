@@ -1295,7 +1295,7 @@ declare global {
       top1000NameSet?: (name: string | null) => Promise<{ ok: true; name: string; custom: string | null; homemini: 'saved' | 'later' } | { ok: false; error: string }>
       // Headline… (2026-11-14, common/ipod-ad.ts): the line at the top of an iPod's page. key = the list's id, or 'top1000'.
       ipodHeadlineSet?: (input: { key: string; headline: string | null }) => Promise<{ ok: true; headline: string | null; homemini: 'saved' | 'later' } | { ok: false; error: string }>
-      top1000HeadlineGet?: (local?: boolean) => Promise<{ ok: true; headline: string | null; pending: boolean } | { ok: false; error: string }>
+      top1000HeadlineGet?: (local?: boolean) => Promise<{ ok: true; headline: string | null; pending: boolean; counts?: { songCount: number; artistCount: number } | null } | { ok: false; error: string }>
       // 2026-11-09 — photo covers (src/main/ipod-photo-covers.ts)
       ipodPhotoGet?: (key: string) => Promise<{ ok: boolean; shown: 'kept' | 'bundled' | 'drawing'; url: string | null }>
       ipodPhotoSync?: () => Promise<{ ok: boolean }>
