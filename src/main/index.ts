@@ -223,6 +223,8 @@ import { summariseLearning, discoverVerdicts, type LedgerRow } from './discovery
 import { readSharedLedgerRows } from './taste-ledger-io.ts'
 import { discoveryFeedbackCache, sharedDiscoveryFeedback, recordNotForMe, recordAllowAgain } from './discovery-feedback.ts'
 import { JsonFileCache, flushAllCaches } from './state-cache'
+import { createTagWritebackQueue } from './tag-writeback-queue.ts'
+import { getHeapStatistics } from 'node:v8'
 import { createQuitFinish, hardExit, leaveFor } from './quit-finish.ts'
 import { BANDCAMP_PARTITION } from './bandcamp-integration/partition'
 import { hashPayload, verifyLandedFile, stagePayloadAndRename } from './save-verify.ts'
@@ -9298,6 +9300,42 @@ async function applyMetadataOverrideInternal(trackId: number, field: string, val
   await writeOverridesSerialized((overrides) => mergeOverrideField(overrides, trackId, field, value, fingerprint))
 }
 
+// Brief 020's tag write-back, behind a queue (tag-writeback-queue.ts): one edit
+// at a time, its song looked up in the library cache. Never a read of
+// library.json per edit: 186 of those at once were the 2026-11-13 crash.
+const tagWriteback = createTagWritebackQueue<Record<string, unknown>>({
+  findTrack: async (trackId) => (((await libraryCache.get()) as { tracks?: Array<Record<string, unknown>> }).tracks || []).find((t) => t.id === trackId),
+  heapShare: () => { const h = getHeapStatistics(); return h.used_heap_size / h.heap_size_limit },
+  warn: (msg) => console.warn(msg),
+  write: async ({ trackId, field, value, fingerprint }, track) => {
+    const colonPath = String(track.path || '')
+    if (!colonPath) return
+    // Fingerprint guard — same identity-gate the renderer uses
+    // when applying overrides. If the track at this ID no longer
+    // matches the fingerprint the override was saved with, don't
+    // touch the file (different track, would write wrong tag).
+    if (fingerprint) {
+      const trackFp = `${String(track.title || '').toLowerCase().trim()}|${String(track.artist || '').toLowerCase().trim()}|${track.duration || 0}`
+      if (trackFp !== fingerprint) {
+        console.warn(`[tag-writeback] skipped trackId=${trackId} field=${field} — fingerprint mismatch (track identity changed)`)
+        return
+      }
+    }
+    const absPath = colonPathToAbsolute(colonPath, MUSIC_DIR)
+    const overrides = augmentPairFields(field, value, track)
+    const result = await writeTagsToFile({ audioFilePath: absPath, overrides })
+    if (result.ok && result.fieldsWritten.length > 0) {
+      console.log(`[tag-writeback] ${trackId} ${field}=${value} → ${absPath}${result.sidecarBackup ? ' (backed up)' : ''}`)
+      // The write resized the file and changed the bytes its fingerprint
+      // hashes. The renderer applies both; its save writes them.
+      const { measured } = await measureLibraryFileSizes([track], () => absPath, () => true, lstat, undefined, computeAudioFingerprint)
+      if (measured[0]) sendToRenderer('tag-writeback:file-changed', measured[0])
+    } else if (!result.ok) {
+      console.warn(`[tag-writeback] ${trackId} ${field} failed: ${result.error}`)
+    }
+  },
+})
+
 ipc.handle('save-metadata-override', async (_event, trackId: number, field: string, value: string, fingerprint?: string) => {
   const editAt = Date.now()   // one time for the journal and the star sidecar
   if (suppressListeningWrites() && (field === 'playCount' || field === 'lastPlayedAt' || field === 'skipCount')) return { ok: true, suppressed: 'dev-review' }
@@ -9467,43 +9505,10 @@ ipc.handle('save-metadata-override', async (_event, trackId: number, field: stri
   // the tag is a downstream propagation miss, not a correctness bug.
   // Skipped for analysis fields (bpm/keyRoot/etc.) and stats
   // (playCount/lastPlayedAt/skipCount) per WRITABLE_FIELDS gate.
-  if (WRITABLE_FIELDS.has(field)) {
-    void (async () => {
-      try {
-        const raw = await readFile(LIBRARY_PATH, 'utf-8')
-        const lib = JSON.parse(raw) as { tracks?: Array<Record<string, unknown>> }
-        const track = (lib.tracks || []).find(t => t.id === trackId)
-        if (!track) return
-        const colonPath = String(track.path || '')
-        if (!colonPath) return
-        // Fingerprint guard — same identity-gate the renderer uses
-        // when applying overrides. If the track at this ID no longer
-        // matches the fingerprint the override was saved with, don't
-        // touch the file (different track, would write wrong tag).
-        if (fingerprint) {
-          const trackFp = `${String(track.title || '').toLowerCase().trim()}|${String(track.artist || '').toLowerCase().trim()}|${track.duration || 0}`
-          if (trackFp !== fingerprint) {
-            console.warn(`[tag-writeback] skipped trackId=${trackId} field=${field} — fingerprint mismatch (track identity changed)`)
-            return
-          }
-        }
-        const absPath = colonPathToAbsolute(colonPath, MUSIC_DIR)
-        const overrides = augmentPairFields(field, value, track)
-        const result = await writeTagsToFile({ audioFilePath: absPath, overrides })
-        if (result.ok && result.fieldsWritten.length > 0) {
-          console.log(`[tag-writeback] ${trackId} ${field}=${value} → ${absPath}${result.sidecarBackup ? ' (backed up)' : ''}`)
-          // The write resized the file and changed the bytes its fingerprint
-          // hashes. The renderer applies both; its save writes them.
-          const { measured } = await measureLibraryFileSizes([track], () => absPath, () => true, lstat, undefined, computeAudioFingerprint)
-          if (measured[0]) sendToRenderer('tag-writeback:file-changed', measured[0])
-        } else if (!result.ok) {
-          console.warn(`[tag-writeback] ${trackId} ${field} failed: ${result.error}`)
-        }
-      } catch (err) {
-        console.warn(`[tag-writeback] hook error for trackId=${trackId} field=${field}:`, err instanceof Error ? err.message : err)
-      }
-    })()
-  }
+  // One at a time, and the song comes from the library already in memory
+  // (tag-writeback-queue.ts): 186 of these at once each read and parsed all of
+  // library.json and ran the main process out of heap (the 2026-11-13 crash).
+  if (WRITABLE_FIELDS.has(field)) tagWriteback.enqueue({ trackId, field, value, fingerprint })
   })().catch((err) => {
     // 4.5.0-105: outer fire-and-forget block. Any unhandled error from
     // the background work lands here. The renderer has already moved on.
