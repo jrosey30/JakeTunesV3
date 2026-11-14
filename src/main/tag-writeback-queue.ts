@@ -38,6 +38,15 @@
  *     that edit goes to the back to be tried later, and the line moves on.
  *   • The saved line is read before anything is saved over it. (An edit in
  *     the first seconds of a run used to replace it: 25 owed, 0 left.)
+ *   • A song that is playing is not rewritten (2026-11-14). Jake changed the
+ *     artist of "Stalks (Greenpoint Mix)" while it played; the write swapped
+ *     the file under the player, mutagen had moved the audio to make room for
+ *     the longer tags, and 50 s later the player's next read landed in the
+ *     wrong place ("DEMUXER_ERROR … PTS is not defined"), its reload failed
+ *     and the song was skipped. So before a file is written the line asks
+ *     `inUse`; a song in use is put back (on disk with the rest) and asked
+ *     about again every `inUseRetryMs`, while the other songs go on being
+ *     written. The library's own tags change at once; only the file waits.
  *   • Only the newest edit of a song's field is written. An older one still
  *     waiting, waiting for a retry, or owed from the last run is dropped when
  *     a newer one arrives, so a retry can't put an old value over a new one.
@@ -147,6 +156,14 @@ export interface TagWritebackDeps {
   augment: (field: string, value: string, track: LibraryRow) => Record<string, string | number>
   /** Write one settled edit into its file. Never looks the song up again. May reject. */
   write: (job: TagWritebackJob) => Promise<TagWriteOutcome>
+  /**
+   * Is the player using this song's file (song-in-use.ts)? True puts the job
+   * back to wait. Absent = never in use. A throw counts as in use: a wrong
+   * "no" splices a playing song, a wrong "yes" only waits.
+   */
+  inUse?: (job: TagWritebackJob) => boolean
+  /** How long a job whose song is in use waits before it is asked about again. */
+  inUseRetryMs?: number
   /** What was waiting when the app last stopped. */
   load?: () => Promise<unknown>
   /** Put the waiting line on disk (whole list, replaced). */
@@ -173,6 +190,7 @@ export const TAG_WRITEBACK_HEAP_CEILING = 0.8
 export const TAG_WRITEBACK_HEAP_WAIT_MS = 60_000
 export const TAG_WRITEBACK_RETRY_AFTER_MS = 10 * 60_000
 export const TAG_WRITEBACK_MAX_TRIES = 3
+export const TAG_WRITEBACK_IN_USE_RETRY_MS = 30_000
 export const TAG_WRITEBACK_PENDING_FILE = 'tag-writeback-pending.json'
 
 export interface TagWritebackStats {
@@ -190,6 +208,10 @@ export interface TagWritebackStats {
   heapWaits: number
   /** Dropped because a newer edit of the same song's field arrived. */
   superseded: number
+  /** Waiting because the player is using the song's file right now. */
+  inUse: number
+  /** Times a write was put back because its song was in use. */
+  heldForPlayback: number
 }
 
 /** A job read back from disk, or null when it isn't one. */
@@ -228,20 +250,25 @@ export function createTagWritebackQueue(deps: TagWritebackDeps): {
   const heapWaitMs = deps.heapWaitMs ?? TAG_WRITEBACK_HEAP_WAIT_MS
   const retryAfterMs = deps.retryAfterMs ?? TAG_WRITEBACK_RETRY_AFTER_MS
   const maxTries = deps.maxTries ?? TAG_WRITEBACK_MAX_TRIES
+  const inUseRetryMs = deps.inUseRetryMs ?? TAG_WRITEBACK_IN_USE_RETRY_MS
   const warn = deps.warn ?? (() => {})
   const now = deps.now ?? Date.now
 
   const waiting: TagWritebackJob[] = []
   const later: TagWritebackJob[] = []
+  /** Songs the player is using: written once it lets go of them. */
+  const held: TagWritebackJob[] = []
+  const toldHeld = new WeakSet<TagWritebackJob>()
+  let heldTimer: ReturnType<typeof setTimeout> | null = null
   let inFlight: TagWritebackJob | null = null
-  const s = { written: 0, failed: 0, gone: 0, refused: 0, heapWaits: 0, superseded: 0 }
+  const s = { written: 0, failed: 0, gone: 0, refused: 0, heapWaits: 0, superseded: 0, heldForPlayback: 0 }
   let draining: Promise<void> | null = null
   let toldFull = false
   let heapTimer: ReturnType<typeof setTimeout> | null = null
   let laterTimer: ReturnType<typeof setTimeout> | null = null
   let stopAt: number | null = null
 
-  const owed = (): TagWritebackJob[] => [...(inFlight ? [inFlight] : []), ...waiting, ...later]
+  const owed = (): TagWritebackJob[] => [...(inFlight ? [inFlight] : []), ...waiting, ...held, ...later]
 
   // ── only the newest edit of a field is ever written ──
   // Each job has a place in the order edits were made; `newest` is the latest
@@ -263,7 +290,7 @@ export function createTagWritebackQueue(deps: TagWritebackDeps): {
   }
   const superseded = (job: TagWritebackJob): boolean => (newest.get(key(job.trackId, job.field)) ?? -Infinity) > (order.get(job) ?? -Infinity)
   const dropSuperseded = (): void => {
-    for (const line of [waiting, later]) {
+    for (const line of [waiting, held, later]) {
       for (let i = line.length - 1; i >= 0; i--) if (superseded(line[i])) { line.splice(i, 1); s.superseded++ }
     }
   }
@@ -287,7 +314,7 @@ export function createTagWritebackQueue(deps: TagWritebackDeps): {
           // what a newer edit, from that run or this one, has replaced.
           const keep = jobs.filter((j) => !superseded(j))
           s.superseded += jobs.length - keep.length
-          const room = Math.max(0, maxWaiting - waiting.length - later.length)
+          const room = Math.max(0, maxWaiting - waiting.length - held.length - later.length)
           waiting.unshift(...keep.slice(0, room))
           n = Math.min(keep.length, room)
           if (n) warn(`[tag-writeback] ${n} tag edit(s) from the last run are still owed to their files; writing them now`)
@@ -315,6 +342,18 @@ export function createTagWritebackQueue(deps: TagWritebackDeps): {
       // change made in between was told "a save is running" and never saved.
       saving = null
     })()
+  }
+
+  const songInUse = (job: TagWritebackJob): boolean => {
+    if (!deps.inUse) return false
+    try { return deps.inUse(job) } catch { return true }
+  }
+  // Every job held for the player goes back on the line together; each is
+  // asked again there, so one still playing simply comes back here.
+  const armHeld = (): void => {
+    if (heldTimer || stopAt !== null) return
+    heldTimer = setTimeout(() => { heldTimer = null; waiting.push(...held.splice(0)); kick() }, inUseRetryMs)
+    heldTimer.unref?.()
   }
 
   const heapIsFull = (): boolean => {
@@ -349,6 +388,15 @@ export function createTagWritebackQueue(deps: TagWritebackDeps): {
         if (!row || String(row.path || '') !== job.path) {
           s.gone++
           warn(`[tag-writeback] ${job.trackId} ${job.field}: the song is no longer at ${job.path}; nothing written`)
+        } else if (songInUse(job)) {
+          // The player has this file: the write waits, the line goes on.
+          held.push(job)
+          s.heldForPlayback++
+          if (!toldHeld.has(job)) {
+            toldHeld.add(job)
+            warn(`[tag-writeback] ${job.trackId} ${job.field}: the song is playing; its file is written once the player is done with it`)
+          }
+          armHeld()
         } else {
           const r = await deps.write(job)
           if (r.ok) s.written++
@@ -391,7 +439,7 @@ export function createTagWritebackQueue(deps: TagWritebackDeps): {
   }
 
   const take = (job: TagWritebackJob): boolean => {
-    if (waiting.length + later.length >= maxWaiting) {
+    if (waiting.length + held.length + later.length >= maxWaiting) {
       s.refused++
       if (!toldFull) {
         toldFull = true
@@ -431,6 +479,7 @@ export function createTagWritebackQueue(deps: TagWritebackDeps): {
       stopAt = now() + Math.max(0, budgetMs)
       if (heapTimer) { clearTimeout(heapTimer); heapTimer = null }
       if (laterTimer) { clearTimeout(laterTimer); laterTimer = null }
+      if (heldTimer) { clearTimeout(heldTimer); heldTimer = null }   // held songs stay on disk: the next launch writes them
       if (!draining && waiting.length && !heapIsFull()) draining = drain().finally(() => { draining = null })
       let timer: ReturnType<typeof setTimeout> | undefined
       await Promise.race([
@@ -450,6 +499,6 @@ export function createTagWritebackQueue(deps: TagWritebackDeps): {
       return { written, left: left.length }
     },
     async idle() { while (draining || saving) { await draining; await saving } },
-    stats: () => ({ waiting: waiting.length + (inFlight ? 1 : 0), later: later.length, ...s }),
+    stats: () => ({ waiting: waiting.length + (inFlight ? 1 : 0), later: later.length, inUse: held.length, ...s }),
   }
 }

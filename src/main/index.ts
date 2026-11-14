@@ -42,7 +42,6 @@ import { writeJsonAtomic } from './atomic-write'
 import { resolveContainedPath, isPathInside } from './path-safety'
 import { isHomeminiPlaybackClient, mayFollowPlaybackSymlink } from './stream-playback'
 import { homeminiStreamTarget, readStreamCompressedCached } from './stream-format'
-import { parseRangeHeader } from './range-header.ts'
 import { getBuildProvenance, formatBuildProvenance } from './build-provenance.ts'
 import {
   phonePlaylistSidecarsNeverPushFromDesktop,
@@ -56,7 +55,7 @@ import { createStreamAlacCache, downloadUrlToFile, ffmpegAlacToFlac, localFileNe
 import { backfillAlacFingerprints, planLocalAlacMigration, type AlacMigrateTrack } from './alac-stream-migrate.ts'
 import { mergeQueuedDuringPass, runConvertPass, type ConvertOutcome, type QueueTrack, type StreamConvertItem } from './stream-convert-pass.ts'; import { confirmHomeminiHoldsFile, keptLocalMessage, USER_PENDING_RETRIES, type RefusalMemo } from './offload-confirm.ts'
 import { askAudioIdentity, hubBaseFromAudioBase, type OneIdentity } from './audio-identity.ts'
-import { askFlacVariants, confirmPlayableOnHomemini, notPlayableMessage, playableIds, playableVerdicts, USER_PLAYABLE_RETRIES } from './flac-variant.ts'; import { addedLately, buildRecentKeep, createKeepWindowState, createPlayerTouches } from './offload-keep-recent.ts'; import { createWarmKeeper } from './stream-keep-warm.ts'; import { createStreamedAlacServer, READY_ASK_MS } from './stream-alac-serve.ts'
+import { askFlacVariants, confirmPlayableOnHomemini, notPlayableMessage, playableIds, playableVerdicts, USER_PLAYABLE_RETRIES } from './flac-variant.ts'; import { addedLately, buildRecentKeep, colonFromAbs, createKeepWindowState, createPlayerTouches } from './offload-keep-recent.ts'; import { createLoadHold, holdKey, serveHeldFile, splitAudioUrl, startsLoad } from './audio-load-hold.ts'; import { songInUse } from './song-in-use.ts'; import { createWarmKeeper } from './stream-keep-warm.ts'; import { createStreamedAlacServer, READY_ASK_MS } from './stream-alac-serve.ts'
 import {
   appendOffloadReplacement, createCachedOffloadReader, hubOffloadActive,
 localAudioDropRefused,   libraryRootFromMusicDir, OFFLOAD_CONVERT_BATCH, serveHubOffloadSymlink, streamConvertRuns,
@@ -4418,6 +4417,8 @@ async function convertTrackToStreamed(ipodPath: string, storedFingerprint: strin
 const askVariants = (ids: ReadonlyArray<string | number>, want: boolean, timeoutMs?: number) => askFlacVariants({ baseUrl: hubBaseFromAudioBase(HOMEMINI_AUDIO_BASE), ids, want, withInit: withCompanionInit, timeoutMs })
 /** What the player asked for lately: playing now, or loaded ahead as next (offload-keep-recent.ts). */
 const playerTouches = createPlayerTouches()
+// One load reads the file it opened first (audio-load-hold.ts, 2026-11-14).
+const audioLoadHold = createLoadHold({ open: (p) => open(p, 'r'), warn: (m) => console.warn(m) })
 const keepWindowState = createKeepWindowState(keepWindowStore)   // two edges: long windows are left under 60 GB free and entered at 80; the side survives a restart
 const warmKeeper = createWarmKeeper({ ask: async (ids) => { const r = await askVariants(ids, false); return r.kind === 'answers' ? r.byId : null }, want: async (ids) => { const r = await askVariants(ids, true); return r.kind === 'answers' ? r.byId : null } })
 async function laptopFreeBytes(): Promise<number> {
@@ -9278,6 +9279,8 @@ const tagWritebackPendingPath = (): string => join(app.getPath('userData'), TAG_
 const tagWriteback = createTagWritebackQueue({
   findTrack: async (trackId) => (((await libraryCache.get()) as { tracks?: Array<Record<string, unknown>> }).tracks || []).find((t) => t.id === trackId),
   augment: augmentPairFields,
+  // A song the player is using is not rewritten under it (song-in-use.ts).
+  inUse: (job) => songInUse({ colonPath: job.path, durationMs: job.duration, now: Date.now(), lastTouchAt: playerTouches.lastAt(job.path), heldOpen: audioLoadHold.holdsSource(job.path) }),
   heapShare: () => { const h = getHeapStatistics(); return h.used_heap_size / h.heap_size_limit },
   warn: (msg) => console.warn(msg),
   load: async () => JSON.parse(await readFile(tagWritebackPendingPath(), 'utf-8')),
@@ -10442,8 +10445,17 @@ app.whenReady().then(async () => {
   // the ingestion-redirect and download/pin paths can share them. See there.
 
   protocol.handle('ipod-audio', async (request) => {
-    const rawPath = decodeURIComponent(request.url.replace('ipod-audio://', ''))
+    // `?v=` is the file-version marker (audio-load-hold.ts), not part of the path.
+    const audioUrl = splitAudioUrl(request.url)
+    const rawPath = decodeURIComponent(audioUrl.base.replace('ipod-audio://', ''))
     playerTouches.noteAbs(rawPath, Date.now())
+    // A piece of a load already under way is read from the file that load
+    // opened, never re-picked by path: a rename over a playing song can't splice it.
+    if (!startsLoad(request.headers.get('range'))) {
+      const held = audioLoadHold.continue(holdKey(audioUrl.base, audioUrl.version), request.headers.get('range'))
+      if (held) return held
+    }
+    const serveLocal = (path: string, ext: string, label: string): Promise<Response> => serveHeldFile(audioLoadHold, { url: request.url, path, source: colonFromAbs(rawPath) ?? rawPath, range: request.headers.get('range'), contentType: MIME_TYPES[ext] || 'audio/mpeg', label, warn: (m) => console.warn(m) })
     const playCacheDir = join(app.getPath('userData'), 'play-cache')
     const localMountRoot = MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, '')
     const homeminiClient = await isHomeminiPlaybackClientCached()
@@ -10543,53 +10555,7 @@ app.whenReady().then(async () => {
           ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase()
         }
       }
-      const mimeType = MIME_TYPES[ext] || 'audio/mpeg'
-      try {
-        const fileStat = await stat(filePath)
-        const total = fileStat.size
-        const rangeHeader = request.headers.get('range')
-        if (rangeHeader) {
-          // Brief 164: range semantics are the tested twin's (range-header.ts,
-          // RFC 9110 §14.2) — clamp an oversize end, honour suffix ranges, and
-          // 416 only when truly unsatisfiable. Garbage/multi-range (null)
-          // falls through to the full serve below, as it did before.
-          const parsed = parseRangeHeader(rangeHeader, total)
-          if (parsed === 'unsatisfiable') {
-            return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${total}` } })
-          }
-          if (parsed) {
-            const { start, end } = parsed
-            const { createReadStream } = await import('fs')
-            const { Readable } = await import('stream')
-            const nodeStream = createReadStream(filePath, { start, end })
-            return new Response(Readable.toWeb(nodeStream) as ReadableStream, {
-              status: 206,
-              headers: {
-                'Content-Type': mimeType,
-                'Content-Length': String(end - start + 1),
-                'Content-Range': `bytes ${start}-${end}/${total}`,
-                'Accept-Ranges': 'bytes',
-                'X-JT-Audio-Source': 'local-cache',
-              },
-            })
-          }
-        }
-        const { createReadStream } = await import('fs')
-        const { Readable } = await import('stream')
-        const nodeStream = createReadStream(filePath)
-        return new Response(Readable.toWeb(nodeStream) as ReadableStream, {
-          status: 200,
-          headers: {
-            'Content-Type': mimeType,
-            'Content-Length': String(total),
-            'Accept-Ranges': 'bytes',
-            'X-JT-Audio-Source': 'local-cache',
-          },
-        })
-      } catch (err) {
-        console.warn('[ipod-audio] local cache serve failed:', err instanceof Error ? err.message : err)
-        return new Response('Not Found', { status: 404 })
-      }
+      return serveLocal(filePath, ext, 'local-cache')
     }
 
     // Hub offload (streamSource still empty). lstat does not follow the
@@ -10724,63 +10690,9 @@ app.whenReady().then(async () => {
         ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase()
       }
     }
-    const mimeType = MIME_TYPES[ext] || 'audio/mpeg'
-    try {
-      const fileStat = await stat(filePath)
-      const total = fileStat.size
-      const rangeHeader = request.headers.get('range')
-
-      // 4.2.11: switched from Buffer.alloc + fh.read (entire file into
-      // memory) to a true streaming response via createReadStream +
-      // Readable.toWeb. The Buffer-based path produced a ~29-second
-      // playback cutoff: HTMLAudioElement decodes ~30s ahead, and once
-      // it had decoded its window, Electron's main-process Buffer was
-      // eligible for GC; if it got collected before the audio element
-      // requested more bytes, audio died mid-track. Streaming responses
-      // hold the file handle open for the duration of the consumer's
-      // read, no buffer to GC.
-      const { createReadStream } = await import('fs')
-      const { Readable } = await import('stream')
-
-      if (rangeHeader) {
-        // Brief 164: same twin as the local-cache serve above (range-header.ts,
-        // RFC 9110 §14.2). 'unsatisfiable' is the only 416 left; garbage or
-        // multi-range headers (null) serve the whole file, as they did before.
-        const parsed = parseRangeHeader(rangeHeader, total)
-        if (parsed === 'unsatisfiable') {
-          return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${total}` } })
-        }
-        if (parsed) {
-          const { start, end } = parsed
-          const chunkSize = end - start + 1
-        const nodeStream = createReadStream(filePath, { start, end })
-        const webStream = Readable.toWeb(nodeStream) as unknown as ReadableStream<Uint8Array>
-        return new Response(webStream, {
-          status: 206,
-          headers: {
-            'Content-Type': mimeType,
-            'Content-Range': `bytes ${start}-${end}/${total}`,
-            'Content-Length': String(chunkSize),
-            'Accept-Ranges': 'bytes',
-            'X-JT-Audio-Source': 'local',
-          },
-        })
-        }
-      }
-
-      const nodeStream = createReadStream(filePath)
-      const webStream = Readable.toWeb(nodeStream) as unknown as ReadableStream<Uint8Array>
-      return new Response(webStream, {
-        headers: {
-          'Content-Type': mimeType,
-          'Content-Length': String(total),
-          'Accept-Ranges': 'bytes',
-          'X-JT-Audio-Source': 'local',
-        },
-      })
-    } catch {
-      return new Response('Not found', { status: 404 })
-    }
+    // 4.2.11: a streaming response (the file is never read whole into memory:
+    // that GC'd under the player at ~29 s). 2026-11-14: one open file per load.
+    return serveLocal(filePath, ext, 'local')
   })
 
   const menu = Menu.buildFromTemplate(menuTemplate)
