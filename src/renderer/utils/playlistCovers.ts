@@ -9,6 +9,9 @@
 // deterministic) — rerun it there and copy the desktop set here.
 // ⚠️ TWIN: JakeTunesMobile backend/assets/playlist-covers/<id>.jpg —
 // the same art the phone shows; change both together.
+// A month's cover and Best of <year>'s are drawn by homemini since 2026-11-13
+// (utils/periodCovers.ts usePeriodPlaylistCover is asked first): the month-*.jpg
+// and best-of files here only show until homemini's has been fetched once.
 // Top 1000 (top-1000.jpg) is the Original's silver iPod mini since 2026-11-09,
 // and every iPod list wears its own iPod: utils/ipodCovers.ts (the iPODS rows
 // and the playlist header ask useIpodPlaylistCover first).

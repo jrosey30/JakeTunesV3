@@ -51,6 +51,7 @@ import { gatherIpodLists, ipodListsCachePath, readListsCache } from '../ipod-lis
 import { createWantedShelfSource } from '../ipod-wanted-shelf-source.ts'
 import { chooseIpodColor, flushPendingColors, readChosenColors } from '../ipod-colors.ts'
 import { ipodCoverDataUrl } from '../ipod-cover-cache.ts'
+import { periodCoverDataUrl } from '../period-cover-cache.ts'
 import { createPhotoCoverClient, createPhotoCovers } from '../ipod-photo-covers.ts'
 import { withCompanionInit } from '../hub-companion.ts'
 import { MAX_PHOTO_BYTES } from '../../common/ipod-photo-covers.ts'
@@ -214,6 +215,11 @@ export function registerIpodListsIpc(ipc: IpcRegistrar, host: IpodListsHost): Ip
   }, { refuse: { ok: false, error: 'refused-sender' } })
   ipc.handle('ipod-cover:get', async (_e, key: unknown) => {
     const url = await ipodCoverDataUrl({ stateDir: host.stateDir, fetchCover: source.cover }, key).catch(() => null)
+    return { ok: true, url }
+  }, { public: true })
+  // A month's or the year's cover, drawn by homemini (2026-11-13, main/period-cover-cache.ts).
+  ipc.handle('period-cover:get', async (_e, remoteId: unknown) => {
+    const url = await periodCoverDataUrl({ stateDir: host.stateDir, fetchCover: source.cover }, remoteId).catch(() => null)
     return { ok: true, url }
   }, { public: true })
   ipc.handle('ipod-lists:proposals', async (_e, deviceId: unknown) => {

@@ -1230,6 +1230,8 @@ const electronAPI = {
   // "iPod color…" (2026-11-09): an iPod list's cover colour; and a custom-colour cover homemini drew.
   ipodListSetColor: (input: { deviceId: string; color: string }): Promise<unknown> => ipcRenderer.invoke('ipod-lists:set-color', input),
   ipodCoverGet: (key: string): Promise<unknown> => ipcRenderer.invoke('ipod-cover:get', key),
+  // 2026-11-13: a month's or the year's cover, drawn by homemini.
+  periodCoverGet: (remoteId: string): Promise<unknown> => ipcRenderer.invoke('period-cover:get', remoteId),
   // Rename… (2026-11-09): an iPod list's name (never the iPod's), and the Top 1000's display name.
   ipodListRename: (input: { deviceId: string; name: string }): Promise<unknown> => ipcRenderer.invoke('ipod-lists:rename', input),
   top1000NameGet: (): Promise<unknown> => ipcRenderer.invoke('top1000-name:get'),

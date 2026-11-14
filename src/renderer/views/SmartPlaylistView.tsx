@@ -15,6 +15,7 @@ import { useIpodLists, entryColor, renameIpodList, useIpodListsRole } from '../i
 import { useTop1000Name, renameTop1000 } from '../top1000Name'
 import ListRenameField from '../components/ListRenameField'
 import { useIpodPlaylistCover } from '../utils/ipodCovers'
+import { usePeriodPlaylistCover } from '../utils/periodCovers'
 import { IpodColorPicker } from '../components/IpodColorPicker'
 import { chooseIpodPhoto, backToIpodDrawing, useHasIpodPhoto } from '../ipodPhotoCovers'
 import { photoKeyForPlaylist } from '../../common/ipod-photo-covers'
@@ -1054,7 +1055,9 @@ export default function SmartPlaylistView() {
   const displayName = isPicksView && picks?.name ? picks.name : title
   // Top 1000 and every iPod list wear their own iPod (2026-11-09, utils/ipodCovers.ts).
   const ipodCover = useIpodPlaylistCover(playlistId)
-  const cover = ipodCover ?? (playlistId ? smartPlaylistCover(playlistId as SmartPlaylistId) : null)
+  // A month and the year wear the cover homemini drew (2026-11-13, utils/periodCovers.ts).
+  const periodCover = usePeriodPlaylistCover(playlistId)
+  const cover = ipodCover ?? periodCover ?? (playlistId ? smartPlaylistCover(playlistId as SmartPlaylistId) : null)
   const loadingLabel =
     picksConfig?.kind === 'larry'   ? 'Larry is picking tracks…' :
     picksConfig?.kind === 'djhands' ? 'DJ Stephen Hands is picking tracks…' :

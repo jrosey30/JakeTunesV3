@@ -3,6 +3,7 @@ import { SMART_PLAYLIST_NAMES } from '../../utils/playlistMenu'
 import { BEST_OF_YEAR_NAME } from '../../utils/smartPlaylists'
 import { smartPlaylistCover } from '../../utils/playlistCovers'
 import { useIpodPlaylistCover } from '../../utils/ipodCovers'
+import { usePeriodPlaylistCover } from '../../utils/periodCovers'
 import { IpodColorPicker } from '../IpodColorPicker'
 import { chooseIpodPhoto, backToIpodDrawing, useHasIpodPhoto } from '../../ipodPhotoCovers'
 import { photoKeyForPlaylist } from '../../../common/ipod-photo-covers'
@@ -219,7 +220,9 @@ function CassetteIcon() {
 function SmartIcon({ id, planned = false }: { id: SmartPlaylistId; planned?: boolean }) {
   // Top 1000 and every iPod list wear their own iPod (2026-11-09, utils/ipodCovers.ts).
   const ipodCover = useIpodPlaylistCover(id)
-  const cover = ipodCover ?? smartPlaylistCover(id)
+  // A month and the year wear the cover homemini drew (2026-11-13, utils/periodCovers.ts).
+  const periodCover = usePeriodPlaylistCover(id)
+  const cover = ipodCover ?? periodCover ?? smartPlaylistCover(id)
   return cover
     ? <img src={cover} alt="" className={`sidebar-cover-icon${planned ? ' sidebar-cover-icon--planned' : ''}`} draggable={false} />
     : <SmartPlaylistIcon />
