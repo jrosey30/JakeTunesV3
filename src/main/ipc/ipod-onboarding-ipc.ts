@@ -8,9 +8,14 @@
  * a step the strip wouldn't be showing.
  *
  *   'ipod-setup:look' ({ listId, name, typed, recheck }) → the facts, the
- *       lists, the next step. Once a list is picked and nothing stops the
- *       set-up, the small test file runs by itself (the 'test' gate).
- *   'ipod-setup:test' ({ listId, name }) → the test file again, on demand.
+ *       lists, the next step. A look NEVER writes to the iPod.
+ *   'ipod-setup:test' ({ listId, name }) → the small test file. The strip asks
+ *       for it by itself once a list is picked; it is still its own step.
+ *   'ipod-setup:card-proof' → read back the first and last songs the first sync
+ *       wrote (ipod-card-proof.ts). Reads only.
+ *   'ipod-setup:same-ipod' ({ typed }) → "this is the same iPod with a new card
+ *       or body": only when the record and the device disagree, only with the
+ *       typed words; the record takes the new serial and size. Never automatic.
  *   'ipod-setup:prepare' ({ listId, name, color, typed, matchCover }) → only
  *       when the step is 'prepare'. Never formats, never deletes a song.
  *   'ipod-setup:checked' → only at the proof step.
@@ -32,6 +37,7 @@ import { REFUSED_SENDER } from '../ipc-register.ts'
 import { createIpodListClient } from '../ipod-list-client.ts'
 import { ipodStateDirFor, registerIpod, restoreOriginalMarker, setIpodSyncHealthGate } from '../ipod-identity.ts'
 import { withCompanionInit } from '../hub-companion.ts'
+import { flushCardProof, startCardProof, verifyCardProof } from '../ipod-card-proof.ts'
 import type { FetchLike } from '../top1000-client.ts'
 import type { IpodSetupSystem } from '../ipod-onboarding-system.ts'
 import type { IpodDeviceMarker } from '../../common/ipod-identity.ts'
@@ -39,12 +45,13 @@ import type { IpodList } from '../../common/ipod-list-doc.ts'
 import { checkIpodName } from '../../common/ipod-name.ts'
 import { normalizeIpodColor } from '../../common/ipod-covers.ts'
 import {
-  STABLE_READS_NEEDED, coverMismatch, healthSyncRefusal, ipodHealthCheck, onboardingActionRefusal, onboardingStep,
+  STABLE_READS_NEEDED, confirmationMatches, coverMismatch, healthBlindRefusal, healthSyncRefusal, ipodHealthCheck,
+  onboardingActionRefusal, onboardingStep, rebindRecord, replacedLabel, sameIpodOffer,
   type IpodDeviceFacts, type OnboardingAction, type OnboardingProgress, type OnboardingStep, type OnboardingTarget,
 } from '../../common/ipod-onboarding.ts'
 import {
-  adoptExistingIpod, gatherIpodFacts, guard, noteLastSync, prepareIpod, readLastSync, readOnboardingRecords,
-  runCardTest, sealOnboarding, stableReads, type WriteGuard,
+  adoptExistingIpod, currentDriveId, gatherIpodFacts, guard, noteLastSync, prepareIpod, readLastSync, readOnboardingRecords,
+  runCardTest, sealOnboarding, stableReads, updateOnboardingRecord, type WriteGuard,
 } from '../ipod-onboarding.ts'
 
 export interface IpodOnboardingHost {
@@ -149,7 +156,7 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
     otherIpods: () => host.system.otherIpods(mount),
     syncInFlight: host.isSyncInFlight,
     // The system is asked again, now: is this still the drive the checks ran on?
-    sameDrive: async () => f.driveId !== null && (await host.system.driveId(mount)) === f.driveId,
+    sameDrive: async () => f.driveId !== null && (await currentDriveId(mount, host.system)) === f.driveId,
   })
 
   /**
@@ -208,15 +215,8 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
   ipc.handle('ipod-setup:look', async (_e, raw) => {
     try {
       const arg = raw as LookArg
-      let s = await survey(arg)
+      const s = await survey(arg)
       if ('refused' in s) return { ok: true as const, mounted: host.getMount() !== null, step: s.refused, targets: [], cover: null, health: null, record: null }
-      // Jake picked a list and nothing stops the set-up: the test file runs by itself, behind the
-      // same gate as the handler. (A test folder left by a kill mid-test is cleaned by the test.)
-      if (!onboardingActionRefusal('test', s.step) && !s.facts.writeTest && s.facts.stable) {
-        await runTest(s)
-        const again = await survey({ ...arg, recheck: false })
-        if (!('refused' in again)) s = again
-      }
       const records = await readOnboardingRecords(host.stateDir)
       const record = s.marker ? records.find((r) => r.listId === s.marker!.id) ?? null : null
       return {
@@ -226,6 +226,7 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
         targets: s.lists.map((l) => ({ listId: l.id, listName: l.name, songs: l.ids.length, model: l.model ?? null, color: l.color ?? null, hasIpod: records.some((r) => r.listId === l.id && !r.released) })),
         cover: coverMismatch(s.target, s.facts),
         health: s.marker ? ipodHealthCheck({ facts: s.facts, record, list: s.mine ? { name: s.mine.name, songs: s.mine.ids.length } : null, lastSync: s.last }) : null,
+        sameIpod: sameIpodOffer(s.facts, record),
         record,
       }
     } catch (err) {
@@ -258,6 +259,8 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
       const done = await prepareIpod(mount, host.stateDir, guardFor(f, mount), {
         listId: target.kind === 'list' ? target.listId : null,
         name: checked.name, color, purpose: list?.purpose ?? null, facts: f, now: new Date().toISOString(),
+        // Only the typed words move an iPod that already carries a list.
+        confirmedMove: f.marker !== null && confirmationMatches(replacedLabel(f), arg.typed),
       })
       if (!done.ok) return done
       const notes: string[] = []
@@ -291,9 +294,46 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
       const act = await mayAct('seal', undefined)
       if (!act.ok) return act
       if (!act.s.marker) return { ok: false, error: 'This iPod isn’t one that was set up here.' }
+      // The card check is the last check. A fail, or a check still waiting for a replug, is not a pass;
+      // one that can't run at all says so and leaves the play test as the check.
+      await flushCardProof().catch((err) => console.warn('[ipod-setup] card check:', message(err)))
+      const proof = await verifyCardProof(act.s.mount, act.s.marker.id)
+      if (proof.status === 'fail' || proof.status === 'waiting') return { ok: false, error: proof.line, cardProof: proof }
       const r = await sealOnboarding(host.stateDir, act.s.marker, new Date().toISOString())
       if (r.ok) host.onDeviceChanged()
       return r
+    } catch (err) {
+      return { ok: false, error: `That couldn’t be saved (${message(err)}).` }
+    }
+  }, { refuse: REFUSED_SENDER })
+
+  ipc.handle('ipod-setup:card-proof', async () => {
+    try {
+      const s = await survey(undefined)
+      if ('refused' in s) return { ok: false, error: s.refused.step === 'refused' ? s.refused.line : NOT_THE_HUB }
+      if (!s.marker || s.marker.primary) return { ok: false, error: 'This iPod isn’t one that is being set up.' }
+      await flushCardProof().catch((err) => console.warn('[ipod-setup] card check:', message(err)))
+      return { ok: true, cardProof: await verifyCardProof(s.mount, s.marker.id) }
+    } catch (err) {
+      return { ok: false, error: `The card check couldn’t run (${message(err)}).` }
+    }
+  }, { refuse: REFUSED_SENDER })
+
+  // The same iPod with a new card or body (a bigger card cloned into punkPod). Explicit and
+  // typed; the record on this Mac takes the new serial and size. Nothing on the iPod is written.
+  ipc.handle('ipod-setup:same-ipod', async (_e, raw) => {
+    try {
+      const s = await survey(undefined)
+      if ('refused' in s) return { ok: false, error: s.refused.step === 'refused' ? s.refused.line : NOT_THE_HUB }
+      const marker = s.marker
+      const record = marker ? (await readOnboardingRecords(host.stateDir)).find((r) => r.listId === marker.id && !r.released) ?? null : null
+      const offer = sameIpodOffer(s.facts, record)
+      if (!marker || !record || !offer) return { ok: false, error: 'This iPod is the one on record. There is nothing to confirm.' }
+      const typed = (raw as { typed?: unknown } | undefined)?.typed
+      if (typeof typed !== 'string' || typed.replace(/\s+/g, ' ').trim() !== offer.phrase) return { ok: false, error: `Type “${offer.phrase}” to confirm. Nothing was changed.` }
+      const next = await updateOnboardingRecord(host.stateDir, marker.id, (cur) => (cur ? rebindRecord(cur, s.facts, new Date().toISOString()) : null))
+      host.onDeviceChanged()
+      return { ok: true, record: next }
     } catch (err) {
       return { ok: false, error: `That couldn’t be saved (${message(err)}).` }
     }
@@ -350,7 +390,18 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
     })
     if (!facts.marker || facts.marker.id !== device.id) return `The iPod changed while it was being checked. The sync was not started.`
     const record = (await readOnboardingRecords(host.stateDir)).find((r) => r.listId === device.id) ?? null
+    const blind = healthBlindRefusal(facts, record)
+    if (blind) return blind
     const last = await readLastSync(ipodStateDirFor(host.stateDir, device))
-    return healthSyncRefusal(ipodHealthCheck({ facts, record, list: null, lastSync: last }))
+    const report = ipodHealthCheck({ facts, record, list: null, lastSync: last })
+    // What the sync is about to repair is said, not hidden.
+    for (const c of report.checks) if (c.status === 'warn') console.warn(`[ipod-health] ${device.name}: ${c.line}`)
+    return healthSyncRefusal(report)
+  })
+
+  // The card check samples the copy of any iPod whose set-up isn't sealed yet.
+  startCardProof(host.stateDir, async (markerId) => {
+    const rec = (await readOnboardingRecords(host.stateDir)).find((r) => r.listId === markerId)
+    return !!rec && !rec.released && rec.sealedAt === null
   })
 }

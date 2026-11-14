@@ -33,7 +33,9 @@ const plist = (xml: string, key: string, type: 'string' | 'integer'): string | n
 export function driveIdFromDiskutil(xml: string): string | null {
   const uuid = plist(xml, 'VolumeUUID', 'string')
   const size = plist(xml, 'TotalSize', 'integer') ?? plist(xml, 'Size', 'integer')
-  return uuid ? `${uuid}|${size ?? ''}` : null
+  // A FAT32 volume with a zero serial reports the all-zero UUID: that is every such drive's
+  // "id", so it is no id at all.
+  return uuid && /[1-9a-f]/i.test(uuid) ? `${uuid}|${size ?? ''}` : null
 }
 
 export const realIpodSetupSystem: IpodSetupSystem = {

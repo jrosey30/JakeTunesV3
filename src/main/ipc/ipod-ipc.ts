@@ -18,6 +18,7 @@ import { identifyIpod, renameIpodMarker, loadIpodRegistry } from '../ipod-identi
 import { renameIpod, renameMacVolume, queueHomeminiName } from '../ipod-rename.ts'
 import { registerIpodOnboardingIpc, type IpodOnboardingHost } from './ipod-onboarding-ipc.ts'
 import { realIpodSetupSystem } from '../ipod-onboarding-system.ts'
+import { cardPlugged } from '../ipod-card-proof.ts'
 
 export interface IpodMountSnapshot {
   mount: string | null
@@ -131,7 +132,7 @@ export function registerIpodIpc(ipc: IpcRegistrar, host: IpodIpcHost): void {
         // identity is checked before anything reads it.
         const isNew = !state.mount || state.mount !== mount
         host.setMount({ mount, volume, missStreak: 0 })
-        if (isNew) host.onMountDetected?.(mount)
+        if (isNew) { cardPlugged(); host.onMountDetected?.(mount) }
         return { mounted: true, name: volume }
       }
       // No mount this poll. Ride out a brief flap rather than yanking the

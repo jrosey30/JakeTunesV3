@@ -885,6 +885,8 @@ declare global {
       ipodSetupLook?: (arg?: { listId?: string | null; name?: string | null; typed?: string | null; recheck?: boolean }) => Promise<import('../common/ipod-onboarding').IpodSetupLook>
       ipodSetupTest?: (arg?: { listId?: string | null; name?: string | null }) => Promise<{ ok: boolean; result?: { ok: boolean; bytes: number; reason?: string }; error?: string }>
       ipodSetupReadoptOriginal?: () => Promise<{ ok: boolean; error?: string }>
+      ipodSetupCardProof?: () => Promise<{ ok: boolean; error?: string; cardProof?: { status: 'pass' | 'fail' | 'waiting' | 'none'; line: string } }>
+      ipodSetupSameIpod?: (arg: { typed: string }) => Promise<{ ok: boolean; error?: string }>
       ipodSetupPrepare?: (arg: { listId: string; name: string | null; color: string | null; typed: string | null; matchCover: boolean }) => Promise<{ ok: boolean; error?: string; did?: string[]; notes?: string[] }>
       ipodSetupChecked?: () => Promise<{ ok: boolean; error?: string }>
       onIpodDeviceChanged?: (callback: () => void) => () => void

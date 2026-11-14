@@ -332,7 +332,7 @@ describe('every later plug-in', () => {
     const drift = verdict({ ...mine, catalog: { present: true, readable: true, songs: 103 } })
     assert.equal(drift.verdict, 'warn')
     assert.match(drift.checks.find((c) => c.id === 'database')!.line, /lists 103 songs; the last sync put 193 on/)
-    assert.equal(verdict({ ...mine, catalog: { present: true, readable: false, songs: null } }).verdict, 'stop')
+    assert.equal(verdict({ ...mine, catalog: { present: true, readable: false, songs: null } }).verdict, 'warn', 'a sync is what repairs it: not a stop')
     assert.equal(verdict({ ...mine, catalog: { present: false, readable: false, songs: null } }).verdict, 'warn')
   })
   test('no room, an unfinished sync, no ID file', () => {
@@ -396,10 +396,10 @@ describe('one gate for every handler that writes', () => {
     assert.equal(onboardingActionRefusal('seal', at({ facts: mine, records: [record()], progress: { ...noProgress, firstSync: { songs: 193, at: 'x' } } })), null)
   })
   test('a health stop is a sync refusal with its reason; warnings are not', () => {
-    const mine = facts({ marker: marker(), catalog: { present: true, readable: false, songs: null } })
+    const mine = facts({ marker: marker(), usb: { vendor: 'Apple Inc.', productId: 0x1205, serial: 'AAAA0000BBBB1111' } })
     const stop = ipodHealthCheck({ facts: mine, record: record(), list: null, lastSync: { sealed: true, songs: 193 } })
-    assert.match(healthSyncRefusal(stop) ?? '', /song database can’t be read.*The sync was not started\./)
-    const fine = ipodHealthCheck({ facts: { ...mine, catalog: { present: true, readable: true, songs: 190 } }, record: record(), list: null, lastSync: { sealed: true, songs: 193 } })
+    assert.match(healthSyncRefusal(stop) ?? '', /in a different iPod than the one set up.*The sync was not started\./)
+    const fine = ipodHealthCheck({ facts: facts({ marker: marker(), catalog: { present: true, readable: true, songs: 190 } }), record: record(), list: null, lastSync: { sealed: true, songs: 193 } })
     assert.equal(fine.verdict, 'warn')
     assert.equal(healthSyncRefusal(fine), null)
   })

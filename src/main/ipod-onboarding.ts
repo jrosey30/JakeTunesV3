@@ -132,6 +132,25 @@ export async function stableReads(mount: string, tries: number, gapMs: number, s
   return { tried: tries, ok }
 }
 
+/**
+ * The drive's identity, asked of the system now. The volume's own UUID when it
+ * has a real one; a FAT32 volume with a zero serial has none, and then it is
+ * the USB serial + the drive's size + the stamp in JakeTunes' ID file (written
+ * at set-up, so two set-up cards never share it). null = no stable identity:
+ * nothing is written to such a drive.
+ */
+export async function currentDriveId(mount: string, deps: Pick<FactsDeps, 'driveId' | 'usb'>): Promise<string | null> {
+  const own = await deps.driveId(mount).catch(() => null)
+  if (own) return own
+  const [usb, total, marker] = await Promise.all([
+    deps.usb ? deps.usb(mount).catch(() => null) : Promise.resolve(null),
+    statfs(mount).then((s) => Number(s.blocks) * Number(s.bsize), () => 0),
+    readMarker(mount),
+  ])
+  const serial = usb?.serial?.trim()
+  return serial && total > 0 ? `usb:${serial.toUpperCase()}|${total}|${marker?.createdAt ?? ''}` : null
+}
+
 /** Everything set-up needs to know about the iPod at `mount`. Reads only. */
 export async function gatherIpodFacts(
   mount: string,
@@ -149,7 +168,7 @@ export async function gatherIpodFacts(
     deps.usb ? deps.usb(mount).catch(() => null) : Promise.resolve(null),
     // A failed look for other iPods counts as "one might be there".
     deps.otherIpods().catch(() => 1),
-    deps.driveId(mount).catch(() => null),
+    currentDriveId(mount, deps),
   ])
   const summary = dbBuf ? readCatalogSummary(dbBuf) : null
   const firmwareFiles = (await exists(join(itunes, 'iTunesPrefs'))) || (await exists(join(itunes, 'iTunesControl')))
@@ -444,6 +463,9 @@ export interface PrepareInput {
   /** The facts the checks ran on. */
   facts: IpodDeviceFacts
   now: string
+  /** Jake typed the confirmation for moving an iPod that already carries a list. Without it an
+   *  existing ID file is never replaced, whatever the guard saw. */
+  confirmedMove?: boolean
 }
 
 export type PrepareResult =
@@ -503,7 +525,7 @@ export async function prepareIpod(
   const reg = await registerIpod(mount, stateDir, {
     asOriginal: false, name: input.name, color: input.color, purpose: input.purpose,
     ...(input.listId ? { id: input.listId } : {}),
-    replace: moving !== null,
+    replace: moving !== null && input.confirmedMove === true,
   })
   if (!reg.ok) return fail('JakeTunes couldn’t write its ID file', new Error(reg.error))
   did.push('the ID file was written')

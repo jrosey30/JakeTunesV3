@@ -335,6 +335,10 @@ const electronAPI = {
     ipcRenderer.invoke('ipod-setup:test', arg),
   ipodSetupReadoptOriginal: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('ipod-setup:readopt-original'),
+  ipodSetupCardProof: (): Promise<{ ok: boolean; error?: string; cardProof?: { status: 'pass' | 'fail' | 'waiting' | 'none'; line: string } }> =>
+    ipcRenderer.invoke('ipod-setup:card-proof'),
+  ipodSetupSameIpod: (arg: { typed: string }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('ipod-setup:same-ipod', arg),
   ipodSetupPrepare: (arg: { listId: string; name: string | null; color: string | null; typed: string | null; matchCover: boolean }): Promise<{ ok: boolean; error?: string; did?: string[]; notes?: string[] }> =>
     ipcRenderer.invoke('ipod-setup:prepare', arg),
   ipodSetupChecked: (): Promise<{ ok: boolean; error?: string }> =>

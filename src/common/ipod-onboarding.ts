@@ -221,7 +221,7 @@ export function deviceSerial(f: Pick<IpodDeviceFacts, 'usb' | 'sysInfo'>): { ser
 // ── The record: which physical iPod carries which list ───────────────────────
 
 export const ONBOARDING_FILE = 'ipod-onboarding.json'
-export type OnboardingEvent = 'set-up' | 'set-up-again' | 'moved-to-another-list' | 'released' | 'checked'
+export type OnboardingEvent = 'set-up' | 'set-up-again' | 'moved-to-another-list' | 'released' | 'checked' | 'new-card-or-body'
 
 export interface IpodOnboardingRecord {
   /** The list's id on homemini = the ID file's id on the card. */
@@ -245,7 +245,7 @@ export interface IpodOnboardingRecord {
 
 const ID = /^[a-z0-9-]{6,64}$/
 const HARDWARE = new Set<IpodHardware>(['mini-1g', 'mini-2g', 'mini', '3g', '4g', 'classic', 'other', 'unknown'])
-const EVENTS = new Set<OnboardingEvent>(['set-up', 'set-up-again', 'moved-to-another-list', 'released', 'checked'])
+const EVENTS = new Set<OnboardingEvent>(['set-up', 'set-up-again', 'moved-to-another-list', 'released', 'checked', 'new-card-or-body'])
 const str = (v: unknown, max = 200): string | null => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null)
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null)
 
@@ -749,6 +749,58 @@ export interface HealthInput {
 }
 export interface HealthReport { verdict: 'ok' | 'warn' | 'stop'; checks: OnboardingCheck[] }
 
+/**
+ * The iPod's body or card is not the one on record. The Original is never held to this: it
+ * predates the records and is known by its own ID file.
+ */
+export function identityChange(
+  facts: IpodDeviceFacts,
+  record: IpodOnboardingRecord | null,
+): { kind: 'body' | 'card'; was: { serial: string | null; bytes: number | null }; now: { serial: string | null; bytes: number | null } } | null {
+  if (!record || !facts.marker || facts.marker.primary) return null
+  const ser = deviceSerial(facts)
+  const out = { was: { serial: record.serial, bytes: record.capacityBytes }, now: { serial: ser?.serial ?? null, bytes: facts.totalBytes } }
+  if (record.serialSource === 'usb' && ser?.source === 'usb' && record.serial !== ser.serial) return { kind: 'body', ...out }
+  if (record.capacityBytes && facts.totalBytes && Math.abs(record.capacityBytes - facts.totalBytes) > record.capacityBytes * 0.02) return { kind: 'card', ...out }
+  return null
+}
+
+/** What Jake types to say "this is the same iPod, with a new card or body". It names the iPod. */
+export function sameIpodPhrase(name: string): string {
+  return `this is ${name.replace(/\s+/g, ' ').trim()}`
+}
+
+/**
+ * The explicit way forward from a body or card mismatch (a bigger card cloned
+ * into punkPod): the old and new identity side by side, and the words to type.
+ * null = nothing changed, or this is the Original. Never automatic.
+ */
+export function sameIpodOffer(facts: IpodDeviceFacts, record: IpodOnboardingRecord | null): { phrase: string; lines: string[] } | null {
+  const c = identityChange(facts, record)
+  if (!c || !facts.marker) return null
+  const show = (v: { serial: string | null; bytes: number | null }) => `serial ${v.serial ?? 'not readable'}, ${v.bytes ? gb(v.bytes) : 'size not readable'}`
+  return {
+    phrase: sameIpodPhrase(facts.marker.name),
+    lines: [
+      `When ${facts.marker.name} was set up: ${show(c.was)}.`,
+      `Plugged in now: ${show(c.now)}.`,
+      `If this is ${facts.marker.name} with a new ${c.kind === 'body' ? 'body' : 'card'}, type the words below and JakeTunes will know it by the new one. Its songs are not touched; the next sync checks them.`,
+    ],
+  }
+}
+
+/** The record after Jake confirmed "same iPod, new card or body". */
+export function rebindRecord(record: IpodOnboardingRecord, facts: IpodDeviceFacts, now: string): IpodOnboardingRecord {
+  const ser = deviceSerial(facts)
+  return {
+    ...record,
+    serial: ser?.serial ?? null,
+    serialSource: ser?.source ?? null,
+    capacityBytes: facts.totalBytes,
+    history: [...record.history, { at: now, event: 'new-card-or-body' as const, note: `was serial ${record.serial ?? '?'}, ${record.capacityBytes ?? '?'} bytes` }].slice(-50),
+  }
+}
+
 /** The floor of free space under which a sync is not started. */
 export const HEALTH_MIN_FREE_BYTES = 200 * 1024 * 1024
 
@@ -768,18 +820,20 @@ export function ipodHealthCheck(input: HealthInput): HealthReport {
   if (!facts.marker) add('identity', 'stop', 'This iPod has no JakeTunes ID file. Set it up before it is synced.')
   else if (facts.marker.primary) add('identity', 'ok', `${name}, your Original.`)
   else if (!record) add('identity', 'warn', `${name} has no set-up record on this Mac yet. It is recorded the next time this page is opened.`)
-  else if (record.serialSource === 'usb' && ser?.source === 'usb' && record.serial !== ser.serial) {
-    add('identity', 'stop', `The card says ${name}, but it is in a different iPod than the one set up on ${day(record.onboardedAt) ?? 'set-up day'}. If you moved the card on purpose, set this iPod up again; otherwise check which iPod this is. ${NOTHING_CHANGED}`)
-  } else if (record.capacityBytes && facts.totalBytes && Math.abs(record.capacityBytes - facts.totalBytes) > record.capacityBytes * 0.02) {
-    add('identity', 'stop', `${name}’s drive was ${gb(record.capacityBytes)} when it was set up and is ${gb(facts.totalBytes)} now. That is a different card. ${NOTHING_CHANGED}`)
-  } else add('identity', 'ok', `${name}. ${onboardedLine(record)}.`)
+  else {
+    const changed = identityChange(facts, record)
+    if (changed?.kind === 'body') add('identity', 'stop', `The card says ${name}, but it is in a different iPod than the one set up on ${day(record.onboardedAt) ?? 'set-up day'}. If this is ${name} with a new body, confirm that below; otherwise check which iPod this is. ${NOTHING_CHANGED}`)
+    else if (changed?.kind === 'card') add('identity', 'stop', `${name}’s drive was ${gb(record.capacityBytes ?? 0)} when it was set up and is ${gb(facts.totalBytes ?? 0)} now. That is a different card. If this is ${name} with a new card, confirm that below. ${NOTHING_CHANGED}`)
+    else add('identity', 'ok', `${name}. ${onboardedLine(record)}.`)
+  }
 
   // Format
   if (facts.fs !== null && facts.fs !== 'fat32' && facts.fs !== 'hfs') add('format', 'stop', `${name} is no longer formatted the way an iPod needs. ${NOTHING_CHANGED}`)
 
   // Database
   if (!facts.catalog.present) add('database', 'warn', lastSync ? `${name} has no song database, though it has been synced. It may have been restored; the next sync is a full copy.` : `${name} has no song database yet.`)
-  else if (!facts.catalog.readable) add('database', 'stop', `${name}’s song database can’t be read, so a sync has nothing sound to build on. ${NOTHING_CHANGED}`)
+  // Not a stop: a sync is what rewrites a broken database, and nothing else can (2026-11-14).
+  else if (!facts.catalog.readable) add('database', 'warn', `${name}’s song database can’t be read. The next sync rewrites it, as a full copy.`)
   else if (lastSync?.sealed && facts.catalog.songs !== lastSync.songs) add('database', 'warn', `${name}’s song database lists ${count(facts.catalog.songs ?? 0, 'song')}; the last sync put ${lastSync.songs.toLocaleString('en-US')} on. Something else wrote to it; the next sync is a full copy.`)
   else add('database', 'ok', `Song database readable: ${count(facts.catalog.songs ?? 0, 'song')}.`)
 
@@ -831,6 +885,20 @@ export function onboardingActionRefusal(action: OnboardingAction, step: Onboardi
 export function healthSyncRefusal(report: HealthReport): string | null {
   const stop = report.checks.find((c) => c.status === 'stop')
   return stop ? `${stop.line} The sync was not started.` : null
+}
+
+/**
+ * A health check that couldn't see what it checks is not a pass. null = it saw enough.
+ * The format and the size must be readable; and when the iPod is on record by its USB
+ * serial, the USB serial must be readable now (the Original has no such hold on it).
+ */
+export function healthBlindRefusal(facts: IpodDeviceFacts, record: IpodOnboardingRecord | null): string | null {
+  const name = facts.marker?.name ?? 'the iPod'
+  const blind = facts.fs === null ? 'how the drive is formatted'
+    : facts.totalBytes === null ? 'the drive’s size'
+      : record?.serialSource === 'usb' && !facts.marker?.primary && !facts.usb?.serial ? 'which iPod body this is'
+        : null
+  return blind ? `JakeTunes couldn’t check ${name} before syncing: the Mac wouldn’t say ${blind}. Unplug it, plug it in again, and sync. The sync was not started.` : null
 }
 
 // ── The write guard ──────────────────────────────────────────────────────────
@@ -902,6 +970,8 @@ export interface IpodSetupTargetRow {
 export type IpodSetupLook =
   | {
       ok: true
+      /** Body or card changed: the old and new identity and the words that confirm "same iPod". */
+      sameIpod?: { phrase: string; lines: string[] } | null
       mounted: boolean
       step: OnboardingStep
       targets: IpodSetupTargetRow[]

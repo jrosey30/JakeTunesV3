@@ -17,6 +17,9 @@ import type { IpcRegistrar } from '../ipc-register.ts'
 import { identifyIpod, registerIpod, resolveIpodState, setIpodSyncHealthGate } from '../ipod-identity.ts'
 import { CARD_TEST_DIR, readOnboardingRecords } from '../ipod-onboarding.ts'
 import { buildBlankCatalog } from '../ipod-blank-catalog.ts'
+import { driveIdFromDiskutil } from '../ipod-onboarding-system.ts'
+import { cardPlugged, flushCardProof, resetCardProof } from '../ipod-card-proof.ts'
+import { confirmWriteOnCard } from '../ipod-sync-card.ts'
 import type { IpodSetupLook, IpodUsbFacts } from '../../common/ipod-onboarding.ts'
 
 const CORE = resolve(import.meta.dirname, '../../../core')
@@ -100,6 +103,12 @@ async function rig(over: { replica?: () => Promise<boolean> } = {}) {
     assert.equal(r.ok, true, r.ok ? '' : r.error)
     return r as Look
   }
+  /** What the strip does when Jake picks a list: look, the test file (its own step), look again. */
+  const pick = async (listId: string): Promise<Look> => {
+    const first = await look({ listId })
+    if (first.step.step === 'checks' && !first.step.blocked) await call('ipod-setup:test', { listId })
+    return look({ listId })
+  }
   /** Unplug, and plug a different blank card in at the same path, with the same name. */
   const swapCard = async (id: string, serial: string) => {
     await rename(mount, join(root, `OLD-${Date.now()}-${Math.random()}`))
@@ -107,7 +116,7 @@ async function rig(over: { replica?: () => Promise<boolean> } = {}) {
     drive.id = id
     drive.usb = { vendor: 'Apple Inc.', productId: 0x1205, serial }
   }
-  return { root, mount, stateDir, drive, state, call, look, swapCard, handlers }
+  return { root, mount, stateDir, drive, state, call, look, pick, swapCard, handlers }
 }
 
 /** A real song database on the card, written by the app's own catalog writer. */
@@ -129,7 +138,7 @@ describe('the road, through the handlers', () => {
   test('pick the list → the checks and the test file run by themselves → set up → first sync', async () => {
     const t = await rig()
     assert.equal((await t.look()).step.step, 'choose-list')
-    const picked = await t.look({ listId: EIGHTIES })
+    const picked = await t.pick(EIGHTIES)
     assert.equal(picked.step.step, 'prepare', JSON.stringify(picked.step))
     assert.equal(picked.step.step === 'prepare' && picked.step.name, '80sPod')
     assert.equal(picked.cover?.model, 'mini', 'the list is drawn as a 3rd generation; this is a mini')
@@ -208,7 +217,7 @@ describe('finding 1 + 7 + 9: one gate, and only the MacBook', () => {
 describe('finding 2 + 3: which drive', () => {
   test('a different blank drive at the same path, same name, after the checks: set-up does not write to it', async () => {
     const t = await rig()
-    assert.equal((await t.look({ listId: EIGHTIES })).step.step, 'prepare')
+    assert.equal((await t.pick(EIGHTIES)).step.step, 'prepare')
     await t.swapCard('BBBB2222-0000-0000-0000-000000000002|249500000000', '000A2700FFFF0002')
     // The second card can't pass its own test file: with the first card's results it would be set up.
     await symlink(t.root, join(t.mount, CARD_TEST_DIR))
@@ -216,25 +225,26 @@ describe('finding 2 + 3: which drive', () => {
     const r = await t.call('ipod-setup:prepare', { listId: EIGHTIES, name: null, color: null, typed: null, matchCover: false })
     assert.equal(r.ok, false)
     assert.deepEqual(await snapshot(t.mount), before)
-    const again = await t.look({ listId: EIGHTIES })
+    const again = await t.pick(EIGHTIES)
     assert.equal(again.step.step, 'checks')
     assert.ok(again.step.step === 'checks' && again.step.checks.some((c) => c.id === 'write-test' && c.status === 'stop'), 'the first card’s passed test is not this card’s')
   })
   test('unplugged, then another new iPod with the same drive name: it starts from nothing', async () => {
     const t = await rig()
-    assert.equal((await t.look({ listId: EIGHTIES })).step.step, 'prepare')
+    assert.equal((await t.pick(EIGHTIES)).step.step, 'prepare')
     t.state.mounted = false
     assert.equal((await t.look()).step.step, 'refused')
     await t.swapCard(t.drive.id!, '000A27001234ABCD')   // even a drive that reports the SAME id: unplugging forgets
     await symlink(t.root, join(t.mount, CARD_TEST_DIR))
     t.state.mounted = true
-    const next = await t.look({ listId: EIGHTIES })
-    assert.equal(next.step.step, 'checks')
+    const fresh = await t.look({ listId: EIGHTIES })
+    assert.ok(fresh.step.step === 'checks' && fresh.step.checks.some((c) => c.id === 'write-test' && c.status === 'unknown'), 'the first iPod’s passed test is forgotten')
+    const next = await t.pick(EIGHTIES)
     assert.ok(next.step.step === 'checks' && next.step.blocked)
   })
   test('the drive changes between the look and the first write: refused, untouched', async () => {
     const t = await rig()
-    assert.equal((await t.look({ listId: EIGHTIES })).step.step, 'prepare')
+    assert.equal((await t.pick(EIGHTIES)).step.step, 'prepare')
     const before = await snapshot(t.mount)
     // The handler's own look still sees the first drive; the question asked right before writing does not.
     t.state.driveIdAfter = { calls: t.state.driveIdCalls + 1, id: 'CCCC3333-0000-0000-0000-000000000003|249500000000' }
@@ -246,7 +256,7 @@ describe('finding 2 + 3: which drive', () => {
   })
   test('the drive changes between two of set-up’s writes: the ID file is never written to the second drive', async () => {
     const t = await rig()
-    assert.equal((await t.look({ listId: EIGHTIES })).step.step, 'prepare')
+    assert.equal((await t.pick(EIGHTIES)).step.step, 'prepare')
     t.state.driveIdAfter = { calls: t.state.driveIdCalls + 2, id: 'CCCC3333-0000-0000-0000-000000000003|249500000000' }
     const r = await t.call('ipod-setup:prepare', { listId: EIGHTIES, name: null, color: null, typed: null, matchCover: false })
     assert.equal(r.ok, false)
@@ -257,7 +267,7 @@ describe('finding 2 + 3: which drive', () => {
   test('the drive changes right before the ID file (the card already has an empty database): no ID file is written', async () => {
     const t = await rig()
     await writeFile(join(t.mount, 'iPod_Control', 'iTunes', 'iTunesDB'), buildBlankCatalog('iPod'))
-    assert.equal((await t.look({ listId: EIGHTIES })).step.step, 'prepare')
+    assert.equal((await t.pick(EIGHTIES)).step.step, 'prepare')
     t.state.driveIdAfter = { calls: t.state.driveIdCalls + 2, id: 'CCCC3333-0000-0000-0000-000000000003|249500000000' }
     const r = await t.call('ipod-setup:prepare', { listId: EIGHTIES, name: null, color: null, typed: null, matchCover: false })
     assert.equal(r.ok, false)
@@ -268,6 +278,7 @@ describe('finding 2 + 3: which drive', () => {
   test('a drive the Mac won’t identify is never written to', async () => {
     const t = await rig()
     t.drive.id = null
+    t.drive.usb = null
     const before = await snapshot(t.mount)
     const looked = await t.look({ listId: EIGHTIES })
     assert.ok(looked.step.step === 'checks' && looked.step.checks.some((c) => c.id === 'drive' && c.status === 'stop'))
@@ -316,7 +327,7 @@ describe('finding 4: the Original without its ID file, and what a confirmation s
     await writeSongs(t.mount, 'Daves iPod', [
       ...paths(3, 'A').map((path) => ({ artist: 'Dave Matthews Band', path })), ...paths(2, 'B').map((path) => ({ artist: 'Phish', path })),
     ])
-    const l = await t.look({ listId: EIGHTIES })
+    const l = await t.pick(EIGHTIES)
     assert.equal(l.step.step, 'confirm', JSON.stringify(l.step))
     assert.equal(l.step.step === 'confirm' && l.step.phrase, 'replace Daves iPod')
     assert.deepEqual(l.step.step === 'confirm' && l.step.onIt, ['It calls itself “Daves iPod”.', '5 songs on it.', 'Mostly: Dave Matthews Band, Phish.'])
@@ -333,7 +344,7 @@ describe('finding 4: the Original without its ID file, and what a confirmation s
   })
   test('8d: an iPod that carries one list is not moved to another without the typed words', async () => {
     const t = await rig()
-    assert.equal((await t.look({ listId: Y2K })).step.step, 'prepare')
+    assert.equal((await t.pick(Y2K)).step.step, 'prepare')
     assert.equal((await t.call('ipod-setup:prepare', { listId: Y2K, name: null, color: null, typed: null, matchCover: false })).ok, true)
     const r = await t.call('ipod-setup:prepare', { listId: EIGHTIES, name: null, color: null, typed: null, matchCover: false })
     assert.equal(r.ok, false)
@@ -360,7 +371,7 @@ describe('finding 4: the Original without its ID file, and what a confirmation s
 describe('finding 5: a health stop stops the sync', () => {
   async function setUp() {
     const t = await rig()
-    assert.equal((await t.look({ listId: EIGHTIES })).step.step, 'prepare')
+    assert.equal((await t.pick(EIGHTIES)).step.step, 'prepare')
     assert.equal((await t.call('ipod-setup:prepare', { listId: EIGHTIES, name: null, color: null, typed: null, matchCover: false })).ok, true)
     return t
   }
@@ -389,9 +400,73 @@ describe('finding 5: a health stop stops the sync', () => {
     format.drive.fs = 'exfat'
     assert.match((await forSync(format)).refusal ?? '', /no longer formatted the way an iPod needs/)
 
+  })
+  test('a database that can’t be read is NOT a dead end: the sync goes ahead as the repair, and the look says why (the Original too)', async () => {
     const torn = await setUp()
     await writeFile(join(torn.mount, 'iPod_Control', 'iTunes', 'iTunesDB'), Buffer.from('not a song database at all'))
-    assert.match((await forSync(torn)).refusal ?? '', /song database can’t be read/)
+    assert.equal((await forSync(torn)).refusal, null)
+    const said = (await torn.look()).health?.checks.find((c) => c.id === 'database')
+    assert.equal(said?.status, 'warn')
+    assert.match(said?.line ?? '', /can’t be read\. The next sync rewrites it, as a full copy\./)
+
+    const original = await rig()
+    await writeFile(join(original.mount, 'iPod_Control', 'iTunes', 'iTunesDB'), buildBlankCatalog('Original'))
+    assert.equal((await original.call('register-ipod-device', { asOriginal: true })).ok, true)
+    await writeFile(join(original.mount, 'iPod_Control', 'iTunes', 'iTunesDB'), Buffer.from('torn'))
+    assert.equal((await forSync(original)).refusal, null)
+  })
+  test('the Original is never stopped by a serial or size on record that no longer matches', async () => {
+    const t = await rig()
+    await writeFile(join(t.mount, 'iPod_Control', 'iTunes', 'iTunesDB'), buildBlankCatalog('Original'))
+    assert.equal((await t.call('register-ipod-device', { asOriginal: true })).ok, true)
+    await t.look()   // records the Original: serial and size
+    const [rec] = await readOnboardingRecords(t.stateDir)
+    assert.equal(rec.serial, '000A27001234ABCD')
+    await writeFile(join(t.stateDir, 'ipod-onboarding.json'), JSON.stringify({ version: 1, devices: [{ ...rec, capacityBytes: 1000 }] }))
+    t.drive.usb = { vendor: 'Apple Inc.', productId: 0x1205, serial: 'FFFF0000EEEE1111' }
+    assert.equal((await forSync(t)).refusal, null)
+    assert.equal((await t.look()).sameIpod ?? null, null)
+  })
+  test('a health check that couldn’t see what it checks does not let the sync go', async () => {
+    const usb = await setUp()
+    usb.drive.usb = null
+    assert.match((await forSync(usb)).refusal ?? '', /couldn’t check 80sPod before syncing: the Mac wouldn’t say which iPod body this is.*The sync was not started\./)
+    const table = await setUp()
+    table.state.noTable = true
+    assert.match((await forSync(table)).refusal ?? '', /the Mac wouldn’t say how the drive is formatted/)
+  })
+  test('the same iPod with a new body or a new card: old and new shown, the typed words, then the record follows; never by itself', async () => {
+    for (const change of ['body', 'card'] as const) {
+      const t = await setUp()
+      if (change === 'body') t.drive.usb = { vendor: 'Apple Inc.', productId: 0x1205, serial: 'FFFF0000EEEE1111' }
+      else {
+        const recs = await readOnboardingRecords(t.stateDir)
+        await writeFile(join(t.stateDir, 'ipod-onboarding.json'), JSON.stringify({ version: 1, devices: [{ ...recs[0], capacityBytes: 128e9 }] }))
+      }
+      assert.notEqual((await forSync(t)).refusal, null)
+      const offer = (await t.look()).sameIpod
+      assert.equal(offer?.phrase, 'this is 80sPod')
+      assert.match(offer?.lines[0] ?? '', change === 'body' ? /When 80sPod was set up: serial 000A27001234ABCD/ : /When 80sPod was set up: serial 000A27001234ABCD, 128 GB/)
+      assert.match(offer?.lines[1] ?? '', change === 'body' ? /Plugged in now: serial FFFF0000EEEE1111/ : /Plugged in now: serial 000A27001234ABCD/)
+      const before = await readFile(join(t.stateDir, 'ipod-onboarding.json'), 'utf-8')
+      for (const typed of [undefined, '', 'yes', 'replace 80sPod', 'this is punkPod']) {
+        const r = await t.call('ipod-setup:same-ipod', { typed })
+        assert.equal(r.ok, false)
+        assert.match(String(r.error), /Type “this is 80sPod” to confirm/)
+      }
+      assert.equal(await readFile(join(t.stateDir, 'ipod-onboarding.json'), 'utf-8'), before)
+      assert.notEqual((await forSync(t)).refusal, null, 'still stopped: nothing re-binds by itself')
+      const cardBefore = await snapshot(t.mount)
+      assert.equal((await t.call('ipod-setup:same-ipod', { typed: 'this is 80sPod' })).ok, true)
+      assert.deepEqual(await snapshot(t.mount), cardBefore, 'the iPod itself is not written')
+      assert.equal((await forSync(t)).refusal, null)
+      const [rec] = await readOnboardingRecords(t.stateDir)
+      assert.equal(rec.history.at(-1)?.event, 'new-card-or-body')
+      assert.equal(rec.listId, EIGHTIES)
+      if (change === 'body') assert.equal(rec.serial, 'FFFF0000EEEE1111')
+      // Nothing left to confirm.
+      assert.match(String((await t.call('ipod-setup:same-ipod', { typed: 'this is 80sPod' })).error), /nothing to confirm/)
+    }
   })
   test('the sync itself asks with forSync (the one line in the sync engine), so the stop reaches it', async () => {
     const src = await readFile(resolve(import.meta.dirname, '../sync-engine/index.ts'), 'utf-8')
@@ -409,23 +484,116 @@ describe('finding 5: a health stop stops the sync', () => {
   })
 })
 
+describe('re-review: a look never writes; a drive with no ID of its own; the card check', () => {
+  test('the look writes nothing to the iPod, even with a list picked and every check ready to run', async () => {
+    const t = await rig()
+    const before = await snapshot(t.mount)
+    for (const arg of [undefined, { listId: EIGHTIES }, { listId: EIGHTIES, recheck: true }, { listId: 'new', name: 'Mine' }]) await t.look(arg)
+    const l = await t.look({ listId: EIGHTIES })
+    assert.ok(l.step.step === 'checks' && !l.step.blocked && l.step.checks.some((c) => c.id === 'write-test' && c.status === 'unknown'))
+    assert.deepEqual(await snapshot(t.mount), before)
+  })
+  test('a volume with the all-zero ID: known by its USB serial and size instead; with neither, it stops', async () => {
+    assert.equal(driveIdFromDiskutil('<key>VolumeUUID</key>\n<string>00000000-0000-0000-0000-000000000000</string><key>TotalSize</key><integer>249500000000</integer>'), null)
+    assert.equal(driveIdFromDiskutil('<key>TotalSize</key><integer>249500000000</integer>'), null)
+    assert.equal(driveIdFromDiskutil('<key>VolumeUUID</key>\n<string>0A1B0000-0000-0000-0000-000000000000</string><key>TotalSize</key><integer>5</integer>'), '0A1B0000-0000-0000-0000-000000000000|5')
+    const t = await rig()
+    t.drive.id = null   // what the system layer answers for an all-zero or missing UUID
+    assert.equal((await t.pick(EIGHTIES)).step.step, 'prepare')
+    // Another iPod body at the same path: not the drive that was checked.
+    t.drive.usb = { vendor: 'Apple Inc.', productId: 0x1205, serial: 'FFFF0000EEEE1111' }
+    const before = await snapshot(t.mount)
+    assert.equal((await t.call('ipod-setup:prepare', { listId: EIGHTIES, name: null, color: null, typed: null, matchCover: false })).ok, false)
+    assert.deepEqual(await snapshot(t.mount), before)
+    t.drive.usb = { vendor: 'Apple Inc.', productId: 0x1205, serial: '000A27001234ABCD' }
+    assert.equal((await t.pick(EIGHTIES)).step.step, 'prepare')
+    assert.equal((await t.call('ipod-setup:prepare', { listId: EIGHTIES, name: null, color: null, typed: null, matchCover: false })).ok, true)
+  })
+  test('the card check: the first and last songs the first sync wrote are read back after a replug, and decide the seal', async () => {
+    resetCardProof()
+    const t = await rig()   // registering the handlers turns the collector on for unsealed iPods
+    assert.equal((await t.pick(EIGHTIES)).step.step, 'prepare')
+    assert.equal((await t.call('ipod-setup:prepare', { listId: EIGHTIES, name: null, color: null, typed: null, matchCover: false })).ok, true)
+    cardPlugged()
+    // The "sync": 40 songs copied and confirmed the way every engine confirms them.
+    const src = join(t.root, 'library')
+    await mkdir(src)
+    const dsts: string[] = []
+    for (let i = 0; i < 40; i++) {
+      const from = join(src, `song${i}.m4a`)
+      const to = join(t.mount, 'iPod_Control', 'Music', `F${String(i % 50).padStart(2, '0')}`, `S${i}.m4a`)
+      await writeFile(from, Buffer.from(`audio of song ${i} `.repeat(200)))
+      await writeFile(to, await readFile(from))
+      assert.equal((await confirmWriteOnCard(from, to)).ok, true)
+      dsts.push(to)
+    }
+    await mkdir(join(t.stateDir, 'ipod-pools', EIGHTIES), { recursive: true })
+    await writeFile(join(t.stateDir, 'ipod-pools', EIGHTIES, 'last-sync-manifest.json'), JSON.stringify({ sealed: true, syncedAt: '2026-11-20T16:30:00.000Z', tracks: dsts.map((_, id) => ({ id })) }))
+    assert.equal((await t.look()).step.step, 'proof')
+    // Not replugged yet: it says so, and the set-up can't be sealed on it.
+    const waiting = await t.call<{ cardProof: { status: string; line: string } }>('ipod-setup:card-proof')
+    assert.equal(waiting.cardProof.status, 'waiting')
+    assert.match(String((await t.call('ipod-setup:checked')).error), /Unplug the iPod and plug it back in/)
+    cardPlugged()
+    // A card that wrapped: an EARLY song now holds a late song's bytes (same length).
+    const good = await readFile(dsts[2])
+    await writeFile(dsts[2], Buffer.from(good.toString().replace(/song 2 /g, 'song 9 ')))
+    const failed = await t.call<{ cardProof: { status: string; line: string } }>('ipod-setup:card-proof')
+    assert.equal(failed.cardProof.status, 'fail')
+    assert.match(failed.cardProof.line, /1 of the 30 songs read back came back different/)
+    const refused = await t.call('ipod-setup:checked')
+    assert.equal(refused.ok, false)
+    assert.equal((await readOnboardingRecords(t.stateDir))[0].sealedAt, null)
+    // Sound again: it passes, and only now does "Both are right" seal the set-up.
+    await writeFile(dsts[2], good)
+    assert.equal((await t.call<{ cardProof: { status: string } }>('ipod-setup:card-proof')).cardProof.status, 'pass')
+    assert.equal((await t.call('ipod-setup:checked')).ok, true)
+    assert.notEqual((await readOnboardingRecords(t.stateDir))[0].sealedAt, null)
+    resetCardProof()
+  })
+  test('no record of the copy: the card check says it couldn’t run (it does not pass), and the play test stands', async () => {
+    resetCardProof()
+    const t = await rig()
+    assert.equal((await t.pick(EIGHTIES)).step.step, 'prepare')
+    assert.equal((await t.call('ipod-setup:prepare', { listId: EIGHTIES, name: null, color: null, typed: null, matchCover: false })).ok, true)
+    await mkdir(join(t.stateDir, 'ipod-pools', EIGHTIES), { recursive: true })
+    await writeFile(join(t.stateDir, 'ipod-pools', EIGHTIES, 'last-sync-manifest.json'), JSON.stringify({ sealed: true, syncedAt: '2026-11-20T16:30:00.000Z', tracks: [{ id: 1 }] }))
+    const r = await t.call<{ cardProof: { status: string; line: string } }>('ipod-setup:card-proof')
+    assert.equal(r.cardProof.status, 'none')
+    assert.match(r.cardProof.line, /couldn’t run/)
+    assert.equal((await t.call('ipod-setup:checked')).ok, true)
+    resetCardProof()
+  })
+  test('a sealed iPod’s ordinary syncs are not sampled', async () => {
+    resetCardProof()
+    const t = await rig()
+    assert.equal((await registerIpod(t.mount, t.stateDir, { asOriginal: false, name: 'punkPod', id: '0d8fc490-74d1-4232-9a35-1801a66f4fde' })).ok, true)
+    const from = join(t.root, 'a.m4a')
+    const to = join(t.mount, 'iPod_Control', 'Music', 'F00', 'A.m4a')
+    await mkdir(dirname(to), { recursive: true })
+    await writeFile(from, 'x'); await writeFile(to, 'x')
+    assert.equal((await confirmWriteOnCard(from, to)).ok, true)
+    await flushCardProof()
+    assert.equal(await stat(join(t.stateDir, 'ipod-card-proof.json')).then(() => true, () => false), false)
+    resetCardProof()
+  })
+})
+
 describe('finding 6: the test folder', () => {
   test('a symlink named like the test folder: the look’s own test writes nothing outside the iPod, and the set-up stops', async () => {
     const t = await rig()
     const outside = join(t.root, 'OUTSIDE')
     await mkdir(outside)
     await symlink(outside, join(t.mount, CARD_TEST_DIR))
-    const l = await t.look({ listId: EIGHTIES })
+    const l = await t.pick(EIGHTIES)
     assert.ok(l.step.step === 'checks' && l.step.blocked)
     assert.deepEqual(await readdir(outside), [])
-    await t.call('ipod-setup:test', { listId: EIGHTIES })
-    assert.deepEqual(await readdir(outside), [])
   })
-  test('a test folder left by a kill mid-test is cleaned on the next look', async () => {
+  test('a test folder left by a kill mid-test is cleaned by the next test', async () => {
     const t = await rig()
     await mkdir(join(t.mount, CARD_TEST_DIR))
     await writeFile(join(t.mount, CARD_TEST_DIR, 'jt-test-00000.bin'), Buffer.alloc(5000))
-    const l = await t.look({ listId: EIGHTIES })
+    const l = await t.pick(EIGHTIES)
     assert.equal(l.step.step, 'prepare')
     assert.equal(await stat(join(t.mount, CARD_TEST_DIR)).then(() => true, () => false), false)
   })
