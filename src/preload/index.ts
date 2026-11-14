@@ -331,8 +331,10 @@ const electronAPI = {
   // Setting up a new iPod (2026-11-13; main/ipc/ipod-onboarding-ipc.ts).
   ipodSetupLook: (arg?: { listId?: string | null; name?: string | null; typed?: string | null; recheck?: boolean }): Promise<IpodSetupLook> =>
     ipcRenderer.invoke('ipod-setup:look', arg),
-  ipodSetupTest: (): Promise<{ ok: boolean; result?: { ok: boolean; bytes: number; reason?: string }; error?: string }> =>
-    ipcRenderer.invoke('ipod-setup:test'),
+  ipodSetupTest: (arg?: { listId?: string | null; name?: string | null }): Promise<{ ok: boolean; result?: { ok: boolean; bytes: number; reason?: string }; error?: string }> =>
+    ipcRenderer.invoke('ipod-setup:test', arg),
+  ipodSetupReadoptOriginal: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('ipod-setup:readopt-original'),
   ipodSetupPrepare: (arg: { listId: string; name: string | null; color: string | null; typed: string | null; matchCover: boolean }): Promise<{ ok: boolean; error?: string; did?: string[]; notes?: string[] }> =>
     ipcRenderer.invoke('ipod-setup:prepare', arg),
   ipodSetupChecked: (): Promise<{ ok: boolean; error?: string }> =>

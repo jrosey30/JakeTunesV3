@@ -2,7 +2,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  QUICK_TEST_BYTES, STABLE_READS_NEEDED, bpmLine, buildOnboardingRecord, cardTestPlan, compareFirmware, confirmationMatches,
+  QUICK_TEST_BYTES, STABLE_READS_NEEDED, bpmLine, healthSyncRefusal, looksLikeOriginal, onboardingActionRefusal, buildOnboardingRecord, cardTestPlan, compareFirmware, confirmationMatches,
   confirmationPhrase, coverMismatch, detectHardware, deviceSerial, firmwareFromBuildId, firstSyncEstimate, ipodHealthCheck,
   isModdedStorage, onboardedLine, onboardingChecks, onboardingStep, onboardingWriteRefusal, parseOnboardingDoc, parseSysInfo,
   proofChecklist, recordForWipedIpod, suggestedIpodName,
@@ -22,7 +22,7 @@ const BANDCAMP = 'a7f82840-2f4a-4efc-9707-28fc08b7a8f3'
 
 function facts(over: Partial<IpodDeviceFacts> = {}): IpodDeviceFacts {
   return {
-    volumeLabel: 'IPOD', fs: 'fat32', totalBytes: 249.5 * GB, freeBytes: 249 * GB,
+    driveId: 'A1B2C3D4-0000-1111-2222-333344445555|249500000000', volumeLabel: 'IPOD', fs: 'fat32', totalBytes: 249.5 * GB, freeBytes: 249 * GB,
     sysInfo: parseSysInfo(SYS_MINI_2G), usb: { vendor: 'Apple Inc.', productId: 0x1205, serial: '000A27001234ABCD' },
     marker: null, catalog: { present: false, readable: false, songs: null }, musicFiles: 0, firmwareFiles: true, rockbox: false,
     stable: { tried: STABLE_READS_NEEDED, ok: STABLE_READS_NEEDED }, writeTest: { ok: true, bytes: QUICK_TEST_BYTES },
@@ -96,7 +96,7 @@ describe('refusals: nothing is written, and it says so', () => {
     const two = onboardingStep(input({ facts: facts({ otherIpods: 1 }) }))
     assert.equal(two.step === 'refused' && two.why, 'two-ipods')
     assert.match(two.step === 'refused' ? two.line : '', /Nothing on it was changed/)
-    assert.equal((onboardingStep(input({ facts: facts({ syncInFlight: true }) })) as { why: string }).why, 'sync-running')
+    assert.equal((onboardingStep(input({ facts: facts({ syncInFlight: true, sameDrive: true }) })) as { why: string }).why, 'sync-running')
   })
   test('the Original is never set up as anything else, whatever list is picked', () => {
     const original = marker({ id: 'original-1a2b3c4d', name: 'Original', primary: true })
@@ -166,25 +166,41 @@ describe('the steps, in order', () => {
     assert.match(ask.step === 'name' ? ask.line : '', /Give the iPod a short name \(11 characters at most/)
     assert.equal(onboardingStep(input({ target: { kind: 'new' } })).step, 'name')
   })
-  test('songs already on it: the typed confirmation names the device, and only the exact words pass', () => {
-    const used = facts({ catalog: { present: true, readable: true, songs: 10727 }, musicFiles: 10727 })
-    const base = { facts: used, target: list({ listName: 'Eighties' }) }
+  test('songs already on it: the confirmation shows what is there and the typed words name what is REPLACED', () => {
+    const used = facts({ volumeLabel: 'JT RED', catalog: { present: true, readable: true, songs: 10727, name: 'JakeTunes Red', artists: ['Geese', 'The Strokes', 'Blink-182'] }, musicFiles: 10727 })
+    const base = { facts: used, target: list() }
     const ask = onboardingStep(input(base))
     assert.equal(ask.step, 'confirm')
-    assert.equal(ask.step === 'confirm' && ask.phrase, 'replace Eighties')
+    assert.equal(ask.step === 'confirm' && ask.phrase, 'replace JakeTunes Red', 'not the new name (80sPod): the name of what goes')
+    assert.deepEqual(ask.step === 'confirm' && ask.onIt, ['It calls itself “JakeTunes Red”.', '10,727 songs on it.', 'Mostly: Geese, The Strokes, Blink-182.'])
     assert.match(ask.step === 'confirm' ? ask.why[0] : '', /10,727 songs on this iPod now will be replaced/)
-    for (const typed of ['', 'yes', 'replace', 'Replace Eighties', 'replace Y2K', 'replace eighties']) {
+    for (const typed of ['', 'yes', 'replace', 'Replace JakeTunes Red', 'replace 80sPod', "replace 1980's", 'replace jaketunes red']) {
       assert.equal(onboardingStep(input({ ...base, typed })).step, 'confirm', typed)
     }
-    assert.equal(onboardingStep(input({ ...base, typed: 'replace Eighties' })).step, 'prepare')
-    assert.equal(confirmationMatches('Eighties', ' replace  Eighties '), true)
+    assert.equal(onboardingStep(input({ ...base, typed: 'replace JakeTunes Red' })).step, 'prepare')
+    assert.equal(confirmationMatches('JakeTunes Red', ' replace  JakeTunes Red '), true)
     assert.equal(confirmationPhrase(' punk  Pod '), 'replace punk Pod')
+    // No name in its database: the drive's name stands in.
+    const nameless = onboardingStep(input({ facts: { ...used, catalog: { present: true, readable: true, songs: 12 } }, target: list() }))
+    assert.equal(nameless.step === 'confirm' && nameless.phrase, 'replace JT RED')
   })
-  test('a list that already has an iPod: taking it for another one is said and confirmed', () => {
+  test('song files with no database, and a database that can’t be read, both need the confirmation', () => {
+    const loose = onboardingStep(input({ facts: facts({ musicFiles: 12 }), target: list() }))
+    assert.equal(loose.step, 'confirm')
+    assert.match(loose.step === 'confirm' ? loose.why[0] : '', /The 12 songs on this iPod now will be replaced/)
+    assert.deepEqual(loose.step === 'confirm' && loose.onIt, ['12 songs on it.'])
+    const torn = onboardingStep(input({ facts: facts({ catalog: { present: true, readable: false, songs: null } }), target: list() }))
+    assert.equal(torn.step, 'confirm')
+    assert.match(torn.step === 'confirm' ? torn.why.join(' ') : '', /can’t be read and will be replaced/)
+    assert.ok(torn.step === 'confirm' && torn.onIt.some((l) => /can’t say what the songs are/.test(l)))
+  })
+  test('a list that already has an iPod: taking it for another one names the iPod that loses it', () => {
     const other = record({ serial: 'FFFF000011112222', name: 'Eighties' })
-    const s = onboardingStep(input({ target: list({ listName: 'Eighties' }), records: [other] }))
+    const s = onboardingStep(input({ target: list(), records: [other] }))
     assert.equal(s.step, 'confirm')
+    assert.equal(s.step === 'confirm' && s.phrase, 'replace Eighties')
     assert.match(s.step === 'confirm' ? s.why.join(' ') : '', /already on another iPod \(Eighties, set up Nov 20, 2026\)/)
+    assert.equal(onboardingStep(input({ target: list(), records: [other], typed: 'replace Eighties' })).step, 'prepare')
   })
   test('the same iPod wiped and plugged back in is offered its list, with nothing to confirm', () => {
     const rec = record({ name: 'Eighties' })
@@ -202,6 +218,8 @@ describe('the steps, in order', () => {
     const s = onboardingStep(input({ facts: used, target: list({ listName: 'Eighties' }) }))
     assert.equal(s.step, 'confirm')
     assert.ok(s.step === 'confirm' && s.why.some((w) => /will stop being Y2K and become Eighties/.test(w)))
+    assert.equal(s.step === 'confirm' && s.phrase, 'replace Y2K')
+    assert.deepEqual(s.step === 'confirm' && s.onIt.slice(0, 2), ['JakeTunes knows it as Y2K.', '352 songs on it.'])
   })
   test('after set-up: first sync, then the checklist on the iPod, then done', () => {
     const mine = facts({ marker: marker({ name: 'Eighties' }), catalog: { present: true, readable: true, songs: 0 } })
@@ -278,6 +296,13 @@ describe('the checks', () => {
     assert.match(status(stock, 'fits').line, /needs 6 GB and this iPod holds 4 GB/)
     assert.equal(status(facts(), 'fits', list({ songs: 0, bytes: null })).status, 'warn')
   })
+  test('a drive whose format or whose own ID the Mac wouldn’t give is a stop, not a shrug', () => {
+    assert.equal(status(facts({ fs: null }), 'format').status, 'stop')
+    assert.equal(blocked(facts({ fs: null })), true)
+    assert.equal(status(facts({ driveId: null }), 'drive').status, 'stop')
+    assert.equal(blocked(facts({ driveId: null })), true)
+    assert.equal(onboardingChecks(facts(), list()).find((c) => c.id === 'drive'), undefined)
+  })
   test('battery and disk health are said to be unreadable, never guessed', () => {
     assert.equal(status(facts(), 'battery').status, 'unknown')
   })
@@ -308,10 +333,10 @@ describe('every later plug-in', () => {
     assert.equal(drift.verdict, 'warn')
     assert.match(drift.checks.find((c) => c.id === 'database')!.line, /lists 103 songs; the last sync put 193 on/)
     assert.equal(verdict({ ...mine, catalog: { present: true, readable: false, songs: null } }).verdict, 'stop')
-    assert.equal(verdict({ ...mine, catalog: { present: false, readable: false, songs: null } }).verdict, 'stop')
+    assert.equal(verdict({ ...mine, catalog: { present: false, readable: false, songs: null } }).verdict, 'warn')
   })
   test('no room, an unfinished sync, no ID file', () => {
-    assert.equal(verdict({ ...mine, freeBytes: 50 * 1024 * 1024 }).verdict, 'stop')
+    assert.equal(verdict({ ...mine, freeBytes: 50 * 1024 * 1024 }).verdict, 'warn')
     assert.equal(verdict(mine, rec, { sealed: false, songs: 0 }).verdict, 'warn')
     assert.equal(verdict({ ...mine, marker: null }).verdict, 'stop')
   })
@@ -322,20 +347,79 @@ describe('every later plug-in', () => {
   })
 })
 
+describe('the Original without its ID file', () => {
+  const original = { name: 'Original', serial: '000A27009999EEEE', capacityBytes: 128 * GB }
+  const lastSyncPaths = Array.from({ length: 1000 }, (_, i) => `:iPod_Control:Music:F${String(i % 50).padStart(2, '0')}:S${i}.m4a`)
+  const base = { marker: null, original, serial: null, totalBytes: 249.5 * GB, catalogName: null, cardPaths: [] as string[], lastSyncPaths }
+  test('its serial, or half its songs, or its name on a drive its size: each is enough', () => {
+    assert.match(looksLikeOriginal({ ...base, serial: '000A27009999EEEE' }) ?? '', /Original’s serial number/)
+    // 600 of the last sync's songs and 300 others: far from the 95% the automatic recognition needs.
+    const drifted = [...lastSyncPaths.slice(0, 600), ...Array.from({ length: 300 }, (_, i) => `:iPod_Control:Music:F01:X${i}.m4a`)]
+    assert.match(looksLikeOriginal({ ...base, cardPaths: drifted }) ?? '', /600 of the songs on it are songs Original’s last sync put there/)
+    assert.match(looksLikeOriginal({ ...base, totalBytes: 128 * GB, catalogName: 'original' }) ?? '', /calls itself Original/)
+  })
+  test('another iPod is not the Original: a few shared songs, the same size alone, a marked card, no Original on this Mac', () => {
+    assert.equal(looksLikeOriginal({ ...base, cardPaths: [...lastSyncPaths.slice(0, 15), ...Array.from({ length: 800 }, (_, i) => `:x:${i}`)] }), null)
+    assert.equal(looksLikeOriginal({ ...base, totalBytes: 128 * GB, catalogName: 'punkPod' }), null)
+    assert.equal(looksLikeOriginal({ ...base, serial: '000A27009999EEEE', marker: marker() }), null)
+    assert.equal(looksLikeOriginal({ ...base, serial: '000A27009999EEEE', original: null }), null)
+  })
+  test('it is refused as a new iPod, whatever list is picked, and told how to get its ID back', () => {
+    const f = facts({ originalEvidence: 'it has Original’s serial number' })
+    for (const target of [null, list(), { kind: 'new' } as OnboardingTarget]) {
+      const s = onboardingStep(input({ facts: f, target, typed: 'replace IPOD' }))
+      assert.equal(s.step === 'refused' && s.why, 'looks-like-the-original')
+      assert.match(s.step === 'refused' ? s.line : '', /It won’t be set up as another iPod/)
+    }
+  })
+})
+
+describe('one gate for every handler that writes', () => {
+  const at = (over: Partial<OnboardingInput>) => onboardingStep(input(over))
+  test('the test file: only while an iPod is being checked and nothing stops it', () => {
+    assert.equal(onboardingActionRefusal('test', at({ facts: facts({ stable: null, writeTest: null }), target: list() })), null)
+    assert.match(onboardingActionRefusal('test', at({ facts: facts({ role: 'replica' }) })) ?? '', /Only the MacBook/)
+    assert.match(onboardingActionRefusal('test', at({ facts: facts({ fs: 'exfat', writeTest: null }), target: list() })) ?? '', /The test file was not written/)
+    assert.match(onboardingActionRefusal('test', at({ facts: facts({ sysInfo: null, usb: null, firmwareFiles: false }), target: list() })) ?? '', /can’t tell that this drive is an iPod/)
+    assert.match(onboardingActionRefusal('test', at({})) ?? '', /only written while an iPod is being checked/)
+    assert.match(onboardingActionRefusal('test', at({ target: list() })) ?? '', /only written while/, 'already at set-up: nothing left to test')
+  })
+  test('set-up: only when the step is "prepare"; checking off: only at the proof', () => {
+    assert.equal(onboardingActionRefusal('prepare', at({ target: list() })), null)
+    assert.match(onboardingActionRefusal('prepare', at({ facts: facts({ musicFiles: 5 }), target: list() })) ?? '', /Type “replace IPOD” to go on/)
+    assert.match(onboardingActionRefusal('prepare', at({ facts: facts({ writeTest: null }), target: list() })) ?? '', /Nothing on the iPod was changed/)
+    assert.match(onboardingActionRefusal('prepare', at({})) ?? '', /isn’t at the set-up step/)
+    const original = marker({ id: 'original-1a2b3c4d', name: 'Original', primary: true })
+    for (const a of ['test', 'prepare', 'seal'] as const) assert.match(onboardingActionRefusal(a, at({ facts: facts({ marker: original }), target: list() })) ?? '', /your Original/)
+    const mine = facts({ marker: marker(), catalog: { present: true, readable: true, songs: 0 } })
+    assert.match(onboardingActionRefusal('seal', at({ facts: mine })) ?? '', /Press Sync/)
+    assert.equal(onboardingActionRefusal('seal', at({ facts: mine, records: [record()], progress: { ...noProgress, firstSync: { songs: 193, at: 'x' } } })), null)
+  })
+  test('a health stop is a sync refusal with its reason; warnings are not', () => {
+    const mine = facts({ marker: marker(), catalog: { present: true, readable: false, songs: null } })
+    const stop = ipodHealthCheck({ facts: mine, record: record(), list: null, lastSync: { sealed: true, songs: 193 } })
+    assert.match(healthSyncRefusal(stop) ?? '', /song database can’t be read.*The sync was not started\./)
+    const fine = ipodHealthCheck({ facts: { ...mine, catalog: { present: true, readable: true, songs: 190 } }, record: record(), list: null, lastSync: { sealed: true, songs: 193 } })
+    assert.equal(fine.verdict, 'warn')
+    assert.equal(healthSyncRefusal(fine), null)
+  })
+})
+
 describe('the write guard', () => {
   const original = marker({ id: 'original-1a2b3c4d', name: 'Original', primary: true })
   test('the Original on the card stops every write, whatever the checks saw', () => {
     for (const at of [null, original, marker()]) {
-      assert.match(onboardingWriteRefusal({ markerNow: original, markerAtChecks: at, otherIpods: 0, syncInFlight: false }) ?? '', /your Original/)
+      assert.match(onboardingWriteRefusal({ markerNow: original, markerAtChecks: at, otherIpods: 0, syncInFlight: false, sameDrive: true }) ?? '', /your Original/)
     }
   })
   test('a card whose ID changed since the checks, a second iPod, a running sync', () => {
-    assert.match(onboardingWriteRefusal({ markerNow: marker({ id: Y2K }), markerAtChecks: null, otherIpods: 0, syncInFlight: false }) ?? '', /changed since it was checked/)
-    assert.match(onboardingWriteRefusal({ markerNow: null, markerAtChecks: marker(), otherIpods: 0, syncInFlight: false }) ?? '', /changed since it was checked/)
-    assert.match(onboardingWriteRefusal({ markerNow: null, markerAtChecks: null, otherIpods: 1, syncInFlight: false }) ?? '', /Two iPods/)
-    assert.match(onboardingWriteRefusal({ markerNow: null, markerAtChecks: null, otherIpods: 0, syncInFlight: true }) ?? '', /sync is running/)
-    assert.equal(onboardingWriteRefusal({ markerNow: null, markerAtChecks: null, otherIpods: 0, syncInFlight: false }), null)
-    assert.equal(onboardingWriteRefusal({ markerNow: marker(), markerAtChecks: marker(), otherIpods: 0, syncInFlight: false }), null)
+    assert.match(onboardingWriteRefusal({ markerNow: marker({ id: Y2K }), markerAtChecks: null, otherIpods: 0, syncInFlight: false, sameDrive: true }) ?? '', /changed since it was checked/)
+    assert.match(onboardingWriteRefusal({ markerNow: null, markerAtChecks: marker(), otherIpods: 0, syncInFlight: false, sameDrive: true }) ?? '', /changed since it was checked/)
+    assert.match(onboardingWriteRefusal({ markerNow: null, markerAtChecks: null, otherIpods: 1, syncInFlight: false, sameDrive: true }) ?? '', /Two iPods/)
+    assert.match(onboardingWriteRefusal({ markerNow: null, markerAtChecks: null, otherIpods: 0, syncInFlight: true, sameDrive: true }) ?? '', /sync is running/)
+    assert.equal(onboardingWriteRefusal({ markerNow: null, markerAtChecks: null, otherIpods: 0, syncInFlight: false, sameDrive: true }), null)
+    assert.match(onboardingWriteRefusal({ markerNow: null, markerAtChecks: null, otherIpods: 0, syncInFlight: false, sameDrive: false }) ?? '', /isn’t the drive that was checked/)
+    assert.equal(onboardingWriteRefusal({ markerNow: marker(), markerAtChecks: marker(), otherIpods: 0, syncInFlight: false, sameDrive: true }), null)
   })
 })
 

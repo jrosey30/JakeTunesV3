@@ -143,3 +143,42 @@ export function readCatalogSummary(buf: Buffer): { songs: number; name: string |
   }
   return songs === null ? null : { songs, name }
 }
+
+/** The artists with the most songs in a database, most first (mhod type 4). [] when it can't be walked. */
+export function catalogArtists(buf: Buffer, max = 5): string[] {
+  try {
+    if (buf.length < 24 || buf.toString('latin1', 0, 4) !== 'mhbd') return []
+    let pos = buf.readUInt32LE(4)
+    const counts = new Map<string, number>()
+    while (pos + 16 <= buf.length && buf.toString('latin1', pos, pos + 4) === 'mhsd') {
+      const total = buf.readUInt32LE(pos + 8)
+      if (total <= 0) break
+      if (buf.readUInt32LE(pos + 12) === 1) {
+        const mhlt = pos + buf.readUInt32LE(pos + 4)
+        const n = buf.readUInt32LE(mhlt + 8)
+        let p = mhlt + buf.readUInt32LE(mhlt + 4)
+        for (let i = 0; i < n && p + 16 <= buf.length; i++) {
+          if (buf.toString('latin1', p, p + 4) !== 'mhit') break
+          const tl = buf.readUInt32LE(p + 8)
+          let mp = p + buf.readUInt32LE(p + 4)
+          for (let m = 0, nm = buf.readUInt32LE(p + 12); m < nm && mp + 40 <= buf.length; m++) {
+            const mtl = buf.readUInt32LE(mp + 8)
+            if (buf.readUInt32LE(mp + 12) === 4) {
+              const a = buf.toString('utf16le', mp + 40, mp + 40 + buf.readUInt32LE(mp + 28)).trim()
+              if (a) counts.set(a, (counts.get(a) ?? 0) + 1)
+            }
+            if (mtl <= 0) break
+            mp += mtl
+          }
+          if (tl <= 0) break
+          p += tl
+        }
+        break
+      }
+      pos += total
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, max).map(([a]) => a)
+  } catch {
+    return []
+  }
+}

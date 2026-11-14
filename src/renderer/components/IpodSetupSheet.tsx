@@ -97,6 +97,18 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
       {stops.length > 0 && <Checks checks={stops} />}
 
       {step.step === 'refused' && <span className="ipod-id-note ipod-id-note--strong">{step.line}</span>}
+      {step.step === 'refused' && step.why === 'looks-like-the-original' && (
+        <div className="ipod-id-actions">
+          <button
+            type="button" className="device-itunes-btn" disabled={!!busy}
+            onClick={() => { void run('Writing the Original’s ID file…', async () => {
+              const r = await window.electronAPI.ipodSetupReadoptOriginal?.()
+              if (r && !r.ok) setError(r.error ?? 'That didn’t work.')
+              else onClose?.()
+            }) }}
+          >This is my Original: give it its ID back</button>
+        </div>
+      )}
 
       {step.step === 'choose-list' && (
         <>
@@ -136,6 +148,14 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
 
       {step.step === 'confirm' && (
         <form className="ipod-id-form" onSubmit={(e) => { e.preventDefault(); void run('Checking…', () => refresh()) }}>
+          {step.onIt.length > 0 && (
+            <>
+              <span className="ipod-id-note ipod-id-note--strong">On this iPod now:</span>
+              <ul className="ipod-setup-checks">
+                {step.onIt.map((l) => <li key={l} className="ipod-setup-check"><span className="ipod-setup-mark" aria-hidden="true">•</span><span>{l}</span></li>)}
+              </ul>
+            </>
+          )}
           <ul className="ipod-setup-checks">
             {step.why.map((w) => <li key={w} className="ipod-setup-check ipod-setup-check--warn"><span className="ipod-setup-mark" aria-hidden="true">!</span><span>{w}</span></li>)}
           </ul>

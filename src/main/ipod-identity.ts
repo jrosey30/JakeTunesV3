@@ -78,6 +78,12 @@ export function ipodStateDirFor(stateDir: string, device: IpodDeviceMarker | nul
   return join(stateDir, ...ipodStateRel(device))
 }
 
+/** The plug-in health check as a sync gate (set by ipc/ipod-onboarding-ipc.ts on the hub): the
+ *  reason not to sync this iPod, or null. Absent (tests, replicas) = no health gate. */
+export type IpodSyncHealthGate = (mount: string, device: IpodDeviceMarker) => Promise<string | null>
+let syncHealthGate: IpodSyncHealthGate | null = null
+export function setIpodSyncHealthGate(gate: IpodSyncHealthGate | null): void { syncHealthGate = gate }
+
 export interface IpodState {
   /** Why the card must not be touched, or null when it may be (any known iPod). */
   refusal: string | null
@@ -92,15 +98,27 @@ export interface IpodState {
  * TSA seal check) asks this first. Unknown cards fail closed; a known second iPod gets its own
  * folder; the Original keeps the root.
  */
-export async function resolveIpodState(mount: string, stateDir: string): Promise<IpodState> {
+export async function resolveIpodState(
+  mount: string,
+  stateDir: string,
+  /** `forSync`: a sync is about to write to this iPod, so the plug-in health check must pass too. */
+  opts: { forSync?: boolean } = {},
+): Promise<IpodState> {
   let identity: IpodIdentity
   try {
     identity = await identifyIpod(mount, stateDir)
   } catch {
     return { refusal: 'JakeTunes couldn’t tell which iPod this is, so it left it alone.', device: null, stateDir }
   }
-  const refusal = ipodWriteRefusal(identity)
+  let refusal = ipodWriteRefusal(identity)
   const device = identity.status === 'known' ? identity.device : null
+  // A health "stop" stops the sync (2026-11-14): a card in a different iPod body, a different
+  // card, a drive that is no longer an iPod's format, a database that can't be read. A check
+  // that itself fails says so and refuses too: an unchecked iPod is not a healthy one.
+  if (!refusal && device && opts.forSync && syncHealthGate) {
+    refusal = await syncHealthGate(mount, device).catch((err) =>
+      `JakeTunes couldn’t check ${device.name} before syncing (${err instanceof Error ? err.message : 'the check failed'}). The sync was not started.`)
+  }
   const dir = ipodStateDirFor(stateDir, device)
   if (!refusal && dir !== stateDir) await mkdir(dir, { recursive: true }).catch(logRegistryFail)
   return { refusal, device, stateDir: dir }
@@ -280,4 +298,25 @@ export async function forgetIpod(stateDir: string, id: string): Promise<void> {
   const tmp = uniqueTmpPath(path)
   await writeFile(tmp, JSON.stringify({ devices }, null, 2), 'utf-8')
   await rename(tmp, path)
+}
+
+/**
+ * The Original lost its ID file (a restore, a card repair) and Jake says this is it: the ID
+ * this Mac has on record for the Original goes back onto the card, unchanged. Only onto a card
+ * with no ID file, and only when this Mac already knows an Original.
+ */
+export async function restoreOriginalMarker(
+  mount: string,
+  stateDir: string,
+): Promise<{ ok: true; device: IpodDeviceMarker } | { ok: false; error: string }> {
+  if (await readDeviceMarker(mount)) return { ok: false, error: 'This iPod already has its ID file.' }
+  const original = (await loadRegistry(stateDir)).devices.find((d) => d.primary)
+  if (!original) return { ok: false, error: 'This Mac has no Original on record.' }
+  try {
+    await writeDeviceMarker(mount, original)
+  } catch (err) {
+    return { ok: false, error: `Couldn’t write to the iPod: ${err instanceof Error ? err.message : 'write failed'}` }
+  }
+  unknownCache.delete(mount)
+  return { ok: true, device: original }
 }

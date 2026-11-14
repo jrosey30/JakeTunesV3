@@ -14,9 +14,10 @@ import { REFUSED_SENDER } from '../ipc-register.ts'
 import { safeIpcError } from '../safe-ipc-error.ts'
 import { findIpodMount, isIpodMount, volumeNameFromMount, ejectVolume, IS_MAC } from '../platform.ts'
 import { STATE_DIR } from '../state-dir.ts'
-import { identifyIpod, registerIpod, renameIpodMarker, loadIpodRegistry } from '../ipod-identity.ts'
+import { identifyIpod, renameIpodMarker, loadIpodRegistry } from '../ipod-identity.ts'
 import { renameIpod, renameMacVolume, queueHomeminiName } from '../ipod-rename.ts'
 import { registerIpodOnboardingIpc, type IpodOnboardingHost } from './ipod-onboarding-ipc.ts'
+import { realIpodSetupSystem } from '../ipod-onboarding-system.ts'
 
 export interface IpodMountSnapshot {
   mount: string | null
@@ -46,7 +47,8 @@ export interface IpodIpcHost {
   renameOnHomemini?: (deviceId: string, name: string) => Promise<boolean>
   /** The plugged-in iPod's identity changed (a rename): the renderer re-reads it. */
   onDeviceChanged?: () => void
-  /** iPod set-up (ipod-onboarding-ipc.ts): homemini, the library, and which Mac this is. Absent = no set-up handlers. */
+  /** iPod set-up (ipod-onboarding-ipc.ts): homemini, the library, and which Mac this is. Absent = no set-up handlers,
+   *  'register-ipod-device' included (it lives there since 2026-11-14, behind the same checks). */
   setup?: Pick<IpodOnboardingHost, 'stateDir' | 'baseUrl' | 'libraryTracks' | 'isReplica'>
 }
 
@@ -188,23 +190,6 @@ export function registerIpodIpc(ipc: IpcRegistrar, host: IpodIpcHost): void {
     }
   }, { public: true })
 
-  ipc.handle('register-ipod-device', async (_e, input: { asOriginal?: boolean; name?: unknown; color?: unknown; purpose?: unknown }) => {
-    try {
-      if (host.isSyncInFlight?.()) return { ok: false, error: 'Wait for the sync to finish.' }
-      const { mount } = host.getMount()
-      if (!mount) return { ok: false, error: 'No iPod detected' }
-      const r = await registerIpod(mount, STATE_DIR, {
-        asOriginal: input?.asOriginal === true,
-        name: input?.name, color: input?.color, purpose: input?.purpose,
-      })
-      // Newly identified as the original: its plays can come home now.
-      if (r.ok && r.device.primary) host.onMountDetected?.(mount)
-      return r
-    } catch (err) {
-      return { ok: false, error: safeIpcError(err, 'io-failed') }
-    }
-  }, { refuse: REFUSED_SENDER })
-
   // Rename the plugged-in iPod (2026-11-07): marker + registry, the drive's own
   // label, homemini's list name; the next sync writes it into the catalog.
   ipc.handle('rename-ipod-device', async (_e, name: unknown) => {
@@ -262,6 +247,8 @@ export function registerIpodIpc(ipc: IpcRegistrar, host: IpodIpcHost): void {
   if (host.setup) {
     registerIpodOnboardingIpc(ipc, {
       ...host.setup,
+      system: realIpodSetupSystem,
+      onOriginalKnown: (mount) => host.onMountDetected?.(mount),
       getMount: () => host.getMount().mount,
       followMount: (mount) => host.setMount({ mount, volume: volumeNameFromMount(mount), missStreak: 0 }),
       isSyncInFlight: () => host.isSyncInFlight?.() === true || renameInFlight,

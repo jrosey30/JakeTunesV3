@@ -11,12 +11,12 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'child_process'
-import { mkdtemp, mkdir, readFile, readdir, stat, writeFile, copyFile } from 'fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, stat, writeFile, copyFile, symlink, lstat } from 'fs/promises'
 import { tmpdir } from 'os'
 import { dirname, join, resolve } from 'path'
 import { buildBlankCatalog, readCatalogSummary } from '../ipod-blank-catalog.ts'
 import {
-  CARD_TEST_DIR, adoptExistingIpod, fsFromMountTable, gatherIpodFacts, guard, noteLastSync, prepareIpod, readOnboardingRecords,
+  CARD_TEST_DIR, adoptExistingIpod, cleanLeftoverTest, fsFromMountTable, gatherIpodFacts, guard, noteLastSync, prepareIpod, readOnboardingRecords,
   runCardTest, sealOnboarding, stableReads, testBlock, usbFactsFromProfile, type FactsDeps, type WriteGuard,
 } from '../ipod-onboarding.ts'
 import { identifyIpod, loadIpodRegistry, registerIpod, resolveIpodState } from '../ipod-identity.ts'
@@ -48,11 +48,12 @@ async function freshCard(sysInfo: string | null = SYS_MINI): Promise<{ root: str
 const deps = (mount: string, over: Partial<FactsDeps> = {}): FactsDeps => ({
   mountTable: async () => `/dev/disk3s1 on / (apfs, sealed, local)\n/dev/disk9s2 on ${mount} (msdos, local, nodev, nosuid, noowners, noatime, fskit)\n`,
   otherIpods: async () => 0,
+  driveId: async () => 'A1B2C3D4-0000-1111-2222-333344445555|249500000000',
   syncInFlight: () => false,
   role: 'hub',
   ...over,
 })
-const guardOf = (f: IpodDeviceFacts): WriteGuard => ({ markerAtChecks: f.marker, otherIpods: async () => 0, syncInFlight: () => false })
+const guardOf = (f: IpodDeviceFacts): WriteGuard => ({ markerAtChecks: f.marker, otherIpods: async () => 0, syncInFlight: () => false, sameDrive: async () => true })
 const passed = { stable: { tried: 8, ok: 8 }, writeTest: { ok: true, bytes: 1 } }
 const noProgress = { firstSync: null, listSongs: null, playlists: 'not-built-yet' as const, bpm: null }
 
@@ -83,7 +84,7 @@ describe('reading an iPod without writing to it', () => {
     assert.equal(detectHardware(f.sysInfo, f.usb), 'mini-2g')
     assert.equal(f.sysInfo?.firmware, '1.4.1')
     assert.equal(f.fs, 'fat32')
-    assert.deepEqual(f.catalog, { present: false, readable: false, songs: null })
+    assert.deepEqual(f.catalog, { present: false, readable: false, songs: null, name: null, artists: [] })
     assert.equal(f.musicFiles, 0)
     assert.equal(f.firmwareFiles, true)
     assert.equal(f.marker, null)
@@ -247,6 +248,8 @@ describe('preparing the iPod', () => {
     assert.match(await guard(a.mount, { ...guardOf(fa), otherIpods: async () => { throw new Error('mount table') } }) ?? '', /Two iPods/, 'a failed look counts as "another iPod might be there"')
     assert.match(await guard(a.mount, { ...guardOf(fa), syncInFlight: () => true }) ?? '', /sync is running/)
     assert.match(await guard(join(a.root, 'GONE'), guardOf(fa)) ?? '', /isn’t there any more/)
+    assert.match(await guard(a.mount, { ...guardOf(fa), sameDrive: async () => false }) ?? '', /isn’t the drive that was checked/)
+    assert.match(await guard(a.mount, { ...guardOf(fa), sameDrive: async () => { throw new Error('diskutil') } }) ?? '', /isn’t the drive that was checked/, 'a failed look counts as "not the same drive"')
     assert.equal(await guard(a.mount, guardOf(fa)), null)
     assert.deepEqual(await snapshot(b.mount), before)
   })
@@ -267,6 +270,46 @@ describe('preparing the iPod', () => {
     assert.equal(old.released, true)
     assert.equal(old.history.at(-1)?.event, 'released')
     assert.deepEqual(now.history.map((h) => h.event), ['set-up', 'moved-to-another-list'])
+  })
+  test('a card that doesn’t give the blank database back stops the set-up before the ID file is written', async () => {
+    const { mount, stateDir } = await freshCard()
+    const f = await gatherIpodFacts(mount, deps(mount), passed)
+    const r = await prepareIpod(mount, stateDir, guardOf(f), { listId: Y2K, name: 'y2kPod', color: null, purpose: null, facts: f, now: '2026-11-20T15:00:00.000Z' },
+      { readBack: async () => Buffer.alloc(4096) })
+    assert.equal(r.ok, false)
+    assert.match(r.ok ? '' : r.error, /couldn’t write the blank song database \(the blank song database didn’t read back\)\. Already done: the folders are there\./)
+    assert.equal(await stat(join(mount, 'iPod_Control', 'jaketunes-device.json')).then(() => true, () => false), false)
+    assert.deepEqual(await readOnboardingRecords(stateDir), [])
+  })
+  test('the drive changes between two of set-up’s writes: it stops there and says what was done', async () => {
+    const { mount, stateDir } = await freshCard()
+    const f = await gatherIpodFacts(mount, deps(mount), passed)
+    let asked = 0
+    const g: WriteGuard = { ...guardOf(f), sameDrive: async () => ++asked < 2 }
+    const r = await prepareIpod(mount, stateDir, g, { listId: Y2K, name: 'y2kPod', color: null, purpose: null, facts: f, now: '2026-11-20T15:00:00.000Z' })
+    assert.equal(r.ok, false)
+    assert.match(r.ok ? '' : r.error, /isn’t the drive that was checked.*Already done: the folders are there\./)
+    assert.equal(await stat(join(mount, 'iPod_Control', 'iTunes', 'iTunesDB')).then(() => true, () => false), false)
+    assert.equal(await stat(join(mount, 'iPod_Control', 'jaketunes-device.json')).then(() => true, () => false), false)
+  })
+  test('the Original’s ID file is never overwritten and its id is never given to another iPod', async () => {
+    const a = await freshCard()
+    await writeFile(join(a.mount, 'iPod_Control', 'iTunes', 'iTunesDB'), buildBlankCatalog('Original'))
+    const original = await registerIpod(a.mount, a.stateDir, { asOriginal: true })
+    assert.equal(original.ok, true)
+    const before = await readFile(join(a.mount, 'iPod_Control', 'jaketunes-device.json'), 'utf-8')
+    for (const input of [{ asOriginal: false, name: 'Eighties', id: EIGHTIES, replace: true }, { asOriginal: true, replace: true }, { asOriginal: false, name: 'x', replace: true }]) {
+      assert.deepEqual(await registerIpod(a.mount, a.stateDir, input), { ok: false, error: 'This iPod is already set up.' })
+    }
+    assert.equal(await readFile(join(a.mount, 'iPod_Control', 'jaketunes-device.json'), 'utf-8'), before)
+    // Another, blank iPod on the same Mac asks for the Original's id.
+    const blank = join(a.root, 'OTHER')
+    await mkdir(join(blank, 'iPod_Control', 'iTunes'), { recursive: true })
+    const taken = await registerIpod(blank, a.stateDir, { asOriginal: false, name: 'Thief', id: original.ok ? original.device.id : '' })
+    assert.deepEqual(taken, { ok: false, error: 'That list belongs to your original iPod.' })
+    assert.equal(await stat(join(blank, 'iPod_Control', 'jaketunes-device.json')).then(() => true, () => false), false)
+    // And "I checked it" is never the Original's.
+    assert.match(((await sealOnboarding(a.stateDir, original.ok ? original.device : null!, '2026-11-20T17:00:00.000Z')) as { error: string }).error, /your Original/)
   })
   test('an ID file is never replaced by accident: without the confirmed move, a set-up iPod is "already set up"', async () => {
     const { mount, stateDir } = await freshCard()
@@ -323,6 +366,37 @@ describe('the test file', () => {
     assert.match(r.reason ?? '', /test file 1 of 3 came back different 0 MB in/)
     assert.equal(await stat(join(mount, CARD_TEST_DIR)).then(() => true, () => false), false)
     assert.deepEqual(await snapshot(mount), before)
+  })
+  test('a symlink where the test folder goes is never followed: nothing lands outside the iPod', async () => {
+    const { mount, root } = await freshCard()
+    const outside = join(root, 'OUTSIDE')
+    await mkdir(outside)
+    await symlink(outside, join(mount, CARD_TEST_DIR))
+    const f = await gatherIpodFacts(mount, deps(mount))
+    const r = await runCardTest(mount, guardOf(f), { quick: true, freeBytes: small })
+    assert.equal(r.ok, false)
+    assert.match(r.reason ?? '', /isn’t JakeTunes’ own test folder, so the test wasn’t written/)
+    assert.deepEqual(await readdir(outside), [])
+    assert.equal((await lstat(join(mount, CARD_TEST_DIR))).isSymbolicLink(), true, 'and the link itself is left alone')
+    assert.equal(await cleanLeftoverTest(mount), 'symlink')
+  })
+  test('a test folder left by a kill is cleaned; one with someone else’s file in it is left', async () => {
+    const { mount } = await freshCard()
+    const dir = join(mount, CARD_TEST_DIR)
+    await mkdir(dir)
+    await writeFile(join(dir, 'jt-test-00000.bin'), Buffer.alloc(1000))
+    await writeFile(join(dir, 'jt-test-00001.bin'), Buffer.alloc(1000))
+    assert.equal(await cleanLeftoverTest(mount), 'cleaned')
+    assert.equal(await stat(dir).then(() => true, () => false), false)
+    assert.equal(await cleanLeftoverTest(mount), 'none')
+    await mkdir(dir)
+    await writeFile(join(dir, 'jt-test-00000.bin'), Buffer.alloc(10))
+    await writeFile(join(dir, 'holiday.jpg'), 'theirs')
+    assert.equal(await cleanLeftoverTest(mount), 'not-ours')
+    assert.deepEqual(await readdir(dir), ['holiday.jpg'])
+    const f = await gatherIpodFacts(mount, deps(mount))
+    assert.equal((await runCardTest(mount, guardOf(f), { quick: true, freeBytes: small })).ok, false)
+    assert.equal(await readFile(join(dir, 'holiday.jpg'), 'utf-8'), 'theirs')
   })
   test('the blocks are the same every time they are asked for, and different from each other', () => {
     assert.ok(testBlock(7, 0, 0).equals(testBlock(7, 0, 0)))
