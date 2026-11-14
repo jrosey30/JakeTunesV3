@@ -25,7 +25,7 @@ import { activityTrackCanBoard, pickReplacementTracks } from './activity-fill.ts
 import { onCardByRecord, readCardState } from './ipod-activity-engine.ts'
 import { LAST_SYNC_MANIFEST_FILE, TSA_SEAL_FILE } from './ipod-swap-sync.ts'
 import { offloadReplacementsPath, parseReplacementLog, rawAudioUrl } from './offload-audio.ts'
-import { createIpodKeepLocal, keepsRel, type KeepGate } from './ipod-keep-local.ts'
+import { createIpodKeepLocal, IPOD_KEEP_FETCH_FLOOR_BYTES, keepsRel, type KeepGate } from './ipod-keep-local.ts'
 import {
   afterProbe, decidePrefetch, discardPart, probeAlreadyParked, fetchResumable, nextRefused, OWED_FINGERPRINTS_FILE, owedFingerprints, parseOwedFingerprints, parseRefused, planPrefetch, prefetchLogLine, probeFingerprint, REFUSED_FILE, REFUSED_HOLD_MS, runPrefetchPass, splitRefused, verifyFetched,
   type LocalKind, type MeasuredLanding, type OwedLanding, type PrefetchItem, type PrefetchPassResult, type PrefetchVerdict, type RemoteAnswers,
@@ -94,6 +94,7 @@ export function startIpodLocal(host: IpodLocalHost): IpodLocal {
     lists: async () => (await lists.all())?.map((l) => ({ id: l.id, name: l.name, ids: l.ids })) ?? null,
     registered: async () => new Set((await loadIpodRegistry(host.stateDir)).devices.map((d) => d.id)),
     libraryTracks: host.libraryTracks,
+    freeBytes: host.freeBytes,
     log: host.log,
   })
 
@@ -239,6 +240,7 @@ export function startIpodLocal(host: IpodLocalHost): IpodLocal {
         reachable,
         isPlaying: () => host.isPlaying() || host.syncInFlight(),
         freeBytes: host.freeBytes,
+        floorBytes: IPOD_KEEP_FETCH_FLOOR_BYTES,   // a list can hold 5,000 songs: the bring-back stops well short of filling this Mac
         fetchOne: async (item, shouldStop) => {
           const url = rawAudioUrl(host.audioBase, item.id)
           const part = join(partDir, `${item.id}.part`)

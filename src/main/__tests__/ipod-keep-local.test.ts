@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   buildKeepDoc, createIpodKeepLocal, gateFor, keepsColon, keepsRel, relOfColon, KEEP_LOCAL_FILE,
+  IPOD_KEEP_ALWAYS, IPOD_KEEP_FETCH_FLOOR_BYTES, IPOD_KEEP_FLOOR_BYTES,
   type KeepLocalDoc,
 } from '../ipod-keep-local.ts'
 import { sweepOnce, EVICT_GRACE_MS, type EvictionDeps } from '../library-eviction.ts'
@@ -81,6 +82,73 @@ describe('the gate', () => {
     assert.equal(keepsRel(g, rel(2)), true)
     assert.equal(keepsColon(g, colon(3)), false)
     assert.equal(keepsRel(g, rel(3)), false)
+  })
+
+  // 2026-11-13: a list can hold 5,000 songs; kept without a limit they'd stop this Mac freeing room.
+  describe('the free-space floor', () => {
+    const GIB = 1024 ** 3
+    const many: KeepLocalDoc = { version: 1, at: NOW, ids: Array.from({ length: 6000 }, (_, i) => i + 1), sources: [], complete: true }
+    const lib = many.ids.map((id) => ({ id, path: colon(id) }))
+
+    it('with room, every one of 6,000 iPod songs is kept', () => {
+      const g = gateFor(true, many, lib, 80 * GIB)
+      assert.equal(g.kind === 'keep' && g.count, 6000)
+      assert.equal(g.kind === 'keep' && g.lapsed, undefined)
+      assert.equal(keepsColon(g, colon(6000)), true)
+      assert.equal(keepsColon(gateFor(true, many, lib, IPOD_KEEP_FLOOR_BYTES), colon(6000)), true)   // exactly at the floor: kept
+    })
+
+    it('under 30 GB free only the first 1,000 (the Top 1000) stay kept; the rest may be offloaded', () => {
+      const g = gateFor(true, many, lib, IPOD_KEEP_FLOOR_BYTES - 1)
+      assert.equal(g.kind === 'keep' && g.count, IPOD_KEEP_ALWAYS)
+      assert.equal(g.kind === 'keep' && g.lapsed, 5000)
+      assert.equal(keepsColon(g, colon(1)), true)
+      assert.equal(keepsRel(g, rel(1000)), true)
+      assert.equal(keepsColon(g, colon(1001)), false)
+      assert.equal(keepsRel(g, rel(6000)), false)
+    })
+
+    it('a free-space read that failed changes nothing: every song stays kept', () => {
+      for (const free of [undefined, Number.NaN, Number.POSITIVE_INFINITY]) {
+        const g = gateFor(true, many, lib, free)
+        assert.equal(keepsColon(g, colon(6000)), true, String(free))
+      }
+    })
+
+    it('unknown songs still hold everything, whatever the disk says', () => {
+      assert.equal(keepsColon(gateFor(true, null, lib, 1), colon(6000)), true)
+    })
+
+    it('the download floor sits above the lapse floor, so a fetch can never cause a lapse', () => {
+      assert.ok(IPOD_KEEP_FETCH_FLOOR_BYTES > IPOD_KEEP_FLOOR_BYTES)
+      assert.equal(IPOD_KEEP_FLOOR_BYTES, 30 * GIB)
+      assert.equal(IPOD_KEEP_FETCH_FLOOR_BYTES, 40 * GIB)
+    })
+
+    it('the live gate asks the disk each time, and says so once', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'jt-keep-floor-'))
+      let free = 80 * GIB
+      const lines: string[] = []
+      const keep = createIpodKeepLocal({
+        userDataDir: dir, applies: async () => true,
+        top1000: async () => many.ids.slice(0, 1000), lists: async () => [{ id: 'punk-0d8fc490', name: 'punkPod', ids: many.ids.slice(1000) }],
+        registered: async () => new Set(['punk-0d8fc490']), libraryTracks: async () => lib,
+        freeBytes: async () => free, log: (m) => lines.push(m),
+      })
+      await keep.refresh()
+      assert.equal(keepsColon(await keep.gate(), colon(6000)), true)
+      free = 29 * GIB
+      assert.equal(keepsColon(await keep.gate(), colon(6000)), false)
+      assert.equal(keepsColon(await keep.gate(), colon(1000)), true)
+      free = 31 * GIB
+      assert.equal(keepsColon(await keep.gate(), colon(6000)), true)
+      assert.deepEqual(lines, [
+        '[ipod-local] keeping 6000 iPod song(s) on this Mac',
+        '[ipod-local] keeping 1000 iPod song(s) on this Mac; 5000 more may be offloaded while it has under 30 GB free',
+        '[ipod-local] keeping 6000 iPod song(s) on this Mac',
+      ])
+      await rm(dir, { recursive: true, force: true })
+    })
   })
 })
 

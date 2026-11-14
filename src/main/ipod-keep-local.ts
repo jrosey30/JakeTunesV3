@@ -35,6 +35,20 @@
  * never shrinks the set: the last saved songs stay kept until a clean read
  * says otherwise.
  *
+ * A free-space floor (2026-11-13). A list can now hold 5,000 songs (about
+ * 150 GB lossless), and two such lists plus the Top 1000 are most of the
+ * library: kept without a limit, this rule would stop the Mac ever freeing
+ * room. So:
+ *   • under IPOD_KEEP_FLOOR_BYTES free, only the first IPOD_KEEP_ALWAYS songs
+ *     in fetch priority (the Original's Top 1000) are still kept; the rest may
+ *     be offloaded like any other song until the room is back;
+ *   • the background download (ipod-prefetch.ts) brings a song back only when
+ *     that leaves IPOD_KEEP_FETCH_FLOOR_BYTES free. The gap between the two
+ *     numbers is what stops one from undoing the other in a loop.
+ * A free-space read that fails changes nothing: every song stays kept.
+ * A song not on this Mac at sync time is asked about before the card is
+ * touched (common/ipod-ready-on-mac.ts), as before.
+ *
  * Electron-free; every effect is injected (__tests__/ipod-keep-local.test.ts).
  */
 import { readFile } from 'node:fs/promises'
@@ -42,6 +56,15 @@ import { join } from 'node:path'
 import { writeJsonAtomic } from './atomic-write.ts'
 
 export const KEEP_LOCAL_FILE = 'ipod-keep-local.json'
+const GIB = 1024 * 1024 * 1024
+/** Under this much free disk, only the first IPOD_KEEP_ALWAYS kept songs stay exempt from offload
+ *  (the number the recent-songs hold lapses at too: offload-recent-return.ts HOLD_LAPSE_BYTES). */
+export const IPOD_KEEP_FLOOR_BYTES = 30 * GIB
+/** The background download never takes this Mac's free disk under this. Above
+ *  IPOD_KEEP_FLOOR_BYTES on purpose: a fetch can't push the disk into the lapse. */
+export const IPOD_KEEP_FETCH_FLOOR_BYTES = 40 * GIB
+/** How many songs, in fetch priority, stay on this Mac whatever the disk says (the Original's Top 1000). */
+export const IPOD_KEEP_ALWAYS = 1000
 
 export interface KeepSourceSummary {
   /** 'top1000', or an iPod list's marker id. */
@@ -146,16 +169,23 @@ export function relOfColon(colon: string): string | null {
 export type KeepGate =
   | { kind: 'off' }
   | { kind: 'hold'; why: string }
-  | { kind: 'keep'; colons: ReadonlySet<string>; rels: ReadonlySet<string>; count: number }
+  | { kind: 'keep'; colons: ReadonlySet<string>; rels: ReadonlySet<string>; count: number
+      /** Songs whose exemption lapsed because this Mac is under IPOD_KEEP_FLOOR_BYTES free; absent = none. */
+      lapsed?: number }
 
 export function gateFor(
   applies: boolean,
   doc: KeepLocalDoc | null,
   tracks: ReadonlyArray<{ id?: unknown; path?: unknown }>,
+  /** This Mac's free disk; missing or not a number = unknown, and every song stays kept. */
+  freeBytes?: number,
 ): KeepGate {
   if (!applies) return { kind: 'off' }
   if (!doc) return { kind: 'hold', why: 'the iPod lists haven’t been read from homemini yet' }
-  const want = new Set(doc.ids)
+  const low = typeof freeBytes === 'number' && Number.isFinite(freeBytes) && freeBytes < IPOD_KEEP_FLOOR_BYTES
+  const keptIds = low ? doc.ids.slice(0, IPOD_KEEP_ALWAYS) : doc.ids
+  const lapsed = doc.ids.length - keptIds.length
+  const want = new Set(keptIds)
   const colons = new Set<string>()
   const rels = new Set<string>()
   for (const t of tracks) {
@@ -167,7 +197,7 @@ export function gateFor(
     const rel = relOfColon(colon)
     if (rel) rels.add(rel)
   }
-  return { kind: 'keep', colons, rels, count: doc.ids.length }
+  return { kind: 'keep', colons, rels, count: keptIds.length, ...(lapsed > 0 ? { lapsed } : {}) }
 }
 
 /** The stream-convert route: true = leave this file local. */
@@ -195,6 +225,8 @@ export interface KeepLocalHost {
   /** Marker ids of the iPods registered on this Mac. */
   registered: () => Promise<Set<string>>
   libraryTracks: () => Promise<ReadonlyArray<{ id?: unknown; path?: unknown }>>
+  /** This Mac's free disk, for the floor. Missing, or a throw = unknown: every song stays kept. */
+  freeBytes?: () => Promise<number>
   now?: () => number
   log?: (msg: string) => void
 }
@@ -247,12 +279,13 @@ export function createIpodKeepLocal(host: KeepLocalHost): IpodKeepLocal {
     const applies = await host.applies().catch(() => false)
     const d = applies ? await current() : null
     const tracks = applies && d ? await host.libraryTracks().catch(() => []) : []
-    const g = gateFor(applies, d, tracks)
-    const word = g.kind === 'keep' ? `keep ${g.count}` : g.kind === 'hold' ? `hold: ${g.why}` : 'off'
+    const free = applies && d && host.freeBytes ? await host.freeBytes().catch(() => Number.NaN) : Number.NaN
+    const g = gateFor(applies, d, tracks, free)
+    const word = g.kind === 'keep' ? `keep ${g.count}${g.lapsed ? ` lapsed ${g.lapsed}` : ''}` : g.kind === 'hold' ? `hold: ${g.why}` : 'off'
     if (word !== lastGateWord) {
       lastGateWord = word
       if (g.kind === 'hold') host.log?.(`[ipod-local] evicting nothing: ${g.why}`)
-      else if (g.kind === 'keep') host.log?.(`[ipod-local] keeping ${g.count} iPod song(s) on this Mac`)
+      else if (g.kind === 'keep') host.log?.(`[ipod-local] keeping ${g.count} iPod song(s) on this Mac` + (g.lapsed ? `; ${g.lapsed} more may be offloaded while it has under ${IPOD_KEEP_FLOOR_BYTES / GIB} GB free` : ''))
     }
     return g
   }

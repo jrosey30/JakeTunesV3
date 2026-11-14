@@ -5,7 +5,7 @@
  *
  * The plan that one Sync puts on the plugged-in iPod:
  *   • the Original → its Top 1000 (exactly 1,000, most-loved fill when the list is short)
- *   • any other registered iPod → its list from homemini, at most 1,000, never filler
+ *   • any other registered iPod → its list from homemini, whole (at most 5,000), never filler
  *   • an unknown iPod, or none → refused
  * No size picker, no brief, no Music Man — for either.
  */
@@ -116,13 +116,23 @@ describe('any other iPod: its list, never filler', () => {
     assert.equal(leftOffLine(plan), '3 songs can’t go on')
   })
 
-  it('capped at 1,000', async () => {
+  it('a list past 1,000 goes on whole, in order (2026-11-13: a list’s cap can be raised to 5,000)', async () => {
     const lib = library(1500)
     const { d } = deps(PUNK, { list: async () => ({ ids: lib.map((t) => t.id), note: null }) })
     const plan = await planOneSync(d, lib)
     assert.ok(plan.ok)
-    assert.equal(plan.trackIds.length, 1000)
-    assert.deepEqual(plan.trackIds.slice(0, 2), [1, 2])
+    assert.equal(plan.trackIds.length, 1500)
+    assert.deepEqual([plan.trackIds[0], plan.trackIds[1], plan.trackIds[1499]], [1, 2, 1500])
+  })
+
+  it('all 5,000 of a full list go on; nothing past 5,000 ever does', async () => {
+    const lib = library(5200)
+    const { d } = deps(PUNK, { list: async () => ({ ids: lib.map((t) => t.id), note: null }) })
+    const plan = await planOneSync(d, lib)
+    assert.ok(plan.ok)
+    assert.equal(plan.trackIds.length, 5000)
+    assert.equal(new Set(plan.trackIds).size, 5000)
+    assert.equal(plan.trackIds[4999], 5000)
   })
 
   it('homemini’s note rides along (the last good list in use)', async () => {

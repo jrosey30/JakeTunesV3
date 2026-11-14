@@ -26,7 +26,7 @@ import { ORIGINAL_DEFAULTS, type IpodDeviceMarker } from '../../common/ipod-iden
 import { loadIpodRegistry, poolFileFor } from '../ipod-identity.ts'
 import { isSkitOrIntro } from '../workout-sync.ts'
 import { createHubPoolMirror } from '../hub-pool-mirror.ts'
-import { poolEditRefusal } from '../../common/ipod-list-doc.ts'
+import { IPOD_LIST_MAX, poolEditRefusal } from '../../common/ipod-list-doc.ts'
 import type { IpodPoolRefresh } from '../ipod-list-pool.ts'
 
 /** A replica (workmini) shows the MacBook's pool read-only; it never edits one. */
@@ -161,13 +161,13 @@ export function registerActivityPoolIpc(
       if (opts.listPool) {
         try {
           const r = await opts.listPool(owner)
-          return { ok: true, ids: r.poolIds, names: r.names, max: POOL_MAX, managed: true, note: r.note, device: ownerOut(owner) }
+          return { ok: true, ids: r.poolIds, names: r.names, max: IPOD_LIST_MAX, managed: true, note: r.note, device: ownerOut(owner) }
         } catch (err) {
           console.warn(`[activity-pool] ${owner.name}: list refresh failed — showing the file:`, err instanceof Error ? err.message : err)
         }
       }
       const file = await loadPoolFile(owner)
-      return { ok: true, ids: file.ids, names: file.names, max: POOL_MAX, managed: true, note: null, device: ownerOut(owner) }
+      return { ok: true, ids: file.ids, names: file.names, max: IPOD_LIST_MAX, managed: true, note: null, device: ownerOut(owner) }
     }
     const file = await loadPoolFile(owner)
     // The Original's ledger names its pool's early drops; another iPod has no ledger yet.

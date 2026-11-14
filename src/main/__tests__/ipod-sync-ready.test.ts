@@ -391,12 +391,21 @@ describe('the runner', () => {
     assert.equal(two.w.notices.length, 0)
   })
 
-  it('a list over 1,000 is held to its newest 1,000', async () => {
+  it('a list past 1,000 is compared whole: every song the iPod lacks is "in" (2026-11-13)', async () => {
     const { w, runner } = world()
     w.lists[punk.id] = range(1, 1200).reverse()   // newest first: 1200..1
-    w.manifests[punk.id] = range(201, 1000)
+    w.manifests[punk.id] = range(1, 1200)
     await runner.check({ lists: true })
-    assert.equal(w.notices.length, 0)
+    assert.equal(w.notices.length, 0)             // the iPod has all 1,200: nothing to say
+    w.manifests[punk.id] = range(1, 1000)         // the iPod as it was before the cap was raised
+    await runner.check({ lists: true })
+    assert.equal(w.notices.length, 1)
+    assert.equal(diffIpodTarget({ target: w.lists[punk.id], onIpod: range(1, 1000), cap: 5000 }).kind, 'differs')
+  })
+
+  it('a list is never compared past 5,000 songs', () => {
+    const d = diffIpodTarget({ target: range(1, 5200), onIpod: range(1, 5000), cap: 5000 })
+    assert.equal(d.kind, 'same')
   })
 })
 
