@@ -223,7 +223,8 @@ import { summariseLearning, discoverVerdicts, type LedgerRow } from './discovery
 import { readSharedLedgerRows } from './taste-ledger-io.ts'
 import { discoveryFeedbackCache, sharedDiscoveryFeedback, recordNotForMe, recordAllowAgain } from './discovery-feedback.ts'
 import { JsonFileCache, flushAllCaches } from './state-cache'
-import { createTagWritebackQueue } from './tag-writeback-queue.ts'
+import { createTagWritebackQueue, overrideNamesTrack, TAG_WRITEBACK_PENDING_FILE } from './tag-writeback-queue.ts'
+import { createSharedJsonRead } from './shared-json-read.ts'
 import { getHeapStatistics } from 'node:v8'
 import { createQuitFinish, hardExit, leaveFor } from './quit-finish.ts'
 import { BANDCAMP_PARTITION } from './bandcamp-integration/partition'
@@ -3151,12 +3152,17 @@ async function getLibraryAlbumsForArtist(artistName: string): Promise<string[]> 
 // keep the four fields they read, re-parsed only when the file changes.
 type IdentityTrack = { artist?: string; albumArtist?: string; album?: string; genre?: string }
 let identityLibCache: { mtimeMs: number; tracks: IdentityTrack[] } | null = null
+// library.json as it is on disk, parsed once per date it has had, for the three
+// readers that need the file itself and not the cache (readIdentityLibrary,
+// trackIdForAbsPath, fingerprintForIpodPath). Each used to parse all 14 MB per
+// caller: the shape of the 2026-11-13 crash.
+const libraryOnDisk = createSharedJsonRead<{ tracks?: unknown[] }>({ path: () => LIBRARY_PATH })
 async function readIdentityLibrary(): Promise<IdentityTrack[]> {
-  const st = await stat(LIBRARY_PATH)
-  if (identityLibCache && identityLibCache.mtimeMs === st.mtimeMs) return identityLibCache.tracks
-  const lib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8')) as { tracks?: IdentityTrack[] }
-  const tracks = (lib.tracks || []).map(t => ({ artist: t.artist, albumArtist: t.albumArtist, album: t.album, genre: t.genre }))
-  identityLibCache = { mtimeMs: st.mtimeMs, tracks }
+  // One parse for every caller that arrives together (shared-json-read.ts).
+  const { value: lib, mtimeMs } = await libraryOnDisk.read()
+  if (identityLibCache && identityLibCache.mtimeMs === mtimeMs) return identityLibCache.tracks
+  const tracks = ((lib.tracks || []) as IdentityTrack[]).map(t => ({ artist: t.artist, albumArtist: t.albumArtist, album: t.album, genre: t.genre }))
+  identityLibCache = { mtimeMs, tracks }
   return tracks
 }
 
@@ -4170,13 +4176,13 @@ async function trackIdForAbsPath(absPath: string): Promise<string | number | nul
   if (i < 0) return null
   const colon = ':' + absPath.slice(i).replace(/\//g, ':')
   try {
-    const st = await stat(LIBRARY_PATH)
-    if (!streamTrackIdByColonPath || st.mtimeMs !== streamTrackIdMapMtime) {
-      const lib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8')) as { tracks?: Array<{ id: string | number; path?: string }> }
+    // One parse for every caller that arrives together (shared-json-read.ts).
+    const { value: lib, mtimeMs } = await libraryOnDisk.read()
+    if (!streamTrackIdByColonPath || mtimeMs !== streamTrackIdMapMtime) {
       const m = new Map<string, string | number>()
-      for (const t of lib.tracks || []) if (t.path) m.set(t.path, t.id)
+      for (const t of (lib.tracks || []) as Array<{ id: string | number; path?: string }>) if (t.path) m.set(t.path, t.id)
       streamTrackIdByColonPath = m
-      streamTrackIdMapMtime = st.mtimeMs
+      streamTrackIdMapMtime = mtimeMs
     }
   } catch { return null }
   return streamTrackIdByColonPath.get(colon) ?? null
@@ -4346,8 +4352,9 @@ async function ensureStreamedSentinel(): Promise<string> {
 // convert-to-streamed identity gate when the caller doesn't already have it).
 async function fingerprintForIpodPath(ipodPath: string): Promise<string | undefined> {
   try {
-    const lib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8')) as { tracks?: Array<{ path?: string; audioFingerprint?: string }> }
-    for (const t of lib.tracks || []) {
+    // One parse for every caller that arrives together (shared-json-read.ts).
+    const { value: lib } = await libraryOnDisk.read()
+    for (const t of (lib.tracks || []) as Array<{ path?: string; audioFingerprint?: string }>) {
       if (t.path === ipodPath) return typeof t.audioFingerprint === 'string' ? t.audioFingerprint : undefined
     }
   } catch { /* ignore */ }
@@ -9301,28 +9308,33 @@ async function applyMetadataOverrideInternal(trackId: number, field: string, val
 }
 
 // Brief 020's tag write-back, behind a queue (tag-writeback-queue.ts): one edit
-// at a time, its song looked up in the library cache. Never a read of
-// library.json per edit: 186 of those at once were the 2026-11-13 crash.
-const tagWriteback = createTagWritebackQueue<Record<string, unknown>>({
+// at a time. The song is settled from the library cache when the edit ARRIVES
+// (never a read of library.json per edit: 186 of those at once were the
+// 2026-11-13 crash; never a lookup at write time: by then the renderer has
+// saved the new title/artist and the edit's own fingerprint no longer matches).
+// What is still owed to a file is kept in tag-writeback-pending.json.
+const tagWritebackPendingPath = (): string => join(app.getPath('userData'), TAG_WRITEBACK_PENDING_FILE)
+const tagWriteback = createTagWritebackQueue({
   findTrack: async (trackId) => (((await libraryCache.get()) as { tracks?: Array<Record<string, unknown>> }).tracks || []).find((t) => t.id === trackId),
+  augment: augmentPairFields,
   heapShare: () => { const h = getHeapStatistics(); return h.used_heap_size / h.heap_size_limit },
   warn: (msg) => console.warn(msg),
-  write: async ({ trackId, field, value, fingerprint }, track) => {
-    const colonPath = String(track.path || '')
-    if (!colonPath) return
-    // Fingerprint guard — same identity-gate the renderer uses
-    // when applying overrides. If the track at this ID no longer
-    // matches the fingerprint the override was saved with, don't
-    // touch the file (different track, would write wrong tag).
-    if (fingerprint) {
-      const trackFp = `${String(track.title || '').toLowerCase().trim()}|${String(track.artist || '').toLowerCase().trim()}|${track.duration || 0}`
-      if (trackFp !== fingerprint) {
-        console.warn(`[tag-writeback] skipped trackId=${trackId} field=${field} — fingerprint mismatch (track identity changed)`)
-        return
-      }
-    }
-    const absPath = colonPathToAbsolute(colonPath, MUSIC_DIR)
-    const overrides = augmentPairFields(field, value, track)
+  load: async () => JSON.parse(await readFile(tagWritebackPendingPath(), 'utf-8')),
+  save: async (jobs) => {
+    const file = tagWritebackPendingPath(), tmp = `${file}.${process.pid}.tmp`
+    await writeFile(tmp, JSON.stringify(jobs))
+    await rename(tmp, file)
+  },
+  saveNow: (jobs) => {
+    const file = tagWritebackPendingPath(), tmp = `${file}.${process.pid}.quit.tmp`
+    writeFileSync(tmp, JSON.stringify(jobs))
+    renameSync(tmp, file)
+  },
+  write: async (job) => {
+    // The job's own identity and value: nothing here is looked up again.
+    const { trackId, field, value, overrides } = job
+    const track = { id: job.trackId, path: job.path, duration: job.duration }
+    const absPath = colonPathToAbsolute(job.path, MUSIC_DIR)
     const result = await writeTagsToFile({ audioFilePath: absPath, overrides })
     if (result.ok && result.fieldsWritten.length > 0) {
       console.log(`[tag-writeback] ${trackId} ${field}=${value} → ${absPath}${result.sidecarBackup ? ' (backed up)' : ''}`)
@@ -9331,10 +9343,13 @@ const tagWriteback = createTagWritebackQueue<Record<string, unknown>>({
       const { measured } = await measureLibraryFileSizes([track], () => absPath, () => true, lstat, undefined, computeAudioFingerprint)
       if (measured[0]) sendToRenderer('tag-writeback:file-changed', measured[0])
     } else if (!result.ok) {
-      console.warn(`[tag-writeback] ${trackId} ${field} failed: ${result.error}`)
+      return { ok: false, timedOut: result.timedOut === true, error: result.error }
     }
+    return { ok: true }
   },
 })
+// What the last run still owed its files, once the library folder is known.
+app.whenReady().then(() => { setTimeout(() => { void tagWriteback.resume() }, 20_000).unref() })
 
 ipc.handle('save-metadata-override', async (_event, trackId: number, field: string, value: string, fingerprint?: string) => {
   const editAt = Date.now()   // one time for the journal and the star sidecar
@@ -9366,6 +9381,10 @@ ipc.handle('save-metadata-override', async (_event, trackId: number, field: stri
   // the re-parse safeguard); a no-fingerprint save MERGES preserving
   // existing fields and keeping the existing fp; a matching
   // fingerprint or empty-fp existing entry merges as before.
+  // Brief 020: the edit also goes into the audio file's own tags (Plex reads
+  // those). Which song it is for is settled HERE, as the edit arrives, and the
+  // write waits its turn (tag-writeback-queue.ts). Never rejects.
+  if (WRITABLE_FIELDS.has(field)) await tagWriteback.edit({ trackId, field, value, fingerprint })
   void (async () => {
   await applyMetadataOverrideInternal(trackId, field, value, fingerprint)
   // 2026-10-20: the ONLY journal writer for this Mac's own edits — Jake's
@@ -9505,10 +9524,6 @@ ipc.handle('save-metadata-override', async (_event, trackId: number, field: stri
   // the tag is a downstream propagation miss, not a correctness bug.
   // Skipped for analysis fields (bpm/keyRoot/etc.) and stats
   // (playCount/lastPlayedAt/skipCount) per WRITABLE_FIELDS gate.
-  // One at a time, and the song comes from the library already in memory
-  // (tag-writeback-queue.ts): 186 of these at once each read and parsed all of
-  // library.json and ran the main process out of heap (the 2026-11-13 crash).
-  if (WRITABLE_FIELDS.has(field)) tagWriteback.enqueue({ trackId, field, value, fingerprint })
   })().catch((err) => {
     // 4.5.0-105: outer fire-and-forget block. Any unhandled error from
     // the background work lands here. The renderer has already moved on.
@@ -9575,9 +9590,10 @@ ipc.handle('apply-overrides-batch', async (event) => {
       if (writable.discNumber && !writable.discCount && track.discCount) {
         writable.discCount = String(track.discCount)
       }
-      // Fingerprint guard
-      const trackFp = `${String(track.title || '').toLowerCase().trim()}|${String(track.artist || '').toLowerCase().trim()}|${track.duration || 0}`
-      if (entry.fp && entry.fp !== trackFp) {
+      // Identity guard. The entry's fingerprint is the song BEFORE its first
+      // edit, so a corrected title or artist is allowed when the row carries
+      // exactly what the entry set (tag-writeback-queue.ts overrideNamesTrack).
+      if (!overrideNamesTrack(entry, track)) {
         skippedFpMismatch++
         continue
       }
@@ -11004,6 +11020,8 @@ app.on('before-quit', (e) => {
   void (async () => {
     const [settled] = await Promise.all([
       flush,
+      // Tag edits still owed to files: what finishes in the same 2 s, the rest stays on disk for the next launch.
+      tagWriteback.stop(2000).catch(() => undefined),
       // Preserve the 180ms audio-fade deferral alongside the flush wait.
       new Promise((r) => setTimeout(r, hasWin ? 180 : 0)),
     ])

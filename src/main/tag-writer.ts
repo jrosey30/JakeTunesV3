@@ -63,6 +63,8 @@ export interface TagWriteResult {
   fieldsSkipped: string[]      // present in input but filtered (not in WRITABLE_FIELDS)
   sidecarBackup?: string       // path to the sidecar; absent if pre-existing
   error?: string
+  /** The tag writer was stopped by its clock; the file is untouched. Worth another try later. */
+  timedOut?: boolean
 }
 
 function filterWritable(overrides: Record<string, string | number>): {
@@ -136,9 +138,29 @@ async function defaultTagWriterScript(): Promise<string> {
 // Spawn python3 core/tag_writer.py <path> and pipe the payload to stdin.
 // Same pattern as embedTags() in platform.ts. ~30-80ms per file on local
 // SSD (mutagen mostly).
-function runPythonTagWriter(script: string, audioFilePath: string, payload: Record<string, string | number>): Promise<{ ok: boolean; error?: string }> {
-  return new Promise((resolve) => {
+//
+// The writer has a clock (2026-11-14). It had none, and write-backs now run one
+// at a time (tag-writeback-queue.ts): one writer that never returned (a file on
+// a mount that stopped answering) would hold every later edit. Past the clock
+// it is killed. It was writing a copy (writeVerified), which is thrown away, so
+// the song's file is untouched; the result says `timedOut` so the caller can
+// try again later.
+export const TAG_WRITER_TIMEOUT_MS = 120_000   // the decode check's own limit (audio-write-guard.ts)
+function runPythonTagWriter(script: string, audioFilePath: string, payload: Record<string, string | number>, timeoutMs: number = TAG_WRITER_TIMEOUT_MS): Promise<{ ok: boolean; error?: string; timedOut?: boolean }> {
+  return new Promise((done) => {
     const py = spawn(PYTHON_CMD ?? 'python3', [script, audioFilePath])
+    let settled = false
+    const clock = setTimeout(() => {
+      if (settled) return
+      try { py.kill('SIGKILL') } catch { /* already gone */ }
+      resolve({ ok: false, timedOut: true, error: `tag writer gave no answer in ${Math.round(timeoutMs / 1000)} s and was stopped; the file is untouched` })
+    }, timeoutMs)
+    const resolve = (r: { ok: boolean; error?: string; timedOut?: boolean }): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(clock)
+      done(r)
+    }
     let stderr = ''
     py.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
     py.stdin.on('error', (err) => {
@@ -163,7 +185,7 @@ function runPythonTagWriter(script: string, audioFilePath: string, payload: Reco
   })
 }
 
-export async function writeTagsToFile(req: TagWriteRequest, opts: { script?: string; noteEdit?: (path: string) => Promise<void> } = {}): Promise<TagWriteResult> {
+export async function writeTagsToFile(req: TagWriteRequest, opts: { script?: string; noteEdit?: (path: string) => Promise<void>; timeoutMs?: number } = {}): Promise<TagWriteResult> {
   const { audioFilePath, overrides } = req
   // Absolute-path sanity check. iPod colon-paths would silently fail
   // here ("file not found" deep in mutagen), so reject up front with a
@@ -208,7 +230,12 @@ export async function writeTagsToFile(req: TagWriteRequest, opts: { script?: str
     const sidecarBackup = await backupOriginalTags(audioFilePath)
     // Callers (writeTagsBatch's Promise.all among them) expect a result,
     // never a throw: a vanished file or a refused rename is a failed write.
-    const writeResult = await writeVerified(audioFilePath, (target) => runPythonTagWriter(script, target, payload))
+    let timedOut = false
+    const writeResult = await writeVerified(audioFilePath, async (target) => {
+      const w = await runPythonTagWriter(script, target, payload, opts.timeoutMs)
+      if (w.timedOut) timedOut = true
+      return { ok: w.ok, error: w.error }
+    })
       .catch((err: unknown) => ({ ok: false, error: safeIpcError(err, 'io-failed') }))
     // The quick leg carries a rewrite to the NAS, whenever it next runs.
     if (writeResult.ok) await (opts.noteEdit ?? noteAudioEditOwed)(audioFilePath)
@@ -219,6 +246,7 @@ export async function writeTagsToFile(req: TagWriteRequest, opts: { script?: str
       fieldsSkipped: skipped,
       sidecarBackup,
       error: writeResult.error,
+      ...(timedOut && !writeResult.ok ? { timedOut: true } : {}),
     }
   })
 }
