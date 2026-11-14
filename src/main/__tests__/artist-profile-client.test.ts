@@ -380,8 +380,14 @@ describe('the profile text is delivered before its photos', () => {
     assert.equal(s.profile?.name, 'Geese')
     await waitFor(() => hub.asked.length === 3, 'all three photos asked for')
     hub.release('face-cameron.jpg'); hub.release('jake-emily.jpg')      // hero.jpg hangs (homemini slow)
-    await waitFor(() => hub.inFlight() === 1, 'the two released photos to land')
-    assert.equal(Object.keys((await c.read('Geese')).photos).length, 2)
+    // Wait for the photos on disk, not for the fetch count: a fetch counts as done the
+    // moment its gate opens, before the client has written the file (CI, 2026-11-14: 1 !== 2).
+    const landed = await waitFor(async () => {
+      const photos = Object.keys((await c.read('Geese')).photos).sort()
+      return photos.length >= 2 ? photos : null
+    }, 'the two released photos to land')
+    assert.deepEqual(landed, ['/api/artist-photo/face-cameron.jpg', '/api/artist-photo/jake-emily.jpg'])
+    assert.equal(hub.inFlight(), 1, 'hero.jpg is still hanging while the other two are on the page')
     hub.release('hero.jpg')
     await c.photosSettled('Geese')
   })
