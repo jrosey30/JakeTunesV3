@@ -82,6 +82,7 @@ import { mergeHubCatalog, ABSORBED_IMPORT_PREFIX } from '../common/hub-catalog-m
 import { ackVersionAfterSave, hubAdoptAfterMerge, trackIdKey } from '../common/hub-catalog-ack'
 import { phoneOverlayFields } from '../common/genre-vocab'
 import { measuredFileUpdates } from '../common/library-file-sizes'
+import { noteMeasuredVersions } from './audio/audioUrlVersion'
 import { bumpArtRevisions } from './artRevision'
 
 // Session cap — startup must not walk every missing album via fetchAlbumArt.
@@ -1993,6 +1994,7 @@ function AppInner() {
     return window.electronAPI.onTagWritebackFileChanged((m) => {
       const updates = measuredFileUpdates(libTracksRef.current, [m])
       if (updates.length) dispatch({ type: 'UPDATE_TRACKS', updates })
+      noteMeasuredVersions(libTracksRef.current, [m])   // the next load of it is a new URL (audioUrlVersion.ts)
     })
   }, [dispatch])
 
@@ -2180,6 +2182,7 @@ function AppInner() {
                     // track list's own save writes the new sizes.
                     const sizeUpdates = measuredFileUpdates(libTracksRef.current, r.fileSizes ?? [])
                     if (sizeUpdates.length) dispatch({ type: 'UPDATE_TRACKS', updates: sizeUpdates })
+                    noteMeasuredVersions(libTracksRef.current, r.fileSizes ?? [])
                     setApplyOverridesResult({
                       total: r.total ?? 0,
                       succeeded: r.succeeded ?? 0,

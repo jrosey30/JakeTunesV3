@@ -82,7 +82,10 @@ const trimByUrl = new Map<string, { delaySec: number; paddingSec: number; origin
 function fsPathFromAudioUrl(url: string): string | null {
   const marker = 'ipod-audio://'
   if (!url.startsWith(marker)) return null
-  try { return decodeURIComponent(url.slice(marker.length)) } catch { return null }
+  // `?v=` (audioUrlVersion.ts) is a version, not part of the path; a `?` in
+  // the path itself is always encoded.
+  const q = url.indexOf('?')
+  try { return decodeURIComponent(url.slice(marker.length, q < 0 ? undefined : q)) } catch { return null }
 }
 
 /** How far into this buffer the actual music starts. 0 when unknown. */

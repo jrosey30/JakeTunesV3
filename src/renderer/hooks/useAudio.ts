@@ -20,6 +20,7 @@ import {
 } from '../audio/seamScheduler'
 import { remainingMsUntilMusicEnd } from '../audio/gapless-timing'
 import { notifyToast } from '../state/recentlyAdded'
+import { withFileVersion } from '../audio/audioUrlVersion'
 
 // 4.5.0-78 — sample-accurate seam scheduling. See seamScheduler.ts
 // header for the full rationale. Flag-gated so flipping to false
@@ -60,7 +61,8 @@ function ipodPathToAudioURL(ipodPath: string, codecHint?: string): { url: string
   // defined) and Howler sniffs the bytes itself — instead of the old
   // default that called every unknown file 'mp3'.
   const format = FORMAT_MAP[ext] || (codecHint ? CODEC_FORMAT_MAP[codecHint.toLowerCase()] : undefined)
-  const url = 'ipod-audio://' + encodeURIComponent(fsPath)
+  // `?v=` only for a file a tag write rewrote this run (audioUrlVersion.ts).
+  const url = withFileVersion('ipod-audio://' + encodeURIComponent(fsPath), ipodPath)
   return { url, format }
 }
 

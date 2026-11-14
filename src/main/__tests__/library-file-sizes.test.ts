@@ -8,11 +8,12 @@
  */
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { lstat, mkdtemp, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { measureLibraryFileSizes, measuredFileUpdates } from '../../common/library-file-sizes.ts'
+import { fileVersion } from '../../common/audio-file-version.ts'
 
 const SRC = join(import.meta.dirname, '..', '..')
 
@@ -94,7 +95,8 @@ describe('measureLibraryFileSizes', () => {
       () => true,
       lstat,
     )
-    assert.deepEqual(scan.measured, [{ id: 1, fileSize: 4096 }])
+    // A real lstat has an mtime, so the entry carries the file's ?v= too (audio-file-version.ts).
+    assert.deepEqual(scan.measured, [{ id: 1, fileSize: 4096, fileVersion: fileVersion(statSync(join(root, 'local.m4a'))) }])
     assert.equal(scan.streamed, 1)
   })
 })

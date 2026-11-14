@@ -19,11 +19,15 @@
  * file that still has the old bytes.
  */
 
+import { fileVersion } from './audio-file-version.ts'
+
 export interface MeasuredFileSize {
   id: number
   fileSize: number
   /** Present only when the caller asked for fingerprints. */
   audioFingerprint?: string
+  /** The file's `?v=` (audio-file-version.ts), when the stat had an mtime. */
+  fileVersion?: string
 }
 
 export interface FileSizeScan {
@@ -37,7 +41,7 @@ export interface FileSizeScan {
   missing: number
 }
 
-type LstatLike = (path: string) => Promise<{ size: number; isFile(): boolean; isSymbolicLink(): boolean }>
+type LstatLike = (path: string) => Promise<{ size: number; mtimeMs?: number; isFile(): boolean; isSymbolicLink(): boolean }>
 type FingerprintFn = (absPath: string, durationMs: number) => Promise<string | null>
 
 export interface FileSizeProgress {
@@ -76,6 +80,7 @@ export async function measureLibraryFileSizes(
         const entry: MeasuredFileSize = { id, fileSize: s.size }
         const fp = fingerprint ? await fingerprint(abs, Number(t.duration) || 0) : null
         if (fp) entry.audioFingerprint = fp
+        if (typeof s.mtimeMs === 'number' && Number.isFinite(s.mtimeMs)) entry.fileVersion = fileVersion({ mtimeMs: s.mtimeMs, size: s.size })
         scan.measured.push(entry)
         if (Number(t.fileSize) !== s.size) scan.stale++
       }

@@ -65,6 +65,9 @@
  */
 import { createHash } from 'crypto'
 import { parseRangeHeader } from './range-header.ts'
+import { FILE_VERSION_SHAPE, fileVersion } from '../common/audio-file-version.ts'
+
+export { fileVersion }
 
 export interface HoldFileStat { size: number; mtimeMs: number; ino?: number }
 /**
@@ -165,10 +168,6 @@ export const LOAD_HOLD_IDLE_MS = 15 * 60_000
 export const LOAD_HOLD_MAX = 24
 export const LOAD_HOLD_PIECE_STALE_MS = 2 * 60_000
 
-/** A file's version for the URL marker: its mtime and size. */
-export function fileVersion(st: HoldFileStat): string {
-  return `${Math.round(st.mtimeMs).toString(36)}-${st.size.toString(36)}`
-}
 
 /**
  * Does this request start a load? No Range, or a Range from byte 0. A suffix
@@ -186,7 +185,7 @@ export function splitAudioUrl(url: string, scheme = 'ipod-audio://'): { base: st
   const base = q < 0 ? url : url.slice(0, q)
   if (q < 0 || !base.startsWith(scheme)) return { base, version: null }
   const v = new URLSearchParams(url.slice(q + 1)).get('v')
-  return { base, version: v && /^[0-9a-z-]{1,40}$/.test(v) ? v : null }
+  return { base, version: v && FILE_VERSION_SHAPE.test(v) ? v : null }
 }
 
 /** The key a load is held under: the URL without anything but its `v`. */

@@ -9276,11 +9276,13 @@ async function applyMetadataOverrideInternal(trackId: number, field: string, val
 // saved the new title/artist and the edit's own fingerprint no longer matches).
 // What is still owed to a file is kept in tag-writeback-pending.json.
 const tagWritebackPendingPath = (): string => join(app.getPath('userData'), TAG_WRITEBACK_PENDING_FILE)
+/** Is the player using this song's file? (song-in-use.ts) The per-edit line and "Apply Overrides to Files…" both ask. */
+const playerUsing = (colonPath: string, durationMs: number): boolean => songInUse({ colonPath, durationMs, now: Date.now(), lastTouchAt: playerTouches.lastAt(colonPath), heldOpen: audioLoadHold.holdsSource(colonPath) })
 const tagWriteback = createTagWritebackQueue({
   findTrack: async (trackId) => (((await libraryCache.get()) as { tracks?: Array<Record<string, unknown>> }).tracks || []).find((t) => t.id === trackId),
   augment: augmentPairFields,
   // A song the player is using is not rewritten under it (song-in-use.ts).
-  inUse: (job) => songInUse({ colonPath: job.path, durationMs: job.duration, now: Date.now(), lastTouchAt: playerTouches.lastAt(job.path), heldOpen: audioLoadHold.holdsSource(job.path) }),
+  inUse: (job) => playerUsing(job.path, job.duration),
   heapShare: () => { const h = getHeapStatistics(); return h.used_heap_size / h.heap_size_limit },
   warn: (msg) => console.warn(msg),
   load: async () => JSON.parse(await readFile(tagWritebackPendingPath(), 'utf-8')),
@@ -9532,6 +9534,7 @@ ipc.handle('apply-overrides-batch', async (event) => {
     let skippedNoTrack = 0
     let skippedFpMismatch = 0
     let skippedNoWritable = 0
+    let waitingForPlayback = 0
     for (const [keyStr, entry] of Object.entries(overrides)) {
       const trackId = Number(keyStr)
       if (!Number.isFinite(trackId)) continue
@@ -9563,11 +9566,18 @@ ipc.handle('apply-overrides-batch', async (event) => {
       }
       const colonPath = String(track.path || '')
       if (!colonPath) { skippedNoTrack++; continue }
+      // A song the player is using goes on the per-edit line instead, which
+      // writes it once the player is done with it (the 2026-11-14 splice).
+      if (playerUsing(colonPath, Number(track.duration) || 0)) {
+        waitingForPlayback++
+        for (const [field, value] of Object.entries(writable)) await tagWriteback.edit({ trackId, field, value: String(value) })
+        continue
+      }
       const absPath = colonPathToAbsolute(colonPath, MUSIC_DIR)
       requests.push({ audioFilePath: absPath, overrides: writable })
     }
 
-    console.log(`[tag-writeback] batch: ${requests.length} files to update (skipped: ${skippedNoTrack} no-track, ${skippedFpMismatch} fp-mismatch, ${skippedNoWritable} no-writable)`)
+    console.log(`[tag-writeback] batch: ${requests.length} files to update (skipped: ${skippedNoTrack} no-track, ${skippedFpMismatch} fp-mismatch, ${skippedNoWritable} no-writable; ${waitingForPlayback} playing, written when the player is done)`)
 
     const result = await writeTagsBatch(requests, (p) => {
       // Relay progress to the renderer for the live counter. Best-
@@ -9603,6 +9613,7 @@ ipc.handle('apply-overrides-batch', async (event) => {
       skippedNoTrack,
       skippedFpMismatch,
       skippedNoWritable,
+      waitingForPlayback,
       fileSizesRefreshed: sizeScan?.stale ?? 0,
       fileSizes: sizeScan?.measured ?? [],
       // Don't ship the full per-file results array (could be 6k entries) —
