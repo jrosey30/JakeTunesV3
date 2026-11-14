@@ -8,6 +8,7 @@
  * Jake: "with that sync, it shouldnt wipe the ipod and start the 1000 from
  * scratch, it should just swap out the songs that they are being replaced with".
  */
+import { cardFit, cardTooSmall, CARD_FIT_PER_SONG_BYTES } from '../ipod-card-fit.ts'
 import { describe, it, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'child_process'
@@ -521,7 +522,9 @@ describe('the fragmentation backstop, end to end', () => {
     try {
       const now = JSON.parse(await readFile(join(r.state, 'last-sync-manifest.json'), 'utf-8')).tracks.map((t: { id: number }) => t.id) as number[]
       const keep = now.slice(4)
-      const res = await sync(r, [...keep, 510, 511, 512, 513])     // 4 out = 20% of this card
+      // 4 out = 20% of this card. 3 in, so the set (19 songs) still fits a card of 20 songs' worth:
+      // a set that doesn't fit is refused before the card is touched (ipod-card-fit.ts).
+      const res = await sync(r, [...keep, 510, 511, 512])
       assert.equal(res.ok, true, res.error)
       assert.equal(res.mode, 'full')
       assert.match(String(res.fullReason), /would have cleared 2\d% of the iPod/)
@@ -529,6 +532,92 @@ describe('the fragmentation backstop, end to end', () => {
     } finally {
       delete r.host.cardCapacityBytes
     }
+  })
+})
+
+// Review of PR 413 (2026-11-13): a list can hold 5,000 songs now, and nothing checked
+// that a set fits on the card. It copied until the card was full, failed its verify,
+// and the stop emptied the card.
+describe('a set that doesn’t fit on the card is refused before the card is touched', () => {
+  it('a synced card: refused with the numbers; every file, the catalog and the record are as they were', async () => {
+    const r = await makeRig()
+    try {
+      const first = await sync(r, range(0, N))
+      assert.equal(first.ok, true, first.error)
+      const filesBefore = await cardFiles(r.card)
+      const dbPath = join(r.card, 'iPod_Control', 'iTunes', 'iTunesDB')
+      const dbBefore = await readFile(dbPath)
+      const manifestBefore = await readFile(join(r.state, 'last-sync-manifest.json'), 'utf-8')
+      const sealBefore = await readFile(join(r.state, 'ipod-activity-tsa-seal.json'), 'utf-8')
+      for (const id of range(800, 810)) await addSong(r, id)
+      r.host.cardCapacityBytes = async () => 25 * SONG_BYTES
+      const res = await sync(r, [...range(0, N), ...range(800, 810)])   // 30 songs onto a card of 25 songs' worth
+      assert.equal(res.ok, false)
+      assert.match(String(res.error), /^These 30 songs need about [\d.]+ GB and TestPod holds [\d.]+ GB, so they won’t fit\. Nothing on the iPod was touched\./)
+      assert.equal(res.copied, 0)
+      assert.ok(!r.events.some((e) => /^Wiping/.test(String(e.title))), 'nothing was wiped')
+      assert.ok(!r.events.some((e) => e.phase === 'copy'), 'nothing was copied')
+      const filesAfter = await cardFiles(r.card)
+      assert.deepEqual([...filesAfter.keys()].sort(), [...filesBefore.keys()].sort())
+      for (const [p, b] of filesBefore) assert.deepEqual(filesAfter.get(p), b, `${p} was touched`)
+      assert.ok(dbBefore.equals(await readFile(dbPath)), 'the catalog is byte for byte the last sync’s')
+      assert.equal(await readFile(join(r.state, 'last-sync-manifest.json'), 'utf-8'), manifestBefore)
+      assert.equal(await readFile(join(r.state, 'ipod-activity-tsa-seal.json'), 'utf-8'), sealBefore)
+      // The same set on a card with the room goes on, as a swap: the refusal left nothing behind.
+      r.host.cardCapacityBytes = async () => 40 * SONG_BYTES
+      const ok = await sync(r, [...range(0, N), ...range(800, 810)])
+      assert.equal(ok.ok, true, ok.error)
+      assert.equal(ok.mode, 'swap', String(ok.fullReason))
+      await assertCardWhole(r)
+    } finally {
+      await rm(r.root, { recursive: true, force: true })
+    }
+  })
+
+  it('a first sync (a full copy) onto a card too small: refused, not wiped, nothing written', async () => {
+    const r = await makeRig()
+    try {
+      r.host.cardCapacityBytes = async () => 10 * SONG_BYTES
+      const res = await sync(r, range(0, N))
+      assert.equal(res.ok, false)
+      assert.match(String(res.error), /won’t fit\. Nothing on the iPod was touched\./)
+      assert.ok(!r.events.some((e) => /^Wiping/.test(String(e.title))))
+      assert.equal((await cardFiles(r.card)).size, 0)
+    } finally {
+      await rm(r.root, { recursive: true, force: true })
+    }
+  })
+
+  it('a card whose size can’t be read refuses nothing (as before)', async () => {
+    const r = await makeRig()
+    try {
+      r.host.cardCapacityBytes = async () => null
+      const res = await sync(r, range(0, N))
+      assert.equal(res.ok, true, res.error)
+    } finally {
+      await rm(r.root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('cardTooSmall (the rule)', () => {
+  const GIB = 1024 ** 3
+  it('5,000 lossless songs: fit a 256 GB card, not a 128 GB one, and the refusal names both numbers', () => {
+    const sizes = Array.from({ length: 5000 }, () => 30 * 1024 * 1024)   // 146.5 GB
+    assert.equal(cardTooSmall(sizes, 238 * GIB, 'punkPod'), null)
+    assert.equal(cardTooSmall(sizes, 119 * GIB, 'punkPod'),
+      'These 5,000 songs need about 147 GB and punkPod holds 118 GB, so they won’t fit. Nothing on the iPod was touched. Make the list shorter, or sync smaller (AAC) copies.')
+  })
+  it('room is held back for the catalog and the file system: 1% of the card and 4 KB a song', () => {
+    assert.deepEqual(cardFit([1000, 1000], 1_000_000), { needBytes: 2000 + 2 * CARD_FIT_PER_SONG_BYTES, roomBytes: 990_000 })
+    assert.equal(cardTooSmall([980_000], 1_000_000), null)
+    assert.match(String(cardTooSmall([990_000], 1_000_000)), /won’t fit/)
+  })
+  it('an unknown card size is unknown, never "too small"', () => {
+    for (const cap of [null, undefined, 0, -1, Number.NaN, Number.POSITIVE_INFINITY]) assert.equal(cardTooSmall([5e12], cap), null, String(cap))
+  })
+  it('a size that isn’t a number counts as nothing, never as not-a-number', () => {
+    assert.equal(cardTooSmall([Number.NaN, -5, 100], 1_000_000), null)
   })
 })
 

@@ -626,6 +626,19 @@ resolve_sync_src() {
 # incoming one's newest, the incoming copy is stale and is refused; and,
 # Brief 197, a song it lacks that was added in the last 30 days refuses
 # too, even when older than the incoming one's newest, and is named).
+# One difference from that twin, on purpose (2026-11-12): a song Jake
+# DELETED is not a song this copy "has never seen". homemini keeps his
+# deletions in ~/JakeTunesState/track-tombstones.json (the desktop POSTs
+# them, src/main/track-tombstones.ts), and a missing song one of them
+# covers refuses nothing. Without this, deleting a song added in the last
+# 30 days refused every publish after it; at home the save-time NAS mirror
+# carried the deletion round the guard within minutes, but away from home
+# there is no NAS, so nothing new reached the phone or workmini until the
+# laptop was home again (7 songs held for hours on 2026-11-12, and for 2 h
+# on 11-09). ⚠️ TWIN of tombstoneFor in src/main/track-tombstones.ts.
+# At most 50 songs are excused this way in one publish; more is refused
+# (refused-too-many-deletions), and a row with no audioFingerprint is never
+# excused, so deleting one of those away from home still waits for home.
 publish_backend_library() {
   local src="$1" out
   if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$src" 2>/dev/null; then
@@ -638,23 +651,117 @@ publish_backend_library() {
   fi
   out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOMEMINI" 'cd ~/JakeTunesState && python3 - <<"EOF"
 import json, os, time
-from datetime import datetime
 def tracks(p):
     try:
         d = json.load(open(p))
     except Exception:
         return None
     return d if isinstance(d, list) else d.get("tracks", [])
-def ts(t):
-    try: return datetime.fromisoformat(str(t.get("dateAdded","")).replace("Z","+00:00")).timestamp()
+# Dates. The desktop wrote every one of them, so a date is read the way
+# JavaScript reads it, by hand, so homemini on Python 3.9 and a newer Python
+# agree: any number of fractional digits, Z or an offset, no zone at all
+# means local time, and a bare date is UTC midnight. Until 2026-11-13 the
+# guard used datetime.fromisoformat, which on 3.9 cannot read one fractional
+# digit and takes a bare date as LOCAL midnight. That reading is kept too
+# (legacy), and where the two differ each rule takes the one that refuses
+# more, so this guard never lets through what the old one refused:
+#   a missing song is as late as either reading says,
+#   the newest song in this copy is as early as either says,
+#   a deletion is as early as either says,
+#   and a date nobody can read is recent (a refusal), never old.
+import re, calendar
+from datetime import datetime
+WHEN = re.compile(r"^(\d{4})-(\d\d)-(\d\d)(?:[Tt ](\d\d):(\d\d)(?::(\d\d)(?:\.(\d+))?)?(Z|z|[+-]\d\d:?\d\d)?)?$")
+def local(y, mo, d, h, mi, sec):
+    try: return time.mktime((y, mo, d, h, mi, sec, 0, 0, -1))
     except Exception: return None
+def readings(v):
+    # (earliest, latest) instant the text can mean; None when it cannot be read
+    m = WHEN.match(v.strip()) if isinstance(v, str) else None
+    if not m: return None
+    y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    timed = m.group(4) is not None
+    h, mi, sec = int(m.group(4) or 0), int(m.group(5) or 0), int(m.group(6) or 0)
+    if not (1 <= mo <= 12 and 1 <= d <= 31 and h < 24 and mi < 60 and sec < 60): return None
+    try: utc = calendar.timegm((y, mo, d, h, mi, sec))
+    except Exception: return None
+    if not timed:
+        loc = local(y, mo, d, 0, 0, 0)
+        return (min(utc, loc), max(utc, loc)) if loc is not None else (utc, utc)
+    frac = float("0." + m.group(7)) if m.group(7) else 0.0
+    tz = m.group(8)
+    if not tz:
+        loc = local(y, mo, d, h, mi, sec)
+        return (loc + frac, loc + frac) if loc is not None else None
+    off = 0
+    if tz not in ("Z", "z"):
+        digits = tz[1:].replace(":", "")
+        off = (int(digits[:2]) * 3600 + int(digits[2:]) * 60) * (1 if tz[0] == "+" else -1)
+    return (utc - off + frac, utc - off + frac)
+def legacy(v):
+    try: return datetime.fromisoformat(str(v).replace("Z","+00:00")).timestamp()
+    except Exception: return None
+def latest(v):
+    # None when the desktop itself could not read it, whatever this Python makes of it
+    # (3.14 reads 20200101, 3.9 and JavaScript do not): unreadable is one thing everywhere.
+    r, old = readings(v), legacy(v)
+    if r is None: return None
+    return max(r[1], old) if old is not None else r[1]
+def added(t):
+    return latest(t.get("dateAdded", ""))
 new = tracks(".library.json.incoming")
 if new is None or len(new) == 0:
     print("refused-corrupt"); raise SystemExit(0)
 cur = tracks("library.json") or []
 ids = set(str(t.get("id")) for t in new)
-newest = max([x for x in (ts(t) for t in new) if x is not None] or [float("-inf")])
-ahead = [t for t in cur if str(t.get("id")) not in ids and (ts(t) or float("-inf")) > newest]
+newest = min(
+    max([r[0] for r in (readings(t.get("dateAdded", "")) for t in new) if r] or [float("-inf")]),
+    max([x for x in (legacy(t.get("dateAdded", "")) for t in new) if x is not None] or [float("-inf")]))
+# The deletions Jake made, by audio fingerprint (never by id or title;
+# no apostrophes in here, this text sits inside a quoted ssh command). A file
+# that is missing or does not parse is no deletions: the guard refuses as
+# it always did. Every doubt below falls the same way, to the old refusal.
+def fp_of(t):
+    v = t.get("audioFingerprint")
+    return v.strip() if isinstance(v, str) else ""
+now = time.time()
+# A deletion dated after now (a desktop with a fast clock) would excuse a
+# song added again later, so it is not a deletion. Five minutes of skew.
+SKEW = 5 * 60
+def deletions():
+    try:
+        d = json.load(open("track-tombstones.json"))
+    except Exception:
+        return {}
+    rows = d if isinstance(d, list) else (d.get("tombstones") if isinstance(d, dict) else None)
+    out = {}
+    for r in rows if isinstance(rows, list) else []:
+        if not isinstance(r, dict): continue
+        fp, read = fp_of(r), readings(r.get("deletedAt"))
+        if not fp or read is None or read[1] > now + SKEW: continue
+        at = read[0]
+        if at > out.get(fp, float("-inf")): out[fp] = at
+    return out
+tombs = deletions()
+live = set(fp_of(t) for t in new)
+def deleted(t):
+    fp = fp_of(t)
+    at = tombs.get(fp) if fp else None
+    if at is None or fp in live: return False   # same audio still in the incoming copy: not gone
+    since = added(t)
+    return since is not None and since <= at    # added after the deletion, or a date nobody can read: not deleted
+missing = [t for t in cur if str(t.get("id")) not in ids]
+honoured = [t for t in missing if deleted(t)]
+# Jake deletes songs by the handful: 31 in his busiest day (2026-11-03), 22
+# on 11-09. A tombstone is minted by any desktop save that drops a row, so a
+# save that shed rows by mistake would mint hundreds and walk straight
+# through here. More than 50 in one publish is not a deletion, it is a
+# question for Jake; at home the NAS route still carries a real one.
+MAX_DELETIONS = 50
+if len(honoured) > MAX_DELETIONS:
+    print("refused-too-many-deletions %d" % len(honoured)); raise SystemExit(0)
+missing = [t for t in missing if not deleted(t)]
+ahead = [t for t in missing if (added(t) if added(t) is not None else float("-inf")) > newest]
 if ahead:
     print("refused-stale %d" % len(ahead)); raise SystemExit(0)
 # Brief 197 — twin of the recent-id rule in stale-push.ts: a song the
@@ -662,17 +769,21 @@ if ahead:
 # even when it is OLDER than the newest in the incoming copy (the same-day
 # phone download erased by a cross-lineage publish, 2026-10-14). Named,
 # so the refusal is loud, never silent.
-cutoff = time.time() - 30 * 24 * 3600
-recent = [t for t in cur if str(t.get("id")) not in ids and (ts(t) or 0) > cutoff]
+cutoff = now - 30 * 24 * 3600
+recent = [t for t in missing if added(t) is None or added(t) > cutoff]
 if recent:
     names = "; ".join(str(t.get("title") or t.get("id")) for t in recent[:10])
     print("refused-recent %d %s" % (len(recent), names)); raise SystemExit(0)
 os.replace(".library.json.incoming", "library.json")
+if honoured:
+    import sys
+    sys.stderr.write("backend publish: %d song(s) Jake deleted left homemini with this copy (%s)\n" % (len(honoured), "; ".join(str(t.get("title") or t.get("id")) for t in honoured[:10])))
 print("published %d" % len(new))
 EOF' 2>>"$LOG")
   case "$out" in
     published*) log "backend publish: $out tracks → ~/JakeTunesState/library.json (phone sees it on its next check)"; return 0 ;;
     refused-stale*) log "backend publish REFUSED: homemini has ${out#refused-stale } song(s) newer than this copy — this copy is stale"; return 1 ;;
+    refused-too-many-deletions*) log "backend publish REFUSED: this copy is missing ${out#refused-too-many-deletions } songs homemini has, every one marked deleted — more than 50 at once is never published by itself (a real clear-out goes through at home, or by the manual push)"; return 1 ;;
     refused-recent*) log "backend publish REFUSED: homemini has song(s) this copy has never seen, added in the last 30 days (${out#refused-recent }) — refusing to drop them (Brief 197)"; return 1 ;;
     *) log "backend publish: unexpected result '$out'"; return 1 ;;
   esac

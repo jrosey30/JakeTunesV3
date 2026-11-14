@@ -28,6 +28,12 @@
  * refusal names the songs. A deliberate drop (including deleting a
  * recently added song) goes through the same manual reconcile
  * override as before — deleting the newest song already refused here.
+ *
+ * 2026-11-12: the sync script's copy of these rules (publish_backend_library
+ * in Dr. Claude/scripts/jaketunes-homemini-sync.sh) now lets a deletion
+ * through when homemini holds its tombstone (track-tombstones.json). This
+ * function is unchanged: it guards the NAS auto-backup, and the NAS learns
+ * of a deletion from the save-time mirror.
  */
 
 interface LibTrack { id?: unknown; dateAdded?: unknown; title?: unknown; artist?: unknown }

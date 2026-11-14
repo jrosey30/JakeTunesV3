@@ -24,8 +24,9 @@ describe('sync script rails: nothing gets past the fakes', () => {
 
   it('every test that runs the script fakes the mount tools', () => {
     const offenders = readdirSync(here).filter((f) => {
-      // replica-sync-legs only runs `bash -n` on it.
-      if (!f.endsWith('.test.ts') || f === 'replica-sync-legs.test.ts') return false
+      // replica-sync-legs only runs `bash -n` on it. sync-script-publish-deletions runs
+      // only the publish guard's Python, cut out of it, in a temp folder: no bash, no mount.
+      if (!f.endsWith('.test.ts') || f === 'replica-sync-legs.test.ts' || f === 'sync-script-publish-deletions.test.ts') return false
       const src = readFileSync(join(here, f), 'utf-8')
       return src.includes('jaketunes-homemini-sync.sh')
         && /\b(spawnSync|spawn|execFileSync|execFile|execSync|exec)\(/.test(src)
