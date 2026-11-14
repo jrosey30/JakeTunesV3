@@ -53,6 +53,9 @@ export interface IpodListWire {
   cap: number | null
   /** When its iPod was last synced, from this Mac's own record (hub, a set-up iPod). null = not known. */
   lastSyncedAt: string | null
+  /** homemini's counts for the copy line (the phone's numbers); null = not sent (the page counts its own). */
+  songCount: number | null
+  artistCount: number | null
 }
 
 export interface IpodListsAnswer {
@@ -127,6 +130,7 @@ function wire(l: IpodList, fresh: boolean, registered: boolean, waiting: Record<
     id: l.id, name: pendingName ?? l.name, color: look.color, model: look.model, purpose: l.purpose, ids: [...l.ids],
     source: fresh ? 'homemini' : 'cache', note: null, updatedAt: l.updatedAt, registered,
     headline: headlineOf(l.id, l.headline, waiting), cap: l.cap, lastSyncedAt: lastSyncedAt ?? null,
+    songCount: l.songCount ?? null, artistCount: l.artistCount ?? null,
   }
 }
 
@@ -164,7 +168,8 @@ export async function gatherIpodLists(deps: GatherIpodListsDeps): Promise<IpodLi
     // homemini hasn't heard yet, else homemini's, else the iPod's own.
     const name = names[d.id] ?? h?.name ?? d.name
     lists.push({ id: d.id, name, color: look.color, model: look.model, purpose: d.purpose, ids: r.listIds, source: r.source, note: r.note, updatedAt: r.updatedAt, registered: true,
-      headline: headlineOf(d.id, h?.headline, headlines), cap: h?.cap ?? null, lastSyncedAt: synced[d.id] ?? null })
+      headline: headlineOf(d.id, h?.headline, headlines), cap: h?.cap ?? null, lastSyncedAt: synced[d.id] ?? null,
+      songCount: h?.songCount ?? null, artistCount: h?.artistCount ?? null })
   }
   for (const l of remote.lists) if (!known.has(l.id)) lists.push(wire(l, remote.fresh, false, headlines, chosen[l.id], names[l.id], synced[l.id]))
   return { ok: true, role: 'hub', lists }

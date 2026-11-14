@@ -33,6 +33,9 @@ export interface IpodListEntry {
   cap: number | null
   /** When its iPod was last synced (the hub's record); null = not known. */
   lastSyncedAt: string | null
+  /** homemini's counts for the copy line (the phone's numbers); null = not sent. */
+  songCount: number | null
+  artistCount: number | null
 }
 
 export type IpodListsRole = 'hub' | 'replica'
@@ -75,6 +78,8 @@ export function refreshIpodLists(): Promise<void> {
         headline: cleanHeadline(l.headline),
         cap: typeof l.cap === 'number' && Number.isInteger(l.cap) && l.cap > 0 ? l.cap : null,
         lastSyncedAt: typeof l.lastSyncedAt === 'string' && l.lastSyncedAt ? l.lastSyncedAt : null,
+        songCount: typeof l.songCount === 'number' && Number.isInteger(l.songCount) && l.songCount >= 0 ? l.songCount : null,
+        artistCount: typeof l.artistCount === 'number' && Number.isInteger(l.artistCount) && l.artistCount >= 0 ? l.artistCount : null,
       }))
       for (const l of listeners) l()
     })

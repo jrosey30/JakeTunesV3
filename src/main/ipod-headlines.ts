@@ -12,11 +12,24 @@
  * goes on the next read or the 5-minute retry (main/ipc/ipod-lists-ipc.ts).
  * A homemini that doesn't know the field yet answers 400: the headline waits.
  *
+ * Three things write here and they overlap in normal use: Headline… itself,
+ * the flush before every list read, and the 5-minute retry. So (review of
+ * PR 419, the same class as the tag queue's #415):
+ *   - the waiting file is only ever changed under one lock, read and written
+ *     in one turn, through writeJsonAtomic (a staging name no other write can
+ *     share). Two lists saved at once used to tear it or wipe a waiting line;
+ *   - one send at a time per list. A send that finishes clears the waiting
+ *     line only if it is still the line that was sent; if Jake typed a newer
+ *     one meanwhile, that one is sent next. A retry still on its way can no
+ *     longer land after a newer headline and leave homemini on the old one.
+ *
  * Deps injected so node --test runs it without homemini.
  */
-import { readFile, writeFile, rename, mkdir } from 'fs/promises'
-import { dirname, join } from 'path'
+import { readFile } from 'fs/promises'
+import { join } from 'path'
 import { checkHeadline, cleanHeadline } from '../common/ipod-ad.ts'
+import { writeJsonAtomic } from './atomic-write.ts'
+import { withLocalLock } from './hub-local-state.ts'
 import { withCompanionInit } from './hub-companion.ts'
 import type { FetchLike } from './top1000-client.ts'
 
@@ -31,11 +44,25 @@ const KEY = /^[a-z0-9-]{6,64}$/
 type Headline = string | null
 export type HeadlineSend = (key: string, headline: Headline) => Promise<'done' | 'retry' | 'drop'>
 
-async function writeJson(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true })
-  const tmp = `${path}.tmp-${process.pid}-${Date.now()}`
-  await writeFile(tmp, JSON.stringify(value, null, 2), 'utf-8')
-  await rename(tmp, path)
+const has = (o: object, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k)
+
+/** The lock on the waiting file: every read-modify-write of it, in turn. */
+const fileLock = (stateDir: string): string => `ipod-headlines-file:${stateDir}`
+/** One send at a time for one list (or the Top 1000). */
+const sendLock = (stateDir: string, key: string): string => `ipod-headlines-send:${stateDir}:${key}`
+
+/** What became of the last value sent for each list, so a save whose line was sent by someone else's turn still knows. */
+const settled = new Map<string, { headline: Headline; out: 'done' | 'drop' }>()
+
+/** Change the waiting file in one locked turn. `edit` changes the map and returns its answer. */
+function editPending<T>(stateDir: string, edit: (pending: Record<string, Headline>) => T): Promise<T> {
+  return withLocalLock(fileLock(stateDir), async () => {
+    const pending = await readPendingHeadlines(stateDir)
+    const before = JSON.stringify(pending)
+    const answer = edit(pending)
+    if (JSON.stringify(pending) !== before) await writeJsonAtomic(join(stateDir, PENDING_FILE), pending)
+    return answer
+  })
 }
 
 /** Headlines homemini hasn't heard yet, by key. A value that breaks the rules is not there. */
@@ -57,10 +84,44 @@ export async function readPendingHeadlines(stateDir: string): Promise<Record<str
   return out
 }
 
+/** How many newer lines one turn will send for one list before it leaves the rest for the next flush. */
+const MAX_SENDS_PER_TURN = 10
+
+/**
+ * One list's turn: send its waiting line; when the send is answered, clear it
+ * only if it is still the line that was sent, otherwise send the newer one.
+ * 'none' = nothing was waiting when the turn began.
+ */
+function flushOne(stateDir: string, key: string, send: HeadlineSend, warn?: (msg: string) => void): Promise<'none' | 'sent' | 'still-waiting' | 'dropped'> {
+  return withLocalLock(sendLock(stateDir, key), async () => {
+    let result: 'none' | 'sent' | 'dropped' = 'none'
+    for (let i = 0; i < MAX_SENDS_PER_TURN; i++) {
+      const pending = await withLocalLock(fileLock(stateDir), () => readPendingHeadlines(stateDir))
+      if (!has(pending, key)) return result
+      const headline = pending[key]
+      const out = await send(key, headline).catch((err) => {
+        warn?.(`[ipod-headline] ${key}: ${(err as Error)?.message ?? err}`)
+        return 'retry' as const
+      })
+      if (out === 'retry') return 'still-waiting'
+      if (out === 'drop') warn?.(`[ipod-headline] homemini has no list for ${key}; its headline is dropped`)
+      settled.set(`${stateDir}\0${key}`, { headline, out })
+      result = out === 'drop' ? 'dropped' : 'sent'
+      const cleared = await editPending(stateDir, (p) => {
+        if (!has(p, key) || p[key] !== headline) return false
+        delete p[key]
+        return true
+      })
+      if (cleared) return result
+      // Jake typed a newer line while this one was on its way: that one goes now.
+    }
+    return 'still-waiting'
+  })
+}
+
 /**
  * Send what homemini hasn't heard (all, or one key's). 'drop' = homemini will
- * never take it (the list is gone): it stops waiting. A headline changed again
- * while one was in flight stays waiting for the next flush.
+ * never take it (the list is gone): it stops waiting.
  */
 export async function flushPendingHeadlines(
   stateDir: string,
@@ -68,27 +129,13 @@ export async function flushPendingHeadlines(
   only?: string,
   warn?: (msg: string) => void,
 ): Promise<'none' | 'sent' | 'still-waiting' | 'dropped'> {
-  const pending = await readPendingHeadlines(stateDir)
+  const pending = await withLocalLock(fileLock(stateDir), () => readPendingHeadlines(stateDir))
   const keys = Object.keys(pending).filter((k) => only === undefined || k === only)
   if (!keys.length) return 'none'
-  let waiting = false
-  let dropped = false
-  for (const key of keys) {
-    const headline = pending[key]
-    const out = await send(key, headline).catch((err) => {
-      warn?.(`[ipod-headline] ${key}: ${(err as Error)?.message ?? err}`)
-      return 'retry' as const
-    })
-    if (out === 'retry') { waiting = true; continue }
-    if (out === 'drop') { dropped = true; warn?.(`[ipod-headline] homemini has no list for ${key}; its headline is dropped`) }
-    const now = await readPendingHeadlines(stateDir)
-    if (Object.prototype.hasOwnProperty.call(now, key) && now[key] === headline) {
-      delete now[key]
-      await writeJson(join(stateDir, PENDING_FILE), now)
-    }
-  }
-  if (waiting) return 'still-waiting'
-  return dropped && only !== undefined ? 'dropped' : 'sent'
+  const outs = await Promise.all(keys.map((k) => flushOne(stateDir, k, send, warn)))
+  if (outs.includes('still-waiting')) return 'still-waiting'
+  if (only !== undefined && outs[0] === 'dropped') return 'dropped'
+  return outs.every((o) => o === 'none') ? 'none' : 'sent'
 }
 
 export interface SetHeadlineDeps {
@@ -107,13 +154,16 @@ export async function setHeadline(deps: SetHeadlineDeps, key: unknown, raw: unkn
   const check = checkHeadline(raw)
   if (!check.ok) return check
   // On disk before homemini is asked: a crash mid-send can't lose it.
-  const pending = await readPendingHeadlines(deps.stateDir)
-  pending[key] = check.headline
-  await writeJson(join(deps.stateDir, PENDING_FILE), pending)
-  const flushed = await flushPendingHeadlines(deps.stateDir, deps.send, key, deps.warn)
+  await editPending(deps.stateDir, (p) => { p[key] = check.headline })
+  let flushed = await flushOne(deps.stateDir, key, deps.send, deps.warn)
+  if (flushed === 'none') {
+    // Another turn (a list read, the retry) sent it before this one got its go.
+    const last = settled.get(`${deps.stateDir}\0${key}`)
+    flushed = last && last.headline === check.headline ? (last.out === 'drop' ? 'dropped' : 'sent') : 'sent'
+  }
   if (flushed === 'dropped') return { ok: false, error: 'homemini has no list for this iPod.' }
   if (flushed === 'sent' && key === TOP1000_HEADLINE_KEY) {
-    await writeJson(join(deps.stateDir, TOP1000_CACHE_FILE), { headline: check.headline, savedAt: new Date().toISOString() })
+    await withLocalLock(sendLock(deps.stateDir, key), () => writeJsonAtomic(join(deps.stateDir, TOP1000_CACHE_FILE), { headline: check.headline, savedAt: new Date().toISOString() }))
       .catch((err) => deps.warn?.(`[ipod-headline] cache write: ${(err as Error)?.message ?? err}`))
   }
   return { ok: true, headline: check.headline, homemini: flushed === 'sent' ? 'saved' : 'later' }
@@ -145,22 +195,26 @@ async function cachedTop1000Headline(stateDir: string): Promise<Headline> {
 }
 
 /** The Top 1000's headline now: one waiting for homemini, else homemini's, else its last answer kept here. */
-export async function readTop1000Headline(deps: { stateDir: string; get: Top1000HeadlineRemote['get']; warn?: (msg: string) => void }): Promise<Top1000HeadlineView> {
-  const waiting = await readPendingHeadlines(deps.stateDir)
-  if (Object.prototype.hasOwnProperty.call(waiting, TOP1000_HEADLINE_KEY)) return { headline: waiting[TOP1000_HEADLINE_KEY], pending: true }
-  const fresh = await deps.get().catch(() => undefined)
-  if (fresh) {
-    await writeJson(join(deps.stateDir, TOP1000_CACHE_FILE), { headline: fresh.headline, savedAt: new Date().toISOString() })
-      .catch((err) => deps.warn?.(`[ipod-headline] cache write: ${(err as Error)?.message ?? err}`))
-    return { headline: fresh.headline, pending: false }
-  }
-  return { headline: await cachedTop1000Headline(deps.stateDir), pending: false }
+export function readTop1000Headline(deps: { stateDir: string; get: Top1000HeadlineRemote['get']; warn?: (msg: string) => void }): Promise<Top1000HeadlineView> {
+  // In the Top 1000's send turn: an answer asked for while a new headline is on its
+  // way can't be kept over the new one.
+  return withLocalLock(sendLock(deps.stateDir, TOP1000_HEADLINE_KEY), async () => {
+    const waiting = await withLocalLock(fileLock(deps.stateDir), () => readPendingHeadlines(deps.stateDir))
+    if (has(waiting, TOP1000_HEADLINE_KEY)) return { headline: waiting[TOP1000_HEADLINE_KEY], pending: true }
+    const fresh = await deps.get().catch(() => undefined)
+    if (fresh) {
+      await writeJsonAtomic(join(deps.stateDir, TOP1000_CACHE_FILE), { headline: fresh.headline, savedAt: new Date().toISOString() })
+        .catch((err) => deps.warn?.(`[ipod-headline] cache write: ${(err as Error)?.message ?? err}`))
+      return { headline: fresh.headline, pending: false }
+    }
+    return { headline: await cachedTop1000Headline(deps.stateDir), pending: false }
+  })
 }
 
 /** The Top 1000's headline as this Mac has it on disk, without asking homemini (the first paint). */
 export async function localTop1000Headline(stateDir: string): Promise<Top1000HeadlineView> {
   const waiting = await readPendingHeadlines(stateDir)
-  if (Object.prototype.hasOwnProperty.call(waiting, TOP1000_HEADLINE_KEY)) return { headline: waiting[TOP1000_HEADLINE_KEY], pending: true }
+  if (has(waiting, TOP1000_HEADLINE_KEY)) return { headline: waiting[TOP1000_HEADLINE_KEY], pending: true }
   return { headline: await cachedTop1000Headline(stateDir), pending: false }
 }
 

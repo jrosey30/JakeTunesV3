@@ -18,7 +18,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  adCopy, adHeadline, adLegal, checkHeadline, cleanHeadline, countArtists, headlineLines, headlineSizePx, hoursWords,
+  adCopy, adCounts, adHeadline, adLegal, checkHeadline, cleanHeadline, countArtists, headlineLines, headlineSizePx, hoursWords,
   ipodDrawingColors, ipodModelWords, ipodScreenTitle, syncedDateWords,
   HEADLINE_FULL_PX, HEADLINE_MAX, HEADLINE_MIN_PX, TOP_1000_DEFAULT_HEADLINE,
 } from '../../common/ipod-ad.ts'
@@ -145,6 +145,17 @@ describe('the copy line', () => {
     assert.equal(adCopy(5, 0), '5 songs.')
     assert.equal(adCopy(0, 0), 'No songs yet.')
   })
+  it('homemini\'s counts win when it sends them (so the phone and the desktop agree); otherwise this Mac counts', () => {
+    const local = { songs: 834, artists: 200 }
+    assert.deepEqual(adCounts(local, { songCount: 834, artistCount: 199 }), { songs: 834, artists: 199 })
+    assert.deepEqual(adCounts(local, { artistCount: 199 }), { songs: 834, artists: 199 })
+    assert.deepEqual(adCounts(local, { songCount: 840 }), { songs: 840, artists: 200 })
+    assert.deepEqual(adCounts(local, {}), local)
+    assert.deepEqual(adCounts(local, null), local)
+    assert.deepEqual(adCounts(local, { songCount: null, artistCount: undefined }), local)
+    for (const bad of [-1, 1.5, '199', Number.NaN]) assert.deepEqual(adCounts(local, { songCount: bad, artistCount: bad }), local)
+    assert.deepEqual(adCounts(local, { songCount: 0, artistCount: 0 }), { songs: 0, artists: 0 })
+  })
   it('artists are counted once, whatever their case, by the key the app gives', () => {
     const tracks = [{ artist: 'Wire' }, { artist: 'wire ' }, { artist: 'The Cramps' }, { artist: '' }, { artist: null }, {}]
     assert.equal(countArtists(tracks), 2)
@@ -245,6 +256,15 @@ describe('the drawn iPod\'s colours (model and colour to fills)', () => {
 })
 
 describe('homemini\'s list carries the headline (common/ipod-list-doc.ts)', () => {
+  it('homemini\'s counts are read when they are whole numbers, and absent otherwise', () => {
+    const l = parseIpodList({ ...list(PUNK_ID, 'punkPod', [1]), songCount: 834, artistCount: 199 })
+    assert.equal(l?.songCount, 834)
+    assert.equal(l?.artistCount, 199)
+    const bad = parseIpodList({ ...list(PUNK_ID, 'punkPod', [1]), songCount: -1, artistCount: '199' })
+    assert.ok(bad)
+    assert.equal('songCount' in bad, false)
+    assert.equal('artistCount' in bad, false)
+  })
   it('a good headline is read; none, or a bad one, is simply absent and the list still parses', () => {
     assert.equal(parseIpodList({ ...list(PUNK_ID, 'punkPod', [1]), headline: 'Louder than it looks.' })?.headline, 'Louder than it looks.')
     const none = parseIpodList(list(PUNK_ID, 'punkPod', [1]))
@@ -316,16 +336,19 @@ describe('Headline…: the write (main/ipod-headlines.ts)', () => {
     assert.equal(asked, 0)
     assert.deepEqual(await readPendingHeadlines(stateDir), {})
   })
-  it('changed again while one was in flight: the newer one stays waiting', async () => {
+  it('changed again while one was in flight: the newer one is sent next, in the same turn', async () => {
     const stateDir = tmp()
     await setHeadline({ stateDir, send: async () => 'retry', warn: quiet }, PUNK_ID, 'First.')
-    const out = await flushPendingHeadlines(stateDir, async () => {
+    const sent: Array<string | null> = []
+    const out = await flushPendingHeadlines(stateDir, async (_k, h) => {
+      sent.push(h)
       // Jake types a new one while the first is on its way
-      writeFileSync(join(stateDir, PENDING_FILE), JSON.stringify({ [PUNK_ID]: 'Second.' }))
+      if (h === 'First.') writeFileSync(join(stateDir, PENDING_FILE), JSON.stringify({ [PUNK_ID]: 'Second.' }))
       return 'done'
     })
     assert.equal(out, 'sent')
-    assert.deepEqual(await readPendingHeadlines(stateDir), { [PUNK_ID]: 'Second.' })
+    assert.deepEqual(sent, ['First.', 'Second.'])
+    assert.deepEqual(await readPendingHeadlines(stateDir), {})
   })
   it('one list\'s flush leaves another\'s waiting; a file with junk in it loses only the junk', async () => {
     const stateDir = tmp()
@@ -333,6 +356,107 @@ describe('Headline…: the write (main/ipod-headlines.ts)', () => {
     assert.deepEqual(await readPendingHeadlines(stateDir), { [PUNK_ID]: 'A.', [Y2K_ID]: 'B.', top1000: null })
     await flushPendingHeadlines(stateDir, async () => 'done', PUNK_ID)
     assert.deepEqual(await readPendingHeadlines(stateDir), { [Y2K_ID]: 'B.', top1000: null })
+  })
+})
+
+/**
+ * A homemini whose answers come back only when the test lets them. It applies
+ * a headline when the answer is sent (the moment its write lands), so the
+ * order answers come back in is the order homemini ends up in.
+ */
+function gatedHomemini(answer: (key: string, headline: string | null) => 'done' | 'retry' | 'drop' = () => 'done') {
+  const inFlight: Array<{ key: string; headline: string | null; release: () => void }> = []
+  const applied = new Map<string, string | null>()
+  const send: HeadlineSend = (key, headline) => new Promise((resolve) => {
+    inFlight.push({
+      key, headline,
+      release: () => {
+        const out = answer(key, headline)
+        if (out === 'done') applied.set(key, headline)
+        resolve(out)
+      },
+    })
+  })
+  return { send, inFlight, applied }
+}
+const tick = () => new Promise((r) => setImmediate(r))
+
+describe('Headline… under overlap (review of PR 419)', () => {
+  it('a retry still on its way can\'t land after a newer headline: homemini ends on the newer one', { timeout: 60_000 }, async () => {
+    const stateDir = tmp()
+    // "Older" waits: homemini was away.
+    await setHeadline({ stateDir, send: async () => 'retry', warn: quiet }, PUNK_ID, 'Older.')
+    const hub = gatedHomemini()
+    // The 5-minute retry is mid-send with "Older".
+    const retry = flushPendingHeadlines(stateDir, hub.send, undefined, quiet)
+    while (hub.inFlight.length === 0) await tick()
+    // Jake types "Newer".
+    const save = setHeadline({ stateDir, send: hub.send, warn: quiet }, PUNK_ID, 'Newer.')
+    // homemini answers the newest request first, as a slow first request lets it.
+    let settledAll = false
+    void Promise.all([retry, save]).then(() => { settledAll = true })
+    while (!settledAll) {
+      const next = hub.inFlight.pop()
+      if (next) next.release()
+      await tick()
+    }
+    assert.equal(hub.applied.get(PUNK_ID), 'Newer.', 'homemini ends on what Jake typed last')
+    assert.deepEqual(await save, { ok: true, headline: 'Newer.', homemini: 'saved' })
+    assert.deepEqual(await readPendingHeadlines(stateDir), {})
+  })
+
+  it('a retry that fails after a newer one was sent never puts the old line back on the waiting list', { timeout: 60_000 }, async () => {
+    const stateDir = tmp()
+    await setHeadline({ stateDir, send: async () => 'retry', warn: quiet }, PUNK_ID, 'Older.')
+    const hub = gatedHomemini((_k, h) => (h === 'Older.' ? 'retry' : 'done'))
+    const retry = flushPendingHeadlines(stateDir, hub.send, undefined, quiet)
+    while (hub.inFlight.length === 0) await tick()
+    const save = setHeadline({ stateDir, send: hub.send, warn: quiet }, PUNK_ID, 'Newer.')
+    let settledAll = false
+    void Promise.all([retry, save]).then(() => { settledAll = true })
+    while (!settledAll) {
+      const next = hub.inFlight.shift()
+      if (next) next.release()
+      await tick()
+    }
+    // "Older" was refused (retry); "Newer" is still owed or sent, never "Older" again.
+    const left = await readPendingHeadlines(stateDir)
+    assert.ok(!Object.values(left).includes('Older.'), JSON.stringify(left))
+    // one more flush settles it on the newer line
+    await flushPendingHeadlines(stateDir, async (k, h) => { hub.applied.set(k, h); return 'done' })
+    assert.equal(hub.applied.get(PUNK_ID), 'Newer.')
+  })
+
+  it('200 runs of two lists saved at once, with the list read and the retry flushing beside them: nothing torn, nothing thrown, nothing owed lost', { timeout: 60_000 }, async () => {
+    const problems = { torn: 0, saveThrew: 0, flushThrew: 0, wiped: 0, wrongFinal: 0 }
+    for (let run = 0; run < 200; run++) {
+      const stateDir = tmp()
+      const applied = new Map<string, string | null>()
+      // List A's homemini is away this run (every send is 'retry'); B's answers after a random wait.
+      const send: HeadlineSend = (key, headline) => new Promise((resolve) => {
+        setTimeout(() => {
+          if (key === PUNK_ID) { resolve('retry'); return }
+          applied.set(key, headline)
+          resolve('done')
+        }, Math.floor(Math.random() * 3))
+      })
+      const jobs: Array<Promise<unknown>> = []
+      const save = (key: string, h: string) => jobs.push(setHeadline({ stateDir, send, warn: quiet }, key, h).catch(() => { problems.saveThrew++ }))
+      const flush = () => jobs.push(flushPendingHeadlines(stateDir, send, undefined, quiet).catch(() => { problems.flushThrew++ }))
+      save(PUNK_ID, `A ${run}.`)
+      save(Y2K_ID, `B ${run}.`)
+      flush()
+      save(Y2K_ID, `B ${run} again.`)
+      flush()
+      save(PUNK_ID, `A ${run} again.`)
+      await Promise.all(jobs)
+      let pending: Record<string, unknown> | null = null
+      try { pending = JSON.parse(readFileSync(join(stateDir, PENDING_FILE), 'utf-8')) } catch { problems.torn++ }
+      if (pending && pending[PUNK_ID] !== `A ${run} again.`) problems.wiped++
+      if (pending && Y2K_ID in pending) problems.wiped++
+      if (applied.get(Y2K_ID) !== `B ${run} again.`) problems.wrongFinal++
+    }
+    assert.deepEqual(problems, { torn: 0, saveThrew: 0, flushThrew: 0, wiped: 0, wrongFinal: 0 })
   })
 })
 
@@ -398,11 +522,12 @@ describe('the lists the page reads (main/ipod-lists-gather.ts)', () => {
     const base = {
       registry: async () => [punk],
       refresh,
-      all: async () => [list(PUNK_ID, 'punkPod', [1], { headline: 'Old line.', cap: 5000 }), list(Y2K_ID, 'Y2K', [2], { headline: 'Period correct.' })],
+      all: async () => [list(PUNK_ID, 'punkPod', [1], { headline: 'Old line.', cap: 5000, songCount: 834, artistCount: 199 }), list(Y2K_ID, 'Y2K', [2], { headline: 'Period correct.' })],
       cacheFile: ipodListsCachePath(stateDir),
       lastSynced: async () => ({ [PUNK_ID]: '2026-11-08T18:15:00.000Z' }),
     }
     const hub = await gatherIpodLists({ ...base, isReplica: async () => false })
+    assert.deepEqual(hub.lists.map((l) => [l.songCount, l.artistCount]), [[834, 199], [null, null]], 'homemini\'s counts pass through, or null')
     assert.deepEqual(hub.lists.map((l) => [l.name, l.headline, l.cap, l.lastSyncedAt]), [
       ['punkPod', 'Old line.', 5000, '2026-11-08T18:15:00.000Z'],
       ['Y2K', 'Period correct.', 1000, null],

@@ -67,6 +67,9 @@ export interface IpodList {
   color?: string
   /** The line at the top of its page (2026-11-14, common/ipod-ad.ts): 1 to 60 characters. Absent = its name and a full stop. */
   headline?: string
+  /** homemini's count of its songs and of their artists (the main-artist rule, the phone's numbers). Absent = not sent. */
+  songCount?: number
+  artistCount?: number
   /**
    * What the list's purpose calls for that the library doesn't have
    * (2026-11-09, Jake: "the songs i dont have for y2k, 80's and indie
@@ -128,6 +131,8 @@ function parseChanges(raw: unknown): IpodListChange[] {
  * The history (`adds`, `removed`) is informational: a bad entry is dropped,
  * not a reason to refuse the list.
  */
+const wholeCount = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0
+
 export function parseIpodList(raw: unknown, expectedId?: string): IpodList | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const r = raw as Record<string, unknown>
@@ -170,6 +175,9 @@ export function parseIpodList(raw: unknown, expectedId?: string): IpodList | nul
     ...(normalizeIpodColor(r.color) ? { color: normalizeIpodColor(r.color)! } : {}),
     // The page's headline (2026-11-14): optional, a bad one is just absent.
     ...(cleanHeadline(r.headline) ? { headline: cleanHeadline(r.headline)! } : {}),
+    // homemini's counts (2026-11-14): optional, anything but a whole count is absent.
+    ...(wholeCount(r.songCount) ? { songCount: r.songCount } : {}),
+    ...(wholeCount(r.artistCount) ? { artistCount: r.artistCount } : {}),
   }
 }
 

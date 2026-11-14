@@ -100,6 +100,21 @@ export function adCopy(songs: number, artists: number): string {
   return `${s} by ${n(artists)} ${artists === 1 ? 'artist' : 'artists'}.`
 }
 
+/**
+ * The two numbers on the copy line. homemini counts them for the phone too
+ * (`songCount`, `artistCount` on its list rows, by the main-artist rule), so
+ * when it sends them every screen says the same thing. A homemini that doesn't
+ * send them yet, or a number that isn't a whole count, falls back to this
+ * Mac's own count of the songs it has.
+ */
+export function adCounts(local: { songs: number; artists: number }, homemini: { songCount?: unknown; artistCount?: unknown } | null | undefined): { songs: number; artists: number } {
+  const whole = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0
+  return {
+    songs: whole(homemini?.songCount) ? homemini!.songCount as number : local.songs,
+    artists: whole(homemini?.artistCount) ? homemini!.artistCount as number : local.artists,
+  }
+}
+
 /** How many different artists a list has. `keyOf` is the app's own artist key (the renderer passes canonicalArtist). */
 export function countArtists(tracks: ReadonlyArray<{ artist?: string | null }>, keyOf: (artist: string) => string = (a) => a): number {
   const seen = new Set<string>()
