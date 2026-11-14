@@ -124,8 +124,9 @@ import { registerIpodIpc } from './ipc/ipod-ipc.ts'
 import { registerSyncIpc, type SyncConvertOptions } from './ipc/sync-ipc.ts'
 import { createSyncEngine, type VerifyTrackInput, type VerifyTrackUpdate } from './sync-engine/index.ts'
 import { createDevicePlaylists } from './ipod-device-playlists-run.ts'
+import { readLastSyncPlaylists } from './ipod-playlist-rule.ts'
 import { saveOtgLists } from './ipod-otg-playlists.ts'
-import { deviceKeyOf } from '../common/ipod-device-playlists.ts'
+import { deviceKeyOf, stillAnIpodPlaylist } from '../common/ipod-device-playlists.ts'
 import type { IpodDeviceMarker } from '../common/ipod-identity.ts'
 import { ingestIpodRoundTrip, type RoundTripHost } from './sync-engine/roundtrip.ts'
 import { identifyIpod, resolveIpodState } from './ipod-identity.ts'
@@ -4855,6 +4856,10 @@ function scheduleDbRebuild(deletedPaths: string[]) {
       // Re-read the current library and write a fresh iTunesDB so
       // the iPod's track count drops to match.
       const lib = JSON.parse(await readFile(LIBRARY_PATH, 'utf-8'))
+      // Only this iPod's own playlists, as its last finished sync wrote them (2026-11-14):
+      // never the library's playlists, never another iPod's own list as a playlist.
+      const lastPl = await readLastSyncPlaylists(ipod.stateDir)
+      const keepPlaylists = (lastPl?.playlists ?? []).filter((p) => stillAnIpodPlaylist(p, !!ipod.device?.primary))
       const ipodDb = join(ipodMount, 'iPod_Control', 'iTunes', 'iTunesDB')
       try { await copyFile(ipodDb, ipodDb + '.bak') } catch { /* non-fatal */ }
       const scriptPath = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/db_reader.py')
@@ -4869,7 +4874,7 @@ function scheduleDbRebuild(deletedPaths: string[]) {
         // Same pattern at every spawn-and-write site below.
         py.stdin.on('error', (err) => reject(err))
         try {
-          py.stdin.write(JSON.stringify({ tracks: lib.tracks, playlists: lib.playlists || [] }))
+          py.stdin.write(JSON.stringify({ tracks: lib.tracks, playlists: keepPlaylists }))
           py.stdin.end()
         } catch (err) { reject(err) }
       })
@@ -8484,6 +8489,16 @@ registerWorkoutSyncIpc({
   },
   listOnlyPool: () => ipodLists.refreshPlugged(detectedIpodMount),   // homemini's list, refreshed first
   pluggedIpod: async () => (detectedIpodMount ? identifyIpod(detectedIpodMount, STATE_DIR) : null),   // the one-button sync
+  // The plan's playlist list: the same set a sync writes, worked out without writing anything.
+  previewIpodPlaylists: async (passed, tracks) => {
+    if (!detectedIpodMount) return null
+    const ipod = await resolveIpodState(detectedIpodMount, STATE_DIR)
+    if (ipod.refusal || !ipod.device) return null
+    const r = await createDevicePlaylists({ baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), timeoutMs: 3_000, warn: (m) => quietWarn('ipod-playlists-preview', m) }).preview({
+      passed, tracks, stateDir: ipod.stateDir, deviceKey: deviceKeyOf(ipod.device), ipodName: ipod.device.name, original: ipod.device.primary,
+    })
+    return { names: r.playlists.map((p) => p.name), notes: r.notes }
+  },
 })
 // iPod Pool — the hand-built sync set (drag songs/albums/artists/playlists
 // onto the sidebar row); build-workout-sync-set reads it in pool mode.

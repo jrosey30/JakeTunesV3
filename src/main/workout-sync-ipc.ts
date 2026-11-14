@@ -66,6 +66,12 @@ export interface WorkoutSyncHost {
   listOnlyPool?: () => Promise<{ ids: number[]; note: string | null } | null>
   /** Which iPod is plugged in (null = none) — the one-button sync's door (ipod-one-sync.ts). */
   pluggedIpod?: () => Promise<IpodIdentity | null>
+  /** What the next sync would write as the plugged-in iPod's playlists, by name and in order,
+   *  for the plan (ipod-device-playlists-run.ts preview: writes nothing). null = no known iPod. */
+  previewIpodPlaylists?: (
+    passed: Array<Record<string, unknown>>,
+    tracks: Array<Record<string, unknown>>,
+  ) => Promise<{ names: string[]; notes: string[] } | null>
 }
 
 const WORKOUT_TARGET = 1000
@@ -266,6 +272,18 @@ export function registerWorkoutSyncIpc(host: WorkoutSyncHost): void {
       list: async () => (await host.listOnlyPool?.()) ?? null,
       ineligible: async () => (await host.getIneligibleTrackIds?.()) ?? new Set<number>(),
     }, Array.isArray(tracks) ? tracks : [])
+  }, { refuse: REFUSED_SENDER })
+
+  // The playlists the next sync writes on the plugged-in iPod (2026-11-14), for the plan:
+  // the renderer hands the built-ins it evaluated against the plan's songs. Writes nothing.
+  ipc.handle('preview-ipod-playlists', async (_e, passed: unknown, tracks: unknown) => {
+    if (!host.previewIpodPlaylists || !Array.isArray(passed) || !Array.isArray(tracks)) return null
+    try {
+      return await host.previewIpodPlaylists(passed as Array<Record<string, unknown>>, tracks as Array<Record<string, unknown>>)
+    } catch (err) {
+      console.warn('[ipod-playlists] preview failed:', err instanceof Error ? err.message : err)
+      return null
+    }
   }, { refuse: REFUSED_SENDER })
 
   ipc.handle('build-workout-sync-set', async (
