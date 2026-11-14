@@ -13,11 +13,14 @@
  *  - unhandledrejection → every fire-and-forget promise that broke quietly
  */
 import React from 'react'
+import { noteError } from './usageLog'
 
 function report(kind: string, message: string, stack?: string, source?: string): void {
   try {
     window.electronAPI?.reportCrash?.({ kind, message, stack, source })
   } catch { /* the net must never itself throw */ }
+  // The usage log too (usageLog.ts), with the message only: homemini's digest counts them.
+  if (!kind.startsWith('boot.')) noteError(kind, message)
 }
 
 let globalNetsArmed = false

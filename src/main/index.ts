@@ -64,6 +64,7 @@ localAudioDropRefused,   libraryRootFromMusicDir, OFFLOAD_CONVERT_BATCH, serveHu
 import { bootHubOffload, keepWindowStore, menuHubOffload, registerOffloadIpc, returnedHold, returnRecentToDisk } from './ipc/offload-ipc.ts'
 import { createServePin } from './play-cache-serve-pin.ts'
 import { createIpcRegistrar, REFUSED_SENDER } from './ipc-register.ts'
+import { startUsageLog } from './usage-log-start.ts'
 import { registerUiStateIpc, readSavedSidebarOrder } from './ipc/ui-state-ipc.ts'
 import { createSidebarOrderPublisher } from './sidebar-order-publish.ts'
 import { registerBackupIpc } from './ipc/backup-ipc.ts'
@@ -10052,13 +10053,15 @@ app.whenReady().then(async () => {
   // Show the window before heavy startup IO (artwork self-heal, memory
   // loads, ipod-audio handler registration). Splash + library load give
   // us ~3s before playback needs ipod-audio://.
+  // Usage log (2026-11-14): what happens as Jake uses the app, on disk first, sent to homemini in batches. Module: usage-log-start.ts.
+  const usageLog = startUsageLog({ userData: app.getPath('userData'), build: getBuildProvenance(app.getVersion()).buildSha, version: app.getVersion(), hubBase: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), syncInFlight: () => syncEngine.isSyncInFlight() })
   createWindow()
   registerMediaKeyShortcuts()
   // Pause for video calls (2026-10-30): per-process mic watcher → pause/play through the media-key path. Module: pause-for-calls.ts.
   startPauseForCalls({ sendAction: sendMediaKeyAction, notify: (n) => sendToRenderer('app-notice', n), record: (tag, detail) => flightRecorder.record('info', tag, detail), settingsPath: appSettingsPath })
   startLibraryWatcher()
   // Update ready (2026-10-30): the install gate's update-ready.json → status-bar "Update ready · Install"; the click pauses via the media-key path and writes update-go. Module: update-ready.ts.
-  startUpdateReadyWatcher({ ipc, userData: app.getPath('userData'), runningSha: getBuildProvenance(app.getVersion()).buildSha, send: (s) => sendToRenderer('update-ready', s), sendAction: sendMediaKeyAction, syncInFlight: () => syncEngine.isSyncInFlight(), record: (tag, detail) => flightRecorder.record('info', tag, detail) })
+  startUpdateReadyWatcher({ ipc, userData: app.getPath('userData'), runningSha: getBuildProvenance(app.getVersion()).buildSha, send: (s) => sendToRenderer('update-ready', s), sendAction: sendMediaKeyAction, syncInFlight: () => syncEngine.isSyncInFlight(), playing: () => playbackActive, busy: () => usageLog.busyReason(), usage: (name, detail, ok) => usageLog.log('update', name, { detail, ok }), record: (tag, detail) => flightRecorder.record('info', tag, detail) })
 
   void (async () => {
     try {

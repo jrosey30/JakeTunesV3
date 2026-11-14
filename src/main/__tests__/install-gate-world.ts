@@ -399,7 +399,8 @@ export interface World {
   /** A TERM to the gate and its copy, the way a kill of the process group lands. */
   termGateAndCopy: (g: Gate) => void
   quitDone: () => void
-  run: (args: { sha?: string; note?: string; maxMin?: number }) => Gate
+  /** release: the weekly release's file (label, kind, notes): the v 2 gate. */
+  run: (args: { sha?: string; note?: string; maxMin?: number; release?: string }) => Gate
   cleanup: () => void
 }
 
@@ -532,10 +533,11 @@ export function makeWorld(o: WorldOpts = {}): World {
     // Five minutes, not the script's 45: the runner's own limit, so being slow never
     // trips this ABORT, and a gate that outlives its test goes soon after instead of
     // holding a CI run for 45 minutes (2026-10-30).
-    run: ({ sha, note, maxMin = 5 }) => {
+    run: ({ sha, note, maxMin = 5, release }) => {
       const args = [scriptPath, stagedApp, BK, String(maxMin)]
       if (sha !== undefined) args.push(sha)
       if (note !== undefined) args.push(note)
+      if (release !== undefined) args.push(release)
       const child = spawn('/bin/bash', args, {
         env: {
           HOME: home,

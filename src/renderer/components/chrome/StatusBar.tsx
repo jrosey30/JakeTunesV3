@@ -3,6 +3,7 @@ import { useLibrary } from '../../context/LibraryContext'
 import { useRegularLibraryTracks } from '../../hooks/useRegularLibraryTracks'
 import { useUpdateReady } from '../../hooks/useUpdateReady'
 import ConfirmDialog from '../ConfirmDialog'
+import UpdateChoices from './UpdateChoices'
 
 export default function StatusBar() {
   const { state } = useLibrary()
@@ -11,7 +12,9 @@ export default function StatusBar() {
   // 2026-10-30: a new build staged at the install gate shows here, on every
   // page (this bar is global), and Jake pushes it through himself.
   const update = useUpdateReady()
+  // 2026-11-14: three answers — Install now, Install at…, Skip to next week (UpdateChoices.tsx).
   const [confirmInstall, setConfirmInstall] = useState(false)
+  const [confirmSkip, setConfirmSkip] = useState(false)
 
   const summary = useMemo(() => {
     const count = tracks.length
@@ -44,35 +47,43 @@ export default function StatusBar() {
   }, [tracks])
 
   const ready = update.ready
-  const updateTitle = ready ? (ready.note || (ready.version ? `Version ${ready.version}` : 'A new build is staged')) : ''
 
   return (
-    <div className="statusbar">
+    <div className={ready ? 'statusbar statusbar--update' : 'statusbar'}>
       <span className="statusbar-info">{summary}</span>
-      {ready && update.installing && (
-        <span className="statusbar-update statusbar-update--busy" aria-live="polite" title={updateTitle}>
-          Installing — back in a moment
-        </span>
-      )}
-      {ready && !update.installing && (
-        <button
-          type="button"
-          className="statusbar-update"
-          title={updateTitle}
-          onClick={() => setConfirmInstall(true)}
-        >
-          {update.afterSync ? 'Install after the iPod sync' : update.failed ? 'Install didn’t start — try again' : 'Update ready · Install'}
-        </button>
+      {ready && (
+        <UpdateChoices
+          ready={ready}
+          installing={update.installing}
+          failed={update.failed}
+          afterSync={update.afterSync}
+          now={Date.now()}
+          onInstallNow={() => setConfirmInstall(true)}
+          onInstallAt={update.installAt}
+          onSkip={() => setConfirmSkip(true)}
+          onCancel={() => { void update.cancel() }}
+        />
       )}
       {confirmInstall && ready && (
         <ConfirmDialog
           message="Install the update?"
-          detail={`JakeTunes will pause, close and come back in about 20 seconds.${ready.note ? `\n${ready.note}` : ''}`}
+          detail={`JakeTunes will pause, close and come back in about 20 seconds.${ready.notes.length ? `\n${ready.notes.join('\n')}` : ready.note ? `\n${ready.note}` : ''}`}
           confirmLabel="Install"
           cancelLabel="Not now"
           destructive={false}
           onConfirm={() => { setConfirmInstall(false); void update.install() }}
           onCancel={() => setConfirmInstall(false)}
+        />
+      )}
+      {confirmSkip && ready && (
+        <ConfirmDialog
+          message="Skip this update?"
+          detail="It won’t be offered on this Mac again. Next week’s update replaces it."
+          confirmLabel="Skip"
+          cancelLabel="Keep it"
+          destructive={false}
+          onConfirm={() => { setConfirmSkip(false); void update.skip() }}
+          onCancel={() => setConfirmSkip(false)}
         />
       )}
     </div>

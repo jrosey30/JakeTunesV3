@@ -615,6 +615,105 @@
 .statusbar-update--busy,
 .statusbar-update--busy:hover { text-decoration: none; }
 
+/* The weekly release (2026-11-14): three answers on the right of the bar.
+   With an update on offer the song count moves to the left edge so the two
+   never overlap on a narrow window. Same type as the rest of the bar; what can
+   be clicked is the text-safe orange (--accent-text, #C14201), underlined on
+   hover, like "Update ready · Install" before it. */
+.statusbar--update { justify-content: flex-start; }
+.statusbar--update .statusbar-info { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; margin-right: 12px; }
+.update-choices {
+  position: relative;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  white-space: nowrap;
+  -webkit-app-region: no-drag;
+}
+.update-choices-label,
+.update-choices-status {
+  color: #3a3a3a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+.update-choices-label { font-weight: 600; }
+.update-choices-note,
+.update-choices-link {
+  margin: 0;
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: default;
+  white-space: nowrap;
+}
+.update-choices-note {
+  color: #555049;
+  display: inline-flex;
+  align-items: baseline;
+  min-width: 0;
+}
+.update-choices-note-text {
+  display: inline-block;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  margin-right: 4px;
+}
+.update-choices-note::after { content: ' \25B8'; color: #8a847c; }
+.update-choices-link { color: var(--accent-text, #C14201); }
+.update-choices-note:hover,
+.update-choices-link:hover { text-decoration: underline; }
+.update-choices-note:focus-visible,
+.update-choices-link:focus-visible {
+  outline: 2px solid var(--brand-orange, #FC5501);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+/* A panel above the bar, right-aligned with it: the notes, or the day + time. */
+.update-choices-panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 50;
+  min-width: 280px;
+  max-width: 420px;
+  padding: 10px 12px 12px;
+  background: linear-gradient(180deg, #fbfbfb, #efefef);
+  border: 1px solid #a6a6a6;
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22), 0 1px 0 rgba(255, 255, 255, 0.8) inset;
+  white-space: normal;
+  color: #161312;
+  font-size: var(--font-11, 11px);
+}
+.update-choices-panel-title { font-weight: 600; font-size: var(--font-12, 12px); }
+.update-choices-panel-sub { margin-top: 2px; color: #555049; font-size: var(--font-10, 10px); }
+.update-choices-notes { margin: 8px 0 0; padding-left: 16px; line-height: 1.45; }
+.update-choices-at { display: flex; gap: 6px; margin-top: 10px; }
+.update-choices-at select { font: inherit; font-size: var(--font-11, 11px); }
+.update-choices-warn { margin-top: 6px; color: #b3261e; font-size: var(--font-10, 10px); }
+.update-choices-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
+.update-choices-button {
+  font: inherit;
+  font-size: var(--font-11, 11px);
+  padding: 2px 12px;
+  border: 1px solid #9a9a9a;
+  border-radius: 4px;
+  background: linear-gradient(180deg, #ffffff, #e8e8e8);
+  color: #161312;
+}
+.update-choices-button--default {
+  border-color: #b04000;
+  background: linear-gradient(180deg, #ff7a33, #e05200);
+  color: #ffffff;
+}
+.update-choices-button:disabled { opacity: 0.5; }
+
 /* Titlebar breadcrumb — replaces the static "JakeTunes" label. Left-aligned
    right after the ‹ › history buttons; opts out of the window drag region so
    segments are clickable. Long names truncate. */

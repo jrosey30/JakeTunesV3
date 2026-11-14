@@ -1,15 +1,18 @@
 /**
- * useUpdateReady (2026-10-30) — what the status bar needs to say "Update
- * ready · Install" and to push the install through.
+ * useUpdateReady (2026-10-30, three choices 2026-11-14) — what the status bar
+ * needs to offer an update and carry out Jake's answer.
  *
- * Main (src/main/update-ready.ts) watches the install gate's marker and
- * pushes `update-ready` with { sha, version, note } or null. The hook pulls
- * the current state once on mount (the push may have happened before the
- * renderer was listening) and then follows the pushes.
+ * Main (src/main/update-ready.ts) watches the install gate's marker and this
+ * Mac's decision and pushes `update-ready` with the whole state (or null). The
+ * hook pulls the current state once on mount (the push may have happened
+ * before the renderer was listening) and then follows the pushes.
  *
- * install() asks main to pause the music (the media-key path) and write the
- * go-file; `installing` stays true until the gate quits the app — or until
- * main says the update is gone (a null push), because then nothing is coming.
+ *   install()      Install now: main pauses the music and writes the go-file;
+ *                  `installing` stays true until the gate quits the app — or
+ *                  until main says the update is gone (a null push).
+ *   installAt(t)   Install at a time in the next 7 days (main holds the clock).
+ *   skip()         Skip to next week: never offered on this Mac again.
+ *   cancel()       Take back a now or an at before the install starts.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { UpdateReadyState } from '../types'
@@ -17,13 +20,16 @@ import { INSTALL_AFTER_SYNC } from '../../common/update-ready'
 
 export interface UpdateReadyView {
   ready: UpdateReadyState | null
-  /** Install clicked and accepted; the gate is about to quit the app. */
+  /** Install clicked and accepted, or main says the install has started. */
   installing: boolean
-  /** The click did not take (main refused or the go-file could not be written); clears itself. */
+  /** The last click did not take; clears itself. */
   failed: boolean
   /** That click came during an iPod sync: nothing went wrong, it has to wait. Clears itself. */
   afterSync: boolean
   install: () => Promise<void>
+  installAt: (at: number) => Promise<boolean>
+  skip: () => Promise<boolean>
+  cancel: () => Promise<boolean>
 }
 
 const FAILED_SHOWN_MS = 6000
@@ -52,6 +58,13 @@ export function useUpdateReady(): UpdateReadyView {
     }
   }, [])
 
+  const showFailed = useCallback((error?: string) => {
+    setFailed(true)
+    setAfterSync(error === INSTALL_AFTER_SYNC)
+    if (failedTimer.current) clearTimeout(failedTimer.current)
+    failedTimer.current = setTimeout(() => { failedTimer.current = null; setFailed(false); setAfterSync(false) }, FAILED_SHOWN_MS)
+  }, [])
+
   const install = useCallback(async () => {
     setFailed(false)
     setAfterSync(false)
@@ -65,11 +78,26 @@ export function useUpdateReady(): UpdateReadyView {
     }
     if (ok) return
     setInstalling(false)
-    setFailed(true)
-    setAfterSync(error === INSTALL_AFTER_SYNC)
-    if (failedTimer.current) clearTimeout(failedTimer.current)
-    failedTimer.current = setTimeout(() => { failedTimer.current = null; setFailed(false); setAfterSync(false) }, FAILED_SHOWN_MS)
-  }, [])
+    showFailed(error)
+  }, [showFailed])
 
-  return { ready, installing, failed, afterSync, install }
+  const answer = useCallback(async (run: () => Promise<{ ok: boolean; error?: string }>): Promise<boolean> => {
+    setFailed(false)
+    setAfterSync(false)
+    try {
+      const r = await run()
+      if (r.ok) return true
+      showFailed(r.error)
+    } catch (err) {
+      console.warn('[update-ready] request failed:', err)
+      showFailed()
+    }
+    return false
+  }, [showFailed])
+
+  const installAt = useCallback((at: number) => answer(() => window.electronAPI.decideUpdate({ choice: 'at', at: new Date(at).toISOString() })), [answer])
+  const skip = useCallback(() => answer(() => window.electronAPI.decideUpdate({ choice: 'skip' })), [answer])
+  const cancel = useCallback(() => answer(() => window.electronAPI.cancelUpdateDecision()), [answer])
+
+  return { ready, installing: installing || ready?.phase === 'installing', failed, afterSync, install, installAt, skip, cancel }
 }

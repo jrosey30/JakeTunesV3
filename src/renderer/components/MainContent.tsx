@@ -34,6 +34,7 @@ import { primeArtistPage } from '../artistPageSeed'
 import { subscribeAliases, getAliasVersion } from '../utils/artistAlias'
 import { foldName } from '../releaseKinds'
 import { navDxNavigated } from '../navDxDom'
+import { noteScreen } from '../usageLog'
 import { takeHistoryNavigation, pageArrival } from '../navIntent'
 import { useNavigation } from '../context/NavigationContext'
 import { useBackLabel } from '../hooks/useBackLabel'
@@ -126,6 +127,8 @@ export default function MainContent() {
     const from = lastKeyRef.current
     lastKeyRef.current = activeKey
     if (from !== null) navDxNavigated({ from, to: activeKey, kind: arrival === 'return' ? 'return' : 'arrive', remount: !keptActive })
+    // The usage log takes every page, dx.nav or not (usageLog.ts).
+    if (from !== null) noteScreen({ from, to: activeKey, kind: arrival === 'return' ? 'return' : 'arrive', remount: !keptActive })
   }, [activeKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Parking a page must not leave keyboard focus on one of its cards — Space /

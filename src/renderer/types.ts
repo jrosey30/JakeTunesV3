@@ -713,10 +713,14 @@ declare global {
       onMenuAction: (callback: (action: string) => void) => () => void
       onAppNotice: (callback: (notice: { text: string; kind?: 'error' | 'info' | 'success'; durationMs?: number }) => void) => () => void
       // 2026-10-30 — "Update ready": a staged build waiting at the install gate.
-      // ⚠️ TWIN: src/preload/index.ts (onUpdateReady / getUpdateReady / installUpdateNow).
+      // ⚠️ TWIN: src/preload/index.ts (onUpdateReady / getUpdateReady / installUpdateNow / decideUpdate / cancelUpdateDecision).
       onUpdateReady: (callback: (state: UpdateReadyState | null) => void) => () => void
       getUpdateReady: () => Promise<{ ok: boolean; state: UpdateReadyState | null }>
       installUpdateNow: () => Promise<{ ok: boolean; error?: string }>
+      decideUpdate: (choice: import('../common/update-ready').UpdateChoice) => Promise<{ ok: boolean; error?: string }>
+      cancelUpdateDecision: () => Promise<{ ok: boolean; error?: string }>
+      // The usage log (renderer/usageLog.ts). ⚠️ TWIN: src/preload/index.ts usageLog.
+      usageLog?: (events: unknown[]) => void
       setLibraryContext: (ctx: string) => Promise<void>
       musicmanChat: (messages: { role: string; content: string }[], context?: string, subject?: import('../common/music-man-packet').AskSubject | null, nowPlayingId?: number | null) => Promise<{ ok: boolean; text: string; textRaw: string; createdPlaylist?: { name: string; trackIds: number[] } | null }>
       musicmanSpeak: (text: string, fast?: boolean, voiceId?: string) => Promise<{ ok: boolean; audio?: string; error?: string }>

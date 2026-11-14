@@ -22,16 +22,28 @@
  *     build we already are is the tail of the install that just happened.
  *     A dev run has no build sha ('dev'): every marker is new then.
  */
-import type { UpdateReadyState } from '../common/update-ready.ts'
+import { UPDATE_KINDS, type UpdateKind, type UpdateReadyState } from '../common/update-ready.ts'
+
+/** What the marker itself says; the shell adds where this Mac's decision stands. */
+export type UpdateOffer = Omit<UpdateReadyState, 'phase' | 'at' | 'waitingFor'>
 
 /** Both live in Electron's userData (~/Library/Application Support/JakeTunes). */
 export const UPDATE_READY_FILE = 'update-ready.json'
 export const UPDATE_GO_FILE = 'update-go'
 /** A gate waits 45–180 min; anything older than this is not a gate we trust. */
 export const MARKER_MAX_AGE_MS = 12 * 60 * 60 * 1000
+/**
+ * A v 2 gate (the weekly release) waits for a decision, which may be "Install
+ * at…" up to 7 days after the offer was seen: it is trusted for 9 days. The
+ * next week's offer replaces it long before that.
+ */
+export const MARKER_V2_MAX_AGE_MS = 9 * 24 * 60 * 60 * 1000
+/** At most this many notes, each cut to this length: the bar shows one, the list all. */
+export const MAX_NOTES = 30
+export const MAX_NOTE_CHARS = 200
 
 export type MarkerVerdict =
-  | { kind: 'ready'; state: UpdateReadyState; gatePid: number }
+  | { kind: 'ready'; state: UpdateOffer; gatePid: number }
   /** Valid, alive, but it names the build that is running — nothing to offer. */
   | { kind: 'same-build'; sha: string }
   /** Valid shape, but the gate that wrote it is gone — the file is litter; delete it. */
@@ -66,7 +78,8 @@ export function parseMarkerText(text: string): unknown {
 export function judgeMarker(raw: unknown, ctx: JudgeContext): MarkerVerdict {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { kind: 'invalid', reason: 'shape' }
   const o = raw as Record<string, unknown>
-  if (o['v'] !== 1) return { kind: 'invalid', reason: 'v' }
+  const v = o['v']
+  if (v !== 1 && v !== 2) return { kind: 'invalid', reason: 'v' }
   const sha = typeof o['sha'] === 'string' ? o['sha'].trim() : ''
   if (!sha) return { kind: 'invalid', reason: 'sha' }
   const gatePid = o['gatePid']
@@ -76,18 +89,38 @@ export function judgeMarker(raw: unknown, ctx: JudgeContext): MarkerVerdict {
   // A dead gate is checked before age and sha: whatever else the file says,
   // nobody is waiting behind it, so it must go.
   if (!ctx.pidAlive(gatePid)) return { kind: 'dead-gate', gatePid }
-  if (ctx.now - stagedAt > MARKER_MAX_AGE_MS) return { kind: 'invalid', reason: 'stale' }
+  if (ctx.now - stagedAt > (v === 2 ? MARKER_V2_MAX_AGE_MS : MARKER_MAX_AGE_MS)) return { kind: 'invalid', reason: 'stale' }
   const running = ctx.runningSha && ctx.runningSha !== 'dev' ? ctx.runningSha : null
   if (running && sameBuild(sha, running)) return { kind: 'same-build', sha }
+  const version = typeof o['version'] === 'string' ? o['version'] : ''
+  const note = typeof o['note'] === 'string' ? o['note'] : ''
+  const offeredAtMs = typeof o['offeredAt'] === 'string' ? Date.parse(o['offeredAt']) : NaN
   return {
     kind: 'ready',
     gatePid,
     state: {
       sha,
-      version: typeof o['version'] === 'string' ? o['version'] : '',
-      note: typeof o['note'] === 'string' ? o['note'] : '',
+      version,
+      note,
+      label: oneLine(o['label']) || oneLine(note) || (version ? `Version ${version}` : 'A new build'),
+      kind: v === 2 && UPDATE_KINDS.includes(o['kind'] as UpdateKind) ? (o['kind'] as UpdateKind) : 'fix',
+      notes: v === 2 ? readNotes(o['notes']) : (oneLine(note) ? [oneLine(note)] : []),
+      offeredAt: new Date(Number.isFinite(offeredAtMs) ? offeredAtMs : stagedAt).toISOString(),
+      decides: v === 2,
     },
   }
+}
+
+/** A string on one line, trimmed, at most MAX_NOTE_CHARS; '' for anything else. */
+function oneLine(x: unknown): string {
+  if (typeof x !== 'string') return ''
+  return x.replace(/\s+/g, ' ').trim().slice(0, MAX_NOTE_CHARS)
+}
+
+/** The plain one-line notes of a v 2 marker. Anything that isn't a non-empty string is left out. */
+export function readNotes(x: unknown): string[] {
+  if (!Array.isArray(x)) return []
+  return x.map(oneLine).filter((n) => n !== '').slice(0, MAX_NOTES)
 }
 
 /** What the app writes into update-go: the bare sha, one line (the gate strips whitespace). */
@@ -98,5 +131,5 @@ export function goFileBody(sha: string): string {
 export function sameState(a: UpdateReadyState | null, b: UpdateReadyState | null): boolean {
   if (a === b) return true
   if (!a || !b) return false
-  return a.sha === b.sha && a.version === b.version && a.note === b.note
+  return JSON.stringify(a) === JSON.stringify(b)
 }

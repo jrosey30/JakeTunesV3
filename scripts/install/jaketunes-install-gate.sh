@@ -1,5 +1,5 @@
 #!/bin/bash
-# jaketunes-install-gate.sh <staged .app> <backup name> [max wait minutes] [sha] [note]
+# jaketunes-install-gate.sh <staged .app> <backup name> [max wait minutes] [sha] [note] [release.json]
 #
 # Gated JakeTunes install on THIS Mac. Deployed copies: ~/bin/jaketunes-install-gate.sh
 # on the MacBook and ~/install-jt-wait.sh on workmini — this file is the source of
@@ -34,6 +34,23 @@
 #    as the audio checks pass — the ≥120 s idle requirement is waived, the audio hard
 #    stop never is. A go-file for another sha is ignored and deleted. The heavier
 #    checks (pmset / ioreg) keep their 15 s cadence until a go-file appears.
+#
+# The weekly release (2026-11-14, Jake: "Don't force anything, user decides in app whether he
+# wants to update now. update later in middle of night or something (user will tell you when)
+# or skip to next week."). A 6th argument, a JSON file { "label": "...", "kind": "weekly" |
+# "monthly" | "fix", "notes": ["one line", ...] }, makes the marker v 2 (the same fields plus
+# label, kind, notes, offeredAt) and changes the wait:
+#  - nothing installs on idle. Only the app's go-file installs: "<sha>" means now (the app writes
+#    it for Install now, and for Install at... once that time has come and nothing is playing or
+#    syncing; the app holds the time, so Change and Cancel never need this script). The audio and
+#    sync checks below still run first and are never waived.
+#  - "skip <sha>" in the go-file: this Mac skipped the release. The gate leaves, exit 5, nothing
+#    changed.
+#  - a marker that no longer carries our gatePid was replaced by the next release's gate: this
+#    one leaves, exit 6, nothing changed.
+#  - the heavy checks run only once a go-file is there, so a wait of days costs one stat every 2 s.
+#  The release file is read with plutil; one it can't read is an ABORT (exit 1) before any wait.
+#  Pass a max wait long enough for the choice (8 days = 11520 min for a weekly release).
 #  Both markers are removed on EVERY exit path (install done, any ABORT, timeout, a
 #  TERM/INT kill) by the EXIT trap — only our own marker (our gatePid / our sha), so a
 #  newer gate's files survive an older gate's death. No sha, or no data folder (a dev
@@ -42,6 +59,7 @@
 # Exit codes, for a caller that keeps ${PIPESTATUS[0]}. The recipes so far pipe this through grep and
 # read only the last line, so keep the messages too (README):
 #   0 installed · 1 ABORT (precondition, quit, copy, asar changed) · 3 gate timeout
+#   5 skipped on this Mac (v 2) · 6 replaced by a newer release's gate (v 2)
 #   4 installed, but no app came up: open -a said no, or said yes and nothing started.
 #     The watcher keeps asking.
 #
@@ -61,7 +79,7 @@ set -u
 # as "did not quit". So the first failure points stdout at /dev/null and flushes the text there.
 trap '' PIPE
 say() { echo "$@" || { exec >/dev/null; echo; }; }
-NEW="$1"; BK="$2"; MAXMIN="${3:-45}"; SHA="${4:-}"; NOTE="${5:-}"
+NEW="$1"; BK="$2"; MAXMIN="${3:-45}"; SHA="${4:-}"; NOTE="${5:-}"; RELEASE="${6:-}"
 APP="${JT_GATE_APP:-/Applications/JakeTunes.app}"
 ASAR="$APP/Contents/Resources/app.asar"
 LSREG="${JT_GATE_LSREGISTER:-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister}"
@@ -245,6 +263,23 @@ restore_previous() {
 # ── Marker protocol ──────────────────────────────────────────────────────────
 markers_on=0
 [ -n "$SHA" ] && [ -d "$DATA_DIR" ] && markers_on=1
+V2=0
+# A release file means "wait for a decision". Without a sha or a data folder there is no marker
+# for the app to read and no go-file to wait for, and falling back to the idle install would
+# install with nobody asked: stop instead.
+if [ -n "$RELEASE" ] && [ "$markers_on" != 1 ]; then
+  say "ABORT: a release file needs a sha and the app's data folder ($DATA_DIR) — nothing installs without a decision"; exit 1
+fi
+if [ -n "$RELEASE" ] && [ "$markers_on" = 1 ]; then
+  [ -f "$RELEASE" ] || { say "ABORT: no release file at $RELEASE"; exit 1; }
+  R_LABEL=$(plutil -extract label raw -o - "$RELEASE" 2>/dev/null) || { say "ABORT: the release file has no label"; exit 1; }
+  R_KIND=$(plutil -extract kind raw -o - "$RELEASE" 2>/dev/null) || { say "ABORT: the release file has no kind"; exit 1; }
+  case "$R_KIND" in weekly|monthly|fix) ;; *) say "ABORT: release kind must be weekly, monthly or fix (got $R_KIND)"; exit 1 ;; esac
+  R_NOTES=$(plutil -extract notes json -o - "$RELEASE" 2>/dev/null) || { say "ABORT: the release file has no notes list"; exit 1; }
+  R_NOTES=$(printf '%s' "$R_NOTES" | tr '\n\r\t' '   ')
+  case "$R_NOTES" in \[*\]) ;; *) say "ABORT: the release notes must be a list"; exit 1 ;; esac
+  V2=1
+fi
 
 # Minimal JSON string escaping (the note is free text from the pipeline).
 json_str() {
@@ -259,9 +294,16 @@ write_ready() {
   local ver tmp
   ver=$("$PLISTBUDDY" -c 'Print CFBundleShortVersionString' "$NEW/Contents/Info.plist" 2>/dev/null || true)
   tmp="$DATA_DIR/.update-ready.$$.tmp"
-  if printf '{ "v": 1, "sha": "%s", "version": "%s", "note": "%s", "stagedAt": "%s", "gatePid": %d }\n' \
-      "$(json_str "$SHA")" "$(json_str "$ver")" "$(json_str "$NOTE")" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$$" > "$tmp" \
-     && mv -f "$tmp" "$READY"; then
+  local now ok=1
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  if [ "$V2" = 1 ]; then
+    printf '{ "v": 2, "sha": "%s", "version": "%s", "note": "%s", "stagedAt": "%s", "gatePid": %d, "label": "%s", "kind": "%s", "offeredAt": "%s", "notes": %s }\n' \
+      "$(json_str "$SHA")" "$(json_str "$ver")" "$(json_str "$NOTE")" "$now" "$$" "$(json_str "$R_LABEL")" "$R_KIND" "$now" "$R_NOTES" > "$tmp" || ok=0
+  else
+    printf '{ "v": 1, "sha": "%s", "version": "%s", "note": "%s", "stagedAt": "%s", "gatePid": %d }\n' \
+      "$(json_str "$SHA")" "$(json_str "$ver")" "$(json_str "$NOTE")" "$now" "$$" > "$tmp" || ok=0
+  fi
+  if [ "$ok" = 1 ] && mv -f "$tmp" "$READY"; then
     say "$(date +%H:%M:%S) update-ready.json written for $SHA — the app can push the install through"
   else
     rm -f "$tmp"; say "WARN: could not write $READY — waiting on idle only"
@@ -269,6 +311,19 @@ write_ready() {
 }
 
 go_sha() { head -c 200 "$GO" 2>/dev/null | tr -d '[:space:]'; }
+
+# A v 2 gate: the app said "skip" for THIS build.
+skip_requested() {
+  [ "$V2" = 1 ] || return 1
+  [ -f "$GO" ] || return 1
+  [ "$(go_sha)" = "skip$SHA" ]
+}
+# A v 2 gate whose marker now names another gate: the next release replaced it.
+replaced() {
+  [ "$V2" = 1 ] || return 1
+  [ -f "$READY" ] || return 1
+  ! grep -q "\"gatePid\": $$[,} ]" "$READY" 2>/dev/null
+}
 
 # True when the app asked for THIS build. A go-file for another build is
 # removed so it cannot linger into a later gate — taken aside first, so a
@@ -282,6 +337,7 @@ go_requested() {
   local want; want=$(go_sha)
   [ "$want" = "$SHA" ] && return 0
   [ -n "$want" ] || return 1
+  [ "$want" = "skip$SHA" ] && return 1
   local aside="$GO.ignored.$$"
   mv -f "$GO" "$aside" 2>/dev/null || return 1
   local got; got=$(head -c 200 "$aside" 2>/dev/null | tr -d '[:space:]')
@@ -294,7 +350,7 @@ go_requested() {
 cleanup_markers() {
   [ "$markers_on" = 1 ] || return 0
   if [ -f "$READY" ] && grep -q "\"gatePid\": $$[,} ]" "$READY" 2>/dev/null; then rm -f "$READY"; fi
-  if [ -f "$GO" ] && [ "$(go_sha)" = "$SHA" ]; then rm -f "$GO"; fi
+  if [ -f "$GO" ] && { [ "$(go_sha)" = "$SHA" ] || [ "$(go_sha)" = "skip$SHA" ]; }; then rm -f "$GO"; fi
 }
 # Any exit after the quit, a kill included, still gets the app back. A kill between the two
 # renames leaves no bundle at the path, so the previous build goes back first.
@@ -330,6 +386,7 @@ gate() {
     ps -o comm= -p "$p" 2>/dev/null | grep -q JakeTunes && { echo "JakeTunes holds an audio stream"; return 1; }
   done
   if [ "${1:-0}" = 1 ]; then echo "clear (install clicked in the app, no audio)"; return 0; fi
+  if [ "$V2" = 1 ]; then echo "waiting for a decision in the app"; return 1; fi
   idle=$(( $(ioreg -c IOHIDSystem | awk '/HIDIdleTime/ {print $NF; exit}') / 1000000000 ))
   [ "$idle" -ge 120 ] || { echo "in use ${idle}s ago"; return 1; }
   echo "clear (idle ${idle}s, no audio)"; return 0
@@ -341,6 +398,13 @@ deadline=$(( $(date +%s) + MAXMIN * 60 )); last=""; heavy_at=0; why=""
 while :; do
   go=0; go_requested && go=1
   now=$(date +%s)
+  if skip_requested; then say "$(date +%H:%M:%S) skipped on this Mac in the app — nothing changed"; exit 5; fi
+  if replaced; then say "$(date +%H:%M:%S) a newer release's gate took over the offer — nothing changed"; exit 6; fi
+  if [ "$V2" = 1 ] && [ "$go" = 0 ]; then
+    [ "$last" != "decision" ] && say "$(date +%H:%M:%S) waiting: a decision in the app (Install now, Install at..., Skip to next week)" && last="decision"
+    [ "$now" -ge "$deadline" ] && { say "ABORT: no decision in ${MAXMIN} min — nothing changed"; exit 3; }
+    sleep "$GO_EVERY"; continue
+  fi
   if [ "$go" = 1 ] || [ $(( now - heavy_at )) -ge "$HEAVY_EVERY" ]; then
     heavy_at=$now
     if why="$(gate "$go")"; then break; fi
