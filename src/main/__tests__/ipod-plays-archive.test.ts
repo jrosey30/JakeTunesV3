@@ -80,7 +80,7 @@ async function fixture(opts: { plays?: number[]; manifest?: unknown; otg?: boole
   await writeFile(join(itunes, 'iTunesDB'), db(PATHS))
   await writeFile(join(itunes, 'Play Counts'), playCounts((opts.plays ?? [2, 0, 5]).map((plays) => ({ plays, unixS: 1_761_600_000 }))))
   if (opts.otg) {
-    const o = Buffer.alloc(20 + 8); o.write('mhpo', 0, 'latin1'); o.writeUInt32LE(20, 4); o.writeUInt32LE(2, 16)
+    const o = Buffer.alloc(20 + 8); o.write('mhpo', 0, 'latin1'); o.writeUInt32LE(20, 4); o.writeUInt32LE(4, 8); o.writeUInt32LE(2, 12)
     o.writeUInt32LE(2, 20); o.writeUInt32LE(0, 24)
     await writeFile(join(itunes, 'OTGPlaylistInfo'), o)
   }

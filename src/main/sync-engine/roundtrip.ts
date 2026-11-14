@@ -29,7 +29,7 @@
 
 import { createHash, randomUUID } from 'crypto'
 import { join } from 'path'
-import { appendFile, mkdir, readFile, writeFile, rename } from 'fs/promises'
+import { appendFile, mkdir, readdir, readFile, stat, writeFile, rename } from 'fs/promises'
 
 const MAC_EPOCH_OFFSET_S = 2082844800 // 1904-01-01 → 1970-01-01
 
@@ -53,17 +53,37 @@ export function parsePlayCounts(buf: Buffer): PlayCountEntry[] | null {
   return out
 }
 
-/** Parse one `OTGPlaylistInfo` file → positional catalog indexes. */
+/**
+ * Parse one `OTGPlaylistInfo` file → positional catalog indexes (0-based
+ * positions in the on-card iTunesDB's track list, in the order Jake picked).
+ *
+ * Layout, from libgpod (itdb_itunesdb.c process_OTG_file) and gnupod
+ * (GNUpod/iTunesDB.pm readOTG), which agree:
+ *   0  "mhpo"            4  header length (0x14 on every known firmware)
+ *   8  entry length (4)  12 number of entries     16 unknown
+ *   then one 32-bit index per entry, from the header's end.
+ * A file written the other way round starts "opmh" and every number in it is
+ * big-endian (libgpod's `reversed`). A longer header or entry is read by its
+ * stated length, so a later firmware's extra fields are skipped, not misread.
+ *
+ * 2026-11-13: this used to read the count from offset 16 (the unknown field),
+ * so it answered "no songs" for every real On-The-Go list.
+ */
 export function parseOtgIndexes(buf: Buffer): number[] {
-  if (buf.length < 20 || buf.toString('latin1', 0, 4) !== 'mhpo') return []
-  const headerLen = buf.readUInt32LE(4)
-  const n = buf.readUInt32LE(16)
-  if (headerLen < 20 || n < 0 || n > 100000) return []
+  if (buf.length < 16) return []
+  const tag = buf.toString('latin1', 0, 4)
+  const bigEndian = tag === 'opmh'
+  if (tag !== 'mhpo' && !bigEndian) return []
+  const u32 = (p: number): number => (bigEndian ? buf.readUInt32BE(p) : buf.readUInt32LE(p))
+  const headerLen = u32(4)
+  const entryLen = u32(8)
+  const n = u32(12)
+  if (headerLen < 0x14 || entryLen < 4 || entryLen > 64 || n > 100000) return []
   const out: number[] = []
   for (let i = 0; i < n; i++) {
-    const p = headerLen + i * 4
+    const p = headerLen + i * entryLen
     if (p + 4 > buf.length) break
-    out.push(buf.readUInt32LE(p))
+    out.push(u32(p))
   }
   return out
 }
@@ -119,6 +139,22 @@ export const ROUNDTRIP_LEDGER_FILE = 'ipod-roundtrip-ledger.jsonl'
 /** The OTG files the round trip reads, in snapshot order (order is part of the snapshot hash). */
 export const ROUNDTRIP_OTG_NAMES = ['OTGPlaylistInfo', 'OTGPlaylistInfo_1', 'OTGPlaylistInfo_2', 'OTGPlaylistInfo_3'] as const
 
+/**
+ * Every On-The-Go file in a folder listing, in the firmware's order: the
+ * first list is `OTGPlaylistInfo`, each later one `OTGPlaylistInfo_<n>`
+ * (libgpod reads them until one is missing; a listing reads them all). The
+ * first four keep the order ROUNDTRIP_OTG_NAMES always had, so a snapshot id
+ * recorded before 2026-11-13 is unchanged.
+ */
+export function otgFileNames(listing: readonly string[]): string[] {
+  const rows: Array<{ name: string; n: number }> = []
+  for (const name of listing) {
+    const m = /^OTGPlaylistInfo(?:_(\d+))?$/.exec(name)
+    if (m) rows.push({ name, n: m[1] ? Number(m[1]) : 0 })
+  }
+  return rows.sort((a, b) => a.n - b.n || a.name.localeCompare(b.name)).map((r) => r.name)
+}
+
 /** The bytes the round trip needs: firmware scratch + the catalog it is positional against. */
 export interface RoundTripSnapshot {
   playCounts: Buffer | null
@@ -130,7 +166,7 @@ export interface RoundTripSnapshot {
 export async function readRoundTripSnapshot(itunesDir: string): Promise<RoundTripSnapshot> {
   const playCounts = await readFile(join(itunesDir, 'Play Counts')).catch(() => null)
   const otg: Buffer[] = []
-  for (const name of ROUNDTRIP_OTG_NAMES) {
+  for (const name of otgFileNames(await readdir(itunesDir).catch(() => [] as string[]))) {
     const b = await readFile(join(itunesDir, name)).catch(() => null)
     if (b) otg.push(b)
   }
@@ -144,6 +180,18 @@ export function roundTripSnapshotId(snap: RoundTripSnapshot): string {
 }
 
 export type ManifestLike = { tracks?: Array<{ id: number; destPath?: string }> } | null
+
+/** One On-The-Go list as read off the card. */
+export interface OtgListPlan {
+  /** 1 = OTGPlaylistInfo, 2 = OTGPlaylistInfo_1 … (the order the files were read in). */
+  list: number
+  /** How many songs the list holds on the iPod. */
+  total: number
+  /** The ones matched to library songs, in his order. */
+  ids: number[]
+  /** The ones that couldn't be, and why. */
+  unmapped: Array<{ position: number; index: number; why: string }>
+}
 
 export interface RoundTripDelta { id: number; delta: number; lastPlayedMs: number }
 
@@ -159,6 +207,8 @@ export type RoundTripPlan =
       snapshot: string
       deltas: RoundTripDelta[]
       otgLists: number[][]
+      /** Every On-The-Go list on the card that holds a song, with what could not be matched. */
+      otg: OtgListPlan[]
       unmatched: number
       nextState: RoundTripState
     }
@@ -218,11 +268,26 @@ export function planRoundTrip(
     if (delta > 0) deltas.push({ id, delta, lastPlayedMs: e.lastPlayedMs })
     state.ingested[String(id)] = Math.max(prev, e.plays)
   }
-  const otgLists = otgIdx
-    .map((l) => l.map(idAt).filter((x): x is number => x !== null))
-    .filter((l) => l.length > 0)
+  const otg: OtgListPlan[] = []
+  otgIdx.forEach((indexes, i) => {
+    if (indexes.length === 0) return
+    const row: OtgListPlan = { list: i + 1, total: indexes.length, ids: [], unmapped: [] }
+    indexes.forEach((index, k) => {
+      const id = idAt(index)
+      if (id !== null) { row.ids.push(id); return }
+      const path = paths[index]
+      row.unmapped.push({
+        position: k + 1, index,
+        why: path === undefined
+          ? `it points at song ${index + 1} of the iPod’s list, which has ${paths.length}`
+          : `this Mac has no record of which library song the iPod keeps at ${path || '(no path)'}`,
+      })
+    })
+    otg.push(row)
+  })
+  const otgLists = otg.map((l) => l.ids).filter((l) => l.length > 0)
   state = { ...state, snapshot }
-  return { kind: 'plan', generation, snapshot, deltas, otgLists, unmatched, nextState: state }
+  return { kind: 'plan', generation, snapshot, deltas, otgLists, otg, unmatched, nextState: state }
 }
 
 export interface RoundTripHost {
@@ -231,6 +296,14 @@ export interface RoundTripHost {
   appendPlayEvents: (trackId: number, count: number, tsMs: number) => Promise<void>
   sendToRenderer: (channel: string, ...args: unknown[]) => void
   isSyncInFlight: () => boolean
+  /**
+   * Save the On-The-Go lists Jake made on the iPod as real playlists (library
+   * track ids, in his order). Called BEFORE the round-trip state is written:
+   * the pre-sync gate only lets a sync clear the card once that state shows
+   * this snapshot, so a list that could not be saved stops the sync with the
+   * iPod's own files untouched. Must be idempotent per snapshot.
+   */
+  saveOtgLists?: (snapshot: string, lists: Array<{ trackIds: number[]; onIpod: number }>) => Promise<void>
   /** A manifest kept with an archived copy of THIS catalog (by sha1), for when the live
    *  manifest can't map it — e.g. a sync that stopped after writing its in-flight manifest. */
   fallbackManifest?: (catalogSha1: string) => Promise<ManifestLike>
@@ -244,6 +317,12 @@ export type RoundTripOutcome =
   | { kind: 'brought-home'; snapshot: string; plays: number; tracks: number; otgLists: number; unmatched: number }
   | { kind: 'skipped'; reason: string }
   | { kind: 'cannot-map'; reason: string; plays: number }
+  /** An On-The-Go list on the iPod with not one song that could be matched. The plays
+   *  ARE recorded (a list never holds them back); this outcome is what makes the
+   *  pre-sync gate stop a sync, so the list stays on the iPod. */
+  | { kind: 'otg-unmatched'; list: number; songs: number; reason: string }
+  /** A never-synced iPod's leftover On-The-Go lists (a previous owner's): let go, logged. */
+  | { kind: 'otg-leftover-discarded'; lists: number; songs: number }
   | { kind: 'failed'; reason: string }
 
 export function describeRoundTripOutcome(o: RoundTripOutcome): string {
@@ -256,6 +335,8 @@ export function describeRoundTripOutcome(o: RoundTripOutcome): string {
       ` (snapshot ${o.snapshot.slice(0, 12)})`
     case 'skipped': return `skipped: ${o.reason}`
     case 'cannot-map': return `could not match ${o.plays} play(s): ${o.reason}`
+    case 'otg-leftover-discarded': return `this iPod has never been synced by JakeTunes: ${o.lists} leftover On-The-Go list(s) (${o.songs} song(s)) from before it was set up were not kept`
+    case 'otg-unmatched': return `On-The-Go list ${o.list} (${o.songs} song(s)) could not be matched to any library song: ${o.reason}`
     case 'failed': return `failed: ${o.reason}`
   }
 }
@@ -268,6 +349,8 @@ export async function readRoundTripState(stateDir: string): Promise<RoundTripSta
     return null
   }
 }
+
+const fileExists = (path: string): Promise<boolean> => stat(path).then(() => true, () => false)
 
 async function readManifest(path: string): Promise<ManifestLike> {
   try {
@@ -324,6 +407,9 @@ export async function applyRoundTripPlan(
   opts: { ledgerKind?: string; writeState?: boolean } = {},
 ): Promise<RoundTripOutcome> {
   const ledgerKind = opts.ledgerKind || 'roundtrip'
+  // On-The-Go first, and it may throw: nothing below records this snapshot as
+  // "brought home" unless the lists are saved (see RoundTripHost.saveOtgLists).
+  await saveOtg(plan, host)
   // An archive re-ingest must not overwrite the live per-generation state:
   // that state guards the card's CURRENT Play Counts against double counting.
   if (opts.writeState !== false) await writeRoundTripState(host.stateDir, plan.nextState)
@@ -370,6 +456,30 @@ export async function applyRoundTripPlan(
   return outcome
 }
 
+/** Save a plan's On-The-Go lists, saying for each what came home and what didn't. */
+async function saveOtg(plan: Extract<RoundTripPlan, { kind: 'plan' }>, host: RoundTripHost): Promise<void> {
+  for (const l of plan.otg) {
+    for (const u of l.unmapped) console.warn(`[roundtrip] On-The-Go list ${l.list}, song ${u.position}: not brought home — ${u.why}`)
+    if (l.unmapped.length) console.warn(`[roundtrip] On-The-Go list ${l.list}: ${l.ids.length} of ${l.total} songs came home`)
+  }
+  const lists = plan.otg.filter((l) => l.ids.length > 0).map((l) => ({ trackIds: l.ids, onIpod: l.total }))
+  if (lists.length > 0 && host.saveOtgLists) await host.saveOtgLists(plan.snapshot, lists)
+}
+
+/**
+ * A list on the iPod with songs in it and not one that can be matched would be
+ * LOST by a sync (the sync clears the iPod's On-The-Go files, and they can't
+ * stay: they are positions in the catalog the sync replaces). So the gate
+ * stops the sync and the list stays on the iPod. The plays on the card are
+ * recorded all the same.
+ */
+function unmatchedOtgList(plan: Extract<RoundTripPlan, { kind: 'plan' }>): RoundTripOutcome | null {
+  const lost = plan.otg.find((l) => l.total > 0 && l.ids.length === 0)
+  if (!lost) return null
+  for (const u of lost.unmapped) console.warn(`[roundtrip] On-The-Go list ${lost.list}, song ${u.position}: not brought home — ${u.why}`)
+  return { kind: 'otg-unmatched', list: lost.list, songs: lost.total, reason: lost.unmapped[0]?.why ?? 'no song in it could be read' }
+}
+
 // One round trip at a time per process. Plug-in and the pre-sync gate queue
 // behind each other (the second one sees "nothing new") instead of racing
 // on the state file or silently skipping.
@@ -399,12 +509,43 @@ export function ingestRoundTripSnapshot(snap: RoundTripSnapshot, host: RoundTrip
           plan = p2
         }
       }
+      // A snapshot recorded before 2026-11-13 was recorded with its On-The-Go
+      // lists unread (the count was read from the wrong field). The plays are
+      // home; the lists still have to be saved before anything clears the card.
+      if (plan.kind === 'already-recorded' && host.saveOtgLists && snap.otg.some((b) => parseOtgIndexes(b).length > 0)) {
+        const again = planRoundTrip(snap, manifest, prior ? { ...prior, snapshot: '' } : null)
+        if (again.kind === 'plan') {
+          await saveOtg(again, host)
+          const lost = unmatchedOtgList(again)
+          if (lost) return lost
+        }
+      }
+      // An iPod JakeTunes has never synced (no manifest was ever written for it) that
+      // arrives with On-The-Go lists and no plays: the lists are a previous owner's,
+      // made against a catalog this Mac never wrote, so nothing in them can be one of
+      // Jake's songs. They are let go, with a line in the log, instead of stopping the
+      // first sync. (The raw files are still copied to the plays archive before any
+      // sync clears them.) Plays on such an iPod are a different matter and still stop.
+      if (plan.kind === 'cannot-map' && plan.code === 'no-manifest' && plan.plays === 0 && host.saveOtgLists &&
+        !(await fileExists(join(host.stateDir, 'last-sync-manifest.json')))) {
+        const lists = snap.otg.map(parseOtgIndexes).filter((l) => l.length > 0)
+        const songs = lists.reduce((n, l) => n + l.length, 0)
+        console.warn(`[roundtrip] this iPod has never been synced by JakeTunes; the ${lists.length} On-The-Go list(s) on it (${songs} song(s)) are from before it was set up and can’t be matched to anything, so they are not kept`)
+        return { kind: 'otg-leftover-discarded', lists: lists.length, songs }
+      }
       switch (plan.kind) {
         case 'empty': return { kind: 'nothing-on-card' }
         case 'no-plays': return { kind: 'no-plays' }
         case 'already-recorded': return { kind: 'nothing-new', snapshot: plan.snapshot }
         case 'cannot-map': return { kind: 'cannot-map', reason: plan.reason, plays: plan.plays }
-        case 'plan': return await applyRoundTripPlan(plan, host)
+        case 'plan': {
+          // Plays first, always: a list that can't be matched must never hold them back.
+          // The lists that DO match are saved in the same step. Only then is the
+          // unmatched list reported, which is what stops a sync from erasing it.
+          const lost = host.saveOtgLists ? unmatchedOtgList(plan) : null
+          const done = await applyRoundTripPlan(plan, host)
+          return lost && done.kind !== 'failed' ? lost : done
+        }
       }
     } catch (err) {
       return { kind: 'failed', reason: err instanceof Error ? err.message : String(err) }

@@ -54,7 +54,7 @@ describe('sync wiring (source locks, step 2b)', () => {
     assert.doesNotMatch(syncIpc, /refuseUnlessOriginalIpod/)
     // 2026-10-28: the plug-in round trip resolves first (waiting out an in-flight ID adoption).
     assert.match(index, /onMountDetected: \(mount\) => void roundTripOnMount\(mount\)/)
-    assert.match(index, /async function roundTripOnMount\(mount: string\)[\s\S]*?resolveIpodState\(mount, STATE_DIR\)[\s\S]*?roundTripHostFor\(ipod\.stateDir\)/)
+    assert.match(index, /async function roundTripOnMount\(mount: string\)[\s\S]*?resolveIpodState\(mount, STATE_DIR\)[\s\S]*?roundTripHostFor\(ipod\.stateDir, ipod\.device\)/)
     assert.match(index, /\[delete-sync\] skipped — \$\{ipod\.refusal\}/)
     assert.doesNotMatch(index, /refuseUnlessOriginalIpod/)
   })

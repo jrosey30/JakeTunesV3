@@ -227,6 +227,9 @@ export function securePlaysRefusal(outcome: RoundTripOutcome | null, archiveDir:
   if (outcome.kind === 'cannot-map') {
     return `JakeTunes stopped before touching the iPod: it holds ${outcome.plays || 'some'} play${outcome.plays === 1 ? '' : 's'} that can’t be brought home, because ${outcome.reason}.${kept}`
   }
+  if (outcome.kind === 'otg-unmatched') {
+    return `JakeTunes stopped before touching the iPod: On-The-Go list ${outcome.list} on it (${outcome.songs} song${outcome.songs === 1 ? '' : 's'}) can’t be matched to your library, because ${outcome.reason}. A sync would erase that list, so it was left on the iPod. Your plays were recorded.${kept} To sync: on the iPod, go to Playlists → On-The-Go → Clear Playlist, then sync again.`
+  }
   if (outcome.kind === 'failed') return `JakeTunes stopped before touching the iPod: bringing its plays home failed (${outcome.reason}).${kept}`
   return `JakeTunes stopped before touching the iPod: it couldn’t confirm the iPod’s plays were recorded${why ? ` (${why})` : ''}.${kept}`
 }
@@ -264,6 +267,7 @@ export async function securePlaysBeforeSync(mount: string, host: RoundTripHost, 
   switch (outcome.kind) {
     case 'nothing-on-card':
     case 'no-plays':
+    case 'otg-leftover-discarded':
       return finish({ ok: true, archiveDir, outcome })
     case 'nothing-new':
     case 'brought-home': {
