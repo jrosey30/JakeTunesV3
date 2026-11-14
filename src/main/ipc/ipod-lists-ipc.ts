@@ -219,7 +219,8 @@ export function registerIpodListsIpc(ipc: IpcRegistrar, host: IpodListsHost): Ip
     return { ok: true, url }
   }, { public: true })
   // A month's or the year's cover, drawn by homemini (2026-11-13, main/period-cover-cache.ts).
-  ipc.handle('period-cover:get', async (_e, remoteId: unknown) => {
+  ipc.handle('period-cover:get', async (_e, remoteId: unknown, fresh?: unknown) => {
+    if (fresh === true && typeof remoteId === 'string') forgetPeriodCover(remoteId)      // Jake just changed it: ask homemini now
     const url = await periodCoverDataUrl({ stateDir: host.stateDir, fetchCover: source.cover }, remoteId).catch(() => null)
     return { ok: true, url }
   }, { public: true })
@@ -228,10 +229,17 @@ export function registerIpodListsIpc(ipc: IpcRegistrar, host: IpodListsHost): Ip
   ipc.handle('event-cover:get', async (_e, ym: unknown) => {
     const list = await eventCoverClient.list()
     if (!list) return { ok: false, away: true }
-    const proposal = list.find((p) => p.ym === ym) ?? null
+    const proposal = list.proposals.find((p) => p.ym === ym) ?? null
     const bytes = proposal?.hasPreview ? await eventCoverClient.preview(ym) : null
-    return { ok: true, proposal, preview: bytes ? `data:image/jpeg;base64,${bytes.toString('base64')}` : null }
+    return { ok: true, proposal, tones: list.tones, preview: bytes ? `data:image/jpeg;base64,${bytes.toString('base64')}` : null }
   }, { public: true })
+  // A write: the main window only. A photo plate in full colour or in the month's ink.
+  ipc.handle('event-cover:tone', async (_e, input: unknown) => {
+    const i = input as { id?: unknown; tone?: unknown } | null
+    const out = await eventCoverClient.tone(i?.id, i?.tone)
+    if (out.ok && typeof i?.id === 'string') forgetPeriodCover(i.id)
+    return out
+  }, { refuse: { ok: false, away: false, error: 'refused-sender' } })
   // A write: the main window only. A yes or a no changes what every device shows.
   ipc.handle('event-cover:decide', async (_e, input: unknown) => {
     const i = input as { ym?: unknown; decision?: unknown } | null

@@ -1241,7 +1241,7 @@ export default function SmartPlaylistView() {
       {/* The brain's picks waiting for Jake's OK (2026-11-09) */}
       {ipodListDevice && <IpodProposalsPanel deviceId={ipodListDevice} ipodName={ipodList?.name ?? title} />}
       {/* An event cover proposed for this month, and "This month's cover is…" (2026-11-13) */}
-      <EventCoverPanel playlistId={playlistId} />
+      <EventCoverPanel playlistId={playlistId} name={displayName} />
       {isPicksView && picks?.commentary && (
         <div className={`playlist-view-commentary playlist-view-commentary--${picksConfig?.kind === 'larry' ? 'larry' : picksConfig?.kind === 'djhands' ? 'djhands' : 'musicman'}`}>
           {picks.commentary}{' '}

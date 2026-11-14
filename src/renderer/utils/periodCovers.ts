@@ -19,7 +19,7 @@ export function refreshPeriodPlaylistCover(playlistId: string): void {
   const remoteId = periodCoverRemoteId(playlistId, BEST_OF_YEAR)
   if (!remoteId) return
   askedAt.set(remoteId, Date.now())
-  void window.electronAPI.periodCoverGet?.(remoteId)
+  void window.electronAPI.periodCoverGet?.(remoteId, true)
     .then((r) => { if (r?.url) { fetched.set(remoteId, r.url); for (const l of listeners) l() } })
     .catch(() => {})
 }

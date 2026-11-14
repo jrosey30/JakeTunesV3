@@ -1275,9 +1275,10 @@ declare global {
       ipodListSetColor?: (input: { deviceId: string; color: string }) => Promise<{ ok: true; color: string; homemini: 'saved' | 'later'; registry: boolean } | { ok: false; error: string }>
       ipodCoverGet?: (key: string) => Promise<{ ok: boolean; url: string | null }>
       // 2026-11-13 — a month's or the year's cover from homemini (src/main/period-cover-cache.ts)
-      periodCoverGet?: (remoteId: string) => Promise<{ ok: boolean; url: string | null }>
+      periodCoverGet?: (remoteId: string, fresh?: boolean) => Promise<{ ok: boolean; url: string | null }>
       // 2026-11-13 — event covers (src/common/event-covers.ts, src/main/event-cover-client.ts)
-      eventCoverGet?: (ym: string) => Promise<{ ok: boolean; away?: boolean; proposal?: import('../common/event-covers').EventCoverProposal | null; preview?: string | null }>
+      eventCoverGet?: (ym: string) => Promise<{ ok: boolean; away?: boolean; proposal?: import('../common/event-covers').EventCoverProposal | null; tones?: Record<string, import('../common/event-covers').PhotoTone>; preview?: string | null }>
+      eventCoverTone?: (input: { id: string; tone: import('../common/event-covers').PhotoTone }) => Promise<{ ok: boolean; away?: boolean; error?: string }>
       eventCoverDecide?: (input: { ym: string; decision: import('../common/event-covers').EventCoverDecision }) => Promise<{ ok: boolean; away?: boolean; error?: string }>
       eventCoverWish?: (input: { ym: string; text: string }) => Promise<{ ok: boolean; away?: boolean; error?: string }>
       // 2026-11-09 — Rename… an iPod list (src/main/ipod-list-rename.ts) and the Top 1000 (src/main/top1000-name.ts)

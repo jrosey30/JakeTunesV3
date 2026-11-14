@@ -77,3 +77,4 @@
 }
 .event-cover-wish { display: flex; gap: 6px; margin-top: 4px; }
 .event-cover-wish-input { flex: 1; min-width: 0; font-size: 12px; padding: 3px 6px; }
+.event-cover-tools { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 2px; }
