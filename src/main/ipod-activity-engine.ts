@@ -22,6 +22,7 @@
  * (enforced in ipod-sync-origin.ts before we run).
  */
 
+import { cardTooSmall } from './ipod-card-fit.ts'
 import { spawn } from 'child_process'
 import { createHash } from 'crypto'
 import { appendFile, copyFile, mkdir, readFile, stat, statfs, lstat, unlink } from 'fs/promises'
@@ -893,6 +894,16 @@ async function runActivitySyncHolding(
       copySize: e.knownSourceSize ?? (await stat(e.srcToCopy).catch(() => null))?.size ?? 0,
       sourceSize: e.masterSize || 0,
     })
+  }
+  // Does the set fit on the card? Asked here, before anything on it is touched
+  // (ipod-card-fit.ts): a set too big used to copy until the card was full,
+  // fail its verify, and leave the card emptied.
+  const tooSmall = cardTooSmall(candidates.map((c) => c.copySize),
+    await (host.cardCapacityBytes ?? cardCapacityBytes)(IPOD_MOUNT).catch(() => null), input.ipodName)
+  if (tooSmall) {
+    console.error(`activity-sync: REFUSING — ${tooSmall}`)
+    await host.writeJournal(null)
+    return fail({ copied: 0, error: tooSmall, target })
   }
   const proof = proveCardForSwap(priorManifestRaw, priorSealRaw, await readCardState(IPOD_MOUNT))
   let swap: SwapPlan | null = null

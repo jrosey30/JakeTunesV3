@@ -10,7 +10,7 @@
  *     songs in the library fill the seats (pickReplacementTracks), and the engine
  *     keeps its own copy-time fill for the Original as before.
  *   • every other registered iPod: its whole list from homemini, refreshed first
- *     (ipod-list-pool.ts), at most 1,000, never filler. A song that can't go on is
+ *     (ipod-list-pool.ts), at most its cap (never past IPOD_LIST_MAX), never filler. A song that can't go on is
  *     left off and named.
  *   • an unknown iPod, or none: refused. The set-up strip above the page handles
  *     an unknown one.
@@ -24,8 +24,9 @@
 import { activityTrackCanBoard, leftOffSong, pickReplacementTracks, planListOnlyBoarding, type LeftOffSong } from './activity-fill.ts'
 import { pickFromTop1000 } from '../common/top1000-sync.ts'
 import type { OneSyncPlan } from '../common/ipod-one-sync-plan.ts'
+import { IPOD_LIST_MAX } from '../common/ipod-list-doc.ts'
 
-/** Every iPod carries at most this many songs (and the Original exactly this many). */
+/** The Original carries exactly this many songs. Another iPod carries its whole list (at most IPOD_LIST_MAX). */
 export const ONE_SYNC_SIZE = 1000
 
 export type OneSyncIpod =
@@ -140,7 +141,7 @@ async function planList(
     if (ineligible.has(id)) { leftOff.push(leftOffSong(t, 'it belongs to a full concert, which stays off iPods')); continue }
     rows.push(t)
   }
-  const plan = planListOnlyBoarding(rows, ONE_SYNC_SIZE, (t) => Number(t.id))
+  const plan = planListOnlyBoarding(rows, IPOD_LIST_MAX, (t) => Number(t.id))
   leftOff.push(...plan.leftOff)
   if (plan.pool.length === 0) {
     return { ok: false, ...base, error: `None of the ${list.ids.length.toLocaleString('en-US')} songs on ${ipod.name}’s list can go on it. Nothing on the iPod was changed.` }

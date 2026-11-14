@@ -86,7 +86,7 @@ describe('ipod-lists:get on a replica (workmini, homemini\'s app)', () => {
   })
   it('a cache entry that fails the parser is dropped, never guessed at', async () => {
     const stateDir = tmp()
-    await gatherIpodLists(deps({ stateDir, all: async () => [...HOMEMINI, { ...list('bad-list-01', 'Bad', []), cap: 5000 } as IpodList] }))
+    await gatherIpodLists(deps({ stateDir, all: async () => [...HOMEMINI, { ...list('bad-list-01', 'Bad', []), cap: 5001 } as IpodList] }))
     const kept = await readListsCache(ipodListsCachePath(stateDir))
     assert.deepEqual(kept?.map((l) => l.id), [PUNK_ID, 'y2k-revival-01', 'best-of-bandcamp'])
   })

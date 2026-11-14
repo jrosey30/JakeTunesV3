@@ -9,7 +9,7 @@
  *     exactly as the one-button sync picks them (main/ipod-one-sync.ts
  *     planOriginal: pickFromTop1000, then the most-loved songs fill the seats).
  *     A filler song already on the iPod that the sync would keep is not "out".
- *   • every other iPod: its homemini list (newest first), at most 1,000, the
+ *   • every other iPod: its homemini list (newest first), at most IPOD_LIST_MAX, the
  *     songs that can go on.
  *
  * One macOS notification (and one ntfy push when a topic is set) per distinct
@@ -40,8 +40,9 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pickFromTop1000 } from '../common/top1000-sync.ts'
 import type { IpodDeviceMarker } from '../common/ipod-identity.ts'
+import { IPOD_LIST_MAX } from '../common/ipod-list-doc.ts'
 
-/** No iPod carries more than this (ONE_SYNC_SIZE in ipod-one-sync.ts, IPOD_LIST_MAX). */
+/** The Original carries this many (ONE_SYNC_SIZE in ipod-one-sync.ts). Another iPod: its list, at most IPOD_LIST_MAX. */
 export const SYNC_READY_CAP = 1000
 /** At most one notice per iPod in this window, however often its difference shifts. */
 export const SYNC_READY_QUIET_MS = 6 * 3600 * 1000
@@ -231,7 +232,7 @@ export function createIpodSyncReady(deps: IpodSyncReadyDeps): IpodSyncReadyRunne
     // is homemini's word on it (no everyDays = the list has none).
     const ids = Array.isArray(answer) ? answer : answer.ids
     const cadence = Array.isArray(answer) ? undefined : { everyDays: answer.everyDays }
-    const capped = ids.slice(0, SYNC_READY_CAP)
+    const capped = ids.slice(0, IPOD_LIST_MAX)
     return { target: boarding ? capped.filter((id) => boarding.canBoard(id)) : capped, keep: new Set(), ...(cadence ? { cadence } : {}) }
   }
 
@@ -250,7 +251,7 @@ export function createIpodSyncReady(deps: IpodSyncReadyDeps): IpodSyncReadyRunne
       }
       const t = await targetFor(device, boarding, given && given.deviceId === device.id ? given.answer : undefined)
       if (!t) continue   // homemini away / no list: say nothing, keep the state
-      const diff = diffIpodTarget({ target: t.target, onIpod, keep: t.keep })
+      const diff = diffIpodTarget({ target: t.target, onIpod, keep: t.keep, cap: device.primary ? SYNC_READY_CAP : IPOD_LIST_MAX })
       diffs.set(device.id, diff)
       // The cadence: this read's when it says, else the last one seen (a read that
       // doesn't carry it still waits out the window homemini last named).

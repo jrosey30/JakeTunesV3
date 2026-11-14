@@ -16,7 +16,7 @@ export type OneSyncPlan =
       color: string | null
       /** The playlist name on the iPod. */
       setName: string
-      /** What goes on, in order. Never more than 1,000. */
+      /** What goes on, in order. The Original: 1,000. Another iPod: its list, never more than IPOD_LIST_MAX. */
       trackIds: number[]
       /** What can't go on, each with a plain reason (list-only iPods only). */
       leftOff: OneSyncLeftOff[]

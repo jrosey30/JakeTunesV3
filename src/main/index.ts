@@ -4403,7 +4403,7 @@ async function laptopFreeBytes(): Promise<number> {
     return Number(s.bavail) * Number(s.bsize)
   } catch (err) {
     console.warn('[disk] free-space check failed:', err instanceof Error ? err.message : err)
-    return 0
+    return Number.NaN   // unknown, never "0 free": every caller treats not-a-number as unknown (a floor refuses, a hold stays)
   }
 }
 function homeminiPullOpts(colonPath: string, trackId: number | string) {

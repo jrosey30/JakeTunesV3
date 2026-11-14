@@ -17,13 +17,21 @@
  * (main/ipod-list-pool.ts). Pure — node --test loads it.
  *
  * ⚠️ TWIN: JakeTunesMobile backend, the GET /api/ipod-lists/:deviceId route and
- * the list's writer — the shape, the 1000 ceiling and newest-first order must match.
+ * the list's writer — the shape, the ceiling (its MAX_CAP, util/ipodLists.ts) and newest-first
+ * order must match.
  */
 
 import { isIpodModel, normalizeIpodColor, type IpodModel } from './ipod-covers.ts'
 
-/** No iPod list is ever bigger than this, whatever homemini says its cap is. */
-export const IPOD_LIST_MAX = 1000
+/**
+ * No iPod list is ever bigger than this, whatever homemini says its cap is.
+ * Each list has its own `cap` on homemini (1000 for a new list, raised by hand);
+ * this is the most any cap may be. 2026-11-13, Jake: "we will raise punkpod
+ * capacity to 5000 songs. it is 256 GB. lets use it." The Original's Top 1000
+ * is not a list and stays 1,000 (ONE_SYNC_SIZE, main/ipod-one-sync.ts).
+ * The catalog writer is proven at this size (__tests__/ipod-db-5000.test.ts).
+ */
+export const IPOD_LIST_MAX = 5000
 
 export type IpodListAddedBy = 'seed' | 'claude' | 'brain'
 
