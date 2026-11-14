@@ -59,6 +59,7 @@ import { ensureLiveSetsLoaded, reloadLiveSets } from './liveSets'
 import { hydrateScrollCacheFromUiState } from './hooks/useScrollPersistence'
 import { restoreActionFor, savedLocation } from './nav-history'
 import { initNavDx } from './navDxDom'
+import { noteLaunch } from './usageLog'
 import { AppSettings, DEFAULT_APP_SETTINGS, type Playlist, type SmartPlaylistId, type Track } from './types'
 import { parseOpenIpodListAction } from '../common/ipod-list-proposals'
 import { ipodListPlaylistId } from '../common/ipod-list-doc'
@@ -209,6 +210,10 @@ function AppInner() {
     const t = window.setTimeout(() => setSplashMinElapsed(true), 3600)
     return () => window.clearTimeout(t)
   }, [])
+  // Usage log (renderer/usageLog.ts): the library is loaded (uiReady), and the
+  // first frame with it on screen (the splash gone).
+  useEffect(() => { if (uiReady) noteLaunch('launch.library-loaded') }, [uiReady])
+  useEffect(() => { if (uiReady && splashMinElapsed) noteLaunch('launch.library-painted') }, [uiReady, splashMinElapsed])
 
   // Load persisted settings once on mount and push to the audio layer.
   useEffect(() => {

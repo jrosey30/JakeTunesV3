@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { IpodDeviceMarker, IpodIdentity } from '../common/ipod-identity'
 import type { IpodSetupLook } from '../common/ipod-onboarding'
-import type { UpdateReadyState } from '../common/update-ready'
+import type { UpdateChoice, UpdateReadyState } from '../common/update-ready'
 import type { DialogueInput, DialogueResult } from '../common/speech'
 import type { AskResult, AskSubject } from '../common/music-man-packet'
 
@@ -31,7 +31,8 @@ const electronAPI = {
   // it and pushes { sha, version, note } — or null once it stops counting.
   // installUpdateNow() pauses the music through the media-key path and writes
   // update-go, so the gate installs without waiting for 120 s of idle.
-  // ⚠️ TWIN: src/renderer/types.ts (Window.electronAPI) declares these three.
+  // ⚠️ TWIN: src/renderer/types.ts (Window.electronAPI) declares these, and the
+  // two below (decideUpdate / cancelUpdateDecision).
   onUpdateReady: (callback: (state: UpdateReadyState | null) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, state: UpdateReadyState | null) => callback(state)
     ipcRenderer.on('update-ready', handler)
@@ -39,6 +40,12 @@ const electronAPI = {
   },
   getUpdateReady: (): Promise<{ ok: boolean; state: UpdateReadyState | null }> => ipcRenderer.invoke('update-ready:get'),
   installUpdateNow: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('install-update-now'),
+  // 2026-11-14 — the weekly release: Jake's answer (now / at a time / skip to next week),
+  // and taking back a now or an at before the install starts (main/update-ready.ts).
+  decideUpdate: (choice: UpdateChoice): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('update-ready:decide', choice),
+  cancelUpdateDecision: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('update-ready:cancel'),
+  // The usage log (renderer/usageLog.ts → main/usage-log-start.ts). One-way, batched.
+  usageLog: (events: unknown[]): void => { ipcRenderer.send('usage-log:events', events) },
   setLibraryContext: (ctx: string): Promise<void> => ipcRenderer.invoke('set-library-context', ctx),
   musicmanChat: (messages: { role: string; content: string }[], context?: string, subject?: AskSubject | null, nowPlayingId?: number | null): Promise<{ ok: boolean; text: string; textRaw: string; createdPlaylist?: { name: string; trackIds: number[] } | null }> =>
     ipcRenderer.invoke('musicman-chat', messages, context, subject, nowPlayingId),

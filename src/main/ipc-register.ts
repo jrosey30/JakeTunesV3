@@ -69,6 +69,47 @@ export function assertIpcRegisterOptions(
   return { public: isPublic }
 }
 
+/**
+ * Every invoke that went through a registrar, once it has answered: the usage
+ * log (usage-log-start.ts) times them. `ok` is false when the handler threw
+ * or answered `{ ok: false }`. Arguments and results never leave here.
+ */
+export interface IpcObservation { channel: string; ms: number; ok: boolean; error?: string; refused?: boolean }
+export type IpcObserver = (o: IpcObservation) => void
+let ipcObserver: IpcObserver | null = null
+/** Channels with an invoke still running (a CD rip, an iPod sync): name → how many. */
+const inFlight = new Map<string, number>()
+
+export function observeIpc(fn: IpcObserver | null): void { ipcObserver = fn }
+export function ipcInFlight(channel: string): boolean { return (inFlight.get(channel) ?? 0) > 0 }
+
+function shortError(err: unknown): string {
+  return (err instanceof Error ? err.message : String(err)).slice(0, 200)
+}
+
+/** Time one invoke for the observer. The observer can never change what the renderer gets. */
+export async function observed<R>(channel: string, run: () => Promise<R> | R): Promise<R> {
+  const began = performance.now()
+  inFlight.set(channel, (inFlight.get(channel) ?? 0) + 1)
+  const tell = (o: Omit<IpcObservation, 'channel' | 'ms'>): void => {
+    const n = (inFlight.get(channel) ?? 1) - 1
+    if (n > 0) inFlight.set(channel, n)
+    else inFlight.delete(channel)
+    if (!ipcObserver) return
+    try { ipcObserver({ channel, ms: Math.round(performance.now() - began), ...o }) } catch { /* observation only */ }
+  }
+  try {
+    const result = await run()
+    const r = result as { ok?: unknown; error?: unknown } | null
+    const failed = !!r && typeof r === 'object' && r.ok === false
+    tell({ ok: !failed, ...(failed && r.error !== undefined ? { error: shortError(r.error) } : {}), ...(failed && r.error === 'refused-sender' ? { refused: true } : {}) })
+    return result
+  } catch (err) {
+    tell({ ok: false, error: shortError(err) })
+    throw err
+  }
+}
+
 export function createIpcRegistrar(getMainWindow: MainWindowAccessor): IpcRegistrar {
   // Lazy so importing this module under node:test does not need Electron.
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -91,7 +132,7 @@ export function createIpcRegistrar(getMainWindow: MainWindowAccessor): IpcRegist
         )
         if (refused !== null) return refused
       }
-      return listener(event, ...(args as Args))
+      return observed(channel, () => listener(event, ...(args as Args)))
     })
   }
 

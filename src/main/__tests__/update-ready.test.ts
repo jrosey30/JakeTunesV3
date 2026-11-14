@@ -41,6 +41,13 @@ function marker(over: Record<string, unknown> = {}): Record<string, unknown> {
   return { v: 1, sha: SHA, version: '6.0.0', note: 'Album page + back pill', stagedAt: '2026-10-30T17:50:00Z', gatePid: 4242, ...over }
 }
 
+/** What a v 1 marker becomes: the old three fields, the note standing in for the label and the notes. */
+const V1_OFFER = {
+  sha: SHA, version: '6.0.0', note: 'Album page + back pill', label: 'Album page + back pill', kind: 'fix' as const,
+  notes: ['Album page + back pill'], offeredAt: '2026-10-30T17:50:00.000Z', decides: false,
+}
+const V1_STATE: UpdateReadyState = { ...V1_OFFER, phase: 'offered', at: null, waitingFor: null }
+
 describe('update-ready core — which markers count', () => {
   const alive = { now: NOW, runningSha: RUNNING, pidAlive: () => true }
 
@@ -48,7 +55,7 @@ describe('update-ready core — which markers count', () => {
     const v = judgeMarker(marker(), alive)
     assert.equal(v.kind, 'ready')
     if (v.kind === 'ready') {
-      assert.deepEqual(v.state, { sha: SHA, version: '6.0.0', note: 'Album page + back pill' })
+      assert.deepEqual(v.state, V1_OFFER)
       assert.equal(v.gatePid, 4242)
     }
   })
@@ -56,14 +63,14 @@ describe('update-ready core — which markers count', () => {
   test('missing version / note read as empty strings, never as a rejection', () => {
     const v = judgeMarker(marker({ version: undefined, note: 7 }), alive)
     assert.equal(v.kind, 'ready')
-    if (v.kind === 'ready') assert.deepEqual(v.state, { sha: SHA, version: '', note: '' })
+    if (v.kind === 'ready') assert.deepEqual(v.state, { ...V1_OFFER, version: '', note: '', label: 'A new build', notes: [] })
   })
 
   test('shape rejections name their reason', () => {
     assert.deepEqual(judgeMarker(null, alive), { kind: 'invalid', reason: 'shape' })
     assert.deepEqual(judgeMarker('{}', alive), { kind: 'invalid', reason: 'shape' })
     assert.deepEqual(judgeMarker([], alive), { kind: 'invalid', reason: 'shape' })
-    assert.deepEqual(judgeMarker(marker({ v: 2 }), alive), { kind: 'invalid', reason: 'v' })
+    assert.deepEqual(judgeMarker(marker({ v: 3 }), alive), { kind: 'invalid', reason: 'v' })
     assert.deepEqual(judgeMarker(marker({ v: '1' }), alive), { kind: 'invalid', reason: 'v' })
     assert.deepEqual(judgeMarker(marker({ sha: '' }), alive), { kind: 'invalid', reason: 'sha' })
     assert.deepEqual(judgeMarker(marker({ sha: '   ' }), alive), { kind: 'invalid', reason: 'sha' })
@@ -114,7 +121,7 @@ describe('update-ready core — which markers count', () => {
     assert.equal(parseMarkerText(''), null)
     assert.deepEqual(parseMarkerText('{"v":1}'), { v: 1 })
     assert.equal(goFileBody(`  ${SHA} `), `${SHA}\n`)
-    const a: UpdateReadyState = { sha: SHA, version: '6.0.0', note: 'x' }
+    const a: UpdateReadyState = { ...V1_STATE, note: 'x' }
     assert.ok(sameState(a, { ...a }))
     assert.ok(sameState(null, null))
     assert.ok(!sameState(a, null))
@@ -239,9 +246,9 @@ describe('update-ready watcher — the marker reaches the renderer', () => {
       h.write(marker())
       await h.handle.check()
       await h.handle.check()   // unchanged → no second push
-      assert.deepEqual(h.sent, [{ sha: SHA, version: '6.0.0', note: 'Album page + back pill' }])
+      assert.deepEqual(h.sent, [V1_STATE])
       assert.deepEqual(h.rows.filter((r) => r.tag === 'update-ready.seen').length, 1)
-      assert.deepEqual(await h.invoke('update-ready:get'), { ok: true, state: { sha: SHA, version: '6.0.0', note: 'Album page + back pill' } })
+      assert.deepEqual(await h.invoke('update-ready:get'), { ok: true, state: V1_STATE })
     } finally { h.cleanup() }
   })
 
@@ -253,7 +260,7 @@ describe('update-ready watcher — the marker reaches the renderer', () => {
       unlinkSync(h.markerPath)
       await h.handle.check()
       await h.handle.check()
-      assert.deepEqual(h.sent, [{ sha: SHA, version: '6.0.0', note: 'Album page + back pill' }, null])
+      assert.deepEqual(h.sent, [V1_STATE, null])
       assert.equal(h.rows.filter((r) => r.tag === 'update-ready.gone').length, 1)
     } finally { h.cleanup() }
   })
@@ -310,7 +317,7 @@ describe('update-ready watcher — the marker reaches the renderer', () => {
       assert.deepEqual(h.actions, ['pause'])
       assert.equal(goExistedAtPause, false, 'the music is paused before the gate is told to go')
       assert.equal(readFileSync(h.goPath, 'utf8'), `${SHA}\n`)
-      assert.deepEqual(h.rows.find((r) => r.tag === 'update-ready.install-now')?.detail, { sha: SHA, version: '6.0.0' })
+      assert.deepEqual(h.rows.find((r) => r.tag === 'update-ready.install-now')?.detail, { sha: SHA, version: '6.0.0', choice: 'now' })
       // The gate removes its marker when it exits — the bar follows.
       unlinkSync(h.markerPath)
       await h.handle.check()
@@ -387,25 +394,33 @@ describe('update-ready wiring — the tested code is the live code', () => {
     assert.match(line, /runningSha: getBuildProvenance\(app\.getVersion\(\)\)\.buildSha/, 'the running build is identified by its build sha, not its version')
     assert.match(line, /userData: app\.getPath\('userData'\)/, 'the markers live in userData, where the gate writes them')
     assert.match(line, /sendToRenderer\('update-ready'/, 'the push channel the preload listens on')
+    assert.match(line, /playing: \(\) => playbackActive/, 'an "Install at…" waits while the music plays')
+    assert.match(line, /busy: \(\) => usageLog\.busyReason\(\)/, 'and while a CD rip runs')
+    assert.match(line, /usage: \(name, detail, ok\) => usageLog\.log\('update'/, 'homemini hears each decision through the usage log')
   })
 
   test('preload and renderer types are twins on the three entry points', () => {
-    for (const name of ['onUpdateReady', 'getUpdateReady', 'installUpdateNow']) {
+    for (const name of ['onUpdateReady', 'getUpdateReady', 'installUpdateNow', 'decideUpdate', 'cancelUpdateDecision']) {
       assert.match(preload, new RegExp(`^  ${name}: `, 'm'), `preload exposes ${name}`)
       assert.match(types, new RegExp(`^      ${name}: `, 'm'), `renderer types declare ${name}`)
     }
     assert.match(preload, /ipcRenderer\.on\('update-ready', handler\)/)
     assert.match(preload, /ipcRenderer\.invoke\('update-ready:get'\)/)
     assert.match(preload, /ipcRenderer\.invoke\('install-update-now'\)/)
+    assert.match(preload, /ipcRenderer\.invoke\('update-ready:decide', choice\)/)
+    assert.match(preload, /ipcRenderer\.invoke\('update-ready:cancel'\)/)
     assert.match(preload, /TWIN: src\/renderer\/types\.ts/)
     assert.match(types, /TWIN: src\/preload\/index\.ts \(onUpdateReady/)
   })
 
-  test('the status bar draws the indicator and asks through ConfirmDialog; App mounts the bar once, globally', () => {
+  test('the status bar draws the three choices and asks through ConfirmDialog; App mounts the bar once, globally', () => {
+    const choices = readFileSync(join(SRC, 'renderer/components/chrome/UpdateChoices.tsx'), 'utf-8')
     assert.match(statusBar, /useUpdateReady\(\)/)
-    assert.match(statusBar, /Update ready · Install/)
-    assert.match(statusBar, /Installing — back in a moment/)
-    assert.match(statusBar, /update\.afterSync \? 'Install after the iPod sync'/)
+    assert.match(statusBar, /<UpdateChoices/)
+    for (const words of ['Update ready: ', '>Install now<', '>Install at…<', '>Skip to next week<', 'Update installs at ', '>Change<', '>Cancel<', 'Installing — back in a moment', "p.afterSync ? 'Install after the iPod sync'"]) {
+      assert.ok(choices.includes(words), `UpdateChoices says ${words}`)
+    }
+    assert.match(statusBar, /message="Skip this update\?"/)
     assert.match(hook, /error === INSTALL_AFTER_SYNC/)
     assert.match(statusBar, /message="Install the update\?"/)
     assert.match(statusBar, /JakeTunes will pause, close and come back in about 20 seconds\./)

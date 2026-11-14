@@ -185,3 +185,50 @@ bundle as the install target. The overrides it uses — `JT_GATE_APP`,
 `JT_GATE_STAY_S`, `JT_GATE_LS_LIMIT_S` — all default to the real thing and are
 not used by the pipeline. `src/main/__tests__/update-ready.test.ts` covers the
 app side and locks the wiring. Both run in `npm run check`.
+
+## The weekly release: three answers (2026-11-14)
+
+Jake: *"Don't force anything, user decides in app whether he wants to update now. update
+later in middle of night or something (user will tell you when) or skip to next week."*
+
+Give the gate a 6th argument, a release file, and it waits for a decision instead of idle:
+
+```sh
+cat > "$SP/release.json" <<'JSON'
+{ "label": "This week's fixes", "kind": "weekly", "notes": ["Album pages open faster", "…"] }
+JSON
+# kind: weekly | monthly | fix. Max wait: 8 days (11520 min). Run it detached on each Mac
+# (nohup … &): an ssh session held open for a week is not something to rely on.
+~/bin/jaketunes-install-gate.sh "$STAGED" "JakeTunes-prev-$TAG-$SHA.app" 11520 "$SHA" "$NOTE" "$SP/release.json"
+```
+
+- The marker is `v: 2`: the v 1 fields plus `label`, `kind`, `notes` (list of one-line
+  strings) and `offeredAt`. The app trusts it for 9 days, not 12 hours.
+- **Nothing installs on idle.** The heavy checks don't run until the app says go, so a
+  week of waiting is one `stat` every 2 s.
+- **The one file the gate reads is `update-go`.** The app holds the decision
+  (`update-decision.json` in its own data folder, saved before anything acts on it) and
+  writes `update-go` only when it is time:
+  - `<sha>`: install now. Written at once for **Install now** (after pausing the music),
+    and for **Install at…** once that time has come *and* nothing is playing and no iPod
+    sync or CD rip runs; otherwise at the first moment after that nothing is. An install
+    that came due while the app was closed waits 5 minutes after launch. The gate's own
+    audio and sync stops still run first.
+  - `skip <sha>`: **Skip to next week**. The gate leaves with exit 5, nothing changed. The
+    app writes it again whenever that release's marker reappears, and never shows it again.
+- A marker that no longer carries the gate's pid was replaced by the next release's gate:
+  the older gate leaves with exit 6 and the new marker stays.
+- A release file `plutil` can't read (no label, a kind other than the three, notes not a
+  list) is exit 1 before any offer is made.
+- Change and Cancel happen entirely in the app, until `update-go` is written; after that the
+  bar says "Installing — back in a moment" and refuses both.
+- Without the 6th argument the gate is the v 1 gate, idle install included. A v 1 offer still
+  shows the three answers, but **Skip** only hides it there: a v 1 gate installs on idle anyway.
+- A reboot ends a waiting gate (the marker goes with it); the decision stays on disk and
+  applies if the same release is offered again.
+
+Each decision also reaches homemini as an `update` event in the usage log
+(`update.offered`, `update.decide`, `update.change`, `update.cancel`,
+`update.install.waiting`, `update.install.start`, and on the next launch `update.installed`
+or `update.install-not-landed`). Tests: `install-gate-release.test.ts` (the script),
+`update-decision.test.ts` (the app). Pictures of the bar: `node tools/render-update-choices.mjs <dir>`.
