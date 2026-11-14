@@ -1,5 +1,5 @@
 import { albumAdjacent } from '../../common/album-adjacent'
-import { resolveSeamAdvance } from '../queue-seam'
+import { resolveSeamAdvance, nowPlayingFollows } from '../queue-seam'
 import { useRef, useEffect, useCallback } from 'react'
 import { Howl } from 'howler'
 import { usePlayback } from '../context/PlaybackContext'
@@ -1572,6 +1572,8 @@ export function useAudio(opts?: { primary?: boolean }) {
         return
       }
       notifyToast(`Couldn't play '${failed.title}' — skipping to the next track`)
+      // The screen names what sounds (queue-seam.ts nowPlayingFollows).
+      dispatchRef.current(nowPlayingFollows(next, seam.nextIndex))
       loadAndPlay(next, s.queue, seam.nextIndex)
     }
   })

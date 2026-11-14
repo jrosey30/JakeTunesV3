@@ -63,3 +63,23 @@ export function resolveSeamAdvance(
   if (nextIndex >= queue.length) nextIndex = repeat === 'all' ? 0 : -1
   return { currentIndex, nextIndex }
 }
+
+/**
+ * The screen follows the sound (2026-11-14, Jake: "you do realize love
+ * takes miles is playing right now right"). Every place the engine starts
+ * a DIFFERENT song must tell the playback state which song, by the track
+ * itself, in the same breath as it loads it. This is that message: the
+ * PLAY_TRACK the seams already send, located by id in the live queue
+ * (`locateInQueue`; the index is only a hint for duplicates).
+ *
+ * The failure skip (Brief 160's failAdvance) loaded the next song and sent
+ * nothing, so after "Stalks (Greenpoint Mix)" failed to decode, the Now
+ * Playing display, the artwork and the list's speaker icon kept naming
+ * Stalks while Love Takes Miles played, and a later failure of the song
+ * actually sounding was ignored as "stale" (silence, shown as playing).
+ */
+export function nowPlayingFollows<T extends SeamTrack & { duration?: number }>(track: T, queueIndex: number): {
+  type: 'PLAY_TRACK'; track: T; queueIndex: number; locateInQueue: true; duration: number
+} {
+  return { type: 'PLAY_TRACK', track, queueIndex, locateInQueue: true, duration: (track.duration || 0) / 1000 }
+}
