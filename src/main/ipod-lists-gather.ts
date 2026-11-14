@@ -46,6 +46,13 @@ export interface IpodListWire {
   updatedAt: string | null
   /** An iPod in this Mac's registry carries this list (always false on a replica). */
   registered: boolean
+  /** The line at the top of the list's page (2026-11-14, common/ipod-ad.ts): one Jake wrote that
+   *  homemini hasn't heard yet, else homemini's. null = none (the page shows the name). */
+  headline: string | null
+  /** How many songs the list may hold; null when homemini's list isn't known here. */
+  cap: number | null
+  /** When its iPod was last synced, from this Mac's own record (hub, a set-up iPod). null = not known. */
+  lastSyncedAt: string | null
 }
 
 export interface IpodListsAnswer {
@@ -70,6 +77,10 @@ export interface GatherIpodListsDeps {
   /** Names homemini hasn't heard yet (main/ipod-rename.ts readPendingNames), by iPod id. They win
    *  everywhere, so a rename shows at once, homemini there or not (2026-11-09). */
   pendingNames?: () => Promise<Record<string, string>>
+  /** Headlines homemini hasn't heard yet (main/ipod-headlines.ts), by iPod id; null = cleared. They win everywhere. */
+  pendingHeadlines?: () => Promise<Record<string, string | null>>
+  /** When each set-up iPod was last synced (hub only: this Mac's onboarding records), by iPod id. */
+  lastSynced?: () => Promise<Record<string, string>>
   warn?: (msg: string) => void
 }
 
@@ -105,11 +116,17 @@ async function homeminiLists(deps: GatherIpodListsDeps): Promise<{ lists: IpodLi
   return { lists: (await readListsCache(deps.cacheFile)) ?? [], fresh: false }
 }
 
-function wire(l: IpodList, fresh: boolean, registered: boolean, chosen?: string, pendingName?: string): IpodListWire {
+/** A headline waiting for homemini wins (null = Jake cleared it); else the list's own. */
+function headlineOf(id: string, own: string | undefined, waiting: Record<string, string | null>): string | null {
+  return Object.prototype.hasOwnProperty.call(waiting, id) ? waiting[id] : own ?? null
+}
+
+function wire(l: IpodList, fresh: boolean, registered: boolean, waiting: Record<string, string | null>, chosen?: string, pendingName?: string, lastSyncedAt?: string): IpodListWire {
   const look = ipodLook({ model: l.model, listColor: l.color, chosen })
   return {
     id: l.id, name: pendingName ?? l.name, color: look.color, model: look.model, purpose: l.purpose, ids: [...l.ids],
     source: fresh ? 'homemini' : 'cache', note: null, updatedAt: l.updatedAt, registered,
+    headline: headlineOf(l.id, l.headline, waiting), cap: l.cap, lastSyncedAt: lastSyncedAt ?? null,
   }
 }
 
@@ -118,14 +135,16 @@ export async function gatherIpodLists(deps: GatherIpodListsDeps): Promise<IpodLi
   try { replica = await deps.isReplica() } catch (err) { deps.warn?.(`[ipod-lists] role check: ${(err as Error)?.message ?? err}`) }
 
   const names = await (deps.pendingNames?.() ?? Promise.resolve({} as Record<string, string>)).catch(() => ({} as Record<string, string>))
+  const headlines = await (deps.pendingHeadlines?.() ?? Promise.resolve({} as Record<string, string | null>)).catch(() => ({} as Record<string, string | null>))
 
   if (replica) {
     const remote = await homeminiLists(deps)
-    return { ok: true, role: 'replica', lists: remote.lists.map((l) => wire(l, remote.fresh, false, undefined, names[l.id])) }
+    return { ok: true, role: 'replica', lists: remote.lists.map((l) => wire(l, remote.fresh, false, headlines, undefined, names[l.id])) }
   }
 
   const devices = await deps.registry().catch(() => [] as IpodDeviceMarker[])
   const chosen = await (deps.chosen?.() ?? Promise.resolve({} as Record<string, string>)).catch(() => ({} as Record<string, string>))
+  const synced = await (deps.lastSynced?.() ?? Promise.resolve({} as Record<string, string>)).catch(() => ({} as Record<string, string>))
   const lists: IpodListWire[] = []
   const known = new Set<string>()
   const pending: Array<{ d: IpodDeviceMarker; r: IpodPoolRefresh }> = []
@@ -144,8 +163,9 @@ export async function gatherIpodLists(deps: GatherIpodListsDeps): Promise<IpodLi
     // The list's name (2026-11-09: a list is renamed on its own, the iPod keeps its name): a rename
     // homemini hasn't heard yet, else homemini's, else the iPod's own.
     const name = names[d.id] ?? h?.name ?? d.name
-    lists.push({ id: d.id, name, color: look.color, model: look.model, purpose: d.purpose, ids: r.listIds, source: r.source, note: r.note, updatedAt: r.updatedAt, registered: true })
+    lists.push({ id: d.id, name, color: look.color, model: look.model, purpose: d.purpose, ids: r.listIds, source: r.source, note: r.note, updatedAt: r.updatedAt, registered: true,
+      headline: headlineOf(d.id, h?.headline, headlines), cap: h?.cap ?? null, lastSyncedAt: synced[d.id] ?? null })
   }
-  for (const l of remote.lists) if (!known.has(l.id)) lists.push(wire(l, remote.fresh, false, chosen[l.id], names[l.id]))
+  for (const l of remote.lists) if (!known.has(l.id)) lists.push(wire(l, remote.fresh, false, headlines, chosen[l.id], names[l.id], synced[l.id]))
   return { ok: true, role: 'hub', lists }
 }

@@ -80,7 +80,8 @@ export function scrollListRowIntoView(container: HTMLElement | null, idx: number
   const row = rows[idx]
   if (!row) return
   const box = container.getBoundingClientRect()
-  const header = container.querySelector<HTMLElement>(':scope > .songs-header')
+  // An iPod's page pins its bar and the column header together (.songs-pin, styles/ipod-ad.css).
+  const header = container.querySelector<HTMLElement>(':scope > .songs-pin, :scope > .songs-header')
   // Sticky or scrolled away, the header covers whatever is above its bottom edge.
   const top = header ? Math.max(box.top, header.getBoundingClientRect().bottom) : box.top
   const r = row.getBoundingClientRect()

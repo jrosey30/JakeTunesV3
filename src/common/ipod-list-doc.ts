@@ -22,6 +22,7 @@
  */
 
 import { isIpodModel, normalizeIpodColor, type IpodModel } from './ipod-covers.ts'
+import { cleanHeadline } from './ipod-ad.ts'
 
 /**
  * No iPod list is ever bigger than this, whatever homemini says its cap is.
@@ -64,6 +65,8 @@ export interface IpodList {
   model?: IpodModel
   /** Its colour: a named iPod colour or '#rrggbb' (common/ipod-covers.ts). Absent = not chosen. */
   color?: string
+  /** The line at the top of its page (2026-11-14, common/ipod-ad.ts): 1 to 60 characters. Absent = its name and a full stop. */
+  headline?: string
   /**
    * What the list's purpose calls for that the library doesn't have
    * (2026-11-09, Jake: "the songs i dont have for y2k, 80's and indie
@@ -165,6 +168,8 @@ export function parseIpodList(raw: unknown, expectedId?: string): IpodList | nul
     // The iPod's look (2026-11-09): optional, a bad one is just absent.
     ...(isIpodModel(r.model) ? { model: r.model } : {}),
     ...(normalizeIpodColor(r.color) ? { color: normalizeIpodColor(r.color)! } : {}),
+    // The page's headline (2026-11-14): optional, a bad one is just absent.
+    ...(cleanHeadline(r.headline) ? { headline: cleanHeadline(r.headline)! } : {}),
   }
 }
 

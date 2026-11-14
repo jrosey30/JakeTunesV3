@@ -28,6 +28,12 @@
  *       Waits on disk when homemini is away; flushed before each list read and on the 5-minute retry.
  *   'top1000-name:get' → { ok, name, custom, pending }  /  'top1000-name:set' (name) → { ok, name, custom, homemini }
  *       The Top 1000's display name, kept on homemini (main/top1000-name.ts).
+ *   'ipod-headline:set' ({ key, headline }) → { ok, headline, homemini: 'saved' | 'later' } | { ok: false, error }
+ *       Headline… (2026-11-14): the line at the top of an iPod list's page (key = its id) or the
+ *       Top 1000's (key = 'top1000'); null or empty clears it (main/ipod-headlines.ts). On disk
+ *       first; waits there when homemini is away; flushed before each list read and on the 5-minute retry.
+ *   'ipod-headline:top1000' (local?) → { ok, headline, pending } — the Top 1000's headline; local = this
+ *       Mac's own copy without asking homemini (the first paint).
  *   'ipod-cover:get' (key) → { ok, url } — a custom-colour cover homemini drew, kept on
  *       this Mac for good (main/ipod-cover-cache.ts); url null = show the bundled nearest.
  *
@@ -54,6 +60,8 @@ import { ipodCoverDataUrl } from '../ipod-cover-cache.ts'
 import { forgetPeriodCover, periodCoverDataUrl } from '../period-cover-cache.ts'
 import { createEventCoverClient } from '../event-cover-client.ts'
 import { createPhotoCoverClient, createPhotoCovers } from '../ipod-photo-covers.ts'
+import { createTop1000HeadlineRemote, flushPendingHeadlines, localTop1000Headline, readPendingHeadlines, readTop1000Headline, setHeadline, TOP1000_HEADLINE_KEY, type HeadlineSend } from '../ipod-headlines.ts'
+import { readOnboardingRecords } from '../ipod-onboarding.ts'
 import { withCompanionInit } from '../hub-companion.ts'
 import { MAX_PHOTO_BYTES } from '../../common/ipod-photo-covers.ts'
 import { open as openFile } from 'fs/promises'
@@ -92,6 +100,7 @@ export function createIpodListSource(host: IpodListsHost): IpodListSource & {
   flushColors: () => Promise<'none' | 'sent' | 'still-waiting'>
   flushNames: () => Promise<'none' | 'sent' | 'still-waiting'>
   renameList: (deviceId: string, name: string) => Promise<'done' | 'retry' | 'drop'>
+  setHeadline: (deviceId: string, headline: string | null) => Promise<'done' | 'retry' | 'drop'>
   cover: (path: string) => Promise<{ bytes: Buffer; exact: boolean } | null>
 } {
   const client = createIpodListClient({ baseUrl: host.baseUrl, fetchImpl: host.fetchImpl, warn: host.warn })
@@ -144,6 +153,7 @@ export function createIpodListSource(host: IpodListsHost): IpodListSource & {
     flushColors,
     flushNames,
     renameList: client.renameList,
+    setHeadline: (deviceId, headline) => client.setHeadline(deviceId, headline),
     cover: (path: string) => client.cover(path),
     refresh,
     all: () => client.all(),
@@ -166,10 +176,22 @@ export function registerIpodListsIpc(ipc: IpcRegistrar, host: IpodListsHost): Ip
     ...createTop1000NameRemote({ baseUrl: host.baseUrl, fetchImpl: host.fetchImpl, warn: host.warn }),
     warn: host.warn,
   }
+  // Headline… (2026-11-14, main/ipod-headlines.ts): one queue for every list's and the Top 1000's.
+  const top1000Headline = createTop1000HeadlineRemote({ baseUrl: host.baseUrl, fetchImpl: host.fetchImpl, warn: host.warn })
+  const sendHeadline: HeadlineSend = (key, headline) => (key === TOP1000_HEADLINE_KEY ? top1000Headline.put(headline) : source.setHeadline(key, headline))
+  const flushHeadlines = () => flushPendingHeadlines(host.stateDir, sendHeadline, undefined, host.warn)
+    .catch((err) => { host.warn?.(`[ipod-headline] pending: ${(err as Error)?.message ?? err}`); return 'still-waiting' as const })
+  /** When each set-up iPod was last synced, from this Mac's own records (the hub's). */
+  async function lastSynced(): Promise<Record<string, string>> {
+    const out: Record<string, string> = {}
+    for (const r of await readOnboardingRecords(host.stateDir)) if (!r.released && r.lastSyncedAt) out[r.listId] = r.lastSyncedAt
+    return out
+  }
   ipc.handle('ipod-lists:get', async () => {
-    // A colour or a name homemini missed goes first, so the read has it.
+    // A colour, a name or a headline homemini missed goes first, so the read has it.
     await source.flushColors()
     await source.flushNames()
+    await flushHeadlines()
     return gatherIpodLists({
       isReplica,
       registry: async () => (await loadIpodRegistry(host.stateDir)).devices,
@@ -178,8 +200,22 @@ export function registerIpodListsIpc(ipc: IpcRegistrar, host: IpodListsHost): Ip
       cacheFile: ipodListsCachePath(host.stateDir),
       chosen: () => readChosenColors(host.stateDir),
       pendingNames: () => readPendingNames(host.stateDir),
+      pendingHeadlines: () => readPendingHeadlines(host.stateDir),
+      lastSynced,
       warn: host.warn,
     })
+  }, { public: true })
+  // A write: the main window only. Any Mac, hub or replica.
+  ipc.handle('ipod-headline:set', async (_e, input: unknown) => {
+    const i = input as { key?: unknown; headline?: unknown } | null
+    return setHeadline({ stateDir: host.stateDir, send: sendHeadline, warn: host.warn }, i?.key, i?.headline ?? null)
+      .catch((err) => ({ ok: false as const, error: (err as Error)?.message ?? 'couldn’t save the headline' }))
+  }, { refuse: { ok: false, error: 'refused-sender' } })
+  ipc.handle('ipod-headline:top1000', async (_e, local?: unknown) => {
+    if (local === true) return { ok: true as const, ...(await localTop1000Headline(host.stateDir)) }
+    await flushPendingHeadlines(host.stateDir, sendHeadline, TOP1000_HEADLINE_KEY, host.warn)
+      .catch((err) => host.warn?.(`[ipod-headline] Top 1000 flush: ${(err as Error)?.message ?? err}`))
+    return { ok: true as const, ...(await readTop1000Headline({ stateDir: host.stateDir, get: top1000Headline.get, warn: host.warn })) }
   }, { public: true })
   // Every list's name as this Mac shows it: homemini's last answer with the renames still waiting on top.
   async function listNames(): Promise<Array<{ id: string; name: string }>> {
@@ -307,6 +343,7 @@ export function registerIpodListsIpc(ipc: IpcRegistrar, host: IpodListsHost): Ip
     void source.desk.flush().catch(() => undefined)
     void source.flushColors()
     void source.flushNames()
+    void flushHeadlines()
     void flushTop1000Name(top1000).catch(() => undefined)
     void photos.sync().catch(() => undefined)
   }, DECISION_RETRY_MS).unref?.()

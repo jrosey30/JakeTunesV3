@@ -19,9 +19,13 @@ export interface ListRenameFieldProps {
   hint?: string | null
   /** 'sidebar' (the row's box) or 'header' (the playlist page's title). */
   variant: 'sidebar' | 'header'
+  /** The rules for what is typed, when it isn't a list's name (Headline…, 2026-11-14). Default: checkListName against `others`. */
+  check?: (value: string) => { ok: true; name: string } | { ok: false; error: string }
+  /** What the box is for, read out and shown while it is empty. Default: "New name". */
+  label?: string
 }
 
-export default function ListRenameField({ initial, others, onSave, onDone, hint, variant }: ListRenameFieldProps) {
+export default function ListRenameField({ initial, others, onSave, onDone, hint, variant, check: checkValue, label }: ListRenameFieldProps) {
   const ref = useRef<HTMLInputElement>(null)
   const [error, setError] = useState<string | null>(null)
   const saving = useRef(false)
@@ -42,7 +46,7 @@ export default function ListRenameField({ initial, others, onSave, onDone, hint,
   const commit = async (value: string, viaBlur: boolean) => {
     if (saving.current || finished.current) return
     if (value.trim() === initial.trim()) { finish(); return }
-    const check = checkListName(value, others)
+    const check = checkValue ? checkValue(value) : checkListName(value, others)
     if (!check.ok) {
       if (viaBlur) finish()
       else setError(check.error)
@@ -62,7 +66,8 @@ export default function ListRenameField({ initial, others, onSave, onDone, hint,
         className={variant === 'sidebar' ? 'sidebar-inline-input' : 'playlist-view-name-input list-rename-header-input'}
         defaultValue={initial}
         maxLength={LIST_NAME_MAX + 20}
-        aria-label="New name"
+        aria-label={label ?? 'New name'}
+        placeholder={label}
         aria-invalid={error !== null}
         autoFocus
         onClick={(e) => e.stopPropagation()}

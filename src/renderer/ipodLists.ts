@@ -10,6 +10,7 @@
 // Same module-store idiom as top1000List.ts.
 import { useEffect, useSyncExternalStore } from 'react'
 import { isIpodModel, normalizeIpodColor, IPOD_DEFAULT_COLOR, type IpodModel } from '../common/ipod-covers'
+import { checkHeadline, cleanHeadline } from '../common/ipod-ad'
 
 export interface IpodListEntry {
   /** The iPod's marker id. */
@@ -26,6 +27,12 @@ export interface IpodListEntry {
   note: string | null
   /** An iPod in this Mac's registry carries it (hub). */
   registered: boolean
+  /** The line at the top of its page (2026-11-14, common/ipod-ad.ts); null = its name and a full stop. */
+  headline: string | null
+  /** How many songs it may hold; null = not known on this Mac. */
+  cap: number | null
+  /** When its iPod was last synced (the hub's record); null = not known. */
+  lastSyncedAt: string | null
 }
 
 export type IpodListsRole = 'hub' | 'replica'
@@ -65,6 +72,9 @@ export function refreshIpodLists(): Promise<void> {
         source: l.source === 'homemini' ? 'homemini' : l.source === 'cache' ? 'cache' : 'local',
         note: typeof l.note === 'string' && l.note ? l.note : null,
         registered: l.registered === true,
+        headline: cleanHeadline(l.headline),
+        cap: typeof l.cap === 'number' && Number.isInteger(l.cap) && l.cap > 0 ? l.cap : null,
+        lastSyncedAt: typeof l.lastSyncedAt === 'string' && l.lastSyncedAt ? l.lastSyncedAt : null,
       }))
       for (const l of listeners) l()
     })
@@ -123,6 +133,28 @@ export async function renameIpodList(deviceId: string, name: string): Promise<{ 
   for (const l of listeners) l()
   const r = await (window.electronAPI.ipodListRename?.({ deviceId, name: trimmed }) ?? Promise.resolve({ ok: false as const, error: 'not available' }))
     .catch((err: unknown) => ({ ok: false as const, error: err instanceof Error ? err.message : 'couldn’t rename the list' }))
+  if (!r.ok) {
+    snap = before
+    for (const l of listeners) l()
+    return r
+  }
+  void refreshIpodLists()
+  return r
+}
+
+/**
+ * Headline… (2026-11-14): the line at the top of the list's page changes at once, then main
+ * keeps it on disk and tells homemini (or holds it until homemini answers). Empty = none: the
+ * page shows the list's name again. On a refusal the old line comes back with the reason.
+ */
+export async function setIpodListHeadline(deviceId: string, raw: string): Promise<{ ok: true; headline: string | null; homemini: 'saved' | 'later' } | { ok: false; error: string }> {
+  const check = checkHeadline(raw)
+  if (!check.ok) return check
+  const before = snap
+  snap = snap.map((l) => (l.id === deviceId ? { ...l, headline: check.headline } : l))
+  for (const l of listeners) l()
+  const r = await (window.electronAPI.ipodHeadlineSet?.({ key: deviceId, headline: check.headline }) ?? Promise.resolve({ ok: false as const, error: 'Headlines need a newer JakeTunes.' }))
+    .catch((err: unknown) => ({ ok: false as const, error: err instanceof Error ? err.message : 'couldn’t save the headline' }))
   if (!r.ok) {
     snap = before
     for (const l of listeners) l()

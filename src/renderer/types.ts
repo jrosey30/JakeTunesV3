@@ -1275,7 +1275,7 @@ declare global {
       top1000List?: () => Promise<{ ok: true; value: { progress: import('../common/top1000-doc').QuizProgress; list: import('../common/top1000-doc').QuizListEntry[] } } | { ok: false; error: string }>
       // 2026-11-07 — every non-Original iPod's list (homemini writes it; src/main/ipc/ipod-lists-ipc.ts)
       ipodRegistryList?: () => Promise<{ ok: boolean; devices?: Array<{ id: string; name: string; color: string | null; primary: boolean }>; error?: string }>
-      ipodListsGet?: () => Promise<{ ok: boolean; role?: 'hub' | 'replica'; lists?: Array<{ id: string; name: string; color: string | null; model?: string; purpose: string | null; ids: number[]; source: 'homemini' | 'local' | 'cache'; note: string | null; updatedAt: string | null; registered?: boolean }> }>
+      ipodListsGet?: () => Promise<{ ok: boolean; role?: 'hub' | 'replica'; lists?: Array<{ id: string; name: string; color: string | null; model?: string; purpose: string | null; ids: number[]; source: 'homemini' | 'local' | 'cache'; note: string | null; updatedAt: string | null; registered?: boolean; headline?: string | null; cap?: number | null; lastSyncedAt?: string | null }> }>
       ipodWantedShelf?: (force?: boolean) => Promise<{ ok: boolean; shelves?: Array<{ listId: string; listName: string; title: string; cards: Array<{ lane: 'ipod-wanted'; type: 'album' | 'song'; artist: string; title: string; year?: string; why: string; artUrl?: string; previewUrl?: string }> }>; error?: string }>
       ipodListProposals?: (deviceId: string) => Promise<{ ok: boolean; proposals?: Array<{ id: number; why: string; at: string; artist?: string; title?: string; album?: string }>; proposedAt?: string | null; queued?: number; offline?: boolean; error?: string }>
       ipodListDecide?: (input: { deviceId: string; approve?: number[]; reject?: number[] }) => Promise<{ ok: boolean; sent?: boolean; error?: string }>
@@ -1293,6 +1293,9 @@ declare global {
       ipodListRename?: (input: { deviceId: string; name: string }) => Promise<{ ok: true; name: string; homemini: 'saved' | 'later' } | { ok: false; error: string }>
       top1000NameGet?: () => Promise<{ ok: true; name: string; custom: string | null; pending: boolean } | { ok: false; error: string }>
       top1000NameSet?: (name: string | null) => Promise<{ ok: true; name: string; custom: string | null; homemini: 'saved' | 'later' } | { ok: false; error: string }>
+      // Headline… (2026-11-14, common/ipod-ad.ts): the line at the top of an iPod's page. key = the list's id, or 'top1000'.
+      ipodHeadlineSet?: (input: { key: string; headline: string | null }) => Promise<{ ok: true; headline: string | null; homemini: 'saved' | 'later' } | { ok: false; error: string }>
+      top1000HeadlineGet?: (local?: boolean) => Promise<{ ok: true; headline: string | null; pending: boolean } | { ok: false; error: string }>
       // 2026-11-09 — photo covers (src/main/ipod-photo-covers.ts)
       ipodPhotoGet?: (key: string) => Promise<{ ok: boolean; shown: 'kept' | 'bundled' | 'drawing'; url: string | null }>
       ipodPhotoSync?: () => Promise<{ ok: boolean }>
