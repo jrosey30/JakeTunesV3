@@ -1,45 +1,44 @@
 /**
- * What playlists one iPod carries (2026-11-13) — PURE, no I/O, no clock.
+ * What playlists one iPod carries (2026-11-13; one rule for every iPod since
+ * 2026-11-14) — PURE, no I/O, no clock.
  *
  * Jake: "the only playlists each ipod gets are the default and its specific
- * ipod assigned playlists". So a sync writes exactly, in this order:
+ * ipod assigned playlists"; 2026-11-14: "The playlists only can be specific to
+ * its iPod!!! Plus the defaults!!" So a sync writes exactly, in this order:
  *
- *   1. the iPod's own list (the set the sync just built, in its order)
- *   2. the DEFAULTS, each worked out from THAT iPod's songs:
+ *   1. the DEFAULTS, each worked out from THAT iPod's songs:
+ *        Top 1000                  (the Original only: its own list, in rank order,
+ *                                   because the order is the point)
  *        Top 25 Most Played, Starred, Recently Added, Recently Played,
  *        Best of <year>            (evaluated by renderer/utils/smartPlaylists.ts
  *                                   against the iPod's songs, kept here by name)
  *        60's Music … 2020's Music (a decade with DECADE_MIN songs or more; decadeName)
  *        BPM 060-089 … BPM 170+    (verified foot-tap BPM only)
- *   3. On-The-Go read-backs, in the order they were numbered
- *   4. every other playlist assigned to that iPod (AI ones Jake approved and
+ *   2. On-The-Go read-backs, in the order they were numbered
+ *   3. every other playlist assigned to that iPod (AI ones Jake approved and
  *      his own, mixed), A to Z by the app's one name-sort rule.
  *
  * The old firmwares list playlists in database order, so this order IS the
  * order of the mhyp records (core/db_reader.py writes them as handed).
  *
- * Nothing else: none of the library's general playlists reach an iPod.
+ * NOTHING ELSE, ON EVERY iPOD, WITH NO SWITCH. None of the library's general
+ * playlists reach an iPod (the per-iPod yes of PR 412 is gone: Jake said yes
+ * for every iPod). The iPod's database is rewritten whole at each sync, so a
+ * library playlist an earlier sync wrote comes off at the next one. `removed`
+ * names the library playlists that were handed in and left off, for the log.
  *
- * ⚠️ THAT LAST LINE IS BEHIND A SWITCH, PER iPOD, OFF UNTIL JAKE SAYS YES
- * (`onlyOwn`, read by main/ipod-playlist-rule.ts from that iPod's state
- * folder). Taking the library's playlists off his iPods is a visible change he
- * has to approve iPod by iPod. With the switch OFF a sync writes exactly what
- * it wrote before (same playlists, same order) and ADDS the new ones after
- * them: decades, BPM, On-The-Go, assigned. Either way the result says which
- * playlists are new (`added`) and which library playlists are, or would be,
- * left off (`removed` / `wouldRemove`).
- *
- * A default that would be empty is not written, and neither is one that
- * would hold NEARLY_ALL of the iPod (the 1990's iPod needs no "90's Music").
- * The iPod's own list is exempt: it is the whole iPod on purpose.
+ * Any other iPod's own list ("punkPod", the whole iPod) is NOT a playlist: it
+ * is just Songs again. A default that would be empty is not written, and
+ * neither is one that would hold NEARLY_ALL of the iPod (the 1990's iPod needs
+ * no "90's Music"). Only the Original's Top 1000 is exempt: it is the whole
+ * iPod on purpose, in an order Songs can't show.
  *
  * Membership is by library track id; ids not on the iPod are dropped, so the
  * database never references a song that didn't land.
  */
 
-/** Where a playlist on an iPod comes from. `library` = one of the library's general
- *  playlists, which reach an iPod only while that iPod's switch is off. */
-export type DevicePlaylistKind = 'set' | 'default' | 'on-the-go' | 'assigned' | 'library'
+/** Where a playlist on an iPod comes from. `set` = the Original's Top 1000 (no other iPod's list is written). */
+export type DevicePlaylistKind = 'set' | 'default' | 'on-the-go' | 'assigned'
 
 export interface DevicePlaylist {
   id: string
@@ -167,22 +166,26 @@ export function verifiedBpmFrom(tracks: unknown): Map<number, number> {
   return out
 }
 
-/** Which syncs this rule is for: the one Sync button per iPod, and nothing else.
- *  The whole-library mirror is not an iPod's own sync and keeps what it always wrote. */
-export function playlistRuleApplies(origin: unknown): boolean {
-  return origin === 'activity-click'
+/**
+ * A playlist an earlier sync recorded that the rule still writes on this iPod.
+ * Records from before 2026-11-14 also hold the library's playlists (kind
+ * 'library') and another iPod's own list (kind 'set'): neither is ever written again.
+ */
+export function stillAnIpodPlaylist(p: { kind?: unknown; id?: unknown }, original: boolean): boolean {
+  if (p.kind === 'set') return original && p.id === SET_PLAYLIST_ID
+  return p.kind === 'default' || p.kind === 'on-the-go' || p.kind === 'assigned'
 }
 
 export interface DevicePlaylistInput {
   /** What the renderer handed the sync: the set, the evaluated built-ins, and
-   *  the library's own playlists. */
+   *  (still, from older renderers) the library's own playlists, which are left off. */
   passed: ReadonlyArray<{ id?: unknown; name?: unknown; trackIds?: unknown }>
   /** The songs going on the iPod, in catalog order. */
   tracks: DeviceTrack[]
   year: number
-  /** THE SWITCH. false (the default everywhere) = today's playlists keep being
-   *  written and the new ones are added after them. true = only this iPod's own. */
-  onlyOwn: boolean
+  /** The Original: its own list ("Top 1000") is written, in rank order. Any other
+   *  iPod: its own list is the whole iPod, so it is never written as a playlist. */
+  original: boolean
   verifiedBpm: ReadonlyMap<number, number>
   /** On-The-Go read-backs, in the order they were numbered (1, 2, 3 …). */
   onTheGo: DevicePlaylist[]
@@ -196,12 +199,9 @@ export interface DevicePlaylistInput {
 
 export interface DevicePlaylistResult {
   playlists: DevicePlaylist[]
-  /** New playlists this sync writes that the old rule never did (decades, BPM, On-The-Go, assigned). */
-  added: string[]
-  /** Switch ON: the library playlists this sync leaves off. */
+  /** The library playlists that were handed in and are not written (an earlier
+   *  sync's copy comes off with the database rewrite). For the log only. */
   removed: string[]
-  /** Switch OFF: the library playlists that WOULD be left off if it were on. Still written. */
-  wouldRemove: string[]
 }
 
 const idsOf = (v: unknown): number[] =>
@@ -224,73 +224,53 @@ export function devicePlaylistSet(input: DevicePlaylistInput): DevicePlaylistRes
 
   const out: DevicePlaylist[] = []
   const usedNames = new Set<string>()
-  const push = (p: DevicePlaylist, kind: DevicePlaylistKind): boolean => {
+  const push = (p: DevicePlaylist, kind: DevicePlaylistKind): void => {
     const name = String(p.name || '').trim()
-    if (!name || usedNames.has(nameKey(name))) return false
+    if (!name || usedNames.has(nameKey(name))) return
     usedNames.add(nameKey(name))
     out.push({ id: p.id, name, trackIds: p.trackIds, kind })
-    return true
   }
 
   const builtinNames = builtinDefaultNames(input.year)
-  const libraryNames: string[] = []
-  const isSet = (p: { id?: unknown }): boolean => String(p?.id ?? '') === SET_PLAYLIST_ID
-
-  if (!input.onlyOwn) {
-    // Switch OFF: exactly what a sync wrote before this rule existed, in the
-    // order it was handed over, untouched. (The writer drops ids not on the iPod.)
-    for (const p of input.passed) {
-      const name = String(p?.name ?? '').trim()
-      const kind: DevicePlaylistKind = isSet(p) ? 'set' : builtinNames.includes(name) ? 'default' : 'library'
-      // Not deduped, not cleaned: byte for byte what the writer was handed before.
-      out.push({ id: String(p?.id ?? name), name, trackIds: idsOf(p.trackIds), kind })
-      usedNames.add(nameKey(name))
-      if (kind === 'library' && name) libraryNames.push(name)
+  const removed: string[] = []
+  const passedByName = new Map<string, number[]>()
+  let ownList: DevicePlaylist | null = null
+  for (const p of input.passed) {
+    const name = String(p?.name ?? '').trim()
+    if (String(p?.id ?? '') === SET_PLAYLIST_ID) {
+      // The Original's Top 1000, in its rank order. Any other iPod's list is just Songs.
+      if (input.original && !ownList) ownList = { id: SET_PLAYLIST_ID, name, trackIds: clean(idsOf(p.trackIds)) }
+      continue
     }
-  } else {
-    const passedByName = new Map<string, number[]>()
-    for (const p of input.passed) {
-      const name = String(p?.name ?? '').trim()
-      if (isSet(p)) {
-        const ids = clean(idsOf(p.trackIds))
-        if (ids.length > 0) push({ id: SET_PLAYLIST_ID, name, trackIds: ids }, 'set')
-        continue
-      }
-      if (builtinNames.includes(name)) {
-        if (!passedByName.has(name)) passedByName.set(name, clean(idsOf(p.trackIds)))
-        continue
-      }
-      if (name) libraryNames.push(name)
+    if (builtinNames.includes(name)) {
+      if (!passedByName.has(name)) passedByName.set(name, clean(idsOf(p.trackIds)))
+      continue
     }
-    for (const name of builtinNames) {
-      const ids = passedByName.get(name)
-      if (ids && worthWriting(ids.length)) push({ id: `default-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`, name, trackIds: ids }, 'default')
-    }
+    if (name) removed.push(name)
   }
 
-  const added: string[] = []
-  const add = (p: DevicePlaylist, kind: DevicePlaylistKind): void => { if (push(p, kind)) added.push(p.name.trim()) }
+  // 1. The defaults.
+  if (ownList && ownList.trackIds.length > 0) push(ownList, 'set')
+  for (const name of builtinNames) {
+    const ids = passedByName.get(name)
+    if (ids && worthWriting(ids.length)) push({ id: `default-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`, name, trackIds: ids }, 'default')
+  }
   for (const p of [...decadePlaylists(input.tracks), ...bpmPlaylists(input.tracks, input.verifiedBpm)]) {
-    if (worthWriting(p.trackIds.length)) add(p, 'default')
+    if (worthWriting(p.trackIds.length)) push(p, 'default')
   }
-  // On-The-Go and assigned playlists are Jake's own: written whenever any of
-  // their songs is on the iPod, whatever share of it they are. An empty one
-  // (none of its songs on this iPod) is never written.
+  // 2 and 3. On-The-Go and assigned playlists are Jake's own: written whenever
+  // any of their songs is on the iPod, whatever share of it they are. An empty
+  // one (none of its songs on this iPod) is never written.
   // Jake, 2026-11-13: "default playlists on top, on the go, then the per ipod
   // playlists in a to z order. same rules as we have for songs, artists albums".
   for (const p of input.onTheGo) {
     const ids = clean(idsOf(p.trackIds))
-    if (ids.length > 0) add({ id: p.id, name: p.name, trackIds: ids }, 'on-the-go')
+    if (ids.length > 0) push({ id: p.id, name: p.name, trackIds: ids }, 'on-the-go')
   }
   const rest = [...input.assigned].sort((a, b) => input.compareNames(a.name, b.name) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
   for (const p of rest) {
     const ids = clean(idsOf(p.trackIds))
-    if (ids.length > 0) add({ id: p.id, name: p.name, trackIds: ids }, 'assigned')
+    if (ids.length > 0) push({ id: p.id, name: p.name, trackIds: ids }, 'assigned')
   }
-  return {
-    playlists: out,
-    added,
-    removed: input.onlyOwn ? libraryNames : [],
-    wouldRemove: input.onlyOwn ? [] : libraryNames,
-  }
+  return { playlists: out, removed }
 }

@@ -22,6 +22,13 @@ export type OneSyncPlan =
       leftOff: OneSyncLeftOff[]
       /** One plain line when something is worth saying (homemini away, filler used). */
       note: string | null
+      /** The playlists the next sync writes on this iPod, in the iPod's order: the
+       *  defaults, On-The-Go, then the rest A to Z (common/ipod-device-playlists.ts).
+       *  Nothing else: never the library's playlists, and no playlist that is just
+       *  Songs again. Absent when it couldn't be worked out (an older build). */
+      playlists?: string[]
+      /** Plain lines about what couldn't be asked while working that out. */
+      playlistNotes?: string[]
     }
   | {
       ok: false
@@ -44,6 +51,12 @@ export function leftOffLine(plan: Extract<OneSyncPlan, { ok: true }>): string | 
   const c = plan.leftOff.length
   if (c === 0) return null
   return `${n(c)} ${c === 1 ? 'song can’t' : 'songs can’t'} go on`
+}
+
+/** "Playlists: Top 25 Most Played, 90's Music, On-The-Go 1, Skate Night" — null when unknown. */
+export function playlistsLine(plan: Extract<OneSyncPlan, { ok: true }>): string | null {
+  if (!plan.playlists) return null
+  return plan.playlists.length ? `Playlists: ${plan.playlists.join(', ')}` : 'No playlists, just Songs'
 }
 
 /** "Sync punkPod" */

@@ -3,13 +3,16 @@
  * common/ipod-device-playlists.ts (the rule) for the sync engine.
  *
  * Gathers, for the plugged-in iPod:
- *   - its switch (ipod-playlist-rule.ts): off = today's playlists keep being
- *     written and the new ones are added; on = only its own
  *   - verified BPMs from homemini (GET /api/bpm-key?ids=), for the BPM lists
  *   - the playlists assigned to it on homemini (GET /api/ipod-playlists?device=):
  *     AI ones Jake approved and the ones he made himself
  *   - its On-The-Go read-backs (this Mac's ipod-otg-playlists.json)
- * and hands them, with what the renderer passed, to devicePlaylistSet.
+ * and hands them, with what the renderer passed, to devicePlaylistSet. The
+ * rule holds on every iPod (2026-11-14): there is no per-iPod switch.
+ *
+ * `preview` is the same set, worked out for the Device page's plan before
+ * anything is plugged in or synced: it writes nothing (no plan file, no kept
+ * copies, nothing sent to homemini, a damaged On-The-Go file left where it is).
  *
  * UNKNOWN IS NOT EMPTY. When homemini can't be asked, the answer kept from
  * last time is used. When there is no kept answer either, the playlists the
@@ -23,17 +26,17 @@ import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { withCompanionInit } from './hub-companion.ts'
 import type { FetchLike } from './top1000-client.ts'
-import { readOtgPlaylistsRepairing, type OtgPlaylist } from './ipod-otg-playlists.ts'
+import { readOtgPlaylistsRepairing, type OtgIo, type OtgPlaylist } from './ipod-otg-playlists.ts'
 import {
-  describePlaylistPlan, onlyOwnPlaylists, readLastSyncPlaylists, writePlannedPlaylists, type LastSyncPlaylists,
+  describePlaylistPlan, readLastSyncPlaylists, writePlannedPlaylists, type LastSyncPlaylists,
 } from './ipod-playlist-rule.ts'
 // The app's one name-sort rule, main-side twin of renderer/utils/artistSort.ts compareNames
 // (pinned equal on one fixture by __tests__/ipod-device-playlists.test.ts).
 import { compareIpodArtistNames } from './ipod-artist-sort.ts'
 import {
   devicePlaylistSet,
-  playlistRuleApplies,
   verifiedBpmFrom,
+  NEARLY_ALL,
   type DevicePlaylist,
   type DevicePlaylistResult,
   type DeviceTrack,
@@ -87,8 +90,10 @@ export interface ForSyncInput {
   stateDir: string
   deviceKey: string
   ipodName: string
+  /** The Original: keeps "Top 1000" as a playlist, in rank order. */
+  original: boolean
 }
-export type ForSyncResult = DevicePlaylistResult & { onlyOwnPlaylists: boolean; notes: string[] }
+export type ForSyncResult = DevicePlaylistResult & { notes: string[] }
 
 export function createDevicePlaylists(deps: DevicePlaylistsDeps) {
   const fetchImpl: FetchLike = deps.fetchImpl ?? (fetch as unknown as FetchLike)
@@ -106,7 +111,7 @@ export function createDevicePlaylists(deps: DevicePlaylistsDeps) {
   }
 
   /** Verified BPM per id: homemini's answer, else the kept copy, else null = unknown. */
-  async function verifiedBpm(stateDir: string, ids: number[]): Promise<{ bpm: Map<number, number> | null; note: string | null }> {
+  async function verifiedBpm(stateDir: string, ids: number[], preview: boolean): Promise<{ bpm: Map<number, number> | null; note: string | null }> {
     const cachePath = join(stateDir, BPM_CACHE_FILE)
     const fresh = new Map<number, number>()
     let complete = true
@@ -117,6 +122,7 @@ export function createDevicePlaylists(deps: DevicePlaylistsDeps) {
       for (const [id, bpm] of verifiedBpmFrom(tracks)) fresh.set(id, bpm)
     }
     if (complete) {
+      if (preview) return { bpm: fresh, note: null }
       await writeJson(cachePath, { savedAt: (deps.now?.() ?? new Date()).toISOString(), bpm: Object.fromEntries(fresh) })
         .catch((err) => warn(`[ipod-playlists] could not keep the BPM copy: ${(err as Error)?.message ?? err}`))
       return { bpm: fresh, note: null }
@@ -149,11 +155,12 @@ export function createDevicePlaylists(deps: DevicePlaylistsDeps) {
   }
 
   /** The playlists homemini holds for this iPod, else the kept copy, else null = unknown. */
-  async function assigned(stateDir: string, deviceKey: string, otg: OtgPlaylist[]): Promise<{ playlists: DevicePlaylist[] | null; note: string | null }> {
+  async function assigned(stateDir: string, deviceKey: string, otg: OtgPlaylist[], preview: boolean): Promise<{ playlists: DevicePlaylist[] | null; note: string | null }> {
     const cachePath = join(stateDir, ASSIGNED_CACHE_FILE)
     const r = await get(`/api/ipod-playlists?device=${encodeURIComponent(deviceKey)}`)
     const parsed = r && r.status === 200 ? parseAssigned(r.body) : null
     if (parsed) {
+      if (preview) return { playlists: parsed, note: null }
       await sendOtg(deviceKey, otg, parsed)
       await writeJson(cachePath, { savedAt: (deps.now?.() ?? new Date()).toISOString(), playlists: parsed })
         .catch((err) => warn(`[ipod-playlists] could not keep the playlists copy: ${(err as Error)?.message ?? err}`))
@@ -165,29 +172,37 @@ export function createDevicePlaylists(deps: DevicePlaylistsDeps) {
     return { playlists: null, note: why }
   }
 
-  /**
-   * The exact playlist set to write to this iPod, and what changed. Throws only
-   * when the saved On-The-Go lists are damaged AND can't be moved aside.
-   * Leaves ipod-playlists-planned.json behind (never the last-sync record).
-   */
-  async function forSync(input: ForSyncInput): Promise<ForSyncResult> {
-    await mkdir(input.stateDir, { recursive: true }).catch((err) => warn(`[ipod-playlists] could not make ${input.stateDir}: ${(err as Error)?.message ?? err}`))
+  /** The set, worked out. `preview`: write nothing anywhere (see the top of this file). */
+  async function build(input: ForSyncInput, preview: boolean): Promise<ForSyncResult & { record: LastSyncPlaylists }> {
+    if (!preview) await mkdir(input.stateDir, { recursive: true }).catch((err) => warn(`[ipod-playlists] could not make ${input.stateDir}: ${(err as Error)?.message ?? err}`))
     const now = deps.now?.() ?? new Date()
     const tracks: DeviceTrack[] = input.tracks.map((t) => ({ id: Number(t.id), year: t.year as number | string | null }))
     const notes: string[] = []
-    const otgRead = await readOtgPlaylistsRepairing(input.stateDir, { now, warn })
-    if (otgRead.repaired) notes.push(otgRead.repaired)
-    const otg = otgRead.playlists
-    const [bpm, mine, onlyOwn, last] = await Promise.all([
-      verifiedBpm(input.stateDir, tracks.map((t) => t.id)),
-      assigned(input.stateDir, input.deviceKey, otg),
-      onlyOwnPlaylists(input.stateDir),
+    let otg: OtgPlaylist[]
+    if (preview) {
+      // Read only: a damaged file is left for the sync to repair, and the preview shows none.
+      const readOnly: OtgIo = {
+        readFile: (p) => readFile(p, 'utf-8'),
+        writeFile: async () => { throw new Error('preview writes nothing') },
+        rename: async () => { throw new Error('preview writes nothing') },
+      }
+      otg = (await readOtgPlaylistsRepairing(input.stateDir, { io: readOnly, warn: () => {} }).catch(() => ({ playlists: [] as OtgPlaylist[] }))).playlists
+    } else {
+      const otgRead = await readOtgPlaylistsRepairing(input.stateDir, { now, warn })
+      if (otgRead.repaired) notes.push(otgRead.repaired)
+      otg = otgRead.playlists
+    }
+    const [bpm, mine, last] = await Promise.all([
+      verifiedBpm(input.stateDir, tracks.map((t) => t.id), preview),
+      assigned(input.stateDir, input.deviceKey, otg, preview),
       readLastSyncPlaylists(input.stateDir),
     ])
     if (bpm.note) notes.push(bpm.note)
     if (mine.note && mine.playlists) notes.push(mine.note)
 
     // Unknown is not empty: what the last sync wrote stands in for what couldn't be asked.
+    // Only its assigned and BPM lists are ever taken, so a record older than the rule
+    // (library playlists, another iPod's own list) can't bring those back.
     const lastOf = (pick: (p: DevicePlaylist) => boolean): DevicePlaylist[] => (last?.playlists ?? []).filter(pick)
     let assignedNow = mine.playlists
     if (!assignedNow) {
@@ -207,7 +222,7 @@ export function createDevicePlaylists(deps: DevicePlaylistsDeps) {
       passed: input.passed,
       tracks,
       year: now.getFullYear(),
-      onlyOwn,
+      original: input.original,
       verifiedBpm: bpm.bpm ?? new Map(),
       onTheGo: otg.map((p) => ({ id: p.id, name: p.deviceName, trackIds: p.trackIds })),
       // A read-back On-The-Go list homemini also holds is written once, in the On-The-Go block.
@@ -216,15 +231,25 @@ export function createDevicePlaylists(deps: DevicePlaylistsDeps) {
     })
     if (lastBpm.length) {
       // Put the last sync's BPM lists back where BPM lists go: after the last default.
+      // Held to the same line as every default: empty or nearly the whole iPod is not written.
       const onIpod = new Set(tracks.map((t) => t.id))
       const keep = lastBpm
         .map((p) => ({ ...p, trackIds: p.trackIds.filter((id) => onIpod.has(id)) }))
-        .filter((p) => p.trackIds.length > 0 && !set.playlists.some((q) => q.name === p.name))
+        .filter((p) => p.trackIds.length > 0 && p.trackIds.length / Math.max(1, tracks.length) < NEARLY_ALL && !set.playlists.some((q) => q.name === p.name))
       const at = set.playlists.findIndex((p) => p.kind === 'on-the-go' || p.kind === 'assigned')
       set.playlists.splice(at === -1 ? set.playlists.length : at, 0, ...keep)
     }
-    const result: ForSyncResult = { ...set, onlyOwnPlaylists: onlyOwn, notes }
-    const record: LastSyncPlaylists = { version: 1, at: now.toISOString(), ipod: input.ipodName, onlyOwnPlaylists: onlyOwn, ...set, notes }
+    const record: LastSyncPlaylists = { version: 1, at: now.toISOString(), ipod: input.ipodName, ...set, notes }
+    return { ...set, notes, record }
+  }
+
+  /**
+   * The exact playlist set to write to this iPod, and what is left off. Throws only
+   * when the saved On-The-Go lists are damaged AND can't be moved aside.
+   * Leaves ipod-playlists-planned.json behind (never the last-sync record).
+   */
+  async function forSync(input: ForSyncInput): Promise<ForSyncResult> {
+    const { record, ...result } = await build(input, false)
     // The PLAN, not the record: it becomes ipod-playlists-last-sync.json only when the
     // sync it belongs to has verified and sealed (sync-engine → promotePlannedPlaylists).
     await writePlannedPlaylists(input.stateDir, record)
@@ -232,23 +257,29 @@ export function createDevicePlaylists(deps: DevicePlaylistsDeps) {
     return result
   }
 
-  return { forSync }
+  /** What the next sync would write, for the Device page's plan. Writes nothing. */
+  async function preview(input: ForSyncInput): Promise<ForSyncResult> {
+    const { record: _record, ...result } = await build(input, true)
+    return result
+  }
+
+  return { forSync, preview }
 }
 
 export type ApplyResult =
-  | { ok: true; playlists: Array<Record<string, unknown>>; applied: boolean }
+  | { ok: true; playlists: Array<Record<string, unknown>> }
   | { ok: false; error: string }
 
 /**
- * The sync engine's one call. Runs after the plays gate and before anything is
- * written to the card.
- *   - not the one Sync button (the whole-library mirror, anything else): the
- *     playlists handed in are returned untouched and nothing is asked.
- *   - the one Sync button: this iPod's set (per its switch). ANY failure putting
- *     it together is ok:false: the caller must stop, the card is untouched.
+ * The sync engine's one call, for EVERY sync that writes an iPod's database (the
+ * one Sync button and the whole-library sync alike). Runs after the plays gate
+ * (On-The-Go is read back and saved first) and before anything is written to
+ * the card. ANY failure putting the set together is ok:false: the caller must
+ * stop, the card is untouched. There is no path that hands the library's
+ * playlists through: an unknown iPod never gets this far (resolveIpodState
+ * refuses it), and a sync with no iPod identified is refused here too.
  */
 export async function applyDevicePlaylists(input: {
-  origin: unknown
   device: { id: string; name: string; primary: boolean } | null
   passed: Array<Record<string, unknown>>
   tracks: ReadonlyArray<Record<string, unknown>>
@@ -257,11 +288,14 @@ export async function applyDevicePlaylists(input: {
   forSync: (i: ForSyncInput) => Promise<ForSyncResult>
   log?: (line: string) => void
 }): Promise<ApplyResult> {
-  if (!playlistRuleApplies(input.origin) || !input.device) return { ok: true, playlists: input.passed, applied: false }
+  if (!input.device) return { ok: false, error: 'JakeTunes couldn’t tell which iPod this is, so its playlists can’t be worked out. Nothing on the iPod was changed.' }
   try {
-    const set = await input.forSync({ passed: input.passed, tracks: input.tracks, stateDir: input.stateDir, deviceKey: input.deviceKey, ipodName: input.device.name })
+    const set = await input.forSync({
+      passed: input.passed, tracks: input.tracks, stateDir: input.stateDir, deviceKey: input.deviceKey,
+      ipodName: input.device.name, original: input.device.primary,
+    })
     ;(input.log ?? ((l: string) => console.warn(l)))(`sync-to-ipod: playlists — ${describePlaylistPlan(input.device.name, set)}`)
-    return { ok: true, playlists: set.playlists as unknown as Array<Record<string, unknown>>, applied: true }
+    return { ok: true, playlists: set.playlists as unknown as Array<Record<string, unknown>> }
   } catch (err) {
     const why = err instanceof Error ? err.message : String(err)
     return { ok: false, error: `This iPod’s playlists couldn’t be put together (${why}). Nothing on the iPod was changed.` }

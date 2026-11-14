@@ -102,8 +102,8 @@ export interface SyncEngineHost {
   roundTripHost: (stateDir: string, ipod?: IpodDeviceMarker | null) => RoundTripHost
   /**
    * The playlists this iPod carries (2026-11-13, common/ipod-device-playlists.ts):
-   * its own list, the defaults, On-The-Go, then what is assigned to it. The
-   * library's general playlists are left off. Throws to stop the sync.
+   * the defaults (the Original's Top 1000 among them), On-The-Go, then what is
+   * assigned to it. The library's general playlists are left off. Throws to stop the sync.
    */
   devicePlaylists: (input: ForSyncInput) => Promise<ForSyncResult>
 }
@@ -371,14 +371,15 @@ export function createSyncEngine(host: SyncEngineHost) {
       const plays = await securePlaysBeforeSync(gateMount, host.roundTripHost(syncStateDir, ipod.device),
         syncOpts?.origin === 'activity-click' ? 'Activity Sync' : 'library sync')
       if (!plays.ok) return { ok: false, copied: 0, error: plays.error }
-      // This iPod's playlists (Jake, 2026-11-13; ipod-device-playlists-run.ts). After
-      // the plays gate, so an On-The-Go list made since the last sync is already saved
-      // and goes back on as a normal playlist. Before anything is written: a failure
-      // here leaves the card exactly as it was. Only the one Sync button; the
-      // whole-library mirror keeps what it always wrote. Taking the library's
-      // playlists OFF an iPod is behind that iPod's own switch (ipod-playlist-rule.ts).
+      // This iPod's playlists (Jake, 2026-11-13; every iPod, no switch, 2026-11-14:
+      // "The playlists only can be specific to its iPod!!! Plus the defaults!!").
+      // After the plays gate, so an On-The-Go list made since the last sync is
+      // already saved and goes back on as a normal playlist. Before anything is
+      // written: a failure here leaves the card exactly as it was. EVERY sync that
+      // writes the database goes through it, so the library's playlists never
+      // reach an iPod, and the ones an earlier sync wrote come off with the rewrite.
       const own = await applyDevicePlaylists({
-        origin: syncOpts?.origin, device: ipod.device, passed: playlists, tracks,
+        device: ipod.device, passed: playlists, tracks,
         stateDir: syncStateDir, deviceKey: deviceKeyOf(ipod.device), forSync: host.devicePlaylists,
       })
       if (!own.ok) {
@@ -386,7 +387,12 @@ export function createSyncEngine(host: SyncEngineHost) {
         return { ok: false, copied: 0, error: own.error }
       }
       playlists = own.playlists
-      playlistsPlanned = own.applied
+      playlistsPlanned = true
+    } else {
+      // No iPod to identify means no playlists worked out for it: nothing is written.
+      const error = 'No verified iPod mount detected'
+      console.error(`sync-to-ipod: REFUSED — ${error}`)
+      return { ok: false, copied: 0, error }
     }
     syncCancelRequested = false
     if (syncOpts?.origin === 'activity-click') {

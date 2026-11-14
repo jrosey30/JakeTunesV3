@@ -34,9 +34,28 @@ export async function planIpodSync(allTracks: Track[]): Promise<OneSyncPlan> {
   const api = window.electronAPI.planIpodSync
   if (!api) return { ok: false, kind: 'none', ipodName: null, color: null, error: 'This build can’t sync iPods.' }
   try {
-    return await api(allTracks.map(toPlanTrack))
+    const plan = await api(allTracks.map(toPlanTrack))
+    return plan.ok ? await withPlaylists(plan, allTracks) : plan
   } catch (err) {
     return { ok: false, kind: 'none', ipodName: null, color: null, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/** The plan, plus the playlists the next sync writes on that iPod (2026-11-14):
+ *  the built-ins evaluated against the plan's songs, exactly as the sync hands
+ *  them over, and main works out the rest (main/ipod-device-playlists-run.ts
+ *  preview). On any trouble the plan comes back as it was, without the list. */
+async function withPlaylists(plan: Extract<OneSyncPlan, { ok: true }>, allTracks: Track[]): Promise<OneSyncPlan> {
+  const preview = window.electronAPI.previewIpodPlaylists
+  if (!preview) return plan
+  try {
+    const rows = planTracks(plan, allTracks)
+    const passed = assembleSyncPlaylists(rows, [], plan.setName)
+      .map((p) => ({ id: String(p.id), name: p.name, trackIds: (p.trackIds || []).map(Number) }))
+    const r = await preview(passed, rows.map((t) => ({ id: t.id, year: t.year ?? null })))
+    return r ? { ...plan, playlists: r.names, playlistNotes: r.notes } : plan
+  } catch {
+    return plan
   }
 }
 
@@ -56,9 +75,13 @@ export function planTracks(plan: Extract<OneSyncPlan, { ok: true }>, allTracks: 
 
 /**
  * Assemble the playlist list for an iPod sync: the set itself as a named
- * playlist, plus the user's regular playlists filtered down to members of
- * the set. Always built from the FINAL track list, or the iPod DB would
- * reference songs that never landed.
+ * playlist, the built-ins evaluated against the set, plus the user's regular
+ * playlists filtered down to members of the set. Always built from the FINAL
+ * track list, or the iPod DB would reference songs that never landed.
+ *
+ * Main keeps only what belongs on that iPod (common/ipod-device-playlists.ts,
+ * 2026-11-14): the regular playlists are never written, and the set is written
+ * only on the Original ("Top 1000"). Whatever is handed in here, that holds.
  */
 export function assembleSyncPlaylists(
   tracks: Track[],

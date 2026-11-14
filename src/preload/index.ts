@@ -691,6 +691,9 @@ const electronAPI = {
   // One button per iPod (2026-11-07): what one Sync puts on the plugged-in iPod.
   planIpodSync: (tracks: unknown[]): Promise<unknown> =>
     ipcRenderer.invoke('plan-ipod-sync', tracks),
+  // The playlists the next sync writes on the plugged-in iPod, in order (writes nothing).
+  previewIpodPlaylists: (passed: unknown[], tracks: unknown[]): Promise<unknown> =>
+    ipcRenderer.invoke('preview-ipod-playlists', passed, tracks),
   // iPod songs stay on this Mac (2026-11-08): is everything the plan needs here? / fetch now.
   ipodLocalCheck: (planIds: number[]): Promise<unknown> =>
     ipcRenderer.invoke('ipod-local:check', planIds),
