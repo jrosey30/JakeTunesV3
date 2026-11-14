@@ -29,7 +29,7 @@
 
 import { createHash, randomUUID } from 'crypto'
 import { join } from 'path'
-import { appendFile, mkdir, readFile, writeFile, rename } from 'fs/promises'
+import { appendFile, mkdir, readdir, readFile, writeFile, rename } from 'fs/promises'
 
 const MAC_EPOCH_OFFSET_S = 2082844800 // 1904-01-01 → 1970-01-01
 
@@ -53,17 +53,37 @@ export function parsePlayCounts(buf: Buffer): PlayCountEntry[] | null {
   return out
 }
 
-/** Parse one `OTGPlaylistInfo` file → positional catalog indexes. */
+/**
+ * Parse one `OTGPlaylistInfo` file → positional catalog indexes (0-based
+ * positions in the on-card iTunesDB's track list, in the order Jake picked).
+ *
+ * Layout, from libgpod (itdb_itunesdb.c process_OTG_file) and gnupod
+ * (GNUpod/iTunesDB.pm readOTG), which agree:
+ *   0  "mhpo"            4  header length (0x14 on every known firmware)
+ *   8  entry length (4)  12 number of entries     16 unknown
+ *   then one 32-bit index per entry, from the header's end.
+ * A file written the other way round starts "opmh" and every number in it is
+ * big-endian (libgpod's `reversed`). A longer header or entry is read by its
+ * stated length, so a later firmware's extra fields are skipped, not misread.
+ *
+ * 2026-11-13: this used to read the count from offset 16 (the unknown field),
+ * so it answered "no songs" for every real On-The-Go list.
+ */
 export function parseOtgIndexes(buf: Buffer): number[] {
-  if (buf.length < 20 || buf.toString('latin1', 0, 4) !== 'mhpo') return []
-  const headerLen = buf.readUInt32LE(4)
-  const n = buf.readUInt32LE(16)
-  if (headerLen < 20 || n < 0 || n > 100000) return []
+  if (buf.length < 16) return []
+  const tag = buf.toString('latin1', 0, 4)
+  const bigEndian = tag === 'opmh'
+  if (tag !== 'mhpo' && !bigEndian) return []
+  const u32 = (p: number): number => (bigEndian ? buf.readUInt32BE(p) : buf.readUInt32LE(p))
+  const headerLen = u32(4)
+  const entryLen = u32(8)
+  const n = u32(12)
+  if (headerLen < 0x14 || entryLen < 4 || entryLen > 64 || n > 100000) return []
   const out: number[] = []
   for (let i = 0; i < n; i++) {
-    const p = headerLen + i * 4
+    const p = headerLen + i * entryLen
     if (p + 4 > buf.length) break
-    out.push(buf.readUInt32LE(p))
+    out.push(u32(p))
   }
   return out
 }
@@ -119,6 +139,22 @@ export const ROUNDTRIP_LEDGER_FILE = 'ipod-roundtrip-ledger.jsonl'
 /** The OTG files the round trip reads, in snapshot order (order is part of the snapshot hash). */
 export const ROUNDTRIP_OTG_NAMES = ['OTGPlaylistInfo', 'OTGPlaylistInfo_1', 'OTGPlaylistInfo_2', 'OTGPlaylistInfo_3'] as const
 
+/**
+ * Every On-The-Go file in a folder listing, in the firmware's order: the
+ * first list is `OTGPlaylistInfo`, each later one `OTGPlaylistInfo_<n>`
+ * (libgpod reads them until one is missing; a listing reads them all). The
+ * first four keep the order ROUNDTRIP_OTG_NAMES always had, so a snapshot id
+ * recorded before 2026-11-13 is unchanged.
+ */
+export function otgFileNames(listing: readonly string[]): string[] {
+  const rows: Array<{ name: string; n: number }> = []
+  for (const name of listing) {
+    const m = /^OTGPlaylistInfo(?:_(\d+))?$/.exec(name)
+    if (m) rows.push({ name, n: m[1] ? Number(m[1]) : 0 })
+  }
+  return rows.sort((a, b) => a.n - b.n || a.name.localeCompare(b.name)).map((r) => r.name)
+}
+
 /** The bytes the round trip needs: firmware scratch + the catalog it is positional against. */
 export interface RoundTripSnapshot {
   playCounts: Buffer | null
@@ -130,7 +166,7 @@ export interface RoundTripSnapshot {
 export async function readRoundTripSnapshot(itunesDir: string): Promise<RoundTripSnapshot> {
   const playCounts = await readFile(join(itunesDir, 'Play Counts')).catch(() => null)
   const otg: Buffer[] = []
-  for (const name of ROUNDTRIP_OTG_NAMES) {
+  for (const name of otgFileNames(await readdir(itunesDir).catch(() => [] as string[]))) {
     const b = await readFile(join(itunesDir, name)).catch(() => null)
     if (b) otg.push(b)
   }
@@ -231,6 +267,14 @@ export interface RoundTripHost {
   appendPlayEvents: (trackId: number, count: number, tsMs: number) => Promise<void>
   sendToRenderer: (channel: string, ...args: unknown[]) => void
   isSyncInFlight: () => boolean
+  /**
+   * Save the On-The-Go lists Jake made on the iPod as real playlists (library
+   * track ids, in his order). Called BEFORE the round-trip state is written:
+   * the pre-sync gate only lets a sync clear the card once that state shows
+   * this snapshot, so a list that could not be saved stops the sync with the
+   * iPod's own files untouched. Must be idempotent per snapshot.
+   */
+  saveOtgLists?: (snapshot: string, lists: number[][]) => Promise<void>
   /** A manifest kept with an archived copy of THIS catalog (by sha1), for when the live
    *  manifest can't map it — e.g. a sync that stopped after writing its in-flight manifest. */
   fallbackManifest?: (catalogSha1: string) => Promise<ManifestLike>
@@ -324,6 +368,9 @@ export async function applyRoundTripPlan(
   opts: { ledgerKind?: string; writeState?: boolean } = {},
 ): Promise<RoundTripOutcome> {
   const ledgerKind = opts.ledgerKind || 'roundtrip'
+  // On-The-Go first, and it may throw: nothing below records this snapshot as
+  // "brought home" unless the lists are saved (see RoundTripHost.saveOtgLists).
+  if (plan.otgLists.length > 0 && host.saveOtgLists) await host.saveOtgLists(plan.snapshot, plan.otgLists)
   // An archive re-ingest must not overwrite the live per-generation state:
   // that state guards the card's CURRENT Play Counts against double counting.
   if (opts.writeState !== false) await writeRoundTripState(host.stateDir, plan.nextState)
@@ -398,6 +445,13 @@ export function ingestRoundTripSnapshot(snap: RoundTripSnapshot, host: RoundTrip
           console.warn(`[roundtrip] mapped with the manifest kept alongside this catalog (${p2.unmatched} unmatched)`)
           plan = p2
         }
+      }
+      // A snapshot recorded before 2026-11-13 was recorded with its On-The-Go
+      // lists unread (the count was read from the wrong field). The plays are
+      // home; the lists still have to be saved before anything clears the card.
+      if (plan.kind === 'already-recorded' && host.saveOtgLists && snap.otg.some((b) => parseOtgIndexes(b).length > 0)) {
+        const again = planRoundTrip(snap, manifest, prior ? { ...prior, snapshot: '' } : null)
+        if (again.kind === 'plan' && again.otgLists.length > 0) await host.saveOtgLists(again.snapshot, again.otgLists)
       }
       switch (plan.kind) {
         case 'empty': return { kind: 'nothing-on-card' }
