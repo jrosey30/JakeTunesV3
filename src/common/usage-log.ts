@@ -72,7 +72,8 @@ export function deviceFromHostname(hostname: string): UsageDevice {
 // ── scrubbing ─────────────────────────────────────────────────────────────
 
 const SECRET_KEY = /(token|secret|password|passwd|authorization|auth|cookie|api[-_]?key|apikey|bearer|credential|session|companion)/i
-const LYRIC_KEY = /lyric/i
+/** Keys whose values are words Jake typed or sang along to: dropped whole. */
+const LYRIC_KEY = /lyric|^(q|query|queries|search|searches|searchterms?|term|terms|keywords?|words|typed|input|text)$|query|search/i
 const SECRET_SHAPES: RegExp[] = [
   /\b(sk|pk|rk)-[A-Za-z0-9_-]{12,}/g,                       // vendor keys (sk-ant-…, sk-…)
   /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi,
@@ -88,6 +89,33 @@ const SECRET_SHAPES: RegExp[] = [
 const OPAQUE = /\b[A-Za-z0-9+/_=-]{32,}\b/g
 const EMAIL = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g
 const URL_QUERY = /\b((?:https?|ipod-audio|file):\/\/[^\s?#"']*)[?#][^\s"']*/gi
+/** A query string with no scheme in front: "/api/search?q=…&token=…", or a bare "?q=…". */
+const BARE_QUERY = /((?:^|[\s("'=])\/?[A-Za-z0-9._~%/-]*)\?[A-Za-z0-9_.%-]+=[^\s"']*/g
+/** user:password@ (or a lone user@) in a URL. */
+const URL_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@"']+@/gi
+/**
+ * A header or a key=value whose name says what it is: "X-JakeTunes-Companion: abc",
+ * "Authorization: Basic …", "token=…", "password: …". The value goes, however short.
+ */
+const NAMED_SECRET = /\b([A-Za-z0-9_-]*(?:token|secret|passw(?:or)?d|pwd|authorization|auth(?!or)|companion|api[-_]?key|apikey|cookie|session|credential)[A-Za-z0-9_-]*)(\s*[:=]\s*)(?:(?:Basic|Bearer|Token|Digest)\s+)?("[^"]*"|'[^']*'|[^\s,;&]+)/gi
+
+const encoder = new TextEncoder()
+export const utf8Bytes = (s: string): number => encoder.encode(s).length
+
+/** Cut a string to at most `max` UTF-8 bytes, an ellipsis marking the cut. */
+function cutBytes(s: string, max: number): string {
+  if (utf8Bytes(s) <= max) return s
+  const chars = Array.from(s)
+  let out = ''
+  let bytes = 0
+  for (const c of chars) {
+    const b = utf8Bytes(c)
+    if (bytes + b > max - 3) break
+    out += c
+    bytes += b
+  }
+  return `${out}…`
+}
 
 /**
  * A path, made safe. The music library's own relative path (the part from
@@ -111,13 +139,15 @@ const ABS_PATH = /(?:file:\/\/|ipod-audio:\/\/)[^\s"']+|(?:~|\/(?:Users|Volumes|
 /** One string, made safe and short. */
 export function scrubString(input: string): string {
   let s = input
+  s = s.replace(URL_USERINFO, '$1[secret]@')
   s = s.replace(URL_QUERY, '$1')
+  s = s.replace(BARE_QUERY, '$1')
+  s = s.replace(NAMED_SECRET, '$1$2[secret]')
   s = s.replace(ABS_PATH, (m) => scrubPath(m))
   for (const re of SECRET_SHAPES) s = s.replace(re, '[secret]')
   s = s.replace(EMAIL, '[email]')
   s = s.replace(OPAQUE, (m) => (/^[0-9a-f]+$/i.test(m) ? m.slice(0, 12) : '[secret]'))
-  if (s.length > MAX_STRING) s = `${s.slice(0, MAX_STRING - 1)}…`
-  return s
+  return cutBytes(s, MAX_STRING)
 }
 
 /** A name: short, stable, lower-case words with . : _ - only. */
@@ -129,7 +159,8 @@ export function scrubName(name: unknown): string {
 /**
  * A detail object, flat and small. Nested objects and arrays are left out
  * (arrays of plain values become their length), so is anything whose key
- * names a secret or a lyric. Over 1 KB, keys are dropped from the end and
+ * names a secret, a lyric or typed words (q, query, search…). Over 1 KB of
+ * UTF-8, keys are dropped from the end and
  * `truncated: true` says so.
  */
 export function scrubDetail(raw: unknown): UsageDetail | undefined {
@@ -147,10 +178,11 @@ export function scrubDetail(raw: unknown): UsageDetail | undefined {
     else continue
     n++
   }
+  // Sized in UTF-8 bytes, as homemini sizes it: an accented title is longer than it looks.
   let json = JSON.stringify(out)
-  if (json.length > MAX_DETAIL_BYTES) {
+  if (utf8Bytes(json) > MAX_DETAIL_BYTES) {
     const keys = Object.keys(out)
-    while (keys.length && JSON.stringify(out).length > MAX_DETAIL_BYTES - 20) delete out[keys.pop()!]
+    while (keys.length && utf8Bytes(JSON.stringify(out)) > MAX_DETAIL_BYTES - 20) delete out[keys.pop()!]
     out.truncated = true
     json = JSON.stringify(out)
   }
@@ -261,8 +293,6 @@ export function ipcEvent(o: { channel: string; ms: number; ok: boolean; error?: 
 
 // ── batching ─────────────────────────────────────────────────────────────
 
-const encoder = new TextEncoder()
-export const utf8Bytes = (s: string): number => encoder.encode(s).length
 
 /**
  * Split serialized events (one JSON line each) into POST-sized batches: at

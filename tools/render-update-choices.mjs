@@ -50,6 +50,7 @@ const states = [
   ['1-offered', { ...base, ready: offer }],
   ['1b-offered-notes', { ...base, ready: offer, initialPanel: 'notes' }],
   ['1c-offered-install-at', { ...base, ready: offer, initialPanel: 'at' }],
+  ['1d-offered-old-style-gate', { ...base, ready: { ...offer, decides: false, label: 'Version 6.1.0', notes: ['Album page fixes'] } }],
   ['2-scheduled', { ...base, ready: { ...offer, phase: 'scheduled', at: new Date(tonight).toISOString() } }],
   ['2b-waiting', { ...base, ready: { ...offer, phase: 'waiting', at: new Date(tonight).toISOString(), waitingFor: 'the music is playing' } }],
   ['3-installing', { ...base, ready: { ...offer, phase: 'installing' }, installing: true }],

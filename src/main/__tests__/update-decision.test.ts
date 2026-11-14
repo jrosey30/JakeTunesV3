@@ -14,6 +14,7 @@ import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import type { IpcMainInvokeEvent } from 'electron'
 import type { IpcRegistrar } from '../ipc-register.ts'
@@ -314,6 +315,43 @@ describe('update decisions — the watcher carries them out', () => {
       assert.equal(h.last()?.waitingFor, 'a CD rip is running')
       assert.equal(h.go(), null)
     } finally { h.cleanup() }
+  })
+
+  test('an old-style offer (no release file): only Install now; a time or a skip is refused, nothing saved, no go-file', async () => {
+    const h = harness()
+    try {
+      writeFileSync(join(h.dir, UPDATE_READY_FILE), JSON.stringify({ v: 1, sha: SHA, version: '6.1.0', note: 'x', stagedAt: new Date(T0 - 60_000).toISOString(), gatePid: 4242 }))
+      await h.check()
+      assert.equal(h.last()?.decides, false)
+      assert.deepEqual(await h.invoke('update-ready:decide', { choice: 'skip' }), { ok: false, error: 'not-for-this-offer' })
+      assert.deepEqual(await h.invoke('update-ready:decide', { choice: 'at', at: new Date(T0 + HOUR).toISOString() }), { ok: false, error: 'not-for-this-offer' })
+      assert.equal(h.last()?.phase, 'offered', 'still offered: its gate will install on idle, and the bar must not say otherwise')
+      assert.equal(h.go(), null)
+      assert.ok(!existsSync(join(h.dir, UPDATE_DECISION_FILE)) || h.decisions().current === null)
+      assert.deepEqual(await h.invoke('update-ready:decide', { choice: 'now' }), { ok: true })
+      assert.equal(h.go(), `${SHA}\n`)
+    } finally { h.cleanup() }
+  })
+
+  test('the bar draws Install now only for an old-style offer, all three for a v 2 one', async () => {
+    const { build } = await import('esbuild')
+    const out = join(mkdtempSync(join(tmpdir(), 'jt-update-choices-')), 'render.cjs')
+    const root = join(import.meta.dirname, '..', '..', '..')
+    await build({
+      stdin: { contents: `import { renderToStaticMarkup } from 'react-dom/server'\nimport C from ${JSON.stringify(join(root, 'src/renderer/components/chrome/UpdateChoices.tsx'))}\nexport const render = (p) => renderToStaticMarkup(<C {...p} />)`, resolveDir: root, loader: 'tsx' },
+      bundle: true, platform: 'node', format: 'cjs', jsx: 'automatic', outfile: out, logLevel: 'error',
+    })
+    const { render } = createRequire(import.meta.url)(out) as { render: (p: unknown) => string }
+    const ready: UpdateReadyState = { sha: SHA, version: '6.1.0', note: 'x', label: 'x', kind: 'fix', notes: ['x'], offeredAt: new Date(T0).toISOString(), decides: false, phase: 'offered', at: null, waitingFor: null }
+    const props = { installing: false, failed: false, afterSync: false, now: T0, onInstallNow: () => {}, onInstallAt: async () => true, onSkip: () => {}, onCancel: () => {} }
+    const old = render({ ...props, ready })
+    assert.match(old, />Install now</)
+    assert.doesNotMatch(old, /Install at|Skip to next week|Update installs at|Change</)
+    // Even with an answer somehow on disk for it, an old-style offer never claims a time.
+    assert.doesNotMatch(render({ ...props, ready: { ...ready, phase: 'scheduled', at: new Date(T0 + HOUR).toISOString() } }), /Update installs at|Install at/)
+    const v2 = render({ ...props, ready: { ...ready, decides: true } })
+    for (const w of ['>Install now<', '>Install at…<', '>Skip to next week<']) assert.ok(v2.includes(w), w)
+    rmSync(join(out, '..'), { recursive: true, force: true })
   })
 
   test('a bad time is refused and nothing is saved', async () => {

@@ -137,6 +137,8 @@ export function createUsageStore(deps: UsageStoreDeps): UsageStore {
   let stopped = false
   const s = { logged: 0, sent: 0, dropped: 0, posts: 0, failedPosts: 0 }
   let warnedWrite = false
+  /** Events the memory cap took since the last flush. */
+  let memDropped = 0
 
   // ── one line of work for the files ──
   let chain: Promise<unknown> = Promise.resolve()
@@ -172,8 +174,11 @@ export function createUsageStore(deps: UsageStoreDeps): UsageStore {
       if (buffer.length > maxBuffered) {
         // Disk can't keep up (or is refusing): the oldest in memory go, counted.
         const over = buffer.length - maxBuffered
+        // One running count, written as one line at the next flush: a "dropped" line held in
+        // memory would itself take the room it reports on.
         const gone = buffer.splice(0, over)
-        counted(eventsIn(gone), 'memory', freshIn(gone))
+        memDropped += eventsIn(gone)
+        s.dropped += freshIn(gone)
       }
       if (buffer.length >= flushAt && flushTimer) { clearTimeout(flushTimer); flushTimer = null }
       schedule()
@@ -230,6 +235,11 @@ export function createUsageStore(deps: UsageStoreDeps): UsageStore {
 
   const flush = (): Promise<void> => serial(async () => {
     if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }
+    if (memDropped) {
+      const ev = scrubEvent({ kind: 'dropped', name: 'usage-log.dropped', detail: { count: memDropped, reason: 'memory' } }, now())
+      if (ev) buffer.unshift(JSON.stringify(ev))
+      memDropped = 0
+    }
     if (!buffer.length) return
     const lines = buffer
     buffer = []
@@ -251,6 +261,11 @@ export function createUsageStore(deps: UsageStoreDeps): UsageStore {
 
   const flushSync = (): void => {
     if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }
+    if (memDropped) {
+      const ev = scrubEvent({ kind: 'dropped', name: 'usage-log.dropped', detail: { count: memDropped, reason: 'memory' } }, now())
+      if (ev) buffer.unshift(JSON.stringify(ev))
+      memDropped = 0
+    }
     if (!buffer.length) return
     try {
       mkdirSync(deps.dir, { recursive: true })

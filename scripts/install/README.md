@@ -219,8 +219,11 @@ jaketunes-install-gate.sh <staged.app> <backup> 11520 <sha> <label> <staged-upda
   list) is exit 1 before any offer is made.
 - Change and Cancel happen entirely in the app, until `update-go` is written; after that the
   bar says "Installing — back in a moment" and refuses both.
-- Without the 6th argument the gate is the v 1 gate, idle install included. A v 1 offer still
-  shows the three answers, but **Skip** only hides it there: a v 1 gate installs on idle anyway.
+- Without the 6th argument the gate is the v 1 gate, idle install included. A v 1 offer shows
+  **Install now** only (the app refuses a time or a skip for it), because its gate installs on
+  idle by itself and would read neither.
+- A release file with no sha or no data folder is an ABORT (exit 1), never the idle install.
+- A build skipped on a Mac stays skipped there, even when the release job stages it again.
 - A reboot ends a waiting gate (the marker goes with it). The agent starts a new gate for the
   same release within 5 minutes of login, and the decision on disk applies to it.
 

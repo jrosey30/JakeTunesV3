@@ -60,8 +60,10 @@ else
   echo "staged: $SHA"
 fi
 cp "$REL" "$DEST/release.json.tmp" && mv -f "$DEST/release.json.tmp" "$DEST/release.json"
-# A release staged again after a skip or a give-up is a new offer.
-rm -f "$DEST/skipped" "$DEST/gave-up" "$DEST/tries"
+# A build staged again after the agent gave up on it gets three more tries. One skipped on this
+# Mac stays skipped: Skip is final for that release (the app would only skip it again).
+rm -f "$DEST/gave-up" "$DEST/tries"
+[ -f "$DEST/skipped" ] && echo "note: $SHA was skipped on this Mac — it stays skipped"
 
 install -m 755 "$HERE/jaketunes-update-agent.sh" "$AGENT_DIR/jaketunes-update-agent.sh" || fail "could not install the agent"
 install -m 755 "$HERE/jaketunes-install-gate.sh" "$AGENT_DIR/jaketunes-install-gate.sh" || fail "could not install the gate"

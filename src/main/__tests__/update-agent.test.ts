@@ -210,6 +210,41 @@ describe('update agent — what it starts, and when', () => {
     assert.ok(existsSync(join(w.dir(B), 'skipped')))
   })
 
+  it('a skip stays final on every later run, a stale pid or a lost exit file included', async () => {
+    const w = world()
+    w.stage_(B, 2000)
+    await w.agent()
+    await waitFor(() => w.gateCalls().length === 1 || null, 'the gate to start')
+    await releaseGates(w, B, 5)
+    await w.agent()
+    assert.ok(existsSync(join(w.dir(B), 'skipped')))
+    // Whatever the folder looks like afterwards, a skipped release is never started again.
+    const dead = spawn('/usr/bin/true')
+    await new Promise((r) => dead.on('exit', r))
+    writeFileSync(join(w.dir(B), 'gate.pid'), `${dead.pid}\n`)
+    for (let i = 0; i < 4; i++) await w.agent()
+    writeFileSync(join(w.dir(B), 'gate.exit'), '3\n')
+    await w.agent()
+    await new Promise((r) => setTimeout(r, 300))
+    assert.equal(w.gateCalls().length, 1)
+  })
+
+  it('pruning never removes a release whose gate is running', async () => {
+    const w = world()
+    w.stage_(A, 1000)
+    await w.agent()
+    await waitFor(() => w.gateCalls().length === 1 || null, 'A\'s gate')
+    w.stage_(B, 2000)
+    w.stage_(C, 3000)
+    w.installedIs(C)
+    await w.agent()
+    assert.ok(existsSync(join(w.dir(A), 'JakeTunes.app')), 'A is third newest but its gate is still running: kept')
+    assert.ok(existsSync(w.dir(B)) && existsSync(w.dir(C)))
+    await releaseGates(w, A, 3)
+    await w.agent()
+    assert.ok(!existsSync(w.dir(A)), 'once its gate has ended it goes')
+  })
+
   it('timeouts, a newer marker and kills restart uncounted; three ABORTs and it gives up', async () => {
     const w = world()
     w.stage_(B, 2000)
@@ -363,6 +398,21 @@ describe('offer — stage, install the agent, load it once', () => {
     const r = await unsigned.offer()
     assert.equal(r.code, 1)
     assert.match(r.out, /signature does not verify/)
+  })
+
+  it('a build skipped on this Mac and staged again is not offered again', async () => {
+    const o = offerWorld()
+    await o.offer()
+    await o.w.agent()
+    await waitFor(() => o.w.gateCalls().length === 1 || null, 'the gate to start')
+    await releaseGates(o.w, B, 5)
+    await o.w.agent()
+    const again = await o.offer()
+    assert.equal(again.code, 0)
+    assert.match(again.out, /was skipped on this Mac — it stays skipped/)
+    await o.w.agent()
+    await new Promise((r) => setTimeout(r, 300))
+    assert.equal(o.w.gateCalls().length, 1, 'no second gate for a skipped build')
   })
 
   it('offer then agent, end to end: the staged copy is what the gate is handed', async () => {

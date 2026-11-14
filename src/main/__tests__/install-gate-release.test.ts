@@ -126,6 +126,18 @@ describe('install gate — a weekly release waits for a decision', () => {
     }
   })
 
+  it('a release file with no data folder is an ABORT, never the idle install', async () => {
+    const w = makeWorld({ idleS: 900, dataDir: false })
+    try {
+      const g = w.run({ sha: SHA, note: NOTE, release: releaseFile(w.root) })
+      const r = await finished(g)
+      assert.equal(r.code, 1, g.out())
+      assert.match(g.out(), /ABORT: a release file needs a sha and the app's data folder/)
+      assert.equal(readFileSync(w.installedAsar, 'utf8'), OLD_ASAR)
+      assert.doesNotMatch(w.calls(), /^osascript /m)
+    } finally { w.cleanup() }
+  })
+
   it('a no-decision timeout is exit 3 and changes nothing', async () => {
     const w = makeWorld({ idleS: 900 })
     try {

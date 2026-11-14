@@ -4,6 +4,8 @@
  * of night or something (user will tell you when) or skip to next week."
  *
  *   offered     Update ready: <label> · <first note ▸>  Install now · Install at… · Skip to next week
+ *               (an old-style offer, `decides` false, shows Install now only: its gate installs
+ *               on idle by itself and reads neither a time nor a skip)
  *   scheduled   Update installs at 3:00 AM  Change · Cancel
  *   waiting     Update waiting: the music is playing  Change · Cancel
  *   installing  Installing — back in a moment
@@ -114,7 +116,7 @@ export default function UpdateChoices(p: UpdateChoicesProps) {
 
   return (
     <div className="update-choices" ref={boxRef}>
-      {ready.phase === 'scheduled' || ready.phase === 'waiting' ? (
+      {ready.decides && (ready.phase === 'scheduled' || ready.phase === 'waiting') ? (
         <>
           <span className="update-choices-status" aria-live="polite">
             {ready.phase === 'scheduled' ? `Update installs at ${when}` : `Update waiting: ${ready.waitingFor ?? 'not idle yet'}`}
@@ -131,8 +133,10 @@ export default function UpdateChoices(p: UpdateChoicesProps) {
             </button>
           )}
           <button type="button" className="update-choices-link" onClick={p.onInstallNow}>Install now</button>
-          <button type="button" className="update-choices-link" onClick={openAt}>Install at…</button>
-          <button type="button" className="update-choices-link" onClick={p.onSkip}>Skip to next week</button>
+          {/* An old-style gate (no release file) never reads a chosen time or a skip, and installs
+              by itself when the Mac is idle: offering either would be a promise it can't keep. */}
+          {ready.decides && <button type="button" className="update-choices-link" onClick={openAt}>Install at…</button>}
+          {ready.decides && <button type="button" className="update-choices-link" onClick={p.onSkip}>Skip to next week</button>}
         </>
       )}
 
@@ -146,7 +150,7 @@ export default function UpdateChoices(p: UpdateChoicesProps) {
         </div>
       )}
 
-      {panel === 'at' && (
+      {panel === 'at' && ready.decides && (
         <div className="update-choices-panel" role="dialog" aria-label="Install at">
           <div className="update-choices-panel-title">Install at</div>
           <div className="update-choices-panel-sub">Only if nothing is playing or syncing then; otherwise as soon as it stops.</div>

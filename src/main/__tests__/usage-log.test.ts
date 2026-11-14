@@ -50,6 +50,29 @@ describe('usage log — nothing private gets in', () => {
     assert.doesNotMatch(scrubString('read /Users/jake/.config/jaketunes/companion-token'), /companion-token|jake/)
   })
 
+  test('a query string with no scheme, a short token in a header, a user:password URL', () => {
+    assert.equal(scrubString('GET /api/search?q=the%20smiths&token=abc failed'), 'GET /api/search failed')
+    assert.equal(scrubString('fetch ?q=lorde&page=2').trim(), 'fetch')
+    assert.doesNotMatch(scrubString('X-JakeTunes-Companion: s3cr3t'), /s3cr3t/)
+    assert.doesNotMatch(scrubString('Authorization: Basic YWJjOmRlZg'), /YWJj/)
+    assert.doesNotMatch(scrubString('sent token=ab12, then password: hunter2;'), /ab12|hunter2/)
+    assert.doesNotMatch(scrubString('api_key="k-1"'), /k-1/)
+    assert.equal(scrubString('GET http://jake:hunter2@homemini:3000/api/x'), 'GET http://[secret]@homemini:3000/api/x')
+    assert.equal(scrubString('author: Radiohead, what? why?'), 'author: Radiohead, what? why?', 'plain words and question marks stay')
+  })
+
+  test('typed words never get in: q, query, search, lyrics keys are dropped at the logger', () => {
+    const e = scrubEvent({ kind: 'action', name: 'search', detail: { q: 'my song', query: 'x', searchTerm: 'y', lyrics: 'la', lyric: 'la', count: 3 } }, T)
+    assert.deepEqual(e?.detail, { count: 3 })
+  })
+
+  test('a detail is sized in UTF-8 bytes, and so is a string', () => {
+    const d = scrubDetail(Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`k${i}`, 'é'.repeat(60)])))
+    assert.ok(utf8Bytes(JSON.stringify(d)) <= 1024, `${utf8Bytes(JSON.stringify(d))} bytes`)
+    assert.equal(d?.truncated, true, '12 × 60 é is under 1 KB in characters but not in bytes')
+    assert.ok(utf8Bytes(scrubString('ü'.repeat(300))) <= 200)
+  })
+
   test('a detail is flat, keyless of secrets and lyrics, and ≤ 1 KB with strings ≤ 200', () => {
     const d = scrubDetail({
       route: '/api/x', status: 200, ok: true, none: null, nested: { a: 1 }, list: [1, 2, 3],
@@ -57,7 +80,7 @@ describe('usage log — nothing private gets in', () => {
       long: 'a few words '.repeat(50), weird: NaN,
     })
     assert.deepEqual(Object.keys(d ?? {}).sort(), ['listCount', 'long', 'none', 'ok', 'route', 'status'])
-    assert.equal(String(d?.long).length, 200)
+    assert.ok(utf8Bytes(String(d?.long)) <= 200 && String(d?.long).endsWith('…'))
     const big = scrubDetail(Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`k${i}`, 'why '.repeat(40)])))
     assert.ok(JSON.stringify(big).length <= 1024, `${JSON.stringify(big).length}`)
     assert.equal(big?.truncated, true)
@@ -250,6 +273,25 @@ describe('usage log — the store on disk', () => {
       assert.equal(r.dropped, 1)
       await store.send()
       assert.ok(accepted.includes(-1), 'the dropped event itself reaches homemini')
+      store.stop()
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  test('the memory cap: past maxBuffered the oldest in memory go, counted, and the totals still add up', async () => {
+    const dir = tmp()
+    try {
+      const bodies: string[] = []
+      // A long flush interval and no flush in between: everything piles up in memory.
+      const store = createUsageStore({ dir, device: 'macbook', build: 'abc', maxBuffered: 10, flushMs: 60_000, flushAt: 1000, post: async (b) => { bodies.push(b); return { status: 200 } } })
+      for (let i = 0; i < 25; i++) store.log({ kind: 'action', name: 'x', detail: { id: i } })
+      assert.ok(store.stats().buffered <= 11, `${store.stats().buffered} in memory`)
+      assert.equal(store.stats().dropped, 15)
+      await store.send()
+      const evs = bodies.flatMap((b) => (JSON.parse(b) as { events: Array<{ name: string; detail?: { id?: number; count?: number; reason?: string } }> }).events)
+      const real = evs.filter((e) => e.name !== 'usage-log.dropped').map((e) => e.detail?.id)
+      const dropped = evs.filter((e) => e.name === 'usage-log.dropped' && e.detail?.reason === 'memory').reduce((a, e) => a + (e.detail?.count ?? 0), 0)
+      assert.equal(real.length + dropped, 25, `${real.length} sent + ${dropped} counted`)
+      assert.equal(real.at(-1), 24, 'the newest are the ones kept')
       store.stop()
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })

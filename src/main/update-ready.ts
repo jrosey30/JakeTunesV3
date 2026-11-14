@@ -374,6 +374,9 @@ export function startUpdateReadyWatcher(deps: UpdateReadyDeps): UpdateReadyHandl
       const o = offer
       if (!o || !decisions || isSkipped(decisions, o.sha) && choice.choice !== 'skip') return { ok: false, error: 'no-update' }
       if (installingSha && sameBuild(installingSha, o.sha)) return { ok: false, error: 'installing' }
+      // An old-style gate (v 1 marker, no release file) installs on idle by itself and never
+      // reads a time or a skip: only "now" means anything to it.
+      if (!o.decides && choice.choice !== 'now') return { ok: false, error: 'not-for-this-offer' }
       if (choice.choice === 'now' && deps.syncInFlight()) {
         deps.record('update-ready.install-after-sync', { sha: o.sha })
         usage('update.decide', { sha: o.sha.slice(0, 12), choice: 'now', refused: 'ipod-sync' }, false)

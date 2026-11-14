@@ -264,6 +264,12 @@ restore_previous() {
 markers_on=0
 [ -n "$SHA" ] && [ -d "$DATA_DIR" ] && markers_on=1
 V2=0
+# A release file means "wait for a decision". Without a sha or a data folder there is no marker
+# for the app to read and no go-file to wait for, and falling back to the idle install would
+# install with nobody asked: stop instead.
+if [ -n "$RELEASE" ] && [ "$markers_on" != 1 ]; then
+  say "ABORT: a release file needs a sha and the app's data folder ($DATA_DIR) — nothing installs without a decision"; exit 1
+fi
 if [ -n "$RELEASE" ] && [ "$markers_on" = 1 ]; then
   [ -f "$RELEASE" ] || { say "ABORT: no release file at $RELEASE"; exit 1; }
   R_LABEL=$(plutil -extract label raw -o - "$RELEASE" 2>/dev/null) || { say "ABORT: the release file has no label"; exit 1; }
