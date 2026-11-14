@@ -19,14 +19,31 @@
  * done instead: song-in-use.ts.)
  *
  * When a hold closes: its key gets a new load (the old hold closes once its
- * last piece has been sent), nobody has read it for `idleMs`, or more than
- * `max` holds are open (the least recently read idle one goes). A hold with a
- * piece still being sent is never closed under it.
+ * last piece has been sent), nobody has read it for `idleMs` (pieces still
+ * "being sent" or not), or more than `max` holds are open (the least
+ * recently read idle one goes). A piece that is being read is never closed
+ * under.
  *
- * A key's version is remembered after its hold closes. A later piece of that
- * load arriving for a file that is no longer that version is refused (409)
- * rather than spliced: an error the player recovers from is better than bytes
- * it decodes as garbage.
+ * Review of #425: Electron can drop a response without cancelling its body,
+ * and 200 such pieces kept a hold, and so the song's "in use", open until a
+ * restart: its tag edit never landed. So a hold closes when nobody has read
+ * ANY of its pieces for `idleMs`, whether pieces are still "being sent" or
+ * not, the current hold and a replaced one alike; whatever is left of them
+ * then counts as abandoned. A piece unread for `pieceStaleMs` no longer
+ * counts as being read (`stats().reading`), but its file is NOT closed for
+ * that: a playing song whose body the player has simply not pulled for a few
+ * minutes (it has enough buffered) must still read on when it comes back,
+ * even after a second load of the same URL (repeat one) replaced its hold.
+ * If a reader does come back after its file closed, the read fails and the
+ * player reloads; FileHandle refuses reads after close, so a reused
+ * descriptor can never be read through it.
+ *
+ * A key's version is remembered after its hold closes, with what the file's
+ * bytes looked like (`contentSignature`: size, the first and last 64 KB, and
+ * an MP4's audio offset). A later piece of that load whose file now has
+ * another date but the same bytes is served (a touch, a copy of the same
+ * file); one whose bytes changed is refused (409) rather than spliced: an
+ * error the player recovers from is better than bytes it decodes as garbage.
  *
  * The URL. Measured in Electron 30 (a muted, hidden window; scratch proof
  * in the PR): Chromium keeps a song's bytes per URL across media elements. A
@@ -46,6 +63,7 @@
  * Electron-free (Node's fs, stream and fetch Response only);
  * __tests__/audio-load-hold.test.ts.
  */
+import { createHash } from 'crypto'
 import { parseRangeHeader } from './range-header.ts'
 
 export interface HoldFileStat { size: number; mtimeMs: number; ino?: number }
@@ -61,28 +79,74 @@ export interface HoldFileHandle {
   close(): Promise<void>
 }
 
-/** Bytes start..end (inclusive) of an open file, read as the consumer pulls; `done` once, at the end or on cancel. */
-function rangeStream(fh: HoldFileHandle, start: number, end: number, done: () => void): ReadableStream<Uint8Array> {
+type PieceEnd = 'ended' | 'cancelled' | 'failed' | 'abandoned'
+/** One response body being sent. `finish` is idempotent. */
+interface Piece { lastPull: number; finish: (how: PieceEnd) => void }
+
+/**
+ * Bytes start..end (inclusive) of an open file, read as the consumer pulls.
+ * `piece.finish` once: at the end, on cancel, on an error, or by the sweep.
+ */
+function rangeStream(fh: HoldFileHandle, start: number, end: number, piece: Piece, pulled: () => void): ReadableStream<Uint8Array> {
   let pos = start
-  let over = false
-  const finish = (): void => { if (!over) { over = true; done() } }
   return new ReadableStream<Uint8Array>({
     async pull(ctrl) {
-      if (pos > end) { ctrl.close(); finish(); return }
+      pulled()
+      if (pos > end) { ctrl.close(); piece.finish('ended'); return }
       const len = Math.min(256 * 1024, end - pos + 1)
       const buf = new Uint8Array(len)
       try {
         const { bytesRead } = await fh.read(buf, 0, len, pos)
-        if (bytesRead === 0) { ctrl.close(); finish(); return }   // the file is shorter than it was said to be
+        if (bytesRead === 0) { ctrl.close(); piece.finish('ended'); return }   // the file is shorter than it was said to be
         pos += bytesRead
         ctrl.enqueue(bytesRead === len ? buf : buf.subarray(0, bytesRead))
       } catch (err) {
         ctrl.error(err)
-        finish()
+        piece.finish('failed')
       }
     },
-    cancel() { finish() },
+    cancel() { piece.finish('cancelled') },
   })
+}
+
+const SIG_EDGE = 64 * 1024
+
+/** The offset of an MP4's top-level `mdat` (where its audio starts), or null. A few 8/16-byte reads. */
+async function mp4AudioOffset(fh: HoldFileHandle, size: number): Promise<number | null> {
+  const head = new Uint8Array(16)
+  let pos = 0
+  for (let i = 0; i < 64 && pos + 8 <= size; i++) {
+    const { bytesRead } = await fh.read(head, 0, 16, pos)
+    if (bytesRead < 8) return null
+    const dv = new DataView(head.buffer)
+    let len = dv.getUint32(0)
+    const type = String.fromCharCode(head[4], head[5], head[6], head[7])
+    if (i === 0 && type !== 'ftyp') return null
+    if (len === 1 && bytesRead >= 16) len = Number(dv.getBigUint64(8))
+    else if (len === 0) len = size - pos
+    if (type === 'mdat') return pos
+    if (len < 8) return null
+    pos += len
+  }
+  return null
+}
+
+/**
+ * What a file's bytes look like, cheaply: its size, a hash of its first and
+ * last 64 KB, and (an MP4) where its audio starts. Two files with the same
+ * signature read the same at the offsets a player already has.
+ */
+export async function contentSignature(fh: HoldFileHandle, size: number): Promise<string> {
+  const h = createHash('sha1')
+  const edge = async (pos: number, len: number): Promise<void> => {
+    if (len <= 0) return
+    const buf = new Uint8Array(len)
+    const { bytesRead } = await fh.read(buf, 0, len, pos)
+    h.update(buf.subarray(0, bytesRead))
+  }
+  await edge(0, Math.min(SIG_EDGE, size))
+  await edge(Math.max(0, size - SIG_EDGE), Math.min(SIG_EDGE, size))
+  return `${size}:${await mp4AudioOffset(fh, size)}:${h.digest('hex')}`
 }
 
 export interface LoadHoldDeps {
@@ -92,11 +156,14 @@ export interface LoadHoldDeps {
   idleMs?: number
   /** Most holds open at once; past it the least recently read idle one closes. */
   max?: number
+  /** A piece nobody has read for this long no longer counts as being read (stats only). */
+  pieceStaleMs?: number
   warn?: (msg: string) => void
 }
 
 export const LOAD_HOLD_IDLE_MS = 15 * 60_000
 export const LOAD_HOLD_MAX = 24
+export const LOAD_HOLD_PIECE_STALE_MS = 2 * 60_000
 
 /** A file's version for the URL marker: its mtime and size. */
 export function fileVersion(st: HoldFileStat): string {
@@ -139,7 +206,9 @@ interface Held {
   source: string
   size: number
   version: string
+  signature: string
   headers: ServeHeaders
+  pieces: Set<Piece>
   active: number
   lastUse: number
   retired: boolean
@@ -170,22 +239,24 @@ export interface LoadHold {
   sweep(): void
   /** Close everything (quit). */
   closeAll(): Promise<void>
-  stats(): { open: number; reading: number; opened: number; closed: number; refused: number }
+  stats(): { open: number; reading: number; stale: number; opened: number; closed: number; refused: number; sameBytes: number; ended: number; cancelled: number; failed: number; abandoned: number }
 }
 
 export function createLoadHold(deps: LoadHoldDeps): LoadHold {
   const now = deps.now ?? Date.now
   const idleMs = deps.idleMs ?? LOAD_HOLD_IDLE_MS
   const max = deps.max ?? LOAD_HOLD_MAX
+  const pieceStaleMs = deps.pieceStaleMs ?? LOAD_HOLD_PIECE_STALE_MS
   const warn = deps.warn ?? (() => {})
   const holds = new Map<string, Held>()          // key → the current hold
   const retired = new Set<Held>()                // replaced, still sending a piece
-  const versions = new Map<string, string>()     // key → version last served (bounded)
-  const st = { opened: 0, closed: 0, refused: 0 }
+  const versions = new Map<string, { version: string; signature: string }>()   // key → what it last served (bounded)
+  const st = { opened: 0, closed: 0, refused: 0, sameBytes: 0, ended: 0, cancelled: 0, failed: 0, abandoned: 0 }
 
   const close = (h: Held): void => {
     if (h.closed) return
     h.closed = true
+    for (const p of [...h.pieces]) p.finish('abandoned')   // a piece read after this fails: FileHandle refuses reads once closed
     retired.delete(h)
     st.closed++
     h.fh.close().catch((err: unknown) => warn(`[audio-load-hold] close failed for ${h.path}: ${err instanceof Error ? err.message : String(err)}`))
@@ -195,23 +266,26 @@ export function createLoadHold(deps: LoadHoldDeps): LoadHold {
     if (h.active === 0) close(h)
     else retired.add(h)
   }
-  const remember = (key: string, version: string): void => {
+  const remember = (key: string, h: Held): void => {
     versions.delete(key)
-    versions.set(key, version)
+    versions.set(key, { version: h.version, signature: h.signature })
     if (versions.size > 2000) versions.delete(versions.keys().next().value as string)
   }
   const install = (key: string, h: Held): void => {
     const old = holds.get(key)
     holds.set(key, h)
     if (old && old !== h) retire(old)
-    remember(key, h.version)
+    remember(key, h)
   }
 
   const sweep = (): void => {
     const t = now()
+    // Nobody has read the hold for idleMs: it closes, pieces "in flight" or not
+    // (a dropped response never ends by itself).
     for (const [key, h] of holds) {
-      if (h.active === 0 && t - h.lastUse >= idleMs) { holds.delete(key); close(h) }
+      if (t - h.lastUse >= idleMs) { holds.delete(key); close(h) }
     }
+    for (const h of [...retired]) if (t - h.lastUse >= idleMs) close(h)
     if (holds.size > max) {
       const idle = [...holds].filter(([, h]) => h.active === 0).sort((a, b) => a[1].lastUse - b[1].lastUse)
       for (const [key, h] of idle) {
@@ -232,11 +306,20 @@ export function createLoadHold(deps: LoadHoldDeps): LoadHold {
     }
     if (h.size === 0) return new Response(new Uint8Array(0), { status: 200, headers: { ...base, 'Content-Length': '0' } })
     h.active++
-    const stream = rangeStream(h.fh, start, end, () => {
-      h.active--
-      h.lastUse = now()
-      if (h.retired && h.active === 0) close(h)
-    })
+    let over = false
+    const piece: Piece = {
+      lastPull: now(),
+      finish: (how) => {
+        if (over) return
+        over = true
+        st[how]++
+        h.pieces.delete(piece)
+        h.active--
+        if (h.retired && h.active === 0) close(h)
+      },
+    }
+    h.pieces.add(piece)
+    const stream = rangeStream(h.fh, start, end, piece, () => { piece.lastPull = h.lastUse = now() })
     return new Response(stream, {
       status: partial ? 206 : 200,
       headers: { ...base, 'Content-Length': String(end - start + 1), ...(partial ? { 'Content-Range': `bytes ${start}-${end}/${h.size}` } : {}) },
@@ -247,8 +330,9 @@ export function createLoadHold(deps: LoadHoldDeps): LoadHold {
     const fh = await deps.open(path)
     try {
       const s = await fh.stat()
+      const signature = await contentSignature(fh, s.size)
       st.opened++
-      return { fh, path, source, size: s.size, version: fileVersion(s), headers, active: 0, lastUse: now(), retired: false, closed: false }
+      return { fh, path, source, size: s.size, version: fileVersion(s), signature, headers, pieces: new Set(), active: 0, lastUse: now(), retired: false, closed: false }
     } catch (err) {
       await fh.close().catch(() => undefined)
       throw err
@@ -273,11 +357,14 @@ export function createLoadHold(deps: LoadHoldDeps): LoadHold {
       sweep()
       const h = await openHold(path, source, headers)
       const was = versions.get(key)
-      if (was && was !== h.version) {
-        close(h)
-        st.refused++
-        warn(`[audio-load-hold] ${path}: the file changed under a load (was ${was}, now ${h.version}); refused, the player reloads it`)
-        return new Response('The file changed under this load', { status: 409 })
+      if (was && was.version !== h.version) {
+        if (was.signature !== h.signature) {
+          close(h)
+          st.refused++
+          warn(`[audio-load-hold] ${path}: the file's bytes changed under a load (was ${was.version}, now ${h.version}); refused, the player reloads it`)
+          return new Response('The file changed under this load', { status: 409 })
+        }
+        st.sameBytes++                                   // a new date on the same bytes: nothing to splice
       }
       install(key, h)
       return respond(h, rangeHeader)
@@ -288,17 +375,18 @@ export function createLoadHold(deps: LoadHoldDeps): LoadHold {
       for (const h of retired) if (!h.closed && h.source === source) return true
       return false
     },
-    versionOf: (key) => versions.get(key) ?? null,
+    versionOf: (key) => versions.get(key)?.version ?? null,
     sweep,
     async closeAll() {
       for (const h of [...holds.values(), ...retired]) close(h)
       holds.clear()
     },
-    stats: () => ({
-      open: [...holds.values()].filter((h) => !h.closed).length + retired.size,
-      reading: [...holds.values(), ...retired].reduce((n, h) => n + h.active, 0),
-      ...st,
-    }),
+    stats: () => {
+      const t = now()
+      const pieces = [...holds.values(), ...retired].flatMap((h) => [...h.pieces])
+      const reading = pieces.filter((p) => t - p.lastPull < pieceStaleMs).length
+      return { open: [...holds.values()].filter((h) => !h.closed).length + retired.size, reading, stale: pieces.length - reading, ...st }
+    },
   }
 }
 

@@ -11,10 +11,10 @@
 import { test, describe, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { open } from 'node:fs/promises'
+import { open, utimes } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { createLoadHold, fileVersion, holdKey, serveHeldFile, splitAudioUrl, startsLoad, versionedUrl, type LoadHold } from '../audio-load-hold.ts'
+import { contentSignature, createLoadHold, fileVersion, holdKey, serveHeldFile, splitAudioUrl, startsLoad, versionedUrl, type LoadHold } from '../audio-load-hold.ts'
 import { writeVerified } from '../audio-write-guard.ts'
 
 const dir = mkdtempSync(join(tmpdir(), 'jt-load-hold-'))
@@ -230,6 +230,154 @@ describe('holds are closed, never leaked, never closed under a reader', () => {
     assert.equal(h.holdsSource(s.source), true)
     t += 5000
     assert.equal(h.holdsSource(s.source), false)
+  })
+})
+
+describe('review of #425: a dropped piece can\'t hold a song open forever', () => {
+  const fds = (): number => readdirSync('/dev/fd').length
+
+  test('200 pieces Electron dropped without cancelling: not counted as being read after 2 min, and the hold closes after its idle window', async () => {
+    let t = 0
+    const s = song(bytes(40, 400_000))
+    const h = hold({ now: () => t, idleMs: 15 * 60_000, pieceStaleMs: 2 * 60_000 })
+    await new Promise((r) => setTimeout(r, 50))
+    const before = fds()
+    const dropped: Response[] = []
+    dropped.push(await request(h, s, s.url, 'bytes=0-'))
+    for (let i = 1; i < 200; i++) { t += 100; dropped.push(await request(h, s, s.url, `bytes=${i * 1000}-`)) }   // never read, never cancelled
+    assert.equal(h.stats().reading, 200)
+    assert.equal(h.holdsSource(s.source), true, 'the song is in use while they are fresh')
+    t += 2 * 60_000
+    h.sweep()
+    assert.equal(h.stats().reading, 0, 'none still counts as being read')
+    assert.equal(h.stats().stale, 200)
+    assert.equal(h.holdsSource(s.source), true, 'the hold itself stays for its idle window: a paused song is still in use')
+    const next = await request(h, s, s.url, 'bytes=0-')      // a new load replaces the hold with its 200 dropped pieces
+    t += 15 * 60_000
+    assert.equal(h.holdsSource(s.source), false, 'and then the song is free: its tag edit can land')
+    assert.equal(h.stats().abandoned, 201, 'the replaced hold closes on its idle window too')
+    assert.equal(h.stats().open, 0)
+    void next
+    await new Promise((r) => setTimeout(r, 50))
+    assert.ok(fds() <= before, `${fds()} descriptors open, ${before} before`)
+    // A dropped piece read after its file closed fails; it never reads anything else.
+    await assert.rejects(dropped[5].arrayBuffer())
+  })
+
+  test('a replaced hold whose piece the player just stopped pulling (repeat one) is not closed under it before its idle window', async () => {
+    let t = 0
+    const A = bytes(48, 2_000_000)
+    const s = song(A)
+    const h = hold({ now: () => t, idleMs: 15 * 60_000, pieceStaleMs: 2 * 60_000 })
+    const playing = await request(h, s, s.url, 'bytes=0-')
+    const reader = playing.body!.getReader()
+    const got: Uint8Array[] = [(await reader.read()).value!]
+    await body(await request(h, s, s.url, 'bytes=0-'))      // the same song loaded again: its hold is replaced
+    t += 5 * 60_000                                          // the playing song has enough buffered: no pull for 5 minutes
+    h.sweep()
+    for (;;) { const { done, value } = await reader.read(); if (done) break; got.push(value) }
+    assert.deepEqual(Buffer.concat(got), A, 'it reads on, whole')
+    assert.equal(h.stats().abandoned, 0)
+  })
+
+  test('a hold with a piece "in flight" but nobody reading closes after its idle window', async () => {
+    let t = 0
+    const s = song(bytes(41, 100_000))
+    const h = hold({ now: () => t, idleMs: 1000 })
+    await request(h, s, s.url, 'bytes=0-')                   // never read
+    assert.equal(h.stats().reading, 1)
+    t += 1000
+    h.sweep()
+    assert.equal(h.stats().open, 0)
+    assert.equal(h.stats().reading, 0)
+    assert.equal(h.stats().abandoned, 1)
+  })
+
+  test('a piece being read slowly is never counted as dropped while it is read', async () => {
+    let t = 0
+    const A = bytes(42, 3_000_000)
+    const s = song(A)
+    const h = hold({ now: () => t, idleMs: 15 * 60_000, pieceStaleMs: 2 * 60_000 })
+    const r = await request(h, s, s.url, 'bytes=0-')
+    const reader = r.body!.getReader()
+    const got: Uint8Array[] = []
+    for (;;) {
+      t += 60_000                                            // a pull a minute: slow, never stale
+      h.sweep()
+      const { done, value } = await reader.read()
+      if (done) break
+      got.push(value)
+    }
+    assert.deepEqual(Buffer.concat(got), A)
+    assert.equal(h.stats().abandoned, 0)
+    assert.equal(h.stats().ended, 1)
+  })
+
+  test('the queue\'s view: a song whose pieces were dropped is written once the hold has gone idle', async () => {
+    let t = 0
+    const s = song(bytes(43, 50_000))
+    const h = hold({ now: () => t })
+    for (let i = 0; i < 5; i++) await request(h, s, s.url, i ? `bytes=${i * 100}-` : 'bytes=0-')
+    t += 16 * 60_000
+    assert.equal(h.holdsSource(s.source), false)
+  })
+})
+
+describe('review of #425: only a real byte change is refused', () => {
+  test('after a long pause, a date-only change (touch) is served, not refused', async () => {
+    let t = 0
+    const A = bytes(44, 200_000)
+    const s = song(A)
+    const h = hold({ now: () => t, idleMs: 1000 })
+    await body(await request(h, s, s.url, 'bytes=0-'))
+    t += 5000; h.sweep()
+    const later = new Date(Date.now() + 60_000)
+    await utimes(s.path, later, later)
+    const r = await request(h, s, s.url, 'bytes=100000-109999')
+    assert.equal(r.status, 206)
+    assert.deepEqual(await body(r), A.subarray(100000, 110000))
+    assert.equal(h.stats().sameBytes, 1)
+    assert.equal(h.stats().refused, 0)
+  })
+
+  test('the same bytes written again (a copy renamed over it) are served', async () => {
+    let t = 0
+    const A = bytes(45, 200_000)
+    const s = song(A)
+    const h = hold({ now: () => t, idleMs: 1000 })
+    await body(await request(h, s, s.url, 'bytes=0-'))
+    t += 5000; h.sweep()
+    await rewriteUnder(s.path, Buffer.from(A))
+    assert.equal((await request(h, s, s.url, 'bytes=5000-5999')).status, 206)
+  })
+
+  test('a same-size tag change at the start, or at the end, is refused', async () => {
+    for (const where of ['start', 'end'] as const) {
+      let t = 0
+      const A = bytes(46, 200_000)
+      const s = song(A)
+      const h = hold({ now: () => t, idleMs: 1000 })
+      await body(await request(h, s, s.url, 'bytes=0-'))
+      t += 5000; h.sweep()
+      const B = Buffer.from(A)
+      B[where === 'start' ? 100 : B.length - 100] ^= 0xff
+      await rewriteUnder(s.path, B)
+      assert.equal((await request(h, s, s.url, 'bytes=5000-5999')).status, 409, where)
+    }
+  })
+
+  test('contentSignature: an MP4 whose audio moved differs even with equal edges and size; a date does not count', async () => {
+    const atom = (type: string, len: number): Buffer => { const b = Buffer.alloc(len); b.writeUInt32BE(len, 0); b.write(type, 4, 'latin1'); return b }
+    const tail = Buffer.alloc(70_000, 7)
+    const mk = (moov: number, free: number): Buffer => Buffer.concat([atom('ftyp', 24), atom('moov', moov), atom('free', free), atom('mdat', 200_000), tail])
+    const same1 = song(mk(100_000, 1000)), same2 = song(mk(100_000, 1000))
+    // The same size, the same first and last 64 KB, but the audio starts 1,000 bytes earlier:
+    const moved = song(Buffer.concat([atom('ftyp', 24), atom('moov', 100_000), atom('mdat', 200_000), atom('free', 1000), tail]))
+    const sig = async (p: string): Promise<string> => { const fh = await open(p, 'r'); try { return await contentSignature(fh, (await fh.stat()).size) } finally { await fh.close() } }
+    assert.equal(await sig(same1.path), await sig(same2.path))
+    assert.match(await sig(same1.path), /^\d+:101024:/, 'the audio offset is read from the atoms')
+    assert.notEqual(await sig(same1.path), await sig(moved.path))
+    assert.match(await sig(song(bytes(47, 1000)).path), /^1000:null:/, 'not an MP4: size and edges only')
   })
 })
 
