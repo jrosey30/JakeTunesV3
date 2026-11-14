@@ -84,6 +84,8 @@ describe('the iPod list parser', () => {
       doc({ id: 'Not An Id!' }),
       doc({ name: '' }),
       doc({ cap: 0 }), doc({ cap: 5001 }), doc({ cap: 1.5 }), doc({ cap: '1000' }),
+      // with no songs, only the cap's own bounds refuse these (review of PR 413)
+      doc({ cap: 0, ids: [] }), doc({ cap: -1, ids: [] }), doc({ cap: -5000, ids: [] }), doc({ cap: 5001, ids: [] }),
       doc({ ids: 'x' }), doc({ ids: [1, 2, '3'] }), doc({ ids: [1, 2.5] }), doc({ ids: [0] }), doc({ ids: [-4] }),
       doc({ ids: [5, 6, 5] }),
       doc({ updatedAt: '' }), doc({ updatedAt: undefined }),

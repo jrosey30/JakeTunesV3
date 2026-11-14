@@ -39,13 +39,21 @@
  * 150 GB lossless), and two such lists plus the Top 1000 are most of the
  * library: kept without a limit, this rule would stop the Mac ever freeing
  * room. So:
- *   • under IPOD_KEEP_FLOOR_BYTES free, only the first IPOD_KEEP_ALWAYS songs
- *     in fetch priority (the Original's Top 1000) are still kept; the rest may
- *     be offloaded like any other song until the room is back;
+ *   • under IPOD_KEEP_FLOOR_BYTES free, only the Original's Top 1000 is still
+ *     kept (by identity: the doc's own `top1000`, from the last good read,
+ *     never "whatever came first"); the rest may be offloaded like any other
+ *     song until the room is back;
  *   • the background download (ipod-prefetch.ts) brings a song back only when
- *     that leaves IPOD_KEEP_FETCH_FLOOR_BYTES free. The gap between the two
- *     numbers is what stops one from undoing the other in a loop.
- * A free-space read that fails changes nothing: every song stays kept.
+ *     that leaves IPOD_KEEP_FETCH_FLOOR_BYTES free: 80 GB, the edge at which
+ *     "what Jake just got stays 14 days" (offload-keep-recent.ts) holds its
+ *     long windows, so iPod songs never crowd his new music off this Mac.
+ *     Jake's own Wait on the Device page goes to IPOD_KEEP_ASKED_FLOOR_BYTES
+ *     (60 GB, the edge those windows are left at). Both sit far above the
+ *     lapse floor, so a fetch can never cause a lapse and no loop can form.
+ * What that means: a 5,000-song list mostly does NOT live on this Mac.
+ * A free-space read that fails, or says 0 or less, is unknown and changes
+ * nothing: every song stays kept (2026-11-13 review: statfs failing used to
+ * read as 0 free and lapsed every list song).
  * A song not on this Mac at sync time is asked about before the card is
  * touched (common/ipod-ready-on-mac.ts), as before.
  *
@@ -54,17 +62,40 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { writeJsonAtomic } from './atomic-write.ts'
+import { ROOMY_ENTER_BYTES, ROOMY_FREE_BYTES } from './offload-keep-recent.ts'
 
 export const KEEP_LOCAL_FILE = 'ipod-keep-local.json'
 const GIB = 1024 * 1024 * 1024
 /** Under this much free disk, only the first IPOD_KEEP_ALWAYS kept songs stay exempt from offload
  *  (the number the recent-songs hold lapses at too: offload-recent-return.ts HOLD_LAPSE_BYTES). */
 export const IPOD_KEEP_FLOOR_BYTES = 30 * GIB
-/** The background download never takes this Mac's free disk under this. Above
- *  IPOD_KEEP_FLOOR_BYTES on purpose: a fetch can't push the disk into the lapse. */
-export const IPOD_KEEP_FETCH_FLOOR_BYTES = 40 * GIB
-/** How many songs, in fetch priority, stay on this Mac whatever the disk says (the Original's Top 1000). */
+/** The background download never takes this Mac's free disk under this: the edge the
+ *  recent-songs windows are entered at (80 GB), so they hold while iPod songs arrive. */
+export const IPOD_KEEP_FETCH_FLOOR_BYTES = ROOMY_ENTER_BYTES
+/** Jake's Wait (the Device page) may go this far: the edge those windows are left at (60 GB). */
+export const IPOD_KEEP_ASKED_FLOOR_BYTES = ROOMY_FREE_BYTES
+/** The floor one download pass runs with. `asked`: Jake asked for this pass. */
+export const prefetchFloorFor = (asked: boolean): number => (asked ? IPOD_KEEP_ASKED_FLOOR_BYTES : IPOD_KEEP_FETCH_FLOOR_BYTES)
+/** The Original's Top 1000 is never more than this many songs. */
 export const IPOD_KEEP_ALWAYS = 1000
+
+/** This Mac's free disk as a number the floor can trust; anything else (a failed read, 0, negative) is unknown. */
+export function knownFreeBytes(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null
+}
+
+/**
+ * The songs kept whatever the disk says: the Original's Top 1000, by identity.
+ * null = this doc can't say which they are (saved before 2026-11-13 from a read
+ * where a source failed); then nothing lapses.
+ */
+export function alwaysKeptIds(doc: KeepLocalDoc): number[] | null {
+  if (Array.isArray(doc.top1000)) return doc.top1000.slice(0, IPOD_KEEP_ALWAYS)
+  // An older doc from a clean read: the Top 1000 was added first, so it is the head.
+  const first = doc.sources[0]
+  if (doc.complete && first?.key === 'top1000') return doc.ids.slice(0, Math.min(first.count, IPOD_KEEP_ALWAYS))
+  return null
+}
 
 export interface KeepSourceSummary {
   /** 'top1000', or an iPod list's marker id. */
@@ -85,6 +116,8 @@ export interface KeepLocalDoc {
   sources: KeepSourceSummary[]
   /** false: some source didn't answer, so the previous songs were kept on. */
   complete: boolean
+  /** The Original's Top 1000 as last read clean (2026-11-13): the songs the floor never lapses. Absent on older docs. */
+  top1000?: number[]
 }
 
 export interface KeepListInput { id: string; name: string; ids: readonly number[] }
@@ -118,9 +151,18 @@ export function buildKeepDoc(input: {
     ids.push(id)
   }
   const sources: KeepSourceSummary[] = []
-  if (input.top1000) {
-    for (const id of input.top1000) add(id)
-    sources.push({ key: 'top1000', name: 'Top 1000', count: input.top1000.length, registered: true })
+  // The Top 1000 goes first whichever answer arrived: this read's, or the last
+  // good copy when homemini didn't answer for it. (It used to go LAST on such
+  // a read, and the floor then protected 1,000 list songs instead.)
+  const lastTop = input.previous ? alwaysKeptIds(input.previous) : null
+  const top: number[] | null = input.top1000
+    ? input.top1000.map(songId).filter((n): n is number => n !== null)
+    : lastTop
+  if (top) for (const id of top) add(id)
+  if (input.top1000) sources.push({ key: 'top1000', name: 'Top 1000', count: input.top1000.length, registered: true })
+  else if (lastTop) {
+    const was = input.previous!.sources.find((s) => s.key === 'top1000')
+    sources.push(was ?? { key: 'top1000', name: 'Top 1000', count: lastTop.length, registered: true })
   }
   if (input.lists) {
     const ordered = [...input.lists].sort((a, b) => Number(input.registered.has(b.id)) - Number(input.registered.has(a.id)))
@@ -134,7 +176,7 @@ export function buildKeepDoc(input: {
     const have = new Set(sources.map((s) => s.key))
     for (const s of input.previous.sources) if (!have.has(s.key)) sources.push(s)
   }
-  return { version: 1, at: input.now, ids, sources, complete }
+  return { version: 1, at: input.now, ids, sources, complete, ...(top ? { top1000: top } : {}) }
 }
 
 export function parseKeepDoc(raw: unknown): KeepLocalDoc | null {
@@ -144,7 +186,8 @@ export function parseKeepDoc(raw: unknown): KeepLocalDoc | null {
   const sources = Array.isArray(r.sources)
     ? r.sources.filter((s) => s && typeof s.key === 'string').map((s) => ({ key: s.key, name: String(s.name || s.key), count: Number(s.count) || 0, registered: s.registered === true }))
     : []
-  return { version: 1, at: r.at, ids, sources, complete: r.complete === true }
+  const top1000 = Array.isArray(r.top1000) ? r.top1000.map(songId).filter((n): n is number => n !== null) : null
+  return { version: 1, at: r.at, ids, sources, complete: r.complete === true, ...(top1000 ? { top1000 } : {}) }
 }
 
 export function sameKeepSongs(a: KeepLocalDoc | null, b: KeepLocalDoc | null): boolean {
@@ -177,15 +220,16 @@ export function gateFor(
   applies: boolean,
   doc: KeepLocalDoc | null,
   tracks: ReadonlyArray<{ id?: unknown; path?: unknown }>,
-  /** This Mac's free disk; missing or not a number = unknown, and every song stays kept. */
+  /** This Mac's free disk; missing, not a number, 0 or less = unknown, and every song stays kept. */
   freeBytes?: number,
 ): KeepGate {
   if (!applies) return { kind: 'off' }
   if (!doc) return { kind: 'hold', why: 'the iPod lists haven’t been read from homemini yet' }
-  const low = typeof freeBytes === 'number' && Number.isFinite(freeBytes) && freeBytes < IPOD_KEEP_FLOOR_BYTES
-  const keptIds = low ? doc.ids.slice(0, IPOD_KEEP_ALWAYS) : doc.ids
-  const lapsed = doc.ids.length - keptIds.length
-  const want = new Set(keptIds)
+  const free = knownFreeBytes(freeBytes)
+  const always = free !== null && free < IPOD_KEEP_FLOOR_BYTES ? alwaysKeptIds(doc) : null
+  const want = new Set(always ?? doc.ids)
+  const keptCount = always ? doc.ids.filter((id) => want.has(id)).length : doc.ids.length
+  const lapsed = doc.ids.length - keptCount
   const colons = new Set<string>()
   const rels = new Set<string>()
   for (const t of tracks) {
@@ -197,7 +241,7 @@ export function gateFor(
     const rel = relOfColon(colon)
     if (rel) rels.add(rel)
   }
-  return { kind: 'keep', colons, rels, count: keptIds.length, ...(lapsed > 0 ? { lapsed } : {}) }
+  return { kind: 'keep', colons, rels, count: keptCount, ...(lapsed > 0 ? { lapsed } : {}) }
 }
 
 /** The stream-convert route: true = leave this file local. */

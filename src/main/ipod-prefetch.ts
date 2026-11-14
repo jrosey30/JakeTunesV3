@@ -25,9 +25,9 @@
  *   • A disk floor: before each song, the write must leave the floor free
  *     (counted twice: the part file and the restore's temp). Short of it, the
  *     pass stops and says how much room the rest needs. The background pass
- *     runs with 40 GB (ipod-keep-local.ts IPOD_KEEP_FETCH_FLOOR_BYTES, since
- *     2026-11-13: a list can hold 5,000 songs, more than this Mac has room
- *     for); the restore itself still refuses under 10 GB.
+ *     runs with 80 GB, and Jake's Wait with 60 (ipod-keep-local.ts
+ *     prefetchFloorFor, since 2026-11-13: a list can hold 5,000 songs, more
+ *     than this Mac has room for); the restore itself still refuses under 10 GB.
  *   • homemini not answering: the pass is skipped.
  *   • A song homemini's copy can't prove is asked for once a day, not every
  *     pass (2026-11-09). The library's fingerprint goes stale when a file's
