@@ -12,6 +12,8 @@ import { useState, useCallback, useImperativeHandle, forwardRef, useMemo } from 
 import { usePlayback } from '../context/PlaybackContext'
 import { useLibrary } from '../context/LibraryContext'
 import MusicManChat from './MusicManChat'
+import { askSubjectFor } from '../musicManSubject'
+import { useIpodListsSnapshot } from '../ipodLists'
 import musicmanAvatar from '../assets/musicman-avatar.png'
 import '../styles/musicman.css'
 import '../styles/musicman-drawer.css'
@@ -30,6 +32,17 @@ const MusicManDrawer = forwardRef<MusicManDrawerHandle, { onClose: () => void }>
   }, [exiting, onClose])
   useImperativeHandle(ref, () => ({ requestClose }), [requestClose])
 
+  // The same page as facts (2026-11-13): main lays out what JakeTunes knows about it, so a typed
+  // "is this any good?" is answered from that, and it is the same subject the mic asks about.
+  const ipodLists = useIpodListsSnapshot()
+  const subject = useMemo(
+    () => askSubjectFor(lib, pb.nowPlaying, ipodLists),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [lib.currentView, lib.activeArtist, lib.pendingAlbumKey, lib.activePlaylistId, lib.activeSmartPlaylist, lib.playlists, lib.tracks, pb.nowPlaying?.id, ipodLists],
+  )
+
+  const subjectAlbum = subject?.kind === 'album' ? `“${subject.album}” by ${subject.artist}` : ''
+
   // What the listener is looking at, in plain words. Kept short — it rides
   // into the prompt on every message.
   const context = useMemo(() => {
@@ -37,6 +50,7 @@ const MusicManDrawer = forwardRef<MusicManDrawerHandle, { onClose: () => void }>
     const np = pb.nowPlaying
     if (np) parts.push(`${pb.isPlaying ? 'Playing' : 'Paused on'}: "${np.title}" by ${np.artist}${np.album ? ` (from ${np.album})` : ''}`)
     if (lib.currentView === 'artist-detail' && lib.activeArtist) parts.push(`Looking at the artist page for ${lib.activeArtist}`)
+    else if (lib.currentView === 'album-detail' && subjectAlbum) parts.push(`Looking at the album ${subjectAlbum}`)
     else if (lib.currentView === 'playlist' && lib.activePlaylistId) {
       const pl = lib.playlists.find((p) => p.id === lib.activePlaylistId)
       if (pl) parts.push(`Looking at the playlist "${pl.name}" (${pl.trackIds.length} songs)`)
@@ -44,7 +58,7 @@ const MusicManDrawer = forwardRef<MusicManDrawerHandle, { onClose: () => void }>
     else if (lib.currentView === 'mixtape-detail') parts.push('Looking at a mixtape')
     else if (lib.currentView === 'device') parts.push('Looking at the iPod page')
     return parts.join('. ')
-  }, [pb.nowPlaying, pb.isPlaying, lib.currentView, lib.activeArtist, lib.activePlaylistId, lib.activeSmartPlaylist, lib.playlists])
+  }, [pb.nowPlaying, pb.isPlaying, lib.currentView, lib.activeArtist, lib.activePlaylistId, lib.activeSmartPlaylist, lib.playlists, subjectAlbum])
 
   return (
     <div className={`mm-drawer ${exiting ? 'mm-drawer--exiting' : ''}`} role="complementary" aria-label="The Music Man">
@@ -59,7 +73,7 @@ const MusicManDrawer = forwardRef<MusicManDrawerHandle, { onClose: () => void }>
           <span className="mm-drawer-context-text">{context}</span>
         </div>
       )}
-      <MusicManChat variant="drawer" contextLine={context || undefined} />
+      <MusicManChat variant="drawer" contextLine={context || undefined} subject={subject} nowPlayingId={pb.nowPlaying?.id ?? null} />
     </div>
   )
 })

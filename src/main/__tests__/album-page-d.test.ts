@@ -36,8 +36,8 @@ describe('album page D — kept behaviours', () => {
     assert.match(view, /const multiArtist = new Set\(tracks\.map/)
     assert.match(view, /\{multiArtist && <div className="apd-th" role="columnheader">Artist<\/div>\}/)
   })
-  it("the Music Man's take is fetched with the page, not behind a click", () => {
-    assert.match(view, /const takeCall = window\.electronAPI\.getAlbumTake\?\./)
+  it("the page shows no Music Man's take: he gives one when asked (2026-11-13)", () => {
+    assert.doesNotMatch(view, /getAlbumTake|Music Man’s take|Music Man's take\b.*<h4|apd-take-text/)
     assert.doesNotMatch(view, /handleToggleTake/)
   })
   it('the history is shown in full (no clamp on the bio)', () => {

@@ -102,9 +102,6 @@ const ICON_LEFT = (
 const ICON_RIGHT = (
   <svg width="7" height="10" viewBox="0 0 7 10" aria-hidden="true"><path d="M2 1l3.5 4L2 9" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
 )
-const ICON_NOTE = (
-  <svg width="12" height="13" viewBox="0 0 12 13" aria-hidden="true"><path d="M4.5 1.5l6-1.2v8.2a2 2 0 11-1.3-1.9V3L5.8 3.7v6.8a2 2 0 11-1.3-1.9z" fill="currentColor" /></svg>
-)
 const ICON_NOTE_BIG = (
   <svg width="84" height="91" viewBox="0 0 12 13" aria-hidden="true"><path d="M4.5 1.5l6-1.2v8.2a2 2 0 11-1.3-1.9V3L5.8 3.7v6.8a2 2 0 11-1.3-1.9z" fill="currentColor" /></svg>
 )
@@ -307,14 +304,9 @@ export default function AlbumDetailView() {
   const [blurb, setBlurb] = useState<string>('')
   const [infoLoading, setInfoLoading] = useState(false)
   const [infoError, setInfoError] = useState(false)
-  // The Music Man's take — an open block under the history (direction D):
-  // fetched with the album info, shown clamped, "Read all" opens the rest.
-  const [take, setTake] = useState<string>('')
-  const [takeExpanded, setTakeExpanded] = useState(false)
-  const [takeOverflows, setTakeOverflows] = useState(false)
+  // No take here (Jake, 2026-11-13: "he also should only give his opinion if i ask"): the Music
+  // Man answers about this album when the mic is pressed on this page (musicManSubject.ts).
   const [bioExpanded, setBioExpanded] = useState(false)
-  const [takeLoading, setTakeLoading] = useState(false)
-  const [takeError, setTakeError] = useState(false)
   // Personnel — who played and who made it, from MusicBrainz (never the AI;
   // Jake 2026-10-30: "mention the album personnel somewhere"). Nothing until
   // it's known, nothing when it isn't.
@@ -372,7 +364,6 @@ export default function AlbumDetailView() {
   const lastClickedIdx = useRef<number>(-1)
   // Keyboard cursor in the table (↑/↓/Return — see the keydown effect below).
   const focusedIdx = useRef<number>(-1)
-  const takeRef = useRef<HTMLParagraphElement>(null)
 
   const handleClick = useCallback((id: number, idx: number, e: React.MouseEvent) => {
     window.getSelection()?.removeAllRanges()
@@ -579,7 +570,6 @@ export default function AlbumDetailView() {
     if (tracks.length === 0) return
     let cancelled = false
     setCredits(null); setBlurb(''); setBioExpanded(false); setInfoLoading(true); setInfoError(false)
-    setTake(''); setTakeExpanded(false); setTakeOverflows(false); setTakeLoading(true); setTakeError(false)
     setPeople([]); setPeopleTrackCount(0); setPeopleAll(false)
     const timer = window.setTimeout(() => {
       // Personnel rides on its own promise too: a cold MusicBrainz lookup is
@@ -591,17 +581,6 @@ export default function AlbumDetailView() {
           setPeopleTrackCount(typeof r.trackCount === 'number' && r.trackCount > 0 ? r.trackCount : 0)
         })
         .catch(() => { /* unknown reads as nothing, like the credits */ })
-      // The take rides beside the facts, never in front of them: its own
-      // promise, so a slow opinion can't hold the history back.
-      const takeCall = window.electronAPI.getAlbumTake?.(albumArtist, albumName, String(year || ''))
-      if (takeCall) {
-        takeCall
-          .then((r) => { if (cancelled) return; if (r?.ok && r.take) setTake(r.take); else setTakeError(true) })
-          .catch(() => { if (!cancelled) setTakeError(true) })
-          .finally(() => { if (!cancelled) setTakeLoading(false) })
-      } else {
-        setTakeLoading(false); setTakeError(true)
-      }
       void (async () => {
         try {
           const [info, b] = await Promise.all([
@@ -619,24 +598,6 @@ export default function AlbumDetailView() {
     }, 280)
     return () => { cancelled = true; window.clearTimeout(timer) }
   }, [albumArtist, albumName, year, tracks.length])
-
-  // Show Read all / Show less only when the take's clamp actually hides text.
-  useEffect(() => {
-    if (!take || takeExpanded) return
-    const el = takeRef.current
-    if (!el) return
-    const check = () => {
-      setTakeOverflows(el.scrollHeight > el.clientHeight + 1)
-    }
-    check()
-    const raf = requestAnimationFrame(check)
-    const ro = new ResizeObserver(check)
-    ro.observe(el)
-    return () => {
-      cancelAnimationFrame(raf)
-      ro.disconnect()
-    }
-  }, [take, takeExpanded])
 
   // Drag-to-queue from the album page. This view never set the drag payload,
   // so dragging a song into the queue silently did nothing — the "works
@@ -1049,27 +1010,6 @@ export default function AlbumDetailView() {
           })}
         </div>
 
-        {/* The Music Man's take — his opinion, kept apart from the
-            factual history. Under the songs: the songs come first (Jake
-            2026-10-30). Read all un-clamps it when it runs long. */}
-        <section className="apd-take" aria-label="The Music Man’s take">
-          <div className="apd-take-mark" aria-hidden="true">{ICON_NOTE}</div>
-          <h4 className="apd-take-title">The Music Man’s take</h4>
-          {take && (takeOverflows || takeExpanded) ? (
-            <button
-              type="button"
-              className={`apd-take-more${takeExpanded ? ' is-open' : ''}`}
-              onClick={() => setTakeExpanded((v) => !v)}
-              aria-expanded={takeExpanded}
-            >
-              {takeExpanded ? 'Show less' : 'Read all'}
-              <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><path d="M2 3l2 2 2-2" fill="none" stroke="currentColor" strokeWidth="1.4" /></svg>
-            </button>
-          ) : <span />}
-          {take && <p ref={takeRef} className={`apd-take-text${takeExpanded ? ' is-open' : ''}`}>{take}</p>}
-          {!take && takeLoading && <p className="apd-take-status">The Music Man’s mulling it over…</p>}
-          {!take && !takeLoading && takeError && <p className="apd-take-status">Couldn’t get his take right now.</p>}
-        </section>
       </div>
 
       <div className="apd-statusbar">

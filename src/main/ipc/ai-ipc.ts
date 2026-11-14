@@ -1,7 +1,7 @@
 /**
  * AI support IPC: Claude ceiling/stats, radio plan/cast, chat history,
  * Cynthia ledger/findings surface, library-context + radio memory clears,
- * plus thin Music Man surfaces (TTS speak, album blurb/take, save-recording).
+ * plus thin Music Man surfaces (TTS speak, album blurb, save-recording).
  *
  * Heavy Music Man bodies (musicman-chat / -radio / -playlist / picks /
  * streaming DJ) stay in main/index.ts — they share persona helpers, RAG,
@@ -20,7 +20,6 @@ import { setShowPlan, clearShowPlan, clearMemory } from '../radio-memory.ts'
 import { musicManVoiceId, radioCastForRenderer } from '../cast.ts'
 import { LARRY_VOICE_ID } from '../../common/cohost.ts'
 import { allowWithinRateLimit } from '../url-safety.ts'
-import { MUSIC_MAN_CORE } from '../personas.ts'
 import { setLibraryContext } from '../library-digest.ts'
 import {
   getFindingsFor,
@@ -29,7 +28,7 @@ import {
   sweepStatus,
 } from '../cynthia-sweep.ts'
 import type Anthropic from '@anthropic-ai/sdk'
-import { MODEL_SMART, MODEL_FAST } from '../../common/ai-models.ts'
+import { MODEL_SMART } from '../../common/ai-models.ts'
 import { wholeSentences } from '../../common/sentences.ts'
 import { albumNotesKey, createAlbumNotesStore, type AlbumNotesStore } from '../album-notes.ts'
 import { cleanAiProse } from '../../common/clean-ai-prose.ts'
@@ -248,40 +247,8 @@ export function registerAiIpc(ipc: IpcRegistrar, host: AiIpcHost): void {
     }
   }, { refuse: REFUSED_SENDER })
 
-  ipc.handle('get-album-take', async (_e, artist: string, album: string, year?: string | number): Promise<{ ok: boolean; take?: string; error?: string }> => {
-    if (!album) return { ok: true, take: '' }
-    const yr = year ? String(year).trim() : ''
-    const key = albumNotesKey(artist, album, yr)
-    const cached = await albumNotesStore().get('takes', key)
-    if (cached) return { ok: true, take: cached }
-    try {
-      const user = [
-        `Give your take on the album "${album}" by ${artist}${yr ? ` (${yr})` : ''}.`,
-        yr ? `It's from ${yr} — place it correctly in that era of their run; never treat it as older or newer than it is.` : '',
-        '2-3 sentences MAX, in your voice. Focus on the music\'s character and where it sits in the artist\'s run.',
-        'Do NOT state hard facts you might be wrong about (specific producers, exact dates, chart/sales numbers) — credits are shown separately. No preamble, no "Ah," — just the take.',
-        'Plain prose ONLY — no markdown (no # headings, no *asterisks*, no backticks).',
-        'This is read, not spoken: no stage directions or performance tags like [softer] or [laughs].',
-      ].filter(Boolean).join('\n')
-      const reply = await host.claudeCall('album-take', {
-        model: MODEL_FAST,
-        max_tokens: 450,
-        system: MUSIC_MAN_CORE,
-        messages: [{ role: 'user', content: user }],
-      })
-      const block = reply.content[0]
-      let text = cleanAiProse(block && block.type === 'text' ? block.text : '', album)
-      // Out of room → it stopped mid-sentence (Jake 2026-10-30: Perfecth's
-      // history ended on "Where). Keep the finished sentences; never cache a
-      // cut-off answer.
-      const cut = reply.stop_reason === 'max_tokens'
-      if (cut) text = wholeSentences(text)
-      if (!cut && !isWeakBlurb(text)) void albumNotesStore().set('takes', key, text)
-      return { ok: true, take: text }
-    } catch (err) {
-      return { ok: false, error: safeIpcError(err, 'api-failed') }
-    }
-  }, { refuse: REFUSED_SENDER })
+  // The Music Man's take is no longer written for a page that opens (Jake, 2026-11-13: "he also
+  // should only give his opinion if i ask"). He is asked through the mic: ipc/music-man-ask-ipc.ts.
 
   ipc.handle('save-recording-mp3', async (_event, audioBytes: Uint8Array, mimeType: string) => {
     try {

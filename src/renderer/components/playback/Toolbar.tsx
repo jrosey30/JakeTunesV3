@@ -1,5 +1,5 @@
 import { LARRY_VOICE_ID, RADIO_SCRIPT_TAGS, currentRadioTag } from '../../../common/cohost'
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { audioFromBase64Mpeg } from '../../audio/base64-audio'
 import { usePlayback } from '../../context/PlaybackContext'
 import NowPlayingActions from './NowPlayingActions'
@@ -15,6 +15,8 @@ import { useLcdTicker } from './lcdTicker'
 import VolumeSlider from './VolumeSlider'
 import SearchPill from './SearchPill'
 import { setNotice, setBroadcast, streamBroadcast, setBroadcastTimed, setRadio, getBroadcast } from '../../activity'
+import { askSubjectFor, askSubjectHint } from '../../musicManSubject'
+import { useIpodListsSnapshot } from '../../ipodLists'
 
 // 4.5 radioV2 rebuild — when true, Radio Mode routes through the new RadioEngine
 // (src/renderer/radio/); false = the original V1 path. Lets us A/B the two.
@@ -201,7 +203,14 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
   // ~200ms (long enough to not fire on accidental sweeps) kick off the
   // artist-facts lookup so a real click finds the cache already warm.
   const micHoverTimer = useRef<number | null>(null)
-  const lastPrefetchedTrackId = useRef<number | null>(null)
+  // What a press of the mic asks about: the page Jake is on, else the song playing.
+  const ipodLists = useIpodListsSnapshot()
+  const askSubject = useMemo(
+    () => askSubjectFor(lib, pb.nowPlaying, ipodLists),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [lib.currentView, lib.activeArtist, lib.pendingAlbumKey, lib.activePlaylistId, lib.activeSmartPlaylist, lib.playlists, lib.tracks, pb.nowPlaying?.id, ipodLists],
+  )
+  const lastPrefetchedKey = useRef<string | null>(null)
   // Names never clip on the LCD: long song / artist / album names shrink or
   // tick past like the phone's (lcdTicker.ts). Refs only — no state deps.
   const toolbarRef = useRef<HTMLDivElement>(null)
@@ -1029,7 +1038,9 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
     void kickRadioPrefetch(pb.nowPlaying, pb.queue[nextIdx])
   }, [radioMode, pb.nowPlaying, pb.position, pb.duration, pb.queue, pb.queueIndex, kickRadioPrefetch])
 
-  // Click mic: one-shot DJ comment on current track. Click again to stop.
+  // Each press of the mic is a run: a timer left over from an earlier run must not clear a later one's bubble.
+  const micRunRef = useRef(0)
+  // Click mic: the Music Man on the page Jake is on (else the song playing). Click again to stop.
   const handleDjClick = useCallback(async () => {
     // If actively speaking or autoDj is lingering from a previous mic click, stop everything
     if (djActive || autoDj) {
@@ -1048,113 +1059,107 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
       return
     }
 
-    if (!pb.nowPlaying) return
+    // He answers about the page Jake is on; with no such page, the song playing (musicManSubject.ts).
+    const subject = askSubject
+    if (!subject) return
+    const run = ++micRunRef.current
     djCancelledRef.current = false
     let micFailed = ''
     setDjActive(true)
     setDjLoading(true)
     setDjText('')
     // 4.4.52: the mic button speaks as the user's CHOSEN host — the
-    // Music Man or Larry. buildMusicManPrompt() swaps persona on the
-    // aiHost setting, so the bubble must follow. Was hardcoded 'mm',
-    // which mis-attributed every comment when Larry was the host.
+    // Music Man or Larry. The bubble follows whoever main says answered.
     const micHost = await window.electronAPI.getActiveHost()
     setDjSpeaker(micHost === 'larry' ? 'larry' : 'mm')
     savedVolumeRef.current = pb.volume
 
-    // 4.5: SINGLE-TTS path (reverted from per-sentence queue). The
-    // per-sentence approach produced "5 random voices stitched
-    // together" — ElevenLabs gave subtly different inflection per
-    // call, and the seams between clips read as different speakers.
-    // One TTS on the full response loses the early-start speed but
-    // sounds like ONE person delivering the take. Latency is what it
-    // is; thinking dots cover it. Caption flips when audio.play()
-    // fires so the typewriter (12 cps) starts in step with the voice.
-    const stripAudioTags = (s: string): string =>
-      s.replace(/\s*\[[a-zA-Z][a-zA-Z\s]*\]\s*/g, ' ').replace(/\s+/g, ' ').trim()
+    // One clip, start to finish: ducks the music on the first, types the
+    // caption in step with the voice, resolves when it has been said. One TTS
+    // call per speaker (4.5: per-sentence clips sounded like five voices).
+    const sayLine = async (who: 'mm' | 'larry', caption: string, base64: string, first: boolean): Promise<boolean> => {
+      const audio = audioFromBase64Mpeg(base64)
+      attachClipToBroadcast(audio)
+      djAudioRef.current = audio
+      const done = new Promise<boolean>((resolve) => {
+        audio.onended = () => {
+          try { detachClipFromBroadcast(audio) } catch { /* ignore */ }
+          if (djAudioRef.current === audio) djAudioRef.current = null
+          resolve(true)
+        }
+        audio.onerror = (err) => {
+          console.error('[DJ] Audio playback error:', err)
+          try { detachClipFromBroadcast(audio) } catch { /* ignore */ }
+          if (djAudioRef.current === audio) djAudioRef.current = null
+          resolve(false)
+        }
+      })
+      if (first) await fadeVolumeOut()
+      if (djCancelledRef.current) return false
+      // Wait for the clip's length so the caption finishes when the voice does.
+      await new Promise<void>((resolve) => {
+        if (!isNaN(audio.duration) && audio.duration > 0) { resolve(); return }
+        const onMeta = () => { audio.removeEventListener('loadedmetadata', onMeta); resolve() }
+        audio.addEventListener('loadedmetadata', onMeta)
+        setTimeout(() => { audio.removeEventListener('loadedmetadata', onMeta); resolve() }, 1000)
+      })
+      if (djCancelledRef.current) return false
+      const durationMs = (audio.duration > 0 && !isNaN(audio.duration)) ? audio.duration * 1000 : 0
+      // Order matters: setBroadcastTimed FIRST seeds the activity store with
+      // the timed reveal; setDjText afterwards triggers the relay useEffect,
+      // which sees a matching speaking entry and no-ops.
+      setDjSpeaker(who)
+      setBroadcastTimed({ speaker: BUBBLE_SPEAKER_LABEL[who], text: caption }, durationMs)
+      setDjLoading(false)
+      setDjText(caption)
+      await audio.play()
+      return done
+    }
 
     try {
-      const track = pb.nowPlaying
-      const persona = micHost === 'larry' ? undefined : undefined
-      // Subscribe to chunks but DON'T do anything with them — the
-      // stream completion is what matters now. Empty subscribe keeps
-      // the IPC channel clean and lets future debug logging slot in
-      // without re-wiring.
-      const unsubscribe = window.electronAPI.onMusicmanDjChunk(() => { /* no-op */ })
-      let result: { ok: boolean; text?: string; error?: string }
-      try {
-        result = await window.electronAPI.musicmanDjStreaming({
-          title: track.title || '', artist: track.artist || '',
-          album: track.album || '', genre: track.genre || '', year: track.year || '',
-        }, persona)
-      } finally {
-        unsubscribe()
-      }
+      const result = await window.electronAPI.musicmanAsk(subject, undefined, pb.nowPlaying?.id ?? null)
       if (djCancelledRef.current) return
-      console.log('[DJ] Claude response:', result)
+      console.log('[DJ] ask:', result.ok ? `${result.speaker} (${result.how})${result.larry ? ' + larry' : ''}` : result.error)
       if (result.ok && result.text) {
-        const tts = await window.electronAPI.musicmanSpeak(result.text, false)
+        const voice = result.speaker === 'larry' ? LARRY_VOICE_ID : undefined
+        // Larry's clip is fetched while the first one plays, so he comes in on the beat.
+        const larryClip = result.larry ? window.electronAPI.musicmanSpeak(result.larry.textRaw, false, LARRY_VOICE_ID) : null
+        const tts = await window.electronAPI.musicmanSpeak(result.textRaw, false, voice)
         if (djCancelledRef.current) return
-        console.log('[DJ] TTS response:', tts.ok, tts.error || '')
         if (tts.ok && tts.audio) {
-          const caption = stripAudioTags(result.text)
-          const audio = audioFromBase64Mpeg(tts.audio)
-          attachClipToBroadcast(audio)
-          djAudioRef.current = audio
-          audio.onended = () => {
-            try { detachClipFromBroadcast(audio) } catch { /* ignore */ }
-            try { fadeVolumeIn() } catch { /* ignore */ }
-            djAudioRef.current = null
-            setDjActive(false)
-            setAutoDj(false)
+          const said = await sayLine(result.speaker, result.text, tts.audio, true)
+          if (djCancelledRef.current) return
+          if (said && result.larry && larryClip) {
+            const l = await larryClip.catch(() => null)
+            if (djCancelledRef.current) return
+            if (l?.ok && l.audio) await sayLine('larry', result.larry.text, l.audio, false)
+            if (djCancelledRef.current) return
+          }
+          try { fadeVolumeIn() } catch { /* ignore */ }
+          setDjActive(false)
+          setAutoDj(false)
+          setTimeout(() => {
+            if (micRunRef.current !== run) return
+            setDjExiting(true)
             setTimeout(() => {
-              setDjExiting(true)
-              setTimeout(() => {
-                setDjText('')
-                setBroadcast(null)
-                setDjExiting(false)
-              }, 400)
-            }, 3000)
-          }
-          audio.onerror = (err) => {
-            console.error('[DJ] Audio playback error:', err)
-            try { detachClipFromBroadcast(audio) } catch { /* ignore */ }
-            setVolume(savedVolumeRef.current)
-            djAudioRef.current = null
-            setDjActive(false)
-            setAutoDj(false)
-            setDjText('')
-          }
-          await fadeVolumeOut()
-          if (djCancelledRef.current) return
-          // 4.5: wait for the audio's loadedmetadata so audio.duration
-          // is known, then pin the typewriter to that exact length via
-          // setBroadcastTimed. Caption finishes exactly when the voice
-          // does — no drift on long Music Man takes. djText stays
-          // empty so the existing relay useEffect doesn't ALSO fire a
-          // regular setBroadcast and double-start the typewriter.
-          await new Promise<void>((resolve) => {
-            if (!isNaN(audio.duration) && audio.duration > 0) { resolve(); return }
-            const onMeta = () => { audio.removeEventListener('loadedmetadata', onMeta); resolve() }
-            audio.addEventListener('loadedmetadata', onMeta)
-            // 1s belt-and-suspenders: if metadata never lands (rare for
-            // a data: URI), proceed with unknown duration — setBroadcast
-            // Timed handles durationMs<=0 by revealing instantly.
-            setTimeout(() => { audio.removeEventListener('loadedmetadata', onMeta); resolve() }, 1000)
-          })
-          if (djCancelledRef.current) return
-          const durationMs = (audio.duration > 0 && !isNaN(audio.duration)) ? audio.duration * 1000 : 0
-          // Order matters: setBroadcastTimed FIRST seeds the activity
-          // store with the timed reveal; setDjText afterwards triggers
-          // the relay useEffect, which now sees a matching speaking
-          // entry and no-ops (see relay guard). Without setDjText
-          // here, the relay would treat djText='' + djLoading=false
-          // as "clear broadcast" on the next render and wipe the
-          // timed reveal.
-          setBroadcastTimed({ speaker: BUBBLE_SPEAKER_LABEL[djSpeaker], text: caption }, durationMs)
+              setDjExiting(false)
+              if (micRunRef.current !== run) return
+              setDjText('')
+              setBroadcast(null)
+            }, 400)
+          }, 3000)
+          return
+        } else if (tts.ok) {
+          // The voice is off in Settings: he still answers, in the bubble, for as long as it takes to read.
+          const shown = result.larry ? `${result.text} Larry: ${result.larry.text}` : result.text
+          setDjSpeaker(result.speaker)
           setDjLoading(false)
-          setDjText(caption)
-          await audio.play()
+          setDjText(shown)
+          setTimeout(() => {
+            if (djCancelledRef.current || micRunRef.current !== run) return
+            setDjActive(false)
+            setDjText('')
+          }, Math.max(6000, shown.length * 60))
           return
         } else {
           console.warn('[DJ] TTS failed or no audio:', tts.error)
@@ -1163,8 +1168,10 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
             : "Music Man had the words but no voice — speech failed."
         }
       } else {
-        console.warn('[DJ] Claude returned no text:', result)
-        micFailed = 'Music Man had nothing to say about this one.'
+        console.warn('[DJ] no answer:', result)
+        micFailed = !result.ok && result.error === 'not-in-library'
+          ? "That isn't in your library yet, so there's nothing for him to go on."
+          : 'Music Man had nothing to say about this one.'
       }
     } catch (err) {
       console.error('[DJ] Error:', err)
@@ -1180,7 +1187,7 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
     setDjActive(false)
     setDjLoading(false)
     setDjText('')
-  }, [djActive, autoDj, pb.nowPlaying, pb.volume, setVolume, fadeVolumeOut, fadeVolumeIn])
+  }, [djActive, autoDj, askSubject, pb.nowPlaying?.id, pb.volume, setVolume, fadeVolumeOut, fadeVolumeIn])
 
   // Auto-DJ / Radio Mode: listen for track transitions. Either flag
   // arms the listener; the body picks which prompt + cache to use.
@@ -1754,16 +1761,17 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
             onClick={handleDjClick}
             onContextMenu={(e) => { e.preventDefault(); setShowBubble(s => !s) }}
             onMouseEnter={() => {
-              if (!pb.nowPlaying) return
-              if (lastPrefetchedTrackId.current === pb.nowPlaying.id) return
+              // Warm the press search for whoever a press will ask about: the page's artist, else the song's.
+              const about = askSubject?.kind === 'album' ? { artist: askSubject.artist, album: askSubject.album }
+                : askSubject?.kind === 'artist' ? { artist: askSubject.name, album: '' }
+                  : pb.nowPlaying ? { artist: pb.nowPlaying.artist || '', album: pb.nowPlaying.album || '' } : null
+              if (!about || !about.artist) return
+              const key = `${about.artist}|${about.album}`
+              if (lastPrefetchedKey.current === key) return
               if (micHoverTimer.current) window.clearTimeout(micHoverTimer.current)
               micHoverTimer.current = window.setTimeout(() => {
-                if (!pb.nowPlaying) return
-                lastPrefetchedTrackId.current = pb.nowPlaying.id
-                window.electronAPI.musicmanPrefetchFacts?.({
-                  artist: pb.nowPlaying.artist || '',
-                  album: pb.nowPlaying.album || '',
-                }).catch(() => { /* fall through to cold-start on click */ })
+                lastPrefetchedKey.current = key
+                window.electronAPI.musicmanPrefetchFacts?.(about).catch(() => { /* fall through to cold-start on click */ })
               }, 200)
             }}
             onMouseLeave={() => {
@@ -1772,8 +1780,8 @@ export default function Toolbar({ onToggleQueue, onOpenQueue, showQueue, onToggl
                 micHoverTimer.current = null
               }
             }}
-            disabled={!pb.nowPlaying}
-            title="Music Man — one-shot comment on the current track (right-click: toggle bubble)"
+            disabled={!askSubject && !djActive}
+            title={askSubjectHint(askSubject)}
           >
             <MicIcon />
           </button>

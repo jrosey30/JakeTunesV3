@@ -545,6 +545,8 @@ export interface AppSettings {
   }
   ai: {
     musicManVoiceEnabled: boolean   // when off, skip ElevenLabs and chat in text only
+    // 2026-11-13: after the Music Man answers the mic, Larry may add one line (main/music-man-ask.ts). Absent = on.
+    larryChimesIn?: boolean
     claudeDailyCeiling: number      // mirrored to claude-stats.json on save
     aiHost: 'mm' | 'larry'          // 4.2.5: which persona is the solo host. Radio Mode always co-hosts both regardless.
     /** Draft-only: typed key to save. Never returned by load-app-settings. */
@@ -716,7 +718,7 @@ declare global {
       getUpdateReady: () => Promise<{ ok: boolean; state: UpdateReadyState | null }>
       installUpdateNow: () => Promise<{ ok: boolean; error?: string }>
       setLibraryContext: (ctx: string) => Promise<void>
-      musicmanChat: (messages: { role: string; content: string }[], context?: string) => Promise<{ ok: boolean; text: string; textRaw: string; createdPlaylist?: { name: string; trackIds: number[] } | null }>
+      musicmanChat: (messages: { role: string; content: string }[], context?: string, subject?: import('../common/music-man-packet').AskSubject | null, nowPlayingId?: number | null) => Promise<{ ok: boolean; text: string; textRaw: string; createdPlaylist?: { name: string; trackIds: number[] } | null }>
       musicmanSpeak: (text: string, fast?: boolean, voiceId?: string) => Promise<{ ok: boolean; audio?: string; error?: string }>
       // A run of radio lines as one take (2026-11-06). Types: src/common/speech.ts.
       radioDialogue: (inputs: DialogueInput[]) => Promise<DialogueResult>
@@ -740,9 +742,8 @@ declare global {
       radioClearShowPlan: () => Promise<{ ok: boolean; error?: string }>
       // 4.5 radioV2: unified cast registry (speaker id → tag / pill label / voice id).
       radioGetCast: () => Promise<{ ok: boolean; cast?: Array<{ id: string; tag: string; label: string; voiceId?: string; kind: string }> }>
-      // 4.5: streaming mic-button path + hover prefetch.
-      musicmanDjStreaming: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => Promise<{ ok: boolean; text?: string; error?: string }>
-      onMusicmanDjChunk: (callback: (p: { chunk: string; accumulated: string }) => void) => () => void
+      // The mic button (2026-11-13): asks about the page Jake is on (main/music-man-ask.ts).
+      musicmanAsk: (subject: import('../common/music-man-packet').AskSubject, question?: string, nowPlayingId?: number | null) => Promise<import('../common/music-man-packet').AskResult>
       musicmanPrefetchFacts: (track: { artist: string; album: string }) => Promise<{ ok: boolean }>
       onAppQuitFade: (callback: () => void) => () => void
       getArtistDiscography: (artist: string) => Promise<{ ok: boolean; albums?: Array<{ title: string; year: string; tracks: Array<{ title: string; position: number }>; mb?: { primaryType?: string; secondaryTypes?: string[] } }>; incomplete?: boolean; error?: string }>
@@ -807,7 +808,6 @@ declare global {
       // ⚠️ TWIN: src/main/album-personnel.ts AlbumPersonnel (the handler's return type).
       getAlbumPersonnel: (artist: string, album: string) => Promise<AlbumPersonnel>
       getAlbumBlurb: (artist: string, album: string, year?: string | number) => Promise<{ ok: boolean; blurb?: string; error?: string }>
-      getAlbumTake: (artist: string, album: string, year?: string | number) => Promise<{ ok: boolean; take?: string; error?: string }>
       // 4.5.0-117 — library backup/restore (Phase 0).
       listBackups: () => Promise<{ ok: boolean; backups: Array<{ file: string; date: string; mtimeMs: number; trackCount: number; sizeBytes: number; reason: string }> }>
       createBackup: () => Promise<{ ok: boolean; backup?: { file: string; date: string; trackCount: number }; error?: string }>

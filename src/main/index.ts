@@ -126,6 +126,9 @@ import { ingestIpodRoundTrip, type RoundTripHost } from './sync-engine/roundtrip
 import { identifyIpod, resolveIpodState } from './ipod-identity.ts'
 import { manifestForCatalog, securePlaysBeforeSync } from './ipod-plays-archive.ts'
 import { registerAiIpc } from './ipc/ai-ipc.ts'
+import { registerMusicManAskIpc } from './ipc/music-man-ask-ipc.ts'
+import type { GatherTrack } from './music-man-gather.ts'
+import { subjectLabel } from '../common/music-man-packet.ts'
 import {
   registerCynthiaIpc,
   runCynthiaInvestigation,
@@ -6293,84 +6296,23 @@ ipc.handle('musicman-prefetch-facts', async (_event, track: { artist: string; al
   }
 }, { refuse: REFUSED_SENDER })
 
-// 4.5: streaming variant of musicman-dj for the mic button. Same prompt
-// + persona logic as the non-streaming handler above, but emits each
-// Claude text chunk as a 'musicman-dj-chunk' event so the renderer can
-// type the response into the pill in real time instead of waiting for
-// the full message. Returns the final accumulated text + transition
-// (Stephen-only) so the renderer can fire TTS and audio playback on the
-// completed string. Non-streaming handler stays for DJ Mode transitions
-// where the auto-DJ doesn't need the typing UX.
-ipc.handle('musicman-dj-streaming', async (event, track: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => {
-  const isStephen = persona === 'stephen'
-  const djInstructions = isStephen
-    ? `A track is on. Give a Stephen Hands DJ comment. Pure Stephen voice — short, hyped, party-first. Usually one beat is the whole comment; two beats if the second one earns it. NEVER pad to hit a meter; never explain a banger.`
-    : `The listener is currently playing a song. This will be SPOKEN ALOUD, so it should sound like you're TALKING — not reading. Length serves the take: sometimes one line is the whole comment, sometimes you take three. Vary the rhythm. NEVER hit a sentence count just because it was written down.
-
-Be unpredictable — sometimes a verified fun fact, sometimes an arrogant opinion, sometimes a memory of seeing them live, sometimes a roast of the listener's taste, sometimes a defense of an underrated cut. Use fragments. Cut yourself off when a better thought arrives. Don't restate the situation back ("So we've got a track on by X…") — go straight to the take.
-
-If background info from MusicBrainz or Wikipedia is provided below, USE IT for facts. If no background info and you're not confident, pivot to the sound/genre/era — never invent a story.`
-
-  const systemPrompt = isStephen ? (withLibraryDigest(DJ_HANDS_CORE) + '\n\n' + djInstructions) : buildMusicManPrompt(djInstructions)
-
-  // Hover prefetch usually fills the cache before we get here; on a
-  // cold click this is the lookup itself (no slower than the non-
-  // streaming path).
-  const artistFacts = await searchWebCached(`${track.artist} musician`, track.album)
-  let userMessage = `Now playing: "${track.title}" by ${track.artist} from the album "${track.album}" (${track.genre}, ${track.year})`
-  if (artistFacts) userMessage += `\n\nBackground on ${track.artist}: ${artistFacts}`
-
-  await loadClaudeStats()
-  rolloverIfNewDay()
-  if (claudeStats.callsToday >= claudeStats.dailyCeiling) {
-    return { ok: false, error: `Claude daily ceiling reached (${claudeStats.dailyCeiling}).` }
-  }
-  sessionCallCount++
-  claudeStats.callsToday++
-  console.log(`[claude] musicman-dj-streaming — session=${sessionCallCount} today=${claudeStats.callsToday}/${claudeStats.dailyCeiling}`)
-
-  try {
-    let accumulated = ''
-    const stream = anthropic.messages.stream(withModelPolicy({
-      model: MODEL_SMART,
-      // 4.5.0-50: 500 → 300. The hard "1-3 sentence default" rule in
-      // MUSIC_MAN_CORE means most takes are now 60-120 tokens; 300
-      // leaves headroom for the rare longer take without enabling the
-      // ramble pattern Jake flagged. 500 was the wordy regime.
-      max_tokens: 300,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userMessage }],
-    }))
-    stream.on('text', (textChunk: string) => {
-      accumulated += textChunk
-      try {
-        event.sender.send('musicman-dj-chunk', { chunk: textChunk, accumulated })
-      } catch { /* renderer gone — stream completes silently */ }
-    })
-    const final = await stream.finalMessage()
-    const text = final.content[0]?.type === 'text' ? final.content[0].text : accumulated
-    if (text) {
-      noteMusicManUtterance('dj', text)
-      // 4.5: hive-mind log — every mic press captured for future
-      // personalization. Persona is 'stephen' if requested, else the
-      // active host (mm/larry) at call time.
-      logHiveMindInteraction({
-        at: Date.now(),
-        mode: 'mic',
-        persona: isStephen ? 'stephen' : readActiveHostSync(),
-        track: { title: track.title, artist: track.artist, album: track.album, genre: track.genre, year: track.year },
-        response: text,
-        facts: artistFacts || undefined,
-      })
-    }
-    void saveClaudeStats()
-    return { ok: true, text }
-  } catch (err: unknown) {
-    void saveClaudeStats()
-    const msg = safeIpcError(err, 'api-failed')
-    return { ok: false, error: msg }
-  }
-}, { refuse: REFUSED_SENDER })
+// The mic button (2026-11-13): he answers when Jake asks, about the page Jake
+// is on, from what JakeTunes knows about it (ipc/music-man-ask-ipc.ts). It
+// replaced 'musicman-dj-streaming', which knew only the song playing.
+const musicManGrounding = registerMusicManAskIpc(ipc, {
+  tracks: async () => (((await libraryCache.get()) as { tracks?: GatherTrack[] }).tracks) ?? [],
+  userDataDir: () => app.getPath('userData'),
+  hubUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''),
+  withAuth: withCompanionInit,
+  press: (artist, album) => searchWebCached(`${artist} musician`, album),
+  claudeCall,
+  readActiveHost: () => readActiveHostSync(),
+  readAppSettings: () => readAppSettingsAsync(),
+  said: (who, text, subject) => {
+    if (who === 'mm') noteMusicManUtterance('dj', text)
+    logHiveMindInteraction({ at: Date.now(), mode: 'mic', persona: who, track: { title: subjectLabel(subject) }, response: text })
+  },
+})
 
 ipc.handle('musicman-dj', async (_event, track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen') => {
   // 4.4.0: persona override. The mic button (one-shot commentary on the
@@ -7139,7 +7081,9 @@ function buildCynthiaSweepHooks() {
 
 
 // Music Man chat
-ipc.handle('musicman-chat', async (_event, messages: { role: string; content: string }[], context?: string) => {
+ipc.handle('musicman-chat', async (_event, messages: { role: string; content: string }[], context?: string, subject?: unknown, nowPlayingId?: unknown) => {
+  // The page Jake is on, as facts (2026-11-13): "is this any good?" is answered from what the app knows.
+  const grounded = await musicManGrounding.chatBlock(subject, nowPlayingId)
   const lastUserMsg = messages.filter(m => m.role === 'user').pop()?.content || ''
   // Drawer context (2026-09-02): what's playing / which page is open, so
   // "is this any good?" means THIS song. Bounded; never trusted as fact.
@@ -7204,7 +7148,7 @@ playlist itself is already in their sidebar; don't recite it.
 
 This response is shown as text in a chat panel, but the user may click a speaker button to hear it via ElevenLabs v4. Feel free to use v4 performance tags ([scoff], [laughs], [sighs], [softer], [whispers], [excited], [sarcastic]) where they meaningfully shape the delivery — they're invisible in the text panel (stripped before display) and performed by v4 if the user opts to hear the message.${searchResults ? `\n\nLive web search results — TREAT AS GROUND TRUTH and answer FROM these. Don't tell the user to "check" anything; you just did:\n${searchResults}` : ''}${retrievedTracksBlock ? `\n\n${retrievedTracksBlock}` : ''}${lookingAt ? `\n\nWHAT THE LISTENER HAS IN FRONT OF THEM RIGHT NOW (the drawer is open beside the library): ${lookingAt}. When they say "this" or "it", they mean that.` : ''}`
 
-  const systemPrompt = buildMusicManPrompt(chatInstructions)
+  const systemPrompt = buildMusicManPrompt(chatInstructions + (grounded?.block ?? ''))
 
   // 4.5.0: Music Man recommends IN CONVERSATION only — he no longer writes to
   // "Listen to the List". The old add_to_recommendations tool quietly stuffed
@@ -7284,7 +7228,11 @@ This response is shown as text in a chat panel, but the user may click a speaker
       .join('\n')
       .trim(), retrieved.tracks)
     if (credited.fixes.length) console.warn('[musicman] credit guard fixed:', credited.fixes.map(f => `${f.from} -> ${f.to} (${f.why})`).join('; '))
-    const textRaw = credited.text
+    // On a page he was handed the facts for, "I don't know them" is never the reply (non-answer.ts).
+    const textRaw = !grounded ? credited.text : await musicManGrounding.rescueChat(grounded.input, credited.text, async (extra) => {
+      const r = await claudeCall('musicman-chat', { model: MODEL_SMART, max_tokens: 600, system: systemPrompt, messages: [...convo, { role: 'user', content: extra }] })
+      return r.content.filter((b): b is Anthropic.Messages.TextBlock => b.type === 'text').map((b) => b.text).join('\n').trim()
+    })
     // Strip performance tags WITHOUT flattening structure — the old
     // `\s+ → ' '` collapse destroyed every newline the model wrote,
     // which is exactly how a 50-song list became an unreadable wall
