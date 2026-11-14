@@ -10,6 +10,7 @@
  * button live here so the two surfaces cannot drift.
  */
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import type { AskSubject } from '../../common/music-man-packet'
 import { audioFromBase64Mpeg } from '../audio/base64-audio'
 import { useLibrary } from '../context/LibraryContext'
 import { useAudio } from '../hooks/useAudio'
@@ -54,9 +55,12 @@ interface Props {
   /** What the listener is looking at / hearing — sent with every message
    *  so the answer lands on the thing in front of them. Drawer only. */
   contextLine?: string
+  /** The same thing as a subject main can gather facts for (musicManSubject.ts). Drawer only. */
+  subject?: AskSubject | null
+  nowPlayingId?: number | null
 }
 
-export default function MusicManChat({ variant, contextLine }: Props) {
+export default function MusicManChat({ variant, contextLine, subject, nowPlayingId }: Props) {
   const { state: lib, dispatch } = useLibrary()
   const { playTrack } = useAudio()
   const [chatInput, setChatInput] = useState('')
@@ -169,7 +173,7 @@ export default function MusicManChat({ variant, contextLine }: Props) {
     setIsLoading(true)
 
     try {
-      const result = await window.electronAPI.musicmanChat(newMessages, contextLine || undefined)
+      const result = await window.electronAPI.musicmanChat(newMessages, contextLine || undefined, subject ?? null, nowPlayingId ?? null)
       // 2026-08-07: the Music Man has HANDS — when his create_playlist
       // tool fired, the resolved playlist lands in the sidebar HERE, the
       // same ADD_PLAYLIST path a hand-made playlist uses.

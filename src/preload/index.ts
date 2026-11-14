@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { IpodDeviceMarker, IpodIdentity } from '../common/ipod-identity'
 import type { UpdateReadyState } from '../common/update-ready'
 import type { DialogueInput, DialogueResult } from '../common/speech'
+import type { AskResult, AskSubject } from '../common/music-man-packet'
 
 const electronAPI = {
   loadTracks: (): Promise<{ tracks: unknown[]; playlists: { name: string; trackIds: number[] }[] }> => ipcRenderer.invoke('load-tracks'),
@@ -38,8 +39,8 @@ const electronAPI = {
   getUpdateReady: (): Promise<{ ok: boolean; state: UpdateReadyState | null }> => ipcRenderer.invoke('update-ready:get'),
   installUpdateNow: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('install-update-now'),
   setLibraryContext: (ctx: string): Promise<void> => ipcRenderer.invoke('set-library-context', ctx),
-  musicmanChat: (messages: { role: string; content: string }[], context?: string): Promise<{ ok: boolean; text: string; textRaw: string; createdPlaylist?: { name: string; trackIds: number[] } | null }> =>
-    ipcRenderer.invoke('musicman-chat', messages, context),
+  musicmanChat: (messages: { role: string; content: string }[], context?: string, subject?: AskSubject | null, nowPlayingId?: number | null): Promise<{ ok: boolean; text: string; textRaw: string; createdPlaylist?: { name: string; trackIds: number[] } | null }> =>
+    ipcRenderer.invoke('musicman-chat', messages, context, subject, nowPlayingId),
   musicmanSpeak: (text: string, fast?: boolean, voiceId?: string): Promise<{ ok: boolean; audio?: string; error?: string }> =>
     ipcRenderer.invoke('musicman-speak', text, fast, voiceId),
   // A run of radio lines as one take (2026-11-06). Types: src/common/speech.ts.
@@ -47,16 +48,10 @@ const electronAPI = {
     ipcRenderer.invoke('radio-dialogue', inputs),
   musicmanDj: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, nextTrack?: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen'): Promise<{ ok: boolean; text: string; transition?: 'talk' | 'scratch' | 'cut' }> =>
     ipcRenderer.invoke('musicman-dj', track, nextTrack, persona),
-  // 4.5: streaming variant for the mic button. The renderer subscribes
-  // to onMusicmanDjChunk before invoking; the resolved promise carries
-  // the final text after the stream completes (or an error).
-  musicmanDjStreaming: (track: { title: string; artist: string; album: string; genre: string; year: string | number }, persona?: 'mm' | 'stephen'): Promise<{ ok: boolean; text?: string; error?: string }> =>
-    ipcRenderer.invoke('musicman-dj-streaming', track, persona),
-  onMusicmanDjChunk: (callback: (p: { chunk: string; accumulated: string }) => void) => {
-    const handler = (_e: Electron.IpcRendererEvent, p: { chunk: string; accumulated: string }) => callback(p)
-    ipcRenderer.on('musicman-dj-chunk', handler)
-    return () => { ipcRenderer.removeListener('musicman-dj-chunk', handler) }
-  },
+  // The mic button (2026-11-13): he answers about the page Jake is on, from what the app
+  // knows about it, and Larry may add a line (main/music-man-ask.ts). `question` is the typed ask.
+  musicmanAsk: (subject: AskSubject, question?: string, nowPlayingId?: number | null): Promise<AskResult> =>
+    ipcRenderer.invoke('musicman-ask', subject, question, nowPlayingId),
   // 4.5: hover-prefetch from the mic button — warms the per-artist
   // facts cache so the streaming Claude call starts ~500-1500ms sooner
   // on the subsequent click. Fire-and-forget.
@@ -274,7 +269,6 @@ const electronAPI = {
   // 2026-10-30 — album page Personnel: who played and produced what (MusicBrainz, cached on disk).
   getAlbumPersonnel: (artist: string, album: string) => ipcRenderer.invoke('get-album-personnel', artist, album),
   getAlbumBlurb: (artist: string, album: string, year?: string | number) => ipcRenderer.invoke('get-album-blurb', artist, album, year),
-  getAlbumTake: (artist: string, album: string, year?: string | number) => ipcRenderer.invoke('get-album-take', artist, album, year),
   // 4.5.0-117 — library backup/restore (Phase 0).
   listBackups: () => ipcRenderer.invoke('list-backups'),
   createBackup: () => ipcRenderer.invoke('create-backup'),

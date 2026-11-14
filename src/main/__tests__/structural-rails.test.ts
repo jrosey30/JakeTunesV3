@@ -164,7 +164,11 @@ describe('WIRING — the tested code is the live code', () => {
     { fn: '<RemoveConcertDialog', file: 'renderer/views/AlbumDetailView.tsx', minCalls: 1, literal: true, why: 'spec-03 — the album page and the concert page must ask in the same words' },
     { fn: 'setConfirmTapeOver(true)', file: 'renderer/components/MixtapeSheet.tsx', minCalls: 1, literal: true, why: 'spec-03 — taping over a saved tape goes back to destroying it without asking' },
     // 2026-10-10 model upgrade: the 5.x models refuse temperature and think by default.
-    { fn: 'withModelPolicy', file: 'main/index.ts', minCalls: 3, why: 'model upgrade — unwired, a 5.x call 400s on temperature or spends its budget thinking and returns no text' },
+    // 2 since 2026-11-13: the third was the mic's own streaming call ('musicman-dj-streaming'), which
+    // 'musicman-ask' replaced. The ask goes through claudeCall, one of the two that remain.
+    { fn: 'withModelPolicy', file: 'main/index.ts', minCalls: 2, why: 'model upgrade — unwired, a 5.x call 400s on temperature or spends its budget thinking and returns no text' },
+    { fn: 'registerMusicManAskIpc', file: 'main/index.ts', minCalls: 1, why: 'unwired, the mic button asks nobody and the chat goes back to answering about a page with no facts (2026-11-13, "music man cant suck at knowing the twisted teens")' },
+    { fn: 'musicManGrounding.rescueChat(', file: 'main/index.ts', minCalls: 1, literal: true, why: 'unwired, "I don\'t know that band" about the page Jake is on reaches the chat again' },
     { fn: 'armGlobalNets', file: 'renderer/main.tsx', minCalls: 1, why: 'reliability P0 — the renderer crash net must arm before first render or grey screens go unrecorded again' },
     { fn: 'claimTransportKeys', file: 'renderer/views/ListenToTheListView.tsx', minCalls: 1, why: 'unwired, Space in the Listen List previews AND toggles the music, and ↑/↓ nudge the volume while you triage' },
     { fn: 'userEdits.applyPhoneUnstars(', file: 'main/index.ts', minCalls: 1, literal: true,

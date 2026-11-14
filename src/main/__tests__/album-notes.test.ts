@@ -73,3 +73,31 @@ test("a saved take reads without the voice's stage directions", async () => {
     assert.equal(await createAlbumNotesStore(file).get('takes', 'k'), 'Softer and more devastating. It holds up.')
   } finally { await rm(dir, { recursive: true, force: true }) }
 })
+
+// 2026-11-13: "music man cant suck at knowing the twisted teens". No page writes a take any
+// more; the ones on disk that said he didn't know the record go the first time the file is read.
+test("takes that said he didn't know the record are dropped from the file on first read; the rest stay", async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'album-notes-purge-'))
+  try {
+    const file = join(dir, 'album-notes.json')
+    const saw = 'I don\'t know Twisted Teens or "The Holy Cross Tigers," and I\'d rather say that than invent a take on a record I can\'t place in their run. If you give me a sense of the sound, I\'ll tell you honestly whether it fits.'
+    await writeFile(file, JSON.stringify({
+      v: 1,
+      blurbs: { 'twisted teens|the holy cross tigers|2026': 'Their third release of 2026.' },
+      takes: { 'twisted teens|the holy cross tigers|2026': saw, 'nirvana|nevermind|1991': 'Nevermind dragged the underground into the arena.' },
+    }))
+    const warnings: string[] = []
+    const store = createAlbumNotesStore(file, (m) => warnings.push(m))
+    assert.equal(await store.get('takes', 'twisted teens|the holy cross tigers|2026'), undefined)
+    assert.equal(await store.get('takes', 'nirvana|nevermind|1991'), 'Nevermind dragged the underground into the arena.')
+    assert.equal(await store.get('blurbs', 'twisted teens|the holy cross tigers|2026'), 'Their third release of 2026.')
+    // A write settles the queue the purge is on.
+    await store.set('blurbs', 'a|b', 'A history.')
+    const onDisk = JSON.parse(await readFile(file, 'utf-8')) as { takes: Record<string, string>; blurbs: Record<string, string> }
+    assert.deepEqual(Object.keys(onDisk.takes), ['nirvana|nevermind|1991'])
+    assert.equal(onDisk.blurbs['twisted teens|the holy cross tigers|2026'], 'Their third release of 2026.')
+    assert.ok(warnings.some((w) => /dropped 1 take/.test(w)))
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})

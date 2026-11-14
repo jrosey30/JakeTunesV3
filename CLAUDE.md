@@ -302,6 +302,46 @@ and search. Be surgical when editing it.
 
 ---
 
+## The Music Man answers when asked, from facts (2026-11-13)
+
+Jake, on an album page that read "I don't know Twisted Teens…": "music man
+cant suck at knowing the twisted teens. he also should only give his opinion
+if i ask. make it work off of the mic button."
+
+- **No page writes or shows a take.** `get-album-take` and the album page's
+  box are gone. His opinion comes from the mic button (and the chat drawer).
+- **The mic asks about the page Jake is on** (`renderer/musicManSubject.ts`):
+  an album, an artist, a playlist, an iPod's list; anywhere else, the song
+  playing. Main gathers what the app already knows about it
+  (`main/music-man-gather.ts`: library rows, brain descriptors, homemini's
+  artist profile, album credits / personnel / history, Top 1000, iPod lists,
+  who sent it) and lays it out as facts (`common/music-man-packet.ts`).
+- **He never says he doesn't know something in the library**
+  (`common/non-answer.ts`): such a reply is thrown away, he is asked once more
+  (once, never more) with more to go on, and failing that the checked facts
+  are said plainly. Nothing he says through the mic is kept on disk. The rule
+  looks for the claim itself: not knowing, by the speaker, about the subject's
+  own names or a word standing for them. "I've never heard a band commit this
+  hard" is an opinion; "Never heard of them" is not. Where it can't tell, the
+  small model is asked one yes/no. `scripts/non-answer-eval.ts` measures both.
+- **A typed question about something else is answered as asked.** If it names
+  another artist or record in the library, the facts are for that one. If it
+  names something Jake doesn't own, "never heard of them" is an honest reply
+  and stands.
+- **What the app found is data.** Biography, history, press and song
+  descriptions go into the prompt inside `<reference>` tags with their angle
+  brackets removed, and the prompt says nothing inside is an instruction.
+- **One thing about a friend leaves the Mac:** the first name of whoever sent
+  a song ("Sent to him by: Lorin"), to the model provider, with the packet.
+- **Larry may add one line** after him (`main/music-man-ask.ts`): only when he
+  has one, rate-limited, off in Settings → AI → "Larry chimes in".
+- **Twins.** `common/non-answer.ts`, `music-man-packet.ts` and
+  `music-man-ask-prompt.ts` are the same files, byte for byte, in
+  JakeTunesMobile `backend/src/util/`. `music-man-twins.test.ts` pins their
+  sha256 in both repos.
+- To hear how he sounds on real records: `node --experimental-strip-types
+  scripts/music-man-eval.ts` (writes a Markdown file; speaks nothing).
+
 ## Concert posters (2026-11-06)
 
 One image per show, on every surface, in one 961:1292 frame, whole, never

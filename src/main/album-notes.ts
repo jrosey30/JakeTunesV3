@@ -6,9 +6,16 @@
  * launch). Only finished text goes in: a reply that ran out of tokens is
  * shown trimmed to whole sentences once and asked again next time
  * (ipc/ai-ipc.ts).
+ *
+ * TAKES (2026-11-13): no page writes or shows a take any more: the Music Man
+ * gives his opinion when Jake asks (ipc/music-man-ask-ipc.ts). The takes
+ * already in the file stay, for homemini's merge tool, except the ones that
+ * said he didn't know the record ("I don't know Twisted Teens…", 9 of 35 on
+ * the MacBook): those are dropped the first time the file is read.
  */
 import { readFile } from 'node:fs/promises'
 import { stripStageDirections } from '../common/stage-directions.ts'
+import { isNonAnswer } from '../common/non-answer.ts'
 import { writeJsonAtomic } from './atomic-write.ts'
 
 export type AlbumNoteKind = 'blurbs' | 'takes'
@@ -39,6 +46,16 @@ export function createAlbumNotesStore(path: string, warn: (msg: string) => void 
           const raw = JSON.parse(await readFile(path, 'utf-8')) as Partial<AlbumNotesFile> | null
           if (raw && typeof raw === 'object') {
             loaded = { v: 1, blurbs: { ...(raw.blurbs || {}) }, takes: { ...(raw.takes || {}) } }
+            const before = Object.keys(loaded.takes).length
+            for (const [k, v] of Object.entries(loaded.takes)) if (typeof v !== 'string' || isNonAnswer(v, k.split('|').slice(0, 2))) delete loaded.takes[k]
+            const dropped = before - Object.keys(loaded.takes).length
+            if (dropped > 0) {
+              const snapshot: AlbumNotesFile = { v: 1, blurbs: { ...loaded.blurbs }, takes: { ...loaded.takes } }
+              writes = writes
+                .then(() => writeJsonAtomic(path, snapshot))
+                .then(() => warn(`[album-notes] dropped ${dropped} take(s) that said he didn't know the record`))
+                .catch((err) => warn(`[album-notes] not saved: ${(err as Error).message}`))
+            }
           }
         } catch (err) {
           // No file yet is the first launch; anything else is worth one line.

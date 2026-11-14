@@ -68,7 +68,9 @@ test('heavy-extract modules register expected channels', () => {
   }
   assert.match(cynthia, /export async function runCynthiaInvestigation/)
   const ai = readFileSync(join(ipcDir, 'ai-ipc.ts'), 'utf-8')
-  for (const ch of ['musicman-speak', 'get-album-blurb', 'get-album-take', 'save-recording-mp3']) {
+  for (const ch of ['musicman-speak', 'get-album-blurb', 'save-recording-mp3']) {
     assert.match(ai, new RegExp(`'${ch}'`))
   }
+  // 2026-11-13: no page asks for a take ('get-album-take' is gone); he is asked through the mic.
+  assert.match(readFileSync(join(ipcDir, 'music-man-ask-ipc.ts'), 'utf-8'), /ipc\.handle\('musicman-ask'/)
 })

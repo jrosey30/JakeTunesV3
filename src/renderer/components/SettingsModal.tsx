@@ -1118,6 +1118,21 @@ export default function SettingsModal({ initial, onClose, onSaved, initialTab }:
                 When off, your selected host chats in text only. Saves ElevenLabs credits on quiet days.
               </p>
 
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                <input
+                  type="checkbox"
+                  checked={draft.ai.larryChimesIn !== false}
+                  onChange={(e) => setDraft({
+                    ...draft,
+                    ai: { ...draft.ai, larryChimesIn: e.target.checked },
+                  })}
+                />
+                <span>Larry chimes in</span>
+              </label>
+              <p className="imp-help" style={{ marginTop: 0, marginBottom: 16 }}>
+                When you ask the Music Man with the mic, Larry may add one line after him. Only when he has something to say, and never every time.
+              </p>
+
               {/* 4.5: Exa.ai key. Powers semantic music-journalism
                   search that augments every character call's facts
                   block. Optional — empty string disables the feature
