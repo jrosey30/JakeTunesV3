@@ -8,6 +8,12 @@
  * and hands either to macOS's Share menu (Messages, Mail, AirDrop…), the
  * clipboard, or a file.
  *
+ * SEND TO (2026-11-14, share by service): Jake's people, each tagged with the
+ * app they listen on (homemini's friend-services.json). A click copies THAT
+ * person's message — the signature line and their app's one link — and says so
+ * plainly: the desktop can't open Messages addressed to one person, so Jake
+ * pastes it there. Greyed where their app has no proven link.
+ *
  * Opened from the song and album menus through `openFriendShare` (a window
  * event, so the menus stay plain data); <FriendShareHost /> in App owns it.
  */
@@ -19,6 +25,7 @@ import { albumArtUrl } from '../artRevision'
 import { renderShareCard, type CardContent } from '../utils/friendShareCard'
 import { cardName, type CardFormat } from '../../common/friend-share-card'
 import { offlineShareText, type ShareInfo } from '../../common/friend-share-doc'
+import { chipFor, copiedNote, serviceLabel, serviceTag, type FriendPerson } from '../../common/friend-services-doc'
 import '../styles/friend-share.css'
 
 export interface FriendShareRequest {
@@ -52,6 +59,7 @@ function FriendShareDialog({ req, onClose }: { req: FriendShareRequest; onClose:
   const [note, setNote] = useState<string | null>(null)
   const [format, setFormat] = useState<CardFormat>('story')
   const [cards, setCards] = useState<Partial<Record<CardFormat, string>>>({})
+  const [people, setPeople] = useState<FriendPerson[]>([])
 
   const t = req.track
   const title = req.kind === 'album' ? (t.album || 'Unknown Album') : (t.title || 'Unknown Title')
@@ -69,6 +77,12 @@ function FriendShareDialog({ req, onClose }: { req: FriendShareRequest; onClose:
     })()
     return () => { live = false }
   }, [t.id, req.kind])
+
+  useEffect(() => {
+    let live = true
+    void window.electronAPI.friendShareFriends?.().then((r) => { if (live && r?.ok) setPeople(r.value) })
+    return () => { live = false }
+  }, [])
 
   const content = useCallback((): CardContent => {
     const hash = lib.artworkMap[albumKeyOf(t)]
@@ -101,7 +115,12 @@ function FriendShareDialog({ req, onClose }: { req: FriendShareRequest; onClose:
 
   const png = cards[format]
   const name = cardName(title, artist, format)
-  const flash = (s: string) => { setNote(s); window.setTimeout(() => setNote((n) => (n === s ? null : n)), 2200) }
+  const flash = (s: string, ms = 2200) => { setNote(s); window.setTimeout(() => setNote((n) => (n === s ? null : n)), ms) }
+  const sendTo = (p: FriendPerson) => {
+    const chip = chipFor(p, loading ? null : info)
+    if (chip.state !== 'ready') return
+    void window.electronAPI.friendShareCopy?.({ text: chip.text }).then((r) => r?.ok && flash(copiedNote(p), 6000))
+  }
 
   return (
     <div className="fshare-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
@@ -124,6 +143,29 @@ function FriendShareDialog({ req, onClose }: { req: FriendShareRequest; onClose:
             </div>
             <div className="fshare-label">THE MESSAGE</div>
             <pre className="fshare-text">{loading ? 'Finding it on Spotify and Apple Music…' : text}</pre>
+            {people.length > 0 && (
+              <div className="fshare-sendto" role="group" aria-label="Send to">
+                <div className="fshare-sendto-head">SEND TO</div>
+                <div className="fshare-sendto-grid">
+                  {people.map((p) => {
+                    const chip = chipFor(p, loading ? null : info)
+                    const tag = serviceTag(p.service)
+                    return (
+                      <button
+                        key={p.key}
+                        className="fshare-person"
+                        disabled={chip.state !== 'ready'}
+                        title={chip.state === 'no-link' ? `No ${serviceLabel(p.service)} link for this one` : `Copy ${p.name}’s ${serviceLabel(p.service)} message`}
+                        onClick={() => sendTo(p)}
+                      >
+                        <span className="fshare-person-name">{p.name}</span>
+                        {tag && <span className={`fshare-tag fshare-tag--${p.service}`}>{tag}</span>}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
             <div className="fshare-row">
               <button disabled={loading} onClick={() => void window.electronAPI.friendShareShare?.({ text })}>Send Link…</button>
               <button disabled={loading} onClick={() => void window.electronAPI.friendShareCopy?.({ text }).then((r) => r?.ok && flash('Message copied'))}>Copy Message</button>

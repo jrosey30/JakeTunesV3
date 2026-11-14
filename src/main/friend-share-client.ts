@@ -6,6 +6,7 @@
  */
 import { withCompanionInit } from './hub-companion.ts'
 import { parseShareInfo, type ShareInfo, type ShareKind } from '../common/friend-share-doc.ts'
+import { parseFriendServices, type FriendPerson } from '../common/friend-services-doc.ts'
 
 export interface FetchReply { ok: boolean; status: number; json(): Promise<unknown> }
 export type FetchLike = (url: string, init?: Record<string, unknown>) => Promise<FetchReply>
@@ -27,6 +28,16 @@ export function createFriendShareClient(opts: { baseUrl: string; fetchImpl?: Fet
         return doc ? { ok: true, value: doc } : { ok: false, error: 'homemini sent back something unexpected.' }
       } catch {
         return { ok: false, error: 'homemini isn’t answering, so the links can’t be found right now.' }
+      }
+    },
+    /** Which app each of Jake's people listens on (homemini's friend-services.json). */
+    async friends(): Promise<Result<FriendPerson[]>> {
+      try {
+        const res = await fetchImpl(`${base}/api/friend-services`, withCompanionInit({ method: 'GET', signal: AbortSignal.timeout(8000) }) as Record<string, unknown>)
+        if (res.status !== 200) return { ok: false, error: 'homemini didn’t send the list of people.' }
+        return { ok: true, value: parseFriendServices(await res.json().catch(() => null)) }
+      } catch {
+        return { ok: false, error: 'homemini isn’t answering.' }
       }
     },
   }

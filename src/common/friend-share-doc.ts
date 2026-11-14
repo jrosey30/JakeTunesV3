@@ -32,6 +32,19 @@ export interface ShareInfo {
   /** The message, ready to send: signature first, two links at most. */
   text: string
   partial: boolean
+  /** Share by service (2026-11-14): each app's own message (the signature line
+   *  and that one link), null where homemini proved no link. Absent from a
+   *  homemini that predates it. */
+  byService?: { apple: ServiceLink | null; spotify: ServiceLink | null }
+}
+
+export interface ServiceLink { url: string; text: string }
+
+function serviceLink(v: unknown): ServiceLink | null {
+  const r = o(v)
+  const url = s(r.url)
+  const text = s(r.text)
+  return url && text && /^https:\/\//.test(url) ? { url, text } : null
 }
 
 const s = (v: unknown): string | null => (typeof v === 'string' && v ? v : null)
@@ -67,6 +80,9 @@ export function parseShareInfo(raw: unknown): ShareInfo | null {
     },
     text,
     partial: r.partial === true,
+    ...(r.byService && typeof r.byService === 'object'
+      ? { byService: { apple: serviceLink(o(r.byService).apple), spotify: serviceLink(o(r.byService).spotify) } }
+      : {}),
   }
 }
 

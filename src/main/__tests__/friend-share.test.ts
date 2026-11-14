@@ -105,3 +105,75 @@ test('square steps down until the screen fits, eyebrow first', () => {
   assert.equal(SQUARE_STEPS[pickSquareStep(big)].art <= 0.5, true)
   assert.equal(pickSquareStep(() => 5000), SQUARE_STEPS.length - 1)
 })
+
+// ── Share by service (2026-11-14) ─────────────────────────────────────────
+
+import { parseFriendServices, chipFor, copiedNote, serviceTag } from '../../common/friend-services-doc.ts'
+import { readFileSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const byService = {
+  apple: { url: 'https://music.apple.com/us/album/1?i=2', text: "#212 in Jake's Top 1000: I Can See For Miles by The Who\nhttps://music.apple.com/us/album/1?i=2" },
+  spotify: null,
+}
+const people = { people: [
+  { key: 'mom', name: 'Mom', service: 'apple', setBy: 'jake', at: 'x', seed: true },
+  { key: 'lorin bloom', name: 'Lorin Bloom', service: 'spotify', setBy: 'jake', at: 'x', seed: true },
+  { key: 'dana', name: 'Dana', service: 'unknown', setBy: 'jake', at: 'x', seed: false },
+  { key: '', name: 'No Key', service: 'apple' },
+  { key: 'bad', name: 'Bad', service: 'tidal' },
+] }
+
+test('parseShareInfo keeps byService and an old answer without it still reads', () => {
+  const i = parseShareInfo({ ...answer, byService })!
+  assert.equal(i.byService?.apple?.url, 'https://music.apple.com/us/album/1?i=2')
+  assert.equal(i.byService?.spotify, null)
+  assert.equal(parseShareInfo(answer)!.byService, undefined)
+  assert.equal(parseShareInfo({ ...answer, byService: { apple: { url: 'javascript:x', text: 't' } } })!.byService?.apple, null)
+})
+
+test('parseFriendServices keeps the route order and drops rows that do not read', () => {
+  const p = parseFriendServices(people)
+  assert.deepEqual(p.map((x) => x.name), ['Mom', 'Lorin Bloom', 'Dana'])
+  assert.deepEqual(parseFriendServices(null), [])
+  assert.equal(serviceTag('apple'), 'APPLE')
+  assert.equal(serviceTag('unknown'), null)
+})
+
+test('SEND TO: each person gets their app\'s message; no proven link greys them; unknown gets both', () => {
+  const [mom, lorin, dana] = parseFriendServices(people)
+  const i = parseShareInfo({ ...answer, byService })!
+  assert.deepEqual(chipFor(mom!, i), { state: 'ready', text: byService.apple.text })
+  assert.deepEqual(chipFor(lorin!, i), { state: 'no-link' })
+  assert.deepEqual(chipFor(dana!, i), { state: 'ready', text: answer.text })
+  assert.deepEqual(chipFor(mom!, null), { state: 'waiting' })
+  // A homemini from before share-by-service: everyone gets the two-link text.
+  assert.deepEqual(chipFor(lorin!, parseShareInfo(answer)), { state: 'ready', text: answer.text })
+})
+
+test('SEND TO says plainly what was copied and that Messages cannot be addressed from here', () => {
+  const [mom, lorin, dana] = parseFriendServices(people)
+  assert.equal(copiedNote(lorin!), 'Lorin’s Spotify message is copied. The desktop can’t open Messages to one person, so paste it in Messages to Lorin.')
+  assert.match(copiedNote(mom!), /^Mom’s Apple Music message is copied\./)
+  assert.match(copiedNote(dana!), /message \(both links\)/)
+})
+
+test('client: friends() asks /api/friend-services and fails soft', async () => {
+  const seen: string[] = []
+  const c = createFriendShareClient({ baseUrl: 'http://homemini:3000', fetchImpl: async (url) => { seen.push(url); return { ok: true, status: 200, json: async () => people } } })
+  const r = await c.friends()
+  assert.ok(r.ok)
+  assert.equal(seen[0], 'http://homemini:3000/api/friend-services')
+  const down = createFriendShareClient({ baseUrl: 'http://h', fetchImpl: async () => { throw new Error('ECONNREFUSED') } })
+  assert.equal((await down.friends()).ok, false)
+})
+
+test('the dialog draws SEND TO from the route and copies through the main process', () => {
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../renderer/components/FriendShareDialog.tsx'), 'utf8')
+  assert.match(src, /friendShareFriends\?\.\(\)/, 'asks for the people')
+  assert.match(src, /chipFor\(p, loading \? null : info\)/, 'each person by the shared rule')
+  assert.match(src, /friendShareCopy\?\.\(\{ text: chip\.text \}\)/, 'copies that person\'s message (clipboard via IPC, never navigator.clipboard)')
+  assert.match(src, /copiedNote\(p\)/, 'and says so')
+  assert.doesNotMatch(src, /navigator\.clipboard/)
+})
