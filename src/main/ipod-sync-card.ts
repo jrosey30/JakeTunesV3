@@ -12,12 +12,15 @@ import { join } from 'path'
 import { fullFsync, remountVolume } from './platform.ts'
 import { partitionLanded, type IntendedTrack } from './ipod-reconcile.ts'
 import { ensureScratchArchived } from './ipod-plays-archive.ts'
+import { noteCardWrite } from './ipod-card-proof.ts'
 
 export async function confirmWriteOnCard(src: string, dst: string): Promise<{ ok: boolean; reason?: string }> {
   try {
     await fullFsync(dst)
     const [sSt, dSt] = await Promise.all([stat(src), stat(dst)])
     if (sSt.size !== dSt.size) return { ok: false, reason: `on-card size ${dSt.size} != source ${sSt.size}` }
+    // A sample for the card check of an iPod still being set up (ipod-card-proof.ts); never fails a copy.
+    await noteCardWrite(src, dst)
     return { ok: true }
   } catch (err) {
     return { ok: false, reason: err instanceof Error ? err.message : String(err) }

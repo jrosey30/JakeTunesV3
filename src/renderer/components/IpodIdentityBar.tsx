@@ -6,11 +6,13 @@
  *   • an iPod JakeTunes knows: nothing here — its name, colour and one Sync
  *     button are in the Device page's Sync area (2026-11-07)
  *   • an iPod with no ID yet: set it up, either as the original (only when no
- *     original is registered on this Mac) or as a new iPod with a name, a
- *     sticker colour and a line about what it's for
+ *     original is registered on this Mac) or through the guided set-up
+ *     (IpodSetupSheet, 2026-11-13): which list it carries, the checks, the ID file
+ *   • an iPod that was just set up: its first sync and the checklist on the iPod
  */
 import { useCallback, useEffect, useState } from 'react'
 import type { IpodIdentity } from '../../common/ipod-identity'
+import IpodSetupSheet from './IpodSetupSheet'
 import '../styles/ipod-identity.css'
 
 // iPod mini's own colours, plus black for whatever comes next.
@@ -30,10 +32,8 @@ export function stickerHex(color: string | null): string {
 
 export default function IpodIdentityBar() {
   const [identity, setIdentity] = useState<IpodIdentity | null>(null)
-  const [setup, setSetup] = useState(false)
-  const [name, setName] = useState('')
-  const [color, setColor] = useState('red')
-  const [purpose, setPurpose] = useState('')
+  // The guided set-up (2026-11-13): which list, the checks, the ID file (IpodSetupSheet).
+  const [guided, setGuided] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -59,16 +59,14 @@ export default function IpodIdentityBar() {
     }
   }, [refresh])
 
-  const register = async (asOriginal: boolean) => {
+  const registerOriginal = async () => {
     setBusy(true)
     setError(null)
     try {
-      const r = await window.electronAPI.registerIpodDevice?.(
-        asOriginal ? { asOriginal: true } : { asOriginal: false, name: name.trim(), color, purpose: purpose.trim() },
-      )
+      const r = await window.electronAPI.registerIpodDevice?.({ asOriginal: true })
       if (!r) setError('This build can’t set up iPods.')
       else if (!r.ok) setError(r.error)
-      else { setSetup(false); await refresh() }
+      else await refresh()
     } finally {
       setBusy(false)
     }
@@ -77,64 +75,34 @@ export default function IpodIdentityBar() {
   if (!identity) return null
 
   // A known iPod's name and colour sit in the Device page's Sync area, beside
-  // its one Sync button (2026-11-07). This strip is only for setting one up.
-  if (identity.status === 'known') return null
+  // its one Sync button (2026-11-07). This strip is for setting one up, and for
+  // the end of a set-up: the first sync and the checklist on the iPod itself
+  // (2026-11-13). The Original has no set-up.
+  if (identity.status === 'known') {
+    if (identity.device.primary) return null
+    return <div className="ipod-id-bar ipod-id-bar--setup"><IpodSetupSheet key={identity.device.id} mode="tail" /></div>
+  }
+  if (guided) {
+    return <div className="ipod-id-bar ipod-id-bar--unknown ipod-id-bar--setup"><IpodSetupSheet mode="setup" onClose={() => { setGuided(false); void refresh() }} /></div>
+  }
 
   return (
     <div className="ipod-id-bar ipod-id-bar--unknown">
-      {!setup ? (
-        <>
-          <span className="ipod-id-note ipod-id-note--strong">
-            JakeTunes doesn’t know this iPod yet. Until it’s set up, JakeTunes won’t sync it or read its play counts.
-          </span>
-          <div className="ipod-id-actions">
-            {identity.canBeOriginal && (
-              <button className="device-itunes-btn" disabled={busy} onClick={() => { void register(true) }}>
-                This is my original iPod
-              </button>
-            )}
-            <button className="device-itunes-btn" disabled={busy} onClick={() => { setSetup(true); setError(null) }}>
-              Set up as a new iPod
+      <>
+        <span className="ipod-id-note ipod-id-note--strong">
+          JakeTunes doesn’t know this iPod yet. Until it’s set up, JakeTunes won’t sync it or read its play counts.
+        </span>
+        <div className="ipod-id-actions">
+          {identity.canBeOriginal && (
+            <button className="device-itunes-btn" disabled={busy} onClick={() => { void registerOriginal() }}>
+              This is my original iPod
             </button>
-          </div>
-        </>
-      ) : (
-        <form
-          className="ipod-id-form"
-          onSubmit={(e) => { e.preventDefault(); if (name.trim()) void register(false) }}
-        >
-          <label className="ipod-id-field">
-            <span>Name</span>
-            <input value={name} maxLength={40} placeholder="Red" autoFocus onChange={(e) => setName(e.target.value)} />
-          </label>
-          <div className="ipod-id-field">
-            <span>Sticker</span>
-            <div className="ipod-id-swatches" role="radiogroup" aria-label="Sticker colour">
-              {STICKERS.map((s) => (
-                <button
-                  key={s.name}
-                  type="button"
-                  role="radio"
-                  aria-checked={color === s.name}
-                  aria-label={s.name}
-                  title={s.name}
-                  className={`ipod-id-swatch${color === s.name ? ' is-on' : ''}`}
-                  style={{ background: s.hex }}
-                  onClick={() => setColor(s.name)}
-                />
-              ))}
-            </div>
-          </div>
-          <label className="ipod-id-field ipod-id-field--wide">
-            <span>What’s it for?</span>
-            <input value={purpose} maxLength={120} placeholder="Optional — decide later" onChange={(e) => setPurpose(e.target.value)} />
-          </label>
-          <div className="ipod-id-actions">
-            <button type="submit" className="device-itunes-btn" disabled={busy || !name.trim()}>Save</button>
-            <button type="button" className="device-link-btn" disabled={busy} onClick={() => setSetup(false)}>Cancel</button>
-          </div>
-        </form>
-      )}
+          )}
+          <button className="device-itunes-btn" disabled={busy} onClick={() => { setGuided(true); setError(null) }}>
+            Set up this iPod
+          </button>
+        </div>
+      </>
       {error && <span className="ipod-id-error">{error}</span>}
     </div>
   )

@@ -356,7 +356,7 @@ export function createSyncEngine(host: SyncEngineHost) {
     // The iPod's own name, written as the catalog's master title (what the iPod calls itself).
     let ipodName: string | undefined
     if (gateMount) {
-      const ipod = await resolveIpodState(gateMount, STATE_DIR)
+      const ipod = await resolveIpodState(gateMount, STATE_DIR, { forSync: true })
       if (ipod.refusal) {
         console.error(`sync-to-ipod: REFUSED — ${ipod.refusal}`)
         return { ok: false, copied: 0, error: ipod.refusal }

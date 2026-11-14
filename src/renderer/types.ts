@@ -881,6 +881,14 @@ declare global {
         | { ok: true; device: IpodDeviceMarker; mount: string; driveNote: string | null; homemini: 'saved' | 'later' | 'n/a' }
         | { ok: false; error: string }>
       registerIpodDevice?: (input: { asOriginal: boolean; name?: string; color?: string; purpose?: string }) => Promise<{ ok: true; device: IpodDeviceMarker } | { ok: false; error: string }>
+      // Setting up a new iPod (2026-11-13; main/ipc/ipod-onboarding-ipc.ts).
+      ipodSetupLook?: (arg?: { listId?: string | null; name?: string | null; typed?: string | null; recheck?: boolean }) => Promise<import('../common/ipod-onboarding').IpodSetupLook>
+      ipodSetupTest?: (arg?: { listId?: string | null; name?: string | null }) => Promise<{ ok: boolean; result?: { ok: boolean; bytes: number; reason?: string }; error?: string }>
+      ipodSetupReadoptOriginal?: () => Promise<{ ok: boolean; error?: string }>
+      ipodSetupCardProof?: () => Promise<{ ok: boolean; error?: string; cardProof?: { status: 'pass' | 'fail' | 'waiting' | 'none'; line: string } }>
+      ipodSetupSameIpod?: (arg: { typed: string }) => Promise<{ ok: boolean; error?: string }>
+      ipodSetupPrepare?: (arg: { listId: string; name: string | null; color: string | null; typed: string | null; matchCover: boolean }) => Promise<{ ok: boolean; error?: string; did?: string[]; notes?: string[] }>
+      ipodSetupChecked?: () => Promise<{ ok: boolean; error?: string }>
       onIpodDeviceChanged?: (callback: () => void) => () => void
       analyzeTrack: (trackId: number, colonPath: string, fingerprint: string) => Promise<{ ok: boolean; bpm?: number; keyRoot?: string; keyMode?: 'major' | 'minor' | ''; camelotKey?: string; error?: string }>
       // Brief 010 Phase 3 + Brief 014a: audio-analysis worker progress
