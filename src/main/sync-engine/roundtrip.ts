@@ -29,7 +29,7 @@
 
 import { createHash, randomUUID } from 'crypto'
 import { join } from 'path'
-import { appendFile, mkdir, readdir, readFile, writeFile, rename } from 'fs/promises'
+import { appendFile, mkdir, readdir, readFile, stat, writeFile, rename } from 'fs/promises'
 
 const MAC_EPOCH_OFFSET_S = 2082844800 // 1904-01-01 → 1970-01-01
 
@@ -317,9 +317,12 @@ export type RoundTripOutcome =
   | { kind: 'brought-home'; snapshot: string; plays: number; tracks: number; otgLists: number; unmatched: number }
   | { kind: 'skipped'; reason: string }
   | { kind: 'cannot-map'; reason: string; plays: number }
-  /** An On-The-Go list on the iPod with not one song that could be matched. Nothing was
-   *  recorded, so the pre-sync gate stops the sync and the list stays on the iPod. */
+  /** An On-The-Go list on the iPod with not one song that could be matched. The plays
+   *  ARE recorded (a list never holds them back); this outcome is what makes the
+   *  pre-sync gate stop a sync, so the list stays on the iPod. */
   | { kind: 'otg-unmatched'; list: number; songs: number; reason: string }
+  /** A never-synced iPod's leftover On-The-Go lists (a previous owner's): let go, logged. */
+  | { kind: 'otg-leftover-discarded'; lists: number; songs: number }
   | { kind: 'failed'; reason: string }
 
 export function describeRoundTripOutcome(o: RoundTripOutcome): string {
@@ -332,6 +335,7 @@ export function describeRoundTripOutcome(o: RoundTripOutcome): string {
       ` (snapshot ${o.snapshot.slice(0, 12)})`
     case 'skipped': return `skipped: ${o.reason}`
     case 'cannot-map': return `could not match ${o.plays} play(s): ${o.reason}`
+    case 'otg-leftover-discarded': return `this iPod has never been synced by JakeTunes: ${o.lists} leftover On-The-Go list(s) (${o.songs} song(s)) from before it was set up were not kept`
     case 'otg-unmatched': return `On-The-Go list ${o.list} (${o.songs} song(s)) could not be matched to any library song: ${o.reason}`
     case 'failed': return `failed: ${o.reason}`
   }
@@ -345,6 +349,8 @@ export async function readRoundTripState(stateDir: string): Promise<RoundTripSta
     return null
   }
 }
+
+const fileExists = (path: string): Promise<boolean> => stat(path).then(() => true, () => false)
 
 async function readManifest(path: string): Promise<ManifestLike> {
   try {
@@ -463,8 +469,9 @@ async function saveOtg(plan: Extract<RoundTripPlan, { kind: 'plan' }>, host: Rou
 /**
  * A list on the iPod with songs in it and not one that can be matched would be
  * LOST by a sync (the sync clears the iPod's On-The-Go files, and they can't
- * stay: they are positions in the catalog the sync replaces). So nothing is
- * recorded, the gate stops the sync, and the list stays on the iPod.
+ * stay: they are positions in the catalog the sync replaces). So the gate
+ * stops the sync and the list stays on the iPod. The plays on the card are
+ * recorded all the same.
  */
 function unmatchedOtgList(plan: Extract<RoundTripPlan, { kind: 'plan' }>): RoundTripOutcome | null {
   const lost = plan.otg.find((l) => l.total > 0 && l.ids.length === 0)
@@ -508,21 +515,37 @@ export function ingestRoundTripSnapshot(snap: RoundTripSnapshot, host: RoundTrip
       if (plan.kind === 'already-recorded' && host.saveOtgLists && snap.otg.some((b) => parseOtgIndexes(b).length > 0)) {
         const again = planRoundTrip(snap, manifest, prior ? { ...prior, snapshot: '' } : null)
         if (again.kind === 'plan') {
+          await saveOtg(again, host)
           const lost = unmatchedOtgList(again)
           if (lost) return lost
-          await saveOtg(again, host)
         }
       }
-      if (plan.kind === 'plan' && host.saveOtgLists) {
-        const lost = unmatchedOtgList(plan)
-        if (lost) return lost
+      // An iPod JakeTunes has never synced (no manifest was ever written for it) that
+      // arrives with On-The-Go lists and no plays: the lists are a previous owner's,
+      // made against a catalog this Mac never wrote, so nothing in them can be one of
+      // Jake's songs. They are let go, with a line in the log, instead of stopping the
+      // first sync. (The raw files are still copied to the plays archive before any
+      // sync clears them.) Plays on such an iPod are a different matter and still stop.
+      if (plan.kind === 'cannot-map' && plan.code === 'no-manifest' && plan.plays === 0 && host.saveOtgLists &&
+        !(await fileExists(join(host.stateDir, 'last-sync-manifest.json')))) {
+        const lists = snap.otg.map(parseOtgIndexes).filter((l) => l.length > 0)
+        const songs = lists.reduce((n, l) => n + l.length, 0)
+        console.warn(`[roundtrip] this iPod has never been synced by JakeTunes; the ${lists.length} On-The-Go list(s) on it (${songs} song(s)) are from before it was set up and can’t be matched to anything, so they are not kept`)
+        return { kind: 'otg-leftover-discarded', lists: lists.length, songs }
       }
       switch (plan.kind) {
         case 'empty': return { kind: 'nothing-on-card' }
         case 'no-plays': return { kind: 'no-plays' }
         case 'already-recorded': return { kind: 'nothing-new', snapshot: plan.snapshot }
         case 'cannot-map': return { kind: 'cannot-map', reason: plan.reason, plays: plan.plays }
-        case 'plan': return await applyRoundTripPlan(plan, host)
+        case 'plan': {
+          // Plays first, always: a list that can't be matched must never hold them back.
+          // The lists that DO match are saved in the same step. Only then is the
+          // unmatched list reported, which is what stops a sync from erasing it.
+          const lost = host.saveOtgLists ? unmatchedOtgList(plan) : null
+          const done = await applyRoundTripPlan(plan, host)
+          return lost && done.kind !== 'failed' ? lost : done
+        }
       }
     } catch (err) {
       return { kind: 'failed', reason: err instanceof Error ? err.message : String(err) }

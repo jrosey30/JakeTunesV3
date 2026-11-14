@@ -9,7 +9,7 @@
  *        Top 25 Most Played, Starred, Recently Added, Recently Played,
  *        Best of <year>            (evaluated by renderer/utils/smartPlaylists.ts
  *                                   against the iPod's songs, kept here by name)
- *        60's Music … 20's Music   (a decade with DECADE_MIN songs or more)
+ *        60's Music … 2020's Music (a decade with DECADE_MIN songs or more; decadeName)
  *        BPM 060-089 … BPM 170+    (verified foot-tap BPM only)
  *   3. On-The-Go read-backs, in the order they were numbered
  *   4. every other playlist assigned to that iPod (AI ones Jake approved and
@@ -75,9 +75,17 @@ export function builtinDefaultNames(year: number): string[] {
   return ['Top 25 Most Played', 'Starred', 'Recently Added', 'Recently Played', `Best of ${year}`]
 }
 
-/** "90's Music", the way an iPod named it. 2000 → "00's Music". */
+/**
+ * A decade list's name. ONE rule, and no two decades can share a name:
+ *   the 1900s keep the name an iPod gave them — "60's Music", "90's Music";
+ *   every other century is written out — "2000's Music", "2020's Music".
+ * (Two digits everywhere made the 1920s and the 2020s both "20's Music", and
+ * the second one was silently left off: review of PR 412.)
+ */
 export function decadeName(decadeStart: number): string {
-  return `${String(decadeStart % 100).padStart(2, '0')}'s Music`
+  return decadeStart >= 1900 && decadeStart < 2000
+    ? `${String(decadeStart % 100).padStart(2, '0')}'s Music`
+    : `${decadeStart}'s Music`
 }
 
 const yearOf = (t: DeviceTrack): number => {

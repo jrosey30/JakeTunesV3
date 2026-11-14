@@ -38,6 +38,7 @@ import { securePlaysBeforeSync } from '../ipod-plays-archive.ts'
 import { uniqueTmpPath, type RoundTripHost } from './roundtrip.ts'
 import { deviceKeyOf } from '../../common/ipod-device-playlists.ts'
 import { applyDevicePlaylists, type ForSyncInput, type ForSyncResult } from '../ipod-device-playlists-run.ts'
+import { promotePlannedPlaylists } from '../ipod-playlist-rule.ts'
 import type { IpodDeviceMarker } from '../../common/ipod-identity.ts'
 import {
   tsaActivityOk, tsaAllClear, tsaBoardPassenger, tsaDestCollisions,
@@ -190,6 +191,8 @@ export function createSyncEngine(host: SyncEngineHost) {
   // out at the next file-copy boundary and returns ok:false, cancelled:true.
   // Reset to false at the top of every new runSyncToIpod call.
   let syncCancelRequested = false
+  /** This sync put an iPod's playlist plan on disk (ipod-playlists-planned.json). */
+  let playlistsPlanned = false
 
 
 
@@ -239,9 +242,15 @@ export function createSyncEngine(host: SyncEngineHost) {
     // card. A preflight refuse used to leave phase:copy on disk, and the
     // LCD / iPod page kept showing a failed sync that never wrote a byte.
     try {
+      playlistsPlanned = false
       const result = await runSyncToIpod(tracks, playlists, convertOptions, syncOpts)
-      if ((result as { ok?: boolean })?.ok) await writeSyncJournal(null)
-      else {
+      if ((result as { ok?: boolean })?.ok) {
+        await writeSyncJournal(null)
+        // The sync verified and sealed: the playlists it planned are now what the iPod
+        // holds. A refused, failed or cancelled sync never gets here, so the record a
+        // later sync falls back on only ever describes a sync that finished.
+        if (playlistsPlanned) await promotePlannedPlaylists(syncStateDir)
+      } else {
         const err = String((result as { error?: string }).error || 'Sync failed')
         sendToRenderer('sync-progress', {
           phase: 'error', current: 0, total: 0, title: err,
@@ -377,6 +386,7 @@ export function createSyncEngine(host: SyncEngineHost) {
         return { ok: false, copied: 0, error: own.error }
       }
       playlists = own.playlists
+      playlistsPlanned = own.applied
     }
     syncCancelRequested = false
     if (syncOpts?.origin === 'activity-click') {

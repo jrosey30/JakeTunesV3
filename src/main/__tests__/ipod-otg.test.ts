@@ -14,7 +14,7 @@
  */
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readdir, readFile, writeFile, stat } from 'node:fs/promises'
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -298,16 +298,57 @@ describe('On-The-Go through the round trip', () => {
     assert.ok(said.some((l) => /On-The-Go list 1: 2 of 3 songs came home/.test(l)))
   })
 
-  test('a list with NO song that can be matched is never lost: nothing is recorded, the sync stops, the iPod keeps it', async () => {
+  test('a list with NO song that can be matched is never lost: the sync stops and the iPod keeps it — but the plays come home', async () => {
     const c = await card({ OTGPlaylistInfo: otgFile([40, 41]) })
-    const out = await ingestRoundTripSnapshot(await readRoundTripSnapshot(c.itunes), c.host(c.real))
+    const pc = Buffer.alloc(16 + 3 * 16); pc.write('mhdp', 0, 'latin1'); pc.writeUInt32LE(16, 4); pc.writeUInt32LE(16, 8); pc.writeUInt32LE(3, 12)
+    pc.writeUInt32LE(4, 16); pc.writeUInt32LE(3_900_000_000, 20)   // 4 plays of the first song
+    await writeFile(join(c.itunes, 'Play Counts'), pc)
+    const played: Array<[number, number]> = []
+    const host = { ...c.host(c.real), appendPlayEvents: async (id: number, n: number) => { played.push([id, n]) } }
+
+    const out = await ingestRoundTripSnapshot(await readRoundTripSnapshot(c.itunes), host)   // plug-in
     assert.deepEqual([out.kind, (out as { list?: number }).list, (out as { songs?: number }).songs], ['otg-unmatched', 1, 2])
-    assert.equal(await readRoundTripState(c.state), null, 'not recorded as brought home')
+    assert.deepEqual(played, [[101, 4]], 'the plays were recorded at plug-in: the list did not hold them back')
+    assert.equal((await readRoundTripState(c.state))?.ingested['101'], 4)
     assert.deepEqual(await readOtgPlaylists(c.state), [])
+
+    const gate = await securePlaysBeforeSync(c.mount, host, 'Activity Sync')
+    assert.equal(gate.ok, false, 'a sync is still stopped')
+    const msg = (gate as { error: string }).error
+    assert.match(msg, /On-The-Go list 1 on it \(2 songs\) can’t be matched to your library/)
+    assert.match(msg, /it was left on the iPod\. Your plays were recorded\./)
+    assert.match(msg, /To sync: on the iPod, go to Playlists → On-The-Go → Clear Playlist, then sync again\.$/)
+    assert.equal(/Claude/.test(msg), false)
+    assert.equal(await exists(join(c.itunes, 'OTGPlaylistInfo')), true, 'still on the iPod')
+    assert.deepEqual(played, [[101, 4]], 'and the plays are not counted twice')
+
+    // Jake clears On-The-Go on the iPod: the sync goes.
+    await writeFile(join(c.itunes, 'OTGPlaylistInfo'), otgFile([]))
+    assert.equal((await securePlaysBeforeSync(c.mount, host, 'Activity Sync')).ok, true)
+    assert.deepEqual(played, [[101, 4]])
+  })
+
+  test('a newly set-up iPod with a previous owner’s On-The-Go list: let go with a log line, the first sync is not stopped', async () => {
+    const c = await card({ OTGPlaylistInfo: otgFile([0, 2, 1]) })
+    await rm(join(c.state, 'last-sync-manifest.json'))   // JakeTunes has never synced this iPod
+    const said: string[] = []
+    const warn = console.warn
+    console.warn = (...a: unknown[]) => { said.push(a.join(' ')) }
+    let gate
+    try { gate = await securePlaysBeforeSync(c.mount, c.host(c.real), 'Activity Sync') } finally { console.warn = warn }
+    assert.equal(gate.ok, true)
+    assert.deepEqual(gate.outcome, { kind: 'otg-leftover-discarded', lists: 1, songs: 3 })
+    assert.ok(said.some((l) => /has never been synced by JakeTunes; the 1 On-The-Go list\(s\) on it \(3 song\(s\)\) are from before it was set up/.test(l)), said.join('\n'))
+    assert.deepEqual(await readOtgPlaylists(c.state), [], 'nothing of a stranger’s is saved as Jake’s')
+    assert.ok(gate.archiveDir && await exists(join(gate.archiveDir, 'iTunes', 'OTGPlaylistInfo')), 'the raw file is still kept in the archive')
+  })
+
+  test('an iPod JakeTunes HAS synced is never treated as newly set up: an unreadable manifest still stops', async () => {
+    const c = await card({ OTGPlaylistInfo: otgFile([0, 2, 1]) })
+    await writeFile(join(c.state, 'last-sync-manifest.json'), '{ torn')
     const gate = await securePlaysBeforeSync(c.mount, c.host(c.real), 'Activity Sync')
     assert.equal(gate.ok, false)
-    assert.match((gate as { error: string }).error, /On-The-Go list 1 on it \(2 songs\) can’t be brought home.*the list was left on the iPod/)
-    assert.equal(await exists(join(c.itunes, 'OTGPlaylistInfo')), true, 'still on the iPod')
+    assert.equal(gate.outcome?.kind, 'cannot-map')
   })
 
   test('one good list and one unmatched list: the sync still stops, so the unmatched one isn’t erased', async () => {

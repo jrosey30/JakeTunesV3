@@ -13,7 +13,7 @@
  *
  * UNKNOWN IS NOT EMPTY. When homemini can't be asked, the answer kept from
  * last time is used. When there is no kept answer either, the playlists the
- * LAST SYNC wrote (ipod-playlists-last-sync.json) are written again: a
+ * LAST FINISHED SYNC wrote (ipod-playlists-last-sync.json) are written again: a
  * playlist is never taken off an iPod because a list couldn't be read. Only an
  * iPod that has never had them goes without, and every such case is a line in
  * `notes`, in the log and in the last-sync file.
@@ -25,7 +25,7 @@ import { withCompanionInit } from './hub-companion.ts'
 import type { FetchLike } from './top1000-client.ts'
 import { readOtgPlaylistsRepairing, type OtgPlaylist } from './ipod-otg-playlists.ts'
 import {
-  describePlaylistPlan, onlyOwnPlaylists, readLastSyncPlaylists, writeLastSyncPlaylists, type LastSyncPlaylists,
+  describePlaylistPlan, onlyOwnPlaylists, readLastSyncPlaylists, writePlannedPlaylists, type LastSyncPlaylists,
 } from './ipod-playlist-rule.ts'
 // The app's one name-sort rule, main-side twin of renderer/utils/artistSort.ts compareNames
 // (pinned equal on one fixture by __tests__/ipod-device-playlists.test.ts).
@@ -168,7 +168,7 @@ export function createDevicePlaylists(deps: DevicePlaylistsDeps) {
   /**
    * The exact playlist set to write to this iPod, and what changed. Throws only
    * when the saved On-The-Go lists are damaged AND can't be moved aside.
-   * Leaves ipod-playlists-last-sync.json behind.
+   * Leaves ipod-playlists-planned.json behind (never the last-sync record).
    */
   async function forSync(input: ForSyncInput): Promise<ForSyncResult> {
     await mkdir(input.stateDir, { recursive: true }).catch((err) => warn(`[ipod-playlists] could not make ${input.stateDir}: ${(err as Error)?.message ?? err}`))
@@ -225,8 +225,10 @@ export function createDevicePlaylists(deps: DevicePlaylistsDeps) {
     }
     const result: ForSyncResult = { ...set, onlyOwnPlaylists: onlyOwn, notes }
     const record: LastSyncPlaylists = { version: 1, at: now.toISOString(), ipod: input.ipodName, onlyOwnPlaylists: onlyOwn, ...set, notes }
-    await writeLastSyncPlaylists(input.stateDir, record)
-      .catch((err) => warn(`[ipod-playlists] could not keep the record of this sync’s playlists: ${(err as Error)?.message ?? err}`))
+    // The PLAN, not the record: it becomes ipod-playlists-last-sync.json only when the
+    // sync it belongs to has verified and sealed (sync-engine → promotePlannedPlaylists).
+    await writePlannedPlaylists(input.stateDir, record)
+      .catch((err) => warn(`[ipod-playlists] could not keep this sync’s playlist plan: ${(err as Error)?.message ?? err}`))
     return result
   }
 

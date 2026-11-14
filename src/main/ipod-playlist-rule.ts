@@ -17,14 +17,20 @@
  * NOTHING IN THE APP WRITES THIS FILE (a test reads the source to keep it that
  * way). It is written by hand, or by Claude, on Jake's word, for one iPod.
  *
- * Every sync also leaves, in the same folder,
+ * Two records live in the same folder:
  *
- *   ipod-playlists-last-sync.json
+ *   ipod-playlists-planned.json    what a sync is ABOUT to write, left when the
+ *                                  set is put together, before the card is touched
+ *   ipod-playlists-last-sync.json  what the last sync that FINISHED wrote: the
+ *                                  planned file, moved here only after that sync
+ *                                  verified and sealed (promotePlannedPlaylists)
  *
- * which says what that sync wrote: every playlist with its songs, which are
- * new, and which library playlists were left off (switch on) or would be
- * (switch off). That file is how Jake sees the list before saying yes, and it
- * is what a later sync reuses when homemini can't be asked (unknown is not empty).
+ * Each says every playlist with its songs, which are new, and which library
+ * playlists were left off (switch on) or would be (switch off). The planned
+ * file is how Jake sees the list before saying yes. The last-sync file is what
+ * a later sync reuses when homemini can't be asked (unknown is not empty), so
+ * it must only ever describe what is really on the iPod: a refused, failed or
+ * cancelled sync leaves it alone.
  */
 import { readFile, rename, writeFile } from 'fs/promises'
 import { join } from 'path'
@@ -33,6 +39,7 @@ import type { DevicePlaylist } from '../common/ipod-device-playlists.ts'
 
 export const PLAYLIST_RULE_FILE = 'ipod-playlists-rule.json'
 export const LAST_SYNC_PLAYLISTS_FILE = 'ipod-playlists-last-sync.json'
+export const PLANNED_PLAYLISTS_FILE = 'ipod-playlists-planned.json'
 
 /** Is "only its own playlists" switched on for the iPod whose state lives here? Any doubt = off. */
 export async function onlyOwnPlaylists(stateDir: string): Promise<boolean> {
@@ -67,11 +74,26 @@ export async function readLastSyncPlaylists(stateDir: string): Promise<LastSyncP
   }
 }
 
-export async function writeLastSyncPlaylists(stateDir: string, doc: LastSyncPlaylists): Promise<void> {
-  const path = join(stateDir, LAST_SYNC_PLAYLISTS_FILE)
+/** What a sync is about to write. Never read back as "what is on the iPod". */
+export async function writePlannedPlaylists(stateDir: string, doc: LastSyncPlaylists): Promise<void> {
+  const path = join(stateDir, PLANNED_PLAYLISTS_FILE)
   const tmp = `${path}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`
   await writeFile(tmp, JSON.stringify(doc, null, 1), 'utf-8')
   await rename(tmp, path)
+}
+
+/**
+ * The sync that planned these playlists finished (verified, sealed): its plan is
+ * now what the iPod holds. Returns false when there was no plan to promote.
+ */
+export async function promotePlannedPlaylists(stateDir: string): Promise<boolean> {
+  try {
+    await rename(join(stateDir, PLANNED_PLAYLISTS_FILE), join(stateDir, LAST_SYNC_PLAYLISTS_FILE))
+    return true
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`[ipod-playlists] could not record what this sync wrote: ${(err as Error).message}`)
+    return false
+  }
 }
 
 /** The line a sync logs before it touches the card: what is written, what is new, what is (or would be) left off. */
