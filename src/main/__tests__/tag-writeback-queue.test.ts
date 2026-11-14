@@ -69,7 +69,7 @@ describe('the crash night, replayed', () => {
     await q.idle()
     assert.equal(most, 1, 'never two writes in flight: each used to hold its own copy of the library')
     assert.deepEqual(written.map((j) => `${j.trackId}:${j.field}`), sent.map((e) => `${e.trackId}:${e.field}`))
-    assert.deepEqual(q.stats(), { waiting: 0, later: 0, written: 186, failed: 0, gone: 0, refused: 0, heapWaits: 0 })
+    assert.deepEqual(q.stats(), { waiting: 0, later: 0, written: 186, failed: 0, gone: 0, refused: 0, heapWaits: 0, superseded: 0 })
   })
 
   test('186 of 186 are written although the renderer saves the new artist while most still wait', async () => {
@@ -187,7 +187,7 @@ describe('nothing waiting is lost', () => {
 
   test('what comes back from disk goes ahead of what arrived since, and junk is not a job', async () => {
     const rows = [song(1), song(2), song(3)]
-    const old = [{ trackId: 2, path: rows[1].path, field: 'genre', value: 'Punk', overrides: { genre: 'Punk' }, duration: 1, tries: 1 }, { trackId: 'x' }, null, 7, { trackId: 3, path: rows[2].path, field: 'genre', value: 'Ska', overrides: { genre: 'Ska' }, duration: 1, tries: 0 }, { trackId: 3, path: '', field: 'genre', value: 'x' }]
+    const old = [{ trackId: 2, path: rows[1].path, field: 'genre', value: 'Punk', overrides: { genre: 'Punk' }, duration: 1, tries: 1 }, { trackId: 'x' }, null, 7, { trackId: 3, path: rows[2].path, field: 'year', value: '1999', overrides: { year: '1999' }, duration: 1, tries: 0 }, { trackId: 3, path: '', field: 'genre', value: 'x' }]
     const gate: Array<() => void> = []
     const { q, written } = rig(rows, { load: async () => old, write: (job) => new Promise<TagWriteOutcome>((r) => { gate.push(() => { written.push({ ...job }); r({ ok: true }) }) }) })
     await q.edit(edit(rows[0], 'genre', 'Rock'))
@@ -196,8 +196,8 @@ describe('nothing waiting is lost', () => {
     assert.equal(await q.resume(), 2)
     for (let i = 0; i < 4; i++) { while (gate.length === 0) await tick(); gate.shift()!() }
     await q.idle()
-    assert.deepEqual(written.map((j) => `${j.trackId}:${j.value}`), ['1:Rock', '2:Punk', '3:Ska', '3:Rock'], 'the last run\'s edits first, in their own order')
-    assert.equal(written[1].tries, 1)
+    assert.deepEqual(written.map((j) => `${j.trackId}:${j.value}`), ['2:Punk', '3:1999', '1:Rock', '3:Rock'], 'the last run\'s edits first, in their own order')
+    assert.equal(written[0].tries, 1, 'its count of time-outs came back with it')
     assert.equal(jobFromDisk({ trackId: 5, path: ':p', field: 'year', value: '1999' })?.overrides.year, '1999', 'a job saved without its payload still writes its own field')
     assert.equal(jobFromDisk({ trackId: 5, path: ':p', field: 'year', value: 1999 }), null)
     assert.equal(jobFromDisk({ trackId: NaN, path: ':p', field: 'year', value: '1' }), null)
@@ -243,6 +243,144 @@ describe('nothing waiting is lost', () => {
     assert.deepEqual(await q.stop(50), { written: 0, left: 2 })
     assert.deepEqual(left.map((j) => j.trackId), [1, 2])
     assert.deepEqual(written, [])
+  })
+})
+
+describe('the second review: the saved line and the newest edit', () => {
+  const owedJob = (row: Row, field: string, value: string): TagWritebackJob => ({ trackId: row.id as number, path: row.path as string, field, value, overrides: { [field]: value }, duration: 1, tries: 0 })
+
+  test('an edit made before the saved line was read does not wipe it: 25 owed + 1 new, all 26 written, owed first', async () => {
+    const rows = Array.from({ length: 26 }, (_, i) => song(i + 1))
+    let disk: TagWritebackJob[] = rows.slice(0, 25).map((r) => owedJob(r, 'genre', 'Owed'))
+    let reads = 0
+    const { q, written, saved } = rig(rows, {
+      load: async () => { reads++; await sleep(15); return JSON.parse(JSON.stringify(disk)) },   // the file read takes a moment, as a real one does
+      save: async (jobs) => { disk = jobs.map((j) => ({ ...j })); saved.push(disk) },
+    })
+    // The first 20 seconds after launch: resume has not run, and Jake edits a song.
+    await q.edit(edit(rows[25], 'genre', 'New'))
+    await tick()
+    assert.equal(await q.resume(), 25, 'the saved line is still there to bring back')
+    await q.idle()
+    assert.equal(reads, 1, 'read once, whoever asked first')
+    assert.deepEqual(saved[0].map((j) => j.trackId), [...rows.slice(0, 25).map((r) => r.id), 26], 'the first save holds the owed edits, ahead of the new one')
+    assert.ok(saved.every((list, i) => i === saved.length - 1 || list.length > 0), 'no save in between emptied the line')
+    assert.deepEqual(written.map((j) => `${j.trackId}:${j.value}`), [...rows.slice(0, 25).map((r) => `${r.id}:Owed`), '26:New'])
+    assert.deepEqual(disk, [])
+  })
+
+  test('with no resume call at all, the first edit still brings the saved line back', async () => {
+    const rows = [song(1), song(2)]
+    const { q, written } = rig(rows, { load: async () => [owedJob(rows[0], 'genre', 'Owed')] })
+    await q.edit(edit(rows[1], 'genre', 'New'))
+    await q.idle()
+    assert.deepEqual(written.map((j) => `${j.trackId}:${j.value}`), ['1:Owed', '2:New'])
+  })
+
+  test('a quit before the saved line was read leaves the saved line alone', async () => {
+    const rows = [song(1)]
+    let savedNow = 0
+    const { q, warned } = rig(rows, { load: async () => [owedJob(rows[0], 'genre', 'Owed')], saveNow: () => { savedNow++ } })
+    assert.deepEqual(await q.stop(20), { written: 0, left: 0 })
+    assert.equal(savedNow, 0, 'an empty list is not written over a line nobody read')
+    assert.deepEqual(warned, [])
+  })
+
+  test('a write that timed out is not retried over a newer edit of the same field', async () => {
+    const rows = [song(1), song(2)]
+    let hang = true
+    const { q, written, warned } = rig(rows, {
+      retryAfterMs: 25,
+      write: async (job) => { if (job.value === 'Old' && hang) return { ok: false, timedOut: true }; written.push({ ...job }); return { ok: true } },
+    })
+    await q.edit(edit(rows[0], 'genre', 'Old'))
+    await q.idle()
+    assert.equal(q.stats().later, 1, 'timed out, waiting for its retry')
+    await q.edit(edit(rows[0], 'genre', 'New'))          // Jake edits the same field again; it is written at once
+    await q.idle()
+    hang = false
+    await sleep(60)                                      // the retry's time comes
+    await q.idle()
+    assert.deepEqual(written.map((j) => `${j.trackId}:${j.field}=${j.value}`), ['1:genre=New'], 'the old value never lands over the new one')
+    assert.deepEqual({ later: q.stats().later, superseded: q.stats().superseded, failed: q.stats().failed }, { later: 0, superseded: 1, failed: 0 })
+    assert.equal(warned.filter((m) => /timed out/.test(m)).length, 1)
+  })
+
+  test('a newer edit that arrives while the older one is timing out: the older one is not queued for a retry', async () => {
+    const rows = [song(1)]
+    const gate: Array<(r: TagWriteOutcome) => void> = []
+    const { q, written } = rig(rows, { retryAfterMs: 60_000, write: (job) => new Promise<TagWriteOutcome>((r) => { gate.push((o) => { if (o.ok) written.push({ ...job }); r(o) }) }) })
+    await q.edit(edit(rows[0], 'genre', 'Old'))
+    while (gate.length === 0) await tick()
+    await q.edit(edit(rows[0], 'genre', 'New'))          // arrives while Old's writer hangs
+    gate.shift()!({ ok: false, timedOut: true })         // Old's writer is killed by its clock
+    while (gate.length === 0) await tick()
+    gate.shift()!({ ok: true })
+    await q.idle()
+    assert.equal(q.stats().later, 0, 'not parked for a retry at all: nothing is left to go off in ten minutes')
+    assert.deepEqual(written.map((j) => j.value), ['New'])
+    assert.deepEqual({ later: q.stats().later, superseded: q.stats().superseded }, { later: 0, superseded: 1 })
+    assert.equal(gate.length, 0, 'no third write was started')
+  })
+
+  test('an older edit still waiting is dropped when a newer one of the same field arrives; other fields and other songs are not', async () => {
+    const rows = [song(1), song(2)]
+    const gate: Array<() => void> = []
+    const { q, written } = rig(rows, { write: (job) => new Promise<TagWriteOutcome>((r) => { gate.push(() => { written.push({ ...job }); r({ ok: true }) }) }) })
+    await q.edit(edit(rows[1], 'year', '1999'))          // in flight: holds the line
+    while (gate.length === 0) await tick()
+    await q.edit(edit(rows[0], 'genre', 'Old'))
+    await q.edit(edit(rows[0], 'album', 'Kept'))
+    await q.edit(edit(rows[1], 'genre', 'Other song'))
+    await q.edit(edit(rows[0], 'genre', 'New'))
+    for (let i = 0; i < 4; i++) { while (gate.length === 0) await tick(); gate.shift()!() }
+    await q.idle()
+    assert.deepEqual(written.map((j) => `${j.trackId}:${j.field}=${j.value}`), ['2:year=1999', '1:album=Kept', '2:genre=Other song', '1:genre=New'])
+    assert.equal(q.stats().superseded, 1)
+  })
+
+  test('the pair counts: "track 4" also writes "of 11", so an older "of 12" still waiting is dropped', async () => {
+    const rows = [song(1), song(2)]
+    const gate: Array<() => void> = []
+    const { q, written } = rig(rows, { write: (job) => new Promise<TagWriteOutcome>((r) => { gate.push(() => { written.push({ ...job }); r({ ok: true }) }) }) })
+    await q.edit(edit(rows[1], 'year', '1999'))
+    while (gate.length === 0) await tick()
+    await q.edit(edit(rows[0], 'trackCount', '12'))
+    await q.edit(edit(rows[0], 'trackNumber', '4'))      // carries trackCount 11 from the row
+    for (let i = 0; i < 2; i++) { while (gate.length === 0) await tick(); gate.shift()!() }
+    await q.idle()
+    assert.deepEqual(written.map((j) => `${j.field}:${JSON.stringify(j.overrides)}`), ['year:{"year":"1999"}', 'trackNumber:{"trackNumber":"4","trackCount":"11"}'])
+  })
+
+  test('an edit owed from the last run loses to a newer one made in this run, whichever is seen first', async () => {
+    const rows = [song(1), song(2)]
+    // This run's edit first, the saved line read after it.
+    const a = rig(rows, { load: async () => { await sleep(10); return [owedJob(rows[0], 'genre', 'Owed'), owedJob(rows[1], 'genre', 'Owed too')] } })
+    await a.q.edit(edit(rows[0], 'genre', 'New'))
+    assert.equal(await a.q.resume(), 1, 'only the one no newer edit replaced comes back')
+    await a.q.idle()
+    assert.deepEqual(a.written.map((j) => `${j.trackId}:${j.value}`), ['2:Owed too', '1:New'])
+    assert.equal(a.q.stats().superseded, 1)
+    // The saved line read first, this run's edit while the owed one still waits.
+    const gate: Array<() => void> = []
+    const b = rig(rows, {
+      load: async () => [owedJob(rows[1], 'year', '1999'), owedJob(rows[0], 'genre', 'Owed')],
+      write: (job) => new Promise<TagWriteOutcome>((r) => { gate.push(() => { b.written.push({ ...job }); r({ ok: true }) }) }),
+    })
+    assert.equal(await b.q.resume(), 2)
+    while (gate.length === 0) await tick()
+    await b.q.edit(edit(rows[0], 'genre', 'New'))
+    for (let i = 0; i < 2; i++) { while (gate.length === 0) await tick(); gate.shift()!() }
+    await b.q.idle()
+    assert.deepEqual(b.written.map((j) => `${j.trackId}:${j.value}`), ['2:1999', '1:New'])
+  })
+
+  test('two edits of one field owed from the last run: only the later is written', async () => {
+    const rows = [song(1)]
+    const { q, written } = rig(rows, { load: async () => [owedJob(rows[0], 'genre', 'First'), owedJob(rows[0], 'genre', 'Second')] })
+    assert.equal(await q.resume(), 1)
+    await q.idle()
+    assert.deepEqual(written.map((j) => j.value), ['Second'])
   })
 })
 

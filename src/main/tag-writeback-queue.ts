@@ -36,6 +36,11 @@
  *     waits and looks again later.
  *   • A tag writer that hangs is killed by its own clock (tag-writer.ts);
  *     that edit goes to the back to be tried later, and the line moves on.
+ *   • The saved line is read before anything is saved over it. (An edit in
+ *     the first seconds of a run used to replace it: 25 owed, 0 left.)
+ *   • Only the newest edit of a song's field is written. An older one still
+ *     waiting, waiting for a retry, or owed from the last run is dropped when
+ *     a newer one arrives, so a retry can't put an old value over a new one.
  *
  * metadata-overrides.json stays the truth for what the tags should be; this
  * file is only "which of them still owe the audio file a write".
@@ -183,6 +188,8 @@ export interface TagWritebackStats {
   refused: number
   /** Times the line stopped to wait for memory. */
   heapWaits: number
+  /** Dropped because a newer edit of the same song's field arrived. */
+  superseded: number
 }
 
 /** A job read back from disk, or null when it isn't one. */
@@ -205,7 +212,7 @@ export function createTagWritebackQueue(deps: TagWritebackDeps): {
    * Resolves to the job taken, or to why none was. Never rejects.
    */
   edit: (edit: TagEdit) => Promise<ResolvedTagEdit | { skip: 'full' }>
-  /** Put back what was waiting when the app last stopped. Call once, at launch. */
+  /** Put back what was waiting when the app last stopped. Read once, however it is first reached: here, or by the first edit. */
   resume: () => Promise<number>
   /**
    * The app is quitting: write what finishes within `budgetMs`, start nothing
@@ -227,7 +234,7 @@ export function createTagWritebackQueue(deps: TagWritebackDeps): {
   const waiting: TagWritebackJob[] = []
   const later: TagWritebackJob[] = []
   let inFlight: TagWritebackJob | null = null
-  const s = { written: 0, failed: 0, gone: 0, refused: 0, heapWaits: 0 }
+  const s = { written: 0, failed: 0, gone: 0, refused: 0, heapWaits: 0, superseded: 0 }
   let draining: Promise<void> | null = null
   let toldFull = false
   let heapTimer: ReturnType<typeof setTimeout> | null = null
@@ -236,6 +243,62 @@ export function createTagWritebackQueue(deps: TagWritebackDeps): {
 
   const owed = (): TagWritebackJob[] => [...(inFlight ? [inFlight] : []), ...waiting, ...later]
 
+  // ── only the newest edit of a field is ever written ──
+  // Each job has a place in the order edits were made; `newest` is the latest
+  // place seen for a song's field (the pair an edit carries counts: "track 3"
+  // also writes "of 11"). An older edit of a field a newer one covers is
+  // dropped wherever it is waiting, and is not tried again after a time-out:
+  // a retry ten minutes later would put the old value over the new one.
+  const order = new WeakMap<TagWritebackJob, number>()
+  const newest = new Map<string, number>()
+  let nextOrder = 0
+  let nextOwedOrder = -1e12                                // what was owed from the last run is older than anything made in this one
+  const key = (trackId: number, field: string): string => `${trackId}|${field}`
+  const stamp = (job: TagWritebackJob, at: number): void => {
+    order.set(job, at)
+    for (const f of new Set([job.field, ...Object.keys(job.overrides)])) {
+      const k = key(job.trackId, f)
+      if ((newest.get(k) ?? -Infinity) < at) newest.set(k, at)
+    }
+  }
+  const superseded = (job: TagWritebackJob): boolean => (newest.get(key(job.trackId, job.field)) ?? -Infinity) > (order.get(job) ?? -Infinity)
+  const dropSuperseded = (): void => {
+    for (const line of [waiting, later]) {
+      for (let i = line.length - 1; i >= 0; i--) if (superseded(line[i])) { line.splice(i, 1); s.superseded++ }
+    }
+  }
+
+  // ── what the last run still owed: read once, BEFORE anything is saved ──
+  // The first save of a run used to go out before the saved line had been
+  // read, and replaced it: one edit in the first seconds after launch wiped
+  // every edit the last run still owed.
+  let loading: Promise<number> | null = null
+  let loaded = false
+  const loadOnce = (): Promise<number> => {
+    if (!loading) {
+      loading = (async () => {
+        let n = 0
+        if (deps.load) {
+          let raw: unknown
+          try { raw = await deps.load() } catch { raw = [] }
+          const jobs = (Array.isArray(raw) ? raw : []).map(jobFromDisk).filter((j): j is TagWritebackJob => j !== null)
+          for (const j of jobs) stamp(j, nextOwedOrder++)
+          // Ahead of anything that arrived since launch (they are older), minus
+          // what a newer edit, from that run or this one, has replaced.
+          const keep = jobs.filter((j) => !superseded(j))
+          s.superseded += jobs.length - keep.length
+          const room = Math.max(0, maxWaiting - waiting.length - later.length)
+          waiting.unshift(...keep.slice(0, room))
+          n = Math.min(keep.length, room)
+          if (n) warn(`[tag-writeback] ${n} tag edit(s) from the last run are still owed to their files; writing them now`)
+        }
+        loaded = true
+        return n
+      })()
+    }
+    return loading
+  }
+
   // ── the line on disk: one save at a time, the newest list wins ──
   let saving: Promise<void> | null = null
   let saveAgain = false
@@ -243,11 +306,15 @@ export function createTagWritebackQueue(deps: TagWritebackDeps): {
     if (!deps.save) return
     if (saving) { saveAgain = true; return }
     saving = (async () => {
+      await loadOnce()                                     // never rejects; nothing is saved over a line not yet read
       do {
         saveAgain = false
         try { await deps.save!(owed()) } catch (err) { warn(`[tag-writeback] could not save the waiting line: ${err instanceof Error ? err.message : String(err)}`) }
       } while (saveAgain)
-    })().finally(() => { saving = null })
+      // Cleared here, in the same turn the loop ends: cleared a turn later, a
+      // change made in between was told "a save is running" and never saved.
+      saving = null
+    })()
   }
 
   const heapIsFull = (): boolean => {
@@ -259,6 +326,7 @@ export function createTagWritebackQueue(deps: TagWritebackDeps): {
     // A turn first: the edits of one action arrive together, and they are then
     // all on the line (and in one save) before the first is looked at.
     await Promise.resolve()
+    await loadOnce()                                       // what the last run owed goes first
     while (waiting.length) {
       if (stopAt !== null && now() >= stopAt) return        // quitting: what is left stays on disk
       if (heapIsFull()) {
@@ -289,6 +357,8 @@ export function createTagWritebackQueue(deps: TagWritebackDeps): {
             if (job.tries >= maxTries) {
               s.failed++
               warn(`[tag-writeback] ${job.trackId} ${job.field} failed: the tag writer timed out ${job.tries} times; given up ("Apply Overrides to Files…" writes it)`)
+            } else if (superseded(job)) {
+              s.superseded++                              // a newer edit of this field arrived meanwhile: this one is never retried
             } else {
               later.push(job)
               warn(`[tag-writeback] ${job.trackId} ${job.field}: the tag writer timed out and was stopped; the file is untouched, tried again later`)
@@ -329,6 +399,8 @@ export function createTagWritebackQueue(deps: TagWritebackDeps): {
       }
       return false
     }
+    stamp(job, nextOrder++)
+    dropSuperseded()                                       // an older edit of this field, waiting or to be retried, is not written after it
     waiting.push(job)
     persist()
     kick()
@@ -350,18 +422,8 @@ export function createTagWritebackQueue(deps: TagWritebackDeps): {
       }
     },
     async resume() {
-      if (!deps.load) return 0
-      let raw: unknown
-      try { raw = await deps.load() } catch { return 0 }
-      const jobs = (Array.isArray(raw) ? raw : []).map(jobFromDisk).filter((j): j is TagWritebackJob => j !== null)
-      let n = 0
-      // Ahead of anything that arrived since launch: they are older.
-      for (const j of jobs.reverse()) { if (waiting.length + later.length < maxWaiting) { waiting.unshift(j); n++ } }
-      if (n) {
-        warn(`[tag-writeback] ${n} tag edit(s) from the last run are still owed to their files; writing them now`)
-        persist()
-        kick()
-      }
+      const n = await loadOnce()
+      if (n) { persist(); kick() }
       return n
     },
     async stop(budgetMs) {
@@ -377,6 +439,11 @@ export function createTagWritebackQueue(deps: TagWritebackDeps): {
       ])
       if (timer) clearTimeout(timer)
       const left = owed()
+      // A quit before the saved line was read must not replace it with this run's.
+      if (!loaded) {
+        if (left.length) warn(`[tag-writeback] quit before the waiting line was read: the saved one is left as it is (${left.length} of this run's not added to it)`)
+        return { written: s.written - before, left: left.length }
+      }
       try { deps.saveNow?.(left) } catch (err) { warn(`[tag-writeback] could not save the waiting line at quit: ${err instanceof Error ? err.message : String(err)}`) }
       const written = s.written - before
       if (written || left.length) warn(`[tag-writeback] quit: ${written} tag edit(s) written into files, ${left.length} left for the next launch`)
