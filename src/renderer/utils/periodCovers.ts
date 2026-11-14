@@ -12,10 +12,27 @@ const askedAt = new Map<string, number>()
 /** Main asks homemini at most every half hour; asking main more often than this buys nothing. */
 const ASK_AGAIN_MS = 10 * 60_000
 
+const listeners = new Set<() => void>()
+
+/** Jake just approved, skipped or restored a cover: ask main again now, and repaint whoever shows it. */
+export function refreshPeriodPlaylistCover(playlistId: string): void {
+  const remoteId = periodCoverRemoteId(playlistId, BEST_OF_YEAR)
+  if (!remoteId) return
+  askedAt.set(remoteId, Date.now())
+  void window.electronAPI.periodCoverGet?.(remoteId)
+    .then((r) => { if (r?.url) { fetched.set(remoteId, r.url); for (const l of listeners) l() } })
+    .catch(() => {})
+}
+
 /** homemini's cover for a month or year playlist; null for any other playlist, or before the first answer. */
 export function usePeriodPlaylistCover(playlistId: string | null | undefined): string | null {
   const remoteId = periodCoverRemoteId(playlistId, BEST_OF_YEAR)
   const [, bump] = useState(0)
+  useEffect(() => {
+    const l = () => bump((n) => n + 1)
+    listeners.add(l)
+    return () => { listeners.delete(l) }
+  }, [])
   useEffect(() => {
     if (!remoteId) return
     const last = askedAt.get(remoteId)

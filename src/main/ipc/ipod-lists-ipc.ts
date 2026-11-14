@@ -51,7 +51,8 @@ import { gatherIpodLists, ipodListsCachePath, readListsCache } from '../ipod-lis
 import { createWantedShelfSource } from '../ipod-wanted-shelf-source.ts'
 import { chooseIpodColor, flushPendingColors, readChosenColors } from '../ipod-colors.ts'
 import { ipodCoverDataUrl } from '../ipod-cover-cache.ts'
-import { periodCoverDataUrl } from '../period-cover-cache.ts'
+import { forgetPeriodCover, periodCoverDataUrl } from '../period-cover-cache.ts'
+import { createEventCoverClient } from '../event-cover-client.ts'
 import { createPhotoCoverClient, createPhotoCovers } from '../ipod-photo-covers.ts'
 import { withCompanionInit } from '../hub-companion.ts'
 import { MAX_PHOTO_BYTES } from '../../common/ipod-photo-covers.ts'
@@ -222,6 +223,26 @@ export function registerIpodListsIpc(ipc: IpcRegistrar, host: IpodListsHost): Ip
     const url = await periodCoverDataUrl({ stateDir: host.stateDir, fetchCover: source.cover }, remoteId).catch(() => null)
     return { ok: true, url }
   }, { public: true })
+  // Event covers (2026-11-13, common/event-covers.ts): one month's proposal and its drawn preview.
+  const eventCoverClient = createEventCoverClient({ baseUrl: host.baseUrl, fetchImpl: host.fetchImpl, warn: host.warn })
+  ipc.handle('event-cover:get', async (_e, ym: unknown) => {
+    const list = await eventCoverClient.list()
+    if (!list) return { ok: false, away: true }
+    const proposal = list.find((p) => p.ym === ym) ?? null
+    const bytes = proposal?.hasPreview ? await eventCoverClient.preview(ym) : null
+    return { ok: true, proposal, preview: bytes ? `data:image/jpeg;base64,${bytes.toString('base64')}` : null }
+  }, { public: true })
+  // A write: the main window only. A yes or a no changes what every device shows.
+  ipc.handle('event-cover:decide', async (_e, input: unknown) => {
+    const i = input as { ym?: unknown; decision?: unknown } | null
+    const out = await eventCoverClient.decide(i?.ym, i?.decision)
+    if (out.ok && typeof i?.ym === 'string') forgetPeriodCover(`jaketunes-month-${i.ym}`)      // the sidebar asks homemini again
+    return out
+  }, { refuse: { ok: false, away: false, error: 'refused-sender' } })
+  ipc.handle('event-cover:wish', async (_e, input: unknown) => {
+    const i = input as { ym?: unknown; text?: unknown } | null
+    return eventCoverClient.wish(i?.ym, i?.text)
+  }, { refuse: { ok: false, away: false, error: 'refused-sender' } })
   ipc.handle('ipod-lists:proposals', async (_e, deviceId: unknown) => {
     if (typeof deviceId !== 'string') return { ok: false, error: 'no iPod' }
     return source.desk.view(deviceId)

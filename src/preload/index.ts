@@ -1232,6 +1232,10 @@ const electronAPI = {
   ipodCoverGet: (key: string): Promise<unknown> => ipcRenderer.invoke('ipod-cover:get', key),
   // 2026-11-13: a month's or the year's cover, drawn by homemini.
   periodCoverGet: (remoteId: string): Promise<unknown> => ipcRenderer.invoke('period-cover:get', remoteId),
+  // 2026-11-13: event covers. A month wears one only after Jake approves it.
+  eventCoverGet: (ym: string): Promise<unknown> => ipcRenderer.invoke('event-cover:get', ym),
+  eventCoverDecide: (input: { ym: string; decision: string }): Promise<unknown> => ipcRenderer.invoke('event-cover:decide', input),
+  eventCoverWish: (input: { ym: string; text: string }): Promise<unknown> => ipcRenderer.invoke('event-cover:wish', input),
   // Rename… (2026-11-09): an iPod list's name (never the iPod's), and the Top 1000's display name.
   ipodListRename: (input: { deviceId: string; name: string }): Promise<unknown> => ipcRenderer.invoke('ipod-lists:rename', input),
   top1000NameGet: (): Promise<unknown> => ipcRenderer.invoke('top1000-name:get'),

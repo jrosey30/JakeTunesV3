@@ -21,6 +21,7 @@ import { chooseIpodPhoto, backToIpodDrawing, useHasIpodPhoto } from '../ipodPhot
 import { photoKeyForPlaylist } from '../../common/ipod-photo-covers'
 import { parseIpodListPlaylistId } from '../../common/ipod-list-doc'
 import IpodProposalsPanel from '../components/IpodProposalsPanel'
+import EventCoverPanel from '../components/EventCoverPanel'
 import { useHomeShelves } from '../homeShelves'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { useReleaseMonths } from '../releaseMonths'
@@ -1239,6 +1240,8 @@ export default function SmartPlaylistView() {
       </div>
       {/* The brain's picks waiting for Jake's OK (2026-11-09) */}
       {ipodListDevice && <IpodProposalsPanel deviceId={ipodListDevice} ipodName={ipodList?.name ?? title} />}
+      {/* An event cover proposed for this month, and "This month's cover is…" (2026-11-13) */}
+      <EventCoverPanel playlistId={playlistId} />
       {isPicksView && picks?.commentary && (
         <div className={`playlist-view-commentary playlist-view-commentary--${picksConfig?.kind === 'larry' ? 'larry' : picksConfig?.kind === 'djhands' ? 'djhands' : 'musicman'}`}>
           {picks.commentary}{' '}

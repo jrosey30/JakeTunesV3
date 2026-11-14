@@ -51,5 +51,10 @@ export function periodCoverDataUrl(deps: PeriodCoverCacheDeps, remoteId: unknown
   return job
 }
 
+/** The cover changed by Jake's own decision: ask homemini the next time, not in half an hour. */
+export function forgetPeriodCover(remoteId: string): void {
+  for (const k of [...askedAt.keys()]) if (k.endsWith(`/${remoteId}.jpg`)) askedAt.delete(k)
+}
+
 /** Tests only. */
 export function _resetPeriodCoverCache(): void { inFlight.clear(); askedAt.clear() }
