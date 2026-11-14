@@ -15,11 +15,13 @@ import { useIpodLists, entryColor, renameIpodList, useIpodListsRole } from '../i
 import { useTop1000Name, renameTop1000 } from '../top1000Name'
 import ListRenameField from '../components/ListRenameField'
 import { useIpodPlaylistCover } from '../utils/ipodCovers'
+import { usePeriodPlaylistCover } from '../utils/periodCovers'
 import { IpodColorPicker } from '../components/IpodColorPicker'
 import { chooseIpodPhoto, backToIpodDrawing, useHasIpodPhoto } from '../ipodPhotoCovers'
 import { photoKeyForPlaylist } from '../../common/ipod-photo-covers'
 import { parseIpodListPlaylistId } from '../../common/ipod-list-doc'
 import IpodProposalsPanel from '../components/IpodProposalsPanel'
+import EventCoverPanel from '../components/EventCoverPanel'
 import { useHomeShelves } from '../homeShelves'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import { useReleaseMonths } from '../releaseMonths'
@@ -1054,7 +1056,9 @@ export default function SmartPlaylistView() {
   const displayName = isPicksView && picks?.name ? picks.name : title
   // Top 1000 and every iPod list wear their own iPod (2026-11-09, utils/ipodCovers.ts).
   const ipodCover = useIpodPlaylistCover(playlistId)
-  const cover = ipodCover ?? (playlistId ? smartPlaylistCover(playlistId as SmartPlaylistId) : null)
+  // A month and the year wear the cover homemini drew (2026-11-13, utils/periodCovers.ts).
+  const periodCover = usePeriodPlaylistCover(playlistId)
+  const cover = ipodCover ?? periodCover ?? (playlistId ? smartPlaylistCover(playlistId as SmartPlaylistId) : null)
   const loadingLabel =
     picksConfig?.kind === 'larry'   ? 'Larry is picking tracks…' :
     picksConfig?.kind === 'djhands' ? 'DJ Stephen Hands is picking tracks…' :
@@ -1236,6 +1240,8 @@ export default function SmartPlaylistView() {
       </div>
       {/* The brain's picks waiting for Jake's OK (2026-11-09) */}
       {ipodListDevice && <IpodProposalsPanel deviceId={ipodListDevice} ipodName={ipodList?.name ?? title} />}
+      {/* An event cover proposed for this month, and "This month's cover is…" (2026-11-13) */}
+      <EventCoverPanel playlistId={playlistId} name={displayName} />
       {isPicksView && picks?.commentary && (
         <div className={`playlist-view-commentary playlist-view-commentary--${picksConfig?.kind === 'larry' ? 'larry' : picksConfig?.kind === 'djhands' ? 'djhands' : 'musicman'}`}>
           {picks.commentary}{' '}
