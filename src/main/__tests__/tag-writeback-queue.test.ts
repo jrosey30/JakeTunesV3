@@ -585,6 +585,16 @@ describe('index.ts goes through the queue', () => {
     assert.match(batch, /if \(!overrideNamesTrack\(entry, track\)\) \{\s*skippedFpMismatch\+\+\s*continue/)
     assert.doesNotMatch(batch, /entry\.fp !== trackFp/)
   })
+
+  test('"Apply Overrides to Files…" sends a song the player is using to the per-edit line, which waits for it', () => {
+    const batch = src.slice(src.indexOf("ipc.handle('apply-overrides-batch'"), src.indexOf('const result = await writeTagsBatch('))
+    const asks = batch.indexOf('if (playerUsing(colonPath, Number(track.duration) || 0)) {')
+    assert.ok(asks > 0, 'the batch never asks whether the song is playing')
+    assert.ok(asks > batch.indexOf('if (!overrideNamesTrack(entry, track))'), 'asked after the identity guard, so only the right song is queued')
+    const branch = batch.slice(asks, batch.indexOf('requests.push(', asks))
+    assert.match(branch, /for \(const \[field, value\] of Object\.entries\(writable\)\) await tagWriteback\.edit\(\{ trackId, field, value: String\(value\) \}\)\s*continue/, 'queued and NOT also written now')
+    assert.match(src, /waitingForPlayback,\n\s*fileSizesRefreshed:/, 'the result says how many wait')
+  })
 })
 
 describe('a song that is playing is not rewritten under the player (2026-11-14)', () => {
@@ -704,7 +714,8 @@ describe('a song that is playing is not rewritten under the player (2026-11-14)'
   test('index.ts asks the player before it writes', () => {
     const wiring = readFileSync(new URL('../index.ts', import.meta.url), 'utf8')
     const q = wiring.slice(wiring.indexOf('const tagWriteback = createTagWritebackQueue({'), wiring.indexOf('app.whenReady().then(() => { setTimeout(() => { void tagWriteback.resume() }'))
-    assert.match(q, /inUse: \(job\) => songInUse\(\{ colonPath: job\.path, durationMs: job\.duration, now: Date\.now\(\), lastTouchAt: playerTouches\.lastAt\(job\.path\), heldOpen: audioLoadHold\.holdsSource\(job\.path\) \}\)/)
+    assert.match(q, /inUse: \(job\) => playerUsing\(job\.path, job\.duration\),/)
+    assert.match(wiring, /const playerUsing = \(colonPath: string, durationMs: number\): boolean => songInUse\(\{ colonPath, durationMs, now: Date\.now\(\), lastTouchAt: playerTouches\.lastAt\(colonPath\), heldOpen: audioLoadHold\.holdsSource\(colonPath\) \}\)/)
     assert.match(wiring, /playerTouches\.noteAbs\(rawPath, Date\.now\(\)\)/, 'every player request is still noted')
   })
 })
