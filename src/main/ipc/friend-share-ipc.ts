@@ -5,6 +5,8 @@
  *   'friend-share:info'  (trackId, kind)            → { ok, value: ShareInfo } | { ok: false, error }
  *        homemini builds the message + links (GET /api/share/link), so both
  *        Macs and the phone send the same thing.
+ *   'friend-share:friends' ()                       → { ok, value: FriendPerson[] } | { ok: false, error }
+ *        which app each of Jake's people listens on (GET /api/friend-services).
  *   'friend-share:share' ({ text } | { png, name })  → { ok }
  *        macOS's own Share menu (Messages, Mail, AirDrop, Notes…) at the cursor:
  *        the message as text, or the card as a PNG file.
@@ -51,6 +53,9 @@ export function registerFriendShareIpc(ipc: IpcRegistrar, host: FriendShareIpcHo
     if ((typeof trackId !== 'string' && typeof trackId !== 'number') || String(trackId).length > 64) return { ok: false, error: 'bad track' }
     return client.info(trackId, kind === 'album' ? 'album' : 'song')
   }, { refuse: REFUSED_SENDER })
+
+  // Share by service (2026-11-14): who listens where, for the SEND TO row.
+  ipc.handle('friend-share:friends', async () => client.friends(), { refuse: REFUSED_SENDER })
 
   ipc.handle('friend-share:share', async (_e, item: { text?: unknown; png?: unknown; name?: unknown }) => {
     const win = host.getMainWindow()

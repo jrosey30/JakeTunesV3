@@ -42,3 +42,30 @@
 }
 .fshare-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .fshare-note { font-size: 11px; color: #444; }
+
+/* SEND TO (2026-11-14, share by service): Jake's people two to a line, each
+   tagged with their app. The head bar is the accent (#FD5601 → #C14201); the
+   tags are each app's ink, darkened to read at 9px on white (≥ 4.5:1). */
+.fshare-sendto { background: #fff; border: 1px solid #b5b5b5; border-radius: 6px; overflow: hidden; }
+.fshare-sendto-head {
+  font-family: 'pixChicago', var(--font-family); font-size: 11px; letter-spacing: 2px; color: #fff;
+  background: linear-gradient(180deg, #FD5601 0%, #C14201 100%); padding: 4px 10px;
+}
+.fshare-sendto-grid { display: grid; grid-template-columns: 1fr 1fr; }
+.fshare-person {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  min-height: 30px; padding: 4px 10px; background: #fff; border: none; border-bottom: 1px solid #e3e3e3;
+  font: 12px var(--font-family); color: #1a1a1a; text-align: left; cursor: default;
+}
+.fshare-person:nth-child(odd) { border-right: 1px solid #e3e3e3; }
+.fshare-person:hover:not(:disabled) { background: linear-gradient(180deg, #FE6E25 0%, #E64D00 100%); color: #fff; }
+.fshare-person:hover:not(:disabled) .fshare-tag { color: #fff; border-color: #fff; }
+.fshare-person:disabled { color: #9a9a9a; }
+.fshare-person:disabled .fshare-tag { opacity: 0.35; }
+.fshare-person-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fshare-tag {
+  flex: none; font-family: 'pixChicago', var(--font-family); font-size: 9px; letter-spacing: 1px;
+  padding: 0 4px; border: 1px solid currentColor; border-radius: 3px; line-height: 13px;
+}
+.fshare-tag--apple { color: #CC1A33; }
+.fshare-tag--spotify { color: #1A8038; }
