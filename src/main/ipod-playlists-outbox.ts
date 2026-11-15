@@ -315,18 +315,21 @@ export function createIpodPlaylistsDesk(deps: IpodPlaylistsDeskDeps) {
         if (cleared) return 'sent'
         continue
       }
-      // done
-      await keep(e.device, e.id, e.op === 'delete' ? null : (a.playlist ?? {
-        id: e.id, device: e.device, name: e.name, source: 'jake', trackIds: e.trackIds, createdAt: e.createdAt,
-      }))
-      const cleared = await editPending(deps.stateDir, (doc) => {
+      // done. Decide under the file's lock what this answer means now, then keep homemini's copy.
+      const now = await editPending(deps.stateDir, (doc) => {
         const cur = doc.saves[key]
-        if (!cur) return true
-        if (cur.rev === e.rev) { delete doc.saves[key]; return true }
+        if (!cur || cur.rev === e.rev) { delete doc.saves[key]; return 'cleared' as const }
         // A newer edit came in while this one was on its way: homemini has the playlist now.
         if (e.op === 'save') cur.isNew = false
-        return false
+        // Deleted meanwhile: what homemini just made must not come back here; the delete goes next.
+        return cur.op === 'delete' ? 'deleted-meanwhile' as const : 'newer-save' as const
       })
+      if (now !== 'deleted-meanwhile') {
+        await keep(e.device, e.id, e.op === 'delete' ? null : (a.playlist ?? {
+          id: e.id, device: e.device, name: e.name, source: 'jake', trackIds: e.trackIds, createdAt: e.createdAt,
+        }))
+      }
+      const cleared = now === 'cleared'
       if (cleared) return 'sent'
     }
     return 'still-waiting'
@@ -459,7 +462,8 @@ export function createIpodPlaylistsDesk(deps: IpodPlaylistsDeskDeps) {
     await editPending(deps.stateDir, (doc) => {
       const key = pendingKey(device, id)
       const was = doc.saves[key]
-      if (was?.isNew) { delete doc.saves[key]; return }   // homemini never had it: nothing to tell
+      // Always sent, even for a playlist this Mac thinks homemini never had: its create may have
+      // landed with the reply lost, or be on its way right now. A second delete is fine (existed: false).
       doc.saves[key] = { device, id, rev: (was?.rev ?? 0) + 1, op: 'delete', name: current?.name ?? was?.name ?? '', trackIds: [], createdAt: was?.createdAt ?? '', isNew: false }
     })
     return { ok: true, id, view: await local(device) }

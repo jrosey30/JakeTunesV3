@@ -279,7 +279,7 @@ describe('Jake’s own playlists reach homemini, whatever the signal', () => {
     assert.deepEqual(v.playlists, [])
   })
 
-  test('a playlist deleted before homemini ever had it never bothers homemini', async () => {
+  test('a playlist deleted while homemini is away is deleted there too when it answers', async () => {
     const dir = tmp()
     const h = fakeHomemini({ punk: { ids: [1] } })
     h.away = true
@@ -287,8 +287,50 @@ describe('Jake’s own playlists reach homemini, whatever the signal', () => {
     await desk.save({ device: 'punk', name: 'Gym', trackIds: [1], defaults: [], ipodName: 'punkPod' })
     await desk.remove({ device: 'punk', id: 'mac-gone' })
     h.away = false
-    await fresh(desk, 'punk')
-    assert.deepEqual(h.calls, [])
+    const v = await fresh(desk, 'punk')
+    assert.equal(h.store.size, 0)
+    assert.deepEqual(v.playlists, [])
+    assert.deepEqual(h.calls, ['DELETE punk/mac-gone'], 'a delete of something homemini never had is answered existed:false, and is fine')
+  })
+
+  test('create, the reply lost, then delete: homemini ends with no playlist (review of PR 423)', async () => {
+    const dir = tmp()
+    const h = fakeHomemini({ punk: { ids: [1] } })
+    const desk = deskFor(dir, h, ['p'])
+    await desk.save({ device: 'punk', name: 'Gym', trackIds: [1], defaults: [], ipodName: 'punkPod' })
+    h.loseNextReply = true
+    await desk.flushDevice('punk')            // homemini made it; this Mac never heard
+    assert.equal(h.store.size, 1)
+    await desk.remove({ device: 'punk', id: 'mac-p' })
+    const v = await fresh(desk, 'punk')
+    assert.equal(h.store.size, 0, 'the create that landed is deleted')
+    assert.deepEqual(v.playlists, [])
+    assert.deepEqual(JSON.parse(readFileSync(join(dir, PENDING_FILE), 'utf-8')).saves, {})
+  })
+
+  test('deleted while its create is on its way: it never comes back, here or on homemini (review of PR 423)', async () => {
+    const dir = tmp()
+    const h = fakeHomemini({ punk: { ids: [1] } })
+    const desk = deskFor(dir, h, ['p'])
+    await desk.save({ device: 'punk', name: 'Gym', trackIds: [1], defaults: [], ipodName: 'punkPod' })
+    let release: () => void = () => {}
+    const gate = new Promise<void>((r) => { release = r })
+    h.latency = () => gate
+    const sending = desk.flushDevice('punk')
+    await new Promise((r) => setTimeout(r, 10))
+    const r = await desk.remove({ device: 'punk', id: 'mac-p' })
+    assert.ok(r.ok)
+    assert.deepEqual(r.view.playlists, [], 'gone from the screen at once')
+    release()
+    h.latency = async () => {}
+    await sending
+    const local = await desk.view('punk')
+    assert.ok(local.ok)
+    assert.deepEqual(local.playlists, [], 'the create’s answer did not put it back')
+    const v = await fresh(desk, 'punk')
+    assert.deepEqual(v.playlists, [])
+    assert.equal(h.store.size, 0)
+    assert.deepEqual(h.calls, ['PUT punk/mac-p', 'DELETE punk/mac-p'])
   })
 
   test('a name the defaults or another playlist has is refused before anything is written', async () => {
