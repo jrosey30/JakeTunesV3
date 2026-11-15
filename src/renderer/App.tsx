@@ -83,6 +83,7 @@ import { ackVersionAfterSave, hubAdoptAfterMerge, trackIdKey } from '../common/h
 import { phoneOverlayFields } from '../common/genre-vocab'
 import { measuredFileUpdates } from '../common/library-file-sizes'
 import { noteMeasuredVersions } from './audio/audioUrlVersion'
+import { applyOverridesSummary, type ApplyOverridesCounts } from '../common/apply-overrides-summary'
 import { bumpArtRevisions } from './artRevision'
 
 // Session cap — startup must not walk every missing album via fetchAlbumArt.
@@ -169,7 +170,7 @@ function AppInner() {
   //   - applyOverridesResult != null → result summary modal
   const [applyOverridesConfirmOpen, setApplyOverridesConfirmOpen] = useState(false)
   const [applyOverridesProgress, setApplyOverridesProgress] = useState<{ done: number; total: number; succeeded: number; failed: number } | null>(null)
-  const [applyOverridesResult, setApplyOverridesResult] = useState<{ total: number; succeeded: number; failed: number; skippedNoTrack: number; skippedFpMismatch: number; skippedNoWritable: number; failures: Array<{ filePath: string; error?: string }> } | null>(null)
+  const [applyOverridesResult, setApplyOverridesResult] = useState<ApplyOverridesCounts | null>(null)
   // Brief 016 commit 2: refresh-file-sizes UI state — same three-phase
   // confirm/progress/result pattern as Brief 020's apply-overrides flow.
   const [refreshSizesConfirmOpen, setRefreshSizesConfirmOpen] = useState(false)
@@ -2187,6 +2188,7 @@ function AppInner() {
                       total: r.total ?? 0,
                       succeeded: r.succeeded ?? 0,
                       failed: r.failed ?? 0,
+                      waitingForPlayback: r.waitingForPlayback ?? 0,
                       skippedNoTrack: r.skippedNoTrack ?? 0,
                       skippedFpMismatch: r.skippedFpMismatch ?? 0,
                       skippedNoWritable: r.skippedNoWritable ?? 0,
@@ -2194,7 +2196,7 @@ function AppInner() {
                     })
                   } else {
                     setApplyOverridesResult({
-                      total: 0, succeeded: 0, failed: 0,
+                      total: 0, succeeded: 0, failed: 0, waitingForPlayback: 0,
                       skippedNoTrack: 0, skippedFpMismatch: 0, skippedNoWritable: 0,
                       failures: [{ filePath: '(batch error)', error: r.error }],
                     })
@@ -2203,7 +2205,7 @@ function AppInner() {
                   unsub()
                   setApplyOverridesProgress(null)
                   setApplyOverridesResult({
-                    total: 0, succeeded: 0, failed: 0,
+                    total: 0, succeeded: 0, failed: 0, waitingForPlayback: 0,
                     skippedNoTrack: 0, skippedFpMismatch: 0, skippedNoWritable: 0,
                     failures: [{ filePath: '(client error)', error: err instanceof Error ? err.message : String(err) }],
                   })
@@ -2240,19 +2242,8 @@ function AppInner() {
         )}
         {applyOverridesResult && (
           <ConfirmDialog
-            message={
-              applyOverridesResult.failed > 0
-                ? `Wrote tags to ${applyOverridesResult.succeeded.toLocaleString()} files; ${applyOverridesResult.failed.toLocaleString()} failed.`
-                : `Wrote tags to ${applyOverridesResult.succeeded.toLocaleString()} files.`
-            }
-            detail={
-              `Skipped: ${applyOverridesResult.skippedNoTrack.toLocaleString()} missing-track, ` +
-              `${applyOverridesResult.skippedFpMismatch.toLocaleString()} fingerprint-mismatch, ` +
-              `${applyOverridesResult.skippedNoWritable.toLocaleString()} analysis-only.` +
-              (applyOverridesResult.failures.length > 0
-                ? `\n\nFirst failures:\n${applyOverridesResult.failures.slice(0, 5).map(f => `• ${f.filePath.split('/').pop()}: ${f.error || 'unknown'}`).join('\n')}`
-                : '')
-            }
+            message={applyOverridesSummary(applyOverridesResult).message}
+            detail={applyOverridesSummary(applyOverridesResult).detail}
             confirmLabel="Done"
             hideCancel
             destructive={false}
