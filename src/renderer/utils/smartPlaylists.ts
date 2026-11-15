@@ -37,10 +37,10 @@
  */
 
 import type { Track, Playlist, SmartPlaylistId } from '../types'
-import { isTop25Rankable } from '../../common/top25-rankable'
-import { buildTasteProfile, tasteScore } from './tasteScore'
-import { pickBestOfYear } from '../../common/best-of-year'
-import { SOURCE_PLAYLISTS, sourcePlaylistTracks } from '../../common/source-playlists'
+import { isTop25Rankable } from '../../common/top25-rankable.ts'
+import { buildTasteProfile, tasteScore } from './tasteScore.ts'
+import { pickBestOfYear } from '../../common/best-of-year.ts'
+import { SOURCE_PLAYLISTS, sourcePlaylistTracks } from '../../common/source-playlists.ts'
 
 /** The four built-in, sync-eligible smart playlists and their iPod /
  *  sidebar display names. Keep these names in lockstep with

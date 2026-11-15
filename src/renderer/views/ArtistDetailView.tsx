@@ -31,6 +31,7 @@ import ContextMenu, { MenuEntry } from '../components/ContextMenu'
 import type { Track } from '../types'
 import '../styles/artist-detail.css'
 import { addToPlaylistEntry, queueMenuEntries } from '../utils/playlistMenu'
+import { addToIpodPlaylistEntries } from '../ipodPlaylistAdd'
 import { setAlbumDragPayload } from '../utils/trackDrag'
 import { normTitle } from '../utils/normTitle'
 import { classifyRelease, RELEASE_KIND_LABEL, type ReleaseKind } from '../../common/release-kind'
@@ -170,6 +171,7 @@ export default function ArtistDetailView() {
       { separator: true as const },
       ...queueMenuEntries(ordered, pbDispatch),
       addToPlaylistEntry(ordered, lib.playlists, (pid, ids) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
+      ...addToIpodPlaylistEntries(ordered, lib.tracks),
     ]
   }, [playQueue, pbDispatch, lib.playlists, dispatch])
   const artist = lib.activeArtist || ''

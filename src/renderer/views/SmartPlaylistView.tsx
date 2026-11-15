@@ -54,6 +54,7 @@ import { songsGridTemplate, songsGridTemplateFixed } from '../utils/songsGridTem
 import '../styles/musicman.css'
 import '../styles/songs.css'
 import { addToPlaylistEntry, queueMenuEntries } from '../utils/playlistMenu'
+import { addToIpodPlaylistEntries } from '../ipodPlaylistAdd'
 import { getInfoTarget } from '../../common/get-info-target'
 import { sortTracksByName } from '../utils/artistSort'
 
@@ -1000,6 +1001,7 @@ export default function SmartPlaylistView() {
       { separator: true as const },
       ...queueMenuEntries(selected, pbDispatch),
       addToPlaylistEntry(selected, libState.playlists, (pid, ids) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
+      ...addToIpodPlaylistEntries(selected, libState.tracks),
       { separator: true as const },
       { label: 'Go to Artist', onClick: () => dispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(track.albumArtist || track.artist || '') }) },
       { label: 'Go to Album', onClick: () => dispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyOf(track) }) },

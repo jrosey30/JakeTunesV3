@@ -1261,6 +1261,12 @@ const electronAPI = {
   eventCoverWish: (input: { ym: string; text: string }): Promise<unknown> => ipcRenderer.invoke('event-cover:wish', input),
   // Rename… (2026-11-09): an iPod list's name (never the iPod's), and the Top 1000's display name.
   ipodListRename: (input: { deviceId: string; name: string }): Promise<unknown> => ipcRenderer.invoke('ipod-lists:rename', input),
+  // The playlists on one iPod (2026-11-14; main/ipc/ipod-playlists-ipc.ts).
+  ipodPlaylistsGet: (device: string, opts?: { fresh?: boolean; ipodName?: string }): Promise<unknown> => ipcRenderer.invoke('ipod-playlists:get', device, opts),
+  ipodPlaylistsSave: (input: { device: string; id?: string; name?: string; trackIds?: number[]; defaults: string[]; ipodName: string; alsoOnIpod?: number[] }): Promise<unknown> => ipcRenderer.invoke('ipod-playlists:save', input),
+  ipodPlaylistsDelete: (input: { device: string; id: string }): Promise<unknown> => ipcRenderer.invoke('ipod-playlists:delete', input),
+  ipodPlaylistsAnswer: (input: { device: string; id: string; choice: 'add' | 'drop' | 'rename'; name?: string; ipodName?: string; defaults?: string[] }): Promise<unknown> => ipcRenderer.invoke('ipod-playlists:answer', input),
+  ipodPlaylistsBpm: (ids: number[]): Promise<unknown> => ipcRenderer.invoke('ipod-playlists:bpm', ids),
   top1000NameGet: (): Promise<unknown> => ipcRenderer.invoke('top1000-name:get'),
   top1000NameSet: (name: string | null): Promise<unknown> => ipcRenderer.invoke('top1000-name:set', name),
   // Headline… (2026-11-14): the line at the top of an iPod list's page (key = its id) or the Top 1000's ('top1000').

@@ -31,6 +31,7 @@ const BACK_LABELS: Record<ViewName, string> = {
   dj: '← DJ',
   'year-in-review': '← Year in Review',
   top1000: '← Top 1000 Quiz',
+  'ipod-playlist': '← iPod Playlist',
 }
 
 /** The names a history step only holds ids for, resolved by the caller

@@ -30,6 +30,8 @@ export interface NavLocation {
 export interface DetailSubjects {
   concertKey?: string | null
   mixtapeId?: string | null
+  /** The iPod playlist page's `${device}/${id}` (renderer/ipodPlaylists.ts). */
+  ipodPlaylistKey?: string | null
 }
 
 export interface NavHistory {
@@ -98,7 +100,8 @@ export function locationOf(s: NavigableState, subjects: DetailSubjects = {}): Na
     detailKey:
       s.currentView === 'concert-detail' ? (subjects.concertKey || null)
         : s.currentView === 'mixtape-detail' ? (subjects.mixtapeId || null)
-          : null,
+          : s.currentView === 'ipod-playlist' ? (subjects.ipodPlaylistKey || null)
+            : null,
   }
 }
 
@@ -108,10 +111,11 @@ export function locationOf(s: NavigableState, subjects: DetailSubjects = {}): Na
  * opens the one that entry was, not the one opened last. Null: the entry has
  * no such subject (or was recorded without one — the store is left as it is).
  */
-export function detailSubjectFor(t: NavLocation): { store: 'concert' | 'mixtape'; key: string } | null {
+export function detailSubjectFor(t: NavLocation): { store: 'concert' | 'mixtape' | 'ipod-playlist'; key: string } | null {
   if (!t.detailKey) return null
   if (t.view === 'concert-detail') return { store: 'concert', key: t.detailKey }
   if (t.view === 'mixtape-detail') return { store: 'mixtape', key: t.detailKey }
+  if (t.view === 'ipod-playlist') return { store: 'ipod-playlist', key: t.detailKey }
   return null
 }
 
@@ -142,6 +146,9 @@ export function restoreActionFor(t: NavLocation): RestoreAction {
       return t.artist ? { type: 'VIEW_ARTIST_DETAIL', artistName: t.artist } : { type: 'SET_VIEW', view: 'artists' }
     case 'album-detail':
       return t.albumKey ? { type: 'VIEW_ALBUM_DETAIL', albumKey: t.albumKey } : { type: 'SET_VIEW', view: 'albums' }
+    case 'ipod-playlist':
+      // Its subject lives in a module store that a restart doesn't keep: no subject, no page.
+      return t.detailKey ? { type: 'SET_VIEW', view: 'ipod-playlist' } : { type: 'SET_VIEW', view: 'songs' }
     default:
       return { type: 'SET_VIEW', view: t.view as ViewName }
   }

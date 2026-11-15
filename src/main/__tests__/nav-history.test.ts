@@ -226,7 +226,7 @@ describe('savedLocation — reopening the window lands on the page you were on',
 describe('wiring: one rule for re-entering a page, used by Back/Forward AND the startup restore', () => {
   it('NavigationContext reads its location and replays entries through nav-history', () => {
     const ctx = src('context', 'NavigationContext.tsx')
-    assert.match(ctx, /const loc: NavLocation = locationOf\(lib, \{ concertKey, mixtapeId \}\)/)
+    assert.match(ctx, /const loc: NavLocation = locationOf\(lib, \{ concertKey, mixtapeId, ipodPlaylistKey \}\)/)
     assert.match(ctx, /dispatch\(restoreActionFor\(t\)\)/)
   })
   it('App reopens the saved page with the same step, and no longer replays a lingering playlist id', () => {
@@ -338,13 +338,18 @@ describe('Back to a concert opens THAT concert', () => {
     assert.equal(detailSubjectFor(L('albums', { detailKey: A })), null)
     assert.deepEqual(detailSubjectFor(L('concert-detail', { detailKey: A })), { store: 'concert', key: A })
     assert.deepEqual(detailSubjectFor(L('mixtape-detail', { detailKey: 't' })), { store: 'mixtape', key: 't' })
+    // An iPod playlist (2026-11-14): `${device}/${id}`, kept in renderer/ipodPlaylists.ts.
+    assert.deepEqual(detailSubjectFor(L('ipod-playlist', { detailKey: 'punk/mac-1' })), { store: 'ipod-playlist', key: 'punk/mac-1' })
+    assert.deepEqual(restoreActionFor(L('ipod-playlist', { detailKey: 'punk/mac-1' })), { type: 'SET_VIEW', view: 'ipod-playlist' })
+    assert.deepEqual(restoreActionFor(L('ipod-playlist')), { type: 'SET_VIEW', view: 'songs' }, 'a restart keeps no subject: no blank page')
   })
 
   it('NavigationContext reads the stores and puts the subject back before it replays the entry', () => {
     const ctx = src('context', 'NavigationContext.tsx')
     assert.match(ctx, /useSyncExternalStore\(subscribeConcertKey, getConcertKey\)/)
     assert.match(ctx, /useSyncExternalStore\(subscribeMixtapes, getMixtapeId\)/)
-    assert.match(ctx, /if \(subject\?\.store === 'concert'\) setConcertKey\(subject\.key\)\s+else if \(subject\?\.store === 'mixtape'\) setMixtapeId\(subject\.key\)\s+dispatch\(restoreActionFor\(t\)\)/)
+    assert.match(ctx, /useSyncExternalStore\(subscribeOpenIpodPlaylist, getOpenIpodPlaylistKey\)/)
+    assert.match(ctx, /if \(subject\?\.store === 'concert'\) setConcertKey\(subject\.key\)\s+else if \(subject\?\.store === 'mixtape'\) setMixtapeId\(subject\.key\)\s+else if \(subject\?\.store === 'ipod-playlist'\) setOpenIpodPlaylistKey\(subject\.key\)\s+dispatch\(restoreActionFor\(t\)\)/)
     assert.match(ctx, /loc\.albumKey, loc\.detailKey\]/, 'a change of concert alone is a navigation')
   })
 })

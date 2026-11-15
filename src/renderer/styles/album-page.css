@@ -984,3 +984,33 @@
 @container apd-page (max-width: 1000px) {
   .apd-statusbar-hint { visibility: hidden; }
 }
+
+/* One iPod playlist's page (2026-11-14, views/IpodPlaylistView.tsx). */
+.ipod-playlist-page:focus { outline: none; }
+.ipod-playlist-rename {
+  font: inherit;
+  border: 1px solid var(--selection-top, #4a90d9);
+  border-radius: 4px;
+  padding: 0 6px;
+  background: #fff;
+  width: min(100%, 520px);
+}
+.ipod-playlist-waiting { font-style: italic; }
+.ipod-playlist-notice,
+.ipod-playlist-error { color: #b4470d; }
+/* homemini held this playlist: its question, in words, above the songs. */
+.ipod-playlist-question {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 32px 14px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: #fff4ec;
+  border: 1px solid #f3c9ad;
+  color: #3d2a1e;
+  font-size: 13px;
+}
+.ipod-playlist-question-text { flex: 1 1 320px; }
+.ipod-playlist-row--dropline { box-shadow: inset 0 2px 0 #FD5601; }
