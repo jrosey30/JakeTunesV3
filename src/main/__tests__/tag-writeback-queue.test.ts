@@ -20,6 +20,8 @@ import {
   type TagEdit, type TagWritebackDeps, type TagWritebackJob, type TagWriteOutcome,
 } from '../tag-writeback-queue.ts'
 import { augmentPairFields, writeTagsToFile } from '../tag-writer.ts'
+import { createPlayerTouches } from '../offload-keep-recent.ts'
+import { IN_USE_GRACE_MS, songInUse } from '../song-in-use.ts'
 
 type Row = Record<string, unknown>
 const tick = (): Promise<void> => new Promise((r) => setImmediate(r))
@@ -69,7 +71,7 @@ describe('the crash night, replayed', () => {
     await q.idle()
     assert.equal(most, 1, 'never two writes in flight: each used to hold its own copy of the library')
     assert.deepEqual(written.map((j) => `${j.trackId}:${j.field}`), sent.map((e) => `${e.trackId}:${e.field}`))
-    assert.deepEqual(q.stats(), { waiting: 0, later: 0, written: 186, failed: 0, gone: 0, refused: 0, heapWaits: 0, superseded: 0 })
+    assert.deepEqual(q.stats(), { waiting: 0, later: 0, written: 186, failed: 0, gone: 0, refused: 0, heapWaits: 0, superseded: 0, inUse: 0, heldForPlayback: 0 })
   })
 
   test('186 of 186 are written although the renderer saves the new artist while most still wait', async () => {
@@ -583,4 +585,141 @@ describe('index.ts goes through the queue', () => {
     assert.match(batch, /if \(!overrideNamesTrack\(entry, track\)\) \{\s*skippedFpMismatch\+\+\s*continue/)
     assert.doesNotMatch(batch, /entry\.fp !== trackFp/)
   })
+})
+
+describe('a song that is playing is not rewritten under the player (2026-11-14)', () => {
+  // "Stalks (Greenpoint Mix)", id 15343: onplay 19:09:25, Get Info edit of
+  // artist + albumArtist 19:10:19, the file renamed under the player, a
+  // DEMUXER_ERROR 50 s later and a skip.
+  const T0 = Date.parse('2026-11-14T19:09:25Z')
+  const stalks = (): Row => song(15343, { path: ':iPod_Control:Music:F43:imported_15343.m4a', title: 'Stalks (Greenpoint Mix)', duration: 312_000 })
+  /** The queue wired as index.ts wires it: playerTouches + songInUse, on a clock the test moves. */
+  function playing(rows: Row[], over: Partial<TagWritebackDeps> = {}) {
+    let now = T0
+    const touches = createPlayerTouches()
+    const heldOpen = new Set<string>()
+    const r = rig(rows, {
+      inUse: (job) => songInUse({ colonPath: job.path, durationMs: job.duration, now, lastTouchAt: touches.lastAt(job.path), heldOpen: heldOpen.has(job.path) }),
+      inUseRetryMs: 5,
+      ...over,
+    })
+    const play = (row: Row): void => touches.noteAbs('/Users/x/Music2/JakeTunesLibrary' + String(row.path).replace(/:/g, '/'), now)
+    return { ...r, play, heldOpen, at: (iso: string) => { now = Date.parse(iso) }, touches }
+  }
+
+  test("Jake's story: the edit while it plays changes nothing on disk until the song is done; then the file is written", async () => {
+    const row = stalks()
+    const p = playing([row])
+    p.play(row)                                           // 19:09:25 onplay
+    p.at('2026-11-14T19:10:19Z')                          // the Get Info edit
+    await p.q.edit(edit(row, 'artist', 'Mount Kimbie'))
+    await p.q.edit(edit(row, 'albumArtist', 'Mount Kimbie'))
+    await p.q.idle()
+    assert.equal(p.written.length, 0, 'nothing written into the playing file')
+    assert.equal(p.q.stats().inUse, 2)
+    assert.ok(p.warned.some((m) => /15343 artist: the song is playing/.test(m)))
+    assert.deepEqual(p.saved.at(-1)!.map((j) => j.field).sort(), ['albumArtist', 'artist'], 'the waiting writes are on disk: a quit loses nothing')
+    // 19:10:44: the player still reads it (a Range request ~50 s in): still waiting.
+    p.at('2026-11-14T19:11:09Z'); p.play(row)
+    await sleep(20); await p.q.idle()
+    assert.equal(p.written.length, 0)
+    // The song ends at 19:14:37; length + 2 min after the last read, it is written.
+    p.at('2026-11-14T19:16:10Z')
+    await sleep(20); await p.q.idle()
+    assert.equal(p.written.length, 0, '19:11:09 + 5:12 + 2:00 = 19:18:21: not yet')
+    p.at('2026-11-14T19:18:22Z')
+    await sleep(20); await p.q.idle()
+    assert.deepEqual(p.written.map((j) => `${j.trackId}:${j.field}=${j.value}`), ['15343:artist=Mount Kimbie', '15343:albumArtist=Mount Kimbie'])
+    assert.equal(p.q.stats().inUse, 0)
+    assert.equal(p.q.stats().failed, 0)
+  })
+
+  test('a load still holding the file (paused for an hour) keeps the write waiting', async () => {
+    const row = stalks()
+    const p = playing([row])
+    p.play(row)
+    p.heldOpen.add(String(row.path))
+    p.at('2026-11-14T20:30:00Z')
+    await p.q.edit(edit(row, 'genre', 'Electronic'))
+    await sleep(20); await p.q.idle()
+    assert.equal(p.written.length, 0)
+    p.heldOpen.clear()
+    await sleep(20); await p.q.idle()
+    assert.equal(p.written.length, 1)
+  })
+
+  test('an album-wide edit while listening to that album: the other songs are written now, the playing one and the one loaded next wait', async () => {
+    const album = Array.from({ length: 10 }, (_, i) => song(16000 + i, { duration: 200_000 }))
+    const p = playing(album)
+    p.play(album[2])                                       // playing
+    p.play(album[3])                                       // the gapless preload of the next
+    for (const r of album) await p.q.edit(edit(r, 'albumArtist', 'Twisted Teens'))
+    await p.q.idle()
+    assert.deepEqual(p.written.map((j) => j.trackId).sort(), album.filter((_, i) => i !== 2 && i !== 3).map((r) => r.id).sort())
+    assert.equal(p.q.stats().inUse, 2)
+    p.at(new Date(T0 + 200_000 + 120_000 + 1).toISOString())
+    await sleep(20); await p.q.idle()
+    assert.equal(p.written.length, 10)
+    assert.equal(new Set(p.written.map((j) => j.trackId)).size, 10, 'each written once')
+  })
+
+  test('a quit while a song plays leaves its write on disk for the next launch', async () => {
+    const row = stalks()
+    let atQuit: TagWritebackJob[] | null = null
+    const p = playing([row], { saveNow: (jobs) => { atQuit = jobs } })
+    p.play(row)
+    await p.q.edit(edit(row, 'artist', 'Mount Kimbie'))
+    await p.q.idle()
+    const r = await p.q.stop(50)
+    assert.deepEqual(r, { written: 0, left: 1 })
+    assert.equal(atQuit![0].field, 'artist')
+  })
+
+  test('a newer edit of the same field replaces the one waiting for the player', async () => {
+    const row = stalks()
+    const p = playing([row])
+    p.play(row)
+    await p.q.edit(edit(row, 'artist', 'Mount Kimbe'))
+    await p.q.idle()
+    await p.q.edit({ trackId: 15343, field: 'artist', value: 'Mount Kimbie' })
+    await p.q.idle()
+    p.at('2026-11-14T23:00:00Z')
+    await sleep(20); await p.q.idle()
+    assert.deepEqual(p.written.map((j) => j.value), ['Mount Kimbie'])
+    assert.equal(p.q.stats().superseded, 1)
+  })
+
+  test('an in-use check that throws counts as in use: a wrong "no" splices a song, a wrong "yes" only waits', async () => {
+    const row = stalks()
+    let broken = true
+    const { q, written } = rig([row], { inUse: () => { if (broken) throw new Error('boom'); return false }, inUseRetryMs: 5 })
+    await q.edit(edit(row, 'artist', 'X'))
+    await q.idle()
+    assert.equal(written.length, 0)
+    broken = false
+    await sleep(20); await q.idle()
+    assert.equal(written.length, 1)
+  })
+
+  test('index.ts asks the player before it writes', () => {
+    const wiring = readFileSync(new URL('../index.ts', import.meta.url), 'utf8')
+    const q = wiring.slice(wiring.indexOf('const tagWriteback = createTagWritebackQueue({'), wiring.indexOf('app.whenReady().then(() => { setTimeout(() => { void tagWriteback.resume() }'))
+    assert.match(q, /inUse: \(job\) => songInUse\(\{ colonPath: job\.path, durationMs: job\.duration, now: Date\.now\(\), lastTouchAt: playerTouches\.lastAt\(job\.path\), heldOpen: audioLoadHold\.holdsSource\(job\.path\) \}\)/)
+    assert.match(wiring, /playerTouches\.noteAbs\(rawPath, Date\.now\(\)\)/, 'every player request is still noted')
+  })
+})
+
+describe('songInUse', () => {
+  const base = { colonPath: ':iPod_Control:Music:F00:a.m4a', durationMs: 180_000, now: 1_000_000, lastTouchAt: null, heldOpen: false }
+  test('never touched, not held: free', () => assert.equal(songInUse(base), false))
+  test('held open: in use', () => assert.equal(songInUse({ ...base, heldOpen: true }), true))
+  test('touched within length + 2 min: in use; at it: free', () => {
+    assert.equal(songInUse({ ...base, lastTouchAt: base.now - (180_000 + IN_USE_GRACE_MS) + 1 }), true)
+    assert.equal(songInUse({ ...base, lastTouchAt: base.now - (180_000 + IN_USE_GRACE_MS) }), false)
+  })
+  test('an unknown length counts as 15 minutes', () => {
+    assert.equal(songInUse({ ...base, durationMs: 0, lastTouchAt: base.now - 14 * 60_000 }), true)
+    assert.equal(songInUse({ ...base, durationMs: 0, lastTouchAt: base.now - 18 * 60_000 }), false)
+  })
+  test('a touch in the future (the clock stepped back) is in use', () => assert.equal(songInUse({ ...base, lastTouchAt: base.now + 60_000 }), true))
 })

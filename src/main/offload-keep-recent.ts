@@ -129,6 +129,8 @@ export function colonFromAbs(absPath: string): string | null {
 export interface PlayerTouches {
   noteAbs(absPath: string, now: number): void
   has(colonPath: string, now: number): boolean
+  /** When the player last asked for this song, or null (song-in-use.ts). */
+  lastAt(colonPath: string): number | null
   /** Every path asked for inside the window with when it was last asked for, newest first. */
   recent(now: number): Array<{ path: string; at: number }>
   readonly size: number
@@ -150,6 +152,7 @@ export function createPlayerTouches(windowMs = PLAYER_TOUCH_MS, max = 5000): Pla
       if (now - t >= windowMs) { at.delete(colonPath); return false }
       return true
     },
+    lastAt(colonPath) { return at.get(colonPath) ?? null },
     recent(now) {
       return [...at].filter(([, t]) => now - t < windowMs).map(([path, t]) => ({ path, at: t })).reverse()
     },
