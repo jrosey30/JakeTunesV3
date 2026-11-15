@@ -256,7 +256,9 @@ export function createIpodPlaylistsDesk(deps: IpodPlaylistsDeskDeps) {
   const titleOf = deps.titleOf ?? ((id: number) => `song ${id}`)
 
   async function local(device: string, from: IpodPlaylistsView['from'] | null = null): Promise<IpodPlaylistsView> {
-    const [cache, pending] = await Promise.all([readCache(deps.stateDir), withLocalLock(fileLock(deps.stateDir), () => readPending(deps.stateDir))])
+    // Both files in one turn of the waiting file's lock: a send that lands keeps homemini's copy
+    // and clears its entry inside that lock, so a read here sees the playlist in one or the other.
+    const [cache, pending] = await withLocalLock(fileLock(deps.stateDir), async () => [await readCache(deps.stateDir), await readPending(deps.stateDir)] as const)
     const kept = cache[device]
     return {
       ok: true,
@@ -315,22 +317,30 @@ export function createIpodPlaylistsDesk(deps: IpodPlaylistsDeskDeps) {
         if (cleared) return 'sent'
         continue
       }
-      // done. Decide under the file's lock what this answer means now, then keep homemini's copy.
-      const now = await editPending(deps.stateDir, (doc) => {
+      // done. One turn of the waiting file's lock, held across both writes: decide what this
+      // answer means now, keep homemini's copy, then clear the entry. Clearing first left a
+      // moment with the playlist in neither file, and a save arriving then found no playlist
+      // (CI on PR 423: 100 of 200 overlap runs threw "isn't on this iPod any more").
+      const verdictNow = await withLocalLock(fileLock(deps.stateDir), async () => {
+        const doc = await readPending(deps.stateDir)
         const cur = doc.saves[key]
-        if (!cur || cur.rev === e.rev) { delete doc.saves[key]; return 'cleared' as const }
-        // A newer edit came in while this one was on its way: homemini has the playlist now.
-        if (e.op === 'save') cur.isNew = false
+        let verdict: 'cleared' | 'newer-save' | 'deleted-meanwhile'
+        if (!cur || cur.rev === e.rev) verdict = 'cleared'
         // Deleted meanwhile: what homemini just made must not come back here; the delete goes next.
-        return cur.op === 'delete' ? 'deleted-meanwhile' as const : 'newer-save' as const
+        else if (cur.op === 'delete') verdict = 'deleted-meanwhile'
+        else verdict = 'newer-save'
+        if (verdict !== 'deleted-meanwhile') {
+          await keep(e.device, e.id, e.op === 'delete' ? null : (a.playlist ?? {
+            id: e.id, device: e.device, name: e.name, source: 'jake', trackIds: e.trackIds, createdAt: e.createdAt,
+          }))
+        }
+        if (verdict === 'cleared' && cur) delete doc.saves[key]
+        // A newer edit came in while this one was on its way: homemini has the playlist now.
+        else if (cur && e.op === 'save') cur.isNew = false
+        if (cur) await writeJsonAtomic(join(deps.stateDir, PENDING_FILE), doc)
+        return verdict
       })
-      if (now !== 'deleted-meanwhile') {
-        await keep(e.device, e.id, e.op === 'delete' ? null : (a.playlist ?? {
-          id: e.id, device: e.device, name: e.name, source: 'jake', trackIds: e.trackIds, createdAt: e.createdAt,
-        }))
-      }
-      const cleared = now === 'cleared'
-      if (cleared) return 'sent'
+      if (verdictNow === 'cleared') return 'sent'
     }
     return 'still-waiting'
   }
