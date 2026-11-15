@@ -37,6 +37,7 @@ import { albumKeyOf, albumKeyFromStrings } from './albumKey'
 import { toCynthiaTrack } from './cynthia'
 import { sortAlbumTracks } from './albumTrackOrder'
 import { addToPlaylistEntry, queueMenuEntries } from './playlistMenu'
+import { addToIpodPlaylistEntries } from '../ipodPlaylistAdd'
 import { liveSetFor } from '../liveSets'
 import { declareLiveSet, isDeclareInFlight } from '../liveSetDeclare'
 import { verifyLiveSetCompleteness } from './liveSetCompleteness'
@@ -170,6 +171,7 @@ export function songMenuEntries(o: SongMenuOptions): MenuEntry[] {
     { separator: true as const },
     ...queueMenuEntries(selectedTracks, pbDispatch),
     addToPlaylistEntry(selectedTracks, o.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
+    ...addToIpodPlaylistEntries(selectedTracks, selectedTracks),
     ...(getDeckState() ? [
       {
         label: `Lay on the tape (${selectedTracks.length} song${selectedTracks.length === 1 ? '' : 's'})`,
@@ -293,6 +295,7 @@ export function albumMenuEntries(o: AlbumMenuOptions): MenuEntry[] {
     { separator: true as const },
     ...queueMenuEntries(ordered, pbDispatch),
     addToPlaylistEntry(ordered, o.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
+    ...addToIpodPlaylistEntries(ordered, ordered),
     ...(islandEntry ? [islandEntry] : []),
     ...(ordered.length ? [{ label: 'Share Album…', onClick: () => openFriendShare({ kind: 'album', track: ordered[0], albumTracks: ordered }) }] : []),
     { separator: true as const },

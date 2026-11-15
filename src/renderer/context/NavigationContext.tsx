@@ -3,6 +3,7 @@ import { useLibrary } from './LibraryContext'
 import { recordLocation, locationOf, restoreActionFor, detailSubjectFor, canGoBack as histCanBack, canGoForward as histCanForward } from '../nav-history'
 import { getConcertKey, setConcertKey, subscribeConcertKey } from '../concertNav'
 import { getMixtapeId, setMixtapeId, subscribeMixtapes } from '../mixtapes'
+import { getOpenIpodPlaylistKey, setOpenIpodPlaylistKey, subscribeOpenIpodPlaylist } from '../ipodPlaylists'
 import { noteNavHow } from '../navDxDom'
 import type { NavLocation, NavHistory } from '../nav-history'
 import { reopenSearch } from '../searchNav'
@@ -54,7 +55,8 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
   // routed by SET_VIEW); read here so two concerts are two places in history.
   const concertKey = useSyncExternalStore(subscribeConcertKey, getConcertKey)
   const mixtapeId = useSyncExternalStore(subscribeMixtapes, getMixtapeId)
-  const loc: NavLocation = locationOf(lib, { concertKey, mixtapeId })
+  const ipodPlaylistKey = useSyncExternalStore(subscribeOpenIpodPlaylist, getOpenIpodPlaylistKey)
+  const loc: NavLocation = locationOf(lib, { concertKey, mixtapeId, ipodPlaylistKey })
 
   // History in a ref (synchronous read/write across the observer + handlers);
   // `tick` just forces a repaint so derived canGoBack/Forward update.
@@ -90,6 +92,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
     const subject = detailSubjectFor(t)
     if (subject?.store === 'concert') setConcertKey(subject.key)
     else if (subject?.store === 'mixtape') setMixtapeId(subject.key)
+    else if (subject?.store === 'ipod-playlist') setOpenIpodPlaylistKey(subject.key)
     dispatch(restoreActionFor(t))
   }, [dispatch])
 

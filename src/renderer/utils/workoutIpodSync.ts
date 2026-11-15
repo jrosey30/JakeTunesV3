@@ -7,7 +7,7 @@
  */
 
 import type { Track, Playlist } from '../types'
-import { buildSmartPlaylistsForSync } from './smartPlaylists'
+import { buildSmartPlaylistsForSync } from './smartPlaylists.ts'
 import type { OneSyncPlan } from '../../common/ipod-one-sync-plan'
 
 /** What main needs to plan a sync: the board check (title, artist, path, codec,

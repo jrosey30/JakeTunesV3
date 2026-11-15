@@ -42,6 +42,7 @@ import { setNotice } from '../activity'
 import { songsGridTemplate, songsGridTemplateFixed } from '../utils/songsGridTemplate'
 import '../styles/songs.css'
 import { addToPlaylistEntry, queueMenuEntries } from '../utils/playlistMenu'
+import { addToIpodPlaylistEntries } from '../ipodPlaylistAdd'
 import { getInfoTarget } from '../../common/get-info-target'
 import { lastPlayedEverywhere, playsEverywhere } from '../../common/plays-elsewhere'
 import { usePlaysElsewhere } from '../playsElsewhere'
@@ -767,6 +768,7 @@ export default function PlaylistView() {
       { separator: true as const },
       ...queueMenuEntries(selected, pbDispatch),
       addToPlaylistEntry(selected, state.playlists, (pid, ids) => dispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
+      ...addToIpodPlaylistEntries(selected, state.tracks),
       ...(getDeckState() ? [
         {
           label: `Lay on the tape (${selected.length} song${selected.length === 1 ? '' : 's'})`,

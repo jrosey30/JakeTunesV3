@@ -364,3 +364,32 @@ nothing is drawn on top. `src/common/concert-poster.ts` is the rule.
   part-way leaves `backups/concert-posters.in-progress.json`; run it again and it
   finishes, keeping the first backup. Quit the app first: it holds live-sets.json
   and the artwork index in memory.
+
+## The playlists on each iPod (2026-11-14)
+
+Jake approved ~/concert-repair/ipod-playlists-plan.md: "default playlists on top,
+on the go, then the per ipod playlists in a to z order".
+
+- **Where:** under each iPod's row in the sidebar's iPODS section
+  (`components/sidebar/IpodPlaylistsTree.tsx`). The triangle left of the iPod
+  opens it; opening the iPod or one of its playlists opens it too. Each opens
+  `views/IpodPlaylistView.tsx` (view `'ipod-playlist'`, subject in
+  `renderer/ipodPlaylists.ts`).
+- **Defaults** are the sync's own code run on the iPod's list
+  (`renderer/utils/ipodDeviceDefaults.ts`: `assembleSyncPlaylists` +
+  `devicePlaylistSet`), so they are exactly what the sync writes: the iPod's own
+  list only on the Original (the Top 1000), the 90% rule on every one.
+  Read-only, like On-The-Go.
+- **Twins:** `common/ipod-device-playlists.ts` is byte for byte JakeTunesMobile
+  `backend/src/util/ipodDevicePlaylists.ts`, and
+  `src/main/__tests__/fixtures/ipod-default-playlists.fixture.json` is the same
+  file there; both repos pin both sha256s (`ipod-playlist-screens.test.ts`).
+  homemini names the same defaults for the phone (`GET /api/ipod-playlists/defaults`).
+- **Jake's own** go through `main/ipod-playlists-outbox.ts`: on this Mac's disk
+  first (`ipod-playlists-pending.json`), one lock, `writeJsonAtomic`, one send at
+  a time per iPod, cleared only if unchanged (`rev`), a "put it on the iPod too"
+  sent before the playlists. homemini's 409s HOLD the playlist and ask
+  (`not-on-ipod`: "Add it to punkPod too?"; `name-taken`: rename). A full iPod
+  takes the song back out and says so on the playlist. The Original never takes
+  a song by hand. `renderer/ipodPlaylistAdd.ts` is the one way songs are added
+  (sidebar drop, "Add to <iPod> Playlist ▸" on every song menu, the page).

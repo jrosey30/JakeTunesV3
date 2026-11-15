@@ -35,6 +35,13 @@
  *
  * Membership is by library track id; ids not on the iPod are dropped, so the
  * database never references a song that didn't land.
+ *
+ * ⚠️ TWIN: one file, byte for byte, in two repos: JakeTunesMobile
+ * backend/src/util/ipodDevicePlaylists.ts, where homemini names the same
+ * defaults for the phone (GET /api/ipod-playlists/defaults?device=). Each repo's
+ * twin test pins its sha256 (ipod-playlist-screens.test.ts here,
+ * util/__tests__/ipodDefaultPlaylists.test.ts there): change it here, copy it
+ * there, move both pins.
  */
 
 /** Where a playlist on an iPod comes from. `set` = the Original's Top 1000 (no other iPod's list is written). */
@@ -122,8 +129,7 @@ export const BPM_RANGES: ReadonlyArray<{ from: number; to: number | null; name: 
 /** Which range a BPM falls in; null under 60 or for a number that isn't one. */
 export function bpmRangeIndex(bpm: number): number | null {
   if (!Number.isFinite(bpm)) return null
-  for (let i = 0; i < BPM_RANGES.length; i++) {
-    const r = BPM_RANGES[i]
+  for (const [i, r] of BPM_RANGES.entries()) {
     if (bpm >= r.from && (r.to === null || bpm < r.to)) return i
   }
   return null
@@ -140,13 +146,13 @@ export function bpmPlaylists(tracks: DeviceTrack[], verifiedBpm: ReadonlyMap<num
     const bpm = verifiedBpm.get(t.id)
     if (bpm === undefined) return
     const i = bpmRangeIndex(bpm)
-    if (i !== null) buckets[i].push({ id: t.id, bpm, order })
+    if (i !== null) buckets[i]?.push({ id: t.id, bpm, order })
   })
-  return buckets
-    .map((rows, i) => ({
-      id: `default-bpm-${BPM_RANGES[i].from}`,
-      name: BPM_RANGES[i].name,
-      trackIds: rows.sort((a, b) => a.bpm - b.bpm || a.order - b.order).map((r) => r.id),
+  return BPM_RANGES
+    .map((range, i) => ({
+      id: `default-bpm-${range.from}`,
+      name: range.name,
+      trackIds: (buckets[i] ?? []).sort((a, b) => a.bpm - b.bpm || a.order - b.order).map((r) => r.id),
     }))
     .filter((p) => p.trackIds.length > 0)
 }

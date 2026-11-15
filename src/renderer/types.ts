@@ -144,7 +144,7 @@ export interface Mixtape {
   seasonal?: string
 }
 
-export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'download' | 'scotus' | 'rock-dna' | 'listen-to-the-list' | 'new-for-you' | 'discovery' | 'mix-detail' | 'concerts' | 'concert-detail' | 'mixtape-detail' | 'dj' | 'year-in-review' | 'top1000'
+export type ViewName = 'home' | 'songs' | 'artists' | 'artist-detail' | 'albums' | 'album-detail' | 'genres' | 'musicman' | 'playlist' | 'smart-playlist' | 'device' | 'cd-import' | 'store' | 'download' | 'scotus' | 'rock-dna' | 'listen-to-the-list' | 'new-for-you' | 'discovery' | 'mix-detail' | 'concerts' | 'concert-detail' | 'mixtape-detail' | 'dj' | 'year-in-review' | 'top1000' | 'ipod-playlist'
 
 // V5 Live Concert Mode — a declared album's merged "live set". Key'd by
 // albumKey (artist|||album) in live-sets.json; the merged file is a REAL
@@ -1301,6 +1301,12 @@ declare global {
       eventCoverWish?: (input: { ym: string; text: string }) => Promise<{ ok: boolean; away?: boolean; error?: string }>
       // 2026-11-09 — Rename… an iPod list (src/main/ipod-list-rename.ts) and the Top 1000 (src/main/top1000-name.ts)
       ipodListRename?: (input: { deviceId: string; name: string }) => Promise<{ ok: true; name: string; homemini: 'saved' | 'later' } | { ok: false; error: string }>
+      // The playlists on one iPod (2026-11-14; main/ipc/ipod-playlists-ipc.ts, common/ipod-playlists-view.ts).
+      ipodPlaylistsGet?: (device: string, opts?: { fresh?: boolean; ipodName?: string }) => Promise<import('../common/ipod-playlists-view').IpodPlaylistsAnswer>
+      ipodPlaylistsSave?: (input: { device: string; id?: string; name?: string; trackIds?: number[]; defaults: string[]; ipodName: string; alsoOnIpod?: number[] }) => Promise<import('../common/ipod-playlists-view').IpodPlaylistWriteAnswer>
+      ipodPlaylistsDelete?: (input: { device: string; id: string }) => Promise<import('../common/ipod-playlists-view').IpodPlaylistWriteAnswer>
+      ipodPlaylistsAnswer?: (input: { device: string; id: string; choice: 'add' | 'drop' | 'rename'; name?: string; ipodName?: string; defaults?: string[] }) => Promise<import('../common/ipod-playlists-view').IpodPlaylistWriteAnswer>
+      ipodPlaylistsBpm?: (ids: number[]) => Promise<{ ok: true; bpm: Record<string, number>; known: boolean }>
       top1000NameGet?: () => Promise<{ ok: true; name: string; custom: string | null; pending: boolean } | { ok: false; error: string }>
       top1000NameSet?: (name: string | null) => Promise<{ ok: true; name: string; custom: string | null; homemini: 'saved' | 'later' } | { ok: false; error: string }>
       // Headline… (2026-11-14, common/ipod-ad.ts): the line at the top of an iPod's page. key = the list's id, or 'top1000'.

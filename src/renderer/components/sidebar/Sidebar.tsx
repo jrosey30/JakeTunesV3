@@ -41,6 +41,11 @@ import { CD_PRESENCE_START, stepCdPresence } from '../../../common/auto-nav'
 import { quizDoorShown } from '../../../common/top1000-doc'
 import { autoNavBlocked } from '../../utils/autoNavGuard'
 import NewMixtapeSheet from '../NewMixtapeSheet'
+import IpodPlaylistsTree, { IpodDisclosure, ipodOpenNow, useIpodOpenVersion } from './IpodPlaylistsTree'
+import IpodPlaylistQuestion from '../IpodPlaylistQuestion'
+import { getOpenIpodPlaylistKey, subscribeOpenIpodPlaylist } from '../../ipodPlaylists'
+
+const NO_IPOD_IDS: number[] = []
 
 const LIBRARY_ICONS: Record<string, JSX.Element> = {
   home: <HomeIcon />,
@@ -349,6 +354,29 @@ export default function Sidebar() {
     pinned,
     top1000Name,
   }), [ipodListsRole, ipodRegistry, ipodLists, top1000Ids, libraryIds, pinned, top1000Name])
+  // The playlists on each iPod (2026-11-14): the key homemini keeps them under, the
+  // name the iPod's own list is written under, and its songs (IpodPlaylistsTree.tsx).
+  const openIpodKey = useSyncExternalStore(subscribeOpenIpodPlaylist, getOpenIpodPlaylistKey)
+  useIpodOpenVersion()
+  const ipodDeviceOf = (r: (typeof ipodRows)[number]): string => (r.playlistId === TOP_1000_PLAYLIST_ID ? 'top1000' : parseIpodListPlaylistId(r.playlistId) ?? r.key)
+  const ipodTreeProps = (r: (typeof ipodRows)[number]) => {
+    const device = ipodDeviceOf(r)
+    const original = device === 'top1000'
+    const onOwnList = state.currentView === 'smart-playlist' && state.activeSmartPlaylist === r.playlistId
+    const onPage = state.currentView === 'ipod-playlist'
+    return {
+      device,
+      ipodName: original ? (r.primary && r.detail ? r.name : 'The Original') : r.name,
+      // The sync writes the Original's list as "Top 1000" and any other iPod's under the iPod's own name.
+      setName: original ? 'Top 1000' : (ipodRegistry.find((d) => d.id === device)?.name?.trim() || r.name),
+      ipodIds: original ? (top1000Ids ?? NO_IPOD_IDS) : (ipodLists.find((l) => l.id === device)?.ids ?? NO_IPOD_IDS),
+      library: state.tracks,
+      open: ipodOpenNow(device, onOwnList || (onPage && (openIpodKey ?? '').startsWith(`${device}/`))),
+      onPage,
+      openOwnList: () => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: r.playlistId as SmartPlaylistId }),
+      openPage: () => dispatch({ type: 'SET_VIEW', view: 'ipod-playlist' }),
+    }
+  }
   // A pin on an iPod list (Top 1000 included) moves that row up inside iPODS; it is never drawn
   // a second time under PLAYLISTS (isIpodPlaylistId). Jake: "why are there 2 places".
   useEffect(() => {
@@ -824,7 +852,7 @@ export default function Sidebar() {
         {ipodRows.map((r) => renamingIpodRow === r.playlistId ? (
           <div key={r.key}>{ipodRenameField(r.playlistId)}</div>
         ) : (
-          <div key={r.key} onContextMenu={(e) => handlePlaylistContextMenu(e, r.playlistId, r.detail && !r.planned ? `${r.name} · ${r.detail}` : r.name, 'smart')}>
+          <div key={r.key} className="sidebar-ipod-group" onContextMenu={(e) => handlePlaylistContextMenu(e, r.playlistId, r.detail && !r.planned ? `${r.name} · ${r.detail}` : r.name, 'smart')}>
             <SidebarItem
               label={r.name}
               detail={r.detail ?? undefined}
@@ -834,6 +862,9 @@ export default function Sidebar() {
               selected={state.currentView === 'smart-playlist' && state.activeSmartPlaylist === r.playlistId}
               onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: r.playlistId as SmartPlaylistId })}
             />
+            <IpodDisclosure device={ipodDeviceOf(r)} ipodName={r.name} />
+            {/* The playlists on this iPod (2026-11-14, IpodPlaylistsTree.tsx). */}
+            <IpodPlaylistsTree {...ipodTreeProps(r)} />
           </div>
         ))}
       </SidebarSection>
@@ -1093,6 +1124,8 @@ export default function Sidebar() {
         />
       )}
       {showBlankTape && <NewMixtapeSheet onClose={() => setShowBlankTape(false)} />}
+      {/* "Add it to punkPod too?" — one dialog for every way into an iPod playlist (ipodPlaylistAdd.ts). */}
+      <IpodPlaylistQuestion />
       {deleteConfirm && (
         <ConfirmDialog
           message={`Delete the playlist "${deleteConfirm.name}"?`}

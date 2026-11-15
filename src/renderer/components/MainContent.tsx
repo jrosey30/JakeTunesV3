@@ -9,6 +9,7 @@ import ConcertsView from '../views/ConcertsView'
 import ConcertDetailView from '../views/ConcertDetailView'
 import MixtapeView from '../views/MixtapeView'
 import MixDetailView from '../views/MixDetailView'
+import IpodPlaylistView from '../views/IpodPlaylistView'
 import GenresPage from '../views/GenresPage'
 import DiscoveryView from '../views/DiscoveryView'
 import DJView from '../views/DJView'
@@ -163,6 +164,7 @@ export default function MainContent() {
     case 'top1000': viewElement = <Top1000QuizView />; break
     case 'concert-detail': viewElement = <ConcertDetailView />; break
     case 'mixtape-detail': viewElement = <MixtapeView />; break
+    case 'ipod-playlist': viewElement = <IpodPlaylistView />; break
     case 'mix-detail': viewElement = <MixDetailView />; break
     case 'genres': viewElement = <GenresPage />; break   // Browse (GenresView, untouched) | Icebergs
     case 'discovery': viewElement = <DiscoveryView />; break

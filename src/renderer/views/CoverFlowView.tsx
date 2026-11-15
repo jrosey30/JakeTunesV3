@@ -15,6 +15,7 @@ import { groupTracksIntoAlbums, type Album } from '../utils/albumGroups'
 import type { Track } from '../types'
 import '../styles/coverflow.css'
 import { addToPlaylistEntry, queueMenuEntries } from '../utils/playlistMenu'
+import { addToIpodPlaylistEntries } from '../ipodPlaylistAdd'
 import { JUKEBOX_WHEEL_OPTIONS } from '../../common/cover-flow-wheel'
 import { useCoverFlowWheel } from '../hooks/useCoverFlowWheel'
 import { useArrowKeyOwner } from '../hooks/useArrowKeyOwner'
@@ -208,6 +209,7 @@ export default function CoverFlowView({ tracks, emptyNoun, stateKey = 'default' 
       { separator: true as const },
       ...queueMenuEntries(ordered, pbDispatch),
       addToPlaylistEntry(ordered, lib.playlists, (pid, ids) => libDispatch({ type: 'ADD_TRACKS_TO_PLAYLIST', playlistId: pid, trackIds: ids })),
+      ...addToIpodPlaylistEntries(ordered, lib.tracks),
       { separator: true as const },
       { label: 'Go to Album', onClick: () => libDispatch({ type: 'VIEW_ALBUM_DETAIL', albumKey: albumKeyFromStrings(album.artist, album.name) }) },
       { label: 'Go to Artist', onClick: () => libDispatch({ type: 'VIEW_ARTIST_DETAIL', artistName: canonicalArtist(album.artist || '') }) },
