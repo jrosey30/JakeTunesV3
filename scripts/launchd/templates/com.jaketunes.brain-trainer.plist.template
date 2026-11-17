@@ -11,8 +11,8 @@
   </array>
   <key>WorkingDirectory</key><string>__REPO__</string>
   <key>StartCalendarInterval</key><dict>
-    <key>Hour</key><integer>2</integer>
-    <key>Minute</key><integer>0</integer>
+    <key>Hour</key><integer>23</integer>
+    <key>Minute</key><integer>40</integer>
   </dict>
   <key>StandardOutPath</key><string>__HOME__/Library/Logs/jaketunes-brain-trainer.log</string>
   <key>StandardErrorPath</key><string>__HOME__/Library/Logs/jaketunes-brain-trainer.log</string>
