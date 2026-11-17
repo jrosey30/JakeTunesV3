@@ -88,8 +88,12 @@ export function createTop1000Client(opts: Top1000ClientOptions) {
       return n !== null ? { ok: true, value: n } : { ok: false, error: 'The tie count came back unreadable.' }
     },
 
-    async list(): Promise<Result<{ progress: QuizProgress; list: QuizListEntry[] }>> {
-      const r = await call('', { method: 'GET' })
+    /** The published Top 1000 (playlist, sidebar, iPod sync). `live: true` is the quiz's own
+     *  ranking as it stands now (homemini 2026-11-17: the list is published weekly and ranked
+     *  mostly by listening; ?live=1 is the quiz's list). An older homemini ignores the query
+     *  and answers its one list, which was the quiz's. */
+    async list(o: { live?: boolean } = {}): Promise<Result<{ progress: QuizProgress; list: QuizListEntry[] }>> {
+      const r = await call(o.live ? '?live=1' : '', { method: 'GET' })
       if (!r) return { ok: false, error: OFFLINE }
       const doc = r.status === 200 ? parseQuizList(r.body) : null
       return doc ? { ok: true, value: doc } : { ok: false, error: 'The Top 1000 list came back unreadable.' }

@@ -1283,6 +1283,8 @@ declare global {
       top1000Answer?: (input: import('../common/top1000-doc').QuizAnswerInput) => Promise<{ ok: true; value: import('../common/top1000-doc').QuizProgress } | { ok: false; error: string }>
       top1000Undo?: () => Promise<{ ok: true; value: import('../common/top1000-doc').QuizUndo } | { ok: false; error: string }>
       top1000List?: () => Promise<{ ok: true; value: { progress: import('../common/top1000-doc').QuizProgress; list: import('../common/top1000-doc').QuizListEntry[] } } | { ok: false; error: string }>
+      /** The quiz's own ranking (homemini ?live=1); top1000List is the published weekly list. */
+      top1000LiveList?: () => Promise<{ ok: true; value: { progress: import('../common/top1000-doc').QuizProgress; list: import('../common/top1000-doc').QuizListEntry[] } } | { ok: false; error: string }>
       // 2026-11-07 — every non-Original iPod's list (homemini writes it; src/main/ipc/ipod-lists-ipc.ts)
       ipodRegistryList?: () => Promise<{ ok: boolean; devices?: Array<{ id: string; name: string; color: string | null; primary: boolean }>; error?: string }>
       ipodListsGet?: () => Promise<{ ok: boolean; role?: 'hub' | 'replica'; lists?: Array<{ id: string; name: string; color: string | null; model?: string; purpose: string | null; ids: number[]; source: 'homemini' | 'local' | 'cache'; note: string | null; updatedAt: string | null; registered?: boolean; headline?: string | null; cap?: number | null; lastSyncedAt?: string | null; songCount?: number | null; artistCount?: number | null }> }>

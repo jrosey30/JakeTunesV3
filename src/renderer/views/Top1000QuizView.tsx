@@ -406,7 +406,11 @@ export default function Top1000QuizView(): JSX.Element {
     if (tab !== 'list') return
     let alive = true
     setListError(null)
-    void window.electronAPI.top1000List?.().then((r) => {
+    // The quiz's own ranking (its "Settled / Moving" reads the quiz's pIn), not the weekly
+    // published list the playlist and iPods use. Falls back to the published list on an
+    // app/preload that predates the live call.
+    const api = window.electronAPI
+    void (api.top1000LiveList ?? api.top1000List)?.().then((r) => {
       if (!alive || !r) return
       if (r.ok) { setList(r.value.list); setProgress(r.value.progress) } else setListError(r.error)
     })

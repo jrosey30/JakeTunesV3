@@ -1242,6 +1242,7 @@ const electronAPI = {
   top1000Answer: (input: { kind: string; ids: string[]; choice: string; reasons?: string[] }): Promise<unknown> => ipcRenderer.invoke('top1000:answer', input),
   top1000Undo: (): Promise<unknown> => ipcRenderer.invoke('top1000:undo'),
   top1000List: (): Promise<unknown> => ipcRenderer.invoke('top1000:list'),
+  top1000LiveList: (): Promise<unknown> => ipcRenderer.invoke('top1000:list-live'),
   top1000Ties: (): Promise<unknown> => ipcRenderer.invoke('top1000:ties'),
   // Every non-Original iPod's list (2026-11-07) — homemini writes it; read-only here.
   ipodListsGet: (): Promise<unknown> => ipcRenderer.invoke('ipod-lists:get'),
