@@ -16,7 +16,8 @@
  * 170px a count left a name like "Top 25 Most Played" no room.
  *
  * Under an open iPod, in the order the iPod shows them:
- *   the defaults (its own list first; worked out with the sync's own code),
+ *   the defaults (worked out with the sync's own code; the iPod's own list is
+ *   the row above, never drawn again here),
  *   On-The-Go, then everything else A to Z (homemini's order), then
  *   "New Playlist on <iPod>…".
  * Defaults and On-The-Go are read-only. Jake's own take dropped songs, and
@@ -72,9 +73,9 @@ function NewIcon() {
   )
 }
 /** The triangle in the row's left margin, where iTunes put a folder's. */
-export function IpodDisclosure({ device, ipodName }: { device: string; ipodName: string }) {
+export function IpodDisclosure({ device, ipodName, active }: { device: string; ipodName: string; active: boolean }) {
   useSyncExternalStore(subscribeOpen, getOpenVersion)
-  const shown = opened.has(device)
+  const shown = ipodOpenNow(device, active)
   return (
     <button
       type="button"
@@ -82,7 +83,7 @@ export function IpodDisclosure({ device, ipodName }: { device: string; ipodName:
       aria-expanded={shown}
       title={shown ? `Hide ${ipodName}’s playlists` : `Show ${ipodName}’s playlists`}
       aria-label={shown ? `Hide ${ipodName}’s playlists` : `Show ${ipodName}’s playlists`}
-      onClick={(e) => { e.stopPropagation(); toggleIpodOpen(device) }}
+      onClick={(e) => { e.stopPropagation(); toggleIpodOpen(device, shown) }}
     >
       <svg width="8" height="8" viewBox="0 0 10 10" aria-hidden="true" style={{ transform: shown ? 'rotate(90deg)' : undefined, transition: 'transform 120ms ease' }}>
         <path d="M2.5 1 L8 5 L2.5 9 Z" fill="currentColor" />
@@ -92,12 +93,18 @@ export function IpodDisclosure({ device, ipodName }: { device: string; ipodName:
 }
 
 // Which iPods are open, for this session (not saved: closed is the resting state).
+// `closed` is the triangle closing an iPod whose own page is showing. Jake
+// (2026-11-17): "the collapsing of sub playlists on each ipod doesnt happen on
+// desktop" — showing the page used to force the playlists open, so the
+// triangle could never close them.
 const opened = new Set<string>()
+const closed = new Set<string>()
 const openListeners = new Set<() => void>()
 let openVersion = 0
-export function toggleIpodOpen(device: string): void {
-  if (opened.has(device)) opened.delete(device)
-  else opened.add(device)
+/** The triangle: close what is shown, open what isn't. */
+export function toggleIpodOpen(device: string, shownNow: boolean): void {
+  if (shownNow) { opened.delete(device); closed.add(device) }
+  else { opened.add(device); closed.delete(device) }
   openVersion++
   for (const l of openListeners) l()
 }
@@ -109,8 +116,9 @@ export function useIpodOpenVersion(): number {
 }
 /** Opened by its triangle. */
 export const ipodIsOpened = (device: string): boolean => opened.has(device)
-/** Shown: opened by its ▸, or its own list or one of its playlists is the page showing. */
-export const ipodOpenNow = (device: string, active: boolean): boolean => active || opened.has(device)
+/** Shown: opened by its ▸, or its own list or one of its playlists is the page showing (unless its ▾ closed it). */
+export const ipodOpenNow = (device: string, active: boolean): boolean =>
+  opened.has(device) || (active && !closed.has(device))
 
 export interface IpodPlaylistsTreeProps {
   /** 'top1000' for the Original, the list id otherwise. */
@@ -185,7 +193,9 @@ export default function IpodPlaylistsTree(props: IpodPlaylistsTreeProps) {
 
   return (
     <ul className="sidebar-ipod-playlists" aria-label={`Playlists on ${ipodName}`}>
-      {defaults.map((p) => (
+      {/* The iPod's own list is the row above, not one of its playlists. Jake (2026-11-17):
+          "seeing top 1000 on original as a playlist is dumb". The sync still writes it. */}
+      {defaults.filter((p) => p.kind !== 'set').map((p) => (
         <SidebarItem
           key={`d-${p.id}`}
           className="sidebar-item--ipod-playlist"
