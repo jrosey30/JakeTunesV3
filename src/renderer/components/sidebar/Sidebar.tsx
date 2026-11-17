@@ -359,10 +359,15 @@ export default function Sidebar() {
   const openIpodKey = useSyncExternalStore(subscribeOpenIpodPlaylist, getOpenIpodPlaylistKey)
   useIpodOpenVersion()
   const ipodDeviceOf = (r: (typeof ipodRows)[number]): string => (r.playlistId === TOP_1000_PLAYLIST_ID ? 'top1000' : parseIpodListPlaylistId(r.playlistId) ?? r.key)
+  // Its own list or one of its playlists is the page showing.
+  const ipodActive = (r: (typeof ipodRows)[number]): boolean => {
+    const device = ipodDeviceOf(r)
+    const onOwnList = state.currentView === 'smart-playlist' && state.activeSmartPlaylist === r.playlistId
+    return onOwnList || (state.currentView === 'ipod-playlist' && (openIpodKey ?? '').startsWith(`${device}/`))
+  }
   const ipodTreeProps = (r: (typeof ipodRows)[number]) => {
     const device = ipodDeviceOf(r)
     const original = device === 'top1000'
-    const onOwnList = state.currentView === 'smart-playlist' && state.activeSmartPlaylist === r.playlistId
     const onPage = state.currentView === 'ipod-playlist'
     return {
       device,
@@ -371,7 +376,7 @@ export default function Sidebar() {
       setName: original ? 'Top 1000' : (ipodRegistry.find((d) => d.id === device)?.name?.trim() || r.name),
       ipodIds: original ? (top1000Ids ?? NO_IPOD_IDS) : (ipodLists.find((l) => l.id === device)?.ids ?? NO_IPOD_IDS),
       library: state.tracks,
-      open: ipodOpenNow(device, onOwnList || (onPage && (openIpodKey ?? '').startsWith(`${device}/`))),
+      open: ipodOpenNow(device, ipodActive(r)),
       onPage,
       openOwnList: () => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: r.playlistId as SmartPlaylistId }),
       openPage: () => dispatch({ type: 'SET_VIEW', view: 'ipod-playlist' }),
@@ -862,7 +867,7 @@ export default function Sidebar() {
               selected={state.currentView === 'smart-playlist' && state.activeSmartPlaylist === r.playlistId}
               onClick={() => dispatch({ type: 'VIEW_SMART_PLAYLIST', id: r.playlistId as SmartPlaylistId })}
             />
-            <IpodDisclosure device={ipodDeviceOf(r)} ipodName={r.name} />
+            <IpodDisclosure device={ipodDeviceOf(r)} ipodName={r.name} active={ipodActive(r)} />
             {/* The playlists on this iPod (2026-11-14, IpodPlaylistsTree.tsx). */}
             <IpodPlaylistsTree {...ipodTreeProps(r)} />
           </div>
