@@ -494,7 +494,10 @@ export default function HomeView() {
       const d = new Date(Number(y), Number(m) - 1, 1)
       return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
     }
-    const d = new Date(raw)
+    // A full date is a calendar day, not an instant: new Date('2026-12-04') is UTC
+    // midnight, which reads as Dec 3 in New York (2026-11-17, Getdown Services).
+    const ymd = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw)
+    const d = ymd ? new Date(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3])) : new Date(raw)
     if (isNaN(d.getTime())) return raw
     const sameYear = d.getFullYear() === new Date().getFullYear()
     return d.toLocaleDateString(undefined,
