@@ -64,7 +64,7 @@ const EMBED_DIM = 1536
 const BATCH = Number(process.env.BRAIN_BATCH || 300)
 // A whole run's time budget (2026-10-12). New adds are no longer capped by
 // BATCH (see pickBatch); this is what bounds a huge import night, so the
-// trainer (02:00) is always finished well before brain-improve (03:05).
+// trainer (23:40 since 2026-11-17; was 02:00) is always finished well before brain-improve (03:05).
 const MINUTES = Number(process.env.BRAIN_MINUTES || 40)
 const MAGIC = 'EMBD', VERSION = 1
 
@@ -593,7 +593,7 @@ async function main() {
   // so a multi-night run continues where it stopped. `--until HH:MM` ends the
   // night's window. YIELD RULE: this is the always-on serving box — before
   // every call we check for a MUSIC transcode (cable playout's video ffmpeg
-  // runs 24/7 and does not count), for the 02:00 nightly trainer, and for
+  // runs 24/7 and does not count), for the nightly trainer (23:40), and for
   // high memory pressure (critical, or swap in use past 10 GB: memoryYieldReason);
   // any one unloads the model until the coast is clear.
   if (process.argv.includes('--redescribe-all')) {
