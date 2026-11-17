@@ -83,7 +83,7 @@ export function IpodDisclosure({ device, ipodName, active }: { device: string; i
       aria-expanded={shown}
       title={shown ? `Hide ${ipodName}’s playlists` : `Show ${ipodName}’s playlists`}
       aria-label={shown ? `Hide ${ipodName}’s playlists` : `Show ${ipodName}’s playlists`}
-      onClick={(e) => { e.stopPropagation(); toggleIpodOpen(device, shown) }}
+      onClick={(e) => { e.stopPropagation(); toggleIpodOpen(device, shown, active) }}
     >
       <svg width="8" height="8" viewBox="0 0 10 10" aria-hidden="true" style={{ transform: shown ? 'rotate(90deg)' : undefined, transition: 'transform 120ms ease' }}>
         <path d="M2.5 1 L8 5 L2.5 9 Z" fill="currentColor" />
@@ -101,9 +101,10 @@ const opened = new Set<string>()
 const closed = new Set<string>()
 const openListeners = new Set<() => void>()
 let openVersion = 0
-/** The triangle: close what is shown, open what isn't. */
-export function toggleIpodOpen(device: string, shownNow: boolean): void {
-  if (shownNow) { opened.delete(device); closed.add(device) }
+/** The triangle: close what is shown, open what isn't. Closing only sticks over a page
+ *  that is showing; an iPod closed while its page isn't still opens with its page. */
+export function toggleIpodOpen(device: string, shownNow: boolean, active: boolean): void {
+  if (shownNow) { opened.delete(device); if (active) closed.add(device) }
   else { opened.add(device); closed.delete(device) }
   openVersion++
   for (const l of openListeners) l()
@@ -202,8 +203,8 @@ export default function IpodPlaylistsTree(props: IpodPlaylistsTreeProps) {
           wrap
           label={p.name}
           icon={<DefaultIcon />}
-          selected={p.kind === 'set' ? false : isOpen(p.id)}
-          onClick={() => (p.kind === 'set' ? props.openOwnList() : show(p.id))}
+          selected={isOpen(p.id)}
+          onClick={() => show(p.id)}
         />
       ))}
       {stored.rows.map((p) => naming?.id === p.id ? nameBox(p.id) : (
