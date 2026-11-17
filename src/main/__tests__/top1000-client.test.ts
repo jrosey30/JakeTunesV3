@@ -164,3 +164,18 @@ describe('top1000 client', () => {
     assert.equal((await junk.ties()).ok, false)
   })
 })
+
+describe('top1000 client list (2026-11-17: published weekly list vs the quiz\'s own)', () => {
+  const body = { progress, list: [{ id: '7', rank: 1, pIn: 0.9 }] }
+  it('asks for the published list by default and the quiz\'s own with live', async () => {
+    const seen: Array<{ url: string }> = []
+    const c = createTop1000Client({ baseUrl: 'http://hub:3000/', fetchImpl: fake({ '/api/top1000': { status: 200, body }, '/api/top1000?live=1': { status: 200, body } }, seen), warn: () => {} })
+    assert.equal((await c.list()).ok, true)
+    assert.equal((await c.list({ live: true })).ok, true)
+    assert.deepEqual(seen.map((s) => s.url), ['http://hub:3000/api/top1000', 'http://hub:3000/api/top1000?live=1'])
+  })
+  it('the quiz view reads the live list, and falls back to the published one on an old preload', () => {
+    const src = readFileSync(new URL('../../renderer/views/Top1000QuizView.tsx', import.meta.url), 'utf8')
+    assert.match(src, /\(api\.top1000LiveList \?\? api\.top1000List\)\?\.\(\)/)
+  })
+})
