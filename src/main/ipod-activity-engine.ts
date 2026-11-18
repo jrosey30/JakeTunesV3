@@ -102,7 +102,7 @@ import {
 } from './ipod-sync-materialize.ts'
 import {
   activityTrackCanBoard, leftOffSong, pickReplacementTracks, planListOnlyBoarding, queueActivityCandidates,
-  whyActivityTrackCannotBoard, type LeftOffSong,
+  whyActivityTrackCannotBoard, whyListTrackCannotBoard, listTrackCanBoard, type LeftOffSong,
 } from './activity-fill.ts'
 import { orderTracksForIpodTitleIndex, stampIpodSortArtist } from './ipod-artist-sort.ts'
 
@@ -392,12 +392,12 @@ async function runActivitySyncHolding(
     if (listOnly && (classified.blanks.length || classified.fileless.length)) {
       const before = tracks.length
       leaveOff((t) => {
-        if (!activityTrackCanBoard(t)) return false
+        if (!listTrackCanBoard(t)) return false
         const label = `${String(t.title || '').trim()} — ${String(t.artist || '').trim()}`
         if (classified.fileless.some((f) => f.startsWith(label))) return false
         if (classified.blanks.some((b) => b.includes(`id ${t.id}:`))) return false
         return true
-      }, (t) => whyActivityTrackCannotBoard(t) || 'its audio file is not on this Mac or homemini')
+      }, (t) => whyListTrackCannotBoard(t) || 'its audio file is not on this Mac or homemini')
       console.warn(`activity-sync: list-only set — left off ${before - tracks.length} song(s) with no playable file; landing ${target}`)
     } else if (classified.blanks.length || classified.fileless.length) {
       const before = tracks.length

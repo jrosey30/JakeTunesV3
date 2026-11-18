@@ -14,7 +14,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { planOneSync, ONE_SYNC_SIZE, type OneSyncDeps, type OneSyncIpod, type OneSyncTrack } from '../ipod-one-sync.ts'
-import { readyLine, leftOffLine, syncButtonLabel, lastSyncedLine, syncingStep } from '../../common/ipod-one-sync-plan.ts'
+import { readyLine, leftOffLine, listErrorLine, syncButtonLabel, lastSyncedLine, syncingStep } from '../../common/ipod-one-sync-plan.ts'
 import { syncFailureCopy } from '../../common/sync-failure-copy.ts'
 
 const ORIGINAL: OneSyncIpod = { status: 'known', id: 'orig-0001', name: 'Original', color: 'silver', primary: true }
@@ -114,6 +114,18 @@ describe('any other iPod: its list, never filler', () => {
     ])
     assert.equal(plan.leftOff[2].title, 'Gone')
     assert.equal(leftOffLine(plan), '3 songs can’t go on')
+    // A list iPod says it as one error line, never a list (2026-11-17).
+    assert.equal(listErrorLine(plan), 'Can’t sync 3 songs on punkPod’s list: Song 77777 (it isn’t in this library) and 2 more.')
+  })
+
+  it('a short song, an intro or a segue on the list goes on: a list is what Jake chose (2026-11-17)', async () => {
+    const lib = library(10)
+    lib[2] = song(3, { title: 'Intro', duration: 50_000, genre: 'Pop' })
+    const plan = await planOneSync(deps(PUNK, { list: async () => ({ ids: [1, 2, 3, 4], note: null }) }).d, lib)
+    assert.ok(plan.ok)
+    assert.deepEqual(plan.trackIds, [1, 2, 3, 4])
+    assert.deepEqual(plan.leftOff, [])
+    assert.equal(listErrorLine(plan), null)
   })
 
   it('a list past 1,000 goes on whole, in order (2026-11-13: a list’s cap can be raised to 5,000)', async () => {

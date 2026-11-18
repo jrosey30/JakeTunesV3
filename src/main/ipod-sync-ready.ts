@@ -160,6 +160,9 @@ export function noticeText(device: { name: string; primary: boolean }, diff: Ipo
 /** What can go on an iPod, from this Mac's library (null = the library couldn't be read). */
 export interface SyncBoarding {
   canBoard(id: number): boolean
+  /** A list iPod's rule (activity-fill.ts listTrackCanBoard: no skit rule, a list is what
+   *  Jake chose, 2026-11-17). Absent = canBoard. */
+  canBoardList?(id: number): boolean
   /** The one-button sync's filler for the Original: the most-loved songs not in `taken`. */
   fill(taken: Set<number>, needed: number): number[]
 }
@@ -233,7 +236,8 @@ export function createIpodSyncReady(deps: IpodSyncReadyDeps): IpodSyncReadyRunne
     const ids = Array.isArray(answer) ? answer : answer.ids
     const cadence = Array.isArray(answer) ? undefined : { everyDays: answer.everyDays }
     const capped = ids.slice(0, IPOD_LIST_MAX)
-    return { target: boarding ? capped.filter((id) => boarding.canBoard(id)) : capped, keep: new Set(), ...(cadence ? { cadence } : {}) }
+    const listCanBoard = boarding ? (boarding.canBoardList ?? boarding.canBoard).bind(boarding) : null
+    return { target: listCanBoard ? capped.filter((id) => listCanBoard(id)) : capped, keep: new Set(), ...(cadence ? { cadence } : {}) }
   }
 
   async function pass(only: (d: IpodDeviceMarker) => boolean, given?: { deviceId: string; answer: { ids: number[]; everyDays?: number } }): Promise<void> {

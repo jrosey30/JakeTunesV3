@@ -391,6 +391,24 @@ describe('the runner', () => {
     assert.equal(two.w.notices.length, 0)
   })
 
+  it('a list iPod uses the list rule: a song only the skit rule stops is still expected on the iPod (2026-11-17)', async () => {
+    // Song 3 is a skit: canBoard (app-filled sets) says no, canBoardList says yes.
+    const { w, runner } = world({
+      boarding: async () => ({ canBoard: (id) => id !== 3, canBoardList: () => true, fill: () => [] }),
+    })
+    w.lists[punk.id] = [4, 3, 2, 1]
+    w.manifests[punk.id] = [1, 2, 4]
+    await runner.check({ lists: true })
+    assert.equal(w.notices.length, 1, 'the skit on the list is a song to sync, not one to ignore')
+    assert.equal(w.notices[0].body, 'punkPod: 1 new song ready to sync.')
+    // And with it on the iPod, nothing to say (the old rule would call it one to come off).
+    const two = world({ boarding: async () => ({ canBoard: (id) => id !== 3, canBoardList: () => true, fill: () => [] }) })
+    two.w.lists[punk.id] = [4, 3, 2, 1]
+    two.w.manifests[punk.id] = [1, 2, 3, 4]
+    await two.runner.check({ lists: true })
+    assert.equal(two.w.notices.length, 0)
+  })
+
   it('a list past 1,000 is compared whole: every song the iPod lacks is "in" (2026-11-13)', async () => {
     const { w, runner } = world()
     w.lists[punk.id] = range(1, 1200).reverse()   // newest first: 1200..1

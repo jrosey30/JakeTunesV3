@@ -5,7 +5,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  idsLeavingOff, leaveOffQuestion, mustAskBeforeSync, readyOnMacLine, syncNowLeavingOffLabel, type ReadyOnMac,
+  idsLeavingOff, leaveOffQuestion, listFetchStep, mustAskBeforeSync, readyOnMacLine, syncNowLeavingOffLabel, type ReadyOnMac,
 } from '../../common/ipod-ready-on-mac.ts'
 
 const ready = (over: Partial<ReadyOnMac>): ReadyOnMac => ({ total: 829, missing: [], onCard: 0, fill: [], downloading: false, stoppedBecause: null, ...over })
@@ -55,5 +55,33 @@ describe('what “Sync now” sends', () => {
   })
   it('never a fill song twice or a missing one back', () => {
     assert.deepEqual(idsLeavingOff([5, 1], { missing: [1], fill: [5, 1] }), [5])
+  })
+})
+
+describe('a list iPod waits for its songs instead of leaving any off (2026-11-17)', () => {
+  const t0 = 1_000_000
+  const at = (now: number, lastProgressAt = t0) => ({ startedAt: t0, lastProgressAt, now, ipodName: 'iBANDCAMP' })
+  it('the line never offers to leave songs off', () => {
+    assert.equal(readyOnMacLine(ready({ missing: [1, 2], downloading: true }), { list: true }), '2 songs still downloading — Sync waits for them')
+    assert.equal(readyOnMacLine(ready({ missing: [1], stoppedBecause: 'away from home' }), { list: true }),
+      '1 song not on this Mac yet (away from home) — Sync gets them from homemini first')
+    assert.equal(readyOnMacLine(ready({}), { list: true }), 'All 829 songs ready on this Mac')
+    assert.doesNotMatch(readyOnMacLine(ready({ missing: [1], downloading: true }), { list: true }), /leaves them off/)
+  })
+  it('go when everything is here, or when the check could not run', () => {
+    assert.deepEqual(listFetchStep(ready({}), at(t0)), { kind: 'go' })
+    assert.deepEqual(listFetchStep(null, at(t0)), { kind: 'go' })
+  })
+  it('waits while downloading, and through the first moments even if the last pass had stopped', () => {
+    const s = listFetchStep(ready({ missing: [1, 2, 3], downloading: true }), at(t0 + 60_000))
+    assert.deepEqual(s, { kind: 'wait', line: 'Getting 3 songs for iBANDCAMP from homemini before the sync…' })
+    assert.equal(listFetchStep(ready({ missing: [1], stoppedBecause: 'old reason' }), at(t0 + 5_000)).kind, 'wait')
+  })
+  it('stuck when the download stopped and says why, or nothing arrived for 10 minutes: one error line, nothing changed', () => {
+    const stopped = listFetchStep(ready({ missing: [1], stoppedBecause: 'homemini didn’t answer' }), at(t0 + 20_000))
+    assert.equal(stopped.kind, 'stuck')
+    assert.match(stopped.kind === 'stuck' ? stopped.error : '', /1 song isn’t on this Mac \(homemini didn’t answer\)\. Nothing on the iPod was changed\./)
+    assert.equal(listFetchStep(ready({ missing: [1, 2], downloading: true }), at(t0 + 11 * 60_000)).kind, 'stuck')
+    assert.equal(listFetchStep(ready({ missing: [1, 2], downloading: true }), at(t0 + 11 * 60_000, t0 + 10 * 60_000)).kind, 'wait', 'progress resets the stall clock')
   })
 })

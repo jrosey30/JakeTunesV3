@@ -27,10 +27,14 @@ export interface ReadyOnMac {
 const n = (v: number): string => v.toLocaleString('en-US')
 const songs = (c: number): string => `${n(c)} ${c === 1 ? 'song' : 'songs'}`
 
-/** The line under the iPod's name. */
-export function readyOnMacLine(r: ReadyOnMac): string {
+/** The line under the iPod's name. A list iPod (`list`) never leaves a song off: its Sync gets them first. */
+export function readyOnMacLine(r: ReadyOnMac, opts: { list?: boolean } = {}): string {
   const c = r.missing.length
   if (c === 0) return `All ${songs(r.total)} ready on this Mac`
+  if (opts.list) {
+    if (r.stoppedBecause && !r.downloading) return `${songs(c)} not on this Mac yet (${r.stoppedBecause}) — Sync gets them from homemini first`
+    return `${songs(c)} still downloading — Sync waits for them`
+  }
   if (r.stoppedBecause && !r.downloading) return `${songs(c)} not on this Mac yet (${r.stoppedBecause}) — Sync now leaves them off`
   return `${songs(c)} still downloading — Sync will wait / Sync now leaves them off`
 }
@@ -76,4 +80,41 @@ export function idsLeavingOff(planIds: readonly number[], r: Pick<ReadyOnMac, 'm
     out.push(id)
   }
   return out
+}
+
+/**
+ * A list iPod never leaves a song off because it isn't on this Mac yet (Jake,
+ * 2026-11-17: a list iPod gets exactly its list). Its Sync is the Wait path:
+ * kick the background download, wait while the songs arrive, then sync, with
+ * no "Sync now (N left off)". What the Device page does on each look at the
+ * ready check:
+ *   • go: every song is on this Mac (or already on the iPod)
+ *   • wait: still downloading, or the download has had less than `graceMs` to start
+ *   • stuck: the download stopped and says why, or nothing arrived for `stallMs`
+ *     (a sync error, said in one line; nothing on the iPod was changed)
+ */
+export type ListFetchStep =
+  | { kind: 'go' }
+  | { kind: 'wait'; line: string }
+  | { kind: 'stuck'; error: string }
+
+export function listFetchStep(
+  check: Pick<ReadyOnMac, 'missing' | 'downloading' | 'stoppedBecause'> | null,
+  t: { startedAt: number; lastProgressAt: number; now: number; ipodName: string },
+  limits: { graceMs?: number; stallMs?: number } = {},
+): ListFetchStep {
+  const graceMs = limits.graceMs ?? 15_000
+  const stallMs = limits.stallMs ?? 10 * 60_000
+  if (!check) return { kind: 'go' }   // the check itself couldn't run: the sync goes ahead as before
+  const c = check.missing.length
+  if (c === 0) return { kind: 'go' }
+  const getting = `Getting ${songs(c)} for ${t.ipodName} from homemini before the sync…`
+  if (t.now - t.startedAt < graceMs) return { kind: 'wait', line: getting }
+  if (check.stoppedBecause && !check.downloading) {
+    return { kind: 'stuck', error: `Can’t sync ${t.ipodName} yet: ${songs(c)} ${c === 1 ? 'isn’t' : 'aren’t'} on this Mac (${check.stoppedBecause}). Nothing on the iPod was changed.` }
+  }
+  if (t.now - t.lastProgressAt >= stallMs) {
+    return { kind: 'stuck', error: `Can’t sync ${t.ipodName} yet: ${songs(c)} stopped arriving from homemini. Nothing on the iPod was changed. Try Sync again.` }
+  }
+  return { kind: 'wait', line: getting }
 }

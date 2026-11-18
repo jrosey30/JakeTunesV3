@@ -30,13 +30,33 @@ type BoardRow = {
 
 /** Why this row can't go on the iPod, in plain words; null when it can. */
 export function whyActivityTrackCannotBoard(t: BoardRow): string | null {
+  return whyCannotBoard(t, true)
+}
+
+/**
+ * The same, for a song on one of Jake's iPod lists. A list is what he chose, so a short song,
+ * an intro or a segue on it goes on like any other (Jake, 2026-11-17, on 36 Best of Bandcamp
+ * songs left off as skits: "why cant these songs go on????"). Only what the iPod truly can't
+ * carry is left off. The skit rule stays for sets the app fills by itself; homemini keeps
+ * skits off every list but Best of Bandcamp (its curation.keepShortSongs) at the list itself
+ * (JakeTunesMobile backend util/skitRule.ts, the twin of workout-sync.ts isSkitOrIntro).
+ */
+export function whyListTrackCannotBoard(t: BoardRow): string | null {
+  return whyCannotBoard(t, false)
+}
+
+export function listTrackCanBoard(t: BoardRow): boolean {
+  return whyListTrackCannotBoard(t) === null
+}
+
+function whyCannotBoard(t: BoardRow, skits: boolean): string | null {
   if (t.audioMissing === true) return 'its audio file is missing everywhere'
   const title = String(t.title || '').trim()
   const artist = String(t.artist || '').trim()
   if (!title || !artist) return 'it has no title or no artist'
   const path = String(t.path || '').trim()
   if (!path) return 'it has no audio file in the library'
-  if (isSkitOrIntro(t as WorkoutTrack)) return 'it reads as a skit, intro or segue, not a song'
+  if (skits && isSkitOrIntro(t as WorkoutTrack)) return 'it reads as a skit, intro or segue, not a song'
   // The SOURCE question: a .flac is converted to ALAC at copy time.
   if (!ipodCanCarryAfterConversion({ title, artist, path, codec: t.codec })) {
     const ext = ipodPathExtension(path) || 'no extension'
@@ -74,7 +94,7 @@ export function planListOnlyBoarding<T extends BoardRow>(
     const id = idOf(t)
     if (!Number.isFinite(id) || seen.has(id)) continue
     seen.add(id)
-    const why = whyActivityTrackCannotBoard(t)
+    const why = whyListTrackCannotBoard(t)
     if (why) { leftOff.push(leftOffSong(t, why)); continue }
     pool.push(t)
   }

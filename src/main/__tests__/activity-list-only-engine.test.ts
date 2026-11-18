@@ -97,7 +97,7 @@ async function lastPicks(root: string): Promise<{ pickedIds: number[]; target: n
 }
 
 describe('runActivitySync — list-only iPod', () => {
-  it('lands its own list minus what cannot go on, names them, and never asks the library', async () => {
+  it('lands its own list (the segue too: a list is what Jake chose, 2026-11-17) minus what truly cannot go on, and never asks the library', async () => {
     const r = await rig()
     try {
       const res = await runActivitySync(r.host, { tracks: r.tracks, playlists: [], listOnly: true })
@@ -106,13 +106,12 @@ describe('runActivitySync — list-only iPod', () => {
 
       const picks = await lastPicks(r.root)
       assert.equal(picks.requested, 9)
-      assert.equal(picks.target, 7)
-      assert.deepEqual(picks.pickedIds.slice().sort((a, b) => a - b), [5000, 5001, 5002, 5003, 5004, 5005, 5006])
-      assert.ok(picks.pickedIds.every((id) => id >= 5000), 'nothing from outside the list')
+      assert.equal(picks.target, 8)
+      assert.deepEqual(picks.pickedIds.slice().sort((a, b) => a - b), [5000, 5001, 5002, 5003, 5004, 5005, 5006, 12813])
+      assert.ok(picks.pickedIds.every((id) => r.tracks.some((t) => Number(t.id) === id)), 'nothing from outside the list')
       const why = new Map((picks.leftOff || []).map((l) => [l.id, l.why]))
-      assert.match(String(why.get(12813)), /segue/)
       assert.match(String(why.get(5008)), /homemini/)
-      assert.equal(why.size, 2)
+      assert.equal(why.size, 1)
 
       // The FLAC went to the ALAC conversion.
       assert.equal(r.alacCalls.length, 1)
