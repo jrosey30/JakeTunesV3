@@ -353,7 +353,7 @@ export function createIpodPlaylistsDesk(deps: IpodPlaylistsDeskDeps) {
       if (!add) return true
       const a = await deps.remote.addToIpod(device, add.trackIds, `Jake said yes on the desktop, for his iPod playlist “${add.forName}”`)
       if (a.kind === 'retry') return false
-      const skipped = a.kind === 'done' ? a.skipped.filter((s) => s.reason === 'full' || s.reason === 'not-in-library') : add.trackIds.map((id) => ({ id, reason: 'refused' }))
+      const skipped = a.kind === 'done' ? a.skipped.filter((s) => s.reason === 'full' || s.reason === 'not-in-library' || s.reason === 'skit') : add.trackIds.map((id) => ({ id, reason: 'refused' }))
       await editPending(deps.stateDir, (doc) => {
         doc.adds = doc.adds.filter((x) => x.opId !== add.opId)
         if (!skipped.length) return
