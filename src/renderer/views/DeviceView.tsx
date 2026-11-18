@@ -2,8 +2,8 @@ import { useMemo, useState, useEffect, useRef, useSyncExternalStore } from 'reac
 import { useLibrary } from '../context/LibraryContext'
 import { assembleSyncPlaylists, planIpodSync, planTracks } from '../utils/workoutIpodSync'
 import type { OneSyncPlan } from '../../common/ipod-one-sync-plan'
-import { readyLine, leftOffLine, syncButtonLabel, lastSyncedLine, syncingStep, withLastSyncLeftOff } from '../../common/ipod-one-sync-plan'
-import { readyOnMacLine, leaveOffQuestion, syncNowLeavingOffLabel, idsLeavingOff, mustAskBeforeSync, type ReadyOnMac } from '../../common/ipod-ready-on-mac'
+import { readyLine, leftOffLine, listErrorLine, syncButtonLabel, lastSyncedLine, syncingStep, withLastSyncLeftOff } from '../../common/ipod-one-sync-plan'
+import { readyOnMacLine, leaveOffQuestion, syncNowLeavingOffLabel, idsLeavingOff, mustAskBeforeSync, listFetchStep, type ReadyOnMac } from '../../common/ipod-ready-on-mac'
 import { stickerHex } from '../components/IpodIdentityBar'
 import { checkIpodName, macShowsLine } from '../../common/ipod-name'
 // Called in runFullLibrarySync below. The comment at the top of this file has
@@ -156,6 +156,14 @@ export default function DeviceView() {
     const r = await window.electronAPI.ipodLocalCheck(p.trackIds).catch(() => null)
     return r && r.ok ? r.ready : null
   }
+  // A list iPod's Sync waits for its songs instead of leaving any off (2026-11-17):
+  // set while it waits, so the Stop button can end the wait.
+  const [fetchingFirst, setFetchingFirst] = useState(false)
+  const stopFetchRef = useRef(false)
+  // False once this page is gone: a wait that outlives the page must never start a sync
+  // nobody is watching (review of #433).
+  const aliveRef = useRef(true)
+  useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false } }, [])
   const tracksRef = useRef(state.tracks)
   tracksRef.current = state.tracks
   const planSeq = useRef(0)
@@ -509,8 +517,71 @@ export default function DeviceView() {
       // Before anything touches the card: a song that isn't on this Mac (and
       // isn't already on the iPod) would be fetched mid-sync. Ask first; more
       // missing than Jake agreed to leave off asks again.
-      const local = await checkReady(fresh)
-      if (local && mustAskBeforeSync(local, leaving)) {
+      let local = await checkReady(fresh)
+      // A list iPod must know what's on this Mac before anything touches the card.
+      if (fresh.kind === 'list' && !local) {
+        const msg = `Couldn’t check which of ${fresh.ipodName}’s songs are on this Mac. Nothing on the iPod was changed. Try Sync again.`
+        setSyncStatus({ state: 'error', message: msg })
+        activity.setSync({ active: true, step: msg })
+        setTimeout(() => activity.setSync(null), 6000)
+        return
+      }
+      // A list iPod gets exactly its list (Jake, 2026-11-17): a song not on this Mac
+      // is fetched from homemini first (the Wait path), never left off. The card is
+      // not touched until every song is here, or the wait ends in one error line.
+      if (fresh.ok && fresh.kind === 'list' && local && local.missing.length > 0) {
+        stopFetchRef.current = false
+        setFetchingFirst(true)
+        const leave = (): boolean => !aliveRef.current || stopFetchRef.current
+        try {
+          void window.electronAPI.ipodLocalKick?.()
+          const startedAt = Date.now()
+          let lastProgressAt = startedAt
+          let lastMissing = local.missing.length
+          for (;;) {
+            const step = listFetchStep(local, { startedAt, lastProgressAt, now: Date.now(), ipodName: fresh.ipodName })
+            if (leave()) { setSyncStatus({ state: 'idle' }); activity.setSync(null); return }
+            if (step.kind === 'go') break
+            if (step.kind === 'stuck') {
+              setReady(local)
+              setSyncStatus({ state: 'error', message: step.error })
+              activity.setSync({ active: true, step: step.error })
+              setTimeout(() => activity.setSync(null), 6000)
+              return
+            }
+            setSyncStatus({ state: 'syncing', step: step.line })
+            activity.setSync({ active: true, step: step.line })
+            await new Promise((r) => window.setTimeout(r, 4000))
+            if (leave()) {
+              setSyncStatus({ state: 'idle' })
+              activity.setSync(null)
+              return
+            }
+            // A failed check is not "everything is here": keep the last answer and keep
+            // waiting (no progress for 10 minutes ends it in one error line).
+            const next = await checkReady(fresh)
+            if (next) local = next
+            if (local.missing.length < lastMissing) { lastMissing = local.missing.length; lastProgressAt = Date.now() }
+          }
+        } finally {
+          setFetchingFirst(false)
+        }
+        // The wait can take minutes: the page may be gone, Stop may have come in, or another
+        // iPod may be plugged in now. Only the same iPod with the same list syncs.
+        if (leave()) { setSyncStatus({ state: 'idle' }); activity.setSync(null); return }
+        const still = (await ensureIpodMounted()) ? await refreshPlan() : null
+        const same = !!still && still.ok && still.kind === fresh.kind && still.ipodName === fresh.ipodName
+          && still.trackIds.length === fresh.trackIds.length && still.trackIds.every((id, i) => id === fresh.trackIds[i])
+        if (!same || leave()) {
+          const msg = `${fresh.ipodName} or its list changed while its songs were downloading. Nothing on the iPod was changed. Press Sync again.`
+          setSyncStatus({ state: 'error', message: msg })
+          activity.setSync({ active: true, step: msg })
+          setTimeout(() => activity.setSync(null), 6000)
+          return
+        }
+        setReady(local)
+      }
+      if (fresh.ok && fresh.kind === 'original' && local && mustAskBeforeSync(local, leaving)) {
         setReady(local)
         setLeaveOff(local)
         return
@@ -715,7 +786,12 @@ export default function DeviceView() {
           {plan === null && <span>Reading what goes on this iPod…</span>}
           {plan && !plan.ok && plan.kind === 'unknown' && <span>Set this iPod up above, then it gets its own Sync button.</span>}
           {plan && !plan.ok && plan.kind !== 'unknown' && <span className="device-sync-facts-error">{plan.error}</span>}
-          {plan?.ok && ready && !leaveOff && <span>{readyOnMacLine(ready)}</span>}
+          {plan?.ok && ready && !leaveOff && !fetchingFirst && <span>{readyOnMacLine(ready, { list: plan.kind === 'list' })}</span>}
+          {fetchingFirst && (
+            <span>
+              <button type="button" className="device-link-btn" onClick={() => { stopFetchRef.current = true }}>Stop</button>
+            </span>
+          )}
           {leaveOff && (
             <span className="device-sync-leaveoff" role="group" aria-label="Songs not on this Mac">
               {leaveOffQuestion(leaveOff)}{' '}
@@ -724,7 +800,10 @@ export default function DeviceView() {
             </span>
           )}
           {plan?.ok && plan.note && <span>{plan.note}</span>}
-          {leftOffPlan && leftOffLine(leftOffPlan) && (
+          {leftOffPlan && leftOffPlan.kind === 'list' && listErrorLine(leftOffPlan) && (
+            <span className="device-sync-facts-error">{listErrorLine(leftOffPlan)}</span>
+          )}
+          {leftOffPlan && leftOffPlan.kind !== 'list' && leftOffLine(leftOffPlan) && (
             <span>
               {leftOffLine(leftOffPlan)}{' '}
               <button type="button" className="device-link-btn" aria-expanded={showLeftOff} onClick={() => setShowLeftOff((v) => !v)}>{showLeftOff ? 'Hide' : 'Which ones'}</button>
@@ -735,7 +814,7 @@ export default function DeviceView() {
             <button type="button" className="device-link-btn" onClick={() => setShowSyncHistory(true)}>Sync History</button>
           </span>
         </div>
-        {leftOffPlan && showLeftOff && leftOffPlan.leftOff.length > 0 && (
+        {leftOffPlan && leftOffPlan.kind !== 'list' && showLeftOff && leftOffPlan.leftOff.length > 0 && (
           <ul className="device-sync-leftoff">
             {leftOffPlan.leftOff.map((l) => (
               <li key={l.id}>{l.artist ? `${l.artist} — ` : ''}{l.title}: {l.why}</li>

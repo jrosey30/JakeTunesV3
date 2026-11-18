@@ -101,6 +101,11 @@ const SKIP_ARTISTS = new Set(['various artists', 'various', 'va', 'unknown artis
 // Title patterns are out at ANY length. Short tracks are out UNLESS the
 // genre is punk-family (where sub-minute songs are real songs) or Jake
 // has demonstrated he plays/loves the track.
+// ⚠️ TWIN: JakeTunesMobile backend `src/util/skitRule.ts` (homemini refuses
+// these on an iPod list unless its curation.keepShortSongs is true, 2026-11-17),
+// so SKIT_TITLE, SHORT_OK_GENRE, SHORT_MS, MICRO_MS and the evidence rule
+// change in both or neither. An iPod list's sync applies none of it
+// (activity-fill.ts whyListTrackCannotBoard): the list is already clean.
 const SKIT_TITLE = /\b(skit|interlude|intro|outro|prelude|segue|snippet|spoken word|a\s?cappella)\b/i
 const SHORT_OK_GENRE = /punk|hardcore|grind|powerviolence|thrash|crust|ska|garage|surf|noise/i
 const SHORT_MS = 75_000   // under this, a non-punk track needs evidence

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import {
+import { whyListTrackCannotBoard,
   activityTrackCanBoard,
   pickReplacementTracks,
   planListOnlyBoarding,
@@ -148,18 +148,28 @@ describe('FLAC primaries board (2026-11-07: 74 of iPod EVIL\'s 500 were left off
 })
 
 describe('planListOnlyBoarding — a list-only iPod gets its own list and nothing else', () => {
-  it('500 on the list with one skit lands 499 and names the one left off', () => {
+  it('a short song, an intro or a segue on the list goes on: the list is what he chose (2026-11-17)', () => {
     const list = []
     for (let i = 0; i < 500; i++) {
       list.push(song({ id: 5000 + i, path: i % 7 === 0 ? `:F01:t${i}.flac` : `:F01:t${i}.m4a` }))
     }
     list[123] = song({ id: 12813, title: 'HIDE ALL YOUR RECORDS SEGUE', duration: 61107, genre: 'Hardcore Punk' })
+    list[200] = song({ id: 12814, title: 'Intro', duration: 50000, genre: 'Pop' })
+    list[300] = song({ id: 12815, title: 'Del Boca Vista', duration: 40000, genre: 'Indie Rock' })
     const r = planListOnlyBoarding(list, 500)
-    assert.equal(r.target, 499)
-    assert.equal(r.pool.length, 499)
-    assert.deepEqual(r.leftOff.map((l) => l.id), [12813])
-    assert.match(r.leftOff[0].why, /segue/)
-    assert.ok(r.pool.every((t) => Number(t.id) >= 5000), 'nothing outside the list')
+    assert.equal(r.target, 500)
+    assert.deepEqual(r.leftOff, [])
+    assert.ok(r.pool.some((t) => Number(t.id) === 12815))
+    // An app-filled set still drops it.
+    assert.match(String(whyActivityTrackCannotBoard(list[300])), /skit, intro or segue/)
+    assert.equal(whyListTrackCannotBoard(list[300]), null)
+  })
+
+  it('what truly cannot go on is still left off a list, with the reason', () => {
+    const list = [song({ id: 1 }), song({ id: 2, path: ':F00:x.ogg' }), song({ id: 3, audioMissing: true })]
+    const r = planListOnlyBoarding(list, 10)
+    assert.equal(r.target, 1)
+    assert.deepEqual(r.leftOff.map((l) => l.id), [2, 3])
   })
 
   it('a list bigger than the size keeps its order and stops at the size', () => {

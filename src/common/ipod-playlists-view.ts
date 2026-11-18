@@ -198,6 +198,8 @@ export function skippedAddNotice(ipodName: string, cap: number | null, reason: s
     return `${ipodName} is full${cap ? ` (${cap.toLocaleString('en-US')} songs)` : ''}, so “${songTitle}” couldn’t go on it.`
   }
   if (reason === 'not-in-library') return `homemini doesn’t have “${songTitle}” in the library, so it couldn’t go on ${ipodName}.`
+  // homemini's list rule (2026-11-17): only Best of Bandcamp keeps short songs, intros and segues.
+  if (reason === 'skit') return `“${songTitle}” reads as a skit, intro or segue, and only Best of Bandcamp keeps those, so it couldn’t go on ${ipodName}.`
   return `“${songTitle}” couldn’t go on ${ipodName}.`
 }
 

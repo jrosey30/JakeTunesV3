@@ -53,6 +53,23 @@ export function leftOffLine(plan: Extract<OneSyncPlan, { ok: true }>): string | 
   return `${n(c)} ${c === 1 ? 'song can’t' : 'songs can’t'} go on`
 }
 
+/**
+ * A list iPod gets exactly its list (Jake, 2026-11-17: "nothing should have a list
+ * showing why its left off. thats why we have the ipod playlists in the first place").
+ * The only songs it can't take are true impossibilities (no audio file anywhere, a file
+ * type that can't be converted, not in this library): a sync error to fix, said in one
+ * line, never a standing "can't go on" list. null when every song can go on.
+ * "Can’t sync 2 songs on punkPod’s list: Ghost Band — Gone (its audio file is missing everywhere) and 1 more."
+ */
+export function listErrorLine(plan: Extract<OneSyncPlan, { ok: true }>): string | null {
+  const c = plan.leftOff.length
+  if (c === 0) return null
+  const first = plan.leftOff[0]
+  const name = `${first.artist ? `${first.artist} — ` : ''}${first.title}`
+  const more = c > 1 ? ` and ${n(c - 1)} more` : ''
+  return `Can’t sync ${n(c)} ${c === 1 ? 'song' : 'songs'} on ${plan.ipodName}’s list: ${name} (${first.why})${more}.`
+}
+
 /** "Playlists: Top 25 Most Played, 90's Music, On-The-Go 1, Skate Night" — null when unknown. */
 export function playlistsLine(plan: Extract<OneSyncPlan, { ok: true }>): string | null {
   if (!plan.playlists) return null

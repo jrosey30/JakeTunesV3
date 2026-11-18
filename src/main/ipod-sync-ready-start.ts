@@ -11,7 +11,7 @@
  */
 import { Notification, type BrowserWindow } from 'electron'
 import { join } from 'node:path'
-import { activityTrackCanBoard, pickReplacementTracks } from './activity-fill.ts'
+import { activityTrackCanBoard, listTrackCanBoard, pickReplacementTracks } from './activity-fill.ts'
 import { ipodStateDirFor, loadIpodRegistry } from './ipod-identity.ts'
 import { createIpodListClient } from './ipod-list-client.ts'
 import { createIpodSyncReady, readManifestIds, type IpodSyncReadyRunner, type SyncBoarding } from './ipod-sync-ready.ts'
@@ -90,6 +90,7 @@ export function startIpodSyncReady(host: IpodSyncReadyHost): IpodSyncReadyRunner
       for (const t of tracks) { const id = Number(t?.id); if (Number.isInteger(id)) byId.set(id, t) }
       return {
         canBoard: (id) => { const t = byId.get(id); return !!t && !ineligible.has(id) && activityTrackCanBoard(t) },
+        canBoardList: (id) => { const t = byId.get(id); return !!t && !ineligible.has(id) && listTrackCanBoard(t) },
         fill: (taken, needed) => pickReplacementTracks(tracks, taken, needed, ineligible).map((t) => Number(t.id)),
       }
     },
