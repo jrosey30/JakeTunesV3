@@ -56,6 +56,7 @@ import {
   type TsaSeal,
 } from './ipod-sync-tsa.ts'
 import { ensureContiguousDb as platformEnsureContiguousDb } from './ipod-db-contiguity.ts'
+import { clearLocalArtwork, installArtworkOnIpod, prepareArtworkArgs } from './ipod-artwork.ts'
 import {
   confirmWriteOnCard,
   flushCardCaches,
@@ -149,6 +150,10 @@ export interface ActivitySyncHost {
    *  Needed so 15 firmware-unlistable / dead-path rows do not shrink a
    *  1000-song request to 985. */
   loadReplacementTracks?: (excludeIds: Set<number>, needed: number) => Promise<Array<Record<string, unknown>>>
+  /** The app's own cover file for (artist, album), or null (2026-11-18). Set:
+   *  a colour iPod gets album art (core/ipod_artwork.py decides which iPods;
+   *  a mini gets none). Unset: no art is looked for. */
+  resolveArtworkFile?: (artist: string, album: string) => Promise<string | null>
   /** Tests only: a fake card has no device node to unmount. Production leaves it unset. */
   remountVolume?: typeof platformRemountVolume
   /** Tests only: force the contiguity step to fail. Production leaves it unset. */
@@ -1226,9 +1231,14 @@ async function runActivitySyncHolding(
       try { await copyFile(ipodDb, ipodDb + '.bak') } catch { /* non-fatal */ }
     }
     const localDb = join(host.tempDir, `jaketunes-itunesdb-${host.pid}`)
+    // Album covers for a colour iPod (ipod-artwork.ts); nothing for a mini.
+    const localArt = join(host.tempDir, `jaketunes-artwork-${host.pid}`)
+    const artArgs = host.resolveArtworkFile
+      ? await prepareArtworkArgs(tracks, host.resolveArtworkFile, localArt, (line) => console.log(`activity-sync: ${line}`))
+      : []
     const written = await spawnJson(
       python,
-      [host.coreScript('core/db_reader.py'), '--write', localDb, '--template', ipodDb, '--ipod-root', IPOD_MOUNT],
+      [host.coreScript('core/db_reader.py'), '--write', localDb, '--template', ipodDb, '--ipod-root', IPOD_MOUNT, ...artArgs],
       JSON.stringify({ tracks, playlists, masterName: input.ipodName }),
     )
     if (written.err && (written.err as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -1266,6 +1276,14 @@ async function runActivitySyncHolding(
         copied, copyErrors, target,
         error: `The catalog was written but could not be laid down as one piece (${contig.error}). Previous catalog is untouched. Sync again.`,
       })
+    }
+    if (artArgs.length > 0) {
+      try {
+        console.log(`activity-sync: ${(await installArtworkOnIpod(localArt, IPOD_MOUNT)).summary}`)
+      } catch (artErr) {
+        console.warn('activity-sync: artwork install failed (non-fatal):', artErr)
+      }
+      await clearLocalArtwork(localArt)
     }
     if (interim) say('song list for the songs that stay written')
     else host.sendProgress({ phase: 'db', current: 1, total: 1, title: 'iTunesDB written' })
