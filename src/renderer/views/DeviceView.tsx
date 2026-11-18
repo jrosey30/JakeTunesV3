@@ -160,6 +160,10 @@ export default function DeviceView() {
   // set while it waits, so the Stop button can end the wait.
   const [fetchingFirst, setFetchingFirst] = useState(false)
   const stopFetchRef = useRef(false)
+  // False once this page is gone: a wait that outlives the page must never start a sync
+  // nobody is watching (review of #433).
+  const aliveRef = useRef(true)
+  useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false } }, [])
   const tracksRef = useRef(state.tracks)
   tracksRef.current = state.tracks
   const planSeq = useRef(0)
@@ -514,12 +518,21 @@ export default function DeviceView() {
       // isn't already on the iPod) would be fetched mid-sync. Ask first; more
       // missing than Jake agreed to leave off asks again.
       let local = await checkReady(fresh)
+      // A list iPod must know what's on this Mac before anything touches the card.
+      if (fresh.kind === 'list' && !local) {
+        const msg = `Couldn’t check which of ${fresh.ipodName}’s songs are on this Mac. Nothing on the iPod was changed. Try Sync again.`
+        setSyncStatus({ state: 'error', message: msg })
+        activity.setSync({ active: true, step: msg })
+        setTimeout(() => activity.setSync(null), 6000)
+        return
+      }
       // A list iPod gets exactly its list (Jake, 2026-11-17): a song not on this Mac
       // is fetched from homemini first (the Wait path), never left off. The card is
       // not touched until every song is here, or the wait ends in one error line.
       if (fresh.ok && fresh.kind === 'list' && local && local.missing.length > 0) {
         stopFetchRef.current = false
         setFetchingFirst(true)
+        const leave = (): boolean => !aliveRef.current || stopFetchRef.current
         try {
           void window.electronAPI.ipodLocalKick?.()
           const startedAt = Date.now()
@@ -527,6 +540,7 @@ export default function DeviceView() {
           let lastMissing = local.missing.length
           for (;;) {
             const step = listFetchStep(local, { startedAt, lastProgressAt, now: Date.now(), ipodName: fresh.ipodName })
+            if (leave()) { setSyncStatus({ state: 'idle' }); activity.setSync(null); return }
             if (step.kind === 'go') break
             if (step.kind === 'stuck') {
               setReady(local)
@@ -538,16 +552,32 @@ export default function DeviceView() {
             setSyncStatus({ state: 'syncing', step: step.line })
             activity.setSync({ active: true, step: step.line })
             await new Promise((r) => window.setTimeout(r, 4000))
-            if (stopFetchRef.current) {
+            if (leave()) {
               setSyncStatus({ state: 'idle' })
               activity.setSync(null)
               return
             }
-            local = await checkReady(fresh)
-            if (local && local.missing.length < lastMissing) { lastMissing = local.missing.length; lastProgressAt = Date.now() }
+            // A failed check is not "everything is here": keep the last answer and keep
+            // waiting (no progress for 10 minutes ends it in one error line).
+            const next = await checkReady(fresh)
+            if (next) local = next
+            if (local.missing.length < lastMissing) { lastMissing = local.missing.length; lastProgressAt = Date.now() }
           }
         } finally {
           setFetchingFirst(false)
+        }
+        // The wait can take minutes: the page may be gone, Stop may have come in, or another
+        // iPod may be plugged in now. Only the same iPod with the same list syncs.
+        if (leave()) { setSyncStatus({ state: 'idle' }); activity.setSync(null); return }
+        const still = (await ensureIpodMounted()) ? await refreshPlan() : null
+        const same = !!still && still.ok && still.kind === fresh.kind && still.ipodName === fresh.ipodName
+          && still.trackIds.length === fresh.trackIds.length && still.trackIds.every((id, i) => id === fresh.trackIds[i])
+        if (!same || leave()) {
+          const msg = `${fresh.ipodName} or its list changed while its songs were downloading. Nothing on the iPod was changed. Press Sync again.`
+          setSyncStatus({ state: 'error', message: msg })
+          activity.setSync({ active: true, step: msg })
+          setTimeout(() => activity.setSync(null), 6000)
+          return
         }
         setReady(local)
       }
