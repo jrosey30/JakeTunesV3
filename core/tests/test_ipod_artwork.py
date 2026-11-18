@@ -109,7 +109,11 @@ def part_db():
     check('patch touches only +0x7C, +0x80, +0xA4, +0x160', changed <= allowed, sorted(changed - allowed))
     check('patched fields read back', struct.unpack_from('<H', patched, 0x7C)[0] == 1
           and struct.unpack_from('<I', patched, 0x80)[0] == 5000 and patched[0xA4] == 1
-          and struct.unpack_from('<I', patched, 0x160)[0] == 0x65)
+          and struct.unpack_from('<I', patched, 0x160)[0] == 0)  # libgpod Video: mhii_link 0
+    def _bad(_p): raise OSError('no Pillow')
+    got = A.prepare_covers([{'id': 1, 'artworkPath': '/x/a.jpg'}, {'id': 2, 'artworkPath': '/x/b.jpg'}],
+                           A.VIDEO_COVER_FORMATS, lambda *_: None, read=_bad)
+    check('every cover unreadable: None (iPod keeps its covers)', got is None, got)
     short = bytearray(0xD4)
     short[0:4] = b'mhit'
     struct.pack_into('<I', short, 4, 0xD4)

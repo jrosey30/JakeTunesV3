@@ -23,7 +23,8 @@ Byte layouts follow libgpod (strawberry-libgpod master, src/):
   - db-artwork-writer.c
                     non-sparse ipod_artwork_db_set_ids: every track with art
                     gets its OWN artwork id, consecutively from 0x64, and
-                    mhii_link = that id; write_mhii: song_id = track dbid
+                    mhii_link = 0 (only sparse-artwork iPods use the link,
+                    so the Video gets 0 here too); write_mhii: song_id = track dbid
                     (mhit +0x70), orig_img_size = artwork_size (the track's
                     + 1, itdb_track.c); write_mhfd: unknown2 = 2,
                     next_id = highest id, unknown_flag1 = 2; mhsd 1/2/3 =
@@ -215,6 +216,11 @@ def prepare_covers(tracks, formats, log, read=None):
     log('artwork: %d cover(s) for %d of %d song(s)%s'
         % (sum(1 for c in covers.values() if c), len(by_track), len(tracks),
            ', %d unreadable' % failed if failed else ''))
+    if failed and not by_track:
+        # Every cover failed (e.g. no Pillow on this Mac): leave the iPod's
+        # existing covers alone instead of installing an empty ArtworkDB.
+        log('artwork: no cover could be read; keeping what the iPod has')
+        return None
     return by_track
 
 
@@ -249,7 +255,9 @@ def patch_mhit_artwork(mhit, image_id, artwork_size):
         struct.pack_into('<I', rec, MHIT_ARTWORK_SIZE, 0)
         rec[MHIT_HAS_ARTWORK] = 2
     if hlen >= MHIT_MHII_LINK + 4:
-        struct.pack_into('<I', rec, MHIT_MHII_LINK, image_id or 0)
+        # libgpod's non-sparse (iPod Video) writer sets mhii_link = 0 for
+        # every track; the Video matches covers by song id (+0x70).
+        struct.pack_into('<I', rec, MHIT_MHII_LINK, 0)
     return bytes(rec)
 
 
