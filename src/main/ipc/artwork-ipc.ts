@@ -7,7 +7,6 @@
  * directly, so the host only carries genuinely main-owned state.
  */
 import { app, dialog } from 'electron'
-import { createHash } from 'crypto'
 import { join } from 'path'
 import { copyFile, mkdir, stat, unlink, writeFile } from 'fs/promises'
 import type { BrowserWindow } from 'electron'
@@ -18,12 +17,11 @@ import { triggerSync } from '../sync-orchestrator'
 import { safeIpcError } from '../safe-ipc-error'
 import { getCoverArtUrlByMbid, getMusicBrainzReleaseMbid } from '../external'
 import {
-  type ParsedPicture, artworkHash, artworkLookupRebuildPromise, artworkNormIndexMem,
-  artworkSidecarNormMem, extractAndSaveEmbeddedArtwork, getArtworkDir,
+  type ParsedPicture, artworkHash, extractAndSaveEmbeddedArtwork, getArtworkDir,
   getArtworkLockedBackupDir, invalidateArtBytes, loadArtworkIndex, loadArtworkLocks,
-  mergeArtworkSidecarsIntoIndex, normalizeArtworkPartServer, resolveArtworkCache,
+  mergeArtworkSidecarsIntoIndex,
   saveArtworkIndex, scheduleArtworkLookupRebuild, setArtworkIndexMem, setArtworkLock,
-  searchDeezerArt,
+  searchDeezerArt, resolveArtworkHash, type ArtworkResolveSource,
 } from '../artwork-engine.ts'
 import { type ArtworkFetchProvider, fetchedArtworkSidecar } from '../artwork-provenance.ts'
 import { installPosterImage, withPosterKeys } from '../concert-poster.ts'
@@ -414,75 +412,10 @@ export function registerArtworkIpc(ipc: IpcRegistrar, host: ArtworkIpcHost): voi
    * Returns the matching hash (versioned if present in the index) or null.
    * Renderer caches the result via ADD_ARTWORK so future lookups are sync.
    */
-  async function fileExists(absPath: string): Promise<boolean> {
-    try { await stat(absPath); return true } catch { return false }
-  }
-
-  ipc.handle('resolve-artwork', async (_event, artist: string, album: string): Promise<{ ok: boolean; hash: string | null; source?: 'exact' | 'normalized' | 'disk-hash' | 'disk-normalized' }> => {
-    if (!artist || !album) return { ok: true, hash: null }
-    const resolveKey = `${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`
-    if (resolveArtworkCache.has(resolveKey)) {
-      return { ok: true, hash: resolveArtworkCache.get(resolveKey)! }
-    }
-    const dir = getArtworkDir()
-    const index = await loadArtworkIndex()
-    if (artworkLookupRebuildPromise) {
-      await artworkLookupRebuildPromise.catch(() => {})
-    }
-
-    // 1. Exact JSON key
-    const exactKey = `${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`
-    if (index[exactKey]) {
-      const bareHash = String(index[exactKey]).replace(/_\d+$/, '')
-      if (await fileExists(join(dir, `${bareHash}.jpg`))) {
-        resolveArtworkCache.set(resolveKey, index[exactKey])
-        return { ok: true, hash: index[exactKey], source: 'exact' }
-      }
-    }
-
-    // 2. Normalized JSON key — O(1) via prebuilt index (was O(n) scan).
-    const nArtist = normalizeArtworkPartServer(artist)
-    const nAlbum = normalizeArtworkPartServer(album)
-    const wantedNorm = `${nArtist}|||${nAlbum}`
-    const normHit = artworkNormIndexMem?.get(wantedNorm)
-    if (normHit) {
-      const bareHash = String(normHit).replace(/_\d+$/, '')
-      if (await fileExists(join(dir, `${bareHash}.jpg`))) {
-        resolveArtworkCache.set(resolveKey, normHit)
-        return { ok: true, hash: normHit, source: 'normalized' }
-      }
-    }
-
-    // 3. Compute the hash from CURRENT strings (post-Get-Info edit case
-    // where the JSON entry was never updated but the file IS on disk
-    // under a key we can recompute).
-    const directHash = artworkHash(artist, album)
-    if (await fileExists(join(dir, `${directHash}.jpg`))) {
-      resolveArtworkCache.set(resolveKey, directHash)
-      return { ok: true, hash: directHash, source: 'disk-hash' }
-    }
-
-    // 4. Normalized-string hash variants — try hashing the normalized
-    // (parens-stripped, diacritics-folded) artist+album. Catches the
-    // case where a track was imported with "(Remastered)" in the title
-    // and the user later cleaned it up, OR vice versa.
-    const normalizedHash = createHash('md5')
-      .update(`${nArtist}|||${nAlbum}`)
-      .digest('hex')
-    if (await fileExists(join(dir, `${normalizedHash}.jpg`))) {
-      resolveArtworkCache.set(resolveKey, normalizedHash)
-      return { ok: true, hash: normalizedHash, source: 'disk-normalized' }
-    }
-
-    // 5. Sidecar index — O(1) lookup (was linear readdir+parse per miss).
-    const sidecarHash = artworkSidecarNormMem?.get(wantedNorm)
-    if (sidecarHash && await fileExists(join(dir, `${sidecarHash}.jpg`))) {
-      resolveArtworkCache.set(resolveKey, sidecarHash)
-      return { ok: true, hash: sidecarHash, source: 'disk-normalized' }
-    }
-
-    resolveArtworkCache.set(resolveKey, null)
-    return { ok: true, hash: null }
+  ipc.handle('resolve-artwork', async (_event, artist: string, album: string): Promise<{ ok: boolean; hash: string | null; source?: ArtworkResolveSource }> => {
+    // The chain lives in artwork-engine.ts resolveArtworkHash so the iPod
+    // sync finds exactly the cover the app shows (2026-11-18).
+    return { ok: true, ...(await resolveArtworkHash(artist, album)) }
   }, { public: true })
 
   /**

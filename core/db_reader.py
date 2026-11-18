@@ -8,6 +8,9 @@ import plistlib
 import hashlib
 import unicodedata
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import ipod_artwork  # noqa: E402  (core/ipod_artwork.py)
+
 MAC_EPOCH_OFFSET = 2082844800  # seconds between 1904-01-01 and 1970-01-01
 
 _legacy_lib = os.path.expanduser("~/Music2/JakeTunesLibrary")
@@ -1143,9 +1146,18 @@ def build_mhyp_record(name, dbids, is_master, template_header=None,
     return bytes(hdr) + bytes(mhods) + bytes(items)
 
 
-def write_itunesdb(tracks, playlists, template_path, output_path, ipod_root=None, master_name=None):
+def write_itunesdb(tracks, playlists, template_path, output_path, ipod_root=None, master_name=None,
+                   artwork_out=None, artwork_report=None, artwork_map=None):
     """Rebuild the iPod iTunesDB from JakeTunes library data.
-    master_name: the iPod's own name, written as the master playlist title."""
+    master_name: the iPod's own name, written as the master playlist title.
+    artwork_out: a LOCAL directory. When the iPod at ipod_root is a colour
+      model core/ipod_artwork.py knows, ArtworkDB + .ithmb files land there
+      (from each track's 'artworkPath') and the mhits carry the artwork
+      fields. Any other iPod: the directory is left empty and no mhit byte
+      changes. A failure here never fails the catalog: songs go without art.
+    artwork_report: optional dict filled with what happened.
+    artwork_map: optional {str(track id): cover path}; wins over a row's
+      own 'artworkPath'."""
     # ⚠️ TWIN: src/main/ipod-reconcile.ts fileSizeForItunesDb
     # mhit 0x24 MUST be the file on THIS card. library.json fileSize is often
     # a stale ALAC length (Beyond Me 31MB vs 7.5MB on disk). Mini firmware
@@ -1378,15 +1390,75 @@ def write_itunesdb(tracks, playlists, template_path, output_path, ipod_root=None
     struct.pack_into('<I', mhlt, 4, 92)
     struct.pack_into('<I', mhlt, 8, len(tracks))
 
-    track_data = bytearray(mhlt)
-    for t in tracks:
-        # Use track's own existing mhit header if available (preserves codec, bitrate, etc.)
-        path = t.get('path', '')
-        is_new = path not in path_to_mhit
-        per_track_hdr = path_to_mhit.get(path, template_mhit)
-        extra_mhods = path_to_extra_mhods.get(path)
-        track_data += build_mhit_record(t, track_dbids[t['id']], per_track_hdr,
-                                         extra_mhods=extra_mhods, is_new=is_new)
+    def build_track_data(art_covers):
+        """art_covers None = artwork off (every mhit byte as before this
+        feature); a dict = colour iPod: every mhit gets its artwork fields."""
+        data = bytearray(mhlt)
+        entries = []
+        for t in tracks:
+            # Use track's own existing mhit header if available (preserves codec, bitrate, etc.)
+            path = t.get('path', '')
+            is_new = path not in path_to_mhit
+            per_track_hdr = path_to_mhit.get(path, template_mhit)
+            extra_mhods = path_to_extra_mhods.get(path)
+            rec = build_mhit_record(t, track_dbids[t['id']], per_track_hdr,
+                                    extra_mhods=extra_mhods, is_new=is_new)
+            if art_covers is not None:
+                cover = art_covers.get(t['id'])
+                if cover:
+                    # Non-sparse (iPod Video): one artwork id per song, in order.
+                    image_id = ipod_artwork.ARTWORK_MIN_ID + len(entries)
+                    rec = ipod_artwork.patch_mhit_artwork(rec, image_id, cover['size'])
+                    entries.append({'id': image_id, 'song_id': ipod_artwork.song_id_of(rec),
+                                    'cover': cover})
+                else:
+                    rec = ipod_artwork.patch_mhit_artwork(rec, 0, 0)
+            data += rec
+        return data, entries
+
+    art_covers = None
+    art_model = None
+    if artwork_out is not None:
+        art_report = artwork_report if artwork_report is not None else {}
+        try:
+            art_model, why = ipod_artwork.artwork_model_for_ipod(ipod_root)
+            art_report['model'] = art_model
+            art_report['why'] = why
+            if art_model:
+                # A cover per song: the --artwork-map file (song id -> cover
+                # path) when given, else a row's own 'artworkPath'.
+                wanted = [{'id': t['id'],
+                           'artworkPath': (artwork_map or {}).get(str(t['id'])) or t.get('artworkPath')}
+                          for t in tracks]
+                art_covers = ipod_artwork.prepare_covers(
+                    wanted, ipod_artwork.COVER_FORMATS[art_model],
+                    lambda m: print(m, file=sys.stderr))
+            else:
+                print(f"artwork: none for this iPod ({why})", file=sys.stderr)
+        except Exception as e:  # noqa: BLE001 — art never fails the music
+            art_covers = None
+            art_report['error'] = f"{type(e).__name__}: {e}"
+            print(f"artwork: skipped ({type(e).__name__}: {e})", file=sys.stderr)
+        ipod_artwork.clear_artwork_dir(artwork_out)
+
+    track_data, art_entries = build_track_data(art_covers)
+    if art_covers is not None:
+        try:
+            art_db, art_files = ipod_artwork.build_artwork_db(
+                art_entries, ipod_artwork.COVER_FORMATS[art_model])
+            ipod_artwork.parse_artworkdb(art_db)   # never hand over a DB we can't read back
+            ipod_artwork.write_artwork_dir(artwork_out, art_db, art_files)
+            art_report.update({'images': len(art_entries), 'bytes': len(art_db),
+                               'ithmb': {k: len(v) for k, v in art_files.items()}})
+            print(f"artwork: ArtworkDB {len(art_db):,} bytes, {len(art_entries)} song(s) with a cover, "
+                  + ', '.join(f"{k} {len(v):,}" for k, v in sorted(art_files.items())), file=sys.stderr)
+        except Exception as e:  # noqa: BLE001 — rebuild the songs without art
+            ipod_artwork.clear_artwork_dir(artwork_out)
+            art_report['error'] = f"{type(e).__name__}: {e}"
+            art_report.pop('images', None)
+            print(f"artwork: could not build ArtworkDB ({type(e).__name__}: {e}); writing songs without art",
+                  file=sys.stderr)
+            track_data, _ = build_track_data(None)
 
     type1_mhsd = bytearray(96)
     struct.pack_into('<4s', type1_mhsd, 0, b'mhsd')
@@ -1573,7 +1645,7 @@ if __name__ == "__main__":
         idx = sys.argv.index('--write')
         db_path = sys.argv[idx + 1] if idx + 1 < len(sys.argv) else None
         if not db_path:
-            print("Usage: db_reader.py --write <output_path> [--template <itunesdb>] [--ipod-root <mount>]", file=sys.stderr)
+            print("Usage: db_reader.py --write <output_path> [--template <itunesdb>] [--ipod-root <mount>] [--artwork-out <local dir>]", file=sys.stderr)
             sys.exit(1)
         template = db_path
         if '--template' in sys.argv:
@@ -1583,7 +1655,23 @@ if __name__ == "__main__":
         if '--ipod-root' in sys.argv:
             ridx = sys.argv.index('--ipod-root')
             root = sys.argv[ridx + 1] if ridx + 1 < len(sys.argv) else None
+        art_out = None
+        if '--artwork-out' in sys.argv:
+            aidx = sys.argv.index('--artwork-out')
+            art_out = sys.argv[aidx + 1] if aidx + 1 < len(sys.argv) else None
+        art_map = None
+        if '--artwork-map' in sys.argv:
+            midx = sys.argv.index('--artwork-map')
+            try:
+                with open(sys.argv[midx + 1], 'r', encoding='utf-8') as f:
+                    art_map = json.load(f)
+                if not isinstance(art_map, dict):
+                    art_map = None
+            except (IndexError, OSError, ValueError) as e:
+                print(f"artwork: map unreadable ({type(e).__name__}); no covers this sync", file=sys.stderr)
+                art_map = None
         input_data = json.load(sys.stdin)
+        art_report = {}
         count = write_itunesdb(
             input_data['tracks'],
             input_data.get('playlists', []),
@@ -1591,8 +1679,14 @@ if __name__ == "__main__":
             db_path,
             ipod_root=root,
             master_name=input_data.get('masterName'),
+            artwork_out=art_out,
+            artwork_report=art_report,
+            artwork_map=art_map,
         )
-        json.dump({'ok': True, 'count': count}, sys.stdout)
+        out = {'ok': True, 'count': count}
+        if art_out is not None:
+            out['artwork'] = art_report
+        json.dump(out, sys.stdout)
         sys.exit(0)
 
     # ── Read mode: parse iPod DB and output JSON ──

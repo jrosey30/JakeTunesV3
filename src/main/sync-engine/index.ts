@@ -27,6 +27,8 @@ import { refuseUnlessOriginalIpod, resolveIpodState } from '../ipod-identity.ts'
 import type { SyncConvertOptions } from '../ipc/sync-ipc.ts'
 import { bindActivityReplacements, runActivitySync } from '../ipod-activity-engine.ts'
 import { ensureContiguousDb } from '../ipod-db-contiguity.ts'
+import { clearLocalArtwork, installArtworkOnIpod, prepareArtworkArgs } from '../ipod-artwork.ts'
+import { resolveArtworkFile } from '../artwork-engine.ts'
 import { orderForIpodCatalog, conformCatalogIdOrder } from '../ipod-catalog-order.ts'
 import {
   ACTIVITY_WIPE_MAX_PASSES, activitySetProven, activityWipeEmptyStreak, activityWipeProvenEmpty,
@@ -425,6 +427,7 @@ export function createSyncEngine(host: SyncEngineHost) {
         // #47 (fill-to-N): next eligible library songs when a boarded one cannot copy.
         // A list-only iPod gets no library loader at all — its set is its list.
         loadReplacementTracks: listOnlyIpod ? undefined : bindActivityReplacements(getLibraryTracks, getConcertOwnedTrackIds),
+        resolveArtworkFile,
       }, { tracks, playlists, convertOptions, listOnly: listOnlyIpod, ipodName })
     }
     if (syncOpts?.wipeFirst) {
@@ -1713,10 +1716,17 @@ export function createSyncEngine(host: SyncEngineHost) {
     // (Jake 2026-08-16). Mini Songs was 450.
     const localDb = join(app.getPath('temp'), `jaketunes-itunesdb-${process.pid}`)
     const scriptPath = join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/db_reader.py')
+    // Album covers (2026-11-18): each song carries the app's own cover file;
+    // db_reader builds ArtworkDB + .ithmb here on the Mac for a colour iPod
+    // only (core/ipod_artwork.py), and leaves this folder empty for a mini.
+    const localArt = join(app.getPath('temp'), `jaketunes-artwork-${process.pid}`)
+    const artArgs = await prepareArtworkArgs(tracks, resolveArtworkFile, localArt,
+      (line) => console.log(`sync-to-ipod: ${line}`))
     return await new Promise((resolve) => {
       const input = JSON.stringify({ tracks, playlists, masterName: ipodName })
       const py = spawn(PYTHON_CMD ?? 'python3', [
         scriptPath, '--write', localDb, '--template', ipodDb, '--ipod-root', IPOD_MOUNT,
+        ...artArgs,
       ])
       py.on('error', (err: Error) => {
         if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -1791,6 +1801,15 @@ export function createSyncEngine(host: SyncEngineHost) {
             })
             return
           }
+          // Covers onto the card before the catalog (a no-op for a mini).
+          // Never fails the sync: see ipod-artwork.ts.
+          try {
+            const art = await installArtworkOnIpod(localArt, IPOD_MOUNT)
+            console.log(`sync-to-ipod: ${art.summary}`)
+          } catch (artErr) {
+            console.warn('sync-to-ipod: artwork install failed (non-fatal):', artErr)
+          }
+          await clearLocalArtwork(localArt)
           sendToRenderer('sync-progress', {
             phase: 'db', current: 1, total: 1, title: 'iTunesDB written',
           })

@@ -163,6 +163,100 @@ export function putArtBytes(hash: string, body: ArrayBuffer): void {
   ART_BYTES_CACHE.set(key, body)
 }
 
+export type ArtworkResolveSource = 'exact' | 'normalized' | 'disk-hash' | 'disk-normalized'
+
+/**
+ * 4.5.0-51 — Authoritative artwork resolver (the 'resolve-artwork' IPC and,
+ * since 2026-11-18, the iPod sync's covers: the iPod gets exactly the cover
+ * the app shows, from this cache, never re-fetched).
+ *
+ *   1. Exact JSON key (`${artist.toLowerCase().trim()}|||${album...}`)
+ *   2. Normalized JSON key — parens/diacritics/etc. stripped on both sides
+ *   3. Recompute artworkHash from CURRENT strings; check if the file
+ *      exists on disk (catches cases where the JSON index entry was lost
+ *      but the JPG is still sitting there)
+ *   4. Normalized-string hash variants checked on disk
+ *   5. Sidecar index
+ *
+ * Returns the matching hash (versioned if present in the index) or null.
+ * The file is `${bareArtHash(hash)}.jpg` in getArtworkDir().
+ */
+export async function resolveArtworkHash(artist: string, album: string): Promise<{ hash: string | null; source?: ArtworkResolveSource }> {
+  if (!artist || !album) return { hash: null }
+  const resolveKey = `${artist.toLowerCase().trim()}|||${album.toLowerCase().trim()}`
+  if (resolveArtworkCache.has(resolveKey)) {
+    return { hash: resolveArtworkCache.get(resolveKey)! }
+  }
+  const fileExists = async (absPath: string): Promise<boolean> => {
+    try { await stat(absPath); return true } catch { return false }
+  }
+  const dir = getArtworkDir()
+  const index = await loadArtworkIndex()
+  if (artworkLookupRebuildPromise) {
+    await artworkLookupRebuildPromise.catch(() => {})
+  }
+
+  // 1. Exact JSON key
+  const exactKey = resolveKey
+  if (index[exactKey]) {
+    const bareHash = String(index[exactKey]).replace(/_\d+$/, '')
+    if (await fileExists(join(dir, `${bareHash}.jpg`))) {
+      resolveArtworkCache.set(resolveKey, index[exactKey])
+      return { hash: index[exactKey], source: 'exact' }
+    }
+  }
+
+  // 2. Normalized JSON key — O(1) via prebuilt index (was O(n) scan).
+  const nArtist = normalizeArtworkPartServer(artist)
+  const nAlbum = normalizeArtworkPartServer(album)
+  const wantedNorm = `${nArtist}|||${nAlbum}`
+  const normHit = artworkNormIndexMem?.get(wantedNorm)
+  if (normHit) {
+    const bareHash = String(normHit).replace(/_\d+$/, '')
+    if (await fileExists(join(dir, `${bareHash}.jpg`))) {
+      resolveArtworkCache.set(resolveKey, normHit)
+      return { hash: normHit, source: 'normalized' }
+    }
+  }
+
+  // 3. Compute the hash from CURRENT strings (post-Get-Info edit case
+  // where the JSON entry was never updated but the file IS on disk
+  // under a key we can recompute).
+  const directHash = artworkHash(artist, album)
+  if (await fileExists(join(dir, `${directHash}.jpg`))) {
+    resolveArtworkCache.set(resolveKey, directHash)
+    return { hash: directHash, source: 'disk-hash' }
+  }
+
+  // 4. Normalized-string hash variants — try hashing the normalized
+  // (parens-stripped, diacritics-folded) artist+album. Catches the
+  // case where a track was imported with "(Remastered)" in the title
+  // and the user later cleaned it up, OR vice versa.
+  const normalizedHash = createHash('md5')
+    .update(`${nArtist}|||${nAlbum}`)
+    .digest('hex')
+  if (await fileExists(join(dir, `${normalizedHash}.jpg`))) {
+    resolveArtworkCache.set(resolveKey, normalizedHash)
+    return { hash: normalizedHash, source: 'disk-normalized' }
+  }
+
+  // 5. Sidecar index — O(1) lookup (was linear readdir+parse per miss).
+  const sidecarHash = artworkSidecarNormMem?.get(wantedNorm)
+  if (sidecarHash && await fileExists(join(dir, `${sidecarHash}.jpg`))) {
+    resolveArtworkCache.set(resolveKey, sidecarHash)
+    return { hash: sidecarHash, source: 'disk-normalized' }
+  }
+
+  resolveArtworkCache.set(resolveKey, null)
+  return { hash: null }
+}
+
+/** The cover file the app shows for (artist, album), or null. */
+export async function resolveArtworkFile(artist: string, album: string): Promise<string | null> {
+  const { hash } = await resolveArtworkHash(artist, album)
+  return hash ? join(getArtworkDir(), `${String(hash).replace(/_\d+$/, '')}.jpg`) : null
+}
+
 export async function loadArtworkIndex(): Promise<Record<string, string>> {
   if (artworkIndexMem) return artworkIndexMem
   try {
