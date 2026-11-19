@@ -53,3 +53,21 @@ describe('buildSyncHistory', () => {
     assert.deepEqual(buildSyncHistory('', ''), [])
   })
 })
+
+// 2026-11-19: 'ipod-artwork-remember' was registered with no options and the
+// app's registrar (ipc-register.ts) threw at startup. Every channel this
+// module registers must pass the same rule the real registrar enforces.
+import { assertIpcRegisterOptions } from '../ipc-register.ts'
+import { registerSyncHistoryIpc } from '../ipc/sync-history-ipc.ts'
+
+test('every channel registerSyncHistoryIpc registers passes the app registrar\'s rule', () => {
+  const seen: string[] = []
+  const strict = {
+    handle(channel: string, _fn: unknown, options?: unknown) {
+      assertIpcRegisterOptions(channel, options as Parameters<typeof assertIpcRegisterOptions>[1])
+      seen.push(channel)
+    },
+  }
+  registerSyncHistoryIpc(strict as never, { stateDir: '/tmp/none', dir: async () => null, artworkModelsFile: '/tmp/none.json', ipodPlugged: () => false })
+  for (const ch of ['get-sync-history', 'ipod-artwork-families', 'ipod-artwork-remember']) assert.ok(seen.includes(ch), ch)
+})

@@ -15,6 +15,7 @@
 import { join } from 'path'
 import { readFile } from 'fs/promises'
 import { artworkFamilies, rememberArtworkFamily } from '../ipod-artwork.ts'
+import { REFUSED_SENDER } from '../ipc-register.ts'
 import type { IpcRegistrar } from '../ipc-register.ts'
 
 interface PicksRow {
@@ -151,7 +152,7 @@ export function registerSyncHistoryIpc(
     } catch (err) {
       return { ok: false, error: (err as Error)?.message ?? 'could not save' }
     }
-  })
+  }, { refuse: REFUSED_SENDER })   // a write: the main window only
   ipc.handle('get-sync-history', async (): Promise<{ ok: boolean; entries: SyncHistoryEntry[] }> => {
     const dir = host.dir ? await host.dir().catch(() => host.stateDir) : host.stateDir
     if (dir === null) return { ok: true, entries: [] }
