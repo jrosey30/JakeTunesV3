@@ -83,9 +83,9 @@ describe('the iPod list parser', () => {
       null, 'list', [], 42,
       doc({ id: 'Not An Id!' }),
       doc({ name: '' }),
-      doc({ cap: 0 }), doc({ cap: 5001 }), doc({ cap: 1.5 }), doc({ cap: '1000' }),
+      doc({ cap: 0 }), doc({ cap: 10001 }), doc({ cap: 1.5 }), doc({ cap: '1000' }),
       // with no songs, only the cap's own bounds refuse these (review of PR 413)
-      doc({ cap: 0, ids: [] }), doc({ cap: -1, ids: [] }), doc({ cap: -5000, ids: [] }), doc({ cap: 5001, ids: [] }),
+      doc({ cap: 0, ids: [] }), doc({ cap: -1, ids: [] }), doc({ cap: -5000, ids: [] }), doc({ cap: 10001, ids: [] }),
       doc({ ids: 'x' }), doc({ ids: [1, 2, '3'] }), doc({ ids: [1, 2.5] }), doc({ ids: [0] }), doc({ ids: [-4] }),
       doc({ ids: [5, 6, 5] }),
       doc({ updatedAt: '' }), doc({ updatedAt: undefined }),
@@ -95,8 +95,8 @@ describe('the iPod list parser', () => {
   it('refuses another iPod’s list', () => {
     assert.equal(parseIpodList(doc(), 'original-58ebb78e'), null)
   })
-  it('refuses a list over its cap, and any cap over 5000', () => {
-    assert.equal(IPOD_LIST_MAX, 5000)
+  it('refuses a list over its cap, and any cap over 10000', () => {
+    assert.equal(IPOD_LIST_MAX, 10000)
     assert.equal(parseIpodList(doc({ cap: 2, ids: [3, 2, 1] })), null)
     const big = Array.from({ length: IPOD_LIST_MAX + 1 }, (_, i) => i + 1)
     assert.equal(parseIpodList(doc({ cap: IPOD_LIST_MAX + 1, ids: big })), null)
@@ -104,12 +104,12 @@ describe('the iPod list parser', () => {
     // a list still at homemini's first cap can't carry more than that
     assert.equal(parseIpodList(doc({ cap: 1000, ids: big.slice(0, 1001) })), null)
   })
-  it('a list whose cap homemini raised carries every song, to 5000 (2026-11-13)', () => {
+  it('a list whose cap homemini raised carries every song, to 10000 (2026-11-13; 10000 from 2026-11-18)', () => {
     const ids = Array.from({ length: IPOD_LIST_MAX }, (_, i) => i + 1)
     const l = parseIpodList(doc({ cap: IPOD_LIST_MAX, ids }))
-    assert.equal(l?.cap, 5000)
-    assert.equal(l?.ids.length, 5000)
-    assert.deepEqual([l?.ids[0], l?.ids[4999]], [1, 5000])
+    assert.equal(l?.cap, 10000)
+    assert.equal(l?.ids.length, 10000)
+    assert.deepEqual([l?.ids[0], l?.ids[9999]], [1, 10000])
     assert.equal(parseIpodList(doc({ cap: 1834, ids: ids.slice(0, 1834) }))?.ids.length, 1834)
   })
   it('drops a bad history entry without refusing the list', () => {
@@ -250,7 +250,7 @@ describe('the pre-sync refresh of a list iPod’s pool file', () => {
     const pool = poolFileFor(tmp('jt-ipl-'), evil)
     const before = writePool(pool, [7, 8, 9])
     const over = Array.from({ length: 1001 }, (_, i) => i + 1)
-    for (const body of [doc({ ids: over }), doc({ cap: 2, ids: [3, 2, 1] }), doc({ cap: 5001, ids: [1] })]) {
+    for (const body of [doc({ ids: over }), doc({ cap: 2, ids: [3, 2, 1] }), doc({ cap: 10001, ids: [1] })]) {
       const client = createIpodListClient({ baseUrl: 'http://h', fetchImpl: async () => ({ ok: true, status: 200, json: async () => body }), warn: () => {} })
       const r = await refreshIpodPool(base(pool, () => client.get(EVIL_ID)))
       assert.deepEqual(r.poolIds, [7, 8, 9])

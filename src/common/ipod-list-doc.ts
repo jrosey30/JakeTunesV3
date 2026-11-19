@@ -28,11 +28,14 @@ import { cleanHeadline } from './ipod-ad.ts'
  * No iPod list is ever bigger than this, whatever homemini says its cap is.
  * Each list has its own `cap` on homemini (1000 for a new list, raised by hand);
  * this is the most any cap may be. 2026-11-13, Jake: "we will raise punkpod
- * capacity to 5000 songs. it is 256 GB. lets use it." The Original's Top 1000
+ * capacity to 5000 songs. it is 256 GB. lets use it." 2026-11-18: 10,000, when
+ * Jake's Bandcamp picks passed 5,000 ("increase capacity"; iBANDCAMP has
+ * 188 GB free). ⚠️ TWIN: JakeTunesMobile backend/src/util/ipodLists.ts MAX_CAP.
+ * The Original's Top 1000
  * is not a list and stays 1,000 (ONE_SYNC_SIZE, main/ipod-one-sync.ts).
  * The catalog writer is proven at this size (__tests__/ipod-db-5000.test.ts).
  */
-export const IPOD_LIST_MAX = 5000
+export const IPOD_LIST_MAX = 10000
 
 export type IpodListAddedBy = 'seed' | 'claude' | 'brain'
 
