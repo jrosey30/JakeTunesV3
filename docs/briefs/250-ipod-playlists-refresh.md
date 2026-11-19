@@ -23,12 +23,17 @@ writes made anywhere else (the phone, another desktop, a script) never arrived.
   - **every 5 minutes** while the window is visible (`IPOD_PLAYLISTS_REFRESH_MS`);
   - **the library-version poll moving** (`hub-catalog-updated`, which only
     replicas such as workmini run; the canonical MacBook has no such poll, so
-    there it is focus and the 5 minutes).
+    there it is focus and the 5 minutes). homemini's library version does not
+    move on an iPod playlist edit, so this signal only catches a playlist
+    change that happens to ride along with a library change; focus and the
+    5 minutes are what carry it.
   Focus, the timer and the library signal ask a device at most once per 30 s
   (`IPOD_PLAYLISTS_MIN_GAP_MS`), and every ask still goes through
   `refreshIpodPlaylists`, whose `inFlight` map makes asks that overlap one
   request. One timer and one set of listeners for all iPods, removed when the
-  last row unmounts. A write still re-reads at once, outside the gap.
+  last row unmounts. A write still re-reads at once, outside the gap; if a read
+  is already running it may have sent before the write was on disk, so the
+  write's re-read waits for it to end and asks again (review of #438).
 - `src/renderer/ipodPlaylists.ts`: `useIpodPlaylists` registers with it
   instead of asking once.
 

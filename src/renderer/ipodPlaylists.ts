@@ -167,8 +167,12 @@ async function afterWrite(device: string, ipodName: string, r: Awaited<ReturnTyp
     return { ok: false, error: r?.error ?? 'This build can’t save iPod playlists.' }
   }
   take(device, r.view)
-  // Sends what is waiting to homemini, then reads its answer.
-  void refreshIpodPlaylists(device, ipodName)
+  // Sends what is waiting to homemini, then reads its answer. A read already
+  // running (a focus or timer ask) may have sent before this write was on disk,
+  // so joining it could leave the write waiting: ask again once it ends.
+  const running = inFlight.get(device)
+  if (running) void running.finally(() => { void refreshIpodPlaylists(device, ipodName) })
+  else void refreshIpodPlaylists(device, ipodName)
   return { ok: true, id: r.id }
 }
 
