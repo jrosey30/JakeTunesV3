@@ -11,11 +11,14 @@
 //
 // A write changes the store at once (it is on this Mac's disk when main answers),
 // then asks main for a fresh read, which sends what is waiting to homemini.
+// While an iPod is on screen it is asked again on focus, every 5 minutes and when
+// the library-version poll moves (ipodPlaylistsLive.ts, Brief 250).
 // Same module-store idiom as ipodLists.ts.
 import { useEffect, useMemo, useSyncExternalStore } from 'react'
 import type { Track } from './types'
 import type { IpodPlaylistRow, IpodPlaylistsAnswer } from '../common/ipod-playlists-view'
 import { ipodDefaultPlaylists, type IpodDefaultPlaylist } from './utils/ipodDeviceDefaults'
+import { createIpodPlaylistsLive } from './ipodPlaylistsLive'
 
 export type { IpodPlaylistRow }
 
@@ -65,11 +68,31 @@ export function refreshIpodPlaylists(device: string, ipodName: string, fresh = t
   return p
 }
 
-/** One iPod's stored playlists (On-The-Go, Jake's own, approved AI ones), in order. `enabled` false = don't ask yet. */
+const live = createIpodPlaylistsLive({
+  refresh: (device, ipodName) => refreshIpodPlaylists(device, ipodName),
+  now: () => Date.now(),
+  visible: () => document.visibilityState !== 'hidden',
+  every: (fn, ms) => { const id = window.setInterval(fn, ms); return () => window.clearInterval(id) },
+  onWake: (fn) => {
+    const onVisible = (): void => { if (document.visibilityState === 'visible') fn() }
+    window.addEventListener('focus', fn)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      window.removeEventListener('focus', fn)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  },
+  // Replicas only (workmini): the canonical Mac runs no library-version poll.
+  onLibraryMoved: (fn) => window.electronAPI.onHubCatalogUpdated?.(() => fn()) ?? (() => {}),
+})
+
+/** One iPod's stored playlists (On-The-Go, Jake's own, approved AI ones), in order. `enabled` false = don't ask yet.
+ *  Kept fresh while mounted and enabled: focus, every 5 minutes, the library-version poll. */
 export function useIpodPlaylists(device: string | null, ipodName: string, enabled = true): IpodPlaylistsState {
   useSyncExternalStore(subscribe, getVersion)
   useEffect(() => {
-    if (device && enabled) void refreshIpodPlaylists(device, ipodName)
+    if (!device || !enabled) return
+    return live.watch(device, ipodName)
   }, [device, ipodName, enabled])
   return (device && byDevice.get(device)) || EMPTY
 }
