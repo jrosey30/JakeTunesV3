@@ -136,12 +136,13 @@ export function registerSyncHistoryIpc(
   /** `dir`: the plugged-in iPod's own state dir (each iPod keeps its own ledgers,
    *  step 2b) — null for an iPod JakeTunes doesn't know, which has no history.
    *  Absent: `stateDir` (the Original's). */
-  host: { stateDir: string; dir?: () => Promise<string | null>; artworkModelsFile?: string },
+  host: { stateDir: string; dir?: () => Promise<string | null>; artworkModelsFile?: string; ipodPlugged?: () => boolean },
 ): void {
   // "Which iPod is this?" for album covers (core/ipod_artwork_models.json, ipod-artwork.ts).
   ipc.handle('ipod-artwork-families', async () => (host.artworkModelsFile ? artworkFamilies(host.artworkModelsFile) : []), { public: true })
   ipc.handle('ipod-artwork-remember', async (_e, family: unknown) => {
-    if (typeof family !== 'string' || !host.artworkModelsFile || !host.dir) return { ok: false, error: 'no iPod' }
+    // With nothing plugged in, dir() is the Original's folder: never save an answer meant for another iPod there.
+    if (typeof family !== 'string' || !host.artworkModelsFile || !host.dir || !host.ipodPlugged?.()) return { ok: false, error: 'no iPod plugged in' }
     const dir = await host.dir().catch(() => null)
     if (!dir) return { ok: false, error: 'no iPod plugged in' }
     const known = (await artworkFamilies(host.artworkModelsFile)).map((f) => f.family)

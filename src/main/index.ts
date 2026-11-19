@@ -9148,7 +9148,7 @@ registerSyncHistoryIpc(ipc, { stateDir: STATE_DIR, dir: async () => {   // the p
   if (!detectedIpodMount) return STATE_DIR
   const ipod = await resolveIpodState(detectedIpodMount, STATE_DIR)
   return ipod.refusal ? null : ipod.stateDir
-}, artworkModelsFile: join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/ipod_artwork_models.json') })
+}, artworkModelsFile: join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'core/ipod_artwork_models.json'), ipodPlugged: () => !!detectedIpodMount })
 
 
 ipc.handle('get-friend-standings', async () => {

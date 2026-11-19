@@ -89,7 +89,18 @@ def load_models(path=None):
     return out
 
 
-MODELS = load_models()
+def _load_models_safely():
+    """The table, or {} when it is missing or unreadable: then no iPod gets
+    covers, and the catalog (the music) is written exactly as without art."""
+    try:
+        return load_models()
+    except Exception as e:  # noqa: BLE001 — art never stops the music
+        import sys
+        print('artwork: model table unreadable (%s: %s); no covers' % (type(e).__name__, e), file=sys.stderr)
+        return {}
+
+
+MODELS = _load_models_safely()
 
 
 def cover_formats_of(entry):
@@ -102,8 +113,8 @@ def cover_formats_of(entry):
 COVER_FORMATS = {k: cover_formats_of(e) for k, e in MODELS.items() if e.get('artwork')}
 
 # Kept for callers and tests that name the Video directly.
-VIDEO_COVER_FORMATS = COVER_FORMATS['video']
-VIDEO_MODEL_NUMBERS = set(MODELS['video']['modelNumbers'])
+VIDEO_COVER_FORMATS = COVER_FORMATS.get('video', ())
+VIDEO_MODEL_NUMBERS = set(MODELS.get('video', {}).get('modelNumbers', ()))
 
 # Every family the table names, by model number (no leading letter) and by
 # the last three characters of the serial number (libgpod's podsleuth table).
@@ -209,28 +220,38 @@ def detect_ipod(ipod_root, remembered=None, device_key=None):
       why        one line for the log
       deviceKey  the key a remembered answer is kept under (None if none)
       ask        True when nothing named the model: ask Jake once
-    Order: SysInfoExtended's serial number (libgpod's own first choice,
-    itdb_device.c:1211-1219), SysInfo's ModelNumStr (:1223), the answer Jake
-    gave for this device, then the iPod's own thumbnail files."""
+    Order: SysInfo's ModelNumStr (itdb_device.c:1223; the firmware rewrites it,
+    so it names the body the card is in now), then, only when SysInfo names
+    nothing, SysInfoExtended's serial number (:1211-1219; libgpod asks it first,
+    but a card moved from a Video into a mini can keep the Video's file), the
+    answer Jake gave for this device, then the iPod's own thumbnail files. A
+    model number the table doesn't list gets no covers and no question."""
     out = {'family': None, 'artwork': False, 'why': '', 'deviceKey': device_key, 'ask': False}
     if not ipod_root:
         out['why'] = 'no iPod root given'
         return out
-    ext = read_sysinfo_extended(ipod_root)
-    fam = family_from_serial(ext.get('SerialNumber'))
+    try:
+        with open(os.path.join(ipod_root, 'iPod_Control', 'Device', 'SysInfo'), 'r',
+                  encoding='utf-8', errors='replace') as f:
+            text = f.read()
+    except OSError:
+        text = ''
+    num = parse_sysinfo(text).get('ModelNumStr')
+    fam = family_from_model_number(num) if num else None
+    ext_serial = None
     if fam:
-        out.update(family=fam, why='SysInfoExtended serial %s' % ext.get('SerialNumber'))
+        # SysInfo is rewritten by the iPod's own firmware, so it names the body
+        # the card is in now; a SysInfoExtended can be left over from another body.
+        out.update(family=fam, why='ModelNumStr %s' % num)
+    elif num:
+        # A model the table doesn't list (a classic, a 3G nano...): no covers,
+        # and no question, since the choices offered would all be wrong for it.
+        out.update(why='model %s is not in the artwork table' % num)
     else:
-        try:
-            with open(os.path.join(ipod_root, 'iPod_Control', 'Device', 'SysInfo'), 'r',
-                      encoding='utf-8', errors='replace') as f:
-                text = f.read()
-        except OSError:
-            text = ''
-        num = parse_sysinfo(text).get('ModelNumStr')
-        fam = family_from_model_number(num) if num else None
+        ext_serial = read_sysinfo_extended(ipod_root).get('SerialNumber')
+        fam = family_from_serial(ext_serial)
         if fam:
-            out.update(family=fam, why='ModelNumStr %s' % num)
+            out.update(family=fam, why='SysInfoExtended serial %s' % ext_serial)
         elif device_key and (remembered or {}).get(device_key):
             fam = remembered[device_key]
             out.update(family=fam if fam in MODELS or fam == NO_ART else None,
@@ -240,8 +261,7 @@ def detect_ipod(ipod_root, remembered=None, device_key=None):
             if fam:
                 out.update(family=fam, why="no model in SysInfo; the Artwork folder holds this model's thumbnail files")
             else:
-                out.update(why=('model %s is not in the artwork table' % num) if num
-                           else 'no model in SysInfo or SysInfoExtended, and no thumbnail files', ask=True)
+                out.update(why='no model in SysInfo or SysInfoExtended, and no thumbnail files', ask=True)
     out['artwork'] = out['family'] in COVER_FORMATS
     return out
 
@@ -346,6 +366,15 @@ def render_thumbs(image_bytes, formats):
 
 
 THUMB_CACHE_MAX_BYTES = 1000 * 1000 * 1000   # about 10,000 iPod Video covers
+GENERATOR_VERSION = 1   # bump when scaled_cover / pack_thumb change their bytes
+
+
+def _pil_version():
+    try:
+        import PIL
+        return str(getattr(PIL, '__version__', '0')).replace('.', '_')
+    except ImportError:
+        return 'none'
 
 
 class ThumbCache:
@@ -359,7 +388,10 @@ class ThumbCache:
         os.makedirs(folder, exist_ok=True)
 
     def _key(self, digest, f):
-        return '%s-%d' % (digest, f['formatId'])
+        # The drawing code and Pillow's resampler shape the bytes, so a new
+        # version of either draws afresh instead of serving old thumbnails.
+        return '%s-%d-%dx%d-g%d-p%s' % (digest, f['formatId'], f['width'], f['height'],
+                                       GENERATOR_VERSION, _pil_version())
 
     def get(self, digest, f):
         k = os.path.join(self.folder, self._key(digest, f))
@@ -368,16 +400,18 @@ class ThumbCache:
                 meta = json.load(fh)
             with open(k + '.pix', 'rb') as fh:
                 data = fh.read()
-        except (OSError, ValueError):
-            return None
-        if len(data) != format_bytes(f) or meta.get('w') != f['width'] or meta.get('h') != f['height']:
-            return None
+            if (not isinstance(meta, dict) or len(data) != format_bytes(f)
+                    or meta.get('w') != f['width'] or meta.get('h') != f['height']):
+                return None
+            th = {'format_id': f['formatId'], 'data': data, 'hpad': int(meta['hpad']), 'vpad': int(meta['vpad']),
+                  'width': int(meta['width']), 'height': int(meta['height'])}
+        except (OSError, ValueError, KeyError, TypeError):
+            return None   # damaged: redrawn and rewritten by the caller
         try:
             os.utime(k + '.pix')   # newest-used first when the cache is trimmed
         except OSError:
             pass
-        return {'format_id': f['formatId'], 'data': data, 'hpad': meta['hpad'], 'vpad': meta['vpad'],
-                'width': meta['width'], 'height': meta['height']}
+        return th
 
     def put(self, digest, f, th):
         k = os.path.join(self.folder, self._key(digest, f))

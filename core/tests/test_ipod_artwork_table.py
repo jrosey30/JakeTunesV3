@@ -125,12 +125,17 @@ def part_detect():
     g3 = d(ipod('ModelNumStr: M9245\n'))
     check('3G M9245 -> no artwork, no question', not g3['artwork'] and not g3['ask'])
     suffix = next(iter(A.MODELS['nano-2g']['serialSuffixes']))
-    check('SysInfoExtended serial suffix -> nano-2g (libgpod tries it first)',
-          d(ipod('ModelNumStr: MA002\n', {'SerialNumber': 'ABCDEFGH' + suffix}))['family'] == 'nano-2g')
+    check('SysInfoExtended serial names the model when SysInfo is empty',
+          d(ipod('', {'SerialNumber': 'ABCDEFGH' + suffix}))['family'] == 'nano-2g')
+    vsuffix = next(iter(A.MODELS['video']['serialSuffixes']))
+    check("a mini's own SysInfo wins over a Video's leftover SysInfoExtended (no covers)",
+          not d(ipod('ModelNumStr: M9800\n', {'SerialNumber': 'XX' + vsuffix}))['artwork'])
     unk = d(ipod(''))
     check('empty SysInfo, nothing else -> ask', unk['family'] is None and unk['ask'] and not unk['artwork'])
-    unk2 = d(ipod('ModelNumStr: MZZZZ\n'))
-    check('unknown model number -> ask', unk2['ask'] and not unk2['artwork'])
+    unk2 = d(ipod('ModelNumStr: xB029\n'))
+    check('a model the table lacks (classic) -> no covers, no question', not unk2['ask'] and not unk2['artwork'])
+    check('...and a remembered answer cannot give it the wrong format',
+          not d(ipod('ModelNumStr: xB029\n'), {'k': 'video'}, 'k')['artwork'])
     check('remembered answer used when nothing names the model',
           d(ipod(''), {'k': 'nano-2g'}, 'k')['family'] == 'nano-2g')
     check('remembered "none" -> no artwork, no question',
@@ -171,8 +176,27 @@ def part_cache():
         f.write(b'torn')
     third = A.prepare_covers(tracks, A.VIDEO_COVER_FORMATS, log.append, read=store.__getitem__, cache_dir=folder)
     check('a damaged record is redrawn, same bytes', [t['data'] for t in first[1]['thumbs']] == [t['data'] for t in third[1]['thumbs']])
+    meta = [n for n in os.listdir(folder) if n.endswith('.json')][0]
+    with open(os.path.join(folder, meta), 'w') as f:
+        f.write('[1, 2]')
+    fourth = A.prepare_covers(tracks, A.VIDEO_COVER_FORMATS, log.append, read=store.__getitem__, cache_dir=folder)
+    check('a damaged metadata record is redrawn, the album keeps its art',
+          fourth and [t['data'] for t in first[1]['thumbs']] == [t['data'] for t in fourth[1]['thumbs']])
+    with open(os.path.join(folder, meta), 'w') as f:
+        f.write('{"w": 100, "h": 100}')
+    fifth = A.prepare_covers(tracks, A.VIDEO_COVER_FORMATS, log.append, read=store.__getitem__, cache_dir=folder)
+    check('metadata missing its pads is redrawn too', fifth and 1 in fifth)
     c = A.ThumbCache(folder)
     check('trim to 0 bytes drops everything', c.trim(0) == 2 and not [n for n in os.listdir(folder) if n.endswith('.pix')])
+
+
+def part_missing_table():
+    print('\n6. a missing table means no covers, never a crash')
+    import subprocess
+    code = ("import sys, builtins; sys.path.insert(0, %r); import ipod_artwork as A; "
+            "A.MODELS_FILE = '/nonexistent.json'; print(A._load_models_safely() == {})") % os.path.join(os.path.dirname(__file__), '..')
+    r = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True)
+    check('unreadable table -> {} and a log line', r.stdout.strip() == 'True' and 'model table unreadable' in r.stderr, r.stderr[-300:])
 
 
 def part_unsupported():
@@ -196,5 +220,6 @@ if __name__ == '__main__':
     part_detect()
     part_cache()
     part_unsupported()
+    part_missing_table()
     print('\n' + ('all ok' if not FAILURES else f'{len(FAILURES)} FAILED: {FAILURES}'))
     sys.exit(1 if FAILURES else 0)
