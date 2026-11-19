@@ -90,6 +90,9 @@ def test_char_fold():
     check("Latin beyond Latin-1 still folds", f('Tone-Lōc') == 'Tone-Loc' and f('YĪN YĪN') == 'YIN YIN')
     check("modifier letters still fold", f('Rhum cokeᴹᴰ') == 'Rhum cokeMD')
     check("curly quote next to Hebrew still folds", f('דג’s') == "דג's")
+    check("Katakana long-vowel mark kept", f('ドップラー') == 'ドップラー' and f('ユートピア') == 'ユートピア')
+    check("Roman numeral and Kelvin fold to Latin", f('Rocky Ⅱ') == 'Rocky II' and f('5\u212a') == '5K')
+    check("Arabic harakat kept", f('سَلام') == 'سَلام')
 
 
 # ── 2. String mhods use the fold — except the file path ────────────────────

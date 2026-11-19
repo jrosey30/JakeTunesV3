@@ -429,15 +429,17 @@ export function foldForIpod(text: string | null | undefined): string {
 }
 
 /**
- * One character above U+00FF. Letters, marks and digits of every script other
- * than Latin are kept (2026-11-19: "זקני צפת 2" became "  2" and "Σtella"
- * became "tella"); Latin beyond Latin-1, modifier letters, combining accents
- * and symbols fold through NFKD to Latin-1. ⚠️ TWIN: core/db_reader.py _fold_wide_char
+ * One character above U+00FF. A character with a Latin-1 letter or digit in its
+ * NFKD form is written as that (Ō → O, Ⅱ → II, ᴹ → M); any other letter, mark or
+ * digit is kept as written (2026-11-19: "זקני צפת 2" became "  2" and "Σtella"
+ * became "tella"); symbols fold to their Latin-1 part, usually nothing.
+ * ⚠️ TWIN: core/db_reader.py _fold_wide_char (same output for every code point)
  */
 function foldWideChar(c: string): string {
-  const keep = /[\p{L}\p{M}\p{N}]/u.test(c) && !/\p{Lm}/u.test(c) && !/\p{Script=Latin}/u.test(c) && !/\p{Script=Inherited}/u.test(c)
-  if (keep) return c
-  return [...c.normalize('NFKD')].filter((x) => (x.codePointAt(0) ?? 0) <= 0xFF && !/\p{M}/u.test(x)).join('')
+  const latin = [...c.normalize('NFKD')].filter((x) => (x.codePointAt(0) ?? 0) <= 0xFF && !/\p{M}/u.test(x)).join('')
+  if (/[\p{L}\p{N}]/u.test(latin)) return latin
+  if (/[\p{L}\p{M}\p{N}]/u.test(c)) return c
+  return latin
 }
 
 /**

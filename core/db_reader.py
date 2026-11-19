@@ -427,22 +427,24 @@ IPOD_CHAR_FOLD = {
 def _fold_wide_char(c):
     """One character above U+00FF, for the iPod's catalog.
 
-    Letters, marks and digits of every script other than Latin are KEPT
-    (2026-11-19, Jake: Hebrew "needs to appear"): the firmware lists a title
-    it can carry in UTF-16, and the mini shows Hebrew. Folding them dropped
-    them from any name that also had a Latin letter, a digit or a bracket in
-    it ("זקני צפת 2" became "  2", "Haze'evot הזאבות" lost its Hebrew,
-    "Σtella" became "tella"). Latin beyond Latin-1 (Ō, ā), modifier letters
-    (ᴹᴰ), combining accents and symbols/punctuation still fold through NFKD
-    to Latin-1, the shapes that cost songs on 2026-07-25 and 2026-08-15.
+    A character with a Latin-1 letter or digit in its NFKD form is written as
+    that (Ō → O, Ⅱ → II, ᴹ → M, fullwidth Ａ → A, Kelvin K → K). Any other
+    letter, mark or digit is KEPT as written (2026-11-19, Jake: Hebrew "needs
+    to appear"): Hebrew, Greek, Cyrillic, CJK, Katakana's ー. Folding them
+    dropped them from any name that also had a Latin letter, digit or bracket
+    ("זקני צפת 2" became "  2", "Σtella" became "tella"). Symbols and
+    punctuation fold to their Latin-1 part, usually nothing, as before.
+
+    ⚠️ TWIN: src/main/ipod-reconcile.ts foldWideChar (same rule, same output
+    for every code point; tests/test_ipod_db_fields.py and ipod-reconcile.test.ts).
     """
-    cat = unicodedata.category(c)
-    name = unicodedata.name(c, '')
-    keep = cat[0] in 'LMN' and cat != 'Lm' and 'LATIN' not in name and not name.startswith('COMBINING')
-    if keep:
-        return c
     dec = unicodedata.normalize('NFKD', c)
-    return ''.join(x for x in dec if ord(x) <= 0xFF and not unicodedata.combining(x))
+    latin = ''.join(x for x in dec if ord(x) <= 0xFF and not unicodedata.combining(x))
+    if any(x.isalnum() for x in latin):
+        return latin
+    if unicodedata.category(c)[0] in 'LMN':
+        return c
+    return latin
 
 
 def fold_for_ipod(text):

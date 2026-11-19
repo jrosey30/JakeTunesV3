@@ -381,6 +381,10 @@ describe('ipodPlayableDestPath / foldForIpod / ipodFirmwareWillList — 497 is 7
     assert.equal(foldForIpod('YĪN YĪN'), 'YIN YIN')
     assert.equal(foldForIpod('Rhum cokeᴹᴰ'), 'Rhum cokeMD')
     assert.equal(foldForIpod('דג’s'), "דג's")
+    assert.equal(foldForIpod('ドップラー'), 'ドップラー')
+    assert.equal(foldForIpod('Rocky Ⅱ'), 'Rocky II')
+    assert.equal(foldForIpod('5\u212a'), '5K')
+    assert.equal(foldForIpod('سَلام'), 'سَلام')
   })
 
   it('rejects the three 497-of-500 shapes and accepts a real ALAC row', () => {
