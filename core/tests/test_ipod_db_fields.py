@@ -79,6 +79,18 @@ def test_char_fold():
     check("CJK is not blanked", f('東京 トラック').strip() != '')
     check("empty/None safe", f('') == '' and f(None) == '')
 
+    # 2026-11-19: a name with Hebrew AND a Latin letter, digit or bracket lost
+    # every Hebrew letter. Other scripts' letters stay; Latin and symbols fold.
+    check("Hebrew + digit keeps the Hebrew", f('זקני צפת 2') == 'זקני צפת 2', f"-> {f('זקני צפת 2')!r}")
+    check("Latin + Hebrew keeps both", f("Haze'evot הזאבות") == "Haze'evot הזאבות")
+    check("Hebrew with a slash keeps both halves", f('Ze Ma Yesh / זה מה יש') == 'Ze Ma Yesh / זה מה יש')
+    check("Cyrillic in brackets kept", f('Судно (Борис Рыжий)') == 'Судно (Борис Рыжий)')
+    check("Greek letter kept", f('Σtella') == 'Σtella')
+    check("Hebrew points kept", f('שָׁלוֹם') == 'שָׁלוֹם')
+    check("Latin beyond Latin-1 still folds", f('Tone-Lōc') == 'Tone-Loc' and f('YĪN YĪN') == 'YIN YIN')
+    check("modifier letters still fold", f('Rhum cokeᴹᴰ') == 'Rhum cokeMD')
+    check("curly quote next to Hebrew still folds", f('דג’s') == "דג's")
+
 
 # ── 2. String mhods use the fold — except the file path ────────────────────
 def test_string_mhod_folding():

@@ -424,14 +424,35 @@ IPOD_CHAR_FOLD = {
 }
 
 
+def _fold_wide_char(c):
+    """One character above U+00FF, for the iPod's catalog.
+
+    Letters, marks and digits of every script other than Latin are KEPT
+    (2026-11-19, Jake: Hebrew "needs to appear"): the firmware lists a title
+    it can carry in UTF-16, and the mini shows Hebrew. Folding them dropped
+    them from any name that also had a Latin letter, a digit or a bracket in
+    it ("זקני צפת 2" became "  2", "Haze'evot הזאבות" lost its Hebrew,
+    "Σtella" became "tella"). Latin beyond Latin-1 (Ō, ā), modifier letters
+    (ᴹᴰ), combining accents and symbols/punctuation still fold through NFKD
+    to Latin-1, the shapes that cost songs on 2026-07-25 and 2026-08-15.
+    """
+    cat = unicodedata.category(c)
+    name = unicodedata.name(c, '')
+    keep = cat[0] in 'LMN' and cat != 'Lm' and 'LATIN' not in name and not name.startswith('COMBINING')
+    if keep:
+        return c
+    dec = unicodedata.normalize('NFKD', c)
+    return ''.join(x for x in dec if ord(x) <= 0xFF and not unicodedata.combining(x))
+
+
 def fold_for_ipod(text):
     """Fold characters the iPod firmware rejects down to safe ASCII.
 
     Curly quotes / dashes / ellipsis become ASCII (Mini 1.4.1 Songs-skips
-    U+2019). Latin-1 stays. Anything still above U+00FF is transliterated
-    via NFKD when that yields Latin; if the result would be whitespace
-    but the original was not, keep the original UTF-16 — blanking Hebrew
-    ("דג") is how a listable track becomes a skip.
+    U+2019). Latin-1 stays. Above U+00FF: other scripts' letters stay as
+    they are (Hebrew, Greek, Cyrillic, CJK), Latin and symbols fold via
+    NFKD (_fold_wide_char). If the result would be whitespace but the
+    original was not, keep the original UTF-16.
 
     ⚠️ TWIN: src/main/ipod-reconcile.ts foldForIpod
     """
@@ -440,15 +461,7 @@ def fold_for_ipod(text):
         return ''
     out = ''.join(IPOD_CHAR_FOLD.get(c, c) for c in s)
     if any(ord(c) > 0xFF for c in out):
-        folded = []
-        for c in out:
-            if ord(c) <= 0xFF:
-                folded.append(c)
-                continue
-            dec = unicodedata.normalize('NFKD', c)
-            ascii_only = ''.join(x for x in dec if ord(x) <= 0xFF and not unicodedata.combining(x))
-            folded.append(ascii_only)
-        out = ''.join(folded)
+        out = ''.join(c if ord(c) <= 0xFF else _fold_wide_char(c) for c in out)
     if not out.strip() and s.strip():
         return s
     return out

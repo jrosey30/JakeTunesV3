@@ -370,6 +370,19 @@ describe('ipodPlayableDestPath / foldForIpod / ipodFirmwareWillList — 497 is 7
     assert.ok(foldForIpod('בלו בלו בלו').trim().length > 0)
   })
 
+  it('keeps other scripts mixed with Latin, digits or brackets (2026-11-19)', () => {
+    assert.equal(foldForIpod('זקני צפת 2'), 'זקני צפת 2')
+    assert.equal(foldForIpod("Haze'evot הזאבות"), "Haze'evot הזאבות")
+    assert.equal(foldForIpod('Ze Ma Yesh / זה מה יש'), 'Ze Ma Yesh / זה מה יש')
+    assert.equal(foldForIpod('Судно (Борис Рыжий)'), 'Судно (Борис Рыжий)')
+    assert.equal(foldForIpod('Σtella'), 'Σtella')
+    assert.equal(foldForIpod('שָׁלוֹם'), 'שָׁלוֹם')
+    assert.equal(foldForIpod('Tone-Lōc'), 'Tone-Loc')
+    assert.equal(foldForIpod('YĪN YĪN'), 'YIN YIN')
+    assert.equal(foldForIpod('Rhum cokeᴹᴰ'), 'Rhum cokeMD')
+    assert.equal(foldForIpod('דג’s'), "דג's")
+  })
+
   it('rejects the three 497-of-500 shapes and accepts a real ALAC row', () => {
     assert.equal(ipodFirmwareWillList({
       title: 'The Brighter The Light', artist: 'The Juan Maclean',
