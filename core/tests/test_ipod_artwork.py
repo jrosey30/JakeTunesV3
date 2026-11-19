@@ -149,6 +149,24 @@ def part_models():
     d = tempfile.mkdtemp(prefix='jt-art-model-')
     check('no SysInfo file -> nothing', A.artwork_model_for_ipod(d)[0] is None)
 
+    # Jake's iBANDCAMP: a 0-byte SysInfo, the Video's two .ithmb files present.
+    def ipod(sysinfo, ithmbs):
+        root = tempfile.mkdtemp(prefix='jt-art-root-')
+        os.makedirs(os.path.join(root, 'iPod_Control', 'Device'))
+        os.makedirs(os.path.join(root, 'iPod_Control', 'Artwork'))
+        if sysinfo is not None:
+            open(os.path.join(root, 'iPod_Control', 'Device', 'SysInfo'), 'w').write(sysinfo)
+        for n in ithmbs:
+            open(os.path.join(root, 'iPod_Control', 'Artwork', n), 'wb').close()
+        return A.artwork_model_for_ipod(root)[0]
+    both = ('F1028_1.ithmb', 'F1029_1.ithmb')
+    check('empty SysInfo + Video .ithmb files -> video', ipod('', both) == 'video')
+    check('no SysInfo + Video .ithmb files -> video', ipod(None, both) == 'video')
+    check('empty SysInfo + only one .ithmb -> nothing', ipod('', both[:1]) is None)
+    check('empty SysInfo + no .ithmb -> nothing', ipod('', ()) is None)
+    check('mini SysInfo + Video .ithmb files -> nothing (SysInfo wins)', ipod(SYSINFO_MINI, both) is None)
+    check('Video SysInfo, no .ithmb -> video', ipod(SYSINFO_VIDEO, ()) == 'video')
+
 
 def empty_template():
     mhlt = bytearray(92)

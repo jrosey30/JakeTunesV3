@@ -103,6 +103,21 @@ def model_from_sysinfo(text):
     return 'video' if num[:4].upper() in VIDEO_MODEL_NUMBERS else None
 
 
+def model_from_artwork_folder(ipod_root):
+    """'video' when iPod_Control/Artwork already holds the iPod Video's own
+    thumbnail files (F1028_1.ithmb and F1029_1.ithmb, its two formats and no
+    other model's), else None. Asked only when SysInfo names no model: Jake's
+    iBANDCAMP has a 0-byte SysInfo (a restored or rebuilt iPod often does;
+    the firmware never needs it), and its Artwork folder has both files,
+    empty, from 2026-11-11. JakeTunes writes those names only for a Video,
+    so a mini can never grow them by syncing here."""
+    folder = os.path.join(ipod_root, 'iPod_Control', 'Artwork')
+    names = ('F%d_1.ithmb' % fid for fid, _w, _h in VIDEO_COVER_FORMATS)
+    if all(os.path.isfile(os.path.join(folder, n)) for n in names):
+        return 'video'
+    return None
+
+
 def artwork_model_for_ipod(ipod_root):
     """(model, why). model is None for anything that must get no artwork."""
     if not ipod_root:
@@ -111,13 +126,17 @@ def artwork_model_for_ipod(ipod_root):
     try:
         with open(path, 'r', encoding='utf-8', errors='replace') as f:
             text = f.read()
-    except OSError as e:
-        return None, 'no readable SysInfo (%s)' % type(e).__name__
-    model = model_from_sysinfo(text)
-    if model is None:
-        num = parse_sysinfo(text).get('ModelNumStr') or '(none)'
-        return None, 'model %s has no artwork formats JakeTunes knows' % num
-    return model, 'ModelNumStr %s' % parse_sysinfo(text).get('ModelNumStr')
+    except OSError:
+        text = ''
+    num = parse_sysinfo(text).get('ModelNumStr')
+    if num:
+        if model_from_sysinfo(text) is None:
+            return None, 'model %s has no artwork formats JakeTunes knows' % num
+        return 'video', 'ModelNumStr %s' % num
+    # SysInfo missing, empty or naming no model: the Artwork folder decides.
+    if model_from_artwork_folder(ipod_root) == 'video':
+        return 'video', 'no ModelNumStr; the Artwork folder holds the Video\'s F1028/F1029 files'
+    return None, 'no ModelNumStr in SysInfo and no Video thumbnail files'
 
 
 # --------------------------------------------------------------------------
