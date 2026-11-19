@@ -11,7 +11,9 @@
  *
  * This wrapper is the other half of the budget: it passes chunks
  * through untouched while bytes flow, and errors the stream after
- * `timeoutMs` of ZERO bytes. Erroring surfaces to the consumer as a
+ * `timeoutMs` of ZERO bytes while a read is waiting (a consumer that is
+ * simply not asking for more, e.g. a player with a full buffer, never
+ * counts as a stall). Erroring surfaces to the consumer as a
  * load failure — on the desktop that is Brief 160's ending (advance,
  * counted) instead of silence forever. The timer resets on every
  * chunk, so a slow-but-alive stream is never cut: only a dead one.
@@ -58,22 +60,29 @@ export function withBodyInactivityTimeout<T>(
     // while a stalled read was still pending (the tests were cancelled).
   }
 
+  // The clock runs only while a read is waiting on the network (2026-11-19).
+  // It used to be re-armed after every chunk and left running while the
+  // CONSUMER held off: a player with a full buffer stops pulling, so a
+  // healthy, fast stream "stalled" 10 s later and the song was cut and
+  // skipped mid-play ("[stream] homemini body stalled" 30-40 times an hour
+  // on workmini while homemini's log showed MBs sent at 4-5 Mbps).
   return new ReadableStream<T>({
-    start(controller) { arm(controller) },
     async pull(controller) {
       try {
+        arm(controller)
         const { value, done } = await reader.read()
+        clear()
+        if (settled) return   // the clock ran out while this read waited
         if (done) {
           settled = true
-          clear()
           controller.close()
           return
         }
-        arm(controller)
         controller.enqueue(value)
       } catch (err) {
-        settled = true
         clear()
+        if (settled) return
+        settled = true
         controller.error(err)
       }
     },
