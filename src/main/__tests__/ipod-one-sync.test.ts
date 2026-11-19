@@ -137,14 +137,14 @@ describe('any other iPod: its list, never filler', () => {
     assert.deepEqual([plan.trackIds[0], plan.trackIds[1], plan.trackIds[1499]], [1, 2, 1500])
   })
 
-  it('all 5,000 of a full list go on; nothing past 5,000 ever does', async () => {
-    const lib = library(5200)
+  it('all 10,000 of a full list go on; nothing past 10,000 ever does (2026-11-18: raised from 5,000)', async () => {
+    const lib = library(10200)
     const { d } = deps(PUNK, { list: async () => ({ ids: lib.map((t) => t.id), note: null }) })
     const plan = await planOneSync(d, lib)
     assert.ok(plan.ok)
-    assert.equal(plan.trackIds.length, 5000)
-    assert.equal(new Set(plan.trackIds).size, 5000)
-    assert.equal(plan.trackIds[4999], 5000)
+    assert.equal(plan.trackIds.length, 10000)
+    assert.equal(new Set(plan.trackIds).size, 10000)
+    assert.equal(plan.trackIds[9999], 10000)
   })
 
   it('homemini’s note rides along (the last good list in use)', async () => {
