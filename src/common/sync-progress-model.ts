@@ -11,12 +11,13 @@
  */
 export type SyncStep = 'prepare' | 'wipe' | 'copy' | 'verify' | 'catalog' | 'seal'
 export const SYNC_STEPS: ReadonlyArray<{ id: SyncStep; label: string }> = [
-  { id: 'prepare', label: 'Prepare' },
-  { id: 'wipe', label: 'Wipe' },
+  // Plain words (Jake, 2026-11-19). The ids stay the engine's.
+  { id: 'prepare', label: 'Get ready' },
+  { id: 'wipe', label: 'Clear' },
   { id: 'copy', label: 'Copy' },
-  { id: 'verify', label: 'Verify' },
-  { id: 'catalog', label: 'Catalog' },
-  { id: 'seal', label: 'Seal' },
+  { id: 'verify', label: 'Check' },
+  { id: 'catalog', label: 'Song list' },
+  { id: 'seal', label: 'Finish' },
 ]
 const ORDER: Record<SyncStep, number> = { prepare: 0, wipe: 1, copy: 2, verify: 3, catalog: 4, seal: 5 }
 
@@ -155,16 +156,26 @@ export function stepLabel(step: SyncStep, t?: Pick<SyncTimeline, 'swap'> | null)
   return SYNC_STEPS.find((s) => s.id === step)?.label ?? step
 }
 
-/** One line, what About will say. */
-export function resultLine(t: SyncTimeline, timeLabel: (ms: number) => string): string | null {
+/** One line, and what About will say (Jake, 2026-11-19: "it needs to be simple").
+ *  Only a clean sync gets here (status 'done' = every song landed and the card proved it);
+ *  the engine's swap/full summary stays in its log. */
+export function resultLine(t: SyncTimeline, _timeLabel?: (ms: number) => string): string | null {
   if (t.status !== 'done') return null
-  const n = (t.landed ?? t.target ?? 0).toLocaleString()
-  const target = t.target != null ? t.target.toLocaleString() : n
-  const when = t.endedAt ? `, ${timeLabel(t.endedAt)}` : ''
-  // A swap leads with what moved; a full copy keeps its line and says why.
-  if (t.swap && t.summary) return `${t.summary} All ${n} verified on the card${when}.`
-  const line = `Landed ${n} of ${target} — verified on the card${when}`
-  return t.summary ? `${line}. ${t.summary}` : line
+  const count = t.landed ?? t.target ?? 0
+  const n = count.toLocaleString('en-US')
+  return `Synced ${n} ${count === 1 ? 'song' : 'songs'}. On the iPod, Settings › About should say ${n}.`
+}
+
+/**
+ * The engine's progress title, only when it is a song's name (the Copy step names the song
+ * going on). Its working sentences ("Wiping the iPod for a clean rebuild…", "TSA — inspecting…",
+ * "Writing iTunesDB...") are never shown (Jake, 2026-11-19: "it needs to be simple").
+ */
+export function songTitleOnly(step: SyncStep | null, title: string | null | undefined): string {
+  const t = String(title || '').trim()
+  if (step !== 'copy' || !t) return ''
+  if (/(…|\.\.\.)$/.test(t) || /^(wiping|removing|converting|putting|writing|checking|swapping|full copy)\b/i.test(t) || /—|→/.test(t)) return ''
+  return t
 }
 
 export function elapsedLabel(t: SyncTimeline, now: number): string {
@@ -173,13 +184,14 @@ export function elapsedLabel(t: SyncTimeline, now: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
-/** The header's claim about the card. "On the iPod now" only when the newest
+/** The header's claim about the card. "On the iPod" only when the newest
  *  recorded sync sealed its full set AND no attempt since has ended
- *  uncertain; otherwise the old count is only what was LAST VERIFIED. */
-export function ipodCountLabel(latest: { landed?: number; target?: number; sealedOk?: boolean; aborted?: boolean } | null, timelineStatus: TimelineStatus): 'On the iPod now' | 'Last verified' | null {
-  if (!latest || latest.landed == null) return null
+ *  uncertain; otherwise the count is only what the LAST SYNC put on. */
+export function ipodCountLabel(latest: { landed?: number; target?: number; sealedOk?: boolean; aborted?: boolean } | null, timelineStatus: TimelineStatus): 'On the iPod' | 'Last sync' | null {
+  // An aborted sync's count is not what went on (the card may have been emptied again): no count.
+  if (!latest || latest.landed == null || latest.aborted) return null
   const clean = latest.sealedOk !== false && !latest.aborted && (latest.target == null || latest.landed >= latest.target)
-  if (!clean) return 'Last verified'
-  if (timelineStatus === 'failed' || timelineStatus === 'cancelled' || timelineStatus === 'running') return 'Last verified'
-  return 'On the iPod now'
+  if (!clean) return 'Last sync'
+  if (timelineStatus === 'failed' || timelineStatus === 'cancelled' || timelineStatus === 'running') return 'Last sync'
+  return 'On the iPod'
 }

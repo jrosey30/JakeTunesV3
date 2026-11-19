@@ -121,7 +121,7 @@ export function shouldAutoAdoptOriginal(input: {
  *  2026-10-27). An unknown card fails closed: nothing written to it, nothing read off it. */
 export function ipodWriteRefusal(identity: IpodIdentity): string | null {
   if (identity.status === 'unknown') {
-    return 'JakeTunes doesn’t know this iPod yet. Set it up on the Device page first — nothing on it was changed.'
+    return 'Set up this iPod to sync it.'
   }
   return null
 }

@@ -21,7 +21,7 @@
  *
  * Pure apart from the injected deps — node --test loads it.
  */
-import { activityTrackCanBoard, leftOffSong, pickReplacementTracks, planListOnlyBoarding, type LeftOffSong } from './activity-fill.ts'
+import { activityTrackCanBoard, pickReplacementTracks, planListOnlyBoarding, type LeftOffSong } from './activity-fill.ts'
 import { pickFromTop1000 } from '../common/top1000-sync.ts'
 import type { OneSyncPlan } from '../common/ipod-one-sync-plan.ts'
 import { IPOD_LIST_MAX } from '../common/ipod-list-doc.ts'
@@ -65,10 +65,10 @@ export type { OneSyncPlan, OneSyncKind } from '../common/ipod-one-sync-plan.ts'
 export async function planOneSync(deps: OneSyncDeps, tracks: OneSyncTrack[]): Promise<OneSyncPlan> {
   const ipod = await deps.ipod().catch((): OneSyncIpod => ({ status: 'none' }))
   if (ipod.status === 'none') {
-    return { ok: false, kind: 'none', ipodName: null, color: null, error: 'No iPod is plugged in.' }
+    return { ok: false, kind: 'none', ipodName: null, color: null, error: 'Plug in the iPod.' }
   }
   if (ipod.status === 'unknown') {
-    return { ok: false, kind: 'unknown', ipodName: null, color: null, error: 'JakeTunes doesn’t know this iPod yet. Set it up first, then sync it.' }
+    return { ok: false, kind: 'unknown', ipodName: null, color: null, error: 'Set up this iPod to sync it.' }
   }
   const ineligible = await deps.ineligible().catch(() => new Set<number>())
   const byId = new Map<number, OneSyncTrack>()
@@ -91,24 +91,23 @@ async function planOriginal(
   const base = { kind: 'original' as const, ipodName: ipod.name, color: ipod.color }
   const ranked = await deps.top1000().catch(() => null)
   if (!ranked || ranked.length === 0) {
-    return { ok: false, ...base, error: `homemini didn’t answer, so ${ipod.name}’s Top 1000 can’t be read right now. Nothing on the iPod was changed. Try again when homemini is back.` }
+    return { ok: false, ...base, error: `Can’t get the Top 1000 right now. Try again in a minute.` }
   }
   const picked = pickFromTop1000(ranked, {
     gap: ONE_SYNC_SIZE,
     exclude: ineligible,
     syncable: (id) => { const t = byId.get(id); return !!t && activityTrackCanBoard(t) },
   }).picked
-  let note: string | null = null
+  const note: string | null = null
   const trackIds = [...picked]
   if (trackIds.length < ONE_SYNC_SIZE) {
     const fill = pickReplacementTracks(tracks, new Set(trackIds), ONE_SYNC_SIZE - trackIds.length, ineligible)
     for (const t of fill) trackIds.push(Number(t.id))
-    if (fill.length > 0) {
-      note = `${picked.length.toLocaleString('en-US')} from your Top 1000 can go on; your most-loved songs fill the other ${fill.length.toLocaleString('en-US')}.`
-    }
+    // The app fills the seats itself and says nothing (Jake, 2026-11-19: what the app
+    // can fix, it fixes quietly). `note` stays null.
   }
   if (trackIds.length === 0) {
-    return { ok: false, ...base, error: `None of the Top 1000 can go on ${ipod.name}. Nothing on the iPod was changed.` }
+    return { ok: false, ...base, error: `None of the Top 1000 can go on ${ipod.name}.` }
   }
   return { ok: true, ...base, setName: 'Top 1000', trackIds, leftOff: [], note }
 }
@@ -122,29 +121,37 @@ async function planList(
   const base = { kind: 'list' as const, ipodName: ipod.name, color: ipod.color }
   const list = await deps.list().catch(() => null)
   if (!list) {
-    return { ok: false, ...base, error: `${ipod.name}’s list couldn’t be read. Nothing on the iPod was changed.` }
+    return { ok: false, ...base, error: `Can’t get ${ipod.name}’s songs right now. Try again in a minute.` }
   }
   if (list.ids.length === 0) {
-    return { ok: false, ...base, error: `${ipod.name}’s list is empty. Songs are added by asking Claude, or by the brain.${list.note ? ` ${list.note}` : ''}` }
+    return { ok: false, ...base, error: `${ipod.name} has no songs yet.` }
   }
-  // Songs not in this library, or owned by a full concert, are left off and named
-  // here; the board check names the rest (planListOnlyBoarding, the engine's own).
+  // Songs not in this library, or owned by a full concert, are left off QUIETLY (Jake,
+  // 2026-11-19, on "Can’t sync 3 songs on iBANDCAMP’s list: Song 13903 (it isn’t in this
+  // library) and 2 more": "i cant keep seeing this crap"). Nothing to do about either: a
+  // song that left the library has left the list's reach, and concerts stay off iPods by
+  // design. The board check names the rest (planListOnlyBoarding, the engine's own).
   const leftOff: LeftOffSong[] = []
   const rows: OneSyncTrack[] = []
   const seen = new Set<number>()
+  const notHere: number[] = []
   for (const raw of list.ids) {
     const id = Number(raw)
     if (!Number.isFinite(id) || seen.has(id)) continue
     seen.add(id)
     const t = byId.get(id)
-    if (!t) { leftOff.push(leftOffSong({ id, title: `Song ${id}`, artist: '' }, 'it isn’t in this library')); continue }
-    if (ineligible.has(id)) { leftOff.push(leftOffSong(t, 'it belongs to a full concert, which stays off iPods')); continue }
+    if (!t) { notHere.push(id); continue }
+    if (ineligible.has(id)) continue
     rows.push(t)
   }
+  // Quiet on the page, never lost: a desktop library that is behind homemini makes real songs
+  // look missing here, so the count and the ids go to the log.
+  if (notHere.length) console.warn(`[one-sync] ${ipod.name}: ${notHere.length} song(s) on the list aren’t in this library, left off: ${notHere.slice(0, 50).join(', ')}`)
+  if (list.note) console.log(`[one-sync] ${list.note}`)
   const plan = planListOnlyBoarding(rows, IPOD_LIST_MAX, (t) => Number(t.id))
   leftOff.push(...plan.leftOff)
   if (plan.pool.length === 0) {
-    return { ok: false, ...base, error: `None of the ${list.ids.length.toLocaleString('en-US')} songs on ${ipod.name}’s list can go on it. Nothing on the iPod was changed.` }
+    return { ok: false, ...base, error: `None of ${ipod.name}’s songs can go on it.` }
   }
   return {
     ok: true,
@@ -152,6 +159,7 @@ async function planList(
     setName: ipod.name,
     trackIds: plan.pool.map((t) => Number(t.id)),
     leftOff,
-    note: list.note,
+    // homemini away: the copy on this Mac is used, quietly; the note goes to the log only.
+    note: null,
   }
 }

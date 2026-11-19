@@ -443,12 +443,12 @@ export async function noteLastSync(stateDir: string, device: IpodDeviceMarker): 
 
 /** Jake went through the checklist on the iPod itself. Only after a sealed sync. */
 export async function sealOnboarding(stateDir: string, device: IpodDeviceMarker, now: string): Promise<{ ok: true; record: IpodOnboardingRecord } | { ok: false; error: string }> {
-  if (device.primary) return { ok: false, error: `${device.name} is your Original. It has no set-up to check off.` }
+  if (device.primary) return { ok: false, error: `${device.name} is your Original.` }
   const last = await readLastSync(ipodStateDirFor(stateDir, device))
-  if (!last?.sealed) return { ok: false, error: `${device.name} hasn’t finished a sync yet. Sync it first, then check it.` }
+  if (!last?.sealed) return { ok: false, error: `Sync ${device.name} first.` }
   const rec = await updateOnboardingRecord(stateDir, device.id, (cur) =>
     cur ? event({ ...cur, sealedAt: now, lastSyncedAt: last.at || cur.lastSyncedAt, lastSyncSongs: last.songs }, now, 'checked', `${last.songs} songs, checked on the iPod`) : null)
-  return rec?.sealedAt ? { ok: true, record: rec } : { ok: false, error: `${device.name} has no set-up record on this Mac.` }
+  return rec?.sealedAt ? { ok: true, record: rec } : { ok: false, error: 'Couldn’t save that. Try again.' }
 }
 
 // ── Preparing the iPod ───────────────────────────────────────────────────────
@@ -485,10 +485,15 @@ export async function prepareIpod(
   const did: string[] = []
   const refusal = await guard(mount, g)
   if (refusal) return { ok: false, error: refusal, did }
-  const stopped = (why: string): PrepareResult =>
-    ({ ok: false, error: `${why}${did.length ? ` Already done: ${did.join('; ')}.` : ''}`, did })
-  const fail = (what: string, err: unknown): PrepareResult =>
-    ({ ok: false, error: `${what} (${err instanceof Error ? err.message : 'the write failed'}). ${did.length ? `Already done: ${did.join('; ')}.` : 'Nothing on the iPod was changed.'}`, did })
+  // One plain line for Jake; what was already done and the raw error go to the log (2026-11-19).
+  const stopped = (why: string): PrepareResult => {
+    if (did.length) console.warn(`[ipod-setup] stopped: ${why.replace(/\.$/, '')}. Already done: ${did.join('; ')}.`)
+    return { ok: false, error: why, did }
+  }
+  const fail = (what: string, err: unknown): PrepareResult => {
+    console.warn(`[ipod-setup] ${what}: ${(err instanceof Error ? err.message : 'the write failed').replace(/\.$/, '')}${did.length ? `. Already done: ${did.join('; ')}.` : ''}`)
+    return { ok: false, error: 'Couldn’t set up the iPod. Try again.', did }
+  }
 
   const itunes = join(mount, 'iPod_Control', 'iTunes')
   try {
@@ -527,7 +532,8 @@ export async function prepareIpod(
     ...(input.listId ? { id: input.listId } : {}),
     replace: moving !== null && input.confirmedMove === true,
   })
-  if (!reg.ok) return fail('JakeTunes couldn’t write its ID file', new Error(reg.error))
+  // "This iPod is already set up." is a plain answer: said as it is, never "try again".
+  if (!reg.ok) return /already set up/i.test(reg.error) ? stopped(reg.error) : fail('JakeTunes couldn’t write its ID file', new Error(reg.error))
   did.push('the ID file was written')
 
   try {

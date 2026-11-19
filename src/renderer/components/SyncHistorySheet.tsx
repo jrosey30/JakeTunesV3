@@ -6,6 +6,7 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 import { useLibrary } from '../context/LibraryContext'
+import { leftOffKind } from '../../common/ipod-one-sync-plan'
 import '../styles/activity-sheet.css'
 
 type Entry = Awaited<ReturnType<typeof window.electronAPI.getSyncHistory>>['entries'][number]
@@ -18,6 +19,17 @@ function whenLabel(iso: string): string {
 
 export type SyncHistoryEntryLike = Entry
 
+/** One or two words for why a song was left off (common/ipod-one-sync-plan.ts leftOffKind). */
+const LEFT_OFF_WORDS: Record<ReturnType<typeof leftOffKind>, string> = {
+  damaged: 'damaged',
+  missing: 'file missing',
+  type: 'can’t play on the iPod',
+  untagged: 'no title or artist',
+  clash: 'same file name as another song',
+  download: 'didn’t download',
+  other: 'left off',
+}
+
 /** The timeline rows — shared by the sheet and the device page's recent
  *  list (same reader, same rendering; `limit` trims for the page). */
 export function SyncHistoryRows({ entries, limit }: { entries: Entry[]; limit?: number }) {
@@ -27,7 +39,7 @@ export function SyncHistoryRows({ entries, limit }: { entries: Entry[]; limit?: 
   const nameOf = (x: { id: number; t?: string; a?: string }): string => {
     if (x.a || x.t) return `${x.a || '?'} — ${x.t || '?'}`
     const t = byId.get(x.id)
-    return t ? `${t.artist || '?'} — ${t.title || '?'}` : `track ${x.id}`
+    return t ? `${t.artist || '?'} — ${t.title || '?'}` : 'Unknown song'
   }
   const shown = limit ? entries.slice(0, limit) : entries
   return (
@@ -41,9 +53,9 @@ export function SyncHistoryRows({ entries, limit }: { entries: Entry[]; limit?: 
                 <div key={key} className={`sh-row sh-row--trip${expanded ? ' is-open' : ''}`}>
                   <button type="button" className="sh-row-head" onClick={() => setOpen(expanded ? null : key)}>
                     <span className="sh-when">{whenLabel(e.when)}</span>
-                    <span className="sh-what">Round Trip</span>
+                    <span className="sh-what">Plays from the iPod</span>
                     <span className="sh-badge sh-badge--trip">
-                      {total} play{total === 1 ? '' : 's'} home
+                      {total} play{total === 1 ? '' : 's'}
                     </span>
                   </button>
                   {expanded && (
@@ -53,8 +65,8 @@ export function SyncHistoryRows({ entries, limit }: { entries: Entry[]; limit?: 
                           {nameOf({ id: p.id })}{p.delta > 1 ? ` ×${p.delta}` : ''}
                         </div>
                       ))}
-                      {(e.otgLists ?? 0) > 0 && <div className="sh-line sh-line--dim">{e.otgLists} On-The-Go list(s)</div>}
-                      {(e.unmatched ?? 0) > 0 && <div className="sh-line sh-line--dim">{e.unmatched} unmatched record(s)</div>}
+                      {(e.otgLists ?? 0) > 0 && <div className="sh-line sh-line--dim">{e.otgLists} On-The-Go {e.otgLists === 1 ? 'playlist' : 'playlists'}</div>}
+                      {(e.unmatched ?? 0) > 0 && <div className="sh-line sh-line--dim">{e.unmatched} {e.unmatched === 1 ? 'play' : 'plays'} that didn’t match a song</div>}
                     </div>
                   )}
                 </div>
@@ -62,13 +74,13 @@ export function SyncHistoryRows({ entries, limit }: { entries: Entry[]; limit?: 
             }
             const good = !e.aborted && e.sealedOk && e.landed === e.target
             const badge = e.aborted
-              ? 'did not finish'
-              : good ? `${e.landed} of ${e.target} sealed` : `${e.landed ?? '?'} of ${e.target} landed`
+              ? 'Didn’t finish'
+              : good ? `${(e.landed ?? 0).toLocaleString('en-US')} songs` : e.target != null ? `${(e.landed ?? 0).toLocaleString('en-US')} of ${e.target.toLocaleString('en-US')} went on` : 'Didn’t finish'
             return (
               <div key={key} className={`sh-row${expanded ? ' is-open' : ''}`}>
                 <button type="button" className="sh-row-head" onClick={() => setOpen(expanded ? null : key)}>
                   <span className="sh-when">{whenLabel(e.when)}</span>
-                  <span className="sh-what">Sync · {e.target ?? '?'} songs</span>
+                  <span className="sh-what">Sync</span>
                   <span className={`sh-badge ${e.aborted ? 'sh-badge--bad' : good ? 'sh-badge--good' : 'sh-badge--warn'}`}>
                     {badge}
                   </span>
@@ -77,28 +89,26 @@ export function SyncHistoryRows({ entries, limit }: { entries: Entry[]; limit?: 
                   <div className="sh-detail">
                     {(e.added || []).length > 0 && (
                       <>
-                        <div className="sh-detail-head">Went on ({e.added!.length})</div>
+                        <div className="sh-detail-head">Added {e.added!.length.toLocaleString('en-US')}</div>
                         {e.added!.map((x) => <div key={`a${x.id}`} className="sh-line">{nameOf(x)}</div>)}
                       </>
                     )}
                     {(e.removed || []).length > 0 && (
                       <>
-                        <div className="sh-detail-head">Came off ({e.removed!.length})</div>
+                        <div className="sh-detail-head">Removed {e.removed!.length.toLocaleString('en-US')}</div>
                         {e.removed!.map((x) => <div key={`r${x.id}`} className="sh-line sh-line--off">{nameOf(x)}</div>)}
                       </>
                     )}
                     {(e.leftOff || []).length > 0 && (
                       <>
-                        <div className="sh-detail-head">
-                          Left off ({e.leftOff!.length}{e.requested != null ? ` of the ${e.requested} on the list` : ''}) — nothing took their place
-                        </div>
+                        <div className="sh-detail-head">Left off {e.leftOff!.length.toLocaleString('en-US')}</div>
                         {e.leftOff!.map((x) => (
-                          <div key={`l${x.id}`} className="sh-line sh-line--off">{nameOf(x)}{x.why ? ` — ${x.why}` : ''}</div>
+                          <div key={`l${x.id}`} className="sh-line sh-line--off">{nameOf(x)} — {LEFT_OFF_WORDS[leftOffKind(x.why)]}</div>
                         ))}
                       </>
                     )}
                     {(e.added || []).length === 0 && (e.removed || []).length === 0 && (
-                      <div className="sh-line sh-line--dim">Same set as the sync before.</div>
+                      <div className="sh-line sh-line--dim">No changes.</div>
                     )}
                   </div>
                 )}
@@ -123,11 +133,11 @@ export default function SyncHistorySheet({ onClose }: { onClose: () => void }) {
       <div className="activity-sheet sync-history-sheet" onClick={(e) => e.stopPropagation()}>
         <h2 className="activity-sheet-title">Sync History</h2>
         <p className="activity-sheet-sub">
-          Every sync&apos;s cargo — and every play the iPod brought home.
+          Every sync, and the plays the iPod brought home.
         </p>
-        {entries === null && <div className="sh-empty">Reading the ledgers…</div>}
+        {entries === null && <div className="sh-empty">Loading…</div>}
         {entries !== null && entries.length === 0 && (
-          <div className="sh-empty">No syncs recorded yet.</div>
+          <div className="sh-empty">No syncs yet.</div>
         )}
         {entries && entries.length > 0 && <SyncHistoryRows entries={entries} />}
         <div className="activity-sheet-actions">

@@ -17,6 +17,8 @@ import { planOneSync, ONE_SYNC_SIZE, type OneSyncDeps, type OneSyncIpod, type On
 import { readyLine, leftOffLine, listErrorLine, syncButtonLabel, lastSyncedLine, syncingStep } from '../../common/ipod-one-sync-plan.ts'
 import { syncFailureCopy } from '../../common/sync-failure-copy.ts'
 
+const device = readFileSync(join(import.meta.dirname, '..', '..', 'renderer/views/DeviceView.tsx'), 'utf-8')
+
 const ORIGINAL: OneSyncIpod = { status: 'known', id: 'orig-0001', name: 'Original', color: 'silver', primary: true }
 const PUNK: OneSyncIpod = { status: 'known', id: '0d8fc490-74d1-4232-9a35-1801a66f4fde', name: 'punkPod', color: 'pink', primary: false }
 
@@ -71,7 +73,8 @@ describe('the Original: its Top 1000', () => {
     assert.ok(!plan.trackIds.includes(5) && !plan.trackIds.includes(10) && !plan.trackIds.includes(20))
     assert.equal(plan.trackIds[997], 1400, 'the first fill seat goes to the most-loved song')
     assert.equal(new Set(plan.trackIds).size, 1000)
-    assert.match(plan.note || '', /997 from your Top 1000 can go on; your most-loved songs fill the other 3\./)
+    // The app fills the seats itself and says nothing (2026-11-19).
+    assert.equal(plan.note, null)
   })
 
   it('homemini away: refused in plain words — no Music Man, no guess', async () => {
@@ -79,7 +82,7 @@ describe('the Original: its Top 1000', () => {
     const plan = await planOneSync(d, library(2000))
     assert.equal(plan.ok, false)
     assert.equal(plan.kind, 'original')
-    assert.match(plan.ok ? '' : plan.error, /homemini didn’t answer, so Original’s Top 1000 can’t be read right now\. Nothing on the iPod was changed\./)
+    assert.equal(plan.ok ? '' : plan.error, 'Can’t get the Top 1000 right now. Try again in a minute.')
     assert.equal(syncFailureCopy(plan.ok ? '' : plan.error).stage, 'build')
   })
 })
@@ -99,7 +102,7 @@ describe('any other iPod: its list, never filler', () => {
     assert.equal(calls.top1000, 0, 'a list-only iPod never reads the Top 1000')
   })
 
-  it('what can’t go on is left off and named; nothing from the library takes its seat', async () => {
+  it('what can’t go on is left off and named; a song not in the library or in a full concert is left off quietly (2026-11-19)', async () => {
     const lib = library(50)
     lib[1] = song(2, { audioMissing: true, title: 'Gone', artist: 'Ghost Band' })
     const ids = [1, 2, 3, 77777, 4, 5]
@@ -108,14 +111,14 @@ describe('any other iPod: its list, never filler', () => {
     assert.ok(plan.ok)
     assert.deepEqual(plan.trackIds, [1, 3, 5])
     assert.deepEqual(plan.leftOff.map((l) => [l.id, l.why]), [
-      [77777, 'it isn’t in this library'],
-      [4, 'it belongs to a full concert, which stays off iPods'],
       [2, 'its audio file is missing everywhere'],
     ])
-    assert.equal(plan.leftOff[2].title, 'Gone')
-    assert.equal(leftOffLine(plan), '3 songs can’t go on')
-    // A list iPod says it as one error line, never a list (2026-11-17).
-    assert.equal(listErrorLine(plan), 'Can’t sync 3 songs on punkPod’s list: Song 77777 (it isn’t in this library) and 2 more.')
+    assert.equal(plan.leftOff[0].title, 'Gone')
+    // Jake, 2026-11-19, on "Can’t sync 3 songs on iBANDCAMP’s list: Song 13903 (it isn’t in this
+    // library) and 2 more.": one plain line, names, no ids, no brackets, no "and N more".
+    assert.equal(leftOffLine(plan), '1 song is missing its file and was left off: Gone.')
+    assert.equal(listErrorLine(plan), leftOffLine(plan))
+    assert.doesNotMatch(leftOffLine(plan) ?? '', /\d{4,}|\(|and \d+ more|Song \d/)
   })
 
   it('a short song, an intro or a segue on the list goes on: a list is what Jake chose (2026-11-17)', async () => {
@@ -147,22 +150,23 @@ describe('any other iPod: its list, never filler', () => {
     assert.equal(plan.trackIds[9999], 10000)
   })
 
-  it('homemini’s note rides along (the last good list in use)', async () => {
+  it('homemini away: the last good list is used quietly (2026-11-19: the app fixes it, says nothing)', async () => {
     const note = 'homemini didn’t answer — using the list from Nov 7, 1:15 PM.'
     const { d } = deps(PUNK, { list: async () => ({ ids: [1, 2], note }) })
     const plan = await planOneSync(d, library(5))
     assert.ok(plan.ok)
-    assert.equal(plan.note, note)
+    assert.deepEqual(plan.trackIds, [1, 2])
+    assert.equal(plan.note, null)
   })
 
   it('an empty list, or none of it able to go on, is refused before anything is written', async () => {
     const empty = await planOneSync(deps(PUNK, { list: async () => ({ ids: [], note: null }) }).d, library(5))
     assert.equal(empty.ok, false)
-    assert.match(empty.ok ? '' : empty.error, /punkPod’s list is empty/)
+    assert.equal(empty.ok ? '' : empty.error, 'punkPod has no songs yet.')
     assert.equal(syncFailureCopy(empty.ok ? '' : empty.error).stage, 'build')
     const none = await planOneSync(deps(PUNK, { list: async () => ({ ids: [900, 901], note: null }) }).d, library(5))
     assert.equal(none.ok, false)
-    assert.match(none.ok ? '' : none.error, /None of the 2 songs on punkPod’s list can go on it/)
+    assert.equal(none.ok ? '' : none.error, 'None of punkPod’s songs can go on it.')
     assert.equal(syncFailureCopy(none.ok ? '' : none.error).stage, 'build')
   })
 })
@@ -196,17 +200,18 @@ describe('the words on the Device page', () => {
     assert.equal(syncButtonLabel('A Very Long iPod Name That Keeps Going'), 'Sync A Very Long iPod Name That Keeps Going')
     assert.equal(leftOffLine(plan), null)
   })
-  it('last synced reads like a date, and the progress step carries the count the strip reads', () => {
+  it('last synced reads like a date, and the progress step says the count in words', () => {
     assert.match(lastSyncedLine('2026-11-07T18:15:00Z'), /^Last synced Nov 7, \d{1,2}:15 [AP]M$/)
     assert.equal(lastSyncedLine(null), 'Not synced yet')
     assert.equal(lastSyncedLine('junk'), 'Not synced yet')
-    assert.match(syncingStep('Top 1000', 1000), /1,000 tracks/)
+    assert.equal(syncingStep('Top 1000', 1000), 'Syncing 1,000 songs to Top 1000…')
+    // The strip's target travels as a number, never parsed from these words.
+    assert.match(device, /step: syncingStep\(fresh\.setName, finalTracks\.length\), target: finalTracks\.length/)
   })
 })
 
 describe('wiring (source locks)', () => {
   const read = (p: string) => readFileSync(join(import.meta.dirname, '..', '..', p), 'utf-8')
-  const device = read('renderer/views/DeviceView.tsx')
   const util = read('renderer/utils/workoutIpodSync.ts')
   const ipc = read('main/workout-sync-ipc.ts')
   const one = read('main/ipod-one-sync.ts')

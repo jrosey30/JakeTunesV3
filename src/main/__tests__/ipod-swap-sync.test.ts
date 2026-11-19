@@ -239,7 +239,7 @@ describe('catalogIdsAscend — the firmware binary-search rule (819 saga)', () =
 
 describe('the strip: Remove, and the result line', () => {
   const now = 1_000
-  it('a swap run relabels Wipe as Remove and leads its result with what moved', () => {
+  it('a swap run relabels Clear as Remove, and its result is one plain line', () => {
     let t = startTimeline(now, 1000)
     t = reduceSyncEvent(t, { phase: 'preflight', current: 1000, total: 1000, title: 'Swapping: 7 out, 7 in, 993 stay', mode: 'swap' }, now)
     t = reduceSyncEvent(t, { phase: 'copy', current: 0, total: 7, title: 'Removing 7 songs leaving the iPod…', mode: 'swap' }, now)
@@ -253,22 +253,24 @@ describe('the strip: Remove, and the result line', () => {
     t = reduceSyncEvent(t, { phase: 'db', current: 0, total: 1, title: 'Writing iTunesDB...' }, now)
     t = reduceSyncEvent(t, { phase: 'verify', current: 1, total: 1, title: 'Sealed', mode: 'swap', summary: 'Swapped 7 songs: 7 out, 7 in. 993 stayed.' }, now)
     t = applySyncResult(t, { ok: true, landed: 1000, target: 1000, sealedOk: true }, now)
-    assert.equal(resultLine(t, () => '4:05 PM'), 'Swapped 7 songs: 7 out, 7 in. 993 stayed. All 1,000 verified on the card, 4:05 PM.')
+    // The engine's swap summary stays in its log; the page says the count and what About shows (2026-11-19).
+    assert.equal(t.summary, 'Swapped 7 songs: 7 out, 7 in. 993 stayed.')
+    assert.equal(resultLine(t), 'Synced 1,000 songs. On the iPod, Settings › About should say 1,000.')
   })
-  it('a full run keeps Wipe and its line, and says why', () => {
+  it('a full run keeps Clear, and the same plain line', () => {
     let t = startTimeline(now, 1000)
     t = reduceSyncEvent(t, { phase: 'preflight', current: 1000, total: 1000, title: 'Full copy: the last sync didn’t finish.', mode: 'full' }, now)
     t = reduceSyncEvent(t, { phase: 'copy', current: 0, total: 1, title: 'Wiping the iPod for a clean rebuild…', mode: 'full' }, now)
-    assert.equal(stepLabel('wipe', t), 'Wipe')
+    assert.equal(stepLabel('wipe', t), 'Clear')
     t = reduceSyncEvent(t, { phase: 'verify', current: 1, total: 1, title: 'Sealed', mode: 'full', summary: 'Full copy: the last sync didn’t finish.' }, now)
     t = applySyncResult(t, { ok: true, landed: 1000, target: 1000, sealedOk: true }, now)
-    assert.equal(resultLine(t, () => '4:05 PM'), 'Landed 1,000 of 1,000 — verified on the card, 4:05 PM. Full copy: the last sync didn’t finish.')
+    assert.equal(resultLine(t), 'Synced 1,000 songs. On the iPod, Settings › About should say 1,000.')
   })
-  it('an old engine (no mode, no summary) reads exactly as before', () => {
+  it('an old engine (no mode, no summary) reads the same', () => {
     let t = startTimeline(now, 500)
     t = applySyncResult(t, { ok: true, landed: 500, target: 500, sealedOk: true }, now)
-    assert.equal(resultLine(t, () => 'x'), 'Landed 500 of 500 — verified on the card, x')
-    assert.equal(stepLabel('wipe'), 'Wipe')
+    assert.equal(resultLine(t), 'Synced 500 songs. On the iPod, Settings › About should say 500.')
+    assert.equal(stepLabel('wipe'), 'Clear')
     assert.equal(IDLE_TIMELINE.swap, false)
   })
 })
@@ -278,7 +280,7 @@ describe('a swap that stops says the iPod still works', () => {
     const base = { ...startTimeline(1, 1000), status: 'failed' as const, step: 'copy' as const, reached: ['prepare', 'wipe', 'copy'] as Array<'prepare' | 'wipe' | 'copy'>, seen: 5 }
     const kept = syncOutcome({ ...base, error: `Sync cancelled by user ${swapKeptNote(993, false)}` })
     assert.equal(kept?.changed, 'swap-kept')
-    assert.match(String(kept?.changedLine), /still plays/)
+    assert.equal(kept?.changedLine, 'The iPod still works. Sync again to finish.')
     const untouched = syncOutcome({ ...base, error: `Sync cancelled by user ${swapKeptNote(1000, true)}` })
     assert.equal(untouched?.changed, 'no')
     assert.equal(untouched?.catalog, 'previous')
@@ -287,7 +289,7 @@ describe('a swap that stops says the iPod still works', () => {
     assert.equal(syncFailureCopy('2 song(s) the catalog would list are not on the card at their proven size. Not writing a catalog. A — B').stage, 'catalog')
     const removal = syncFailureCopy('The swap’s removal step could not settle the iPod (1 leaving file still there, 0 staying files vanished).')
     assert.equal(removal.stage, 'wipe')
-    assert.match(removal.happened, /leaving the iPod could not all be removed/)
+    assert.equal(removal.happened, 'Couldn’t remove the old songs.')
   })
 })
 

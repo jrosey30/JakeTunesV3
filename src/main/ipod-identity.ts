@@ -266,7 +266,7 @@ export async function renameIpodMarker(
   name: string,
 ): Promise<{ ok: true; device: IpodDeviceMarker; before: string } | { ok: false; error: string }> {
   const current = await readDeviceMarker(mount)
-  if (!current) return { ok: false, error: 'JakeTunes doesn’t know this iPod yet. Set it up first.' }
+  if (!current) return { ok: false, error: 'Set up this iPod first.' }
   const next = parseDeviceMarker({ ...current, name })
   if (!next) return { ok: false, error: 'Give the iPod a name.' }
   try {

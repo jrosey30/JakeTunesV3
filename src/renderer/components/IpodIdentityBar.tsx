@@ -64,7 +64,7 @@ export default function IpodIdentityBar() {
     setError(null)
     try {
       const r = await window.electronAPI.registerIpodDevice?.({ asOriginal: true })
-      if (!r) setError('This build can’t set up iPods.')
+      if (!r) setError('This version can’t set up iPods.')
       else if (!r.ok) setError(r.error)
       else await refresh()
     } finally {
@@ -90,7 +90,7 @@ export default function IpodIdentityBar() {
     <div className="ipod-id-bar ipod-id-bar--unknown">
       <>
         <span className="ipod-id-note ipod-id-note--strong">
-          JakeTunes doesn’t know this iPod yet. Until it’s set up, JakeTunes won’t sync it or read its play counts.
+          New iPod. Set it up to sync it.
         </span>
         <div className="ipod-id-actions">
           {identity.canBeOriginal && (

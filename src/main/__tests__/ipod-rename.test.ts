@@ -42,7 +42,7 @@ describe('a name the iPod’s FAT32 drive can hold', () => {
     assert.ok(c.ok)
     assert.equal(c.name, 'punkPod')
     assert.equal(c.macShows, 'PUNKPOD')
-    assert.match(macShowsLine(c) || '', /The Mac’s Finder will show the drive as PUNKPOD/)
+    assert.equal(macShowsLine(c), 'Finder shows it as PUNKPOD.')
     const caps = checkIpodName('EVIL')
     assert.ok(caps.ok)
     assert.equal(macShowsLine(caps), null, 'all capitals: nothing to warn about')
@@ -50,7 +50,7 @@ describe('a name the iPod’s FAT32 drive can hold', () => {
   it('refuses what the drive refused on a real FAT32 image, in plain words', () => {
     assert.equal(checkIpodName('').ok, false)
     const long = checkIpodName('TwelveChars1')
-    assert.ok(!long.ok && long.error.includes(`at most ${FAT_LABEL_MAX}`))
+    assert.ok(!long.ok && long.error === `Too long: ${FAT_LABEL_MAX} letters at most.`)
     for (const bad of ['a.b', 'a+b', 'a=b', 'a,b', 'a;b', 'a[b', 'a"b', 'a*b', 'a?b', 'a|b', 'a<b', 'ÅBC', 'a/b', 'a:b']) {
       assert.equal(checkIpodName(bad).ok, false, bad)
     }

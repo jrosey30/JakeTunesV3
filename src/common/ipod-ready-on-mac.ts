@@ -27,22 +27,25 @@ export interface ReadyOnMac {
 const n = (v: number): string => v.toLocaleString('en-US')
 const songs = (c: number): string => `${n(c)} ${c === 1 ? 'song' : 'songs'}`
 
-/** The line under the iPod's name. A list iPod (`list`) never leaves a song off: its Sync gets them first. */
-export function readyOnMacLine(r: ReadyOnMac, opts: { list?: boolean } = {}): string {
+/**
+ * The line under the iPod's name, or null when there is nothing to say (every song is
+ * ready: the line beside the name already says so). Plain words only (Jake, 2026-11-19:
+ * "its AI slop. it needs to be simple"): no reason in brackets, no machine names.
+ * A list iPod (`list`) never leaves a song off: its Sync gets them first.
+ */
+export function readyOnMacLine(r: ReadyOnMac, opts: { list?: boolean } = {}): string | null {
   const c = r.missing.length
-  if (c === 0) return `All ${songs(r.total)} ready on this Mac`
-  if (opts.list) {
-    if (r.stoppedBecause && !r.downloading) return `${songs(c)} not on this Mac yet (${r.stoppedBecause}) — Sync gets them from homemini first`
-    return `${songs(c)} still downloading — Sync waits for them`
-  }
-  if (r.stoppedBecause && !r.downloading) return `${songs(c)} not on this Mac yet (${r.stoppedBecause}) — Sync now leaves them off`
-  return `${songs(c)} still downloading — Sync will wait / Sync now leaves them off`
+  if (c === 0) return null
+  const notHere = `${songs(c)} ${c === 1 ? 'isn’t' : 'aren’t'} on this Mac yet.`
+  if (opts.list) return `${notHere} Sync gets ${c === 1 ? 'it' : 'them'} first.`
+  if (r.downloading) return `${songs(c)} still downloading.`
+  return notHere
 }
 
 /** The confirm Sync shows before it touches the card. */
 export function leaveOffQuestion(r: ReadyOnMac): string {
   const c = r.missing.length
-  return `${songs(c)} ${c === 1 ? 'isn’t' : 'aren’t'} on this Mac yet. Sync now and leave ${c === 1 ? 'it' : 'them'} off, or wait for the download?`
+  return `${songs(c)} ${c === 1 ? 'isn’t' : 'aren’t'} on this Mac yet.`
 }
 
 /**
@@ -57,7 +60,7 @@ export function mustAskBeforeSync(check: Pick<ReadyOnMac, 'missing'> | null, agr
 }
 
 export function syncNowLeavingOffLabel(missing: number): string {
-  return `Sync now (${n(missing)} left off)`
+  return missing === 1 ? 'Sync without it' : 'Sync without them'
 }
 
 /**
@@ -108,13 +111,13 @@ export function listFetchStep(
   if (!check) return { kind: 'go' }   // the check itself couldn't run: the sync goes ahead as before
   const c = check.missing.length
   if (c === 0) return { kind: 'go' }
-  const getting = `Getting ${songs(c)} for ${t.ipodName} from homemini before the sync…`
+  const getting = `Getting ${songs(c)} from homemini…`
   if (t.now - t.startedAt < graceMs) return { kind: 'wait', line: getting }
   if (check.stoppedBecause && !check.downloading) {
-    return { kind: 'stuck', error: `Can’t sync ${t.ipodName} yet: ${songs(c)} ${c === 1 ? 'isn’t' : 'aren’t'} on this Mac (${check.stoppedBecause}). Nothing on the iPod was changed.` }
+    return { kind: 'stuck', error: `Can’t get ${songs(c)} right now. Try Sync again later.` }
   }
   if (t.now - t.lastProgressAt >= stallMs) {
-    return { kind: 'stuck', error: `Can’t sync ${t.ipodName} yet: ${songs(c)} stopped arriving from homemini. Nothing on the iPod was changed. Try Sync again.` }
+    return { kind: 'stuck', error: `${songs(c)} stopped downloading. Press Sync to try again.` }
   }
   return { kind: 'wait', line: getting }
 }

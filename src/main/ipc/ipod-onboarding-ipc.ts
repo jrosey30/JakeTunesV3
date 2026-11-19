@@ -72,7 +72,7 @@ export interface IpodOnboardingHost {
   sleep?: (ms: number) => Promise<void>
 }
 
-const NOT_THE_HUB = 'Only the MacBook sets up and syncs iPods. Nothing on the iPod was changed.'
+const NOT_THE_HUB = 'Sync iPods on the MacBook.'
 const message = (err: unknown): string => (err instanceof Error ? err.message : 'something went wrong')
 
 interface Survey {
@@ -230,7 +230,8 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
         record,
       }
     } catch (err) {
-      return { ok: false as const, error: `JakeTunes couldn’t look at the iPod (${message(err)}). Nothing on it was changed.` }
+      console.warn('[ipod-setup]', message(err))
+      return { ok: false as const, error: 'Couldn’t read the iPod. Unplug it and plug it back in.' }
     }
   }, { public: true })
 
@@ -240,7 +241,8 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
       if (!act.ok) return act
       return { ok: true, result: await runTest(act.s) }
     } catch (err) {
-      return { ok: false, error: `The test couldn’t run (${message(err)}).` }
+      console.warn('[ipod-setup]', message(err))
+      return { ok: false, error: 'Couldn’t test the iPod. Try again.' }
     }
   }, { refuse: REFUSED_SENDER })
 
@@ -251,7 +253,7 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
       if (!act.ok) return act
       const { s } = act
       const { mount, facts: f, target } = s
-      if (!target || s.step.step !== 'prepare') return { ok: false, error: 'Pick the list this iPod will carry first. Nothing on the iPod was changed.' }
+      if (!target || s.step.step !== 'prepare') return { ok: false, error: 'Pick which iPod this is first.' }
       const checked = checkIpodName(s.step.name)
       if (!checked.ok) return { ok: false, error: checked.error }
       const color = normalizeIpodColor(arg.color) ?? (target.kind === 'list' ? target.color : null)
@@ -270,7 +272,7 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
           const moved = await host.system.renameVolume(mount, checked.name)
           if (moved && moved !== mount) host.followMount(moved)
         } catch (err) {
-          notes.push(`The Mac kept the drive’s old name (${message(err)}). Rename it from the Device page.`)
+          console.warn('[ipod-setup] the Mac kept the drive’s old name:', message(err))
         }
       }
       // The list's picture: the real model, and the colour Jake picked.
@@ -280,12 +282,13 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
         const res = await fetchImpl(`${host.baseUrl().replace(/\/+$/, '')}/api/ipod-lists/${encodeURIComponent(target.listId)}`, withCompanionInit({
           method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(8000),
         }) as Record<string, unknown>).catch(() => null)
-        if (!res || res.status !== 200) notes.push('homemini didn’t take the new picture just now. Set it from the list’s “iPod color…” menu.')
+        if (!res || res.status !== 200) notes.push('The iPod’s picture didn’t save. Set it from its “iPod color…” menu.')
       }
       host.onDeviceChanged()
       return { ok: true, device: done.device, record: done.record, did: done.did, notes }
     } catch (err) {
-      return { ok: false, error: `Setting up didn’t finish (${message(err)}).` }
+      console.warn('[ipod-setup]', message(err))
+      return { ok: false, error: 'Couldn’t set up the iPod. Try again.' }
     }
   }, { refuse: REFUSED_SENDER })
 
@@ -293,7 +296,7 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
     try {
       const act = await mayAct('seal', undefined)
       if (!act.ok) return act
-      if (!act.s.marker) return { ok: false, error: 'This iPod isn’t one that was set up here.' }
+      if (!act.s.marker) return { ok: false, error: 'Set up this iPod first.' }
       // The card check is the last check. A fail, or a check still waiting for a replug, is not a pass;
       // one that can't run at all says so and leaves the play test as the check.
       await flushCardProof().catch((err) => console.warn('[ipod-setup] card check:', message(err)))
@@ -303,7 +306,8 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
       if (r.ok) host.onDeviceChanged()
       return r
     } catch (err) {
-      return { ok: false, error: `That couldn’t be saved (${message(err)}).` }
+      console.warn('[ipod-setup]', message(err))
+      return { ok: false, error: 'Couldn’t save that. Try again.' }
     }
   }, { refuse: REFUSED_SENDER })
 
@@ -311,11 +315,12 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
     try {
       const s = await survey(undefined)
       if ('refused' in s) return { ok: false, error: s.refused.step === 'refused' ? s.refused.line : NOT_THE_HUB }
-      if (!s.marker || s.marker.primary) return { ok: false, error: 'This iPod isn’t one that is being set up.' }
+      if (!s.marker || s.marker.primary) return { ok: false, error: 'This iPod isn’t being set up.' }
       await flushCardProof().catch((err) => console.warn('[ipod-setup] card check:', message(err)))
       return { ok: true, cardProof: await verifyCardProof(s.mount, s.marker.id) }
     } catch (err) {
-      return { ok: false, error: `The card check couldn’t run (${message(err)}).` }
+      console.warn('[ipod-setup]', message(err))
+      return { ok: false, error: 'Couldn’t check the iPod. Try again.' }
     }
   }, { refuse: REFUSED_SENDER })
 
@@ -328,14 +333,15 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
       const marker = s.marker
       const record = marker ? (await readOnboardingRecords(host.stateDir)).find((r) => r.listId === marker.id && !r.released) ?? null : null
       const offer = sameIpodOffer(s.facts, record)
-      if (!marker || !record || !offer) return { ok: false, error: 'This iPod is the one on record. There is nothing to confirm.' }
+      if (!marker || !record || !offer) return { ok: false, error: 'Nothing to confirm.' }
       const typed = (raw as { typed?: unknown } | undefined)?.typed
-      if (typeof typed !== 'string' || typed.replace(/\s+/g, ' ').trim() !== offer.phrase) return { ok: false, error: `Type “${offer.phrase}” to confirm. Nothing was changed.` }
+      if (typeof typed !== 'string' || typed.replace(/\s+/g, ' ').trim() !== offer.phrase) return { ok: false, error: `Type “${offer.phrase}” to confirm.` }
       const next = await updateOnboardingRecord(host.stateDir, marker.id, (cur) => (cur ? rebindRecord(cur, s.facts, new Date().toISOString()) : null))
       host.onDeviceChanged()
       return { ok: true, record: next }
     } catch (err) {
-      return { ok: false, error: `That couldn’t be saved (${message(err)}).` }
+      console.warn('[ipod-setup]', message(err))
+      return { ok: false, error: 'Couldn’t save that. Try again.' }
     }
   }, { refuse: REFUSED_SENDER })
 
@@ -346,7 +352,7 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
       const s = await survey(undefined)
       if ('refused' in s) return { ok: false, error: s.refused.step === 'refused' ? s.refused.line : NOT_THE_HUB }
       if (s.step.step !== 'refused' || s.step.why !== 'looks-like-the-original') {
-        return { ok: false, error: 'JakeTunes doesn’t recognise this iPod as your Original. Nothing on it was changed.' }
+        return { ok: false, error: 'This doesn’t look like your Original.' }
       }
       const refusal = await guard(s.mount, guardFor(s.facts, s.mount))
       if (refusal) return { ok: false, error: refusal }
@@ -354,7 +360,8 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
       if (r.ok) { host.onOriginalKnown?.(s.mount); host.onDeviceChanged() }
       return r
     } catch (err) {
-      return { ok: false, error: `The ID file couldn’t be written (${message(err)}).` }
+      console.warn('[ipod-setup]', message(err))
+      return { ok: false, error: 'Couldn’t save that. Try again.' }
     }
   }, { refuse: REFUSED_SENDER })
 
@@ -362,18 +369,19 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
   // (2026-11-14: this handler used to register any iPod with none of the checks).
   ipc.handle('register-ipod-device', async (_e, input: { asOriginal?: boolean } | undefined) => {
     try {
-      if (input?.asOriginal !== true) return { ok: false, error: 'Use “Set up this iPod”. Nothing on the iPod was changed.' }
+      if (input?.asOriginal !== true) return { ok: false, error: 'Use “Set up this iPod”.' }
       if (!(await isHub())) return { ok: false, error: NOT_THE_HUB }
       if (host.isSyncInFlight()) return { ok: false, error: 'Wait for the sync to finish.' }
       const mount = host.getMount()
-      if (!mount) return { ok: false, error: 'No iPod detected' }
-      if (await host.system.otherIpods(mount).catch(() => 1)) return { ok: false, error: 'Two iPods are plugged in. Unplug the one that isn’t your Original. Nothing was changed.' }
+      if (!mount) return { ok: false, error: 'Plug in the iPod.' }
+      if (await host.system.otherIpods(mount).catch(() => 1)) return { ok: false, error: 'Two iPods are plugged in. Unplug one.' }
       const r = await registerIpod(mount, host.stateDir, { asOriginal: true })
       // Newly identified as the original: its plays can come home now.
       if (r.ok) { host.onOriginalKnown?.(mount); host.onDeviceChanged() }
       return r
     } catch (err) {
-      return { ok: false, error: `The ID file couldn’t be written (${message(err)}).` }
+      console.warn('[ipod-setup]', message(err))
+      return { ok: false, error: 'Couldn’t save that. Try again.' }
     }
   }, { refuse: REFUSED_SENDER })
 
@@ -388,7 +396,7 @@ export function registerIpodOnboardingIpc(ipc: IpcRegistrar, host: IpodOnboardin
       syncInFlight: host.isSyncInFlight,
       role: 'hub',
     })
-    if (!facts.marker || facts.marker.id !== device.id) return `The iPod changed while it was being checked. The sync was not started.`
+    if (!facts.marker || facts.marker.id !== device.id) return 'The iPod changed. Press Sync again.'
     const record = (await readOnboardingRecords(host.stateDir)).find((r) => r.listId === device.id) ?? null
     const blind = healthBlindRefusal(facts, record)
     if (blind) return blind

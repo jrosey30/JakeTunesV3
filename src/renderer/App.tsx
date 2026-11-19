@@ -84,6 +84,8 @@ import { phoneOverlayFields } from '../common/genre-vocab'
 import { measuredFileUpdates } from '../common/library-file-sizes'
 import { noteMeasuredVersions } from './audio/audioUrlVersion'
 import { applyOverridesSummary, type ApplyOverridesCounts } from '../common/apply-overrides-summary'
+import { songTitleOnly } from '../common/sync-progress-model'
+import { syncFailureCopy } from '../common/sync-failure-copy'
 import { bumpArtRevisions } from './artRevision'
 
 // Session cap — startup must not walk every missing album via fetchAlbumArt.
@@ -1502,18 +1504,17 @@ function AppInner() {
         if (progress.phase === 'copy') {
           a.setSync({
             active: true,
+            // Plain words (2026-11-19): a song's name, never the engine's working sentence.
             step: progress.total > 0
-              ? `Copying ${progress.current}/${progress.total} to iPod${progress.title ? ' — ' + progress.title : ''}`
-              : 'Copying to iPod...',
+              ? `Copying ${progress.current.toLocaleString('en-US')} of ${progress.total.toLocaleString('en-US')}${songTitleOnly('copy', progress.title) ? ' — ' + songTitleOnly('copy', progress.title) : ''}`
+              : 'Copying to the iPod…',
             current: progress.current,
             total: progress.total,
           })
         } else if (progress.phase === 'preflight') {
           a.setSync({
             active: true,
-            step: progress.total > 0
-              ? `Verifying ${progress.current}/${progress.total} audio files…`
-              : 'Verifying audio files…',
+            step: 'Getting ready…',
             current: progress.current,
             total: progress.total,
           })
@@ -1521,23 +1522,23 @@ function AppInner() {
           // Landing-proof + TSA are the longest stretch of an activity
           // sync; no auto-clear here — DeviceView's terminal status
           // always replaces this step.
-          a.setSync({ active: true, step: progress.title || 'Verifying the iPod…' })
+          a.setSync({ active: true, step: 'Checking the iPod…' })
         } else if (progress.phase === 'db') {
           const done = progress.current >= progress.total
           a.setSync({
             active: true,
-            step: done ? 'iTunesDB written' : 'Writing iTunesDB...',
+            step: done ? 'Song list written' : 'Writing the song list…',
           })
           if (done) {
             clearTimer = setTimeout(() => { a.setSync(null) }, 4000)
           }
         } else if (progress.phase === 'cancelled') {
-          a.setSync({ active: true, step: `Sync cancelled (${progress.current} copied)` })
+          a.setSync({ active: true, step: 'Sync stopped' })
           clearTimer = setTimeout(() => { a.setSync(null) }, 3000)
         } else if (progress.phase === 'error') {
           a.setSync({
             active: true,
-            step: progress.title ? `Sync failed — ${progress.title}` : 'Sync failed',
+            step: syncFailureCopy(progress.title || '').happened,
           })
           clearTimer = setTimeout(() => { a.setSync(null) }, 8000)
         }

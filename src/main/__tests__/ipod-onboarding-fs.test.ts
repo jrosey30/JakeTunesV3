@@ -24,6 +24,18 @@ import { parseCatalogPaths } from '../sync-engine/roundtrip.ts'
 import { CARD_HEADROOM_BYTES, detectHardware, onboardingStep, type IpodDeviceFacts } from '../../common/ipod-onboarding.ts'
 
 const CORE = resolve(import.meta.dirname, '../../../core')
+
+/** What set-up sends to the log (console.warn) while `fn` runs: the detail Jake's one line leaves out. */
+async function warnings<T>(fn: () => Promise<T>): Promise<{ value: T; logged: string }> {
+  const lines: string[] = []
+  const was = console.warn
+  console.warn = (...a: unknown[]) => { lines.push(a.map(String).join(' ')) }
+  try {
+    return { value: await fn(), logged: lines.join('\n') }
+  } finally {
+    console.warn = was
+  }
+}
 const EIGHTIES = '5e7f7a64-f770-48bd-a3dc-58bca2a6b716'
 const Y2K = '842f4c4f-14f2-45b4-9c5d-32c1295604da'
 const SYS_3G = 'BoardHwName: iPod Q14\npszSerialNumber: JQ3456ZZZZZ\nModelNumStr: M9245\nFirewireGuid: 0x000A270000001111\nvisibleBuildID: 0x02308000 (2.3)\n'
@@ -241,15 +253,15 @@ describe('preparing the iPod', () => {
     const fb = await gatherIpodFacts(b.mount, deps(b.mount), passed)
     assert.equal((await prepareIpod(b.mount, b.stateDir, guardOf(fb), { listId: Y2K, name: 'Y2K', color: null, purpose: null, facts: fb, now: '2026-11-20T15:00:00.000Z' })).ok, true)
     const before = await snapshot(b.mount)
-    assert.match(await guard(b.mount, guardOf(fa)) ?? '', /changed since it was checked/)
+    assert.equal(await guard(b.mount, guardOf(fa)), 'The iPod changed. Start again.')
     const refused = await prepareIpod(b.mount, b.stateDir, guardOf(fa), { listId: EIGHTIES, name: 'Eighties', color: null, purpose: null, facts: fa, now: '2026-11-21T15:00:00.000Z' })
     assert.equal(refused.ok, false)
     assert.match(await guard(a.mount, { ...guardOf(fa), otherIpods: async () => 1 }) ?? '', /Two iPods/)
     assert.match(await guard(a.mount, { ...guardOf(fa), otherIpods: async () => { throw new Error('mount table') } }) ?? '', /Two iPods/, 'a failed look counts as "another iPod might be there"')
-    assert.match(await guard(a.mount, { ...guardOf(fa), syncInFlight: () => true }) ?? '', /sync is running/)
+    assert.equal(await guard(a.mount, { ...guardOf(fa), syncInFlight: () => true }), 'Wait for the sync to finish.')
     assert.match(await guard(join(a.root, 'GONE'), guardOf(fa)) ?? '', /isn’t there any more/)
-    assert.match(await guard(a.mount, { ...guardOf(fa), sameDrive: async () => false }) ?? '', /isn’t the drive that was checked/)
-    assert.match(await guard(a.mount, { ...guardOf(fa), sameDrive: async () => { throw new Error('diskutil') } }) ?? '', /isn’t the drive that was checked/, 'a failed look counts as "not the same drive"')
+    assert.equal(await guard(a.mount, { ...guardOf(fa), sameDrive: async () => false }), 'The iPod changed. Start again.')
+    assert.equal(await guard(a.mount, { ...guardOf(fa), sameDrive: async () => { throw new Error('diskutil') } }), 'The iPod changed. Start again.', 'a failed look counts as "not the same drive"')
     assert.equal(await guard(a.mount, guardOf(fa)), null)
     assert.deepEqual(await snapshot(b.mount), before)
   })
@@ -260,9 +272,12 @@ describe('preparing the iPod', () => {
     const f2 = await gatherIpodFacts(mount, deps(mount), passed)
     assert.equal(f2.marker?.id, Y2K)
     // Without the typed confirmation an ID file is never replaced, even with a guard that saw it.
-    const unconfirmed = await prepareIpod(mount, stateDir, guardOf(f2), { listId: EIGHTIES, name: 'Eighties', color: 'purple', purpose: null, facts: f2, now: '2026-12-01T15:00:00.000Z' })
+    const { value: unconfirmed, logged } = await warnings(() => prepareIpod(mount, stateDir, guardOf(f2), { listId: EIGHTIES, name: 'Eighties', color: 'purple', purpose: null, facts: f2, now: '2026-12-01T15:00:00.000Z' }))
     assert.equal(unconfirmed.ok, false)
-    assert.match(unconfirmed.ok ? '' : unconfirmed.error, /This iPod is already set up/)
+    // Said as it is (never "try again", which would never work); what was done goes to the log.
+    assert.equal(unconfirmed.ok ? '' : unconfirmed.error, 'This iPod is already set up.')
+    assert.match(logged, /stopped: This iPod is already set up\. Already done:/)
+    assert.doesNotMatch(logged, /\.\./)
     const still = await identifyIpod(mount, stateDir)
     assert.equal(still.status === 'known' && still.device.id, Y2K)
     const r = await prepareIpod(mount, stateDir, guardOf(f2), { listId: EIGHTIES, name: 'Eighties', color: 'purple', purpose: null, facts: f2, now: '2026-12-01T15:00:00.000Z', confirmedMove: true })
@@ -280,10 +295,13 @@ describe('preparing the iPod', () => {
   test('a card that doesn’t give the blank database back stops the set-up before the ID file is written', async () => {
     const { mount, stateDir } = await freshCard()
     const f = await gatherIpodFacts(mount, deps(mount), passed)
-    const r = await prepareIpod(mount, stateDir, guardOf(f), { listId: Y2K, name: 'y2kPod', color: null, purpose: null, facts: f, now: '2026-11-20T15:00:00.000Z' },
-      { readBack: async () => Buffer.alloc(4096) })
+    const { value: r, logged } = await warnings(() => prepareIpod(mount, stateDir, guardOf(f), { listId: Y2K, name: 'y2kPod', color: null, purpose: null, facts: f, now: '2026-11-20T15:00:00.000Z' },
+      { readBack: async () => Buffer.alloc(4096) }))
     assert.equal(r.ok, false)
-    assert.match(r.ok ? '' : r.error, /couldn’t write the blank song database \(the blank song database didn’t read back\)\. Already done: the folders are there\./)
+    // One plain line for Jake, no raw error in brackets; what failed and what was done go to the log.
+    assert.equal(r.ok ? '' : r.error, 'Couldn’t set up the iPod. Try again.')
+    assert.deepEqual(r.did, ['the folders are there'])
+    assert.match(logged, /couldn’t write the blank song database: the blank song database didn’t read back\. Already done: the folders are there\./)
     assert.equal(await stat(join(mount, 'iPod_Control', 'jaketunes-device.json')).then(() => true, () => false), false)
     assert.deepEqual(await readOnboardingRecords(stateDir), [])
   })
@@ -292,9 +310,12 @@ describe('preparing the iPod', () => {
     const f = await gatherIpodFacts(mount, deps(mount), passed)
     let asked = 0
     const g: WriteGuard = { ...guardOf(f), sameDrive: async () => ++asked < 2 }
-    const r = await prepareIpod(mount, stateDir, g, { listId: Y2K, name: 'y2kPod', color: null, purpose: null, facts: f, now: '2026-11-20T15:00:00.000Z' })
+    const { value: r, logged } = await warnings(() => prepareIpod(mount, stateDir, g, { listId: Y2K, name: 'y2kPod', color: null, purpose: null, facts: f, now: '2026-11-20T15:00:00.000Z' }))
     assert.equal(r.ok, false)
-    assert.match(r.ok ? '' : r.error, /isn’t the drive that was checked.*Already done: the folders are there\./)
+    // It stops there: Jake's line says what to do; what was done is on the result and in the log.
+    assert.equal(r.ok ? '' : r.error, 'The iPod changed. Start again.')
+    assert.deepEqual(r.did, ['the folders are there'])
+    assert.match(logged, /stopped: The iPod changed\. Start again\. Already done: the folders are there\./)
     assert.equal(await stat(join(mount, 'iPod_Control', 'iTunes', 'iTunesDB')).then(() => true, () => false), false)
     assert.equal(await stat(join(mount, 'iPod_Control', 'jaketunes-device.json')).then(() => true, () => false), false)
   })
@@ -435,7 +456,7 @@ describe('the record after set-up', () => {
 
   test('"I checked it on the iPod" only counts after a sealed sync', async () => {
     const { stateDir, pool, device } = await setUp()
-    assert.deepEqual(await sealOnboarding(stateDir, device, '2026-11-20T16:00:00.000Z'), { ok: false, error: "1980's hasn’t finished a sync yet. Sync it first, then check it." })
+    assert.deepEqual(await sealOnboarding(stateDir, device, '2026-11-20T16:00:00.000Z'), { ok: false, error: "Sync 1980's first." })
     await writeFile(join(pool, 'last-sync-manifest.json'), manifest(false))
     assert.equal((await sealOnboarding(stateDir, device, '2026-11-20T16:00:00.000Z')).ok, false)
     await writeFile(join(pool, 'last-sync-manifest.json'), manifest(true))
