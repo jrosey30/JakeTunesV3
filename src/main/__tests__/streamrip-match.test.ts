@@ -2,7 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { foldAccents, withinEditDistance, typoBudget } from '../../common/fold-text.ts'
 import { recoArtistMatches, recoTitleMatches } from '../reco-match.ts'
-import { pickBestStreamripMatch, pickBestSoundcloudMatch, rankStreamripCandidates, unwantedVersionOf , searchTitle, maskedTitleMatches, searchQueryTitle, editionSubstituted, carriesCensorStamp, withoutCensorStamp, subtitleVariantMatches, applyExplicitGate, liveBrandMarker, hitsByAnotherName, rankWithArtistAliases, isCoverAct, isMaskedToken, albumVersionOf, titleReads, requestedVersionMarkers } from '../streamrip-match.ts'
+import { pickBestStreamripMatch, pickBestSoundcloudMatch, rankStreamripCandidates, unwantedVersionOf , searchTitle, maskedTitleMatches, searchQueryTitle, editionSubstituted, carriesCensorStamp, withoutCensorStamp, subtitleVariantMatches, applyExplicitGate, liveBrandMarker, hitsByAnotherName, rankWithArtistAliases, isCoverAct, isMaskedToken, albumVersionOf, titleReads, requestedVersionMarkers, addsNumber, onWantedAlbum } from '../streamrip-match.ts'
 
 function hit(id: string, desc: string) {
   return { source: 'qobuz', mediaType: 'track', id, desc }
@@ -603,5 +603,134 @@ describe('albumVersionOf: an album says what it is in its label, or in a few phr
     assert.equal(albumVersionOf('Aloha', 'Dancefloor Fever 2016 (The Best of Clubbing Music: Electro, Techno, Deep-House. Including a Special House Mix By Yellow Productions)'), null)
     assert.ok(albumVersionOf('Song', 'Good Evening New York City (Live At Citi Field, NYC, 2009)'))
     assert.ok(albumVersionOf('Song', 'Dah Instrumentalz'), 'the stem, however the record spells it')
+  })
+})
+
+// ⚠️ TWIN TESTS: JakeTunesMobile backend/src/util/__tests__/streamripMatch.test.ts
+// "a number the request does not say (Brief 252)", the same answers and the same rule.
+describe('a number the request does not say (JakeTunesMobile Brief 252)', () => {
+  // Real answers, saved 2026-11-19. The row: Jake's "White Lines (Don't Do It)" by Grandmaster & Melle Mel, naming Apple's
+  // Various Artists compilation "1983" (460.4 s), so it has no clock (expectedRuntimes). His copy is the 459.7 s single.
+  // Qobuz's 54918217 is Melle Mel's "White Lines 89", 421 s, on "The Greatest Hip-Hop Songs Vol. 1".
+  const row = { title: "White Lines (Don't Do It)", artist: 'Grandmaster & Melle Mel', album: '1983' }
+  // Qobuz's answer to "Grandmaster & Melle Mel White Lines", as it answered.
+  const second = [
+    ['1060683', "White Lines (Don't Do It) [feat. Melle Mel & Grand by Duran Duran"], ['51099263', 'White Lines (Long Version) (Re-Recorded / Remaster by Grandmaster Flash'],
+    ['207323928', 'White Lines by Grandmaster Flash & The Furious Five'], ['45187132', "White Lines (Don't Don't Do It) by Grandmaster Flash"],
+    ['24419976', 'White Lines (Long Version) [Re-Recorded] by Grandmaster Flash & The Furious Five'], ['52493185', 'White Lines by Grandmaster Flash'],
+    ['354212520', 'White Lines by SWR Big Band'], ['51094444', 'White Lines (Re-Recorded) [Remastered] by Grandmaster Flash'],
+    ['51099265', 'White Lines (Rock Hero Mix) by Grandmaster Flash'], ['2955051', 'White Lines by Grandmaster Melle-Mel'],
+    ['121481003', 'White Lines (Re-Recorded) by Grandmaster Flash'], ['192784974', 'White Lines / Cavern by Walter Robert'],
+    ['16850899', 'White Lines (12" Version) [Re-Recorded] by Grandmaster Flash'], ['55275996', "White Lines (Don't Don't It) by Driver"],
+    ['54918217', 'White Lines 89 by Melle Mel'], ['51056455', 'White Lines (Re-Recorded / Remastered) by Grandmaster Flash & The Furious Five'],
+  ].map(([id, desc]) => hit(id!, desc!))
+
+  it('the fuzzy arms read "White Lines 89" as the song: its first nine letters are three quarters of it', () => {
+    assert.equal(recoTitleMatches(row.title, 'White Lines 89'), true)
+    assert.equal(titleReads(row.title, 'White Lines 89'), true, 'and titleReads stays as it was: album names go through it')
+    assert.equal(addsNumber(row.title, 'White Lines 89'), '89')
+  })
+
+  it('the ranking never offers it, and still offers the song under its own name', () => {
+    const { ranked, rejectedVersions } = rankStreamripCandidates(row.title, row.artist, second)
+    assert.deepEqual(ranked.map((h) => h.id), ['2955051'])
+    assert.equal(rejectedVersions.includes('White Lines 89'), false, 'another track, not another version of the song')
+  })
+
+  it('nor does it send the walk to MusicBrainz for another name', () => {
+    const flash = 'Grandmaster Flash & The Furious Five'
+    assert.equal(hitsByAnotherName(row.title, flash, [hit('54918217', 'White Lines 89 by Melle Mel')]), false)
+    assert.equal(hitsByAnotherName(row.title, flash, [hit('2955051', 'White Lines by Grandmaster Melle-Mel')]), true, 'the song by another name still does')
+  })
+
+  it('one recording under another spelling of its number still reads as the song', () => {
+    for (const [want, got] of [
+      ['Anthem Part Two', 'Anthem, Pt. 2'], // blink-182: his file, and Apple's row, both 228 s
+      ['5446 Thats My Number / Ball and Chain', "54-46 That's My Number / Ball And Chain"], // Sublime: Apple's row, his file, both 318 s
+      ["54-46 That's My Number / Ball And Chain", '5446 Thats My Number / Ball and Chain'],
+      ['12XU', '1 2 X U'], // Wire: Pink Flag's spelling, and his file's
+      ['America Is My Home', 'America Is My Home, Pt. 1'], // James Brown: Apple lists 203 s and 202 s
+      ['Song 2', 'Song 2 (2012 Remaster)'], // Blur: his file, Apple's row, both 121 s
+      ['1979', '1979 (Remastered 2012)'], // The Smashing Pumpkins, both 266 s
+      ['1999 (7" Stereo Edit)', '1999 (7" Stereo Edit - 2019 Remaster)'], // Prince: Apple's row, Qobuz's copy
+      ['Ain’t Hard 2 Find', "Ain't Hard 2 Find (feat. E-40, Richie Rich, B-Legit & C-Bo)"], // 2Pac: his file, Apple's row, both 269 s
+      ['Lay, Lady, Lay (Live)', 'Lay, Lady, Lay ((Incomplete) Live at Henry Levitt Arena, Wichita, KS - May 19, 1976)'], // Bob Dylan, Apple
+      ['Shine on You Crazy Diamond (Parts I-V)', 'Shine On You Crazy Diamond, Pts. 1-5'], // Pink Floyd: his file 812.8 s, Apple's row 814.8 s
+    ] as const) {
+      assert.equal(addsNumber(want, got), null, `${want} -> ${got}`)
+    }
+    // His other part, against Apple's first: "VI-IX" is 6 and 9, split at the hyphen (folded, "viix" says nothing).
+    assert.equal(addsNumber('Shine on You Crazy Diamond (Parts VI-IX)', 'Shine On You Crazy Diamond, Pts. 1-5'), '1')
+  })
+
+  it('a bracket comes off whole, nested or not, and so does a credit with no bracket', () => {
+    // Qobuz's own version field, in brackets the way the file is tagged (Kool & the Gang).
+    assert.equal(addsNumber('Get Down On It', 'Get Down On It (Original 12" Extended Version)'), null)
+    assert.equal(addsNumber('I Feel Love', 'I Feel Love (12" Version)'), null) // Donna Summer
+    // Apple's Dylan title with a comma for its dash, so only the inner bracket coming off first empties it.
+    assert.equal(addsNumber('Lay, Lady, Lay (Live)', 'Lay, Lady, Lay ((Incomplete) Live at Henry Levitt Arena, Wichita, KS, May 19, 1976)'), null)
+    // Apple's 2Pac title with its credit out of the brackets. searchTitle keeps that credit; the number rule doesn't.
+    assert.equal(addsNumber('Ain’t Hard 2 Find', "Ain't Hard 2 Find feat. E-40, Richie Rich, B-Legit & C-Bo"), null)
+    // Qobuz's own title for Jazzanova's "Another Fine Day" (2026-11-19): Ovasoul7 sings on it, no number is added.
+    assert.equal(addsNumber('Another Fine Day', 'Another Fine Day feat. Ovasoul 7'), null)
+    // A number after a closed bracket is the name's.
+    assert.equal(addsNumber('Song', '(Intro) Song 2000'), '2000')
+  })
+
+  it('a number said in roman numerals, in words, or as half a year is said', () => {
+    assert.equal(addsNumber('Another Brick in the Wall (Part II)', 'Another Brick in the Wall, Pt. 2'), null)
+    assert.equal(addsNumber('Another Brick in the Wall (Part II)', 'Another Brick in the Wall, Pt. 3'), '3')
+    assert.equal(addsNumber('Seventy Times Seven', 'Seventy Times 7'), null) // Brand New's "Seventy Times 7"
+    assert.equal(addsNumber('Twenty-One Days', '21 Days'), null) // blink-182's "21 Days"
+    assert.equal(addsNumber("Woodstock '99", 'Woodstock 1999'), null) // the Mountain Goats' "Woodstock '99"
+    assert.equal(addsNumber('Woodstock 1999', "Woodstock '99"), null)
+    assert.equal(addsNumber("Woodstock '99", 'Woodstock 2009'), '2009')
+  })
+
+  it('a song named with a number is asked for with it, so its number is said', () => {
+    // Jake, 2026-11-19: "what if its like pop song 89. or 99 BPM".
+    for (const [want, got] of [
+      ['Pop Song 89', 'Pop Song 89'], ['Pop Song 89', 'Pop Song 89 (2023 Remaster)'], ['Pop Song 89', "Pop Song '89"], ['Pop Song 89', 'Pop Song 1989'],
+      ['99 BPM', '99 BPM'], ['99 BPM', '99BPM (Radio Edit)'], ['99 BPM', 'Ninety-Nine BPM'], ['Ninety-Nine BPM', '99 BPM'],
+      ['99 Problems', '99 Problems (feat. Linkin Park)'], ['1979', '1979 - Remastered 2012'],
+    ] as const) assert.equal(addsNumber(want, got), null, `${want} -> ${got}`)
+    assert.equal(addsNumber('Pop Song', 'Pop Song 89'), '89', 'only a row that leaves the number out refuses it')
+  })
+
+  it('marks between digits never add one: "10:00PM" is 10 PM, and a 0 says nothing', () => {
+    assert.equal(addsNumber('10PM', '10:00PM'), null) // EazyNotey's "10:00PM"
+    assert.equal(addsNumber('Insomnia 2', 'Insomnia 2.0'), null) // Faithless' "Insomnia 2.0"
+    assert.equal(addsNumber('Insomnia', 'Insomnia 2.0'), '2')
+  })
+
+  it('a first part is the song only when the request names no part', () => {
+    assert.equal(addsNumber('America Is My Home', 'America Is My Home, Pt. 2'), '2')
+    assert.equal(addsNumber('Super Bad', 'Super Bad, Pts. 1 & 2'), null) // James Brown
+    assert.equal(addsNumber('Pi (Part 2) (Orb Remix)', 'Pi Part 1'), '1') // The Orb: his library
+    assert.equal(addsNumber('A Beautiful Memory Pt. 2', 'A Beautiful Memory Pt. 1'), '1') // Geese: his library
+  })
+
+  it('a bracket or a dash tail is a label, left to the version gate and the clock', () => {
+    // Qobuz's "Say Anything (Else) - 2025" is on "Chroma - 2025", 230 s against Chroma's 229 s.
+    assert.equal(addsNumber('Say Anything (Else)', 'Say Anything (Else) - 2025'), null)
+    // A summary streamrip cut open: the bracket's number is a label's too.
+    assert.equal(addsNumber('Cretin Hop', 'Cretin Hop (Live at the Palladium, New York, NY, 1'), null)
+    assert.equal(addsNumber('Hypnotize', 'Hypnotize (2005 Remaster) [Album Version]'), null)
+  })
+
+  it('only a song: an album keeps its numbers ("OK Computer OKNOTOK 1997 2017" is OK Computer)', () => {
+    const albums = [{ source: 'qobuz', mediaType: 'album', id: 'a', desc: 'OK Computer OKNOTOK 1997 2017 by Radiohead' }]
+    assert.deepEqual(rankStreamripCandidates('OK Computer', 'Radiohead', albums, 'album').ranked.map((h) => h.id), ['a'])
+    assert.equal(hitsByAnotherName('OK Computer', 'Thom Yorke', albums, 'album'), true, 'an album by another name is still asked about')
+    assert.equal(onWantedAlbum('OK Computer', 'OK Computer OKNOTOK 1997 2017'), true)
+  })
+
+  it('a summary streamrip cut at 50 characters may have cut its number in two', () => {
+    const want = 'The Long and Winding Road to Nowhere at All, Pt. 12'
+    const summary = want.slice(0, 50)
+    assert.equal(summary.endsWith('Pt. 1'), true)
+    assert.equal(addsNumber(want, summary), '1', 'the cut reads as another part')
+    assert.deepEqual(rankStreamripCandidates(want, 'Band', [hit('a', `${summary} by Band`)]).ranked.map((h) => h.id), ['a'], 'so the ranking leaves it to the file')
+    assert.equal(hitsByAnotherName(want, 'Someone Else', [hit('a', `${summary} by Band`)]), true)
   })
 })
