@@ -16,8 +16,10 @@
  *      acoustic, demo, edit, cover, instrumental, sped/slowed…) is rejected.
  *      A marker Jake DID pick ("… (Live)") is honored. Remasters are the
  *      same recording and pass.
- *   3. The file's own tags are witnesses: title must read as the song,
- *      artist must be the artist (SoundCloud's uploader tag is allowed to be
+ *   3. The file's own tags are witnesses: title must read as the song, with
+ *      no number in its name the request doesn't say (addsNumber: "White
+ *      Lines 89" is another track), artist must be the artist (SoundCloud's
+ *      uploader tag is allowed to be
  *      a label when the artist is in the title, and Qobuz may write the credit
  *      another way: creditHolds), album must not name a different recording, a
  *      TV/venue show brand is a different recording.
@@ -41,7 +43,7 @@ import type { Provider, RequestedRecording, Alternative, DownloadOutcome } from 
 export type { Provider, RequestedRecording, Alternative, DownloadOutcome } from '../common/acquisition-identity.ts'
 
 import { artistOrAlias, recoArtistMatches, recoNorm, recoTitleMatches } from './reco-match.ts'
-import { NO_EXPLICIT_WARNING, albumVersionOf, bareTitle, carriesCensorStamp, creditHolds, editionSubstituted, isCompilationCopy, isCoverAct, isCoverRelease, liveBrandMarker, maskedTitleMatches, parseStreamripDesc, saysExplicit, searchTitle, titleKey, titleReads, titleWithVersion, unwantedVersionOf, requestedVersionMarkers, withoutCensorStamp, type QobuzTrackMeta, onWantedAlbum } from './streamrip-match.ts'
+import { NO_EXPLICIT_WARNING, addsNumber, albumVersionOf, bareTitle, carriesCensorStamp, creditHolds, editionSubstituted, isCompilationCopy, isCoverAct, isCoverRelease, liveBrandMarker, maskedTitleMatches, parseStreamripDesc, saysExplicit, searchTitle, titleKey, titleReads, titleWithVersion, unwantedVersionOf, requestedVersionMarkers, withoutCensorStamp, type QobuzTrackMeta, onWantedAlbum } from './streamrip-match.ts'
 import { nameKey } from '../common/fold-text.ts'
 
 /** Does free text (a SoundCloud title/desc) name the artist? Folded in any
@@ -341,8 +343,15 @@ export function verifyCandidate(req: RequestedRecording, ev: CandidateEvidence):
   //    BY NAME ("… (Live)"), a title without that word is a different
   //    recording too: the studio cut is not the live one he picked.
   if (ev.title) {
-    const reads = titleReads(req.title, ev.title) || titleReads(req.title, withoutArtistPrefix(ev.title, req.artist))
+    const song = withoutArtistPrefix(ev.title, req.artist)
+    const afterArtist = song !== ev.title && titleReads(req.title, song)
+    const reads = afterArtist || titleReads(req.title, ev.title)
     if (!reads) return { verdict: 'reject', kind: 'title', reason: `is titled “${ev.title}”, not “${req.title}”` }
+    // A number the request doesn't say is another track: "White Lines 89" for "White Lines (Don't
+    // Do It)", "Revolution 9" for "Revolution 1" (addsNumber). An upload's name is what follows the
+    // artist when that reads as the song, so "blink-182 - All the Small Things" adds no 182.
+    const number = addsNumber(req.title, afterArtist ? song : ev.title)
+    if (number) return { verdict: 'reject', kind: 'title', reason: `is titled “${ev.title}”, not “${req.title}” (it adds ${number})` }
     if (req.requestedMarkers.length) {
       const gotMarkers = new Set(requestedVersionMarkers(`${ev.title} ${ev.version ?? ''} ${ev.album ?? ''}`))
       const missing = req.requestedMarkers.find((m) => !gotMarkers.has(m))

@@ -433,6 +433,131 @@ export function titleReads(want: string, got: string): boolean {
 }
 
 /**
+ * A number in the song's own name that the request doesn't say (JakeTunesMobile Brief 252), or null.
+ * "White Lines 89" read as "White Lines (Don't Do It)": recoTitleMatches' last arm asks only for the
+ * first three quarters of the shorter title, and "whiteline" is that. A row naming a compilation has
+ * no clock (expectedRuntimes), so nothing kept Melle Mel's 421 s remake out: verifyCandidate called it
+ * exact for the "1983" row, and the ranking offered it. The same arms read "Revolution 9" as
+ * "Revolution 1", "Obstacle 2" as "Obstacle 1" and "Another Brick in the Wall, Pt. 2" as Pt. 1. A digit
+ * is never a spelling of another word.
+ *
+ * Only digits in the NAME count (songName), not in a bracket or a dash tail: there a year is a remaster
+ * stamp or a live date, and the version checks read those. The request may say the number any way: in
+ * digits, in words ("Anthem Part Two"), in roman numerals ("Pt. II"), or as the other half of a year
+ * ('89 for 1989). Spacing never counts: "1 2 X U" is Wire's "12XU" folded, and "10:00PM" is 10 PM
+ * split at its marks, so a number is added only when both readings add one. A 0 adds nothing ("2.0").
+ *
+ * Asked in the phone's three places, for songs only: rankStreamripCandidates, hitsByAnotherName and
+ * verifyCandidate's title step. Never in titleReads, which onWantedAlbum reads album names with: "OK Computer
+ * OKNOTOK 1997 2017" is OK Computer.
+ * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts addsNumber, with songName, numbersSaid,
+ *    numberWord, romanNumeral, NAMES_A_PART and FIRST_PART: one rule, written the same. The phone
+ *    reads a title through withoutEditionLabels; numberedName reads the same of it here.
+ */
+export function addsNumber(want: string, got: string, plain: (title: string) => string = numberedName): string | null {
+  const said = numbersSaid(want)
+  const twoDigit = new Set([...want.normalize('NFKC').matchAll(/\d+/g)].filter((r) => r[0].length === 2).map((r) => Number(r[0])))
+  const unsaid = (run: string): boolean => {
+    const n = Number(run)
+    if (n === 0 || said.has(n)) return false
+    if (run.length === 2) return !said.has(1900 + n) && !said.has(2000 + n)
+    return !(run.length === 4 && n >= 1900 && n < 2100 && twoDigit.has(n % 100))
+  }
+  const name = songName(got, plain, NAMES_A_PART.test(want))
+  const split = [...name.matchAll(/\d+/g)].map((r) => r[0]).filter(unsaid)
+  const folded = [...recoFold(name).matchAll(/\d+/g)].map((r) => r[0]).filter(unsaid)
+  return split.length > 0 && folded.length > 0 ? split[0]! : null
+}
+
+/**
+ * What addsNumber reads a title through here: searchTitle, and without a credit written outside
+ * brackets, which searchTitle keeps: "Ain't Hard 2 Find feat. E-40, Richie Rich, B-Legit & C-Bo" is
+ * "Ain't Hard 2 Find" (2Pac; Apple's row and his file both run 269 s), and "feat. 21 Savage" adds no 21.
+ * The phone's withoutEditionLabels drops the same credit, and songName reads nothing else of either.
+ */
+const numberedName = (title: string): string => (searchTitle(title) || title).replace(/\s+(?:feat\.?|ft\.?|featuring)\s.*$/i, '')
+
+const NAMES_A_PART = /\b(?:pts?|parts?)\b/i
+/** A part list that starts with the first part: "Pt. 1", "Part 1", "Pts. 1 & 2", "Pts. 1-5". */
+const FIRST_PART = /\b(?:pts?|parts?)\.?\s*0*1(?:\s*(?:[-–—&,/+]|and)\s*\d+)*\b/giu
+
+/**
+ * What addsNumber reads of a title: its name, without its edition labels, without any bracket
+ * (innermost first: Dylan's "Lay, Lady, Lay ((Incomplete) Live at …, May 19, 1976)", and one streamrip
+ * cut open), and without anything after a spaced dash. And without its first part when the request
+ * names no part: a single's first side is often listed as the song itself. Apple lists James Brown's
+ * "America Is My Home" at 203 s and "America Is My Home, Pt. 1" at 202 s. "Pt. 2" still counts.
+ * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts songName.
+ */
+function songName(title: string, plain: (title: string) => string, partNamed: boolean): string {
+  let s = plain(title).normalize('NFKC')
+  for (let was = ''; was !== s;) {
+    was = s
+    s = s.replace(/[([{][^()[\]{}]*[)\]}]/g, ' ')
+  }
+  s = s.replace(/[([{][^)\]}]*$/u, ' ').replace(/\s+[-–—]\s.*$/u, '')
+  return partNamed ? s : s.replace(FIRST_PART, ' ')
+}
+
+const UNITS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen']
+const ORDINALS = ['zeroth', 'first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'eleventh', 'twelfth', 'thirteenth', 'fourteenth', 'fifteenth', 'sixteenth', 'seventeenth', 'eighteenth', 'nineteenth']
+const TENS = ['twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety']
+
+/** "two", "second", "twenty-one" (folded to "twentyone"), "hundred". ⚠️ TWIN: the phone's numberWord. */
+function numberWord(w: string): number | null {
+  const unit = Math.max(UNITS.indexOf(w), ORDINALS.indexOf(w))
+  if (unit >= 0) return unit
+  for (const [i, tens] of TENS.entries()) {
+    if (w === tens || w === tens.replace(/y$/, 'ieth')) return (i + 2) * 10
+    const rest = w.startsWith(tens) ? Math.max(UNITS.indexOf(w.slice(tens.length)), ORDINALS.indexOf(w.slice(tens.length))) : -1
+    if (rest >= 1 && rest <= 9) return (i + 2) * 10 + rest
+  }
+  return w === 'hundred' ? 100 : w === 'thousand' ? 1000 : null
+}
+
+const ROMAN_NUMERAL = /^m{0,3}(?:cm|cd|d?c{0,3})(?:xc|xl|l?x{0,3})(?:ix|iv|v?i{0,3})$/
+const ROMAN_VALUE: Record<string, number> = { i: 1, v: 5, x: 10, l: 50, c: 100, d: 500, m: 1000 }
+/** ⚠️ TWIN: the phone's romanNumeral. */
+function romanNumeral(w: string): number | null {
+  if (!w || !ROMAN_NUMERAL.test(w)) return null
+  let n = 0
+  for (let i = 0; i < w.length; i++) {
+    const v = ROMAN_VALUE[w[i]!]!
+    n += v < (ROMAN_VALUE[w[i + 1] ?? ''] ?? 0) ? -v : v
+  }
+  return n
+}
+
+/** A title's words, folded, "&" as "and" (the phone's `words`). */
+const foldedWords = (s: string): string[] => spelledOutAnd(s).split(/\s+/).map(recoFold).filter(Boolean)
+
+/** Every number a title says, in digits, words or roman numerals, read generously: this only ever
+ *  forgives a number (addsNumber), so a word that merely looks like one ("mix") costs nothing.
+ *  ⚠️ TWIN: the phone's numbersSaid. */
+function numbersSaid(title: string): Set<number> {
+  const text = title.normalize('NFKC')
+  const said = new Set([...text.matchAll(/\d+/g), ...recoFold(text).matchAll(/\d+/g)].map((r) => Number(r[0])))
+  for (const w of [...foldedWords(text), ...text.split(/[^\p{L}\p{N}]+/u).map(recoFold)]) {
+    const n = numberWord(w) ?? romanNumeral(w)
+    if (n !== null) said.add(n)
+  }
+  return said
+}
+
+/** streamrip cuts a summary's title at 50 characters (`clean` in its search_results.py).
+ *  "This Happy Madness (Estrada Branca) (Album Version" has lost the bracket that makes
+ *  it a label, so a title that long is not evidence of anything.
+ *  ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts SUMMARY_TITLE_CUT. */
+const SUMMARY_TITLE_CUT = 50
+
+/** addsNumber on a search hit: a song's title, never an album's, and never one streamrip may have
+ *  cut mid-number (SUMMARY_TITLE_CUT). The file's own title is judged whole (verifyCandidate).
+ *  ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts numberAdded. */
+function numberAdded(wantTitle: string, title: string, mediaType: 'track' | 'album'): boolean {
+  return mediaType === 'track' && title.length < SUMMARY_TITLE_CUT && addsNumber(wantTitle, title) !== null
+}
+
+/**
  * Whether another way of writing the credit is this song. The title has to be the request's
  * exactly, without its edition labels. A search summary hides the version ("Feels Alright" for
  * the Vocal Mix), so there the name without its brackets will do (`summary`), and the file's
@@ -462,6 +587,8 @@ export function creditHolds(
  *
  *  Ordering rules (the wrong-version fix, 2026-08-07):
  *  - unwanted-version titles are EXCLUDED, reported in `rejectedVersions`
+ *  - a song title with a number the request doesn't say is another track
+ *    (addsNumber): EXCLUDED, and not reported as a version of the song
  *  - a known artist that doesn't match is EXCLUDED, never scored down — a
  *    high title score must not float a cover band above "not found"
  *  - exact title equality beats loose containment; fewer extra title tokens
@@ -498,6 +625,8 @@ export function rankStreamripCandidates(
       || (nWant !== '' && titleKey(searchTitle(title)) === nWant)
     const subtitleOnly = !reads && (subtitleVariantMatches(wantTitle, title) || subtitleVariantMatches(searchTitle(wantTitle) || wantTitle, searchTitle(title) || title))
     if (!reads && !subtitleOnly) continue
+    // "White Lines 89" for "White Lines (Don't Do It)": another track, not another version of it.
+    if (numberAdded(wantTitle, title, wantMediaType)) continue
     if (unwantedVersionOf(wantTitle, title)) { rejectedVersions.push(title); continue }
     // Show-brand live recordings hide the tell in the album part of the
     // desc while the title reads clean — same rejection lane as markers.
@@ -547,7 +676,7 @@ export function hitsByAnotherName(
     if (r.mediaType !== wantMediaType) return false
     const { title, artist } = parseStreamripDesc(r.desc)
     if (!artist || recoArtistMatches(wantArtist, artist) || isCoverAct(title, artist)) return false
-    if (!titleReads(wantTitle, title)) return false
+    if (!titleReads(wantTitle, title) || numberAdded(wantTitle, title, wantMediaType)) return false
     return !unwantedVersionOf(wantTitle, title) && !liveBrandMarker(wantTitle, r.desc)
   })
 }

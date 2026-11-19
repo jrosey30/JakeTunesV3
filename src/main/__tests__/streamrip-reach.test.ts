@@ -381,4 +381,88 @@ describe('walked through the real handler', () => {
       assert.deepEqual(searched('album'), ['Underworld Second Toughest in the Infants (Super Deluxe)'])
     })
   })
+
+  // ⚠️ TWIN TESTS: JakeTunesMobile backend/src/util/__tests__/streamripWalk.test.ts, "a number the request does not say,
+  // on the real walk (Brief 252)": the same row, and Qobuz's and Apple's answers of 2026-11-19, kept here and not in
+  // fixtures/qobuz-walks.json, which both repos share byte for byte.
+  describe('a number the request does not say (JakeTunesMobile Brief 252)', () => {
+    // Jake's row names Apple's Various Artists compilation "1983" (460.4 s), so nothing holds a file to a length. His copy
+    // is the 459.7 s single. Qobuz's 54918217 is Melle Mel's 421 s "White Lines 89", and "whiteline" is three quarters
+    // of "whitelines89": the title check reads it as the song.
+    const ROW = { artist: 'Grandmaster & Melle Mel', title: "White Lines (Don't Do It)", album: '1983' }
+    const WHOLE = "Grandmaster & Melle Mel White Lines (Don't Do It)"
+    const BARE = 'Grandmaster & Melle Mel White Lines'
+    // Every hit Qobuz answered to each search, in its order (streamrip cuts a summary's title at 50 characters).
+    const WHOLE_HITS: Array<[string, string]> = [
+      ['1060683', "White Lines (Don't Do It) [feat. Melle Mel & Grand by Duran Duran"], ['45187132', "White Lines (Don't Don't Do It) by Grandmaster Flash"],
+      ['2955051', 'White Lines by Grandmaster Melle-Mel'], ['41326410', "White Lines (Don't Do It) [feat. Melle Mel & Grand by Duran Duran"],
+      ['41326413', "White Lines (Don't Do It) [feat. Melle Mel & Grand by Duran Duran"], ['41326412', "White Lines (Don't Do It) [feat. Melle Mel & Grand by Duran Duran"],
+      ['41326414', "White Lines (Don't Do It) [feat. Melle Mel & Grand by Duran Duran"], ['89311620', "White Lines (Don't Don't Do It) by Pure Adrenalin"],
+      ['71165763', "White Lines (Don't Do It) by The 80's Allstars"], ['340610892', "White Lines (Don't Don't Do It) by Fresh Beat MCs"],
+    ]
+    const BARE_HITS: Array<[string, string]> = [
+      ['1060683', "White Lines (Don't Do It) [feat. Melle Mel & Grand by Duran Duran"], ['51099263', 'White Lines (Long Version) (Re-Recorded / Remaster by Grandmaster Flash'],
+      ['207323928', 'White Lines by Grandmaster Flash & The Furious Five'], ['45187132', "White Lines (Don't Don't Do It) by Grandmaster Flash"],
+      ['24419976', 'White Lines (Long Version) [Re-Recorded] by Grandmaster Flash & The Furious Five'], ['52493185', 'White Lines by Grandmaster Flash'],
+      ['354212520', 'White Lines by SWR Big Band'], ['51094444', 'White Lines (Re-Recorded) [Remastered] by Grandmaster Flash'],
+      ['51099265', 'White Lines (Rock Hero Mix) by Grandmaster Flash'], ['2955051', 'White Lines by Grandmaster Melle-Mel'],
+      ['121481003', 'White Lines (Re-Recorded) by Grandmaster Flash'], ['41326410', "White Lines (Don't Do It) [feat. Melle Mel & Grand by Duran Duran"],
+      ['192784974', 'White Lines / Cavern by Walter Robert'], ['51062478', 'White Lines (Long Version) (Re-Recorded / Remaster by Grandmaster Flash'],
+      ['51091734', 'White Lines (Long Version) (Re-Recorded / Remaster by Grandmaster Flash & The Furious Five'], ['52497987', 'White Lines by Grandmaster Flash'],
+      ['16850899', 'White Lines (12" Version) [Re-Recorded] by Grandmaster Flash'], ['50585925', 'White Lines by Max Mutzke'],
+      ['117542037', 'White Lines by The Traffic'], ['55275996', "White Lines (Don't Don't It) by Driver"],
+      ['41326413', "White Lines (Don't Do It) [feat. Melle Mel & Grand by Duran Duran"], ['41326412', "White Lines (Don't Do It) [feat. Melle Mel & Grand by Duran Duran"],
+      ['54918217', 'White Lines 89 by Melle Mel'], ['51083168', 'White Lines (Long Version)(Re-Recorded / Remastere by Grandmaster Flash & The Furious Five'],
+      ['51056455', 'White Lines (Re-Recorded / Remastered) by Grandmaster Flash & The Furious Five'],
+    ]
+    // Qobuz's track/get for the two hits under his name, and the files as streamrip tags them.
+    const QOBUZ: Record<string, QobuzTrack & { parental_warning: boolean; album: { parental_warning: boolean; artist: { name: string } } }> = {
+      2955051: { title: 'White Lines   ', version: "New Remix    aka White Lines  Don't Do It", duration: 200, parental_warning: false, album: { title: 'Grandmaster Flash & The Furious Five', version: null, parental_warning: true, artist: { name: 'Grandmaster Melle-Mel' } }, performer: { name: 'Grandmaster Melle-Mel' } },
+      54918217: { title: 'White Lines 89', version: null, duration: 421, parental_warning: false, album: { title: 'The Greatest Hip-Hop Songs Vol. 1', version: null, parental_warning: false, artist: { name: 'Various Artists' } }, performer: { name: 'Melle Mel' } },
+    }
+    // Apple's rows for the song, as it answered the handler's own question.
+    const APPLE = [
+      { trackName: "White Lines (Don't Do It) [Original Long Version]", artistName: 'Melle Mel & Grandmaster Flash', collectionName: "White Lines (Don't Do It) - EP", trackTimeMillis: 448000, collectionArtistName: 'Grandmaster Flash, Melle Mel & Ben Liebrand', trackExplicitness: 'cleaned' },
+      { trackName: "White Lines (Don't Do It)", artistName: 'Grandmaster & Melle Mel', collectionName: '1983', trackTimeMillis: 460400, collectionArtistName: 'Various Artists', trackExplicitness: 'notExplicit' },
+      { trackName: 'White Lines', artistName: 'Grandmaster Melle Mel', collectionName: 'Hip Hop Anniversary - Europe Tour (Live)', trackTimeMillis: 247827, trackExplicitness: 'notExplicit' },
+      { trackName: 'White Lines', artistName: 'Grandmaster Melle Mel', collectionName: 'Anchorman 2: The Legend Continues (Music From the Motion Picture)', trackTimeMillis: 268800, collectionArtistName: 'Various Artists', trackExplicitness: 'notExplicit' },
+    ]
+    const SINGLE: [string, string] = ['single', "White Lines (Don't Do It) by Grandmaster & Melle Mel"]
+    const qobuzSongSearches = (): string[] => calls().filter((l) => l.startsWith('rip search') && l.includes(' qobuz track ')).map((l) => l.split(' qobuz track ')[1]!)
+    function whiteLines(searches: Array<[query: string, hits: Array<[string, string]>]>): typeof ROW {
+      apple = APPLE
+      qobuz = { ...QOBUZ, single: { title: "White Lines (Don't Do It)", version: null, duration: 460, parental_warning: false, album: { title: "White Lines (Don't Do It) - Single", version: null, parental_warning: false, artist: { name: 'Grandmaster & Melle Mel' } }, performer: { name: 'Grandmaster & Melle Mel' } } }
+      for (const [query, hits] of searches) answerSearch('track', query, hits)
+      for (const [id, a] of Object.entries(QOBUZ)) fileTags(id, { title: named(a.title.trim(), a.version), artist: a.performer.name, album: a.album.title, duration: a.duration })
+      fileTags('single', { title: "White Lines (Don't Do It)", artist: 'Grandmaster & Melle Mel', album: "White Lines (Don't Do It) - Single", duration: 459.7 })
+      return ROW
+    }
+
+    test('Jake’s row: Qobuz’s answer to the whole title has no 89, and nothing lands', async () => {
+      const { walk, importedIds } = store()
+      const r = await walk(whiteLines([[WHOLE, WHOLE_HITS], [BARE, BARE_HITS]]))
+      assert.equal(r.ok, false)
+      assert.deepEqual(qobuzSongSearches(), [WHOLE], 'the walk asks for the whole title, and that answer has hits')
+      assert.deepEqual(importedIds(), [])
+      assert.deepEqual(ripped(), [], 'the remix by his name is refused by what Qobuz says it is')
+    })
+
+    test('when Qobuz answers the whole title with nothing, its answer without the bracket has "White Lines 89", and it is never fetched', async () => {
+      const { walk, importedIds } = store()
+      const r = await walk(whiteLines([[BARE, BARE_HITS]]))
+      assert.deepEqual(importedIds(), [], 'main lands 54918217 here: 421 s, after one fetch')
+      assert.deepEqual(ripped(), [])
+      assert.deepEqual(qobuzSongSearches(), [WHOLE, BARE])
+      assert.equal(r.ok, false)
+      assert.deepEqual(trackQuestions().map((u) => /track_id=(\d+)/.exec(u)?.[1]), ['2955051'], 'nor is Qobuz asked about it')
+    })
+
+    test('his single, had Qobuz carried it, still comes in, beside "White Lines 89"', async () => {
+      const { walk, importedIds } = store()
+      const r = await walk(whiteLines([[BARE, [...BARE_HITS, SINGLE]]]))
+      assert.equal(r.outcome, 'imported', r.error)
+      assert.deepEqual(importedIds(), ['single'])
+      assert.deepEqual(ripped(), ['single'])
+    })
+  })
 })

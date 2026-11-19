@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildRequestedRecording, requestedLength, verifyCandidate, finalOutcome, describeOutcome, EDITION_TOLERANCE_SEC, RUNTIME_TOLERANCE_SEC, type CandidateEvidence } from '../exact-recording.ts'
-import { NO_EXPLICIT_WARNING, rankSoundcloudCandidates, requestedVersionMarkers, unwantedVersionOf, searchTitle, isNoResultsMessage } from '../streamrip-match.ts'
+import { buildRequestedRecording, requestedLength, verifyCandidate, judgeHitsByMeta, finalOutcome, describeOutcome, EDITION_TOLERANCE_SEC, RUNTIME_TOLERANCE_SEC, type CandidateEvidence } from '../exact-recording.ts'
+import { NO_EXPLICIT_WARNING, rankSoundcloudCandidates, requestedVersionMarkers, unwantedVersionOf, searchTitle, isNoResultsMessage, type QobuzTrackMeta } from '../streamrip-match.ts'
 
 // The regression that started 6.0 Phase 1: Jake picked the regular album
 // version of "5 Years Time" by Noah and the Whale (3:37 on iTunes) and the
@@ -383,5 +383,68 @@ describe('a clean row has no length', () => {
     assert.equal(req.durationSec, 229.8)
     const v = verifyCandidate(req, big({ title: 'Hypnotize', album: 'Hypnotize - EP', durationSec: 243.4 }))
     assert.equal(v.verdict === 'reject' && v.kind, 'duration', 'the 243 s this comment once called explicit is the Club Mix')
+  })
+})
+
+// ⚠️ TWIN TESTS: JakeTunesMobile backend/src/util/__tests__/streamripMatch.test.ts and streamripWalk.test.ts,
+// "a number the request does not say (Brief 252)": the same answers, judged by the same rule (addsNumber).
+describe('a number the request does not say (JakeTunesMobile Brief 252)', () => {
+  // Real answers, saved 2026-11-19. The row names Apple's Various Artists compilation "1983" (460.4 s), so nothing holds a
+  // file to a length (expectedRuntimes), and "whiteline" is three quarters of "whitelines89", all recoTitleMatches asks.
+  const row = () => buildRequestedRecording({ title: "White Lines (Don't Do It)", artist: 'Grandmaster & Melle Mel', album: '1983' })
+  const eightyNine = qz({ title: 'White Lines 89', artist: 'Melle Mel', album: 'The Greatest Hip-Hop Songs Vol. 1', albumArtist: 'Various Artists', durationSec: 421 })
+
+  it('Melle Mel\'s 421 s "White Lines 89" is refused by its title, with no clock to do it', () => {
+    assert.equal(row().durationSec, 0)
+    assert.deepEqual(verifyCandidate(row(), eightyNine), { verdict: 'reject', kind: 'title', reason: "is titled “White Lines 89”, not “White Lines (Don't Do It)” (it adds 89)" })
+  })
+
+  it('his own copy, the 459.7 s single, still comes in', () => {
+    const single = qz({ title: "White Lines (Don't Do It)", artist: 'Grandmaster & Melle Mel', album: "White Lines (Don't Do It) - Single", durationSec: 459.7 })
+    assert.equal(verifyCandidate(row(), single).verdict, 'exact')
+  })
+
+  it("what Qobuz says of its two hits under his name leaves nothing to fetch", () => {
+    // track/get, 2026-11-19: 2955051 is the "New Remix", 54918217 the 89.
+    const meta = new Map<string, QobuzTrackMeta>([
+      ['2955051', { title: 'White Lines   ', version: "New Remix    aka White Lines  Don't Do It", durationSec: 200, parentalWarning: false, albumParentalWarning: true, album: 'Grandmaster Flash & The Furious Five', albumArtist: 'Grandmaster Melle-Mel' }],
+      ['54918217', { title: 'White Lines 89', version: null, durationSec: 421, parentalWarning: false, albumParentalWarning: false, album: 'The Greatest Hip-Hop Songs Vol. 1', albumArtist: 'Various Artists' }],
+    ])
+    const hits = [{ id: '2955051', desc: 'White Lines by Grandmaster Melle-Mel' }, { id: '54918217', desc: 'White Lines 89 by Melle Mel' }]
+    const v = judgeHitsByMeta(row(), hits, meta, new Set())
+    assert.deepEqual(v.kept, [])
+    assert.deepEqual(v.wrongRecording.map((r) => [r.hit.id, r.verdict.kind]), [['2955051', 'version'], ['54918217', 'title']])
+  })
+
+  it('his own pairs of other tracks: each title reads as the other, and the number says no', () => {
+    // Pairs from Jake's library.json, by one artist, that the title check reads as one title. No clock: a row may have none.
+    for (const [want, got] of [
+      ['Revolution 1', 'Revolution 9'], // The Beatles, 256 s and 502 s
+      ['Another Brick in the Wall, Pt. 1', 'Another Brick in the Wall, Pt. 2'], // Pink Floyd, 191 s and 239 s
+      ['Obstacle 1', 'Obstacle 2'], // Interpol, 251 s and 227 s
+      ['Segue 1', 'Segue 3'], // Failure, 114 s and 131 s
+      ['Public Service Announcement', 'Public Service Announcement 2000'], // Eminem, 33 s and 25 s
+      ['Vermilion', 'Vermilion, Pt. 2'], // Slipknot, 317 s and 224 s
+      ['Maybe Partying Will Help…Pt. 1', 'Maybe Partying Will Help… Pt.3'], // Sublime, 110 s and 32 s
+      ['Started From the Bottom', 'Star67'], // Drake, 174 s and 295 s
+    ] as const) {
+      const v = verifyCandidate(buildRequestedRecording({ title: want, artist: 'x' }), qz({ title: got, artist: 'x' }))
+      assert.equal(v.verdict === 'reject' && v.kind, 'title', `${want} -> ${got}`)
+      assert.match(v.verdict === 'reject' ? v.reason : '', /\(it adds \d+\)$/, `${want} -> ${got}`)
+    }
+  })
+
+  it('an upload\'s name is what follows the artist, when that is what reads as the song', () => {
+    // blink-182's "All The Small Things", 168.2 s on Enema Of The State (his library). The whole tag reads as the song
+    // too ("allthesmallthings" is inside it), and its name would be "blink-182".
+    const small = buildRequestedRecording({ title: 'All The Small Things', artist: 'blink-182', album: 'Enema Of The State', durationMs: 168_200 })
+    assert.equal(verifyCandidate(small, sc({ title: 'blink-182 - All The Small Things', artist: 'blink-182', durationSec: 168 })).verdict, 'exact')
+    // The Beatles' "Revolution 9" for "Revolution 1", with no clock: only the part after the artist reads as the song.
+    const nine = verifyCandidate(buildRequestedRecording({ title: 'Revolution 1', artist: 'The Beatles' }), sc({ title: 'The Beatles - Revolution 9', artist: 'The Beatles' }))
+    assert.equal(nine.verdict === 'reject' && nine.reason, 'is titled “The Beatles - Revolution 9”, not “Revolution 1” (it adds 9)')
+    // Collect 200's own "Collect 200" (170.5 s, his library) under a remaster stamp: what follows the dash is no song,
+    // so the tag's own name is read, and it says 200.
+    const collect = buildRequestedRecording({ title: 'Collect 200', artist: 'Collect 200' })
+    assert.equal(verifyCandidate(collect, qz({ title: 'Collect 200 - 2023 Remaster', artist: 'Collect 200' })).verdict, 'exact')
   })
 })
