@@ -3716,7 +3716,7 @@ const PHONE_AUTHORED_FILES = [
   'mobile-imports.json',
 ]
 // 2026-10-20 — a song deleted here stays deleted: tombstones to homemini + the absorb filter, and freed ids never reissued (phone-import-guard.ts).
-const phoneImportGuard = createPhoneImportGuard({ dir: app.getPath('userData'), baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), libraryTracks: async () => (await libraryCache.get()).tracks as never, warn: quietWarn })
+const phoneImportGuard = createPhoneImportGuard({ dir: app.getPath('userData'), baseUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), libraryTracks: async () => (await libraryCache.get()).tracks as never, warn: quietWarn, onDeletionsLanded: () => triggerSync('delete') })   // 2026-11-19: a delete reaches homemini as fast as an add
 const importAudioPuller = createImportAudioPuller((rows, onFailure) => ensureMobileImportAudio(rows, { libraryRoot: MUSIC_DIR.replace(/[/\\]iPod_Control[/\\]Music$/, ''), backendUrl: MOBILE_BACKEND_URL.replace(/\/audio$/, ''), onFailure, log: (m) => console.log(m) }))
 async function refreshPhoneAuthoredMirrors(): Promise<void> {
   // 2026-08-30 ("do a better job of adding the songs i download on mobile
