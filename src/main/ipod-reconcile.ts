@@ -421,22 +421,23 @@ export function foldForIpod(text: string | null | undefined): string {
   for (const c of s) out += IPOD_CHAR_FOLD[c] ?? c
   if ([...out].some((c) => (c.codePointAt(0) ?? 0) > 0xFF)) {
     let folded = ''
-    for (const c of out) {
-      const cp = c.codePointAt(0) ?? 0
-      if (cp <= 0xFF) {
-        folded += c
-        continue
-      }
-      const dec = c.normalize('NFKD')
-      const ascii = [...dec]
-        .filter((x) => (x.codePointAt(0) ?? 0) <= 0xFF && !/\p{M}/u.test(x))
-        .join('')
-      folded += ascii
-    }
+    for (const c of out) folded += (c.codePointAt(0) ?? 0) <= 0xFF ? c : foldWideChar(c)
     out = folded
   }
   if (!out.trim() && s.trim()) return s
   return out
+}
+
+/**
+ * One character above U+00FF. Letters, marks and digits of every script other
+ * than Latin are kept (2026-11-19: "זקני צפת 2" became "  2" and "Σtella"
+ * became "tella"); Latin beyond Latin-1, modifier letters, combining accents
+ * and symbols fold through NFKD to Latin-1. ⚠️ TWIN: core/db_reader.py _fold_wide_char
+ */
+function foldWideChar(c: string): string {
+  const keep = /[\p{L}\p{M}\p{N}]/u.test(c) && !/\p{Lm}/u.test(c) && !/\p{Script=Latin}/u.test(c) && !/\p{Script=Inherited}/u.test(c)
+  if (keep) return c
+  return [...c.normalize('NFKD')].filter((x) => (x.codePointAt(0) ?? 0) <= 0xFF && !/\p{M}/u.test(x)).join('')
 }
 
 /**
