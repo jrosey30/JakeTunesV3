@@ -148,6 +148,9 @@ const LIVE_REQUEST = /[([–—-][^)\]]*\b(?:live|concert|unplugged)\b/i
 
 const albumKey = (album: string): string => titleKey(searchTitle(album) || album) || album.trim().toLowerCase()
 
+/** Apple's clean edition of a song: its flag, or a censor stamp on the title or the album. */
+const cleanAppleRow = (r: AppleSongRow): boolean => Boolean(r.cleaned) || carriesCensorStamp(r.title) || carriesCensorStamp(r.album)
+
 /**
  * What a row with no length of its own should run, from what Apple lists (2026-11-05). Nobody
  * clicked a row on the Listen List, so each of its rows reached the judge with only tags to go
@@ -193,9 +196,8 @@ export function expectedRuntimes(want: { title: string; artist: string; album?: 
   const byArtist = rows.filter((r) => r.durationSec > 0
     && recoArtistMatches(want.artist, r.artist)
     && !(isCoverAct(r.title, r.artist) || isCoverAct(r.album, '')))
-  const isClean = (r: AppleSongRow): boolean => Boolean(r.cleaned) || carriesCensorStamp(r.title) || carriesCensorStamp(r.album)
   const namesTheSong = (r: AppleSongRow): boolean => (wantBare !== '' && titleKey(bareTitle(plain(r.title))) === wantBare) || masked(r.title)
-  if (byArtist.some((r) => isClean(r) && namesTheSong(r))) return []
+  if (byArtist.some((r) => cleanAppleRow(r) && namesTheSong(r))) return []
   const song = byArtist.filter((r) => !r.compilation
     && (exactTitle(r.title) || (wantBare !== '' && titleKey(plain(r.title)) === wantBare) || masked(r.title))
     && !unwantedVersionOf(want.title, r.title) && !unwantedVersionOf(r.title, want.title))
@@ -210,6 +212,30 @@ export function expectedRuntimes(want: { title: string; artist: string; album?: 
     out.set(`${r.durationSec.toFixed(1)}|${tolSec}`, { sec: r.durationSec, tolSec })
   }
   return [...out.values()]
+}
+
+/**
+ * Every length Apple lists for the song itself, by the artist, for telling which of MusicBrainz's
+ * recordings is meant (common/real-album.ts) when the row has no clock of its own. Looser than
+ * expectedRuntimes: a row on a compilation, or on another record, counts. Only the real-album
+ * lookup hears these, never the judge.
+ *
+ * Never a clean row's length. Apple's search shows no explicit row (none in 10,678, 2026-11-04), so
+ * for an explicit song all it lists is the clean edition, and that is often another cut: B.I.G.'s "Sky's
+ * the Limit" is 4:37 as "[Amended]" and 5:29 on Life After Death. Told 4:37, MusicBrainz is sure
+ * of the amended edition's cut, and a copy of the album's own from elsewhere is then never filed on
+ * the album (realAlbumTags). Its "Respect" and Hurricane Chris's "A Bay Bay" lose the album
+ * altogether. This is #350's rule for the file's clock, kept for MusicBrainz's.
+ *
+ * ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripMatch.ts appleSongLengths, which counts clean
+ * rows (2026-11-19): Sick Puppies' clean row there ran the album's length.
+ */
+export function appleSongLengths(want: { title: string; artist: string }, rows: AppleSongRow[]): number[] {
+  const plain = (t: string): string => searchTitle(t) || t
+  const wantKey = titleKey(plain(want.title))
+  return [...new Set(rows
+    .filter((r) => r.durationSec > 0 && !cleanAppleRow(r) && recoArtistMatches(want.artist, r.artist) && titleKey(plain(r.title)) === wantKey)
+    .map((r) => r.durationSec))]
 }
 
 /**

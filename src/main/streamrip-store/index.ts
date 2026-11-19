@@ -30,7 +30,7 @@ import { NO_EXPLICIT_WARNING, albumFirst, albumSearchNames, albumVersionOf, band
 import { buildRequestedAlbum, verifyAlbumCandidate, reconcileAlbumCompletion, describeCompletion, albumAlternativeDesc, orderTracks, parseCountTag, matchLibraryOwnership, ladderBudgetMs, type RequestedAlbum, type CandidateAlbum, type AlbumVerdict, type Ownership, type LibraryTrackLite } from '../album-identity.ts'
 import { loadLibraryTracksLite, type ImportRowTags } from '../import-pipeline.ts'
 import { itunesAlbumTracks, itunesFindAlbum, itunesSongRows } from '../download-search.ts'
-import { asksAppleForLength, buildRequestedRecording, expectedRuntimes, flagToJudge, judgeHitsByMeta, requestedLength, verifyCandidate, finalOutcome, describeOutcome, soundcloudSearchNote, type Alternative, type CandidateEvidence, type DownloadOutcome, type ExpectedRuntime, type Provider } from '../exact-recording.ts'
+import { appleSongLengths, asksAppleForLength, buildRequestedRecording, expectedRuntimes, flagToJudge, judgeHitsByMeta, requestedLength, verifyCandidate, finalOutcome, describeOutcome, soundcloudSearchNote, type Alternative, type CandidateEvidence, type DownloadOutcome, type ExpectedRuntime, type Provider } from '../exact-recording.ts'
 import { albumToLookFor, ownedAlbumSpelling, ownedAlbumTest, type RealAlbum } from '../../common/real-album.ts'
 import { lookUpRealAlbum } from '../real-album-lookup.ts'
 import { requestFromSourceEdition, verifySourceEdition } from '../source-edition-verify.ts'
@@ -788,9 +788,14 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     // Any trouble is no length: the guard stays out of it, not the download.
     // ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripWalk.ts walkDownload.
     let runtimes: ExpectedRuntime[] = []
+    // What MusicBrainz is told the song runs, to tell its recordings apart (below): the lengths the
+    // file is held to, so it can't name an album whose cut the clock would then refuse, and with
+    // none (a clean row, or the song listed only elsewhere) what Apple lists, a clean row's aside.
+    let songLengths: number[] = []
     if (!wantAlbum && title && artist && asksAppleForLength({ title, album: opts?.album, durationMs, cleanedSource: opts?.cleanedSource, explicitSource: opts?.explicitSource })) {
       const rows = await itunesSongRows(lookFor, artist)
       runtimes = expectedRuntimes({ title, artist, album: opts?.album }, rows ?? [])
+      songLengths = runtimes.length > 0 ? runtimes.map((r) => r.sec) : appleSongLengths({ title, artist }, rows ?? [])
       trace.push(rows === null ? 'apple: no answer, so no length' : runtimes.length ? `apple lists ${runtimes.map((r) => `${fmtDur(r.sec)} ±${r.tolSec}`).join(', ')}` : 'apple: no length for this recording')
     }
     const clocked = runtimes.length > 0 || requestedLength({ title, album: opts?.album, durationMs, cleanedSource: opts?.cleanedSource }).durationSec > 0
@@ -810,13 +815,16 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     if (durationMs && !req.durationSec) trace.push(`no length: ${fmtDur(durationMs / 1000)} is the clean row's`)
     // ── The song's real album (JakeTunesMobile Brief 231). A store's first hit for a hit song
     // is a compilation, and so can be the row's own album. MusicBrainz says which album to look
-    // for: common/real-album.ts. Any trouble is null, and the ladder goes on the row.
+    // for: common/real-album.ts. Any trouble is null, and the ladder goes on the row. It is sure only
+    // when it knows what the song runs, so a row with no length tells it what Apple lists: until
+    // 2026-11-19 a Listen List row never did, and a row off a single or a compilation stayed there.
+    // ⚠️ TWIN: JakeTunesMobile/backend/src/util/streamripWalk.ts walkDownload (`lengths`).
     const rowAlbum = (opts?.album || '').trim()
     let real: RealAlbum | null = null
     let library: LibraryTrackLite[] = []
     if (!wantAlbum && title && artist) {
       library = await loadLibraryTracksLite().catch(() => [] as LibraryTrackLite[])
-      real = await lookUpRealAlbum(lookFor, artist, durationMs ? [durationMs / 1000] : [], ownedAlbumTest(library, artist), {
+      real = await lookUpRealAlbum(lookFor, artist, durationMs ? [durationMs / 1000] : songLengths, ownedAlbumTest(library, artist), {
         throttle: deps.mbThrottle,
         userAgent: deps.mbUserAgent,
         onTrouble: (why) => trace.push(`musicbrainz: ${why}: going on the row`),
