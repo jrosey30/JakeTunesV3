@@ -120,3 +120,30 @@ describe('the orchestrator is wired to the policy', () => {
     assert.match(src, /triggerSync\('startup'\)/)
   })
 })
+
+describe('a delete is as fast as an add (2026-11-19)', () => {
+  it('urgent and quick: 5 s, never the 5-minute window', () => {
+    assert.equal(syncUrgency('delete'), 'urgent')
+    assert.equal(nextDueAt(null, 'delete', 0), SYNC_URGENT_DELAY_MS)
+    // The save itself already opened a window ('metadata-edit'); the delete pulls it in.
+    assert.equal(nextDueAt(nextDueAt(null, 'metadata-edit', 0), 'delete', 2 * S), 2 * S + SYNC_URGENT_DELAY_MS)
+    assert.equal(mergePendingReason('metadata-edit', 'delete'), 'delete')
+    assert.equal(mergePendingReason('delete', 'metadata-edit'), 'delete')
+  })
+  it('the 2026-11-19 morning, replayed: three deletes then an add each sync within seconds', () => {
+    // 10:21:32, 10:22:03, 10:22:26 deletes (save + homemini taking the tombstone ~2 s later), 10:24:44 add.
+    const t0 = 0
+    const runs = replay([
+      [t0, 'metadata-edit'], [t0 + 2 * S, 'delete'],
+      [31 * S, 'metadata-edit'], [33 * S, 'delete'],
+      [54 * S, 'metadata-edit'], [56 * S, 'delete'],
+      [192 * S, 'import'],
+    ], 6 * S, 10 * MIN)
+    assert.ok(runs.length >= 1 && runs[0] <= 2 * S + SYNC_URGENT_DELAY_MS + 100, `first delete synced at ${runs[0]} ms`)
+    assert.ok(runs.some((r) => r >= 56 * S && r <= 56 * S + SYNC_URGENT_DELAY_MS + 100), 'the last delete synced within 5 s')
+  })
+  it('the orchestrator treats it as a quick pass', () => {
+    const src = readFileSync(join(import.meta.dirname, '..', 'sync-orchestrator.ts'), 'utf-8')
+    assert.match(src, /r === 'delete'/)
+  })
+})

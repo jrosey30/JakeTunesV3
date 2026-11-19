@@ -8,8 +8,8 @@
  * triggers, a fixed 5-minute batch window leaves 34 (peak 9/h).
  *
  * Two kinds of trigger:
- *   - URGENT ('import', 'artwork', 'manual', 'nas-recovery', 'safety-net'):
- *     new music, new covers, a sync Jake asked for. 5 s trailing debounce,
+ *   - URGENT ('import', 'delete', 'artwork', 'manual', 'nas-recovery', 'safety-net'):
+ *     new music, a song Jake deleted, new covers, a sync Jake asked for. 5 s trailing debounce,
  *     as before — an album of 12 imports is still one sync — and it carries
  *     any batched change along with it.
  *   - BATCHED ('metadata-edit', 'playlist', 'startup', 'taste'): routine
@@ -19,6 +19,15 @@
  *     taste choice — a strip ✕ / refresh / add, Record Shop "Not for me", a
  *     Rock DNA answer — so it reaches the other Mac without waiting for an
  *     unrelated library save.
+ *
+ * 'delete' (2026-11-19; Jake: "it should be eye for eye changes. if i add a
+ * song on macbook at work it adds to workmini"): a deletion used to ride the
+ * 5-minute window as a routine save ('metadata-edit') while an add went in
+ * 5 s. It now goes as fast as an add. It is fired by homemini TAKING the
+ * save's tombstones (src/main/track-tombstones.ts onLanded), never by the
+ * save itself: homemini's publish guard lets a recently added song leave
+ * only when it already holds that song's tombstone, so a publish that ran
+ * first was refused and nothing asked again until some other save.
  *
  * Pure (no electron, no timers) so the policy is tested directly;
  * src/main/sync-orchestrator.ts owns the clock and the single-flight gate.

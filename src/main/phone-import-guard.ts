@@ -25,6 +25,8 @@ export interface PhoneImportGuardOptions {
   fetchImpl?: Parameters<typeof createTrackTombstones>[0]['fetchImpl']
   warn?: (key: string, msg: string) => void
   log?: (msg: string) => void
+  /** homemini took this session's deletions (track-tombstones.ts onLanded). */
+  onDeletionsLanded?: () => void
 }
 
 export interface PhoneImportGuard {
@@ -44,7 +46,7 @@ export interface PhoneImportGuard {
 export function createPhoneImportGuard(opts: PhoneImportGuardOptions): PhoneImportGuard {
   const warn = opts.warn ?? ((_k: string, m: string) => console.warn(m))
   const log = opts.log ?? ((m: string) => console.log(m))
-  const tombstones = createTrackTombstones({ dir: opts.dir, baseUrl: opts.baseUrl, fetchImpl: opts.fetchImpl, warn, log })
+  const tombstones = createTrackTombstones({ dir: opts.dir, baseUrl: opts.baseUrl, fetchImpl: opts.fetchImpl, warn, log, onLanded: opts.onDeletionsLanded })
   const idHighWater = createIdHighWater(join(opts.dir, TRACK_ID_HIGH_WATER_FILE), (m) => warn('id-high-water', m))
   let lastWithheld = ''
 

@@ -19,6 +19,7 @@
  *   - post-success of `import-track` / `import-tracks`
  *   - post-success of `save-metadata-override`
  *   - post-success of `save-playlists`
+ *   - homemini taking a save's deletions (`delete`, 2026-11-19: track-tombstones.ts onLanded)
  *
  * Timing lives in src/common/sync-batching.ts (2026-10-10): imports,
  * covers and manual syncs run 5 s after the last trigger (an album of
@@ -127,7 +128,7 @@ const SAFETY_NET_INTERVAL_MS = 21_600_000 // 6 h — rare full reconcile (10 min
 const RUN_TIMEOUT_MS = 600_000            // kill a hung sync after 10 min
 
 export type SyncReason =
-  | 'import' | 'metadata-edit' | 'playlist' | 'safety-net' | 'manual' | 'artwork' | 'nas-recovery' | 'startup' | 'taste'
+  | 'import' | 'metadata-edit' | 'playlist' | 'safety-net' | 'manual' | 'artwork' | 'nas-recovery' | 'startup' | 'taste' | 'delete'
 
 let getWindow: (() => BrowserWindow | null) | null = null
 let debounceTimer: NodeJS.Timeout | null = null
@@ -146,8 +147,9 @@ let preempted = false
 // 2026-10-10: 'artwork' is quick too. It used to run FULL mode — a stat-walk
 // over the whole 73 GB library for one new cover — though the artwork leg
 // runs in every mode.
+// 2026-11-19: 'delete' is quick and urgent, like 'import' (src/common/sync-batching.ts).
 const isQuickReason = (r: SyncReason): boolean =>
-  r === 'import' || r === 'metadata-edit' || r === 'playlist' || r === 'nas-recovery' || r === 'artwork' || r === 'startup' || r === 'taste'
+  r === 'import' || r === 'metadata-edit' || r === 'playlist' || r === 'nas-recovery' || r === 'artwork' || r === 'startup' || r === 'taste' || r === 'delete'
 
 function armTimer(): void {
   if (debounceTimer) clearTimeout(debounceTimer)

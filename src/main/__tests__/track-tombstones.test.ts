@@ -183,6 +183,121 @@ describe('the evening, replayed on the desktop', () => {
     assert.equal(src.split('phoneImportGuard.absorbableImports(').length - 1, 2, 'boot pull + mid-session push')
     assert.match(src, /idHighWater: phoneImportGuard\.idHighWater/)
     assert.match(src, /void phoneImportGuard\.tombstones\.tick\(\)/)
+    assert.match(src, /onDeletionsLanded: \(\) => triggerSync\('delete'\)/, 'homemini taking a delete fires the urgent sync (2026-11-19)')
+  })
+})
+
+// 2026-11-19, Jake: "it should be eye for eye changes. if i add a song on
+// macbook at work it adds to workmini". Three deletes at 10:21-10:22 reached
+// homemini at 10:24 with the 5-minute batch; an add at 10:24:44 was there at
+// 10:24:51. A delete now fires the same urgent sync, once homemini holds the
+// tombstones its publish guard asks for.
+describe('a delete travels like an add', () => {
+  test('homemini taking this session\'s deletes calls onLanded once; nothing new, nothing called', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jt-tomb-'))
+    const up = fakeHomemini(true)
+    let landed = 0
+    const t = createTrackTombstones({ dir, baseUrl: 'http://homemini:3000', fetchImpl: up.fetchImpl, ...quiet, debounceMs: 60_000, onLanded: () => { landed++ } })
+    await t.tick()
+    assert.equal(landed, 0, 'the launch push carries nothing Jake deleted this session')
+    await t.recordSave([orb, drunks], [orb])
+    assert.equal(landed, 0, 'never before homemini has them')
+    assert.equal(await t.pushNow(), true)
+    assert.equal(landed, 1)
+    assert.equal(up.calls.at(-1)!.body.tombstones.length, 1, 'the push that landed carried the deletion')
+    assert.equal(await t.pushNow(), true)
+    assert.equal(landed, 1, 'a later push with nothing new does not sync again')
+    await t.recordSave([orb], [orb])
+    assert.equal(await t.pushNow(), true)
+    assert.equal(landed, 1, 'a save that deleted nothing records nothing')
+  })
+
+  test('homemini unreachable: no sync yet; the tick that lands it brings the sync', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jt-tomb-'))
+    let ok = false
+    let landed = 0
+    const t = createTrackTombstones({
+      dir, baseUrl: 'http://homemini:3000', ...quiet, debounceMs: 60_000, onLanded: () => { landed++ },
+      fetchImpl: async () => ({ ok, status: ok ? 200 : 503 }),
+    })
+    await t.recordSave([orb, drunks], [orb])
+    assert.equal(await t.pushNow(), false)
+    await t.tick()
+    assert.equal(landed, 0)
+    ok = true
+    await t.tick()
+    assert.equal(landed, 1)
+    await t.tick()
+    assert.equal(landed, 1, 'landed, nothing owed')
+  })
+
+  test('a deletion read back after a restart never fires it; a throwing hook never fails the push', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jt-tomb-'))
+    const a = createTrackTombstones({ dir, baseUrl: 'http://homemini:3000', fetchImpl: fakeHomemini(false).fetchImpl, ...quiet, debounceMs: 60_000 })
+    await a.recordSave([orb, drunks], [orb])
+    let landed = 0
+    const b = createTrackTombstones({ dir, baseUrl: 'http://homemini:3000', fetchImpl: fakeHomemini(true).fetchImpl, ...quiet, onLanded: () => { landed++ } })
+    await b.tick()
+    assert.equal(landed, 0, 'only deletes from this session (the 6 h net and the next save publish the rest)')
+    const c = createTrackTombstones({ dir, baseUrl: 'http://homemini:3000', fetchImpl: fakeHomemini(true).fetchImpl, ...quiet, debounceMs: 60_000, onLanded: () => { throw new Error('boom') } })
+    await c.recordSave([orb, cowboyAt(13000)], [orb])
+    assert.equal(await c.pushNow(), true)
+  })
+
+  test('a delete made while a push is on the wire goes in a second push at once, and syncs again', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jt-tomb-'))
+    const calls: number[] = []
+    let release: () => void = () => {}
+    let landed = 0
+    const t = createTrackTombstones({
+      dir, baseUrl: 'http://homemini:3000', ...quiet, debounceMs: 60_000, onLanded: () => { landed++ },
+      fetchImpl: async (_url, init) => {
+        calls.push(parseTombstones(JSON.parse(String(init?.body))).length)
+        if (calls.length === 1) await new Promise<void>((r) => { release = r })
+        return { ok: true, status: 200 }
+      },
+    })
+    await t.recordSave([orb, drunks], [orb])
+    const first = t.pushNow()
+    await new Promise((r) => setTimeout(r, 10))
+    await t.recordSave([orb, cowboyAt(13000)], [orb])
+    const joined = t.pushNow()   // joins the push on the wire; its body has only the first delete
+    release()
+    assert.equal(await joined, true)
+    assert.equal(await first, true)
+    for (let i = 0; i < 20 && calls.length < 2; i++) await new Promise((r) => setTimeout(r, 5))
+    await new Promise((r) => setTimeout(r, 10))
+    assert.deepEqual(calls, [1, 2], 'the second push carries both, without waiting for the tick')
+    assert.equal(landed, 2)
+  })
+
+  test('two loads at once just after launch: the later read never undoes a recorded delete', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jt-tomb-'))
+    const bodies: number[] = []
+    const t = createTrackTombstones({
+      dir, baseUrl: 'http://homemini:3000', ...quiet, debounceMs: 60_000,
+      fetchImpl: async (_url, init) => { bodies.push(parseTombstones(JSON.parse(String(init?.body))).length); return { ok: true, status: 200 } },
+    })
+    // A delete and the launch push start together, both reading the file;
+    // the delete's read is issued first, so it lands first and the push's
+    // read lands on top of it.
+    const rec = t.recordSave([orb, drunks], [orb])
+    for (let i = 0; i < 5; i++) await Promise.resolve()
+    const launch = t.pushNow()
+    await rec
+    await launch
+    assert.equal((await t.list()).length, 1, 'the recorded delete is still in memory')
+    assert.equal(await t.pushNow(), true)
+    assert.equal(bodies.at(-1), 1, 'and homemini is sent it')
+  })
+
+  test('the guard passes the hook through', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jt-tomb-'))
+    let landed = 0
+    const g = createPhoneImportGuard({ dir, baseUrl: 'http://homemini:3000', libraryTracks: async () => [], fetchImpl: fakeHomemini(true).fetchImpl, ...quiet, onDeletionsLanded: () => { landed++ } })
+    await g.afterSave([orb, drunks], [orb], {})
+    assert.equal(await g.tombstones.pushNow(), true)
+    assert.equal(landed, 1)
   })
 })
 

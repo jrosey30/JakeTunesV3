@@ -15,6 +15,11 @@
  *   • POSTs the whole list to homemini's /api/track-tombstones/merge, which
  *     drops the matching sidecar row, holds its audio, and never re-homes
  *     it (the same push-until-it-lands shape as star-hub-push.ts);
+ *   • once homemini has taken deletions this session recorded, calls
+ *     onLanded (2026-11-19): main/index.ts fires an urgent sync there, so the
+ *     library.json without the songs reaches homemini (and from it the phone
+ *     and workmini) as fast as an added song does, and only AFTER homemini
+ *     holds the tombstones its publish guard asks for;
  *   • filters the phone-import mirror before the absorb, so a deleted row
  *     can never come back here even while homemini is unreachable or can't
  *     save — and its audio is never pulled down again.
@@ -242,6 +247,14 @@ export interface TrackTombstonesOptions {
   now?: () => Date
   debounceMs?: number
   timeoutMs?: number
+  /**
+   * homemini has just taken deletions recorded since the last push it took
+   * (2026-11-19). Not called for a list read back at launch, or a push that
+   * carried nothing new: only Jake's deletes from this session. A push that
+   * fails stays owed and the mirror tick retries it, so this still comes.
+   * Never throws into the push.
+   */
+  onLanded?: () => void
 }
 
 export interface TrackTombstones {
@@ -273,17 +286,26 @@ export function createTrackTombstones(opts: TrackTombstonesOptions): TrackTombst
   let owed = true          // nothing has landed this session yet
   let timer: ReturnType<typeof setTimeout> | null = null
   let inFlight: Promise<boolean> | null = null
+  // Deletions recorded this session, and how many of them homemini has taken.
+  let recordedGen = 0
+  let landedGen = 0
 
   async function load(): Promise<TrackTombstone[]> {
     if (cache) return cache
+    let read: TrackTombstone[]
     try {
-      cache = parseTombstones(JSON.parse(await readFile(path, 'utf-8')))
+      read = parseTombstones(JSON.parse(await readFile(path, 'utf-8')))
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
         warn('track-tombstones-read', `[track-tombstones] could not read ${path} (${err instanceof Error ? err.message : String(err)}) — starting from none`)
       }
-      cache = []
+      read = []
     }
+    // Two loads can be reading at once (a push and a save just after launch).
+    // The one that finishes second must not put the file's older list over
+    // the deletion the other just recorded (2026-11-19 review).
+    if (cache) return cache
+    cache = read
     index = indexTombstones(cache)
     return cache
   }
@@ -292,6 +314,7 @@ export function createTrackTombstones(opts: TrackTombstonesOptions): TrackTombst
     if (inFlight) return inFlight
     inFlight = (async () => {
       owed = false
+      const gen = recordedGen
       try {
         const tombstones = await load()
         const res = await fetchImpl(url, withCompanionInit({
@@ -305,6 +328,12 @@ export function createTrackTombstones(opts: TrackTombstonesOptions): TrackTombst
           warn('track-tombstones-http', `[track-tombstones] homemini refused the deletions (${res.status}) — next tick retries`)
           return false
         }
+        if (gen > landedGen) {
+          landedGen = gen
+          try { opts.onLanded?.() } catch (err) {
+            warn('track-tombstones-landed', `[track-tombstones] after-push hook failed: ${err instanceof Error ? err.message : String(err)}`)
+          }
+        }
         return true
       } catch (err) {
         owed = true
@@ -314,7 +343,12 @@ export function createTrackTombstones(opts: TrackTombstonesOptions): TrackTombst
         inFlight = null
       }
     })()
-    return inFlight
+    const push = inFlight
+    // A delete recorded while this push was on the wire joined it (pushNow
+    // returns the push in flight) but is not in its body: send it now, not at
+    // the next mirror tick (2026-11-19 review).
+    void push.then((ok) => { if (ok && recordedGen > landedGen && !inFlight) void pushNow() })
+    return push
   }
 
   function changed(): void {
@@ -331,6 +365,7 @@ export function createTrackTombstones(opts: TrackTombstonesOptions): TrackTombst
     const run = chain.then(async () => {
       const r = mergeTombstones(await load(), fresh)
       if (!r.changed) return 0
+      recordedGen++
       // Memory first: a refused write still honours the deletion this session.
       cache = r.merged
       index = indexTombstones(cache)
