@@ -17,14 +17,22 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { asksAppleForLength, buildRequestedRecording, expectedRuntimes, verifyCandidate, type AppleSongRow } from '../exact-recording.ts'
+import { appleSongLengths, asksAppleForLength, buildRequestedRecording, expectedRuntimes, verifyCandidate, type AppleSongRow } from '../exact-recording.ts'
 import { itunesSongRows } from '../download-search.ts'
+import { pickRealAlbum, type MbRecording } from '../../common/real-album.ts'
 
 const userData = mkdtempSync(join(tmpdir(), 'jt-applelen-userdata-'))
 process.env.JT_USER_DATA = userData
 register('../../../scripts/concert/electron-hooks.mjs', import.meta.url)
 const { registerStreamripStore } = await import('../streamrip-store/index.ts')
 after(() => rmSync(userData, { recursive: true, force: true }))
+
+/** MusicBrainz's real answers, saved for the real-album tests (2026-11-05), and for these (2026-11-19, each artist's own
+ *  recordings of the title: all the real-album rule reads). */
+const MB_ANSWERS = {
+  ...JSON.parse(readFileSync(new URL('./fixtures/real-album-musicbrainz.json', import.meta.url), 'utf8')),
+  ...JSON.parse(readFileSync(new URL('./fixtures/real-album-lengths-musicbrainz.json', import.meta.url), 'utf8')),
+} as Record<string, unknown[]>
 
 const row = (title: string, artist: string, album: string, durationSec: number, extra: Partial<AppleSongRow> = {}): AppleSongRow =>
   ({ title, artist, album, durationSec, ...extra })
@@ -235,6 +243,60 @@ describe('asksAppleForLength: whose length is Apple’s to answer', () => {
   })
 })
 
+describe('appleSongLengths: what MusicBrainz is told a row with no clock runs', () => {
+  // The phone's test table for the song (JakeTunesMobile streamripMatch.test.ts), the album listed
+  // twice, and a row with no length.
+  const PUPPIES = [
+    row("You're Going Down", 'Sick Puppies', 'Tri-Polar', 187.2, { explicit: true }),
+    row("You're Going Down", 'Sick Puppies', 'Tri-Polar', 187.1, CLEAN),
+    row("You're Going Down", 'Sick Puppies', 'Tri-Polar (Deluxe)', 187.2),
+    row("You're Going Down (Radio Edit)", 'Sick Puppies', 'Radio Hits', 160),
+    row("You're Going Down", 'Somebody Else', 'Karaoke', 190),
+    row("You're Going Down", 'Sick Puppies', 'Tri-Polar', 0),
+  ]
+  const want = { title: "You're Going Down", artist: 'Sick Puppies' }
+
+  test('a clean row quiets the file’s clock, and its own length is never told', () => {
+    assert.deepEqual(expectedRuntimes(want, PUPPIES), [], 'the judge hears nothing')
+    assert.deepEqual(appleSongLengths(want, PUPPIES), [187.2])
+  })
+
+  test('Sky’s the Limit: Apple lists only the clean edit, a 4:37 cut, so MusicBrainz keeps the album’s 5:29', () => {
+    // Apple's real answer to "Sky's the Limit The Notorious B.I.G." (2026-11-19), the rows by the artist with the title.
+    const real = [
+      row("Sky's the Limit (feat. 112) [Amended]", 'The Notorious B.I.G.', 'Life After Death [Amended Version] (2014 Remaster)', 277.133, CLEAN),
+      row("Sky's the Limit (feat. 112) [Radio Edit] [2014 Remaster]", 'The Notorious B.I.G.', 'Life After Death (25th Anniversary Super Deluxe Edition)', 253.653),
+      row("Sky's the Limit (Instrumental) [2014 Remaster]", 'The Notorious B.I.G.', 'Life After Death (25th Anniversary Super Deluxe Edition)', 273.707),
+    ]
+    const want = { title: "Sky's the Limit", artist: 'The Notorious B.I.G.' }
+    assert.deepEqual(appleSongLengths(want, real), [])
+    const mb = MB_ANSWERS["The Notorious B.I.G. - Sky's the Limit"] as MbRecording[]
+    assert.equal(pickRealAlbum(mb, { ...want, durationsSec: [] })?.durationSec, 329.506)
+    assert.equal(pickRealAlbum(mb, { ...want, durationsSec: [277.133] })?.durationSec, 277.266, 'told the clean edit, MusicBrainz is sure of the clean cut')
+  })
+
+  test('Sick Puppies: Apple’s search lists only the clean edition, as "(Radio Edit)", so there is nothing to tell', () => {
+    // Apple's real answer to "You're Going Down SICK PUPPIES" (2026-11-19). Its search never shows an explicit row.
+    const real = [
+      row("You're Going Down (Radio Edit)", 'SICK PUPPIES', 'Tri-Polar', 187.32, CLEAN),
+      row("You're Going Down (Unplugged)", 'SICK PUPPIES', 'Polar Opposite', 249.2, CLEAN),
+      row("You're Going Down (Live)", 'SICK PUPPIES', 'Live At House of Blues, Cleveland (Live Nation Studios)', 258.2, CLEAN),
+    ]
+    assert.deepEqual(appleSongLengths({ title: "You're Going Down", artist: 'SICK PUPPIES' }, real), [])
+  })
+
+  test('a featured credit is a label on the song, not another song', () => {
+    assert.deepEqual(appleSongLengths({ title: 'We Found Love', artist: 'Rihanna' }, [RIHANNA[0]!]), [215.2])
+  })
+
+  test('reads "&" as "and", and says nothing with nothing to go on', () => {
+    assert.deepEqual(appleSongLengths({ title: 'Girls and Boys', artist: 'Blur' }, [row('Girls & Boys', 'Blur', 'Parklife', 291.2)]), [291.2])
+    // Qobuz's Parklife prints "Girls & Boys"; Apple's own rows say "Girls and Boys" (2026-11-19).
+    assert.deepEqual(appleSongLengths({ title: 'Girls & Boys', artist: 'Blur' }, [row('Girls and Boys', 'Blur', 'Parklife', 291.2), row('Girls and Boys', 'Blur', 'The Best Of', 258.8)]), [291.2, 258.8])
+    assert.deepEqual(appleSongLengths(want, []), [])
+  })
+})
+
 describe('the judge, with what Apple lists', () => {
   const qz = (durationSec: number | null, album = 'Spirit Desire') => ({ provider: 'qobuz' as const, title: 'Spirit Desire', artist: 'Tigers Jaw', album, durationSec })
   const req = (runtimes: Array<{ sec: number; tolSec: number }>, over: Parameters<typeof buildRequestedRecording>[0] = {}) =>
@@ -381,6 +443,7 @@ describe('walked through the real handler', () => {
   let appleAsked: string[] = []
   let qobuz: Record<string, unknown> = {}
   let bandcamp: unknown[] = []
+  let musicBrainz: unknown[] = []
   let warned: string[] = []
   const realFetch = globalThis.fetch
   const savedEnv = { HOME: process.env.HOME, PATH: process.env.PATH, TMPDIR: process.env.TMPDIR }
@@ -393,6 +456,7 @@ describe('walked through the real handler', () => {
   }
   const calls = (): string[] => existsSync(join(world, 'calls.log')) ? readFileSync(join(world, 'calls.log'), 'utf-8').split('\n') : []
   const ripped = (): string[] => calls().filter((l) => l.startsWith('rip --folder')).map((l) => l.split(' ').at(-1)!)
+  const albumsSearched = (): string[] => calls().filter((l) => l.startsWith('rip search') && l.includes(' qobuz album ')).map((l) => l.split(' qobuz album ')[1]!)
   const hits = (rows: Array<[id: string, desc: string]>): void =>
     put('search-qobuz-track.json', JSON.stringify(rows.map(([id, desc]) => ({ source: 'qobuz', media_type: 'track', id, desc }))))
   const fileTags = (id: string, t: { title: string; artist: string; album: string; duration: number }): void =>
@@ -404,15 +468,18 @@ describe('walked through the real handler', () => {
   function store() {
     const handlers = new Map<string, (event: unknown, ...args: unknown[]) => Promise<unknown>>()
     const imported: string[] = []
+    const tags: unknown[] = []
     registerStreamripStore({
       ipc: { handle: (channel: string, fn: never) => { handlers.set(channel, fn) } },
       getMainWindow: () => null,
-      importDownloaded: async (paths: string[]) => { imported.push(...paths); return paths.map(() => ({ title: 'x' })) },
+      importDownloaded: async (paths: string[], _source?: string, _addedVia?: string, rowTags?: unknown) => { imported.push(...paths); tags.push(rowTags); return paths.map(() => ({ title: 'x' })) },
       mbThrottle: async () => {},
       mbUserAgent: 'jt-applelen-test',
     } as never)
     return {
       importedIds: (): string[] => imported.map((p) => p.split('/').at(-1)!.replace(/-\d+\.\w+$/, '')),
+      /** The album the row files each import on, when it overrules the file's own tags. */
+      rowTags: (): unknown[] => tags,
       walk: async (opts: Record<string, unknown>): Promise<WalkResult> => {
         const r = await handlers.get('streamrip:download-by-query')!({}, opts) as WalkResult
         assert.deepEqual(readdirSync(process.env.TMPDIR!).filter((n) => n.startsWith('jaketunes-')), [], 'staging must not outlive the walk')
@@ -448,6 +515,7 @@ describe('walked through the real handler', () => {
     appleAsked = []
     qobuz = {}
     bandcamp = []
+    musicBrainz = []
     warned = []
     mock.method(console, 'warn', (...args: unknown[]) => { warned.push(args.join(' ')) })
     mock.method(console, 'log', () => {})
@@ -463,6 +531,7 @@ describe('walked through the real handler', () => {
         return qobuz[id] === undefined ? json({ status: 'error' }, 500) : json(qobuz[id])
       }
       if (u.includes('bandcamp.com/api')) return json({ auto: { results: bandcamp } })
+      if (u.includes('musicbrainz.org/ws/2/recording')) return json({ count: musicBrainz.length, recordings: musicBrainz })
       return json({}, 404)
     }) as typeof fetch
   })
@@ -692,6 +761,75 @@ describe('walked through the real handler', () => {
     assert.equal(r.outcome, 'exact-not-found')
     assert.ok(r.alternatives?.some((a) => a.provider === 'bandcamp' && a.reason === 'runs 4:10, wanted 3:54'), JSON.stringify(r.alternatives))
     assert.doesNotMatch(r.detail!, /left alone/)
+  })
+
+  // MusicBrainz names a song's real album for sure only when it knows what the song runs
+  // (common/real-album.ts), and a Listen List row has no length of its own: what Apple lists has
+  // to reach it. Before 2026-11-19 it never did, so a row off a single or a compilation stayed there.
+  // Jungle's "Romeo (feat. Bas)" on a row naming "Volcano", a record it isn't on: Apple's, MusicBrainz's and Qobuz's
+  // real answers (2026-11-19). Apple lists the song only as a clean row and on a compilation, so the row sets no clock,
+  // and MusicBrainz is sure of Loving in Stereo only once it hears what those rows run.
+  const romeo = (): void => {
+    apple = { rows: [
+      appleRow('Romeo II', 'Jungle & Bas', 'Sunshine', 183.115, { collectionArtistName: 'Jungle' }),
+      appleRow('Romeo (feat. Bas)', 'Jungle', 'Loving in Stereo', 166.2, { trackExplicitness: 'cleaned' }),
+      appleRow('Romeo', 'Jungle & Bas', 'Nova Tunes 4.3', 162.107, { collectionArtistName: 'Various Artists' }),
+    ] }
+    musicBrainz = MB_ANSWERS['Jungle - Romeo']!
+    hits([['443318790', 'Romeo II by Jungle'], ['178610310', 'Romeo by Jungle'], ['177366782', 'Romeo by Jungle'], ['172670324', 'Romeo by Jungle']])
+    qobuz['443318790'] = { title: 'Romeo II', duration: 183, parental_warning: true, album: { title: 'Sunshine', artist: { name: 'Jungle' } } }
+    qobuz['178610310'] = { title: 'Romeo', duration: 166, parental_warning: true, album: { title: 'Loving In Stereo', artist: { name: 'Jungle' } } }
+    qobuz['177366782'] = { title: 'Romeo', duration: 166, parental_warning: true, album: { title: 'Romeo', artist: { name: 'Jungle' } } }
+    qobuz['172670324'] = { title: 'Romeo', duration: 162, parental_warning: false, album: { title: 'Nova Tunes 4.3', artist: { name: 'Various Artists' } } }
+    fileTags('178610310', { title: 'Romeo', artist: 'Jungle', album: 'Loving In Stereo', duration: 166 })
+    fileTags('177366782', { title: 'Romeo', artist: 'Jungle', album: 'Romeo', duration: 166 })
+    fileTags('172670324', { title: 'Romeo', artist: 'Jungle', album: 'Nova Tunes 4.3', duration: 162 })
+  }
+
+  test('Romeo off Volcano: Apple’s lengths make MusicBrainz sure of Loving in Stereo, and its copy lands without a look for Volcano', async () => {
+    romeo()
+    const { walk, importedIds, rowTags } = store()
+    const r = await walk({ artist: 'Jungle', title: 'Romeo (feat. Bas)', album: 'Volcano' })
+    assert.equal(r.outcome, 'imported', r.error)
+    assert.deepEqual(importedIds(), ['178610310'])
+    assert.deepEqual(ripped(), ['178610310'])
+    assert.deepEqual(albumsSearched(), [], 'no door to a record the song isn’t on')
+    assert.deepEqual(rowTags(), [undefined])
+  })
+
+  test('Wrong Again off the single: MusicBrainz hears the 3:03 Apple lists there, and Blue Desert’s copy lands', async () => {
+    // Jake's real Listen List row, and Apple's, MusicBrainz's and Qobuz's real answers (2026-11-19). Apple lists the song
+    // at 3:03 on the single and on Blue Desert, and Qobuz's first hit is Blue Desert's. On main the single's copy landed.
+    apple = { rows: [
+      appleRow('Wrong Again', 'Jack J', 'Wrong Again - Single', 182.869),
+      appleRow('Wrong Again', 'Jack J', 'Blue Desert', 182.869),
+      appleRow('Pink shoes (Part I)', 'Jack J', 'Wrong Again - Single', 75.901),
+    ] }
+    musicBrainz = MB_ANSWERS['Jack J - Wrong Again']!
+    hits([['290541010', 'Wrong Again by Jack J'], ['287575155', 'Wrong Again by Jack J'], ['287575156', 'Pink shoes by Jack J']])
+    qobuz['290541010'] = { title: 'Wrong Again', duration: 182, parental_warning: false, album: { title: 'Blue Desert', artist: { name: 'Jack J' } } }
+    qobuz['287575155'] = { title: 'Wrong Again', duration: 182, parental_warning: false, album: { title: 'Wrong Again', artist: { name: 'Jack J' } } }
+    fileTags('290541010', { title: 'Wrong Again', artist: 'Jack J', album: 'Blue Desert', duration: 182 })
+    fileTags('287575155', { title: 'Wrong Again', artist: 'Jack J', album: 'Wrong Again', duration: 182 })
+    const { walk, importedIds } = store()
+    const r = await walk({ artist: 'Jack J', title: 'Wrong Again', album: 'Wrong Again - Single' })
+    assert.equal(r.outcome, 'imported', r.error)
+    assert.deepEqual(importedIds(), ['290541010'])
+    assert.deepEqual(ripped(), ['290541010'])
+  })
+
+  test('Girls and Boys off The Best Of: MusicBrainz hears the 4:19 the row names, not Parklife’s, and the edit lands as itself', async () => {
+    apple = { rows: [appleRow('Girls and Boys', 'Blur', 'Parklife', 291.2), appleRow('Girls and Boys', 'Blur', 'The Best Of', 258.8)] }
+    musicBrainz = MB_ANSWERS['Blur - Girls and Boys']!
+    hits([['bestof', 'Girls and Boys by Blur']])
+    qobuz.bestof = { title: 'Girls and Boys', duration: 259, parental_warning: false, album: { title: 'The Best Of', artist: { name: 'Blur' } } }
+    fileTags('bestof', { title: 'Girls and Boys', artist: 'Blur', album: 'The Best Of', duration: 259 })
+    const { walk, importedIds, rowTags } = store()
+    const r = await walk({ artist: 'Blur', title: 'Girls and Boys', album: 'The Best Of' })
+    assert.equal(r.outcome, 'imported', r.error)
+    assert.deepEqual(importedIds(), ['bestof'])
+    assert.deepEqual(rowTags(), [undefined], 'filed as the record it is, never as Parklife')
+    assert.deepEqual(albumsSearched(), [], 'no door to Parklife')
   })
 
   test('OMA & SitarNik: Apple’s length lets "Oma" through, ranked and judged', async () => {

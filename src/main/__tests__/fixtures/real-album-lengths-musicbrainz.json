@@ -1,0 +1,2768 @@
+{
+ "Jack J - Wrong Again": [
+  {
+   "id": "f52a51d5-0007-497a-bb5c-37c0d90cee7e",
+   "score": 100,
+   "artist-credit-id": "08f86956-26f5-35a9-b984-991448d80da1",
+   "title": "Wrong Again",
+   "length": 182869,
+   "video": null,
+   "artist-credit": [
+    {
+     "name": "Jack J",
+     "artist": {
+      "id": "ed6233e9-7a01-42f0-8136-b4c7cc456d54",
+      "name": "Jack J",
+      "sort-name": "J, Jack",
+      "disambiguation": "downtempo/electronic artist Jack Jutson",
+      "aliases": [
+       {
+        "sort-name": "Jutson, Jack",
+        "name": "Jack Jutson",
+        "locale": null,
+        "type": null,
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "C'est Life",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "C'est Life",
+        "locale": null,
+        "type": "Artist name",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       }
+      ]
+     }
+    }
+   ],
+   "first-release-date": "2024-11-01",
+   "releases": [
+    {
+     "id": "694d4b09-d31e-483d-abc1-70ea641a0cb5",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "08f86956-26f5-35a9-b984-991448d80da1",
+     "count": 1,
+     "title": "Blue Desert",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "Jack J",
+       "artist": {
+        "id": "ed6233e9-7a01-42f0-8136-b4c7cc456d54",
+        "name": "Jack J",
+        "sort-name": "J, Jack",
+        "disambiguation": "downtempo/electronic artist Jack Jutson"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "6d403c35-778c-4c49-b631-45577cfb11fe",
+      "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Blue Desert",
+      "primary-type": "Album"
+     },
+     "date": "2024-11-01",
+     "country": "XW",
+     "release-events": [
+      {
+       "date": "2024-11-01",
+       "area": {
+        "id": "525d4e18-3d00-31b9-a58b-a146a916de8f",
+        "name": "[Worldwide]",
+        "sort-name": "[Worldwide]",
+        "iso-3166-1-codes": [
+         "XW"
+        ]
+       }
+      }
+     ],
+     "track-count": 11,
+     "media": [
+      {
+       "id": "664f8c94-4f4e-3c85-ab3e-5f6d183ffede",
+       "position": 1,
+       "format": "Digital Media",
+       "track": [
+        {
+         "id": "5bbd8b58-9ef9-4129-a150-c766840c3138",
+         "number": "1",
+         "title": "Wrong Again",
+         "length": 182869
+        }
+       ],
+       "track-count": 11,
+       "track-offset": 0
+      }
+     ]
+    }
+   ],
+   "isrcs": [
+    "USYBL2401878"
+   ]
+  }
+ ],
+ "Jungle - Romeo": [
+  {
+   "id": "f8036526-21ca-479d-b7fc-5c9484652f32",
+   "score": 100,
+   "artist-credit-id": "dcdf63e6-62f2-43c5-9dde-821eee251f91",
+   "title": "Romeo",
+   "length": 162106,
+   "video": null,
+   "artist-credit": [
+    {
+     "joinphrase": ", ",
+     "name": "Jungle",
+     "artist": {
+      "id": "6bbb3983-ce8a-4971-96e0-7cae73268fc4",
+      "name": "Jungle",
+      "sort-name": "Jungle",
+      "disambiguation": "London modern soul collective"
+     }
+    },
+    {
+     "name": "Bas",
+     "artist": {
+      "id": "3ba54400-4c97-450f-b108-bcd90b9b2b76",
+      "name": "Bas",
+      "sort-name": "Bas",
+      "disambiguation": "US rapper",
+      "aliases": [
+       {
+        "sort-name": "Hamad, Abbas",
+        "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+        "name": "Abbas Hamad",
+        "locale": null,
+        "type": "Legal name",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       }
+      ]
+     }
+    }
+   ],
+   "first-release-date": "2022-09-07",
+   "releases": [
+    {
+     "id": "173fc008-dbb9-4514-bf43-f6c531547482",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "949a7fd5-fe73-3e8f-922e-01ff4ca958f7",
+     "count": 1,
+     "title": "Nova Tunes 4.3",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "Various Artists",
+       "artist": {
+        "id": "89ad4ac3-39f7-470e-963a-56509c546377",
+        "name": "Various Artists",
+        "sort-name": "Various Artists",
+        "disambiguation": "add compilations to this artist"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "1d1718c8-c30d-4a9a-8cec-d58dcd4b5bc9",
+      "type-id": "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Nova Tunes 4.3",
+      "primary-type": "Album",
+      "secondary-types": [
+       "Compilation"
+      ],
+      "secondary-type-ids": [
+       "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ]
+     },
+     "date": "2022-09-07",
+     "country": "XW",
+     "release-events": [
+      {
+       "date": "2022-09-07",
+       "area": {
+        "id": "525d4e18-3d00-31b9-a58b-a146a916de8f",
+        "name": "[Worldwide]",
+        "sort-name": "[Worldwide]",
+        "iso-3166-1-codes": [
+         "XW"
+        ]
+       }
+      }
+     ],
+     "track-count": 22,
+     "media": [
+      {
+       "id": "813559b2-83ed-32c7-9b02-a67e0442891b",
+       "position": 1,
+       "format": "Digital Media",
+       "track": [
+        {
+         "id": "ba2fd7b6-3841-416f-9281-402a46f64d67",
+         "number": "2",
+         "title": "Romeo",
+         "length": 162106
+        }
+       ],
+       "track-count": 22,
+       "track-offset": 1
+      }
+     ]
+    },
+    {
+     "id": "c627ef8d-2cab-4177-847c-19c408e0ac06",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "949a7fd5-fe73-3e8f-922e-01ff4ca958f7",
+     "count": 1,
+     "title": "Nova Tunes 4.3",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "Various Artists",
+       "artist": {
+        "id": "89ad4ac3-39f7-470e-963a-56509c546377",
+        "name": "Various Artists",
+        "sort-name": "Various Artists",
+        "disambiguation": "add compilations to this artist"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "1d1718c8-c30d-4a9a-8cec-d58dcd4b5bc9",
+      "type-id": "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Nova Tunes 4.3",
+      "primary-type": "Album",
+      "secondary-types": [
+       "Compilation"
+      ],
+      "secondary-type-ids": [
+       "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ]
+     },
+     "date": "2022-09-07",
+     "country": "XW",
+     "release-events": [
+      {
+       "date": "2022-09-07",
+       "area": {
+        "id": "525d4e18-3d00-31b9-a58b-a146a916de8f",
+        "name": "[Worldwide]",
+        "sort-name": "[Worldwide]",
+        "iso-3166-1-codes": [
+         "XW"
+        ]
+       }
+      }
+     ],
+     "track-count": 23,
+     "media": [
+      {
+       "id": "0cce3abe-2f86-342e-a346-f8b15570a4ba",
+       "position": 1,
+       "format": "Digital Media",
+       "track": [
+        {
+         "id": "8165517e-2244-4223-b415-4562dac046ea",
+         "number": "2",
+         "title": "Romeo",
+         "length": 162106
+        }
+       ],
+       "track-count": 23,
+       "track-offset": 1
+      }
+     ]
+    }
+   ],
+   "isrcs": [
+    "GBKPL2167915"
+   ],
+   "tags": [
+    {
+     "count": 1,
+     "name": "classical"
+    }
+   ]
+  },
+  {
+   "id": "9979ddff-82ab-46a6-8c2d-e33a3d2b97f4",
+   "score": 93,
+   "artist-credit-id": "4cceb356-d534-3ec7-bfaa-6963b0e6f675",
+   "title": "Romeo",
+   "length": 166000,
+   "video": null,
+   "artist-credit": [
+    {
+     "joinphrase": " feat. ",
+     "name": "Jungle",
+     "artist": {
+      "id": "6bbb3983-ce8a-4971-96e0-7cae73268fc4",
+      "name": "Jungle",
+      "sort-name": "Jungle",
+      "disambiguation": "London modern soul collective"
+     }
+    },
+    {
+     "name": "Bas",
+     "artist": {
+      "id": "3ba54400-4c97-450f-b108-bcd90b9b2b76",
+      "name": "Bas",
+      "sort-name": "Bas",
+      "disambiguation": "US rapper",
+      "aliases": [
+       {
+        "sort-name": "Hamad, Abbas",
+        "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+        "name": "Abbas Hamad",
+        "locale": null,
+        "type": "Legal name",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       }
+      ]
+     }
+    }
+   ],
+   "first-release-date": "2021-07-06",
+   "releases": [
+    {
+     "id": "76f7973b-4905-429a-ad52-7bc82c1daccf",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "e377a8bd-5c6e-344b-b81d-1a7ff96f2619",
+     "count": 1,
+     "title": "Loving In Stereo",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "Jungle",
+       "artist": {
+        "id": "6bbb3983-ce8a-4971-96e0-7cae73268fc4",
+        "name": "Jungle",
+        "sort-name": "Jungle",
+        "disambiguation": "London modern soul collective"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "7cb74cf3-7e87-4822-835a-2d2bbdf7f558",
+      "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Loving in Stereo",
+      "primary-type": "Album"
+     },
+     "date": "2021-08-13",
+     "country": "JP",
+     "release-events": [
+      {
+       "date": "2021-08-13",
+       "area": {
+        "id": "2db42837-c832-3c27-b4a3-08198f75693c",
+        "name": "Japan",
+        "sort-name": "Japan",
+        "iso-3166-1-codes": [
+         "JP"
+        ]
+       }
+      }
+     ],
+     "track-count": 16,
+     "media": [
+      {
+       "id": "137b610d-fc47-4ab4-ace7-687c19d1aadb",
+       "position": 1,
+       "format": "CD",
+       "track": [
+        {
+         "id": "e9a578de-3b13-40d8-84a5-35814f6149f3",
+         "number": "4",
+         "title": "Romeo",
+         "length": 166200
+        }
+       ],
+       "track-count": 16,
+       "track-offset": 3
+      }
+     ]
+    },
+    {
+     "id": "d18b3c6a-59b3-49ea-b28b-19d774f67aba",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "e377a8bd-5c6e-344b-b81d-1a7ff96f2619",
+     "count": 1,
+     "title": "Romeo",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "Jungle",
+       "artist": {
+        "id": "6bbb3983-ce8a-4971-96e0-7cae73268fc4",
+        "name": "Jungle",
+        "sort-name": "Jungle",
+        "disambiguation": "London modern soul collective"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "00c3eb10-0f8b-403d-bef3-ebaeea338699",
+      "type-id": "d6038452-8ee0-3f68-affc-2de9a1ede0b9",
+      "primary-type-id": "d6038452-8ee0-3f68-affc-2de9a1ede0b9",
+      "title": "Romeo",
+      "primary-type": "Single"
+     },
+     "date": "2021-07-06",
+     "country": "XW",
+     "release-events": [
+      {
+       "date": "2021-07-06",
+       "area": {
+        "id": "525d4e18-3d00-31b9-a58b-a146a916de8f",
+        "name": "[Worldwide]",
+        "sort-name": "[Worldwide]",
+        "iso-3166-1-codes": [
+         "XW"
+        ]
+       }
+      }
+     ],
+     "track-count": 1,
+     "media": [
+      {
+       "id": "707d45fd-175c-385a-b266-789c848263bc",
+       "position": 1,
+       "format": "Digital Media",
+       "track": [
+        {
+         "id": "fbc4321a-9779-4ba7-9b3b-0e71b36a453c",
+         "number": "1",
+         "title": "Romeo",
+         "length": 166000
+        }
+       ],
+       "track-count": 1,
+       "track-offset": 0
+      }
+     ]
+    },
+    {
+     "id": "bedd648b-c2b6-4c07-9600-1bfa433d6635",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "e377a8bd-5c6e-344b-b81d-1a7ff96f2619",
+     "count": 1,
+     "title": "Loving in stereo",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "Jungle",
+       "artist": {
+        "id": "6bbb3983-ce8a-4971-96e0-7cae73268fc4",
+        "name": "Jungle",
+        "sort-name": "Jungle",
+        "disambiguation": "London modern soul collective"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "7cb74cf3-7e87-4822-835a-2d2bbdf7f558",
+      "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Loving in Stereo",
+      "primary-type": "Album"
+     },
+     "date": "2021-08-13",
+     "country": "XE",
+     "release-events": [
+      {
+       "date": "2021-08-13",
+       "area": {
+        "id": "89a675c2-3e37-3518-b83c-418bad59a85a",
+        "name": "Europe",
+        "sort-name": "Europe",
+        "iso-3166-1-codes": [
+         "XE"
+        ]
+       }
+      }
+     ],
+     "track-count": 14,
+     "media": [
+      {
+       "id": "bb9c1a17-1696-3056-bd76-6f4a71d03421",
+       "position": 1,
+       "format": "CD",
+       "track": [
+        {
+         "id": "4dd1a616-5b05-4035-a7ee-dde83bb328b9",
+         "number": "4",
+         "title": "Romeo",
+         "length": 166000
+        }
+       ],
+       "track-count": 14,
+       "track-offset": 3
+      }
+     ]
+    },
+    {
+     "id": "99d04d2e-eb94-42ee-a46e-959dcfc2c36d",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "e377a8bd-5c6e-344b-b81d-1a7ff96f2619",
+     "count": 1,
+     "title": "Loving in Stereo",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "Jungle",
+       "artist": {
+        "id": "6bbb3983-ce8a-4971-96e0-7cae73268fc4",
+        "name": "Jungle",
+        "sort-name": "Jungle",
+        "disambiguation": "London modern soul collective"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "7cb74cf3-7e87-4822-835a-2d2bbdf7f558",
+      "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Loving in Stereo",
+      "primary-type": "Album"
+     },
+     "track-count": 14,
+     "media": [
+      {
+       "id": "0cbba57f-aaa7-335a-9ad5-a0b600a79862",
+       "position": 1,
+       "format": "12\" Vinyl",
+       "track": [
+        {
+         "id": "1615845c-9c7c-4cd7-b382-30108106e120",
+         "number": "4",
+         "title": "Romeo",
+         "length": 166200
+        }
+       ],
+       "track-count": 14,
+       "track-offset": 3
+      }
+     ]
+    },
+    {
+     "id": "3e75a147-f34d-49c5-8863-86e585842932",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "e377a8bd-5c6e-344b-b81d-1a7ff96f2619",
+     "count": 1,
+     "title": "Loving in Stereo",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "Jungle",
+       "artist": {
+        "id": "6bbb3983-ce8a-4971-96e0-7cae73268fc4",
+        "name": "Jungle",
+        "sort-name": "Jungle",
+        "disambiguation": "London modern soul collective"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "7cb74cf3-7e87-4822-835a-2d2bbdf7f558",
+      "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Loving in Stereo",
+      "primary-type": "Album"
+     },
+     "date": "2021-08-13",
+     "country": "GB",
+     "release-events": [
+      {
+       "date": "2021-08-13",
+       "area": {
+        "id": "8a754a16-0027-3a29-b6d7-2b40ea0481ed",
+        "name": "United Kingdom",
+        "sort-name": "United Kingdom",
+        "iso-3166-1-codes": [
+         "GB"
+        ]
+       }
+      }
+     ],
+     "track-count": 14,
+     "media": [
+      {
+       "id": "c3eb1255-a3da-31a3-b912-3a6f53389a4f",
+       "position": 1,
+       "format": "CD",
+       "track": [
+        {
+         "id": "480d26d1-124d-4055-b035-f5d11c24017e",
+         "number": "4",
+         "title": "Romeo",
+         "length": 166200
+        }
+       ],
+       "track-count": 14,
+       "track-offset": 3
+      }
+     ]
+    },
+    {
+     "id": "c5c1b5e3-b6ec-40ea-806a-c73e81da279b",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "e377a8bd-5c6e-344b-b81d-1a7ff96f2619",
+     "count": 1,
+     "title": "Loving in Stereo",
+     "status": "Official",
+     "disambiguation": "24-Bit 44.1kHz",
+     "artist-credit": [
+      {
+       "name": "Jungle",
+       "artist": {
+        "id": "6bbb3983-ce8a-4971-96e0-7cae73268fc4",
+        "name": "Jungle",
+        "sort-name": "Jungle",
+        "disambiguation": "London modern soul collective"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "7cb74cf3-7e87-4822-835a-2d2bbdf7f558",
+      "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Loving in Stereo",
+      "primary-type": "Album"
+     },
+     "date": "2021-08-13",
+     "country": "XW",
+     "release-events": [
+      {
+       "date": "2021-08-13",
+       "area": {
+        "id": "525d4e18-3d00-31b9-a58b-a146a916de8f",
+        "name": "[Worldwide]",
+        "sort-name": "[Worldwide]",
+        "iso-3166-1-codes": [
+         "XW"
+        ]
+       }
+      }
+     ],
+     "track-count": 14,
+     "media": [
+      {
+       "id": "26f4ceb1-a1bf-3b81-8a25-e52120f7db35",
+       "position": 1,
+       "format": "Digital Media",
+       "track": [
+        {
+         "id": "b686cc65-5249-4f2c-a04a-f6362b41074c",
+         "number": "4",
+         "title": "Romeo",
+         "length": 166000
+        }
+       ],
+       "track-count": 14,
+       "track-offset": 3
+      }
+     ]
+    }
+   ],
+   "isrcs": [
+    "GBKPL2144800"
+   ]
+  }
+ ],
+ "The Notorious B.I.G. - Sky's the Limit": [
+  {
+   "id": "6bd94c67-c758-4325-a5e1-1d40049dc2b9",
+   "score": 100,
+   "artist-credit-id": "3949451f-e69d-36dc-aba4-bf2220746085",
+   "title": "Sky’s the Limit",
+   "length": 330000,
+   "video": null,
+   "artist-credit": [
+    {
+     "name": "The Notorious B.I.G.",
+     "artist": {
+      "id": "d5d97b2b-b83b-4976-814a-056d9076c8c3",
+      "name": "The Notorious B.I.G.",
+      "sort-name": "Notorious B.I.G., The",
+      "aliases": [
+       {
+        "sort-name": "Christopher Wallace",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Christopher Wallace",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "BIG",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "BIG",
+        "locale": "en",
+        "type": "Artist name",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious B.I.G., The",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "The Notorious B.I.G.",
+        "locale": "en",
+        "type": "Artist name",
+        "primary": true,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious B. I. G.",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious B. I. G.",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious B.I.G",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious B.I.G",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notrious B.I.G",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notrious B.I.G",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "The Notorious B. I. G.",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "The Notorious B. I. G.",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "C. Wallace",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "C. Wallace",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Biggie Smallz",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Biggie Smallz",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Wallace, Christopher George Latore",
+        "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+        "name": "Christopher George Latore Wallace",
+        "locale": null,
+        "type": "Legal name",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious B.I.G.",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious B.I.G.",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious BIG",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious BIG",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "The Notorious BIG",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "The Notorious BIG",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious BIG.",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious BIG.",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Biggy Smalls",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Biggy Smalls",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Biggie Smalls",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "Biggie Smalls",
+        "locale": null,
+        "type": "Artist name",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Biggie",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "Biggie",
+        "locale": null,
+        "type": "Artist name",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       }
+      ]
+     }
+    }
+   ],
+   "first-release-date": "1997-05-07",
+   "releases": [
+    {
+     "id": "192b407e-9f1c-4e64-9c14-aa6c22e64538",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "3949451f-e69d-36dc-aba4-bf2220746085",
+     "count": 1,
+     "title": "Life After Death Cassette Two",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "The Notorious B.I.G.",
+       "artist": {
+        "id": "d5d97b2b-b83b-4976-814a-056d9076c8c3",
+        "name": "The Notorious B.I.G.",
+        "sort-name": "Notorious B.I.G., The"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "132d78be-baa5-3301-aba5-933409e3f848",
+      "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Life After Death",
+      "primary-type": "Album"
+     },
+     "date": "1997-05-07",
+     "country": "IN",
+     "release-events": [
+      {
+       "date": "1997-05-07",
+       "area": {
+        "id": "d31a9a15-537f-3669-ad53-25753ddd2772",
+        "name": "India",
+        "sort-name": "India",
+        "iso-3166-1-codes": [
+         "IN"
+        ]
+       }
+      }
+     ],
+     "track-count": 12,
+     "media": [
+      {
+       "id": "925f546a-bde7-3744-a829-2e7c184ea07a",
+       "position": 1,
+       "format": "Cassette",
+       "track": [
+        {
+         "id": "c41a0429-201a-482e-8f03-2f3447f8052b",
+         "number": "8",
+         "title": "Sky’s the Limit",
+         "length": 330000
+        }
+       ],
+       "track-count": 12,
+       "track-offset": 7
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "52018ab2-8337-4a14-a4d0-32d9ebaad733",
+   "score": 100,
+   "artist-credit-id": "3949451f-e69d-36dc-aba4-bf2220746085",
+   "title": "Sky's the Limit",
+   "length": 277000,
+   "video": null,
+   "artist-credit": [
+    {
+     "name": "The Notorious B.I.G.",
+     "artist": {
+      "id": "d5d97b2b-b83b-4976-814a-056d9076c8c3",
+      "name": "The Notorious B.I.G.",
+      "sort-name": "Notorious B.I.G., The",
+      "aliases": [
+       {
+        "sort-name": "Christopher Wallace",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Christopher Wallace",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "BIG",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "BIG",
+        "locale": "en",
+        "type": "Artist name",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious B.I.G., The",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "The Notorious B.I.G.",
+        "locale": "en",
+        "type": "Artist name",
+        "primary": true,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious B. I. G.",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious B. I. G.",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious B.I.G",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious B.I.G",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notrious B.I.G",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notrious B.I.G",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "The Notorious B. I. G.",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "The Notorious B. I. G.",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "C. Wallace",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "C. Wallace",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Biggie Smallz",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Biggie Smallz",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Wallace, Christopher George Latore",
+        "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+        "name": "Christopher George Latore Wallace",
+        "locale": null,
+        "type": "Legal name",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious B.I.G.",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious B.I.G.",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious BIG",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious BIG",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "The Notorious BIG",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "The Notorious BIG",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious BIG.",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious BIG.",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Biggy Smalls",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Biggy Smalls",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Biggie Smalls",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "Biggie Smalls",
+        "locale": null,
+        "type": "Artist name",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Biggie",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "Biggie",
+        "locale": null,
+        "type": "Artist name",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       }
+      ]
+     }
+    }
+   ],
+   "first-release-date": "1997-11-18",
+   "releases": [
+    {
+     "id": "99f623fe-1891-4159-8085-8d1aa6e4185f",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "3949451f-e69d-36dc-aba4-bf2220746085",
+     "count": 1,
+     "title": "An Introduction to The Notorious B.I.G.",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "The Notorious B.I.G.",
+       "artist": {
+        "id": "d5d97b2b-b83b-4976-814a-056d9076c8c3",
+        "name": "The Notorious B.I.G.",
+        "sort-name": "Notorious B.I.G., The"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "aedc989b-ecfb-41d7-8a54-6e1e270ea449",
+      "type-id": "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "An Introduction to The Notorious B.I.G.",
+      "primary-type": "Album",
+      "secondary-types": [
+       "Compilation"
+      ],
+      "secondary-type-ids": [
+       "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ]
+     },
+     "date": "2019-03-29",
+     "country": "US",
+     "release-events": [
+      {
+       "date": "2019-03-29",
+       "area": {
+        "id": "489ce91b-6658-3307-9877-795b68554c98",
+        "name": "United States",
+        "sort-name": "United States",
+        "iso-3166-1-codes": [
+         "US"
+        ]
+       }
+      }
+     ],
+     "track-count": 10,
+     "media": [
+      {
+       "id": "10105c31-95bc-3516-86e9-96945a26397d",
+       "position": 1,
+       "format": "CD",
+       "track": [
+        {
+         "id": "5adb36e1-ff29-46ae-b463-f3bcd467d8b7",
+         "number": "10",
+         "title": "Sky's The Limit",
+         "length": 277000
+        }
+       ],
+       "track-count": 10,
+       "track-offset": 9
+      }
+     ]
+    },
+    {
+     "id": "b54d00b7-54d1-4093-b7a8-207732be87bd",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "3949451f-e69d-36dc-aba4-bf2220746085",
+     "count": 1,
+     "title": "Life After Death",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "The Notorious B.I.G.",
+       "artist": {
+        "id": "d5d97b2b-b83b-4976-814a-056d9076c8c3",
+        "name": "The Notorious B.I.G.",
+        "sort-name": "Notorious B.I.G., The"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "132d78be-baa5-3301-aba5-933409e3f848",
+      "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Life After Death",
+      "primary-type": "Album"
+     },
+     "date": "1997-11-18",
+     "country": "US",
+     "release-events": [
+      {
+       "date": "1997-11-18",
+       "area": {
+        "id": "489ce91b-6658-3307-9877-795b68554c98",
+        "name": "United States",
+        "sort-name": "United States",
+        "iso-3166-1-codes": [
+         "US"
+        ]
+       }
+      }
+     ],
+     "track-count": 14,
+     "media": [
+      {
+       "id": "dfb322b0-f7d3-3140-af2b-9d8531e0e05b",
+       "position": 1,
+       "format": "CD",
+       "track": [
+        {
+         "id": "03c1b316-ecfc-3a16-944e-2d23bb5139e4",
+         "number": "11",
+         "title": "Sky's the Limit",
+         "length": 277266
+        }
+       ],
+       "track-count": 14,
+       "track-offset": 10
+      }
+     ]
+    }
+   ],
+   "tags": [
+    {
+     "count": 1,
+     "name": "hip hop"
+    }
+   ]
+  },
+  {
+   "id": "e01fb4e2-953b-455f-a6dd-447e7e874493",
+   "score": 89,
+   "artist-credit-id": "c5c0eafc-189a-3d21-b5d0-94dc969828f4",
+   "title": "Sky’s the Limit",
+   "disambiguation": "part of “Throwback: Slowjamz” DJ-mix",
+   "video": null,
+   "artist-credit": [
+    {
+     "joinphrase": " feat. ",
+     "name": "The Notorious B.I.G.",
+     "artist": {
+      "id": "d5d97b2b-b83b-4976-814a-056d9076c8c3",
+      "name": "The Notorious B.I.G.",
+      "sort-name": "Notorious B.I.G., The",
+      "aliases": [
+       {
+        "sort-name": "Christopher Wallace",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Christopher Wallace",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "BIG",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "BIG",
+        "locale": "en",
+        "type": "Artist name",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious B.I.G., The",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "The Notorious B.I.G.",
+        "locale": "en",
+        "type": "Artist name",
+        "primary": true,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious B. I. G.",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious B. I. G.",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious B.I.G",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious B.I.G",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notrious B.I.G",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notrious B.I.G",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "The Notorious B. I. G.",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "The Notorious B. I. G.",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "C. Wallace",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "C. Wallace",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Biggie Smallz",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Biggie Smallz",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Wallace, Christopher George Latore",
+        "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+        "name": "Christopher George Latore Wallace",
+        "locale": null,
+        "type": "Legal name",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious B.I.G.",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious B.I.G.",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious BIG",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious BIG",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "The Notorious BIG",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "The Notorious BIG",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious BIG.",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious BIG.",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Biggy Smalls",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Biggy Smalls",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Biggie Smalls",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "Biggie Smalls",
+        "locale": null,
+        "type": "Artist name",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Biggie",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "Biggie",
+        "locale": null,
+        "type": "Artist name",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       }
+      ]
+     }
+    },
+    {
+     "name": "112",
+     "artist": {
+      "id": "9132d515-dc0e-4494-85ae-20f06eed14f9",
+      "name": "112",
+      "sort-name": "112",
+      "aliases": [
+       {
+        "sort-name": "One Twelve",
+        "name": "One Twelve",
+        "locale": null,
+        "type": null,
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       }
+      ]
+     }
+    }
+   ],
+   "first-release-date": "2016-01-29",
+   "releases": [
+    {
+     "id": "50660cb7-8ba5-4445-ba88-2a9f1ac1aee6",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "949a7fd5-fe73-3e8f-922e-01ff4ca958f7",
+     "count": 3,
+     "title": "Throwback: Slowjamz",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "Various Artists",
+       "artist": {
+        "id": "89ad4ac3-39f7-470e-963a-56509c546377",
+        "name": "Various Artists",
+        "sort-name": "Various Artists",
+        "disambiguation": "add compilations to this artist"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "000c5ae5-642b-4183-97f6-57c718361d54",
+      "type-id": "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Throwback: Slowjamz",
+      "primary-type": "Album",
+      "secondary-types": [
+       "Compilation",
+       "DJ-mix"
+      ],
+      "secondary-type-ids": [
+       "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1",
+       "0d47f47a-3fe5-3d69-ac9d-d566c23968bf"
+      ]
+     },
+     "date": "2016-01-29",
+     "country": "GB",
+     "release-events": [
+      {
+       "date": "2016-01-29",
+       "area": {
+        "id": "8a754a16-0027-3a29-b6d7-2b40ea0481ed",
+        "name": "United Kingdom",
+        "sort-name": "United Kingdom",
+        "iso-3166-1-codes": [
+         "GB"
+        ]
+       }
+      }
+     ],
+     "track-count": 60,
+     "media": [
+      {
+       "id": "631868d5-5271-38c6-8642-f502743e462b",
+       "position": 2,
+       "format": "CD",
+       "track": [
+        {
+         "id": "3c6d8fb8-a121-4767-b123-e54f183b116e",
+         "number": "19",
+         "title": "Sky’s the Limit"
+        }
+       ],
+       "track-count": 20,
+       "track-offset": 18
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "ad487c31-f59d-49e4-b5aa-e8bef481ac74",
+   "score": 89,
+   "artist-credit-id": "c5c0eafc-189a-3d21-b5d0-94dc969828f4",
+   "title": "Sky’s the Limit",
+   "length": 329000,
+   "video": null,
+   "artist-credit": [
+    {
+     "joinphrase": " feat. ",
+     "name": "The Notorious B.I.G.",
+     "artist": {
+      "id": "d5d97b2b-b83b-4976-814a-056d9076c8c3",
+      "name": "The Notorious B.I.G.",
+      "sort-name": "Notorious B.I.G., The",
+      "aliases": [
+       {
+        "sort-name": "Christopher Wallace",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Christopher Wallace",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "BIG",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "BIG",
+        "locale": "en",
+        "type": "Artist name",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious B.I.G., The",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "The Notorious B.I.G.",
+        "locale": "en",
+        "type": "Artist name",
+        "primary": true,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious B. I. G.",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious B. I. G.",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious B.I.G",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious B.I.G",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notrious B.I.G",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notrious B.I.G",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "The Notorious B. I. G.",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "The Notorious B. I. G.",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "C. Wallace",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "C. Wallace",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Biggie Smallz",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Biggie Smallz",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Wallace, Christopher George Latore",
+        "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+        "name": "Christopher George Latore Wallace",
+        "locale": null,
+        "type": "Legal name",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious B.I.G.",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious B.I.G.",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious BIG",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious BIG",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "The Notorious BIG",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "The Notorious BIG",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious BIG.",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious BIG.",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Biggy Smalls",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Biggy Smalls",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Biggie Smalls",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "Biggie Smalls",
+        "locale": null,
+        "type": "Artist name",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Biggie",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "Biggie",
+        "locale": null,
+        "type": "Artist name",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       }
+      ]
+     }
+    },
+    {
+     "name": "112",
+     "artist": {
+      "id": "9132d515-dc0e-4494-85ae-20f06eed14f9",
+      "name": "112",
+      "sort-name": "112",
+      "aliases": [
+       {
+        "sort-name": "One Twelve",
+        "name": "One Twelve",
+        "locale": null,
+        "type": null,
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       }
+      ]
+     }
+    }
+   ],
+   "first-release-date": "2023-08-25",
+   "releases": [
+    {
+     "id": "49b812f8-0aa3-4a9b-aa27-d6dc33410e19",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "3949451f-e69d-36dc-aba4-bf2220746085",
+     "count": 1,
+     "title": "Now Playing",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "The Notorious B.I.G.",
+       "artist": {
+        "id": "d5d97b2b-b83b-4976-814a-056d9076c8c3",
+        "name": "The Notorious B.I.G.",
+        "sort-name": "Notorious B.I.G., The"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "004bc5e8-8f24-476a-9368-0566839e5fbf",
+      "type-id": "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Now Playing",
+      "primary-type": "Album",
+      "secondary-types": [
+       "Compilation"
+      ],
+      "secondary-type-ids": [
+       "dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"
+      ]
+     },
+     "date": "2023-08-25",
+     "country": "US",
+     "release-events": [
+      {
+       "date": "2023-08-25",
+       "area": {
+        "id": "489ce91b-6658-3307-9877-795b68554c98",
+        "name": "United States",
+        "sort-name": "United States",
+        "iso-3166-1-codes": [
+         "US"
+        ]
+       }
+      }
+     ],
+     "track-count": 10,
+     "media": [
+      {
+       "id": "9921cac4-ebb8-4472-bc19-6933541a52c4",
+       "position": 1,
+       "format": "12\" Vinyl",
+       "track": [
+        {
+         "id": "4bf72d05-bd79-4df1-8c21-6672e7bfc000",
+         "number": "B5",
+         "title": "Sky’s the Limit",
+         "length": 329000
+        }
+       ],
+       "track-count": 10,
+       "track-offset": 9
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "05c7ddf1-325f-432b-9aca-c8f9f1a7db47",
+   "score": 89,
+   "artist-credit-id": "c5c0eafc-189a-3d21-b5d0-94dc969828f4",
+   "title": "Sky’s the Limit",
+   "length": 329506,
+   "video": null,
+   "artist-credit": [
+    {
+     "joinphrase": " feat. ",
+     "name": "The Notorious B.I.G.",
+     "artist": {
+      "id": "d5d97b2b-b83b-4976-814a-056d9076c8c3",
+      "name": "The Notorious B.I.G.",
+      "sort-name": "Notorious B.I.G., The",
+      "aliases": [
+       {
+        "sort-name": "Christopher Wallace",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Christopher Wallace",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "BIG",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "BIG",
+        "locale": "en",
+        "type": "Artist name",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious B.I.G., The",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "The Notorious B.I.G.",
+        "locale": "en",
+        "type": "Artist name",
+        "primary": true,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious B. I. G.",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious B. I. G.",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious B.I.G",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious B.I.G",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notrious B.I.G",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notrious B.I.G",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "The Notorious B. I. G.",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "The Notorious B. I. G.",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "C. Wallace",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "C. Wallace",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Biggie Smallz",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Biggie Smallz",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Wallace, Christopher George Latore",
+        "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+        "name": "Christopher George Latore Wallace",
+        "locale": null,
+        "type": "Legal name",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious B.I.G.",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious B.I.G.",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious BIG",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious BIG",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "The Notorious BIG",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "The Notorious BIG",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Notorious BIG.",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Notorious BIG.",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Biggy Smalls",
+        "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+        "name": "Biggy Smalls",
+        "locale": null,
+        "type": "Search hint",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Biggie Smalls",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "Biggie Smalls",
+        "locale": null,
+        "type": "Artist name",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       },
+       {
+        "sort-name": "Biggie",
+        "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+        "name": "Biggie",
+        "locale": null,
+        "type": "Artist name",
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       }
+      ]
+     }
+    },
+    {
+     "name": "112",
+     "artist": {
+      "id": "9132d515-dc0e-4494-85ae-20f06eed14f9",
+      "name": "112",
+      "sort-name": "112",
+      "aliases": [
+       {
+        "sort-name": "One Twelve",
+        "name": "One Twelve",
+        "locale": null,
+        "type": null,
+        "primary": null,
+        "begin-date": null,
+        "end-date": null
+       }
+      ]
+     }
+    }
+   ],
+   "first-release-date": "1997-03-25",
+   "releases": [
+    {
+     "id": "13b55015-8ae1-44b2-a4d2-9659a87d83e3",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "3949451f-e69d-36dc-aba4-bf2220746085",
+     "count": 2,
+     "title": "Life After Death",
+     "status": "Official",
+     "disambiguation": "Club Edition",
+     "artist-credit": [
+      {
+       "name": "The Notorious B.I.G.",
+       "artist": {
+        "id": "d5d97b2b-b83b-4976-814a-056d9076c8c3",
+        "name": "The Notorious B.I.G.",
+        "sort-name": "Notorious B.I.G., The"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "132d78be-baa5-3301-aba5-933409e3f848",
+      "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Life After Death",
+      "primary-type": "Album"
+     },
+     "date": "1997",
+     "country": "CA",
+     "release-events": [
+      {
+       "date": "1997",
+       "area": {
+        "id": "71bbafaa-e825-3e15-8ca9-017dcad1748b",
+        "name": "Canada",
+        "sort-name": "Canada",
+        "iso-3166-1-codes": [
+         "CA"
+        ]
+       }
+      }
+     ],
+     "track-count": 24,
+     "media": [
+      {
+       "id": "194bcda2-eeb3-49bc-8d9a-cb8ce9b5ac87",
+       "position": 2,
+       "format": "CD",
+       "track": [
+        {
+         "id": "2cfa001e-9546-403b-a7fe-ea696bf32f51",
+         "number": "8",
+         "title": "Sky’s the Limit",
+         "length": 329506
+        }
+       ],
+       "track-count": 12,
+       "track-offset": 7
+      }
+     ]
+    },
+    {
+     "id": "bf85c2f9-77ee-4d2b-ad54-78874bae151b",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "3949451f-e69d-36dc-aba4-bf2220746085",
+     "count": 1,
+     "title": "Notorious III: Christopher Wallace",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "The Notorious B.I.G.",
+       "artist": {
+        "id": "d5d97b2b-b83b-4976-814a-056d9076c8c3",
+        "name": "The Notorious B.I.G.",
+        "sort-name": "Notorious B.I.G., The"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "f9bf004a-37e0-4885-a454-cf03fdd8e892",
+      "type-id": "6d0c5bf6-7a33-3420-a519-44fc63eedebf",
+      "primary-type-id": "6d0c5bf6-7a33-3420-a519-44fc63eedebf",
+      "title": "Notorious III: Christopher Wallace",
+      "primary-type": "EP"
+     },
+     "date": "2021-09-16",
+     "country": "XW",
+     "release-events": [
+      {
+       "date": "2021-09-16",
+       "area": {
+        "id": "525d4e18-3d00-31b9-a58b-a146a916de8f",
+        "name": "[Worldwide]",
+        "sort-name": "[Worldwide]",
+        "iso-3166-1-codes": [
+         "XW"
+        ]
+       }
+      }
+     ],
+     "track-count": 6,
+     "media": [
+      {
+       "id": "e4364cb1-b566-3639-990d-b1d1fc546f90",
+       "position": 1,
+       "format": "Digital Media",
+       "track": [
+        {
+         "id": "7e60e98c-8933-44c4-8bf6-badd6f102cf0",
+         "number": "6",
+         "title": "Sky’s the Limit (2014 remaster)",
+         "length": 329426
+        }
+       ],
+       "track-count": 6,
+       "track-offset": 5
+      }
+     ]
+    },
+    {
+     "id": "b385c5bf-02f6-4edb-a9ce-90af3670d17b",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "3949451f-e69d-36dc-aba4-bf2220746085",
+     "count": 1,
+     "title": "Life After Death (25th anniversary super deluxe edition)",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "The Notorious B.I.G.",
+       "artist": {
+        "id": "d5d97b2b-b83b-4976-814a-056d9076c8c3",
+        "name": "The Notorious B.I.G.",
+        "sort-name": "Notorious B.I.G., The"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "132d78be-baa5-3301-aba5-933409e3f848",
+      "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Life After Death",
+      "primary-type": "Album"
+     },
+     "date": "2022",
+     "country": "US",
+     "release-events": [
+      {
+       "date": "2022",
+       "area": {
+        "id": "489ce91b-6658-3307-9877-795b68554c98",
+        "name": "United States",
+        "sort-name": "United States",
+        "iso-3166-1-codes": [
+         "US"
+        ]
+       }
+      }
+     ],
+     "track-count": 39,
+     "media": [
+      {
+       "id": "2c58da0d-2eaf-3a56-805b-3216de80dd38",
+       "position": 1,
+       "format": "Digital Media",
+       "track": [
+        {
+         "id": "60b6fccb-7192-4292-9cce-548dc8d59c6f",
+         "number": "20",
+         "title": "Sky’s the Limit (2005 remaster)",
+         "length": 329140
+        }
+       ],
+       "track-count": 39,
+       "track-offset": 19
+      }
+     ]
+    },
+    {
+     "id": "08fce299-adf5-466e-897b-1da36fbc757d",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "3949451f-e69d-36dc-aba4-bf2220746085",
+     "count": 8,
+     "title": "Life After Death (25th Anniversary Super Deluxe Edition)",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "The Notorious B.I.G.",
+       "artist": {
+        "id": "d5d97b2b-b83b-4976-814a-056d9076c8c3",
+        "name": "The Notorious B.I.G.",
+        "sort-name": "Notorious B.I.G., The"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "132d78be-baa5-3301-aba5-933409e3f848",
+      "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Life After Death",
+      "primary-type": "Album"
+     },
+     "date": "2022-06",
+     "country": "XE",
+     "release-events": [
+      {
+       "date": "2022-06",
+       "area": {
+        "id": "89a675c2-3e37-3518-b83c-418bad59a85a",
+        "name": "Europe",
+        "sort-name": "Europe",
+        "iso-3166-1-codes": [
+         "XE"
+        ]
+       }
+      }
+     ],
+     "track-count": 42,
+     "media": [
+      {
+       "id": "01146cc4-846c-3f69-b713-eec9dfb3f938",
+       "position": 3,
+       "format": "12\" Vinyl",
+       "track": [
+        {
+         "id": "7e7480f9-7359-4ec9-a1d1-33e4876cd374",
+         "number": "E4",
+         "title": "Sky’s the Limit",
+         "length": 329000
+        }
+       ],
+       "track-count": 8,
+       "track-offset": 3
+      }
+     ]
+    },
+    {
+     "id": "5a4ae435-be76-4934-b05f-d38cf991afb9",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "3949451f-e69d-36dc-aba4-bf2220746085",
+     "count": 3,
+     "title": "Life After Death",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "The Notorious B.I.G.",
+       "artist": {
+        "id": "d5d97b2b-b83b-4976-814a-056d9076c8c3",
+        "name": "The Notorious B.I.G.",
+        "sort-name": "Notorious B.I.G., The"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "132d78be-baa5-3301-aba5-933409e3f848",
+      "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Life After Death",
+      "primary-type": "Album"
+     },
+     "date": "1997-03-25",
+     "country": "US",
+     "release-events": [
+      {
+       "date": "1997-03-25",
+       "area": {
+        "id": "489ce91b-6658-3307-9877-795b68554c98",
+        "name": "United States",
+        "sort-name": "United States",
+        "iso-3166-1-codes": [
+         "US"
+        ]
+       }
+      }
+     ],
+     "track-count": 24,
+     "media": [
+      {
+       "id": "dcf220db-b4ea-3384-bcba-a9030cd55a7f",
+       "position": 3,
+       "format": "12\" Vinyl",
+       "track": [
+        {
+         "id": "c425969a-6fd2-4560-b792-56ce64a8581e",
+         "number": "E4",
+         "title": "Sky's The Limit"
+        }
+       ],
+       "track-count": 8,
+       "track-offset": 3
+      }
+     ]
+    },
+    {
+     "id": "03aa0355-70d2-4032-9985-f9a040978520",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "3949451f-e69d-36dc-aba4-bf2220746085",
+     "count": 2,
+     "title": "Life After Death",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "The Notorious B.I.G.",
+       "artist": {
+        "id": "d5d97b2b-b83b-4976-814a-056d9076c8c3",
+        "name": "The Notorious B.I.G.",
+        "sort-name": "Notorious B.I.G., The"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "132d78be-baa5-3301-aba5-933409e3f848",
+      "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Life After Death",
+      "primary-type": "Album"
+     },
+     "date": "1997-03-25",
+     "country": "US",
+     "release-events": [
+      {
+       "date": "1997-03-25",
+       "area": {
+        "id": "489ce91b-6658-3307-9877-795b68554c98",
+        "name": "United States",
+        "sort-name": "United States",
+        "iso-3166-1-codes": [
+         "US"
+        ]
+       }
+      }
+     ],
+     "track-count": 24,
+     "media": [
+      {
+       "id": "4cdd1688-54ef-3068-970e-0236fa719980",
+       "position": 2,
+       "format": "CD",
+       "track": [
+        {
+         "id": "7d0ce343-7a2a-3414-8d55-c20cfb5ed479",
+         "number": "8",
+         "title": "Sky’s the Limit",
+         "length": 329506
+        }
+       ],
+       "track-count": 12,
+       "track-offset": 7
+      }
+     ]
+    },
+    {
+     "id": "e40318ab-0fb0-4a0c-b161-cd09fb544238",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "3949451f-e69d-36dc-aba4-bf2220746085",
+     "count": 1,
+     "title": "Life After Death (remastered edition)",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "The Notorious B.I.G.",
+       "artist": {
+        "id": "d5d97b2b-b83b-4976-814a-056d9076c8c3",
+        "name": "The Notorious B.I.G.",
+        "sort-name": "Notorious B.I.G., The"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "132d78be-baa5-3301-aba5-933409e3f848",
+      "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Life After Death",
+      "primary-type": "Album"
+     },
+     "date": "2014-08-25",
+     "country": "US",
+     "release-events": [
+      {
+       "date": "2014-08-25",
+       "area": {
+        "id": "489ce91b-6658-3307-9877-795b68554c98",
+        "name": "United States",
+        "sort-name": "United States",
+        "iso-3166-1-codes": [
+         "US"
+        ]
+       }
+      }
+     ],
+     "track-count": 24,
+     "media": [
+      {
+       "id": "f107903b-8239-3ca1-88e2-5090146a959d",
+       "position": 1,
+       "format": "Digital Media",
+       "track": [
+        {
+         "id": "e000e430-8f16-463f-86b1-6c6398fefb76",
+         "number": "20",
+         "title": "Sky’s the Limit",
+         "length": 330000
+        }
+       ],
+       "track-count": 24,
+       "track-offset": 19
+      }
+     ]
+    },
+    {
+     "id": "e7704e04-c1c5-40e0-a4d5-fa7be6a2c04d",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "3949451f-e69d-36dc-aba4-bf2220746085",
+     "count": 2,
+     "title": "Life After Death",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "The Notorious B.I.G.",
+       "artist": {
+        "id": "d5d97b2b-b83b-4976-814a-056d9076c8c3",
+        "name": "The Notorious B.I.G.",
+        "sort-name": "Notorious B.I.G., The"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "132d78be-baa5-3301-aba5-933409e3f848",
+      "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Life After Death",
+      "primary-type": "Album"
+     },
+     "date": "1997",
+     "country": "US",
+     "release-events": [
+      {
+       "date": "1997",
+       "area": {
+        "id": "489ce91b-6658-3307-9877-795b68554c98",
+        "name": "United States",
+        "sort-name": "United States",
+        "iso-3166-1-codes": [
+         "US"
+        ]
+       }
+      }
+     ],
+     "track-count": 25,
+     "media": [
+      {
+       "id": "a6d94e4f-a831-3b94-95be-31f4bce717ba",
+       "position": 2,
+       "format": "CD",
+       "track": [
+        {
+         "id": "27184453-e9e0-4c3e-a17c-60c83b2eeba5",
+         "number": "8",
+         "title": "Sky’s the Limit",
+         "length": 329506
+        }
+       ],
+       "track-count": 12,
+       "track-offset": 7
+      }
+     ]
+    },
+    {
+     "id": "40067804-b457-3e4e-8ac6-1a23f777c024",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "3949451f-e69d-36dc-aba4-bf2220746085",
+     "count": 2,
+     "title": "Life After Death",
+     "status": "Official",
+     "disambiguation": "explicit version",
+     "artist-credit": [
+      {
+       "name": "The Notorious B.I.G.",
+       "artist": {
+        "id": "d5d97b2b-b83b-4976-814a-056d9076c8c3",
+        "name": "The Notorious B.I.G.",
+        "sort-name": "Notorious B.I.G., The"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "132d78be-baa5-3301-aba5-933409e3f848",
+      "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Life After Death",
+      "primary-type": "Album"
+     },
+     "date": "1997",
+     "country": "XE",
+     "release-events": [
+      {
+       "date": "1997",
+       "area": {
+        "id": "89a675c2-3e37-3518-b83c-418bad59a85a",
+        "name": "Europe",
+        "sort-name": "Europe",
+        "iso-3166-1-codes": [
+         "XE"
+        ]
+       }
+      }
+     ],
+     "track-count": 24,
+     "media": [
+      {
+       "id": "25808458-8a3c-344d-a6b4-483468e485b9",
+       "position": 2,
+       "format": "CD",
+       "track": [
+        {
+         "id": "d8ab63bb-2afb-3ec9-9370-edfcec2c8ee2",
+         "number": "8",
+         "title": "Sky’s the Limit",
+         "length": 329506
+        }
+       ],
+       "track-count": 12,
+       "track-offset": 7
+      }
+     ]
+    },
+    {
+     "id": "a0a9b2c2-8a10-3438-9468-fbb7bb4b800b",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "3949451f-e69d-36dc-aba4-bf2220746085",
+     "count": 2,
+     "title": "Life After Death",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "The Notorious B.I.G.",
+       "artist": {
+        "id": "d5d97b2b-b83b-4976-814a-056d9076c8c3",
+        "name": "The Notorious B.I.G.",
+        "sort-name": "Notorious B.I.G., The"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "132d78be-baa5-3301-aba5-933409e3f848",
+      "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Life After Death",
+      "primary-type": "Album"
+     },
+     "date": "1997-03-25",
+     "country": "CA",
+     "release-events": [
+      {
+       "date": "1997-03-25",
+       "area": {
+        "id": "71bbafaa-e825-3e15-8ca9-017dcad1748b",
+        "name": "Canada",
+        "sort-name": "Canada",
+        "iso-3166-1-codes": [
+         "CA"
+        ]
+       }
+      }
+     ],
+     "track-count": 24,
+     "media": [
+      {
+       "id": "f4b5e643-d4fb-3763-a232-57fefb724a62",
+       "position": 2,
+       "format": "CD",
+       "track": [
+        {
+         "id": "46780b5d-68bb-3495-ab92-2f8a3a68edc7",
+         "number": "8",
+         "title": "Sky’s the Limit",
+         "length": 329506
+        }
+       ],
+       "track-count": 12,
+       "track-offset": 7
+      }
+     ]
+    },
+    {
+     "id": "87a4b5d9-6390-4aae-8df3-a517820540c5",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "3949451f-e69d-36dc-aba4-bf2220746085",
+     "count": 2,
+     "title": "Life After Death",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "The Notorious B.I.G.",
+       "artist": {
+        "id": "d5d97b2b-b83b-4976-814a-056d9076c8c3",
+        "name": "The Notorious B.I.G.",
+        "sort-name": "Notorious B.I.G., The"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "132d78be-baa5-3301-aba5-933409e3f848",
+      "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Life After Death",
+      "primary-type": "Album"
+     },
+     "date": "1997",
+     "country": "US",
+     "release-events": [
+      {
+       "date": "1997",
+       "area": {
+        "id": "489ce91b-6658-3307-9877-795b68554c98",
+        "name": "United States",
+        "sort-name": "United States",
+        "iso-3166-1-codes": [
+         "US"
+        ]
+       }
+      }
+     ],
+     "track-count": 24,
+     "media": [
+      {
+       "id": "b5044f22-0d21-324b-a070-095ed1ae1945",
+       "position": 2,
+       "format": "CD",
+       "track": [
+        {
+         "id": "3ded15f0-147f-4fce-a09b-674ed32d59df",
+         "number": "8",
+         "title": "Sky’s the Limit",
+         "length": 329506
+        }
+       ],
+       "track-count": 12,
+       "track-offset": 7
+      }
+     ]
+    },
+    {
+     "id": "8f7b946b-66ec-4dd8-9b1d-73a19d1dff1d",
+     "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+     "artist-credit-id": "3949451f-e69d-36dc-aba4-bf2220746085",
+     "count": 2,
+     "title": "Life After Death",
+     "status": "Official",
+     "artist-credit": [
+      {
+       "name": "The Notorious B.I.G.",
+       "artist": {
+        "id": "d5d97b2b-b83b-4976-814a-056d9076c8c3",
+        "name": "The Notorious B.I.G.",
+        "sort-name": "Notorious B.I.G., The"
+       }
+      }
+     ],
+     "release-group": {
+      "id": "132d78be-baa5-3301-aba5-933409e3f848",
+      "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "title": "Life After Death",
+      "primary-type": "Album"
+     },
+     "date": "1997-03-29",
+     "country": "US",
+     "release-events": [
+      {
+       "date": "1997-03-29",
+       "area": {
+        "id": "489ce91b-6658-3307-9877-795b68554c98",
+        "name": "United States",
+        "sort-name": "United States",
+        "iso-3166-1-codes": [
+         "US"
+        ]
+       }
+      }
+     ],
+     "track-count": 25,
+     "media": [
+      {
+       "id": "921e496c-58ab-3e24-9606-dea8ce155486",
+       "position": 2,
+       "format": "CD",
+       "track": [
+        {
+         "id": "dbaece6f-cfa8-3779-8147-c499bfc3894f",
+         "number": "8",
+         "title": "Sky’s the Limit",
+         "length": 329506
+        }
+       ],
+       "track-count": 12,
+       "track-offset": 7
+      }
+     ]
+    }
+   ],
+   "isrcs": [
+    "USBB49901031",
+    "USBB40580726",
+    "USAT21402742"
+   ],
+   "tags": [
+    {
+     "count": 2,
+     "name": "rap"
+    },
+    {
+     "count": 3,
+     "name": "hip hop"
+    },
+    {
+     "count": 2,
+     "name": "gangsta rap"
+    },
+    {
+     "count": 1,
+     "name": "thug rap"
+    },
+    {
+     "count": 2,
+     "name": "east coast rap"
+    },
+    {
+     "count": 2,
+     "name": "pop-rap"
+    },
+    {
+     "count": 1,
+     "name": "hip hop/rap"
+    },
+    {
+     "count": 1,
+     "name": "hip-hop/rap"
+    },
+    {
+     "count": 2,
+     "name": "east coast hip hop"
+    },
+    {
+     "count": 1,
+     "name": "rap/hip hop"
+    }
+   ]
+  }
+ ]
+}
