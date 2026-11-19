@@ -26,6 +26,10 @@
  *    is gone is taken over
  *  - the gate log: a usual run writes nothing to stderr, which launchd puts in that log; a policy
  *    file that is there but can't be read still says so
+ *  - never go back (2026-11-19, workmini): a staged release older than the running app (an ancestor
+ *    of its commit, else built earlier) is never offered and is removed, a leftover "installed" answer
+ *    included; a newer one, or one either side has no provenance for, is offered as before; a gate
+ *    waiting for a superseded release is stopped; a staged commit a checkout has not fetched is never older
  */
 import { describe, it, after } from 'node:test'
 import assert from 'node:assert/strict'
@@ -91,7 +95,7 @@ interface World {
   installedIs: (sha: string) => void
   /** One run of the agent. `hold`: a folder; the agent stops right after taking its lock, writes
    *  `held` there and goes on once `go` is there (JT_AGENT_LOCK_HOLD). */
-  agent: (opts?: { host?: string; hold?: string }) => Promise<{ stdout: string; stderr: string }>
+  agent: (opts?: { host?: string; hold?: string; repo?: string }) => Promise<{ stdout: string; stderr: string }>
   gateCalls: () => string[]
   /** Every gate started so far ends with this code. */
   gatesEnd: (code: number) => void
@@ -140,6 +144,7 @@ exit $(cat "${fake}/gate-exit")
           HOME: home, PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
           JT_AGENT_GATE: gate, JT_AGENT_APP: app, JT_AGENT_HOSTNAME: opts.host ?? 'Jakes-MacBook-Pro-2458',
           ...(opts.hold ? { JT_AGENT_LOCK_HOLD: opts.hold } : {}),
+          ...(opts.repo ? { JT_AGENT_REPO: opts.repo } : {}),
         },
       })
       return { stdout: r.stdout, stderr: r.stderr }
@@ -412,6 +417,170 @@ describe('update agent — the gate log (launchd puts its stderr there)', () => 
     await waitFor(() => w.gateCalls().length === 1 || null, 'the gate to start')
     assert.match(w.gateCalls()[0], /release\.json\t$/, 'a MacBook decides, as with no file')
     await releaseGates(w, B, 3)
+  })
+})
+
+/** An app.asar as electron-builder leaves it: Brief 192's build-info.json, pretty-printed, among other files. */
+const asarWith = (sha: string, builtAt: string): string =>
+  `\0\0header{"files":{}}\n"use strict";\nconst sha = "${'f'.repeat(40)}";\n` +
+  JSON.stringify({ sha, commit: sha, dirty: false, builtAt, version: '6.0.0' }, null, 2) + '\n"use strict";\n'
+const runningIs = (w: World, sha: string, builtAt: string): void =>
+  writeFileSync(join(w.app, 'Contents', 'Resources', 'app.asar'), asarWith(sha, builtAt))
+const stagedBuilt = (w: World, sha: string, builtAt: string): void => {
+  mkdirSync(join(w.dir(sha), 'JakeTunes.app', 'Contents', 'Resources'), { recursive: true })
+  writeFileSync(join(w.dir(sha), 'JakeTunes.app', 'Contents', 'Resources', 'app.asar'), asarWith(sha, builtAt))
+}
+/** git in a temp repo, with no GIT_* from the environment. Under a pre-commit hook GIT_DIR and
+ *  GIT_INDEX_FILE name the real repo: `git init` there re-initialised it with core.bare = true
+ *  (2026-11-19, this file's first run under the hook), which stopped every worktree. */
+function gitIn(repo: string, args: string[]): string {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')))
+  return execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8', env }).trim()
+}
+/** A git repo whose first commit is the parent of the second: [older, newer]. */
+function repoOfTwo(root: string): [string, string] {
+  const repo = join(root, 'repo')
+  mkdirSync(repo)
+  const git = (...args: string[]): string => gitIn(repo, args)
+  git('init', '-q')
+  git('commit', '-q', '--allow-empty', '-m', 'one')
+  const older = git('rev-parse', 'HEAD')
+  git('commit', '-q', '--allow-empty', '-m', 'two')
+  return [older, git('rev-parse', 'HEAD')]
+}
+
+describe('update agent — never go back to an older build', () => {
+  it('the workmini incident: an older staged build, once installed, then replaced by hand with a newer one, is never offered again', async () => {
+    const w = world()
+    w.stage_(A, 1000)
+    stagedBuilt(w, A, '2026-11-18T01:05:32.405Z')
+    // It was offered and installed: the gate's answer and the agent's mark are still in its folder.
+    writeFileSync(join(w.dir(A), 'gate.exit'), '0\n')
+    writeFileSync(join(w.dir(A), 'installed'), '')
+    // Then a newer build went on by hand, without being staged.
+    runningIs(w, B, '2026-11-19T02:00:00.000Z')
+    await w.agent()
+    await new Promise((r) => setTimeout(r, 300))
+    assert.deepEqual(w.gateCalls(), [], 'no gate for the older build')
+    assert.equal(existsSync(w.dir(A)), false, 'the superseded release is removed')
+    const log = readFileSync(w.log, 'utf8')
+    assert.match(log, /aaaa+: superseded — built 2026-11-18T01:05:32.405Z, before the running build bbbbbbbbbbbb/)
+    assert.doesNotMatch(log, /the gate said installed/)
+    await w.agent()
+    assert.deepEqual(w.gateCalls(), [], 'and never on a later run')
+  })
+
+  it('a staged build newer than the running one is offered as before; the older one beside it is dropped', async () => {
+    const w = world()
+    runningIs(w, B, '2026-11-19T02:00:00.000Z')
+    w.stage_(A, 3000) // staged last, but built first: staged-at order is not build order
+    stagedBuilt(w, A, '2026-11-18T01:05:32.405Z')
+    w.stage_(C, 2000)
+    stagedBuilt(w, C, '2026-11-19T17:31:18.184Z')
+    await w.agent()
+    await waitFor(() => w.gateCalls().length === 1 || null, 'C\'s gate')
+    assert.equal(w.gateCalls()[0].split('\t')[3], C)
+    assert.equal(existsSync(w.dir(A)), false)
+    await releaseGates(w, C, 3)
+  })
+
+  it('git ancestry wins over build times when a checkout has both commits', async () => {
+    const w = world()
+    const [older, newer] = repoOfTwo(w.root)
+    // The older commit rebuilt later: its builtAt is newer, but it is still the past.
+    runningIs(w, newer, '2026-11-19T02:00:00.000Z')
+    w.stage_(older, 2000)
+    stagedBuilt(w, older, '2026-11-20T09:00:00.000Z')
+    await w.agent({ repo: join(w.root, 'repo') })
+    await new Promise((r) => setTimeout(r, 300))
+    assert.deepEqual(w.gateCalls(), [])
+    assert.match(readFileSync(w.log, 'utf8'), /superseded — an ancestor of the running build/)
+
+    // The other way round: a descendant built on a Mac whose clock ran behind is still newer.
+    const w2 = world()
+    const [o2, n2] = repoOfTwo(w2.root)
+    runningIs(w2, o2, '2026-11-19T02:00:00.000Z')
+    w2.stage_(n2, 2000)
+    stagedBuilt(w2, n2, '2026-11-18T00:00:00.000Z')
+    await w2.agent({ repo: join(w2.root, 'repo') })
+    await waitFor(() => w2.gateCalls().length === 1 || null, 'the descendant\'s gate')
+    await releaseGates(w2, n2, 3)
+  })
+
+  it('no provenance on either side: the agent cannot tell, and offers as before', async () => {
+    const w = world()
+    runningIs(w, B, '2026-11-19T02:00:00.000Z')
+    w.stage_(A, 1000) // a staged copy with no build-info.json
+    await w.agent()
+    await waitFor(() => w.gateCalls().length === 1 || null, 'A\'s gate')
+    await releaseGates(w, A, 3)
+
+    const w2 = world() // the running app has none (the fake one every other test uses)
+    w2.stage_(A, 1000)
+    stagedBuilt(w2, A, '2026-11-18T01:05:32.405Z')
+    await w2.agent()
+    await waitFor(() => w2.gateCalls().length === 1 || null, 'A\'s gate')
+    await releaseGates(w2, A, 3)
+  })
+
+  it('a plain build-info.json beside app.asar counts too', async () => {
+    const w = world()
+    writeFileSync(join(w.app, 'Contents', 'Resources', 'build-info.json'), JSON.stringify({ sha: B, builtAt: '2026-11-19T02:00:00.000Z' }))
+    w.stage_(A, 1000)
+    stagedBuilt(w, A, '2026-11-18T01:05:32.405Z')
+    await w.agent()
+    await new Promise((r) => setTimeout(r, 300))
+    assert.deepEqual(w.gateCalls(), [])
+    assert.equal(existsSync(w.dir(A)), false)
+  })
+
+  for (const host of ['Jakes-MacBook-Pro-2458', 'Jakes-Mini-6224']) {
+    it(`a gate waiting for a release that becomes superseded is stopped, and its folder goes once it has ended (${host})`, async () => {
+      const w = world()
+      w.stage_(A, 1000)
+      stagedBuilt(w, A, '2026-11-18T01:05:32.405Z')
+      await w.agent({ host })
+      await waitFor(() => w.gateCalls().length === 1 || null, 'A\'s gate')
+      // A newer build by hand while it waits (on a decide Mac or an idle one, with nothing newer staged:
+      // a gate started after such an install took it as its baseline, so only the agent can stop it).
+      runningIs(w, B, '2026-11-19T02:00:00.000Z')
+      await w.agent({ host })
+      assert.equal(existsSync(join(w.dir(A), 'superseded')), true)
+      await waitFor(() => existsSync(join(w.dir(A), 'gate.exit')) || null, 'A\'s gate to be stopped')
+      assert.match(readFileSync(w.log, 'utf8'), /aaaa+: superseded — stopped its gate/)
+      await w.agent({ host })
+      assert.equal(existsSync(w.dir(A)), false, 'removed once its gate is gone')
+      assert.equal(w.gateCalls().length, 1, 'never a second gate')
+    })
+  }
+
+  it('a checkout that has the running commit but not the staged one (not fetched yet): never called older', async () => {
+    const w = world()
+    const [older] = repoOfTwo(w.root)
+    runningIs(w, older, '2026-11-19T10:00:00.000Z') // a hand build of a commit the checkout has
+    w.stage_(C, 2000) // the release job's build, from a commit this checkout has not fetched
+    stagedBuilt(w, C, '2026-11-19T09:00:00.000Z')
+    await w.agent({ repo: join(w.root, 'repo') })
+    await waitFor(() => w.gateCalls().length === 1 || null, 'C\'s gate')
+    assert.equal(existsSync(join(w.dir(C), 'superseded')), false)
+    await releaseGates(w, C, 3)
+  })
+
+  it('two commits on different branches: the earlier build is older', async () => {
+    const w = world()
+    const repo = join(w.root, 'repo')
+    const [base, main] = repoOfTwo(w.root)
+    const git = (...args: string[]): string => gitIn(repo, args)
+    git('checkout', '-q', '-b', 'side', base)
+    git('commit', '-q', '--allow-empty', '-m', 'side')
+    const side = git('rev-parse', 'HEAD')
+    runningIs(w, side, '2026-11-19T10:00:00.000Z')
+    w.stage_(main, 2000)
+    stagedBuilt(w, main, '2026-11-19T09:00:00.000Z')
+    await w.agent({ repo })
+    await new Promise((r) => setTimeout(r, 300))
+    assert.deepEqual(w.gateCalls(), [])
+    assert.match(readFileSync(w.log, 'utf8'), /superseded — built 2026-11-19T09:00:00.000Z, before the running build/)
   })
 })
 

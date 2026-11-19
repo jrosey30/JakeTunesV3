@@ -255,8 +255,21 @@ leaves. The plist sets `AbandonProcessGroup`, so launchd doesn't kill the gate w
 
 Staged releases live in `~/Library/Application Support/JakeTunes/staged-updates/<sha>/`:
 `JakeTunes.app`, `release.json`, `staged-at`. The agent keeps its own notes beside them
-(`gate.pid`, `gate.exit`, `tries`, `skipped`, `gave-up`, `installed`).
+(`gate.pid`, `gate.exit`, `tries`, `skipped`, `gave-up`, `installed`, `superseded`).
 
+The agent that runs is the copy in `.../JakeTunes/update-agent/`, put there by the offer script
+with each release. A fix to it reaches a Mac with the next release, or by copying it over that
+copy by hand (`install -m 755 scripts/install/jaketunes-update-agent.sh "$HOME/Library/Application
+Support/JakeTunes/update-agent/"`, over ssh for workmini and homemini).
+
+- **Never back (2026-11-19).** On workmini a newer build went on by hand over an offered one,
+  and the agent offered the older one again. Install put it back, and its 5,000-song limit dropped
+  the 10,000-song Best of Bandcamp list. Now a staged release older than the running app is marked
+  `superseded`, never offered, its gate (if one is alive) sent TERM on every Mac, and its folder
+  removed once that gate is gone. Older: an ancestor of the running commit where `~/JakeTunesV3`
+  has both (a staged commit it hasn't fetched is never older), else an earlier `builtAt`. Both
+  come from `build-info.json` (`src/main/build-provenance.ts`), beside `app.asar` or inside it.
+  No provenance on either side: offered as before.
 - **The newest staged release wins.** An older release is never started again. Its waiting v 2
   gate sees the newer marker and leaves (exit 6). On an `idle` Mac the agent sends it TERM,
   because a v 1 gate has no marker check. One job owns it all, so a release job never finds "a

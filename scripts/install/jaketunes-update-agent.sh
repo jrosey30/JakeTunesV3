@@ -10,8 +10,23 @@
 #     staged-at                      epoch seconds; the newest staged release wins
 #     gate.pid / gate.exit           the gate this agent started, and how it ended
 #     tries / skipped / gave-up      what the agent has learnt about this release
+#     superseded                     older than the build this Mac runs: never offered, then removed
 #
 # Each run, under a lock (one agent at a time):
+#  0. Never go back (2026-11-19, workmini: a build installed by hand on top of an offered one, and
+#     the agent offered the older one again; Install put it back, and its 5,000-song limit dropped
+#     the 10,000-song Best of Bandcamp list). A staged release OLDER than the running app is
+#     marked superseded, never offered, and removed once no gate of its own is alive; a gate of
+#     its own that is alive is sent TERM, whatever the policy (one started after a hand install
+#     took the new app as its baseline, so its own app.asar check would not stop it; killed in the
+#     swap, the gate puts the previous build back). Older means, with a V3 checkout here
+#     (~/JakeTunesV3): the staged commit is an ancestor of the running one. A descendant is newer.
+#     A staged commit the checkout does not have yet is never called older (it is probably just
+#     not fetched). Two commits on different branches, or no checkout at all: an earlier builtAt.
+#     Both come from Brief 192's build-info.json (src/main/build-provenance.ts), beside app.asar
+#     or inside it. Either side without it: not older (the agent cannot tell, and goes on as
+#     before). Without a checkout an old commit rebuilt later is newer by its builtAt: a known
+#     limit of the fallback.
 #  1. Take the NEWEST staged release. Older ones are never started again; a gate still waiting
 #     on one ends by itself (a v 2 gate sees the newer marker and exits 6) or, on an idle-policy
 #     Mac, is sent TERM here (a v 1 gate has no marker check and could install the older build).
@@ -40,7 +55,7 @@
 #
 # Test overrides (src/main/__tests__/update-agent.test.ts): JT_AGENT_DATA_DIR, JT_AGENT_GATE,
 # JT_AGENT_APP, JT_AGENT_LOG, JT_AGENT_HOSTNAME, JT_AGENT_HOME_BACKUPS, JT_AGENT_DECIDE_MAX_MIN,
-# JT_AGENT_IDLE_MAX_MIN, JT_AGENT_LOCK_HOLD. All default to the real thing.
+# JT_AGENT_IDLE_MAX_MIN, JT_AGENT_LOCK_HOLD, JT_AGENT_REPO. All default to the real thing.
 set -u
 trap '' PIPE
 DATA="${JT_AGENT_DATA_DIR:-$HOME/Library/Application Support/JakeTunes}"
@@ -52,6 +67,7 @@ BACKUPS="${JT_AGENT_HOME_BACKUPS:-$HOME}"
 POLICY_FILE="$HOME/.config/jaketunes/update-policy"
 DECIDE_MAX_MIN="${JT_AGENT_DECIDE_MAX_MIN:-11520}"
 IDLE_MAX_MIN="${JT_AGENT_IDLE_MAX_MIN:-180}"
+REPO="${JT_AGENT_REPO:-$HOME/JakeTunesV3}"
 MAX_TRIES=3
 KEEP=2
 
@@ -137,7 +153,63 @@ prune() {   # keep the newest $KEEP staged releases; never one whose gate is ali
   done < <(staged_list)
 }
 
-NEWEST=$(staged_list | head -1)
+# Brief 192's build-info.json of an .app ("<sha> <builtAt>", builtAt "-" when it has none), or
+# nothing. A plain file beside app.asar, else the one inside it, which electron-builder stores
+# uncompressed and write-build-info.mjs pretty-prints: `  "sha": "<hex>",` on a line of its own,
+# `"commit"` (the same sha) and `"builtAt": "<ISO>"` a few lines on.
+build_info() {
+  local res="$1/Contents/Resources" txt sha at
+  if [ -f "$res/build-info.json" ]; then txt=$(head -c 4096 "$res/build-info.json" 2>/dev/null)
+  elif [ -f "$res/app.asar" ]; then txt=$(LC_ALL=C grep -a -m1 -A6 -E '^  "sha": "[0-9a-f]{7,40}",$' "$res/app.asar" 2>/dev/null)
+  else return 0
+  fi
+  sha=$(printf '%s\n' "$txt" | LC_ALL=C grep -o -E '"sha"[[:space:]]*:[[:space:]]*"[0-9a-f]{7,40}"' | head -1 | LC_ALL=C grep -o -E '[0-9a-f]{7,40}"$' | tr -d '"')
+  at=$(printf '%s\n' "$txt" | LC_ALL=C grep -o -E '"builtAt"[[:space:]]*:[[:space:]]*"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z"' | head -1 | LC_ALL=C grep -o -E '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z')
+  [ -n "$sha" ] || return 0
+  # Inside the asar, only the stamper's own block counts: its "commit" repeats the sha.
+  [ -f "$res/build-info.json" ] || printf '%s\n' "$txt" | LC_ALL=C grep -q -F "\"commit\": \"$sha\"" || return 0
+  echo "$sha ${at:--}"
+}
+RUNNING=$(build_info "$APP")
+RUN_SHA=${RUNNING%% *}; RUN_AT=${RUNNING#* }
+# Is staged release $1 older than the running app? (Step 0 above.) Prints why when it is.
+older_than_running() {
+  local s=$1 st st_at
+  [ -n "$RUNNING" ] || return 1
+  [ "${s:0:12}" = "${RUN_SHA:0:12}" ] && return 1
+  # Only where a checkout is (a Mac without the developer tools would get /usr/bin/git's install
+  # dialog every 5 minutes).
+  if [ -e "$REPO/.git" ]; then
+    git -C "$REPO" cat-file -e "$s^{commit}" 2>/dev/null || return 1   # not fetched here yet
+    if git -C "$REPO" cat-file -e "$RUN_SHA^{commit}" 2>/dev/null; then
+      if git -C "$REPO" merge-base --is-ancestor "$s" "$RUN_SHA" 2>/dev/null; then echo "an ancestor of the running build ${RUN_SHA:0:12}"; return 0; fi
+      git -C "$REPO" merge-base --is-ancestor "$RUN_SHA" "$s" 2>/dev/null && return 1
+    fi
+  fi
+  st=$(build_info "$STAGE/$s/JakeTunes.app"); st_at=${st#* }
+  [ -n "$st" ] && [ "$st_at" != - ] && [ "$RUN_AT" != - ] || return 1
+  [[ "$st_at" < "$RUN_AT" ]] || return 1
+  echo "built $st_at, before the running build ${RUN_SHA:0:12} ($RUN_AT)"
+}
+
+# 0. Never go back: a staged release older than the running app is superseded.
+while read -r line; do
+  s=${line#* }
+  if [ ! -f "$STAGE/$s/superseded" ]; then
+    installed "$s" && continue
+    why=$(older_than_running "$s") || continue
+    touch "$STAGE/$s/superseded"
+    log "$s: superseded — $why; not offered"
+  fi
+  if gate_alive "$s"; then
+    pkill -TERM -P "$(cat "$STAGE/$s/gate.pid")" 2>/dev/null && log "$s: superseded — stopped its gate"
+    continue   # its folder goes on a later run, once the gate is gone
+  fi
+  valid_sha "$s" && rm -rf "${STAGE:?}/$s" && log "removed staged $s (superseded)"
+done < <(staged_list)
+
+# A superseded release still here has a gate on its way out: never the newest.
+NEWEST=$(staged_list | while read -r line; do [ -f "$STAGE/${line#* }/superseded" ] || echo "$line"; done | head -1)
 [ -n "$NEWEST" ] || exit 0
 SHA=${NEWEST#* }
 DIR="$STAGE/$SHA"
@@ -154,6 +226,7 @@ done < <(staged_list)
 
 # 2. Already installed.
 if installed "$SHA"; then
+  rm -f "$DIR/gate.exit"   # its answer is this; read later (after a hand install) it means nothing
   if [ ! -f "$DIR/installed" ]; then
     touch "$DIR/installed"; log "$SHA is installed"
     # The newest rollback bundle stays; older ones go (what the install recipes did after a leg).
