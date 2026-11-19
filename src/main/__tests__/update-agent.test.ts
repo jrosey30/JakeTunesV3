@@ -21,13 +21,18 @@
  *    pid, no answer) starts it again; a skip is final; 3 ABORTs and it gives up; a timeout or a
  *    newer marker restarts it uncounted; installed means nothing to do and the last two staged
  *    releases kept; two agents at once start one gate; on an idle Mac an older waiting gate is stopped
+ *  - the agent's lock: an agent that finds it just taken never gets past it (until 2026-11-19 the
+ *    moment between taking it and naming its holder let agents through); one left by an agent that
+ *    is gone is taken over
+ *  - the gate log: a usual run writes nothing to stderr, which launchd puts in that log; a policy
+ *    file that is there but can't be read still says so
  */
 import { describe, it, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile, execFileSync, spawn } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { deviceFromHostname } from '../../common/usage-log.ts'
 import { HUNG_MS, waitFor } from './wait-for.ts'
@@ -84,7 +89,9 @@ interface World {
   /** Stage a release as the offer script would leave it (staged-at in epoch seconds). */
   stage_: (sha: string, at: number) => void
   installedIs: (sha: string) => void
-  agent: (opts?: { host?: string }) => Promise<string>
+  /** One run of the agent. `hold`: a folder; the agent stops right after taking its lock, writes
+   *  `held` there and goes on once `go` is there (JT_AGENT_LOCK_HOLD). */
+  agent: (opts?: { host?: string; hold?: string }) => Promise<{ stdout: string; stderr: string }>
   gateCalls: () => string[]
   /** Every gate started so far ends with this code. */
   gatesEnd: (code: number) => void
@@ -132,9 +139,10 @@ exit $(cat "${fake}/gate-exit")
         env: {
           HOME: home, PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
           JT_AGENT_GATE: gate, JT_AGENT_APP: app, JT_AGENT_HOSTNAME: opts.host ?? 'Jakes-MacBook-Pro-2458',
+          ...(opts.hold ? { JT_AGENT_LOCK_HOLD: opts.hold } : {}),
         },
       })
-      return r.stdout
+      return { stdout: r.stdout, stderr: r.stderr }
     },
     gateCalls: () => (existsSync(join(fake, 'gate-calls')) ? readFileSync(join(fake, 'gate-calls'), 'utf8').split('\n').filter(Boolean) : []),
     gatesEnd: (code) => writeFileSync(join(fake, 'gate-exit'), String(code)),
@@ -325,6 +333,44 @@ describe('update agent — what it starts, and when', () => {
     await releaseGates(w, B, 3)
   })
 
+  it('an agent that finds the lock just taken never gets past it', async () => {
+    // Until 2026-11-19 the lock was a folder whose holder wrote its pid into it a moment after making
+    // it. An agent that looked in between found no pid, took the lock as left behind and went on: on
+    // 2026-11-14 three agents started together on a busy Mac each started a gate. Here the first
+    // agent stops right after taking the lock, and two more run while it holds it.
+    const w = world()
+    w.stage_(B, 2000)
+    const hold = join(w.root, 'hold')
+    mkdirSync(hold)
+    const first = w.agent({ hold })
+    try {
+      await waitFor(() => existsSync(join(hold, 'held')) || null, 'the first agent to take the lock')
+      await Promise.all([w.agent(), w.agent()])
+      assert.ok(!existsSync(join(w.dir(B), 'gate.pid')), 'no gate started while the first agent holds the lock')
+    } finally {
+      writeFileSync(join(hold, 'go'), '')
+      await first
+    }
+    await waitFor(() => w.gateCalls().length === 1 || null, 'the first agent\'s gate')
+    await new Promise((r) => setTimeout(r, 300))
+    assert.equal(w.gateCalls().length, 1)
+    await releaseGates(w, B, 3)
+  })
+
+  it('a lock left by an agent that is gone (killed, or the Mac lost power) is taken over', async () => {
+    const w = world()
+    w.stage_(B, 2000)
+    const dead = spawn('/usr/bin/true')
+    await new Promise((r) => dead.on('exit', r))
+    // The lock as such an agent leaves it: a link naming its pid.
+    symlinkSync(String(dead.pid), join(w.stage, '.agent-lock'))
+    await w.agent()
+    await waitFor(() => w.gateCalls().length === 1 || null, 'the gate to start')
+    assert.match(readFileSync(w.log, 'utf8'), new RegExp(`took over a lock left by pid ${dead.pid}$`, 'm'))
+    assert.ok(!readdirSync(w.stage).includes('.agent-lock'), 'and let go of it when done')
+    await releaseGates(w, B, 3)
+  })
+
   it('a newer release staged while an older gate waits: the newest gets its gate; on an idle Mac the older one is stopped', async () => {
     const w = world()
     w.stage_(A, 1000)
@@ -337,6 +383,34 @@ describe('update agent — what it starts, and when', () => {
     // A's gate got TERM: its wrapper writes how it ended.
     await waitFor(() => existsSync(join(w.dir(A), 'gate.exit')) || null, 'A\'s gate to be stopped')
     assert.match(readFileSync(w.log, 'utf8'), /newer release bbbb.* staged — stopped its gate|aaaa.*stopped its gate/)
+    await releaseGates(w, B, 3)
+  })
+})
+
+describe('update agent — the gate log (launchd puts its stderr there)', () => {
+  it('a usual run writes nothing to stderr: no policy file and no tries file are the usual case', async () => {
+    // Until 2026-11-19 reading either missing file put "No such file or directory" in the log: 510
+    // lines on the MacBook by then.
+    const w = world()
+    w.stage_(B, 2000)
+    const starts = await w.agent()
+    await waitFor(() => w.gateCalls().length === 1 || null, 'the gate to start')
+    const waits = await w.agent()
+    assert.deepEqual([starts.stderr, waits.stderr], ['', ''], 'starting a gate, and finding it waiting')
+    await releaseGates(w, B, 3)
+  })
+
+  it('a policy file that is there but cannot be read still says so, and the host name decides', async () => {
+    const w = world()
+    const file = join(w.home, '.config', 'jaketunes', 'update-policy')
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, 'idle\n')
+    chmodSync(file, 0o000)
+    w.stage_(B, 2000)
+    const r = await w.agent()
+    assert.match(r.stderr, /update-policy: Permission denied/)
+    await waitFor(() => w.gateCalls().length === 1 || null, 'the gate to start')
+    assert.match(w.gateCalls()[0], /release\.json\t$/, 'a MacBook decides, as with no file')
     await releaseGates(w, B, 3)
   })
 })

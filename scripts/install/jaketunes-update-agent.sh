@@ -40,7 +40,7 @@
 #
 # Test overrides (src/main/__tests__/update-agent.test.ts): JT_AGENT_DATA_DIR, JT_AGENT_GATE,
 # JT_AGENT_APP, JT_AGENT_LOG, JT_AGENT_HOSTNAME, JT_AGENT_HOME_BACKUPS, JT_AGENT_DECIDE_MAX_MIN,
-# JT_AGENT_IDLE_MAX_MIN. All default to the real thing.
+# JT_AGENT_IDLE_MAX_MIN, JT_AGENT_LOCK_HOLD. All default to the real thing.
 set -u
 trap '' PIPE
 DATA="${JT_AGENT_DATA_DIR:-$HOME/Library/Application Support/JakeTunes}"
@@ -62,15 +62,32 @@ log() { echo "$(date '+%Y-%m-%d %H:%M:%S') agent: $*" >> "$LOG" 2>/dev/null || t
 [ -d "$STAGE" ] || exit 0
 
 # ── one agent at a time ──
-LOCK="$STAGE/.agent.lock"
-if ! mkdir "$LOCK" 2>/dev/null; then
-  holder=$(cat "$LOCK/pid" 2>/dev/null)
+# The lock is a symlink whose target is its holder's pid, so taking it and naming the holder are one
+# step: symlink() makes the whole link or fails because one is there. Until 2026-11-19 it was a
+# folder (.agent.lock) that the holder wrote its pid into a moment after making it; an agent that
+# looked in between found no pid, took the lock as left behind and went on, so on a busy Mac agents
+# started together (launchd never starts two; tests and runs by hand can) could each start a gate
+# for the same release.
+LOCK="$STAGE/.agent-lock"
+take_lock() { ln -s "$$" "$LOCK" 2>/dev/null; }
+if ! take_lock; then
+  holder=$(readlink "$LOCK" 2>/dev/null)
   if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then exit 0; fi
-  rm -rf "$LOCK"; mkdir "$LOCK" 2>/dev/null || exit 0
-  log "took over a lock left by pid ${holder:-?}"
+  # Its holder is gone (killed, or the Mac lost power): take it over, if it still names that pid.
+  # No holder: it was let go between the two looks. Either way, one more try.
+  if [ -n "$holder" ] && [ "$(readlink "$LOCK" 2>/dev/null)" = "$holder" ]; then rm -f "$LOCK"; fi
+  take_lock || exit 0
+  [ -n "$holder" ] && log "took over a lock left by pid $holder"
 fi
-echo $$ > "$LOCK/pid"
-trap 'rm -rf "$LOCK"' EXIT
+trap '[ "$(readlink "$LOCK" 2>/dev/null)" = "$$" ] && rm -f "$LOCK"' EXIT   # only ever our own
+# Tests only (update-agent.test.ts): hold the lock until told, so a test can start other agents at
+# this moment. JT_AGENT_LOCK_HOLD is a folder: `held` appears in it once the lock is taken, and the
+# agent goes on when `go` appears, the folder goes, or a minute has passed.
+if [ -n "${JT_AGENT_LOCK_HOLD:-}" ]; then
+  h=$JT_AGENT_LOCK_HOLD n=0
+  touch "$h/held"
+  while [ -d "$h" ] && [ ! -e "$h/go" ] && [ "$n" -lt 1200 ]; do sleep 0.05; n=$((n + 1)); done
+fi
 
 host_policy() {
   local h; h=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
@@ -80,7 +97,12 @@ host_policy() {
   esac
 }
 policy() {
-  local p; p=$(tr -d '[:space:]' < "$POLICY_FILE" 2>/dev/null)
+  # No policy file is the usual case and says nothing; one that is there and can't be read still
+  # says so in the log. (`tr < f 2>/dev/null` was never quiet: bash opens f before the 2> applies,
+  # and wrote "No such file or directory" into the gate log, 510 lines on the MacBook by 2026-11-19,
+  # 6 of them for `tries` below.)
+  local p=
+  [ -f "$POLICY_FILE" ] && p=$(tr -d '[:space:]' < "$POLICY_FILE")
   case "$p" in idle|decide) echo "$p"; return ;; esac
   host_policy "${JT_AGENT_HOSTNAME:-$(scutil --get LocalHostName 2>/dev/null || hostname)}"
 }
@@ -150,7 +172,7 @@ if gate_alive "$SHA"; then exit 0; fi
 # 4. How the last one ended.
 [ -f "$DIR/skipped" ] && exit 0
 [ -f "$DIR/gave-up" ] && exit 0
-tries=$(tr -dc 0-9 < "$DIR/tries" 2>/dev/null); tries=${tries:-0}
+tries=0; [ -f "$DIR/tries" ] && tries=$(tr -dc 0-9 < "$DIR/tries"); tries=${tries:-0}
 if [ -f "$DIR/gate.exit" ]; then
   code=$(tr -dc 0-9 < "$DIR/gate.exit"); code=${code:-1}
   rm -f "$DIR/gate.exit"
