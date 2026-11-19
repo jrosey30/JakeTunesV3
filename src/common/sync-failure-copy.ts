@@ -21,7 +21,6 @@
  *    A short count is never a card diagnosis on its own.
  */
 import type { SyncStep, SyncTimeline } from './sync-progress-model.ts'
-import { stepLabel } from './sync-progress-model.ts'
 
 export type IpodChanged = 'no' | 'unknown' | 'emptied' | 'songs-only' | 'catalog-unverified' | 'swap-kept'
 export type CatalogClaim = 'previous' | 'unknown' | 'written-unverified'
@@ -35,55 +34,69 @@ export interface SyncFailureCopy {
 
 type Rule = { test: RegExp; stage: SyncFailureCopy['stage']; happened: string; next: string }
 
-const AGAIN = 'Sync again without unplugging.'
-const AGAIN_CABLE = 'Sync again without unplugging. If it comes up short again, check the cable and the port before anything else.'
+// Plain words (Jake, 2026-11-19: "its these confusing messages. its AI slop. it needs to be
+// simple"): `happened` is one short line in his words, `next` says what to do only when he
+// has to do something ('' otherwise). Whether the iPod changed is CHANGED_LINE's, from the
+// phase evidence, never claimed here. The engine's own sentence stays in Details.
+const AGAIN = 'Sync again.'
+const AGAIN_CABLE = 'Sync again. If it happens again, try another cable or USB port.'
+const HOMEMINI = 'Try again in a minute.'
+const ITS_SONGS = 'Open Details to see which songs, then sync again.'
 
 const RULES: Rule[] = [
-  { test: /no verified ipod mount|ipod is not mounted|no ipod detected/i, stage: 'device', happened: 'No iPod was found.', next: 'Plug it in (a direct USB port, no hub) and try again.' },
-  { test: /library is empty|nothing to commit|could not build an activity set|api-failed|io-failed|build failed/i, stage: 'build', happened: 'The set could not be built.', next: 'Sync again; if it keeps failing, check the library and homemini.' },
+  // The page's own refusals before anything touches the iPod (DeviceView, ipod-ready-on-mac,
+  // ipod-one-sync). They are already plain: shown as written (happened '' = the message itself).
+  { test: /stopped downloading|couldn’t get ready to sync|changed while its songs were downloading|songs are in your library|^set up this ipod/i, stage: 'build', happened: '', next: '' },
+  // Refusals before the iPod is touched: the plug-in health check (common/ipod-onboarding.ts
+  // healthSyncRefusal / healthBlindRefusal), the identity gate and the card-fit check. Their own
+  // line says what to do; the sync never started. sync-front-end-models.test.ts runs each one.
+  { test: /is in a different ipod|has a different card now|needs erasing|^unplug the ipod, plug it back in|^the ipod changed|won’t fit on/i, stage: 'build', happened: '', next: '' },
+  { test: /^plug in the ipod/i, stage: 'device', happened: '', next: '' },
+  { test: /no verified ipod mount|ipod is not mounted|no ipod detected/i, stage: 'device', happened: 'No iPod found.', next: 'Plug it straight into the Mac and try again.' },
+  { test: /library is empty|nothing to commit|could not build an activity set|api-failed|io-failed|build failed/i, stage: 'build', happened: 'Couldn’t get the songs ready.', next: AGAIN },
   // One button per iPod (2026-11-07, main/ipod-one-sync.ts): refused before anything is written.
-  { test: /top 1000 can’t be read right now|list couldn’t be read/i, stage: 'build', happened: 'What goes on this iPod couldn’t be read from homemini. Nothing on the iPod was touched.', next: 'Sync again once homemini is answering.' },
-  { test: /list is empty\. songs are added/i, stage: 'build', happened: 'This iPod’s list is empty, and only its list goes on it.', next: 'Ask Claude to add songs to it, then sync again.' },
-  { test: /none of the [\d,]+ songs on .+ list can go on it|none of the top 1000 can go on/i, stage: 'build', happened: 'None of the songs for this iPod can go on it, so nothing on the iPod was touched.', next: 'Open Details for the reasons, and sync again once they’re fixed.' },
+  { test: /top 1000 can’t be read right now|list couldn’t be read|can’t get the top 1000|can’t get .+ songs right now/i, stage: 'build', happened: 'Couldn’t get this iPod’s songs.', next: HOMEMINI },
+  { test: /list is empty\. songs are added|has no songs yet/i, stage: 'build', happened: 'This iPod has no songs yet.', next: '' },
+  { test: /none of the [\d,]+ songs on .+ list can go on it|none of the top 1000 can go on|none of .+ songs can go on it/i, stage: 'build', happened: 'None of this iPod’s songs can go on it.', next: ITS_SONGS },
   // A list-only iPod (every iPod but the Original, 2026-11-07) with nothing in its Pool.
-  { test: /pool is empty\. only its pool goes on/i, stage: 'build', happened: 'This iPod’s Pool is empty, and only its Pool goes on it.', next: 'Drop songs into its Pool, then sync again.' },
-  { test: /songs on this ipod's list (can go on it|could be converted for it)/i, stage: 'prepare', happened: 'None of the songs on this iPod’s list can go on it, so nothing on the iPod was touched.', next: 'Open Details for the reasons, fix or swap those songs in its Pool, and sync again.' },
-  { test: /your pool has \d+ songs/i, stage: 'build', happened: 'The pool is larger than the chosen size.', next: 'Remove songs from the pool or pick a bigger size.' },
+  { test: /pool is empty\. only its pool goes on/i, stage: 'build', happened: 'This iPod has no songs yet.', next: '' },
+  { test: /songs on this ipod's list (can go on it|could be converted for it)/i, stage: 'prepare', happened: 'None of this iPod’s songs can go on it.', next: ITS_SONGS },
+  { test: /your pool has \d+ songs/i, stage: 'build', happened: 'Too many songs for this iPod.', next: 'Remove some, then sync again.' },
   // #47 fill-to-N (merged 2026-10-08): refused before the wipe — the library cannot fill N.
-  { test: /only \d+ of \d+ requested songs can land/i, stage: 'prepare', happened: 'The library has fewer songs that can land on the iPod than the chosen size.', next: 'Pick a smaller size, or add songs the Mini can list, and sync again.' },
-  { test: /activity tsa/i, stage: 'prepare', happened: 'Some songs could not board: a file is missing, has no destination, or would collide on the card.', next: 'Open Details for the songs, fix or drop them, and sync again.' },
-  { test: /have damaged audio and there are not enough replacements/i, stage: 'prepare', happened: 'Some songs have damaged audio files and there were not enough replacement songs, so nothing on the iPod was touched.', next: 'Pick a smaller size, or re-download the damaged songs (Details lists them), then sync again.' },
-  { test: /could not build an ipod-safe alac|flac→alac failed/i, stage: 'prepare', happened: 'A song could not be converted to an iPod-safe ALAC, so nothing on the iPod was touched.', next: 'Open Details for the song — the original may be multichannel or damaged. Drop it and sync again.' },
-  { test: /could be fetched from homemini\. nothing on the ipod was touched/i, stage: 'prepare', happened: 'None of the new songs could be fetched from homemini, so nothing on the iPod was touched.', next: 'Sync again once homemini is answering.' },
-  { test: /arriving song\(s\) and there are not enough replacements/i, stage: 'prepare', happened: 'homemini couldn’t send some new songs and there weren’t enough replacements, so nothing on the iPod was touched.', next: 'Sync again once homemini is answering.' },
-  { test: /could be fetched from homemini\. not writing a catalog/i, stage: 'copy', happened: 'None of the new songs could be fetched from homemini.', next: 'Sync again once homemini is answering.' },
-  { test: /swap’s removal step/i, stage: 'wipe', happened: 'The songs leaving the iPod could not all be removed.', next: 'Reseat the cable (direct USB port) and sync again.' },
-  { test: /activity wipe/i, stage: 'wipe', happened: 'The iPod could not be cleared for the rebuild.', next: 'Reseat the cable (direct USB port) and sync again.' },
-  { test: /sync cancelled/i, stage: 'copy', happened: 'You stopped the sync.', next: 'Sync again when ready.' },
-  { test: /confirmed on the card after copy/i, stage: 'copy', happened: 'Fewer songs reached the card than were sent.', next: AGAIN_CABLE },
-  { test: /only prove the card on macos/i, stage: 'verify', happened: 'The card could not be proved on this system.', next: 'Sync from the Mac.' },
-  { test: /could not verify the ipod \(remount failed/i, stage: 'verify', happened: 'The iPod would not remount to prove the write.', next: AGAIN },
-  { test: /held across two remounts/i, stage: 'verify', happened: 'Songs dropped off the card between two remounts.', next: AGAIN_CABLE },
-  { test: /will not list/i, stage: 'verify', happened: 'Some songs would not be listed by the Mini’s firmware.', next: 'Open Details for the songs, drop or re-encode them, and sync again.' },
-  { test: /tsa held \d+ of \d+ songs/i, stage: 'verify', happened: 'Some songs were held back because the Mini would not show them.', next: 'Open Details for the songs, drop or re-encode them, and sync again.' },
-  { test: /the catalog would list are not on the card/i, stage: 'catalog', happened: 'Some songs the new catalog would list were not on the card, so no catalog was written.', next: AGAIN_CABLE },
-  { test: /could not be conformed to firmware id order|could not be laid down as one piece/i, stage: 'catalog', happened: 'The new catalog could not be written correctly.', next: AGAIN },
-  { test: /catalog file never made it onto the card|never committed to the card/i, stage: 'seal', happened: 'The new catalog did not reach the card.', next: AGAIN },
-  { test: /catalog on the card lists \d+ of \d+/i, stage: 'seal', happened: 'The card’s catalog lists fewer songs than the set.', next: AGAIN },
-  { test: /catalog songs are not on the card/i, stage: 'seal', happened: 'Some catalogued songs are not on the card, which the Mini’s firmware cannot tolerate.', next: AGAIN_CABLE },
-  { test: /firmware-invalid song records/i, stage: 'seal', happened: 'The files are on the card but the catalog holds records the firmware would reject.', next: AGAIN },
-  { test: /could not build a seal|could not seal the set/i, stage: 'seal', happened: 'The songs are on the card but the set could not be sealed.', next: AGAIN },
-  { test: /actually stuck on the ipod|card keeps dropping writes|stuck on the ipod/i, stage: 'seal', happened: 'Fewer songs stuck on the card than the set.', next: AGAIN_CABLE },
-  { test: /catalog was not sealed/i, stage: 'seal', happened: 'The catalog was written but not sealed.', next: AGAIN },
-  { test: /eject failed/i, stage: 'device', happened: 'The iPod could not be ejected.', next: 'Close anything reading the card (a booted simulator counts), then eject again.' },
+  { test: /only \d+ of \d+ requested songs can land/i, stage: 'prepare', happened: 'Not enough songs can go on.', next: 'Pick a smaller size, then sync again.' },
+  { test: /activity tsa/i, stage: 'prepare', happened: 'Some songs can’t go on.', next: ITS_SONGS },
+  { test: /have damaged audio and there are not enough replacements/i, stage: 'prepare', happened: 'Some songs are damaged.', next: 'Download them again, then sync.' },
+  { test: /could not build an ipod-safe alac|flac→alac failed/i, stage: 'prepare', happened: 'A song couldn’t be converted for the iPod.', next: ITS_SONGS },
+  { test: /could be fetched from homemini\. nothing on the ipod was touched/i, stage: 'prepare', happened: 'Couldn’t download the new songs.', next: HOMEMINI },
+  { test: /arriving song\(s\) and there are not enough replacements/i, stage: 'prepare', happened: 'Couldn’t download some new songs.', next: HOMEMINI },
+  { test: /could be fetched from homemini\. not writing a catalog/i, stage: 'copy', happened: 'Couldn’t download the new songs.', next: HOMEMINI },
+  { test: /swap’s removal step/i, stage: 'wipe', happened: 'Couldn’t remove the old songs.', next: AGAIN_CABLE },
+  { test: /activity wipe/i, stage: 'wipe', happened: 'Couldn’t clear the iPod.', next: AGAIN_CABLE },
+  { test: /sync cancelled/i, stage: 'copy', happened: 'You stopped the sync.', next: '' },
+  { test: /confirmed on the card after copy/i, stage: 'copy', happened: 'Some songs didn’t copy.', next: AGAIN_CABLE },
+  { test: /only prove the card on macos/i, stage: 'verify', happened: 'This computer can’t check the iPod.', next: 'Sync from the Mac.' },
+  { test: /could not verify the ipod \(remount failed/i, stage: 'verify', happened: 'Couldn’t check the iPod.', next: AGAIN },
+  { test: /held across two remounts/i, stage: 'verify', happened: 'Some songs didn’t stay on the iPod.', next: AGAIN_CABLE },
+  { test: /will not list/i, stage: 'verify', happened: 'Some songs won’t show on the iPod.', next: ITS_SONGS },
+  { test: /tsa held \d+ of \d+ songs/i, stage: 'verify', happened: 'Some songs won’t show on the iPod.', next: ITS_SONGS },
+  { test: /the catalog would list are not on the card/i, stage: 'catalog', happened: 'Some songs didn’t make it onto the iPod.', next: AGAIN_CABLE },
+  { test: /could not be conformed to firmware id order|could not be laid down as one piece/i, stage: 'catalog', happened: 'Couldn’t write the iPod’s song list.', next: AGAIN },
+  { test: /catalog file never made it onto the card|never committed to the card/i, stage: 'seal', happened: 'Couldn’t write the iPod’s song list.', next: AGAIN },
+  { test: /catalog on the card lists \d+ of \d+/i, stage: 'seal', happened: 'The iPod’s song list came up short.', next: AGAIN },
+  { test: /catalog songs are not on the card/i, stage: 'seal', happened: 'Some songs didn’t make it onto the iPod.', next: AGAIN_CABLE },
+  { test: /firmware-invalid song records/i, stage: 'seal', happened: 'The iPod’s song list came out wrong.', next: AGAIN },
+  { test: /could not build a seal|could not seal the set/i, stage: 'seal', happened: 'The sync didn’t finish.', next: AGAIN },
+  { test: /actually stuck on the ipod|card keeps dropping writes|stuck on the ipod/i, stage: 'seal', happened: 'Some songs didn’t stay on the iPod.', next: AGAIN_CABLE },
+  { test: /catalog was not sealed/i, stage: 'seal', happened: 'The sync didn’t finish.', next: AGAIN },
+  { test: /eject failed/i, stage: 'device', happened: 'Couldn’t eject the iPod.', next: 'Close anything using it, then eject again.' },
 ]
 
 export function syncFailureCopy(raw: string): SyncFailureCopy {
   const text = String(raw || '').trim()
   for (const r of RULES) {
-    if (r.test.test(text)) return { stage: r.stage, happened: r.happened, next: r.next, raw: text }
+    if (r.test.test(text)) return { stage: r.stage, happened: r.happened || text, next: r.next, raw: text }
   }
-  return { stage: null, happened: 'The sync stopped.', next: 'Open Details, then sync again with the iPod still plugged in.', raw: text || 'Sync failed' }
+  return { stage: null, happened: 'The sync stopped.', next: AGAIN, raw: text || 'Sync failed' }
 }
 
 export interface SyncOutcome extends SyncFailureCopy {
@@ -97,12 +110,12 @@ export interface SyncOutcome extends SyncFailureCopy {
 }
 
 const CHANGED_LINE: Record<IpodChanged, string> = {
-  no: 'Nothing on the iPod was changed.',
-  unknown: 'Whether the iPod changed is not known — check On This iPod before trusting any count.',
-  emptied: 'The copied songs were cleared again and no catalog was written. The previous catalog stands, but its songs are no longer on the card — sync again before using the iPod.',
-  'songs-only': 'The new songs are on the card, but the catalog was not replaced. The iPod will show the old list until you sync again.',
-  'catalog-unverified': 'The new songs are on the card and a new catalog was written, but the card did not prove it. Do not trust the count the iPod shows until a sync seals.',
-  'swap-kept': 'The iPod still plays: every song its list names is on it. Sync again to finish the swap.',
+  no: 'Nothing on the iPod changed.',
+  unknown: 'The iPod may be half-synced. Sync again before you use it.',
+  emptied: 'The iPod’s songs were cleared. Sync again before you use it.',
+  'songs-only': 'The iPod still shows its old songs until you sync again.',
+  'catalog-unverified': 'The iPod may show the wrong songs until you sync again.',
+  'swap-kept': 'The iPod still works. Sync again to finish.',
 }
 
 /** Appended by the Activity engine when an abort after the wipe removed
@@ -152,8 +165,22 @@ export function syncOutcome(t: SyncTimeline): SyncOutcome | null {
   return { ...copy, stoppedAt, changed, catalog, changedLine: CHANGED_LINE[changed], fromEvidence: evidence }
 }
 
-/** "Stopped at Verify" / "Stopped" — the lead of the result line. */
-export function stoppedLabel(o: SyncOutcome): string {
-  if (!o.stoppedAt || o.stoppedAt === 'build' || o.stoppedAt === 'device') return 'Stopped'
-  return `Stopped at ${stepLabel(o.stoppedAt)}`
+/** "Sync stopped" — the lead of the result line. The step it stopped at is the strip's
+ *  ✕, and Details names it; the line itself stays plain (2026-11-19). */
+export function stoppedLabel(_o: SyncOutcome): string {
+  return 'Sync stopped'
+}
+
+/**
+ * The whole stopped-sync message as one line: what happened, whether the iPod changed,
+ * and what to do (only when there is something to do), with nothing said twice.
+ */
+export function outcomeLine(o: SyncOutcome): string {
+  // The page's own refusals (shown as written) come before the iPod is touched, and with no
+  // iPod there "nothing on the iPod changed" says nothing: no changed line for either.
+  const quiet = o.changed === 'no' && (o.happened === o.raw || o.stoppedAt === 'device')
+  const parts = [o.happened, quiet ? '' : o.changedLine]
+  // "Sync again." after a changed line that already says to sync again is said once.
+  if (o.next && !(/sync again/i.test(o.changedLine) && o.next === AGAIN)) parts.push(o.next)
+  return parts.filter(Boolean).join(' ')
 }

@@ -54,7 +54,7 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
       typed: over.typed ?? typed,
       recheck: over.recheck === true,
     })
-    if (!r) { setError('This build can’t set up iPods.'); return null }
+    if (!r) { setError('This version can’t set up iPods.'); return null }
     if (!r.ok) { setError(r.error); return null }
     setLook(r)
     return r
@@ -67,12 +67,12 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
     const st = r?.step
     if (st?.step === 'checks' && !st.blocked && st.checks.some((c) => c.id === 'write-test' && c.status === 'unknown')) {
       const t = await window.electronAPI.ipodSetupTest?.({ listId: over.listId !== undefined ? over.listId : listId, name: (over.name ?? name).trim() || null })
-      if (t && !t.ok) setError(t.error ?? 'The test couldn’t run.')
+      if (t && !t.ok) setError(t.error ?? 'Couldn’t test the iPod. Try again.')
       await refresh({ ...over, recheck: false })
     }
   }, [refresh, listId, name])
 
-  // The card check (the first and last songs written, read back) runs by itself at the proof step.
+  // The card check runs by itself at the proof step; it says something only when Jake must act.
   const [proof, setProof] = useState<{ status: 'pass' | 'fail' | 'waiting' | 'none'; line: string } | null>(null)
   const [same, setSame] = useState('')
   const atProof = look?.step.step === 'proof'
@@ -94,7 +94,7 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
   const run = async (label: string, work: () => Promise<void>) => {
     setBusy(label)
     setError(null)
-    try { await work() } catch (err) { setError(err instanceof Error ? err.message : 'That didn’t work.') } finally { setBusy(null) }
+    try { await work() } catch (err) { console.warn('[ipod-setup]', err); setError('That didn’t work. Try again.') } finally { setBusy(null) }
   }
 
   if (!look) return error ? <span className="ipod-id-error">{error}</span> : null
@@ -114,7 +114,7 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
     setColor(row?.color ?? null)
     setTyped('')
     setName('')
-    void run('Checking the iPod, and writing and reading back a test file…', () => settle({ listId: id, name: '', typed: '' }))
+    void run('Checking the iPod…', () => settle({ listId: id, name: '', typed: '' }))
   }
 
   return (
@@ -125,7 +125,7 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
           className="ipod-id-form"
           onSubmit={(e) => { e.preventDefault(); void run('Saving…', async () => {
             const r = await window.electronAPI.ipodSetupSameIpod?.({ typed: same })
-            if (r && !r.ok) setError(r.error ?? 'That couldn’t be saved.')
+            if (r && !r.ok) setError(r.error ?? 'Couldn’t save that. Try again.')
             else { setSame(''); await refresh() }
           }) }}
         >
@@ -145,12 +145,12 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
         <div className="ipod-id-actions">
           <button
             type="button" className="device-itunes-btn" disabled={!!busy}
-            onClick={() => { void run('Writing the Original’s ID file…', async () => {
+            onClick={() => { void run('Saving…', async () => {
               const r = await window.electronAPI.ipodSetupReadoptOriginal?.()
-              if (r && !r.ok) setError(r.error ?? 'That didn’t work.')
+              if (r && !r.ok) setError(r.error ?? 'That didn’t work. Try again.')
               else onClose?.()
             }) }}
-          >This is my Original: give it its ID back</button>
+          >This is my Original</button>
         </div>
       )}
 
@@ -160,12 +160,12 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
           <div className="ipod-setup-lists">
             {look.targets.map((t) => (
               <button key={t.listId} type="button" className="device-itunes-btn" disabled={!!busy} onClick={() => pick(t.listId)}>
-                {t.listName} · {t.songs.toLocaleString('en-US')} songs{t.hasIpod ? ' · has an iPod' : t.listId === step.suggestListId ? ' · this one' : ''}
+                {t.listName} · {t.songs.toLocaleString('en-US')} songs{t.listId === step.suggestListId ? ' · this one' : ''}
               </button>
             ))}
             <button type="button" className="device-link-btn" disabled={!!busy} onClick={() => pick('new')}>A brand-new iPod</button>
           </div>
-          {look.targets.length === 0 && <span className="ipod-id-note">homemini isn’t answering, so the lists can’t be shown. Try again in a moment.</span>}
+          {look.targets.length === 0 && <span className="ipod-id-note">Can’t load your iPods right now. Try again in a minute.</span>}
         </>
       )}
 
@@ -185,7 +185,7 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
           <span className="ipod-id-note ipod-id-note--strong">{step.line}</span>
           <Checks checks={step.checks} />
           <div className="ipod-id-actions">
-            <button type="button" className="device-itunes-btn" disabled={!!busy} onClick={() => { void run('Checking the connection…', () => settle({ recheck: true })) }}>Check again</button>
+            <button type="button" className="device-itunes-btn" disabled={!!busy} onClick={() => { void run('Checking…', () => settle({ recheck: true })) }}>Check again</button>
           </div>
         </>
       )}
@@ -194,7 +194,7 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
         <form className="ipod-id-form" onSubmit={(e) => { e.preventDefault(); void run('Checking…', async () => { await refresh() }) }}>
           {step.onIt.length > 0 && (
             <>
-              <span className="ipod-id-note ipod-id-note--strong">On this iPod now:</span>
+              <span className="ipod-id-note ipod-id-note--strong">On it now:</span>
               <ul className="ipod-setup-checks">
                 {step.onIt.map((l) => <li key={l} className="ipod-setup-check"><span className="ipod-setup-mark" aria-hidden="true">•</span><span>{l}</span></li>)}
               </ul>
@@ -213,7 +213,7 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
 
       {step.step === 'prepare' && listId && (
         <>
-          <span className="ipod-id-note ipod-id-note--strong">Everything checks out. Setting up will:</span>
+          <span className="ipod-id-note ipod-id-note--strong">Ready to set up:</span>
           <ul className="ipod-setup-checks">
             {step.actions.map((a) => <li key={a} className="ipod-setup-check"><span className="ipod-setup-mark" aria-hidden="true">•</span><span>{a}</span></li>)}
           </ul>
@@ -222,8 +222,8 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
             <input value={name || step.name} maxLength={11} onChange={(e) => setName(e.target.value)} />
           </label>
           <div className="ipod-id-field">
-            <span>The iPod’s colour</span>
-            <div className="ipod-id-swatches" role="radiogroup" aria-label="iPod colour">
+            <span>Color</span>
+            <div className="ipod-id-swatches" role="radiogroup" aria-label="iPod color">
               {IPOD_COLORS.map((c) => (
                 <button
                   key={c.name} type="button" role="radio" aria-checked={color === c.name} aria-label={c.name} title={c.name}
@@ -241,10 +241,10 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
           <div className="ipod-id-actions">
             <button
               type="button" className="device-itunes-btn" disabled={!!busy}
-              onClick={() => { void run('Setting up the iPod…', async () => {
+              onClick={() => { void run('Setting up…', async () => {
                 const r = await window.electronAPI.ipodSetupPrepare?.({ listId, name: name.trim() || step.name, color, typed, matchCover })
-                if (!r) { setError('This build can’t set up iPods.'); return }
-                if (!r.ok) { setError(r.error ?? 'Setting up didn’t finish.'); await refresh(); return }
+                if (!r) { setError('This version can’t set up iPods.'); return }
+                if (!r.ok) { setError(r.error ?? 'Couldn’t set up the iPod. Try again.'); await refresh(); return }
                 // Something worth reading (the drive kept its old name, the picture didn't save) is
                 // handed to the strip that takes over once the iPod is known.
                 carriedNotes = r.notes ?? []
@@ -265,17 +265,17 @@ export default function IpodSetupSheet({ mode, onClose }: { mode: 'setup' | 'tai
       {step.step === 'proof' && (
         <>
           <span className="ipod-id-note ipod-id-note--strong">{step.line}</span>
-          <ol className="ipod-setup-proof">{step.checklist.map((c) => <li key={c}>{c}</li>)}</ol>
-          {proof && <span className={proof.status === 'fail' ? 'ipod-id-error' : 'ipod-id-note'}>{proof.line}</span>}
+          {/* The check is in the line; the card check speaks only when Jake must act. */}
+          {proof && proof.line && <span className={proof.status === 'fail' ? 'ipod-id-error' : 'ipod-id-note'}>{proof.line}</span>}
           <div className="ipod-id-actions">
             <button
               type="button" className="device-itunes-btn" disabled={!!busy || proof?.status === 'fail' || proof?.status === 'waiting'}
               onClick={() => { void run('Saving…', async () => {
                 const r = await window.electronAPI.ipodSetupChecked?.()
-                if (r && !r.ok) setError(r.error ?? 'That couldn’t be saved.')
+                if (r && !r.ok) setError(r.error ?? 'Couldn’t save that. Try again.')
                 await refresh()
               }) }}
-            >Both are right</button>
+            >Looks right</button>
           </div>
         </>
       )}

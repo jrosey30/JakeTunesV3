@@ -49,13 +49,13 @@ describe('recognising the original by its last sync', () => {
 
 describe('only a KNOWN iPod is written to; only the Original is imported from', () => {
   it('refuses an unknown card; any known iPod may be synced and have its plays read (step 2b)', () => {
-    assert.match(ipodWriteRefusal({ status: 'unknown', canBeOriginal: true }) || '', /doesn’t know this iPod/)
+    assert.equal(ipodWriteRefusal({ status: 'unknown', canBeOriginal: true }), 'Set up this iPod to sync it.')
     const red = buildDeviceMarker({ id: 'abc12345-red', name: 'Red', primary: false, now })!
     assert.equal(ipodWriteRefusal({ status: 'known', device: red }), null)
     const orig = buildDeviceMarker({ id: 'original-1234', name: 'Original', primary: true, now })!
     assert.equal(ipodWriteRefusal({ status: 'known', device: orig }), null)
     // Importing songs INTO the library stays Original-only: another iPod's card is never a source.
-    assert.match(ipodImportRefusal({ status: 'unknown', canBeOriginal: false }) || '', /doesn’t know this iPod/)
+    assert.equal(ipodImportRefusal({ status: 'unknown', canBeOriginal: false }), 'Set up this iPod to sync it.')
     assert.match(ipodImportRefusal({ status: 'known', device: red }) || '', /Red isn’t the Original/)
     assert.equal(ipodImportRefusal({ status: 'known', device: orig }), null)
   })

@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useRef, useSyncExternalStore } from 'reac
 import { useLibrary } from '../context/LibraryContext'
 import { assembleSyncPlaylists, planIpodSync, planTracks } from '../utils/workoutIpodSync'
 import type { OneSyncPlan } from '../../common/ipod-one-sync-plan'
-import { readyLine, leftOffLine, listErrorLine, syncButtonLabel, lastSyncedLine, syncingStep, withLastSyncLeftOff } from '../../common/ipod-one-sync-plan'
+import { readyLine, leftOffLine, syncButtonLabel, lastSyncedLine, syncingStep, withLastSyncLeftOff } from '../../common/ipod-one-sync-plan'
 import { readyOnMacLine, leaveOffQuestion, syncNowLeavingOffLabel, idsLeavingOff, mustAskBeforeSync, listFetchStep, type ReadyOnMac } from '../../common/ipod-ready-on-mac'
 import { stickerHex } from '../components/IpodIdentityBar'
 import IpodArtworkAsk from '../components/IpodArtworkAsk'
@@ -16,8 +16,8 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import IpodLibraryModal from '../components/IpodLibraryModal'
 import SyncHistorySheet, { SyncHistoryRows, type SyncHistoryEntryLike } from '../components/SyncHistorySheet'
 import { subscribeSyncTimeline, getSyncTimeline, startSyncTimeline, finishSyncTimeline, clearSyncTimeline, deviceFixtureRequested, subscribeEjectFailure, getEjectFailure, showEjectFailure } from '../syncTimeline'
-import { SYNC_STEPS, finishedSyncResult, timelinePercent, resultLine, elapsedLabel, stepLabel, ipodCountLabel } from '../../common/sync-progress-model'
-import { syncOutcome, stoppedLabel, syncFailureCopy } from '../../common/sync-failure-copy'
+import { SYNC_STEPS, finishedSyncResult, timelinePercent, resultLine, elapsedLabel, stepLabel, ipodCountLabel, songTitleOnly } from '../../common/sync-progress-model'
+import { syncOutcome, outcomeLine, syncFailureCopy } from '../../common/sync-failure-copy'
 import { useRegularLibraryTracks } from '../hooks/useRegularLibraryTracks'
 import '../styles/device.css'
 
@@ -69,7 +69,7 @@ function IpodLargeIcon() {
 // the same `evaluateSmartPlaylist` the view uses. See that file's
 // header for the full why.
 
-type SyncStatus = { state: 'idle' } | { state: 'syncing'; step: string } | { state: 'done'; copied: number; total: number; time: string; target?: number } | { state: 'error'; message: string }
+type SyncStatus = { state: 'idle' } | { state: 'syncing'; step: string; target?: number } | { state: 'done'; copied: number; total: number; time: string; target?: number } | { state: 'error'; message: string }
 
 export default function DeviceView() {
   const { state, dispatch } = useLibrary()
@@ -96,8 +96,8 @@ export default function DeviceView() {
     const t = getSyncTimeline()
     if (next.state === 'syncing') {
       if (t.status !== 'running') {
-        const m = /(\d[\d,]*) tracks/.exec(next.step)
-        const target = m ? Number(m[1].replace(/,/g, '')) : (/whole library/i.test(next.step) ? libraryCountRef.current : null)
+        // The target comes as a number (syncingStep's words carry no parseable count any more).
+        const target = next.target ?? (/whole library/i.test(next.step) ? libraryCountRef.current : null)
         startSyncTimeline(target, next.step)
       }
     } else if (next.state === 'done') {
@@ -217,7 +217,6 @@ export default function DeviceView() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [libraryLoaded, syncing])
-  const timeLabel = (ms: number) => new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
   // Claims come from the phase evidence (which steps ran, where it stopped),
   // never from the message alone — see sync-failure-copy.ts.
   const outcome = syncOutcome(timeline)
@@ -415,8 +414,8 @@ export default function DeviceView() {
     const mount = await window.electronAPI.checkIpodMounted()
     if (mount?.mounted) return true
     const activity = await import('../activity')
-    setSyncStatus({ state: 'error', message: 'No iPod detected — plug it in and try again.' })
-    activity.setSync({ active: true, step: 'No iPod detected' })
+    setSyncStatus({ state: 'error', message: 'Plug in the iPod.' })
+    activity.setSync({ active: true, step: 'Plug in the iPod' })
     setTimeout(() => activity.setSync(null), 4000)
     return false
   }
@@ -435,8 +434,8 @@ export default function DeviceView() {
     setShowFullSyncConfirm(false)
     const activity = await import('../activity')
     setSyncing(true)
-    setSyncStatus({ state: 'syncing', step: 'Copying your whole library to iPod…' })
-    activity.setSync({ active: true, step: 'Copying your whole library to iPod…' })
+    setSyncStatus({ state: 'syncing', step: 'Copying your whole library to the iPod…' })
+    activity.setSync({ active: true, step: 'Copying your whole library to the iPod…' })
     try {
       const syncPlaylists = buildSmartPlaylistsForSync(state.tracks, state.playlists)
       const targetKbpsNum: 128 | 192 | 256 =
@@ -451,7 +450,7 @@ export default function DeviceView() {
       if (!result.ok) {
         const msg = result.error || 'Sync failed'
         setSyncStatus({ state: 'error', message: msg })
-        activity.setSync({ active: true, step: `Sync failed — ${msg}` })
+        activity.setSync({ active: true, step: syncFailureCopy(msg).happened })
         setTimeout(() => activity.setSync(null), 4000)
         return
       }
@@ -464,7 +463,7 @@ export default function DeviceView() {
         total: result.totalTracks ?? state.tracks.length,
         time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
       })
-      activity.setSync({ active: true, step: 'Sync complete' })
+      activity.setSync({ active: true, step: 'Synced' })
       setTimeout(() => activity.setSync(null), 4000)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Sync failed'
@@ -481,11 +480,13 @@ export default function DeviceView() {
     setRenameBusy(true)
     try {
       const r = await window.electronAPI.renameIpodDevice?.(check.name)
-      if (!r) { setRenameMsg('This build can’t rename iPods.'); return }
+      if (!r) { setRenameMsg('This version can’t rename iPods.'); return }
       if (!r.ok) { setRenameMsg(r.error); return }
       setRenaming(null)
-      const later = r.homemini === 'later' ? ` homemini will hear the new name on the next sync.` : ''
-      setRenameMsg(r.driveNote ? `${r.driveNote}${later}` : `Renamed to ${r.device.name}. The iPod shows it after the next sync.${later}`)
+      // homemini hears a late rename by itself on the next sync, and the Mac keeping the
+      // drive's old name changes nothing for Jake: neither is said (2026-11-19).
+      if (r.driveNote) console.warn('[rename]', r.driveNote)
+      setRenameMsg(`Renamed to ${r.device.name}. The iPod shows it after the next sync.`)
       setIpodName(r.mount.split('/').pop() || r.device.name)
       void refreshPlan()
       window.dispatchEvent(new Event('jaketunes-ipod-mounted'))
@@ -511,7 +512,7 @@ export default function DeviceView() {
       const fresh = await refreshPlan()
       if (!fresh.ok) {
         setSyncStatus({ state: 'error', message: fresh.error })
-        activity.setSync({ active: true, step: `Sync didn’t start — ${fresh.error}` })
+        activity.setSync({ active: true, step: fresh.error })
         setTimeout(() => activity.setSync(null), 5000)
         return
       }
@@ -521,7 +522,7 @@ export default function DeviceView() {
       let local = await checkReady(fresh)
       // A list iPod must know what's on this Mac before anything touches the card.
       if (fresh.kind === 'list' && !local) {
-        const msg = `Couldn’t check which of ${fresh.ipodName}’s songs are on this Mac. Nothing on the iPod was changed. Try Sync again.`
+        const msg = 'Couldn’t get ready to sync. Press Sync again.'
         setSyncStatus({ state: 'error', message: msg })
         activity.setSync({ active: true, step: msg })
         setTimeout(() => activity.setSync(null), 6000)
@@ -574,7 +575,7 @@ export default function DeviceView() {
         const same = !!still && still.ok && still.kind === fresh.kind && still.ipodName === fresh.ipodName
           && still.trackIds.length === fresh.trackIds.length && still.trackIds.every((id, i) => id === fresh.trackIds[i])
         if (!same || leave()) {
-          const msg = `${fresh.ipodName} or its list changed while its songs were downloading. Nothing on the iPod was changed. Press Sync again.`
+          const msg = `${fresh.ipodName} changed while its songs were downloading. Press Sync again.`
           setSyncStatus({ state: 'error', message: msg })
           activity.setSync({ active: true, step: msg })
           setTimeout(() => activity.setSync(null), 6000)
@@ -590,7 +591,7 @@ export default function DeviceView() {
       const ids = local && local.missing.length > 0 ? idsLeavingOff(fresh.trackIds, local) : fresh.trackIds
       const finalTracks = planTracks({ ...fresh, trackIds: ids }, state.tracks)
       if (finalTracks.length === 0) {
-        setSyncStatus({ state: 'error', message: `None of ${fresh.ipodName}’s songs are in this library.` })
+        setSyncStatus({ state: 'error', message: `None of ${fresh.ipodName}’s songs are in your library.` })
         return
       }
       // Playlists restored: the real root cause was the iTunesDB dataset assembly
@@ -598,7 +599,7 @@ export default function DeviceView() {
       // verbatim from the old library). Fixed in core/db_reader.py, so playlists
       // are safe to write.
       const playlists = assembleSyncPlaylists(finalTracks, state.playlists, fresh.setName)
-      setSyncStatus({ state: 'syncing', step: syncingStep(fresh.setName, finalTracks.length) })
+      setSyncStatus({ state: 'syncing', step: syncingStep(fresh.setName, finalTracks.length), target: finalTracks.length })
       activity.setSync({ active: true, step: syncingStep(fresh.setName, finalTracks.length) })
       // The user's APPLIED convert setting — toggle ON = AAC mirrors, OFF = ALAC preserved.
       const targetKbpsNum: 128 | 192 | 256 =
@@ -614,7 +615,7 @@ export default function DeviceView() {
         // Cancel is expected, not an error; flash a brief notice + return to idle.
         if (result.cancelled) {
           setSyncStatus({ state: 'idle' })
-          activity.setSync({ active: true, step: `Sync cancelled (${result.copied || 0} files copied before stop)` })
+          activity.setSync({ active: true, step: 'Sync stopped' })
           setTimeout(() => activity.setSync(null), 3000)
           return
         }
@@ -626,7 +627,7 @@ export default function DeviceView() {
           if (dead.length > 0) dispatch({ type: 'UPDATE_TRACKS', updates: dead })
         }
         setSyncStatus({ state: 'error', message: msg })
-        activity.setSync({ active: true, step: `Sync failed — ${msg}` })
+        activity.setSync({ active: true, step: syncFailureCopy(msg).happened })
         setTimeout(() => activity.setSync(null), 4000)
         return
       }
@@ -656,9 +657,11 @@ export default function DeviceView() {
       const landed = result.landed ?? (result.totalTracks || finalTracks.length)
       const shortfall = result.shortfall ?? 0
       if (shortfall > 0) {
-        const msg = `Only ${landed} of ${target} songs actually stuck on the iPod after ${result.verifyAttempts ?? 0} tries — the card keeps dropping writes. A reformat is likely needed to reach ${target}.`
+        // The engine's words stay in the log and in Details (the timeline matches "stuck on the iPod").
+        console.warn(`[sync] only ${landed} of ${target} stuck after ${result.verifyAttempts ?? 0} tries`)
+        const msg = `Only ${landed.toLocaleString('en-US')} of ${target.toLocaleString('en-US')} songs stuck on the iPod.`
         setSyncStatus({ state: 'error', message: msg })
-        activity.setSync({ active: true, step: `iPod: ${landed}/${target} verified on device — card dropping writes` })
+        activity.setSync({ active: true, step: msg })
         setTimeout(() => activity.setSync(null), 6000)
       } else {
         setSyncStatus({
@@ -672,7 +675,7 @@ export default function DeviceView() {
         // count climbs up to the real number over the next moment.
         activity.setSync({
           active: true,
-          step: `Synced ${landed} to ${fresh.ipodName} — all verified on the card. Give it a moment to finish counting up to ${landed}.`,
+          step: `Synced ${landed.toLocaleString('en-US')} songs to ${fresh.ipodName}.`,
         })
         setTimeout(() => activity.setSync(null), 7000)
       }
@@ -680,7 +683,7 @@ export default function DeviceView() {
       console.error('Sync failed:', err)
       const msg = String(err)
       setSyncStatus({ state: 'error', message: msg })
-      activity.setSync({ active: true, step: `Sync failed — ${msg}` })
+      activity.setSync({ active: true, step: syncFailureCopy(msg).happened })
       setTimeout(() => activity.setSync(null), 4000)
     } finally {
       setSyncing(false)
@@ -703,12 +706,9 @@ export default function DeviceView() {
             <span className="device-itunes-value">
               {deviceSongCount != null
                 // The device's own catalog — an exact, counted number.
-                ? `${deviceSongCount.toLocaleString()} workout`
-                // No device attached — the next sync's target, marked as such.
-                : `~${stats.trackCount.toLocaleString()} workout`}
-              {stats.libraryTotal > (deviceSongCount ?? stats.trackCount)
-                ? ` (of ${stats.libraryTotal.toLocaleString()} in library)`
-                : ''}
+                ? deviceSongCount.toLocaleString()
+                // No device attached: nothing to count.
+                : '—'}
             </span>
           </div>
           <div className="device-itunes-info-line">
@@ -721,8 +721,8 @@ export default function DeviceView() {
           </div>
           <div className="device-itunes-info-line device-now-line">
             {lastSync && countLabel
-              ? <span>{countLabel}: <strong>{(lastSync.landed ?? 0).toLocaleString()} songs</strong> · {new Date(lastSync.when).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}{lastSync.target != null && lastSync.landed != null && lastSync.landed < lastSync.target ? ` (short of ${lastSync.target.toLocaleString()})` : ''}{countLabel === 'Last verified' ? ' — what the iPod holds now is not verified' : ''}</span>
-              : <span>No sync recorded yet.</span>}
+              ? <span>{countLabel}: <strong>{(lastSync.landed ?? 0).toLocaleString()} songs</strong> · {new Date(lastSync.when).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}</span>
+              : <span>{lastSync?.aborted ? 'The last sync didn’t finish.' : 'Not synced yet.'}</span>}
             {fixture && <span className="device-fixture-tag" title="Renderer fixture — no iPod, no engine">Fixture</span>}
           </div>
         </div>
@@ -774,20 +774,20 @@ export default function DeviceView() {
               className="device-itunes-btn device-itunes-btn--sync"
               disabled={syncing || isDirty}
               onClick={() => { void runOneSync() }}
-              title={isDirty ? 'Click Apply first to save your setting changes' : (syncing ? 'Sync in progress…' : `Put these ${plan.trackIds.length.toLocaleString('en-US')} songs on ${plan.ipodName}`)}
+              title={isDirty ? 'Click Apply first' : (syncing ? 'Syncing…' : `Put these ${plan.trackIds.length.toLocaleString('en-US')} songs on ${plan.ipodName}`)}
             >{syncing ? 'Syncing…' : syncButtonLabel(plan.ipodName)}</button>
           )}
           <span className="device-sync-spacer" />
-          <button type="button" className="device-link-btn" disabled={syncing || isDirty} onClick={handleFullSync} title={isDirty ? 'Click Apply first to save your setting changes' : 'Mirror the ENTIRE library to the iPod at your convert setting'}>Full Sync…</button>
+          <button type="button" className="device-link-btn" disabled={syncing || isDirty} onClick={handleFullSync} title={isDirty ? 'Click Apply first' : 'Put your whole library on the iPod'}>Full Sync…</button>
           <button type="button" className="device-link-btn" aria-expanded={optionsOpen || isDirty} onClick={() => setOptionsOpen((o) => !o)}>Options {optionsOpen || isDirty ? '▾' : '▸'}</button>
         </div>
         <div className="device-sync-facts">
           {renameMsg && renaming === null && <span>{renameMsg}</span>}
           {renameMsg && renaming !== null && <span className="device-sync-facts-error">{renameMsg}</span>}
-          {plan === null && <span>Reading what goes on this iPod…</span>}
-          {plan && !plan.ok && plan.kind === 'unknown' && <span>Set this iPod up above, then it gets its own Sync button.</span>}
+          {plan === null && <span>Loading…</span>}
+          {plan && !plan.ok && plan.kind === 'unknown' && <span>Set up this iPod above to sync it.</span>}
           {plan && !plan.ok && plan.kind !== 'unknown' && <span className="device-sync-facts-error">{plan.error}</span>}
-          {plan?.ok && ready && !leaveOff && !fetchingFirst && <span>{readyOnMacLine(ready, { list: plan.kind === 'list' })}</span>}
+          {plan?.ok && ready && !leaveOff && !fetchingFirst && readyOnMacLine(ready, { list: plan.kind === 'list' }) && <span>{readyOnMacLine(ready, { list: plan.kind === 'list' })}</span>}
           {fetchingFirst && (
             <span>
               <button type="button" className="device-link-btn" onClick={() => { stopFetchRef.current = true }}>Stop</button>
@@ -801,13 +801,13 @@ export default function DeviceView() {
             </span>
           )}
           {plan?.ok && plan.note && <span>{plan.note}</span>}
-          {leftOffPlan && leftOffPlan.kind === 'list' && listErrorLine(leftOffPlan) && (
-            <span className="device-sync-facts-error">{listErrorLine(leftOffPlan)}</span>
-          )}
-          {leftOffPlan && leftOffPlan.kind !== 'list' && leftOffLine(leftOffPlan) && (
+          {leftOffPlan && leftOffLine(leftOffPlan) && (
             <span>
-              {leftOffLine(leftOffPlan)}{' '}
-              <button type="button" className="device-link-btn" aria-expanded={showLeftOff} onClick={() => setShowLeftOff((v) => !v)}>{showLeftOff ? 'Hide' : 'Which ones'}</button>
+              {leftOffLine(leftOffPlan)}
+              {/* Only when the line has no names (more than three): the names, nothing else. */}
+              {leftOffPlan.leftOff.length > 3 && (
+                <>{' '}<button type="button" className="device-link-btn" aria-expanded={showLeftOff} onClick={() => setShowLeftOff((v) => !v)}>{showLeftOff ? 'Hide' : 'Which ones'}</button></>
+              )}
             </span>
           )}
           <IpodArtworkAsk artwork={lastSync?.artwork} />
@@ -816,10 +816,10 @@ export default function DeviceView() {
             <button type="button" className="device-link-btn" onClick={() => setShowSyncHistory(true)}>Sync History</button>
           </span>
         </div>
-        {leftOffPlan && leftOffPlan.kind !== 'list' && showLeftOff && leftOffPlan.leftOff.length > 0 && (
+        {leftOffPlan && showLeftOff && leftOffPlan.leftOff.length > 3 && (
           <ul className="device-sync-leftoff">
             {leftOffPlan.leftOff.map((l) => (
-              <li key={l.id}>{l.artist ? `${l.artist} — ` : ''}{l.title}: {l.why}</li>
+              <li key={l.id}>{l.artist ? `${l.artist} — ` : ''}{l.title || 'Unknown song'}</li>
             ))}
           </ul>
         )}
@@ -844,33 +844,32 @@ export default function DeviceView() {
             {timeline.status === 'running' && (
               <div className="device-sync-live">
                 <span className="device-sync-live-bar" aria-hidden="true"><i style={{ width: `${timelinePercent(timeline)}%` }} /></span>
-                <span className="device-sync-live-text">{timeline.step ? stepLabel(timeline.step, timeline) : ''}{timeline.title ? ` — ${timeline.title}` : ''}</span>
+                <span className="device-sync-live-text">{timeline.step ? stepLabel(timeline.step, timeline) : ''}{songTitleOnly(timeline.step, timeline.title) ? ` — ${songTitleOnly(timeline.step, timeline.title)}` : ''}</span>
                 <span className="device-sync-live-elapsed">{elapsedLabel(timeline, now)}</span>
                 <button
                   className="device-itunes-btn"
                   onClick={async () => {
                     const r = await window.electronAPI.cancelSync()
-                    if (r.wasRunning) setSyncStatus({ state: 'syncing', step: 'Cancelling…' })
+                    if (r.wasRunning) setSyncStatus({ state: 'syncing', step: 'Stopping…' })
                   }}
-                  title="Stop the current sync after the file in flight finishes"
-                >Cancel</button>
+                  title="Stop the sync"
+                >Stop</button>
               </div>
             )}
             {timeline.status === 'done' && (
               <div className="device-sync-result device-sync-result--done">
-                <span className="device-sync-result-line">{resultLine(timeline, timeLabel)}</span>
-                <button type="button" className="device-link-btn" onClick={clearSyncTimeline}>Dismiss</button>
+                <span className="device-sync-result-line">{resultLine(timeline)}</span>
+                <button type="button" className="device-link-btn" onClick={clearSyncTimeline}>OK</button>
               </div>
             )}
             {outcome && (
               <div className={`device-sync-result device-sync-result--${timeline.status} device-sync-result--changed-${outcome.changed}`}>
-                <span className="device-sync-result-line">{stoppedLabel(outcome)}: {outcome.happened}{timeline.status === 'cancelled' && timeline.copied != null ? ` ${timeline.copied.toLocaleString()} copied before the stop.` : ''}</span>
-                <span className="device-sync-result-sub">{outcome.changedLine} {outcome.next}</span>
+                <span className="device-sync-result-line">{outcomeLine(outcome)}</span>
                 <span className="device-sync-result-actions">
                   <button type="button" className="device-link-btn" aria-expanded={failureDetails} onClick={() => setFailureDetails((d) => !d)}>{failureDetails ? 'Hide details' : 'Details'}</button>
-                  <button type="button" className="device-link-btn" onClick={() => { setFailureDetails(false); clearSyncTimeline(); if (syncStatus.state === 'error') setSyncStatus({ state: 'idle' }) }}>Dismiss</button>
+                  <button type="button" className="device-link-btn" onClick={() => { setFailureDetails(false); clearSyncTimeline(); if (syncStatus.state === 'error') setSyncStatus({ state: 'idle' }) }}>OK</button>
                 </span>
-                {failureDetails && <pre className="device-sync-result-raw">{outcome.raw}{outcome.fromEvidence ? `\n\nSteps reached: ${timeline.reached.map((s) => stepLabel(s, timeline)).join(' → ')}; stopped at ${timeline.step ? stepLabel(timeline.step, timeline) : '—'}.` : '\n\nNo phase events were received for this attempt.'}</pre>}
+                {failureDetails && <pre className="device-sync-result-raw">{outcome.raw}{outcome.fromEvidence && timeline.step ? `\n\nStopped at: ${stepLabel(timeline.step, timeline)}` : ''}</pre>}
               </div>
             )}
           </div>
@@ -879,9 +878,8 @@ export default function DeviceView() {
         {ejectCopy && (
           <div className="device-sync-strip device-sync-strip--failed device-eject-notice" role="status">
             <div className="device-sync-result device-sync-result--failed">
-              <span className="device-sync-result-line">Eject failed: {ejectFailure}</span>
-              <span className="device-sync-result-sub">Nothing on the iPod was changed by the eject. {ejectCopy.next}</span>
-              <span className="device-sync-result-actions"><button type="button" className="device-link-btn" onClick={() => showEjectFailure(null)}>Dismiss</button></span>
+              <span className="device-sync-result-line">{ejectCopy.happened} {ejectCopy.next}</span>
+              <span className="device-sync-result-actions"><button type="button" className="device-link-btn" onClick={() => showEjectFailure(null)}>OK</button></span>
             </div>
           </div>
         )}
@@ -946,8 +944,8 @@ export default function DeviceView() {
       {/* ── RECENT SYNCS — the ledger, the same rows the Sync History sheet shows ── */}
       <div className="device-itunes-section device-recent">
         <h2 className="device-itunes-section-title">Recent syncs</h2>
-        {history === null && <div className="sh-empty">Reading the ledgers…</div>}
-        {history && history.length === 0 && <div className="sh-empty">No syncs recorded yet.</div>}
+        {history === null && <div className="sh-empty">Loading…</div>}
+        {history && history.length === 0 && <div className="sh-empty">No syncs yet.</div>}
         {history && history.length > 0 && <SyncHistoryRows entries={history} limit={5} />}
         {history && history.length > 5 && (
           <button type="button" className="device-link-btn" onClick={() => setShowSyncHistory(true)}>See all ({history.length})</button>
@@ -963,7 +961,7 @@ export default function DeviceView() {
               title={`Audio: ${formatBytes(stats.audioBytes)}`} />
             <div className="device-itunes-capacity-seg device-itunes-capacity-other"
               style={{ width: `${stats.otherPercent}%` }}
-              title="Other (iPod OS, database, artwork, orphan files)" />
+              title="Other: the iPod’s own files and artwork" />
             <div className="device-itunes-capacity-seg device-itunes-capacity-free"
               style={{ width: `${stats.freePercent}%` }}
               title={`Free: ${formatBytes(stats.freeBytes)}`} />
@@ -993,12 +991,12 @@ export default function DeviceView() {
           <button
             className="device-itunes-btn"
             onClick={() => setShowIpodLibrary(true)}
-            title="See exactly what tracks and playlists are on the iPod right now"
+            title="See the songs and playlists on the iPod"
           >On This iPod…</button>
           <button
             className="device-itunes-btn"
             onClick={() => setShowSyncHistory(true)}
-            title="Every sync's cargo and every play the iPod brought home"
+            title="Every sync, and the plays the iPod brought home"
           >Sync History</button>
           <button
             className="device-itunes-btn device-itunes-btn--eject"
@@ -1015,8 +1013,8 @@ export default function DeviceView() {
       {showSyncHistory && <SyncHistorySheet onClose={() => setShowSyncHistory(false)} />}
       {showFullSyncConfirm && (
         <ConfirmDialog
-          message="Mirror the ENTIRE library to the iPod?"
-          detail={`All ${state.tracks.length.toLocaleString()} songs copy at ${appliedSettings.optConvertBitrate ? `${appliedSettings.optConvertBitrateTarget} kbps AAC` : 'original quality'}. Anything on the iPod that isn't in the library — including the songs from the last Sync — is replaced. On the Mini this takes hours; keep it plugged in.`}
+          message="Put your whole library on the iPod?"
+          detail={`All ${state.tracks.length.toLocaleString()} songs. Everything on the iPod now is replaced. It takes hours, so keep it plugged in.`}
           confirmLabel="Full Sync"
           destructive={false}
           onConfirm={() => { void runFullLibrarySync() }}

@@ -134,11 +134,11 @@ export async function noteCardWrite(src: string, dst: string): Promise<void> {
 export async function verifyCardProof(mount: string, markerId: string): Promise<CardProofResult> {
   const p = live.get(markerId) ?? (await readAll())[markerId] ?? null
   if (!p || p.first.length === 0) {
-    return { status: 'none', line: 'The card check couldn’t run: JakeTunes has no record of what the first sync wrote. Playing the last song on the iPod is the check.' }
+    return { status: 'none', line: 'Play the last song on the iPod to check it.' }
   }
   // Read back only what the Mac can no longer be holding in memory.
   const replugged = p.run === runId ? plugCount > p.plug : plugCount >= 2
-  if (!replugged) return { status: 'waiting', line: 'Unplug the iPod and plug it back in. Then JakeTunes reads back the first and last songs it wrote, to check the card (about a minute).' }
+  if (!replugged) return { status: 'waiting', line: 'Unplug the iPod and plug it back in.' }
   let checked = 0
   let bad = 0
   for (const s of [...p.first, ...p.last]) {
@@ -148,9 +148,10 @@ export async function verifyCardProof(mount: string, markerId: string): Promise<
     checked++
     if (size !== s.size || (await md5OfFile(path).catch(() => '')) !== s.md5) bad++
   }
-  if (checked === 0) return { status: 'none', line: 'The card check couldn’t run: none of the songs it sampled are on the iPod any more.' }
+  if (checked === 0) return { status: 'none', line: 'Play the last song on the iPod to check it.' }
   if (bad > 0) {
-    return { status: 'fail', checked, bad, line: `The card didn’t keep what was written: ${bad} of the ${checked} songs read back came back different. This card is not sound, or not the size it says. Don’t trust this iPod until the card is replaced.` }
+    console.warn(`[card-proof] ${bad} of ${checked} sampled songs read back different`)
+    return { status: 'fail', checked, bad, line: 'This iPod’s card didn’t keep the songs. Replace the card before you use it.' }
   }
-  return { status: 'pass', checked, line: `Card check passed: the first and last songs written (${checked} of them) read back exactly as written.` }
+  return { status: 'pass', checked, line: '' }
 }

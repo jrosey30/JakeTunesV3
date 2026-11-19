@@ -24,7 +24,7 @@ describe('where an iPod’s Pool lives', () => {
   it('a second iPod has its own Pool AND its own sync (step 2b): only an unknown card is refused', () => {
     assert.equal(ipodWriteRefusal({ status: 'known', device: red }), null)
     assert.equal(ipodWriteRefusal({ status: 'known', device: original }), null)
-    assert.match(ipodWriteRefusal({ status: 'unknown', canBeOriginal: false }) || '', /doesn’t know this iPod/)
+    assert.equal(ipodWriteRefusal({ status: 'unknown', canBeOriginal: false }), 'Set up this iPod to sync it.')
   })
   it('every sync-side file of a second iPod lives in its folder; the Original keeps the root', () => {
     assert.deepEqual(ipodStateRel(original), [])

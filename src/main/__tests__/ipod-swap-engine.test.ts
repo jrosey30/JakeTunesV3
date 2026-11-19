@@ -553,7 +553,7 @@ describe('a set that doesn’t fit on the card is refused before the card is tou
       r.host.cardCapacityBytes = async () => 25 * SONG_BYTES
       const res = await sync(r, [...range(0, N), ...range(800, 810)])   // 30 songs onto a card of 25 songs' worth
       assert.equal(res.ok, false)
-      assert.match(String(res.error), /^These 30 songs need about [\d.]+ GB and TestPod holds [\d.]+ GB, so they won’t fit\. Nothing on the iPod was touched\./)
+      assert.equal(String(res.error), '30 songs won’t fit on TestPod. Make the list shorter.')
       assert.equal(res.copied, 0)
       assert.ok(!r.events.some((e) => /^Wiping/.test(String(e.title))), 'nothing was wiped')
       assert.ok(!r.events.some((e) => e.phase === 'copy'), 'nothing was copied')
@@ -580,7 +580,7 @@ describe('a set that doesn’t fit on the card is refused before the card is tou
       r.host.cardCapacityBytes = async () => 10 * SONG_BYTES
       const res = await sync(r, range(0, N))
       assert.equal(res.ok, false)
-      assert.match(String(res.error), /won’t fit\. Nothing on the iPod was touched\./)
+      assert.match(String(res.error), /won’t fit on .+\. Make the list shorter\.$/)
       assert.ok(!r.events.some((e) => /^Wiping/.test(String(e.title))))
       assert.equal((await cardFiles(r.card)).size, 0)
     } finally {
@@ -606,7 +606,7 @@ describe('cardTooSmall (the rule)', () => {
     const sizes = Array.from({ length: 5000 }, () => 30 * 1024 * 1024)   // 146.5 GB
     assert.equal(cardTooSmall(sizes, 238 * GIB, 'punkPod'), null)
     assert.equal(cardTooSmall(sizes, 119 * GIB, 'punkPod'),
-      'These 5,000 songs need about 147 GB and punkPod holds 118 GB, so they won’t fit. Nothing on the iPod was touched. Make the list shorter, or sync smaller (AAC) copies.')
+      '5,000 songs won’t fit on punkPod. Make the list shorter.')
   })
   it('room is held back for the catalog and the file system: 1% of the card and 4 KB a song', () => {
     assert.deepEqual(cardFit([1000, 1000], 1_000_000), { needBytes: 2000 + 2 * CARD_FIT_PER_SONG_BYTES, roomBytes: 990_000 })

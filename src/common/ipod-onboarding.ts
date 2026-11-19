@@ -130,8 +130,8 @@ export function hardwareName(hw: IpodHardware): string {
     case '3g': return 'iPod (3rd generation)'
     case '4g': return 'iPod (4th generation)'
     case 'classic': return 'iPod Classic'
-    case 'other': return 'an iPod JakeTunes hasn’t worked with'
-    case 'unknown': return 'an iPod it can’t name yet'
+    case 'other': return 'a kind of iPod JakeTunes hasn’t synced before'
+    case 'unknown': return 'an unknown iPod'
   }
 }
 
@@ -371,68 +371,68 @@ export function onboardingChecks(facts: IpodDeviceFacts, target: OnboardingTarge
   const add = (id: string, status: CheckStatus, line: string) => out.push({ id, status, line })
 
   // Model
-  if (hw === 'classic') add('model', 'stop', 'This is an iPod Classic. A Classic only shows songs when the song database is signed for that exact iPod, and JakeTunes can’t sign it yet.')
-  else if (hw === 'unknown') add('model', 'unknown', 'The iPod didn’t say which model it is. Setting up can go on, treated as a plain FAT32 iPod; check the picture afterwards.')
-  else if (hw === 'other' || hw === '4g') add('model', 'warn', `This is ${hardwareName(hw)}. JakeTunes has only synced minis so far; it will be treated like one.`)
+  if (hw === 'classic') add('model', 'stop', 'JakeTunes can’t sync an iPod Classic yet.')
+  else if (hw === 'unknown') add('model', 'unknown', 'Couldn’t tell which iPod model this is.')
+  else if (hw === 'other' || hw === '4g') add('model', 'warn', `This is ${hardwareName(hw)}. JakeTunes has only synced minis so far.`)
   else add('model', 'ok', `${hardwareName(hw)}${facts.sysInfo?.modelNumStr ? `, model ${facts.sysInfo.modelNumStr}` : ''}.`)
 
   // Firmware
   const fw = facts.sysInfo?.firmware ?? null
-  if (facts.rockbox) add('firmware', 'stop', 'This iPod is running Rockbox, not Apple’s software. Apple’s software is still on it behind Rockbox; removing Rockbox takes two commands that only you can run in Terminal (see the plan). Nothing was changed.')
-  else if (!fw) add('firmware', 'unknown', 'The iPod didn’t say which software version it runs. Look at Settings > About on the iPod.')
-  else if (hw === '3g' && compareFirmware(fw, THIRD_GEN_LOSSLESS_FIRMWARE) === -1) add('firmware', 'warn', `Software ${fw}. A 3rd-generation iPod plays Apple Lossless from ${THIRD_GEN_LOSSLESS_FIRMWARE} on; on ${fw} lossless songs would be silent. JakeTunes can’t update an iPod’s software.`)
-  else if ((hw === 'mini-1g' || hw === 'mini-2g' || hw === 'mini') && fw !== MINI_KNOWN_FIRMWARE) add('firmware', 'warn', `Software ${fw}. Your other minis run ${MINI_KNOWN_FIRMWARE}, the version the song database was tuned on.`)
+  if (facts.rockbox) add('firmware', 'stop', 'This iPod runs Rockbox. Remove Rockbox first.')
+  else if (!fw) add('firmware', 'unknown', 'Couldn’t tell which software the iPod runs.')
+  else if (hw === '3g' && compareFirmware(fw, THIRD_GEN_LOSSLESS_FIRMWARE) === -1) add('firmware', 'warn', `Software ${fw} won’t play lossless songs. Update the iPod to ${THIRD_GEN_LOSSLESS_FIRMWARE} or later.`)
+  else if ((hw === 'mini-1g' || hw === 'mini-2g' || hw === 'mini') && fw !== MINI_KNOWN_FIRMWARE) add('firmware', 'warn', `Software ${fw}. Your other minis run ${MINI_KNOWN_FIRMWARE}.`)
   else add('firmware', 'ok', `Software ${fw}.`)
 
   // The drive itself
-  if (!facts.driveId) add('drive', 'stop', 'The Mac wouldn’t give this drive’s own ID, so JakeTunes can’t be sure it stays the same drive between the checks and the set-up. Unplug it, plug it in again, and check again. Nothing was changed.')
+  if (!facts.driveId) add('drive', 'stop', 'Unplug the iPod, plug it back in, and check again.')
 
   // Format
-  if (facts.fs === null) add('format', 'stop', 'JakeTunes couldn’t read how the drive is formatted, so it won’t write to it. Unplug it, plug it in again, and check again. Nothing was changed.')
-  else if (facts.fs === 'fat32') add('format', 'ok', 'Formatted FAT32, the format JakeTunes syncs.')
+  if (facts.fs === null) add('format', 'stop', 'Unplug the iPod, plug it back in, and check again.')
+  else if (facts.fs === 'fat32') add('format', 'ok', 'Formatted right.')
   // A Mac-formatted iPod runs on HFS+ natively and the Mac writes it, so nothing has to be erased
   // (2026-11-14). Converting one to FAT32 is not a reformat of the data partition: the partition
   // map changes and the firmware partition moves, which a mistake turns into a dead iPod.
-  else if (facts.fs === 'hfs') add('format', 'warn', 'Formatted for a Mac (HFS+). The iPod runs on that as it is and nothing needs erasing. JakeTunes has only synced FAT32 iPods so far, so its first sync is the test.')
-  else add('format', 'stop', 'This drive isn’t formatted the way an iPod needs (FAT32). Changing the format erases it, and JakeTunes doesn’t do that for you. Nothing was changed.')
+  else if (facts.fs === 'hfs') add('format', 'warn', 'Formatted for a Mac. That works; its first sync is the test.')
+  else add('format', 'stop', 'This iPod needs erasing first. Restore it in Finder, then plug it back in.')
 
   // Storage
-  if (facts.totalBytes === null) add('storage', 'unknown', 'JakeTunes couldn’t read the drive’s size.')
+  if (facts.totalBytes === null) add('storage', 'unknown', 'Couldn’t read the iPod’s size.')
   else {
     const modded = isModdedStorage(hw, facts.totalBytes)
     const recorded = `${gb(facts.totalBytes)}${facts.freeBytes !== null ? `, ${gb(facts.freeBytes)} free` : ''}`
-    if (modded) add('storage', 'warn', `The drive says ${recorded}. That’s a replacement card, and some cards claim more than they hold. The first sync reads every song back; the full card test (in the plan) checks the rest.`)
-    else add('storage', 'ok', `The drive says ${recorded}.`)
+    if (modded) add('storage', 'warn', `${recorded}. A replacement card; the first sync checks it.`)
+    else add('storage', 'ok', `${recorded}.`)
   }
 
   // Connection
-  if (!facts.stable) add('connection', 'unknown', 'The connection hasn’t been checked yet.')
+  if (!facts.stable) add('connection', 'unknown', 'Checking the connection…')
   else if (facts.stable.ok < facts.stable.tried || facts.stable.tried < STABLE_READS_NEEDED) {
-    add('connection', 'stop', `The iPod dropped off the Mac ${count(facts.stable.tried - facts.stable.ok, 'time')} in ${facts.stable.tried} looks. Plug it straight into the Mac (no hub), wait for it to settle, and check again. A sync over a connection like this leaves the iPod half-written.`)
-  } else add('connection', 'ok', `The connection held for ${facts.stable.tried} looks in a row.`)
+    add('connection', 'stop', 'The iPod keeps dropping off. Plug it straight into the Mac and check again.')
+  } else add('connection', 'ok', 'Connection is steady.')
 
   // Write test
-  if (!facts.writeTest) add('write-test', 'unknown', `Not run yet: JakeTunes writes a ${Math.round(QUICK_TEST_BYTES / 1048576)} MB test file to the iPod, reads it back, and removes it.`)
-  else if (!facts.writeTest.ok) add('write-test', 'stop', `The iPod didn’t keep what was written to it (${facts.writeTest.reason || 'the test file came back different'}). The card or the adapter needs looking at before any music goes on.`)
-  else add('write-test', 'ok', 'A test file written to the iPod came back exactly as written.')
+  if (!facts.writeTest) add('write-test', 'unknown', 'Testing the iPod’s card…')
+  else if (!facts.writeTest.ok) add('write-test', 'stop', 'The iPod’s card didn’t keep a test file. Replace the card first.')
+  else add('write-test', 'ok', 'Card works.')
 
   // What's on it now
   const songsOn = facts.catalog.songs ?? 0
   const filesOn = facts.musicFiles ?? 0
-  if (facts.catalog.present && !facts.catalog.readable) add('contents', 'warn', 'The iPod has a song database JakeTunes can’t read. Setting up replaces it at the first sync.')
+  if (facts.catalog.present && !facts.catalog.readable) add('contents', 'warn', 'The iPod’s songs can’t be read. The first sync replaces them.')
   else if (songsOn > 0 || filesOn > 0) add('contents', 'warn', `The iPod already has ${count(Math.max(songsOn, filesOn), 'song')} on it. The first sync replaces them with the list. You’ll be asked to confirm.`)
-  else add('contents', 'ok', facts.catalog.present ? 'The iPod is empty.' : 'The iPod is empty and has no song database yet. Setting up writes a blank one.')
+  else add('contents', 'ok', 'The iPod is empty.')
 
   // The list fits
   if (target?.kind === 'list') {
-    if (target.songs === 0) add('fits', 'warn', `${target.listName} has no songs yet. The iPod can be set up now and synced once the list has songs.`)
-    else if (target.bytes === null || facts.totalBytes === null) add('fits', 'unknown', `${target.listName} is ${count(target.songs, 'song')}. JakeTunes couldn’t work out whether they fit.`)
-    else if (target.bytes + CARD_HEADROOM_BYTES > facts.totalBytes) add('fits', 'stop', `${target.listName} needs ${gb(target.bytes)} and this iPod holds ${gb(facts.totalBytes)}. It won’t fit.`)
-    else add('fits', 'ok', `${target.listName} is ${count(target.songs, 'song')}, ${gb(target.bytes)}. It fits with ${gb(facts.totalBytes - target.bytes)} to spare.`)
+    if (target.songs === 0) add('fits', 'warn', `${target.listName} has no songs yet.`)
+    else if (target.bytes === null || facts.totalBytes === null) add('fits', 'unknown', `Couldn’t tell if ${count(target.songs, 'song')} fit.`)
+    else if (target.bytes + CARD_HEADROOM_BYTES > facts.totalBytes) add('fits', 'stop', `${target.listName} needs ${gb(target.bytes)}; this iPod holds ${gb(facts.totalBytes)}.`)
+    else add('fits', 'ok', `${count(target.songs, 'song')} fit.`)
   }
 
   // Things no iPod of these years reports over USB
-  add('battery', 'unknown', 'Battery and disk health can’t be read from the Mac on these iPods. The play test at the end is the check.')
+  // Battery and disk health can't be read over USB on these iPods: nothing to say or do.
   return out
 }
 
@@ -442,7 +442,7 @@ export function coverMismatch(target: OnboardingTarget | null, facts: IpodDevice
   const real = coverModelFor(detectHardware(facts.sysInfo, facts.usb))
   if (!real || target.model === real) return null
   const had = target.model && target.model !== 'default' ? `drawn as ${target.model === '3g' ? 'a 3rd-generation iPod' : target.model === 'mini' ? 'an iPod mini' : 'an iPod Classic'}` : 'not drawn as any iPod yet'
-  return { model: real, line: `${target.listName} is ${had}; this is ${hardwareName(detectHardware(facts.sysInfo, facts.usb))}. Update the picture to match? The colour stays what you pick.` }
+  return { model: real, line: 'Change the picture to match this iPod' }
 }
 
 // ── The iPod's own name ──────────────────────────────────────────────────────
@@ -520,11 +520,11 @@ export function replacedLabel(facts: IpodDeviceFacts): string {
 export function whatIsOnIt(facts: IpodDeviceFacts): string[] {
   const songs = Math.max(facts.catalog.songs ?? 0, facts.musicFiles ?? 0)
   const out: string[] = []
-  if (facts.marker) out.push(`JakeTunes knows it as ${facts.marker.name}.`)
-  if (facts.catalog.name?.trim()) out.push(`It calls itself “${facts.catalog.name.trim()}”.`)
+  if (facts.marker) out.push(`It’s ${facts.marker.name}.`)
+  else if (facts.catalog.name?.trim()) out.push(`It’s called “${facts.catalog.name.trim()}”.`)
   if (songs > 0) out.push(`${count(songs, 'song')} on it.`)
   if (facts.catalog.artists?.length) out.push(`Mostly: ${facts.catalog.artists.slice(0, 5).join(', ')}.`)
-  if (facts.catalog.present && !facts.catalog.readable) out.push('Its song database can’t be read, so JakeTunes can’t say what the songs are.')
+  if (facts.catalog.present && !facts.catalog.readable) out.push('Its songs can’t be read.')
   return out
 }
 export function confirmationMatches(replaced: string, typed: unknown): boolean {
@@ -570,7 +570,6 @@ export interface OnboardingInput {
   progress: OnboardingProgress
 }
 
-const NOTHING_CHANGED = 'Nothing on it was changed.'
 
 /** Is there enough here to call this device an iPod at all? An unidentifiable drive is never written to. */
 export function isIdentifiable(f: IpodDeviceFacts): boolean {
@@ -590,16 +589,16 @@ export function recordForWipedIpod(facts: IpodDeviceFacts, records: readonly Ipo
 function destructiveReasons(facts: IpodDeviceFacts, target: OnboardingTarget, records: readonly IpodOnboardingRecord[]): string[] {
   const why: string[] = []
   const on = Math.max(facts.catalog.songs ?? 0, facts.musicFiles ?? 0)
-  if (on > 0) why.push(`The ${count(on, 'song')} on this iPod now will be replaced by the list at the first sync.`)
-  if (facts.catalog.present && !facts.catalog.readable) why.push('The song database on it now can’t be read and will be replaced.')
+  if (on > 0) why.push(`The ${count(on, 'song')} on it will be replaced.`)
+  if (facts.catalog.present && !facts.catalog.readable && on === 0) why.push('What’s on it will be replaced.')
   if (facts.marker && !facts.marker.primary) {
     const to = target.kind === 'list' ? target.listName : 'a new list'
-    why.push(`This iPod is ${facts.marker.name} today. It will stop being ${facts.marker.name} and become ${to}.`)
+    why.push(`It stops being ${facts.marker.name} and becomes ${to}.`)
   }
   if (target.kind === 'list') {
     const held = records.find((r) => r.listId === target.listId && !r.released)
     const ser = deviceSerial(facts)
-    if (held && !(ser && held.serial === ser.serial)) why.push(`${target.listName} is already on another iPod (${held.name}, set up ${day(held.onboardedAt) ?? 'earlier'}). That iPod will no longer be recognised as ${target.listName}.`)
+    if (held && !(ser && held.serial === ser.serial)) why.push(`${held.name} stops being ${target.listName}.`)
   }
   return why
 }
@@ -610,22 +609,20 @@ export function firstSyncEstimate(songs: number, bytes: number | null): string |
   const fast = Math.max(1, Math.round(bytes / (12 * 1e6) / 60))
   const slow = Math.max(fast + 1, Math.round(bytes / (4 * 1e6) / 60))
   const span = (m: number) => (m >= 90 ? `${Math.round(m / 6) / 10} hours` : `${m} minutes`)
-  return `${count(songs, 'song')}, ${gb(bytes)}: about ${span(fast)} to ${span(slow)}, with the Mac awake and the screen unlocked.`
+  return `It takes about ${span(fast)} to ${span(slow)}. Keep the Mac awake.`
 }
 
 /** The shortest honest proof (Jake, 2026-11-14: "less red tape the better, but ensure success"):
  *  the count the iPod's own software indexed, and the last song written, played. */
 export function proofChecklist(_name: string, songs: number, _playlists: OnboardingProgress['playlists']): string[] {
-  return [
-    `Settings > About: Songs reads ${songs.toLocaleString('en-US')}.`,
-    'Music > Songs: the very last song plays, and skips to its middle without a pause.',
-  ]
+  // One check, said in the proof step's own line (Jake, 2026-11-19: "it needs to be simple").
+  return [`Settings › About should say ${songs.toLocaleString('en-US')}.`]
 }
 
 export function bpmLine(listName: string, bpm: OnboardingProgress['bpm']): string {
-  if (!bpm || bpm.total === 0) return `BPM and key check for ${listName}: not known yet.`
-  if (bpm.checked >= bpm.total) return `BPM and key check: all ${count(bpm.total, 'song')} on ${listName} are checked.`
-  return `BPM and key check: ${bpm.checked.toLocaleString('en-US')} of ${count(bpm.total, 'song')} on ${listName} are checked. The rest are checked overnight and stay out of the BPM playlists until then.`
+  if (!bpm || bpm.total === 0) return ''
+  if (bpm.checked >= bpm.total) return ''
+  return `The BPM playlists for ${listName} fill in overnight.`
 }
 
 /**
@@ -637,13 +634,13 @@ export function onboardingStep(input: OnboardingInput): OnboardingStep {
   const { facts, target, records, progress } = input
   const refuse = (why: OnboardingRefusal, line: string): OnboardingStep => ({ step: 'refused', why, line })
 
-  if (facts?.role === 'replica') return refuse('not-the-hub', 'Only the MacBook sets up and syncs iPods. On this Mac the iPod lists are playlists.')
-  if (!facts) return refuse('no-ipod', 'No iPod is plugged in.')
-  if (facts.otherIpods > 0) return refuse('two-ipods', `Two iPods are plugged in. Unplug the one you’re not setting up, so JakeTunes can’t write to the wrong one. ${NOTHING_CHANGED}`)
-  if (facts.syncInFlight) return refuse('sync-running', 'A sync is running. Wait for it to finish.')
-  if (facts.marker?.primary) return refuse('the-original', `This is ${facts.marker.name}, your Original. It carries the Top 1000 and is never set up as anything else. ${NOTHING_CHANGED}`)
-  if (facts.originalEvidence) return refuse('looks-like-the-original', `This looks like your Original without its JakeTunes ID file: ${facts.originalEvidence}. It won’t be set up as another iPod. If it is the Original, give it its ID back with the button below. ${NOTHING_CHANGED}`)
-  if (!isIdentifiable(facts)) return refuse('cannot-identify', `JakeTunes can’t tell that this drive is an iPod, so it won’t write to it. If it is one, let it start up fully, then plug it in again. ${NOTHING_CHANGED}`)
+  if (facts?.role === 'replica') return refuse('not-the-hub', 'Sync iPods on the MacBook.')
+  if (!facts) return refuse('no-ipod', 'Plug in the iPod.')
+  if (facts.otherIpods > 0) return refuse('two-ipods', 'Two iPods are plugged in. Unplug one.')
+  if (facts.syncInFlight) return refuse('sync-running', 'Wait for the sync to finish.')
+  if (facts.marker?.primary) return refuse('the-original', `This is ${facts.marker.name}, your Original.`)
+  if (facts.originalEvidence) return refuse('looks-like-the-original', 'This looks like your Original.')
+  if (!isIdentifiable(facts)) return refuse('cannot-identify', 'This doesn’t look like an iPod. If it is, let it start up, then plug it in again.')
 
   const wiped = recordForWipedIpod(facts, records)
   const boundHere = facts.marker ? records.find((r) => r.listId === facts.marker!.id && !r.released) ?? null : null
@@ -654,24 +651,19 @@ export function onboardingStep(input: OnboardingInput): OnboardingStep {
     if (!progress.firstSync) {
       const bytes = target?.kind === 'list' ? target.bytes : null
       const songs = target?.kind === 'list' ? target.songs : progress.listSongs ?? 0
-      return { step: 'first-sync', line: `${name} is set up. Press Sync ${name} on this page for its first sync.`, estimate: firstSyncEstimate(songs, bytes) }
+      return { step: 'first-sync', line: `${name} is set up. Press Sync ${name}.`, estimate: firstSyncEstimate(songs, bytes) }
     }
     if (!boundHere?.sealedAt) {
       return {
         step: 'proof',
-        line: `The first sync finished and was read back: ${count(progress.firstSync.songs, 'song')}. Eject ${name}, unplug it, and check these on the iPod itself:`,
+        line: `Synced ${count(progress.firstSync.songs, 'song')}. On the iPod, Settings › About should say ${progress.firstSync.songs.toLocaleString('en-US')}.`,
+        // The check is in the line; the list stays for older callers and is not shown.
         checklist: proofChecklist(name, progress.firstSync.songs, progress.playlists),
       }
     }
     return {
       step: 'done',
-      lines: [
-        `${name} is set up and checked. ${onboardedLine(boundHere)}.`,
-        progress.playlists === 'on-the-ipod'
-          ? 'Its default playlists and On-The-Go are on the iPod.'
-          : 'Its default playlists arrive with the per-iPod playlists work; On-The-Go lists you build on the iPod come home at each plug-in.',
-        bpmLine(name, progress.bpm),
-      ],
+      lines: [`${name} is set up.`, bpmLine(name, progress.bpm)].filter((l) => l !== ''),
     }
   }
 
@@ -680,8 +672,8 @@ export function onboardingStep(input: OnboardingInput): OnboardingStep {
       step: 'choose-list',
       suggestListId: wiped?.listId ?? null,
       line: wiped
-        ? `This looks like ${wiped.name}, wiped. Set it up as ${wiped.name} again, or pick another list.`
-        : 'Which iPod is this? Pick the list it will carry, or set it up as a brand-new iPod.',
+        ? `This looks like ${wiped.name}, erased. Set it up as ${wiped.name} again?`
+        : 'Which iPod is this?',
     }
   }
 
@@ -695,8 +687,8 @@ export function onboardingStep(input: OnboardingInput): OnboardingStep {
       line: input.name
         ? nameCheck.error
         : target.kind === 'list'
-          ? `Give the iPod a short name (${FAT_LABEL_MAX} characters at most: it is the drive’s name too). The list stays “${target.listName}”.`
-          : 'Give the new iPod a name (11 characters at most: it is the drive’s name too).',
+          ? `Name the iPod (up to ${FAT_LABEL_MAX} letters).`
+          : `Name the iPod (up to ${FAT_LABEL_MAX} letters).`,
     }
   }
 
@@ -709,8 +701,8 @@ export function onboardingStep(input: OnboardingInput): OnboardingStep {
       checks,
       blocked: stops.length > 0,
       line: stops.length
-        ? `${count(stops.length, 'thing')} must be fixed before this iPod can be set up. ${NOTHING_CHANGED}`
-        : 'Checking the connection and the test file…',
+        ? (stops.length === 1 ? 'Fix this first:' : `Fix these ${stops.length} first:`)
+        : 'Checking the iPod…',
     }
   }
 
@@ -728,11 +720,8 @@ export function onboardingStep(input: OnboardingInput): OnboardingStep {
     step: 'prepare',
     name: nameCheck.name,
     actions: [
-      'Make the iPod’s folders (they are left alone where they already exist).',
-      facts.catalog.present ? 'Keep the song database that’s there; the first sync rewrites it.' : 'Write a blank song database.',
-      `Write JakeTunes’ ID file, so this iPod is ${nameCheck.name}${target.kind === 'list' ? ` and carries ${target.listName}` : ''} on every plug-in.`,
-      `Name the drive ${nameCheck.name} (the Mac shows ${nameCheck.macShows}).`,
-      'Record this iPod (model, software, size, serial) so it is recognised next time, and after a wipe.',
+      `Name it ${nameCheck.name}.`,
+      target.kind === 'list' ? `Put the songs from ${target.listName} on it at its first sync.` : 'Make it ready for its first sync.',
     ],
   }
 }
@@ -778,13 +767,10 @@ export function sameIpodPhrase(name: string): string {
 export function sameIpodOffer(facts: IpodDeviceFacts, record: IpodOnboardingRecord | null): { phrase: string; lines: string[] } | null {
   const c = identityChange(facts, record)
   if (!c || !facts.marker) return null
-  const show = (v: { serial: string | null; bytes: number | null }) => `serial ${v.serial ?? 'not readable'}, ${v.bytes ? gb(v.bytes) : 'size not readable'}`
   return {
     phrase: sameIpodPhrase(facts.marker.name),
     lines: [
-      `When ${facts.marker.name} was set up: ${show(c.was)}.`,
-      `Plugged in now: ${show(c.now)}.`,
-      `If this is ${facts.marker.name} with a new ${c.kind === 'body' ? 'body' : 'card'}, type the words below and JakeTunes will know it by the new one. Its songs are not touched; the next sync checks them.`,
+      `Is this still ${facts.marker.name}, with a new ${c.kind === 'body' ? 'body' : 'card'}?`,
     ],
   }
 }
@@ -817,38 +803,38 @@ export function ipodHealthCheck(input: HealthInput): HealthReport {
 
   // Identity
   const ser = deviceSerial(facts)
-  if (!facts.marker) add('identity', 'stop', 'This iPod has no JakeTunes ID file. Set it up before it is synced.')
+  if (!facts.marker) add('identity', 'stop', 'Set up this iPod to sync it.')
   else if (facts.marker.primary) add('identity', 'ok', `${name}, your Original.`)
-  else if (!record) add('identity', 'warn', `${name} has no set-up record on this Mac yet. It is recorded the next time this page is opened.`)
+  else if (!record) add('identity', 'warn', `${name} is new on this Mac.`)
   else {
     const changed = identityChange(facts, record)
-    if (changed?.kind === 'body') add('identity', 'stop', `The card says ${name}, but it is in a different iPod than the one set up on ${day(record.onboardedAt) ?? 'set-up day'}. If this is ${name} with a new body, confirm that below; otherwise check which iPod this is. ${NOTHING_CHANGED}`)
-    else if (changed?.kind === 'card') add('identity', 'stop', `${name}’s drive was ${gb(record.capacityBytes ?? 0)} when it was set up and is ${gb(facts.totalBytes ?? 0)} now. That is a different card. If this is ${name} with a new card, confirm that below. ${NOTHING_CHANGED}`)
+    if (changed?.kind === 'body') add('identity', 'stop', `The card for ${name} is in a different iPod. Confirm below if that’s right.`)
+    else if (changed?.kind === 'card') add('identity', 'stop', `${name} has a different card now. Confirm below if that’s right.`)
     else add('identity', 'ok', `${name}. ${onboardedLine(record)}.`)
   }
 
   // Format
-  if (facts.fs !== null && facts.fs !== 'fat32' && facts.fs !== 'hfs') add('format', 'stop', `${name} is no longer formatted the way an iPod needs. ${NOTHING_CHANGED}`)
+  if (facts.fs !== null && facts.fs !== 'fat32' && facts.fs !== 'hfs') add('format', 'stop', `${name} needs erasing. Restore it in Finder, then set it up again.`)
 
   // Database
-  if (!facts.catalog.present) add('database', 'warn', lastSync ? `${name} has no song database, though it has been synced. It may have been restored; the next sync is a full copy.` : `${name} has no song database yet.`)
+  if (!facts.catalog.present) add('database', 'warn', lastSync ? `${name} was erased. The next sync puts everything back.` : `${name} has no songs yet.`)
   // Not a stop: a sync is what rewrites a broken database, and nothing else can (2026-11-14).
-  else if (!facts.catalog.readable) add('database', 'warn', `${name}’s song database can’t be read. The next sync rewrites it, as a full copy.`)
-  else if (lastSync?.sealed && facts.catalog.songs !== lastSync.songs) add('database', 'warn', `${name}’s song database lists ${count(facts.catalog.songs ?? 0, 'song')}; the last sync put ${lastSync.songs.toLocaleString('en-US')} on. Something else wrote to it; the next sync is a full copy.`)
-  else add('database', 'ok', `Song database readable: ${count(facts.catalog.songs ?? 0, 'song')}.`)
+  else if (!facts.catalog.readable) add('database', 'warn', `${name}’s songs can’t be read. Sync to fix it.`)
+  else if (lastSync?.sealed && facts.catalog.songs !== lastSync.songs) add('database', 'warn', `${name} has ${count(facts.catalog.songs ?? 0, 'song')}, not ${lastSync.songs.toLocaleString('en-US')}. The next sync fixes it.`)
+  else add('database', 'ok', `${count(facts.catalog.songs ?? 0, 'song')}.`)
 
   // Room
-  if (facts.freeBytes === null) add('space', 'unknown', 'Free space couldn’t be read.')
-  else if (facts.freeBytes < HEALTH_MIN_FREE_BYTES) add('space', 'warn', `Only ${gb(facts.freeBytes)} free. A sync that adds songs may not fit.`)
+  if (facts.freeBytes === null) add('space', 'unknown', 'Couldn’t read free space.')
+  else if (facts.freeBytes < HEALTH_MIN_FREE_BYTES) add('space', 'warn', `Only ${gb(facts.freeBytes)} free.`)
   else add('space', 'ok', `${gb(facts.freeBytes)} free.`)
 
   // Last sync
   if (!lastSync) add('last-sync', 'warn', 'Not synced yet.')
-  else if (!lastSync.sealed) add('last-sync', 'warn', 'The last sync didn’t finish. The next one is a full copy.')
-  else if (list && list.songs !== lastSync.songs) add('last-sync', 'ok', `Last sync finished and was read back. The list has changed since (${lastSync.songs.toLocaleString('en-US')} on the iPod, ${list.songs.toLocaleString('en-US')} on the list): ready to sync.`)
-  else add('last-sync', 'ok', 'Last sync finished and was read back.')
+  else if (!lastSync.sealed) add('last-sync', 'warn', 'The last sync didn’t finish. Sync again.')
+  else if (list && list.songs !== lastSync.songs) add('last-sync', 'ok', 'New songs are ready to sync.')
+  else add('last-sync', 'ok', 'Up to date.')
 
-  if (facts.rockbox) add('firmware', 'warn', `${name} has a Rockbox folder on it. JakeTunes syncs Apple’s software only.`)
+  if (facts.rockbox) add('firmware', 'warn', `${name} has Rockbox on it.`)
 
   const verdict = checks.some((c) => c.status === 'stop') ? 'stop' : checks.some((c) => c.status === 'warn') ? 'warn' : 'ok'
   return { verdict, checks }
@@ -868,23 +854,24 @@ export function onboardingActionRefusal(action: OnboardingAction, step: Onboardi
   if (step.step === 'refused') return step.line
   if (action === 'test') {
     if (step.step === 'checks' && !step.blocked) return null
-    if (step.step === 'checks') return `${step.line} The test file was not written.`
-    return `The test file is only written while an iPod is being checked for set-up. ${NOTHING_CHANGED}`
+    if (step.step === 'checks') return 'Fix the problems above first.'
+    return 'This iPod isn’t being set up.'
   }
   if (action === 'prepare') {
     if (step.step === 'prepare') return null
-    if (step.step === 'checks' || step.step === 'name') return `${step.line} Nothing on the iPod was changed.`
-    if (step.step === 'confirm') return `Type “${step.phrase}” to go on. Nothing on the iPod was changed.`
-    return `This iPod isn’t at the set-up step. ${NOTHING_CHANGED}`
+    if (step.step === 'checks') return step.blocked ? 'Fix the problems above first.' : 'Wait for the checks to finish.'
+    if (step.step === 'name') return step.line
+    if (step.step === 'confirm') return `Type “${step.phrase}” to go on.`
+    return 'This iPod isn’t ready to set up.'
   }
   if (step.step === 'proof') return null
-  return step.step === 'first-sync' ? step.line : `There is nothing to check off for this iPod right now. ${NOTHING_CHANGED}`
+  return step.step === 'first-sync' ? step.line : 'Nothing to check on this iPod right now.'
 }
 
 /** The health check's reason for refusing a sync, or null. A "stop" stops the sync. */
 export function healthSyncRefusal(report: HealthReport): string | null {
   const stop = report.checks.find((c) => c.status === 'stop')
-  return stop ? `${stop.line} The sync was not started.` : null
+  return stop ? stop.line : null
 }
 
 /**
@@ -898,7 +885,8 @@ export function healthBlindRefusal(facts: IpodDeviceFacts, record: IpodOnboardin
     : facts.totalBytes === null ? 'the drive’s size'
       : record?.serialSource === 'usb' && !facts.marker?.primary && !facts.usb?.serial ? 'which iPod body this is'
         : null
-  return blind ? `JakeTunes couldn’t check ${name} before syncing: the Mac wouldn’t say ${blind}. Unplug it, plug it in again, and sync. The sync was not started.` : null
+  if (blind) console.warn(`[ipod-health] couldn’t read ${blind} for ${name}`)
+  return blind ? 'Unplug the iPod, plug it back in, and sync again.' : null
 }
 
 // ── The write guard ──────────────────────────────────────────────────────────
@@ -918,11 +906,11 @@ export function onboardingWriteRefusal(input: {
   /** Is the drive at this path still the drive the checks ran on (its system identity)? */
   sameDrive: boolean
 }): string | null {
-  if (!input.sameDrive) return `This isn’t the drive that was checked. Start the set-up again. ${NOTHING_CHANGED}`
-  if (input.markerNow?.primary) return `This is ${input.markerNow.name}, your Original. Setting up another iPod never writes to it. ${NOTHING_CHANGED}`
-  if (input.otherIpods > 0) return `Two iPods are plugged in. Unplug the one you’re not setting up. ${NOTHING_CHANGED}`
-  if (input.syncInFlight) return 'A sync is running. Wait for it to finish.'
-  if ((input.markerNow?.id ?? null) !== (input.markerAtChecks?.id ?? null)) return `The iPod changed since it was checked. Run the checks again. ${NOTHING_CHANGED}`
+  if (!input.sameDrive) return 'The iPod changed. Start again.'
+  if (input.markerNow?.primary) return `This is ${input.markerNow.name}, your Original.`
+  if (input.otherIpods > 0) return 'Two iPods are plugged in. Unplug one.'
+  if (input.syncInFlight) return 'Wait for the sync to finish.'
+  if ((input.markerNow?.id ?? null) !== (input.markerAtChecks?.id ?? null)) return 'The iPod changed. Start again.'
   return null
 }
 

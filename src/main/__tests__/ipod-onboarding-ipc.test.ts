@@ -132,6 +132,17 @@ async function writeSongs(mount: string, name: string, songs: Array<{ artist: st
   const r = spawnSync('python3', [join(CORE, 'db_reader.py'), '--write', db, '--template', db, '--ipod-root', mount], { input: JSON.stringify({ tracks, playlists: [], masterName: name }), encoding: 'utf-8' })
   assert.equal(r.status, 0, r.stderr)
 }
+/** What the handlers send to the log (console.warn) while `fn` runs: the detail the plain line leaves out. */
+async function warnings<T>(fn: () => Promise<T>): Promise<{ value: T; logged: string }> {
+  const lines: string[] = []
+  const was = console.warn
+  console.warn = (...a: unknown[]) => { lines.push(a.map(String).join(' ')) }
+  try {
+    return { value: await fn(), logged: lines.join('\n') }
+  } finally {
+    console.warn = was
+  }
+}
 const paths = (n: number, tag: string) => Array.from({ length: n }, (_, i) => `:iPod_Control:Music:F${String(i % 50).padStart(2, '0')}:${tag}${i}.m4a`)
 
 describe('the road, through the handlers', () => {
@@ -166,7 +177,8 @@ describe('finding 1 + 7 + 9: one gate, and only the MacBook', () => {
       ] as const) {
         const r = await t.call(ch, arg)
         assert.equal(r.ok, false, ch)
-        assert.match(String(r.error), /Only the MacBook/, ch)
+        // The step's own line ("Sync iPods on the MacBook.") or the handlers' NOT_THE_HUB ("Only the MacBook …").
+        assert.match(String(r.error), /MacBook/, ch)
       }
       assert.deepEqual(await snapshot(t.root), before)
     })
@@ -186,7 +198,7 @@ describe('finding 1 + 7 + 9: one gate, and only the MacBook', () => {
     notAnIpod.drive.usb = null
     const noFormat = await rig()
     noFormat.state.noTable = true
-    for (const [t, why] of [[wrongFormat, /The test file was not written/], [notAnIpod, /can’t tell that this drive is an iPod/], [noFormat, /The test file was not written/]] as const) {
+    for (const [t, why] of [[wrongFormat, /^Fix the problems above first\.$/], [notAnIpod, /doesn’t look like an iPod/], [noFormat, /^Fix the problems above first\.$/]] as const) {
       const before = await snapshot(t.mount)
       const looked = await t.look({ listId: EIGHTIES })
       assert.notEqual(looked.step.step, 'prepare')
@@ -199,14 +211,14 @@ describe('finding 1 + 7 + 9: one gate, and only the MacBook', () => {
   test('the test file is not written with no list picked, or once the iPod is past its checks', async () => {
     const t = await rig()
     const before = await snapshot(t.mount)
-    assert.match(String((await t.call('ipod-setup:test', {})).error), /only written while an iPod is being checked/)
+    assert.equal((await t.call('ipod-setup:test', {})).error, 'This iPod isn’t being set up.')
     assert.deepEqual(await snapshot(t.mount), before)
   })
   test('the old register handler no longer sets up an iPod without the checks', async () => {
     const t = await rig()
     const before = await snapshot(t.root)
     const r = await t.call('register-ipod-device', { asOriginal: false, name: 'Sneaky', color: 'red' })
-    assert.deepEqual(r, { ok: false, error: 'Use “Set up this iPod”. Nothing on the iPod was changed.' })
+    assert.deepEqual(r, { ok: false, error: 'Use “Set up this iPod”.' })
     assert.deepEqual(await snapshot(t.root), before)
     t.state.others = 1
     assert.match(String((await t.call('register-ipod-device', { asOriginal: true })).error), /Two iPods are plugged in/)
@@ -250,7 +262,7 @@ describe('finding 2 + 3: which drive', () => {
     t.state.driveIdAfter = { calls: t.state.driveIdCalls + 1, id: 'CCCC3333-0000-0000-0000-000000000003|249500000000' }
     const r = await t.call('ipod-setup:prepare', { listId: EIGHTIES, name: null, color: null, typed: null, matchCover: false })
     assert.equal(r.ok, false)
-    assert.match(String(r.error), /isn’t the drive that was checked\. Start the set-up again/)
+    assert.equal(r.error, 'The iPod changed. Start again.')
     assert.deepEqual(await snapshot(t.mount), before)
     assert.deepEqual(await readOnboardingRecords(t.stateDir), [])
   })
@@ -258,9 +270,12 @@ describe('finding 2 + 3: which drive', () => {
     const t = await rig()
     assert.equal((await t.pick(EIGHTIES)).step.step, 'prepare')
     t.state.driveIdAfter = { calls: t.state.driveIdCalls + 2, id: 'CCCC3333-0000-0000-0000-000000000003|249500000000' }
-    const r = await t.call('ipod-setup:prepare', { listId: EIGHTIES, name: null, color: null, typed: null, matchCover: false })
+    const { value: r, logged } = await warnings(() => t.call('ipod-setup:prepare', { listId: EIGHTIES, name: null, color: null, typed: null, matchCover: false }))
     assert.equal(r.ok, false)
-    assert.match(String(r.error), /Already done: the folders are there/)
+    // One plain line for Jake; what was already done goes to the log.
+    assert.equal(r.error, 'The iPod changed. Start again.')
+    assert.match(logged, /Already done: the folders are there/)
+    assert.doesNotMatch(String(r.error), /Already done/)
     assert.equal(await stat(join(t.mount, 'iPod_Control', 'jaketunes-device.json')).then(() => true, () => false), false)
     assert.equal(await stat(join(t.mount, 'iPod_Control', 'iTunes', 'iTunesDB')).then(() => true, () => false), false)
   })
@@ -269,9 +284,10 @@ describe('finding 2 + 3: which drive', () => {
     await writeFile(join(t.mount, 'iPod_Control', 'iTunes', 'iTunesDB'), buildBlankCatalog('iPod'))
     assert.equal((await t.pick(EIGHTIES)).step.step, 'prepare')
     t.state.driveIdAfter = { calls: t.state.driveIdCalls + 2, id: 'CCCC3333-0000-0000-0000-000000000003|249500000000' }
-    const r = await t.call('ipod-setup:prepare', { listId: EIGHTIES, name: null, color: null, typed: null, matchCover: false })
+    const { value: r, logged } = await warnings(() => t.call('ipod-setup:prepare', { listId: EIGHTIES, name: null, color: null, typed: null, matchCover: false }))
     assert.equal(r.ok, false)
-    assert.match(String(r.error), /isn’t the drive that was checked.*Already done: the folders are there/)
+    assert.equal(r.error, 'The iPod changed. Start again.')
+    assert.match(logged, /The iPod changed\. Start again\. Already done: the folders are there/)
     assert.equal(await stat(join(t.mount, 'iPod_Control', 'jaketunes-device.json')).then(() => true, () => false), false)
     assert.deepEqual(await readOnboardingRecords(t.stateDir), [])
   })
@@ -303,11 +319,11 @@ describe('finding 4: the Original without its ID file, and what a confirmation s
     for (const arg of [undefined, { listId: EIGHTIES }, { listId: 'new', name: 'Mine' }]) {
       const l = await t.look(arg)
       assert.equal(l.step.step === 'refused' && l.step.why, 'looks-like-the-original')
-      assert.match(l.step.step === 'refused' ? l.step.line : '', /30 of the songs on it are songs Original’s last sync put there/)
+      assert.equal(l.step.step === 'refused' ? l.step.line : '', 'This looks like your Original.')
     }
     const r = await t.call('ipod-setup:prepare', { listId: EIGHTIES, name: null, color: null, typed: 'replace JakeTunes', matchCover: false })
     assert.equal(r.ok, false)
-    assert.match(String(r.error), /won’t be set up as another iPod/)
+    assert.equal(r.error, 'This looks like your Original.')
     assert.deepEqual(await snapshot(t.mount), before)
     // The separate, explicit path.
     assert.equal((await t.call('ipod-setup:readopt-original')).ok, true)
@@ -319,7 +335,7 @@ describe('finding 4: the Original without its ID file, and what a confirmation s
     const { t } = await withOriginalOnRecord()
     const before = await snapshot(t.mount)
     const r = await t.call('ipod-setup:readopt-original')
-    assert.deepEqual(r, { ok: false, error: 'JakeTunes doesn’t recognise this iPod as your Original. Nothing on it was changed.' })
+    assert.deepEqual(r, { ok: false, error: 'This doesn’t look like your Original.' })
     assert.deepEqual(await snapshot(t.mount), before)
   })
   test('songs on a new iPod: the look shows the count, the artists and its old name, and the words to type name the OLD name', async () => {
@@ -330,7 +346,7 @@ describe('finding 4: the Original without its ID file, and what a confirmation s
     const l = await t.pick(EIGHTIES)
     assert.equal(l.step.step, 'confirm', JSON.stringify(l.step))
     assert.equal(l.step.step === 'confirm' && l.step.phrase, 'replace Daves iPod')
-    assert.deepEqual(l.step.step === 'confirm' && l.step.onIt, ['It calls itself “Daves iPod”.', '5 songs on it.', 'Mostly: Dave Matthews Band, Phish.'])
+    assert.deepEqual(l.step.step === 'confirm' && l.step.onIt, ['It’s called “Daves iPod”.', '5 songs on it.', 'Mostly: Dave Matthews Band, Phish.'])
     // 8a: set-up does not go ahead while the step is "confirm" — not with nothing typed, not with the NEW name typed.
     const before = await snapshot(t.mount)
     for (const typed of [null, 'replace 80sPod', "replace 1980's"]) {
@@ -384,7 +400,7 @@ describe('finding 5: a health stop stops the sync', () => {
     const t = await setUp()
     t.drive.usb = { vendor: 'Apple Inc.', productId: 0x1205, serial: 'FFFF0000EEEE1111' }
     const r = await forSync(t)
-    assert.match(r.refusal ?? '', /it is in a different iPod than the one set up on .*The sync was not started\./)
+    assert.equal(r.refusal, 'The card for 80sPod is in a different iPod. Confirm below if that’s right.')
     assert.equal(r.device?.id, EIGHTIES)
     assert.equal((await readOnboardingRecords(t.stateDir))[0].serial, '000A27001234ABCD', 'the record still names the body it was set up in')
     // Asking where its state lives (not a sync) is not refused.
@@ -394,11 +410,11 @@ describe('finding 5: a health stop stops the sync', () => {
     const size = await setUp()
     const recs = await readOnboardingRecords(size.stateDir)
     await writeFile(join(size.stateDir, 'ipod-onboarding.json'), JSON.stringify({ version: 1, devices: [{ ...recs[0], capacityBytes: 1000 }] }))
-    assert.match((await forSync(size)).refusal ?? '', /That is a different card/)
+    assert.equal((await forSync(size)).refusal, '80sPod has a different card now. Confirm below if that’s right.')
 
     const format = await setUp()
     format.drive.fs = 'exfat'
-    assert.match((await forSync(format)).refusal ?? '', /no longer formatted the way an iPod needs/)
+    assert.equal((await forSync(format)).refusal, '80sPod needs erasing. Restore it in Finder, then set it up again.')
 
   })
   test('a database that can’t be read is NOT a dead end: the sync goes ahead as the repair, and the look says why (the Original too)', async () => {
@@ -407,7 +423,7 @@ describe('finding 5: a health stop stops the sync', () => {
     assert.equal((await forSync(torn)).refusal, null)
     const said = (await torn.look()).health?.checks.find((c) => c.id === 'database')
     assert.equal(said?.status, 'warn')
-    assert.match(said?.line ?? '', /can’t be read\. The next sync rewrites it, as a full copy\./)
+    assert.equal(said?.line, '80sPod’s songs can’t be read. Sync to fix it.')
 
     const original = await rig()
     await writeFile(join(original.mount, 'iPod_Control', 'iTunes', 'iTunesDB'), buildBlankCatalog('Original'))
@@ -430,10 +446,15 @@ describe('finding 5: a health stop stops the sync', () => {
   test('a health check that couldn’t see what it checks does not let the sync go', async () => {
     const usb = await setUp()
     usb.drive.usb = null
-    assert.match((await forSync(usb)).refusal ?? '', /couldn’t check 80sPod before syncing: the Mac wouldn’t say which iPod body this is.*The sync was not started\./)
+    // One plain line; what couldn't be read goes to the log.
+    const blindUsb = await warnings(() => forSync(usb))
+    assert.equal(blindUsb.value.refusal, 'Unplug the iPod, plug it back in, and sync again.')
+    assert.match(blindUsb.logged, /couldn’t read which iPod body this is for 80sPod/)
     const table = await setUp()
     table.state.noTable = true
-    assert.match((await forSync(table)).refusal ?? '', /the Mac wouldn’t say how the drive is formatted/)
+    const blindTable = await warnings(() => forSync(table))
+    assert.equal(blindTable.value.refusal, 'Unplug the iPod, plug it back in, and sync again.')
+    assert.match(blindTable.logged, /couldn’t read how the drive is formatted for 80sPod/)
   })
   test('the same iPod with a new body or a new card: old and new shown, the typed words, then the record follows; never by itself', async () => {
     for (const change of ['body', 'card'] as const) {
@@ -446,8 +467,8 @@ describe('finding 5: a health stop stops the sync', () => {
       assert.notEqual((await forSync(t)).refusal, null)
       const offer = (await t.look()).sameIpod
       assert.equal(offer?.phrase, 'this is 80sPod')
-      assert.match(offer?.lines[0] ?? '', change === 'body' ? /When 80sPod was set up: serial 000A27001234ABCD/ : /When 80sPod was set up: serial 000A27001234ABCD, 128 GB/)
-      assert.match(offer?.lines[1] ?? '', change === 'body' ? /Plugged in now: serial FFFF0000EEEE1111/ : /Plugged in now: serial 000A27001234ABCD/)
+      // The question names what changed; the serials and sizes are no longer shown.
+      assert.deepEqual(offer?.lines, [`Is this still 80sPod, with a new ${change}?`])
       const before = await readFile(join(t.stateDir, 'ipod-onboarding.json'), 'utf-8')
       for (const typed of [undefined, '', 'yes', 'replace 80sPod', 'this is punkPod']) {
         const r = await t.call('ipod-setup:same-ipod', { typed })
@@ -465,7 +486,7 @@ describe('finding 5: a health stop stops the sync', () => {
       assert.equal(rec.listId, EIGHTIES)
       if (change === 'body') assert.equal(rec.serial, 'FFFF0000EEEE1111')
       // Nothing left to confirm.
-      assert.match(String((await t.call('ipod-setup:same-ipod', { typed: 'this is 80sPod' })).error), /nothing to confirm/)
+      assert.equal((await t.call('ipod-setup:same-ipod', { typed: 'this is 80sPod' })).error, 'Nothing to confirm.')
     }
   })
   test('the sync itself asks with forSync (the one line in the sync engine), so the stop reaches it', async () => {
@@ -538,20 +559,25 @@ describe('re-review: a look never writes; a drive with no ID of its own; the car
     // A card that wrapped: an EARLY song now holds a late song's bytes (same length).
     const good = await readFile(dsts[2])
     await writeFile(dsts[2], Buffer.from(good.toString().replace(/song 2 /g, 'song 9 ')))
-    const failed = await t.call<{ cardProof: { status: string; line: string } }>('ipod-setup:card-proof')
+    const failed = await t.call<{ cardProof: { status: string; line: string; checked?: number; bad?: number } }>('ipod-setup:card-proof')
     assert.equal(failed.cardProof.status, 'fail')
-    assert.match(failed.cardProof.line, /1 of the 30 songs read back came back different/)
+    // The counts stay on the result (and in the log); the line says what to do.
+    assert.equal(failed.cardProof.checked, 30)
+    assert.equal(failed.cardProof.bad, 1)
+    assert.equal(failed.cardProof.line, 'This iPod’s card didn’t keep the songs. Replace the card before you use it.')
     const refused = await t.call('ipod-setup:checked')
     assert.equal(refused.ok, false)
     assert.equal((await readOnboardingRecords(t.stateDir))[0].sealedAt, null)
     // Sound again: it passes, and only now does "Both are right" seal the set-up.
     await writeFile(dsts[2], good)
-    assert.equal((await t.call<{ cardProof: { status: string } }>('ipod-setup:card-proof')).cardProof.status, 'pass')
+    const passed = (await t.call<{ cardProof: { status: string; line: string } }>('ipod-setup:card-proof')).cardProof
+    assert.equal(passed.status, 'pass')
+    assert.equal(passed.line, '', 'a pass says nothing')
     assert.equal((await t.call('ipod-setup:checked')).ok, true)
     assert.notEqual((await readOnboardingRecords(t.stateDir))[0].sealedAt, null)
     resetCardProof()
   })
-  test('no record of the copy: the card check says it couldn’t run (it does not pass), and the play test stands', async () => {
+  test('no record of the copy: the card check can’t run (it does not pass), says nothing, and the seal stands on the play test', async () => {
     resetCardProof()
     const t = await rig()
     assert.equal((await t.pick(EIGHTIES)).step.step, 'prepare')
@@ -560,7 +586,7 @@ describe('re-review: a look never writes; a drive with no ID of its own; the car
     await writeFile(join(t.stateDir, 'ipod-pools', EIGHTIES, 'last-sync-manifest.json'), JSON.stringify({ sealed: true, syncedAt: '2026-11-20T16:30:00.000Z', tracks: [{ id: 1 }] }))
     const r = await t.call<{ cardProof: { status: string; line: string } }>('ipod-setup:card-proof')
     assert.equal(r.cardProof.status, 'none')
-    assert.match(r.cardProof.line, /couldn’t run/)
+    assert.equal(r.cardProof.line, 'Play the last song on the iPod to check it.', 'no card check: the play test is the check')
     assert.equal((await t.call('ipod-setup:checked')).ok, true)
     resetCardProof()
   })

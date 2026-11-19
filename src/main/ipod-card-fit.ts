@@ -41,6 +41,6 @@ export function cardTooSmall(copySizes: readonly number[], capacityBytes: number
   const fit = cardFit(copySizes, capacityBytes)
   if (!fit || fit.needBytes <= fit.roomBytes) return null
   const n = copySizes.length.toLocaleString('en-US')
-  return `These ${n} songs need about ${gb(fit.needBytes)} GB and ${ipodName} holds ${gb(fit.roomBytes)} GB, so they won’t fit. ` +
-    `Nothing on the iPod was touched. Make the list shorter, or sync smaller (AAC) copies.`
+  console.warn(`[card-fit] ${n} songs need about ${gb(fit.needBytes)} GB; ${ipodName} holds ${gb(fit.roomBytes)} GB`)
+  return `${n} ${copySizes.length === 1 ? 'song' : 'songs'} won’t fit on ${ipodName}. Make the list shorter.`
 }

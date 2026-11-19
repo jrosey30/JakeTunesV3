@@ -37,10 +37,10 @@ export function checkIpodName(raw: unknown): IpodNameCheck {
   const name = typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim() : ''
   if (!name) return { ok: false, error: 'Give the iPod a name.' }
   if (name.length > FAT_LABEL_MAX) {
-    return { ok: false, error: `“${name}” is ${name.length} characters. An iPod’s drive name can be at most ${FAT_LABEL_MAX}.` }
+    return { ok: false, error: `Too long: ${FAT_LABEL_MAX} letters at most.` }
   }
   if (!ALLOWED.test(name)) {
-    return { ok: false, error: 'Use letters, numbers, spaces and - _ ! # $ % & \' ( ) @ ^ { } ~ only. The iPod’s drive can’t hold other characters.' }
+    return { ok: false, error: 'That name has a character the iPod can’t use.' }
   }
   const upper = name.toUpperCase()
   return { ok: true, name, upperOnMac: upper !== name, macShows: upper }
@@ -49,6 +49,6 @@ export function checkIpodName(raw: unknown): IpodNameCheck {
 /** One plain line for the rename box: what the Mac will call the drive. */
 export function macShowsLine(check: Extract<IpodNameCheck, { ok: true }>): string | null {
   return check.upperOnMac
-    ? `The iPod and JakeTunes will say ${check.name}. The Mac’s Finder will show the drive as ${check.macShows} (FAT32 drives keep names in capitals).`
+    ? `Finder shows it as ${check.macShows}.`
     : null
 }
