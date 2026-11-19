@@ -5,6 +5,13 @@
  * ends when the test says. No launchd job is ever loaded: launchctl is a fake that writes down
  * what it was asked.
  *
+ * The agent detaches its gate on purpose (a real one must outlive the agent's run), so nothing but
+ * this file ends a fake one: after() ends every process the tests started and fails the run if one
+ * is still going, and a fake gate gives up by itself once the test process is gone (a run killed
+ * before its after()). Until 2026-11-19 the cleanup wrote each gate's word and deleted its folder in
+ * the same breath, which a gate that looks every 50 ms often missed: 27 of them, from four runs on
+ * 2026-11-14, ran for five days on Jake's MacBook, each starting `sleep` 20 times a second.
+ *
  * What these prove:
  *  - offer: refuses a bad sha, bundle, signature or release file and stages nothing; stages under a
  *    hidden name; installs the agent and gate; writes the plist once and loads it once, then only
@@ -17,13 +24,13 @@
  */
 import { describe, it, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { execFile, spawn } from 'node:child_process'
+import { execFile, execFileSync, spawn } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { deviceFromHostname } from '../../common/usage-log.ts'
-import { waitFor } from './wait-for.ts'
+import { HUNG_MS, waitFor } from './wait-for.ts'
 
 const run = promisify(execFile)
 const ROOT = join(import.meta.dirname, '..', '..', '..')
@@ -35,10 +42,35 @@ const C = 'cccccccccccccccccccccccccccccccccccccccc'
 const RELEASE = JSON.stringify({ label: 'This week’s fixes', kind: 'weekly', notes: ['Album pages open faster'] })
 
 const worlds: string[] = []
-after(() => {
-  // Release every fake gate still waiting, then clear the folders.
-  for (const w of worlds) { try { writeFileSync(join(w, 'fake', 'gate-exit'), '3') } catch { /* gone */ } }
+
+/** Every process still running from these worlds: a fake gate, or the wrapper the agent started it in.
+ *  Both name their world's folder on their command line. */
+function running(roots: string[]): Array<{ pid: number; command: string }> {
+  const ps = execFileSync('/bin/ps', ['-A', '-ww', '-o', 'pid=,command='], { encoding: 'utf8' })
+  return ps.split('\n').flatMap((line) => {
+    const m = /^\s*(\d+)\s+(.*)$/.exec(line)
+    return m && roots.some((r) => m[2].includes(`${r}/`)) ? [{ pid: Number(m[1]), command: m[2] }] : []
+  })
+}
+
+/** Ends every process these worlds started and waits until they are gone: TERM, and whatever has not
+ *  gone in 5 s gets KILL, which nothing refuses, then as long as a busy Mac needs (wait-for.ts).
+ *  Returns what is still running: nothing, unless a kill did not work. */
+async function endAll(roots: string[]): Promise<string[]> {
+  for (const [signal, ms] of [['SIGTERM', 5_000], ['SIGKILL', HUNG_MS]] as const) {
+    for (const p of running(roots)) { try { process.kill(p.pid, signal) } catch { /* already gone */ } }
+    const until = Date.now() + ms
+    while (running(roots).length > 0 && Date.now() < until) await new Promise((r) => setTimeout(r, 50))
+  }
+  return running(roots).map((p) => `${p.pid} ${p.command}`)
+}
+
+after(async () => {
+  // A gate still waiting here was left by a test that failed before releasing it, or started where a
+  // test expected none. End them all before the folders go, and fail the run if any is left.
+  const left = await endAll(worlds)
   for (const w of worlds) rmSync(w, { recursive: true, force: true })
+  assert.deepEqual(left, [], 'every process the tests started has ended')
 })
 
 interface World {
@@ -59,7 +91,9 @@ interface World {
   dir: (sha: string) => string
 }
 
-function world(): World {
+/** `owner`: the process whose end ends this world's gates (the test process; a test of that rule
+ *  passes one it can kill). */
+function world(opts: { owner?: number } = {}): World {
   const root = mkdtempSync(join(tmpdir(), 'jt-update-agent-'))
   worlds.push(root)
   const home = join(root, 'home')
@@ -71,11 +105,15 @@ function world(): World {
   mkdirSync(fake)
   mkdirSync(join(app, 'Contents', 'Resources'), { recursive: true })
   writeFileSync(join(app, 'Contents', 'Resources', 'app.asar'), `old build ${'0'.repeat(12)}`)
-  // The fake gate: writes down how it was called, then waits for the test's word.
+  // The fake gate: writes down how it was called, then waits for the test's word. With the test
+  // process gone nobody will ever give it, so it ends.
   const gate = join(fake, 'gate.sh')
   writeFileSync(gate, `#!/bin/bash
 printf '%s\t' "$@" >> "${fake}/gate-calls"; echo >> "${fake}/gate-calls"
-while [ ! -f "${fake}/gate-exit" ]; do sleep 0.05; done
+while [ ! -f "${fake}/gate-exit" ]; do
+  kill -0 ${opts.owner ?? process.pid} 2>/dev/null || exit 3
+  sleep 0.05
+done
 exit $(cat "${fake}/gate-exit")
 `)
   chmodSync(gate, 0o755)
@@ -422,5 +460,35 @@ describe('offer — stage, install the agent, load it once', () => {
     await waitFor(() => o.w.gateCalls().length === 1 || null, 'the gate to start')
     assert.equal(o.w.gateCalls()[0].split('\t')[0], join(o.w.dir(B), 'JakeTunes.app'))
     await releaseGates(o.w, B, 3)
+  })
+})
+
+// ── This file leaves nothing running ────────────────────────────────────
+
+describe('the tests leave nothing running', () => {
+  it('a gate a test leaves waiting (a failed test does) is ended by the teardown', async () => {
+    const w = world()
+    w.stage_(B, 2000)
+    await w.agent()
+    await waitFor(() => w.gateCalls().length === 1 || null, 'the gate to start')
+    assert.ok(running([w.root]).length > 0, 'the gate is waiting')
+    assert.deepEqual(await endAll([w.root]), [])
+  })
+
+  it('a fake gate ends by itself once the test process is gone (a run killed before its after())', async () => {
+    const owner = spawn('/bin/sleep', ['600'])
+    try {
+      const w = world({ owner: owner.pid })
+      w.stage_(B, 2000)
+      await w.agent()
+      await waitFor(() => w.gateCalls().length === 1 || null, 'the gate to start')
+      assert.ok(running([w.root]).length > 0, 'the gate is waiting')
+      const gone = new Promise((r) => owner.on('exit', r))
+      owner.kill('SIGKILL')
+      await gone
+      await waitFor(() => running([w.root]).length === 0 || null, 'the gate to end by itself')
+    } finally {
+      owner.kill('SIGKILL')
+    }
   })
 })
