@@ -63,6 +63,20 @@ describe('withBodyInactivityTimeout', () => {
     assert.deepEqual(out, [1, 2, 3])
   })
 
+  test('a consumer that stops reading is never a stall (2026-11-19: songs cut mid-play)', async () => {
+    // A fast source, a player whose buffer is full: it takes one chunk, then
+    // reads nothing for 3x the budget, then reads the rest. Nothing is cut.
+    const body = streamOf([new Uint8Array([1]), new Uint8Array([2]), new Uint8Array([3])], 1)
+    let timeouts = 0
+    const reader = withBodyInactivityTimeout(body, 60, () => { timeouts++ }).getReader()
+    assert.deepEqual([...((await reader.read()).value ?? [])], [1])
+    await new Promise((r) => setTimeout(r, 200))
+    assert.deepEqual([...((await reader.read()).value ?? [])], [2])
+    assert.deepEqual([...((await reader.read()).value ?? [])], [3])
+    assert.equal((await reader.read()).done, true)
+    assert.equal(timeouts, 0)
+  })
+
   test('a source error propagates instead of becoming a stall', async () => {
     const body = new ReadableStream<Uint8Array>({
       pull(controller) { controller.error(new Error('source died')) },
