@@ -1160,7 +1160,8 @@ def build_mhyp_record(name, dbids, is_master, template_header=None,
 
 
 def write_itunesdb(tracks, playlists, template_path, output_path, ipod_root=None, master_name=None,
-                   artwork_out=None, artwork_report=None, artwork_map=None):
+                   artwork_out=None, artwork_report=None, artwork_map=None,
+                   artwork_family=None, artwork_cache=None):
     """Rebuild the iPod iTunesDB from JakeTunes library data.
     master_name: the iPod's own name, written as the master playlist title.
     artwork_out: a LOCAL directory. When the iPod at ipod_root is a colour
@@ -1170,7 +1171,10 @@ def write_itunesdb(tracks, playlists, template_path, output_path, ipod_root=None
       changes. A failure here never fails the catalog: songs go without art.
     artwork_report: optional dict filled with what happened.
     artwork_map: optional {str(track id): cover path}; wins over a row's
-      own 'artworkPath'."""
+      own 'artworkPath'.
+    artwork_family: optional family Jake named for this iPod (the table's
+      key, or 'none'); used only when nothing on the iPod names its model.
+    artwork_cache: optional directory that keeps thumbnails between syncs."""
     # ⚠️ TWIN: src/main/ipod-reconcile.ts fileSizeForItunesDb
     # mhit 0x24 MUST be the file on THIS card. library.json fileSize is often
     # a stale ALAC length (Beyond Me 31MB vs 7.5MB on disk). Mini firmware
@@ -1434,9 +1438,14 @@ def write_itunesdb(tracks, playlists, template_path, output_path, ipod_root=None
     if artwork_out is not None:
         art_report = artwork_report if artwork_report is not None else {}
         try:
-            art_model, why = ipod_artwork.artwork_model_for_ipod(ipod_root)
+            remembered = {'this': artwork_family} if artwork_family else None
+            found = ipod_artwork.detect_ipod(ipod_root, remembered, 'this' if remembered else None)
+            art_model, why = ipod_artwork.artwork_model_for_ipod(ipod_root, remembered, 'this' if remembered else None)
             art_report['model'] = art_model
             art_report['why'] = why
+            art_report['family'] = found['family']
+            art_report['familyName'] = ipod_artwork.MODELS.get(found['family'] or '', {}).get('name')
+            art_report['ask'] = bool(found['ask'])
             if art_model:
                 # A cover per song: the --artwork-map file (song id -> cover
                 # path) when given, else a row's own 'artworkPath'.
@@ -1445,7 +1454,7 @@ def write_itunesdb(tracks, playlists, template_path, output_path, ipod_root=None
                           for t in tracks]
                 art_covers = ipod_artwork.prepare_covers(
                     wanted, ipod_artwork.COVER_FORMATS[art_model],
-                    lambda m: print(m, file=sys.stderr))
+                    lambda m: print(m, file=sys.stderr), cache_dir=artwork_cache)
             else:
                 print(f"artwork: none for this iPod ({why})", file=sys.stderr)
         except Exception as e:  # noqa: BLE001 — art never fails the music
@@ -1683,6 +1692,14 @@ if __name__ == "__main__":
             except (IndexError, OSError, ValueError) as e:
                 print(f"artwork: map unreadable ({type(e).__name__}); no covers this sync", file=sys.stderr)
                 art_map = None
+        art_family = None
+        if '--artwork-family' in sys.argv:
+            fidx = sys.argv.index('--artwork-family')
+            art_family = sys.argv[fidx + 1] if fidx + 1 < len(sys.argv) else None
+        art_cache = None
+        if '--artwork-cache' in sys.argv:
+            cidx = sys.argv.index('--artwork-cache')
+            art_cache = sys.argv[cidx + 1] if cidx + 1 < len(sys.argv) else None
         input_data = json.load(sys.stdin)
         art_report = {}
         count = write_itunesdb(
@@ -1695,6 +1712,8 @@ if __name__ == "__main__":
             artwork_out=art_out,
             artwork_report=art_report,
             artwork_map=art_map,
+            artwork_family=art_family,
+            artwork_cache=art_cache,
         )
         out = {'ok': True, 'count': count}
         if art_out is not None:

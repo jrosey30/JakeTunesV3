@@ -1,0 +1,523 @@
+{
+  "_about": "iPod album-artwork formats by model family. DATA, not code: core/ipod_artwork.py reads this file. Every value is taken from libgpod; each entry cites file:line. Adding a model = adding a family here.",
+  "libgpod": {
+    "repo": "https://github.com/fadingred/libgpod",
+    "commit": "4a8a33ef4bc58eee1baca6793618365f75a5c3fa",
+    "files": [
+      "src/itdb_device.c",
+      "src/itdb_device.h:148-164 (Itdb_ArtworkFormat: padding, crop, rotation, back_color, row_bytes_alignment default to 0 in these static tables)",
+      "src/ithumb-writer.c:70-183 (get_RGB_565_pixel, get_aligned_width, pack_RGB_565)"
+    ]
+  },
+  "families": [
+    {
+      "family": "video",
+      "name": "iPod Video (5G / 5.5G)",
+      "libgpodGenerations": [
+        "ITDB_IPOD_GENERATION_VIDEO_1",
+        "ITDB_IPOD_GENERATION_VIDEO_2"
+      ],
+      "modelNumbers": [
+        "A002",
+        "A146",
+        "A003",
+        "A147",
+        "A452",
+        "A444",
+        "A446",
+        "A664",
+        "A448",
+        "A450"
+      ],
+      "modelNumberSources": [
+        "itdb_device.c:173",
+        "itdb_device.c:174",
+        "itdb_device.c:175",
+        "itdb_device.c:176",
+        "itdb_device.c:177",
+        "itdb_device.c:182",
+        "itdb_device.c:183",
+        "itdb_device.c:184",
+        "itdb_device.c:185",
+        "itdb_device.c:186"
+      ],
+      "serialSuffixes": {
+        "SZ9": "A002",
+        "WEC": "A002",
+        "WED": "A002",
+        "WEG": "A002",
+        "WEH": "A002",
+        "WEL": "A002",
+        "TXK": "A146",
+        "TXM": "A146",
+        "WEE": "A446",
+        "WEF": "A146",
+        "WEJ": "A146",
+        "WEK": "A146",
+        "SZA": "A003",
+        "SZU": "A003",
+        "TXL": "A147",
+        "TXN": "A147",
+        "V9K": "A444",
+        "V9L": "A444",
+        "WU9": "A444",
+        "VQM": "A446",
+        "V9M": "A446",
+        "V9N": "A446",
+        "W9G": "A664",
+        "V9P": "A448",
+        "V9Q": "A448",
+        "V9R": "A450",
+        "V9S": "A450",
+        "V95": "A450",
+        "V96": "A450",
+        "WUC": "A450"
+      },
+      "serialSuffixSources": "itdb_device.c:744-774 (serial_to_model_mapping)",
+      "sparseArtwork": false,
+      "sparseArtworkSource": "itdb_device.c:1423-1453 (itdb_device_supports_sparse_artwork: FALSE for these generations)",
+      "artwork": true,
+      "coverFormats": [
+        {
+          "formatId": 1028,
+          "width": 100,
+          "height": 100,
+          "pixelFormat": "RGB565",
+          "byteOrder": "little",
+          "bytesPerPixel": 2,
+          "rowAlignmentBytes": 0,
+          "backColor": [
+            0,
+            0,
+            0
+          ],
+          "crop": false,
+          "rotation": 0,
+          "ithmbFile": "F1028_<n>.ithmb",
+          "bytes": 20000,
+          "source": "itdb_device.c:514 (ipod_video_cover_art_info)"
+        },
+        {
+          "formatId": 1029,
+          "width": 200,
+          "height": 200,
+          "pixelFormat": "RGB565",
+          "byteOrder": "little",
+          "bytesPerPixel": 2,
+          "rowAlignmentBytes": 0,
+          "backColor": [
+            0,
+            0,
+            0
+          ],
+          "crop": false,
+          "rotation": 0,
+          "ithmbFile": "F1029_<n>.ithmb",
+          "bytes": 80000,
+          "source": "itdb_device.c:515 (ipod_video_cover_art_info)"
+        }
+      ],
+      "formatTableSource": "itdb_device.c:604-605 (ipod_artwork_capabilities)"
+    },
+    {
+      "family": "nano-1g",
+      "name": "iPod nano (1st generation)",
+      "libgpodGenerations": [
+        "ITDB_IPOD_GENERATION_NANO_1"
+      ],
+      "modelNumbers": [
+        "A350",
+        "A352",
+        "A004",
+        "A099",
+        "A005",
+        "A107"
+      ],
+      "modelNumberSources": [
+        "itdb_device.c:164",
+        "itdb_device.c:165",
+        "itdb_device.c:166",
+        "itdb_device.c:167",
+        "itdb_device.c:168",
+        "itdb_device.c:169"
+      ],
+      "serialSuffixes": {
+        "UNA": "A350",
+        "UNB": "A350",
+        "UPR": "A352",
+        "UPS": "A352",
+        "SZB": "A004",
+        "SZV": "A004",
+        "SZW": "A004",
+        "TJT": "A099",
+        "TJU": "A099",
+        "SZC": "A005",
+        "SZT": "A005",
+        "TK2": "A107",
+        "TK3": "A107"
+      },
+      "serialSuffixSources": "itdb_device.c:709-721 (serial_to_model_mapping)",
+      "sparseArtwork": false,
+      "sparseArtworkSource": "itdb_device.c:1423-1453 (itdb_device_supports_sparse_artwork: FALSE for these generations)",
+      "artwork": true,
+      "coverFormats": [
+        {
+          "formatId": 1031,
+          "width": 42,
+          "height": 42,
+          "pixelFormat": "RGB565",
+          "byteOrder": "little",
+          "bytesPerPixel": 2,
+          "rowAlignmentBytes": 0,
+          "backColor": [
+            0,
+            0,
+            0
+          ],
+          "crop": false,
+          "rotation": 0,
+          "ithmbFile": "F1031_<n>.ithmb",
+          "bytes": 3528,
+          "source": "itdb_device.c:457 (ipod_nano_cover_art_info)"
+        },
+        {
+          "formatId": 1027,
+          "width": 100,
+          "height": 100,
+          "pixelFormat": "RGB565",
+          "byteOrder": "little",
+          "bytesPerPixel": 2,
+          "rowAlignmentBytes": 0,
+          "backColor": [
+            0,
+            0,
+            0
+          ],
+          "crop": false,
+          "rotation": 0,
+          "ithmbFile": "F1027_<n>.ithmb",
+          "bytes": 20000,
+          "source": "itdb_device.c:458 (ipod_nano_cover_art_info)"
+        }
+      ],
+      "formatTableSource": "itdb_device.c:606 (ipod_artwork_capabilities)"
+    },
+    {
+      "family": "nano-2g",
+      "name": "iPod nano (2nd generation)",
+      "libgpodGenerations": [
+        "ITDB_IPOD_GENERATION_NANO_2"
+      ],
+      "modelNumbers": [
+        "A477",
+        "A426",
+        "A428",
+        "A487",
+        "A489",
+        "A725",
+        "A726",
+        "A497"
+      ],
+      "modelNumberSources": [
+        "itdb_device.c:191",
+        "itdb_device.c:192",
+        "itdb_device.c:193",
+        "itdb_device.c:194",
+        "itdb_device.c:195",
+        "itdb_device.c:196",
+        "itdb_device.c:197",
+        "itdb_device.c:198"
+      ],
+      "serialSuffixes": {
+        "VQ5": "A477",
+        "VQ6": "A477",
+        "V8T": "A426",
+        "V8U": "A426",
+        "V8W": "A428",
+        "V8X": "A428",
+        "VQH": "A487",
+        "VQJ": "A487",
+        "VQK": "A489",
+        "VKL": "A489",
+        "WL2": "A725",
+        "WL3": "A725",
+        "X9A": "A726",
+        "X9B": "A726",
+        "VQT": "A497",
+        "VQU": "A497"
+      },
+      "serialSuffixSources": "itdb_device.c:722-737 (serial_to_model_mapping)",
+      "sparseArtwork": false,
+      "sparseArtworkSource": "itdb_device.c:1423-1453 (itdb_device_supports_sparse_artwork: FALSE for these generations)",
+      "artwork": true,
+      "coverFormats": [
+        {
+          "formatId": 1031,
+          "width": 42,
+          "height": 42,
+          "pixelFormat": "RGB565",
+          "byteOrder": "little",
+          "bytesPerPixel": 2,
+          "rowAlignmentBytes": 0,
+          "backColor": [
+            0,
+            0,
+            0
+          ],
+          "crop": false,
+          "rotation": 0,
+          "ithmbFile": "F1031_<n>.ithmb",
+          "bytes": 3528,
+          "source": "itdb_device.c:457 (ipod_nano_cover_art_info)"
+        },
+        {
+          "formatId": 1027,
+          "width": 100,
+          "height": 100,
+          "pixelFormat": "RGB565",
+          "byteOrder": "little",
+          "bytesPerPixel": 2,
+          "rowAlignmentBytes": 0,
+          "backColor": [
+            0,
+            0,
+            0
+          ],
+          "crop": false,
+          "rotation": 0,
+          "ithmbFile": "F1027_<n>.ithmb",
+          "bytes": 20000,
+          "source": "itdb_device.c:458 (ipod_nano_cover_art_info)"
+        }
+      ],
+      "formatTableSource": "itdb_device.c:607 (ipod_artwork_capabilities)"
+    },
+    {
+      "family": "photo",
+      "name": "iPod Photo / iPod Color",
+      "libgpodGenerations": [
+        "ITDB_IPOD_GENERATION_PHOTO"
+      ],
+      "modelNumbers": [
+        "A079",
+        "A127",
+        "9829",
+        "9585",
+        "9830",
+        "9586",
+        "S492"
+      ],
+      "modelNumberSources": [
+        "itdb_device.c:107",
+        "itdb_device.c:108",
+        "itdb_device.c:109",
+        "itdb_device.c:110",
+        "itdb_device.c:111",
+        "itdb_device.c:112",
+        "itdb_device.c:203"
+      ],
+      "serialSuffixes": {
+        "TDU": "A079",
+        "TDS": "A079",
+        "TM2": "A127",
+        "SAY": "9829",
+        "R5Q": "9585",
+        "SAZ": "9830",
+        "SB1": "9830",
+        "R5R": "9586",
+        "R5T": "9586"
+      },
+      "serialSuffixSources": "itdb_device.c:657-665 (serial_to_model_mapping)",
+      "sparseArtwork": false,
+      "sparseArtworkSource": "itdb_device.c:1423-1453 (itdb_device_supports_sparse_artwork: FALSE for these generations)",
+      "artwork": true,
+      "coverFormats": [
+        {
+          "formatId": 1017,
+          "width": 56,
+          "height": 56,
+          "pixelFormat": "RGB565",
+          "byteOrder": "little",
+          "bytesPerPixel": 2,
+          "rowAlignmentBytes": 0,
+          "backColor": [
+            0,
+            0,
+            0
+          ],
+          "crop": false,
+          "rotation": 0,
+          "ithmbFile": "F1017_<n>.ithmb",
+          "bytes": 6272,
+          "source": "itdb_device.c:443 (ipod_photo_cover_art_info)"
+        },
+        {
+          "formatId": 1016,
+          "width": 140,
+          "height": 140,
+          "pixelFormat": "RGB565",
+          "byteOrder": "little",
+          "bytesPerPixel": 2,
+          "rowAlignmentBytes": 0,
+          "backColor": [
+            0,
+            0,
+            0
+          ],
+          "crop": false,
+          "rotation": 0,
+          "ithmbFile": "F1016_<n>.ithmb",
+          "bytes": 39200,
+          "source": "itdb_device.c:444 (ipod_photo_cover_art_info)"
+        }
+      ],
+      "formatTableSource": "itdb_device.c:603 (ipod_artwork_capabilities)"
+    },
+    {
+      "family": "mini",
+      "name": "iPod mini (1st / 2nd generation)",
+      "libgpodGenerations": [
+        "ITDB_IPOD_GENERATION_MINI_1",
+        "ITDB_IPOD_GENERATION_MINI_2"
+      ],
+      "modelNumbers": [
+        "9160",
+        "9436",
+        "9435",
+        "9434",
+        "9437",
+        "9800",
+        "9802",
+        "9804",
+        "9806",
+        "9801",
+        "9803",
+        "9805",
+        "9807"
+      ],
+      "modelNumberSources": [
+        "itdb_device.c:89",
+        "itdb_device.c:90",
+        "itdb_device.c:91",
+        "itdb_device.c:92",
+        "itdb_device.c:93",
+        "itdb_device.c:96",
+        "itdb_device.c:97",
+        "itdb_device.c:98",
+        "itdb_device.c:99",
+        "itdb_device.c:100",
+        "itdb_device.c:101",
+        "itdb_device.c:102",
+        "itdb_device.c:103"
+      ],
+      "serialSuffixes": {
+        "PFW": "9160",
+        "PRC": "9160",
+        "QKL": "9436",
+        "QKQ": "9436",
+        "QKK": "9435",
+        "QKP": "9435",
+        "QKJ": "9434",
+        "QKN": "9434",
+        "QKM": "9437",
+        "QKR": "9437",
+        "S41": "9800",
+        "S4C": "9800",
+        "S43": "9802",
+        "S45": "9804",
+        "S47": "9806",
+        "S4J": "9806",
+        "S42": "9801",
+        "S44": "9803",
+        "S48": "9807"
+      },
+      "serialSuffixSources": "itdb_device.c:666-684 (serial_to_model_mapping)",
+      "sparseArtwork": false,
+      "sparseArtworkSource": "itdb_device.c:1423-1453 (itdb_device_supports_sparse_artwork: FALSE for these generations)",
+      "artwork": false,
+      "coverFormats": [],
+      "noArtworkSource": "itdb_device.c:602-622: no ipod_artwork_capabilities row for these generations"
+    },
+    {
+      "family": "classic-mono",
+      "name": "iPod 1G-4G (monochrome)",
+      "libgpodGenerations": [
+        "ITDB_IPOD_GENERATION_FIRST",
+        "ITDB_IPOD_GENERATION_SECOND",
+        "ITDB_IPOD_GENERATION_THIRD",
+        "ITDB_IPOD_GENERATION_FOURTH"
+      ],
+      "modelNumbers": [
+        "8513",
+        "8541",
+        "8697",
+        "8709",
+        "8737",
+        "8740",
+        "8738",
+        "8741",
+        "8976",
+        "8946",
+        "9460",
+        "9244",
+        "8948",
+        "9245",
+        "9282",
+        "9787",
+        "9268",
+        "E436"
+      ],
+      "modelNumberSources": [
+        "itdb_device.c:57",
+        "itdb_device.c:58",
+        "itdb_device.c:59",
+        "itdb_device.c:60",
+        "itdb_device.c:66",
+        "itdb_device.c:67",
+        "itdb_device.c:68",
+        "itdb_device.c:69",
+        "itdb_device.c:75",
+        "itdb_device.c:76",
+        "itdb_device.c:77",
+        "itdb_device.c:78",
+        "itdb_device.c:79",
+        "itdb_device.c:80",
+        "itdb_device.c:84",
+        "itdb_device.c:85",
+        "itdb_device.c:86",
+        "itdb_device.c:202"
+      ],
+      "serialSuffixes": {
+        "LG6": "8541",
+        "NAM": "8541",
+        "MJ2": "8541",
+        "ML1": "8709",
+        "MME": "8709",
+        "MMB": "8737",
+        "NGE": "8740",
+        "NGH": "8740",
+        "MMC": "8738",
+        "MMF": "8741",
+        "NRH": "8976",
+        "NLW": "8946",
+        "QQF": "9460",
+        "PQ5": "9244",
+        "PNT": "9244",
+        "NLY": "8948",
+        "NM7": "8948",
+        "PNU": "9245",
+        "PS9": "9282",
+        "Q8U": "9282",
+        "V9V": "9787",
+        "S2X": "9787",
+        "PQ7": "9268"
+      },
+      "serialSuffixSources": "itdb_device.c:634-656 (serial_to_model_mapping)",
+      "sparseArtwork": false,
+      "sparseArtworkSource": "itdb_device.c:1423-1453 (itdb_device_supports_sparse_artwork: FALSE for these generations)",
+      "artwork": false,
+      "coverFormats": [],
+      "noArtworkSource": "itdb_device.c:602-622: no ipod_artwork_capabilities row for these generations"
+    }
+  ]
+}

@@ -794,6 +794,10 @@ const electronAPI = {
     ipcRenderer.invoke('preview-place-weather', place),
   getSyncHistory: (): Promise<{ ok: boolean; entries: Array<Record<string, unknown>> }> =>
     ipcRenderer.invoke('get-sync-history'),
+  ipodArtworkFamilies: (): Promise<Array<{ family: string; name: string }>> =>
+    ipcRenderer.invoke('ipod-artwork-families'),
+  rememberIpodArtworkFamily: (family: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('ipod-artwork-remember', family),
   refreshDeezerPreview: (artist: string, title: string): Promise<{ ok: boolean; previewUrl?: string }> =>
     ipcRenderer.invoke('refresh-deezer-preview', artist, title),
   onIpodRoundTrip: (callback: (payload: { updates: Array<{ id: number; field: string; value: number }>; summary: { plays: number; tracks: number; otgLists: number } }) => void) => {

@@ -14,6 +14,7 @@
  */
 import { join } from 'path'
 import { readFile } from 'fs/promises'
+import { artworkFamilies, rememberArtworkFamily } from '../ipod-artwork.ts'
 import type { IpcRegistrar } from '../ipc-register.ts'
 
 interface PicksRow {
@@ -38,6 +39,8 @@ interface ResultRow {
   copyErrors?: number
   /** Written on the sealed run; also holds songs left off at the conversion step. */
   leftOff?: Array<{ id: number; t?: string; a?: string; why?: string }>
+  /** Album covers (ipod-artwork.ts ArtworkOutcome). */
+  artwork?: { images: number; model: string | null; ask: boolean; skipped: string | null }
 }
 interface RoundTripRow {
   kind: 'roundtrip'
@@ -63,6 +66,8 @@ export interface SyncHistoryEntry {
   plays?: Array<{ id: number; delta: number }>
   otgLists?: number
   unmatched?: number
+  /** Album covers on that sync (ipod-artwork.ts ArtworkOutcome). */
+  artwork?: { images: number; model: string | null; ask: boolean; skipped: string | null }
 }
 
 function parseLines<T>(text: string, kind: string): T[] {
@@ -110,6 +115,7 @@ export function buildSyncHistory(
       removed: (p.removed || []).map((id) => prev.get(id) || { id }),
       ...(p.requested != null ? { requested: p.requested } : {}),
       ...((res?.leftOff || p.leftOff || []).length > 0 ? { leftOff: res?.leftOff || p.leftOff } : {}),
+      ...(res?.artwork ? { artwork: res.artwork } : {}),
     })
   })
   for (const t of trips) {
@@ -130,8 +136,22 @@ export function registerSyncHistoryIpc(
   /** `dir`: the plugged-in iPod's own state dir (each iPod keeps its own ledgers,
    *  step 2b) — null for an iPod JakeTunes doesn't know, which has no history.
    *  Absent: `stateDir` (the Original's). */
-  host: { stateDir: string; dir?: () => Promise<string | null> },
+  host: { stateDir: string; dir?: () => Promise<string | null>; artworkModelsFile?: string; ipodPlugged?: () => boolean },
 ): void {
+  // "Which iPod is this?" for album covers (core/ipod_artwork_models.json, ipod-artwork.ts).
+  ipc.handle('ipod-artwork-families', async () => (host.artworkModelsFile ? artworkFamilies(host.artworkModelsFile) : []), { public: true })
+  ipc.handle('ipod-artwork-remember', async (_e, family: unknown) => {
+    // With nothing plugged in, dir() is the Original's folder: never save an answer meant for another iPod there.
+    if (typeof family !== 'string' || !host.artworkModelsFile || !host.dir || !host.ipodPlugged?.()) return { ok: false, error: 'no iPod plugged in' }
+    const dir = await host.dir().catch(() => null)
+    if (!dir) return { ok: false, error: 'no iPod plugged in' }
+    const known = (await artworkFamilies(host.artworkModelsFile)).map((f) => f.family)
+    try {
+      return (await rememberArtworkFamily(dir, family, known)) ? { ok: true } : { ok: false, error: 'unknown model' }
+    } catch (err) {
+      return { ok: false, error: (err as Error)?.message ?? 'could not save' }
+    }
+  })
   ipc.handle('get-sync-history', async (): Promise<{ ok: boolean; entries: SyncHistoryEntry[] }> => {
     const dir = host.dir ? await host.dir().catch(() => host.stateDir) : host.stateDir
     if (dir === null) return { ok: true, entries: [] }

@@ -1028,7 +1028,12 @@ declare global {
     requested?: number
     leftOff?: Array<{ id: number; t?: string; a?: string; why?: string }>
     plays?: Array<{ id: number; delta: number }>; otgLists?: number; unmatched?: number
+    artwork?: { images: number; model: string | null; ask: boolean; skipped: string | null }
   }> }>
+      /** The colour iPods the artwork table knows, for "Which iPod is this?". */
+      ipodArtworkFamilies?: () => Promise<Array<{ family: string; name: string }>>
+      /** Remember which iPod the plugged-in one is ('none' = no colour screen). */
+      rememberIpodArtworkFamily?: (family: string) => Promise<{ ok: boolean; error?: string }>
   refreshDeezerPreview: (artist: string, title: string) => Promise<{ ok: boolean; previewUrl?: string }>
   onIpodRoundTrip: (callback: (payload: { updates: Array<{ id: number; field: string; value: number }>; summary: { plays: number; tracks: number; otgLists: number } }) => void) => () => void
   onSyncProgress: (callback: (progress: { phase: 'copy' | 'preflight' | 'db' | 'verify' | 'cancelled' | 'error'; current: number; total: number; title: string; mode?: 'swap' | 'full'; summary?: string }) => void) => () => void
