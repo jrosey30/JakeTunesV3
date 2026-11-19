@@ -11,7 +11,7 @@ import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { artworkPathsFor, installArtworkOnIpod, prepareArtworkArgs } from '../ipod-artwork.ts'
+import { ARTWORK_CACHE_DIR, artworkFamilies, artworkOutcome, artworkPathsFor, installArtworkOnIpod, prepareArtworkArgs, rememberArtworkFamily, rememberedArtworkFamily } from '../ipod-artwork.ts'
 
 describe('artworkPathsFor / prepareArtworkArgs', () => {
   test('album artist first, then the song artist; rows are not changed', async () => {
@@ -102,6 +102,54 @@ describe('installArtworkOnIpod', () => {
 describe('core/tests/test_ipod_artwork.py', () => {
   test('ArtworkDB round trip, iPod Video formats, a mini writes nothing', () => {
     const script = join(import.meta.dirname, '..', '..', '..', 'core', 'tests', 'test_ipod_artwork.py')
+    const r = spawnSync('python3', [script], { encoding: 'utf8', timeout: 120_000 })
+    if (r.error && (r.error as NodeJS.ErrnoException).code === 'ENOENT') return // no python3 on this runner
+    assert.equal(r.status, 0, `${r.stdout.slice(-3000)}\n${r.stderr.slice(-2000)}`)
+    assert.match(r.stdout, /all ok/)
+  })
+})
+
+describe('artwork table: remembered model, outcome, cache folder (2026-11-19)', () => {
+  test('prepareArtworkArgs adds the iPod\'s cache folder and its remembered model', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'jt-art-'))
+    const local = join(root, 'art')
+    const ipod = join(root, 'ipod-pools', 'x')
+    const plain = await prepareArtworkArgs([{ id: 7, artist: 'A', album: 'B' }], async () => '/art/b.jpg', local, () => {}, { ipodStateDir: ipod })
+    assert.deepEqual(plain, ['--artwork-out', local, '--artwork-map', local + '.map.json', '--artwork-cache', join(ipod, ARTWORK_CACHE_DIR)])
+    assert.equal(await rememberArtworkFamily(ipod, 'nano-2g', ['video', 'nano-2g']), true)
+    assert.equal(await rememberedArtworkFamily(ipod), 'nano-2g')
+    const withModel = await prepareArtworkArgs([{ id: 7, artist: 'A', album: 'B' }], async () => '/art/b.jpg', local, () => {}, { ipodStateDir: ipod })
+    assert.deepEqual(withModel.slice(-2), ['--artwork-family', 'nano-2g'])
+  })
+
+  test('only a family the table knows, or "none", is remembered', async () => {
+    const ipod = await mkdtemp(join(tmpdir(), 'jt-art-'))
+    assert.equal(await rememberArtworkFamily(ipod, 'zune', ['video']), false)
+    assert.equal(await rememberedArtworkFamily(ipod), null)
+    assert.equal(await rememberArtworkFamily(ipod, 'none', ['video']), true)
+    assert.equal(await rememberedArtworkFamily(ipod), 'none')
+  })
+
+  test('artworkOutcome reads db_reader\'s answer in plain words', () => {
+    assert.deepEqual(artworkOutcome(JSON.stringify({ ok: true, artwork: { images: 12, familyName: 'iPod Video (5G / 5.5G)', ask: false } })),
+      { images: 12, model: 'iPod Video (5G / 5.5G)', ask: false, skipped: null })
+    assert.equal(artworkOutcome(JSON.stringify({ ok: true, artwork: { ask: true } }))?.ask, true)
+    assert.match(artworkOutcome(JSON.stringify({ ok: true, artwork: { ask: true } }))?.skipped ?? '', /which iPod/)
+    assert.match(artworkOutcome(JSON.stringify({ ok: true, artwork: { error: 'UnsupportedFormat: x' } }))?.skipped ?? '', /couldn’t be made/)
+    assert.equal(artworkOutcome(JSON.stringify({ ok: true, artwork: { model: null, why: 'iPod mini has no colour screen' } }))?.skipped, null)
+    assert.equal(artworkOutcome('not json'), null)
+  })
+
+  test('artworkFamilies lists the colour iPods in the shipped table', async () => {
+    const file = join(import.meta.dirname, '..', '..', '..', 'core', 'ipod_artwork_models.json')
+    const fams = (await artworkFamilies(file)).map((f) => f.family)
+    assert.deepEqual(fams, ['video', 'nano-1g', 'nano-2g', 'photo'])
+  })
+})
+
+describe('core/tests/test_ipod_artwork_table.py', () => {
+  test('the table, every format\'s byte size, model detection, the cache', () => {
+    const script = join(import.meta.dirname, '..', '..', '..', 'core', 'tests', 'test_ipod_artwork_table.py')
     const r = spawnSync('python3', [script], { encoding: 'utf8', timeout: 120_000 })
     if (r.error && (r.error as NodeJS.ErrnoException).code === 'ENOENT') return // no python3 on this runner
     assert.equal(r.status, 0, `${r.stdout.slice(-3000)}\n${r.stderr.slice(-2000)}`)

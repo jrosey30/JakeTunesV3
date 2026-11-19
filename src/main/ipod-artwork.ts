@@ -20,7 +20,7 @@
  * ArtworkDB last. A rename that fails part-way removes ArtworkDB, so the iPod
  * shows no covers rather than wrong ones.
  */
-import { copyFile, mkdir, readdir, rename, rm, stat, unlink, writeFile } from 'fs/promises'
+import { copyFile, mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from 'fs/promises'
 import { join } from 'path'
 
 type Row = Record<string, unknown>
@@ -66,6 +66,9 @@ export async function prepareArtworkArgs(
   resolve: (artist: string, album: string) => Promise<string | null>,
   localDir: string,
   log: (line: string) => void,
+  /** The plugged-in iPod's own state folder: its thumbnail cache, and the
+   *  model Jake named for it when the iPod itself doesn't say (rememberArtworkFamily). */
+  opts: { ipodStateDir?: string } = {},
 ): Promise<string[]> {
   try {
     await clearLocalArtwork(localDir)
@@ -73,9 +76,81 @@ export async function prepareArtworkArgs(
     const mapFile = localDir + '.map.json'
     await writeFile(mapFile, JSON.stringify(paths))
     log(`${withArt}/${tracks.length} song(s) have a cover in the app`)
-    return ['--artwork-out', localDir, '--artwork-map', mapFile]
+    const args = ['--artwork-out', localDir, '--artwork-map', mapFile]
+    if (opts.ipodStateDir) {
+      args.push('--artwork-cache', join(opts.ipodStateDir, ARTWORK_CACHE_DIR))
+      const family = await rememberedArtworkFamily(opts.ipodStateDir)
+      if (family) args.push('--artwork-family', family)
+    }
+    return args
   } catch (err) {
     log(`cover lookup failed (non-fatal, no covers this sync): ${errText(err)}`)
+    return []
+  }
+}
+
+/** Thumbnails kept between syncs, in the iPod's own state folder (core/ipod_artwork.py ThumbCache). */
+export const ARTWORK_CACHE_DIR = 'artwork-thumbs'
+/** The model Jake named for an iPod that doesn't say what it is. */
+export const ARTWORK_MODEL_FILE = 'ipod-artwork-model.json'
+
+/** The family Jake named for this iPod ('none' = no colour screen), or null. */
+export async function rememberedArtworkFamily(ipodStateDir: string): Promise<string | null> {
+  try {
+    const raw = JSON.parse(await readFile(join(ipodStateDir, ARTWORK_MODEL_FILE), 'utf-8')) as { family?: unknown }
+    return typeof raw.family === 'string' && /^[a-z0-9-]{1,40}$/.test(raw.family) ? raw.family : null
+  } catch {
+    return null
+  }
+}
+
+/** Remember Jake's answer for this iPod. Only a family the table knows, or 'none'. */
+export async function rememberArtworkFamily(ipodStateDir: string, family: string, known: readonly string[]): Promise<boolean> {
+  if (family !== 'none' && !known.includes(family)) return false
+  await mkdir(ipodStateDir, { recursive: true })
+  const tmp = join(ipodStateDir, `${ARTWORK_MODEL_FILE}.tmp-${process.pid}`)
+  await writeFile(tmp, JSON.stringify({ family, at: new Date().toISOString() }))
+  await rename(tmp, join(ipodStateDir, ARTWORK_MODEL_FILE))
+  return true
+}
+
+/** What the sync did about covers, from db_reader's JSON answer (its `artwork` key). */
+export interface ArtworkOutcome {
+  /** Covers written for this many songs (0 = none this sync). */
+  images: number
+  /** The table's family name for this iPod, if known. */
+  model: string | null
+  /** Nothing on the iPod says what it is: ask Jake once. */
+  ask: boolean
+  /** Why there are no covers, in plain words, or null. */
+  skipped: string | null
+}
+
+export function artworkOutcome(stdout: string): ArtworkOutcome | null {
+  let art: Record<string, unknown> | undefined
+  try {
+    art = (JSON.parse(stdout) as { artwork?: Record<string, unknown> }).artwork
+  } catch {
+    return null
+  }
+  if (!art || typeof art !== 'object') return null
+  const images = typeof art.images === 'number' ? art.images : 0
+  const model = typeof art.familyName === 'string' ? art.familyName : null
+  const ask = art.ask === true
+  let skipped: string | null = null
+  if (ask) skipped = 'JakeTunes doesn’t know which iPod this is'
+  else if (typeof art.error === 'string') skipped = 'the covers couldn’t be made'
+  return { images, model, ask, skipped }
+}
+
+/** The colour iPods the table knows, for "Which iPod is this?" (core/ipod_artwork_models.json). */
+export async function artworkFamilies(modelsFile: string): Promise<Array<{ family: string; name: string }>> {
+  try {
+    const doc = JSON.parse(await readFile(modelsFile, 'utf-8')) as { families?: Array<{ family?: unknown; name?: unknown; artwork?: unknown }> }
+    return (doc.families ?? [])
+      .filter((f) => f.artwork === true && typeof f.family === 'string' && typeof f.name === 'string')
+      .map((f) => ({ family: f.family as string, name: f.name as string }))
+  } catch {
     return []
   }
 }

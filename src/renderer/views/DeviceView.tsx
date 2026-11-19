@@ -5,6 +5,7 @@ import type { OneSyncPlan } from '../../common/ipod-one-sync-plan'
 import { readyLine, leftOffLine, listErrorLine, syncButtonLabel, lastSyncedLine, syncingStep, withLastSyncLeftOff } from '../../common/ipod-one-sync-plan'
 import { readyOnMacLine, leaveOffQuestion, syncNowLeavingOffLabel, idsLeavingOff, mustAskBeforeSync, listFetchStep, type ReadyOnMac } from '../../common/ipod-ready-on-mac'
 import { stickerHex } from '../components/IpodIdentityBar'
+import IpodArtworkAsk from '../components/IpodArtworkAsk'
 import { checkIpodName, macShowsLine } from '../../common/ipod-name'
 // Called in runFullLibrarySync below. The comment at the top of this file has
 // named this as the shared source of sync playlists since it was extracted, but
@@ -809,6 +810,7 @@ export default function DeviceView() {
               <button type="button" className="device-link-btn" aria-expanded={showLeftOff} onClick={() => setShowLeftOff((v) => !v)}>{showLeftOff ? 'Hide' : 'Which ones'}</button>
             </span>
           )}
+          <IpodArtworkAsk artwork={lastSync?.artwork} />
           <span>
             {lastSyncedLine(lastSync?.when)}{' · '}
             <button type="button" className="device-link-btn" onClick={() => setShowSyncHistory(true)}>Sync History</button>

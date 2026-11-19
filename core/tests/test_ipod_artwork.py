@@ -44,7 +44,9 @@ def check(label, cond, detail=''):
 
 def fake_cover(key, size, formats, shade):
     thumbs = []
-    for fid, W, H in formats:
+    for f in formats:
+        f = A._fmt(f)
+        fid, W, H = f['formatId'], f['width'], f['height']
         thumbs.append({'format_id': fid, 'data': bytes([shade]) * (W * H * 2),
                        'hpad': 0, 'vpad': 0, 'width': W, 'height': H})
     return {'key': key, 'size': size, 'thumbs': thumbs}

@@ -56,7 +56,7 @@ import {
   type TsaSeal,
 } from './ipod-sync-tsa.ts'
 import { ensureContiguousDb as platformEnsureContiguousDb } from './ipod-db-contiguity.ts'
-import { clearLocalArtwork, installArtworkOnIpod, prepareArtworkArgs } from './ipod-artwork.ts'
+import { artworkOutcome, clearLocalArtwork, installArtworkOnIpod, prepareArtworkArgs, type ArtworkOutcome } from './ipod-artwork.ts'
 import {
   confirmWriteOnCard,
   flushCardCaches,
@@ -182,6 +182,8 @@ export interface ActivitySyncInput {
 
 export interface ActivitySyncResult {
   ok: boolean
+  /** What happened to album covers (ipod-artwork.ts artworkOutcome); absent when the sync didn't build any. */
+  artwork?: ArtworkOutcome
   copied: number
   /** Songs already on the card by identity + size, left in place (2026-09-19). */
   kept?: number
@@ -317,6 +319,8 @@ async function runActivitySyncHolding(
   const listOnly = input.listOnly === true
   // List-only: songs that cannot go on, each with why (result + ledger).
   const leftOff: LeftOffSong[] = []
+  // Covers: the last catalog write's answer (never fails the sync).
+  let artwork: ArtworkOutcome | null = null
   let tracks: Array<Record<string, unknown>>
   let target = requested
   {
@@ -1234,7 +1238,7 @@ async function runActivitySyncHolding(
     // Album covers for a colour iPod (ipod-artwork.ts); nothing for a mini.
     const localArt = join(host.tempDir, `jaketunes-artwork-${host.pid}`)
     const artArgs = host.resolveArtworkFile
-      ? await prepareArtworkArgs(tracks, host.resolveArtworkFile, localArt, (line) => console.log(`activity-sync: ${line}`))
+      ? await prepareArtworkArgs(tracks, host.resolveArtworkFile, localArt, (line) => console.log(`activity-sync: ${line}`), { ipodStateDir: host.stateDir })
       : []
     const written = await spawnJson(
       python,
@@ -1252,6 +1256,7 @@ async function runActivitySyncHolding(
       })
     }
     console.log('activity-sync stderr:', written.stderr)
+    if (artArgs.length > 0) artwork = artworkOutcome(written.stdout)
     // Firmware finds songs by binary search on mhit id — ids must ascend in
     // record order or songs silently vanish from About (the 819 saga).
     const conform = await conformCatalogIdOrder(localDb)
@@ -1879,6 +1884,7 @@ async function runActivitySyncHolding(
       ...(unconvertible.length > 0 ? { unconvertible: unconvertible.map((u) => u.id) } : {}),
       ...(listOnly ? { requested } : {}),
       ...(leftOff.length > 0 ? { leftOff: leftOff.map((l) => ({ id: l.id, t: l.title, a: l.artist, why: l.why })) } : {}),
+      ...(artwork ? { artwork } : {}),
     }) + '\n', 'utf-8')
   } catch (err) {
     console.warn('activity-sync: ledger result append failed (non-blocking):', err)
@@ -1901,6 +1907,7 @@ async function runActivitySyncHolding(
     ...(unconvertible.length > 0 ? { unconvertible } : {}),
     ...(listOnly ? { requested } : {}),
     ...(leftOff.length > 0 ? { leftOff } : {}),
+    ...(artwork ? { artwork } : {}),
     mode,
     ...(counts ? { swap: counts } : { fullReason: fullReason || undefined }),
     summary,
