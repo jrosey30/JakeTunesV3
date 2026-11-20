@@ -8,14 +8,18 @@
  * the Search tab's Save album would make for that edition.
  *
  * One lookup at a time, a little apart: a Listen List with forty albums must
- * not burst Apple's search (it answers 403 to a burst).
+ * not burst Apple's search (it answers 403 to a burst). Nothing is asked on
+ * mount: a card's Edition menu asks when it is hovered or focused (in turn),
+ * and opening it, opening the songs, or a Save album click asks at the front
+ * of the line, ahead of every lookup still waiting.
  */
 import { albumQueryId, trackQueryId, type QResult, type QueueOrigin } from './downloadQueue.ts'
 import { norm } from './downloadKeys.ts'
 import type { AlbumEdition, AlbumEditions, AlbumSaveEdition, AlbumSaveSurface } from '../../../common/album-preflight.ts'
 
 export interface EditionsState {
-  state: 'idle' | 'loading' | 'ready'
+  /** failed: the last lookup got no answer. Not kept: the next look asks again. */
+  state: 'idle' | 'loading' | 'ready' | 'failed'
   editions: AlbumEdition[]
   /** Jake's pick from the menu, else main's choice, else null (no edition named). */
   chosenId: number | null
@@ -28,9 +32,28 @@ const IDLE: EditionsState = { state: 'idle', editions: [], chosenId: null, picke
 const answers = new Map<string, AlbumEditions>()
 const inflight = new Map<string, Promise<AlbumEditions>>()
 const picks = new Map<string, number>()
+const failed = new Set<string>()
 const states = new Map<string, EditionsState>()
 const subs = new Set<() => void>()
-let line: Promise<unknown> = Promise.resolve()
+
+/** The lookups waiting their turn, front first. One runs at a time. */
+interface Waiting { key: string; run: () => Promise<void> }
+let waiting: Waiting[] = []
+let running = false
+
+async function pump(): Promise<void> {
+  if (running) return
+  running = true
+  try {
+    for (let next = waiting.shift(); next; next = waiting.shift()) await next.run()
+  } finally { running = false }
+}
+
+/** Moves a waiting lookup to the front of the line (no-op once it has started). */
+function toFront(key: string): void {
+  const i = waiting.findIndex((w) => w.key === key)
+  if (i > 0) waiting.unshift(...waiting.splice(i, 1))
+}
 
 const keyOf = (artist: string, album: string): string => albumQueryId(artist, album)
 const emit = (): void => { for (const f of subs) f() }
@@ -42,7 +65,7 @@ function rebuild(key: string): void {
   const editions = a?.editions ?? []
   const picked = pick != null && editions.some((e) => e.collectionId === pick)
   states.set(key, {
-    state: a ? 'ready' : loading ? 'loading' : 'idle',
+    state: a ? 'ready' : loading ? 'loading' : failed.has(key) ? 'failed' : 'idle',
     editions,
     chosenId: picked ? pick! : a?.chosenId ?? null,
     picked,
@@ -59,30 +82,48 @@ export function editionsState(artist: string, album: string): EditionsState {
   return states.get(keyOf(artist, album)) ?? IDLE
 }
 
-/** The editions of a record, asked once per session (in turn with the others). */
-export function loadEditions(artist: string, album: string): Promise<AlbumEditions> {
+/**
+ * The editions of a record, asked once per session (in turn with the others).
+ * `front`: Jake is waiting on this one (a Save album click, the menu or the
+ * songs opened), so it goes ahead of every lookup still waiting.
+ */
+export function loadEditions(artist: string, album: string, o: { front?: boolean } = {}): Promise<AlbumEditions> {
   const key = keyOf(artist, album)
   const have = answers.get(key)
   if (have) return Promise.resolve(have)
-  const running = inflight.get(key)
-  if (running) return running
+  const inFlight = inflight.get(key)
+  if (inFlight) {
+    if (o.front) toFront(key)
+    return inFlight
+  }
   const api = typeof window !== 'undefined' ? window.electronAPI?.listAlbumEditions : undefined
-  if (!api) return Promise.resolve({ ok: false, editions: [], chosenId: null })
-  const p = line.then(async () => {
-    let out: AlbumEditions
-    try { out = (await api(artist, album)) ?? { ok: false, editions: [], chosenId: null } } catch { out = { ok: false, editions: [], chosenId: null } }
-    await new Promise((r) => setTimeout(r, SPACING_MS))
-    return out
+  if (!api) {
+    failed.add(key)
+    rebuild(key); emit()
+    return Promise.resolve({ ok: false, editions: [], chosenId: null })
+  }
+  failed.delete(key)
+  const p = new Promise<AlbumEditions>((resolve) => {
+    const task: Waiting = {
+      key,
+      run: async () => {
+        let out: AlbumEditions
+        try { out = (await api(artist, album)) ?? { ok: false, editions: [], chosenId: null } } catch { out = { ok: false, editions: [], chosenId: null } }
+        inflight.delete(key)
+        // A failed lookup is not kept: the next look asks again.
+        if (out.ok) answers.set(key, out)
+        else failed.add(key)
+        rebuild(key); emit()
+        resolve(out)
+        await new Promise((r) => setTimeout(r, SPACING_MS))
+      },
+    }
+    if (o.front) waiting.unshift(task)
+    else waiting.push(task)
   })
-  line = p.catch(() => undefined)
   inflight.set(key, p)
   rebuild(key); emit()
-  void p.then((out) => {
-    inflight.delete(key)
-    // A failed lookup is not kept: the next look asks again.
-    if (out.ok) answers.set(key, out)
-    rebuild(key); emit()
-  })
+  void pump()
   return p
 }
 
@@ -135,7 +176,7 @@ export function albumJobFor(o: {
 
 /** The edition a save takes right now (waits for the lookup, at most a few seconds). */
 export async function editionToSave(artist: string, album: string): Promise<{ edition: AlbumEdition | null; from: AlbumSaveEdition }> {
-  await loadEditions(artist, album).catch(() => null)
+  await loadEditions(artist, album, { front: true }).catch(() => null)
   const s = editionsState(artist, album)
   const edition = s.editions.find((e) => e.collectionId === s.chosenId) ?? null
   return { edition, from: edition ? (s.picked ? 'picked' : 'resolved') : 'none' }
@@ -187,5 +228,5 @@ export function songJobsFor(o: { tracks: readonly EditionTrack[]; ticked: Iterab
 
 /** Tests only. */
 export function resetEditionsForTests(): void {
-  answers.clear(); inflight.clear(); picks.clear(); states.clear(); line = Promise.resolve()
+  answers.clear(); inflight.clear(); picks.clear(); states.clear(); failed.clear(); waiting = []
 }

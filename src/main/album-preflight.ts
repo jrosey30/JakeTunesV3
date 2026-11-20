@@ -9,7 +9,9 @@
  * more: the explicit gate when the row is explicit, explicit-first
  * otherwise, and the first three candidates (the walk stages at most three).
  * Where the walk would look at something this didn't, the answer is
- * "unknown" and the walk runs as it always has.
+ * "unknown" and the walk runs as it always has. That includes a listing that
+ * didn't answer anywhere in the top six: the explicit filters can lift any of
+ * them into the three that count (judgeHeardListings).
  *
  * A listed song Qobuz marks unstreamable is never a "no" here: the walk does
  * not read that flag (it stages and judges the files), so the walk decides.
@@ -51,6 +53,27 @@ export function listingCandidate(hit: { id: string; desc: string }, tl: QobuzLis
     listed: tl.tracks.length,
     streamable: tl.tracks.filter((t) => t.streamable !== false).length,
   }
+}
+
+/** One of the top six as the wiring heard it: Qobuz's listing, whether it answered, whether it 404'd. */
+export interface HeardListing {
+  hit: { id: string; desc: string }
+  tl: QobuzListingLike
+  answered: boolean
+  gone: boolean
+}
+
+/**
+ * The answer from the top six listings as heard. A listing that didn't answer
+ * (or listed no songs) is a candidate the walk would still stage, and the
+ * explicit gate / explicit-first can promote any of the six into the three
+ * that are judged, so one silent listing anywhere in them is "can't tell",
+ * never a "no". A 404 (`gone`) is left out, as the walk leaves it out.
+ */
+export function judgeHeardListings(req: RequestedAlbum, heard: readonly HeardListing[], o: { rejectedVersions?: readonly string[]; explicitSource?: boolean; beyond?: boolean } = {}): AlbumPreflight {
+  const live = heard.filter((x) => !x.gone)
+  if (live.some((x) => !x.answered || x.tl.tracks.length === 0)) return { answer: 'unknown', why: 'no-answer' }
+  return judgeQobuzAlbum(req, { ...o, listings: live.map((x) => listingCandidate(x.hit, x.tl)) })
 }
 
 const PACKAGING_WORDS: Record<string, string> = {

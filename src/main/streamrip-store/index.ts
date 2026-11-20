@@ -40,7 +40,7 @@ import { recoArtistMatches } from '../reco-match.ts'
 import { isAllowedStreamripUrl } from '../url-safety.ts'
 import { artistAliases } from '../artist-spellings-store.ts'
 import { quietWarn } from '../flight-recorder.ts'
-import { judgeQobuzAlbum, listingCandidate } from '../album-preflight.ts'
+import { judgeHeardListings } from '../album-preflight.ts'
 import { PREFLIGHT_BUDGET_MS, type AlbumPreflight, type AlbumPreflightRequest } from '../../common/album-preflight.ts'
 
 export interface StreamripDeps {
@@ -1432,11 +1432,9 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         const tl = await qobuzAlbumTrackList(hit.id, h)
         return { hit, tl, h }
       }))
-      // A listing nobody answered is a candidate the walk would still stage: no verdict.
-      const live = heard.filter((x) => !x.h.gone)
-      if (live.slice(0, 3).some((x) => !x.h.answered || x.tl.tracks.length === 0)) return { answer: 'unknown', why: 'no-answer' }
-      const verdict = judgeQobuzAlbum(req, {
-        listings: live.filter((x) => x.h.answered && x.tl.tracks.length > 0).map((x) => listingCandidate(x.hit, x.tl)),
+      // A listing nobody answered anywhere in the six is a candidate the walk could
+      // still stage (the explicit filters can lift #4-6 into the judged three): no verdict.
+      const verdict = judgeHeardListings(req, heard.map((x) => ({ hit: x.hit, tl: x.tl, answered: x.h.answered, gone: x.h.gone })), {
         rejectedVersions, explicitSource: opts?.explicitSource, beyond: ranked.length > 6,
       })
       if (verdict.answer !== 'no') return verdict
@@ -1449,8 +1447,10 @@ export function registerStreamripStore(deps: StreamripDeps): void {
           recoArtistMatches(artist, r.band) && titleMatches(title, r.name) && !unwantedVersionOf(title, r.name) && !liveBrandMarker(title, r.name)
           && !bandcampHitDoubt({ artist, title, album: title }, r))
         if (picks.length) return { answer: 'unknown', why: 'bandcamp' }
+        return verdict
       }
-      return verdict
+      // Bandcamp didn't answer: the no stands for Qobuz, and says Bandcamp wasn't asked (as the walk does).
+      return { ...verdict, bandcampUnasked: true }
     }
     let timer: NodeJS.Timeout | undefined
     const budget = new Promise<AlbumPreflight>((res) => { timer = setTimeout(() => res({ answer: 'unknown', why: 'timeout' }), PREFLIGHT_BUDGET_MS) })

@@ -50,6 +50,8 @@ export type AlbumPreflight =
       near?: boolean
       /** The editions Qobuz listed and why each isn't this one (same shape as the walk's). */
       alternatives?: Alternative[]
+      /** Bandcamp's search got no answer, so it wasn't asked and may still have the album. */
+      bandcampUnasked?: boolean
     }
   | { answer: 'unknown'; why: PreflightUnknown }
 
@@ -86,6 +88,12 @@ export function preflightLine(p: AlbumPreflight): string | null {
 /** The sentence under it, in Details. Plain words, no ids. */
 export function preflightDetail(p: AlbumPreflight): string | null {
   if (p.answer !== 'no') return null
+  const said = preflightDetailQobuz(p)
+  // The walk's own words when Bandcamp's search didn't answer (streamrip-store laneNotes).
+  return said && p.bandcampUnasked ? `${said} Bandcamp wasn’t searched, so it may still have this.` : said
+}
+
+function preflightDetailQobuz(p: Extract<AlbumPreflight, { answer: 'no' }>): string | null {
   const nothing = 'Nothing was downloaded.'
   switch (p.why) {
     case 'not-on-qobuz': return `Qobuz doesn’t have this album. ${nothing}`

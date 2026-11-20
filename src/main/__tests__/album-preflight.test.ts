@@ -7,7 +7,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { chooseAlbumEditions, editionLabelOf, type ItunesAlbumRow } from '../album-editions.ts'
-import { judgeQobuzAlbum, listingCandidate, type PreflightListing } from '../album-preflight.ts'
+import { judgeHeardListings, judgeQobuzAlbum, listingCandidate, type HeardListing, type PreflightListing } from '../album-preflight.ts'
 import { buildRequestedAlbum } from '../album-identity.ts'
 import { albumSaveEvent, editionOptionLabel, preflightDetail, preflightLine, preflightVerdict, type AlbumPreflight } from '../../common/album-preflight.ts'
 import { scrubEvent } from '../../common/usage-log.ts'
@@ -160,6 +160,25 @@ describe('does Qobuz have this edition?', () => {
     assert.equal(preflightLine(v), 'Only the live version is on Qobuz')
   })
 
+  it('a listing that didn’t answer anywhere in the top six is "can’t tell", never "no" (the explicit gate can lift #4 into the judged three)', () => {
+    const heard = (id: string, title: string, tracks: string[], o: { parental?: boolean; answered?: boolean; gone?: boolean } = {}): HeardListing => ({
+      hit: { id, desc: `${title} by MJ Lenderman` },
+      tl: { title, artist: 'MJ Lenderman', tracksCount: tracks.length, parentalWarning: o.parental, tracks: o.answered === false ? [] : tracks.map((t, i) => ({ title: t, trackNumber: i + 1, durationSec: 200, streamable: true })) },
+      answered: o.answered ?? true, gone: o.gone ?? false,
+    })
+    const req = reqOf(nine, { explicitSource: true })
+    const top3Clean = [heard('1', 'Manning Fireworks', nine, { parental: false }), heard('2', 'Manning Fireworks', nine, { parental: false }), heard('3', 'Manning Fireworks', nine, { parental: false })]
+    // #4 explicit, its listing timed out: it is the one the walk's explicit gate would stage
+    const v = judgeHeardListings(req, [...top3Clean, heard('4', 'Manning Fireworks', nine, { parental: true, answered: false })], { explicitSource: true })
+    assert.deepEqual(v, { answer: 'unknown', why: 'no-answer' })
+    // the same six with #4 listed fine: the walk would take it
+    assert.deepEqual(judgeHeardListings(req, [...top3Clean, heard('4', 'Manning Fireworks', nine, { parental: true })], { explicitSource: true }), { answer: 'found' })
+    // answered, but listed no songs: the same "can't tell"
+    assert.deepEqual(judgeHeardListings(req, [...top3Clean, { ...heard('4', 'Manning Fireworks', [], { parental: true }) }], { explicitSource: true }), { answer: 'unknown', why: 'no-answer' })
+    // a 404 is left out, as the walk leaves it out: only clean copies remain
+    assert.equal(judgeHeardListings(req, [...top3Clean, heard('4', 'Manning Fireworks', nine, { parental: true, answered: false, gone: true })], { explicitSource: true }).answer, 'no')
+  })
+
   it('a request with no tracklist can’t be refused on one: the walk decides, as before', () => {
     const bare = buildRequestedAlbum({ artist: 'MJ Lenderman', title: 'Manning Fireworks' })
     assert.deepEqual(judgeQobuzAlbum(bare, { listings: [listing('a', 'Manning Fireworks', nine)] }), { answer: 'found' })
@@ -167,6 +186,12 @@ describe('does Qobuz have this edition?', () => {
 })
 
 describe('the panel line and the job verdict', () => {
+  it('Bandcamp not asked: the "no" says it may still have it, as the walk does', () => {
+    assert.equal(preflightDetail({ answer: 'no', why: 'not-on-qobuz', bandcampUnasked: true }), 'Qobuz doesn’t have this album. Nothing was downloaded. Bandcamp wasn’t searched, so it may still have this.')
+    assert.equal(preflightDetail({ answer: 'no', why: 'not-on-qobuz' }), 'Qobuz doesn’t have this album. Nothing was downloaded.')
+    assert.equal(preflightLine({ answer: 'no', why: 'not-on-qobuz', bandcampUnasked: true }), 'Not on Qobuz')
+  })
+
   it('only a "no" has a line; found and unknown run the walk', () => {
     assert.equal(preflightLine({ answer: 'found' }), null)
     assert.equal(preflightLine({ answer: 'unknown', why: 'timeout' }), null)

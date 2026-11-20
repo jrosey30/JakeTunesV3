@@ -36,11 +36,14 @@ export default function AlbumTracklistSheet({ artist, album, origin, onSaveAlbum
   const [tracks, setTracks] = useState<{ loading: boolean; list?: EditionTrack[]; albumName?: string; error?: string }>({ loading: true })
   const [ticked, setTicked] = useState<Set<number>>(() => new Set())
 
-  useEffect(() => { void loadEditions(artist, album) }, [artist, album])
-  // The edition's own tracklist; again when the Edition menu changes it.
+  // Opening the songs is Jake waiting on them: the edition lookup goes to the front of the line.
+  useEffect(() => { void loadEditions(artist, album, { front: true }) }, [artist, album])
+  // The edition's own tracklist; again when the Edition menu changes it. A lookup that
+  // got no answer falls back to the record by name, as the songs always loaded.
   const editionId = eds.state === 'ready' ? eds.chosenId : undefined
+  const settled = eds.state === 'ready' || eds.state === 'failed'
   useEffect(() => {
-    if (eds.state !== 'ready') return
+    if (!settled) return
     let live = true
     setTracks({ loading: true }); setTicked(new Set())
     const ref = editionId ?? { artist, album }
@@ -48,7 +51,7 @@ export default function AlbumTracklistSheet({ artist, album, origin, onSaveAlbum
       .then((r) => { if (live) setTracks(r?.ok && r.tracks?.length ? { loading: false, list: r.tracks, albumName: r.album } : { loading: false, error: 'Couldn’t load the songs.' }) })
       .catch(() => { if (live) setTracks({ loading: false, error: 'Couldn’t load the songs.' }) })
     return () => { live = false }
-  }, [artist, album, editionId, eds.state])
+  }, [artist, album, editionId, settled])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
