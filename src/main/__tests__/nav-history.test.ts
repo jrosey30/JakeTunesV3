@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  recordLocation, canGoBack, canGoForward, sameLoc, locationOf, restoreActionFor, savedLocation, detailSubjectFor,
+  recordLocation, canGoBack, canGoForward, sameLoc, locationOf, restoreActionFor, savedLocation, detailSubjectFor, legacyShopTab,
 } from '../../renderer/nav-history.ts'
 import type { NavLocation, NavHistory, NavigableState, RestoreAction, DetailSubjects } from '../../renderer/nav-history.ts'
 
@@ -221,6 +221,15 @@ describe('savedLocation — reopening the window lands on the page you were on',
     assert.deepEqual(savedLocation({ currentView: 'recordstore' }), L('songs'))
     assert.deepEqual(savedLocation({ currentView: 42, activePlaylistId: ['x'] }), L('home'))
   })
+  it('a session saved on the retired Bandcamp Store or Download page reopens in the Record Shop, on its tab (Brief 253)', () => {
+    assert.deepEqual(savedLocation({ currentView: 'store' }), L('discovery'))
+    assert.deepEqual(savedLocation({ currentView: 'download' }), L('discovery'))
+    assert.deepEqual(restoreActionFor(savedLocation({ currentView: 'download' })), { type: 'SET_VIEW', view: 'discovery' })
+    assert.equal(legacyShopTab({ currentView: 'store' }), 'bandcamp')
+    assert.equal(legacyShopTab({ currentView: 'download' }), 'browse')
+    assert.equal(legacyShopTab({ currentView: 'discovery' }), null)
+    assert.equal(legacyShopTab(null), null)
+  })
 })
 
 describe('wiring: one rule for re-entering a page, used by Back/Forward AND the startup restore', () => {
@@ -232,6 +241,7 @@ describe('wiring: one rule for re-entering a page, used by Back/Forward AND the 
   it('App reopens the saved page with the same step, and no longer replays a lingering playlist id', () => {
     const app = src('App.tsx')
     assert.match(app, /restoreActionFor\(savedLocation\(ui\)\)/)
+    assert.match(app, /const shopTab = legacyShopTab\(ui\)\s+if \(shopTab\) requestDiscoveryTab\(shopTab\)\s+dispatch\(restoreActionFor\(savedLocation\(ui\)\)\)/, 'the tab is asked for before the restore')
     assert.doesNotMatch(app, /VIEW_PLAYLIST', id: ui\.activePlaylistId/)
     assert.doesNotMatch(app, /VIEW_SMART_PLAYLIST', id: ui\.activeSmartPlaylist/)
   })

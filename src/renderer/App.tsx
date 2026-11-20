@@ -57,7 +57,8 @@ import { setUserAliases } from './utils/artistAlias'
 import { initDownloads } from './utils/downloadStore'
 import { ensureLiveSetsLoaded, reloadLiveSets } from './liveSets'
 import { hydrateScrollCacheFromUiState } from './hooks/useScrollPersistence'
-import { restoreActionFor, savedLocation } from './nav-history'
+import { restoreActionFor, savedLocation, legacyShopTab } from './nav-history'
+import { requestDiscoveryTab } from './views/discoveryTab'
 import { initNavDx } from './navDxDom'
 import { noteLaunch } from './usageLog'
 import { AppSettings, DEFAULT_APP_SETTINGS, type Playlist, type SmartPlaylistId, type Track } from './types'
@@ -1099,6 +1100,10 @@ function AppInner() {
         // an album page therefore landed on a playlist visited earlier, behind
         // an album entry with no album under it: Back could only reach Albums.
         // Jake: "page memory sucks … no way of going back to the Perfecth page."
+        // A session saved on the retired Bandcamp Store or Download page
+        // reopens on that Record Shop tab (Brief 253).
+        const shopTab = legacyShopTab(ui)
+        if (shopTab) requestDiscoveryTab(shopTab)
         dispatch(restoreActionFor(savedLocation(ui)))
         if (typeof ui.sortColumn === 'string') {
           // Restore sort state — dispatch twice if needed to match saved direction

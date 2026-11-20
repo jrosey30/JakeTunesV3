@@ -67,6 +67,9 @@
 .dlp-row--downloading { background: rgba(255,255,255,0.7); }
 .dlp-row--refused, .dlp-row--failed { background: rgba(255, 240, 232, 0.75); }
 .dlp-row--canceled { background: rgba(255,255,255,0.25); color: #666; }
+/* "Save album" on a record that already has a job opens the panel on it
+   (Brief 253): the row says "this one" for a moment. */
+.dlp-row--focus { box-shadow: inset 3px 0 0 rgba(var(--brand-orange-rgb), 0.9); background: rgba(var(--brand-orange-rgb), 0.08); transition: background 0.6s ease; }
 
 .dlp-row-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }
 .dlp-status {

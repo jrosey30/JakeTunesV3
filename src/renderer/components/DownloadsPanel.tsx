@@ -3,10 +3,11 @@
  * scheduler (Record Shop plan, step 5 slice 3). Reachable from any view via
  * the sidebar Download badge; rows are the queue's own entries projected by
  * `downloads-panel-model` so provenance, edition identity and completion
- * details are exactly what the Download view shows. The Download view's own
- * queue bar stays until this replacement is verified.
+ * details are exactly what the shop's search shows. Since Brief 253 it is
+ * the ONLY place that shows progress and failures: the old Download page and
+ * its queue bar are gone.
  */
-import { useState, useCallback, useEffect, useImperativeHandle, forwardRef, useSyncExternalStore } from 'react'
+import { useState, useCallback, useEffect, useImperativeHandle, useRef, forwardRef, useSyncExternalStore } from 'react'
 import { useLibrary } from '../context/LibraryContext'
 import { openBrowse } from '../listen-to-the-list/ltlDownload'
 import NearEditionTable from './NearEditionTable'
@@ -22,6 +23,17 @@ export interface DownloadsPanelHandle { requestClose: () => void }
 export const DOWNLOADS_PANEL_EVENT = 'jaketunes-downloads-panel'
 export function toggleDownloadsPanel(action: 'toggle' | 'open' | 'close' = 'toggle'): void {
   window.dispatchEvent(new CustomEvent(DOWNLOADS_PANEL_EVENT, { detail: action }))
+}
+
+/** Open the panel on one job (Brief 253: "Save album" on a record that
+ *  already has a job). The key is held until a panel takes it, so a panel
+ *  that mounts after the open still finds it. */
+const DOWNLOADS_FOCUS_EVENT = 'jaketunes-downloads-focus'
+let pendingFocus: string | null = null
+export function showDownload(key: string): void {
+  pendingFocus = key
+  toggleDownloadsPanel('open')
+  window.dispatchEvent(new CustomEvent(DOWNLOADS_FOCUS_EVENT, { detail: key }))
 }
 
 // Is the panel open? App owns the state; the sidebar's Downloads row reads it
@@ -77,6 +89,26 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
   const summary = panelSummary(rows)
   const settled = summary.done + summary.failed + summary.canceled
 
+  // The job showDownload asked for: scrolled to and marked for a moment. A
+  // song of an album group is shown by its album's row.
+  const [focusKey, setFocusKey] = useState<string | null>(() => { const k = pendingFocus; pendingFocus = null; return k })
+  useEffect(() => {
+    const onFocus = (e: Event) => { pendingFocus = null; setFocusKey((e as CustomEvent<string>).detail ?? null) }
+    window.addEventListener(DOWNLOADS_FOCUS_EVENT, onFocus)
+    return () => window.removeEventListener(DOWNLOADS_FOCUS_EVENT, onFocus)
+  }, [])
+  const focusRow = focusKey ? rows.find((r) => r.key === focusKey || r.group?.children.some((c) => c.key === focusKey))?.key ?? null : null
+  const listRef = useRef<HTMLUListElement>(null)
+  useEffect(() => {
+    if (!focusKey) return
+    if (focusRow) {
+      const el = Array.from(listRef.current?.querySelectorAll<HTMLElement>('[data-row-key]') ?? []).find((n) => n.dataset.rowKey === focusRow)
+      el?.scrollIntoView({ block: 'nearest' })
+    }
+    const t = setTimeout(() => setFocusKey(null), 2400)
+    return () => clearTimeout(t)
+  }, [focusKey, focusRow])
+
   const requestClose = useCallback(() => {
     setExiting(true)
     setTimeout(onClose, 220)
@@ -84,7 +116,7 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
   useImperativeHandle(ref, () => ({ requestClose }), [requestClose])
 
   const toggleDetails = (key: string) => setOpen((s) => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n })
-  // A refused verdict re-opens Record Shop → Browse on the same request so
+  // A refused verdict re-opens Record Shop → Search on the same request so
   // Jake picks a DIFFERENT edition or version — the job's provenance rides along.
   const chooseAgain = (row: PanelRow) => {
     if (!row.choose) return
@@ -122,15 +154,15 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
         <button className="dlp-close" onClick={requestClose} aria-label="Close Downloads">×</button>
       </div>
       <div className="dlp-summary">{summaryLine}</div>
-      <ul className="dlp-list">
+      <ul className="dlp-list" ref={listRef}>
         {rows.length === 0 && (
-          <li className="dlp-empty">Get something from the Record Shop or the Download view and it shows up here.</li>
+          <li className="dlp-empty">Save something in the Record Shop and it shows up here.</li>
         )}
         {rows.map((row) => {
           const showDetails = open.has(row.key)
           const hasDetails = !!(row.detail || row.alternatives.length || row.completion || row.nearEdition)
           return (
-            <li key={row.key} className={`dlp-row dlp-row--${row.status}`}>
+            <li key={row.key} data-row-key={row.key} className={`dlp-row dlp-row--${row.status}${row.key === focusRow ? ' dlp-row--focus' : ''}`}>
               <div className="dlp-row-head">
                 <span className={`dlp-status dlp-status--${row.status}`}>{STATUS_LABEL[row.status]}{row.elapsedSec != null ? ` · ${row.elapsedSec}s` : ''}</span>
                 {row.from && <span className="dlp-from">{row.from}</span>}
@@ -159,7 +191,7 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
                     {c?.error && <span className="dlp-near-text">Couldn’t compare the editions ({c.error}).</span>}
                     {plan && plan.jobs.length > 0 && (
                       <>
-                        <button className="dlp-primary-action" onClick={() => getMatching(plan)} title={`Queues ${plan.jobs.length} song downloads pinned to the edition you picked; each is verified before import`}>Get {plan.jobs.length} matching track{plan.jobs.length === 1 ? '' : 's'}</button>
+                        <button className="dlp-primary-action" onClick={() => getMatching(plan)} title={`Queues ${plan.jobs.length} song downloads pinned to the edition you picked; each is verified before import`}>Save {plan.jobs.length} matching song{plan.jobs.length === 1 ? '' : 's'}</button>
                         <span className="dlp-near-text">{plan.skippedOwned.length ? `${plan.skippedOwned.length} already yours. ` : ''}Not acquired: {omitted}.</span>
                       </>
                     )}

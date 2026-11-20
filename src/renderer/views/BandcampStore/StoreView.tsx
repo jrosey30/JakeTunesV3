@@ -76,7 +76,9 @@ export default function StoreView() {
     // BEHIND the store (Jake: "options for everything appear behind
     // bandcamp always"). Watch the document for any known overlay and
     // hide the native view while one is up.
-    const OVERLAYS = '.context-menu, .confirm-overlay, .activity-sheet-overlay, [class*="-overlay"], [class*="modal"]'
+    // The side drawers (Downloads, Up Next, Lyrics, the Music Man) open over the
+    // content area too, so the native Bandcamp page has to step aside for them.
+    const OVERLAYS = '.context-menu, .confirm-overlay, .activity-sheet-overlay, [class*="-overlay"], [class*="modal"], .dlp-panel, .queue-panel, .mm-drawer'
     let hidden = false
     const checkOverlays = () => {
       const anyOpen = !!document.querySelector(OVERLAYS)

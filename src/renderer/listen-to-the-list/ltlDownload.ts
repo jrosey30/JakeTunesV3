@@ -228,14 +228,14 @@ export function prefillDownloadView(rec: Recommendation, kind: 'album' | 'song' 
   // never searched, so he landed on an empty page. It now runs the search, and
   // for an album it opens that album's tracklist so he can take the whole
   // thing or pick songs out of it.
-  // Record Shop → Browse takes it (step 5 slice 4); the legacy Download route
-  // ignores a prefill addressed to Browse.
+  // Record Shop → Search (tab id 'browse') takes it; the legacy Download
+  // route that once ignored it is gone (Brief 253).
   window.dispatchEvent(new CustomEvent('jaketunes-download-prefill', {
     detail: { query, kind, artist, title: name, origin: recoOrigin(rec), target: 'browse' },
   }))
 }
 
-/** Open Record Shop → Browse. Call AFTER the prefill event: a mounted Browse
+/** Open Record Shop → Search (tab id 'browse'). Call AFTER the prefill event: a mounted Browse
  *  already took it; a fresh one reads the captured prefill when it mounts. */
 export function openBrowse(dispatch: (a: { type: 'SET_VIEW'; view: 'discovery' }) => void): void {
   requestDiscoveryTab('browse')

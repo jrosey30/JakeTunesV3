@@ -280,7 +280,7 @@ export default function NewForYouView() {
   }
 
   // The Listen List's own door (ListenToTheListView getReco): a song queues
-  // on the one scheduler; an album has its EDITION picked in Browse first;
+  // on the one scheduler; an album has its EDITION picked in Search first;
   // an artist-only pick is browsed, never downloaded blind.
   const getReco = (rec: Recommendation) => {
     const d = queueRecoDownload(rec)
@@ -365,14 +365,15 @@ export default function NewForYouView() {
           const rec = addedRecs.get(id)
           const dl = rec ? dlMap.get(rec.id)?.state ?? 'idle' : null
           if (!rec || dl === 'queued' || dl === 'downloading' || dl === 'done') {
-            const label = !rec ? 'On your list ✓' : dl === 'queued' ? 'Queued…' : dl === 'downloading' ? 'Getting…' : 'In your library ✓'
+            const label = !rec ? 'On your list ✓' : dl === 'queued' ? 'Queued…' : dl === 'downloading' ? 'Saving…' : 'In your library ✓'
             return <button type="button" className="store-add store-add--done" disabled>{label}</button>
           }
           const failed = dl === 'error'
           return (
             <button type="button" className="store-add" onClick={() => getReco(rec)}
-              title={failed ? (dlMap.get(rec.id)?.error || 'Download failed — try again') : c.type === 'song' ? 'Download to your library' : c.type === 'album' ? 'Pick the edition in Browse' : 'Browse their records'}>
-              {failed ? 'Retry ↓' : '↓ Get'}
+              title={failed ? (dlMap.get(rec.id)?.error || 'Download failed — try again') : c.type === 'song' ? 'Save to your library' : c.type === 'album' ? 'Pick the edition in Search' : 'Find their records in Search'}>
+              {/* One word per action (Brief 253): Save / Save album. */}
+              {failed ? 'Retry' : c.type === 'album' ? 'Save album' : c.type === 'song' ? 'Save' : 'Search'}
             </button>
           )
         })()}
