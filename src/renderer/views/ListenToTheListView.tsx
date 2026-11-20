@@ -33,6 +33,7 @@ import {
   canDownloadReco, getLtlDownloadSnapshot, prefillDownloadView, openBrowse,
   queueRecoDownload, recoFields, recoOrigin, saveRecoAlbum, subscribeLtlDownload, type LtlDownloadStatus,
 } from '../listen-to-the-list/ltlDownload'
+import OfferButtons from './DownloadStore/OfferButtons'
 import EditionMenu, { askEditions } from './DownloadStore/EditionMenu'
 import AlbumTracklistSheet from './DownloadStore/AlbumTracklistSheet'
 import { showDownload } from '../components/DownloadsPanel'
@@ -176,7 +177,7 @@ export default function ListenToTheListView() {
     if (!canDownloadReco(r)) return
     const f = friendOf(r)
     if (f) void window.electronAPI.friendEvent?.(f, 'got')
-    const d = queueRecoDownload(r)
+    const d = queueRecoDownload(r, { askAgain: true })   // this row's own Save / Retry
     if (d.kind === 'select-edition') void saveRecoAlbum(r, 'listen-list').then((res) => { if (res.existingKey) showDownload(res.existingKey) })
     else if (d.kind === 'browse-only') { prefillDownloadView(r, 'song'); openBrowse(dispatch) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -362,6 +363,8 @@ export default function ListenToTheListView() {
               {dl.error || 'Download failed.'}
             </div>
           )}
+          {/* Brief 257: what can be had instead, one tap each. */}
+          {dl.state === 'error' && <OfferButtons jobKey={dl.jobKey} />}
         </div>
         <div className="ltl-tri-actions" onClick={(e) => e.stopPropagation()}>
           {dl.state === 'queued' || dl.state === 'downloading' ? (

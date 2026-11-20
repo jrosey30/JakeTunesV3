@@ -35,6 +35,16 @@ export const MAX_SAVED_JOBS = 400
 export const SAVED_FIELDS = [
   'key', 'result', 'status', 'armId', 'attempt', 'imported', 'dupes', 'error', 'outcome', 'alternatives',
   'primary', 'detail', 'matchDesc', 'completion', 'startedAt', 'endedAt',
+  // Brief 257: a refused album's offers survive a restart. The preflight's answer
+  // (a "no" carries the offers, the asked edition's label and size; the
+  // session-only 'asking' state is not saved); which offer was taken;
+  // a not-found memory answer. An offer's songs (one by one, or the ones that
+  // exist) are song jobs whose album group rides in `result.origin.group`, and
+  // `result.offerOf` / `result.lossyOk` ride in `result`: saved with it.
+  'preflightAnswer', 'offerTaken', 'fromMemory',
+  // When the job was last queued: the newest job for a Listen List row is picked
+  // by it, since a restart moves an interrupted job to the head of its lane.
+  'enqueuedAt',
 ] as const
 
 export interface SavedJob {

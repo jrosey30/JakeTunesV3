@@ -17,6 +17,8 @@
 import { norm } from './downloadKeys.ts'
 import { laneOf, nextInLane, nextProgress, restoreJobs, toSavedJobs, type JobEndResult, type Lane, type SavedQueueDoc } from '../../../common/download-lanes.ts'
 import { PREFLIGHT_BUDGET_MS, albumSaveEvent, preflightVerdict, type AlbumPreflight, type AlbumSaveEdition, type AlbumSaveSurface } from '../../../common/album-preflight.ts'
+import { notFoundKey, rememberable, rememberedVerdict } from '../../../common/not-found-memory.ts'
+import type { ShopOfferKind } from '../../../common/closest-edition.ts'
 
 /** Where a job came from (the Record Shop's saved list, a feed shelf…) —
  *  carried on the job so every presentation can find it by recommendation
@@ -95,6 +97,11 @@ export interface QResult {
   clickedAt?: number
   surface?: AlbumSaveSurface
   editionFrom?: AlbumSaveEdition
+  /** Brief 257: Jake took the lossy Bandcamp copy the shop offered, so the
+   *  album skips the preflight and the walk runs as it always has (Qobuz, then Bandcamp). */
+  lossyOk?: boolean
+  /** Brief 257: this job is an offer taken on that refused job (display only). */
+  offerOf?: string
 }
 export type QStatus = 'queued' | 'downloading' | 'done' | 'failed' | 'canceled'
 export interface QItem {
@@ -127,6 +134,10 @@ export interface QItem {
   /** When this arm of the job began (the click, for the first), and whether its usage line is written. */
   armedAt?: number
   logged?: boolean
+  /** Brief 257: which offer Jake took on this refused job (it is then answered elsewhere). */
+  offerTaken?: ShopOfferKind
+  /** Brief 257: the not-found memory answered this job instead of a search. */
+  fromMemory?: boolean
   /** Brief 258: this arm of the job, as main knows it (its cancel, its "7 of 12", its finished ledger). New on every arm. */
   armId?: string
   /** An album's songs landed so far, from main. */
@@ -134,6 +145,18 @@ export interface QItem {
   /** Brief 258: main was still running this arm when the window reloaded; it is
    *  followed (main's end event, main's live list) instead of started again. Not saved. */
   attached?: boolean
+  /** When this job was last queued (its first arm, or a re-arm). Saved, so after a
+   *  restart (which moves an interrupted job to the head of its lane) the newest job
+   *  for a row is still the one Jake queued last, not the one first in the list. */
+  enqueuedAt?: number
+}
+
+/** The newest job matching `pred`, by when it was queued. A job saved before
+ *  `enqueuedAt` existed counts as oldest; between equals the later in the list wins. */
+export function newestJob<T extends { enqueuedAt?: number }>(items: readonly T[], pred: (q: T) => boolean): T | undefined {
+  let best: T | undefined
+  for (const q of items) if (pred(q) && (!best || (q.enqueuedAt ?? 0) >= (best.enqueuedAt ?? 0))) best = q
+  return best
 }
 
 export function queueKey(r: QResult): string {
@@ -312,9 +335,11 @@ export function subscribeQueue(fn: () => void): () => void {
 }
 export function getQueue(): QItem[] { return queue }
 export function itemFor(r: QResult): QItem | undefined { return queue.find((q) => q.key === queueKey(r)) }
-/** The job a recommendation is riding on, if any. */
+/** The job a recommendation is riding on, if any: the newest by when it was
+ *  queued, so an offer taken on a refused album (Brief 257) is the one that
+ *  answers for the row, after a restart too. */
 export function itemForRecommendation(recommendationId: string): QItem | undefined {
-  return queue.find((q) => q.result.origin?.recommendationIds.includes(recommendationId))
+  return newestJob(queue, (q) => Boolean(q.result.origin?.recommendationIds.includes(recommendationId)))
 }
 
 /** Adopt a second origin onto an existing job (same recording, another
@@ -341,19 +366,27 @@ export function queueSummary(): { active: number; queued: number; done: number; 
 }
 
 /** Add a result to the queue (or re-arm a failed one). No-op if already queued,
- *  running, or done — clicking twice never double-grabs. */
-export function enqueue(r: QResult): void {
+ *  running, or done — clicking twice never double-grabs. `askAgain` is set only
+ *  by one explicit action on that row (its own Save): re-arming a failed song
+ *  then forgets the not-found memory and searches. Anything else (a Save all,
+ *  any batch) asks the memory first and is answered from it. */
+export function enqueue(r: QResult, opts: { askAgain?: boolean } = {}): void {
   const key = queueKey(r)
   const existing = queue.find((q) => q.key === key)
   if (existing) {
     mergeOrigin(existing.result, r.origin)
-    if (existing.status === 'failed' || existing.status === 'canceled') { existing.status = 'queued'; existing.error = undefined; existing.attempt = (existing.attempt ?? 1) + 1; existing.armId = newArmId(); askPreflight(existing, r.clickedAt); emit(); void pump() }
+    if (existing.status === 'failed' || existing.status === 'canceled') {
+      existing.status = 'queued'; existing.error = undefined; existing.attempt = (existing.attempt ?? 1) + 1; existing.armId = newArmId(); existing.enqueuedAt = Date.now(); existing.fromMemory = false
+      if (opts.askAgain) askAgain(existing); else checkMemory(existing)
+      askPreflight(existing, r.clickedAt); emit(); void pump()
+    }
     else emit()
     return
   }
-  const it: QItem = { key, result: r, status: 'queued', armId: newArmId() }
+  const it: QItem = { key, result: r, status: 'queued', armId: newArmId(), enqueuedAt: Date.now() }
   queue = [...queue, it]
   askPreflight(it, r.clickedAt)
+  checkMemory(it)
   emit()
   void pump()
 }
@@ -369,7 +402,7 @@ export function enqueue(r: QResult): void {
 const asking = new Map<QItem, Promise<void>>()
 
 function wantsPreflight(r: QResult): boolean {
-  return r.kind === 'query' && r.mediaType === 'album' && !r.sourceEdition && !r.origin?.group
+  return r.kind === 'query' && r.mediaType === 'album' && !r.sourceEdition && !r.origin?.group && !r.lossyOk
     && Boolean((r.album || '').trim() && (r.artist || '').trim())
     && typeof window !== 'undefined' && typeof window.electronAPI?.checkQobuzAlbum === 'function'
 }
@@ -383,6 +416,7 @@ function logAlbumSave(it: QItem, answer: 'found' | 'no' | 'done' | 'failed', p?:
     why: p && 'why' in p ? p.why : undefined,
     surface: it.result.surface, edition: it.result.editionFrom,
     have: p?.answer === 'no' ? p.have : undefined, of: p?.answer === 'no' ? p.of : undefined,
+    offers: p?.answer === 'no' ? p.offers?.map((o) => o.kind) : undefined,
   })
   try { window.electronAPI.usageLog?.([{ t: new Date().toISOString(), ...ev }]) } catch { /* observation only */ }
 }
@@ -430,6 +464,77 @@ function askPreflight(it: QItem, clickedAt?: number): void {
   asking.set(it, settled)
 }
 
+// ── The not-found memory (Brief 257) ────────────────────────────────────
+// A song the walk found nowhere isn't searched again the same way for a week:
+// a NEW job for it (a Save all, a Save click after a restart) is answered from
+// main's memory at once, and so is a batch that re-arms a failed job (Save all,
+// the queue bar's Retry all). Only one explicit action on that row (its Retry,
+// its own Save) is a manual retry: the memory forgets it and the walk asks.
+// A different title, artist, album or length is another key, asked at once.
+// Songs only: an album's "no" comes from the preflight in seconds, with offers.
+const remembering = new Map<QItem, Promise<void>>()
+
+function memoryKey(r: QResult): string | null {
+  if (r.kind !== 'query' || r.mediaType === 'album' || r.sourceEdition) return null
+  return notFoundKey({ mediaType: r.mediaType, artist: r.artist, title: r.title, album: r.album, durationMs: r.durationMs, explicitSource: r.explicitSource, cleanedSource: r.cleanedSource })
+}
+const memoryApi = () => (typeof window !== 'undefined' ? window.electronAPI?.shopNotFound : undefined)
+
+function checkMemory(it: QItem): void {
+  const key = memoryKey(it.result)
+  const api = memoryApi()
+  if (!key || !api) return
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const done: Promise<void> = Promise.race([
+    Promise.resolve(api.check(key)).catch(() => null),
+    new Promise<null>((res) => { timer = setTimeout(() => res(null), 2000) }),
+  ]).then((hit) => {
+    if (timer) clearTimeout(timer)
+    if (remembering.get(it) !== done) return
+    remembering.delete(it)
+    if (!hit || !queue.includes(it) || it.status !== 'queued') return
+    const v = rememberedVerdict(hit, Date.now())
+    it.status = 'failed'
+    it.fromMemory = true
+    it.outcome = v.outcome
+    it.primary = v.primary
+    it.detail = v.detail
+    it.error = v.primary
+    it.startedAt = it.endedAt = Date.now()
+    emit()
+  })
+  remembering.set(it, done)
+}
+
+/** A manual retry: whatever the memory held for this request is forgotten. */
+function askAgain(it: QItem): void {
+  remembering.delete(it)
+  it.fromMemory = false
+  const key = memoryKey(it.result)
+  if (key) void Promise.resolve(memoryApi()?.forget(key)).catch(() => {})
+}
+
+/** After the walk: a real "found nowhere" is remembered, a save forgets. */
+function noteMemory(it: QItem): void {
+  const key = memoryKey(it.result)
+  const api = memoryApi()
+  if (!key || !api) return
+  if (it.status === 'failed' && rememberable(it.outcome, it.detail)) void Promise.resolve(api.note(key, it.outcome!)).catch(() => {})
+  else if (it.status === 'done') void Promise.resolve(api.forget(key)).catch(() => {})
+}
+
+/** Brief 257: Jake took an offer on this refused job. `patch` changes what a
+ *  re-arm of it asks (the lossy copy: `lossyOk`). The row then says what is
+ *  happening instead of asking again. */
+export function markOfferTaken(key: string, kind: ShopOfferKind, patch?: Partial<QResult>): QItem | undefined {
+  const it = queue.find((q) => q.key === key)
+  if (!it) return undefined
+  it.offerTaken = kind
+  if (patch) Object.assign(it.result, patch)
+  emit()
+  return it
+}
+
 /** Cancel a queued item (drop it) or an in-flight one (kill the rip
  *  process; main's staging cleanup handles the partial files). */
 export async function cancel(key: string): Promise<void> {
@@ -460,6 +565,8 @@ export function retry(key: string): void {
   it.imported = undefined
   it.dupes = undefined
   it.attempt = (it.attempt ?? 1) + 1
+  it.enqueuedAt = Date.now()
+  askAgain(it)
   it.armId = newArmId()
   askPreflight(it)
   emit()
@@ -477,6 +584,10 @@ export function retryFailed(): void {
     it.imported = undefined
     it.dupes = undefined
     it.attempt = (it.attempt ?? 1) + 1
+    it.enqueuedAt = Date.now()
+    it.fromMemory = false
+    // A batch: the memory answers a song it still holds; only a row's own Retry forgets.
+    checkMemory(it)
     it.armId = newArmId()
     askPreflight(it)
     any = true
@@ -508,7 +619,7 @@ async function pumpLane(lane: Lane): Promise<void> {
       const it = nextInLane(queue, lane)
       if (!it) break
       // An album still asking Qobuz: its answer first (seconds). A "no" ends it there.
-      const pending = asking.get(it)
+      const pending = asking.get(it) ?? remembering.get(it)
       if (pending) { await pending; continue }
       it.status = 'downloading'
       it.startedAt = Date.now()
@@ -547,6 +658,7 @@ async function pumpLane(lane: Lane): Promise<void> {
         }
       }
       it.endedAt = Date.now()
+      noteMemory(it)
       it.progress = undefined
       // The preflight couldn't tell: the walk's own end is the first answer.
       const ended = it.status as QStatus   // applyEnd set it; TypeScript still sees 'downloading'
@@ -564,6 +676,7 @@ export function resetQueueForTests(opts: { restored?: boolean; retryMs?: number;
   running.album = false
   running.song = false
   asking.clear()
+  remembering.clear()
   endedEarly.clear()
   if (followTimer) { clearInterval(followTimer); followTimer = null }
   restored = opts.restored ?? true

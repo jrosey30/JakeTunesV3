@@ -131,6 +131,23 @@ describe('the saved list', () => {
     assert.equal(toSavedJobs([{ nope: 1 }, { key: 'k', status: 'done', result: {} }]).length, 1)
   })
 
+  it('a refused album keeps its offers, the offer taken and its songs\' album group across a restart (Brief 257)', () => {
+    const answer = { answer: 'no', why: 'edition', offers: [{ kind: 'songs-each', of: 12 }], asked: 'Deluxe', askedCount: 12 }
+    const group = { parentKey: 'p', label: 'A', of: 12, position: 3, notAcquired: [], skippedOwned: 0 }
+    const jobs = toSavedJobs([
+      { key: 'p', status: 'failed', armId: 'x', result: { mediaType: 'album', album: 'A', lossyOk: true }, preflight: 'no', preflightAnswer: answer, offerTaken: 'songs-each', endedAt: 1 },
+      { key: 's', status: 'queued', armId: 'y', result: { mediaType: 'track', title: 'T', offerOf: 'p', origin: { recommendationIds: [], group } }, fromMemory: true },
+    ])
+    const back = parseSavedQueue(JSON.parse(JSON.stringify({ version: SAVED_QUEUE_VERSION, savedAt: 1, jobs, finished: {} })))!
+    assert.deepEqual(back.jobs[0].preflightAnswer, answer)
+    assert.equal(back.jobs[0].offerTaken, 'songs-each')
+    assert.equal(back.jobs[0].preflight, undefined)
+    assert.equal((back.jobs[0].result as { lossyOk?: boolean }).lossyOk, true)
+    assert.deepEqual((back.jobs[1].result as { origin: { group: unknown } }).origin.group, group)
+    assert.equal((back.jobs[1].result as { offerOf?: string }).offerOf, 'p')
+    assert.equal(back.jobs[1].fromMemory, true)
+  })
+
   it('a foreign or newer file is not read as a list', () => {
     assert.equal(parseSavedQueue(null), null)
     assert.equal(parseSavedQueue({ version: SAVED_QUEUE_VERSION + 1, jobs: [] }), null)
@@ -378,6 +395,29 @@ describe('the one list', () => {
     assert.equal(sections[0].rows[0].progress, '7 of 12')
     assert.deepEqual(sections[2].rows[0].needsYou, { kind: 'failed', line: 'Not on Qobuz' })
     assert.equal(sections[1].rows[0].needsYou, null)
+  })
+
+  it('Brief 257: offers wait in Needs you; an offer taken leaves it, and its songs fold under the album', () => {
+    const album = (key: string, extra: Record<string, unknown> = {}) => ({ key, status: 'failed' as const, result: { kind: 'query', source: 'qobuz', mediaType: 'album', id: key, desc: key, artist: 'Band', album: key, trackCount: 3 }, outcome: 'exact-not-found', primary: 'Not on Qobuz', endedAt: now - 10, preflightAnswer: { answer: 'no' as const, why: 'missing' as const, offers: [{ kind: 'songs-each' as const, of: 3 }] }, ...extra })
+    const song = (key: string, parentKey: string, position: number, status: 'queued' | 'done' | 'failed') => ({ key, status, result: { kind: 'query', source: 'qobuz', mediaType: 'track', id: key, desc: key, artist: 'Band', title: key, origin: { recommendationIds: [], group: { parentKey, label: parentKey, of: 3, position, notAcquired: [], skippedOwned: 0 } } }, endedAt: status === 'queued' ? undefined : now - 1 })
+    const q = [
+      album('offer'),
+      album('songs', { offerTaken: 'songs-each' }), song('s1', 'songs', 1, 'done'), song('s2', 'songs', 2, 'queued'),
+      album('edition', { offerTaken: 'edition' }),
+      { key: 'ed2', status: 'queued' as const, result: { kind: 'query', source: 'qobuz', mediaType: 'album', id: 'ed2', desc: 'ed2', artist: 'Band', album: 'ed2', offerOf: 'edition' } },
+    ]
+    const rows = downloadsPanelRows(q as Parameters<typeof downloadsPanelRows>[0], now)
+    const sections = downloadsPanelSections(rows, now)
+    assert.deepEqual(sections.map((s) => [s.title, s.rows.map((r) => r.key)]), [['In progress', ['ed2', 'songs']], ['Needs you', ['offer']]])
+    assert.equal(sections[1].rows[0].offers.length, 1, 'the offer rides on the Needs you row')
+    const songs = sections[0].rows.find((r) => r.key === 'songs')!
+    assert.equal(songs.needsYou, null)
+    assert.equal(songs.group?.line, '1 of 3 in your library · 1 on the way')
+    // One song failed and nothing is left on the way: back in Needs you, with "Retry the 1 that failed".
+    const q2 = [album('songs', { offerTaken: 'songs-each' }), song('s1', 'songs', 1, 'done'), song('s2', 'songs', 2, 'failed')]
+    const s2 = downloadsPanelSections(downloadsPanelRows(q2 as Parameters<typeof downloadsPanelRows>[0], now), now)
+    assert.deepEqual(s2.map((s) => [s.title, s.rows.map((r) => r.key)]), [['Needs you', ['songs']]])
+    assert.ok(s2[0].rows[0].actions.includes('retryGroup'))
   })
 
   it('"7 of 12": a count only for an album, held between 0 and its size, never going back', () => {

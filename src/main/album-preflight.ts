@@ -76,7 +76,7 @@ export function judgeHeardListings(req: RequestedAlbum, heard: readonly HeardLis
   return judgeQobuzAlbum(req, { ...o, listings: live.map((x) => listingCandidate(x.hit, x.tl)) })
 }
 
-const PACKAGING_WORDS: Record<string, string> = {
+export const PACKAGING_WORDS: Record<string, string> = {
   bonus: 'bonus track edition', deluxe: 'Deluxe', expanded: 'Expanded edition', anniversary: 'anniversary edition',
   special: 'special edition', collector: 'collector’s edition', legacy: 'Legacy edition', super: 'Super Deluxe',
   complete: 'complete edition', definitive: 'definitive edition', ultimate: 'ultimate edition', redux: 'Redux',

@@ -12,6 +12,7 @@
  */
 import type { Alternative, DownloadOutcome } from './acquisition-identity.ts'
 import type { UsageDetail } from './usage-log.ts'
+import type { ShopOffer } from './closest-edition.ts'
 
 /** Why Qobuz said no. */
 export type PreflightNo =
@@ -52,6 +53,11 @@ export type AlbumPreflight =
       alternatives?: Alternative[]
       /** Bandcamp's search got no answer, so it wasn't asked and may still have the album. */
       bandcampUnasked?: boolean
+      /** What can be had instead, each taken only with a tap (Brief 257). */
+      offers?: ShopOffer[]
+      /** The asked edition's label ("Deluxe", "Standard") and size, for the offer's words. */
+      asked?: string
+      askedCount?: number
     }
   | { answer: 'unknown'; why: PreflightUnknown }
 
@@ -177,6 +183,8 @@ export function albumSaveEvent(o: {
   edition?: AlbumSaveEdition
   have?: number
   of?: number
+  /** Brief 257: the kinds of offer a "no" carried ("edition+songs"). */
+  offers?: readonly string[]
 }): AlbumSaveEvent {
   const detail: UsageDetail = { answer: o.answer, by: o.answer === 'found' || o.answer === 'no' ? 'preflight' : 'walk' }
   if (o.why) detail.why = o.why
@@ -184,5 +192,6 @@ export function albumSaveEvent(o: {
   if (o.edition) detail.edition = o.edition
   if (typeof o.have === 'number') detail.have = o.have
   if (typeof o.of === 'number') detail.of = o.of
+  if (o.offers?.length) detail.offer = o.offers.join('+')
   return { kind: 'action', name: 'shop.album-save', ms: Math.max(0, Math.round(o.answeredAt - o.clickedAt)), ok: o.answer === 'found' || o.answer === 'done', detail }
 }

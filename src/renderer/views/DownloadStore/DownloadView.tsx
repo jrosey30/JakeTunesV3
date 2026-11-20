@@ -388,7 +388,7 @@ export default function DownloadView() {
     const n = qobuzNoticeFor(qobuz, 'get', { kind: q.mediaType === 'album' ? 'album' : 'song', title: (q.mediaType === 'album' ? q.album : q.title) || q.desc })
     if (n) showCredentialNotice(n)
     funnel.saved(q.mediaType === 'album' ? 'album' : 'song')
-    enqueue(withOrigin(q))
+    enqueue(withOrigin(q), { askAgain: true })   // one Save on one result: a manual try
   }
   // Save album on a record that already has a job: never a silent no-op —
   // the Downloads panel opens on that job (Brief 253).

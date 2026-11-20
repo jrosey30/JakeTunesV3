@@ -96,7 +96,7 @@ export function RecoRow({ rec, onDelete, onOpenDownload }: RecoRowProps) {
             if (dl.state === 'error') { onOpenDownload?.(rec); return }
             // One scheduler: songs queue; an album (edition not chosen) or a
             // browse-only jot goes to the Download view instead of downloading blind.
-            const d = queueRecoDownload(rec)
+            const d = queueRecoDownload(rec, { askAgain: true })   // this row's own Save
             if (d.kind !== 'queue') onOpenDownload?.(rec)
           }}
           disabled={dlBusy}

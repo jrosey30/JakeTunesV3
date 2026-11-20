@@ -20,6 +20,8 @@ import LyricsPanel, { type LyricsPanelHandle } from './components/playback/Lyric
 import { lyricsFor } from './lyricsStore'
 import MusicManDrawer, { type MusicManDrawerHandle } from './components/MusicManDrawer'
 import DownloadsPanel, { DOWNLOADS_PANEL_EVENT, setDownloadsPanelOpen, type DownloadsPanelHandle } from './components/DownloadsPanel'
+// Brief 257: the closest-edition offers are Needs you's one-tap fix (registers itself in NeedsYouSlot).
+import './views/DownloadStore/OfferButtons'
 import { OPEN_PREFERENCES_EVENT } from './views/DownloadStore/credential-notice-store'
 import { ingestSyncEvent } from './syncTimeline'
 import QueueHonestyProbe from './components/QueueHonestyProbe'

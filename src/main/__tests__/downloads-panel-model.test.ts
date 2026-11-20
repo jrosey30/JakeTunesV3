@@ -39,7 +39,9 @@ describe('the Downloads panel rows', () => {
     assert.deepEqual(s.choose, { query: 'D-Stone Cups', kind: 'song', artist: 'D-Stone', title: 'Cups' })
     assert.equal(s.from, 'from your Listen List')
     const a = panelRowFor(album({ status: 'failed', outcome: 'exact-not-found', primary: 'Exact edition not found', alternatives: [{ provider: 'qobuz', desc: 'Little Creatures (9 tracks)', reason: 'has 9 tracks' }] }), NOW)
-    assert.equal(a.status, 'refused'); assert.deepEqual(a.actions, ['chooseEdition']); assert.equal(a.alternatives.length, 1)
+    assert.equal(a.status, 'refused'); assert.deepEqual(a.actions, ['offer', 'chooseEdition']); assert.equal(a.alternatives.length, 1)
+    // Brief 257: a record the walk refused also offers its songs one at a time (a tap, never on its own).
+    assert.deepEqual(a.offers, [{ kind: 'songs-each', of: 12 }])
     assert.equal(a.choose?.kind, 'album')
   })
   it('a provider failure and a canceled job offer Retry', () => {

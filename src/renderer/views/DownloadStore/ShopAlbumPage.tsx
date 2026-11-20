@@ -15,6 +15,7 @@ import { losslessOf, losslessTitle } from '../../../common/shop-lossless'
 import { albumJobFor, editionsState, editionsWithCard, loadEditions, saveSongsLabel, songJobsFor, subscribeEditions, type EditionTrack } from './albumEditions'
 import { getQueue, itemFor, subscribeQueue, type QItem, type QResult } from './downloadQueue'
 import { askLossless, losslessFor, losslessVersion, subscribeLossless } from './shopLossless'
+import OfferButtons from './OfferButtons'
 
 const mmss = (secs: number): string => `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`
 
@@ -149,6 +150,8 @@ export default function ShopAlbumPage({ album, marks, onSave, renderAction, onBa
               </label>
             )}
           </span>
+          {/* Brief 257: Qobuz said no to this edition: what can be had instead, here too (one tap each). */}
+          {albumItem?.status === 'failed' && <OfferButtons jobKey={albumItem.key} className="shop-page-offer" />}
         </div>
       </div>
       {tracks.loading && <div className="dl-rel-panel-note"><span className="dl-spinner" aria-hidden="true" /> Loading songs…</div>}
