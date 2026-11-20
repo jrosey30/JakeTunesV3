@@ -30,6 +30,16 @@ describe('a song', () => {
     assert.equal(resolvePlan(SONG, [track('clean', { explicit: false })]), null)
     assert.equal(resolvePlan(SONG, [track('clean', { explicit: false }), track('dirty')])?.id, 'dirty')
   })
+  it('an explicit sibling credited with a feature still wins over the clean copy', () => {
+    const row: PlanRow = { ...SONG, explicit: undefined }
+    const plan = resolvePlan(row, [track('clean', { explicit: false }), track('dirty', { artist: 'Kendrick Lamar feat. Drake' })])
+    assert.notEqual(plan?.id, 'clean')
+  })
+  it('an explicit copy named only in its title is preferred over an unmarked one', () => {
+    const row: PlanRow = { ...SONG, explicit: undefined }
+    const plan = resolvePlan(row, [track('plain', { explicit: false }), track('named', { explicit: false, version: 'Explicit' })])
+    assert.equal(plan?.id, 'named')
+  })
   it('explicit wins by default: a row Apple calls not explicit still takes the explicit copy when there is one', () => {
     const row: PlanRow = { ...SONG, explicit: false }
     assert.equal(resolvePlan(row, [track('clean', { explicit: false }), track('dirty')])?.id, 'dirty')

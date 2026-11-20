@@ -66,6 +66,15 @@ const sameArtist = (want: string, got: string | undefined): boolean => {
   const g = new Set(artistKeys(got))
   return artistKeys(want).some((a) => g.has(a))
 }
+/** Any credit on the hit names the artist ("A feat. B", "A & B", "B, A"): loose on purpose, used only where a match can only send Save down the walk. */
+const anyCredit = (want: string, got: string | undefined): boolean => {
+  if (!got) return false
+  if (sameArtist(want, got)) return true
+  const w = new Set(artistKeys(want))
+  return got.split(/\s*(?:,|&|\band\b|\bfeat\.?|\bfeaturing\b|\bft\.?|\bwith\b|\bx\b|\/)\s*/i).some((part) => artistKeys(part).some((a) => w.has(a)))
+}
+/** A copy flagged explicit, or named so ("Song (Explicit)", version "Explicit"). */
+const saysExplicitCopy = (h: QobuzHit): boolean => h.explicit === true || /\bexplicit\b/i.test(`${h.title} ${h.version ?? ''}`)
 const titleKeys = (h: QobuzHit): string[] => [h.title, h.version ? `${h.title} (${h.version})` : ''].filter(Boolean).map((t) => k(t)).filter(Boolean)
 /**
  * Version words that make an item another cut of the song: a live take, a demo, a remix, an
@@ -132,7 +141,7 @@ const withinClock = (h: QobuzHit, durationMs: number | undefined): boolean =>
  * only sends Save down the walk costs a few seconds, never the wrong file.
  */
 export function explicitSibling(want: { artist: string; title: string; durationMs?: number }, hits: readonly QobuzHit[]): QobuzHit | null {
-  return hits.find((h) => h.kind === 'track' && h.explicit === true && sameArtist(want.artist, h.artist) && sameTitle(want.title, h)
+  return hits.find((h) => h.kind === 'track' && saysExplicitCopy(h) && anyCredit(want.artist, h.artist) && sameTitle(want.title, h)
     && !isCompilation(want.artist, h) && withinClock(h, want.durationMs)) ?? null
 }
 
@@ -169,7 +178,8 @@ export function resolvePlan(row: PlanRow, hits: readonly QobuzHit[], ev: PlanEvi
     // The explicit rule first, over every copy of the song by name: an ISRC that points at the
     // clean edit must not leave it alone in the pool. An explicit copy at the row's length
     // means a copy flagged clean is never the plan.
-    cands = row.explicit ? explicitPool(row, cands) : explicitSibling(row, hits) ? cands.filter((h) => h.explicit !== false) : cands
+    const sibling = row.explicit ? null : explicitSibling(row, hits)
+    cands = row.explicit ? explicitPool(row, cands) : sibling ? cands.filter((h) => saysExplicitCopy(h)) : cands
     if (isrc) cands = cands.filter((h) => (h.isrc ?? '').toUpperCase() === isrc)
     if (row.durationMs) cands = cands.filter((h) => withinClock(h, row.durationMs))
     if (row.album) {
@@ -178,7 +188,9 @@ export function resolvePlan(row: PlanRow, hits: readonly QobuzHit[], ev: PlanEvi
     }
     cands = cands.filter((h) => !isCompilation(row.artist, h) || (row.album && bareAlbum(h.album) === bareAlbum(row.album) && !VARIOUS.test(h.albumArtist ?? '')))
     if (!cands.length) return null
-    const pick = cands.find((h) => h.hires) ?? cands[0]
+    const named = cands.filter(saysExplicitCopy)
+    const pool = named.length ? named : cands
+    const pick = pool.find((h) => h.hires) ?? pool[0]
     return planOf(pick, isrc ? 'isrc' : 'catalog')
   }
   const name = k(displayAlbumTitle(row.title))
