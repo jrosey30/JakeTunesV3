@@ -19,7 +19,9 @@ const watchers = new Set<() => void>()
 function setLast(t: DiscoveryTab): void {
   if (lastTab === t) return
   lastTab = t
-  for (const w of watchers) w()
+  // After the current render: DiscoveryView remembers its first tab while it
+  // renders, and telling the sidebar then is a setState during another render.
+  queueMicrotask(() => { for (const w of watchers) w() })
 }
 export function rememberedDiscoveryTab(): DiscoveryTab { return lastTab }
 export function rememberDiscoveryTab(t: DiscoveryTab): void { setLast(t) }
