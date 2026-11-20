@@ -35,7 +35,11 @@ cat "$FAKE_WORLD/probe.json"
 
 const MONEY = { artist: 'Feedback Revival', title: 'Money', album: 'Money', durationMs: 143_000 }
 const THE_FILE = { format: { duration: '142.6', tags: { title: 'Money', artist: 'Feedback Revival', album: 'Money', track: '1' } } }
-const TRACK_GET = { title: 'Money', duration: 143, parental_warning: false, album: { title: 'Money', artist: { name: 'Feedback Revival' } } }
+const TRACK_GET = { title: 'Money', duration: 143, parental_warning: false, performer: { name: 'Feedback Revival' }, album: { title: 'Money', artist: { name: 'Feedback Revival' } } }
+/** The page's catalogue answer for the row's words (the resolver's, cached): the one copy. */
+const CATALOG_KEY = `catalog/search?query=${encodeURIComponent('Feedback Revival Money')}&limit=50`
+const catalogTrack = (id: number, o: Record<string, unknown> = {}): Record<string, unknown> => ({ id, title: 'Money', duration: 143, parental_warning: false, streamable: true, performer: { name: 'Feedback Revival' }, album: { title: 'Money', artist: { name: 'Feedback Revival' } }, ...o })
+const CATALOG = { tracks: { items: [catalogTrack(777)] } }
 const ALBUM_GET = { title: 'Money', artist: { name: 'Feedback Revival' }, tracks_count: 1, media_count: 1, parental_warning: false, release_date_original: '2020-03-01', tracks: { items: [{ id: 777, title: 'Money', duration: 143, track_number: 1, media_number: 1, streamable: true, performer: { name: 'Feedback Revival' } }] } }
 const APPLE_ALBUM = { results: [
   { wrapperType: 'collection', collectionId: 55, collectionName: 'Money', artistName: 'Feedback Revival', trackCount: 1, releaseDate: '2020-03-01T08:00:00Z', collectionExplicitness: 'notExplicit' },
@@ -104,7 +108,7 @@ beforeEach(() => {
   put('probe.json', JSON.stringify(THE_FILE))
   install(join(home, '.local', 'bin'), 'rip', FAKE_RIP)
   install(join(world, 'app-path'), 'ffprobe', FAKE_FFPROBE)
-  qobuz = { 'track/get?track_id=777': TRACK_GET, 'album/get?album_id=alb1': ALBUM_GET }
+  qobuz = { 'track/get?track_id=777': TRACK_GET, 'album/get?album_id=alb1': ALBUM_GET, [CATALOG_KEY]: CATALOG }
   mock.method(console, 'warn', () => {})
   mock.method(console, 'log', () => {})
   globalThis.fetch = (async (url: string | URL) => {
@@ -156,6 +160,32 @@ describe('a song by id', () => {
     const r = await save({ ...MONEY, explicitSource: true, qobuz: { id: '777', how: 'catalog' } })
     assert.equal(r.via, 'walk')
     assert.equal(r.fellBack, 'explicit')
+    assert.ok(!calls().some((c) => c.endsWith('id qobuz track 777')))
+  })
+
+  test('a clean edit never lands while Qobuz has an explicit copy of the song (the walk’s explicit-wins rule)', async () => {
+    // Watch the Throne: the row carries no explicit flag and Deezer's ISRC named the clean edit.
+    qobuz[CATALOG_KEY] = { tracks: { items: [catalogTrack(777), catalogTrack(778, { parental_warning: true, duration: 144 })] } }
+    const { save, imported } = store()
+    const r = await save({ ...MONEY, qobuz: { id: '777', how: 'isrc' } })
+    assert.equal(r.via, 'walk')
+    assert.equal(r.fellBack, 'explicit')
+    assert.ok(!calls().some((c) => c.endsWith('id qobuz track 777')), 'the clean edit was never fetched')
+    assert.equal(imported.length, 0)
+  })
+
+  test('no catalogue answer to compare with: the clean-flagged copy walks', async () => {
+    delete qobuz[CATALOG_KEY]
+    const r = await store().save({ ...MONEY, qobuz: { id: '777', how: 'isrc' } })
+    assert.equal(r.via, 'walk')
+    assert.equal(r.fellBack, 'no-answer')
+  })
+
+  test('Qobuz’s performer is another artist: the item is held to the row before a byte moves', async () => {
+    qobuz['track/get?track_id=777'] = { ...TRACK_GET, performer: { name: 'Pink Floyd' } }
+    const r = await store().save({ ...MONEY, qobuz: { id: '777', how: 'catalog' } })
+    assert.equal(r.via, 'walk')
+    assert.equal(r.fellBack, 'wrong-recording')
     assert.ok(!calls().some((c) => c.endsWith('id qobuz track 777')))
   })
 

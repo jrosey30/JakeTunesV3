@@ -67,9 +67,36 @@ const sameArtist = (want: string, got: string | undefined): boolean => {
   return artistKeys(want).some((a) => g.has(a))
 }
 const titleKeys = (h: QobuzHit): string[] => [h.title, h.version ? `${h.title} (${h.version})` : ''].filter(Boolean).map((t) => k(t)).filter(Boolean)
+/**
+ * Version words that make an item another cut of the song: a live take, a demo, a remix, an
+ * edit. Copied (common can't import main) from streamrip-match.ts VERSION_MARKER, which the
+ * walk's judge holds every file to. "Remastered", "Explicit", "Album Version" are not here: a
+ * remaster is the recording.
+ */
+const OTHER_VERSION = /^(live|unplugged|acoustic|rerecord|rerecorded|rerecording|rerecordings|rerecords|demo|demos|karaoke|tribute|instrumental|instrumentals|remix|remixed|remixes|reedit|mix|mixes|megamix|extended|mashup|mashups|medley|sped|spedup|slowed|reverb|nightcore|chopped|screwed|8d|soundalike|cover|covers|bootleg|session|sessions|rehearsal|rehearsals|alternate|alt|acapella|acappella|concert|dub|club|amended|amendedd|clean|cleaned|censored|edit|edited|radio)$/
+const words = (s: string): string[] => s.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean)
+/**
+ * Qobuz's version field names another cut the row's own title doesn't ask for ("Live", "Radio
+ * Edit", "Taylor's Version"). Count-based like streamrip-match.ts unwantedVersionOf: "Live and
+ * Let Die" asks for one "live", so "Live and Let Die (Live)" is still another cut. "Original
+ * Mix" is the recording.
+ */
+export function versionIsAnotherCut(wantTitle: string, hitTitle: string, version: string | undefined): boolean {
+  const v = (version ?? '').replace(/\boriginal\s+mix\b/gi, '')
+  if (!v.trim()) return false
+  if (/\p{L}['’]s\s+version/iu.test(v) && !/\p{L}['’]s\s+version/iu.test(wantTitle)) return true
+  const budget = new Map<string, number>()
+  for (const w of words(wantTitle)) budget.set(w, (budget.get(w) ?? 0) + 1)
+  for (const w of words(`${hitTitle} ${v}`)) {
+    const left = budget.get(w) ?? 0
+    if (left > 0) { budget.set(w, left - 1); continue }
+    if (OTHER_VERSION.test(w)) return true
+  }
+  return false
+}
 const sameTitle = (want: string, h: QobuzHit): boolean => {
   const w = k(want)
-  return Boolean(w) && titleKeys(h).includes(w)
+  return Boolean(w) && titleKeys(h).includes(w) && !versionIsAnotherCut(want, h.title, h.version)
 }
 /** "Nevermind (Remastered)" and "Nevermind" are the same album NAME here; the edition is the track count's job. */
 const bareAlbum = (s: string | undefined): string => k(displayAlbumTitle(s ?? '').replace(/\s*[([{][^)\]}]*[)\]}]/g, ''))
@@ -90,6 +117,23 @@ const digits = (s: string | undefined): string => (s ?? '').replace(/\D/g, '').r
 function explicitPool(row: PlanRow, cands: QobuzHit[]): QobuzHit[] {
   if (row.explicit || row.cleaned) return cands.filter((h) => h.explicit === true)
   return cands.some((h) => h.explicit === true) ? cands.filter((h) => h.explicit !== false) : cands
+}
+
+const withinClock = (h: QobuzHit, durationMs: number | undefined): boolean =>
+  !durationMs || (typeof h.durationSec === 'number' && Math.abs(h.durationSec * 1000 - durationMs) <= PLAN_DURATION_TOLERANCE_MS)
+
+/**
+ * An explicit copy of the song among Qobuz's hits: the same title and artist, the same length
+ * within 3 s (when one is known), on any of the artist's own albums (a compilation's flag
+ * proves nothing about the recording: exact-recording.ts judgeHitsByMeta). While one exists a
+ * copy flagged clean is the clean edit, whatever its ISRC says: the walk's "explicit wins by
+ * default" is a comparison of copies, and an id alone can't make it. Not held to the row's
+ * album on purpose: the "Deluxe" and the standard edition are one record, and a sibling that
+ * only sends Save down the walk costs a few seconds, never the wrong file.
+ */
+export function explicitSibling(want: { artist: string; title: string; durationMs?: number }, hits: readonly QobuzHit[]): QobuzHit | null {
+  return hits.find((h) => h.kind === 'track' && h.explicit === true && sameArtist(want.artist, h.artist) && sameTitle(want.title, h)
+    && !isCompilation(want.artist, h) && withinClock(h, want.durationMs)) ?? null
 }
 
 const planOf = (h: QobuzHit, how: PlanHow): QobuzPlan | null => h.id && isQobuzId(h.id)
@@ -114,15 +158,20 @@ const planOf = (h: QobuzHit, how: PlanHow): QobuzPlan | null => h.id && isQobuzI
  * nothing here can prove which recording the explicit copy is.
  */
 export function resolvePlan(row: PlanRow, hits: readonly QobuzHit[], ev: PlanEvidence = {}): QobuzPlan | null {
+  // A song by ISRC: `hits` must hold the row's catalogue answer too (main passes both), or an
+  // explicit sibling with another ISRC can't be seen and the clean edit would stand alone.
   if (!row.artist || !row.title) return null
   if (row.kind === 'song') {
     if (row.cleaned) return null
     const isrc = (ev.isrc ?? '').toUpperCase()
     let cands = hits.filter((h) => h.kind === 'track' && sameArtist(row.artist, h.artist) && sameTitle(row.title, h))
+    if (!row.durationMs && !isrc) return null
+    // The explicit rule first, over every copy of the song by name: an ISRC that points at the
+    // clean edit must not leave it alone in the pool. An explicit copy at the row's length
+    // means a copy flagged clean is never the plan.
+    cands = row.explicit ? explicitPool(row, cands) : explicitSibling(row, hits) ? cands.filter((h) => h.explicit !== false) : cands
     if (isrc) cands = cands.filter((h) => (h.isrc ?? '').toUpperCase() === isrc)
-    if (row.durationMs) cands = cands.filter((h) => typeof h.durationSec === 'number' && Math.abs(h.durationSec * 1000 - row.durationMs!) <= PLAN_DURATION_TOLERANCE_MS)
-    else if (!isrc) return null
-    cands = explicitPool(row, cands)
+    if (row.durationMs) cands = cands.filter((h) => withinClock(h, row.durationMs))
     if (row.album) {
       const want = bareAlbum(row.album)
       cands = cands.filter((h) => bareAlbum(h.album) === want)
@@ -276,7 +325,7 @@ export function createRateWindow(max: number, windowMs: number, now: () => numbe
     },
   }
 }
-export const DEEZER_MAX_PER_WINDOW = 45   // under Deezer's 50, for the rest of the app
+export const DEEZER_MAX_PER_WINDOW = 45   // under Deezer's 50; covers this feature's calls only, the app's other Deezer callers keep their own pace
 export const DEEZER_WINDOW_MS = 5000
 
 /** How long a plan (or no plan) is kept, and how many rows one ask may carry. */

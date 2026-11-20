@@ -26,7 +26,7 @@ import { homedir, tmpdir } from 'os'
 import { lstat, mkdtemp, readdir, readFile, writeFile, rm } from 'fs/promises'
 import { createRipProgress, cutShort, decodedSecFromStats, finishedRipFiles, RIP_HARD_CAP_MS, RIP_PROGRESS_CHECK_MS } from './rip-finish.ts'
 import type { ImportedTrackRecord, BatchSummary } from '../bandcamp-integration/acquisition/download-router'
-import { NO_EXPLICIT_WARNING, albumFirst, albumSearchNames, albumVersionOf, bandcampHitDoubt, isCompilationCopy, onWantedAlbum, rankStreamripCandidates, realAlbumTags, titleMatches, rankWithArtistAliases, searchTitle, searchQueryTitle, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, isNoResultsMessage, isQobuzNoSuchItem, parseStreamripDesc, qobuzTrackMetaOf, type QobuzTrackMeta } from '../streamrip-match.ts'
+import { NO_EXPLICIT_WARNING, albumFirst, albumSearchNames, albumVersionOf, bandcampHitDoubt, isCompilationCopy, onWantedAlbum, rankStreamripCandidates, realAlbumTags, titleMatches, rankWithArtistAliases, searchTitle, searchQueryTitle, rankSoundcloudCandidates, unwantedVersionOf, liveBrandMarker, applyExplicitGate, isNoResultsMessage, isQobuzNoSuchItem, parseStreamripDesc, qobuzTrackMetaOf, saysExplicit, type QobuzTrackMeta } from '../streamrip-match.ts'
 import { buildRequestedAlbum, verifyAlbumCandidate, reconcileAlbumCompletion, describeCompletion, albumAlternativeDesc, orderTracks, parseCountTag, matchLibraryOwnership, ladderBudgetMs, type RequestedAlbum, type CandidateAlbum, type AlbumVerdict, type Ownership, type LibraryTrackLite } from '../album-identity.ts'
 import { loadLibraryTracksLite, type ImportRowTags } from '../import-pipeline.ts'
 import { itunesAlbumTracks, itunesFindAlbum, itunesSongRows } from '../download-search.ts'
@@ -48,7 +48,7 @@ import { isShelfListId } from '../ipod-shelf-joins.ts'
 import { createAnswerCache, createLimiter } from '../../common/answer-cache.ts'
 import { qobuzHitsOf, losslessScope, LOSSLESS_CONCURRENCY, LOSSLESS_FAIL_QUIET_MS, LOSSLESS_MAX_SCOPES, LOSSLESS_TTL_MS, type QobuzHit } from '../../common/shop-lossless.ts'
 import { PREFLIGHT_BUDGET_MS, type AlbumPreflight, type AlbumPreflightRequest } from '../../common/album-preflight.ts'
-import { createRateWindow, deezerIsrc, deezerSearchPath, deezerUpc, isQobuzId, pickDeezer, planKey, planRowFrom, resolvePlan, DEEZER_MAX_PER_WINDOW, DEEZER_WINDOW_MS, PLAN_CONCURRENCY, PLAN_FAIL_QUIET_MS, PLAN_MAX_ENTRIES, PLAN_ROWS_PER_ASK, PLAN_TTL_MS, type ByIdFallback, type PlanHow, type PlanRow, type QobuzPlan } from '../../common/shop-qobuz-id.ts'
+import { createRateWindow, deezerIsrc, deezerSearchPath, deezerUpc, explicitSibling, isQobuzId, pickDeezer, planKey, planRowFrom, resolvePlan, DEEZER_MAX_PER_WINDOW, DEEZER_WINDOW_MS, PLAN_CONCURRENCY, PLAN_FAIL_QUIET_MS, PLAN_MAX_ENTRIES, PLAN_ROWS_PER_ASK, PLAN_TTL_MS, type ByIdFallback, type PlanHow, type PlanRow, type QobuzPlan } from '../../common/shop-qobuz-id.ts'
 import { displayAlbumTitle } from '../../common/shop-search.ts'
 import { cancelJobs, clearLanding, currentJob, importOneAtATime, markShelfSave, runInJob, stopAllJobsNow, sweepOrphanedStaging, watchLanding } from './rip-jobs.ts'
 import type { FinishedJob } from '../../common/download-lanes.ts'
@@ -794,7 +794,10 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       // Apple's cleaned row is the clean edit's length: nothing here can prove the explicit recording.
       if (row.cleaned || !row.durationMs) return { plan: null }
       const words = await askCatalog(`${row.artist} ${row.title}`.slice(0, 120), 50)
-      const byWords = words ? resolvePlan(row, words) : null
+      // No catalogue answer, no plan by ISRC either: only the row's words show an explicit copy
+      // beside the one Deezer's ISRC names (the ISRC search finds that one recording alone).
+      if (!words) return null
+      const byWords = resolvePlan(row, words)
       if (byWords) return { plan: byWords }
       const found = await deezerGet(deezerSearchPath(row))
       if (!found) return null
@@ -804,7 +807,7 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       if (!isrc) return null
       const byCode = await qobuzGet(`catalog/search?query=${encodeURIComponent(isrc)}&limit=10`, creds, 8000)
       if (!byCode || byCode === 'gone') return null
-      const plan = resolvePlan(row, qobuzHitsOf(byCode.body), { isrc })
+      const plan = resolvePlan(row, [...words, ...qobuzHitsOf(byCode.body)], { isrc })
       if (!plan) return { plan: null }
       // Qobuz's own listing of the track must carry that very ISRC.
       const got = await qobuzGet('track/get?track_id=' + encodeURIComponent(plan.id), creds, 6000)
@@ -1291,11 +1294,24 @@ export function registerStreamripStore(deps: StreamripDeps): void {
         if (gone.has(plan.id)) return { why: 'gone' }
         const m = meta.get(plan.id)
         if (!m) return { why: 'no-answer' }
-        const desc = `${m.title ?? title} by ${artist}`
+        // Who Qobuz says performs it (track/get's performer), so the artist check compares the
+        // item with the row, not the row with itself. With no performer in the answer the staged
+        // file's own tags (judgeStaged, below) are the artist check.
+        const desc = `${m.title ?? title} by ${m.performer ?? artist}`
         const v = judgeHitsByMeta(req, [{ id: plan.id, desc }], meta, gone)
         if (v.wrongRecording.length) { trace.push(`by id: ${v.wrongRecording[0].verdict.reason}`); return { why: 'wrong-recording' } }
         if (v.kept.length === 0) return { why: 'explicit' }
         if ((opts?.explicitSource || opts?.cleanedSource) && m.parentalWarning !== true) return { why: 'explicit' }
+        // Explicit wins by default, and that is a comparison of copies: one id can't see its
+        // explicit sibling. A copy that isn't flagged or named explicit is held to the page's own
+        // catalogue answer (cached from the resolver): an explicit copy of the song at the row's
+        // length means this one is the clean edit. No answer, no proof: walk.
+        if (m.parentalWarning !== true && !saysExplicit(m.title, m.version)) {
+          const words = await askCatalog(`${artist} ${title}`.slice(0, 120), 50)
+          if (!words) return { why: 'no-answer' }
+          const sib = explicitSibling({ artist, title, durationMs: req.durationSec * 1000 }, words)
+          if (sib && sib.id !== plan.id) { trace.push('by id: an explicit copy of the song is on Qobuz; this one is flagged clean'); return { why: 'explicit' } }
+        }
         // The song's own album, and not a compilation: anything else is the walk's to weigh (Brief 231).
         if (isCompilationCopy(req, m)) return { why: 'compilation' }
         if (req.album && !onWantedAlbum(req.album, m.album)) return { why: 'other-album' }

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { qobuzHitsOf, type QobuzHit } from '../../common/shop-lossless.ts'
 import {
-  createRateWindow, deezerIsrc, deezerUpc, downloadPathEvent, isQobuzId, pickDeezer, planKey, planRowFrom, planRowOfJob, resolvePlan,
+  createRateWindow, deezerIsrc, deezerUpc, downloadPathEvent, explicitSibling, isQobuzId, pickDeezer, planKey, planRowFrom, planRowOfJob, resolvePlan, versionIsAnotherCut,
   type PlanRow,
 } from '../../common/shop-qobuz-id.ts'
 
@@ -52,6 +52,32 @@ describe('a song', () => {
   })
   it('a row on another album than Qobuz’s copy: no plan', () => {
     assert.equal(resolvePlan(SONG, [track('1', { album: 'Section.80' })]), null)
+  })
+  it('a clean edit by ISRC never lands while an explicit copy is there (Watch the Throne)', () => {
+    // Apple's row carries no explicit flag; Deezer's ISRC is the clean edit's. The ISRC search
+    // finds only that recording, so main passes the row's catalogue answer as well.
+    const row: PlanRow = { kind: 'song', artist: 'JAY-Z', title: 'Niggas In Paris', album: 'Watch The Throne (Deluxe)', durationMs: 219_000 }
+    const base = { artist: 'JAY-Z', title: 'Niggas In Paris', album: 'Watch The Throne (Deluxe)', albumArtist: 'JAY-Z', durationSec: 219 }
+    const cleanIsrc = 'USUM71111111'
+    const clean = track('clean', { ...base, explicit: false, isrc: cleanIsrc, hires: true })
+    const dirty = track('dirty', { ...base, explicit: true, isrc: 'USUM72222222' })
+    assert.equal(resolvePlan(row, [dirty, clean], { isrc: cleanIsrc }), null, 'the ISRC names the clean edit: walk')
+    assert.equal(resolvePlan(row, [clean, dirty])?.id, 'dirty', 'by the page alone: the explicit copy')
+    assert.equal(resolvePlan(row, [clean], { isrc: cleanIsrc })?.id, 'clean', 'no explicit copy seen: the clean record is the record')
+    assert.equal(explicitSibling(row, [clean, dirty])?.id, 'dirty')
+    assert.equal(explicitSibling(row, [clean, track('d2', { ...base, explicit: true, durationSec: 260 })]), null, 'another length is another recording')
+    assert.equal(explicitSibling(row, [clean, track('d3', { ...base, explicit: true, albumArtist: 'Various Artists', album: 'Now 80' })]), null, 'a compilation’s flag proves nothing')
+  })
+  it('a version Qobuz names as another cut is not the song, unless the row asks for it', () => {
+    for (const version of ['Live', 'Demo', 'Remix', 'Club Mix', 'Acoustic', 'Instrumental', 'Radio Edit', 'Live at Glastonbury 2019', 'Taylor’s Version']) {
+      assert.equal(resolvePlan(SONG, [track('1', { version })]), null, version)
+    }
+    for (const version of ['Remastered', 'Album Version', 'Explicit', 'Original Mix', '2012 Remaster']) {
+      assert.equal(resolvePlan(SONG, [track('1', { version })])?.id, '1', version)
+    }
+    assert.equal(resolvePlan({ ...SONG, title: 'Money Trees (Live)' }, [track('1', { version: 'Live' })])?.id, '1', 'the row asks for the live cut')
+    assert.equal(versionIsAnotherCut('Live and Let Die', 'Live and Let Die', 'Remastered'), false, 'a song named with the word is not another cut')
+    assert.equal(versionIsAnotherCut('Live and Let Die', 'Live and Let Die', 'Live'), true, 'but its live take is')
   })
   it('twin ids of one recording on one album: the hi-res one', () => {
     assert.equal(resolvePlan(SONG, [track('a'), track('b', { hires: true })])?.id, 'b')
