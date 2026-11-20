@@ -145,6 +145,18 @@ export interface QItem {
   /** Brief 258: main was still running this arm when the window reloaded; it is
    *  followed (main's end event, main's live list) instead of started again. Not saved. */
   attached?: boolean
+  /** When this job was last queued (its first arm, or a re-arm). Saved, so after a
+   *  restart (which moves an interrupted job to the head of its lane) the newest job
+   *  for a row is still the one Jake queued last, not the one first in the list. */
+  enqueuedAt?: number
+}
+
+/** The newest job matching `pred`, by when it was queued. A job saved before
+ *  `enqueuedAt` existed counts as oldest; between equals the later in the list wins. */
+export function newestJob<T extends { enqueuedAt?: number }>(items: readonly T[], pred: (q: T) => boolean): T | undefined {
+  let best: T | undefined
+  for (const q of items) if (pred(q) && (!best || (q.enqueuedAt ?? 0) >= (best.enqueuedAt ?? 0))) best = q
+  return best
 }
 
 export function queueKey(r: QResult): string {
@@ -323,11 +335,11 @@ export function subscribeQueue(fn: () => void): () => void {
 }
 export function getQueue(): QItem[] { return queue }
 export function itemFor(r: QResult): QItem | undefined { return queue.find((q) => q.key === queueKey(r)) }
-/** The job a recommendation is riding on, if any: the newest, so an offer
- *  taken on a refused album (Brief 257) is the one that answers for the row. */
+/** The job a recommendation is riding on, if any: the newest by when it was
+ *  queued, so an offer taken on a refused album (Brief 257) is the one that
+ *  answers for the row, after a restart too. */
 export function itemForRecommendation(recommendationId: string): QItem | undefined {
-  for (let i = queue.length - 1; i >= 0; i--) if (queue[i].result.origin?.recommendationIds.includes(recommendationId)) return queue[i]
-  return undefined
+  return newestJob(queue, (q) => Boolean(q.result.origin?.recommendationIds.includes(recommendationId)))
 }
 
 /** Adopt a second origin onto an existing job (same recording, another
@@ -354,17 +366,24 @@ export function queueSummary(): { active: number; queued: number; done: number; 
 }
 
 /** Add a result to the queue (or re-arm a failed one). No-op if already queued,
- *  running, or done — clicking twice never double-grabs. */
-export function enqueue(r: QResult): void {
+ *  running, or done — clicking twice never double-grabs. `askAgain` is set only
+ *  by one explicit action on that row (its own Save): re-arming a failed song
+ *  then forgets the not-found memory and searches. Anything else (a Save all,
+ *  any batch) asks the memory first and is answered from it. */
+export function enqueue(r: QResult, opts: { askAgain?: boolean } = {}): void {
   const key = queueKey(r)
   const existing = queue.find((q) => q.key === key)
   if (existing) {
     mergeOrigin(existing.result, r.origin)
-    if (existing.status === 'failed' || existing.status === 'canceled') { existing.status = 'queued'; existing.error = undefined; existing.attempt = (existing.attempt ?? 1) + 1; existing.armId = newArmId(); askAgain(existing); askPreflight(existing, r.clickedAt); emit(); void pump() }
+    if (existing.status === 'failed' || existing.status === 'canceled') {
+      existing.status = 'queued'; existing.error = undefined; existing.attempt = (existing.attempt ?? 1) + 1; existing.armId = newArmId(); existing.enqueuedAt = Date.now(); existing.fromMemory = false
+      if (opts.askAgain) askAgain(existing); else checkMemory(existing)
+      askPreflight(existing, r.clickedAt); emit(); void pump()
+    }
     else emit()
     return
   }
-  const it: QItem = { key, result: r, status: 'queued', armId: newArmId() }
+  const it: QItem = { key, result: r, status: 'queued', armId: newArmId(), enqueuedAt: Date.now() }
   queue = [...queue, it]
   askPreflight(it, r.clickedAt)
   checkMemory(it)
@@ -448,8 +467,9 @@ function askPreflight(it: QItem, clickedAt?: number): void {
 // ── The not-found memory (Brief 257) ────────────────────────────────────
 // A song the walk found nowhere isn't searched again the same way for a week:
 // a NEW job for it (a Save all, a Save click after a restart) is answered from
-// main's memory at once. A re-arm of a job already in the queue (Retry, Save
-// on a failed row) is a manual retry: the memory forgets it and the walk asks.
+// main's memory at once, and so is a batch that re-arms a failed job (Save all,
+// the queue bar's Retry all). Only one explicit action on that row (its Retry,
+// its own Save) is a manual retry: the memory forgets it and the walk asks.
 // A different title, artist, album or length is another key, asked at once.
 // Songs only: an album's "no" comes from the preflight in seconds, with offers.
 const remembering = new Map<QItem, Promise<void>>()
@@ -545,6 +565,7 @@ export function retry(key: string): void {
   it.imported = undefined
   it.dupes = undefined
   it.attempt = (it.attempt ?? 1) + 1
+  it.enqueuedAt = Date.now()
   askAgain(it)
   it.armId = newArmId()
   askPreflight(it)
@@ -563,7 +584,10 @@ export function retryFailed(): void {
     it.imported = undefined
     it.dupes = undefined
     it.attempt = (it.attempt ?? 1) + 1
-    askAgain(it)
+    it.enqueuedAt = Date.now()
+    it.fromMemory = false
+    // A batch: the memory answers a song it still holds; only a row's own Retry forgets.
+    checkMemory(it)
     it.armId = newArmId()
     askPreflight(it)
     any = true

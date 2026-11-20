@@ -83,3 +83,4 @@ No edition offer came up in the replay except Wu-Tang: Apple rarely lists the ot
 - A single song's Bandcamp or SoundCloud copy is still taken by the walk; it is labelled lossy in Downloads after, not before (there is no song preflight).
 - The album jot stays on the Listen List beside the song rows a partial save adds; Jake tosses it if he wants.
 - Phase 5: offers survive a restart only once the queue does.
+- When the album check can't tell (no login, no answer, too slow), the full download still runs and can take a Bandcamp MP3 without asking.

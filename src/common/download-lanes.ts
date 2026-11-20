@@ -42,6 +42,9 @@ export const SAVED_FIELDS = [
   // exist) are song jobs whose album group rides in `result.origin.group`, and
   // `result.offerOf` / `result.lossyOk` ride in `result`: saved with it.
   'preflightAnswer', 'offerTaken', 'fromMemory',
+  // When the job was last queued: the newest job for a Listen List row is picked
+  // by it, since a restart moves an interrupted job to the head of its lane.
+  'enqueuedAt',
 ] as const
 
 export interface SavedJob {

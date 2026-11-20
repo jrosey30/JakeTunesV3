@@ -15,7 +15,10 @@ import { NOT_FOUND_CAP, NOT_FOUND_WEEK_MS, forgetNotFound, notFoundKey, noteNotF
 import { panelRowFor, type PanelQueueItem } from '../../common/downloads-panel-model.ts'
 import { albumSaveEvent, type AlbumEdition, type AlbumPreflight } from '../../common/album-preflight.ts'
 import { scrubEvent } from '../../common/usage-log.ts'
-import { enqueue, getQueue, clearFinished, retry, albumQueryId, trackQueryId, type QResult } from '../../renderer/views/DownloadStore/downloadQueue.ts'
+import { enqueue, getQueue, clearFinished, retry, albumQueryId, trackQueryId, itemForRecommendation, resetQueueForTests, restoreSavedQueue, type QResult } from '../../renderer/views/DownloadStore/downloadQueue.ts'
+import { queueAllRecoDownloads, queueRecoDownload, retryRecoDownload, projectRecoStatus } from '../../renderer/listen-to-the-list/ltlDownload.ts'
+import { emptyQueueDoc, toSavedJobs, type SavedJob } from '../../common/download-lanes.ts'
+import type { Recommendation } from '../../renderer/types.ts'
 import { editionOfferJob, offerSongJobs, takeOffer } from '../../renderer/views/DownloadStore/shopOffers.ts'
 
 // ── fixtures ────────────────────────────────────────────────────────────
@@ -275,6 +278,9 @@ const settle = async () => { for (let i = 0; i < 300; i++) { await sleep(5); if 
 const songJob = (title: string, o: Partial<QResult> = {}): QResult => ({ kind: 'query', source: 'qobuz', mediaType: 'track', id: trackQueryId('Zinc Vaccum', title), desc: title, artist: 'Zinc Vaccum', title, ...o })
 const albumJob = (name: string, o: Partial<QResult> = {}): QResult => ({ kind: 'query', source: 'qobuz', mediaType: 'album', id: albumQueryId('MJ Lenderman', name), desc: name, artist: 'MJ Lenderman', album: name, collectionId: 1, trackCount: 9, surface: 'listen-list', origin: { recommendationIds: ['rec-1'], entryId: 'rec-1', sourceLabel: 'Alex' }, ...o })
 const find = (k: string) => getQueue().find((q) => q.key === k)!
+/** A quit and a start: the list as saved, brought back by the Phase 5 restore. */
+const restart = async (jobs: SavedJob[] = toSavedJobs(getQueue())) => { resetQueueForTests(); await restoreSavedQueue({ ...emptyQueueDoc(), jobs }) }
+const recoOf = (id: string, song: string): Recommendation => ({ id, createdAt: '2026-11-20T00:00:00Z', song, artist: 'Zinc Vaccum' })
 
 beforeEach(async () => {
   await settle(); clearFinished()
@@ -290,8 +296,10 @@ describe('the memory on the scheduler', () => {
     assert.equal(walkCalls.length, 1)
     await sleep(10)
     assert.equal(memory.size, 1, 'remembered')
-    // A new session's Save: the same request, a new job.
-    clearFinished()
+    // A restart: the failed row is saved and comes back (Phase 5), then a
+    // Save from a batch re-arms it. The memory answers; nothing is searched.
+    await restart()
+    assert.equal(getQueue()[0].status, 'failed', 'the failed row came back')
     enqueue(songJob('Dollar'))
     await settle()
     const it = getQueue()[0]
@@ -305,6 +313,42 @@ describe('the memory on the scheduler', () => {
     await settle()
     assert.equal(walkCalls.length, 2)
     assert.ok(memoryCalls.some((c) => c.startsWith('forget')))
+  })
+  it('after a restart, Save all answers a failed song from the memory; only the row’s own Retry searches', async () => {
+    walk.set('Penny', async () => ({ ok: false, outcome: 'not-found', primary: 'Not found', detail: 'Nothing resembling it.' }))
+    const r = recoOf('rec-penny', 'Penny')
+    queueRecoDownload(r, { askAgain: true })
+    await settle(); await sleep(10)
+    assert.equal(walkCalls.length, 1)
+    assert.equal(memory.size, 1, 'remembered')
+    await restart()
+    assert.equal(itemForRecommendation(r.id)?.status, 'failed', 'the failed row came back')
+    // The Listen List's Save all: a batch. Asked of the memory, answered from it.
+    memoryCalls.length = 0
+    assert.equal(queueAllRecoDownloads([r]).queued, 1)
+    await settle()
+    assert.equal(walkCalls.length, 1, 'no search')
+    assert.ok(memoryCalls.some((c) => c.startsWith('check')), 'the memory was asked')
+    assert.ok(!memoryCalls.some((c) => c.startsWith('forget')), 'and kept')
+    const it = itemForRecommendation(r.id)!
+    assert.equal(it.status, 'failed')
+    assert.equal(it.fromMemory, true)
+    assert.equal(memory.size, 1)
+    // The row's own Retry: forgotten and searched.
+    retryRecoDownload(r.id)
+    await settle()
+    assert.equal(walkCalls.length, 2, 'searched')
+    assert.ok(memoryCalls.some((c) => c.startsWith('forget')))
+  })
+  it('the row’s own Save on a failed song searches again', async () => {
+    walk.set('Nickel', async () => ({ ok: false, outcome: 'not-found', primary: 'Not found', detail: 'x' }))
+    const r = recoOf('rec-nickel', 'Nickel')
+    queueRecoDownload(r, { askAgain: true })
+    await settle(); await sleep(10)
+    await restart()
+    queueRecoDownload(r, { askAgain: true })
+    await settle()
+    assert.equal(walkCalls.length, 2)
   })
   it('a different length is a new question, asked at once', async () => {
     memory.set(notFoundKey({ mediaType: 'track', artist: 'Zinc Vaccum', title: 'Dollar', durationMs: 200_000 })!, { at: Date.now(), outcome: 'not-found' })
@@ -416,5 +460,31 @@ describe('a clean edition of another size', () => {
   })
   it('all the songs on an edition of the same size reads "another edition"', () => {
     assert.equal(offerLine({ kind: 'songs', have: tracks(['a', 'b']), missing: [], owned: 0, of: 2, from: 2 }), 'Qobuz has all 2 songs, on another edition. Save those 2?')
+  })
+})
+
+describe('after a restart the row follows the job Jake queued last', () => {
+  it('an interrupted edition job moved to the front still answers for the row, not the refused album', async () => {
+    const refused = albumJob('Manning Fireworks')
+    const edition = albumJob('Manning Fireworks (6-Song Edition)', { id: albumQueryId('MJ Lenderman', 'Manning Fireworks (6-Song Edition)'), collectionId: 9, trackCount: 6 })
+    let release!: () => void
+    walk.set('Manning Fireworks (6-Song Edition)', () => new Promise((res) => { release = () => res({ ok: true, imported: 6, dupes: 0 }) }))
+    const jobs: SavedJob[] = [
+      { key: `qobuz|album|${refused.id}`, result: refused as unknown as SavedJob['result'], status: 'failed', armId: 'arm-a', endedAt: Date.now(), enqueuedAt: Date.now() - 60_000, primary: 'Not on Qobuz' },
+      { key: `qobuz|album|${edition.id}`, result: edition as unknown as SavedJob['result'], status: 'downloading', armId: 'arm-b', enqueuedAt: Date.now() - 30_000 },
+    ]
+    await restart(jobs)
+    assert.equal(getQueue()[0].key, `qobuz|album|${edition.id}`, 'the interrupted job is first in the list')
+    assert.equal(itemForRecommendation('rec-1')?.key, `qobuz|album|${edition.id}`)
+    assert.equal(projectRecoStatus(getQueue(), { id: 'rec-1' }).jobKey, `qobuz|album|${edition.id}`)
+    for (let i = 0; i < 100 && !release; i++) await sleep(5)
+    release?.()
+    await settle()
+    assert.equal(projectRecoStatus(getQueue(), { id: 'rec-1' }).state, 'done')
+  })
+  it('enqueuedAt is saved with the job', () => {
+    enqueue(songJob('Saved Clock'))
+    const saved = toSavedJobs(getQueue()).find((j) => j.key.endsWith(trackQueryId('Zinc Vaccum', 'Saved Clock')))!
+    assert.equal(typeof saved.enqueuedAt, 'number')
   })
 })

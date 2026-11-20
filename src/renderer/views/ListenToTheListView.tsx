@@ -177,7 +177,7 @@ export default function ListenToTheListView() {
     if (!canDownloadReco(r)) return
     const f = friendOf(r)
     if (f) void window.electronAPI.friendEvent?.(f, 'got')
-    const d = queueRecoDownload(r)
+    const d = queueRecoDownload(r, { askAgain: true })   // this row's own Save / Retry
     if (d.kind === 'select-edition') void saveRecoAlbum(r, 'listen-list').then((res) => { if (res.existingKey) showDownload(res.existingKey) })
     else if (d.kind === 'browse-only') { prefillDownloadView(r, 'song'); openBrowse(dispatch) }
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -290,7 +290,7 @@ export default function NewForYouView() {
   // the card (Brief 255); an artist-only pick is browsed, never downloaded blind.
   // Brief 259: from an iPod's shelf, the song carries that list's id and joins the list once imported.
   const getReco = (rec: Recommendation, forIpodList?: string) => {
-    const d = queueRecoDownload(rec, forIpodList ? { forIpodList } : {})
+    const d = queueRecoDownload(rec, { askAgain: true, ...(forIpodList ? { forIpodList } : {}) })   // this card's own Save
     if (d.kind === 'select-edition') void saveRecoAlbum(rec, 'for-you').then((r) => { if (r.existingKey) showDownload(r.existingKey) })
     else if (d.kind === 'browse-only') { prefillDownloadView(rec, 'song'); openBrowse(dispatch) }
   }

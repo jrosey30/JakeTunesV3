@@ -22,7 +22,7 @@ import { recoFields } from '../../common/artist-credit.ts'
 import type { Recommendation } from '../types.ts'
 import { friendOf, isLinkKind } from './friend.ts'
 import {
-  enqueue, cancel, retry, subscribeQueue, getQueue, itemForRecommendation, itemFor,
+  enqueue, cancel, retry, subscribeQueue, getQueue, itemForRecommendation, itemFor, newestJob,
   trackQueryId, albumQueryId, type QItem, type QResult, type QueueOrigin,
 } from '../views/DownloadStore/downloadQueue.ts'
 import { albumJobFor, editionToSave } from '../views/DownloadStore/albumEditions.ts'
@@ -122,7 +122,8 @@ const jobKeyFor = (rec: Recommendation): string | undefined => {
 export function projectRecoStatus(queue: QItem[], rec: Pick<Recommendation, 'id'> & Partial<Recommendation>): LtlDownloadStatus {
   // The newest job carrying the row wins: an offer taken on a refused album
   // (Brief 257) is a second job for the same jot, after the refused one.
-  const it = [...queue].reverse().find((q) => q.result.origin?.recommendationIds.includes(rec.id))
+  // Newest by when it was queued, never by place: a restart moves an interrupted job to the front.
+  const it = newestJob(queue, (q) => Boolean(q.result.origin?.recommendationIds.includes(rec.id)))
     ?? (rec.artist || rec.song || rec.album ? (() => { const k = jobKeyFor(rec as Recommendation); return k ? queue.find((q) => q.key === k) : undefined })() : undefined)
   if (!it) return { state: 'idle' }
   const base = { jobKey: it.key, matchDesc: it.matchDesc, completion: it.completion, primary: it.primary, detail: it.detail, outcome: it.outcome }
@@ -171,14 +172,16 @@ export function isLtlDownloadBusy(id: string): boolean {
 }
 
 /** Queue a recommendation on the one scheduler, or say what must happen
- *  first. Re-arms a failed/canceled job for the same recording. */
-export function queueRecoDownload(rec: Recommendation, opts: { forIpodList?: string } = {}): RecoQueueDecision {
+ *  first. Re-arms a failed/canceled job for the same recording. `askAgain`:
+ *  this is the row's own Save (one explicit action), so a song the not-found
+ *  memory holds is searched again; a batch leaves it unset and the memory answers. */
+export function queueRecoDownload(rec: Recommendation, opts: { forIpodList?: string; askAgain?: boolean } = {}): RecoQueueDecision {
   const d = recoToQueueResult(rec)
   if (d.kind !== 'queue') return d
   // Brief 259: a song saved from an iPod's shelf joins that list once it is imported.
   if (opts.forIpodList && d.result.origin) d.result.origin.forIpodList = opts.forIpodList
   if (isLtlDownloadBusy(rec.id)) return d
-  enqueue(d.result)
+  enqueue(d.result, { askAgain: opts.askAgain })
   return d
 }
 

@@ -171,8 +171,9 @@ describe('the wiring', () => {
   // Listen List's own.
   it('Get on a song in the Record Shop takes the Listen List\'s door', () => {
     // Brief 259: a shelf's Save also names its iPod list (the same door).
-    assert.match(src('../../renderer/views/NewForYouView.tsx'), /const d = queueRecoDownload\(rec(, forIpodList \? \{ forIpodList \} : \{\})?\)/)
-    assert.match(src('../../renderer/views/ListenToTheListView.tsx'), /const d = queueRecoDownload\(r\)/)
+    // Brief 257: a row's own Save is a manual try (askAgain), so the not-found memory is asked again.
+    assert.match(src('../../renderer/views/NewForYouView.tsx'), /const d = queueRecoDownload\(rec, \{ askAgain: true, \.\.\.\(forIpodList \? \{ forIpodList \} : \{\}\) \}\)/)
+    assert.match(src('../../renderer/views/ListenToTheListView.tsx'), /const d = queueRecoDownload\(r, \{ askAgain: true \}\)/)
   })
   it('the list groups a row by the names it will ask for', () => {
     assert.match(src('../../renderer/views/ListenToTheListView.tsx'), /const recoType = \(r: Recommendation\)[^\n]*\n\s+const \{ title: song, album \} = recoFields\(r\)/)
