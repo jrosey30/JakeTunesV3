@@ -140,7 +140,7 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
     return planMatchingTrackGets(c.data, { parentKey: row.key, artist: row.artist, album: q?.result.album || row.title, releaseYear: q?.result.releaseYear, sourceKind: q?.result.origin?.sourceKind, sourceLabel: q?.result.origin?.sourceLabel, addedVia: q?.result.origin?.addedVia })
   }
   const retryGroup = (row: PanelRow) => {
-    for (const c of row.group?.children ?? []) if (c.status === 'failed' || c.status === 'refused' || c.status === 'canceled') retry(c.key)
+    for (const c of row.group?.children ?? []) if (c.status === 'failed' || c.status === 'refused' || c.status === 'canceled') retry(c.key, { askAgain: false })
   }
   const summaryLine = [
     summary.active ? `${summary.active} downloading` : null,

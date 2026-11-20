@@ -557,7 +557,8 @@ export async function cancel(key: string): Promise<void> {
   }
 }
 
-export function retry(key: string): void {
+/** A row's own Retry asks again (`askAgain`, the default); a group retry passes false and is answered from the not-found memory. */
+export function retry(key: string, opts: { askAgain?: boolean } = {}): void {
   const it = queue.find((q) => q.key === key)
   if (!it || it.status === 'downloading' || it.status === 'queued') return
   it.status = 'queued'
@@ -566,7 +567,7 @@ export function retry(key: string): void {
   it.dupes = undefined
   it.attempt = (it.attempt ?? 1) + 1
   it.enqueuedAt = Date.now()
-  askAgain(it)
+  if (opts.askAgain === false) { it.fromMemory = false; checkMemory(it) } else askAgain(it)
   it.armId = newArmId()
   askPreflight(it)
   emit()

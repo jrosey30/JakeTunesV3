@@ -381,14 +381,15 @@ export default function DownloadView() {
   // Every Get goes through here: a missing Qobuz account is said out loud with
   // its fix (Preferences → Music Sources); the job still runs so the other
   // providers can answer for a song. Search and previews never ask.
-  const startGet = (asked: QResult): void => {
+  const startGet = (asked: QResult, opts: { bulk?: boolean } = {}): void => {
     // An album save is timed from here to Qobuz's first answer (Brief 255, usage log).
     // The album page says how its edition was named (card or picked); a card here is 'card'.
     const q: QResult = asked.mediaType === 'album' ? { ...asked, clickedAt: asked.clickedAt ?? Date.now(), surface: asked.surface ?? 'search', editionFrom: asked.editionFrom ?? (asked.collectionId ? 'card' : 'none') } : asked
     const n = qobuzNoticeFor(qobuz, 'get', { kind: q.mediaType === 'album' ? 'album' : 'song', title: (q.mediaType === 'album' ? q.album : q.title) || q.desc })
     if (n) showCredentialNotice(n)
     funnel.saved(q.mediaType === 'album' ? 'album' : 'song')
-    enqueue(withOrigin(q), { askAgain: true })   // one Save on one result: a manual try
+    // one Save on one result is a manual try; one of several saved at once is answered from memory
+    enqueue(withOrigin(q), opts.bulk ? {} : { askAgain: true })
   }
   // Save album on a record that already has a job: never a silent no-op —
   // the Downloads panel opens on that job (Brief 253).
@@ -772,7 +773,7 @@ export default function DownloadView() {
   }
 
   /** Saves from the artist and album pages go the Search tab's way. */
-  const savePageJob = (q: QResult): void => { if (q.mediaType === 'album') saveAlbum(q); else startGet(q) }
+  const savePageJob = (q: QResult, opts: { bulk?: boolean } = {}): void => { if (q.mediaType === 'album') saveAlbum(q); else startGet(q, opts) }
 
   const hasResults = !!(ranked.artists.length || ranked.songs.length || ranked.albums.length || libraryHits.length)
 
