@@ -40,6 +40,9 @@ export interface QueueOrigin {
   group?: QueueGroup
   /** Action B: this source edition was chosen instead of a picked (iTunes) edition. Display only. */
   chosenInsteadOf?: { parentKey: string; label: string }
+  /** Brief 259: saved from this iPod list's shelf in the Record Shop; the song joins that list once
+   *  imported (main/ipod-shelf-joins.ts). Saved with the job, so a restart keeps it. */
+  forIpodList?: string
 }
 export interface QueueGroup {
   parentKey: string
@@ -323,6 +326,7 @@ export function mergeOrigin(into: QResult, from?: QueueOrigin): void {
   if (!into.origin.entryId && from.entryId) into.origin.entryId = from.entryId
   if (!into.origin.sourceLabel && from.sourceLabel) { into.origin.sourceLabel = from.sourceLabel; into.origin.sourceKind = from.sourceKind }
   if (!into.origin.addedVia && from.addedVia) into.origin.addedVia = from.addedVia
+  if (!into.origin.forIpodList && from.forIpodList) into.origin.forIpodList = from.forIpodList
 }
 
 export function queueSummary(): { active: number; queued: number; done: number; failed: number } {
@@ -522,7 +526,7 @@ async function pumpLane(lane: Lane): Promise<void> {
       emit()
       try {
         const r: { ok: boolean; imported?: number; dupes?: number; error?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string; tracks?: Array<{ title: string; trackNumber?: number; discNumber?: number; durationSec?: number | null }>; trackCount?: number; url?: string }>; primary?: string; detail?: string; matchDesc?: string; completion?: string } | undefined = it.result.kind === 'query'
-          ? await window.electronAPI.streamripDownloadByQuery?.({ artist: it.result.artist, askedArtist: it.result.askedArtist, title: it.result.title, album: it.result.album, durationMs: it.result.durationMs, cleanedSource: it.result.cleanedSource, explicitSource: it.result.explicitSource, releaseYear: it.result.releaseYear, collectionId: it.result.collectionId, trackCount: it.result.trackCount, sourceEdition: it.result.sourceEdition, addedVia: it.result.origin?.addedVia, jobId: it.armId })
+          ? await window.electronAPI.streamripDownloadByQuery?.({ artist: it.result.artist, askedArtist: it.result.askedArtist, title: it.result.title, album: it.result.album, durationMs: it.result.durationMs, cleanedSource: it.result.cleanedSource, explicitSource: it.result.explicitSource, releaseYear: it.result.releaseYear, collectionId: it.result.collectionId, trackCount: it.result.trackCount, sourceEdition: it.result.sourceEdition, addedVia: it.result.origin?.addedVia, forIpodList: it.result.origin?.forIpodList, jobId: it.armId })
           : await window.electronAPI.streamripDownloadId?.(it.result.source, it.result.mediaType, it.result.id, it.result.origin?.addedVia, it.armId)
         // Read through a widened alias. TypeScript narrows it.status to
         // 'downloading' before the await and cannot see that cancel() mutates
