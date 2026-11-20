@@ -174,7 +174,11 @@ export default function SearchPill() {
     void window.electronAPI.saveUiState({ [SEARCH_SCOPE_KEY]: next }).catch(() => undefined)
     cancelPending()
     if (next === 'page') {
-      writePageFilter(query.trim() ? query : '')
+      // An empty box keeps the words already in Albums' or Artists' own filter
+      // (review of #452: switching wiped them); typed words filter the page.
+      const kept = !query.trim() && ownBox ? getPageFilter(ownBox) : ''
+      if (kept) { sentRef.current = kept; setQuery(kept) }
+      else writePageFilter(query.trim() ? query : '')
     } else {
       // The words stay in the box and now search JakeTunes; the page unfilters.
       sentRef.current = null
