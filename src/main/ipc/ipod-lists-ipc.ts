@@ -66,6 +66,7 @@ import { withCompanionInit } from '../hub-companion.ts'
 import { MAX_PHOTO_BYTES } from '../../common/ipod-photo-covers.ts'
 import { open as openFile } from 'fs/promises'
 import { registerIpodPlaylistsIpc } from './ipod-playlists-ipc.ts'
+import { installShelfJoins } from '../ipod-shelf-joins.ts'
 
 /** How often a decision homemini hasn't heard yet is tried again. */
 export const DECISION_RETRY_MS = 5 * 60_000
@@ -350,6 +351,8 @@ export function registerIpodListsIpc(ipc: IpcRegistrar, host: IpodListsHost): Ip
   }, DECISION_RETRY_MS).unref?.()
   // The playlists on each iPod (2026-11-14): defaults, On-The-Go and Jake's own (ipod-playlists-ipc.ts).
   registerIpodPlaylistsIpc(ipc, { stateDir: host.stateDir, baseUrl: host.baseUrl, fetchImpl: host.fetchImpl, libraryTracks: host.libraryTracks, warn: host.warn })
+  // Songs Jake saved from an iPod's shelf in the Record Shop join that iPod's list (Brief 259, ipod-shelf-joins.ts).
+  installShelfJoins({ stateDir: host.stateDir, baseUrl: host.baseUrl, fetchImpl: host.fetchImpl, warn: host.warn })
   return source
 }
 

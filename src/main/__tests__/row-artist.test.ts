@@ -170,7 +170,8 @@ describe('the wiring', () => {
   // (2026-11-09): the doors that are left are the shop card's Get and the
   // Listen List's own.
   it('Get on a song in the Record Shop takes the Listen List\'s door', () => {
-    assert.match(src('../../renderer/views/NewForYouView.tsx'), /const d = queueRecoDownload\(rec\)/)
+    // Brief 259: a shelf's Save also names its iPod list (the same door).
+    assert.match(src('../../renderer/views/NewForYouView.tsx'), /const d = queueRecoDownload\(rec(, forIpodList \? \{ forIpodList \} : \{\})?\)/)
     assert.match(src('../../renderer/views/ListenToTheListView.tsx'), /const d = queueRecoDownload\(r\)/)
   })
   it('the list groups a row by the names it will ask for', () => {

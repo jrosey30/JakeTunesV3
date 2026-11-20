@@ -1028,7 +1028,7 @@ const electronAPI = {
     ipcRenderer.invoke('streamrip:search', opts),
   streamripDownloadId: (source: string, mediaType: string, id: string, addedVia?: string, jobId?: string): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }> =>
     ipcRenderer.invoke('streamrip:download-id', source, mediaType, id, addedVia, jobId),
-  streamripDownloadByQuery: (opts: { artist?: string; askedArtist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number; sourceEdition?: unknown; addedVia?: string; jobId?: string }): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }> }> =>
+  streamripDownloadByQuery: (opts: { artist?: string; askedArtist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number; sourceEdition?: unknown; addedVia?: string; forIpodList?: string; jobId?: string }): Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }> }> =>
     ipcRenderer.invoke('streamrip:download-by-query', opts),
   // Does Qobuz have this album edition? Asked before an album job downloads (Brief 255).
   checkQobuzAlbum: (opts: AlbumPreflightRequest): Promise<AlbumPreflight> =>
