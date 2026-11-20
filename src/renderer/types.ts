@@ -797,6 +797,11 @@ declare global {
       searchItunes: (query: string) => Promise<{ ok: boolean; results: ItunesSuggestion[] }>
       /** A record's real editions and the one Save album takes (Brief 255). */
       listAlbumEditions?: (artist: string, album: string) => Promise<import('../common/album-preflight').AlbumEditions>
+      /** The Record Shop's grouped search (Brief 256): artists, albums, songs. */
+      shopSearch?: (query: string) => Promise<{ ok: boolean; songs: ItunesSuggestion[]; artists: import('../common/shop-search').ShopArtist[]; albums: import('../common/shop-search').ShopAlbum[]; albumsOk: boolean }>
+      shopArtistReleases?: (artistId: number, name: string) => Promise<{ ok: boolean; artist?: import('../common/shop-search').ShopArtist; releases: import('../common/shop-search').ArtistReleases }>
+      /** One Qobuz catalogue search for a page's lossless dots; the token never leaves main. */
+      shopQobuzLossless?: (words: string, limit?: number) => Promise<{ ok: boolean; hits: import('../common/shop-lossless').QobuzHit[] }>
       itunesAlbumTracks: (ref: number | { artist?: string; album: string }) => Promise<{ ok: boolean; tracks: ItunesSuggestion[]; album?: string; artist?: string; artworkUrl?: string; releaseYear?: number; trackCount?: number; genre?: string; explicitness?: string; collectionId?: number }>
       /** Record Shop (6.0): resolve an item's catalogue selection + ownership (src/common/record-shop-live.ts types). */
       recordShop?: { resolve: (req: import('../common/record-shop-live').ShopResolveRequest) => Promise<import('../common/record-shop-live').ShopResolveResult> }

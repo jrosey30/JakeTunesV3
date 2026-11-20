@@ -276,3 +276,17 @@ export function resetEditionsForTests(): void {
 
 /** Tests only: the clock the failure memory reads. */
 export function setEditionsClockForTests(clock: () => number): void { now = clock }
+
+// ── The Record Shop's album page (Brief 256) ──────────────────────────────
+
+/**
+ * The editions the album page offers: Apple's editions of the record, with the
+ * edition Jake clicked always among them (first, when Apple's list for the name
+ * doesn't carry it: a search hit can be an edition the name lookup filters out).
+ * Pure.
+ */
+export function editionsWithCard(editions: readonly AlbumEdition[], card: AlbumEdition | null): AlbumEdition[] {
+  if (!card) return [...editions]
+  if (editions.some((e) => e.collectionId === card.collectionId)) return [...editions]
+  return [card, ...editions]
+}
