@@ -15,7 +15,6 @@ import { planMatchingTrackGets, omittedTrackLine, type MatchingTrackPlan } from 
 import type { CompareEditionsResult } from '../../common/near-edition-types'
 import { subscribeQueue, getQueue, cancel, retry, clearFinished, enqueue, type QResult } from '../views/DownloadStore/downloadQueue'
 import { downloadsPanelRows, downloadsPanelSections, panelSummary, type PanelRow } from '../../common/downloads-panel-model'
-import OfferButtons from '../views/DownloadStore/OfferButtons'
 import NeedsYouSlot, { getNeedsYouFix, subscribeNeedsYouFix } from './NeedsYouSlot'
 import '../styles/downloads-panel.css'
 
@@ -181,8 +180,8 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
               {row.counts && <div className="dlp-row-counts">{row.counts}</div>}
               {row.primary && <div className="dlp-row-primary">{row.primary}</div>}
               {row.lossy && <div className="dlp-row-edition dlp-row-edition--note">{row.lossy}</div>}
-              {/* Brief 257: what can be had instead, one tap each; never taken on its own. */}
-              {(row.offers.length > 0 || row.offerTaken) && <OfferButtons jobKey={row.key} />}
+              {/* Brief 257: an offer taken says what is happening instead. The offers themselves are Needs you's fix (OfferButtons registers it). */}
+              {row.offerTaken && !row.needsYou && <div className="dlp-row-edition dlp-row-edition--note">{row.offerTaken}</div>}
               {row.needsYou && (() => { const item = queue.find((q) => q.key === row.key); return item ? <NeedsYouSlot row={row} item={item} fix={needsYouFix} /> : null })()}
               <div className="dlp-row-actions">
                 {row.actions.includes('cancel') && <button onClick={() => void cancel(row.key)}>Cancel</button>}

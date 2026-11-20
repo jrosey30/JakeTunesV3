@@ -70,6 +70,8 @@ export interface PanelRow {
   offerTaken: string | null
   /** Brief 257: a finished save that is a lossy MP3 says so. */
   lossy: string | null
+  /** Brief 257: this job is an offer taken on that refused job's key. */
+  offerOf: string | null
   /** Brief 258: an album's songs landed so far ("7 of 12"), while it downloads. */
   progress: string | null
   /** When it finished (for Done today). */
@@ -192,15 +194,31 @@ export function panelRowFor(q: PanelQueueItem, now: number): PanelRow {
     offerAsk: offers.length ? offerLine(offers[0], { asked: pa?.asked, askedCount: pa?.askedCount }) : null,
     offerTaken: q.offerTaken ? TAKEN_WORDS[q.offerTaken] : null,
     lossy: status === 'done' ? lossyNote(q.matchDesc) : null,
+    offerOf: r.offerOf ?? null,
     progress: status === 'downloading' && kind === 'album' ? songProgressLine(q.progress) : null,
     endedAt: q.endedAt ?? null,
-    needsYou: status === 'refused' || status === 'failed' ? { kind: status, line: q.primary || q.error || 'Download failed' } : null,
+    // An offer taken (Brief 257) is answered elsewhere and no longer waits on Jake;
+    // the lossy copy re-arms this same job, so its own end still can.
+    needsYou: (status === 'refused' || status === 'failed') && !(q.offerTaken && q.offerTaken !== 'bandcamp') ? { kind: status, line: q.primary || q.error || 'Download failed' } : null,
   }
 }
 
 /** Brief 258: the one Downloads list — In progress, Done today, Needs you. A refused album whose recovered songs are still on the way stays In progress. */
 export function downloadsPanelSections(rows: readonly PanelRow[], now: number): Array<{ id: DownloadsSection; title: string; rows: PanelRow[] }> {
-  return groupBySection(rows, (r) => sectionOf({ status: r.status, endedAt: r.endedAt, groupInFlight: r.group?.inFlight }, now))
+  // Brief 257: a refused row whose offer was taken leaves Needs you. Its songs
+  // fold under it (In progress while they land); an edition taken instead is
+  // its own row, which then stands for it; otherwise it sits with today's.
+  const taken = new Set(rows.map((r) => r.offerOf).filter(Boolean) as string[])
+  return groupBySection(rows, (r) => {
+    if (r.offerTaken && !r.needsYou && (r.status === 'refused' || r.status === 'failed')) {
+      if ((r.group?.inFlight ?? 0) > 0) return 'inProgress'
+      // Songs that failed under it: Needs you, with "Retry the N that failed".
+      if (r.group && r.group.failed + r.group.canceled > 0) return 'needsYou'
+      if (taken.has(r.key)) return null
+      return sectionOf({ status: 'done', endedAt: r.endedAt, groupInFlight: r.group?.inFlight }, now)
+    }
+    return sectionOf({ status: r.status, endedAt: r.endedAt, groupInFlight: r.group?.inFlight }, now)
+  })
 }
 
 /** In-flight first, then what needs a decision, then what's finished — newest first within a group. */

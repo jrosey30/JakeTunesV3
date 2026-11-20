@@ -1,13 +1,16 @@
 /**
  * The one-tap offers on a refused album (Brief 257): the question, and a
- * button per offer. Shown in Downloads and on the For You card or Listen
- * List row the save came from. Nothing is taken until a button is pressed.
+ * button per offer. Shown in Downloads' Needs you (the fix this module
+ * registers in NeedsYouSlot, the panel's one place for it) and on the For You
+ * card, Listen List row or shop album page the save came from. Nothing is
+ * taken until a button is pressed.
  */
 import { useState, useSyncExternalStore } from 'react'
 import { getQueue, subscribeQueue } from './downloadQueue'
 import { takeOffer } from './shopOffers'
 import { panelRowFor } from '../../../common/downloads-panel-model'
 import { offerButton, offerTitle, type ShopOffer } from '../../../common/closest-edition'
+import { setNeedsYouFix, type NeedsYouFixProps } from '../../components/NeedsYouSlot'
 import '../../styles/shop-offer.css'
 
 export default function OfferButtons({ jobKey, compact, className }: { jobKey: string | undefined; compact?: boolean; className?: string }) {
@@ -40,3 +43,9 @@ export default function OfferButtons({ jobKey, compact, className }: { jobKey: s
     </div>
   )
 }
+
+/** Downloads → Needs you: the row's offers, under its one plain line. */
+export function NeedsYouOffer({ item }: NeedsYouFixProps) {
+  return <OfferButtons jobKey={item.key} />
+}
+setNeedsYouFix(NeedsYouOffer)
