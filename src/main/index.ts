@@ -101,6 +101,7 @@ import { registerPreviewRefreshIpc } from './ipc/preview-refresh-ipc.ts'
 import { registerSyncHistoryIpc } from './ipc/sync-history-ipc.ts'
 import { registerActivityPoolIpc } from './ipc/activity-pool-ipc.ts'
 import { registerIpodListsIpc } from './ipc/ipod-lists-ipc.ts'
+import { queueShelfSave } from './ipod-shelf-joins.ts'
 import { startIpodSyncReady } from './ipod-sync-ready-start.ts'
 import { startIpodLocal } from './ipod-local-start.ts'; import { keepsColon } from './ipod-keep-local.ts'
 import { registerAlbumInfoIpc, rankLibraryAlbums } from './ipc/album-info-ipc.ts'
@@ -10757,6 +10758,7 @@ app.whenReady().then(async () => {
     mbUserAgent: `JakeTunes/${app.getVersion()} (jacobrosenbaum@gmail.com)`,
     // Brief 258: the ledger of finished jobs, beside the saved list (registered before createWindow).
     onJobFinished: (jobId, f) => downloadQueueStore ? downloadQueueStore.markFinished(jobId, f) : Promise.resolve(),
+    onShelfImported: queueShelfSave,   // Brief 259: a song saved from an iPod's shelf joins its list
   })
 
   // SCOTUS Archive — Poppy's Supreme Court argument (Beck v. Prupis). A

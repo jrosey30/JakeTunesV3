@@ -37,6 +37,8 @@ export interface RipJob {
   procs: Set<Killable>
   stagingDirs: Set<string>
   progress?: (have: number, of: number, reset?: boolean) => void
+  /** Brief 259: a song saved from this iPod list's Record Shop shelf; what the job imports joins that list. */
+  forIpodList?: string
 }
 
 const als = new AsyncLocalStorage<RipJob>()
@@ -46,6 +48,12 @@ const outside: RipJob = { id: null, canceled: false, lastStageFailure: null, of:
 
 export function currentJob(): RipJob {
   return als.getStore() ?? outside
+}
+
+/** Brief 259: this job is a save from an iPod's shelf. Never marks the shared outside-a-job slot. */
+export function markShelfSave(listId: string | null): void {
+  const job = als.getStore()
+  if (job && listId) job.forIpodList = listId
 }
 
 export function runInJob<T>(id: string | null | undefined, of: number | null | undefined, progress: ((have: number, of: number, reset?: boolean) => void) | undefined, fn: () => Promise<T>): Promise<T> {

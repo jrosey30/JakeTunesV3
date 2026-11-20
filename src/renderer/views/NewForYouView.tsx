@@ -288,8 +288,9 @@ export default function NewForYouView() {
   // The Listen List's own door (ListenToTheListView getReco): a song queues
   // on the one scheduler; an album saves in one click, its edition named on
   // the card (Brief 255); an artist-only pick is browsed, never downloaded blind.
-  const getReco = (rec: Recommendation) => {
-    const d = queueRecoDownload(rec)
+  // Brief 259: from an iPod's shelf, the song carries that list's id and joins the list once imported.
+  const getReco = (rec: Recommendation, forIpodList?: string) => {
+    const d = queueRecoDownload(rec, forIpodList ? { forIpodList } : {})
     if (d.kind === 'select-edition') void saveRecoAlbum(rec, 'for-you').then((r) => { if (r.existingKey) showDownload(r.existingKey) })
     else if (d.kind === 'browse-only') { prefillDownloadView(rec, 'song'); openBrowse(dispatch) }
   }
@@ -319,6 +320,12 @@ export default function NewForYouView() {
   // What I've learned. buildShopPage decides; this only draws.
   const year = String(new Date().getFullYear())
   const page = useMemo(() => buildShopPage({ lanes, wanted: wantedShelves, year }), [lanes, wantedShelves, year])
+  // Which iPod shelf each wanted card sits on (the first, if two lists want one song): a Save there joins that list.
+  const wantedListOf = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const sh of page.ipods) for (const s of sh.cards) if (!m.has(cardId(s.card))) m.set(cardId(s.card), sh.listId)
+    return m
+  }, [page.ipods])
 
   const laneReason = (c: FeedCard): string | null => {
     switch (c.lane) {
@@ -392,7 +399,7 @@ export default function NewForYouView() {
               {albumOf && <button type="button" className="store-songs" onClick={() => setSongsOf(c)} title="See the songs and pick a few">Songs</button>}
               {/* Its place is held, so its appearing never moves Songs or Save album. */}
               {albumOf && <EditionMenu artist={albumOf.artist} album={albumOf.album || albumOf.title} onMore={() => pickInSearch(rec)} className="edition-menu--card" reserve />}
-              <button type="button" className="store-add" onClick={() => getReco(rec)}
+              <button type="button" className="store-add" onClick={() => getReco(rec, c.lane === 'ipod-wanted' && c.type === 'song' ? wantedListOf.get(id) : undefined)}
                 title={failed ? (dlMap.get(rec.id)?.error || 'Download failed — try again') : c.type === 'song' ? 'Save to your library' : c.type === 'album' ? 'Save the album' : 'Find their records in Search'}>
                 {/* One word per action (Brief 253): Save / Save album. */}
                 {failed ? 'Retry' : c.type === 'album' ? 'Save album' : c.type === 'song' ? 'Save' : 'Search'}

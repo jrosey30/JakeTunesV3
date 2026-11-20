@@ -172,9 +172,11 @@ export function isLtlDownloadBusy(id: string): boolean {
 
 /** Queue a recommendation on the one scheduler, or say what must happen
  *  first. Re-arms a failed/canceled job for the same recording. */
-export function queueRecoDownload(rec: Recommendation): RecoQueueDecision {
+export function queueRecoDownload(rec: Recommendation, opts: { forIpodList?: string } = {}): RecoQueueDecision {
   const d = recoToQueueResult(rec)
   if (d.kind !== 'queue') return d
+  // Brief 259: a song saved from an iPod's shelf joins that list once it is imported.
+  if (opts.forIpodList && d.result.origin) d.result.origin.forIpodList = opts.forIpodList
   if (isLtlDownloadBusy(rec.id)) return d
   enqueue(d.result)
   return d

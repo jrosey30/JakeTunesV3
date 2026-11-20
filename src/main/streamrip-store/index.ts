@@ -44,10 +44,11 @@ import { judgeHeardListings, listingCandidate } from '../album-preflight.ts'
 import { findOffers } from '../closest-edition-live.ts'
 import { askedLabel } from '../closest-edition.ts'
 import { registerNotFoundMemory } from '../not-found-memory-store.ts'
+import { isShelfListId } from '../ipod-shelf-joins.ts'
 import { createAnswerCache, createLimiter } from '../../common/answer-cache.ts'
 import { qobuzHitsOf, losslessScope, LOSSLESS_CONCURRENCY, LOSSLESS_FAIL_QUIET_MS, LOSSLESS_MAX_SCOPES, LOSSLESS_TTL_MS, type QobuzHit } from '../../common/shop-lossless.ts'
 import { PREFLIGHT_BUDGET_MS, type AlbumPreflight, type AlbumPreflightRequest } from '../../common/album-preflight.ts'
-import { cancelJobs, clearLanding, currentJob, importOneAtATime, runInJob, stopAllJobsNow, sweepOrphanedStaging, watchLanding } from './rip-jobs.ts'
+import { cancelJobs, clearLanding, currentJob, importOneAtATime, markShelfSave, runInJob, stopAllJobsNow, sweepOrphanedStaging, watchLanding } from './rip-jobs.ts'
 import type { FinishedJob } from '../../common/download-lanes.ts'
 
 export interface StreamripDeps {
@@ -61,6 +62,8 @@ export interface StreamripDeps {
   mbUserAgent: string
   /** Brief 258: a job's import finished — main's ledger, so a quit before the renderer saves "done" never downloads it twice. */
   onJobFinished?: (jobId: string, f: Omit<FinishedJob, 'at'>) => Promise<void>
+  /** Brief 259: a save from an iPod's shelf imported these ids: kept on disk before the job answers (ipod-shelf-joins.ts). */
+  onShelfImported?: (listId: string, ids: number[]) => Promise<void>
 }
 
 // pipx installs the launcher here; an absolute path sidesteps the app's spawn
@@ -573,6 +576,13 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       if (win && !win.isDestroyed()) {
         for (const t of importedTracks) win.webContents.send('bandcamp:track-imported', t)
       }
+      // Brief 259: a song saved from an iPod's shelf joins that list, by the ids imported here
+      // (a dupe the library already had never does). On disk before the job answers.
+      const shelfList = currentJob().forIpodList
+      if (shelfList && deps.onShelfImported) {
+        const ids = importedTracks.map((t) => Number(t.id)).filter((n) => Number.isSafeInteger(n) && n > 0)
+        if (ids.length) await deps.onShelfImported(shelfList, ids).catch((err) => quietWarn('ipod-shelf', `${ids.length} song(s) for ${shelfList} not kept: ${(err as Error)?.message ?? err}`))
+      }
       const dupes = Array.isArray(summary) ? 0 : ((summary as { dupeCount?: number }).dupeCount ?? 0)
       const dupeFiles = Array.isArray(summary) ? [] : (((summary as { dupes?: Array<{ src: string }> }).dupes ?? []).map((d) => d.src))
       return { ok: true, imported: importedTracks.length, dupes, importedTitles: importedTracks.map((t) => String(t.title ?? '')), dupeFiles }
@@ -809,12 +819,14 @@ export function registerStreamripStore(deps: StreamripDeps): void {
   // file's own clock is the only trustworthy witness. A clean row has no clock. A row
   // with no `durationMs`, every Listen List row among them, asks Apple for one first.
   const fmtDur = (s: number | null): string => s == null ? 'unknown length' : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`
-  ipc.handle('streamrip:download-by-query', async (_e, opts: { sourceEdition?: SourceEdition; artist?: string; askedArtist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number; addedVia?: string }): Promise<DownloadResult & { matchDesc?: string }> => {
+  ipc.handle('streamrip:download-by-query', async (_e, opts: { sourceEdition?: SourceEdition; artist?: string; askedArtist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number; addedVia?: string; forIpodList?: string }): Promise<DownloadResult & { matchDesc?: string }> => {
     // A new job is a clean slate (rip-jobs.ts runInJob): its own cancel flag, its own last rip error.
     const addedVia = shareSourceKey(opts?.addedVia)   // every import below lands with it
     const artist = (opts?.artist || '').trim()
     // album set WITHOUT a title -> resolve a whole ALBUM on Qobuz; else a single track.
     const wantAlbum = Boolean((opts?.album || '').trim()) && !(opts?.title || opts?.song)
+    // Brief 259: a SONG saved from an iPod's shelf joins that list once imported (never an album).
+    if (!wantAlbum) markShelfSave(isShelfListId(opts?.forIpodList) ? opts.forIpodList : null)
     const title = wantAlbum ? (opts!.album as string).trim() : (opts?.title || opts?.song || '').trim()
     // An album's clock is sized to the album (ladderBudgetMs) — the flat
     // 12 minutes gave up mid-rip on a 12-track Deluxe on 2026-09-05.
