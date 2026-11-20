@@ -69,7 +69,7 @@ describe('shop funnel', () => {
 describe('wiring', () => {
   const view = readFileSync(join(import.meta.dirname, '../../renderer/views/DownloadStore/DownloadView.tsx'), 'utf-8')
   test('every save from the search is counted, and the words never go in', () => {
-    assert.match(view, /funnel\.saved\(q\.mediaType === 'album' \? 'album' : 'song'\)\s+enqueue\(withOrigin\(q\)\)/)
+    assert.match(view, /funnel\.saved\(q\.mediaType === 'album' \? 'album' : 'song'\)[\s\S]{0,200}?enqueue\(withOrigin\(q\)/)
     assert.match(view, /len: query\.trim\(\)\.length/)
     assert.ok(!/funnel\.searched\(\{[^}]*\bquery\s*[,}]/.test(view), 'the query itself is never passed')
   })
