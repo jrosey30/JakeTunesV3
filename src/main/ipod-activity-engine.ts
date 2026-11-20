@@ -25,9 +25,9 @@
 import { cardTooSmall } from './ipod-card-fit.ts'
 import { spawn } from 'child_process'
 import { createHash } from 'crypto'
-import { appendFile, copyFile, mkdir, readFile, stat, statfs, lstat, unlink } from 'fs/promises'
+import { appendFile, copyFile, mkdir, readFile, stat, statfs, lstat, unlink, writeFile } from 'fs/promises'
 import { join } from 'path'
-import { findIpodMount, isIpodMount, PYTHON_CMD, PYTHON_INSTALL_HINT, remountVolume as platformRemountVolume } from './platform.ts'
+import { findIpodMount, isIpodMount, listMountPoints, PYTHON_CMD, PYTHON_INSTALL_HINT, remountVolume as platformRemountVolume } from './platform.ts'
 import {
   activitySetProven,
   ACTIVITY_WIPE_EMPTY_STREAK,
@@ -88,7 +88,7 @@ import {
 } from './ipod-swap-sync.ts'
 import { startRoundTripGeneration } from './sync-engine/roundtrip.ts'
 import { orderForIpodCatalog, conformCatalogIdOrder } from './ipod-catalog-order.ts'
-import { REWIPED_NOTE, swapKeptNote } from '../common/sync-failure-copy.ts'
+import { REWIPED_NOTE, dropKeptNote, swapKeptNote } from '../common/sync-failure-copy.ts'
 import type { SyncConvertOptions } from './ipc/sync-ipc.ts'
 import {
   classifyActivitySyncTracks,
@@ -106,6 +106,12 @@ import {
   whyActivityTrackCannotBoard, whyListTrackCannotBoard, listTrackCanBoard, type LeftOffSong,
 } from './activity-fill.ts'
 import { orderTracksForIpodTitleIndex, stampIpodSortArtist } from './ipod-artist-sort.ts'
+import {
+  DROP_BACK_LINE, DROP_WAITING_LINE, MAX_DROPS_PER_RUN, OLD_IPOD_PAUSE_EVERY_BYTES, OLD_IPOD_PAUSE_MS, PARTIAL_ON_CARD_FILE,
+  adoptFromPartial, buildPartialOnCard, cardFileFacts, dropLogLine, errnoCode, identityKnown, looksLikeDrop, pacesWrites,
+  parsePartialOnCard, readCardIdentity as readCardIdentityFromCard, waitForSameIpod,
+  type DropFacts, type IpodCardIdentity, type PartialRow,
+} from './ipod-sync-drop.ts'
 
 export interface ActivitySyncHost {
   pythonCmd: string
@@ -160,6 +166,15 @@ export interface ActivitySyncHost {
   ensureContiguousDb?: typeof platformEnsureContiguousDb
   /** Tests only: the card's size in bytes. Production reads it with statfs. */
   cardCapacityBytes?: (mount: string) => Promise<number | null>
+  /** Tests only: one song onto the card (a fake card fails it with EIO). Production: copyFile. */
+  copyToCard?: (src: string, dst: string) => Promise<void>
+  /** Tests only: who the card is (marker, SysInfo). Production reads the card. */
+  readCardIdentity?: (mount: string) => Promise<IpodCardIdentity>
+  /** Tests only: a clock and a sleep, so a two-minute wait runs in no time. */
+  now?: () => number
+  sleep?: (ms: number) => Promise<void>
+  /** Tests only: other mounted iPods to look at while a dropped card is away. Production lists /Volumes. */
+  otherIpodMounts?: () => Promise<string[]>
 }
 
 export interface ActivitySyncInput {
@@ -384,7 +399,16 @@ async function runActivitySyncHolding(
   } catch {
     return fail({ copied: 0, error: 'iPod is not mounted' })
   }
-  const IPOD_MOUNT = mount
+  // `let`, not const: a card that drops off USB mid-copy may come back at another
+  // /Volumes path, and every path below follows it there (rebaseCard, Brief 260).
+  let IPOD_MOUNT = mount
+  // Who this card is, read once before anything is written (Brief 260): a USB
+  // drop mid-copy is ridden out only when the card that comes back is this one.
+  const readIdentity = host.readCardIdentity ?? readCardIdentityFromCard
+  const cardIdentity = await readIdentity(IPOD_MOUNT)
+  const nowMs = host.now ?? Date.now
+  const sleepMs = host.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
+  const copyToCard = host.copyToCard ?? ((src: string, dst: string) => copyFile(src, dst))
   // Every scratch retire keeps a copy in THIS iPod's state dir first (2026-10-28).
   const retireScratch = (m: string, why: string): Promise<number> =>
     retireIpodFirmwareScratch(m, { stateDir: host.stateDir, reason: `activity sync: ${why}` })
@@ -461,6 +485,8 @@ async function runActivitySyncHolding(
     try { return JSON.parse(await readFile(join(host.stateDir, name), 'utf-8')) } catch { return null }
   }
   const priorManifestRaw = await readStateJson(LAST_SYNC_MANIFEST_FILE)
+  // What a sync stopped by a USB drop left confirmed on the card (Brief 260).
+  const priorPartialRaw = await readStateJson(PARTIAL_ON_CARD_FILE)
   const priorSealRaw = await readStateJson(TSA_SEAL_FILE)
 
   // A song not on this Mac that the last sync's record proves is on the card,
@@ -934,8 +960,31 @@ async function runActivitySyncHolding(
       for (const id of swap.stay) stayRows.set(id, proof.rows.get(id)!)
     }
   }
+  // A full copy after a sync the iPod dropped out of (Brief 260): the songs
+  // that sync confirmed on the card are adopted, not copied again, when each is
+  // the same song this sync would copy (id, card path, identity, both sizes)
+  // and the card still holds that exact file (its size and mtime as confirmed).
+  // Everything else is wiped as before; the whole set is still proven across
+  // remounts, catalogued and sealed like any full copy.
+  const adopted = new Set<number>()
+  if (!swap) {
+    const partial = parsePartialOnCard(priorPartialRaw, cardIdentity)
+    if (partial && partial.size > 0) {
+      for (const c of candidates) {
+        const row = partial.get(c.id)
+        if (!row) continue
+        const onCard = await cardFileFacts(join(IPOD_MOUNT, tsaRelFromColon(row.destPath, pathSep)))
+        if (!adoptFromPartial(c, row, onCard)) continue
+        adopted.add(c.id)
+        stayRows.set(c.id, { id: row.id, destPath: row.destPath, identity: row.identity, size: row.size, sourceSize: row.sourceSize })
+      }
+      console.log(`activity-sync: ${adopted.size} of ${partial.size} song(s) the stopped sync left on the card are adopted, not copied again`)
+    } else if (priorPartialRaw) {
+      console.warn('activity-sync: a stopped sync\'s record of the card was not for this iPod or was malformed — nothing adopted')
+    }
+  }
   const mode: 'swap' | 'full' = swap ? 'swap' : 'full'
-  const keepIds = swap ? swap.stay : new Set<number>()
+  const keepIds = swap ? swap.stay : adopted
   const keepAbs = new Set(plan.filter((e) => keepIds.has(e.id)).map((e) => e.dstToCopy))
   if (swap) {
     console.log(`activity-sync: SWAP — ${swap.leave.length} out, ${swap.arrive.length} in, ${swap.stay.size} stay` +
@@ -1077,7 +1126,12 @@ async function runActivitySyncHolding(
   let copyErrors = 0
   let verifyAttempts = 0
 
+  // The record of songs a dropped sync left on the card: obsolete once this run
+  // empties the card again, swaps, or seals (Brief 260).
+  const forgetPartial = (): Promise<void> => unlink(join(host.stateDir, PARTIAL_ON_CARD_FILE)).catch(() => {})
+
   const rewipeAndStop = async (why: ActivitySyncResult): Promise<ActivitySyncResult> => {
+    await forgetPartial()
     try {
       for (const p of await listIpodMusicFiles(IPOD_MOUNT)) {
         try { await unlink(p) } catch { /* best effort */ }
@@ -1108,6 +1162,7 @@ async function runActivitySyncHolding(
     } catch (err) {
       console.warn('activity-sync: swap stop — round-trip generation check failed (non-blocking):', err)
     }
+    await forgetPartial()
     if (finalTouched) return { ...why, mode, swap: swapCounts() }
     let removed = 0
     try {
@@ -1498,7 +1553,12 @@ async function runActivitySyncHolding(
     cataloguedAbs = new Set(keepAbs)
     host.sendProgress({ phase: 'copy', current: 0, total: out, mode, title: `Removing ${out.toLocaleString()} song${out === 1 ? '' : 's'} — the iPod now lists the ${stayIds.size.toLocaleString()} that stay` })
   } else if (!swap) {
-    host.sendProgress({ phase: 'copy', current: 0, total: 1, mode, title: 'Wiping the iPod for a clean rebuild…' })
+    host.sendProgress({
+      phase: 'copy', current: 0, total: 1, mode,
+      title: adopted.size > 0
+        ? `Wiping the iPod — keeping the ${adopted.size.toLocaleString()} song${adopted.size === 1 ? '' : 's'} the stopped sync already copied…`
+        : 'Wiping the iPod for a clean rebuild…',
+    })
   }
   if (!swap || swap.leave.length > 0) {
     let wiped = 0
@@ -1567,20 +1627,87 @@ async function runActivitySyncHolding(
   // Prepare, never a stopped sync (2026-11-08). Not a full Mac disk: that stops.
   const droppedAtCopy = new Set<number>()
 
-  for (const e of plan) {
+  // ── Riding out a USB drop (Brief 260) ──
+  // Each song's outcome is settled once; a drop rewinds the loop to the song
+  // it was writing and to any confirmed song the card lost meanwhile.
+  const planIndex = new Map(plan.map((e, k) => [e.id, k]))
+  const settled = new Set<number>()
+  const cardMtime = new Map<number, number>()
+  /** Songs whose write failed while the card seemed fine: the card may have been on its way out, so one more try after a drop. */
+  const writeFailedIds = new Set<number>()
+  const copyStartedAt = nowMs()
+  const pace = pacesWrites(cardIdentity.hardware)
+  let bytesWritten = 0
+  let bytesSincePause = 0
+  let drops = 0
+  const cardThere = (): Promise<boolean> => stat(join(IPOD_MOUNT, 'iPod_Control')).then(() => true, () => false)
+
+  /** Move every card path from the old mount to the new one (same card, new /Volumes name). */
+  const rebaseCard = (to: string): void => {
+    const from = IPOD_MOUNT
+    if (to === from) return
+    const move = (abs: string): string => (abs === from || abs.startsWith(from + pathSep) ? to + abs.slice(from.length) : abs)
+    for (const e of plan) e.dstToCopy = move(e.dstToCopy)
+    for (const [id, d] of dstById) dstById.set(id, move(d))
+    for (const w of writtenById.values()) w.dstPath = move(w.dstPath)
+    cataloguedAbs = new Set([...cataloguedAbs].map(move))
+    const k = [...keepAbs].map(move)
+    keepAbs.clear()
+    for (const p of k) keepAbs.add(p)
+    IPOD_MOUNT = to
+    host.setDetectedMount(to)
+    console.warn(`activity-sync: the iPod came back at ${to} (was ${from}); every card path follows it`)
+  }
+
+  /** The files confirmed on the card before a drop, as the next sync can adopt them. */
+  const partialRows = (): PartialRow[] => {
+    const rows: PartialRow[] = []
+    for (const [id, w] of writtenById) {
+      const mtimeMs = cardMtime.get(id)
+      const identity = identityById.get(id) || ''
+      if (!mtimeMs || !identity || !(w.expectedSize > 0)) continue
+      rows.push({ id, destPath: relOf(w.dstPath), identity, size: w.expectedSize, sourceSize: masterSizeById.get(id) || 0, mtimeMs })
+    }
+    return rows
+  }
+
+  /** The iPod didn't come back (or another did): touch nothing on any card, keep the record. */
+  const dropStop = async (why: string): Promise<ActivitySyncResult> => {
+    const rows = partialRows()
+    try {
+      await writeFile(join(host.stateDir, PARTIAL_ON_CARD_FILE),
+        JSON.stringify(buildPartialOnCard(cardIdentity, rows, new Date().toISOString()), null, 1), 'utf-8')
+    } catch (err) {
+      console.warn('activity-sync: could not keep the record of the songs left on the card (the next sync copies them again):', err)
+    }
+    console.error(`activity-sync: stopped after a drop — ${rows.length} confirmed song(s) left on the card for the next sync to adopt; nothing on the card was touched. ${why}`)
+    const error = [why, dropKeptNote(rows.length)].join(' ')   // `why` is one of the drop lines sync-failure-copy maps
+    return {
+      ...fail({ copied, kept, copyErrors, target, landed: writtenById.size, shortfall: target - writtenById.size, error }),
+      mode, ...(swap ? { swap: swapCounts() } : {}),
+    }
+  }
+
+  for (let i = 0; i < plan.length; i++) {
+    const e = plan[i]
     if (writtenById.size >= target) break   // #47: N reached — the rest were reserves
+    if (settled.has(e.id) || writtenById.has(e.id)) continue
     if (host.isCancelled()) {
       host.sendProgress({ phase: 'cancelled', current: copied, total: copyTotal, title: '' })
       return stopAfterTouch({ ok: false, copied, kept, copyErrors, cancelled: true, error: 'Sync cancelled by user', target })
     }
     if (keepIds.has(e.id)) {
       writtenById.set(e.id, { srcPath: e.srcToCopy, dstPath: e.dstToCopy, expectedSize: stayRows.get(e.id)?.size ?? 0 })
+      const facts = await cardFileFacts(e.dstToCopy)
+      if (facts) cardMtime.set(e.id, facts.mtimeMs)
       kept++
+      settled.add(e.id)
       continue
     }
     host.sendProgress({ phase: 'copy', current: copied + copyErrors, total: copyTotal, title: e.title })
     if (fetchFailedIds.has(e.id)) {   // the Original: homemini couldn't send it (probe or fetch ahead); a reserve takes the seat
       copyErrors++
+      settled.add(e.id)
       continue
     }
     let copySrc = e.srcToCopy
@@ -1592,6 +1719,7 @@ async function runActivitySyncHolding(
       const staged = await host.stageTrack(e.restage.colon, e.restage.id)
       if (!staged.ok) {
         console.error(`activity-sync: skipping "${e.title}" — ${staged.error}`)
+        settled.add(e.id)
         if (listOnly && staged.reason !== 'free-space') {
           const t = tracks.find((x) => Number(x.id) === e.id)
           leftOff.push(leftOffSong(t ?? { id: e.id, title: e.title }, LEFT_OFF_NO_FETCH))
@@ -1604,26 +1732,142 @@ async function runActivitySyncHolding(
       copySrc = staged.abs
       release = staged.cleanup
     }
+    let dropErr: unknown = null
     try {
       const dir = e.dstToCopy.substring(0, e.dstToCopy.lastIndexOf(pathSep))
       await mkdir(dir, { recursive: true })
-      await copyFile(copySrc, e.dstToCopy)
+      await copyToCard(copySrc, e.dstToCopy)
       const conf = await confirmWriteOnCard(copySrc, e.dstToCopy)
       if (!conf.ok) {
-        console.error(`activity-sync: write NOT confirmed for "${e.title}" — ${conf.reason}`)
-        copyErrors++
-        continue
+        if (!(await cardThere()) || /\b(EIO|ENXIO|ENODEV)\b/.test(conf.reason || '')) {
+          dropErr = new Error(conf.reason || 'write not confirmed')
+        } else {
+          console.error(`activity-sync: write NOT confirmed for "${e.title}" — ${conf.reason}`)
+          copyErrors++
+          settled.add(e.id)
+          writeFailedIds.add(e.id)
+        }
+      } else {
+        const sz = (await stat(copySrc)).size
+        writtenById.set(e.id, { srcPath: e.srcToCopy, dstPath: e.dstToCopy, expectedSize: sz })
+        const facts = await cardFileFacts(e.dstToCopy)
+        if (facts) cardMtime.set(e.id, facts.mtimeMs)
+        copied++
+        settled.add(e.id)
+        bytesWritten += sz
+        bytesSincePause += sz
+        host.sendProgress({ phase: 'copy', current: copied + copyErrors, total: copyTotal, title: e.title })
       }
-      const sz = (await stat(copySrc)).size
-      writtenById.set(e.id, { srcPath: e.srcToCopy, dstPath: e.dstToCopy, expectedSize: sz })
-      copied++
-      host.sendProgress({ phase: 'copy', current: copied + copyErrors, total: copyTotal, title: e.title })
     } catch (err) {
-      console.error(`activity-sync: copy failed for "${e.title}":`, err)
-      copyErrors++
+      if (looksLikeDrop(err, await cardThere())) {
+        dropErr = err
+      } else {
+        console.error(`activity-sync: copy failed for "${e.title}":`, err)
+        copyErrors++
+        settled.add(e.id)
+        writeFailedIds.add(e.id)
+      }
     } finally {
       await release()
     }
+
+    if (dropErr === null) {
+      // Gentler on the old hard-drive iPods (1G–4G, mini): a short breather
+      // every 200 MB. The fsync per file is confirmWriteOnCard's F_FULLFSYNC.
+      if (pace && bytesSincePause >= OLD_IPOD_PAUSE_EVERY_BYTES) {
+        bytesSincePause = 0
+        await sleepMs(OLD_IPOD_PAUSE_MS)
+      }
+      continue
+    }
+
+    // ── The card went away mid-write ──
+    drops++
+    const droppedAt = nowMs()
+    const facts: DropFacts = {
+      at: new Date().toISOString(),
+      ipod: input.ipodName || cardIdentity.markerId || IPOD_MOUNT,
+      hardware: cardIdentity.hardware,
+      songsDone: writtenById.size,
+      songsTotal: target,
+      bytesWritten,
+      secondsIn: (droppedAt - copyStartedAt) / 1000,
+      file: `${e.title} → ${relOf(e.dstToCopy)}`,
+      error: [errnoCode(dropErr), dropErr instanceof Error ? dropErr.message : String(dropErr)].filter(Boolean).join(' '),
+      goneSeconds: null,
+      outcome: 'never-back',
+    }
+    const noteDrop = async (outcome: DropFacts['outcome'], goneMs: number | null): Promise<void> => {
+      facts.outcome = outcome
+      facts.goneSeconds = goneMs === null ? null : goneMs / 1000
+      console.error(dropLogLine(facts))
+      await appendFile(join(host.stateDir, 'ipod-drops.jsonl'), JSON.stringify(facts) + '\n', 'utf-8')
+        .catch((err) => console.warn('activity-sync: drop log append failed (non-blocking):', err))
+    }
+    if (drops > MAX_DROPS_PER_RUN) {
+      await noteDrop('too-many', null)
+      return dropStop(`The iPod kept disconnecting during the copy (${drops} times). Try another cable or USB port.`)
+    }
+    if (!identityKnown(cardIdentity)) {
+      await noteDrop('never-back', null)
+      return dropStop('The iPod disconnected during the copy and didn’t come back. It has no identity JakeTunes can check, so the copy was not carried on.')
+    }
+    host.sendProgress({ phase: 'copy', current: copied + copyErrors, total: copyTotal, title: DROP_WAITING_LINE })
+    const back = await waitForSameIpod({
+      mount: IPOD_MOUNT,
+      before: cardIdentity,
+      read: readIdentity,
+      present: async (m) => stat(join(m, 'iPod_Control')).then(() => true, () => false),
+      others: host.otherIpodMounts ?? (async () => {
+        const out: string[] = []
+        for (const m of await listMountPoints().catch(() => [] as string[])) {
+          if (m !== IPOD_MOUNT && await isIpodMount(m)) out.push(m)
+        }
+        return out
+      }),
+      now: nowMs,
+      sleep: sleepMs,
+      startedAt: droppedAt,
+    })
+    if (!back.back) {
+      await noteDrop(back.why === 'other-ipod' ? 'other-ipod' : 'never-back', back.goneMs)
+      return dropStop(back.why === 'other-ipod'
+        ? 'The iPod disconnected during the copy and a different iPod came back. Nothing was written to it.'
+        : 'The iPod disconnected during the copy and didn’t come back.')
+    }
+    await noteDrop('back', back.goneMs)
+    rebaseCard(back.mount)
+    // What was confirmed before the drop must still be there, at its size.
+    const lost: number[] = []
+    for (const [id, w] of writtenById) {
+      const now = await cardFileFacts(w.dstPath)
+      if (!now || now.size !== w.expectedSize) lost.push(id)
+    }
+    if (lost.some((id) => keepIds.has(id))) {
+      // A song the catalog on the card names went missing: not ours to patch mid-copy.
+      return stopAfterTouch(fail({
+        copied, kept, copyErrors, target, landed: writtenById.size - lost.length, shortfall: target - writtenById.size + lost.length,
+        error: `The iPod disconnected during the copy and came back missing ${lost.length} song(s) it already had. Only ${writtenById.size - lost.length} of ${target} songs confirmed on the card after copy. Not writing a catalog. Sync again.`,
+      }))
+    }
+    let rewindTo = i
+    for (const id of lost) {
+      writtenById.delete(id)
+      cardMtime.delete(id)
+      settled.delete(id)
+      copied--
+      rewindTo = Math.min(rewindTo, planIndex.get(id) ?? i)
+    }
+    for (const id of writeFailedIds) {
+      settled.delete(id)
+      copyErrors--
+      rewindTo = Math.min(rewindTo, planIndex.get(id) ?? i)
+    }
+    writeFailedIds.clear()
+    if (lost.length > 0) console.warn(`activity-sync: after the drop ${lost.length} confirmed song(s) were gone or short on the card — copying them again`)
+    console.log(`activity-sync: the iPod is back after ${(back.goneMs / 1000).toFixed(1)}s — ${writtenById.size} confirmed song(s) intact, carrying on from "${plan[rewindTo]?.title}"`)
+    host.sendProgress({ phase: 'copy', current: copied + copyErrors, total: copyTotal, title: DROP_BACK_LINE })
+    i = rewindTo - 1
   }
 
   if (droppedAtCopy.size > 0) {
@@ -1823,6 +2067,7 @@ async function runActivitySyncHolding(
   try {
     await host.writeSeal(seal)
     console.log(`activity-sync: TSA sealed ${seal.target} songs — plug-in will inspect, not auto-sync`)
+    await forgetPartial()
     try {
       // The swap's proof: this catalog's bytes and every file's size, so the
       // next Sync can trust the card and move only what changes.

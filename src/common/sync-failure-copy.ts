@@ -22,7 +22,7 @@
  */
 import type { SyncStep, SyncTimeline } from './sync-progress-model.ts'
 
-export type IpodChanged = 'no' | 'unknown' | 'emptied' | 'songs-only' | 'catalog-unverified' | 'swap-kept'
+export type IpodChanged = 'no' | 'unknown' | 'emptied' | 'songs-only' | 'catalog-unverified' | 'swap-kept' | 'drop-kept'
 export type CatalogClaim = 'previous' | 'unknown' | 'written-unverified'
 
 export interface SyncFailureCopy {
@@ -73,6 +73,9 @@ const RULES: Rule[] = [
   { test: /swap’s removal step/i, stage: 'wipe', happened: 'Couldn’t remove the old songs.', next: AGAIN_CABLE },
   { test: /activity wipe/i, stage: 'wipe', happened: 'Couldn’t clear the iPod.', next: AGAIN_CABLE },
   { test: /sync cancelled/i, stage: 'copy', happened: 'You stopped the sync.', next: '' },
+  // Brief 260: the iPod's USB reset mid-copy and it never came back, or another iPod did.
+  { test: /disconnected during the copy and didn’t come back|kept disconnecting/i, stage: 'copy', happened: 'The iPod disconnected.', next: AGAIN_CABLE },
+  { test: /a different ipod came back/i, stage: 'copy', happened: 'A different iPod was plugged in.', next: 'Plug the first iPod back in and sync again.' },
   { test: /confirmed on the card after copy/i, stage: 'copy', happened: 'Some songs didn’t copy.', next: AGAIN_CABLE },
   { test: /only prove the card on macos/i, stage: 'verify', happened: 'This computer can’t check the iPod.', next: 'Sync from the Mac.' },
   { test: /could not verify the ipod \(remount failed/i, stage: 'verify', happened: 'Couldn’t check the iPod.', next: AGAIN },
@@ -116,6 +119,7 @@ const CHANGED_LINE: Record<IpodChanged, string> = {
   'songs-only': 'The iPod still shows its old songs until you sync again.',
   'catalog-unverified': 'The iPod may show the wrong songs until you sync again.',
   'swap-kept': 'The iPod still works. Sync again to finish.',
+  'drop-kept': 'The songs copied so far stay on the iPod. Sync again: it copies only the rest.',
 }
 
 /** Appended by the Activity engine when an abort after the wipe removed
@@ -132,6 +136,14 @@ export function swapKeptNote(songs: number, restored: boolean): string {
   return restored
     ? `${SWAP_KEPT_MARK}: nothing on it changed, all ${n} songs are still there.`
     : `${SWAP_KEPT_MARK} of the ${n} songs on it. Sync again to finish.`
+}
+
+/** Appended by the Activity engine when the iPod dropped off USB mid-copy and
+ *  didn't come back (Brief 260, 2026-11-20): nothing was taken off the card,
+ *  and the next sync adopts what was confirmed instead of copying it again. */
+export const DROP_KEPT_MARK = 'The songs copied so far stay on the iPod'
+export function dropKeptNote(songs: number): string {
+  return `${DROP_KEPT_MARK} (${songs.toLocaleString('en-US')}); the next sync copies only the rest.`
 }
 
 /** The claims, from what actually happened. */
@@ -157,6 +169,7 @@ export function syncOutcome(t: SyncTimeline): SyncOutcome | null {
     }
   }
   if ((t.error || '').includes(REWIPED_NOTE)) { changed = 'emptied'; catalog = 'previous' }
+  else if ((t.error || '').includes(DROP_KEPT_MARK)) { changed = 'drop-kept'; catalog = 'previous' }
   else if ((t.error || '').includes(SWAP_KEPT_MARK)) {
     const untouched = (t.error || '').includes('nothing on it changed')
     changed = untouched ? 'no' : 'swap-kept'
