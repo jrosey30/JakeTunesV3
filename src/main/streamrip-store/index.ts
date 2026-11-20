@@ -41,6 +41,8 @@ import { isAllowedStreamripUrl } from '../url-safety.ts'
 import { artistAliases } from '../artist-spellings-store.ts'
 import { quietWarn } from '../flight-recorder.ts'
 import { judgeHeardListings } from '../album-preflight.ts'
+import { createAnswerCache, createLimiter } from '../../common/answer-cache.ts'
+import { qobuzHitsOf, losslessScope, LOSSLESS_CONCURRENCY, LOSSLESS_FAIL_QUIET_MS, LOSSLESS_MAX_SCOPES, LOSSLESS_TTL_MS, type QobuzHit } from '../../common/shop-lossless.ts'
 import { PREFLIGHT_BUDGET_MS, type AlbumPreflight, type AlbumPreflightRequest } from '../../common/album-preflight.ts'
 import { cancelJobs, currentJob, importOneAtATime, runInJob, stopAllJobsNow, watchLanding } from './rip-jobs.ts'
 import type { FinishedJob } from '../../common/download-lanes.ts'
@@ -729,6 +731,28 @@ export function registerStreamripStore(deps: StreamripDeps): void {
     }
     return out
   }
+
+  // ── The Record Shop's lossless dot (Brief 256) ─────────────────────
+  // One Qobuz catalogue search per page (a search's words, an artist, an
+  // album), never one per row: the rows are matched against this one answer
+  // in the renderer (common/shop-lossless.ts). Two in flight at most, an
+  // answer kept 30 minutes, a failed one left alone for a minute. The token
+  // stays here; the renderer gets titles and artists. Nothing is logged.
+  const losslessAnswers = createAnswerCache<QobuzHit[]>({ ttlMs: LOSSLESS_TTL_MS, failQuietMs: LOSSLESS_FAIL_QUIET_MS, maxEntries: LOSSLESS_MAX_SCOPES, now: () => Date.now() })
+  const losslessTurn = createLimiter(LOSSLESS_CONCURRENCY)
+  ipc.handle('shop-qobuz-lossless', async (_e, words: string, limit?: number): Promise<{ ok: boolean; hits: QobuzHit[] }> => {
+    const w = String(words || '').trim().slice(0, 120)
+    if (w.length < 2) return { ok: false, hits: [] }
+    const n = Math.min(Math.max(Math.round(Number(limit) || 50), 10), 100)
+    const hits = await losslessAnswers.ask(`${n}|${losslessScope(w)}`, () => losslessTurn(async () => {
+      const creds = await readQobuzCreds()
+      if (!creds) return null
+      const answer = await qobuzGet(`catalog/search?query=${encodeURIComponent(w)}&limit=${n}`, creds, 8000)
+      if (!answer || answer === 'gone') return null
+      return qobuzHitsOf(answer.body)
+    }))
+    return hits ? { ok: true, hits } : { ok: false, hits: [] }
+  }, { refuse: { ok: false, hits: [] } })
 
   async function searchCatalog(opts: {
     query: string
