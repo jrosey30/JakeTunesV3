@@ -573,8 +573,10 @@ export default function SongsView() {
   const sortedRef = useRef(sorted)
 
   // ⌘F find-in-view — Word-style: jump + highlight matches in the current
-  // sort order, Enter/Shift+Enter to cycle. Distinct from the search pill
-  // (which FILTERS); find keeps the full list and walks it.
+  // sort order, Enter/Shift+Enter to cycle. Distinct from the toolbar search:
+  // in "JakeTunes" it opens a dropdown over the whole library, and in "This
+  // page" it filters this list (lib.searchQuery, Brief 254); find keeps the
+  // full list and walks it.
   const find = useFindState()
   const findMatches = useMemo(() => {
     const q = find.query.trim().toLowerCase()

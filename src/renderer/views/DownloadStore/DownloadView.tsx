@@ -165,7 +165,9 @@ let pageCache: DownloadCache = { query: '', results: [], pasteUrl: '' }
 /** `target` once told the shop's search from the legacy Download route; the
  *  route is gone (Brief 253) and every sender says 'browse'. Kept so a
  *  prefill addressed elsewhere is still left alone. */
-export interface DownloadPrefill { query?: string; kind?: string; artist?: string; title?: string; origin?: QueueOrigin; target?: 'browse' }
+/** `how` (Brief 254): the toolbar search's Record Shop row sends words Jake
+ *  typed, so the usage log counts that search as typed, not sent from a list. */
+export interface DownloadPrefill { query?: string; kind?: string; artist?: string; title?: string; origin?: QueueOrigin; target?: 'browse'; how?: ShopSearchHow }
 let pendingPrefill: DownloadPrefill | null = null
 if (typeof window !== 'undefined') {
   window.addEventListener('jaketunes-download-prefill', (e: Event) => { pendingPrefill = (e as CustomEvent<DownloadPrefill>).detail ?? null })
@@ -459,7 +461,7 @@ export default function DownloadView() {
       setSearchErr(null)
       setNotice(null)
       pendingOriginRef.current = d?.origin ? { query: q, origin: d.origin } : null
-      searchHowRef.current = 'list'
+      searchHowRef.current = d?.how === 'typed' ? 'typed' : 'list'
       pendingExpandRef.current = d?.kind === 'album' && d.artist && d.title
         ? { artist: d.artist, album: d.title }
         : null

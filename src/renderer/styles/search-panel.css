@@ -188,3 +188,63 @@
   padding: 0 1px;
   border-radius: 2px;
 }
+
+/* Brief 254 — the scope switch (JakeTunes | This page). A segmented control at
+ * the top of the dropdown, or alone under the box when nothing else shows. */
+.search-panel--scope-only {
+  width: auto;
+  min-width: 220px;
+  padding: 6px;
+}
+
+.search-scope {
+  display: flex;
+  gap: 2px;
+  margin: 2px 8px 4px;
+  padding: 2px;
+  background: rgba(0, 0, 0, 0.07);
+  border-radius: 6px;
+}
+
+.search-panel--scope-only .search-scope {
+  margin: 0;
+}
+
+.search-scope-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 3px 10px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #5a5236;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.search-scope-btn:hover {
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.search-scope-btn--on,
+.search-scope-btn--on:hover {
+  background: #fffdf6;
+  color: #2a2510;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+.search-panel-empty-msg--padded {
+  padding: 14px 18px 10px;
+}
+
+/* The Record Shop row: last, under a rule, like a section of its own. */
+.search-panel-section--shop {
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  margin-top: 4px;
+  padding-top: 4px;
+}

@@ -20,6 +20,7 @@ import { useAudio } from '../hooks/useAudio'
 import { groupTracksIntoAlbums, type Album } from '../utils/albumGroups'
 // V5 Live Concert Mode — declared-set lookups for the context menu.
 import { useSyncExternalStore } from 'react'
+import { getPageFilter, setPageFilter, subscribePageFilter } from '../utils/pageFilter'
 import { subscribeLiveSets, getLiveSetsSnapshot, ensureLiveSetsLoaded } from '../liveSets'
 import { verifyLiveSetCompleteness } from '../utils/liveSetCompleteness'
 import '../styles/albums.css'
@@ -71,24 +72,26 @@ export default function AlbumsView() {
   const regularTracks = useRegularLibraryTracks(lib.tracks)
   const albums = useMemo((): Album[] => groupTracksIntoAlbums(regularTracks), [regularTracks])
 
-  const effectiveQuery = (lib.searchQuery || '').trim().toLowerCase()
-  const [albFilter, setAlbFilter] = useState('')
-  const af = albFilter.trim().toLowerCase()
+  // One filter (Brief 254): this page's box and the toolbar search in
+  // "This page" mode write the same value (utils/pageFilter.ts). It used to be
+  // two — the library's search query from the pill, and a local box with
+  // other rules.
+  const albFilter = useSyncExternalStore(subscribePageFilter, () => getPageFilter('albums'))
+  const setAlbFilter = useCallback((q: string) => setPageFilter('albums', q), [])
+  // Leaving the page (anywhere but an album or artist page, which keep this
+  // one mounted underneath) forgets the filter, as the local box did.
+  useEffect(() => () => setPageFilter('albums', ''), [])
+  const effectiveQuery = albFilter.trim().toLowerCase()
   const filteredAlbums = useMemo(() => {
-    let result = albums
-    if (effectiveQuery) {
-      const q = effectiveQuery
-      result = result.filter(a =>
-        a.name.toLowerCase().includes(q) ||
-        a.artist.toLowerCase().includes(q) ||
-        a.artists.some(art => art.toLowerCase().includes(q)) ||
-        a.tracks.some(t => (t.title || '').toLowerCase().includes(q)),
-      )
-    }
-    // In-view filter box — album or artist name.
-    if (af) result = result.filter(a => a.name.toLowerCase().includes(af) || a.artist.toLowerCase().includes(af))
-    return result
-  }, [albums, effectiveQuery, af])
+    if (!effectiveQuery) return albums
+    const q = effectiveQuery
+    return albums.filter(a =>
+      a.name.toLowerCase().includes(q) ||
+      a.artist.toLowerCase().includes(q) ||
+      a.artists.some(art => art.toLowerCase().includes(q)) ||
+      a.tracks.some(t => (t.title || '').toLowerCase().includes(q)),
+    )
+  }, [albums, effectiveQuery])
 
   // ⌘F find-in-view: jump to an album card + flash it (cards carry
   // data-album-key, all in the DOM).
@@ -250,11 +253,11 @@ export default function AlbumsView() {
       )}
       {/* Hidden while the search pill or the filter narrows the grid — the
           results are the point then (same rule as the Artists shelves). */}
-      {!effectiveQuery && !af && (
+      {!effectiveQuery && (
         <IslandAlbumsShelf albums={albums} findArtHash={findArtHash} lookupArt={lookupArt} requestArt={requestArt} onOpenAlbum={openAlbum} />
       )}
       {filteredAlbums.length === 0 && (
-        <EmptyState query={lib.searchQuery} noun="albums" />
+        <EmptyState query={albFilter} noun="albums" />
       )}
       <AlbumGrid
         ref={gridHandleRef}
