@@ -1,0 +1,19 @@
+/* The one-tap offers on a refused album (Brief 257). Same buttons as the
+   Downloads panel's actions; the first is the one the question asks about. */
+.shop-offer { display: flex; flex-direction: column; gap: 5px; margin-top: 6px; }
+.shop-offer--compact { margin-top: 4px; }
+.shop-offer-ask { font-size: 11px; line-height: 1.4; color: #333; }
+.shop-offer-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.shop-offer-btn {
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 3px;
+  border: 1px solid #a8a8a8;
+  background: linear-gradient(180deg, #fafafa, #e4e4e4);
+  color: #222;
+  cursor: default;
+  white-space: nowrap;
+}
+.shop-offer-btn:first-child { border-color: #8f3f2a; background: linear-gradient(180deg, #d9633f, #b8482b); color: #fff; }
+.shop-offer-btn:disabled { opacity: 0.5; }
+.shop-offer--taken { font-size: 10.5px; color: #555; margin-top: 4px; }

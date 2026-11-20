@@ -1027,6 +1027,12 @@ const electronAPI = {
   // Does Qobuz have this album edition? Asked before an album job downloads (Brief 255).
   checkQobuzAlbum: (opts: AlbumPreflightRequest): Promise<AlbumPreflight> =>
     ipcRenderer.invoke('check-qobuz-album', opts),
+  // A song not found anywhere isn't searched again the same way for a week (Brief 257).
+  shopNotFound: {
+    check: (key: string): Promise<{ at: number; outcome: string } | null> => ipcRenderer.invoke('shop-not-found:check', key),
+    note: (key: string, outcome: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('shop-not-found:note', key, outcome),
+    forget: (key: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('shop-not-found:forget', key),
+  },
   streamripCancelActive: (): Promise<{ ok: boolean; killed: number }> =>
     ipcRenderer.invoke('streamrip:cancel-active'),
   streamripGetQobuz: (): Promise<{ ok: boolean; configured: boolean; email?: string }> =>

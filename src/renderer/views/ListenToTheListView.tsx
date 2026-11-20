@@ -33,6 +33,7 @@ import {
   canDownloadReco, getLtlDownloadSnapshot, prefillDownloadView, openBrowse,
   queueRecoDownload, recoFields, recoOrigin, saveRecoAlbum, subscribeLtlDownload, type LtlDownloadStatus,
 } from '../listen-to-the-list/ltlDownload'
+import OfferButtons from './DownloadStore/OfferButtons'
 import EditionMenu, { askEditions } from './DownloadStore/EditionMenu'
 import AlbumTracklistSheet from './DownloadStore/AlbumTracklistSheet'
 import { showDownload } from '../components/DownloadsPanel'
@@ -362,6 +363,8 @@ export default function ListenToTheListView() {
               {dl.error || 'Download failed.'}
             </div>
           )}
+          {/* Brief 257: what can be had instead, one tap each. */}
+          {dl.state === 'error' && <OfferButtons jobKey={dl.jobKey} />}
         </div>
         <div className="ltl-tri-actions" onClick={(e) => e.stopPropagation()}>
           {dl.state === 'queued' || dl.state === 'downloading' ? (

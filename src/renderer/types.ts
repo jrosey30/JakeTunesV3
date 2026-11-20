@@ -1203,6 +1203,12 @@ declare global {
       streamripDownloadId?: (source: string, mediaType: string, id: string, addedVia?: string) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string }>
       /** Does Qobuz have this album edition? Asked before an album job downloads (Brief 255). */
       checkQobuzAlbum?: (opts: import('../common/album-preflight').AlbumPreflightRequest) => Promise<import('../common/album-preflight').AlbumPreflight>
+      /** A song not found anywhere isn't searched again the same way for a week (Brief 257). */
+      shopNotFound?: {
+        check: (key: string) => Promise<{ at: number; outcome: string } | null>
+        note: (key: string, outcome: string) => Promise<{ ok: boolean }>
+        forget: (key: string) => Promise<{ ok: boolean }>
+      }
       streamripDownloadByQuery?: (opts: { artist?: string; askedArtist?: string; title?: string; song?: string; album?: string; durationMs?: number; cleanedSource?: boolean; explicitSource?: boolean; releaseYear?: number; collectionId?: number; trackCount?: number ; sourceEdition?: import('../common/source-edition').SourceEdition; addedVia?: string }) => Promise<{ ok: boolean; imported?: number; dupes?: number; error?: string; matchDesc?: string; outcome?: string; alternatives?: Array<{ provider: string; desc: string; reason: string }> }>
       streamripCancelActive?: () => Promise<{ ok: boolean; killed: number }>
       streamripGetQobuz?: () => Promise<{ ok: boolean; configured: boolean; email?: string }>

@@ -15,6 +15,7 @@ import { planMatchingTrackGets, omittedTrackLine, type MatchingTrackPlan } from 
 import type { CompareEditionsResult } from '../../common/near-edition-types'
 import { subscribeQueue, getQueue, cancel, retry, clearFinished, enqueue, type QResult } from '../views/DownloadStore/downloadQueue'
 import { downloadsPanelRows, panelSummary, type PanelRow } from '../../common/downloads-panel-model'
+import OfferButtons from '../views/DownloadStore/OfferButtons'
 import '../styles/downloads-panel.css'
 
 export interface DownloadsPanelHandle { requestClose: () => void }
@@ -173,11 +174,14 @@ const DownloadsPanel = forwardRef<DownloadsPanelHandle, { onClose: () => void }>
               {row.editionNote && <div className="dlp-row-edition dlp-row-edition--note">{row.editionNote}</div>}
               {row.counts && <div className="dlp-row-counts">{row.counts}</div>}
               {row.primary && <div className="dlp-row-primary">{row.primary}</div>}
+              {row.lossy && <div className="dlp-row-edition dlp-row-edition--note">{row.lossy}</div>}
+              {/* Brief 257: what can be had instead, one tap each; never taken on its own. */}
+              {(row.offers.length > 0 || row.offerTaken) && <OfferButtons jobKey={row.key} />}
               <div className="dlp-row-actions">
                 {row.actions.includes('cancel') && <button onClick={() => void cancel(row.key)}>Cancel</button>}
                 {row.actions.includes('retry') && <button onClick={() => retry(row.key)}>Retry</button>}
-                {row.actions.includes('chooseEdition') && <button className="dlp-primary-action" onClick={() => chooseAgain(row)} disabled={!row.choose}>Choose edition</button>}
-                {row.actions.includes('chooseVersion') && <button className="dlp-primary-action" onClick={() => chooseAgain(row)} disabled={!row.choose}>Choose version</button>}
+                {row.actions.includes('chooseEdition') && <button className={row.offers.length ? undefined : 'dlp-primary-action'} onClick={() => chooseAgain(row)} disabled={!row.choose}>Choose edition</button>}
+                {row.actions.includes('chooseVersion') && <button className={row.offers.length ? undefined : 'dlp-primary-action'} onClick={() => chooseAgain(row)} disabled={!row.choose}>Choose version</button>}
                 {row.actions.includes('retryGroup') && <button onClick={() => retryGroup(row)} title="Retry only the tracks that failed or were canceled">Retry the {row.group ? row.group.failed + row.group.canceled : 0} that failed</button>}
                 {hasDetails && <button className="dlp-details-toggle" onClick={() => toggleDetails(row.key)} aria-expanded={showDetails}>{showDetails ? 'Hide details' : 'Details'}</button>}
               </div>

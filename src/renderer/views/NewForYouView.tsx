@@ -41,6 +41,7 @@ import { lookupArtworkOneShot } from '../utils/artworkLookup'
 import {
   getLtlDownloadSnapshot, subscribeLtlDownload, queueRecoDownload, prefillDownloadView, openBrowse, saveRecoAlbum, saveAlbumNamed, recoFields, recoOrigin,
 } from '../listen-to-the-list/ltlDownload'
+import OfferButtons from './DownloadStore/OfferButtons'
 import EditionMenu, { askEditions } from './DownloadStore/EditionMenu'
 import AlbumTracklistSheet from './DownloadStore/AlbumTracklistSheet'
 import { showDownload } from '../components/DownloadsPanel'
@@ -396,6 +397,8 @@ export default function NewForYouView() {
                 {/* One word per action (Brief 253): Save / Save album. */}
                 {failed ? 'Retry' : c.type === 'album' ? 'Save album' : c.type === 'song' ? 'Save' : 'Search'}
               </button>
+              {/* Brief 257: what can be had instead, one tap each. */}
+              {failed && <OfferButtons jobKey={dlMap.get(rec.id)?.jobKey} compact className="store-offer" />}
             </>
           )
         })()}

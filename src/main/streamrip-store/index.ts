@@ -40,7 +40,10 @@ import { recoArtistMatches } from '../reco-match.ts'
 import { isAllowedStreamripUrl } from '../url-safety.ts'
 import { artistAliases } from '../artist-spellings-store.ts'
 import { quietWarn } from '../flight-recorder.ts'
-import { judgeHeardListings } from '../album-preflight.ts'
+import { judgeHeardListings, listingCandidate } from '../album-preflight.ts'
+import { findOffers } from '../closest-edition-live.ts'
+import { askedLabel } from '../closest-edition.ts'
+import { registerNotFoundMemory } from '../not-found-memory-store.ts'
 import { PREFLIGHT_BUDGET_MS, type AlbumPreflight, type AlbumPreflightRequest } from '../../common/album-preflight.ts'
 
 export interface StreamripDeps {
@@ -301,6 +304,8 @@ async function sweepOrphanedStaging(): Promise<void> {
 }
 
 export function registerStreamripStore(deps: StreamripDeps): void {
+  // A song that wasn't found isn't searched again the same way for a week (Brief 257).
+  registerNotFoundMemory(deps.ipc)
   setTimeout(() => { void sweepOrphanedStaging() }, 30_000).unref()
   const { ipc } = deps
   /** outcome + alternatives (6.0 Phase 1): the structured verdict behind the
@@ -1439,24 +1444,36 @@ export function registerStreamripStore(deps: StreamripDeps): void {
       })
       if (verdict.answer !== 'no') return verdict
       // Today's walk goes on to Bandcamp after a Qobuz "no", and stages up to two
-      // pages there. When it would, it runs (unchanged); when it wouldn't, the no stands.
+      // pages there. That copy is a lossy MP3, so since Brief 257 it is offered
+      // (and labelled lossy) instead of taken; taking it runs the walk unchanged.
       // ⚠️ TWIN: the walk's bcNamed / bcPicks (download-by-query, album request).
       const bc = await bandcamp
-      if ('hits' in bc) {
-        const picks = bc.hits.filter((r) =>
+      const bcPick = 'hits' in bc
+        ? bc.hits.find((r) =>
           recoArtistMatches(artist, r.band) && titleMatches(title, r.name) && !unwantedVersionOf(title, r.name) && !liveBrandMarker(title, r.name)
-          && !bandcampHitDoubt({ artist, title, album: title }, r))
-        if (picks.length) return { answer: 'unknown', why: 'bandcamp' }
-        return verdict
+          && !bandcampHitDoubt({ artist, title, album: title }, r)) ?? null
+        : null
+      // What can be had instead (Brief 257), each only with a tap: the nearest
+      // edition, the songs that exist, the lossy copy. Within what's left of the budget.
+      const offers = await findOffers({
+        artist, title, req,
+        listings: heard.filter((x) => x.h.answered && !x.h.gone && x.tl.tracks.length).map((x) => listingCandidate(x.hit, x.tl).cand),
+        bandcamp: bcPick ? { url: bcPick.url, name: bcPick.name, band: bcPick.band } : null,
+        budgetMs: Math.min(8000, PREFLIGHT_BUDGET_MS - (Date.now() - started) - 1500),
+      })
+      return {
+        ...verdict,
+        // Bandcamp didn't answer: the no stands for Qobuz, and says Bandcamp wasn't asked (as the walk does).
+        ...('hits' in bc ? {} : { bandcampUnasked: true }),
+        asked: askedLabel(req), askedCount: req.trackCount ?? (req.tracks.length || undefined),
+        ...(offers.length ? { offers } : {}),
       }
-      // Bandcamp didn't answer: the no stands for Qobuz, and says Bandcamp wasn't asked (as the walk does).
-      return { ...verdict, bandcampUnasked: true }
     }
     let timer: NodeJS.Timeout | undefined
     const budget = new Promise<AlbumPreflight>((res) => { timer = setTimeout(() => res({ answer: 'unknown', why: 'timeout' }), PREFLIGHT_BUDGET_MS) })
     try {
       const out = await Promise.race([ask().catch((): AlbumPreflight => ({ answer: 'unknown', why: 'error' })), budget])
-      console.warn(`[preflight] album “${title}” — ${artist}: ${out.answer}${'why' in out ? ` (${out.why}${out.answer === 'no' && out.why === 'partial' ? ` ${out.have}/${out.of}` : ''})` : ''} in ${Date.now() - started} ms`)
+      console.warn(`[preflight] album “${title}” — ${artist}: ${out.answer}${'why' in out ? ` (${out.why}${out.answer === 'no' && out.why === 'partial' ? ` ${out.have}/${out.of}` : ''})` : ''}${out.answer === 'no' && out.offers?.length ? `, offers ${out.offers.map((o) => o.kind).join('+')}` : ''} in ${Date.now() - started} ms`)
       return out
     } finally { if (timer) clearTimeout(timer) }
   }, { refuse: { answer: 'unknown', why: 'error' } })

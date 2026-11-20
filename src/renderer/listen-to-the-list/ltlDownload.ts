@@ -120,7 +120,9 @@ const jobKeyFor = (rec: Recommendation): string | undefined => {
  *  for a job started from the Download view before the list knew, off the
  *  identity key). Pure over the queue array. */
 export function projectRecoStatus(queue: QItem[], rec: Pick<Recommendation, 'id'> & Partial<Recommendation>): LtlDownloadStatus {
-  const it = queue.find((q) => q.result.origin?.recommendationIds.includes(rec.id))
+  // The newest job carrying the row wins: an offer taken on a refused album
+  // (Brief 257) is a second job for the same jot, after the refused one.
+  const it = [...queue].reverse().find((q) => q.result.origin?.recommendationIds.includes(rec.id))
     ?? (rec.artist || rec.song || rec.album ? (() => { const k = jobKeyFor(rec as Recommendation); return k ? queue.find((q) => q.key === k) : undefined })() : undefined)
   if (!it) return { state: 'idle' }
   const base = { jobKey: it.key, matchDesc: it.matchDesc, completion: it.completion, primary: it.primary, detail: it.detail, outcome: it.outcome }
