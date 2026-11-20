@@ -23,7 +23,8 @@
     "test:all": "npm test && npm run test:mobile",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "sync:contracts": "bash scripts/sync-jaketunes-contracts.sh",
-    "check": "npx tsc -p tsconfig.web.json --noEmit && npx tsc -p tsconfig.node.json --noEmit && npm test && node scripts/check-no-root-bundle.mjs",
+    "check": "npx tsc -p tsconfig.web.json --noEmit && npx tsc -p tsconfig.node.json --noEmit && npm test && node scripts/check-no-root-bundle.mjs && npm run check:slop",
+    "check:slop": "python3 tools/vale/slop-check.py --repo v3",
     "check:root-bundle": "node scripts/check-no-root-bundle.mjs"
   },
   "build": {
