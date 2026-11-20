@@ -47,6 +47,26 @@ jobs:
         with:
           python-version: '3.14'
 
+      - name: No AI slop in the app's words (Brief 262)
+        # tools/vale/slop-check.py pulls the words a person reads (renderer JSX
+        # text, toasts, the message tables) and runs Vale with the vendored
+        # ai-tells rules tools/vale/.vale.ini turns on. Vale is not in the
+        # repo: this fetches exactly the v3.26.0 macOS arm64 release and
+        # refuses it unless its sha256 is the one pinned here (the release's
+        # own digest, also in tools/vale/README.md). JT_VALE_REQUIRED=1 makes
+        # a missing Vale a failure, not a skip.
+        env:
+          JT_VALE_REQUIRED: '1'
+        run: |
+          set -euo pipefail
+          want=a6c3370f53bad93086c6b85f3163676e44e08049d69743afdcc13f3aab5b7482
+          curl -fsSL -o "$RUNNER_TEMP/vale.tgz" \
+            https://github.com/errata-ai/vale/releases/download/v3.26.0/vale_3.26.0_macOS_arm64.tar.gz
+          echo "$want  $RUNNER_TEMP/vale.tgz" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/vale"
+          tar -xzf "$RUNNER_TEMP/vale.tgz" -C "$RUNNER_TEMP/vale" vale
+          JT_VALE="$RUNNER_TEMP/vale/vale" python3 tools/vale/slop-check.py --repo v3
+
       - name: Install dependencies
         # `npm ci` is strict — uses package-lock exactly. If lockfile
         # drifts from package.json this fails loudly, which is what we
